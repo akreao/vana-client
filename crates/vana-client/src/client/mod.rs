@@ -2107,6 +2107,8 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
                         world.sounds.push(crate::audio::Ui::Cancel as u32);
                     }
                 }
+                // Ours (modern): Ctrl+Space opens the command palette in the field.
+                egui::Key::Space if modifiers.ctrl && !modifiers.alt && listsearch::palette_allowed(world) => listsearch::open_palette(world),
                 // Ctrl / Alt + M, J, W, B (key functions 0x41, 0x7f, 0x80, 0x9f): magic in list mode without trusts, job
                 // abilities, weapon skills, pet commands; in the field, alive, no prompt.
                 egui::Key::M | egui::Key::J | egui::Key::W | egui::Key::B if (modifiers.ctrl || modifiers.alt) && !event::active(world) && !world.dead() && !target::sub_up(world) => match key {
@@ -5912,6 +5914,8 @@ struct World {
     /// The modern magic and ability windows' search (listsearch.rs), their suggestions (taken when a window opens or
     /// changes, held while it is navigated; by the window they were taken for) and the one Tab has the focus on.
     list_search: Option<listsearch::ListSearch>,
+    /// Ours (modern): the command palette is up (Ctrl+Space; listsearch.rs), `list_search` its field.
+    command_palette: bool,
     /// The search's recent picks (listsearch::key_of), newest first, and whether they changed since the save.
     recent_picks: Vec<String>,
     recent_save: bool,
@@ -7751,6 +7755,7 @@ impl App {
                             modern_chat_edge: None,
                             retail_frames: Vec::new(),
                             list_search: None,
+                            command_palette: false,
                             recent_picks: self.cfg.modern_recent.get(&login.name).cloned().unwrap_or_default(),
                             recent_save: false,
                             root_sugg: Vec::new(),

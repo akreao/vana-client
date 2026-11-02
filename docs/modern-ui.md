@@ -167,7 +167,8 @@ scale.
 
 ## Open questions
 
-- Which keys open the command palette and the search? (Tab is FFXI's target cycling.)
+- Which keys open the command palette and the search? (Tab is FFXI's target cycling.) Taken for now (2026-11-02):
+  Ctrl+Space opens the palette; typing in an open list searches it.
 - Click-to-move, or only mouse targeting and interaction?
 - Which windows hide in combat and which stay pinned?
 - How macros and equipment sets show in search and favourites.
@@ -300,6 +301,9 @@ Milestone 1:
 - Storage (modern/storage.rs): the bags as tabs, Mog Safe / Safe 2 and Mog Wardrobe 1..8 merged; the bag beside the
   inventory; a click moves a stack (right click one), into a merged bag the first part with room that takes it;
   retail's colours say what may move.
+- Command palette (2026-11-02, ours; listsearch.rs, modern/lists.rs): Ctrl+Space in the field searches every spell,
+  ability, usable item and action menu command (Attack, Disengage, Switch Target, Check, Call for Help, Heal); recent
+  picks show on the empty field; a pick goes through the menus as the keys would.
 - Plate badges: the approved SVG set (assets/modern/badges) in place of retail's glyphs; the pearl tinted by its
   linkshell; rank stars, the recruiter star in its orb, the master stars above.
 - Icons: batches 1 and 2 (131) redrawn in VectorCraft and approved.
