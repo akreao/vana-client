@@ -41,6 +41,9 @@ master 2026-10-27 (kept).
 - **Breathing room.** Rows and frames keep a few pixels between their lines and their contents.
 - **Icons.** The pack's icons are placeholders. A full icon set (every job, spell, buff and debuff) may come later;
   game art is mapped by stable game ids, never by atlas sprite ids.
+- **Icon set settled (user, 2026-11-02).** Spells, abilities, mounts, emotes and items keep the game's own icons
+  (magic::row_icon, Modern::item_icon), drawn by game id; ours are the jobs (jobs/*), statuses (status/s<id>),
+  weather, target markers, badges and the 131 interface icons, all approved. No new spell or ability art.
 
 ## Goal
 
@@ -172,7 +175,7 @@ scale.
 - Which windows hide in combat and which stay pinned?
 - How macros and equipment sets show in search and favourites.
 - How to show skillchain windows without a rotation HUD.
-- Which icons come from the DATs and which are new art.
+- ~~Which icons come from the DATs and which are new art.~~ Settled 2026-11-02: see Decisions (Icon set settled).
 - How latency, failed transfers and invalid targets are shown.
 
 ## State
