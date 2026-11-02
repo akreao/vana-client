@@ -54,6 +54,11 @@ fn kit_sample(p: &mut Panels) {
             kit::button(ui, m, "ON", 64.0, kit::Btn { lit: true, ..Default::default() });
         });
     });
+    // link11 as the modern window draws it (no item cache here: a disc stands in for the shell icon).
+    let v = super::social::NameView { name: "Sunset Watch", rgb: [15, 9, 3], sel: 3, edit: 0 };
+    p.panel_at("naming sample", Some(Title { icon: Some("icons/linkshell"), text: "New Linkshell", note: None }), super::social::NAME_W + 44.0, pos2(720.0, 40.0), |ui| {
+        super::social::naming_body(ui, m, &v, None, true);
+    });
 }
 
 fn menu_sample(p: &mut Panels) {
