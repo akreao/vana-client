@@ -22,11 +22,11 @@ A new file per entry touches no shared lines.
 
 ## Folding into MODLOG.md
 
-`python3 docs/modlog/fold.py` appends every fragment to the end of `MODLOG.md`, oldest file name first, and
+`python3 docs/fold.py` appends every fragment here to the end of `MODLOG.md`, oldest file name first, and
 deletes the fragments. Run it on `master` (not on a feature branch) whenever convenient, and always before sending
-work upstream, so `MODLOG.md` stays one complete file there.
+work upstream, so `MODLOG.md` stays one complete file there. It folds `docs/modern-ui/` the same way.
 
-- `python3 docs/modlog/fold.py --check` only checks that each fragment starts with a `## ` heading.
-- `python3 docs/modlog/fold.py --print` writes the would-be additions to stdout and changes nothing.
+- `python3 docs/fold.py --check` only checks the fragments.
+- `python3 docs/fold.py --print` writes the would-be additions to stdout and changes nothing.
 
 Until a fragment is folded, read it here alongside `MODLOG.md`.

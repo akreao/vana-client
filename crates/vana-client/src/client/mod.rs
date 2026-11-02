@@ -4,6 +4,7 @@ pub mod ground;
 pub mod combat;
 mod actmotion;
 mod chair;
+mod clickmove;
 mod battlemod;
 pub mod opening;
 mod flyover;
@@ -76,6 +77,7 @@ mod party;
 mod macros;
 mod textcmd;
 mod magic;
+mod registry;
 mod moogle;
 mod post;
 mod synth;
@@ -1479,6 +1481,9 @@ fn bar_full_log(w: &mut World, m: scrollbar::Msg, (total, lines, _): (usize, usi
     fl.key(key, true, lines, total)
 }
 
+/// Ours: the double-click time for the modern UI's world clicks (Windows' default).
+const DOUBLE_CLICK: std::time::Duration = std::time::Duration::from_millis(500);
+
 /// FUN_10130280 (Ctrl+C): talk to an NPC target, check anything else.
 fn check_target(world: &mut World) {
     match world.target.filter(|t| t >> 24 != 0 && world.entities.get(t).is_some_and(|e| !e.mob)) {
@@ -2110,6 +2115,8 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
                         world.sounds.push(crate::audio::Ui::Cancel as u32);
                     }
                 }
+                // Ours (modern): Ctrl+Space opens the command palette in the field.
+                egui::Key::Space if modifiers.ctrl && !modifiers.alt && listsearch::palette_allowed(world) => listsearch::open_palette(world),
                 // Ctrl / Alt + M, J, W, B (key functions 0x41, 0x7f, 0x80, 0x9f): magic in list mode without trusts, job
                 // abilities, weapon skills, pet commands; in the field, alive, no prompt.
                 egui::Key::M | egui::Key::J | egui::Key::W | egui::Key::B if (modifiers.ctrl || modifiers.alt) && !event::active(world) && !world.dead() && !target::sub_up(world) => match key {
@@ -2195,7 +2202,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
                 },
                 _ if world.inspect.up() && !shop::wares_open(world) => inspect::key(world, gu, *key),
                 _ if world.win.is_some() => {
-                    items::key(world, *key, modifiers.ctrl || modifiers.alt, modifiers.alt);
+                    items::key(world, *key, modifiers.ctrl || modifiers.alt, modifiers.alt, modifiers.shift);
                 }
                 _ if shop::active(world) => shop::key(world, *key),
                 _ if trade::active(world) => trade::key(world, gu, *key),
@@ -2570,13 +2577,14 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
         let out = c.pointer(gu, &mut world.game, p, input.moved, input.clicked, sw, sh);
         config_out(world, out);
     }
+    world.ptr_button = (input.pressed, input.down);
     // Mouse on an open window's item list (the modern layer's own list takes it there).
     if world.win.is_some()
         && !(world.modern && items::modern_list(world))
         && world.maze.screen.is_none()
         && let Some(p) = input.pointer
     {
-        items::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
+        items::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.linkshell.as_ref().is_some_and(|l| !world.modern || l.naming.is_some()) && world.linklist.is_none() && world.confirm.is_none()) {
         linkshell::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
@@ -5616,6 +5624,9 @@ struct World {
     started: Instant,
     logging_out: bool,
     target: Option<u32>,
+    /// Ours (modern): the target before the current one, set as target::set changes it (the sub-target prompt's
+    /// stand-ins are not counted); `<lt>` and the modern focus panel's Last row.
+    last_target: Option<u32>,
     /// Target lock-on (DAT_10565d34 +0x5c bits 0..1 != 0), the locked camera, ticks left in which the free
     /// camera ignores manual turns after a lock (DAT_10444464), auto lock-on (config 7 = 0), when the target
     /// was set, and manual camera turns waiting for the locked camera.
@@ -5652,6 +5663,8 @@ struct World {
     translating: bool,
     /// /follow's target (0x10487f74): autorun steers at it each tick.
     follow: Option<u32>,
+    /// Ours (modern UI, Ctrl + click on the ground): the walk autorun steers along.
+    click_move: Option<clickmove::ClickMove>,
     target_since: Instant,
     cam_turn: (f32, f32),
     /// UI sound effects to play ("0002", "0009" ...), by SE id.
@@ -5929,6 +5942,8 @@ struct World {
     /// The modern magic and ability windows' search (listsearch.rs), their suggestions (taken when a window opens or
     /// changes, held while it is navigated; by the window they were taken for) and the one Tab has the focus on.
     list_search: Option<listsearch::ListSearch>,
+    /// Ours (modern): the command palette is up (Ctrl+Space; listsearch.rs), `list_search` its field.
+    command_palette: bool,
     /// The search's recent picks (listsearch::key_of), newest first, and whether they changed since the save.
     recent_picks: Vec<String>,
     recent_save: bool,
@@ -5941,6 +5956,8 @@ struct World {
     /// Where retail's target cursors (anc_l) go this frame, for the modern layer's own: screen fractions, the kind (0
     /// the target, 1 a prompt's saved target, 2 its pick) and the pick's range tint.
     modern_pointers: Vec<(f32, f32, u8, u32)>,
+    /// An actor a right click on the world asked the modern layer's menu for (modern/ctxmenu.rs).
+    actor_menu: Option<u32>,
     /// The game UI's layout size this frame (the modern layer turns its rects into screen fractions).
     ui_wh: (f32, f32),
     /// A yes/no prompt (FUN_102075f0) and whether Yes is highlighted.
@@ -5984,6 +6001,10 @@ struct World {
     info_page: std::cell::Cell<(usize, u16, usize)>,
     /// Windows as drawn this frame (name, frame, children), for the mouse (winhits.rs).
     win_hits: std::cell::RefCell<Vec<(String, [f32; 4], Vec<(u16, [f32; 4])>)>>,
+    /// The left button this frame (pressed, held), for the windows' held buttons (winhits::ctr).
+    ptr_button: (bool, bool),
+    /// itemctrl / moneyctr's - / + held under the pointer, and when it repeats next (winhits::ctr).
+    ctr_hold: Option<(u16, Instant)>,
     /// The ops' shared extdata buffer (DAT_104886bc).
     event_ext: [u8; 24],
     event_mem: crate::event_vm::Memory,
@@ -6479,6 +6500,8 @@ pub struct App {
     /// When the left button went down, and the right one (where and when): the drag rule (FUN_10125040).
     press_time: Option<Instant>,
     right_press: Option<((f64, f64), Instant)>,
+    /// Ours (modern UI): the actor the last plain left click picked and when, for the double click.
+    last_pick: Option<(u32, Instant)>,
     /// Ours (modern MMOs): a look drag holds the pointer, hidden, where it began. Some(true) locked (raw motion turns
     /// the camera), Some(false) only confined (X11: warped back after each move).
     look_grab: Option<bool>,
@@ -6733,6 +6756,7 @@ impl App {
             press_at: None,
             press_time: None,
             right_press: None,
+            last_pick: None,
             look_grab: None,
             grab_at: None,
             swallow_click: false,
@@ -7546,6 +7570,7 @@ impl App {
                             started: Instant::now(),
                             logging_out: false,
                             target: None,
+                            last_target: None,
                             locked: false,
                             cam: Default::default(),
                             lock_height: -1.5,
@@ -7565,6 +7590,7 @@ impl App {
                             party_tp_save: false,
                             item_search: false,
                             follow: None,
+                            click_move: None,
                             translating: false,
                             last_proposer: String::new(),
                             overlay: None,
@@ -7771,6 +7797,7 @@ impl App {
                             modern_chat_edge: None,
                             retail_frames: Vec::new(),
                             list_search: None,
+                            command_palette: false,
                             recent_picks: self.cfg.modern_recent.get(&login.name).cloned().unwrap_or_default(),
                             recent_save: false,
                             root_sugg: Vec::new(),
@@ -7778,6 +7805,7 @@ impl App {
                             suggest_sel: None,
                             party_hp_max: HashMap::new(),
                             modern_pointers: Vec::new(),
+                            actor_menu: None,
                             ui_wh: (1.0, 1.0),
                             confirm: None,
                             shutdown: false,
@@ -7799,6 +7827,8 @@ impl App {
                             info_win: None,
                             info_page: std::cell::Cell::new((0, 0, 1)),
                             win_hits: Default::default(),
+                            ptr_button: (false, false),
+                            ctr_hold: None,
                             event_ext: [0; 24],
                             event_mem: Default::default(),
                             event_end_at: None,
@@ -10009,6 +10039,12 @@ impl App {
         if !in_event && self.input.test(0x1c, input::mode::PRESS) {
             world.autorun = !world.autorun;
             world.autorun_dir = Vec3::ZERO;
+            world.click_move = None;
+        }
+        // A click-to-move walk ends at any move or turn of the player's own.
+        if world.click_move.is_some() && (ax != 0.0 || ay != 0.0 || turn != 0.0) {
+            world.click_move = None;
+            world.autorun = false;
         }
         // Turning while autorunning steers it: the move goes forward and the turn counts as X input.
         if world.autorun && turn != 0.0 {
@@ -10032,6 +10068,22 @@ impl App {
                     }
                 }
                 _ => world.autorun = false,
+            }
+        }
+        // Click-to-move: autorun points along the walk; arriving, or no progress, ends it.
+        if let Some(cm) = world.click_move.as_mut() {
+            match cm.steer(world.pos) {
+                _ if !world.autorun => world.click_move = None,
+                clickmove::Steer::Toward(d) => world.autorun_dir = d,
+                clickmove::Steer::Arrived => {
+                    world.click_move = None;
+                    world.autorun = false;
+                }
+                clickmove::Steer::Stuck => {
+                    world.click_move = None;
+                    world.autorun = false;
+                    world.chat.push("Can't go any further that way.");
+                }
             }
         }
         if world.autorun && !world.locked && !move_locked {
@@ -10643,7 +10695,9 @@ impl App {
         let size = self.window_size;
         let (k, retail_aspect) = (self.ui_k, self.cfg.retail_aspect);
         let hud = &self.hud_blockers;
-        let world_click = |phase: &mut Phase, b: (f64, f64), left: bool, drag: bool| -> bool {
+        let ctrl = self.mods.control_key();
+        let last_pick = &mut self.last_pick;
+        let mut world_click = |phase: &mut Phase, b: (f64, f64), left: bool, drag: bool| -> bool {
             let on_hud = hud.iter().any(|r| inside(r, (b.0 as f32 * k.0, b.1 as f32 * k.1)));
             let Phase::World(world) = phase else { return false };
             let gated = consumed || event::active(world) || world.typing || world.ui_hidden || (world_window_open(world) && world.prompt.is_none());
@@ -10654,8 +10708,28 @@ impl App {
             if !drag {
                 fishing::click(world);
             }
+            // Ours (modern UI): a right click that did not drag, on an actor, opens its menu (modern/ctxmenu.rs) in
+            // place of retail's right click (clear the target).
+            if !left
+                && !drag
+                && world.modern
+                && !target::sub_up(world)
+                && let Some(id) = Self::under_pointer(world, b, size, aspect).0.filter(|&id| id != world.my_id && world.entities.contains_key(&id))
+            {
+                world.actor_menu = Some(id);
+                return false;
+            }
             let picked = if left { Self::under_pointer(world, b, size, aspect).0 } else { None };
-            target::click(world, picked, left, drag)
+            // Ours (modern UI): Ctrl + left click on the ground (no actor there) walks to it.
+            if left && !drag && ctrl && world.modern && picked.is_none() {
+                Self::click_move(world, b, size, aspect);
+                return true;
+            }
+            // Ours (the modern UI's mouse contract): a second plain left click on the same actor within the
+            // double-click time runs the safe default (talk to an NPC, check anyone else) instead of the action menu.
+            let double = left && !drag && world.modern && picked.is_some_and(|p| last_pick.is_some_and(|(q, at)| q == p && at.elapsed() < DOUBLE_CLICK));
+            *last_pick = if left && !drag && !double { picked.map(|p| (p, Instant::now())) } else { None };
+            target::click(world, picked, left, drag, double)
         };
         match button {
             MouseButton::Left => {
@@ -10691,6 +10765,32 @@ impl App {
         }
         if !self.left_down && !self.dragging && !self.middle_down {
             self.release_pointer();
+        }
+    }
+
+    /// Click-to-move: the ground under the pointer, the way there, and autorun along it (clickmove.rs).
+    fn click_move(world: &mut World, cursor: (f64, f64), size: [u32; 2], aspect: f32) {
+        let cam = Self::camera(world);
+        let inv = (cam.proj(aspect) * cam.view()).inverse();
+        let ndc = glam::Vec2::new(2.0 * cursor.0 as f32 / size[0].max(1) as f32 - 1.0, 1.0 - 2.0 * cursor.1 as f32 / size[1].max(1) as f32);
+        let far = inv.project_point3(Vec3::new(ndc.x, ndc.y, 0.5));
+        let blocked = world.locked || world.dead() || world.my_motion.status != 0 && world.my_motion.status != 1;
+        let way = world
+            .ground
+            .as_ref()
+            .filter(|_| !blocked && world.zone == Some(world.pos_zone))
+            .and_then(|g| clickmove::ground_point(g, cam.eye, far - cam.eye).and_then(|to| clickmove::path(g, world.pos, to)));
+        match way {
+            Some(path) => {
+                log::debug!("click-to-move: {} points to {:?}", path.len(), path.last());
+                world.follow = None;
+                world.click_move = Some(clickmove::ClickMove::new(path, world.pos));
+                world.autorun = true;
+                world.autorun_dir = Vec3::ZERO;
+            }
+            None => {
+                world.sounds.push(crate::audio::Ui::Error as u32);
+            }
         }
     }
 
@@ -11976,8 +12076,8 @@ impl App {
                     apply = true;
                     // Panel Places' Reset: this character's saved places go; the row reads As Moved again.
                     if std::mem::take(&mut s.s.reset_places) {
-                        log::info!("modern: panel places of {} reset", world.name);
-                        self.cfg.modern_places.remove(&world.name);
+                        log::info!("modern: panel places of {} reset (every display)", world.name);
+                        self.cfg.modern_places.retain(|k, _| !modern::layout_of(k, &world.name));
                         if let Err(e) = self.cfg.save() {
                             log::warn!("config: {e:#}");
                         }

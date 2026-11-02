@@ -17,6 +17,7 @@ mod combat;
 mod command;
 mod config;
 mod craft;
+mod ctxmenu;
 mod equip;
 mod extras;
 mod gametext;
@@ -134,6 +135,8 @@ pub struct Modern {
     line_sel: std::cell::Cell<bool>,
     chat_menu: std::cell::RefCell<Option<chatsel::Menu>>,
     chat_act: std::cell::RefCell<Option<chatsel::Act>>,
+    /// The open right-click menu on an item, a party row or an actor (ctxmenu.rs).
+    ctx_menu: std::cell::RefCell<Option<ctxmenu::Menu>>,
     /// The retail windows drawn this frame: the edge windows give way to them (they draw under every panel).
     retail: std::cell::RefCell<Vec<Rect>>,
     /// A place changed during a drag: saved once the pointer is let go.
@@ -188,6 +191,7 @@ impl Modern {
             line_sel: Default::default(),
             chat_menu: Default::default(),
             chat_act: Default::default(),
+            ctx_menu: Default::default(),
             dirty: false,
         }
     }
@@ -240,9 +244,13 @@ impl Modern {
         *self.retail.borrow_mut() = w.retail_frames.iter().map(|r| Rect::from_min_size(pos2(r[0], r[1]), vec2(r[2], r[3]))).collect();
         topbar::draw(self, ctx, &w.hud_top.view);
         pointers(self, ctx, w);
-        let layout = cfg.modern_places.entry(w.name.clone()).or_default();
+        // Places per display (plan B): this window size and UI scale's own layout, else the character's last one; a
+        // change saves both, so a new display starts from the latest arrangement and resizing the window through
+        // sizes nobody arranged for stores nothing.
+        let key = display_key(&w.name, window, cfg.modern_scale);
+        let mut layout = cfg.modern_places.get(&key).or_else(|| cfg.modern_places.get(&w.name)).cloned().unwrap_or_default();
         let mut changed = false;
-        let mut p = Panels { m: self, ctx, gu: Some(gu), layout, changed: &mut changed, chat_font: &mut cfg.modern_chat_font, battle_in_all: &mut cfg.modern_battle_in_all, condense: &mut cfg.modern_condense, folded: &mut cfg.modern_folded, scan_kinds: &mut cfg.modern_scan_kinds, this: HashMap::new(), retail: HashMap::new(), focus: focus_panel(w) };
+        let mut p = Panels { m: self, ctx, gu: Some(gu), layout: &mut layout, changed: &mut changed, chat_font: &mut cfg.modern_chat_font, battle_in_all: &mut cfg.modern_battle_in_all, condense: &mut cfg.modern_condense, folded: &mut cfg.modern_folded, scan_kinds: &mut cfg.modern_scan_kinds, this: HashMap::new(), retail: HashMap::new(), focus: focus_panel(w) };
         // The chat window first: what sits on it places by this frame's height.
         self.chat_edge.set(None);
         chat::panel(&mut p, w);
@@ -287,8 +295,13 @@ impl Modern {
         charlnk::draw(&mut p, w);
         mogdoor(&mut p, w);
         event_input(&mut p, w);
+        ctxmenu::draw(self, ctx, w);
         let this = std::mem::take(&mut p.this);
         *self.rects.borrow_mut() = this;
+        if changed {
+            cfg.modern_places.insert(key, layout.clone());
+            cfg.modern_places.insert(w.name.clone(), layout);
+        }
         // The chat settings act at once (the world reads it as lines print).
         w.condense = cfg.modern_condense;
         w.chat.set_fold(cfg.modern_condense);
@@ -380,6 +393,17 @@ struct Look<'a> {
 }
 
 /// What a frame's panels share.
+/// The config `modern_places` key of a character's layout for one display: the window's size in pixels and the UI
+/// scale (the plain name holds the character's latest layout, the template for a display not yet arranged).
+pub fn display_key(name: &str, window: [u32; 2], scale: u32) -> String {
+    format!("{name} @{}x{} {scale}%", window[0], window[1])
+}
+
+/// Whether config `modern_places` key `key` is one of `name`'s layouts (the plain one or a display's).
+pub fn layout_of(key: &str, name: &str) -> bool {
+    key == name || key.strip_prefix(name).is_some_and(|rest| rest.starts_with(" @"))
+}
+
 struct Panels<'a> {
     m: &'a Modern,
     ctx: &'a Context,
@@ -476,6 +500,8 @@ fn default_place(id: &str) -> Place {
         "where" => Place { dock: Some(Dock { to: "chat".into(), gap: -0.5, dx: 1.25, right: false }), ..Default::default() },
         "combat" => on("where"),
         "target" => on("party"),
+        // Ours: the focus and last targets on the target panel.
+        "focus" => on("target"),
         // The magic and ability windows ride on the combat window (retail's sit on the log), the list on its categories.
         "cats" => on("combat"),
         "list" => on("cats"),
@@ -504,6 +530,8 @@ fn default_place(id: &str) -> Place {
         "loot" => on("iteminfo"),
         // /check beside the command window's place.
         "check" => at(0.2, 0.0347),
+        // Ours: the command palette above the screen's middle.
+        "palette" => at(0.38, 0.22),
         "blklist" => at(0.2, 0.0347),
         // The chat mode window rides the action menu it is opened from.
         "chatctrl" => on("combat"),
@@ -1192,4 +1220,17 @@ pub(super) fn one_line(painter: &egui::Painter, text: &str, font: egui::FontId, 
     let mut job = egui::text::LayoutJob::simple_singleline(text.to_string(), font, colour);
     job.wrap = egui::text::TextWrapping { max_width: width, max_rows: 1, break_anywhere: true, overflow_character: Some('\u{2026}') };
     painter.layout_job(job)
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::{display_key, layout_of};
+
+    #[test]
+    fn display_layouts_belong_to_their_character() {
+        let k = display_key("Naji", [2560, 1440], 60);
+        assert_eq!(k, "Naji @2560x1440 60%");
+        assert!(layout_of(&k, "Naji") && layout_of("Naji", "Naji"));
+        assert!(!layout_of(&k, "Naj") && !layout_of("Najim @1920x1080 60%", "Naji"));
+    }
 }

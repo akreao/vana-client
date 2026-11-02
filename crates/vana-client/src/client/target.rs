@@ -75,6 +75,13 @@ pub fn in_own_six(w: &World, id: u32) -> bool {
     w.party.slots().slots[..6].iter().flatten().any(|m| m.id == id && m.index < 0x700)
 }
 
+/// Ours (modern): the last target while it is still here and targetable, `<lt>`.
+pub fn last_target(w: &World) -> Option<(u32, u16)> {
+    let id = w.last_target.filter(|&id| Some(id) != w.target)?;
+    let e = w.entities.get(&id).filter(|e| e.targetable())?;
+    Some((id, e.index))
+}
+
 /// FUN_101593c0 on the focus target: someone other than us in our six slots.
 pub fn focus_member(w: &World) -> Option<u32> {
     w.focus.map(|f| f.0).filter(|&id| id != w.my_id && in_own_six(w, id))
@@ -308,6 +315,14 @@ impl Sub {
 /// Table 0x103720c0: a DAT valid-target flag's include / exclude kinds (FUN_10159170).
 const SUB_FLAGS: [(u32, u32, u32); 8] = [(1, 0x200, 0), (2, 0x100, 0), (4, 4, 0), (8, 8, 0), (0x10, 1, 0), (0x20, 0x10, 0), (0x40, 2, 0), (0x80, 2, 0x1800)];
 
+/// Ours (the action registry): whether DAT target `flags` may take actor `id`, by the prompt's include / exclude
+/// kinds (SUB_FLAGS, Sub::takes).
+pub(super) fn takes(w: &World, flags: u32, id: u32) -> bool {
+    let (inc, exc) = SUB_FLAGS.iter().filter(|f| flags & f.0 != 0).fold((0, 0), |(i, e), f| (i | f.1, e | f.2));
+    let kind = sub_kind(w, id);
+    inc & kind != 0 && exc & kind == 0
+}
+
 /// FUN_1008e290's kind bits: 0x200 self, 1 PC, 4 party, 8 alliance, 0x10 monster, 2 NPC, 0x800 our pet, 0x1000
 /// others' pets and trusts (0x700.., inf for +0x12c bit 22). Not done: 0x100 ally NPCs, 0x400 allegiance.
 fn sub_kind(w: &World, id: u32) -> u32 {
@@ -475,6 +490,9 @@ pub fn set(w: &mut World, t: Option<u32>) {
     }
     let e = t.and_then(|t| w.entities.get(&t));
     log::info!("target {:#x} {:?} at {:?} radius {:?} (ours {})", t.unwrap_or(0), e.map(|e| e.name.as_str()), e.map(|e| (e.pos.x, e.pos.z)), e.map(|e| e.hitbox), w.my_plate.hitbox);
+    if let Some(old) = w.target.filter(|&old| old != w.my_id) {
+        w.last_target = Some(old);
+    }
     w.target = t;
     w.target_since = std::time::Instant::now();
     if w.locked && w.prompt.is_none() {
@@ -630,7 +648,9 @@ pub fn confirm_target(w: &mut World) {
 /// pick; else the actor under the pointer becomes the target / the prompt's pick, and a click that leaves it as it
 /// was confirms (the prompt, the target, or with none the action menu). After a drag only the pick runs. Right:
 /// cancels the prompt, clears an unlocked target, or with none stops autorun. True when it confirmed.
-pub fn click(w: &mut World, picked: Option<u32>, left: bool, drag: bool) -> bool {
+/// `double` (ours, the modern UI's double click on the target): instead of the action menu, the safe default runs as
+/// Ctrl+C does (talk to an NPC, check a player or a monster), closing the menu the first click opened.
+pub fn click(w: &mut World, picked: Option<u32>, left: bool, drag: bool, double: bool) -> bool {
     log::debug!("world click left {left} drag {drag} picked {picked:?} target {:?}", w.target);
     if !left {
         if sub_up(w) {
@@ -659,6 +679,9 @@ pub fn click(w: &mut World, picked: Option<u32>, left: bool, drag: bool) -> bool
     }
     if sub_up(w) {
         confirm_sub(w);
+    } else if double {
+        w.action_menu = None;
+        super::check_target(w);
     } else {
         confirm_target(w);
     }

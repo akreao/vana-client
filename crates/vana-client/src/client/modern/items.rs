@@ -63,6 +63,8 @@ struct Mouse {
     iuse: Option<u16>,
     drop: Option<bool>,
     wheel: f32,
+    /// A row right-clicked: its slot (index, id) and where.
+    menu: Option<(u8, u16, egui::Pos2)>,
 }
 
 /// The Items list (or the action menu's direct-use list): the rows from the scroll with icons and quantities in the
@@ -150,6 +152,14 @@ fn list(p: &mut Panels, w: &mut World) {
             if resp.clicked() {
                 mouse.click = Some(k);
             }
+            if resp.secondary_clicked()
+                && sub.is_none()
+                && sort.is_none()
+                && manual.is_none()
+                && let Some(at) = resp.interact_pointer_pos()
+            {
+                mouse.menu = Some((slot.index, slot.id, at));
+            }
             ui.add_space(2.0);
         }
         // The bar: the rows shown out of all, at the right edge.
@@ -207,11 +217,14 @@ fn list(p: &mut Panels, w: &mut World) {
         lists::search_mouse(w, &found, hits);
         return;
     }
+    if let Some((index, id, at)) = mouse.menu.take() {
+        super::ctxmenu::open(m, super::ctxmenu::Menu::Item { at, index, id, moving: false });
+    }
     apply(w, mouse, sort, sub);
 }
 
 fn enter(w: &mut World) {
-    gitems::key(w, egui::Key::Enter, false, false);
+    gitems::key(w, egui::Key::Enter, false, false, false);
 }
 
 fn win_mut(w: &mut World) -> Option<(&mut usize, &mut Option<Sub>, &mut Option<SortWin>)> {

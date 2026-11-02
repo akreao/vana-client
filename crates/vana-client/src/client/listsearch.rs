@@ -1,6 +1,8 @@
 //! Type-to-search in the magic and ability windows (not retail; the modern layer's, docs/modern-ui.md): typing while
 //! a category window or a list is open searches the names; from a category window every list behind it. A pick goes
 //! through retail's own keys (the category, the row, Enter), so every check and the target prompt still apply.
+//! The command palette (Ctrl+Space in the field, modern) is the same search over everything the action menu reaches:
+//! spells, abilities, usable items and the menu's commands; a pick opens what the menu would and acts through it.
 
 use super::magic::{self, Cat, Kind};
 use super::{World, items, journal, keyitems, missions, quests};
@@ -80,6 +82,95 @@ pub enum Journal {
     Mission(usize, usize),
     /// An auction house item (not retail) and its bid category.
     Auction(u8),
+    /// The command palette's action menu command (combat::cmd), or HEAL.
+    Command(u8),
+}
+
+/// The palette's /heal (not an action menu row).
+const HEAL: u8 = 0xfe;
+
+/// The palette's commands: the action menu's rows that act at once, and /heal.
+const COMMANDS: [(u8, &str); 6] = [
+    (super::combat::cmd::ATTACK, "Attack"),
+    (super::combat::cmd::DISENGAGE, "Disengage"),
+    (super::combat::cmd::SWITCH_TARGET, "Switch Target"),
+    (super::combat::cmd::CHECK, "Check"),
+    (super::combat::cmd::CALL_HELP, "Call for Help"),
+    (HEAL, "Heal"),
+];
+
+/// Where the palette may open: modern, in the field, alive, nothing open or typed, not under a prompt or Monstrosity.
+pub fn palette_allowed(w: &World) -> bool {
+    w.modern
+        && !w.typing
+        && !w.dead()
+        && w.prompt.is_none()
+        && w.confirm.is_none()
+        && w.win.is_none()
+        && w.menu.is_none()
+        && w.cats.is_none()
+        && w.magic.is_none()
+        && w.ability.is_none()
+        && !super::event::active(w)
+        && !super::target::sub_up(w)
+        && !super::monstrosity::active(w)
+}
+
+/// Opens the command palette (an empty search: recent picks first).
+pub fn open_palette(w: &mut World) {
+    w.command_palette = true;
+    w.list_search = Some(ListSearch::default());
+    w.sounds.push(Se::Select as u32);
+}
+
+fn close_palette(w: &mut World) {
+    w.command_palette = false;
+    w.list_search = None;
+}
+
+/// The palette's candidates: every spell and ability the menus list, the usable items (one per item, the total as the
+/// note) and the commands. An empty query keeps only the recent picks.
+fn palette_matches(w: &World, query: &str) -> Vec<Hit> {
+    let mut out = Vec::new();
+    let mut push = |kind: Kind, id: u16, name: String, slot: Option<u8>, note: String, journal: Option<Journal>| {
+        let mut h = Hit { kind, cat: None, id, name, score: 0, slot, note, journal, recent: false };
+        let score = if query.is_empty() { w.recent_picks.contains(&key_of(&h)).then_some(0) } else { score(&h.name, query) };
+        if let Some(score) = score {
+            h.score = score;
+            out.push(h);
+        }
+    };
+    for &(c, label) in &COMMANDS {
+        push(Kind::Ability, c as u16, label.to_string(), None, "command".into(), Some(Journal::Command(c)));
+    }
+    for &(_, cat) in magic::cat_rows("menu    magselec") {
+        if let Cat::Magic(ty, list) = cat {
+            for id in magic::magic_rows(w, ty, list, 0) {
+                push(Kind::Magic, id, name(w, Kind::Magic, id), None, magic::type_label(ty).into(), None);
+            }
+        }
+    }
+    for &(_, cat) in magic::cat_rows("menu    abiselec") {
+        if let Cat::Ability(ty) = cat {
+            for id in magic::ability_rows(w, ty) {
+                push(Kind::Ability, id, name(w, Kind::Ability, id), None, magic::ability_label(ty).into(), None);
+            }
+        }
+    }
+    let info = w.item_info.as_ref();
+    let mut seen: Vec<(u16, u8, u32)> = Vec::new();
+    for s in items::listed(w, true) {
+        match seen.iter_mut().find(|(id, ..)| *id == s.id) {
+            Some((.., n)) => *n += s.count.max(1),
+            None => seen.push((s.id, s.index, s.count.max(1))),
+        }
+    }
+    for (id, slot, n) in seen {
+        let name = info.and_then(|c| c.item(id)).map(|it| it.name.clone()).unwrap_or_default();
+        push(Kind::Ability, id, name, Some(slot), if n > 1 { format!("item · {n}") } else { "item".into() }, None);
+    }
+    out.sort_by(|a, b| b.score.cmp(&a.score));
+    out
 }
 
 /// Rows a search shows at most.
@@ -204,6 +295,7 @@ pub fn key_of(h: &Hit) -> String {
         (Some(Journal::Quest(a, e)), _, _) => format!("q:{a}:{e}"),
         (Some(Journal::Mission(l, e)), _, _) => format!("n:{l}:{e}"),
         (Some(Journal::Auction(_)), _, _) => format!("h:{}", h.id),
+        (Some(Journal::Command(c)), _, _) => format!("c:{c}"),
         (None, Some(_), _) => format!("i:{}", h.id),
         (None, None, Kind::Magic) => format!("m:{}", h.id),
         (None, None, Kind::Ability) => format!("a:{}", h.id),
@@ -242,6 +334,9 @@ fn remember(w: &mut World, h: &Hit) {
 
 /// The matches for the open window by score (the list's own order among equals).
 fn matches(w: &World, query: &str) -> Vec<Hit> {
+    if w.command_palette {
+        return palette_matches(w, query);
+    }
     let mut out = Vec::new();
     // The auction house's bid menus: every item of every category (its place as the note, filled by the modern layer);
     // none until the index is in.
@@ -364,7 +459,7 @@ pub fn can_run(w: &World) -> bool {
         && w.prompt.is_none()
         && w.confirm.is_none()
         && !w.typing
-        && (super::auction::searchable(w) || w.cats.is_some() || list.is_some_and(|l| !l.hidden && l.sort_focus.is_none() && l.ask.is_none() && l.manual == 0) || (w.win.is_some() && item_list(w).is_some()) || key_items(w) || quest_list(w) || mission_list(w))
+        && (w.command_palette || super::auction::searchable(w) || w.cats.is_some() || list.is_some_and(|l| !l.hidden && l.sort_focus.is_none() && l.ask.is_none() && l.manual == 0) || (w.win.is_some() && item_list(w).is_some()) || key_items(w) || quest_list(w) || mission_list(w))
 }
 
 /// The modern quest list (no Records of Eminence list over it).
@@ -386,7 +481,11 @@ fn key_items(w: &World) -> bool {
 pub fn events(w: &mut World, events: &[egui::Event]) -> bool {
     if !can_run(w) {
         w.list_search = None;
+        w.command_palette = false;
         return false;
+    }
+    if w.command_palette && w.list_search.is_none() {
+        w.list_search = Some(ListSearch::default());
     }
     let starts = events.iter().any(|e| matches!(e, egui::Event::Text(t) if t.chars().next().is_some_and(|c| c.is_alphanumeric())));
     if w.list_search.is_none() && !starts {
@@ -432,13 +531,18 @@ fn key_in(w: &mut World, key: egui::Key) {
                 pick(w, &h);
             }
         }
+        // The palette stays up with an empty field; Backspace on it, or Escape, closes it.
+        egui::Key::Backspace if w.command_palette && s.text.is_empty() => {
+            close_palette(w);
+            w.sounds.push(Se::Cancel as u32);
+        }
         egui::Key::Backspace => {
             let mut t = s.text;
             t.pop();
-            w.list_search = (!t.is_empty()).then_some(ListSearch { text: t, sel: 0 });
+            w.list_search = (!t.is_empty() || w.command_palette).then_some(ListSearch { text: t, sel: 0 });
         }
         egui::Key::Escape => {
-            w.list_search = None;
+            close_palette(w);
             w.sounds.push(Se::Cancel as u32);
         }
         _ => {}
@@ -456,6 +560,27 @@ pub fn set_sel(w: &mut World, sel: usize) {
 pub fn pick(w: &mut World, h: &Hit) {
     if w.list_search.take().is_some() {
         remember(w, h);
+    }
+    // From the palette: a command acts, a spell or ability opens its menu as a suggestion's pick does, an item opens the
+    // direct-use list and is picked there as below.
+    if std::mem::take(&mut w.command_palette) {
+        match (h.journal, h.slot, h.kind) {
+            (Some(Journal::Command(HEAL)), ..) => {
+                w.sounds.push(Se::Select as u32);
+                super::textcmd::run(w, "/heal", super::textcmd::Mode::Internal);
+                return;
+            }
+            (Some(Journal::Command(c)), ..) => {
+                w.sounds.push(Se::Select as u32);
+                if !super::combat::choose(w, c) {
+                    w.sounds.push(Se::Error as u32);
+                }
+                return;
+            }
+            (_, Some(_), _) => items::open_direct(w),
+            (_, None, Kind::Magic) => return pick_root(w, Action::Spell(h.id), None),
+            (_, None, _) => return pick_root(w, Action::Ability(h.id), None),
+        }
     }
     match h.journal {
         Some(Journal::Auction(cat)) => {
@@ -492,7 +617,7 @@ pub fn pick(w: &mut World, h: &Hit) {
             *scroll = if k < *scroll { k } else if k >= *scroll + vis { k + 1 - vis } else { *scroll };
             *cursor = k - *scroll;
         }
-        items::key(w, egui::Key::Enter, false, false);
+        items::key(w, egui::Key::Enter, false, false, false);
         return;
     }
     if let (Some(k), Some(c)) = (h.cat, w.cats) {

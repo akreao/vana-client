@@ -257,6 +257,19 @@ pub struct Storage {
     pub manual: Option<(bool, Option<u8>)>,
     /// "menu    itmstora" (Switch) with its cursor row, for the side itmsortw serves.
     pub stora: Option<u16>,
+    /// Modern (not retail): the move sent and not yet seen in the inventory, and the line explaining the last refusal.
+    pub pending: Option<Pending>,
+    pub note: Option<&'static str>,
+}
+
+/// A move sent to the server (modern, not retail): the slot it left and what was there, until the slot changes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Pending {
+    pub from: u8,
+    pub index: u8,
+    pub id: u16,
+    pub count: u32,
+    pub sent: std::time::Instant,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -427,7 +440,7 @@ pub(super) fn bar(w: &mut World, owner: Owner, m: Msg) -> bool {
 }
 
 /// Keys while a window is open; `page` is key function 0xa8 (Ctrl / Alt held). Returns true when the key was used.
-pub fn key(w: &mut World, key: egui::Key, page: bool, alt: bool) -> bool {
+pub fn key(w: &mut World, key: egui::Key, page: bool, alt: bool, shift: bool) -> bool {
     if matches!(w.win, Some(Win::Equip(_))) {
         super::equipwin::key(w, key);
         return true;
@@ -443,7 +456,7 @@ pub fn key(w: &mut World, key: egui::Key, page: bool, alt: bool) -> bool {
     let rows = shown.len();
     if matches!(w.win, Some(Win::Items { store: Some(_), .. })) {
         // The modern storage view has its own keys.
-        if !super::modern::storage_key(w, key) {
+        if !super::modern::storage_key(w, key, shift) {
             store_key(w, &info, key, page, alt);
         }
         return true;
@@ -1144,7 +1157,7 @@ fn open_view(w: &mut World, bank: u8, at_moogle: bool, read_only: bool, from_men
 }
 
 fn open_view_n(w: &mut World, bank: u8, at_moogle: bool, nomad: bool, read_only: bool, from_menu: bool) {
-    let st = Storage { bank, side: INVENTORY, scroll: 0, cursor: 0, on_bank: true, qty: None, from_menu, at_moogle, nomad, read_only, sortw: None, manual: None, stora: None };
+    let st = Storage { bank, side: INVENTORY, scroll: 0, cursor: 0, on_bank: true, qty: None, from_menu, at_moogle, nomad, read_only, sortw: None, manual: None, stora: None, pending: None, note: None };
     match &mut w.win {
         Some(Win::Items { store, sort, direct: false, .. }) if from_menu => {
             *store = Some(st);
@@ -1225,24 +1238,33 @@ pub fn open_dae10(w: &mut World, c: u8, nomad: bool) -> bool {
 /// FUN_101db220 for a row of the bank side (`bank_side`) or the inventory side; the first rule that applies wins.
 /// Not done: the equipped linkshell (7, s2c 0x0E0).
 pub(super) fn tint(w: &World, info: &ItemCache, st: &Storage, bank_side: bool, s: &Slot) -> u32 {
+    judge(w, info, st, bank_side, s).0
+}
+
+/// tint's colour with the reason for a row that may not move (modern's explanation, not retail's: retail only
+/// colours the row and plays the error sound). Installed furniture on another floor is coloured dark red and refused.
+pub(super) fn judge(w: &World, info: &ItemCache, st: &Storage, bank_side: bool, s: &Slot) -> (u32, Option<&'static str>) {
     use crate::inventory::{TINT_DIM, TINT_WHITE};
     let (own, dest) = if bank_side { (st.bank, st.side) } else { (st.side, st.bank) };
     let it = info.item(s.id);
     let furniture = it.as_ref().is_some_and(|it| matches!(it.item_type, 10 | 12 | 14));
-    if (!bank_side && st.bank == BIN) || !has_free(w, dest) {
-        return TINT_DIM;
+    if !bank_side && st.bank == BIN {
+        return (TINT_DIM, Some("Nothing goes into the Recycle Bin from here."));
+    }
+    if !has_free(w, dest) {
+        return (TINT_DIM, Some("No room on the other side."));
     }
     if own == BIN {
         let rare = it.as_ref().is_some_and(|it| it.flags & 0x8000 != 0) && w.inv.slots.iter().any(|(&(c, _), &(id, _))| id == s.id && c != 3 && c != BIN);
         if s.id == 0 || rare {
-            return TINT_DIM;
+            return (TINT_DIM, Some("Rare: you already hold one."));
         }
     }
     // Rule 4: Wardrobe 3..8 (0xb..0x10) need lobby feature bit 0x04 << (c - 0xb); the lower of own / dest decides.
     if let Some(c) = [own, dest].into_iter().filter(|c| (0xb..=0x10).contains(c)).min()
         && w.features & (0x04 << (c - 0xb)) == 0
     {
-        return TINT_DIM;
+        return (TINT_DIM, Some("That Mog Wardrobe is not open to this account."));
     }
     // Installed furniture in the Safe: grey on this floor, dark red on another.
     if matches!(own, 1 | 9)
@@ -1250,24 +1272,31 @@ pub(super) fn tint(w: &World, info: &ItemCache, st: &Storage, bank_side: bool, s
         && let Some(e) = w.inv.ext.get(&(own, s.index)).filter(|e| e[1] & 0x40 != 0)
     {
         if w.myroom.as_ref().is_some_and(|r| r.floor == e[1] & 3) {
-            return TINT_DIM;
+            return (TINT_DIM, Some("Installed in your Mog House: put it away in Layout first."));
         }
-        return 0x8060_2020;
+        return (0x8060_2020, Some("Installed on another floor of your Mog House."));
     }
     // A Storage piece a mannequin wears (FUN_101334c0) stays.
     if own == 2 && super::mannequin::worn_by_any(w, s.index) {
-        return TINT_DIM;
+        return (TINT_DIM, Some("A mannequin wears it."));
     }
     let equipped = (own == INVENTORY || wardrobe(own)) && w.inv.equip.contains(&Some((own, s.index)));
     let gear = it.as_ref().is_some_and(|it| it.level != 0 && it.races != 0);
     let moogle_only = |c: u8| matches!(c, 1 | 2 | 4 | 9);
-    if equipped || (wardrobe(dest) && !gear) || (dest == 2 && furniture) || (!st.at_moogle && (moogle_only(own) || moogle_only(dest))) {
-        return TINT_DIM;
+    let why = match () {
+        _ if equipped => Some("Equipped: take it off first."),
+        _ if wardrobe(dest) && !gear => Some("Only equipment goes in a Mog Wardrobe."),
+        _ if dest == 2 && furniture => Some("Furniture does not go in Storage."),
+        _ if !st.at_moogle && (moogle_only(own) || moogle_only(dest)) => Some("Only by the moogle."),
+        _ => None,
+    };
+    if why.is_some() {
+        return (TINT_DIM, why);
     }
     if st.qty.is_some_and(|q| q.index == s.index && q.from == own) {
-        return 0x8080_4020;
+        return (0x8080_4020, None);
     }
-    TINT_WHITE
+    (TINT_WHITE, None)
 }
 
 /// FUN_101dbdb0, Manual's colours: the held row orange, equipped gear green (still movable), a Storage piece a
@@ -1755,6 +1784,7 @@ fn draw_storage(gu: &mut GameUi, w: &World, info: &ItemCache, scroll: usize, cur
     if let Some(q) = b.qty
         && let Some(win) = gu.lobby_window_off("menu    itemctrl", sw, sh, (0.0, 0.0), Some(1), true, &[])
     {
+        super::winhits::record(w, "menu    itemctrl", &win);
         rects.push(win.frame);
         let (bt, ui, _, _) = gu.parts();
         if let Some(m) = ui.menu("menu    itemctrl") {
@@ -1779,9 +1809,16 @@ fn draw_count(gu: &mut GameUi, n: usize, size: u8, sw: f32, sh: f32) {
 }
 
 /// Mouse on the item list: hover moves the cursor, a click on the highlighted row acts as Enter.
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
     if matches!(w.win, Some(Win::Equip(_))) {
         super::equipwin::pointer(w, gu, sw, sh, p, moved, clicked);
+        return;
+    }
+    // The bin view's count (itemctrl) by winhits::ctr.
+    if matches!(&w.win, Some(Win::Items { store: Some(b), .. }) if b.qty.is_some()) {
+        super::winhits::ctr(w, gu, "menu    itemctrl", p, clicked, right, |w, _, k| {
+            key(w, k, false, false, false);
+        });
         return;
     }
     // The bin view moves the list; its mouse handling (hover messages 3 / 4) is not done.
@@ -1805,7 +1842,7 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
     let same = *cur == row;
     *cur = row;
     if clicked && same && enter {
-        key(w, egui::Key::Enter, false, false);
+        key(w, egui::Key::Enter, false, false, false);
     }
 }
 
