@@ -868,10 +868,15 @@ impl Host for LiveHost<'_> {
                     self.w.effects.stop_actor_scheduler(id, u32::from_le_bytes(n));
                 }
             }
-            // FUN_100b3870 (0x5f sub 2): drop the event motion files (FUN_100d2340(2)).
-            Effect::Op { op: 0x5f, sub: Some(2), actor, .. } => {
-                let id = self.wid(actor);
-                if let Some(a) = self.w.actors.get_mut(&id) {
+            // FUN_100b5510 (0x5f sub 2, and op 0xc1 with a frame end): on actor@2 (0xc1: actor@1) when the event binds
+            // it (+0x120 bit 7) and it has a model, its event scheduler stops (FUN_10087d40, vtable +0x29c on
+            // +0x1ec / +0x1f4) and its event motion files go (FUN_100d44b0(2)).
+            Effect::Op { op: op @ (0x5f | 0xc1), sub, args, .. } if op == 0xc1 || sub == Some(2) => {
+                let Some(id) = self.arg_actor(&args, if op == 0xc1 { 0 } else { 1 }) else { return };
+                if !self.st.bound.contains(&id) {
+                    return;
+                }
+                if let Some(a) = self.w.actors.get_mut(&id).filter(|a| a.character.is_some()) {
                     super::actmotion::drop_kind(&mut a.extra, super::actmotion::Kind::Event);
                     a.play = None;
                 }

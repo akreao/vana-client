@@ -3049,6 +3049,32 @@ mod tests {
         assert_eq!(ops[..3], [(0xa8, Some(0), vec![230, 5]), (0xb9, Some(1), vec![230, 3, 5]), (0xa8, Some(2), vec![])]);
     }
 
+    /// Op 0x5f sub 2 names its actor at pc+2 (FUN_100b5510 reads operand 1 after the sub byte), op 0xc1 at pc+1.
+    #[test]
+    fn motion_reset_actor_operand() {
+        let npc = 0x010e_6030u32.to_le_bytes();
+        let mut code = vec![0x5f, 0x02];
+        code.extend_from_slice(&npc);
+        code.push(0xc1);
+        code.extend_from_slice(&npc);
+        code.extend_from_slice(&[0x21, 0x00]);
+        let actor = 0x010e_601b;
+        let blocks = vec![event::Block { actor, events: vec![(1, 0)], consts: vec![], code }];
+        let mut host = Scripted::new(&[]);
+        let start = Start { zone: 230, event: 1, target: actor, ..Default::default() };
+        let mut rt = Runtime::start(blocks, None, start, Memory::default(), &mut host);
+        run_scripted(&mut rt, &mut host, 60).expect("finished");
+        let found: Vec<(u8, Option<u32>)> = host
+            .log
+            .iter()
+            .filter_map(|e| match e {
+                Effect::Op { op: op @ (0x5f | 0xc1), args, .. } => Some((*op, args.iter().find_map(|a| if let Arg::Actor(x) = a { Some(*x) } else { None }))),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(found[..2], [(0x5f, Some(0x010e_6030)), (0xc1, Some(0x010e_6030))]);
+    }
+
     #[test]
     fn input_window() {
         assert_eq!((Runtime::atoi(b" -42x"), Runtime::atoi(b"+7"), Runtime::atoi(b"")), (-42, 7, 0));
