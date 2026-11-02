@@ -11172,7 +11172,8 @@ keeps its newest 100 rows *(inf: retail ~50 at the switch, up to 100 while open)
   (subs 0xa / 0xc / 0xb). Not seen live.
 - A 0x97 message's pages (op 0x48) print as mode 0xbe (asm 0x1013669b); 0x96 / 0x97 / 0x98 / 0xbe share colour id 91
   and mask bit 9, so only the record's mode differs.
-- Not done: the frames' magenta tint (windowps 43, spec §8).
+- The frames' magenta tint (windowps 43, spec §8): retail never draws it; see "rem4line / spoolmsg: the magenta
+  plate is never drawn" (2026-11-02).
 
 ## s2c 0x075: the battlefield countdown, objective bars and text (2026-10-28)
 
