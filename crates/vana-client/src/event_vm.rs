@@ -3038,7 +3038,6 @@ mod tests {
         assert_eq!(end(&host.log), Some(0x4000_0000));
     }
 
-    /// Op 0x71 over hand-made code: an "Enter number:" input read with atoi, then a name stored as words.
     /// Op 0x83 (FUN_100b90e0): var@1 = the game clock (FUN_101039e0), here read back through the event's end option.
     #[test]
     fn game_clock_83() {
@@ -3058,6 +3057,7 @@ mod tests {
         assert_eq!(end(&host.log), Some(1_234_567_891));
     }
 
+    /// Op 0x71 over hand-made code: an "Enter number:" input read with atoi, then a name stored as words.
     #[test]
     fn input_window() {
         assert_eq!((Runtime::atoi(b" -42x"), Runtime::atoi(b"+7"), Runtime::atoi(b"")), (-42, 7, 0));
