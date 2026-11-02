@@ -201,6 +201,8 @@ pub struct Config {
     pub modern_condense: bool,
     /// The list search's recent picks by character, newest first (listsearch.rs).
     pub modern_recent: std::collections::BTreeMap<String, Vec<String>>,
+    /// The modern UI's mode presets (client/modern/modes.rs).
+    pub modern_modes: ModernModes,
     /// Read a game controller (client/gamepad.rs; retail: padmode000's first flag).
     pub gamepad: bool,
     /// Stick travel ignored around the centre as a fraction of full: retail's 42 of 127.
@@ -212,6 +214,25 @@ pub struct Config {
     pub gamepad_padsin: String,
     /// padexsin000, the map used while slot 34 is held; empty = gamepad::DEFAULT_PADEXSIN.
     pub gamepad_padexsin: String,
+}
+
+/// The modern UI's mode presets: per mode (Exploration, Combat, Management) the HUD panels it hides, the panels shown
+/// in every mode, and whether panels fade in and out.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ModernModes {
+    pub hidden: [Vec<String>; 3],
+    pub pinned: Vec<String>,
+    pub fades: bool,
+}
+
+impl Default for ModernModes {
+    fn default() -> Self {
+        // Combat hides the location panel (user, 2026-11-01) and the training regime; the skillchain helper only in
+        // combat.
+        let v = |ids: &[&str]| ids.iter().map(|s| s.to_string()).collect();
+        Self { hidden: [v(&["skillchains"]), v(&["where", "regime"]), v(&["skillchains"])], pinned: Vec::new(), fades: true }
+    }
 }
 
 /// A modern UI panel's place: its left and top (or, for the panels that grow upward, its bottom `b`) as fractions of the
@@ -361,6 +382,7 @@ impl Default for Config {
             modern_battle_in_all: true,
             modern_condense: true,
             modern_recent: Default::default(),
+            modern_modes: Default::default(),
             gamepad: true,
             gamepad_deadzone: 42.0 / 127.0,
             gamepad_invert_y: false,

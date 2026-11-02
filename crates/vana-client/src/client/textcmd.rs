@@ -617,6 +617,11 @@ pub fn run(w: &mut World, line: &str, mode: Mode) {
         find(w, line[first.len()..].trim());
         return;
     }
+    // Ours (not retail; the modern UI's mode presets): /uimodes opens or closes their editor.
+    if first.eq_ignore_ascii_case("/uimodes") && w.modern {
+        w.uimodes_open = !w.uimodes_open;
+        return;
+    }
     // Ours (the DPS-meter add-ons): /dps prints the party's damage since the last /dps reset (client/dps.rs).
     if first.eq_ignore_ascii_case("/dps") {
         super::dps::command(w, line.split_whitespace().nth(1));

@@ -5917,6 +5917,8 @@ struct World {
     /// The search's recent picks (listsearch::key_of), newest first, and whether they changed since the save.
     recent_picks: Vec<String>,
     recent_save: bool,
+    /// The modern UI Modes editor is open (/uimodes, modern/modes.rs).
+    uimodes_open: bool,
     /// The battle menu's suggestions (suggest.rs::refresh_root), when they were taken, and the one the cursor is on.
     root_sugg: Vec<suggest::Suggestion>,
     root_sugg_at: Option<Instant>,
@@ -7756,6 +7758,7 @@ impl App {
                             list_search: None,
                             recent_picks: self.cfg.modern_recent.get(&login.name).cloned().unwrap_or_default(),
                             recent_save: false,
+                            uimodes_open: false,
                             root_sugg: Vec::new(),
                             root_sugg_at: None,
                             suggest_sel: None,
