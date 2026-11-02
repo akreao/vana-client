@@ -71,6 +71,8 @@ pub struct ListWin {
     /// Manual Sort (+0x6c / +0x68): 0 off, 1 pick, 2 picked (`picked` = its row).
     pub manual: u8,
     pub picked: usize,
+    /// Rows the view holds: retail's VISIBLE, or as many as the modern list was resized to (ours).
+    pub visible: usize,
 }
 
 impl ListWin {
@@ -170,8 +172,8 @@ pub(super) fn ability_label(ty: u16) -> &'static str {
 /// The open list's row `id` under the cursor, scrolled into view. False when it is not in the list.
 pub(super) fn focus_row(win: &mut ListWin, id: u16) -> bool {
     let Some(at) = win.rows.iter().position(|&r| r == id) else { return false };
-    if at < win.scroll || at >= win.scroll + VISIBLE {
-        win.scroll = at.saturating_sub(VISIBLE / 2).min(win.rows.len().saturating_sub(VISIBLE));
+    if at < win.scroll || at >= win.scroll + win.visible {
+        win.scroll = at.saturating_sub(win.visible / 2).min(win.rows.len().saturating_sub(win.visible));
     }
     win.cursor = at - win.scroll;
     true
@@ -273,7 +275,7 @@ pub(super) fn ability_rows(w: &World, ty: u16) -> Vec<u16> {
 fn recall(w: &World, win: &mut ListWin) {
     let key = (win.kind != Kind::Magic, win.list_mode && win.kind == Kind::Magic, win.ty);
     if let Some(at) = w.list_memory.get(&key).and_then(|id| win.rows.iter().position(|r| r == id)) {
-        win.scroll = at.saturating_sub(VISIBLE - 1);
+        win.scroll = at.saturating_sub(win.visible - 1);
         win.cursor = at - win.scroll;
     }
 }
@@ -292,7 +294,7 @@ pub fn open_magic(w: &mut World, ty: u16, list_mode: bool, exclude: u32) {
     let rows = magic_rows(w, ty, list_mode, exclude);
     // Ours: the modern UI gives every magic list its sort window (retail: mgcmenu's list mode only, attached below).
     let sort = w.modern.then_some(if ty == 6 { "menu    blusortw" } else { "menu    mgcsortw" });
-    let mut win = ListWin { kind: Kind::Magic, ty, exclude, list_mode, rows, scroll: 0, cursor: 0, hidden: false, sort, sort_focus: None, ask: None, manual: 0, picked: 0 };
+    let mut win = ListWin { kind: Kind::Magic, ty, exclude, list_mode, rows, scroll: 0, cursor: 0, hidden: false, sort, sort_focus: None, ask: None, manual: 0, picked: 0, visible: VISIBLE };
     recall(w, &mut win);
     w.magic = Some(win);
     w.menu = None;
@@ -318,7 +320,7 @@ pub fn open_ability(w: &mut World, ty: u16, sortable: bool) {
     // Ours: the modern UI sorts Job Abilities, Weapon Skills and their sub-lists however they were opened.
     let parent = ABILITY_TYPES.get(ty as usize).map_or(0, |t| t.0);
     let sort = (sortable || (w.modern && (matches!(ty, 1 | 3) || matches!(parent, 1 | 3)))).then_some("menu    abisortw");
-    let mut win = ListWin { kind: Kind::Ability, ty, exclude: 0, list_mode: false, rows, scroll: 0, cursor: 0, hidden: false, sort, sort_focus: None, ask: None, manual: 0, picked: 0 };
+    let mut win = ListWin { kind: Kind::Ability, ty, exclude: 0, list_mode: false, rows, scroll: 0, cursor: 0, hidden: false, sort, sort_focus: None, ask: None, manual: 0, picked: 0, visible: VISIBLE };
     recall(w, &mut win);
     w.ability = Some(win);
     w.menu = None;
@@ -341,7 +343,7 @@ pub(super) fn mount_rows(w: &World) -> Vec<u16> {
 pub fn open_mount(w: &mut World, sortable: bool) {
     let rows = mount_rows(w);
     let sort = (sortable || w.modern).then_some("menu    abisortw");
-    let mut win = ListWin { kind: Kind::Mount, ty: 0xfffe, exclude: 0, list_mode: false, rows, scroll: 0, cursor: 0, hidden: false, sort, sort_focus: None, ask: None, manual: 0, picked: 0 };
+    let mut win = ListWin { kind: Kind::Mount, ty: 0xfffe, exclude: 0, list_mode: false, rows, scroll: 0, cursor: 0, hidden: false, sort, sort_focus: None, ask: None, manual: 0, picked: 0, visible: VISIBLE };
     recall(w, &mut win);
     w.ability = Some(win);
     w.menu = None;
@@ -378,7 +380,7 @@ pub fn open_emote(w: &mut World) {
     }
     let folder = w.emote_path.last().copied().unwrap_or(0);
     let rows = emote_rows(w, folder);
-    let mut win = ListWin { kind: Kind::Emote, ty: 0x8000 | folder, exclude: 0, list_mode: false, rows, scroll: 0, cursor: 0, hidden: false, sort: Some("menu    abisortw"), sort_focus: None, ask: None, manual: 0, picked: 0 };
+    let mut win = ListWin { kind: Kind::Emote, ty: 0x8000 | folder, exclude: 0, list_mode: false, rows, scroll: 0, cursor: 0, hidden: false, sort: Some("menu    abisortw"), sort_focus: None, ask: None, manual: 0, picked: 0, visible: VISIBLE };
     recall(w, &mut win);
     w.ability = Some(win);
     w.menu = None;
@@ -691,7 +693,7 @@ pub(super) fn enter(w: &mut World, kind: Kind) {
 pub(super) fn bar(w: &mut World, m: super::scrollbar::Msg) -> bool {
     let Some(win) = w.ability.as_mut().or(w.magic.as_mut()).filter(|x| !x.hidden) else { return false };
     let n = win.rows.len();
-    super::scrollbar::paged(m, &mut win.scroll, &mut win.cursor, n, VISIBLE)
+    super::scrollbar::paged(m, &mut win.scroll, &mut win.cursor, n, win.visible)
 }
 
 /// FUN_10222150: Down / Up step and wrap; Right / Left are re-sent as 0x19 / 0x18, a page of the view with the screen
@@ -707,14 +709,14 @@ pub(super) fn step(win: &mut ListWin, key: egui::Key) -> bool {
         egui::Key::ArrowUp => at = (at + n - 1) % n,
         egui::Key::ArrowRight | egui::Key::ArrowLeft => {
             let m = if key == egui::Key::ArrowRight { super::scrollbar::Msg::PageDown } else { super::scrollbar::Msg::PageUp };
-            return super::scrollbar::paged(m, &mut win.scroll, &mut win.cursor, n, VISIBLE);
+            return super::scrollbar::paged(m, &mut win.scroll, &mut win.cursor, n, win.visible);
         }
         _ => return false,
     }
     if at < win.scroll {
         win.scroll = at;
-    } else if at >= win.scroll + VISIBLE {
-        win.scroll = at + 1 - VISIBLE;
+    } else if at >= win.scroll + win.visible {
+        win.scroll = at + 1 - win.visible;
     }
     win.cursor = at - win.scroll;
     true
@@ -1317,7 +1319,7 @@ mod tests {
 
     #[test]
     fn list_paging() {
-        let mut win = ListWin { kind: Kind::Magic, ty: 0, exclude: 0, list_mode: true, rows: (1..=30).collect(), scroll: 0, cursor: 0, hidden: false, sort: None, sort_focus: None, ask: None, manual: 0, picked: 0 };
+        let mut win = ListWin { kind: Kind::Magic, ty: 0, exclude: 0, list_mode: true, rows: (1..=30).collect(), scroll: 0, cursor: 0, hidden: false, sort: None, sort_focus: None, ask: None, manual: 0, picked: 0, visible: VISIBLE };
         step(&mut win, egui::Key::ArrowUp);
         assert_eq!((win.scroll, win.cursor, win.at()), (18, 11, Some(30)));
         step(&mut win, egui::Key::ArrowDown);

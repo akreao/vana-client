@@ -192,7 +192,8 @@ Milestone 1:
 - Every panel moves by a drag on its background (contents keep their clicks); places are screen fractions per
   character in config `modern_places`, saved when the pointer is let go. Only the chat window resizes, by the glyph
   in its corner: more room for the lines, nothing scales. Its settings button (the tabs' right) sets the font size
-  (config `modern_chat_font`, 10 .. 32, default 15). User's call (2026-10-26): no lock button, no other resizing.
+  (config `modern_chat_font`, 10 .. 32, default 15). User's call (2026-10-26): no lock button, no other resizing (revisited 2026-11-02: the magic / ability list
+  resizes too, see below).
 - The top bar: retail's titlewin, helpwind (marquee, busy strip, "Help" legend) and netstat (meter, %, S / R) in
   their places and by their fade rule (hudtop.rs fills a TopView), in the pack's frames on a layer that takes no input.
 - The chat window runs the retail log's rule (logwin::LogAnim, shared with the retail log) on its wrapped rows:
@@ -542,4 +543,11 @@ Milestone 1:
   names (a status id) rather than prints is kept as it is. Live: Warcry with a bot in the party.
 - The target panel's name in retail's name colour (FUN_1008db40 as the plates: unclaimed monster pale yellow, our
   party's claim red, another's magenta).
+- Layouts per display and the resizable list (2026-11-02, ours; plan B): config `modern_places` keeps a layout per
+  character and display ("Name @2560x1440 60%": the window's pixels and the UI scale) beside the character's latest
+  one (the plain name). A display not arranged yet starts from the latest; a change saves both, so a window dragged
+  through sizes stores nothing until something is moved there. Panel Places' Reset clears every display's. The magic /
+  ability / mount / emote list resizes by its corner like the chat window: the width as dragged and as many rows as the
+  height holds (4 .. 30, retail's 12 by default; ListWin.visible), the cursor's row kept in view; the classic UI
+  goes back to 12. The command window ("window") does not resize: its pages are laid out to fixed widths.
 - Not yet: alliance rows live.

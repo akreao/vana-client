@@ -5,6 +5,7 @@
 
 use super::super::listsearch::{self, Hit};
 use super::super::magic::{self, Cat, Cats, Kind, ListWin, VISIBLE};
+use super::Show;
 use super::super::scrollbar::Msg;
 use super::super::World;
 use super::{Panels, Title, kit, paint};
@@ -256,6 +257,17 @@ fn cost_lines(w: &World, win: &ListWin) -> Vec<(&'static str, String)> {
 
 /// The open list: its rows from the scroll, the sort strip (Num+ focuses it), the cost box, the bar.
 fn list(p: &mut Panels, w: &mut World) {
+    if w.ability.as_ref().or(w.magic.as_ref()).is_none_or(|x| x.hidden) {
+        return;
+    }
+    // Resizable (ours, plan B): the width as dragged, and as many rows as the dragged height holds (retail's twelve
+    // by default), the cursor kept in view.
+    let step = ROW + 2.0 + p.ctx.global_style().spacing.item_spacing.y;
+    let room = p.room("list", vec2(360.0, VISIBLE as f32 * step));
+    let visible = ((room.y / step).round() as usize).clamp(MIN_ROWS, MAX_ROWS);
+    if let Some(x) = list_mut(w) {
+        fit(x, visible);
+    }
     let Some(win) = w.ability.as_ref().or(w.magic.as_ref()).filter(|x| !x.hidden).cloned() else { return };
     let m = p.m;
     let title = match win.kind {
@@ -265,14 +277,15 @@ fn list(p: &mut Panels, w: &mut World) {
         Kind::Emote => "Emotes",
     };
     let note = win.rows.len().to_string();
-    let icons: Vec<Option<egui::TextureId>> = win.rows.iter().skip(win.scroll).take(VISIBLE).map(|&id| p.gu.and_then(|gu| magic::row_icon(w, win.kind, id).and_then(|(lib, k)| m.sprite_icon(p.ctx, gu, lib, k)))).collect();
+    let icons: Vec<Option<egui::TextureId>> = win.rows.iter().skip(win.scroll).take(win.visible).map(|&id| p.gu.and_then(|gu| magic::row_icon(w, win.kind, id).and_then(|(lib, k)| m.sprite_icon(p.ctx, gu, lib, k)))).collect();
     let mut mouse = Mouse::default();
     let search = search_hits(p, w);
     let mut found = Mouse::default();
     let mut sort_click: Option<u16> = None;
     let mut ask_click: Option<bool> = None;
     let mut wheel = 0.0f32;
-    let rect = p.panel("list", Some(Title { icon: None, text: title, note: Some(&note) }), 360.0, |ui| {
+    let show = Show { title: Some(Title { icon: None, text: title, note: Some(&note) }), size: vec2(360.0, VISIBLE as f32 * step), resizable: true, ..Default::default() };
+    let rect = p.show("list", show, |ui, _| {
         // The sort strip: its window's rows as the kit's buttons, the cursor's ringed while it has the keys.
         if let Some(menu) = win.sort {
             let labels = sort_labels(menu);
@@ -300,7 +313,7 @@ fn list(p: &mut Panels, w: &mut World) {
             };
             ui.label(egui::RichText::new(empty).size(m.theme.ui).color(m.theme.color("muted")));
         }
-        for (k, &id) in win.rows.iter().skip(win.scroll).take(VISIBLE).enumerate() {
+        for (k, &id) in win.rows.iter().skip(win.scroll).take(win.visible).enumerate() {
             let (name, right, off) = row_view(w, win.kind, id);
             let picked = win.manual == 2 && win.scroll + k == win.picked;
             let look = if k == win.cursor && win.sort_focus.is_none() { Look::Cursor } else if picked { Look::Picked } else { Look::Normal };
@@ -309,7 +322,7 @@ fn list(p: &mut Panels, w: &mut World) {
         }
         // The bar: the rows shown out of all, at the right edge.
         let track = Rect::from_min_max(pos2(ui.max_rect().max.x + 6.0, top.y), pos2(ui.max_rect().max.x + 14.0, ui.cursor().min.y));
-        kit::bar(ui.painter(), m, track, win.rows.len(), VISIBLE, win.scroll);
+        kit::bar(ui.painter(), m, track, win.rows.len(), win.visible, win.scroll);
         // The cost box for the cursor's row, and Manual Sort's hint.
         let lines = cost_lines(w, &win);
         if !lines.is_empty() || win.manual > 0 {
@@ -375,6 +388,23 @@ fn list(p: &mut Panels, w: &mut World) {
     }
 }
 
+/// The fewest and most rows a resized list holds.
+const MIN_ROWS: usize = 4;
+const MAX_ROWS: usize = 30;
+
+/// A list's view set to `visible` rows: the cursor's row stays where it was in the list and in view, and no rows
+/// past the end show while the list has more above.
+fn fit(win: &mut ListWin, visible: usize) {
+    if win.visible == visible {
+        return;
+    }
+    let at = win.scroll + win.cursor;
+    win.visible = visible;
+    let top = win.rows.len().saturating_sub(visible);
+    win.scroll = win.scroll.min(top).max((at + 1).saturating_sub(visible)).min(at);
+    win.cursor = at - win.scroll;
+}
+
 /// The sort strip's buttons for a sort window.
 fn sort_labels(menu: &str) -> &'static [&'static str] {
     match menu {
@@ -402,7 +432,7 @@ pub fn key(w: &mut World, key: egui::Key) -> bool {
         return true;
     }
     let n = win.rows.len();
-    let stops = [kit::Stop::Buttons { n: sort_labels(menu).len(), off: 0, pair: None }, kit::Stop::List { n, page: VISIBLE }];
+    let stops = [kit::Stop::Buttons { n: sort_labels(menu).len(), off: 0, pair: None }, kit::Stop::List { n, page: win.visible }];
     let mut at = match win.sort_focus {
         Some(c) => kit::At::new(0, c as usize - 1),
         None => kit::At::new(1, win.scroll + win.cursor),
@@ -415,8 +445,8 @@ pub fn key(w: &mut World, key: egui::Key) -> bool {
         let i = at.sub.min(n.saturating_sub(1));
         if i < win.scroll {
             win.scroll = i;
-        } else if i >= win.scroll + VISIBLE {
-            win.scroll = i + 1 - VISIBLE;
+        } else if i >= win.scroll + win.visible {
+            win.scroll = i + 1 - win.visible;
         }
         win.cursor = i - win.scroll;
     }
@@ -426,4 +456,29 @@ pub fn key(w: &mut World, key: egui::Key) -> bool {
 
 fn list_mut(w: &mut World) -> Option<&mut ListWin> {
     if w.ability.is_some() { w.ability.as_mut() } else { w.magic.as_mut() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn win(n: u16, scroll: usize, cursor: usize) -> ListWin {
+        ListWin { kind: Kind::Magic, ty: 0, exclude: 0, list_mode: true, rows: (1..=n).collect(), scroll, cursor, hidden: false, sort: None, sort_focus: None, ask: None, manual: 0, picked: 0, visible: VISIBLE }
+    }
+
+    #[test]
+    fn fit_keeps_the_cursor_row() {
+        // Shrinking to 4 rows with the cursor on the view's last row scrolls it into view.
+        let mut x = win(30, 0, 11);
+        fit(&mut x, 4);
+        assert_eq!((x.scroll, x.cursor, x.scroll + x.cursor), (8, 3, 11));
+        // Growing near the end shows more above instead of empty rows below.
+        let mut x = win(30, 18, 5);
+        fit(&mut x, 20);
+        assert_eq!((x.scroll, x.scroll + x.cursor), (10, 23));
+        // A short list stays at its top.
+        let mut x = win(5, 0, 2);
+        fit(&mut x, 20);
+        assert_eq!((x.scroll, x.cursor), (0, 2));
+    }
 }
