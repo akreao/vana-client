@@ -1817,7 +1817,7 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
     // The bin view's count (itemctrl) by winhits::ctr.
     if matches!(&w.win, Some(Win::Items { store: Some(b), .. }) if b.qty.is_some()) {
         super::winhits::ctr(w, gu, "menu    itemctrl", p, clicked, right, |w, _, k| {
-            key(w, k, false, false);
+            key(w, k, false, false, false);
         });
         return;
     }
