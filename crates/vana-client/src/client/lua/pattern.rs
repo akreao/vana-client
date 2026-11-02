@@ -12,8 +12,8 @@ const MAXCAPTURES: usize = 32;
 const MAXCCALLS: usize = 200;
 const ESC: u8 = b'%';
 const SPECIALS: &[u8] = b"^$*+?.([%-";
-/// Match steps between deadline checks.
-const CHECK_EVERY: u32 = 1024;
+/// Units of work between deadline checks: a match step, a pattern byte scanned, 256 bytes of output.
+const CHECK_EVERY: usize = 4096;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Cap {
@@ -28,7 +28,7 @@ struct State<'a> {
     level: usize,
     capture: [(usize, Cap); MAXCAPTURES],
     depth: usize,
-    steps: u32,
+    work: usize,
     deadline: Option<Instant>,
 }
 
@@ -40,7 +40,7 @@ fn err(msg: impl Into<String>) -> mlua::Error {
 
 impl<'a> State<'a> {
     fn new(src: &'a [u8], pat: &'a [u8], deadline: Option<Instant>) -> Self {
-        Self { src, pat, level: 0, capture: [(0, Cap::Unfinished); MAXCAPTURES], depth: MAXCCALLS, steps: 0, deadline }
+        Self { src, pat, level: 0, capture: [(0, Cap::Unfinished); MAXCAPTURES], depth: MAXCCALLS, work: 0, deadline }
     }
 
     /// Before each match attempt (reprepstate).
@@ -49,11 +49,19 @@ impl<'a> State<'a> {
         self.depth = MAXCCALLS;
     }
 
-    /// One unit of work; past the deadline the call stops as the VM's own hook would stop it.
+    /// One unit of work.
     fn step(&mut self) -> R<()> {
-        self.steps = self.steps.wrapping_add(1);
-        if self.steps % CHECK_EVERY == 0 && self.deadline.is_some_and(|d| Instant::now() > d) {
-            return Err(err("ran past its time budget"));
+        self.charge(1)
+    }
+
+    /// `n` units of work; past the deadline the call stops as the VM's own hook would stop it.
+    fn charge(&mut self, n: usize) -> R<()> {
+        self.work += n;
+        if self.work >= CHECK_EVERY {
+            self.work = 0;
+            if self.deadline.is_some_and(|d| Instant::now() > d) {
+                return Err(err("ran past its time budget"));
+            }
         }
         Ok(())
     }
@@ -67,7 +75,14 @@ impl<'a> State<'a> {
         self.pat.get(p).copied().unwrap_or(0)
     }
 
-    fn class_end(&self, mut p: usize) -> R<usize> {
+    /// Where the class at `p` ends; a set's scan is charged by its length.
+    fn class_end(&mut self, p: usize) -> R<usize> {
+        let ep = self.class_end_at(p)?;
+        self.charge(ep - p)?;
+        Ok(ep)
+    }
+
+    fn class_end_at(&self, mut p: usize) -> R<usize> {
         let c = self.p_at(p);
         p += 1;
         match c {
@@ -130,17 +145,21 @@ impl<'a> State<'a> {
         !sig
     }
 
-    fn single(&self, s: usize, p: usize, ep: usize) -> bool {
+    /// Whether the class `pat[p..ep]` matches `src[s]`; a set's scan is charged by its length.
+    fn single(&mut self, s: usize, p: usize, ep: usize) -> R<bool> {
         if s >= self.src.len() {
-            return false;
+            return Ok(false);
         }
         let c = self.src[s];
-        match self.pat[p] {
+        Ok(match self.pat[p] {
             b'.' => true,
             ESC => class(c, self.p_at(p + 1)),
-            b'[' => self.bracket(c, p, ep - 1),
+            b'[' => {
+                self.charge(ep - p)?;
+                self.bracket(c, p, ep - 1)
+            }
             pc => pc == c,
-        }
+        })
     }
 
     fn balance(&mut self, s: usize, p: usize) -> R<Option<usize>> {
@@ -171,7 +190,7 @@ impl<'a> State<'a> {
 
     fn max_expand(&mut self, s: usize, p: usize, ep: usize) -> R<Option<usize>> {
         let mut i = 0;
-        while self.single(s + i, p, ep) {
+        while self.single(s + i, p, ep)? {
             self.step()?;
             i += 1;
         }
@@ -192,7 +211,7 @@ impl<'a> State<'a> {
             if let Some(r) = self.do_match(s, ep + 1)? {
                 return Ok(Some(r));
             }
-            if self.single(s, p, ep) {
+            if self.single(s, p, ep)? {
                 s += 1;
             } else {
                 return Ok(None);
@@ -277,6 +296,7 @@ impl<'a> State<'a> {
                     }
                     let ep = self.class_end(p)?;
                     let previous = if s == 0 { 0 } else { self.src[s - 1] };
+                    self.charge(2 * (ep - p))?;
                     if !self.bracket(previous, p, ep - 1) && self.bracket(self.s_at(s), p, ep - 1) {
                         p = ep;
                         continue;
@@ -294,7 +314,7 @@ impl<'a> State<'a> {
                 _ => {
                     let ep = self.class_end(p)?;
                     let q = self.p_at(ep);
-                    if !self.single(s, p, ep) {
+                    if !self.single(s, p, ep)? {
                         // Accept empty?
                         if matches!(q, b'*' | b'?' | b'-') && ep < self.pat.len() {
                             p = ep + 1;
@@ -477,19 +497,20 @@ fn gsub(lua: &Lua, (s0, p, repl, max): (Value, Value, Value, Option<i64>)) -> R<
     let anchor = p.first() == Some(&b'^');
     let p = if anchor { &p[1..] } else { p };
     let mut ms = State::new(s, p, deadline(lua));
-    let mut out: Vec<u8> = Vec::new();
+    // Lua's own buffer counts against the mod's memory limit; ours is Rust's, so it is held to what is left of it.
+    let mut out = Out { buf: Vec::new(), cap: super::vm::MEMORY.saturating_sub(lua.used_memory()) };
     let (mut at, mut last, mut n, mut changed) = (0usize, None::<usize>, 0i64, false);
     while n < max_s {
         ms.reset();
         match ms.do_match(at, 0)? {
             Some(e) if Some(e) != last => {
                 n += 1;
-                changed |= add_value(lua, &ms, &mut out, at, e, &repl)?;
+                changed |= add_value(lua, &mut ms, &mut out, at, e, &repl)?;
                 at = e;
                 last = Some(e);
             }
             _ if at < s.len() => {
-                out.push(s[at]);
+                out.push(&mut ms, &s[at..at + 1])?;
                 at += 1;
             }
             _ => break,
@@ -502,33 +523,50 @@ fn gsub(lua: &Lua, (s0, p, repl, max): (Value, Value, Value, Option<i64>)) -> R<
         // As C, which converted the argument in place: a number subject comes back as its string.
         return Ok((Value::String(src.clone()), n));
     }
-    out.extend_from_slice(&s[at..]);
-    Ok((Value::String(lua.create_string(&out)?), n))
+    out.push(&mut ms, &s[at..])?;
+    Ok((Value::String(lua.create_string(&out.buf)?), n))
+}
+
+/// gsub's result as it grows: held to the mod's memory, its bytes charged as work.
+struct Out {
+    buf: Vec<u8>,
+    cap: usize,
+}
+
+impl Out {
+    fn push(&mut self, ms: &mut State, bytes: &[u8]) -> R<()> {
+        if self.buf.len() + bytes.len() > self.cap {
+            return Err(err("not enough memory"));
+        }
+        self.buf.extend_from_slice(bytes);
+        ms.charge(bytes.len() / 256)
+    }
 }
 
 /// One replacement (lstrlib's add_value): whether it changed the text.
-fn add_value(lua: &Lua, ms: &State, out: &mut Vec<u8>, s: usize, e: usize, repl: &Value) -> R<bool> {
+fn add_value(lua: &Lua, ms: &mut State, out: &mut Out, s: usize, e: usize, repl: &Value) -> R<bool> {
+    let src = ms.src;
     let v = match repl {
         Value::String(r) => {
             let r = r.as_bytes();
             let mut i = 0;
             while i < r.len() {
-                let c = r[i];
-                i += 1;
-                if c != ESC {
-                    out.push(c);
-                    continue;
+                // The text up to the next escape in one piece.
+                let k = r[i..].iter().position(|&c| c == ESC).map_or(r.len(), |k| i + k);
+                out.push(ms, &r[i..k])?;
+                if k == r.len() {
+                    break;
                 }
-                let d = r.get(i).copied().unwrap_or(0);
-                i += 1;
+                let d = r.get(k + 1).copied().unwrap_or(0);
+                i = k + 2;
                 if d == ESC {
-                    out.push(ESC);
+                    out.push(ms, &[ESC])?;
                 } else if d == b'0' {
-                    out.extend_from_slice(&ms.src[s..e]);
+                    out.push(ms, &src[s..e])?;
                 } else if d.is_ascii_digit() {
                     match ms.capture_value(lua, (d - b'1') as usize, s, e)? {
-                        Value::String(t) => out.extend_from_slice(&t.as_bytes()),
-                        Value::Integer(k) => out.extend_from_slice(k.to_string().as_bytes()),
+                        Value::String(t) => out.push(ms, &t.as_bytes())?,
+                        Value::Integer(k) => out.push(ms, k.to_string().as_bytes())?,
                         _ => {}
                     }
                 } else {
@@ -543,16 +581,16 @@ fn add_value(lua: &Lua, ms: &State, out: &mut Vec<u8>, s: usize, e: usize, repl:
     };
     match v {
         Value::Nil | Value::Boolean(false) => {
-            out.extend_from_slice(&ms.src[s..e]);
+            out.push(ms, &src[s..e])?;
             Ok(false)
         }
         Value::String(t) => {
-            out.extend_from_slice(&t.as_bytes());
+            out.push(ms, &t.as_bytes())?;
             Ok(true)
         }
         v @ (Value::Integer(_) | Value::Number(_)) => {
             let t = lua.coerce_string(v)?.ok_or_else(|| err("invalid replacement value"))?;
-            out.extend_from_slice(&t.as_bytes());
+            out.push(ms, &t.as_bytes())?;
             Ok(true)
         }
         v => Err(err(format!("invalid replacement value (a {})", v.type_name()))),
@@ -760,5 +798,33 @@ mod tests {
             assert!(r.unwrap_err().to_string().contains("time budget"), "{code}");
         }
         assert!(t0.elapsed() < std::time::Duration::from_secs(1), "took {:?}", t0.elapsed());
+    }
+
+    /// A huge set is charged by its length, so it can't scan for long between deadline checks (Devin on #95).
+    #[test]
+    fn deadline_counts_large_sets() {
+        let lua = Lua::new();
+        let st = std::rc::Rc::new(std::cell::RefCell::new(super::super::vm::ModState::default()));
+        st.borrow_mut().deadline = Some(std::time::Instant::now() + std::time::Duration::from_millis(100));
+        lua.set_app_data(st);
+        super::install(&lua, &lua.globals().get("string").unwrap()).unwrap();
+        let t0 = std::time::Instant::now();
+        let r = lua.load("return string.find(string.rep('b', 1000000), '[' .. string.rep('a', 1000000) .. ']')").eval::<mlua::MultiValue>();
+        assert!(r.unwrap_err().to_string().contains("time budget"));
+        assert!(t0.elapsed() < std::time::Duration::from_secs(1), "took {:?}", t0.elapsed());
+    }
+
+    /// gsub's output is held to the mod's memory limit, even within one replacement (Devin on #95).
+    #[test]
+    fn gsub_output_is_bounded() {
+        let lua = Lua::new();
+        super::install(&lua, &lua.globals().get("string").unwrap()).unwrap();
+        for code in [
+            "return string.gsub(string.rep('a', 1000000), 'a', string.rep('x', 1048576))",
+            "return string.gsub(string.rep('a', 1000000), '.+', string.rep('%0', 100))",
+        ] {
+            let r = lua.load(code).eval::<mlua::MultiValue>();
+            assert!(r.unwrap_err().to_string().contains("not enough memory"), "{code}");
+        }
     }
 }

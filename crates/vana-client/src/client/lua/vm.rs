@@ -12,7 +12,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 /// Memory a mod may hold.
-const MEMORY: usize = 64 << 20;
+pub(super) const MEMORY: usize = 64 << 20;
 /// A single call past this is stopped; repeated, the mod is suspended.
 const HARD_CAP: Duration = Duration::from_millis(100);
 /// A call past this is reported once (BG3SE's client default).
