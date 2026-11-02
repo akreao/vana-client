@@ -209,13 +209,33 @@ pub fn connect_pinned(store: &Path, host: &str, port: u16) -> Result<TlsStream> 
     if expected.is_none()
         && let Some(got) = *seen.lock().unwrap()
     {
-        // Re-read: another connection may have pinned it meanwhile.
-        let mut known = KnownServers::load(store)?;
-        known.0.entry(key.clone()).or_insert(Pin { sha256: hex::encode(got), fixed: false });
-        known.save(store)?;
-        log::info!("tls: pinned {key}'s certificate {}", show(&got));
+        record_pin(store, &key, got)?;
     }
     Ok(StreamOwned::new(conn, tcp))
+}
+
+/// Pins `got` for `key` after a first handshake. Another connection may have pinned the server while that handshake
+/// ran (the auth and lobby steps run on their own threads, and another client may share the file): re-read under a
+/// lock, and refuse a certificate that differs from the pin found.
+fn record_pin(store: &Path, key: &str, got: Fingerprint) -> Result<()> {
+    static PINNING: Mutex<()> = Mutex::new(());
+    let _held = PINNING.lock().unwrap_or_else(|e| e.into_inner());
+    let mut known = KnownServers::load(store)?;
+    match known.expected(key)? {
+        Some(want) if want != got => bail!(
+            "{key} sent two different certificates while it was being pinned (kept {}, refused {}). Someone may be \
+             intercepting the connection.",
+            show(&want),
+            show(&got)
+        ),
+        Some(_) => Ok(()),
+        None => {
+            known.0.insert(key.to_string(), Pin { sha256: hex::encode(got), fixed: false });
+            known.save(store)?;
+            log::info!("tls: pinned {key}'s certificate {}", show(&got));
+            Ok(())
+        }
+    }
 }
 
 /// trust-server: forgets `host`'s learned pins (all its ports, or `port`), so the next connection pins what it is
@@ -360,6 +380,12 @@ mod tests {
         let k = KnownServers::load(&store).unwrap();
         assert_eq!(k.0.get("h:3"), Some(&Pin { sha256: hex::encode(f), fixed: true }));
         assert!(!k.0.contains_key("h:2"));
+        // A first connection that finds a pin made meanwhile keeps it, and refuses a different certificate.
+        let g = fingerprint(b"other cert");
+        record_pin(&store, "new:1", f).unwrap();
+        record_pin(&store, "new:1", f).unwrap();
+        assert!(record_pin(&store, "new:1", g).is_err());
+        assert_eq!(KnownServers::load(&store).unwrap().expected("new:1").unwrap(), Some(f));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
