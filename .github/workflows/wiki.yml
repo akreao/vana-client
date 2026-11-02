@@ -1,0 +1,44 @@
+# Publishes wiki/ to the repository's GitHub wiki on every push to master that changes it. The wiki is generated:
+# edits made in its web editor are overwritten. GitHub creates the wiki's git repository only when its first page is
+# saved, so create any page once in the web UI before the first run.
+name: Wiki
+
+on:
+  push:
+    branches: [master]
+    paths: [wiki/**, .github/workflows/wiki.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: wiki
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          if ! git clone --depth 1 "https://x-access-token:${TOKEN}@github.com/${REPO}.wiki.git" wiki-repo; then
+            echo "::error::No wiki repository yet. Create any page at https://github.com/${REPO}/wiki once, then re-run."
+            exit 1
+          fi
+          find wiki-repo -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp -r wiki/. wiki-repo/
+          cd wiki-repo
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Wiki already up to date."
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -m "Sync from ${REPO}@${SHA}"
+          git push
