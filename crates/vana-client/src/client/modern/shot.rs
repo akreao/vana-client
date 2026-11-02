@@ -40,6 +40,26 @@ fn list_sample(p: &mut Panels) {
     });
 }
 
+/// The favourites strip (no game art offscreen: the names' first letters) and list rows with their stars.
+fn favs_sample(p: &mut Panels) {
+    use super::super::favs::Fav;
+    let chip = |fav, name: &str, off, count| super::favs::Chip { fav, name: name.into(), icon: None, off, count };
+    let chips = [chip(Fav::Spell(1), "Cure", false, None), chip(Fav::Spell(4), "Cure IV", true, None), chip(Fav::Ability(0x210), "Provoke", false, None), chip(Fav::Ability(0x2a), "Savage Blade", false, None), chip(Fav::Item(4112), "Hi-Potion", false, Some(12)), chip(Fav::Item(4151), "Echo Drops", false, Some(4))];
+    super::favs::strip(p, &chips);
+    let m = p.m;
+    let at = p.ctx.content_rect().center() + vec2(-160.0, -240.0);
+    p.panel_at("items", Some(super::Title { icon: None, text: "White Magic", note: Some("4") }), 320.0, at, |ui| {
+        for (k, (name, on)) in [("Cure", true), ("Cure II", false), ("Cure IV", true), ("Protect", false)].into_iter().enumerate() {
+            let (r, resp) = ui.allocate_exact_size(vec2(296.0, 30.0), egui::Sense::hover());
+            let face = if k == 1 { "controls/list_row_selected" } else { "controls/list_row_normal" };
+            super::rows::face(ui.painter(), m, r, face, Color32::WHITE);
+            ui.painter().text(pos2(r.min.x + 24.0, r.center().y), egui::Align2::LEFT_CENTER, name, egui::FontId::proportional(m.theme.ui), m.theme.color("text"));
+            super::favs::star(ui, m, r, on, k == 1 || resp.hovered());
+            ui.add_space(2.0);
+        }
+    });
+}
+
 /// The main menu as command.rs draws it, Journal open with its submenu: a hovered row, one disabled.
 /// The kit's controls as a Config page has them: sliders with a short and a long value, options, a long-labelled line.
 fn kit_sample(p: &mut Panels) {
@@ -250,6 +270,9 @@ fn sample(m: &Modern, ctx: &egui::Context, layout: &mut Layout, opts: &Opts) {
     if opts.kit {
         kit_sample(&mut p);
     }
+    if opts.favs {
+        favs_sample(&mut p);
+    }
     if opts.rows.is_some() || opts.borders.is_some() {
         menu_sample(&mut p);
     }
@@ -261,7 +284,7 @@ fn sample(m: &Modern, ctx: &egui::Context, layout: &mut Layout, opts: &Opts) {
         timers_sample(m, ctx, screen.center().x - 190.0 - super::extras::WIDTH, super::extras::WIDTH, super::extras::Side::Left);
         timers_sample(m, ctx, screen.center().x - 180.0, 360.0, super::extras::Side::Left);
     }
-    if opts.list || opts.kit || opts.rows.is_some() || opts.borders.is_some() {
+    if opts.list || opts.kit || opts.favs || opts.rows.is_some() || opts.borders.is_some() {
         return;
     }
     // Every frame at a few sizes: nine-slice corners, tiled edges, the stretched gradient.
@@ -294,6 +317,8 @@ pub struct Opts {
     pub opacity: f32,
     /// A panel of the kit's controls.
     pub kit: bool,
+    /// The favourites strip and starred list rows.
+    pub favs: bool,
 }
 
 pub fn shot(width: u32, height: u32, scale: u32, backdrop: Option<&Path>, out: &Path, opts: &Opts) -> Result<()> {

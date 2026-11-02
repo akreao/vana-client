@@ -33,6 +33,7 @@ mod buffs;
 mod game_ui;
 mod hudtop;
 mod listsearch;
+mod favs;
 mod suggest;
 mod augment;
 mod iteminfo;
@@ -5917,6 +5918,10 @@ struct World {
     /// The search's recent picks (listsearch::key_of), newest first, and whether they changed since the save.
     recent_picks: Vec<String>,
     recent_save: bool,
+    /// Favourites (favs.rs keys, the strip's order), whether the strip shows, and whether either changed since the save.
+    favourites: Vec<String>,
+    fav_strip: bool,
+    fav_save: bool,
     /// The battle menu's suggestions (suggest.rs::refresh_root), when they were taken, and the one the cursor is on.
     root_sugg: Vec<suggest::Suggestion>,
     root_sugg_at: Option<Instant>,
@@ -7756,6 +7761,9 @@ impl App {
                             list_search: None,
                             recent_picks: self.cfg.modern_recent.get(&login.name).cloned().unwrap_or_default(),
                             recent_save: false,
+                            favourites: self.cfg.modern_favourites.get(&login.name).cloned().unwrap_or_default(),
+                            fav_strip: self.cfg.modern_fav_strip,
+                            fav_save: false,
                             root_sugg: Vec::new(),
                             root_sugg_at: None,
                             suggest_sel: None,
@@ -11956,6 +11964,13 @@ impl App {
                 }
                 if std::mem::take(&mut world.volume_dirty) {
                     apply = true;
+                }
+                if std::mem::take(&mut world.fav_save) {
+                    self.cfg.modern_favourites.insert(world.name.clone(), world.favourites.clone());
+                    self.cfg.modern_fav_strip = world.fav_strip;
+                    if let Err(e) = self.cfg.save() {
+                        log::warn!("config: {e:#}");
+                    }
                 }
                 if std::mem::take(&mut world.recent_save) {
                     self.cfg.modern_recent.insert(world.name.clone(), world.recent_picks.clone());
