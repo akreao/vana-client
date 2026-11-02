@@ -506,6 +506,8 @@ fn default_place(id: &str) -> Place {
         "loot" => on("iteminfo"),
         // /check beside the command window's place.
         "check" => at(0.2, 0.0347),
+        // Ours: the command palette above the screen's middle.
+        "palette" => at(0.38, 0.22),
         "blklist" => at(0.2, 0.0347),
         // The chat mode window rides the action menu it is opened from.
         "chatctrl" => on("combat"),
