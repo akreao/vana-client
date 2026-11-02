@@ -27,8 +27,12 @@ jobs:
           REPO: ${{ github.repository }}
           SHA: ${{ github.sha }}
         run: |
-          if ! git clone --depth 1 "https://x-access-token:${TOKEN}@github.com/${REPO}.wiki.git" wiki-repo; then
-            echo "::error::No wiki repository yet. Create any page at https://github.com/${REPO}/wiki once, then re-run."
+          # The token goes in a header for each git call, so it is never stored in the wiki clone's remote URL.
+          AUTH="$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
+          echo "::add-mask::${AUTH}"
+          git_auth() { git -c http.extraheader="Authorization: Basic ${AUTH}" "$@"; }
+          if ! git_auth clone --depth 1 "https://github.com/${REPO}.wiki.git" wiki-repo; then
+            echo "::error::Could not clone the wiki. If it has no pages yet, create any page at https://github.com/${REPO}/wiki once (GitHub creates the wiki repository then) and re-run; otherwise check the token's access."
             exit 1
           fi
           find wiki-repo -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
@@ -41,4 +45,4 @@ jobs:
           fi
           git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
             commit -m "Sync from ${REPO}@${SHA}"
-          git push
+          git_auth push
