@@ -13236,11 +13236,8 @@ Specs: `~/ffxi/lab/research/pol_map_session_spec.md`, `entity_update_spec.md` (a
   Ctrl / Alt + 1 ..= 8, the palettes' macros.
 - Config 0xce's choices 1 / 2 (Misc. 4) stay off: they need retail's pad count, FUN_101bced0.
 
-## Modern layouts per display, and the resizable list (ours, 2026-11-02)
+## Modern layouts per display (ours, 2026-11-02)
 
 - Config `modern_places` keys: the character's name (its latest layout) and "<name> @<w>x<h> <scale>%" per display
   (modern::display_key). Read: the display's, else the latest; a change writes both. Reset removes every key of the
   character (modern::layout_of).
-- The magic / ability list (FUN_1022b220 / FUN_10222b90's view, retail 12 rows) holds ListWin.visible rows: VISIBLE
-  when opened and with the classic UI, the modern list's resized height in rows (4 ..= 30) otherwise. Scrolling,
-  paging and the cursor memory use it; retail's drawing and mouse rows keep VISIBLE.

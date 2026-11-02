@@ -6836,12 +6836,6 @@ impl App {
         if let Phase::World(w) = &mut self.phase {
             w.party_tp = self.cfg.party_tp;
             w.modern = self.cfg.modern_ui;
-            // The modern list's own row count (resized) goes back to retail's with the classic UI.
-            if !w.modern {
-                for l in [w.magic.as_mut(), w.ability.as_mut()].into_iter().flatten() {
-                    l.visible = magic::VISIBLE;
-                }
-            }
             w.condense = self.cfg.modern_condense;
             w.chat.set_fold(self.cfg.modern_ui && self.cfg.modern_condense);
             w.map_opacity = self.cfg.map_overlay_opacity;
