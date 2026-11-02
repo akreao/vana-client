@@ -168,7 +168,7 @@ scale.
 ## Open questions
 
 - Which keys open the command palette and the search? (Tab is FFXI's target cycling.)
-- Click-to-move, or only mouse targeting and interaction?
+- ~~Click-to-move, or only mouse targeting and interaction?~~ Ctrl + left click on the ground (user, 2026-11-02).
 - Which windows hide in combat and which stay pinned?
 - How macros and equipment sets show in search and favourites.
 - How to show skillchain windows without a rotation HUD.
@@ -542,4 +542,10 @@ Milestone 1:
   names (a status id) rather than prints is kept as it is. Live: Warcry with a bot in the party.
 - The target panel's name in retail's name colour (FUN_1008db40 as the plates: unclaimed monster pale yellow, our
   party's claim red, another's magenta).
+- Click-to-move (2026-11-02, ours; the open question, user's pick: Ctrl + left click only): with the modern UI,
+  Ctrl + left click on the ground (no actor under the pointer) walks there. The point is the pointer's ray on the
+  collision mesh; the way is an A* search on a one-yalm grid (a floor within 0.8 up / 1.5 down of the last, no wall at
+  chest height), straightened where a straight walk stays on the floor, within 60 yalms (client/clickmove.rs). The walk
+  is autorun steered at each point as /follow steers it, so autorun's rules hold; a move or turn key, the autorun key,
+  arriving, or 1.5 s without half a yalm of progress ends it. No way found: the error sound. Plain clicks are as before.
 - Not yet: alliance rows live.

@@ -4,6 +4,7 @@ pub mod ground;
 pub mod combat;
 mod actmotion;
 mod chair;
+mod clickmove;
 mod battlemod;
 pub mod opening;
 mod flyover;
@@ -5635,6 +5636,8 @@ struct World {
     translating: bool,
     /// /follow's target (0x10487f74): autorun steers at it each tick.
     follow: Option<u32>,
+    /// Ours (modern UI, Ctrl + click on the ground): the walk autorun steers along.
+    click_move: Option<clickmove::ClickMove>,
     target_since: Instant,
     cam_turn: (f32, f32),
     /// UI sound effects to play ("0002", "0009" ...), by SE id.
@@ -7548,6 +7551,7 @@ impl App {
                             party_tp_save: false,
                             item_search: false,
                             follow: None,
+                            click_move: None,
                             translating: false,
                             last_proposer: String::new(),
                             overlay: None,
@@ -9989,6 +9993,12 @@ impl App {
         if !in_event && self.input.test(0x1c, input::mode::PRESS) {
             world.autorun = !world.autorun;
             world.autorun_dir = Vec3::ZERO;
+            world.click_move = None;
+        }
+        // A click-to-move walk ends at any move or turn of the player's own.
+        if world.click_move.is_some() && (ax != 0.0 || ay != 0.0 || turn != 0.0) {
+            world.click_move = None;
+            world.autorun = false;
         }
         // Turning while autorunning steers it: the move goes forward and the turn counts as X input.
         if world.autorun && turn != 0.0 {
@@ -10012,6 +10022,22 @@ impl App {
                     }
                 }
                 _ => world.autorun = false,
+            }
+        }
+        // Click-to-move: autorun points along the walk; arriving, or no progress, ends it.
+        if let Some(cm) = world.click_move.as_mut() {
+            match cm.steer(world.pos) {
+                _ if !world.autorun => world.click_move = None,
+                clickmove::Steer::Toward(d) => world.autorun_dir = d,
+                clickmove::Steer::Arrived => {
+                    world.click_move = None;
+                    world.autorun = false;
+                }
+                clickmove::Steer::Stuck => {
+                    world.click_move = None;
+                    world.autorun = false;
+                    world.chat.push("Can't go any further that way.");
+                }
             }
         }
         if world.autorun && !world.locked && !move_locked {
@@ -10576,6 +10602,7 @@ impl App {
         let size = self.window_size;
         let (k, retail_aspect) = (self.ui_k, self.cfg.retail_aspect);
         let hud = &self.hud_blockers;
+        let ctrl = self.mods.control_key();
         let world_click = |phase: &mut Phase, b: (f64, f64), left: bool, drag: bool| -> bool {
             let on_hud = hud.iter().any(|r| inside(r, (b.0 as f32 * k.0, b.1 as f32 * k.1)));
             let Phase::World(world) = phase else { return false };
@@ -10588,6 +10615,11 @@ impl App {
                 fishing::click(world);
             }
             let picked = if left { Self::under_pointer(world, b, size, aspect).0 } else { None };
+            // Ours (modern UI): Ctrl + left click on the ground (no actor there) walks to it.
+            if left && !drag && ctrl && world.modern && picked.is_none() {
+                Self::click_move(world, b, size, aspect);
+                return true;
+            }
             target::click(world, picked, left, drag)
         };
         match button {
@@ -10624,6 +10656,32 @@ impl App {
         }
         if !self.left_down && !self.dragging && !self.middle_down {
             self.release_pointer();
+        }
+    }
+
+    /// Click-to-move: the ground under the pointer, the way there, and autorun along it (clickmove.rs).
+    fn click_move(world: &mut World, cursor: (f64, f64), size: [u32; 2], aspect: f32) {
+        let cam = Self::camera(world);
+        let inv = (cam.proj(aspect) * cam.view()).inverse();
+        let ndc = glam::Vec2::new(2.0 * cursor.0 as f32 / size[0].max(1) as f32 - 1.0, 1.0 - 2.0 * cursor.1 as f32 / size[1].max(1) as f32);
+        let far = inv.project_point3(Vec3::new(ndc.x, ndc.y, 0.5));
+        let blocked = world.locked || world.dead() || world.my_motion.status != 0 && world.my_motion.status != 1;
+        let way = world
+            .ground
+            .as_ref()
+            .filter(|_| !blocked && world.zone == Some(world.pos_zone))
+            .and_then(|g| clickmove::ground_point(g, cam.eye, far - cam.eye).and_then(|to| clickmove::path(g, world.pos, to)));
+        match way {
+            Some(path) => {
+                log::debug!("click-to-move: {} points to {:?}", path.len(), path.last());
+                world.follow = None;
+                world.click_move = Some(clickmove::ClickMove::new(path, world.pos));
+                world.autorun = true;
+                world.autorun_dir = Vec3::ZERO;
+            }
+            None => {
+                world.sounds.push(crate::audio::Ui::Error as u32);
+            }
         }
     }
 
