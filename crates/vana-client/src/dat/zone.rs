@@ -158,7 +158,8 @@ pub fn parse_mmb(p: &[u8]) -> Result<Mmb> {
             offsets.push_back(64);
         } else {
             for i in 0..8 {
-                let o = u32_at(p, 64 + i * 4) as usize;
+                // A table cut by the end of the chunk has no more offsets (issue #87).
+                let Some(o) = p.get(64 + i * 4..68 + i * 4).map(|_| u32_at(p, 64 + i * 4) as usize) else { break };
                 if o != 0 {
                     offsets.push_back(o);
                 }
@@ -167,7 +168,8 @@ pub fn parse_mmb(p: &[u8]) -> Result<Mmb> {
     } else {
         offsets.push_back(first);
         let mut at = 64;
-        while at + 4 <= first {
+        // The offset table runs up to the first piece; a first offset past the end stops at the end (issue #87).
+        while at + 4 <= first.min(p.len()) {
             let o = u32_at(p, at) as usize;
             if o != 0 {
                 offsets.push_back(o);
@@ -357,17 +359,26 @@ pub fn camera_lists(p: &[u8]) -> std::collections::HashMap<u32, Vec<u32>> {
 /// FUN_10172530: version byte 3 > 0x11 and u32 @0x18: the light list, 256 records of 0x4c with the key at +0
 /// (empty without one).
 pub fn light_list(p: &[u8]) -> Vec<u32> {
+    if p.len() < 0x1c {
+        return Vec::new();
+    }
     let list = u32_at(p, 0x18) as usize;
-    if p.len() < 0x1c || p[3] <= 0x11 || list == 0 || list + 256 * 0x4c > p.len() {
+    if p[3] <= 0x11 || list == 0 || list + 256 * 0x4c > p.len() {
         return Vec::new();
     }
     (0..256).map(|k| u32_at(p, list + k * 0x4c)).collect()
 }
 
 pub fn parse_mzb(p: &mut [u8]) -> Result<Vec<Placement>> {
+    if p.len() < 32 {
+        bail!("MZB too short");
+    }
     let count = (p[4] as usize) | (p[5] as usize) << 8 | (p[6] as usize) << 16;
     let end = u32_at(p, 20) as usize;
     let stride = [100usize, 84, 92].into_iter().find(|s| count * s + 32 == end).ok_or_else(|| anyhow::anyhow!("unknown MZB record size ({count} records end at {end})"))?;
+    if end > p.len() {
+        bail!("MZB: {count} records end at {end}, past the chunk");
+    }
     let version = p[3];
     let keys = light_list(p);
     let world = p.get(0x1c) == Some(&2);
@@ -640,7 +651,9 @@ impl Region {
 /// RID chunk (0x36): count @0x30, 0x40-byte entries from 0x40 (pos, rot, scale, name[8] @0x24).
 pub fn parse_rid(p: &[u8]) -> Vec<Region> {
     let count = p.get(0x30..0x34).map(|_| u32_at(p, 0x30) as usize).unwrap_or(0);
-    (0..count)
+    // Entries from p.len() / 0x40 on end past the chunk and are dropped below anyway; stopping there keeps a bad
+    // count from looping up to u32::MAX times (issue #87).
+    (0..count.min(p.len() / 0x40))
         .filter_map(|i| {
             let e = 0x40 + i * 0x40;
             (e + 0x38 <= p.len()).then(|| Region {
