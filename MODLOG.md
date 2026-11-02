@@ -13221,3 +13221,17 @@ Specs: `~/ffxi/lab/research/pol_map_session_spec.md`, `entity_update_spec.md` (a
 - Live (Lnxcsfix at the San d'Oria berth): Kazham's docked update came at 44.4 s and was applied at 45.0 s (yaw
   1.665 -> 1.571 at (-4, 10.45, 117)); San d'Oria's came at 25.6 s and was applied at 26.4 s (1.493 -> 1.571 at
   (-68, 10.45, 117)). Seen fixed by the user.
+
+## Gamepad (ours, 2026-11-02)
+
+- Retail's PC client handed pads to the external config tool (configwi row 13 / lobycwin child 13 start it,
+  FUN_101bcb60; see "Tables copied from FFXiMain"), which we don't have, and its in-client pad word (key functions
+  0xb7..0xba) is still unread. So ours is not retail: client/gamepad.rs reads pads with gilrs and acts as a keyboard.
+  Buttons hold keys (DIK into `Input::set` for the key functions, egui key events for the windows, with cursor
+  repeats after 0.4 s every 0.08 s); the sticks go to `Input::set_stick` and count in `Input::axis` as the compact
+  stick does (the larger of keys, compact stick and pad stick). The left stick does not move while typing; the right
+  stick follows the arrows' rule (not typing, no window). With a window up, or outside the field, the left stick
+  steps the cursor as the arrows instead of moving.
+- A button bound to Ctrl / Alt (the triggers by default) makes the d-pad and face buttons press 1 ..= 8 while held:
+  Ctrl / Alt + 1 ..= 8, the palettes' macros.
+- Config 0xce's choices 1 / 2 (Misc. 4) stay off: they need retail's pad count, FUN_101bced0.

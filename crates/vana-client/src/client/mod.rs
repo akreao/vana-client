@@ -52,6 +52,7 @@ mod updater;
 mod firstrun;
 mod desktop;
 mod target;
+mod gamepad;
 mod input;
 mod camera;
 mod items;
@@ -6479,6 +6480,7 @@ pub struct App {
     numpad_slash: bool,
     /// Retail key functions (DAT_103619f0 and FUN_1011ff30).
     input: input::Input,
+    gamepad: gamepad::Gamepad,
     /// Frames per second, 0 = unlimited (config frame_limit), and the present mode must be picked again.
     frame_limit: u32,
     present_dirty: bool,
@@ -6723,6 +6725,7 @@ impl App {
             next_frame: None,
             numpad_slash: false,
             input: input::Input::default(),
+            gamepad: gamepad::Gamepad::default(),
             frame_limit,
             present_dirty: false,
             window_dirty: false,
@@ -12481,6 +12484,20 @@ impl App {
         // egui-winit passes the texture limit in its first input only; lost, egui assumes 2048 and the modern atlases
         // (status_0@2x is 2184 wide) fail its debug check.
         raw.max_texture_side = Some(gfx.gpu.device.limits().max_texture_dimension_2d as usize);
+        // A game controller as keys and sticks (not retail): outside the field or with a window up, its left stick
+        // steps the cursor.
+        let menu = !matches!(self.phase, Phase::World(_)) || self.input.window_active();
+        let pad = self.gamepad.poll(&self.cfg, gfx.window.has_focus(), menu, dt);
+        for (code, down) in pad.keys {
+            if let Some(k) = input::dik(code) {
+                self.input.set(k, down);
+            }
+        }
+        self.input.set_stick(pad.stick);
+        if pad.pressed && !self.dragging && !self.left_down {
+            self.mouse.visible = false;
+        }
+        raw.events.extend(pad.events);
         let phase = self.phase_name();
         let mut script_shot = None;
         if let Some(sc) = &mut self.drive.input {
