@@ -356,8 +356,8 @@ impl HudTop {
     }
 
     /// FUN_102014f0: the mail page for 60 ticks, then the network page for 120; held on the network page while nothing
-    /// is unread and no Help Desk reply waits (+0x2c). Not done: the 3 x 120 network page while only engine +0xe
-    /// (+0x20) is set.
+    /// is unread and no Help Desk reply waits (+0x2c). Retail's 3 x 120 network page while engine +0xe (+0x20) is
+    /// set never happens: nothing in the DLL counts +0xe up (only its init and FUN_100f6f20 zero it).
     fn step_page(&mut self, ticks: f32) {
         self.net_ticks += ticks;
         if self.net_page == 0 {
