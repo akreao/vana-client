@@ -1,5 +1,5 @@
-//! Ours (the modern UI's click-to-move; the plan's open question, not retail): Ctrl + left click on the ground walks
-//! the character there. The point is where the pointer's ray meets the collision mesh; the way is an A* search on a
+//! Ours (the modern UI's click-to-move; one way to try the plan's open question, which stays open; not retail):
+//! Ctrl + left click on the ground walks the character there. The point is where the pointer's ray meets the collision mesh; the way is an A* search on a
 //! one-yalm grid over the same mesh (a step is a floor within reach of the last one with no wall between at chest
 //! height), straightened where a straight walk stays on the floor. The walk itself is autorun steered at each point
 //! in turn, as /follow steers it at a target, so every rule autorun keeps (events, resting, locks) still holds.
