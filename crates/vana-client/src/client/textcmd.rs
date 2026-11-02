@@ -2770,6 +2770,7 @@ fn magic(w: &mut World, cid: u16, args: &[String], mode: Mode) -> Done {
     let spell = find_spell(w, args.get(1).ok_or(())?, kind)?;
     let t = resolve(w, args.get(2).map(String::as_str), false, true, mode).ok_or(())?;
     act(w, t, cat::MAGIC, spell as u32);
+    super::pending::start(w, super::pending::Ask::Spell(spell as u16), t.0);
     Ok(())
 }
 
@@ -2800,6 +2801,7 @@ fn weapon_skill(w: &mut World, args: &[String], mode: Mode) -> Done {
     let ws = ability_named(w, args.get(1).ok_or(())?, 0..0x200).ok_or(())?;
     let t = resolve(w, args.get(2).map(String::as_str), false, true, mode).ok_or(())?;
     act(w, t, cat::WS, ws as u32);
+    super::pending::start(w, super::pending::Ask::WeaponSkill(ws as u16), t.0);
     Ok(())
 }
 
@@ -2821,6 +2823,7 @@ fn ability(w: &mut World, _pet: bool, args: &[String], mode: Mode) -> Done {
     }
     let t = resolve(w, args.get(2).map(String::as_str), false, true, mode).ok_or(())?;
     act(w, t, cat::JA, (id - 0x200) as u32);
+    super::pending::start(w, super::pending::Ask::Ability(id as u16), t.0);
     Ok(())
 }
 
@@ -2909,6 +2912,7 @@ fn bstpet(w: &mut World, args: &[String], mode: Mode) -> Done {
     .ok_or(())?;
     let t = resolve(w, args.get(2).map(String::as_str), false, false, mode).ok_or(())?;
     act(w, t, cat::JA, (id - 0x200) as u32);
+    super::pending::start(w, super::pending::Ask::Ability(id as u16), t.0);
     Ok(())
 }
 

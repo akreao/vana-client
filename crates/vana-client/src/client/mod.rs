@@ -34,6 +34,7 @@ mod buffs;
 mod game_ui;
 mod hudtop;
 mod listsearch;
+mod pending;
 mod suggest;
 mod augment;
 mod iteminfo;
@@ -5947,6 +5948,8 @@ struct World {
     /// The search's recent picks (listsearch::key_of), newest first, and whether they changed since the save.
     recent_picks: Vec<String>,
     recent_save: bool,
+    /// The action we asked the server for and its answer so far (pending.rs).
+    asked: Option<pending::Pending>,
     /// The battle menu's suggestions (suggest.rs::refresh_root), when they were taken, and the one the cursor is on.
     root_sugg: Vec<suggest::Suggestion>,
     root_sugg_at: Option<Instant>,
@@ -7800,6 +7803,7 @@ impl App {
                             command_palette: false,
                             recent_picks: self.cfg.modern_recent.get(&login.name).cloned().unwrap_or_default(),
                             recent_save: false,
+                            asked: None,
                             root_sugg: Vec::new(),
                             root_sugg_at: None,
                             suggest_sel: None,
@@ -12608,6 +12612,7 @@ impl App {
             combat::battle_frame(w);
             synth::update(w);
             resttick::update(w);
+            pending::update(w);
             servmes::frame(w);
         }
         // Config 0022: the opening movie before the title, which loads behind it.
