@@ -21,6 +21,7 @@ mod craft;
 mod ctxmenu;
 mod equip;
 mod extras;
+mod favs;
 mod gametext;
 mod hud;
 mod inspect;
@@ -258,6 +259,7 @@ impl Modern {
         chat::panel(&mut p, w);
         extras::draw(&mut p, w);
         hud::draw(&mut p, w);
+        favs::draw(&mut p, w);
         pending::draw(&mut p, w);
         command::draw(&mut p, w);
         combat::draw(&mut p, w);
@@ -543,6 +545,8 @@ fn default_place(id: &str) -> Place {
         "chatctrl" => on("combat"),
         // The comment editor sits on the log as retail's (flag 0x1000).
         "comment" => on("combat"),
+        // The favourites strip over the chat window's right end.
+        "favourites" => at(0.42, 0.66),
         _ => at(0.3, 0.3),
     }
 }
