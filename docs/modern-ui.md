@@ -4,6 +4,9 @@ The plan for vana-client's modern interface, from the user's planning document (
 26 October 2026), with the decisions taken since and the state of the work. Built on branch `ui-update`, merged into
 master 2026-10-27 (kept).
 
+Feature branches don't edit this file: their State updates go in `docs/modern-ui/`, one file each, and are folded
+in here later (see `docs/modern-ui/README.md`).
+
 ## Decisions (2026-10-26)
 
 - **Runtime toggle.** The retail UI stays the default and untouched. Settings > Client > Interface switches between
