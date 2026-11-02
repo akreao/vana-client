@@ -545,4 +545,8 @@ Milestone 1:
   names (a status id) rather than prints is kept as it is. Live: Warcry with a bot in the party.
 - The target panel's name in retail's name colour (FUN_1008db40 as the plates: unclaimed monster pale yellow, our
   party's claim red, another's magenta).
+- Double click on the world (2026-11-02, ours; the pack's mouse contract): with the modern UI, a second plain left
+  click on the same actor within 500 ms runs the safe default instead of opening the action menu: talk to an NPC or
+  a door, check a player or a monster (retail's Ctrl+C, FUN_10130280). A slower second click stays retail's
+  (confirm: talk, or the action menu); a locked target, a sub-target prompt, a drag and the classic UI are unchanged.
 - Not yet: alliance rows live.
