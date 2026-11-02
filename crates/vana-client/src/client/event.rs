@@ -470,6 +470,8 @@ pub struct State {
     /// Op 0x92 (+0x12c bit 16): a bound actor's name is not drawn while the event runs (FUN_10096000); unbinding
     /// clears it.
     pub no_name: HashSet<u32>,
+    /// Op 0x86 (+0x12c bit 3): a bound actor's turns play no step motion; unbinding clears it.
+    no_turn_steps: HashSet<u32>,
     /// First person at the event's start (DAT_10351bb8 = DAT_10475578, FUN_100ad2c0): op 0x46 sub 1 leaves it, sub 0
     /// and the end put it back (FUN_100acf70).
     first_saved: bool,
@@ -496,8 +498,10 @@ pub struct State {
     flags_df04: u32,
     idle_since: Option<Instant>,
     rng: u32,
-    /// Op 0x77: hour and weather while the event runs (None = 0xff: that one stays); 0x78 drops it.
-    pub time: Option<(Option<u32>, Option<u16>)>,
+    /// Ops 0x77 / 0xa9: the Vana'diel clock held still (FUN_1018c4f0) until 0x78 / 0xc9 (FUN_1018c4d0).
+    pub clock: Option<HeldClock>,
+    /// Op 0x77's weather until 0x78 (DAT_104886db).
+    pub weather: Option<u16>,
     /// FUN_10132030 on the event message windows: +0x48 on, +0x4a x, +0x4c y (ops 0x67 / 0x68), and the text
     /// codes' x / y (DAT_10476f98 / 9a).
     place_on: bool,
@@ -542,6 +546,7 @@ impl State {
             idle: HashMap::new(),
             bound: HashSet::new(),
             no_name: HashSet::new(),
+            no_turn_steps: HashSet::new(),
             first_saved: false,
             poses: HashMap::new(),
             event_status: HashMap::new(),
@@ -557,7 +562,8 @@ impl State {
             flags_df04: 0,
             idle_since: None,
             rng: 1,
-            time: None,
+            clock: None,
+            weather: None,
             place_on: false,
             place: (0, 0),
             code_xy: (0, 0),
@@ -942,6 +948,44 @@ impl Host for LiveHost<'_> {
                     self.hide(id, &args, 0);
                 }
             }
+            // FUN_100b9100 (op 0x84): the event actor's +0x12c bit 0; FUN_10095da0 then makes its model again (FUN_10092900,
+            // FUN_1008f740) and clears it.
+            Effect::Op { op: 0x84, actor, .. } => {
+                let id = self.wid(actor);
+                if self.w.entities.contains_key(&id) {
+                    remake_model(self.w, id);
+                }
+            }
+            // FUN_100b9c20 (op 0x95) / FUN_100b9c70 (op 0x96): the event actor's MonStat override (+0x12c bit 19, bits
+            // 20..21 = val@1 & 3) set / cleared, and its model made again (FUN_10092900).
+            Effect::Op { op: op @ (0x95 | 0x96), actor, args, .. } => {
+                let id = self.wid(actor);
+                if let Some(e) = self.w.entities.get_mut(&id) {
+                    e.ev_mon_stat = if op == 0x95 { Some((Self::arg_int(&args, 0).unwrap_or(0) & 3) as u8) } else { None };
+                    remake_model(self.w, id);
+                }
+            }
+            // FUN_100ba8d0 (op 0xa4): the event actor's +0x12c bit 26 = u8@1: the eye near it does not fade it.
+            Effect::Op { op: 0xa4, actor, args, .. } => {
+                let id = self.wid(actor);
+                if let (Some(v), Some(e)) = (Self::arg_int(&args, 0), self.w.entities.get_mut(&id)) {
+                    e.no_near_fade = v & 1 != 0;
+                }
+            }
+            // FUN_100b8f30 (op 0x86): actor@2's +0x12c bit 3 = u8@1 when it has a model: while bound, an event turn
+            // plays no '@tl0' / '@tr0' step (FUN_1008cd90).
+            Effect::Op { op: 0x86, args, .. } => {
+                if let (Some(on), Some(Arg::Actor(a))) = (Self::arg_int(&args, 0), args.get(1)) {
+                    let id = self.wid(*a);
+                    if self.w.actors.get(&id).is_some_and(|a| a.character.is_some()) {
+                        if on & 1 != 0 {
+                            self.st.no_turn_steps.insert(id);
+                        } else {
+                            self.st.no_turn_steps.remove(&id);
+                        }
+                    }
+                }
+            }
             // FUN_100b7e20: actor@2's +0x12c bit 17 = u8@1: no occlusion test for its model (FUN_100c9da0).
             Effect::Op { op: 0x94, args, .. } => {
                 if let (Some(on), Some(Arg::Actor(a))) = (Self::arg_int(&args, 0), args.get(1)) {
@@ -1197,23 +1241,36 @@ impl Host for LiveHost<'_> {
                     self.w.music_fades.push((v, t));
                 }
             }
-            // FUN_100b6880: the weather applies even with hour 0xff (the clock then stays); FUN_100b6920 restores.
+            // FUN_100b8710: hour val@1 holds the clock's day at that hour, minute 0 (FUN_1018bf50 / bf00); weather val@3
+            // applies even with hour 0xff (the clock then runs on).
             Effect::Op { op: 0x77, args, .. } => {
                 if let (Some(h), Some(wt)) = (Self::arg_int(&args, 0), Self::arg_int(&args, 1)) {
-                    self.st.time = Some(((h != 0xff).then_some(h as u32), (wt != 0xff).then_some(wt as u16)));
-                    // FUN_10092900: the weather's effects switch at once too.
+                    if h != 0xff {
+                        let held = self.st.clock;
+                        self.st.clock = Some(HeldClock { day: held.and_then(|c| c.day), minute: h as u32 * 60, moon: held.is_some_and(|c| c.moon) });
+                    }
+                    // FUN_100940b0: the weather's effects switch at once too.
                     if wt != 0xff {
+                        self.st.weather = Some(wt as u16);
                         self.w.effects.set_weather(crate::dat::weather::weather_tag(wt as u16), 0.0);
                     }
                 }
             }
-            // FUN_10092940: back to the server's weather, effects too.
-            Effect::Op { op: 0x78, .. } => {
-                if self.st.time.is_some_and(|t| t.1.is_some()) {
+            // FUN_100bab50: day val@1 x 7 at 00:30 (FUN_1018be70 / bfa0 / bf00), and the weekday and moon phase read it
+            // (DAT_1065cb20) instead of the server's.
+            Effect::Op { op: 0xa9, args, .. } => {
+                if let Some(v) = Self::arg_int(&args, 0) {
+                    self.st.clock = Some(HeldClock { day: Some(v as u32 * 7), minute: 30, moon: true });
+                }
+            }
+            // FUN_100b87e0: the clock runs again; FUN_100b87b0 (0x78) also goes back to the server's weather (FUN_100940f0),
+            // effects too.
+            Effect::Op { op: op @ (0x78 | 0xc9), .. } => {
+                self.st.clock = None;
+                if op == 0x78 && self.st.weather.take().is_some() {
                     let wt = self.w.weather;
                     self.w.effects.set_weather(crate::dat::weather::weather_tag(wt), 0.0);
                 }
-                self.st.time = None;
             }
             // FUN_100b6950 / 6a00 / 69b0 / 6980 / 6a30: the event's door state (+0x174) for the bound actor.
             Effect::Op { op: op @ (0x4c | 0x4d | 0x4f | 0x8e | 0x8f), actor, args, .. } => {
@@ -1369,6 +1426,20 @@ impl Host for LiveHost<'_> {
             }
             Effect::Op { op: 0x71, sub: Some(0x21), .. } => super::maze::close(self.w),
             // FUN_100b7e10 0x40: the concierge's list (link5 mode 1, link6 title val@2).
+            // FUN_100bbaf0: 0 / 3 / 4 / 6 / 7 start the Fishing Ranking's request 1 / 10 / 11 / 12 / 13 with the value;
+            // 2 opens its window, 8 closes it.
+            Effect::Op { op: 0xb3, sub: Some(s @ (0 | 3 | 4 | 6 | 7)), args, .. } => {
+                let cmd = match s {
+                    0 => 1,
+                    3 => 10,
+                    4 => 11,
+                    6 => 12,
+                    _ => 13,
+                };
+                super::ranking::start(self.w, cmd, Self::arg_int(&args, 0).unwrap_or(0) as u8);
+            }
+            Effect::Op { op: 0xb3, sub: Some(2), .. } => super::ranking::open(self.w),
+            Effect::Op { op: 0xb3, sub: Some(8), .. } => super::ranking::close(self.w),
             Effect::Op { op: 0x71, sub: Some(0x40), args, .. } => {
                 let title = Self::arg_int(&args, 0).unwrap_or(0) as u8;
                 super::concierge::open(self.w, title);
@@ -1562,7 +1633,8 @@ impl Host for LiveHost<'_> {
             // 0x9a: until the music change has loaded.
             Busy::Op { op: 0x9a, .. } => self.w.music_changing,
             // FUN_10178780: a sub-area load is running.
-            Busy::Op { op: 0x75, .. } => self.w.sub.loading.is_some() || self.w.sub.asked.is_some(),
+            // FUN_100b8630 (0x98): ends the frame while one runs (DAT_10631f24 +0x44).
+            Busy::Op { op: 0x75 | 0x98, .. } => self.w.sub.loading.is_some() || self.w.sub.asked.is_some(),
             // Op 0xb6 sub 0x10: until the player's model is up.
             Busy::Op { op: 0xb6, sub: Some(0x10), .. } => self.w.actors.get(&self.w.my_id).is_none_or(|a| a.character.is_none()),
             Busy::Op { op: 0x99, actor, .. } | Busy::Op { op: 0x59, sub: Some(6), actor } => {
@@ -1640,6 +1712,14 @@ impl Host for LiveHost<'_> {
         (!super::arealist::picking(self.w)).then_some(self.w.area_pick)
     }
 
+    fn ranking(&self, full: bool) -> Option<[i32; 8]> {
+        super::ranking::values(self.w, full)
+    }
+
+    fn ranking_open(&self) -> bool {
+        super::ranking::is_open(self.w)
+    }
+
     fn game_config(&self, id: u16) -> u32 {
         self.w.game.get(id)
     }
@@ -1683,6 +1763,10 @@ impl Host for LiveHost<'_> {
     fn rand(&mut self) -> u32 {
         self.st.rng = self.st.rng.wrapping_mul(1_103_515_245).wrapping_add(12345);
         (self.st.rng >> 16) & 0x7fff
+    }
+
+    fn game_time(&self) -> u32 {
+        super::vana_now(self.w) as u32
     }
 }
 
@@ -2014,7 +2098,7 @@ fn sync(live: &mut Live, w: &mut World, ticks: f32, dt: f32) {
         if b.dir != pose.dir {
             let q = |r: f32| ((r / TAU * 4096.0).round() as i32).rem_euclid(4096);
             let (l, r) = (q(pose.dir - b.dir), q(b.dir - pose.dir));
-            if !moving && !snap {
+            if !moving && !snap && !live.st.no_turn_steps.contains(&id) {
                 if (0x201..0x800).contains(&l) {
                     steps.push((id, "@tl0", pose.ratio));
                 } else if r > 0x200 {
@@ -2071,7 +2155,7 @@ fn finish(w: &mut World, live: Box<Live>) {
     // FUN_100acf20: first person as it was before the event.
     w.camst.first = live.st.first_saved;
     // Op 0x77's weather without its 0x78: the lighting goes back with the event, so the effects do too.
-    if live.st.time.is_some_and(|t| t.1.is_some()) {
+    if live.st.weather.is_some() {
         let wt = w.weather;
         w.effects.set_weather(crate::dat::weather::weather_tag(wt), 0.0);
     }
@@ -2103,10 +2187,11 @@ fn finish(w: &mut World, live: Box<Live>) {
         }
     }
     // FUN_100ae3f0 on the bound entities: the mouth (+0x128 bit 17), footsteps (bit 0) and the blinks (model +0x8b4)
-    // back on, the area free again (+0x13c bit 19, +0x20c).
+    // back on, the area free again (+0x13c bit 19, +0x20c), the near fade back (+0x12c bit 26).
     for id in &live.st.bound {
         if let Some(e) = w.entities.get_mut(id) {
             (e.mouth_off, e.steps_off, e.area_frozen, e.area_override) = (false, false, None, 0);
+            e.no_near_fade = false;
         }
         if let Some(a) = w.actors.get_mut(id) {
             a.blink_off = false;
@@ -2153,15 +2238,21 @@ pub fn rebuild_models(w: &mut World) {
     let ids: Vec<u32> = w.actors.keys().copied().filter(|&id| id != w.my_id && w.entities.contains_key(&id)).collect();
     log::info!("event: rebuilding {} models (op 0xab 0x11)", ids.len());
     for id in ids {
-        let src = w.actors.get(&id).and_then(|a| a.source);
-        for gone in [id, super::ride::ANIMAL | id, super::chair::CHAIR | id] {
-            if w.actors.remove(&gone).is_some() {
-                w.effects.forget_actor(gone);
-            }
+        remake_model(w, id);
+    }
+}
+
+/// FUN_10092900 then FUN_1008f740: the entity's model goes (its riding animal and chair with it) and loads again,
+/// its load fade from 0.
+fn remake_model(w: &mut World, id: u32) {
+    let src = w.actors.get(&id).and_then(|a| a.source);
+    for gone in [id, super::ride::ANIMAL | id, super::chair::CHAIR | id] {
+        if w.actors.remove(&gone).is_some() {
+            w.effects.forget_actor(gone);
         }
-        if let Some(src) = src {
-            w.event_looks.push((id, src));
-        }
+    }
+    if let Some(src) = src {
+        w.event_looks.push((id, src));
     }
 }
 
@@ -2247,14 +2338,39 @@ pub fn holds(w: &mut World, id: u32) -> bool {
     false
 }
 
-/// Op 0x77's hour while the event holds one (the clock stands at its minute 0).
+/// Ops 0x77 / 0xa9: the clock the event holds still.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HeldClock {
+    /// Days since the Vana'diel epoch (0xa9); None: 0x77 alone, the running clock's day.
+    pub day: Option<u32>,
+    /// Minute of the day.
+    pub minute: u32,
+    /// 0xa9 (DAT_1065cb20): the weekday and moon phase come from this clock (FUN_1018bd90 / bde0).
+    pub moon: bool,
+}
+
+impl HeldClock {
+    /// FUN_1018bde0 / bd90 on the held clock: ((day + 12 h) / 7) % 12 and day & 7.
+    pub fn moon_weekday(&self) -> Option<(u32, u32)> {
+        let day = self.day.filter(|_| self.moon)?;
+        let d = (day as u64 * 1440 + self.minute as u64 + 720) / 1440;
+        Some(((d / 7 % 12) as u32, day & 7))
+    }
+}
+
+/// The clock the event holds still (ops 0x77 / 0xa9), if any.
+pub fn clock(w: &World) -> Option<HeldClock> {
+    w.event.as_ref().and_then(|l| l.st.clock)
+}
+
+/// The hour of the held clock.
 pub fn hour(w: &World) -> Option<u32> {
-    w.event.as_ref().and_then(|l| l.st.time).and_then(|t| t.0)
+    clock(w).map(|c| c.minute / 60)
 }
 
 /// The weather in force: op 0x77's while the event holds one, else the server's.
 pub fn weather(w: &World) -> u16 {
-    w.event.as_ref().and_then(|l| l.st.time).and_then(|t| t.1).unwrap_or(w.weather)
+    w.event.as_ref().and_then(|l| l.st.weather).unwrap_or(w.weather)
 }
 
 /// Bound actors whose name op 0x92 turned off while the event runs (FUN_10096000).
@@ -2959,6 +3075,16 @@ pub fn source_line(w: &mut World, source: u16, id: u16, num: [u32; 5], mode: u8,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Op 0xa9 day val x 7 at 00:30: moon phase val % 12, weekday (val x 7) & 7; 0x77 alone leaves both to the server.
+    #[test]
+    fn held_clock_moon() {
+        let a9 = |v: u32| HeldClock { day: Some(v * 7), minute: 30, moon: true };
+        assert_eq!(a9(5).moon_weekday(), Some((5, 3)));
+        assert_eq!(a9(13).moon_weekday(), Some((1, 91 & 7)));
+        assert_eq!(HeldClock { day: Some(35), minute: 1000, moon: true }.moon_weekday(), Some((5, 3)));
+        assert_eq!(HeldClock { day: None, minute: 18 * 60, moon: false }.moon_weekday(), None);
+    }
 
     /// A login event holds the scene black; `fdi1` (0x0f to 0x80 over 60 ticks) fades it in from there, and an event
     /// that ends without a fade of its own gets one.
