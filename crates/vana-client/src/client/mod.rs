@@ -1479,6 +1479,9 @@ fn bar_full_log(w: &mut World, m: scrollbar::Msg, (total, lines, _): (usize, usi
     fl.key(key, true, lines, total)
 }
 
+/// Ours: the double-click time for the modern UI's world clicks (Windows' default).
+const DOUBLE_CLICK: std::time::Duration = std::time::Duration::from_millis(500);
+
 /// FUN_10130280 (Ctrl+C): talk to an NPC target, check anything else.
 fn check_target(world: &mut World) {
     match world.target.filter(|t| t >> 24 != 0 && world.entities.get(t).is_some_and(|e| !e.mob)) {
@@ -2195,7 +2198,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
                 },
                 _ if world.inspect.up() && !shop::wares_open(world) => inspect::key(world, gu, *key),
                 _ if world.win.is_some() => {
-                    items::key(world, *key, modifiers.ctrl || modifiers.alt, modifiers.alt);
+                    items::key(world, *key, modifiers.ctrl || modifiers.alt, modifiers.alt, modifiers.shift);
                 }
                 _ if shop::active(world) => shop::key(world, *key),
                 _ if trade::active(world) => trade::key(world, gu, *key),
@@ -6479,6 +6482,8 @@ pub struct App {
     /// When the left button went down, and the right one (where and when): the drag rule (FUN_10125040).
     press_time: Option<Instant>,
     right_press: Option<((f64, f64), Instant)>,
+    /// Ours (modern UI): the actor the last plain left click picked and when, for the double click.
+    last_pick: Option<(u32, Instant)>,
     /// Ours (modern MMOs): a look drag holds the pointer, hidden, where it began. Some(true) locked (raw motion turns
     /// the camera), Some(false) only confined (X11: warped back after each move).
     look_grab: Option<bool>,
@@ -6733,6 +6738,7 @@ impl App {
             press_at: None,
             press_time: None,
             right_press: None,
+            last_pick: None,
             look_grab: None,
             grab_at: None,
             swallow_click: false,
@@ -10643,7 +10649,8 @@ impl App {
         let size = self.window_size;
         let (k, retail_aspect) = (self.ui_k, self.cfg.retail_aspect);
         let hud = &self.hud_blockers;
-        let world_click = |phase: &mut Phase, b: (f64, f64), left: bool, drag: bool| -> bool {
+        let last_pick = &mut self.last_pick;
+        let mut world_click = |phase: &mut Phase, b: (f64, f64), left: bool, drag: bool| -> bool {
             let on_hud = hud.iter().any(|r| inside(r, (b.0 as f32 * k.0, b.1 as f32 * k.1)));
             let Phase::World(world) = phase else { return false };
             let gated = consumed || event::active(world) || world.typing || world.ui_hidden || (world_window_open(world) && world.prompt.is_none());
@@ -10655,7 +10662,11 @@ impl App {
                 fishing::click(world);
             }
             let picked = if left { Self::under_pointer(world, b, size, aspect).0 } else { None };
-            target::click(world, picked, left, drag)
+            // Ours (the modern UI's mouse contract): a second plain left click on the same actor within the
+            // double-click time runs the safe default (talk to an NPC, check anyone else) instead of the action menu.
+            let double = left && !drag && world.modern && picked.is_some_and(|p| last_pick.is_some_and(|(q, at)| q == p && at.elapsed() < DOUBLE_CLICK));
+            *last_pick = if left && !drag && !double { picked.map(|p| (p, Instant::now())) } else { None };
+            target::click(world, picked, left, drag, double)
         };
         match button {
             MouseButton::Left => {

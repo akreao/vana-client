@@ -4,6 +4,9 @@ The plan for vana-client's modern interface, from the user's planning document (
 26 October 2026), with the decisions taken since and the state of the work. Built on branch `ui-update`, merged into
 master 2026-10-27 (kept).
 
+Feature branches don't edit this file: their State updates go in `docs/modern-ui/`, one file each, and are folded
+in here later (see `docs/modern-ui/README.md`).
+
 ## Decisions (2026-10-26)
 
 - **Runtime toggle.** The retail UI stays the default and untouched. Settings > Client > Interface switches between
@@ -298,8 +301,11 @@ Milestone 1:
   and Global drawn natively (rows from the pages' controls, named with their layouts' captions, help lines);
   the list pages open retail's windows over it.
 - Storage (modern/storage.rs): the bags as tabs, Mog Safe / Safe 2 and Mog Wardrobe 1..8 merged; the bag beside the
-  inventory; a click moves a stack (right click one), into a merged bag the first part with room that takes it;
-  retail's colours say what may move.
+  inventory; a click (or Ctrl-click) moves a stack (right click one), into a merged bag the first part with room that
+  takes it; retail's colours say what may move. Milestone 2 (2026-11-02): a row dragged onto the other pane moves
+  its stack, the pane outlined teal / red for a valid / invalid drop; Shift (on the drop, a click or Enter) asks how
+  many; a refused row says why (hover, and under the lists after a try); a sent move shows as pending until the
+  server moves it, and one the server ignores is explained (nothing moves optimistically, so nothing is restored).
 - Plate badges: the approved SVG set (assets/modern/badges) in place of retail's glyphs; the pearl tinted by its
   linkshell; rank stars, the recruiter star in its orb, the master stars above.
 - Icons: batches 1 and 2 (131) redrawn in VectorCraft and approved.
@@ -314,9 +320,8 @@ Milestone 1:
   retail's keytops3 69 on the party window. Atlases weather_0 / markers_0. Sources vc/weather, vc/markers.
 - Status (modern/status.rs): the persona, the level gauge, retail's rows on the left with the page under the cursor
   beside them at once (profile with the attributes, job and master levels with the job icons, combat / magic / craft
-  skills named by their sprites' captions, Currencies 1 and 2 as one list with "only those held"); Play Time ticks on
-  its page (days, hours, minutes, seconds and retail's line; Enter or "Show in the log" still prints it); Unity, Merit
-  Points, Job Points and Alter Ego Points open retail's windows over it.
+  skills named by their sprites' captions, Currencies 1 and 2 as one list with "only those held"); Unity, Play Time,
+  Merit Points, Job Points and Alter Ego Points open retail's windows over it.
 - Journal (modern/journal.rs): Missions, Quests and Key Items as tabs of one window (Tab or a click switches): every
   log / area / category on the left with counts, the chosen one's rows on the right (a log's or an area's current and
   completed together), the cursor row's description under them at once; a new key item is marked seen by Enter or a
@@ -324,9 +329,7 @@ Milestone 1:
   searches every key item, quest or mission there is (listsearch.rs).
 - Social (modern/social.rs): the Party menu, Search and Linkshell windows drawn from retail's menus (their rows
   named by their label sprites, retail's disabled rows and swaps, a window opened over another shown beside it);
-  link12 is the member list (People). link11, naming a new shell, takes the window: the shell icon in the chosen
-  colour, the name as a field (a click types), Red / Green / Blue as sliders 0..15, OK and Cancel; retail's keys
-  still drive it. Set Bazaar the same way. View House is the storage view itself, opened on the Mog
+  link11 / link12 stay retail's. Set Bazaar the same way. View House is the storage view itself, opened on the Mog
   Safe, with every bag its menu allows as a tab (each opened as its row would).
 - Chat timestamps are in the monospace face.
 - The full log is the chat window itself at full height (under the top bar), with its tabs, scrolled by the wheel and
@@ -545,9 +548,8 @@ Milestone 1:
   names (a status id) rather than prints is kept as it is. Live: Warcry with a bot in the party.
 - The target panel's name in retail's name colour (FUN_1008db40 as the plates: unclaimed monster pale yellow, our
   party's claim red, another's magenta).
-- Remaining retail windows (2026-11-02): link11 and Play Time as above; retail's link6 header no longer draws over
-  the modern member list. Region Info's maps (Conquest, Besieged, Campaign, Colonization) keep retail's map and
-  markers; their info windows are one panel (modern/regioninfo.rs) at the edge away from the cursor: the region's
-  owner, tally and nation gauges, the nation ranking, Al Zahbi's and each army's level and orders, a stronghold's
-  forces, mirrors and prisoners, an area's development and bivouacs, the coalition ranks and the legend's value.
+- Double click on the world (2026-11-02, ours; the pack's mouse contract): with the modern UI, a second plain left
+  click on the same actor within 500 ms runs the safe default instead of opening the action menu: talk to an NPC or
+  a door, check a player or a monster (retail's Ctrl+C, FUN_10130280). A slower second click stays retail's
+  (confirm: talk, or the action menu); a locked target, a sub-target prompt, a drag and the classic UI are unchanged.
 - Not yet: alliance rows live.
