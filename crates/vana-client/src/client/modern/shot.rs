@@ -267,6 +267,12 @@ fn sample(m: &Modern, ctx: &egui::Context, layout: &mut Layout, opts: &Opts) {
     if opts.kit {
         kit_sample(&mut p);
     }
+    if opts.menus {
+        let r = p.this.get("party").copied().unwrap_or(Rect::NOTHING);
+        super::ctxmenu::popup(ctx, m, pos2(r.min.x - 560.0, r.min.y - 40.0), None, &[("Use", true), ("Drop", true), ("Sort", true), ("Move to...", true)]);
+        super::ctxmenu::popup(ctx, m, pos2(r.min.x - 380.0, r.min.y - 40.0), Some("Raven"), &[("Target", true), ("Check", true), ("Tell", true), ("Focus Target", true)]);
+        super::ctxmenu::popup(ctx, m, pos2(r.min.x - 200.0, r.min.y - 40.0), Some("Robber Crab"), &[("Target", true), ("Attack", true), ("Check", true)]);
+    }
     if opts.rows.is_some() || opts.borders.is_some() {
         menu_sample(&mut p);
     }
@@ -311,6 +317,8 @@ pub struct Opts {
     pub opacity: f32,
     /// A panel of the kit's controls.
     pub kit: bool,
+    /// The right-click menus beside the party window.
+    pub menus: bool,
     /// The alliance windows with sample rows.
     pub alliance: bool,
 }
