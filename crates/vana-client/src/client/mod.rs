@@ -2187,7 +2187,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
                 },
                 _ if world.inspect.up() && !shop::wares_open(world) => inspect::key(world, gu, *key),
                 _ if world.win.is_some() => {
-                    items::key(world, *key, modifiers.ctrl || modifiers.alt, modifiers.alt);
+                    items::key(world, *key, modifiers.ctrl || modifiers.alt, modifiers.alt, modifiers.shift);
                 }
                 _ if shop::active(world) => shop::key(world, *key),
                 _ if trade::active(world) => trade::key(world, gu, *key),
