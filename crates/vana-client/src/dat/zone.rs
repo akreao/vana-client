@@ -58,7 +58,12 @@ fn name_at(b: &[u8], o: usize, len: usize) -> String {
 
 /// Byte-wise key stream, then (when flagged 0xFFFF) a keyed swap of 8-byte blocks between halves.
 pub fn decode_mmb(keys: &Keys, p: &mut [u8]) {
-    let len = (p[0] as usize | (p[1] as usize) << 8 | (p[2] as usize) << 16).min(p.len());
+    // The 8-byte header holds the length and keys; without it there is nothing to decode, and a length under 8 has
+    // no body (issue #87: both used to panic).
+    if p.len() < 8 {
+        return;
+    }
+    let len = (p[0] as usize | (p[1] as usize) << 8 | (p[2] as usize) << 16).clamp(8, p.len());
     if p[3] >= 5 {
         let mut key = keys.t1[(p[5] ^ 0xF0) as usize] as u32;
         let mut counter = 0u32;

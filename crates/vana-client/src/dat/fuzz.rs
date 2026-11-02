@@ -55,7 +55,9 @@ fn flat(r: &mut Rng) -> Vec<u8> {
 
 /// A chunk file (`chunks`): 16-byte headers with a kind and a size that fits, random payloads.
 fn chunked(r: &mut Rng) -> Vec<u8> {
-    const KINDS: [u8; 12] = [0x01, 0x06, 0x07, 0x19, 0x1c, 0x1f, 0x20, 0x29, 0x2a, 0x2b, 0x36, 0x3f];
+    // The kinds the parsers here match on: zone scenery (0x1c MZB, 0x20 IMG, 0x2e MMB, 0x36 RID), title / event
+    // (0x06 camera, 0x07 scheduler, 0x19 KeyFrame), folders (0x01) and others.
+    const KINDS: [u8; 13] = [0x01, 0x06, 0x07, 0x19, 0x1c, 0x1f, 0x20, 0x29, 0x2a, 0x2b, 0x2e, 0x36, 0x3f];
     let mut out = Vec::new();
     for _ in 0..1 + r.below(4) {
         let size = 16 * (1 + r.below(24));
@@ -142,6 +144,7 @@ fn parsers_survive_malformed_input() {
         ("zone::light_list", Box::new(|b| { let _ = zone::light_list(b); })),
         ("zone::load_scene", Box::new(|b| { let _ = zone::load_scene(&zone::Keys::for_tests(), b); })),
         ("zone::decode_mzb", Box::new(|b| { let _ = zone::decode_mzb(&zone::Keys::for_tests(), &mut b.to_vec()); })),
+        ("zone::decode_mmb", Box::new(|b| zone::decode_mmb(&zone::Keys::for_tests(), &mut b.to_vec()))),
         ("zone::parse_mzb", Box::new(|b| { let _ = zone::parse_mzb(&mut b.to_vec()); })),
         ("zone::parse_img", Box::new(|b| { let _ = zone::parse_img(b); })),
         ("zone::parse_rid", Box::new(|b| { let _ = zone::parse_rid(b); })),
@@ -152,4 +155,19 @@ fn parsers_survive_malformed_input() {
         .filter_map(|(i, (name, f))| first_panic(0x9e37_79b9_7f4a_7c15 ^ i as u64, f.as_ref()).map(|b| format!("{name}: {:02x?}", &b[..b.len().min(96)])))
         .collect();
     assert!(failed.is_empty(), "{} parser(s) panicked:\n{}", failed.len(), failed.join("\n"));
+}
+
+/// One chunk of each kind with an empty or 16-byte payload, through the parsers that dispatch on the kind.
+#[test]
+fn empty_chunks_of_every_kind() {
+    for kind in 0..0x80u32 {
+        for size in [16usize, 32] {
+            let mut file = vec![0u8; size];
+            file[4..8].copy_from_slice(&(kind | ((size / 16) as u32) << 7).to_le_bytes());
+            let keys = zone::Keys::for_tests();
+            for (name, f) in [("load_scene", &(|b: &[u8]| drop(zone::load_scene(&keys, b))) as &dyn Fn(&[u8])), ("Title::parse", &|b: &[u8]| drop(title::Title::parse(b)))] {
+                assert!(catch_unwind(AssertUnwindSafe(|| f(&file))).is_ok(), "{name} panicked on an empty chunk of kind {kind:#x}, size {size}");
+            }
+        }
+    }
 }
