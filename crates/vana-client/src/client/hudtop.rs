@@ -216,8 +216,10 @@ impl HudTop {
         // titlewin HN mode (+0x448) and titlehan are not modelled. A busy bar counts as active (FUN_10221740).
         // The rule runs in game state 0x60 only; zoning and the zone load are taken as 0x70 (inferred).
         // Bits: 0x80 the scan, 4 party positions, 0x40 the stats, 1 the journal lists, 2 conquest, 8 a search query
-        // (FUN_1020a9d0), 0x80000000 an auction bid (LAB_101d95b0).
+        // (FUN_1020a9d0), 0x10 a PlayOnline message job (msgline's
+        // commits; friends.strip), 0x80000000 an auction bid (LAB_101d95b0).
         let busy = w.scan.busy
+            || w.friends.strip
             || w.scan.party_busy
             || w.status.as_ref().is_some_and(|s| s.busy)
             || super::missions::busy(w)
@@ -356,8 +358,8 @@ impl HudTop {
     }
 
     /// FUN_102014f0: the mail page for 60 ticks, then the network page for 120; held on the network page while nothing
-    /// is unread and no Help Desk reply waits (+0x2c). Not done: the 3 x 120 network page while only engine +0xe
-    /// (+0x20) is set.
+    /// is unread and no Help Desk reply waits (+0x2c). Retail's 3 x 120 network page while engine +0xe (+0x20) is
+    /// set never happens: nothing in the DLL counts +0xe up (only its init and FUN_100f6f20 zero it).
     fn step_page(&mut self, ticks: f32) {
         self.net_ticks += ticks;
         if self.net_page == 0 {
