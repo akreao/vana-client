@@ -34,6 +34,7 @@ mod buffs;
 mod game_ui;
 mod hudtop;
 mod listsearch;
+mod favs;
 mod pending;
 mod suggest;
 mod augment;
@@ -5952,6 +5953,12 @@ struct World {
     recent_save: bool,
     /// The modern UI Modes editor is open (/uimodes, modern/modes.rs).
     uimodes_open: bool,
+        return;
+    }
+    /// Favourites (favs.rs keys, the strip's order), whether the strip shows, and whether either changed since the save.
+    favourites: Vec<String>,
+    fav_strip: bool,
+    fav_save: bool,
     /// The action we asked the server for and its answer so far (pending.rs).
     asked: Option<pending::Pending>,
     /// The battle menu's suggestions (suggest.rs::refresh_root), when they were taken, and the one the cursor is on.
@@ -7809,6 +7816,9 @@ impl App {
                             recent_picks: self.cfg.modern_recent.get(&login.name).cloned().unwrap_or_default(),
                             recent_save: false,
                             uimodes_open: false,
+                            favourites: self.cfg.modern_favourites.get(&login.name).cloned().unwrap_or_default(),
+                            fav_strip: self.cfg.modern_fav_strip,
+                            fav_save: false,
                             asked: None,
                             root_sugg: Vec::new(),
                             root_sugg_at: None,
@@ -12095,6 +12105,13 @@ impl App {
                 }
                 if std::mem::take(&mut world.volume_dirty) {
                     apply = true;
+                }
+                if std::mem::take(&mut world.fav_save) {
+                    self.cfg.modern_favourites.insert(world.name.clone(), world.favourites.clone());
+                    self.cfg.modern_fav_strip = world.fav_strip;
+                    if let Err(e) = self.cfg.save() {
+                        log::warn!("config: {e:#}");
+                    }
                 }
                 if std::mem::take(&mut world.recent_save) {
                     self.cfg.modern_recent.insert(world.name.clone(), world.recent_picks.clone());

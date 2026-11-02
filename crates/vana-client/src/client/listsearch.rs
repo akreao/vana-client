@@ -44,7 +44,7 @@ pub fn pick_action(w: &mut World, action: Action) {
         })
     });
     if in_list || cat.is_some() {
-        pick(w, &Hit { kind, cat, id, name: String::new(), score: 0, slot: None, note: String::new(), journal: None, recent: false });
+        pick(w, &Hit { kind, cat, id, name: String::new(), score: 0, slot: None, note: String::new(), journal: None, recent: false, fav: false });
     }
 }
 
@@ -70,6 +70,8 @@ pub struct Hit {
     pub journal: Option<Journal>,
     /// Picked lately (World::recent_picks): ranked up and marked.
     pub recent: bool,
+    /// A favourite (favs.rs): ranked above the rest and marked.
+    pub fav: bool,
 }
 
 /// Where a journal hit is.
@@ -133,7 +135,7 @@ fn close_palette(w: &mut World) {
 fn palette_matches(w: &World, query: &str) -> Vec<Hit> {
     let mut out = Vec::new();
     let mut push = |kind: Kind, id: u16, name: String, slot: Option<u8>, note: String, journal: Option<Journal>| {
-        let mut h = Hit { kind, cat: None, id, name, score: 0, slot, note, journal, recent: false };
+        let mut h = Hit { kind, cat: None, id, name, score: 0, slot, note, journal, recent: false, fav: false };
         let score = if query.is_empty() { w.recent_picks.contains(&key_of(&h)).then_some(0) } else { score(&h.name, query) };
         if let Some(score) = score {
             h.score = score;
@@ -320,6 +322,7 @@ fn boost(recent: &[String], hits: &mut [Hit]) {
 pub fn hits(w: &World, query: &str) -> Vec<Hit> {
     let mut out = matches(w, query);
     boost(&w.recent_picks, &mut out);
+    super::favs::boost(w, &mut out);
     out
 }
 
@@ -345,7 +348,7 @@ fn matches(w: &World, query: &str) -> Vec<Hit> {
         for &(id, cat) in super::auction::index(w).iter().flat_map(|v| v.iter()) {
             let name = info.and_then(|c| c.item(id)).map(|it| it.name.clone()).unwrap_or_default();
             if let Some(score) = score(&name, query) {
-                out.push(Hit { kind: Kind::Ability, cat: None, id, name, score, slot: None, note: String::new(), journal: Some(Journal::Auction(cat)), recent: false });
+                out.push(Hit { kind: Kind::Ability, cat: None, id, name, score, slot: None, note: String::new(), journal: Some(Journal::Auction(cat)), recent: false, fav: false });
             }
         }
         out.sort_by(|a, b| b.score.cmp(&a.score));
@@ -356,7 +359,7 @@ fn matches(w: &World, query: &str) -> Vec<Hit> {
         for (k, (title, items)) in keyitems::all(w).into_iter().enumerate() {
             for (id, name) in items.into_iter().filter(|(id, _)| w.has_key_item(*id)) {
                 if let Some(score) = score(&name, query) {
-                    out.push(Hit { kind: Kind::Ability, cat: Some(k), id, name, score, slot: None, note: title.clone(), journal: Some(Journal::KeyItem), recent: false });
+                    out.push(Hit { kind: Kind::Ability, cat: Some(k), id, name, score, slot: None, note: title.clone(), journal: Some(Journal::KeyItem), recent: false, fav: false });
                 }
             }
         }
@@ -374,7 +377,7 @@ fn matches(w: &World, query: &str) -> Vec<Hit> {
                 let name = e.name.trim_start_matches('+').to_string();
                 if let Some(score) = score(&name, query) {
                     let note = (if k < split { "current" } else { "completed" }).to_string();
-                    out.push(Hit { kind: Kind::Ability, cat: None, id: 0, name, score, slot: None, note, journal: Some(Journal::Quest(area, i)), recent: false });
+                    out.push(Hit { kind: Kind::Ability, cat: None, id: 0, name, score, slot: None, note, journal: Some(Journal::Quest(area, i)), recent: false, fav: false });
                 }
             }
         }
@@ -391,7 +394,7 @@ fn matches(w: &World, query: &str) -> Vec<Hit> {
                 let Some(e) = f.entries.get(i) else { continue };
                 let name = journal::indent(&e.name).0.to_string();
                 if let Some(score) = score(&name, query) {
-                    out.push(Hit { kind: Kind::Ability, cat: None, id: 0, name, score, slot: None, note: String::new(), journal: Some(Journal::Mission(log, i)), recent: false });
+                    out.push(Hit { kind: Kind::Ability, cat: None, id: 0, name, score, slot: None, note: String::new(), journal: Some(Journal::Mission(log, i)), recent: false, fav: false });
                 }
             }
         }
@@ -410,7 +413,7 @@ fn matches(w: &World, query: &str) -> Vec<Hit> {
             if out.iter().all(|h: &Hit| h.id != s.id)
                 && let Some(score) = score(&n, query)
             {
-                out.push(Hit { kind: Kind::Ability, cat: None, id: s.id, name: n, score, slot: Some(s.index), note: String::new(), journal: None, recent: false });
+                out.push(Hit { kind: Kind::Ability, cat: None, id: s.id, name: n, score, slot: Some(s.index), note: String::new(), journal: None, recent: false, fav: false });
             }
         }
         for h in &mut out {
@@ -424,7 +427,7 @@ fn matches(w: &World, query: &str) -> Vec<Hit> {
         for id in rows {
             let n = name(w, kind, id);
             if let Some(score) = score(&n, query) {
-                out.push(Hit { kind, cat, id, name: n, score, slot: None, note: String::new(), journal: None, recent: false });
+                out.push(Hit { kind, cat, id, name: n, score, slot: None, note: String::new(), journal: None, recent: false, fav: false });
             }
         }
     };
@@ -483,6 +486,11 @@ pub fn events(w: &mut World, events: &[egui::Event]) -> bool {
         w.list_search = None;
         w.command_palette = false;
         return false;
+    }
+    // Ctrl+F stars or unstars the row under the cursor (favs.rs).
+    let star = events.iter().any(|e| matches!(e, egui::Event::Key { key: egui::Key::F, pressed: true, modifiers, .. } if modifiers.command || modifiers.ctrl));
+    if star && super::favs::toggle_current(w) {
+        return true;
     }
     if w.command_palette && w.list_search.is_none() {
         w.list_search = Some(ListSearch::default());
@@ -648,7 +656,7 @@ mod tests {
     }
 
     fn hit(id: u16, score: i32) -> Hit {
-        Hit { kind: Kind::Magic, cat: None, id, name: String::new(), score, slot: None, note: String::new(), journal: None, recent: false }
+        Hit { kind: Kind::Magic, cat: None, id, name: String::new(), score, slot: None, note: String::new(), journal: None, recent: false, fav: false }
     }
 
     #[test]

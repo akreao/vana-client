@@ -63,6 +63,8 @@ struct Mouse {
     iuse: Option<u16>,
     drop: Option<bool>,
     wheel: f32,
+    /// A row's star clicked: the item.
+    star: Option<u16>,
     /// A row right-clicked: its slot (index, id) and where.
     menu: Option<(u8, u16, egui::Pos2)>,
 }
@@ -90,6 +92,7 @@ fn list(p: &mut Panels, w: &mut World) {
         _ => false,
     };
     let held = manual.flatten();
+    let favs: Vec<bool> = shown.iter().skip(scroll).take(VISIBLE_ROWS).map(|s| super::super::favs::is(w, super::super::favs::Fav::Item(s.1.id))).collect();
     let msg = |g: u8, k: usize, or: &str| gu.map_or(or.to_string(), |gu| gu.lobby_msg(g, k, or));
     let mut mouse = Mouse::default();
     let search = lists::search_hits(p, w);
@@ -142,14 +145,19 @@ fn list(p: &mut Panels, w: &mut World) {
                 painter.image(t, Rect::from_min_size(at, vec2(ICON, ICON)), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
             }
             painter.text(pos2(r.min.x + 42.0, r.center().y), Align2::LEFT_CENTER, &row.name, FontId::proportional(m.theme.ui), tint(m, row.tint));
-            let mut right = r.max.x - 12.0;
+            let starred = !direct && super::favs::star(ui, m, r, favs.get(k).copied().unwrap_or(false), resp.hovered() && sub.is_none());
+            if starred {
+                mouse.star = Some(slot.id);
+            }
+            let painter = ui.painter();
+            let mut right = r.max.x - 12.0 - if direct { 0.0 } else { super::favs::STAR_W };
             if let Some(n) = &row.count {
                 right = painter.text(pos2(right, r.center().y), Align2::RIGHT_CENTER, n, FontId::proportional(m.theme.ui), m.theme.color("text")).min.x - 8.0;
             }
             if let Some(price) = bazaar.get(k).copied().flatten() {
                 bazaar_tag(ui, m, right, r.center().y, price);
             }
-            if resp.clicked() {
+            if resp.clicked() && !starred {
                 mouse.click = Some(k);
             }
             if resp.secondary_clicked()
@@ -215,6 +223,10 @@ fn list(p: &mut Panels, w: &mut World) {
     });
     if let Some((_, _, hits, _)) = &search {
         lists::search_mouse(w, &found, hits);
+        return;
+    }
+    if let Some(id) = mouse.star.take() {
+        super::super::favs::toggle(w, super::super::favs::Fav::Item(id));
         return;
     }
     if let Some((index, id, at)) = mouse.menu.take() {

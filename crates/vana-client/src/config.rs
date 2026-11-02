@@ -203,6 +203,9 @@ pub struct Config {
     pub modern_recent: std::collections::BTreeMap<String, Vec<String>>,
     /// The modern UI's mode presets (client/modern/modes.rs).
     pub modern_modes: ModernModes,
+    /// Favourites by character, in the strip's order (client/favs.rs), and whether the strip shows (/favs).
+    pub modern_favourites: std::collections::BTreeMap<String, Vec<String>>,
+    pub modern_fav_strip: bool,
     /// Read a game controller (client/gamepad.rs; retail: padmode000's first flag).
     pub gamepad: bool,
     /// Stick travel ignored around the centre as a fraction of full: retail's 42 of 127.
@@ -383,6 +386,8 @@ impl Default for Config {
             modern_condense: true,
             modern_recent: Default::default(),
             modern_modes: Default::default(),
+            modern_favourites: Default::default(),
+            modern_fav_strip: true,
             gamepad: true,
             gamepad_deadzone: 42.0 / 127.0,
             gamepad_invert_y: false,

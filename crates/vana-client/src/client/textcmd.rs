@@ -626,6 +626,11 @@ pub fn run(w: &mut World, line: &str, mode: Mode) {
         w.uimodes_open = !w.uimodes_open;
         return;
     }
+    // Ours (not retail; modern favourites): /favs [on | off] shows or hides the favourites strip.
+    if first.eq_ignore_ascii_case("/favs") {
+        super::favs::command(w, line.split_whitespace().nth(1));
+        return;
+    }
     // Ours (the DPS-meter add-ons): /dps prints the party's damage since the last /dps reset (client/dps.rs).
     if first.eq_ignore_ascii_case("/dps") {
         super::dps::command(w, line.split_whitespace().nth(1));

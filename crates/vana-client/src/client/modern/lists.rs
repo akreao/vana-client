@@ -25,8 +25,11 @@ enum Look {
 
 /// A row's frame (the pack's list rows), its icon and name, greyed when `off` (can't be used now); its response.
 #[allow(clippy::too_many_arguments)]
-fn row(ui: &mut Ui, m: &super::Modern, icon: Option<egui::TextureId>, pack: Option<&str>, name: &str, right: &str, look: Look, off: bool) -> egui::Response {
+fn row(ui: &mut Ui, m: &super::Modern, icon: Option<egui::TextureId>, pack: Option<&str>, name: &str, right: &str, look: Look, off: bool, star: Option<bool>) -> (egui::Response, bool) {
     let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW), Sense::click());
+    // A row that can be a favourite keeps its right end for the star (favs.rs).
+    let starred = star.map(|on| super::favs::star(ui, m, r, on, resp.hovered()));
+    let r = if star.is_some() { Rect::from_min_max(r.min, pos2(r.max.x - super::favs::STAR_W, r.max.y)) } else { r };
     let sprite = match look {
         Look::Cursor => "controls/list_row_selected",
         Look::Picked => "controls/list_row_hover",
@@ -49,7 +52,7 @@ fn row(ui: &mut Ui, m: &super::Modern, icon: Option<egui::TextureId>, pack: Opti
         p.text(pos2(r.max.x - 12.0, r.center().y), Align2::RIGHT_CENTER, right, FontId::proportional(m.theme.small), m.theme.color("muted"));
     }
     ui.add_space(2.0);
-    resp
+    (resp, starred == Some(true))
 }
 
 /// The pack's icon for a category.
@@ -77,6 +80,8 @@ fn cat_icon(cat: Cat) -> &'static str {
 #[derive(Default)]
 pub(super) struct Mouse {
     click: Option<usize>,
+    /// A row's star clicked.
+    star: Option<super::super::favs::Fav>,
 }
 
 impl Mouse {
@@ -136,8 +141,14 @@ pub(super) fn search_rows(ui: &mut Ui, m: &super::Modern, w: &World, icons: &[Op
         let look = if k == sel { Look::Cursor } else { Look::Normal };
         // Spells and abilities grey as in their lists (items keep their window's rules).
         let dim = h.slot.is_none() && h.journal.is_none() && off(w, h.kind, h.id);
-        let resp = row(ui, m, icons.get(k).copied().flatten(), None, &h.name, &right, look, dim);
+        let fav = super::super::favs::of_hit(w, h);
+        // A favourite says so (it ranks first among the matches).
+        let right = if h.fav { if right.is_empty() { "favourite".to_string() } else { format!("favourite · {right}") } } else { right };
+        let (resp, star) = row(ui, m, icons.get(k).copied().flatten(), None, &h.name, &right, look, dim, fav.map(|f| super::super::favs::is(w, f)));
         mouse.take(k, &resp);
+        if star {
+            mouse.star = fav;
+        }
     }
     mouse
 }
@@ -176,6 +187,10 @@ pub(super) fn search_hits(p: &Panels, w: &World) -> Option<(String, usize, Vec<H
 
 /// A search's mouse: a click picks.
 pub(super) fn search_mouse(w: &mut World, mouse: &Mouse, hits: &[Hit]) {
+    if let Some(f) = mouse.star {
+        super::super::favs::toggle(w, f);
+        return;
+    }
     if let Some(h) = mouse.click.and_then(|k| hits.get(k)) {
         listsearch::pick(w, h);
     }
@@ -201,7 +216,7 @@ fn cats(p: &mut Panels, w: &mut World) {
         }
         for (k, &(_, cat)) in rows.iter().enumerate() {
             let look = if k == c.sel { Look::Cursor } else { Look::Normal };
-            let resp = row(ui, m, None, Some(cat_icon(cat)), magic::cat_label(c.menu, cat), "", look, !magic::cat_ready(w, cat));
+            let (resp, _) = row(ui, m, None, Some(cat_icon(cat)), magic::cat_label(c.menu, cat), "", look, !magic::cat_ready(w, cat), None);
             mouse.take(k, &resp);
         }
     });
@@ -216,7 +231,7 @@ fn cats(p: &mut Panels, w: &mut World) {
 }
 
 /// Whether a spell or ability can't be used now (status, recast, MP / TP, effects we carry); traits never grey.
-fn off(w: &World, kind: Kind, id: u16) -> bool {
+pub(super) fn off(w: &World, kind: Kind, id: u16) -> bool {
     match kind {
         Kind::Magic => !magic::spell_ready(w, id),
         Kind::Ability => w.actions.as_ref().and_then(|a| a.abilities.get(id as usize)).is_some_and(|a| a.kind != 4) && !magic::ability_ready(w, id),
@@ -355,8 +370,13 @@ fn list(p: &mut Panels, w: &mut World) {
             let (name, right, off) = row_view(w, win.kind, id);
             let picked = win.manual == 2 && win.scroll + k == win.picked;
             let look = if k == win.cursor && win.sort_focus.is_none() { Look::Cursor } else if picked { Look::Picked } else { Look::Normal };
-            let resp = row(ui, m, icons.get(k).copied().flatten(), None, &name, &right, look, off);
-            mouse.take(k, &resp);
+            let fav = super::super::favs::of_row(w, win.kind, id);
+            let (resp, star) = row(ui, m, icons.get(k).copied().flatten(), None, &name, &right, look, off, fav.map(|f| super::super::favs::is(w, f)));
+            if star {
+                mouse.star = fav;
+            } else {
+                mouse.take(k, &resp);
+            }
         }
         // The bar: the rows shown out of all, at the right edge.
         let track = Rect::from_min_max(pos2(ui.max_rect().max.x + 6.0, top.y), pos2(ui.max_rect().max.x + 14.0, ui.cursor().min.y));
@@ -413,6 +433,10 @@ fn list(p: &mut Panels, w: &mut World) {
             x.sort_focus = Some(child);
         }
         magic::key(w, egui::Key::Enter);
+        return;
+    }
+    if let Some(f) = mouse.star {
+        super::super::favs::toggle(w, f);
         return;
     }
     if let Some(k) = mouse.click {
