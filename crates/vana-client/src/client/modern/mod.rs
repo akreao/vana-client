@@ -8,6 +8,7 @@
 mod auction;
 mod bluset;
 mod pupset;
+mod regioninfo;
 mod maze;
 mod charlnk;
 mod borders;
@@ -258,6 +259,7 @@ impl Modern {
         points::draw(&mut p, w);
         journal::draw(&mut p, w);
         social::draw(&mut p, w);
+        regioninfo::draw(&mut p, w);
         craft::draw(&mut p, w);
         macros::draw(&mut p, w);
         storage::draw(&mut p, w);

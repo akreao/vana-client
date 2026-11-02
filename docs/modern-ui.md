@@ -314,8 +314,9 @@ Milestone 1:
   retail's keytops3 69 on the party window. Atlases weather_0 / markers_0. Sources vc/weather, vc/markers.
 - Status (modern/status.rs): the persona, the level gauge, retail's rows on the left with the page under the cursor
   beside them at once (profile with the attributes, job and master levels with the job icons, combat / magic / craft
-  skills named by their sprites' captions, Currencies 1 and 2 as one list with "only those held"); Unity, Play Time,
-  Merit Points, Job Points and Alter Ego Points open retail's windows over it.
+  skills named by their sprites' captions, Currencies 1 and 2 as one list with "only those held"); Play Time ticks on
+  its page (days, hours, minutes, seconds and retail's line; Enter or "Show in the log" still prints it); Unity, Merit
+  Points, Job Points and Alter Ego Points open retail's windows over it.
 - Journal (modern/journal.rs): Missions, Quests and Key Items as tabs of one window (Tab or a click switches): every
   log / area / category on the left with counts, the chosen one's rows on the right (a log's or an area's current and
   completed together), the cursor row's description under them at once; a new key item is marked seen by Enter or a
@@ -323,7 +324,9 @@ Milestone 1:
   searches every key item, quest or mission there is (listsearch.rs).
 - Social (modern/social.rs): the Party menu, Search and Linkshell windows drawn from retail's menus (their rows
   named by their label sprites, retail's disabled rows and swaps, a window opened over another shown beside it);
-  link11 / link12 stay retail's. Set Bazaar the same way. View House is the storage view itself, opened on the Mog
+  link12 is the member list (People). link11, naming a new shell, takes the window: the shell icon in the chosen
+  colour, the name as a field (a click types), Red / Green / Blue as sliders 0..15, OK and Cancel; retail's keys
+  still drive it. Set Bazaar the same way. View House is the storage view itself, opened on the Mog
   Safe, with every bag its menu allows as a tab (each opened as its row would).
 - Chat timestamps are in the monospace face.
 - The full log is the chat window itself at full height (under the top bar), with its tabs, scrolled by the wheel and
@@ -542,4 +545,9 @@ Milestone 1:
   names (a status id) rather than prints is kept as it is. Live: Warcry with a bot in the party.
 - The target panel's name in retail's name colour (FUN_1008db40 as the plates: unclaimed monster pale yellow, our
   party's claim red, another's magenta).
+- Remaining retail windows (2026-11-02): link11 and Play Time as above; retail's link6 header no longer draws over
+  the modern member list. Region Info's maps (Conquest, Besieged, Campaign, Colonization) keep retail's map and
+  markers; their info windows are one panel (modern/regioninfo.rs) at the edge away from the cursor: the region's
+  owner, tally and nation gauges, the nation ranking, Al Zahbi's and each army's level and orders, a stronghold's
+  forces, mirrors and prisoners, an area's development and bivouacs, the coalition ranks and the legend's value.
 - Not yet: alliance rows live.

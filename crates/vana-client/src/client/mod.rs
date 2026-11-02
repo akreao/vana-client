@@ -2578,7 +2578,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
     {
         items::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
     }
-    if let Some(p) = input.pointer.filter(|_| world.linkshell.as_ref().is_some_and(|l| !world.modern || l.naming.is_some()) && world.linklist.is_none() && world.confirm.is_none()) {
+    if let Some(p) = input.pointer.filter(|_| world.linkshell.is_some() && !world.modern && world.linklist.is_none() && world.confirm.is_none()) {
         linkshell::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.concierge_ui.is_some() && world.confirm.is_none()) {
@@ -3467,7 +3467,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
         blockers.extend(keyitems::draw(gu, world, sw, sh));
     }
     blockers.extend(quests::draw(gu, world, sw, sh));
-    if !world.modern || world.linkshell.as_ref().is_some_and(|l| l.naming.is_some()) || world.linklist.is_some() {
+    if !world.modern {
         blockers.extend(linkshell::draw(gu, world, sw, sh));
     }
     blockers.extend(concierge::draw(gu, world, sw, sh));
