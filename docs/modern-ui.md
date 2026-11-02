@@ -300,6 +300,8 @@ Milestone 1:
 - Storage (modern/storage.rs): the bags as tabs, Mog Safe / Safe 2 and Mog Wardrobe 1..8 merged; the bag beside the
   inventory; a click moves a stack (right click one), into a merged bag the first part with room that takes it;
   retail's colours say what may move.
+- Suggestion tests (2026-11-02, plan G): game states recorded as JSON cases (VANA_SUGGEST_RECORD=<folder>) and
+  replayed against the rules by `cargo test suggest` (client/suggest_cases/, a case for every rule).
 - Plate badges: the approved SVG set (assets/modern/badges) in place of retail's glyphs; the pearl tinted by its
   linkshell; rank stars, the recruiter star in its orb, the master stars above.
 - Icons: batches 1 and 2 (131) redrawn in VectorCraft and approved.

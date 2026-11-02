@@ -1,0 +1,67 @@
+{
+  "rule": "between",
+  "note": "Out of combat with no Protect or Shell: put them back.",
+  "facts": {
+    "party": [
+      {
+        "name": "Lenon",
+        "me": true,
+        "here": true,
+        "hp": 800,
+        "hp_max": 800,
+        "job": 3,
+        "effects": []
+      }
+    ],
+    "own": [],
+    "tp": 0,
+    "engaged": false,
+    "spells": [
+      {
+        "id": 43,
+        "name": "Protect",
+        "skill": 0,
+        "element": 0,
+        "mp": 0,
+        "targets": 0
+      },
+      {
+        "id": 44,
+        "name": "Protect II",
+        "skill": 0,
+        "element": 0,
+        "mp": 0,
+        "targets": 0
+      },
+      {
+        "id": 48,
+        "name": "Shell",
+        "skill": 0,
+        "element": 0,
+        "mp": 0,
+        "targets": 0
+      }
+    ],
+    "abilities": [],
+    "weapon_skills": [],
+    "target": null,
+    "resonance": null,
+    "partners": []
+  },
+  "expect": [
+    {
+      "action": {
+        "Spell": 44
+      },
+      "target": null,
+      "reason": "Protect is not on you."
+    },
+    {
+      "action": {
+        "Spell": 48
+      },
+      "target": null,
+      "reason": "Shell is not on you."
+    }
+  ]
+}
