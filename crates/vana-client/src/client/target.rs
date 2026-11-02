@@ -315,6 +315,14 @@ impl Sub {
 /// Table 0x103720c0: a DAT valid-target flag's include / exclude kinds (FUN_10159170).
 const SUB_FLAGS: [(u32, u32, u32); 8] = [(1, 0x200, 0), (2, 0x100, 0), (4, 4, 0), (8, 8, 0), (0x10, 1, 0), (0x20, 0x10, 0), (0x40, 2, 0), (0x80, 2, 0x1800)];
 
+/// Ours (the action registry): whether DAT target `flags` may take actor `id`, by the prompt's include / exclude
+/// kinds (SUB_FLAGS, Sub::takes).
+pub(super) fn takes(w: &World, flags: u32, id: u32) -> bool {
+    let (inc, exc) = SUB_FLAGS.iter().filter(|f| flags & f.0 != 0).fold((0, 0), |(i, e), f| (i | f.1, e | f.2));
+    let kind = sub_kind(w, id);
+    inc & kind != 0 && exc & kind == 0
+}
+
 /// FUN_1008e290's kind bits: 0x200 self, 1 PC, 4 party, 8 alliance, 0x10 monster, 2 NPC, 0x800 our pet, 0x1000
 /// others' pets and trusts (0x700.., inf for +0x12c bit 22). Not done: 0x100 ally NPCs, 0x400 allegiance.
 fn sub_kind(w: &World, id: u32) -> u32 {
