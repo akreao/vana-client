@@ -367,6 +367,9 @@ fn tag(w: &World, tag: &str, target_cmd: bool) -> Option<String> {
         "<ht>" if !target_cmd => super::target::call_for_help(w).and_then(|id| w.entities.get(&id)).and_then(|e| w.npc_names.iter().find(|(n, _)| (*n & 0x3ff) as u16 == e.index & 0x3ff)).map(|(_, n)| n.clone()),
         // Type 0x1d, in target commands too.
         "<focust>" => focus_name(w),
+        // Ours, modern only: <ft> is <focust>; <lt> the last target's name (a target command resolves it itself).
+        "<ft>" if w.modern => focus_name(w),
+        "<lt>" if w.modern && !target_cmd => super::target::last_target(w).and_then(|t| name_of(w, t)),
         "<r>" => w.tells.first().cloned(),
         "<tp>" => vit.map(|v| v.2.to_string()),
         "<hp>" => Some(format!("{}/{}", vit?.0, stats?.hp_max)),
@@ -446,6 +449,7 @@ fn resolve(w: &World, text: Option<&str>, fallback: bool, wide: bool, mode: Mode
             // FUN_1007a1c0: the tracked actor while tracking, when it is here.
             "<scan>" => w.scan.tracking().and_then(|t| w.entities.iter().find(|(_, e)| e.index == t.index).map(|(id, e)| (*id, e.index))),
             "<pet>" => pet(w),
+            "<lt>" if w.modern => super::target::last_target(w),
             "<ht>" => super::target::call_for_help(w).and_then(|id| w.entities.get(&id).map(|e| (id, e.index))),
             _ => None,
         };

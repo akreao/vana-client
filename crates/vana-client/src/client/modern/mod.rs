@@ -488,6 +488,8 @@ fn default_place(id: &str) -> Place {
         "where" => Place { dock: Some(Dock { to: "chat".into(), gap: -0.5, dx: 1.25, right: false }), ..Default::default() },
         "combat" => on("where"),
         "target" => on("party"),
+        // Ours: the focus and last targets on the target panel.
+        "focus" => on("target"),
         // The magic and ability windows ride on the combat window (retail's sit on the log), the list on its categories.
         "cats" => on("combat"),
         "list" => on("cats"),
@@ -516,6 +518,8 @@ fn default_place(id: &str) -> Place {
         "loot" => on("iteminfo"),
         // /check beside the command window's place.
         "check" => at(0.2, 0.0347),
+        // Ours: the command palette above the screen's middle.
+        "palette" => at(0.38, 0.22),
         "blklist" => at(0.2, 0.0347),
         // The chat mode window rides the action menu it is opened from.
         "chatctrl" => on("combat"),

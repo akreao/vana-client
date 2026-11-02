@@ -75,6 +75,13 @@ pub fn in_own_six(w: &World, id: u32) -> bool {
     w.party.slots().slots[..6].iter().flatten().any(|m| m.id == id && m.index < 0x700)
 }
 
+/// Ours (modern): the last target while it is still here and targetable, `<lt>`.
+pub fn last_target(w: &World) -> Option<(u32, u16)> {
+    let id = w.last_target.filter(|&id| Some(id) != w.target)?;
+    let e = w.entities.get(&id).filter(|e| e.targetable())?;
+    Some((id, e.index))
+}
+
 /// FUN_101593c0 on the focus target: someone other than us in our six slots.
 pub fn focus_member(w: &World) -> Option<u32> {
     w.focus.map(|f| f.0).filter(|&id| id != w.my_id && in_own_six(w, id))
@@ -475,6 +482,9 @@ pub fn set(w: &mut World, t: Option<u32>) {
     }
     let e = t.and_then(|t| w.entities.get(&t));
     log::info!("target {:#x} {:?} at {:?} radius {:?} (ours {})", t.unwrap_or(0), e.map(|e| e.name.as_str()), e.map(|e| (e.pos.x, e.pos.z)), e.map(|e| e.hitbox), w.my_plate.hitbox);
+    if let Some(old) = w.target.filter(|&old| old != w.my_id) {
+        w.last_target = Some(old);
+    }
     w.target = t;
     w.target_since = std::time::Instant::now();
     if w.locked && w.prompt.is_none() {
