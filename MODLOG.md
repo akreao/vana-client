@@ -13256,6 +13256,20 @@ Specs: `~/ffxi/lab/research/pol_map_session_spec.md`, `entity_update_spec.md` (a
 - Not built: the software keyboard (keypad*, where RB / LB / X / Back / LT / RT type), the ground-position cursor that
   LT / RT + d-pad move in position-target mode (0xb0..0xb3), and L3 centring the map viewer on its cursor (0x7e).
 
+## Gamepad: window tabs, lock-on camera, own facing (2026-11-02)
+
+- Ours: with a window up the pad's LB / RB (slots 8 / 12; retail's list windows take neither, window_fns.md) send
+  Shift+Tab / Tab, and every modern tabbed window turns its tabs with them: the storage view's bags, the journal,
+  settings (Settings::tab_back), the macro palettes and config pages (kit), the job point pages, the equip set pages
+  (esmenu) and storage tabs (esedit), the concierge's filters. World::key_shift carries the dispatched key's Shift.
+  Not the shop's Buy / Sell (its main menu, reached with the d-pad) or the chat log's channel tabs (no pad focus).
+- Fix: locked on, the stick's / keys' axis 6 turned the camera the wrong way. target::step_camera rotates with
+  Quat::from_rotation_y, opposite to camera::orbit, which the free camera turns by -v6; the locked call now negates it
+  (the mouse's cam_turn already matched).
+- Fix: our character is drawn from the float facing (World::my_face) instead of the network byte. Retail keeps the
+  heading as a float (FUN_100a6240: -atan2 of the frame's step, or the stick turned by the camera yaw) and rounds it
+  only for the position packet; from the byte (1.4 degree steps) a stick's slow turn stepped and its noise shook.
+
 ## Temporary items in the Items lists (2026-11-02)
 
 - Main Menu > Items and the action menu's Items now list the temporary items (container 3, Abyssea / Salvage and the
