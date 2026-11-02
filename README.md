@@ -141,42 +141,50 @@ changed from the in-game Config menus. The fields you may need to set by hand:
 | `frame_limit` | `300` | Frame limit in fps, `0` for unlimited |
 | `gpu` | empty | Graphics adapter by name; empty picks the high-performance one |
 | `audio_device` | empty | Output device; empty uses the system default |
-| `gamepad` | `true` | Read a game controller |
-| `gamepad_deadzone` | `0.2` | Stick travel ignored around the centre, `0` to `0.9` |
-| `gamepad_invert_y` | `false` | Turn the right stick's up and down over |
-| `gamepad_buttons` | empty | Button to key overrides (see below) |
+| `gamepad`, `gamepad_padsin` ... | | See [Gamepad](#gamepad) |
 
 ### Gamepad
 
-Any controller SDL-style mappings know (Xbox, PlayStation, Switch Pro and most others) works on Linux and Windows.
-The pad acts as a keyboard: the left stick walks (analog), the right stick turns the camera, and each button holds a
-key. With a window open, and on the title and lobby screens, the left stick moves the cursor like the arrow keys.
+Controllers work on Linux and Windows (any pad with an SDL mapping: Xbox, PlayStation, Switch Pro and most others)
+through the retail client's own pad path: the buttons set the pad bits the game's key functions test, and the sticks
+fill its stick bytes (see [docs/re/gamepad](docs/re/gamepad/findings.md)). The button settings use the format of
+retail's registry value `padsin000`, written by FFXiPadConfig.exe, so a retail setting can be copied over as is.
+The default is FFXiPadConfig's XInput layout, the same as the official PC layout:
 
-| Button | Key | Does |
+| Button | Does |
+|---|---|
+| A / Cross | Confirm, the action menu |
+| B / Circle | Cancel |
+| X / Square | Main menu |
+| Y / Triangle | Active window |
+| D-pad | In a menu: the cursor. In the field: up / down the party and alliance members (wrapping), left / right the actors on screen (stopping at the last) |
+| Left stick / right stick | Move / camera (also with a menu up; the sticks never drive menus) |
+| LB / L1 | Autorun; in a window with tabs, the previous tab |
+| RB / R1 | Open the chat line; with the windows hidden, a screenshot; in a window with tabs, the next tab |
+| LT / L2, RT / R2 | In the field: open or close the Ctrl / Alt macro palette (the other trigger swaps); in it the d-pad picks the macro (left / right) and the set (up / down), A runs it, B closes. In a window: held, the d-pad pages lists like Ctrl + arrow; both held, left / right switch the item bag |
+| L3 | Rest, or lock on with a target |
+| R3 | First / third person |
+| Back / Select | Hide or show the windows |
+| Start | Log out |
+
+| Field | Default | Meaning |
 |---|---|---|
-| South (A / Cross) | Enter | Confirm, act on the target |
-| East (B / Circle) | Escape | Cancel, back |
-| West (X / Square) | Num * | Lock on (or `/heal`) |
-| North (Y / Triangle), Start | Num - | Main menu |
-| D-pad | Arrows | Window cursor, camera |
-| LB / L1 | Tab | Next target |
-| RB / R1 | Num + | Other window, next tab |
-| LT / L2, RT / R2 | Ctrl, Alt | Held: the macro palettes. D-pad up / right / down / left and the face buttons N / E / S / W then press 1 to 8 |
-| Back / Select | F8 | Nearest monster |
-| Left stick click | Num 7 | Autorun |
-| Right stick click | Num 5 | First / third person |
+| `gamepad` | `true` | Read a game controller |
+| `gamepad_padsin` | empty (FFXiPadConfig's XInput default) | Button settings in `padsin000` format: 32 numbers, one per function, each an XInput button number (0 B, 1 X, 2 Y, 3 A, 4 / 5 / 6 / 7 d-pad right / left / up / down, 8 LB, 9 LT, 10 L3, 11 RB, 12 RT, 13 R3, 14 Start, 15 Back), an axis 32 + n (1 left X, 2 left Y, 4 right X, 5 right Y; negative inverts) or -1. The function order is in [padsin_order.md](docs/re/gamepad/padsin_order.md) |
+| `gamepad_padexsin` | empty | `padexsin000`, the map used while the "alternate map" button is held |
+| `gamepad_deadzone` | `0.33` | Stick travel ignored around the centre (retail's 42 of 127) |
+| `gamepad_invert_y` | `false` | Turn the camera's up and down over |
 
-`gamepad_buttons` changes a button by gilrs's button name and winit's key name, for example
-`"gamepad_buttons": {"West": "F1", "Select": ""}` (an empty key unbinds it). Button names: `South`, `East`, `North`,
-`West`, `LeftTrigger`, `RightTrigger`, `LeftTrigger2`, `RightTrigger2`, `Select`, `Start`, `Mode`, `LeftThumb`,
-`RightThumb`, `DPadUp`, `DPadDown`, `DPadLeft`, `DPadRight`. Building on Linux needs libudev's headers
-(`libudev-dev`, `systemd-devel`).
+Building on Linux needs libudev's headers (`libudev-dev`, `systemd-devel`).
 
 ## For developers
 
 - `MODLOG.md` records every reverse-engineered fact the code relies on: addresses in the original executable,
   DAT formats, packets. Anything inferred rather than read from the binary is marked as inferred. Read the
-  relevant section before changing behaviour, and add what you learn.
+  relevant section before changing behaviour, and add what you learn. New entries go in `docs/modlog/`, one
+  file each, so branches don't conflict on `MODLOG.md`; `docs/modlog/README.md` explains how.
+- `docs/modern-ui.md` is the modern UI's plan and state. Branches don't edit it: their state updates go in
+  `docs/modern-ui/`, one file each. `python3 docs/fold.py` folds both folders in on master.
 - `cargo test --release` runs the tests. Tests that need the game data skip themselves when it isn't installed.
 - Offscreen tools render parts of the client to PNG without opening a window, for example `zone-shot`, `npc-shot`,
   `char-shot`, `select-shot`, `creator-shot` and `cs-shot`. Others decode game files: `dat-info`, `ui-dump`,

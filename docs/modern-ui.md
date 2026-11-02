@@ -4,6 +4,9 @@ The plan for vana-client's modern interface, from the user's planning document (
 26 October 2026), with the decisions taken since and the state of the work. Built on branch `ui-update`, merged into
 master 2026-10-27 (kept).
 
+Feature branches don't edit this file: their State updates go in `docs/modern-ui/`, one file each, and are folded
+in here later (see `docs/modern-ui/README.md`).
+
 ## Decisions (2026-10-26)
 
 - **Runtime toggle.** The retail UI stays the default and untouched. Settings > Client > Interface switches between
@@ -41,9 +44,6 @@ master 2026-10-27 (kept).
 - **Breathing room.** Rows and frames keep a few pixels between their lines and their contents.
 - **Icons.** The pack's icons are placeholders. A full icon set (every job, spell, buff and debuff) may come later;
   game art is mapped by stable game ids, never by atlas sprite ids.
-- **Icon set settled (user, 2026-11-02).** Spells, abilities, mounts, emotes and items keep the game's own icons
-  (magic::row_icon, Modern::item_icon), drawn by game id; ours are the jobs (jobs/*), statuses (status/s<id>),
-  weather, target markers, badges and the 131 interface icons, all approved. No new spell or ability art.
 
 ## Goal
 
@@ -175,7 +175,7 @@ scale.
 - Which windows hide in combat and which stay pinned?
 - How macros and equipment sets show in search and favourites.
 - How to show skillchain windows without a rotation HUD.
-- ~~Which icons come from the DATs and which are new art.~~ Settled 2026-11-02: see Decisions (Icon set settled).
+- Which icons come from the DATs and which are new art.
 - How latency, failed transfers and invalid targets are shown.
 
 ## State
@@ -301,8 +301,11 @@ Milestone 1:
   and Global drawn natively (rows from the pages' controls, named with their layouts' captions, help lines);
   the list pages open retail's windows over it.
 - Storage (modern/storage.rs): the bags as tabs, Mog Safe / Safe 2 and Mog Wardrobe 1..8 merged; the bag beside the
-  inventory; a click moves a stack (right click one), into a merged bag the first part with room that takes it;
-  retail's colours say what may move.
+  inventory; a click (or Ctrl-click) moves a stack (right click one), into a merged bag the first part with room that
+  takes it; retail's colours say what may move. Milestone 2 (2026-11-02): a row dragged onto the other pane moves
+  its stack, the pane outlined teal / red for a valid / invalid drop; Shift (on the drop, a click or Enter) asks how
+  many; a refused row says why (hover, and under the lists after a try); a sent move shows as pending until the
+  server moves it, and one the server ignores is explained (nothing moves optimistically, so nothing is restored).
 - Plate badges: the approved SVG set (assets/modern/badges) in place of retail's glyphs; the pearl tinted by its
   linkshell; rank stars, the recruiter star in its orb, the master stars above.
 - Icons: batches 1 and 2 (131) redrawn in VectorCraft and approved.
@@ -545,4 +548,8 @@ Milestone 1:
   names (a status id) rather than prints is kept as it is. Live: Warcry with a bot in the party.
 - The target panel's name in retail's name colour (FUN_1008db40 as the plates: unclaimed monster pale yellow, our
   party's claim red, another's magenta).
+- Double click on the world (2026-11-02, ours; the pack's mouse contract): with the modern UI, a second plain left
+  click on the same actor within 500 ms runs the safe default instead of opening the action menu: talk to an NPC or
+  a door, check a player or a monster (retail's Ctrl+C, FUN_10130280). A slower second click stays retail's
+  (confirm: talk, or the action menu); a locked target, a sub-target prompt, a drag and the classic UI are unchanged.
 - Not yet: alliance rows live.
