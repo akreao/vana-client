@@ -574,14 +574,20 @@ impl Chat {
                 b"300" if !registered => {
                     let r = b32_decode(rest(&l, 2), 0x2e);
                     log::info!("PlayOnline chat: routing {}", hex::encode(&r[..r.len().min(0x18)]));
-                    chat.region = u16::from_be_bytes([r[0], r[1]]);
-                    chat.host_byte = r[2];
+                    // A short routing reply is logged and skipped, not indexed out of range.
+                    let [a, b, host, ..] = r[..] else { continue };
+                    chat.region = u16::from_be_bytes([a, b]);
+                    chat.host_byte = host;
                 }
                 b"422" => registered = true,
                 b"NOTICE" if registered && !rest(&l, 1).starts_with(b"#") => {
                     let text = rest(&l, 2);
                     let text = text.strip_prefix(b":").unwrap_or(text);
                     let h = b64_decode(text, 0x60);
+                    // Read up to 0x42 below; a shorter notice is not the one we wait for.
+                    if h.len() <= 0x42 {
+                        continue;
+                    }
                     // The profile service's "available" notice (0x1001b6f0).
                     let ty = u16::from_le_bytes([h[0x3e], h[0x3f]]) >> 7 & 0x1f;
                     if h[0x42] & 1 != 0 && ty == 31 && h[0x1b] != 0 && h[0x18] == 0xff && h[0x1c] == 0xff && h[0x10] == 1 {
