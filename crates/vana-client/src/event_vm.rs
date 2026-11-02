@@ -192,6 +192,10 @@ pub trait Host {
     fn rand(&mut self) -> u32 {
         0
     }
+    /// FUN_101039e0: the game clock, Earth seconds since the Vana'diel epoch (s2c 0x00A's time plus the time since).
+    fn game_time(&self) -> u32 {
+        0
+    }
     /// The client language (DAT_10456a28 + 8): 0 Japanese, 1 English, 2 / 3 the European ones.
     fn language(&self) -> u32 {
         1
@@ -1843,6 +1847,12 @@ impl Runtime {
             }
             // FUN_100babe0: Vana'diel time val@1 (earth seconds; hour 0x90, day 0xd80) as year + 886, month + 1,
             // day + 1, weekday, hour, minute and moon step.
+            // FUN_100b90e0: var@1 = the game clock (FUN_101039e0).
+            0x83 => {
+                let t = host.game_time();
+                self.set_at(v, 1, 0, t);
+                self.adv(v, 3);
+            }
             0xaa => {
                 let t = self.val(v, 1) as u32;
                 let parts = [t / 0x12fc00 + 0x376, t % 0x12fc00 / 0x19500 + 1, t % 0x19500 / 0xd80 + 1, t % 0x6c00 / 0xd80, t % 0xd80 / 0x90, t % 0x90 * 60 / 0x90, t / 0x5e80 % 12];
@@ -2656,6 +2666,8 @@ pub struct Scripted {
     /// Op 0xb3's request values (None: no result yet) and window.
     pub ranking: Option<[i32; 8]>,
     pub ranking_open: bool,
+    /// The game clock op 0x83 reads (Earth seconds since the Vana'diel epoch).
+    pub time: u32,
     running: Vec<(Busy, u32)>,
     seed: u32,
     frame: u32,
@@ -2712,6 +2724,7 @@ impl Scripted {
             map_busy: false,
             ranking: Some([-1, 0, 0, 0, 0, 0, 0, 0]),
             ranking_open: false,
+            time: 0,
             running: Vec::new(),
             seed: 1,
             frame: 0,
@@ -2726,6 +2739,8 @@ impl Host for Scripted {
 
     fn ranking_open(&self) -> bool {
         self.ranking_open
+    fn game_time(&self) -> u32 {
+        self.time
     }
 
     fn race(&self, actor: u32) -> u8 {
@@ -3072,6 +3087,25 @@ mod tests {
         assert_eq!(end(&host.log), Some(0x4000_0000));
     }
 
+    /// Op 0x83 (FUN_100b90e0): var@1 = the game clock (FUN_101039e0), here read back through the event's end option.
+    #[test]
+    fn game_clock_83() {
+        let code = vec![
+            0x83, 0x10, 0x00, // L16 = clock
+            0x0b, 0x10, 0x00, // L16 += 1
+            0x03, 0x01, 0x10, 0x10, 0x00, // Z1 (the end option) = L16
+            0x21, 0x00,
+        ];
+        let actor = 0x010e_601b;
+        let blocks = vec![event::Block { actor, events: vec![(1, 0)], consts: vec![], code }];
+        let mut host = Scripted::new(&[]);
+        host.time = 1_234_567_890;
+        let start = Start { zone: 230, event: 1, target: actor, ..Default::default() };
+        let mut rt = Runtime::start(blocks, None, start, Memory::default(), &mut host);
+        run_scripted(&mut rt, &mut host, 60).expect("finished");
+        assert_eq!(end(&host.log), Some(1_234_567_891));
+    }
+
     /// Op 0x71 over hand-made code: an "Enter number:" input read with atoi, then a name stored as words.
     /// Op 0xb3 (FUN_100bbaf0) over hand-made code: sub 0 starts the request (an effect), sub 1 waits for the result
     /// then sets six values, sub 9 reads the window; here L1 (the entry count) comes back as the end option.
@@ -3127,6 +3161,37 @@ mod tests {
             })
             .collect();
         assert_eq!(ops[..3], [(0xa8, Some(0), vec![230, 5]), (0xb9, Some(1), vec![230, 3, 5]), (0xa8, Some(2), vec![])]);
+    }
+
+    /// The cutscene clock ops reach the host in order with their operands: 0xa9 day val@1, 0x98 (no wait headless),
+    /// 0xc9, 0x77 hour / weather, 0x78.
+    #[test]
+    fn cutscene_clock_ops() {
+        let code = vec![
+            0xa9, 0x00, 0x80, // day #0 x 7
+            0x98, //
+            0xc9, //
+            0x77, 0x01, 0x80, 0x02, 0x80, // hour #1, weather #2
+            0x78, //
+            0x21, 0x00,
+        ];
+        let actor = 0x010e_601b;
+        let blocks = vec![event::Block { actor, events: vec![(1, 0)], consts: vec![5, 18, 0xff], code }];
+        let mut host = Scripted::new(&[]);
+        let start = Start { zone: 230, event: 1, target: actor, ..Default::default() };
+        let mut rt = Runtime::start(blocks, None, start, Memory::default(), &mut host);
+        run_scripted(&mut rt, &mut host, 60).expect("finished");
+        let ops: Vec<(u8, Vec<i32>)> = host
+            .log
+            .iter()
+            .filter_map(|e| match e {
+                Effect::Op { op: op @ (0xa9 | 0x98 | 0xc9 | 0x77 | 0x78), args, .. } => {
+                    Some((*op, args.iter().map(|a| if let Arg::Int(i) = a { *i } else { -1 }).collect()))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ops[..5], [(0xa9, vec![5]), (0x98, vec![]), (0xc9, vec![]), (0x77, vec![18, 0xff]), (0x78, vec![])]);
     }
 
     #[test]

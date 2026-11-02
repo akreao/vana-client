@@ -7201,7 +7201,7 @@ impl App {
                 a.play_ui_se(id);
             }
             let hour = w.clock.map(|(t, at)| crate::dat::weather::vana_minute(t, at.elapsed().as_secs_f32()) as u32 / 60).unwrap_or(12);
-            // Op 0x77's hour is the clock's while it holds (FUN_100b6880).
+            // Ops 0x77 / 0xa9: the held clock's hour (FUN_100b8710 / FUN_100bab50).
             let hour = event::hour(w).unwrap_or(hour);
             let party = w.party.party().count().max(1) as u32;
             let cx = crate::audio::MusicContext { status: w.my_motion.status, hour, party, party_battle: party_battle(w), myroom: w.myroom.is_some_and(|r| r.map != 0x2d4), basket: w.actors.get(&w.my_id).is_some_and(|a| matches!(&a.source, Some(Source::Pc(l)) if l.range == 0xc)) };
@@ -13130,7 +13130,7 @@ impl App {
                 r.show_link999(&gfx.gpu, ceiling);
             }
             let new_lamps = if w.renderer.as_ref().is_some_and(|r| r.ready(&gfx.gpu)) { w.lamps.update(&mut w.effects, w.ground.as_ref(), self.cfg.lamp_lights) } else { None };
-            let ev_hour = event::hour(w);
+            let ev_clock = event::clock(w);
             if let Some(r) = &mut w.renderer {
                 if let Some(l) = &new_lamps {
                     r.set_lamps(&gfx.gpu, &l.iter().map(|l| (l.pos, l.slot)).collect::<Vec<_>>());
@@ -13151,15 +13151,15 @@ impl App {
                 // Zone lighting for the Vana'diel time and weather the server gave us.
                 if let (Some(zw), Some((t, at))) = (&w.zone_weather, w.clock) {
                     // Op 0x77 sets the hour and weather while an event runs.
-                    let ev_time = w.event.as_ref().and_then(|l| l.st.time);
+                    let ev_weather = w.event.as_ref().and_then(|l| l.st.weather);
                     let clock = crate::dat::weather::vana_minute(t, at.elapsed().as_secs_f32());
-                    let minute = ev_time.and_then(|(h, _)| h).map_or(clock, |h| h as f32 * 60.0);
+                    let minute = ev_clock.map_or(clock, |c| c.minute as f32);
                     // thunk_FUN_1018ade0: each weather object blends its child chain's output into its own env by
                     // (total - left) / total; a finished one drops the chain before it. Op 0x77's weather stands alone.
                     if let Some(k) = w.weather_chain.iter().rposition(|c| c.2 <= 0.0 || c.1.elapsed().as_secs_f32() >= c.2) {
                         w.weather_chain.drain(..k);
                     }
-                    let chain: Vec<(&str, f32)> = match ev_time.and_then(|(_, x)| x) {
+                    let chain: Vec<(&str, f32)> = match ev_weather {
                         Some(x) => vec![(crate::dat::weather::weather_tag(x), 1.0)],
                         None if w.weather_chain.is_empty() => vec![(crate::dat::weather::weather_tag(w.weather), 1.0)],
                         None => w.weather_chain.iter().map(|c| (crate::dat::weather::weather_tag(c.0), if c.2 <= 0.0 { 1.0 } else { (c.1.elapsed().as_secs_f32() / c.2).min(1.0) })).collect(),
@@ -13769,8 +13769,9 @@ impl App {
                     let mut view_rot = view;
                     view_rot.w_axis = glam::Vec4::W;
                     let minute = w.clock.map(|(t, at)| crate::dat::weather::vana_minute(t, at.elapsed().as_secs_f32())).unwrap_or(720.0);
-                    // Op 0x77's hour holds the clock at its minute 0 (FUN_100b6880).
-                    let minute = ev_hour.map_or(minute, |h| h as f32 * 60.0);
+                    // Ops 0x77 / 0xa9 hold the clock (FUN_100b8710 / FUN_100bab50).
+                    let minute = ev_clock.map_or(minute, |c| c.minute as f32);
+                    let held_moon = ev_clock.and_then(|c| c.moon_weekday());
                     let f = crate::fx::Frame {
                         dt: (dt * 60.0).max(1e-3),
                         seconds: dt,
@@ -13785,8 +13786,9 @@ impl App {
                         area_light: r.lighting.map_or(Vec3::ONE, |l| l.area),
                         focal: 192.0 / (camera.fov_y * 0.5).tan(),
                         // FUN_10184dc0: ((Vana day of now + 12 h) / 7) % 12 (one Vana minute = 2.4 s).
-                        moon_phase: w.clock.map_or(0, |(t, at)| ((((t as f64 + at.elapsed().as_secs_f64()) / 2.4 + 720.0) / 1440.0) as u64 / 7 % 12) as u32),
-                        weekday: w.clock.map_or(0, |(t, at)| (((t as f64 + at.elapsed().as_secs_f64()) / 2.4 / 1440.0) as u64 & 7) as u32),
+                        // Op 0xa9 (DAT_1065cb20): both from the held clock.
+                        moon_phase: if let Some((m, _)) = held_moon { m } else { w.clock.map_or(0, |(t, at)| ((((t as f64 + at.elapsed().as_secs_f64()) / 2.4 + 720.0) / 1440.0) as u64 / 7 % 12) as u32) },
+                        weekday: if let Some((_, d)) = held_moon { d } else { w.clock.map_or(0, |(t, at)| (((t as f64 + at.elapsed().as_secs_f64()) / 2.4 / 1440.0) as u64 & 7) as u32) },
                     };
                     let party: Vec<u32> = std::iter::once(w.my_id).chain(w.party.party().map(|m| m.id).filter(|&id| id != w.my_id)).collect();
                     let ship_fx = ships::fx_actors(&w.ships, &w.entities);
