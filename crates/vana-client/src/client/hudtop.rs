@@ -216,10 +216,10 @@ impl HudTop {
         // titlewin HN mode (+0x448) and titlehan are not modelled. A busy bar counts as active (FUN_10221740).
         // The rule runs in game state 0x60 only; zoning and the zone load are taken as 0x70 (inferred).
         // Bits: 0x80 the scan, 4 party positions, 0x40 the stats, 1 the journal lists, 2 conquest, 8 a search query
-        // (FUN_1020a9d0), 0x10 a PlayOnline message job (the mail windows' setters FUN_101ff3e0..FUN_10200d70: send,
-        // befriend, ignore; friends.busy, DAT_10663ac8), 0x80000000 an auction bid (LAB_101d95b0).
+        // (FUN_1020a9d0), 0x10 a PlayOnline message job (msgline's
+        // commits; friends.strip), 0x80000000 an auction bid (LAB_101d95b0).
         let busy = w.scan.busy
-            || w.friends.busy
+            || w.friends.strip
             || w.scan.party_busy
             || w.status.as_ref().is_some_and(|s| s.busy)
             || super::missions::busy(w)
