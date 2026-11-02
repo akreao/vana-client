@@ -4,6 +4,9 @@ The plan for vana-client's modern interface, from the user's planning document (
 26 October 2026), with the decisions taken since and the state of the work. Built on branch `ui-update`, merged into
 master 2026-10-27 (kept).
 
+Feature branches don't edit this file: their State updates go in `docs/modern-ui/`, one file each, and are folded
+in here later (see `docs/modern-ui/README.md`).
+
 ## Decisions (2026-10-26)
 
 - **Runtime toggle.** The retail UI stays the default and untouched. Settings > Client > Interface switches between
@@ -167,8 +170,7 @@ scale.
 
 ## Open questions
 
-- Which keys open the command palette and the search? (Tab is FFXI's target cycling.) Taken for now (2026-11-02):
-  Ctrl+Space opens the palette; typing in an open list searches it.
+- Which keys open the command palette and the search? (Tab is FFXI's target cycling.)
 - Click-to-move, or only mouse targeting and interaction?
 - Which windows hide in combat and which stay pinned?
 - How macros and equipment sets show in search and favourites.
@@ -304,9 +306,6 @@ Milestone 1:
   its stack, the pane outlined teal / red for a valid / invalid drop; Shift (on the drop, a click or Enter) asks how
   many; a refused row says why (hover, and under the lists after a try); a sent move shows as pending until the
   server moves it, and one the server ignores is explained (nothing moves optimistically, so nothing is restored).
-- Command palette (2026-11-02, ours; listsearch.rs, modern/lists.rs): Ctrl+Space in the field searches every spell,
-  ability, usable item and action menu command (Attack, Disengage, Switch Target, Check, Call for Help, Heal); recent
-  picks show on the empty field; a pick goes through the menus as the keys would.
 - Plate badges: the approved SVG set (assets/modern/badges) in place of retail's glyphs; the pearl tinted by its
   linkshell; rank stars, the recruiter star in its orb, the master stars above.
 - Icons: batches 1 and 2 (131) redrawn in VectorCraft and approved.
