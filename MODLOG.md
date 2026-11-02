@@ -13222,21 +13222,23 @@ Specs: `~/ffxi/lab/research/pol_map_session_spec.md`, `entity_update_spec.md` (a
   1.665 -> 1.571 at (-4, 10.45, 117)); San d'Oria's came at 25.6 s and was applied at 26.4 s (1.493 -> 1.571 at
   (-68, 10.45, 117)). Seen fixed by the user.
 
-## Gamepad (ours, 2026-11-02)
+## Gamepad (2026-11-02)
 
-- Retail's PC client handed pads to the external config tool (configwi row 13 / lobycwin child 13 start it,
-  FUN_101bcb60; see "Tables copied from FFXiMain"), which we don't have, and its in-client pad word (key functions
-  0xb7..0xba) is still unread. So ours is not retail: client/gamepad.rs reads pads with gilrs and acts as a keyboard.
-  Buttons hold keys (DIK into `Input::set` for the key functions, egui key events for the windows, with cursor
-  repeats after 0.4 s every 0.08 s); the sticks go to `Input::set_stick` and count in `Input::axis` as the compact
-  stick does (the larger of keys, compact stick and pad stick). The left stick does not move while typing but does
-  with a window up (the action menu: walk to the target); the right stick follows the arrows' rule (not typing, no
-  window). The sticks never drive menus: the d-pad does.
-- Defaults are the official PC layout for an Xbox 360 pad (PlayOnline new player tips, ff11newplayer/tips/en/list.html):
-  A Enter, B Escape, X main menu, Y active window, LB autorun, RB software keyboard / screenshot with windows hidden,
-  LT / RT macro windows, Back hide windows, Start log out, L3 rest / lock target, R3 first person, d-pad menus and
-  targets. In the field the d-pad runs actions, not keys: left / right target::cycle (as Tab / Shift+Tab), up / down
-  the party (target::party_pad_step: slots 0 ..= 5 as F1 ..= F6, wrapping; ours, the retail code not found).
-- A button bound to Ctrl / Alt (the triggers by default) makes the d-pad and face buttons press 1 ..= 8 while held:
-  Ctrl / Alt + 1 ..= 8, the palettes' macros.
-- Config 0xce's choices 1 / 2 (Misc. 4) stay off: they need retail's pad count, FUN_101bced0.
+- Retail's pad path, from the unpacked FFXiMain.dll (30261006_0; the file is POL1-packed, see
+  docs/re/gamepad/findings.md, which also corrects earlier guesses: FUN_101bced0 is the chat word list loader, so
+  config 0xce is a chat-filter option, not a pad option). FUN_10005a40 polls DirectInput (DIJOYSTATE2) or XInput
+  (through xinputdll.dll) each frame into the input object's 64-bit pad word (+0x220 held, +0x228 pressed, +0x230
+  released, +0x238 repeat; bit n = slot n) and the stick bytes +0x250 / +0x251 camera X / Y, +0x252 / +0x253
+  movement X / Y ((b - 0x80) / 128, dead zone 42, movement past 9677 rescaled). padsin000 maps 32 positions to slots
+  through the permutation at 0x1034f930; values are button numbers (XInput virtual: 0 B, 1 X, 2 Y, 3 A, 4..7 d-pad
+  R / L / U / D, 8 LB, 9 LT, 10 L3, 11 RB, 12 RT, 13 R3, 14 Start, 15 Back) or axis codes 32 + n.
+- The key functions' pad bits (keyfn_table.md) are our PAD table's: the compact keyboard and the pad share the word.
+  The second word (+0x224) holds slots 32 / 33 / 35 / 36 (key functions 0xb7..0xba); slot 34 switches to padexsin.
+  0x27..0x2a are pad-only d-pad functions in context 1 (the field); what they do in the field is ours from the
+  official layout (up / down the party, right / left target::cycle), retail's handlers not traced.
+- Ours (client/gamepad.rs): gilrs stands in for DirectInput / XInput; config.json gamepad_padsin / gamepad_padexsin in
+  the registry's format, FFXiPadConfig's XInput layout by default. Our windows read egui keys, so the confirm,
+  cancel and main menu slots also send Enter / Escape / Num-, and the d-pad the arrows with a window up (repeat 16
+  ticks, then every 2, as mgr +0x94). The macro triggers (slots 9 / 13) hold Ctrl / Alt and turn the d-pad and face
+  slots into 1 ..= 8 (retail's pad macro functions 0xa8 / 0xb0.. are not built). The sticks never step a window's
+  cursor and keep moving / turning with a window up.
