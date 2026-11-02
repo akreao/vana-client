@@ -193,6 +193,8 @@ impl Vm {
         g.raw_set("load", text_only)?;
         let string: mlua::Table = g.get("string")?;
         string.raw_set("dump", Value::Nil)?;
+        // Patterns run in C, out of reach of the budget hook: ours count their steps against the deadline.
+        super::pattern::install(&lua, &string)?;
         let gc = lua.create_function(|lua, opt: Option<String>| match opt.as_deref().unwrap_or("collect") {
             "count" => Ok(lua.used_memory() as f64 / 1024.0),
             _ => Ok(0.0),
