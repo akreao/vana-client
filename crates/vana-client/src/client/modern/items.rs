@@ -224,7 +224,7 @@ fn list(p: &mut Panels, w: &mut World) {
 }
 
 fn enter(w: &mut World) {
-    gitems::key(w, egui::Key::Enter, false, false);
+    gitems::key(w, egui::Key::Enter, false, false, false);
 }
 
 fn win_mut(w: &mut World) -> Option<(&mut usize, &mut Option<Sub>, &mut Option<SortWin>)> {

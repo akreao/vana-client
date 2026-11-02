@@ -173,7 +173,7 @@ fn item_row(w: &World, index: u8, id: u16) -> Option<usize> {
 /// A storage view state for the item rules (gitems::usable / tint): `bank` against the inventory, away from the
 /// moogle.
 fn away(bank: u8) -> Storage {
-    Storage { bank, side: gitems::INVENTORY, scroll: 0, cursor: 0, on_bank: false, qty: None, from_menu: false, at_moogle: false, nomad: false, read_only: false, sortw: None, manual: None, stora: None }
+    Storage { bank, side: gitems::INVENTORY, scroll: 0, cursor: 0, on_bank: false, qty: None, from_menu: false, at_moogle: false, nomad: false, read_only: false, sortw: None, manual: None, stora: None, pending: None, note: None }
 }
 
 /// The bags the slot may move to now: open to us, with room, and taking the item (retail's storage colours).
@@ -328,5 +328,5 @@ fn item_act(w: &mut World, index: u8, id: u16, act: Act) {
         Act::Sort => *sort = Some(gitems::SortWin { cursor: 1, ask: None }),
         _ => return,
     }
-    gitems::key(w, egui::Key::Enter, false, false);
+    gitems::key(w, egui::Key::Enter, false, false, false);
 }
