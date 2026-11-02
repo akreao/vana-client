@@ -13222,7 +13222,39 @@ Specs: `~/ffxi/lab/research/pol_map_session_spec.md`, `entity_update_spec.md` (a
   1.665 -> 1.571 at (-4, 10.45, 117)); San d'Oria's came at 25.6 s and was applied at 26.4 s (1.493 -> 1.571 at
   (-68, 10.45, 117)). Seen fixed by the user.
 
-## Gamepad (ours, 2026-11-02)
+## Gamepad (2026-11-02)
+
+- Retail's pad path, from the unpacked FFXiMain.dll (30261006_0; the file is POL1-packed, see
+  docs/re/gamepad/findings.md, which also corrects earlier guesses: FUN_101bced0 is the chat word list loader, so
+  config 0xce is a chat-filter option, not a pad option). FUN_10005a40 polls DirectInput (DIJOYSTATE2) or XInput
+  (through xinputdll.dll) each frame into the input object's 64-bit pad word (+0x220 held, +0x228 pressed, +0x230
+  released, +0x238 repeat; bit n = slot n) and the stick bytes +0x250 / +0x251 camera X / Y, +0x252 / +0x253
+  movement X / Y ((b - 0x80) / 128, dead zone 42, movement past 9677 rescaled). padsin000 maps 32 positions to slots
+  through the permutation at 0x1034f930; values are button numbers (XInput virtual: 0 B, 1 X, 2 Y, 3 A, 4..7 d-pad
+  R / L / U / D, 8 LB, 9 LT, 10 L3, 11 RB, 12 RT, 13 R3, 14 Start, 15 Back) or axis codes 32 + n.
+- The key functions' pad bits (keyfn_table.md) are our PAD table's: the compact keyboard and the pad share the word.
+  The second word (+0x224) holds slots 32 / 33 / 35 / 36 (key functions 0xb7..0xba); slot 34 switches to padexsin.
+  0x27..0x2a are pad-only d-pad functions in the field (below).
+- Ours (client/gamepad.rs): gilrs stands in for DirectInput / XInput; config.json gamepad_padsin / gamepad_padexsin in
+  the registry's format, FFXiPadConfig's XInput layout by default. Our windows read egui keys, so the confirm,
+  cancel and main menu slots also send Enter / Escape / Num-, and the d-pad the arrows with a window or a palette up
+  (repeat 16 ticks, then every 2, as mgr +0x94). The sticks never step a window's cursor and keep moving / turning
+  with a window up.
+- What each button does where, from the DLL (docs/re/gamepad/window_fns.md): only 18 of the 239 window OnKey handlers
+  take the pad's extra events, nearly all of them text input (the software keyboard, msgline, comment, fep).
+  - Field d-pad (table 0x10371ee0): up / down step the alliance's 18 slots, wrapping (FUN_10203920); right / left the
+    next / previous actor on screen without wrapping (FUN_10083d00 / FUN_10083b40; Tab wraps). target::pad_step,
+    target::party_pad_step.
+  - Macros (FUN_101a2e80): a trigger's press (0x89 LT / 0x8a RT) toggles the Ctrl / Alt palette and the other swaps
+    it; the palette's own keys (FUN_101a3960) pick and run the macro. A pad-opened palette stays up after the
+    release (World::pad_palette). No button maps straight to a macro number.
+  - Windows: LT / RT are 0xa8, read with Ctrl / Alt, so held they ride on the arrows as Ctrl (page; the full log's
+    0xaf scroll) and both together as Alt (0xb5 / 0xb6, the item lists' next / previous bag). Their bits stay set
+    (0x89 item compare, 0x9a map fast scroll).
+  - RB 0x24 (FUN_101579c0): with no window, opens the chat line; with the UI hidden (FUN_101d0c70) the screenshot.
+  - Slots 32 / 33 / 35 / 36 (0xb7..0xba, unbound by default): the shut down prompt, F8's nearest target, /jump, /map.
+- Not built: the software keyboard (keypad*, where RB / LB / X / Back / LT / RT type), the ground-position cursor that
+  LT / RT + d-pad move in position-target mode (0xb0..0xb3), and L3 centring the map viewer on its cursor (0x7e).
 
 - Retail's PC client handed pads to the external config tool (configwi row 13 / lobycwin child 13 start it,
   FUN_101bcb60; see "Tables copied from FFXiMain"), which we don't have, and its in-client pad word (key functions
