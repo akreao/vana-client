@@ -29,6 +29,7 @@ mod regime;
 pub use creator::{ScreenShot as CreatorScreenShot, screen_shot as creator_screen_shot};
 pub use modern::shot::{Opts as ModernShotOpts, shot as modern_shot};
 pub use hudtop::topbar_shot;
+pub use lua::stubs as lua_stubs;
 mod event;
 mod buffs;
 mod game_ui;
@@ -69,7 +70,6 @@ mod bump;
 mod doors;
 mod lifts;
 mod ships;
-mod dps;
 mod skillchain;
 mod clock;
 mod lamps;
@@ -78,6 +78,7 @@ pub use lamps::Lamps;
 mod mousecur;
 mod party;
 mod macros;
+mod lua;
 mod textcmd;
 mod magic;
 mod registry;
@@ -316,7 +317,7 @@ fn world_window_open(w: &World) -> bool {
 /// The open windows but the action menu (playermo), which stays up while engaged: macros run while it is the only one
 /// (FUN_101a33e0 lets the focus be playermo, mp_pmode or a palette).
 fn window_over_actions(w: &World) -> bool {
-    w.ko_open || w.ko_offer == 2 || w.menu.is_some() || w.confirm.is_some() || w.win.is_some() || w.config.is_some() || w.settings.is_some() || w.map.is_some() || w.full_log.is_some() || w.magic.is_some() || w.ability.is_some() || w.cats.is_some() || w.moogle.is_some() || post::active(w) || synth::active(w) || shop::active(w) || trade::active(w) || w.search.is_some() || w.inspect.up() || w.mogdoor.is_some() || treasure::active(w) || w.chatctrl.is_some() || w.partymenu.is_some() || w.levelsync.is_some() || w.viewhouse.is_some() || w.bazaar.is_some() || w.helpdesk.is_some() || w.primer.is_some() || w.macroedit.is_some() || w.status.is_some() || w.missions.is_some() || w.quests.is_some() || w.keyitems.is_some() || w.searchmenu.is_some() || w.linkshell.is_some() || w.arealist.is_some() || ranking::is_open(w) || w.region_menu.is_some() || w.cnq.is_some() || w.blklist.is_some() || w.auction.is_some() || w.remodel.is_some() || w.moncustom.is_some() || gmtell::open(w) || w.friendui.is_some() || polmail::focused(w)
+    w.lua.focused() || w.ko_open || w.ko_offer == 2 || w.menu.is_some() || w.confirm.is_some() || w.win.is_some() || w.config.is_some() || w.settings.is_some() || w.map.is_some() || w.full_log.is_some() || w.magic.is_some() || w.ability.is_some() || w.cats.is_some() || w.moogle.is_some() || post::active(w) || synth::active(w) || shop::active(w) || trade::active(w) || w.search.is_some() || w.inspect.up() || w.mogdoor.is_some() || treasure::active(w) || w.chatctrl.is_some() || w.partymenu.is_some() || w.levelsync.is_some() || w.viewhouse.is_some() || w.bazaar.is_some() || w.helpdesk.is_some() || w.primer.is_some() || w.macroedit.is_some() || w.status.is_some() || w.missions.is_some() || w.quests.is_some() || w.keyitems.is_some() || w.searchmenu.is_some() || w.linkshell.is_some() || w.arealist.is_some() || ranking::is_open(w) || w.region_menu.is_some() || w.cnq.is_some() || w.blklist.is_some() || w.auction.is_some() || w.remodel.is_some() || w.moncustom.is_some() || gmtell::open(w) || w.friendui.is_some() || polmail::focused(w)
 }
 
 /// FUN_100c63d0: a jump starts when none runs (draw actor +0x8bc = 32 ticks).
@@ -480,6 +481,8 @@ struct Entity {
     active: f32,
     no_bump: bool,
     model: u16,
+    /// A player-style look (0x00D, or a 0x00E SubKind 1): race, face and the eight equipment models.
+    appearance: Option<Look>,
     /// An object (actor +0x128 bit 3 from the 0x00E look): no target gauge, no name plate.
     object: bool,
     /// The ActIndex its head looks at (0x00E / 0x00D facetarget, actor +0x1f8); 0 = none.
@@ -1582,6 +1585,7 @@ fn self_entity(w: &World) -> Entity {
         active: 0.0,
         no_bump: false,
         model: 0,
+        appearance: None,
         object: false,
         face: 0,
         spawn_fx: false,
@@ -2171,6 +2175,10 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
                     world.timers.toggle();
                     world.sounds.push(crate::audio::Ui::Cursor as u32);
                 }
+                // A Lua mod's window with the focus takes the keys (docs/lua-mods.md 4.10).
+                _ if world.lua.focused() => {
+                    lua::window_key(world, *key);
+                }
                 // Our settings screen, then the Config windows, take the keys while open (in the modern Config ours is
                 // one of its pages, keyed there).
                 _ if world.settings.is_some() && !(world.modern && world.config.is_some()) => {
@@ -2589,6 +2597,13 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
             gu.hover.set(true);
         }
         world.sounds.extend(s.sounds.drain(..).map(|x| x as u32));
+    }
+    // Mouse on the Lua mods' windows (the modern UI's panels take egui's).
+    if !world.modern
+        && let Some(p) = input.pointer
+        && lua::pointer_classic(world, gu, p, input.moved, input.clicked)
+    {
+        gu.hover.set(true);
     }
     // While Modern is on configwi alone is the modern page's (egui's mouse); retail's windows over it take it.
     let modern_page = world.modern && world.config.as_ref().is_some_and(|c| c.stack.len() <= 1);
@@ -3532,6 +3547,10 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
     if let Some(s) = world.settings.as_ref().filter(|_| !world.modern) {
         blockers.push(s.draw(gu, sw, sh));
     }
+    // The Lua mods' windows (the modern UI draws them as panels).
+    if !world.modern {
+        blockers.extend(lua::draw_classic(gu, world));
+    }
     // The map covers the screen (mapframe takes the mouse), as does cnqframe.
     if world.map.is_some() || world.cnq.is_some() {
         blockers.push([0.0, 0.0, sw, sh]);
@@ -4356,6 +4375,7 @@ fn place_mogdoor(w: &mut World) {
             active: 0.0,
             no_bump: false,
             model: 0,
+            appearance: None,
             object: true,
             face: 0,
             spawn_fx: false,
@@ -5392,7 +5412,7 @@ fn box_index(status: u8) -> usize {
 
 /// FUN_100cbde0's plain frame: T . RotY(yaw); with op 0xd8's x / z (FUN_100843b0) D3DX Scale . RotZ(z) . RotY(yaw)
 /// . RotX(x), i.e. z about the model's Z and x about the world X after the yaw, both positive
-/// (ground_tilt_spec.md 6).
+/// (MODLOG "Ground tilt").
 fn plain_frame(pos: Vec3, forward: Vec3, t: [f32; 2]) -> glam::Mat4 {
     let m = actor_matrix(pos, forward);
     if t == [0.0; 2] {
@@ -5713,6 +5733,8 @@ struct World {
     /// Items /equip took in the last seconds (FUN_101efee0; six, each held while under 2 s old).
     equip_claims: Vec<((u8, u8), Instant)>,
     autorun_dir: Vec3,
+    /// Ours (docs/lua-mods.md 4.8): a mod's run to a point (x, z, stop within): autorun steers at it as /follow does.
+    run_to: Option<(f32, f32, f32)>,
     move_tier: f32,
     /// Player physics runs in retail frames (ground::STEP_TICKS): ticks not yet stepped, the last four step
     /// results (oldest first), the position after the last step, and where the player is drawn (drawn_pos).
@@ -5925,8 +5947,6 @@ struct World {
     synth_amount: bool,
     /// Config `stamp_all_lines` (extra).
     stamp_all_lines: bool,
-    /// The /dps tally (client/dps.rs).
-    dps: dps::Dps,
     /// The skillchain helper's resonances and seen skills (client/skillchain.rs).
     skillchain: skillchain::Tracker,
     /// Config `target_distance` / `target_hpp` / `auto_advance` (extras).
@@ -6296,6 +6316,8 @@ struct World {
     /// Our Settings or Extras page when opened from the Config window, and a request to open one.
     settings: Option<settings::SettingsUi>,
     want_settings: Option<settings::Kind>,
+    /// The Lua mods of this session (docs/lua-mods.md).
+    lua: lua::Host,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -6561,6 +6583,8 @@ pub struct App {
     kb_edge: osk::Edge,
     pad_last: bool,
     kb_events: Vec<egui::Event>,
+    /// Keys Lua mods pressed this frame, as egui events.
+    synth_events: Vec<egui::Event>,
     /// Frames per second, 0 = unlimited (config frame_limit), and the present mode must be picked again.
     frame_limit: u32,
     present_dirty: bool,
@@ -6811,6 +6835,7 @@ impl App {
             kb_edge: osk::Edge::default(),
             pad_last: false,
             kb_events: Vec::new(),
+            synth_events: Vec::new(),
             frame_limit,
             present_dirty: false,
             window_dirty: false,
@@ -7643,7 +7668,6 @@ impl App {
                             map_overlay: self.cfg.map_overlay,
                             synth_amount: self.cfg.synth_amount,
                             stamp_all_lines: self.cfg.stamp_all_lines,
-                            dps: Default::default(),
                             skillchain: Default::default(),
                             target_distance: self.cfg.target_distance,
                             target_hpp: self.cfg.target_hpp,
@@ -7671,6 +7695,7 @@ impl App {
                             journal_on_list: false,
                             equip_claims: Vec::new(),
                             autorun_dir: Vec3::ZERO,
+                            run_to: None,
                             move_tier: 0.0,
                             step_ticks: 0.0,
                             step_hist: [Vec3::ZERO; 4],
@@ -8037,6 +8062,7 @@ impl App {
                             game_save: false,
                             settings: None,
                             want_settings: None,
+                            lua: Default::default(),
                         }));
                         if let Phase::World(w) = &mut self.phase {
                             cfgapply::apply_all(w);
@@ -8232,7 +8258,8 @@ impl App {
                             world.zone_uploading = Some(Instant::now());
                         }
                         world.ground = Some(ground);
-                        world.zone = Some(zone_id);
+                        let old_zone = world.zone.replace(zone_id);
+                        world.lua.raise("zone_change", vec![zone_id.into(), old_zone.into()]);
                         world.scene = Some(map_no);
                         world.npc_names = world.index.as_ref().map(|i| npc_names(i, zone_id)).unwrap_or_default();
                         for (id, e) in world.entities.iter_mut() {
@@ -8465,6 +8492,15 @@ impl App {
                 continue;
             }
             match ev {
+                // The mods' packet hooks (docs/lua-mods.md 3.3): a batch in or out, through them and back.
+                NetEvent::RawIn(sess, packets) => {
+                    let out = lua::packets_in(world, packets);
+                    let _ = world.net.commands.send(NetCommand::Decode(sess, out));
+                }
+                NetEvent::RawOut(sess, packets) => {
+                    let out = lua::packets_out(world, packets);
+                    let _ = world.net.commands.send(NetCommand::SendBatch(sess, out));
+                }
                 NetEvent::EntityVis(list) => {
                     world.vis_list = list;
                     for (id, e) in world.entities.iter_mut().filter(|(_, e)| e.listed_only) {
@@ -8587,6 +8623,7 @@ impl App {
                     // FUN_10011a00 state 5 (each zone-in): first person (DAT_10487f80) and autorun (DAT_10487f81) off,
                     // set directly: no "Follow canceled." line.
                     (world.autorun, world.autorun_dir, world.follow, world.camst.first) = (false, Vec3::ZERO, None, false);
+                    world.run_to = None;
                     (world.fishing, world.fish_pending, world.fish_gauge, world.primer) = (None, false, None, None);
                     world.hud_top.enter();
                     // FUN_10095650 at the world start: the Unity chat setting (config 0xb2) and the job master display
@@ -8789,6 +8826,7 @@ impl App {
                         active: 0.0,
                         no_bump: false,
                         model: 0,
+                        appearance: None,
                         object: false,
                         face: 0,
                         spawn_fx: false,
@@ -8806,6 +8844,12 @@ impl App {
                     });
                     if e.mask & 7 != 0 {
                         entry.flags = e.status;
+                    }
+                    if let Some(tbl) = e.look.filter(|t| t[8] != 0xFFFF) {
+                        entry.appearance = Some(look_from(tbl));
+                    }
+                    if let Some(crate::dat::npc::NpcLook::Equipped(l)) = &e.npc {
+                        entry.appearance = Some(*l);
                     }
                     // Falling dead plays the death motion once (the "dead" scheduler), then the corpse loop.
                     // Fields outside this update's mask bits are zero, not news.
@@ -8996,6 +9040,7 @@ impl App {
                     if kind != 0x19 && attr & 1 == 0 && partyreq::blacklisted(world, &from) == 1 {
                         continue;
                     }
+                    world.lua.raise("chat_message", vec![text.as_str().into(), from.as_str().into(), kind.into(), (attr & 1 != 0).into()]);
                     // Tells (and kind 0x15) go into the reply history.
                     if matches!(kind, 3 | 0x15) && !from.is_empty() {
                         world.tells.retain(|t| *t != from);
@@ -9024,6 +9069,9 @@ impl App {
                 }
                 NetEvent::Logout { state } => {
                     log::info!("logged out of the zone (0x00B state {state})");
+                    let mut mods = std::mem::take(&mut world.lua);
+                    mods.stop(world);
+                    world.chat.filter = None;
                     if let Some(dir) = world.macros.as_ref().map(|m| m.dir().to_path_buf()) {
                         synth::save_history(world, &dir);
                         partyreq::save(world, &dir);
@@ -9051,6 +9099,7 @@ impl App {
                     timers::on_party_effects(world);
                 }
                 NetEvent::Battle(m) => {
+                    world.lua.raise("battle_message", vec![m.actor.into(), m.target.into(), m.message.into(), m.data[0].into(), m.data[1].into()]);
                     timers::on_message(world, m.target, m.data[0] as u32, m.message);
                     regime::on_battle(world, &m);
                     combat::on_battle_message(world, &m);
@@ -9197,6 +9246,7 @@ impl App {
                 NetEvent::Monstrosity { kind, data } => monstrosity::on_data(world, kind, data),
                 NetEvent::SkillBase(s) => world.skill_base = Some(s),
                 NetEvent::Action(a) => {
+                    world.lua.raise("action", vec![lua::action_json(&a)]);
                     timers::on_action(world, &a);
                     combat::on_action(world, &a);
                 }
@@ -10144,6 +10194,16 @@ impl App {
                 }
             }
         }
+        // A mod's run to a point: steered as /follow, ended there.
+        if let Some((x, z, within)) = world.run_to {
+            let d = Vec3::new(x - world.pos.x, 0.0, z - world.pos.z);
+            if !world.autorun || d.length() <= within.max(0.1) {
+                world.autorun = false;
+                world.run_to = None;
+            } else {
+                world.autorun_dir = d.normalize();
+            }
+        }
         if world.autorun && !world.locked && !move_locked {
             if world.autorun_dir == Vec3::ZERO && step != Vec3::ZERO {
                 world.autorun_dir = step.normalize();
@@ -10161,6 +10221,7 @@ impl App {
         }
         if !world.autorun {
             world.autorun_dir = Vec3::ZERO;
+            world.run_to = None;
             // Autorun ending for any reason ends the follow: group 9 0x41 "Follow canceled.".
             if world.follow.take().is_some() {
                 textcmd::log9(world, 0x41);
@@ -10372,8 +10433,9 @@ impl App {
             };
             f.typing = text_field_open(w);
             f.keyboard = w.game.get(0x42);
-            // A window has the keys: arrows go to it, not to the camera (keys_spec "window" state). The log counts only
-            // while focused: Escape or another window unfocuses it and leaves the 0x78 state at 1.
+            // A window has the keys: arrows go to it, not to the camera (the window-active state, MODLOG "Input
+            // layer"). The log counts only while focused: Escape or another window unfocuses it and leaves the 0x78
+            // state at 1.
             f.window = world_window_open(w) || w.palette.0 != 0 || w.log_active || w.log_focus == 2 || event::choice(w).is_some() || event::input(w).is_some();
             f.assigning = w.config.as_ref().and_then(|c| c.stack.last()).is_some_and(|t| t.name == "k1assign" || t.name == "k2assign");
         }
@@ -10843,6 +10905,7 @@ impl App {
                 log::debug!("click-to-move: {} points to {:?}", path.len(), path.last());
                 world.follow = None;
                 world.click_move = Some(clickmove::ClickMove::new(path, world.pos));
+                world.run_to = None;
                 world.autorun = true;
                 world.autorun_dir = Vec3::ZERO;
             }
@@ -12056,6 +12119,8 @@ impl App {
                     if !status.is_empty() {
                         lines.push(status.clone());
                     }
+                    // The Lua mods: time a frame (average, peak), memory, state (docs/lua-mods.md 3.4).
+                    lines.extend(world.lua.debug_lines());
                     // What holds the keys now (intermittent stuck-input reports).
                     let w = &*world;
                     let open: Vec<&str> = [
@@ -12065,6 +12130,7 @@ impl App {
                         ("action", w.action_menu.is_some()),
                         ("config", w.config.is_some()),
                         ("settings", w.settings.is_some()),
+                        ("mod window", w.lua.focused()),
                         ("map", w.map.is_some()),
                         ("fulllog", w.full_log.is_some()),
                         ("magic", w.magic.is_some()),
@@ -12136,10 +12202,25 @@ impl App {
                     s.monitors = self.monitors.clone();
                     s.gpus = self.gpus.clone();
                     s.in_game = true;
+                    if kind == settings::Kind::Extras {
+                        s.mod_pages = world.lua.settings_pages();
+                        if let Some(id) = world.lua.open_page.take() {
+                            s.goto_mod(&id);
+                        }
+                    }
                     world.settings = Some(s);
                 }
                 if let Some(s) = world.settings.as_mut() {
                     s.tick();
+                }
+                // The Lua mods' settings changed on their Extras pages.
+                let changes = world.settings.as_mut().map(|s| std::mem::take(&mut s.mod_changes)).unwrap_or_default();
+                if !changes.is_empty() {
+                    let mut mods = std::mem::take(&mut world.lua);
+                    for (id, key, value) in changes {
+                        mods.apply_setting(world, &id, &key, value);
+                    }
+                    world.lua = mods;
                 }
                 if let Some(s) = world.settings.as_mut().filter(|s| s.dirty) {
                     s.dirty = false;
@@ -12689,6 +12770,16 @@ impl App {
             pending::update(w);
             servmes::frame(w);
             ranking::frame(w);
+            lua::frame(w, self.game_ui.as_ref());
+            // Keys the mods pressed: the key functions now, egui with this frame's input.
+            for k in std::mem::take(&mut w.lua.synth) {
+                let (key, mods) = k.diks();
+                match k.down {
+                    None => mods.into_iter().chain(key).for_each(|d| self.input.tap(d)),
+                    Some(down) => key.into_iter().for_each(|d| self.input.set(d, down)),
+                }
+                self.synth_events.extend(k.egui_events());
+            }
         }
         // Config 0022: the opening movie before the title, which loads behind it.
         if self.opening.is_some() {
@@ -12791,6 +12882,7 @@ impl App {
         {
             self.kb.open(f);
         }
+        raw.events.append(&mut self.synth_events);
         let phase = self.phase_name();
         let mut script_shot = None;
         if let Some(sc) = &mut self.drive.input {
@@ -12800,6 +12892,11 @@ impl App {
             };
             // egui's points per pixel (its zoom included: the modern layer sets one), as egui reads the events.
             let (events, shot, action) = sc.next(phase, &probes, gfx.egui_ctx.pixels_per_point());
+            // Through the Lua mods first, as the window's keys and mouse go.
+            let events = match &mut self.phase {
+                Phase::World(w) => lua::input::drive_events(w, events, gfx.window.scale_factor()),
+                _ => events,
+            };
             for e in &events {
                 self.input.drive_event(e);
             }
@@ -13574,8 +13671,9 @@ impl App {
                         let bones = if a.bones.is_empty() { &a.rest } else { &a.bones };
                         a.anchor_at[k] = ch.skeleton.points.get(a.anchors[k] as usize).filter(|_| a.anchors[k] != 2).and_then(|&(b, off)| bones.get(b as usize).map(|x| model.transform_point3(x.at(off))));
                     }
-                    // FUN_100cd040 (camera_collision_spec.md 2.2): the eye near posed point 12 fades the actor (not the
-                    // player in first person, who fades on its own). A CPU pose only when the rest pose is close.
+                    // FUN_100cd040 (MODLOG "The near-camera character fade"): the eye near posed point 12 fades
+                    // the actor (not the player in first person, who fades on its own). A CPU pose only when the
+                    // rest pose is close.
                     let cam_fade = if *id == w.my_id && w.camst.first || w.entities.get(id).is_some_and(|e| e.no_near_fade) {
                         1.0
                     } else {
@@ -14190,6 +14288,13 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
+        // Lua mods see keys and the mouse first, and may take them.
+        if self.opening.is_none()
+            && let Phase::World(w) = &mut self.phase
+            && lua::input::window_event(w, &event)
+        {
+            return;
+        }
         let Some(gfx) = &mut self.gfx else { return };
         let consumed = gfx.egui_state.on_window_event(&gfx.window, &event).consumed;
         match event {
@@ -14549,8 +14654,8 @@ mod tests {
         assert!((player_yaw(std::f32::consts::PI) + std::f32::consts::FRAC_PI_2).abs() < 1e-5);
     }
 
-    /// camera_collision_spec.md 2.2: 0 within 0.2, linear to 0.5, nothing with the eye more than 0.5 above the point
-    /// (y down), no lower limit below it.
+    /// MODLOG "The near-camera character fade": 0 within 0.2, linear to 0.5, nothing with the eye more than 0.5
+    /// above the point (y down), no lower limit below it.
     #[test]
     fn near_camera_fade_cylinder() {
         let p = Vec3::new(0.0, -1.5, 0.0);
