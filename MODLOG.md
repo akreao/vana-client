@@ -7465,7 +7465,7 @@ Spec `~/ffxi/lab/research/social_rows_spec.md` H4.2 (client/faqmain.rs).
 - LSB sends the oldest unread `help_desk.response` at zone-in as 0x0B6 chunks; 0x0D5 marks it read and sends the
   next. Live (2026-10-28, a help_desk row for Lnxcsfix): the reply arrived at zone-in, /helpdesk -> Help Desk showed
   it with "Delete this message." / "Return.", Delete set deleted_at (LSB) and went back to faqsub; the same in the
-  modern UI. Not done: netstat's "reply waiting" mark (+0x30 = 2, its drawing not traced).
+  modern UI. The "reply waiting" mark: see "netstat: the Help Desk reply mark" (2026-11-02).
 
 ## The party cursor with the mouse (2026-10-25)
 
