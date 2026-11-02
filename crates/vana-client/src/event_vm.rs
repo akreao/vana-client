@@ -3049,6 +3049,27 @@ mod tests {
         assert_eq!(ops[..3], [(0xa8, Some(0), vec![230, 5]), (0xb9, Some(1), vec![230, 3, 5]), (0xa8, Some(2), vec![])]);
     }
 
+    /// Op 0xae sub 0 (FUN_100bb620 -> FUN_10094040): six bytes, weather val@2 and blend time val@4 to the host.
+    #[test]
+    fn event_weather_change() {
+        let code = vec![0xae, 0x00, 0x00, 0x80, 0x01, 0x80, 0x21, 0x00];
+        let actor = 0x010e_601b;
+        let blocks = vec![event::Block { actor, events: vec![(1, 0)], consts: vec![6, 120], code }];
+        let mut host = Scripted::new(&[]);
+        let start = Start { zone: 230, event: 1, target: actor, ..Default::default() };
+        let mut rt = Runtime::start(blocks, None, start, Memory::default(), &mut host);
+        run_scripted(&mut rt, &mut host, 60).expect("finished");
+        let ops: Vec<Vec<i32>> = host
+            .log
+            .iter()
+            .filter_map(|e| match e {
+                Effect::Op { op: 0xae, sub: Some(0), args, .. } => Some(args.iter().map(|a| if let Arg::Int(i) = a { *i } else { -1 }).collect()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ops[0], vec![6, 120]);
+    }
+
     #[test]
     fn input_window() {
         assert_eq!((Runtime::atoi(b" -42x"), Runtime::atoi(b"+7"), Runtime::atoi(b"")), (-42, 7, 0));
