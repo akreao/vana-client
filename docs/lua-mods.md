@@ -8,7 +8,7 @@ Built (client/lua/, modern/modwin.rs), each checked live:
 - **Runtime:**
   - a VM per mod (Lua 5.4, mlua 0.12): 38 to 64 KB each, measured on F12
   - restricted libraries, text-only `load`, a 64 MB memory limit
-  - a 100 ms budget per call (a runaway loop is stopped)
+  - a 100 ms budget per call (a runaway loop is stopped; string patterns count their steps against it too)
   - coroutine handlers (`sleep`, `sleep_frames`, `wait_until`)
   - errors reported once with file:line; 20 in a minute suspend the mod
   - `require` from the mod's folder
@@ -51,7 +51,9 @@ Built (client/lua/, modern/modwin.rs), each checked live:
 - **Packets** (`packets.read` / `packets.write`):
   - `packets.on_in` / `on_out` (one id or all) see each packet before the client reads it or after it built it, as
     a chain: original and current bytes, blocked, injected; a handler returns new bytes, `false` to block, or nothing
-  - `inject_in` (decoded as if the server sent it) and `inject_out`, both through the hooks; `build`; `last`
+  - `inject_in` (decoded as if the server sent it) and `inject_out`, both through the hooks; `build`; `last`. A
+    packet's size field is set from its bytes (injected or returned by a hook); one over 508 bytes (the 7-bit field
+    of 4-byte words) is refused
   - checked live: counts by id, an injected tell, a say rewritten into a GM command the server answered, across zones
 - **Actions** (`actions`: only while handling the player's input, a typed command or a window event; `automation`:
   any time; a coroutine keeps how it began across sleeps; `commands.run` of a game command is an action too):

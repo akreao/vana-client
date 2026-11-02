@@ -4458,6 +4458,7 @@ dependencies = [
  "jiff",
  "log",
  "md-5",
+ "memchr",
  "mlua",
  "msi",
  "png",
