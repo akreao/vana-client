@@ -98,6 +98,24 @@ pub fn draw(p: &mut Panels, w: &mut World) {
     }
     cats(p, w);
     list(p, w);
+    palette(p, w);
+}
+
+/// The command palette (ours, Ctrl+Space in the field): the search field over its hits; a click picks, as Enter.
+fn palette(p: &mut Panels, w: &mut World) {
+    if !w.command_palette {
+        return;
+    }
+    let Some((text, sel, hits, icons)) = search_hits(p, w) else { return };
+    let m = p.m;
+    let mut found = Mouse::default();
+    p.panel("palette", Some(Title { icon: Some("controls/search"), text: "Commands", note: Some("Esc closes") }), 420.0, |ui| {
+        found = search_rows(ui, m, w, &icons, &text, sel, &hits);
+        if text.is_empty() && hits.is_empty() {
+            ui.label(egui::RichText::new("Type a spell, ability, item or command. Recent picks show here.").size(m.theme.small).color(m.theme.color("muted")));
+        }
+    });
+    search_mouse(w, &found, &hits);
 }
 
 /// The search field and its hits in place of the window's rows: what was clicked, what the pointer is over.

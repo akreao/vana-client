@@ -4,15 +4,16 @@
 
 use super::World;
 use crate::dat::skillchains::{self as sc, Prop};
+use serde::{Deserialize, Serialize};
 
 /// What a suggestion uses: a spell id, or an ability table index (job abilities and weapon skills).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Action {
     Spell(u16),
     Ability(u16),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Suggestion {
     pub action: Action,
     /// Who it is for (a name), when not ourselves or the target.
@@ -21,7 +22,8 @@ pub struct Suggestion {
 }
 
 /// A party member (ourselves first): in our zone, HP now / max, main job, effects.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Member {
     pub name: String,
     pub me: bool,
@@ -33,7 +35,8 @@ pub struct Member {
 }
 
 /// A spell castable now.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SpellFact {
     pub id: u16,
     pub name: String,
@@ -44,7 +47,8 @@ pub struct SpellFact {
 }
 
 /// A job ability or weapon skill usable now (its table index, name); a weapon skill's properties and power order.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AbilityFact {
     pub index: u16,
     pub name: String,
@@ -53,7 +57,8 @@ pub struct AbilityFact {
 }
 
 /// The monster we fight or target.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct TargetFact {
     pub name: String,
     pub hpp: u8,
@@ -65,7 +70,8 @@ pub struct TargetFact {
 }
 
 /// The target's resonance (skillchain.rs): properties (or the chain), seconds since and seconds left.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ResonanceFact {
     pub against: Vec<Prop>,
     pub chain: Option<Prop>,
@@ -74,7 +80,8 @@ pub struct ResonanceFact {
 }
 
 /// A party member's skills for opening a chain with: name, TP, properties of each.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Partner {
     pub name: String,
     pub tp: u32,
@@ -82,7 +89,8 @@ pub struct Partner {
 }
 
 /// The facts the rules read.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Facts {
     pub party: Vec<Member>,
     /// Our effects and their seconds left (untimed: none).
@@ -416,9 +424,44 @@ pub fn refresh_root(w: &mut World) {
         return;
     }
     if w.root_sugg_at.is_none_or(|t| t.elapsed().as_secs_f32() >= 0.5) {
-        w.root_sugg = suggest(&facts(w));
+        let f = facts(w);
+        let out = suggest(&f);
+        if out != w.root_sugg && !out.is_empty() {
+            record(&f, &out);
+        }
+        w.root_sugg = out;
         w.root_sugg_at = Some(std::time::Instant::now());
         w.suggest_sel = None;
+    }
+}
+
+/// A recorded game state and what the rules made of it: suggest_cases/*.json, replayed by the tests. `rule` names the
+/// rule the case is for (RULES), `note` says what was going on.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Case {
+    pub rule: String,
+    pub note: String,
+    pub facts: Facts,
+    pub expect: Vec<Suggestion>,
+}
+
+/// The rules by the names cases give them, in suggest's order.
+pub const RULES: [&str; 17] = [
+    "raise", "shadows", "ailment", "curaga", "cure", "waltz", "burst", "close", "provoke", "job_ability", "ninja_stance", "samba", "debuff", "open_chain", "strongest_ws", "renew", "between",
+];
+
+/// With VANA_SUGGEST_RECORD set to a folder, each new set of suggestions is written there with its facts as a case
+/// (rule and note left for whoever files it under suggest_cases/).
+fn record(f: &Facts, out: &[Suggestion]) {
+    let Some(dir) = std::env::var_os("VANA_SUGGEST_RECORD") else { return };
+    let dir = std::path::PathBuf::from(dir);
+    let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
+    let case = Case { rule: String::new(), note: String::new(), facts: f.clone(), expect: out.to_vec() };
+    let path = dir.join(format!("suggest-{ms}.json"));
+    match serde_json::to_string_pretty(&case).map_err(std::io::Error::other).and_then(|j| std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&path, j))) {
+        Ok(()) => log::info!("suggest: recorded {}", path.display()),
+        Err(e) => log::warn!("suggest: can't record to {}: {e}", dir.display()),
     }
 }
 
@@ -476,6 +519,46 @@ pub fn facts(w: &World) -> Facts {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cases_dir() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/client/suggest_cases")
+    }
+
+    /// Every case in suggest_cases/ gives exactly its recorded suggestions. VANA_SUGGEST_BLESS=1 rewrites the
+    /// expectations from the rules as they are (check the diff before keeping it).
+    #[test]
+    fn recorded_cases() {
+        let bless = std::env::var_os("VANA_SUGGEST_BLESS").is_some();
+        let mut paths: Vec<_> = std::fs::read_dir(cases_dir()).expect("suggest_cases").filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
+        paths.sort();
+        assert!(!paths.is_empty());
+        let mut failed = Vec::new();
+        for p in &paths {
+            let mut case: Case = serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
+            assert!(RULES.contains(&case.rule.as_str()), "{}: rule {:?} is not one of RULES", p.display(), case.rule);
+            let got = suggest(&case.facts);
+            if bless {
+                case.expect = got;
+                std::fs::write(p, serde_json::to_string_pretty(&case).unwrap() + "\n").unwrap();
+            } else if got != case.expect {
+                failed.push(format!("{} ({}): expected {:#?}\n got {:#?}", p.display(), case.note, case.expect, got));
+            }
+        }
+        assert!(failed.is_empty(), "{}", failed.join("\n\n"));
+    }
+
+    /// Each rule has a case.
+    #[test]
+    fn every_rule_has_a_case() {
+        let rules: Vec<String> = std::fs::read_dir(cases_dir())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter_map(|e| serde_json::from_str::<Case>(&std::fs::read_to_string(e.path()).ok()?).ok())
+            .map(|c| c.rule)
+            .collect();
+        let missing: Vec<&str> = RULES.iter().copied().filter(|r| !rules.iter().any(|x| x == r)).collect();
+        assert!(missing.is_empty(), "rules without a case: {missing:?}");
+    }
 
     fn me(hp: u32, max: u32) -> Member {
         Member { name: "Lenon".into(), me: true, here: true, hp, hp_max: max, ..Default::default() }
