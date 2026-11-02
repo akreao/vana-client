@@ -76,6 +76,7 @@ mod party;
 mod macros;
 mod textcmd;
 mod magic;
+mod registry;
 mod moogle;
 mod post;
 mod synth;
