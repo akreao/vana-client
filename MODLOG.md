@@ -7465,7 +7465,7 @@ Spec `~/ffxi/lab/research/social_rows_spec.md` H4.2 (client/faqmain.rs).
 - LSB sends the oldest unread `help_desk.response` at zone-in as 0x0B6 chunks; 0x0D5 marks it read and sends the
   next. Live (2026-10-28, a help_desk row for Lnxcsfix): the reply arrived at zone-in, /helpdesk -> Help Desk showed
   it with "Delete this message." / "Return.", Delete set deleted_at (LSB) and went back to faqsub; the same in the
-  modern UI. Not done: netstat's "reply waiting" mark (+0x30 = 2, its drawing not traced).
+  modern UI. The "reply waiting" mark: see "netstat: the Help Desk reply mark" (2026-11-02).
 
 ## The party cursor with the mouse (2026-10-25)
 
@@ -9451,7 +9451,7 @@ FUN_101cf510 (client/layout.rs `overlay`, render/lines.wgsl, ZoneRenderer `set_l
   on the window is Escape. Hand-over: slots 1..8, OK 9, Cancel 10, gil 11; player trade: "menu    trade" 1..11
   (after our OK only OK / Cancel take the cursor, as the keys) and "menu    gift" 1..8. The picker (the inventory list
   at x 200, post::picker_row) as the item list: hover moves the row cursor, a click on it is Enter, a right click
-  Escape. itemctrl / moneyctr take only the right click (Escape) *(their arrows by mouse not done)*.
+  Escape. itemctrl / moneyctr by winhits::ctr (see "itemctrl / moneyctr: the mouse").
 - Live (Lnxcsfix, the Moogle in its house, main menu Trade): hover slot 2, click (picker), hover and click Distilled
   Water (No. of Items), Enter (in slot 2), right click (cursor to Cancel), click Cancel (closed). Player trade not
   tried live (one account).
@@ -9694,7 +9694,7 @@ client/macroedit.rs (`pointer`, `generic`, `child_under`, `hit`), esmenu.rs, ese
   right click over it Escape). MacroPalette (macroedit.rs) uses it now.
 - Shops (shop.rs `pointer`): shopmain / guildsho and shopbuy / shopsell as the generic window; the list's rows (18 px
   from (3, 4), short of the bar) as the item list: hover moves the row, a click on it is Enter, a right click on the
-  list Escape; itemctrl / moneyctr take only the right click *(their arrows by mouse not done)*.
+  list Escape; itemctrl / moneyctr by winhits::ctr.
 - Live (Lnxcsfix at Capucine, Southern San d'Oria): hover Sell, click Buy, hover and click Mitts (the purchase
   confirm, cursor on Cancel), right clicks closing the list and the shop. The windows stacked on the log move as it
   shrinks or grows, so a click must land where they are that frame (the recorded rects follow them).
@@ -9709,7 +9709,7 @@ client/macroedit.rs (`pointer`, `generic`, `child_under`, `hit`), esmenu.rs, ese
 
 - post.rs `pointer` (winhits.rs): post1 / post2 (receive), delivery and stringdl (send; stringdl's buttons are drawn by
   code, so their rects come from the layout) as the generic window; the inventory list at x 200 as the item list;
-  itemctrl / moneyctr only the right click; nothing while busy or while the name is typed.
+  itemctrl / moneyctr by winhits::ctr; nothing while busy or while the name is typed.
 - Live (Lnxcsfix, its Mog House): moogle menu Delivery Box, mogpost Send, hover Exit ("Cancel.") and OK ("Is
   recipient's name correct?"), click Exit closes the send UI. The moogle menu and mogpost sit on the log and move with
   it (a click must use where they are that frame).
@@ -9802,7 +9802,7 @@ PS2-era system, statuses 6 / 0x26.. and 0x081 / 0x066, is not done: LSB never se
 
 - synth.rs `pointer` (winhits.rs): cmbmenu, cmbhwin and tskill1 as the generic window, cmbhlst's code-drawn rows (18
   apart from (0, 4)) as its children; the crystal list and the material picker as the item list at x 200
-  (post::picker_row); itemctrl only the right click. A right click on tskill1 is its Escape (the cursor to Cancel).
+  (post::picker_row); itemctrl by winhits::ctr. A right click on tskill1 is its Escape (the cursor to Cancel).
 - Live (Lnxcsfix): main menu Synthesis, cmbmenu hover / click Crystal Synthesis, the crystal list hover / click Wind
   Crystal, tskill1 hover / click a slot (the picker), a picker row hovered, right clicks back, Cancel, the crystal list
   and cmbmenu closed by right clicks. Nothing synthesized.
@@ -9811,7 +9811,7 @@ PS2-era system, statuses 6 / 0x26.. and 0x081 / 0x066, is not done: LSB never se
 
 - auction.rs `pointer` (winhits.rs): the command menus (auc1..aucitem, auc3, auc4, the sort menus) and shopsell as the
   generic window; auclist's and auchisto's code-drawn rows (18 apart from (4, 4)) as their children; the sell list (the
-  inventory list) by its row pitch; moneyctr only the right click. Scroll bars: Owner::Auction for auclist and the sell
+  inventory list) by its row pitch; moneyctr by winhits::ctr. Scroll bars: Owner::Auction for auclist and the sell
   list (FUN_101f6c70 rows: a notch moves the top, the hand keeps its screen row).
 - Live (Lnxcsfix, !ah): auc1 Bid, auc2 Crystals, auclist hover / wheel / click (auc3), right clicks back to auc2 and
   auc1, Sell (the sell list hover / wheel), right clicks out. Nothing bid or sold.
