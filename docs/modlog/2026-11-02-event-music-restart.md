@@ -9,4 +9,5 @@
   168, 131, 130 and 166, checks every frame whether the music stopped and restarts it.
 - Ours: the VM stores the host's state for 0xb0 (the mixer has a track: 1 / 0; -1 without audio), and 0xb1 asks the
   audio to start its last task track again when the mixer has none. Ours skips the restart while a music change is
-  under way, since that change starts its own track.
+  under way, since that change starts its own track, and for 2 s after its own restart until the mixer has the track
+  (the scripts ask every frame, and each request reads the whole file).
