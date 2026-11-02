@@ -13242,3 +13242,8 @@ Specs: `~/ffxi/lab/research/pol_map_session_spec.md`, `entity_update_spec.md` (a
   ticks, then every 2, as mgr +0x94). The macro triggers (slots 9 / 13) hold Ctrl / Alt and turn the d-pad and face
   slots into 1 ..= 8 (retail's pad macro functions 0xa8 / 0xb0.. are not built). The sticks never step a window's
   cursor and keep moving / turning with a window up.
+- Windows: LT / RT are a macro trigger only while retail's macro gate is open (FUN_101a33e0: field, no window but
+  the action menu). With a window up they are the page modifier, as key function 0xa8 reads them alongside Ctrl / Alt:
+  the d-pad's arrows carry Ctrl / Alt, so LT / RT + d-pad pages a list like Ctrl / Alt + arrow, and A / B / X stay
+  Enter / Escape / Num-. Their pad bits stay set, so 0x89 (item compare, LT) and 0x9a (map fast scroll, RT) answer
+  natively. Y is slot 2, which 0x11 / 0x78 already read (item sort, list view, log cycle).
