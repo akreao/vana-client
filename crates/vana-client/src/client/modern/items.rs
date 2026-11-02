@@ -65,6 +65,8 @@ struct Mouse {
     wheel: f32,
     /// A row's star clicked: the item.
     star: Option<u16>,
+    /// A row right-clicked: its slot (index, id) and where.
+    menu: Option<(u8, u16, egui::Pos2)>,
 }
 
 /// The Items list (or the action menu's direct-use list): the rows from the scroll with icons and quantities in the
@@ -158,6 +160,14 @@ fn list(p: &mut Panels, w: &mut World) {
             if resp.clicked() && !starred {
                 mouse.click = Some(k);
             }
+            if resp.secondary_clicked()
+                && sub.is_none()
+                && sort.is_none()
+                && manual.is_none()
+                && let Some(at) = resp.interact_pointer_pos()
+            {
+                mouse.menu = Some((slot.index, slot.id, at));
+            }
             ui.add_space(2.0);
         }
         // The bar: the rows shown out of all, at the right edge.
@@ -218,6 +228,9 @@ fn list(p: &mut Panels, w: &mut World) {
     if let Some(id) = mouse.star.take() {
         super::super::favs::toggle(w, super::super::favs::Fav::Item(id));
         return;
+    }
+    if let Some((index, id, at)) = mouse.menu.take() {
+        super::ctxmenu::open(m, super::ctxmenu::Menu::Item { at, index, id, moving: false });
     }
     apply(w, mouse, sort, sub);
 }

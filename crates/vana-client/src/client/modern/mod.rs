@@ -17,6 +17,7 @@ mod combat;
 mod command;
 mod config;
 mod craft;
+mod ctxmenu;
 mod equip;
 mod extras;
 mod favs;
@@ -135,6 +136,8 @@ pub struct Modern {
     line_sel: std::cell::Cell<bool>,
     chat_menu: std::cell::RefCell<Option<chatsel::Menu>>,
     chat_act: std::cell::RefCell<Option<chatsel::Act>>,
+    /// The open right-click menu on an item, a party row or an actor (ctxmenu.rs).
+    ctx_menu: std::cell::RefCell<Option<ctxmenu::Menu>>,
     /// The retail windows drawn this frame: the edge windows give way to them (they draw under every panel).
     retail: std::cell::RefCell<Vec<Rect>>,
     /// A place changed during a drag: saved once the pointer is let go.
@@ -189,6 +192,7 @@ impl Modern {
             line_sel: Default::default(),
             chat_menu: Default::default(),
             chat_act: Default::default(),
+            ctx_menu: Default::default(),
             dirty: false,
         }
     }
@@ -293,6 +297,7 @@ impl Modern {
         charlnk::draw(&mut p, w);
         mogdoor(&mut p, w);
         event_input(&mut p, w);
+        ctxmenu::draw(self, ctx, w);
         let this = std::mem::take(&mut p.this);
         *self.rects.borrow_mut() = this;
         if changed {
