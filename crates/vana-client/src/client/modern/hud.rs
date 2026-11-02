@@ -5,7 +5,7 @@
 //! draw them too.
 
 use super::super::resttick::Shown;
-use super::super::{App, World, buffs, hudtop, items::JOBS, monstrosity, objective, radar, self_entity, target, vana_now};
+use super::super::{App, World, buffs, event, hudtop, items::JOBS, monstrosity, objective, radar, self_entity, target, vana_now};
 use super::{Look, Modern, Panels, Title, chat, paint};
 use egui::{Align2, Color32, FontFamily, FontId, Painter, Pos2, Rect, Sense, Stroke, Ui, pos2, vec2};
 use std::f32::consts::PI;
@@ -702,8 +702,8 @@ pub fn draw(p: &mut Panels, w: &mut World) {
         status_panel(p, &v, small);
     }
     // Hidden while engaged (user, 2026-11-01) by the Combat mode's default (modes.rs); what rides on it drops to the
-    // chat window.
-    if let Some(v) = where_view(p.look(), w) {
+    // chat window. In an event too, as retail's compass it stands for (hudtop.rs).
+    if let Some(v) = where_view(p.look(), w).filter(|_| !event::active(w)) {
         where_panel(p, &v);
     }
     let (party, allies) = party_rows(p.look(), w);
@@ -735,10 +735,13 @@ pub fn draw(p: &mut Panels, w: &mut World) {
         let t = target::slot_target(w, k);
         target::pick(w, t);
     }
-    if let Some(v) = target_view(w, p.gu) {
+    // An event takes the target window down unless it keeps it (EventPara2 bit 1, FUN_10085a00), as the retail HUD
+    // does (client/mod.rs world_hud); the focus panel goes with it.
+    let keeps_target = event::keeps_target(w);
+    if let Some(v) = target_view(w, p.gu).filter(|_| keeps_target) {
         target_panel(p, &v);
     }
-    let others = others_view(w, p.gu);
+    let others = if keeps_target { others_view(w, p.gu) } else { Vec::new() };
     if let Some(t) = others_panel(p, &others) {
         target::pick(w, Some(t));
     }
