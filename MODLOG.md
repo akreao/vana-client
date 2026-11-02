@@ -10086,7 +10086,7 @@ PS2-era system, statuses 6 / 0x26.. and 0x081 / 0x066, is not done: LSB never se
   msglist, FUN_101ff3e0..FUN_10200d70; not on LSB), **0x20** only cleared (FUN_101e3430, link5), **0x80000000** an
   auction bid in flight (LAB_101d95b0 with DAT_1066344e; cleared FUN_101d7ac0 / FUN_101da370).
 - Ours now adds the search (search::busy) and the bid (bid.pending) to the strip; the Help Desk's (its Q&A never
-  loads in ours) and the mail windows' are not modelled.
+  loads in ours) is not modelled. The mail windows' 0x10: see "The busy strip's 0x10: PlayOnline message jobs".
 
 ## 0x00E SubKind 5 / 6 and event op 0xb6 0x11 (2026-10-26; partly traced)
 
@@ -11133,7 +11133,7 @@ keeps its newest 100 rows *(inf: retail ~50 at the switch, up to 100 while open)
   message; the unread count at (+0x6c, +0x10), 0x60808080) for 60 ticks (DAT_10385270), page 1 the network for 120
   (DAT_10385272), held on page 1 while nothing is unread; the modern top bar the same with its own envelope. Seen live
   in both UIs.
-- Not done: netstat's Help Desk count (GM replies) and its second count (engine +0xe), the busy strip bit 0x10, deleting / unblocking / reordering
+- Not done: netstat's Help Desk count (GM replies) and its second count (engine +0xe), deleting / unblocking / reordering
   (retail has no in-game way: the user's call), Away back to Online at login *(inf, spec 2.5)*.
 - Also: the K.O. windows (dead, mp_dead) drawn 8 / 4 px larger (ours, the user's call, as the raise prompt).
 
