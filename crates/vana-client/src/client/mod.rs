@@ -5559,6 +5559,8 @@ struct World {
     paste_request: bool,
     /// The auto-translate candidate list (menu fep) while open.
     fep: Option<fep::Fep>,
+    /// Tab completion's list in the macro editor or the comment editor (fep.rs FieldFep).
+    field_fep: Option<fep::FieldFep>,
     /// The log window's size and scroll state, and the top bar / Network / compass state.
     log: logwin::LogWin,
     /// Log window 2 (logwin2, config 0xb4) and whether it was up last frame (a reopen rebuilds its lines).
@@ -7537,6 +7539,7 @@ impl App {
                             log_selection: None,
                             paste_request: false,
                             fep: None,
+                            field_fep: None,
                             log: Default::default(),
                             log2: logwin::LogWin::second(),
                             log2_up: false,
