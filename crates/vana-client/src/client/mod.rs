@@ -8702,6 +8702,9 @@ impl App {
                     world.pos = Vec3::from(pos);
                     world.pos_zone = zone;
                     world.unsettled = true;
+                    // The drawn facing starts at the new heading (a zone-in into the zone already loaded settles in
+                    // the same frame, before the easing would snap it); the old float facing is the last zone's.
+                    (world.my_draw_yaw, world.my_face) = (None, None);
                     log::info!("zone-in: zone {zone} at {:?} dir {dir}", pos);
                     // FUN_1018b500 -> FUN_1001e4f0: the view shake stops at a zone load.
                     world.camst.shake = camera::Shake::default();
