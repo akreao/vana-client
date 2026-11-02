@@ -37,8 +37,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Skipped only when the published text is the same AND its signature checks against the key built into
+          # clients now: after a key rotation or a half-finished upload the list is signed again.
           gh release download code-pins -R "$GITHUB_REPOSITORY" -p code-pins.txt -O published.txt 2>/dev/null || : > published.txt
-          if cmp -s code-pins.txt published.txt; then echo "same=1" >> "$GITHUB_OUTPUT"; echo "unchanged"; fi
+          gh release download code-pins -R "$GITHUB_REPOSITORY" -p code-pins.txt.sig -O published.sig 2>/dev/null || : > published.sig
+          pub=$(tr -d ' \n' < release/code-pins-key.pub)
+          if [ ${#pub} -eq 64 ]; then
+            # An Ed25519 SubjectPublicKeyInfo is this fixed 12-byte prefix and the 32-byte key.
+            printf "$(printf '302a300506032b6570032100%s' "$pub" | sed 's/../\\x&/g')" > pub.der
+            valid=0
+            openssl pkeyutl -verify -rawin -pubin -keyform DER -inkey pub.der -in published.txt -sigfile published.sig >/dev/null 2>&1 && valid=1
+          else
+            valid=0
+          fi
+          if cmp -s code-pins.txt published.txt && [ "$valid" = 1 ]; then echo "same=1" >> "$GITHUB_OUTPUT"; echo "unchanged"; fi
       - name: Sign and publish
         if: steps.diff.outputs.same != '1'
         env:
