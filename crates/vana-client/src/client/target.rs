@@ -630,7 +630,9 @@ pub fn confirm_target(w: &mut World) {
 /// pick; else the actor under the pointer becomes the target / the prompt's pick, and a click that leaves it as it
 /// was confirms (the prompt, the target, or with none the action menu). After a drag only the pick runs. Right:
 /// cancels the prompt, clears an unlocked target, or with none stops autorun. True when it confirmed.
-pub fn click(w: &mut World, picked: Option<u32>, left: bool, drag: bool) -> bool {
+/// `double` (ours, the modern UI's double click on the target): instead of the action menu, the safe default runs as
+/// Ctrl+C does (talk to an NPC, check a player or a monster), closing the menu the first click opened.
+pub fn click(w: &mut World, picked: Option<u32>, left: bool, drag: bool, double: bool) -> bool {
     log::debug!("world click left {left} drag {drag} picked {picked:?} target {:?}", w.target);
     if !left {
         if sub_up(w) {
@@ -659,6 +661,9 @@ pub fn click(w: &mut World, picked: Option<u32>, left: bool, drag: bool) -> bool
     }
     if sub_up(w) {
         confirm_sub(w);
+    } else if double {
+        w.action_menu = None;
+        super::check_target(w);
     } else {
         confirm_target(w);
     }
