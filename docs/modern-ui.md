@@ -4,6 +4,9 @@ The plan for vana-client's modern interface, from the user's planning document (
 26 October 2026), with the decisions taken since and the state of the work. Built on branch `ui-update`, merged into
 master 2026-10-27 (kept).
 
+Feature branches don't edit this file: their State updates go in `docs/modern-ui/`, one file each, and are folded
+in here later (see `docs/modern-ui/README.md`).
+
 ## Decisions (2026-10-26)
 
 - **Runtime toggle.** The retail UI stays the default and untouched. Settings > Client > Interface switches between
@@ -298,8 +301,11 @@ Milestone 1:
   and Global drawn natively (rows from the pages' controls, named with their layouts' captions, help lines);
   the list pages open retail's windows over it.
 - Storage (modern/storage.rs): the bags as tabs, Mog Safe / Safe 2 and Mog Wardrobe 1..8 merged; the bag beside the
-  inventory; a click moves a stack (right click one), into a merged bag the first part with room that takes it;
-  retail's colours say what may move.
+  inventory; a click (or Ctrl-click) moves a stack (right click one), into a merged bag the first part with room that
+  takes it; retail's colours say what may move. Milestone 2 (2026-11-02): a row dragged onto the other pane moves
+  its stack, the pane outlined teal / red for a valid / invalid drop; Shift (on the drop, a click or Enter) asks how
+  many; a refused row says why (hover, and under the lists after a try); a sent move shows as pending until the
+  server moves it, and one the server ignores is explained (nothing moves optimistically, so nothing is restored).
 - Plate badges: the approved SVG set (assets/modern/badges) in place of retail's glyphs; the pearl tinted by its
   linkshell; rank stars, the recruiter star in its orb, the master stars above.
 - Icons: batches 1 and 2 (131) redrawn in VectorCraft and approved.
@@ -542,10 +548,8 @@ Milestone 1:
   names (a status id) rather than prints is kept as it is. Live: Warcry with a bot in the party.
 - The target panel's name in retail's name colour (FUN_1008db40 as the plates: unclaimed monster pale yellow, our
   party's claim red, another's magenta).
-- The action registry (2026-11-02, ours; plan D): client/registry.rs gives, for a spell or an ability, its valid
-  targets (the DAT bits by the prompt's kinds), its range (spell +0x45, table 0x103644a8), the current target's flat
-  distance when the action may take it, and why it can't be used now (retail's group 7 refusal line from
-  magic_check / ability_check, else the effect that stops it: asleep, silenced, amnesia ...). The magic and ability
-  lists show it under the cost box ("Range 20 · Self, Party · Target 12.3"), the reason in red, and "Target out of
-  range" past range + 0.5 (the prompt's red arrow). Range only warns: the row greys by retail's checks alone.
+- Double click on the world (2026-11-02, ours; the pack's mouse contract): with the modern UI, a second plain left
+  click on the same actor within 500 ms runs the safe default instead of opening the action menu: talk to an NPC or
+  a door, check a player or a monster (retail's Ctrl+C, FUN_10130280). A slower second click stays retail's
+  (confirm: talk, or the action menu); a locked target, a sub-target prompt, a drag and the classic UI are unchanged.
 - Not yet: alliance rows live.
