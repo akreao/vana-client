@@ -49,9 +49,17 @@ fn place(lua: &Lua, data: &Path, path: &str) -> mlua::Result<PathBuf> {
     match r.strip_prefix("shared") {
         Ok(rest) => {
             super::api::need(lua, "files.shared")?;
-            no_links(&super::data_dir().join(".shared"), rest, path)
+            no_links(&super::data_dir(), &Path::new(".shared").join(rest), path)
         }
-        Err(_) => no_links(data, &r, path),
+        // From mod-data down, so a link at <id> or <id>/files is caught too (mod-data itself may be a link: the
+        // user's own choice of where it lives).
+        Err(_) => {
+            let root = super::data_dir();
+            match data.strip_prefix(&root) {
+                Ok(sub) => no_links(&root, &sub.join(r), path),
+                Err(_) => no_links(data, &r, path),
+            }
+        }
     }
 }
 
@@ -357,6 +365,8 @@ mod tests {
         assert!(p("new/b.txt").is_ok());
         assert!(p("out").is_err());
         assert!(p("out/x.txt").is_err());
+        // A link as the mod's own folder is caught from the root down.
+        assert!(super::no_links(&base, std::path::Path::new("out/files/a.txt"), "a.txt").is_err());
         let _ = std::fs::remove_dir_all(&base);
     }
 }

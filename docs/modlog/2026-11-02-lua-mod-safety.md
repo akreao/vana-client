@@ -5,7 +5,8 @@
   error and ends the wait (as an error did before). A test that looped used to freeze the client.
 - require: a module name with a backslash or a colon is refused, as `..` and a leading `/` were (on Windows those
   made an absolute path that joined past the mod's folder).
-- fs: a path whose existing part is a symlink, in the mod's data folder or the shared area, is refused, so a link
-  can't lead read, write, list, delete or move outside the folder.
+- fs: a path whose existing part is a symlink, from mod-data down (the mod's <id>/files folder or .shared, and
+  the path in it), is refused, so a link can't lead read, write, list, delete or move outside the folder. mod-data
+  itself may be a link (where the user keeps it).
 - Not changed: mods.call runs the provider's function with the provider's grants. Whether it should check the
   caller's grants instead is still open (upstream's permission model).
