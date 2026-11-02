@@ -3,6 +3,8 @@
 Confirmed facts only; each with where it was verified. Sources: LSB `~/landsandboat` (commit d90234d2d1),
 xiloader (`~/ffxi/lab/xiloader`, ceb79a0), Ghidra on the installer. Decompiled output stays in `~/ffxi/lab`.
 
+New entries go in `docs/modlog/` as one file each and are folded in here later (see `docs/modlog/README.md`).
+
 ## Installer (FFXIFullSetup_US)
 - RAR5 SFX, 5 volumes. Contents: `FFXISetup.exe` (MFC bootstrapper), `PlayOnline/PlayOnlineViewer.msi`,
   `FINAL_FANTASY_XI/FINAL_FANTASY_XI.msi` + `data1..7.cab`, `redist/Directx_Jun2010`.
