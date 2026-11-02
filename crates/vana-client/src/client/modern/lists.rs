@@ -6,6 +6,7 @@
 use super::super::listsearch::{self, Hit};
 use super::super::magic::{self, Cat, Cats, Kind, ListWin, VISIBLE};
 use super::super::scrollbar::Msg;
+use super::super::registry;
 use super::super::World;
 use super::{Panels, Title, kit, paint};
 use crate::audio::Ui as Se;
@@ -272,6 +273,38 @@ fn cost_lines(w: &World, win: &ListWin) -> Vec<(&'static str, String)> {
     }
 }
 
+/// The action registry's view of the cursor's spell or ability (ours, plan D).
+fn registry_info(w: &World, win: &ListWin) -> Option<registry::Info> {
+    let at = win.rows.get(win.scroll + win.cursor).copied()?;
+    match win.kind {
+        Kind::Magic => registry::spell(w, at),
+        Kind::Ability => registry::ability(w, at),
+        Kind::Mount | Kind::Emote => None,
+    }
+}
+
+/// Under the cost box: range, valid targets and the current target's distance, then why the row is greyed (or that
+/// the target is out of reach), in the HP red.
+fn registry_lines(ui: &mut Ui, m: &super::Modern, info: &registry::Info) {
+    let mut facts: Vec<String> = Vec::new();
+    if let Some(r) = info.range {
+        facts.push(format!("Range {r:.0}"));
+    }
+    if !info.targets.is_empty() {
+        facts.push(info.targets.join(", "));
+    }
+    if let Some(d) = info.distance.filter(|_| !info.out_of_range()) {
+        facts.push(format!("Target {d:.1}"));
+    }
+    if !facts.is_empty() {
+        ui.label(egui::RichText::new(facts.join("  ·  ")).size(m.theme.small).color(m.theme.color("muted")));
+    }
+    let warn = info.why.clone().or_else(|| info.out_of_range().then(|| format!("Target out of range ({:.1}).", info.distance.unwrap_or_default())));
+    if let Some(why) = warn {
+        ui.label(egui::RichText::new(why).size(m.theme.small).color(m.theme.color("hp")));
+    }
+}
+
 /// The open list: its rows from the scroll, the sort strip (Num+ focuses it), the cost box, the bar.
 fn list(p: &mut Panels, w: &mut World) {
     let Some(win) = w.ability.as_ref().or(w.magic.as_ref()).filter(|x| !x.hidden).cloned() else { return };
@@ -330,7 +363,8 @@ fn list(p: &mut Panels, w: &mut World) {
         kit::bar(ui.painter(), m, track, win.rows.len(), VISIBLE, win.scroll);
         // The cost box for the cursor's row, and Manual Sort's hint.
         let lines = cost_lines(w, &win);
-        if !lines.is_empty() || win.manual > 0 {
+        let info = registry_info(w, &win);
+        if !lines.is_empty() || win.manual > 0 || info.is_some() {
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 18.0;
@@ -339,6 +373,9 @@ fn list(p: &mut Panels, w: &mut World) {
                     ui.label(egui::RichText::new(value).size(m.theme.ui).color(m.theme.color("text")));
                 }
             });
+            if let Some(info) = &info {
+                registry_lines(ui, m, info);
+            }
             if win.manual > 0 {
                 let hint = if win.manual == 1 { "Manual Sort: pick a row to move." } else { "Manual Sort: pick its new place." };
                 ui.label(egui::RichText::new(hint).size(m.theme.small).color(m.theme.color("gold")));
