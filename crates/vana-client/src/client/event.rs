@@ -420,19 +420,23 @@ pub struct Pose {
     pub turning: bool,
     /// The direction last seen (+0xe4), for the step motions of a turn.
     dir: f32,
-    /// Not retail: the place, rotation and tilt before the last VM step, drawn toward the current ones by the part of
-    /// a tick since (`drawn`).
+    /// Not retail: the place, rotation and tilt drawn when the last VM step came, drawn toward the current ones over
+    /// the tick after it (`drawn`).
     from: (Vec3, f32, [f32; 2]),
+    /// Ticks drawn since the last VM step, counting the frame that ran it.
+    since: f32,
 }
 
 impl Pose {
     fn new(pos: Vec3, yaw: f32, tilt: [f32; 2]) -> Pose {
-        Pose { pos, yaw, tilt, ratio: 0.0, turning: false, dir: yaw, from: (pos, yaw, tilt) }
+        Pose { pos, yaw, tilt, ratio: 0.0, turning: false, dir: yaw, from: (pos, yaw, tilt), since: 1.0 }
     }
 
-    /// Not retail (it draws a whole number of ticks a frame): the pose `t` (0..1) of a tick past the step before the
-    /// last. The bodies move in 60 Hz VM steps; drawn as they are at a faster frame rate they stood still for some
-    /// frames and jumped on the next, against a camera path sampled every frame, and the actors shook.
+    /// Not retail (it draws a whole number of ticks a frame): `t` (0..1) of the way from `from` to the stepped pose.
+    /// The bodies move in 60 Hz VM steps; drawn as they are at a faster frame rate they stood still for some frames
+    /// and jumped on the next, against a camera path sampled every frame, and the actors shook. Each step is drawn
+    /// across the tick that follows it, starting from where the body was drawn, so it never goes back; a frame of a
+    /// tick or more (60 fps and below) draws the stepped pose as before.
     fn drawn(&self, t: f32) -> Pose {
         let (pos, yaw, tilt) = self.from;
         let t = t.clamp(0.0, 1.0);
@@ -2111,6 +2115,9 @@ pub fn update(w: &mut World, dt: f32) {
     if ran > 0 {
         sync(&mut live, w, ran as f32, ran as f32 / 60.0);
     }
+    for p in live.st.poses.values_mut() {
+        p.since += ticks;
+    }
     if !live.rt.done() && live.rt.idle() && live.st.msg.is_none() && live.st.choice.is_none() {
         // Every thread ended without 0x21: the server ends these (0x052); then the client cancels.
         let since = *live.st.idle_since.get_or_insert_with(Instant::now);
@@ -2163,9 +2170,12 @@ fn sync(live: &mut Live, w: &mut World, ticks: f32, dt: f32) {
         let pose = live.st.poses.entry(id).or_insert(Pose::new(p, b.dir, b.tilt));
         let step = p - pose.pos;
         let flat = Vec3::new(step.x, 0.0, step.z).length();
-        // A placement is drawn at once; a step is drawn across the next tick.
+        // A step is drawn across the next tick from where the body is drawn now; a placement's place and tilt at
+        // once (its rotation still eases below, so it eases from the drawn one).
         let placed = snap || flat > 2.0 * ticks;
-        pose.from = if placed { (p, b.dir, b.tilt) } else { (pose.pos, pose.yaw, pose.tilt) };
+        let now = pose.drawn(pose.since);
+        pose.from = if placed { (p, now.yaw, b.tilt) } else { (now.pos, now.yaw, now.tilt) };
+        pose.since = 0.0;
         pose.pos = p;
         pose.tilt = b.tilt;
         let moving = flat >= 0.01 * ticks.max(1e-3);
@@ -2488,11 +2498,9 @@ pub fn bound(w: &World, id: u32) -> bool {
     w.event.as_ref().is_some_and(|l| l.st.bound.contains(&id))
 }
 
-/// A bound actor's drawn transform while the event runs: between its last two VM steps by the part of a tick
-/// waiting (one tick behind the VM).
+/// A bound actor's drawn transform while the event runs: on its way to its last VM step, over the tick after it.
 pub fn pose(w: &World, id: u32) -> Option<Pose> {
-    let l = w.event.as_ref()?;
-    l.st.poses.get(&id).map(|p| p.drawn(l.st.vm_ticks))
+    w.event.as_ref()?.st.poses.get(&id).map(|p| p.drawn(p.since))
 }
 
 /// A bound actor's event status (+0x174, op 0xac sub 1); 0 when none was set.
@@ -3193,7 +3201,7 @@ mod tests {
         assert_eq!(HeldClock { day: None, minute: 18 * 60, moon: false }.moon_weekday(), None);
     }
 
-    /// A body's step is drawn across the tick after it: between the two places by the waiting part of a tick, the
+    /// A body's step is drawn across the tick after it: between the two places by the part of a tick drawn since, the
     /// rotation the short way round; a fresh pose is drawn where it is.
     #[test]
     fn pose_drawn_between_steps() {
