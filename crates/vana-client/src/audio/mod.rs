@@ -334,6 +334,19 @@ impl Audio {
         self.send(Cmd::BgmVolume { level, ticks: ticks.max(0) });
     }
 
+    /// The mixer has a music track (FUN_10246710(0, -1): the stream's +0x94 is set).
+    pub fn music_playing(&self) -> bool {
+        self.status.bgm.load(std::sync::atomic::Ordering::Relaxed) != 0
+    }
+
+    /// Event op 0x5c 0xb1 (FUN_100378b0(DAT_10463940)): the track last started plays again when the mixer has none.
+    /// Ours skips it while a change is under way, which starts its own track.
+    pub fn restart_music(&mut self) {
+        if !self.music_playing() && self.playing != 0 && self.task.is_none() {
+            self.start(self.playing, self.cur_vol);
+        }
+    }
+
     /// A music change is still under way (event op 0x9a waits for it).
     pub fn music_changing(&self) -> bool {
         self.task.is_some()
