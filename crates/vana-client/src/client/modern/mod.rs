@@ -1246,20 +1246,63 @@ fn title_row(ui: &mut Ui, m: &Modern, t: &Title) {
 }
 
 /// A title row in another colour (the target's name in its retail name colour).
+///
+/// Ours: the note keeps to the room the title leaves (a long target name over "Commands" ran under the title). A note
+/// too long for one line breaks in two as retail's target window breaks a name (FUN_101c9fa0, see `name_lines`), and
+/// the row grows to hold both lines. A title too long for the row leaves the note at least 40% of it.
 fn title_row_in(ui: &mut Ui, m: &Modern, t: &Title, colour: egui::Color32) {
-    let h = 28.0;
-    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), h), egui::Sense::hover());
-    let p = ui.painter();
-    let mut x = r.min.x;
-    if let Some(s) = t.icon.and_then(|i| m.art.sprite(i)) {
-        p.add(paint::image(&s, pos2(x, r.center().y - 13.0), 26.0, egui::Color32::WHITE));
-        x += 34.0;
-    }
+    const GAP: f32 = 12.0;
+    let width = ui.available_width();
+    let icon = t.icon.and_then(|i| m.art.sprite(i));
+    let lead = if icon.is_some() { 34.0 } else { 0.0 };
     let font = FontId::new(m.theme.title, FontFamily::Name(STRONG.into()));
-    p.text(pos2(x, r.center().y), egui::Align2::LEFT_CENTER, t.text, font, colour);
-    if let Some(n) = t.note {
-        p.text(pos2(r.max.x, r.center().y), egui::Align2::RIGHT_CENTER, n, FontId::proportional(m.theme.small), m.theme.color("muted"));
+    let small = FontId::proportional(m.theme.small);
+    let muted = m.theme.color("muted");
+    let painter = ui.painter().clone();
+    let measure = |s: &str| painter.layout_no_wrap(s.to_string(), small.clone(), muted).size().x;
+    let full = painter.layout_no_wrap(t.text.to_string(), font.clone(), colour).size().x;
+    let note_w = t.note.map(measure).unwrap_or(0.0);
+    let title_room = (if t.note.is_some() { width - lead - GAP - note_w.min(0.4 * width) } else { width - lead }).max(0.0);
+    let title = one_line(&painter, t.text, font, colour, title_room);
+    let room = (width - lead - full.min(title_room) - GAP).max(0.0);
+    let lines = t.note.map(|n| name_lines(n, room, &measure)).unwrap_or_default();
+    let line_h = painter.layout_no_wrap("Ag".into(), small.clone(), muted).size().y;
+    let h = 28.0f32.max(lines.len() as f32 * line_h + 2.0);
+    let (r, _) = ui.allocate_exact_size(vec2(width, h), egui::Sense::hover());
+    if let Some(s) = icon {
+        painter.add(paint::image(&s, pos2(r.min.x, r.center().y - 13.0), 26.0, egui::Color32::WHITE));
     }
+    painter.galley(pos2(r.min.x + lead, r.center().y - title.size().y / 2.0), title, colour);
+    let top = r.center().y - lines.len() as f32 * line_h / 2.0;
+    for (k, l) in lines.iter().enumerate() {
+        let g = one_line(&painter, l, small.clone(), muted, room);
+        painter.galley(pos2(r.max.x - g.size().x, top + k as f32 * line_h), g, muted);
+    }
+}
+
+/// A name in at most two lines of `room`, as retail's target window breaks one (FUN_101c9fa0): one line when it fits
+/// and has no ':'; else broken after the first ':' before the fit, else after the last ' ', '-', '@', ''' or ':' from
+/// the fit down to a quarter of it, else at the fit; when what is left still does not fit, cut at the fit, and the
+/// rest ends in an ellipsis (`one_line` when drawn). Ours: measured in chars by `measure`, not fontshp bytes, and the
+/// search starts at the fit, not retail's fit + 1 (which can leave the first line one char over).
+fn name_lines(s: &str, room: f32, measure: &dyn Fn(&str) -> f32) -> Vec<String> {
+    let c: Vec<char> = s.chars().collect();
+    let text = |a: usize, b: usize| c[a..b].iter().collect::<String>();
+    let fit = (0..=c.len()).take_while(|&n| measure(&text(0, n)) <= room).last().unwrap_or(0);
+    let colon = c.iter().position(|&ch| ch == ':');
+    if fit >= c.len() && colon.is_none() {
+        return vec![s.to_string()];
+    }
+    let brk = |ch: char| matches!(ch, ' ' | '-' | '@' | '\'' | ':');
+    let cut = match colon {
+        Some(i) if i < fit && i + 1 != fit => i + 1,
+        _ => (fit / 4..=fit.min(c.len().saturating_sub(1))).rev().find(|&i| brk(c[i])).map_or(fit, |i| i + 1),
+    };
+    let cut = cut.clamp(1, c.len().max(1));
+    let cut = if measure(text(cut, c.len()).trim_start()) <= room { cut } else { fit.max(1).min(c.len()) };
+    let first = text(0, cut).trim_end().to_string();
+    let rest = text(cut, c.len()).trim_start().to_string();
+    if rest.is_empty() { vec![first] } else { vec![first, rest] }
 }
 
 /// `text` on one line of at most `width`, cut with an ellipsis.
@@ -1271,7 +1314,17 @@ pub(super) fn one_line(painter: &egui::Painter, text: &str, font: egui::FontId, 
 
 #[cfg(test)]
 mod layout_tests {
-    use super::{display_key, layout_of};
+    use super::{display_key, layout_of, name_lines};
+
+    #[test]
+    fn long_names_break_like_the_target_window() {
+        // 10 px a char.
+        let w = |s: &str| 10.0 * s.chars().count() as f32;
+        assert_eq!(name_lines("Goblin", 100.0, &w), vec!["Goblin"]);
+        assert_eq!(name_lines("Ophiotaurus of the Western", 120.0, &w), vec!["Ophiotaurus", "of the Western"]);
+        assert_eq!(name_lines("Qu'Bia: Arena", 200.0, &w), vec!["Qu'Bia:", "Arena"]);
+        assert_eq!(name_lines("Abcdefghijklmnopqrstuvwxyz", 100.0, &w), vec!["Abcdefghij", "klmnopqrstuvwxyz"]);
+    }
 
     #[test]
     fn display_layouts_belong_to_their_character() {
