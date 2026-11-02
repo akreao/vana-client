@@ -2570,13 +2570,14 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
         let out = c.pointer(gu, &mut world.game, p, input.moved, input.clicked, sw, sh);
         config_out(world, out);
     }
+    world.ptr_button = (input.pressed, input.down);
     // Mouse on an open window's item list (the modern layer's own list takes it there).
     if world.win.is_some()
         && !(world.modern && items::modern_list(world))
         && world.maze.screen.is_none()
         && let Some(p) = input.pointer
     {
-        items::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
+        items::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.linkshell.as_ref().is_some_and(|l| !world.modern || l.naming.is_some()) && world.linklist.is_none() && world.confirm.is_none()) {
         linkshell::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
@@ -5984,6 +5985,10 @@ struct World {
     info_page: std::cell::Cell<(usize, u16, usize)>,
     /// Windows as drawn this frame (name, frame, children), for the mouse (winhits.rs).
     win_hits: std::cell::RefCell<Vec<(String, [f32; 4], Vec<(u16, [f32; 4])>)>>,
+    /// The left button this frame (pressed, held), for the windows' held buttons (winhits::ctr).
+    ptr_button: (bool, bool),
+    /// itemctrl / moneyctr's - / + held under the pointer, and when it repeats next (winhits::ctr).
+    ctr_hold: Option<(u16, Instant)>,
     /// The ops' shared extdata buffer (DAT_104886bc).
     event_ext: [u8; 24],
     event_mem: crate::event_vm::Memory,
@@ -7799,6 +7804,8 @@ impl App {
                             info_win: None,
                             info_page: std::cell::Cell::new((0, 0, 1)),
                             win_hits: Default::default(),
+                            ptr_button: (false, false),
+                            ctr_hold: None,
                             event_ext: [0; 24],
                             event_mem: Default::default(),
                             event_end_at: None,
