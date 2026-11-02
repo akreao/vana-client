@@ -7,7 +7,7 @@
 
 use super::blowfish::Blowfish;
 use super::compress::Codec;
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use md5::{Digest, Md5};
 use std::net::{SocketAddr, UdpSocket};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
