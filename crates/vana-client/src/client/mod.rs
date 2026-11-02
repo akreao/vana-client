@@ -34,6 +34,7 @@ mod buffs;
 mod game_ui;
 mod hudtop;
 mod listsearch;
+mod pending;
 mod suggest;
 mod augment;
 mod iteminfo;
@@ -2586,7 +2587,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
     {
         items::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked);
     }
-    if let Some(p) = input.pointer.filter(|_| world.linkshell.as_ref().is_some_and(|l| !world.modern || l.naming.is_some()) && world.linklist.is_none() && world.confirm.is_none()) {
+    if let Some(p) = input.pointer.filter(|_| world.linkshell.is_some() && !world.modern && world.linklist.is_none() && world.confirm.is_none()) {
         linkshell::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.concierge_ui.is_some() && world.confirm.is_none()) {
@@ -3475,7 +3476,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
         blockers.extend(keyitems::draw(gu, world, sw, sh));
     }
     blockers.extend(quests::draw(gu, world, sw, sh));
-    if !world.modern || world.linkshell.as_ref().is_some_and(|l| l.naming.is_some()) || world.linklist.is_some() {
+    if !world.modern {
         blockers.extend(linkshell::draw(gu, world, sw, sh));
     }
     blockers.extend(concierge::draw(gu, world, sw, sh));
@@ -5558,6 +5559,8 @@ struct World {
     paste_request: bool,
     /// The auto-translate candidate list (menu fep) while open.
     fep: Option<fep::Fep>,
+    /// Tab completion's list in the macro editor or the comment editor (fep.rs FieldFep).
+    field_fep: Option<fep::FieldFep>,
     /// The log window's size and scroll state, and the top bar / Network / compass state.
     log: logwin::LogWin,
     /// Log window 2 (logwin2, config 0xb4) and whether it was up last frame (a reopen rebuilds its lines).
@@ -5949,6 +5952,8 @@ struct World {
     recent_save: bool,
     /// The modern UI Modes editor is open (/uimodes, modern/modes.rs).
     uimodes_open: bool,
+    /// The action we asked the server for and its answer so far (pending.rs).
+    asked: Option<pending::Pending>,
     /// The battle menu's suggestions (suggest.rs::refresh_root), when they were taken, and the one the cursor is on.
     root_sugg: Vec<suggest::Suggestion>,
     root_sugg_at: Option<Instant>,
@@ -7536,6 +7541,7 @@ impl App {
                             log_selection: None,
                             paste_request: false,
                             fep: None,
+                            field_fep: None,
                             log: Default::default(),
                             log2: logwin::LogWin::second(),
                             log2_up: false,
@@ -7803,6 +7809,7 @@ impl App {
                             recent_picks: self.cfg.modern_recent.get(&login.name).cloned().unwrap_or_default(),
                             recent_save: false,
                             uimodes_open: false,
+                            asked: None,
                             root_sugg: Vec::new(),
                             root_sugg_at: None,
                             suggest_sel: None,
@@ -12611,6 +12618,7 @@ impl App {
             combat::battle_frame(w);
             synth::update(w);
             resttick::update(w);
+            pending::update(w);
             servmes::frame(w);
         }
         // Config 0022: the opening movie before the title, which loads behind it.
