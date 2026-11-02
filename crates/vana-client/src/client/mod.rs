@@ -5926,6 +5926,8 @@ struct World {
     /// Where retail's target cursors (anc_l) go this frame, for the modern layer's own: screen fractions, the kind (0
     /// the target, 1 a prompt's saved target, 2 its pick) and the pick's range tint.
     modern_pointers: Vec<(f32, f32, u8, u32)>,
+    /// An actor a right click on the world asked the modern layer's menu for (modern/ctxmenu.rs).
+    actor_menu: Option<u32>,
     /// The game UI's layout size this frame (the modern layer turns its rects into screen fractions).
     ui_wh: (f32, f32),
     /// A yes/no prompt (FUN_102075f0) and whether Yes is highlighted.
@@ -7761,6 +7763,7 @@ impl App {
                             suggest_sel: None,
                             party_hp_max: HashMap::new(),
                             modern_pointers: Vec::new(),
+                            actor_menu: None,
                             ui_wh: (1.0, 1.0),
                             confirm: None,
                             shutdown: false,
@@ -10628,6 +10631,17 @@ impl App {
             let aspect = cfgapply::aspect(size, retail_aspect, world.game.get(0x43));
             if !drag {
                 fishing::click(world);
+            }
+            // Ours (modern UI): a right click that did not drag, on an actor, opens its menu (modern/ctxmenu.rs) in
+            // place of retail's right click (clear the target).
+            if !left
+                && !drag
+                && world.modern
+                && !target::sub_up(world)
+                && let Some(id) = Self::under_pointer(world, b, size, aspect).0.filter(|&id| id != world.my_id && world.entities.contains_key(&id))
+            {
+                world.actor_menu = Some(id);
+                return false;
             }
             let picked = if left { Self::under_pointer(world, b, size, aspect).0 } else { None };
             target::click(world, picked, left, drag)

@@ -374,6 +374,7 @@ pub fn party_panel(p: &mut Panels, id: &str, title: &str, rows: &[PartyRow], sma
                 if resp.clicked() {
                     clicked = Some(row.slot);
                 }
+                row_menu(m, &resp, row.slot);
                 continue;
             };
             // Room inside the row's frame lines: the labels start well under its top, the MP line ends well over its
@@ -416,9 +417,19 @@ pub fn party_panel(p: &mut Panels, id: &str, title: &str, rows: &[PartyRow], sma
             if resp.clicked() {
                 clicked = Some(row.slot);
             }
+            row_menu(m, &resp, row.slot);
         }
     });
     clicked
+}
+
+/// A right click on a party row opens its menu (ctxmenu.rs).
+fn row_menu(m: &Modern, resp: &egui::Response, slot: usize) {
+    if resp.secondary_clicked()
+        && let Some(at) = resp.interact_pointer_pos()
+    {
+        super::ctxmenu::open(m, super::ctxmenu::Menu::Party { at, slot });
+    }
 }
 
 pub fn target_panel(p: &mut Panels, v: &TargetView) {
