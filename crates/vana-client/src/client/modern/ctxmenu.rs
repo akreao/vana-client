@@ -166,7 +166,8 @@ fn items_list(w: &World) -> Option<bool> {
 /// The slot's row in the list shown, while it is still there with the same item.
 fn item_row(w: &World, index: u8, id: u16) -> Option<usize> {
     let direct = items_list(w)?;
-    gitems::listed(w, direct).iter().position(|s| s.index == index && s.id == id)
+    // Inventory rows only: the temporary items (listed first) keep retail's keys.
+    gitems::listed_at(w, direct).iter().position(|(c, s)| *c == gitems::INVENTORY && s.index == index && s.id == id)
 }
 
 /// A storage view state for the item rules (gitems::usable / tint): `bank` against the inventory, away from the
@@ -192,7 +193,7 @@ fn item_rows(w: &World, index: u8, id: u16, moving: bool) -> Option<Vec<Row>> {
         rows.push(("Back".into(), Act::Back, true));
         return Some(rows);
     }
-    let [can_use, can_drop] = gitems::iuse_states(w, index, id);
+    let [can_use, can_drop] = gitems::iuse_states(w, gitems::INVENTORY, index, id);
     let bazaar = super::items::bazaar_price(w, gitems::INVENTORY, index).is_some();
     if direct {
         return Some(vec![("Use".into(), Act::Use, can_use && !bazaar)]);
@@ -322,8 +323,8 @@ fn item_act(w: &mut World, index: u8, id: u16, act: Act) {
     *cursor = row - *scroll;
     match act {
         Act::Use if *direct => {}
-        Act::Use => *sub = Some(Sub::Use { child: 1, index, id }),
-        Act::Drop => *sub = Some(Sub::Use { child: 2, index, id }),
+        Act::Use => *sub = Some(Sub::Use { child: 1, c: gitems::INVENTORY, index, id }),
+        Act::Drop => *sub = Some(Sub::Use { child: 2, c: gitems::INVENTORY, index, id }),
         Act::Sort => *sort = Some(gitems::SortWin { cursor: 1, ask: None }),
         _ => return,
     }
