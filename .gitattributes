@@ -1,0 +1,3 @@
+# Entries are only ever appended, so a local merge can keep both sides.
+# (GitHub's merge button ignores this; new entries go in docs/modlog/ instead.)
+MODLOG.md merge=union
