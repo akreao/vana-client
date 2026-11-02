@@ -1013,6 +1013,20 @@ impl<'a> Panels<'a> {
             // Dragged past the screen's edge, it is saved where it will show.
             r = Rect::from_min_size(on_screen(Rect::from_min_size(r.min, vec2(r.width(), h)), screen), r.size());
         }
+        // A panel placed by its bottom (on another, on the screen's bottom, or risen to fit) is placed by last frame's
+        // height, so the frame its contents grow or shrink (the item info moving to a longer or shorter item) it stood
+        // that much too low or too high, then jumped. It moves now by the height it was drawn at.
+        if o.at.is_none() && !exact && m.dragging.borrow().as_deref() != Some(id) && (r.height() - h).abs() > 0.5 {
+            let top = |h: f32| {
+                let y = self.resolve(id, &place, h).y;
+                if o.height.is_none() && !BOTTOM.contains(&id) && h > 0.0 { y.min(screen.max.y - h).max(screen.min.y) } else { y }
+            };
+            let dy = top(r.height()) - top(h);
+            if dy.abs() > 0.01 {
+                ctx.transform_layer_shapes(shown.response.layer_id, egui::emath::TSTransform::from_translation(vec2(0.0, dy)));
+                r = r.translate(vec2(0.0, dy));
+            }
+        }
         let showing = Rect::from_min_max(pos2(r.min.x, r.max.y - r.height() * fold), r.max);
         // Placement trace (debug), only when a panel moves.
         thread_local!(static SEEN: std::cell::RefCell<HashMap<String, Pos2>> = Default::default());
@@ -1318,5 +1332,51 @@ mod layout_tests {
         assert_eq!(k, "Naji @2560x1440 60%");
         assert!(layout_of(&k, "Naji") && layout_of("Naji", "Naji"));
         assert!(!layout_of(&k, "Naj") && !layout_of("Najim @1920x1080 60%", "Naji"));
+    }
+}
+
+#[cfg(test)]
+mod panel_tests {
+    use super::*;
+
+    /// A docked panel whose contents grow or shrink keeps its bottom on the panel it sits on the same frame (the item
+    /// info moving between a long and a short item stood a frame too high or too low).
+    #[test]
+    fn docked_panel_keeps_its_bottom_as_it_resizes() {
+        let ctx = egui::Context::default();
+        let side = Some(16384);
+        let mut o = ctx.run_ui(egui::RawInput { max_texture_side: side, ..Default::default() }, |_| {});
+        o.textures_delta.clear();
+        let m = Modern::new(&ctx);
+        let mut layout = Layout::new();
+        let mut bottoms = Vec::new();
+        for (f, n) in [12usize, 12, 12, 2, 2, 12, 12, 1, 7].into_iter().enumerate() {
+            let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1280.0, 720.0))), time: Some(f as f64 * 0.1), max_texture_side: side, ..Default::default() };
+            let mut info = None;
+            let mut o = ctx.run_ui(raw, |ui| {
+                let ctx = ui.ctx();
+                let (mut changed, mut chat_font) = (false, 14.0);
+                let mut p = Panels { m: &m, ctx, gu: None, layout: &mut layout, vis: Default::default(), changed: &mut changed, chat_font: &mut chat_font, battle_in_all: &mut true, condense: &mut true, folded: &mut Default::default(), scan_kinds: &mut 7, this: Default::default(), retail: Default::default(), focus: None };
+                let combat = p.panel("combat", None, 200.0, |ui| {
+                    ui.label("Attack");
+                });
+                info = p.panel("iteminfo", None, 420.0, |ui| {
+                    for k in 0..n {
+                        ui.label(format!("line {k}"));
+                    }
+                }).zip(combat);
+                *m.rects.borrow_mut() = std::mem::take(&mut p.this);
+            });
+            o.textures_delta.clear();
+            // Frame 0 has egui's default screen.
+            if f > 0 {
+                let (r, under) = info.unwrap();
+                bottoms.push((r.max.y, under.min.y));
+            }
+        }
+        let gap = default_place("iteminfo").dock.unwrap().gap;
+        for (bottom, under) in bottoms {
+            assert!((bottom - (under - gap)).abs() < 0.5, "bottom {bottom} on {under}");
+        }
     }
 }
