@@ -217,6 +217,21 @@ fn timers_sample(m: &Modern, ctx: &egui::Context, x: f32, width: f32, side: supe
     });
 }
 
+/// Title rows whose notes are long: the Commands window on a target whose name takes two lines, on one with a ':',
+/// on a short one, and a target with a long name and a distance.
+fn titles_sample(p: &mut Panels) {
+    let m = p.m;
+    let rows = |ui: &mut egui::Ui, labels: &[&str]| {
+        for l in labels {
+            ui.label(egui::RichText::new(*l).size(m.theme.ui).color(m.theme.color("text")));
+        }
+    };
+    for (id, title, note) in [("combat", "Commands", "Ghillie Dhu of the Great Woods"), ("palette", "Battle", "Qu'Vho: Deathhurler"), ("list", "Commands", "Tonberry Creeper")] {
+        p.panel(id, Some(Title { icon: Some("icons/attack"), text: title, note: Some(note) }), 270.0, |ui| rows(ui, &["Attack", "Magic", "Abilities"]));
+    }
+    hud::target_panel(p, &TargetView { name: "Shadow Lord's Lieutenant of the North".into(), ring: "indicators/target_hostile", locked: false, hp: Some((100, 1.0)), colour: None, cast: None, distance: Some(4.2) });
+}
+
 fn sample(m: &Modern, ctx: &egui::Context, layout: &mut Layout, opts: &Opts) {
     let top = crate::client::hudtop::TopView {
         title: "Status".into(),
@@ -287,7 +302,12 @@ fn sample(m: &Modern, ctx: &egui::Context, layout: &mut Layout, opts: &Opts) {
     hud::cast_panel(&mut p, "cast", "Casting", 0.6, "60%");
     // A refused action's chip over the cast bar (pending.rs).
     super::pending::panel(&mut p, &super::pending::View { what: "Cure III".into(), on: Some("Raven".into()), state: super::super::pending::State::Refused("Raven is out of range.".into()), secs: 0.6 });
-    hud::target_panel(&mut p, &TargetView { name: "Robber Crab".into(), ring: "indicators/target_hostile", locked: true, hp: Some((72, 0.72)), colour: Some(egui::Color32::from_rgb(255, 80, 80)), cast: Some(("Firaga".into(), Some(0.4))), distance: Some(12.4) });
+if !opts.titles {
+        hud::target_panel(&mut p, &TargetView { name: "Robber Crab".into(), ring: "indicators/target_hostile", locked: true, hp: Some((72, 0.72)), colour: Some(egui::Color32::from_rgb(255, 80, 80)), cast: Some(("Firaga".into(), Some(0.4))), distance: Some(12.4) });
+    }
+    if opts.titles {
+        titles_sample(&mut p);
+    }
     if opts.list {
         list_sample(&mut p);
     }
@@ -360,6 +380,8 @@ pub struct Opts {
     pub menus: bool,
     /// The alliance windows with sample rows.
     pub alliance: bool,
+    /// Title rows with long notes.
+    pub titles: bool,
 }
 
 pub fn shot(width: u32, height: u32, scale: u32, backdrop: Option<&Path>, out: &Path, opts: &Opts) -> Result<()> {
