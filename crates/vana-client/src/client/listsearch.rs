@@ -617,7 +617,7 @@ pub fn pick(w: &mut World, h: &Hit) {
             *scroll = if k < *scroll { k } else if k >= *scroll + vis { k + 1 - vis } else { *scroll };
             *cursor = k - *scroll;
         }
-        items::key(w, egui::Key::Enter, false, false);
+        items::key(w, egui::Key::Enter, false, false, false);
         return;
     }
     if let (Some(k), Some(c)) = (h.cat, w.cats) {

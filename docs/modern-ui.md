@@ -299,8 +299,11 @@ Milestone 1:
   and Global drawn natively (rows from the pages' controls, named with their layouts' captions, help lines);
   the list pages open retail's windows over it.
 - Storage (modern/storage.rs): the bags as tabs, Mog Safe / Safe 2 and Mog Wardrobe 1..8 merged; the bag beside the
-  inventory; a click moves a stack (right click one), into a merged bag the first part with room that takes it;
-  retail's colours say what may move.
+  inventory; a click (or Ctrl-click) moves a stack (right click one), into a merged bag the first part with room that
+  takes it; retail's colours say what may move. Milestone 2 (2026-11-02): a row dragged onto the other pane moves
+  its stack, the pane outlined teal / red for a valid / invalid drop; Shift (on the drop, a click or Enter) asks how
+  many; a refused row says why (hover, and under the lists after a try); a sent move shows as pending until the
+  server moves it, and one the server ignores is explained (nothing moves optimistically, so nothing is restored).
 - Command palette (2026-11-02, ours; listsearch.rs, modern/lists.rs): Ctrl+Space in the field searches every spell,
   ability, usable item and action menu command (Attack, Disengage, Switch Target, Check, Call for Help, Heal); recent
   picks show on the empty field; a pick goes through the menus as the keys would.
@@ -546,4 +549,8 @@ Milestone 1:
   names (a status id) rather than prints is kept as it is. Live: Warcry with a bot in the party.
 - The target panel's name in retail's name colour (FUN_1008db40 as the plates: unclaimed monster pale yellow, our
   party's claim red, another's magenta).
+- Double click on the world (2026-11-02, ours; the pack's mouse contract): with the modern UI, a second plain left
+  click on the same actor within 500 ms runs the safe default instead of opening the action menu: talk to an NPC or
+  a door, check a player or a monster (retail's Ctrl+C, FUN_10130280). A slower second click stays retail's
+  (confirm: talk, or the action menu); a locked target, a sub-target prompt, a drag and the classic UI are unchanged.
 - Not yet: alliance rows live.
