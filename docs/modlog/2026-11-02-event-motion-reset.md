@@ -5,8 +5,8 @@
   0xc1: pc+1). When the event binds that actor (+0x120 bit 7) and it has a model (bit 9), it waits for the model
   (FUN_100d12d0), stops the actor's event scheduler (FUN_10087d40: vtable +0x29c on +0x1ec / +0x1f4) and drops its
   motion files of kind 2 (FUN_100d44b0(2)). 0xc1 ends the frame after it; 0x5f does not.
-- Ours applied 0x5f sub 2 to the thread's own actor instead of the named one, so the 204 uses (mostly on NPCs other
-  than the event's) reset the wrong actor and left the named NPC's event motions running. It now takes the operand,
+- Ours applied 0x5f sub 2 to the thread's own actor instead of the named one, so the 204 uses (every one names an NPC
+  other than the block's own) reset the wrong actor and left the named NPC's event motions running. It now takes the operand,
   checks that the actor is bound and has a model, and handles 0xc1 the same way.
 - Traced, unchanged: op 0xac sub 4 (FUN_100bb180) ORs val@6 & 3 into actor@2's +0x13c, which the event teardown
   reads (FUN_100ae3f0 at 0x100ae422); its only uses (zone 280, four) pass 0, so it does nothing. Op 0x5c 0xb0 /
