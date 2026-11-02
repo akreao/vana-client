@@ -5954,8 +5954,6 @@ struct World {
     recent_save: bool,
     /// The modern UI Modes editor is open (/uimodes, modern/modes.rs).
     uimodes_open: bool,
-        return;
-    }
     /// Favourites (favs.rs keys, the strip's order), whether the strip shows, and whether either changed since the save.
     favourites: Vec<String>,
     fav_strip: bool,
