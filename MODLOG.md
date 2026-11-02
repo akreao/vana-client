@@ -13229,9 +13229,14 @@ Specs: `~/ffxi/lab/research/pol_map_session_spec.md`, `entity_update_spec.md` (a
   0xb7..0xba) is still unread. So ours is not retail: client/gamepad.rs reads pads with gilrs and acts as a keyboard.
   Buttons hold keys (DIK into `Input::set` for the key functions, egui key events for the windows, with cursor
   repeats after 0.4 s every 0.08 s); the sticks go to `Input::set_stick` and count in `Input::axis` as the compact
-  stick does (the larger of keys, compact stick and pad stick). The left stick does not move while typing; the right
-  stick follows the arrows' rule (not typing, no window). With a window up, or outside the field, the left stick
-  steps the cursor as the arrows instead of moving.
+  stick does (the larger of keys, compact stick and pad stick). The left stick does not move while typing but does
+  with a window up (the action menu: walk to the target); the right stick follows the arrows' rule (not typing, no
+  window). The sticks never drive menus: the d-pad does.
+- Defaults are the official PC layout for an Xbox 360 pad (PlayOnline new player tips, ff11newplayer/tips/en/list.html):
+  A Enter, B Escape, X main menu, Y active window, LB autorun, RB software keyboard / screenshot with windows hidden,
+  LT / RT macro windows, Back hide windows, Start log out, L3 rest / lock target, R3 first person, d-pad menus and
+  targets. In the field the d-pad runs actions, not keys: left / right target::cycle (as Tab / Shift+Tab), up / down
+  the party (target::party_pad_step: slots 0 ..= 5 as F1 ..= F6, wrapping; ours, the retail code not found).
 - A button bound to Ctrl / Alt (the triggers by default) makes the d-pad and face buttons press 1 ..= 8 while held:
   Ctrl / Alt + 1 ..= 8, the palettes' macros.
 - Config 0xce's choices 1 / 2 (Misc. 4) stay off: they need retail's pad count, FUN_101bced0.
