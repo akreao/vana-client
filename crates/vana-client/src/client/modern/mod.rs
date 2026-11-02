@@ -8,6 +8,7 @@
 mod auction;
 mod bluset;
 mod pupset;
+mod regioninfo;
 mod maze;
 mod charlnk;
 mod borders;
@@ -32,6 +33,7 @@ mod lists;
 mod loot;
 mod macros;
 mod minor;
+mod pending;
 mod paint;
 pub mod plates;
 mod points;
@@ -258,6 +260,7 @@ impl Modern {
         extras::draw(&mut p, w);
         hud::draw(&mut p, w);
         favs::draw(&mut p, w);
+        pending::draw(&mut p, w);
         command::draw(&mut p, w);
         combat::draw(&mut p, w);
         lists::draw(&mut p, w);
@@ -268,6 +271,7 @@ impl Modern {
         points::draw(&mut p, w);
         journal::draw(&mut p, w);
         social::draw(&mut p, w);
+        regioninfo::draw(&mut p, w);
         craft::draw(&mut p, w);
         macros::draw(&mut p, w);
         storage::draw(&mut p, w);
@@ -515,6 +519,8 @@ fn default_place(id: &str) -> Place {
         "alliance2" => at(0.87, 0.335),
         // The cast bar at retail's (16, 94); the Timers on the left edge, the minimap on the right one.
         "cast" => at(0.02, 0.21),
+        // The pending action's chip just over it (pending.rs).
+        "pending" => at(0.02, 0.16),
         // The 0x075 countdown under it, the objective's bars under that.
         "countdown" => at(0.02, 0.28),
         "objective" => at(0.02, 0.35),

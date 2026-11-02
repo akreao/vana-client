@@ -74,6 +74,11 @@ fn kit_sample(p: &mut Panels) {
             kit::button(ui, m, "ON", 64.0, kit::Btn { lit: true, ..Default::default() });
         });
     });
+    // link11 as the modern window draws it (no item cache here: a disc stands in for the shell icon).
+    let v = super::social::NameView { name: "Sunset Watch", rgb: [15, 9, 3], sel: 3, edit: 0 };
+    p.panel_at("naming sample", Some(Title { icon: Some("icons/linkshell"), text: "New Linkshell", note: None }), super::social::NAME_W + 44.0, pos2(720.0, 40.0), |ui| {
+        super::social::naming_body(ui, m, &v, None, true);
+    });
 }
 
 fn menu_sample(p: &mut Panels) {
@@ -280,6 +285,8 @@ fn sample(m: &Modern, ctx: &egui::Context, layout: &mut Layout, opts: &Opts) {
         hud::party_panel(&mut p, "alliance2", "Alliance", &a2, false, None);
     }
     hud::cast_panel(&mut p, "cast", "Casting", 0.6, "60%");
+    // A refused action's chip over the cast bar (pending.rs).
+    super::pending::panel(&mut p, &super::pending::View { what: "Cure III".into(), on: Some("Raven".into()), state: super::super::pending::State::Refused("Raven is out of range.".into()), secs: 0.6 });
     hud::target_panel(&mut p, &TargetView { name: "Robber Crab".into(), ring: "indicators/target_hostile", locked: true, hp: Some((72, 0.72)), colour: Some(egui::Color32::from_rgb(255, 80, 80)), cast: Some(("Firaga".into(), Some(0.4))), distance: Some(12.4) });
     if opts.list {
         list_sample(&mut p);

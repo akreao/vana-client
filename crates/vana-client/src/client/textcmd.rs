@@ -2412,16 +2412,25 @@ fn find(w: &mut World, what: &str) {
 
 /// FUN_1007cab0: PlayTime from the 0x00A plus the time since, group 10 0x2e (h, m, s) or 0x2f (with days), mode 0x8b.
 fn playtime(w: &mut World) -> Done {
-    use crate::dat::msgfmt;
-    let (Some(bt), Some((base, at))) = (w.battle.clone(), w.play_time) else { return Ok(()) };
-    let t = base as i64 + at.elapsed().as_secs() as i64;
-    let (d, h, m, s) = ((t / 86400) as i32, (t % 86400 / 3600) as i32, (t % 3600 / 60) as i32, (t % 60) as i32);
-    let (id, ints) = if d == 0 { (0x2e, vec![h, m, s]) } else { (0x2f, vec![d, h, m, s]) };
-    let Some(raw) = bt.group10_raw(id) else { return Ok(()) };
-    let text = crate::dat::font::decode_sjis(&msgfmt::format(&raw, &[], &ints, &|_, _, _| None));
+    let (Some(bt), Some(text)) = (w.battle.clone(), playtime_text(w)) else { return Ok(()) };
     let colour = bt.colour_in(0x8b, &w.game);
     w.chat.push_colour(text, colour);
     Ok(())
+}
+
+/// The seconds played: the 0x00A's PlayTime plus the time since it came.
+pub(super) fn played(w: &World) -> Option<i64> {
+    w.play_time.map(|(base, at)| base as i64 + at.elapsed().as_secs() as i64)
+}
+
+/// /playtime's line: group 10 0x2e (h, m, s) or 0x2f (with days).
+pub(super) fn playtime_text(w: &World) -> Option<String> {
+    use crate::dat::msgfmt;
+    let t = played(w)?;
+    let (d, h, m, s) = ((t / 86400) as i32, (t % 86400 / 3600) as i32, (t % 3600 / 60) as i32, (t % 60) as i32);
+    let (id, ints) = if d == 0 { (0x2e, vec![h, m, s]) } else { (0x2f, vec![d, h, m, s]) };
+    let raw = w.battle.as_ref()?.group10_raw(id)?;
+    Some(crate::dat::font::decode_sjis(&msgfmt::format(&raw, &[], &ints, &|_, _, _| None)))
 }
 
 /// FUN_10080830: no argument prints "(chatmode : prefix)" (mode 0x9d); else the mode by its word (table 0x10357ac8),
@@ -2775,6 +2784,7 @@ fn magic(w: &mut World, cid: u16, args: &[String], mode: Mode) -> Done {
     let spell = find_spell(w, args.get(1).ok_or(())?, kind)?;
     let t = resolve(w, args.get(2).map(String::as_str), false, true, mode).ok_or(())?;
     act(w, t, cat::MAGIC, spell as u32);
+    super::pending::start(w, super::pending::Ask::Spell(spell as u16), t.0);
     Ok(())
 }
 
@@ -2805,6 +2815,7 @@ fn weapon_skill(w: &mut World, args: &[String], mode: Mode) -> Done {
     let ws = ability_named(w, args.get(1).ok_or(())?, 0..0x200).ok_or(())?;
     let t = resolve(w, args.get(2).map(String::as_str), false, true, mode).ok_or(())?;
     act(w, t, cat::WS, ws as u32);
+    super::pending::start(w, super::pending::Ask::WeaponSkill(ws as u16), t.0);
     Ok(())
 }
 
@@ -2826,6 +2837,7 @@ fn ability(w: &mut World, _pet: bool, args: &[String], mode: Mode) -> Done {
     }
     let t = resolve(w, args.get(2).map(String::as_str), false, true, mode).ok_or(())?;
     act(w, t, cat::JA, (id - 0x200) as u32);
+    super::pending::start(w, super::pending::Ask::Ability(id as u16), t.0);
     Ok(())
 }
 
@@ -2914,6 +2926,7 @@ fn bstpet(w: &mut World, args: &[String], mode: Mode) -> Done {
     .ok_or(())?;
     let t = resolve(w, args.get(2).map(String::as_str), false, false, mode).ok_or(())?;
     act(w, t, cat::JA, (id - 0x200) as u32);
+    super::pending::start(w, super::pending::Ask::Ability(id as u16), t.0);
     Ok(())
 }
 
