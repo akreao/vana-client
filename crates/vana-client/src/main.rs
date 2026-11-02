@@ -582,6 +582,9 @@ enum Cmd {
         /// The right-click menus (an item's, a party row's, an actor's) beside the party window.
         #[arg(long)]
         menus: bool,
+        /// The two alliance windows with sample rows.
+        #[arg(long)]
+        alliance: bool,
     },
     /// Disassemble a zone's event scripts (event DAT), with dialogue text inlined.
     EventDump {
@@ -1194,9 +1197,9 @@ fn main() -> Result<()> {
             println!("bounds {} .. {}; wrote {}", mesh.min, mesh.max, out.display());
             Ok(())
         }
-        Cmd::ModernShot { width, height, scale, backdrop, out, chat_font, font, font_strong, rows, borders, opacity, kit, menus } => {
+        Cmd::ModernShot { width, height, scale, backdrop, out, chat_font, font, font_strong, rows, borders, opacity, kit, alliance, menus } => {
             let list = font.is_some();
-            client::modern_shot(width, height, scale, backdrop.as_deref(), &out, &client::ModernShotOpts { chat_font, font: font.zip(font_strong), list, rows, borders, opacity, kit, menus })
+            client::modern_shot(width, height, scale, backdrop.as_deref(), &out, &client::ModernShotOpts { chat_font, font: font.zip(font_strong), list, rows, borders, opacity, kit, alliance, menus })
         }
         Cmd::CreatorShot { screen: true, race, face, hair, frame, view, width, height, step, size, job, nation, name, world, help_time, bench, out, .. } => {
             client::creator_screen_shot(&client::CreatorScreenShot { race, face, hair, size, job, nation, step, name, world, frame, view, help_time, width, height, bench }, &out)

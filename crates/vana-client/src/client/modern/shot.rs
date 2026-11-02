@@ -206,6 +206,7 @@ fn sample(m: &Modern, ctx: &egui::Context, layout: &mut Layout, opts: &Opts) {
         recv: 276,
         meter: (1, 3),
         mail: None,
+        gm_reply: false,
     };
     super::topbar::draw(m, ctx, &top);
     let (mut changed, mut chat_font) = (false, opts.chat_font);
@@ -242,6 +243,22 @@ fn sample(m: &Modern, ctx: &egui::Context, layout: &mut Layout, opts: &Opts) {
     let vit = |hp: u32, mp: u32, f: f32| hud::RowVitals { hp, hp_max: Some(1000), mp, tp: Some(if f > 0.9 { 1250 } else { 300 }), hpf: f, mpf: Some(f * 0.8), hp_colour: if f < 0.75 { egui::Color32::from_rgb(0xff, 0xd0, 0x40) } else { egui::Color32::WHITE } };
     let row = |slot, name: &str, job, here: bool, hp: f32, marked, effects: Vec<Effect>| PartyRow { slot, name: name.into(), icon: hud::job_icon(job), sub_icon: hud::job_icon(if job == 3 { 5 } else { 0 }), here: here.then(|| vit((hp * 1000.0) as u32, 420, hp)), zone: "Port Jeuno".into(), marked, hand: marked.then_some(0x8080_8080), marks: (slot == 0) as u8, effects, jobs: String::new() };
     hud::party_panel(&mut p, "party", "Party", &[row(0, "Lenon", 5, true, 0.98, false, vec![]), row(1, "Raven", 1, true, 0.88, false, theirs.clone()), row(2, "Koru", 3, true, 0.62, true, vec![]), row(3, "Shantotto", 4, true, 0.95, false, vec![]), row(4, "Prishe", 2, false, 1.0, false, vec![])], false, Some(super::super::resttick::Shown::Next(0.6, 4.0)));
+    // The two alliance parties as party_rows builds them: no MP bar, leader marks (bit 1 the alliance leader's), a
+    // member out of the zone, a trust's row without TP.
+    let ally = |slot, name: &str, job, here: bool, hp: f32, marks: u8, tp: bool| {
+        let mut r = row(slot, name, job, here, hp, false, vec![]);
+        if let Some(v) = r.here.as_mut() {
+            v.mpf = None;
+            v.tp = v.tp.filter(|_| tp);
+        }
+        PartyRow { marks, ..r }
+    };
+    if opts.alliance {
+        let a1 = [ally(6, "Ayame", 12, true, 1.0, 3, true), ally(7, "Naji", 1, true, 0.42, 0, true), ally(8, "Kupipi", 3, true, 0.9, 0, false), ally(9, "Mihli Aliapoh", 3, false, 1.0, 0, true), ally(10, "Excenmille", 7, true, 0.15, 0, true), ally(11, "Trion", 7, true, 0.77, 0, true)];
+        let a2 = [ally(12, "Zeid", 8, true, 0.66, 1, true), ally(13, "Lion", 6, true, 1.0, 0, true)];
+        hud::party_panel(&mut p, "alliance1", "Alliance", &a1, false, None);
+        hud::party_panel(&mut p, "alliance2", "Alliance", &a2, false, None);
+    }
     hud::cast_panel(&mut p, "cast", "Casting", 0.6, "60%");
     hud::target_panel(&mut p, &TargetView { name: "Robber Crab".into(), ring: "indicators/target_hostile", locked: true, hp: Some((72, 0.72)), colour: Some(egui::Color32::from_rgb(255, 80, 80)), cast: Some(("Firaga".into(), Some(0.4))), distance: Some(12.4) });
     if opts.list {
@@ -302,6 +319,8 @@ pub struct Opts {
     pub kit: bool,
     /// The right-click menus beside the party window.
     pub menus: bool,
+    /// The alliance windows with sample rows.
+    pub alliance: bool,
 }
 
 pub fn shot(width: u32, height: u32, scale: u32, backdrop: Option<&Path>, out: &Path, opts: &Opts) -> Result<()> {
@@ -319,6 +338,11 @@ pub fn shot(width: u32, height: u32, scale: u32, backdrop: Option<&Path>, out: &
     });
     let view = target.create_view(&Default::default());
     let ctx = egui::Context::default();
+    // The atlases load at once: the context learns the GPU's texture limit first (egui assumes 2048 until told).
+    let side = Some(gpu.device.limits().max_texture_dimension_2d as usize);
+    let mut warm = ctx.run_ui(egui::RawInput { max_texture_side: side, ..Default::default() }, |_| {});
+    let mut deltas: Vec<_> = warm.textures_delta.set.drain().collect();
+    warm.textures_delta.clear();
     let m = Modern::new(&ctx);
     m.set_opacity(opts.opacity);
     if let Some(name) = &opts.rows {
@@ -334,11 +358,10 @@ pub fn shot(width: u32, height: u32, scale: u32, backdrop: Option<&Path>, out: &
     ctx.set_zoom_factor(zoom);
     let bg = backdrop.map(load_png).transpose()?.map(|(size, rgba)| ctx.load_texture("backdrop", egui::ColorImage::from_rgba_unmultiplied(size, &rgba), egui::TextureOptions::LINEAR));
     let mut layout = Layout::new();
-    let mut deltas = Vec::new();
     let mut last = None;
     // Frame 0 only sets the screen (egui's first frame has its default one); the time steps finish the fades.
     for frame in 0..8 {
-        let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(width as f32, height as f32) / zoom)), time: Some(frame as f64 * 0.5), ..Default::default() };
+        let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(width as f32, height as f32) / zoom)), time: Some(frame as f64 * 0.5), max_texture_side: side, ..Default::default() };
         let mut output = ctx.run_ui(raw, |ui| {
             let ctx = ui.ctx();
             if frame == 0 {
