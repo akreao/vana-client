@@ -19,12 +19,15 @@ pub fn data_dir() -> PathBuf {
     app_dir(dirs::data_dir())
 }
 
-/// A character name as a file name: the name comes from the server's zone-in packet, so anything but ASCII letters
-/// and digits (a path separator, "..") becomes '_', and the file stays inside its folder. Retail names are letters
-/// only, so their files keep their names.
+/// A character name as a file name. The name comes from the server's zone-in packet, so only ASCII letters and
+/// digits are used as they are (every retail and LSB name: LSB's validateCharacterName allows letters only, so their
+/// files keep their names). Anything else, a path separator or "..", becomes '_' and the name's UTF-8 bytes in hex:
+/// the file stays inside its folder, and two different names never share a file.
 fn name_file(name: &str) -> String {
-    let stem: String = name.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
-    format!("{}.json", if stem.is_empty() { "_" } else { &stem })
+    if !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric()) {
+        return format!("{name}.json");
+    }
+    format!("_{}.json", name.bytes().map(|b| format!("{b:02x}")).collect::<String>())
 }
 
 /// A character's saved chat lines (the modern chat's history): in the data dir, or beside an FFXI_CONFIG copy.
@@ -547,9 +550,11 @@ mod tests {
     #[test]
     fn name_file_stays_in_its_folder() {
         assert_eq!(name_file("Steven"), "Steven.json");
-        assert_eq!(name_file("../../evil"), "______evil.json");
-        assert_eq!(name_file("a/b\\c"), "a_b_c.json");
+        assert_eq!(name_file("../x"), "_2e2e2f78.json");
+        assert_eq!(name_file("a/b\\c"), "_612f625c63.json");
         assert_eq!(name_file(""), "_.json");
-        assert_eq!(chat_history_path("../x").file_name().unwrap(), "___x.json");
+        // Names that differ only in a replaced character keep separate files.
+        assert_ne!(name_file("a/b"), name_file("a\\b"));
+        assert_eq!(chat_history_path("../x").file_name().unwrap(), "_2e2e2f78.json");
     }
 }
