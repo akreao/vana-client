@@ -13235,3 +13235,13 @@ Specs: `~/ffxi/lab/research/pol_map_session_spec.md`, `entity_update_spec.md` (a
 - A button bound to Ctrl / Alt (the triggers by default) makes the d-pad and face buttons press 1 ..= 8 while held:
   Ctrl / Alt + 1 ..= 8, the palettes' macros.
 - Config 0xce's choices 1 / 2 (Misc. 4) stay off: they need retail's pad count, FUN_101bced0.
+
+## Modern focus and last target (ours, 2026-11-02)
+
+- Not retail: World.last_target is the target before the current one, set in target::set (the sub-target prompt's
+  stand-ins don't count; us neither). target::last_target gives it while it is here and targetable.
+- Modern only (the classic UI keeps retail's tags): `<lt>` names the last target in text and resolves to it in
+  target commands; `<ft>` is `<focust>`.
+- The modern focus panel (hud.rs others_panel, place "focus" on the target panel): a row for the focus target
+  (retail's /focustarget, a member of our six) and one for the last target, each with its HP; a click targets it.
+  Hidden when neither is set.

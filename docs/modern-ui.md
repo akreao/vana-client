@@ -300,6 +300,9 @@ Milestone 1:
 - Storage (modern/storage.rs): the bags as tabs, Mog Safe / Safe 2 and Mog Wardrobe 1..8 merged; the bag beside the
   inventory; a click moves a stack (right click one), into a merged bag the first part with room that takes it;
   retail's colours say what may move.
+- Focus and last target (2026-11-02, ours): a panel on the target panel with the focus target (retail's
+  /focustarget, a party member) and the last target (the one before the current), each with HP; a click targets it.
+  In modern, `<lt>` names / targets the last target and `<ft>` is `<focust>`.
 - Plate badges: the approved SVG set (assets/modern/badges) in place of retail's glyphs; the pearl tinted by its
   linkshell; rank stars, the recruiter star in its orb, the master stars above.
 - Icons: batches 1 and 2 (131) redrawn in VectorCraft and approved.
