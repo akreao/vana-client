@@ -1,7 +1,7 @@
 ## Event actor flag ops 0x84 / 0x86 / 0x95 / 0x96 / 0xa4 (2026-11-02)
 
-- Traced in the current build (30261006_0) through the dispatcher's jump table (0x100bc960). The handler names in
-  `event_ops.rs` for these ops point inside other functions. The real handlers: 0x84 FUN_100b9100, 0x86 FUN_100b8f30,
+- Traced in the current build (30261006_0) through the dispatcher's jump table (0x100bc960). The handler names `event_ops.rs`
+  gave these ops pointed inside other functions and are corrected. The real handlers: 0x84 FUN_100b9100, 0x86 FUN_100b8f30,
   0x95 FUN_100b9c20, 0x96 FUN_100b9c70, 0xa4 FUN_100ba8d0, 0xab FUN_100bac90. Ours had no handler for any of them.
   Sites in zones 0..299: 0x84 131 (40 zones), 0x86 208 (30), 0x95 267 (54), 0x96 166 (49), 0xa4 446 (81).
 - 0x84: the event actor's +0x12c bit 0. The entity pass (FUN_10095900 -> FUN_10095da0) then drops its model
