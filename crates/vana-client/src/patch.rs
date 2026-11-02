@@ -315,6 +315,30 @@ fn local(root: &Path, p: &str) -> Result<PathBuf> {
     Ok(root.join(p))
 }
 
+/// Where a manifest file is written under `root`: [`local`], and no folder between `root` and the file may be a
+/// symlink or junction, since writing through one would leave the install folder.
+fn writable(root: &Path, p: &str) -> Result<PathBuf> {
+    let out = local(root, p)?;
+    let mut at = root.to_path_buf();
+    let dirs: Vec<&str> = p.split(['/', '\\']).collect();
+    for c in &dirs[..dirs.len() - 1] {
+        at.push(c);
+        let m = match std::fs::symlink_metadata(&at) {
+            Ok(m) => m,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => break,
+            Err(e) => return Err(e).with_context(|| at.display().to_string()),
+        };
+        #[cfg(windows)]
+        let linked = m.file_type().is_symlink() || std::os::windows::fs::MetadataExt::file_attributes(&m) & 0x400 != 0;
+        #[cfg(not(windows))]
+        let linked = m.file_type().is_symlink();
+        if linked {
+            bail!("{} is a link; the patcher only writes inside the install folder", at.display());
+        }
+    }
+    Ok(out)
+}
+
 /// `file <path> {`, version lines `stamp len sum md5 <direct>.slc len [<delta>.olc len]`, `}`, until `end`.
 pub fn parse_manifest(text: &str) -> Result<Vec<Entry>> {
     // Paths may hold spaces: a path token ends at its suffix followed by a space.
@@ -518,7 +542,7 @@ pub fn fetch_one(path: &str, dir: &Path) -> Result<(PathBuf, String)> {
     let entries = parse_manifest(&String::from_utf8_lossy(&manifest))?;
     let e = entries.iter().find(|e| e.path.eq_ignore_ascii_case(path)).ok_or_else(|| anyhow!("{path} is not in the manifest"))?;
     let data = produce(&mut Session::connect()?, dir, e, Action::Direct)?;
-    let out = local(dir, &e.path)?;
+    let out = writable(dir, &e.path)?;
     write_atomic(&out, &data)?;
     Ok((out, e.versions.last().map(|v| v.stamp.clone()).unwrap_or_default()))
 }
@@ -543,7 +567,7 @@ pub fn apply(root: &Path, plan: &Plan, connections: usize, progress: &(dyn Fn(us
                     let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let Some(&(ei, a, n)) = plan.todo.get(i) else { return };
                     let e = &plan.entries[ei];
-                    match produce(&mut sess, root, e, a).and_then(|d| write_atomic(&local(root, &e.path)?, &d)) {
+                    match produce(&mut sess, root, e, a).and_then(|d| write_atomic(&writable(root, &e.path)?, &d)) {
                         Ok(()) => {
                             let f = files.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                             let b = bytes.fetch_add(n, std::sync::atomic::Ordering::Relaxed) + n;
@@ -627,5 +651,22 @@ mod tests {
         }
         assert!(local(Path::new("/game"), "/etc/passwd").is_err());
         assert_eq!(local(Path::new("/game"), "ROM/0/0.DAT").unwrap(), Path::new("/game/ROM/0/0.DAT"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn writes_do_not_follow_links_out_of_the_root() {
+        let base = std::env::temp_dir().join(format!("vana-patch-links-{}", std::process::id()));
+        let (root, outside) = (base.join("game"), base.join("outside"));
+        std::fs::create_dir_all(root.join("ROM/0")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("ROM2")).unwrap();
+        assert_eq!(writable(&root, "ROM/0/0.DAT").unwrap(), root.join("ROM/0/0.DAT"));
+        assert_eq!(writable(&root, "ROM3/1/2.DAT").unwrap(), root.join("ROM3/1/2.DAT"));
+        assert!(writable(&root, "ROM2/1/2.DAT").is_err());
+        // A linked root itself is fine: only folders below it are checked.
+        std::os::unix::fs::symlink(&root, base.join("linked")).unwrap();
+        assert!(writable(&base.join("linked"), "ROM/0/0.DAT").is_ok());
+        std::fs::remove_dir_all(&base).unwrap();
     }
 }
