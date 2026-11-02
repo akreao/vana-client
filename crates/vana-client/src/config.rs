@@ -19,13 +19,21 @@ pub fn data_dir() -> PathBuf {
     app_dir(dirs::data_dir())
 }
 
+/// A character name as a file name: the name comes from the server's zone-in packet, so anything but ASCII letters
+/// and digits (a path separator, "..") becomes '_', and the file stays inside its folder. Retail names are letters
+/// only, so their files keep their names.
+fn name_file(name: &str) -> String {
+    let stem: String = name.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
+    format!("{}.json", if stem.is_empty() { "_" } else { &stem })
+}
+
 /// A character's saved chat lines (the modern chat's history): in the data dir, or beside an FFXI_CONFIG copy.
 pub fn chat_history_path(name: &str) -> PathBuf {
     let dir = match std::env::var_os("FFXI_CONFIG") {
         Some(p) => PathBuf::from(p).with_file_name("chat"),
         None => data_dir().join("chat"),
     };
-    dir.join(format!("{name}.json"))
+    dir.join(name_file(name))
 }
 
 /// A character's training regime state (client/regime.rs), beside the chat history.
@@ -34,7 +42,7 @@ pub fn regime_path(name: &str) -> PathBuf {
         Some(p) => PathBuf::from(p).with_file_name("regime"),
         None => data_dir().join("regime"),
     };
-    dir.join(format!("{name}.json"))
+    dir.join(name_file(name))
 }
 
 /// The client's log: in the data dir, or beside an FFXI_CONFIG copy (test runs keep their own).
@@ -529,5 +537,19 @@ impl Config {
     /// The frame limit in effect: FFXI_FRAME_LIMIT overrides the file (test runs), 0 = unlimited.
     pub fn frame_limit(&self) -> u32 {
         std::env::var("FFXI_FRAME_LIMIT").ok().and_then(|v| v.parse().ok()).unwrap_or(self.frame_limit)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn name_file_stays_in_its_folder() {
+        assert_eq!(name_file("Steven"), "Steven.json");
+        assert_eq!(name_file("../../evil"), "______evil.json");
+        assert_eq!(name_file("a/b\\c"), "a_b_c.json");
+        assert_eq!(name_file(""), "_.json");
+        assert_eq!(chat_history_path("../x").file_name().unwrap(), "___x.json");
     }
 }
