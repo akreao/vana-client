@@ -352,9 +352,9 @@ impl RsaKey {
     }
 
     /// 0x1002bde0: m = c^d mod n on the big-endian block, then the type-2 unpad on its little-endian bytes (the type
-    /// byte unchecked); the message in natural order.
-    pub fn decrypt(&self, c_be: &[u8]) -> Vec<u8> {
-        let c: Vec<u8> = c_be[..32].iter().rev().copied().collect();
+    /// byte unchecked); the message in natural order. None when the block is shorter than 32 bytes.
+    pub fn decrypt(&self, c_be: &[u8]) -> Option<Vec<u8>> {
+        let c: Vec<u8> = c_be.get(..32)?.iter().rev().copied().collect();
         let mut m = Big::from_le(&c).pow_mod(&self.d, &self.n).to_le(32);
         m[0x1e] = 0;
         let mut i = 0x1d;
@@ -365,7 +365,7 @@ impl RsaKey {
             i -= 1;
         }
         let len = 32usize.saturating_sub(count);
-        m[..len].iter().rev().copied().collect()
+        Some(m[..len].iter().rev().copied().collect())
     }
 }
 
@@ -534,10 +534,10 @@ impl Chat {
             }
             if command(&l) == b"300" {
                 let block = b64_decode(rest(&l, 2), 0x2e);
-                let msg = key.decrypt(&block[..32]);
-                if msg.len() < 8 {
+                // A short or malformed reply is refused here rather than panicking the chat thread.
+                let Some(msg) = key.decrypt(&block).filter(|m| m.len() >= 8) else {
                     bail!("PlayOnline's session key was not understood");
-                }
+                };
                 // The key is the message's first 8 bytes, reversed.
                 let mut k: [u8; 8] = msg[..8].try_into().unwrap();
                 k.reverse();
@@ -655,7 +655,7 @@ mod tests {
             n: Big::from_le(&h("a9117fcd9fc86ba6ff0444ab91083b0f1b440d15457364a6e1cfc47d0c4d094a")),
             d: Big::from_le(&h("af83a34b7d9da940222e3fa56a724d79fd396e56595f026a272f96431bb43c40")),
         };
-        assert_eq!(k.decrypt(&h("0e4cc04625bcb376824893ff1c49e6e4777d7bdb03968d85c47a100193d45984")), h("1122334455667788"));
+        assert_eq!(k.decrypt(&h("0e4cc04625bcb376824893ff1c49e6e4777d7bdb03968d85c47a100193d45984")), Some(h("1122334455667788")));
         assert_eq!(b64_encode(&h("97400b4f21d135a21c85ba38b12b7ed1e31e309b078f7f68c73dab4b0971d444")), "rdTKzvW9ky3YUBiJjqMudQoQoHjWR_6ipaf@qtrp0I7");
         // A fresh pair decrypts what the server encrypts with e = 0xffff.
         let k = RsaKey::generate().unwrap();
@@ -666,6 +666,8 @@ mod tests {
         em.extend_from_slice(&h("0807060504030201"));
         let m = Big::from_le(&em.iter().rev().copied().collect::<Vec<u8>>());
         let c: Vec<u8> = m.pow_mod(&Big::small(E), &k.n).to_le(32).into_iter().rev().collect();
-        assert_eq!(k.decrypt(&c), h("0807060504030201"));
+        assert_eq!(k.decrypt(&c), Some(h("0807060504030201")));
+        // A block short of 32 bytes is refused, not sliced out of range.
+        assert_eq!(k.decrypt(&c[..31]), None);
     }
 }
