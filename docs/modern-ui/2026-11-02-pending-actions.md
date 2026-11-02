@@ -5,3 +5,5 @@
   it). Our 0x028 confirms it (the chip goes; the cast bar and the effect take over). A 0x029 of ours before that is the
   refusal: the chip turns red with the message's own text ("Raven is out of range.") for 4 s. No answer in 5 s says
   "The server has not answered." The client's own refusals (group 7 lines before anything is sent) start nothing.
+- Open question still open for upstream: "How latency, failed transfers and invalid targets are shown." The chip is
+  one candidate for actions only (not transfers); it does not settle it.
