@@ -319,9 +319,9 @@ fn local(root: &Path, p: &str) -> Result<PathBuf> {
 /// symlink or junction, since writing through one would leave the install folder.
 fn writable(root: &Path, p: &str) -> Result<PathBuf> {
     let out = local(root, p)?;
+    // The folders the write really goes through: on Unix a backslash is part of a name, not a separator.
     let mut at = root.to_path_buf();
-    let dirs: Vec<&str> = p.split(['/', '\\']).collect();
-    for c in &dirs[..dirs.len() - 1] {
+    for c in Path::new(p).parent().into_iter().flat_map(Path::components) {
         at.push(c);
         let m = match std::fs::symlink_metadata(&at) {
             Ok(m) => m,
@@ -664,6 +664,8 @@ mod tests {
         assert_eq!(writable(&root, "ROM/0/0.DAT").unwrap(), root.join("ROM/0/0.DAT"));
         assert_eq!(writable(&root, "ROM3/1/2.DAT").unwrap(), root.join("ROM3/1/2.DAT"));
         assert!(writable(&root, "ROM2/1/2.DAT").is_err());
+        // One file name on Unix, so the ROM2 link is not on its way.
+        assert!(writable(&root, "ROM2\\1\\2.DAT").is_ok());
         // A linked root itself is fine: only folders below it are checked.
         std::os::unix::fs::symlink(&root, base.join("linked")).unwrap();
         assert!(writable(&base.join("linked"), "ROM/0/0.DAT").is_ok());
