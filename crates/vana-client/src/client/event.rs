@@ -470,6 +470,9 @@ pub struct State {
     /// Op 0x92 (+0x12c bit 16): a bound actor's name is not drawn while the event runs (FUN_10096000); unbinding
     /// clears it.
     pub no_name: HashSet<u32>,
+    /// Op 0x5f sub 1 (+0x124 bit 29): s2c 0x038 schedulers naming this actor are dropped (LAB_1009dee0) until sub 0
+    /// or the event's end (FUN_100ae3f0 / FUN_100bd3xx clear it).
+    pub no_038: HashSet<u32>,
     /// First person at the event's start (DAT_10351bb8 = DAT_10475578, FUN_100ad2c0): op 0x46 sub 1 leaves it, sub 0
     /// and the end put it back (FUN_100acf70).
     first_saved: bool,
@@ -542,6 +545,7 @@ impl State {
             idle: HashMap::new(),
             bound: HashSet::new(),
             no_name: HashSet::new(),
+            no_038: HashSet::new(),
             first_saved: false,
             poses: HashMap::new(),
             event_status: HashMap::new(),
@@ -866,6 +870,15 @@ impl Host for LiveHost<'_> {
                 }
                 if let Ok(n) = <[u8; 4]>::try_from(name.as_bytes()) {
                     self.w.effects.stop_actor_scheduler(id, u32::from_le_bytes(n));
+                }
+            }
+            // FUN_100b72c0 subs 0 / 1: the thread's own actor (+0x124 bit 29 = sub).
+            Effect::Op { op: 0x5f, sub: Some(s @ (0 | 1)), actor, .. } => {
+                let id = self.wid(actor);
+                if s == 1 {
+                    self.st.no_038.insert(id);
+                } else {
+                    self.st.no_038.remove(&id);
                 }
             }
             // FUN_100b3870 (0x5f sub 2): drop the event motion files (FUN_100d2340(2)).
@@ -2253,6 +2266,11 @@ pub fn weather(w: &World) -> u16 {
 /// Bound actors whose name op 0x92 turned off while the event runs (FUN_10096000).
 pub fn nameless(w: &World) -> HashSet<u32> {
     w.event.as_ref().map_or_else(HashSet::new, |l| l.st.no_name.intersection(&l.st.bound).copied().collect())
+}
+
+/// Op 0x5f sub 1 holds this actor out of s2c 0x038 schedulers while the event runs.
+pub fn no_038(w: &World, id: u32) -> bool {
+    w.event.as_ref().is_some_and(|l| l.st.no_038.contains(&id))
 }
 
 /// The running event binds this actor (+0x120 bit 7).

@@ -3049,6 +3049,21 @@ mod tests {
         assert_eq!(ops[..3], [(0xa8, Some(0), vec![230, 5]), (0xb9, Some(1), vec![230, 3, 5]), (0xa8, Some(2), vec![])]);
     }
 
+    /// Op 0x5f subs 0 / 1 (FUN_100b72c0): two bytes, to the host with the thread's own actor (its +0x124 bit 29).
+    #[test]
+    fn scheduler_guard_subs() {
+        let code = vec![0x5f, 0x01, 0x5f, 0x00, 0x21, 0x00];
+        let actor = 0x010e_601b;
+        let blocks = vec![event::Block { actor, events: vec![(1, 0)], consts: vec![], code }];
+        let mut host = Scripted::new(&[]);
+        let start = Start { zone: 230, event: 1, target: actor, ..Default::default() };
+        let mut rt = Runtime::start(blocks, None, start, Memory::default(), &mut host);
+        run_scripted(&mut rt, &mut host, 60).expect("finished");
+        let subs: Vec<(Option<u8>, u32)> =
+            host.log.iter().filter_map(|e| if let Effect::Op { op: 0x5f, sub, actor, .. } = e { Some((*sub, *actor)) } else { None }).collect();
+        assert_eq!(subs[..2], [(Some(1), actor), (Some(0), actor)]);
+    }
+
     #[test]
     fn input_window() {
         assert_eq!((Runtime::atoi(b" -42x"), Runtime::atoi(b"+7"), Runtime::atoi(b"")), (-42, 7, 0));
