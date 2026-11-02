@@ -33,6 +33,7 @@ mod lists;
 mod loot;
 mod macros;
 mod minor;
+mod modes;
 mod pending;
 mod paint;
 pub mod plates;
@@ -144,6 +145,8 @@ pub struct Modern {
     retail: std::cell::RefCell<Vec<Rect>>,
     /// A place changed during a drag: saved once the pointer is let go.
     dirty: bool,
+    /// When we were last engaged (modes.rs holds Combat a little after).
+    engaged_at: std::cell::Cell<Option<std::time::Instant>>,
 }
 
 impl Modern {
@@ -196,6 +199,7 @@ impl Modern {
             chat_act: Default::default(),
             ctx_menu: Default::default(),
             dirty: false,
+            engaged_at: Default::default(),
         }
     }
 
@@ -247,13 +251,16 @@ impl Modern {
         *self.retail.borrow_mut() = w.retail_frames.iter().map(|r| Rect::from_min_size(pos2(r[0], r[1]), vec2(r[2], r[3]))).collect();
         topbar::draw(self, ctx, &w.hud_top.view);
         pointers(self, ctx, w);
+        let focus = focus_panel(w);
+        let mode = modes::current(w, &self.engaged_at, focus);
+        let vis = modes::visibility(ctx, &cfg.modern_modes, mode);
         // Places per display (plan B): this window size and UI scale's own layout, else the character's last one; a
         // change saves both, so a new display starts from the latest arrangement and resizing the window through
         // sizes nobody arranged for stores nothing.
         let key = display_key(&w.name, window, cfg.modern_scale);
         let mut layout = cfg.modern_places.get(&key).or_else(|| cfg.modern_places.get(&w.name)).cloned().unwrap_or_default();
         let mut changed = false;
-        let mut p = Panels { m: self, ctx, gu: Some(gu), layout: &mut layout, changed: &mut changed, chat_font: &mut cfg.modern_chat_font, battle_in_all: &mut cfg.modern_battle_in_all, condense: &mut cfg.modern_condense, folded: &mut cfg.modern_folded, scan_kinds: &mut cfg.modern_scan_kinds, this: HashMap::new(), retail: HashMap::new(), focus: focus_panel(w) };
+        let mut p = Panels { m: self, ctx, gu: Some(gu), layout: &mut layout, vis, changed: &mut changed, chat_font: &mut cfg.modern_chat_font, battle_in_all: &mut cfg.modern_battle_in_all, condense: &mut cfg.modern_condense, folded: &mut cfg.modern_folded, scan_kinds: &mut cfg.modern_scan_kinds, this: HashMap::new(), retail: HashMap::new(), focus };
         // The chat window first: what sits on it places by this frame's height.
         self.chat_edge.set(None);
         chat::panel(&mut p, w);
@@ -301,6 +308,9 @@ impl Modern {
         charlnk::draw(&mut p, w);
         mogdoor(&mut p, w);
         event_input(&mut p, w);
+        if modes::editor(&mut p, &mut w.uimodes_open, &mut cfg.modern_modes, mode) {
+            *p.changed = true;
+        }
         ctxmenu::draw(self, ctx, w);
         let this = std::mem::take(&mut p.this);
         *self.rects.borrow_mut() = this;
@@ -430,6 +440,8 @@ struct Panels<'a> {
     retail: HashMap<String, Place>,
     /// The panel with the keys (focus_panel): drawn in the focused frame.
     focus: Option<&'static str>,
+    /// The mode presets' panels' opacity this frame (modes.rs): 0 not drawn; others always drawn.
+    vis: HashMap<&'static str, f32>,
 }
 
 /// The panel that takes the keys now, as the key dispatch (client/mod.rs) routes them: the prompt, the chat line, an
@@ -782,6 +794,11 @@ impl<'a> Panels<'a> {
         Look { m: self.m, ctx: self.ctx, gu: self.gu }
     }
 
+    /// The mode's opacity for a panel (1 for every panel the modes don't list).
+    fn vis(&self, id: &str) -> f32 {
+        self.vis.get(id).copied().unwrap_or(1.0)
+    }
+
     /// A panel `width` points wide.
     fn panel(&mut self, id: &str, title: Option<Title>, width: f32, add: impl FnOnce(&mut Ui)) -> Option<Rect> {
         self.framed(id, title, width, "window_normal", add)
@@ -908,6 +925,11 @@ impl<'a> Panels<'a> {
     /// The panel itself: the pack's window frame behind its title row and contents, moved by a drag on its background
     /// unless placed beside another; a resizable one has the resize glyph in its corner. Returns its rect.
     fn show(&mut self, id: &str, o: Show, add: impl FnOnce(&mut Ui, Vec2)) -> Option<Rect> {
+        // Hidden by the mode (modes.rs): not drawn, so what docks on it falls to what it sits on.
+        let vis = self.vis(id);
+        if vis <= 0.01 {
+            return None;
+        }
         let (m, ctx) = (self.m, self.ctx);
         let screen = ctx.content_rect();
         let mut place = self.place(id);
@@ -943,6 +965,7 @@ impl<'a> Panels<'a> {
         let frame = if frame == "window_normal" && self.focus == Some(id) { "window_focused" } else { frame };
         // A panel at a fixed point may stand partly off screen (the Timers slid in).
         let shown = egui::Area::new(Id::unique(("modern panel", id))).order(Order::Middle).current_pos(pos).movable(o.at.is_none()).constrain(o.at.is_none() && !exact).show(ctx, |ui| {
+            ui.multiply_opacity(vis);
             // An area offers its contents only last frame's size: room to the screen's bottom, or a page grown taller
             // (a scroll area in it) stays clipped at its first height.
             // Not for the panels placed by their exact height (the chat window folding, the party window).

@@ -621,6 +621,11 @@ pub fn run(w: &mut World, line: &str, mode: Mode) {
         find(w, line[first.len()..].trim());
         return;
     }
+    // Ours (not retail; the modern UI's mode presets): /uimodes opens or closes their editor.
+    if first.eq_ignore_ascii_case("/uimodes") && w.modern {
+        w.uimodes_open = !w.uimodes_open;
+        return;
+    }
     // Ours (not retail; modern favourites): /favs [on | off] shows or hides the favourites strip.
     if first.eq_ignore_ascii_case("/favs") {
         super::favs::command(w, line.split_whitespace().nth(1));

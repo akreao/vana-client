@@ -5951,6 +5951,10 @@ struct World {
     /// The search's recent picks (listsearch::key_of), newest first, and whether they changed since the save.
     recent_picks: Vec<String>,
     recent_save: bool,
+    /// The modern UI Modes editor is open (/uimodes, modern/modes.rs).
+    uimodes_open: bool,
+        return;
+    }
     /// Favourites (favs.rs keys, the strip's order), whether the strip shows, and whether either changed since the save.
     favourites: Vec<String>,
     fav_strip: bool,
@@ -7811,6 +7815,7 @@ impl App {
                             command_palette: false,
                             recent_picks: self.cfg.modern_recent.get(&login.name).cloned().unwrap_or_default(),
                             recent_save: false,
+                            uimodes_open: false,
                             favourites: self.cfg.modern_favourites.get(&login.name).cloned().unwrap_or_default(),
                             fav_strip: self.cfg.modern_fav_strip,
                             fav_save: false,

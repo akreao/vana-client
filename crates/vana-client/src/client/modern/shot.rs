@@ -235,7 +235,7 @@ fn sample(m: &Modern, ctx: &egui::Context, layout: &mut Layout, opts: &Opts) {
     };
     super::topbar::draw(m, ctx, &top);
     let (mut changed, mut chat_font) = (false, opts.chat_font);
-    let mut p = Panels { m, ctx, gu: None, layout, changed: &mut changed, chat_font: &mut chat_font, battle_in_all: &mut true, condense: &mut true, folded: &mut Default::default(), scan_kinds: &mut 7, this: Default::default(), retail: Default::default(), focus: Some("target") };
+    let mut p = Panels { m, ctx, gu: None, layout, vis: Default::default(), changed: &mut changed, chat_font: &mut chat_font, battle_in_all: &mut true, condense: &mut true, folded: &mut Default::default(), scan_kinds: &mut 7, this: Default::default(), retail: Default::default(), focus: Some("target") };
     // The chat window first, as the layer draws it: the location panel sits on it.
     let wh = [0x80, 0x80, 0x80, 0x80];
     let lines = vec![
@@ -294,6 +294,11 @@ fn sample(m: &Modern, ctx: &egui::Context, layout: &mut Layout, opts: &Opts) {
     if opts.kit {
         kit_sample(&mut p);
     }
+    if opts.modes {
+        let mut cfg = crate::config::ModernModes::default();
+        cfg.pinned.push("party".into());
+        super::modes::editor(&mut p, &mut true, &mut cfg, super::modes::Mode::Combat);
+    }
     if opts.favs {
         favs_sample(&mut p);
     }
@@ -314,7 +319,7 @@ fn sample(m: &Modern, ctx: &egui::Context, layout: &mut Layout, opts: &Opts) {
         timers_sample(m, ctx, screen.center().x - 190.0 - super::extras::WIDTH, super::extras::WIDTH, super::extras::Side::Left);
         timers_sample(m, ctx, screen.center().x - 180.0, 360.0, super::extras::Side::Left);
     }
-    if opts.list || opts.kit || opts.favs || opts.rows.is_some() || opts.borders.is_some() {
+    if opts.list || opts.kit || opts.favs || opts.modes || opts.rows.is_some() || opts.borders.is_some() {
         return;
     }
     // Every frame at a few sizes: nine-slice corners, tiled edges, the stretched gradient.
@@ -347,6 +352,8 @@ pub struct Opts {
     pub opacity: f32,
     /// A panel of the kit's controls.
     pub kit: bool,
+    /// The UI Modes editor.
+    pub modes: bool,
     /// The favourites strip and starred list rows.
     pub favs: bool,
     /// The right-click menus beside the party window.
