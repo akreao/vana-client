@@ -1785,6 +1785,7 @@ fn draw_storage(gu: &mut GameUi, w: &World, info: &ItemCache, scroll: usize, cur
     if let Some(q) = b.qty
         && let Some(win) = gu.lobby_window_off("menu    itemctrl", sw, sh, (0.0, 0.0), Some(1), true, &[])
     {
+        super::winhits::record(w, "menu    itemctrl", &win);
         rects.push(win.frame);
         let (bt, ui, _, _) = gu.parts();
         if let Some(m) = ui.menu("menu    itemctrl") {
@@ -1809,9 +1810,16 @@ fn draw_count(gu: &mut GameUi, n: usize, size: u8, sw: f32, sh: f32) {
 }
 
 /// Mouse on the item list: hover moves the cursor, a click on the highlighted row acts as Enter.
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
     if matches!(w.win, Some(Win::Equip(_))) {
         super::equipwin::pointer(w, gu, sw, sh, p, moved, clicked);
+        return;
+    }
+    // The bin view's count (itemctrl) by winhits::ctr.
+    if matches!(&w.win, Some(Win::Items { store: Some(b), .. }) if b.qty.is_some()) {
+        super::winhits::ctr(w, gu, "menu    itemctrl", p, clicked, right, |w, _, k| {
+            key(w, k, false, false, false);
+        });
         return;
     }
     // The bin view moves the list; its mouse handling (hover messages 3 / 4) is not done.
