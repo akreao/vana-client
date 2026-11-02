@@ -3,6 +3,8 @@
 Confirmed facts only; each with where it was verified. Sources: LSB `~/landsandboat` (commit d90234d2d1),
 xiloader (`~/ffxi/lab/xiloader`, ceb79a0), Ghidra on the installer. Decompiled output stays in `~/ffxi/lab`.
 
+New entries go in `docs/modlog/` as one file each and are folded in here later (see `docs/modlog/README.md`).
+
 ## Installer (FFXIFullSetup_US)
 - RAR5 SFX, 5 volumes. Contents: `FFXISetup.exe` (MFC bootstrapper), `PlayOnline/PlayOnlineViewer.msi`,
   `FINAL_FANTASY_XI/FINAL_FANTASY_XI.msi` + `data1..7.cab`, `redist/Directx_Jun2010`.
@@ -13222,25 +13224,64 @@ Specs: `~/ffxi/lab/research/pol_map_session_spec.md`, `entity_update_spec.md` (a
   1.665 -> 1.571 at (-4, 10.45, 117)); San d'Oria's came at 25.6 s and was applied at 26.4 s (1.493 -> 1.571 at
   (-68, 10.45, 117)). Seen fixed by the user.
 
-## Gamepad (ours, 2026-11-02)
+## Gamepad (2026-11-02)
 
-- Retail's PC client handed pads to the external config tool (configwi row 13 / lobycwin child 13 start it,
-  FUN_101bcb60; see "Tables copied from FFXiMain"), which we don't have, and its in-client pad word (key functions
-  0xb7..0xba) is still unread. So ours is not retail: client/gamepad.rs reads pads with gilrs and acts as a keyboard.
-  Buttons hold keys (DIK into `Input::set` for the key functions, egui key events for the windows, with cursor
-  repeats after 0.4 s every 0.08 s); the sticks go to `Input::set_stick` and count in `Input::axis` as the compact
-  stick does (the larger of keys, compact stick and pad stick). The left stick does not move while typing; the right
-  stick follows the arrows' rule (not typing, no window). With a window up, or outside the field, the left stick
-  steps the cursor as the arrows instead of moving.
-- A button bound to Ctrl / Alt (the triggers by default) makes the d-pad and face buttons press 1 ..= 8 while held:
-  Ctrl / Alt + 1 ..= 8, the palettes' macros.
-- Config 0xce's choices 1 / 2 (Misc. 4) stay off: they need retail's pad count, FUN_101bced0.
+- Retail's pad path, from the unpacked FFXiMain.dll (30261006_0; the file is POL1-packed, see
+  docs/re/gamepad/findings.md, which also corrects earlier guesses: FUN_101bced0 is the chat word list loader, so
+  config 0xce is a chat-filter option, not a pad option). FUN_10005a40 polls DirectInput (DIJOYSTATE2) or XInput
+  (through xinputdll.dll) each frame into the input object's 64-bit pad word (+0x220 held, +0x228 pressed, +0x230
+  released, +0x238 repeat; bit n = slot n) and the stick bytes +0x250 / +0x251 camera X / Y, +0x252 / +0x253
+  movement X / Y ((b - 0x80) / 128, dead zone 42, movement past 9677 rescaled). padsin000 maps 32 positions to slots
+  through the permutation at 0x1034f930; values are button numbers (XInput virtual: 0 B, 1 X, 2 Y, 3 A, 4..7 d-pad
+  R / L / U / D, 8 LB, 9 LT, 10 L3, 11 RB, 12 RT, 13 R3, 14 Start, 15 Back) or axis codes 32 + n.
+- The key functions' pad bits (keyfn_table.md) are our PAD table's: the compact keyboard and the pad share the word.
+  The second word (+0x224) holds slots 32 / 33 / 35 / 36 (key functions 0xb7..0xba); slot 34 switches to padexsin.
+  0x27..0x2a are pad-only d-pad functions in the field (below).
+- Ours (client/gamepad.rs): gilrs stands in for DirectInput / XInput; config.json gamepad_padsin / gamepad_padexsin in
+  the registry's format, FFXiPadConfig's XInput layout by default. Our windows read egui keys, so the confirm,
+  cancel and main menu slots also send Enter / Escape / Num-, and the d-pad the arrows with a window or a palette up
+  (repeat 16 ticks, then every 2, as mgr +0x94). The sticks never step a window's cursor and keep moving / turning
+  with a window up.
+- What each button does where, from the DLL (docs/re/gamepad/window_fns.md): only 18 of the 239 window OnKey handlers
+  take the pad's extra events, nearly all of them text input (the software keyboard, msgline, comment, fep).
+  - Field d-pad (table 0x10371ee0): up / down step the alliance's 18 slots, wrapping (FUN_10203920); right / left the
+    next / previous actor on screen without wrapping (FUN_10083d00 / FUN_10083b40; Tab wraps). target::pad_step,
+    target::party_pad_step.
+  - Macros (FUN_101a2e80): a trigger's press (0x89 LT / 0x8a RT) toggles the Ctrl / Alt palette and the other swaps
+    it; the palette's own keys (FUN_101a3960) pick and run the macro. A pad-opened palette stays up after the
+    release (World::pad_palette). No button maps straight to a macro number.
+  - Windows: LT / RT are 0xa8, read with Ctrl / Alt, so held they ride on the arrows as Ctrl (page; the full log's
+    0xaf scroll) and both together as Alt (0xb5 / 0xb6, the item lists' next / previous bag). Their bits stay set
+    (0x89 item compare, 0x9a map fast scroll).
+  - RB 0x24 (FUN_101579c0): with no window, opens the chat line; with the UI hidden (FUN_101d0c70) the screenshot.
+  - Slots 32 / 33 / 35 / 36 (0xb7..0xba, unbound by default): the shut down prompt, F8's nearest target, /jump, /map.
+- Not built: the software keyboard (keypad*, where RB / LB / X / Back / LT / RT type), the ground-position cursor that
+  LT / RT + d-pad move in position-target mode (0xb0..0xb3), and L3 centring the map viewer on its cursor (0x7e).
 
-## The busy strip's 0x10: PlayOnline message jobs (2026-11-02)
+## Gamepad: window tabs, lock-on camera, own facing (2026-11-02)
 
-- Bit 0x10's setters are the mail windows' code, FUN_101ff3e0..FUN_10200d70 (see "The help bar's busy strip: the
-  other bits"). Ours has those windows now (polmail.rs, friends.rs), and its three jobs in that range hold
-  friends.busy (DAT_10663ac8) while they run: msgline's commit (FUN_101ff3e0, friends::send), /befriend
-  (FUN_101ffa20, friends::befriend) and Ignore (FUN_10200280, friends::ignore). hudtop now counts friends.busy as bit
-  0x10, so the strip shows while a message, a friend request or an ignore is in flight. *(inf: the bit is set where
-  the busy flag is; which call site sets it was not re-read per function.)*
+- Ours: with a window up the pad's LB / RB (slots 8 / 12; retail's list windows take neither, window_fns.md) send
+  Shift+Tab / Tab, and every modern tabbed window turns its tabs with them: the storage view's bags, the journal,
+  settings (Settings::tab_back), the macro palettes and config pages (kit), the job point pages, the equip set pages
+  (esmenu) and storage tabs (esedit), the concierge's filters. World::key_shift carries the dispatched key's Shift.
+  Not the shop's Buy / Sell (its main menu, reached with the d-pad) or the chat log's channel tabs (no pad focus).
+- Fix: locked on, the stick's / keys' axis 6 turned the camera the wrong way. target::step_camera rotates with
+  Quat::from_rotation_y, opposite to camera::orbit, which the free camera turns by -v6; the locked call now negates it
+  (the mouse's cam_turn already matched).
+- Fix: our character is drawn from the float facing (World::my_face) instead of the network byte. Retail keeps the
+  heading as a float (FUN_100a6240: -atan2 of the frame's step, or the stick turned by the camera yaw) and rounds it
+  only for the position packet; from the byte (1.4 degree steps) a stick's slow turn stepped and its noise shook.
+
+## Temporary items in the Items lists (2026-11-02)
+
+- Main Menu > Items and the action menu's Items now list the temporary items (container 3, Abyssea / Salvage and the
+  like), which they left out. FFXiMain.dll's list rebuild (FUN_101f1100, 0x101f12a8..0x101f16c8): once container 3 is
+  loaded and the list's source returns a colour from its +0x20 (FUN_101f1bf0 for the main list, FUN_101f1c40 for the
+  direct list: both 0x80806040), every temporary item comes first (+0x54 rows, its view's order), then the inventory.
+  The temporary rows take that colour and show no quantity; the direct list takes them all, unfiltered. The storage
+  view's sources return 0 there, so its inventory side stays without them.
+- The list's "items/size" count leaves the temporary rows out (the row total +0x52 less +0x54).
+- Use and Drop work on a temporary row: the target prompt carries container 3 to c2s 0x037, and Drop sends c2s 0x028
+  with container 3 (LSB takes LOC_TEMPITEMS for both). iuse, the drop question and the item info follow the row's
+  container.
+- Ours: Manual Sort only moves inventory slots, so a temporary row there plays the error sound.
