@@ -5619,6 +5619,9 @@ struct World {
     started: Instant,
     logging_out: bool,
     target: Option<u32>,
+    /// Ours (modern): the target before the current one, set as target::set changes it (the sub-target prompt's
+    /// stand-ins are not counted); `<lt>` and the modern focus panel's Last row.
+    last_target: Option<u32>,
     /// Target lock-on (DAT_10565d34 +0x5c bits 0..1 != 0), the locked camera, ticks left in which the free
     /// camera ignores manual turns after a lock (DAT_10444464), auto lock-on (config 7 = 0), when the target
     /// was set, and manual camera turns waiting for the locked camera.
@@ -7552,6 +7555,7 @@ impl App {
                             started: Instant::now(),
                             logging_out: false,
                             target: None,
+                            last_target: None,
                             locked: false,
                             cam: Default::default(),
                             lock_height: -1.5,
