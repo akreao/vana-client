@@ -3,6 +3,8 @@
 Confirmed facts only; each with where it was verified. Sources: LSB `~/landsandboat` (commit d90234d2d1),
 xiloader (`~/ffxi/lab/xiloader`, ceb79a0), Ghidra on the installer. Decompiled output stays in `~/ffxi/lab`.
 
+New entries go in `docs/modlog/` as one file each and are folded in here later (see `docs/modlog/README.md`).
+
 ## Installer (FFXIFullSetup_US)
 - RAR5 SFX, 5 volumes. Contents: `FFXISetup.exe` (MFC bootstrapper), `PlayOnline/PlayOnlineViewer.msi`,
   `FINAL_FANTASY_XI/FINAL_FANTASY_XI.msi` + `data1..7.cab`, `redist/Directx_Jun2010`.
@@ -13270,27 +13272,16 @@ Specs: `~/ffxi/lab/research/pol_map_session_spec.md`, `entity_update_spec.md` (a
   heading as a float (FUN_100a6240: -atan2 of the frame's step, or the stick turned by the camera yaw) and rounds it
   only for the position packet; from the byte (1.4 degree steps) a stick's slow turn stepped and its noise shook.
 
-- Retail's PC client handed pads to the external config tool (configwi row 13 / lobycwin child 13 start it,
-  FUN_101bcb60; see "Tables copied from FFXiMain"), which we don't have, and its in-client pad word (key functions
-  0xb7..0xba) is still unread. So ours is not retail: client/gamepad.rs reads pads with gilrs and acts as a keyboard.
-  Buttons hold keys (DIK into `Input::set` for the key functions, egui key events for the windows, with cursor
-  repeats after 0.4 s every 0.08 s); the sticks go to `Input::set_stick` and count in `Input::axis` as the compact
-  stick does (the larger of keys, compact stick and pad stick). The left stick does not move while typing; the right
-  stick follows the arrows' rule (not typing, no window). With a window up, or outside the field, the left stick
-  steps the cursor as the arrows instead of moving.
-- A button bound to Ctrl / Alt (the triggers by default) makes the d-pad and face buttons press 1 ..= 8 while held:
-  Ctrl / Alt + 1 ..= 8, the palettes' macros.
-- Config 0xce's choices 1 / 2 (Misc. 4) stay off: they need retail's pad count, FUN_101bced0.
+## Temporary items in the Items lists (2026-11-02)
 
-## Suggestion tests from recorded game states (ours, 2026-11-02)
-
-- suggest.rs (plan G): `Facts` and `Suggestion` serialize; a `Case` is a game state with what the rules made of it
-  (`rule`, `note`, `facts`, `expect`). Cases live in client/suggest_cases/*.json and `recorded_cases` replays each one
-  against the rules (the whole list must match); `every_rule_has_a_case` checks each name in `RULES` (raise, shadows,
-  ailment, curaga, cure, waltz, burst, close, provoke, job_ability, ninja_stance, samba, debuff, open_chain,
-  strongest_ws, renew, between) has one.
-- Recording: with `VANA_SUGGEST_RECORD=<folder>` the client writes each new non-empty set of battle-menu
-  suggestions with its facts there (suggest-<ms>.json); fill in `rule` and `note` and move it under suggest_cases/.
-  `VANA_SUGGEST_BLESS=1 cargo test suggest` rewrites the expectations from the current rules (check the diff).
-- The first 17 cases are written by hand in the recorded format, one per rule (no game data in the build box); real
-  recordings can replace or join them.
+- Main Menu > Items and the action menu's Items now list the temporary items (container 3, Abyssea / Salvage and the
+  like), which they left out. FFXiMain.dll's list rebuild (FUN_101f1100, 0x101f12a8..0x101f16c8): once container 3 is
+  loaded and the list's source returns a colour from its +0x20 (FUN_101f1bf0 for the main list, FUN_101f1c40 for the
+  direct list: both 0x80806040), every temporary item comes first (+0x54 rows, its view's order), then the inventory.
+  The temporary rows take that colour and show no quantity; the direct list takes them all, unfiltered. The storage
+  view's sources return 0 there, so its inventory side stays without them.
+- The list's "items/size" count leaves the temporary rows out (the row total +0x52 less +0x54).
+- Use and Drop work on a temporary row: the target prompt carries container 3 to c2s 0x037, and Drop sends c2s 0x028
+  with container 3 (LSB takes LOC_TEMPITEMS for both). iuse, the drop question and the item info follow the row's
+  container.
+- Ours: Manual Sort only moves inventory slots, so a temporary row there plays the error sound.
