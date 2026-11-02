@@ -19,6 +19,12 @@ pub struct Keys {
 }
 
 impl Keys {
+    /// Made-up tables for tests without FFXiMain.dll (dat/fuzz.rs).
+    #[cfg(test)]
+    pub(crate) fn for_tests() -> Self {
+        Self { t1: std::array::from_fn(|i| i as u8), t2: std::array::from_fn(|i| (i as u8).wrapping_mul(7)) }
+    }
+
     pub fn from_ffximain(dll: &[u8]) -> Result<Self> {
         let table = |at: usize, want: &str| -> Result<[u8; 256]> {
             let t: [u8; 256] = dll.get(at..at + 256).and_then(|s| s.try_into().ok()).ok_or_else(|| anyhow::anyhow!("FFXiMain.dll too short"))?;
@@ -84,6 +90,10 @@ pub fn decode_mmb(keys: &Keys, p: &mut [u8]) {
 
 /// Inverts runs of 16..23 bytes chosen by the key (versions >= 0x1b; parse_mzb XORs their names with 0x55).
 pub fn decode_mzb(keys: &Keys, p: &mut [u8]) -> Result<()> {
+    // The header's length, version and key bytes (issue #87: a shorter chunk used to panic here).
+    if p.len() < 8 {
+        bail!("MZB too short");
+    }
     if p[3] < 0x1B {
         return Ok(());
     }
