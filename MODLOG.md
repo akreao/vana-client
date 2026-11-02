@@ -13235,3 +13235,11 @@ Specs: `~/ffxi/lab/research/pol_map_session_spec.md`, `entity_update_spec.md` (a
 - A button bound to Ctrl / Alt (the triggers by default) makes the d-pad and face buttons press 1 ..= 8 while held:
   Ctrl / Alt + 1 ..= 8, the palettes' macros.
 - Config 0xce's choices 1 / 2 (Misc. 4) stay off: they need retail's pad count, FUN_101bced0.
+
+## modern-shot: the alliance windows, and the texture limit (ours, 2026-11-02)
+
+- `modern-shot --alliance`: alliance1 / alliance2 with sample rows (mpf None, marks bit 1 the alliance leader's, an
+  away member, a trust's row without TP) through hud::party_panel, as the live path does.
+- The shot ran no frame before Modern::new loaded the atlases, so egui still assumed a 2048 texture side and the
+  2184 x 1776 status atlas panicked. A first empty frame now carries the device's max_texture_dimension_2d (the live
+  client passes it to egui_winit already); its texture deltas go with the rest.
