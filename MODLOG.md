@@ -13255,3 +13255,11 @@ Specs: `~/ffxi/lab/research/pol_map_session_spec.md`, `entity_update_spec.md` (a
   - Slots 32 / 33 / 35 / 36 (0xb7..0xba, unbound by default): the shut down prompt, F8's nearest target, /jump, /map.
 - Not built: the software keyboard (keypad*, where RB / LB / X / Back / LT / RT type), the ground-position cursor that
   LT / RT + d-pad move in position-target mode (0xb0..0xb3), and L3 centring the map viewer on its cursor (0x7e).
+
+## Pending actions (ours, 2026-11-02)
+
+- Retail shows nothing between sending an action and the server's answer. Ours keeps the last 0x01A (magic 3, weapon
+  skill 7, job ability 9) or 0x037 sent; the first 0x028 with our id as actor confirms it, a 0x029 with our id as
+  actor before that is taken as the refusal (but experience, limit and capacity points, defeats: 6, 8, 105, 253, 371,
+  372, 718, 735). The heuristic leans on LSB answering a refused action with a 0x029 and an accepted one with a 0x028
+  first.
