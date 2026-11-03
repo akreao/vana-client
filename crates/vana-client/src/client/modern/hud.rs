@@ -738,7 +738,7 @@ pub fn draw(p: &mut Panels, w: &mut World) {
     // An event takes the target window down unless it keeps it (EventPara2 bit 1, FUN_10085a00), as the retail HUD
     // does (client/mod.rs world_hud); the focus panel goes with it.
     let keeps_target = event::keeps_target(w);
-    if let Some(v) = target_view(w, p.gu).filter(|_| keeps_target) {
+    if let Some(v) = target_view(w, p.gu).filter(|_| keeps_target || w.target_event.is_some()) {
         target_panel(p, &v);
     }
     let others = if keeps_target { others_view(w, p.gu) } else { Vec::new() };
@@ -930,6 +930,11 @@ fn others_view(w: &World, gu: Option<&super::super::game_ui::GameUi>) -> Vec<Oth
 }
 
 fn target_view(w: &World, gu: Option<&super::super::game_ui::GameUi>) -> Option<TargetView> {
+    // Event op 0xb4 sub 2: the event's name and gauge whatever is targeted, in +0x68 (white), as the retail HUD.
+    if let Some((name, v)) = &w.target_event {
+        let colour = gu.map(|_| super::chat::colour(0x8080_8080u32.to_le_bytes()));
+        return Some(TargetView { name: name.clone(), ring: "indicators/target_neutral", locked: false, hp: Some((*v, *v as f32 / 100.0)), colour, cast: None, distance: None });
+    }
     let id = w.target?;
     let me = (id == w.my_id).then(|| self_entity(w));
     let e = me.as_ref().or_else(|| w.entities.get(&id))?;

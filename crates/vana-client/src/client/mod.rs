@@ -3154,7 +3154,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
     // FUN_1015fa00's group walk (GameUi::want; the gated windows say so themselves): suspended windows are not drawn,
     // their close plays, and their open when the bits are free again.
     let menu_off = world.action_menu.is_some() && !gu.want("menu    playermo");
-    let target_off = target.is_some() && event::keeps_target(world) && !gu.want("menu    targetwi");
+    let target_off = (world.target_event.is_some() || target.is_some() && event::keeps_target(world)) && !gu.want("menu    targetwi");
     let main_off = world.menu.is_some() && !gu.want(crate::render::screens::menu_window(world.menu_page));
     world.main_off = main_off;
     let mut st = crate::render::screens::HudState {
@@ -3178,7 +3178,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
         }).collect(),
         // FUN_101501a0 with +0x65 set: only the event's gauge and name, whatever is targeted.
         target: match &world.target_event {
-            Some((_, v)) => Some(Some(*v as f32 / 100.0)),
+            Some((_, v)) => (!target_off).then_some(Some(*v as f32 / 100.0)),
             None => target.filter(|_| event::keeps_target(world) && !target_off).map(|t| (!t.no_gauge).then_some(t.hpp as f32 / 100.0)),
         },
         menu_selected: world.menu.filter(|_| !main_off && !world.modern).and_then(|k| items.get(k)).map(|(i, _)| *i),
@@ -9205,6 +9205,8 @@ impl App {
                     world.party.refresh_self(char_id, index, &name, zone);
                     world.event = None;
                     world.event_pending = None;
+                    // The event's target-window mode (op 0xb4 sub 2) goes with the event.
+                    world.target_event = None;
                     // A zone-in drops the event without its tail (FUN_100ae960), so undo op 0x46 sub 1 here too:
                     // otherwise the status icons stay hidden for the whole next zone.
                     world.buffs_hidden = false;
