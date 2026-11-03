@@ -54,7 +54,8 @@ From the unpacked FFXiMain.dll (30261006_0). [C] confirmed in code, [I] inferred
   0xb8 [C]. So a trigger + d-pad hits 0xb0..0xb3 first and never steps the target; outside a ground prompt their
   command does nothing (+0x58 == 0) [C].
 - Locked on with no prompt, FUN_101587f0 swallows every command but 1 and 5 [C].
-- Up / down (command 2, FUN_10158b60) need field +0x60 & 4 and a pick, else nothing [C]. partyOnly = !(+0x60 & 8).
+- Up / down (command 2, FUN_10158b60) step only with field +0x60 & 4 and a pick (FUN_101597f0); without either the
+  result is 0, and the 0x200 rule below still makes that us, so with no target and no prompt they target us [C]. partyOnly = !(+0x60 & 8).
   FUN_10203920 (ECX DAT_106643a8; only with no party-window pick, +0x40 == 0 and DAT_106643e4 == 0) resets the index
   DAT_106643dc to 0 with no step when the pick is in no slot; else 0x27 -1 / 0x28 +1, wrapping over all 18 slots,
   until FUN_102034e0(0) is non-zero (slot valid by FUN_102033c0: record 0x10663af0 + i * 0x7c, +0x62 set, short +0x1c
