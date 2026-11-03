@@ -19,15 +19,19 @@ pub fn data_dir() -> PathBuf {
     app_dir(dirs::data_dir())
 }
 
-/// A character name as a file name. The name comes from the server's zone-in packet, so only ASCII letters and
-/// digits are used as they are (every retail and LSB name: LSB's validateCharacterName allows letters only, so their
-/// files keep their names). Anything else, a path separator or "..", becomes '_' and the name's UTF-8 bytes in hex:
-/// the file stays inside its folder, and two different names never share a file.
+/// A server-sent character name as a file name: letters and digits as they are, anything else (and a Windows device
+/// name) as '_' and the name's bytes in hex, so the file stays in its folder and two names never share one.
 fn name_file(name: &str) -> String {
-    if !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric()) {
+    if !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric()) && !(cfg!(windows) && device_name(name)) {
         return format!("{name}.json");
     }
     format!("_{}.json", name.bytes().map(|b| format!("{b:02x}")).collect::<String>())
+}
+
+/// CON, PRN, AUX, NUL, COM0..9 and LPT0..9, which Windows opens as devices whatever the extension.
+fn device_name(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    matches!(n.as_str(), "con" | "prn" | "aux" | "nul") || (n.len() == 4 && (n.starts_with("com") || n.starts_with("lpt")) && n.as_bytes()[3].is_ascii_digit())
 }
 
 /// A character's saved chat lines (the modern chat's history): in the data dir, or beside an FFXI_CONFIG copy.
@@ -179,6 +183,10 @@ pub struct Config {
     /// The drawn cursor's size (config 0021 off) in percent of retail's pixels on screen; 0 = auto (grows with the
     /// window height from 720). Not retail: it was sized for 640 x 480. The .ani cursors keep their own size.
     pub cursor_size: u32,
+    /// Ours (user, 2026-11-02): Mouse/Cam.'s Camera Keys, the keys' X / Y sense apart from the mouse: 0 Same (the
+    /// camera rows, keys and mouse alike, as retail), 1 normal, 2 inverted.
+    pub cam_keys_x: u32,
+    pub cam_keys_y: u32,
     /// Ours (user, 2026-10-25): containers whose sort window's Auto stays on, bit = container: a new item there sorts
     /// it again. Retail's Auto sorts once; Manual turns ours off.
     pub auto_sort: u32,
@@ -210,7 +218,7 @@ pub struct Config {
     pub modern_chat_font: f32,
     /// The modern edge windows folded to their tabs, by panel (the minimap, Wide Scan).
     pub modern_folded: std::collections::BTreeMap<String, bool>,
-    /// The Wide Scan flyout's kinds shown: 1 players, 2 NPCs, 4 monsters.
+    /// The Wide Scan flyout's kinds shown: 2 NPCs, 4 monsters (players, 1, always: LSB sends none).
     pub modern_scan_kinds: u8,
     /// The modern chat's All tab shows the battle lines too (the Battle tab has them alone).
     pub modern_battle_in_all: bool,
@@ -225,10 +233,10 @@ pub struct Config {
     pub modern_fav_strip: bool,
     /// Read a game controller (client/gamepad.rs; retail: padmode000's first flag).
     pub gamepad: bool,
-    /// Stick travel ignored around the centre as a fraction of full: retail's 42 of 127.
+    /// Stick travel ignored around the centre as a fraction of full: retail's 42 of 127 (ours round).
     pub gamepad_deadzone: f32,
-    /// The camera's up and down turned over (ours; retail inverts through padsin's sign).
-    pub gamepad_invert_y: bool,
+    /// Read the pad while the window is in the background (padmode000's [4], DISCL_BACKGROUND).
+    pub gamepad_background: bool,
     /// The button settings in retail's padsin000 format (FFXiPadConfig's registry value: 32 numbers, XInput button
     /// numbers or axis codes 32 + n); empty = gamepad::DEFAULT_PADSIN.
     pub gamepad_padsin: String,
@@ -389,6 +397,8 @@ impl Default for Config {
             minimap_span: 160.0,
             rest_tick: None,
             cursor_size: 0,
+            cam_keys_x: 0,
+            cam_keys_y: 0,
             auto_sort: 0,
             mods: Vec::new(),
             modern_ui: false,
@@ -405,8 +415,8 @@ impl Default for Config {
             modern_favourites: Default::default(),
             modern_fav_strip: true,
             gamepad: true,
-            gamepad_deadzone: 42.0 / 127.0,
-            gamepad_invert_y: false,
+            gamepad_deadzone: 0.33,
+            gamepad_background: false,
             gamepad_padsin: String::new(),
             gamepad_padexsin: String::new(),
             tool: Default::default(),
@@ -561,5 +571,7 @@ mod tests {
         // Names that differ only in a replaced character keep separate files.
         assert_ne!(name_file("a/b"), name_file("a\\b"));
         assert_eq!(chat_history_path("../x").file_name().unwrap(), "_2e2e2f78.json");
+        assert!(device_name("Con") && device_name("nul") && device_name("COM1") && device_name("Lpt9"));
+        assert!(!device_name("Conan") && !device_name("Comx") && !device_name("Nine"));
     }
 }

@@ -92,8 +92,8 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
         menu_key(w, gu, key, o, row);
         return;
     }
-    // Tab / Shift+Tab (the pad's RB / LB): the next / previous page, the modern layer's page tabs.
-    if key == K::Tab {
+    // Modern only: Tab / Shift+Tab (the pad's RB / LB) the next / previous page tab.
+    if key == K::Tab && w.modern {
         flip(w, !w.key_shift);
         w.sounds.push(Ui::Cursor as u32);
         return;

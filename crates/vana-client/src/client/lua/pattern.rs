@@ -1,8 +1,5 @@
-//! Lua 5.4's string patterns (lstrlib.c) in Rust, for `string.find` / `match` / `gmatch` / `gsub` (issue #83).
-//!
-//! Lua's own matcher runs in C and executes no VM instructions, so the count hook that enforces a mod's time budget
-//! never fires while it backtracks: one careless pattern (`.-.-x` on a long line) froze the client. This port follows
-//! lstrlib.c step for step (same results, same errors) and checks the mod's deadline as it goes.
+//! Lua 5.4's string patterns (lstrlib.c) in Rust, for `string.find` / `match` / `gmatch` / `gsub`: C's matcher runs
+//! no VM instructions, out of the budget hook's reach; this one follows it step for step and checks the deadline.
 
 use mlua::{Lua, MultiValue, Value};
 use std::time::Instant;
@@ -12,7 +9,8 @@ const MAXCAPTURES: usize = 32;
 const MAXCCALLS: usize = 200;
 const ESC: u8 = b'%';
 const SPECIALS: &[u8] = b"^$*+?.([%-";
-/// Units of work between deadline checks: a match step, a pattern byte scanned, 256 bytes of output.
+/// Units of work between deadline checks: a match step, a pattern byte scanned, an output push, 256 bytes compared or
+/// written.
 const CHECK_EVERY: usize = 4096;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -32,10 +30,34 @@ struct State<'a> {
     deadline: Option<Instant>,
 }
 
-type R<T> = Result<T, mlua::Error>;
+/// How a call fails: our own error (raised at the caller's line, as luaL_error), a bad argument (luaL_argerror: it
+/// names the function as called), or one passed on as it came (a replacement function's error, memory).
+enum Fail {
+    Raise(String),
+    Arg(usize, String),
+    Pass(String),
+}
 
-fn err(msg: impl Into<String>) -> mlua::Error {
-    mlua::Error::runtime(msg.into())
+impl From<mlua::Error> for Fail {
+    fn from(e: mlua::Error) -> Self {
+        Fail::Pass(message(&e))
+    }
+}
+
+/// An error's text as Lua would hold it (mlua adds a traceback to one it caught).
+fn message(e: &mlua::Error) -> String {
+    match e {
+        mlua::Error::RuntimeError(m) => m.split_once("\nstack traceback:\n").map_or(m.as_str(), |x| x.0).to_string(),
+        mlua::Error::MemoryError(_) => "not enough memory".into(),
+        mlua::Error::CallbackError { cause, .. } | mlua::Error::WithContext { cause, .. } => message(cause),
+        e => e.to_string(),
+    }
+}
+
+type R<T> = Result<T, Fail>;
+
+fn err(msg: impl Into<String>) -> Fail {
+    Fail::Raise(msg.into())
 }
 
 impl<'a> State<'a> {
@@ -250,11 +272,12 @@ impl<'a> State<'a> {
         Ok(l as usize)
     }
 
-    fn match_capture(&self, s: usize, l: u8) -> R<Option<usize>> {
+    fn match_capture(&mut self, s: usize, l: u8) -> R<Option<usize>> {
         let l = self.check_capture(l)?;
         let (init, cap) = self.capture[l];
         // A position capture has no text: C compares (size_t)-2 bytes, which never fits.
         let Cap::Len(len) = cap else { return Ok(None) };
+        self.charge(len / 256)?;
         if self.src.len() - s >= len && self.src[init..init + len] == self.src[s..s + len] { Ok(Some(s + len)) } else { Ok(None) }
     }
 
@@ -397,26 +420,72 @@ fn posrelat(pos: i64, len: usize) -> usize {
     }
 }
 
-fn arg_str(lua: &Lua, v: Value, n: usize, f: &str) -> R<mlua::LuaString> {
-    let t = v.type_name();
-    lua.coerce_string(v)?.ok_or_else(|| err(format!("bad argument #{n} to '{f}' (string expected, got {t})")))
+/// The arguments as C sees them: a missing one is "no value", not nil.
+struct Args(Vec<Value>);
+
+impl Args {
+    fn get(&self, n: usize) -> &Value {
+        self.0.get(n - 1).unwrap_or(&Value::Nil)
+    }
+
+    /// luaL_typeerror's name for the argument.
+    fn type_name(&self, n: usize) -> String {
+        match self.0.get(n - 1) {
+            None => "no value".into(),
+            Some(Value::LightUserData(_)) => "light userdata".into(),
+            Some(v) => {
+                let named = match v {
+                    Value::Table(t) => t.metatable().and_then(|m| m.raw_get::<Value>("__name").ok()),
+                    Value::UserData(u) => u.metatable().ok().and_then(|m| m.get::<Value>("__name").ok()),
+                    _ => None,
+                };
+                match named {
+                    Some(Value::String(n)) => n.to_string_lossy(),
+                    _ => v.type_name().to_string(),
+                }
+            }
+        }
+    }
+
+    fn bad(&self, n: usize, why: &str) -> Fail {
+        Fail::Arg(n, why.to_string())
+    }
+
+    /// luaL_checklstring: a string, or a number as its text.
+    fn str(&self, lua: &Lua, n: usize) -> R<mlua::LuaString> {
+        let v = self.get(n);
+        let s = if matches!(v, Value::String(_) | Value::Integer(_) | Value::Number(_)) { lua.coerce_string(v.clone())? } else { None };
+        s.ok_or_else(|| self.bad(n, &format!("string expected, got {}", self.type_name(n))))
+    }
+
+    /// luaL_optinteger.
+    fn int(&self, lua: &Lua, n: usize, default: i64) -> R<i64> {
+        let v = self.get(n);
+        if v.is_nil() {
+            return Ok(default);
+        }
+        if let Some(i) = lua.coerce_integer(v.clone())? {
+            return Ok(i);
+        }
+        let why = if lua.coerce_number(v.clone())?.is_some() { "number has no integer representation".to_string() } else { format!("number expected, got {}", self.type_name(n)) };
+        Err(self.bad(n, &why))
+    }
 }
 
 fn deadline(lua: &Lua) -> Option<Instant> {
     lua.app_data_ref::<std::rc::Rc<std::cell::RefCell<super::vm::ModState>>>().and_then(|st| st.borrow().deadline)
 }
 
-fn find_aux(lua: &Lua, args: (Value, Value, Option<i64>, Value), find: bool) -> R<MultiValue> {
-    let name = if find { "find" } else { "match" };
-    let s = arg_str(lua, args.0, 1, name)?;
-    let p = arg_str(lua, args.1, 2, name)?;
+fn find_aux(lua: &Lua, a: &Args, find: bool) -> R<MultiValue> {
+    let s = a.str(lua, 1)?;
+    let p = a.str(lua, 2)?;
     let (s, p) = (s.as_bytes(), p.as_bytes());
     let (s, p): (&[u8], &[u8]) = (&s, &p);
-    let init = posrelat(args.2.unwrap_or(1), s.len()) - 1;
+    let init = posrelat(a.int(lua, 3, 1)?, s.len()) - 1;
     if init > s.len() {
         return Ok(MultiValue::from_vec(vec![Value::Nil]));
     }
-    let plain = !matches!(args.3, Value::Nil | Value::Boolean(false));
+    let plain = !matches!(a.get(4), Value::Nil | Value::Boolean(false));
     if find && (plain || !p.iter().any(|c| SPECIALS.contains(c))) {
         // A plain search (linear, so no budget needed).
         return Ok(match memchr::memmem::find(&s[init..], p) {
@@ -447,53 +516,136 @@ fn find_aux(lua: &Lua, args: (Value, Value, Option<i64>, Value), find: bool) -> 
     Ok(MultiValue::from_vec(vec![Value::Nil]))
 }
 
-/// Replaces `string.find`, `match`, `gmatch` and `gsub` in the mod's string table (also its strings' methods).
-pub(super) fn install(lua: &Lua, string: &mlua::Table) -> mlua::Result<()> {
-    string.raw_set("find", lua.create_function(|lua, a: (Value, Value, Option<i64>, Value)| find_aux(lua, a, true))?)?;
-    string.raw_set("match", lua.create_function(|lua, (s, p, i): (Value, Value, Option<i64>)| find_aux(lua, (s, p, i, Value::Nil), false))?)?;
-    string.raw_set(
-        "gmatch",
-        lua.create_function(|lua, (s, p, i): (Value, Value, Option<i64>)| {
-            let s = arg_str(lua, s, 1, "gmatch")?.as_bytes().to_vec();
-            let p = arg_str(lua, p, 2, "gmatch")?.as_bytes().to_vec();
-            let mut src = (posrelat(i.unwrap_or(1), s.len()) - 1).min(s.len() + 1);
-            let mut last: Option<usize> = None;
-            lua.create_function_mut(move |lua, ()| {
-                let mut ms = State::new(&s, &p, deadline(lua));
-                while src <= s.len() {
-                    ms.reset();
-                    if let Some(e) = ms.do_match(src, 0)?
-                        && Some(e) != last
-                    {
-                        let start = src;
-                        src = e;
-                        last = Some(e);
-                        return ms.captures(lua, Some((start, e)));
-                    }
-                    src += 1;
-                }
-                Ok(MultiValue::new())
-            })
-        })?,
-    )?;
-    string.raw_set("gsub", lua.create_function(gsub)?)?;
-    Ok(())
+/// Marks a failed call's results for `raise`.
+static FAILED: u8 = 0;
+
+fn failed() -> Value {
+    Value::LightUserData(mlua::LightUserData(failed_ptr()))
 }
 
-fn gsub(lua: &Lua, (s0, p, repl, max): (Value, Value, Value, Option<i64>)) -> R<(Value, i64)> {
-    let src = arg_str(lua, s0, 1, "gsub")?;
-    let p = arg_str(lua, p, 2, "gsub")?;
+/// A call's results; a failure as (FAILED, level, message).
+/// A call's results; a failure as (FAILED, kind, message, argument) for `raise`.
+fn results(lua: &Lua, r: R<MultiValue>) -> mlua::Result<MultiValue> {
+    let (kind, m, arg) = match r {
+        Ok(v) => return Ok(v),
+        Err(Fail::Pass(m)) => (0, m, 0),
+        Err(Fail::Raise(m)) => (1, m, 0),
+        Err(Fail::Arg(n, m)) => (2, m, n as i64),
+    };
+    Ok(MultiValue::from_vec(vec![failed(), Value::Integer(kind), Value::String(lua.create_string(m)?), Value::Integer(arg)]))
+}
+
+/// The C function a mod calls: its Rust half (upvalue 1) returns a failure as values, raised here as luaL_error
+/// raises one, a string at the caller's line. A C function keeps that line under a tail call; a Lua one would not.
+unsafe extern "C-unwind" fn raise(l: *mut mlua::ffi::lua_State) -> std::ffi::c_int {
+    use mlua::ffi;
+    // SAFETY: called by Lua with a valid state; nothing here owns memory a longjmp could skip.
+    unsafe {
+        let n = ffi::lua_gettop(l);
+        ffi::lua_pushvalue(l, ffi::lua_upvalueindex(1));
+        ffi::lua_insert(l, 1);
+        ffi::lua_call(l, n, ffi::LUA_MULTRET);
+        let got = ffi::lua_gettop(l);
+        if got == 4 && ffi::lua_touserdata(l, 1) == failed_ptr() {
+            match ffi::lua_tointeger(l, 2) {
+                2 => {
+                    ffi::luaL_argerror(l, ffi::lua_tointeger(l, 4) as std::ffi::c_int, ffi::lua_tostring(l, 3));
+                }
+                kind => {
+                    ffi::lua_settop(l, 3);
+                    if kind == 1 {
+                        ffi::luaL_where(l, 1);
+                        ffi::lua_insert(l, 3);
+                        ffi::lua_concat(l, 2);
+                    }
+                }
+            }
+            ffi::lua_error(l);
+        }
+        got
+    }
+}
+
+/// gmatch: as raise, and the iterator it returns is wrapped the same way.
+unsafe extern "C-unwind" fn raise_gmatch(l: *mut mlua::ffi::lua_State) -> std::ffi::c_int {
+    // SAFETY: as raise; on success the stack holds the iterator alone.
+    unsafe {
+        raise(l);
+        mlua::ffi::lua_pushcclosure(l, raise, 1);
+        1
+    }
+}
+
+fn failed_ptr() -> *mut std::ffi::c_void {
+    &FAILED as *const u8 as *mut std::ffi::c_void
+}
+
+/// Replaces `string.find`, `match`, `gmatch` and `gsub` in the mod's string table (also its strings' methods).
+pub(super) fn install(lua: &Lua, string: &mlua::Table) -> mlua::Result<()> {
+    let find = lua.create_function(|lua, a: MultiValue| results(lua, find_aux(lua, &Args(a.into_vec()), true)))?;
+    let r#match = lua.create_function(|lua, a: MultiValue| results(lua, find_aux(lua, &Args(a.into_vec()), false)))?;
+    let gmatch = lua.create_function(|lua, a: MultiValue| results(lua, gmatch(lua, &Args(a.into_vec()))))?;
+    let gsub = lua.create_function(|lua, a: MultiValue| results(lua, gsub(lua, &Args(a.into_vec())).map(|(s, n)| MultiValue::from_vec(vec![s, Value::Integer(n)]))))?;
+    // SAFETY: the stack holds the five arguments; each closure takes one of them as its upvalue.
+    unsafe {
+        lua.exec_raw::<()>((string.clone(), find, r#match, gmatch, gsub), |l| {
+            use mlua::ffi;
+            for (i, name, f) in [(2, c"find", raise as ffi::lua_CFunction), (3, c"match", raise), (4, c"gmatch", raise_gmatch), (5, c"gsub", raise)] {
+                ffi::lua_pushvalue(l, i);
+                ffi::lua_pushcclosure(l, f, 1);
+                ffi::lua_setfield(l, 1, name.as_ptr());
+            }
+            ffi::lua_settop(l, 0);
+        })
+    }
+}
+
+/// gmatch's iterator, over the subject and pattern as Lua holds them.
+fn gmatch(lua: &Lua, a: &Args) -> R<MultiValue> {
+    let s = a.str(lua, 1)?;
+    let p = a.str(lua, 2)?;
+    let len = s.as_bytes().len();
+    let mut src = (posrelat(a.int(lua, 3, 1)?, len) - 1).min(len + 1);
+    let mut last: Option<usize> = None;
+    let it = lua.create_function_mut(move |lua, ()| {
+        let (sb, pb) = (s.as_bytes(), p.as_bytes());
+        let r = (|| {
+            let mut ms = State::new(&sb, &pb, deadline(lua));
+            while src <= len {
+                ms.reset();
+                if let Some(e) = ms.do_match(src, 0)?
+                    && Some(e) != last
+                {
+                    let start = src;
+                    src = e;
+                    last = Some(e);
+                    return ms.captures(lua, Some((start, e)));
+                }
+                src += 1;
+            }
+            Ok(MultiValue::new())
+        })();
+        results(lua, r)
+    })?;
+    Ok(MultiValue::from_vec(vec![Value::Function(it)]))
+}
+
+fn gsub(lua: &Lua, a: &Args) -> R<(Value, i64)> {
+    let src = a.str(lua, 1)?;
+    let p = a.str(lua, 2)?;
+    // As C: the count (4) is read before the replacement's type (3) is checked.
+    let max_s = a.int(lua, 4, src.as_bytes().len() as i64 + 1)?;
+    let repl = a.get(3).clone();
+    if !matches!(repl, Value::Integer(_) | Value::Number(_) | Value::String(_) | Value::Table(_) | Value::Function(_)) {
+        return Err(a.bad(3, &format!("string/function/table expected, got {}", a.type_name(3))));
+    }
     let (src_b, p_b) = (src.as_bytes(), p.as_bytes());
     let (s, p): (&[u8], &[u8]) = (&src_b, &p_b);
-    if !matches!(repl, Value::Integer(_) | Value::Number(_) | Value::String(_) | Value::Table(_) | Value::Function(_)) {
-        return Err(err(format!("bad argument #3 to 'gsub' (string/function/table expected, got {})", repl.type_name())));
-    }
     // A number replacement is its string form.
     let repl = match repl {
         Value::Integer(_) | Value::Number(_) => Value::String(lua.coerce_string(repl)?.ok_or_else(|| err("bad replacement"))?),
         r => r,
     };
-    let max_s = max.unwrap_or(s.len() as i64 + 1);
     let anchor = p.first() == Some(&b'^');
     let p = if anchor { &p[1..] } else { p };
     let mut ms = State::new(s, p, deadline(lua));
@@ -536,10 +688,10 @@ struct Out {
 impl Out {
     fn push(&mut self, ms: &mut State, bytes: &[u8]) -> R<()> {
         if self.buf.len() + bytes.len() > self.cap {
-            return Err(err("not enough memory"));
+            return Err(Fail::Pass("not enough memory".into()));
         }
         self.buf.extend_from_slice(bytes);
-        ms.charge(bytes.len() / 256)
+        ms.charge(1 + bytes.len() / 256)
     }
 }
 
@@ -688,6 +840,29 @@ mod tests {
             "(function() local t = {} for p in string.gmatch('abc', '()') do t[#t+1] = p end return table.concat(t, ',') end)()",
             "('Method Call'):find('C')",
             "('x'):rep(3):gsub('x', 'y')",
+            "string.find('<a<b>>c', '%b<>')",
+            "string.find('[[x]]', '%b[]')",
+            "string.find('abc', '%f[%z]')",
+            "string.find('ab cd', '%f[%A]')",
+            "string.find('\\200\\201a', '[\\128-\\255]+')",
+            "string.match('caf\\195\\169', '%a+')",
+            "table.concat({string.gsub('\\255x', '.', '%0%0')}, ',')",
+            "(function() local it = string.gmatch('a', 'b') return select('#', it()) end)()",
+            // Errors are strings, at the caller's line as C's (none when pcall calls the function itself).
+            "(function() local ok, e = pcall(string.find, 'a', '%') return type(e), e end)()",
+            "select(2, pcall(function() return string.find('a', '%') end))",
+            "select(2, pcall(function() for w in string.gmatch('a', '%') do end end))",
+            "select(2, pcall(string.gsub, 'a', 'a', function() error('boom') end))",
+            "select(2, pcall(string.find))",
+            "select(2, pcall(string.match, 'a'))",
+            "select(2, pcall(string.find, 'a', 'a', 1.5))",
+            "select(2, pcall(string.find, 'a', 'a', 'x'))",
+            "select(2, pcall(string.gsub, 'a', 'a'))",
+            "select(2, pcall(string.gsub, 'a', 'a', nil, 'x'))",
+            "select(2, pcall(string.gmatch, {}, 'a'))",
+            "select(2, pcall(function() return ('x'):find({}) end))",
+            "select(2, pcall(function() local s = 'x' return s.find() end))",
+            "select(2, pcall(string.find, setmetatable({}, {__name = 'Thing'}), 'a'))",
             // Errors.
             "string.find('a', '%')",
             "string.find('a', '[a')",
@@ -784,7 +959,7 @@ mod tests {
         }
     }
 
-    /// A backtracking pattern stops at the deadline instead of running for seconds (issue #83).
+    /// A backtracking pattern stops at the deadline instead of running for seconds.
     #[test]
     fn deadline_stops_backtracking() {
         let lua = Lua::new();
@@ -800,7 +975,7 @@ mod tests {
         assert!(t0.elapsed() < std::time::Duration::from_secs(1), "took {:?}", t0.elapsed());
     }
 
-    /// A huge set is charged by its length, so it can't scan for long between deadline checks (Devin on #95).
+    /// A huge set is charged by its length, so it can't scan for long between deadline checks.
     #[test]
     fn deadline_counts_large_sets() {
         let lua = Lua::new();
@@ -814,7 +989,22 @@ mod tests {
         assert!(t0.elapsed() < std::time::Duration::from_secs(1), "took {:?}", t0.elapsed());
     }
 
-    /// gsub's output is held to the mod's memory limit, even within one replacement (Devin on #95).
+    /// A back-reference is charged by its length: long compares can't run for long between deadline checks.
+    #[test]
+    fn deadline_counts_back_references() {
+        let lua = Lua::new();
+        let st = std::rc::Rc::new(std::cell::RefCell::new(super::super::vm::ModState::default()));
+        lua.set_app_data(st.clone());
+        super::install(&lua, &lua.globals().get("string").unwrap()).unwrap();
+        lua.load("s = string.rep('a', 16 << 20)").exec().unwrap();
+        st.borrow_mut().deadline = Some(std::time::Instant::now() + std::time::Duration::from_millis(100));
+        let t0 = std::time::Instant::now();
+        let r = lua.load("return string.find(s, '^(.*)%1x')").eval::<mlua::MultiValue>();
+        assert!(r.unwrap_err().to_string().contains("time budget"));
+        assert!(t0.elapsed() < std::time::Duration::from_millis(500), "took {:?}", t0.elapsed());
+    }
+
+    /// gsub's output is held to the mod's memory limit, even within one replacement.
     #[test]
     fn gsub_output_is_bounded() {
         let lua = Lua::new();

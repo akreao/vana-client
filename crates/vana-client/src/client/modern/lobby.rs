@@ -201,6 +201,46 @@ impl Modern {
         ctx.request_repaint();
     }
 
+    /// The Update window (client/updater.rs) on the rects its view placed (UI pixels): the frame and title, its lines,
+    /// the On / Off boxes, the progress bar, the buttons; their mouse stays the window's.
+    pub fn update_window(&mut self, ctx: &Context, window: [u32; 2], scale: u32, ui_k: (f32, f32), v: &super::super::updater::View) {
+        self.zoom_to(ctx, window, scale);
+        let k = ctx.pixels_per_point();
+        let pt = |r: [f32; 4]| egui::Rect::from_min_size(pos2(r[0] / (k * ui_k.0), r[1] / (k * ui_k.1)), vec2(r[2] / (k * ui_k.0), r[3] / (k * ui_k.1)));
+        let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("modern update")));
+        let frame = pt(v.frame).expand(6.0);
+        // Opaque whatever the Opacity setting: the title's buttons must not show through.
+        let opacity = self.opacity.replace(1.0);
+        p.add(super::borders::window(self, "window_focused", frame));
+        self.opacity.set(opacity);
+        // Text to the view's line height (the window is zoomed for it).
+        let size = (v.line / (k * ui_k.1) * 0.8).max(self.theme.small);
+        let title = pt([v.frame[0] + v.line * 0.5, v.frame[1] + v.line * 0.25, v.frame[2], v.line]);
+        p.text(pos2(title.min.x, title.center().y), Align2::LEFT_CENTER, "Update", FontId::new(size, FontFamily::Name(super::STRONG.into())), self.theme.color("gold"));
+        for t in &v.texts {
+            let at = pt([t.at[0], t.at[1], t.wrap, v.line]);
+            let c = if t.white { self.theme.color("text") } else { self.theme.color("muted") };
+            let mut job = egui::text::LayoutJob::simple(t.text.clone(), FontId::proportional(size), c, at.width());
+            job.wrap.max_rows = t.max;
+            p.galley(pos2(at.min.x, at.center().y - size * 0.6), p.layout_job(job), c);
+        }
+        let hover = ctx.input(|i| i.pointer.hover_pos());
+        for &(r, label, avail, on) in &v.toggles {
+            self.lobby_button(&p, pt(r).expand2(vec2(3.0, 2.0)), label, on, avail, hover, size);
+        }
+        if let Some((r, f)) = v.gauge {
+            let bar = pt(r).shrink2(vec2(0.0, pt(r).height() * 0.25));
+            p.rect(bar, bar.height() / 2.0, self.theme.color("charcoal"), egui::Stroke::new(1.0, self.theme.color("bronze").gamma_multiply(0.7)), egui::StrokeKind::Outside);
+            if f > 0.0 {
+                p.rect_filled(egui::Rect::from_min_max(bar.min, pos2(bar.min.x + bar.width() * f, bar.max.y)), bar.height() / 2.0, self.theme.color("focus"));
+            }
+        }
+        for &(r, label, on) in &v.buttons {
+            self.lobby_button(&p, pt(r).expand2(vec2(4.0, 3.0)), label, on, true, hover, size);
+        }
+        ctx.request_repaint();
+    }
+
     /// The lobby's help bar on retail's lobyhelp strip (UI pixels, the screen's width): the help line centred in its
     /// colour, the client version above the strip at retail's spot.
     #[allow(clippy::too_many_arguments)]
@@ -271,7 +311,7 @@ impl Modern {
         self.zoom_to(ctx, window, scale);
         let mut layout = Default::default();
         let (mut changed, mut font) = (false, 15.0);
-        let mut p = Panels { m: self, ctx, gu: Some(gu), layout: &mut layout, vis: Default::default(), changed: &mut changed, chat_font: &mut font, battle_in_all: &mut true, condense: &mut true, folded: &mut Default::default(), scan_kinds: &mut 7, this: Default::default(), retail: Default::default(), focus: Some("select") };
+        let mut p = Panels { m: self, ctx, gu: Some(gu), layout: &mut layout, vis: Default::default(), changed: &mut changed, chat_font: &mut font, battle_in_all: &mut true, condense: &mut true, folded: &mut Default::default(), scan_kinds: &mut 7, this: Default::default(), retail: Default::default(), focus: Some("select"), hidden: Vec::new() };
         let mut out = Pointer::default();
         list_panel(&mut p, gu, v, &mut out);
         windows(&mut p, gu, v, &mut out);
@@ -286,7 +326,7 @@ impl Modern {
         let mut layout = Default::default();
         let (mut changed, mut font) = (false, 15.0);
         let focus = if c.ok.is_some() || c.confirm.is_some() { "creator prompt" } else { "creator" };
-        let mut p = Panels { m: self, ctx, gu: Some(gu), layout: &mut layout, vis: Default::default(), changed: &mut changed, chat_font: &mut font, battle_in_all: &mut true, condense: &mut true, folded: &mut Default::default(), scan_kinds: &mut 7, this: Default::default(), retail: Default::default(), focus: Some(focus) };
+        let mut p = Panels { m: self, ctx, gu: Some(gu), layout: &mut layout, vis: Default::default(), changed: &mut changed, chat_font: &mut font, battle_in_all: &mut true, condense: &mut true, folded: &mut Default::default(), scan_kinds: &mut 7, this: Default::default(), retail: Default::default(), focus: Some(focus), hidden: Vec::new() };
         let mut out = creator::Pointer::default();
         creator_panel(&mut p, gu, c, &mut out);
         creator_prompts(&mut p, gu, c, &mut out);
@@ -302,7 +342,7 @@ impl Modern {
         self.zoom_to(ctx, window, scale);
         let mut layout = Default::default();
         let (mut changed, mut font) = (false, 15.0);
-        let mut p = Panels { m: self, ctx, gu: Some(gu), layout: &mut layout, vis: Default::default(), changed: &mut changed, chat_font: &mut font, battle_in_all: &mut true, condense: &mut true, folded: &mut Default::default(), scan_kinds: &mut 7, this: Default::default(), retail: Default::default(), focus: Some("lobby config") };
+        let mut p = Panels { m: self, ctx, gu: Some(gu), layout: &mut layout, vis: Default::default(), changed: &mut changed, chat_font: &mut font, battle_in_all: &mut true, condense: &mut true, folded: &mut Default::default(), scan_kinds: &mut 7, this: Default::default(), retail: Default::default(), focus: Some("lobby config"), hidden: Vec::new() };
         let out = super::config::lobby(&mut p, c, v, s, sw);
         *p.m.rects.borrow_mut() = std::mem::take(&mut p.this);
         out

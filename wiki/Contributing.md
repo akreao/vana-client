@@ -31,10 +31,9 @@ On master, `python3 docs/fold.py` appends every fragment to MODLOG.md and docs/m
 - Offscreen tools render parts of the client to PNG for checking by eye; decoders print game files. See [[Command Line]].
 - `play --input '<script>'` drives the client for test runs.
 
-## Releases and pinned code files
+## Releases
 
 - `release/publish.sh VERSION` signs the Linux and Windows builds with the release key and creates the GitHub release the in-app Update offers. See [[Building from Source#release-builds]].
-- The [Code pins workflow](https://github.com/akreao/vana-client/blob/master/.github/workflows/code-pins.yml) checks the PlayOnline patch server every few hours, hashes every game .exe / .dll and, when the list changes, signs and publishes it as the `code-pins` pre-release. The patcher only writes a code file that is on this list.
 
 ## This wiki
 

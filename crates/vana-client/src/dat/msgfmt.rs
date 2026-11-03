@@ -23,11 +23,7 @@ fn sjis_pair(a: u8, b: u8) -> bool {
 }
 
 /// Expands a string: Shift-JIS bytes in and out. `item(id, count, no_article)` names an item for code 0x8e.
-///
-/// A jump (0x84..=0x8a) may land at or before its own code. Where it goes next depends only on the position, the
-/// compare flags and the choice end (`ints` and `strs` never change), so a string that loops comes back to one of
-/// those states after a backward jump. Such a string stops at the second visit instead of looping forever
-/// (issue #88), and the output so far is returned. A string that ends never repeats a state, so its output is unchanged.
+/// A backward jump back to a state already left from (position, compare flags, choice end) ends the string.
 pub fn format(s: &[u8], strs: &[&[u8]], ints: &[i32], item: &dyn Fn(i32, i32, bool) -> Option<Vec<u8>>) -> Vec<u8> {
     let mut out = Vec::new();
     let (mut eq, mut lt, mut gt) = (false, false, false);
@@ -255,8 +251,7 @@ mod tests {
         format(s, &[], ints, &|_, _, _| None)
     }
 
-    /// Issue #88: an always-taken jump back to the start used to repeat forever. It now stops when the jump comes
-    /// back to a state it has already left from, so the loop body is written twice.
+    /// An always-taken jump back to the start stops at the repeated state: the loop body is written twice.
     #[test]
     fn backward_jump_stops() {
         assert_eq!(plain(b"A\xFA\x40\x84\xFB", &[]), b"AA");
@@ -272,7 +267,7 @@ mod tests {
         assert_eq!(plain(s, &[]), b"XZY");
     }
 
-    /// Issue #88's fuzz shape: random bytes always return.
+    /// Random bytes always return.
     #[test]
     fn random_strings_return() {
         let mut x = 0x2545_f491_4f6c_dd1du64;

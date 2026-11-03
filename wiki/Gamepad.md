@@ -36,9 +36,6 @@ The function order for `gamepad_padsin` is in [padsin_order.md](https://github.c
 
 ## Typing on the pad
 
-When a text field opens while the pad was the last thing used (the chat line, the login boxes, the character name), or on RB in a text field, a keyboard comes up:
-
-- Under Steam (Steam Deck, Big Picture): Steam's own keyboard.
-- Elsewhere: an on-screen keyboard drawn by the client (ported from [Blizz127/vana-client](https://github.com/Blizz127/vana-client)).
-
-On the on-screen keyboard: the d-pad moves, A types the key, B or LB deletes, X turns the page (letters, capitals, symbols), Y types a space, RB or Start sends Enter, Back closes it. The mouse can click its keys too.
+RB opens retail's software keyboard ("menu    keypadus": its pages, keys, pad buttons, placement and sounds) when
+Config > Misc. 4 > Software Keyboard is on, typing into the open field, or into the chat line when no field is open.
+It is drawn larger in the classic UI and as a panel in the modern UI. With the option off, RB does nothing here.

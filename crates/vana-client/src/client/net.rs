@@ -40,7 +40,8 @@ pub struct EntityUpdate {
     /// Name-colour marks (mask 0x04), FUN_1008db40's inputs.
     pub marks: Option<Marks>,
     pub plate: Option<PlateExtra>,
-    /// 0x00D mask 0x04, u32 @0x20 bit 15: male (the emote lines' [his/her]).
+    /// 0x00D / 0x00E mask 0x04, u32 @0x20 bit 15: male (+0x124 bit 25; every actor kind, FUN_10099ae0 / FUN_1009b550):
+    /// the [a/b] picks and event values 0x7f0b / 0x7f8b.
     pub male: Option<bool>,
     /// u32 @0x24 bits 29 (named: no article) and 30 (plural verbs), read by the 0x00D/0x00E handlers.
     pub name_flags: Option<(bool, bool)>,
@@ -323,6 +324,16 @@ pub struct ZoneText {
     pub flags: u8,
 }
 
+/// Our pet as s2c 0x068 type 4 gives it.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PetSync {
+    pub index: u16,
+    pub hpp: u8,
+    pub mpp: u8,
+    pub tp: u16,
+    pub target: u32,
+}
+
 #[derive(Clone, Debug)]
 pub enum NetEvent {
     /// Ours (docs/lua-mods.md 3.3): while a mod hooks incoming packets, a received batch for the hooks, undecoded,
@@ -418,8 +429,9 @@ pub enum NetEvent {
     Mounts(u64),
     /// s2c 0x119 u32 @0xfc: the mount recast in seconds (one shared timer).
     MountRecast(u32),
-    /// s2c 0x068 type 4 (LSB CPetSyncPacket): our pet's TP (u16 @0x10), none without a pet.
-    PetTp(Option<u16>),
+    /// s2c 0x068 type 4 (LSB CPetSyncPacket): our pet (ActIndex u16 @0xc, HP% @0xe, MP% @0xf, TP u16 @0x10, its
+    /// target u32 @0x14 while attacking), none without a pet.
+    PetSync(Option<PetSync>),
     /// 0x01C: container sizes (ItemNum, 1 + size).
     ItemMax([u8; 18], [u16; 18]),
     /// 0x01E: count of a slot (0 = emptied).
@@ -468,7 +480,7 @@ pub enum NetEvent {
     /// `team`: the PvP team byte (+0x1ff, u32 @0x34 >> 21; LSB allegiance).
     /// `ride`: ChocoboIndex u32 @0x28 bits 13..15 and the mount id u8 @0x5B.
     /// `speed`: flags1 (u32 @0x2C) Speed bits 0..11 and SpeedBase bits 17..24 (FUN_1009d0f0 -> actor +0x15c / +0x9c).
-    SelfStatus { speed: (u8, u8), status: u8, hpp: u8, dead: (u32, u32), pet: u16, flags: u32, icons: [u16; 32], team: u8, fellow: u16, plate: SelfPlate, ride: (u8, u8), indi: u8, fish_timer: u16, gate: u8 },
+    SelfStatus { speed: (u8, u8), status: u8, hpp: u8, dead: (u32, u32), pet: u16, flags: u32, icons: [u16; 32], team: u8, fellow: u16, plate: SelfPlate, ride: (u8, u8), indi: u8, fish_timer: u16, gate: u8, costume: u16 },
     /// s2c 0x115: the hooked fish.
     Fish(super::fishing::FishParams),
     /// s2c 0x076: party members' status icons (UniqueNo, 32 icons), five rows (ourselves not included).
@@ -746,6 +758,8 @@ pub struct SelfState {
     pub pos: [f32; 3],
     pub dir: u8,
     pub moving: bool,
+    /// c2s 0x015 @0x12 (FUN_10096c00): the ticks of the move so far; others' clients slide us by its steps.
+    pub move_time: u16,
     /// The current target's ActIndex (0 none): c2s 0x015 @0x16 facetarget, the server's cursor target.
     pub target: u16,
 }
@@ -761,6 +775,8 @@ pub struct NetHandle {
 
 pub const HOOK_IN: u8 = 1;
 pub const HOOK_OUT: u8 = 2;
+/// A mod may read packets.last: the net thread keeps the last of each id.
+pub const HOOK_LAST: u8 = 4;
 
 /// Datagram bytes sent and received (whole UDP payloads, as FUN_100f9b80 / FUN_100f9b90 count them) and
 /// when the last server datagram came, in ms since the session started.
@@ -770,6 +786,21 @@ pub struct NetStats {
     pub received: std::sync::atomic::AtomicU64,
     pub last_rx_ms: std::sync::atomic::AtomicU64,
     pub start: std::sync::OnceLock<Instant>,
+    /// A mod's datagram interval in ms (client.set_option send_interval); 0 retail's 400.
+    pub send_ms: std::sync::atomic::AtomicU32,
+    /// The last sub-packet of each id each way (packets.last), kept while HOOK_LAST is set.
+    pub last_in: Mutex<std::collections::HashMap<u16, Vec<u8>>>,
+    pub last_out: Mutex<std::collections::HashMap<u16, Vec<u8>>>,
+}
+
+impl NetStats {
+    /// Keeps a sub-packet as the last of its id.
+    pub fn keep_last(&self, out: bool, data: &[u8]) {
+        let id = if data.len() < 2 { 0 } else { u16::from_le_bytes([data[0], data[1]]) & 0x1ff };
+        if let Ok(mut m) = if out { &self.last_out } else { &self.last_in }.lock() {
+            m.insert(id, data.to_vec());
+        }
+    }
 }
 
 impl NetStats {
@@ -893,7 +924,7 @@ fn entity(p: &SubPacket, kind: EntityKind) -> EntityUpdate {
             .flatten(),
         claim: (kind == EntityKind::Npc && flags & 0x02 != 0).then(|| p.u32(0x2C)),
         mob: (kind == EntityKind::Npc && flags & 7 != 0).then(|| p.u8(0x20) & 1 != 0),
-        male: (kind == EntityKind::Player && flags & 0x04 != 0).then(|| p.u32(0x20) >> 15 & 1 != 0),
+        male: (flags & 0x04 != 0 && p.data.len() >= 0x24).then(|| p.u32(0x20) >> 15 & 1 != 0),
         marks: (flags & 0x04 != 0 && p.data.len() >= 0x2C).then(|| {
             let pc = kind == EntityKind::Player;
             Marks {
@@ -1041,7 +1072,7 @@ fn session(addr: SocketAddr, login: &MapLogin, account: &str, codec: &Codec, tx:
             Some(std::mem::take(&mut hooked_in))
         } else {
             let got = map.recv(Duration::from_millis(20))?;
-            // Every datagram's bytes count, the dropped unreadable ones too (recv's None).
+            // Only datagrams that decode count (recv adds them).
             stats.received.fetch_add(map.bytes_in - rx_seen, Relaxed);
             rx_seen = map.bytes_in;
             match got {
@@ -1054,6 +1085,11 @@ fn session(addr: SocketAddr, login: &MapLogin, account: &str, codec: &Codec, tx:
                         tx.send(NetEvent::RawIn(sess, packets))?;
                         None
                     } else {
+                        if hooks.load(Ordering::Relaxed) & HOOK_LAST != 0 {
+                            for p in &packets {
+                                stats.keep_last(false, &p.data);
+                            }
+                        }
                         Some(packets)
                     }
                 }
@@ -1069,7 +1105,7 @@ fn session(addr: SocketAddr, login: &MapLogin, account: &str, codec: &Codec, tx:
                         map.zoned_in(&p);
                         let pos = [p.f32(12), p.f32(16), p.f32(20)];
                         let (scene, myroom) = scene_of(&p);
-                        *me.lock().unwrap() = SelfState { pos, dir: p.u8(11), moving: false, target: 0 };
+                        *me.lock().unwrap() = SelfState { pos, dir: p.u8(11), moving: false, move_time: 0, target: 0 };
                         zoned = true;
                         my_index = p.u16(8);
                         queue.push(build(0x00C, &[0u8; 8]));
@@ -1111,7 +1147,7 @@ fn session(addr: SocketAddr, login: &MapLogin, account: &str, codec: &Codec, tx:
                             if lo == 0xff && hi == 0 { 0xffff } else { hi << 8 | lo }
                         });
                         let speed = ((p.u32(0x2C) & 0xfff).min(255) as u8, (p.u32(0x2C) >> 17) as u8);
-                        tx.send(NetEvent::SelfStatus { speed, status, hpp: (p.u32(0x28) >> 16) as u8, dead: (p.u32(0x3C), p.u32(0x40)), pet: (p.u32(0x34) >> 3) as u16, flags: p.u32(0x28), icons, team: (p.u32(0x34) >> 21) as u8, fellow: p.u16(0x48), plate: self_plate(&p), ride: ((p.u32(0x28) >> 13 & 7) as u8, if p.data.len() > 0x5b { p.u8(0x5b) } else { 0 }), indi: if p.data.len() > 0x58 { p.u8(0x58) & 0x7f } else { 0x10 }, fish_timer: if p.data.len() > 0x4b { p.u16(0x4a) } else { 0 }, gate: if p.data.len() > 0x5a { p.u8(0x5a) >> 4 } else { 0 } })?;
+                        tx.send(NetEvent::SelfStatus { speed, status, hpp: (p.u32(0x28) >> 16) as u8, dead: (p.u32(0x3C), p.u32(0x40)), pet: (p.u32(0x34) >> 3) as u16, flags: p.u32(0x28), icons, team: (p.u32(0x34) >> 21) as u8, fellow: p.u16(0x48), plate: self_plate(&p), ride: ((p.u32(0x28) >> 13 & 7) as u8, if p.data.len() > 0x5b { p.u8(0x5b) } else { 0 }), indi: if p.data.len() > 0x58 { p.u8(0x58) & 0x7f } else { 0x10 }, fish_timer: if p.data.len() > 0x4b { p.u16(0x4a) } else { 0 }, gate: if p.data.len() > 0x5a { p.u8(0x5a) >> 4 } else { 0 }, costume: if p.data.len() > 0x45 { p.u16(0x44) } else { 0 } })?;
                     }
                     // FUN_10098f90: 5 x {u32 UniqueNo, u16 ActIndex, pad, u64 bits, u8 icons[32]}; icon = (hi << 8 | lo) &
                     // 0x3ff, none when lo 0xff with hi 0.
@@ -1219,7 +1255,7 @@ fn session(addr: SocketAddr, login: &MapLogin, account: &str, codec: &Codec, tx:
                     0x0DC => tx.send(NetEvent::Invite { anon: p.u8(0xa), kind: p.u8(0xb), name: text(&p, 0xc, 16), race: p.u16(0x1c) })?,
                     0x0AE => tx.send(NetEvent::Mounts(p.u32(4) as u64 | (p.u32(8) as u64) << 32))?,
                     0x119 if { let _ = tx.send(NetEvent::MountRecast(p.u32(0xfc))); false } => {}
-                    0x068 if p.u8(4) & 0x3f == 4 => tx.send(NetEvent::PetTp((p.u16(0xc) != 0).then(|| p.u16(0x10))))?,
+                    0x068 if p.u8(4) & 0x3f == 4 => tx.send(NetEvent::PetSync((p.u16(0xc) != 0).then(|| PetSync { index: p.u16(0xc), hpp: p.u8(0xe), mpp: p.u8(0xf), tp: p.u16(0x10), target: p.u32(0x14) })))?,
                     0x119 => tx.send(NetEvent::AbilityRecasts((0..31).map(|i| (p.u8(4 + 8 * i + 3) as u16, p.u16(4 + 8 * i), p.u8(4 + 8 * i + 2), p.u16(4 + 8 * i + 4) as i16)).collect()))?,
                     0x0AA => tx.send(NetEvent::MagicKnown((0..128).map(|i| p.u8(4 + i)).collect()))?,
                     0x0AC => tx.send(NetEvent::CommandsKnown((0..224).map(|i| p.u8(4 + i)).collect()))?,
@@ -1564,14 +1600,18 @@ fn session(addr: SocketAddr, login: &MapLogin, account: &str, codec: &Codec, tx:
             }
         }
         // Retail sends one datagram every 400 ms (config +0xd0 = 400, net+0x417c), each with a fresh 0x015.
-        if zoned && last_send.elapsed() >= Duration::from_millis(400) {
+        let every = match stats.send_ms.load(Relaxed) {
+            0 => 400,
+            n => n as u64,
+        };
+        if zoned && last_send.elapsed() >= Duration::from_millis(every) {
             if zoned {
                 let s = *me.lock().unwrap();
                 let mut body = [0u8; 28];
                 for (i, v) in s.pos.iter().enumerate() {
                     body[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());
                 }
-                body[14..16].copy_from_slice(&(s.moving as u16).to_le_bytes());
+                body[14..16].copy_from_slice(&s.move_time.to_le_bytes());
                 body[16] = s.dir;
                 // FUN_10096c00: @0x16 the current target's ActIndex (FUN_10152f20).
                 body[18..20].copy_from_slice(&s.target.to_le_bytes());
@@ -1582,6 +1622,11 @@ fn session(addr: SocketAddr, login: &MapLogin, account: &str, codec: &Codec, tx:
                 away_out += 1;
                 tx.send(NetEvent::RawOut(sess, std::mem::take(&mut queue)))?;
             } else {
+                if hooks.load(Ordering::Relaxed) & HOOK_LAST != 0 {
+                    for p in &queue {
+                        stats.keep_last(true, p);
+                    }
+                }
                 map.send(&queue)?;
                 stats.sent.fetch_add(map.bytes_out - tx_seen, Relaxed);
                 tx_seen = map.bytes_out;

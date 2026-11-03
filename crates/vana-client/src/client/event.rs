@@ -167,7 +167,7 @@ impl Screen {
             .entry(id)
             .or_insert_with(|| {
                 let bytes = index.read(id).map_err(|e| log::warn!("event scheduler file {id}: {e:#}")).ok()?;
-                let title = Title::parse(&bytes).ok();
+                let title = Title::parse(&bytes).map_err(|e| log::warn!("event scheduler file {id}: {e:#}")).ok();
                 Some(Arc::new(SchedFile { bytes, title }))
             })
             .clone()
@@ -263,10 +263,16 @@ impl Screen {
         std::array::from_fn(|i| from[i] + (to[i] - from[i]) * t)
     }
 
-    /// FUN_100132b0's first block: the flash quad when its RGB is not 0, alpha doubled (SRCALPHA / ONE).
-    pub fn flash(&self) -> Option<[f32; 4]> {
+    /// FUN_100132b0's first block: the flash quad when its RGB is not 0, alpha doubled (SRCALPHA / ONE). `add`: the
+    /// effect elements' flash this frame (update op 0x60, FUN_10014f70), added to op 0x72's colour bytes, saturating.
+    pub fn flash(&self, add: [u8; 3]) -> Option<[f32; 4]> {
         let c = self.lerp(self.flash);
-        (c[..3].iter().any(|v| *v * 255.0 >= 0.5)).then(|| [c[0], c[1], c[2], (2.0 * c[3]).min(1.0)])
+        // Without an op 0x72 colour the alpha byte is the default 0x80 (0x100149d4), doubled to 255
+        // *(inf: what +0x327 holds after an op 0x72 has ended)*.
+        let own = c[..3].iter().any(|v| *v * 255.0 >= 0.5);
+        let a = if own { (2.0 * c[3]).min(1.0) } else { 1.0 };
+        let rgb: [f32; 3] = std::array::from_fn(|k| (c[k] + add[k] as f32 / 255.0).min(1.0));
+        (rgb.iter().any(|v| *v * 255.0 >= 0.5)).then(|| [rgb[0], rgb[1], rgb[2], a])
     }
 
     /// FUN_100132b0's second block: last frame drawn over the scene while the alpha is not 0.
@@ -1136,6 +1142,9 @@ impl Host for LiveHost<'_> {
                     a.blink_off = on == 0;
                 }
             }
+            // FUN_100bac90 subs 9 / 10 (FUN_10087120): DAT_10487ef5 = 1 / 0, the weather density held at 1.0 (FUN_10002d80)
+            // whatever config 0x3b says; the zone load (FUN_10093720) clears it.
+            Effect::Op { op: 0xab, sub: Some(s @ (9 | 10)), .. } => self.w.weather_forced = s == 9,
             // FUN_100bac90 0x0f / 0x10: DAT_10489900 = 1 / 0.
             Effect::Op { op: 0xab, sub: Some(s @ (0x0f | 0x10)), .. } => self.st.raw_pc_y = s == 0x0f,
             // FUN_100bac90 sub 0x11: DAT_1035af3c = val@2; anything but -1 rebuilds the models after the event.
@@ -1317,6 +1326,13 @@ impl Host for LiveHost<'_> {
                         self.st.weather = Some(wt as u16);
                         self.w.effects.set_weather(crate::dat::weather::weather_tag(wt as u16), 0.0);
                     }
+                }
+            }
+            // FUN_100ba0c0: the gusts' base val@1 and spread val@3 (DAT_1065cb04 +0x138 / +0x13c), the first 0x97 of
+            // the event saving the old ones (FUN_100ba040) for its end.
+            Effect::Op { op: 0x97, args, .. } => {
+                if let (Some(base), Some(spread)) = (Self::arg_int(&args, 0), Self::arg_int(&args, 1)) {
+                    self.w.wind.set(base, spread);
                 }
             }
             // FUN_100bab50: day val@1 x 7 at 00:30 (FUN_1018be70 / bfa0 / bf00), and the weekday and moon phase read it
@@ -1581,7 +1597,7 @@ impl Host for LiveHost<'_> {
             Effect::Op { op: 0xb4, sub: Some(7), args, .. } => {
                 if self.w.cast_bar.is_none() {
                     let n = Self::arg_int(&args, 0).unwrap_or(0).max(0) as f32;
-                    (self.w.cast_bar, self.w.cast_event) = (Some((n, n)), true);
+                    (self.w.cast_bar, self.w.cast_event, self.w.cast_spell) = (Some((n, n)), true, 0);
                 }
             }
             Effect::Op { op: 0xb4, sub: Some(0xa), args, .. } => {
@@ -1767,6 +1783,15 @@ impl Host for LiveHost<'_> {
             return self.w.my_race;
         }
         self.w.actors.get(&id).and_then(|a| a.character.as_ref()?.pc).map_or(0, |pc| pc.race)
+    }
+
+    /// +0x124 bit 25: ours from the race (inf: retail copies 0x00A @0x20 bit 15), others from 0x00D / 0x00E.
+    fn male(&self, actor: u32) -> bool {
+        let id = self.wid(actor);
+        if id == self.w.my_id {
+            return !matches!(self.w.my_race, 2 | 4 | 6 | 7);
+        }
+        self.w.entities.get(&id).is_some_and(|e| !e.female)
     }
 
     fn server_id(&self, actor: u32) -> u32 {
@@ -2012,6 +2037,9 @@ fn begin(w: &mut World, mut wt: Box<Waiting>, index: &DatIndex) {
     }
     log::info!("event {:#x}: {} actors bound, {} start hidden", st.start.event, st.bound.len(), st.hidden.len());
     let mem = w.event_mem.clone();
+    // FUN_100aed00 clears op 0x97's saved flag (DAT_10488978) without restoring: gusts an unfinished event left
+    // become the originals. Before the start, whose init threads may run a 0x97 already.
+    w.wind.forget();
     let mut rt = {
         let mut host = LiveHost { w: &mut *w, st: &mut st, index };
         Runtime::start(blocks, dialog, start, mem, &mut host)
@@ -2255,6 +2283,8 @@ fn keep_pose(w: &mut World, p: Pose) {
 /// bits, event motions and looks end, deferred despawns happen.
 fn finish(w: &mut World, live: Box<Live>) {
     w.screen.release_black();
+    // FUN_100ae3f0 -> FUN_100ba080: op 0x97's gusts back as they were.
+    w.wind.restore();
     // FUN_100acf20: first person as it was before the event.
     w.camst.first = live.st.first_saved;
     // Op 0x77's weather without its 0x78: the lighting goes back with the event, so the effects do too.
@@ -2934,6 +2964,10 @@ pub fn talk(w: &mut World, target: u32) -> bool {
     if target >> 24 == 0 || e.index == 0 || !(w.actors.contains_key(&target) || e.door != 0) || e.flags & 6 != 0 {
         return false;
     }
+    // An index past 0x6ff (pets, trusts) only when talkable (+0x12c bit 30: 0x00E @0x28 bit 6).
+    if e.index > 0x6ff && !e.marks.npc_pet {
+        return false;
+    }
     // Not while invisible (own +0x128 bit 6 = 0x037 flags1 bit 15): system message 0xac.
     if w.my_plate.invisible {
         super::textcmd::system_line(w, 0xac);
@@ -3064,6 +3098,7 @@ pub fn zone_text(w: &mut World, t: &ZoneText) {
         return;
     }
     let speaker = if t.name.is_empty() { entity.clone().unwrap_or_default() } else { t.name.clone() };
+    let speaker_female = if t.actor == w.my_id { matches!(w.my_race, 2 | 4 | 6 | 7) } else { w.entities.get(&t.actor).filter(|e| e.index == t.index).is_some_and(|e| e.female) };
     // msg+0xc10: FUN_100ad5e0 / FUN_100ad660 get the speaker entity's name, else sName; 0x027 none.
     let msg_name = if t.packet == 0x027 { String::new() } else { entity.clone().unwrap_or_else(|| t.name.clone()) };
     // The "%s : " prefix (FUN_100abbb0; MesNum bit 15 none). 0x027: String1's, or with String2 / Flags 1 the NPC's
@@ -3084,6 +3119,9 @@ pub fn zone_text(w: &mut World, t: &ZoneText) {
         g,
         strings: t.strings.clone(),
         female: matches!(w.my_race, 2 | 4 | 6 | 7),
+        // 0x036 / 0x043 / 0x02A set both message actors to the speaker; one not here picks the first form (inf).
+        // 0x027's actors were not traced: the player's, as before.
+        actors: (t.packet != 0x027).then_some([speaker_female; 2]),
         names: w.names.clone().map(|n| n as Arc<dyn crate::dat::names::NameSource>),
         msg_name,
         slots,
@@ -3407,12 +3445,14 @@ mod tests {
         // 0x72 white 0x80 over 11 ticks: half way at 5, the alpha doubled.
         sc.fx_op(0x72, [0xff, 0xff, 0xff, 0x80], 0.0, 11.0);
         sc.tick = 5.0;
-        let f = sc.flash().unwrap();
+        let f = sc.flash([0; 3]).unwrap();
         assert!((f[0] - 0.5).abs() < 1e-3 && (f[3] - 0.502).abs() < 1e-2, "{f:?}");
         // The "off" op starts from the last target.
         sc.fx_op(0x72, [0, 0, 0, 0], 0.0, 1.0);
         sc.tick = 6.0;
-        assert!(sc.flash().is_none());
+        assert!(sc.flash([0; 3]).is_none());
+        // Op 0x60's element flash alone: drawn at the default alpha 0x80, doubled.
+        assert_eq!(sc.flash([0x40, 0, 0xff]), Some([0x40 as f32 / 255.0, 0.0, 1.0, 1.0]));
         // 0x0e on, then off: each start counts.
         sc.fx_op(0x0e, [0x80, 0x80, 0x80, 0x1e], 0.99, 0.0);
         let b = sc.blur().unwrap();

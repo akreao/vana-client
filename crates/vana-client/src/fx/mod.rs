@@ -192,8 +192,9 @@ pub enum Draw {
     DistModel(u32),
     /// CMoDistMorphElem (D3b + 0x100000, FUN_10043590): a registered morph drawn shifted over the scene copy.
     DistMorph(u32),
-    /// CMoVuDist (batched 0x22, FUN_10043110): the element's own CMoDist diamond n times, each over a new copy.
-    VuDist(u32),
+    /// CMoVuDist (batched 0x22, FUN_10043110): the element's own CMoDist diamond N times, each over a new copy;
+    /// the flag is a weather generator's (+0xde bit 0), whose N from 20 up is scaled by the weather density.
+    VuDist(u32, bool),
     /// CMoDistRingElem (ring + 0x100000, FUN_10043720).
     DistRing,
     /// D3m + 0x200000 (FUN_10040e70): the mesh rendered top-down and painted onto the ground (render/effects.rs).
@@ -264,6 +265,9 @@ pub struct ElemCpu {
     pub parts: Option<(u32, u32)>,
     /// A point light's table slot.
     pub light: Option<u32>,
+    /// CMoPointLightProgElem: its intensity / range multipliers (+0x1a4 / +0x1a8) as last written from the CPU, the
+    /// start of scheduler ops 0x6f / 0x70.
+    pub light_scale: Option<[f32; 2]>,
 }
 
 /// Op 0x25 (reactor actor2) / 0x21 (actor1): amount f32 @8, rate @0xc, count u32 @0x10, blend-in ticks @0x14, fade
@@ -538,6 +542,22 @@ pub enum ColorOp {
 struct Foot {
     rain: bool,
     at: (usize, usize),
+}
+
+/// FUN_10060990 (vtable 0x1032bb80): a point light's intensity (`k` 0, +0x1a4) or range (1, +0x1a8) multiplier
+/// linearly from `from` to `to` over `total` ticks; the end (or the scheduler's death) writes `to` (FUN_10060960).
+/// `light` (element, serial, start value) is None until the instance `inst`'s light is out (ours: a generator started
+/// in the same step emits after the scheduler ops); an unbound ramp that ended waits for it, then writes `to`.
+#[derive(Clone, Copy, Debug)]
+struct LightRamp {
+    owner: u64,
+    src: Ref,
+    inst: usize,
+    light: Option<(u32, u32, f32)>,
+    k: usize,
+    to: f32,
+    total: f32,
+    left: f32,
 }
 
 /// A running colour drive: its scheduler task, ticks left, target, and whether its destructor lands on the target
@@ -913,6 +933,8 @@ pub struct Effects {
     pub fades: Vec<ColorOp>,
     /// The running channel-0 drives (CMoActorColorDriveTask), children of their scheduler task.
     color_drives: Vec<ColorDrive>,
+    /// Scheduler ops 0x6f / 0x70's ramps (FUN_10060990), children of their scheduler task.
+    light_ramps: Vec<LightRamp>,
     /// The path and rotation drives (ops 0x26 / 0x27, 0xa9 / 0xaa), children of their scheduler task, and the poses
     /// they set this frame for the client (ship model actors take them); the fast-forward's overshoot for a new drive.
     drives: Vec<drive::Drive>,
@@ -943,6 +965,9 @@ pub struct Effects {
     equip_calls: Vec<(u32, EquipCall)>,
     /// Config 0xbe == 1 (Misc. 3 "weapon effect" Off): `!w01` / `!w11` are skipped.
     pub weapon_effect_off: bool,
+    /// FUN_10002d80: Misc.'s weather density (config 0x3b as a float, DAT_10456a68), or 1.0 while an event forces it
+    /// (DAT_10487ef5, event op 0xab subs 9 / 10).
+    pub weather_density: f32,
     pub releases: Vec<u32>,
     /// Load holds taken here (op 0x80's skillchain burst, FUN_100a8e30); released like the action's.
     pub loads: Vec<u32>,
@@ -1018,6 +1043,9 @@ pub struct Effects {
     pub lift_moves: Vec<LiftMove>,
     /// W+0x1bc: the camera is under a covered object (FUN_101845c0).
     covered: bool,
+    /// Update op 0x60's screen flash from the last readback: the bytes the elements add to renderer +0x324..+0x326
+    /// (FUN_10014f70; B, G, R as in the element colour), a frame or two late.
+    pub flash: [u8; 3],
     /// Sound elements and scheduler sounds; this frame's commands for the audio; voices the audio reports alive.
     sounds: Vec<sound::Sound>,
     /// Config 0x92 (the Effects filter) and whether the player's status is 1 or 3 (FUN_100ac4b0's bit-0 gate).
@@ -1098,6 +1126,7 @@ impl Effects {
             motions: Vec::new(),
             fades: Vec::new(),
             color_drives: Vec::new(),
+            light_ramps: Vec::new(),
             drives: Vec::new(),
             rot_drives: Vec::new(),
             actor_poses: HashMap::new(),
@@ -1115,6 +1144,7 @@ impl Effects {
             equip: HashMap::new(),
             equip_calls: Vec::new(),
             weapon_effect_off: false,
+            weather_density: 1.0,
             releases: Vec::new(),
             loads: Vec::new(),
             reacts: Vec::new(),
@@ -1157,6 +1187,7 @@ impl Effects {
             lift_moves: Vec::new(),
             sub_lib: None,
             covered: false,
+            flash: [0; 3],
             sounds: Vec::new(),
             filter: (0, false),
             in_event: false,
@@ -1716,10 +1747,15 @@ impl Effects {
     /// Readback records from the GPU (a frame or two late): sort keys, expire requests, positions.
     pub fn take_back(&mut self, words: &[u32]) {
         use elem::{BACK_WORDS, back};
+        self.flash = [0; 3];
         for (i, r) in words.chunks_exact(BACK_WORDS).enumerate() {
             let Some(Some(c)) = self.elems.get_mut(i) else { continue };
             if r[back::SERIAL] != c.serial {
                 continue;
+            }
+            // FUN_10014f90: each element's flash adds, saturating at 255.
+            for (k, v) in r[back::FLASH].to_le_bytes()[..3].iter().enumerate() {
+                self.flash[k] = self.flash[k].saturating_add(*v);
             }
             let f = |k: usize| f32::from_bits(r[k]);
             let has_drift = self.insts.get(c.inst).and_then(|x| x.as_ref()).is_some_and(|x| self.reg.update_op_slot(x.src, 2).is_some());
@@ -1878,7 +1914,8 @@ impl Effects {
             }
         } else {
             if inst.de & 2 != 0 {
-                dt *= 1.0; // weather density (config 0x3b) is 1.0 *(inf: the setting is not wired)*
+                // FUN_100496f0 (0x1004a654): a weather generator's clock runs at the weather density.
+                dt *= self.weather_density;
             }
             inst.countdown -= dt;
             let mut budget = inst.life;
@@ -2641,7 +2678,7 @@ impl Effects {
                 Draw::Ring => "ring".into(),
                 Draw::DistModel(id) => format!("distmodel {id}"),
                 Draw::DistMorph(id) => format!("distmorph {id}"),
-                Draw::VuDist(n) => format!("vudist x{n}"),
+                Draw::VuDist(n, _) => format!("vudist x{n}"),
                 Draw::DistRing => "distring".into(),
                 Draw::GroundProj(id) => format!("groundproj {id}"),
                 Draw::DamValue => "damv".into(),

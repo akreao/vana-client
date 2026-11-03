@@ -44,9 +44,6 @@ impl SubPacket {
     }
 }
 
-/// The largest sub-packet: its header's size field is 7 bits of 4-byte words (127 * 4).
-pub const MAX_SUB_LEN: usize = 0x7f * 4;
-
 /// Builds one sub-packet; the body is padded to the 4-byte unit the size field counts in.
 pub fn build(id: u16, body: &[u8]) -> Vec<u8> {
     let len = (4 + body.len()).div_ceil(4) * 4;
@@ -261,7 +258,6 @@ impl MapSession {
             log::debug!("dropped a {n}-byte datagram");
             return Ok(None);
         }
-        self.bytes_in += n as u64;
         let mut dgram = buf[..n].to_vec();
         self.cipher.decrypt(&mut dgram[HEADER..]);
         let (data, digest) = dgram[HEADER..].split_at(n - HEADER - 16);
@@ -276,6 +272,8 @@ impl MapSession {
             Err(e) => return self.bad_datagram(n, &format!("did not decompress: {e:#}")),
         };
         self.bad_run = 0;
+        // FUN_100f76b0 counts a datagram's bytes (FUN_100f9b90) only once FUN_100dad80 has read it.
+        self.bytes_in += n as u64;
         // FUN_100f76b0: a datagram not newer than the last one handled is dropped (counted), and so is a sub-packet
         // whose sync is not newer; only an accepted datagram moves the stored sequence and ack.
         let seq = u16::from_le_bytes([dgram[0], dgram[1]]);
@@ -362,8 +360,7 @@ mod tests {
         Codec::from_table(&table).unwrap()
     }
 
-    /// A datagram that fails its checksum or doesn't decompress is dropped, not the session; a run of them ends it
-    /// (issue #82).
+    /// A datagram that fails its checksum or doesn't decompress is dropped, not the session; a run of them ends it.
     #[test]
     fn bad_datagram_dropped() {
         let codec = plain_codec();

@@ -150,7 +150,7 @@ mod reply_tests {
         assert_eq!(v["result"], 1);
     }
 
-    /// A server streaming non-JSON is cut off at MAX_REPLY, not read until it stops (issue #81).
+    /// A server streaming non-JSON is cut off at MAX_REPLY, not read until it stops.
     #[test]
     fn endless_reply_is_cut_off() {
         let mut r = Endless(b' ', usize::MAX);
