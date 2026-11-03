@@ -569,6 +569,8 @@ pub struct Waiting {
 
 impl State {
     fn new(start: EventStart) -> Self {
+        // 0x100952e7..0x1009531f: a zone-in event with Mode bit 0x80 starts in cinema mode at (0, 0).
+        let cinema = start.login && start.mode & 0x80 != 0;
         State {
             start,
             msg: None,
@@ -605,7 +607,7 @@ impl State {
             rng: 1,
             clock: None,
             weather: None,
-            place_on: false,
+            place_on: cinema,
             place: (0, 0),
             code_xy: (0, 0),
             vm_ticks: 0.0,
@@ -804,9 +806,12 @@ impl Host for LiveHost<'_> {
             Effect::Message { id, text, prompt, wait, speaker, op, place, mode, sounds, motions } => {
                 self.w.sounds.extend(sounds);
                 super::moogle::emote(self.w, &motions);
-                // FUN_100bf790: 02 / 03 set DAT_10476f98 / 9a and place the window there (FUN_10132030(1, x, y)).
+                // FUN_100c1650 (0x100c22c5 / 0x100c22ef): code 02 only stores x (DAT_104899b0); 03 stores y and turns
+                // cinema mode on at the stored x / y (FUN_10136870).
                 if place.iter().any(Option::is_some) {
                     self.st.code_xy = (place[0].unwrap_or(self.st.code_xy.0), place[1].unwrap_or(self.st.code_xy.1));
+                }
+                if place[1].is_some() {
                     self.st.place_on = true;
                     self.st.place = self.st.code_xy;
                 }
@@ -2776,7 +2781,14 @@ pub fn message_id(w: &World) -> Option<u32> {
     w.event.as_ref()?.st.msg.as_ref().map(|m| m.id)
 }
 
-/// FUN_10132030: the event message window's placement (+0x48 on) in pixels; negative values are percentages
+/// Cinema mode (rem4line +0x48, FUN_1015dce0): ops 0x67 / 0x68, text code 03, a zone-in event with Mode 0x80; the
+/// event end clears it. FUN_101177d0 then draws no window but the event text (and mapframe / cnqframe), and the
+/// menu keys, targeting, macros and the chat line are blocked as with the UI hidden; movement still works.
+pub fn cinema(w: &World) -> bool {
+    w.event.as_ref().is_some_and(|l| l.st.place_on)
+}
+
+/// FUN_10136870: the event message window's placement (+0x48 on) in pixels; negative values are percentages
 /// of the UI width / height less 176 / 32.
 pub fn placement(w: &World, sw: f32, sh: f32) -> Option<(f32, f32)> {
     let l = w.event.as_ref()?;
@@ -3228,6 +3240,14 @@ pub fn source_line(w: &mut World, source: u16, id: u16, num: [u32; 5], mode: u8,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 0x100952e7: only a zone-in event with Mode bit 0x80 starts in cinema mode, at (0, 0).
+    #[test]
+    fn login_mode_80_starts_cinema() {
+        assert!(State::new(EventStart { mode: 0x80, login: true, ..Default::default() }).place_on);
+        assert!(!State::new(EventStart { mode: 0x80, ..Default::default() }).place_on);
+        assert!(!State::new(EventStart { mode: 0x03, login: true, ..Default::default() }).place_on);
+    }
 
     /// Op 0xa9 day val x 7 at 00:30: moon phase val % 12, weekday (val x 7) & 7; 0x77 alone leaves both to the server.
     #[test]

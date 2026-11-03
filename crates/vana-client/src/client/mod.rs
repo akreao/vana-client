@@ -2070,7 +2070,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
         }
         match ev {
             // Ctrl+V with the chat line closed opens it with the text (ours).
-            egui::Event::Paste(t) if !world.typing && !opened => {
+            egui::Event::Paste(t) if !world.typing && !opened && !event::cinema(world) => {
                 world.typing = true;
                 let t: String = t.chars().filter(|c| !c.is_control()).collect();
                 fep::insert(world, &t);
@@ -2144,7 +2144,8 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
                 egui::Key::ArrowLeft | egui::Key::ArrowRight | egui::Key::Home | egui::Key::End if world.typing => fep::caret_key(world, *key, modifiers.shift),
                 egui::Key::A if world.typing && modifiers.ctrl => fep::select_all(world),
                 // Ctrl / Alt shortcuts (DAT_103619f0 flag 0x10, FUN_101a5e80). Mode 2 (chat) works while typing.
-                k if (modifiers.ctrl || modifiers.alt) && !opened && let Some(p) = chat_shortcut(*k) => {
+                // Not in cinema mode: the chat line can't open (FUN_101b0060 at 0x101b0065).
+                k if (modifiers.ctrl || modifiers.alt) && !opened && !event::cinema(world) && let Some(p) = chat_shortcut(*k) => {
                     chat_prefix(world, p);
                     keys.clear();
                 }
@@ -4111,6 +4112,20 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
     blockers.extend(timers::pointer(world, gu, input.pointer, input.clicked, &blockers));
     blockers.extend(regime::pointer(world, gu, input.pointer, input.clicked, &blockers));
     blockers.extend(skillchain::pointer(world, gu, input.pointer, input.clicked, &blockers));
+    // Cinema mode (FUN_101177d0 at 0x101177ee): no window draws but the event text box, mapframe and cnqframe; the
+    // name plates are a 3D pass and stay. The windows' state still updates underneath (the log's included, which
+    // retail freezes).
+    if event::cinema(world) {
+        gu.clear();
+        if !world.lua.hides("plates") {
+            name_plates(gu, world, sw, sh, view_proj);
+        }
+        if let Some(m) = world.map.as_mut() {
+            m.draw(gu, sw, sh);
+        }
+        self::event_window(gu, world, sw, sh, logwin::text_width(sw, world.log.cfg.pct));
+        return Vec::new();
+    }
 
     blockers
 }
@@ -12707,9 +12722,11 @@ impl App {
                     window_closes(world, &input.events);
                     self.hud_blockers = world_hud(gu, world, &input, screen_size, &mut self.keys, view_proj, self.numpad_slash);
                 }
-                // With the UI hidden (key function 0x56) retail draws no window at all, so the modern layer goes too.
+                // With the UI hidden (key function 0x56) retail draws no window at all, so the modern layer goes too; in
+                // cinema mode only the event text box (drawn by world_hud).
                 if world.modern
                     && !world.ui_hidden
+                    && !event::cinema(world)
                     && let Some(gu) = self.game_ui.as_ref()
                 {
                     // The retail windows drawn this frame, in egui points.
