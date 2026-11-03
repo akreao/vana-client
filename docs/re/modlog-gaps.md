@@ -185,7 +185,7 @@ detail inside implemented ops.
 | Message formatter: the other callers (party join, merit prompts, auction house, level sync, /sea counts); FUN_10080350's source; FUN_10128ce0's flags; FUN_101f4bb0's date lists | Not built / not traced | L6651, L6706 | DLL |
 | Trust party lines: grammar kinds not seen used | Not built | L14144 | Data |
 | `17 n` moogle motions: S+0x40daa and +0xee | Not built | L19915 | DLL |
-| Mask-0 0x00E: kind 9 (FUN_100bd760 / FUN_101c8450) | Not built | L19835 | DLL |
+| Mask-0 0x00E: kind 9 (FUN_100bd760 / FUN_101c8450) *([batch 6](notes/2026-11-03-modlog-gaps-batch6.md) item 16: message source 9 = the trust lines, language slot 0x22)* | Built | L19835 | DLL |
 
 ## 7. Menus and windows
 
