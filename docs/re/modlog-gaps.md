@@ -64,7 +64,7 @@ detail inside implemented ops.
 | Item | Status | Source | Settle by |
 |---|---|---|---|
 | Installed DATs are older than LSB's text ids, so message ids can be shifted (msgshift table); ids between two segments stay unknown | Known limitation | L835, L1086 | Data |
-| Motion length (+0x2a0) comes from the motion; the headless host keeps it busy for 30 frames | Approximation | L1266 | DLL |
+| Motion length (+0x2a0) comes from the motion; the headless host keeps it busy for 30 frames | Answered *([batch 8](notes/2026-11-03-modlog-gaps-batch8.md) item 38: there is no length field at all. vt+0x2a0 is busy while the model's files load or a live 'Ms' scheduler task for that 4cc and actor pair exists, and ends at once when no scheduler resource exists; the live wait on the playing motion is our equivalent, the headless 30 frames stay a test stub)* | L1266 | DLL |
 | Name plates in cutscenes *(answered, [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §3: no event check in the plate draw; bound actors keep it unless op 0x92 / bit 17; non-participants lose the model by event Mode & 2 / & 0x10)*; ours not audited against it | Answered | L2408 | Code check |
 | The mouth's 8-tick blend out (0x23 and unbind) *([batch 5](notes/2026-11-03-modlog-gaps-batch5.md) item 4: FUN_100ce160 fades every motion in the mouth region over 8 ticks. Needs per-motion weights in our poser, which blends whole poses, so ours still drops the mouth motion; the countdowns are already cleared)* | Not built (needs weighted regions) | L2343, L2408, L14046 | DLL |
 | 0x5b / 0x66 finishing in one call when the file is cached (ours take 2 frames) | Not built | L2408 | DLL |

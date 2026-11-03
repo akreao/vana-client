@@ -24,3 +24,25 @@ Our side reaches the same place from the other end: the send gate holds a refuse
 as soon as the per-id window opens (the RETRIED ids), so the request always goes out within a second, `status::open`
 shows the busy strip until `on_stats`, and retail's give-up path has nothing to trigger it. The only difference left
 is that our strip appears at open rather than on the frame the packet leaves, which is at most that one second.
+
+## Op 0x53 has no motion length to read
+
+Batch 8 item 38 settles what op 0x53 waits on. There is **no length field**: `FUN_100b4e10(0, 0)` calls
+`drawobj(actor1)->vt+0x2a0(4cc, drawobj(actor2))` = `FUN_10084d40`, which is busy when
+
+1. the model's files are not all loaded (vt+0x1e4 -> `FUN_100d12d0`), or
+2. the actor's motion bank +0xb4 exists but is not ready, or
+3. a live scheduler task exists for the 4cc and that actor pair: `FUN_10057010` walks the task list for +0x1c ==
+   `'Ms'`, +0x80 == the resource's id and the two actors equal.
+
+If no scheduler resource is found for the 4cc anywhere (the actor's own files, a skeleton actor's bank, or the global
+bank), it is **not busy** and 0x53 advances at once. So "how long the motion plays" is only how long that task runs:
+until its op stream ends or something kills it. Nothing reads a frame count.
+
+Ours waits while the named motion is still playing, which is the same thing for a motion started by 0x5b / 0x66 (the
+scheduler is what drives it), and is the nearest equivalent in a client that plays motions directly. The headless
+host's 30 frames are a test stub, not a claim about retail.
+
+Item 38 also corrects MODLOG on 0x5f sub 7: `vt+0x2ac` (`FUN_10084fb0`) walks the actor's attached list for an element
+of type 0x1032cfa0 whose +0x78 is the 4cc, so it waits on that object, not on a scheduler. Our timer started by
+0x5f sub 5 / 6 stands in for that object's lifetime.
