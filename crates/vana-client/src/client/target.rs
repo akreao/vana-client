@@ -131,7 +131,9 @@ pub fn party_cursor_key(w: &mut World, key: egui::Key) -> bool {
     let mut used: Vec<bool> = w.party.slots().slots.iter().map(|m| m.is_some()).collect();
     // Slot 0 is always us.
     used[0] = true;
-    let fellow = w.party_cursor.as_ref().is_some_and(|pc| pc.moving.is_none() && fellow_ok(w, &pc.then)).then(|| super::petrow::fellow(w)).flatten();
+    // Ours: the modern party panel has no fellow row, so the cursor doesn't stop on one there (a deviation of the
+    // modern UI; the classic window keeps retail's fellow row).
+    let fellow = w.party_cursor.as_ref().is_some_and(|pc| !w.modern && pc.moving.is_none() && fellow_ok(w, &pc.then)).then(|| super::petrow::fellow(w)).flatten();
     let Some(pc) = w.party_cursor.as_mut() else { return false };
     match key {
         K::ArrowDown | K::ArrowUp => {

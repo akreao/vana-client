@@ -68,6 +68,9 @@ pub(super) fn origin(party: [f32; 4], log: [f32; 4], log2: Option<[f32; 4]>, sec
 /// map, the full log, the macro editor, ...) or a running event skip both rows.
 fn skipped(w: &World) -> bool {
     w.config.is_some()
+        // The item info window is group 8; the item windows (ours: w.win) are treated the same *(inf)*.
+        || w.win.is_some()
+        || super::item_info_source(w).is_some()
         || w.full_log.is_some()
         || w.macroedit.is_some()
         || w.map.is_some()
