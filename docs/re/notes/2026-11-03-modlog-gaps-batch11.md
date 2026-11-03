@@ -219,3 +219,34 @@ the show — the next step does.**
 
 Build: at the show, re-make the `fvib` clone unstarted (or lazily); fire it as a one-shot burst on each new step while
 footstep effects are on.
+
+## Addendum (coordinator question): what the callers do when the per-id gate FUN_100fc3c0 refuses
+
+**1. The gate time is stored before the queue allocation.** FUN_100fc3c0 (0x100fc3c0..0x100fc4c2): for force == 0,
+if the id's last time is non-zero and now ≤ last + 1000 → return NULL (nothing stored). Otherwise **S+0x41b4[id] =
+now (0x100fc47e..0x100fc489) first**, then FUN_100dda60(queue). If that returns NULL the function returns NULL, but
+**the time stays set**, so the id is also gated for the next 1000 ms although nothing was sent.
+
+**2. Per caller** (all these call sites pass force = 0, so all are gated):
+
+| Id | Sender | Caller(s) | On NULL |
+|---|---|---|---|
+| 0x05B (update) | FUN_100a0510 | **event op 0x43** (FUN_100b63a0, 0x100b63e2) and **op 0xa7** (FUN_100baa60, 0x100baae4) | **retries**: the op sets +0x25a = 1 (yield) without advancing (0x100b63d8 / 0x100baab3 with bl = 1), so it re-runs next frame until sent; on success DAT_104855a8 = 1 (op 0x43) and advance 2 |
+| 0x05B (end) | FUN_100a0660 | **the event end FUN_100ae960**, called every frame from FUN_10096640 (0x10096af4) while DAT_104804c2 && !DAT_104808f0 | **retries**: the local end FUN_100ae3f0 (which clears DAT_10487e48 / DAT_104804c2 …) runs only when the send succeeded; on NULL the rest of FUN_100ae960 still runs (FUN_100ae9b0, buff show FUN_10221c70, FUN_100852d0, credits close) and the whole thing repeats next frame |
+| 0x05C (position) | FUN_100a05e0 | **event op 0x47** (FUN_100b62b0, 0x100b636f) | **retries**: yield (0x100b62f2: +0x25a = 1) without advancing |
+| 0x061 (stats) | FUN_10097fd0 | FUN_10147030 (persona) and FUN_10144ca0 (mp_stat): **retry** every 20 frames, ≤ 12 tries (batch 7 item 28); FUN_101d3260: **retries every frame** until sent (+0x811 = 1 on success); FUN_10093db0 (the 0x00C zone-in step), FUN_10133130 (Equipment), FUN_1020dc60 / FUN_1020dfb0, FUN_1022f670: **drop** (result ignored) | see column 3 |
+| 0x0DD (check) | FUN_100e5660 | FUN_101347b0 (0x1013491c / 0x1013496a) | **drop**: the result is ignored and DAT_105781c4 = now is stored anyway (the caller's own cooldown) |
+| 0x0F1 (cancel status) | FUN_100a0590 | the buff window FUN_10227eb0 | **drop**; on success it also clears that status from the icon list DAT_10485a30 — on NULL the icon stays |
+| 0x0E7 (logout) | the /logout handler (0x1007cdde..0x1007cdf4) | the command | **drop**: jumps to the end (0x1007cf77) with no line and nothing changed |
+| 0x00C (zone-in) | FUN_10093db0 | FUN_10096640 every frame (0x100966f7: a 0 return ends that frame's player update) and actor ctors (ignored) | **retries**: DAT_104859e4 (pending) stays set until a send succeeds; success clears it, sets DAT_1047d3f0 = 1 and queues 0x061 (FUN_10097fd0(0, 0), dropped if refused) |
+| 0x011 (zone-in) | FUN_100fbb40 | the connection state FUN_100fb830 (state 3, while +0xd == 0) | **retries** each call until sent (+0xd = 1 on success) |
+| 0x037 (item use) | FUN_100eb5e0 / FUN_100eb660 | the item sender FUN_101f0260 (batch 7 item 29) and /item (FUN_100eb570) | **drop**: returns 0; the cast bar the item sender opened stays up |
+| 0x028 (drop) | FUN_100eb6c0 | the linkshell Drop (FUN_101e5d60, FUN_101e5f90), the item Drop FUN_101f2ff0 | **drop**: the item Drop ignores it and closes iuse anyway; the linkshell paths test it (no retry found) |
+| 0x029 (move) | FUN_100eb710 | sort / move code (FUN_101daf70, FUN_101dbdb0, FUN_101f0460) | **drop** (results ignored or used only to skip local follow-up; no retry loop found) |
+| 0x0B5 / 0x0B6 (chat) | FUN_100e3400 / FUN_100e3570 | the chat line | **drop** (batch 5 item 2 / batch 6 item 12) |
+
+So the **retrying** callers are: event ops 0x43 / 0xa7 / 0x47 (0x05B / 0x05C), the event end (0x05B), the zone-in pair
+0x00C / 0x011, and the 0x061 stats requests of persona / mp_stat / FUN_101d3260. Everything else drops silently.
+
+Build note: when gating these ids, the retrying paths must keep their state (stay on the op / keep the pending flag)
+and try again next frame; and remember the time is consumed even when the queue itself is full.
