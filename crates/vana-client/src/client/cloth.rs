@@ -244,9 +244,9 @@ fn norm(v: Vec3) -> Vec3 {
 /// then each sphere sweeps from last step's centre to this one against its edges, both ways. The sweep's start moves
 /// along as it goes, so a sphere's later edges start where the earlier ones stopped.
 fn collide(spec: &ClothSpec, f: &Frame, p: &mut [Particle], prev: &mut [Option<Vec3>]) {
-    // An unused table slot (0xCD fill: bone -12851, radius -4.3e8) passes every edge's test, so it takes the edges
-    // of the spheres before it in the list, and pushes nothing (both ends always inside). An index past the table
-    // reads whatever follows it in retail; ours skips it.
+    // An unused table slot (0xCD fill: bone -12851, radius -4.3e8) reads a bone matrix from before the table in
+    // retail, so what it does is down to that memory; ours skips it (1367's cape then drapes over the body instead
+    // of losing all its edges to slot 1). An index past the 64 slots is skipped too.
     let spheres: Vec<Option<(i32, Option<(Vec3, f32)>)>> = spec
         .spheres
         .iter()
@@ -270,7 +270,7 @@ fn collide(spec: &ClothSpec, f: &Frame, p: &mut [Particle], prev: &mut [Option<V
                 .iter()
                 .flatten()
                 .rev()
-                .find(|(_, at)| at.is_none_or(|(c, r)| (a - c).length_squared() <= r * r * 1.5))
+                .find(|(_, at)| at.is_some_and(|(c, r)| (a - c).length_squared() <= r * r * 1.5))
                 .map_or(-1, |(s, _)| *s as u8 as i8 as i32)
         })
         .collect();

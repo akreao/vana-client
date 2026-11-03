@@ -71,8 +71,8 @@ pub fn run(file: u32, zone: u32, hour: f32, pos: [f32; 3], steps: u32, out_dir: 
     let bones = dat::character::pose(&ch.skeleton, &idle);
     let top = render::character::skinned_top(&ch, &bones).min(-0.5);
     let p0 = Vec3::from(pos);
-    // Side on to the wind (world -x): the actor faces +z.
-    let at = |p: Vec3| Mat4::from_translation(p) * Mat4::from_rotation_y(std::f32::consts::FRAC_PI_2);
+    // Side on to the wind (world -x): the model's +x (its front) turned to +z, the way it walks.
+    let at = |p: Vec3| Mat4::from_translation(p) * Mat4::from_rotation_y(-std::f32::consts::FRAC_PI_2);
     let mut wind = Wind::default();
     let mut model = at(p0);
     let mut shots: Vec<(String, Mat4, Vec<[f32; 4]>)> = vec![("cloth_rest.png".into(), model, Vec::new())];
