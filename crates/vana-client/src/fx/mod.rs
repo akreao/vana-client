@@ -192,8 +192,9 @@ pub enum Draw {
     DistModel(u32),
     /// CMoDistMorphElem (D3b + 0x100000, FUN_10043590): a registered morph drawn shifted over the scene copy.
     DistMorph(u32),
-    /// CMoVuDist (batched 0x22, FUN_10043110): the element's own CMoDist diamond n times, each over a new copy.
-    VuDist(u32),
+    /// CMoVuDist (batched 0x22, FUN_10043110): the element's own CMoDist diamond N times, each over a new copy;
+    /// the flag is a weather generator's (+0xde bit 0), whose N from 20 up is scaled by the weather density.
+    VuDist(u32, bool),
     /// CMoDistRingElem (ring + 0x100000, FUN_10043720).
     DistRing,
     /// D3m + 0x200000 (FUN_10040e70): the mesh rendered top-down and painted onto the ground (render/effects.rs).
@@ -2646,7 +2647,7 @@ impl Effects {
                 Draw::Ring => "ring".into(),
                 Draw::DistModel(id) => format!("distmodel {id}"),
                 Draw::DistMorph(id) => format!("distmorph {id}"),
-                Draw::VuDist(n) => format!("vudist x{n}"),
+                Draw::VuDist(n, _) => format!("vudist x{n}"),
                 Draw::DistRing => "distring".into(),
                 Draw::GroundProj(id) => format!("groundproj {id}"),
                 Draw::DamValue => "damv".into(),
