@@ -74,7 +74,7 @@ detail inside implemented ops.
 | Op 0x89 (actor +0x840 bit 1 and position held for dur ticks; *inferred: holds the actor in place*); also its head-look suppression | Not built | L7951, L4535 | DLL |
 | Event text codes 0x1d (speaker's compass direction), 0x13 *(answered, [batch 5](notes/2026-11-03-modlog-gaps-batch5.md) item 1: not Japanese, the raise / tractor offer)* | Built | L15345 | DLL |
 | Grammar 2 / 3 whole-text conversions (key items with their own article) | Not built | L14678 | DLL |
-| Event positions: the +0x128 bit 14 and +0x120 bit 0x100000 ground-snap skips (only 0x200000 is ours) | Not built | L19371 | DLL |
+| Event positions: the +0x128 bit 14 and +0x120 bit 0x100000 ground-snap skips (only 0x200000 is ours) *([batch 6](notes/2026-11-03-modlog-gaps-batch6.md) item 14: the bits are GroundFlag and HackMove)* | Built | L19371 | DLL |
 | Op 0x71 subs 0x50..0x55 (a full-screen picture, zone 291) | Not built | L4983 | DLL |
 | 0x7f0b / 0x7f8b special values (+0x124 bit 25, 475 sites); FUN_100977f0's gate for PCs *(answered, [batch 3](notes/2026-11-03-modlog-gaps-batch3.md) §2: the speaker's / player's gender bit (1 male); ours reads 0 for both, and dialog `7F 90` / `7F 91` use the player's gender; the PC see-through is FUN_100973f0, already built; [batch 4](notes/2026-11-03-modlog-gaps-batch4.md) §2..3: 0x00D / 0x00E mask 4 write it for every actor, default female; `7F 90` / `7F 91` are the message's actor 1 / 2)* | Not built | L4893, L4900 | DLL |
 | Op 0x7e / 0xac subs 5 / 0x55 (FUN_10097a20 spawning the chocobo / mount in an event) | Not built | L5246 | DLL |
