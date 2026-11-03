@@ -149,7 +149,7 @@ detail inside implemented ops.
 
 | Item | Status | Source | Settle by |
 |---|---|---|---|
-| Footsteps: zone flag +0x1cf alt name (surface 3 -> 2), the model-scope fses retry, the culled-pass skip (+0x840 bits 20..21), 'fvib', the footstep-effects option DAT_10444158 (taken as on) | Not built | L3717, L3734..L3755 | DLL |
+| Footsteps: zone flag +0x1cf alt name (surface 3 -> 2), the model-scope fses retry, the culled-pass skip (+0x840 bits 20..21), 'fvib', the footstep-effects option DAT_10444158 (taken as on) *([batch 12](notes/2026-11-03-modlog-gaps-batch12.md) item 72: the alt name is areas 704..706 only, now built (session flag bit 0x100 taken as clear); a failed lookup already retried each pass. Open: the culled-pass skip, and the note's "no model-scope search in this build", which ours still has)* | Built apart from the culled-pass skip | L3717, L3734..L3755 | DLL |
 | Sound levels: the resets at event end / SE slider change (FUN_100ae3f0 / FUN_10035e80) *([batch 6](notes/2026-11-03-modlog-gaps-batch6.md) item 18: one reset a zone, so a normal event's end restores nothing; a slider move resets every channel)* | Built | L6303 | DLL |
 | Zone ambient loop: a time / weather / indoor change crossfades over 150 sound ticks; a zone change cuts the old loop *(answered, [batch 3](notes/2026-11-03-modlog-gaps-batch3.md) §7; ours cuts every change)* | Not built | L5932 | DLL |
 | Title buttons: press sounds on the character list rows, Config pages, the login screen *([batch 12](notes/2026-11-03-modlog-gaps-batch12.md) item 73: the press is the generic Enter effect (N = 20 from 9), already ours on the character list (`select.rs`) and the Config pages; the login screen is ours, not retail's)* | Matches | L7195 | DLL |
