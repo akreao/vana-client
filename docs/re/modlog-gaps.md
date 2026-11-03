@@ -43,7 +43,7 @@ detail inside implemented ops.
 |---|---|---|---|
 | Map packets: Huffman-compressed payload, MD5 and Blowfish over whole blocks ("Later") | Not built | L40 | DLL (polcore / zone coder) |
 | Send cadence: the adaptive +50 ms step when the server lags; the 1000 ms per-id refusal | Not built | L2242 | DLL |
-| Bazaar / trade sends: the per-id 1000 ms send refusal (FUN_100fc3c0) | Not built | L16460, L16478 | DLL |
+| Bazaar / trade sends: the per-id 1000 ms send refusal (FUN_100fc3c0) *([batch 6](notes/2026-11-03-modlog-gaps-batch6.md) item 12 and the [batch 11](notes/2026-11-03-modlog-gaps-batch11.md) addendum: every c2s id, gated or forced per call site; refused sends dropped, or retried by the event / zone-in / stats callers)* | Built | L16460, L16478 | DLL |
 | Djarum reached 0 HP twice with no mobs in the zone (once after /logout) | Unknown, not reproduced | L120 | Live (chat log now shows the source) |
 | Lobby netwait: retail's backdrops hnbackwi / ptcbgwin behind the run; op 5 as one Task with the log-in; the 3600-frame timeout (FFXI-3113); FFXI-3115 after a failed refresh | Not built | L15896, L15916, L15937 | DLL |
 | Lobby: what the PlayOnline calls return under xiloader (step 3 sub 14 flag 0x8000); error 0x68's field +0x144; FUN_1023be30's 0x6c path | Unknown | L15953, L15955 | DLL |
@@ -74,7 +74,7 @@ detail inside implemented ops.
 | Op 0x89 (actor +0x840 bit 1 and position held for dur ticks; *inferred: holds the actor in place*); also its head-look suppression | Not built | L7951, L4535 | DLL |
 | Event text codes 0x1d (speaker's compass direction), 0x13 *(answered, [batch 5](notes/2026-11-03-modlog-gaps-batch5.md) item 1: not Japanese, the raise / tractor offer)* | Built | L15345 | DLL |
 | Grammar 2 / 3 whole-text conversions (key items with their own article) | Not built | L14678 | DLL |
-| Event positions: the +0x128 bit 14 and +0x120 bit 0x100000 ground-snap skips (only 0x200000 is ours) | Not built | L19371 | DLL |
+| Event positions: the +0x128 bit 14 and +0x120 bit 0x100000 ground-snap skips (only 0x200000 is ours) *([batch 6](notes/2026-11-03-modlog-gaps-batch6.md) item 14: the bits are GroundFlag and HackMove)* | Built | L19371 | DLL |
 | Op 0x71 subs 0x50..0x55 (a full-screen picture, zone 291) | Not built | L4983 | DLL |
 | 0x7f0b / 0x7f8b special values (+0x124 bit 25, 475 sites); FUN_100977f0's gate for PCs *(answered, [batch 3](notes/2026-11-03-modlog-gaps-batch3.md) §2: the speaker's / player's gender bit (1 male); ours reads 0 for both, and dialog `7F 90` / `7F 91` use the player's gender; the PC see-through is FUN_100973f0, already built; [batch 4](notes/2026-11-03-modlog-gaps-batch4.md) §2..3: 0x00D / 0x00E mask 4 write it for every actor, default female; `7F 90` / `7F 91` are the message's actor 1 / 2)* | Not built | L4893, L4900 | DLL |
 | Op 0x7e / 0xac subs 5 / 0x55 (FUN_10097a20 spawning the chocobo / mount in an event) | Not built | L5246 | DLL |
@@ -213,7 +213,7 @@ detail inside implemented ops.
 | Guild shops: the cursor reset on source switch; kind 0x19 squeeze or clip; Trade refusal codes other than 0xfb / 0xfd; Stat 2 / bit 31 with Stat 0; DAT head byte 13 | Inferred / unknown | L6485, L6470 | DLL / LSB |
 | Field manuals: the query window's scroll bar | Not built | L6545 | DLL |
 | Player trade | Built, not tested live (needs a second account) | L6597 | Live |
-| Trade: the costume refusal bit 0x40 (FUN_101cc040) *(answered, [batch 1](notes/2026-11-03-modlog-gaps-batch1.md) §7: player +0x120 bit 5 from the costume state machine FUN_10095e90; its four helpers in [batch 3](notes/2026-11-03-modlog-gaps-batch3.md) §1: the status lists only take a costume off, +0x120 bit 7 = bound to the event; [batch 4](notes/2026-11-03-modlog-gaps-batch4.md) §1: 0x40 is checked after 0x04, before 0x08; §4: the costume id is an NPC model id, drawn as the whole body)* | Not built | L6568 | DLL |
+| Trade: the costume refusal bit 0x40 (FUN_101cc040) *(answered, [batch 1](notes/2026-11-03-modlog-gaps-batch1.md) §7: player +0x120 bit 5 from the costume state machine FUN_10095e90; its four helpers in [batch 3](notes/2026-11-03-modlog-gaps-batch3.md) §1: the status lists only take a costume off, +0x120 bit 7 = bound to the event; [batch 4](notes/2026-11-03-modlog-gaps-batch4.md) §1: 0x40 is checked after 0x04, before 0x08; §4: the costume id is an NPC model id, drawn as the whole body; [batch 5](notes/2026-11-03-modlog-gaps-batch5-build.md) §6: other players too, from 0x00D @0x30)*; built 2026-11-03 (the refusal, the model for us and others) | Built | L6568 | Live |
 | Set Bazaar: the name's bazaar glyph (0x9c); the row disabled in Monstrosity | Not built | L9921 | DLL |
 | Bazaar View Wares: FUN_10210880's flag (taken as "list is live"); hidden windows from the group walk; the Escape sound; shopbuy's registry flags vs ours stacking the confirm on the log | Inferred | L16503 | DLL / Footage |
 | Bazaar View Wares | Not seen live (needs a second character) | L16460 | Live |
@@ -223,7 +223,7 @@ detail inside implemented ops.
 
 | Item | Status | Source | Settle by |
 |---|---|---|---|
-| Party-list cursor: the fellow row *(answered, [batch 1](notes/2026-11-03-modlog-gaps-batch1.md) §4: drawn above the pet row, reached past the last row; ours draws no fellow row yet)* | Not built | L5444 | Build |
+| Party-list cursor: the fellow row *(answered, [batch 1](notes/2026-11-03-modlog-gaps-batch1.md) §4: drawn above the pet row, reached past the last row; built with the pet row from [batch 5 build](notes/2026-11-03-modlog-gaps-batch5-build.md) §5)* | Built | L5444 | Build |
 | Alliance windows: live test (one session cannot show them); quartermaster 433 / level-sync 493 marks | Not checked live / not built | L5488, L5485 | Live |
 | Party menu: the request-history prompt (comyn 9 0x140); the auto-pool area rule (actor +0x18c); the stage-1 mark; Level Sync's empty list text; the mouse in levelsyn | Not built | L8932, L9764 | DLL |
 | Party: the receiving side of invites | Untested live (no bot invites) | L8939 | Live |
@@ -248,7 +248,7 @@ detail inside implemented ops.
 | Config: chat-type filters (server); the mouse movement reference; 0x3e clip scale; 0x40 animation step | Not built | L3069 | DLL |
 | Config lists: the key item / quest / mission list pages | Not built | L8495 | DLL |
 | List scroll bars: the post / delivery / trade / synthesis lists and the synthesis history | Not built | L8731 | DLL |
-| The page modifier (0xa8): the arrows' hover state (a Ctrl-click on an arrow does nothing in retail; ours switches) | Not built | L13962 | DLL |
+| The page modifier (0xa8): the arrows' hover state (a Ctrl-click on an arrow does nothing in retail; ours switches) | Built *([batch 7](notes/2026-11-03-modlog-gaps-batch7.md) item 25: FUN_10221cd0 / FUN_10221ce0 disable and enable the paged list; over the arrows there is no hand and the list ignores keys, and a Ctrl / Alt click pages the disabled list, i.e. does nothing. RoE's arrows and jbpcat's page areas skip the test and are left alone)* | L13962 | DLL |
 | Cursor memory: the other KEEP windows' cursors (myroom, configwi, cmbmenu) | Not built | L9171 | DLL |
 | Missions: the held-key header stop | Not built | L9102, L9153 | DLL |
 | Status window: Monstrosity (mp_stat) from the main menu | Not built at the time | L9017 | *(closed: "Monstrosity, part 5: mp_stat")* |

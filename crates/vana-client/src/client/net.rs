@@ -19,6 +19,8 @@ pub enum EntityKind {
 
 #[derive(Clone, Debug)]
 pub struct EntityUpdate {
+    /// 0x00D u16 @0x30 (0x10099cd6): the costume, an NPC model id (0 none; FUN_1008cce0).
+    pub costume: Option<u16>,
     pub id: u32,
     pub index: u16,
     pub kind: EntityKind,
@@ -49,6 +51,9 @@ pub struct EntityUpdate {
     /// NPC ids without u32 @0x18 bit 15, kind (@0x30 & 7) not 2 / 3 (LAB_10099c80).
     pub counter: u16,
     pub ground: bool,
+    /// GroundFlag (+0x120 bit 20, u32 @0x18 bit 15) and HackMove (+0x128 bit 14, u32 @0x20 bit 27): either one, or
+    /// op 0x33's bit 21, stops the event ground snaps and the model's ground tilt (FUN_10084640, batch 6 item 14).
+    pub no_snap: Option<bool>,
     /// Update mask (u8 @0x0a) and status bits u8 @0x20 & 7 (actor +0x120 bits 13 / 14 / 18, 0x1009a397).
     pub mask: u8,
     pub status: u8,
@@ -166,6 +171,8 @@ pub struct SelfPlate {
     pub zone_pool: bool,
     /// u8 @0x59 x 0.1 (asm 0x1009d90c): our model radius, actor +0x208.
     pub hitbox: f32,
+    /// GroundFlag (flags0 bit 2) or HackMove (flags1 bit 12): no event ground snap, no ground tilt (batch 6 item 14).
+    pub no_snap: bool,
 }
 
 fn self_plate(p: &SubPacket) -> SelfPlate {
@@ -192,7 +199,7 @@ fn self_plate(p: &SubPacket) -> SelfPlate {
     };
     let r = p.u8(0x5a);
     let extra = PlateExtra { ballista: p.u8(0x39), trial: bit(f3, 1), job_master: p.u8(0x58) & 0x80 != 0, ranks: (r & 3) << 2 | (r >> 2 & 3) };
-    SelfPlate { marks, extra, invisible: bit(f1, 15), frozen: bit(f1, 13), charmed: bit(f1, 30), monstrosity: p.u16(0x54), mon_prefix: [p.u8(0x56), p.u8(0x57)], zone_pool: bit(f0, 9), hitbox: p.u8(0x59) as f32 * 0.1 }
+    SelfPlate { marks, extra, invisible: bit(f1, 15), frozen: bit(f1, 13), charmed: bit(f1, 30), monstrosity: p.u16(0x54), mon_prefix: [p.u8(0x56), p.u8(0x57)], zone_pool: bit(f0, 9), hitbox: p.u8(0x59) as f32 * 0.1, no_snap: bit(f0, 2) || bit(f1, 12) }
 }
 
 /// The rest of the plate's fields: u8 @0x32 (+0x294 Ballista info) and @0x33 bit 1 trial, bit 6 job master, bits 4..5 /
@@ -832,6 +839,83 @@ fn add_position(queue: &mut Vec<Vec<u8>>, pos: Vec<u8>, moving: bool) {
     }
 }
 
+/// c2s ids FUN_100fc3c0 is always asked to gate (force 0 at every call site, batch 6 item 12). Ids sent with force,
+/// or with a force that depends on the caller, are left out.
+const GATED: &[u16] = &[
+    0x0C, 0x0F, 0x11, 0x17, 0x1B, 0x1C, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x32, 0x34, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x3D, 0x41, 0x51, 0x52, 0x53, 0x58, 0x59,
+    0x5A, 0x5B, 0x5C, 0x5D, 0x60, 0x61, 0x63, 0x64, 0x66, 0x6E, 0x6F, 0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x77, 0x85, 0x8C, 0x8D, 0x96, 0x9B, 0xA0, 0xA1,
+    0xA2, 0xAA, 0xAB, 0xAC, 0xAD, 0xB5, 0xB6, 0xB7, 0xC3, 0xC4, 0xCD, 0xCE, 0xCF, 0xD0, 0xD2, 0xD4, 0xD5, 0xD8, 0xDD, 0xDE, 0xE0, 0xE2, 0xE4, 0xE7, 0xE9,
+    0xEA, 0xEB, 0xEC, 0xF0, 0xF1, 0xF5, 0xF6, 0x100, 0x102, 0x106, 0x109, 0x10A, 0x10B, 0x10C, 0x10D, 0x10F, 0x110, 0x112, 0x113, 0x114, 0x115, 0x117,
+    0x118, 0x119, 0x11A, 0x11B, 0x11C, 0x11D,
+];
+
+/// Gated ids whose retail callers retry a refused send (batch 11 addendum): event ops 0x43 / 0xa7 / 0x47 and the event
+/// end stay on it (0x05B / 0x05C), the zone-in keeps its pending flag (0x00C / 0x011), and persona / mp_stat /
+/// FUN_101d3260 ask for 0x061 again. Ours holds these and sends them once the gate allows; the rest are dropped.
+const RETRIED: &[u16] = &[0x00C, 0x011, 0x05B, 0x05C, 0x061];
+
+/// FUN_100fc3c0's per-id gate: a gated id sent again within 1000 ms of its last gated send is refused (retail returns
+/// NULL). Per the callers, a refused packet is dropped (nothing queued, no message) or held and retried.
+#[derive(Default)]
+struct SendGate {
+    /// char data +0x41b4: the last gated send per id.
+    last: std::collections::HashMap<u16, Instant>,
+    /// Refused packets of the retried ids, oldest first.
+    held: std::collections::VecDeque<Vec<u8>>,
+}
+
+fn packet_id(p: &[u8]) -> u16 {
+    u16::from_le_bytes([p[0], p[1]]) & 0x1ff
+}
+
+impl SendGate {
+    fn open(&self, id: u16, now: Instant) -> bool {
+        self.last.get(&id).is_none_or(|t| now.duration_since(*t) >= Duration::from_millis(1000))
+    }
+
+    /// Gates the packets a command queued from `from` on.
+    fn admit(&mut self, queue: &mut Vec<Vec<u8>>, from: usize, now: Instant) {
+        let mut k = from;
+        while k < queue.len() {
+            let id = packet_id(&queue[k]);
+            if GATED.binary_search(&id).is_err() {
+                k += 1;
+                continue;
+            }
+            // Behind a held one of its id, or within its second: refused.
+            if self.held.iter().any(|h| packet_id(h) == id) || !self.open(id, now) {
+                let p = queue.remove(k);
+                if RETRIED.contains(&id) {
+                    log::info!("c2s {id:#05x} held: the 1000 ms gate (FUN_100fc3c0); sent when it opens");
+                    self.held.push_back(p);
+                } else {
+                    log::warn!("c2s {id:#05x} refused: sent again within 1000 ms (FUN_100fc3c0's gate)");
+                }
+                continue;
+            }
+            self.last.insert(id, now);
+            k += 1;
+        }
+    }
+
+    /// The retried sends: each held packet goes once its id's gate is open (the first of its id first).
+    fn release(&mut self, queue: &mut Vec<Vec<u8>>, now: Instant) {
+        let mut seen = Vec::new();
+        let mut k = 0;
+        while k < self.held.len() {
+            let id = packet_id(&self.held[k]);
+            if !seen.contains(&id) && self.open(id, now) {
+                self.last.insert(id, now);
+                seen.push(id);
+                queue.extend(self.held.remove(k));
+                continue;
+            }
+            seen.push(id);
+            k += 1;
+        }
+    }
+}
+
 /// A built sub-packet the server interrupts on movement (LSB HasMoved): 0x01A magic (3) or ranged attack (0x10),
 /// 0x037 item use.
 fn stopped_by_moving(p: &[u8]) -> bool {
@@ -988,9 +1072,11 @@ fn entity(p: &SubPacket, kind: EntityKind) -> EntityUpdate {
         name_flags: (flags & 0x04 != 0 && p.data.len() >= 0x28).then(|| (p.u32(0x24) >> 29 & 1 != 0, p.u32(0x24) >> 30 & 1 != 0)),
         counter: p.u16(0x18) & 0x1fff,
         ground: p.u32(4) >> 24 == 1 && p.u32(0x18) & 0x8000 == 0 && !matches!(p.u8(0x30) & 7, 2 | 3),
+        no_snap: (flags & 0x04 != 0 && p.data.len() >= 0x24).then(|| p.u32(0x18) & 0x8000 != 0 || p.u32(0x20) >> 27 & 1 != 0),
         mask: flags,
         status: p.u8(0x20) & 7,
         look_kind: p.u8(0x30) & 7,
+        costume: (kind == EntityKind::Player && flags & 0x20 == 0 && p.data.len() >= 0x32).then(|| p.u16(0x30)),
         door: (kind == EntityKind::Npc && p.u8(0x30) & 7 == 2 && p.data.len() >= 0x38).then(|| p.u32(0x34)).filter(|d| *d != 0),
         lift: (kind == EntityKind::Npc && p.u8(0x30) & 7 == 3 && p.data.len() >= 0x3e).then(|| (p.u32(0x34), p.u32(0x38), p.u32(0x38).wrapping_add(p.u16(0x3c) as u32))).filter(|l| l.0 != 0),
         ship: (kind == EntityKind::Npc && p.u8(0x30) & 7 == 4 && p.data.len() >= 0x3c).then(|| (p.u32(0x34), p.u32(0x38))),
@@ -1088,6 +1174,8 @@ fn session(addr: SocketAddr, login: &MapLogin, account: &str, codec: &Codec, tx:
     let mut answered = false;
     let mut zoned = false;
     let mut queue: Vec<Vec<u8>> = Vec::new();
+    // FUN_100fc3c0's per-id send times (char data +0x41b4), for the gated ids.
+    let mut gate = SendGate::default();
     let mut last_send = Instant::now();
     let mut last_login = Instant::now();
     let mut my_index = 0u16;
@@ -1530,7 +1618,9 @@ fn session(addr: SocketAddr, login: &MapLogin, account: &str, codec: &Codec, tx:
             map.send_login(login.char_id, &login.name, account, if answered { 3 } else { 2 })?;
             last_login = Instant::now();
         }
+        gate.release(&mut queue, Instant::now());
         while let Ok(cmd) = rx.try_recv() {
+            let before = queue.len();
             match cmd {
                 NetCommand::Decode(g, packets) => {
                     if g == sess {
@@ -1630,6 +1720,7 @@ fn session(addr: SocketAddr, login: &MapLogin, account: &str, codec: &Codec, tx:
                     queue.push(build(0x0F2, &b));
                 }
             }
+            gate.admit(&mut queue, before, Instant::now());
         }
         // Retail sends one datagram every 400 ms (config +0xd0 = 400, net+0x417c), each with a fresh 0x015.
         let every = match stats.send_ms.load(Relaxed) {
@@ -1694,6 +1785,33 @@ mod tests {
         assert_eq!(chat_text(&packet(0x19, b"\x1eX")).1, String::new());
         assert_eq!(chat_text(&packet(0x22, b"GM\x1eX")), ("GM".into(), "Restarting".into()));
         assert_eq!(chat_text(&packet(0, b"GM")), ("GM".into(), "Restarting".into()));
+    }
+
+    /// A gated id goes once a second (a dropped id's repeat is lost, a retried one's waits); others go through; GATED
+    /// stays sorted for the search.
+    #[test]
+    fn send_gate() {
+        assert!(GATED.windows(2).all(|p| p[0] < p[1]));
+        let t0 = Instant::now();
+        let ms = |n| t0 + Duration::from_millis(n);
+        let ids = |q: &[Vec<u8>]| q.iter().map(|p| packet_id(p)).collect::<Vec<_>>();
+        let mut g = SendGate::default();
+        let mut q = vec![build(0x0B5, &[0; 4]), build(0x015, &[0; 28]), build(0x0B5, &[0; 4]), build(0x05B, &[1; 4]), build(0x05B, &[2; 4])];
+        g.admit(&mut q, 0, t0);
+        assert_eq!(ids(&q), [0x0B5, 0x015, 0x05B]);
+        g.release(&mut q, ms(999));
+        assert_eq!(ids(&q), [0x0B5, 0x015, 0x05B]);
+        q.clear();
+        q.push(build(0x0B5, &[0; 4]));
+        g.admit(&mut q, 0, ms(999));
+        assert!(q.is_empty());
+        // At 1 s the held 0x05B goes (the second one, body 2), and a new chat line is let through.
+        g.release(&mut q, ms(1000));
+        assert_eq!((ids(&q), q[0][4]), (vec![0x05B], 2));
+        q.push(build(0x0B5, &[0; 4]));
+        g.admit(&mut q, 1, ms(1000));
+        assert_eq!(ids(&q), [0x05B, 0x0B5]);
+        assert!(g.held.is_empty());
     }
 
     /// Standing still, a cast or a ranged attack goes after the position, sent twice; moving, or with only other

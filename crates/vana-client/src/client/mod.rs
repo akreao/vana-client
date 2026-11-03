@@ -26,6 +26,7 @@ mod friendlist;
 mod polmail;
 mod modern;
 mod monstrosity;
+mod petrow;
 mod moncustom;
 mod objective;
 mod border;
@@ -531,6 +532,8 @@ struct Entity {
     /// +0x12c bit 26 (event op 0xa4): the eye near it does not fade it (FUN_100c63d0 sets model +0x664 to 1); cleared
     /// when an event unbinds it (FUN_100ae3f0).
     no_near_fade: bool,
+    /// GroundFlag or HackMove (net.rs EntityUpdate::no_snap): no event ground snap and no ground tilt.
+    no_snap: bool,
     /// A door's id (0x00E SubKind 2, u32 @0x34); 0 for anything else.
     door: u32,
     /// A lift's (shaft id, move start, move end) (0x00E SubKind 3, client/lifts.rs).
@@ -666,6 +669,9 @@ struct UiInput {
     middle_clicked: bool,
     /// Wheel notches for the focused list, up positive (FUN_10125360).
     wheel: i32,
+    /// Ctrl or Alt held: the page modifier 0xa8 that a click on a list's arrows is tested against
+    /// (FUN_10123a70(0x3e, 0xa8, 4, -1)).
+    page: bool,
     events: Vec<egui::Event>,
 }
 
@@ -1657,6 +1663,7 @@ fn self_entity(w: &World) -> Entity {
         ev_reserved: false,
         no_occlusion: false,
         no_near_fade: false,
+        no_snap: false,
         door: 0,
         lift: None,
         ship: None,
@@ -2565,6 +2572,9 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
         }
     }
     world.key_shift = false;
+    // Recomputed by this frame's pointer handlers (retail keeps it until a row is hovered or the list is rebuilt;
+    // ours drops it as soon as the pointer is elsewhere, so a pointer that leaves the window cannot strand the keys).
+    world.list_arrow_hover = false;
 
     // Mouse on the main menu: hover moves the cursor, a click picks; the arrows swap pages. Not while the group walk
     // suspends it (a window over it, e.g. MacroPalette's).
@@ -2770,7 +2780,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
         chatctrl::pointer(world, gu, p, input.moved, input.clicked, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.primer.is_some() && world.confirm.is_none()) {
-        primer::pointer(world, gu, p, input.moved, input.clicked, input.right_clicked);
+        primer::pointer(world, gu, p, input.moved, input.clicked, input.right_clicked, input.page);
     }
     if let Some(p) = input.pointer.filter(|_| helpdesk::focused(world)) {
         helpdesk::pointer(world, gu, p, input.moved, input.clicked, input.right_clicked);
@@ -2844,10 +2854,10 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
         keyitems::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
     }
     if let Some(p) = input.pointer.filter(|_| !world.modern && world.quests.is_some() && world.confirm.is_none()) {
-        quests::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
+        quests::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.page);
     }
     if let Some(p) = input.pointer.filter(|_| !world.modern && world.missions.is_some() && world.confirm.is_none()) {
-        missions::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
+        missions::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.page);
     }
     // Taken before the sub-windows run: a right click closing one must not reach statcom2 the same frame.
     let status_pointer = input.pointer.filter(|_| !world.modern && world.status.is_some() && world.currencies.is_none() && world.unity.is_none() && world.merits_ui.is_none() && world.jp_ui.is_none() && world.ae_ui.is_none() && world.confirm.is_none());
@@ -3367,6 +3377,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
         _ => (log.rect, world.log.faded()),
     };
     world.timers.log = Some(region);
+    let log_rects = (log.rect, log2.as_ref().map(|f| f.rect));
     gu.log_top = Some(region[1]);
     gu.log_bottom = Some(region[1] + region[3]);
     gu.log_faded = region_faded;
@@ -3897,6 +3908,17 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
     }
     // The party window's hand over the log's edge (partywin layer 3 above logwindo's 1).
     gu.party_hand(sw, sh, &st);
+    // FUN_102041d0's tail: the pet and fellow rows beside the party window, the hand at row -1 (FUN_10202110).
+    if !world.modern
+        && let Some(r) = gu.window_rect(&st.party_window, sw, sh)
+    {
+        let (x, y) = petrow::origin(r, log_rects.0, log_rects.1, second_mode);
+        if let Some((fx, fy)) = petrow::draw(gu, world, x, y)
+            && let Some((tint, _)) = target::fellow_hand(world)
+        {
+            gu.party_hand_at(fx, fy, tint);
+        }
+    }
 
     // The K.O. window ("menu    dead", FUN_1012def0): "Time Left:" baked in its frame sprite, the time "%d:%02d" (minutes
     // unwrapped) at (+75, +6) in the sprite font, child 1 "Back to Home Point" with the hand while it has the focus.
@@ -4558,6 +4580,7 @@ fn place_mogdoor(w: &mut World) {
             ev_reserved: false,
             no_occlusion: false,
             no_near_fade: false,
+            no_snap: false,
             door: 0,
             lift: None,
             ship: None,
@@ -5755,6 +5778,9 @@ struct World {
     swkbd: Option<swkbd::Keyboard>,
     swkbd_out: Vec<egui::Event>,
     swkbd_reopen: bool,
+    /// The pointer is over a paged list's page arrows (children 9 / 10), which disables the list itself
+    /// (FUN_10221cd0: window +0x62 = 0, list +0x5c bit 1): no hand, and the list ignores keys.
+    list_arrow_hover: bool,
     /// Shift was held with the key being dispatched by world_hud's loop (Shift+Tab turns a modern window's tabs back;
     /// the pad's LB sends it); false anywhere else.
     key_shift: bool,
@@ -5780,6 +5806,9 @@ struct World {
     event_voices: bool,
     /// Looks set by event op 0xb6 (and the riding animals, ride.rs), for the model loader.
     event_looks: Vec<(u32, Source)>,
+    /// Other characters' costumes (0x00D @0x30), and the look each actor in costume would have without it.
+    costumes: HashMap<u32, costume::Costume>,
+    costume_base: HashMap<u32, Source>,
     /// Changed looks waiting while their actor is held (FUN_10095dd0 waits for FUN_10095850).
     held_looks: Vec<(u32, Source)>,
     /// Event op 0xab 0x11 (DAT_1035af3c != -1): once no event runs, every model but ours is built again.
@@ -8263,6 +8292,7 @@ impl App {
                             swkbd_out: Vec::new(),
                             swkbd_reopen: false,
                             key_shift: false,
+                            list_arrow_hover: false,
                             my_face: None,
                             ui_hidden: false,
                             shot_request: None,
@@ -8273,6 +8303,8 @@ impl App {
                             doors: Default::default(),
                             event_voices: false,
                             event_looks: Vec::new(),
+                            costumes: HashMap::new(),
+                            costume_base: HashMap::new(),
                             held_looks: Vec::new(),
                             rebuild_models: false,
                             my_ride: Default::default(),
@@ -9147,6 +9179,7 @@ impl App {
                     world.my_init_done = false;
                     // FUN_1008a350 / a new actor table: no costume until 0x037 sends it again.
                     world.costume = Default::default();
+                    (world.costumes, world.costume_base) = (HashMap::new(), HashMap::new());
                     world.effects.reset_equip(char_id);
                     (world.zoning_since, world.zone_touch) = (None, None);
                     world.pos = Vec3::from(pos);
@@ -9234,6 +9267,9 @@ impl App {
                     if let Some(npc) = e.npc {
                         looks.push((e.id, Source::Npc(npc)));
                     }
+                    if let Some(c) = e.costume.filter(|_| e.id != world.my_id) {
+                        world.costumes.entry(e.id).or_default().set_id(c);
+                    }
                     let fresh = !world.entities.contains_key(&e.id);
                     let raw_y = e.kind == EntityKind::Player && event::raw_pc_y(world, e.id);
                     let rising = e.hpp.is_some() && chair::rise(world, e.id, e.motion.status);
@@ -9297,6 +9333,7 @@ impl App {
                         ev_reserved: false,
                         no_occlusion: false,
                         no_near_fade: false,
+                        no_snap: e.no_snap.unwrap_or(false),
                         door: 0,
                         lift: None,
                         ship: None,
@@ -9466,6 +9503,9 @@ impl App {
                     }
                     if let Some(x) = e.plate {
                         entry.plate = x;
+                    }
+                    if let Some(x) = e.no_snap {
+                        entry.no_snap = x;
                     }
                     if let Some((inv, off, mon)) = e.radar {
                         (entry.invisible, entry.radar_off, entry.monstrosity) = (inv, off, mon);
@@ -9996,6 +10036,15 @@ impl App {
             if matches!(source, Source::Pc(l) if l.race == 0) {
                 continue;
             }
+            // FUN_100d2f60 case 2: in costume the model is the costume's whatever the look; the look waits for it to
+            // come off.
+            let source = match costume::worn(world, id) {
+                Some(c) if !costume::is_model(&source, c) => {
+                    world.costume_base.insert(id, source);
+                    continue;
+                }
+                _ => source,
+            };
             let key = format!("{source:?}");
             let spawn_fx = world.entities.get(&id).is_some_and(|e| e.spawn_fx);
             let shadow = world.entities.get(&id).map_or((false, false), |e| (e.shadowless || e.ev_shadowless, e.noblob));
@@ -10119,9 +10168,8 @@ impl App {
         if !event::active(world) {
             ko_step(world);
         }
-        // FUN_10095e90 for us, once a frame; bound = +0x120 bit 7, our character among the running event's actors.
-        let bound = world.event.as_ref().is_some_and(|l| l.st.bound.contains(&world.my_id));
-        world.costume.step(world.my_motion.status, bound);
+        // FUN_10095e90 for every actor, once a frame; bound = +0x120 bit 7, among the running event's actors.
+        costume::step_all(world);
         gmtell::step(world);
         event::update(world, dt);
         event::rebuild_models(world);
@@ -10457,7 +10505,7 @@ impl App {
         keyitems::update(world);
         linkshell::update(world);
         if world.party_cursor.is_some()
-            && let Some((_, _, Some(id))) = target::party_hand(world)
+            && let Some(id) = target::party_hand(world).and_then(|h| h.2).or_else(|| target::fellow_hand(world).and_then(|h| h.1))
         {
             target::force_flash(world, id);
         }
@@ -11674,6 +11722,7 @@ impl App {
             released: i.pointer.primary_released() && !swallow && mine,
             right_clicked: i.pointer.secondary_clicked() && mine,
             middle_clicked: i.pointer.button_clicked(egui::PointerButton::Middle) && mine,
+            page: i.modifiers.ctrl || i.modifiers.alt,
             events: i.events.clone(),
         });
         if input.moved
@@ -11773,7 +11822,7 @@ impl App {
                     fields[account_field].options = accounts.clone();
                     let remembered = self.cfg.remember_password;
                     // While an error shows, the fields take no input (the OK window has it).
-                    let none = UiInput { pointer: None, moved: false, clicked: false, pressed: false, down: false, released: false, right_clicked: false, middle_clicked: false, wheel: 0, events: Vec::new() };
+                    let none = UiInput { pointer: None, moved: false, clicked: false, pressed: false, down: false, released: false, right_clicked: false, middle_clicked: false, wheel: 0, page: false, events: Vec::new() };
                     let shown = if self.login_error.is_some() || self.twofa.is_some() { &none } else { &input };
                     let mut sounds = Vec::new();
                     let modern_ui = self.cfg.modern_ui;
@@ -14269,7 +14318,13 @@ impl App {
                     let rider = (*id & ride::ANIMAL != 0).then_some(*id & !ride::ANIMAL);
                     let gate_status = rider.and_then(|r| places.get(&r)).map_or(status, |p| p.status);
                     a.tilt_rot = None;
-                    if tilt::eligible(ch.cib[0], gate_status) {
+                    // FUN_100cbde0 / FUN_10084640: GroundFlag, HackMove or op 0x33's bit 21 means no ground tilt; a
+                    // riding animal has no entity, so it goes by its rider's.
+                    let flags_of = rider.unwrap_or(*id);
+                    let no_snap = w.entities.get(&flags_of).is_some_and(|e| e.no_snap)
+                        || (flags_of == w.my_id && w.my_plate.no_snap)
+                        || w.event.as_ref().is_some_and(|l| l.no_ground(w.my_id, flags_of));
+                    if tilt::eligible(ch.cib[0], gate_status) && !no_snap {
                         // Ours: the player's walk normal, else the face under the position each frame (the rider's for an
                         // animal at its place) *(retail skips far moving actors, up to 121 frames)*.
                         let n = if rider.unwrap_or(*id) == w.my_id {
