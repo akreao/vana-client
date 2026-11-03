@@ -3157,6 +3157,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
     let target_off = (world.target_event.is_some() || target.is_some() && event::keeps_target(world)) && !gu.want("menu    targetwi");
     let main_off = world.menu.is_some() && !gu.want(crate::render::screens::menu_window(world.menu_page));
     world.main_off = main_off;
+    world.target_suspended = target_off;
     let mut st = crate::render::screens::HudState {
         party_anim: world.party_gauges.iter().map(|g| (g.1 as f32 / 100.0, g.2 as f32 / 100.0)).collect(),
         target_anim: match &world.target_event {
@@ -6177,6 +6178,8 @@ struct World {
     region_menu: Option<region::Menu>,
     /// FUN_1015fa00's walk suspends the main menu (mcrmenu over its group): the modern command menu hides too.
     main_off: bool,
+    /// The target window is open but suspended by the window walk this frame (world_hud's `target_off`).
+    target_suspended: bool,
     cnq: Option<region::CnqMap>,
     region_cmd: Option<usize>,
     /// The own search comment (shared with /seacom) and its editor while open.
@@ -8320,6 +8323,7 @@ impl App {
                             confirm_text: String::new(),
                             confirm_click: None,
                             main_off: false,
+                            target_suspended: false,
                             cnq: None,
                             region_cmd: None,
                             logs: None,

@@ -738,7 +738,7 @@ pub fn draw(p: &mut Panels, w: &mut World) {
     // An event takes the target window down unless it keeps it (EventPara2 bit 1, FUN_10085a00), as the retail HUD
     // does (client/mod.rs world_hud); the focus panel goes with it.
     let keeps_target = event::keeps_target(w);
-    if let Some(v) = target_view(w, p.gu).filter(|_| keeps_target || w.target_event.is_some()) {
+    if let Some(v) = target_view(w, p.gu).filter(|_| if w.target_event.is_some() { !w.target_suspended } else { keeps_target }) {
         target_panel(p, &v);
     }
     let others = if keeps_target { others_view(w, p.gu) } else { Vec::new() };
