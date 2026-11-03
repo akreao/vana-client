@@ -401,7 +401,9 @@ impl Audio {
         }
         self.ambient_se = se;
         let Some(id) = se else { return };
-        if self.status.voices.load(std::sync::atomic::Ordering::Relaxed) >= self.max_se {
+        // The ambient voices just stopped or fading still count in the mixer; they do not keep the new loop out.
+        let ours = self.alive().iter().filter(|&&h| h == AMBIENT || h == AMBIENT + 1).count() as u32;
+        if self.status.voices.load(std::sync::atomic::Ordering::Relaxed).saturating_sub(ours) >= self.max_se {
             return;
         }
         self.ambient_level = self.zone_level();
