@@ -61,33 +61,39 @@ pub(super) fn step_all(w: &mut World) {
     let bound = |w: &World, id: u32| w.event.as_ref().is_some_and(|l| l.st.bound.contains(&id));
     let mut changes = Vec::new();
     let me = w.my_id;
-    let was = w.costume.on;
+    // The applied model: a new id while on (FUN_1008cce0 marks it pending) reloads it too.
+    let applied = |c: &Costume| c.on.then_some(c.id);
+    let was = applied(&w.costume);
     let b = bound(w, me);
     w.costume.step(w.my_motion.status, b);
-    if w.costume.on != was {
-        changes.push((me, w.costume.on.then_some(w.costume.id)));
+    if applied(&w.costume) != was {
+        changes.push((me, applied(&w.costume)));
     }
     w.costumes.retain(|id, _| w.entities.contains_key(id));
     let ids: Vec<(u32, u8, bool)> = w.costumes.keys().map(|&id| (id, w.entities.get(&id).map_or(0, |e| e.motion.status), bound(w, id))).collect();
     for (id, status, b) in ids {
         let Some(c) = w.costumes.get_mut(&id) else { continue };
-        let was = c.on;
+        let was = applied(c);
         c.step(status, b);
-        if c.on != was {
-            changes.push((id, c.on.then_some(c.id)));
+        if applied(c) != was {
+            changes.push((id, applied(c)));
         }
     }
     for (id, on) in changes {
         match on {
             Some(model) => {
-                if let Some(s) = w.actors.get(&id).and_then(|a| a.source).filter(|s| !is_model(s, model)) {
+                // The look underneath is kept once; a costume swapped for another keeps the same one.
+                if !w.costume_base.contains_key(&id)
+                    && let Some(s) = w.actors.get(&id).and_then(|a| a.source).filter(|s| !is_model(s, model))
+                {
                     w.costume_base.insert(id, s);
                 }
                 w.event_looks.push((id, Source::Npc(crate::dat::npc::NpcLook::Model(model))));
             }
             None => {
+                // With the held looks, ahead of this frame's server looks: a newer look from the server wins.
                 if let Some(s) = w.costume_base.remove(&id) {
-                    w.event_looks.push((id, s));
+                    w.held_looks.push((id, s));
                 }
             }
         }
@@ -110,6 +116,9 @@ mod tests {
         assert!(c.pending && !c.on, "sitting takes it off");
         c.step(0, false);
         assert!(c.on);
+        c.set_id(0x124);
+        c.step(0, false);
+        assert!(c.on && c.id == 0x124 && !c.pending, "a new id while on swaps the model");
         c.set_id(0);
         c.step(0, true);
         assert_eq!(c, Costume::default(), "id 0 takes it off even while bound");
