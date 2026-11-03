@@ -65,7 +65,7 @@ detail inside implemented ops.
 |---|---|---|---|
 | Installed DATs are older than LSB's text ids, so message ids can be shifted (msgshift table); ids between two segments stay unknown | Known limitation | L835, L1086 | Data |
 | Motion length (+0x2a0) comes from the motion; the headless host keeps it busy for 30 frames | Approximation | L1266 | DLL |
-| Name plates in cutscenes *(answered, [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §3: no event check in the plate draw; bound actors keep it unless op 0x92 / bit 17; non-participants lose the model by event Mode & 2 / & 0x10)*; ours not audited against it | Answered | L2408 | Code check |
+| Name plates in cutscenes *(answered, [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §3: no event check in the plate draw; bound actors keep it unless op 0x92 / bit 17; non-participants lose the model by event Mode & 2 / & 0x10)*; audited 2026-11-03 with [batch 5](notes/2026-11-03-modlog-gaps-batch5-build.md) §2: ours unloaded doors, elevators, ships and op 0xac sub 2 actors too, now exempt. Left: the hold count +0xf2, the +0x1ff status rule | Built | L2408 | Code check |
 | The mouth's 8-tick blend out (0x23 and unbind) | Not built | L2343, L2408, L14046 | DLL |
 | 0x5b / 0x66 finishing in one call when the file is cached (ours take 2 frames) | Not built | L2408 | DLL |
 | Motion-file model kinds | Not built | L2408 | DLL |
