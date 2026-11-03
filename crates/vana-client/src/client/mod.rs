@@ -7032,6 +7032,11 @@ enum LoadState {
     Failed,
 }
 
+/// Where op 0x89's look hold measures an actor: its event pose while an event drives it, else its own place.
+fn hold_pos(w: &World, id: u32) -> Option<Vec3> {
+    event::pose(w, id).map(|p| p.pos).or_else(|| if id == w.my_id { Some(w.pos) } else { w.entities.get(&id).map(|e| e.pos) })
+}
+
 /// Our yaw (face (sin Y, 0, cos Y)) for an entity yaw (facing (cos y, 0, -sin y)).
 fn player_yaw(entity_yaw: f32) -> f32 {
     entity_yaw.cos().atan2(-entity_yaw.sin())
@@ -10319,7 +10324,7 @@ impl App {
         // The countdown runs before this frame's new holds, so a one-tick hold still covers the frame that set it.
         let holding: Vec<u32> = world.actors.iter().filter(|(_, a)| a.look_hold.is_some()).map(|(id, _)| *id).collect();
         for id in holding {
-            let now = if id == world.my_id { Some(world.pos) } else { world.entities.get(&id).map(|e| e.pos) };
+            let now = hold_pos(world, id);
             let Some(a) = world.actors.get_mut(&id) else { continue };
             let Some((left, at)) = a.look_hold else { continue };
             let moved = at.is_some_and(|(x, z)| now.is_some_and(|p| (p.x - x).abs() > 1.0 || (p.z - z).abs() > 1.0));
@@ -10327,7 +10332,7 @@ impl App {
             a.look_hold = (!moved && left > 0.0).then_some((left, at));
         }
         for (id, ticks) in std::mem::take(&mut world.effects.look_holds) {
-            let at = if id == world.my_id { Some(world.pos) } else { world.entities.get(&id).map(|e| e.pos) };
+            let at = hold_pos(world, id);
             if let Some(a) = world.actors.get_mut(&id) {
                 a.look_hold = Some((ticks, at.map(|p| (p.x, p.z))));
             }
