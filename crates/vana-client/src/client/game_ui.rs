@@ -279,6 +279,8 @@ pub struct GameUi {
     /// The window style in use and images to replace in the renderer.
     style_index: usize,
     replaced: Vec<(String, u32, u32, Vec<u8>)>,
+    /// Images to free from the renderer (a mod image's older contents, image).
+    dropped: Vec<String>,
     /// The startup images a style replaced, for reset_style.
     style_saved: std::collections::HashMap<String, crate::dat::ui::UiImage>,
     /// When each scrolling text (scroll_text) first showed.
@@ -382,7 +384,7 @@ pub struct WorldView<'a> {
 impl GameUi {
     pub fn new(data: GameUiData) -> Self {
         crate::render::ui::set_caption_words(caption_words(&data));
-        Self { data, renderer: None, scene_depth: None, batch: UiBatch::default(), modern_frame: None, skin_on: false, modern_scale: 1.0, ttf_text: false, modern_help: None, started: Instant::now(), pending: Vec::new(), images: Default::default(), help: HelpScroll::default(), party_window: "menu    ptw0".into(), log_top: None, style_index: 0, replaced: Vec::new(), style_saved: Default::default(), scroll_seen: Default::default(), hover: Default::default(), modern_order: Default::default(), bars: Vec::new(), bar_hold: None, anims: Default::default(), contents: Default::default(), anim_frame: 1, anim_acc: 0.0, open_ticks: 25.0, log_faded: false, log_bottom: None, target_up: false, walk: Walk::default(), focus: (None, None), presses: Default::default() }
+        Self { data, renderer: None, scene_depth: None, batch: UiBatch::default(), modern_frame: None, skin_on: false, modern_scale: 1.0, ttf_text: false, modern_help: None, started: Instant::now(), pending: Vec::new(), images: Default::default(), help: HelpScroll::default(), party_window: "menu    ptw0".into(), log_top: None, style_index: 0, replaced: Vec::new(), dropped: Vec::new(), style_saved: Default::default(), scroll_seen: Default::default(), hover: Default::default(), modern_order: Default::default(), bars: Vec::new(), bar_hold: None, anims: Default::default(), contents: Default::default(), anim_frame: 1, anim_acc: 0.0, open_ticks: 25.0, log_faded: false, log_bottom: None, target_up: false, walk: Walk::default(), focus: (None, None), presses: Default::default() }
     }
 
     /// FUN_1015e530 / FUN_101177d0 for a window drawn this frame with frame rect `r`: false while it opens (only the
@@ -1342,9 +1344,20 @@ impl GameUi {
         self.data.lobby.lib(lib).map_or(0, |l| l.sprites.len())
     }
 
-    /// Uploads an RGBA image under `name` once (item icons).
+    /// Uploads an RGBA image under `name` once (item icons). A mod's image (lua::hud::image_key, "<file>#<hash of its
+    /// bytes>") frees the texture of the same file's older contents, so editing and reloading a mod doesn't pile them up.
     pub fn image(&mut self, name: &str, w: u32, h: u32, rgba: Vec<u8>) {
         if self.images.insert(name.to_string()) {
+            if name.starts_with("lua image ")
+                && let Some((file, _)) = name.rsplit_once('#')
+            {
+                let old: Vec<String> = self.images.iter().filter(|n| n.as_str() != name && n.rsplit_once('#').is_some_and(|(f, _)| f == file)).cloned().collect();
+                for n in old {
+                    self.images.remove(&n);
+                    self.pending.retain(|p| p.0 != n);
+                    self.dropped.push(n);
+                }
+            }
             self.pending.push((name.to_string(), w, h, rgba));
         }
     }
@@ -1935,6 +1948,9 @@ impl GameUi {
             }
             r
         });
+        for name in self.dropped.drain(..) {
+            r.drop_image(&name);
+        }
         for (name, w, h, rgba) in self.pending.drain(..) {
             r.load_image(gpu, &name, w, h, &rgba);
         }

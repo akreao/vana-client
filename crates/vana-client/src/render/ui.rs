@@ -829,6 +829,11 @@ impl UiRenderer {
         self.textures.insert(name.to_string(), bg);
     }
 
+    /// Frees the image under `name`.
+    pub fn drop_image(&mut self, name: &str) {
+        self.textures.remove(name);
+    }
+
     /// Uploads one RGBA8 image under `name` unless one is already there.
     pub fn load_image(&mut self, gpu: &Gpu, name: &str, width: u32, height: u32, rgba: &[u8]) {
         if !self.textures.contains_key(name) {
