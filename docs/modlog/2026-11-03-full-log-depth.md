@@ -8,5 +8,6 @@
   - The wheel moves one row per notch (0x16 older, 0x17 newer), the hand stays on its screen row, and SE 0001 plays
     when the view moves.
 - Ours already matched the wheel, the keys and the channel tabs' 100 rows. Window 1 / 2 kept 512 rows; they now keep
-  1000 (logwin.rs `KEEP` = 20 x 50).
+  1000 (logwin.rs `KEEP` = 20 x 50). A rewrap (resize, edit, route change) refills up to 1000 rows too; it used to
+  refill only the ~50 rows retail loads at an open, which dropped the older history.
 - Not modelled: the store's files on disk (ours keeps the rows in memory for the session).

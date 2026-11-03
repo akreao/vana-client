@@ -762,7 +762,9 @@ impl LogWin {
         let rewrap = tw != self.width || chat.edits() != self.edits || route != self.route;
         let mut new = 0;
         if rewrap {
-            // FUN_101295d0 at an open: the newest lines that pass, until more than 49 rows.
+            // FUN_101295d0 at an open: the newest lines that pass, until more than 49 rows. Ours also rewraps on a
+            // resize, an edit or a route change, which retail never does to rows it holds, so refill up to KEEP rows
+            // to keep the full log's history (Window 1's tab reads these rows).
             (self.width, self.edits, self.route) = (tw, chat.edits(), route);
             let mut rows: Vec<Vec<Row>> = Vec::new();
             let mut n = 0;
@@ -774,7 +776,7 @@ impl LogWin {
                 let r = self.wrap_line(gu, chat, k, tw);
                 n += r.len();
                 rows.push(r);
-                if n > 49 {
+                if n >= KEEP {
                     break;
                 }
             }
