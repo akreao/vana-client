@@ -46,3 +46,17 @@ host's 30 frames are a test stub, not a claim about retail.
 Item 38 also corrects MODLOG on 0x5f sub 7: `vt+0x2ac` (`FUN_10084fb0`) walks the actor's attached list for an element
 of type 0x1032cfa0 whose +0x78 is the 4cc, so it waits on that object, not on a scheduler. Our timer started by
 0x5f sub 5 / 6 stands in for that object's lifetime.
+
+## Op 0x7a on our own actor: the server does see the pinned place
+
+Batch 8 item 40 closes the inferred link ours was already built on:
+
+- The pin writes the **drawobj**, and the per-frame entity update `FUN_1008cd90` copies drawobj +0x34..+0x3c into
+  entity +4..+0xc once the model is loaded, plus the rotation for the player.
+- The c2s 0x015 builder `FUN_100983f0` sends that entity copy (position @4/@8/@0xc, the yaw byte @0x14), and 0x015 is
+  never gated for our own id, so **the server receives the pinned position and facing every frame**.
+- When the pin ends (`FUN_10061f50`) the drawobj is left where it was, so the player stays there and the next 0x015
+  carries that spot.
+
+Ours sets `world.pos` / `world.yaw` from `Effects::pinned` each frame, before the 0x015 send, and leaves the position
+alone when the pin expires, so no change was needed.
