@@ -1,5 +1,5 @@
 
-## Set Bazaar: the glyph and the Monstrosity row already match
+## Set Bazaar: the glyph and the Monstrosity row already match (2026-11-03)
 
 Batch 7 item 30 traced both halves of the Set Bazaar row, and ours already match:
 
@@ -12,7 +12,7 @@ Batch 7 item 30 traced both halves of the Set Bazaar row, and ours already match
   (char data +0x40db6 != 0 or main job 23). `menu_disabled_on` already returns child 5 for the social page in
   Monstrosity, and the row's own handler has no second check.
 
-## Status window: the stats request retries are our send gate's job
+## Status window: the stats request retries have nothing to retry in ours (2026-11-03)
 
 Batch 7 item 28 traced persona's frame `FUN_10147030`: while the request has not gone out it counts frames down and
 calls `FUN_100fc3c0(0x61, 0, 0)`, which allocates the c2s 0x061 through the **1000 ms per-id gate**. Refused, it
@@ -20,12 +20,13 @@ counts a try and sets the counter to 20 frames; after 12 tries it gives up silen
 successful send it sets the busy bit 0x40 on statcom2, which the 0x061 answer (`FUN_100994a0` -> the stored
 `LAB_10147010`) clears.
 
-Our side reaches the same place from the other end: the send gate holds a refused 0x061 in its queue and releases it
-as soon as the per-id window opens (the RETRIED ids), so the request always goes out within a second, `status::open`
-shows the busy strip until `on_stats`, and retail's give-up path has nothing to trigger it. The only difference left
-is that our strip appears at open rather than on the frame the packet leaves, which is at most that one second.
+Ours has no per-id gate to be refused by: `NetCommand::StatusRequest` pushes the 0x061 onto the session queue, and
+the queue goes out with the next datagram (every 400 ms, `net.rs` `session`). So the request always goes out within
+one cycle, `status::open` shows the busy strip until `on_stats`, and retail's retry and give-up paths have nothing to
+trigger them. The only difference left is that our strip appears at open rather than on the frame the packet leaves,
+which is at most that one cycle.
 
-## Op 0x53 has no motion length to read
+## Op 0x53 has no motion length to read (2026-11-03)
 
 Batch 8 item 38 settles what op 0x53 waits on. There is **no length field**: `FUN_100b4e10(0, 0)` calls
 `drawobj(actor1)->vt+0x2a0(4cc, drawobj(actor2))` = `FUN_10084d40`, which is busy when
@@ -47,7 +48,7 @@ Item 38 also corrects MODLOG on 0x5f sub 7: `vt+0x2ac` (`FUN_10084fb0`) walks th
 of type 0x1032cfa0 whose +0x78 is the 4cc, so it waits on that object, not on a scheduler. Our timer started by
 0x5f sub 5 / 6 stands in for that object's lifetime.
 
-## Op 0x7a on our own actor: the server does see the pinned place
+## Op 0x7a on our own actor: the server does see the pinned place (2026-11-03)
 
 Batch 8 item 40 closes the inferred link ours was already built on:
 
@@ -61,7 +62,7 @@ Batch 8 item 40 closes the inferred link ours was already built on:
 Ours sets `world.pos` / `world.yaw` from `Effects::pinned` each frame, before the 0x015 send, and leaves the position
 alone when the pin expires, so no change was needed.
 
-## Scheduler ops 0x8c / 0xa4 / 0xa5 write the entity's base names, as ours do
+## Scheduler ops 0x8c / 0xa4 / 0xa5 write the entity's base names, as ours do (2026-11-03)
 
 Batch 9 item 41 names the fields behind the behaviour ours already models. The entity keeps a **base** set (+0x190
 idle, +0x194 sit idle, +0x198 walk, +0x19c run, +0x1a0 chair idle) and a **current** set (+0x1a4 / +0x1a8 / +0x1ac
