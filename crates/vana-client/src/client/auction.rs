@@ -1042,7 +1042,8 @@ fn key_inner(w: &mut World, a: &mut Auction, key: egui::Key) -> bool {
         }
         a.money = Some((step, max, v, purpose));
         match key {
-            K::ArrowUp | K::ArrowDown | K::ArrowRight | K::ArrowLeft => w.sounds.push(Ui::Cursor as u32),
+            // FUN_1013a6c0 / FUN_10140bc0 play nothing on the arrows or at a limit (only OK 0002 / cancel 0003).
+            K::ArrowUp | K::ArrowDown | K::ArrowRight | K::ArrowLeft => {}
             K::Enter | K::Escape => {
                 w.sounds.push(if key == K::Enter { Ui::Select } else { Ui::Cancel } as u32);
                 a.money = None;
