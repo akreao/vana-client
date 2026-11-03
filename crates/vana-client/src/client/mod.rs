@@ -4124,10 +4124,8 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
         if let Some(m) = world.map.as_mut() {
             m.draw(gu, sw, sh);
         }
-        // cnqframe has flag 0x40 too.
-        if world.cnq.is_some() {
-            region::draw(gu, world, sw, sh);
-        }
+        // cnqframe has flag 0x40 too; its info windows don't.
+        region::draw_map(gu, world);
         // An event choice (op 0xd4, "menu    query", flags 0x11012) is neither drawn nor answered here: the event
         // waits until the script clears cinema mode (batch 8). Retail scripts run op 0x68 first.
         self::event_window(gu, world, sw, sh, logwin::text_width(sw, world.log.cfg.pct));
