@@ -88,7 +88,7 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
                 _ => Facing::Ground,
             };
             let (w, h) = (s.get::<Option<f32>>("w")?.unwrap_or(2.0).max(0.01), s.get::<Option<f32>>("h")?.unwrap_or(2.0).max(0.01));
-            let kind = Kind::Image { at: vec3(s.get("at")?)?, w, h, yaw: s.get::<Option<f32>>("yaw")?.unwrap_or(0.0), facing, key: format!("lua image {mod_id}/{path}"), img: std::sync::Arc::new(img) };
+            let kind = Kind::Image { at: vec3(s.get("at")?)?, w, h, yaw: s.get::<Option<f32>>("yaw")?.unwrap_or(0.0), facing, key: super::hud::image_key(&mod_id, &path, &bytes), img: std::sync::Arc::new(img) };
             put(lua, id, kind, colour(&s)?)
         })?,
     )?;
