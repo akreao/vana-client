@@ -1,4 +1,4 @@
-//! cloth-shot: a cloth model part (a DAT file id with a cloth mesh) on its race, its cloth headers and the skeleton's
+//! cloth-shot: a model file with a cloth mesh (whole, or a PC part on its race), its cloth headers and the skeleton's
 //! spheres printed, then simulated (client/cloth.rs) standing in the wind and walking, each to a PNG.
 
 use crate::client::cloth::{Cloth, Frame, Wind};
@@ -16,16 +16,25 @@ fn look_of(file: u32) -> Option<(u8, usize, u16)> {
 pub fn run(file: u32, zone: u32, hour: f32, pos: [f32; 3], steps: u32, out_dir: &std::path::Path) -> Result<()> {
     let cfg = config::Config::load();
     let index = dat::DatIndex::open(&cfg.ffxi_dir())?;
-    let (race, slot, id) = look_of(file).with_context(|| format!("file {file} is no PC part file"))?;
-    let mut look = dat::character::Look { race, face: 0, head: 0, body: 0, hands: 0, legs: 0, feet: 0, main: 0, sub: 0, range: 0 };
-    *[&mut look.face, &mut look.head, &mut look.body, &mut look.hands, &mut look.legs, &mut look.feet][slot] = id;
-    println!("file {file}: race {race} {} {id}", dat::character::SLOTS[slot]);
-    let ch = std::sync::Arc::new(dat::character::load_character(&index, &look)?);
+    // Retail's cloth meshes are in whole-model files (a flag, NPCs), not PC gear; a PC part file loads on its race.
+    let ch = std::sync::Arc::new(match look_of(file) {
+        Some((race, slot, id)) => {
+            let mut look = dat::character::Look { race, face: 0, head: 0, body: 0, hands: 0, legs: 0, feet: 0, main: 0, sub: 0, range: 0 };
+            *[&mut look.face, &mut look.head, &mut look.body, &mut look.hands, &mut look.legs, &mut look.feet][slot] = id;
+            println!("file {file}: race {race} {} {id}", dat::character::SLOTS[slot]);
+            dat::character::load_character(&index, &look)?
+        }
+        None => {
+            println!("file {file}: a whole model");
+            dat::npc::load_file_model(&index, file)?
+        }
+    });
     let sk = &ch.skeleton;
-    println!("skeleton {}: {} bones, {} sphere records", sk.name, sk.bones.len(), sk.spheres.len());
+    println!("skeleton {}: {} bones, {} sphere slots (used ones below)", sk.name, sk.bones.len(), sk.spheres.len());
     for (i, s) in sk.spheres.iter().enumerate() {
-        let ok = (s.bone as usize) < sk.bones.len() && s.radius.is_finite() && s.radius > 0.0 && s.radius < 10.0;
-        println!("  sphere {i}: bone {} radius {:.4} offset {:.4?}{}", s.bone, s.radius, s.offset.to_array(), if ok { "" } else { "  <- implausible" });
+        if s.bone >= 0 && (s.bone as usize) < sk.bones.len() && s.radius > 0.0 {
+            println!("  sphere {i}: bone {} radius {:.4} offset {:.4?}", s.bone, s.radius, s.offset.to_array());
+        }
     }
     for p in ch.parts.iter().filter(|p| p.cloth) {
         match &p.sim {
@@ -60,6 +69,7 @@ pub fn run(file: u32, zone: u32, hour: f32, pos: [f32; 3], steps: u32, out_dir: 
     let mut actor = r.new_skinned(&gpu, &ch);
     let idle: Vec<_> = ch.find_animations("idl").into_iter().map(|a| (a, 0.0)).collect();
     let bones = dat::character::pose(&ch.skeleton, &idle);
+    let top = render::character::skinned_top(&ch, &bones).min(-0.5);
     let p0 = Vec3::from(pos);
     // Side on to the wind (world -x): the actor faces +z.
     let at = |p: Vec3| Mat4::from_translation(p) * Mat4::from_rotation_y(std::f32::consts::FRAC_PI_2);
@@ -123,8 +133,10 @@ pub fn run(file: u32, zone: u32, hour: f32, pos: [f32; 3], steps: u32, out_dir: 
     let depth = render::depth_view(&gpu.device, w, h);
     for (name, m, data) in shots {
         let feet = m.w_axis.truncate();
+        // Framed on the model's height (y down: the top is negative).
+        let look = feet + Vec3::new(0.0, top * 0.5, 0.0);
         let camera =
-            render::Camera { eye: feet + Vec3::new(2.6, -1.4, -1.2), target: feet + Vec3::new(0.0, -0.9, 0.0), up: Vec3::NEG_Y, fov_y: 40f32.to_radians() };
+            render::Camera { eye: look + Vec3::new(2.6, -0.5, -1.2) * (top.abs() / 1.8).max(1.0), target: look, up: Vec3::NEG_Y, fov_y: 40f32.to_radians() };
         actor.cloth = data;
         r.begin_poses();
         r.pose_actor_gpu(&mut actor, &ch, &[], &idle, &[], 1.0, m, None, None, &[]);

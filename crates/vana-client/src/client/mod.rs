@@ -13850,7 +13850,9 @@ impl App {
                             let moved = if d.length() < 0.01 { Vec3::ZERO } else { d };
                             if drawn && visible.contains(id) {
                                 let bones = if a.bones.is_empty() { pose_now() } else { a.bones.clone() };
-                                let f = cloth::Frame { skeleton: &ch.skeleton, bones: &bones, model, moved, wind: Some((wind.1, wind.2)) };
+                                // Actor +0x17c (FUN_100a4ed0): no wind on a covered floor (MZB object flags bit 2).
+                                let covered = w.ground.as_ref().is_some_and(|g| g.surface(pos).1);
+                                let f = cloth::Frame { skeleton: &ch.skeleton, bones: &bones, model, moved, wind: (!covered).then_some((wind.1, wind.2)) };
                                 c.step(&ch.parts, &f);
                             } else {
                                 c.carry(moved);

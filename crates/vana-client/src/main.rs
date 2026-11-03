@@ -436,8 +436,8 @@ enum Cmd {
         #[arg(long)]
         out_dir: PathBuf,
     },
-    /// A cloth model part (DAT file id, e.g. 1367) on its race: the cloth headers printed, then simulated in the wind
-    /// and walking (cloth_*.png in --out-dir).
+    /// A model file with cloth (DAT file id, e.g. 2114 the flag, 1367): the cloth headers printed, then simulated in
+    /// the wind and walking (cloth_*.png in --out-dir).
     ClothShot {
         #[arg(long)]
         file: u32,

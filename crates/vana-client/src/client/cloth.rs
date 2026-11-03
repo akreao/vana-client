@@ -126,7 +126,8 @@ pub struct Frame<'a> {
     pub model: Mat4,
     /// The actor's move since the last step (model +0x34, FUN_100c63d0).
     pub moved: Vec3,
-    /// Wind direction x strength, or None (actor +0x17c).
+    /// Wind direction and strength, or None: actor +0x17c, set while it stands on a covered floor (FUN_100a4ed0:
+    /// the ground hit's MZB object flags bit 2).
     pub wind: Option<(Vec3, f32)>,
 }
 
@@ -243,13 +244,20 @@ fn norm(v: Vec3) -> Vec3 {
 /// then each sphere sweeps from last step's centre to this one against its edges, both ways. The sweep's start moves
 /// along as it goes, so a sphere's later edges start where the earlier ones stopped.
 fn collide(spec: &ClothSpec, f: &Frame, p: &mut [Particle], prev: &mut [Option<Vec3>]) {
-    let spheres: Vec<Option<(i32, Vec3, f32)>> = spec
+    // An unused table slot (0xCD fill: bone -12851, radius -4.3e8) passes every edge's test, so it takes the edges
+    // of the spheres before it in the list, and pushes nothing (both ends always inside). An index past the table
+    // reads whatever follows it in retail; ours skips it.
+    let spheres: Vec<Option<(i32, Option<(Vec3, f32)>)>> = spec
         .spheres
         .iter()
         .map(|&s| {
             let r = f.skeleton.spheres.get(s as usize)?;
-            let b = f.bones.get(r.bone as usize).copied().unwrap_or(BoneXf::IDENTITY);
-            Some((s as i32, f.model.transform_point3(b.at(r.offset)), r.radius))
+            let used = r.bone >= 0 && (r.bone as usize) < f.skeleton.bones.len() && r.radius > 0.0 && r.radius.is_finite();
+            let at = used.then(|| {
+                let b = f.bones.get(r.bone as usize).copied().unwrap_or(BoneXf::IDENTITY);
+                (f.model.transform_point3(b.at(r.offset)), r.radius)
+            });
+            Some((s as i32, at))
         })
         .collect();
     // DAT_10456e38: a byte an edge, 0xff none; compared as a signed char with the sphere index.
@@ -258,12 +266,18 @@ fn collide(spec: &ClothSpec, f: &Frame, p: &mut [Particle], prev: &mut [Option<V
         .iter()
         .map(|e| {
             let a = p[(e.a & 0x7fff) as usize].cur;
-            spheres.iter().flatten().rev().find(|(_, c, r)| (a - *c).length_squared() <= r * r * 1.5).map_or(-1, |(s, ..)| *s as u8 as i8 as i32)
+            spheres
+                .iter()
+                .flatten()
+                .rev()
+                .find(|(_, at)| at.is_none_or(|(c, r)| (a - c).length_squared() <= r * r * 1.5))
+                .map_or(-1, |(s, _)| *s as u8 as i8 as i32)
         })
         .collect();
     for (i, sph) in spheres.iter().enumerate() {
-        let Some((s, cur, r)) = *sph else { continue };
-        // Ours: the first step has no last centre (retail's instance buffer); the sphere starts where it is.
+        let Some((s, Some((cur, r)))) = *sph else { continue };
+        // Retail's last centres (instance +0x48) start as whatever the pool allocator left there (FUN_10028930 does
+        // not clear); ours start at the current centre.
         let mut c = prev[i].unwrap_or(cur);
         for (n, e) in spec.edges.iter().enumerate() {
             if owner[n] != s || e.a & 0x8000 != 0 {

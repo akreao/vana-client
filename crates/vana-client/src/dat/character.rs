@@ -51,8 +51,8 @@ pub struct Skeleton {
     /// Bounding boxes (FUN_100cfb40) at the end of the point table: 0 standing, 1 engaged / sitting / riding, 2
     /// dead; six floats each (y b0..b1, x +-b2 / b3, z b4..b5).
     pub boxes: Vec<[f32; 6]>,
-    /// Cloth collision spheres (FUN_10035290: the end of the point table + 0x6c, 0x12 bytes each): bone, radius and
-    /// the centre in the bone's frame. Cloth meshes pick theirs by index.
+    /// Cloth collision spheres (FUN_10035290: the end of the point table + 0x6c, 64 slots of 0x12 bytes): bone,
+    /// radius and the centre in the bone's frame. Cloth meshes pick theirs by index.
     pub spheres: Vec<ClothSphere>,
 }
 
@@ -101,9 +101,10 @@ pub fn parse_skeleton(name: String, d: &[u8]) -> Result<Skeleton> {
     let look_limits = [0, 1].map(|i| [0, 1, 2].map(|k| if lim + 12 * i + 4 * k + 4 <= d.len() { f32_at(d, lim + 12 * i + 4 * k) } else { 0.0 }));
     let at_box = at + 4 + count * 26;
     let boxes = (0..3).take_while(|i| at_box + 0x18 * i + 0x18 <= d.len()).map(|i| std::array::from_fn(|k| f32_at(d, at_box + 0x18 * i + 4 * k))).collect();
-    // FUN_10035290 (FUN_10035270(0) + 0x24): {s16 bone, f32 radius, f32 offset xyz} to the chunk's end.
+    // FUN_10035290 (FUN_10035270(0) + 0x24): 64 slots of {s16 bone, f32 radius, f32 offset xyz}, unused ones 0xCD
+    // fill.
     let sph = at_box + 0x6c;
-    let spheres = (0..).map(|i| sph + i * 0x12).take_while(|o| o + 0x12 <= d.len()).map(|o| ClothSphere { bone: u16_at(d, o) as i16, radius: f32_at(d, o + 2), offset: vec3_at(d, o + 6) }).collect();
+    let spheres = (0..64).map(|i| sph + i * 0x12).take_while(|o| o + 0x12 <= d.len()).map(|o| ClothSphere { bone: u16_at(d, o) as i16, radius: f32_at(d, o + 2), offset: vec3_at(d, o + 6) }).collect();
     Ok(Skeleton { name, bones, points, point_rots, look_limits, boxes, spheres })
 }
 
