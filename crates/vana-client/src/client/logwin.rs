@@ -104,8 +104,10 @@ pub fn second_rect(mode: u32, w1: [f32; 4], w: f32, h: f32) -> [f32; 4] {
     if mode == 2 { [w1[0] + w1[2], w1[1] + w1[3] - h, w, h] } else { [w1[0], w1[1] - h, w, h] }
 }
 
-/// Wrapped lines kept for drawing.
-const KEEP: usize = 512;
+/// Wrapped rows kept for drawing and the full log's Window 1 / 2 tabs: retail's history store, 20 rotating
+/// "%d_%d.log" pages of 50 rows (FUN_1018ed80; batch 12 item 77: the full log pages older through it past its
+/// 100-row view).
+const KEEP: usize = 20 * 50;
 
 /// Ticks a retail frame steps the log by (the frame divisor: 2 = stock retail's 30 fps).
 const FRAME: i32 = 2;

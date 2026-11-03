@@ -167,7 +167,7 @@ detail inside implemented ops.
 | Chat: c2s 0x0B5 / 0x0B6 at 150 bytes (ours 127) *([batch 5](notes/2026-11-03-modlog-gaps-batch5.md) item 2: 150 already; 0x0B6 now sized 4 × ceil((len + 0x15) / 4))* | Built | L5953 | DLL |
 | s2c 0x027 / 0x043: the event-lock drop ((DAT_104808fc \| DAT_1047fb40) & 0x40) | Not built | L6010 | DLL |
 | Invisible (own +0x128 bit 6) and /linkshell (7031 0x25) in chat log fixes *([batch 6](notes/2026-11-03-modlog-gaps-batch6.md) item 19: talk and /l refusals were in; /returntrust added. The zone-in source, char +0x40db2 bit 1, is not mapped to a packet field)* | Built apart from the zone-in flag | L5884, L5886 | DLL |
-| Full log: ~100-line history (ours keeps 512 wrapped lines); its wheel handler *(inf)* | Deviation / not traced | L2581, L8726 | DLL |
+| Full log: ~100-line history (ours keeps 512 wrapped lines); its wheel handler *(inf)* *([batch 12](notes/2026-11-03-modlog-gaps-batch12.md) item 77: the 100 rows are the view; Window 1 / 2 page older through the 20 x 50-row store, channel tabs stop at 100; one row per notch, as ours already did. Ours now keeps 1000 rows)* | Built | L2581, L8726 | DLL |
 | Auto-translate: what window FUN_101ddcb0 is and the s2c 0x0CC chain to FUN_101dd780; FUN_101bceb0 (config 0xce); what FUN_1022aff0 tests and why ids 0x181..0x183 end the key item scan; the French / Japanese second key | Unknown | L6175 | DLL |
 | Auto-translate: the item / key item groups built at run time (the 200-record item cache); kind 6; the nested FD 06 block | Not built | L6116, L6149, L6192 | DLL |
 | Macro editor: Shift-JIS input; the palettes' flip zoom (FUN on set change, 20 + 20 ticks) | Not built | L10057, L10085 | DLL |
