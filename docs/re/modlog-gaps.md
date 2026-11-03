@@ -103,7 +103,7 @@ detail inside implemented ops.
 | Model hide / show: the skeleton's `fvib` clone at the show; the +0x764 / +0x814 clones | Not built | L13203 | DLL |
 | Near-camera fade after the cylinder (vt+0x260, first person, fishing) | Built *([batch 9](notes/2026-11-03-modlog-gaps-batch9.md) item 42: vt+0x260 never fires in this build, the fishing fade and the +0x130 bit 18 half draw are built; the first-person step needs the forced-follow target (0x037 @0x46), which ours does not model)* | L12096 | DLL |
 | Character bump during events; whether any actor reaches +0x59c >= 1 | Built *([batch 9](notes/2026-11-03-modlog-gaps-batch9.md) item 43: +0x59c is the load fade and every actor reaches 1.0 about 32 ticks after its files load; the bump needs it at 1.0, and the bump has no event test of its own - it simply runs inside the move step, which returns early whenever we cannot move)* | L8858, L8889 | DLL |
-| Lifts: the camera's look point; LSB's Metalworks door data not checked against the doors | Not built / not checked | L8776 | DLL / LSB |
+| Lifts: the camera's look point; LSB's Metalworks door data not checked against the doors *([batch 12](notes/2026-11-03-modlog-gaps-batch12.md) item 71: the look point has no lift handling; the eye rides and holds the auto-adjust 10 ticks, which `camera::ride` already does)* | Matches; LSB door data not checked | L8776 | DLL / LSB |
 | Ship actors: whether a new task first updates in its frame; vt +0x178 and the default speed 1.0 assumed; the far plane; the lighting area; the 10-second no-skip window; +0x130 bit 21's writer | Unknown | L18113 | DLL |
 | Ships: per-run data for each voyage (no captures; pirates' run 227 / 228) | Blocked: no data | L13802, L13831 | Captures |
 | 0x00E SubKind 5 / 6: the 0x9000 word *(answered, [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §5: bits 0..11 NPC-table model id, bits 12..15 the look slot; kind 7 has a case)*; built: ours keeps the low 12 bits (MODLOG "0x00E SubKind 5 / 6: the model word's low 12 bits"). Not done: SubKind 6's +0xf6 = 2 for raw words 0x7b8..0x7cb / 0x7d3..0x7da, and slot 9 attached over a race or slot 0 base (op 0xb6 sub 0x0c, kind 7) | Built apart from the SubKind 6 flag and slot 9 attach | L15593 | DLL |
@@ -152,15 +152,15 @@ detail inside implemented ops.
 | Footsteps: zone flag +0x1cf alt name (surface 3 -> 2), the model-scope fses retry, the culled-pass skip (+0x840 bits 20..21), 'fvib', the footstep-effects option DAT_10444158 (taken as on) | Not built | L3717, L3734..L3755 | DLL |
 | Sound levels: the resets at event end / SE slider change (FUN_100ae3f0 / FUN_10035e80) *([batch 6](notes/2026-11-03-modlog-gaps-batch6.md) item 18: one reset a zone, so a normal event's end restores nothing; a slider move resets every channel)* | Built | L6303 | DLL |
 | Zone ambient loop: a time / weather / indoor change crossfades over 150 sound ticks; a zone change cuts the old loop *(answered, [batch 3](notes/2026-11-03-modlog-gaps-batch3.md) §7; ours cuts every change)* | Not built | L5932 | DLL |
-| Title buttons: press sounds on the character list rows, Config pages, the login screen | Not built | L7195 | DLL |
+| Title buttons: press sounds on the character list rows, Config pages, the login screen *([batch 12](notes/2026-11-03-modlog-gaps-batch12.md) item 73: the press is the generic Enter effect (N = 20 from 9), already ours on the character list (`select.rs`) and the Config pages; the login screen is ours, not retail's)* | Matches | L7195 | DLL |
 | Number windows' sounds: retail plays nothing on Up / Down / Left / Right or at a limit, only OK 0002 / cancel 0003; ours plays the cursor sound *(answered, [batch 3](notes/2026-11-03-modlog-gaps-batch3.md) §8)* | Not built | L6841 | DLL |
 
 ## 6. HUD, chat log and text
 
 | Item | Status | Source | Settle by |
 |---|---|---|---|
-| Chat: the spam filter (config 0xce; kinds 1, 0x1a, 0x22, 0x23) | Not built | L5953, L5960 | DLL |
-| Chat: the profanity mask (vulgar2.dic, FUN_101ba200) | Not built | L5970 | DLL |
+| Chat: the spam filter (config 0xce; kinds 1, 0x1a, 0x22, 0x23) *([batch 12](notes/2026-11-03-modlog-gaps-batch12.md) item 74: `client/spamfilter.rs` already matches the loader, the i / s / n flags, the classes and allowed-before-prohibited)* | Built | L5953, L5960 | DLL |
+| Chat: the profanity mask (vulgar2.dic, FUN_101ba200) *([batch 12](notes/2026-11-03-modlog-gaps-batch12.md) item 75: config 0x18 switches it; the masking engine is in the PlayOnline host's interface table (DAT_10456a2c + 0x5a8 / 0x5ac), not FFXiMain)* | Blocked: host module | L5970 | DLL |
 | Chat: the line cut at a control byte (FUN_1018fc40) *([batch 6](notes/2026-11-03-modlog-gaps-batch6.md) item 20: the assist kinds cut name and text apart; which packet carries MODLOG's icon-bearing filtered shout / yell is not traced)* | Built apart from the filtered shout / yell icon lines | L5974 | DLL |
 | Chat: the echoes' rank icon (mentor / mastery rank) | Not built | L5985 | DLL |
 | Chat: Shift-JIS text (ours decode UTF-8); SJIS quotes 0x8167 / 0x8168 print '?' | Not built | L5953, L1634 | DLL |
