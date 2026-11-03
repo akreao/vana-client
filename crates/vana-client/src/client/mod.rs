@@ -4623,6 +4623,43 @@ struct Actor {
     death_pick: u8,
     /// The riding files on `extra`.
     ride_on: Vec<u32>,
+    /// FUN_100cbde0's Misc. 2 animation frame rate: the slot (+0x9fc, 0..3), the update forced (+0xa04, set when the
+    /// actor is made, FUN_100c62e0), last frame updated (+0xa00), and the motion frames posed then (ours).
+    anim_slot: u8,
+    anim_force: bool,
+    anim_fresh: bool,
+    anim_held: Option<AnimHeld>,
+}
+
+/// The motion frames an actor was last posed at, with their animations' addresses to notice a change.
+struct AnimHeld {
+    to: Vec<(usize, f32)>,
+    from: Vec<(usize, f32)>,
+    t: f32,
+}
+
+/// FUN_100c62e0 gives each new actor the least used of 4 slots (counts at 0x1048a368); ours deals them in turn.
+static ANIM_SLOTS: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// FUN_100cbde0 (0x100cc9b4): whether an actor keeps last frame's pose under Misc. 2's animation frame rate (config
+/// 0x40, slider 0..3, rate = 3 - value in DAT_10456c00). Rate 1 skips on its slot's frame of 4, 2 off its parity, 3
+/// off its slot's frame; never two frames running (+0xa00), never when forced (+0xa04). A kept frame clears
+/// DAT_10457460, so skinning (FUN_10023290) keeps the old vertices.
+fn anim_skip(config: u32, frame: u32, a: &mut Actor) -> bool {
+    let slot = a.anim_slot as u32;
+    let update = match 3u32.saturating_sub(config.min(3)) {
+        0 => true,
+        1 => frame & 3 != slot,
+        2 => (frame ^ slot) & 1 == 0,
+        _ => frame & 3 == slot,
+    };
+    if a.anim_force || update || !a.anim_fresh {
+        (a.anim_force, a.anim_fresh) = (false, true);
+        false
+    } else {
+        a.anim_fresh = false;
+        true
+    }
 }
 
 impl Actor {
@@ -4679,6 +4716,10 @@ impl Actor {
             motion_names: None,
             rate_scale: 1.0,
             ride_on: Vec::new(),
+            anim_slot: ANIM_SLOTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) & 3,
+            anim_force: true,
+            anim_fresh: false,
+            anim_held: None,
             axes: None,
             appear: 0.0,
             mouth_name: "mou4",
@@ -6280,6 +6321,8 @@ struct World {
     auto_sort: u32,
     auto_sort_dirty: bool,
     sort_due: (u32, f32),
+    /// The frames posed so far (FUN_10014d50's count, for Misc. 2's animation frame rate).
+    anim_frame: u32,
     /// FUN_1021c4c0's inventory record (items::retail_auto_sort): the free slots last seen (+8; None from zone-in
     /// until the inventory settles), Manual Sort's split hold (+6), and the seconds since the last inventory 0x03A.
     inv_free: Option<u32>,
@@ -8057,6 +8100,7 @@ impl App {
                             auto_sort: self.cfg.auto_sort,
                             auto_sort_dirty: false,
                             sort_due: (0, 0.0),
+                            anim_frame: 0,
                             inv_free: None,
                             sort_hold: false,
                             sort_wait: f32::MAX,
@@ -13425,6 +13469,9 @@ impl App {
                     }
                 }
                 r.begin_poses();
+                // FUN_10014d50: the frame count the animation frame rate keys on.
+                w.anim_frame = w.anim_frame.wrapping_add(1);
+                let (anim_cfg, anim_frame) = (w.game.get(0x40), w.anim_frame);
                 let (cview, cproj) = (camera.view(), camera.proj(aspect));
                 let eye = camera.eye;
                 let mut visible = HashSet::new();
@@ -13671,7 +13718,7 @@ impl App {
                     // Motions are evaluated and skinned on the GPU (render/anim.rs, vs_skinned).
                     // The old pose: its own regions, the kept ones live (a kept region does not blend).
                     let kept_mask = mask(&kept);
-                    let from = a
+                    let mut from = a
                         .prev
                         .as_ref()
                         .map(|(old, old_ticks, old_once)| {
@@ -13691,7 +13738,24 @@ impl App {
                         a.overlay = None;
                     }
                     a.find_cache = cache.take();
-                    let t = a.blend / a.blend_len;
+                    let mut t = a.blend / a.blend_len;
+                    // Misc. 2's animation frame rate: other actors (not one on a mount, status 0x55: FUN_100956a0) keep
+                    // last frame's motion frames when FUN_100cbde0 would not skin them.
+                    let addr = |v: &[(&crate::dat::character::Animation, f32)]| v.iter().map(|(x, f)| (*x as *const _ as usize, *f)).collect::<Vec<_>>();
+                    let same = |held: &[(usize, f32)], now: &[(&crate::dat::character::Animation, f32)]| held.len() == now.len() && held.iter().zip(now).all(|(h, (x, _))| h.0 == *x as *const _ as usize);
+                    if *id != me && status != 0x55 && anim_skip(anim_cfg, anim_frame, a)
+                        && let Some(h) = a.anim_held.as_ref().filter(|h| same(&h.to, &anims) && same(&h.from, &from))
+                    {
+                        for (x, h) in anims.iter_mut().zip(&h.to) {
+                            x.1 = h.1;
+                        }
+                        for (x, h) in from.iter_mut().zip(&h.from) {
+                            x.1 = h.1;
+                        }
+                        t = h.t;
+                    } else {
+                        a.anim_held = Some(AnimHeld { to: addr(&anims), from: addr(&from), t });
+                    }
                     a.scale = a.event_scale.unwrap_or_else(|| ch.scale(size));
                     // The rest pose's mesh top, once (stub models, plates without attach points).
                     if a.top_key.is_empty() {
@@ -14696,6 +14760,21 @@ mod tests {
     use super::*;
 
     /// A new install's login form opens on Server Type Private.
+    /// Animation frame rate: full at config 3; never two kept frames running; forced at first.
+    #[test]
+    fn anim_skip_pattern() {
+        let run = |cfg: u32| {
+            let mut a = Actor::new();
+            a.anim_slot = 1;
+            (0..8u32).map(|f| anim_skip(cfg, f, &mut a)).collect::<Vec<_>>()
+        };
+        assert!(run(3).iter().all(|k| !k));
+        // Rate 3: the first frame is forced, frame 1 is the slot's, then kept and updated in turn.
+        assert_eq!(run(0), [false, false, true, false, true, false, true, false]);
+        // Rate 1: the slot's frame is kept.
+        assert_eq!(run(2), [false, true, false, false, false, true, false, false]);
+    }
+
     #[test]
     fn new_install_private() {
         assert!(!is_playonline(&crate::config::Config::default().server));
