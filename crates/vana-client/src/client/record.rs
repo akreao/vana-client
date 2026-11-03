@@ -48,7 +48,9 @@ pub struct Recorder {
     every: Duration,
     next: Instant,
     ring: Vec<Slot>,
-    tx: Option<SyncSender<Arc<Vec<u8>>>>,
+    /// Frames for the encoder thread, each with how many intervals it fills (that thread writes it that many times, so
+    /// a late frame is one item in the bounded queue, not a burst).
+    tx: Option<SyncSender<(Arc<Vec<u8>>, u32)>>,
     last: Option<Arc<Vec<u8>>>,
     fps: u32,
     /// Frame numbers done but not yet sent (an earlier one is still mapping), and the next number to send.
@@ -76,11 +78,13 @@ impl Recorder {
             .spawn()
             .map_err(|e| anyhow::anyhow!("ffmpeg: {e}"))?;
         let mut stdin = child.stdin.take().ok_or_else(|| anyhow::anyhow!("ffmpeg: no stdin"))?;
-        let (tx, rx) = sync_channel::<Arc<Vec<u8>>>(16);
+        let (tx, rx) = sync_channel::<(Arc<Vec<u8>>, u32)>(16);
         std::thread::Builder::new().name("record".into()).spawn(move || {
-            for f in rx {
-                if stdin.write_all(&f).is_err() {
-                    break;
+            'out: for (f, times) in rx {
+                for _ in 0..times {
+                    if stdin.write_all(&f).is_err() {
+                        break 'out;
+                    }
                 }
             }
             drop(stdin);
@@ -130,11 +134,12 @@ impl Recorder {
         }
     }
 
-    fn send(&mut self, f: Arc<Vec<u8>>) {
-        if let Some(tx) = &self.tx
-            && tx.try_send(f).is_ok()
+    fn send(&mut self, f: Arc<Vec<u8>>, times: u32) {
+        if times > 0
+            && let Some(tx) = &self.tx
+            && tx.try_send((f, times)).is_ok()
         {
-            self.frames += 1;
+            self.frames += times as u64;
         }
     }
 
@@ -172,6 +177,11 @@ impl Recorder {
             }
         }
         // In drawing order: a later frame waits for an earlier one still mapping.
+        self.drain();
+    }
+
+    /// Sends the frames done from the next number on, stopping at the first one not done yet.
+    fn drain(&mut self) {
         while let Some(o) = self.ready.remove(&self.next_seq) {
             self.next_seq += 1;
             let (f, times) = match o {
@@ -184,14 +194,23 @@ impl Recorder {
                     None => continue,
                 },
             };
-            for _ in 0..times {
-                self.send(f.clone());
-            }
+            self.send(f, times);
         }
     }
 
     /// Ends the input; ffmpeg finishes the file on its thread.
     pub fn stop(mut self) {
+        // The frames already mapped go out; a copy still mapping keeps its time with the last frame.
+        let pending: Vec<(u64, u32)> = self.ring.iter().filter(|s| s.copied || s.state.load(Ordering::Acquire) == PENDING).map(|s| (s.seq, s.times)).collect();
+        for (seq, times) in pending {
+            self.ready.entry(seq).or_insert(Out::Again(times));
+        }
+        if let Some(&last) = self.ready.keys().next_back() {
+            for seq in self.next_seq..=last {
+                self.ready.entry(seq).or_insert(Out::Again(0));
+            }
+        }
+        self.drain();
         self.tx = None;
         log::info!("record: {} frames to {}", self.frames, self.path.display());
     }
