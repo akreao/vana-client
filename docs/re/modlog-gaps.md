@@ -214,7 +214,7 @@ detail inside implemented ops.
 | Field manuals: the query window's scroll bar | Not built | L6545 | DLL |
 | Player trade | Built, not tested live (needs a second account) | L6597 | Live |
 | Trade: the costume refusal bit 0x40 (FUN_101cc040) *(answered, [batch 1](notes/2026-11-03-modlog-gaps-batch1.md) §7: player +0x120 bit 5 from the costume state machine FUN_10095e90; its four helpers in [batch 3](notes/2026-11-03-modlog-gaps-batch3.md) §1: the status lists only take a costume off, +0x120 bit 7 = bound to the event; [batch 4](notes/2026-11-03-modlog-gaps-batch4.md) §1: 0x40 is checked after 0x04, before 0x08; §4: the costume id is an NPC model id, drawn as the whole body)* | Not built | L6568 | DLL |
-| Set Bazaar: the name's bazaar glyph (0x9c); the row disabled in Monstrosity | Not built | L9921 | DLL |
+| Set Bazaar: the name's bazaar glyph (0x9c); the row disabled in Monstrosity | Matches *([batch 7](notes/2026-11-03-modlog-gaps-batch7.md) item 30: both bit writers are 0x00D @0x20 bit 31 and 0x037 @0x2c bit 29 as we read them, the glyph is last in FUN_10097500's chain, and socialme child 5 is already disabled in Monstrosity)* | L9921 | DLL |
 | Bazaar View Wares: FUN_10210880's flag (taken as "list is live"); hidden windows from the group walk; the Escape sound; shopbuy's registry flags vs ours stacking the confirm on the log | Inferred | L16503 | DLL / Footage |
 | Bazaar View Wares | Not seen live (needs a second character) | L16460 | Live |
 | Auction house: whether anything clears the remembered state on zoning; the menus' +0x24 rerun | Not traced | L14474, L14493 | DLL |
