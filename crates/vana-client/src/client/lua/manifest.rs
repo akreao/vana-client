@@ -22,7 +22,7 @@ pub struct Manifest {
     pub entry: String,
     /// Permissions asked for (docs/lua-mods.md 3.5); the user grants them.
     pub permissions: Vec<String>,
-    /// The VM lives from the start of the process (lobby screens) rather than from login. Not used yet.
+    /// The VM lives from the lobby screens (before login) to the end of the process, not from login to logout.
     pub lobby: bool,
     /// Declared settings by key, drawn by the client (docs/lua-mods.md 4.12).
     pub settings: IndexMap<String, Setting>,
@@ -54,7 +54,7 @@ pub struct Setting {
     pub default: Option<toml::Value>,
     pub label: String,
     pub help: String,
-    /// account (default), character or server.
+    /// account (default) or character.
     pub scope: String,
     pub min: Option<f64>,
     pub max: Option<f64>,
@@ -64,7 +64,7 @@ pub struct Setting {
 }
 
 /// Every permission a mod may ask for.
-pub const PERMISSIONS: [&str; 10] = ["actions", "automation", "packets.read", "packets.write", "input.capture", "files.shared", "net", "exec", "multibox", "ui.native"];
+pub const PERMISSIONS: [&str; 13] = ["actions", "automation", "packets.read", "packets.write", "input.capture", "files.shared", "net", "exec", "multibox", "ui.native", "clipboard", "process", "devices"];
 
 /// Reads `dir/mod.toml`.
 pub fn read(dir: &Path) -> Result<Manifest> {
@@ -91,6 +91,15 @@ pub fn parse(text: &str, folder: &str) -> Result<Manifest> {
     }
     if let Some(p) = m.permissions.iter().find(|p| !PERMISSIONS.contains(&p.as_str())) {
         bail!("{}: unknown permission {p:?}", m.id);
+    }
+    const TYPES: [&str; 7] = ["bool", "int", "number", "enum", "string", "colour", "key"];
+    for (key, s) in &m.settings {
+        if !["", "account", "character"].contains(&s.scope.as_str()) {
+            bail!("{}: setting {key}: scope is \"account\" or \"character\" ({:?} given)", m.id, s.scope);
+        }
+        if !s.kind.is_empty() && !TYPES.contains(&s.kind.as_str()) {
+            bail!("{}: setting {key}: type is one of {} ({:?} given)", m.id, TYPES.join(", "), s.kind);
+        }
     }
     Ok(m)
 }

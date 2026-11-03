@@ -242,8 +242,8 @@ pub(in crate::client) fn window_event(w: &mut World, event: &WindowEvent) -> boo
     }
 }
 
-/// A test drive's egui events through the mods, as the window's go: the ones no mod took. `ppp` is egui's points per
-/// window pixel.
+/// A test drive's egui events through the mods, as the window's go: the ones no mod took. `ppp` is egui's pixels per
+/// point, so a drive's pixel lands where the window's would.
 pub(in crate::client) fn drive_events(w: &mut World, events: Vec<egui::Event>, ppp: f64) -> Vec<egui::Event> {
     if !w.lua.started {
         return events;
@@ -315,6 +315,22 @@ fn moved(w: &mut World, x: f64, y: f64) -> bool {
 
 fn button_edge(w: &mut World, button: MouseButton, down: bool) -> bool {
     let st = w.lua.input.clone();
+    // A press on a HUD element with a click handler is its (and its release).
+    if down && matches!(button, MouseButton::Left | MouseButton::Right) {
+        let (x, y) = st.borrow().cursor;
+        if let Some((m, id)) = super::hud::hit(w, x, y) {
+            w.lua.hud_clicks.push((m, id, button_name(button)));
+            {
+                let mut s = st.borrow_mut();
+                s.taken_buttons.push(button);
+                s.buttons[if button == MouseButton::Left { 0 } else { 1 }] = true;
+            }
+            // The filters still see the press, already taken, as they see its release.
+            let e = serde_json::json!({"kind": "down", "button": button_name(button), "x": x.round() as i64, "y": y.round() as i64});
+            filter_from(w, true, e, true);
+            return true;
+        }
+    }
     let (taken, (x, y)) = {
         let mut s = st.borrow_mut();
         if let Some(k) = [MouseButton::Left, MouseButton::Right, MouseButton::Middle].iter().position(|b| *b == button) {
@@ -337,13 +353,18 @@ fn wheel(w: &mut World, d: f64) -> bool {
 
 /// Every running mod's key (or mouse) filters, in load order: a blocked event still reaches later ones (blocked =
 /// true). True when one with input.capture returned true.
-fn filter(w: &mut World, mouse: bool, mut e: serde_json::Value) -> bool {
+fn filter(w: &mut World, mouse: bool, e: serde_json::Value) -> bool {
+    filter_from(w, mouse, e, false)
+}
+
+/// As `filter`, the event already taken (`blocked` from the first filter on) when `taken`.
+fn filter_from(w: &mut World, mouse: bool, mut e: serde_json::Value, taken: bool) -> bool {
     let list = |st: &super::vm::ModState| if mouse { st.mouse_filters.len() } else { st.key_filters.len() };
     if w.lua.vms.iter().all(|v| list(&v.st.borrow()) == 0) {
-        return false;
+        return taken;
     }
     let host = std::mem::take(&mut w.lua);
-    let mut blocked = false;
+    let mut blocked = taken;
     for vm in host.vms.iter().filter(|v| v.suspended.is_none()) {
         let funcs: Vec<Function> = {
             let st = vm.st.borrow();
@@ -355,10 +376,9 @@ fn filter(w: &mut World, mouse: bool, mut e: serde_json::Value) -> bool {
         }
         let capture = vm.st.borrow().granted.iter().any(|g| g == "input.capture");
         lend(vm, w, |vm| {
-            use mlua::LuaSerdeExt;
             for f in funcs {
                 e["blocked"] = blocked.into();
-                let t = vm.lua.to_value(&e).unwrap_or(Value::Nil);
+                let t = super::api::to_lua(&vm.lua, &e).unwrap_or(Value::Nil);
                 // The player's input: actions may act from here.
                 if let Some(r) = vm.call_filter(f, t, true)
                     && matches!(r.front(), Some(Value::Boolean(true)))
@@ -379,10 +399,18 @@ fn filter(w: &mut World, mouse: bool, mut e: serde_json::Value) -> bool {
 /// The first running mod's bind for this key edge (load order): queued for the mod phase.
 fn bind(w: &mut World, code: K, mods: ModifiersState, down: bool, typing: bool) -> bool {
     for vm in w.lua.vms.iter().filter(|v| v.suspended.is_none()) {
-        let hit = vm.st.borrow().binds.iter().find(|b| b.up != down && (b.typing || !typing) && b.combo.matches(code, mods)).map(|b| b.text.clone());
+        let (hit, on_release) = {
+            let st = vm.st.borrow();
+            let here = st.binds.iter().filter(|b| (b.typing || !typing) && b.combo.matches(code, mods));
+            (here.clone().find(|b| b.up != down).map(|b| b.text.clone()), down && here.clone().any(|b| b.up))
+        };
         if let Some(text) = hit {
             let id = vm.manifest.id.clone();
             w.lua.fired.push((id, text, !down));
+            return true;
+        }
+        // A bind on the release takes the press too, so the game never sees the key.
+        if on_release {
             return true;
         }
     }
@@ -422,6 +450,12 @@ pub(super) fn run_binds(host: &mut super::Host, w: &World, out: &mut Vec<(String
         }
     }
     game
+}
+
+/// The pointer in window pixels.
+pub(super) fn cursor(lua: &mlua::Lua) -> (f32, f32) {
+    let c = shared(lua).borrow().cursor;
+    (c.0 as f32, c.1 as f32)
 }
 
 fn shared(lua: &mlua::Lua) -> std::rc::Rc<std::cell::RefCell<State>> {
@@ -503,7 +537,11 @@ pub(super) fn install(lua: &mlua::Lua, g: &mlua::Table) -> mlua::Result<()> {
         lua.create_function(|lua, key: String| {
             need(lua, "input.capture")?;
             let c = combo_arg(&key)?;
-            state(lua).borrow_mut().ops.push(super::Op::Key(Synth { key: c.key, down: None, ctrl: c.ctrl, alt: c.alt, shift: c.shift }));
+            // The game reads no Windows key: a press with it would be a different one.
+            if c.win {
+                return Err(mlua::Error::runtime(format!("{key:?}: the Windows key cannot be pressed for the game")));
+            }
+            super::api::push_op(lua, super::Op::Key(Synth { key: c.key, down: None, ctrl: c.ctrl, alt: c.alt, shift: c.shift }))?;
             Ok(())
         })?,
     )?;
@@ -512,7 +550,13 @@ pub(super) fn install(lua: &mlua::Lua, g: &mlua::Table) -> mlua::Result<()> {
         lua.create_function(|lua, (key, down): (String, bool)| {
             need(lua, "input.capture")?;
             let key = code_of(&key).ok_or_else(|| mlua::Error::runtime(format!("no key {key:?}")))?;
-            state(lua).borrow_mut().ops.push(super::Op::Key(Synth { key, down: Some(down), ctrl: false, alt: false, shift: false }));
+            super::api::push_op(lua, super::Op::Key(Synth { key, down: Some(down), ctrl: false, alt: false, shift: false }))?;
+            let st = super::api::state(lua);
+            let mut s = st.borrow_mut();
+            s.keys_down.retain(|k| *k != key);
+            if down {
+                s.keys_down.push(key);
+            }
             Ok(())
         })?,
     )?;
@@ -596,7 +640,7 @@ pub(super) fn install(lua: &mlua::Lua, g: &mlua::Table) -> mlua::Result<()> {
     chat.set(
         "set_line",
         lua.create_function(|lua, (text, open): (Option<String>, Option<bool>)| {
-            state(lua).borrow_mut().ops.push(super::Op::Line { text: text.unwrap_or_default(), open: open.unwrap_or(true) });
+            super::api::push_op(lua, super::Op::Line { text: text.unwrap_or_default(), open: open.unwrap_or(true) })?;
             Ok(())
         })?,
     )?;

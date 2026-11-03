@@ -401,7 +401,7 @@ pub fn ground_cursor(w: &World) -> Option<Vec3> {
 }
 
 /// FUN_10159a20: moves the ground-position cursor by `dir` (x right, z up, as FUN_10159970 builds it for 0xb2 / 0xb3
-/// / 0xb0 / 0xb1) times config 0xc4 x the frame's whole ticks (at least 1) x 0.01, turned to the camera
+/// / 0xb0 / 0xb1) times config 0xc4 x the frame's ticks (retail: whole, at least 1; ours: `ticks`) x 0.01, turned to the camera
 /// (FUN_10159b10). The first move starts it at the pick's position. Its height follows the ground below
 /// (FUN_10177770 -> FUN_10181210; kept when the probe misses).
 pub fn move_ground_cursor(w: &mut World, dir: glam::Vec2, ticks: f32, look: Vec3) {
@@ -414,7 +414,7 @@ pub fn move_ground_cursor(w: &mut World, dir: glam::Vec2, ticks: f32, look: Vec3
             None => return,
         },
     };
-    let step = w.game.get(0xc4) as f32 * ticks.floor().max(1.0) * 0.01;
+    let step = w.game.get(0xc4) as f32 * ticks * 0.01;
     let mut p = from + cursor_step(dir, look) * step;
     let above = if w.pos_zone == 0x95 { 0.5 } else { 2.0 };
     if let Some(y) = w.ground.as_ref().and_then(|g| ground_height(g, p, above)) {
@@ -687,10 +687,25 @@ pub fn mouse_candidate(w: &World, hidden: &std::collections::HashSet<u32>, id: u
     w.entities.get(&id).is_some_and(|e| candidate(w, hidden, id, e))
 }
 
-/// FUN_10158db0(0), the confirm on the target (Enter, a click on the target): an NPC is talked to; anything else,
-/// or no target, opens the action menu ("menu    playermo").
+/// FUN_101524e0's talk test: an NPC id (high byte 1), not our pet, not a trust (+0x12c bit 22: 0x00E @0x28 bit 0),
+/// charmed only when talkable (+0x12c bit 30), not allied with players (FUN_1008ca40: allegiance 1, LSB's trusts).
+/// Monsters take the menu *(inferred)*.
+pub fn talks_to(w: &World, t: u32) -> bool {
+    let Some(e) = w.entities.get(&t) else { return false };
+    let m = &e.marks;
+    t >> 24 == 1 && t != 0x0100_0000 && !e.mob && !m.trust && !(w.my_pet != 0 && e.index == w.my_pet) && (!m.charm || m.npc_pet) && !allied(w, t, e)
+}
+
+/// FUN_1008ca40: not a PC, not charmed (+0x1cc 0x100), allegiance (+0x1fb) 1, the players' side: LSB's trusts.
+pub fn allied(w: &World, t: u32, e: &super::Entity) -> bool {
+    let k = super::radar::kind_bits(w, t, e);
+    k & 1 == 0 && k & 0x100 == 0 && e.marks.alleg == 1
+}
+
+/// FUN_10158db0(0), the confirm on the target (Enter, a click on the target): an NPC is talked to; anything else
+/// (a trust too), or no target, opens the action menu ("menu    playermo").
 pub fn confirm_target(w: &mut World) {
-    match w.target.filter(|t| t >> 24 != 0 && w.entities.get(t).is_some_and(|e| !e.mob)) {
+    match w.target.filter(|&t| talks_to(w, t)) {
         // FUN_10158db0: SE 0009 once the talk went out (after FUN_1007bf30).
         Some(t) => {
             if super::event::talk(w, t) {
@@ -789,33 +804,41 @@ pub fn cycle(w: &mut World, view: glam::Mat4, right: bool) {
     step_screen(w, view, right, true);
 }
 
-/// The pad's field d-pad right / left (key functions 0x29 / 0x2a, table 0x10371ee0): the same screen order as Tab, but
-/// it stops at the last actor on that side instead of wrapping (window_fns.md).
+/// The pad's field d-pad right / left (key functions 0x29 / 0x2a, FUN_10158c40): the next actor that way in Tab's
+/// screen order, never wrapping. None that way, or no pick: us when the prompt takes us (+0x60 & 0x200; the field's
+/// +0x60 is every bit), else nothing.
 pub fn pad_step(w: &mut World, view: glam::Mat4, right: bool) {
-    step_screen(w, view, right, false);
+    if !picks_allowed(w) {
+        return;
+    }
+    let inc = w.prompt.as_ref().map_or(u32::MAX, |s| s.inc);
+    let next = w.target.and_then(|t| screen_next(w, view, t, right, false));
+    let pick = next.or_else(|| (inc & 0x200 != 0).then_some(w.my_id));
+    if pick.is_some() && pick != w.target {
+        set(w, pick);
+    }
+}
+
+/// The actor after `from` in screen order (FUN_10083d00 / FUN_10083b40), wrapping or not.
+fn screen_next(w: &World, view: glam::Mat4, from: u32, right: bool, wrap: bool) -> Option<u32> {
+    let at = if from == w.my_id { Some(w.pos) } else { w.entities.get(&from).map(|e| e.pos) }?;
+    let focal = super::camera::focal(w);
+    let raw = |p: Vec3| {
+        let v = view.transform_point3(p);
+        (v.x / v.z.abs().max(1.0) * focal, v.length())
+    };
+    let key = |p: Vec3| Some(raw(p)).filter(|k| k.1 < 50.0).map(|k| k.0);
+    let hidden = super::event::hidden(w);
+    let keys: Vec<(u32, f32)> = w.entities.iter().filter(|(id, e)| **id != from && candidate(w, &hidden, **id, e)).filter_map(|(id, e)| key(e.pos).map(|k| (*id, k))).collect();
+    screen_step(&keys, raw(at).0, right, wrap)
 }
 
 fn step_screen(w: &mut World, view: glam::Mat4, right: bool, wrap: bool) {
     if !picks_allowed(w) {
         return;
     }
-    let focal = super::camera::focal(w);
-    let raw = |p: Vec3| {
-        let v = view.transform_point3(p);
-        (v.x / v.z.abs().max(1.0) * focal, v.length())
-    };
     let cur = w.target.filter(|t| w.entities.contains_key(t));
-    let pick = cur.and_then(|t| {
-        let from = raw(w.entities[&t].pos).0;
-        let key = |p: Vec3| Some(raw(p)).filter(|k| k.1 < 50.0).map(|k| k.0);
-        let hidden = super::event::hidden(w);
-        let keys: Vec<(u32, f32)> = w.entities.iter().filter(|(id, e)| **id != t && candidate(w, &hidden, **id, e)).filter_map(|(id, e)| key(e.pos).map(|k| (*id, k))).collect();
-        screen_step(&keys, from, right, wrap)
-    });
-    // At the edge the pad keeps its target.
-    if pick.is_none() && cur.is_some() && !wrap {
-        return;
-    }
+    let pick = cur.and_then(|t| screen_next(w, view, t, right, wrap));
     let pick = pick.or_else(|| nearest(w, |_, _| true));
     if pick.is_some() {
         set(w, pick);
@@ -896,7 +919,9 @@ pub fn slot_target(w: &World, slot: usize) -> Option<u32> {
 }
 
 /// The pad's field d-pad up / down (key functions 0x27 / 0x28, table 0x10371ee0, FUN_10158b60 -> FUN_10203920). None
-/// leaves the pick as it is. Field +0x60 is Sub::inc, every bit with no prompt (ground_cursor.md).
+/// leaves the pick as it is. Field +0x60 is Sub::inc, every bit with no prompt. FUN_10203920 steps DAT_106643dc, which
+/// every pick of a party member sets to its slot (FUN_10203520), so the pick's own slot is where it starts; the slot
+/// it lands on is not checked against the prompt's exclusions (FUN_10082fa0 reads only the id).
 pub fn party_pad_step(w: &World, down: bool) -> Option<u32> {
     let inc = w.prompt.as_ref().map_or(u32::MAX, |s| s.inc);
     let slots: Vec<Option<u32>> = (0..18).map(|s| slot_target(w, s)).collect();

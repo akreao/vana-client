@@ -146,6 +146,29 @@ fn send(w: &World, h: &Handover) -> bool {
     true
 }
 
+/// A hand-over without the window (a Lua mod's): the NPC within reach, up to 8 entries with the gil, inventory
+/// items that are neither worn nor linkshell items; sent as the window's Trade does.
+pub(super) fn hand_over(w: &World, npc: u32, items: &[(u8, u32)], gil: u32) -> Result<(), &'static str> {
+    let e = w.entities.get(&npc).ok_or("no such NPC")?;
+    if e.pos.distance_squared(w.pos) > REACH * REACH {
+        return Err("too far away");
+    }
+    if items.len() + usize::from(gil > 0) > 8 {
+        return Err("at most 8 entries");
+    }
+    let mut slots = [None; 8];
+    for (k, &(slot, n)) in items.iter().enumerate() {
+        let &(id, held) = w.inv.slots.get(&(super::items::INVENTORY, slot)).ok_or("an empty inventory slot")?;
+        let worn = w.inv.equip.iter().flatten().any(|&(b, i)| b == super::items::INVENTORY && i == slot);
+        if (0x201..=0x203).contains(&id) || worn || n == 0 || n > held {
+            return Err("an item that cannot be traded (worn, a linkshell item, or not that many)");
+        }
+        slots[k] = Some((id, slot, n));
+    }
+    let h = Handover { npc: (npc, e.index), slots, gil, cursor: 1, focus: Focus::Window, list: (0, 0), qty: None, money: None };
+    if send(w, &h) { Ok(()) } else { Err("nothing to trade") }
+}
+
 /// Per frame (FUN_10139b00): the NPC out of reach (or gone) closes it with "Target out of range."; an event closes it
 /// (the 0x838 hook).
 fn handover_update(w: &mut World) {
@@ -271,7 +294,8 @@ fn handover_key(w: &mut World, gu: &GameUi, key: egui::Key) {
             }
             h.qty = Some((inv, v, max));
             match key {
-                K::ArrowUp | K::ArrowDown | K::ArrowRight | K::ArrowLeft => w.sounds.push(Ui::Cursor as u32),
+                // FUN_1013a6c0 / FUN_10140bc0 play nothing on the arrows or at a limit (only OK 0002 / cancel 0003).
+                K::ArrowUp | K::ArrowDown | K::ArrowRight | K::ArrowLeft => {}
                 K::Enter => {
                     w.sounds.push(Ui::Select as u32);
                     let item = w.inv.slots.get(&(super::items::INVENTORY, inv)).map_or(0, |x| x.0);
@@ -299,7 +323,8 @@ fn handover_key(w: &mut World, gu: &GameUi, key: egui::Key) {
             }
             h.money = Some((step, max, v));
             match key {
-                K::ArrowUp | K::ArrowDown | K::ArrowRight | K::ArrowLeft => w.sounds.push(Ui::Cursor as u32),
+                // FUN_1013a6c0 / FUN_10140bc0 play nothing on the arrows or at a limit (only OK 0002 / cancel 0003).
+                K::ArrowUp | K::ArrowDown | K::ArrowRight | K::ArrowLeft => {}
                 K::Enter | K::Escape => {
                     w.sounds.push(if key == K::Enter { Ui::Select } else { Ui::Cancel } as u32);
                     if key == K::Enter {
@@ -1053,7 +1078,8 @@ fn p2p_key(w: &mut World, gu: &GameUi, key: egui::Key) {
             }
             u.qty = Some((inv, v, max));
             match key {
-                K::ArrowUp | K::ArrowDown | K::ArrowRight | K::ArrowLeft => w.sounds.push(Ui::Cursor as u32),
+                // FUN_1013a6c0 / FUN_10140bc0 play nothing on the arrows or at a limit (only OK 0002 / cancel 0003).
+                K::ArrowUp | K::ArrowDown | K::ArrowRight | K::ArrowLeft => {}
                 K::Enter => {
                     w.sounds.push(Ui::Select as u32);
                     let item = w.inv.slots.get(&(super::items::INVENTORY, inv)).map_or(0, |x| x.0);
@@ -1080,7 +1106,8 @@ fn p2p_key(w: &mut World, gu: &GameUi, key: egui::Key) {
             }
             u.money = Some((step, max, v));
             match key {
-                K::ArrowUp | K::ArrowDown | K::ArrowRight | K::ArrowLeft => w.sounds.push(Ui::Cursor as u32),
+                // FUN_1013a6c0 / FUN_10140bc0 play nothing on the arrows or at a limit (only OK 0002 / cancel 0003).
+                K::ArrowUp | K::ArrowDown | K::ArrowRight | K::ArrowLeft => {}
                 K::Enter | K::Escape => {
                     w.sounds.push(if key == K::Enter { Ui::Select } else { Ui::Cancel } as u32);
                     if key == K::Enter {

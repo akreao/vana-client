@@ -79,7 +79,7 @@ pub fn parse_ops(pay: &[u8]) -> Vec<Op> {
         }
         let b = &pay[p..p + 4 * len];
         let (wait, ticks) = if len >= 2 { (u16_at(b, 4), u16_at(b, 6)) } else { (0, 0) };
-        // The argument word @8; an op too short to hold it is kept as Other (issue #87).
+        // The argument word @8; an op too short to hold it is kept as Other.
         let arg: Option<[u8; 4]> = b.get(8..12).map(|a| a.try_into().unwrap());
         out.push(match (op, arg) {
             (0x7b, Some(a)) => Op::Zone(u32::from_le_bytes(a)),
@@ -117,10 +117,11 @@ impl Title {
             match c.kind {
                 0x07 => schedulers.push((c.name(), parse_ops(c.data))),
                 0x06 => {
-                    // 0x20 header bytes, then 0x30 per key; a key count past the chunk is an error (issue #87).
+                    // 0x20 header bytes, then 0x30 per key; a path whose keys overrun the chunk is skipped.
                     let nkeys = c.data.get(0x10).map_or(0, |&k| k as usize);
                     if c.data.len() < 0x20 + 0x30 * nkeys {
-                        anyhow::bail!("camera path {}: {nkeys} keys overrun the chunk", c.name());
+                        log::warn!("camera path {}: {nkeys} keys overrun the chunk; skipped", c.name());
+                        continue;
                     }
                     let attach = u32_at(c.data, 0);
                     let flags = u32_at(c.data, 0x10);
@@ -316,6 +317,29 @@ mod tests {
         let slow = keyed.iter().find(|p| p.ease == u32::from_le_bytes(*b"y110")).expect("a y110 path");
         let u = path_u(slow, 0.3);
         assert!(u < 0.1, "u {u}");
+    }
+
+    /// A camera path whose keys overrun its chunk is skipped; the next path still loads.
+    #[test]
+    fn bad_camera_path_is_skipped() {
+        let chunk = |name: &[u8; 4], body: &[u8]| {
+            let size = (16 + body.len()).div_ceil(16) * 16;
+            let mut c = name.to_vec();
+            c.extend_from_slice(&(((size / 16) as u32) << 7 | 0x06).to_le_bytes());
+            c.extend_from_slice(&[0; 8]);
+            c.extend_from_slice(body);
+            c.resize(size, 0);
+            c
+        };
+        let mut bad = vec![0u8; 0x20];
+        bad[0x10] = 3;
+        let mut good = vec![0u8; 0x50];
+        good[0x10] = 1;
+        let mut file = chunk(b"bad\0", &bad);
+        file.extend(chunk(b"good", &good));
+        let t = Title::parse(&file).unwrap();
+        assert_eq!(t.paths.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["good"]);
+        assert_eq!(t.paths[0].keys.len(), 1);
     }
 
     /// A one-key bit-19 path lerps from the current camera; without the bit it holds its key.

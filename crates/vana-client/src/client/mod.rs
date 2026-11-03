@@ -3,6 +3,9 @@
 pub mod ground;
 pub mod combat;
 mod actmotion;
+mod costume;
+mod chaticons;
+mod record;
 mod chair;
 mod spamfilter;
 pub mod cloth;
@@ -59,7 +62,7 @@ mod firstrun;
 mod desktop;
 mod target;
 mod gamepad;
-mod osk;
+mod swkbd;
 mod input;
 mod camera;
 mod items;
@@ -304,6 +307,8 @@ fn text_field_open(w: &World) -> bool {
         || macroedit::typing(w)
         || faqmain::typing(w)
         || polmail::composing(w)
+        // A Lua mod window's line being typed.
+        || w.lua.typing()
         // The modern list search (magic, abilities, items, journal, the auction's bid pages) takes the letters.
         || w.list_search.is_some()
         // The modern Wide Scan name filter and the full log's find.
@@ -316,10 +321,17 @@ fn world_window_open(w: &World) -> bool {
     w.action_menu.is_some() || window_over_actions(w)
 }
 
+/// FUN_101a33e0: in the field with the UI up, no event, target prompt (+0x59) or party cursor (+0xc4), alive, and no
+/// window holding the keys but the action menu (playermo / mp_pmode) or a palette.
+fn macro_gate(w: &World) -> bool {
+    let window = window_over_actions(w) || w.settings.is_some() || w.full_log.is_some() || w.prompt.is_some() || w.party_cursor.is_some();
+    w.in_scene() && !w.ui_hidden && !event::active(w) && !w.dead() && !window && w.macros.is_some()
+}
+
 /// The open windows but the action menu (playermo), which stays up while engaged: macros run while it is the only one
 /// (FUN_101a33e0 lets the focus be playermo, mp_pmode or a palette).
 fn window_over_actions(w: &World) -> bool {
-    w.lua.focused() || w.ko_open || w.ko_offer == 2 || w.menu.is_some() || w.confirm.is_some() || w.win.is_some() || w.config.is_some() || w.settings.is_some() || w.map.is_some() || w.full_log.is_some() || w.magic.is_some() || w.ability.is_some() || w.cats.is_some() || w.moogle.is_some() || post::active(w) || synth::active(w) || shop::active(w) || trade::active(w) || w.search.is_some() || w.inspect.up() || w.mogdoor.is_some() || treasure::active(w) || w.chatctrl.is_some() || w.partymenu.is_some() || w.levelsync.is_some() || w.viewhouse.is_some() || w.bazaar.is_some() || w.helpdesk.is_some() || w.primer.is_some() || w.macroedit.is_some() || w.status.is_some() || w.missions.is_some() || w.quests.is_some() || w.keyitems.is_some() || w.searchmenu.is_some() || w.linkshell.is_some() || w.arealist.is_some() || ranking::is_open(w) || w.region_menu.is_some() || w.cnq.is_some() || w.blklist.is_some() || w.auction.is_some() || w.remodel.is_some() || w.moncustom.is_some() || gmtell::open(w) || w.friendui.is_some() || polmail::focused(w)
+    w.swkbd.is_some() || w.lua.focused() || w.ko_open || w.ko_offer == 2 || w.menu.is_some() || w.confirm.is_some() || w.win.is_some() || w.config.is_some() || w.settings.is_some() || w.map.is_some() || w.full_log.is_some() || w.magic.is_some() || w.ability.is_some() || w.cats.is_some() || w.moogle.is_some() || post::active(w) || synth::active(w) || shop::active(w) || trade::active(w) || w.search.is_some() || w.inspect.up() || w.mogdoor.is_some() || treasure::active(w) || w.chatctrl.is_some() || w.partymenu.is_some() || w.levelsync.is_some() || w.viewhouse.is_some() || w.bazaar.is_some() || w.helpdesk.is_some() || w.primer.is_some() || w.macroedit.is_some() || w.status.is_some() || w.missions.is_some() || w.quests.is_some() || w.keyitems.is_some() || w.searchmenu.is_some() || w.linkshell.is_some() || w.arealist.is_some() || w.region_menu.is_some() || w.cnq.is_some() || w.blklist.is_some() || w.auction.is_some() || w.remodel.is_some() || w.moncustom.is_some() || gmtell::open(w) || w.friendui.is_some() || polmail::focused(w)
 }
 
 /// FUN_100c63d0: a jump starts when none runs (draw actor +0x8bc = 32 ticks).
@@ -344,6 +356,55 @@ fn jump(w: &mut World) {
 /// FUN_10096640 / FUN_100882d0: c2s 0x01A ActionID 0x14 once per zone load (LSB SendResRdy; in the Mog House it
 /// sends the moogle). Waits for the world (and our model), then outside the Mog House for SendCount KingFlag
 /// actors or 600 ticks from the zone load; in the Mog House for the room object's 20-frame count.
+/// Switches Lua mods set (client.set_option): retail's waits (on by default) and the cutscene speed.
+#[derive(Clone, Copy, Debug)]
+struct Opts {
+    macro_delay: bool,
+    ah_delay: bool,
+    equipset_delay: bool,
+    cutscene_speed: f32,
+    /// The actors' animation speed, and the scene background and ambient light in place of the zone's.
+    anim_rate: f32,
+    clear: Option<[f32; 3]>,
+    ambient: Option<[f32; 3]>,
+    /// Rules a mod may lift: our actions' move lock (scheduler op 0x2e), maps needing their key items, the dead
+    /// state's command refusal, monster dots only for the seeing jobs, moving players holding a step, the occlusion
+    /// test, the AH and nomad moogle menus closing 6 away.
+    move_lock: bool,
+    all_maps: bool,
+    dead_commands: bool,
+    radar_mobs: bool,
+    player_bump: bool,
+    occlusion: bool,
+    menu_reach: bool,
+    /// The scenery drawn as lines, and the game font's text in the TrueType face (a mod's switches).
+    wireframe: bool,
+    ttf_text: bool,
+}
+
+impl Default for Opts {
+    fn default() -> Self {
+        Self {
+            macro_delay: true,
+            ah_delay: true,
+            equipset_delay: true,
+            cutscene_speed: 1.0,
+            anim_rate: 1.0,
+            clear: None,
+            ambient: None,
+            move_lock: true,
+            all_maps: false,
+            dead_commands: false,
+            radar_mobs: false,
+            player_bump: true,
+            occlusion: true,
+            menu_reach: true,
+            wireframe: false,
+            ttf_text: false,
+        }
+    }
+}
+
 #[derive(Default)]
 struct ResRdy {
     pub sent: bool,
@@ -506,7 +567,8 @@ struct Entity {
     gate: u8,
     /// Entity +0x1d8: an "menu    ncol" index event op 0xae 1 forces the name colour to, 0x17 none (op 0xae 2).
     name_ncol: u16,
-    /// Name-colour marks (net::Marks) and SubKind 2..4 (doors, lifts, ships); a female PC (0x00D @0x20 bit 15 clear).
+    /// Name-colour marks (net::Marks) and SubKind 2..4 (doors, lifts, ships); female (+0x124 bit 25 clear: 0x00D / 0x00E
+    /// @0x20 bit 15).
     marks: net::Marks,
     female: bool,
     sub_kind: u8,
@@ -1229,9 +1291,12 @@ fn chat_line(kind: u8, attr: u8, data: u16, from: &str, text: &str, zone: &str) 
 /// A chat line in its log mode's colour (the config colour before the message tables load), auto-translate blocks
 /// expanded with their brackets (FUN_10127c00 with param 5).
 /// FUN_10127990: a party line (modes 5 / 0x0d) with a call tag outside quotes plays its sound (the first tag that
-/// matches; FUN_100380f0 plays one at a time). The tell sound (mode 0x0c, config 0x47) names SeSep "0p40", which no
-/// resident file holds: not played.
-fn call_sound(bt: &crate::dat::battle::BattleText, line: &str, mode: u8) -> Option<u32> {
+/// matches; FUN_100380f0 plays one at a time). A received tell (mode 0x0c) with config 0x47 names SeSep "0p40", which
+/// no game file holds; ours plays the <call> sound (0017) for it.
+fn call_sound(bt: &crate::dat::battle::BattleText, line: &str, mode: u8, tell_sound: bool) -> Option<u32> {
+    if mode == 0x0c {
+        return tell_sound.then_some(17);
+    }
     if !matches!(mode, 5 | 0x0d) {
         return None;
     }
@@ -1288,15 +1353,21 @@ fn hold_bit(mode: u8) -> Option<u32> {
     })
 }
 
+/// A line's auto-translate phrases as their braced text.
+fn expand_phrases(world: &World, line: &str) -> String {
+    let names = world.names.as_deref().map(|n| n as &dyn crate::dat::names::NameSource);
+    world.battle.as_ref().and_then(|bt| bt.phrases.as_ref()).map_or_else(|| line.to_string(), |d| d.expand(line, names))
+}
+
 /// A chat line in its mode, `gm` from s2c 0x017's Attr bit 0, `who` its record's name.
 fn push_chat_line(world: &mut World, line: String, mode: u8, kind: u8, gm: bool, who: Option<(String, u8)>) {
-    if let Some(n) = world.battle.as_ref().and_then(|bt| call_sound(bt, &line, mode)) {
+    let tell_sound = world.game.get(0x47) != 0;
+    if let Some(n) = world.battle.as_ref().and_then(|bt| call_sound(bt, &line, mode, tell_sound)) {
         world.sounds.push(n);
     }
     let (colour, line, indent) = match world.battle.clone() {
         Some(bt) => {
-            let names = world.names.clone();
-            let line = bt.phrases.as_ref().map_or(line.clone(), |d| d.expand(&line, names.as_deref().map(|n| n as &dyn crate::dat::names::NameSource)));
+            let line = expand_phrases(world, &line);
             (bt.colour_in(mode, &world.game), line, bt.indents(mode))
         }
         None => (cfgapply::chat_colour(&world.game, kind), line, false),
@@ -1504,9 +1575,9 @@ fn bar_full_log(w: &mut World, m: scrollbar::Msg, (total, lines, _): (usize, usi
 /// Ours: the double-click time for the modern UI's world clicks (Windows' default).
 const DOUBLE_CLICK: std::time::Duration = std::time::Duration::from_millis(500);
 
-/// FUN_10130280 (Ctrl+C): talk to an NPC target, check anything else.
+/// FUN_10130280 (Ctrl+C): talk to an NPC target, check anything else (a trust *(inferred)*: talk releases it on LSB).
 fn check_target(world: &mut World) {
-    match world.target.filter(|t| t >> 24 != 0 && world.entities.get(t).is_some_and(|e| !e.mob)) {
+    match world.target.filter(|&t| target::talks_to(world, t)) {
         Some(t) => {
             event::talk(world, t);
         }
@@ -1717,6 +1788,8 @@ fn name_plates(gu: &mut GameUi, world: &World, sw: f32, sh: f32, view_proj: glam
     };
     let mut hidden = event::hidden(world);
     hidden.extend(event::nameless(world));
+    let looks = world.lua.looks();
+    hidden.extend(looks.iter().filter(|(_, l)| l.hidden).map(|(id, _)| *id));
     // Retail draws plates into the scene target before the op 0x0f multiply (FUN_10010d20, MODLOG "Name plates under
     // the screen fade"); ours scale their colour by it, which is the same for an alpha-blended plate.
     let m = world.screen.multiply().map(|c| c * (1.0 - world.fade));
@@ -1747,13 +1820,15 @@ fn name_plates(gu: &mut GameUi, world: &World, sw: f32, sh: f32, view_proj: glam
             };
             // Pre-transformed quads at the projected depth (FUN_10080100): walls in front hide them.
             gu.depth(Some(z));
-            let tint = name_colour(*id, e, world, |i| gu.ncol(i));
+            let look = looks.get(id);
+            let tint = look.and_then(|l| l.plate_tint()).unwrap_or_else(|| name_colour(*id, e, world, |i| gu.ncol(i)));
+            let name = look.and_then(|l| l.name.as_deref()).unwrap_or_else(|| monstrosity::name(e));
             let p = entity_plate(*id, e);
             let (prefix, icon) = plate::prefix(&p);
             if world.modern {
-                modern::plates::draw(gu, &prefix, monstrosity::name(e), x, y, scale, faded(tint), pulse, faded(icon), plate::stars(&p), m);
+                modern::plates::draw(gu, &prefix, name, x, y, scale, faded(tint), pulse, faded(icon), plate::stars(&p), m);
             } else {
-                gu.name_plate(&prefix, monstrosity::name(e), x, y, scale, faded(tint), pulse, faded(icon), plate::stars(&p));
+                gu.name_plate(&prefix, name, x, y, scale, faded(tint), pulse, faded(icon), plate::stars(&p));
             }
         }
     }
@@ -1774,13 +1849,15 @@ fn name_plates(gu: &mut GameUi, world: &World, sw: f32, sh: f32, view_proj: glam
             _ if mk.anon => 3,
             _ => 0,
         };
-        let tint = faded(gu.ncol(ncol));
+        let look = looks.get(&world.my_id);
+        let tint = faded(look.and_then(|l| l.plate_tint()).unwrap_or_else(|| gu.ncol(ncol)));
+        let name = look.and_then(|l| l.name.as_deref()).unwrap_or_else(|| monstrosity::my_name(world));
         let p = self_plate(world);
         let (prefix, icon) = plate::prefix(&p);
         if world.modern {
-            modern::plates::draw(gu, &prefix, monstrosity::my_name(world), x, y, scale, tint, 1.0, faded(icon), plate::stars(&p), m);
+            modern::plates::draw(gu, &prefix, name, x, y, scale, tint, 1.0, faded(icon), plate::stars(&p), m);
         } else {
-            gu.name_plate(&prefix, monstrosity::my_name(world), x, y, scale, tint, 1.0, faded(icon), plate::stars(&p));
+            gu.name_plate(&prefix, name, x, y, scale, tint, 1.0, faded(icon), plate::stars(&p));
         }
     }
     gu.depth(None);
@@ -1865,8 +1942,11 @@ fn window_closes(w: &mut World, events: &[egui::Event]) {
 }
 
 fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2], keys: &mut HashSet<KeyCode>, view_proj: glam::Mat4, numpad_slash: bool) -> Vec<[f32; 4]> {
+    // A mod's TrueType text switch, from this frame's drawing on.
+    gu.set_ttf(world.opts.ttf_text);
     let (sw, sh) = (size[0] as f32, size[1] as f32);
     world.ui_wh = (sw, sh);
+    world.lua.set_view_proj(view_proj);
     // The focused list's scroll bar and the wheel, before the windows see the press.
     let taken = scrollbar::frame(gu, world, input);
     let input = taken.as_ref().unwrap_or(input);
@@ -1913,6 +1993,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
     let macro_typing = macroedit::typing(world);
     let faq_typing = faqmain::typing(world);
     let mail_typing = polmail::composing(world);
+    let lua_typing = world.lua.typing();
     // The Wide Scan flyout's name filter.
     let scan_typing = world.scan_typing && world.modern;
     if scan_typing {
@@ -1939,7 +2020,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
     if list_typing {
         keys.clear();
     }
-    let input_open = event::input(world).is_some() || map_typing || post_typing || search_typing || ls_typing || comment_typing || macro_typing || faq_typing || mail_typing || list_typing || scan_typing || find_typing;
+    let input_open = event::input(world).is_some() || map_typing || post_typing || search_typing || ls_typing || comment_typing || macro_typing || faq_typing || mail_typing || lua_typing || list_typing || scan_typing || find_typing;
     if post_typing {
         post::text_events(world, &input.events);
         keys.clear();
@@ -1961,6 +2042,9 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
     } else if mail_typing {
         polmail::text_events(world, &input.events);
         keys.clear();
+    } else if lua_typing {
+        lua::window_text(world, &input.events);
+        keys.clear();
     } else if map_typing && let Some(m) = world.map.as_mut() {
         m.text_events(&input.events);
         keys.clear();
@@ -1975,6 +2059,11 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
     if let Some(p) = input.pointer.filter(|_| input.clicked) {
         gu.press_at(p);
     }
+    if !world.typing {
+        world.ime_preedit.clear();
+    }
+    // Each key's own Shift, for the handlers it reaches; none outside this loop.
+    world.key_shift = false;
     for ev in input.events.iter().filter(|_| !input_open) {
         if let egui::Event::Key { modifiers, .. } = ev {
             world.key_shift = modifiers.shift;
@@ -1986,6 +2075,15 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
                 let t: String = t.chars().filter(|c| !c.is_control()).collect();
                 fep::insert(world, &t);
             }
+            // An IME's composition and its result (ours); its keys stay the IME's while it composes.
+            egui::Event::Ime(egui::ImeEvent::Commit(t)) if world.typing && !opened => {
+                world.ime_preedit.clear();
+                world.line_hist.edited();
+                let t: String = t.chars().filter(|c| !c.is_control()).collect();
+                fep::insert(world, &t);
+            }
+            egui::Event::Ime(egui::ImeEvent::Preedit { text, .. }) if world.typing => world.ime_preedit = text.clone(),
+            egui::Event::Key { .. } if world.typing && !world.ime_preedit.is_empty() => {}
             egui::Event::Text(t) | egui::Event::Paste(t) if world.typing && !opened => {
                 world.line_hist.edited();
                 let t = if std::mem::take(&mut world.space_open) { t.strip_prefix(' ').unwrap_or(t) } else { t.as_str() };
@@ -2028,7 +2126,11 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
                     (world.chat_caret, world.chat_anchor) = (None, None);
                     world.line_hist.record(&text);
                     let text = fep::outgoing(world, text);
-                    textcmd::run(world, &text, textcmd::Mode::Typed);
+                    if world.lua.synth_enter {
+                        lua::run_line(world, &text, textcmd::Mode::Typed, lua::From::Mod);
+                    } else {
+                        textcmd::run(world, &text, textcmd::Mode::Typed);
+                    }
                 }
                 egui::Key::Escape if world.typing => {
                     world.typing = false;
@@ -2455,6 +2557,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
             _ => {}
         }
     }
+    world.key_shift = false;
 
     // Mouse on the main menu: hover moves the cursor, a click picks; the arrows swap pages. Not while the group walk
     // suspends it (a window over it, e.g. MacroPalette's).
@@ -2557,6 +2660,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
             (1, 7) => {
                 let mut c = configui::ConfigUi::open("configwi");
                 c.mon = monstrosity::active(world);
+                c.cam_keys = world.cam_keys;
                 world.config = Some(c);
                 world.menu = None;
                 world.sounds.push(crate::audio::Ui::Select as u32);
@@ -2607,7 +2711,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
     // Mouse on the Lua mods' windows (the modern UI's panels take egui's).
     if !world.modern
         && let Some(p) = input.pointer
-        && lua::pointer_classic(world, gu, p, input.moved, input.clicked)
+        && lua::pointer_classic(world, gu, p, input.moved, input.clicked, (input.pressed, input.down, input.released))
     {
         gu.hover.set(true);
     }
@@ -2663,6 +2767,10 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
     }
     if let Some(p) = input.pointer.filter(|_| helpdesk::focused(world)) {
         helpdesk::pointer(world, gu, p, input.moved, input.clicked, input.right_clicked);
+    }
+    // The software keyboard is on top of the windows it types for.
+    if let Some(p) = input.pointer.filter(|_| world.swkbd.is_some()) {
+        swkbd::pointer(world, gu, p, input.moved, input.clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.inspect.up() && world.confirm.is_none()) {
         inspect::pointer(world, gu, p, input.moved, input.clicked, input.right_clicked);
@@ -2917,11 +3025,12 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
     if world.page_from.is_some() && world.rem_open_at.is_none() {
         world.rem_open_at = Some(world.chat.len());
     }
-    // The message is over (FUN_10126970): its rows are plain log rows.
-    if event::message_ref(world).is_none()
-        && let Some(from) = world.page_from.take()
-    {
-        world.chat.unmark(1, from);
+    // The message is over (FUN_10126970): rem4line's close FUN_10136ab0 runs FUN_10129290(rem +0x50) on its log, and
+    // +0x50 is always 0 (written once from a zero-filled header dword, 0x101367d3): every row of the log loses its
+    // mark, the held chat lines (mark 2) included.
+    if event::message_ref(world).is_none() && world.page_from.take().is_some() {
+        world.chat.unmark(1, 0);
+        world.chat.unmark(2, 0);
         world.rem_open_at = None;
     }
     minimap::prepare(gu, world, sw);
@@ -3057,7 +3166,11 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
     }
     gu.clear();
     gu.modern_skin(world.modern);
-    name_plates(gu, world, sw, sh, view_proj);
+    if !world.lua.hides("plates") {
+        name_plates(gu, world, sw, sh, view_proj);
+    }
+    // The Lua mods' HUD elements, over the plates and under every window.
+    lua::draw_hud(gu, world);
     if world.overlay.as_ref().is_some_and(|o| o.zone != world.pos_zone) {
         world.overlay = Some(map::Overlay::open(world, gu.map_regions()));
     } else if let Some(mut o) = world.overlay.take() {
@@ -3105,11 +3218,25 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
             }
         }
     }
-    if !world.modern {
+    if !world.modern && !world.lua.hides("minimap") {
         minimap::draw(gu, &mut world.minimap, world.minimap_frame.take());
     }
-    timers::draw(gu, &mut world.timers, sw);
-    regime::draw(gu, &mut world.regime, sw);
+    // HUD pieces a Lua mod hid (ui.native.hide).
+    if world.lua.hides("party") {
+        (st.party_window, st.alliance) = (String::new(), [None, None]);
+    }
+    if world.lua.hides("alliance") {
+        st.alliance = [None, None];
+    }
+    if world.lua.hides("target") {
+        st.target = None;
+    }
+    if !world.lua.hides("timers") {
+        timers::draw(gu, &mut world.timers, sw);
+    }
+    if !world.lua.hides("regime") {
+        regime::draw(gu, &mut world.regime, sw);
+    }
     skillchain::draw(gu, &mut world.skillchain, sw);
     let slots = gu.hud(sw, sh, &st);
 
@@ -3276,7 +3403,9 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
     blockers.extend(world.minimap_rect);
     // Window 2 (FUN_10161d60): its frame, text and caption 740 at its own (x0 + textw - 352, y0); drawn before window 1,
     // which comes later in the window list (reopened after it), so window 1's caption sits over window 2's bottom edge.
-    if let Some(f) = log2.filter(|f| event_window.is_none() && !world.modern && (f.alpha > 0.0 || f.lines > 0)) {
+    // A Lua mod's hide of the log windows (ui.native.hide "log"), not while an event, a prompt or the line needs them.
+    let log_hidden = world.lua.hides("log") && !event::active(world) && !prompt && !line_open;
+    if let Some(f) = log2.filter(|f| !log_hidden && event_window.is_none() && !world.modern && (f.alpha > 0.0 || f.lines > 0)) {
         let [x, y, w, h] = f.rect;
         gu.frame_alpha(x, y, w, h, f.alpha);
         let newest = world.log2.draw(gu, &f, false, &world.chat);
@@ -3309,7 +3438,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
         let band = world.log.full_row_line(fl.filter, fl.back(logwin::full_lines(sh))).is_some_and(|k| charlnk::lit(world, k));
         blockers.push(world.log.draw_full(gu, &fl, sw, sh, line_open, route.second, band));
         blockers.extend(charlnk::draw(gu, world, sw, sh));
-    } else if !world.modern && (log.alpha > 0.0 || log.lines > 0) {
+    } else if !log_hidden && !world.modern && (log.alpha > 0.0 || log.lines > 0) {
         let [x, y, w, h] = log.rect;
         gu.frame_alpha(x, y, w, h, log.alpha);
         let newest = world.log.draw(gu, &log, line_open, &world.chat);
@@ -3328,6 +3457,10 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
             gu.sprite("menu    windowps", logwin::caption_1(world.chat_prefix.split(' ').next().unwrap_or(""), route.second), x + tw - 352.0, y, 0x8080_8080);
         }
         blockers.push(log.rect);
+    }
+    // The software keyboard (FUN_101af440).
+    if let Some(r) = swkbd::draw(gu, world, sw, sh) {
+        blockers.push(r);
     }
     // The chat line ("menu    inline") (16, H - 38), (textw + 14) x 22, windowps 37; FUN_101b7fd0.
     if world.typing && !world.modern {
@@ -3411,9 +3544,16 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
         // The caret: a '|' after the text before it, not counted in the width, while inline +0x20 (0..25 a draw at 30
         // fps) is 10..24.
         let phase = (world.started.elapsed().as_secs_f32() * 30.0) as u64 % 26;
-        if (10..=24).contains(&phase) {
+        // An IME's composition over the line at the caret, underlined (ours).
+        if !world.ime_preedit.is_empty() {
+            let pw = gu.text_width(&world.ime_preedit);
+            gu.rect(caret_x, y + 2.0, pw + 2.0, 18.0, [0.05, 0.05, 0.1, 0.9]);
+            gu.text(&world.ime_preedit, caret_x + 1.0, y + 3.0, 0, WHITE);
+            gu.rect(caret_x + 1.0, y + 18.0, pw, 1.0, [1.0, 1.0, 1.0, 0.9]);
+        } else if (10..=24).contains(&phase) {
             gu.text("|", caret_x, y + 3.0, 0, WHITE);
         }
+        world.ime_at.set(Some([caret_x, y + 3.0, 2.0, 16.0]));
         blockers.push([x, y, w, 22.0]);
         if let Some(f) = &world.fep {
             blockers.push(fep::draw(gu, f, word_x - 8.0, y));
@@ -3428,8 +3568,12 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
     }
     // The status icons are layer 0 (registry +0x29): every window draws over them.
     if !world.modern {
-        buffs::draw(gu, world, sw, sh);
-        buffs::draw_party(gu, world, sw, sh, region);
+        if !world.lua.hides("buffs") {
+            buffs::draw(gu, world, sw, sh);
+        }
+        if !world.lua.hides("party") {
+            buffs::draw_party(gu, world, sw, sh, region);
+        }
     }
     fishing::draw_gauge(gu, world, sw, sh);
     blockers.extend(moogle::draw(gu, world, sw, sh));
@@ -3540,7 +3684,9 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
     blockers.extend(bluset::draw(gu, world, sw, sh));
     blockers.extend(moncustom::draw(gu, world, sw, sh));
     if !world.modern {
-        magic::draw_cast_bar(gu, world, sw, sh);
+        if !world.lua.hides("cast") {
+            magic::draw_cast_bar(gu, world, sw, sh);
+        }
         magic::draw_event_timer(gu, world, sw, sh);
         objective::draw_countdown(gu, world, sw, sh);
         objective::draw_bars(gu, world);
@@ -3603,13 +3749,14 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
     // the UI font.
     if world.palette.0 != 0
         && !world.modern
+        && !world.lua.hides("palette")
         && let Some(m) = world.macros.as_ref()
     {
         let p = world.palette.0 as usize;
         let long = world.game.get(0x9d) == 0 && sw >= 1024.0;
         let name = format!("menu    mcr{p}{}", if long { "long" } else { "pall" });
-        // 0x82 to the right while gaugewin or cnttime is up (FUN_101a3840, mode DAT_106218ee 0).
-        let dx = macroedit::palette_dx(world);
+        // 0x82 to the right by Misc. 2 config 0x9e (FUN_101a3840, mode DAT_106218ee).
+        let dx = macroedit::palette_dx(world, sw);
         if let Some(win) = gu.lobby_window_off(&name, sw, sh, (dx, 0.0), Some(world.palette.3[p - 1] as u16 + 1), true, &[]) {
             let pad = if win.frame[2] >= 800.0 { 4.0 } else { 2.0 };
             for (k, (_, r)) in win.children.iter().take(10).enumerate() {
@@ -4022,6 +4169,9 @@ fn config_out(world: &mut World, out: configui::Out) {
     if let Some(mode) = out.lockstyle {
         equipsets::lock_mode(world, mode, false, 0);
     }
+    if let Some(k) = out.cam_keys {
+        world.cam_keys = k;
+    }
 }
 
 /// The indicator's draw `n` (from 1).
@@ -4080,7 +4230,7 @@ fn bar_text(gu: &GameUi, world: &World, items: &[(usize, [f32; 4])]) -> hudtop::
     if let Some((name, child)) = focus.filter(|_| world.confirm.is_none()) {
         let [help, title] = gu.focus_text(name, child);
         (bars.help[1], bars.title[1]) = (help.unwrap_or_default(), title.unwrap_or_default());
-        if let Some(h) = configui::our_help(child) {
+        if let Some(h) = configui::our_help(name, child) {
             bars.help[1] = h.into();
         }
     }
@@ -4106,6 +4256,10 @@ fn bar_text(gu: &GameUi, world: &World, items: &[(usize, [f32; 4])]) -> hudtop::
     }
     if let Some(s) = &world.settings {
         (bars.help[1], bars.title[1]) = (s.help(), s.title().into());
+    }
+    // A Lua mod window with the keys: its title and the help under its cursor.
+    if let Some((title, help)) = world.lua.focused_help() {
+        (bars.help[1], bars.title[1]) = (help, title);
     }
     // The palette's caption (FUN_101a3d00): group 10 0x27 "Macro Set %s (#%d)"; titles "MacroPalette" (group 0xd
     // 0x50) under the cursor cell's macro title.
@@ -4777,6 +4931,20 @@ fn look_source(tbl: [u16; 9]) -> Source {
     if tbl[8] == 0xFFFF { Source::Npc(crate::dat::npc::NpcLook::Model(tbl[0])) } else { Source::Pc(look_from(tbl)) }
 }
 
+/// FUN_1009afe0 with Misc.'s PC armour Hide (config 0xa5 != 0), for another PC's look (not ours, not a model id):
+/// head, body, hands, legs and feet become the defaults of table 0x1032d678 (0, 8, 8, 8, 8), the face and weapons
+/// stay. Retail reads it as each look arrives, so a change shows on the next look update. Its third exclusion, a slot
+/// with +0x78's high byte set, is a client-made model (FUN_100ab750: the menu preview FUN_101cd3b0, the lobby's
+/// FUN_10242cd0), which never gets a 0x00D look here.
+fn hide_armour(mut tbl: [u16; 9]) -> [u16; 9] {
+    if tbl[8] != 0xFFFF {
+        for (i, v) in [0u16, 8, 8, 8, 8].into_iter().enumerate() {
+            tbl[i + 1] = ((i as u16 + 1) << 12) | v;
+        }
+    }
+    tbl
+}
+
 const TAU_4096: f32 = std::f32::consts::TAU / 4096.0;
 
 /// Where and how an actor is drawn this frame: position, facing, status, motion ratio, size.
@@ -4962,6 +5130,12 @@ fn scan_track(world: &mut World, index: u16) {
 /// another level is more than 12 away and taken at once. `server` is the goal's height as sent and the server's
 /// height along the slide (unsnapped), which keeps an actor out of holes the server walks it over. Returns the slide
 /// (where the actor is drawn) and whether the goal was taken at once.
+/// FFXI_TRACE_MOVE=1: movement traces in the log (test runs).
+fn trace_move() -> bool {
+    static TRACE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *TRACE.get_or_init(|| std::env::var_os("FFXI_TRACE_MOVE").is_some())
+}
+
 fn slide_frame(pos: Vec3, target: &mut Vec3, remain: &mut f32, ticks: f32, floor: Option<&ground::Ground>, server: (f32, &mut f32)) -> (Vec3, bool) {
     let (sent, raw) = server;
     let mut slide = pos;
@@ -5503,9 +5677,17 @@ struct World {
     /// The macro palette controller (DAT_1066279c): +0xc open (0, 1 Ctrl, 2 Alt), +0xd pending, +0x10 the hold's
     /// second, each palette's cursor cell.
     palette: (u8, u8, u64, [usize; 2]),
-    /// The open palette came from a pad trigger (FUN_101a2e80's toggle: it stays up after the release).
+    /// FUN_101a2e80 +0x18: the open palette came from a pad trigger (it stays up after the release); +0x14 the
+    /// second a held trigger started waiting at.
     pad_palette: bool,
-    /// Shift was held with the key being dispatched (Shift+Tab turns a window's tabs back; the pad's LB sends it).
+    pad_hold: u64,
+    /// The software keyboard (client/swkbd.rs), what it typed for the next frame's input, and whether it comes back
+    /// after the zone.
+    swkbd: Option<swkbd::Keyboard>,
+    swkbd_out: Vec<egui::Event>,
+    swkbd_reopen: bool,
+    /// Shift was held with the key being dispatched by world_hud's loop (Shift+Tab turns a modern window's tabs back;
+    /// the pad's LB sends it); false anywhere else.
     key_shift: bool,
     /// Our facing unquantized, with the network direction it rounds to: retail draws the player from the float heading
     /// (FUN_100a6240) and rounds it only for the position packet; drawn from the byte, a stick's slow turn stepped.
@@ -5611,6 +5793,10 @@ struct World {
     vis_list: Vec<u32>,
     chat: combat::ChatLog,
     chat_input: String,
+    /// An IME's text being composed at the caret (ours; MODLOG "Chat line: the system IME"), and the caret's
+    /// rect in the classic line (GameUi units) for the candidate window.
+    ime_preedit: String,
+    ime_at: std::cell::Cell<Option<[f32; 4]>>,
     /// The chat line's caret (char index; None the end of the line, where every new line starts).
     chat_caret: Option<usize>,
     /// The other end of the chat line's selection (Shift + arrows; ours), and text for the clipboard this frame.
@@ -5742,6 +5928,8 @@ struct World {
     unsettled: bool,
     actors: HashMap<u32, Actor>,
     moving: bool,
+    /// The ticks of our move so far (c2s 0x015 @0x12, actor +0x1b4).
+    move_acc: f32,
     /// Walk mode (0x45, DAT_10565d34 +0x50 / player +0xfa), autorun (0x1c, DAT_10475579) and its world-space
     /// vector (DAT_1047555c), and this frame's speed fraction (FUN_100a5f60: 1, 1/3 or 0).
     walk: bool,
@@ -5812,6 +6000,8 @@ struct World {
     journal: journal::Store,
     /// Our adventuring fellow's ActIndex (0x037 u16 @0x48, player +0x29c).
     my_fellow: u16,
+    /// Our costume (0x037 @0x44) and whether it is on (+0x120 bit 5).
+    costume: costume::Costume,
     /// The Search row's windows (searchma and its criteria), and scname's name (kept between opens, +0x18).
     searchmenu: Option<searchmenu::SearchMenu>,
     search_name: String,
@@ -6287,6 +6477,8 @@ struct World {
     auto_sort: u32,
     auto_sort_dirty: bool,
     sort_due: (u32, f32),
+    /// DAT_10487ef5 (event op 0xab subs 9 / 10): the weather density forced to 1.0; cleared by each zone load.
+    weather_forced: bool,
     /// FUN_1021c4c0's inventory record (items::retail_auto_sort): the free slots last seen (+8; None from zone-in
     /// until the inventory settles), Manual Sort's split hold (+6), and the seconds since the last inventory 0x03A.
     inv_free: Option<u32>,
@@ -6297,8 +6489,13 @@ struct World {
     regime: regime::Tracker,
     /// The ship voyage (kept across zone changes, as retail's globals).
     voyage: voyage::Voyage,
-    /// "menu    casttime" (FUN_1012c1d0): total and remaining ticks of our cast.
+    /// "menu    casttime" (FUN_1012c1d0): total and remaining ticks of our cast, and the spell (0 an event's bar).
     cast_bar: Option<(f32, f32)>,
+    cast_spell: u16,
+    /// Our pet's vitals and target (s2c 0x068 type 4).
+    pet_sync: Option<net::PetSync>,
+    /// Behaviour switches Lua mods set (client.set_option).
+    opts: Opts,
     /// The cast bar was opened by an event (op 0xb4 7, mode 4): it shows the time left (FUN_1012bfe0).
     cast_event: bool,
     /// "menu    eventtim" (FUN_1012c500, op 0xb4 0xa): total and remaining ticks.
@@ -6343,6 +6540,8 @@ struct World {
     /// Our Settings or Extras page when opened from the Config window, and a request to open one.
     settings: Option<settings::SettingsUi>,
     want_settings: Option<settings::Kind>,
+    /// Ours: the camera keys' Y / X sense (Mouse/Cam.'s Camera Keys; the client's config keeps it).
+    cam_keys: [u8; 2],
     /// The Lua mods of this session (docs/lua-mods.md).
     lua: lua::Host,
     /// Misc. 4 chat filter lists (config 0xce).
@@ -6606,14 +6805,13 @@ pub struct App {
     /// Retail key functions (DAT_103619f0 and FUN_1011ff30).
     input: input::Input,
     gamepad: gamepad::Gamepad,
-    /// The on-screen keyboard (osk.rs): ours where Steam has none, the text field edge that raises it, whether the pad
-    /// was the last device used, and the events its mouse clicks made for the next frame.
-    kb: osk::Keyboard,
-    kb_edge: osk::Edge,
-    pad_last: bool,
-    kb_events: Vec<egui::Event>,
     /// Keys Lua mods pressed this frame, as egui events.
     synth_events: Vec<egui::Event>,
+    /// The lobby mods before login (in the world, the World's host holds them).
+    lobby_mods: lua::Host,
+    /// A mod's recording (client.record), and the mods' post-process passes (render.shader).
+    recorder: Option<record::Recorder>,
+    post_fx: Option<crate::render::postfx::PostFx>,
     /// Frames per second, 0 = unlimited (config frame_limit), and the present mode must be picked again.
     frame_limit: u32,
     present_dirty: bool,
@@ -6860,11 +7058,10 @@ impl App {
             numpad_slash: false,
             input: input::Input::default(),
             gamepad: gamepad::Gamepad::default(),
-            kb: osk::Keyboard::default(),
-            kb_edge: osk::Edge::default(),
-            pad_last: false,
-            kb_events: Vec::new(),
             synth_events: Vec::new(),
+            lobby_mods: Default::default(),
+            recorder: None,
+            post_fx: None,
             frame_limit,
             present_dirty: false,
             window_dirty: false,
@@ -7099,10 +7296,111 @@ impl App {
         }
     }
 
+    /// A key a mod pressed: the key functions now, egui with this frame's input.
+    fn synth_key(&mut self, k: &lua::input::Synth) {
+        let (key, mods) = k.diks();
+        match k.down {
+            None => mods.into_iter().chain(key).for_each(|d| self.input.tap(d)),
+            Some(down) => key.into_iter().for_each(|d| self.input.set(d, down)),
+        }
+        self.synth_events.extend(k.egui_events());
+    }
+
+    /// The lobby mods' phase, and what they asked for.
+    fn lobby_mods_frame(&mut self) {
+        let busy = self.busy || self.netwait.is_some() || self.lobby_fade.busy() || self.login_error.is_some();
+        let mut view = lua::lobby::View {
+            server: self.cfg.server.clone(),
+            account: self.cfg.username.clone(),
+            playonline: is_playonline(&self.cfg.server),
+            busy,
+            error: self.login_error.clone(),
+            ..Default::default()
+        };
+        match &self.phase {
+            Phase::Login { .. } => view.screen = "login",
+            Phase::Characters { lobby, chars, selected, screen, .. } => {
+                view.screen = match (lobby.is_some(), screen) {
+                    (false, _) => "connecting",
+                    (true, LobbyScreen::Main) => "title",
+                    (true, LobbyScreen::Select) => "select",
+                    (true, LobbyScreen::Create) => "create",
+                    (true, LobbyScreen::Delete) => "delete",
+                    (true, LobbyScreen::Config) => "config",
+                };
+                view.selected = *selected;
+                view.characters = chars
+                    .iter()
+                    .map(|c| lua::lobby::Char { name: c.name.trim().to_string(), world: c.world.clone(), race: c.race, job: c.main_job, level: c.main_level, sub_job: c.sub_job, zone: c.zone, available: !c.is_empty_slot() && c.status == 1 })
+                    .collect();
+            }
+            Phase::World(_) => return,
+        }
+        let out = lua::lobby_frame(&mut self.lobby_mods, view);
+        for k in &out.keys {
+            self.synth_key(k);
+        }
+        for a in out.acts {
+            self.lobby_act(a, busy);
+        }
+    }
+
+    /// A lobby mod's sign-in or character pick, taken as the login form and the select screen take theirs.
+    fn lobby_act(&mut self, a: lua::lobby::Act, busy: bool) {
+        use lua::lobby::{Act, Who};
+        if busy {
+            log::info!("lua: a lobby action while the lobby is busy, dropped");
+            return;
+        }
+        match a {
+            Act::SignIn { server, account, password, otp, pol_id, pol_password } => {
+                if !matches!(self.phase, Phase::Login { .. }) {
+                    return;
+                }
+                if let Some(s) = server {
+                    self.cfg.server = s;
+                }
+                self.cfg.username = account;
+                if is_playonline(&self.cfg.server) {
+                    if let Some(id) = pol_id {
+                        self.cfg.pol_id = id;
+                    }
+                    self.login_playonline(pol_password, password, otp);
+                } else {
+                    self.login(password, otp, false);
+                }
+            }
+            Act::Play(who) => {
+                let Phase::Characters { lobby, chars, selected, .. } = &mut self.phase else { return };
+                let k = match who {
+                    Who::Slot(k) => Some(k),
+                    Who::Name(n) => chars.iter().position(|c| c.name.trim().eq_ignore_ascii_case(n.trim())),
+                };
+                let Some(k) = k.filter(|&k| chars.get(k).is_some_and(|c| !c.is_empty_slot() && c.status == 1)) else {
+                    log::info!("lua: lobby.play: no such character");
+                    return;
+                };
+                let (Some(l), c) = (lobby.take(), chars[k].clone()) else { return };
+                *selected = Some(k);
+                let replies = l.replies.clone();
+                self.lobby_fade.out(Box::new(move |app: &mut App| {
+                    app.netwait = Some(netwait::NetWait::new(netwait::Op::Login, replies));
+                    app.spawn(move || Task::Selected(l.select(&c)));
+                    app.lobby_fade.enter(true);
+                }));
+            }
+        }
+    }
+
     /// Back to the login screen. The world entry (or the world) left the lobby faded out, so the fade starts over;
     /// an error waits in the OK window.
     fn to_login(&mut self, error: bool) {
         if let Phase::World(w) = &mut self.phase {
+            let mut mods = std::mem::take(&mut w.lua);
+            if mods.started() {
+                mods.stop(w);
+            }
+            self.lobby_mods = mods;
             self.line_hist = std::mem::take(&mut w.line_hist);
             // The modern chat's history for the next login (not retail).
             if self.cfg.modern_ui
@@ -7114,9 +7412,11 @@ impl App {
         self.phase = Phase::login(&self.cfg);
         self.lobby_fade = LobbyFade::default();
         self.close_asked = false;
-        // The character's window style (config 0x12) replaced lobby images (the select screen drew gray).
+        // The character's window style (config 0x12) replaced lobby images (the select screen drew gray); a mod's
+        // TrueType text ends with the world.
         if let Some(gu) = self.game_ui.as_mut() {
             gu.reset_style();
+            gu.set_ttf(false);
         }
         if error {
             log::warn!("back to the login screen: {}", self.status);
@@ -7252,7 +7552,8 @@ impl App {
             }
         }
         // The zone's ambient loop, only in the world (world+0x20 is 0 elsewhere).
-        a.ambient(if let Phase::World(w) = &self.phase { w.ambient } else { None });
+        let (se, scene) = if let Phase::World(w) = &self.phase { (w.ambient, w.scene) } else { (None, None) };
+        a.ambient(se, scene);
         if let Phase::World(w) = &mut self.phase {
             for (mask, level, ticks) in w.audio_cmds.drain(..) {
                 a.event_volume(mask, level, ticks);
@@ -7273,12 +7574,31 @@ impl App {
             for id in w.sounds.drain(..) {
                 a.play_ui_se(id);
             }
+            // The Lua mods' sounds.
+            for s in w.lua.sounds.drain(..) {
+                match s {
+                    lua::audio::Sound::File(bytes, level) => a.play_bytes(bytes, level),
+                    lua::audio::Sound::Se(id, level) => a.play_se(id, level),
+                    lua::audio::Sound::Ui(id) => a.play_ui_se(id),
+                }
+            }
             let hour = w.clock.map(|(t, at)| crate::dat::weather::vana_minute(t, at.elapsed().as_secs_f32()) as u32 / 60).unwrap_or(12);
             // Ops 0x77 / 0xa9: the held clock's hour (FUN_100b8710 / FUN_100bab50).
             let hour = event::hour(w).unwrap_or(hour);
             let party = w.party.party().count().max(1) as u32;
+            // A Lua mod's hold on the music: its track or silence; given back, the context's track again.
+            if std::mem::take(&mut w.lua.music_dirty) {
+                log::info!("lua music: {:?} (playing {})", w.lua.music.as_ref().map(|m| m.1), a.status.bgm.load(std::sync::atomic::Ordering::Relaxed) as i64 - 1);
+                match w.lua.music.as_ref().map(|m| m.1) {
+                    Some(lua::audio::Music::Track(id)) => a.change_music(id, 0x7f, 0x7f, 0, 0x3c, false),
+                    Some(lua::audio::Music::Mute) => a.stop_music(0x3c),
+                    None => w.music.forget(),
+                }
+            }
             let cx = crate::audio::MusicContext { status: w.my_motion.status, hour, party, party_battle: party_battle(w), myroom: w.myroom.is_some_and(|r| r.map != 0x2d4), basket: w.actors.get(&w.my_id).is_some_and(|a| matches!(&a.source, Some(Source::Pc(l)) if l.range == 0xc)) };
-            if let Some(c) = w.music.select(cx) {
+            if w.lua.music.is_none()
+                && let Some(c) = w.music.select(cx)
+            {
                 log::info!("music: {c:?}");
                 if c.clear {
                     a.clear_positions();
@@ -7634,6 +7954,8 @@ impl App {
                             vis_list: Vec::new(),
                             chat: Default::default(),
                             chat_input: String::new(),
+                            ime_preedit: String::new(),
+                            ime_at: Default::default(),
                             chat_caret: None,
                             chat_anchor: None,
                             copied: None,
@@ -7725,6 +8047,7 @@ impl App {
                             inv_loaded: 0,
                             actors: HashMap::new(),
                             moving: false,
+                            move_acc: 0.0,
                             walk: false,
                             autorun: false,
                             mouse_look: false,
@@ -7774,6 +8097,7 @@ impl App {
                             ls_msg: Default::default(),
                             ls_msg_seq: 0,
                             my_fellow: 0,
+                            costume: Default::default(),
                             search_name: String::new(),
                             search_cond: Default::default(),
                             search_status0: 0,
@@ -7851,6 +8175,10 @@ impl App {
                             macros: None,
                             palette: (0, 0, 0, [0, 0]),
                             pad_palette: false,
+                            pad_hold: 0,
+                            swkbd: None,
+                            swkbd_out: Vec::new(),
+                            swkbd_reopen: false,
                             key_shift: false,
                             my_face: None,
                             ui_hidden: false,
@@ -8070,6 +8398,7 @@ impl App {
                             auto_sort: self.cfg.auto_sort,
                             auto_sort_dirty: false,
                             sort_due: (0, 0.0),
+                            weather_forced: false,
                             inv_free: None,
                             sort_hold: false,
                             sort_wait: f32::MAX,
@@ -8079,6 +8408,9 @@ impl App {
                             voyage: Default::default(),
                             recasts_seen: false,
                             cast_bar: None,
+                            cast_spell: 0,
+                            pet_sync: None,
+                            opts: Opts::default(),
                             cast_event: false,
                             event_timer: None,
                             objective: Default::default(),
@@ -8105,7 +8437,8 @@ impl App {
                             game_save: false,
                             settings: None,
                             want_settings: None,
-                            lua: Default::default(),
+                            cam_keys: [self.cfg.cam_keys_y as u8, self.cfg.cam_keys_x as u8],
+                            lua: std::mem::take(&mut self.lobby_mods),
                             spam: spamfilter::SpamFilter::new(self.cfg.ffxi_dir()),
                         }));
                         if let Phase::World(w) = &mut self.phase {
@@ -8679,6 +9012,8 @@ impl App {
                     // LSB re-sends every container after c2s 0x00C and empties the temporary items and the recycle
                     // bin on zoning, so slots kept from the last zone would go stale (retail's reset: inferred).
                     world.inv = items::Inventory { sizes: world.inv.sizes, sizes2: world.inv.sizes2, ..Default::default() };
+                    // FUN_10093720: DAT_10487ef5 = 0.
+                    world.weather_forced = false;
                     // The resend refills the emptied view: Auto-sort's free-slot count starts again once it settles.
                     (world.inv_free, world.sort_hold) = (None, false);
                     if let Some(ev) = login_event {
@@ -8721,6 +9056,8 @@ impl App {
                         (a.alpha, a.rgb, a.fade, a.event_scale) = (actmotion::OPAQUE, [actmotion::OPAQUE; 3], None, None);
                     }
                     world.my_init_done = false;
+                    // FUN_1008a350 / a new actor table: no costume until 0x037 sends it again.
+                    world.costume = Default::default();
                     world.effects.reset_equip(char_id);
                     (world.zoning_since, world.zone_touch) = (None, None);
                     world.pos = Vec3::from(pos);
@@ -8729,6 +9066,7 @@ impl App {
                     // The drawn facing starts at the new heading (a zone-in into the zone already loaded settles in
                     // the same frame, before the easing would snap it); the old float facing is the last zone's.
                     (world.my_draw_yaw, world.my_face) = (None, None);
+                    swkbd::zone_out(world);
                     log::info!("zone-in: zone {zone} at {:?} dir {dir}", pos);
                     // FUN_1018b500 -> FUN_1001e4f0: the view shake stops at a zone load.
                     world.camst.shake = camera::Shake::default();
@@ -8801,6 +9139,7 @@ impl App {
                         continue;
                     }
                     if let Some(tbl) = e.look {
+                        let tbl = if e.id != world.my_id && world.game.get(0xa5) != 0 { hide_armour(tbl) } else { tbl };
                         looks.push((e.id, look_source(tbl)));
                     }
                     if let Some(npc) = e.npc {
@@ -8889,7 +9228,8 @@ impl App {
                         gate: 0,
                         name_ncol: 0x17,
                         marks: net::Marks::default(),
-                        female: false,
+                        // FUN_1008a350: +0x124 = 0x880, bit 25 clear (female) until a mask-4 update.
+                        female: true,
                         sub_kind: 0,
                     });
                     if e.mask & 7 != 0 {
@@ -8988,6 +9328,9 @@ impl App {
                         // FUN_1008b610: slide over the counter delta + 8 ticks (a smaller counter restarts it).
                         let c = e.counter;
                         let dur = if c < entry.counter { c } else { c - entry.counter };
+                        if trace_move() && e.id < 0x0100_0000 && e.id != world.my_id {
+                            log::info!("pcupd {:#x} {} t {:.3} pos ({:.2}, {:.2}) counter {c} dur {dur}", e.id, entry.name, world.started.elapsed().as_secs_f32(), p.x, p.z);
+                        }
                         entry.remain = dur as f32 + 8.0;
                         entry.counter = c;
                         if fresh {
@@ -9127,8 +9470,6 @@ impl App {
                 }
                 NetEvent::Logout { state } => {
                     log::info!("logged out of the zone (0x00B state {state})");
-                    let mut mods = std::mem::take(&mut world.lua);
-                    mods.stop(world);
                     world.chat.filter = None;
                     if let Some(dir) = world.macros.as_ref().map(|m| m.dir().to_path_buf()) {
                         synth::save_history(world, &dir);
@@ -9201,7 +9542,7 @@ impl App {
                 NetEvent::ItemMax(s, s2) => (world.inv.sizes, world.inv.sizes2) = (s, s2),
                 NetEvent::Mounts(bits) => world.mount_bits = Some(bits),
                 NetEvent::EmoteUnlocks { jobs, chairs } => (world.emote_jobs, world.emote_chairs) = (jobs, chairs),
-                NetEvent::PetTp(tp) => world.timers.pet_tp = tp,
+                NetEvent::PetSync(p) => (world.timers.pet_tp, world.pet_sync) = (p.map(|p| p.tp), p),
                 NetEvent::MountRecast(s) => world.mount_recast = (s > 0).then(|| Instant::now() + std::time::Duration::from_secs(s as u64)),
                 // LAB_1009b6xx: the entity at ActIndex `index` with server id `id` takes its master.
                 NetEvent::EntityMaster { index, id, master } => {
@@ -9379,7 +9720,7 @@ impl App {
                 }
                 NetEvent::KeyItems { .. } => {}
                 NetEvent::Music { slot, id } => world.music.set_slot(slot, id),
-                NetEvent::SelfStatus { speed, status, hpp, dead, pet, flags, icons, team, fellow, plate, ride, indi, fish_timer, gate } => {
+                NetEvent::SelfStatus { speed, status, hpp, dead, pet, flags, icons, team, fellow, plate, ride, indi, fish_timer, gate, costume } => {
                     world.my_gate = gate;
                     // LSB sends Death (3) for a character leaving by a zone line (its isDead() counts status Disappear)
                     // with HP left: not a death, the status stays (ours, inferred).
@@ -9395,6 +9736,7 @@ impl App {
                     indi::apply(world, me, indi);
                     world.my_plate = plate;
                     world.my_fellow = fellow;
+                    world.costume.set_id(costume);
                     world.self_flags = flags;
                     world.buffs = icons;
                     world.my_team = team;
@@ -9475,7 +9817,10 @@ impl App {
                     roe::active_changed(world);
                 }
                 NetEvent::RoeLog { offset, data } => world.roe.log_part(offset, &data),
-                NetEvent::Invite { anon, kind, name, race } => partymenu::invited(world, anon, kind, name, race),
+                NetEvent::Invite { anon, kind, name, race } => {
+                    world.lua.raise("party_invite", vec![name.clone().into(), (if kind == 5 { "alliance" } else { "party" }).into()]);
+                    partymenu::invited(world, anon, kind, name, race)
+                }
                 NetEvent::PartyRequest { status, name } => partyreq::received(world, status, name),
                 NetEvent::Blacklist { stat, entries } => partyreq::blacklist(world, stat, entries),
                 NetEvent::BlackEdit { id, name, mode } => partyreq::black_result(world, id, name, mode),
@@ -9532,7 +9877,14 @@ impl App {
                         l.rt.registration(result as u32);
                     }
                 }
-                NetEvent::Emote { caster, target, emote, param, mode } => combat::on_emote(world, caster, target, emote, param, mode),
+                NetEvent::Emote { caster, target, emote, param, mode } => {
+                    // A blocked player's emote is no event, as it is no motion or line (asked once: the check
+                    // asks for the list while it is not in).
+                    if !partyreq::sender_blocked(world, caster, emote, 2) {
+                        world.lua.raise("emote", vec![caster.into(), target.into(), emote.into(), mode.into()]);
+                        combat::on_emote(world, caster, target, emote, param, mode)
+                    }
+                }
                 NetEvent::AbilityRecasts(timers) => {
                     world.recasts_seen = true;
                     let now = Instant::now();
@@ -9678,6 +10030,9 @@ impl App {
         if !event::active(world) {
             ko_step(world);
         }
+        // FUN_10095e90 for us, once a frame; bound = +0x120 bit 7, our character among the running event's actors.
+        let bound = world.event.as_ref().is_some_and(|l| l.st.bound.contains(&world.my_id));
+        world.costume.step(world.my_motion.status, bound);
         gmtell::step(world);
         event::update(world, dt);
         event::rebuild_models(world);
@@ -9979,7 +10334,7 @@ impl App {
         racing::step(world, dt * 60.0);
         combat::run_map_schedulers(world);
         ride::dig_update(world);
-        actmotion::update(world, dt);
+        actmotion::update(world, dt * world.opts.anim_rate);
         // FUN_10096640: the lock goes with its target; inferred, after 10 s (a talk the server never answers).
         if !event::active(world) && world.control_lock.is_some_and(|(t, id)| t.elapsed().as_secs_f32() > 10.0 || !world.entities.contains_key(&id)) {
             world.control_lock = None;
@@ -10122,12 +10477,12 @@ impl App {
                 world.knocks.remove(&id);
             }
         }
-        // FFXI_TRACE_MOVE=1: the nearest monster's drawn / goal position and motion ratio each frame (test runs).
-        static TRACE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if *TRACE.get_or_init(|| std::env::var_os("FFXI_TRACE_MOVE").is_some())
-            && let Some((id, e)) = world.entities.iter().filter(|(_, e)| e.mob).min_by(|a, b| (a.1.pos - world.pos).length().total_cmp(&(b.1.pos - world.pos).length()))
-        {
-            log::info!("move {id:#x} {} t {:.3} drawn ({:.3}, {:.3}) goal ({:.3}, {:.3}) remain {:.1} ratio {:.3} yaw {:.2}", e.name, world.started.elapsed().as_secs_f32(), e.pos.x, e.pos.z, e.target.x, e.target.z, e.remain, e.ratio, e.yaw);
+        // FFXI_TRACE_MOVE=1: the nearest monster's and player's drawn / goal position and motion ratio each frame.
+        if trace_move() {
+            let near = |pc: bool| world.entities.iter().filter(|(id, e)| if pc { **id < 0x0100_0000 && **id != world.my_id } else { e.mob }).min_by(|a, b| (a.1.pos - world.pos).length().total_cmp(&(b.1.pos - world.pos).length()));
+            for (id, e) in [near(false), near(true)].into_iter().flatten() {
+                log::info!("move {id:#x} {} t {:.3} drawn ({:.3}, {:.3}) goal ({:.3}, {:.3}) remain {:.1} ratio {:.3} yaw {:.2}", e.name, world.started.elapsed().as_secs_f32(), e.pos.x, e.pos.z, e.target.x, e.target.z, e.remain, e.ratio, e.yaw);
+            }
         }
         // A refused zone line never brings a zone-in; give up waiting.
         if world.zoning_since.is_some_and(|t| t.elapsed().as_secs_f32() > 8.0) {
@@ -10189,32 +10544,36 @@ impl App {
             self.stand_sent = false;
         }
         // Scheduler op 0x2e: the effect of our own action holds the walk input (FUN_100a5ec0 skips FUN_100a6240).
-        let move_locked = world.effects.rooted.contains(&world.my_id);
+        let move_locked = world.opts.move_lock && world.effects.rooted.contains(&world.my_id);
         if resting || move_locked {
             (ax, ay) = (0.0, 0.0);
         }
         // Camera axes 6 / 7: the arrows (with Shift in a window) or the compact I / J / K / L stick.
         let (mut cx, mut cy) = (self.input.axis(6), self.input.axis(7));
-        // FUN_10159ba0: in a ground-cursor prompt with the keyboard's Ctrl / Alt held (0x76 / 0x77), the movement stick
-        // (axes 4, -5), else the camera stick, moves the cursor every frame; we and the camera take neither meanwhile.
-        // A new pick ends the cursor (FUN_10159660 clears +0x22), so going back to an earlier pick starts afresh.
+        // The controller's camera stick, apart: Camera Keys (ours) is for the keys alone.
+        let (mut px, mut py) = (self.input.device_stick()[2], self.input.device_stick()[3]);
+        // FUN_10159ba0: in a ground-cursor prompt with Ctrl / Alt held (0x76 / 0x77), the movement stick (axes 4, -5),
+        // else the camera stick, moves the cursor every frame; we and the camera take neither meanwhile. Ours: the
+        // controller's sticks only (the arrows move it through 0xb0..0xb3, once). A new pick ends the cursor
+        // (FUN_10159660 clears +0x22), so going back to an earlier pick starts afresh.
         target::drop_stale_ground_cursor(world);
         if !world.prompt.as_ref().is_some_and(|s| s.ground) {
             world.ground_cursor = None;
         } else if self.input.test(0x76, input::mode::HELD) || self.input.test(0x77, input::mode::HELD) {
-            let dir = if (ax, ay) != (0.0, 0.0) { glam::Vec2::new(ax, -ay) } else { glam::Vec2::new(cx, -cy) };
+            let s = self.input.device_stick();
+            let dir = if (s[0], s[1]) != (0.0, 0.0) { glam::Vec2::new(s[0], -s[1]) } else { glam::Vec2::new(s[2], -s[3]) };
             if dir != glam::Vec2::ZERO {
                 let c = Self::camera(world);
                 target::move_ground_cursor(world, dir, ticks, c.target - c.eye);
             }
-            (ax, ay, cx, cy) = (0.0, 0.0, 0.0, 0.0);
+            (ax, ay, cx, cy, px, py) = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
         }
         // Keyboard type 2, free camera: Shift held faces the camera (0x9c, player +0xfb; camera keys and Q / E off; a
         // controller's B only in the field, client/gamepad.rs), and Q / E turn the player (0xaa / 0xa9, FUN_10253a60 /
         // FUN_102539f0) while the camera axes are idle.
         let type2 = world.game.get(0x42) == 2 && !world.locked;
         let face_cam = type2 && self.input.test(0x9c, input::mode::HELD);
-        let turn = if type2 && !face_cam && cx == 0.0 && cy == 0.0 && ax == 0.0 {
+        let turn = if type2 && !face_cam && cx == 0.0 && cy == 0.0 && px == 0.0 && py == 0.0 && ax == 0.0 {
             self.input.test(0xaa, input::mode::HELD) as i32 as f32 - self.input.test(0xa9, input::mode::HELD) as i32 as f32
         } else {
             0.0
@@ -10245,7 +10604,9 @@ impl App {
             world.autorun = false;
         }
         // /follow (FUN_100a6070's users): autorun points at the target each tick; the target gone, dead or without a
-        // model ends it.
+        // model ends it. FUN_100a79a0: touching it (the horizontal gap less both radii, FUN_100aaef0, under 0) the step
+        // is none, and the follow goes on.
+        let mut touching = false;
         if let Some(t) = world.follow {
             match world.entities.get(&t).filter(|e| !matches!(e.motion.status, 2 | 3) && world.actors.contains_key(&t)) {
                 Some(e) if world.autorun => {
@@ -10253,6 +10614,8 @@ impl App {
                     if d.length() > 1e-3 {
                         world.autorun_dir = d.normalize();
                     }
+                    let r = |id: u32| world.actors.get(&id).map_or(0.0, bump::radius);
+                    touching = d.length() - r(world.my_id) - r(t) < 0.0;
                 }
                 _ => world.autorun = false,
             }
@@ -10295,7 +10658,7 @@ impl App {
                     let a = d.x.atan2(d.z) + 2.0 * ax * ticks * 0.017452778;
                     world.autorun_dir = Vec3::new(a.sin(), 0.0, a.cos());
                 }
-                step = world.autorun_dir;
+                step = if touching { Vec3::ZERO } else { world.autorun_dir };
             }
         }
         if !world.autorun {
@@ -10323,15 +10686,24 @@ impl App {
         // Q / E: player yaw += ticks x 0.01745 x 1.57075; the camera follows the turn (FUN_1001d4c0).
         let turn_delta = if turn != 0.0 && !world.autorun && !in_event && world.unlock_ticks <= 0.0 { turn * ticks * 0.017452778 * 1.57075 } else { 0.0 };
         world.yaw += turn_delta;
-        let turn_keys = if face_cam { 0.0 } else { cx };
-        // Mouse/Cam.: 0x8b / 0x8c invert the camera axes, 0x8d / 0x8e in first person.
+        // Mouse/Cam.: 0x8b / 0x8c invert the camera axes, 0x8d / 0x8e in first person (FUN_1001ee60: the keys' and
+        // the stick's axes 6 / 7 alike).
         let first = world.camst.first;
         let (i6, i7) = [(0x8b, 0x8c), (0x8d, 0x8e)][first as usize];
-        let (i6, i7) = (if world.game.get(i6) == 1 { -1.0 } else { 1.0 }, if world.game.get(i7) == 1 { -1.0 } else { 1.0 });
+        // Ours (Mouse/Cam.'s Camera Keys): the keys' own sense, else the camera rows'. The stick keeps the rows'.
+        let sense = |id: u16, ours: u32| match ours {
+            1 => 1.0,
+            2 => -1.0,
+            _ => if world.game.get(id) == 1 { -1.0 } else { 1.0 },
+        };
+        let larger = |k: f32, ks: f32, p: f32, ps: f32| if k.abs() >= p.abs() { k * ks } else { p * ps };
+        let v6 = larger(cx, sense(i6, world.cam_keys[1] as u32), px, sense(i6, 0));
+        let v7 = larger(cy, sense(i7, world.cam_keys[0] as u32), py, sense(i7, 0));
+        let turn_keys = if face_cam { 0.0 } else { v6 };
         let still = face_cam || in_event;
         let mut cam_in = camera::Inputs {
-            v6: if still { 0.0 } else { cx * i6 },
-            v7: if still { 0.0 } else { cy * i7 },
+            v6: if still { 0.0 } else { v6 },
+            v7: if still { 0.0 } else { v7 },
             turn: turn_delta,
             face_cam,
             zoom_in: self.input.test(0x4f, input::mode::HELD),
@@ -10367,9 +10739,11 @@ impl App {
             // and lowers the eye at the free rate, unscaled.
             let (dx, dy) = std::mem::take(&mut world.cam_turn);
             let ticks = dt * 60.0;
-            // step_camera's rotation runs opposite to camera::orbit's, which the free camera turns by -v6: the stick /
-            // keys' axis 6 goes in negated so it turns the same way locked as free (the mouse's cam_turn already does).
-            target::step_camera(world, ticks, dx - turn_keys * i6 * camera::YAW_RATE * ticks, dy + cy * i7 * camera::RISE_RATE * ticks);
+            // step_camera's rotation runs opposite to camera::orbit's, which the free camera turns by -v6: axis 6 goes in
+            // negated so it turns the same way locked as free, as FUN_1001ee60 sends both through FUN_1001ebb0 (the
+            // mouse's cam_turn already does).
+            let sp = camera::speed(&world.camst);
+            target::step_camera(world, ticks, dx - turn_keys * camera::YAW_RATE * sp * ticks, dy + v7 * camera::RISE_RATE * sp * ticks);
             let to = tp - world.pos;
             if to.x.abs() + to.z.abs() > 1e-3 {
                 world.yaw = to.x.atan2(to.z);
@@ -10451,15 +10825,16 @@ impl App {
             camera::ride(world, h - world.ride_y);
         }
         world.ride_y = world.draw_pos.y;
-        if *TRACE.get_or_init(|| std::env::var_os("FFXI_TRACE_MOVE").is_some()) && (stepping || world.riding) {
+        if trace_move() && (stepping || world.riding) {
             let c = Self::camera(world);
-            log::info!("me t {:.4} steps {steps} y {:.4} drawn ({:.3}, {:.4}, {:.3}) eye ({:.3}, {:.4}, {:.3}) look ({:.3}, {:.4}, {:.3})", world.started.elapsed().as_secs_f32(), world.pos.y, world.draw_pos.x, world.draw_pos.y, world.draw_pos.z, c.eye.x, c.eye.y, c.eye.z, c.target.x, c.target.y, c.target.z);
+            let mt = world.net.me.lock().map_or(0, |m| m.move_time);
+            log::info!("me t {:.4} steps {steps} y {:.4} drawn ({:.3}, {:.4}, {:.3}) eye ({:.3}, {:.4}, {:.3}) look ({:.3}, {:.4}, {:.3}) move_time {mt}", world.started.elapsed().as_secs_f32(), world.pos.y, world.draw_pos.x, world.draw_pos.y, world.draw_pos.z, c.eye.x, c.eye.y, c.eye.z, c.target.x, c.target.y, c.target.z);
         }
         camera::step(world, dt, &cam_in);
         let in_event = event::active(world);
         world.effects.in_event = in_event;
         camera::shake_step(world, dt);
-        if *TRACE.get_or_init(|| std::env::var_os("FFXI_TRACE_MOVE").is_some()) && (cx != 0.0 || cy != 0.0 || (world.started.elapsed().as_secs_f32() * 2.0).fract() < dt * 2.0) {
+        if trace_move() && (cx != 0.0 || cy != 0.0 || (world.started.elapsed().as_secs_f32() * 2.0).fract() < dt * 2.0) {
             log::info!("cam t {:.3} eye {:.3} look {:.3} drawn {:.3} unlock {:.1} v6 {cx:.2} v7 {cy:.2} first {}", world.started.elapsed().as_secs_f32(), world.cam.eye, world.cam.look, world.draw_pos, world.unlock_ticks, world.camst.first);
         }
         // FUN_1008b100, every frame: a zone line between our position and where we are drawn (an event's pose: Jeuno's
@@ -10492,6 +10867,21 @@ impl App {
                 world.my_face = Some((me.dir, f));
             }
             me.moving = moving;
+            // FUN_10096c00: moving, the ticks add up; the frame after a stop sends the total, then it starts over.
+            // Retail counts a tick a frame or more; ours counts 60 Hz time at any frame rate.
+            let flame = if moving {
+                world.move_acc += dt * 60.0;
+                world.move_acc
+            } else {
+                let v = dt * 60.0 + world.move_acc;
+                world.move_acc = 0.0;
+                v
+            };
+            // Others read 13 bits: a whole lap off keeps the value they see.
+            if world.move_acc >= 8192.0 {
+                world.move_acc -= 8192.0;
+            }
+            me.move_time = (flame.round() as u32 & 0xffff) as u16;
         }
         world.moving = moving;
         // FUN_100c4390 (free camera): the heading turns at once, the model eases its drawn rotation (+0x61c) 0.125 a
@@ -10534,6 +10924,11 @@ impl App {
         let window = f.window;
         self.input.begin_frame(f);
         let Phase::World(world) = &mut self.phase else { return };
+        // The software keyboard first: open, it is the focused window and takes the frame's presses.
+        swkbd::update(world, self.game_ui.as_ref(), &mut self.input);
+        if world.swkbd_reopen && world.in_scene() {
+            swkbd::zone_in(world);
+        }
         fishing::update(world, &mut self.input, dt, window);
         primer::update(world, dt * 60.0);
         if world.layout.is_some() && !world_window_open(world) {
@@ -10655,30 +11050,51 @@ impl App {
         // when the gate allows (field, UI shown, no event, alive, no window), Ctrl / Alt + digit runs a macro and
         // Shift + Ctrl / Alt + digit picks a set. The palettes are not drawn yet.
         let sub_up = target::sub_up(world);
+        let by_mod = world.macros.as_ref().is_some_and(|m| m.by_mod());
         if let Some(line) = world.macros.as_mut().filter(|_| !sub_up).and_then(|m| m.step(dt * 60.0)) {
-            textcmd::run(world, &crate::dat::font::decode_sjis(&line), textcmd::Mode::Macro);
+            let line = crate::dat::font::decode_sjis(&line);
+            if by_mod {
+                lua::run_line(world, &line, textcmd::Mode::Macro, lua::From::Mod);
+            } else {
+                textcmd::run(world, &line, textcmd::Mode::Macro);
+            }
         }
-        // FUN_101a33e0: no window has the focus, or the one that has it is the action menu (playermo / mp_pmode) or a
-        // palette; the action menu stays up while engaged.
-        // A target prompt keeps the triggers / Ctrl / Alt for its ground-position cursor (0xb0..0xb3, FUN_10159ba0).
-        let window = window_over_actions(world) || world.settings.is_some() || world.full_log.is_some() || world.prompt.is_some();
-        let gate = world.in_scene() && !world.ui_hidden && !event::active(world) && !world.dead() && !window && world.macros.is_some();
-        // FUN_101a2e80 step 3: Ctrl (0x76) / Alt (0x77) held opens palette 1 / 2 at the next whole second of the
-        // clock; released, it closes. Ctrl wins.
-        let held = if self.input.test(0x76, input::mode::HELD) { 1 } else if self.input.test(0x77, input::mode::HELD) { 2 } else { 0 };
+        let gate = macro_gate(world);
         let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-        // A pad trigger's palette (client/gamepad.rs) stays up until toggled, run or cancelled.
-        world.pad_palette &= world.palette.0 != 0 && gate;
-        let pad_palette = world.pad_palette;
+        // FUN_101a2e80, the pad's triggers first (0x89 LT / 0x8a RT): a press opens its palette, or closes it when it is
+        // the one up; held with none up, it opens at the next whole second. Either stays up after the release (+0x18).
+        let (lt, rt) = ((self.input.test(0x89, input::mode::PRESS), self.input.test(0x89, input::mode::HELD)), (self.input.test(0x8a, input::mode::PRESS), self.input.test(0x8a, input::mode::HELD)));
         let pal = &mut world.palette;
-        if held == 0 && pad_palette {
-        } else if held == 0 || !gate {
-            (pal.0, pal.1, pal.2) = (0, 0, 0);
-        } else if pal.0 != held {
-            if pal.1 != held {
+        if !gate {
+            // (inf: a window, event or prompt that closes the gate closes the palettes)
+            (pal.0, pal.1, pal.2, world.pad_palette) = (0, 0, 0, false);
+        } else if lt.0 || rt.0 {
+            let n = if lt.0 { 1 } else { 2 };
+            (pal.0, world.pad_palette) = if pal.0 == n { (0, false) } else { (n, true) };
+        } else if lt.1 || rt.1 {
+            if pal.0 == 0 {
+                if world.pad_hold == 0 {
+                    world.pad_hold = secs;
+                } else if secs != world.pad_hold {
+                    (pal.0, world.pad_palette) = (if lt.1 { 1 } else { 2 }, true);
+                }
+            }
+        } else {
+            world.pad_hold = 0;
+        }
+        // Then Ctrl (0x76) / Alt (0x77) held: palette 1 / 2 at the next whole second of the clock (ours: at once with
+        // the delay off), no longer a pad one; released, a palette that isn't a pad one closes. Ctrl wins.
+        let held = if self.input.test(0x76, input::mode::HELD) { 1 } else if self.input.test(0x77, input::mode::HELD) { 2 } else { 0 };
+        if held == 0 {
+            if !world.pad_palette {
+                pal.0 = 0;
+            }
+            (pal.1, pal.2) = (0, 0);
+        } else if gate && pal.0 != held {
+            if pal.2 == 0 {
                 (pal.1, pal.2) = (held, secs);
-            } else if secs != pal.2 {
-                pal.0 = held;
+            } else if secs != pal.2 || !world.opts.macro_delay {
+                (pal.0, world.pad_palette) = (held, false);
             }
         }
         if gate {
@@ -10709,7 +11125,7 @@ impl App {
         // map closed; the shutter SE "0016". Saved as FUN_101d0ea0 names it: the name's first three letters,
         // yymmddhhmmss and a letter for shots in the same second, in the game folder's screenshots (PNG here, retail
         // JPG).
-        // The pad's RB (key function 0x24, pad only) is the same shutter with the UI hidden (window_fns.md).
+        // The pad's RB (key function 0x24, pad only) is the same shutter with the UI hidden (DAT_10663178 state 0).
         let rb = self.input.test(0x24, input::mode::PRESS);
         if (self.input.test(0x55, input::mode::PRESS) || rb) && world.ui_hidden && world.map.is_none() && world.in_scene() {
             let t = jiff::Zoned::now();
@@ -10720,10 +11136,10 @@ impl App {
             world.shot_request = Some(self.cfg.ffxi_dir().join("screenshots").join(name));
             world.sounds.push(16);
         }
-        // RB with the UI shown, in the field with no window: the chat input line opens (the software keyboard's
-        // trigger; the software keyboard itself is not built).
-        if rb && !world.ui_hidden && !world.typing && !event::active(world) && !world_window_open(world) && world.palette.0 == 0 {
-            world.typing = true;
+        // RB (0x24) with the UI shown, outside an event (FUN_101579c0): the software keyboard, with the chat line when no
+        // field is open (FUN_101b13f0); nothing with config 0xc9 off.
+        if rb && !world.ui_hidden && !event::active(world) {
+            swkbd::rb(world);
         }
         // The pad's extra slots 32 / 33 / 35 / 36 (key functions 0xb7..0xba, pad only, unbound by default): the shut
         // down prompt, F8's nearest target, /jump and /map.
@@ -10774,22 +11190,19 @@ impl App {
                 }
             }
         }
-        // Field command table 0x10371ee0 (FUN_101585f0 -> FUN_101587b0, the first entry whose test passes, one a
-        // frame), in a target prompt or with no window holding the field; its ids act only in the field context
-        // (mask 1). Its d-pad entries, in table order, all mode 0 (the press and its repeats):
-        // - 0xb0 / 0xb1 / 0xb3 / 0xb2 (LT or RT + the d-pad, Ctrl or Alt + the arrows): the ground-position cursor of a
-        //   prompt that takes one (commands 0x18..0x1b). They come first, so with a trigger held the d-pad never steps
-        //   the target, prompt or not (their command does nothing without the cursor).
-        // - 0x27 / 0x28 (pad only): up / down the alliance; 0x2a / 0x29 the previous / next actor on screen. In a
-        //   prompt they take its targets (field +0x60 / +0x64); locked on with no prompt, nothing (FUN_101587f0).
-        if !event::active(world) && !world.ko_open && world.ko_offer != 2 && (world.prompt.is_some() || !world_window_open(world)) && world.palette.0 == 0 {
+        // Field command table 0x10371ee0 (FUN_101587b0: the first entry that passes, one a frame, press or repeat): the
+        // ground cursor 0xb0 / 0xb1 / 0xb3 / 0xb2 first, then the pad's 0x27 / 0x28 up / down and 0x2a / 0x29 left /
+        // right (MODLOG "Gamepad"). Locked on with no prompt or party cursor none acts (FUN_101587f0).
+        let locked_only = world.locked && world.prompt.is_none() && world.party_cursor.is_none();
+        if !event::active(world) && !world.ko_open && world.ko_offer != 2 && !locked_only && (world.prompt.is_some() || !world_window_open(world)) && world.palette.0 == 0 {
             let rep = |input: &mut input::Input, k: usize| input.test(k, input::mode::REPEAT);
             let cursor = [(0xb0, glam::Vec2::Y), (0xb1, glam::Vec2::NEG_Y), (0xb3, glam::Vec2::NEG_X), (0xb2, glam::Vec2::X)].into_iter().find(|(k, _)| rep(&mut self.input, *k));
             let view = Self::camera(world).view();
             if let Some((_, dir)) = cursor {
+                // A press or repeat moves one retail frame's worth (2 ticks).
                 if world.prompt.as_ref().is_some_and(|s| s.ground) {
                     let c = Self::camera(world);
-                    target::move_ground_cursor(world, dir, dt * 60.0, c.target - c.eye);
+                    target::move_ground_cursor(world, dir, 2.0, c.target - c.eye);
                 }
             } else if let Some(down) = [(0x27, false), (0x28, true)].into_iter().find(|(k, _)| rep(&mut self.input, *k)).map(|(_, d)| d) {
                 if let Some(t) = target::party_pad_step(world, down) {
@@ -11137,17 +11550,6 @@ impl App {
         })
     }
 
-    /// The text field that has the keys, if any, for the on-screen keyboard: the chat line and the world's fields, the
-    /// login screen's, the character name entry.
-    fn text_field(&self) -> Option<osk::Field> {
-        match &self.phase {
-            Phase::World(w) => text_field_open(w).then_some(if w.typing { osk::Field::Chat } else { osk::Field::Other }),
-            Phase::Login { .. } => Some(osk::Field::Login),
-            Phase::Characters { screen: LobbyScreen::Create, .. } if self.creator_step == 5 && self.creator_world.is_none() => Some(osk::Field::Name),
-            _ => None,
-        }
-    }
-
     fn ui(&mut self, ctx: &egui::Context, window: [u32; 2]) {
         let mut action: Option<Box<dyn FnOnce(&mut App)>> = None;
         self.ui_drawn = false;
@@ -11155,6 +11557,9 @@ impl App {
         let size = self.cfg.ui_size(window);
         self.ui_k = (size[0] as f32 / window[0].max(1) as f32, size[1] as f32 / window[1].max(1) as f32);
         let k = self.ui_k;
+        if let Phase::World(w) = &self.phase {
+            w.lua.set_view(window, k);
+        }
         let screen_size = size;
         let ppp = ctx.pixels_per_point();
         if let Some(m) = &self.modern {
@@ -11169,7 +11574,7 @@ impl App {
         let notches = self.list_wheel.trunc();
         self.list_wheel -= notches;
         // Over a modern panel the pointer is egui's: the game's windows get no clicks or wheel there.
-        let mine = !(matches!(&self.phase, Phase::World(w) if w.modern) && (ctx.is_pointer_over_egui() || ctx.egui_is_using_pointer())) && !self.kb.hovered();
+        let mine = !(matches!(&self.phase, Phase::World(w) if w.modern) && (ctx.is_pointer_over_egui() || ctx.egui_is_using_pointer()));
         let input = ctx.input(|i| UiInput {
             wheel: if mine { notches as i32 } else { 0 },
             pointer: i.pointer.hover_pos().map(|p| (p.x * ppp * k.0, p.y * ppp * k.1 + ptr_dy)),
@@ -11688,6 +12093,7 @@ impl App {
                                 }
                             }
                             if let Some(u) = self.update_ui.as_mut() {
+                                u.zoom = if modern_title { 1.35 } else { 1.0 };
                                 let mut outs = vec![u.poll()];
                                 for ev in input.events.iter() {
                                     if let egui::Event::Key { key, pressed: true, .. } = ev {
@@ -11700,7 +12106,12 @@ impl App {
                                         lu.hover.set(true);
                                     }
                                 }
-                                u.draw(lu, sw, sh);
+                                let v = u.view(sw, sh);
+                                if modern_title {
+                                    self.modern.get_or_insert_with(|| modern::Modern::new(ctx)).update_window(ctx, [screen_size[0] as u32, screen_size[1] as u32], self.cfg.modern_scale, self.ui_k, &v);
+                                } else {
+                                    updater::UpdateUi::draw(lu, &v);
+                                }
                                 for out in outs {
                                     if let Some(a) = self.audio.as_mut() {
                                         for x in &out.sounds {
@@ -12231,41 +12642,7 @@ impl App {
                     lines.extend(world.lua.debug_lines());
                     // What holds the keys now (intermittent stuck-input reports).
                     let w = &*world;
-                    let open: Vec<&str> = [
-                        ("menu", w.menu.is_some()),
-                        ("confirm", w.confirm.is_some()),
-                        ("items", w.win.is_some()),
-                        ("action", w.action_menu.is_some()),
-                        ("config", w.config.is_some()),
-                        ("settings", w.settings.is_some()),
-                        ("mod window", w.lua.focused()),
-                        ("map", w.map.is_some()),
-                        ("fulllog", w.full_log.is_some()),
-                        ("magic", w.magic.is_some()),
-                        ("ability", w.ability.is_some()),
-                        ("cats", w.cats.is_some()),
-                        ("moogle", w.moogle.is_some()),
-                        ("mogdoor", w.mogdoor.is_some()),
-                        ("shop", shop::active(w)),
-                        ("trade", trade::active(w)),
-                        ("post", post::active(w)),
-                        ("loot", treasure::active(w)),
-                        ("synth", synth::active(w)),
-                        ("search", w.search.is_some()),
-                        ("inspect", w.inspect.up()),
-                        ("prompt", w.prompt.is_some()),
-                        ("typing", w.typing),
-                        ("log_active", w.log_active),
-                        ("ko_open", w.ko_open),
-                        ("raise", w.ko_offer == 2),
-                        ("event", event::active(w)),
-                        ("choice", event::choice(w).is_some()),
-                        ("palette", w.palette.0 != 0),
-                    ]
-                    .into_iter()
-                    .filter(|(_, on)| *on)
-                    .map(|(n, _)| n)
-                    .collect();
+                    let open = open_windows(w);
                     lines.push(format!("open [{}]  log_focus {} (active {})  locked {}  party_cursor {}", open.join(" "), w.log_focus, w.log_active, w.locked, w.party_cursor.is_some()));
                     lines.push(self.input.debug_state());
                     egui::Area::new(egui::Id::unique("status")).anchor(egui::Align2::LEFT_TOP, [8.0, 56.0]).interactable(false).show(ctx, |ui| {
@@ -12304,6 +12681,13 @@ impl App {
                     }
                 }
                 // What the Config windows and the settings screen hand to the app.
+                let keys = [world.cam_keys[1] as u32, world.cam_keys[0] as u32];
+                if keys != [self.cfg.cam_keys_x, self.cfg.cam_keys_y] {
+                    (self.cfg.cam_keys_x, self.cfg.cam_keys_y) = (keys[0], keys[1]);
+                    if let Err(e) = self.cfg.save() {
+                        log::warn!("config save: {e:#}");
+                    }
+                }
                 if let Some(kind) = world.want_settings.take() {
                     // Size lists come from the window, not the menu layout it is scaled to.
                     let mut s = settings::SettingsUi::open_kind(&self.cfg, window, kind);
@@ -12875,13 +13259,10 @@ impl App {
             lua::frame(w, self.game_ui.as_ref());
             // Keys the mods pressed: the key functions now, egui with this frame's input.
             for k in std::mem::take(&mut w.lua.synth) {
-                let (key, mods) = k.diks();
-                match k.down {
-                    None => mods.into_iter().chain(key).for_each(|d| self.input.tap(d)),
-                    Some(down) => key.into_iter().for_each(|d| self.input.set(d, down)),
-                }
-                self.synth_events.extend(k.egui_events());
+                self.synth_key(&k);
             }
+        } else {
+            self.lobby_mods_frame();
         }
         // Config 0022: the opening movie before the title, which loads behind it.
         if self.opening.is_some() {
@@ -12906,6 +13287,11 @@ impl App {
         let shoot = self.step_drive();
         let dt = self.last_frame.elapsed().as_secs_f32().min(0.1);
         self.last_frame = Instant::now();
+        // A Lua mod's cutscene speed: the whole frame runs faster while an event plays.
+        let dt = match &self.phase {
+            Phase::World(w) if w.opts.cutscene_speed > 1.0 && event::active(w) => (dt * w.opts.cutscene_speed).min(0.25),
+            _ => dt,
+        };
         self.key_functions(dt);
         perf::timed(|| "movement".into(), || self.update_movement(dt));
         if matches!(&self.phase, Phase::Characters { screen: LobbyScreen::Create, .. }) && (self.creator_simple || self.creator.as_ref().is_some_and(|c| c.wants().is_some())) && self.lobby_fade.next.is_none() {
@@ -12928,63 +13314,33 @@ impl App {
         // egui-winit passes the texture limit in its first input only; lost, egui assumes 2048 and the modern atlases
         // (status_0@2x is 2184 wide) fail its debug check.
         raw.max_texture_side = Some(gfx.gpu.device.limits().max_texture_dimension_2d as usize);
+        if let Phase::World(w) = &mut self.phase {
+            w.lua.synth_enter = self.synth_events.iter().any(|e| matches!(e, egui::Event::Key { key: egui::Key::Enter, pressed: true, .. }));
+        }
+        raw.events.append(&mut self.synth_events);
         // A game controller through retail's pad word and stick bytes (client/gamepad.rs); the windows get the keys its
         // confirm / cancel / menu / d-pad slots stand for.
         let field = matches!(self.phase, Phase::World(_));
         let menu = self.input.window_active() || matches!(&self.phase, Phase::World(w) if w.prompt.is_some());
-        // Retail's macro gate (FUN_101a33e0): no window has the focus but the action menu, and no target prompt.
-        let macros = matches!(&self.phase, Phase::World(w) if !window_over_actions(w) && !w.typing && !w.ui_hidden && w.prompt.is_none() && w.macros.is_some());
         let palette = matches!(&self.phase, Phase::World(w) if w.palette.0 != 0);
         // A window has the keys (not the chat line): LB / RB turn its tabs.
         let tabs = match &self.phase {
             Phase::World(w) => window_over_actions(w) && !w.typing,
             _ => true,
         };
-        // A key, a click or typed text: the keyboard and mouse are the last devices, not the pad.
-        if raw.events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, .. } | egui::Event::PointerButton { pressed: true, .. } | egui::Event::Text(_))) {
-            self.pad_last = false;
-        }
-        // A keyboard over a field that is gone closes before it takes another frame of the pad.
-        let text = self.text_field();
-        if text.is_none() {
-            self.kb.close();
-        }
-        let ctx = gamepad::Ctx { menu, macros, palette, tabs, field, text: text.is_some(), osk: self.kb.is_open() };
+        let keyboard = matches!(&self.phase, Phase::World(w) if w.swkbd.is_some());
+        let ctx = gamepad::Ctx { menu, palette, tabs, field, keyboard };
         let pad = self.gamepad.poll(&self.cfg, gfx.window.has_focus(), ctx, dt);
-        self.pad_last |= pad.pressed;
         self.input.set_pad(pad.pad);
-        // FUN_101a2e80: a trigger press toggles its palette, the other trigger swaps to the other one.
-        if pad.palette != 0
-            && let Phase::World(w) = &mut self.phase
-        {
-            let n = pad.palette;
-            if w.palette.0 == n {
-                (w.palette.0, w.palette.1, w.palette.2, w.pad_palette) = (0, 0, 0, false);
-            } else {
-                (w.palette.0, w.palette.1, w.pad_palette) = (n, n, true);
-            }
-        }
         self.input.set_stick(pad.stick);
         if pad.pressed && !self.dragging && !self.left_down {
             self.mouse.visible = false;
         }
-        // The on-screen keyboard: last frame's clicks, then the pad's keys (it takes them all while up).
-        raw.events.append(&mut self.kb_events);
-        if ctx.osk {
-            for ev in &pad.events {
-                raw.events.extend(self.kb.pad_event(ev));
-            }
-        } else {
-            raw.events.extend(pad.events);
+        raw.events.extend(pad.events);
+        // What the software keyboard typed, as the keys a field reads.
+        if let Phase::World(w) = &mut self.phase {
+            raw.events.append(&mut w.swkbd_out);
         }
-        let rose = self.kb_edge.update(text.is_some(), self.pad_last);
-        if let Some(f) = text
-            && (rose || (pad.keyboard && !self.kb.is_open()))
-            && osk::request(f) == osk::Raised::Builtin
-        {
-            self.kb.open(f);
-        }
-        raw.events.append(&mut self.synth_events);
         let phase = self.phase_name();
         let mut script_shot = None;
         if let Some(sc) = &mut self.drive.input {
@@ -12996,7 +13352,7 @@ impl App {
             let (events, shot, action) = sc.next(phase, &probes, gfx.egui_ctx.pixels_per_point());
             // Through the Lua mods first, as the window's keys and mouse go.
             let events = match &mut self.phase {
-                Phase::World(w) => lua::input::drive_events(w, events, gfx.window.scale_factor()),
+                Phase::World(w) => lua::input::drive_events(w, events, gfx.egui_ctx.pixels_per_point() as f64),
                 _ => events,
             };
             for e in &events {
@@ -13095,6 +13451,12 @@ impl App {
                 }
             }
         }
+        // A Lua mod's screenshot (client.screenshot), under the screenshots folder.
+        if let Phase::World(w) = &mut self.phase
+            && let Some(n) = w.lua.shot.take()
+        {
+            w.shot_request = Some(self.cfg.ffxi_dir().join("screenshots").join(n));
+        }
         // A Print Screen shot from the game (key function 0x55).
         let mut game_shot = false;
         if script_shot.is_none()
@@ -13111,12 +13473,7 @@ impl App {
         let ctx = gfx.egui_ctx.clone();
         self.update_netwait(dt);
         let before = self.ui_snap();
-        let mut output = perf::timed(|| "egui".into(), || ctx.run_ui(raw, |ui| {
-            self.ui(ui.ctx(), size);
-            // The on-screen keyboard over everything; its clicks type next frame.
-            let typed = self.kb.show(ui.ctx());
-            self.kb_events.extend(typed);
-        }));
+        let mut output = perf::timed(|| "egui".into(), || ctx.run_ui(raw, |ui| self.ui(ui.ctx(), size)));
         self.egui_deltas.append(std::mem::take(&mut output.textures_delta));
         let after = self.ui_snap();
         if let (Some(s), Some(a)) = (Self::ui_sound(&before, &after), self.audio.as_mut()) {
@@ -13132,6 +13489,43 @@ impl App {
             log::info!("clipboard: copied {} chars", t.chars().count());
             platform.commands.push(egui::OutputCommand::CopyText(t));
         }
+        // Lua mods' requests: the window moved, sized or focused, the clipboard read; the window's place and focus.
+        let mut mod_size = None;
+        if let Phase::World(w) = &mut self.phase {
+            for r in std::mem::take(&mut w.lua.win_reqs) {
+                if let Some((x, y)) = r.pos {
+                    gfx.window.set_outer_position(winit::dpi::PhysicalPosition::new(x, y));
+                }
+                mod_size = r.size.or(mod_size);
+                if r.focus {
+                    gfx.window.focus_window();
+                }
+                if let Some(t) = r.top {
+                    gfx.window.set_window_level(if t { winit::window::WindowLevel::AlwaysOnTop } else { winit::window::WindowLevel::Normal });
+                }
+                if let Some(m) = r.minimised {
+                    gfx.window.set_minimized(m);
+                }
+                if let Some(f) = r.fullscreen {
+                    gfx.window.set_fullscreen(f.then_some(winit::window::Fullscreen::Borderless(None)));
+                }
+                if let Some(b) = r.border {
+                    gfx.window.set_decorations(b);
+                }
+                if let Some(p) = r.protected {
+                    gfx.window.set_content_protected(p);
+                }
+            }
+            if std::mem::take(&mut w.lua.paste_wanted) {
+                w.lua.pasted = Some(gfx.egui_state.clipboard_text().unwrap_or_default());
+            }
+            let pos = gfx.window.outer_position().ok().map(|p| (p.x, p.y));
+            w.lua.set_window_state(pos, gfx.window.has_focus());
+        }
+        // A size asked for between frames, as the Settings' sizes are (request_size).
+        if let Some((cw, ch)) = mod_size {
+            self.size_pin.set(Some((winit::dpi::PhysicalSize::new(cw, ch), 0)));
+        }
         // The chat menu's Paste: the clipboard read here, given to the next frame as a paste.
         if let Phase::World(w) = &mut self.phase
             && std::mem::take(&mut w.paste_request)
@@ -13140,9 +13534,24 @@ impl App {
             gfx.egui_state.egui_input_mut().events.push(egui::Event::Paste(t));
         }
         if self.ui_drawn {
-            platform.cursor_icon = if self.cfg.tool("0021") == 0 && !self.kb.hovered() { egui::CursorIcon::None } else { egui::CursorIcon::Default };
+            platform.cursor_icon = if self.cfg.tool("0021") == 0 { egui::CursorIcon::None } else { egui::CursorIcon::Default };
         } else {
             self.mouse.invalidate();
+        }
+        // The open chat line takes an IME (ours): its caret places the candidate window; closed, the IME is off.
+        if let Phase::World(w) = &self.phase
+            && w.typing
+            && platform.ime.is_none()
+        {
+            let (ppp, k) = (ctx.pixels_per_point(), self.ui_k);
+            let caret = if w.modern {
+                self.modern.as_ref().and_then(|m| m.ime_caret.take())
+            } else {
+                w.ime_at.take().map(|r| egui::Rect::from_min_size(egui::pos2(r[0] / k.0 / ppp, r[1] / k.1 / ppp), egui::vec2(r[2] / k.0 / ppp, r[3] / k.1 / ppp)))
+            };
+            if let Some(rect) = caret {
+                platform.ime = Some(egui::output::IMEOutput { purpose: egui::IMEPurpose::Normal, rect, cursor_rect: rect, should_interrupt_composition: false });
+            }
         }
         gfx.egui_state.handle_platform_output(&gfx.window, platform);
         let jobs = ctx.tessellate(output.shapes, output.pixels_per_point);
@@ -13304,6 +13713,8 @@ impl App {
             doors::moves(w, &gfx.gpu);
             lifts::moves(w, &gfx.gpu);
             let invis: HashMap<u32, f32> = w.actors.keys().filter_map(|id| invisible_alpha(w, *id).map(|k| (*id, k))).collect();
+            // Looks Lua mods set (render.entity).
+            let looks = w.lua.looks();
             // Mog House furniture loaded for this scene goes up.
             if w.renderer.is_some()
                 && let Some(l) = w.furniture.ready.take()
@@ -13341,8 +13752,10 @@ impl App {
             }
             let lines = layout::overlay(w);
             let ceiling = !w.layout.as_ref().is_some_and(|l| l.view == 0);
+            let shapes = lua::world_shapes(w);
             if let Some(r) = w.renderer.as_mut() {
                 r.set_lines(&gfx.gpu, lines);
+                r.set_world_shapes(&gfx.gpu, shapes);
                 r.show_link999(&gfx.gpu, ceiling);
             }
             let new_lamps = if w.renderer.as_ref().is_some_and(|r| r.ready(&gfx.gpu)) { w.lamps.update(&mut w.effects, w.ground.as_ref(), self.cfg.lamp_lights) } else { None };
@@ -13715,7 +14128,7 @@ impl App {
                     }
                     a.find_cache = cache.take();
                     let t = a.blend / a.blend_len;
-                    a.scale = a.event_scale.unwrap_or_else(|| ch.scale(size));
+                    a.scale = a.event_scale.unwrap_or_else(|| ch.scale(size)) * looks.get(id).and_then(|l| l.scale).unwrap_or(1.0);
                     // The rest pose's mesh top, once (stub models, plates without attach points).
                     if a.top_key.is_empty() {
                         a.rest = crate::dat::character::pose(&ch.skeleton, &[]);
@@ -13819,7 +14232,7 @@ impl App {
                         drop: if matches!(status, 5 | 0x55) { 1.0 / a.scale.max(1e-3) } else { 0.0 },
                         limits: ch.skeleton.look_limits,
                     });
-                    let drawn = !a.vanished() && !hidden.contains(id) && !(*id == w.my_id && w.camst.self_alpha <= 0.0);
+                    let drawn = !a.vanished() && !hidden.contains(id) && !(*id == w.my_id && w.camst.self_alpha <= 0.0) && !looks.get(id).is_some_and(|l| l.hidden);
                     let bx = ch.skeleton.boxes.get(box_index(status)).or(ch.skeleton.boxes.first()).copied();
                     // FUN_100c63d0: past the draw distance by its box's farthest corner, neither drawn nor a target.
                     if r.clip[0] > 0.0 && *id != w.my_id && bx.is_some_and(|b| box_depth(cview, model, &box_corners(b)) > r.clip[0]) {
@@ -13837,7 +14250,7 @@ impl App {
                         && let Some((rect, z)) = box_on_screen(cview, cproj, model, &box_corners(b))
                     {
                         visible.insert(*id);
-                        if w.entities.get(id).is_some_and(|e| e.no_occlusion) {
+                        if !w.opts.occlusion || w.entities.get(id).is_some_and(|e| e.no_occlusion) {
                             r.occl.results.remove(id);
                         } else if *id != w.my_id {
                             r.occl.query(*id, rect, z);
@@ -13853,6 +14266,11 @@ impl App {
                         g.alpha = g.alpha.min(*k);
                     }
                     g.tint = a.rgb.map(|c| c.max(0.0) / actmotion::OPAQUE);
+                    if let Some(l) = looks.get(id) {
+                        g.alpha = g.alpha.min(l.alpha.unwrap_or(1.0));
+                        let t = l.tint.unwrap_or([1.0; 3]);
+                        g.tint = [g.tint[0] * t[0], g.tint[1] * t[1], g.tint[2] * t[2]];
+                    }
                     g.hidden_weps = wepfx::mask(&a.wep_hide);
                     g.shine = shines.get(id).copied();
                     // FUN_100d6d30: TFACTOR alpha (0x80 - model colour alpha) & 0xff; an opaque model adds nothing.
@@ -13974,6 +14392,7 @@ impl App {
                 r.set_camera_list(&gfx.gpu, list, far);
                 // Config 0017: bump mapping's lighting (one eased light, vertex fog) or the two-light model; never in 182.
                 r.bump_mode = self.cfg.tool("0017") != 0 && w.zone != Some(182);
+                (r.mod_clear, r.mod_ambient, r.wireframe) = (w.opts.clear, w.opts.ambient, w.opts.wireframe);
                 // Config 0011: the animated meshes' sway this frame (render/sway.rs).
                 let steps = match self.cfg.tool("0011") {
                     0 => 1,
@@ -14062,6 +14481,8 @@ impl App {
                     }
                     w.effects.filter = (w.game.get(0x92) as u32, matches!(w.my_motion.status, 1 | 3));
                     w.effects.weapon_effect_off = w.game.get(0xbe) == 1;
+                    // Misc.'s weather density (LAB_101aa650 case 0x3b: DAT_10456a68 = the value as a float).
+                    w.effects.weather_density = if w.weather_forced { 1.0 } else { w.game.get(0x3b) as f32 };
                     w.effects.reg.aspect = aspect;
                     perf::timed(|| "effects".into(), || w.effects.tick(&f, &fa));
                     event::camera_frame(&mut w.screen, &w.effects, &fa, f.dt);
@@ -14080,14 +14501,25 @@ impl App {
                     }
                     eg.set_lights(&r.lights);
                     eg.set_light(r.lighting.as_ref().map(|l| (l.dir, l.diffuse, l.ambient)));
+                    eg.set_depth(Some((&scene_depth, camera.proj(aspect))));
                     perf::timed(|| "effects upload".into(), || eg.update(&gfx.gpu, &mut encoder, &mut w.effects, &f));
                     mark!("fx update");
                     let (fog_color, fog) = r.lighting.as_ref().map_or(([0.0; 3], [150.0, 600.0]), |l| (l.fog.to_array(), [l.fog_start, l.fog_end]));
                     eg.draw(&gfx.gpu, &mut encoder, (&scene_raw, &scene_depth, bg), Some(&scene_tex), &w.effects, (camera.proj(aspect), camera.view(), camera.eye), [crate::render::NEAR, crate::render::FAR], fog_color, fog);
                     mark!("fx draw");
                 }
-                // Layout mode's overlay over the finished scene.
+                // The Lua mods' world shapes, then layout mode's overlay over the finished scene.
+                r.render_world_shapes(&mut encoder, &scene_raw, &scene_depth);
                 r.render_lines(&mut encoder, &scene_raw);
+                // The mods' post-process passes over the scene, under the fades.
+                let want = w.lua.shaders();
+                if !want.is_empty() || self.post_fx.is_some() {
+                    let post = self.post_fx.get_or_insert_with(|| crate::render::postfx::PostFx::new(&gfx.gpu, scene_fmt));
+                    for (m, id, e) in post.sync(&gfx.gpu, &want) {
+                        w.lua.shader_error(&m, &id, &e);
+                    }
+                    post.draw(&gfx.gpu, &mut encoder, &scene_tex, &scene_raw, &scene_depth, w.started.elapsed().as_secs_f32(), &want);
+                }
                 // A zone change's held frame under the fade to black (the camera has moved on).
                 if let (Some(_), Some(fx)) = (w.zone_hold.filter(|h| h.captured), &self.screen_fx_zone) {
                     fx.draw_held(&gfx.gpu, &mut encoder, &scene_raw, 1.0);
@@ -14095,7 +14527,7 @@ impl App {
                 // Event crossfade, the effect flash and feedback blur, and the fades over the scene, under the 2D layer;
                 // the zoning fade as a multiply too.
                 let (cross, m) = (w.screen.cross_alpha(), w.screen.multiply().map(|c| c * (1.0 - w.fade)));
-                let (flash, blur) = (w.screen.flash(), w.screen.blur());
+                let (flash, blur) = (w.screen.flash(w.effects.flash), w.screen.blur());
                 if cross.is_some() || flash.is_some() || blur.is_some() || m.iter().any(|c| (c - 1.0).abs() > 0.005) {
                     let fx = self.screen_fx_world.get_or_insert_with(|| crate::render::screenfx::ScreenFx::new(&gfx.gpu, scene_fmt));
                     fx.draw_all(&gfx.gpu, &mut encoder, &scene_raw, Some(&scene_tex), bg, cross, flash, blur, m);
@@ -14240,6 +14672,46 @@ impl App {
             gfx.egui_renderer.free_texture(id);
         }
         textures.clear();
+        // A mod's recording: started or stopped as asked, ended with its mod or a new size, a frame copied for it.
+        if let Phase::World(w) = &mut self.phase
+            && let Some((owner, req)) = w.lua.record_req.take()
+        {
+            // Only the mod recording ends or replaces its recording.
+            if self.recorder.as_ref().is_none_or(|r| r.owner == owner) {
+                if let Some(r) = self.recorder.take() {
+                    r.stop();
+                }
+                if let Some((path, fps)) = req {
+                    let started = if gfx.config.usage.contains(wgpu::TextureUsages::COPY_SRC) {
+                        record::Recorder::start(&gfx.gpu, size, gfx.config.format, path, fps, owner.clone())
+                    } else {
+                        Err(anyhow::anyhow!("this window cannot be copied for recording"))
+                    };
+                    match started {
+                        Ok(r) => self.recorder = Some(r),
+                        Err(e) => {
+                            log::warn!("record: {e:#}");
+                            w.chat.push_colour(format!("{owner}: client.record: {e:#}"), lua::ERROR);
+                        }
+                    }
+                }
+            }
+        }
+        let ids = match &self.phase {
+            Phase::World(w) => w.lua.mod_ids(),
+            _ => self.lobby_mods.mod_ids(),
+        };
+        if self.recorder.as_ref().is_some_and(|r| r.size != size || !ids.contains(&r.owner))
+            && let Some(r) = self.recorder.take()
+        {
+            r.stop();
+        }
+        if let Some(r) = self.recorder.as_mut() {
+            r.copy(&mut encoder, &frame.texture);
+        }
+        if let Phase::World(w) = &self.phase {
+            *w.lua.recording.borrow_mut() = self.recorder.as_ref().map(|r| (r.owner.clone(), r.path.clone()));
+        }
         let row = (size[0] * 4).div_ceil(256) * 256;
         let capture = (shoot && gfx.config.usage.contains(wgpu::TextureUsages::COPY_SRC)).then(|| {
             let buf = gfx.gpu.device.create_buffer(&wgpu::BufferDescriptor {
@@ -14261,6 +14733,9 @@ impl App {
         perf::timed(|| "submit".into(), || gfx.gpu.queue.submit(extra.into_iter().chain([encoder.finish()])));
         if let Some(t) = gpu_time.as_mut() {
             t.after_submit();
+        }
+        if let Some(r) = self.recorder.as_mut() {
+            r.after_submit(&gfx.gpu);
         }
         self.gpu_time = gpu_time;
         if let (Some(eg), Phase::World(w)) = (&mut self.effects_gpu, &mut self.phase) {
@@ -14351,8 +14826,10 @@ impl ApplicationHandler for App {
         // No game files yet: the first-start window is a fixed size, whatever the config says.
         let bootstrap = firstrun::needed(&self.cfg.ffxi_dir());
         let [ww, wh] = if bootstrap { firstrun::WINDOW } else { self.cfg.window_size() };
-        // Test runs are always windowed.
-        let mode = if self.drive.driven() || bootstrap { 1 } else { self.cfg.window_mode() };
+        // Test runs are windowed, unless their config puts them borderless on a named monitor (mode 3), which keeps
+        // them off the screen the user works on.
+        let test_monitor = self.drive.driven() && self.cfg.window_mode() == 3 && !self.cfg.monitor.is_empty();
+        let mode = if bootstrap || (self.drive.driven() && !test_monitor) { 1 } else { self.cfg.window_mode() };
         let monitor = pick_monitor(&self.cfg.monitor, event_loop.primary_monitor(), event_loop.available_monitors(), [ww, wh]);
         let full = fullscreen(mode, [ww, wh], monitor.clone());
         let mut attrs = Window::default_attributes()
@@ -14615,6 +15092,52 @@ impl ApplicationHandler for App {
     }
 }
 
+/// The windows open now by name, for F12 and the mods (ui.native.windows).
+fn open_windows(w: &World) -> Vec<&'static str> {
+    [
+        ("menu", w.menu.is_some()),
+        ("confirm", w.confirm.is_some()),
+        ("items", w.win.is_some()),
+        ("action", w.action_menu.is_some()),
+        ("config", w.config.is_some()),
+        ("settings", w.settings.is_some()),
+        ("mod window", w.lua.focused()),
+        ("map", w.map.is_some()),
+        ("fulllog", w.full_log.is_some()),
+        ("magic", w.magic.is_some()),
+        ("ability", w.ability.is_some()),
+        ("cats", w.cats.is_some()),
+        ("moogle", w.moogle.is_some()),
+        ("mogdoor", w.mogdoor.is_some()),
+        ("shop", shop::active(w)),
+        ("auction", w.auction.is_some()),
+        ("trade", trade::active(w)),
+        ("post", post::active(w)),
+        ("loot", treasure::active(w)),
+        ("synth", synth::active(w)),
+        ("search", w.search.is_some()),
+        ("inspect", w.inspect.up()),
+        ("prompt", w.prompt.is_some()),
+        ("typing", w.typing),
+        ("log_active", w.log_active),
+        ("ko_open", w.ko_open),
+        ("raise", w.ko_offer == 2),
+        ("event", event::active(w)),
+        ("choice", event::choice(w).is_some()),
+        ("palette", w.palette.0 != 0),
+        ("status", w.status.is_some()),
+        ("missions", w.missions.is_some()),
+        ("quests", w.quests.is_some()),
+        ("keyitems", w.keyitems.is_some()),
+        ("linkshell", w.linkshell.is_some()),
+        ("helpdesk", w.helpdesk.is_some()),
+    ]
+    .into_iter()
+    .filter(|(_, on)| *on)
+    .map(|(n, _)| n)
+    .collect()
+}
+
 /// The monitor a full-screen window goes on: the configured one by name, else the current one (Wayland often
 /// can't say: None), else the first matching `size`, else the first.
 fn pick_monitor(preferred: &str, current: Option<winit::monitor::MonitorHandle>, all: impl Iterator<Item = winit::monitor::MonitorHandle>, size: [u32; 2]) -> Option<winit::monitor::MonitorHandle> {
@@ -14758,6 +15281,15 @@ pub fn run(cfg: Config, drive: Drive) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Hide PC armour: slots 1..5 to the defaults, face, weapons and a model look kept.
+    #[test]
+    fn hide_armour_keeps_face_and_weapons() {
+        let tbl = [0x0105, 0x1123, 0x2234, 0x3345, 0x4456, 0x5567, 0x6678, 0x7789, 0x889a];
+        assert_eq!(hide_armour(tbl), [0x0105, 0x1000, 0x2008, 0x3008, 0x4008, 0x5008, 0x6678, 0x7789, 0x889a]);
+        let model = [0x0123, 0, 0, 0, 0, 0, 0, 0, 0xFFFF];
+        assert_eq!(hide_armour(model), model);
+    }
 
     /// A new install's login form opens on Server Type Private.
     #[test]

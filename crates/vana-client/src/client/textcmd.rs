@@ -248,6 +248,11 @@ fn table() -> &'static Table {
     &commands().map
 }
 
+/// A game command's name (without the slash), as /item or /ma.
+pub(super) fn is_game_command(name: &str) -> bool {
+    table().contains_key(format!("/{name}").as_str())
+}
+
 /// FUN_10076830: tokens split at spaces (and tabs outside typed lines); a token opening with a quote runs to the
 /// matching one, and the quotes go (FUN_10076a70: only when the last char matches the first). At most 17; the
 /// 17th takes the rest.
@@ -534,8 +539,7 @@ pub(super) fn status_gate(w: &mut World, mask: u8) -> bool {
     }
 }
 
-/// FUN_101cc0d0(mask, 1): the check alone, no line. The costume bit (0x40, entity +0x120 bit 5, line 0xb1) is not
-/// tracked.
+/// FUN_101cc0d0(mask, 1): the check alone, no line. Order 0x10, 0x20, 0x01, 0x02, 0x04, 0x40, 0x08, 0x80.
 pub(super) fn gate_line(w: &World, mask: u8) -> Option<usize> {
     let s = w.my_motion.status;
     let line = if mask & 0x10 != 0 && matches!(s, 0x21 | 7) {
@@ -548,6 +552,9 @@ pub(super) fn gate_line(w: &World, mask: u8) -> Option<usize> {
         0x4d
     } else if mask & 0x04 != 0 && s == 0x2c {
         0x4e
+    } else if mask & 0x40 != 0 && w.costume.on {
+        // FUN_101cc040: in costume (player +0x120 bit 5).
+        0xb1
     } else if mask & 0x08 != 0 && w.room_flag {
         0x44
     } else if mask & 0x80 != 0 && w.myroom.is_some_and(|r| r.map == 0x2d4) {
@@ -571,7 +578,7 @@ fn state_gate(w: &mut World, flags: u16) -> bool {
     }
     let s = w.my_motion.status;
     let busy = busy(w);
-    let state = if w.dead() { 0x20 } else { 0 } | if matches!(s, 5 | 0x55) { 0x40 } else { 0 } | if busy { 0x80 } else { 0 };
+    let state = if w.dead() && !w.opts.dead_commands { 0x20 } else { 0 } | if matches!(s, 5 | 0x55) { 0x40 } else { 0 } | if busy { 0x80 } else { 0 };
     // Any disallowed state refuses; the line goes by the states held, first match.
     if state & !flags != 0 {
         if state & 0x20 != 0 {
@@ -618,7 +625,12 @@ pub fn run(w: &mut World, line: &str, mode: Mode) {
     }
     // The mods' typed-line filters may rewrite or block it (once: not again when a sub-target prompt completes it).
     let Some(filtered) = (if mode == Mode::SubTarget { Some(line.to_string()) } else { super::lua::filter_typed(w, line) }) else { return };
-    let line = filtered.trim();
+    run_unfiltered(w, &filtered, mode);
+}
+
+/// A line past the mods' dispatch and typed filters: a mod's own action lines start here.
+pub(super) fn run_unfiltered(w: &mut World, line: &str, mode: Mode) {
+    let line = line.trim();
     if line.is_empty() {
         return;
     }
@@ -788,6 +800,7 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
                 && let Some(bt) = w.battle.clone()
             {
                 let colour = bt.colour_in(0xce, &w.game);
+                let text = super::expand_phrases(w, &text);
                 w.chat.push_colour(text, colour);
             }
             Ok(())
@@ -2664,7 +2677,8 @@ fn recruitlist(w: &mut World, args: &[String]) -> Done {
 
 /// FUN_1007d9c0 (/partyrequestcmd, /prcmd): add [target] asks to join that player's party (c2s 0x11C kind 0, group 10
 /// 0x76), remove [target] takes it back (kind 1); someone not here is looked up by name. Refusals 7 0xc4 / 0xc5 (on
-/// our blacklist) / 0xc6 (blacklist not in yet). Not done: the own actor's +0x124 bits 22 / 23 (0xc6).
+/// our blacklist) / 0xc6 (blacklist not in yet; or we are /anon or /away: own actor +0x124 bit 23 / 22, from 0x037
+/// u32 @0x28 bits 5 / 7, asm 0x1007da8b..0x1007dab7; the name-lookup path does not test them).
 fn prcmd(w: &mut World, args: &[String], mode: Mode) -> Done {
     let kind = match args.get(1).map(String::as_str) {
         Some("add") => 0,
@@ -2679,7 +2693,11 @@ fn prcmd(w: &mut World, args: &[String], mode: Mode) -> Done {
         return Ok(());
     };
     let name = if id == w.my_id { w.name.clone() } else { w.entities.get(&id).map(|e| e.name.clone()).unwrap_or_default() };
+    // Anonymous (bit 5) or Away (bit 7): "You were unable to make a request to join." and nothing is sent. Checked
+    // here before the blacklist *(inf: the order between the two tests, and that remove skips it)*.
+    let anon_away = kind == 0 && w.self_flags & (1 << 5 | 1 << 7) != 0;
     match if kind == 0 { super::partyreq::blacklisted(w, &name) } else { 0 } {
+        _ if anon_away => refuse(w, 0xc6),
         1 => refuse(w, 0xc5),
         2 => refuse(w, 0xc6),
         _ if (kind == 0 && id == w.my_id) || id >> 24 == 1 => refuse(w, 0xc4),

@@ -132,7 +132,10 @@ impl Inventory {
     pub fn slots_of(&self, container: u8) -> Vec<Slot> {
         self.slots
             .range((container, 0)..=(container, 255))
-            .map(|(&(c, i), &(id, count))| Slot { index: i, id, count, equipped: self.equip.contains(&Some((c, i))), equipped_ex: false })
+            .map(|(&(c, i), &(id, count))| {
+                let equipped = self.equip.contains(&Some((c, i)));
+                Slot { index: i, id, count, equipped, equipped_ex: equipped && self.ext.get(&(c, i)).is_some_and(charged_ready) }
+            })
             .collect()
     }
 
@@ -760,6 +763,22 @@ pub fn info_source(w: &World) -> Option<(u16, Option<[u8; 24]>, u8, u8, bool, u8
     Some((slot.id, w.inv.ext.get(&(container, slot.index)).copied(), container, slot.index, slot.equipped, mode))
 }
 
+/// The open item list for mods (ui.native.list): its container, rows, cursor and top.
+pub(in crate::client) fn native_list(w: &World) -> Option<(u8, Vec<Slot>, usize, usize)> {
+    match w.win.as_ref()? {
+        Win::Items { store: Some(b), .. } if b.on_bank || b.read_only => Some((b.bank, store_rows(w, b.bank), b.scroll + b.cursor, b.scroll)),
+        Win::Items { store: Some(b), scroll, cursor, .. } => Some((b.side, store_rows(w, b.side), scroll + cursor, *scroll)),
+        Win::Items { scroll, cursor, direct, .. } => Some((INVENTORY, listed(w, *direct), scroll + cursor, *scroll)),
+        Win::Equip(_) => None,
+    }
+}
+
+/// FUN_100febe0 (MODLOG's FUN_100fbc70; the item id is not read): the extdata is the charged-item layout (byte 0 == 1,
+/// use times at +4 / +8) and byte 3 bit 0x40 is set (ready to use; Windower's "usable").
+pub(super) fn charged_ready(e: &[u8; 24]) -> bool {
+    e[0] == 1 && e[3] & 0x40 != 0
+}
+
 /// The item's target prompt is up (SubThen::Item).
 pub(super) fn item_prompt(w: &World) -> bool {
     matches!(w.prompt.as_ref().map(|p| &p.then), Some(super::target::SubThen::Item { .. }))
@@ -771,13 +790,20 @@ pub(super) fn item_prompt(w: &World) -> bool {
 pub(super) fn list_rows(w: &World, info: &ItemCache, shown: &[(u8, Slot)], direct: bool) -> Vec<crate::inventory::Row> {
     let slots: Vec<Slot> = shown.iter().map(|(_, s)| s.clone()).collect();
     let mut rows = build_rows(&slots, info, false);
+    // FUN_101f06e0 rule 4: the equipped linkshell / linkshell 2 from this slot of this bag is green, after the
+    // equipped rules and before the yellow / white ones.
+    for (r, (c, s)) in rows.iter_mut().zip(shown) {
+        if matches!(r.tint, crate::inventory::TINT_FLAGGED | crate::inventory::TINT_WHITE) && linkshell_row(w, *c, s.index) {
+            r.tint = crate::inventory::TINT_EQUIPPED;
+        }
+    }
     for (r, _) in rows.iter_mut().zip(shown).filter(|(_, (c, _))| *c == TEMP) {
         (r.tint, r.count) = (TINT_TEMP, None);
     }
     if direct {
         for (r, s) in rows.iter_mut().zip(&slots).skip(temp_rows(shown)) {
             let gear = info.item(s.id).is_some_and(|it| matches!(it.item_type, 4 | 5));
-            let ready = w.inv.ext.get(&(INVENTORY, s.index)).is_some_and(|e| e[0] == 1 && u16::from_le_bytes([e[2], e[3]]) & 0x4000 != 0);
+            let ready = w.inv.ext.get(&(INVENTORY, s.index)).is_some_and(charged_ready);
             r.tint = match (gear, ready) {
                 (false, _) => crate::inventory::TINT_FLAGGED,
                 (true, true) => 0x8040_7090,
@@ -1226,8 +1252,8 @@ pub fn open_bin(w: &mut World, from_menu: bool) -> bool {
     true
 }
 
-/// FUN_101daf70(c, need_satchel, nomad): Satchel, Sack, Case, the wardrobes. Gate 0x44 (the costume bit and the job
-/// change cooldown are not tracked); a missing Satchel (ItemNum < 30) fails silently. At the moogle in our own Mog
+/// FUN_101daf70(c, need_satchel, nomad): Satchel, Sack, Case, the wardrobes. Gate 0x44 (the job
+/// change cooldown is not tracked); a missing Satchel (ItemNum < 30) fails silently. At the moogle in our own Mog
 /// House of a residential zone (with the moogle's line 0x2e), or by a nomad moogle in a MogZoneFlag zone; else the
 /// Safe / Storage / Locker rows stay grey. Opens anywhere.
 pub fn open_daf70(w: &mut World, c: u8, need_satchel: bool, nomad: bool) -> bool {
@@ -1281,8 +1307,13 @@ pub fn open_dae10(w: &mut World, c: u8, nomad: bool) -> bool {
     true
 }
 
+/// FUN_100e9730 for n = 1 / 2: the row (bag `c`, slot `index`) holds the equipped linkshell or linkshell 2
+/// (s2c 0x0E0 @5 slot / @6 bag, FUN_100ea780).
+pub(super) fn linkshell_row(w: &World, c: u8, index: u8) -> bool {
+    (1..=2).any(|n| super::chatctrl::ls_on(w, n) && w.linkshells[n] == (index, c))
+}
+
 /// FUN_101db220 for a row of the bank side (`bank_side`) or the inventory side; the first rule that applies wins.
-/// Not done: the equipped linkshell (7, s2c 0x0E0).
 pub(super) fn tint(w: &World, info: &ItemCache, st: &Storage, bank_side: bool, s: &Slot) -> u32 {
     judge(w, info, st, bank_side, s).0
 }
@@ -1327,10 +1358,14 @@ pub(super) fn judge(w: &World, info: &ItemCache, st: &Storage, bank_side: bool, 
         return (TINT_DIM, Some("A mannequin wears it."));
     }
     let equipped = (own == INVENTORY || wardrobe(own)) && w.inv.equip.contains(&Some((own, s.index)));
+    // Rule 7 (asm 0x101db46a..0x101db4e6): from bags 0 / 5 / 6 / 7, not into a wardrobe, the equipped linkshell or
+    // linkshell 2 is grey (the item lists draw it green; here it may not move).
+    let shell = matches!(own, 0 | 5 | 6 | 7) && !wardrobe(dest) && linkshell_row(w, own, s.index);
     let gear = it.as_ref().is_some_and(|it| it.level != 0 && it.races != 0);
     let moogle_only = |c: u8| matches!(c, 1 | 2 | 4 | 9);
     let why = match () {
         _ if equipped => Some("Equipped: take it off first."),
+        _ if shell => Some("Your equipped linkshell: unequip it first."),
         _ if wardrobe(dest) && !gear => Some("Only equipment goes in a Mog Wardrobe."),
         _ if dest == 2 && furniture => Some("Furniture does not go in Storage."),
         _ if !st.at_moogle && (moogle_only(own) || moogle_only(dest)) => Some("Only by the moogle."),
@@ -1411,7 +1446,8 @@ fn store_key(w: &mut World, info: &ItemCache, key: egui::Key, page: bool, alt: b
         }
         b.qty = Some(q);
         match key {
-            K::ArrowUp | K::ArrowDown | K::ArrowRight | K::ArrowLeft => w.sounds.push(Ui::Cursor as u32),
+            // FUN_1013a6c0 / FUN_10140bc0 play nothing on the arrows or at a limit (only OK 0002 / cancel 0003).
+            K::ArrowUp | K::ArrowDown | K::ArrowRight | K::ArrowLeft => {}
             K::Enter => {
                 send_move(w, q.from, q.to, q.index, q.value);
                 b.qty = None;
@@ -1913,4 +1949,20 @@ pub(super) fn persona(w: &World) -> Persona {
         base: st.base,
         bonus: st.adj,
     })
+}
+
+#[cfg(test)]
+mod charged_tests {
+    /// Blue names: a charged item's extdata (kind 1) with byte 3 bit 0x40; anything else stays green.
+    #[test]
+    fn charged_ready_reads_kind_and_bit() {
+        let mut e = [0u8; 24];
+        assert!(!super::charged_ready(&e));
+        e[0] = 1;
+        assert!(!super::charged_ready(&e));
+        e[3] = 0x40;
+        assert!(super::charged_ready(&e));
+        e[0] = 2;
+        assert!(!super::charged_ready(&e));
+    }
 }
