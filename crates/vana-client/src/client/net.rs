@@ -884,6 +884,21 @@ fn chat_bytes(text: &str) -> Vec<u8> {
     out
 }
 
+/// s2c 0x017's name @8 and text @0x17, each cut at a control byte (FUN_1018fc40). Retail cuts the formatted line, so a
+/// cut in the name drops the text too; the assist kinds 0x22 / 0x23 (an icon line) cut the name and the text apart.
+fn chat_text(p: &SubPacket) -> (String, String) {
+    let raw = |at: usize, len: usize| -> &[u8] {
+        let end = (at + len).min(p.data.len());
+        let b = &p.data[at.min(end)..end];
+        &b[..b.iter().position(|&x| x == 0).unwrap_or(b.len())]
+    };
+    let (name, text) = (raw(8, 15), raw(23, 150));
+    let (nk, tk) = (crate::dat::font::chat_cut(name), crate::dat::font::chat_cut(text));
+    let decode = crate::dat::font::decode_sjis;
+    let text = if nk < name.len() && !matches!(p.u8(4), 0x22 | 0x23) { String::new() } else { decode(&text[..tk]) };
+    (decode(&name[..nk]), text)
+}
+
 fn text(p: &SubPacket, at: usize, len: usize) -> String {
     p.str(at, len)
 }
@@ -1367,7 +1382,10 @@ fn session(addr: SocketAddr, login: &MapLogin, account: &str, codec: &Codec, tx:
                     0x058 => tx.send(NetEvent::Assist { player: p.u32(4), target: p.u32(8) })?,
                     0x055 if p.data.len() >= 0x86 => tx.send(NetEvent::KeyItems { table: p.u16(0x84), bits: std::array::from_fn(|i| p.u32(4 + 4 * i)), seen: std::array::from_fn(|i| p.u32(0x44 + 4 * i)) })?,
                     0x05F => tx.send(NetEvent::Music { slot: p.u16(4), id: p.u16(6) })?,
-                    0x017 => tx.send(NetEvent::Chat { kind: p.u8(4), attr: p.u8(5), data: p.u16(6), from: text(&p, 8, 15), text: text(&p, 23, 150) })?,
+                    0x017 => {
+                        let (from, text) = chat_text(&p);
+                        tx.send(NetEvent::Chat { kind: p.u8(4), attr: p.u8(5), data: p.u16(6), from, text })?
+                    }
                     0x032..=0x034 => tx.send(NetEvent::Event(event_start(&p)))?,
                     0x05D => tx.send(NetEvent::EventStrings((0..4).map(|i| p.str(0x28 + 16 * i, 16)).collect()))?,
                     0x05C => tx.send(NetEvent::EventParams(std::array::from_fn(|i| p.u32(4 + 4 * i))))?,
