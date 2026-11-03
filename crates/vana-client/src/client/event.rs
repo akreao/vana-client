@@ -3107,7 +3107,8 @@ pub fn zone_text(w: &mut World, t: &ZoneText) {
         strings: t.strings.clone(),
         female: matches!(w.my_race, 2 | 4 | 6 | 7),
         // 0x036 / 0x043 / 0x02A set both message actors to the speaker; one not here picks the first form (inf).
-        actors: Some([speaker_female; 2]),
+        // 0x027's actors were not traced: the player's, as before.
+        actors: (t.packet != 0x027).then_some([speaker_female; 2]),
         names: w.names.clone().map(|n| n as Arc<dyn crate::dat::names::NameSource>),
         msg_name,
         slots,
