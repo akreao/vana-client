@@ -43,7 +43,7 @@ detail inside implemented ops.
 |---|---|---|---|
 | Map packets: Huffman-compressed payload, MD5 and Blowfish over whole blocks ("Later") | Not built | L40 | DLL (polcore / zone coder) |
 | Send cadence: the adaptive +50 ms step when the server lags; the 1000 ms per-id refusal | Not built | L2242 | DLL |
-| Bazaar / trade sends: the per-id 1000 ms send refusal (FUN_100fc3c0) | Not built | L16460, L16478 | DLL |
+| Bazaar / trade sends: the per-id 1000 ms send refusal (FUN_100fc3c0) *([batch 6](notes/2026-11-03-modlog-gaps-batch6.md) item 12 and the [batch 11](notes/2026-11-03-modlog-gaps-batch11.md) addendum: every c2s id, gated or forced per call site; refused sends dropped, or retried by the event / zone-in / stats callers)* | Built | L16460, L16478 | DLL |
 | Djarum reached 0 HP twice with no mobs in the zone (once after /logout) | Unknown, not reproduced | L120 | Live (chat log now shows the source) |
 | Lobby netwait: retail's backdrops hnbackwi / ptcbgwin behind the run; op 5 as one Task with the log-in; the 3600-frame timeout (FFXI-3113); FFXI-3115 after a failed refresh | Not built | L15896, L15916, L15937 | DLL |
 | Lobby: what the PlayOnline calls return under xiloader (step 3 sub 14 flag 0x8000); error 0x68's field +0x144; FUN_1023be30's 0x6c path | Unknown | L15953, L15955 | DLL |
@@ -65,16 +65,16 @@ detail inside implemented ops.
 |---|---|---|---|
 | Installed DATs are older than LSB's text ids, so message ids can be shifted (msgshift table); ids between two segments stay unknown | Known limitation | L835, L1086 | Data |
 | Motion length (+0x2a0) comes from the motion; the headless host keeps it busy for 30 frames | Approximation | L1266 | DLL |
-| Name plates in cutscenes *(answered, [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §3: no event check in the plate draw; bound actors keep it unless op 0x92 / bit 17; non-participants lose the model by event Mode & 2 / & 0x10)*; ours not audited against it | Answered | L2408 | Code check |
+| Name plates in cutscenes *(answered, [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §3: no event check in the plate draw; bound actors keep it unless op 0x92 / bit 17; non-participants lose the model by event Mode & 2 / & 0x10)*; audited 2026-11-03 with [batch 5](notes/2026-11-03-modlog-gaps-batch5-build.md) §2: ours unloaded doors, elevators, ships and op 0xac sub 2 actors too, now exempt. Left: the hold count +0xf2, the +0x1ff status rule | Built | L2408 | Code check |
 | The mouth's 8-tick blend out (0x23 and unbind) | Not built | L2343, L2408, L14046 | DLL |
 | 0x5b / 0x66 finishing in one call when the file is cached (ours take 2 frames) | Not built | L2408 | DLL |
 | Motion-file model kinds | Not built | L2408 | DLL |
-| 0x46 sub 1's HUD window FUN_10217e90 *(inf: hides a HUD window)* | Not built | L2408 | DLL |
+| 0x46 sub 1's HUD window FUN_10217e90 *(inf: hides a HUD window)* *([batch 5](notes/2026-11-03-modlog-gaps-batch5.md) item 5: "menu    buff" hidden until the event ends)* | Built | L2408 | DLL |
 | 0x1f7 (San d'Oria opening) not played live since the VM-speed fix; timing is the headless VM's | Not checked live | L2408 | Live |
 | Op 0x89 (actor +0x840 bit 1 and position held for dur ticks; *inferred: holds the actor in place*); also its head-look suppression *([batch 6](notes/2026-11-03-modlog-gaps-batch6.md) item 13: no hold; head-look off for dur x speed ticks or until a move > 1 in x / z)* | Built | L7951, L4535 | DLL |
-| Event text codes 0x1d (speaker's compass direction), 0x13 (Japanese) | Not built | L15345 | DLL |
+| Event text codes 0x1d (speaker's compass direction), 0x13 *(answered, [batch 5](notes/2026-11-03-modlog-gaps-batch5.md) item 1: not Japanese, the raise / tractor offer)* | Built | L15345 | DLL |
 | Grammar 2 / 3 whole-text conversions (key items with their own article) | Not built | L14678 | DLL |
-| Event positions: the +0x128 bit 14 and +0x120 bit 0x100000 ground-snap skips (only 0x200000 is ours) | Not built | L19371 | DLL |
+| Event positions: the +0x128 bit 14 and +0x120 bit 0x100000 ground-snap skips (only 0x200000 is ours) *([batch 6](notes/2026-11-03-modlog-gaps-batch6.md) item 14: the bits are GroundFlag and HackMove)* | Built | L19371 | DLL |
 | Op 0x71 subs 0x50..0x55 (a full-screen picture, zone 291) | Not built | L4983 | DLL |
 | 0x7f0b / 0x7f8b special values (+0x124 bit 25, 475 sites); FUN_100977f0's gate for PCs *(answered, [batch 3](notes/2026-11-03-modlog-gaps-batch3.md) §2: the speaker's / player's gender bit (1 male); ours reads 0 for both, and dialog `7F 90` / `7F 91` use the player's gender; the PC see-through is FUN_100973f0, already built; [batch 4](notes/2026-11-03-modlog-gaps-batch4.md) §2..3: 0x00D / 0x00E mask 4 write it for every actor, default female; `7F 90` / `7F 91` are the message's actor 1 / 2)* | Not built | L4893, L4900 | DLL |
 | Op 0x7e / 0xac subs 5 / 0x55 (FUN_10097a20 spawning the chocobo / mount in an event) | Not built | L5246 | DLL |
@@ -90,7 +90,7 @@ detail inside implemented ops.
 | Item | Status | Source | Settle by |
 |---|---|---|---|
 | Motion schedulers bntg / klbt / hwat / res0; the move direction for atr / atb / atl (moving always picks f) | Not built | L1771 | DLL |
-| Faded actors: retail draws the model opaque into an offscreen target, then blends it as one SRCALPHA / INVSRCALPHA quad (no self-overlap); ours blends each triangle *(answered, [batch 3](notes/2026-11-03-modlog-gaps-batch3.md) §4)* | Not built | L1702, L1771 | DLL |
+| Faded actors: retail draws the model opaque into an offscreen target, then blends it as one SRCALPHA / INVSRCALPHA quad (no self-overlap); ours blended each triangle *(answered, [batch 3](notes/2026-11-03-modlog-gaps-batch3.md) §4)*; built 2026-11-03 for GPU-skinned actors (`ZoneRenderer::render_faded`). Left: CPU-posed actors, the second-RT path, the +0x9c effects | Built | L1702, L1771 | Live |
 | Hit reactions: two overlays at once (a new one replaces the old); the CPU pose for the locked camera ignores it | Not built | L4829 | DLL |
 | Model-file generators: the un-hide restart (FUN_10084320 re-runs FUN_10083970) | Not built | L7567 | DLL |
 | Riding: ground tilt of info[0] 1 / 2 models (FUN_100d54c0); op 0x6e for other actors; the riding `cdam`; the local player's wait for the stand motion before `coff` | Not built | L12422, L13095 | DLL |
@@ -106,7 +106,7 @@ detail inside implemented ops.
 | Lifts: the camera's look point; LSB's Metalworks door data not checked against the doors | Not built / not checked | L8776 | DLL / LSB |
 | Ship actors: whether a new task first updates in its frame; vt +0x178 and the default speed 1.0 assumed; the far plane; the lighting area; the 10-second no-skip window; +0x130 bit 21's writer | Unknown | L18113 | DLL |
 | Ships: per-run data for each voyage (no captures; pirates' run 227 / 228) | Blocked: no data | L13802, L13831 | Captures |
-| 0x00E SubKind 5 / 6: the 0x9000 word *(answered, [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §5: bits 0..11 NPC-table model id, bits 12..15 the look slot; kind 7 has a case)*; ours not audited against it | Answered | L15593 | Code check |
+| 0x00E SubKind 5 / 6: the 0x9000 word *(answered, [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §5: bits 0..11 NPC-table model id, bits 12..15 the look slot; kind 7 has a case)*; audited 2026-11-03: ours took the whole word as the model id, now the low 12 bits. Left: SubKind 6's +0xf6 = 2 ranges, slot 9 attached over a race / slot 0 base | Partly built | L15593 | DLL |
 | /sitchair: trusts ignoring chair / sit / heal statuses in 0x00E (asm 0x1009c148) | Not built | L18831 | DLL |
 | Dual wield: a 'b' scheduler with +0x8b5 calls vtable +0x250(1), no effect seen | Not traced | L16279 | DLL |
 
@@ -162,11 +162,11 @@ detail inside implemented ops.
 | Chat: the spam filter (config 0xce; kinds 1, 0x1a, 0x22, 0x23) | Not built | L5953, L5960 | DLL |
 | Chat: the profanity mask (vulgar2.dic, FUN_101ba200) | Not built | L5970 | DLL |
 | Chat: the line cut at a control byte (FUN_1018fc40) | Not built | L5974 | DLL |
-| Chat: the echoes' rank icon (mentor / mastery rank) | Not built | L5985 | DLL |
+| Chat: the echoes' rank icon (mentor / mastery rank) *([batch 7](notes/2026-11-03-modlog-gaps-batch7.md) item 21: assist echoes only)* | Built | L5985 | DLL |
 | Chat: Shift-JIS text (ours decode UTF-8); SJIS quotes 0x8167 / 0x8168 print '?' | Not built | L5953, L1634 | DLL |
 | Chat: c2s 0x0B5 / 0x0B6 at 150 bytes (ours 127) | Not built | L5953 | DLL |
 | s2c 0x027 / 0x043: the event-lock drop ((DAT_104808fc \| DAT_1047fb40) & 0x40) | Not built | L6010 | DLL |
-| Invisible (own +0x128 bit 6) and /linkshell (7031 0x25) in chat log fixes | Not built | L5884, L5886 | DLL |
+| Invisible (own +0x128 bit 6) and /linkshell (7031 0x25) in chat log fixes *([batch 6](notes/2026-11-03-modlog-gaps-batch6.md) item 19: talk and /l refusals were in; /returntrust added. The zone-in source, char +0x40db2 bit 1, is not mapped to a packet field)* | Built apart from the zone-in flag | L5884, L5886 | DLL |
 | Full log: ~100-line history (ours keeps 512 wrapped lines); its wheel handler *(inf)* | Deviation / not traced | L2581, L8726 | DLL |
 | Auto-translate: what window FUN_101ddcb0 is and the s2c 0x0CC chain to FUN_101dd780; FUN_101bceb0 (config 0xce); what FUN_1022aff0 tests and why ids 0x181..0x183 end the key item scan; the French / Japanese second key | Unknown | L6175 | DLL |
 | Auto-translate: the item / key item groups built at run time (the 200-record item cache); kind 6; the nested FD 06 block | Not built | L6116, L6149, L6192 | DLL |
@@ -174,7 +174,7 @@ detail inside implemented ops.
 | Macro palette: the default cursors; FUN_101262e0 as the left click in the palettes' frame | Unknown | L10096 | DLL |
 | Equipment sets: who calls mcres20 vtable +0x2c FUN_101a7010; the status gate's bit 0x40; chat mode 0xca's colour | Unknown | L10170 | DLL |
 | Status icons: the 240 x 4 line and per-cell corner sprite; whether retail hides the buff window in cutscenes | Unknown | L7340, L7359 | Footage |
-| Top bar: netstat in cutscenes; item overrides +0x4c / +0x50 *(answered, [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §4: no event check, only cinema mode / UI hidden; +0x4c help, +0x50 title overrides)*; ours not audited against it | Answered | L2494, L2502 | Code check |
+| Top bar: netstat in cutscenes; item overrides +0x4c / +0x50 *(answered, [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §4: no event check, only cinema mode / UI hidden; +0x4c help, +0x50 title overrides)*; audited 2026-11-03: ours had no cinema mode; built from [batch 5](notes/2026-11-03-modlog-gaps-batch5-build.md) §1 (`event::cinema`). Left: the +0x4c / +0x50 overrides audit | Partly built | L2494, L2502 | Code check |
 | Target window: the state codes and model range; the pet line; the event mode | Not built | L2541, L4485 | DLL |
 | Name plates: scheduler op 0xb4 (+0x8c0, 8 `cst0` schedulers); the mount sub-case per-race tables; k = FUN_10022340(race) | Not built / not decoded | L8708, L2172 | DLL |
 | Name plates under the screen fade: retail's one-frame delay | Not built | L5646 | DLL |
@@ -185,7 +185,7 @@ detail inside implemented ops.
 | Message formatter: the other callers (party join, merit prompts, auction house, level sync, /sea counts); FUN_10080350's source; FUN_10128ce0's flags; FUN_101f4bb0's date lists | Not built / not traced | L6651, L6706 | DLL |
 | Trust party lines: grammar kinds not seen used | Not built | L14144 | Data |
 | `17 n` moogle motions: S+0x40daa and +0xee | Not built | L19915 | DLL |
-| Mask-0 0x00E: kind 9 (FUN_100bd760 / FUN_101c8450) | Not built | L19835 | DLL |
+| Mask-0 0x00E: kind 9 (FUN_100bd760 / FUN_101c8450) *([batch 6](notes/2026-11-03-modlog-gaps-batch6.md) item 16: message source 9 = the trust lines, language slot 0x22)* | Built | L19835 | DLL |
 
 ## 7. Menus and windows
 
@@ -213,7 +213,7 @@ detail inside implemented ops.
 | Guild shops: the cursor reset on source switch; kind 0x19 squeeze or clip; Trade refusal codes other than 0xfb / 0xfd; Stat 2 / bit 31 with Stat 0; DAT head byte 13 | Inferred / unknown | L6485, L6470 | DLL / LSB |
 | Field manuals: the query window's scroll bar | Not built | L6545 | DLL |
 | Player trade | Built, not tested live (needs a second account) | L6597 | Live |
-| Trade: the costume refusal bit 0x40 (FUN_101cc040) *(answered, [batch 1](notes/2026-11-03-modlog-gaps-batch1.md) §7: player +0x120 bit 5 from the costume state machine FUN_10095e90; its four helpers in [batch 3](notes/2026-11-03-modlog-gaps-batch3.md) §1: the status lists only take a costume off, +0x120 bit 7 = bound to the event; [batch 4](notes/2026-11-03-modlog-gaps-batch4.md) §1: 0x40 is checked after 0x04, before 0x08; §4: the costume id is an NPC model id, drawn as the whole body)* | Not built | L6568 | DLL |
+| Trade: the costume refusal bit 0x40 (FUN_101cc040) *(answered, [batch 1](notes/2026-11-03-modlog-gaps-batch1.md) §7: player +0x120 bit 5 from the costume state machine FUN_10095e90; its four helpers in [batch 3](notes/2026-11-03-modlog-gaps-batch3.md) §1: the status lists only take a costume off, +0x120 bit 7 = bound to the event; [batch 4](notes/2026-11-03-modlog-gaps-batch4.md) §1: 0x40 is checked after 0x04, before 0x08; §4: the costume id is an NPC model id, drawn as the whole body; [batch 5](notes/2026-11-03-modlog-gaps-batch5-build.md) §6: other players too, from 0x00D @0x30)*; built 2026-11-03 (the refusal, the model for us and others) | Built | L6568 | Live |
 | Set Bazaar: the name's bazaar glyph (0x9c); the row disabled in Monstrosity | Not built | L9921 | DLL |
 | Bazaar View Wares: FUN_10210880's flag (taken as "list is live"); hidden windows from the group walk; the Escape sound; shopbuy's registry flags vs ours stacking the confirm on the log | Inferred | L16503 | DLL / Footage |
 | Bazaar View Wares | Not seen live (needs a second character) | L16460 | Live |
@@ -223,7 +223,7 @@ detail inside implemented ops.
 
 | Item | Status | Source | Settle by |
 |---|---|---|---|
-| Party-list cursor: the fellow row *(answered, [batch 1](notes/2026-11-03-modlog-gaps-batch1.md) §4: drawn above the pet row, reached past the last row; ours draws no fellow row yet)* | Not built | L5444 | Build |
+| Party-list cursor: the fellow row *(answered, [batch 1](notes/2026-11-03-modlog-gaps-batch1.md) §4: drawn above the pet row, reached past the last row; built with the pet row from [batch 5 build](notes/2026-11-03-modlog-gaps-batch5-build.md) §5)* | Built | L5444 | Build |
 | Alliance windows: live test (one session cannot show them); quartermaster 433 / level-sync 493 marks | Not checked live / not built | L5488, L5485 | Live |
 | Party menu: the request-history prompt (comyn 9 0x140); the auto-pool area rule (actor +0x18c); the stage-1 mark; Level Sync's empty list text; the mouse in levelsyn | Not built | L8932, L9764 | DLL |
 | Party: the receiving side of invites | Untested live (no bot invites) | L8939 | Live |
@@ -248,7 +248,7 @@ detail inside implemented ops.
 | Config: chat-type filters (server); the mouse movement reference; 0x3e clip scale; 0x40 animation step | Not built | L3069 | DLL |
 | Config lists: the key item / quest / mission list pages | Not built | L8495 | DLL |
 | List scroll bars: the post / delivery / trade / synthesis lists and the synthesis history | Not built | L8731 | DLL |
-| The page modifier (0xa8): the arrows' hover state (a Ctrl-click on an arrow does nothing in retail; ours switches) | Not built | L13962 | DLL |
+| The page modifier (0xa8): the arrows' hover state (a Ctrl-click on an arrow does nothing in retail; ours switches) | Built *([batch 7](notes/2026-11-03-modlog-gaps-batch7.md) item 25: FUN_10221cd0 / FUN_10221ce0 disable and enable the paged list; over the arrows there is no hand and the list ignores keys, and a Ctrl / Alt click pages the disabled list, i.e. does nothing. RoE's arrows and jbpcat's page areas skip the test and are left alone)* | L13962 | DLL |
 | Cursor memory: the other KEEP windows' cursors (myroom, configwi, cmbmenu) | Not built | L9171 | DLL |
 | Missions: the held-key header stop | Not built | L9102, L9153 | DLL |
 | Status window: Monstrosity (mp_stat) from the main menu | Not built at the time | L9017 | *(closed: "Monstrosity, part 5: mp_stat")* |

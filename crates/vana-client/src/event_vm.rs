@@ -51,6 +51,8 @@ pub enum Effect {
     /// `mode`: a 1f code's (msg+4); `sounds`: the 0d / 0e SeSep ids played as the text was built.
     /// `motions`: the `17 n` names the moogle plays.
     Message { op: u8, speaker: Option<u32>, id: u32, text: String, prompt: bool, wait: Option<u32>, place: [Option<i16>; 2], mode: Option<u8>, sounds: Vec<u32>, motions: Vec<&'static str> },
+    /// A message's `13 n`: the K.O. offer state (2 raise, 3 tractor) as s2c 0x0F9 sets it.
+    Offer(u8),
     /// Choice menu (op 0x24); answer with [`Runtime::choose`].
     Choice { id: u32, question: String, options: Vec<(u32, String)>, cursor: usize },
     /// Scheduler start (0x45 and family): file id (base + n), tag, actor, target, param.
@@ -60,6 +62,9 @@ pub enum Effect {
     /// FUN_10082be0 (flag = 0). Cutscenes run with 0 and set 1 before they end. Sub 3 seeds it at `offset` in the
     /// player's frame (x forward, y down) instead of FUN_10021680's (-4, -2, 0).
     Camera { flag: bool, offset: Option<[f32; 3]> },
+    /// 0x46 sub 1 also hides "menu    buff" (FUN_10221c30: not drawn, items disabled, no cursor); only the event end
+    /// (FUN_100ae960) shows it again, not sub 0.
+    HideBuffs,
     /// Op 0x71: open "menu    passinpu" (kind: title and allowed characters; max bytes, at most 16); answer with
     /// [`Runtime::input_done`].
     Input { kind: i32, max: usize },
@@ -186,6 +191,10 @@ pub trait Host {
     /// the server sends one, FUN_1008a350).
     fn male(&self, _actor: u32) -> bool {
         false
+    }
+    /// An actor's yaw (+0x18, radians; 0 east, increasing toward south), for text code `1d`.
+    fn yaw(&self, _actor: u32) -> Option<f32> {
+        None
     }
     /// A game config value by id (op 0xda reads 0x43, the aspect).
     fn game_config(&self, _id: u16) -> u32 {
@@ -1015,6 +1024,8 @@ impl Runtime {
             female: host.female(),
             // FUN_100c2e20's actors 1 / 2: the speaker (none: the player).
             actors: speaker.map(|s| [!host.male(s); 2]),
+            facing: host.yaw(speaker.unwrap_or(PLAYER)),
+            actor2_me: speaker.is_none_or(|s| s == PLAYER),
             names: self.names.clone(),
             slots: self.mem.names,
             ..host.text_ctx()
@@ -1038,6 +1049,9 @@ impl Runtime {
             self.last_speaker = about;
         }
         let (text, prompt, e) = self.text(id, self.last_speaker, host);
+        if let Some(o) = e.as_ref().and_then(|e| e.offer) {
+            host.effect(Effect::Offer(o));
+        }
         let (wait, place, mode, sounds, motions) = e.map_or((None, [None; 2], None, Vec::new(), Vec::new()), |e| (e.wait, e.place, e.mode, e.sounds, e.motions));
         let name = speaker.map(|s| host.name(s));
         let text = match name {
@@ -1564,6 +1578,9 @@ impl Runtime {
                     Some(0) | Some(1) => {
                         self.camera = sub == Some(0);
                         host.effect(Effect::Camera { flag: self.camera, offset: None });
+                        if sub == Some(1) {
+                            host.effect(Effect::HideBuffs);
+                        }
                     }
                     // FUN_100b6440 sub 3: as sub 0 from (val@2, val@4, val@6) x 0.001, read the first time a run
                     // gets here (4 sites: "check your character's appearance", (4, -1.2, 0): in front).
@@ -1675,7 +1692,8 @@ impl Runtime {
             }
             0x6a => {
                 let (level, ticks) = (self.val(v, 1) as f32 * POS, self.val(v, 3) as f32);
-                host.effect(Effect::Volume { mask: self.val(v, 5), level, ticks });
+                // Mask 0x10 (the call sounds' level) is 0x69's alone: a fade ignores it, even at 0 ticks.
+                host.effect(Effect::Volume { mask: self.val(v, 5) & !0x10, level, ticks });
                 self.adv(v, 7);
             }
             0x6c => {
@@ -2404,6 +2422,10 @@ fn atoi(b: &[u8]) -> i32 {
                 let mut question = String::new();
                 let mut cursor = 0;
                 if let Some(e) = e {
+                    // The expander's side effects run wherever it expands in retail (FUN_100c1650), choices included.
+                    if let Some(o) = e.offer {
+                        host.effect(Effect::Offer(o));
+                    }
                     let at = e.choice.unwrap_or(e.lines.len());
                     question = e.lines[..at.min(e.lines.len())].iter().map(|l| decode_sjis(l)).collect::<Vec<_>>().join("\n");
                     let (default, mut mask) = (self.val(v, 3 + off) as u32, self.val(v, 5 + off) as u32);
@@ -3209,6 +3231,20 @@ mod tests {
             })
             .collect();
         assert_eq!(ops[..3], [(0xa8, Some(0), vec![230, 5]), (0xb9, Some(1), vec![230, 3, 5]), (0xa8, Some(2), vec![])]);
+    }
+
+    /// Op 0x46 sub 1 hides the status icons as well as freeing the camera flag; sub 0 doesn't show them again.
+    #[test]
+    fn camera_sub1_hides_buffs() {
+        let code = vec![0x46, 0x01, 0x46, 0x00, 0x21, 0x00];
+        let actor = 0x010e_601b;
+        let blocks = vec![event::Block { actor, events: vec![(1, 0)], consts: vec![], code }];
+        let mut host = Scripted::new(&[]);
+        let start = Start { zone: 230, event: 1, target: actor, ..Default::default() };
+        let mut rt = Runtime::start(blocks, None, start, Memory::default(), &mut host);
+        run_scripted(&mut rt, &mut host, 60).expect("finished");
+        let seen: Vec<String> = host.log.iter().filter(|e| matches!(e, Effect::Camera { .. } | Effect::HideBuffs)).map(|e| format!("{e:?}")).collect();
+        assert_eq!(seen[..3], ["Camera { flag: false, offset: None }", "HideBuffs", "Camera { flag: true, offset: None }"]);
     }
 
     /// The cutscene clock ops reach the host in order with their operands: 0xa9 day val@1, 0x98 (no wait headless),
