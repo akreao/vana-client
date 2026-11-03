@@ -707,6 +707,21 @@ impl Effects {
             }
             self.pins.push((owner, a, b, k, off, left));
         }
+        // FUN_100609f0: a light ramp steps by the frame; its end or its scheduler's death writes the target (FUN_10060960).
+        for mut r in std::mem::take(&mut self.light_ramps) {
+            r.left -= f.dt;
+            let Some(c) = self.elems.get_mut(r.elem as usize).and_then(|c| c.as_mut()).filter(|c| c.serial == r.serial) else { continue };
+            let done = r.left <= 0.0 || !live.contains(&r.owner);
+            let v = if done || r.total <= 0.0 { r.to } else { r.from + (r.to - r.from) * (1.0 - r.left / r.total) };
+            if let Some(s) = c.light_scale.as_mut() {
+                s[r.k] = v;
+            }
+            let word = if r.k == 0 { super::elem::w::L_ISCALE } else { super::elem::w::L_RSCALE };
+            self.writes.push(super::Write::Words(r.elem, word, vec![v.to_bits()]));
+            if !done {
+                self.light_ramps.push(r);
+            }
+        }
         // FUN_1005f820: a drive ends below 0; its scheduler's death deletes it early, frozen (0xa0: on its target).
         for mut d in std::mem::take(&mut self.color_drives) {
             d.left -= f.dt;
@@ -1287,6 +1302,29 @@ impl Effects {
                     };
                     self.anchor_points.push((id, which, op.raw.get(8).copied().unwrap_or(2)));
                 }
+                Flow::Next
+            }
+            // Asm 0x10059da7: the static generator 4cc @8's live CMoPointLightProgElem ramps its intensity (0x6f, +0x1a4)
+            // or range (0x70, +0x1a8) multiplier linearly to f32 @0x10 over dur x speed (FUN_10060990). A new ramp on the
+            // same word replaces the running one (ours: retail would run both).
+            0x6f | 0x70 => {
+                let Some(g) = scope(self, kind::GENERATOR) else { return Flow::Next };
+                if !self.is_static(g) {
+                    return Flow::Next;
+                }
+                let Some(i) = self.template_inst(g) else { return Flow::Next };
+                let live = self.insts[i].as_ref().map(|x| x.live.clone()).unwrap_or_default();
+                let Some((e, serial, from)) = live.iter().find_map(|&e| {
+                    let c = self.elems.get(e as usize)?.as_ref()?;
+                    Some((e, c.serial, c.light_scale?))
+                }) else {
+                    return Flow::Next;
+                };
+                let k = (op.code - 0x6f) as usize;
+                let total = op.dur.max(0) as f32 * t.speed;
+                self.light_ramps.retain(|r| !(r.elem == e && r.k == k));
+                let to = f32::from_bits(op.u32_at(0x10));
+                self.light_ramps.push(super::LightRamp { owner: t.uid, elem: e, serial, k, from: from[k], to, total, left: total });
                 Flow::Next
             }
             // FUN_100aad40: actor1 moves itself along its facing for u16 @6 ticks at f32 @8 / 60 units a tick (a dismounted

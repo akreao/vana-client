@@ -264,6 +264,9 @@ pub struct ElemCpu {
     pub parts: Option<(u32, u32)>,
     /// A point light's table slot.
     pub light: Option<u32>,
+    /// CMoPointLightProgElem: its intensity / range multipliers (+0x1a4 / +0x1a8) as last written from the CPU, the
+    /// start of scheduler ops 0x6f / 0x70.
+    pub light_scale: Option<[f32; 2]>,
 }
 
 /// Op 0x25 (reactor actor2) / 0x21 (actor1): amount f32 @8, rate @0xc, count u32 @0x10, blend-in ticks @0x14, fade
@@ -538,6 +541,20 @@ pub enum ColorOp {
 struct Foot {
     rain: bool,
     at: (usize, usize),
+}
+
+/// FUN_10060990 (vtable 0x1032bb80): a point light's intensity (`k` 0, +0x1a4) or range (1, +0x1a8) multiplier
+/// linearly from `from` to `to` over `total` ticks; the end (or the scheduler's death) writes `to` (FUN_10060960).
+#[derive(Clone, Copy, Debug)]
+struct LightRamp {
+    owner: u64,
+    elem: u32,
+    serial: u32,
+    k: usize,
+    from: f32,
+    to: f32,
+    total: f32,
+    left: f32,
 }
 
 /// A running colour drive: its scheduler task, ticks left, target, and whether its destructor lands on the target
@@ -913,6 +930,8 @@ pub struct Effects {
     pub fades: Vec<ColorOp>,
     /// The running channel-0 drives (CMoActorColorDriveTask), children of their scheduler task.
     color_drives: Vec<ColorDrive>,
+    /// Scheduler ops 0x6f / 0x70's ramps (FUN_10060990), children of their scheduler task.
+    light_ramps: Vec<LightRamp>,
     /// The path and rotation drives (ops 0x26 / 0x27, 0xa9 / 0xaa), children of their scheduler task, and the poses
     /// they set this frame for the client (ship model actors take them); the fast-forward's overshoot for a new drive.
     drives: Vec<drive::Drive>,
@@ -1098,6 +1117,7 @@ impl Effects {
             motions: Vec::new(),
             fades: Vec::new(),
             color_drives: Vec::new(),
+            light_ramps: Vec::new(),
             drives: Vec::new(),
             rot_drives: Vec::new(),
             actor_poses: HashMap::new(),
