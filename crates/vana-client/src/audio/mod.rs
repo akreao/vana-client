@@ -315,7 +315,8 @@ impl Audio {
     /// only; 0x6a ignores it) sets the chat call sounds' level DAT_10351710, which nothing resets but another 0x69.
     pub fn event_volume(&mut self, mask: i32, level: f32, ticks: f32) {
         let level = level.clamp(0.0, 1.0);
-        if mask & 0x10 != 0 && ticks <= 0.0 {
+        // The VM strips 0x10 from 0x6a, so it only reaches here from 0x69.
+        if mask & 0x10 != 0 {
             self.call_level = level;
         }
         // FUN_100b5c30: 1 world effects (FUN_10035200), 8 everything and the stream (FUN_100350e0); 2 interface sounds
