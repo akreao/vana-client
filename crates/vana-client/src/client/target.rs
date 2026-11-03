@@ -899,25 +899,31 @@ pub fn slot_target(w: &World, slot: usize) -> Option<u32> {
 /// leaves the pick as it is. Field +0x60 is Sub::inc, every bit with no prompt (ground_cursor.md).
 pub fn party_pad_step(w: &World, down: bool) -> Option<u32> {
     let inc = w.prompt.as_ref().map_or(u32::MAX, |s| s.inc);
-    // Nothing without 4 or without a pick.
-    let pick = w.target.filter(|_| inc & 4 != 0)?;
+    let slots: Vec<Option<u32>> = (0..18).map(|s| slot_target(w, s)).collect();
+    pad_party_step(&slots, w.target, w.my_id, inc, down)
+}
+
+/// FUN_10158b60 over the 18 alliance slots (`slots`, slot 0 us): the step from `pick` under the prompt's `inc`.
+fn pad_party_step(slots: &[Option<u32>], pick: Option<u32>, me: u32, inc: u32, down: bool) -> Option<u32> {
     // Without 8 only our six count (FUN_10203500).
     let party_only = inc & 8 == 0;
-    let slots: Vec<Option<u32>> = (0..18).map(|s| slot_target(w, s)).collect();
+    let n = slots.len();
     let fits = |s: usize| slots[s].filter(|_| !(party_only && s > 5));
     // FUN_10203920 walks all 18 slots to the next occupied one, wrapping; a pick outside them (or outside our six
     // when party_only) gives nothing.
-    let next = |at: usize| (1..=18).map(|i| if down { (at + i) % 18 } else { (at + 18 - i) % 18 }).find(|&s| slots[s].is_some());
-    let at = slots.iter().position(|s| *s == Some(pick)).filter(|&at| fits(at).is_some());
+    let next = |at: usize| (1..=n).map(|i| if down { (at + i) % n } else { (at + n - i) % n }).find(|&s| slots[s].is_some());
+    // Only with 4 and a pick does it step at all (0x10158b7d..0x10158b83); either missing leaves the result 0, which
+    // the 0x200 rule below still turns into us, so with no target and no prompt up / down pick us.
+    let at = pick.filter(|_| inc & 4 != 0).and_then(|p| slots.iter().position(|s| *s == Some(p))).filter(|&at| fits(at).is_some());
     let mut to = at.and_then(next);
     let mut found = to.and_then(fits);
     // Without 0x200, landing on us steps once more; us again is nothing.
-    if inc & 0x200 == 0 && found == Some(w.my_id) {
+    if inc & 0x200 == 0 && found == Some(me) {
         to = to.and_then(next);
-        found = to.and_then(fits).filter(|&id| id != w.my_id);
+        found = to.and_then(fits).filter(|&id| id != me);
     }
-    // With 0x200, nothing becomes us.
-    found.or_else(|| (inc & 0x200 != 0).then_some(w.my_id))
+    // With 0x200, nothing becomes us (0x10158c20: ECX 0x1047d600, our actor).
+    found.or_else(|| (inc & 0x200 != 0).then_some(me))
 }
 
 /// FUN_101514a0: while engaged with no target, the first attackable actor we claimed that is alive.
@@ -1123,6 +1129,31 @@ mod tests {
         assert_eq!(drop_rule(0, true, 3, 10.0, false), None);
         assert_eq!(drop_rule(0, false, 0, 50.5, false), Some(false));
         assert_eq!(drop_rule(0, false, 0, 1.0, true), Some(false));
+    }
+
+    /// Field d-pad up / down (FUN_10158b60): with no target and no prompt they pick us, then step the party from
+    /// there, wrapping; a pick outside the party also goes to us; a prompt without 0x200 skips us.
+    #[test]
+    fn dpad_party_step() {
+        let me = 1;
+        let mut slots = vec![None; 18];
+        (slots[0], slots[1], slots[2]) = (Some(me), Some(2), Some(3));
+        let all = u32::MAX;
+        assert_eq!(pad_party_step(&slots, None, me, all, true), Some(me));
+        assert_eq!(pad_party_step(&slots, None, me, all, false), Some(me));
+        assert_eq!(pad_party_step(&slots, Some(me), me, all, true), Some(2));
+        assert_eq!(pad_party_step(&slots, Some(me), me, all, false), Some(3));
+        assert_eq!(pad_party_step(&slots, Some(3), me, all, true), Some(me));
+        assert_eq!(pad_party_step(&slots, Some(0x0106_5013), me, all, true), Some(me));
+        // A prompt without 4 steps nothing, but 0x200 still gives us.
+        assert_eq!(pad_party_step(&slots, Some(2), me, 0x200, true), Some(me));
+        // A party-only prompt that cannot take us: no pick is nothing, landing on us steps past it.
+        assert_eq!(pad_party_step(&slots, None, me, 4, true), None);
+        assert_eq!(pad_party_step(&slots, Some(3), me, 4, true), Some(2));
+        assert_eq!(pad_party_step(&slots, Some(2), me, 4, false), Some(3));
+        // Alone in such a prompt: us again is nothing.
+        let alone: Vec<Option<u32>> = (0..18).map(|s| (s == 0).then_some(me)).collect();
+        assert_eq!(pad_party_step(&alone, Some(me), me, 4, true), None);
     }
 
     /// Engaging with auto lock-on at its default (config 7 = 0) targets and locks a monster; config 7 = 1
