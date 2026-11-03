@@ -884,8 +884,15 @@ fn chat_bytes(text: &str) -> Vec<u8> {
     out
 }
 
+/// The Kinds whose line never carries the sender's name (client/mod.rs chat_line): the system announcements 6 / 7 and
+/// the "NS" text-only kinds. A control byte in their unused name cannot reach the formatted line.
+fn chat_nameless(kind: u8) -> bool {
+    matches!(kind, 6 | 7 | 0xd..=0x17 | 0x1c | 0x1d | 0x1f | 0x20)
+}
+
 /// s2c 0x017's name @8 and text @0x17, each cut at a control byte (FUN_1018fc40). Retail cuts the formatted line, so a
-/// cut in the name drops the text too; the assist kinds 0x22 / 0x23 (an icon line) cut the name and the text apart.
+/// cut in the name drops the text too, but only where the line holds the name: the text-only kinds keep their text,
+/// and the assist kinds 0x22 / 0x23 (an icon line) cut the name and the text apart.
 fn chat_text(p: &SubPacket) -> (String, String) {
     let raw = |at: usize, len: usize| -> &[u8] {
         let end = (at + len).min(p.data.len());
@@ -895,7 +902,10 @@ fn chat_text(p: &SubPacket) -> (String, String) {
     let (name, text) = (raw(8, 15), raw(23, 150));
     let (nk, tk) = (crate::dat::font::chat_cut(name), crate::dat::font::chat_cut(text));
     let decode = crate::dat::font::decode_sjis;
-    let text = if nk < name.len() && !matches!(p.u8(4), 0x22 | 0x23) { String::new() } else { decode(&text[..tk]) };
+    // Kind 0x19 takes the name only when the packet sent one, so an all-control-byte name there is a text-only line.
+    let kind = p.u8(4);
+    let named = !chat_nameless(kind) && !matches!(kind, 0x22 | 0x23) && !(kind == 0x19 && name.is_empty());
+    let text = if nk < name.len() && named { String::new() } else { decode(&text[..tk]) };
     (decode(&name[..nk]), text)
 }
 
@@ -1658,6 +1668,29 @@ fn session(addr: SocketAddr, login: &MapLogin, account: &str, codec: &Codec, tx:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A control byte in the sender's name drops the text with it (retail cuts the formatted line), but not for the
+    /// kinds whose line never holds the name: 6 / 7, the NS kinds, and 0x19 with no name at all.
+    #[test]
+    fn chat_cut_in_the_name() {
+        let packet = |kind: u8, name: &[u8]| {
+            let mut data = vec![0u8; 0x100];
+            data[4] = kind;
+            data[8..8 + name.len()].copy_from_slice(name);
+            data[23..23 + 10].copy_from_slice(b"Restarting");
+            SubPacket { id: 0x017, sync: 0, data }
+        };
+        assert_eq!(chat_text(&packet(0, b"GM\x1eX")), ("GM".into(), String::new()));
+        assert_eq!(chat_text(&packet(6, b"GM\x1eX")).1, "Restarting");
+        assert_eq!(chat_text(&packet(0xd, b"GM\x1eX")).1, "Restarting");
+        assert_eq!(chat_text(&packet(0x19, b"")).1, "Restarting");
+        assert_eq!(chat_text(&packet(0x19, b"GM\x1eX")).1, String::new());
+        // Retail picks 0x19's format from the name the packet sent, so a name that is only a control byte still
+        // formats with it and the cut takes the text.
+        assert_eq!(chat_text(&packet(0x19, b"\x1eX")).1, String::new());
+        assert_eq!(chat_text(&packet(0x22, b"GM\x1eX")), ("GM".into(), "Restarting".into()));
+        assert_eq!(chat_text(&packet(0, b"GM")), ("GM".into(), "Restarting".into()));
+    }
 
     /// Standing still, a cast or a ranged attack goes after the position, sent twice; moving, or with only other
     /// packets, the position goes last as retail's.
