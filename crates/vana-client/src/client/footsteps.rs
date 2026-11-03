@@ -20,10 +20,19 @@ pub fn wanted(ch: &crate::dat::character::Character, status: u8, pos: Vec3, eye:
     ch.cib[1] >= 1 && matches!(status, 0 | 1 | 4 | 0x1c | 0x1f | 5 | 0x55) && pos.distance_squared(eye) < 900.0
 }
 
+/// Misc. 2's Footsteps (config 0x3f: 0 On, 1 Off): LAB_101aa650 case 0x3f sets DAT_10456a70 = 1 - value
+/// (FUN_10002e20), which FUN_100d4bc0 tests before the wade point and before each footstep.
+fn on(w: &World) -> bool {
+    w.game.get(0x3f) == 0
+}
+
 /// FUN_100d4bc0 (asm 0x100d4c93..0x100d4d03): the wade point +0x64c (the position, y the water surface on a type-9
 /// floor) for actors in statuses 0 / 1 / 4 / 0x1c / 0x1f / 5 / 0x55 with a model (others keep theirs), and the
 /// wading ripple `i900` started near the eye on water, stopped off it.
 pub(super) fn wade(w: &mut World, places: &HashMap<u32, Place>, eye: Vec3) {
+    // DAT_10456a70 (asm 0x100d4caa): with Footsteps Off the point stays the position and the ripple is stopped
+    // (the jump lands on FUN_100d6550); the step's folder is in the skipped step code too.
+    let feet = on(w);
     let actors = &w.actors;
     w.wades.retain(|id, _| actors.contains_key(id));
     let Some(g) = &w.ground else { return };
@@ -38,7 +47,7 @@ pub(super) fn wade(w: &mut World, places: &HashMap<u32, Place>, eye: Vec3) {
         let pos = pl.pos - super::ride::offset(w, *id);
         let leg3 = ch.cib[0] == 3;
         // On a lift the shaft's type (FUN_100a4ed0), never water.
-        let water = if w.lifts.ride(pos, pos).is_some() { None } else { g.wade(pos) };
+        let water = if !feet || w.lifts.ride(pos, pos).is_some() { None } else { g.wade(pos) };
         let y = match water {
             Some(h) if !leg3 => h,
             _ => pos.y,
@@ -49,7 +58,7 @@ pub(super) fn wade(w: &mut World, places: &HashMap<u32, Place>, eye: Vec3) {
         }
         let near = pos.distance_squared(eye) < 900.0;
         let (kind, covered) = g.surface(pos);
-        let folder = (near && ch.cib[1] >= 1 && kind != 0).then_some(rain_tag && !covered);
+        let folder = (feet && near && ch.cib[1] >= 1 && kind != 0).then_some(rain_tag && !covered);
         calls.push((*id, water.is_some(), near, folder));
     }
     for (id, water, near, folder) in calls {
@@ -59,6 +68,10 @@ pub(super) fn wade(w: &mut World, places: &HashMap<u32, Place>, eye: Vec3) {
 
 /// Heights that came back: a crossing on a moving actor plays its step.
 pub(super) fn steps(w: &mut World, places: &HashMap<u32, Place>, points: Vec<(u64, Vec3)>) {
+    // DAT_10456a70 (asm 0x100d51ab, 0x100d5351): no step is looked for with Footsteps Off.
+    if !on(w) {
+        return;
+    }
     // The last point to touch down (tested 9, 8, 0xb, 0xa), relative to the root.
     let mut contact: HashMap<u32, Option<Vec3>> = HashMap::new();
     let actors = &w.actors;
