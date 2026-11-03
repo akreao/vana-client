@@ -223,7 +223,7 @@ detail inside implemented ops.
 
 | Item | Status | Source | Settle by |
 |---|---|---|---|
-| Party-list cursor: the fellow row *(answered, [batch 1](notes/2026-11-03-modlog-gaps-batch1.md) §4: drawn above the pet row, reached past the last row; ours draws no fellow row yet)* | Not built | L5444 | Build |
+| Party-list cursor: the fellow row *(answered, [batch 1](notes/2026-11-03-modlog-gaps-batch1.md) §4: drawn above the pet row, reached past the last row; built with the pet row from [batch 5 build](notes/2026-11-03-modlog-gaps-batch5-build.md) §5)* | Built | L5444 | Build |
 | Alliance windows: live test (one session cannot show them); quartermaster 433 / level-sync 493 marks | Not checked live / not built | L5488, L5485 | Live |
 | Party menu: the request-history prompt (comyn 9 0x140); the auto-pool area rule (actor +0x18c); the stage-1 mark; Level Sync's empty list text; the mouse in levelsyn | Not built | L8932, L9764 | DLL |
 | Party: the receiving side of invites | Untested live (no bot invites) | L8939 | Live |
