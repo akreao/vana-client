@@ -1,11 +1,11 @@
 # MODLOG inferred and untraced claims
 
 Generated from `MODLOG.md` and `docs/modlog/*.md` on 2026-11-03. Every line that carries an *(inf)* / *(inferred)* /
-*(not traced)* / *(as read)* marker, or says "inferred" or "not traced" in prose, is listed once under its entry,
+*(not traced)* / *(as read)* marker, or says "inferred" or "not traced" in prose, is listed under its entry,
 with its line number. These are the claims a check against retail FFXiMain.dll (30261006_0) can settle.
 Companion to [modlog-gaps.md](modlog-gaps.md).
 
-745 lines in 252 entries.
+826 marked lines in 270 entries (a marker that wraps onto the next line counts once, at its first line).
 
 ## Zone session
 
@@ -69,15 +69,15 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 
 `MODLOG.md:1190`
 
-- L1229: \|---\|---\|---\| \| 1 \| world sound effects, DAT_1034656c (scales 3D sounds, FUN_10035590) \| FUN_10035230 \| \| 2 \| interface sounds, DAT_10346568 (inferred from FUN_10036d10, its one use) \| FUN_10035280 \| \| 4 \| music, DAT_10346570 (applied to the current BGM throu
+- L1229: **Mask bits:** \| Bit \| Channel \| Setter \| \|---\|---\|---\| \| 1 \| world sound effects, DAT_1034656c (scales 3D sounds, FUN_10035590) \| FUN_10035230 \| \| 2 \| interface sounds, DAT_10346568 (inferred from FUN_10036d10, its one use) \| FUN_10035280 \| \| 4 \| music, DAT_10346570 (applied to the current BGM throu
 - L1269: It is not traced further.
 
 ## Inventory and equipment menus (inventor, equip, persona, money) and their item list
 
 `MODLOG.md:1273`
 
-- L1289: \| `persona` (status panel) \| DAT_105659c4 \| FUN_10141c10 \| \| `money` \| DAT_10565830 \| FUN_1013b8b0 \| \| `iteminfo` \| DAT_105657ec \| not traced \| - **Items menu:** FUN_101e9f10 opens `inventor` for a container source object.
-- L1325: \|---\|---\|---\| \| 0x80404040 \| grey \| player +0x132 bit 0 is set \| \| 0x80407090 \| blue \| equipped weapon/armour that also passes FUN_100fbc70 (item id + extdata; meaning not traced) \| \| 0x80509050 \| green \| equipped, or the equipped linkshell / linkshell 2 \| \| 0x80909040 \| yellow \| non
+- L1289: … \| \| `equip` \| DAT_10565794 \| FUN_1012ea90 \| \| `persona` (status panel) \| DAT_105659c4 \| FUN_10141c10 \| \| `money` \| DAT_10565830 \| FUN_1013b8b0 \| \| `iteminfo` \| DAT_105657ec \| not traced \| - **Items menu:** FUN_101e9f10 opens `inventor` for a container source object.
+- L1325: … \| \|---\|---\|---\| \| 0x80404040 \| grey \| player +0x132 bit 0 is set \| \| 0x80407090 \| blue \| equipped weapon/armour that also passes FUN_100fbc70 (item id + extdata; meaning not traced) \| \| 0x80509050 \| green \| equipped, or the equipped linkshell / linkshell 2 \| \| 0x80909040 \| yellow \| non
 
 ## Combat: battle messages, 0x028 actions, combat motions, the action menu (dat/battle.rs, dat/sched.rs, net/action.rs, client/combat.rs, combat-shot)
 
@@ -116,12 +116,14 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 - L1708: … battle files (FUN_100cf650, or FUN_100cf900 with dual wield +0x8b5) and calls vtable +0x160; state 1 plays scheduler "in N"; state 2 vtable +0x31c(1, 0) (weapon to the hand *(inf)*
 - L1754: … bone (PC Elvaan main 1, file 14745: wep0 -> bone 77 = skeleton point 112 = main info[6] 0x70); points 112..125 are carry bones, 126 (bone 66) / 127 (bone 52) the hand grips *(inf: which is which hand)*
 - L1798: The log's punctuation ("(Name)", "<Name>", "Name>>") is inferred.
+- L1807: Ours counts in 2-tick frames whatever the frame rate *(inf: at 60 fps retail repeats every 3 ticks;
 - L1812: … & 0x41 while typing; then pad callback 0, then the three bindings with their flags (FUN_101201c0 Ctrl = 0x1d / 0x9d held, FUN_101201f0 Alt = 0x38 / 0xb8, FUN_10120220 Shift *(inf: 0x2a / 0x36)*
 - L1844: *(inf: which)*
 - L1856: Q / E (0x80000000 / bit 32) are read by no callback *(inf: unused)*
 - L1874: … face-camera strafe (type 2); 0xa9 / 0xaa Q / E turn (type 2); 0xa4 / 0xa5 the zoom axis (map zoom); 0x35 LShift, a list's Shift selection (FUN_10188060, FUN_101a70d0) *(inf)*
 - L1888: … sets); 0x89 / 0x8a pad palette toggles; 0x0e fishing (Enter / Y); 0x0f events and fishing; 0x8b 0x8c 0x96 the mouse buttons; 0x9b Shift+Ctrl+Alt+D and 0xa6 D, lobby hooks *(inf: debug)*
 - L1889: … 0x8c 0x96 the mouse buttons; 0x9b Shift+Ctrl+Alt+D and 0xa6 D, lobby hooks *(inf: debug)*; 0x00..0x03 arrows in list windows (Up with Esc held a debug toggle FUN_10077000 *(inf)*
+- L1927: … look (5, 0.25, 0) about Z by +pitch, below the eye, which ours matched; the user reports retail's first-person mouse Y the other way (2026-11-02), so ours now follows that *(inf: our reading of the Z rotation's sense or of the mode-5 axis in first person is off somewhere)*
 - L1936: Ours uses the posed model's top *(inf: bounds)*
 - L1947: Type 2: FUN_10253af0 *(inf: wheel)*
 - L1957: Ours: no ceiling, no side rays, no path mode (DAT_10444458: the camera retraces the look's path when the view keeps being blocked *(inf)*
@@ -144,9 +146,12 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 `MODLOG.md:2059`
 
 - L2062: Inferred items are marked *(inf)*
+- L2068: Numpad * also binds 0x7e (context 0x04: a recentre, *(inf: the map)*
 - L2071: /heal (FUN_1007adb0) also needs FUN_101c2550(0x60, 0) (mask bits 0x20 \| 0x40, not decoded); with FUN_100f9220() & 0x80000 it first clears DAT_10444110+0x18 bit 3 and calls FUN_100f9370(0x80000) *(inf: stops auto-run / follow)*
 - L2076: Events: the message window's init FUN_10132230 clears window +0x84 when not cancellable (meaning not traced).
+- L2084: Actor +0xf9 = 1 free / 0 locked (vtable +0x330 / +0x334); +0xfa is toggled by key 0x45 (Numpad /, Ctrl / Alt + Z) *(inf: first person)*
 - L2092: The free look-at: pos.y - 0.6 h (h the bbox height, capped 2.5 with +0x14c set *(inf: mounted)*
+- L2100: Name plates: with DAT_10443fe4+9 == 0 the target's colour loses its low byte (XOR AL,AL; *(inf: white turns yellow)*
 - L2103: Inferred, open: the tick unit of DAT_10443fe4+0x28 (60 Hz), who sets lock mode 2, the +0xee kinds and +0x120 bits 9 /
 - L2127: Frame height eases 8 px a tick while more than 16 px off, else 2 px *(inf: per 1/60 tick, retail per frame)*
 - L2131: msgline: (16, H - 38), (textw + 14) x 22, windowps 37, text at +2 / +2 *(inf: +2 more for the caret gap)*
@@ -173,21 +178,25 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 - L2375: Op 0x10 captures the frame before the cut and fades it out over 60 ticks (SRCALPHA); ours renders that frame once offscreen from the last camera with last frame's poses, in its own submit *(inf: the capture source)*
 - L2384: UI fade: the UI shader multiplies by the level (colour and alpha) *(inf: op 0x51 as a modulate)*
 - L2409: Name plates in cutscenes: ours show over visible NPCs; whether retail hides them during events is not traced (FUN_100ce4d0's vtable checks).
+- L2436: 0x46: every sub advances 2 and does nothing while the player has no model; sub 1 calls FUN_10217e90 *(inf: hides a HUD window)*
+- L2439: Motion scheduler op 0x28 (32732 'tlk1'): FUN_100c6b70 + FUN_100cb8e0, a 10-tick blend into a chosen motion *(inf: back to the stance)*
 
 ## Top bar fade, menu titles, target gauge, map window, log focus, lock-on release, loading indicator (2026-10-21)
 
 `MODLOG.md:2454`
 
 - L2457: Inferred items are marked *(inf)*
+- L2472: Manager init sets the timer to 30 and parts start shown: HudTop::enter() on every zone-in *(inf: FUN_10010080 is the in-game start)*
 - L2473: The rule runs only in game state 0x60; zoning and the zone load are taken as 0x70 *(inf)*
 - L2480: Active also while titlewin's "HN" mode (+0x448, a PlayOnline handle *(inf)*
 - L2486: … update (manager 0x105dc2e0, timer +0x78) only while the value at DAT_10444110 is 0x60; 0x70 is set by FUN_100897b0 ('zmrq') and FUN_1009d500 case 8, cases 5 / 9 set 0x60 back *(inf: zoning)*
 - L2489: Part 0 (FUN_10114f00): +0x44 state, +0x48 count, +0x0c alpha factor; state 0's factor is 0.58 when part +0x4c is set *(inf: dimmed)*
+- L2493: No event, chat-input or cutscene case: in a cutscene the bars go because the bar is empty *(inf: no event text writes helpwind or titlewin;
 - L2494: … in a cutscene the bars go because the bar is empty *(inf: no event text writes helpwind or titlewin; not checked site by site)*; whether netstat's content hides in cutscenes is not traced.
 - L2502: help), map0. Per-item overrides (+0x4c / +0x50) are not traced.
 - L2530: Home Point #2, Cheval River) set neither, so on LSB NPCs show a gauge (live3c_1). Retail's server presumably sets one of them for ordinary NPCs *(inf)*
 - L2555: View: the player under (W * 200 / 512, H / 2) clamped to [base, base + max(0, 512 - W / zoom)] (FUN_101e7a60 / FUN_101e6110); retail animates that scroll, ours starts there *(inf)*
-- L2564: Not done: the open / close fades, the recentring scroll, pan / zoom keys (input context 0x26, not traced), the sub-map key, Markers (mapv3) / Wide Scan / Change Map, other markers (party, POIs, .MRK files), the M
+- L2564: Not done: the open / close fades, the recentring scroll, pan / zoom keys (input context 0x26, not traced), the sub-map key, Markers (mapv3) / Wide Scan / Change Map, other markers (party, POIs, .MRK files), the Mog House branch (myroom), the group 7 messages 97 / 98, the mouse.
 - L2580: Tabs (table 0x1032867c): fep sprites from (x0, y0 - 9), slot s unselected A[2s] / selected A[2s + 1], 30 px after an unselected one; the filter-8 tab only with config 0xb4 (default 0 *(inf)*
 - L2587: … log while engaged): a window that takes the keys (main menu, item windows, action menu, confirm, config) takes the focus from the log when it opens, not while it stays open *(inf: the newest window has the focus)*
 - L2601: … (6 by default), handed back to the yaw / pitch orbit once settled or on manual input; the height hold and the wall-ray recovery are simplified to a ray from the look point *(inf)*
@@ -212,6 +221,7 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 - L2760: Hand anc_s at the cursor child *(inf)*
 - L2762: … = the fontshp sprite font (not the game font), fitted to the child width 128: pen starts at 8, at the limit the rest becomes an 8 px piece (the ellipsis sprite 0x6c *(inf)*
 - L2799: Escape in a prompt answers No *(inf: the result -1 path of FUN_10233cb0 was not traced to a key)*
+- L2802: File not found." *(inf: the file-missing path)*
 - L2810: Opened by message 8 on a used slot (right button inside the list, FUN_102370d0; numpad + per the caption and key function 0x11, *(inf)*
 - L2815: File not found." / 0xf0 "Unable to load ..." *(inf: the -1 path)*
 - L2855: With focal 350 (the camera ctor; the lobby does not change it *(inf)*
@@ -221,7 +231,7 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 
 `MODLOG.md:2866`
 
-- L2869: Decompile: all.c / all.asm (FFXiMain) and the US "FINAL FANTASY XI Config" tool (v5.0, decompiled headless). Inferred items are marked *(inf)*
+- L2869: … settings, background resolution, target flash (2026-10-21) Decompile: all.c / all.asm (FFXiMain) and the US "FINAL FANTASY XI Config" tool (v5.0, decompiled headless). Inferred items are marked *(inf)*
 - L2936: A window under a later one at the same place (k1assign over conf6win, textcol3 over textcol2) is not drawn *(inf)*
 - L2945: … style (files 14..21, textures swapped in the UI renderer); 0xb4 the full log's second-window tab; 0xb5 timestamps "[hh:mm]" / "[hh:mm:ss]" (12-hour, local time) on chat lines (*(inf: placement)*
 - L2949: … message filters on the client (FUN_100abf20: kind table 0x10350a60, 11 relation tables from 0x10351bbc; party / alliance relations not modelled); 0x3c nearest-N other PCs drawn *(inf: which are dropped)*
@@ -229,6 +239,7 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 - L2952: … the mouse camera; 0x8f edge panning (pointer within 2 px of the left / right edge turns 1.5 rad/s *(inf)*); 0x91 chase cam (the free camera eases toward the facing while moving *(inf)*
 - L3008: A half-size target exists too *(inf: glow)*
 - L3034: … draw FUN_1002a8c0; FUN_100c9da0 is reached through FUN_100c9d20 at vtable slot 0x288 of 0x10322540, 0x10325d70 and 0x10326218, so every skeleton actor (PCs, NPCs, monsters) *(inf: which class is which not mapped)*
+- L3046: It is strongest where the zone's actor ambient is low (night, dungeons) and almost invisible near 0.86 *(inf: why "some monsters do it")*
 - L3052: … whenever a target is set and the player actor exists; the locked camera (FUN_1001e030), locked movement (FUN_100a6210) and "/target %d" (FUN_100a8510) read it too *(inf: normally the same actor)*
 - L3059: … FUN_1008dc40: every actor within a radius (FUN_100995f0) and dy^2 <= 64 of a point from entity +0xcc / +0xd0, while DAT_104cd388 != 0 and entity +0x134 >> 20 & 0xf == 2 *(inf: an area-of-effect preview)*
 - L3109: *(inf, open)*
@@ -239,6 +250,7 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 
 - L3136: Inferred items are marked *(inf)*
 - L3137: Inferred items are marked *(inf)*
+- L3146: A left click on nothing never clears the target (FUN_10151d20 keeps it and runs FUN_101524e0(0), the confirm key on it): ours keeps it and talks to an NPC target *(inf: monsters take no action on that click)*
 - L3151: … toggle; the rest unlock (status leaving 1 / 3, death, +0x22 = cursor moved off the actor to a ground point, invalid target, target change, server-forced position FUN_1008b680 *(inf)*
 - L3157: The physical pad button is the 5th entry of the pad list (FUN_10004eb0, local_f0[4] = 10) *(inf)*
 - L3160: Ours keeps facing the target every frame while locked (the user's spec; differs from that reading *(inf: retail's schedules may turn the attacker)*
@@ -271,6 +283,7 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 
 `MODLOG.md:3533`
 
+- L3539: … point of an Sph capsule chain: points from block u32 @0x10 + 0x10 at 0x20 bytes (x, y, z, r), segment pairs from block u32 @0x14 + 0x10; pulled in by the radius, zero inside *(inf: the clamp, FUN_10054fb0 is garbled)*
 - L3543: Scheduler ops 0x0a (actor1), 0x0b (actor2), 0x53 (*(inf)*
 - L3559: SeSep chunk (resource type 0x3d): "SeSep " @0 (5 bytes compared, FUN_1023b920); u8 @7 (0, 0x14, 0x1e, 0x28 seen) and u32 @0x10 (2, 3, 4, 6) are not read by the PC paths; @0xc low 31 bits a length *(inf)*
 - L3560: … seen) and u32 @0x10 (2, 3, 4, 6) are not read by the PC paths; @0xc low 31 bits a length *(inf)*; the bytes from @0x14 are never read on PC (command 2 passes only the id) *(inf: PS2 sequence data)*
@@ -297,6 +310,9 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 
 - L3692: Motion gate (inferred): retail tests the base motion against the idle 'idl?' (+0x7d8 != +0x7c8) and a few flags (scheduler op 0xbc's counter, a landing);
 - L3701: Retail keeps one clone per actor and restarts it *(inf: a new instance per step)*
+- L3714: *(inf: the sign of +0x210: the floor normal turned to +y, so flat ground gives identity, which is what fmrk's flat-lying rotation needs.)*
+- L3727: It returns at once, keeping the stored heights, when actor+0x8ac bit 0 is set (invisible, vt+0x260 = FUN_100a2e40) or the entity's +0x128 bit 0 is clear *(inf: shown / active;
+- L3738: The alt name (not done): zone flag zone+0x1cf (DAT_106175ac) and surface 3 -> byte 1 = '2' *(inf: a zone whose surface 3 borrows surface 2's sounds;
 - L3747: The motion gate as retail has it (ours above is inferred): a step needs actor+0x8ab != 0 (a counter held up by scheduler op 0xbc, FUN_10060cc0 / FUN_10060c80 *(inf: for the scheduler's remaining time, FUN_1005d5e0)*
 - L3748: The motion gate as retail has it (ours above is inferred): a step needs actor+0x8ab != 0 (a counter held up by scheduler op 0xbc, FUN_10060cc0 / FUN_10060c80 *(inf: for the scheduler's remaining time, FUN_1005d5e0)*
 - L3751: … / scheduler op 0x28, +0x7c8 from op 0x8c / FUN_10088be0), entity+0x128 bit 1, or actor+0x8b6 (set in FUN_100c4390 when FUN_10082fe0() and +0x8bc < 0, which then becomes 32.0 *(inf: a landing)*
@@ -483,11 +499,17 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 
 - L5481: Ours maps that to world.menu / win / config / map / magic / ability / palette / event (inferred).
 
-## moogle/SPEC.md of that session)
+## Moogle menus: s2c 0x02E, "menu    myroom", "menu    mogext", the storage menus (2026-10-23; spec: scratchpad moogle/SPEC.md of that session)
 
-`MODLOG.md:5522`
+`MODLOG.md:5521`
 
 - L5558: /dig (id 0x37, flags 0x41, FUN_1007aaf0) on a chocobo: c2s 0x01A category 0x11 (LSB ChocoboDig); its place checks (refusal index 8 = group 7 0x4a) are left to the server (inferred).
+
+## The emote list (2026-10-23; spec: scratchpad mount/SPEC.md section B of that session)
+
+`MODLOG.md:5561`
+
+- L5575: /sitchair [n] (id 0x34): c2s 0x113 {u32 mode 0 toggle, u32 chair} (LSB's layout; the handler's checks are not traced).
 
 ## Change Jobs: "menu    jobchang" / "menu    jobcselu" (2026-10-23; spec: scratchpad moogle/SPEC.md section 4)
 
@@ -495,11 +517,18 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 
 - L5587: Enter opens jobcselu (16, 48) with +0x14 = 1 / 2; its cursor starts on child 1 *(inf)*
 
+## c2s 0x01A ActionID 0x14 (LSB SendResRdy) (2026-10-23)
+
+`MODLOG.md:5612`
+
+- L5627: Ours (client/mod.rs res_rdy): once the world is shown, in the Mog House after 20 ticks of 1/60 s *(inf: the frame length)*
+
 ## Name plates under the screen fade (2026-10-23)
 
 `MODLOG.md:5633`
 
 - L5640: FUN_10160650; the target arrow is a window too *(inf)*
+- L5644: Ours draws plates in the HUD batch after ScreenFx; their colour is now scaled by the same multiply (and the zoning fade), which equals retail for an alpha-blended plate *(inf: up to the clamp of MODULATE4X)*
 
 ## /jump (2026-10-23)
 
@@ -556,8 +585,11 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 
 - L6128: … (count +0x1c), so phrase id N is words[N] (FUN_101bae40 indexes directly); sorted array +0x20 (count +0x28) by key: case-insensitive in English (FUN_10325d40, a strnicmp *(inf)*
 - L6129: … indexes directly); sorted array +0x20 (count +0x28) by key: case-insensitive in English (FUN_10325d40, a strnicmp *(inf)*), strncmp in Japanese, FUN_101c88a0 (accent folding *(inf)*
+- L6138: The cache holds the item records last looked up (bags, equipment, shops) *(inf: what fills it;
+- L6142: Entries from the key item table (FUN_101549e0 count, FUN_101549f0(i) id, FUN_10154550(i) name) that FUN_1022aff0(i) accepts *(inf: owned)*
 - L6143: Entries from the key item table (FUN_101549e0 count, FUN_101549f0(i) id, FUN_10154550(i) name) that FUN_1022aff0(i) accepts *(inf: owned)*, stopping at the first id 0x181..0x183 *(inf: why)*
-- L6146: / 0x14 (id 0) / 0x15 (hi 0 -> FF) / 0x16 (lo 0 -> FF). - The category list (no word, or no match) is every group's title in load order: the 42 file groups, then Items and Key Items *(inf: the order of the two)*
+- L6146: … 0) / 0x15 (hi 0 -> FF) / 0x16 (lo 0 -> FF). - The category list (no word, or no match) is every group's title in load order: the 42 file groups, then Items and Key Items *(inf: the order of the two)*
+- L6150: The input code never makes one *(inf: from servers / scripts)*
 - L6158: … the log add FUN_10127c00 when its param 5 is 1 (every chat line, the tell echo ">> %s : %s", most system chat); FUN_100d9b20 (s2c 0x017, and 0x0CA, the bazaar / inspect message *(inf: LSB's name)*
 - L6159: … (s2c 0x017, and 0x0CA, the bazaar / inspect message *(inf: LSB's name)*); FUN_101dd780 (linkshell message lines, chat mode 0xcc, 40 bytes a row, each row expanded alone *(inf: s2c 0x0CC)*
 - L6160: … name)*); FUN_101dd780 (linkshell message lines, chat mode 0xcc, 40 bytes a row, each row expanded alone *(inf: s2c 0x0CC)*); FUN_101ddcb0 (41-byte texts in the same module *(inf: the linkshell message window)*
@@ -576,6 +608,7 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 
 `MODLOG.md:6320`
 
+- L6350: Opening: shopmain +0x14..+0x1c = our position, +0x24 = +0x25 = 0; buy source +0x12 = ShopListNum (low byte); FUN_1021c7a0(0, 1) on DAT_10666e2c *(inf: the inventory view set for the sell list)*
 - L6356: c2s 0x085 (FUN_100f8a40): u16 SellFlag 1 @4; its FUN_100fc3c0(0x85, 0, 0) key 0 puts it under the per-id send interval (the 0x083 / 0x084 builders pass the index as key) *(inf)*
 - L6373: Open / inferred: DAT_1057876c + 0xc4;
 - L6375: … 274 (from the decompile; to check against retail shots); the meanings of the tint helpers FUN_1022b680 / FUN_1022b570 / FUN_10223360 / FUN_102092b0; the Escape / close sound not traced.
@@ -585,6 +618,7 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 `MODLOG.md:6428`
 
 - L6464: … 8 bytes): u16 item @4, u8 slot @6 (0 for a buy), u8 quantity @7. 0x0AB / 0x0AD: FUN_100eb100 / FUN_100eb130, header only; key 0, so the per-id send interval applies *(inf)*
+- L6472: … icon by id (FUN_1015bd70); 0x16 an icon from a pointer to an id-led struct (FUN_1015bdb0); 0x17 FUN_101f7120; 0x19 an item name by id drawn by list vfunc 0x68 in (width - 8) *(inf: fitted)*
 - L6485: Open / inferred: the cursor reset when the list switches source and the focus back to guildsho;
 
 ## NPC trade: the hand-over window (2026-10-24)
@@ -594,6 +628,7 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 - L6568: On an NPC: FUN_101cc0d0(0x43); its bit 0x40 is the costume refusal, group 7 0xb1 (FUN_101cc040, not traced).
 - L6569: A PC on the blacklist (FUN_100e0a50 *(inf)*
 - L6570: Range FUN_10152490(e, mode): 0 = the squared 3D distance of the models (+0xa0 -> +0x34..+0x3c) <= 36; 1 = FUN_10084100(a, b, 36.0) *(inf: the same rule, another metric)*
+- L6572: … inventory slot, u8 count}, gil +0x3c; the cursor-child table 0x10371d60 (children 1..8 -> slots 1..8, 11 -> 0 gil); the cursor shape FUN_101c8c30(7) on child 11, 0xb elsewhere *(inf: the numctrl vs slot cursor)*
 - L6574: The picker lists bag 0 only *(inf)*
 
 ## Player trade (2026-10-24)
@@ -602,6 +637,7 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 
 - L6615: … +0xc4 the partner's (4 OK); the partner +0x6c / +0x70 / +0x7c, the pending requester +0x74 / +0x78 / +0x9c, times +0x20 request, +0x24 prompt, +0x28 cancel (FUN_100dc130 *(inf: seconds)*
 - L6616: An incoming 0x021 counts only while idle or pending; a Start is refused (0x033 Cancel) also while FUN_10160740(8) holds *(inf: the UI locked)*
+- L6617: Draws: our name at (+4, +5), orange 0x80804020 in state 4; the gift's gil at the top right *(inf: x + w - 14, y + 8)*
 - L6619: The key codes 1 / 2 / 8 and the edge flag +0x5a are inferred.
 - L6620: Picker greys (FUN_10150e60): extdata Ex (FUN_101cb960 / FUN_101cba20 & 2, augment tables *(inf)*
 - L6622: The action menu shows 0x13 unless our +0x1d0 bit 0x400 (FUN_101cc350(0, 0)) *(inf: a costume or a non-human form)*
@@ -622,7 +658,7 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 
 - L6736: Title slot 0 while engaged: retail shows group 0xd 5 "Commands" (seen live twice by the user), although FUN_1012b4b0 reads as 7 "Battle Mode" when +0x170 == 1: that field is not the engaged status (inferred).
 - L6768: No sound on this path *(inferred: no SE call in FUN_1015f3e0)*
-- L6776: … (12 bytes: u16 sprite, u8 library 0 keytops3 / 1 windowps, u16 help id, the Right handler @8): 2 / 3 FUN_1012acc0, 4 / 5 FUN_1012aae0 (chatctrl), 8 FUN_1012ab00 (magselec) *(inferred: the ">" is part of keytops3 sprites 7 / 22)*
+- L6776: Command table 0x1036f240 (12 bytes: u16 sprite, u8 library 0 keytops3 / 1 windowps, u16 help id, the Right handler @8): 2 / 3 FUN_1012acc0, 4 / 5 FUN_1012aae0 (chatctrl), 8 FUN_1012ab00 (magselec) *(inferred: the ">" is part of keytops3 sprites 7 / 22)*
 - L6782: The update runs once a call (a frame), not by ticks *(inferred: steps meant for 2-tick frames)*
 - L6784: The cast bar's test is FUN_1011ba40 on DAT_105781ec (FUN_1012c0f0); the palette shift also needs DAT_106218ee == 0 (always when it is 1; its source not traced).
 - L6789: Lock modes (target system +0x5c & 3, FUN_10157660): 1 locked, 2 locked with 5.0 (the x1.5 cone, +5 x bounds distance), 0 free; no PC caller passes 2 *(inferred: unused on PC)*
@@ -658,6 +694,13 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 - L7020: Sorted in CMoOT by +0x128 - z_view, so the glow (-1.2) draws before the digits (-1.5); in the scene pass, under the 2D windows and the op 0x0f fade *(inf: the exact slot)*
 - L7022: No spread or stacking: every printed record starts its own task, so numbers on one target overlap and only their print times separate them; no distance limit; no count limit beyond the pools *(inf)*
 - L7023: The Effects filter (0x92) is not applied *(inf: FUN_10056c70 gets 0 for task+0x90)*
+- L7027: FUN_1009e090 also needs game state 0x60 (DAT_10456a28) and FUN_1009e370 false *(inf: it hides actions between actors whose team byte +0x200 differs from ours with +0x201 clear: PvP / Ballista;
+
+## Emission op 0x3c and op 0x45; the double "Miss!" (2026-10-24)
+
+`MODLOG.md:7035`
+
+- L7079: *(inf: nothing allocates a never-started resource's +0xa4, so the 0x3c element borrows the mis0 clone's frame through E+0x100.)*
 
 ## Per-record reactions from the files: guard, parry, block, counters, added-effect / spike lines (2026-10-24)
 
@@ -679,8 +722,11 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 - L7201: Window events: 1..4 arrows, 5 Enter (and the left click *(inf: the click path in FUN_10125360 not traced to the end)*
 - L7210: Delete with DAT_10456a4c bit 0 gives 0004 and draws 0x80202020 *(inf: the flag is only ever zeroed in this build)*
 - L7211: Escape: cursor 3 (Back), window cursor child 4, FUN_10118170, FUN_10124b70 *(inf: puts the pointer on the new child when the mouse is in use)*
+- L7214: Create also calls FUN_10037a70(0x1e) when DAT_10456aa4 == 0 *(inf: a sound-system command 9 to the music, FUN_1024c080(9, -1, 0x1e);
+- L7217: … [1023ab10]) has the same shape with a list of three items (+0x1c + 4 i enable flags): 1 / 2 / 9 0001; 5 0002 and lock, or 0004 when disabled; 6 the cursor to item 2 with 0001 *(inf: a second button set ours does not show;
 - L7224: FUN_10119fb0 [10116c90](window, sprite, x, y, sx, sy, N, c), RET 0x1c: with window +0x99 set, sx / sy become FUN_101601d0's scaled-window factors *(inf: the 0x100000 registry flag;
 - L7227: Ring k: alpha = ftol(128 (1 - e / M)), tint alpha << 24 \| 0x805020, centred: x -= ftol((sx s - 1) \|x1 - x0\| / 2), y likewise, with the sprite's +0x20 / +0x22 / +0x24 / +0x26 *(inf: its bounds)*
+- L7234: … k0, ring k1): 9: +1, s 1.000 a 128, none; 7: +1, s 1.107 a 82, s 1.017 a 120; 5: +1, s 1.213 a 36, s 1.123 a 75; 3: +1, none, s 1.230 a 29; 1: +1, none, none; 0: -1, none, none *(inf: whether the press frame draws c 9 or already 7 depends on the update / draw order)*
 
 ## Actor sounds 1: voices, model init, sub-animations (2026-10-24)
 
@@ -724,6 +770,7 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 
 `MODLOG.md:7419`
 
+- L7445: *(inf: 2..4 Ballista teams, 5 / 6 Brenner, 8 / 9 Monstrosity Belligerency, 0x28..0x2b another PvP mode, 0x63 used by FUN_101cc220.)*
 - L7448: Sprint becomes Scout (0x17) when our +0x1ff is not 5..6 and +0x27c != 0 *(inf: Petra carried)*
 - L7450: … +0x27c is printed by the `<petra>` tag and written only at asm 0x100a22e4 from u32 @8 of a packet whose u16 @4 holds kind 1 / sub 2 (code at 0x100a21c0, not decompiled; *(inf: s2c 0x0E6, Ballista)*
 - L7453: Nothing happens on the client *(inf: the speed-up is a server status)*
@@ -758,6 +805,8 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 
 `MODLOG.md:7698`
 
+- L7725: … MoghouseFlg @0x1B is the party flag PARTY_MOGHOUSE 0x200, not a location; a member in a Mog House is in the city's zone; 0x0DF goes to every alliance member with real HP *(inf: also those in other zones)*
+- L7729: The away row's name is slot +6 (never the Monstrosity name) through FUN_10202380 -> FUN_101ca180 (the 8-byte ellipsis rule); the gauge anim bytes freeze while away *(inf: the bars ease from the frozen value on return and reset only when the slot's id changes)*
 - L7733: Zone names: FUN_101cbc10(zone, 0) = group 4 (file 55466, short names), else group 9 0x40 *(inf: "---------")*
 
 ## Search: /search and the results window (2026-10-24)
@@ -790,7 +839,9 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 `MODLOG.md:7992`
 
 - L8023: FUN_10096c90 mode 2 opens it with FUN_10210e30(LAB_10097370, &state[5], 0, 1, 0, 1, 0): the cursor on Accept *(inf: the default child)*
+- L8028: Escape (message 6, also the right release): the generic SE 0003 (+0x84; it does not close: registry flags & 2), then the class's SE 0004 (+0x39 == 0) *(inf: whether 0003 is heard too depends on the voice stealing)*
 - L8042: … FUN_10087070(0) holds; it floors y at win+0xbe when +0xbe != +0xc2 (both 0 by default) and at 16, moves the window by FUN_10119110 without easing, and sets +0x88 = (x - 8, y) *(inf: the hand)*
+- L8054: … / 0x191, 0x167 / 0x192, 0x168, 0x169, 0x16e, 0x16f, 0x247 scale it by 50 / 90 / 120 / 150 / 200 % through FUN_10102030 by the spell type (1, 2, 0x63) and +0x44 bits 0 / 1) *(inf: the SCH arts, Manafont, Manawell, Penury, Parsimony family)*
 
 ## /check on a player: "menu    inspect" (2026-10-24)
 
@@ -833,12 +884,14 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 - L8381: A toggle row flips once a second while held *(inf;
 - L8382: After Disengage's hold the release confirms the row now shown, so Call for help runs /help *(inf: no guard)*
 - L8383: After Disengage's hold the release confirms the row now shown, so Call for help runs /help *(inf: no guard)*; after Magic's the release is judged against magselec *(inf: SE 0004 with the pointer still over playermo)*
+- L8386: Middle (0x96) release -> msg 7 when FUN_10123e50(4) (playermo: FUN_1015ee40, the main menu) *(inf: the button)*
 - L8389: The party cursor on engaging: cancelled through its callback with 0, its window restored, then FUN_10202d10 / FUN_10157780(0, 0) / FUN_10157860(0, 0) and target-system +0x58 = 0; no sound *(inf)*
 
 ## Treasure pool window: loot, lootope, lnowin (2026-10-24)
 
 `MODLOG.md:8391`
 
+- L8444: Closing by itself: engaging (FUN_1015f3e0(0x20)) and an event start (0x800) close the windows whose registry byte +0x28 bit 2 is clear; zoning through 0x200 (bit 3 clear) or 8 (no flag 0x100) *(inf: which game state is the zone change)*
 - L8449: … 1 or past the count puts the cursor on the last item, else SE 0001 when it moved onto another row; with lnowin open and the pointer in its rect, loot's update sends message 8 *(inf: while focused)*
 - L8465: Packet queue: 0x041 is allocated with key 0, so a second 0x041 within the id's minimum interval is not sent; 0x042 uses the slot as its key (a still-queued pass for the same slot is reused) *(inf: the interval's value)*
 
@@ -853,6 +906,7 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 
 `MODLOG.md:8537`
 
+- L8594: Game state 0x40 (FUN_1015f3e0(0x200) -> FUN_101b83e0) sets Say again *(inf: leaving the game)*
 - L8597: Tell names DAT_1066268c (FUN_1018d640): +4 count, +8 8 x 16-byte names, loaded from the per-character file acq.dat (FUN_101b9f20 kind 1, 0x80 bytes; names of up to 15 letters) *(inf: saved like cnf.dat)*
 
 ## Target flash: the ambient bytes (2026-10-24)
@@ -872,6 +926,7 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 `MODLOG.md:8752`
 
 - L8787: FUN_101d5fe0 is true (boxes skipped) while byte +0x40db1 bit 4 is clear; the zone load clears it and the Mog House entry sets it for map 0x121..0x123 or +0x40d82 != 0 *(inf: the rent-a-rooms have no furniture collision)*
+- L8814: FUN_10176620 takes the first matching '@' record in list order; its six-face test (table 0x10376bc0, FUN_101768a0) gets the world-space old position and delta, so it is dead for real lifts *(inf: a retail bug;
 
 ## Character bump (2026-10-24)
 
@@ -942,6 +997,7 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 
 `MODLOG.md:9446`
 
+- L9501: *(inf: an opener running while arealist is open would reset the mode through +8;
 - L9522: FUN_1020a9d0 returns at once while a query is out (DAT_10385a04 != 4), but the windows still close, 0002 plays and the condition has changed *(inf)*
 - L9541: The first menu reset (FUN_1015d860) clears blocks 2 / 5 and +0x18 *(inf: the comment starts empty each login)*
 - L9544: c2s 0x0E0 (0x98 bytes): text[128] @4 (<= 123 bytes), installTime @0x84 (FUN_100e3220: a u32 from "ffxiusr.sys", 8 bytes {time(), -1}, made if missing), "WIN" @0x88 with byte @0x8b = DAT_104b1770 *(inf: from that file's read)*
@@ -962,7 +1018,7 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 `MODLOG.md:9609`
 
 - L9700: … S+0x3c17c + 12 off (off = packet +9, < 26); when off + 13 >= 26 the callback (S+0x3c150, LAB_101e8200) takes the buffer: per area entry (mode 2 entries 16..41) bit 0 (battle *(inf)*
-- L9710: 0x16 + 16 k). - campsan (dword n = buffer + 4 + 4 i): three sprites at (x + 4, y + 8), (x + 0x20, y + 6), (x + 0x20, y + 0x14) (not traced);
+- L9710: … "%d" right-aligned at (x1 - 6, y + 0x16 + 16 k). - campsan (dword n = buffer + 4 + 4 i): three sprites at (x + 4, y + 8), (x + 0x20, y + 6), (x + 0x20, y + 0x14) (not traced);
 - L9718: Not traced: the beseige2 / campsan sprites and the Besieged forces gauge sprites (in FUN_101e9c40 / FUN_101e9af0 / FUN_101ea150);
 
 ## View House: "menu    mogcont" (2026-10-24)
@@ -1005,6 +1061,7 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 - L10044: "menu mcrbedit" beside them, Num+ (key function 0x11) gives it the focus (SE 0013): Copy / Paste / Delete of the macro (memory), or with Ctrl / Alt held 31 frames *(inf: at 30 fps)*
 - L10082: Fields (FUN_101c5be0): the book name mode 4, 15 bytes (+0xc..+0x11 = 0, 0, 0, 1, 0; *(inf: no auto-translate)*
 - L10084: The editor blinks +0x24 40 on / 20 off of 60 frames while editing *(inf: the caret)*
+- L10085: The flip (not done): on a set change both palettes' element +0x44 = 2 for 20 ticks, then 3 for 20 *(inf: the close zoom, then the open zoom, the contents swapped at once)*
 - L10095: mcrselec +0x2c (FUN_101a6560) clears the book and set clipboards (S+0x235e / +0x235d) *(caller not traced)*
 
 ## MacroPalette: equipment sets (2026-10-25)
@@ -1013,6 +1070,7 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 
 - L10139: … draw nothing and take no space), frame FUN_101a6d60 (title slot 2 the name, help group 10 0x75 "Equipment Set (#%d)" as the child's help override through FUN_1011ae10 *(inf)*
 - L10163: Commands: /equipset (0x9e, flags 0x51) FUN_1007b570 with the gate FUN_101cc0d0(0x46) (fishing, synthesis and bit 0x40 *(inf)*
+- L10170: Open: who calls mcres20 vtable +0x2c FUN_101a7010 (it registers the 0x117 / 0x11b / 0x11c callbacks) *(inf: at load)*
 
 ## The chat line's caret (2026-10-25)
 
@@ -1038,6 +1096,7 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 - L10302: … base FUN_1010a290; language 0 Japanese, 1 English, 2 / 3 the European ones, from DAT_10456a28 + 8); a session already in state 4 / 5 -> FUN_1010a550(0), 7 -> FUN_1010a5f0(0) *(inf: restart / retry)*
 - L10303: Placed: a non-Japanese client sets +0x2bc = FUN_101addc0('wind', 0x183) *(inf: a resource for the language row)*
 - L10306: A slot without a link ends the walk *(inf)*
+- L10320: … a row moves the cursor (SE 0001 when it changed) and sets the pointer shape (DAT_104e1d4c + 0x4c = 2); a click on the cursor row posts a click at its centre (FUN_10124700) *(inf: = Enter)*
 - L10322: With no session only Escape (FUN_1021bb70) and a debug error-file viewer ("err_%03d.bin", +0x34a; not traced).
 - L10332: Open: where "Input:REQUIRE" is enforced (SE 0004 *(inf)*
 
@@ -1061,6 +1120,7 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 - L10483: … draws framesus 188..191 (Wardrobe 1..4) / 204..207 (5..8) at (cell x, y + 2): tinted 16 x 16 itemslot cells with vertex alpha 0 under alpha blending, so they draw nothing *(as read;
 - L10495: … returns 0); 0013 Num+ both ways; a mode-1 grid equip that works plays nothing; Escape and the mode-2 grid Enter have no sound in these handlers (the window manager's not traced).
 - L10497: Bars: the strip's help is 0, so slot 2 is cleared and slot 1 shows the list child's text, falling back to inventor's 0xe 3 "Select an item." *(inf)*
+- L10498: The pointer swap (FUN_10132c30 / FUN_101f27a0; *(inf: FUN_10118c10 = the pointer inside that window)*
 - L10502: … the strip by FUN_10135300): mcresed's grid Enter rebuilds view 2 on all 16 containers (FUN_10134f00); at the editor's open no rebuild runs (the view the last user left) *(inf)*
 - L10503: Open: the list's cursor row after a grid Enter is kept (only the top row is reset) *(as read)*
 
@@ -1110,12 +1170,20 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 `MODLOG.md:10803`
 
 - L10816: Disabled: rank changes and Kick unless through linkshell 1; the rank change unless the member wears it as linkshell 1 *(inf)*
+- L10827: link12 shares the list globals with scresult (DAT_106644dc / DAT_106644e4, busy DAT_10385a04) *(inf: opening one replaces the other's list;
+- L10836: Kick's prompt also takes FUN_101cc590(race) *(inf: the pronoun)*
 
 ## Help Desk: the GM reply page (2026-10-25)
 
 `MODLOG.md:10841`
 
 - L10857: … writes the finished text as "gmNotice.fdt" / "gmNotice.siz"; FUN_10115250 reports the waiting reply to netstat (+0x30 = 2, FUN_102014f0; which sprite its states 1 / 2 draw is not traced).
+
+## The party cursor with the mouse (2026-10-25)
+
+`MODLOG.md:10860`
+
+- L10862: The `<stpc>` / party menu party cursor (FUN_102036f0) takes the party windows' generic mouse events *(inf, as the other windows)*
 
 ## Party requests (2026-10-25)
 
@@ -1156,6 +1224,12 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 - L11132: Then the tail, shared with the locked branch: (B) when the eye moved more than 0.005 this tick *(inf: retail 0.01 a frame)*
 - L11135: … bar (+-0.17 along the camera x: two faces crossing it move the eye until the +x end touches the face nearest the -x end; one face, the same point within 1e-4 from both ends *(inf)*
 
+## Effects audit: fx-sweep (2026-10-25)
+
+`MODLOG.md:11197`
+
+- L11214: 644 item and 14 ability files are effect files with other entry names (4972: goal / kill / open / clos; 56695: str0 / str1 / dis0..2 / trg0): which of their schedulers retail starts is not traced yet.
+
 ## Scheduler task ops: holds, locks, loops, flow (2026-10-25)
 
 `MODLOG.md:11269`
@@ -1176,6 +1250,7 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 `MODLOG.md:11341`
 
 - L11362: … projection, 141); task ops 0x40..0x47 / 0x54 / 0x55 (the shine overlay), 0x88, 0x3f, 0x2c, 0xb2, screen ops 0x0e / 0x72 / 0x0f, 0x7a; attach modes 9..0xb (the bone rotation, inferred).
+- L11379: The nearest-hit rule of FUN_101693b0 (point 0x30, op 0x42) is not traced.
 - L11389: Op 0x56's real users besides VuAnm: VuDist 79 files, Disintegrate 4 (5036 yam_/mt00, 5069, 5070, 5071; its use of the particle block is not traced), VuLine 1 (5024;
 
 ## The actor shine overlay: scheduler ops 0x40..0x47, 0x54 / 0x55 (2026-10-25)
@@ -1187,13 +1262,23 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 - L11444: Whether a child made during the scheduler's update steps in the same frame is not traced (at most one frame).
 - L11450: Two drives on one channel do not cancel; the one stepped later wins (inferred).
 - L11459: The mesh declaration has no diffuse, so DIFFUSE is white with lighting off (inferred, the D3D8 default).
+- L11460: Op 0x05's `ded?` / `cor?` case (0x1005bbd2) skips the scheduler's scope for actors where FUN_10081b30 == 0 (not traced).
+
+## Effect attach modes 9..0xc: the bone frame (2026-10-25)
+
+`MODLOG.md:11463`
+
+- L11477: … times T(doll position), no rotation, the point ignored: a rebuild (op 0x11, spin ops) adds the position again (copied); a doll's 0xb / 0xc heading is the math pool's scratch *(inf: identity)*
 
 ## Camera shake and rumble: element update op 0x5f (2026-10-25)
 
 `MODLOG.md:11518`
 
+- L11557: *(inf: whether the pair is read at emission or at instance start;
 - L11560: Consumer FUN_10007ae0 from the pad poll FUN_10005a40, once a frame *(inf)*
+- L11563: level x 10000 / 256: XInput (pad +0xc9a set, needs +0xc99 and DAT_10455c39) both motors min(level x 4, 0xffff) via FUN_10008ed0 *(inf: XInputSetState)*
 - L11566: DAT_10455c39 is the second flag of the gamepad settings string, the external gamepad tool's *(inf: "vibration on")*
+- L11567: Also added to +0xdb4: a sound task FUN_100381d0 (60 a frame while its timer bit 0x20 and a flag are set) and FUN_10252ce0 (a sound level) *(inf: which sounds)*
 - L11598: … / DAT_10455c39; above 30 fps retail runs n = 1 and so shakes faster, ours keeps n = 2 per 2 ticks; the lobby, creator and title cameras are not the game camera and do not shake *(inf)*
 
 ## Distortion meshes: CMoDistModelElem (2026-10-25)
@@ -1219,6 +1304,7 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 
 `MODLOG.md:11793`
 
+- L11839: *(inf: an MMB resource would leave FUN_10183760's lists, an untextured mesh 0x10352348 / 0x10352648.)*
 - L11841: … lists, an untextured mesh 0x10352348 / 0x10352648.)* LIGHTING follows flag 16 (2 generators); without normals in FVF 0x142 the lit colour would be the ambient / emissive terms *(inf)*
 
 ## Scheduler op 0x7a: pin actor1 to actor2 (2026-10-25)
@@ -1233,6 +1319,12 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 `MODLOG.md:11895`
 
 - L11908: f *(inf: FUN_1000a5a0's uv order)*
+
+## Generator op 0x15: the view gate (2026-10-25)
+
+`MODLOG.md:11935`
+
+- L11943: Ours (fx/emit.rs generator_stream): off screen = every corner outside one plane of the scene frustum (fovy 2 atan(192 / focal), Registry::aspect from the client each frame) *(inf: the exact test of FUN_1004a870's vtable +0x8c call;
 
 ## Weapon after-image: scheduler op 0x2c, Afb chunks (2026-10-25)
 
@@ -1281,6 +1373,7 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 - L12269: /automove (FUN_1007e170): autorun on, forward as we face *(inf)*
 - L12275: Ours: our trusts are our party rows from index 0x700 *(inf: retail tests the owner index +0x2a4)*
 - L12303: The third %s is inferred (the decompile drops the argument).
+- L12322: … water in front), the session and zone != 0xd3, else 7 0x49 "You cannot fish here." (refusal index 7); already fishing (DAT_10487e49): done; FUN_1009fb50: FUN_100956c0(0xff) *(inf: rod or bait missing, nothing sent)*
 - L12332: … FUN_1007bf30(t, 1, k, 1, 0) is refused mounted (7 0x4b) or with our +0x128 bit 6 (7031 0xac), has no distance test, skips a target in status 2 / 3, and queues with key k *(inf: keeps the per-trust packets apart)*
 - L12341: /vote 0x10: argc 2 with a number 1..8 votes for the last proposer (DAT_104df910), else a name (<= 15, starting with a letter) with index 0; FUN_100e0a50(name) must be 0 *(inf: not blacklisted;
 
@@ -1354,6 +1447,7 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 `MODLOG.md:12924`
 
 - L12955: Two drives on one actor both write +0x744 every frame, the later-stepped winning *(inf: task-list order)*
+- L12978: *(inf: copy.a is about 1 nearly everywhere, opaque scenery writing sat(4 tex.a diffuse.a);
 
 ## Weapon glows, `!in?` / `!kl?`, timed hides (2026-10-25)
 
@@ -1366,6 +1460,7 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 
 `MODLOG.md:13056`
 
+- L13106: Children started by `main` carry no +0xac and may outlive the files *(inf: their motions are not from the skill file)*
 - L13111: FUN_100c63d0 (asm 0x100c716f) with +0x80 up also skips FUN_100c9810 / FUN_100c9c10 / FUN_100ca310 / FUN_100ca730 (linked-actor syncs, not traced) but keeps the per-status placement (dead, riding, fishing, chair) and FUN_100ca8c0 (knockback).
 - L13119: Inferred: the actor -> entity copy for c2s 0x015 (2019 FUN_10096c00) is not traced in cur;
 - L13121: End (dtor FUN_10061f50): +0x7a4 = -1, ref cleared, +0x5fc = +0x5c4, +0x608 = 1; the player stays where the pin left it *(inf)*
@@ -1384,6 +1479,7 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 - L13232: next) t; FUN_10032fe0 / FUN_10028200), x 127, chopped *(inf: the sense toward next)*
 - L13247: … restarted or cut the blend); 0 minutes deletes the chain; each object blends its child chain's output into its own env by (total - left) / total (the linear weight MODLOG had inferred), and a finished one drops the chain before it, so a change mid-blend starts from the mixed state.
 - L13256: Not traced: the light yaw world+0x1cc (a scheduler op at 0x100580a4), DAT_1047bf18's override of @0x50 / @0x54 / @0x5c
+- L13273: The light yaw world+0x1cc (i16 degrees x 0.0174528) turns both sun and moon when non-zero (FUN_10027b80, axis not traced);
 - L13277: DAT_1047bf18: while set, FUN_10189980 takes @0x50 / @0x54 / @0x5c / @0x5d from DAT_1065ca54 / ca50 / ca4c / ca48 instead of the lerp; written by scheduler-op code around 0x10059273 / 0x100604d7 (not traced).
 - L13279: … light (type 3), Diffuse = the eased colour x FUN_10186fd0 (env +0x44) for the background, E+0x19c x FUN_10186f60 (env +0x24) for actors; Ambient = DAT_1065ca34 (source not traced).
 - L13287: Inferred: the slerp's sense (toward next) and FUN_10313820 = acos, from use;
@@ -1426,6 +1522,12 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 `MODLOG.md:13778`
 
 - L13828: Their routes *(inf, from the endpoints against the docks)*
+
+## Motion regions: a region the new motion lacks keeps playing (2026-10-25)
+
+`MODLOG.md:13878`
+
+- L13896: … still playing where the current one has no chunk, its ticks, once), set at each motion change, the finished-counted clear included; kept regions advance at the status rate *(inf: every frame)*
 
 ## Weapon skills from NPCs and trusts: the per-race files (2026-10-25)
 
@@ -1561,10 +1663,13 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 
 - L15030: … (FUN_100964f0) is refused while the latch is set or our status (or last 0x037 status) is a fishing one; the field's Enter (target / action menu) is not taken while fishing *(inf: retail's menu is busy-gated)*
 - L15036: The rod is its own actor (id 0x1000_0000 \| angler; file DAT_1035f598[race] + look, Mithra willow 39477) at the angler's place with the angler's status (its fh1 -> fh10) and scale *(inf)*
+- L15045: … 0x38 `!f01` after 136 ticks, 0x3a..0x3e `!f02` after 102 / 40 / 44 / 68 / 0, on the rod; only the rods of looks 14 / 15 (the +1 rods, MId 0x800e / 0x800f) have them *(inf: the others draw nothing)*
 - L15049: A status 6 / 0x32 / 0x38 waits in held_status while the model still plays its walk or run motion (FUN_100d65b0(1) *(inf: walking = those motions)*
 - L15050: Left: FUN_10127ea0 (drops queued text after a mode-3 send *(inf)*
 - L15062: The water test returns true while DAT_1065ca30 is set *(inf: debug)*
+- L15077: FUN_10127ea0 after a mode-3 send empties two message lists on DAT_10578158 (FUN_10126a00) and sets DAT_10488208 = 2 *(inf: so the result line is not held behind queued text)*
 - L15081: Sub-state in +0x13c bits 8..10, the arrow clear counter in bits 12..17; bit 11 (a forced end) has no setter in this build *(inf: dead)*
+- L15104: … status x 4): 0x38 fsh0 (fh0? 136 ticks, then fh1? held), 0x39 fsh7 (fhb?), 0x3a fsh2 (fh3? 168, fh4? 124), 0x3b fsh3, 0x3c fsh4, 0x3d fsh5, 0x3e fsh6; fsh1 is in no table *(inf: unused)*
 - L15107: The status motion is `fh1 ` unless DAT_104568fc +9 *(inf: an event pose flag)*
 - L15111: … + look, bases {39307, 39307, 39339, 39371, 39403, 39435, 39435, 39467, 39499}; skeleton `sao`, mesh `hf_s`, motions fh00..fhd0 / idl0, fsh0..fsh9, SeSep 8231..8236 / 6095 *(inf: cast / reel)*
 - L15115: Leaving fishing drops the files and the rod *(inf: the FUN_1008a2f0 path, as for a mount)*
@@ -1656,6 +1761,12 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 - L16013: worldsel: 14 rows 16 apart from (16, 4); row ref kind 0 = 170 (an invisible cell), kind 1 = 171 (a translucent bar; which row state shows it is not traced);
 - L16015: Not traced: FUN_101ba240 (the local name filter, 3322), the right click and the mouse on chmkserv / chmkpass, whether retail sends 0x24 again later.
 
+## Monstrosity, part 10: Customization (2026-10-27)
+
+`MODLOG.md:16018`
+
+- L16037: Commit: c2s 0x102 (flags 1 species, 4 instincts, 8 / 0x10 descriptors) at most once a second *(inf: retail's 30 frames)*
+
 ## The full log's tabs and the log filters (2026-10-26)
 
 `MODLOG.md:16100`
@@ -1675,6 +1786,18 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 `MODLOG.md:16260`
 
 - L16279: With +0x8b5 a 'b' scheduler calls the model's vtable +0x250(1) *(not traced: no effect seen;
+
+## A new scheduler task takes its first step at once (2026-10-27)
+
+`MODLOG.md:16356`
+
+- L16366: … task at once (fx/tasks.rs: ops 0x03 / 0x73, 0x09 / 0x57, 0x3b, 0x3c, 0x24 / 0x5d and run_pending's starts), then marks it `stepped` so the frame's own step passes it by once *(inf: one step a frame, which keeps the hit sparks at T+5 ("Effect schedulers");
+
+## Dolls made before the actor's first pose (Shantotto II's summon sparkle, 2026-10-27)
+
+`MODLOG.md:16370`
+
+- L16378: Ours now: a doll of an actor not yet posed (Actors::posed: no bones yet) keeps no points; who_point reads the live ones until the first pose, and step_tasks fills the doll's points then *(inf: retail's model is posed before its init schedulers run, so its doll never sees the rest pose)*
 
 ## Buying from a player's bazaar: View Wares (2026-10-27)
 
@@ -1696,6 +1819,7 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 
 `MODLOG.md:16705`
 
+- L16724: A merged sub-area's objects get vis 0 *(inf: retail would hand slot 0 a list from the sub-area's pool;
 - L16726: *(inf: our door boxes name no list)*
 - L16747: A list can leave out placements that are in the frustum and in range *(inferred: an offline visible set per floor region)*
 
@@ -1757,6 +1881,12 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 - L17223: The handle-id text (slot 0x1db) is unknown too; titlehan draws only while polcore's mode byte *DAT_10456a28 == 0x60 *(inf: signed on)*
 - L17230: Our status at login: s2c 0x00A (LAB_100facf0, LoginState @0x80 in {1, 2, 0, 6}) sets Away back to Online with a 0x0DC clear *(inf: only the first 0x00A)*
 
+## rem4line / rem4li2 and spoolmsg / splmsg2: the log's page overflow and Hold (2026-10-28)
+
+`MODLOG.md:17238`
+
+- L17252: Ours runs the test per new row of the frame (a frame's rows come together), and shows the current page *(inf: retail draws from its list head +0x58, stepped 4 rows by the message handler;
+
 ## s2c 0x075: the battlefield countdown, objective bars and text (2026-10-28)
 
 `MODLOG.md:17308`
@@ -1785,6 +1915,7 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 
 `MODLOG.md:17467`
 
+- L17516: and odds are not reset: the last board shows until the first 0x073 *(inf: zero on the session's first open)*
 - L17530: FUN_100f9940 (session start) zeroes it *(inf: so per zone)*
 - L17551: keytops3 sprites, named from the art only *(inf)*
 - L17562: Event 210 polls update option 5 up to 30 times (Z9 -4 one more try, -5 / -6 stop); LSB answers only after the race has run *(inf: else the update never returns)*
@@ -1795,6 +1926,12 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 
 - L17602: … factored out of attach_matrix), event::camera_frame after the effects tick (the frame is one frame behind the actors *(ours)*), the blend scaled to retail's frame as 1/30 s *(inf)*
 
+## MonStat idles: dft / df1, ark, hsr (2026-10-28)
+
+`MODLOG.md:17604`
+
+- L17620: A race model (Elvaan F) has no dft / df1 / ark (npc-shot: bind pose), so the motions belong to particular NPC models *(inf: not found yet)*
+
 ## Training regime window (an Extra, 2026-10-28)
 
 `MODLOG.md:17635`
@@ -1802,6 +1939,12 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 - L17661: Id ranges in the book's bytecode (West Ronfaure's actor 0x010642dd, Gustav Tunnel's 0x010d4157): 1..146 FoV, 147..559 hunts, 560..601 unused by LSB *(inf: elite training)*
 - L17686: A Hunt Registry (event 1500) end with option 4 cancels: 0x02A REGIME_CANCELED "Current training regime canceled." *(inf for retail)*
 - L17688: LSB keeps the state in char vars only ([regime]type / zone / id / repeat / lastReward / needed1..4 / killed1..4), untouched by zoning, logout or a job change; retail cancels on a job change *(inf, from the R + 1 text)*
+
+## Remote actors keep their level (2026-10-28)
+
+`MODLOG.md:17725`
+
+- L17749: Knockback and op 0x7a pins: the slide goes on from the pushed / pinned spot, as retail's slide starts from the actor's position; with no slide time left the actor goes to the goal at once *(inf: LSB sends no position after a push)*
 
 ## Moblin Maze Mongers: the Maze Tabula editor (2026-10-28)
 
@@ -1845,6 +1988,7 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 `MODLOG.md:18364`
 
 - L18376: Not ported: the "nothing drawn on the first frame" rule (+0x728 < 2, inferred) and chairs (they have no actor here).
+- L18404: Others: +0x728 (primitives of its last mesh draw) < 2 -> none *(inf: its first drawn frame;
 - L18408: +0x66c is 0x80 when the model colour's alpha (+0x663) is non-zero, else 0 (ctor default 0x80) *(inf, not traced: whether a 'spop' actor's alpha-0 start colour is already set then)*
 - L18422: TEXTUREFACTOR 0x80FFFFFF, stage 0 SELECTARG2 TFACTOR (cutouts fill solid), lighting, fog and z off; alpha test GREATER 0x60 passes; blending off *(inf)*
 - L18428: *(Not traced: whether the overlay passes between the meshes and the shadow leave other stage states.)*
@@ -1889,6 +2033,7 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 `MODLOG.md:18612`
 
 - L18623: The UI draws once over it *(inf, as retail)*
+- L18625: … on odd values the bottom 10 window rows get the 1 x 16 strip texture (row 0 black, rows 1..15 (0x48, 0, 0)): one black row, nine dark red, drawn opaque, under our UI *(inf: retail's blend and order for it)*
 - L18642: FUN_1000afd0's strip is a pre-transformed quad over (0, H - 10, W, H), Z off *(inf: a signal for the display)*
 
 ## Config tool 0017 "Bump Mapping" (2026-10-29)
@@ -1946,12 +2091,20 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 
 - L19059: … next two); chest 7632 / 7751 / 7681 and Domain Invasion 7644-7645 / 7763-7764 / 7693-7694 ("You obtain", colour 0x79). No "can't hold more silt" line exists in any of them *(inf: retail caps silently)*
 - L19065: What starts 9702..9704 is not in the script: the server picks the csid *(inf: a trade)*
+- L19075: *(inf: bit 3 = DI not open to this player, bit 2 = the DI introduction given.)*
 - L19095: Key item shop (prices are in the script, not sent; option: key item, silt): 1 2894 tribulens (1000 while c <= 2, else 1000 + (1000 << c) / 20, c = update 3's num0 *(inf: c decays over time)*
+
+## Wide Scan: a track the server refuses (2026-10-30)
+
+`MODLOG.md:19234`
+
+- L19241: *(inf: the first was out of range or gone when Track was clicked;
 
 ## Ru'Aun's sub-areas: textures found in the zone; variant stand-ins and the camera lists past Retail (2026-11-01)
 
 `MODLOG.md:19444`
 
+- L19456: Now ZoneGeometry::build_keyed takes the zone's texture names, and set_sub maps those to the zone's slots *(inf: retail's texture lookup is by name over everything loaded;
 - L19457: Now ZoneGeometry::build_keyed takes the zone's texture names, and set_sub maps those to the zone's slots *(inf: retail's texture lookup is by name over everything loaded; not traced)*
 
 ## PlayOnline sign-in (net/pol) and FFXiMain's -net 3 lobby path (2026-11-01)
@@ -1993,6 +2146,12 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 
 - L20098: Now Screen::level (from what is shown, as 0x0f), in Screen::multiply (scene and plates) and Screen::ui_level (the 2D layer's level, the mean of its RGB *(inf: as the lobby's modulate)*
 
+## Motion scale and the root turn (2026-11-01)
+
+`MODLOG.md:20117`
+
+- L20140: Normals turn only (our shader normalises them) *(inf: retail's fixed function lighting may see a scaled normal)*
+
 ## Plate and arrow points from `init` (scheduler ops 0x9e / 0x9f / 0xad) (2026-11-01)
 
 `MODLOG.md:20169`
@@ -2005,6 +2164,18 @@ Companion to [modlog-gaps.md](modlog-gaps.md).
 
 - L20194: The pushes FUN_10092c20 / FUN_100929d0 / FUN_10092b20 skip kind 5. So the call that puts a server pose on a ship is still not found *(inf)*
 - L20195: Ours *(inf)*
+
+## Event actor flag ops 0x84 / 0x86 / 0x95 / 0x96 / 0xa4 (2026-11-02)
+
+`docs/modlog/2026-11-02-event-actor-flags.md`
+
+- L22: It shows weather effects even with the Weather setting (config 0x3b) off *(inf: the setter call at 0x101aa703 was not tied to 0x3b)*
+
+## Event op 0xb3: the Fishing Ranking (2026-11-02)
+
+`docs/modlog/2026-11-02-fishing-ranking.md`
+
+- L29: Escape closes it *(inf: the generic window handler)*
 
 ## itemctrl / moneyctr: the mouse (2026-11-02)
 

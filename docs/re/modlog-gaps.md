@@ -12,7 +12,7 @@ decoded, not traced, inferred or not checked live, grouped by area.
 - **Settle by**: **DLL** = read retail FFXiMain.dll (30261006_0) in Ghidra / Rizin; **Live** = try it in game;
   **Footage** = compare with the retail client or a recording; **LSB** = depends on what the server sends;
   **Upstream** = a design question for upstream (lenonk/vana-client), listed only, not answered here.
-- Inline inference markers (*(inf)*, *(inferred)*, *(not traced)*, *(as read)*: 745 lines in 252 entries) are
+- Inline inference markers (*(inf)*, *(inferred)*, *(not traced)*, *(as read)*: 826 lines in 270 entries) are
   too many for this page. They are indexed one per line in [modlog-inferred.md](modlog-inferred.md), generated
   from the same files.
 
@@ -245,7 +245,6 @@ detail inside implemented ops.
 | Party menu: the request-history prompt (comyn 9 0x140); the auto-pool area rule (actor +0x18c); the stage-1 mark; Level Sync's empty list text; the mouse in levelsyn | Not built | L8932, L9764 | DLL |
 | Party requests: the own actor's +0x124 bits 22 / 23 (0xc6) | Not decoded | L10906, L10933 | DLL |
 | Party: the receiving side of invites | Untested live (no bot invites) | L8939 | Live |
-| Status icons: party members | Built, untested live | L7394 | Live (closed live on 2026-10-26: "Party member status icons, live") |
 | Search: /seacom and /seacomup on the same store; scoption's Request / Cancel Request (/partyrequestcmd) | Not built | L9482 | DLL |
 | Search: rec +0x14 vs +0x18; flags 0x400 and 0x10000 | Not traced | L7835 | DLL / LSB |
 | Search: the generic handler before arealist's list | Not traced | L9547 | DLL |
@@ -404,7 +403,7 @@ Items an early entry lists as not done or open that a later entry built or answe
 | 7f ab / 7f ac; /playtime | L6651 | "Event text date codes 7f a0..ac", "Text commands: toggles, /ver, /playtime" |
 | Knockback, guard / parry, op 0x71, skillchain burst | L6860 | "Knockback", "Per-record reactions", "Skillchains" |
 | Tell sound "0p40" | L6900 | L7416: retail finds nothing either; not played |
-| Status icons Num+ focus; party member icons | L7324, L7370 | "Status icons: Num+ focus", "Status icons: party members" |
+| Status icons Num+ focus; party member icons, and their live test (L7394) | L7324, L7370 | "Status icons: Num+ focus", "Status icons: party members", "Party member status icons, live" (L14902) |
 | Engaged menu: loot window, mouse hold, inspect | L7433 | "Treasure pool window", "Action menu: the mouse hold", "/check on a player" |
 | Search: grammar, criteria windows, comment fetch, acoption, LS member list | L7763 | "Search: the /search grammar", "Search menu, part 2", "charlnk ... and acoption", "Linkshell: the Link List" |
 | Party menu: Member List, View Request, Level Sync, Focus, Rearrange | L8932 | "Party menu: Member List, Level Sync ...", "Party requests" |
