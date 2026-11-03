@@ -31,7 +31,7 @@ fn on(w: &World) -> bool {
 /// wading ripple `i900` started near the eye on water, stopped off it.
 pub(super) fn wade(w: &mut World, places: &HashMap<u32, Place>, eye: Vec3) {
     // DAT_10456a70 (asm 0x100d4caa): with Footsteps Off the point stays the position and the ripple is stopped
-    // (the jump lands on FUN_100d6550); the step's folder is in the skipped step code too.
+    // (the jump lands on FUN_100d6550). The step's folder (fses / fres) is looked up either way.
     let feet = on(w);
     let actors = &w.actors;
     w.wades.retain(|id, _| actors.contains_key(id));
@@ -58,7 +58,7 @@ pub(super) fn wade(w: &mut World, places: &HashMap<u32, Place>, eye: Vec3) {
         }
         let near = pos.distance_squared(eye) < 900.0;
         let (kind, covered) = g.surface(pos);
-        let folder = (feet && near && ch.cib[1] >= 1 && kind != 0).then_some(rain_tag && !covered);
+        let folder = (near && ch.cib[1] >= 1 && kind != 0).then_some(rain_tag && !covered);
         calls.push((*id, water.is_some(), near, folder));
     }
     for (id, water, near, folder) in calls {
@@ -68,10 +68,9 @@ pub(super) fn wade(w: &mut World, places: &HashMap<u32, Place>, eye: Vec3) {
 
 /// Heights that came back: a crossing on a moving actor plays its step.
 pub(super) fn steps(w: &mut World, places: &HashMap<u32, Place>, points: Vec<(u64, Vec3)>) {
-    // DAT_10456a70 (asm 0x100d51ab, 0x100d5351): no step is looked for with Footsteps Off.
-    if !on(w) {
-        return;
-    }
+    // DAT_10456a70 (asm 0x100d51ab, 0x100d5351) is tested after the step sound (0x100d514f): Footsteps Off drops
+    // only the footprints and the dust. The foot heights are kept either way (LAB_100d53bc).
+    let feet = on(w);
     // The last point to touch down (tested 9, 8, 0xb, 0xa), relative to the root.
     let mut contact: HashMap<u32, Option<Vec3>> = HashMap::new();
     let actors = &w.actors;
@@ -111,9 +110,9 @@ pub(super) fn steps(w: &mut World, places: &HashMap<u32, Place>, points: Vec<(u6
         let level = if pl.ratio < 0.5 { 101 } else { 127 };
         w.contacts.insert(id, (pl.pos + foot, g.floor_normal(pl.pos).unwrap_or(Vec3::Y)));
         // Dust "w100" walking / "0100" running, unless leg mode 3 (footstep-effects option DAT_10444158, default on).
-        let dust = (ch.cib[0] != 3).then_some([if level == 101 { b'w' } else { b'0' }, b'0' + surface, b'0', b'0']);
+        let dust = (feet && ch.cib[0] != 3).then_some([if level == 101 { b'w' } else { b'0' }, b'0' + surface, b'0', b'0']);
         // Footprints on surfaces 3, 4 and 8, unless leg mode 3.
-        let print = ch.cib[0] != 3 && matches!(surface, 3 | 4 | 8);
+        let print = feet && ch.cib[0] != 3 && matches!(surface, 3 | 4 | 8);
         // +0x128 bit 8 (Sneak) silences the step; the dust and prints stay.
         let silent = if id == w.my_id { w.my_plate.marks.silent } else { w.entities.get(&id).is_some_and(|e| e.marks.silent) };
         log::debug!("footstep {id:#x} {} level {level}{}", String::from_utf8_lossy(&name), if silent { " silent" } else { "" });
