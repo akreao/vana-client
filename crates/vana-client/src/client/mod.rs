@@ -4695,6 +4695,9 @@ struct Actor {
     look_pct: i32,
     /// The attack scheduler used last (FUN_100d46f0 avoids repeating it).
     last_attack: String,
+    /// Drawobj +0x840 bit 6 (FUN_100d6850, set at every swing): the swing now playing is the off-hand one, i.e. a
+    /// dual-wield model playing a `b...` scheduler. Read as scheduler value 0x3b (batch 5 item 8).
+    off_hand: bool,
     /// Motion files on top of the model (event banks, battle files), newest last.
     extra: actmotion::Extra,
     /// Effect files whose schedulers play motions from them (Kind::Effect), wanted on `extra`.
@@ -4845,6 +4848,7 @@ impl Actor {
             turn_pct: 0,
             look_pct: 0,
             last_attack: String::new(),
+            off_hand: false,
             extra: Vec::new(),
             fx_files: Vec::new(),
             skill_want: Vec::new(),
@@ -5390,6 +5394,10 @@ impl crate::fx::Actors for FxActors<'_> {
 
     fn sub_anim(&self, id: u32) -> u8 {
         self.entities.get(&id).map_or(0, |e| e.sub[2])
+    }
+
+    fn off_hand(&self, id: u32) -> bool {
+        self.actors.get(&id).is_some_and(|a| a.off_hand)
     }
 
     fn ranged_class(&self, id: u32) -> Option<i8> {

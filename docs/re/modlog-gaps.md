@@ -108,7 +108,7 @@ detail inside implemented ops.
 | Ships: per-run data for each voyage (no captures; pirates' run 227 / 228) | Blocked: no data | L13802, L13831 | Captures |
 | 0x00E SubKind 5 / 6: the 0x9000 word *(answered, [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §5: bits 0..11 NPC-table model id, bits 12..15 the look slot; kind 7 has a case)*; ours not audited against it | Answered | L15593 | Code check |
 | /sitchair: trusts ignoring chair / sit / heal statuses in 0x00E (asm 0x1009c148) | Not built | L18831 | DLL |
-| Dual wield: a 'b' scheduler with +0x8b5 calls vtable +0x250(1), no effect seen | Not traced | L16279 | DLL |
+| Dual wield: a 'b' scheduler with +0x8b5 calls vtable +0x250(1), no effect seen *([batch 5](notes/2026-11-03-modlog-gaps-batch5.md) item 8: it sets drawobj +0x840 bit 6, read only as scheduler system value 0x3b)* | Built | L16279 | DLL |
 
 ## 4. Effects, lighting and rendering
 
