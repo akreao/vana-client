@@ -407,7 +407,9 @@ impl Audio {
             return;
         }
         self.ambient_level = self.zone_level();
-        let _ = self.tx.send(Req::Voice { id, level: self.ambient_level, pan: 0x40, handle: self.ambient_handle, limit: self.max_se as u8 });
+        // Limit 0 in the mixer: the check above already applied the configured limit, so the loop takes any free slot
+        // while the one it replaces fades out there.
+        let _ = self.tx.send(Req::Voice { id, level: self.ambient_level, pan: 0x40, handle: self.ambient_handle, limit: 0 });
     }
 
     fn zone_level(&self) -> u8 {
