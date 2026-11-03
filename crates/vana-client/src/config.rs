@@ -136,6 +136,8 @@ pub struct Config {
     pub frame_limit: u32,
     /// Anisotropic filtering for scenery, models and the creator (1 = off, up to 16). Not a retail option.
     pub anisotropy: u16,
+    /// Anti-aliasing of the 3D scene: 0 off (retail), 1 FXAA. Not a retail option.
+    pub antialias: u32,
     /// How far scenery, actors and effects draw, in percent of retail's distance (the zone's, scaled by the
     /// Clipping setting); 0 = no limit. Not a retail option.
     pub draw_distance: u32,
@@ -378,6 +380,7 @@ impl Default for Config {
             audio_device: String::new(),
             frame_limit: 300,
             anisotropy: 16,
+            antialias: 0,
             draw_distance: 0,
             party_tp: true,
             map_overlay: false,
