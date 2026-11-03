@@ -180,7 +180,8 @@ The name is drawn whenever the row is shown; the rest only when actor +0xa0 (mod
 ## 6. Costume on other players
 
 - FUN_10095e90 runs for every actor the frame loop buckets, other PCs included.
-- On: s2c 0x00D @0x30 (u16) differs from +0x166 -> stored, +0x120 bit 4 (pending). Next frame: pending, id != 0, not
+- On: s2c 0x00D @0x30 (u16) differs from +0x166 -> stored, +0x120 bit 4 (pending). (Our own player's id also comes
+  from s2c 0x037 @0x44, batch 3; for other players 0x00D is the only source.) Next frame: pending, id != 0, not
   bound -> model freed, bit 5 set, +0x128 |= 0x40000000, +0xee = 2; the model reloads: case 2 of FUN_100d2f60 =
   +0x130 bit 21 ? FUN_100c51c0(2, slot 0) : (bit 5 ? FUN_100c51c0(0, +0x166) : FUN_100c51c0(0, slot 0)).
 - Off: 0x00D @0x30 = 0; bound to an event (comes back once unbound); a status in {2, 3, 7, 0x21, 0x2c, 0x2f, 0x30,
