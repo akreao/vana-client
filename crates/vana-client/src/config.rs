@@ -52,18 +52,13 @@ pub fn regime_path(name: &str) -> PathBuf {
     dir.join(name_file(name))
 }
 
-/// Where to read a character's regime state: regime_path, or the data dir's copy when that one is newer (or the only
-/// one). A run with FFXI_CONFIG (the wrapper) keeps its own copy, a plain run the data dir's, so a regime begun in one
-/// would be missing from the other after a restart.
-pub fn regime_read_path(name: &str) -> PathBuf {
+/// Every place a character's regime state is kept: regime_path, and with FFXI_CONFIG (the wrapper) the data dir's
+/// copy too, so a plain run and a wrapper run each find what the other saw. A save writes them all; a load takes the
+/// newest that reads.
+pub fn regime_paths(name: &str) -> Vec<PathBuf> {
     let own = regime_path(name);
     let home = data_dir().join("regime").join(name_file(name));
-    let modified = |p: &PathBuf| std::fs::metadata(p).and_then(|m| m.modified()).ok();
-    match (modified(&own), modified(&home)) {
-        (None, Some(_)) => home,
-        (Some(a), Some(b)) if b > a => home,
-        _ => own,
-    }
+    if own == home { vec![own] } else { vec![own, home] }
 }
 
 /// The servers' certificate fingerprints (net/tls.rs): in the data dir, or beside an FFXI_CONFIG copy.

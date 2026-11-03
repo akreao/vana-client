@@ -233,10 +233,12 @@ fn save(w: &World) {
     if w.regime.who.is_empty() {
         return;
     }
-    let path = crate::config::regime_path(&w.regime.who);
-    let r = std::fs::create_dir_all(path.parent().unwrap_or(&path)).map_err(anyhow::Error::from).and_then(|_| Ok(std::fs::write(&path, serde_json::to_vec_pretty(&w.regime.state)?)?));
-    if let Err(e) = r {
-        log::warn!("regime: {}: {e:#}", path.display());
+    let Ok(body) = serde_json::to_vec_pretty(&w.regime.state) else { return };
+    for path in crate::config::regime_paths(&w.regime.who) {
+        let r = std::fs::create_dir_all(path.parent().unwrap_or(&path)).and_then(|_| std::fs::write(&path, &body));
+        if let Err(e) = r {
+            log::warn!("regime: {}: {e:#}", path.display());
+        }
     }
 }
 
@@ -253,10 +255,13 @@ pub fn on_zone(w: &mut World) {
         return;
     }
     w.regime.who = w.name.clone();
-    let path = crate::config::regime_read_path(&w.name);
-    w.regime.state = std::fs::read(&path).ok().and_then(|b| serde_json::from_slice::<Option<Regime>>(&b).ok()).flatten();
-    if let Some(r) = &w.regime.state {
-        log::info!("regime: kept for {} ({}): {r:?}", w.name, path.display());
+    // The newest copy that reads (a kept `null` is a cancel, not a failure).
+    let mut paths: Vec<_> = crate::config::regime_paths(&w.name).into_iter().filter_map(|p| Some((std::fs::metadata(&p).and_then(|m| m.modified()).ok()?, p))).collect();
+    paths.sort_by(|a, b| b.0.cmp(&a.0));
+    let kept = paths.iter().find_map(|(_, p)| Some((std::fs::read(p).ok().and_then(|b| serde_json::from_slice::<Option<Regime>>(&b).ok())?, p)));
+    w.regime.state = kept.as_ref().and_then(|(r, _)| r.clone());
+    if let Some((Some(r), p)) = &kept {
+        log::info!("regime: kept for {} ({}): {r:?}", w.name, p.display());
     }
 }
 
