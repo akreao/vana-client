@@ -14233,8 +14233,12 @@ impl App {
                     let rider = (*id & ride::ANIMAL != 0).then_some(*id & !ride::ANIMAL);
                     let gate_status = rider.and_then(|r| places.get(&r)).map_or(status, |p| p.status);
                     a.tilt_rot = None;
-                    // FUN_100cbde0 / FUN_10084640: GroundFlag, HackMove or op 0x33's bit 21 means no ground tilt.
-                    let no_snap = w.entities.get(id).is_some_and(|e| e.no_snap) || (*id == w.my_id && w.my_plate.no_snap);
+                    // FUN_100cbde0 / FUN_10084640: GroundFlag, HackMove or op 0x33's bit 21 means no ground tilt; a
+                    // riding animal has no entity, so it goes by its rider's.
+                    let flags_of = rider.unwrap_or(*id);
+                    let no_snap = w.entities.get(&flags_of).is_some_and(|e| e.no_snap)
+                        || (flags_of == w.my_id && w.my_plate.no_snap)
+                        || w.event.as_ref().is_some_and(|l| l.no_ground(w.my_id, flags_of));
                     if tilt::eligible(ch.cib[0], gate_status) && !no_snap {
                         // Ours: the player's walk normal, else the face under the position each frame (the rider's for an
                         // animal at its place) *(retail skips far moving actors, up to 121 frames)*.

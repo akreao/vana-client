@@ -555,6 +555,13 @@ pub struct Live {
     pub st: State,
 }
 
+impl Live {
+    /// Op 0x33's bit 21 on a bound actor (entity +0x120 bit 21): no ground snap and, through FUN_10084640, no tilt.
+    pub fn no_ground(&self, me: u32, id: u32) -> bool {
+        self.rt.actors().any(|(a, b)| b.no_ground && (if a == PLAYER { me } else { a }) == id)
+    }
+}
+
 /// An event waiting for its actors (FUN_100ad000 -> FUN_100ad460).
 pub struct Waiting {
     pub start: EventStart,
@@ -1877,6 +1884,8 @@ impl Host for LiveHost<'_> {
     /// FUN_100b3fb0 / FUN_100b4130 and the walks skip the snap when the actor has GroundFlag, HackMove or op 0x33's
     /// bit 21 (batch 6 item 14).
     fn ground(&self, actor: u32, p: [f32; 3]) -> Option<f32> {
+        // The VM names us PLAYER; the flags live under our world id.
+        let actor = self.wid(actor);
         let no_snap = if actor == self.w.my_id { self.w.my_plate.no_snap } else { self.w.entities.get(&actor).is_some_and(|e| e.no_snap) };
         if no_snap {
             return None;
