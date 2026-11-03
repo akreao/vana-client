@@ -162,7 +162,7 @@ detail inside implemented ops.
 | Chat: the spam filter (config 0xce; kinds 1, 0x1a, 0x22, 0x23) | Not built | L5953, L5960 | DLL |
 | Chat: the profanity mask (vulgar2.dic, FUN_101ba200) | Not built | L5970 | DLL |
 | Chat: the line cut at a control byte (FUN_1018fc40) | Not built | L5974 | DLL |
-| Chat: the echoes' rank icon (mentor / mastery rank) | Not built | L5985 | DLL |
+| Chat: the echoes' rank icon (mentor / mastery rank) *([batch 7](notes/2026-11-03-modlog-gaps-batch7.md) item 21: assist echoes only)* | Built | L5985 | DLL |
 | Chat: Shift-JIS text (ours decode UTF-8); SJIS quotes 0x8167 / 0x8168 print '?' | Not built | L5953, L1634 | DLL |
 | Chat: c2s 0x0B5 / 0x0B6 at 150 bytes (ours 127) | Not built | L5953 | DLL |
 | s2c 0x027 / 0x043: the event-lock drop ((DAT_104808fc \| DAT_1047fb40) & 0x40) | Not built | L6010 | DLL |
