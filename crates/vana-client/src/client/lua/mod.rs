@@ -1988,6 +1988,8 @@ mod stub_tests {
         for e in std::fs::read_dir(&dir).unwrap().flatten() {
             text += &std::fs::read_to_string(e.path()).unwrap();
         }
+        // A Windows checkout may carry CRLF line ends.
+        let text = text.replace("\r\n", "\n");
         for f in super::docs::FUNCS {
             let full = if f.ns.is_empty() { f.name.to_string() } else { format!("{}.{}", f.ns, f.name) };
             assert!(text.contains(&format!("\n## `{full}`\n")), "docs/modding/reference has no section for {full}");
