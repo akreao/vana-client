@@ -1,8 +1,10 @@
-//! Our own character's costume state (FUN_10095e90, actor +0x120 bits 4 / 5): the id from s2c 0x037 @0x44 marks a
-//! change pending; once a frame the pending costume goes on (or off, for id 0) unless the actor is bound to the
-//! running event. Some statuses take a costume that is on back off, which leaves it pending again. Only the "in
-//! costume" bit is kept here: FUN_101cc0d0's mask 0x40 refuses trades and commands with it (group 7 line 0xb1). The
-//! costume model itself (an NPC model id, drawn as the whole body) is not built.
+//! Characters' costumes (FUN_10095e90, actor +0x120 bits 4 / 5): the id from s2c 0x037 @0x44 (ours) or 0x00D @0x30
+//! (others) marks a change pending; once a frame the pending costume goes on (or off, for id 0) unless the actor is
+//! bound to the running event. Some statuses take a costume that is on back off, which leaves it pending again. In
+//! costume FUN_101cc0d0's mask 0x40 refuses our trades and commands (group 7 line 0xb1), and the actor is drawn as the
+//! costume's NPC model (FUN_100d2f60 case 2: FUN_100c51c0(0, +0x166), the whole body); the look it would have waits.
+
+use super::{Source, World};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(super) struct Costume {
@@ -38,6 +40,56 @@ impl Costume {
         } else if self.on && !allowed {
             // Off and pending again (inf: so in one of those statuses it goes back on the next frame).
             (self.pending, self.on) = (true, false);
+        }
+    }
+}
+
+/// The costume model an actor wears now, if any.
+pub(super) fn worn(w: &World, id: u32) -> Option<u16> {
+    let c = if id == w.my_id { Some(&w.costume) } else { w.costumes.get(&id) };
+    c.filter(|c| c.on && c.id != 0).map(|c| c.id)
+}
+
+/// `source` is the costume's own model.
+pub(super) fn is_model(source: &Source, id: u16) -> bool {
+    matches!(source, Source::Npc(crate::dat::npc::NpcLook::Model(m)) if *m == id)
+}
+
+/// FUN_10095e90 on every actor with a costume, ours from our status, the others' from theirs. A costume going on keeps
+/// the actor's look aside and loads the NPC model; coming off brings the look back.
+pub(super) fn step_all(w: &mut World) {
+    let bound = |w: &World, id: u32| w.event.as_ref().is_some_and(|l| l.st.bound.contains(&id));
+    let mut changes = Vec::new();
+    let me = w.my_id;
+    let was = w.costume.on;
+    let b = bound(w, me);
+    w.costume.step(w.my_motion.status, b);
+    if w.costume.on != was {
+        changes.push((me, w.costume.on.then_some(w.costume.id)));
+    }
+    w.costumes.retain(|id, _| w.entities.contains_key(id));
+    let ids: Vec<(u32, u8, bool)> = w.costumes.keys().map(|&id| (id, w.entities.get(&id).map_or(0, |e| e.motion.status), bound(w, id))).collect();
+    for (id, status, b) in ids {
+        let Some(c) = w.costumes.get_mut(&id) else { continue };
+        let was = c.on;
+        c.step(status, b);
+        if c.on != was {
+            changes.push((id, c.on.then_some(c.id)));
+        }
+    }
+    for (id, on) in changes {
+        match on {
+            Some(model) => {
+                if let Some(s) = w.actors.get(&id).and_then(|a| a.source).filter(|s| !is_model(s, model)) {
+                    w.costume_base.insert(id, s);
+                }
+                w.event_looks.push((id, Source::Npc(crate::dat::npc::NpcLook::Model(model))));
+            }
+            None => {
+                if let Some(s) = w.costume_base.remove(&id) {
+                    w.event_looks.push((id, s));
+                }
+            }
         }
     }
 }
