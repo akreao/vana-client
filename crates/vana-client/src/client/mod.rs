@@ -26,6 +26,7 @@ mod friendlist;
 mod polmail;
 mod modern;
 mod monstrosity;
+mod petrow;
 mod moncustom;
 mod objective;
 mod border;
@@ -534,6 +535,8 @@ struct Entity {
     /// Entity +0x130 bit 18 (0x00E u32 @0x28 bit 31): drawn at half alpha, over the near-camera fade. Our own 0x037
     /// clears it.
     half_fade: bool,
+    /// GroundFlag or HackMove (net.rs EntityUpdate::no_snap): no event ground snap and no ground tilt.
+    no_snap: bool,
     /// A door's id (0x00E SubKind 2, u32 @0x34); 0 for anything else.
     door: u32,
     /// A lift's (shaft id, move start, move end) (0x00E SubKind 3, client/lifts.rs).
@@ -669,6 +672,9 @@ struct UiInput {
     middle_clicked: bool,
     /// Wheel notches for the focused list, up positive (FUN_10125360).
     wheel: i32,
+    /// Ctrl or Alt held: the page modifier 0xa8 that a click on a list's arrows is tested against
+    /// (FUN_10123a70(0x3e, 0xa8, 4, -1)).
+    page: bool,
     events: Vec<egui::Event>,
 }
 
@@ -1276,8 +1282,7 @@ fn chat_line(kind: u8, attr: u8, data: u16, from: &str, text: &str, zone: &str) 
         0x22 | 0x23 => {
             let c = if kind == 0x22 { 'J' } else { 'E' };
             let [mastery, mentor] = data.to_le_bytes();
-            let r = mentor.wrapping_mul(10).wrapping_add(mastery).wrapping_add(0x24);
-            let rank = if data != 0 { crate::dat::font::decode_sjis(&[0xef, if (0x2f..=0x4c).contains(&r) { r } else { 0x2f }]) } else { String::new() };
+            let rank = if data != 0 { rank_icon(mentor, mastery) } else { String::new() };
             (format!("{gm}{rank}{n}({c}) : {text}"), if kind == 0x22 { 0xdc } else { 0xde })
         }
         // "NS" kinds: the text alone.
@@ -1289,6 +1294,12 @@ fn chat_line(kind: u8, attr: u8, data: u16, from: &str, text: &str, zone: &str) 
         0x11..=0x17 | 0x1d | 0x1f | 0x20 => (text.to_string(), 0x79),
         _ => return None,
     })
+}
+
+/// The assist channels' rank icon: SJIS 0xEF R, R = mentor x 10 + mastery + 0x24, 0x2f outside 0x2f..0x4c.
+pub(super) fn rank_icon(mentor: u8, mastery: u8) -> String {
+    let r = mentor.wrapping_mul(10).wrapping_add(mastery).wrapping_add(0x24);
+    crate::dat::font::decode_sjis(&[0xef, if (0x2f..=0x4c).contains(&r) { r } else { 0x2f }])
 }
 
 /// A chat line in its log mode's colour (the config colour before the message tables load), auto-translate blocks
@@ -1366,7 +1377,8 @@ fn expand_phrases(world: &World, line: &str) -> String {
 fn push_chat_line(world: &mut World, line: String, mode: u8, kind: u8, gm: bool, who: Option<(String, u8)>) {
     let tell_sound = world.game.get(0x47) != 0;
     if let Some(n) = world.battle.as_ref().and_then(|bt| call_sound(bt, &line, mode, tell_sound)) {
-        world.sounds.push(n);
+        // Ours: the tell sound stays an interface sound; the call tags go through FUN_100380f0's level.
+        if mode == 0x0c { world.sounds.push(n) } else { world.call_sounds.push(n) }
     }
     let (colour, line, indent) = match world.battle.clone() {
         Some(bt) => {
@@ -1483,7 +1495,7 @@ fn log_cycle(w: &mut World) {
     w.sounds.push(13);
     w.log_focus = (w.log_focus + 1) % 3;
     // The buff list takes the focus only with icons (FUN_10227bf0 gives it up at 0).
-    if w.log_focus == 2 && !w.buffs.iter().any(|&b| b != 0xffff && b != 0) {
+    if w.log_focus == 2 && (w.buffs_hidden || !w.buffs.iter().any(|&b| b != 0xffff && b != 0)) {
         w.log_focus = 0;
     }
     w.buff_cursor = 0;
@@ -1655,6 +1667,7 @@ fn self_entity(w: &World) -> Entity {
         no_occlusion: false,
         no_near_fade: false,
         half_fade: false,
+        no_snap: false,
         door: 0,
         lift: None,
         ship: None,
@@ -2074,7 +2087,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
         }
         match ev {
             // Ctrl+V with the chat line closed opens it with the text (ours).
-            egui::Event::Paste(t) if !world.typing && !opened => {
+            egui::Event::Paste(t) if !world.typing && !opened && !event::cinema(world) => {
                 world.typing = true;
                 let t: String = t.chars().filter(|c| !c.is_control()).collect();
                 fep::insert(world, &t);
@@ -2107,7 +2120,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
                 world.copied = fep::selected_text(world);
                 fep::delete_selection(world);
             }
-            egui::Event::Cut => chat_prefix(world, "/linkshell2 "),
+            egui::Event::Cut if !event::cinema(world) => chat_prefix(world, "/linkshell2 "),
             egui::Event::Key { key, pressed: true, modifiers, .. } => match key {
                 // The auto-translate list takes its keys first (FUN_101b5d10).
                 k if world.typing && world.fep.is_some() && fep::key(world, *k, modifiers.shift) => {}
@@ -2148,11 +2161,12 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
                 egui::Key::ArrowLeft | egui::Key::ArrowRight | egui::Key::Home | egui::Key::End if world.typing => fep::caret_key(world, *key, modifiers.shift),
                 egui::Key::A if world.typing && modifiers.ctrl => fep::select_all(world),
                 // Ctrl / Alt shortcuts (DAT_103619f0 flag 0x10, FUN_101a5e80). Mode 2 (chat) works while typing.
-                k if (modifiers.ctrl || modifiers.alt) && !opened && let Some(p) = chat_shortcut(*k) => {
+                // Not in cinema mode: the chat line can't open (FUN_101b0060 at 0x101b0065).
+                k if (modifiers.ctrl || modifiers.alt) && !opened && !event::cinema(world) && let Some(p) = chat_shortcut(*k) => {
                     chat_prefix(world, p);
                     keys.clear();
                 }
-                egui::Key::R if modifiers.ctrl || modifiers.alt => {
+                egui::Key::R if (modifiers.ctrl || modifiers.alt) && (world.typing || !event::cinema(world)) => {
                     reply(world);
                     keys.clear();
                 }
@@ -2544,7 +2558,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
                         target::confirm_target(world);
                     }
                 }
-                egui::Key::Space => {
+                egui::Key::Space if !event::cinema(world) => {
                     world.typing = true;
                     world.space_open = true;
                     opened = true;
@@ -2552,7 +2566,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
                 }
                 // FUN_101aa930 -> FUN_101ac1a0: VK 0xBF opens the input; the '/' character that follows is typed.
                 // egui reports numpad / as Slash too; that key is 0x45 / 0x88, not chat.
-                egui::Key::Slash if !modifiers.ctrl && !modifiers.alt && !numpad_slash => {
+                egui::Key::Slash if !modifiers.ctrl && !modifiers.alt && !numpad_slash && !event::cinema(world) => {
                     world.typing = true;
                     keys.clear();
                 }
@@ -2562,6 +2576,9 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
         }
     }
     world.key_shift = false;
+    // Recomputed by this frame's pointer handlers (retail keeps it until a row is hovered or the list is rebuilt;
+    // ours drops it as soon as the pointer is elsewhere, so a pointer that leaves the window cannot strand the keys).
+    world.list_arrow_hover = false;
 
     // Mouse on the main menu: hover moves the cursor, a click picks; the arrows swap pages. Not while the group walk
     // suspends it (a window over it, e.g. MacroPalette's).
@@ -2767,7 +2784,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
         chatctrl::pointer(world, gu, p, input.moved, input.clicked, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.primer.is_some() && world.confirm.is_none()) {
-        primer::pointer(world, gu, p, input.moved, input.clicked, input.right_clicked);
+        primer::pointer(world, gu, p, input.moved, input.clicked, input.right_clicked, input.page);
     }
     if let Some(p) = input.pointer.filter(|_| helpdesk::focused(world)) {
         helpdesk::pointer(world, gu, p, input.moved, input.clicked, input.right_clicked);
@@ -2841,10 +2858,10 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
         keyitems::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
     }
     if let Some(p) = input.pointer.filter(|_| !world.modern && world.quests.is_some() && world.confirm.is_none()) {
-        quests::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
+        quests::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.page);
     }
     if let Some(p) = input.pointer.filter(|_| !world.modern && world.missions.is_some() && world.confirm.is_none()) {
-        missions::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
+        missions::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.page);
     }
     // Taken before the sub-windows run: a right click closing one must not reach statcom2 the same frame.
     let status_pointer = input.pointer.filter(|_| !world.modern && world.status.is_some() && world.currencies.is_none() && world.unity.is_none() && world.merits_ui.is_none() && world.jp_ui.is_none() && world.ae_ui.is_none() && world.confirm.is_none());
@@ -2898,7 +2915,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
     // Mouse in an event: a click on a choice row picks it, anywhere else advances a prompt.
     if input.clicked && world.event.is_some() {
         // The modern layer's choice panel takes its own clicks.
-        let row = event::choice(world).filter(|_| !world.modern).and_then(|_| {
+        let row = event::choice(world).filter(|_| !world.modern && !event::cinema(world)).and_then(|_| {
             let r = gu.window_rect("menu    query", sw, sh)?;
             let p = input.pointer?;
             gu.children("menu    query").iter().position(|c| inside(&[r[0] + c[0], r[1] + c[1], c[2].max(132.0), c[3].max(16.0)], p))
@@ -3364,6 +3381,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
         _ => (log.rect, world.log.faded()),
     };
     world.timers.log = Some(region);
+    let log_rects = (log.rect, log2.as_ref().map(|f| f.rect));
     gu.log_top = Some(region[1]);
     gu.log_bottom = Some(region[1] + region[3]);
     gu.log_faded = region_faded;
@@ -3894,6 +3912,17 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
     }
     // The party window's hand over the log's edge (partywin layer 3 above logwindo's 1).
     gu.party_hand(sw, sh, &st);
+    // FUN_102041d0's tail: the pet and fellow rows beside the party window, the hand at row -1 (FUN_10202110).
+    if !world.modern
+        && let Some(r) = gu.window_rect(&st.party_window, sw, sh)
+    {
+        let (x, y) = petrow::origin(r, log_rects.0, log_rects.1, second_mode);
+        if let Some((fx, fy)) = petrow::draw(gu, world, x, y)
+            && let Some((tint, _)) = target::fellow_hand(world)
+        {
+            gu.party_hand_at(fx, fy, tint);
+        }
+    }
 
     // The K.O. window ("menu    dead", FUN_1012def0): "Time Left:" baked in its frame sprite, the time "%d:%02d" (minutes
     // unwrapped) at (+75, +6) in the sprite font, child 1 "Back to Home Point" with the hand while it has the focus.
@@ -4115,6 +4144,24 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
     blockers.extend(timers::pointer(world, gu, input.pointer, input.clicked, &blockers));
     blockers.extend(regime::pointer(world, gu, input.pointer, input.clicked, &blockers));
     blockers.extend(skillchain::pointer(world, gu, input.pointer, input.clicked, &blockers));
+    // Cinema mode (FUN_101177d0 at 0x101177ee): no window draws but the event text box, mapframe and cnqframe; the
+    // name plates are a 3D pass and stay. The windows' state still updates underneath (the log's included, which
+    // retail freezes).
+    if event::cinema(world) {
+        gu.clear();
+        if !world.lua.hides("plates") {
+            name_plates(gu, world, sw, sh, view_proj);
+        }
+        if let Some(m) = world.map.as_mut() {
+            m.draw(gu, sw, sh);
+        }
+        // cnqframe has flag 0x40 too; its info windows don't.
+        region::draw_map(gu, world);
+        // An event choice (op 0xd4, "menu    query", flags 0x11012) is neither drawn nor answered here: the event
+        // waits until the script clears cinema mode (batch 8). Retail scripts run op 0x68 first.
+        self::event_window(gu, world, sw, sh, logwin::text_width(sw, world.log.cfg.pct));
+        return Vec::new();
+    }
 
     blockers
 }
@@ -4538,6 +4585,7 @@ fn place_mogdoor(w: &mut World) {
             no_occlusion: false,
             no_near_fade: false,
             half_fade: false,
+            no_snap: false,
             door: 0,
             lift: None,
             ship: None,
@@ -5747,6 +5795,9 @@ struct World {
     swkbd: Option<swkbd::Keyboard>,
     swkbd_out: Vec<egui::Event>,
     swkbd_reopen: bool,
+    /// The pointer is over a paged list's page arrows (children 9 / 10), which disables the list itself
+    /// (FUN_10221cd0: window +0x62 = 0, list +0x5c bit 1): no hand, and the list ignores keys.
+    list_arrow_hover: bool,
     /// Shift was held with the key being dispatched by world_hud's loop (Shift+Tab turns a modern window's tabs back;
     /// the pad's LB sends it); false anywhere else.
     key_shift: bool,
@@ -5772,6 +5823,9 @@ struct World {
     event_voices: bool,
     /// Looks set by event op 0xb6 (and the riding animals, ride.rs), for the model loader.
     event_looks: Vec<(u32, Source)>,
+    /// Other characters' costumes (0x00D @0x30), and the look each actor in costume would have without it.
+    costumes: HashMap<u32, costume::Costume>,
+    costume_base: HashMap<u32, Source>,
     /// Changed looks waiting while their actor is held (FUN_10095dd0 waits for FUN_10095850).
     held_looks: Vec<(u32, Source)>,
     /// Event op 0xab 0x11 (DAT_1035af3c != -1): once no event runs, every model but ours is built again.
@@ -6194,6 +6248,8 @@ struct World {
     /// logwindo is the active menu, and the full log (menu fulllog) when open.
     log_focus: u8,
     log_active: bool,
+    /// "menu    buff" hidden by event op 0x46 sub 1 until the event ends (FUN_10221c30 / FUN_10221c70).
+    buffs_hidden: bool,
     /// The windows that take the log's focus open last frame (main menu, item windows, action menu, confirm, config).
     log_takers: u8,
     full_log: Option<logwin::FullLog>,
@@ -6363,6 +6419,8 @@ struct World {
     bid: auction::BidState,
     /// Event volume changes for the mixer: (mask, level, ticks).
     audio_cmds: Vec<(i32, f32, f32)>,
+    /// Chat call sounds to play (FUN_100380f0, at the op 0x69 mask 0x10 level).
+    call_sounds: Vec<u32>,
     names: Option<Arc<crate::dat::names::Names>>,
     /// Spell / ability records, and the learned bits (s2c 0x0AA, 0x0AC).
     actions: Option<Arc<crate::dat::actions::Actions>>,
@@ -7050,6 +7108,11 @@ fn player_yaw(entity_yaw: f32) -> f32 {
     entity_yaw.cos().atan2(-entity_yaw.sin())
 }
 
+/// The entity yaw (+0x18, as packets and the text code `1d` use it) behind one of our player yaws.
+fn entity_yaw(player_yaw: f32) -> f32 {
+    (-player_yaw.cos()).atan2(player_yaw.sin())
+}
+
 fn dir_from_forward(f: Vec3) -> u8 {
     // FFXI dir: 0 east, 64 south, 128 west, 192 north.
     let theta = (-f.z).atan2(f.x);
@@ -7636,6 +7699,9 @@ impl App {
             // Interface sounds (targeting, menus, prompts).
             for id in w.sounds.drain(..) {
                 a.play_ui_se(id);
+            }
+            for id in w.call_sounds.drain(..) {
+                a.play_call(id);
             }
             // The Lua mods' sounds.
             for s in w.lua.sounds.drain(..) {
@@ -8243,6 +8309,7 @@ impl App {
                             swkbd_out: Vec::new(),
                             swkbd_reopen: false,
                             key_shift: false,
+                            list_arrow_hover: false,
                             my_face: None,
                             ui_hidden: false,
                             shot_request: None,
@@ -8253,6 +8320,8 @@ impl App {
                             doors: Default::default(),
                             event_voices: false,
                             event_looks: Vec::new(),
+                            costumes: HashMap::new(),
+                            costume_base: HashMap::new(),
                             held_looks: Vec::new(),
                             rebuild_models: false,
                             my_ride: Default::default(),
@@ -8274,6 +8343,7 @@ impl App {
                             open_seen: 0,
                             recent_keys: Default::default(),
                             log_focus: 0,
+                            buffs_hidden: false,
                             log_active: false,
                             log_takers: 0,
                             full_log: None,
@@ -8355,6 +8425,7 @@ impl App {
                             ah_slots: Default::default(),
                             bid: Default::default(),
                             audio_cmds: Vec::new(),
+                            call_sounds: Vec::new(),
                             names: None,
                             actions: None,
                             spells_known: Vec::new(),
@@ -9053,6 +9124,9 @@ impl App {
                     world.party.refresh_self(char_id, index, &name, zone);
                     world.event = None;
                     world.event_pending = None;
+                    // A zone-in drops the event without its tail (FUN_100ae960), so undo op 0x46 sub 1 here too:
+                    // otherwise the status icons stay hidden for the whole next zone.
+                    world.buffs_hidden = false;
                     world.screen = Default::default();
                     world.self_lock = None;
                     world.rebuild_models = false;
@@ -9122,6 +9196,7 @@ impl App {
                     world.my_init_done = false;
                     // FUN_1008a350 / a new actor table: no costume until 0x037 sends it again.
                     world.costume = Default::default();
+                    (world.costumes, world.costume_base) = (HashMap::new(), HashMap::new());
                     world.effects.reset_equip(char_id);
                     (world.zoning_since, world.zone_touch) = (None, None);
                     world.pos = Vec3::from(pos);
@@ -9209,6 +9284,9 @@ impl App {
                     if let Some(npc) = e.npc {
                         looks.push((e.id, Source::Npc(npc)));
                     }
+                    if let Some(c) = e.costume.filter(|_| e.id != world.my_id) {
+                        world.costumes.entry(e.id).or_default().set_id(c);
+                    }
                     let fresh = !world.entities.contains_key(&e.id);
                     let raw_y = e.kind == EntityKind::Player && event::raw_pc_y(world, e.id);
                     let rising = e.hpp.is_some() && chair::rise(world, e.id, e.motion.status);
@@ -9273,6 +9351,7 @@ impl App {
                         no_occlusion: false,
                         no_near_fade: false,
                         half_fade: false,
+                        no_snap: e.no_snap.unwrap_or(false),
                         door: 0,
                         lift: None,
                         ship: None,
@@ -9442,6 +9521,9 @@ impl App {
                     }
                     if let Some(x) = e.plate {
                         entry.plate = x;
+                    }
+                    if let Some(x) = e.no_snap {
+                        entry.no_snap = x;
                     }
                     if let Some((inv, off, mon)) = e.radar {
                         (entry.invisible, entry.radar_off, entry.monstrosity) = (inv, off, mon);
@@ -9979,6 +10061,15 @@ impl App {
             if matches!(source, Source::Pc(l) if l.race == 0) {
                 continue;
             }
+            // FUN_100d2f60 case 2: in costume the model is the costume's whatever the look; the look waits for it to
+            // come off.
+            let source = match costume::worn(world, id) {
+                Some(c) if !costume::is_model(&source, c) => {
+                    world.costume_base.insert(id, source);
+                    continue;
+                }
+                _ => source,
+            };
             let key = format!("{source:?}");
             let spawn_fx = world.entities.get(&id).is_some_and(|e| e.spawn_fx);
             let shadow = world.entities.get(&id).map_or((false, false), |e| (e.shadowless || e.ev_shadowless, e.noblob));
@@ -10102,9 +10193,8 @@ impl App {
         if !event::active(world) {
             ko_step(world);
         }
-        // FUN_10095e90 for us, once a frame; bound = +0x120 bit 7, our character among the running event's actors.
-        let bound = world.event.as_ref().is_some_and(|l| l.st.bound.contains(&world.my_id));
-        world.costume.step(world.my_motion.status, bound);
+        // FUN_10095e90 for every actor, once a frame; bound = +0x120 bit 7, among the running event's actors.
+        costume::step_all(world);
         gmtell::step(world);
         event::update(world, dt);
         event::rebuild_models(world);
@@ -10440,7 +10530,7 @@ impl App {
         keyitems::update(world);
         linkshell::update(world);
         if world.party_cursor.is_some()
-            && let Some((_, _, Some(id))) = target::party_hand(world)
+            && let Some(id) = target::party_hand(world).and_then(|h| h.2).or_else(|| target::fellow_hand(world).and_then(|h| h.1))
         {
             target::force_flash(world, id);
         }
@@ -11657,6 +11747,7 @@ impl App {
             released: i.pointer.primary_released() && !swallow && mine,
             right_clicked: i.pointer.secondary_clicked() && mine,
             middle_clicked: i.pointer.button_clicked(egui::PointerButton::Middle) && mine,
+            page: i.modifiers.ctrl || i.modifiers.alt,
             events: i.events.clone(),
         });
         if input.moved
@@ -11756,7 +11847,7 @@ impl App {
                     fields[account_field].options = accounts.clone();
                     let remembered = self.cfg.remember_password;
                     // While an error shows, the fields take no input (the OK window has it).
-                    let none = UiInput { pointer: None, moved: false, clicked: false, pressed: false, down: false, released: false, right_clicked: false, middle_clicked: false, wheel: 0, events: Vec::new() };
+                    let none = UiInput { pointer: None, moved: false, clicked: false, pressed: false, down: false, released: false, right_clicked: false, middle_clicked: false, wheel: 0, page: false, events: Vec::new() };
                     let shown = if self.login_error.is_some() || self.twofa.is_some() { &none } else { &input };
                     let mut sounds = Vec::new();
                     let modern_ui = self.cfg.modern_ui;
@@ -12732,9 +12823,11 @@ impl App {
                     window_closes(world, &input.events);
                     self.hud_blockers = world_hud(gu, world, &input, screen_size, &mut self.keys, view_proj, self.numpad_slash);
                 }
-                // With the UI hidden (key function 0x56) retail draws no window at all, so the modern layer goes too.
+                // With the UI hidden (key function 0x56) retail draws no window at all, so the modern layer goes too; in
+                // cinema mode only the event text box (drawn by world_hud).
                 if world.modern
                     && !world.ui_hidden
+                    && !event::cinema(world)
                     && let Some(gu) = self.game_ui.as_ref()
                 {
                     // The retail windows drawn this frame, in egui points.
@@ -14252,7 +14345,13 @@ impl App {
                     let rider = (*id & ride::ANIMAL != 0).then_some(*id & !ride::ANIMAL);
                     let gate_status = rider.and_then(|r| places.get(&r)).map_or(status, |p| p.status);
                     a.tilt_rot = None;
-                    if tilt::eligible(ch.cib[0], gate_status) {
+                    // FUN_100cbde0 / FUN_10084640: GroundFlag, HackMove or op 0x33's bit 21 means no ground tilt; a
+                    // riding animal has no entity, so it goes by its rider's.
+                    let flags_of = rider.unwrap_or(*id);
+                    let no_snap = w.entities.get(&flags_of).is_some_and(|e| e.no_snap)
+                        || (flags_of == w.my_id && w.my_plate.no_snap)
+                        || w.event.as_ref().is_some_and(|l| l.no_ground(w.my_id, flags_of));
+                    if tilt::eligible(ch.cib[0], gate_status) && !no_snap {
                         // Ours: the player's walk normal, else the face under the position each frame (the rider's for an
                         // animal at its place) *(retail skips far moving actors, up to 121 frames)*.
                         let n = if rider.unwrap_or(*id) == w.my_id {
@@ -14515,6 +14614,8 @@ impl App {
                     _ => 32,
                 };
                 r.set_sway(dt * 60.0, steps, crate::dat::zone::SWAY_TAGS.iter().position(|t| *t == crate::dat::weather::weather_tag(w.weather)));
+                // FUN_1001d240's helper target for faded actors (drawn opaque, then blended as one quad).
+                r.prepare_faded(&gfx.gpu, &scene_tex);
                 perf::timed(|| "zone render".into(), || r.render(&gfx.gpu, &mut encoder, &scene_raw, &scene_depth, &camera, aspect, &actors));
                 mark!("scene");
                 // The actors' ground shadows over the scene (client/shadows.rs, render/shadow.rs).
@@ -15458,6 +15559,11 @@ mod tests {
             assert!(Vec3::new(face.sin(), 0.0, face.cos()).distance(want) < 1e-5, "{y}");
         }
         assert!((player_yaw(std::f32::consts::PI) + std::f32::consts::FRAC_PI_2).abs() < 1e-5);
+        // entity_yaw undoes it, so the text code 1d sees east at 0 again.
+        for y in [std::f32::consts::PI, 0.0, 1.0, -2.5] {
+            let back = entity_yaw(player_yaw(y));
+            assert!((back.cos() - y.cos()).abs() < 1e-5 && (back.sin() - y.sin()).abs() < 1e-5, "{y} -> {back}");
+        }
     }
 
     /// FUN_100cd040's tail: the fishing fade (hidden within 1.0, linear to full at 2.5) and the half-alpha bit,
@@ -15497,6 +15603,10 @@ mod tests {
         assert_eq!(chat_line(0x1a, 0, 230, "Rabbit", "hi", "Southern San d'Oria"), Some(("Rabbit[Southern San d'Oria]: hi".into(), 0xb)));
         assert_eq!(chat_line(6, 0, 0, "", "Restarting", ""), Some(("----== SystemMessage ==----\nRestarting".into(), 0xc8)));
         assert_eq!(chat_line(0x22, 0, 0, "Rabbit", "hi", ""), Some(("Rabbit(J) : hi".into(), 0xdc)));
+        // Mentor 1, mastery 3: 0xEF 0x31; out of range falls back to 0x2f; the 0x017 icon and our echo's agree.
+        assert_eq!(chat_line(0x23, 0, 0x0103, "Rabbit", "hi", ""), Some((format!("{}Rabbit(E) : hi", rank_icon(1, 3)), 0xde)));
+        assert_eq!(rank_icon(1, 3), crate::dat::font::decode_sjis(&[0xef, 0x31]));
+        assert_eq!(rank_icon(9, 9), crate::dat::font::decode_sjis(&[0xef, 0x2f]));
         assert_eq!(chat_line(0x11, 0, 0, "Rabbit", "text only", ""), Some(("text only".into(), 0x79)));
         assert_eq!(chat_line(0xc, 0, 0, "GM", "menu", ""), None);
         assert_eq!(chat_line(2, 0, 0, "Rabbit", "hi", ""), None);
