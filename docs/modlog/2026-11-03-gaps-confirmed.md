@@ -60,3 +60,21 @@ Batch 8 item 40 closes the inferred link ours was already built on:
 
 Ours sets `world.pos` / `world.yaw` from `Effects::pinned` each frame, before the 0x015 send, and leaves the position
 alone when the pin expires, so no change was needed.
+
+## Scheduler ops 0x8c / 0xa4 / 0xa5 write the entity's base names, as ours do
+
+Batch 9 item 41 names the fields behind the behaviour ours already models. The entity keeps a **base** set (+0x190
+idle, +0x194 sit idle, +0x198 walk, +0x19c run, +0x1a0 chair idle) and a **current** set (+0x1a4 / +0x1a8 / +0x1ac
+idles, +0x1b0 walk, +0x1b4 run):
+
+- Op 0x8c writes the current idles **and** base +0x190; 0xa4 writes +0x1b4 and base +0x19c; 0xa5 writes +0x1b0 and
+  base +0x198. Op 0x79's battle name goes to the drawobj only.
+- `FUN_1008a1a0` recomputes the current set from the base set on every status, mount or appearance update, and
+  `FUN_1008f740` copies it to the drawobj. So the op's name comes back instead of idl / wlk / run until
+  `FUN_1008a160` resets the bases (entity init, or the +0x130 bit 4 path, which is op 0xab).
+- A mount (`FUN_10087dc0() == 2`) ignores the bases and uses the fixed dft / dft / df1 / ark / hsr set; sitting and
+  chair idles come from +0x194 / +0x1a0, which the ops never write.
+
+That is exactly `World::my_motion_bases` / `Entity::motion_bases` with the `rebase` recompute, the MonStat 2
+override, op 0xab's reset flag and 0x79 going only to the model, so nothing changed. Our sit and chair idles come
+from the status motion table and are likewise untouched by the ops.
