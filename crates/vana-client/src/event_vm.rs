@@ -2415,6 +2415,10 @@ fn atoi(b: &[u8]) -> i32 {
                 let mut question = String::new();
                 let mut cursor = 0;
                 if let Some(e) = e {
+                    // The expander's side effects run wherever it expands in retail (FUN_100c1650), choices included.
+                    if let Some(o) = e.offer {
+                        host.effect(Effect::Offer(o));
+                    }
                     let at = e.choice.unwrap_or(e.lines.len());
                     question = e.lines[..at.min(e.lines.len())].iter().map(|l| decode_sjis(l)).collect::<Vec<_>>().join("\n");
                     let (default, mut mask) = (self.val(v, 3 + off) as u32, self.val(v, 5 + off) as u32);

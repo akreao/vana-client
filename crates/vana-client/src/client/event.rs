@@ -1808,7 +1808,8 @@ impl Host for LiveHost<'_> {
     fn yaw(&self, actor: u32) -> Option<f32> {
         let id = self.wid(actor);
         if id == self.w.my_id {
-            return Some(self.w.yaw);
+            // Retail reads entity +0x18 for us too, so undo our north-zero player yaw.
+            return Some(super::entity_yaw(self.w.yaw));
         }
         self.w.entities.get(&id).map(|e| e.yaw)
     }
