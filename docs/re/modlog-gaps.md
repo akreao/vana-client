@@ -97,7 +97,7 @@ detail inside implemented ops.
 | Riding yaws (Tiger 0x40 for Hume F, Elvaan F, Mithra) | Not checked against footage | L12469 | Footage |
 | Ops 0x9c / 0x9d (no file uses them); the 0x038 handler's filters | Not built | L13095 | DLL |
 | Ground tilt: writers of +0x128 bit 14 and +0x120 bit 20; statuses 0x1a / 0x1b / 0x1d / 0x1e *(inferred: transport)*; whether vt+0x1c4's bones include +0x998; long bodies' no-roll and scale overshoot | Unknown | L12689, L12740 | DLL / Footage |
-| Motion regions: FUN_10019ed0 carries the old entry's frame into a status motion's start frame (ours starts at 0) | Not built | L13899 | DLL |
+| Motion regions: FUN_10019ed0 carries the old entry's frame into a status motion's start frame (ours starts at 0) *([batch 5](notes/2026-11-03-modlog-gaps-batch5.md) item 9: the enqueue is FUN_1001ad00 in this build; the carry is the old position as a fraction of its length, plus half the blend at the new rate)* | Built | L13899 | DLL |
 | Eye blink: the entity copies (+0x190..+0x1b4) the 0x8c / 0xa4 / 0xa5 setters also write | Not built | L11933 | DLL |
 | Op 0x7a pinned to our own actor | Not built (partly: "op 0x7a on us" later) | L11885 | DLL |
 | Model hide / show: the skeleton's `fvib` clone at the show; the +0x764 / +0x814 clones | Not built | L13203 | DLL |
