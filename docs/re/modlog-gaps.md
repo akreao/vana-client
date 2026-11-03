@@ -254,7 +254,7 @@ detail inside implemented ops.
 | Status window: Monstrosity (mp_stat) from the main menu | Not built at the time | L9017 | *(closed: "Monstrosity, part 5: mp_stat")* |
 | Mouse picking: the hover's frame lag, the talk lock; kind 1 over objects | Not built | L5747, L4556 | DLL |
 | Mouse picking: "StreetLamp" without a box is not pickable (the box path) | Not built | L5730 | DLL |
-| Mouse: right-button release clearing the target (key 0x8c); ours drags the camera with it | Not built | L3221 | DLL |
+| Mouse: right-button release clearing the target (key 0x8c); ours drags the camera with it *([batch 7](notes/2026-11-03-modlog-gaps-batch7.md) item 27: our right release already clears the target, drops a sub-target prompt and stops autorun as FUN_101587f0 does. Retail has no right-drag camera at all: a right drag only turns the cursor into an 8-way arrow and stops the edge pan, and the camera turns when the cursor touches the window edge (FUN_10124bc0). Our mouse-drag camera is a deliberate deviation (modern MMOs); the edge pan is not built and is a design question for Steven / upstream)* | Deviation (release built) | L3221 | DLL |
 | GM prompt / Moblin Maze Mongers: d5 bits 4..10; message 7's middle-button source; the late 0x0D8 at the event end; helpwind's line with grid focus; the pulse timing assumes 30 fps | Unknown | L17934 | DLL |
 | Maze Mongers: LSB logs GP_CLI_COMMAND_DUNGEON_PARAM as not implemented | Blocked: LSB | L17848 | LSB |
 | Creator random names: FUN_101ba240 (validity check, ours skips it) | Not traced | L5346 | DLL |
