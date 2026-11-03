@@ -16,6 +16,7 @@ pub struct Settings {
     pub tool: std::collections::BTreeMap<String, u32>,
     pub frame_limit: u32,
     pub anisotropy: u16,
+    pub antialias: u32,
     pub draw_distance: u32,
     pub party_tp: bool,
     pub map_overlay: bool,
@@ -63,6 +64,7 @@ impl Settings {
             tool: c.tool.clone(),
             frame_limit: c.frame_limit,
             anisotropy: c.anisotropy,
+            antialias: c.antialias,
             draw_distance: c.draw_distance,
             party_tp: c.party_tp,
             map_overlay: c.map_overlay,
@@ -108,6 +110,7 @@ impl Settings {
         c.tool = self.tool.clone();
         c.frame_limit = self.frame_limit;
         c.anisotropy = self.anisotropy;
+        c.antialias = self.antialias;
         c.draw_distance = self.draw_distance;
         c.party_tp = self.party_tp;
         c.map_overlay = self.map_overlay;
@@ -164,6 +167,7 @@ enum Val {
     Gamma,
     FrameLimit,
     Aniso,
+    Antialias,
     DrawDistance,
     PartyTp,
     MapOverlay,
@@ -315,6 +319,7 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
     const CLIENT: &[SRow] = &[
         row("Frame Limit", "Frames drawn a second; game time stays at 60 ticks.", FrameLimit, &[], Now),
         row("Anisotropic Filtering", "Anisotropic texture filtering.", Aniso, &[(1, "Off"), (2, "2x"), (4, "4x"), (8, "8x"), (16, "16x")], NextZone),
+        row("Anti-aliasing", "Smooths the jagged edges of the 3D scene with FXAA; menus and text are not touched (not retail). For supersampling, set Background above the window size.", Antialias, &[(0, "Off"), (1, "FXAA")], Now),
         row("Party TP", "Show TP in the party window (retail config 0xae, off there).", PartyTp, OFF_ON, Now),
         row("Interface", "Classic: the game's own windows. Modern: the new interface's windows where it has them (not retail).", ModernUi, &[(0, "Classic"), (1, "Modern")], Now),
         row("Interface Size", "The modern interface's size (not retail).", ModernScale, MODERN_SCALES, Now),
@@ -500,6 +505,7 @@ impl SettingsUi {
             Val::Size(..) | Val::Gamma | Val::Monitor | Val::Gpu => 0,
             Val::FrameLimit => self.s.frame_limit,
             Val::Aniso => self.s.anisotropy as u32,
+            Val::Antialias => self.s.antialias,
             Val::DrawDistance => self.s.draw_distance,
             Val::PartyTp => self.s.party_tp as u32,
             Val::ModernUi => self.s.modern_ui as u32,
@@ -540,6 +546,7 @@ impl SettingsUi {
         match v {
             Val::Tool(n) => self.tool_set(n, x),
             Val::Aniso => self.s.anisotropy = x as u16,
+            Val::Antialias => self.s.antialias = x,
             Val::DrawDistance => self.s.draw_distance = x,
             Val::PartyTp => self.s.party_tp = x != 0,
             Val::ModernUi => self.s.modern_ui = x != 0,

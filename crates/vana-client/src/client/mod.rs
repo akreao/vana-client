@@ -15024,7 +15024,7 @@ impl App {
             && scaled
             && let Some(sc) = &self.scene_scale
         {
-            sc.blit(&gfx.gpu, &mut encoder, &view, size, gamma, lcd.then_some((LCD_SHIFT, self.lcd_frame % 2 == 1)));
+            sc.blit(&gfx.gpu, &mut encoder, &view, size, gamma, lcd.then_some((LCD_SHIFT, self.lcd_frame % 2 == 1)), self.cfg.antialias != 0);
         }
         self.window_size = size;
         self.mouse_kind(size);
