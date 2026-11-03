@@ -289,7 +289,7 @@ detail inside implemented ops.
 | The target cursor for Switch target | Not built | L1506 | DLL |
 | Skillchains: the 0x04 MagicBurst message (Swipe / Lunge); 67507's purpose | Not traced | L6959, L6943 | DLL |
 | Knockback: vt+0x304 / +0x103 / +0x104 in FUN_100a57f0 | Not traced | L7179 | DLL |
-| Cast bar: Chainspell (status 48) skipping it; items (mode 1) | Not built | L4837 | DLL |
+| Cast bar: Chainspell (status 48) skipping it; items (mode 1) | Built *([batch 7](notes/2026-11-03-modlog-gaps-batch7.md) item 29: FUN_1022b3d0 opens the bar only when FUN_1021e670(0x30) == 0, a scan of the 32-u16 icon list for 48; item use opens mode 1 for record +0x26 x 20 ticks before c2s 0x037; mode 4 draws the seconds only)* | L4837 | DLL |
 | K.O. window: raise / tractor offers (s2c 0x0F9) | Not built at the time | L4860 | *(closed: "The raise prompt", "The raise offer during a zone-in event")* |
 | Timers Extra: blue magic's and pet moves' added effects | Not built | L13649 | Ours |
 | Engaged state: FUN_1013eff0 *(inferred)*, DAT_106218ee's source, FUN_1015e6e0's exact effect | Not traced | L6784, L6790 | DLL |
