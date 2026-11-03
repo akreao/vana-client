@@ -191,6 +191,10 @@ fn show(l: &mut List) {
 }
 
 pub(super) fn bar(w: &mut World, m: super::scrollbar::Msg) -> bool {
+    // A disabled list (the pointer was on a page arrow, last frame's hover) takes no bar or wheel message either.
+    if w.list_arrow_hover {
+        return false;
+    }
     let Some(l) = w.quests.as_mut().and_then(|q| q.list.as_mut()).filter(|l| l.state == 0) else { return false };
     let mut row = l.cursor.saturating_sub(l.top);
     let moved = super::scrollbar::paged(m, &mut l.top, &mut row, l.rows.len(), VISIBLE);
@@ -319,10 +323,11 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
         // FUN_10221cd0: over the page arrows the list is disabled (no hand, no list keys); a click on them is Left /
         // Right through the 0xa8 test, so with Ctrl / Alt held it pages the disabled list, i.e. does nothing.
         if matches!(c, 9 | 10) && l.state == 0 {
-            w.list_arrow_hover = true;
+            // The click's Left / Right switches the area before the hover disables the list.
             if clicked && !page {
                 key(w, if c == 9 { egui::Key::ArrowLeft } else { egui::Key::ArrowRight }, false);
             }
+            w.list_arrow_hover = true;
             return;
         }
         gu.hover.set(true);

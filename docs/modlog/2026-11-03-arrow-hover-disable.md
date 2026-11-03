@@ -1,4 +1,4 @@
-## The page arrows disable their list while hovered
+## The page arrows disable their list while hovered (2026-11-03)
 
 The paged-list base has a disable / enable pair (confirmed with the helpers read for batch 5 item 5):
 

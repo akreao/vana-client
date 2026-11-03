@@ -198,6 +198,10 @@ pub fn key(w: &mut World, key: egui::Key, page_mod: bool) {
 
 /// guide01's bar and the wheel (the paged base, as quest01).
 pub(super) fn bar(w: &mut World, m: super::scrollbar::Msg) -> bool {
+    // A disabled list (the pointer was on a page arrow, last frame's hover) takes no bar or wheel message either.
+    if w.list_arrow_hover {
+        return false;
+    }
     let Some(p) = w.primer.as_mut() else { return false };
     let Some(l) = p.list.as_mut().filter(|l| !l.page) else { return false };
     let n = p.cats[l.cat].topics.len();
@@ -262,10 +266,11 @@ pub fn pointer(w: &mut World, gu: &GameUi, pt: (f32, f32), moved: bool, clicked:
             // FUN_10221cd0: over the page arrows the list is disabled (no hand, no list keys); the click is Left /
             // Right through the 0xa8 test, so with Ctrl / Alt held it pages the disabled list, i.e. does nothing.
             if let (Some(a), _) = child_under(w, PAGES, pt, 9..=10) {
-                w.list_arrow_hover = true;
+                // The click's Left / Right switches the category before the hover disables the list.
                 if clicked && !page {
                     key(w, if a == 9 { egui::Key::ArrowLeft } else { egui::Key::ArrowRight }, false);
                 }
+                w.list_arrow_hover = true;
                 return;
             }
             let top = l.top;
