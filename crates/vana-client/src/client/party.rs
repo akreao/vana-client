@@ -88,7 +88,13 @@ pub struct Roster {
 
 impl Default for Roster {
     fn default() -> Self {
-        Self { recs: vec![Member::default(); RECORDS], order: vec![0], own_flags: 0, seen_table: false, clock: 0 }
+        Self {
+            recs: vec![Member::default(); RECORDS],
+            order: vec![0],
+            own_flags: 0,
+            seen_table: false,
+            clock: 0,
+        }
     }
 }
 
@@ -99,12 +105,16 @@ impl Roster {
     }
 
     fn find(&self, id: u32) -> Option<usize> {
-        (id != 0).then(|| self.recs.iter().position(|r| r.id == id)).flatten()
+        (id != 0)
+            .then(|| self.recs.iter().position(|r| r.id == id))
+            .flatten()
     }
 
     /// FUN_100ea140: the first free record past ours, else the one updated longest ago.
     fn alloc(&mut self) -> usize {
-        let i = (1..RECORDS).find(|&i| self.recs[i].id == 0).unwrap_or_else(|| (1..RECORDS).min_by_key(|&i| self.recs[i].time).unwrap_or(1));
+        let i = (1..RECORDS)
+            .find(|&i| self.recs[i].id == 0)
+            .unwrap_or_else(|| (1..RECORDS).min_by_key(|&i| self.recs[i].time).unwrap_or(1));
         self.recs[i] = Member::default();
         i
     }
@@ -196,7 +206,8 @@ impl Roster {
         let Some(i) = self.find(u.id) else { return };
         let t = self.tick();
         let r = &mut self.recs[i];
-        (r.index, r.hp, r.mp, r.tp, r.hpp, r.mpp, r.jobs, r.time) = (u.index, u.hp, u.mp, u.tp, u.hpp, u.mpp, u.jobs, t);
+        (r.index, r.hp, r.mp, r.tp, r.hpp, r.mpp, r.jobs, r.time) =
+            (u.index, u.hp, u.mp, u.tp, u.hpp, u.mpp, u.jobs, t);
         (r.mon, r.mon_ids) = (u.mon, u.mon_ids);
         r.mon_short.clear();
     }
@@ -214,8 +225,14 @@ impl Roster {
     /// FUN_100e99b0: member `a` moves to member `b`'s place in the order, the ones between shift by one (the party
     /// menu's Rearrange; local only).
     pub fn move_member(&mut self, a: u32, b: u32) {
-        let pos = |id: u32| self.order.iter().position(|&i| self.recs[i].id == id && id != 0);
-        let (Some(pa), Some(pb)) = (pos(a), pos(b)) else { return };
+        let pos = |id: u32| {
+            self.order
+                .iter()
+                .position(|&i| self.recs[i].id == id && id != 0)
+        };
+        let (Some(pa), Some(pb)) = (pos(a), pos(b)) else {
+            return;
+        };
         if pa == 0 || pb == 0 {
             return;
         }
@@ -229,7 +246,12 @@ impl Roster {
             return;
         }
         let mut order: Vec<usize> = vec![0];
-        order.extend(self.order.iter().copied().filter(|&i| i != 0 && self.recs[i].id != 0));
+        order.extend(
+            self.order
+                .iter()
+                .copied()
+                .filter(|&i| i != 0 && self.recs[i].id != 0),
+        );
         for i in 1..RECORDS {
             if self.recs[i].id != 0 && !order.contains(&i) {
                 order.push(i);
@@ -240,7 +262,11 @@ impl Roster {
 
     /// FUN_100e9850 (event op 0xc2 sub 1): bit i for each record i listed, not ours, whose member is in their Mog House.
     pub fn mog_mask(&self, me: u32) -> u32 {
-        self.recs.iter().enumerate().filter(|(_, r)| Self::in_mog(r, me)).fold(0, |m, (i, _)| m | 1 << i)
+        self.recs
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| Self::in_mog(r, me))
+            .fold(0, |m, (i, _)| m | 1 << i)
     }
 
     /// FUN_100e98b0 (op 0xc2 sub 2): the id of the member at display slot n (1..19, G+0x9534) if they are in their Mog
@@ -259,12 +285,18 @@ impl Roster {
 
     /// Mode 5 (FUN_100e8b80 / FUN_100e8c70): ourselves, then everyone listed in order.
     pub fn members(&self) -> impl Iterator<Item = &Member> {
-        self.order.iter().map(|&i| &self.recs[i]).filter(|r| r.id != 0)
+        self.order
+            .iter()
+            .map(|&i| &self.recs[i])
+            .filter(|r| r.id != 0)
     }
 
     /// Everyone listed with their record number, in display order (G+0x9534; text codes 0x18 / 0x19).
     pub fn indexed(&self) -> impl Iterator<Item = (usize, &Member)> {
-        self.order.iter().map(|&i| (i, &self.recs[i])).filter(|(_, r)| r.id != 0)
+        self.order
+            .iter()
+            .map(|&i| (i, &self.recs[i]))
+            .filter(|(_, r)| r.id != 0)
     }
 
     /// Mode 0: only our own party ((flags ^ own) & 3 == 0).
@@ -285,7 +317,11 @@ impl Roster {
         let mut parties: [Option<u32>; 3] = [None; 3];
         let mut counts = [0usize; 3];
         for (k, r) in self.members().enumerate() {
-            let num = if k == 0 { self.own_flags & 3 } else { r.flags & 3 };
+            let num = if k == 0 {
+                self.own_flags & 3
+            } else {
+                r.flags & 3
+            };
             let p = match parties.iter().position(|n| *n == Some(num)) {
                 Some(p) => p,
                 None => match parties.iter().position(Option::is_none) {
@@ -327,12 +363,19 @@ pub struct Slots {
 impl Slots {
     /// FUN_102033c0: slot `s` when used, in our zone and not marked elsewhere.
     pub fn here(&self, s: usize, zone: u16) -> Option<&Member> {
-        self.slots.get(s)?.as_ref().filter(|m| m.away == 0 && m.zone == zone)
+        self.slots
+            .get(s)?
+            .as_ref()
+            .filter(|m| m.away == 0 && m.zone == zone)
     }
 
     /// The window: "menu    ptw0" with no leader in our party (solo), else "menu    ptwN".
     pub fn window(&self) -> String {
-        if self.leaders[0] == 0 { "menu    ptw0".into() } else { format!("menu    ptw{}", self.counts[0].clamp(1, 6)) }
+        if self.leaders[0] == 0 {
+            "menu    ptw0".into()
+        } else {
+            format!("menu    ptw{}", self.counts[0].clamp(1, 6))
+        }
     }
 
     /// FUN_10201f00: over all 18 slots, exactly one that is not a trust (ActIndex < 0x700) and at least one trust.
@@ -391,7 +434,15 @@ mod tests {
     const ME: u32 = 0x100;
 
     fn listed(id: u32, index: u16, flags: u32, zone: u16, name: &str) -> ListUpdate {
-        ListUpdate { id, index, flags, zone, name: name.into(), hpp: 100, ..Default::default() }
+        ListUpdate {
+            id,
+            index,
+            flags,
+            zone,
+            name: name.into(),
+            hpp: 100,
+            ..Default::default()
+        }
     }
 
     /// Two join (LSB: 0x0C8 then a 0x0DD each), one leaves (an empty-for-them 0x0C8), then disband (empty table).
@@ -402,7 +453,11 @@ mod tests {
         // A 0x0DD before the table is ignored for others.
         r.list(&listed(0x200, 0x401, 1, 0, "Ann"), ME, false);
         assert_eq!(r.members().count(), 1);
-        r.table(&[(ME, 0x400, 4, 230), (0x200, 0x401, 0, 230), (0x300, 0x402, 0, 100)]);
+        r.table(&[
+            (ME, 0x400, 4, 230),
+            (0x200, 0x401, 0, 230),
+            (0x300, 0x402, 0, 100),
+        ]);
         r.list(&listed(ME, 0x400, 4, 0, "Me"), ME, false);
         r.list(&listed(0x200, 0x401, 0, 0, "Ann"), ME, false);
         r.list(&listed(0x300, 0x402, 0, 100, "Bo"), ME, false);
@@ -413,7 +468,10 @@ mod tests {
         assert!(s.here(2, 230).is_none());
         // Ann leaves.
         r.table(&[(ME, 0x400, 4, 230), (0x300, 0x402, 0, 100)]);
-        assert_eq!(r.members().map(|m| m.id).collect::<Vec<_>>(), vec![ME, 0x300]);
+        assert_eq!(
+            r.members().map(|m| m.id).collect::<Vec<_>>(),
+            vec![ME, 0x300]
+        );
         // Disband (LSB: an empty table, then a 0x0DD about us with flags 0): record 0 refills on the next refresh.
         r.table(&[]);
         r.refresh_self(ME, 0x400, "Me", 230);
@@ -427,14 +485,29 @@ mod tests {
     fn mog_house_members() {
         let mut r = Roster::default();
         r.refresh_self(ME, 0x400, "Me", 230);
-        r.table(&[(ME, 0x400, 4, 230), (0x200, 0x401, 0, 230), (0x300, 0x402, 0, 231)]);
-        let mog = |id, zone, name: &str| ListUpdate { moghouse: true, ..listed(id, 0x401, 0, zone, name) };
+        r.table(&[
+            (ME, 0x400, 4, 230),
+            (0x200, 0x401, 0, 230),
+            (0x300, 0x402, 0, 231),
+        ]);
+        let mog = |id, zone, name: &str| ListUpdate {
+            moghouse: true,
+            ..listed(id, 0x401, 0, zone, name)
+        };
         r.list(&mog(ME, 230, "Me"), ME, false);
         r.list(&listed(0x200, 0x401, 0, 230, "Ann"), ME, false);
         r.list(&mog(0x300, 0, "Bo"), ME, false);
         assert_eq!(r.recs[2].mog_zone, 230);
         assert_eq!(r.mog_mask(ME), 1 << 2);
-        assert_eq!((r.mog_member(ME, 0), r.mog_member(ME, 1), r.mog_member(ME, 2), r.mog_member(ME, 3)), (0, 0, 0x300, 0));
+        assert_eq!(
+            (
+                r.mog_member(ME, 0),
+                r.mog_member(ME, 1),
+                r.mog_member(ME, 2),
+                r.mog_member(ME, 3)
+            ),
+            (0, 0, 0x300, 0)
+        );
         // Bo leaves the Mog House.
         r.list(&listed(0x300, 0x402, 0, 231, "Bo"), ME, false);
         assert_eq!((r.mog_mask(ME), r.mog_member(ME, 2)), (0, 0));
@@ -445,11 +518,20 @@ mod tests {
     fn alliance_slots() {
         let mut r = Roster::default();
         r.refresh_self(ME, 0x400, "Me", 230);
-        r.table(&[(ME, 0x400, 0x0c, 230), (2, 1, 1, 230), (3, 2, 1 | 4, 230), (4, 3, 2 | 4, 230), (5, 4, 0, 230)]);
+        r.table(&[
+            (ME, 0x400, 0x0c, 230),
+            (2, 1, 1, 230),
+            (3, 2, 1 | 4, 230),
+            (4, 3, 2 | 4, 230),
+            (5, 4, 0, 230),
+        ]);
         r.list(&listed(ME, 0x400, 0x0c, 0, "Me"), ME, false);
         let s = r.slots();
         let ids: Vec<Option<u32>> = s.slots.iter().map(|m| m.as_ref().map(|m| m.id)).collect();
-        assert_eq!((ids[0], ids[1], ids[6], ids[7], ids[12]), (Some(ME), Some(5), Some(2), Some(3), Some(4)));
+        assert_eq!(
+            (ids[0], ids[1], ids[6], ids[7], ids[12]),
+            (Some(ME), Some(5), Some(2), Some(3), Some(4))
+        );
         assert_eq!((s.leaders, s.alliance_leader), ([ME, 3, 4], ME));
     }
 }

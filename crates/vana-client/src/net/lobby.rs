@@ -5,9 +5,9 @@
 use anyhow::{Context, Result, bail};
 use md5::{Digest, Md5};
 use std::io::{Read, Write};
+use std::net::{Ipv4Addr, TcpStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::net::{Ipv4Addr, TcpStream};
 use std::time::Duration;
 
 const MAGIC: &[u8; 4] = b"IXFF";
@@ -44,7 +44,9 @@ impl Session {
 
 /// FUN_100185a0 over FFXiMain.dll (period 0x13): each signed byte shifted left by 4 * (i mod 20), summed. 0x07 sends it.
 pub fn ffximain_checksum(dll: &[u8]) -> u32 {
-    dll.iter().enumerate().fold(0u32, |s, (i, &b)| s.wrapping_add(((b as i8 as i32) << ((i % 20) * 4 & 31)) as u32))
+    dll.iter().enumerate().fold(0u32, |s, (i, &b)| {
+        s.wrapping_add(((b as i8 as i32) << ((i % 20) * 4 & 31)) as u32)
+    })
 }
 
 #[derive(Clone, Debug)]
@@ -203,12 +205,26 @@ impl Lobby {
     /// `host`: the lobby (LSB's server, or ffxi00.pol.com); `data_port` is LSB's only. `content`: the installed
     /// ROMs (FUN_101c3400, dat::installed).
     #[allow(clippy::too_many_arguments)]
-    pub fn connect(host: &str, view_port: u16, data_port: u16, session: Session, ffximain: &[u8], version: &str, region: u32, content: u32, replies: Arc<AtomicU32>) -> Result<Self> {
+    pub fn connect(
+        host: &str,
+        view_port: u16,
+        data_port: u16,
+        session: Session,
+        ffximain: &[u8],
+        version: &str,
+        region: u32,
+        content: u32,
+        replies: Arc<AtomicU32>,
+    ) -> Result<Self> {
         let data = match session {
-            Session::Lsb { .. } => Some(TcpStream::connect((host, data_port)).with_context(|| format!("connecting to lobby data {host}:{data_port}"))?),
+            Session::Lsb { .. } => Some(
+                TcpStream::connect((host, data_port))
+                    .with_context(|| format!("connecting to lobby data {host}:{data_port}"))?,
+            ),
             Session::PlayOnline { .. } => None,
         };
-        let view = TcpStream::connect((host, view_port)).with_context(|| format!("connecting to the lobby {host}:{view_port}"))?;
+        let view = TcpStream::connect((host, view_port))
+            .with_context(|| format!("connecting to the lobby {host}:{view_port}"))?;
         let server_ip = match view.peer_addr()?.ip() {
             std::net::IpAddr::V4(ip) => ip,
             std::net::IpAddr::V6(ip) => ip.to_ipv4().unwrap_or(Ipv4Addr::LOCALHOST),
@@ -288,7 +304,9 @@ impl Lobby {
     /// caller reads (lobby errors become `Err`).
     fn read_view(&mut self, expect: u8, min_len: usize) -> Result<Vec<u8>> {
         let mut size = [0u8; 4];
-        self.view.read_exact(&mut size).context("the lobby closed the view connection")?;
+        self.view
+            .read_exact(&mut size)
+            .context("the lobby closed the view connection")?;
         let size = u32::from_le_bytes(size) as usize;
         if !(28..=MAX_REPLY).contains(&size) {
             bail!("bad lobby packet size {size}");
@@ -309,7 +327,10 @@ impl Lobby {
             }
         }
         let command = pkt[8];
-        log::info!("lobby: reply 0x{command:02X} ({size} bytes) to 0x{:02X}", self.last_request);
+        log::info!(
+            "lobby: reply 0x{command:02X} ({size} bytes) to 0x{:02X}",
+            self.last_request
+        );
         self.replies.fetch_add(1, Ordering::Relaxed);
         if matches!(command, 0x03 | 0x0B | 0x20 | 0x23)
             || (command == 0x04 && matches!(self.last_request, 0x22 | 0x24 | 0x28 | 0x2B))
@@ -318,7 +339,9 @@ impl Lobby {
         }
         if command == 0x04 {
             // The code is the u32 @0x20.
-            let code = pkt.get(32..36).context("the lobby's refusal is too short to carry its code")?;
+            let code = pkt
+                .get(32..36)
+                .context("the lobby's refusal is too short to carry its code")?;
             return Err(Refused(u32::from_le_bytes(code.try_into().unwrap()) as u16).into());
         }
         if command != expect {
@@ -334,7 +357,8 @@ impl Lobby {
     fn read_data(&mut self) -> Result<Vec<u8>> {
         let data = self.data.as_mut().context("no lobby data link")?;
         let mut first = [0u8; 1];
-        data.read_exact(&mut first).context("the lobby closed the data connection")?;
+        data.read_exact(&mut first)
+            .context("the lobby closed the data connection")?;
         let len = match first[0] {
             0x01 | 0x02 => 5,
             0x03 => 0x148,
@@ -347,17 +371,23 @@ impl Lobby {
 
     /// The 0x20 record of a content id.
     fn record(&self, content_id: u32) -> Option<&[u8; CHAR_INFO_LEN]> {
-        self.records.iter().find(|r| rd_u32(&r[..], 0) == content_id)
+        self.records
+            .iter()
+            .find(|r| rd_u32(&r[..], 0) == content_id)
     }
 
     /// The first free slot (status 1, name " ": FUN_1023df20), whose content id a new character takes.
     fn free_slot(&self) -> u32 {
-        self.records.iter().find(|r| rd_u16(&r[..], 8) == 1 && r[12] == b' ' && r[13] == 0).map_or(0, |r| rd_u32(&r[..], 0))
+        self.records
+            .iter()
+            .find(|r| rd_u16(&r[..], 8) == 1 && r[12] == b' ' && r[13] == 0)
+            .map_or(0, |r| rd_u32(&r[..], 0))
     }
 
     /// The record's u16 at +4 (ffxi_id_world), which 0x07 / 0x14 / 0x28 carry @0x20.
     fn world_id(&self, content_id: u32) -> u32 {
-        self.record(content_id).map_or(content_id & 0xFFFF, |r| rd_u16(&r[..], 4) as u32)
+        self.record(content_id)
+            .map_or(content_id & 0xFFFF, |r| rd_u16(&r[..], 4) as u32)
     }
 
     pub fn characters(&mut self) -> Result<Vec<Character>> {
@@ -380,7 +410,10 @@ impl Lobby {
         }
         let pkt = self.read_view(0x20, 32)?;
         let count = (rd_u32(&pkt, 28) as usize).min(16);
-        self.records = (0..count).filter_map(|i| pkt.get(32 + i * CHAR_INFO_LEN..32 + (i + 1) * CHAR_INFO_LEN)).map(|r| r.try_into().unwrap()).collect();
+        self.records = (0..count)
+            .filter_map(|i| pkt.get(32 + i * CHAR_INFO_LEN..32 + (i + 1) * CHAR_INFO_LEN))
+            .map(|r| r.try_into().unwrap())
+            .collect();
         Ok(self.records.iter().map(|r| parse_char(r)).collect())
     }
 
@@ -434,7 +467,9 @@ impl Lobby {
 
     /// Picks a character; the lobby answers with where its zone runs.
     pub fn select(mut self, ch: &Character) -> Result<MapLogin> {
-        let rec = *self.record(ch.content_id).context("that character is not in the lobby's list")?;
+        let rec = *self
+            .record(ch.content_id)
+            .context("that character is not in the lobby's list")?;
         let mut p = packet(0x58);
         put(&mut p, 0x1C, &ch.content_id.to_le_bytes());
         put(&mut p, 0x20, &(rd_u16(&rec, 4) as u32).to_le_bytes());
@@ -480,8 +515,11 @@ impl Lobby {
             self.view.set_read_timeout(Some(Duration::from_secs(10)))?;
             let mut rest = Vec::new();
             // Bounded: anything after 0x0B is ignored, and a lobby that keeps sending can't grow it without limit.
-            let _ = (&mut self.view).take(MAX_REPLY as u64).read_to_end(&mut rest);
-            let world_key = rd_u16(&rec, 4) as u32 | (rd_u16(&rec, 6) as u32) << 16 | (rec[0xB] as u32) << 24;
+            let _ = (&mut self.view)
+                .take(MAX_REPLY as u64)
+                .read_to_end(&mut rest);
+            let world_key =
+                rd_u16(&rec, 4) as u32 | (rd_u16(&rec, 6) as u32) << 16 | (rec[0xB] as u32) << 24;
             if let Some(p) = self.pol.as_mut() {
                 p.profile.select(ch.content_id, world_key)?;
             }
@@ -572,8 +610,28 @@ mod create_tests {
     fn size_lands_where_lsb_reads_it() {
         // LSB: m_look.size = ref<uint8>(buf, 57), buf from the packet start.
         for size in 0..3u8 {
-            let pkt = make_body(7, &NewCharacter { race: 2, face: 5, size, job: 3, nation: 1 });
-            assert_eq!((pkt.len(), pkt[57], pkt[48], pkt[50], pkt[54], pkt[60], pkt[0x1C]), (0x90, size, 2, 3, 1, 5, 7));
+            let pkt = make_body(
+                7,
+                &NewCharacter {
+                    race: 2,
+                    face: 5,
+                    size,
+                    job: 3,
+                    nation: 1,
+                },
+            );
+            assert_eq!(
+                (
+                    pkt.len(),
+                    pkt[57],
+                    pkt[48],
+                    pkt[50],
+                    pkt[54],
+                    pkt[60],
+                    pkt[0x1C]
+                ),
+                (0x90, size, 2, 3, 1, 5, 7)
+            );
         }
     }
 
@@ -581,14 +639,26 @@ mod create_tests {
     #[test]
     fn name_check_lands_where_lsb_reads_it() {
         let pkt = check_body(9, "Abcde", "Nameless", "1234567890");
-        assert_eq!((pkt.len(), &pkt[32..37], &pkt[0x40..0x48], &pkt[0x50..0x5a], pkt[0x1C]), (0x60, &b"Abcde"[..], &b"Nameless"[..], &b"1234567890"[..], 9));
+        assert_eq!(
+            (
+                pkt.len(),
+                &pkt[32..37],
+                &pkt[0x40..0x48],
+                &pkt[0x50..0x5a],
+                pkt[0x1C]
+            ),
+            (0x60, &b"Abcde"[..], &b"Nameless"[..], &b"1234567890"[..], 9)
+        );
     }
 
     #[test]
     fn rename_lands_where_lsb_reads_it() {
         // LSB 0x28: charid = ref<uint32>(buf, 28), name from buf + 36 (15 bytes).
         let pkt = rename_body(0x0102_0304, 0x0304, "Newname");
-        assert_eq!(u32::from_le_bytes(pkt[28..32].try_into().unwrap()), 0x0102_0304);
+        assert_eq!(
+            u32::from_le_bytes(pkt[28..32].try_into().unwrap()),
+            0x0102_0304
+        );
         assert_eq!(&pkt[36..44], b"Newname\0");
         assert_eq!(pkt.len(), 0x44);
     }
@@ -634,7 +704,13 @@ mod create_tests {
                 m.finalize().into()
             };
             let p = read(&mut s);
-            assert!(md5_ok(&p) && p[8] == 0x26 && p.len() == 0x98 && p[0x34..0x74] == auth[..] && &p[0x74..0x7e] == b"30261006_0");
+            assert!(
+                md5_ok(&p)
+                    && p[8] == 0x26
+                    && p.len() == 0x98
+                    && p[0x34..0x74] == auth[..]
+                    && &p[0x74..0x7e] == b"30261006_0"
+            );
             let mut b = [0u8; 12];
             b[..4].copy_from_slice(&99u32.to_le_bytes());
             reply(&mut s, 0x05, &b);
@@ -664,12 +740,34 @@ mod create_tests {
             reply(&mut s, 0x0B, &b);
             c
         });
-        let mut l = Lobby::connect("127.0.0.1", port, 0, Session::PlayOnline { auth_code: auth, k16 }, b"dll", "30261006_0", 5, 0xfff, Default::default()).unwrap();
+        let mut l = Lobby::connect(
+            "127.0.0.1",
+            port,
+            0,
+            Session::PlayOnline {
+                auth_code: auth,
+                k16,
+            },
+            b"dll",
+            "30261006_0",
+            5,
+            0xfff,
+            Default::default(),
+        )
+        .unwrap();
         let chars = l.characters().unwrap();
         let m = l.select(&chars[0]).unwrap();
         // The 0x07 hashed c; 0x0B makes it c + 2 and world entry c + 4 (MODLOG "PlayOnline sign-in").
         let c = server.join().unwrap();
-        assert_eq!((m.char_id, m.map.1, m.key[..16].to_vec(), u32::from_le_bytes(m.key[16..].try_into().unwrap())), (2 << 16 | 0x1234, 54230, k16.to_vec(), c + 4));
+        assert_eq!(
+            (
+                m.char_id,
+                m.map.1,
+                m.key[..16].to_vec(),
+                u32::from_le_bytes(m.key[16..].try_into().unwrap())
+            ),
+            (2 << 16 | 0x1234, 54230, k16.to_vec(), c + 4)
+        );
     }
 
     /// A lobby whose replies stop at the header: each one is an error, not a panic (issue #80).
@@ -697,8 +795,24 @@ mod create_tests {
                     s.write_all(&r).unwrap();
                 }
             });
-            let session = Session::PlayOnline { auth_code: [0; 64], k16: [0; 16] };
-            (Lobby::connect("127.0.0.1", port, 0, session, b"dll", "30261006_0", 5, 0, Default::default()), server)
+            let session = Session::PlayOnline {
+                auth_code: [0; 64],
+                k16: [0; 16],
+            };
+            (
+                Lobby::connect(
+                    "127.0.0.1",
+                    port,
+                    0,
+                    session,
+                    b"dll",
+                    "30261006_0",
+                    5,
+                    0,
+                    Default::default(),
+                ),
+                server,
+            )
         };
         let ok05 = (0x05, vec![0u8; 12]);
         // 0x05 without its counter seed and masks.
@@ -742,13 +856,27 @@ mod create_tests {
         rec[12..16].copy_from_slice(b"Nine");
         let info = 44;
         rec[info..info + 2].copy_from_slice(&3u16.to_le_bytes());
-        for (i, id) in [0u16, 0x1130, 0x2130, 0x3130, 0x4130, 0x5130, 0x6010, 0x7000].iter().enumerate() {
+        for (i, id) in [0u16, 0x1130, 0x2130, 0x3130, 0x4130, 0x5130, 0x6010, 0x7000]
+            .iter()
+            .enumerate()
+        {
             rec[info + 12 + i * 2..info + 14 + i * 2].copy_from_slice(&id.to_le_bytes());
         }
         let c = parse_char(&rec);
         assert_eq!(c.looks, [0, 0x130, 0x130, 0x130, 0x130, 0x130, 0x010, 0]);
         let l = &c.looks;
-        let look = crate::dat::character::Look { race: c.race as u8, face: c.face, head: l[1], body: l[2], hands: l[3], legs: l[4], feet: l[5], main: l[6], sub: l[7], range: 0 };
+        let look = crate::dat::character::Look {
+            race: c.race as u8,
+            face: c.face,
+            head: l[1],
+            body: l[2],
+            hands: l[3],
+            legs: l[4],
+            feet: l[5],
+            main: l[6],
+            sub: l[7],
+            range: 0,
+        };
         assert!(crate::dat::character::file_ids(&look).is_ok());
     }
 
@@ -762,7 +890,9 @@ mod create_tests {
         }
         assert_eq!(ffximain_checksum(&d), s);
         // The installed 30261006_0 (its value in MODLOG "PlayOnline sign-in"), when present.
-        let dll = crate::config::Config::load().ffxi_dir().join("FFXiMain.dll");
+        let dll = crate::config::Config::load()
+            .ffxi_dir()
+            .join("FFXiMain.dll");
         if let Ok(b) = std::fs::read(dll)
             && b.len() == 2_901_584
         {

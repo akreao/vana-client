@@ -69,16 +69,25 @@ impl Action {
     /// cmd_arg as text when it is a 4cc.
     pub fn arg_4cc(&self) -> Option<String> {
         let b = self.arg.to_le_bytes();
-        b.iter().all(|c| c.is_ascii_graphic()).then(|| String::from_utf8_lossy(&b).into_owned())
+        b.iter()
+            .all(|c| c.is_ascii_graphic())
+            .then(|| String::from_utf8_lossy(&b).into_owned())
     }
 
     /// The (target, result) records the client keeps (FUN_10185a20): every result of a single target,
     /// else the first result of each target.
     pub fn records(&self) -> Vec<(u32, &ActionResult)> {
         if self.targets.len() == 1 {
-            self.targets[0].results.iter().map(|r| (self.targets[0].id, r)).collect()
+            self.targets[0]
+                .results
+                .iter()
+                .map(|r| (self.targets[0].id, r))
+                .collect()
         } else {
-            self.targets.iter().filter_map(|t| t.results.first().map(|r| (t.id, r))).collect()
+            self.targets
+                .iter()
+                .filter_map(|t| t.results.first().map(|r| (t.id, r)))
+                .collect()
         }
     }
 }
@@ -102,7 +111,10 @@ impl Bits<'_> {
 
 /// Decodes a whole 0x028 sub-packet (header included).
 pub fn parse(packet: &[u8]) -> Action {
-    let mut b = Bits { data: packet, at: 40 };
+    let mut b = Bits {
+        data: packet,
+        at: 40,
+    };
     let actor = b.take(32);
     let count = b.take(6);
     let _res_sum = b.take(4);
@@ -127,16 +139,33 @@ pub fn parse(packet: &[u8]) -> Action {
                 ..Default::default()
             };
             if b.take(1) != 0 {
-                r.proc = Some(Side { kind: b.take(6) as u8, info: b.take(4) as u8, value: b.take(17), message: b.take(10) as u16 });
+                r.proc = Some(Side {
+                    kind: b.take(6) as u8,
+                    info: b.take(4) as u8,
+                    value: b.take(17),
+                    message: b.take(10) as u16,
+                });
             }
             if b.take(1) != 0 {
-                r.react = Some(Side { kind: b.take(6) as u8, info: b.take(4) as u8, value: b.take(14), message: b.take(10) as u16 });
+                r.react = Some(Side {
+                    kind: b.take(6) as u8,
+                    info: b.take(4) as u8,
+                    value: b.take(14),
+                    message: b.take(10) as u16,
+                });
             }
             results.push(r);
         }
         targets.push(ActionTarget { id, results });
     }
-    Action { actor, category, arg, info, targets, seq: 0 }
+    Action {
+        actor,
+        category,
+        arg,
+        info,
+        targets,
+        seq: 0,
+    }
 }
 
 /// LSB's packer (packBitsBE + GP_SERV_COMMAND_BATTLE2::pack), for test packets and combat-shot.
@@ -201,9 +230,37 @@ mod tests {
 
     fn melee() -> Action {
         // A mob (0x0100_1234) hits Tuxedo for 7, with a 3-point additional effect, then misses.
-        let hit = ActionResult { kind: 1, animation: 0, scale: 1, value: 7, message: 1, proc: Some(Side { kind: 1, info: 0, value: 3, message: 163 }), ..Default::default() };
-        let miss = ActionResult { miss: 1, kind: 1, message: 15, ..Default::default() };
-        Action { actor: 0x0100_1234, category: category::BASIC_ATTACK, arg: u32::from_le_bytes(*b"atk0"), info: 0, targets: vec![ActionTarget { id: 0x0001_0203, results: vec![hit, miss] }], seq: 0 }
+        let hit = ActionResult {
+            kind: 1,
+            animation: 0,
+            scale: 1,
+            value: 7,
+            message: 1,
+            proc: Some(Side {
+                kind: 1,
+                info: 0,
+                value: 3,
+                message: 163,
+            }),
+            ..Default::default()
+        };
+        let miss = ActionResult {
+            miss: 1,
+            kind: 1,
+            message: 15,
+            ..Default::default()
+        };
+        Action {
+            actor: 0x0100_1234,
+            category: category::BASIC_ATTACK,
+            arg: u32::from_le_bytes(*b"atk0"),
+            info: 0,
+            targets: vec![ActionTarget {
+                id: 0x0001_0203,
+                results: vec![hit, miss],
+            }],
+            seq: 0,
+        }
     }
 
     #[test]
@@ -220,24 +277,50 @@ mod tests {
 
     #[test]
     fn many_targets_keep_first_results() {
-        let r = |m| ActionResult { message: m, value: 10, ..Default::default() };
+        let r = |m| ActionResult {
+            message: m,
+            value: 10,
+            ..Default::default()
+        };
         let a = Action {
             actor: 1,
             category: category::MAGIC_FINISH,
             arg: 144,
             info: 5,
-            targets: vec![ActionTarget { id: 2, results: vec![r(2), r(3)] }, ActionTarget { id: 3, results: vec![r(264)] }],
+            targets: vec![
+                ActionTarget {
+                    id: 2,
+                    results: vec![r(2), r(3)],
+                },
+                ActionTarget {
+                    id: 3,
+                    results: vec![r(264)],
+                },
+            ],
             seq: 0,
         };
         let b = parse(&pack(&a));
         assert_eq!(b, a);
-        assert_eq!(b.records().iter().map(|(id, r)| (*id, r.message)).collect::<Vec<_>>(), [(2, 2), (3, 264)]);
+        assert_eq!(
+            b.records()
+                .iter()
+                .map(|(id, r)| (*id, r.message))
+                .collect::<Vec<_>>(),
+            [(2, 2), (3, 264)]
+        );
     }
 
     /// Bytes as LSB builds them for a known action (bit order checked by hand against packBitsBE).
     #[test]
     fn known_bits() {
-        let a = Action { actor: 0x0001_0203, category: 1, arg: 0, info: 0, targets: vec![], seq: 0 };
+        let a = Action {
+            actor: 0x0001_0203,
+            category: 1,
+            arg: 0,
+            info: 0,
+            targets: vec![],
+            seq: 0,
+        };
         let p = pack(&a);
         assert_eq!(&p[5..9], &[0x03, 0x02, 0x01, 0x00]);
         // 6 bits of count (0), 4 of res_sum, then category 1 at bit 10 of byte 9.

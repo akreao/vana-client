@@ -13,20 +13,39 @@ pub fn frames_per_second(speed: f32, rate: f32) -> f32 {
 /// Looping frame position: the client wraps at `frames` (the keys less one), so the last interval runs into the
 /// closing key, which repeats the first.
 pub fn loop_frame(elapsed_frames: f32, frames: u16) -> f32 {
-    if frames == 0 { 0.0 } else { elapsed_frames.rem_euclid(frames as f32) }
+    if frames == 0 {
+        0.0
+    } else {
+        elapsed_frames.rem_euclid(frames as f32)
+    }
 }
 
 /// Movement ratio of a remote actor from how far it moved this frame (FUN_100c68f0). `speed` and
 /// `speed_base` are the 0x00D/0x00E bytes @0x1C/@0x1D (x0.1 = units per second; the ratio uses
 /// SpeedBase). Stops at once below 1e-4 units, else smooths 0.25 new + 0.75 old, capped at 3.
-pub fn move_ratio(prev: f32, moved: f32, dt_secs: f32, speed: u8, speed_base: u8, status: u8) -> f32 {
+pub fn move_ratio(
+    prev: f32,
+    moved: f32,
+    dt_secs: f32,
+    speed: u8,
+    speed_base: u8,
+    status: u8,
+) -> f32 {
     if moved < 1e-4 {
         return 0.0;
     }
     // Riding (status 5 chocobo, 85 mount) expects 1.6x the distance.
-    let k = if status == 5 || status == 85 { 1.6 } else { 1.0 };
+    let k = if status == 5 || status == 85 {
+        1.6
+    } else {
+        1.0
+    };
     let expected = dt_secs * 60.0 * speed_base as f32 * 0.1 * k / 60.0;
-    let r = if expected >= 1e-6 && speed > 0 { moved / expected } else { 0.0 };
+    let r = if expected >= 1e-6 && speed > 0 {
+        moved / expected
+    } else {
+        0.0
+    };
     (r * 0.25 + prev * 0.75).min(3.0)
 }
 
@@ -37,7 +56,11 @@ pub fn move_ratio_ref(prev: f32, moved: f32, dt_secs: f32, reference: f32) -> f3
         return 0.0;
     }
     let expected = dt_secs * reference;
-    let r = if expected >= 1e-6 { moved / expected } else { 0.0 };
+    let r = if expected >= 1e-6 {
+        moved / expected
+    } else {
+        0.0
+    };
     (r * 0.25 + prev * 0.75).min(3.0)
 }
 
@@ -54,7 +77,12 @@ pub struct MotionNames {
 
 impl Default for MotionNames {
     fn default() -> Self {
-        Self { idle: "idl", battle: "btl", walk: "wlk", run: "run" }
+        Self {
+            idle: "idl",
+            battle: "btl",
+            walk: "wlk",
+            run: "run",
+        }
     }
 }
 
@@ -77,7 +105,10 @@ impl MotionNames {
 /// also falls back from "id1" to "idl" when the first is missing (FUN_100c6380).
 /// FUN_100ca9b0: status motions an op 0x2e's end leaves playing (the first three letters).
 pub fn keeps_status_motion(n: &str) -> bool {
-    matches!(n.get(..3).unwrap_or(n), "idl" | "1dl" | "2dl" | "3dl" | "btl" | "1tl" | "2tl" | "3tl" | "cor" | "rx1")
+    matches!(
+        n.get(..3).unwrap_or(n),
+        "idl" | "1dl" | "2dl" | "3dl" | "btl" | "1tl" | "2tl" | "3tl" | "cor" | "rx1"
+    )
 }
 
 pub fn choose(names: &MotionNames, status: u8, ratio: f32) -> (&'static str, f32) {
@@ -90,9 +121,17 @@ pub fn choose(names: &MotionNames, status: u8, ratio: f32) -> (&'static str, f32
         _ => {}
     }
     // Status 1 (engaged) stands in the battle motion.
-    let stand = if status == 1 { names.battle } else { names.idle };
+    let stand = if status == 1 {
+        names.battle
+    } else {
+        names.idle
+    };
     if ratio > 1.0 / 3.0 {
-        if ratio * 3.0 <= 1.5 { (names.walk, ratio * 3.0) } else { (names.run, ratio) }
+        if ratio * 3.0 <= 1.5 {
+            (names.walk, ratio * 3.0)
+        } else {
+            (names.run, ratio)
+        }
     } else if ratio > 1e-4 {
         (names.walk, ratio * 3.0)
     } else {
@@ -147,14 +186,27 @@ mod loop_tests {
     /// is the one at frame 0 (the closing key repeats the first; the frame count is the keys less one).
     #[test]
     fn run_cycle_has_no_hitch() {
-        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir())
+        else {
+            return;
+        };
         let Ok(d) = index.read(16600) else { return };
         let f = crate::dat::character::load_file(&d).unwrap();
         let skel = f.skeleton.as_ref().unwrap();
         let run = f.animations.iter().find(|a| a.name == "run0").unwrap();
         let pose = |frame: f32| crate::dat::character::pose(skel, &[(run, frame)]);
-        let diff = |a: &[crate::dat::character::BoneXf], b: &[crate::dat::character::BoneXf]| a.iter().zip(b).map(|(x, y)| x.q.angle_between(y.q)).fold(0f32, f32::max);
-        assert!(diff(&pose(super::loop_frame(run.frames as f32 - 1e-4, run.frames)), &pose(0.0)) < 1e-2);
+        let diff = |a: &[crate::dat::character::BoneXf], b: &[crate::dat::character::BoneXf]| {
+            a.iter()
+                .zip(b)
+                .map(|(x, y)| x.q.angle_between(y.q))
+                .fold(0f32, f32::max)
+        };
+        assert!(
+            diff(
+                &pose(super::loop_frame(run.frames as f32 - 1e-4, run.frames)),
+                &pose(0.0)
+            ) < 1e-2
+        );
         // One tick at rate 1: frames += speed * 0.5.
         let step = run.speed * 0.5;
         let (mut t, mut prev) = (0.0f32, pose(0.0));
@@ -162,7 +214,11 @@ mod loop_tests {
             t += step;
             let now = pose(super::loop_frame(t, run.frames));
             // A step moves some bone 0.12 rad or more; a held pose reads about 0.0015 (acos noise).
-            assert!(diff(&now, &prev) > 1e-2, "held pose at frame {}", super::loop_frame(t, run.frames));
+            assert!(
+                diff(&now, &prev) > 1e-2,
+                "held pose at frame {}",
+                super::loop_frame(t, run.frames)
+            );
             prev = now;
         }
     }

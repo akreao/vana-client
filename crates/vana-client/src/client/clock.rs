@@ -23,10 +23,22 @@ pub fn parts(w: &World) -> Option<Parts> {
     let t = super::vana_now(w);
     let p = msgfmt::VanaParts::of(t);
     let g = |id: u16| bt.group10_raw(id as usize);
-    let unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
-    let earth = crate::dat::font::decode_sjis(&msgfmt::earth_datetime(&g, unix, 8, (w.game.get(0x95) & 3) as usize, w.game.get(0x96) & 1 != 0));
+    let unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    let earth = crate::dat::font::decode_sjis(&msgfmt::earth_datetime(
+        &g,
+        unix,
+        8,
+        (w.game.get(0x95) & 3) as usize,
+        w.game.get(0x96) & 1 != 0,
+    ));
     let next = bt.day_name((p.weekday + 1) % 8).unwrap_or_default();
-    Some(Parts { earth: earth.trim().to_string(), moon: (bt.moon_name(p.phase).unwrap_or_default(), p.moon), next: (next, (DAY - t % DAY).div_ceil(60)) })
+    Some(Parts {
+        earth: earth.trim().to_string(),
+        moon: (bt.moon_name(p.phase).unwrap_or_default(), p.moon),
+        next: (next, (DAY - t % DAY).div_ceil(60)),
+    })
 }
 
 impl Parts {

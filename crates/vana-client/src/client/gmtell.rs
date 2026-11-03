@@ -39,7 +39,9 @@ pub fn receive(w: &mut World, from: &str, text: &str) {
     } else if w.gmtell.queue.len() + open(w) as usize >= SLOTS {
         reply(w, from, 0x83, &[]);
     } else {
-        w.gmtell.queue.push_back((from.to_string(), text.to_string()));
+        w.gmtell
+            .queue
+            .push_back((from.to_string(), text.to_string()));
     }
 }
 
@@ -59,7 +61,9 @@ pub fn step(w: &mut World) {
     if open(w) {
         return;
     }
-    let Some((from, text)) = w.gmtell.queue.pop_front() else { return };
+    let Some((from, text)) = w.gmtell.queue.pop_front() else {
+        return;
+    };
     // FUN_100a3f10: the first word the question, up to 8 more the answers; without both it closes unanswered.
     let mut it = words(&text).into_iter();
     let question = it.next().unwrap_or_default();
@@ -67,7 +71,13 @@ pub fn step(w: &mut World) {
     if question.is_empty() || options.is_empty() {
         return;
     }
-    w.gmtell.open = Some(Prompt { from, question, options, cursor: 0, scroll: 0 });
+    w.gmtell.open = Some(Prompt {
+        from,
+        question,
+        options,
+        cursor: 0,
+        scroll: 0,
+    });
 }
 
 /// FUN_100a3fe0's words: a quoted run up to its closing quote, else up to a space or tab; the spaces and tabs after
@@ -79,7 +89,13 @@ fn words(text: &str) -> Vec<String> {
         let quoted = c[i] == '"';
         let start = i + quoted as usize;
         let mut j = start;
-        while j < c.len() && !(if quoted { c[j] == '"' } else { c[j] == ' ' || c[j] == '\t' }) {
+        while j < c.len()
+            && !(if quoted {
+                c[j] == '"'
+            } else {
+                c[j] == ' ' || c[j] == '\t'
+            })
+        {
             j += 1;
         }
         out.push(c[start..j].iter().collect());
@@ -94,16 +110,23 @@ fn words(text: &str) -> Vec<String> {
 
 /// The answer tell: group 9 `id` with the player's name, then `args`, sent to `to` (no echo in the log).
 fn reply(w: &World, to: &str, id: usize, args: &[&str]) {
-    let Some(f) = w.battle.as_ref().and_then(|b| b.group9(id)) else { return };
+    let Some(f) = w.battle.as_ref().and_then(|b| b.group9(id)) else {
+        return;
+    };
     let mut all = vec![super::monstrosity::my_name(w)];
     all.extend_from_slice(args);
     let text = super::select::printf(&f, &all);
-    let _ = w.net.commands.send(NetCommand::Tell { name: to.to_string(), text });
+    let _ = w.net.commands.send(NetCommand::Tell {
+        name: to.to_string(),
+        text,
+    });
 }
 
 /// The answer (Enter: the cursor's, 0x86) or the cancel (Escape, 0x85); the window closes.
 fn answer(w: &mut World, pick: Option<usize>) {
-    let Some(p) = w.gmtell.open.take() else { return };
+    let Some(p) = w.gmtell.open.take() else {
+        return;
+    };
     match pick.and_then(|k| p.options.get(k)) {
         Some(o) => reply(w, &p.from, 0x86, &[&p.question, o]),
         None => reply(w, &p.from, 0x85, &[&p.question]),
@@ -113,7 +136,9 @@ fn answer(w: &mut World, pick: Option<usize>) {
 /// FUN_1014e550: Down / Up one answer (no wrap, no pages), the view following inside 3 rows, SE 0001 when it moved;
 /// Enter picks (SE 0002, the generic handler's), Escape cancels (SE 0003).
 pub fn key(w: &mut World, key: egui::Key) {
-    let Some(p) = w.gmtell.open.as_mut() else { return };
+    let Some(p) = w.gmtell.open.as_mut() else {
+        return;
+    };
     let was = p.cursor;
     match key {
         egui::Key::ArrowDown => move_to(p, was + 1),
@@ -137,12 +162,17 @@ pub fn key(w: &mut World, key: egui::Key) {
 
 fn move_to(p: &mut Prompt, k: usize) {
     p.cursor = k.min(p.options.len() - 1);
-    p.scroll = p.scroll.min(p.cursor).max((p.cursor + 1).saturating_sub(ROWS));
+    p.scroll = p
+        .scroll
+        .min(p.cursor)
+        .max((p.cursor + 1).saturating_sub(ROWS));
 }
 
 /// The mouse (ours, as the query's): hovering row `k` moves the cursor there, a click picks it.
 pub fn pointer(w: &mut World, k: usize, click: bool) {
-    let Some(p) = w.gmtell.open.as_mut().filter(|p| k < p.options.len()) else { return };
+    let Some(p) = w.gmtell.open.as_mut().filter(|p| k < p.options.len()) else {
+        return;
+    };
     if p.cursor != k {
         move_to(p, k);
         w.sounds.push(crate::audio::Ui::Cursor as u32);
@@ -158,7 +188,10 @@ mod tests {
 
     #[test]
     fn lsb_menu_words() {
-        assert_eq!(words("\"Pick one\"\"Yes\"\"No thanks\""), ["Pick one", "Yes", "No thanks"]);
+        assert_eq!(
+            words("\"Pick one\"\"Yes\"\"No thanks\""),
+            ["Pick one", "Yes", "No thanks"]
+        );
         assert_eq!(words("Title  a\tb"), ["Title", "a", "b"]);
         assert_eq!(words("\"open"), ["open"]);
         assert_eq!(words(" x"), ["", "x"]);

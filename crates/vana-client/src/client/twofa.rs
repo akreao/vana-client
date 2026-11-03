@@ -19,11 +19,18 @@ pub enum Ask {
 pub enum Step {
     Menu,
     /// The URI's QR modules (dark true, `side` a row) and the key under it.
-    Scan { qr: Vec<bool>, side: usize, key: String },
+    Scan {
+        qr: Vec<bool>,
+        side: usize,
+        key: String,
+    },
     /// A code to turn it off or to make a new recovery code.
     Code(Ask),
     /// The outcome, and a recovery code to keep.
-    Done { text: &'static str, code: Option<String> },
+    Done {
+        text: &'static str,
+        code: Option<String>,
+    },
 }
 
 pub struct TwoFa {
@@ -55,7 +62,12 @@ pub struct View {
 
 impl TwoFa {
     pub fn new() -> Self {
-        TwoFa { step: Step::Menu, focus: 0, code: String::new(), error: None }
+        TwoFa {
+            step: Step::Menu,
+            focus: 0,
+            code: String::new(),
+            error: None,
+        }
     }
 
     fn has_field(&self) -> bool {
@@ -75,9 +87,15 @@ impl TwoFa {
 
     fn text(&self) -> &'static str {
         match &self.step {
-            Step::Menu => "With two-factor sign-in on, logging in also asks for a code from an authenticator app on your phone.",
-            Step::Scan { .. } => "Scan this with an authenticator app (or type in the key under it), then enter the 6-digit code it shows.",
-            Step::Code(_) => "Enter the code your authenticator app shows now, or your recovery code.",
+            Step::Menu => {
+                "With two-factor sign-in on, logging in also asks for a code from an authenticator app on your phone."
+            }
+            Step::Scan { .. } => {
+                "Scan this with an authenticator app (or type in the key under it), then enter the 6-digit code it shows."
+            }
+            Step::Code(_) => {
+                "Enter the code your authenticator app shows now, or your recovery code."
+            }
             Step::Done { text, .. } => text,
         }
     }
@@ -90,7 +108,9 @@ impl TwoFa {
             (Step::Menu, 2) => "Replace the recovery code (needs a code or the old recovery code).",
             (Step::Menu, _) => "Back to the login form.",
             (Step::Scan { .. } | Step::Code(_), 0) => "Type the code.",
-            (Step::Done { code: Some(_), .. }, _) => "Write the recovery code down before closing this window.",
+            (Step::Done { code: Some(_), .. }, _) => {
+                "Write the recovery code down before closing this window."
+            }
             _ => "",
         }
     }
@@ -101,11 +121,22 @@ impl TwoFa {
         match r {
             Ok(Reply::TotpCreated { uri }) => match qr(&uri) {
                 Some((qr, side)) => {
-                    let key = uri.split(['?', '&']).find_map(|p| p.strip_prefix("secret=")).unwrap_or_default();
-                    let key = key.as_bytes().chunks(4).map(|c| String::from_utf8_lossy(c).into_owned()).collect::<Vec<_>>().join(" ");
-                    (self.step, self.focus, self.code) = (Step::Scan { qr, side, key }, 0, String::new());
+                    let key = uri
+                        .split(['?', '&'])
+                        .find_map(|p| p.strip_prefix("secret="))
+                        .unwrap_or_default();
+                    let key = key
+                        .as_bytes()
+                        .chunks(4)
+                        .map(|c| String::from_utf8_lossy(c).into_owned())
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    (self.step, self.focus, self.code) =
+                        (Step::Scan { qr, side, key }, 0, String::new());
                 }
-                None => self.error = Some("The server's key could not be shown as a QR code.".into()),
+                None => {
+                    self.error = Some("The server's key could not be shown as a QR code.".into())
+                }
             },
             Ok(Reply::TotpVerified { recovery_code }) => {
                 let text = if matches!(self.step, Step::Scan { .. }) {
@@ -113,9 +144,25 @@ impl TwoFa {
                 } else {
                     "Your new recovery code (the old one no longer works):"
                 };
-                (self.step, self.focus, self.code) = (Step::Done { text, code: recovery_code }, 0, String::new());
+                (self.step, self.focus, self.code) = (
+                    Step::Done {
+                        text,
+                        code: recovery_code,
+                    },
+                    0,
+                    String::new(),
+                );
             }
-            Ok(Reply::TotpRemoved) => (self.step, self.focus, self.code) = (Step::Done { text: "Two-factor sign-in is off.", code: None }, 0, String::new()),
+            Ok(Reply::TotpRemoved) => {
+                (self.step, self.focus, self.code) = (
+                    Step::Done {
+                        text: "Two-factor sign-in is off.",
+                        code: None,
+                    },
+                    0,
+                    String::new(),
+                )
+            }
             Ok(_) => self.error = Some("Unexpected reply from the login server.".into()),
             // LSB answers every refusal with "Failed to validate credentials".
             Err(e) => {
@@ -133,13 +180,27 @@ impl TwoFa {
 /// The URI as QR modules (error correction M) and their side.
 fn qr(uri: &str) -> Option<(Vec<bool>, usize)> {
     let code = qrcode::QrCode::with_error_correction_level(uri, qrcode::EcLevel::M).ok()?;
-    Some((code.to_colors().into_iter().map(|c| c == qrcode::Color::Dark).collect(), code.width()))
+    Some((
+        code.to_colors()
+            .into_iter()
+            .map(|c| c == qrcode::Color::Dark)
+            .collect(),
+        code.width(),
+    ))
 }
 
 type Line = ([f32; 4], String, [u8; 4], bool);
 
 /// A text line at `y` (window-relative), then `y` below it.
-fn push(lines: &mut Vec<Line>, y: &mut f32, f: f32, cw: f32, text: String, colour: [u8; 4], centre: bool) {
+fn push(
+    lines: &mut Vec<Line>,
+    y: &mut f32,
+    f: f32,
+    cw: f32,
+    text: String,
+    colour: [u8; 4],
+    centre: bool,
+) {
     lines.push(([16.0 * f, *y, cw, LINE * f], text, colour, centre));
     *y += LINE * f;
 }
@@ -159,7 +220,9 @@ fn layout(lu: &GameUi, size: [u32; 2], st: &TwoFa, busy: bool, f: f32) -> Lay {
     let cw = ww - 32.0 * f;
     let mut lines = Vec::new();
     let mut y = 12.0 * f;
-    let line = |lines: &mut Vec<Line>, y: &mut f32, text: String, colour, centre| push(lines, y, f, cw, text, colour, centre);
+    let line = |lines: &mut Vec<Line>, y: &mut f32, text: String, colour, centre| {
+        push(lines, y, f, cw, text, colour, centre)
+    };
     line(&mut lines, &mut y, TITLE.into(), YELLOW, true);
     y += 4.0 * f;
     for l in lu.wrap(st.text(), cw / f) {
@@ -181,7 +244,12 @@ fn layout(lu: &GameUi, size: [u32; 2], st: &TwoFa, busy: bool, f: f32) -> Lay {
     let mut field = None;
     if st.has_field() {
         y += 8.0 * f;
-        lines.push(([16.0 * f, y + 1.0 * f, 60.0 * f, LINE * f], "Code".into(), WHITE, false));
+        lines.push((
+            [16.0 * f, y + 1.0 * f, 60.0 * f, LINE * f],
+            "Code".into(),
+            WHITE,
+            false,
+        ));
         field = Some([80.0 * f, y, cw - 64.0 * f, 18.0 * f]);
         y += 22.0 * f;
     }
@@ -192,11 +260,20 @@ fn layout(lu: &GameUi, size: [u32; 2], st: &TwoFa, busy: bool, f: f32) -> Lay {
         }
     } else if busy {
         y += 4.0 * f;
-        line(&mut lines, &mut y, "Asking the login server...".into(), GREY, false);
+        line(
+            &mut lines,
+            &mut y,
+            "Asking the login server...".into(),
+            GREY,
+            false,
+        );
     }
     y += 10.0 * f;
     let names = st.buttons();
-    let widths: Vec<f32> = names.iter().map(|n| ((lu.label_width(n) + 14.0).max(88.0) * f).round()).collect();
+    let widths: Vec<f32> = names
+        .iter()
+        .map(|n| ((lu.label_width(n) + 14.0).max(88.0) * f).round())
+        .collect();
     let mut buttons = Vec::new();
     if matches!(st.step, Step::Menu) {
         // A column, as a menu.
@@ -219,7 +296,10 @@ fn layout(lu: &GameUi, size: [u32; 2], st: &TwoFa, busy: bool, f: f32) -> Lay {
     let at = |r: [f32; 4]| [wx + r[0], wy + r[1], r[2], r[3]];
     Lay {
         frame: [wx, wy, ww, wh],
-        lines: lines.into_iter().map(|(r, t, c, centre)| (at(r), t, c, centre)).collect(),
+        lines: lines
+            .into_iter()
+            .map(|(r, t, c, centre)| (at(r), t, c, centre))
+            .collect(),
         qr: qr.map(at),
         field: field.map(at),
         buttons: buttons.into_iter().map(at).collect(),
@@ -229,7 +309,15 @@ fn layout(lu: &GameUi, size: [u32; 2], st: &TwoFa, busy: bool, f: f32) -> Lay {
 /// The window over the login form: keys and mouse (none while `busy`), then drawn here (classic) or handed to the
 /// modern layer through `modern`. Focus 0 is the code field where there is one, then the buttons.
 #[allow(clippy::too_many_arguments)]
-pub fn window(lu: &mut GameUi, input: &UiInput, size: [u32; 2], st: &mut TwoFa, busy: bool, sounds: &mut Vec<crate::audio::Ui>, modern: Option<&mut Option<View>>) -> Option<Act> {
+pub fn window(
+    lu: &mut GameUi,
+    input: &UiInput,
+    size: [u32; 2],
+    st: &mut TwoFa,
+    busy: bool,
+    sounds: &mut Vec<crate::audio::Ui>,
+    modern: Option<&mut Option<View>>,
+) -> Option<Act> {
     let f = if modern.is_some() { 1.5 } else { 1.0 };
     // The modern layer's rule: hovering only lights a button.
     let hover_moves = modern.is_none();
@@ -239,7 +327,10 @@ pub fn window(lu: &mut GameUi, input: &UiInput, size: [u32; 2], st: &mut TwoFa, 
     let was = st.focus;
     let mut press = None;
     if !busy {
-        if let Some(k) = input.pointer.and_then(|p| lay.buttons.iter().position(|r| inside(r, p))) {
+        if let Some(k) = input
+            .pointer
+            .and_then(|p| lay.buttons.iter().position(|r| inside(r, p)))
+        {
             lu.hover.set(true);
             if input.moved && hover_moves {
                 st.focus = first + k;
@@ -248,25 +339,47 @@ pub fn window(lu: &mut GameUi, input: &UiInput, size: [u32; 2], st: &mut TwoFa, 
                 press = Some(first + k);
             }
         }
-        if input.clicked && lay.field.is_some_and(|r| input.pointer.is_some_and(|p| inside(&r, p))) {
+        if input.clicked
+            && lay
+                .field
+                .is_some_and(|r| input.pointer.is_some_and(|p| inside(&r, p)))
+        {
             st.focus = 0;
         }
         for ev in &input.events {
             match ev {
                 // Ctrl+C copies the recovery code.
-                egui::Event::Copy if matches!(st.step, Step::Done { code: Some(_), .. }) => press = Some(0),
+                egui::Event::Copy if matches!(st.step, Step::Done { code: Some(_), .. }) => {
+                    press = Some(0)
+                }
                 egui::Event::Text(t) | egui::Event::Paste(t) if first == 1 && st.focus == 0 => {
-                    st.code.extend(t.chars().filter(|c| c.is_ascii_alphanumeric()));
+                    st.code
+                        .extend(t.chars().filter(|c| c.is_ascii_alphanumeric()));
                     st.code = st.code.chars().take(32).collect();
                 }
-                egui::Event::Key { key, pressed: true, modifiers, .. } => match key {
+                egui::Event::Key {
+                    key,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } => match key {
                     egui::Key::Tab if modifiers.shift => st.focus = (st.focus + items - 1) % items,
                     egui::Key::Tab => st.focus = (st.focus + 1) % items,
-                    egui::Key::ArrowDown if first == 0 || st.focus == 0 => st.focus = (st.focus + 1) % items,
+                    egui::Key::ArrowDown if first == 0 || st.focus == 0 => {
+                        st.focus = (st.focus + 1) % items
+                    }
                     egui::Key::ArrowUp if first == 0 => st.focus = (st.focus + items - 1) % items,
                     egui::Key::ArrowUp => st.focus = 0,
-                    egui::Key::ArrowRight if first == 1 && st.focus > 0 => st.focus = (st.focus % (items - 1)) + 1,
-                    egui::Key::ArrowLeft if first == 1 && st.focus > 0 => st.focus = if st.focus == 1 { items - 1 } else { st.focus - 1 },
+                    egui::Key::ArrowRight if first == 1 && st.focus > 0 => {
+                        st.focus = (st.focus % (items - 1)) + 1
+                    }
+                    egui::Key::ArrowLeft if first == 1 && st.focus > 0 => {
+                        st.focus = if st.focus == 1 {
+                            items - 1
+                        } else {
+                            st.focus - 1
+                        }
+                    }
                     egui::Key::Backspace if first == 1 && st.focus == 0 => {
                         st.code.pop();
                     }
@@ -284,7 +397,13 @@ pub fn window(lu: &mut GameUi, input: &UiInput, size: [u32; 2], st: &mut TwoFa, 
         st.focus = i;
         let k = i - first;
         let needs_code = first == 1 && k == 0 && st.code.is_empty();
-        sounds.push(if needs_code { crate::audio::Ui::Error } else if k + 1 == lay.buttons.len() && first == 1 { crate::audio::Ui::Cancel } else { crate::audio::Ui::Select });
+        sounds.push(if needs_code {
+            crate::audio::Ui::Error
+        } else if k + 1 == lay.buttons.len() && first == 1 {
+            crate::audio::Ui::Cancel
+        } else {
+            crate::audio::Ui::Select
+        });
         st.error = None;
         match (&st.step, k) {
             (Step::Menu, 0) => act = Some(Act::Send(Command::CreateTotp, String::new())),
@@ -294,8 +413,12 @@ pub fn window(lu: &mut GameUi, input: &UiInput, size: [u32; 2], st: &mut TwoFa, 
             (Step::Menu, _) | (Step::Done { .. }, _) => act = Some(Act::Close),
             _ if needs_code => st.error = Some("Enter a code first.".into()),
             (Step::Scan { .. }, 0) => act = Some(Act::Send(Command::VerifyTotp, st.code.clone())),
-            (Step::Code(Ask::Off), 0) => act = Some(Act::Send(Command::RemoveTotp, st.code.clone())),
-            (Step::Code(Ask::Recovery), 0) => act = Some(Act::Send(Command::RegenerateRecovery, st.code.clone())),
+            (Step::Code(Ask::Off), 0) => {
+                act = Some(Act::Send(Command::RemoveTotp, st.code.clone()))
+            }
+            (Step::Code(Ask::Recovery), 0) => {
+                act = Some(Act::Send(Command::RegenerateRecovery, st.code.clone()))
+            }
             _ => (st.step, st.focus, st.code) = (Step::Menu, 0, String::new()),
         }
     } else if st.focus != was {
@@ -314,7 +437,12 @@ pub fn window(lu: &mut GameUi, input: &UiInput, size: [u32; 2], st: &mut TwoFa, 
             lines: lay.lines,
             qr,
             field: lay.field.map(|r| (r, st.code.clone())),
-            buttons: lay.buttons.iter().zip(names).map(|(r, n)| (*r, *n)).collect(),
+            buttons: lay
+                .buttons
+                .iter()
+                .zip(names)
+                .map(|(r, n)| (*r, *n))
+                .collect(),
             focus: st.focus,
             busy,
         });
@@ -322,10 +450,20 @@ pub fn window(lu: &mut GameUi, input: &UiInput, size: [u32; 2], st: &mut TwoFa, 
     }
     let [wx, wy, ww, wh] = lay.frame;
     // Opaque under the translucent frame: the logo and the form would show through.
-    lu.rect(wx + 2.0, wy + 2.0, ww - 4.0, wh - 4.0, [0.02, 0.02, 0.06, 0.9]);
+    lu.rect(
+        wx + 2.0,
+        wy + 2.0,
+        ww - 4.0,
+        wh - 4.0,
+        [0.02, 0.02, 0.06, 0.9],
+    );
     lu.frame(wx, wy, ww, wh);
     for (r, text, colour, centre) in &lay.lines {
-        let x = if *centre { r[0] + ((r[2] - lu.text_width(text)) / 2.0).round() } else { r[0] };
+        let x = if *centre {
+            r[0] + ((r[2] - lu.text_width(text)) / 2.0).round()
+        } else {
+            r[0]
+        };
         lu.text(text, x, r[1], 0, *colour);
     }
     if let (Step::Scan { qr, side, .. }, Some(r)) = (&st.step, lay.qr) {
@@ -333,22 +471,50 @@ pub fn window(lu: &mut GameUi, input: &UiInput, size: [u32; 2], st: &mut TwoFa, 
         let m = r[2] / (*side as f32 + 8.0);
         for (i, _) in qr.iter().enumerate().filter(|(_, d)| **d) {
             let (x, y) = ((i % side) as f32, (i / side) as f32);
-            lu.rect(r[0] + (x + 4.0) * m, r[1] + (y + 4.0) * m, m, m, [0.0, 0.0, 0.0, 1.0]);
+            lu.rect(
+                r[0] + (x + 4.0) * m,
+                r[1] + (y + 4.0) * m,
+                m,
+                m,
+                [0.0, 0.0, 0.0, 1.0],
+            );
         }
     }
     if let Some(r) = lay.field {
         let on = st.focus == 0 && !busy;
-        lu.rect(r[0], r[1], r[2], r[3], if on { [0.16, 0.2, 0.45, 0.6] } else { [0.0, 0.0, 0.0, 0.35] });
+        lu.rect(
+            r[0],
+            r[1],
+            r[2],
+            r[3],
+            if on {
+                [0.16, 0.2, 0.45, 0.6]
+            } else {
+                [0.0, 0.0, 0.0, 0.35]
+            },
+        );
         lu.text(&st.code, r[0] + 4.0, r[1] + 1.0, 0, WHITE);
         if on && lu.blink() {
-            lu.rect(r[0] + 4.0 + lu.text_width(&st.code), r[1] + 2.0, 2.0, 14.0, [1.0, 1.0, 1.0, 0.9]);
+            lu.rect(
+                r[0] + 4.0 + lu.text_width(&st.code),
+                r[1] + 2.0,
+                2.0,
+                14.0,
+                [1.0, 1.0, 1.0, 0.9],
+            );
         }
     }
     let mut hand = None;
     for (k, (r, name)) in lay.buttons.iter().zip(names).enumerate() {
         let on = st.focus == first + k && !busy;
         let d = if on { -1.0 } else { 0.0 };
-        let tint = if busy { 0x8040_4040 } else if on { 0x8080_5020 } else { 0x8080_8080 };
+        let tint = if busy {
+            0x8040_4040
+        } else if on {
+            0x8080_5020
+        } else {
+            0x8080_8080
+        };
         super::settings::button(lu, [r[0] + d, r[1] + d, r[2], r[3]], tint);
         let lx = r[0] + ((r[2] - lu.label_width(name)) / 2.0).round();
         lu.label(name, lx + d, r[1] + 1.0 + d, tint, true);

@@ -1,8 +1,8 @@
 //! The rest of the game façade (docs/lua-mods.md 4.6): skills, jobs, merits and job points, stats, gil, what we have
 //! learned, job setups, session flags, the camera, targets by tag and the zone's NPC list.
 
-use super::api::world;
 use super::World;
+use super::api::world;
 use mlua::{Lua, Table};
 
 /// What the mod phase reads from the UI for the mods (shared as app data): the map grid as <pos> shows it.
@@ -34,7 +34,10 @@ pub(super) struct FrameInfo {
 impl FrameInfo {
     /// The grid square, every half second (both UIs' location panels do the same).
     pub fn update(&mut self, w: &World, gu: &super::super::game_ui::GameUi) {
-        if self.grid_at.is_none_or(|t| t.elapsed().as_secs_f32() >= 0.5) {
+        if self
+            .grid_at
+            .is_none_or(|t| t.elapsed().as_secs_f32() >= 0.5)
+        {
             self.grid_at = Some(std::time::Instant::now());
             self.grid = super::super::map::grid_text(w, gu.map_regions());
         }
@@ -52,10 +55,16 @@ fn vec3(lua: &Lua, v: glam::Vec3) -> mlua::Result<Table> {
 /// A target tag ("t", "<st>", "bt", "pet", "me", "ht", "scan", "p0".."p5", "a10".."a25"), a player's name or a server
 /// id: (id, index).
 pub(super) fn by_tag(w: &World, tag: &str) -> Option<(u32, u16)> {
-    let inner = tag.trim().trim_start_matches('<').trim_end_matches('>').to_ascii_lowercase();
+    let inner = tag
+        .trim()
+        .trim_start_matches('<')
+        .trim_end_matches('>')
+        .to_ascii_lowercase();
     let slot = match inner.as_bytes() {
         [b'p', d @ b'0'..=b'5'] => Some((d - b'0') as usize),
-        [b'a', p @ b'1'..=b'2', d @ b'0'..=b'5'] => Some((p - b'0') as usize * 6 + (d - b'0') as usize),
+        [b'a', p @ b'1'..=b'2', d @ b'0'..=b'5'] => {
+            Some((p - b'0') as usize * 6 + (d - b'0') as usize)
+        }
         _ => None,
     };
     if let Some(k) = slot {
@@ -63,8 +72,18 @@ pub(super) fn by_tag(w: &World, tag: &str) -> Option<(u32, u16)> {
         return Some((m.id, m.index));
     }
     let tagged = format!("<{inner}>");
-    let probe = if ["t", "me", "bt", "scan", "pet", "ht"].contains(&inner.as_str()) { tagged.as_str() } else { tag.trim() };
-    super::super::textcmd::resolve(w, Some(probe), false, true, super::super::textcmd::Mode::Internal)
+    let probe = if ["t", "me", "bt", "scan", "pet", "ht"].contains(&inner.as_str()) {
+        tagged.as_str()
+    } else {
+        tag.trim()
+    };
+    super::super::textcmd::resolve(
+        w,
+        Some(probe),
+        false,
+        true,
+        super::super::textcmd::Mode::Internal,
+    )
 }
 
 pub(super) fn install(lua: &Lua, game: &Table) -> mlua::Result<()> {
@@ -72,11 +91,16 @@ pub(super) fn install(lua: &Lua, game: &Table) -> mlua::Result<()> {
         "entity_by_tag",
         lua.create_function(|lua, tag: String| {
             let w = world(lua)?;
-            let Some((id, _)) = by_tag(w, &tag) else { return Ok(None) };
+            let Some((id, _)) = by_tag(w, &tag) else {
+                return Ok(None);
+            };
             if id == w.my_id {
                 return super::api::self_entity(lua, w).map(Some);
             }
-            w.entities.get(&id).map(|e| super::api::entity(lua, w, id, e)).transpose()
+            w.entities
+                .get(&id)
+                .map(|e| super::api::entity(lua, w, id, e))
+                .transpose()
         })?,
     )?;
     game.set(
@@ -128,7 +152,9 @@ pub(super) fn install(lua: &Lua, game: &Table) -> mlua::Result<()> {
         "stats",
         lua.create_function(|lua, ()| {
             let w = world(lua)?;
-            let Some(s) = w.stats.as_ref() else { return Ok(None) };
+            let Some(s) = w.stats.as_ref() else {
+                return Ok(None);
+            };
             let t = lua.create_table()?;
             t.set("base", s.base.to_vec())?;
             t.set("bonus", s.adj.to_vec())?;
@@ -186,20 +212,34 @@ pub(super) fn install(lua: &Lua, game: &Table) -> mlua::Result<()> {
             Ok(out)
         })?,
     )?;
-    game.set("gil", lua.create_function(|lua, ()| Ok(world(lua)?.inv.gil()))?)?;
+    game.set(
+        "gil",
+        lua.create_function(|lua, ()| Ok(world(lua)?.inv.gil()))?,
+    )?;
     game.set(
         "spells",
         lua.create_function(|lua, ()| {
             let w = world(lua)?;
-            Ok((0..(w.spells_known.len() * 8) as u16).filter(|&s| w.spells_known.get(s as usize / 8).is_some_and(|b| b & (1 << (s % 8)) != 0)).collect::<Vec<u16>>())
+            Ok((0..(w.spells_known.len() * 8) as u16)
+                .filter(|&s| {
+                    w.spells_known
+                        .get(s as usize / 8)
+                        .is_some_and(|b| b & (1 << (s % 8)) != 0)
+                })
+                .collect::<Vec<u16>>())
         })?,
     )?;
     game.set(
         "abilities",
         lua.create_function(|lua, ()| {
             let w = world(lua)?;
-            let Some(acts) = w.actions.as_ref() else { return Ok(Vec::new()) };
-            Ok(super::super::magic::ability_rows(w, 0).into_iter().filter_map(|i| acts.abilities.get(i as usize).map(|a| a.id)).collect::<Vec<u16>>())
+            let Some(acts) = w.actions.as_ref() else {
+                return Ok(Vec::new());
+            };
+            Ok(super::super::magic::ability_rows(w, 0)
+                .into_iter()
+                .filter_map(|i| acts.abilities.get(i as usize).map(|a| a.id))
+                .collect::<Vec<u16>>())
         })?,
     )?;
     game.set(
@@ -217,13 +257,33 @@ pub(super) fn install(lua: &Lua, game: &Table) -> mlua::Result<()> {
                 t.set("raw", lua.create_string(&b[..])?)?;
                 match b[0] {
                     // BLU: 20 slots, spell id - 0x200.
-                    0x10 => t.set("blue_spells", b[4..24].iter().filter(|&&s| s != 0).map(|&s| 0x200 + s as u16).collect::<Vec<u16>>())?,
+                    0x10 => t.set(
+                        "blue_spells",
+                        b[4..24]
+                            .iter()
+                            .filter(|&&s| s != 0)
+                            .map(|&s| 0x200 + s as u16)
+                            .collect::<Vec<u16>>(),
+                    )?,
                     // PUP: head and frame items 0x2000 + n, attachments 0x2100 + n.
                     0x12 => {
-                        let item = |i: usize, v: u8| (v != 0).then(|| if i < 2 { 0x2000 + v as u16 } else { 0x2100 + v as u16 });
+                        let item = |i: usize, v: u8| {
+                            (v != 0).then(|| {
+                                if i < 2 {
+                                    0x2000 + v as u16
+                                } else {
+                                    0x2100 + v as u16
+                                }
+                            })
+                        };
                         t.set("head", item(0, b[4]))?;
                         t.set("frame", item(1, b[5]))?;
-                        t.set("attachments", (2..14).filter_map(|i| item(i, b[4 + i])).collect::<Vec<u16>>())?;
+                        t.set(
+                            "attachments",
+                            (2..14)
+                                .filter_map(|i| item(i, b[4 + i]))
+                                .collect::<Vec<u16>>(),
+                        )?;
                     }
                     _ => {}
                 }
@@ -236,7 +296,9 @@ pub(super) fn install(lua: &Lua, game: &Table) -> mlua::Result<()> {
         "macros",
         lua.create_function(|lua, ()| {
             let w = world(lua)?;
-            let Some(m) = w.macros.as_ref() else { return Ok(None) };
+            let Some(m) = w.macros.as_ref() else {
+                return Ok(None);
+            };
             let t = lua.create_table()?;
             t.set("book", m.book + 1)?;
             t.set("set", m.set + 1)?;
@@ -249,7 +311,9 @@ pub(super) fn install(lua: &Lua, game: &Table) -> mlua::Result<()> {
             for (row, base) in [("ctrl", 0), ("alt", 10)] {
                 let r = lua.create_table()?;
                 for n in 0..10 {
-                    let Some(rec) = m.recs.get(base + n) else { continue };
+                    let Some(rec) = m.recs.get(base + n) else {
+                        continue;
+                    };
                     let e = lua.create_table()?;
                     e.set("title", rec.title())?;
                     let lines = lua.create_table()?;
@@ -269,7 +333,9 @@ pub(super) fn install(lua: &Lua, game: &Table) -> mlua::Result<()> {
         lua.create_function(|lua, ()| {
             let w = world(lua)?;
             let gu = super::api::gu(lua)?;
-            let Some(r) = super::super::map::current(w, gu.map_regions()) else { return Ok(None) };
+            let Some(r) = super::super::map::current(w, gu.map_regions()) else {
+                return Ok(None);
+            };
             let t = lua.create_table()?;
             t.set("zone", r.zone)?;
             t.set("number", r.num)?;
@@ -288,7 +354,9 @@ pub(super) fn install(lua: &Lua, game: &Table) -> mlua::Result<()> {
         lua.create_function(|lua, (x, z): (f32, f32)| {
             let w = world(lua)?;
             let gu = super::api::gu(lua)?;
-            let Some(r) = super::super::map::current(w, gu.map_regions()) else { return Ok((None, None)) };
+            let Some(r) = super::super::map::current(w, gu.map_regions()) else {
+                return Ok((None, None));
+            };
             // The pixel on the map's 512 x 512 image (its top left at the map pixel `origin`).
             let (px, py) = r.px(x, z);
             Ok((Some(px - r.ox as i32), Some(py - r.oy as i32)))
@@ -304,11 +372,17 @@ pub(super) fn install(lua: &Lua, game: &Table) -> mlua::Result<()> {
         "collision",
         lua.create_function(move |lua, (x, z, r): (f32, f32, Option<f32>)| {
             let w = world(lua)?;
-            let Some(g) = w.ground.as_ref() else { return Ok(None) };
+            let Some(g) = w.ground.as_ref() else {
+                return Ok(None);
+            };
             let out = lua.create_table()?;
             for (t, n, kind) in g.tris_near(x, z, r.unwrap_or(8.0).clamp(0.0, 64.0)) {
                 let e = lua.create_table()?;
-                (e.set(1, point(lua, t[0])?)?, e.set(2, point(lua, t[1])?)?, e.set(3, point(lua, t[2])?)?);
+                (
+                    e.set(1, point(lua, t[0])?)?,
+                    e.set(2, point(lua, t[1])?)?,
+                    e.set(3, point(lua, t[2])?)?,
+                );
                 (e.set("normal", point(lua, n)?)?, e.set("kind", kind)?);
                 out.push(e)?;
             }
@@ -319,7 +393,9 @@ pub(super) fn install(lua: &Lua, game: &Table) -> mlua::Result<()> {
         "collision_mesh",
         lua.create_function(|lua, ()| {
             let w = world(lua)?;
-            let Some(g) = w.ground.as_ref() else { return Ok(None) };
+            let Some(g) = w.ground.as_ref() else {
+                return Ok(None);
+            };
             let mut b = Vec::new();
             for t in g.all_tris() {
                 for v in t {
@@ -335,9 +411,13 @@ pub(super) fn install(lua: &Lua, game: &Table) -> mlua::Result<()> {
         "raycast",
         lua.create_function(move |lua, (a, b): (Table, Table)| {
             let w = world(lua)?;
-            let v = |t: &Table| -> mlua::Result<glam::Vec3> { Ok(glam::Vec3::new(t.get("x")?, t.get("y")?, t.get("z")?)) };
+            let v = |t: &Table| -> mlua::Result<glam::Vec3> {
+                Ok(glam::Vec3::new(t.get("x")?, t.get("y")?, t.get("z")?))
+            };
             let (from, to) = (v(&a)?, v(&b)?);
-            let Some(d) = w.ground.as_ref().and_then(|g| g.raycast(from, to)) else { return Ok(None) };
+            let Some(d) = w.ground.as_ref().and_then(|g| g.raycast(from, to)) else {
+                return Ok(None);
+            };
             let hit = point(lua, from + (to - from).normalize_or_zero() * d)?;
             hit.set("distance", d)?;
             Ok(Some(hit))
@@ -347,14 +427,18 @@ pub(super) fn install(lua: &Lua, game: &Table) -> mlua::Result<()> {
         "floor",
         lua.create_function(|lua, (x, z, y): (f32, f32, Option<f32>)| {
             let w = world(lua)?;
-            Ok(w.ground.as_ref().and_then(|g| g.settle(x, z, y.unwrap_or(w.pos.y))))
+            Ok(w.ground
+                .as_ref()
+                .and_then(|g| g.settle(x, z, y.unwrap_or(w.pos.y))))
         })?,
     )?;
     game.set(
         "cast",
         lua.create_function(|lua, ()| {
             let w = world(lua)?;
-            let Some((total, left)) = w.cast_bar else { return Ok(None) };
+            let Some((total, left)) = w.cast_bar else {
+                return Ok(None);
+            };
             let t = lua.create_table()?;
             if w.cast_spell != 0 {
                 t.set("spell", w.cast_spell)?;
@@ -362,7 +446,10 @@ pub(super) fn install(lua: &Lua, game: &Table) -> mlua::Result<()> {
             // The bar's ticks are 60 a second.
             t.set("total", total / 60.0)?;
             t.set("left", left / 60.0)?;
-            t.set("progress", if total > 0.0 { 1.0 - left / total } else { 1.0 })?;
+            t.set(
+                "progress",
+                if total > 0.0 { 1.0 - left / total } else { 1.0 },
+            )?;
             t.set("event", w.cast_event)?;
             Ok(Some(t))
         })?,
@@ -383,8 +470,14 @@ pub(super) fn install(lua: &Lua, game: &Table) -> mlua::Result<()> {
             t.set("autorun", w.autorun)?;
             t.set("follow", w.follow)?;
             t.set("pet_index", (w.my_pet != 0).then_some(w.my_pet))?;
-            let grid = lua.app_data_ref::<std::rc::Rc<std::cell::RefCell<FrameInfo>>>().map(|f| f.borrow().grid.clone()).unwrap_or_default();
-            t.set("map_grid", Some(grid).filter(|g| !g.is_empty() && !w.room_flag))?;
+            let grid = lua
+                .app_data_ref::<std::rc::Rc<std::cell::RefCell<FrameInfo>>>()
+                .map(|f| f.borrow().grid.clone())
+                .unwrap_or_default();
+            t.set(
+                "map_grid",
+                Some(grid).filter(|g| !g.is_empty() && !w.room_flag),
+            )?;
             t.set("modern_ui", w.modern)?;
             Ok(t)
         })?,
@@ -406,7 +499,9 @@ pub(super) fn install(lua: &Lua, game: &Table) -> mlua::Result<()> {
         "shop",
         lua.create_function(|lua, ()| {
             let w = world(lua)?;
-            let Some(rows) = super::super::shop::stock(w) else { return Ok(None) };
+            let Some(rows) = super::super::shop::stock(w) else {
+                return Ok(None);
+            };
             let out = lua.create_table()?;
             for (k, item, price) in rows {
                 let r = lua.create_table()?;

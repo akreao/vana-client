@@ -7,12 +7,20 @@ use crate::fx::EquipCall;
 
 /// The applied status (+0x170) is 1.
 fn engaged(w: &World, id: u32) -> bool {
-    if id == w.my_id { w.my_motion.status == 1 } else { w.entities.get(&id).is_some_and(|e| e.motion.status == 1) }
+    if id == w.my_id {
+        w.my_motion.status == 1
+    } else {
+        w.entities.get(&id).is_some_and(|e| e.motion.status == 1)
+    }
 }
 
 /// InvisFlag (+0x128 bit 6).
 fn invisible(w: &World, id: u32) -> bool {
-    if id == w.my_id { w.my_plate.invisible } else { w.entities.get(&id).is_some_and(|e| e.invisible) }
+    if id == w.my_id {
+        w.my_plate.invisible
+    } else {
+        w.entities.get(&id).is_some_and(|e| e.invisible)
+    }
 }
 
 /// Model +0xb2: the server's hide bits, or a rider waiting hidden for its mount (+0x40).
@@ -22,7 +30,9 @@ fn model_hidden(w: &World, id: u32) -> bool {
 
 /// FUN_100d6240: a hide byte of `wepN` is set.
 fn wep_hidden(w: &World, id: u32, n: usize) -> bool {
-    w.actors.get(&id).is_some_and(|a| a.wep_hide[n].iter().any(|&h| h))
+    w.actors
+        .get(&id)
+        .is_some_and(|a| a.wep_hide[n].iter().any(|&h| h))
 }
 
 /// Only `wep0` / `wep1` have glow schedulers.
@@ -82,12 +92,20 @@ pub fn start_in(w: &mut World, id: u32) {
 /// own model hide +0x120 bits 14 / 15 not modelled): a PC after its `init`, not bound by an event. Shown: `!in?`
 /// and FUN_100cf100; invisible: `!kl?` and every glow off.
 pub fn frame(w: &mut World) {
-    let mut ids: Vec<u32> = w.entities.iter().filter(|(id, e)| **id >> 24 == 0 && e.init_done && !e.no_plate && !e.untargetable).map(|(id, _)| *id).collect();
+    let mut ids: Vec<u32> = w
+        .entities
+        .iter()
+        .filter(|(id, e)| **id >> 24 == 0 && e.init_done && !e.no_plate && !e.untargetable)
+        .map(|(id, _)| *id)
+        .collect();
     if w.my_init_done {
         ids.push(w.my_id);
     }
     for id in ids {
-        if !w.actors.get(&id).is_some_and(|a| a.character.is_some()) || event::bound(w, id) || w.effects.equip_waiting(id) {
+        if !w.actors.get(&id).is_some_and(|a| a.character.is_some())
+            || event::bound(w, id)
+            || w.effects.equip_waiting(id)
+        {
             continue;
         }
         if invisible(w, id) {
@@ -112,7 +130,11 @@ pub fn status_start(w: &mut World, id: u32, status: u8) {
     if (0x3f..=0x53).contains(&status) {
         return;
     }
-    let pc_look = w.actors.get(&id).and_then(|a| a.character.as_ref()).is_some_and(|c| c.pc.is_some());
+    let pc_look = w
+        .actors
+        .get(&id)
+        .and_then(|a| a.character.as_ref())
+        .is_some_and(|c| c.pc.is_some());
     let e = w.entities.get(&id);
     let kind0 = id == w.my_id || id >> 24 == 0 || (pc_look && e.is_some_and(|e| e.marks.npc_pet));
     let (monster, trust) = (e.is_some_and(|e| e.mob), e.is_some_and(|e| e.marks.trust));
@@ -137,7 +159,9 @@ pub fn apply_ops(w: &mut World) {
 
 /// The meshes not drawn (bit N).
 pub fn mask(h: &[[bool; 2]; 16]) -> u16 {
-    (0..16).filter(|&n| h[n].iter().any(|&x| x)).fold(0, |m, n| m | 1 << n)
+    (0..16)
+        .filter(|&n| h[n].iter().any(|&x| x))
+        .fold(0, |m, n| m | 1 << n)
 }
 
 /// A new model's `init` hides (dat/npc.rs), until `init` itself runs.

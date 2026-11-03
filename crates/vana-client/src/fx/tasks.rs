@@ -85,24 +85,78 @@ enum Parts {
 }
 
 /// DAT_1035bc3c: the skillchain burst's animation by proc kind (file 0xaf0 + it; LSB ActionProcSkillChain order).
-const SKILLCHAIN: [u16; 18] = [0, 479, 480, 475, 476, 477, 478, 467, 469, 474, 471, 472, 473, 470, 468, 1013, 1014, 0];
+const SKILLCHAIN: [u16; 18] = [
+    0, 479, 480, 475, 476, 477, 478, 467, 469, 474, 471, 472, 473, 470, 468, 1013, 1014, 0,
+];
 
 /// FUN_10055cc0: several records outside categories 14 / 15 run at 0.7.
 fn action_speed(a: &Action) -> f32 {
-    if a.records().len() > 1 && !matches!(a.category, 0xe | 0xf) { 0.7 } else { 1.0 }
+    if a.records().len() > 1 && !matches!(a.category, 0xe | 0xf) {
+        0.7
+    } else {
+        1.0
+    }
 }
 
 /// FUN_100d25e0's files for a skill on a PC skeleton (tables 0x1035f484..0x1035f550, indexed by race code 0..8):
 /// the motion and effect file, and the skirt file when body info byte 9 > 0 (the pair's first when it is 1).
 fn skill_files(category: u8, anim: u16, race: u8, skirt: i8) -> Option<(u32, Option<u32>)> {
-    const WS: [u32; 9] = [33227, 33227, 33995, 34763, 35531, 36299, 36299, 37067, 37835];
-    const WS2: [[u32; 2]; 9] = [[33483, 33739], [33483, 33739], [34251, 34507], [35019, 35275], [35787, 36043], [36555, 36811], [36555, 36811], [37323, 37579], [38091, 38347]];
-    const WS_HI: [u32; 9] = [61451, 61451, 61499, 61547, 61595, 61643, 61643, 61691, 61739];
-    const WS_HI2: [[u32; 2]; 9] = [[61467, 61483], [61467, 61483], [61515, 61531], [61563, 61579], [61611, 61627], [61659, 61675], [61659, 61675], [61707, 61723], [61755, 61771]];
-    const DANCE: [u32; 9] = [58041, 58041, 58425, 58809, 59193, 59577, 59577, 59961, 60345];
-    const DANCE2: [[u32; 2]; 9] = [[58169, 58297], [58169, 58297], [58553, 58681], [58937, 59065], [59321, 59449], [59705, 59833], [59705, 59833], [60089, 60217], [60473, 60601]];
-    const RUNE: [u32; 9] = [88035, 88035, 89571, 91107, 92643, 94179, 94179, 95715, 97251];
-    const RUNE2: [[u32; 2]; 9] = [[88547, 89059], [88547, 89059], [90083, 90595], [91619, 92131], [93155, 93667], [94691, 95203], [94691, 95203], [96227, 96739], [97763, 98275]];
+    const WS: [u32; 9] = [
+        33227, 33227, 33995, 34763, 35531, 36299, 36299, 37067, 37835,
+    ];
+    const WS2: [[u32; 2]; 9] = [
+        [33483, 33739],
+        [33483, 33739],
+        [34251, 34507],
+        [35019, 35275],
+        [35787, 36043],
+        [36555, 36811],
+        [36555, 36811],
+        [37323, 37579],
+        [38091, 38347],
+    ];
+    const WS_HI: [u32; 9] = [
+        61451, 61451, 61499, 61547, 61595, 61643, 61643, 61691, 61739,
+    ];
+    const WS_HI2: [[u32; 2]; 9] = [
+        [61467, 61483],
+        [61467, 61483],
+        [61515, 61531],
+        [61563, 61579],
+        [61611, 61627],
+        [61659, 61675],
+        [61659, 61675],
+        [61707, 61723],
+        [61755, 61771],
+    ];
+    const DANCE: [u32; 9] = [
+        58041, 58041, 58425, 58809, 59193, 59577, 59577, 59961, 60345,
+    ];
+    const DANCE2: [[u32; 2]; 9] = [
+        [58169, 58297],
+        [58169, 58297],
+        [58553, 58681],
+        [58937, 59065],
+        [59321, 59449],
+        [59705, 59833],
+        [59705, 59833],
+        [60089, 60217],
+        [60473, 60601],
+    ];
+    const RUNE: [u32; 9] = [
+        88035, 88035, 89571, 91107, 92643, 94179, 94179, 95715, 97251,
+    ];
+    const RUNE2: [[u32; 2]; 9] = [
+        [88547, 89059],
+        [88547, 89059],
+        [90083, 90595],
+        [91619, 92131],
+        [93155, 93667],
+        [94691, 95203],
+        [94691, 95203],
+        [96227, 96739],
+        [97763, 98275],
+    ];
     let r = race as usize;
     if r >= 9 {
         return None;
@@ -172,20 +226,22 @@ fn effect_base(category: u8, anim: u32) -> Option<u32> {
 /// The action file a model's vtable +0x2c4..+0x2ec loads for `id` (event ops 0x73 / 0xad / 0xc4, FUN_100a9700..
 /// FUN_100a98b0): 0 item, 1 magic, 2 ability, then fixed bases.
 pub fn event_action_file(kind: u8, id: u32) -> Option<u32> {
-    Some(id + match kind {
-        0 if id < 100 => 0x1330,
-        0 => 0xdca5,
-        1 => 0xaf0,
-        2 => 0x113c,
-        3 => 0x1394,
-        4 => 0xc7ef,
-        5 => 0xdd6d,
-        6 => 0x1071b,
-        7 => 0x11323,
-        8 => 0x11423,
-        9 => 0x19031,
-        _ => return None,
-    })
+    Some(
+        id + match kind {
+            0 if id < 100 => 0x1330,
+            0 => 0xdca5,
+            1 => 0xaf0,
+            2 => 0x113c,
+            3 => 0x1394,
+            4 => 0xc7ef,
+            5 => 0xdd6d,
+            6 => 0x1071b,
+            7 => 0x11323,
+            8 => 0x11423,
+            9 => 0x19031,
+            _ => return None,
+        },
+    )
 }
 
 impl Effects {
@@ -204,7 +260,11 @@ impl Effects {
         {
             let tx = self.load_tx.clone();
             std::thread::spawn(move || {
-                let lib = index.read(file).and_then(|f| Library::load(file, f)).map_err(|e| log::warn!("effects: DAT {file}: {e:#}")).ok();
+                let lib = index
+                    .read(file)
+                    .and_then(|f| Library::load(file, f))
+                    .map_err(|e| log::warn!("effects: DAT {file}: {e:#}"))
+                    .ok();
                 let _ = tx.send((file, lib));
             });
         }
@@ -220,7 +280,9 @@ impl Effects {
 
     /// Whether every file is in (or failed); the others start loading.
     pub fn libs_ready(&mut self, files: &[u32]) -> bool {
-        files.iter().fold(true, |ok, &f| (self.lib_for(f).is_some() || self.failed.contains(&f)) && ok)
+        files.iter().fold(true, |ok, &f| {
+            (self.lib_for(f).is_some() || self.failed.contains(&f)) && ok
+        })
     }
 
     pub fn poll_loads(&mut self) {
@@ -245,14 +307,47 @@ impl Effects {
         let first = a.targets.first().map_or(Who::None, |t| Who::Actor(t.id));
         let records = a.records().len();
         let speed = action_speed(a);
-        log::debug!("effects: action category {} arg {:#x} from {caster:#x}, swing {swing:?}", a.category, a.arg);
+        log::debug!(
+            "effects: action category {} arg {:#x} from {caster:#x}, swing {swing:?}",
+            a.category,
+            a.arg
+        );
         // Melee and ranged main lines are client/combat.rs's (at the hit); their proc / react lines come from op 0x71.
         let client_swing = swing.is_some();
-        let ctx = Rc::new(RefCell::new(ActionCtx { action: a.clone(), cur: 0, swing, printed: vec![matches!(a.category, 1 | 2); records], last: 0, client_swing }));
+        let ctx = Rc::new(RefCell::new(ActionCtx {
+            action: a.clone(),
+            cur: 0,
+            swing,
+            printed: vec![matches!(a.category, 1 | 2); records],
+            last: 0,
+            client_swing,
+        }));
         match a.category {
-            1 | 2 => self.pending.push(Pending { file: None, actor: Some(caster), name: a.arg, a1: Who::Actor(caster), a2: first, action: Some(ctx), speed, end_cast: None, age: 0.0, skill: None, skill_caster: None, wait_motion: None, num: None, quiet: false, own: false, seq: None, event: false }),
+            1 | 2 => self.pending.push(Pending {
+                file: None,
+                actor: Some(caster),
+                name: a.arg,
+                a1: Who::Actor(caster),
+                a2: first,
+                action: Some(ctx),
+                speed,
+                end_cast: None,
+                age: 0.0,
+                skill: None,
+                skill_caster: None,
+                wait_motion: None,
+                num: None,
+                quiet: false,
+                own: false,
+                seq: None,
+                event: false,
+            }),
             3..=6 | 0xb | 0xd..=0xf => {
-                let anim = a.targets.first().and_then(|t| t.results.first()).map_or(0, |r| r.animation as u32);
+                let anim = a
+                    .targets
+                    .first()
+                    .and_then(|t| t.results.first())
+                    .map_or(0, |r| r.animation as u32);
                 let Some(base) = effect_base(a.category, anim) else {
                     let ctx = Some(ctx);
                     self.release(&ctx);
@@ -260,14 +355,50 @@ impl Effects {
                     return;
                 };
                 // The generic file; run_pending swaps in the per-race files for a skeleton caster.
-                self.pending.push(Pending { file: Some(base + anim), actor: None, name: MAIN, a1: Who::Actor(caster), a2: first, action: Some(ctx), speed, end_cast: Some(caster), age: 0.0, skill: matches!(a.category, 3 | 0xe | 0xf).then_some((a.category, anim as u16)), skill_caster: None, wait_motion: None, num: None, quiet: false, own: false, seq: None, event: false });
+                self.pending.push(Pending {
+                    file: Some(base + anim),
+                    actor: None,
+                    name: MAIN,
+                    a1: Who::Actor(caster),
+                    a2: first,
+                    action: Some(ctx),
+                    speed,
+                    end_cast: Some(caster),
+                    age: 0.0,
+                    skill: matches!(a.category, 3 | 0xe | 0xf).then_some((a.category, anim as u16)),
+                    skill_caster: None,
+                    wait_motion: None,
+                    num: None,
+                    quiet: false,
+                    own: false,
+                    seq: None,
+                    event: false,
+                });
             }
             7..=0xa | 0xc => {
                 // Starts: the cmd_arg scheduler on the caster itself; "ca??" goes through FUN_10083d60 first.
                 if a.arg & 0xffff == 0x6163 {
                     self.cast_state(caster, a.arg);
                 }
-                self.pending.push(Pending { file: None, actor: Some(caster), name: a.arg, a1: Who::Actor(caster), a2: Who::Actor(caster), action: None, speed: 1.0, end_cast: None, age: 0.0, skill: None, skill_caster: None, wait_motion: None, num: None, quiet: false, own: true, seq: None, event: false });
+                self.pending.push(Pending {
+                    file: None,
+                    actor: Some(caster),
+                    name: a.arg,
+                    a1: Who::Actor(caster),
+                    a2: Who::Actor(caster),
+                    action: None,
+                    speed: 1.0,
+                    end_cast: None,
+                    age: 0.0,
+                    skill: None,
+                    skill_caster: None,
+                    wait_motion: None,
+                    num: None,
+                    quiet: false,
+                    own: true,
+                    seq: None,
+                    event: false,
+                });
             }
             _ => {}
         }
@@ -278,7 +409,25 @@ impl Effects {
     fn cast_state(&mut self, caster: u32, arg: u32) {
         if let Some(prev) = self.casting.remove(&caster) {
             let st = (prev & 0xffff_7473) | 0x7473;
-            self.pending.push(Pending { file: None, actor: Some(caster), name: st, a1: Who::Actor(caster), a2: Who::Actor(caster), action: None, speed: 1.0, end_cast: None, age: 0.0, skill: None, skill_caster: None, wait_motion: None, num: None, quiet: false, own: true, seq: None, event: false });
+            self.pending.push(Pending {
+                file: None,
+                actor: Some(caster),
+                name: st,
+                a1: Who::Actor(caster),
+                a2: Who::Actor(caster),
+                action: None,
+                speed: 1.0,
+                end_cast: None,
+                age: 0.0,
+                skill: None,
+                skill_caster: None,
+                wait_motion: None,
+                num: None,
+                quiet: false,
+                own: true,
+                seq: None,
+                event: false,
+            });
         }
         if arg != 0 {
             self.casting.insert(caster, arg);
@@ -288,13 +437,35 @@ impl Effects {
     /// Event opcodes 0x45 and family: the scheduler `name` of DAT `file` as a task on (a1, a2), the same task the
     /// event's camera runner follows (its camera / fade ops are the runner's; the rest run here).
     pub fn on_event_scheduler(&mut self, file: u32, name: u32, a1: Who, a2: Who) {
-        log::debug!("effects: event scheduler {} of DAT {file}", String::from_utf8_lossy(&name.to_le_bytes()));
-        self.pending.push(Pending { file: Some(file), actor: None, name, a1, a2, action: None, speed: 1.0, end_cast: None, age: 0.0, skill: None, skill_caster: None, wait_motion: None, num: None, quiet: false, own: false, seq: None, event: true });
+        log::debug!(
+            "effects: event scheduler {} of DAT {file}",
+            String::from_utf8_lossy(&name.to_le_bytes())
+        );
+        self.pending.push(Pending {
+            file: Some(file),
+            actor: None,
+            name,
+            a1,
+            a2,
+            action: None,
+            speed: 1.0,
+            end_cast: None,
+            age: 0.0,
+            skill: None,
+            skill_caster: None,
+            wait_motion: None,
+            num: None,
+            quiet: false,
+            own: false,
+            seq: None,
+            event: true,
+        });
     }
 
     /// Event opcodes 0x52 and family: that scheduler's tasks on (a1, a2) end.
     pub fn stop_event_scheduler(&mut self, file: u32, name: u32, a1: Who, a2: Who) {
-        self.pending.retain(|p| !(p.file == Some(file) && p.name == name && p.a1 == a1 && p.a2 == a2));
+        self.pending
+            .retain(|p| !(p.file == Some(file) && p.name == name && p.a1 == a1 && p.a2 == a2));
         if let Some(l) = self.reg.lib_of(file)
             && let Some(n) = self.reg.libs[l].find_global(kind::SCHEDULER, name)
         {
@@ -304,11 +475,24 @@ impl Effects {
 
     /// A scheduler of `file` on (a1, a2) still waiting for files or running (event op 0x54).
     pub fn event_scheduler_running(&self, file: u32, name: u32, a1: Who, a2: Who) -> bool {
-        if self.pending.iter().any(|p| p.file == Some(file) && p.name == name && p.a1 == a1 && p.a2 == a2) {
+        if self
+            .pending
+            .iter()
+            .any(|p| p.file == Some(file) && p.name == name && p.a1 == a1 && p.a2 == a2)
+        {
             return true;
         }
-        let Some(r) = self.reg.lib_of(file).and_then(|l| self.reg.libs[l].find_global(kind::SCHEDULER, name).map(|n| (l, n))) else { return false };
-        self.tasks.iter().flatten().any(|t| t.res == r && t.a1 == a1 && t.a2 == a2)
+        let Some(r) = self.reg.lib_of(file).and_then(|l| {
+            self.reg.libs[l]
+                .find_global(kind::SCHEDULER, name)
+                .map(|n| (l, n))
+        }) else {
+            return false;
+        };
+        self.tasks
+            .iter()
+            .flatten()
+            .any(|t| t.res == r && t.a1 == a1 && t.a2 == a2)
     }
 
     /// The zone library's file id (its schedulers are the zone's actions, event ops 0x2d / 0x51 / 0x54).
@@ -325,27 +509,72 @@ impl Effects {
             3 => *b"misv",
             _ => return,
         };
-        self.pending.push(Pending { file: Some(27), actor: None, name: u32::from_le_bytes(name), a1: Who::Actor(a1), a2: Who::Actor(a2), action: None, speed: 1.0, end_cast: None, age: 0.0, skill: None, skill_caster: None, wait_motion: None, num: Some((value, rgb)), quiet: false, own: false, seq: None, event: false });
+        self.pending.push(Pending {
+            file: Some(27),
+            actor: None,
+            name: u32::from_le_bytes(name),
+            a1: Who::Actor(a1),
+            a2: Who::Actor(a2),
+            action: None,
+            speed: 1.0,
+            end_cast: None,
+            age: 0.0,
+            skill: None,
+            skill_caster: None,
+            wait_motion: None,
+            num: Some((value, rgb)),
+            quiet: false,
+            own: false,
+            seq: None,
+            event: false,
+        });
     }
 
     /// A status scheduler on the actor with its motions left to the client (FUN_1008c6c0's `dead`).
     pub fn on_scheduler_quiet(&mut self, actor: u32, name: u32) {
-        self.pending.push(Pending { file: None, actor: Some(actor), name, a1: Who::Actor(actor), a2: Who::Actor(actor), action: None, speed: 1.0, end_cast: None, age: 0.0, skill: None, skill_caster: None, wait_motion: None, num: None, quiet: true, own: false, seq: None, event: false });
+        self.pending.push(Pending {
+            file: None,
+            actor: Some(actor),
+            name,
+            a1: Who::Actor(actor),
+            a2: Who::Actor(actor),
+            action: None,
+            speed: 1.0,
+            end_cast: None,
+            age: 0.0,
+            skill: None,
+            skill_caster: None,
+            wait_motion: None,
+            num: None,
+            quiet: true,
+            own: false,
+            seq: None,
+            event: false,
+        });
     }
 
     /// FUN_10083650: a scheduler `name` waiting or running on the actor (as actor1).
     pub fn actor_scheduler_running(&self, actor: u32, name: u32) -> bool {
         let who = Who::Actor(actor);
-        self.pending.iter().any(|p| p.actor == Some(actor) && p.name == name)
-            || self.tasks.iter().flatten().any(|t| t.a1 == who && u32::from_le_bytes(self.reg.libs[t.res.0].tree.nodes[t.res.1].name) == name)
+        self.pending
+            .iter()
+            .any(|p| p.actor == Some(actor) && p.name == name)
+            || self.tasks.iter().flatten().any(|t| {
+                t.a1 == who
+                    && u32::from_le_bytes(self.reg.libs[t.res.0].tree.nodes[t.res.1].name) == name
+            })
     }
 
     /// Model vtable +0x29c: the actor's scheduler `name` stops (waiting or running).
     pub fn stop_actor_scheduler(&mut self, actor: u32, name: u32) {
         let who = Who::Actor(actor);
-        self.pending.retain(|p| !(p.actor == Some(actor) && p.name == name));
+        self.pending
+            .retain(|p| !(p.actor == Some(actor) && p.name == name));
         for i in 0..self.tasks.len() {
-            let hit = self.tasks[i].as_ref().is_some_and(|t| t.a1 == who && u32::from_le_bytes(self.reg.libs[t.res.0].tree.nodes[t.res.1].name) == name);
+            let hit = self.tasks[i].as_ref().is_some_and(|t| {
+                t.a1 == who
+                    && u32::from_le_bytes(self.reg.libs[t.res.0].tree.nodes[t.res.1].name) == name
+            });
             if hit {
                 self.tasks[i] = None;
             }
@@ -379,7 +608,10 @@ impl Effects {
         }
         // Clones: op 0x02's and the model file's, the footstep dust, prints and ripple, an element's sub-clones.
         for i in 0..self.insts.len() {
-            let linked = self.insts[i].as_ref().is_some_and(|x| x.actors.contains(&who) && (x.clone || x.driven.is_some() || matches!(x.owner, super::Owner::Step(_))));
+            let linked = self.insts[i].as_ref().is_some_and(|x| {
+                x.actors.contains(&who)
+                    && (x.clone || x.driven.is_some() || matches!(x.owner, super::Owner::Step(_)))
+            });
             if linked {
                 self.kill(i);
             }
@@ -391,7 +623,25 @@ impl Effects {
 
     /// 0x038: a scheduler by 4cc on an actor (FUN_100cce00 with no action).
     pub fn on_scheduler(&mut self, actor: u32, target: u32, name: u32) {
-        self.pending.push(Pending { file: None, actor: Some(actor), name, a1: Who::Actor(actor), a2: Who::Actor(target), action: None, speed: 1.0, end_cast: None, age: 0.0, skill: None, skill_caster: None, wait_motion: None, num: None, quiet: false, own: true, seq: None, event: false });
+        self.pending.push(Pending {
+            file: None,
+            actor: Some(actor),
+            name,
+            a1: Who::Actor(actor),
+            a2: Who::Actor(target),
+            action: None,
+            speed: 1.0,
+            end_cast: None,
+            age: 0.0,
+            skill: None,
+            skill_caster: None,
+            wait_motion: None,
+            num: None,
+            quiet: false,
+            own: true,
+            seq: None,
+            event: false,
+        });
     }
 
     /// Starts waiting for files, when they are in.
@@ -409,7 +659,8 @@ impl Effects {
                 p.file = Some(file);
                 p.wait_motion = Some((caster, file));
                 p.skill_caster = Some(caster);
-                self.motion_files.push((caster, std::iter::once(file).chain(second).collect()));
+                self.motion_files
+                    .push((caster, std::iter::once(file).chain(second).collect()));
             }
             if let Some((actor, file)) = p.wait_motion
                 && !actors.files(actor).1.contains(&file)
@@ -443,11 +694,19 @@ impl Effects {
             }
             let found = match (p.file, p.actor) {
                 (Some(file), _) => match self.lib_for(file) {
-                    Some(l) => Ok(self.reg.libs[l].find_global(kind::SCHEDULER, p.name).map(|n| (l, n))),
+                    Some(l) => Ok(self.reg.libs[l]
+                        .find_global(kind::SCHEDULER, p.name)
+                        .map(|n| (l, n))),
                     None if self.failed.contains(&file) => Ok(None),
                     None => Err(()),
                 },
-                (None, Some(actor)) => self.find_on_actor(actor, p.name, actors, if p.own { Parts::Skip } else { Parts::First }, true),
+                (None, Some(actor)) => self.find_on_actor(
+                    actor,
+                    p.name,
+                    actors,
+                    if p.own { Parts::Skip } else { Parts::First },
+                    true,
+                ),
                 _ => Ok(None),
             };
             match found {
@@ -460,7 +719,14 @@ impl Effects {
                     }
                     // FUN_100a9500 then checks every target once: one without an actor or still loading and `main`
                     // does not start.
-                    let blocked = p.end_cast.is_some() && p.action.as_ref().is_some_and(|a| a.borrow().action.targets.iter().any(|t| actors.ready(t.id) != Some(true)));
+                    let blocked = p.end_cast.is_some()
+                        && p.action.as_ref().is_some_and(|a| {
+                            a.borrow()
+                                .action
+                                .targets
+                                .iter()
+                                .any(|t| actors.ready(t.id) != Some(true))
+                        });
                     if blocked && res.is_some() {
                         log::debug!("effects: main not started, a target's model is not in");
                         self.end_action(&p.action);
@@ -468,7 +734,10 @@ impl Effects {
                     }
                     match res {
                         Some(r) => {
-                            log::debug!("effects: scheduler {} started", String::from_utf8_lossy(&p.name.to_le_bytes()));
+                            log::debug!(
+                                "effects: scheduler {} started",
+                                String::from_utf8_lossy(&p.name.to_le_bytes())
+                            );
                             let ti = self.spawn_task(r, p.a1, p.a2, p.action, p.speed, None);
                             if let Some(Some(t)) = self.tasks.get_mut(ti) {
                                 t.num = p.num;
@@ -482,7 +751,13 @@ impl Effects {
                             match p.seq {
                                 // A file that came in later skips the time waited too (this frame's ticks came
                                 // before the start).
-                                Some(skip) if skip > 0.0 => _ = self.fast_forward(ti, skip + (p.age - f.dt).max(0.0), actors),
+                                Some(skip) if skip > 0.0 => {
+                                    _ = self.fast_forward(
+                                        ti,
+                                        skip + (p.age - f.dt).max(0.0),
+                                        actors,
+                                    )
+                                }
                                 _ => _ = self.run_new(ti, actors),
                             }
                         }
@@ -490,7 +765,10 @@ impl Effects {
                             if let Some(a) = self.reg.audit.as_mut() {
                                 *a.no_sched.entry(p.name).or_default() += 1;
                             }
-                            log::debug!("effects: scheduler {} not found", String::from_utf8_lossy(&p.name.to_le_bytes()));
+                            log::debug!(
+                                "effects: scheduler {} not found",
+                                String::from_utf8_lossy(&p.name.to_le_bytes())
+                            );
                             self.end_action(&p.action);
                         }
                     }
@@ -535,7 +813,14 @@ impl Effects {
 
     /// FUN_100cc970 (equipment part files, `parts`) and FUN_100cc440 (motion files newest first, then the model's),
     /// then DAT 0 (`global`). Err while one of those files is still loading; a failed file is passed by.
-    fn find_on_actor(&mut self, actor: u32, name: u32, actors: &dyn Actors, parts: Parts, global: bool) -> Result<Option<Ref>, ()> {
+    fn find_on_actor(
+        &mut self,
+        actor: u32,
+        name: u32,
+        actors: &dyn Actors,
+        parts: Parts,
+        global: bool,
+    ) -> Result<Option<Ref>, ()> {
         let (part_files, motion_files) = actors.files(actor);
         let order: Vec<u32> = match parts {
             Parts::First => part_files.into_iter().chain(motion_files).collect(),
@@ -558,14 +843,21 @@ impl Effects {
             return Err(());
         }
         if global && let Some(g) = self.reg.global {
-            return Ok(self.reg.libs[g].find_global(kind::SCHEDULER, name).map(|n| (g, n)));
+            return Ok(self.reg.libs[g]
+                .find_global(kind::SCHEDULER, name)
+                .map(|n| (g, n)));
         }
         Ok(None)
     }
 
     /// FUN_100ce480 / vtable +0x1e8 for an Afb: the motion files in order, matched on 3 letters, then the first Afb of
     /// any name in the part files. Err while one of them is still loading.
-    fn find_afb(&mut self, actor: u32, name: u32, actors: &dyn Actors) -> Result<Option<super::trail::Afb>, ()> {
+    fn find_afb(
+        &mut self,
+        actor: u32,
+        name: u32,
+        actors: &dyn Actors,
+    ) -> Result<Option<super::trail::Afb>, ()> {
         let (parts, motions) = actors.files(actor);
         let want = name.to_le_bytes();
         let mut waiting = false;
@@ -574,7 +866,11 @@ impl Effects {
                 match self.lib_for(file) {
                     Some(l) => {
                         let lib = &self.reg.libs[l];
-                        if let Some(n) = lib.tree.nodes.iter().position(|x| x.kind == kind::AFB && (any || x.name[..3] == want[..3])) {
+                        if let Some(n) =
+                            lib.tree.nodes.iter().position(|x| {
+                                x.kind == kind::AFB && (any || x.name[..3] == want[..3])
+                            })
+                        {
                             return Ok(super::trail::Afb::parse(lib.data(n)));
                         }
                     }
@@ -589,9 +885,21 @@ impl Effects {
         Ok(None)
     }
 
-    pub(super) fn spawn_task(&mut self, r: Ref, a1: Who, a2: Who, action: Option<Rc<RefCell<ActionCtx>>>, speed: f32, parent: Option<usize>) -> usize {
+    pub(super) fn spawn_task(
+        &mut self,
+        r: Ref,
+        a1: Who,
+        a2: Who,
+        action: Option<Rc<RefCell<ActionCtx>>>,
+        speed: f32,
+        parent: Option<usize>,
+    ) -> usize {
         let ops = self.sched_ops(r);
-        log::debug!("effects: task {} (DAT {}) on {a1:?} -> {a2:?}", String::from_utf8_lossy(&self.reg.libs[r.0].tree.nodes[r.1].name), self.reg.libs[r.0].file_id);
+        log::debug!(
+            "effects: task {} (DAT {}) on {a1:?} -> {a2:?}",
+            String::from_utf8_lossy(&self.reg.libs[r.0].tree.nodes[r.1].name),
+            self.reg.libs[r.0].file_id
+        );
         let mut t = Task::new(r, ops, a1, a2, action, speed);
         t.ends_loop = crate::dat::sched::loops(self.reg.libs[r.0].data(r.1));
         t.parent = parent;
@@ -601,7 +909,12 @@ impl Effects {
             t.motions = p.motions;
         }
         // Not the slot of a task being run (it is taken out while it runs).
-        match self.tasks.iter().enumerate().position(|(i, t)| t.is_none() && !self.stepping.contains(&i)) {
+        match self
+            .tasks
+            .iter()
+            .enumerate()
+            .position(|(i, t)| t.is_none() && !self.stepping.contains(&i))
+        {
             Some(i) => {
                 self.tasks[i] = Some(t);
                 i
@@ -633,10 +946,18 @@ impl Effects {
     /// Every task one frame on (the CMoSchedularTask update): countdown -= ticks; ops run while it is <= 0, each
     /// adding its wait x speed.
     pub(super) fn step_tasks(&mut self, f: &Frame, actors: &dyn Actors) {
-        for d in self.dolls.iter_mut().filter(|d| d.unposed && actors.posed(d.of)) {
+        for d in self
+            .dolls
+            .iter_mut()
+            .filter(|d| d.unposed && actors.posed(d.of))
+        {
             d.points = (0..DOLL_POINTS).map(|k| actors.point(d.of, k)).collect();
             d.unposed = false;
-            log::debug!("effects: doll of {:#x} takes its points at the first pose (point 0x2b {:?})", d.of, d.points.get(0x2b).copied().flatten());
+            log::debug!(
+                "effects: doll of {:#x} takes its points at the first pose (point 0x2b {:?})",
+                d.of,
+                d.points.get(0x2b).copied().flatten()
+            );
         }
         let mut i = 0;
         while i < self.tasks.len() {
@@ -652,7 +973,8 @@ impl Effects {
             // FUN_10057c20 a frame after the end op, then FUN_100573e0(res, 0, 0): speed 1.0, the action wrapper and the
             // parent link dropped (the action never prints its rest; a calling parent waits for ever); no op runs.
             if std::mem::take(&mut t.restart) {
-                (t.ip, t.speed, t.countdown, t.early, t.vana, t.parent) = (0, 1.0, 0.0, 0.0, false, None);
+                (t.ip, t.speed, t.countdown, t.early, t.vana, t.parent) =
+                    (0, 1.0, 0.0, 0.0, false, None);
                 if let Some(a) = t.action.take() {
                     self.leaked.push(a);
                 }
@@ -701,8 +1023,11 @@ impl Effects {
             if left < 0.0 || !live.contains(&owner) {
                 continue;
             }
-            if let Some((m, p)) = self.who_point(Who::Actor(b), k, Who::Actor(a), eye, Vec3::ZERO, actors) {
-                let yaw = (k < 0x30).then(|| (-m.x_axis.z).atan2(m.x_axis.x) + std::f32::consts::PI);
+            if let Some((m, p)) =
+                self.who_point(Who::Actor(b), k, Who::Actor(a), eye, Vec3::ZERO, actors)
+            {
+                let yaw =
+                    (k < 0x30).then(|| (-m.x_axis.z).atan2(m.x_axis.x) + std::f32::consts::PI);
                 self.pinned.insert(a, (p + m.transform_vector3(off), yaw));
             }
             self.pins.push((owner, a, b, k, off, left));
@@ -712,7 +1037,11 @@ impl Effects {
             d.left -= f.dt;
             if !live.contains(&d.owner) {
                 if d.left >= 0.0 {
-                    self.fades.push(if d.snap { crate::fx::ColorOp::Snap(d.actor, d.target) } else { crate::fx::ColorOp::Freeze(d.actor) });
+                    self.fades.push(if d.snap {
+                        crate::fx::ColorOp::Snap(d.actor, d.target)
+                    } else {
+                        crate::fx::ColorOp::Freeze(d.actor)
+                    });
                 }
             } else if d.left >= 0.0 {
                 self.color_drives.push(d);
@@ -731,7 +1060,9 @@ impl Effects {
         // 0x100a8db0: a skill `main`'s end drops its caster's skill files (FUN_100d44b0(6)) unless another skill `main`
         // of that caster still runs.
         if !self.skill_mains.is_empty() {
-            let (keep, gone): (Vec<_>, Vec<_>) = std::mem::take(&mut self.skill_mains).into_iter().partition(|(o, _)| live.contains(o));
+            let (keep, gone): (Vec<_>, Vec<_>) = std::mem::take(&mut self.skill_mains)
+                .into_iter()
+                .partition(|(o, _)| live.contains(o));
             for (_, c) in gone {
                 if !keep.iter().any(|k| k.1 == c) && !self.skill_files_done.contains(&c) {
                     self.skill_files_done.push(c);
@@ -741,9 +1072,13 @@ impl Effects {
         }
         // Effect motion files whose every owning task has ended come off their actors.
         if !self.owned_motions.is_empty() {
-            let (keep, gone): (Vec<_>, Vec<_>) = std::mem::take(&mut self.owned_motions).into_iter().partition(|(o, ..)| live.contains(o));
+            let (keep, gone): (Vec<_>, Vec<_>) = std::mem::take(&mut self.owned_motions)
+                .into_iter()
+                .partition(|(o, ..)| live.contains(o));
             for (_, a, f) in gone {
-                if !keep.iter().any(|&(_, ka, kf)| ka == a && kf == f) && !self.effect_motions_done.contains(&(a, f)) {
+                if !keep.iter().any(|&(_, ka, kf)| ka == a && kf == f)
+                    && !self.effect_motions_done.contains(&(a, f))
+                {
                     self.effect_motions_done.push((a, f));
                 }
             }
@@ -810,7 +1145,9 @@ impl Effects {
     /// over it with it.
     fn later_slot(&mut self, t: Task) -> usize {
         let from = self.stepping.first().map_or(0, |o| o + 1);
-        match (from..self.tasks.len()).find(|&i| self.tasks[i].is_none() && !self.stepping.contains(&i)) {
+        match (from..self.tasks.len())
+            .find(|&i| self.tasks[i].is_none() && !self.stepping.contains(&i))
+        {
             Some(i) => {
                 self.tasks[i] = Some(t);
                 i
@@ -825,7 +1162,9 @@ impl Effects {
     /// FUN_10055c00 / FUN_10055cc0 -> FUN_10073910: a task an op creates takes its first step at once (vtable +0x20), before
     /// the op after its creator's (efon's efkl kills the old orbs before the new ones start). True when it already ended.
     fn run_new(&mut self, i: usize, actors: &dyn Actors) -> bool {
-        let Some(mut t) = self.tasks[i].take() else { return true };
+        let Some(mut t) = self.tasks[i].take() else {
+            return true;
+        };
         let outer = self.stepping.first().copied();
         self.stepping.push(i);
         self.run_ready(i, &mut t, actors);
@@ -847,7 +1186,12 @@ impl Effects {
 
     fn run_op_inner(&mut self, me: usize, t: &mut Task, op: &SOp, actors: &dyn Actors) -> Flow {
         let scope = |s: &Self, k: u8| s.reg.resolve(t.res.0, t.res.1, k, op.name());
-        log::trace!("effects: task {:?} op {:#04x} {}", t.res, op.code, String::from_utf8_lossy(&op.name().to_le_bytes()));
+        log::trace!(
+            "effects: task {:?} op {:#04x} {}",
+            t.res,
+            op.code,
+            String::from_utf8_lossy(&op.name().to_le_bytes())
+        );
         if let Some(a) = self.reg.audit.as_mut() {
             *a.ops.entry(op.code).or_default() += 1;
         }
@@ -858,11 +1202,28 @@ impl Effects {
             // tick clock, its countdown the op's wait x speed, stepped this frame (FUN_10074920 / FUN_100750b0).
             0x52 => {
                 t.vana = true;
-                let (spawn, wait) = vana_window(self.vana_now, op.u32_at(8), op.u32_at(0xc), op.u32_at(0x10) as i32, op.u32_at(0x14) as i32);
+                let (spawn, wait) = vana_window(
+                    self.vana_now,
+                    op.u32_at(8),
+                    op.u32_at(0xc),
+                    op.u32_at(0x10) as i32,
+                    op.u32_at(0x14) as i32,
+                );
                 if spawn {
-                    let mut c = Task::new(t.res, t.ops.clone(), t.a1, t.a2, t.action.clone(), t.speed);
-                    (c.ip, c.countdown, c.parent, c.motions, c.num, c.ends_loop) = (t.ip + 1, op.wait as f32 * t.speed, t.parent, t.motions, t.num, t.ends_loop);
-                    log::debug!("effects: {} window opens", String::from_utf8_lossy(&self.reg.libs[t.res.0].tree.nodes[t.res.1].name));
+                    let mut c =
+                        Task::new(t.res, t.ops.clone(), t.a1, t.a2, t.action.clone(), t.speed);
+                    (c.ip, c.countdown, c.parent, c.motions, c.num, c.ends_loop) = (
+                        t.ip + 1,
+                        op.wait as f32 * t.speed,
+                        t.parent,
+                        t.motions,
+                        t.num,
+                        t.ends_loop,
+                    );
+                    log::debug!(
+                        "effects: {} window opens",
+                        String::from_utf8_lossy(&self.reg.libs[t.res.0].tree.nodes[t.res.1].name)
+                    );
                     self.later_slot(c);
                 }
                 t.countdown = wait as f32;
@@ -878,13 +1239,31 @@ impl Effects {
             // every drive on that actor goes first. Over a fast-forward it starts `seq_over` ticks in.
             0x26 | 0x27 => {
                 let on = if op.code == 0x26 { t.a1 } else { t.a2 };
-                let (Some(id), Some(r)) = (on.id(), scope(self, kind::VTX)) else { return Flow::Next };
-                let Some(segs) = drive::path(self.reg.libs[r.0].data(r.1)) else { return Flow::Next };
+                let (Some(id), Some(r)) = (on.id(), scope(self, kind::VTX)) else {
+                    return Flow::Next;
+                };
+                let Some(segs) = drive::path(self.reg.libs[r.0].data(r.1)) else {
+                    return Flow::Next;
+                };
                 // A curve above 6 is a KeyFrame's 4cc, sampled linearly *(inf: no ship file has one)*.
                 let curve = op.u32_at(0x14);
-                let key = if curve > 6 { self.reg.resolve(t.res.0, t.res.1, kind::KEYFRAME, curve).and_then(|k| self.reg.keyframe(k).cloned()) } else { None };
+                let key = if curve > 6 {
+                    self.reg
+                        .resolve(t.res.0, t.res.1, kind::KEYFRAME, curve)
+                        .and_then(|k| self.reg.keyframe(k).cloned())
+                } else {
+                    None
+                };
                 self.drives.retain(|d| d.actor != id);
-                self.drives.push(drive::Drive::new(id, t.uid, segs, &op.raw, t.speed, self.seq_over, key));
+                self.drives.push(drive::Drive::new(
+                    id,
+                    t.uid,
+                    segs,
+                    &op.raw,
+                    t.speed,
+                    self.seq_over,
+                    key,
+                ));
                 Flow::Next
             }
             // Case 0xa9 / 0xaa (FUN_1005fa20): a rotation drive on actor1 / actor2 from its drawn rotation, a child of
@@ -893,7 +1272,8 @@ impl Effects {
                 let on = if op.code == 0xa9 { t.a1 } else { t.a2 };
                 let Some(id) = on.id() else { return Flow::Next };
                 let start = actors.rotation(id).unwrap_or(Vec3::ZERO);
-                self.rot_drives.push(drive::RotDrive::new(id, t.uid, &op.raw, t.speed, start));
+                self.rot_drives
+                    .push(drive::RotDrive::new(id, t.uid, &op.raw, t.speed, start));
                 Flow::Next
             }
             0x1e | 0x2d => {
@@ -923,18 +1303,28 @@ impl Effects {
             0x3b => match scope(self, kind::SCHEDULER) {
                 Some(r) => {
                     let c = self.spawn_task(r, t.a1, t.a2, t.action.clone(), t.speed, Some(me));
-                    if self.run_new(c, actors) { Flow::Next } else { Flow::Wait }
+                    if self.run_new(c, actors) {
+                        Flow::Next
+                    } else {
+                        Flow::Wait
+                    }
                 }
                 None => Flow::Next,
             },
             // On actor2 with the actors swapped / on actor1: its part files, motion and model files, then scope.
             0x09 | 0x57 | 0x85 => {
-                let (on, a1, a2) = if op.code == 0x09 { (t.a2, t.a2, t.a1) } else { (t.a1, t.a1, t.a2) };
+                let (on, a1, a2) = if op.code == 0x09 {
+                    (t.a2, t.a2, t.a1)
+                } else {
+                    (t.a1, t.a1, t.a2)
+                };
                 let found = match on.id() {
-                    Some(id) => match self.find_on_actor(id, op.name(), actors, Parts::First, false) {
-                        Ok(r) => r,
-                        Err(()) => return Flow::Retry,
-                    },
+                    Some(id) => {
+                        match self.find_on_actor(id, op.name(), actors, Parts::First, false) {
+                            Ok(r) => r,
+                            Err(()) => return Flow::Retry,
+                        }
+                    }
                     None => None,
                 };
                 let r = found.or_else(|| scope(self, kind::SCHEDULER));
@@ -950,11 +1340,17 @@ impl Effects {
             }
             // The caster's own scheduler, call-and-wait, no global fallback.
             0x3c => {
-                let Some(id) = t.a1.id() else { return Flow::Next };
+                let Some(id) = t.a1.id() else {
+                    return Flow::Next;
+                };
                 match self.find_on_actor(id, op.name(), actors, Parts::Last, false) {
                     Ok(Some(r)) => {
                         let c = self.spawn_task(r, t.a1, t.a2, t.action.clone(), t.speed, Some(me));
-                        if self.run_new(c, actors) { Flow::Next } else { Flow::Wait }
+                        if self.run_new(c, actors) {
+                            Flow::Next
+                        } else {
+                            Flow::Wait
+                        }
                     }
                     Ok(None) => Flow::Next,
                     Err(()) => Flow::Retry,
@@ -969,11 +1365,16 @@ impl Effects {
             // Ops 0x76 / 0x77 (asm 0x1005adb5): `lc` / `ls` + actor1's ranged class (+0x886) in two digits, a plain
             // child on actor1's own files; mode @8 1: above 2 sings (0), 2: 10 unless 11. Nothing while moving.
             0x76 | 0x77 => {
-                let (Some(a1), Some(a2)) = (self.doll_of(t.a1).id(), self.doll_of(t.a2).id()) else { return Flow::Next };
+                let (Some(a1), Some(a2)) = (self.doll_of(t.a1).id(), self.doll_of(t.a2).id())
+                else {
+                    return Flow::Next;
+                };
                 if actors.moving(a1) {
                     return Flow::Next;
                 }
-                let Some(k) = actors.ranged_class(a1).map(i32::from) else { return Flow::Next };
+                let Some(k) = actors.ranged_class(a1).map(i32::from) else {
+                    return Flow::Next;
+                };
                 let k = match op.u32_at(8) {
                     1 if k > 2 => 0,
                     2 if k != 11 => 10,
@@ -982,10 +1383,22 @@ impl Effects {
                 if k < 0 {
                     return Flow::Next;
                 }
-                let name = u32::from_le_bytes([b'l', if op.code == 0x77 { b's' } else { b'c' }, b'0' + (k / 10) as u8, b'0' + (k % 10) as u8]);
+                let name = u32::from_le_bytes([
+                    b'l',
+                    if op.code == 0x77 { b's' } else { b'c' },
+                    b'0' + (k / 10) as u8,
+                    b'0' + (k % 10) as u8,
+                ]);
                 match self.find_on_actor(a1, name, actors, Parts::Last, false) {
                     Ok(Some(r)) => {
-                        self.spawn_task(r, Who::Actor(a1), Who::Actor(a2), t.action.clone(), t.speed, None);
+                        self.spawn_task(
+                            r,
+                            Who::Actor(a1),
+                            Who::Actor(a2),
+                            t.action.clone(),
+                            t.speed,
+                            None,
+                        );
                         Flow::Next
                     }
                     Ok(None) => Flow::Next,
@@ -995,9 +1408,13 @@ impl Effects {
             // Op 0x84 (case at 0x10059ae3): one hand's draw / sheathe (dat::motionfile::hand_scheduler), a plain child on
             // actor1's own files.
             0x84 => {
-                let Some(a1) = t.a1.id() else { return Flow::Next };
+                let Some(a1) = t.a1.id() else {
+                    return Flow::Next;
+                };
                 let (out, sub) = (op.u16_at(8) != 0, op.u16_at(10) != 0);
-                let Some(d) = actors.hand_draw(a1, sub) else { return Flow::Next };
+                let Some(d) = actors.hand_draw(a1, sub) else {
+                    return Flow::Next;
+                };
                 let name = u32::from_le_bytes(crate::dat::motionfile::hand_name(out, sub, d));
                 match self.find_on_actor(a1, name, actors, Parts::Last, false) {
                     Ok(Some(r)) => {
@@ -1015,8 +1432,14 @@ impl Effects {
             // Swing pick (FUN_100d4600, combat chose it) and the counter swing: call-and-wait, parent back 10 sooner.
             // Op 0x5c: the counter swing, `cni0` standing, `cnf0` moving (ours moves forward only), and no wait.
             0x5c => {
-                let Some(id) = t.a1.id() else { return Flow::Next };
-                let name = if actors.moving(id) { *b"cnf0" } else { *b"cni0" };
+                let Some(id) = t.a1.id() else {
+                    return Flow::Next;
+                };
+                let name = if actors.moving(id) {
+                    *b"cnf0"
+                } else {
+                    *b"cni0"
+                };
                 match self.find_on_actor(id, u32::from_le_bytes(name), actors, Parts::Last, true) {
                     Ok(Some(r)) => {
                         self.spawn_task(r, t.a1, t.a2, t.action.clone(), t.speed, None);
@@ -1027,16 +1450,27 @@ impl Effects {
                 }
             }
             0x24 | 0x5d => {
-                let Some(id) = t.a1.id() else { return Flow::Next };
+                let Some(id) = t.a1.id() else {
+                    return Flow::Next;
+                };
                 let mut name = t.action.as_ref().and_then(|a| a.borrow().swing.clone());
                 // FUN_100d4600 picks here once the attacker's files are in (ours picks at the packet when it can).
-                if name.is_none() && op.code == 0x24 && t.action.as_ref().is_some_and(|a| a.borrow().action.category == 1) {
+                if name.is_none()
+                    && op.code == 0x24
+                    && t.action
+                        .as_ref()
+                        .is_some_and(|a| a.borrow().action.category == 1)
+                {
                     let moving = actors.moving(id);
                     match actors.swings(id, moving) {
                         None => return Flow::Retry,
                         Some(pool) if pool.is_empty() => return Flow::Next,
                         Some(pool) => {
-                            let pick = if moving { pool[0].clone() } else { pool[self.rng.un(pool.len() as u32) as usize].clone() };
+                            let pick = if moving {
+                                pool[0].clone()
+                            } else {
+                                pool[self.rng.un(pool.len() as u32) as usize].clone()
+                            };
                             log::debug!("effects: swing {pick} picked in op 0x24 for {id:#x}");
                             if let Some(a) = &t.action {
                                 a.borrow_mut().swing = Some(pick.clone());
@@ -1053,7 +1487,11 @@ impl Effects {
                         if let Some(Some(ct)) = self.tasks.get_mut(c) {
                             ct.early = 10.0;
                         }
-                        if self.run_new(c, actors) { Flow::Next } else { Flow::Wait }
+                        if self.run_new(c, actors) {
+                            Flow::Next
+                        } else {
+                            Flow::Wait
+                        }
                     }
                     Ok(None) => Flow::Next,
                     Err(()) => Flow::Retry,
@@ -1100,9 +1538,20 @@ impl Effects {
             }
             0x30 => {
                 if let Some(r) = scope(self, kind::SCHEDULER) {
-                    let targets: Vec<u32> = t.action.as_ref().map(|a| a.borrow().records().iter().map(|r| r.0).collect()).unwrap_or_default();
+                    let targets: Vec<u32> = t
+                        .action
+                        .as_ref()
+                        .map(|a| a.borrow().records().iter().map(|r| r.0).collect())
+                        .unwrap_or_default();
                     for target in targets {
-                        self.spawn_task(r, t.a1, Who::Actor(target), t.action.clone(), t.speed, None);
+                        self.spawn_task(
+                            r,
+                            t.a1,
+                            Who::Actor(target),
+                            t.action.clone(),
+                            t.speed,
+                            None,
+                        );
                     }
                 }
                 Flow::Next
@@ -1112,7 +1561,13 @@ impl Effects {
             0x0c | 0x0d => {
                 if let Some(actor) = t.a1.id() {
                     let to = [8, 0xc, 0x10].map(|o| f32::from_bits(op.u32_at(o)));
-                    self.door_moves.push(super::DoorMove { actor, rotate: op.code == 0x0d, part: op.u32_at(0x14), to, ticks: op.dur as f32 * t.speed });
+                    self.door_moves.push(super::DoorMove {
+                        actor,
+                        rotate: op.code == 0x0d,
+                        part: op.u32_at(0x14),
+                        to,
+                        ticks: op.dur as f32 * t.speed,
+                    });
                 }
                 Flow::Next
             }
@@ -1120,7 +1575,10 @@ impl Effects {
             0x1d => {
                 if let Some(actor) = t.a1.id() {
                     let name = self.reg.libs[t.res.0].tree.nodes[t.res.1].name;
-                    self.lift_moves.push(super::LiftMove { actor, floor: name[3].wrapping_sub(b'0') });
+                    self.lift_moves.push(super::LiftMove {
+                        actor,
+                        floor: name[3].wrapping_sub(b'0'),
+                    });
                 }
                 Flow::Next
             }
@@ -1131,30 +1589,52 @@ impl Effects {
             // FUN_10057fb0 case 0xb3: with /bellsw off the op ends; on, it is case 0x0a.
             0xb3 if !actors.bells() => Flow::Next,
             0x0a | 0x0b | 0x53 | 0x4a | 0xb3 => {
-                let mut who = if matches!(op.code, 0x0a | 0xb3) { t.a1 } else { t.a2 };
+                let mut who = if matches!(op.code, 0x0a | 0xb3) {
+                    t.a1
+                } else {
+                    t.a2
+                };
                 // Op 0x53 (all.c 67094): the action target nearest our own actor (actor1 with no player).
                 if op.code == 0x53
                     && let Some(a) = &t.action
                 {
-                    let me = actors.player().and_then(|p| actors.matrix(p)).map(|m| m.w_axis.truncate());
+                    let me = actors
+                        .player()
+                        .and_then(|p| actors.matrix(p))
+                        .map(|m| m.w_axis.truncate());
                     let ids: Vec<u32> = a.borrow().records().iter().map(|r| r.0).collect();
                     who = match me {
-                        Some(mp) => ids.into_iter().filter_map(|id| Some((id, (actors.matrix(id)?.w_axis.truncate() - mp).length()))).min_by(|x, y| x.1.total_cmp(&y.1)).map_or(t.a2, |(id, _)| Who::Actor(id)),
+                        Some(mp) => ids
+                            .into_iter()
+                            .filter_map(|id| {
+                                Some((id, (actors.matrix(id)?.w_axis.truncate() - mp).length()))
+                            })
+                            .min_by(|x, y| x.1.total_cmp(&y.1))
+                            .map_or(t.a2, |(id, _)| Who::Actor(id)),
                         None => t.a1,
                     };
                 }
                 // `shit` / `skaz` take the actor's sub-animation as the last digit when that SeSep exists.
-                let sub = self.doll_of(who).id().map_or(0, |id| actors.sub_anim(id) & 3);
+                let sub = self
+                    .doll_of(who)
+                    .id()
+                    .map_or(0, |id| actors.sub_anim(id) & 3);
                 let r = match op.name().to_le_bytes() {
                     [b's', b'h', b'i', b't'] | [b's', b'k', b'a', b'z'] if sub != 0 => {
                         let mut n = op.name().to_le_bytes();
                         n[3] = b'0' + sub;
-                        self.reg.resolve(t.res.0, t.res.1, 0x3d, u32::from_le_bytes(n)).or_else(|| scope(self, 0x3d))
+                        self.reg
+                            .resolve(t.res.0, t.res.1, 0x3d, u32::from_le_bytes(n))
+                            .or_else(|| scope(self, 0x3d))
                     }
                     _ => scope(self, 0x3d),
                 };
                 // asm 0x1005b760: an actor reserved by its event (+0x138 bit 31) whose model is hidden is silent.
-                if self.doll_of(who).id().is_some_and(|id| actors.sound_muted(id)) {
+                if self
+                    .doll_of(who)
+                    .id()
+                    .is_some_and(|id| actors.sound_muted(id))
+                {
                     return Flow::Next;
                 }
                 if let (Some(r), Some((_, m))) = (r, self.who_matrix(who, actors))
@@ -1213,19 +1693,42 @@ impl Effects {
                 {
                     let s = self.sounds.swap_remove(k);
                     if s.handle != 0 {
-                        self.sound_cmds.push(super::sound::SoundCmd::Stop { handle: s.handle, ticks: 0 });
+                        self.sound_cmds.push(super::sound::SoundCmd::Stop {
+                            handle: s.handle,
+                            ticks: 0,
+                        });
                         self.voice_ended(s.handle);
                     }
                 }
                 Flow::Next
             }
             0x19 => {
-                self.pending.push(Pending { file: Some(0xaf0 + op.u32_at(8)), actor: None, name: MAIN, a1: t.a1, a2: t.a2, action: None, speed: t.speed, end_cast: None, age: 0.0, skill: None, skill_caster: None, wait_motion: None, num: None, quiet: false, own: false, seq: None, event: false });
+                self.pending.push(Pending {
+                    file: Some(0xaf0 + op.u32_at(8)),
+                    actor: None,
+                    name: MAIN,
+                    a1: t.a1,
+                    a2: t.a2,
+                    action: None,
+                    speed: t.speed,
+                    end_cast: None,
+                    age: 0.0,
+                    skill: None,
+                    skill_caster: None,
+                    wait_motion: None,
+                    num: None,
+                    quiet: false,
+                    own: false,
+                    seq: None,
+                    event: false,
+                });
                 Flow::Next
             }
             // One of the ops up to 0x3e at random (FUN_1006afb0).
             0x3d => {
-                let end = (t.ip + 1..t.ops.len()).find(|&k| t.ops[k].code == 0x3e).unwrap_or(t.ops.len());
+                let end = (t.ip + 1..t.ops.len())
+                    .find(|&k| t.ops[k].code == 0x3e)
+                    .unwrap_or(t.ops.len());
                 let n = end - t.ip - 1;
                 if n > 0 {
                     let k = t.ip + 1 + self.rng.un(n as u32) as usize;
@@ -1254,13 +1757,23 @@ impl Effects {
                     // A motion in the scheduler's own file plays from there: that file goes on the actor first.
                     let (lib, raw) = (t.res.0, op.name().to_le_bytes());
                     let has = |n: u32| self.reg.libs[lib].find(t.res.1, kind::MOTION, n).is_some();
-                    let in_file = if raw[3] == b'?' { (b'0'..=b'6').any(|d| has(u32::from_le_bytes([raw[0], raw[1], raw[2], d]))) } else { has(op.name()) };
+                    let in_file = if raw[3] == b'?' {
+                        (b'0'..=b'6').any(|d| has(u32::from_le_bytes([raw[0], raw[1], raw[2], d])))
+                    } else {
+                        has(op.name())
+                    };
                     let file = self.reg.libs[lib].file_id;
-                    let owned = self.owned_motions.iter().any(|&(o, a, f)| o == t.uid && a == id && f == file);
+                    let owned = self
+                        .owned_motions
+                        .iter()
+                        .any(|&(o, a, f)| o == t.uid && a == id && f == file);
                     // A file the actor already has (its model, a skill file) plays as it is.
                     if in_file && (owned || !actors.files(id).1.contains(&file)) {
                         if !owned {
-                            log::debug!("effects: motion {} on {id:#x} from DAT {file}", String::from_utf8_lossy(&raw));
+                            log::debug!(
+                                "effects: motion {} on {id:#x} from DAT {file}",
+                                String::from_utf8_lossy(&raw)
+                            );
                             self.owned_motions.push((t.uid, id, file));
                             self.effect_motions.push((id, file));
                         }
@@ -1268,10 +1781,19 @@ impl Effects {
                             return Flow::Retry;
                         }
                     }
-                    let name = String::from_utf8_lossy(&op.name().to_le_bytes()).trim_end_matches(['\0', '?']).to_string();
+                    let name = String::from_utf8_lossy(&op.name().to_le_bytes())
+                        .trim_end_matches(['\0', '?'])
+                        .to_string();
                     let speed = f32::from_bits(op.u32_at(0x10));
                     let count = op.raw.get(0x1e).map_or(1, |b| b & 0x7f);
-                    let m = crate::dat::sched::Motion { name, at: 0, speed: if speed == 0.0 { 1.0 } else { speed }, ticks: (op.dur.max(0) as f32 * t.speed).round() as u16, count, blend: op.u16_at(0x18) };
+                    let m = crate::dat::sched::Motion {
+                        name,
+                        at: 0,
+                        speed: if speed == 0.0 { 1.0 } else { speed },
+                        ticks: (op.dur.max(0) as f32 * t.speed).round() as u16,
+                        count,
+                        blend: op.u16_at(0x18),
+                    };
                     self.motions.push((id, Some(m)));
                 }
                 Flow::Next
@@ -1285,7 +1807,8 @@ impl Effects {
                         0x9f => 1,
                         _ => 2,
                     };
-                    self.anchor_points.push((id, which, op.raw.get(8).copied().unwrap_or(2)));
+                    self.anchor_points
+                        .push((id, which, op.raw.get(8).copied().unwrap_or(2)));
                 }
                 Flow::Next
             }
@@ -1293,7 +1816,11 @@ impl Effects {
             // animal running off).
             0x6e => {
                 if let Some(id) = t.a1.id() {
-                    self.self_moves.push((id, op.dur.max(0) as f32, f32::from_bits(op.u32_at(8)) / 60.0));
+                    self.self_moves.push((
+                        id,
+                        op.dur.max(0) as f32,
+                        f32::from_bits(op.u32_at(8)) / 60.0,
+                    ));
                 }
                 Flow::Next
             }
@@ -1301,7 +1828,13 @@ impl Effects {
             // actor2; 0xa0 actor1, landing on its target even when cut short).
             0x29 | 0x2a | 0xa0 => {
                 if let Some(id) = self.doll_of(if op.code == 0x2a { t.a2 } else { t.a1 }).id() {
-                    self.color_drive(id, t.uid, op.u32_at(8), op.dur.max(0) as f32 * t.speed, op.code == 0xa0);
+                    self.color_drive(
+                        id,
+                        t.uid,
+                        op.u32_at(8),
+                        op.dur.max(0) as f32 * t.speed,
+                        op.code == 0xa0,
+                    );
                 }
                 Flow::Next
             }
@@ -1318,11 +1851,23 @@ impl Effects {
                     return Flow::Next;
                 }
                 let end = block_end(&t.ops, start);
-                let has_else = t.ops.get(end + 1).is_some_and(|o| o.code == 0x67) && t.ops.get(end + 2).is_some_and(|o| o.code == 0x69);
-                let else_end = if has_else { block_end(&t.ops, end + 2) } else { end };
-                let branch = if v { Some((start + 1, end)) } else if has_else { Some((end + 3, else_end)) } else { None };
+                let has_else = t.ops.get(end + 1).is_some_and(|o| o.code == 0x67)
+                    && t.ops.get(end + 2).is_some_and(|o| o.code == 0x69);
+                let else_end = if has_else {
+                    block_end(&t.ops, end + 2)
+                } else {
+                    end
+                };
+                let branch = if v {
+                    Some((start + 1, end))
+                } else if has_else {
+                    Some((end + 3, else_end))
+                } else {
+                    None
+                };
                 if let Some((from, stop)) = branch {
-                    let mut c = Task::new(t.res, t.ops.clone(), t.a1, t.a2, t.action.clone(), t.speed);
+                    let mut c =
+                        Task::new(t.res, t.ops.clone(), t.a1, t.a2, t.action.clone(), t.speed);
                     c.ip = from;
                     c.stop_at = Some(stop);
                     c.countdown = t.countdown;
@@ -1353,8 +1898,10 @@ impl Effects {
                 let ticks = op.dur.max(0) as f32 * t.speed;
                 match &t.action {
                     Some(a) => {
-                        let ids: Vec<u32> = a.borrow().action.targets.iter().map(|x| x.id).collect();
-                        self.holds.extend(ids.into_iter().map(|id| (id, ticks, HOLD_STATUS)));
+                        let ids: Vec<u32> =
+                            a.borrow().action.targets.iter().map(|x| x.id).collect();
+                        self.holds
+                            .extend(ids.into_iter().map(|id| (id, ticks, HOLD_STATUS)));
                     }
                     None => {
                         if let Some(id) = self.doll_of(t.a2).id() {
@@ -1369,45 +1916,86 @@ impl Effects {
             // u32 @8 (the loader makes one beside each IMG, same 4cc); U (0x42 / 0x44) or V (0x43 / 0x45) linearly to
             // f32 @8, kept mod 2; the colour to ARGB u32 @8 (a new colour drive replaces the running one).
             0x40 | 0x41 | 0x54 | 0x55 | 0x42..=0x47 => {
-                let who = if matches!(op.code, 0x40 | 0x54 | 0x42 | 0x43 | 0x46) { t.a1 } else { t.a2 };
-                let Some(id) = self.doll_of(who).id() else { return Flow::Next };
+                let who = if matches!(op.code, 0x40 | 0x54 | 0x42 | 0x43 | 0x46) {
+                    t.a1
+                } else {
+                    t.a2
+                };
+                let Some(id) = self.doll_of(who).id() else {
+                    return Flow::Next;
+                };
                 let left = (op.dur.max(0) as f32 * t.speed).trunc();
                 let kind = match op.code {
                     0x40 | 0x41 | 0x54 | 0x55 => {
-                        let Some(r) = scope(self, kind::IMG) else { return Flow::Next };
+                        let Some(r) = scope(self, kind::IMG) else {
+                            return Flow::Next;
+                        };
                         self.shine.entry(id).or_default().tex = Some((r, self.next_drive + 1));
-                        log::debug!("effects: shine on {id:#x}: {} of DAT {} for {left} ticks", self.reg.libs[r.0].tree.nodes[r.1].name(), self.reg.libs[r.0].file_id);
+                        log::debug!(
+                            "effects: shine on {id:#x}: {} of DAT {} for {left} ticks",
+                            self.reg.libs[r.0].tree.nodes[r.1].name(),
+                            self.reg.libs[r.0].file_id
+                        );
                         crate::fx::ShineKind::Overlay
                     }
                     0x46 | 0x47 => {
-                        self.shine_drives.retain(|d| !(d.actor == id && matches!(d.kind, crate::fx::ShineKind::Tf { .. })));
+                        self.shine_drives.retain(|d| {
+                            !(d.actor == id && matches!(d.kind, crate::fx::ShineKind::Tf { .. }))
+                        });
                         // Another scheduler's op 0x88 on the actor: the drive never writes (the running one is gone).
                         if self.color_locked(id, t.uid) {
                             return Flow::Next;
                         }
-                        crate::fx::ShineKind::Tf { start: self.shine.entry(id).or_default().tf, target: op.u32_at(8), total: left }
+                        crate::fx::ShineKind::Tf {
+                            start: self.shine.entry(id).or_default().tf,
+                            target: op.u32_at(8),
+                            total: left,
+                        }
                     }
                     c => {
                         let v = matches!(c, 0x43 | 0x45);
                         let s = self.shine.entry(id).or_default();
-                        crate::fx::ShineKind::Uv { v, start: if v { s.v } else { s.u }, target: f32::from_bits(op.u32_at(8)), total: left }
+                        crate::fx::ShineKind::Uv {
+                            v,
+                            start: if v { s.v } else { s.u },
+                            target: f32::from_bits(op.u32_at(8)),
+                            total: left,
+                        }
                     }
                 };
                 self.next_drive += 1;
-                self.shine_drives.push(crate::fx::ShineDrive { id: self.next_drive, owner: t.uid, actor: id, left, kind });
+                self.shine_drives.push(crate::fx::ShineDrive {
+                    id: self.next_drive,
+                    owner: t.uid,
+                    actor: id,
+                    left,
+                    kind,
+                });
                 Flow::Next
             }
             // FUN_10061240 (0x48 actor1, 0x49 actor2): the refraction pass on at once (+0x734 |= 2) and its level from
             // where it is to f32 @8, linearly over trunc(dur x speed); the end (or the scheduler's death) snaps to the
             // target, and a target of 0 turns the pass off. Drives do not replace each other.
             0x48 | 0x49 => {
-                let Some(id) = self.doll_of(if op.code == 0x48 { t.a1 } else { t.a2 }).id() else { return Flow::Next };
+                let Some(id) = self.doll_of(if op.code == 0x48 { t.a1 } else { t.a2 }).id() else {
+                    return Flow::Next;
+                };
                 let left = (op.dur.max(0) as f32 * t.speed).trunc();
                 let s = self.shine.entry(id).or_default();
                 s.refract = true;
-                let kind = crate::fx::ShineKind::Refract { start: s.level, target: f32::from_bits(op.u32_at(8)), total: left };
+                let kind = crate::fx::ShineKind::Refract {
+                    start: s.level,
+                    target: f32::from_bits(op.u32_at(8)),
+                    total: left,
+                };
                 self.next_drive += 1;
-                self.shine_drives.push(crate::fx::ShineDrive { id: self.next_drive, owner: t.uid, actor: id, left, kind });
+                self.shine_drives.push(crate::fx::ShineDrive {
+                    id: self.next_drive,
+                    owner: t.uid,
+                    actor: id,
+                    left,
+                    kind,
+                });
                 Flow::Next
             }
             // FUN_100618a0: a dead (status 2 / 3) actor2 (0xb2) or actor1 (0xb1): model colour 0x80808080 at once.
@@ -1423,18 +2011,25 @@ impl Effects {
             // write; when its scheduler task ends before that, actor1's model colour goes back to 0x80808080.
             0x88 => {
                 if let Some(id) = self.doll_of(t.a1).id() {
-                    self.color_guards.push((t.uid, id, op.dur.max(0) as f32 * t.speed));
+                    self.color_guards
+                        .push((t.uid, id, op.dur.max(0) as f32 * t.speed));
                 }
                 Flow::Next
             }
             // FUN_1005a432: actor1's Afb by the 4cc's first three letters (motion files newest first, then the model's;
             // failing those the first Afb in its part files) starts a top-level after-image; none: nothing.
             0x2c => {
-                let Some(id) = self.doll_of(t.a1).id() else { return Flow::Next };
+                let Some(id) = self.doll_of(t.a1).id() else {
+                    return Flow::Next;
+                };
                 match self.find_afb(id, op.u32_at(8), actors) {
                     Err(()) => return Flow::Retry,
                     Ok(Some(afb)) => {
-                        log::debug!("effects: after-image {} on {id:#x} ({} points)", String::from_utf8_lossy(&op.raw[8..11]), afb.a.len());
+                        log::debug!(
+                            "effects: after-image {} on {id:#x} ({} points)",
+                            String::from_utf8_lossy(&op.raw[8..11]),
+                            afb.a.len()
+                        );
                         let tr = super::trail::Trail::new(id, afb, &op.raw);
                         match self.trails.iter().position(|t| t.is_none()) {
                             Some(i) => self.trails[i] = Some(tr),
@@ -1449,7 +2044,8 @@ impl Effects {
             // FUN_10061af0: actor1 does not blink for dur x speed (actor +0x8aa += 1, FUN_100ce0b0).
             0xb5 => {
                 if let Some(id) = self.doll_of(t.a1).id() {
-                    self.blink_holds.push((t.uid, id, op.dur.max(0) as f32 * t.speed));
+                    self.blink_holds
+                        .push((t.uid, id, op.dur.max(0) as f32 * t.speed));
                 }
                 Flow::Next
             }
@@ -1496,7 +2092,13 @@ impl Effects {
                 if t.event && !t.event_root {
                     let file = self.reg.libs[t.res.0].file_id;
                     let tag = self.reg.libs[t.res.0].tree.nodes[t.res.1].name;
-                    self.event_cameras.push(super::EventCamera { file, tag, path: op.u32_at(8), ticks: op.dur.max(1) as f32 * t.speed, who: [t.a1, t.a2] });
+                    self.event_cameras.push(super::EventCamera {
+                        file,
+                        tag,
+                        path: op.u32_at(8),
+                        ticks: op.dur.max(1) as f32 * t.speed,
+                        who: [t.a1, t.a2],
+                    });
                 }
                 Flow::Next
             }
@@ -1521,8 +2123,13 @@ impl Effects {
             0x0f | 0x51 if t.event_root => Flow::Next,
             0x0f | 0x51 | 0x72 | 0x0e => {
                 let c = op.u32_at(8).to_le_bytes();
-                let zoom = if op.code == 0x0e { f32::from_bits(op.u32_at(0xc)) } else { 0.0 };
-                self.screen_ops.push((op.code, c, zoom, op.dur.max(0) as f32 * t.speed));
+                let zoom = if op.code == 0x0e {
+                    f32::from_bits(op.u32_at(0xc))
+                } else {
+                    0.0
+                };
+                self.screen_ops
+                    .push((op.code, c, zoom, op.dur.max(0) as f32 * t.speed));
                 Flow::Next
             }
             // FUN_10061fd0: for dur x speed, actor1 stands at actor2's point (u32 @0x20) + offset (vec3 @0x10) turned
@@ -1531,9 +2138,20 @@ impl Effects {
                 if let (Some(a), Some(b)) = (self.doll_of(t.a1).id(), self.doll_of(t.a2).id())
                     && a != b
                 {
-                    let off = Vec3::new(f32::from_bits(op.u32_at(0x10)), f32::from_bits(op.u32_at(0x14)), f32::from_bits(op.u32_at(0x18)));
+                    let off = Vec3::new(
+                        f32::from_bits(op.u32_at(0x10)),
+                        f32::from_bits(op.u32_at(0x14)),
+                        f32::from_bits(op.u32_at(0x18)),
+                    );
                     self.pins.retain(|p| p.1 != a);
-                    self.pins.push((t.uid, a, b, op.u32_at(0x20) as u16, off, op.dur.max(0) as f32 * t.speed));
+                    self.pins.push((
+                        t.uid,
+                        a,
+                        b,
+                        op.u32_at(0x20) as u16,
+                        off,
+                        op.dur.max(0) as f32 * t.speed,
+                    ));
                 }
                 Flow::Next
             }
@@ -1541,16 +2159,35 @@ impl Effects {
             // it bursting generator B (4cc @0x10) once where it is (FUN_10052930). A static A morphing in place and a
             // lone B emission when no A runs are not done.
             0x3f => {
-                let (Some(ga), Some(gb)) = (scope(self, kind::GENERATOR), self.reg.resolve(t.res.0, t.res.1, kind::GENERATOR, op.u32_at(0x10))) else { return Flow::Next };
-                let Some(f) = self.last_frame else { return Flow::Next };
+                let (Some(ga), Some(gb)) = (
+                    scope(self, kind::GENERATOR),
+                    self.reg
+                        .resolve(t.res.0, t.res.1, kind::GENERATOR, op.u32_at(0x10)),
+                ) else {
+                    return Flow::Next;
+                };
+                let Some(f) = self.last_frame else {
+                    return Flow::Next;
+                };
                 // FUN_100538e0 per A element: one emission of the target with the element as parent (its count reset),
                 // the A element deleted.
                 let any = self.template_wide(ga);
-                let a_insts: Vec<usize> = (0..self.insts.len()).filter(|&i| self.insts[i].as_ref().is_some_and(|x| x.src == ga && x.driven.is_none() && (any || pair_match(x.actors, t.a1, t.a2)))).collect();
+                let a_insts: Vec<usize> = (0..self.insts.len())
+                    .filter(|&i| {
+                        self.insts[i].as_ref().is_some_and(|x| {
+                            x.src == ga
+                                && x.driven.is_none()
+                                && (any || pair_match(x.actors, t.a1, t.a2))
+                        })
+                    })
+                    .collect();
                 // An unattached static A morphs as its template, into B's (asm 0x10059f66..0x10059f86).
                 if any {
                     for i in a_insts {
-                        let live = self.insts[i].as_ref().map(|x| x.live.clone()).unwrap_or_default();
+                        let live = self.insts[i]
+                            .as_ref()
+                            .map(|x| x.live.clone())
+                            .unwrap_or_default();
                         for e in live {
                             self.burst(gb, e, &f, actors, true);
                         }
@@ -1560,16 +2197,25 @@ impl Effects {
                 }
                 // Else a new clone C of B, linked to the task's pair when B is attached (asm 0x10059f98..0x1005a027):
                 // A's clones on the pair burst into it; with none, a static B's lone emission goes with C at once.
-                let Some(c) = self.start(gb, Owner::Task(t.uid)) else { return Flow::Next };
+                let Some(c) = self.start(gb, Owner::Task(t.uid)) else {
+                    return Flow::Next;
+                };
                 let b_attached = self.is_attached(gb);
                 if let Some(x) = self.insts[c].as_mut() {
                     x.clone = true;
-                    x.actors = if b_attached { [t.a1, t.a2] } else { [Who::None; 2] };
+                    x.actors = if b_attached {
+                        [t.a1, t.a2]
+                    } else {
+                        [Who::None; 2]
+                    };
                 }
                 self.attach_now(c, actors);
                 let found = !a_insts.is_empty();
                 for i in a_insts {
-                    let live = self.insts[i].as_ref().map(|x| x.live.clone()).unwrap_or_default();
+                    let live = self.insts[i]
+                        .as_ref()
+                        .map(|x| x.live.clone())
+                        .unwrap_or_default();
                     for e in live {
                         self.emit_once(c, e, true, &f, actors);
                     }
@@ -1588,19 +2234,37 @@ impl Effects {
             // actor1 is engaged; dur x speed != 0.0: hidden now and, when @8 is 0, shown at the end of that or of the
             // scheduler, FUN_10061960), 0xa3 on byte 1, untimed and ungated.
             0x75 | 0xa3 => {
-                let Some(id) = self.doll_of(t.a1).id() else { return Flow::Next };
+                let Some(id) = self.doll_of(t.a1).id() else {
+                    return Flow::Next;
+                };
                 let (n, show) = (op.u16_at(0xc) as u8, op.u32_at(8) == 0);
                 if op.code == 0xa3 {
-                    self.weapons.push(crate::fx::WeaponOp { actor: id, n, byte: 1, hide: !show });
+                    self.weapons.push(crate::fx::WeaponOp {
+                        actor: id,
+                        n,
+                        byte: 1,
+                        hide: !show,
+                    });
                     return Flow::Next;
                 }
                 if op.u16_at(0xe) != 0 && actors.status(id) != 1 {
                     return Flow::Next;
                 }
                 let len = op.dur as f32 * t.speed;
-                self.weapons.push(crate::fx::WeaponOp { actor: id, n, byte: 0, hide: !show || len != 0.0 });
+                self.weapons.push(crate::fx::WeaponOp {
+                    actor: id,
+                    n,
+                    byte: 0,
+                    hide: !show || len != 0.0,
+                });
                 if len != 0.0 {
-                    self.wep_timers.push(super::equip::WepTimer { owner: t.uid, actor: id, n, left: len.trunc(), show });
+                    self.wep_timers.push(super::equip::WepTimer {
+                        owner: t.uid,
+                        actor: id,
+                        n,
+                        left: len.trunc(),
+                        show,
+                    });
                 }
                 Flow::Next
             }
@@ -1619,16 +2283,33 @@ impl Effects {
             }
             // FUN_10057fb0 cases 0x25 / 0x21: the hit reaction of actor2 / actor1 at this frame (melee's damg too).
             0x25 | 0x21 => {
-                let (reactor, other) = if op.code == 0x25 { (t.a2, t.a1) } else { (t.a1, t.a2) };
+                let (reactor, other) = if op.code == 0x25 {
+                    (t.a2, t.a1)
+                } else {
+                    (t.a1, t.a2)
+                };
                 // FUN_1005e350: the current record's hit distortion (scale & 3); no action 1.
                 let level = t.action.as_ref().map_or(1, |a| {
                     let a = a.borrow();
                     let recs = a.records();
-                    recs.get(a.cur.min(recs.len().saturating_sub(1))).map_or(1, |r| r.1.scale & 3)
+                    recs.get(a.cur.min(recs.len().saturating_sub(1)))
+                        .map_or(1, |r| r.1.scale & 3)
                 });
-                if let (Some(reactor), Some(other)) = (self.doll_of(reactor).id(), self.doll_of(other).id()) {
+                if let (Some(reactor), Some(other)) =
+                    (self.doll_of(reactor).id(), self.doll_of(other).id())
+                {
                     let f = |o: usize| f32::from_bits(op.u32_at(o));
-                    self.reacts.push(super::React { reactor, other, amount: f(8), rate: f(0xc), count: op.u32_at(0x10), blend_in: f(0x14), fade: f(0x18), side: op.u32_at(0x1c), level });
+                    self.reacts.push(super::React {
+                        reactor,
+                        other,
+                        amount: f(8),
+                        rate: f(0xc),
+                        count: op.u32_at(0x10),
+                        blend_in: f(0x14),
+                        fade: f(0x18),
+                        side: op.u32_at(0x1c),
+                        level,
+                    });
                 }
                 Flow::Next
             }
@@ -1636,8 +2317,14 @@ impl Effects {
             // no action 1, 0 = nothing) from DAT_1035bc60, else speed f32 @0xc a second, decay @0x10, ticks @0x14; pull
             // u16 @0xa toward. Motion bf0? with the pusher in front of the reactor's facing, bb0? behind (swapped for a pull).
             0x5e | 0xbf => {
-                let (Some(reactor), Some(pusher)) = (self.doll_of(t.a2).id(), self.doll_of(t.a1).id()) else { return Flow::Next };
-                let (Some(rm), Some(pm)) = (actors.matrix(reactor), actors.matrix(pusher)) else { return Flow::Next };
+                let (Some(reactor), Some(pusher)) =
+                    (self.doll_of(t.a2).id(), self.doll_of(t.a1).id())
+                else {
+                    return Flow::Next;
+                };
+                let (Some(rm), Some(pm)) = (actors.matrix(reactor), actors.matrix(pusher)) else {
+                    return Flow::Next;
+                };
                 let (rp, pp) = (rm.w_axis.truncate(), pm.w_axis.truncate());
                 let front = rm.x_axis.truncate().dot(pp - rp) >= 0.0;
                 let pull = op.u16_at(0xa) != 0;
@@ -1646,7 +2333,8 @@ impl Effects {
                     let level = t.action.as_ref().map_or(1, |a| {
                         let a = a.borrow();
                         let recs = a.records();
-                        recs.get(a.cur.min(recs.len().saturating_sub(1))).map_or(1, |r| r.1.scale >> 2)
+                        recs.get(a.cur.min(recs.len().saturating_sub(1)))
+                            .map_or(1, |r| r.1.scale >> 2)
                     });
                     if level == 0 {
                         return Flow::Next;
@@ -1656,7 +2344,15 @@ impl Effects {
                 } else {
                     (f(0xc) / 60.0, f(0x10), f(0x14))
                 };
-                let k = super::Knock { reactor, from: pp, speed: if pull { -speed } else { speed }, decay, ticks, motion: if front != pull { "bf0" } else { "bb0" }.to_string(), count: (f(0x14) as i32).clamp(0, 255) as u8 };
+                let k = super::Knock {
+                    reactor,
+                    from: pp,
+                    speed: if pull { -speed } else { speed },
+                    decay,
+                    ticks,
+                    motion: if front != pull { "bf0" } else { "bb0" }.to_string(),
+                    count: (f(0x14) as i32).clamp(0, 255) as u8,
+                };
                 if op.code == 0x5e {
                     self.knocks.push(k);
                 } else {
@@ -1667,18 +2363,31 @@ impl Effects {
             // Op 0x78: the body hitting the floor: `0a` + actor1's footstep kind + '1' + shoe in the folder of its last
             // footstep (model +0x800), at a snapshot of it, near f32 @0xc, far @8; nothing before a first step.
             0x78 => {
-                let Some(id) = self.doll_of(t.a1).id() else { return Flow::Next };
-                let (Some([_, k, s]), Some(&f), Some(m)) = (actors.cib(id), self.foot_folder.get(&id), actors.matrix(id)) else { return Flow::Next };
+                let Some(id) = self.doll_of(t.a1).id() else {
+                    return Flow::Next;
+                };
+                let (Some([_, k, s]), Some(&f), Some(m)) =
+                    (actors.cib(id), self.foot_folder.get(&id), actors.matrix(id))
+                else {
+                    return Flow::Next;
+                };
                 if k < 0 || s < 0 {
                     return Flow::Next;
                 }
-                let c = if k < 10 { b'0' + k as u8 } else { b'a' + (k - 10) as u8 };
+                let c = if k < 10 {
+                    b'0' + k as u8
+                } else {
+                    b'a' + (k - 10) as u8
+                };
                 let name = [b'0', b'a', c, b'1' + s as u8];
                 let (l, lib) = (f.at.0, &self.reg.libs[f.at.0]);
                 if let Some(n) = lib.find_in(f.at.1, 0x3d, name)
                     && let Some((se, loops)) = super::sound::sesep(lib.data(n))
                 {
-                    log::debug!("effects: sound {se} op 0x78 ({})", String::from_utf8_lossy(&name));
+                    log::debug!(
+                        "effects: sound {se} op 0x78 ({})",
+                        String::from_utf8_lossy(&name)
+                    );
                     let mut snd = super::sound::Sound::new(se, loops);
                     snd.res = (l, n);
                     snd.pos = m.w_axis.truncate();
@@ -1693,7 +2402,14 @@ impl Effects {
                 let who = if op.code == 0x5a { t.a1 } else { t.a2 };
                 if let Some(reactor) = self.doll_of(who).id() {
                     let f = |o: usize| f32::from_bits(op.u32_at(o));
-                    self.guards.push(super::Guard { reactor, parry: op.u16_at(0xe) != 0, rate: f(8), count: op.u16_at(0xc) as i16, blend_in: f(0x10), fade: f(0x14) });
+                    self.guards.push(super::Guard {
+                        reactor,
+                        parry: op.u16_at(0xe) != 0,
+                        rate: f(8),
+                        count: op.u16_at(0xc) as i16,
+                        blend_in: f(0x10),
+                        fade: f(0x14),
+                    });
                 }
                 Flow::Next
             }
@@ -1714,30 +2430,65 @@ impl Effects {
             0x71 => {
                 if let Some(a) = &t.action {
                     let a = a.borrow();
-                    self.action_prints.push((a.action.clone(), a.last, op.u32_at(8) as u8));
+                    self.action_prints
+                        .push((a.action.clone(), a.last, op.u32_at(8) as u8));
                 }
                 Flow::Next
             }
             // FUN_100a8e30: record 0's skillchain plays its burst file on (actor1, record 0's target), with a copy of
             // the action whose records are all printed (only the burst's `mprc` prints its proc message).
             0x80 if t.motions => {
-                let Some(ctx) = &t.action else { return Flow::Next };
+                let Some(ctx) = &t.action else {
+                    return Flow::Next;
+                };
                 let a = ctx.borrow().action.clone();
                 let recs = a.records();
-                let Some((target, r)) = recs.first().map(|(id, r)| (*id, *r)) else { return Flow::Next };
+                let Some((target, r)) = recs.first().map(|(id, r)| (*id, *r)) else {
+                    return Flow::Next;
+                };
                 let kind = r.proc.as_ref().map_or(0, |p| p.kind as usize);
                 let anim = SKILLCHAIN.get(kind).copied().unwrap_or(0);
-                let Some(caster) = self.doll_of(t.a1).id() else { return Flow::Next };
+                let Some(caster) = self.doll_of(t.a1).id() else {
+                    return Flow::Next;
+                };
                 if anim == 0 {
                     return Flow::Next;
                 }
-                log::debug!("effects: skillchain kind {kind}: burst DAT {} on {caster:#x} -> {target:#x}", 0xaf0 + anim as u32);
+                log::debug!(
+                    "effects: skillchain kind {kind}: burst DAT {} on {caster:#x} -> {target:#x}",
+                    0xaf0 + anim as u32
+                );
                 let n = recs.len();
                 self.loads.push(caster);
                 self.loads.extend(recs.iter().map(|r| r.0));
                 let speed = action_speed(&a);
-                let clone = Rc::new(RefCell::new(ActionCtx { action: a, cur: 0, swing: None, printed: vec![true; n], last: 0, client_swing: false }));
-                self.pending.push(Pending { file: Some(0xaf0 + anim as u32), actor: None, name: MAIN, a1: Who::Actor(caster), a2: Who::Actor(target), action: Some(clone), speed, end_cast: None, age: 0.0, skill: None, skill_caster: None, wait_motion: None, num: None, quiet: false, own: false, seq: None, event: false });
+                let clone = Rc::new(RefCell::new(ActionCtx {
+                    action: a,
+                    cur: 0,
+                    swing: None,
+                    printed: vec![true; n],
+                    last: 0,
+                    client_swing: false,
+                }));
+                self.pending.push(Pending {
+                    file: Some(0xaf0 + anim as u32),
+                    actor: None,
+                    name: MAIN,
+                    a1: Who::Actor(caster),
+                    a2: Who::Actor(target),
+                    action: Some(clone),
+                    speed,
+                    end_cast: None,
+                    age: 0.0,
+                    skill: None,
+                    skill_caster: None,
+                    wait_motion: None,
+                    num: None,
+                    quiet: false,
+                    own: false,
+                    seq: None,
+                    event: false,
+                });
                 Flow::Next
             }
             _ => {
@@ -1764,7 +2515,11 @@ impl Effects {
                     // 0x3a: actor1's sub-animation (vtable +0xa4, +0x8a5 & 3), with or without an action (FUN_10061950).
                     3 => match op.u32_at(12) {
                         0x3a => t.a1.id().map_or(0, |id| actors.sub_anim(id) & 3) as f64,
-                        k => t.action.as_ref().map_or(0, |a| a.borrow().var(k, t.a1.id())) as f64,
+                        k => t
+                            .action
+                            .as_ref()
+                            .map_or(0, |a| a.borrow().var(k, t.a1.id()))
+                            as f64,
                     },
                     _ => 0.0,
                 };
@@ -1805,7 +2560,10 @@ impl Effects {
 
     /// Op 0x02 (FUN_10052710 via FUN_10057000 case 2): a clone of the generator on the task's actor pair.
     fn op_start_generator(&mut self, t: &Task, op: &SOp, actors: &dyn Actors) -> Option<usize> {
-        let Some(g) = self.reg.resolve(t.res.0, t.res.1, kind::GENERATOR, op.name()) else {
+        let Some(g) = self
+            .reg
+            .resolve(t.res.0, t.res.1, kind::GENERATOR, op.name())
+        else {
             self.reg.miss(t.res.0, t.res.1, op.name(), 5);
             return None;
         };
@@ -1813,8 +2571,13 @@ impl Effects {
         let mode = gd.attach_mode();
         let attached = !matches!(mode, 0 | 0xe | 0xf | 0x14);
         let auto = gd.flags & 0x1000 != 0;
-        let persistent = gd.flags & 0x400 != 0 || gd.template().is_some_and(|o| o.i16_at(0x22) == 0);
-        if attached && [t.a1, t.a2].iter().any(|w| w.id().is_some_and(|id| actors.hidden(id))) {
+        let persistent =
+            gd.flags & 0x400 != 0 || gd.template().is_some_and(|o| o.i16_at(0x22) == 0);
+        if attached
+            && [t.a1, t.a2]
+                .iter()
+                .any(|w| w.id().is_some_and(|id| actors.hidden(id)))
+        {
             return None;
         }
         if auto {
@@ -1828,12 +2591,22 @@ impl Effects {
                 return None;
             }
         }
-        log::debug!("effects: generator {} (DAT {}) on {:?} -> {:?}", String::from_utf8_lossy(&self.reg.libs[g.0].tree.nodes[g.1].name), self.reg.libs[g.0].file_id, t.a1, t.a2);
+        log::debug!(
+            "effects: generator {} (DAT {}) on {:?} -> {:?}",
+            String::from_utf8_lossy(&self.reg.libs[g.0].tree.nodes[g.1].name),
+            self.reg.libs[g.0].file_id,
+            t.a1,
+            t.a2
+        );
         // An unattached static generator runs as its template (asm 0x100599e5..0x10059a39): the one object, linked to
         // the task's pair (FUN_1005e090) and restarted (FUN_100531d0), never a second.
         if !attached
             && persistent
-            && let Some(i) = (0..self.insts.len()).find(|&i| self.insts[i].as_ref().is_some_and(|x| x.src == g && !x.clone && x.parent_elem.is_none()))
+            && let Some(i) = (0..self.insts.len()).find(|&i| {
+                self.insts[i]
+                    .as_ref()
+                    .is_some_and(|x| x.src == g && !x.clone && x.parent_elem.is_none())
+            })
         {
             self.restart(i);
             if let Some(x) = self.insts[i].as_mut() {
@@ -1845,7 +2618,19 @@ impl Effects {
         let i = self.start(g, Owner::Task(t.uid))?;
         // FUN_10041f40: "%d" of the task's number, ":" (the "Miss!" art) under `misv`; fixed at emission.
         let misv = self.reg.libs[t.res.0].tree.nodes[t.res.1].name == *b"misv";
-        let dam = t.num.map(|(v, rgb)| super::DamValue { glyphs: if misv { vec![10] } else { v.to_string().bytes().filter(u8::is_ascii_digit).map(|b| b - b'0').take(16).collect() }, rgb });
+        let dam = t.num.map(|(v, rgb)| super::DamValue {
+            glyphs: if misv {
+                vec![10]
+            } else {
+                v.to_string()
+                    .bytes()
+                    .filter(u8::is_ascii_digit)
+                    .map(|b| b - b'0')
+                    .take(16)
+                    .collect()
+            },
+            rgb,
+        });
         if let Some(x) = self.insts[i].as_mut() {
             x.actors = [t.a1, t.a2];
             x.dam = dam;
@@ -1864,7 +2649,25 @@ impl Effects {
     /// `name` of `file` starts on it, caught up by `skip` ticks (0: from its first op).
     pub fn start_sequence(&mut self, actor: u32, file: u32, name: u32, skip: f32) {
         self.kill_sequence(actor);
-        self.pending.push(Pending { file: Some(file), actor: None, name, a1: Who::Actor(actor), a2: Who::Actor(actor), action: None, speed: 1.0, end_cast: None, age: 0.0, skill: None, skill_caster: None, wait_motion: None, num: None, quiet: false, own: false, seq: Some(skip), event: false });
+        self.pending.push(Pending {
+            file: Some(file),
+            actor: None,
+            name,
+            a1: Who::Actor(actor),
+            a2: Who::Actor(actor),
+            action: None,
+            speed: 1.0,
+            end_cast: None,
+            age: 0.0,
+            skill: None,
+            skill_caster: None,
+            wait_motion: None,
+            num: None,
+            quiet: false,
+            own: false,
+            seq: Some(skip),
+            event: false,
+        });
     }
 
     /// A path drive (ops 0x26 / 0x27) holds the actor (its +0x88 bit 0, FUN_10081fb0 / FUN_10081fd0).
@@ -1890,7 +2693,8 @@ impl Effects {
         if self.drives.is_empty() && self.rot_drives.is_empty() {
             return;
         }
-        let live: std::collections::HashSet<u64> = self.tasks.iter().flatten().map(|t| t.uid).collect();
+        let live: std::collections::HashSet<u64> =
+            self.tasks.iter().flatten().map(|t| t.uid).collect();
         self.drives.retain(|d| live.contains(&d.owner));
         self.rot_drives.retain(|d| live.contains(&d.owner));
         let merge = |into: &mut drive::ActorPose, p: drive::ActorPose| {
@@ -1898,9 +2702,12 @@ impl Effects {
             into.target = p.target.or(into.target);
             into.snap = p.snap.or(into.snap);
         };
-        let mut poses: std::collections::HashMap<u32, drive::ActorPose> = std::collections::HashMap::new();
+        let mut poses: std::collections::HashMap<u32, drive::ActorPose> =
+            std::collections::HashMap::new();
         for mut d in std::mem::take(&mut self.drives) {
-            let pos = actors.matrix(d.actor).map_or(Vec3::ZERO, |m| m.w_axis.truncate());
+            let pos = actors
+                .matrix(d.actor)
+                .map_or(Vec3::ZERO, |m| m.w_axis.truncate());
             let (p, more) = d.step(f.dt, pos, actors.rotation(d.actor).unwrap_or(Vec3::ZERO));
             merge(poses.entry(d.actor).or_default(), p);
             if more {
@@ -1920,7 +2727,9 @@ impl Effects {
     /// FUN_10056b20 + FUN_100575a0 (MODLOG "Ship actors"): task `i` caught up by `skip` ticks. The ops that came due
     /// meanwhile run in the catch-up subset, each told how long ago it came due; true when it ended inside the skip.
     fn fast_forward(&mut self, i: usize, skip: f32, actors: &dyn Actors) -> bool {
-        let Some(mut t) = self.tasks[i].take() else { return true };
+        let Some(mut t) = self.tasks[i].take() else {
+            return true;
+        };
         self.stepping.push(i);
         let at_end = |t: &Task| t.ip >= t.ops.len() || t.ops[t.ip].code == 0;
         t.countdown -= skip;
@@ -1950,7 +2759,15 @@ impl Effects {
         if ended && (t.looping || t.ends_loop) {
             (t.restart, ended) = (true, false);
         }
-        log::debug!("effects: {} caught up {skip:.0} ticks: {}", String::from_utf8_lossy(&self.reg.libs[t.res.0].tree.nodes[t.res.1].name), if ended { "ended".to_string() } else { format!("op {} in {:.0}", t.ip, t.countdown) });
+        log::debug!(
+            "effects: {} caught up {skip:.0} ticks: {}",
+            String::from_utf8_lossy(&self.reg.libs[t.res.0].tree.nodes[t.res.1].name),
+            if ended {
+                "ended".to_string()
+            } else {
+                format!("op {} in {:.0}", t.ip, t.countdown)
+            }
+        );
         t.stepped = true;
         t.done = ended;
         self.settle(t, i);
@@ -1964,9 +2781,20 @@ impl Effects {
         match op.code {
             0x02 => self.catch_up_generator(t, op, over, actors),
             0x09 | 0x57 => {
-                let (on, a1, a2) = if op.code == 0x09 { (t.a2, t.a2, t.a1) } else { (t.a1, t.a1, t.a2) };
-                let found = on.id().and_then(|id| self.find_on_actor(id, op.name(), actors, Parts::First, false).ok().flatten());
-                if let Some(r) = found.or_else(|| self.reg.resolve(t.res.0, t.res.1, kind::SCHEDULER, op.name())) {
+                let (on, a1, a2) = if op.code == 0x09 {
+                    (t.a2, t.a2, t.a1)
+                } else {
+                    (t.a1, t.a1, t.a2)
+                };
+                let found = on.id().and_then(|id| {
+                    self.find_on_actor(id, op.name(), actors, Parts::First, false)
+                        .ok()
+                        .flatten()
+                });
+                if let Some(r) = found.or_else(|| {
+                    self.reg
+                        .resolve(t.res.0, t.res.1, kind::SCHEDULER, op.name())
+                }) {
                     let c = self.spawn_task(r, a1, a2, t.action.clone(), t.speed, None);
                     self.fast_forward(c, over.trunc(), actors);
                 }
@@ -1984,8 +2812,15 @@ impl Effects {
     /// hidden, a 0x1000 one's clones on the pair go first, then a clone starts if static or still alive (op-1 element
     /// life + the op's duration >= `over`), `over` ticks old unless static or 0x1000.
     fn catch_up_generator(&mut self, t: &Task, op: &SOp, over: f32, actors: &dyn Actors) {
-        let Some(g) = self.reg.resolve(t.res.0, t.res.1, kind::GENERATOR, op.name()) else { return };
-        let Some(gd) = self.reg.libs[g.0].generator(g.1) else { return };
+        let Some(g) = self
+            .reg
+            .resolve(t.res.0, t.res.1, kind::GENERATOR, op.name())
+        else {
+            return;
+        };
+        let Some(gd) = self.reg.libs[g.0].generator(g.1) else {
+            return;
+        };
         let world = matches!(gd.attach_mode(), 0 | 0xe | 0xf | 0x14);
         let auto = gd.flags & 0x1000 != 0;
         let life = gd.template().map_or(0, |o| o.i16_at(0x22));
@@ -1994,7 +2829,11 @@ impl Effects {
             self.op_start_generator(t, op, actors);
             return;
         }
-        if !world && [t.a1, t.a2].iter().any(|w| w.id().is_some_and(|id| actors.hidden(id))) {
+        if !world
+            && [t.a1, t.a2]
+                .iter()
+                .any(|w| w.id().is_some_and(|id| actors.hidden(id)))
+        {
             return;
         }
         if auto {
@@ -2018,7 +2857,9 @@ impl Effects {
         // An unattached static generator stops as its template, whatever the actors (MODLOG "Scheduler ops 0x3f").
         let any = self.template_wide(g);
         for i in 0..self.insts.len() {
-            let hit = self.insts[i].as_ref().is_some_and(|x| x.src == g && (any || pair_match(x.actors, a1, a2)));
+            let hit = self.insts[i]
+                .as_ref()
+                .is_some_and(|x| x.src == g && (any || pair_match(x.actors, a1, a2)));
             if !hit {
                 continue;
             }
@@ -2036,7 +2877,14 @@ impl Effects {
     /// FUN_1005e0b0 / FUN_100539e0: unattached (mode 0 / 0xe / 0xf / 0x14) and static (flags 0x400, or op 1's life
     /// i16 @0x22 is 0): ops act on the template, i.e. every instance.
     fn template_wide(&self, g: Ref) -> bool {
-        self.reg.libs[g.0].gens.iter().find(|x| x.node == g.1).is_some_and(|x| matches!(x.attach_mode(), 0 | 0xe | 0xf | 0x14) && (x.flags & 0x400 != 0 || x.template().is_some_and(|o| o.i16_at(0x22) == 0)))
+        self.reg.libs[g.0]
+            .gens
+            .iter()
+            .find(|x| x.node == g.1)
+            .is_some_and(|x| {
+                matches!(x.attach_mode(), 0 | 0xe | 0xf | 0x14)
+                    && (x.flags & 0x400 != 0 || x.template().is_some_and(|o| o.i16_at(0x22) == 0))
+            })
     }
 
     /// FUN_10056a50 / FUN_1018a7a0: every self-starting scheduler of library `l` (under folder `under` when given) starts
@@ -2051,10 +2899,18 @@ impl Effects {
             }
         };
         let nodes: Vec<usize> = (0..tree.nodes.len())
-            .filter(|&n| tree.nodes[n].kind == kind::SCHEDULER && under.is_none_or(|f| inside(n, f)) && crate::dat::sched::auto_start(self.reg.libs[l].data(n)))
+            .filter(|&n| {
+                tree.nodes[n].kind == kind::SCHEDULER
+                    && under.is_none_or(|f| inside(n, f))
+                    && crate::dat::sched::auto_start(self.reg.libs[l].data(n))
+            })
             .collect();
         if !nodes.is_empty() {
-            log::debug!("effects: DAT {}: {} schedulers start by themselves", self.reg.libs[l].file_id, nodes.len());
+            log::debug!(
+                "effects: DAT {}: {} schedulers start by themselves",
+                self.reg.libs[l].file_id,
+                nodes.len()
+            );
         }
         for n in nodes {
             self.spawn_task((l, n), Who::None, Who::None, None, 1.0, None);
@@ -2064,7 +2920,9 @@ impl Effects {
     /// FUN_10055f00 / FUN_10055f40: tasks running scheduler `r` (on one actor pair when given) end now.
     pub(super) fn kill_tasks(&mut self, r: Ref, pair: Option<(Who, Who)>) {
         for t in self.tasks.iter_mut() {
-            if t.as_ref().is_some_and(|t| t.res == r && pair.is_none_or(|(a, b)| t.a1 == a && t.a2 == b)) {
+            if t.as_ref()
+                .is_some_and(|t| t.res == r && pair.is_none_or(|(a, b)| t.a1 == a && t.a2 == b))
+            {
                 *t = None;
             }
         }
@@ -2078,10 +2936,21 @@ impl Effects {
         let d = Who::Doll(self.dolls.len());
         let unposed = !actors.posed(id);
         if unposed {
-            log::debug!("effects: doll of {id:#x} made before its first pose (rest point 0x2b {:?})", actors.point(id, 0x2b));
+            log::debug!(
+                "effects: doll of {id:#x} made before its first pose (rest point 0x2b {:?})",
+                actors.point(id, 0x2b)
+            );
         }
-        let points = (0..DOLL_POINTS).map(|k| if unposed { None } else { actors.point(id, k) }).collect();
-        self.dolls.push(Doll { of: id, matrix: m, follow, points, unposed });
+        let points = (0..DOLL_POINTS)
+            .map(|k| if unposed { None } else { actors.point(id, k) })
+            .collect();
+        self.dolls.push(Doll {
+            of: id,
+            matrix: m,
+            follow,
+            points,
+            unposed,
+        });
         self.move_clones(w, d, uid);
         d
     }
@@ -2104,7 +2973,12 @@ impl Effects {
     }
 
     fn move_clones(&mut self, from: Who, to: Who, uid: u64) {
-        for x in self.insts.iter_mut().flatten().filter(|x| x.owner == Owner::Task(uid)) {
+        for x in self
+            .insts
+            .iter_mut()
+            .flatten()
+            .filter(|x| x.owner == Owner::Task(uid))
+        {
             for a in x.actors.iter_mut() {
                 if *a == from {
                     *a = to;
@@ -2132,21 +3006,41 @@ impl Effects {
     /// An actor slot's placement and attach point `k` in the world (FUN_1003ba20): 0x30 the ground under point 0,
     /// 0x31 / 0x32 the body point 0xd..0x14 nearest the other actor, 0x33 the one nearest the eye, 0x34 the last foot
     /// contact, 0x35 the position, 0x36..0x3c points 0x7e / 0x7f / 0x66..0x6a, others point k.
-    fn who_point(&self, w: Who, k: u16, other: Who, eye: Option<Vec3>, off: Vec3, actors: &dyn Actors) -> Option<(Mat4, Vec3)> {
+    fn who_point(
+        &self,
+        w: Who,
+        k: u16,
+        other: Who,
+        eye: Option<Vec3>,
+        off: Vec3,
+        actors: &dyn Actors,
+    ) -> Option<(Mat4, Vec3)> {
         let (id, m) = self.who_matrix(w, actors)?;
         let local = |k: u16| match w {
-            Who::Doll(d) if k < DOLL_POINTS => self.dolls.get(d).and_then(|d| if d.unposed { actors.point(d.of, k) } else { d.points[k as usize] }),
+            Who::Doll(d) if k < DOLL_POINTS => self.dolls.get(d).and_then(|d| {
+                if d.unposed {
+                    actors.point(d.of, k)
+                } else {
+                    d.points[k as usize]
+                }
+            }),
             _ => actors.point(id, k),
         };
         // Op 0x7b's offset turns with the actor (TransformCoord by its yaw).
         let off = m.transform_vector3(off);
         let world = |k: u16| local(k).map(|p| m.transform_point3(p) + off);
-        let nearest = |to: Vec3| (0xd..=0x14u16).filter_map(world).min_by(|a, b| a.distance_squared(to).total_cmp(&b.distance_squared(to)));
+        let nearest = |to: Vec3| {
+            (0xd..=0x14u16)
+                .filter_map(world)
+                .min_by(|a, b| a.distance_squared(to).total_cmp(&b.distance_squared(to)))
+        };
         let p = match k {
             // From 1 above to 6 below; retail's miss is (0, 0, 0), ours keeps the position (our collision is not
             // retail's everywhere).
             0x30 => world(0).and_then(|p| actors.ground_hit(p - Vec3::Y, p + Vec3::Y * 6.0)),
-            0x31 | 0x32 => self.who_matrix(other, actors).and_then(|(_, o)| nearest(o.w_axis.truncate())),
+            0x31 | 0x32 => self
+                .who_matrix(other, actors)
+                .and_then(|(_, o)| nearest(o.w_axis.truncate())),
             0x33 => eye.and_then(nearest),
             0x34 => actors.foot(id),
             // 0x36..0x3c name skeleton points (FUN_1003abe0).
@@ -2170,7 +3064,12 @@ impl Effects {
 
     /// FUN_10052eb0 / FUN_1003afd0 for the instance's actors: its matrix (+0xa4), two-point distance (+0x90) and
     /// the actor-size scale vectors (+0x78 / +0x84).
-    pub(super) fn attach_matrix(&self, i: usize, f: Option<&Frame>, actors: &dyn Actors) -> Option<(Option<Mat4>, Vec3, Vec3, f32)> {
+    pub(super) fn attach_matrix(
+        &self,
+        i: usize,
+        f: Option<&Frame>,
+        actors: &dyn Actors,
+    ) -> Option<(Option<Mat4>, Vec3, Vec3, f32)> {
         let x = self.insts[i].as_ref()?;
         let g = self.reg.libs[x.src.0].generator(x.src.1)?;
         let w = x.attach;
@@ -2182,10 +3081,14 @@ impl Effects {
         // two-point modes only.
         let two_point = matches!(x.mode, 3 | 6 | 0xd | 0x10 | 0x11 | 0x12 | 0x16..=0x1b);
         let (off_a, off_b) = match x.streams[1].iter().find(|o| o.code == 0x7b) {
-            Some(o) if g.offsets && two_point => (Vec3::new(o.f32(1), o.f32(2), o.f32(3)), Vec3::new(o.f32(4), o.f32(5), o.f32(6))),
+            Some(o) if g.offsets && two_point => (
+                Vec3::new(o.f32(1), o.f32(2), o.f32(3)),
+                Vec3::new(o.f32(4), o.f32(5), o.f32(6)),
+            ),
             _ => (Vec3::ZERO, Vec3::ZERO),
         };
-        let (m, dist) = self.attach_frame(x.mode, w, x.actors, (off_a, off_b), x.matrix, f, actors)?;
+        let (m, dist) =
+            self.attach_frame(x.mode, w, x.actors, (off_a, off_b), x.matrix, f, actors)?;
         // Scale A from bits 20..23 (1-4 caster, 5-8 target), scale B from byte 3 low nibble.
         let size = |src: u32, blend: f32| -> Vec3 {
             let who = match src & 0xf {
@@ -2215,7 +3118,16 @@ impl Effects {
     /// FUN_1003afd0's frame for attach `mode` / word `w` on two actor slots, with op 0x7b's offsets and the last matrix
     /// (dolls): the matrix (None while unplaced) and the two-point distance; None for a mode it does not know.
     #[allow(clippy::too_many_arguments)]
-    fn attach_frame(&self, mode: u8, w: u32, [a1, a2]: [Who; 2], (off_a, off_b): (Vec3, Vec3), last: Option<Mat4>, f: Option<&Frame>, actors: &dyn Actors) -> Option<(Option<Mat4>, f32)> {
+    fn attach_frame(
+        &self,
+        mode: u8,
+        w: u32,
+        [a1, a2]: [Who; 2],
+        (off_a, off_b): (Vec3, Vec3),
+        last: Option<Mat4>,
+        f: Option<&Frame>,
+        actors: &dyn Actors,
+    ) -> Option<(Option<Mat4>, f32)> {
         if attach_missing(mode, [a1, a2]) {
             return Some((Some(Mat4::IDENTITY), 0.0));
         }
@@ -2236,12 +3148,14 @@ impl Effects {
             m.w_axis = p1.extend(1.0);
             (m, d.length())
         };
-        let cam = |p: Vec3| f.map(|f| {
-            let [_, _, _, c10] = crate::render::effects::view_set(f.view);
-            let mut m = rot(c10);
-            m.w_axis = p.extend(1.0);
-            m
-        });
+        let cam = |p: Vec3| {
+            f.map(|f| {
+                let [_, _, _, c10] = crate::render::effects::view_set(f.view);
+                let mut m = rot(c10);
+                m.w_axis = p.extend(1.0);
+                m
+            })
+        };
         let eye = f.map(|f| f.eye);
         let p1 = |k: u16| self.who_point(a1, k, a2, eye, off_a, actors);
         let p2 = |k: u16| self.who_point(a2, k, a1, eye, off_b, actors);
@@ -2260,7 +3174,12 @@ impl Effects {
             Who::Actor(id) => {
                 let f = actors.matrix(id)? * actors.point_frame(id, remap(k))?;
                 let s = actors.scale(id);
-                Some(Mat4::from_cols(f.x_axis * s, f.y_axis * s, f.z_axis * s, f.w_axis))
+                Some(Mat4::from_cols(
+                    f.x_axis * s,
+                    f.y_axis * s,
+                    f.z_axis * s,
+                    f.w_axis,
+                ))
             }
             Who::Doll(_) => {
                 let (_, d) = self.who_matrix(w, actors)?;
@@ -2282,7 +3201,11 @@ impl Effects {
             Some(r)
         };
         let m = match mode {
-            9 | 0xa => bone_frame(if mode == 9 { a1 } else { a2 }, if mode == 9 { pc } else { pt }).or_else(|| if mode == 9 { p1(pc) } else { p2(pt) }.map(|(m, p)| at(m, p))),
+            9 | 0xa => bone_frame(
+                if mode == 9 { a1 } else { a2 },
+                if mode == 9 { pc } else { pt },
+            )
+            .or_else(|| if mode == 9 { p1(pc) } else { p2(pt) }.map(|(m, p)| at(m, p))),
             0xb => heading(a1, pc, p1(pc)).or_else(|| p1(pc).map(|(m, p)| at(m, p))),
             0xc => heading(a2, pt, p2(pt)).or_else(|| p2(pt).map(|(m, p)| at(m, p))),
             // FUN_1003be10 0x14 / 0x15: the voyage matrix DAT_10631ed0 (identity off a voyage), whole / its rotation.
@@ -2318,7 +3241,10 @@ impl Effects {
             8 => p2(pt).and_then(|(_, p)| cam(p)),
             0x10 | 0x11 => {
                 let (a, o) = if mode == 0x10 { (a1, a2) } else { (a2, a1) };
-                match (self.who_point(a, pc, o, eye, off_a, actors), self.who_point(a, pt, o, eye, off_b, actors)) {
+                match (
+                    self.who_point(a, pc, o, eye, off_a, actors),
+                    self.who_point(a, pt, o, eye, off_b, actors),
+                ) {
                     (Some((_, p1)), Some((_, p2))) => {
                         let (m, d) = two(p1, p2);
                         dist = d;
@@ -2341,14 +3267,26 @@ impl Effects {
         if mode == 0 || mode > 0x1b {
             return Some(Mat4::IDENTITY);
         }
-        self.attach_frame(mode, w, who, (Vec3::ZERO, Vec3::ZERO), None, self.last_frame.as_ref(), actors)?.0
+        self.attach_frame(
+            mode,
+            w,
+            who,
+            (Vec3::ZERO, Vec3::ZERO),
+            None,
+            self.last_frame.as_ref(),
+            actors,
+        )?
+        .0
     }
 
     /// At start (FUN_10052220 -> FUN_10052eb0).
     pub(super) fn attach_now(&mut self, i: usize, actors: &dyn Actors) {
         if let (Some(au), Some(x)) = (self.reg.audit.as_mut(), self.insts[i].as_ref()) {
             let w = x.attach;
-            let (pc, pt) = (((((w >> 18) & 1) << 6) | ((w >> 4) & 0x3f)) as u16, ((w >> 10) & 0x3f) as u16);
+            let (pc, pt) = (
+                ((((w >> 18) & 1) << 6) | ((w >> 4) & 0x3f)) as u16,
+                ((w >> 10) & 0x3f) as u16,
+            );
             *au.attach.entry((x.mode, pc, pt)).or_default() += 1;
         }
         let last = self.last_frame;
@@ -2374,13 +3312,37 @@ impl Effects {
     /// Generator ops 0x0e / 0x0f / 0x10 (FUN_100496f0): the attachment rebuilt (FUN_10053e60), then turned about X / Y
     /// / Z at its origin by keyframe 4cc u32 @8 at t over the element plus generator life (op 1's i16 @0x22),
     /// half-turns wrapped to +-pi.
-    #[allow(clippy::approx_constant, reason = "truncated pi values, kept as written")]
-    pub(super) fn spin(&mut self, i: usize, op: &crate::dat::generator::Op, f: &Frame, actors: &dyn Actors) {
-        let Some((Some(m), a, b, d)) = self.attach_matrix(i, Some(f), actors) else { return };
-        let Some(x) = self.insts[i].as_ref() else { return };
+    #[allow(
+        clippy::approx_constant,
+        reason = "truncated pi values, kept as written"
+    )]
+    pub(super) fn spin(
+        &mut self,
+        i: usize,
+        op: &crate::dat::generator::Op,
+        f: &Frame,
+        actors: &dyn Actors,
+    ) {
+        let Some((Some(m), a, b, d)) = self.attach_matrix(i, Some(f), actors) else {
+            return;
+        };
+        let Some(x) = self.insts[i].as_ref() else {
+            return;
+        };
         let l = x.streams[1].first().map_or(0.0, |o| o.i16_at(0x22) as f32);
-        let t = if l + x.life > 0.0 { (1.0 - (l + x.life - x.elapsed) / (l + x.life)).min(1.0) } else { 0.0 };
-        let Some(v) = self.reg.resolve(x.src.0, x.src.1, kind::KEYFRAME, op.u32(2)).and_then(|r| self.reg.keyframe(r)).map(|k| k.sample(t, op.u32(3) & 0xf != 0)) else { return };
+        let t = if l + x.life > 0.0 {
+            (1.0 - (l + x.life - x.elapsed) / (l + x.life)).min(1.0)
+        } else {
+            0.0
+        };
+        let Some(v) = self
+            .reg
+            .resolve(x.src.0, x.src.1, kind::KEYFRAME, op.u32(2))
+            .and_then(|r| self.reg.keyframe(r))
+            .map(|k| k.sample(t, op.u32(3) & 0xf != 0))
+        else {
+            return;
+        };
         let mut ang = (v % 2.0) * 3.141592;
         if ang > 3.1415 {
             ang -= 2.0 * 3.1415;
@@ -2397,7 +3359,9 @@ impl Effects {
         rot.w_axis = glam::Vec4::W;
         let mut out = r * rot;
         out.w_axis = m.w_axis;
-        let Some(x) = self.insts[i].as_mut() else { return };
+        let Some(x) = self.insts[i].as_mut() else {
+            return;
+        };
         x.matrix = Some(out);
         x.scale_a = a;
         x.scale_b = b;
@@ -2407,8 +3371,12 @@ impl Effects {
     /// Generator op 0x11 (FUN_10052cd0): the attach matrix again, lerped by k = ((op[1] >> 2) & 0xff) / 255 —
     /// bit 0 the translation, bit 1 the rotation rows.
     pub(super) fn follow(&mut self, i: usize, word: u32, f: &Frame, actors: &dyn Actors) {
-        let Some((Some(m), a, b, d)) = self.attach_matrix(i, Some(f), actors) else { return };
-        let Some(x) = self.insts[i].as_mut() else { return };
+        let Some((Some(m), a, b, d)) = self.attach_matrix(i, Some(f), actors) else {
+            return;
+        };
+        let Some(x) = self.insts[i].as_mut() else {
+            return;
+        };
         // FUN_10052cd0 runs once per pass at retail's 2 ticks a frame: the same pull per 2 ticks at any frame rate.
         let k = 1.0 - (1.0 - ((word >> 2) & 0xff) as f32 / 255.0).powf(f.dt / 2.0);
         let old = x.matrix.unwrap_or(m);
@@ -2431,7 +3399,13 @@ impl Effects {
     /// 4, 5, 7-0xc, 0x10-0x13) runs cloned onto the actor; they go when the actor or its model does.
     /// FUN_100539e0: flags 0x400, or op 1's life i16 @0x22 is 0.
     fn static_gen(&self, g: Ref) -> bool {
-        self.reg.libs[g.0].gens.iter().find(|x| x.node == g.1).is_some_and(|x| x.flags & 0x400 != 0 || x.template().is_some_and(|o| o.i16_at(0x22) == 0))
+        self.reg.libs[g.0]
+            .gens
+            .iter()
+            .find(|x| x.node == g.1)
+            .is_some_and(|x| {
+                x.flags & 0x400 != 0 || x.template().is_some_and(|o| o.i16_at(0x22) == 0)
+            })
     }
 
     /// FUN_10085a50 (hide, once): the actor's non-static clones go, its static ones stop (none live: held here) or
@@ -2439,16 +3413,30 @@ impl Effects {
     /// again (FUN_10085060 replaces their clones).
     fn model_hide(&mut self, actors: &dyn Actors) {
         let mut ids: Vec<u32> = actors.models().into_iter().map(|m| m.0).collect();
-        ids.extend(self.hidden_actors.iter().filter(|id| !ids.contains(id)).copied().collect::<Vec<_>>());
+        ids.extend(
+            self.hidden_actors
+                .iter()
+                .filter(|id| !ids.contains(id))
+                .copied()
+                .collect::<Vec<_>>(),
+        );
         for id in ids {
             let hide = actors.hidden(id);
             if hide == self.hidden_actors.contains(&id) {
                 continue;
             }
             let who = Who::Actor(id);
-            log::debug!("effects: model of {id:#x} {}", if hide { "hidden" } else { "shown" });
+            log::debug!(
+                "effects: model of {id:#x} {}",
+                if hide { "hidden" } else { "shown" }
+            );
             for i in 0..self.insts.len() {
-                let Some(x) = self.insts[i].as_ref().filter(|x| x.actors.contains(&who) && x.driven.is_none()) else { continue };
+                let Some(x) = self.insts[i]
+                    .as_ref()
+                    .filter(|x| x.actors.contains(&who) && x.driven.is_none())
+                else {
+                    continue;
+                };
                 let (src, first) = (x.src, x.live.first().copied());
                 if hide && !self.static_gen(src) {
                     self.kill(i);
@@ -2464,14 +3452,24 @@ impl Effects {
                         if let Some(x) = self.insts[i].as_mut() {
                             x.held = hide;
                             if !hide {
-                                (x.elapsed, x.countdown, x.emitted, x.stopping, x.finished) = (0.0, 0.0, 0, false, false);
+                                (x.elapsed, x.countdown, x.emitted, x.stopping, x.finished) =
+                                    (0.0, 0.0, 0, false, false);
                             }
                         }
                     }
                 }
             }
-            for t in self.tasks.iter_mut().flatten().filter(|t| t.a1 == who || t.a2 == who) {
-                t.paused = if hide { t.paused + 1 } else { t.paused.saturating_sub(1) };
+            for t in self
+                .tasks
+                .iter_mut()
+                .flatten()
+                .filter(|t| t.a1 == who || t.a2 == who)
+            {
+                t.paused = if hide {
+                    t.paused + 1
+                } else {
+                    t.paused.saturating_sub(1)
+                };
             }
             if hide {
                 self.hidden_actors.insert(id);
@@ -2479,7 +3477,10 @@ impl Effects {
                 self.hidden_actors.remove(&id);
                 self.models.remove(&id);
                 for i in 0..self.insts.len() {
-                    if self.insts[i].as_ref().is_some_and(|x| x.owner == Owner::Actor(id)) {
+                    if self.insts[i]
+                        .as_ref()
+                        .is_some_and(|x| x.owner == Owner::Actor(id))
+                    {
                         self.kill(i);
                     }
                 }
@@ -2490,11 +3491,23 @@ impl Effects {
     pub(super) fn model_generators(&mut self, actors: &dyn Actors) {
         self.model_hide(actors);
         let present = actors.models();
-        let gone: Vec<u32> = self.models.keys().filter(|id| !present.iter().any(|(p, files)| p == *id && self.models.get(p) == Some(files))).copied().collect();
+        let gone: Vec<u32> = self
+            .models
+            .keys()
+            .filter(|id| {
+                !present
+                    .iter()
+                    .any(|(p, files)| p == *id && self.models.get(p) == Some(files))
+            })
+            .copied()
+            .collect();
         for id in gone {
             self.models.remove(&id);
             for i in 0..self.insts.len() {
-                if self.insts[i].as_ref().is_some_and(|x| x.owner == Owner::Actor(id)) {
+                if self.insts[i]
+                    .as_ref()
+                    .is_some_and(|x| x.owner == Owner::Actor(id))
+                {
                     self.kill(i);
                 }
             }
@@ -2504,20 +3517,36 @@ impl Effects {
                 continue;
             }
             let libs: Vec<Option<usize>> = files.iter().map(|&f| self.lib_for(f)).collect();
-            if files.iter().zip(&libs).any(|(f, l)| l.is_none() && !self.failed.contains(f)) {
+            if files
+                .iter()
+                .zip(&libs)
+                .any(|(f, l)| l.is_none() && !self.failed.contains(f))
+            {
                 continue;
             }
             let mut gens = Vec::new();
             for l in libs.into_iter().flatten() {
                 for g in &self.reg.libs[l].gens {
-                    if g.flags & 0x1000 != 0 && matches!(g.attach_mode(), 1 | 2 | 4 | 5 | 7..=0xc | 0x10..=0x13) {
+                    if g.flags & 0x1000 != 0
+                        && matches!(g.attach_mode(), 1 | 2 | 4 | 5 | 7..=0xc | 0x10..=0x13)
+                    {
                         gens.push((l, g.node));
                     }
                 }
             }
             if !gens.is_empty() {
-                let names: Vec<String> = gens.iter().map(|g| String::from_utf8_lossy(&self.reg.libs[g.0].tree.nodes[g.1].name).into_owned()).collect();
-                log::debug!("effects: model generators on {id:#x} {:?} at {:?}: {names:?}", files, actors.matrix(id).map(|m| m.w_axis.truncate()));
+                let names: Vec<String> = gens
+                    .iter()
+                    .map(|g| {
+                        String::from_utf8_lossy(&self.reg.libs[g.0].tree.nodes[g.1].name)
+                            .into_owned()
+                    })
+                    .collect();
+                log::debug!(
+                    "effects: model generators on {id:#x} {:?} at {:?}: {names:?}",
+                    files,
+                    actors.matrix(id).map(|m| m.w_axis.truncate())
+                );
             }
             for g in gens.into_iter().take(128) {
                 if let Some(i) = self.start(g, Owner::Actor(id)) {
@@ -2535,11 +3564,27 @@ impl Effects {
     /// Actors whose attach points the live effects read: the client poses their bones (FUN_100d4560 reads the
     /// drawn pose).
     pub fn posed_actors(&self) -> std::collections::HashSet<u32> {
-        let insts = self.insts.iter().flatten().filter(|x| x.mode != 0).flat_map(|x| x.actors);
+        let insts = self
+            .insts
+            .iter()
+            .flatten()
+            .filter(|x| x.mode != 0)
+            .flat_map(|x| x.actors);
         let tasks = self.tasks.iter().flatten().flat_map(|t| [t.a1, t.a2]);
         let pending = self.pending.iter().flat_map(|p| [p.a1, p.a2]);
-        let trails = self.trails.iter().flatten().filter(|t| t.placing()).map(|t| t.actor);
-        insts.chain(tasks).chain(pending).filter_map(|w| self.doll_of(w).id()).chain(self.dolls.iter().map(|d| d.of)).chain(trails).collect()
+        let trails = self
+            .trails
+            .iter()
+            .flatten()
+            .filter(|t| t.placing())
+            .map(|t| t.actor);
+        insts
+            .chain(tasks)
+            .chain(pending)
+            .filter_map(|w| self.doll_of(w).id())
+            .chain(self.dolls.iter().map(|d| d.of))
+            .chain(trails)
+            .collect()
     }
 
     pub fn task_count(&self) -> usize {
@@ -2553,7 +3598,10 @@ impl Effects {
 
     /// Files being read in the background (fx-sweep waits for them in real time, not in ticks).
     pub fn loading_count(&self) -> usize {
-        self.loading.iter().filter(|f| self.reg.lib_of(**f).is_none() && !self.failed.contains(f)).count()
+        self.loading
+            .iter()
+            .filter(|f| self.reg.lib_of(**f).is_none() && !self.failed.contains(f))
+            .count()
     }
 
     /// fx-sweep between runs: every task, pending start and generator gone.
@@ -2572,22 +3620,45 @@ impl Effects {
                         s.tex = None;
                     }
                 }
-                ShineKind::Uv { v, start, target, total } => {
-                    let x = if done || total <= 0.0 { target % 2.0 } else { (start + (target - start) * (1.0 - d.left / total)) % 2.0 };
+                ShineKind::Uv {
+                    v,
+                    start,
+                    target,
+                    total,
+                } => {
+                    let x = if done || total <= 0.0 {
+                        target % 2.0
+                    } else {
+                        (start + (target - start) * (1.0 - d.left / total)) % 2.0
+                    };
                     if v {
                         s.v = x;
                     } else {
                         s.u = x;
                     }
                 }
-                ShineKind::Tf { start, target, total } if !dead => {
-                    let k = if d.left < 0.0 || total <= 0.0 { 1.0 } else { 1.0 - d.left / total };
+                ShineKind::Tf {
+                    start,
+                    target,
+                    total,
+                } if !dead => {
+                    let k = if d.left < 0.0 || total <= 0.0 {
+                        1.0
+                    } else {
+                        1.0 - d.left / total
+                    };
                     let (a, b) = (start.to_le_bytes(), target.to_le_bytes());
-                    s.tf = u32::from_le_bytes(std::array::from_fn(|i| (a[i] as f32 + (b[i] as f32 - a[i] as f32) * k) as u8));
+                    s.tf = u32::from_le_bytes(std::array::from_fn(|i| {
+                        (a[i] as f32 + (b[i] as f32 - a[i] as f32) * k) as u8
+                    }));
                 }
                 ShineKind::Tf { .. } => {}
                 // FUN_100612b0 / FUN_100611e0.
-                ShineKind::Refract { start, target, total } => {
+                ShineKind::Refract {
+                    start,
+                    target,
+                    total,
+                } => {
                     if done || total <= 0.0 {
                         s.level = target;
                         if target == 0.0 {
@@ -2615,7 +3686,11 @@ impl Effects {
         use crate::fx::ColorOp;
         if let Some(i) = self.color_drives.iter().position(|d| d.actor == id) {
             let old = self.color_drives.remove(i);
-            self.fades.push(if old.snap { ColorOp::Snap(id, old.target) } else { ColorOp::Freeze(id) });
+            self.fades.push(if old.snap {
+                ColorOp::Snap(id, old.target)
+            } else {
+                ColorOp::Freeze(id)
+            });
         }
         if self.color_locked(id, owner) {
             if snap {
@@ -2623,27 +3698,64 @@ impl Effects {
             }
             return;
         }
-        self.fades.push(ColorOp::Drive { actor: id, argb: target, ticks });
-        self.color_drives.push(crate::fx::ColorDrive { actor: id, owner, left: ticks, target, snap });
+        self.fades.push(ColorOp::Drive {
+            actor: id,
+            argb: target,
+            ticks,
+        });
+        self.color_drives.push(crate::fx::ColorDrive {
+            actor: id,
+            owner,
+            left: ticks,
+            target,
+            snap,
+        });
     }
 
     /// Actors with the refraction pass on, and its level.
     pub fn refractions(&self) -> Vec<(u32, f32)> {
-        self.shine.iter().filter(|(_, s)| s.refract).map(|(id, s)| (*id, s.level)).collect()
+        self.shine
+            .iter()
+            .filter(|(_, s)| s.refract)
+            .map(|(id, s)| (*id, s.level))
+            .collect()
     }
 
     /// Actors with the shine overlay on: (actor, its image, U, V, TFACTOR as ARGB).
     pub fn shines(&self) -> Vec<(u32, Ref, f32, f32, u32)> {
-        self.shine.iter().filter_map(|(id, s)| s.tex.map(|(r, _)| (*id, r, s.u, s.v, s.tf))).collect()
+        self.shine
+            .iter()
+            .filter_map(|(id, s)| s.tex.map(|(r, _)| (*id, r, s.u, s.v, s.tf)))
+            .collect()
     }
 
     /// fx-soak: every live generator instance as (name, file, clone, endless, what started it).
     pub fn live_instances(&self) -> Vec<(String, u32, bool, bool, String)> {
         let by = |o: &super::Owner| match o {
-            super::Owner::Task(uid) => self.tasks.iter().flatten().find(|t| t.uid == *uid).map_or("task(gone)".to_string(), |t| format!("task {}", String::from_utf8_lossy(&self.reg.libs[t.res.0].tree.nodes[t.res.1].name))),
+            super::Owner::Task(uid) => self.tasks.iter().flatten().find(|t| t.uid == *uid).map_or(
+                "task(gone)".to_string(),
+                |t| {
+                    format!(
+                        "task {}",
+                        String::from_utf8_lossy(&self.reg.libs[t.res.0].tree.nodes[t.res.1].name)
+                    )
+                },
+            ),
             o => format!("{o:?}"),
         };
-        self.insts.iter().flatten().map(|x| (String::from_utf8_lossy(&x.name).into_owned(), self.reg.libs[x.src.0].file_id, x.clone, x.life <= 0.0, by(&x.owner))).collect()
+        self.insts
+            .iter()
+            .flatten()
+            .map(|x| {
+                (
+                    String::from_utf8_lossy(&x.name).into_owned(),
+                    self.reg.libs[x.src.0].file_id,
+                    x.clone,
+                    x.life <= 0.0,
+                    by(&x.owner),
+                )
+            })
+            .collect()
     }
 
     pub fn reset_runs(&mut self) {
@@ -2667,7 +3779,11 @@ pub fn effects_allowed(cfg: u32, battle: bool, class: u8) -> bool {
     if cfg == 0 || (cfg & 1 != 0 && !battle) {
         return true;
     }
-    !(1..=16u32).any(|b| cfg & (1 << b) != 0 && class & (1 << ((b - 1) / 4)) != 0 && class & (0x10 << ((b - 1) % 4)) != 0)
+    !(1..=16u32).any(|b| {
+        cfg & (1 << b) != 0
+            && class & (1 << ((b - 1) / 4)) != 0
+            && class & (0x10 << ((b - 1) % 4)) != 0
+    })
 }
 
 /// FUN_100ac560's class of one side (the target's is shifted 4 up): 1 the player or its pet, 2 a monster (+0x120 bit
@@ -2702,7 +3818,11 @@ mod tests {
 
     impl Actors for Two {
         fn matrix(&self, id: u32) -> Option<Mat4> {
-            Some(Mat4::from_translation(if id == HUME { Vec3::ZERO } else { Vec3::new(2.0, 0.0, 0.0) }))
+            Some(Mat4::from_translation(if id == HUME {
+                Vec3::ZERO
+            } else {
+                Vec3::new(2.0, 0.0, 0.0)
+            }))
         }
         fn point(&self, _: u32, _: u16) -> Option<Vec3> {
             Some(Vec3::new(0.0, -1.0, 0.0))
@@ -2712,7 +3832,11 @@ mod tests {
         }
         // Hume M: fists 8392, battle file 9672, skeleton 7072; orc: model file 1300.
         fn files(&self, id: u32) -> (Vec<u32>, Vec<u32>) {
-            if id == HUME { (vec![8392], vec![9672, 7072]) } else { (Vec::new(), vec![1300]) }
+            if id == HUME {
+                (vec![8392], vec![9672, 7072])
+            } else {
+                (Vec::new(), vec![1300])
+            }
         }
         fn hidden(&self, _: u32) -> bool {
             false
@@ -2726,7 +3850,9 @@ mod tests {
     #[test]
     fn pin_holds_actor1() {
         let cfg = crate::config::Config::load();
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else {
+            return;
+        };
         let index = std::sync::Arc::new(index);
         let mut fx = Effects::new();
         fx.set_index(index.clone());
@@ -2735,13 +3861,48 @@ mod tests {
         pin[..8].copy_from_slice(&[0x7a, 0x0c, 0, 0, 0, 0, 30, 0]);
         pin[0x10..0x14].copy_from_slice(&2.0f32.to_le_bytes());
         pin[0x1c..0x20].copy_from_slice(&1.0f32.to_le_bytes());
-        let ops = vec![SOp { code: 0x7a, wait: 0, dur: 30, raw: pin }, SOp { code: 0x01, wait: 60, dur: 0, raw: vec![1, 2, 0, 0, 60, 0, 0, 0] }];
-        fx.tasks.push(Some(Task::new((fx.reg.global.unwrap(), 0), Rc::new(ops), Who::Actor(ORC), Who::Actor(HUME), None, 1.0)));
-        let f = Frame { dt: 1.0, seconds: 1.0 / 60.0, dayfrac: 0.5, view: Mat4::IDENTITY, view_rot: Mat4::IDENTITY, eye: Vec3::new(0.0, -2.0, -10.0), draw_distance: 2000.0, area_light: Vec3::ONE, focal: 350.0, moon_phase: 0, weekday: 0 };
+        let ops = vec![
+            SOp {
+                code: 0x7a,
+                wait: 0,
+                dur: 30,
+                raw: pin,
+            },
+            SOp {
+                code: 0x01,
+                wait: 60,
+                dur: 0,
+                raw: vec![1, 2, 0, 0, 60, 0, 0, 0],
+            },
+        ];
+        fx.tasks.push(Some(Task::new(
+            (fx.reg.global.unwrap(), 0),
+            Rc::new(ops),
+            Who::Actor(ORC),
+            Who::Actor(HUME),
+            None,
+            1.0,
+        )));
+        let f = Frame {
+            dt: 1.0,
+            seconds: 1.0 / 60.0,
+            dayfrac: 0.5,
+            view: Mat4::IDENTITY,
+            view_rot: Mat4::IDENTITY,
+            eye: Vec3::new(0.0, -2.0, -10.0),
+            draw_distance: 2000.0,
+            area_light: Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        };
         fx.tick(&f, &Two);
         let (p, yaw) = fx.pinned[&ORC];
         assert!(p.distance(Vec3::new(2.0, -1.0, 0.0)) < 1e-5, "{p}");
-        assert!((yaw.unwrap() - std::f32::consts::PI).abs() < 1e-5, "{yaw:?}");
+        assert!(
+            (yaw.unwrap() - std::f32::consts::PI).abs() < 1e-5,
+            "{yaw:?}"
+        );
         for _ in 0..31 {
             fx.tick(&f, &Two);
         }
@@ -2753,15 +3914,58 @@ mod tests {
     #[test]
     fn record_loop_waits() {
         let cfg = crate::config::Config::load();
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else {
+            return;
+        };
         let mut fx = Effects::new();
         fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
-        let rec = |id| ActionTarget { id, results: vec![ActionResult::default()] };
-        let a = Action { actor: HUME, category: 4, arg: 0, info: 0, targets: vec![rec(HUME), rec(ORC), rec(HUME)], seq: 0 };
-        let ctx = Rc::new(RefCell::new(ActionCtx { action: a, cur: 0, swing: None, printed: vec![false; 3], client_swing: false, last: 0 }));
-        let ops = vec![sop(0x31, 0, 0, 0), sop(0x01, 15, 0, 0), sop(0x32, 215, 0, 0), sop(0x00, 0, 0, 0)];
-        fx.tasks.push(Some(Task::new((fx.reg.global.unwrap(), 0), Rc::new(ops), Who::Actor(HUME), Who::Actor(HUME), Some(ctx.clone()), 1.0)));
-        let f = Frame { dt: 1.0, seconds: 1.0 / 60.0, dayfrac: 0.5, view: Mat4::IDENTITY, view_rot: Mat4::IDENTITY, eye: Vec3::ZERO, draw_distance: 2000.0, area_light: Vec3::ONE, focal: 350.0, moon_phase: 0, weekday: 0 };
+        let rec = |id| ActionTarget {
+            id,
+            results: vec![ActionResult::default()],
+        };
+        let a = Action {
+            actor: HUME,
+            category: 4,
+            arg: 0,
+            info: 0,
+            targets: vec![rec(HUME), rec(ORC), rec(HUME)],
+            seq: 0,
+        };
+        let ctx = Rc::new(RefCell::new(ActionCtx {
+            action: a,
+            cur: 0,
+            swing: None,
+            printed: vec![false; 3],
+            client_swing: false,
+            last: 0,
+        }));
+        let ops = vec![
+            sop(0x31, 0, 0, 0),
+            sop(0x01, 15, 0, 0),
+            sop(0x32, 215, 0, 0),
+            sop(0x00, 0, 0, 0),
+        ];
+        fx.tasks.push(Some(Task::new(
+            (fx.reg.global.unwrap(), 0),
+            Rc::new(ops),
+            Who::Actor(HUME),
+            Who::Actor(HUME),
+            Some(ctx.clone()),
+            1.0,
+        )));
+        let f = Frame {
+            dt: 1.0,
+            seconds: 1.0 / 60.0,
+            dayfrac: 0.5,
+            view: Mat4::IDENTITY,
+            view_rot: Mat4::IDENTITY,
+            eye: Vec3::ZERO,
+            draw_distance: 2000.0,
+            area_light: Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        };
         let mut came = Vec::new();
         let mut end = None;
         for tick in 0..300 {
@@ -2784,22 +3988,60 @@ mod tests {
     #[test]
     fn root_end_restarts_status_motion() {
         let cfg = crate::config::Config::load();
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
-        let f = Frame { dt: 1.0, seconds: 1.0 / 60.0, dayfrac: 0.5, view: Mat4::IDENTITY, view_rot: Mat4::IDENTITY, eye: Vec3::new(0.0, -2.0, -10.0), draw_distance: 2000.0, area_light: Vec3::ONE, focal: 350.0, moon_phase: 0, weekday: 0 };
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else {
+            return;
+        };
+        let f = Frame {
+            dt: 1.0,
+            seconds: 1.0 / 60.0,
+            dayfrac: 0.5,
+            view: Mat4::IDENTITY,
+            view_rot: Mat4::IDENTITY,
+            eye: Vec3::new(0.0, -2.0, -10.0),
+            draw_distance: 2000.0,
+            area_light: Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        };
         let run = |kill_at: Option<usize>| -> Vec<(usize, u32, bool)> {
             let mut fx = Effects::new();
             fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
             let mut root = vec![0u8; 16];
             root[..8].copy_from_slice(&[0x2e, 4, 0, 0, 0, 0, 30, 0]);
-            let ops = vec![SOp { code: 0x2e, wait: 0, dur: 30, raw: root }, SOp { code: 0x01, wait: 200, dur: 0, raw: vec![1, 2, 0, 0, 200, 0, 0, 0] }];
-            fx.tasks.push(Some(Task::new((fx.reg.global.unwrap(), 0), Rc::new(ops), Who::Actor(HUME), Who::Actor(ORC), None, 1.0)));
+            let ops = vec![
+                SOp {
+                    code: 0x2e,
+                    wait: 0,
+                    dur: 30,
+                    raw: root,
+                },
+                SOp {
+                    code: 0x01,
+                    wait: 200,
+                    dur: 0,
+                    raw: vec![1, 2, 0, 0, 200, 0, 0, 0],
+                },
+            ];
+            fx.tasks.push(Some(Task::new(
+                (fx.reg.global.unwrap(), 0),
+                Rc::new(ops),
+                Who::Actor(HUME),
+                Who::Actor(ORC),
+                None,
+                1.0,
+            )));
             let mut out = Vec::new();
             for frame in 1..=40 {
                 if kill_at == Some(frame) {
                     fx.tasks.clear();
                 }
                 fx.tick(&f, &Two);
-                out.extend(fx.status_restarts.drain(..).map(|id| (frame, id, fx.rooted.contains(&HUME))));
+                out.extend(
+                    fx.status_restarts
+                        .drain(..)
+                        .map(|id| (frame, id, fx.rooted.contains(&HUME))),
+                );
                 if frame == 5 {
                     assert!(fx.rooted.contains(&HUME));
                 }
@@ -2825,15 +4067,39 @@ mod tests {
         raw[4..6].copy_from_slice(&wait.to_le_bytes());
         raw[6..8].copy_from_slice(&dur.to_le_bytes());
         raw[8..12].copy_from_slice(&v.to_le_bytes());
-        SOp { code, wait, dur, raw }
+        SOp {
+            code,
+            wait,
+            dur,
+            raw,
+        }
     }
 
     fn color_task(fx: &mut Effects, ops: Vec<SOp>) {
-        fx.tasks.push(Some(Task::new((fx.reg.global.unwrap(), 0), Rc::new(ops), Who::Actor(ORC), Who::Actor(HUME), None, 1.0)));
+        fx.tasks.push(Some(Task::new(
+            (fx.reg.global.unwrap(), 0),
+            Rc::new(ops),
+            Who::Actor(ORC),
+            Who::Actor(HUME),
+            None,
+            1.0,
+        )));
     }
 
     fn color_tick(fx: &mut Effects) -> Vec<crate::fx::ColorOp> {
-        let f = Frame { dt: 1.0, seconds: 1.0 / 60.0, dayfrac: 0.5, view: Mat4::IDENTITY, view_rot: Mat4::IDENTITY, eye: Vec3::new(0.0, -2.0, -10.0), draw_distance: 2000.0, area_light: Vec3::ONE, focal: 350.0, moon_phase: 0, weekday: 0 };
+        let f = Frame {
+            dt: 1.0,
+            seconds: 1.0 / 60.0,
+            dayfrac: 0.5,
+            view: Mat4::IDENTITY,
+            view_rot: Mat4::IDENTITY,
+            eye: Vec3::new(0.0, -2.0, -10.0),
+            draw_distance: 2000.0,
+            area_light: Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        };
         fx.tick(&f, &Two);
         std::mem::take(&mut fx.fades)
     }
@@ -2843,13 +4109,38 @@ mod tests {
     fn color_lock() {
         use crate::fx::ColorOp::*;
         let Some(mut fx) = color_fx() else { return };
-        color_task(&mut fx, vec![sop(0x88, 0, 100, 0), sop(0x01, 200, 0, 0), sop(0, 0, 0, 0)]);
+        color_task(
+            &mut fx,
+            vec![sop(0x88, 0, 100, 0), sop(0x01, 200, 0, 0), sop(0, 0, 0, 0)],
+        );
         color_tick(&mut fx);
-        color_task(&mut fx, vec![sop(0x29, 0, 30, 0x8000_0000), sop(0x01, 100, 0, 0), sop(0, 0, 0, 0)]);
+        color_task(
+            &mut fx,
+            vec![
+                sop(0x29, 0, 30, 0x8000_0000),
+                sop(0x01, 100, 0, 0),
+                sop(0, 0, 0, 0),
+            ],
+        );
         assert_eq!(color_tick(&mut fx), []);
         let Some(mut fx) = color_fx() else { return };
-        color_task(&mut fx, vec![sop(0x88, 0, 100, 0), sop(0x29, 0, 30, 0x8000_0000), sop(0x01, 100, 0, 0), sop(0, 0, 0, 0)]);
-        assert_eq!(color_tick(&mut fx), [Drive { actor: ORC, argb: 0x8000_0000, ticks: 30.0 }]);
+        color_task(
+            &mut fx,
+            vec![
+                sop(0x88, 0, 100, 0),
+                sop(0x29, 0, 30, 0x8000_0000),
+                sop(0x01, 100, 0, 0),
+                sop(0, 0, 0, 0),
+            ],
+        );
+        assert_eq!(
+            color_tick(&mut fx),
+            [Drive {
+                actor: ORC,
+                argb: 0x8000_0000,
+                ticks: 30.0
+            }]
+        );
     }
 
     /// A drive whose scheduler ends first stops where it is; 0xa0 lands on its target, at once when locked out.
@@ -2857,15 +4148,47 @@ mod tests {
     fn color_drive_ends() {
         use crate::fx::ColorOp::*;
         let Some(mut fx) = color_fx() else { return };
-        color_task(&mut fx, vec![sop(0x29, 10, 60, 0x8000_0000), sop(0, 0, 0, 0)]);
+        color_task(
+            &mut fx,
+            vec![sop(0x29, 10, 60, 0x8000_0000), sop(0, 0, 0, 0)],
+        );
         let ops: Vec<_> = (0..20).flat_map(|_| color_tick(&mut fx)).collect();
-        assert_eq!(ops, [Drive { actor: ORC, argb: 0x8000_0000, ticks: 60.0 }, Freeze(ORC)]);
-        color_task(&mut fx, vec![sop(0xa0, 10, 60, 0x8000_0000), sop(0, 0, 0, 0)]);
+        assert_eq!(
+            ops,
+            [
+                Drive {
+                    actor: ORC,
+                    argb: 0x8000_0000,
+                    ticks: 60.0
+                },
+                Freeze(ORC)
+            ]
+        );
+        color_task(
+            &mut fx,
+            vec![sop(0xa0, 10, 60, 0x8000_0000), sop(0, 0, 0, 0)],
+        );
         let ops: Vec<_> = (0..20).flat_map(|_| color_tick(&mut fx)).collect();
-        assert_eq!(ops, [Drive { actor: ORC, argb: 0x8000_0000, ticks: 60.0 }, Snap(ORC, 0x8000_0000)]);
-        color_task(&mut fx, vec![sop(0x88, 0, 100, 0), sop(0x01, 200, 0, 0), sop(0, 0, 0, 0)]);
+        assert_eq!(
+            ops,
+            [
+                Drive {
+                    actor: ORC,
+                    argb: 0x8000_0000,
+                    ticks: 60.0
+                },
+                Snap(ORC, 0x8000_0000)
+            ]
+        );
+        color_task(
+            &mut fx,
+            vec![sop(0x88, 0, 100, 0), sop(0x01, 200, 0, 0), sop(0, 0, 0, 0)],
+        );
         color_tick(&mut fx);
-        color_task(&mut fx, vec![sop(0xa0, 10, 60, 0x4000_0000), sop(0, 0, 0, 0)]);
+        color_task(
+            &mut fx,
+            vec![sop(0xa0, 10, 60, 0x4000_0000), sop(0, 0, 0, 0)],
+        );
         assert_eq!(color_tick(&mut fx), [Snap(ORC, 0x4000_0000)]);
     }
 
@@ -2874,11 +4197,35 @@ mod tests {
     fn blocked_drive_stops_running_fade() {
         use crate::fx::ColorOp::*;
         let Some(mut fx) = color_fx() else { return };
-        color_task(&mut fx, vec![sop(0x29, 0, 60, 0x8000_0000), sop(0x01, 200, 0, 0), sop(0, 0, 0, 0)]);
-        assert_eq!(color_tick(&mut fx), [Drive { actor: ORC, argb: 0x8000_0000, ticks: 60.0 }]);
-        color_task(&mut fx, vec![sop(0x88, 0, 100, 0), sop(0x01, 200, 0, 0), sop(0, 0, 0, 0)]);
+        color_task(
+            &mut fx,
+            vec![
+                sop(0x29, 0, 60, 0x8000_0000),
+                sop(0x01, 200, 0, 0),
+                sop(0, 0, 0, 0),
+            ],
+        );
+        assert_eq!(
+            color_tick(&mut fx),
+            [Drive {
+                actor: ORC,
+                argb: 0x8000_0000,
+                ticks: 60.0
+            }]
+        );
+        color_task(
+            &mut fx,
+            vec![sop(0x88, 0, 100, 0), sop(0x01, 200, 0, 0), sop(0, 0, 0, 0)],
+        );
         color_tick(&mut fx);
-        color_task(&mut fx, vec![sop(0x29, 0, 30, 0x0080_8080), sop(0x01, 100, 0, 0), sop(0, 0, 0, 0)]);
+        color_task(
+            &mut fx,
+            vec![
+                sop(0x29, 0, 30, 0x0080_8080),
+                sop(0x01, 100, 0, 0),
+                sop(0, 0, 0, 0),
+            ],
+        );
         assert_eq!(color_tick(&mut fx), [Freeze(ORC)]);
     }
 
@@ -2886,7 +4233,11 @@ mod tests {
     #[test]
     fn morph_pair_match() {
         let (h, o) = (Who::Actor(HUME), Who::Actor(ORC));
-        assert!(pair_match([o, Who::None], o, h) && pair_match([o, h], o, h) && pair_match([h, o], Who::None, h));
+        assert!(
+            pair_match([o, Who::None], o, h)
+                && pair_match([o, h], o, h)
+                && pair_match([h, o], Who::None, h)
+        );
         assert!(!pair_match([o, o], o, h) && !pair_match([h, Who::None], o, h));
     }
 
@@ -2895,31 +4246,103 @@ mod tests {
     #[test]
     fn morph_static_world_in_place() {
         let cfg = crate::config::Config::load();
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
-        let (Ok(zone), Ok(dat0)) = (index.read(110), index.read(0)) else { return };
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else {
+            return;
+        };
+        let (Ok(zone), Ok(dat0)) = (index.read(110), index.read(0)) else {
+            return;
+        };
         let index = std::sync::Arc::new(index);
-        let f = Frame { dt: 1.0, seconds: 1.0 / 60.0, dayfrac: 0.5, view: Mat4::IDENTITY, view_rot: Mat4::IDENTITY, eye: Vec3::new(0.0, -2.0, -10.0), draw_distance: 2000.0, area_light: Vec3::ONE, focal: 350.0, moon_phase: 0, weekday: 0 };
+        let f = Frame {
+            dt: 1.0,
+            seconds: 1.0 / 60.0,
+            dayfrac: 0.5,
+            view: Mat4::IDENTITY,
+            view_rot: Mat4::IDENTITY,
+            eye: Vec3::new(0.0, -2.0, -10.0),
+            draw_distance: 2000.0,
+            area_light: Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        };
         let morph = |fx: &mut Effects, zl: usize| {
-            let node = fx.reg.libs[zl].find_global(kind::SCHEDULER, u32::from_le_bytes(*b"pks1")).unwrap();
+            let node = fx.reg.libs[zl]
+                .find_global(kind::SCHEDULER, u32::from_le_bytes(*b"pks1"))
+                .unwrap();
             let mut raw = vec![0x3f, 7, 0, 0, 0, 0, 0, 0];
             raw.extend_from_slice(b"yaa0\0\0\0\0idy0\0\0\0\0\0\0\0\0");
-            let ops = vec![SOp { code: 0x3f, wait: 0, dur: 0, raw }, SOp { code: 0x01, wait: 100, dur: 0, raw: vec![1, 2, 0, 0, 100, 0, 0, 0] }];
-            fx.tasks.push(Some(Task::new((zl, node), Rc::new(ops), Who::Actor(HUME), Who::Actor(ORC), None, 1.0)));
+            let ops = vec![
+                SOp {
+                    code: 0x3f,
+                    wait: 0,
+                    dur: 0,
+                    raw,
+                },
+                SOp {
+                    code: 0x01,
+                    wait: 100,
+                    dur: 0,
+                    raw: vec![1, 2, 0, 0, 100, 0, 0, 0],
+                },
+            ];
+            fx.tasks.push(Some(Task::new(
+                (zl, node),
+                Rc::new(ops),
+                Who::Actor(HUME),
+                Who::Actor(ORC),
+                None,
+                1.0,
+            )));
         };
         let live = |fx: &Effects, n: &[u8; 4]| -> Vec<(usize, Vec<u32>, Option<u32>)> {
-            fx.insts.iter().enumerate().filter_map(|(i, x)| x.as_ref().filter(|x| x.name == *n).map(|x| (i, x.live.clone(), x.parent_elem))).collect()
+            fx.insts
+                .iter()
+                .enumerate()
+                .filter_map(|(i, x)| {
+                    x.as_ref()
+                        .filter(|x| x.name == *n)
+                        .map(|x| (i, x.live.clone(), x.parent_elem))
+                })
+                .collect()
         };
         let mut fx = Effects::new();
         fx.set_index(index.clone());
         fx.set_global(Library::load(0, dat0.clone()).unwrap());
         let zl = fx.load_zone(Library::load(110, zone.clone()).unwrap());
-        let node = fx.reg.libs[zl].find_global(kind::SCHEDULER, u32::from_le_bytes(*b"pks1")).unwrap();
-        let ga = fx.reg.resolve(zl, node, kind::GENERATOR, u32::from_le_bytes(*b"yaa0")).unwrap();
-        let of_a = |fx: &Effects| fx.insts.iter().flatten().filter(|x| x.src == ga).flat_map(|x| x.live.clone()).collect::<Vec<u32>>();
+        let node = fx.reg.libs[zl]
+            .find_global(kind::SCHEDULER, u32::from_le_bytes(*b"pks1"))
+            .unwrap();
+        let ga = fx
+            .reg
+            .resolve(zl, node, kind::GENERATOR, u32::from_le_bytes(*b"yaa0"))
+            .unwrap();
+        let of_a = |fx: &Effects| {
+            fx.insts
+                .iter()
+                .flatten()
+                .filter(|x| x.src == ga)
+                .flat_map(|x| x.live.clone())
+                .collect::<Vec<u32>>()
+        };
         // The camera on yaa0's emission point (its op 0x0a / 0x15 gates).
-        let p = fx.insts.iter().flatten().find(|x| x.src == ga).and_then(|x| x.streams[1].first().map(|o| Vec3::new(o.f32(5), o.f32(6), o.f32(7)))).unwrap();
+        let p = fx
+            .insts
+            .iter()
+            .flatten()
+            .find(|x| x.src == ga)
+            .and_then(|x| {
+                x.streams[1]
+                    .first()
+                    .map(|o| Vec3::new(o.f32(5), o.f32(6), o.f32(7)))
+            })
+            .unwrap();
         let eye = p + Vec3::new(0.0, -2.0, 10.0);
-        let f = Frame { eye, view: glam::camera::rh::view::look_at_mat4(eye, p, Vec3::NEG_Y), ..f };
+        let f = Frame {
+            eye,
+            view: glam::camera::rh::view::look_at_mat4(eye, p, Vec3::NEG_Y),
+            ..f
+        };
         let mut elem = None;
         for _ in 0..600 {
             fx.tick(&f, &Two);
@@ -2928,11 +4351,17 @@ mod tests {
                 break;
             }
         }
-        let Some(e) = elem else { panic!("pks1's yaa0 never emits") };
+        let Some(e) = elem else {
+            panic!("pks1's yaa0 never emits")
+        };
         morph(&mut fx, zl);
         fx.tick(&f, &Two);
         assert!(of_a(&fx).is_empty(), "{:?}", of_a(&fx));
-        assert!(live(&fx, b"idy0").iter().any(|x| x.2 == Some(e)), "{:?}", live(&fx, b"idy0"));
+        assert!(
+            live(&fx, b"idy0").iter().any(|x| x.2 == Some(e)),
+            "{:?}",
+            live(&fx, b"idy0")
+        );
         // No yaa0 running: no idy0.
         let mut fx = Effects::new();
         fx.set_index(index.clone());
@@ -2974,7 +4403,19 @@ mod tests {
     }
 
     fn gen_insts(fx: &Effects) -> Vec<(String, f32, bool, [Who; 2])> {
-        fx.insts.iter().flatten().filter(|x| x.owner == Owner::Actor(ORC)).map(|x| (String::from_utf8_lossy(&x.name).into_owned(), x.elapsed, x.held, x.actors)).collect()
+        fx.insts
+            .iter()
+            .flatten()
+            .filter(|x| x.owner == Owner::Actor(ORC))
+            .map(|x| {
+                (
+                    String::from_utf8_lossy(&x.name).into_owned(),
+                    x.elapsed,
+                    x.held,
+                    x.actors,
+                )
+            })
+            .collect()
     }
 
     /// FUN_10085a50 / FUN_10085a10: model 1526's looping `g000` goes while the model is hidden and starts fresh when
@@ -2982,7 +4423,9 @@ mod tests {
     #[test]
     fn model_gens_unhide() {
         let cfg = crate::config::Config::load();
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else {
+            return;
+        };
         let index = std::sync::Arc::new(index);
         let mut fx = Effects::new();
         fx.set_index(index.clone());
@@ -2992,15 +4435,42 @@ mod tests {
             fx.poll_loads();
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        let a = Hideable { files: vec![1526], hidden: std::cell::Cell::new(false) };
-        let f = Frame { dt: 1.0, seconds: 1.0 / 60.0, dayfrac: 0.5, view: Mat4::IDENTITY, view_rot: Mat4::IDENTITY, eye: Vec3::new(0.0, -2.0, -10.0), draw_distance: 2000.0, area_light: Vec3::ONE, focal: 350.0, moon_phase: 0, weekday: 0 };
+        let a = Hideable {
+            files: vec![1526],
+            hidden: std::cell::Cell::new(false),
+        };
+        let f = Frame {
+            dt: 1.0,
+            seconds: 1.0 / 60.0,
+            dayfrac: 0.5,
+            view: Mat4::IDENTITY,
+            view_rot: Mat4::IDENTITY,
+            eye: Vec3::new(0.0, -2.0, -10.0),
+            draw_distance: 2000.0,
+            area_light: Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        };
         for _ in 0..30 {
             fx.tick(&f, &a);
         }
         let before = gen_insts(&fx);
         assert!(before.iter().any(|x| x.0 == "g000"), "{before:?}");
-        let ops = vec![SOp { code: 0x01, wait: 500, dur: 0, raw: vec![1, 2, 0, 0, 0xf4, 1, 0, 0] }];
-        fx.tasks.push(Some(Task::new((fx.reg.global.unwrap(), 0), Rc::new(ops), Who::Actor(ORC), Who::Actor(HUME), None, 1.0)));
+        let ops = vec![SOp {
+            code: 0x01,
+            wait: 500,
+            dur: 0,
+            raw: vec![1, 2, 0, 0, 0xf4, 1, 0, 0],
+        }];
+        fx.tasks.push(Some(Task::new(
+            (fx.reg.global.unwrap(), 0),
+            Rc::new(ops),
+            Who::Actor(ORC),
+            Who::Actor(HUME),
+            None,
+            1.0,
+        )));
         a.hidden.set(true);
         fx.tick(&f, &a);
         let hidden = gen_insts(&fx);
@@ -3040,7 +4510,11 @@ mod tests {
             false
         }
         fn models(&self) -> Vec<(u32, Vec<u32>)> {
-            if self.present.get() { vec![(ORC, self.files.clone())] } else { Vec::new() }
+            if self.present.get() {
+                vec![(ORC, self.files.clone())]
+            } else {
+                Vec::new()
+            }
         }
         // mse0 takes ids1 -> efon with sub-animation 1 (ids0 -> efof with 0).
         fn sub_anim(&self, _: u32) -> u8 {
@@ -3054,7 +4528,9 @@ mod tests {
     #[test]
     fn despawn_takes_clones() {
         let cfg = crate::config::Config::load();
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else {
+            return;
+        };
         let index = std::sync::Arc::new(index);
         let mut fx = Effects::new();
         fx.set_index(index.clone());
@@ -3065,9 +4541,30 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         let model = fx.reg.lib_of(52742).unwrap();
-        let a = Coming { files: vec![52742], present: std::cell::Cell::new(true) };
-        let f = Frame { dt: 1.0, seconds: 1.0 / 60.0, dayfrac: 0.5, view: Mat4::IDENTITY, view_rot: Mat4::IDENTITY, eye: Vec3::new(0.0, -2.0, -10.0), draw_distance: 2000.0, area_light: Vec3::ONE, focal: 350.0, moon_phase: 0, weekday: 0 };
-        let live = |fx: &Effects| fx.insts.iter().flatten().filter(|x| x.src.0 == model).count();
+        let a = Coming {
+            files: vec![52742],
+            present: std::cell::Cell::new(true),
+        };
+        let f = Frame {
+            dt: 1.0,
+            seconds: 1.0 / 60.0,
+            dayfrac: 0.5,
+            view: Mat4::IDENTITY,
+            view_rot: Mat4::IDENTITY,
+            eye: Vec3::new(0.0, -2.0, -10.0),
+            draw_distance: 2000.0,
+            area_light: Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        };
+        let live = |fx: &Effects| {
+            fx.insts
+                .iter()
+                .flatten()
+                .filter(|x| x.src.0 == model)
+                .count()
+        };
         let mut counts = Vec::new();
         for _ in 0..3 {
             a.present.set(true);
@@ -3082,22 +4579,47 @@ mod tests {
                 fx.tick(&f, &a);
             }
             assert_eq!(live(&fx), 0);
-            assert!(fx.tasks.iter().flatten().all(|t| t.a1 != Who::Actor(ORC) && t.a2 != Who::Actor(ORC)));
+            assert!(
+                fx.tasks
+                    .iter()
+                    .flatten()
+                    .all(|t| t.a1 != Who::Actor(ORC) && t.a2 != Who::Actor(ORC))
+            );
         }
-        assert!(counts[0] > 0 && counts.iter().all(|&c| c == counts[0]), "{counts:?}");
+        assert!(
+            counts[0] > 0 && counts.iter().all(|&c| c == counts[0]),
+            "{counts:?}"
+        );
     }
 
     /// FUN_100d62c0: a part file's looping generators start on the actor too (Hume M main 8700: `gm01..gm06`).
     #[test]
     fn part_file_gens() {
         let cfg = crate::config::Config::load();
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else {
+            return;
+        };
         let index = std::sync::Arc::new(index);
         let mut fx = Effects::new();
         fx.set_index(index.clone());
         fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
-        let a = Hideable { files: vec![7072, 8700], hidden: std::cell::Cell::new(false) };
-        let f = Frame { dt: 1.0, seconds: 1.0 / 60.0, dayfrac: 0.5, view: Mat4::IDENTITY, view_rot: Mat4::IDENTITY, eye: Vec3::new(0.0, -2.0, -10.0), draw_distance: 2000.0, area_light: Vec3::ONE, focal: 350.0, moon_phase: 0, weekday: 0 };
+        let a = Hideable {
+            files: vec![7072, 8700],
+            hidden: std::cell::Cell::new(false),
+        };
+        let f = Frame {
+            dt: 1.0,
+            seconds: 1.0 / 60.0,
+            dayfrac: 0.5,
+            view: Mat4::IDENTITY,
+            view_rot: Mat4::IDENTITY,
+            eye: Vec3::new(0.0, -2.0, -10.0),
+            draw_distance: 2000.0,
+            area_light: Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        };
         for _ in 0..200 {
             fx.poll_loads();
             fx.tick(&f, &a);
@@ -3110,7 +4632,11 @@ mod tests {
         names.sort();
         names.dedup();
         assert_eq!(names, ["gm01", "gm02", "gm03", "gm04", "gm05", "gm06"]);
-        assert!(gen_insts(&fx).iter().all(|x| x.3 == [Who::Actor(ORC), Who::None]));
+        assert!(
+            gen_insts(&fx)
+                .iter()
+                .all(|x| x.3 == [Who::Actor(ORC), Who::None])
+        );
     }
 
     /// A posed stand-in: point k's frame RotY(0.5) at height k / 100 above its bone, the actor at x 1, size 2.
@@ -3136,7 +4662,10 @@ mod tests {
             Vec::new()
         }
         fn point_frame(&self, _: u32, k: u16) -> Option<Mat4> {
-            Some(Mat4::from_translation(Vec3::new(0.0, -(k as f32) / 100.0, 0.0)) * Mat4::from_rotation_y(0.5))
+            Some(
+                Mat4::from_translation(Vec3::new(0.0, -(k as f32) / 100.0, 0.0))
+                    * Mat4::from_rotation_y(0.5),
+            )
         }
     }
 
@@ -3145,7 +4674,16 @@ mod tests {
         let index = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()).ok()?;
         let mut fx = Effects::new();
         let lib = Library::load(file, index.read(file).ok()?).ok()?;
-        let node = lib.gens.iter().find(|g| g.attach_mode() == mode && pc.is_none_or(|pc| ((((g.attach >> 18) & 1) << 6) | ((g.attach >> 4) & 0x3f)) as u16 == pc))?.node;
+        let node = lib
+            .gens
+            .iter()
+            .find(|g| {
+                g.attach_mode() == mode
+                    && pc.is_none_or(|pc| {
+                        ((((g.attach >> 18) & 1) << 6) | ((g.attach >> 4) & 0x3f)) as u16 == pc
+                    })
+            })?
+            .node;
         let l = fx.reg.add(lib);
         let i = fx.start((l, node), super::super::Owner::Zone)?;
         fx.insts[i].as_mut()?.actors = [Who::Actor(HUME), Who::Actor(ORC)];
@@ -3157,16 +4695,25 @@ mod tests {
     /// Mode 9 with point 0x36 (Bisection, 87053): FUN_1003bd90 takes point 0x7e, and the frame's rows keep the size 2.
     #[test]
     fn attach_bone_frame() {
-        let Some((m, _)) = attached(87053, 9, Some(0x36), &Skel) else { return };
+        let Some((m, _)) = attached(87053, 9, Some(0x36), &Skel) else {
+            return;
+        };
         let want = Mat4::from_translation(Vec3::new(1.0, -1.26, 0.0)) * Mat4::from_rotation_y(0.5);
-        let want = Mat4::from_cols(want.x_axis * 2.0, want.y_axis * 2.0, want.z_axis * 2.0, want.w_axis);
+        let want = Mat4::from_cols(
+            want.x_axis * 2.0,
+            want.y_axis * 2.0,
+            want.z_axis * 2.0,
+            want.w_axis,
+        );
         assert!(m.abs_diff_eq(want, 1e-5), "{m} != {want}");
     }
 
     /// Mode 0x14 (56775 alex): the voyage matrix, identity off a ship's voyage.
     #[test]
     fn attach_voyage_identity() {
-        let Some((m, a)) = attached(56775, 0x14, None, &Two) else { return };
+        let Some((m, a)) = attached(56775, 0x14, None, &Two) else {
+            return;
+        };
         assert_eq!((m, a), (Mat4::IDENTITY, Vec3::ONE));
     }
 
@@ -3180,7 +4727,17 @@ mod tests {
             let s = fx.shine.entry(7).or_default();
             s.refract = true;
             s.level = start;
-            fx.shine_drives.push(ShineDrive { id: 1, owner: 1, actor: 7, left: total, kind: ShineKind::Refract { start, target, total } });
+            fx.shine_drives.push(ShineDrive {
+                id: 1,
+                owner: 1,
+                actor: 7,
+                left: total,
+                kind: ShineKind::Refract {
+                    start,
+                    target,
+                    total,
+                },
+            });
         };
         drive(&mut fx, 0.1, 0.12, 28.0);
         fx.step_shine(14.0, &[1]);
@@ -3200,21 +4757,59 @@ mod tests {
     #[test]
     fn death_pick_op() {
         let cfg = crate::config::Config::load();
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else {
+            return;
+        };
         let index = std::sync::Arc::new(index);
         let mut fx = Effects::new();
         fx.set_index(index.clone());
         fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
-        let f = Frame { dt: 1.0, seconds: 1.0 / 60.0, dayfrac: 0.5, view: Mat4::IDENTITY, view_rot: Mat4::IDENTITY, eye: Vec3::new(0.0, -2.0, -10.0), draw_distance: 2000.0, area_light: Vec3::ONE, focal: 350.0, moon_phase: 0, weekday: 0 };
+        let f = Frame {
+            dt: 1.0,
+            seconds: 1.0 / 60.0,
+            dayfrac: 0.5,
+            view: Mat4::IDENTITY,
+            view_rot: Mat4::IDENTITY,
+            eye: Vec3::new(0.0, -2.0, -10.0),
+            draw_distance: 2000.0,
+            area_light: Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        };
         for (v, want) in [(1u8, 1u8), (6, 2)] {
-            let ops = vec![SOp { code: 0xac, wait: 0, dur: 0, raw: vec![0xac, 3, 0, 0, 0, 0, 0, 0, v, 0, 0, 0] }];
-            fx.tasks.push(Some(Task::new((fx.reg.global.unwrap(), 0), Rc::new(ops), Who::Actor(ORC), Who::Actor(HUME), None, 1.0)));
+            let ops = vec![SOp {
+                code: 0xac,
+                wait: 0,
+                dur: 0,
+                raw: vec![0xac, 3, 0, 0, 0, 0, 0, 0, v, 0, 0, 0],
+            }];
+            fx.tasks.push(Some(Task::new(
+                (fx.reg.global.unwrap(), 0),
+                Rc::new(ops),
+                Who::Actor(ORC),
+                Who::Actor(HUME),
+                None,
+                1.0,
+            )));
             fx.tick(&f, &Two);
             assert_eq!(std::mem::take(&mut fx.death_picks), vec![(ORC, want)]);
         }
         // Op 0xb7 (Valaineral's init): the race code, at once.
-        let ops = vec![SOp { code: 0xb7, wait: 0, dur: 0, raw: vec![0xb7, 3, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0] }];
-        fx.tasks.push(Some(Task::new((fx.reg.global.unwrap(), 0), Rc::new(ops), Who::Actor(ORC), Who::Actor(HUME), None, 1.0)));
+        let ops = vec![SOp {
+            code: 0xb7,
+            wait: 0,
+            dur: 0,
+            raw: vec![0xb7, 3, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0],
+        }];
+        fx.tasks.push(Some(Task::new(
+            (fx.reg.global.unwrap(), 0),
+            Rc::new(ops),
+            Who::Actor(ORC),
+            Who::Actor(HUME),
+            None,
+            1.0,
+        )));
         fx.tick(&f, &Two);
         assert_eq!(std::mem::take(&mut fx.races), vec![(ORC, 3)]);
     }
@@ -3222,11 +4817,17 @@ mod tests {
     /// DAT 50713 (Core Meltdown) main picks 1 at tick 0; the Ghrah model 2461's `1ead` puts it back to 0 at tick 262.
     #[test]
     fn death_pick_data() {
-        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir())
+        else {
+            return;
+        };
         let find = |file: u32, name: &[u8; 4]| -> Option<(u32, u32)> {
             let bytes = index.read(file).ok()?;
             let lib = Library::load(file, bytes.clone()).ok()?;
-            let n = lib.find_global(crate::dat::generator::kind::SCHEDULER, u32::from_le_bytes(*name))?;
+            let n = lib.find_global(
+                crate::dat::generator::kind::SCHEDULER,
+                u32::from_le_bytes(*name),
+            )?;
             let ops = crate::dat::sched::ops(&bytes[lib.tree.nodes[n].data.clone()]);
             let mut tick = 0u32;
             // An op's wait runs after it.
@@ -3273,7 +4874,9 @@ mod tests {
     #[test]
     fn failed_file_passed_by() {
         let cfg = crate::config::Config::load();
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else {
+            return;
+        };
         let index = std::sync::Arc::new(index);
         let mut fx = Effects::new();
         fx.set_index(index.clone());
@@ -3353,9 +4956,20 @@ mod tests {
     #[test]
     fn wade_point() {
         let fx = Effects::new();
-        let (_, p) = fx.who_point(Who::Actor(7), 0x35, Who::None, None, Vec3::new(0.1, 0.0, 0.0), &Wader).unwrap();
+        let (_, p) = fx
+            .who_point(
+                Who::Actor(7),
+                0x35,
+                Who::None,
+                None,
+                Vec3::new(0.1, 0.0, 0.0),
+                &Wader,
+            )
+            .unwrap();
         assert_eq!(p, Vec3::new(3.0, -0.5, -2.0));
-        let (_, p) = fx.who_point(Who::Actor(7), 0x35, Who::None, None, Vec3::ZERO, &Walker).unwrap();
+        let (_, p) = fx
+            .who_point(Who::Actor(7), 0x35, Who::None, None, Vec3::ZERO, &Walker)
+            .unwrap();
         assert_eq!(p, Vec3::new(3.0, 0.0, -2.0));
     }
 
@@ -3364,14 +4978,38 @@ mod tests {
     #[test]
     fn wading_ripple() {
         let cfg = crate::config::Config::load();
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
-        let Ok(dll) = std::fs::read(cfg.ffxi_dir().join("FFXiMain.dll")) else { return };
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else {
+            return;
+        };
+        let Ok(dll) = std::fs::read(cfg.ffxi_dir().join("FFXiMain.dll")) else {
+            return;
+        };
         let mut fx = Effects::new();
-        fx.set_keys(std::sync::Arc::new(crate::dat::zone::Keys::from_ffximain(&dll).unwrap()));
+        fx.set_keys(std::sync::Arc::new(
+            crate::dat::zone::Keys::from_ffximain(&dll).unwrap(),
+        ));
         fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
         fx.load_zone(Library::load(201, index.read(201).unwrap()).unwrap());
-        let f = Frame { dt: 1.0, seconds: 1.0 / 60.0, dayfrac: 0.5, view: Mat4::IDENTITY, view_rot: Mat4::IDENTITY, eye: Vec3::new(0.0, -2.0, -10.0), draw_distance: 2000.0, area_light: Vec3::ONE, focal: 350.0, moon_phase: 0, weekday: 0 };
-        let ripples = |fx: &Effects| fx.insts.iter().flatten().filter(|x| &x.name == b"i900").count();
+        let f = Frame {
+            dt: 1.0,
+            seconds: 1.0 / 60.0,
+            dayfrac: 0.5,
+            view: Mat4::IDENTITY,
+            view_rot: Mat4::IDENTITY,
+            eye: Vec3::new(0.0, -2.0, -10.0),
+            draw_distance: 2000.0,
+            area_light: Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        };
+        let ripples = |fx: &Effects| {
+            fx.insts
+                .iter()
+                .flatten()
+                .filter(|x| &x.name == b"i900")
+                .count()
+        };
         fx.wade(7, false, true, Some(false));
         fx.wade(7, true, true, Some(false));
         fx.wade(7, true, true, Some(false));
@@ -3390,19 +5028,56 @@ mod tests {
     #[test]
     fn walk_dust() {
         let cfg = crate::config::Config::load();
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
-        let Ok(dll) = std::fs::read(cfg.ffxi_dir().join("FFXiMain.dll")) else { return };
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else {
+            return;
+        };
+        let Ok(dll) = std::fs::read(cfg.ffxi_dir().join("FFXiMain.dll")) else {
+            return;
+        };
         let mut fx = Effects::new();
-        fx.set_keys(std::sync::Arc::new(crate::dat::zone::Keys::from_ffximain(&dll).unwrap()));
+        fx.set_keys(std::sync::Arc::new(
+            crate::dat::zone::Keys::from_ffximain(&dll).unwrap(),
+        ));
         fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
         fx.load_zone(Library::load(332, index.read(332).unwrap()).unwrap());
-        let f = Frame { dt: 1.0, seconds: 1.0 / 60.0, dayfrac: 0.5, view: Mat4::IDENTITY, view_rot: Mat4::IDENTITY, eye: Vec3::new(0.0, -2.0, -10.0), draw_distance: 2000.0, area_light: Vec3::ONE, focal: 350.0, moon_phase: 0, weekday: 0 };
-        fx.footstep(7, None, Vec3::new(3.0, 0.0, -2.0), Some(*b"0112"), Some(*b"w100"), false, false, 101);
+        let f = Frame {
+            dt: 1.0,
+            seconds: 1.0 / 60.0,
+            dayfrac: 0.5,
+            view: Mat4::IDENTITY,
+            view_rot: Mat4::IDENTITY,
+            eye: Vec3::new(0.0, -2.0, -10.0),
+            draw_distance: 2000.0,
+            area_light: Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        };
+        fx.footstep(
+            7,
+            None,
+            Vec3::new(3.0, 0.0, -2.0),
+            Some(*b"0112"),
+            Some(*b"w100"),
+            false,
+            false,
+            101,
+        );
         fx.tick(&f, &Walker);
-        let dust: Vec<&crate::fx::Instance> = fx.insts.iter().flatten().filter(|x| &x.name == b"w100").collect();
+        let dust: Vec<&crate::fx::Instance> = fx
+            .insts
+            .iter()
+            .flatten()
+            .filter(|x| &x.name == b"w100")
+            .collect();
         assert_eq!(dust.len(), 1);
         let x = dust[0];
-        assert!(x.finished && !x.live.is_empty(), "emitted {} live {}", x.emitted, x.live.len());
+        assert!(
+            x.finished && !x.live.is_empty(),
+            "emitted {} live {}",
+            x.emitted,
+            x.live.len()
+        );
         assert_eq!(x.matrix.map(|m| m.w_axis.truncate()), Some(FOOT));
         for _ in 0..600 {
             fx.tick(&f, &Walker);
@@ -3416,21 +5091,43 @@ mod tests {
     #[test]
     fn flyer_wing_beats() {
         let cfg = crate::config::Config::load();
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else {
+            return;
+        };
         let mut fx = Effects::new();
         fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
         fx.load_zone(Library::load(179, index.read(179).unwrap()).unwrap());
-        let model = fx.reg.add(Library::load(52021, index.read(52021).unwrap()).unwrap());
+        let model = fx
+            .reg
+            .add(Library::load(52021, index.read(52021).unwrap()).unwrap());
         let zone = fx.zone_lib.unwrap();
         let fses = crate::fx::folder_of(&fx.reg.libs[zone], false).unwrap();
         assert!(fx.reg.libs[zone].find_in(fses, 0x3d, *b"01z1").is_none());
         for _ in 0..2 {
-            fx.footstep(9, Some(52021), Vec3::ZERO, Some(*b"01z1"), None, false, false, 101);
+            fx.footstep(
+                9,
+                Some(52021),
+                Vec3::ZERO,
+                Some(*b"01z1"),
+                None,
+                false,
+                false,
+                101,
+            );
             assert_eq!(fx.sounds.last().map(|s| s.se), Some(147001));
             assert_eq!(fx.foot_folder.get(&9).map(|f| f.at.0), Some(model));
         }
         // With no model file to search, the fallback tone.
-        fx.footstep(10, None, Vec3::ZERO, Some(*b"01z1"), None, false, false, 101);
+        fx.footstep(
+            10,
+            None,
+            Vec3::ZERO,
+            Some(*b"01z1"),
+            None,
+            false,
+            false,
+            101,
+        );
         assert_eq!(fx.sounds.last().map(|s| s.se), Some(12));
     }
 
@@ -3439,18 +5136,51 @@ mod tests {
     #[test]
     fn fist_hit_sparks() {
         let cfg = crate::config::Config::load();
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else {
+            return;
+        };
         let index = std::sync::Arc::new(index);
         let mut fx = Effects::new();
         fx.set_index(index.clone());
         fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
-        let hit = ActionResult { kind: 1, scale: 1, value: 7, message: 1, ..Default::default() };
-        let a = Action { actor: HUME, category: 1, arg: u32::from_le_bytes(*b"atk0"), info: 0, targets: vec![ActionTarget { id: ORC, results: vec![hit] }], seq: 0 };
+        let hit = ActionResult {
+            kind: 1,
+            scale: 1,
+            value: 7,
+            message: 1,
+            ..Default::default()
+        };
+        let a = Action {
+            actor: HUME,
+            category: 1,
+            arg: u32::from_le_bytes(*b"atk0"),
+            info: 0,
+            targets: vec![ActionTarget {
+                id: ORC,
+                results: vec![hit],
+            }],
+            seq: 0,
+        };
         fx.on_action(&a, Some("ati0".into()));
-        let f = Frame { dt: 1.0, seconds: 1.0 / 60.0, dayfrac: 0.5, view: Mat4::IDENTITY, view_rot: Mat4::IDENTITY, eye: Vec3::new(0.0, -2.0, -10.0), draw_distance: 2000.0, area_light: Vec3::ONE, focal: 350.0, moon_phase: 0, weekday: 0 };
+        let f = Frame {
+            dt: 1.0,
+            seconds: 1.0 / 60.0,
+            dayfrac: 0.5,
+            view: Mat4::IDENTITY,
+            view_rot: Mat4::IDENTITY,
+            eye: Vec3::new(0.0, -2.0, -10.0),
+            draw_distance: 2000.0,
+            area_light: Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        };
         // Wait for the actors' files first, as a loaded model would have them.
         fx.preload(&[8392, 9672, 7072, 1300]);
-        while [8392, 9672, 7072, 1300].iter().any(|f| fx.reg.lib_of(*f).is_none()) {
+        while [8392, 9672, 7072, 1300]
+            .iter()
+            .any(|f| fx.reg.lib_of(*f).is_none())
+        {
             fx.poll_loads();
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
@@ -3466,15 +5196,39 @@ mod tests {
         }
         // dada at 40 in Hume ati0; damg and its spark 5 ticks later (MODLOG "Effect schedulers").
         for g in ["g010", "g011", "g012", "g013"] {
-            assert!(started.iter().any(|s| s.1 == g && s.0 == 45), "{g}: {started:?}");
+            assert!(
+                started.iter().any(|s| s.1 == g && s.0 == 45),
+                "{g}: {started:?}"
+            );
         }
         // The orc hits back: orc ati0 dada at 36, then chit on the orc plays DAT 0 hit2 at the Hume (a doll).
-        let a = Action { actor: ORC, category: 1, arg: u32::from_le_bytes(*b"atk0"), info: 0, targets: vec![ActionTarget { id: HUME, results: vec![ActionResult { kind: 1, scale: 1, value: 3, message: 1, ..Default::default() }] }], seq: 0 };
+        let a = Action {
+            actor: ORC,
+            category: 1,
+            arg: u32::from_le_bytes(*b"atk0"),
+            info: 0,
+            targets: vec![ActionTarget {
+                id: HUME,
+                results: vec![ActionResult {
+                    kind: 1,
+                    scale: 1,
+                    value: 3,
+                    message: 1,
+                    ..Default::default()
+                }],
+            }],
+            seq: 0,
+        };
         fx.on_action(&a, Some("ati0".into()));
         let mut started: Vec<(u32, String)> = Vec::new();
         for tick in 0..240 {
             fx.tick(&f, &Two);
-            for x in fx.insts.iter().flatten().filter(|x| x.actors[0] == Who::Actor(ORC)) {
+            for x in fx
+                .insts
+                .iter()
+                .flatten()
+                .filter(|x| x.actors[0] == Who::Actor(ORC))
+            {
                 let n = String::from_utf8_lossy(&x.name).into_owned();
                 if !started.iter().any(|s| s.1 == n) {
                     started.push((tick, n));
@@ -3492,32 +5246,90 @@ mod tests {
     #[test]
     fn cure_cast() {
         let cfg = crate::config::Config::load();
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else {
+            return;
+        };
         let index = std::sync::Arc::new(index);
         let mut fx = Effects::new();
         fx.set_index(index.clone());
         fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
         fx.preload(&[8392, 9672, 7072, 1300, 2801]);
-        while [8392, 9672, 7072, 1300, 2801].iter().any(|f| fx.reg.lib_of(*f).is_none()) {
+        while [8392, 9672, 7072, 1300, 2801]
+            .iter()
+            .any(|f| fx.reg.lib_of(*f).is_none())
+        {
             fx.poll_loads();
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        let f = Frame { dt: 1.0, seconds: 1.0 / 60.0, dayfrac: 0.5, view: Mat4::IDENTITY, view_rot: Mat4::IDENTITY, eye: Vec3::new(0.0, -2.0, -10.0), draw_distance: 2000.0, area_light: Vec3::ONE, focal: 350.0, moon_phase: 0, weekday: 0 };
-        let names = |fx: &Effects| -> Vec<String> { fx.insts.iter().flatten().filter(|x| !x.stopping).map(|x| String::from_utf8_lossy(&x.name).into_owned()).collect() };
-        let start = Action { actor: HUME, category: 8, arg: u32::from_le_bytes(*b"cawh"), info: 0, targets: vec![ActionTarget { id: HUME, results: vec![ActionResult::default()] }], seq: 0 };
+        let f = Frame {
+            dt: 1.0,
+            seconds: 1.0 / 60.0,
+            dayfrac: 0.5,
+            view: Mat4::IDENTITY,
+            view_rot: Mat4::IDENTITY,
+            eye: Vec3::new(0.0, -2.0, -10.0),
+            draw_distance: 2000.0,
+            area_light: Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        };
+        let names = |fx: &Effects| -> Vec<String> {
+            fx.insts
+                .iter()
+                .flatten()
+                .filter(|x| !x.stopping)
+                .map(|x| String::from_utf8_lossy(&x.name).into_owned())
+                .collect()
+        };
+        let start = Action {
+            actor: HUME,
+            category: 8,
+            arg: u32::from_le_bytes(*b"cawh"),
+            info: 0,
+            targets: vec![ActionTarget {
+                id: HUME,
+                results: vec![ActionResult::default()],
+            }],
+            seq: 0,
+        };
         fx.on_action(&start, None);
         let mut casting: Vec<String> = Vec::new();
         for _ in 0..60 {
             fx.tick(&f, &Two);
-            casting.extend(names(&fx).into_iter().filter(|n| !casting.contains(n)).collect::<Vec<_>>());
+            casting.extend(
+                names(&fx)
+                    .into_iter()
+                    .filter(|n| !casting.contains(n))
+                    .collect::<Vec<_>>(),
+            );
         }
         for g in ["gn2s", "gn20", "gn21"] {
             assert!(casting.iter().any(|n| n == g), "{g}: {casting:?}");
         }
         // cawh's op 0x05 plays the cast motion mw0? on the caster.
-        let moved: Vec<String> = fx.motions.drain(..).filter_map(|(id, m)| (id == HUME).then_some(m).flatten().map(|m| m.name)).collect();
+        let moved: Vec<String> = fx
+            .motions
+            .drain(..)
+            .filter_map(|(id, m)| (id == HUME).then_some(m).flatten().map(|m| m.name))
+            .collect();
         assert!(moved.iter().any(|n| n == "mw0"), "{moved:?}");
-        let finish = Action { actor: HUME, category: 4, arg: 1, info: 0, targets: vec![ActionTarget { id: ORC, results: vec![ActionResult { animation: 1, message: 7, value: 30, ..Default::default() }] }], seq: 0 };
+        let finish = Action {
+            actor: HUME,
+            category: 4,
+            arg: 1,
+            info: 0,
+            targets: vec![ActionTarget {
+                id: ORC,
+                results: vec![ActionResult {
+                    animation: 1,
+                    message: 7,
+                    value: 30,
+                    ..Default::default()
+                }],
+            }],
+            seq: 0,
+        };
         fx.on_action(&finish, None);
         let mut seen: Vec<String> = Vec::new();
         for _ in 0..200 {
@@ -3532,9 +5344,21 @@ mod tests {
             assert!(seen.iter().any(|n| n == g), "{g}: {seen:?}");
         }
         // 0303 = se 3037 at the target (op 0x53 / 0x0b, far 60).
-        assert!(fx.sound_cmds.iter().any(|c| matches!(c, super::super::sound::SoundCmd::Play { se: 3037, .. })), "{:?}", fx.sound_cmds);
+        assert!(
+            fx.sound_cmds
+                .iter()
+                .any(|c| matches!(c, super::super::sound::SoundCmd::Play { se: 3037, .. })),
+            "{:?}",
+            fx.sound_cmds
+        );
         // stwh deleted gn2s and stopped gn20 / gn21.
-        assert!(!names(&fx).iter().any(|n| n == "gn2s" || n == "gn20" || n == "gn21"), "{:?}", names(&fx));
+        assert!(
+            !names(&fx)
+                .iter()
+                .any(|n| n == "gn2s" || n == "gn20" || n == "gn21"),
+            "{:?}",
+            names(&fx)
+        );
     }
 
     /// A Hume M PC skeleton (race 1) whose list already holds the weapon-skill file.
@@ -3551,7 +5375,11 @@ mod tests {
             1.0
         }
         fn files(&self, id: u32) -> (Vec<u32>, Vec<u32>) {
-            if id == HUME { (vec![8392], vec![33243, 9672, 7072]) } else { Two.files(id) }
+            if id == HUME {
+                (vec![8392], vec![33243, 9672, 7072])
+            } else {
+                Two.files(id)
+            }
         }
         fn hidden(&self, _: u32) -> bool {
             false
@@ -3569,23 +5397,58 @@ mod tests {
     #[test]
     fn weapon_skill_files() {
         assert_eq!(skill_files(3, 16, 1, 0), Some((33243, None)));
-        assert_eq!(skill_files(3, 16, 2, 2), Some((33995 + 16, Some(34507 + 16))));
+        assert_eq!(
+            skill_files(3, 16, 2, 2),
+            Some((33995 + 16, Some(34507 + 16)))
+        );
         assert_eq!(skill_files(3, 0x105, 1, 1), Some((61456, Some(61472))));
         assert_eq!(skill_files(0xe, 3, 2, 2), Some((58428, Some(58684))));
         assert_eq!(skill_files(0xf, 1, 8, 1), Some((97252, Some(97764))));
         let cfg = crate::config::Config::load();
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else {
+            return;
+        };
         let index = std::sync::Arc::new(index);
         let mut fx = Effects::new();
         fx.set_index(index.clone());
         fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
         fx.preload(&[8392, 9672, 7072, 1300, 33243]);
-        while [8392, 9672, 7072, 1300, 33243].iter().any(|f| fx.reg.lib_of(*f).is_none()) {
+        while [8392, 9672, 7072, 1300, 33243]
+            .iter()
+            .any(|f| fx.reg.lib_of(*f).is_none())
+        {
             fx.poll_loads();
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        let f = Frame { dt: 1.0, seconds: 1.0 / 60.0, dayfrac: 0.5, view: Mat4::IDENTITY, view_rot: Mat4::IDENTITY, eye: Vec3::new(0.0, -2.0, -10.0), draw_distance: 2000.0, area_light: Vec3::ONE, focal: 350.0, moon_phase: 0, weekday: 0 };
-        let a = Action { actor: HUME, category: 3, arg: 1, info: 0, targets: vec![ActionTarget { id: ORC, results: vec![ActionResult { animation: 16, message: 185, value: 40, ..Default::default() }] }], seq: 0 };
+        let f = Frame {
+            dt: 1.0,
+            seconds: 1.0 / 60.0,
+            dayfrac: 0.5,
+            view: Mat4::IDENTITY,
+            view_rot: Mat4::IDENTITY,
+            eye: Vec3::new(0.0, -2.0, -10.0),
+            draw_distance: 2000.0,
+            area_light: Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        };
+        let a = Action {
+            actor: HUME,
+            category: 3,
+            arg: 1,
+            info: 0,
+            targets: vec![ActionTarget {
+                id: ORC,
+                results: vec![ActionResult {
+                    animation: 16,
+                    message: 185,
+                    value: 40,
+                    ..Default::default()
+                }],
+            }],
+            seq: 0,
+        };
         fx.on_action(&a, None);
         let mut gens: Vec<String> = Vec::new();
         let mut moves: Vec<String> = Vec::new();
@@ -3640,23 +5503,60 @@ mod tests {
     #[test]
     fn main_needs_ready_targets() {
         let cfg = crate::config::Config::load();
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else {
+            return;
+        };
         let index = std::sync::Arc::new(index);
         let mut fx = Effects::new();
         fx.set_index(index.clone());
         fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
         fx.preload(&[8392, 9672, 7072, 1300, 33243]);
-        while [8392, 9672, 7072, 1300, 33243].iter().any(|f| fx.reg.lib_of(*f).is_none()) {
+        while [8392, 9672, 7072, 1300, 33243]
+            .iter()
+            .any(|f| fx.reg.lib_of(*f).is_none())
+        {
             fx.poll_loads();
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        let f = Frame { dt: 1.0, seconds: 1.0 / 60.0, dayfrac: 0.5, view: Mat4::IDENTITY, view_rot: Mat4::IDENTITY, eye: Vec3::new(0.0, -2.0, -10.0), draw_distance: 2000.0, area_light: Vec3::ONE, focal: 350.0, moon_phase: 0, weekday: 0 };
-        let a = Action { actor: HUME, category: 3, arg: 1, info: 0, targets: vec![ActionTarget { id: ORC, results: vec![ActionResult { animation: 16, message: 185, value: 40, ..Default::default() }] }], seq: 0 };
+        let f = Frame {
+            dt: 1.0,
+            seconds: 1.0 / 60.0,
+            dayfrac: 0.5,
+            view: Mat4::IDENTITY,
+            view_rot: Mat4::IDENTITY,
+            eye: Vec3::new(0.0, -2.0, -10.0),
+            draw_distance: 2000.0,
+            area_light: Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        };
+        let a = Action {
+            actor: HUME,
+            category: 3,
+            arg: 1,
+            info: 0,
+            targets: vec![ActionTarget {
+                id: ORC,
+                results: vec![ActionResult {
+                    animation: 16,
+                    message: 185,
+                    value: 40,
+                    ..Default::default()
+                }],
+            }],
+            seq: 0,
+        };
         fx.on_action(&a, None);
         for _ in 0..5 {
             fx.tick(&f, &OrcLoading);
         }
-        assert!(fx.tasks.iter().flatten().all(|t| fx.reg.libs[t.res.0].tree.nodes[t.res.1].name != *b"main"));
+        assert!(
+            fx.tasks
+                .iter()
+                .flatten()
+                .all(|t| fx.reg.libs[t.res.0].tree.nodes[t.res.1].name != *b"main")
+        );
         assert_eq!(fx.action_prints.len(), 1);
     }
 
@@ -3665,16 +5565,48 @@ mod tests {
     #[test]
     fn skill_files_dropped_at_main_end() {
         let cfg = crate::config::Config::load();
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else {
+            return;
+        };
         let index = std::sync::Arc::new(index);
-        let f = Frame { dt: 1.0, seconds: 1.0 / 60.0, dayfrac: 0.5, view: Mat4::IDENTITY, view_rot: Mat4::IDENTITY, eye: Vec3::new(0.0, -2.0, -10.0), draw_distance: 2000.0, area_light: Vec3::ONE, focal: 350.0, moon_phase: 0, weekday: 0 };
-        let combo = Action { actor: HUME, category: 3, arg: 1, info: 0, targets: vec![ActionTarget { id: ORC, results: vec![ActionResult { animation: 16, message: 185, value: 40, ..Default::default() }] }], seq: 0 };
+        let f = Frame {
+            dt: 1.0,
+            seconds: 1.0 / 60.0,
+            dayfrac: 0.5,
+            view: Mat4::IDENTITY,
+            view_rot: Mat4::IDENTITY,
+            eye: Vec3::new(0.0, -2.0, -10.0),
+            draw_distance: 2000.0,
+            area_light: Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        };
+        let combo = Action {
+            actor: HUME,
+            category: 3,
+            arg: 1,
+            info: 0,
+            targets: vec![ActionTarget {
+                id: ORC,
+                results: vec![ActionResult {
+                    animation: 16,
+                    message: 185,
+                    value: 40,
+                    ..Default::default()
+                }],
+            }],
+            seq: 0,
+        };
         let run = |second: Option<usize>| -> Vec<usize> {
             let mut fx = Effects::new();
             fx.set_index(index.clone());
             fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
             fx.preload(&[8392, 9672, 7072, 1300, 33243]);
-            while [8392, 9672, 7072, 1300, 33243].iter().any(|f| fx.reg.lib_of(*f).is_none()) {
+            while [8392, 9672, 7072, 1300, 33243]
+                .iter()
+                .any(|f| fx.reg.lib_of(*f).is_none())
+            {
                 fx.poll_loads();
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }
@@ -3693,9 +5625,15 @@ mod tests {
             done
         };
         let once = run(None);
-        assert!(once.len() == 1 && (139..=142).contains(&once[0]), "{once:?}");
+        assert!(
+            once.len() == 1 && (139..=142).contains(&once[0]),
+            "{once:?}"
+        );
         let twice = run(Some(60));
-        assert!(twice.len() == 1 && (199..=202).contains(&twice[0]), "{twice:?}");
+        assert!(
+            twice.len() == 1 && (199..=202).contains(&twice[0]),
+            "{twice:?}"
+        );
     }
 }
 
@@ -3735,20 +5673,71 @@ mod skillchain_tests {
     #[test]
     fn impaction_burst() {
         let cfg = crate::config::Config::load();
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else {
+            return;
+        };
         let mut fx = Effects::new();
         let index = std::sync::Arc::new(index);
         fx.set_index(index.clone());
         fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
-        let f = Frame { dt: 1.0, seconds: 1.0 / 60.0, dayfrac: 0.5, view: Mat4::IDENTITY, view_rot: Mat4::IDENTITY, eye: Vec3::new(0.0, -2.0, -10.0), draw_distance: 2000.0, area_light: Vec3::ONE, focal: 350.0, moon_phase: 0, weekday: 0 };
+        let f = Frame {
+            dt: 1.0,
+            seconds: 1.0 / 60.0,
+            dayfrac: 0.5,
+            view: Mat4::IDENTITY,
+            view_rot: Mat4::IDENTITY,
+            eye: Vec3::new(0.0, -2.0, -10.0),
+            draw_distance: 2000.0,
+            area_light: Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        };
         let g = fx.reg.global.unwrap();
-        let proc_ = fx.reg.libs[g].find_global(kind::SCHEDULER, u32::from_le_bytes(*b"proc")).unwrap();
+        let proc_ = fx.reg.libs[g]
+            .find_global(kind::SCHEDULER, u32::from_le_bytes(*b"proc"))
+            .unwrap();
         assert_eq!(fx.sched_ops((g, proc_)).first().map(|o| o.code), Some(0x80));
         for (kind, burst) in [(0u8, false), (14, true)] {
-            let r = ActionResult { animation: 16, message: 185, value: 40, proc: (kind != 0).then_some(Side { kind, info: 0, value: 57, message: 301 }), ..Default::default() };
-            let a = Action { actor: 1, category: 3, arg: 1, info: 0, targets: vec![ActionTarget { id: 2, results: vec![r] }], seq: 0 };
-            let ctx = Rc::new(RefCell::new(ActionCtx { action: a, cur: 0, swing: None, printed: vec![true], last: 0, client_swing: false }));
-            fx.spawn_task((g, proc_), Who::Actor(1), Who::Actor(2), Some(ctx), 1.0, None);
+            let r = ActionResult {
+                animation: 16,
+                message: 185,
+                value: 40,
+                proc: (kind != 0).then_some(Side {
+                    kind,
+                    info: 0,
+                    value: 57,
+                    message: 301,
+                }),
+                ..Default::default()
+            };
+            let a = Action {
+                actor: 1,
+                category: 3,
+                arg: 1,
+                info: 0,
+                targets: vec![ActionTarget {
+                    id: 2,
+                    results: vec![r],
+                }],
+                seq: 0,
+            };
+            let ctx = Rc::new(RefCell::new(ActionCtx {
+                action: a,
+                cur: 0,
+                swing: None,
+                printed: vec![true],
+                last: 0,
+                client_swing: false,
+            }));
+            fx.spawn_task(
+                (g, proc_),
+                Who::Actor(1),
+                Who::Actor(2),
+                Some(ctx),
+                1.0,
+                None,
+            );
             let (mut prints, mut reacts, mut holds) = (Vec::new(), Vec::new(), Vec::new());
             for _ in 0..600 {
                 fx.tick(&f, &Pair);
@@ -3764,7 +5753,12 @@ mod skillchain_tests {
                 assert_eq!(reacts, vec![2]);
                 assert_eq!(holds, vec![(2, 64.0)]);
             } else {
-                assert!(prints.is_empty() && reacts.is_empty() && holds.is_empty() && fx.loads.is_empty());
+                assert!(
+                    prints.is_empty()
+                        && reacts.is_empty()
+                        && holds.is_empty()
+                        && fx.loads.is_empty()
+                );
             }
         }
     }
@@ -3779,12 +5773,26 @@ mod damage_number_tests {
     #[test]
     fn damv_elements() {
         let cfg = crate::config::Config::load();
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else {
+            return;
+        };
         let mut fx = Effects::new();
         let index = std::sync::Arc::new(index);
         fx.set_index(index.clone());
         fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
-        let f = Frame { dt: 1.0, seconds: 1.0 / 60.0, dayfrac: 0.5, view: Mat4::IDENTITY, view_rot: Mat4::IDENTITY, eye: Vec3::new(0.0, -2.0, -10.0), draw_distance: 2000.0, area_light: Vec3::ONE, focal: 350.0, moon_phase: 0, weekday: 0 };
+        let f = Frame {
+            dt: 1.0,
+            seconds: 1.0 / 60.0,
+            dayfrac: 0.5,
+            view: Mat4::IDENTITY,
+            view_rot: Mat4::IDENTITY,
+            eye: Vec3::new(0.0, -2.0, -10.0),
+            draw_distance: 2000.0,
+            area_light: Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        };
         for (kind, glyphs) in [(1u8, vec![1u8, 2, 3, 4]), (3, vec![10])] {
             fx.on_damage_number(kind, 1, 2, 1234, 0x80_40_20);
             let mut seen = Vec::new();
@@ -3795,18 +5803,37 @@ mod damage_number_tests {
                     let n = String::from_utf8_lossy(&x.name).into_owned();
                     if x.parent_elem.is_none() && !seen.contains(&n) {
                         seen.push(n);
-                        assert_eq!(x.dam.as_ref().map(|d| (d.glyphs.clone(), d.rgb)), Some((glyphs.clone(), 0x80_40_20)));
+                        assert_eq!(
+                            x.dam.as_ref().map(|d| (d.glyphs.clone(), d.rgb)),
+                            Some((glyphs.clone(), 0x80_40_20))
+                        );
                     } else if x.parent_elem.is_some() {
                         assert!(x.dam.is_none());
                     }
                 }
                 std::thread::sleep(std::time::Duration::from_millis(1));
-                if seen.len() >= 2 && fx.elems.iter().flatten().any(|c| c.draw == crate::fx::Draw::DamValue) {
+                if seen.len() >= 2
+                    && fx
+                        .elems
+                        .iter()
+                        .flatten()
+                        .any(|c| c.draw == crate::fx::Draw::DamValue)
+                {
                     break;
                 }
             }
-            assert!(fx.elems.iter().flatten().any(|c| c.draw == crate::fx::Draw::DamValue), "{seen:?}");
-            let want: Vec<String> = if kind == 1 { vec!["dam0".into(), "dam1".into()] } else { vec!["mis0".into(), "mis1".into()] };
+            assert!(
+                fx.elems
+                    .iter()
+                    .flatten()
+                    .any(|c| c.draw == crate::fx::Draw::DamValue),
+                "{seen:?}"
+            );
+            let want: Vec<String> = if kind == 1 {
+                vec!["dam0".into(), "dam1".into()]
+            } else {
+                vec!["mis0".into(), "mis1".into()]
+            };
             for g in want {
                 assert!(seen.contains(&g), "{g}: {seen:?}");
             }
@@ -3825,14 +5852,28 @@ mod damage_number_rate_tests {
     #[test]
     fn damv_life_by_frame_rate() {
         let cfg = crate::config::Config::load();
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else {
+            return;
+        };
         let index = std::sync::Arc::new(index);
         let mut lives = Vec::new();
         for dt in [2.0f32, 0.2] {
             let mut fx = Effects::new();
             fx.set_index(index.clone());
             fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
-            let f = Frame { dt, seconds: dt / 60.0, dayfrac: 0.5, view: Mat4::IDENTITY, view_rot: Mat4::IDENTITY, eye: Vec3::new(0.0, -2.0, -10.0), draw_distance: 2000.0, area_light: Vec3::ONE, focal: 350.0, moon_phase: 0, weekday: 0 };
+            let f = Frame {
+                dt,
+                seconds: dt / 60.0,
+                dayfrac: 0.5,
+                view: Mat4::IDENTITY,
+                view_rot: Mat4::IDENTITY,
+                eye: Vec3::new(0.0, -2.0, -10.0),
+                draw_distance: 2000.0,
+                area_light: Vec3::ONE,
+                focal: 350.0,
+                moon_phase: 0,
+                weekday: 0,
+            };
             while fx.reg.lib_of(27).is_none() {
                 fx.poll_loads();
                 std::thread::sleep(std::time::Duration::from_millis(2));
@@ -3842,7 +5883,12 @@ mod damage_number_rate_tests {
             while t < 200.0 {
                 fx.tick(&f, &super::skillchain_tests::Pair);
                 t += dt;
-                if fx.elems.iter().flatten().any(|c| c.draw == crate::fx::Draw::DamValue) {
+                if fx
+                    .elems
+                    .iter()
+                    .flatten()
+                    .any(|c| c.draw == crate::fx::Draw::DamValue)
+                {
                     first.get_or_insert(t);
                     last = t;
                 }
@@ -3850,7 +5896,10 @@ mod damage_number_rate_tests {
             lives.push((first.unwrap_or(0.0), last));
         }
         eprintln!("damv visible ticks (first, last) at 30 / 300 fps: {lives:?}");
-        assert!((lives[0].1 - lives[1].1).abs() <= 2.0 && (lives[0].0 - lives[1].0).abs() <= 2.0, "{lives:?}");
+        assert!(
+            (lives[0].1 - lives[1].1).abs() <= 2.0 && (lives[0].0 - lives[1].0).abs() <= 2.0,
+            "{lives:?}"
+        );
     }
 }
 
@@ -3863,7 +5912,9 @@ mod load_tests {
         fx.preload(&[9672]);
         assert!(!fx.loading.contains(&9672));
         let cfg = crate::config::Config::load();
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else {
+            return;
+        };
         fx.set_index(std::sync::Arc::new(index));
         let t = std::time::Instant::now();
         while fx.lib_for(9672).is_none() && t.elapsed().as_secs() < 10 {
@@ -3916,25 +5967,50 @@ mod auto_tests {
     use crate::dat::generator::fourcc;
 
     fn index() -> Option<std::sync::Arc<crate::dat::DatIndex>> {
-        crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()).ok().map(std::sync::Arc::new)
+        crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir())
+            .ok()
+            .map(std::sync::Arc::new)
     }
 
     /// The scheduler named `name` whose folder path ends with `path`.
     fn sched(lib: &Library, path: &[&str], name: &str) -> usize {
         let want: Vec<[u8; 4]> = path.iter().map(|p| fourcc(p)).collect();
-        lib.tree.of_kind(kind::SCHEDULER).find(|&n| lib.tree.nodes[n].name == fourcc(name) && lib.tree.path(n).ends_with(&want)).unwrap()
+        lib.tree
+            .of_kind(kind::SCHEDULER)
+            .find(|&n| lib.tree.nodes[n].name == fourcc(name) && lib.tree.path(n).ends_with(&want))
+            .unwrap()
     }
 
     fn frame(dayfrac: f32) -> Frame {
-        Frame { dt: 1.0, seconds: 1.0 / 60.0, dayfrac, view: Mat4::IDENTITY, view_rot: Mat4::IDENTITY, eye: Vec3::new(0.0, -2.0, -10.0), draw_distance: 2000.0, area_light: Vec3::ONE, focal: 350.0, moon_phase: 0, weekday: 0 }
+        Frame {
+            dt: 1.0,
+            seconds: 1.0 / 60.0,
+            dayfrac,
+            view: Mat4::IDENTITY,
+            view_rot: Mat4::IDENTITY,
+            eye: Vec3::new(0.0, -2.0, -10.0),
+            draw_distance: 2000.0,
+            area_light: Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        }
     }
 
     /// FUN_10056e10 / e80 / ae0 on the data: the end loops, the windows, op 0xa2's exception.
     #[test]
     fn end_stream_and_auto() {
         let Some(index) = index() else { return };
-        let (Ok(f103), Ok(f202), Ok(f62870)) = (index.read(103), index.read(202), index.read(62870)) else { return };
-        let (l103, l202, l62870) = (Library::load(103, f103).unwrap(), Library::load(202, f202).unwrap(), Library::load(62870, f62870).unwrap());
+        let (Ok(f103), Ok(f202), Ok(f62870)) =
+            (index.read(103), index.read(202), index.read(62870))
+        else {
+            return;
+        };
+        let (l103, l202, l62870) = (
+            Library::load(103, f103).unwrap(),
+            Library::load(202, f202).unwrap(),
+            Library::load(62870, f62870).unwrap(),
+        );
         let d = |l: &Library, n: usize| l.data(n).to_vec();
         let lop0 = d(&l103, sched(&l103, &["s_pa", "effe", "nami"], "lop0"));
         assert!(crate::dat::sched::loops(&lop0) && crate::dat::sched::auto_start(&lop0));
@@ -3942,17 +6018,46 @@ mod auto_tests {
         let s002 = d(&l202, sched(&l202, &["f_la", "mode", "hato"], "s002"));
         assert!(!crate::dat::sched::loops(&s002) && crate::dat::sched::auto_start(&s002));
         assert_eq!(crate::dat::sched::span(&s002), 9380);
-        assert_eq!(crate::dat::sched::span(&d(&l202, sched(&l202, &["f_la", "mode", "hato"], "s001"))), 9000);
-        assert!(!crate::dat::sched::auto_start(&d(&l62870, sched(&l62870, &["m_ev", "bels"], "s000"))));
-        let count = |l: &Library| l.tree.of_kind(kind::SCHEDULER).filter(|&n| crate::dat::sched::auto_start(l.data(n))).count();
+        assert_eq!(
+            crate::dat::sched::span(&d(&l202, sched(&l202, &["f_la", "mode", "hato"], "s001"))),
+            9000
+        );
+        assert!(!crate::dat::sched::auto_start(&d(
+            &l62870,
+            sched(&l62870, &["m_ev", "bels"], "s000")
+        )));
+        let count = |l: &Library| {
+            l.tree
+                .of_kind(kind::SCHEDULER)
+                .filter(|&n| crate::dat::sched::auto_start(l.data(n)))
+                .count()
+        };
         assert_eq!((count(&l202), count(&l103)), (5, 10));
     }
 
     #[test]
     fn vana_windows() {
         let hato = |now| vana_window(now, 2376000, 2592000, 216000, 10800);
-        assert_eq!([hato(2376000), hato(2383200), hato(2484000), hato(2592000), hato(2368800)], [(true, 216000), (true, 208800), (false, 108000), (false, 4968000), (false, 7200)]);
-        assert_eq!(vana_window(432000, 4536000, 1080000, 108000, 10800), (true, 108000));
+        assert_eq!(
+            [
+                hato(2376000),
+                hato(2383200),
+                hato(2484000),
+                hato(2592000),
+                hato(2368800)
+            ],
+            [
+                (true, 216000),
+                (true, 208800),
+                (false, 108000),
+                (false, 4968000),
+                (false, 7200)
+            ]
+        );
+        assert_eq!(
+            vana_window(432000, 4536000, 1080000, 108000, 10800),
+            (true, 108000)
+        );
         assert_eq!(vana_window(18000, 0, 5162400, 43200, 21600), (true, 25200));
         assert_eq!(vana_window(28800, 0, 5162400, 43200, 21600), (true, 14400));
         assert_eq!(vana_window(500, 1000, 1000, 3600, 100), (false, 500));
@@ -3969,16 +6074,33 @@ mod auto_tests {
         let l = fx.load_zone(Library::load(202, index.read(202).unwrap()).unwrap());
         assert_eq!(fx.tasks.iter().flatten().count(), 5);
         let s001 = (l, sched(&fx.reg.libs[l], &["f_la", "mode", "hato"], "s001"));
-        let hatos = |fx: &Effects| fx.insts.iter().flatten().filter(|x| x.name == *b"hato").count();
+        let hatos = |fx: &Effects| {
+            fx.insts
+                .iter()
+                .flatten()
+                .filter(|x| x.name == *b"hato")
+                .count()
+        };
         let mut seen = Vec::new();
         for i in 0..6 {
-            fx.tick(&frame((2375880 + 25 * i) as f32 / VANA_DAY as f32), &crate::fx::NoActors);
-            let cd = fx.tasks.iter().flatten().find(|t| t.res == s001 && t.vana).map(|t| t.countdown);
+            fx.tick(
+                &frame((2375880 + 25 * i) as f32 / VANA_DAY as f32),
+                &crate::fx::NoActors,
+            );
+            let cd = fx
+                .tasks
+                .iter()
+                .flatten()
+                .find(|t| t.res == s001 && t.vana)
+                .map(|t| t.countdown);
             seen.push((cd, hatos(&fx)));
         }
         let cds: Vec<i32> = seen.iter().map(|x| x.0.unwrap().round() as i32).collect();
         assert_eq!(&cds[..5], &[120, 95, 70, 45, 20]);
-        assert!(seen[..5].iter().all(|x| x.1 == 0) && seen[5].1 == 1, "{seen:?}");
+        assert!(
+            seen[..5].iter().all(|x| x.1 == 0) && seen[5].1 == 1,
+            "{seen:?}"
+        );
         assert_eq!(fx.tasks.iter().flatten().count(), 6);
     }
 
@@ -3995,7 +6117,12 @@ mod auto_tests {
         let mut prev = 0;
         for tick in 1..=200 {
             fx.tick(&frame(0.5), &crate::fx::NoActors);
-            let ip = fx.tasks.iter().flatten().find(|t| t.res == lop0).map_or(0, |t| t.ip);
+            let ip = fx
+                .tasks
+                .iter()
+                .flatten()
+                .find(|t| t.res == lop0)
+                .map_or(0, |t| t.ip);
             if prev == 0 && ip > 0 {
                 starts.push((tick, ip));
             }
@@ -4016,10 +6143,21 @@ mod auto_tests {
         let l = fx.load_zone(Library::load(103, index.read(103).unwrap()).unwrap());
         let count = |fx: &Effects, tag: &str| {
             let want = [fourcc("weat"), fourcc(tag), fourcc("kamo")];
-            fx.tasks.iter().flatten().filter(|t| t.res.0 == l && fx.reg.libs[l].tree.path(t.res.1).ends_with(&want)).count()
+            fx.tasks
+                .iter()
+                .flatten()
+                .filter(|t| t.res.0 == l && fx.reg.libs[l].tree.path(t.res.1).ends_with(&want))
+                .count()
         };
         fx.set_weather("fine", 0.0);
-        assert_eq!((count(&fx, "fine"), count(&fx, "suny"), fx.tasks.iter().flatten().count()), (3, 0, 7));
+        assert_eq!(
+            (
+                count(&fx, "fine"),
+                count(&fx, "suny"),
+                fx.tasks.iter().flatten().count()
+            ),
+            (3, 0, 7)
+        );
         fx.set_weather("suny", 0.0);
         assert_eq!((count(&fx, "fine"), count(&fx, "suny")), (0, 3));
         fx.set_weather("suny", 0.0);
@@ -4043,11 +6181,24 @@ mod auto_tests {
         let s002 = (l, sched(&fx.reg.libs[l], &["m_ev", "bels"], "s002"));
         fx.spawn_task(s002, Who::None, Who::None, None, 1.0, None);
         fx.tick(&frame(2163600.0 / VANA_DAY as f32), &crate::fx::NoActors);
-        let tasks: Vec<&Task> = fx.tasks.iter().flatten().filter(|t| t.res == s002).collect();
+        let tasks: Vec<&Task> = fx
+            .tasks
+            .iter()
+            .flatten()
+            .filter(|t| t.res == s002)
+            .collect();
         assert_eq!(tasks.len(), 2);
-        let (src, copy) = if tasks[0].vana { (tasks[0], tasks[1]) } else { (tasks[1], tasks[0]) };
+        let (src, copy) = if tasks[0].vana {
+            (tasks[0], tasks[1])
+        } else {
+            (tasks[1], tasks[0])
+        };
         assert_eq!(src.countdown, 18000.0);
-        assert!(!copy.vana && (79.0..=80.0).contains(&copy.countdown), "{}", copy.countdown);
+        assert!(
+            !copy.vana && (79.0..=80.0).contains(&copy.countdown),
+            "{}",
+            copy.countdown
+        );
     }
 
     /// A ship (client/ships.rs in small): the drives' poses move it; the heading target eases 1/8 a tick.
@@ -4061,7 +6212,12 @@ mod auto_tests {
     impl Actors for Ship {
         fn matrix(&self, _: u32) -> Option<Mat4> {
             let r = self.rot.get();
-            Some(Mat4::from_translation(self.pos.get()) * Mat4::from_rotation_x(r.x) * Mat4::from_rotation_y(r.y) * Mat4::from_rotation_z(r.z))
+            Some(
+                Mat4::from_translation(self.pos.get())
+                    * Mat4::from_rotation_x(r.x)
+                    * Mat4::from_rotation_y(r.y)
+                    * Mat4::from_rotation_z(r.z),
+            )
         }
         fn rotation(&self, _: u32) -> Option<Vec3> {
             Some(self.rot.get())
@@ -4085,8 +6241,16 @@ mod auto_tests {
 
     /// Ship file `file`'s `seq` run at 30 fps (2-tick frames), caught up by `skip`: the position and the heading target
     /// after each frame (index = ticks / 2).
-    fn sail(file: u32, seq: &[u8; 4], skip: f32, frames: usize, start: Vec3) -> Option<Vec<(Vec3, Vec3)>> {
-        let index = std::sync::Arc::new(crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()).ok()?);
+    fn sail(
+        file: u32,
+        seq: &[u8; 4],
+        skip: f32,
+        frames: usize,
+        start: Vec3,
+    ) -> Option<Vec<(Vec3, Vec3)>> {
+        let index = std::sync::Arc::new(
+            crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()).ok()?,
+        );
         let mut fx = Effects::new();
         fx.set_index(index.clone());
         fx.set_global(Library::load(0, index.read(0).ok()?).ok()?);
@@ -4099,8 +6263,24 @@ mod auto_tests {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         fx.reg.lib_of(file)?;
-        let ship = Ship { file, pos: std::cell::Cell::new(start), rot: std::cell::Cell::new(Vec3::ZERO) };
-        let f = Frame { dt: 2.0, seconds: 2.0 / 60.0, dayfrac: 0.5, view: Mat4::IDENTITY, view_rot: Mat4::IDENTITY, eye: Vec3::ZERO, draw_distance: 2000.0, area_light: Vec3::ONE, focal: 350.0, moon_phase: 0, weekday: 0 };
+        let ship = Ship {
+            file,
+            pos: std::cell::Cell::new(start),
+            rot: std::cell::Cell::new(Vec3::ZERO),
+        };
+        let f = Frame {
+            dt: 2.0,
+            seconds: 2.0 / 60.0,
+            dayfrac: 0.5,
+            view: Mat4::IDENTITY,
+            view_rot: Mat4::IDENTITY,
+            eye: Vec3::ZERO,
+            draw_distance: 2000.0,
+            area_light: Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        };
         fx.start_sequence(SHIP, file, u32::from_le_bytes(*seq), skip);
         let mut target = Vec3::ZERO;
         let mut out = Vec::new();
@@ -4136,39 +6316,82 @@ mod auto_tests {
     /// heading following the course, then `pat2` sideways into the berth.
     #[test]
     fn selbina_arrival() {
-        let Some(run) = sail(31008, b"seq0", 0.0, 1201, Vec3::new(9.294, 0.0, -69.775)) else { return };
+        let Some(run) = sail(31008, b"seq0", 0.0, 1201, Vec3::new(9.294, 0.0, -69.775)) else {
+            return;
+        };
         let at = |t: usize| run[t / 2];
         assert!(near(at(0).0, [-401.468, 0.0, -123.873]), "t 0: {}", at(0).0);
-        assert!(near(at(300).0, [-295.153, 0.0, -116.229]), "t 300: {}", at(300).0);
-        assert!((at(300).1.y - -0.0980).abs() < 0.002, "t 300 yaw {}", at(300).1.y);
-        assert!(near(at(1800).0, [9.295, 0.0, -100.0]), "t 1800: {}", at(1800).0);
-        assert!(near(at(2100).0, [9.295, 0.0, -84.887]), "t 2100: {}", at(2100).0);
-        assert!(near(at(2398).0, [9.295, 0.0, -69.775]), "t 2398: {}", at(2398).0);
+        assert!(
+            near(at(300).0, [-295.153, 0.0, -116.229]),
+            "t 300: {}",
+            at(300).0
+        );
+        assert!(
+            (at(300).1.y - -0.0980).abs() < 0.002,
+            "t 300 yaw {}",
+            at(300).1.y
+        );
+        assert!(
+            near(at(1800).0, [9.295, 0.0, -100.0]),
+            "t 1800: {}",
+            at(1800).0
+        );
+        assert!(
+            near(at(2100).0, [9.295, 0.0, -84.887]),
+            "t 2100: {}",
+            at(2100).0
+        );
+        assert!(
+            near(at(2398).0, [9.295, 0.0, -69.775]),
+            "t 2398: {}",
+            at(2398).0
+        );
     }
 
     /// 3.3: zoning in 1500 ticks into the arrival: `path` has 300 ticks left, so the boat starts near the berth.
     #[test]
     fn selbina_arrival_caught_up() {
-        let Some(run) = sail(31008, b"seq0", 1500.0, 160, Vec3::new(9.294, 0.0, -69.775)) else { return };
-        assert!(near(run[0].0, [-4.737, 0.0, -100.0]), "t 1500: {}", run[0].0);
-        assert!(near(run[150].0, [9.295, 0.0, -100.0]), "t 1800: {}", run[150].0);
+        let Some(run) = sail(31008, b"seq0", 1500.0, 160, Vec3::new(9.294, 0.0, -69.775)) else {
+            return;
+        };
+        assert!(
+            near(run[0].0, [-4.737, 0.0, -100.0]),
+            "t 1500: {}",
+            run[0].0
+        );
+        assert!(
+            near(run[150].0, [9.295, 0.0, -100.0]),
+            "t 1800: {}",
+            run[150].0
+        );
     }
 
     /// 3.7: Port Jeuno's San d'Oria berth (file 31010 `seq0`): down from the sky, nose down.
     #[test]
     fn jeuno_descent() {
-        let Some(run) = sail(31010, b"seq0", 0.0, 801, Vec3::new(-68.0, 10.45, 117.0)) else { return };
+        let Some(run) = sail(31010, b"seq0", 0.0, 801, Vec3::new(-68.0, 10.45, 117.0)) else {
+            return;
+        };
         let (p, r) = run[100];
         assert!(near(p, [-254.825, -25.673, 356.751]), "t 200: {p}");
-        assert!((r.y - 0.5498).abs() < 0.002 && (r.z - 0.1880).abs() < 0.002, "t 200 rot {r}");
-        assert!(near(run[799].0, [-68.0, 10.45, 117.0]), "t 1598: {}", run[799].0);
+        assert!(
+            (r.y - 0.5498).abs() < 0.002 && (r.z - 0.1880).abs() < 0.002,
+            "t 200 rot {r}"
+        );
+        assert!(
+            near(run[799].0, [-68.0, 10.45, 117.0]),
+            "t 1598: {}",
+            run[799].0
+        );
     }
 
     /// 3.7: the pirate ship's leaving (file 31017 `seq1`) ends offshore, its heading never set. The scheduler's end
     /// takes the drive at 0 ticks left before its last step (3.8), and `come` runs back on a sine: 1.75 short.
     #[test]
     fn pirate_away() {
-        let Some(run) = sail(31017, b"seq1", 0.0, 1600, Vec3::new(-30.0, 0.0, 0.0)) else { return };
+        let Some(run) = sail(31017, b"seq1", 0.0, 1600, Vec3::new(-30.0, 0.0, 0.0)) else {
+            return;
+        };
         let (p, r) = run[1599];
         assert!(near(p, [-149.895, 0.0, -998.255]), "t 3198: {p}");
         assert_eq!(r, Vec3::ZERO);
@@ -4184,9 +6407,14 @@ mod event_camera_tests {
     /// cut1..cut4) reach the cutscene camera in order; `main`'s own c000 is the event runner's.
     #[test]
     fn sub_scheduler_cameras() {
-        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir())
+        else {
+            return;
+        };
         let index = std::sync::Arc::new(index);
-        let (Ok(f0), Ok(_)) = (index.read(0), index.read(51252)) else { return };
+        let (Ok(f0), Ok(_)) = (index.read(0), index.read(51252)) else {
+            return;
+        };
         let mut fx = Effects::new();
         fx.set_global(Library::load(0, f0).unwrap());
         fx.set_index(index);
@@ -4196,13 +6424,34 @@ mod event_camera_tests {
             fx.poll_loads();
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        fx.on_event_scheduler(51252, u32::from_le_bytes(fourcc("main")), Who::None, Who::None);
-        let f = Frame { dt: 1.0, seconds: 1.0 / 60.0, dayfrac: 0.5, view: Mat4::IDENTITY, view_rot: Mat4::IDENTITY, eye: Vec3::ZERO, draw_distance: 2000.0, area_light: Vec3::ONE, focal: 350.0, moon_phase: 0, weekday: 0 };
+        fx.on_event_scheduler(
+            51252,
+            u32::from_le_bytes(fourcc("main")),
+            Who::None,
+            Who::None,
+        );
+        let f = Frame {
+            dt: 1.0,
+            seconds: 1.0 / 60.0,
+            dayfrac: 0.5,
+            view: Mat4::IDENTITY,
+            view_rot: Mat4::IDENTITY,
+            eye: Vec3::ZERO,
+            draw_distance: 2000.0,
+            area_light: Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        };
         let mut shots = Vec::new();
         for tick in 0..3400 {
             fx.tick(&f, &crate::fx::NoActors);
             for c in std::mem::take(&mut fx.event_cameras) {
-                shots.push((tick, String::from_utf8_lossy(&c.path.to_le_bytes()).to_string(), c.ticks));
+                shots.push((
+                    tick,
+                    String::from_utf8_lossy(&c.path.to_le_bytes()).to_string(),
+                    c.ticks,
+                ));
             }
         }
         let names: Vec<&str> = shots.iter().map(|s| s.1.as_str()).collect();
@@ -4222,9 +6471,14 @@ mod slot_sound_tests {
     /// here: with no audio device the manager drops a sound that never starts.)
     #[test]
     fn slotted_sound() {
-        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir())
+        else {
+            return;
+        };
         let index = std::sync::Arc::new(index);
-        let (Ok(f0), Ok(_)) = (index.read(0), index.read(30734)) else { return };
+        let (Ok(f0), Ok(_)) = (index.read(0), index.read(30734)) else {
+            return;
+        };
         let mut fx = Effects::new();
         fx.set_global(Library::load(0, f0).unwrap());
         fx.set_index(index);
@@ -4233,8 +6487,25 @@ mod slot_sound_tests {
             fx.poll_loads();
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        fx.on_event_scheduler(30734, u32::from_le_bytes(fourcc("6040")), Who::None, Who::None);
-        let f = Frame { dt: 1.0, seconds: 1.0 / 60.0, dayfrac: 0.5, view: Mat4::IDENTITY, view_rot: Mat4::IDENTITY, eye: Vec3::ZERO, draw_distance: 2000.0, area_light: Vec3::ONE, focal: 350.0, moon_phase: 0, weekday: 0 };
+        fx.on_event_scheduler(
+            30734,
+            u32::from_le_bytes(fourcc("6040")),
+            Who::None,
+            Who::None,
+        );
+        let f = Frame {
+            dt: 1.0,
+            seconds: 1.0 / 60.0,
+            dayfrac: 0.5,
+            view: Mat4::IDENTITY,
+            view_rot: Mat4::IDENTITY,
+            eye: Vec3::ZERO,
+            draw_distance: 2000.0,
+            area_light: Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        };
         fx.tick(&f, &crate::fx::NoActors);
         assert!(fx.sounds.iter().any(|s| s.slot == Some(0) && s.stream));
     }

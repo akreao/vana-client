@@ -58,7 +58,11 @@ impl Who {
     /// The name as the text takes it: in `1e colour` .. `1e 01` when it has a colour.
     fn coded(&self) -> Vec<u8> {
         let name = encode_sjis(&self.name);
-        if self.colour == 0 { name } else { [&[0x1e, self.colour][..], &name, &[0x1e, 1]].concat() }
+        if self.colour == 0 {
+            name
+        } else {
+            [&[0x1e, self.colour][..], &name, &[0x1e, 1]].concat()
+        }
     }
 }
 
@@ -96,7 +100,10 @@ pub struct Line {
 impl Line {
     /// The lines without their colour codes.
     fn plain(&self) -> Vec<String> {
-        self.lines.iter().map(|l| super::font::strip_codes(l)).collect()
+        self.lines
+            .iter()
+            .map(|l| super::font::strip_codes(l))
+            .collect()
     }
 }
 
@@ -166,26 +173,47 @@ pub fn argb_bytes(c: u32) -> [u8; 4] {
 
 /// Bytes at a virtual address of a PE image (data sections; FFXiMain keeps them unpacked).
 pub fn va_bytes(pe: &[u8], va: u32, len: usize) -> Option<&[u8]> {
-    let u16_at = |o: usize| pe.get(o..o + 2).map(|b| u16::from_le_bytes([b[0], b[1]]) as usize);
-    let u32_at = |o: usize| pe.get(o..o + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()));
+    let u16_at = |o: usize| {
+        pe.get(o..o + 2)
+            .map(|b| u16::from_le_bytes([b[0], b[1]]) as usize)
+    };
+    let u32_at = |o: usize| {
+        pe.get(o..o + 4)
+            .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+    };
     let nt = u32_at(0x3c)? as usize;
     let (count, opt) = (u16_at(nt + 6)?, u16_at(nt + 20)?);
     let base = u32_at(nt + 24 + 28)?;
     (0..count).find_map(|i| {
         let s = nt + 24 + opt + i * 40;
         let (sva, raw, rsize) = (base + u32_at(s + 12)?, u32_at(s + 20)?, u32_at(s + 16)?);
-        (va >= sva && va + len as u32 <= sva + rsize).then(|| pe.get((raw + va - sva) as usize..(raw + va - sva) as usize + len)).flatten()
+        (va >= sva && va + len as u32 <= sva + rsize)
+            .then(|| pe.get((raw + va - sva) as usize..(raw + va - sva) as usize + len))
+            .flatten()
     })
 }
 
 impl BattleText {
     pub fn load(index: &DatIndex, ffximain: &[u8]) -> Result<Self> {
-        let file = |slot| slot_file(ffximain, 1, slot).with_context(|| format!("language slot {slot:#x}"));
+        let file =
+            |slot| slot_file(ffximain, 1, slot).with_context(|| format!("language slot {slot:#x}"));
         let dialog = |slot| -> Result<Dialog> { Dialog::parse(&index.read(file(slot)?)?) };
-        let msgs = |id: u32| Messages::load(index, id).map_err(|e| log::warn!("names {id}: {e:#}")).ok();
+        let msgs = |id: u32| {
+            Messages::load(index, id)
+                .map_err(|e| log::warn!("names {id}: {e:#}"))
+                .ok()
+        };
         let basic = dialog(SLOT_BASIC).context("battle messages")?;
         let t = super::tables::of(ffximain)?;
-        let modes = t.mode_tables.iter().map(|&va| va_bytes(ffximain, va, 1024).and_then(|b| b.try_into().ok()).context("mode table")).collect::<Result<Vec<[u8; 1024]>>>()?;
+        let modes = t
+            .mode_tables
+            .iter()
+            .map(|&va| {
+                va_bytes(ffximain, va, 1024)
+                    .and_then(|b| b.try_into().ok())
+                    .context("mode table")
+            })
+            .collect::<Result<Vec<[u8; 1024]>>>()?;
         let mut mode_colours: Vec<(u16, u8)> = Vec::new();
         let mut indent_modes = Vec::new();
         let mut at = t.mode_colours;
@@ -204,13 +232,24 @@ impl BattleText {
             palette.push((e[0], [e[4], e[5], e[6], e[7]]));
             at += 8;
         }
-        let filter_kinds = va_bytes(ffximain, t.filter_kinds, 1024).map(<[u8]>::to_vec).unwrap_or_default();
-        let screen_kinds = va_bytes(ffximain, t.screen_kinds, 1024).map(<[u8]>::to_vec).unwrap_or_default();
+        let filter_kinds = va_bytes(ffximain, t.filter_kinds, 1024)
+            .map(<[u8]>::to_vec)
+            .unwrap_or_default();
+        let screen_kinds = va_bytes(ffximain, t.screen_kinds, 1024)
+            .map(<[u8]>::to_vec)
+            .unwrap_or_default();
         let calls = super::tables::call_sounds(ffximain).unwrap_or_default();
         let filter_tables = t
             .filter_tables
             .iter()
-            .filter_map(|&p| Some(va_bytes(ffximain, p, 49 * 4)?.chunks(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())).collect()))
+            .filter_map(|&p| {
+                Some(
+                    va_bytes(ffximain, p, 49 * 4)?
+                        .chunks(4)
+                        .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
+                        .collect(),
+                )
+            })
             .collect();
         Ok(Self {
             filter_kinds,
@@ -225,17 +264,24 @@ impl BattleText {
             abilities: file(SLOT_ABILITIES).ok().and_then(msgs),
             statuses: msgs(STATUS_FILE),
             items: super::items::Items::load(index, super::items::Lang::En).ok(),
-            system: dialog(SLOT_SYSTEM).map_err(|e| log::warn!("system messages: {e:#}")).ok(),
+            system: dialog(SLOT_SYSTEM)
+                .map_err(|e| log::warn!("system messages: {e:#}"))
+                .ok(),
             group7: super::msg::group_file(ffximain, 1, 7).and_then(msgs),
-            emotes: dialog(SLOT_EMOTES).map_err(|e| log::warn!("emote messages: {e:#}")).ok(),
+            emotes: dialog(SLOT_EMOTES)
+                .map_err(|e| log::warn!("emote messages: {e:#}"))
+                .ok(),
             slot_names: super::msg::group_file(ffximain, 1, 0x17).and_then(msgs),
             group9: super::msg::group_file(ffximain, 1, 9).and_then(msgs),
             group10: super::msg::group_file(ffximain, 1, 10).and_then(msgs),
             group12: super::msg::group_file(ffximain, 1, 0xc).and_then(msgs),
             days: super::msg::group_file(ffximain, 1, 0x10).and_then(msgs),
             moons: super::msg::group_file(ffximain, 1, 0x11).and_then(msgs),
-            tables: [0x1c, 0x22, 0x1b].map(|slot| super::msg::current_slot_file(ffximain, 1, slot).and_then(msgs)),
-            phrases: super::autotrans::Dictionary::load(index, ffximain).map_err(|e| log::warn!("auto-translate: {e:#}")).ok(),
+            tables: [0x1c, 0x22, 0x1b]
+                .map(|slot| super::msg::current_slot_file(ffximain, 1, slot).and_then(msgs)),
+            phrases: super::autotrans::Dictionary::load(index, ffximain)
+                .map_err(|e| log::warn!("auto-translate: {e:#}"))
+                .ok(),
             modes,
             mode_colours,
             indent_modes,
@@ -265,39 +311,77 @@ impl BattleText {
 
     /// Line colour of a chat mode, BGRA with 0x80 = 1.0; 0x80808080 when unlisted (FUN_10126040).
     pub fn colour(&self, mode: u8) -> [u8; 4] {
-        let id = self.mode_colours.iter().find(|(m, _)| *m == mode as u16).map_or(0, |e| e.1);
-        self.palette.iter().find(|(i, _)| *i == id).map_or([0x80; 4], |e| e.1)
+        let id = self
+            .mode_colours
+            .iter()
+            .find(|(m, _)| *m == mode as u16)
+            .map_or(0, |e| e.1);
+        self.palette
+            .iter()
+            .find(|(i, _)| *i == id)
+            .map_or([0x80; 4], |e| e.1)
     }
 
     /// Every colour id (FUN_10129d00: 0x80808080 when absent) and every mode's line colour, with the config's text
     /// colours, for the font's in-line codes.
     pub fn code_tables(&self, cfg: &crate::gamecfg::Values) -> ([[u8; 4]; 256], [[u8; 4]; 256]) {
         let id_colour = |id: u8| {
-            let config = (0x1b..=0x31).chain([0x9b, 0xb0, 0xb3, 0xcb, 0xcc]).find(|&c| colour_id_of(c) == Some(id));
+            let config = (0x1b..=0x31)
+                .chain([0x9b, 0xb0, 0xb3, 0xcb, 0xcc])
+                .find(|&c| colour_id_of(c) == Some(id));
             match config {
                 Some(c) => argb_bytes(cfg.get(c)),
-                None => self.palette.iter().find(|(i, _)| *i == id).map_or([0x80; 4], |e| e.1),
+                None => self
+                    .palette
+                    .iter()
+                    .find(|(i, _)| *i == id)
+                    .map_or([0x80; 4], |e| e.1),
             }
         };
-        (std::array::from_fn(|i| id_colour(i as u8)), std::array::from_fn(|m| self.colour_in(m as u8, cfg)))
+        (
+            std::array::from_fn(|i| id_colour(i as u8)),
+            std::array::from_fn(|m| self.colour_in(m as u8, cfg)),
+        )
     }
 
     /// The line colour with the config's text colours (callback LAB_10126560 replaces the palette entries).
     pub fn colour_in(&self, mode: u8, cfg: &crate::gamecfg::Values) -> [u8; 4] {
-        let id = self.mode_colours.iter().find(|(m, _)| *m == mode as u16).map_or(0, |e| e.1);
-        let config = (0x1b..=0x31).chain([0x9b, 0xb0, 0xb3, 0xcb, 0xcc]).find(|&c| colour_id_of(c) == Some(id));
+        let id = self
+            .mode_colours
+            .iter()
+            .find(|(m, _)| *m == mode as u16)
+            .map_or(0, |e| e.1);
+        let config = (0x1b..=0x31)
+            .chain([0x9b, 0xb0, 0xb3, 0xcb, 0xcc])
+            .find(|&c| colour_id_of(c) == Some(id));
         match config {
             Some(c) => argb_bytes(cfg.get(c)),
-            None => self.palette.iter().find(|(i, _)| *i == id).map_or([0x80; 4], |e| e.1),
+            None => self
+                .palette
+                .iter()
+                .find(|(i, _)| *i == id)
+                .map_or([0x80; 4], |e| e.1),
         }
     }
 
     /// FUN_100ac450: whether message `id` is filtered for relation table `rel` (0 caster us, 1 target us, 2 / 3
     /// party caster / target, 4 / 5 alliance, 6 / 7 our mob, 8 / 9 other PC, 10 else) under 0x32 / 0x33.
     pub fn filtered(&self, id: u16, rel: usize, cfg: &crate::gamecfg::Values) -> bool {
-        let Some(&kind) = self.filter_kinds.get(id as usize) else { return false };
-        let Some(&w) = self.filter_tables.get(rel).and_then(|t| t.get(kind as usize)) else { return false };
-        let word = if w >> 30 == 0 { cfg.get(0x32) } else { cfg.get(0x33) };
+        let Some(&kind) = self.filter_kinds.get(id as usize) else {
+            return false;
+        };
+        let Some(&w) = self
+            .filter_tables
+            .get(rel)
+            .and_then(|t| t.get(kind as usize))
+        else {
+            return false;
+        };
+        let word = if w >> 30 == 0 {
+            cfg.get(0x32)
+        } else {
+            cfg.get(0x33)
+        };
         w & 0x3fff_ffff & word != 0
     }
 
@@ -347,11 +431,16 @@ impl BattleText {
     }
 
     fn name_of(d: &Option<Dialog>, id: u32) -> Vec<u8> {
-        d.as_ref().and_then(|d| d.raw(id)).map(|r| r.split(|&b| b == 0).next().unwrap_or_default().to_vec()).unwrap_or_default()
+        d.as_ref()
+            .and_then(|d| d.raw(id))
+            .map(|r| r.split(|&b| b == 0).next().unwrap_or_default().to_vec())
+            .unwrap_or_default()
     }
 
     fn msg_of(m: &Option<Messages>, id: i32) -> Vec<u8> {
-        m.as_ref().and_then(|m| m.raw(id.max(0) as usize)).unwrap_or_default()
+        m.as_ref()
+            .and_then(|m| m.raw(id.max(0) as usize))
+            .unwrap_or_default()
     }
 
     /// English item name: form 0 singular, 1 with its article, 2 plural.
@@ -445,7 +534,13 @@ impl BattleText {
         let mut lines: Vec<Vec<u8>> = vec![Vec::new()];
         let mut mode = None;
         let work = |k: u8| ctx.work.get(k as usize).copied().unwrap_or(0);
-        let who = |k: u8| if k == 0 { ctx.actor.as_ref() } else { ctx.target.as_ref() };
+        let who = |k: u8| {
+            if k == 0 {
+                ctx.actor.as_ref()
+            } else {
+                ctx.target.as_ref()
+            }
+        };
         let mut i = 0;
         // A count of one prints nothing, nor the space after it (FUN_1024fcd0(0) *(inf)*).
         let mut eat_space = false;
@@ -474,40 +569,58 @@ impl BattleText {
                 }
                 // 01 len kind args: English grammar block (FUN_100bc8a0).
                 0x01 => {
-                    let body = s.get(i + 2..(i + 2 + a as usize).min(s.len())).unwrap_or_default();
+                    let body = s
+                        .get(i + 2..(i + 2 + a as usize).min(s.len()))
+                        .unwrap_or_default();
                     let idx = grammar_index(body.get(1..).unwrap_or_default());
                     let slot = idx as u8;
                     let mut start = out.len();
                     // FUN_1025a2f0's noun token: the waiting article goes in front (a / an for mode 3, the, some).
-                    let mut noun = |out: &mut Vec<u8>, start: &mut usize, n: Option<(String, u8, bool)>| {
-                        let Some((text, mode, an)) = n else { return };
-                        if let Some((l, pos, definite)) = pending.take()
-                            && l == line_no
-                            && pos <= out.len()
-                        {
-                            let art = match (definite, mode) {
-                                (true, _) => "the",
-                                (false, 3) => if an { "an" } else { "a" },
-                                (false, _) => "some",
-                            };
-                            out.splice(pos..pos, art.bytes());
-                            *start = (*start).min(pos);
-                        }
-                        // FUN_100be760: an item's name in `1e 02` .. `1e 01`, after its article.
-                        out.extend([0x1e, 2]);
-                        out.extend(encode_sjis(&text));
-                        out.extend([0x1e, 1]);
-                    };
+                    let mut noun =
+                        |out: &mut Vec<u8>, start: &mut usize, n: Option<(String, u8, bool)>| {
+                            let Some((text, mode, an)) = n else { return };
+                            if let Some((l, pos, definite)) = pending.take()
+                                && l == line_no
+                                && pos <= out.len()
+                            {
+                                let art = match (definite, mode) {
+                                    (true, _) => "the",
+                                    (false, 3) => {
+                                        if an {
+                                            "an"
+                                        } else {
+                                            "a"
+                                        }
+                                    }
+                                    (false, _) => "some",
+                                };
+                                out.splice(pos..pos, art.bytes());
+                                *start = (*start).min(pos);
+                            }
+                            // FUN_100be760: an item's name in `1e 02` .. `1e 01`, after its article.
+                            out.extend([0x1e, 2]);
+                            out.extend(encode_sjis(&text));
+                            out.extend([0x1e, 1]);
+                        };
                     match body.first() {
                         // Kinds 1 / 2 (FUN_1025a400(0 / 1)): an article for the next noun.
                         Some(&k @ (0x01 | 0x02)) => pending = Some((line_no, out.len(), k == 0x02)),
                         Some(0x10) => out.extend(ctx.actor.as_ref().map_or(Vec::new(), Who::coded)),
-                        Some(0x11) => out.extend(ctx.target.as_ref().map_or(Vec::new(), Who::coded)),
+                        Some(0x11) => {
+                            out.extend(ctx.target.as_ref().map_or(Vec::new(), Who::coded))
+                        }
                         // FUN_1021d5f0 / FUN_1021d650: the status noun (field 0, "stun") / adjective (field 1, "stunned").
                         Some(0x13) => out.extend(Self::msg_of(&self.statuses, work(slot))),
-                        Some(0x14) => out.extend(self.statuses.as_ref().and_then(|m| m.raw_field(work(slot).max(0) as usize, 1)).unwrap_or_default()),
+                        Some(0x14) => out.extend(
+                            self.statuses
+                                .as_ref()
+                                .and_then(|m| m.raw_field(work(slot).max(0) as usize, 1))
+                                .unwrap_or_default(),
+                        ),
                         // Kinds 3 / 4: the count, or for one the indefinite article.
-                        Some(0x03 | 0x04) if work(slot) != 1 => out.extend(work(slot).to_string().bytes()),
+                        Some(0x03 | 0x04) if work(slot) != 1 => {
+                            out.extend(work(slot).to_string().bytes())
+                        }
                         Some(0x03 | 0x04) => pending = Some((line_no, out.len(), false)),
                         // Items (FUN_100be760): form (k % 3) bare / singular / plural; the id is the index itself (0x20..0x22),
                         // num (0x23..0x25) or work (0x26..0x28), num read as work here (equal for FUN_100a1ab0 lines).
@@ -519,7 +632,11 @@ impl BattleText {
                         // as work here).
                         Some(&k @ (0x39 | 0x40 | 0x41)) => {
                             let n = if k == 0x39 { idx as i32 } else { work(slot) };
-                            if let Some(o) = self.items.as_ref().and_then(|it| super::roe::objective(it, (n + 0xe000) as u16)) {
+                            if let Some(o) = self
+                                .items
+                                .as_ref()
+                                .and_then(|it| super::roe::objective(it, (n + 0xe000) as u16))
+                            {
                                 out.extend([0x1e, 8]);
                                 out.extend(encode_sjis(&o.name));
                                 out.extend([0x1e, 1]);
@@ -548,17 +665,26 @@ impl BattleText {
                             }
                         }
                         // FUN_100bdc50 cases 6 / 7 / 9: a line of table 0 / 1 / 2 by num / work / work (num read as work).
-                        Some(&k @ (0x87 | 0x88 | 0x8a)) => out.extend(Self::msg_of(&self.tables[match k {
-                            0x87 => 0,
-                            0x88 => 1,
-                            _ => 2,
-                        }], work(slot))),
+                        Some(&k @ (0x87 | 0x88 | 0x8a)) => out.extend(Self::msg_of(
+                            &self.tables[match k {
+                                0x87 => 0,
+                                0x88 => 1,
+                                _ => 2,
+                            }],
+                            work(slot),
+                        )),
                         // 0x29 / 0x2a: a count index, then an item index; the singular for one, else the plural.
                         Some(0x29 | 0x2a) => {
                             let first = body.get(1..).unwrap_or_default();
-                            let item = grammar_index(first.get(grammar_len(first)..).unwrap_or_default()) as u8;
+                            let item =
+                                grammar_index(first.get(grammar_len(first)..).unwrap_or_default())
+                                    as u8;
                             let n = work(slot);
-                            noun(out, &mut start, self.item_noun(work(item) as u32, if n == 1 { 1 } else { 2 }));
+                            noun(
+                                out,
+                                &mut start,
+                                self.item_noun(work(item) as u32, if n == 1 { 1 } else { 2 }),
+                            );
                         }
                         _ => {}
                     }
@@ -593,7 +719,11 @@ impl BattleText {
                 // 16 n: an ability below 0x100 (FUN_100bba90), else kind 7 (mob skills) id - 0x100.
                 0x16 => {
                     let id = work(a) as u16;
-                    out.extend(if id < 0x100 { Self::msg_of(&self.abilities, id as i32) } else { Self::name_of(&self.mob_skills, id as u32 - 0x100) });
+                    out.extend(if id < 0x100 {
+                        Self::msg_of(&self.abilities, id as i32)
+                    } else {
+                        Self::name_of(&self.mob_skills, id as u32 - 0x100)
+                    });
                     2
                 }
                 0x1f => {
@@ -649,7 +779,10 @@ impl BattleText {
                         3
                     }
                     0x8f => {
-                        out.extend(Self::msg_of(&self.abilities, work(s.get(i + 2).copied().unwrap_or(0)) as u16 as i32 + 0x200));
+                        out.extend(Self::msg_of(
+                            &self.abilities,
+                            work(s.get(i + 2).copied().unwrap_or(0)) as u16 as i32 + 0x200,
+                        ));
                         3
                     }
                     // 7f 94 / 98 / 99 / 9a n: num[n] as %02d / %03d / %04d / %05d; 95 "$%x" of num[n]; 96 "%" and its binary
@@ -704,7 +837,10 @@ impl BattleText {
         while lines.len() > 1 && lines.last().is_some_and(|l| l.is_empty()) {
             lines.pop();
         }
-        Line { lines: lines.iter().map(|l| decode_sjis(l)).collect(), mode }
+        Line {
+            lines: lines.iter().map(|l| decode_sjis(l)).collect(),
+            mode,
+        }
     }
 }
 
@@ -764,20 +900,31 @@ fn grammar_len(b: &[u8]) -> usize {
 fn grammar_index(b: &[u8]) -> u16 {
     match b {
         [x, ..] if x & 0x40 != 0 => (x & 0x3f) as u16,
-        [x, b1, b2, b3, ..] if x & 0x3f == 2 => (((b2 & 0x7f) as i32 | ((*b3 as i8 as i32) << 7)) << 7) as u16 | (b1 & 0x7f) as u16,
+        [x, b1, b2, b3, ..] if x & 0x3f == 2 => {
+            (((b2 & 0x7f) as i32 | ((*b3 as i8 as i32) << 7)) << 7) as u16 | (b1 & 0x7f) as u16
+        }
         _ => 0xffff,
     }
 }
 
 /// Alternative `k` of the `[a/b]` group after the code at `from`, and the bytes the code spans.
 fn alternative(s: &[u8], from: usize, k: usize) -> (Vec<u8>, usize) {
-    let Some(open) = s[from..].iter().position(|&c| c == b'[').map(|p| from + p) else { return (Vec::new(), 3) };
+    let Some(open) = s[from..].iter().position(|&c| c == b'[').map(|p| from + p) else {
+        return (Vec::new(), 3);
+    };
     let mut end = open + 1;
     while end < s.len() && s[end] != b']' && s[end] != 0 {
         end += if s[end] >= 0x80 { 2 } else { 1 };
     }
     let inner = &s[open + 1..end.min(s.len())];
-    (inner.split(|&c| c == b'/').nth(k).unwrap_or_default().to_vec(), (end + 1).min(s.len()) - from)
+    (
+        inner
+            .split(|&c| c == b'/')
+            .nth(k)
+            .unwrap_or_default()
+            .to_vec(),
+        (end + 1).min(s.len()) - from,
+    )
 }
 
 #[cfg(test)]
@@ -796,7 +943,10 @@ mod tests {
     #[test]
     fn screen_kinds() {
         let Some(b) = load() else { return };
-        assert_eq!([1, 15, 24, 6, 185, 288].map(|id| b.screen_kind(id)), [1, 3, 2, 0, 1, 1]);
+        assert_eq!(
+            [1, 15, 24, 6, 185, 288].map(|id| b.screen_kind(id)),
+            [1, 3, 2, 0, 1, 1]
+        );
         let mut cfg = crate::gamecfg::Values::default();
         assert!(!b.off_channel(1, 0, &cfg) && !b.off_channel(1, 1, &cfg));
         cfg.set(0x13, 2);
@@ -810,17 +960,33 @@ mod tests {
     #[test]
     fn trust_party_line() {
         let Some(b) = load() else { return };
-        let who = Who { name: "Valaineral".into(), named: true, ..Default::default() };
-        let ctx = Ctx { actor: Some(who.clone()), target: Some(who), work: [11201, 0, 0, 0, 0], ..Default::default() };
+        let who = Who {
+            name: "Valaineral".into(),
+            named: true,
+            ..Default::default()
+        };
+        let ctx = Ctx {
+            actor: Some(who.clone()),
+            target: Some(who),
+            work: [11201, 0, 0, 0, 0],
+            ..Default::default()
+        };
         let l = b.expand(711, &ctx).unwrap();
-        assert!(l.lines[0].starts_with("(Valaineral) The time is at hand"), "{:?}", l.lines);
+        assert!(
+            l.lines[0].starts_with("(Valaineral) The time is at hand"),
+            "{:?}",
+            l.lines
+        );
     }
 
     /// 704 "You have undertaken \"%s\"." names the objective in work[0] (grammar kind 0x41, id + 0xe000).
     #[test]
     fn roe_objective_name() {
         let Some(b) = load() else { return };
-        let ctx = Ctx { work: [1, 0, 0, 0, 0], ..Default::default() };
+        let ctx = Ctx {
+            work: [1, 0, 0, 0, 0],
+            ..Default::default()
+        };
         let l = b.expand(704, &ctx).unwrap();
         assert!(l.lines[0].contains("First Step Forward"), "{:?}", l.lines);
     }
@@ -841,28 +1007,64 @@ mod tests {
     #[test]
     fn status_noun_and_adjective() {
         let Some(b) = load() else { return };
-        let ctx = Ctx { target: pc("Lnxtest"), work: [10, 0, 0, 0, 0], ..Default::default() };
-        assert_eq!(b.expand(204, &ctx).unwrap().plain(), ["Lnxtest is no longer stunned."]);
-        assert_eq!(b.expand(206, &ctx).unwrap().plain(), ["Lnxtest's stun effect wears off."]);
+        let ctx = Ctx {
+            target: pc("Lnxtest"),
+            work: [10, 0, 0, 0, 0],
+            ..Default::default()
+        };
+        assert_eq!(
+            b.expand(204, &ctx).unwrap().plain(),
+            ["Lnxtest is no longer stunned."]
+        );
+        assert_eq!(
+            b.expand(206, &ctx).unwrap().plain(),
+            ["Lnxtest's stun effect wears off."]
+        );
     }
 
     /// Message 180 (s2c 0x009): "You throw away a potion." for one, "... 3 potions." for more.
     #[test]
     fn throw_away_counts() {
         let Some(bt) = load() else { return };
-        let ctx = |n: i32| Ctx { work: [4112, n, 0, 0, 0], ..Default::default() };
-        assert_eq!(bt.system(180, &ctx(1)).unwrap().plain(), vec!["You throw away a potion.".to_string()]);
-        assert_eq!(bt.system(180, &ctx(3)).unwrap().plain(), vec!["You throw away 3 potions.".to_string()]);
+        let ctx = |n: i32| Ctx {
+            work: [4112, n, 0, 0, 0],
+            ..Default::default()
+        };
+        assert_eq!(
+            bt.system(180, &ctx(1)).unwrap().plain(),
+            vec!["You throw away a potion.".to_string()]
+        );
+        assert_eq!(
+            bt.system(180, &ctx(3)).unwrap().plain(),
+            vec!["You throw away 3 potions.".to_string()]
+        );
     }
 
     /// Delivery lines (7031 0xbe / 0xaa): 7f b4 n is "N gil" with separators, 1c n a string slot.
     #[test]
     fn delivery_gil_and_string() {
         let Some(bt) = load() else { return };
-        let ctx = Ctx { work: [2, 0, 12345, 0, 0], strings: ["delivery".into(), String::new()], ..Default::default() };
-        assert_eq!(bt.system(0xbe, &ctx).unwrap().plain(), vec!["You take the 12,345 gil out of delivery slot 2.".to_string()]);
-        let ctx = Ctx { work: [3, 1, 0, 0, 0], strings: ["Lnxcsfix".into(), String::new()], ..Default::default() };
-        assert_eq!(bt.system(0xaa, &ctx).unwrap().plain(), vec!["Slot 3:".to_string(), "1 gil, sent to you by Lnxcsfix.".to_string()]);
+        let ctx = Ctx {
+            work: [2, 0, 12345, 0, 0],
+            strings: ["delivery".into(), String::new()],
+            ..Default::default()
+        };
+        assert_eq!(
+            bt.system(0xbe, &ctx).unwrap().plain(),
+            vec!["You take the 12,345 gil out of delivery slot 2.".to_string()]
+        );
+        let ctx = Ctx {
+            work: [3, 1, 0, 0, 0],
+            strings: ["Lnxcsfix".into(), String::new()],
+            ..Default::default()
+        };
+        assert_eq!(
+            bt.system(0xaa, &ctx).unwrap().plain(),
+            vec![
+                "Slot 3:".to_string(),
+                "1 gil, sent to you by Lnxcsfix.".to_string()
+            ]
+        );
     }
 
     /// A skill up (message 38): 7f 9b prints work[1] x 0.1 as "%.1f"; /lastsynth check's material: 0a, then the
@@ -870,36 +1072,77 @@ mod tests {
     #[test]
     fn skill_up_and_counts() {
         let Some(b) = load() else { return };
-        let ctx = Ctx { target: pc("Lnxcsfix"), work: [49, 1, 0, 0, 0], ..Default::default() };
-        assert_eq!(b.expand(38, &ctx).unwrap().plain(), ["Lnxcsfix's woodworking skill rises 0.1 points."]);
-        let ctx = Ctx { work: [698, 1, 0, 0, 0], ..Default::default() };
+        let ctx = Ctx {
+            target: pc("Lnxcsfix"),
+            work: [49, 1, 0, 0, 0],
+            ..Default::default()
+        };
+        assert_eq!(
+            b.expand(38, &ctx).unwrap().plain(),
+            ["Lnxcsfix's woodworking skill rises 0.1 points."]
+        );
+        let ctx = Ctx {
+            work: [698, 1, 0, 0, 0],
+            ..Default::default()
+        };
         assert_eq!(b.system(0x111, &ctx).unwrap().plain(), ["1 ash log."]);
-        let ctx = Ctx { work: [698, 2, 0, 0, 0], ..Default::default() };
+        let ctx = Ctx {
+            work: [698, 2, 0, 0, 0],
+            ..Default::default()
+        };
         assert_eq!(b.system(0x111, &ctx).unwrap().plain(), ["2 ash logs."]);
-        let ctx = Ctx { work: [715, 1, 0, 0, 0], ..Default::default() };
-        assert_eq!(b.system(0xa0, &ctx).unwrap().plain(), ["You synthesized a piece of ash lumber."]);
+        let ctx = Ctx {
+            work: [715, 1, 0, 0, 0],
+            ..Default::default()
+        };
+        assert_eq!(
+            b.system(0xa0, &ctx).unwrap().plain(),
+            ["You synthesized a piece of ash lumber."]
+        );
     }
 
     /// Synthesis lines (7031 0xa4 / 0xcc): 7f 80 1 capitalises the article; grammar kind 1 is the article token.
     #[test]
     fn synthesis_lost_lines() {
         let Some(bt) = load() else { return };
-        let ctx = Ctx { work: [698, 0, 0, 0, 0], ..Default::default() };
-        assert_eq!(bt.system(0xa4, &ctx).unwrap().plain(), vec!["An ash log was lost.".to_string()]);
-        let ctx = Ctx { work: [698, 0, 0, 0, 0], strings: ["Lnxcsfix".into(), String::new()], ..Default::default() };
-        assert_eq!(bt.system(0xcc, &ctx).unwrap().plain(), vec!["Lnxcsfix lost an ash log.".to_string()]);
+        let ctx = Ctx {
+            work: [698, 0, 0, 0, 0],
+            ..Default::default()
+        };
+        assert_eq!(
+            bt.system(0xa4, &ctx).unwrap().plain(),
+            vec!["An ash log was lost.".to_string()]
+        );
+        let ctx = Ctx {
+            work: [698, 0, 0, 0, 0],
+            strings: ["Lnxcsfix".into(), String::new()],
+            ..Default::default()
+        };
+        assert_eq!(
+            bt.system(0xcc, &ctx).unwrap().plain(),
+            vec!["Lnxcsfix lost an ash log.".to_string()]
+        );
     }
 
     fn mob(name: &str) -> Option<Who> {
-        Some(Who { name: name.into(), ..Default::default() })
+        Some(Who {
+            name: name.into(),
+            ..Default::default()
+        })
     }
 
     /// s2c 0x009 /random (7031 88): string slots 2 / 3 = the roller and the roll.
     #[test]
     fn random_roll() {
         let Some(bt) = load() else { return };
-        let ctx = Ctx { strings: ["Lnxtest".into(), "523".into()], ..Default::default() };
-        assert_eq!(bt.system(88, &ctx).unwrap().plain(), ["Dice roll! Lnxtest rolls 523!"]);
+        let ctx = Ctx {
+            strings: ["Lnxtest".into(), "523".into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            bt.system(88, &ctx).unwrap().plain(),
+            ["Dice roll! Lnxtest rolls 523!"]
+        );
     }
 
     /// Treasure pool lines (s2c 0x0D2 / 0x0D3): the find (0x10, target the dropper), a lot (0x11: slot 2 the points,
@@ -907,60 +1150,183 @@ mod tests {
     #[test]
     fn treasure_lines() {
         let Some(bt) = load() else { return };
-        let ctx = Ctx { target: mob("Wild Rabbit"), work: [698, 0, 0, 0, 0], ..Default::default() };
-        assert_eq!(bt.system(0x10, &ctx).unwrap().plain(), ["You find an ash log on the Wild Rabbit."]);
-        let ctx = Ctx { target: mob("Wild Rabbit"), work: [698, 0, 0, 0, 0], strings: ["523".into(), "Lnxtest".into()], ..Default::default() };
-        assert_eq!(bt.system(0x11, &ctx).unwrap().plain(), ["Lnxtest's lot for the ash log: 523 points."]);
-        let ctx = Ctx { target: mob("Wild Rabbit"), work: [698, 0, 0, 0, 0], strings: ["Lnxtest".into(), String::new()], ..Default::default() };
-        assert_eq!(bt.system(0x12, &ctx).unwrap().plain(), ["Lnxtest obtains an ash log."]);
+        let ctx = Ctx {
+            target: mob("Wild Rabbit"),
+            work: [698, 0, 0, 0, 0],
+            ..Default::default()
+        };
+        assert_eq!(
+            bt.system(0x10, &ctx).unwrap().plain(),
+            ["You find an ash log on the Wild Rabbit."]
+        );
+        let ctx = Ctx {
+            target: mob("Wild Rabbit"),
+            work: [698, 0, 0, 0, 0],
+            strings: ["523".into(), "Lnxtest".into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            bt.system(0x11, &ctx).unwrap().plain(),
+            ["Lnxtest's lot for the ash log: 523 points."]
+        );
+        let ctx = Ctx {
+            target: mob("Wild Rabbit"),
+            work: [698, 0, 0, 0, 0],
+            strings: ["Lnxtest".into(), String::new()],
+            ..Default::default()
+        };
+        assert_eq!(
+            bt.system(0x12, &ctx).unwrap().plain(),
+            ["Lnxtest obtains an ash log."]
+        );
     }
 
     /// File 7025: /wave is entries 16 (a target) and 17; /no takes the caster's [his/her].
     #[test]
     fn emote_lines() {
         let Some(bt) = load() else { return };
-        let me = |female| Some(Who { name: "Lnxtest".into(), pc: true, female, ..Default::default() });
-        let ctx = Ctx { actor: me(false), target: Some(Who { name: "Rahal".into(), named: true, ..Default::default() }), ..Default::default() };
+        let me = |female| {
+            Some(Who {
+                name: "Lnxtest".into(),
+                pc: true,
+                female,
+                ..Default::default()
+            })
+        };
+        let ctx = Ctx {
+            actor: me(false),
+            target: Some(Who {
+                name: "Rahal".into(),
+                named: true,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
         assert_eq!(bt.emote(17, &ctx).unwrap().plain(), ["Lnxtest waves."]);
-        assert_eq!(bt.emote(16, &ctx).unwrap().plain(), ["Lnxtest waves to Rahal."]);
-        let line = |female| bt.emote(13, &Ctx { actor: me(female), ..Default::default() }).unwrap().plain().join(" ");
+        assert_eq!(
+            bt.emote(16, &ctx).unwrap().plain(),
+            ["Lnxtest waves to Rahal."]
+        );
+        let line = |female| {
+            bt.emote(
+                13,
+                &Ctx {
+                    actor: me(female),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .plain()
+            .join(" ")
+        };
         assert!(line(false).contains("his") && line(true).contains("her"));
     }
 
     fn pc(name: &str) -> Option<Who> {
-        Some(Who { name: name.into(), pc: true, ..Default::default() })
+        Some(Who {
+            name: name.into(),
+            pc: true,
+            ..Default::default()
+        })
     }
 
     #[test]
     fn basic_messages() {
         let Some(b) = load() else { return };
-        let ctx = Ctx { actor: pc("Tuxedo"), target: mob("Wild Rabbit"), work: [0, 5, 0, 0, 0], ..Default::default() };
-        assert_eq!(b.expand(1, &ctx).unwrap().plain(), ["Tuxedo hits the Wild Rabbit for 5 points of damage."]);
-        let one = Ctx { work: [0, 1, 0, 0, 0], ..ctx.clone() };
-        assert_eq!(b.expand(1, &one).unwrap().plain(), ["Tuxedo hits the Wild Rabbit for 1 point of damage."]);
-        let back = Ctx { actor: mob("Wild Rabbit"), target: pc("Tuxedo"), ..ctx.clone() };
-        assert_eq!(b.expand(1, &back).unwrap().plain(), ["The Wild Rabbit hits Tuxedo for 5 points of damage."]);
-        assert_eq!(b.expand(15, &back).unwrap().plain(), ["The Wild Rabbit misses Tuxedo."]);
-        assert_eq!(b.expand(6, &ctx).unwrap().plain(), ["Tuxedo defeats the Wild Rabbit."]);
+        let ctx = Ctx {
+            actor: pc("Tuxedo"),
+            target: mob("Wild Rabbit"),
+            work: [0, 5, 0, 0, 0],
+            ..Default::default()
+        };
+        assert_eq!(
+            b.expand(1, &ctx).unwrap().plain(),
+            ["Tuxedo hits the Wild Rabbit for 5 points of damage."]
+        );
+        let one = Ctx {
+            work: [0, 1, 0, 0, 0],
+            ..ctx.clone()
+        };
+        assert_eq!(
+            b.expand(1, &one).unwrap().plain(),
+            ["Tuxedo hits the Wild Rabbit for 1 point of damage."]
+        );
+        let back = Ctx {
+            actor: mob("Wild Rabbit"),
+            target: pc("Tuxedo"),
+            ..ctx.clone()
+        };
+        assert_eq!(
+            b.expand(1, &back).unwrap().plain(),
+            ["The Wild Rabbit hits Tuxedo for 5 points of damage."]
+        );
+        assert_eq!(
+            b.expand(15, &back).unwrap().plain(),
+            ["The Wild Rabbit misses Tuxedo."]
+        );
+        assert_eq!(
+            b.expand(6, &ctx).unwrap().plain(),
+            ["Tuxedo defeats the Wild Rabbit."]
+        );
         // Named (proper noun) and plural monsters: "Ding Bats hit".
-        let bats = Ctx { actor: Some(Who { name: "Ding Bats".into(), named: true, plural: true, ..Default::default() }), target: pc("Tuxedo"), ..ctx.clone() };
-        assert_eq!(b.expand(1, &bats).unwrap().plain(), ["Ding Bats hit Tuxedo for 5 points of damage."]);
+        let bats = Ctx {
+            actor: Some(Who {
+                name: "Ding Bats".into(),
+                named: true,
+                plural: true,
+                ..Default::default()
+            }),
+            target: pc("Tuxedo"),
+            ..ctx.clone()
+        };
+        assert_eq!(
+            b.expand(1, &bats).unwrap().plain(),
+            ["Ding Bats hit Tuxedo for 5 points of damage."]
+        );
         // Experience (0x02D work[0]) and level up, which sets mode 0x79 with 1f 'y'.
-        let exp = Ctx { actor: pc("Tuxedo"), target: pc("Tuxedo"), work: [50, 0, 0, 0, 0], ..Default::default() };
-        assert_eq!(b.expand(8, &exp).unwrap().plain(), ["Tuxedo gains 50 experience points."]);
-        let lv = Ctx { work: [2, 0, 0, 0, 0], ..exp };
+        let exp = Ctx {
+            actor: pc("Tuxedo"),
+            target: pc("Tuxedo"),
+            work: [50, 0, 0, 0, 0],
+            ..Default::default()
+        };
+        assert_eq!(
+            b.expand(8, &exp).unwrap().plain(),
+            ["Tuxedo gains 50 experience points."]
+        );
+        let lv = Ctx {
+            work: [2, 0, 0, 0, 0],
+            ..exp
+        };
         let l = b.expand(9, &lv).unwrap();
-        assert_eq!((l.lines.as_slice(), l.mode), (["Tuxedo attains level 2!".to_string()].as_slice(), Some(0x79)));
+        assert_eq!(
+            (l.lines.as_slice(), l.mode),
+            (
+                ["Tuxedo attains level 2!".to_string()].as_slice(),
+                Some(0x79)
+            )
+        );
         // Spell names (55702) and two-line messages.
-        let cure = Ctx { actor: pc("Tuxedo"), target: pc("Tuxedo"), work: [1, 12, 0, 0, 0], ..Default::default() };
-        assert_eq!(b.expand(7, &cure).unwrap().plain(), ["Tuxedo casts Cure.", "Tuxedo recovers 12 HP."]);
+        let cure = Ctx {
+            actor: pc("Tuxedo"),
+            target: pc("Tuxedo"),
+            work: [1, 12, 0, 0, 0],
+            ..Default::default()
+        };
+        assert_eq!(
+            b.expand(7, &cure).unwrap().plain(),
+            ["Tuxedo casts Cure.", "Tuxedo recovers 12 HP."]
+        );
     }
 
     #[test]
     fn modes_and_colours() {
         let Some(b) = load() else { return };
         // "hits": ours 0x14, on us 0x1c, others 0x28 (FFXiMain tables 0x1034cf60 / d360 / e760).
-        assert_eq!([Relation::CasterIsMe, Relation::TargetIsMe, Relation::Other].map(|r| b.mode(1, r)), [0x14, 0x1c, 0x28]);
+        assert_eq!(
+            [Relation::CasterIsMe, Relation::TargetIsMe, Relation::Other].map(|r| b.mode(1, r)),
+            [0x14, 0x1c, 0x28]
+        );
         assert_eq!(b.mode(13, Relation::Other), HIDDEN);
         // Damage taken is red, system lines yellow.
         assert_eq!(b.colour(0x1c), [0x2c, 0x30, 0xa0, 0x70]);
@@ -972,8 +1338,18 @@ mod tests {
     #[test]
     fn ids_match_lsb() {
         let Some(b) = load() else { return };
-        let ctx = Ctx { actor: pc("A"), target: mob("B"), work: [3, 4, 5, 6, 0], me: "A".into(), ..Default::default() };
-        let t = |id| b.expand(id, &ctx).map(|l| l.lines.join(" ")).unwrap_or_default();
+        let ctx = Ctx {
+            actor: pc("A"),
+            target: mob("B"),
+            work: [3, 4, 5, 6, 0],
+            me: "A".into(),
+            ..Default::default()
+        };
+        let t = |id| {
+            b.expand(id, &ctx)
+                .map(|l| l.lines.join(" "))
+                .unwrap_or_default()
+        };
         assert_eq!(t(264), "The B takes 4 points of damage.");
         assert_eq!(t(282), "The B evades.");
         assert_eq!(t(718), "A gains 3 capacity points.");

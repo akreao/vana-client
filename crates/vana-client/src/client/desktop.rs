@@ -52,7 +52,12 @@ pub fn desktop_shortcut() -> Result<()> {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))?;
     }
-    let _ = std::process::Command::new("gio").arg("set").arg(&path).arg("metadata::trusted").arg("true").output();
+    let _ = std::process::Command::new("gio")
+        .arg("set")
+        .arg(&path)
+        .arg("metadata::trusted")
+        .arg("true")
+        .output();
     Ok(())
 }
 

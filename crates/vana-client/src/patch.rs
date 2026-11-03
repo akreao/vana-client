@@ -55,7 +55,10 @@ fn open(frame: &[u8]) -> Result<(u32, &[u8])> {
     if Md5::digest(&frame[8..])[..4] != frame[4..8] {
         bail!("frame checksum mismatch");
     }
-    Ok((u32::from_le_bytes(frame[12..16].try_into().unwrap()), &frame[HEADER..]))
+    Ok((
+        u32::from_le_bytes(frame[12..16].try_into().unwrap()),
+        &frame[HEADER..],
+    ))
 }
 
 fn file_request(path: &str, offset: u32, len: u32) -> Vec<u8> {
@@ -83,16 +86,25 @@ fn version_reply(b: &[u8]) -> Result<ServerVersion> {
         bail!("short version reply");
     }
     let n = u32::from_le_bytes(b[at..at + 4].try_into().unwrap()) as usize;
-    let text = b.get(at + 4..at + 4 + n).ok_or_else(|| anyhow!("version string truncated"))?;
-    let cstr = |s: &[u8]| String::from_utf8_lossy(s.split(|&c| c == 0).next().unwrap_or_default()).into_owned();
-    Ok(ServerVersion { released: u32::from_le_bytes(b[..4].try_into().unwrap()), label: cstr(&b[8..at]), version: cstr(text) })
+    let text = b
+        .get(at + 4..at + 4 + n)
+        .ok_or_else(|| anyhow!("version string truncated"))?;
+    let cstr = |s: &[u8]| {
+        String::from_utf8_lossy(s.split(|&c| c == 0).next().unwrap_or_default()).into_owned()
+    };
+    Ok(ServerVersion {
+        released: u32::from_le_bytes(b[..4].try_into().unwrap()),
+        label: cstr(&b[8..at]),
+        version: cstr(text),
+    })
 }
 
 pub struct Session(TcpStream);
 
 impl Session {
     pub fn connect() -> Result<Self> {
-        let s = TcpStream::connect((HOST, PORT)).with_context(|| format!("connecting to {HOST}:{PORT}"))?;
+        let s = TcpStream::connect((HOST, PORT))
+            .with_context(|| format!("connecting to {HOST}:{PORT}"))?;
         s.set_read_timeout(Some(Duration::from_secs(120)))?;
         s.set_write_timeout(Some(Duration::from_secs(120)))?;
         Ok(Self(s))
@@ -142,11 +154,21 @@ impl Session {
             let want = ((len - out.len() as u64) as u32).min(CHUNK);
             let f = self.exchange(&file_request(path, offset, want), kind::FILE_CHUNK)?;
             let b = &f[HEADER..];
-            let u = |i: usize| b.get(i..i + 4).map(|s| u32::from_le_bytes(s.try_into().unwrap()));
-            let (Some(got), Some(n), Some(extra)) = (u(0), u(4), u(8)) else { bail!("{path}: short chunk") };
-            let data = b.get(12 + extra as usize..12 + extra as usize + n as usize).ok_or_else(|| anyhow!("{path}: chunk overruns its frame"))?;
+            let u = |i: usize| {
+                b.get(i..i + 4)
+                    .map(|s| u32::from_le_bytes(s.try_into().unwrap()))
+            };
+            let (Some(got), Some(n), Some(extra)) = (u(0), u(4), u(8)) else {
+                bail!("{path}: short chunk")
+            };
+            let data = b
+                .get(12 + extra as usize..12 + extra as usize + n as usize)
+                .ok_or_else(|| anyhow!("{path}: chunk overruns its frame"))?;
             if got != offset || data.is_empty() {
-                bail!("{path}: asked for offset {offset}, got {} bytes at {got}", data.len());
+                bail!(
+                    "{path}: asked for offset {offset}, got {} bytes at {got}",
+                    data.len()
+                );
             }
             out.extend_from_slice(data);
         }
@@ -163,7 +185,13 @@ struct Bits<'a> {
 
 impl<'a> Bits<'a> {
     fn new(coded: &'a [u8]) -> Result<Self> {
-        let end = u32::from_le_bytes(coded.get(..4).ok_or_else(|| anyhow!("coded stream too short"))?.try_into().unwrap()) as usize;
+        let end = u32::from_le_bytes(
+            coded
+                .get(..4)
+                .ok_or_else(|| anyhow!("coded stream too short"))?
+                .try_into()
+                .unwrap(),
+        ) as usize;
         let d = &coded[4..];
         if end > d.len() * 8 {
             bail!("coded stream declares {end} bits, holds {}", d.len() * 8);
@@ -230,7 +258,10 @@ pub fn olc(coded: &[u8], base: &[u8]) -> Result<Vec<u8>> {
             let off = r.take(16)? as u16 as i16 as isize;
             let n = r.take(8)? as usize;
             let at = out.len() as isize + off;
-            let src = usize::try_from(at).ok().and_then(|a| base.get(a..a + n)).ok_or_else(|| anyhow!("base reference {at} outside {} bytes", base.len()))?;
+            let src = usize::try_from(at)
+                .ok()
+                .and_then(|a| base.get(a..a + n))
+                .ok_or_else(|| anyhow!("base reference {at} outside {} bytes", base.len()))?;
             out.extend_from_slice(src);
         }
     }
@@ -264,7 +295,11 @@ impl Sig {
     pub fn of(d: &[u8]) -> Self {
         let sum = d.iter().fold(0i32, |s, &b| s.wrapping_add(b as i8 as i32));
         let h = Md5::digest(d);
-        Self { len: d.len() as u64, sum, md5: i32::from_le_bytes([h[0], h[1], h[2], h[3]]) }
+        Self {
+            len: d.len() as u64,
+            sum,
+            md5: i32::from_le_bytes([h[0], h[1], h[2], h[3]]),
+        }
     }
 }
 
@@ -300,9 +335,21 @@ pub fn check_path(p: &str) -> Result<()> {
         if c.ends_with(['.', ' ']) {
             return bad("has a name ending in a dot or space");
         }
-        let stem = c.split('.').next().unwrap_or_default().trim_end().to_ascii_uppercase();
-        let numbered = stem.len() == 4 && (stem.starts_with("COM") || stem.starts_with("LPT")) && stem.as_bytes()[3].is_ascii_digit();
-        if numbered || matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$") {
+        let stem = c
+            .split('.')
+            .next()
+            .unwrap_or_default()
+            .trim_end()
+            .to_ascii_uppercase();
+        let numbered = stem.len() == 4
+            && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.as_bytes()[3].is_ascii_digit();
+        if numbered
+            || matches!(
+                stem.as_str(),
+                "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+            )
+        {
             return bad("names a Windows device");
         }
     }
@@ -329,11 +376,15 @@ fn writable(root: &Path, p: &str) -> Result<PathBuf> {
             Err(e) => return Err(e).with_context(|| at.display().to_string()),
         };
         #[cfg(windows)]
-        let linked = m.file_type().is_symlink() || std::os::windows::fs::MetadataExt::file_attributes(&m) & 0x400 != 0;
+        let linked = m.file_type().is_symlink()
+            || std::os::windows::fs::MetadataExt::file_attributes(&m) & 0x400 != 0;
         #[cfg(not(windows))]
         let linked = m.file_type().is_symlink();
         if linked {
-            bail!("{} is a link; the patcher only writes inside the install folder", at.display());
+            bail!(
+                "{} is a link; the patcher only writes inside the install folder",
+                at.display()
+            );
         }
     }
     Ok(out)
@@ -350,7 +401,13 @@ pub fn parse_manifest(text: &str) -> Result<Vec<Entry>> {
     }
     let line_version = |l: &str| -> Option<Version> {
         let mut it = l.splitn(5, ' ');
-        let (stamp, len, sum, md5, rest) = (it.next()?, it.next()?.parse().ok()?, it.next()?.parse().ok()?, it.next()?.parse().ok()?, it.next()?);
+        let (stamp, len, sum, md5, rest) = (
+            it.next()?,
+            it.next()?.parse().ok()?,
+            it.next()?.parse().ok()?,
+            it.next()?.parse().ok()?,
+            it.next()?,
+        );
         let (dp, dl, rest) = path_len(rest, ".slc")?;
         let delta = if rest.is_empty() {
             None
@@ -361,7 +418,12 @@ pub fn parse_manifest(text: &str) -> Result<Vec<Entry>> {
             }
             Some((p.to_string(), n))
         };
-        Some(Version { stamp: stamp.into(), sig: Sig { len, sum, md5 }, direct: (dp.into(), dl), delta })
+        Some(Version {
+            stamp: stamp.into(),
+            sig: Sig { len, sum, md5 },
+            direct: (dp.into(), dl),
+            delta,
+        })
     };
     let mut out = Vec::new();
     let mut open: Option<Entry> = None;
@@ -373,9 +435,15 @@ pub fn parse_manifest(text: &str) -> Result<Vec<Entry>> {
         match open.as_mut() {
             None if l == "end" => break,
             None => {
-                let p = l.strip_prefix("file ").and_then(|s| s.strip_suffix(" {")).ok_or_else(|| anyhow!("manifest line {}: {l:?}", i + 1))?;
+                let p = l
+                    .strip_prefix("file ")
+                    .and_then(|s| s.strip_suffix(" {"))
+                    .ok_or_else(|| anyhow!("manifest line {}: {l:?}", i + 1))?;
                 check_path(p).with_context(|| format!("manifest line {}", i + 1))?;
-                open = Some(Entry { path: p.into(), versions: Vec::new() });
+                open = Some(Entry {
+                    path: p.into(),
+                    versions: Vec::new(),
+                });
             }
             Some(_) if l == "}" => {
                 let e = open.take().unwrap();
@@ -383,7 +451,9 @@ pub fn parse_manifest(text: &str) -> Result<Vec<Entry>> {
                     out.push(e);
                 }
             }
-            Some(e) => e.versions.push(line_version(l).ok_or_else(|| anyhow!("manifest line {}: {l:?}", i + 1))?),
+            Some(e) => e
+                .versions
+                .push(line_version(l).ok_or_else(|| anyhow!("manifest line {}: {l:?}", i + 1))?),
         }
     }
     if open.is_some() {
@@ -406,7 +476,9 @@ pub enum Action {
 pub fn decide(e: &Entry, local: Option<Sig>) -> (Action, u64) {
     let cur = e.versions.last().expect("entries have versions");
     let whole = (Action::Direct, cur.direct.1);
-    let Some(i) = local.and_then(|l| e.versions.iter().rposition(|v| v.sig == l)) else { return whole };
+    let Some(i) = local.and_then(|l| e.versions.iter().rposition(|v| v.sig == l)) else {
+        return whole;
+    };
     if i + 1 == e.versions.len() {
         return (Action::Current, 0);
     }
@@ -417,7 +489,11 @@ pub fn decide(e: &Entry, local: Option<Sig>) -> (Action, u64) {
             None => return whole,
         }
     }
-    if bytes < cur.direct.1 { (Action::Deltas(i + 1), bytes) } else { whole }
+    if bytes < cur.direct.1 {
+        (Action::Deltas(i + 1), bytes)
+    } else {
+        whole
+    }
 }
 
 /// Executables and libraries. The client reads its tables out of the current FFXiMain.dll, so they are patched too
@@ -441,20 +517,29 @@ fn sig_of_path(p: &Path) -> Result<Option<Sig>> {
     if !p.is_file() {
         return Ok(None);
     }
-    Ok(Some(Sig::of(&std::fs::read(p).with_context(|| p.display().to_string())?)))
+    Ok(Some(Sig::of(
+        &std::fs::read(p).with_context(|| p.display().to_string())?,
+    )))
 }
 
 /// The version of the manifest last applied here (our stamp file).
 pub fn applied_version(root: &Path) -> Option<String> {
     let text = std::fs::read_to_string(root.join(STAMP_FILE)).ok()?;
-    parse_manifest(&text).ok()?.iter().flat_map(|e| e.versions.iter().map(|v| v.stamp.clone())).max()
+    parse_manifest(&text)
+        .ok()?
+        .iter()
+        .flat_map(|e| e.versions.iter().map(|v| v.stamp.clone()))
+        .max()
 }
 
 /// The start-up check's quick part (one request): the server's version when it is not the one applied last or a
 /// code file is not current (installs once patched with data files only keep a 2019 FFXiMain.dll), else None.
 pub fn behind(root: &Path) -> Result<Option<ServerVersion>> {
     let server = Session::connect()?.version()?;
-    Ok((applied_version(root).as_deref() != Some(server.version.as_str()) || !code_current(root)).then_some(server))
+    Ok(
+        (applied_version(root).as_deref() != Some(server.version.as_str()) || !code_current(root))
+            .then_some(server),
+    )
 }
 
 /// The slow part: every listed file checked against `server`'s manifest.
@@ -464,8 +549,19 @@ pub fn plan_against(root: &Path, server: ServerVersion) -> Result<Plan> {
 
 /// Every code file of the stamped manifest matches its current version.
 fn code_current(root: &Path) -> bool {
-    let Some(entries) = std::fs::read_to_string(root.join(STAMP_FILE)).ok().and_then(|t| parse_manifest(&t).ok()) else { return false };
-    entries.iter().filter(|e| is_code(&e.path)).all(|e| local(root, &e.path).and_then(|p| sig_of_path(&p)).ok().flatten().is_some_and(|l| decide(e, Some(l)).0 == Action::Current))
+    let Some(entries) = std::fs::read_to_string(root.join(STAMP_FILE))
+        .ok()
+        .and_then(|t| parse_manifest(&t).ok())
+    else {
+        return false;
+    };
+    entries.iter().filter(|e| is_code(&e.path)).all(|e| {
+        local(root, &e.path)
+            .and_then(|p| sig_of_path(&p))
+            .ok()
+            .flatten()
+            .is_some_and(|l| decide(e, Some(l)).0 == Action::Current)
+    })
 }
 
 /// Asks the server for its version and manifest and checks every listed file under `root` (in parallel).
@@ -478,28 +574,47 @@ fn plan_for(root: &Path, code: bool, server: ServerVersion) -> Result<Plan> {
     let entries = parse_manifest(&String::from_utf8_lossy(&manifest))?;
     let next = std::sync::atomic::AtomicUsize::new(0);
     let found: std::sync::Mutex<Vec<(usize, Action, u64)>> = Default::default();
-    let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).min(16);
+    let threads = std::thread::available_parallelism()
+        .map_or(4, |n| n.get())
+        .min(16);
     std::thread::scope(|s| -> Result<()> {
         let workers: Vec<_> = (0..threads)
             .map(|_| {
                 s.spawn(|| -> Result<()> {
                     loop {
                         let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        let Some(e) = entries.get(i) else { return Ok(()) };
+                        let Some(e) = entries.get(i) else {
+                            return Ok(());
+                        };
                         let d = decide(e, sig_of_path(&local(root, &e.path)?)?);
                         found.lock().unwrap().push((i, d.0, d.1));
                     }
                 })
             })
             .collect();
-        workers.into_iter().try_for_each(|w| w.join().map_err(|_| anyhow!("scan thread panicked"))?)
+        workers
+            .into_iter()
+            .try_for_each(|w| w.join().map_err(|_| anyhow!("scan thread panicked"))?)
     })?;
     let mut all = found.into_inner().unwrap();
     all.sort_by_key(|x| x.0);
     let current = all.iter().filter(|x| x.1 == Action::Current).count();
-    let skipped_code = all.iter().filter(|x| x.1 != Action::Current && !code && is_code(&entries[x.0].path)).count();
-    let todo = all.into_iter().filter(|x| x.1 != Action::Current && (code || !is_code(&entries[x.0].path))).collect();
-    Ok(Plan { server, manifest, entries, todo, current, skipped_code })
+    let skipped_code = all
+        .iter()
+        .filter(|x| x.1 != Action::Current && !code && is_code(&entries[x.0].path))
+        .count();
+    let todo = all
+        .into_iter()
+        .filter(|x| x.1 != Action::Current && (code || !is_code(&entries[x.0].path)))
+        .collect();
+    Ok(Plan {
+        server,
+        manifest,
+        entries,
+        todo,
+        current,
+        skipped_code,
+    })
 }
 
 fn write_atomic(path: &Path, data: &[u8]) -> Result<()> {
@@ -517,7 +632,9 @@ fn produce(s: &mut Session, root: &Path, e: &Entry, a: Action) -> Result<Vec<u8>
     let cur = e.versions.last().unwrap();
     let data = match a {
         Action::Current => unreachable!(),
-        Action::Direct => direct(&s.fetch(&cur.direct.0, cur.direct.1)?).with_context(|| cur.direct.0.clone())?,
+        Action::Direct => {
+            direct(&s.fetch(&cur.direct.0, cur.direct.1)?).with_context(|| cur.direct.0.clone())?
+        }
         Action::Deltas(from) => {
             let mut d = std::fs::read(local(root, &e.path)?)?;
             for v in &e.versions[from..] {
@@ -540,14 +657,26 @@ fn produce(s: &mut Session, root: &Path, e: &Entry, a: Action) -> Result<Vec<u8>
 pub fn fetch_one(path: &str, dir: &Path) -> Result<(PathBuf, String)> {
     let manifest = Session::connect()?.manifest()?;
     let entries = parse_manifest(&String::from_utf8_lossy(&manifest))?;
-    let e = entries.iter().find(|e| e.path.eq_ignore_ascii_case(path)).ok_or_else(|| anyhow!("{path} is not in the manifest"))?;
+    let e = entries
+        .iter()
+        .find(|e| e.path.eq_ignore_ascii_case(path))
+        .ok_or_else(|| anyhow!("{path} is not in the manifest"))?;
     let data = produce(&mut Session::connect()?, dir, e, Action::Direct)?;
     if is_code(&e.path) && !crate::code_pins::Pins::fetch()?.allows(&e.path, &data) {
-        bail!("{}: not on the pinned list of code files; not written", e.path);
+        bail!(
+            "{}: not on the pinned list of code files; not written",
+            e.path
+        );
     }
     let out = writable(dir, &e.path)?;
     write_atomic(&out, &data)?;
-    Ok((out, e.versions.last().map(|v| v.stamp.clone()).unwrap_or_default()))
+    Ok((
+        out,
+        e.versions
+            .last()
+            .map(|v| v.stamp.clone())
+            .unwrap_or_default(),
+    ))
 }
 
 /// Fetches and writes every planned file on `connections` sessions, then records the manifest. `progress` gets
@@ -556,11 +685,23 @@ pub fn fetch_one(path: &str, dir: &Path) -> Result<(PathBuf, String)> {
 /// An executable or library is written only when it is on the signed pinned list (crate::code_pins): one that is
 /// not, or every one when the list cannot be had, is left as it is while the data files go on, and the manifest is
 /// not recorded, so the next check offers the update again (the list may simply not cover a new patch yet).
-pub fn apply(root: &Path, plan: &Plan, connections: usize, progress: &(dyn Fn(usize, u64) + Sync)) -> Result<()> {
-    let pins = plan.todo.iter().any(|t| is_code(&plan.entries[t.0].path)).then(crate::code_pins::Pins::fetch);
+pub fn apply(
+    root: &Path,
+    plan: &Plan,
+    connections: usize,
+    progress: &(dyn Fn(usize, u64) + Sync),
+) -> Result<()> {
+    let pins = plan
+        .todo
+        .iter()
+        .any(|t| is_code(&plan.entries[t.0].path))
+        .then(crate::code_pins::Pins::fetch);
     let refused: std::sync::Mutex<Vec<String>> = Default::default();
     let next = std::sync::atomic::AtomicUsize::new(0);
-    let (files, bytes) = (std::sync::atomic::AtomicUsize::new(0), std::sync::atomic::AtomicU64::new(0));
+    let (files, bytes) = (
+        std::sync::atomic::AtomicUsize::new(0),
+        std::sync::atomic::AtomicU64::new(0),
+    );
     let failed: std::sync::Mutex<Option<anyhow::Error>> = Default::default();
     std::thread::scope(|s| {
         for _ in 0..connections.clamp(1, 6).min(plan.todo.len().max(1)) {
@@ -574,7 +715,9 @@ pub fn apply(root: &Path, plan: &Plan, connections: usize, progress: &(dyn Fn(us
                         return;
                     }
                     let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    let Some(&(ei, a, n)) = plan.todo.get(i) else { return };
+                    let Some(&(ei, a, n)) = plan.todo.get(i) else {
+                        return;
+                    };
                     let e = &plan.entries[ei];
                     let pinned = |d: &[u8]| match &pins {
                         Some(Ok(p)) => p.allows(&e.path, d),
@@ -607,11 +750,18 @@ pub fn apply(root: &Path, plan: &Plan, connections: usize, progress: &(dyn Fn(us
         let why = match &pins {
             Some(Err(e)) => format!("the pinned list of code files could not be checked ({e:#})"),
             Some(Ok(p)) if p.server != plan.server.version => {
-                format!("the pinned list of code files covers {}, not {} yet; try again later", p.server, plan.server.version)
+                format!(
+                    "the pinned list of code files covers {}, not {} yet; try again later",
+                    p.server, plan.server.version
+                )
             }
             _ => "they are not on the pinned list of code files".into(),
         };
-        bail!("{} code file(s) not written because {why}: {}", refused.len(), refused.join(", "));
+        bail!(
+            "{} code file(s) not written because {why}: {}",
+            refused.len(),
+            refused.join(", ")
+        );
     }
     write_atomic(&root.join(STAMP_FILE), &plan.manifest)
 }
@@ -623,7 +773,16 @@ pub fn code_pins() -> Result<String> {
     let manifest = Session::connect()?.manifest()?;
     let entries = parse_manifest(&String::from_utf8_lossy(&manifest))?;
     let mut s = Session::connect()?;
-    let lines = entries.iter().filter(|e| is_code(&e.path)).map(|e| Ok(crate::code_pins::line(&e.path, &produce(&mut s, Path::new(""), e, Action::Direct)?))).collect::<Result<Vec<_>>>()?;
+    let lines = entries
+        .iter()
+        .filter(|e| is_code(&e.path))
+        .map(|e| {
+            Ok(crate::code_pins::line(
+                &e.path,
+                &produce(&mut s, Path::new(""), e, Action::Direct)?,
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
     if lines.is_empty() {
         bail!("the manifest lists no code files");
     }
@@ -636,10 +795,18 @@ mod tests {
 
     /// LSB-first bit packing with the u32 bit count in front, for building test streams.
     fn pack(items: &[(u32, usize)]) -> Vec<u8> {
-        let bits: Vec<bool> = items.iter().flat_map(|&(v, n)| (0..n).map(move |i| (v >> i) & 1 == 1)).collect();
+        let bits: Vec<bool> = items
+            .iter()
+            .flat_map(|&(v, n)| (0..n).map(move |i| (v >> i) & 1 == 1))
+            .collect();
         let mut out = (bits.len() as u32).to_le_bytes().to_vec();
         for chunk in bits.chunks(8) {
-            out.push(chunk.iter().enumerate().fold(0u8, |b, (i, &x)| b | (x as u8) << i));
+            out.push(
+                chunk
+                    .iter()
+                    .enumerate()
+                    .fold(0u8, |b, (i, &x)| b | (x as u8) << i),
+            );
         }
         out
     }
@@ -648,7 +815,14 @@ mod tests {
     fn frames_seal_and_open() {
         let f = file_request("ROM/0/0.DAT", 0x10000, CHUNK);
         let (k, b) = open(&f).unwrap();
-        assert_eq!((k, &b[16..20], &b[20..]), (kind::FILE_REQUEST, &12u32.to_le_bytes()[..], &b"ROM/0/0.DAT\0"[..]));
+        assert_eq!(
+            (k, &b[16..20], &b[20..]),
+            (
+                kind::FILE_REQUEST,
+                &12u32.to_le_bytes()[..],
+                &b"ROM/0/0.DAT\0"[..]
+            )
+        );
         let mut bad = f.clone();
         bad[20] ^= 1;
         assert!(open(&bad).is_err());
@@ -656,10 +830,27 @@ mod tests {
 
     #[test]
     fn slc_and_olc() {
-        let s = pack(&[(0, 1), (b'a' as u32, 8), (0, 1), (b'b' as u32, 8), (1, 1), (2, 16), (5, 8)]);
+        let s = pack(&[
+            (0, 1),
+            (b'a' as u32, 8),
+            (0, 1),
+            (b'b' as u32, 8),
+            (1, 1),
+            (2, 16),
+            (5, 8),
+        ]);
         assert_eq!(slc(&s).unwrap(), b"abababa");
         // 11 base copy of 3 at +4, literal '-', 10 output copy of 2 from 2 back.
-        let o = pack(&[(0b11, 2), (4, 16), (3, 8), (0, 1), (b'-' as u32, 8), (0b01, 2), (2, 16), (2, 8)]);
+        let o = pack(&[
+            (0b11, 2),
+            (4, 16),
+            (3, 8),
+            (0, 1),
+            (b'-' as u32, 8),
+            (0b01, 2),
+            (2, 16),
+            (2, 8),
+        ]);
         assert_eq!(olc(&o, b"0123456789").unwrap(), b"456-6-");
         assert!(slc(&pack(&[(1, 1), (1, 16), (1, 8)])).is_err());
     }
@@ -668,10 +859,20 @@ mod tests {
     fn manifest_and_decisions() {
         let text = "file Tools/a b.chm {\n1_0 3 0 0 1_0/Direct/Tools/a b.chm.slc 9\n2_0 4 1 2 2_0/Direct/Tools/a b.chm.slc 10 2_0/Indirect/Tools/a b.chm.olc 3\n}\nfile x.dll {\n1_0 1 1 1 1_0/Direct/x.dll.slc 5\n}\nend\n";
         let m = parse_manifest(text).unwrap();
-        assert_eq!((m.len(), m[0].path.as_str(), m[0].versions[1].delta.clone()), (2, "Tools/a b.chm", Some(("2_0/Indirect/Tools/a b.chm.olc".into(), 3))));
+        assert_eq!(
+            (m.len(), m[0].path.as_str(), m[0].versions[1].delta.clone()),
+            (
+                2,
+                "Tools/a b.chm",
+                Some(("2_0/Indirect/Tools/a b.chm.olc".into(), 3))
+            )
+        );
         let old = m[0].versions[0].sig;
         assert_eq!(decide(&m[0], Some(old)), (Action::Deltas(1), 3));
-        assert_eq!(decide(&m[0], Some(m[0].versions[1].sig)), (Action::Current, 0));
+        assert_eq!(
+            decide(&m[0], Some(m[0].versions[1].sig)),
+            (Action::Current, 0)
+        );
         assert_eq!(decide(&m[0], None), (Action::Direct, 10));
         assert!(is_code(&m[1].path));
         let s = Sig::of(b"\xff\x01");
@@ -680,22 +881,51 @@ mod tests {
 
     #[test]
     fn manifest_paths_stay_under_the_root() {
-        for ok in ["ROM/0/0.DAT", "ROM9\\12\\34.DAT", "Tools/a b.chm", "FFXiMain.dll", "polboot.exe"] {
+        for ok in [
+            "ROM/0/0.DAT",
+            "ROM9\\12\\34.DAT",
+            "Tools/a b.chm",
+            "FFXiMain.dll",
+            "polboot.exe",
+        ] {
             assert!(check_path(ok).is_ok(), "{ok}");
         }
         for bad in [
-            "", "/etc/passwd", "\\Windows\\x.dll", "\\\\host\\share\\x", "C:\\x.exe", "C:x.exe", "ROM/../../x", "..\\x", "ROM/./0.DAT",
-            "ROM//0.DAT", "ROM/", "a.DAT:stream", "ROM/.. /x", "ROM/x.", "ROM/NUL", "con.txt", "ROM/COM1.DAT", "a\0b",
+            "",
+            "/etc/passwd",
+            "\\Windows\\x.dll",
+            "\\\\host\\share\\x",
+            "C:\\x.exe",
+            "C:x.exe",
+            "ROM/../../x",
+            "..\\x",
+            "ROM/./0.DAT",
+            "ROM//0.DAT",
+            "ROM/",
+            "a.DAT:stream",
+            "ROM/.. /x",
+            "ROM/x.",
+            "ROM/NUL",
+            "con.txt",
+            "ROM/COM1.DAT",
+            "a\0b",
         ] {
             assert!(check_path(bad).is_err(), "{bad:?}");
         }
         let entry = |p: &str| format!("file {p} {{\n1_0 1 1 1 1_0/Direct/x.slc 5\n}}\nend\n");
         assert!(parse_manifest(&entry("ROM/0/0.DAT")).is_ok());
-        for p in ["../../.config/autostart/x.desktop", "/tmp/x", "C:\\Users\\x\\Start Menu\\x.exe"] {
+        for p in [
+            "../../.config/autostart/x.desktop",
+            "/tmp/x",
+            "C:\\Users\\x\\Start Menu\\x.exe",
+        ] {
             assert!(parse_manifest(&entry(p)).is_err(), "{p}");
         }
         assert!(local(Path::new("/game"), "/etc/passwd").is_err());
-        assert_eq!(local(Path::new("/game"), "ROM/0/0.DAT").unwrap(), Path::new("/game/ROM/0/0.DAT"));
+        assert_eq!(
+            local(Path::new("/game"), "ROM/0/0.DAT").unwrap(),
+            Path::new("/game/ROM/0/0.DAT")
+        );
     }
 
     #[cfg(unix)]
@@ -706,8 +936,14 @@ mod tests {
         std::fs::create_dir_all(root.join("ROM/0")).unwrap();
         std::fs::create_dir_all(&outside).unwrap();
         std::os::unix::fs::symlink(&outside, root.join("ROM2")).unwrap();
-        assert_eq!(writable(&root, "ROM/0/0.DAT").unwrap(), root.join("ROM/0/0.DAT"));
-        assert_eq!(writable(&root, "ROM3/1/2.DAT").unwrap(), root.join("ROM3/1/2.DAT"));
+        assert_eq!(
+            writable(&root, "ROM/0/0.DAT").unwrap(),
+            root.join("ROM/0/0.DAT")
+        );
+        assert_eq!(
+            writable(&root, "ROM3/1/2.DAT").unwrap(),
+            root.join("ROM3/1/2.DAT")
+        );
         assert!(writable(&root, "ROM2/1/2.DAT").is_err());
         // One file name on Unix, so the ROM2 link is not on its way.
         assert!(writable(&root, "ROM2\\1\\2.DAT").is_ok());

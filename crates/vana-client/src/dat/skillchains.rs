@@ -64,7 +64,9 @@ impl Element {
     /// The spell table's element (+0x0a: 0 fire .. 7 dark).
     pub fn of_spell(e: u8) -> Option<Element> {
         use Element::*;
-        [Fire, Ice, Wind, Earth, Thunder, Water, Light, Dark].get(e as usize).copied()
+        [Fire, Ice, Wind, Earth, Thunder, Water, Light, Dark]
+            .get(e as usize)
+            .copied()
     }
 }
 
@@ -145,7 +147,12 @@ const MAP: [((Prop, Prop), Prop); 30] = [
 
 /// FormSkillchain: each resonance property in order against each of the closer's; the first pair in the map wins.
 pub fn form(resonance: &[Prop], closer: &[Prop]) -> Option<Prop> {
-    resonance.iter().filter(|&&r| r != 0).find_map(|&r| closer.iter().filter(|&&c| c != 0).find_map(|&c| MAP.iter().find(|(k, _)| *k == (c, r)).map(|(_, v)| *v)))
+    resonance.iter().filter(|&&r| r != 0).find_map(|&r| {
+        closer
+            .iter()
+            .filter(|&&c| c != 0)
+            .find_map(|&c| MAP.iter().find(|(k, _)| *k == (c, r)).map(|(_, v)| *v))
+    })
 }
 
 /// What uses a skill: a weapon skill (category 3), a mob or pet skill (category 11 / 13), blue magic (category 4).
@@ -178,7 +185,10 @@ impl Data {
     pub fn get(&self, s: Skill) -> Option<&Entry> {
         match s {
             Skill::Weapon(id) => self.weapon.get(&id),
-            Skill::Mob(id) => self.mob.get(&id).or_else(|| self.weapon.get(&id).filter(|_| id < 256)),
+            Skill::Mob(id) => self
+                .mob
+                .get(&id)
+                .or_else(|| self.weapon.get(&id).filter(|_| id < 256)),
             Skill::Blue(id) => self.blue.get(&id),
         }
     }
@@ -195,15 +205,25 @@ impl Data {
 
 /// Lower case, letters and digits only: "TRUST_Ayame_UC" and "Ayame (UC)" both give "ayameuc".
 pub fn fold(name: &str) -> String {
-    name.trim_start_matches("TRUST_").chars().filter(|c| c.is_ascii_alphanumeric()).map(|c| c.to_ascii_lowercase()).collect()
+    name.trim_start_matches("TRUST_")
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
 }
 
 /// "red_lotus_blade" -> "Red Lotus Blade".
 pub fn pretty(name: &str) -> String {
-    name.split('_').filter(|w| !w.is_empty()).map(|w| {
-        let mut c = w.chars();
-        c.next().map_or(String::new(), |f| f.to_ascii_uppercase().to_string() + c.as_str())
-    }).collect::<Vec<_>>().join(" ")
+    name.split('_')
+        .filter(|w| !w.is_empty())
+        .map(|w| {
+            let mut c = w.chars();
+            c.next().map_or(String::new(), |f| {
+                f.to_ascii_uppercase().to_string() + c.as_str()
+            })
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 pub fn data() -> &'static Data {
@@ -219,16 +239,39 @@ fn parse(text: &str) -> Data {
         let props = |k: usize| [num(k) as u8, num(k + 1) as u8, num(k + 2) as u8];
         match f.first() {
             Some(&"w") => {
-                d.weapon.insert(num(1), Entry { props: props(2), skill: num(6), name: f.get(7).unwrap_or(&"").to_string() });
+                d.weapon.insert(
+                    num(1),
+                    Entry {
+                        props: props(2),
+                        skill: num(6),
+                        name: f.get(7).unwrap_or(&"").to_string(),
+                    },
+                );
             }
             Some(&"m") => {
-                d.mob.insert(num(1), Entry { props: props(2), name: f.get(5).unwrap_or(&"").to_string(), ..Default::default() });
+                d.mob.insert(
+                    num(1),
+                    Entry {
+                        props: props(2),
+                        name: f.get(5).unwrap_or(&"").to_string(),
+                        ..Default::default()
+                    },
+                );
             }
             Some(&"b") => {
-                d.blue.insert(num(1), Entry { props: props(2), ..Default::default() });
+                d.blue.insert(
+                    num(1),
+                    Entry {
+                        props: props(2),
+                        ..Default::default()
+                    },
+                );
             }
             Some(&"t") => {
-                d.trusts.insert(f.get(1).unwrap_or(&"").to_string(), f[2..].iter().filter_map(|v| v.parse().ok()).collect());
+                d.trusts.insert(
+                    f.get(1).unwrap_or(&"").to_string(),
+                    f[2..].iter().filter_map(|v| v.parse().ok()).collect(),
+                );
             }
             _ => {}
         }
@@ -263,27 +306,45 @@ fn rows(sql: &str, table: &str) -> Vec<Vec<String>> {
 
 /// `skillchain-gen`: data/skillchains.txt from LSB's sql/ tables.
 pub fn generate(lsb: &Path, out: &Path) -> Result<()> {
-    let read = |name: &str| std::fs::read_to_string(lsb.join("sql").join(name)).with_context(|| format!("reading {name}"));
+    let read = |name: &str| {
+        std::fs::read_to_string(lsb.join("sql").join(name))
+            .with_context(|| format!("reading {name}"))
+    };
     let n = |v: &str| v.parse::<i64>().unwrap_or(0).max(0);
-    let mut text = String::from("# vana-client skillchain-gen from LandSandBoat sql/: weapon_skills, mob_skills, pet_skills, blue_spell_list, mob_skill_lists\n");
+    let mut text = String::from(
+        "# vana-client skillchain-gen from LandSandBoat sql/: weapon_skills, mob_skills, pet_skills, blue_spell_list, mob_skill_lists\n",
+    );
     text += "# w id p1 p2 p3 type skilllevel name / m id p1 p2 p3 name / b spell p1 p2 p3 / t trust skill...\n";
     for r in rows(&read("weapon_skills.sql")?, "weapon_skills") {
         // weaponskillid, name, jobs, type, skilllevel, element, animation, animationTime, range, aoe, radius, primary_sc..
         if r.len() >= 14 {
-            text += &format!("w {} {} {} {} {} {} {}\n", n(&r[0]), n(&r[11]), n(&r[12]), n(&r[13]), n(&r[3]), n(&r[4]), r[1]);
+            text += &format!(
+                "w {} {} {} {} {} {} {}\n",
+                n(&r[0]),
+                n(&r[11]),
+                n(&r[12]),
+                n(&r[13]),
+                n(&r[3]),
+                n(&r[4]),
+                r[1]
+            );
         }
     }
     let mut mob = std::collections::BTreeMap::new();
     for r in rows(&read("mob_skills.sql")?, "mob_skills") {
         if r.len() >= 15 && (n(&r[12]) | n(&r[13]) | n(&r[14])) != 0 {
-            mob.insert(n(&r[0]), format!("{} {} {} {}", n(&r[12]), n(&r[13]), n(&r[14]), r[2]));
+            mob.insert(
+                n(&r[0]),
+                format!("{} {} {} {}", n(&r[12]), n(&r[13]), n(&r[14]), r[2]),
+            );
         }
     }
     // pet_skill_id, mob_skill_id, anim, name, aoe, radius, distance, anim time, prepare, targets, message, flag, param,
     // finish category, knockback, primary_sc..: keyed by the pet skill id the action carries.
     for r in rows(&read("pet_skills.sql")?, "pet_skills") {
         if r.len() >= 18 && (n(&r[15]) | n(&r[16]) | n(&r[17])) != 0 {
-            mob.entry(n(&r[0])).or_insert_with(|| format!("{} {} {} {}", n(&r[15]), n(&r[16]), n(&r[17]), r[3]));
+            mob.entry(n(&r[0]))
+                .or_insert_with(|| format!("{} {} {} {}", n(&r[15]), n(&r[16]), n(&r[17]), r[3]));
         }
     }
     for (id, rest) in mob {
@@ -301,7 +362,13 @@ pub fn generate(lsb: &Path, out: &Path) -> Result<()> {
         }
     }
     for (name, ids) in trusts {
-        text += &format!("t {name} {}\n", ids.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(" "));
+        text += &format!(
+            "t {name} {}\n",
+            ids.iter()
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
     }
     std::fs::write(out, text).with_context(|| format!("writing {}", out.display()))?;
     println!("wrote {}", out.display());
@@ -329,7 +396,10 @@ mod tests {
         let d = data();
         // Blade: Rin (128) Transfixion; Blade: Jin (134) Impaction / Detonation.
         assert_eq!(d.weapon.get(&128).map(|e| e.props), Some([1, 0, 0]));
-        assert_eq!(d.weapon.get(&134).map(|e| e.props[..2].to_vec()), Some(vec![6, 8]));
+        assert_eq!(
+            d.weapon.get(&134).map(|e| e.props[..2].to_vec()),
+            Some(vec![6, 8])
+        );
         assert!(d.trust("Ayame (UC)").is_some() || d.trust("Ayame").is_some());
         assert_eq!(fold("D. Shantotto"), "dshantotto");
     }

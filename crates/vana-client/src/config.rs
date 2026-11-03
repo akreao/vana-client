@@ -27,7 +27,10 @@ fn name_file(name: &str) -> String {
     if !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric()) {
         return format!("{name}.json");
     }
-    format!("_{}.json", name.bytes().map(|b| format!("{b:02x}")).collect::<String>())
+    format!(
+        "_{}.json",
+        name.bytes().map(|b| format!("{b:02x}")).collect::<String>()
+    )
 }
 
 /// A character's saved chat lines (the modern chat's history): in the data dir, or beside an FFXI_CONFIG copy.
@@ -71,7 +74,9 @@ pub fn is_copy() -> bool {
 
 /// FFXI_CONFIG points test runs at a copy, so they never write the user's file.
 fn config_path() -> PathBuf {
-    std::env::var_os("FFXI_CONFIG").map(PathBuf::from).unwrap_or_else(|| app_dir(dirs::config_dir()).join("config.json"))
+    std::env::var_os("FFXI_CONFIG")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| app_dir(dirs::config_dir()).join("config.json"))
 }
 
 /// A login that worked: the server, the account (the Square Enix ID for PlayOnline), PlayOnline's member ID, and its
@@ -251,7 +256,15 @@ impl Default for ModernModes {
         // Combat hides the location panel (user, 2026-11-01) and the training regime; the skillchain helper only in
         // combat.
         let v = |ids: &[&str]| ids.iter().map(|s| s.to_string()).collect();
-        Self { hidden: [v(&["skillchains"]), v(&["where", "regime"]), v(&["skillchains"])], pinned: Vec::new(), fades: true }
+        Self {
+            hidden: [
+                v(&["skillchains"]),
+                v(&["where", "regime"]),
+                v(&["skillchains"]),
+            ],
+            pinned: Vec::new(),
+            fades: true,
+        }
     }
 }
 
@@ -303,7 +316,13 @@ pub fn enabled_mod_dirs() -> Vec<PathBuf> {
     if std::env::var_os("FFXI_NO_MODS").is_some() {
         return Vec::new();
     }
-    Config::load().mods.iter().filter(|m| m.enabled).map(|m| mods_dir().join(&m.name)).filter(|d| d.is_dir()).collect()
+    Config::load()
+        .mods
+        .iter()
+        .filter(|m| m.enabled)
+        .map(|m| mods_dir().join(&m.name))
+        .filter(|d| d.is_dir())
+        .collect()
 }
 
 /// Merged overlay DATs (rebuilt when a source changes).
@@ -339,7 +358,9 @@ pub const TOOL_DEFAULTS: &[(&str, u32)] = &[
 ];
 
 /// Choices for `frame_limit` (0 = unlimited).
-pub const FRAME_LIMITS: [u32; 14] = [30, 60, 75, 90, 100, 120, 144, 165, 180, 200, 240, 300, 360, 0];
+pub const FRAME_LIMITS: [u32; 14] = [
+    30, 60, 75, 90, 100, 120, 144, 165, 180, 200, 240, 300, 360, 0,
+];
 
 impl Default for Config {
     fn default() -> Self {
@@ -429,7 +450,10 @@ impl Config {
     }
 
     pub fn load() -> Self {
-        let mut c: Self = std::fs::read(config_path()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        let mut c: Self = std::fs::read(config_path())
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default();
         // A config from before the lists: its one login starts them.
         if c.logins.is_empty() && !c.server.trim().is_empty() && !c.username.trim().is_empty() {
             c.remember_login();
@@ -450,12 +474,18 @@ impl Config {
 
     /// The accounts logged in with on a server, most recent first.
     pub fn accounts(&self, server: &str) -> Vec<String> {
-        self.logins.iter().filter(|l| same_server(&l.server, server)).map(|l| l.username.clone()).collect()
+        self.logins
+            .iter()
+            .filter(|l| same_server(&l.server, server))
+            .map(|l| l.username.clone())
+            .collect()
     }
 
     /// The saved login for a server and account; with no account, the server's most recent.
     pub fn saved_login(&self, server: &str, username: Option<&str>) -> Option<&SavedLogin> {
-        self.logins.iter().find(|l| same_server(&l.server, server) && username.is_none_or(|u| l.username == u))
+        self.logins
+            .iter()
+            .find(|l| same_server(&l.server, server) && username.is_none_or(|u| l.username == u))
     }
 
     /// Makes a saved login the form's: its server, account, PlayOnline ID, Remember password and sealed passwords.
@@ -476,13 +506,16 @@ impl Config {
             remember_password: self.remember_password,
             saved_password: self.saved_password.clone(),
         };
-        self.logins.retain(|o| !(same_server(&o.server, &l.server) && o.username == l.username));
+        self.logins
+            .retain(|o| !(same_server(&o.server, &l.server) && o.username == l.username));
         self.logins.insert(0, l);
     }
 
     /// Drops a saved login (with its password); with no account, every login of the server.
     pub fn forget_login(&mut self, server: &str, username: Option<&str>) {
-        self.logins.retain(|l| !(same_server(&l.server, server) && username.is_none_or(|u| l.username == u)));
+        self.logins.retain(|l| {
+            !(same_server(&l.server, server) && username.is_none_or(|u| l.username == u))
+        });
     }
 
     pub fn save(&self) -> Result<()> {
@@ -498,7 +531,11 @@ impl Config {
 
     /// A Config-tool value (registry name "0000".."0043").
     pub fn tool(&self, name: &str) -> u32 {
-        self.tool.get(name).copied().or_else(|| TOOL_DEFAULTS.iter().find(|d| d.0 == name).map(|d| d.1)).unwrap_or(0)
+        self.tool
+            .get(name)
+            .copied()
+            .or_else(|| TOOL_DEFAULTS.iter().find(|d| d.0 == name).map(|d| d.1))
+            .unwrap_or(0)
     }
 
     /// Sets a Config-tool value; the default is not stored.
@@ -532,7 +569,9 @@ impl Config {
     /// The UI layout size (0037 / 0038, 0 = the window's): laid out there and stretched to the window.
     pub fn ui_size(&self, window: [u32; 2]) -> [u32; 2] {
         match [self.tool("0037"), self.tool("0038")] {
-            [w, h] if w >= 320 && h >= 240 => [w.min(window[0].max(320) * 4), h.min(window[1].max(240) * 4)],
+            [w, h] if w >= 320 && h >= 240 => {
+                [w.min(window[0].max(320) * 4), h.min(window[1].max(240) * 4)]
+            }
             _ => window,
         }
     }
@@ -544,7 +583,10 @@ impl Config {
 
     /// The frame limit in effect: FFXI_FRAME_LIMIT overrides the file (test runs), 0 = unlimited.
     pub fn frame_limit(&self) -> u32 {
-        std::env::var("FFXI_FRAME_LIMIT").ok().and_then(|v| v.parse().ok()).unwrap_or(self.frame_limit)
+        std::env::var("FFXI_FRAME_LIMIT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(self.frame_limit)
     }
 }
 
@@ -560,6 +602,9 @@ mod tests {
         assert_eq!(name_file(""), "_.json");
         // Names that differ only in a replaced character keep separate files.
         assert_ne!(name_file("a/b"), name_file("a\\b"));
-        assert_eq!(chat_history_path("../x").file_name().unwrap(), "_2e2e2f78.json");
+        assert_eq!(
+            chat_history_path("../x").file_name().unwrap(),
+            "_2e2e2f78.json"
+        );
     }
 }

@@ -12,7 +12,10 @@ const WIN: &str = "menu    faqsub";
 const WHITE: u32 = 0x8080_8080;
 const GREY: u32 = 0x8040_4040;
 /// FUN_10216a50(i): group 9 ids.
-const TEXT: [usize; 26] = [0xc3, 0xc4, 0xc5, 0xc6, 0xc7, 0xc8, 0xc9, 0xca, 0xcb, 0xcc, 0xcd, 0xce, 0xcf, 0xd0, 0xd1, 0x12b, 0xd5, 0xd6, 0xd8, 0xd7, 0xd9, 0xda, 0xdb, 0xdc, 0x12c, 0xdd];
+const TEXT: [usize; 26] = [
+    0xc3, 0xc4, 0xc5, 0xc6, 0xc7, 0xc8, 0xc9, 0xca, 0xcb, 0xcc, 0xcd, 0xce, 0xcf, 0xd0, 0xd1,
+    0x12b, 0xd5, 0xd6, 0xd8, 0xd7, 0xd9, 0xda, 0xdb, 0xdc, 0x12c, 0xdd,
+];
 /// The menu page's rows: Q&A, Adventuring Primer, Mentor Search, Help Desk, Config, Back.
 const MENU: [usize; 6] = [0, 15, 12, 2, 3, 4];
 /// Their help (FUN_10216970), none on Back.
@@ -38,12 +41,20 @@ pub struct HelpDesk {
 /// FUN_102174c0 (and /helpdesk when faqsub is not open): faqsub at its menu page; the social page stays beside it.
 pub fn open(w: &mut World) {
     if w.helpdesk.is_none() {
-        w.helpdesk = Some(HelpDesk { config: false, cursor: 0, scroll: 0.0, main: None });
+        w.helpdesk = Some(HelpDesk {
+            config: false,
+            cursor: 0,
+            scroll: 0.0,
+            main: None,
+        });
     }
 }
 
 fn text(w: &World, i: usize) -> String {
-    w.battle.as_ref().and_then(|b| b.group9(TEXT[i])).unwrap_or_default()
+    w.battle
+        .as_ref()
+        .and_then(|b| b.group9(TEXT[i]))
+        .unwrap_or_default()
 }
 
 /// FUN_100e47c0 on the s2c 0x0B4 bytes @7: 7 mentor unlocked (bit 0), 8 mentor on (bit 1), 9 new adventurer off (bit 2).
@@ -64,13 +75,22 @@ fn config_on(w: &World, row: usize) -> bool {
 
 /// The selectable entries of the page (the terms are not one).
 fn rows(config: bool) -> Vec<usize> {
-    if config { vec![0, 1, 2, 4] } else { (0..6).collect() }
+    if config {
+        vec![0, 1, 2, 4]
+    } else {
+        (0..6).collect()
+    }
 }
 
 /// FUN_10216500: a search of every area for mentors (status flag 1), its results over faqsub.
 fn mentor_search(w: &mut World) {
     use crate::net::search::{AREA, Cond, STATUS};
-    let cond = Cond { flags: AREA | STATUS, last_area: -1, status: 1, ..Default::default() };
+    let cond = Cond {
+        flags: AREA | STATUS,
+        last_area: -1,
+        status: 1,
+        ..Default::default()
+    };
     super::search::run(w, cond, super::search::Scope::World);
 }
 
@@ -88,7 +108,11 @@ pub fn key(w: &mut World, key: egui::Key) {
     let at = r.iter().position(|&c| c == cursor).unwrap_or(0);
     match key {
         K::ArrowUp | K::ArrowDown => {
-            let to = if key == K::ArrowDown { (at + 1).min(r.len() - 1) } else { at.saturating_sub(1) };
+            let to = if key == K::ArrowDown {
+                (at + 1).min(r.len() - 1)
+            } else {
+                at.saturating_sub(1)
+            };
             if to != at
                 && let Some(h) = w.helpdesk.as_mut()
             {
@@ -154,7 +178,12 @@ pub fn key(w: &mut World, key: egui::Key) {
 /// text, enabled, the question's value line).
 pub enum Line {
     Text(String, bool),
-    Row { id: i32, text: String, on: bool, value: Option<String> },
+    Row {
+        id: i32,
+        text: String,
+        on: bool,
+        value: Option<String>,
+    },
 }
 
 /// The page the modern layer draws: its title, lines, the cursor row, whether it has the keys, the open text field.
@@ -179,23 +208,41 @@ pub fn view(w: &World, gu: &GameUi) -> Option<PageView> {
             if row == 3 {
                 lines.push(Line::Text(text(w, i), true));
             } else {
-                lines.push(Line::Row { id: row as i32, text: text(w, i), on: config_on(w, row), value: None });
+                lines.push(Line::Row {
+                    id: row as i32,
+                    text: text(w, i),
+                    on: config_on(w, row),
+                    value: None,
+                });
             }
         }
     } else {
         for (row, &i) in MENU.iter().enumerate() {
-            lines.push(Line::Row { id: row as i32, text: text(w, i), on: row != 0, value: None });
+            lines.push(Line::Row {
+                id: row as i32,
+                text: text(w, i),
+                on: row != 0,
+                value: None,
+            });
             if row == 0 {
                 lines.push(Line::Text(text(w, 1), true));
             }
         }
     }
-    Some(PageView { title: text(w, 25), lines, cursor: h.cursor as i32, focused: focused(w), field: None })
+    Some(PageView {
+        title: text(w, 25),
+        lines,
+        cursor: h.cursor as i32,
+        focused: focused(w),
+        field: None,
+    })
 }
 
 /// The modern layer's mouse: the page's cursor to row `id`; true when it moved.
 pub fn set_cursor(w: &mut World, id: i32) -> bool {
-    let Some(h) = w.helpdesk.as_mut() else { return false };
+    let Some(h) = w.helpdesk.as_mut() else {
+        return false;
+    };
     if h.main.is_some() {
         return super::faqmain::set_cursor(w, id);
     }
@@ -207,18 +254,32 @@ pub fn set_cursor(w: &mut World, id: i32) -> bool {
 /// The mouse: faqsub's rows as the generic window's children (winhits.rs); faqmain only the right click. The modern
 /// layer takes it there.
 pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
-    let Some(h) = w.helpdesk.as_ref().filter(|_| !w.modern) else { return };
+    let Some(h) = w.helpdesk.as_ref().filter(|_| !w.modern) else {
+        return;
+    };
     if h.main.is_some() {
         if right && super::winhits::over(w, "menu    faqmain", p) {
             key(w, egui::Key::Escape);
         }
         return;
     }
-    super::winhits::generic(w, gu, WIN, h.cursor as u16 + 1, 1..=6, p, moved, clicked, right, |w, id| {
-        if let Some(h) = w.helpdesk.as_mut() {
-            h.cursor = id as usize - 1;
-        }
-    }, |w, _, k| key(w, k));
+    super::winhits::generic(
+        w,
+        gu,
+        WIN,
+        h.cursor as u16 + 1,
+        1..=6,
+        p,
+        moved,
+        clicked,
+        right,
+        |w, id| {
+            if let Some(h) = w.helpdesk.as_mut() {
+                h.cursor = id as usize - 1;
+            }
+        },
+        |w, _, k| key(w, k),
+    );
 }
 
 /// Escape: the Config page goes back to the menu page (state 1), the menu page closes faqsub.
@@ -254,7 +315,11 @@ pub fn bars(_gu: &GameUi, w: &World, bars: &mut super::hudtop::BarText) {
         bars.help[2] = String::new();
         return;
     }
-    let help = if h.config { [Some(21), Some(22), Some(23), None, None][h.cursor] } else { MENU_HELP[h.cursor] };
+    let help = if h.config {
+        [Some(21), Some(22), Some(23), None, None][h.cursor]
+    } else {
+        MENU_HELP[h.cursor]
+    };
     bars.help[2] = help.map_or(String::new(), |i| text(w, i));
 }
 
@@ -278,22 +343,50 @@ fn layout(gu: &GameUi, w: &World, h: &HelpDesk, width: f32) -> Vec<Entry> {
         let t = text(w, 3);
         let lines = wrap(&t, width);
         y += 16.0 * lines.len() as f32;
-        out.push(Entry { x: 0.0, y: 0.0, lines, tint: WHITE, row: None });
+        out.push(Entry {
+            x: 0.0,
+            y: 0.0,
+            lines,
+            tint: WHITE,
+            row: None,
+        });
     }
     let row_w = width - INDENT - GAP;
-    let list: Vec<(usize, usize)> = if h.config { CONFIG.iter().copied().enumerate().collect() } else { MENU.iter().copied().enumerate().collect() };
+    let list: Vec<(usize, usize)> = if h.config {
+        CONFIG.iter().copied().enumerate().collect()
+    } else {
+        MENU.iter().copied().enumerate().collect()
+    };
     for (row, i) in list {
         y += GAP;
         let t = text(w, i);
         let lines = wrap(&t, row_w);
-        let tint = if h.config { if config_on(w, row) { WHITE } else { GREY } } else if row == 0 { GREY } else { WHITE };
+        let tint = if h.config {
+            if config_on(w, row) { WHITE } else { GREY }
+        } else if row == 0 {
+            GREY
+        } else {
+            WHITE
+        };
         let selectable = !(h.config && row == 3);
-        out.push(Entry { x: INDENT, y, lines: lines.clone(), tint, row: selectable.then_some(row) });
+        out.push(Entry {
+            x: INDENT,
+            y,
+            lines: lines.clone(),
+            tint,
+            row: selectable.then_some(row),
+        });
         y += 16.0 * lines.len() as f32;
         if !h.config && row == 0 {
             y += GAP;
             let label = text(w, 1);
-            out.push(Entry { x: INDENT * 2.0, y, lines: vec![label], tint: GREY, row: None });
+            out.push(Entry {
+                x: INDENT * 2.0,
+                y,
+                lines: vec![label],
+                tint: GREY,
+                row: None,
+            });
             y += 16.0 + 14.0;
         }
     }
@@ -311,12 +404,22 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Option<[f32; 4]> {
         }
         return r;
     }
-    let win = gu.lobby_window_off(WIN, sw, sh, (0.0, 0.0), None, false, &(1..=15).collect::<Vec<u16>>())?;
+    let win = gu.lobby_window_off(
+        WIN,
+        sw,
+        sh,
+        (0.0, 0.0),
+        None,
+        false,
+        &(1..=15).collect::<Vec<u16>>(),
+    )?;
     let [fx, fy, fw, fh] = win.frame;
     let (px, py, pr, pb) = PAD;
     let (cx, cy, cw, ch) = (fx + px, fy + py, fw - pr - px, fh - 5.0 - py - pb);
     let entries = layout(gu, w, h, cw);
-    let total = entries.last().map_or(0.0, |e| e.y + 16.0 * e.lines.len() as f32);
+    let total = entries
+        .last()
+        .map_or(0.0, |e| e.y + 16.0 * e.lines.len() as f32);
     // FUN_10213bd0: the cursor row inside the view.
     let mut scroll = h.scroll;
     if let Some(e) = entries.iter().find(|e| e.row == Some(h.cursor)) {
@@ -352,7 +455,14 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Option<[f32; 4]> {
         }
     }
     gu.clip(None);
-    gu.scroll_bar(fx + fw - 8.0, fy, fh, total as usize, ch as usize, scroll as usize);
+    gu.scroll_bar(
+        fx + fw - 8.0,
+        fy,
+        fh,
+        total as usize,
+        ch as usize,
+        scroll as usize,
+    );
     Some(win.frame)
 }
 
@@ -363,11 +473,15 @@ pub fn keep_scroll(w: &mut World, gu: &GameUi, sw: f32, sh: f32) {
         super::faqmain::keep_scroll(w, gu, sw, sh);
         return;
     }
-    let Some([_, _, fw, fh]) = gu.window_rect(WIN, sw, sh) else { return };
+    let Some([_, _, fw, fh]) = gu.window_rect(WIN, sw, sh) else {
+        return;
+    };
     let (px, py, pr, pb) = PAD;
     let (cw, ch) = (fw - pr - px, fh - 5.0 - py - pb);
     let entries = layout(gu, w, h, cw);
-    let Some(e) = entries.iter().find(|e| e.row == Some(h.cursor)) else { return };
+    let Some(e) = entries.iter().find(|e| e.row == Some(h.cursor)) else {
+        return;
+    };
     let bottom = e.y + 16.0 * e.lines.len() as f32;
     let mut scroll = h.scroll;
     if e.y - scroll < 0.0 {

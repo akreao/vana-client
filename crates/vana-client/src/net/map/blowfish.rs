@@ -22,7 +22,10 @@ pub fn session_key(key: &[u8; 20]) -> [u8; 16] {
 
 impl Blowfish {
     pub fn new(key: &[u8]) -> Self {
-        let mut bf = Self { p: bf_consts::P, s: bf_consts::S };
+        let mut bf = Self {
+            p: bf_consts::P,
+            s: bf_consts::S,
+        };
         let mut j = 0;
         for i in 0..18 {
             let mut data = 0u32;
@@ -108,12 +111,20 @@ mod tests {
     fn matches_server_cipher() {
         let key: [u8; 20] = std::array::from_fn(|i| (i as u32 * 37 + 0x81) as u8);
         let bf = Blowfish::for_session_key(&key);
-        let mut data: Vec<u8> = (1..=8u32).flat_map(|i| 0x01020304u32.wrapping_mul(i).to_le_bytes()).collect();
+        let mut data: Vec<u8> = (1..=8u32)
+            .flat_map(|i| 0x01020304u32.wrapping_mul(i).to_le_bytes())
+            .collect();
         bf.encrypt(&mut data);
-        let words: Vec<u32> = data.chunks(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())).collect();
+        let words: Vec<u32> = data
+            .chunks(4)
+            .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
+            .collect();
         assert_eq!(
             words,
-            [0x111edfaa, 0xb682b3d2, 0x3318739e, 0x92a2be12, 0x0af2eb55, 0xd3a3a53d, 0x12be7d65, 0x624e929b]
+            [
+                0x111edfaa, 0xb682b3d2, 0x3318739e, 0x92a2be12, 0x0af2eb55, 0xd3a3a53d, 0x12be7d65,
+                0x624e929b
+            ]
         );
     }
 

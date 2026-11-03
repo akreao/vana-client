@@ -11,7 +11,13 @@ pub(super) type Answer = (u64, Result<(u16, Vec<u8>, Vec<(String, String)>), Str
 /// A body larger than this is cut (16 MB).
 const MAX_BODY: u64 = 16 << 20;
 
-fn fetch(method: &str, url: &str, headers: &[(String, String)], body: Option<Vec<u8>>, timeout: Duration) -> Result<(u16, Vec<u8>, Vec<(String, String)>), String> {
+fn fetch(
+    method: &str,
+    url: &str,
+    headers: &[(String, String)],
+    body: Option<Vec<u8>>,
+    timeout: Duration,
+) -> Result<(u16, Vec<u8>, Vec<(String, String)>), String> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .user_agent(concat!("vana-client/", env!("CARGO_PKG_VERSION")))
         .timeout_global(Some(timeout))
@@ -44,8 +50,17 @@ fn fetch(method: &str, url: &str, headers: &[(String, String)], body: Option<Vec
     };
     let mut resp = resp.map_err(|e| e.to_string())?;
     let status = resp.status().as_u16();
-    let hdrs = resp.headers().iter().map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string())).collect();
-    let body = resp.body_mut().with_config().limit(MAX_BODY).read_to_vec().map_err(|e| e.to_string())?;
+    let hdrs = resp
+        .headers()
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+        .collect();
+    let body = resp
+        .body_mut()
+        .with_config()
+        .limit(MAX_BODY)
+        .read_to_vec()
+        .map_err(|e| e.to_string())?;
     Ok((status, body, hdrs))
 }
 
@@ -57,15 +72,26 @@ pub(super) fn install(lua: &Lua, g: &Table) -> mlua::Result<()> {
             need(lua, "net")?;
             let url: String = spec.get("url")?;
             if !(url.starts_with("http://") || url.starts_with("https://")) {
-                return Err(mlua::Error::runtime(format!("{url:?}: only http and https")));
+                return Err(mlua::Error::runtime(format!(
+                    "{url:?}: only http and https"
+                )));
             }
-            let method = spec.get::<Option<String>>("method")?.unwrap_or_else(|| "GET".into()).to_ascii_uppercase();
-            let body = spec.get::<Option<mlua::LuaString>>("body")?.map(|b| b.as_bytes().to_vec());
+            let method = spec
+                .get::<Option<String>>("method")?
+                .unwrap_or_else(|| "GET".into())
+                .to_ascii_uppercase();
+            let body = spec
+                .get::<Option<mlua::LuaString>>("body")?
+                .map(|b| b.as_bytes().to_vec());
             let headers: Vec<(String, String)> = match spec.get::<Option<Table>>("headers")? {
                 Some(h) => h.pairs::<String, String>().collect::<mlua::Result<_>>()?,
                 None => Vec::new(),
             };
-            let timeout = Duration::from_secs_f64(spec.get::<Option<f64>>("timeout")?.unwrap_or(30.0).clamp(1.0, 300.0));
+            let timeout = Duration::from_secs_f64(
+                spec.get::<Option<f64>>("timeout")?
+                    .unwrap_or(30.0)
+                    .clamp(1.0, 300.0),
+            );
             let st = state(lua);
             let id = next_id(&st);
             let key = lua.create_registry_value(callback)?;
@@ -93,15 +119,20 @@ pub(super) fn install(lua: &Lua, g: &Table) -> mlua::Result<()> {
         lua.create_function(|lua, url: String| {
             need(lua, "net")?;
             if !(url.starts_with("http://") || url.starts_with("https://")) {
-                return Err(mlua::Error::runtime(format!("{url:?}: only http and https")));
+                return Err(mlua::Error::runtime(format!(
+                    "{url:?}: only http and https"
+                )));
             }
             #[cfg(target_os = "windows")]
-            let r = std::process::Command::new("cmd").args(["/C", "start", "", &url]).spawn();
+            let r = std::process::Command::new("cmd")
+                .args(["/C", "start", "", &url])
+                .spawn();
             #[cfg(target_os = "macos")]
             let r = std::process::Command::new("open").arg(&url).spawn();
             #[cfg(not(any(target_os = "windows", target_os = "macos")))]
             let r = std::process::Command::new("xdg-open").arg(&url).spawn();
-            r.map(|_| ()).map_err(|e| mlua::Error::runtime(format!("open_url: {e}")))
+            r.map(|_| ())
+                .map_err(|e| mlua::Error::runtime(format!("open_url: {e}")))
         })?,
     )?;
     super::sock::install(lua, &t)?;
@@ -118,7 +149,10 @@ pub(super) fn poll(vm: &super::vm::Vm) {
     for (id, r) in answers {
         let key = {
             let mut s = vm.st.borrow_mut();
-            s.net_pending.iter().position(|p| p.0 == id).map(|k| s.net_pending.remove(k).1)
+            s.net_pending
+                .iter()
+                .position(|p| p.0 == id)
+                .map(|k| s.net_pending.remove(k).1)
         };
         let Some(key) = key else { continue };
         let f: Option<Function> = vm.lua.registry_value(&key).ok();

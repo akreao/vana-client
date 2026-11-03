@@ -60,7 +60,17 @@ pub fn open(w: &mut World) {
         off.push(8);
     }
     let _ = w.net.commands.send(NetCommand::StatusRequest(0));
-    w.status = Some(StatusUi { sel: w.cursor_recall(STATCOM), shown: None, off, once: false, busy: true, return_menu: w.menu, cur: [None, None], cur_wait: None, m_page: 0 });
+    w.status = Some(StatusUi {
+        sel: w.cursor_recall(STATCOM),
+        shown: None,
+        off,
+        once: false,
+        busy: true,
+        return_menu: w.menu,
+        cur: [None, None],
+        cur_wait: None,
+        m_page: 0,
+    });
     w.menu = None;
 }
 
@@ -93,7 +103,11 @@ pub fn update(w: &mut World) {
         s.once = true;
         // FUN_10148be0: in Monstrosity Combat / Magic Skills are never enabled.
         if let Some(b) = skills.filter(|_| !mon) {
-            let on = [b[1..32].iter().any(|&v| exists(v)), b[32..48].iter().any(|&v| exists(v)), b[48..63].iter().any(|&v| v != 0xffff)];
+            let on = [
+                b[1..32].iter().any(|&v| exists(v)),
+                b[32..48].iter().any(|&v| exists(v)),
+                b[48..63].iter().any(|&v| v != 0xffff),
+            ];
             for (c, on) in [3u16, 4, 5].into_iter().zip(on) {
                 if on {
                     s.off.retain(|&o| o != c);
@@ -124,7 +138,9 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
         egui::Key::ArrowUp | egui::Key::ArrowDown => {
             let k = if key == egui::Key::ArrowUp { 2 } else { 3 };
             let to = gu.menu_links(STATCOM, s.sel).map_or(s.sel, |l| l[k] as u16);
-            if to != s.sel && to != 0 && to != 0xff
+            if to != s.sel
+                && to != 0
+                && to != 0xff
                 && let Some(st) = w.status.as_mut()
             {
                 st.sel = to;
@@ -182,21 +198,44 @@ pub(super) fn show_page(w: &mut World) {
 
 /// Mouse: hover over a row moves the cursor, a click on the cursor row is Enter, a right click Escape *(inf: the
 /// generic window events)*.
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+pub fn pointer(
+    w: &mut World,
+    gu: &GameUi,
+    sw: f32,
+    sh: f32,
+    p: (f32, f32),
+    moved: bool,
+    clicked: bool,
+    right: bool,
+) {
     let Some(s) = w.status.clone() else { return };
-    let Some((wx, wy)) = gu.window_xy(STATCOM, sw, sh) else { return };
-    let Some(layout) = gu.layout(STATCOM) else { return };
-    let hit = layout.elements.iter().skip(1).filter(|e| e.links[2] != 0xff).find(|e| {
-        let (x, y) = (wx + e.x as f32, wy + e.y as f32);
-        p.0 >= x && p.0 < x + e.w as f32 && p.1 >= y && p.1 < y + e.h as f32
-    });
-    if right && gu.window_rect(STATCOM, sw, sh).is_some_and(|r| p.0 >= r[0] && p.0 < r[0] + r[2] && p.1 >= r[1] && p.1 < r[1] + r[3]) {
+    let Some((wx, wy)) = gu.window_xy(STATCOM, sw, sh) else {
+        return;
+    };
+    let Some(layout) = gu.layout(STATCOM) else {
+        return;
+    };
+    let hit = layout
+        .elements
+        .iter()
+        .skip(1)
+        .filter(|e| e.links[2] != 0xff)
+        .find(|e| {
+            let (x, y) = (wx + e.x as f32, wy + e.y as f32);
+            p.0 >= x && p.0 < x + e.w as f32 && p.1 >= y && p.1 < y + e.h as f32
+        });
+    if right
+        && gu
+            .window_rect(STATCOM, sw, sh)
+            .is_some_and(|r| p.0 >= r[0] && p.0 < r[0] + r[2] && p.1 >= r[1] && p.1 < r[1] + r[3])
+    {
         key(w, gu, egui::Key::Escape);
         return;
     }
     let Some(e) = hit else { return };
     gu.hover.set(true);
-    if (moved || clicked) && e.id != s.sel
+    if (moved || clicked)
+        && e.id != s.sel
         && let Some(st) = w.status.as_mut()
     {
         st.sel = e.id;
@@ -214,13 +253,20 @@ pub fn bars(gu: &GameUi, w: &World, bars: &mut super::hudtop::BarText) {
     bars.help[1] = help.unwrap_or_default();
     // The modern page has no persona suspending titlewin: statcom2's own caption (child 14) titles it.
     if w.modern {
-        bars.title[1] = gu.child_caption(STATCOM, 14).filter(|t| !t.is_empty()).unwrap_or_else(|| "Status".into());
+        bars.title[1] = gu
+            .child_caption(STATCOM, 14)
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| "Status".into());
     }
     if s.shown == Some(1)
         && let (Some(st), Some(names)) = (&w.stats, &w.names)
     {
         use crate::dat::names::NameSource;
-        bars.help[2] = format!("{}{}", gu.menu_msg(0x4e, ""), names.title(st.title as u32).unwrap_or_default());
+        bars.help[2] = format!(
+            "{}{}",
+            gu.menu_msg(0x4e, ""),
+            names.title(st.title as u32).unwrap_or_default()
+        );
     }
 }
 
@@ -230,7 +276,12 @@ pub(super) fn grouped(v: i64, sep: &str) -> String {
     match v {
         0..1000 => format!("{v}"),
         1000..1_000_000 => format!("{}{sep}{:03}", v / 1000, v % 1000),
-        _ => format!("{}{sep}{:03}{sep}{:03}", v / 1_000_000, v / 1000 % 1000, v % 1000),
+        _ => format!(
+            "{}{sep}{:03}{sep}{:03}",
+            v / 1_000_000,
+            v / 1000 % 1000,
+            v % 1000
+        ),
     }
 }
 
@@ -245,53 +296,149 @@ fn gauge(gu: &mut GameUi, lib: &str, x: f32, y: f32, frame: usize, fill: usize, 
 /// the master level, exemplar points and the next with theirs once one is unlocked (0x061 @0x66 bit 0). Blue / grey
 /// while EXP is capped (0x063 type 2 bit 14; for the master level @0x66 bit 1 with the points at the next - 1).
 fn draw_level(gu: &mut GameUi, w: &World, x: f32, y: f32) {
-    let Some(st) = w.stats.as_ref().filter(|_| w.recasts_seen) else { return };
+    let Some(st) = w.stats.as_ref().filter(|_| w.recasts_seen) else {
+        return;
+    };
     let sep = gu.lobby_msg(0xc, 0x5b, ",");
     let ml = st.ml.1 & 1 != 0;
-    let capped = if ml { st.ml.1 & 2 != 0 && st.ml_exp.0 >= st.ml_exp.1.wrapping_sub(1) } else { w.merits.is_some_and(|m| m.1 & 0x4000 != 0) };
-    let (c1, c2) = if capped { (BLUE, 0x8040_4040) } else { (WHITE, WHITE) };
-    let (head, level, l1, l2, now, next) = if ml {
-        (gu.lobby_msg(0xc, 0x203, ""), st.ml.0, gu.lobby_msg(0xc, 0x204, ""), gu.lobby_msg(0xc, 0x205, ""), st.ml_exp.0 as i64, st.ml_exp.1 as i64)
+    let capped = if ml {
+        st.ml.1 & 2 != 0 && st.ml_exp.0 >= st.ml_exp.1.wrapping_sub(1)
     } else {
-        (gu.lobby_msg(0xc, 0x56, ""), w.real_level.unwrap_or(st.main.1), gu.lobby_msg(0xc, 0x57, ""), gu.lobby_msg(0xc, 0x58, ""), st.exp.0 as i64, st.exp.1 as i64)
+        w.merits.is_some_and(|m| m.1 & 0x4000 != 0)
+    };
+    let (c1, c2) = if capped {
+        (BLUE, 0x8040_4040)
+    } else {
+        (WHITE, WHITE)
+    };
+    let (head, level, l1, l2, now, next) = if ml {
+        (
+            gu.lobby_msg(0xc, 0x203, ""),
+            st.ml.0,
+            gu.lobby_msg(0xc, 0x204, ""),
+            gu.lobby_msg(0xc, 0x205, ""),
+            st.ml_exp.0 as i64,
+            st.ml_exp.1 as i64,
+        )
+    } else {
+        (
+            gu.lobby_msg(0xc, 0x56, ""),
+            w.real_level.unwrap_or(st.main.1),
+            gu.lobby_msg(0xc, 0x57, ""),
+            gu.lobby_msg(0xc, 0x58, ""),
+            st.exp.0 as i64,
+            st.exp.1 as i64,
+        )
     };
     gu.shape_text(&format!("{head} {level}"), x + 8.0, y + 10.0, c1, false);
-    gu.shape_text(&l1, x + if ml { 7.0 } else { 15.0 }, y + 0x16 as f32, c2, false);
-    gu.shape_text(&grouped(now, &sep), x + 0x5a as f32, y + 0x22 as f32, c2, true);
+    gu.shape_text(
+        &l1,
+        x + if ml { 7.0 } else { 15.0 },
+        y + 0x16 as f32,
+        c2,
+        false,
+    );
+    gu.shape_text(
+        &grouped(now, &sep),
+        x + 0x5a as f32,
+        y + 0x22 as f32,
+        c2,
+        true,
+    );
     gu.shape_text(&l2, x + 15.0, y + 0x2e as f32, c2, false);
-    gu.shape_text(&grouped(next, &sep), x + 0x5a as f32, y + 0x3a as f32, c2, true);
-    let f = if next > 0 { (now as f32 / next as f32).min(1.0) } else { 0.0 };
+    gu.shape_text(
+        &grouped(next, &sep),
+        x + 0x5a as f32,
+        y + 0x3a as f32,
+        c2,
+        true,
+    );
+    let f = if next > 0 {
+        (now as f32 / next as f32).min(1.0)
+    } else {
+        0.0
+    };
     let (frame, fill) = crate::render::screens::GAUGE_HP;
-    gauge(gu, "menu    windowps", x + 0x16 as f32, y + 0x48 as f32, frame, fill, f);
+    gauge(
+        gu,
+        "menu    windowps",
+        x + 0x16 as f32,
+        y + 0x48 as f32,
+        frame,
+        fill,
+        f,
+    );
 }
 
 /// FUN_10107320's table 0x10364cb0 (English).
-pub(super) const RACES: [&str; 9] = ["", "Hume", "Hume", "Elvaan", "Elvaan", "Tarutaru", "Tarutaru", "Mithra", "Galka"];
+pub(super) const RACES: [&str; 9] = [
+    "", "Hume", "Hume", "Elvaan", "Elvaan", "Tarutaru", "Tarutaru", "Mithra", "Galka",
+];
 
 /// FUN_10147ac0: the nation crest (keytops3 74 + nation), the race, the home point (group 4), the rank and its gauge
 /// (framesus 103 / 98, points / 4096); with the Monstrosity data (0x063 types 3 and 4) the gladiator rank, prestige,
 /// mastery rank and mentor.
 fn draw_profile(gu: &mut GameUi, w: &World, x: f32, y: f32) {
-    let Some(st) = w.stats.as_ref().filter(|_| w.recasts_seen) else { return };
+    let Some(st) = w.stats.as_ref().filter(|_| w.recasts_seen) else {
+        return;
+    };
     if st.nation < 3 {
-        gu.sprite("menu    keytops3", 74 + st.nation as usize, x + 0x37 as f32, y + 0x12 as f32, WHITE);
+        gu.sprite(
+            "menu    keytops3",
+            74 + st.nation as usize,
+            x + 0x37 as f32,
+            y + 0x12 as f32,
+            WHITE,
+        );
     }
     let home = crate::dat::font::decode_sjis(&gu.area_name(st.home));
     gu.shape_text(&home, x + 0x5e as f32, y + 0x34 as f32, WHITE, false);
     if let Some(r) = RACES.get(w.my_race as usize).filter(|r| !r.is_empty()) {
         gu.shape_text(r, x + 0x32 as f32, y + 0x24 as f32, WHITE, false);
     }
-    gu.shape_text(&st.rank.to_string(), x + 0x40 as f32, y + 0x44 as f32, WHITE, true);
-    gauge(gu, "menu    framesus", x + 0x5c as f32, y + 0x54 as f32, 98, 103, st.rank_points as f32 / 4096.0);
+    gu.shape_text(
+        &st.rank.to_string(),
+        x + 0x40 as f32,
+        y + 0x44 as f32,
+        WHITE,
+        true,
+    );
+    gauge(
+        gu,
+        "menu    framesus",
+        x + 0x5c as f32,
+        y + 0x54 as f32,
+        98,
+        103,
+        st.rank_points as f32 / 4096.0,
+    );
     if let Some((_, rank, prestige)) = w.monstrosity.filter(|m| m.0 & 0x18 == 0x18) {
         if let Some(g) = ["Gla", "CG", "HCG"].get((rank >> 2 & 3) as usize) {
             gu.shape_text(g, x + 0x8c as f32, y + 0x91 as f32, WHITE, false);
         }
-        gu.shape_text(&prestige.to_string(), x + 0x5a as f32, y + 0xa1 as f32, WHITE, false);
+        gu.shape_text(
+            &prestige.to_string(),
+            x + 0x5a as f32,
+            y + 0xa1 as f32,
+            WHITE,
+            false,
+        );
         let (mentor, mastery) = w.job_info.map_or((0, 0), |j| (j.mentor, j.mastery));
-        gu.shape_text(&mastery.to_string(), x + 0x6e as f32, y + 0x6a as f32, WHITE, false);
+        gu.shape_text(
+            &mastery.to_string(),
+            x + 0x6e as f32,
+            y + 0x6a as f32,
+            WHITE,
+            false,
+        );
         if mentor > 0 {
-            gu.sprite("menu    keytops3", 560 + mentor as usize, x + 0xda as f32, y + 0x68 as f32, WHITE);
+            gu.sprite(
+                "menu    keytops3",
+                560 + mentor as usize,
+                x + 0xda as f32,
+                y + 0x68 as f32,
+                WHITE,
+            );
         } else {
             gu.shape_text("--", x + 0xda as f32, y + 0x68 as f32, WHITE, false);
         }
@@ -302,7 +449,9 @@ fn draw_profile(gu: &mut GameUi, w: &World, x: f32, y: f32) {
 /// 14 px a row: the name (windowps 212 + job) at x 0x0a / 0x82, gold for the main job, blue for the support job; the
 /// level right-aligned at 0x6e / 0xe6.
 pub(super) fn job_rows(w: &World, master: bool) -> Vec<(u8, u8)> {
-    let (Some(j), Some(st)) = (w.job_info, w.stats.as_ref()) else { return Vec::new() };
+    let (Some(j), Some(st)) = (w.job_info, w.stats.as_ref()) else {
+        return Vec::new();
+    };
     let flags = if master { j.ml_jobs } else { j.flags & !1 };
     (1..=22u8)
         .filter(|&n| flags >> n & 1 != 0)
@@ -319,7 +468,9 @@ pub(super) fn job_rows(w: &World, master: bool) -> Vec<(u8, u8)> {
 }
 
 fn draw_jobs(gu: &mut GameUi, w: &World, x: f32, y: f32, rows: &[(u8, u8)]) {
-    let Some(st) = w.stats.as_ref().filter(|_| w.recasts_seen) else { return };
+    let Some(st) = w.stats.as_ref().filter(|_| w.recasts_seen) else {
+        return;
+    };
     for (k, &(job, lv)) in rows.iter().enumerate() {
         let (col, ry) = (k & 1, y + 0x13 as f32 + (k / 2) as f32 * 14.0);
         let tint = if job == st.main.0 {
@@ -329,14 +480,28 @@ fn draw_jobs(gu: &mut GameUi, w: &World, x: f32, y: f32, rows: &[(u8, u8)]) {
         } else {
             WHITE
         };
-        gu.sprite("menu    windowps", 212 + job as usize, x + [0x0a, 0x82][col] as f32, ry, tint);
-        gu.shape_text(&lv.to_string(), x + [0x6e, 0xe6][col] as f32, ry, WHITE, true);
+        gu.sprite(
+            "menu    windowps",
+            212 + job as usize,
+            x + [0x0a, 0x82][col] as f32,
+            ry,
+            tint,
+        );
+        gu.shape_text(
+            &lv.to_string(),
+            x + [0x6e, 0xe6][col] as f32,
+            ry,
+            WHITE,
+            true,
+        );
     }
 }
 
 /// The skills of btlskill (1..31) / mgcskill (32..47) that exist (FUN_101484b0 / FUN_101486b0).
 pub(super) fn skill_rows(w: &World, magic: bool) -> Vec<(usize, u16)> {
-    let Some(b) = w.skill_base else { return Vec::new() };
+    let Some(b) = w.skill_base else {
+        return Vec::new();
+    };
     let r = if magic { 32..48 } else { 1..32 };
     r.filter(|&i| exists(b[i])).map(|i| (i, b[i])).collect()
 }
@@ -347,16 +512,33 @@ fn draw_skills(gu: &mut GameUi, x: f32, y: f32, rows: &[(usize, u16)], magic: bo
     let vx = if magic { [0x6e, 0xe6] } else { [0x78, 0xf0] };
     for (k, &(id, v)) in rows.iter().enumerate() {
         let (col, ry) = (k & 1, y + 0x13 as f32 + (k / 2) as f32 * 14.0);
-        gu.sprite("menu    keytops3", 208 + id, x + [0x0a, 0x82][col] as f32, ry, WHITE);
-        gu.shape_text(&(v & 0x7fff).to_string(), x + vx[col] as f32, ry, if v & 0x8000 != 0 { BLUE } else { WHITE }, true);
+        gu.sprite(
+            "menu    keytops3",
+            208 + id,
+            x + [0x0a, 0x82][col] as f32,
+            ry,
+            WHITE,
+        );
+        gu.shape_text(
+            &(v & 0x7fff).to_string(),
+            x + vx[col] as f32,
+            ry,
+            if v & 0x8000 != 0 { BLUE } else { WHITE },
+            true,
+        );
     }
 }
 
 /// trdskill (FUN_101488a0): a row per craft 48..62 there is: the name keytops3 208 + id at 0x0a, the rank (keytops3 193 +
 /// rank, below 16) at 0x6e in blue when capped, "(%d)" of the level right-aligned at 0xf5.
 pub(super) fn craft_rows(w: &World) -> Vec<(usize, u16)> {
-    let Some(b) = w.skill_base else { return Vec::new() };
-    (48..63).filter(|&i| b[i] != 0xffff).map(|i| (i, b[i])).collect()
+    let Some(b) = w.skill_base else {
+        return Vec::new();
+    };
+    (48..63)
+        .filter(|&i| b[i] != 0xffff)
+        .map(|i| (i, b[i]))
+        .collect()
 }
 
 fn draw_crafts(gu: &mut GameUi, x: f32, y: f32, rows: &[(usize, u16)]) {
@@ -364,16 +546,31 @@ fn draw_crafts(gu: &mut GameUi, x: f32, y: f32, rows: &[(usize, u16)]) {
         let ry = y + 0x13 as f32 + k as f32 * 14.0;
         gu.sprite("menu    keytops3", 208 + id, x + 0x0a as f32, ry, WHITE);
         if v & 0x1f < 0x10 {
-            gu.sprite("menu    keytops3", 193 + (v & 0x1f) as usize, x + 0x6e as f32, ry, if v & 0x8000 != 0 { BLUE } else { WHITE });
+            gu.sprite(
+                "menu    keytops3",
+                193 + (v & 0x1f) as usize,
+                x + 0x6e as f32,
+                ry,
+                if v & 0x8000 != 0 { BLUE } else { WHITE },
+            );
         }
-        gu.shape_text(&format!("({})", (v >> 5) & 0x3ff), x + 0xf5 as f32, ry, WHITE, true);
+        gu.shape_text(
+            &format!("({})", (v >> 5) & 0x3ff),
+            x + 0xf5 as f32,
+            ry,
+            WHITE,
+            true,
+        );
     }
 }
 
 /// mp_stat's contents (FUN_10144830, the same in every mode): our monster's name, rank, infamy and the persona rows.
 fn push_mon_stat(gu: &mut GameUi, w: &World, m: &crate::dat::ui::Menu, sw: f32, sh: f32) {
     let mut p = super::items::persona(w);
-    p.name = w.my_mon_name.as_ref().map_or(String::new(), |n| n.1.clone());
+    p.name = w
+        .my_mon_name
+        .as_ref()
+        .map_or(String::new(), |n| n.1.clone());
     p.ready = p.ready && w.mon_in && w.party.own().id == w.my_id;
     let g1 = |o: usize| w.mon_g1.get(o).copied().unwrap_or(0);
     let rank = ["Mon", "NM", "HNM"].get((g1(4) & 3) as usize).copied();
@@ -423,7 +620,8 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
             r
         }));
     }
-    if !mon && gu.gate_layout_at(PERSONA, sw, sh, None, Some(16))
+    if !mon
+        && gu.gate_layout_at(PERSONA, sw, sh, None, Some(16))
         && let Some(mut m) = gu.layout(PERSONA).cloned()
     {
         m.elements[0].y = 16;
@@ -475,7 +673,9 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         }));
     }
     let focused = w.confirm.is_none() && w.currencies.is_none() && w.unity.is_none();
-    if let Some(win) = gu.lobby_window_off(STATCOM, sw, sh, (0.0, 0.0), Some(s.sel), focused, &s.off) {
+    if let Some(win) =
+        gu.lobby_window_off(STATCOM, sw, sh, (0.0, 0.0), Some(s.sel), focused, &s.off)
+    {
         if let Some((wx, wy)) = gu.window_xy(STATCOM, sw, sh) {
             gu.disabled_children(STATCOM, wx, wy, &s.off, Some(s.sel).filter(|_| focused));
         }
@@ -490,7 +690,15 @@ mod tests {
 
     #[test]
     fn numbers() {
-        assert_eq!([grouped(0, ","), grouped(999, ","), grouped(1234, ","), grouped(12_345_678, ",")], ["0", "999", "1,234", "12,345,678"]);
+        assert_eq!(
+            [
+                grouped(0, ","),
+                grouped(999, ","),
+                grouped(1234, ","),
+                grouped(12_345_678, ",")
+            ],
+            ["0", "999", "1,234", "12,345,678"]
+        );
         assert!(exists(0) && exists(0x8005) && !exists(0x8000));
     }
 }

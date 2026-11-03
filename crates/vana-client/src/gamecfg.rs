@@ -23,7 +23,14 @@ fn nearest_ratio(w: u32, h: u32) -> Option<usize> {
     if w == 0 || h == 0 {
         return None;
     }
-    const R: [(f32, f32); 6] = [(4.0, 3.0), (15.0, 9.0), (15.0, 10.0), (16.0, 9.0), (16.0, 10.0), (5.0, 4.0)];
+    const R: [(f32, f32); 6] = [
+        (4.0, 3.0),
+        (15.0, 9.0),
+        (15.0, 10.0),
+        (16.0, 9.0),
+        (16.0, 10.0),
+        (5.0, 4.0),
+    ];
     let a = w as f32 / h as f32;
     (0..6).min_by(|&i, &j| {
         let e = |k: usize| ((a - R[k].0 / R[k].1) / (R[k].0 / R[k].1)).abs();
@@ -51,18 +58,25 @@ pub struct Def {
 }
 
 const fn d(id: u16, default: u32, kind: u8, min: u32, max: u32, flag: u8) -> Def {
-    Def { id, default, kind, min, max, flag }
+    Def {
+        id,
+        default,
+        kind,
+        min,
+        max,
+        flag,
+    }
 }
 
 /// Every id FFXiMain registers (202, the calls in FUN_10195460), sorted.
 pub const TABLE: &[Def] = &[
-    d(0x02, 0x0, 1, 0x0, 0x1, 0),  // LSKF1JHT
-    d(0x03, 0x0, 1, 0x0, 0x1, 0),  // LSKF1JRK
+    d(0x02, 0x0, 1, 0x0, 0x1, 0), // LSKF1JHT
+    d(0x03, 0x0, 1, 0x0, 0x1, 0), // LSKF1JRK
     d(0x04, 0x0, 4, 0x0, 0x0, 0),
-    d(0x05, 0x1, 1, 0x0, 0x1, 1),  // LSKF1PST
-    d(0x06, 0x0, 1, 0x0, 0x1, 0),  // LSKF1PKD
+    d(0x05, 0x1, 1, 0x0, 0x1, 1), // LSKF1PST
+    d(0x06, 0x0, 1, 0x0, 0x1, 0), // LSKF1PKD
     d(0x07, 0x0, 4, 0x0, 0x1, 1),
-    d(0x08, 0x0, 1, 0x0, 0x1, 0),  // LPOL1_SS
+    d(0x08, 0x0, 1, 0x0, 0x1, 0), // LPOL1_SS
     d(0x09, 0x64, 4, 0x0, 0x64, 1),
     d(0x0a, 0x64, 4, 0x0, 0x64, 1),
     d(0x0b, 0x3c, 4, 0x0, 0x7f, 0),
@@ -78,7 +92,7 @@ pub const TABLE: &[Def] = &[
     d(0x15, 0x1, 4, 0x0, 0x1, 0),
     d(0x16, 0x64, 4, 0x0, 0x64, 0),
     d(0x17, 0x0, 4, 0x0, 0x1, 1),
-    d(0x18, 0x0, 1, 0x0, 0x1, 0),  // GOPN1_HF
+    d(0x18, 0x0, 1, 0x0, 0x1, 0), // GOPN1_HF
     d(0x19, 0x0, 5, 0x0, 0x1, 0),
     d(0x1b, 0x80808080, 4, 0x0, 0xffffffff, 0),
     d(0x1c, 0x80a05040, 4, 0x0, 0xffffffff, 0),
@@ -107,7 +121,7 @@ pub const TABLE: &[Def] = &[
     d(0x33, 0x1800, 5, 0x0, 0xffffffff, 1),
     d(0x34, 0x0, 4, 0x0, 0xffffffff, 0),
     d(0x35, 0x0, 5, 0x0, 0x3, 1),
-    d(0x36, 0x0, 1, 0x0, 0x1, 1),  // LSKF1JTK
+    d(0x36, 0x0, 1, 0x0, 0x1, 1), // LSKF1JTK
     d(0x37, 0x32, 4, 0x0, 0x64, 0),
     d(0x38, 0x32, 4, 0x0, 0x64, 0),
     d(0x39, 0x32, 4, 0x0, 0x64, 0),
@@ -118,7 +132,7 @@ pub const TABLE: &[Def] = &[
     d(0x3e, 0x19, 4, 0x0, 0x19, 0),
     d(0x3f, 0x0, 4, 0x0, 0x1, 0),
     d(0x40, 0x3, 4, 0x0, 0x3, 0),
-    d(0x41, 0xffffffff, 1, 0xffffffff, 0x3c, 0),  // GOPN1_AO
+    d(0x41, 0xffffffff, 1, 0xffffffff, 0x3c, 0), // GOPN1_AO
     d(0x42, 0x2, 4, 0x0, 0x2, 0),
     d(0x43, 0x0, 4, 0x0, 0x5, 1),
     d(0x44, 0x0, 4, 0x0, 0x1, 0),
@@ -200,10 +214,10 @@ pub const TABLE: &[Def] = &[
     d(0x90, 0x0, 4, 0x0, 0x1, 0),
     d(0x91, 0x0, 4, 0x0, 0x1, 0),
     d(0x92, 0x0, 4, 0x0, 0xffffffff, 0),
-    d(0x93, 0x0, 1, 0xffffff01, 0xff, 0),  // LPOL1PDX
-    d(0x94, 0x0, 1, 0xffffff01, 0xff, 0),  // LPOL1PDY
-    d(0x95, 0x0, 2, 0x0, 0xff, 1),  // &DAT_1036d91c
-    d(0x96, 0x0, 2, 0x0, 0xff, 1),  // &DAT_1036d910
+    d(0x93, 0x0, 1, 0xffffff01, 0xff, 0), // LPOL1PDX
+    d(0x94, 0x0, 1, 0xffffff01, 0xff, 0), // LPOL1PDY
+    d(0x95, 0x0, 2, 0x0, 0xff, 1),        // &DAT_1036d91c
+    d(0x96, 0x0, 2, 0x0, 0xff, 1),        // &DAT_1036d910
     d(0x97, 0x0, 4, 0x0, 0x1, 0),
     d(0x98, 0x0, 4, 0x0, 0xffff, 0),
     d(0x99, 0x0, 4, 0x0, 0x7fffffff, 0),
@@ -222,7 +236,7 @@ pub const TABLE: &[Def] = &[
     d(0xa8, 0x64, 6, 0x0, 0x64, 1),
     d(0xa9, 0x0, 4, 0x0, 0x1, 0),
     d(0xaa, 0x0, 4, 0x0, 0x1, 0),
-    d(0xab, 0x0, 6, 0x0, 0x5, 1),  // default from the display size: set_desktop
+    d(0xab, 0x0, 6, 0x0, 0x5, 1), // default from the display size: set_desktop
     d(0xac, 0x0, 6, 0x0, 0x1, 1),
     d(0xad, 0x0, 6, 0x0, 0x1, 1),
     d(0xae, 0x0, 4, 0x0, 0x1, 0),
@@ -261,7 +275,10 @@ pub const TABLE: &[Def] = &[
 ];
 
 pub fn def(id: u16) -> Option<&'static Def> {
-    TABLE.binary_search_by_key(&id, |d| d.id).ok().map(|i| &TABLE[i])
+    TABLE
+        .binary_search_by_key(&id, |d| d.id)
+        .ok()
+        .map(|i| &TABLE[i])
 }
 
 /// Where a kind is kept: true for the per-character file (cnf.dat).
@@ -276,7 +293,11 @@ pub struct Values(BTreeMap<u16, u32>);
 impl Values {
     /// FUN_1018e200; unknown ids read 0xffffffff as retail's -1.
     pub fn get(&self, id: u16) -> u32 {
-        self.0.get(&id).copied().or_else(|| def(id).map(default_of)).unwrap_or(u32::MAX)
+        self.0
+            .get(&id)
+            .copied()
+            .or_else(|| def(id).map(default_of))
+            .unwrap_or(u32::MAX)
     }
 
     pub fn get_i(&self, id: u16) -> i32 {
@@ -290,7 +311,11 @@ impl Values {
     /// FUN_1018ecb0: out of range resets to the default. Returns whether the stored value changed.
     pub fn set(&mut self, id: u16, v: u32) -> bool {
         let Some(d) = def(id) else { return false };
-        let v = if d.max != u32::MAX && ((v as i32) < d.min as i32 || (v as i32) > d.max as i32) { default_of(d) } else { v };
+        let v = if d.max != u32::MAX && ((v as i32) < d.min as i32 || (v as i32) > d.max as i32) {
+            default_of(d)
+        } else {
+            v
+        };
         let old = self.get(id);
         if v == default_of(d) {
             self.0.remove(&id);
@@ -315,7 +340,11 @@ impl Values {
 
 impl Serialize for Values {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        let m: BTreeMap<String, u32> = self.0.iter().map(|(k, v)| (format!("{k:#04x}"), *v)).collect();
+        let m: BTreeMap<String, u32> = self
+            .0
+            .iter()
+            .map(|(k, v)| (format!("{k:#04x}"), *v))
+            .collect();
         m.serialize(s)
     }
 }
@@ -325,7 +354,9 @@ impl<'de> Deserialize<'de> for Values {
         let m = BTreeMap::<String, u32>::deserialize(d)?;
         let mut v = Values::default();
         for (k, x) in m {
-            let id = k.strip_prefix("0x").map_or_else(|| k.parse().ok(), |h| u16::from_str_radix(h, 16).ok());
+            let id = k
+                .strip_prefix("0x")
+                .map_or_else(|| k.parse().ok(), |h| u16::from_str_radix(h, 16).ok());
             if let Some(id) = id {
                 v.set(id, x);
             }
@@ -348,7 +379,13 @@ impl GameConfig {
         let mut v = Values::default();
         let own = name.and_then(|n| self.characters.get(n));
         for d in TABLE {
-            let src = if per_character(d.kind) { own } else if d.kind == 5 { None } else { Some(&self.global) };
+            let src = if per_character(d.kind) {
+                own
+            } else if d.kind == 5 {
+                None
+            } else {
+                Some(&self.global)
+            };
             if let Some(x) = src.and_then(|s| s.0.get(&d.id)) {
                 v.0.insert(d.id, *x);
             }
@@ -407,7 +444,17 @@ mod tests {
         assert!(TABLE.windows(2).all(|w| w[0].id < w[1].id));
         let v = Values::default();
         // Known defaults: auto lock-on on (7 = 0), log 10 lines, 5 s a line, width 100 %, focal 350, map zoom 2000.
-        assert_eq!((v.get(7), v.get(0x0f), v.get(0x11), v.get(0x9c), v.get(0x49), v.get(0x8a)), (0, 10, 5, 100, 350, 2000));
+        assert_eq!(
+            (
+                v.get(7),
+                v.get(0x0f),
+                v.get(0x11),
+                v.get(0x9c),
+                v.get(0x49),
+                v.get(0x8a)
+            ),
+            (0, 10, 5, 100, 350, 2000)
+        );
         assert_eq!(v.get(0x1b), 0x8080_8080);
         assert_eq!(v.get(0xae), 0);
         assert_eq!(v.get(0x1a), u32::MAX);

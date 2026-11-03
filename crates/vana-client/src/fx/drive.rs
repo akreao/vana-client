@@ -63,9 +63,22 @@ pub struct Drive {
 impl Drive {
     /// The op's fields: i16 @6 duration (x speed), u32 @0x10 flags, u32 @0x14 curve, f32 @0x18 yaw0; `over` is the
     /// fast-forward's overshoot (DAT_1047bf14), taken off the time left.
-    pub fn new(actor: u32, owner: u64, segs: Vec<Seg>, raw: &[u8], speed: f32, over: f32, key: Option<KeyFrame>) -> Self {
-        let u32_at = |o: usize| raw.get(o..o + 4).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()));
-        let dur = raw.get(6..8).map_or(0, |b| i16::from_le_bytes([b[0], b[1]]));
+    pub fn new(
+        actor: u32,
+        owner: u64,
+        segs: Vec<Seg>,
+        raw: &[u8],
+        speed: f32,
+        over: f32,
+        key: Option<KeyFrame>,
+    ) -> Self {
+        let u32_at = |o: usize| {
+            raw.get(o..o + 4)
+                .map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()))
+        };
+        let dur = raw
+            .get(6..8)
+            .map_or(0, |b| i16::from_le_bytes([b[0], b[1]]));
         let flags = u32_at(0x10);
         let total = dur as f32 * speed;
         Self {
@@ -96,10 +109,18 @@ impl Drive {
     /// One frame of `dt` ticks, the actor at `pos` turned `rot` now: what it sets, and whether it goes on (the end
     /// applies u = 1.0 when it ever ran, whatever its direction).
     pub fn step(&mut self, dt: f32, pos: Vec3, rot: Vec3) -> (ActorPose, bool) {
-        let dt = if std::mem::take(&mut self.fresh) { 0.0 } else { dt };
+        let dt = if std::mem::take(&mut self.fresh) {
+            0.0
+        } else {
+            dt
+        };
         self.left -= dt;
         if self.left >= 0.0 {
-            let u = if self.total > 0.0 { self.left / self.total } else { 0.0 };
+            let u = if self.total > 0.0 {
+                self.left / self.total
+            } else {
+                0.0
+            };
             let u = if self.fwd { 1.0 - u } else { u };
             let f = match (&self.key, self.curve) {
                 (_, c) if c < 5 => ease(u, c),
@@ -140,7 +161,11 @@ impl Drive {
         let h = (d.x * d.x + d.z * d.z).sqrt();
         let yaw = wrap_pi(self.yaw0 - d.z.atan2(d.x));
         // Face 2 / 3 leave retail's pitch uninitialised (no file uses them): ours keeps it *(inf)*.
-        let pitch = if self.face & 2 == 0 { d.y.atan2(h) } else { rot.z };
+        let pitch = if self.face & 2 == 0 {
+            d.y.atan2(h)
+        } else {
+            rot.z
+        };
         let r = Vec3::new(0.0, yaw, pitch);
         if !self.turned {
             self.turned = true;
@@ -166,22 +191,51 @@ pub struct RotDrive {
 
 impl RotDrive {
     pub fn new(actor: u32, owner: u64, raw: &[u8], speed: f32, start: Vec3) -> Self {
-        let f = |o: usize| raw.get(o..o + 4).map_or(0.0, |b| f32::from_le_bytes(b.try_into().unwrap()));
-        let dur = raw.get(6..8).map_or(0, |b| i16::from_le_bytes([b[0], b[1]]));
+        let f = |o: usize| {
+            raw.get(o..o + 4)
+                .map_or(0.0, |b| f32::from_le_bytes(b.try_into().unwrap()))
+        };
+        let dur = raw
+            .get(6..8)
+            .map_or(0, |b| i16::from_le_bytes([b[0], b[1]]));
         let total = dur as f32 * speed;
-        Self { actor, owner, start, target: Vec3::new(f(8), f(0xc), f(0x10)) * (PI / 180.0), mode: raw.get(0x14).copied().unwrap_or(0), total, left: total }
+        Self {
+            actor,
+            owner,
+            start,
+            target: Vec3::new(f(8), f(0xc), f(0x10)) * (PI / 180.0),
+            mode: raw.get(0x14).copied().unwrap_or(0),
+            total,
+            left: total,
+        }
     }
 
     /// Mode 0 holds the target every frame until its scheduler ends; the others turn linearly (no wrap) and end
     /// after the frame they reach it.
     pub fn step(&mut self, dt: f32) -> (ActorPose, bool) {
         if self.mode == 0 {
-            return (ActorPose { snap: Some(self.target), ..Default::default() }, true);
+            return (
+                ActorPose {
+                    snap: Some(self.target),
+                    ..Default::default()
+                },
+                true,
+            );
         }
         self.left -= dt;
-        let k = if self.left >= 0.0 && self.total > 0.0 { 1.0 - self.left / self.total } else { 1.0 };
+        let k = if self.left >= 0.0 && self.total > 0.0 {
+            1.0 - self.left / self.total
+        } else {
+            1.0
+        };
         let r = self.start + (self.target - self.start) * k;
-        (ActorPose { target: Some(r), ..Default::default() }, self.left >= 0.0)
+        (
+            ActorPose {
+                target: Some(r),
+                ..Default::default()
+            },
+            self.left >= 0.0,
+        )
     }
 }
 
@@ -197,9 +251,22 @@ mod tests {
     /// The curves at f(0.25) for modes 0..4 (MODLOG "Ship actors"); the ends.
     #[test]
     fn curves() {
-        for (m, want) in [(0, 0.25), (1, 0.382_683), (2, 0.076_120), (3, 0.353_553), (4, 0.146_447)] {
-            assert!((ease(0.25, m) - want).abs() < 1e-5, "mode {m}: {}", ease(0.25, m));
-            assert!(ease(0.0, m).abs() < 1e-6 && (ease(1.0, m) - 1.0).abs() < 1e-6, "mode {m} ends");
+        for (m, want) in [
+            (0, 0.25),
+            (1, 0.382_683),
+            (2, 0.076_120),
+            (3, 0.353_553),
+            (4, 0.146_447),
+        ] {
+            assert!(
+                (ease(0.25, m) - want).abs() < 1e-5,
+                "mode {m}: {}",
+                ease(0.25, m)
+            );
+            assert!(
+                ease(0.0, m).abs() < 1e-6 && (ease(1.0, m) - 1.0).abs() < 1e-6,
+                "mode {m} ends"
+            );
         }
     }
 }

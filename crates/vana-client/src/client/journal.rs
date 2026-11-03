@@ -52,7 +52,11 @@ impl Store {
     pub fn record(&mut self, port: u16, d: [u32; 8]) {
         let bit = match (port, area_port(port)) {
             (_, Some((a, done))) => {
-                if done { self.completed[a] = d } else { self.current[a] = d }
+                if done {
+                    self.completed[a] = d
+                } else {
+                    self.current[a] = d
+                }
                 a + if done { 11 } else { 0 }
             }
             (0xd0, _) => {
@@ -76,7 +80,8 @@ impl Store {
                 self.nation_mission = d[1] as u16;
                 self.rotz = d[2];
                 self.cop = d[3];
-                let nibbles = (0..5).fold(0, |a, k| a | ((d[4] >> (4 * k) & 0xf).min(9)) << (4 * k));
+                let nibbles =
+                    (0..5).fold(0, |a, k| a | ((d[4] >> (4 * k) & 0xf).min(9)) << (4 * k));
                 self.cop_sub = nibbles | (d[4] & 0xfff0_0000);
                 (self.addons, self.tales) = (d[5] as u16, (d[5] >> 16) as u16);
                 self.soa = d[6];
@@ -103,7 +108,9 @@ fn bit(words: &[u32], n: usize) -> bool {
 }
 
 /// The mission logs' titles (group 0xd), file order as dat::journal::MISSION_FILES.
-pub const MISSION_TITLES: [usize; 15] = [0x15, 0x16, 0x17, 0x18, 0x83, 0x86, 0x87, 0x8f, 0x90, 0x9f, 0xb7, 0xbc, 0x98, 0x99, 0x9a];
+pub const MISSION_TITLES: [usize; 15] = [
+    0x15, 0x16, 0x17, 0x18, 0x83, 0x86, 0x87, 0x8f, 0x90, 0x9f, 0xb7, 0xbc, 0x98, 0x99, 0x9a,
+];
 /// DAT_10386984: the expansion bit each log needs (0 = always).
 pub const MISSION_BITS: [u32; 15] = [0, 0, 0, 1, 2, 3, 3, 4, 4, 0xb, 0, 0, 5, 6, 7];
 
@@ -143,8 +150,20 @@ pub fn current(s: &Store, log: usize, f: &LogFile) -> Result<usize, usize> {
         3 if s.rotz <= 3 && s.tales & 1 != 0 => idx(0x3f),
         3 => idx(s.rotz as usize),
         4 => {
-            let target = if s.cop == 0 && s.tales & 8 != 0 { 1000 } else { s.cop };
-            f.entries.iter().position(|e| e.number == target).or_else(|| (0..n).filter(|&i| f.entries[i].number <= target).max_by_key(|&i| f.entries[i].number)).ok_or(0x39)
+            let target = if s.cop == 0 && s.tales & 8 != 0 {
+                1000
+            } else {
+                s.cop
+            };
+            f.entries
+                .iter()
+                .position(|e| e.number == target)
+                .or_else(|| {
+                    (0..n)
+                        .filter(|&i| f.entries[i].number <= target)
+                        .max_by_key(|&i| f.entries[i].number)
+                })
+                .ok_or(0x39)
         }
         // Area 6's current words 4..7: Assault, ToAU, Campaign, WotG.
         5 | 7 if s.current[6][if log == 5 { 4 } else { 7 }] == 0 => none,
@@ -201,8 +220,15 @@ pub fn completed(s: &Store, log: usize, f: &LogFile, i: usize) -> bool {
 /// FUN_1022dd30: "Current:", the current row, "Completed:", every completed entry in file order (or "No completed
 /// missions.").
 pub fn mission_rows(s: &Store, log: usize, f: &LogFile) -> Vec<Row> {
-    let mut rows = vec![Row::CurHead, current(s, log, f).map_or_else(Row::Msg, Row::Current), Row::DoneHead];
-    let done: Vec<Row> = (0..f.entries.len()).filter(|&i| completed(s, log, f, i)).map(Row::Done).collect();
+    let mut rows = vec![
+        Row::CurHead,
+        current(s, log, f).map_or_else(Row::Msg, Row::Current),
+        Row::DoneHead,
+    ];
+    let done: Vec<Row> = (0..f.entries.len())
+        .filter(|&i| completed(s, log, f, i))
+        .map(Row::Done)
+        .collect();
     if done.is_empty() {
         rows.push(Row::Msg(0x3a));
     } else {
@@ -237,20 +263,44 @@ mod tests {
     use crate::dat::journal::Entry;
 
     fn file(nums: &[u32]) -> LogFile {
-        LogFile { entries: nums.iter().map(|&n| Entry { number: n, name: format!("m{n}"), desc: String::new() }).collect() }
+        LogFile {
+            entries: nums
+                .iter()
+                .map(|&n| Entry {
+                    number: n,
+                    name: format!("m{n}"),
+                    desc: String::new(),
+                })
+                .collect(),
+        }
     }
 
     #[test]
     fn records() {
         let mut s = Store::default();
         s.record(0xffff, [1, 5, 0, 0x145, 0x000c_c0a3, 0x0002_0021, 0, 0]);
-        assert_eq!((s.nation, s.nation_mission, s.cop_sub & 0xfffff, s.addons, s.tales), (1, 5, 0x99093, 0x21, 2));
+        assert_eq!(
+            (
+                s.nation,
+                s.nation_mission,
+                s.cop_sub & 0xfffff,
+                s.addons,
+                s.tales
+            ),
+            (1, 5, 0x99093, 0x21, 2)
+        );
         s.record(0x58, [1; 8]);
         s.record(0x108, [2; 8]);
         s.record(0x1234, [0; 8]);
-        assert_eq!((s.current[1][0], s.completed[10][0], s.received), (1, 2, 1 << 31 | 1 << 1 | 1 << 21));
+        assert_eq!(
+            (s.current[1][0], s.completed[10][0], s.received),
+            (1, 2, 1 << 31 | 1 << 1 | 1 << 21)
+        );
         assert!(!s.complete());
-        for p in (0x50..=0xc8).step_by(8).chain([0xe0, 0xe8, 0xf0, 0xf8, 0x100, 0xd0, 0xd8, 0x30, 0x38]) {
+        for p in (0x50..=0xc8)
+            .step_by(8)
+            .chain([0xe0, 0xe8, 0xf0, 0xf8, 0x100, 0xd0, 0xd8, 0x30, 0x38])
+        {
             s.record(p, [0; 8]);
         }
         assert!(s.complete());
@@ -258,24 +308,50 @@ mod tests {
 
     #[test]
     fn mission_rules() {
-        let mut s = Store { nation: 1, nation_mission: 0xffff, ..Default::default() };
+        let mut s = Store {
+            nation: 1,
+            nation_mission: 0xffff,
+            ..Default::default()
+        };
         let f = file(&[0, 1, 2, 3]);
-        assert_eq!(mission_rows(&s, 0, &f), vec![Row::CurHead, Row::Msg(0x38), Row::DoneHead, Row::Msg(0x3a)]);
+        assert_eq!(
+            mission_rows(&s, 0, &f),
+            vec![Row::CurHead, Row::Msg(0x38), Row::DoneHead, Row::Msg(0x3a)]
+        );
         assert_eq!(current(&s, 1, &f), Err(0x39));
         s.nation_mission = 2;
         s.nations_done[2] = 0b11;
-        assert_eq!(mission_rows(&s, 1, &f), vec![Row::CurHead, Row::Current(2), Row::DoneHead, Row::Done(0), Row::Done(1)]);
+        assert_eq!(
+            mission_rows(&s, 1, &f),
+            vec![
+                Row::CurHead,
+                Row::Current(2),
+                Row::DoneHead,
+                Row::Done(0),
+                Row::Done(1)
+            ]
+        );
         // CoP at "The Road Forks" (325) with path nibbles 1 and 0; "<=" lists the current one as done too.
         let cop = file(&[300, 325, 330, 331, 332, 340, 341]);
         s.cop = 0x145;
         s.cop_sub = 0x01;
         assert_eq!(current(&s, 4, &cop), Ok(1));
-        assert_eq!((0..7).map(|i| completed(&s, 4, &cop, i)).collect::<Vec<_>>(), [true, true, true, true, false, true, false]);
+        assert_eq!(
+            (0..7)
+                .map(|i| completed(&s, 4, &cop, i))
+                .collect::<Vec<_>>(),
+            [true, true, true, true, false, true, false]
+        );
         // SoA: done once the next entry's number is reached; 0 with the declined flag counts as 1000.
         let soa = file(&[10, 10, 20, 30, 1000]);
         s.soa = 20;
         assert_eq!(current(&s, 9, &soa), Ok(2));
-        assert_eq!((0..5).map(|i| completed(&s, 9, &soa, i)).collect::<Vec<_>>(), [true, true, false, false, false]);
+        assert_eq!(
+            (0..5)
+                .map(|i| completed(&s, 9, &soa, i))
+                .collect::<Vec<_>>(),
+            [true, true, false, false, false]
+        );
         s.soa = 0;
         s.tales = 0x20;
         assert_eq!(current(&s, 9, &soa), Ok(4));
@@ -284,14 +360,26 @@ mod tests {
         s.tales = 2;
         assert_eq!(current(&s, 12, &acp), Ok(0xc));
         s.addons = 3;
-        assert_eq!(((0..4).filter(|&i| completed(&s, 12, &acp, i)).count(), current(&s, 12, &acp)), (3, Ok(3)));
+        assert_eq!(
+            (
+                (0..4).filter(|&i| completed(&s, 12, &acp, i)).count(),
+                current(&s, 12, &acp)
+            ),
+            (3, Ok(3))
+        );
     }
 
     #[test]
     fn log_cycle() {
-        let s = Store { rov: 100, ..Default::default() };
+        let s = Store {
+            rov: 100,
+            ..Default::default()
+        };
         // Only bit 0 (and 1 Zilart): 0 1 2 3 10 then back to 0 (TVR waits for RoV 340).
-        let order: Vec<usize> = std::iter::successors(Some(0), |&l| Some(next_log(&s, l, 0b11, true))).take(6).collect();
+        let order: Vec<usize> =
+            std::iter::successors(Some(0), |&l| Some(next_log(&s, l, 0b11, true)))
+                .take(6)
+                .collect();
         assert_eq!(order, [0, 1, 2, 3, 10, 0]);
         assert_eq!(next_log(&s, 0, 0b11, false), 10);
         assert_eq!(indent("__Name"), ("Name", 2));

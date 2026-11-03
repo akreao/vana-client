@@ -32,23 +32,39 @@ impl BluData {
         match index.read(FILE) {
             Ok(d) => {
                 for e in d.chunks_exact(6) {
-                    entries[e[0] as usize] = Some(Entry { points: e[1], desc: e[2], family: e[3], level: e[4], physical: e[5] != 0 });
+                    entries[e[0] as usize] = Some(Entry {
+                        points: e[1],
+                        desc: e[2],
+                        family: e[3],
+                        level: e[4],
+                        physical: e[5] != 0,
+                    });
                 }
             }
             Err(e) => log::warn!("blue magic file {FILE}: {e:#}"),
         }
-        let descs = desc_file.and_then(|f| DMsg::load(index, f).map_err(|e| log::warn!("blue magic descriptions {f}: {e:#}")).ok());
+        let descs = desc_file.and_then(|f| {
+            DMsg::load(index, f)
+                .map_err(|e| log::warn!("blue magic descriptions {f}: {e:#}"))
+                .ok()
+        });
         BluData { entries, descs }
     }
 
     /// FUN_101d6d70: the entry of spell 0x200 + idx.
     pub fn entry(&self, spell: u16) -> Option<Entry> {
-        spell.checked_sub(0x200).filter(|&i| i < 0x100).and_then(|i| self.entries[i as usize])
+        spell
+            .checked_sub(0x200)
+            .filter(|&i| i < 0x100)
+            .and_then(|i| self.entries[i as usize])
     }
 
     /// The description (entry desc - 1), lines split at '\n'.
     pub fn description(&self, e: Entry) -> String {
-        self.descs.as_ref().and_then(|d| d.text(e.desc as usize - 1)).unwrap_or_default()
+        self.descs
+            .as_ref()
+            .and_then(|d| d.text(e.desc as usize - 1))
+            .unwrap_or_default()
     }
 }
 
@@ -73,21 +89,43 @@ mod tests {
 
     #[test]
     fn tables() {
-        assert_eq!((points(1), points(10), points(11), points(75), points(99)), (10, 10, 15, 45, 55));
+        assert_eq!(
+            (points(1), points(10), points(11), points(75), points(99)),
+            (10, 10, 15, 45, 55)
+        );
         assert_eq!((slots(0), slots(20), slots(21), slots(75)), (0, 8, 10, 20));
     }
 
     #[test]
     fn real_file() {
         let cfg = crate::config::Config::load();
-        let Ok(index) = DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(index) = DatIndex::open(&cfg.ffxi_dir()) else {
+            return;
+        };
         let dll = std::fs::read(cfg.ffxi_dir().join("FFXiMain.dll")).ok();
-        let file = dll.as_deref().and_then(|d| crate::dat::msg::current_slot_file(d, 1, 0x1a));
+        let file = dll
+            .as_deref()
+            .and_then(|d| crate::dat::msg::current_slot_file(d, 1, 0x1a));
         let b = BluData::load(&index, file);
         // Venom Shell 513: 3 points, Aquans, Lv 42, magical; Screwdriver 519: physical, Lv 26.
-        assert_eq!(b.entry(513), Some(Entry { points: 3, desc: 1, family: 1, level: 42, physical: false }));
-        assert_eq!(b.entry(519).map(|e| (e.level, e.physical)), Some((26, true)));
-        assert!(b.description(b.entry(513).unwrap()).starts_with("Poisons enemies within range"));
+        assert_eq!(
+            b.entry(513),
+            Some(Entry {
+                points: 3,
+                desc: 1,
+                family: 1,
+                level: 42,
+                physical: false
+            })
+        );
+        assert_eq!(
+            b.entry(519).map(|e| (e.level, e.physical)),
+            Some((26, true))
+        );
+        assert!(
+            b.description(b.entry(513).unwrap())
+                .starts_with("Poisons enemies within range")
+        );
         assert_eq!(b.entry(0x2e0).map(|e| e.points), Some(0));
     }
 }

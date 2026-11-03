@@ -19,11 +19,18 @@ pub struct Output {
 pub fn list() -> Vec<String> {
     let mut out = Vec::new();
     for id in cpal::available_hosts() {
-        let Ok(host) = cpal::host_from_id(id) else { continue };
-        let Ok(devs) = host.output_devices() else { continue };
+        let Ok(host) = cpal::host_from_id(id) else {
+            continue;
+        };
+        let Ok(devs) = host.output_devices() else {
+            continue;
+        };
         for d in devs {
             let name = d.description().map(|x| x.to_string()).unwrap_or_default();
-            out.push(format!("{}  {name}", d.id().map(|i| i.to_string()).unwrap_or_default()));
+            out.push(format!(
+                "{}  {name}",
+                d.id().map(|i| i.to_string()).unwrap_or_default()
+            ));
         }
     }
     out
@@ -50,16 +57,25 @@ pub fn open(device: Option<&str>, make: impl FnOnce(u32) -> Mixer) -> Result<Out
             // A device saved by a build with PipeWire, in one built without it (--no-default-features): this build
             // has no such host, so the id doesn't parse (or the host isn't there) and the default output plays
             // instead of no sound at all. A malformed id or a missing device on a known host still fails.
-            let found = s.parse::<cpal::DeviceId>().and_then(|id| Ok((cpal::host_from_id(id.host())?, id)));
+            let found = s
+                .parse::<cpal::DeviceId>()
+                .and_then(|id| Ok((cpal::host_from_id(id.host())?, id)));
             match found {
                 Ok((host, id)) => {
-                    let d = host.device_by_id(&id).with_context(|| format!("no audio device {s}"))?;
+                    let d = host
+                        .device_by_id(&id)
+                        .with_context(|| format!("no audio device {s}"))?;
                     (host, d)
                 }
-                Err(e) if e.kind() == cpal::ErrorKind::UnsupportedOperation || e.kind() == cpal::ErrorKind::HostUnavailable => {
+                Err(e)
+                    if e.kind() == cpal::ErrorKind::UnsupportedOperation
+                        || e.kind() == cpal::ErrorKind::HostUnavailable =>
+                {
                     log::warn!("audio device {s}: {e}; using the default output");
                     let host = cpal::default_host();
-                    let d = host.default_output_device().context("no audio output device")?;
+                    let d = host
+                        .default_output_device()
+                        .context("no audio output device")?;
                     (host, d)
                 }
                 Err(e) => return Err(e.into()),
@@ -67,7 +83,9 @@ pub fn open(device: Option<&str>, make: impl FnOnce(u32) -> Mixer) -> Result<Out
         }
         None => {
             let host = cpal::default_host();
-            let d = host.default_output_device().context("no audio output device")?;
+            let d = host
+                .default_output_device()
+                .context("no audio output device")?;
             (host, d)
         }
     };
@@ -84,7 +102,12 @@ pub fn open(device: Option<&str>, make: impl FnOnce(u32) -> Mixer) -> Result<Out
         f => anyhow::bail!("unsupported output sample format {f}"),
     };
     stream.play()?;
-    Ok(Output { _stream: Some(stream), _null: None, host: host.id().name().to_string(), rate })
+    Ok(Output {
+        _stream: Some(stream),
+        _null: None,
+        host: host.id().name().to_string(),
+        rate,
+    })
 }
 
 fn open_null(make: impl FnOnce(u32) -> Mixer) -> Result<Output> {
@@ -93,21 +116,34 @@ fn open_null(make: impl FnOnce(u32) -> Mixer) -> Result<Output> {
     let mut mixer = make(RATE);
     let stop = Arc::new(AtomicBool::new(false));
     let s = stop.clone();
-    std::thread::Builder::new().name("audio-null".into()).spawn(move || {
-        let mut buf = vec![0.0f32; BLOCK * 2];
-        let (start, mut done) = (Instant::now(), 0u64);
-        while !s.load(Ordering::Relaxed) {
-            mixer.render(&mut buf);
-            done += BLOCK as u64;
-            if let Some(d) = (start + Duration::from_micros(done * 1_000_000 / RATE as u64)).checked_duration_since(Instant::now()) {
-                std::thread::sleep(d);
+    std::thread::Builder::new()
+        .name("audio-null".into())
+        .spawn(move || {
+            let mut buf = vec![0.0f32; BLOCK * 2];
+            let (start, mut done) = (Instant::now(), 0u64);
+            while !s.load(Ordering::Relaxed) {
+                mixer.render(&mut buf);
+                done += BLOCK as u64;
+                if let Some(d) = (start + Duration::from_micros(done * 1_000_000 / RATE as u64))
+                    .checked_duration_since(Instant::now())
+                {
+                    std::thread::sleep(d);
+                }
             }
-        }
-    })?;
-    Ok(Output { _stream: None, _null: Some(NullOut(stop)), host: "null".into(), rate: RATE })
+        })?;
+    Ok(Output {
+        _stream: None,
+        _null: Some(NullOut(stop)),
+        host: "null".into(),
+        rate: RATE,
+    })
 }
 
-fn build<T: SizedSample + FromSample<f32>>(device: &cpal::Device, config: StreamConfig, mut mixer: Mixer) -> Result<cpal::Stream> {
+fn build<T: SizedSample + FromSample<f32>>(
+    device: &cpal::Device,
+    config: StreamConfig,
+    mut mixer: Mixer,
+) -> Result<cpal::Stream> {
     let channels = config.channels as usize;
     let mut buf: Vec<f32> = Vec::new();
     let stream = device.build_output_stream(
@@ -134,4 +170,3 @@ fn build<T: SizedSample + FromSample<f32>>(device: &cpal::Device, config: Stream
     )?;
     Ok(stream)
 }
-

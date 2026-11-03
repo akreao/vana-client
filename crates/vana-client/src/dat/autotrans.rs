@@ -36,8 +36,12 @@ impl Dictionary {
     pub fn load(index: &DatIndex, ffximain: &[u8]) -> Result<Self> {
         let file = super::msg::slot_file(ffximain, 1, 0x18).context("auto-translate slot")?;
         let data = index.read(file)?;
-        let msgs = |g: u8| super::msg::group_file(ffximain, 1, g).and_then(|f| Messages::load(index, f).ok());
-        let slot = |s: usize| super::msg::slot_file(ffximain, 1, s).and_then(|f| Messages::load(index, f).ok());
+        let msgs = |g: u8| {
+            super::msg::group_file(ffximain, 1, g).and_then(|f| Messages::load(index, f).ok())
+        };
+        let slot = |s: usize| {
+            super::msg::slot_file(ffximain, 1, s).and_then(|f| Messages::load(index, f).ok())
+        };
         let b = msgs(0xb);
         let title = |id: usize| b.as_ref().and_then(|m| m.get(id)).unwrap_or_default();
         let mut d = Self::parse(&data)?;
@@ -45,7 +49,10 @@ impl Dictionary {
         d.places = msgs(0x14);
         d.titles = [title(0x91), title(0x93)];
         // FUN_101ba5d0 replaces @ texts by the names at load; the keys follow them.
-        let (spells, abilities) = (slot(super::battle::SLOT_SPELLS), slot(super::battle::SLOT_ABILITIES));
+        let (spells, abilities) = (
+            slot(super::battle::SLOT_SPELLS),
+            slot(super::battle::SLOT_ABILITIES),
+        );
         let mut groups = std::mem::take(&mut d.groups);
         for g in &mut groups {
             for p in &mut g.phrases {
@@ -60,7 +67,12 @@ impl Dictionary {
     }
 
     /// `@A` place, `@C` spell, `@J` job, `@Y` ability by hex id (FUN_101ba5d0); None for other texts.
-    fn at_name(&self, text: &str, spells: Option<&Messages>, abilities: Option<&Messages>) -> Option<String> {
+    fn at_name(
+        &self,
+        text: &str,
+        spells: Option<&Messages>,
+        abilities: Option<&Messages>,
+    ) -> Option<String> {
         let rest = text.strip_prefix('@')?;
         let (kind, hex) = rest.split_at(rest.len().min(1));
         let id = usize::from_str_radix(hex, 16).ok()?;
@@ -84,33 +96,68 @@ impl Dictionary {
             v
         };
         if let Some(g) = filter {
-            let Some(&i) = self.by_id.get(&g) else { return (Vec::new(), false) };
+            let Some(&i) = self.by_id.get(&g) else {
+                return (Vec::new(), false);
+            };
             let gr = &self.groups[i];
-            return (sorted(gr.phrases.iter().map(|p| (p.1.clone(), p.2.clone(), [GROUP_KIND, LANG_EN, gr.id, p.0])).collect()).into_iter().map(|w| (w.0, w.2)).collect(), false);
+            return (
+                sorted(
+                    gr.phrases
+                        .iter()
+                        .map(|p| (p.1.clone(), p.2.clone(), [GROUP_KIND, LANG_EN, gr.id, p.0]))
+                        .collect(),
+                )
+                .into_iter()
+                .map(|w| (w.0, w.2))
+                .collect(),
+                false,
+            );
         }
-        let titles = || self.groups.iter().map(|g| (g.title.clone(), [GROUP_KIND, LANG_EN, g.id, 0])).collect::<Vec<_>>();
+        let titles = || {
+            self.groups
+                .iter()
+                .map(|g| (g.title.clone(), [GROUP_KIND, LANG_EN, g.id, 0]))
+                .collect::<Vec<_>>()
+        };
         let w = word.to_lowercase();
         if w.is_empty() {
             return (titles(), false);
         }
         let mut all: Vec<(String, String, [u8; 4])> = Vec::new();
         for g in &self.groups {
-            all.push((g.title.clone(), g.key.clone(), [GROUP_KIND, LANG_EN, g.id, 0]));
-            all.extend(g.phrases.iter().map(|p| (p.1.clone(), p.2.clone(), [GROUP_KIND, LANG_EN, g.id, p.0])));
+            all.push((
+                g.title.clone(),
+                g.key.clone(),
+                [GROUP_KIND, LANG_EN, g.id, 0],
+            ));
+            all.extend(
+                g.phrases
+                    .iter()
+                    .map(|p| (p.1.clone(), p.2.clone(), [GROUP_KIND, LANG_EN, g.id, p.0])),
+            );
         }
         let mut seen = std::collections::HashSet::new();
         let hits: Vec<(String, [u8; 4])> = sorted(all)
             .into_iter()
-            .filter(|x| !x.0.is_empty() && !x.0.starts_with(' ') && x.1.to_lowercase().starts_with(&w))
+            .filter(|x| {
+                !x.0.is_empty() && !x.0.starts_with(' ') && x.1.to_lowercase().starts_with(&w)
+            })
             .filter(|x| seen.insert(x.0.clone()))
             .map(|x| (x.0, x.2))
             .collect();
-        if hits.is_empty() { (titles(), false) } else { (hits, true) }
+        if hits.is_empty() {
+            (titles(), false)
+        } else {
+            (hits, true)
+        }
     }
 
     /// FUN_101ac990 without braces (a text command's argument, the line being typed): blocks as their plain text.
     pub fn expand_plain(&self, s: &str, names: Option<&dyn NameSource>) -> String {
-        self.expand(s, names).chars().filter(|&c| c != '\u{E008}' && c != '\u{E009}').collect()
+        self.expand(s, names)
+            .chars()
+            .filter(|&c| c != '\u{E008}' && c != '\u{E009}')
+            .collect()
     }
 
     /// Groups (0x4c-byte header: kind, language, group id, 0, title[32], completion[32], u32 count, u32 bytes) then
@@ -123,7 +170,9 @@ impl Dictionary {
             let h = &data[at..at + 0x4c];
             let bytes = u32::from_le_bytes(h[0x48..0x4c].try_into().unwrap()) as usize;
             let count = u32::from_le_bytes(h[0x44..0x48].try_into().unwrap()) as usize;
-            let body = data.get(at + 0x4c..at + 0x4c + bytes).context("group runs past the file")?;
+            let body = data
+                .get(at + 0x4c..at + 0x4c + bytes)
+                .context("group runs past the file")?;
             at += 0x4c + bytes;
             if h[0] != GROUP_KIND || h[1] != LANG_EN {
                 continue;
@@ -133,7 +182,10 @@ impl Dictionary {
             let mut p = 0;
             while p + 5 <= body.len() && phrases.len() < count {
                 let (lang, id, len) = (body[p + 1], body[p + 3], body[p + 4] as usize);
-                let text = cstr(body.get(p + 5..p + 5 + len).context("phrase runs past its group")?);
+                let text = cstr(
+                    body.get(p + 5..p + 5 + len)
+                        .context("phrase runs past its group")?,
+                );
                 p += 5 + len;
                 if matches!(lang, 1 | 4) {
                     let l2 = body.get(p).copied().unwrap_or(0) as usize;
@@ -141,10 +193,21 @@ impl Dictionary {
                 }
                 phrases.push((id, text.clone(), text));
             }
-            groups.push(Group { id: h[2], title: cstr(&h[4..0x24]), key: cstr(&h[0x24..0x44]), phrases });
+            groups.push(Group {
+                id: h[2],
+                title: cstr(&h[4..0x24]),
+                key: cstr(&h[0x24..0x44]),
+                phrases,
+            });
         }
         let by_id = groups.iter().enumerate().map(|(i, g)| (g.id, i)).collect();
-        Ok(Dictionary { groups, by_id, jobs: None, places: None, titles: Default::default() })
+        Ok(Dictionary {
+            groups,
+            by_id,
+            jobs: None,
+            places: None,
+            titles: Default::default(),
+        })
     }
 
     /// FUN_101bc100: a block's text (the language byte is ignored: the client's own dictionary answers). Kinds 7..0x12
@@ -164,7 +227,11 @@ impl Dictionary {
                 return Some(self.titles[key as usize].clone()).filter(|t| !t.is_empty());
             }
             let n = names?;
-            return if key { n.key_item(id).map(|x| x.bare) } else { n.item(id).map(|x| x.bare) };
+            return if key {
+                n.key_item(id).map(|x| x.bare)
+            } else {
+                n.item(id).map(|x| x.bare)
+            };
         }
         if kind == 6 {
             return None;
@@ -215,16 +282,26 @@ mod tests {
     #[test]
     fn english_dictionary() {
         let cfg = crate::config::Config::load();
-        let Ok(index) = DatIndex::open(&cfg.ffxi_dir()) else { return };
-        let Ok(dll) = std::fs::read(cfg.ffxi_dir().join("FFXiMain.dll")) else { return };
+        let Ok(index) = DatIndex::open(&cfg.ffxi_dir()) else {
+            return;
+        };
+        let Ok(dll) = std::fs::read(cfg.ffxi_dir().join("FFXiMain.dll")) else {
+            return;
+        };
         let d = Dictionary::load(&index, &dll).unwrap();
         assert_eq!(d.groups.len(), 42);
         let names = crate::dat::names::Names::load(&index, crate::dat::items::Lang::En).unwrap();
         let n: Option<&dyn NameSource> = Some(&names);
-        assert_eq!(d.resolve([2, 2, 1, 1], n).as_deref(), Some("Nice to meet you."));
+        assert_eq!(
+            d.resolve([2, 2, 1, 1], n).as_deref(),
+            Some("Nice to meet you.")
+        );
         assert_eq!(d.resolve([2, 2, 0x10, 1], n).as_deref(), Some("Thief"));
         assert_eq!(d.resolve([2, 2, 0x1b, 1], n).as_deref(), Some("Protect"));
-        assert_eq!(d.resolve([2, 2, 0x2a, 0x27], n).as_deref(), Some("Soul Enslavement"));
+        assert_eq!(
+            d.resolve([2, 2, 0x2a, 0x27], n).as_deref(),
+            Some("Soul Enslavement")
+        );
         let line = decode_sjis(b"Hi \xFD\x02\x02\x01\x01\xFD");
         assert_eq!(d.expand(&line, n), "Hi \u{E008}Nice to meet you.\u{E009}");
         // Completion: "prot" finds Protect (and its kin) before the categories; no word gives the 42 titles.

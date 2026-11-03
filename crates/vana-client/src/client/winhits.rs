@@ -15,7 +15,9 @@ pub fn record(w: &World, name: &str, win: &LobbyWin) {
 }
 
 pub fn record_rects(w: &World, name: &str, frame: [f32; 4], children: Vec<(u16, [f32; 4])>) {
-    w.win_hits.borrow_mut().push((name.to_string(), frame, children));
+    w.win_hits
+        .borrow_mut()
+        .push((name.to_string(), frame, children));
 }
 
 fn inside(r: [f32; 4], p: (f32, f32)) -> bool {
@@ -23,10 +25,23 @@ fn inside(r: [f32; 4], p: (f32, f32)) -> bool {
 }
 
 /// The child of a window drawn this frame under the pointer (`ids` only), and whether the pointer is on the window.
-pub fn child_under(w: &World, name: &str, p: (f32, f32), ids: std::ops::RangeInclusive<u16>) -> (Option<u16>, bool) {
+pub fn child_under(
+    w: &World,
+    name: &str,
+    p: (f32, f32),
+    ids: std::ops::RangeInclusive<u16>,
+) -> (Option<u16>, bool) {
     let hits = w.win_hits.borrow();
-    let Some((_, frame, children)) = hits.iter().find(|h| h.0 == name) else { return (None, false) };
-    (children.iter().find(|(id, r)| ids.contains(id) && inside(*r, p)).map(|c| c.0), inside(*frame, p))
+    let Some((_, frame, children)) = hits.iter().find(|h| h.0 == name) else {
+        return (None, false);
+    };
+    (
+        children
+            .iter()
+            .find(|(id, r)| ids.contains(id) && inside(*r, p))
+            .map(|c| c.0),
+        inside(*frame, p),
+    )
 }
 
 /// The pointer on a recorded window.
@@ -38,7 +53,19 @@ pub fn over(w: &World, name: &str, p: (f32, f32)) -> bool {
 /// cursor's child is Enter, a right click on the window Escape (ours only over it; retail's message 6 takes any right
 /// click, FUN_1015def0). `key` is the window's key handler.
 #[allow(clippy::too_many_arguments)]
-pub fn generic(w: &mut World, gu: &GameUi, name: &str, cursor: u16, ids: std::ops::RangeInclusive<u16>, p: (f32, f32), moved: bool, clicked: bool, right: bool, set: impl FnOnce(&mut World, u16), key: impl FnOnce(&mut World, &GameUi, egui::Key)) {
+pub fn generic(
+    w: &mut World,
+    gu: &GameUi,
+    name: &str,
+    cursor: u16,
+    ids: std::ops::RangeInclusive<u16>,
+    p: (f32, f32),
+    moved: bool,
+    clicked: bool,
+    right: bool,
+    set: impl FnOnce(&mut World, u16),
+    key: impl FnOnce(&mut World, &GameUi, egui::Key),
+) {
     let (child, on) = child_under(w, name, p, ids);
     if right && on {
         key(w, gu, egui::Key::Escape);
@@ -76,7 +103,15 @@ const REPEAT: std::time::Duration = std::time::Duration::from_millis(60);
 
 /// The mouse on itemctrl / moneyctr (`name`, as drawn this frame): a click on a child is its message (ctr_key), - / +
 /// step on the press and repeat while held, a right click on the window is Escape. `key` is the window's key handler.
-pub fn ctr(w: &mut World, gu: &GameUi, name: &str, p: (f32, f32), clicked: bool, right: bool, mut key: impl FnMut(&mut World, &GameUi, egui::Key)) {
+pub fn ctr(
+    w: &mut World,
+    gu: &GameUi,
+    name: &str,
+    p: (f32, f32),
+    clicked: bool,
+    right: bool,
+    mut key: impl FnMut(&mut World, &GameUi, egui::Key),
+) {
     let (pressed, down) = w.ptr_button;
     let (child, on) = child_under(w, name, p, 1..=5);
     if !down || w.ctr_hold.is_some_and(|(c, _)| Some(c) != child) {
@@ -111,6 +146,17 @@ mod tests {
     #[test]
     fn ctr_children_send_retails_messages() {
         let keys: Vec<_> = (0..=6).map(ctr_key).collect();
-        assert_eq!(keys, [None, Some(K::Enter), Some(K::ArrowLeft), Some(K::ArrowRight), Some(K::ArrowDown), Some(K::ArrowUp), None]);
+        assert_eq!(
+            keys,
+            [
+                None,
+                Some(K::Enter),
+                Some(K::ArrowLeft),
+                Some(K::ArrowRight),
+                Some(K::ArrowDown),
+                Some(K::ArrowUp),
+                None
+            ]
+        );
     }
 }

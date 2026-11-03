@@ -11,7 +11,8 @@ const CARD: &str = "menu    racecard";
 const WHITE: u32 = 0x8080_8080;
 
 fn u32_at(p: &[u8], o: usize) -> u32 {
-    p.get(o..o + 4).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()))
+    p.get(o..o + 4)
+        .map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()))
 }
 
 /// Copies `src` into `dst` from `at`, clamped (retail copies without bounds).
@@ -35,14 +36,24 @@ pub struct RaceStore {
 
 impl Default for RaceStore {
     fn default() -> Self {
-        Self { ready: false, race: [0; 2], chocobos: [0; 96], sections: [0; 384], result: [0; 4] }
+        Self {
+            ready: false,
+            race: [0; 2],
+            chocobos: [0; 96],
+            sections: [0; 384],
+            result: [0; 4],
+        }
     }
 }
 
 impl RaceStore {
     /// Mode @4, record index @5, size in bytes @6, data from @8; modes 1..4 clear the flag, any other sets it.
     pub fn apply(&mut self, p: &[u8]) {
-        let (mode, index, size) = (p.get(4).copied().unwrap_or(0), p.get(5).copied().unwrap_or(0) as usize, p.get(6).copied().unwrap_or(0) as usize);
+        let (mode, index, size) = (
+            p.get(4).copied().unwrap_or(0),
+            p.get(5).copied().unwrap_or(0) as usize,
+            p.get(6).copied().unwrap_or(0) as usize,
+        );
         let data = p.get(8..).unwrap_or_default();
         let data = &data[..size.min(data.len())];
         match mode {
@@ -61,7 +72,13 @@ impl RaceStore {
         if !self.ready {
             return 0;
         }
-        let rec = |d: &[u8], n: i32| if (0..n).contains(&a) && (0..3).contains(&b) { u32_at(d, 12 * a as usize + 4 * b as usize) } else { 0 };
+        let rec = |d: &[u8], n: i32| {
+            if (0..n).contains(&a) && (0..3).contains(&b) {
+                u32_at(d, 12 * a as usize + 4 * b as usize)
+            } else {
+                0
+            }
+        };
         match sub {
             0 if (0..2).contains(&a) => self.race[a as usize],
             0x20 => rec(&self.chocobos, 8),
@@ -83,7 +100,11 @@ pub struct RaceList {
 
 impl Default for RaceList {
     fn default() -> Self {
-        Self { params: [0; 96], names: [0; 160], filled: false }
+        Self {
+            params: [0; 96],
+            names: [0; 160],
+            filled: false,
+        }
     }
 }
 
@@ -91,7 +112,10 @@ impl RaceList {
     /// Mode byte @0x10, start index byte @0x11; 1 zeroes, 2 copies 0x60 bytes of params, 3 0xa0 bytes of names (both
     /// from @0x14, whatever their size field), 4 calls back.
     pub fn apply(&mut self, p: &[u8]) {
-        let (mode, index) = (p.get(0x10).copied().unwrap_or(0), p.get(0x11).copied().unwrap_or(0) as usize);
+        let (mode, index) = (
+            p.get(0x10).copied().unwrap_or(0),
+            p.get(0x11).copied().unwrap_or(0) as usize,
+        );
         let data = p.get(0x14..).unwrap_or_default();
         match mode {
             1 => *self = Self::default(),
@@ -132,14 +156,20 @@ pub struct Racing {
 
 /// c2s 0x09B {i32 Param = the colour sign-extended, u32 Kind (1 odds, 2 the field)}; refused within 1 s of the last.
 fn request(w: &mut World, colour: i8, kind: u32) {
-    if w.racing.sent.is_some_and(|t| t.elapsed().as_millis() < 1000) {
+    if w.racing
+        .sent
+        .is_some_and(|t| t.elapsed().as_millis() < 1000)
+    {
         return;
     }
     w.racing.sent = Some(Instant::now());
     let mut body = (colour as i32).to_le_bytes().to_vec();
     body.extend(kind.to_le_bytes());
     log::info!("racing: c2s 0x09B colour {colour} kind {kind}");
-    let _ = w.net.commands.send(super::net::NetCommand::Packet { id: 0x09B, body });
+    let _ = w
+        .net
+        .commands
+        .send(super::net::NetCommand::Packet { id: 0x09B, body });
 }
 
 /// s2c 0x069 / 0x073 / 0x074.
@@ -150,9 +180,15 @@ pub fn on_packet(w: &mut World, id: u16, p: &[u8]) {
         0x073 => {
             // FUN_10209530: odds u16[28] @0x10, the tier by {200, 1000, 3000, 6000} (0x1033b2d4), Ident @8.
             for k in 0..28 {
-                let o = p.get(0x10 + 2 * k..0x12 + 2 * k).map_or(0, |b| u16::from_le_bytes([b[0], b[1]]));
+                let o = p
+                    .get(0x10 + 2 * k..0x12 + 2 * k)
+                    .map_or(0, |b| u16::from_le_bytes([b[0], b[1]]));
                 r.odds[k] = o;
-                r.tiers[k] = [200u16, 1000, 3000, 6000].iter().position(|&t| o < t).unwrap_or(3).min(3) as u8;
+                r.tiers[k] = [200u16, 1000, 3000, 6000]
+                    .iter()
+                    .position(|&t| o < t)
+                    .unwrap_or(3)
+                    .min(3) as u8;
             }
             let ident = u32_at(p, 8);
             (r.race_no, r.grade) = (ident & 0x3ffff, (ident >> 18) as i32);
@@ -174,7 +210,12 @@ pub fn on_packet(w: &mut World, id: u16, p: &[u8]) {
 /// unknown, the odds stay until the next 0x073.
 pub fn open_board(w: &mut World, colour: i8, seconds: i32) {
     w.racing.grade = -1;
-    w.racing.board = Some(Board { colour, left: seconds as f32 * 60.0, refresh: 0.0, name: None });
+    w.racing.board = Some(Board {
+        colour,
+        left: seconds as f32 * 60.0,
+        refresh: 0.0,
+        name: None,
+    });
 }
 
 /// Op 0xb4 0x10.
@@ -222,11 +263,23 @@ pub fn step(w: &mut World, ticks: f32) {
 /// FUN_101c93c0: "%d:%02d", "%d:%02d:%02d" from an hour.
 fn clock(secs: i32) -> String {
     let s = secs.max(0);
-    if s >= 3600 { format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60) } else { format!("{}:{:02}", s / 60, s % 60) }
+    if s >= 3600 {
+        format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60)
+    } else {
+        format!("{}:{:02}", s / 60, s % 60)
+    }
 }
 
 /// The pairs' column origins (0x10385584) and counts (0x1033b2ec), rows 16 apart.
-const COLUMNS: [(f32, f32, usize); 7] = [(102.0, 83.0, 7), (182.0, 83.0, 6), (262.0, 83.0, 5), (342.0, 83.0, 4), (342.0, 179.0, 3), (262.0, 195.0, 2), (182.0, 211.0, 1)];
+const COLUMNS: [(f32, f32, usize); 7] = [
+    (102.0, 83.0, 7),
+    (182.0, 83.0, 6),
+    (262.0, 83.0, 5),
+    (342.0, 83.0, 4),
+    (342.0, 179.0, 3),
+    (262.0, 195.0, 2),
+    (182.0, 211.0, 1),
+];
 /// The tiers' colours (0x1033b2dc).
 const TIER: [u32; 4] = [0x8050_9050, 0x8080_8080, 0x8090_9040, 0x8080_4020];
 
@@ -239,30 +292,48 @@ fn right(gu: &mut GameUi, s: &str, x: f32, y: f32, colour: u32) {
 /// +0x2c); the 28 odds right-aligned in the sprite font by tier; while betting is open "Toteboard updated in (%s)" (10
 /// 0x64) right-aligned at (x1 - 4, y1 - 0x14) in 0x80404040.
 fn draw_board(gu: &mut GameUi, w: &World, b: &Board, sw: f32, sh: f32) {
-    let Some(win) = gu.lobby_window_off(BOARD, sw, sh, (0.0, 0.0), None, false, &[]) else { return };
+    let Some(win) = gu.lobby_window_off(BOARD, sw, sh, (0.0, 0.0), None, false, &[]) else {
+        return;
+    };
     let [x0, y0, fw, fh] = win.frame;
     let (x1, y1) = (x0 + fw, y0 + fh);
     let r = &w.racing;
-    let title = gu.lobby_msg(0x0a, 0x66, "%s (Race No. %d)").replacen("%s", b.name.as_deref().unwrap_or(""), 1).replacen("%d", &r.race_no.to_string(), 1);
+    let title = gu
+        .lobby_msg(0x0a, 0x66, "%s (Race No. %d)")
+        .replacen("%s", b.name.as_deref().unwrap_or(""), 1)
+        .replacen("%d", &r.race_no.to_string(), 1);
     gu.text(&title, x0 + 16.0, y0 + 24.0, 0, WHITE.to_le_bytes());
     let line = if b.left <= 0.0 {
         gu.lobby_msg(0x0b, 0xbb, "Bet placement closed")
     } else if b.left < 60.0 {
         gu.lobby_msg(0x0b, 0xba, "Bet placement ending momentarily")
     } else {
-        gu.lobby_msg(0x0a, 0x65, "Betting ends in (%s)").replacen("%s", &clock((b.left / 60.0) as i32), 1)
+        gu.lobby_msg(0x0a, 0x65, "Betting ends in (%s)").replacen(
+            "%s",
+            &clock((b.left / 60.0) as i32),
+            1,
+        )
     };
     right(gu, &line, x1 - 16.0, y0 + 44.0, WHITE);
     let mut k = 0;
     for &(cx, cy, n) in &COLUMNS {
         for row in 0..n {
             let (bt, ui, _, _) = gu.parts();
-            crate::render::screens::push_shape_text_right(bt, ui, r.odds[k].to_string().as_bytes(), x0 + cx, y0 + cy + 16.0 * row as f32, TIER[r.tiers[k] as usize & 3]);
+            crate::render::screens::push_shape_text_right(
+                bt,
+                ui,
+                r.odds[k].to_string().as_bytes(),
+                x0 + cx,
+                y0 + cy + 16.0 * row as f32,
+                TIER[r.tiers[k] as usize & 3],
+            );
             k += 1;
         }
     }
     if b.left > 0.0 {
-        let s = gu.lobby_msg(0x0a, 0x64, "Toteboard updated in (%s)").replacen("%s", &clock((b.refresh / 60.0) as i32), 1);
+        let s = gu
+            .lobby_msg(0x0a, 0x64, "Toteboard updated in (%s)")
+            .replacen("%s", &clock((b.refresh / 60.0) as i32), 1);
         right(gu, &s, x1 - 4.0, y1 - 20.0, 0x8040_4040);
     }
 }
@@ -305,14 +376,22 @@ fn draw_row(gu: &mut GameUi, x: f32, y: f32, name: &[u8], param: &[u8]) {
 
 /// FUN_10209b40: once its pointers are set, 8 rows whatever the entrants.
 fn draw_card(gu: &mut GameUi, w: &World, ready: bool, sw: f32, sh: f32) {
-    let Some(win) = gu.lobby_window_off(CARD, sw, sh, (0.0, 0.0), None, false, &[]) else { return };
+    let Some(win) = gu.lobby_window_off(CARD, sw, sh, (0.0, 0.0), None, false, &[]) else {
+        return;
+    };
     if !ready {
         return;
     }
     let [x0, y0, ..] = win.frame;
     let l = &w.racing.list;
     for i in 0..8 {
-        draw_row(gu, x0, y0 + 30.0 * i as f32, &l.names[20 * i..20 * i + 20], &l.params[12 * i..12 * i + 12]);
+        draw_row(
+            gu,
+            x0,
+            y0 + 30.0 * i as f32,
+            &l.names[20 * i..20 * i + 20],
+            &l.params[12 * i..12 * i + 12],
+        );
     }
 }
 
@@ -347,8 +426,18 @@ mod tests {
         s.apply(&[0, 0, 0, 0, 4, 0, 4, 0, 0x10, 0x32, 0x54, 0x76]);
         s.apply(&[0, 0, 0, 0, 5, 0, 0, 0]);
         assert!(s.ready);
-        assert_eq!((s.value(0, 0, 0), s.value(0, 1, 0), s.value(0, 2, 0)), (0x128, 0x8000_0002, 0));
-        assert_eq!((s.value(0x20, 1, 2), s.value(0x20, 8, 0), s.value(0x60, 0, 0)), (5, 0, 0x7654_3210));
+        assert_eq!(
+            (s.value(0, 0, 0), s.value(0, 1, 0), s.value(0, 2, 0)),
+            (0x128, 0x8000_0002, 0)
+        );
+        assert_eq!(
+            (
+                s.value(0x20, 1, 2),
+                s.value(0x20, 8, 0),
+                s.value(0x60, 0, 0)
+            ),
+            (5, 0, 0x7654_3210)
+        );
     }
 
     #[test]
@@ -370,6 +459,13 @@ mod tests {
 
     #[test]
     fn clocks() {
-        assert_eq!((clock(65), clock(3661), clock(-3)), ("1:05".to_string(), "1:01:01".to_string(), "0:00".to_string()));
+        assert_eq!(
+            (clock(65), clock(3661), clock(-3)),
+            (
+                "1:05".to_string(),
+                "1:01:01".to_string(),
+                "0:00".to_string()
+            )
+        );
     }
 }

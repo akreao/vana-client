@@ -36,12 +36,21 @@ impl Afb {
             (0..n)
                 .map(|i| {
                     let o = at + i * 8;
-                    let v = |k: usize| d.get(o + k..o + k + 2).map(|b| i16::from_le_bytes([b[0], b[1]]) as f32);
+                    let v = |k: usize| {
+                        d.get(o + k..o + k + 2)
+                            .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32)
+                    };
                     Some(Vec3::new(v(0)?, v(2)?, v(4)?) * s)
                 })
                 .collect()
         };
-        Some(Afb { r: d[1], start: d[0x10], len: d[0x12], a: rail(u(0x14))?, b: rail(u(0x18))? })
+        Some(Afb {
+            r: d[1],
+            start: d[0x10],
+            len: d[0x12],
+            a: rail(u(0x14))?,
+            b: rail(u(0x18))?,
+        })
     }
 }
 
@@ -92,10 +101,17 @@ impl Trail {
     /// Op 0x2c's record (0x58 bytes): colours @0x10 / @0x14 (R G B A), V18 @0x18, V28 @0x28, shrink @0x38 / @0x3c,
     /// delay @0x40, split @0x44, speed % @0x56; rate = 2 len / max(dur, 1) x (u56 ? u56 x 0.005 : 0.5).
     pub fn new(actor: u32, afb: Afb, raw: &[u8]) -> Trail {
-        let f = |o: usize| raw.get(o..o + 4).map_or(0.0, |b| f32::from_le_bytes(b.try_into().unwrap()));
+        let f = |o: usize| {
+            raw.get(o..o + 4)
+                .map_or(0.0, |b| f32::from_le_bytes(b.try_into().unwrap()))
+        };
         let c = |o: usize| std::array::from_fn(|i| raw.get(o + i).copied().unwrap_or(0) as f32);
-        let dur = raw.get(6..8).map_or(0, |b| i16::from_le_bytes([b[0], b[1]])) as f32;
-        let u56 = raw.get(0x56..0x58).map_or(0, |b| u16::from_le_bytes([b[0], b[1]]));
+        let dur = raw
+            .get(6..8)
+            .map_or(0, |b| i16::from_le_bytes([b[0], b[1]])) as f32;
+        let u56 = raw
+            .get(0x56..0x58)
+            .map_or(0, |b| u16::from_le_bytes([b[0], b[1]]));
         let factor = if u56 != 0 { u56 as f32 * 0.005 } else { 0.5 };
         let rate = 2.0 * afb.len as f32 / dur.max(1.0) * factor;
         Trail {
@@ -160,7 +176,10 @@ impl Trail {
                 let Some(m) = w() else { return true };
                 for _ in 0..due - 1 {
                     let i = self.next;
-                    self.ctrl.push((m.transform_point3(self.afb.a[i]), m.transform_point3(self.afb.b[i])));
+                    self.ctrl.push((
+                        m.transform_point3(self.afb.a[i]),
+                        m.transform_point3(self.afb.b[i]),
+                    ));
                     self.next += 1;
                     if self.ctrl.len() < 3 {
                         if self.count != 0 {
@@ -172,7 +191,9 @@ impl Trail {
                         }
                         for u in [0.25, 0.5, 0.75, 1.0] {
                             let s = |k: usize, rail: fn(&(Vec3, Vec3)) -> Vec3| rail(&self.ctrl[k]);
-                            let sp = |rail: fn(&(Vec3, Vec3)) -> Vec3| spline(u, s(0, rail), s(1, rail), s(2, rail));
+                            let sp = |rail: fn(&(Vec3, Vec3)) -> Vec3| {
+                                spline(u, s(0, rail), s(1, rail), s(2, rail))
+                            };
                             self.push((sp(|c| c.0), sp(|c| c.1)));
                             self.age(FT);
                         }
@@ -220,7 +241,11 @@ impl Trail {
                 self.void_below[1] = prev.birth + 1;
             }
         }
-        self.ring[self.head] = Sample { a0, b0, birth: self.aged };
+        self.ring[self.head] = Sample {
+            a0,
+            b0,
+            birth: self.aged,
+        };
         self.head = (self.head + 1) % RING;
         self.count = (self.count + 1).min(RING);
     }
@@ -248,7 +273,11 @@ impl Trail {
                 let (sa1, sb1) = (l0 - n1 * p, n1 * q);
                 let l1 = sa1 - sb1;
                 let (x, y) = (sa1 - p.min(l1), sb1 + q.min(l1));
-                (sa, sb) = if ((nf - n1 - 1.0) as u32).is_multiple_of(2) { (x, y) } else { (y, x) };
+                (sa, sb) = if ((nf - n1 - 1.0) as u32).is_multiple_of(2) {
+                    (x, y)
+                } else {
+                    (y, x)
+                };
             }
         }
         let u0 = if l0 > 0.0 { d / l0 } else { Vec3::ZERO };
@@ -257,19 +286,40 @@ impl Trail {
             _ => 0,
         } as f32;
         let n = n as f32;
-        let col = |c: [f32; 4], da: f32| -> [f32; 4] { [(c[0] - m * self.dec[0]).clamp(0.0, 255.0), (c[1] - m * self.dec[1]).clamp(0.0, 255.0), (c[2] - m * self.dec[2]).clamp(0.0, 255.0), (c[3] - n * da).clamp(0.0, 255.0)] };
-        Aged { a: s.b0 + u0 * sa, b: s.b0 + u0 * sb, ca: col(self.ca, self.dec[3]), cb: col(self.cb, self.dec_b), void: [s.birth < self.void_below[0], s.birth < self.void_below[1]] }
+        let col = |c: [f32; 4], da: f32| -> [f32; 4] {
+            [
+                (c[0] - m * self.dec[0]).clamp(0.0, 255.0),
+                (c[1] - m * self.dec[1]).clamp(0.0, 255.0),
+                (c[2] - m * self.dec[2]).clamp(0.0, 255.0),
+                (c[3] - n * da).clamp(0.0, 255.0),
+            ]
+        };
+        Aged {
+            a: s.b0 + u0 * sa,
+            b: s.b0 + u0 * sb,
+            ca: col(self.ca, self.dec[3]),
+            cb: col(self.cb, self.dec_b),
+            void: [s.birth < self.void_below[0], s.birth < self.void_below[1]],
+        }
     }
 
     /// The trim (asm:28827..28976): pairs (newer P, older Q) with both edges under 0.005 (a NaN edge never is), or
     /// no alpha, or no RGB left.
     fn dead(&self) -> usize {
-        let aged: Vec<Aged> = (0..self.count).map(|k| self.aged_sample(&self.sample(k))).collect();
+        let aged: Vec<Aged> = (0..self.count)
+            .map(|k| self.aged_sample(&self.sample(k)))
+            .collect();
         let short = |x: &Aged| !x.void[0] && !x.void[1] && (x.a - x.b).length() < 0.005;
         aged.windows(2)
             .filter(|w| {
                 let (p, q) = (&w[0], &w[1]);
-                (short(q) && short(p)) || q.ca[3] + q.cb[3] + p.cb[3] + p.ca[3] <= 0.0 || [q.ca, q.cb, p.ca, p.cb].iter().map(|c| c[0] + c[1] + c[2]).sum::<f32>() <= 0.0
+                (short(q) && short(p))
+                    || q.ca[3] + q.cb[3] + p.cb[3] + p.ca[3] <= 0.0
+                    || [q.ca, q.cb, p.ca, p.cb]
+                        .iter()
+                        .map(|c| c[0] + c[1] + c[2])
+                        .sum::<f32>()
+                        <= 0.0
             })
             .count()
     }
@@ -286,14 +336,36 @@ impl Trail {
     /// The GPU record: count, head, aged, fade_from (or !0), split, void A / B; CA, CB, V18, (p, q, V28.w); samples.
     pub fn gpu_words(&self) -> Vec<u32> {
         let mut w = vec![0u32; WORDS];
-        w[..7].copy_from_slice(&[self.count as u32, self.head as u32, self.aged, self.fade_from.unwrap_or(u32::MAX), self.split as u32, self.void_below[0], self.void_below[1]]);
-        let floats = [self.ca, self.cb, self.dec, [self.shrink.0, self.shrink.1, self.dec_b, 0.0]];
+        w[..7].copy_from_slice(&[
+            self.count as u32,
+            self.head as u32,
+            self.aged,
+            self.fade_from.unwrap_or(u32::MAX),
+            self.split as u32,
+            self.void_below[0],
+            self.void_below[1],
+        ]);
+        let floats = [
+            self.ca,
+            self.cb,
+            self.dec,
+            [self.shrink.0, self.shrink.1, self.dec_b, 0.0],
+        ];
         for (i, v) in floats.iter().flatten().enumerate() {
             w[8 + i] = v.to_bits();
         }
         for (k, s) in self.ring.iter().enumerate() {
             let o = HEAD_WORDS + k * 8;
-            w[o..o + 8].copy_from_slice(&[s.a0.x.to_bits(), s.a0.y.to_bits(), s.a0.z.to_bits(), s.birth, s.b0.x.to_bits(), s.b0.y.to_bits(), s.b0.z.to_bits(), 0]);
+            w[o..o + 8].copy_from_slice(&[
+                s.a0.x.to_bits(),
+                s.a0.y.to_bits(),
+                s.a0.z.to_bits(),
+                s.birth,
+                s.b0.x.to_bits(),
+                s.b0.y.to_bits(),
+                s.b0.z.to_bits(),
+                0,
+            ]);
         }
         w
     }
@@ -312,7 +384,12 @@ mod tests {
         let cfg = crate::config::Config::load();
         let index = crate::dat::DatIndex::open(&cfg.ffxi_dir()).ok()?;
         let lib = crate::fx::lib::Library::load(file, index.read(file).unwrap()).unwrap();
-        let n = lib.tree.nodes.iter().position(|x| x.kind == crate::dat::generator::kind::AFB && x.name[..3] == name[..]).expect("no Afb");
+        let n = lib
+            .tree
+            .nodes
+            .iter()
+            .position(|x| x.kind == crate::dat::generator::kind::AFB && x.name[..3] == name[..])
+            .expect("no Afb");
         Some(Afb::parse(lib.data(n)).expect("Afb parse"))
     }
 
@@ -321,8 +398,16 @@ mod tests {
     fn parse_fast_blade() {
         let Some(a) = afb(33228, b"b0a") else { return };
         assert_eq!((a.a.len(), a.r, a.start, a.len), (5, 30, 14, 45));
-        assert!(a.a[0].distance(Vec3::new(-1.0234, -1.1406, 0.0)) < 1e-3, "{:?}", a.a[0]);
-        assert!(a.b[4].distance(Vec3::new(1.180, -0.227, 0.094)) < 2e-3, "{:?}", a.b[4]);
+        assert!(
+            a.a[0].distance(Vec3::new(-1.0234, -1.1406, 0.0)) < 1e-3,
+            "{:?}",
+            a.a[0]
+        );
+        assert!(
+            a.b[4].distance(Vec3::new(1.180, -0.227, 0.094)) < 2e-3,
+            "{:?}",
+            a.b[4]
+        );
     }
 
     /// Spec 2.2: Hume M's point 0 is the root at rest, a -90 degree turn about Y that RotY(pi / 2) cancels, so real
@@ -330,18 +415,33 @@ mod tests {
     #[test]
     fn root_turn_cancels() {
         let cfg = crate::config::Config::load();
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else {
+            return;
+        };
         let file = index.read(7072).unwrap();
-        let c = crate::dat::chunks(&file).unwrap().into_iter().find(|c| c.kind == 0x29).expect("skeleton");
+        let c = crate::dat::chunks(&file)
+            .unwrap()
+            .into_iter()
+            .find(|c| c.kind == 0x29)
+            .expect("skeleton");
         let skel = crate::dat::character::parse_skeleton(c.name(), c.data).unwrap();
         let (bone, off) = skel.points[0];
         let r = skel.point_rots.first().copied().unwrap_or(Vec3::ZERO);
         let b = crate::dat::character::pose(&skel, &[])[bone as usize];
-        let local = Mat4::from_translation(off) * Mat4::from_rotation_z(r.z) * Mat4::from_rotation_y(r.y) * Mat4::from_rotation_x(r.x);
-        let w = Mat4::from_scale_rotation_translation(b.s, b.q, b.t) * local * Mat4::from_rotation_y(std::f32::consts::FRAC_PI_2);
+        let local = Mat4::from_translation(off)
+            * Mat4::from_rotation_z(r.z)
+            * Mat4::from_rotation_y(r.y)
+            * Mat4::from_rotation_x(r.x);
+        let w = Mat4::from_scale_rotation_translation(b.s, b.q, b.t)
+            * local
+            * Mat4::from_rotation_y(std::f32::consts::FRAC_PI_2);
         let p = Vec3::new(2.773, -0.008, 0.320);
         let d = w.transform_vector3(p) - p;
-        assert!(d.length() < 1e-3, "bone {bone} {b:?}: {p} -> {}", w.transform_vector3(p));
+        assert!(
+            d.length() < 1e-3,
+            "bone {bone} {b:?}: {p} -> {}",
+            w.transform_vector3(p)
+        );
     }
 
     /// Spec 5.1: Fast Blade's op 7 at 30 fps with the actor at the origin: 9 / 13 samples at ticks 28 / 30, done at 92.
@@ -351,7 +451,13 @@ mod tests {
         let mut raw = vec![0u8; 0x58];
         raw[..8].copy_from_slice(&[0x2c, 0x16, 0, 0, 0x14, 0, 0x46, 0]);
         raw[0x10..0x18].copy_from_slice(&[0x8a, 0x8a, 0x8a, 0x40, 0x8a, 0x8a, 0x8a, 0x00]);
-        for (o, v) in [(0x24, 2.0f32), (0x34, 2.0), (0x38, 0.001), (0x3c, 0.05), (0x40, 20.0)] {
+        for (o, v) in [
+            (0x24, 2.0f32),
+            (0x34, 2.0),
+            (0x38, 0.001),
+            (0x3c, 0.05),
+            (0x40, 20.0),
+        ] {
             raw[o..o + 4].copy_from_slice(&v.to_le_bytes());
         }
         raw[0x44] = 1;
@@ -368,7 +474,11 @@ mod tests {
             }
         }
         let at = |k: u32| counts.iter().find(|c| c.0 == k).map(|c| c.1);
-        assert_eq!((at(26), at(28), at(30)), (Some(0), Some(9), Some(13)), "{counts:?}");
+        assert_eq!(
+            (at(26), at(28), at(30)),
+            (Some(0), Some(9), Some(13)),
+            "{counts:?}"
+        );
         assert_eq!(done, Some(92), "{counts:?}");
     }
 }

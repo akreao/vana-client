@@ -60,11 +60,13 @@ pub struct Objective {
 }
 
 fn u32_at(p: &[u8], o: usize) -> u32 {
-    p.get(o..o + 4).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()))
+    p.get(o..o + 4)
+        .map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()))
 }
 
 fn u16_at(p: &[u8], o: usize) -> u16 {
-    p.get(o..o + 2).map_or(0, |b| u16::from_le_bytes(b.try_into().unwrap()))
+    p.get(o..o + 2)
+        .map_or(0, |b| u16::from_le_bytes(b.try_into().unwrap()))
 }
 
 impl Objective {
@@ -76,13 +78,16 @@ impl Objective {
         }
         let f = p.get(0x24).copied().unwrap_or(0);
         if f & 1 != 0 {
-            (self.start, self.duration, self.warn) = (u32_at(p, 8), u32_at(p, 0xc), u32_at(p, 0x10));
+            (self.start, self.duration, self.warn) =
+                (u32_at(p, 8), u32_at(p, 0xc), u32_at(p, 0x10));
             self.flags |= 1;
         } else {
             self.flags &= !1;
         }
         if f & 2 != 0 {
-            self.data = p.get(0x28..0xa8).map_or_else(|| vec![0; 128], <[u8]>::to_vec);
+            self.data = p
+                .get(0x28..0xa8)
+                .map_or_else(|| vec![0; 128], <[u8]>::to_vec);
             self.flags |= 2;
         } else {
             self.flags &= !2;
@@ -97,7 +102,13 @@ impl Objective {
         }
         // FUN_10087990: always stored; the player's border parts are remade (or dropped at radius 0).
         let milli = |o| u32_at(p, o) as i32 as f32 * 0.001;
-        self.border = Border { x: milli(0x14), z: milli(0x18), radius: u32_at(p, 0x1c) as f32 * 0.001, render: u32_at(p, 0x20) as f32 * 0.001, blue: p.get(0x25).copied().unwrap_or(0) != 0 };
+        self.border = Border {
+            x: milli(0x14),
+            z: milli(0x18),
+            radius: u32_at(p, 0x1c) as f32 * 0.001,
+            render: u32_at(p, 0x20) as f32 * 0.001,
+            blue: p.get(0x25).copied().unwrap_or(0) != 0,
+        };
     }
 
     /// cnttime is up (FUN_100873b0: a mode and the countdown flag).
@@ -130,7 +141,11 @@ impl Objective {
         }
         if self.flash {
             let a = self.alpha - ticks * 6.0;
-            self.alpha = if self.last != left || a < 32.0 { 255.0 } else { a };
+            self.alpha = if self.last != left || a < 32.0 {
+                255.0
+            } else {
+                a
+            };
         }
         self.last = left;
     }
@@ -164,7 +179,8 @@ fn hide(t: &mut Ticker) {
 /// `secs`: the game clock (vana_now); `busy`: FUN_10087070(0).
 pub fn frame(gu: &GameUi, o: &mut Objective, secs: u32, busy: bool, bars: &mut BarText) {
     let now = Instant::now();
-    let ticks = o.at.map_or(0.0, |a| (now - a).as_secs_f32().min(0.5) * 60.0);
+    let ticks =
+        o.at.map_or(0.0, |a| (now - a).as_secs_f32().min(0.5) * 60.0);
     o.at = Some(now);
     if o.counting() {
         let left = o.left(secs);
@@ -187,7 +203,8 @@ pub fn frame(gu: &GameUi, o: &mut Objective, secs: u32, busy: bool, bars: &mut B
     }
     let t = &mut o.ticker;
     // FUN_1013a070: never while busy (FUN_10087070(0)); on while shown or both bars hold text, else every 0x5a ticks.
-    let active = !super::hudtop::shown(&bars.title).is_empty() && !super::hudtop::shown(&bars.help).is_empty();
+    let active = !super::hudtop::shown(&bars.title).is_empty()
+        && !super::hudtop::shown(&bars.help).is_empty();
     let ok = !busy
         && (t.shown || active || {
             t.idle += ticks;
@@ -228,7 +245,9 @@ fn countdown_top(gu: &GameUi, w: &World) -> f32 {
     let gauge = w.gauge.is_some();
     match w.cast_bar {
         Some(_) => {
-            let h = gu.layout("menu    casttime").map_or(24.0, |m| m.elements[0].h as f32);
+            let h = gu
+                .layout("menu    casttime")
+                .map_or(24.0, |m| m.elements[0].h as f32);
             (if gauge { 94.0 } else { 47.0 }) + h
         }
         None if gauge => 94.0,
@@ -246,11 +265,28 @@ pub fn draw_countdown(gu: &mut GameUi, w: &World, sw: f32, sh: f32) {
     let left = o.left(vana_now(w) as u32);
     let top = countdown_top(gu, w);
     let (b, ui, style, _) = gu.parts();
-    let Some(m) = ui.menu("menu    cnttime") else { return };
-    let (x, y) = crate::render::screens::push_window_at(b, ui, style, m, sw, sh, top - m.elements[0].y as f32);
+    let Some(m) = ui.menu("menu    cnttime") else {
+        return;
+    };
+    let (x, y) = crate::render::screens::push_window_at(
+        b,
+        ui,
+        style,
+        m,
+        sw,
+        sh,
+        top - m.elements[0].y as f32,
+    );
     let right = x + m.elements[0].w as f32;
     let text = format!(" {}", super::magic::clock(left as f32));
-    crate::render::screens::push_shape_text_right(b, ui, text.as_bytes(), right - 16.0, y + 6.0, o.colour(left));
+    crate::render::screens::push_shape_text_right(
+        b,
+        ui,
+        text.as_bytes(),
+        right - 16.0,
+        y + 6.0,
+        o.colour(left),
+    );
     gu.sprite("menu    framesus", 197, x + 4.0, y + 4.0, 0x8080_8080);
 }
 
@@ -262,13 +298,25 @@ pub fn countdown(w: &World) -> Option<(f32, String, bool, u32)> {
         return None;
     }
     let left = o.left(vana_now(w) as u32);
-    let gone = if o.duration > 0 { 1.0 - left as f32 / o.duration as f32 } else { 1.0 };
-    Some((gone.clamp(0.0, 1.0), super::magic::clock(left as f32), o.flash, o.colour(left)))
+    let gone = if o.duration > 0 {
+        1.0 - left as f32 / o.duration as f32
+    } else {
+        1.0
+    };
+    Some((
+        gone.clamp(0.0, 1.0),
+        super::magic::clock(left as f32),
+        o.flash,
+        o.colour(left),
+    ))
 }
 
 /// FUN_1021f360: the bottom of the first window up of cnttime, casttime, gaugewin and titlewin.
 fn anchor(gu: &GameUi, w: &World) -> f32 {
-    let bottom = |name: &str, top: Option<f32>| gu.layout(name).map(|m| top.unwrap_or(m.elements[0].y as f32) + m.elements[0].h as f32);
+    let bottom = |name: &str, top: Option<f32>| {
+        gu.layout(name)
+            .map(|m| top.unwrap_or(m.elements[0].y as f32) + m.elements[0].h as f32)
+    };
     let cast_top = if w.gauge.is_some() { 94.0 } else { 47.0 };
     let b = if w.objective.counting() {
         bottom("menu    cnttime", Some(countdown_top(gu, w)))
@@ -304,12 +352,22 @@ pub struct Score {
 
 pub fn score(o: &Objective) -> Score {
     let d = |k: usize| u32_at(&o.data, k * 4);
-    let frac = |v: u32, max: u32| if max != 0 { v as i32 as f32 / max as f32 } else { 0.0 };
+    let frac = |v: u32, max: u32| {
+        if max != 0 {
+            v as i32 as f32 / max as f32
+        } else {
+            0.0
+        }
+    };
     Score {
         scores: (d(0) as i32, d(1) as i32),
         marchland: frac(d(2), d(3)),
         stronghold: frac(d(4), d(5)),
-        second: if d(7) != 0 { "Balamor's Adumbration" } else { "Stronghold" },
+        second: if d(7) != 0 {
+            "Balamor's Adumbration"
+        } else {
+            "Stronghold"
+        },
     }
 }
 
@@ -338,22 +396,51 @@ pub fn draw_bars(gu: &mut GameUi, w: &World) {
         gu.sprite("menu    keytops3", 540, x, y, 0x8080_8080);
         {
             let (bt, ui, _, _) = gu.parts();
-            crate::render::screens::push_shape_text_right(bt, ui, format!("{:2} ", s.scores.0).as_bytes(), x + 40.0, y, 0x8080_8080);
-            crate::render::screens::push_shape_text(bt, ui, format!("{:2}", s.scores.1).as_bytes(), x + 40.0, y, 0x8080_8080);
+            crate::render::screens::push_shape_text_right(
+                bt,
+                ui,
+                format!("{:2} ", s.scores.0).as_bytes(),
+                x + 40.0,
+                y,
+                0x8080_8080,
+            );
+            crate::render::screens::push_shape_text(
+                bt,
+                ui,
+                format!("{:2}", s.scores.1).as_bytes(),
+                x + 40.0,
+                y,
+                0x8080_8080,
+            );
         }
         gu.sprite("menu    keytops3", 541, x + 56.0, y, 0x8080_8080);
-        for (k, (icon, f, name)) in [(540, s.marchland, "Marchland"), (541, s.stronghold, s.second)].into_iter().enumerate() {
+        for (k, (icon, f, name)) in [
+            (540, s.marchland, "Marchland"),
+            (541, s.stronghold, s.second),
+        ]
+        .into_iter()
+        .enumerate()
+        {
             let ry = b + 20.0 + 16.0 * k as f32;
             gu.sprite("menu    keytops3", icon, x, ry, 0x8080_8080);
             gauge(gu, x + 24.0, ry + 8.0, f);
             let (bt, ui, _, _) = gu.parts();
-            crate::render::screens::push_shape_text(bt, ui, name.as_bytes(), x + 16.0, ry, 0x8080_8080);
+            crate::render::screens::push_shape_text(
+                bt,
+                ui,
+                name.as_bytes(),
+                x + 16.0,
+                ry,
+                0x8080_8080,
+            );
         }
         return;
     }
     let data = &o.data;
     for k in 0..6 {
-        let Some(r) = data.get(k * 20..k * 20 + 20) else { break };
+        let Some(r) = data.get(k * 20..k * 20 + 20) else {
+            break;
+        };
         let name = &r[4..20];
         let name = &name[..name.iter().position(|&c| c == 0).unwrap_or(16)];
         if name.is_empty() {
@@ -395,7 +482,10 @@ mod tests {
         let mut o = Objective::default();
         o.apply(&packet(1 | 2 | 4, 0xffff));
         assert!(o.counting());
-        assert_eq!((o.left(1000), o.left(1089), o.left(1090), o.left(2000)), (90, 1, 0, 0));
+        assert_eq!(
+            (o.left(1000), o.left(1089), o.left(1090), o.left(2000)),
+            (90, 1, 0, 0)
+        );
         assert_eq!(o.help, (1, 43));
         assert_eq!(bar_rows(&o), vec![(40, "Motivation".to_string())]);
         let b = o.border;

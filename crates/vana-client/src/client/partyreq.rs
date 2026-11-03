@@ -55,7 +55,9 @@ fn add(s: &mut State, name: &str, now: u32) -> u8 {
 /// FUN_1018de60: the later names move up one, the times stay where they are (the record below takes the deleted
 /// one's time); true when it was there.
 fn delete(s: &mut State, name: &str) -> bool {
-    let Some(i) = s.recs.iter().position(|r| r.0 == name) else { return false };
+    let Some(i) = s.recs.iter().position(|r| r.0 == name) else {
+        return false;
+    };
     for k in i..s.recs.len() - 1 {
         s.recs[k].0 = std::mem::take(&mut s.recs[k + 1].0);
     }
@@ -66,7 +68,12 @@ fn delete(s: &mut State, name: &str) -> bool {
 /// FUN_100e3130 over FUN_100da5c0: the names for the search, newest first, none older than 30 days.
 pub fn names(w: &World) -> Vec<String> {
     let now = super::vana_now(w);
-    w.partyreq.recs.iter().filter(|r| now.saturating_sub(r.1 as u64) <= AGED).map(|r| r.0.clone()).collect()
+    w.partyreq
+        .recs
+        .iter()
+        .filter(|r| now.saturating_sub(r.1 as u64) <= AGED)
+        .map(|r| r.0.clone())
+        .collect()
 }
 
 /// FUN_1020c3e0 (FUN_1018df40): the history cleared, group 9 0x142.
@@ -83,16 +90,25 @@ pub fn delete_named(w: &mut World, name: &str) {
 
 /// FUN_100e09a0: the leading letters, 16 at most.
 fn letters(s: &str) -> &str {
-    let n = s.bytes().take(16).take_while(u8::is_ascii_alphabetic).count();
+    let n = s
+        .bytes()
+        .take(16)
+        .take_while(u8::is_ascii_alphabetic)
+        .count();
     &s[..n]
 }
 
 /// FUN_100e0aa0: c2s 0x03C, at most every 60 s (counted from the session's start).
 pub fn ask_blacklist(w: &mut World) {
     let s = &mut w.partyreq;
-    if s.black_asked.is_none_or(|t| t.elapsed() >= Duration::from_secs(60)) {
+    if s.black_asked
+        .is_none_or(|t| t.elapsed() >= Duration::from_secs(60))
+    {
         s.black_asked = Some(Instant::now());
-        let _ = w.net.commands.send(NetCommand::Packet { id: 0x03C, body: vec![0; 0x18] });
+        let _ = w.net.commands.send(NetCommand::Packet {
+            id: 0x03C,
+            body: vec![0; 0x18],
+        });
     }
 }
 
@@ -100,7 +116,8 @@ pub fn ask_blacklist(w: &mut World) {
 /// without the reset bit, so they would pile up), and the 60 s before an ask start now.
 pub fn black_reset(w: &mut World) {
     let s = &mut w.partyreq;
-    (s.blacklist, s.black_loaded, s.black_asked, s.black_pending) = (Vec::new(), false, Some(Instant::now()), None);
+    (s.blacklist, s.black_loaded, s.black_asked, s.black_pending) =
+        (Vec::new(), false, Some(Instant::now()), None);
 }
 
 /// FUN_100e0a50: 1 on the blacklist, 2 not loaded yet (asking for it), else 0.
@@ -109,7 +126,10 @@ pub fn blacklisted(w: &mut World, name: &str) -> u8 {
         ask_blacklist(w);
         return 2;
     }
-    w.partyreq.blacklist.iter().any(|(_, n)| letters(n) == letters(name)) as u8
+    w.partyreq
+        .blacklist
+        .iter()
+        .any(|(_, n)| letters(n) == letters(name)) as u8
 }
 
 /// FUN_100a1a00: a message from `id` is dropped while its sender (not ourselves; FUN_100a1770's name: party and
@@ -122,7 +142,13 @@ pub fn sender_blocked(w: &mut World, id: u32, msg: u16, kind: u8) -> bool {
     if id == w.my_id {
         return false;
     }
-    let name = w.party.members().find(|m| m.id == id).map(|m| m.name.clone()).or_else(|| w.entities.get(&id).map(|e| e.name.clone())).unwrap_or_default();
+    let name = w
+        .party
+        .members()
+        .find(|m| m.id == id)
+        .map(|m| m.name.clone())
+        .or_else(|| w.entities.get(&id).map(|e| e.name.clone()))
+        .unwrap_or_default();
     if !name.is_empty() && name == w.name {
         return false;
     }
@@ -137,7 +163,10 @@ fn send_edit(w: &mut World, id: u32, name: &str, mode: u8) {
         b[4 + k] = c;
     }
     b[0x14] = mode;
-    let _ = w.net.commands.send(NetCommand::Packet { id: 0x03D, body: b });
+    let _ = w
+        .net
+        .commands
+        .send(NetCommand::Packet { id: 0x03D, body: b });
 }
 
 /// FUN_100e0bc0 for /blacklist add (0) / delete (1): its line comes with the answer.
@@ -164,7 +193,11 @@ pub fn black_result(w: &mut World, id: u32, name: String, mode: u8) {
     let s = &mut w.partyreq;
     let line = match mode {
         0 => {
-            if !s.blacklist.iter().any(|(_, n)| letters(n) == letters(&name)) {
+            if !s
+                .blacklist
+                .iter()
+                .any(|(_, n)| letters(n) == letters(&name))
+            {
                 s.blacklist.push((id, name));
             }
             0x74
@@ -199,9 +232,16 @@ pub fn blacklist(w: &mut World, stat: u8, entries: Vec<(u32, String)>) {
 /// A group 10 line with the name, in mode 0x87 (the 7F name wrapper of 0x76 / 0x77 is not drawn by our log yet).
 pub(super) fn line(w: &mut World, id: usize, name: &str) {
     let Some(bt) = w.battle.clone() else { return };
-    let Some(raw) = bt.group10_raw(id) else { return };
+    let Some(raw) = bt.group10_raw(id) else {
+        return;
+    };
     let sjis = crate::dat::font::encode_sjis(name);
-    let text = crate::dat::font::decode_sjis(&crate::dat::msgfmt::format(&raw, &[&sjis], &[], &|_, _, _| None));
+    let text = crate::dat::font::decode_sjis(&crate::dat::msgfmt::format(
+        &raw,
+        &[&sjis],
+        &[],
+        &|_, _, _| None,
+    ));
     let colour = bt.colour_in(0x87, &w.game);
     w.chat.push_colour(text, colour);
 }
@@ -247,7 +287,11 @@ pub fn received(w: &mut World, status: u8, name: String) {
 pub fn load(w: &mut World, dir: &Path) {
     let s = &mut w.partyreq;
     (s.loaded, s.recs) = (true, Vec::new());
-    let Some(b) = super::macros::read_file(&dir.join("pec.dat"), 2).filter(|b| b.len() >= MAX * 0x14) else { return };
+    let Some(b) =
+        super::macros::read_file(&dir.join("pec.dat"), 2).filter(|b| b.len() >= MAX * 0x14)
+    else {
+        return;
+    };
     let mut recs = Vec::new();
     for r in b.chunks(0x14).take(MAX) {
         let n = r[..15].iter().position(|&c| c == 0).unwrap_or(15);
@@ -258,7 +302,10 @@ pub fn load(w: &mut World, dir: &Path) {
         if n == 0 {
             break;
         }
-        recs.push((String::from_utf8_lossy(&r[..n]).into_owned(), u32::from_le_bytes([r[0x10], r[0x11], r[0x12], r[0x13]])));
+        recs.push((
+            String::from_utf8_lossy(&r[..n]).into_owned(),
+            u32::from_le_bytes([r[0x10], r[0x11], r[0x12], r[0x13]]),
+        ));
     }
     s.recs = recs;
 }
@@ -279,7 +326,10 @@ pub fn save(w: &World, dir: &Path) {
 }
 
 pub fn ask_text(w: &World) -> String {
-    w.battle.as_ref().and_then(|b| b.group9(0x140)).unwrap_or_default()
+    w.battle
+        .as_ref()
+        .and_then(|b| b.group9(0x140))
+        .unwrap_or_default()
 }
 
 /// LAB_10204f40: Yes clears, then Request turns on either way. LAB_1020cc00: Yes clears and every search window
@@ -316,7 +366,11 @@ mod tests {
         assert_eq!(s.recs, vec![("Ab".into(), 1010 + 0xb4)]);
         assert!(!delete(&mut s, "Cd"));
         for k in 0..70 {
-            add(&mut s, &format!("N{}", (b'a' + k as u8 % 26) as char).repeat(1 + k / 26), k as u32);
+            add(
+                &mut s,
+                &format!("N{}", (b'a' + k as u8 % 26) as char).repeat(1 + k / 26),
+                k as u32,
+            );
         }
         assert_eq!(s.recs.len(), MAX);
         assert_eq!((letters("Abc1x"), letters("Lnxtest")), ("Abc", "Lnxtest"));

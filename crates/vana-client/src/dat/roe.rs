@@ -50,7 +50,13 @@ fn texts(r: &[u8], n: usize, lang: Lang) -> (String, Vec<String>) {
     if f.len() != n + start {
         return (String::new(), vec![String::new(); n]);
     }
-    let s = |x: &Field| if let Field::Text(t) = x { t.clone() } else { String::new() };
+    let s = |x: &Field| {
+        if let Field::Text(t) = x {
+            t.clone()
+        } else {
+            String::new()
+        }
+    };
     (s(&f[0]), f[start..].iter().map(s).collect())
 }
 
@@ -75,7 +81,10 @@ pub fn category(items: &Items, id: u16) -> Option<Category> {
     let kids = (0..n)
         .map(|i| {
             let o = 8 + i * 20;
-            (u16::from_le_bytes([r[o], r[o + 1]]), std::array::from_fn(|k| r[o + 4 + 4 * k..o + 8 + 4 * k].try_into().unwrap()))
+            (
+                u16::from_le_bytes([r[o], r[o + 1]]),
+                std::array::from_fn(|k| r[o + 4 + 4 * k..o + 8 + 4 * k].try_into().unwrap()),
+            )
         })
         .collect();
     let (name, _) = texts(&r[0x238..], 1, items.lang());
@@ -89,24 +98,42 @@ mod tests {
 
     #[test]
     fn real_records() {
-        let Ok(index) = DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
-        let Ok(items) = Items::load(&index, Lang::En) else { return };
+        let Ok(index) = DatIndex::open(&crate::config::Config::load().ffxi_dir()) else {
+            return;
+        };
+        let Ok(items) = Items::load(&index, Lang::En) else {
+            return;
+        };
         let root = category(&items, ROOT).expect("root");
         let ids: Vec<u16> = root.kids.iter().map(|k| k.0).collect();
-        assert_eq!(ids, [0xf210, 0xf211, 0xf212, 0xf213, 0xf214, 0xf215, 0xf216, 0xf217, 0xf218, 0xf219, 0xf21b]);
+        assert_eq!(
+            ids,
+            [
+                0xf210, 0xf211, 0xf212, 0xf213, 0xf214, 0xf215, 0xf216, 0xf217, 0xf218, 0xf219,
+                0xf21b
+            ]
+        );
         assert_eq!(root.kids[1].1[0], [1, 0, 0, 1]);
         assert_eq!(category(&items, 0xf210).unwrap().name, "Tutorial");
         let basics = category(&items, 0xf230).unwrap();
         assert_eq!(basics.kids[0].0, 0xe001);
         let o = objective(&items, 0xe001).unwrap();
-        assert_eq!((o.name.as_str(), o.repeatable, o.goal, o.sparks, o.exp), ("First Step Forward", false, 1, 100, 300));
+        assert_eq!(
+            (o.name.as_str(), o.repeatable, o.goal, o.sparks, o.exp),
+            ("First Step Forward", false, 1, 100, 300)
+        );
         let o = objective(&items, 0xe00c).unwrap();
-        assert_eq!((o.repeatable, o.goal, o.sparks, o.acc), (true, 200, 1000, 100));
+        assert_eq!(
+            (o.repeatable, o.goal, o.sparks, o.acc),
+            (true, 200, 1000, 100)
+        );
         assert!(!objective(&items, 0xe331).unwrap().pages[1].is_empty());
         // The whole tree: 121 non-empty categories, 1503 objectives.
         let (mut cats, mut objs, mut todo) = (0, 0, vec![ROOT]);
         while let Some(c) = todo.pop() {
-            let Some(cat) = category(&items, c) else { continue };
+            let Some(cat) = category(&items, c) else {
+                continue;
+            };
             cats += !cat.kids.is_empty() as usize;
             for (k, _) in cat.kids {
                 match k {

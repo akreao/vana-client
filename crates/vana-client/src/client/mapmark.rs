@@ -37,11 +37,17 @@ impl MarkFile {
         if let Ok(b) = std::fs::read(Self::path(dir, zone, key)) {
             return Self::parse(&b, 0, 4, 8).unwrap_or_default();
         }
-        std::fs::read(dir.join(format!("M{zone:03}{key:02}_{char_id:08}.MRK"))).ok().and_then(|b| Self::parse(&b, 0, 8, 0x10)).unwrap_or_default()
+        std::fs::read(dir.join(format!("M{zone:03}{key:02}_{char_id:08}.MRK")))
+            .ok()
+            .and_then(|b| Self::parse(&b, 0, 8, 0x10))
+            .unwrap_or_default()
     }
 
     fn parse(b: &[u8], magic: usize, crc: usize, data: usize) -> Option<MarkFile> {
-        let u32_at = |o: usize| b.get(o..o + 4).map(|s| u32::from_le_bytes(s.try_into().unwrap()));
+        let u32_at = |o: usize| {
+            b.get(o..o + 4)
+                .map(|s| u32::from_le_bytes(s.try_into().unwrap()))
+        };
         let d = b.get(data..data + DATA)?;
         if u32_at(magic)? != MAGIC || u32_at(crc)? != crc32(d) {
             return None;
@@ -52,7 +58,10 @@ impl MarkFile {
             name[15] = 0;
             let end = name.iter().position(|&c| c == 0).unwrap_or(15);
             f.sets[k / 10][k % 10] = Slot {
-                px: (i16::from_le_bytes([r[0], r[1]]), i16::from_le_bytes([r[2], r[3]])),
+                px: (
+                    i16::from_le_bytes([r[0], r[1]]),
+                    i16::from_le_bytes([r[2], r[3]]),
+                ),
                 name: crate::dat::font::decode_sjis(&name[..end]),
                 valid: r[0x14] != 0,
             };
@@ -80,7 +89,9 @@ impl MarkFile {
 
     /// Writes the new layout and removes the old name (inf: the removal, FUN_101c49e0).
     pub fn save(&self, dir: &Path, zone: u16, key: u8, char_id: u32) {
-        if let Err(e) = std::fs::create_dir_all(dir).and_then(|_| std::fs::write(Self::path(dir, zone, key), self.bytes())) {
+        if let Err(e) = std::fs::create_dir_all(dir)
+            .and_then(|_| std::fs::write(Self::path(dir, zone, key), self.bytes()))
+        {
             log::warn!("map markers: {e}");
         }
         let _ = std::fs::remove_file(dir.join(format!("M{zone:03}{key:02}_{char_id:08}.MRK")));
@@ -94,8 +105,16 @@ mod tests {
     #[test]
     fn round_trip() {
         let mut f = MarkFile::default();
-        f.sets[0][3] = Slot { px: (-120, 77), name: "Gate".into(), valid: true };
-        f.sets[1][0] = Slot { px: (5, -6), name: "Quest NPC".into(), valid: true };
+        f.sets[0][3] = Slot {
+            px: (-120, 77),
+            name: "Gate".into(),
+            valid: true,
+        };
+        f.sets[1][0] = Slot {
+            px: (5, -6),
+            name: "Quest NPC".into(),
+            valid: true,
+        };
         let b = f.bytes();
         assert_eq!((b.len(), &b[..4]), (0x1c0, &b"KMIX"[..]));
         assert_eq!(MarkFile::parse(&b, 0, 4, 8), Some(f));

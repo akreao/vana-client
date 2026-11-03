@@ -46,7 +46,11 @@ fn disabled(w: &World) -> Vec<u16> {
 
 fn target_name(w: &World) -> Option<String> {
     let t = w.target?;
-    let name = if t == w.my_id { w.name.clone() } else { w.entities.get(&t)?.name.clone() };
+    let name = if t == w.my_id {
+        w.name.clone()
+    } else {
+        w.entities.get(&t)?.name.clone()
+    };
     (!name.is_empty()).then_some(name)
 }
 
@@ -83,10 +87,16 @@ pub fn open(w: &mut World) {
 /// Left closes silently, Escape with SE 0003; Enter on a disabled row SE 0004 only, else SE 0002, the mode, the chat
 /// line opened empty and the window closed (Tell with no name: SE 0004 too and no mode; the current name: no change).
 pub fn key(w: &mut World, key: egui::Key) {
-    let Some(mut c) = w.chatctrl.clone() else { return };
+    let Some(mut c) = w.chatctrl.clone() else {
+        return;
+    };
     match key {
         egui::Key::ArrowDown | egui::Key::ArrowUp => {
-            c.sel = if key == egui::Key::ArrowDown { c.sel % 7 + 1 } else { (c.sel + 5) % 7 + 1 };
+            c.sel = if key == egui::Key::ArrowDown {
+                c.sel % 7 + 1
+            } else {
+                (c.sel + 5) % 7 + 1
+            };
             w.sounds.push(Ui::Cursor as u32);
         }
         egui::Key::ArrowRight if c.sel == 2 => {
@@ -185,13 +195,27 @@ pub(super) fn look(w: &World, gu: &GameUi) -> Option<Look> {
     let mut values: Vec<(u16, String)> = tell.into_iter().map(|n| (2, n)).collect();
     values.push((4, ls_name_of(w, 1).unwrap_or_else(|| none.clone())));
     values.push((5, ls_name_of(w, 2).unwrap_or(none)));
-    values.push((6, gu.lobby_msg(0xc, 0x1a2 + if f > 11 { 0 } else { f as usize }, "")));
-    Some(Look { sel: c.sel, off: disabled(w), values, range: range(c.sel) })
+    values.push((
+        6,
+        gu.lobby_msg(0xc, 0x1a2 + if f > 11 { 0 } else { f as usize }, ""),
+    ));
+    Some(Look {
+        sel: c.sel,
+        off: disabled(w),
+        values,
+        range: range(c.sel),
+    })
 }
 
 /// The mouse's cursor move onto row `k`. True when it moved.
 pub(super) fn set_sel(w: &mut World, k: u16) -> bool {
-    let Some(c) = w.chatctrl.as_mut().filter(|c| c.sel != k && (1..=7).contains(&k)) else { return false };
+    let Some(c) = w
+        .chatctrl
+        .as_mut()
+        .filter(|c| c.sel != k && (1..=7).contains(&k))
+    else {
+        return false;
+    };
     c.sel = k;
     true
 }
@@ -202,12 +226,26 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
     if w.modern {
         return;
     }
-    let Some(sel) = w.chatctrl.as_ref().map(|c| c.sel) else { return };
-    super::winhits::generic(w, gu, WINDOW, sel, 1..=7, p, moved, clicked, right, |w, id| {
-        if let Some(c) = w.chatctrl.as_mut() {
-            c.sel = id;
-        }
-    }, |w, _, k| key(w, k));
+    let Some(sel) = w.chatctrl.as_ref().map(|c| c.sel) else {
+        return;
+    };
+    super::winhits::generic(
+        w,
+        gu,
+        WINDOW,
+        sel,
+        1..=7,
+        p,
+        moved,
+        clicked,
+        right,
+        |w, id| {
+            if let Some(c) = w.chatctrl.as_mut() {
+                c.sel = id;
+            }
+        },
+        |w, _, k| key(w, k),
+    );
 }
 
 /// The window's own header strings: help 0xe 0x253 "Set your default chat mode.", title 0xd 0x81 "Chat".
@@ -221,8 +259,24 @@ pub fn bars(gu: &GameUi, w: &World, bars: &mut super::hudtop::BarText) {
 /// none is the default chat mode (FUN_101b8c80).
 pub fn line_mode(line: &str, default: u8) -> u8 {
     const PREFIXES: [(&str, u8); 18] = [
-        ("/say ", 2), ("/s ", 2), ("/tell ", 4), ("/t ", 4), ("/party ", 5), ("/p ", 5), ("/shout ", 3), ("/sh ", 3), ("/linkshell ", 6),
-        ("/l ", 6), ("/linkshell2 ", 0xc), ("/l2 ", 0xc), ("/unity ", 0xb), ("/u ", 0xb), ("/assistj ", 0xe), ("/aj ", 0xe), ("/assiste ", 0xf), ("/ae ", 0xf),
+        ("/say ", 2),
+        ("/s ", 2),
+        ("/tell ", 4),
+        ("/t ", 4),
+        ("/party ", 5),
+        ("/p ", 5),
+        ("/shout ", 3),
+        ("/sh ", 3),
+        ("/linkshell ", 6),
+        ("/l ", 6),
+        ("/linkshell2 ", 0xc),
+        ("/l2 ", 0xc),
+        ("/unity ", 0xb),
+        ("/u ", 0xb),
+        ("/assistj ", 0xe),
+        ("/aj ", 0xe),
+        ("/assiste ", 0xf),
+        ("/ae ", 0xf),
     ];
     match PREFIXES.iter().find(|(p, _)| line.starts_with(p)) {
         Some(&(_, m)) => m,
@@ -265,7 +319,13 @@ pub fn ls_line(gu: &mut GameUi, w: &World, n: usize, x: f32, y: f32) {
             }
             let mut packed = [0u8; 16];
             packed[..15].copy_from_slice(&e[9..24]);
-            gu.shape_text(&super::linkshell::ls_name(&packed), x + 16.0, y, 0x8080_6060, false);
+            gu.shape_text(
+                &super::linkshell::ls_name(&packed),
+                x + 16.0,
+                y,
+                0x8080_6060,
+                false,
+            );
         }
         _ => {
             let none = gu.lobby_msg(0xc, 0x55, "");
@@ -283,7 +343,13 @@ pub fn unity_line(gu: &mut GameUi, w: &World, x: f32, y: f32) {
         (_, true) => 0x8080_8080,
         _ => 0x8040_4040,
     };
-    gu.shape_text(&gu.lobby_msg(0xc, 0x1a2 + f as usize, ""), x, y, tint, false);
+    gu.shape_text(
+        &gu.lobby_msg(0xc, 0x1a2 + f as usize, ""),
+        x,
+        y,
+        tint,
+        false,
+    );
 }
 
 /// FUN_1012ce90: the tell name at (+100, +23), the linkshells (icon in the shell's colour at +0x4f, name at +0x5f) or

@@ -24,17 +24,43 @@ impl Overlays {
         let mut by_id: HashMap<u32, Vec<PathBuf>> = HashMap::new();
         let mut unknown = 0;
         for dir in dirs {
-            let Ok(roms) = std::fs::read_dir(dir) else { continue };
+            let Ok(roms) = std::fs::read_dir(dir) else {
+                continue;
+            };
             for rom in roms.flatten() {
                 let name = rom.file_name().to_string_lossy().to_ascii_uppercase();
-                let Some(n) = name.strip_prefix("ROM").map(|s| if s.is_empty() { Some(1u8) } else { s.parse().ok() }).flatten() else { continue };
-                let Ok(subs) = std::fs::read_dir(rom.path()) else { continue };
+                let Some(n) = name
+                    .strip_prefix("ROM")
+                    .map(|s| {
+                        if s.is_empty() {
+                            Some(1u8)
+                        } else {
+                            s.parse().ok()
+                        }
+                    })
+                    .flatten()
+                else {
+                    continue;
+                };
+                let Ok(subs) = std::fs::read_dir(rom.path()) else {
+                    continue;
+                };
                 for sub in subs.flatten() {
-                    let Some(d) = sub.file_name().to_str().and_then(|s| s.parse::<u16>().ok()) else { continue };
-                    let Ok(files) = std::fs::read_dir(sub.path()) else { continue };
+                    let Some(d) = sub.file_name().to_str().and_then(|s| s.parse::<u16>().ok())
+                    else {
+                        continue;
+                    };
+                    let Ok(files) = std::fs::read_dir(sub.path()) else {
+                        continue;
+                    };
                     for f in files.flatten() {
                         let fname = f.file_name().to_string_lossy().to_ascii_uppercase();
-                        let Some(file) = fname.strip_suffix(".DAT").and_then(|s| s.parse::<u16>().ok()) else { continue };
+                        let Some(file) = fname
+                            .strip_suffix(".DAT")
+                            .and_then(|s| s.parse::<u16>().ok())
+                        else {
+                            continue;
+                        };
                         match ids.get(&(n, d << 7 | file)) {
                             Some(&id) => by_id.entry(id).or_default().push(f.path()),
                             None => unknown += 1,
@@ -43,8 +69,16 @@ impl Overlays {
                 }
             }
         }
-        log::info!("overlays: {} mods, {} files overlaid, {unknown} files at paths the game has no id for", dirs.len(), by_id.len());
-        Self { by_id, dirs: dirs.to_vec(), cache }
+        log::info!(
+            "overlays: {} mods, {} files overlaid, {unknown} files at paths the game has no id for",
+            dirs.len(),
+            by_id.len()
+        );
+        Self {
+            by_id,
+            dirs: dirs.to_vec(),
+            cache,
+        }
     }
 
     pub fn has(&self, id: u32) -> bool {
@@ -86,7 +120,10 @@ impl Overlays {
             }
         }
         let tmp = out.with_extension("tmp");
-        if std::fs::write(&tmp, &merged).and_then(|_| std::fs::rename(&tmp, &out)).is_err() {
+        if std::fs::write(&tmp, &merged)
+            .and_then(|_| std::fs::rename(&tmp, &out))
+            .is_err()
+        {
             return mods.first().cloned();
         }
         Some(out)
@@ -115,11 +152,21 @@ fn raw(b: &[u8]) -> Option<Vec<Raw<'_>>> {
         if kind == 1 {
             stack.push(name);
         }
-        let tex = if kind == 0x20 { b.get(at + 17..at + 33).map(<[u8]>::to_vec).unwrap_or_default() } else { Vec::new() };
+        let tex = if kind == 0x20 {
+            b.get(at + 17..at + 33)
+                .map(<[u8]>::to_vec)
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         let k = (stack.clone(), name, kind, tex);
         let n = seen.entry(k.clone()).or_default();
         *n += 1;
-        out.push(Raw { bytes: &b[at..at + size], kind, key: (k.0, k.1, k.2, k.3, *n) });
+        out.push(Raw {
+            bytes: &b[at..at + size],
+            kind,
+            key: (k.0, k.1, k.2, k.3, *n),
+        });
         if kind == 0 {
             stack.pop();
         }
@@ -133,8 +180,13 @@ fn raw(b: &[u8]) -> Option<Vec<Raw<'_>>> {
 /// or the stock image stays.
 fn image_ok(chunk: &[u8]) -> bool {
     let p = chunk.get(16..).unwrap_or_default();
-    let (Some(w), Some(h)) = (p.get(21..25), p.get(25..29)) else { return false };
-    let (w, h) = (u32::from_le_bytes(w.try_into().unwrap()) as usize, u32::from_le_bytes(h.try_into().unwrap()) as usize);
+    let (Some(w), Some(h)) = (p.get(21..25), p.get(25..29)) else {
+        return false;
+    };
+    let (w, h) = (
+        u32::from_le_bytes(w.try_into().unwrap()) as usize,
+        u32::from_le_bytes(h.try_into().unwrap()) as usize,
+    );
     (1..=4096).contains(&w) && (1..=4096).contains(&h) && p.len() >= 57 + w * h / 2
 }
 
@@ -145,13 +197,21 @@ pub fn merge(stock: &[u8], mods: &[Vec<u8>]) -> Option<Vec<u8>> {
     let parsed: Vec<Vec<Raw>> = mods.iter().map(|m| raw(m)).collect::<Option<_>>()?;
     let mut take: HashMap<&(Vec<[u8; 4]>, [u8; 4], u8, Vec<u8>, usize), &[u8]> = HashMap::new();
     for m in parsed.iter().rev() {
-        for c in m.iter().filter(|c| MERGED.contains(&c.kind) && (c.kind != 0x20 || image_ok(c.bytes))) {
+        for c in m
+            .iter()
+            .filter(|c| MERGED.contains(&c.kind) && (c.kind != 0x20 || image_ok(c.bytes)))
+        {
             take.insert(&c.key, c.bytes);
         }
     }
     let mut out = Vec::with_capacity(stock.len());
     for c in &base {
-        out.extend_from_slice(take.get(&c.key).copied().filter(|_| MERGED.contains(&c.kind)).unwrap_or(c.bytes));
+        out.extend_from_slice(
+            take.get(&c.key)
+                .copied()
+                .filter(|_| MERGED.contains(&c.kind))
+                .unwrap_or(c.bytes),
+        );
     }
     Some(out)
 }
@@ -200,11 +260,34 @@ mod tests {
             d[30] = n;
             d
         };
-        let stock = [chunk(b"fold", 1, &[]), chunk(b"img1", 0x20, &tex(1)), chunk(b"mdl1", 0x2e, &[1; 16]), chunk(b"end\0", 0, &[])].concat();
-        let low = [chunk(b"fold", 1, &[]), chunk(b"img1", 0x20, &tex(2)), chunk(b"mdl1", 0x2e, &[9; 16]), chunk(b"end\0", 0, &[])].concat();
-        let high = [chunk(b"fold", 1, &[]), chunk(b"img1", 0x20, &tex(3)), chunk(b"end\0", 0, &[])].concat();
+        let stock = [
+            chunk(b"fold", 1, &[]),
+            chunk(b"img1", 0x20, &tex(1)),
+            chunk(b"mdl1", 0x2e, &[1; 16]),
+            chunk(b"end\0", 0, &[]),
+        ]
+        .concat();
+        let low = [
+            chunk(b"fold", 1, &[]),
+            chunk(b"img1", 0x20, &tex(2)),
+            chunk(b"mdl1", 0x2e, &[9; 16]),
+            chunk(b"end\0", 0, &[]),
+        ]
+        .concat();
+        let high = [
+            chunk(b"fold", 1, &[]),
+            chunk(b"img1", 0x20, &tex(3)),
+            chunk(b"end\0", 0, &[]),
+        ]
+        .concat();
         let m = merge(&stock, &[high.clone(), low]).unwrap();
-        let expect = [chunk(b"fold", 1, &[]), chunk(b"img1", 0x20, &tex(3)), chunk(b"mdl1", 0x2e, &[1; 16]), chunk(b"end\0", 0, &[])].concat();
+        let expect = [
+            chunk(b"fold", 1, &[]),
+            chunk(b"img1", 0x20, &tex(3)),
+            chunk(b"mdl1", 0x2e, &[1; 16]),
+            chunk(b"end\0", 0, &[]),
+        ]
+        .concat();
         assert_eq!(m, expect);
         assert!(merge(b"not a dat", &[high]).is_none());
     }
@@ -238,11 +321,36 @@ mod tests {
             d[30] = n;
             d
         };
-        let stock = [chunk(b"fold", 1, &[]), chunk(b"img1", 0x20, &tex(b"tex1", 1)), chunk(b"img2", 0x20, &tex(b"tex2", 1)), chunk(b"mdl1", 0x2e, &[1; 16]), chunk(b"end\0", 0, &[])].concat();
-        let full = [chunk(b"fold", 1, &[]), chunk(b"img1", 0x20, &tex(b"tex1", 7)), chunk(b"img2", 0x20, &tex(b"tex2", 1)), chunk(b"mdl1", 0x2e, &[1; 16]), chunk(b"end\0", 0, &[])].concat();
+        let stock = [
+            chunk(b"fold", 1, &[]),
+            chunk(b"img1", 0x20, &tex(b"tex1", 1)),
+            chunk(b"img2", 0x20, &tex(b"tex2", 1)),
+            chunk(b"mdl1", 0x2e, &[1; 16]),
+            chunk(b"end\0", 0, &[]),
+        ]
+        .concat();
+        let full = [
+            chunk(b"fold", 1, &[]),
+            chunk(b"img1", 0x20, &tex(b"tex1", 7)),
+            chunk(b"img2", 0x20, &tex(b"tex2", 1)),
+            chunk(b"mdl1", 0x2e, &[1; 16]),
+            chunk(b"end\0", 0, &[]),
+        ]
+        .concat();
         let (s, kept) = slim(&stock, &full).unwrap();
         assert_eq!(kept, 1);
-        assert_eq!(s, [chunk(b"fold", 1, &[]), chunk(b"img1", 0x20, &tex(b"tex1", 7)), chunk(b"end\0", 0, &[])].concat());
-        assert_eq!(merge(&stock, &[s]).unwrap(), merge(&stock, &[full]).unwrap());
+        assert_eq!(
+            s,
+            [
+                chunk(b"fold", 1, &[]),
+                chunk(b"img1", 0x20, &tex(b"tex1", 7)),
+                chunk(b"end\0", 0, &[])
+            ]
+            .concat()
+        );
+        assert_eq!(
+            merge(&stock, &[s]).unwrap(),
+            merge(&stock, &[full]).unwrap()
+        );
     }
 }

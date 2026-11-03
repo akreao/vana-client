@@ -76,7 +76,10 @@ impl Default for Perf {
     fn default() -> Self {
         let log = std::env::var_os("FFXI_PERF").is_some();
         ON.store(log, Ordering::Relaxed);
-        let spike = std::env::var("FFXI_PERF_SPIKE").ok().and_then(|v| v.parse().ok()).unwrap_or(25.0f32);
+        let spike = std::env::var("FFXI_PERF_SPIKE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(25.0f32);
         Self {
             window: Instant::now(),
             frames: 0,
@@ -110,22 +113,48 @@ impl Perf {
             self.spans[i] += this[i];
             prev = *m;
         }
-        let busy = marks[SPANS.len() - 1].saturating_duration_since(start) - marks[2].saturating_duration_since(marks[1]);
+        let busy = marks[SPANS.len() - 1].saturating_duration_since(start)
+            - marks[2].saturating_duration_since(marks[1]);
         self.busy += busy;
         self.worst = self.worst.max(busy);
         self.frames += 1;
         self.written += crate::render::WRITTEN.swap(0, Ordering::Relaxed);
-        let gap = self.last_start.map_or(Duration::ZERO, |l| start.saturating_duration_since(l));
+        let gap = self
+            .last_start
+            .map_or(Duration::ZERO, |l| start.saturating_duration_since(l));
         self.last_start = Some(start);
-        let notes = if self.log { NOTES.lock().map(|mut n| std::mem::take(&mut *n)).unwrap_or_default() } else { Vec::new() };
+        let notes = if self.log {
+            NOTES
+                .lock()
+                .map(|mut n| std::mem::take(&mut *n))
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         self.worst_gap = self.worst_gap.max(gap);
         if self.log && (gap > self.spike || busy > self.spike) {
             self.spikes += 1;
             let ms = |d: Duration| d.as_secs_f32() * 1000.0;
-            let spans: Vec<String> = SPANS.iter().zip(this).map(|(s, d)| format!("{s} {:.1}", ms(d))).collect();
+            let spans: Vec<String> = SPANS
+                .iter()
+                .zip(this)
+                .map(|(s, d)| format!("{s} {:.1}", ms(d)))
+                .collect();
             // The gap less this redraw is time spent before it started (events, the pacing wait).
-            let before = gap.saturating_sub(marks[SPANS.len() - 1].saturating_duration_since(start));
-            log::warn!("spike: gap {:.1} ms (before redraw {:.1}, busy {:.1}); {}; {}", ms(gap), ms(before), ms(busy), spans.join(", "), if notes.is_empty() { "nothing noted".to_string() } else { notes.join("; ") });
+            let before =
+                gap.saturating_sub(marks[SPANS.len() - 1].saturating_duration_since(start));
+            log::warn!(
+                "spike: gap {:.1} ms (before redraw {:.1}, busy {:.1}); {}; {}",
+                ms(gap),
+                ms(before),
+                ms(busy),
+                spans.join(", "),
+                if notes.is_empty() {
+                    "nothing noted".to_string()
+                } else {
+                    notes.join("; ")
+                }
+            );
         }
         let el = self.window.elapsed();
         if el >= Duration::from_secs(2) {
@@ -136,7 +165,11 @@ impl Perf {
             self.span_ms = self.spans.map(|d| d.as_secs_f32() * 1000.0 / n);
             self.upload_kb = self.written as f32 / 1024.0 / n;
             if self.log {
-                let spans: Vec<String> = SPANS.iter().zip(self.span_ms).map(|(s, v)| format!("{s} {v:.2}")).collect();
+                let spans: Vec<String> = SPANS
+                    .iter()
+                    .zip(self.span_ms)
+                    .map(|(s, v)| format!("{s} {v:.2}"))
+                    .collect();
                 let c = self.counts;
                 log::warn!(
                     "perf: {:.1} fps ({}), cpu {:.2} ms (worst {:.2}), worst gap {:.1} ms, spikes {}; {}; entities {} actors {} posed {} drawn {} zone draws {} ui verts {}, upload {:.0} KB/frame",
@@ -170,13 +203,26 @@ impl Perf {
     /// Overlay lines.
     pub fn lines(&self) -> Vec<String> {
         let c = self.counts;
-        let spans: Vec<String> = SPANS.iter().zip(self.span_ms).map(|(s, v)| format!("{s} {v:.1}")).collect();
+        let spans: Vec<String> = SPANS
+            .iter()
+            .zip(self.span_ms)
+            .map(|(s, v)| format!("{s} {v:.1}"))
+            .collect();
         vec![
-            format!("{:.1} fps ({})   cpu {:.2} ms/frame (worst {:.1})", self.fps, self.limit, self.cpu_ms, self.worst_ms),
+            format!(
+                "{:.1} fps ({})   cpu {:.2} ms/frame (worst {:.1})",
+                self.fps, self.limit, self.cpu_ms, self.worst_ms
+            ),
             spans.join("  "),
-            format!("entities {}  actors {} (posed {}, drawn {})  zone draws {}  ui vertices {}", c.entities, c.actors, c.posed, c.drawn, c.zone_draws, c.ui_vertices),
+            format!(
+                "entities {}  actors {} (posed {}, drawn {})  zone draws {}  ui vertices {}",
+                c.entities, c.actors, c.posed, c.drawn, c.zone_draws, c.ui_vertices
+            ),
             format!("upload {:.0} KB/frame", self.upload_kb),
-            format!("effects: tasks {}/{}  generators {}/{}  elements {}/{}", c.fx[0].0, c.fx[0].1, c.fx[1].0, c.fx[1].1, c.fx[2].0, c.fx[2].1),
+            format!(
+                "effects: tasks {}/{}  generators {}/{}  elements {}/{}",
+                c.fx[0].0, c.fx[0].1, c.fx[1].0, c.fx[1].1, c.fx[2].0, c.fx[2].1
+            ),
         ]
     }
 }

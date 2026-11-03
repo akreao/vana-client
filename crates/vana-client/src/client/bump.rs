@@ -21,7 +21,11 @@ pub fn hold(s: &mut State, hit: Option<(u32, f32)>, ticks: f32) -> bool {
         return false;
     }
     if s.blocker != Some(id) {
-        *s = State { blocker: Some(id), left: 30, holding: true };
+        *s = State {
+            blocker: Some(id),
+            left: 30,
+            holding: true,
+        };
         return true;
     }
     if !s.holding {
@@ -38,8 +42,12 @@ pub fn hold(s: &mut State, hit: Option<(u32, f32)>, ticks: f32) -> bool {
 /// FUN_100aaef0: 0.8 x the horizontal offset of skeleton point 44 (bone 0 + (0, 0, -r) for most: Hume 0.32, Taru
 /// 0.24, Galka 0.64), in the rest pose *(inf: retail reads the current pose)*; 0 without a skeleton or the point.
 pub fn radius(a: &Actor) -> f32 {
-    let Some(ch) = a.character.as_ref() else { return 0.0 };
-    let Some(&(bone, off)) = ch.skeleton.points.get(44) else { return 0.0 };
+    let Some(ch) = a.character.as_ref() else {
+        return 0.0;
+    };
+    let Some(&(bone, off)) = ch.skeleton.points.get(44) else {
+        return 0.0;
+    };
     let p = a.rest.get(bone as usize).map_or(off, |b| b.at(off)) * a.scale;
     0.8 * p.x.hypot(p.z)
 }
@@ -66,7 +74,9 @@ fn eligible(w: &World, id: u32, e: &Entity) -> bool {
         && w.visible.contains(&id)
         && !matches!(e.motion.status, 2 | 3)
         && !(e.sub_kind == 0 && (50..=59).contains(&e.model))
-        && w.actors.get(&id).is_some_and(|a| a.alpha >= super::actmotion::OPAQUE)
+        && w.actors
+            .get(&id)
+            .is_some_and(|a| a.alpha >= super::actmotion::OPAQUE)
         && (id >> 24 != 0 || (w.opts.player_bump && e.active > 0.0))
 }
 
@@ -92,7 +102,12 @@ pub fn blocks(w: &mut World, from: Vec3, delta: Vec3, ticks: f32) -> bool {
     let hit = hit.map(|id| (id, best.sqrt() - r(w.my_id) - r(id)));
     let held = hold(&mut w.bump, hit, ticks);
     if held && std::env::var_os("FFXI_TRACE_MOVE").is_some() {
-        log::info!("bump {:?} gap {:.3} left {} held", hit.map(|h| h.0), hit.map_or(0.0, |h| h.1), w.bump.left);
+        log::info!(
+            "bump {:?} gap {:.3} left {} held",
+            hit.map(|h| h.0),
+            hit.map_or(0.0, |h| h.1),
+            w.bump.left
+        );
     }
     held
 }
@@ -106,7 +121,9 @@ mod tests {
     #[test]
     fn hold_then_pass() {
         let mut s = State::default();
-        let held: Vec<bool> = (0..18).map(|_| hold(&mut s, Some((7, -0.1)), 2.0)).collect();
+        let held: Vec<bool> = (0..18)
+            .map(|_| hold(&mut s, Some((7, -0.1)), 2.0))
+            .collect();
         assert_eq!(held.iter().filter(|h| **h).count(), 16, "{held:?}");
         assert!(!held[16] && !held[17]);
         assert!(!hold(&mut s, None, 2.0));

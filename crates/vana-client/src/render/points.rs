@@ -2,9 +2,9 @@
 //! root, in world axes; footsteps test their height). A compute pass reads the frame's pose buffer.
 
 use super::Gpu;
+use super::Put;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use super::Put;
 
 const WGSL: &str = r#"
 @group(0) @binding(0) var<storage, read> pose: array<vec4<f32>>;
@@ -57,20 +57,60 @@ const MAX: usize = 4096;
 impl Points {
     pub fn new(gpu: &Gpu) -> Self {
         let device = &gpu.device;
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("actor points"), source: wgpu::ShaderSource::Wgsl(WGSL.into()) });
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("actor points"),
+            source: wgpu::ShaderSource::Wgsl(WGSL.into()),
+        });
         let entry = |binding, read_only| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only }, has_dynamic_offset: false, min_binding_size: None },
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
             count: None,
         };
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("actor points"), entries: &[entry(0, true), entry(1, true), entry(2, false)] });
-        let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[Some(&layout)], immediate_size: 0 });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor { label: Some("actor points"), layout: Some(&pl), module: &module, entry_point: Some("points"), compilation_options: Default::default(), cache: None });
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("actor points"),
+            entries: &[entry(0, true), entry(1, true), entry(2, false)],
+        });
+        let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: None,
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
+        });
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("actor points"),
+            layout: Some(&pl),
+            module: &module,
+            entry_point: Some("points"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
         let staging = (0..3)
-            .map(|_| Staging { buf: device.create_buffer(&wgpu::BufferDescriptor { label: Some("points readback"), size: (MAX * 16) as u64, usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false }), keys: Vec::new(), state: 0, ready: Arc::new(AtomicBool::new(false)) })
+            .map(|_| Staging {
+                buf: device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("points readback"),
+                    size: (MAX * 16) as u64,
+                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                }),
+                keys: Vec::new(),
+                state: 0,
+                ready: Arc::new(AtomicBool::new(false)),
+            })
             .collect();
-        Self { pipeline, layout, jobs: Vec::new(), keys: Vec::new(), job_buf: None, out_buf: None, staging, done: Vec::new() }
+        Self {
+            pipeline,
+            layout,
+            jobs: Vec::new(),
+            keys: Vec::new(),
+            job_buf: None,
+            out_buf: None,
+            staging,
+            done: Vec::new(),
+        }
     }
 
     /// Asks for a point of the actor whose pose region starts at vec4 `region`: bone, offset, and a key to find
@@ -79,14 +119,20 @@ impl Points {
         if self.keys.len() < MAX {
             self.keys.push(key);
             self.jobs.push([region, bone as u32, 0, 0]);
-            self.jobs.push([off.x.to_bits(), off.y.to_bits(), off.z.to_bits(), 0]);
+            self.jobs
+                .push([off.x.to_bits(), off.y.to_bits(), off.z.to_bits(), 0]);
         }
     }
 
     /// After the frame's posing: the queries' points into a readback copy.
     pub fn run(&mut self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, pose: &wgpu::Buffer) {
         let n = self.keys.len();
-        let Some(s) = self.staging.iter_mut().find(|s| s.state == 0).filter(|_| n > 0) else {
+        let Some(s) = self
+            .staging
+            .iter_mut()
+            .find(|s| s.state == 0)
+            .filter(|_| n > 0)
+        else {
             self.jobs.clear();
             self.keys.clear();
             return;
@@ -97,26 +143,57 @@ impl Points {
         let jsize = (words.len() * 16) as u64;
         if self.job_buf.as_ref().is_none_or(|(_, c)| *c < jsize) {
             let c = jsize.next_power_of_two().max(1024);
-            self.job_buf = Some((device.create_buffer(&wgpu::BufferDescriptor { label: Some("point jobs"), size: c, usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false }), c));
+            self.job_buf = Some((
+                device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("point jobs"),
+                    size: c,
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                }),
+                c,
+            ));
         }
         let osize = (n * 16) as u64;
         if self.out_buf.as_ref().is_none_or(|(_, c)| *c < osize) {
             let c = osize.next_power_of_two().max(1024);
-            self.out_buf = Some((device.create_buffer(&wgpu::BufferDescriptor { label: Some("points"), size: c, usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC, mapped_at_creation: false }), c));
+            self.out_buf = Some((
+                device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("points"),
+                    size: c,
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                    mapped_at_creation: false,
+                }),
+                c,
+            ));
         }
-        let (jb, ob) = (&self.job_buf.as_ref().unwrap().0, &self.out_buf.as_ref().unwrap().0);
+        let (jb, ob) = (
+            &self.job_buf.as_ref().unwrap().0,
+            &self.out_buf.as_ref().unwrap().0,
+        );
         gpu.queue.put(jb, 0, bytemuck::cast_slice(&words));
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("actor points"),
             layout: &self.layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: pose.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: jb.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: ob.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: pose.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: jb.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: ob.as_entire_binding(),
+                },
             ],
         });
         {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("actor points"), timestamp_writes: None });
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("actor points"),
+                timestamp_writes: None,
+            });
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &group, &[]);
             pass.dispatch_workgroups((n as u32).div_ceil(64), 1, 1);
@@ -132,11 +209,14 @@ impl Points {
             if s.state == 1 {
                 let ready = s.ready.clone();
                 ready.store(false, Ordering::Release);
-                s.buf.slice(..(s.keys.len() * 16) as u64).map_async(wgpu::MapMode::Read, move |r| {
-                    if r.is_ok() {
-                        ready.store(true, Ordering::Release);
-                    }
-                });
+                s.buf.slice(..(s.keys.len() * 16) as u64).map_async(
+                    wgpu::MapMode::Read,
+                    move |r| {
+                        if r.is_ok() {
+                            ready.store(true, Ordering::Release);
+                        }
+                    },
+                );
                 s.state = 2;
             }
         }
@@ -145,7 +225,12 @@ impl Points {
             if s.state == 2 && s.ready.load(Ordering::Acquire) {
                 if let Ok(data) = s.buf.slice(..(s.keys.len() * 16) as u64).get_mapped_range() {
                     let v: &[[f32; 4]] = bytemuck::cast_slice(&data);
-                    self.done.extend(s.keys.iter().zip(v).map(|(&k, p)| (k, glam::Vec3::new(p[0], p[1], p[2]))));
+                    self.done.extend(
+                        s.keys
+                            .iter()
+                            .zip(v)
+                            .map(|(&k, p)| (k, glam::Vec3::new(p[0], p[1], p[2]))),
+                    );
                 }
                 s.buf.unmap();
                 s.state = 0;

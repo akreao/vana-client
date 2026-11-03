@@ -50,7 +50,13 @@ const NOT_ANSWERS: [u16; 8] = [6, 8, 105, 253, 371, 372, 718, 735];
 /// An action asked for.
 pub fn start(w: &mut World, ask: Ask, target: u32) {
     let now = Instant::now();
-    w.asked = Some(Pending { ask, target, at: now, state: State::Waiting, since: now });
+    w.asked = Some(Pending {
+        ask,
+        target,
+        at: now,
+        state: State::Waiting,
+        since: now,
+    });
 }
 
 /// 0x028 of ours: whatever was waiting is confirmed (and the cast bar or the effect takes over).
@@ -89,7 +95,12 @@ pub fn name(w: &World, ask: Ask) -> String {
     match ask {
         Ask::Spell(id) => super::magic::spell_name(w, id),
         Ask::WeaponSkill(id) | Ask::Ability(id) => super::magic::ability_name(w, id),
-        Ask::Item(id) => w.item_info.as_ref().and_then(|c| c.item(id)).map(|it| it.name.clone()).unwrap_or_default(),
+        Ask::Item(id) => w
+            .item_info
+            .as_ref()
+            .and_then(|c| c.item(id))
+            .map(|it| it.name.clone())
+            .unwrap_or_default(),
     }
 }
 

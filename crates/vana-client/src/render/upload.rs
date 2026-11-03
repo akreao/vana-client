@@ -4,8 +4,8 @@
 //! The rate is measured as the copies go, so faster machines get more a frame.
 
 use super::Gpu;
-use std::time::Instant;
 use super::Put;
+use std::time::Instant;
 
 /// Copy time a frame in the world, and while the zone indicator is up.
 pub const FRAME_MS: f64 = 2.0;
@@ -55,22 +55,60 @@ impl Gpu {
     /// Room for a piece: up to the budget, rounded down to `unit` (at least one unit, so work always moves).
     pub fn piece(&self, remaining: u64, unit: u64) -> u64 {
         let room = self.upload_room().max(unit.max(1));
-        remaining.min(room / unit.max(1) * unit.max(1)).max(unit.min(remaining))
+        remaining
+            .min(room / unit.max(1) * unit.max(1))
+            .max(unit.min(remaining))
     }
 }
 
 /// Level 0 of an image as it goes up: the file's DXT blocks as BC1 / BC2 when the device samples them (both sides
 /// a multiple of 4), else RGBA. (kind, format, data, bytes per block row, block rows, texel rows per block row).
-pub fn level0<'a>(gpu: &Gpu, t: &'a crate::dat::zone::Texture, srgb: bool) -> (super::mipgen::Kind, wgpu::TextureFormat, &'a [u8], u32, u32, u32) {
+pub fn level0<'a>(
+    gpu: &Gpu,
+    t: &'a crate::dat::zone::Texture,
+    srgb: bool,
+) -> (
+    super::mipgen::Kind,
+    wgpu::TextureFormat,
+    &'a [u8],
+    u32,
+    u32,
+    u32,
+) {
     use super::mipgen::Kind;
     use wgpu::TextureFormat as F;
     let (w, h) = (t.width, t.height);
     let pick = |s: F, u: F| if srgb { s } else { u };
-    let bc = gpu.device.features().contains(wgpu::Features::TEXTURE_COMPRESSION_BC) && !super::UNCOMPRESSED.load(std::sync::atomic::Ordering::Relaxed);
+    let bc = gpu
+        .device
+        .features()
+        .contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
+        && !super::UNCOMPRESSED.load(std::sync::atomic::Ordering::Relaxed);
     match &t.dxt {
-        Some((true, b)) if bc && w % 4 == 0 && h % 4 == 0 => (Kind::Bc2, pick(F::Bc2RgbaUnormSrgb, F::Bc2RgbaUnorm), b.as_slice(), w / 4 * 16, h / 4, 4),
-        Some((false, b)) if bc && w % 4 == 0 && h % 4 == 0 => (Kind::Bc1, pick(F::Bc1RgbaUnormSrgb, F::Bc1RgbaUnorm), b.as_slice(), w / 4 * 8, h / 4, 4),
-        _ => (Kind::Rgba, pick(F::Rgba8UnormSrgb, F::Rgba8Unorm), t.rgba.as_slice(), w * 4, h, 1),
+        Some((true, b)) if bc && w % 4 == 0 && h % 4 == 0 => (
+            Kind::Bc2,
+            pick(F::Bc2RgbaUnormSrgb, F::Bc2RgbaUnorm),
+            b.as_slice(),
+            w / 4 * 16,
+            h / 4,
+            4,
+        ),
+        Some((false, b)) if bc && w % 4 == 0 && h % 4 == 0 => (
+            Kind::Bc1,
+            pick(F::Bc1RgbaUnormSrgb, F::Bc1RgbaUnorm),
+            b.as_slice(),
+            w / 4 * 8,
+            h / 4,
+            4,
+        ),
+        _ => (
+            Kind::Rgba,
+            pick(F::Rgba8UnormSrgb, F::Rgba8Unorm),
+            t.rgba.as_slice(),
+            w * 4,
+            h,
+            1,
+        ),
     }
 }
 
@@ -91,7 +129,11 @@ impl TexUp {
         let levels = super::mipgen::level_count(t.width, t.height);
         let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: None,
-            size: wgpu::Extent3d { width: t.width, height: t.height, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: t.width,
+                height: t.height,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: levels,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -99,9 +141,19 @@ impl TexUp {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        let bytes: u64 = (0..levels).map(|k| level_bytes(kind, (t.width >> k).max(1), (t.height >> k).max(1))).sum();
+        let bytes: u64 = (0..levels)
+            .map(|k| level_bytes(kind, (t.width >> k).max(1), (t.height >> k).max(1)))
+            .sum();
         super::TEXTURE_BYTES.fetch_add(bytes, std::sync::atomic::Ordering::Relaxed);
-        TexUp { texture, kind, srgb, row, rows, block_h, done: 0 }
+        TexUp {
+            texture,
+            kind,
+            srgb,
+            row,
+            rows,
+            block_h,
+            done: 0,
+        }
     }
 
     /// Copies bands of `t` (the same image `new` saw) as the budget allows, all of it when `all`; once level 0 is
@@ -110,20 +162,54 @@ impl TexUp {
         let (_, _, data, ..) = level0(gpu, t, self.srgb);
         while self.done < self.rows && (all || gpu.upload_room() > 0) {
             let left = self.rows - self.done;
-            let n = if all { left } else { (gpu.piece(left as u64 * self.row as u64, self.row as u64) / self.row as u64) as u32 };
+            let n = if all {
+                left
+            } else {
+                (gpu.piece(left as u64 * self.row as u64, self.row as u64) / self.row as u64) as u32
+            };
             let at = (self.done * self.row) as usize;
             let len = (n * self.row) as usize;
             gpu.upload(len as u64, || {
                 gpu.queue.write_texture(
-                    wgpu::TexelCopyTextureInfo { texture: &self.texture, mip_level: 0, origin: wgpu::Origin3d { x: 0, y: self.done * self.block_h, z: 0 }, aspect: wgpu::TextureAspect::All },
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &self.texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d {
+                            x: 0,
+                            y: self.done * self.block_h,
+                            z: 0,
+                        },
+                        aspect: wgpu::TextureAspect::All,
+                    },
                     &data[at..at + len],
-                    wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(self.row), rows_per_image: Some(n) },
-                    wgpu::Extent3d { width: t.width, height: n * self.block_h, depth_or_array_layers: 1 },
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(self.row),
+                        rows_per_image: Some(n),
+                    },
+                    wgpu::Extent3d {
+                        width: t.width,
+                        height: n * self.block_h,
+                        depth_or_array_layers: 1,
+                    },
                 )
             });
             self.done += n;
         }
-        (self.done >= self.rows).then(|| gpu.mips.lock().map(|mut m| m.push(self.texture.clone(), t.width, t.height, self.kind, !self.srgb)).unwrap_or(0))
+        (self.done >= self.rows).then(|| {
+            gpu.mips
+                .lock()
+                .map(|mut m| {
+                    m.push(
+                        self.texture.clone(),
+                        t.width,
+                        t.height,
+                        self.kind,
+                        !self.srgb,
+                    )
+                })
+                .unwrap_or(0)
+        })
     }
 }
 
@@ -142,7 +228,10 @@ pub fn buffer_step(gpu: &Gpu, buf: &wgpu::Buffer, data: &[u8], at: &mut u64) -> 
     let total = data.len() as u64;
     while *at < total && gpu.upload_room() > 0 {
         let n = gpu.piece(total - *at, 4);
-        gpu.upload(n, || gpu.queue.put(buf, *at, &data[*at as usize..(*at + n) as usize]));
+        gpu.upload(n, || {
+            gpu.queue
+                .put(buf, *at, &data[*at as usize..(*at + n) as usize])
+        });
         *at += n;
     }
     *at >= total

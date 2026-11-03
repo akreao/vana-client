@@ -32,7 +32,15 @@ pub struct Friend {
 
 impl Friend {
     fn from_info(f: &FriendInfo) -> Self {
-        Self { black: f.black, index: f.num, order: f.order, account: f.pol, name: f.name.clone(), pending: f.pending, ..Default::default() }
+        Self {
+            black: f.black,
+            index: f.num,
+            order: f.order,
+            account: f.pol,
+            name: f.name.clone(),
+            pending: f.pending,
+            ..Default::default()
+        }
     }
 }
 
@@ -78,7 +86,10 @@ pub struct Friends {
     announced: bool,
     retry_at: Option<Instant>,
     /// The friends' characters asked of xi_search (2.3): the queries out, the chunks left of a round, the next round.
-    lookups: Vec<(mpsc::Receiver<anyhow::Result<crate::net::search::Reply>>, Vec<u32>)>,
+    lookups: Vec<(
+        mpsc::Receiver<anyhow::Result<crate::net::search::Reply>>,
+        Vec<u32>,
+    )>,
     round: Vec<Vec<u32>>,
     next_round: Option<Instant>,
     /// The categories the list hides (+0xa4..+0xa8, kept for the session).
@@ -97,7 +108,10 @@ pub struct Friends {
 
 impl Friends {
     pub fn new(cred: Option<Cred>) -> Self {
-        Self { cred, ..Default::default() }
+        Self {
+            cred,
+            ..Default::default()
+        }
     }
 
     /// A friend by account, on the friend list.
@@ -107,7 +121,9 @@ impl Friends {
 }
 
 fn spawn(w: &mut World, job: impl FnOnce(&Cred) -> Done + Send + 'static) {
-    let Some(c) = w.friends.cred.clone() else { return };
+    let Some(c) = w.friends.cred.clone() else {
+        return;
+    };
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let _ = tx.send(job(&c));
@@ -129,7 +145,12 @@ pub fn start(w: &mut World) {
             let list = profile::load_friend_list(c)?;
             let handle = profile::load_handle(c)?;
             let chars = profile::load_characters(c)?;
-            Ok(Loaded { status, list, handle, chars })
+            Ok(Loaded {
+                status,
+                list,
+                handle,
+                chars,
+            })
         })())
     });
 }
@@ -145,7 +166,9 @@ pub fn set_status(w: &mut World, open: u8) {
         return;
     }
     let s = slot(w);
-    spawn(w, move |c| Done::Status(profile::change_my_status(c, s, Some(open)), Some(open)));
+    spawn(w, move |c| {
+        Done::Status(profile::change_my_status(c, s, Some(open)), Some(open))
+    });
 }
 
 /// Each frame: the jobs' answers and the IRC session's notices.
@@ -163,7 +186,13 @@ pub fn poll(w: &mut World) {
         match d {
             Done::Loaded(Ok(l)) => {
                 let f = &mut w.friends;
-                log::info!("friends: status {}, {} entries, handle {:?}, {} characters", l.status, l.list.len(), l.handle, l.chars.len());
+                log::info!(
+                    "friends: status {}, {} entries, handle {:?}, {} characters",
+                    l.status,
+                    l.list.len(),
+                    l.handle,
+                    l.chars.len()
+                );
                 f.my_status = l.status;
                 f.list = l.list.iter().map(Friend::from_info).collect();
                 (f.handle, f.chars, f.loaded) = (Some(l.handle), l.chars, true);
@@ -179,7 +208,12 @@ pub fn poll(w: &mut World) {
             Done::Then(f) => f(w),
         }
     }
-    let events: Vec<Irc> = w.friends.irc.as_ref().map(|l| l.events.try_iter().collect()).unwrap_or_default();
+    let events: Vec<Irc> = w
+        .friends
+        .irc
+        .as_ref()
+        .map(|l| l.events.try_iter().collect())
+        .unwrap_or_default();
     for e in events {
         match e {
             Irc::SignedOn => {
@@ -188,7 +222,13 @@ pub fn poll(w: &mut World) {
                 load_mail(w);
                 fetch(w);
             }
-            Irc::Status { account, list_index, status, char_id, age } => notice(w, account, list_index, status, char_id, age),
+            Irc::Status {
+                account,
+                list_index,
+                status,
+                char_id,
+                age,
+            } => notice(w, account, list_index, status, char_id, age),
             Irc::Mail(_) => fetch(w),
             Irc::Closed(why) => {
                 log::warn!("friends: IRC closed: {why}");
@@ -209,13 +249,20 @@ pub fn poll(w: &mut World) {
     if f.signed_on && f.loaded && !f.announced && w.zone.is_some() {
         w.friends.announced = true;
         let s = slot(w);
-        spawn(w, move |c| Done::Status(profile::change_my_status(c, s, None), None));
+        spawn(w, move |c| {
+            Done::Status(profile::change_my_status(c, s, None), None)
+        });
     }
 }
 
 /// A friend's status notice (3.4.3): applied to the entry at its list index when newer than the last.
 fn notice(w: &mut World, account: u64, index: u8, status: u8, char_id: Option<u32>, age: u64) {
-    let Some(f) = w.friends.list.iter_mut().find(|f| !f.black && f.index == index && f.account == account) else {
+    let Some(f) = w
+        .friends
+        .list
+        .iter_mut()
+        .find(|f| !f.black && f.index == index && f.account == account)
+    else {
         log::info!("friends: status of account {account} (index {index}) for no entry");
         return;
     };
@@ -244,7 +291,12 @@ fn refresh(w: &mut World) {
     });
     for (r, ids) in answers {
         let records = r.map(|r| r.records).unwrap_or_default();
-        for f in w.friends.list.iter_mut().filter(|f| f.char_id.is_some_and(|c| ids.contains(&c))) {
+        for f in w
+            .friends
+            .list
+            .iter_mut()
+            .filter(|f| f.char_id.is_some_and(|c| ids.contains(&c)))
+        {
             f.record = records.iter().find(|r| Some(r.id) == f.char_id).cloned();
             f.fresh = f.record.is_some();
         }
@@ -255,35 +307,58 @@ fn refresh(w: &mut World) {
     let f = &mut w.friends;
     let now = Instant::now();
     if f.round.is_empty() && f.next_round.is_none_or(|t| now >= t) {
-        let ids: Vec<u32> = f.list.iter().filter(|f| !f.black && !f.pending && f.status != 0).filter_map(|f| f.char_id).collect();
+        let ids: Vec<u32> = f
+            .list
+            .iter()
+            .filter(|f| !f.black && !f.pending && f.status != 0)
+            .filter_map(|f| f.char_id)
+            .collect();
         f.round = ids.chunks(20).map(<[u32]>::to_vec).collect();
         f.next_round = Some(now + Duration::from_secs(60));
     }
     if let Some(ids) = f.round.pop() {
-        let rx = crate::net::search::spawn(w.search_addr, crate::net::search::Cond::ids(ids.clone()));
+        let rx =
+            crate::net::search::spawn(w.search_addr, crate::net::search::Cond::ids(ids.clone()));
         w.friends.lookups.push((rx, ids));
     }
 }
 
 fn now_unix() -> u32 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as u32)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as u32)
 }
 
 /// The local folders: <data>/mail/<account>/unread and read.
 fn mail_dir(w: &World, unread: bool) -> Option<std::path::PathBuf> {
     let c = w.friends.cred.as_ref()?;
-    Some(crate::config::data_dir().join("mail").join(c.account.to_string()).join(if unread { "unread" } else { "read" }))
+    Some(
+        crate::config::data_dir()
+            .join("mail")
+            .join(c.account.to_string())
+            .join(if unread { "unread" } else { "read" }),
+    )
 }
 
 /// The local folders read at sign-on (FUN_100f1f00: the counts), every friend's unread bit set from them.
 fn load_mail(w: &mut World) {
     let mut mail = Vec::new();
     for unread in [true, false] {
-        let Some(dir) = mail_dir(w, unread) else { return };
+        let Some(dir) = mail_dir(w, unread) else {
+            return;
+        };
         for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
-            if let (Some(header), Ok(data)) = (profile::MsgHeader::from_name(&name), std::fs::read(e.path())) {
-                mail.push(Mail { name, header, data, unread });
+            if let (Some(header), Ok(data)) = (
+                profile::MsgHeader::from_name(&name),
+                std::fs::read(e.path()),
+            ) {
+                mail.push(Mail {
+                    name,
+                    header,
+                    data,
+                    unread,
+                });
             }
         }
     }
@@ -294,7 +369,13 @@ fn load_mail(w: &mut World) {
 
 /// +0xfc bit 1: an unread message from that friend.
 fn mark_mail(w: &mut World) {
-    let senders: Vec<u64> = w.friends.mail.iter().filter(|m| m.unread).map(|m| m.header.from).collect();
+    let senders: Vec<u64> = w
+        .friends
+        .mail
+        .iter()
+        .filter(|m| m.unread)
+        .map(|m| m.header.from)
+        .collect();
     for f in &mut w.friends.list {
         f.mail = senders.contains(&f.account);
     }
@@ -322,17 +403,31 @@ pub fn fetch(w: &mut World) {
             w.friends.fetching = false;
             let dir = mail_dir(w, true);
             for (name, data) in got {
-                let Some(header) = profile::MsgHeader::from_name(&name) else { continue };
+                let Some(header) = profile::MsgHeader::from_name(&name) else {
+                    continue;
+                };
                 if let Some(d) = &dir {
                     let _ = std::fs::create_dir_all(d);
                     let _ = std::fs::write(d.join(&name), &data);
                 }
-                log::info!("friends: message type {} from {} ({})", header.kind, header.sender, header.from);
-                w.friends.mail.push(Mail { name, header, data, unread: true });
+                log::info!(
+                    "friends: message type {} from {} ({})",
+                    header.kind,
+                    header.sender,
+                    header.from
+                );
+                w.friends.mail.push(Mail {
+                    name,
+                    header,
+                    data,
+                    unread: true,
+                });
                 w.friends.mail_new += 1;
             }
             // Oldest first by Date (FUN_102006b0).
-            w.friends.mail.sort_by_key(|m| (m.header.date, m.header.seq));
+            w.friends
+                .mail
+                .sort_by_key(|m| (m.header.date, m.header.seq));
             mark_mail(w);
         }))
     });
@@ -355,8 +450,18 @@ pub fn room(w: &World, black: bool, account: u64) -> i8 {
     let f = &w.friends;
     match () {
         _ if f.cred.as_ref().is_some_and(|c| c.account as u64 == account) => -3,
-        _ if f.list.iter().any(|e| e.black == black && e.account == account) => -2,
-        _ if f.list.iter().filter(|e| e.black == black).count() >= if black { 100 } else { 200 } => -1,
+        _ if f
+            .list
+            .iter()
+            .any(|e| e.black == black && e.account == account) =>
+        {
+            -2
+        }
+        _ if f.list.iter().filter(|e| e.black == black).count()
+            >= if black { 100 } else { 200 } =>
+        {
+            -1
+        }
         _ => 0,
     }
 }
@@ -373,7 +478,11 @@ fn store(c: &Cred, list: &[Friend], entry: FriendInfo) -> anyhow::Result<Vec<Fri
         }
     }
     let i = entry.num as usize;
-    if entry.black { bo[i % 100] = entry.order } else { fo[i % 200] = entry.order }
+    if entry.black {
+        bo[i % 100] = entry.order
+    } else {
+        fo[i % 200] = entry.order
+    }
     let ans = profile::store_friend_list(c, &fo, &bo, &[entry])?;
     if ans.first().is_some_and(|a| a.result != 0) {
         anyhow::bail!("the store was refused");
@@ -383,9 +492,26 @@ fn store(c: &Cred, list: &[Friend], entry: FriendInfo) -> anyhow::Result<Vec<Fri
 
 /// A set entry at the first free index of a list.
 fn new_entry(w: &World, black: bool, account: u64, name: &str) -> FriendInfo {
-    let used: Vec<u8> = w.friends.list.iter().filter(|f| f.black == black).map(|f| f.index).collect();
-    let num = (0..if black { 100 } else { 200 }).find(|n| !used.contains(n)).unwrap_or(0);
-    FriendInfo { op: 1, black, handle_id: account, num, order: num, pol: account, name: name.chars().take(15).collect(), ..Default::default() }
+    let used: Vec<u8> = w
+        .friends
+        .list
+        .iter()
+        .filter(|f| f.black == black)
+        .map(|f| f.index)
+        .collect();
+    let num = (0..if black { 100 } else { 200 })
+        .find(|n| !used.contains(n))
+        .unwrap_or(0);
+    FriendInfo {
+        op: 1,
+        black,
+        handle_id: account,
+        num,
+        order: num,
+        pol: account,
+        name: name.chars().take(15).collect(),
+        ..Default::default()
+    }
 }
 
 /// The store's answer applied: the entries as loaded, their presence kept.
@@ -395,8 +521,12 @@ fn apply_list(w: &mut World, list: Vec<FriendInfo>) {
         .iter()
         .map(|i| {
             let mut f = Friend::from_info(i);
-            if let Some(o) = old.iter().find(|o| o.black == f.black && o.account == f.account) {
-                (f.status, f.char_id, f.age, f.record, f.fresh) = (o.status, o.char_id, o.age, o.record.clone(), o.fresh);
+            if let Some(o) = old
+                .iter()
+                .find(|o| o.black == f.black && o.account == f.account)
+            {
+                (f.status, f.char_id, f.age, f.record, f.fresh) =
+                    (o.status, o.char_id, o.age, o.record.clone(), o.fresh);
             }
             f
         })
@@ -410,7 +540,11 @@ pub enum Op {
     /// 0 / 1: a plain message.
     Plain { to: u64 },
     /// 2: a friend request: the account, our list name for them, their character's name (the text).
-    Request { to: u64, list_name: String, char_name: String },
+    Request {
+        to: u64,
+        list_name: String,
+        char_name: String,
+    },
     /// 5: a reply.
     Reply { to: u64 },
     /// 7: an accept, listing them under `list_name`.
@@ -425,14 +559,20 @@ fn title(w: &World, kind: u8, reply: bool) -> String {
         profile::FRIEND_REQUEST => "Let's be friends!".into(),
         profile::FRIEND_ACCEPTED => "Friend registration accepted".into(),
         profile::FRIEND_DECLINED => "Friend registration declined".into(),
-        _ => w.battle.as_ref().and_then(|b| b.group9(if reply { 0x1f } else { 0x1c })).unwrap_or_default(),
+        _ => w
+            .battle
+            .as_ref()
+            .and_then(|b| b.group9(if reply { 0x1f } else { 0x1c }))
+            .unwrap_or_default(),
     }
 }
 
 /// msgline's commit (FUN_101ff3e0): the job for the mode, busy until it answers; the success line (group 9) or the
 /// failure (10 0x2d, reply / accept 10 0x6f).
 pub fn send(w: &mut World, op: Op, text: Vec<u8>) {
-    let Some(me) = w.friends.cred.as_ref().map(|c| c.account as u64) else { return };
+    let Some(me) = w.friends.cred.as_ref().map(|c| c.account as u64) else {
+        return;
+    };
     (w.friends.busy, w.friends.strip) = (true, true);
     let (to, kind) = match &op {
         Op::Plain { to } | Op::Reply { to } => (*to, profile::PLAIN),
@@ -445,10 +585,24 @@ pub fn send(w: &mut World, op: Op, text: Vec<u8>) {
         Op::Request { char_name, .. } => profile::encode_body(t.as_bytes(), char_name.as_bytes()),
         _ => profile::encode_body(t.as_bytes(), &text),
     };
-    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos());
-    let header = profile::MsgHeader { from: me, to, sender: w.name.clone(), title: t.chars().take(15).collect(), seq: nanos, date: now_unix(), length: body.len() as u32, kind, no_reply: false };
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.subsec_nanos());
+    let header = profile::MsgHeader {
+        from: me,
+        to,
+        sender: w.name.clone(),
+        title: t.chars().take(15).collect(),
+        seq: nanos,
+        date: now_unix(),
+        length: body.len() as u32,
+        kind,
+        no_reply: false,
+    };
     let entry = match &op {
-        Op::Request { list_name, .. } | Op::Accept { list_name, .. } => Some(new_entry(w, false, to, list_name)),
+        Op::Request { list_name, .. } | Op::Accept { list_name, .. } => {
+            Some(new_entry(w, false, to, list_name))
+        }
         _ => None,
     };
     let list = w.friends.list.clone();
@@ -496,7 +650,12 @@ fn line10(w: &mut World, id: usize, code: i32) {
 }
 
 /// Ignore (FUN_10200280): a friend's entry copied to the block list, else a new one; 9 0x18, then `then`.
-pub fn ignore(w: &mut World, account: u64, name: &str, then: impl FnOnce(&mut World) + Send + 'static) {
+pub fn ignore(
+    w: &mut World,
+    account: u64,
+    name: &str,
+    then: impl FnOnce(&mut World) + Send + 'static,
+) {
     let e = new_entry(w, true, account, name);
     let list = w.friends.list.clone();
     w.friends.busy = true;
@@ -539,10 +698,21 @@ pub fn befriend(w: &mut World, char_id: u32, char_name: String, from_command: bo
             };
             match room(w, false, pol) {
                 0 => {
-                    super::polmail::compose(w, super::polmail::Mode::Request { to: pol, char_name: char_name.clone() }, char_name);
+                    super::polmail::compose(
+                        w,
+                        super::polmail::Mode::Request {
+                            to: pol,
+                            char_name: char_name.clone(),
+                        },
+                        char_name,
+                    );
                 }
                 -2 if !from_command => {
-                    super::polmail::compose(w, super::polmail::Mode::Plain { to: pol }, String::new());
+                    super::polmail::compose(
+                        w,
+                        super::polmail::Mode::Plain { to: pol },
+                        String::new(),
+                    );
                 }
                 -2 => super::textcmd::refuse(w, 0xa1),
                 _ => super::textcmd::refuse(w, 0xa2),
