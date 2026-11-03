@@ -67,7 +67,7 @@ detail inside implemented ops.
 | Motion length (+0x2a0) comes from the motion; the headless host keeps it busy for 30 frames | Approximation | L1266 | DLL |
 | Name plates in cutscenes *(answered, [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §3: no event check in the plate draw; bound actors keep it unless op 0x92 / bit 17; non-participants lose the model by event Mode & 2 / & 0x10)*; audited 2026-11-03 with [batch 5](notes/2026-11-03-modlog-gaps-batch5-build.md) §2: ours unloaded doors, elevators, ships and op 0xac sub 2 actors too, now exempt. Left: the hold count +0xf2, the +0x1ff status rule | Built | L2408 | Code check |
 | The mouth's 8-tick blend out (0x23 and unbind) | Not built | L2343, L2408, L14046 | DLL |
-| 0x5b / 0x66 finishing in one call when the file is cached (ours take 2 frames) | Not built | L2408 | DLL |
+| 0x5b / 0x66 finishing in one call when the file is cached (ours take 2 frames) | Built *([batch 8](notes/2026-11-03-modlog-gaps-batch8.md) item 39: FUN_100b5210 requests the file and runs FUN_100d12d0's ready test in the same call, keeping its per-kind requested flag so a waiting op does not re-request)* | L2408 | DLL |
 | Motion-file model kinds | Not built | L2408 | DLL |
 | 0x46 sub 1's HUD window FUN_10217e90 *(inf: hides a HUD window)* *([batch 5](notes/2026-11-03-modlog-gaps-batch5.md) item 5: "menu    buff" hidden until the event ends)* | Built | L2408 | DLL |
 | 0x1f7 (San d'Oria opening) not played live since the VM-speed fix; timing is the headless VM's | Not checked live | L2408 | Live |
