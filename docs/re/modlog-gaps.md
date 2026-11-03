@@ -24,12 +24,12 @@ Rows below often mix kinds, so these are rough counts of rows that carry each ki
 
 | Kind | Rows | Typical way to settle |
 |---|---|---|
-| Not built (a retail feature missing in ours) | ~115 | Implement from the DLL |
-| Unknown, not traced, inferred or not decoded (an RE question) | ~85 | DLL |
+| Not built (a retail feature missing in ours) | ~120 | Implement from the DLL |
+| Unknown, not traced, inferred or not decoded (an RE question) | ~77 | DLL |
 | Built but not checked live or against retail | ~20, plus the backlog in section 14 | Live / Footage |
 | Blocked: the server (LSB) never sends the data | 8 | LSB, or leave |
 | Upstream design questions | 1 (Lua mod grants, issue #70) | Upstream |
-| Closed by later entries (kept for reference) | ~65 | none |
+| Closed by later entries (kept for reference) | ~68 | none |
 
 The event VM has no ops left unimplemented: the 2026-11-02 audit closed every missing op, and 0x97 (cloth
 wind) closed with the cloth simulation on 2026-11-03 (`2026-11-03-cloth.md`). What remains under events is
@@ -76,9 +76,8 @@ detail inside implemented ops.
 | Grammar 2 / 3 whole-text conversions (key items with their own article) | Not built | L14678 | DLL |
 | Event positions: the +0x128 bit 14 and +0x120 bit 0x100000 ground-snap skips (only 0x200000 is ours) | Not built | L19371 | DLL |
 | Op 0x71 subs 0x50..0x55 (a full-screen picture, zone 291) | Not built | L4983 | DLL |
-| 0x7f0b / 0x7f8b special values (+0x124 bit 25, 475 sites); FUN_100977f0's gate for PCs | Not decoded | L4893, L4900 | DLL |
+| 0x7f0b / 0x7f8b special values (+0x124 bit 25, 475 sites); FUN_100977f0's gate for PCs *(answered, [batch 3](notes/2026-11-03-modlog-gaps-batch3.md) §2: the speaker's / player's gender bit (1 male); ours reads 0 for both, and dialog `7F 90` / `7F 91` use the player's gender; the PC see-through is FUN_100973f0, already built)* | Not built | L4893, L4900 | DLL |
 | Op 0x7e / 0xac subs 5 / 0x55 (FUN_10097a20 spawning the chocobo / mount in an event) | Not built | L5246 | DLL |
-| Op 0xab 9 / 0xa value meanings (sites read Z registers) | Not traced | L5254 | DLL |
 | Event op 0x34 area swaps: retail's file slots (ours restarts the auto schedulers; inferred) | Unknown | L13514 | DLL |
 | Event sound: Audio::event_volume reaches the mixer, but the live runs had audio off | Not checked live | L1634 | Live |
 | Mhaura ferry: the call that puts the 0x00E pose on an undriven ship is not found *(inf)* | Unknown (behaviour now matches retail) | L20050 | DLL |
@@ -91,7 +90,7 @@ detail inside implemented ops.
 | Item | Status | Source | Settle by |
 |---|---|---|---|
 | Motion schedulers bntg / klbt / hwat / res0; the move direction for atr / atb / atl (moving always picks f) | Not built | L1771 | DLL |
-| Actor pass blend states for faded actors (SRCALPHA / INVSRCALPHA *(inf)*) | Not traced | L1702, L1771 | DLL |
+| Faded actors: retail draws the model opaque into an offscreen target, then blends it as one SRCALPHA / INVSRCALPHA quad (no self-overlap); ours blends each triangle *(answered, [batch 3](notes/2026-11-03-modlog-gaps-batch3.md) §4)* | Not built | L1702, L1771 | DLL |
 | Hit reactions: two overlays at once (a new one replaces the old); the CPU pose for the locked camera ignores it | Not built | L4829 | DLL |
 | Model-file generators: the un-hide restart (FUN_10084320 re-runs FUN_10083970) | Not built | L7567 | DLL |
 | Riding: ground tilt of info[0] 1 / 2 models (FUN_100d54c0); op 0x6e for other actors; the riding `cdam`; the local player's wait for the stand motion before `coff` | Not built | L12422, L13095 | DLL |
@@ -116,7 +115,7 @@ detail inside implemented ops.
 | Item | Status | Source | Settle by |
 |---|---|---|---|
 | Effect schedulers: element ops 0x25 / 0x33 (per-frame child emission) *(FUN_10057c20 never waits for children: [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §2; 0x29 / 0x2a, op 0x80 and stores 0x14..0x18 closed: L10569, L11275, L6913, `fx/tasks.rs`)* | Not confirmed in code | L3454 | DLL |
-| Scheduler op 0x56 (actor drive task); op 0x6f / 0x70 details; what the 0x100a7440 end callback drops | Not traced | L3531, L3463 | DLL |
+| Scheduler ops 0x6f / 0x70: point-light intensity / range multiplier ramps (element +0x1a4 / +0x1a8 to f32 @0x10 over dur x speed) *(answered, [batch 3](notes/2026-11-03-modlog-gaps-batch3.md) §5; 0x56 and the end callback closed)* | Not built | L3531, L3463 | DLL |
 | Effect sound: FUN_10054fb0 (capsule nearest point) needs a clean asm read; FUN_100528e0's effect on the generator's +0xa8; whether a soft stop (op 0x2d) ends persistent sound elements | Unknown | L3595 | DLL |
 | Area-light tint: the crossfade's +0x14 countdown; FUN_10180380's weather argument; where gen+0xc4 is first set; which effects use 0x8f / 0x90 / 0x69 | Unknown | L3877 | DLL |
 | Event op 0xae sub 7 (area-light) | Not built | L3822 | DLL |
@@ -150,12 +149,11 @@ detail inside implemented ops.
 
 | Item | Status | Source | Settle by |
 |---|---|---|---|
-| Positional effect volume (FUN_10035e50 distance curve) | Not traced | L918 | DLL |
 | Footsteps: zone flag +0x1cf alt name (surface 3 -> 2), the model-scope fses retry, the culled-pass skip (+0x840 bits 20..21), 'fvib', the footstep-effects option DAT_10444158 (taken as on) | Not built | L3717, L3734..L3755 | DLL |
 | Sound levels: the resets at event end / SE slider change (FUN_100ae3f0 / FUN_10035e80) | Not built | L6303 | DLL |
-| Zone ambient loop: how retail ends the old voice at a change | Not traced | L5932 | DLL |
+| Zone ambient loop: a time / weather / indoor change crossfades over 150 sound ticks; a zone change cuts the old loop *(answered, [batch 3](notes/2026-11-03-modlog-gaps-batch3.md) §7; ours cuts every change)* | Not built | L5932 | DLL |
 | Title buttons: press sounds on the character list rows, Config pages, the login screen | Not built | L7195 | DLL |
-| Number windows' sounds (quantity / gil, delivery) | Not traced | L6841 | DLL |
+| Number windows' sounds: retail plays nothing on Up / Down / Left / Right or at a limit, only OK 0002 / cancel 0003; ours plays the cursor sound *(answered, [batch 3](notes/2026-11-03-modlog-gaps-batch3.md) §8)* | Not built | L6841 | DLL |
 
 ## 6. HUD, chat log and text
 
@@ -215,7 +213,7 @@ detail inside implemented ops.
 | Guild shops: the cursor reset on source switch; kind 0x19 squeeze or clip; Trade refusal codes other than 0xfb / 0xfd; Stat 2 / bit 31 with Stat 0; DAT head byte 13 | Inferred / unknown | L6485, L6470 | DLL / LSB |
 | Field manuals: the query window's scroll bar | Not built | L6545 | DLL |
 | Player trade | Built, not tested live (needs a second account) | L6597 | Live |
-| Trade: the costume refusal bit 0x40 (FUN_101cc040) *(answered, [batch 1](notes/2026-11-03-modlog-gaps-batch1.md) §7: player +0x120 bit 5 from the costume state machine FUN_10095e90; its four helpers asked in batch 3)* | Not built | L6568 | DLL |
+| Trade: the costume refusal bit 0x40 (FUN_101cc040) *(answered, [batch 1](notes/2026-11-03-modlog-gaps-batch1.md) §7: player +0x120 bit 5 from the costume state machine FUN_10095e90; its four helpers in [batch 3](notes/2026-11-03-modlog-gaps-batch3.md) §1: the status lists only take a costume off, +0x120 bit 7 = bound to the event; asked: where 0x40 sits in FUN_101cc0d0's order)* | Not built | L6568 | DLL |
 | Set Bazaar: the name's bazaar glyph (0x9c); the row disabled in Monstrosity | Not built | L9921 | DLL |
 | Bazaar View Wares: FUN_10210880's flag (taken as "list is live"); hidden windows from the group walk; the Escape sound; shopbuy's registry flags vs ours stacking the confirm on the log | Inferred | L16503 | DLL / Footage |
 | Bazaar View Wares | Not seen live (needs a second character) | L16460 | Live |
@@ -431,3 +429,7 @@ Items an early entry lists as not done or open that a later entry built or answe
 | Storage / item lists: the equipped linkshell row | L5403 | [batch 1](notes/2026-11-03-modlog-gaps-batch1.md) §2; PR #130 (grey in storage, green in item lists) |
 | Help Desk faqmain: the language row | L10322 | [batch 1](notes/2026-11-03-modlog-gaps-batch1.md) §6: dormant in this build (never drawn or selectable); nothing to build |
 | conf6win's key-reset prompt | L4631 | [batch 1](notes/2026-11-03-modlog-gaps-batch1.md) §5; PR #127 |
+| *DLL batch 3, 2026-11-03* | | |
+| Op 0xab 9 / 0xa | L5254 | [batch 3](notes/2026-11-03-modlog-gaps-batch3.md) §3: 2 bytes, no operands (the Z register note was op 0xb6 0xd / 0xe's); 9 forces the effects multiplier (config 0x3b, the Misc. weather option *(inf)*) to 1.0, 0xa restores it. Ours never applies 0x3b, so effects are always full: nothing to build |
+| Positional effect volume | L918 | [batch 3](notes/2026-11-03-modlog-gaps-batch3.md) §6: listener the camera eye, near 3 / far 30 linear, height x 3, x 0.65 behind; `fx/sound.rs` attenuate matches |
+| Scheduler op 0x56; the 0x100a7440 end callback | L3531, L3463 | [batch 3](notes/2026-11-03-modlog-gaps-batch3.md) §5: 0x56 holds each target's status motion (built in `fx/tasks.rs`); the callback (0x100a8db0 here) drops the caster's skill files when its last `main` ends (built) |
