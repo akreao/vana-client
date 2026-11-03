@@ -539,9 +539,9 @@ fn update(@builtin(global_invocation_id) gid: vec3<u32>) {
                             pl = pf;
                         }
                         f = f * pl;
-                        for (var q = 0u; q < 3u; q = q + 1u) {
-                            flash[q] = min(flash[q] + u32(max(f32(cb(b, q)) * f, 0.0)), 255u);
-                        }
+                        // Whole-vector maths: FXC cannot index a local vector inside the op loop.
+                        let add = vec3<u32>(max(vec3<f32>(f32(cb(b, 0u)), f32(cb(b, 1u)), f32(cb(b, 2u))) * f, vec3<f32>(0.0)));
+                        flash = min(flash + add, vec3<u32>(255u));
                     }
                 }
             }
