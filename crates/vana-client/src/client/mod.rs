@@ -15395,9 +15395,9 @@ impl ApplicationHandler for App {
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(code) = event.physical_key {
                     // Other key functions hide the cursor (FUN_10125f70(0)), except during a drag. The Modern UI keeps
-                    // it shown, so walking with the keys leaves the pointer where it was (ours, not retail).
+                    // it shown on every screen, so walking with the keys leaves the pointer where it was (ours, not retail).
                     let modifier = matches!(code, KeyCode::ShiftLeft | KeyCode::ShiftRight | KeyCode::ControlLeft | KeyCode::ControlRight | KeyCode::AltLeft | KeyCode::AltRight | KeyCode::SuperLeft | KeyCode::SuperRight);
-                    let modern = matches!(&self.phase, Phase::World(w) if w.modern);
+                    let modern = self.cfg.modern_ui;
                     if event.state == ElementState::Pressed && !modifier && !modern && !self.dragging && !self.left_down {
                         self.mouse.visible = false;
                     }
