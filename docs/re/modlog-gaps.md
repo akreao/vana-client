@@ -12,6 +12,8 @@ decoded, not traced, inferred or not checked live, grouped by area.
 - **Settle by**: **DLL** = read retail FFXiMain.dll (30261006_0) in Ghidra / Rizin; **Live** = try it in game;
   **Footage** = compare with the retail client or a recording; **LSB** = depends on what the server sends;
   **Upstream** = a design question for upstream (lenonk/vana-client), listed only, not answered here.
+- **Addresses**: many MODLOG / `event_ops.rs` addresses are from an older FFXiMain.dll than Steven's unpacked one
+  (sha256 8097dbf8...; only 40 of 219 event handler addresses match). The RE notes in [notes/](notes/) map them.
 - Inline inference markers (*(inf)*, *(inferred)*, *(not traced)*, *(as read)*: 826 lines in 270 entries) are
   too many for this page. They are indexed one per line in [modlog-inferred.md](modlog-inferred.md), generated
   from the same files.
@@ -48,7 +50,6 @@ detail inside implemented ops.
 | Select screen: delete's second confirmation ptc9dele (FUN_10233c00) | Not built | L2832, L15957 | DLL |
 | Select screen: chswin's file details line; other languages' count lines; DAT_10623ac4 (cursor kept on reopen); chfwin; the 149-frame head-point refresh; the arc-length camera speed | Not built | L529, L2832, L2780 | DLL |
 | Select screen: FFXI-3117 (five failed user-file operations) has no counterpart in ours | Not built (different login flow) | L2832 | DLL |
-| Select screen: Escape in a prompt answers No *(inf)*; the "Connecting to the server..." line has no retail source found | Unknown | L2799, L2832 | DLL |
 | Rename flow | Built, untested live (no character with renamef) | L2832 | Live |
 | Creator: child 3's element state 0x10 (FUN_10118b60(0x10, 3)) | Not built, meaning not traced | L15623, L15640 | DLL |
 | Creator world step: the local name filter FUN_101ba240 (3322); the mouse and right click on chmkserv / chmkpass | Not traced | L15980, L16015 | DLL |
@@ -62,12 +63,9 @@ detail inside implemented ops.
 
 | Item | Status | Source | Settle by |
 |---|---|---|---|
-| Op b1 has no length for sub 4; the 16 blocks that do not decode fully all stop there (one in zone 230) | Unknown | L835 | DLL |
-| Ops marked "inferred" in `event-ops`: 46 sub 2, 69 / 6a screen layers, the units of 1f | Unknown meaning | L835 | DLL |
 | Installed DATs are older than LSB's text ids, so message ids can be shifted (msgshift table); ids between two segments stay unknown | Known limitation | L835, L1086 | Data |
-| FUN_10056c70 restarts a task whose resource holds an op of type 1; not traced | Unknown | L1266 | DLL |
 | Motion length (+0x2a0) comes from the motion; the headless host keeps it busy for 30 frames | Approximation | L1266 | DLL |
-| Name plates in cutscenes: whether retail hides them (FUN_100ce4d0's vtable checks) | Unknown | L2408 | DLL / Footage |
+| Name plates in cutscenes *(answered, [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §3: no event check in the plate draw; bound actors keep it unless op 0x92 / bit 17; non-participants lose the model by event Mode & 2 / & 0x10)*; ours not audited against it | Answered | L2408 | Code check |
 | The mouth's 8-tick blend out (0x23 and unbind) | Not built | L2343, L2408, L14046 | DLL |
 | 0x5b / 0x66 finishing in one call when the file is cached (ours take 2 frames) | Not built | L2408 | DLL |
 | Motion-file model kinds | Not built | L2408 | DLL |
@@ -106,11 +104,10 @@ detail inside implemented ops.
 | Model hide / show: the skeleton's `fvib` clone at the show; the +0x764 / +0x814 clones | Not built | L13203 | DLL |
 | Near-camera fade after the cylinder (vt+0x260, first person, fishing) | Not built | L12096 | DLL |
 | Character bump during events; whether any actor reaches +0x59c >= 1 | Not built / not traced | L8858, L8889 | DLL |
-| Actor collision: the object id skip (+4 vs +0xbc) *(actor boxes and lifts closed: "Actor collision and lifts", L8758)* | Not built | L2694 | DLL |
 | Lifts: the camera's look point; LSB's Metalworks door data not checked against the doors | Not built / not checked | L8776 | DLL / LSB |
 | Ship actors: whether a new task first updates in its frame; vt +0x178 and the default speed 1.0 assumed; the far plane; the lighting area; the 10-second no-skip window; +0x130 bit 21's writer | Unknown | L18113 | DLL |
 | Ships: per-run data for each voyage (no captures; pirates' run 227 / 228) | Blocked: no data | L13802, L13831 | Captures |
-| 0x00E SubKind 5 / 6: how FUN_100d0ef0 decodes the 0x9000 word | Not traced | L15593 | DLL |
+| 0x00E SubKind 5 / 6: the 0x9000 word *(answered, [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §5: bits 0..11 NPC-table model id, bits 12..15 the look slot; kind 7 has a case)*; ours not audited against it | Answered | L15593 | Code check |
 | /sitchair: trusts ignoring chair / sit / heal statuses in 0x00E (asm 0x1009c148) | Not built | L18831 | DLL |
 | Dual wield: a 'b' scheduler with +0x8b5 calls vtable +0x250(1), no effect seen | Not traced | L16279 | DLL |
 
@@ -118,7 +115,7 @@ detail inside implemented ops.
 
 | Item | Status | Source | Settle by |
 |---|---|---|---|
-| Effect schedulers: element ops 0x25 / 0x33 (per-frame child emission), scheduler-owned children waits *(0x29 / 0x2a, op 0x80 and stores 0x14..0x18 closed: L10569, L11275, L6913, `fx/tasks.rs`)* | Not confirmed in code | L3454 | DLL |
+| Effect schedulers: element ops 0x25 / 0x33 (per-frame child emission) *(FUN_10057c20 never waits for children: [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §2; 0x29 / 0x2a, op 0x80 and stores 0x14..0x18 closed: L10569, L11275, L6913, `fx/tasks.rs`)* | Not confirmed in code | L3454 | DLL |
 | Scheduler op 0x56 (actor drive task); op 0x6f / 0x70 details; what the 0x100a7440 end callback drops | Not traced | L3531, L3463 | DLL |
 | Effect sound: FUN_10054fb0 (capsule nearest point) needs a clean asm read; FUN_100528e0's effect on the generator's +0xa8; whether a soft stop (op 0x2d) ends persistent sound elements | Unknown | L3595 | DLL |
 | Area-light tint: the crossfade's +0x14 countdown; FUN_10180380's weather argument; where gen+0xc4 is first set; which effects use 0x8f / 0x90 / 0x69 | Unknown | L3877 | DLL |
@@ -179,14 +176,13 @@ detail inside implemented ops.
 | Macro palette: the default cursors; FUN_101262e0 as the left click in the palettes' frame | Unknown | L10096 | DLL |
 | Equipment sets: who calls mcres20 vtable +0x2c FUN_101a7010; the status gate's bit 0x40; chat mode 0xca's colour | Unknown | L10170 | DLL |
 | Status icons: the 240 x 4 line and per-cell corner sprite; whether retail hides the buff window in cutscenes | Unknown | L7340, L7359 | Footage |
-| Top bar: whether netstat's content hides in cutscenes; per-item title overrides (+0x4c / +0x50) | Not traced | L2494, L2502 | DLL |
+| Top bar: netstat in cutscenes; item overrides +0x4c / +0x50 *(answered, [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §4: no event check, only cinema mode / UI hidden; +0x4c help, +0x50 title overrides)*; ours not audited against it | Answered | L2494, L2502 | Code check |
 | Target window: the state codes and model range; the pet line; the event mode | Not built | L2541, L4485 | DLL |
 | Name plates: scheduler op 0xb4 (+0x8c0, 8 `cst0` schedulers); the mount sub-case per-race tables; k = FUN_10022340(race) | Not built / not decoded | L8708, L2172 | DLL |
 | Name plates under the screen fade: retail's one-frame delay | Not built | L5646 | DLL |
 | Name plate letters: extent - 1 for the other widths | Not checked against retail | L10638 | Footage |
 | netstat: the 3 x network page (modern list feature 17) | Not built | `2026-11-02-helpdesk-reply-mark.md` | DLL |
 | Log window 2: game state 0x40's screen; registry A 0x10; whether FUN_10129090's rows count toward the open ticks | Unknown | L16955 | DLL |
-| rem4line: which pages lose their mark (range unknown) | Unknown | L17291 | DLL |
 | Friend List: Away back to Online at login *(inf)*; deleting / unblocking / reordering (retail has none in game: the user's call); polcore's message format and status mapping | Not built / unknown | L17174, L17143, L17196, L17222 | DLL (polcore) |
 | Message formatter: the other callers (party join, merit prompts, auction house, level sync, /sea counts); FUN_10080350's source; FUN_10128ce0's flags; FUN_101f4bb0's date lists | Not built / not traced | L6651, L6706 | DLL |
 | Trust party lines: grammar kinds not seen used | Not built | L14144 | Data |
@@ -199,11 +195,10 @@ detail inside implemented ops.
 
 | Item | Status | Source | Settle by |
 |---|---|---|---|
-| Inventory: the job sprite after "Lv%2d "; what FUN_100fbc70 tests (blue names); a slot label under an equipped icon; persona offsets while equipping *(scroll bars closed: "List scroll bars", L8480; the used / total count: L5453)* | Unknown | L1383, L1325 | DLL |
+| Inventory: the job sprite after "Lv%2d "; a slot label under an equipped icon; persona offsets while equipping *(blue names: FUN_100fbc70 = charged item ready, [batch 1](notes/2026-11-03-modlog-gaps-batch1.md) §1, PR #129; scroll bars L8480; count L5453)* | Unknown | L1383, L1325 | DLL |
 | Item info: item types 0xf / 0x11..0x15 / 0x1a; the de / fr layout and ja rows | Not built | L5077 | DLL |
 | Item info: its mode and place while the equipment set editor is open | Unknown | L10248 | DLL |
 | Item use menu: the blue / grey row tints for gear in the direct-use list | Not built, not seen live | L5199 | DLL / Live |
-| Storage views: the equipped linkshell's row colour (rule 7, s2c 0x0E0; `World.linkshells` now holds it) *(wardrobe bits closed: L5466; mannequin-worn rows: L14763)* | Not built | L5403 | DLL |
 | Equipment screen: the unequip toggle | Not seen live | L10449 | Live |
 | Equipment screen: the list's cursor row after a grid Enter *(as read)*; the opening set (persona, money, list at (314, 48)) | Unknown | L10419, L10503 | DLL |
 | Equipment sets editor: the mouse; the wardrobe number glyph (unknown) | Not built | L10228, L10217 | DLL |
@@ -220,7 +215,7 @@ detail inside implemented ops.
 | Guild shops: the cursor reset on source switch; kind 0x19 squeeze or clip; Trade refusal codes other than 0xfb / 0xfd; Stat 2 / bit 31 with Stat 0; DAT head byte 13 | Inferred / unknown | L6485, L6470 | DLL / LSB |
 | Field manuals: the query window's scroll bar | Not built | L6545 | DLL |
 | Player trade | Built, not tested live (needs a second account) | L6597 | Live |
-| Trade: the costume refusal bit 0x40 (FUN_101cc040) | Not traced | L6568 | DLL |
+| Trade: the costume refusal bit 0x40 (FUN_101cc040) *(answered, [batch 1](notes/2026-11-03-modlog-gaps-batch1.md) §7: player +0x120 bit 5 from the costume state machine FUN_10095e90; its four helpers asked in batch 3)* | Not built | L6568 | DLL |
 | Set Bazaar: the name's bazaar glyph (0x9c); the row disabled in Monstrosity | Not built | L9921 | DLL |
 | Bazaar View Wares: FUN_10210880's flag (taken as "list is live"); hidden windows from the group walk; the Escape sound; shopbuy's registry flags vs ours stacking the confirm on the log | Inferred | L16503 | DLL / Footage |
 | Bazaar View Wares | Not seen live (needs a second character) | L16460 | Live |
@@ -230,10 +225,9 @@ detail inside implemented ops.
 
 | Item | Status | Source | Settle by |
 |---|---|---|---|
-| Party-list cursor: the fellow row (modes 2 / 3 start at -1, L8995) *(mouse closed: "The party cursor with the mouse", L10866)* | Not built | L5444 | DLL |
+| Party-list cursor: the fellow row *(answered, [batch 1](notes/2026-11-03-modlog-gaps-batch1.md) §4: drawn above the pet row, reached past the last row; ours draws no fellow row yet)* | Not built | L5444 | Build |
 | Alliance windows: live test (one session cannot show them); quartermaster 433 / level-sync 493 marks | Not checked live / not built | L5488, L5485 | Live |
 | Party menu: the request-history prompt (comyn 9 0x140); the auto-pool area rule (actor +0x18c); the stage-1 mark; Level Sync's empty list text; the mouse in levelsyn | Not built | L8932, L9764 | DLL |
-| Party requests: the own actor's +0x124 bits 22 / 23 (0xc6) | Not decoded | L10906, L10933 | DLL |
 | Party: the receiving side of invites | Untested live (no bot invites) | L8939 | Live |
 | Search: /seacom and /seacomup on the same store; scoption's Request / Cancel Request (/partyrequestcmd) | Not built | L9482 | DLL |
 | Search: rec +0x14 vs +0x18; flags 0x400 and 0x10000 | Not traced | L7835 | DLL / LSB |
@@ -250,7 +244,6 @@ detail inside implemented ops.
 | Item | Status | Source | Settle by |
 |---|---|---|---|
 | Help Desk faqsub: the page header against row 0; the hand's frame rate (counter / 24); the keyword box's field frame | Unknown / not built | L10025, L10010 | DLL / Footage |
-| Help Desk faqmain: the language row (area code 2) *(mouse closed: "faqmain and the comment editor: the mouse", L15480)* | Not built | L10322 | DLL |
 | Help Desk faqmain: where "Input:REQUIRE" is enforced; where 9 0x7c is drawn; the parameter evaluation (GAME.INFIELD / GMTIME); the '#' pages; the err_%03d.bin viewer | Unknown | L10332, L10269, L10322 | DLL |
 | Adventuring Primer: the 8 empty row bars for the first 10 frames; a drag's release flipping the page; /primer while up; guide01's arrow sound | Unknown | L15290 | DLL / Footage |
 | Config: the Show / Hide packet; the macro palette's position rule; auto-disconnect's PlayOnline timer | Not built | L2937 | DLL |
@@ -261,7 +254,6 @@ detail inside implemented ops.
 | Cursor memory: the other KEEP windows' cursors (myroom, configwi, cmbmenu) | Not built | L9171 | DLL |
 | Missions: the held-key header stop | Not built | L9102, L9153 | DLL |
 | Status window: Monstrosity (mp_stat) from the main menu | Not built at the time | L9017 | *(closed: "Monstrosity, part 5: mp_stat")* |
-| In-game prompt: conf6win's key-reset prompt draws 39542's yesno (checked 2026-11-03: `configui2.rs` still draws yesno; "Config: keylayou" did not change it) | Not built | L4631 | DLL |
 | Mouse picking: the hover's frame lag, the talk lock; kind 1 over objects | Not built | L5747, L4556 | DLL |
 | Mouse picking: "StreetLamp" without a box is not pickable (the box path) | Not built | L5730 | DLL |
 | Mouse: right-button release clearing the target (key 0x8c); ours drags the camera with it | Not built | L3221 | DLL |
@@ -428,3 +420,14 @@ Items an early entry lists as not done or open that a later entry built or answe
 | Text commands with no consumer (/ignorepet ... /autotarget) | L7496 | "The toggles' consumers" (L12160); /bell note, /ignorepet, /hidetrust not seen live |
 | Records of Eminence: Enter on rows 2..4 | L9195 | "Records of Eminence lists" (L10971) |
 | Synthesis: the history and favourites, cmb%d.dat | L5763 | "Synthesis menu, history, /lastsynth" (L5789, L5818) |
+| *DLL batches 1 and 2, 2026-11-03* | | |
+| Op b1 sub 4 length | L835 | [batch 1](notes/2026-11-03-modlog-gaps-batch1.md) §8: subs >= 3 never advance in this DLL (the event stalls); `event_ops.rs` was right |
+| Ops 46 sub 2, 69 / 6a, units of 1f | L835 | [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §1: 0x46 sub 2 queries the follow camera; 0x69 / 0x6a are sound volume / fade (ours matches); 1f in thousandths, speed in units / s |
+| Scheduler task restart on a type-1 op | L1266 | [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §2 (FUN_10057c20: list C byte 1 or +0x141; ours matches) |
+| Party requests: own +0x124 bits 22 / 23 | L10906, L10933 | [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §6: Away / Anonymous; /prcmd add refusal in PR #131 |
+| rem4line: which rows lose their mark | L17291 | [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §7; PR #133 |
+| Select screen: Escape in a prompt; "Connecting to the server..." | L2799, L2832 | [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §8; PR #132 (Escape = No only in the settings-file prompts; the line is ours, retail's nearest is group 8 id 3) |
+| Actor collision: the object id skip | L2694 | [batch 1](notes/2026-11-03-modlog-gaps-batch1.md) §3: the loaded sub-area id; already built in `dat/collision.rs` |
+| Storage / item lists: the equipped linkshell row | L5403 | [batch 1](notes/2026-11-03-modlog-gaps-batch1.md) §2; PR #130 (grey in storage, green in item lists) |
+| Help Desk faqmain: the language row | L10322 | [batch 1](notes/2026-11-03-modlog-gaps-batch1.md) §6: dormant in this build (never drawn or selectable); nothing to build |
+| conf6win's key-reset prompt | L4631 | [batch 1](notes/2026-11-03-modlog-gaps-batch1.md) §5; PR #127 |
