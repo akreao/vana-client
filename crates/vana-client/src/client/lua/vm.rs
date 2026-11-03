@@ -21,12 +21,20 @@ const SOFT_CAP: Duration = Duration::from_millis(2);
 const ERROR_LIMIT: usize = 20;
 const ERROR_WINDOW: Duration = Duration::from_secs(60);
 
-/// The prelude: sleeping yields our token, so the scheduler can tell its own yields from a mod's.
+/// The prelude: sleeping yields our token, so the scheduler can tell its own yields from a mod's. A `__gc`
+/// finalizer runs with hooks off (lgc.c GCTM), out of the budget's reach, so setmetatable refuses one.
 const PRELUDE: &str = r#"
 local token = ...
 function sleep(seconds) return coroutine.yield(token, "sleep", seconds or 0) end
 function sleep_frames(n) return coroutine.yield(token, "frames", n or 1) end
 function wait_until(test, timeout) return coroutine.yield(token, "until", test, timeout) end
+local setmt, rawget, type, error = setmetatable, rawget, type, error
+function setmetatable(t, mt)
+  if type(mt) == "table" and rawget(mt, "__gc") ~= nil then
+    error("setmetatable: __gc finalizers are not allowed (they would run outside the time budget)", 2)
+  end
+  return setmt(t, mt)
+end
 "#;
 
 /// Where a mod's files come from: its folder, or the binary (a bundled mod, assets/mods).
@@ -36,17 +44,43 @@ pub(super) enum Source {
     Bundled(&'static [(&'static str, &'static str)]),
 }
 
+/// A file under the mod's folder `d`: a relative path, and no link below `d` (one could lead outside it).
+pub(super) fn inside(d: &std::path::Path, rel: &str) -> std::io::Result<PathBuf> {
+    let refuse = |why: &str| std::io::Error::new(std::io::ErrorKind::PermissionDenied, format!("{rel:?}: {why}"));
+    let mut p = d.to_path_buf();
+    for part in rel.split(['/', '\\']) {
+        match part {
+            "" | "." => continue,
+            ".." => return Err(refuse("outside the mod's folder")),
+            s if s.contains(':') => return Err(refuse("not a relative path")),
+            s => p.push(s),
+        }
+        if std::fs::symlink_metadata(&p).is_ok_and(|m| m.file_type().is_symlink()) {
+            return Err(refuse("a link, which could lead outside the mod's folder"));
+        }
+    }
+    Ok(p)
+}
+
 impl Source {
     pub fn read(&self, rel: &str) -> std::io::Result<String> {
         match self {
-            Source::Dir(d) => std::fs::read_to_string(d.join(rel)),
+            Source::Dir(d) => std::fs::read_to_string(inside(d, rel)?),
             Source::Bundled(files) => files.iter().find(|f| f.0 == rel).map(|f| f.1.to_string()).ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound)),
+        }
+    }
+
+    /// A file's bytes, text or not (fs.read).
+    pub fn read_bytes(&self, rel: &str) -> std::io::Result<Vec<u8>> {
+        match self {
+            Source::Dir(d) => std::fs::read(inside(d, rel)?),
+            Source::Bundled(files) => files.iter().find(|f| f.0 == rel).map(|f| f.1.as_bytes().to_vec()).ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound)),
         }
     }
 
     pub fn exists(&self, rel: &str) -> bool {
         match self {
-            Source::Dir(d) => d.join(rel).is_file(),
+            Source::Dir(d) => inside(d, rel).is_ok_and(|p| p.is_file()),
             Source::Bundled(files) => files.iter().any(|f| f.0 == rel),
         }
     }
@@ -68,6 +102,12 @@ pub(super) struct Vm {
 pub(super) struct ModState {
     /// Frames this mod has run (sleepers wake in a later frame than they slept).
     pub frame_no: u64,
+    /// Suspended for its errors (the Vm's flag, seen by other mods' calls).
+    pub suspended: bool,
+    /// The character storage file it loaded (saved there even when the client closes without a world).
+    pub char_file: Option<String>,
+    /// Keys it holds down for the game (input.send), let go when it unloads.
+    pub keys_down: Vec<winit::keyboard::KeyCode>,
     pub handlers: Vec<Handler>,
     pub commands: Vec<(String, RegistryKey)>,
     pub timers: Vec<Timer>,
@@ -108,8 +148,6 @@ pub(super) struct ModState {
     pub binds: Vec<super::input::Bind>,
     /// Functions other mods may call (mods.provide).
     pub provided: Vec<(String, RegistryKey)>,
-    /// The mod was suspended (Vm::suspended): other mods can't run its code through mods.call either.
-    pub suspended: bool,
     /// HUD elements (docs/lua-mods.md 4.10) and their click handlers.
     pub hud: Vec<super::hud::Elem>,
     pub hud_handlers: Vec<(String, RegistryKey)>,
@@ -361,7 +399,8 @@ impl Vm {
                         }
                     }
                 }
-                _ => Wake::Frames(it.next().and_then(|v| v.as_integer()).unwrap_or(1).max(1) as u32),
+                // A whole float (2.0) counts as its integer.
+                _ => Wake::Frames(it.next().and_then(|v| v.as_integer().or(v.as_number().filter(|n| n.fract() == 0.0).map(|n| n as i64))).unwrap_or(1).clamp(1, u32::MAX as i64) as u32),
             }
         } else {
             Wake::Frames(1)
@@ -383,6 +422,7 @@ impl Vm {
         let sleepers = std::mem::take(&mut self.st.borrow_mut().sleepers);
         let mut keep = Vec::new();
         let mut due = Vec::new();
+        let mut ended = Vec::new();
         for mut s in sleepers {
             if s.born == frame {
                 keep.push(s);
@@ -395,24 +435,36 @@ impl Vm {
                     *n == 0
                 }
                 Wake::Until(test, limit) => {
-                    let f: Option<Function> = self.lua.registry_value(test).ok();
-                    // The test runs on the game thread too: under a budget, so one that loops can't freeze the frame.
-                    // An error (the budget's included) is recorded, and the wait ends as before.
-                    let passed = f.is_none_or(|f| {
-                        let prev = self.st.borrow_mut().deadline.replace(Instant::now() + FILTER_CAP);
-                        let r = f.call::<bool>(());
-                        self.st.borrow_mut().deadline = prev;
-                        r.unwrap_or_else(|e| {
+                    // The test runs on the game thread: under the filter budget, counted as the mod's time.
+                    let passed = match self.lua.registry_value::<Function>(test) {
+                        Ok(f) => {
+                            let prev = self.st.borrow_mut().deadline.replace(Instant::now() + FILTER_CAP);
+                            let t0 = Instant::now();
+                            let r = f.call::<bool>(());
+                            let mut st = self.st.borrow_mut();
+                            st.deadline = prev;
+                            st.stats.frame += t0.elapsed();
+                            r
+                        }
+                        Err(_) => Ok(true),
+                    };
+                    match passed {
+                        Ok(p) => p || limit.is_some_and(|l| now >= l),
+                        // A test that fails (its budget included) ends the handler.
+                        Err(e) => {
                             self.error(&e);
-                            true
-                        })
-                    });
-                    passed || limit.is_some_and(|l| now >= l)
+                            ended.push(s);
+                            continue;
+                        }
+                    }
                 }
             };
             if ready { due.push(s) } else { keep.push(s) }
         }
         self.st.borrow_mut().sleepers.extend(keep);
+        for s in ended {
+            let _ = self.lua.remove_registry_value(s.thread);
+        }
         for s in due {
             if let Ok(t) = self.lua.registry_value::<Thread>(&s.thread) {
                 self.st.borrow_mut().input = s.input;

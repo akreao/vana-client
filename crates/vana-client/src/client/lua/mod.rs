@@ -67,7 +67,7 @@ pub(super) enum Op {
     Timer { mod_id: String, name: Option<String>, secs: Option<f32>, section: usize, group: Option<String>, icon: Option<(String, u16)>, total: f32, fills: bool },
     /// A lobby action (sign in, play a character), for the app before login.
     Lobby(lobby::Act),
-    /// A recording started (file, frames a second) or stopped by this mod (client.record / stop_recording).
+    /// A mod's recording started (file, frames a second) or stopped (client.record).
     Record(String, Option<(std::path::PathBuf, u32)>),
 }
 
@@ -152,6 +152,15 @@ fn set_option(w: &mut World, name: &str, v: &serde_json::Value) -> bool {
     true
 }
 
+/// Whether a value suits a switch: a boolean, a number, or a colour ({r, g, b} or false).
+pub(super) fn option_value_ok(name: &str, v: &serde_json::Value) -> Result<(), &'static str> {
+    match name {
+        "cutscene_speed" | "animation_rate" | "send_interval" | "minimap_span" => v.as_f64().map(|_| ()).ok_or("a number"),
+        "clear_colour" | "ambient" => rgb_of(v).map(|_| ()).ok_or("a colour {r, g, b} (0..255), or false"),
+        _ => v.as_bool().map(|_| ()).ok_or("true or false"),
+    }
+}
+
 /// A switch's value now.
 pub(super) fn option(w: &World, name: &str) -> Option<serde_json::Value> {
     use serde_json::json;
@@ -221,8 +230,6 @@ pub struct Host {
     pub(super) open_page: Option<String>,
     /// Window events for the mods' handlers: (mod, window, event).
     ui_events: Vec<(String, String, window::Event)>,
-    /// The last packet of each id each way, shared with every mod (packets.last).
-    pub(super) last: std::rc::Rc<std::cell::RefCell<LastPackets>>,
     /// `/lua watch`: mods reloaded when their files are saved.
     watch: Option<Watch>,
     /// The keys and mouse, shared with every mod (input.held, input.mouse).
@@ -231,6 +238,8 @@ pub struct Host {
     fired: Vec<(String, String, bool)>,
     /// Keys the mods pressed, for the app to hand the game this frame.
     pub(in crate::client) synth: Vec<input::Synth>,
+    /// A mod pressed Enter this frame: a chat line it submits is the mod's, not the player's.
+    pub(in crate::client) synth_enter: bool,
     /// Every loaded mod, for mods.list / call / emit.
     dir: runtime::Shared,
     /// Sounds the mods asked for, for the app's mixer.
@@ -261,10 +270,10 @@ pub struct Host {
     watch_deferred: Vec<String>,
     lobby_screen: Option<&'static str>,
     lobby: lobby::Shared,
-    /// A recording asked for by a mod (taken by the app): started (file, fps) or stopped; and the file being recorded,
-    /// as the app sets it.
+    /// A mod's recording asked for: (the mod, its file and frames a second, or None to stop its own).
     pub(in crate::client) record_req: Option<(String, Option<(std::path::PathBuf, u32)>)>,
-    pub(in crate::client) recording: std::rc::Rc<std::cell::RefCell<Option<std::path::PathBuf>>>,
+    /// The recording running: its mod and file.
+    pub(in crate::client) recording: std::rc::Rc<std::cell::RefCell<Option<(String, std::path::PathBuf)>>>,
 }
 
 impl Drop for Host {
@@ -540,13 +549,13 @@ impl Host {
         let granted: Vec<String> = m.permissions.iter().filter(|p| given.contains(p)).cloned().collect();
         let missing: Vec<String> = m.permissions.iter().filter(|p| !granted.contains(p)).cloned().collect();
         let vm = Vm::new(m, dir, src).map_err(|e| format!("{e:#}"))?;
+        vm.st.borrow_mut().char_file = Self::char_file(w);
         vm.st.borrow_mut().settings = settings;
         vm.st.borrow_mut().granted = granted;
         if !missing.is_empty() {
             let id = vm.manifest.id.clone();
             vm.st.borrow_mut().notices.push(format!("{} asks for {}: allow it on its Extras page (/lua settings {id}) or with /lua grant {id} {}.", vm.manifest.name, missing.join(", "), missing.join(" ")));
         }
-        vm.lua.set_app_data(self.last.clone());
         vm.lua.set_app_data(self.input.clone());
         vm.lua.set_app_data(self.dir.clone());
         vm.lua.set_app_data(self.info.clone());
@@ -585,6 +594,9 @@ impl Host {
         self.filters_dirty = true;
         lend_opt(&vm, w, |vm| vm.emit("unload", ()));
         save(&vm, w);
+        // The keys it held for the game come up.
+        let held = std::mem::take(&mut vm.st.borrow_mut().keys_down);
+        self.synth.extend(held.into_iter().map(|key| input::Synth { key, down: Some(false), ctrl: false, alt: false, shift: false }));
         log::info!("lua mod {} unloaded", vm.manifest.id);
     }
 
@@ -592,6 +604,8 @@ impl Host {
     /// the character's storage and settings.
     fn start(&mut self, w: &mut World) {
         self.started = true;
+        // In the world from here on: the mods loading now may queue world ops.
+        self.lobby.borrow_mut().screen = "world";
         let cfg = crate::config::Config::load();
         let root = mods_dir();
         install_stubs(root.clone());
@@ -621,6 +635,7 @@ impl Host {
         for vm in self.vms.iter().filter(|v| v.manifest.lobby) {
             let data = data_dir().join(&vm.manifest.id);
             let file = Self::char_file(Some(w));
+            vm.st.borrow_mut().char_file = file.clone();
             vm.st.borrow_mut().settings = load_settings(&vm.manifest, &data, file.as_deref());
             let stored = file.map_or(serde_json::Value::Null, |f| read_json(&data.join(f)));
             if let Ok(t) = vm.lua.globals().get::<mlua::Table>("storage")
@@ -890,7 +905,7 @@ impl Host {
 }
 
 /// An error line's colour (BGRA, 0x80 = 1.0: the log's red).
-const ERROR: [u8; 4] = [0x30, 0x30, 0x80, 0x80];
+pub(in crate::client) const ERROR: [u8; 4] = [0x30, 0x30, 0x80, 0x80];
 /// A mod's print line (dim).
 const DIM: [u8; 4] = [0x60, 0x60, 0x60, 0x80];
 
@@ -912,7 +927,8 @@ fn lend_opt(vm: &Vm, w: Option<&World>, f: impl FnOnce(&Vm)) {
 fn save(vm: &Vm, w: Option<&World>) {
     let dir = data_dir().join(&vm.manifest.id);
     let Ok(storage) = vm.lua.globals().get::<mlua::Table>("storage") else { return };
-    for (key, file) in [("account", Some("account.json".to_string())), ("character", Host::char_file(w))] {
+    let char_file = Host::char_file(w).or_else(|| vm.st.borrow().char_file.clone());
+    for (key, file) in [("account", Some("account.json".to_string())), ("character", char_file)] {
         let Some(file) = file else { continue };
         let Ok(t) = storage.get::<mlua::Value>(key) else { continue };
         let mut skipped = Vec::new();
@@ -1168,6 +1184,12 @@ pub(super) enum From {
     Mod,
 }
 
+/// A /lua line, as the host reads one (any number of leading slashes, any case).
+pub(super) fn lua_line(line: &str) -> bool {
+    let line = line.trim();
+    line.starts_with('/') && line.trim_start_matches('/').split_whitespace().next().is_some_and(|w| w.eq_ignore_ascii_case("lua"))
+}
+
 /// A line from a mod or a mod's bind, run as typed. Lines for the mods are queued here with their source, so that
 /// textcmd::run never takes them as the player's (it trims the line the same way, so the check matches).
 pub(super) fn run_line(w: &mut World, line: &str, mode: super::textcmd::Mode, from: From) {
@@ -1180,7 +1202,7 @@ pub(super) fn run_line(w: &mut World, line: &str, mode: super::textcmd::Mode, fr
 }
 
 /// The file the app is recording, shared with the mods (client.recording).
-pub(super) struct Recording(pub std::rc::Rc<std::cell::RefCell<Option<std::path::PathBuf>>>);
+pub(super) struct Recording(pub std::rc::Rc<std::cell::RefCell<Option<(String, std::path::PathBuf)>>>);
 
 /// What the lobby mods asked of the app this frame.
 #[derive(Default)]
@@ -1208,6 +1230,17 @@ pub(in crate::client) fn lobby_frame(host: &mut Host, view: lobby::View) -> Lobb
     host.watch_upkeep(None, &mut lines);
     let events = std::mem::take(&mut host.events);
     let emitted = std::mem::take(&mut host.dir.borrow_mut().emitted);
+    // The bus works in the lobby too; a message for a named character waits for nobody here.
+    let multibox = |v: &Vm| v.suspended.is_none() && v.st.borrow().granted.iter().any(|g| g == "multibox");
+    if host.ipc.is_none() && host.vms.iter().any(multibox) {
+        host.ipc = ipc::Bus::open();
+    }
+    let msgs: Vec<ipc::Msg> = host.ipc.as_ref().map(|b| b.rx.try_iter().collect()).unwrap_or_default();
+    for (m, from, _, text) in msgs.into_iter().filter(|m| m.2.is_empty()) {
+        if let Some(vm) = host.vms.iter().find(|v| v.manifest.id == m && multibox(v)) {
+            lend_opt(vm, None, |vm| vm.emit("ipc_message", (text.clone(), from.clone())));
+        }
+    }
     for vm in host.vms.iter().filter(|v| v.suspended.is_none()) {
         lend_opt(vm, None, |vm| {
             for (_, name, args) in emitted.iter().filter(|e| e.0 != vm.manifest.id) {
@@ -1252,6 +1285,11 @@ pub(in crate::client) fn lobby_frame(host: &mut Host, view: lobby::View) -> Lobb
             match op {
                 Op::Key(k) => out.keys.push(k),
                 Op::Lobby(a) => out.acts.push(a),
+                Op::Ipc(mod_id, to, text) => {
+                    if let Some(b) = &host.ipc {
+                        b.send(&mod_id, "", to.as_deref(), &text);
+                    }
+                }
                 Op::Print(text) | Op::Chat { text, .. } => log::info!("lua mod {}: {text}", vm.manifest.id),
                 _ => log::debug!("lua mod {}: not in the lobby", vm.manifest.id),
             }
@@ -1313,7 +1351,7 @@ fn apply(w: &mut World, gu: Option<&super::game_ui::GameUi>, op: Op) {
         Op::Interface(show) => w.ui_hidden = !show,
         // In the world there is no lobby to act on.
         Op::Lobby(_) => {}
-        Op::Record(owner, r) => w.lua.record_req = Some((owner, r)),
+        Op::Record(m, r) => w.lua.record_req = Some((m, r)),
         Op::CameraDistance(k) => super::camera::set_distance(w, k),
         Op::Camera(speed, max, battle) => super::camera::set_mod(w, speed, max, battle),
         Op::Sound(s) => w.lua.sounds.push(s),
@@ -1486,7 +1524,51 @@ mod tests {
         assert!(e.to_string().contains("suspended"), "{e}");
     }
 
-    /// Injected and hook-built packets carry a size field that matches their bytes, and none overflows it (issue #69).
+    /// A `__gc` finalizer would run with the budget hook off: setmetatable refuses one.
+    #[test]
+    fn setmetatable_refuses_gc() {
+        let vm = Vm::new(manifest::Manifest::default(), PathBuf::from("."), vm::Source::Dir(PathBuf::from("."))).unwrap();
+        let e = vm.lua.load("setmetatable({}, {__gc = function() while true do end end})").exec().unwrap_err();
+        assert!(e.to_string().contains("__gc"), "{e}");
+        vm.lua.load("assert(getmetatable(setmetatable({}, {__index = {}})))").exec().unwrap();
+    }
+
+    /// require and the mod's own files stay in its folder: no leading dot, no link below the folder.
+    #[cfg(unix)]
+    #[test]
+    fn mod_files_stay_in_the_folder() {
+        let base = std::env::temp_dir().join(format!("vana-lua-own-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (dir, out) = (base.join("mod"), base.join("out"));
+        std::fs::create_dir_all(dir.join("lib")).unwrap();
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::write(dir.join("lib/ok.lua"), "return 1").unwrap();
+        std::fs::write(out.join("evil.lua"), "return 2").unwrap();
+        std::os::unix::fs::symlink(&out, dir.join("linked")).unwrap();
+        let vm = Vm::new(manifest::Manifest::default(), dir.clone(), vm::Source::Dir(dir.clone())).unwrap();
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        assert_eq!(vm.lua.load("return require('lib.ok')").eval::<i64>().unwrap(), 1);
+        for code in ["require('.tmp.evil')", "require('linked.evil')", "require('lib\\..\\x')"] {
+            assert!(vm.lua.load(code).exec().is_err(), "{code} was allowed");
+        }
+        assert!(vm.src.read_bytes("linked/evil.lua").is_err());
+        assert!(vm.src.read_bytes("lib/../../out/evil.lua").is_err());
+        assert!(!vm.src.exists("linked/evil.lua"));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A /lua line as the host reads one, whatever its spaces, slashes or case.
+    #[test]
+    fn lua_lines() {
+        for l in ["/lua grant x exec", " /lua grant", "//LUA run x", "\t/Lua"] {
+            assert!(lua_line(l), "{l:?}");
+        }
+        for l in ["/luax", "/echo /lua", "lua grant", ""] {
+            assert!(!lua_line(l), "{l:?}");
+        }
+    }
+
+    /// Injected and hook-built packets carry a size field that matches their bytes, and none overflows it.
     #[test]
     fn packet_sizes_fit_the_header() {
         // A whole sub-packet with a wrong size field gets the right one; the data is padded to a word.
@@ -2119,12 +2201,6 @@ fn save_grants(g: &serde_json::Map<String, serde_json::Value>) {
     }
 }
 
-/// The last packet of each id seen each way (packets.last), shared by every mod.
-#[derive(Default)]
-pub(super) struct LastPackets {
-    pub incoming: std::collections::HashMap<u16, Vec<u8>>,
-    pub outgoing: std::collections::HashMap<u16, Vec<u8>>,
-}
 
 /// A sub-packet's id from its header (9 bits).
 fn packet_id(data: &[u8]) -> u16 {
@@ -2144,21 +2220,25 @@ pub(super) fn fit(mut data: Vec<u8>) -> Vec<u8> {
 /// original and the current bytes, whether it was blocked by an earlier hook, and whether it was injected. The
 /// packet's bytes after them, or none when blocked.
 fn chain(host: &Host, w: &World, data: Vec<u8>, injected: bool, outgoing: bool) -> Option<Vec<u8>> {
-    let id = packet_id(&data);
     let original = data.clone();
+    // A hook may change the id: the later hooks are matched against the packet as it is then.
+    let mut id = packet_id(&data);
     let (mut cur, mut blocked) = (data, false);
     for vm in host.vms.iter().filter(|v| v.suspended.is_none()) {
-        let funcs: Vec<mlua::Function> = {
+        let funcs: Vec<(Option<u16>, mlua::Function)> = {
             let st = vm.st.borrow();
             let hooks = if outgoing { &st.hooks_out } else { &st.hooks_in };
-            hooks.iter().filter(|h| h.1.is_none_or(|i| i == id)).filter_map(|h| vm.lua.registry_value(&h.2).ok()).collect()
+            hooks.iter().filter_map(|h| vm.lua.registry_value(&h.2).ok().map(|f| (h.1, f))).collect()
         };
         if funcs.is_empty() {
             continue;
         }
         let write = vm.st.borrow().granted.iter().any(|g| g == "packets.write");
         lend(vm, w, |vm| {
-            for f in funcs {
+            for (want, f) in funcs {
+                if want.is_some_and(|i| i != id) {
+                    continue;
+                }
                 let p = (|| -> mlua::Result<mlua::Table> {
                     let t = vm.lua.create_table()?;
                     t.set("id", id)?;
@@ -2185,6 +2265,7 @@ fn chain(host: &Host, w: &World, data: Vec<u8>, injected: bool, outgoing: bool) 
                             vm.error(&mlua::Error::runtime(format!("a packet is at most 508 bytes ({} returned): kept as it was", b.len())));
                         } else if b.len() >= 4 {
                             cur = fit(b);
+                            id = packet_id(&cur);
                         }
                     }
                     Ok(_) => {}
@@ -2202,8 +2283,7 @@ pub(super) fn packets_in(w: &mut World, packets: Vec<crate::net::map::session::S
     let injected: Vec<Vec<u8>> = host.vms.iter().flat_map(|v| std::mem::take(&mut v.st.borrow_mut().inject_in)).collect();
     let all = packets.into_iter().map(|p| (p.sync, p.data, false)).chain(injected.into_iter().map(|d| (0, d, true)));
     for (sync, data, inj) in all {
-        let id = packet_id(&data);
-        host.last.borrow_mut().incoming.insert(id, data.clone());
+        w.net.stats.keep_last(false, &data);
         if let Some(d) = chain(&host, w, data, inj, false) {
             out.push(crate::net::map::session::SubPacket { id: packet_id(&d), sync, data: d });
         }
@@ -2218,8 +2298,7 @@ pub(super) fn packets_out(w: &mut World, packets: Vec<Vec<u8>>) -> Vec<Vec<u8>> 
     let injected: Vec<Vec<u8>> = host.vms.iter().flat_map(|v| std::mem::take(&mut v.st.borrow_mut().inject_out)).collect();
     let mut out = Vec::new();
     for (data, inj) in packets.into_iter().map(|d| (d, false)).chain(injected.into_iter().map(|d| (d, true))) {
-        let id = packet_id(&data);
-        host.last.borrow_mut().outgoing.insert(id, data.clone());
+        w.net.stats.keep_last(true, &data);
         if let Some(d) = chain(&host, w, data, inj, true) {
             out.push(d);
         }
@@ -2237,7 +2316,8 @@ impl Host {
             fin |= !st.hooks_in.is_empty();
             fout |= !st.hooks_out.is_empty();
         }
-        let flags = if fin { super::net::HOOK_IN } else { 0 } | if fout { super::net::HOOK_OUT } else { 0 };
+        let last = self.vms.iter().any(|v| v.suspended.is_none() && v.st.borrow().granted.iter().any(|g| g == "packets.read"));
+        let flags = if fin { super::net::HOOK_IN } else { 0 } | if fout { super::net::HOOK_OUT } else { 0 } | if last { super::net::HOOK_LAST } else { 0 };
         w.net.hooks.store(flags, std::sync::atomic::Ordering::Relaxed);
     }
 }

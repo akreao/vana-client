@@ -17,7 +17,8 @@ New entries go in `docs/modlog/` as one file each and are folded in here later (
 - Native install verified: 61349 files, 13.37 GiB, all MsiFileHash MD5s match, ~30 s.
 
 ## Auth (xi_connect, TCP 54231)
-- TLS 1.3. Server cert is X.509 v1 (webpki rejects it); no verification, as xiloader.
+- TLS 1.3. LSB's server certs are self-signed X.509 v1 (webpki rejects them): RSA-4096 on the login port, P-256 for
+  xi_profile, SHA-384. xiloader checks nothing; ours checks them (see "TLS: certificates checked or pinned").
 - JSON in, JSON out. Must send `"version": [2,2,x]`. Login reply: `result` 1, `account_id`,
   `session_hash` as a 16-int array. Verified live (account 1000 created via command 0x20).
 
@@ -1904,6 +1905,11 @@ From the research notes:
   DAT_10443fe4 +0x2c x _DAT_1031f864, asm ~0x100a5360) and the move follows it; no input and |vector| <= 0.001 ends it,
   so Num7 standing still does nothing. With Q / E turning while on, forward is forced and the turn acts as X input.
   Forced off in statuses 2, 3, 6, 7, 0x21, 0x26..0x2c, 0x2f, 0x30, 0x32..0x35, 0x38..0x53 and events.
+- /follow's stop (FUN_100a79a0, free camera, cur 30261006): the autorun vector is the unit direction to the target;
+  when the horizontal distance less both radii (FUN_100aaef0) is under 0 the step is DAT_10487f8c instead *(inf:
+  zero)*, so you stand just behind the target and the follow stays on. Ours did not stop (ran onto the target) until
+  2026-11-02. Live (Lnxcsfix following the bot Shanri, Mhaura): stopped 0.81 short and stood. Standing exactly on the
+  target there is no direction and the follow ends (retail's |vector| <= 0.001 test).
 - Q / E (0xaa / 0xa9, keyboard type 2, free camera, X input 0, camera axes idle): player yaw += ticks x 0.0174528 x
   1.57075 x (E - Q) (_DAT_10322260 = 1.57075; 94 degrees a second); the camera turns with it (FUN_1001d4c0).
 - Face-camera 0x9c (LShift held, type 2, free): the player faces the camera yaw, so A / D strafe; camera axes and Q / E off.
@@ -1927,6 +1933,14 @@ From the research notes:
   Y the other way (2026-11-02), so ours now follows that *(inf: our reading of the Z rotation's sense or of the mode-5
   axis in first person is off somewhere)*. Screen-edge panning (FUN_10120fc0, 0x8f = 0) feeds the same
   axes while a window is up or outside the field.
+- Ours (user, 2026-11-02; not retail): Mouse/Cam. (conf7) gets a sixth group, Camera Keys, under First-Person Camera:
+  rows Y Axis / X Axis (retail's captions), options Same (the camera rows above, keys and mouse alike, as retail),
+  Normal, Inverted for the camera keys alone in both views; the mouse keeps the rows above. Classic: virtual children
+  110..115 (configui Act::CamKeys), the frame 60 taller, the group drawn as the page's (465's bullet at 20, heading and
+  row captions at 33, 64-px buttons from x 78, 68 apart, rows at 262 / 282, markers 412); First Person's X row Down
+  reaches it, Up from Mouse Control. Modern: the same controls on its Mouse/Cam. page. Kept in config.json
+  cam_keys_x / cam_keys_y. Retail's Key Assignment cannot bind the arrow
+  keys (FUN_101a7c20's table holds only character keys; arrows, Enter and the modifiers are passed over in silence).
 
 ### Free camera (FUN_1001e030 free branch; client/camera.rs; traced by a sub-agent from all.c 22024..22887)
 - State: eye (camera +0x44) and look (+0x50) only; +0x48 is the eye's y. One state serves the free, locked and first
@@ -2198,6 +2212,16 @@ From the research notes:
   61-tick slide never ends between updates: live trace (FFXI_TRACE_MOVE=1) shows a rabbit at a steady 2.1-2.4 u/s,
   ratio 0.53-0.59, no stops (scratchpad hud/mvstat.py on h4_mv101.log). Rates are applied per 1/60 tick with powf so
   they hold at any frame rate *(inf: retail assumes one tick a frame or more)*.
+- PCs (s2c 0x00D, the call at 0x1009875b) slide by the same rule as NPCs (0x00E, 0x1009a2c6): u16 @0x18 & 0x1fff into
+  FUN_1008b610. LSB fills it from the player's c2s 0x015 @0x12 (MoveFlame, 0x015_pos.cpp) and from pathfind for
+  NPCs and bots (+0x35 a step, +0x28 with a speed change, WarpTo 0).
+- c2s 0x015 @0x12 (FUN_10096c00, built every frame): while the actor moved this frame (actor +0xf8) the frame's ticks
+  (FUN_10014000, at least one) add to +0x1b4 and the sum is sent; standing, the frame's ticks plus +0x1b4 are sent and
+  +0x1b4 clears. Ours sent 0 / 1 until 2026-11-02, so other clients slid us 8 or 9 ticks after each 400 ms update and
+  then stood: stop and go. Ours now counts 60 Hz time (not a tick a frame) and keeps it under 0x2000.
+- Live trace 2026-11-02 (FFXI_TRACE_MOVE=1 logs every PC update as "pcupd"): LSB bots walking on their own arrive
+  every ~0.4 s with +53 and slide smoothly; a bot following its party leader arrived with counters 0 / 1 (moved in
+  small jumps, a WarpTo sets 0; where the 1 comes from was not found in LSB), so it is stop and go in any client.
 - Ground: NPC ids without u32 @0x18 bit 15 and kind (@0x30 & 7) not 2 / 3 follow the collision floor every frame
   (FUN_1008dfb0 entity level, FUN_1017a400: a ray from y - 2 down 50, else from y + 2 up 15, nearest hit to the
   start, all faces). Before, only packets snapped, and monsters spawned before the zone loaded kept LSB's navmesh y
@@ -4197,9 +4221,10 @@ needs FixVt.java after analysis (3,478 vtable-only methods, 17,877 functions in 
   bits 49 / 50, hold bits 9 / 10. conf11s 0x10379ef8..: window-mask bits 12 / 13. Font Colors 0x10379b50..: 13
   rows in category 0, new config ids 0xcb / 0xcc. k1assign 0x1037a128 (labels only), k2assign 0x1037a218: 29 rows,
   row 28 = key function 0xb4, config 0x86, default DIK 0x10. fxfilter labels from 153; yes/no text 0x8f.
-- Misc. 4 (FUN_1019bdd0): children 4 / 5 / 6 set 0xce = 1 / 2 / 0, 1 and 2 kept only while FUN_101bced0() > 0
-  (inferred: a gamepad count). configwi row 13 and lobycwin child 13 start the external gamepad config tool
-  (FUN_101bcb60): not done.
+- Misc. 4 (FUN_1019bdd0): children 4 / 5 / 6 set 0xce = 1 / 2 / 0, 1 and 2 kept only while FUN_101bced0() > 0:
+  the chat word filter's lists loaded (FUN_101bd820: prohibited.txt / allowed.txt), not a gamepad count (corrected
+  2026-11-03). configwi row 13 and lobycwin child 13 start the external gamepad config tool (FUN_101bcb60, see
+  "Gamepad"): not done; ours sets the pad in Settings and config.json.
 - Title music: SEQUENCE 0x10351718 adds (34, 7740, 108); FUN_102455a0 adds (bit 0, entry 6); TITLE_MODE 0x1033cc48
   8 entries. FUN_100377a0: newest = pick 5, random = timeGetTime % 6. lobycwin child 12 = track 7.
 - Chat: /assistj /aj /assiste /ae (list 0x1037ade8), 0x0B5 kinds 0x22 / 0x23 (FUN_10078be0 / FUN_10078d80; the name
@@ -6903,7 +6928,7 @@ More in "UI sounds and window animations along the menu chain".
 - Chat line (text engine FUN_101b00b0): Enter 0002, Escape 0003. The full log's Escape 0003.
 - Map menu (map0), Mog House door menu, macro palette: the generic handler's 0001 cursor / 0002 Enter / 0003
   Escape. Ctrl / Alt + H (key 0x3d): 0002 before /heal.
-- Not done: the tell sound "0p40" (not resolved); the `<call>` sounds 0017..0023.
+- Not done: the `<call>` sounds 0017..0023. The tell sound: see "<ncall> / <scall>" below (ours plays 0017).
 
 ## Skillchains: the burst file, the proc message, load holds by count (2026-10-24)
 
@@ -7419,8 +7444,10 @@ From the research notes:
   argument: FUN_10127ab0 for ncall (the "(name)" in the line is us, or stands within 4 units: dx^2 + dz^2 < 16), 0 for
   scall, 1 for call. That byte (+0x3c) only sets a blink (DAT_10455c20 +0xdbc, +0xdb4 += 0x3c) while DAT_10351710 is on
   (FUN_100381d0) *(inf: a window flash)*; the sound plays for all three. Ours plays all three (2026-10-26).
-- Tell (mode 0x0c) with config 0x47: SeSep "0p40" (0x30703430 byte-swapped), in no resident DAT (0, 27, 52743),
-  so retail finds nothing either *(inf)*; not played.
+- Tell (mode 0x0c, a received one) with config 0x47 (Chat Filters' Tell "+icon" states, on by default): FUN_10127990
+  names SeSep "0p40" (0x30703430, byte-swapped as DAT_1036eba0's names: "7100" there is 0017). FUN_100380f0 looks it
+  up among the loaded type-0x3d resources (FUN_10072290) and no DAT of the 30261006_0 install holds one (every file
+  scanned, 2026-11-03), so retail plays nothing. Ours (2026-11-03): the <call> sound, 0017.
 
 ## Engaged menu: Check through the prompt, Conflict rows, Call for help block (2026-10-24)
 
@@ -16188,7 +16215,10 @@ From the research notes:
 - /map (FUN_1007d2c0) and the Map row (FUN_101f7810(0)) have no Mog House check: there they open ZoneNo's map, the
   city's, and LSB answers Wide Scan with the zone's entities. The minimap and the Wide Scan list show the city in the
   Mog House as retail would.
-- The Wide Scan flyout's filter (ours): kind toggles (config modern_scan_kinds) and a name field.
+- The Wide Scan flyout's filter (ours): kind toggles (config modern_scan_kinds) and a name field. No players toggle
+  (2026-11-03): LSB's CZoneEntities::WideScan (zone_entities.cpp) walks only the zone's NPC and mob lists, so no
+  player (nor pet or trust) is ever listed, and its 0x0F4 leaves the name empty; a player row a server sends still
+  shows.
 - The receive Delivery Box shows the look-only inventory list (equipped items grey) beside post1 / post2
   (FUN_1014ce80); seen live in modern with the moogle panel stepped right of it.
 - Rest ticks (ours, user 2026-10-27; client/resttick.rs): LSB's /heal (c2s 0x0E8) adds the Healing effect with a 10 s
@@ -20379,3 +20409,324 @@ Lessons from other games' mod layers (BG3 Script Extender, WoW, Skyrim, Factorio
 - Live: a committed 日本語 (script step `ime:`) in both UIs, sent with /echo and printed in the game font and the modern
   one. A real composition (preedit and candidate window from a Japanese input method) not tried.
 
+## DAT parsers: malformed files are errors (ours, 2026-11-02)
+
+- A corrupt DAT (from the install or a mod pack) could panic or abort the client; found by fuzzing. Now errors in
+  event::parse (a block count past the size table reserved up to 77 GB), zone::parse_mmb (offset table read past the
+  end), zone::parse_mzb (short header, records past the end), zone::light_list (read before its length check),
+  zone::parse_rid (a bad count looped up to u32::MAX times), character::parse_skeleton (short chunk),
+  title::parse_ops (ops too short for their argument come out as Other), ui::parse_sprite_lib (sprite count cut),
+  sched::loops (an offset below 0x10 wrapped) and the counts that sized allocations in autotrans, dialog and names
+  (d_msg). zone::decode_mzb and zone::decode_mmb need their 8-byte header.
+- title::Title::parse: a camera path (kind 0x06: 0x20 header bytes, then 0x30 per key) whose key count runs past its
+  chunk is skipped with a warning; the file's other paths and schedulers still load. Every 0x06 chunk of the
+  30261006_0 install (1,393 files, 82,563 chunks) is exactly 0x20 + 0x30 * keys long. A path with no keys (title
+  flyover, eventdump, the title dump) is skipped instead of sampled.
+- Files that parsed before parse the same. dat/fuzz.rs runs about 50 parsers on 4000 random and chunk-shaped
+  inputs each (plus each chunk's payload) and fails if any panics or aborts; new parsers go on its list.
+
+## Message formatter: loops stop (ours, 2026-11-02)
+
+- FUN_10153310 (30261006_0) follows the jump codes 0x84..=0x8a to `p + 4 + (signed byte)` with no check, so a string
+  whose jump goes back to or before itself (`A FA 40 84 FB`) loops for ever there too; only the caller's output
+  buffer bounds what it writes.
+- msgfmt::format (ours): where the formatter goes next depends only on the position, the compare flags and the
+  choice end (`ints` and `strs` never change), so after each backward jump it records that state and stops at the
+  first repeat, returning the output so far. A string that ends never repeats a state, so strings format as before.
+
+## Map session: unreadable datagrams (2026-11-02)
+
+- FUN_100f76b0 (2019 build) reads each datagram through FUN_100dad80: 0 is an MD5 mismatch (FUN_100f7a40(2), slot 0),
+  below 0 a size or decompress failure (FUN_100f7a40(3), slot 1). Either way the datagram is dropped and the session
+  goes on. Only a datagram that reads counts its bytes (FUN_100f9b90 in the > 0 branch), as net/map/session.rs now
+  does for the Network window.
+- Ours: the first 40 drops per session are logged, and 50 unreadable datagrams in a row end the session with the
+  reason. LSB resends a datagram we have not acked (map_networking.cpp), so a single drop is recovered.
+
+## Server replies: size limits (ours, 2026-11-02)
+
+- Lobby (net/lobby.rs): a reply shorter than its packet needs is an error, not a panic: 0x05 needs 0x28 bytes, 0x0B
+  0x48, 0x03 0x20, a refusal 0x24 (code at 32..36), 0x20 / 0x23 at least 32 (LSB view_session.cpp,
+  data_session.cpp). Replies are at most 0xB68 bytes.
+- xi_connect (net/auth.rs): the JSON reply is read up to 64 KiB.
+- xi_profile (net/profile.rs): an answer is at most 0x400000 + 0x1000 bytes (LSB's ReadFile fileSizeLimit 0x400000
+  plus its checksum; the mailbox is capped at kMailboxLimit 100 messages of 0x108 bytes); an IRC line at most 64 KiB.
+
+## Lua mods: the /lua gate, budgets and paths (ours, 2026-11-02)
+
+- /lua grant, revoke, run, set and watch run only from the player's own line (the chat line, a macro the player ran).
+  A mod's line reached textcmd::run untrimmed, so `commands.run(" /lua grant <own id> exec")` or a bind line with a
+  leading space passed as the player's. lua::run_line trims a mod's line first and queues a line for the mods with
+  its source (Op::Run, bind lines, a macro started by actions.macro: Macros::start_for_mod, a chat line submitted by
+  an Enter a mod pressed: Host::synth_enter). actions.macro_edit refuses a /lua line (lua::lua_line: any leading
+  slashes, any case), since the player runs macros. A bind's text is trimmed as stored.
+- wait_until: the test runs on the game thread each frame, under FILTER_CAP (20 ms), with the deadline it found
+  restored after and its time added to the mod's frame time. A test that errors or runs past the budget ends the
+  handler with that error (it was resumed as passed, the error dropped).
+- The mod's own files (vm::inside, for require, fs.read's fallback, fs.exists, fs.list, audio.play, hud images and
+  chat.icon): a relative path, no `..` or `:` part, and no symbolic link (or junction) below the mod's folder; the
+  folder itself may be a link. require refuses a name with `..`, `\` or `:`, or starting with `/` or `.` (a leading
+  dot made `/tmp/evil`). The mod-data side (runtime::no_links) checks from mod-data down; mod-data may be a link.
+- `__gc`: lgc.c GCTM runs a finalizer with `L->allowhook = 0`, out of the budget hook's reach, so a finalizer that
+  loops hangs the client when the object is collected or the mod unloads. The prelude's setmetatable refuses a
+  metatable with a raw `__gc` field (lua_setmetatable marks an object for finalization only when the field is there
+  at that call).
+- mods.call refuses a suspended mod ("mods.call: X is suspended"). An injected whole packet goes through `fit` (padded
+  to a word, its size field set).
+
+## Lua mods: string patterns keep to the time budget (ours, 2026-11-02)
+
+- C's lstrlib matcher runs no VM instructions, so the count hook (every 10,000 instructions) never fires while it
+  backtracks: `string.find(string.rep('a', 40000), '^.-.-b')` takes about 3.6 s (n squared), unanchored much longer;
+  C's plain find (lmemfind) is quadratic too.
+- client/lua/pattern.rs is a port of lstrlib.c 5.4's find / match / gmatch / gsub, function by function, checked
+  against the vendored lstrlib in tests (fixed cases and 4000 random patterns). Every 4096 units of work (a match
+  step, a pattern byte of a set, an output push, 256 bytes of a back-reference compare or of output) it checks the
+  mod's deadline: past it the call fails with "ran past its time budget". A plain find is a linear search (memmem).
+- The four are C closures (`raise`) over their Rust halves: a failure comes back as values and is raised there as
+  lstrlib raises it, so the error is a string, luaL_where's position at the caller's line (kept under a tail call,
+  as for any C function), argument errors through luaL_argerror (the name as called, a method's self). An error of a
+  replacement function passes on as its message (mlua's traceback cut off); a non-string error value becomes its text
+  (C keeps the value). gsub's output is held to what is left of the mod's 64 MB.
+
+## TLS: certificates checked or pinned (ours, 2026-11-02)
+
+- net/tls.rs: the handshake signature is checked against the key of the certificate sent (its SubjectPublicKeyInfo
+  read from the DER by hand, v1 or v3; rustls verify_tls13_signature_with_raw_key): TLS 1.3 only, no PKCS#1, SHA-1 or
+  SHA-224 schemes.
+- The certificate is first checked against the public authorities (webpki-roots). One that passes is accepted and
+  the server is pinned as authority-signed, so a self-signed certificate is refused there later. One that doesn't
+  (LSB's self-signed v1) is pinned by the SHA-256 of its key at the first connection; a later one with another key is
+  refused before anything is sent. A learned key pin gives way to an authority-signed certificate; a fixed one (set
+  with `trust-server --fingerprint`) does not.
+- known_servers.json ("host:port" to {"trust": "authority"} or {"trust": "key", "sha256", "fixed"}) is in the data
+  folder, or beside an FFXI_CONFIG copy. One that doesn't read is renamed .bad and the pins learned again; a pin that
+  can't be written is logged and the login goes on. Saved through a synced temp file named for the process.
+- A pin is recorded under a lock against the store as it is then: if it changed since the connection began (another
+  login thread, or `trust-server` meanwhile), the certificate is judged by the new pin, so a fixed pin made meanwhile
+  is never overwritten by a connection that started before it.
+- `vana-client trust-server HOST [--port P] [--fingerprint F]` forgets the host's pins (every port: an LSB reinstall
+  changes the login port's and xi_profile's 51220 / 51240), or sets a fixed key pin.
+- Character names from the server become file names (chat history, regime state) only as letters and digits, and not
+  a Windows device name on Windows; anything else as '_' and the name's bytes in hex.
+- The Friend List's message names (GetFileList, up to 0x100 bytes) are written as files in the mail folder only when
+  the whole name is the 96 digits of a message header (polcore's alphabet has no separator or dot); a longer one
+  could have walked out of the folder on Windows.
+- PlayOnline chat: a short session-key block, routing reply or notice is refused, not sliced out of range; a refusal
+  with bytes that are not UTF-8 before its "(POL " is read from the bytes (a lossy string's index was off by two
+  for each invalid byte).
+
+## Updates: signed releases, pre-release order, manifest paths (ours, 2026-11-02)
+
+- A client release is offered only with "<asset>.sig" beside its asset: the Ed25519 signature, by the release key,
+  of "vana-client release\n<tag>\n<asset name>\n<asset SHA-256 hex>\n" (updater::signed_text), so a signed binary
+  can't come back under a newer tag or as the other platform's. The download is checked before it replaces the
+  running binary, and removed when it fails. The public half is release/signing-key.pub (built in); release/publish.sh
+  signs with the private one (VANA_SIGNING_KEY or ~/.config/vana-client-release/signing.pem), checks it is that key,
+  and refuses a binary that doesn't carry the public half. A newer release with no signature shows "<tag> is not
+  signed; not offered" on the Update window's row; check failures are logged. Clients up to 1.0.2 check nothing.
+- updater::newer: semver order, so "1.2.0-rc1" comes before "1.2.0" (pre-release parts numbers below words,
+  numerically); a +build part is ignored. A pre-release tagged without GitHub's pre-release flag would still be
+  "latest".
+- patch::check_path: a manifest path (plain TCP from the patch server) must be relative, with no empty, "." or ".."
+  part, no colon or control character, no part ending in a dot or space, no Windows device name; parse_manifest
+  refuses the manifest otherwise. Writes go through no symbolic link or junction below the install folder (Rust's
+  is_symlink: name-surrogate reparse tags, so OneDrive folders pass); the folder itself may be a link. None of the
+  49,413 paths of the 30261006_0 manifest is refused.
+- Not taken from the same batch: pinning game code files (.exe / .dll) against a list hashed from the patch server by
+  a scheduled job: the client never runs them, and a missing list broke the first-start install.
+
+## Gamepad (2026-11-03)
+
+From the 30261006_0 decompile; ours in client/gamepad.rs (gilrs for the device), input.rs, target.rs, mod.rs.
+
+- Registry (HKLM ...\SquareEnix\FinalFantasyXI, read once by FUN_10002840; the pad manager DAT_10455c20):
+  padmode000 (FUN_10005490: six flags, [0] 0x10455c34 pad on, [1] force feedback, [2] axis codes 7 / 8 (sliders),
+  [3] 9 / 10 (POV as axes), [4] background input, [5] XInput through xinputdll.dll), padsin000 (FUN_10005130),
+  padexsin000 (FUN_10005320), padguid000 (the device). The DLL holds no default padsin: with none the maps stay
+  empty and the pad does nothing; FFXiPadConfig.exe (FUN_101bcb60 -> FUN_101bccb0: Tools{,US,EU}\FFXiPadConfig.exe
+  -game, unless a "FINAL FANTASY XI GAMEPAD Config" window is up) writes them. Ours: config gamepad (Settings > Client
+  > Gamepad, on by default), gamepad_padsin / gamepad_padexsin in the registry's format (empty: FFXiPadConfig's
+  XInput layout, "8,9,13,12,10,0,1,3,2,15,-1,-1,14,-33,-33,32,32,-36,-36,35,35,6,7,5,4,11,-1,-1,-1,-1,-1,-1").
+- padsin: up to 32 numbers (strtok " ,"), position p to slot by 0x1034f930 (8 9 14 13 10 3 1 0 2 16 25 26 15 23 24 22
+  21 19 20 18 17 6 7 5 4 12 31 32 33 34 35 36). A value under 32 is a button: XInput's virtual numbers (table
+  0x10329810: 0 B, 1 X, 2 Y, 3 A, 4 / 5 / 6 / 7 d-pad right / left / up / down, 8 LB, 9 LT, 10 L3, 11 RB, 12 RT, 13 R3,
+  14 Start, 15 Back), whose pad bit is 1 << slot. 32 and up is an axis on slots 17..24 (sticks) or 4..7 (the d-pad):
+  code |v| - 31, 1 lX, 2 lY, 3 lZ, 4 lRx, 5 lRy, 6 lRz, 7 / 8 sliders, 9 / 10 the POV; negative inverts. With slot 31
+  mapped: DAT_10455c3c = slot 17 on the movement X axis (slot 21), DAT_10455c3b = slot 4 on it; else the stick mode
+  DAT_10455c3e = 0. padexsin is parsed the same into the alternate button map (0x10456048) and sets the two flags
+  too; its axes are never used.
+- Slots by position (role, key functions): 0 slot 8 LB (0x12, 0x15, 0x1c autorun, 0x1f, 0x99), 1 slot 9 LT (0x16,
+  0x21, 0x86, 0x89, 0x9b, 0xa8, 0xaf, 0xb0..0xb3, 0xb5, 0xb6), 2 slot 14 R3 (0x10, 0x7d, 0x98, 0x9b, 0xa7), 3 slot
+  13 RT (0x17, 0x20, 0x85, 0x8a, 0x9a, 0x9b, 0xa8, 0xaf, 0xb0..0xb3, 0xb5, 0xb6), 4 slot 10 L3 (0x30 lock on, 0x44
+  /heal, 0x7e, 0x99, 0x9b, 0xa6), 5 slot 3 B (0x0f, 0x90, 0x92, 0x94, 0x95, 0x9c), 6 slot 1 X (0x18, 0x19, 0x25,
+  0x35, 0x8d), 7 slot 0 A (0x0d, 0x0e, 0x8f, 0x91, 0x93), 8 slot 2 Y (0x11, 0x22, 0x78), 9 slot 16 Back (0x26, 0x2f,
+  0x56), 10 slot 25 (held: the movement stick is the d-pad), 11 slot 26 (held: it is the camera), 12 slot 15 Start
+  (0x13, 0x14), 13 / 14 slots 23 / 24 move forward / back, 15 / 16 slots 22 / 21 move left / right, 17 / 18 slots 19 /
+  20 camera up / down, 19 / 20 slots 18 / 17 camera left / right, 21..24 slots 6 / 7 / 5 / 4 d-pad up / down / left
+  / right (0x00..0x03, 0x27..0x2e, 0x31..0x34, 0xb0..0xb3, 0xb5, 0xb6), 25 slot 12 RB (0x1a, 0x1e, 0x24, 0x98), 26
+  slot 31 (a press steps the stick mode), 27 / 28 slots 32 / 33 (0xb7 / 0xb8), 29 slot 34 (held: the alternate map),
+  30 / 31 slots 35 / 36 (0xb9 / 0xba). The second word (+0x224) holds slots 32..63.
+- FUN_10005a40 each frame: the pad word +0x220 held, +0x228 pressed, +0x230 released, +0x238 repeat; stick bytes
+  +0x250 / +0x251 camera X / Y, +0x252 / +0x253 movement X / Y (0x80 + value). XInput branch (ours follows it):
+  - buttons through the map (the alternate one, for every button but slot 34's own, while slot 34 is held);
+  - thumbs as v x 127 >> 15; axis codes through jump table 0x100077fc from padsin's axis map only (code 3 writes zero,
+    6 and up are skipped); then a button on a stick slot sets ±127 over the axis;
+  - DAT_10455c3b zeroes the d-pad axis values, DAT_10455c3c the camera's;
+  - slot 25 held: the d-pad values = the movement stick and the real d-pad bits (slots 4..7) dropped; else slot 26 or
+    mode 2: the camera = the movement stick; else mode 1: the d-pad = it; the movement stick is then zero;
+  - each stick axis under 42 is zeroed on its own; no rescale and no clamp (the 0x25cd rescale and the clamp to 127
+    are the DirectInput branch's, asm 0x10006753);
+  - the d-pad from its axis values at ±64 (>= 64 right / down, <= -64 left / up);
+  - repeat: +0x248 adds FUN_10014cf0's ticks; past +0x94 (16) the held bits repeat and it drops by DAT_10329990
+    (2): the press, then 18 ticks and every 4 at retail's 2-tick frame (as the keys, "Input layer").
+  - slot 31's press: the mode steps 1, 2, 0, skipping 1 without DAT_10455c3b and 2 without DAT_10455c3c.
+- Ours: the dead zone is round (config gamepad_deadzone, 0.33 = 42 / 127; Settings > Client > Stick Dead Zone): a
+  stick's two axes are zeroed together while its push is under it, where retail's per-axis zeroing snaps a stick
+  within ~19 degrees of an axis onto it (the character turned in jumps). Window arrows from the d-pad repeat on the
+  same 2-tick counter.
+- Windows (FUN_101ab820, while one has the focus): key functions become window events (FUN_1015dd00): d-pad 0x2b /
+  0x2c / 0x2d / 0x2e -> 2 / 1 / 3 / 4, 0x93 A pressed / repeat / released -> 5 / 0x1d / 0x20, 0x94 B -> 6 (0x1e /
+  0x1f held-released), 0x18 X -> 7, 0x11 Y -> 8, 0x1e RB -> 0x11, 0x1f LB -> 0x15, 0x14 Start -> 0x12, 0x86 LT -> 0x0a,
+  0x85 RT -> 0x0b, 0x22 -> 0x0c, 0x24 -> 0x0e, 0x25 -> 0x0f, 0x26 -> 0x10, 0x2f -> 0x13. The generic list
+  (FUN_10118260) takes cursor, confirm and cancel; the rest go to the window's OnKey (vtable +0x18), and only the
+  text-input windows read the others (the software keyboard keypad / keypadus FUN_101af190: RB 0x11 Enter, LB 0x15
+  Backspace; msgline, comment, fep, keyselec / keypad2 / keypad3). Ours: our windows read egui keys, so confirm /
+  cancel / main menu (slots 0 / 3 / 1) also send Enter / Escape / Num-, and the d-pad the arrows with a window or a
+  palette up; LT / RT (0xa8) ride on the arrows as Ctrl (page), both as Alt (0xb5 / 0xb6, the bag switch).
+- Ours: with a window up the pad's LB / RB send Shift+Tab / Tab (and leave the pad word, so LB's 0x1c autorun does
+  not fire), and the modern tabbed windows turn their tabs with them (storage, journal, settings, job points, equip
+  sets, the concierge's filters; World::key_shift is the dispatched key's Shift). Classic windows have no tabs.
+- RB 0x24: outside an event (FUN_1015dce0) it opens the chat line (the chat object DAT_10662d40's vtable 0); with the
+  UI hidden the screenshot state machine (DAT_10663178 state 0) takes it as Print Screen's 0x55 (FUN_101d0ab0).
+  0xb7 / 0xb8 / 0xb9 / 0xba (slots 32 / 33 / 35 / 36, unbound by default): the shut-down prompt, F8's nearest
+  target, /jump, /map. L3: 0x44 /heal (/sitchair, /sit on those objects), 0x30 lock on, 0x7e on the map (eases it
+  back to where we stood when it opened: map::MapWin::home).
+- Field d-pad (table 0x10371ee0 by FUN_101585f0 -> FUN_101587b0: the first entry whose test passes, one a frame, in
+  a target prompt or with no window holding the field): 0xb0, 0xb1, 0xb3, 0xb2 (the ground cursor), 0x91, 0x27 /
+  0x28 (up / down), 0x2a / 0x29 (left / right), ... FUN_101587f0: locked on (+0x5c & 3) with no prompt (+0x59) or
+  party cursor (+0xc4), every command but 1 and 5 does nothing. A command's actor, when not 0, is picked
+  (FUN_10157b40). The target object's +0x60 (include) is 0xffffffff and +0x64 (exclude) 0 with no prompt.
+  - Up / down (FUN_10158b60): needs +0x60 & 4 and a pick. FUN_10203920 steps DAT_106643dc through the 18 slots to
+    the next occupied one, wrapping; every pick of a party member sets it to that slot (FUN_10203520), and a pick
+    outside the party sets it to 0 and steps nothing. Without +0x60 & 8 only our six count (FUN_10203500). Without
+    0x200, landing on us steps once more (us again: nothing); with 0x200, nothing becomes us. The slot it lands on is
+    not checked against +0x64 (FUN_10082fa0 only reads the id).
+  - Left / right (FUN_10158c40): with a pick, the next actor that way in Tab's screen order (FUN_10083d00 /
+    FUN_10083b40 with +0x60 / +0x64), never wrapping; none that way, or no pick: us with +0x60 & 0x200 (always in the
+    field), else nothing.
+- Macro palettes (FUN_101a2e80; the gate FUN_101a33e0: field, no event, no prompt (+0x59) or party cursor (+0xc4),
+  alive, and no window with the focus but playermo / mp_pmode / a palette): LT 0x89 / RT 0x8a pressed opens mcr1pall
+  / mcr2pall, or closes it when it is the one up (the other trigger swaps); held with none up, it opens at the next
+  whole second of the clock (+0x14). A trigger's palette stays up after the release (+0x18) until toggled, run or
+  cancelled; Ctrl / Alt (0x76 / 0x77) open theirs at the next second and close it on release unless it is a pad one.
+  Ours: World::pad_palette / pad_hold; a closed gate closes the palettes *(inf: the windows that close it do)*.
+- Camera (FUN_1001ee60): axes 6 / 7 (keys and stick alike) invert by 0x8b / 0x8c; free or locked, axis 6 turns
+  through FUN_1001ebb0 with the same sign (locked: scaled by 6 / |eye - look|). Ours: target::step_camera's rotation
+  runs opposite to camera::orbit's, so the locked call negates axis 6 (fixed 2026-11-03: locked on, the keys and the
+  stick turned the camera the other way from free). The stick takes the camera rows' sense; our Camera Keys
+  (Mouse/Cam.) only the keys'.
+- Own facing (FUN_100a6240): retail keeps the heading as a float (-atan2 of the step, or the stick turned by the
+  camera yaw) and rounds it only for the position packet. Ours draws from the float (World::my_face) while the byte
+  is still ours; from the byte (1.4 degree steps) a stick's slow turn stepped.
+- The ground-position cursor (Geo- spells): field +0x58 is set only by FUN_1022b850(spell) as the spell record's
+  +0x44 bit 5 (dat::actions::Spell::flags 0x20); the magic list (FUN_1022c7a0) and /magic's prompt (0x1007b7a8) call
+  it; the party-list cursor (FUN_10202d80) zeroes it. The cursor (field +0x10 / +0x14 / +0x18, live while +0x22 is
+  set; World::ground_cursor) starts at the pick on its first move. 0xb0 / 0xb1 / 0xb2 / 0xb3 (LT or RT + d-pad up /
+  down / right / left; Ctrl or Alt + the arrows) move it on the press and repeats: FUN_10159a20 dir (up +z, right +x)
+  x config 0xc4 (1..100, default 10) x the frame's whole ticks (at least 1) x 0.01, turned by atan2(look - eye)
+  (FUN_10159b10). Its height (FUN_10177770 -> FUN_10181210) is the highest collision face from 2 above (0.5 in zone
+  0x95) to 17 below; no hit keeps it. With Ctrl / Alt held FUN_10159ba0 moves it every frame by the movement stick,
+  else the camera stick. A new pick resets it (FUN_10159660), cancel ends it; /magic (0x1007b710) sends c2s 0x01A
+  category 3 with the cursor less the target's position (FUN_10159cc0) as f32 x / y / z at +0x10..+0x1b. The pick's
+  arrow (FUN_10159d40) stands over it, 0.5 up. Ours: a press moves 2 ticks' worth (retail's frame), the stick its
+  frame's ticks; only the controller's sticks drive it (the arrows go through 0xb0..0xb3 once). FUN_100ca730 also
+  places an actor's companion model (+0x1e5) at the cursor: not found what makes it, not drawn.
+- Ours, modern: while the UI is hidden (0x56) the modern layer is not drawn either (retail's hide draws no window).
+- Not seen live: the ground cursor (needs GEO), the stick modes and slots 25 / 26 / 34 (unbound by default), Windows.
+
+## Software keyboard (2026-11-03)
+
+From the 30261006_0 decompile; ours in client/swkbd.rs (classic) and modern/keyboard.rs.
+
+- English is one window, "menu    keypadus" (menu DAT 39542; Japanese "menu    keypad  "), 334 x 88, anchored to the
+  bottom, caps from "menu    key1topu" (Japanese key1top), hand "menu    yubi" (the window's kind-6 ref). Handler
+  DAT_10662dac, vtable 0x10337940: open hook FUN_101aedc0, close FUN_101af0f0, draw FUN_101af440, OnKey FUN_101af190,
+  press FUN_101af860, messages FUN_101af500. Registry flags 0x10002 (Escape does not close it; the cursor to child 1
+  at open), layer 7.
+- Children 8..82: 75 character keys, 16 x 16, child 8 + 15 r + c at (25 + 16 c, 5 + 16 r); their own sprites are not
+  drawn (+0x3c = 0): FUN_101af440 draws the page's cap at the child + (1, 1), tint 0x80805020 on the cursor key,
+  0x40402810 for a European cap (FUN_101aec30: sprites 0x15a..0x173, 0x177..0x18d, 0x1ae..0x1b0, 0x114, 0x132,
+  0x133), else 0x80808080. Special keys, drawn as the window's children: 6 Backspace, 0x53 Config, 7 Tab, 0x55 SHIFT,
+  0x56 SPACE, 0x57 Enter. Children 1..5 and 0x54 (Japanese) are state 0x10 in English.
+- Pages (table 0x1037c258, 13 records of 7 dwords: characters, cap sprites, kind 1 bytes / 2 Shift-JIS pairs, child
+  4's cap, single-byte flag, page after SHIFT [5], after X [6]). English uses 6..12: the page at open by the field's
+  class (FUN_101af580): 0 letters 9, 1 digits 10, 3 alphanumeric 6, 4 printable 8, 2 / 5 (the chat line) 11. Page
+  11: digits, a..z, `. , ' " & @ # ( ) [ ] ! ?`; page 12: A..Z, `+ - * / = $ \ % : ; ^ ~ _ | { } < >`; 11 and 12 swap,
+  7 and 8 swap, 6 / 9 / 10 name themselves (SHIFT buzzes SE 0004, X does nothing). Pages 11 / 12's pairs become bytes
+  through FUN_101b4450 (tables 0x1037c4a0 from 0x20, 0x1037c668 from 0xa0); a 0x85 lead (the European caps) types
+  nothing. Ours copies pages 6..12 into swkbd.rs; window fields other than the chat line are taken as class 5 *(their
+  classes are not mapped)*.
+- Opening: only key function 0x24 (the pad's RB): FUN_101579c0, outside a narration hold or the hidden UI, calls the
+  text engine's vtable 0 FUN_101b13f0: nothing unless config 0xc9 (Misc. 4 Software Keyboard: 0 Off, 1 Full, 2
+  Compact, disabled in English and acting as Full) is on (the lobby skips the check), nothing while it is up; with no
+  field open it opens the chat line too (vt+0x28(4, 0, 5, 0x78, ...)). So with 0xc9 off RB does nothing in the field
+  (fixed 2026-11-03: ours opened the chat line).
+- Placement at each open (FUN_101aedc0, absolute, not moved again): below "menu    macro" (+2) or above
+  "menu    comment" (-90) when the chat line is closed, else above log window 1 (y = min(log.y1 - 32, log.y0) - 90), else
+  above the chat line (inline.y0 - 122), else (32, 200). The cursor starts on child 8, the page by the class (the
+  SHIFT state never survives a reopen).
+- Keys (FUN_101ab820's window events, generic handler FUN_10118260, then OnKey; English): d-pad 0x2b / 0x2c / 0x2d /
+  0x2e (repeat; one a frame: Up, Down, Left, Right) move by the layout links [2] Up, [3] Down, [4] Right, [5] Left
+  (Up / Down wrap; the row ends lead to the special keys), SE 0001; A 0x93 presses the key, SE 0002; B 0x94 Escape,
+  SE 0003; LT 0x86 / RT 0x85 caret left / right; Y 0x22 Enter; X 0x25 page [6]; RB 0x1e Space; Start 0x14 Tab; Back
+  0x2f close; LB 0x1f Backspace. The keyboard types through the text engine (vt+4 = FUN_101b1800: kind 5 a byte,
+  kind 3 DIK Esc / Backspace / Tab / Enter / Left / Right, kind 8 close), so every field the engine serves takes it.
+  Config (0x53, FUN_101afc40): in the field with no event, SE 0002, the field closes and configwi opens.
+- Closing: Back (the chat line closes with its text kept *(inf)*; a window field only loses the keyboard), the field
+  closing (Enter's submit, Escape on it), Config, any physical key (WM_KEYDOWN -> FUN_101b29f0: the keyboard alone,
+  the key still goes to the field), a zone change (message 8; with the chat line it comes back after the zone,
+  message 4).
+- Ours: what it types goes into the next frame's input as the egui events a field reads (Text, Key); while it is up
+  the pad's buttons stay key functions (no egui keys for the field) and the frame's presses are consumed (Input::
+  consume, FUN_101202a0: a focused window takes them; Back's slot also carries 0x56, the UI hide). Classic: drawn at
+  a whole multiple of its size (about a third of the UI's width) so it reads on a large screen; the hand at the
+  cursor child + the header's (14, 14) *(inf: the hand path was not traced for this window)*. Modern: a kit panel of
+  48-point keys (the same pages, cursor and pad buttons; the European keys muted), centred over the chat window when it
+  opens; the mouse hovers and clicks keys in both.
+- Not built: the Japanese keyboards (keypad, keypad2 / keypad3 / keyselec, edit mode), the lobby's (state 0x40) path.
+
+## Enter on a trust, the action menu's layouts, ninja tools and bursts in the suggestions, the modern Update window (2026-11-03)
+
+- Enter on a target (FUN_101524e0) talks only when the UniqueNo's high byte is 0x01 (not 0x01000000 itself) and none
+  of these hold: the target is our pet (player +0x1f6), or our fellow (player +0x29c) while player +0x130 bit 19
+  (not modelled), or has +0x12c bit 22; it has +0x1cc 0x100 without +0x12c bit 30; FUN_1008ca40 (not a PC, no 0x100, +0x1fb allegiance 1).
+  Otherwise the action menu opens. The 0x00E handler (asm 0x10098ff2 / 0x1009acb2) copies byte 0x28 bit 0 (LSB's
+  TrustFlag) into +0x12c bit 22 and byte 0x28 bit 6 into +0x12c bit 30 (asm 0x10098f8c). LSB sends 0x28 |= 0x45 for
+  every trust ("this also allows trusts to be despawned") and allegiance 1 (Player); a talk (0x01A action 0) from the
+  trust's master releases it. Ours talked to every non-monster NPC and so released trusts; now it follows the rule
+  (target::talks_to). FUN_100edd70's direct-talk branch is not modelled.
+- FUN_1007aac0's check "an index above 0x6ff needs +0x12c bit 30" is now in event::talk.
+- /check's talk (FUN_10130280) tests actor +0x13c bit 10, not traced; ours uses the Enter rule there too *(inferred)*,
+  so a trust is checked, not released.
+- Action menu layout (FUN_10127790), correcting "Action menu libraries" and "NPC trade": no target 0; an attackable
+  target 2; a PC (+0x1cc & 2 clear) or FUN_1008ca40 1; any other NPC 0; doubled, then 6 engaged or + 1 riding. An NPC
+  with +0x1cc 0x100 takes layout 7 directly. FUN_10127230 cases 6 / 0x11 / 0x14 (Talk, NPC Trade) show only when the
+  target is our fellow (FUN_101c29d0: player +0x29c) and the fellow's +0x16c is not 1. So the Talk row is the fellow's
+  "Talk to fellow.", and NPC trade comes from the main menu's Trade (child 7). A trust now gets layout 2: Magic,
+  Abilities, Trust, Items (Chat and Trade drop out on an NPC id). Seen live with Kupipi in West Ronfaure: Enter opens
+  that menu and she stays; Enter on Laillera (the gate guard) still talks.
+- Spell record +0x46 / +0x47 (POLUtils: unknown): +0x47 is nonzero exactly where LSB's spell_list AOE is 1, 2 or 5
+  (radial, conal, songs), across all ~890 records, and zero for 0 / 3 / 4 / 6; +0x46 looks like the radius (3, 4, 8,
+  11, 15) *(inferred)*. Holy 0, Banishga / Banishga II 1. dat/actions.rs Spell.area.
+- Suggestions (ours): a burst takes a one-target spell over an area one, then the highest MP (Holy before Banishga
+  II). Ninjutsu are offered only with the tool in the inventory, or with NIN main the universal one (the server's
+  rule, LSB HasNinjaTool; the client has no tool table and FFXiMain's spell check FUN_1022cf30 tests none; the spell
+  record's MP field is 0 for ninjutsu, while LSB keeps the tool id in its mpCost). Inoshishinofuda 2971 elemental
+  (Katon .. Suiton), Shikanofuda 2972 support (Utsusemi, Tonko, Monomi, Migawari, Myoshu, Gekka, Yain, Kakka),
+  Chonofuda 2973 enfeebling (Hojo, Jubaku, Kurayami, Dokumori, Aisha, Yurin).
+- The Update window had only the classic drawing. It now builds a view (updater::View: frame, line height, texts,
+  rows, On / Off boxes, gauge, buttons) that both UIs draw and the mouse reads. The modern one is the kit frame zoomed
+  1.35 about the screen's centre for its text, with the lobby buttons and a rounded progress bar. The OK pages no
+  longer draw a blank second button. Seen live through a local mock release (VANA_RELEASE_API, FFXI_UPDATE_CHECK=1):
+  the pick page and the failed-download page.

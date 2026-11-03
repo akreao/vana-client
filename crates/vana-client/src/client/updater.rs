@@ -39,14 +39,16 @@ pub struct Release {
     pub tag: String,
     pub url: String,
     pub size: u64,
-    /// The asset's "<name>.sig" beside it: its Ed25519 signature (64 bytes) by the release key.
-    pub sig_url: String,
+    /// "<asset>.sig" beside it: the release key's Ed25519 signature of [`signed_text`].
+    pub sig_url: Option<String>,
 }
 
 pub enum Client {
     Checking,
     Current,
     Available(Release),
+    /// A newer release with no signature: never offered.
+    Unsigned(String),
     /// No release (or none for this platform) or the check failed; not offered.
     Unavailable(String),
 }
@@ -96,12 +98,18 @@ pub fn start(root: PathBuf) -> Shared {
     });
     let c = s.clone();
     std::thread::spawn(move || {
-        let client = match signing_key().and_then(|_| latest_release()) {
+        let client = match latest_release() {
+            Ok(Some(r)) if newer(&r.tag, env!("CARGO_PKG_VERSION")) && r.sig_url.is_none() => Client::Unsigned(r.tag),
             Ok(Some(r)) if newer(&r.tag, env!("CARGO_PKG_VERSION")) => Client::Available(r),
             Ok(Some(_)) => Client::Current,
             Ok(None) => Client::Unavailable("no release for this platform".into()),
             Err(e) => Client::Unavailable(format!("{e:#}")),
         };
+        match &client {
+            Client::Unsigned(tag) => log::warn!("update check: release {tag} has no {}.sig; not offered", asset_name()),
+            Client::Unavailable(why) => log::warn!("update check: no client release: {why}"),
+            _ => {}
+        }
         c.lock().unwrap().client = client;
     });
     s
@@ -124,10 +132,34 @@ fn latest_release() -> Result<Option<Release>> {
     let tag = v["tag_name"].as_str().unwrap_or_default().to_string();
     let find = |name: &str| v["assets"].as_array().and_then(|a| a.iter().find(|x| x["name"].as_str() == Some(name)));
     let url = |a: &serde_json::Value| a["browser_download_url"].as_str().unwrap_or_default().to_string();
-    let Some(asset) = find(asset_name()) else { return Ok(None) };
-    // An unsigned release is never offered: anyone who can change a release could change a checksum beside it too.
-    let sig_url = find(&format!("{}.sig", asset_name())).map(url).with_context(|| format!("release {tag} has no {}.sig; not offered", asset_name()))?;
-    Ok(Some(Release { tag, url: url(asset), size: asset["size"].as_u64().unwrap_or(0), sig_url }))
+    let sig_url = find(&format!("{}.sig", asset_name())).map(url);
+    Ok(find(asset_name()).map(|a| Release { tag, url: url(a), size: a["size"].as_u64().unwrap_or(0), sig_url }))
+}
+
+/// The release signing key's public half (release/signing-key.pub; release/publish.sh signs with the private one).
+const SIGNING_KEY: &str = include_str!("../../../../release/signing-key.pub");
+
+/// What a release's signature covers: its tag, the asset's name and the asset's SHA-256, so a signed binary can't be
+/// served under another tag or for the other platform.
+pub fn signed_text(tag: &str, asset: &str, file: &[u8]) -> String {
+    format!("vana-client release\n{tag}\n{asset}\n{}\n", hex::encode(ring::digest::digest(&ring::digest::SHA256, file)))
+}
+
+/// `sig` is the key's Ed25519 signature of `text`.
+fn signed_by(key: &str, text: &str, sig: &[u8]) -> bool {
+    let Some(key) = hex::decode(key.trim()).ok().filter(|k| k.len() == 32) else { return false };
+    ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, key).verify(text.as_bytes(), sig).is_ok()
+}
+
+/// A downloaded binary checked against its release's signature before it is installed; one that fails is removed.
+fn verify(r: &Release, file: &Path) -> Result<()> {
+    let url = r.sig_url.as_ref().with_context(|| format!("release {} is not signed", r.tag))?;
+    let sig = agent().get(url).call().with_context(|| url.clone())?.body_mut().with_config().limit(1024).read_to_vec()?;
+    if !signed_by(SIGNING_KEY, &signed_text(&r.tag, asset_name(), &std::fs::read(file)?), &sig) {
+        let _ = std::fs::remove_file(file);
+        bail!("the downloaded vana-client {} is not signed by the release key; not installed", r.tag);
+    }
+    Ok(())
 }
 
 /// 5321 as "5,321".
@@ -210,34 +242,6 @@ pub fn download(url: &str, dest: &Path, progress: &dyn Fn(u64, u64)) -> Result<(
     Ok(())
 }
 
-/// The release signing key's public half (release/signing-key.pub, 64 hex digits; the private half stays with whoever
-/// publishes, release/publish.sh signs with it). Empty in a build without one: then no update is offered.
-const SIGNING_KEY: &str = include_str!("../../../../release/signing-key.pub");
-
-fn signing_key() -> Result<[u8; 32]> {
-    let hex = SIGNING_KEY.trim();
-    if hex.is_empty() {
-        bail!("this build has no release signing key; updates are not offered");
-    }
-    hex::decode(hex).ok().and_then(|b| b.try_into().ok()).context("release/signing-key.pub is not 64 hex digits")
-}
-
-/// `data` signed by `key`: Ed25519, as `openssl pkeyutl -sign -rawin` makes it (64 bytes).
-fn signed(key: &[u8; 32], data: &[u8], sig: &[u8]) -> bool {
-    ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, key).verify(data, sig).is_ok()
-}
-
-/// Checks a downloaded binary against the release's .sig before it is installed; anything else removes the file.
-fn verify(r: &Release, file: &Path) -> Result<()> {
-    let key = signing_key()?;
-    let sig = agent().get(&r.sig_url).call().with_context(|| r.sig_url.clone())?.body_mut().with_config().limit(1024).read_to_vec()?;
-    if !signed(&key, &std::fs::read(file)?, &sig) {
-        let _ = std::fs::remove_file(file);
-        bail!("the downloaded vana-client {} is not signed by the release key; not installed", r.tag);
-    }
-    Ok(())
-}
-
 /// The executable as it was at start: once replace_self renames the new binary over it, Linux names the running one
 /// "<path> (deleted)", and a restart from that path fails.
 pub fn exe() -> Option<PathBuf> {
@@ -282,8 +286,7 @@ pub enum Job {
     Running(Progress),
     /// Lines to show; whether a restart finishes it.
     Done(Vec<String>, bool),
-    /// What went wrong; whether game files were written before it (the app reopens its DAT index then too: a
-    /// refused code file leaves the data files already updated).
+    /// What went wrong; whether game files were written before it (the app reopens its DAT index then too).
     Failed(String, bool),
 }
 
@@ -310,6 +313,8 @@ pub struct UpdateUi {
     cursor: usize,
     job: Option<Arc<Mutex<Job>>>,
     reloaded: bool,
+    /// The view's scale about the screen's centre: 1 classic, larger for the modern UI's text.
+    pub zoom: f32,
 }
 
 impl UpdateUi {
@@ -318,7 +323,7 @@ impl UpdateUi {
             let s = status.lock().unwrap();
             (s.game.offered(), matches!(s.client, Client::Available(_)))
         };
-        Self { status, root, pick: [g, c], cursor: if g || c { 2 } else { 3 }, job: None, reloaded: false }
+        Self { status, root, pick: [g, c], cursor: if g || c { 2 } else { 3 }, job: None, reloaded: false, zoom: 1.0 }
     }
 
     fn available(&self, row: usize) -> bool {
@@ -377,6 +382,7 @@ impl UpdateUi {
                     let total_bytes: u64 = plan.todo.iter().map(|t| t.2).sum();
                     let version = plan.server.version.clone();
                     crate::patch::apply(&root, &plan, 4, &|f, b| {
+                        // Called once a file is written.
                         wrote.store(true, std::sync::atomic::Ordering::Relaxed);
                         set(Progress { label: "Updating game files".into(), done: b, total: total_bytes, detail: format!("{} / {} files, {:.1} of {:.1} MB", thousands(f as u64), thousands(total_files as u64), b as f64 / 1e6, total_bytes as f64 / 1e6) });
                     })?;
@@ -467,8 +473,7 @@ impl UpdateUi {
         out
     }
 
-    /// Called every frame: reports once that a game update finished, or failed after writing files (the app reopens
-    /// its DAT index).
+    /// Called every frame: reports a finished game update once (the app reopens its DAT index).
     pub fn poll(&mut self) -> Out {
         let mut out = Out::default();
         if self.reloaded {
@@ -480,6 +485,7 @@ impl UpdateUi {
                 out.reload = lines.iter().any(|l| l.starts_with("Game files"));
                 self.cursor = 2;
             }
+            // A game update that failed after writing files changed them all the same.
             Some(Job::Failed(_, wrote)) => {
                 self.reloaded = true;
                 out.reload = *wrote;
@@ -504,15 +510,11 @@ impl UpdateUi {
 
     /// The pointer: rows and buttons follow it; a click acts as Enter on them.
     pub fn pointer(&mut self, p: (f32, f32), moved: bool, clicked: bool, sw: f32, sh: f32) -> Out {
-        let [x, y, _, h] = Self::rect(sw, sh);
         let inside = |r: [f32; 4]| p.0 >= r[0] && p.1 >= r[1] && p.0 < r[0] + r[2] && p.1 < r[1] + r[3];
         let busy = self.running();
-        let done = self.job.is_some() && !busy;
-        let targets: Vec<(usize, [f32; 4])> = if done {
-            vec![(2, Self::button_rect(x, y, h, 0)), (3, Self::button_rect(x, y, h, 1))]
-        } else {
-            vec![(0, Self::row_rect(x, y, 0)), (1, Self::row_rect(x, y, 1)), (2, Self::button_rect(x, y, h, 0)), (3, Self::button_rect(x, y, h, 1))]
-        };
+        // The rows (whole width) and the buttons the view shows.
+        let v = self.view(sw, sh);
+        let targets: Vec<(usize, [f32; 4])> = v.rows.iter().copied().enumerate().chain(v.buttons.iter().enumerate().map(|(i, b)| (2 + i, b.0))).collect();
         for (i, r) in targets {
             if inside(r) && !busy {
                 if moved || clicked {
@@ -536,60 +538,42 @@ impl UpdateUi {
         }
     }
 
-    pub fn draw(&self, gu: &mut GameUi, sw: f32, sh: f32) -> [f32; 4] {
-        let white = [0x80u8; 4];
-        let grey = [0x58, 0x58, 0x58, 0x80];
+    /// The window as both UIs draw it (UI pixels); the mouse stays on these rects (`pointer`).
+    pub fn view(&self, sw: f32, sh: f32) -> View {
         let [x, y, w, h] = Self::rect(sw, sh);
-        gu.rect(x + 2.0, y + 2.0, w - 4.0, h - 4.0, [0.0, 0.0, 0.0, 0.55]);
-        gu.frame(x, y, w, h);
-        gu.cell_stretch("menu    windowps", 465, 1, x, y + 4.0, w, 16.0, 0x8080_8080);
-        gu.text("Update", x + 8.0, y + 4.0, 0, white);
+        let mut v = View { frame: [x, y, w, h], line: 16.0, texts: Vec::new(), rows: Vec::new(), toggles: Vec::new(), gauge: None, buttons: Vec::new() };
+        let text = |v: &mut View, at: [f32; 2], s: &str, white: bool, max: usize| v.texts.push(Text { at, text: s.to_string(), white, wrap: w - 40.0, max });
+        let buttons = |v: &mut View, labels: &[&'static str], cursor: usize| {
+            for (i, &label) in labels.iter().enumerate() {
+                v.buttons.push((Self::button_rect(x, y, h, i), label, cursor == 2 + i));
+            }
+        };
         let job = self.job.as_ref().map(|j| match &*j.lock().unwrap() {
             Job::Running(p) => Job::Running(p.clone()),
             Job::Done(l, r) => Job::Done(l.clone(), *r),
             Job::Failed(e, w) => Job::Failed(e.clone(), *w),
         });
-        let buttons = |gu: &mut GameUi, labels: [&str; 2], cursor: usize| {
-            for (i, label) in labels.iter().enumerate() {
-                let r = Self::button_rect(x, y, h, i);
-                let on = cursor == 2 + i;
-                super::settings::button(gu, r, if on { 0x8080_5020 } else { 0x8080_8080 });
-                gu.text(label, r[0] + r[2] / 2.0, r[1], 1, white);
-                if on {
-                    gu.cursor(r[0], r[1]);
-                }
-            }
-        };
         match job {
             Some(Job::Running(p)) => {
-                gu.text(if p.label.is_empty() { "Starting..." } else { &p.label }, x + 20.0, y + 48.0, 0, white);
-                // The config pages' slider as the gauge: track windowps 383, fill 384.
-                let (gx, gy, gw) = (x + 20.0, y + 80.0, w - 40.0);
-                gu.sprite_scaled("menu    windowps", 383, gx, gy, gw / 192.0, 1.0, 0x8080_8080);
-                if p.total > 0 && p.done > 0 {
-                    let f = (p.done as f32 / p.total as f32).clamp(0.0, 1.0);
-                    gu.sprite_scaled("menu    windowps", 384, gx, gy, f * gw / 192.0, 1.0, 0xa0a0_a0a0);
-                }
-                gu.text(&p.detail, x + 20.0, y + 104.0, 0, grey);
-                gu.text("Please wait; you can keep this window open.", x + 20.0, y + h - 32.0, 0, grey);
+                text(&mut v, [x + 20.0, y + 48.0], if p.label.is_empty() { "Starting..." } else { &p.label }, true, 1);
+                let f = if p.total > 0 { (p.done as f32 / p.total as f32).clamp(0.0, 1.0) } else { 0.0 };
+                v.gauge = Some(([x + 20.0, y + 80.0, w - 40.0, 16.0], f));
+                text(&mut v, [x + 20.0, y + 104.0], &p.detail, false, 1);
+                text(&mut v, [x + 20.0, y + h - 32.0], "Please wait; you can keep this window open.", false, 1);
             }
             Some(Job::Done(lines, restart)) => {
                 for (i, l) in lines.iter().enumerate() {
-                    for (k, part) in gu.wrap(l, w - 40.0).iter().enumerate().take(2) {
-                        gu.text(part, x + 20.0, y + 48.0 + 34.0 * i as f32 + 16.0 * k as f32, 0, white);
-                    }
+                    text(&mut v, [x + 20.0, y + 48.0 + 34.0 * i as f32], l, true, 2);
                 }
                 if lines.is_empty() {
-                    gu.text("Nothing was updated.", x + 20.0, y + 48.0, 0, white);
+                    text(&mut v, [x + 20.0, y + 48.0], "Nothing was updated.", true, 1);
                 }
-                buttons(gu, if restart { ["Restart", "Later"] } else { ["OK", ""] }, if restart { self.cursor } else { 2 });
+                if restart { buttons(&mut v, &["Restart", "Later"], self.cursor) } else { buttons(&mut v, &["OK"], 2) }
             }
             Some(Job::Failed(e, _)) => {
-                gu.text("The update did not finish:", x + 20.0, y + 48.0, 0, white);
-                for (k, part) in gu.wrap(&e, w - 40.0).iter().enumerate().take(4) {
-                    gu.text(part, x + 20.0, y + 68.0 + 16.0 * k as f32, 0, grey);
-                }
-                buttons(gu, ["OK", ""], 2);
+                text(&mut v, [x + 20.0, y + 48.0], "The update did not finish:", true, 1);
+                text(&mut v, [x + 20.0, y + 68.0], &e, false, 4);
+                buttons(&mut v, &["OK"], 2);
             }
             None => {
                 let s = self.status.lock().unwrap();
@@ -611,6 +595,7 @@ impl UpdateUi {
                             Client::Available(r) => format!("{} to {} ({:.1} MB)", env!("CARGO_PKG_VERSION"), r.tag, r.size as f64 / 1e6),
                             Client::Checking => "Checking...".into(),
                             Client::Current => format!("Up to date ({})", env!("CARGO_PKG_VERSION")),
+                            Client::Unsigned(tag) => format!("{tag} is not signed; not offered"),
                             Client::Unavailable(_) => format!("No newer release ({})", env!("CARGO_PKG_VERSION")),
                         },
                         matches!(s.client, Client::Available(_)),
@@ -619,45 +604,129 @@ impl UpdateUi {
                 drop(s);
                 for (i, (name, detail, avail)) in rows.iter().enumerate() {
                     let r = Self::row_rect(x, y, i);
-                    let on = self.cursor == i;
+                    v.rows.push(r);
                     // The config pages' On / Off button as the checkbox.
-                    let b = [r[0], r[1] + 6.0, 40.0, 16.0];
-                    super::settings::button(gu, b, if on { 0x8080_5020 } else { 0x8080_8080 });
-                    gu.text(if self.pick[i] && *avail { "On" } else { "Off" }, b[0] + 20.0, b[1], 1, if *avail { white } else { grey });
-                    gu.text(name, r[0] + 52.0, r[1], 0, if *avail { white } else { grey });
-                    gu.text(detail, r[0] + 52.0, r[1] + 14.0, 0, grey);
-                    if on {
-                        gu.cursor(b[0], b[1]);
-                    }
+                    v.toggles.push(([r[0], r[1] + 6.0, 40.0, 16.0], if self.pick[i] && *avail { "On" } else { "Off" }, *avail, self.cursor == i));
+                    text(&mut v, [r[0] + 52.0, r[1]], name, *avail, 1);
+                    text(&mut v, [r[0] + 52.0, r[1] + 14.0], detail, false, 1);
                 }
-                buttons(gu, ["Update", "Close"], self.cursor);
+                buttons(&mut v, &["Update", "Close"], self.cursor);
             }
         }
-        [x, y, w, h]
+        v.zoomed(self.zoom, sw / 2.0, sh / 2.0)
+    }
+
+    /// The classic window: the game's frame, title strip, the config pages' buttons and slider.
+    pub fn draw(gu: &mut GameUi, v: &View) {
+        let white = [0x80u8; 4];
+        let grey = [0x58, 0x58, 0x58, 0x80];
+        let [x, y, w, h] = v.frame;
+        gu.rect(x + 2.0, y + 2.0, w - 4.0, h - 4.0, [0.0, 0.0, 0.0, 0.55]);
+        gu.frame(x, y, w, h);
+        gu.cell_stretch("menu    windowps", 465, 1, x, y + 4.0, w, 16.0, 0x8080_8080);
+        gu.text("Update", x + 8.0, y + 4.0, 0, white);
+        for t in &v.texts {
+            for (k, part) in gu.wrap(&t.text, t.wrap).iter().enumerate().take(t.max) {
+                gu.text(part, t.at[0], t.at[1] + 16.0 * k as f32, 0, if t.white { white } else { grey });
+            }
+        }
+        for &(b, label, avail, on) in &v.toggles {
+            super::settings::button(gu, b, if on { 0x8080_5020 } else { 0x8080_8080 });
+            gu.text(label, b[0] + 20.0, b[1], 1, if avail { white } else { grey });
+            if on {
+                gu.cursor(b[0], b[1]);
+            }
+        }
+        // The config pages' slider as the gauge: track windowps 383, fill 384.
+        if let Some(([gx, gy, gw, _], f)) = v.gauge {
+            gu.sprite_scaled("menu    windowps", 383, gx, gy, gw / 192.0, 1.0, 0x8080_8080);
+            if f > 0.0 {
+                gu.sprite_scaled("menu    windowps", 384, gx, gy, f * gw / 192.0, 1.0, 0xa0a0_a0a0);
+            }
+        }
+        for &(r, label, on) in &v.buttons {
+            super::settings::button(gu, r, if on { 0x8080_5020 } else { 0x8080_8080 });
+            gu.text(label, r[0] + r[2] / 2.0, r[1], 1, white);
+            if on {
+                gu.cursor(r[0], r[1]);
+            }
+        }
+    }
+}
+
+/// A line of the window: where (top left), its text, white or grey, wrapped at `wrap` to `max` lines.
+pub struct Text {
+    pub at: [f32; 2],
+    pub text: String,
+    pub white: bool,
+    pub wrap: f32,
+    pub max: usize,
+}
+
+/// The update window for either UI (UI pixels): the frame, the line height, its lines, the rows the mouse takes, the
+/// On / Off boxes (rect, label, available, cursor), the gauge (rect, fraction done), the buttons (rect, label, cursor).
+pub struct View {
+    pub frame: [f32; 4],
+    pub line: f32,
+    pub texts: Vec<Text>,
+    pub rows: Vec<[f32; 4]>,
+    pub toggles: Vec<([f32; 4], &'static str, bool, bool)>,
+    pub gauge: Option<([f32; 4], f32)>,
+    pub buttons: Vec<([f32; 4], &'static str, bool)>,
+}
+
+impl View {
+    /// Every place and size scaled by `z` about (cx, cy).
+    fn zoomed(mut self, z: f32, cx: f32, cy: f32) -> View {
+        let r = |r: &mut [f32; 4]| *r = [cx + (r[0] - cx) * z, cy + (r[1] - cy) * z, r[2] * z, r[3] * z];
+        r(&mut self.frame);
+        self.line *= z;
+        for t in &mut self.texts {
+            t.at = [cx + (t.at[0] - cx) * z, cy + (t.at[1] - cy) * z];
+            t.wrap *= z;
+        }
+        self.rows.iter_mut().for_each(r);
+        self.toggles.iter_mut().for_each(|t| r(&mut t.0));
+        if let Some(g) = self.gauge.as_mut() {
+            r(&mut g.0);
+        }
+        self.buttons.iter_mut().for_each(|b| r(&mut b.0));
+        self
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{newer, signed, thousands};
+    use super::{SIGNING_KEY, newer, signed_by, signed_text, thousands};
 
+    /// A signature covers the tag, the asset's name and its bytes; openssl's Ed25519 (pkeyutl -sign -rawin) checks.
     #[test]
-    fn signatures_check() {
+    fn release_signatures() {
         use ring::signature::{Ed25519KeyPair, KeyPair};
+        // release/publish.sh's text and openssl's signature by upstream's release key (lenonk/vana-client's
+        // release/signing-key.pub) check. This fork builds in its own key, so the vector names upstream's.
+        const UPSTREAM_KEY: &str = "5a005e0b9b54eb97e876bb79b1686dae869ae4af038ccdb7a478245d8b3ddac1";
+        let sig = hex::decode("6db22e308db928bf583baf80d49e91a6573ce88302c67964811dd7f9e0bf2bfa8b00d47f8889e6789d505fe2530cbba9402206e45e29cbd91bf8ba7a3015da01").unwrap();
+        assert!(signed_by(UPSTREAM_KEY, &signed_text("v0.0.0-test", "vana-client-linux-x86_64", b"binary"), &sig));
+        assert_eq!(SIGNING_KEY.trim().len(), 64, "release/signing-key.pub is 64 hex digits");
         let rng = ring::rand::SystemRandom::new();
         let pair = |rng| Ed25519KeyPair::from_pkcs8(Ed25519KeyPair::generate_pkcs8(rng).unwrap().as_ref()).unwrap();
         let (ours, theirs) = (pair(&rng), pair(&rng));
-        let key: [u8; 32] = ours.public_key().as_ref().try_into().unwrap();
-        let data = b"vana-client binary";
-        assert!(signed(&key, data, ours.sign(data).as_ref()));
-        // Another key's signature, a changed binary, or a cut signature are refused.
-        assert!(!signed(&key, data, theirs.sign(data).as_ref()));
-        assert!(!signed(&key, b"vana-client binarY", ours.sign(data).as_ref()));
-        assert!(!signed(&key, data, &ours.sign(data).as_ref()[..63]));
-        // RFC 8032 section 7.1, test 3 (message af82), the same Ed25519 that `openssl pkeyutl -sign -rawin` makes.
-        let key: [u8; 32] = hex::decode("fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025").unwrap().try_into().unwrap();
+        let key = hex::encode(ours.public_key());
+        let text = signed_text("v1.0.3", "vana-client-linux-x86_64", b"binary");
+        let sig = ours.sign(text.as_bytes());
+        assert!(signed_by(&key, &text, sig.as_ref()));
+        // Another key, another tag (a downgrade), the other platform's name, other bytes, a cut signature: refused.
+        assert!(!signed_by(&key, &text, theirs.sign(text.as_bytes()).as_ref()));
+        for other in [signed_text("v1.0.4", "vana-client-linux-x86_64", b"binary"), signed_text("v1.0.3", "vana-client-windows-x86_64.exe", b"binary"), signed_text("v1.0.3", "vana-client-linux-x86_64", b"binarY")] {
+            assert!(!signed_by(&key, &other, sig.as_ref()));
+        }
+        assert!(!signed_by(&key, &text, &sig.as_ref()[..63]));
+        assert!(!signed_by("", &text, sig.as_ref()));
+        // RFC 8032 section 7.1, test 3 (message af82): the Ed25519 openssl makes.
         let sig = hex::decode("6291d657deec24024827e69c3abe01a30ce548a284743a445e3680d7db5ac3ac18ff9b538d16f290ae67f760984dc6594a7c15e9716ed28dc027beceea1ec40a").unwrap();
-        assert!(signed(&key, &hex::decode("af82").unwrap(), &sig));
+        let key = "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025";
+        assert!(ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, hex::decode(key).unwrap()).verify(&hex::decode("af82").unwrap(), &sig).is_ok());
     }
 
     #[test]
@@ -666,7 +735,7 @@ mod tests {
         assert!(newer("0.10.0", "0.9.9"));
         assert!(!newer("v0.1.0", "0.1.0"));
         assert!(!newer("0.0.9", "0.1.0"));
-        // A pre-release comes before its release (#67).
+        // A pre-release comes before its release.
         assert!(!newer("1.2.0-rc1", "1.2.0"));
         assert!(newer("1.2.0", "1.2.0-rc1"));
         assert!(newer("1.2.1-rc1", "1.2.0"));
@@ -679,4 +748,3 @@ mod tests {
         assert_eq!((thousands(5321), thousands(452), thousands(1_234_567)), ("5,321".into(), "452".into(), "1,234,567".into()));
     }
 }
-

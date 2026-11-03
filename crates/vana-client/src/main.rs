@@ -3,7 +3,6 @@
 
 mod audio;
 mod cabx;
-mod code_pins;
 mod mpeg1;
 mod client;
 mod combatshot;
@@ -98,13 +97,8 @@ enum Cmd {
         #[arg(long)]
         to: Option<PathBuf>,
     },
-    /// Print the pinned list of game code files for the patch server's current version (every .exe / .dll
-    /// downloaded whole and hashed, nothing written). The code-pins workflow signs and publishes it.
-    #[command(hide = true)]
-    CodePins,
-    /// Trust a server's new TLS certificate: forget the one pinned for HOST (every port, or --port), so the next
-    /// connection pins the certificate it is sent. With --fingerprint (and --port), pin that SHA-256 instead
-    /// (`openssl x509 -in login.cert -noout -fingerprint -sha256` on the server prints it).
+    /// Trust a server's new TLS certificate: forget what is pinned for HOST (every port, or --port), so the next
+    /// connection pins the certificate it is sent. With --fingerprint and --port, pin that key's SHA-256 instead.
     TrustServer {
         host: String,
         #[arg(long)]
@@ -1183,10 +1177,6 @@ fn main() -> Result<()> {
                 })?;
                 println!("updated {total} files to {}", plan.server.version);
             }
-            Ok(())
-        }
-        Cmd::CodePins => {
-            print!("{}", patch::code_pins()?);
             Ok(())
         }
         Cmd::TrustServer { host, port, fingerprint } => {

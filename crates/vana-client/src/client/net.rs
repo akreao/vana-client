@@ -757,6 +757,8 @@ pub struct SelfState {
     pub pos: [f32; 3],
     pub dir: u8,
     pub moving: bool,
+    /// c2s 0x015 @0x12 (FUN_10096c00): the ticks of the move so far; others' clients slide us by its steps.
+    pub move_time: u16,
     /// The current target's ActIndex (0 none): c2s 0x015 @0x16 facetarget, the server's cursor target.
     pub target: u16,
 }
@@ -772,6 +774,8 @@ pub struct NetHandle {
 
 pub const HOOK_IN: u8 = 1;
 pub const HOOK_OUT: u8 = 2;
+/// A mod may read packets.last: the net thread keeps the last of each id.
+pub const HOOK_LAST: u8 = 4;
 
 /// Datagram bytes sent and received (whole UDP payloads, as FUN_100f9b80 / FUN_100f9b90 count them) and
 /// when the last server datagram came, in ms since the session started.
@@ -783,6 +787,19 @@ pub struct NetStats {
     pub start: std::sync::OnceLock<Instant>,
     /// A mod's datagram interval in ms (client.set_option send_interval); 0 retail's 400.
     pub send_ms: std::sync::atomic::AtomicU32,
+    /// The last sub-packet of each id each way (packets.last), kept while HOOK_LAST is set.
+    pub last_in: Mutex<std::collections::HashMap<u16, Vec<u8>>>,
+    pub last_out: Mutex<std::collections::HashMap<u16, Vec<u8>>>,
+}
+
+impl NetStats {
+    /// Keeps a sub-packet as the last of its id.
+    pub fn keep_last(&self, out: bool, data: &[u8]) {
+        let id = if data.len() < 2 { 0 } else { u16::from_le_bytes([data[0], data[1]]) & 0x1ff };
+        if let Ok(mut m) = if out { &self.last_out } else { &self.last_in }.lock() {
+            m.insert(id, data.to_vec());
+        }
+    }
 }
 
 impl NetStats {
@@ -1054,7 +1071,7 @@ fn session(addr: SocketAddr, login: &MapLogin, account: &str, codec: &Codec, tx:
             Some(std::mem::take(&mut hooked_in))
         } else {
             let got = map.recv(Duration::from_millis(20))?;
-            // Every datagram's bytes count, the dropped unreadable ones too (recv's None).
+            // Only datagrams that decode count (recv adds them).
             stats.received.fetch_add(map.bytes_in - rx_seen, Relaxed);
             rx_seen = map.bytes_in;
             match got {
@@ -1067,6 +1084,11 @@ fn session(addr: SocketAddr, login: &MapLogin, account: &str, codec: &Codec, tx:
                         tx.send(NetEvent::RawIn(sess, packets))?;
                         None
                     } else {
+                        if hooks.load(Ordering::Relaxed) & HOOK_LAST != 0 {
+                            for p in &packets {
+                                stats.keep_last(false, &p.data);
+                            }
+                        }
                         Some(packets)
                     }
                 }
@@ -1082,7 +1104,7 @@ fn session(addr: SocketAddr, login: &MapLogin, account: &str, codec: &Codec, tx:
                         map.zoned_in(&p);
                         let pos = [p.f32(12), p.f32(16), p.f32(20)];
                         let (scene, myroom) = scene_of(&p);
-                        *me.lock().unwrap() = SelfState { pos, dir: p.u8(11), moving: false, target: 0 };
+                        *me.lock().unwrap() = SelfState { pos, dir: p.u8(11), moving: false, move_time: 0, target: 0 };
                         zoned = true;
                         my_index = p.u16(8);
                         queue.push(build(0x00C, &[0u8; 8]));
@@ -1588,7 +1610,7 @@ fn session(addr: SocketAddr, login: &MapLogin, account: &str, codec: &Codec, tx:
                 for (i, v) in s.pos.iter().enumerate() {
                     body[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());
                 }
-                body[14..16].copy_from_slice(&(s.moving as u16).to_le_bytes());
+                body[14..16].copy_from_slice(&s.move_time.to_le_bytes());
                 body[16] = s.dir;
                 // FUN_10096c00: @0x16 the current target's ActIndex (FUN_10152f20).
                 body[18..20].copy_from_slice(&s.target.to_le_bytes());
@@ -1599,6 +1621,11 @@ fn session(addr: SocketAddr, login: &MapLogin, account: &str, codec: &Codec, tx:
                 away_out += 1;
                 tx.send(NetEvent::RawOut(sess, std::mem::take(&mut queue)))?;
             } else {
+                if hooks.load(Ordering::Relaxed) & HOOK_LAST != 0 {
+                    for p in &queue {
+                        stats.keep_last(true, p);
+                    }
+                }
                 map.send(&queue)?;
                 stats.sent.fetch_add(map.bytes_out - tx_seen, Relaxed);
                 tx_seen = map.bytes_out;

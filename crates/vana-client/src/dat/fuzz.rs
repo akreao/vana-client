@@ -1,6 +1,4 @@
-//! Malformed-input tests for the DAT parsers (issue #87): every parser that takes file bytes must return (an error,
-//! an empty result, anything) on random and chunk-shaped input, never panic, abort or hang. DATs come from the
-//! install and from mod packs (`modpack.rs`, `overlay.rs`), so one corrupt file must not take the client down.
+//! Malformed-input tests: every DAT parser returns on random and chunk-shaped input, never panics, aborts or hangs.
 
 use super::*;
 use std::panic::{AssertUnwindSafe, catch_unwind};

@@ -60,7 +60,7 @@ mod firstrun;
 mod desktop;
 mod target;
 mod gamepad;
-mod osk;
+mod swkbd;
 mod input;
 mod camera;
 mod items;
@@ -319,10 +319,17 @@ fn world_window_open(w: &World) -> bool {
     w.action_menu.is_some() || window_over_actions(w)
 }
 
+/// FUN_101a33e0: in the field with the UI up, no event, target prompt (+0x59) or party cursor (+0xc4), alive, and no
+/// window holding the keys but the action menu (playermo / mp_pmode) or a palette.
+fn macro_gate(w: &World) -> bool {
+    let window = window_over_actions(w) || w.settings.is_some() || w.full_log.is_some() || w.prompt.is_some() || w.party_cursor.is_some();
+    w.in_scene() && !w.ui_hidden && !event::active(w) && !w.dead() && !window && w.macros.is_some()
+}
+
 /// The open windows but the action menu (playermo), which stays up while engaged: macros run while it is the only one
 /// (FUN_101a33e0 lets the focus be playermo, mp_pmode or a palette).
 fn window_over_actions(w: &World) -> bool {
-    w.lua.focused() || w.ko_open || w.ko_offer == 2 || w.menu.is_some() || w.confirm.is_some() || w.win.is_some() || w.config.is_some() || w.settings.is_some() || w.map.is_some() || w.full_log.is_some() || w.magic.is_some() || w.ability.is_some() || w.cats.is_some() || w.moogle.is_some() || post::active(w) || synth::active(w) || shop::active(w) || trade::active(w) || w.search.is_some() || w.inspect.up() || w.mogdoor.is_some() || treasure::active(w) || w.chatctrl.is_some() || w.partymenu.is_some() || w.levelsync.is_some() || w.viewhouse.is_some() || w.bazaar.is_some() || w.helpdesk.is_some() || w.primer.is_some() || w.macroedit.is_some() || w.status.is_some() || w.missions.is_some() || w.quests.is_some() || w.keyitems.is_some() || w.searchmenu.is_some() || w.linkshell.is_some() || w.arealist.is_some() || ranking::is_open(w) || w.region_menu.is_some() || w.cnq.is_some() || w.blklist.is_some() || w.auction.is_some() || w.remodel.is_some() || w.moncustom.is_some() || gmtell::open(w) || w.friendui.is_some() || polmail::focused(w)
+    w.swkbd.is_some() || w.lua.focused() || w.ko_open || w.ko_offer == 2 || w.menu.is_some() || w.confirm.is_some() || w.win.is_some() || w.config.is_some() || w.settings.is_some() || w.map.is_some() || w.full_log.is_some() || w.magic.is_some() || w.ability.is_some() || w.cats.is_some() || w.moogle.is_some() || post::active(w) || synth::active(w) || shop::active(w) || trade::active(w) || w.search.is_some() || w.inspect.up() || w.mogdoor.is_some() || treasure::active(w) || w.chatctrl.is_some() || w.partymenu.is_some() || w.levelsync.is_some() || w.viewhouse.is_some() || w.bazaar.is_some() || w.helpdesk.is_some() || w.primer.is_some() || w.macroedit.is_some() || w.status.is_some() || w.missions.is_some() || w.quests.is_some() || w.keyitems.is_some() || w.searchmenu.is_some() || w.linkshell.is_some() || w.arealist.is_some() || w.region_menu.is_some() || w.cnq.is_some() || w.blklist.is_some() || w.auction.is_some() || w.remodel.is_some() || w.moncustom.is_some() || gmtell::open(w) || w.friendui.is_some() || polmail::focused(w)
 }
 
 /// FUN_100c63d0: a jump starts when none runs (draw actor +0x8bc = 32 ticks).
@@ -1281,9 +1288,12 @@ fn chat_line(kind: u8, attr: u8, data: u16, from: &str, text: &str, zone: &str) 
 /// A chat line in its log mode's colour (the config colour before the message tables load), auto-translate blocks
 /// expanded with their brackets (FUN_10127c00 with param 5).
 /// FUN_10127990: a party line (modes 5 / 0x0d) with a call tag outside quotes plays its sound (the first tag that
-/// matches; FUN_100380f0 plays one at a time). The tell sound (mode 0x0c, config 0x47) names SeSep "0p40", which no
-/// resident file holds: not played.
-fn call_sound(bt: &crate::dat::battle::BattleText, line: &str, mode: u8) -> Option<u32> {
+/// matches; FUN_100380f0 plays one at a time). A received tell (mode 0x0c) with config 0x47 names SeSep "0p40", which
+/// no game file holds; ours plays the <call> sound (0017) for it.
+fn call_sound(bt: &crate::dat::battle::BattleText, line: &str, mode: u8, tell_sound: bool) -> Option<u32> {
+    if mode == 0x0c {
+        return tell_sound.then_some(17);
+    }
     if !matches!(mode, 5 | 0x0d) {
         return None;
     }
@@ -1348,7 +1358,8 @@ fn expand_phrases(world: &World, line: &str) -> String {
 
 /// A chat line in its mode, `gm` from s2c 0x017's Attr bit 0, `who` its record's name.
 fn push_chat_line(world: &mut World, line: String, mode: u8, kind: u8, gm: bool, who: Option<(String, u8)>) {
-    if let Some(n) = world.battle.as_ref().and_then(|bt| call_sound(bt, &line, mode)) {
+    let tell_sound = world.game.get(0x47) != 0;
+    if let Some(n) = world.battle.as_ref().and_then(|bt| call_sound(bt, &line, mode, tell_sound)) {
         world.sounds.push(n);
     }
     let (colour, line, indent) = match world.battle.clone() {
@@ -1561,9 +1572,9 @@ fn bar_full_log(w: &mut World, m: scrollbar::Msg, (total, lines, _): (usize, usi
 /// Ours: the double-click time for the modern UI's world clicks (Windows' default).
 const DOUBLE_CLICK: std::time::Duration = std::time::Duration::from_millis(500);
 
-/// FUN_10130280 (Ctrl+C): talk to an NPC target, check anything else.
+/// FUN_10130280 (Ctrl+C): talk to an NPC target, check anything else (a trust *(inferred)*: talk releases it on LSB).
 fn check_target(world: &mut World) {
-    match world.target.filter(|t| t >> 24 != 0 && world.entities.get(t).is_some_and(|e| !e.mob)) {
+    match world.target.filter(|&t| target::talks_to(world, t)) {
         Some(t) => {
             event::talk(world, t);
         }
@@ -2048,6 +2059,8 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
     if !world.typing {
         world.ime_preedit.clear();
     }
+    // Each key's own Shift, for the handlers it reaches; none outside this loop.
+    world.key_shift = false;
     for ev in input.events.iter().filter(|_| !input_open) {
         if let egui::Event::Key { modifiers, .. } = ev {
             world.key_shift = modifiers.shift;
@@ -2110,7 +2123,11 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
                     (world.chat_caret, world.chat_anchor) = (None, None);
                     world.line_hist.record(&text);
                     let text = fep::outgoing(world, text);
-                    textcmd::run(world, &text, textcmd::Mode::Typed);
+                    if world.lua.synth_enter {
+                        lua::run_line(world, &text, textcmd::Mode::Typed, lua::From::Mod);
+                    } else {
+                        textcmd::run(world, &text, textcmd::Mode::Typed);
+                    }
                 }
                 egui::Key::Escape if world.typing => {
                     world.typing = false;
@@ -2537,6 +2554,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
             _ => {}
         }
     }
+    world.key_shift = false;
 
     // Mouse on the main menu: hover moves the cursor, a click picks; the arrows swap pages. Not while the group walk
     // suspends it (a window over it, e.g. MacroPalette's).
@@ -2639,6 +2657,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
             (1, 7) => {
                 let mut c = configui::ConfigUi::open("configwi");
                 c.mon = monstrosity::active(world);
+                c.cam_keys = world.cam_keys;
                 world.config = Some(c);
                 world.menu = None;
                 world.sounds.push(crate::audio::Ui::Select as u32);
@@ -2745,6 +2764,10 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
     }
     if let Some(p) = input.pointer.filter(|_| helpdesk::focused(world)) {
         helpdesk::pointer(world, gu, p, input.moved, input.clicked, input.right_clicked);
+    }
+    // The software keyboard is on top of the windows it types for.
+    if let Some(p) = input.pointer.filter(|_| world.swkbd.is_some()) {
+        swkbd::pointer(world, gu, p, input.moved, input.clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.inspect.up() && world.confirm.is_none()) {
         inspect::pointer(world, gu, p, input.moved, input.clicked, input.right_clicked);
@@ -3430,6 +3453,10 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
             gu.sprite("menu    windowps", logwin::caption_1(world.chat_prefix.split(' ').next().unwrap_or(""), route.second), x + tw - 352.0, y, 0x8080_8080);
         }
         blockers.push(log.rect);
+    }
+    // The software keyboard (FUN_101af440).
+    if let Some(r) = swkbd::draw(gu, world, sw, sh) {
+        blockers.push(r);
     }
     // The chat line ("menu    inline") (16, H - 38), (textw + 14) x 22, windowps 37; FUN_101b7fd0.
     if world.typing && !world.modern {
@@ -4138,6 +4165,9 @@ fn config_out(world: &mut World, out: configui::Out) {
     if let Some(mode) = out.lockstyle {
         equipsets::lock_mode(world, mode, false, 0);
     }
+    if let Some(k) = out.cam_keys {
+        world.cam_keys = k;
+    }
 }
 
 /// The indicator's draw `n` (from 1).
@@ -4196,7 +4226,7 @@ fn bar_text(gu: &GameUi, world: &World, items: &[(usize, [f32; 4])]) -> hudtop::
     if let Some((name, child)) = focus.filter(|_| world.confirm.is_none()) {
         let [help, title] = gu.focus_text(name, child);
         (bars.help[1], bars.title[1]) = (help.unwrap_or_default(), title.unwrap_or_default());
-        if let Some(h) = configui::our_help(child) {
+        if let Some(h) = configui::our_help(name, child) {
             bars.help[1] = h.into();
         }
     }
@@ -5082,6 +5112,12 @@ fn scan_track(world: &mut World, index: u16) {
 /// another level is more than 12 away and taken at once. `server` is the goal's height as sent and the server's
 /// height along the slide (unsnapped), which keeps an actor out of holes the server walks it over. Returns the slide
 /// (where the actor is drawn) and whether the goal was taken at once.
+/// FFXI_TRACE_MOVE=1: movement traces in the log (test runs).
+fn trace_move() -> bool {
+    static TRACE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *TRACE.get_or_init(|| std::env::var_os("FFXI_TRACE_MOVE").is_some())
+}
+
 fn slide_frame(pos: Vec3, target: &mut Vec3, remain: &mut f32, ticks: f32, floor: Option<&ground::Ground>, server: (f32, &mut f32)) -> (Vec3, bool) {
     let (sent, raw) = server;
     let mut slide = pos;
@@ -5623,9 +5659,17 @@ struct World {
     /// The macro palette controller (DAT_1066279c): +0xc open (0, 1 Ctrl, 2 Alt), +0xd pending, +0x10 the hold's
     /// second, each palette's cursor cell.
     palette: (u8, u8, u64, [usize; 2]),
-    /// The open palette came from a pad trigger (FUN_101a2e80's toggle: it stays up after the release).
+    /// FUN_101a2e80 +0x18: the open palette came from a pad trigger (it stays up after the release); +0x14 the
+    /// second a held trigger started waiting at.
     pad_palette: bool,
-    /// Shift was held with the key being dispatched (Shift+Tab turns a window's tabs back; the pad's LB sends it).
+    pad_hold: u64,
+    /// The software keyboard (client/swkbd.rs), what it typed for the next frame's input, and whether it comes back
+    /// after the zone.
+    swkbd: Option<swkbd::Keyboard>,
+    swkbd_out: Vec<egui::Event>,
+    swkbd_reopen: bool,
+    /// Shift was held with the key being dispatched by world_hud's loop (Shift+Tab turns a modern window's tabs back;
+    /// the pad's LB sends it); false anywhere else.
     key_shift: bool,
     /// Our facing unquantized, with the network direction it rounds to: retail draws the player from the float heading
     /// (FUN_100a6240) and rounds it only for the position packet; drawn from the byte, a stick's slow turn stepped.
@@ -5866,6 +5910,8 @@ struct World {
     unsettled: bool,
     actors: HashMap<u32, Actor>,
     moving: bool,
+    /// The ticks of our move so far (c2s 0x015 @0x12, actor +0x1b4).
+    move_acc: f32,
     /// Walk mode (0x45, DAT_10565d34 +0x50 / player +0xfa), autorun (0x1c, DAT_10475579) and its world-space
     /// vector (DAT_1047555c), and this frame's speed fraction (FUN_100a5f60: 1, 1/3 or 0).
     walk: bool,
@@ -6472,6 +6518,8 @@ struct World {
     /// Our Settings or Extras page when opened from the Config window, and a request to open one.
     settings: Option<settings::SettingsUi>,
     want_settings: Option<settings::Kind>,
+    /// Ours: the camera keys' Y / X sense (Mouse/Cam.'s Camera Keys; the client's config keeps it).
+    cam_keys: [u8; 2],
     /// The Lua mods of this session (docs/lua-mods.md).
     lua: lua::Host,
 }
@@ -6733,12 +6781,6 @@ pub struct App {
     /// Retail key functions (DAT_103619f0 and FUN_1011ff30).
     input: input::Input,
     gamepad: gamepad::Gamepad,
-    /// The on-screen keyboard (osk.rs): ours where Steam has none, the text field edge that raises it, whether the pad
-    /// was the last device used, and the events its mouse clicks made for the next frame.
-    kb: osk::Keyboard,
-    kb_edge: osk::Edge,
-    pad_last: bool,
-    kb_events: Vec<egui::Event>,
     /// Keys Lua mods pressed this frame, as egui events.
     synth_events: Vec<egui::Event>,
     /// The lobby mods before login (in the world, the World's host holds them).
@@ -6992,10 +7034,6 @@ impl App {
             numpad_slash: false,
             input: input::Input::default(),
             gamepad: gamepad::Gamepad::default(),
-            kb: osk::Keyboard::default(),
-            kb_edge: osk::Edge::default(),
-            pad_last: false,
-            kb_events: Vec::new(),
             synth_events: Vec::new(),
             lobby_mods: Default::default(),
             recorder: None,
@@ -7981,6 +8019,7 @@ impl App {
                             inv_loaded: 0,
                             actors: HashMap::new(),
                             moving: false,
+                            move_acc: 0.0,
                             walk: false,
                             autorun: false,
                             mouse_look: false,
@@ -8107,6 +8146,10 @@ impl App {
                             macros: None,
                             palette: (0, 0, 0, [0, 0]),
                             pad_palette: false,
+                            pad_hold: 0,
+                            swkbd: None,
+                            swkbd_out: Vec::new(),
+                            swkbd_reopen: false,
                             key_shift: false,
                             my_face: None,
                             ui_hidden: false,
@@ -8364,6 +8407,7 @@ impl App {
                             game_save: false,
                             settings: None,
                             want_settings: None,
+                            cam_keys: [self.cfg.cam_keys_y as u8, self.cfg.cam_keys_x as u8],
                             lua: std::mem::take(&mut self.lobby_mods),
                         }));
                         if let Phase::World(w) = &mut self.phase {
@@ -8987,6 +9031,7 @@ impl App {
                     // The drawn facing starts at the new heading (a zone-in into the zone already loaded settles in
                     // the same frame, before the easing would snap it); the old float facing is the last zone's.
                     (world.my_draw_yaw, world.my_face) = (None, None);
+                    swkbd::zone_out(world);
                     log::info!("zone-in: zone {zone} at {:?} dir {dir}", pos);
                     // FUN_1018b500 -> FUN_1001e4f0: the view shake stops at a zone load.
                     world.camst.shake = camera::Shake::default();
@@ -9246,6 +9291,9 @@ impl App {
                         // FUN_1008b610: slide over the counter delta + 8 ticks (a smaller counter restarts it).
                         let c = e.counter;
                         let dur = if c < entry.counter { c } else { c - entry.counter };
+                        if trace_move() && e.id < 0x0100_0000 && e.id != world.my_id {
+                            log::info!("pcupd {:#x} {} t {:.3} pos ({:.2}, {:.2}) counter {c} dur {dur}", e.id, entry.name, world.started.elapsed().as_secs_f32(), p.x, p.z);
+                        }
                         entry.remain = dur as f32 + 8.0;
                         entry.counter = c;
                         if fresh {
@@ -9786,8 +9834,12 @@ impl App {
                     }
                 }
                 NetEvent::Emote { caster, target, emote, param, mode } => {
-                    world.lua.raise("emote", vec![caster.into(), target.into(), emote.into(), mode.into()]);
-                    combat::on_emote(world, caster, target, emote, param, mode)
+                    // A blocked player's emote is no event, as it is no motion or line (asked once: the check
+                    // asks for the list while it is not in).
+                    if !partyreq::sender_blocked(world, caster, emote, 2) {
+                        world.lua.raise("emote", vec![caster.into(), target.into(), emote.into(), mode.into()]);
+                        combat::on_emote(world, caster, target, emote, param, mode)
+                    }
                 }
                 NetEvent::AbilityRecasts(timers) => {
                     world.recasts_seen = true;
@@ -10378,12 +10430,12 @@ impl App {
                 world.knocks.remove(&id);
             }
         }
-        // FFXI_TRACE_MOVE=1: the nearest monster's drawn / goal position and motion ratio each frame (test runs).
-        static TRACE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if *TRACE.get_or_init(|| std::env::var_os("FFXI_TRACE_MOVE").is_some())
-            && let Some((id, e)) = world.entities.iter().filter(|(_, e)| e.mob).min_by(|a, b| (a.1.pos - world.pos).length().total_cmp(&(b.1.pos - world.pos).length()))
-        {
-            log::info!("move {id:#x} {} t {:.3} drawn ({:.3}, {:.3}) goal ({:.3}, {:.3}) remain {:.1} ratio {:.3} yaw {:.2}", e.name, world.started.elapsed().as_secs_f32(), e.pos.x, e.pos.z, e.target.x, e.target.z, e.remain, e.ratio, e.yaw);
+        // FFXI_TRACE_MOVE=1: the nearest monster's and player's drawn / goal position and motion ratio each frame.
+        if trace_move() {
+            let near = |pc: bool| world.entities.iter().filter(|(id, e)| if pc { **id < 0x0100_0000 && **id != world.my_id } else { e.mob }).min_by(|a, b| (a.1.pos - world.pos).length().total_cmp(&(b.1.pos - world.pos).length()));
+            for (id, e) in [near(false), near(true)].into_iter().flatten() {
+                log::info!("move {id:#x} {} t {:.3} drawn ({:.3}, {:.3}) goal ({:.3}, {:.3}) remain {:.1} ratio {:.3} yaw {:.2}", e.name, world.started.elapsed().as_secs_f32(), e.pos.x, e.pos.z, e.target.x, e.target.z, e.remain, e.ratio, e.yaw);
+            }
         }
         // A refused zone line never brings a zone-in; give up waiting.
         if world.zoning_since.is_some_and(|t| t.elapsed().as_secs_f32() > 8.0) {
@@ -10451,26 +10503,30 @@ impl App {
         }
         // Camera axes 6 / 7: the arrows (with Shift in a window) or the compact I / J / K / L stick.
         let (mut cx, mut cy) = (self.input.axis(6), self.input.axis(7));
-        // FUN_10159ba0: in a ground-cursor prompt with the keyboard's Ctrl / Alt held (0x76 / 0x77), the movement stick
-        // (axes 4, -5), else the camera stick, moves the cursor every frame; we and the camera take neither meanwhile.
-        // A new pick ends the cursor (FUN_10159660 clears +0x22), so going back to an earlier pick starts afresh.
+        // The controller's camera stick, apart: Camera Keys (ours) is for the keys alone.
+        let (mut px, mut py) = (self.input.device_stick()[2], self.input.device_stick()[3]);
+        // FUN_10159ba0: in a ground-cursor prompt with Ctrl / Alt held (0x76 / 0x77), the movement stick (axes 4, -5),
+        // else the camera stick, moves the cursor every frame; we and the camera take neither meanwhile. Ours: the
+        // controller's sticks only (the arrows move it through 0xb0..0xb3, once). A new pick ends the cursor
+        // (FUN_10159660 clears +0x22), so going back to an earlier pick starts afresh.
         target::drop_stale_ground_cursor(world);
         if !world.prompt.as_ref().is_some_and(|s| s.ground) {
             world.ground_cursor = None;
         } else if self.input.test(0x76, input::mode::HELD) || self.input.test(0x77, input::mode::HELD) {
-            let dir = if (ax, ay) != (0.0, 0.0) { glam::Vec2::new(ax, -ay) } else { glam::Vec2::new(cx, -cy) };
+            let s = self.input.device_stick();
+            let dir = if (s[0], s[1]) != (0.0, 0.0) { glam::Vec2::new(s[0], -s[1]) } else { glam::Vec2::new(s[2], -s[3]) };
             if dir != glam::Vec2::ZERO {
                 let c = Self::camera(world);
                 target::move_ground_cursor(world, dir, ticks, c.target - c.eye);
             }
-            (ax, ay, cx, cy) = (0.0, 0.0, 0.0, 0.0);
+            (ax, ay, cx, cy, px, py) = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
         }
         // Keyboard type 2, free camera: Shift held faces the camera (0x9c, player +0xfb; camera keys and Q / E off; a
         // controller's B only in the field, client/gamepad.rs), and Q / E turn the player (0xaa / 0xa9, FUN_10253a60 /
         // FUN_102539f0) while the camera axes are idle.
         let type2 = world.game.get(0x42) == 2 && !world.locked;
         let face_cam = type2 && self.input.test(0x9c, input::mode::HELD);
-        let turn = if type2 && !face_cam && cx == 0.0 && cy == 0.0 && ax == 0.0 {
+        let turn = if type2 && !face_cam && cx == 0.0 && cy == 0.0 && px == 0.0 && py == 0.0 && ax == 0.0 {
             self.input.test(0xaa, input::mode::HELD) as i32 as f32 - self.input.test(0xa9, input::mode::HELD) as i32 as f32
         } else {
             0.0
@@ -10501,7 +10557,9 @@ impl App {
             world.autorun = false;
         }
         // /follow (FUN_100a6070's users): autorun points at the target each tick; the target gone, dead or without a
-        // model ends it.
+        // model ends it. FUN_100a79a0: touching it (the horizontal gap less both radii, FUN_100aaef0, under 0) the step
+        // is none, and the follow goes on.
+        let mut touching = false;
         if let Some(t) = world.follow {
             match world.entities.get(&t).filter(|e| !matches!(e.motion.status, 2 | 3) && world.actors.contains_key(&t)) {
                 Some(e) if world.autorun => {
@@ -10509,6 +10567,8 @@ impl App {
                     if d.length() > 1e-3 {
                         world.autorun_dir = d.normalize();
                     }
+                    let r = |id: u32| world.actors.get(&id).map_or(0.0, bump::radius);
+                    touching = d.length() - r(world.my_id) - r(t) < 0.0;
                 }
                 _ => world.autorun = false,
             }
@@ -10551,7 +10611,7 @@ impl App {
                     let a = d.x.atan2(d.z) + 2.0 * ax * ticks * 0.017452778;
                     world.autorun_dir = Vec3::new(a.sin(), 0.0, a.cos());
                 }
-                step = world.autorun_dir;
+                step = if touching { Vec3::ZERO } else { world.autorun_dir };
             }
         }
         if !world.autorun {
@@ -10579,15 +10639,24 @@ impl App {
         // Q / E: player yaw += ticks x 0.01745 x 1.57075; the camera follows the turn (FUN_1001d4c0).
         let turn_delta = if turn != 0.0 && !world.autorun && !in_event && world.unlock_ticks <= 0.0 { turn * ticks * 0.017452778 * 1.57075 } else { 0.0 };
         world.yaw += turn_delta;
-        let turn_keys = if face_cam { 0.0 } else { cx };
-        // Mouse/Cam.: 0x8b / 0x8c invert the camera axes, 0x8d / 0x8e in first person.
+        // Mouse/Cam.: 0x8b / 0x8c invert the camera axes, 0x8d / 0x8e in first person (FUN_1001ee60: the keys' and
+        // the stick's axes 6 / 7 alike).
         let first = world.camst.first;
         let (i6, i7) = [(0x8b, 0x8c), (0x8d, 0x8e)][first as usize];
-        let (i6, i7) = (if world.game.get(i6) == 1 { -1.0 } else { 1.0 }, if world.game.get(i7) == 1 { -1.0 } else { 1.0 });
+        // Ours (Mouse/Cam.'s Camera Keys): the keys' own sense, else the camera rows'. The stick keeps the rows'.
+        let sense = |id: u16, ours: u32| match ours {
+            1 => 1.0,
+            2 => -1.0,
+            _ => if world.game.get(id) == 1 { -1.0 } else { 1.0 },
+        };
+        let larger = |k: f32, ks: f32, p: f32, ps: f32| if k.abs() >= p.abs() { k * ks } else { p * ps };
+        let v6 = larger(cx, sense(i6, world.cam_keys[1] as u32), px, sense(i6, 0));
+        let v7 = larger(cy, sense(i7, world.cam_keys[0] as u32), py, sense(i7, 0));
+        let turn_keys = if face_cam { 0.0 } else { v6 };
         let still = face_cam || in_event;
         let mut cam_in = camera::Inputs {
-            v6: if still { 0.0 } else { cx * i6 },
-            v7: if still { 0.0 } else { cy * i7 },
+            v6: if still { 0.0 } else { v6 },
+            v7: if still { 0.0 } else { v7 },
             turn: turn_delta,
             face_cam,
             zoom_in: self.input.test(0x4f, input::mode::HELD),
@@ -10623,10 +10692,11 @@ impl App {
             // and lowers the eye at the free rate, unscaled.
             let (dx, dy) = std::mem::take(&mut world.cam_turn);
             let ticks = dt * 60.0;
-            // step_camera's rotation runs opposite to camera::orbit's, which the free camera turns by -v6: the stick /
-            // keys' axis 6 goes in negated so it turns the same way locked as free (the mouse's cam_turn already does).
+            // step_camera's rotation runs opposite to camera::orbit's, which the free camera turns by -v6: axis 6 goes in
+            // negated so it turns the same way locked as free, as FUN_1001ee60 sends both through FUN_1001ebb0 (the
+            // mouse's cam_turn already does).
             let sp = camera::speed(&world.camst);
-            target::step_camera(world, ticks, dx - turn_keys * i6 * camera::YAW_RATE * sp * ticks, dy + cy * i7 * camera::RISE_RATE * sp * ticks);
+            target::step_camera(world, ticks, dx - turn_keys * camera::YAW_RATE * sp * ticks, dy + v7 * camera::RISE_RATE * sp * ticks);
             let to = tp - world.pos;
             if to.x.abs() + to.z.abs() > 1e-3 {
                 world.yaw = to.x.atan2(to.z);
@@ -10708,15 +10778,16 @@ impl App {
             camera::ride(world, h - world.ride_y);
         }
         world.ride_y = world.draw_pos.y;
-        if *TRACE.get_or_init(|| std::env::var_os("FFXI_TRACE_MOVE").is_some()) && (stepping || world.riding) {
+        if trace_move() && (stepping || world.riding) {
             let c = Self::camera(world);
-            log::info!("me t {:.4} steps {steps} y {:.4} drawn ({:.3}, {:.4}, {:.3}) eye ({:.3}, {:.4}, {:.3}) look ({:.3}, {:.4}, {:.3})", world.started.elapsed().as_secs_f32(), world.pos.y, world.draw_pos.x, world.draw_pos.y, world.draw_pos.z, c.eye.x, c.eye.y, c.eye.z, c.target.x, c.target.y, c.target.z);
+            let mt = world.net.me.lock().map_or(0, |m| m.move_time);
+            log::info!("me t {:.4} steps {steps} y {:.4} drawn ({:.3}, {:.4}, {:.3}) eye ({:.3}, {:.4}, {:.3}) look ({:.3}, {:.4}, {:.3}) move_time {mt}", world.started.elapsed().as_secs_f32(), world.pos.y, world.draw_pos.x, world.draw_pos.y, world.draw_pos.z, c.eye.x, c.eye.y, c.eye.z, c.target.x, c.target.y, c.target.z);
         }
         camera::step(world, dt, &cam_in);
         let in_event = event::active(world);
         world.effects.in_event = in_event;
         camera::shake_step(world, dt);
-        if *TRACE.get_or_init(|| std::env::var_os("FFXI_TRACE_MOVE").is_some()) && (cx != 0.0 || cy != 0.0 || (world.started.elapsed().as_secs_f32() * 2.0).fract() < dt * 2.0) {
+        if trace_move() && (cx != 0.0 || cy != 0.0 || (world.started.elapsed().as_secs_f32() * 2.0).fract() < dt * 2.0) {
             log::info!("cam t {:.3} eye {:.3} look {:.3} drawn {:.3} unlock {:.1} v6 {cx:.2} v7 {cy:.2} first {}", world.started.elapsed().as_secs_f32(), world.cam.eye, world.cam.look, world.draw_pos, world.unlock_ticks, world.camst.first);
         }
         // FUN_1008b100, every frame: a zone line between our position and where we are drawn (an event's pose: Jeuno's
@@ -10749,6 +10820,21 @@ impl App {
                 world.my_face = Some((me.dir, f));
             }
             me.moving = moving;
+            // FUN_10096c00: moving, the ticks add up; the frame after a stop sends the total, then it starts over.
+            // Retail counts a tick a frame or more; ours counts 60 Hz time at any frame rate.
+            let flame = if moving {
+                world.move_acc += dt * 60.0;
+                world.move_acc
+            } else {
+                let v = dt * 60.0 + world.move_acc;
+                world.move_acc = 0.0;
+                v
+            };
+            // Others read 13 bits: a whole lap off keeps the value they see.
+            if world.move_acc >= 8192.0 {
+                world.move_acc -= 8192.0;
+            }
+            me.move_time = (flame.round() as u32 & 0xffff) as u16;
         }
         world.moving = moving;
         // FUN_100c4390 (free camera): the heading turns at once, the model eases its drawn rotation (+0x61c) 0.125 a
@@ -10791,6 +10877,11 @@ impl App {
         let window = f.window;
         self.input.begin_frame(f);
         let Phase::World(world) = &mut self.phase else { return };
+        // The software keyboard first: open, it is the focused window and takes the frame's presses.
+        swkbd::update(world, self.game_ui.as_ref(), &mut self.input);
+        if world.swkbd_reopen && world.in_scene() {
+            swkbd::zone_in(world);
+        }
         fishing::update(world, &mut self.input, dt, window);
         primer::update(world, dt * 60.0);
         if world.layout.is_some() && !world_window_open(world) {
@@ -10912,30 +11003,51 @@ impl App {
         // when the gate allows (field, UI shown, no event, alive, no window), Ctrl / Alt + digit runs a macro and
         // Shift + Ctrl / Alt + digit picks a set. The palettes are not drawn yet.
         let sub_up = target::sub_up(world);
+        let by_mod = world.macros.as_ref().is_some_and(|m| m.by_mod());
         if let Some(line) = world.macros.as_mut().filter(|_| !sub_up).and_then(|m| m.step(dt * 60.0)) {
-            textcmd::run(world, &crate::dat::font::decode_sjis(&line), textcmd::Mode::Macro);
+            let line = crate::dat::font::decode_sjis(&line);
+            if by_mod {
+                lua::run_line(world, &line, textcmd::Mode::Macro, lua::From::Mod);
+            } else {
+                textcmd::run(world, &line, textcmd::Mode::Macro);
+            }
         }
-        // FUN_101a33e0: no window has the focus, or the one that has it is the action menu (playermo / mp_pmode) or a
-        // palette; the action menu stays up while engaged.
-        // A target prompt keeps the triggers / Ctrl / Alt for its ground-position cursor (0xb0..0xb3, FUN_10159ba0).
-        let window = window_over_actions(world) || world.settings.is_some() || world.full_log.is_some() || world.prompt.is_some();
-        let gate = world.in_scene() && !world.ui_hidden && !event::active(world) && !world.dead() && !window && world.macros.is_some();
-        // FUN_101a2e80 step 3: Ctrl (0x76) / Alt (0x77) held opens palette 1 / 2 at the next whole second of the
-        // clock; released, it closes. Ctrl wins.
-        let held = if self.input.test(0x76, input::mode::HELD) { 1 } else if self.input.test(0x77, input::mode::HELD) { 2 } else { 0 };
+        let gate = macro_gate(world);
         let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-        // A pad trigger's palette (client/gamepad.rs) stays up until toggled, run or cancelled.
-        world.pad_palette &= world.palette.0 != 0 && gate;
-        let pad_palette = world.pad_palette;
+        // FUN_101a2e80, the pad's triggers first (0x89 LT / 0x8a RT): a press opens its palette, or closes it when it is
+        // the one up; held with none up, it opens at the next whole second. Either stays up after the release (+0x18).
+        let (lt, rt) = ((self.input.test(0x89, input::mode::PRESS), self.input.test(0x89, input::mode::HELD)), (self.input.test(0x8a, input::mode::PRESS), self.input.test(0x8a, input::mode::HELD)));
         let pal = &mut world.palette;
-        if held == 0 && pad_palette {
-        } else if held == 0 || !gate {
-            (pal.0, pal.1, pal.2) = (0, 0, 0);
-        } else if pal.0 != held {
-            if pal.1 != held {
+        if !gate {
+            // (inf: a window, event or prompt that closes the gate closes the palettes)
+            (pal.0, pal.1, pal.2, world.pad_palette) = (0, 0, 0, false);
+        } else if lt.0 || rt.0 {
+            let n = if lt.0 { 1 } else { 2 };
+            (pal.0, world.pad_palette) = if pal.0 == n { (0, false) } else { (n, true) };
+        } else if lt.1 || rt.1 {
+            if pal.0 == 0 {
+                if world.pad_hold == 0 {
+                    world.pad_hold = secs;
+                } else if secs != world.pad_hold {
+                    (pal.0, world.pad_palette) = (if lt.1 { 1 } else { 2 }, true);
+                }
+            }
+        } else {
+            world.pad_hold = 0;
+        }
+        // Then Ctrl (0x76) / Alt (0x77) held: palette 1 / 2 at the next whole second of the clock (ours: at once with
+        // the delay off), no longer a pad one; released, a palette that isn't a pad one closes. Ctrl wins.
+        let held = if self.input.test(0x76, input::mode::HELD) { 1 } else if self.input.test(0x77, input::mode::HELD) { 2 } else { 0 };
+        if held == 0 {
+            if !world.pad_palette {
+                pal.0 = 0;
+            }
+            (pal.1, pal.2) = (0, 0);
+        } else if gate && pal.0 != held {
+            if pal.2 == 0 {
                 (pal.1, pal.2) = (held, secs);
             } else if secs != pal.2 || !world.opts.macro_delay {
-                pal.0 = held;
+                (pal.0, world.pad_palette) = (held, false);
             }
         }
         if gate {
@@ -10966,7 +11078,7 @@ impl App {
         // map closed; the shutter SE "0016". Saved as FUN_101d0ea0 names it: the name's first three letters,
         // yymmddhhmmss and a letter for shots in the same second, in the game folder's screenshots (PNG here, retail
         // JPG).
-        // The pad's RB (key function 0x24, pad only) is the same shutter with the UI hidden (window_fns.md).
+        // The pad's RB (key function 0x24, pad only) is the same shutter with the UI hidden (DAT_10663178 state 0).
         let rb = self.input.test(0x24, input::mode::PRESS);
         if (self.input.test(0x55, input::mode::PRESS) || rb) && world.ui_hidden && world.map.is_none() && world.in_scene() {
             let t = jiff::Zoned::now();
@@ -10977,10 +11089,10 @@ impl App {
             world.shot_request = Some(self.cfg.ffxi_dir().join("screenshots").join(name));
             world.sounds.push(16);
         }
-        // RB with the UI shown, in the field with no window: the chat input line opens (the software keyboard's
-        // trigger; the software keyboard itself is not built).
-        if rb && !world.ui_hidden && !world.typing && !event::active(world) && !world_window_open(world) && world.palette.0 == 0 {
-            world.typing = true;
+        // RB (0x24) with the UI shown, outside an event (FUN_101579c0): the software keyboard, with the chat line when no
+        // field is open (FUN_101b13f0); nothing with config 0xc9 off.
+        if rb && !world.ui_hidden && !event::active(world) {
+            swkbd::rb(world);
         }
         // The pad's extra slots 32 / 33 / 35 / 36 (key functions 0xb7..0xba, pad only, unbound by default): the shut
         // down prompt, F8's nearest target, /jump and /map.
@@ -11031,22 +11143,19 @@ impl App {
                 }
             }
         }
-        // Field command table 0x10371ee0 (FUN_101585f0 -> FUN_101587b0, the first entry whose test passes, one a
-        // frame), in a target prompt or with no window holding the field; its ids act only in the field context
-        // (mask 1). Its d-pad entries, in table order, all mode 0 (the press and its repeats):
-        // - 0xb0 / 0xb1 / 0xb3 / 0xb2 (LT or RT + the d-pad, Ctrl or Alt + the arrows): the ground-position cursor of a
-        //   prompt that takes one (commands 0x18..0x1b). They come first, so with a trigger held the d-pad never steps
-        //   the target, prompt or not (their command does nothing without the cursor).
-        // - 0x27 / 0x28 (pad only): up / down the alliance; 0x2a / 0x29 the previous / next actor on screen. In a
-        //   prompt they take its targets (field +0x60 / +0x64); locked on with no prompt, nothing (FUN_101587f0).
-        if !event::active(world) && !world.ko_open && world.ko_offer != 2 && (world.prompt.is_some() || !world_window_open(world)) && world.palette.0 == 0 {
+        // Field command table 0x10371ee0 (FUN_101587b0: the first entry that passes, one a frame, press or repeat): the
+        // ground cursor 0xb0 / 0xb1 / 0xb3 / 0xb2 first, then the pad's 0x27 / 0x28 up / down and 0x2a / 0x29 left /
+        // right (MODLOG "Gamepad"). Locked on with no prompt or party cursor none acts (FUN_101587f0).
+        let locked_only = world.locked && world.prompt.is_none() && world.party_cursor.is_none();
+        if !event::active(world) && !world.ko_open && world.ko_offer != 2 && !locked_only && (world.prompt.is_some() || !world_window_open(world)) && world.palette.0 == 0 {
             let rep = |input: &mut input::Input, k: usize| input.test(k, input::mode::REPEAT);
             let cursor = [(0xb0, glam::Vec2::Y), (0xb1, glam::Vec2::NEG_Y), (0xb3, glam::Vec2::NEG_X), (0xb2, glam::Vec2::X)].into_iter().find(|(k, _)| rep(&mut self.input, *k));
             let view = Self::camera(world).view();
             if let Some((_, dir)) = cursor {
+                // A press or repeat moves one retail frame's worth (2 ticks).
                 if world.prompt.as_ref().is_some_and(|s| s.ground) {
                     let c = Self::camera(world);
-                    target::move_ground_cursor(world, dir, dt * 60.0, c.target - c.eye);
+                    target::move_ground_cursor(world, dir, 2.0, c.target - c.eye);
                 }
             } else if let Some(down) = [(0x27, false), (0x28, true)].into_iter().find(|(k, _)| rep(&mut self.input, *k)).map(|(_, d)| d) {
                 if let Some(t) = target::party_pad_step(world, down) {
@@ -11394,17 +11503,6 @@ impl App {
         })
     }
 
-    /// The text field that has the keys, if any, for the on-screen keyboard: the chat line and the world's fields, the
-    /// login screen's, the character name entry.
-    fn text_field(&self) -> Option<osk::Field> {
-        match &self.phase {
-            Phase::World(w) => text_field_open(w).then_some(if w.typing { osk::Field::Chat } else { osk::Field::Other }),
-            Phase::Login { .. } => Some(osk::Field::Login),
-            Phase::Characters { screen: LobbyScreen::Create, .. } if self.creator_step == 5 && self.creator_world.is_none() => Some(osk::Field::Name),
-            _ => None,
-        }
-    }
-
     fn ui(&mut self, ctx: &egui::Context, window: [u32; 2]) {
         let mut action: Option<Box<dyn FnOnce(&mut App)>> = None;
         self.ui_drawn = false;
@@ -11429,7 +11527,7 @@ impl App {
         let notches = self.list_wheel.trunc();
         self.list_wheel -= notches;
         // Over a modern panel the pointer is egui's: the game's windows get no clicks or wheel there.
-        let mine = !(matches!(&self.phase, Phase::World(w) if w.modern) && (ctx.is_pointer_over_egui() || ctx.egui_is_using_pointer())) && !self.kb.hovered();
+        let mine = !(matches!(&self.phase, Phase::World(w) if w.modern) && (ctx.is_pointer_over_egui() || ctx.egui_is_using_pointer()));
         let input = ctx.input(|i| UiInput {
             wheel: if mine { notches as i32 } else { 0 },
             pointer: i.pointer.hover_pos().map(|p| (p.x * ppp * k.0, p.y * ppp * k.1 + ptr_dy)),
@@ -11948,6 +12046,7 @@ impl App {
                                 }
                             }
                             if let Some(u) = self.update_ui.as_mut() {
+                                u.zoom = if modern_title { 1.35 } else { 1.0 };
                                 let mut outs = vec![u.poll()];
                                 for ev in input.events.iter() {
                                     if let egui::Event::Key { key, pressed: true, .. } = ev {
@@ -11960,7 +12059,12 @@ impl App {
                                         lu.hover.set(true);
                                     }
                                 }
-                                u.draw(lu, sw, sh);
+                                let v = u.view(sw, sh);
+                                if modern_title {
+                                    self.modern.get_or_insert_with(|| modern::Modern::new(ctx)).update_window(ctx, [screen_size[0] as u32, screen_size[1] as u32], self.cfg.modern_scale, self.ui_k, &v);
+                                } else {
+                                    updater::UpdateUi::draw(lu, &v);
+                                }
                                 for out in outs {
                                     if let Some(a) = self.audio.as_mut() {
                                         for x in &out.sounds {
@@ -12530,6 +12634,13 @@ impl App {
                     }
                 }
                 // What the Config windows and the settings screen hand to the app.
+                let keys = [world.cam_keys[1] as u32, world.cam_keys[0] as u32];
+                if keys != [self.cfg.cam_keys_x, self.cfg.cam_keys_y] {
+                    (self.cfg.cam_keys_x, self.cfg.cam_keys_y) = (keys[0], keys[1]);
+                    if let Err(e) = self.cfg.save() {
+                        log::warn!("config save: {e:#}");
+                    }
+                }
                 if let Some(kind) = world.want_settings.take() {
                     // Size lists come from the window, not the menu layout it is scaled to.
                     let mut s = settings::SettingsUi::open_kind(&self.cfg, window, kind);
@@ -13156,63 +13267,33 @@ impl App {
         // egui-winit passes the texture limit in its first input only; lost, egui assumes 2048 and the modern atlases
         // (status_0@2x is 2184 wide) fail its debug check.
         raw.max_texture_side = Some(gfx.gpu.device.limits().max_texture_dimension_2d as usize);
+        if let Phase::World(w) = &mut self.phase {
+            w.lua.synth_enter = self.synth_events.iter().any(|e| matches!(e, egui::Event::Key { key: egui::Key::Enter, pressed: true, .. }));
+        }
+        raw.events.append(&mut self.synth_events);
         // A game controller through retail's pad word and stick bytes (client/gamepad.rs); the windows get the keys its
         // confirm / cancel / menu / d-pad slots stand for.
         let field = matches!(self.phase, Phase::World(_));
         let menu = self.input.window_active() || matches!(&self.phase, Phase::World(w) if w.prompt.is_some());
-        // Retail's macro gate (FUN_101a33e0): no window has the focus but the action menu, and no target prompt.
-        let macros = matches!(&self.phase, Phase::World(w) if !window_over_actions(w) && !w.typing && !w.ui_hidden && w.prompt.is_none() && w.macros.is_some());
         let palette = matches!(&self.phase, Phase::World(w) if w.palette.0 != 0);
         // A window has the keys (not the chat line): LB / RB turn its tabs.
         let tabs = match &self.phase {
             Phase::World(w) => window_over_actions(w) && !w.typing,
             _ => true,
         };
-        // A key, a click or typed text: the keyboard and mouse are the last devices, not the pad.
-        if raw.events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, .. } | egui::Event::PointerButton { pressed: true, .. } | egui::Event::Text(_))) {
-            self.pad_last = false;
-        }
-        // A keyboard over a field that is gone closes before it takes another frame of the pad.
-        let text = self.text_field();
-        if text.is_none() {
-            self.kb.close();
-        }
-        let ctx = gamepad::Ctx { menu, macros, palette, tabs, field, text: text.is_some(), osk: self.kb.is_open() };
+        let keyboard = matches!(&self.phase, Phase::World(w) if w.swkbd.is_some());
+        let ctx = gamepad::Ctx { menu, palette, tabs, field, keyboard };
         let pad = self.gamepad.poll(&self.cfg, gfx.window.has_focus(), ctx, dt);
-        self.pad_last |= pad.pressed;
         self.input.set_pad(pad.pad);
-        // FUN_101a2e80: a trigger press toggles its palette, the other trigger swaps to the other one.
-        if pad.palette != 0
-            && let Phase::World(w) = &mut self.phase
-        {
-            let n = pad.palette;
-            if w.palette.0 == n {
-                (w.palette.0, w.palette.1, w.palette.2, w.pad_palette) = (0, 0, 0, false);
-            } else {
-                (w.palette.0, w.palette.1, w.pad_palette) = (n, n, true);
-            }
-        }
         self.input.set_stick(pad.stick);
         if pad.pressed && !self.dragging && !self.left_down {
             self.mouse.visible = false;
         }
-        // The on-screen keyboard: last frame's clicks, then the pad's keys (it takes them all while up).
-        raw.events.append(&mut self.kb_events);
-        if ctx.osk {
-            for ev in &pad.events {
-                raw.events.extend(self.kb.pad_event(ev));
-            }
-        } else {
-            raw.events.extend(pad.events);
+        raw.events.extend(pad.events);
+        // What the software keyboard typed, as the keys a field reads.
+        if let Phase::World(w) = &mut self.phase {
+            raw.events.append(&mut w.swkbd_out);
         }
-        let rose = self.kb_edge.update(text.is_some(), self.pad_last);
-        if let Some(f) = text
-            && (rose || (pad.keyboard && !self.kb.is_open()))
-            && osk::request(f) == osk::Raised::Builtin
-        {
-            self.kb.open(f);
-        }
-        raw.events.append(&mut self.synth_events);
         let phase = self.phase_name();
         let mut script_shot = None;
         if let Some(sc) = &mut self.drive.input {
@@ -13345,12 +13426,7 @@ impl App {
         let ctx = gfx.egui_ctx.clone();
         self.update_netwait(dt);
         let before = self.ui_snap();
-        let mut output = perf::timed(|| "egui".into(), || ctx.run_ui(raw, |ui| {
-            self.ui(ui.ctx(), size);
-            // The on-screen keyboard over everything; its clicks type next frame.
-            let typed = self.kb.show(ui.ctx());
-            self.kb_events.extend(typed);
-        }));
+        let mut output = perf::timed(|| "egui".into(), || ctx.run_ui(raw, |ui| self.ui(ui.ctx(), size)));
         self.egui_deltas.append(std::mem::take(&mut output.textures_delta));
         let after = self.ui_snap();
         if let (Some(s), Some(a)) = (Self::ui_sound(&before, &after), self.audio.as_mut()) {
@@ -13411,7 +13487,7 @@ impl App {
             gfx.egui_state.egui_input_mut().events.push(egui::Event::Paste(t));
         }
         if self.ui_drawn {
-            platform.cursor_icon = if self.cfg.tool("0021") == 0 && !self.kb.hovered() { egui::CursorIcon::None } else { egui::CursorIcon::Default };
+            platform.cursor_icon = if self.cfg.tool("0021") == 0 { egui::CursorIcon::None } else { egui::CursorIcon::Default };
         } else {
             self.mouse.invalidate();
         }
@@ -14550,16 +14626,24 @@ impl App {
         if let Phase::World(w) = &mut self.phase
             && let Some((owner, req)) = w.lua.record_req.take()
         {
-            // A stop ends only the asking mod's own recording.
-            if (req.is_some() || self.recorder.as_ref().is_some_and(|r| r.owner == owner))
-                && let Some(r) = self.recorder.take()
-            {
-                r.stop();
-            }
-            if let Some((path, fps)) = req.filter(|_| gfx.config.usage.contains(wgpu::TextureUsages::COPY_SRC)) {
-                match record::Recorder::start(&gfx.gpu, size, gfx.config.format, path, fps, owner) {
-                    Ok(r) => self.recorder = Some(r),
-                    Err(e) => log::warn!("record: {e:#}"),
+            // Only the mod recording ends or replaces its recording.
+            if self.recorder.as_ref().is_none_or(|r| r.owner == owner) {
+                if let Some(r) = self.recorder.take() {
+                    r.stop();
+                }
+                if let Some((path, fps)) = req {
+                    let started = if gfx.config.usage.contains(wgpu::TextureUsages::COPY_SRC) {
+                        record::Recorder::start(&gfx.gpu, size, gfx.config.format, path, fps, owner.clone())
+                    } else {
+                        Err(anyhow::anyhow!("this window cannot be copied for recording"))
+                    };
+                    match started {
+                        Ok(r) => self.recorder = Some(r),
+                        Err(e) => {
+                            log::warn!("record: {e:#}");
+                            w.chat.push_colour(format!("{owner}: client.record: {e:#}"), lua::ERROR);
+                        }
+                    }
                 }
             }
         }
@@ -14576,7 +14660,7 @@ impl App {
             r.copy(&mut encoder, &frame.texture);
         }
         if let Phase::World(w) = &self.phase {
-            *w.lua.recording.borrow_mut() = self.recorder.as_ref().map(|r| r.path.clone());
+            *w.lua.recording.borrow_mut() = self.recorder.as_ref().map(|r| (r.owner.clone(), r.path.clone()));
         }
         let row = (size[0] * 4).div_ceil(256) * 256;
         let capture = (shoot && gfx.config.usage.contains(wgpu::TextureUsages::COPY_SRC)).then(|| {

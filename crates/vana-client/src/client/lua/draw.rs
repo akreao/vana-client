@@ -42,14 +42,9 @@ fn vec3(v: Value) -> mlua::Result<Vec3> {
     }
 }
 
+/// A shape's colour, white when none is given; anything but a colour table is an error, as for the HUD.
 fn colour(t: &Table) -> mlua::Result<[u8; 4]> {
-    Ok(match t.get::<Value>("colour")? {
-        Value::Table(c) => {
-            let get = |k: &str, i: i64, d: u8| -> mlua::Result<u8> { Ok(c.get::<Option<u8>>(k)?.or(c.get::<Option<u8>>(i)?).unwrap_or(d)) };
-            [get("r", 1, 255)?, get("g", 2, 255)?, get("b", 3, 255)?, get("a", 4, 255)?]
-        }
-        _ => [255, 255, 255, 255],
-    })
+    Ok(super::hud::colour(t.get("colour")?)?.unwrap_or([255; 4]))
 }
 
 fn put(lua: &Lua, id: String, kind: Kind, colour: [u8; 4]) -> mlua::Result<()> {
@@ -77,18 +72,14 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
         "image",
         lua.create_function(move |lua, (id, s): (String, Table)| {
             let path: String = s.get("path")?;
-            let bytes = match &src {
-                super::vm::Source::Dir(d) => std::fs::read(super::runtime::mod_file(d, &path)?).map_err(|e| mlua::Error::runtime(format!("{path}: {e}")))?,
-                super::vm::Source::Bundled(_) => return Err(mlua::Error::runtime("bundled mods carry no image files")),
-            };
-            let img = super::hud::decode_png(&bytes).map_err(|e| mlua::Error::runtime(format!("{path}: {e} (a PNG)")))?;
+            let (key, img) = super::hud::load_png(&src, &mod_id, &path)?;
             let facing = match s.get::<Option<String>>("facing")?.as_deref() {
                 Some("upright") => Facing::Upright,
                 Some("camera") => Facing::Camera,
                 _ => Facing::Ground,
             };
             let (w, h) = (s.get::<Option<f32>>("w")?.unwrap_or(2.0).max(0.01), s.get::<Option<f32>>("h")?.unwrap_or(2.0).max(0.01));
-            let kind = Kind::Image { at: vec3(s.get("at")?)?, w, h, yaw: s.get::<Option<f32>>("yaw")?.unwrap_or(0.0), facing, key: super::hud::image_key(&mod_id, &path, &bytes), img: std::sync::Arc::new(img) };
+            let kind = Kind::Image { at: vec3(s.get("at")?)?, w, h, yaw: s.get::<Option<f32>>("yaw")?.unwrap_or(0.0), facing, key, img };
             put(lua, id, kind, colour(&s)?)
         })?,
     )?;
@@ -120,6 +111,9 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
         "to_screen",
         lua.create_function(|lua, p: Value| {
             let p = vec3(p)?;
+            if super::lobby::in_lobby(lua) {
+                return Err(mlua::Error::runtime("not available in the lobby (before login)"));
+            }
             let info = lua.app_data_ref::<std::rc::Rc<std::cell::RefCell<super::state::FrameInfo>>>().map(|f| f.clone()).unwrap_or_default();
             let f = info.borrow();
             let clip = f.view_proj * p.extend(1.0);

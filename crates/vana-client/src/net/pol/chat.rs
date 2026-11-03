@@ -395,7 +395,8 @@ fn refusal(body: &[u8]) -> Option<String> {
         if text.contains("Kicked by same NICK") {
             return Some("This PlayOnline ID signed in somewhere else.".into());
         }
-        if let Some(i) = text.find("(POL ") {
+        // Found in the bytes: a lossy string's index is off by each invalid byte before it.
+        if let Some(i) = body.windows(5).position(|w| w == b"(POL ") {
             let code = b32_decode(&body[i + 5..], 16).get(6).copied().unwrap_or(0);
             return Some(format!("PlayOnline refused the sign-in (POL error {code:#x})."));
         }
@@ -628,7 +629,14 @@ mod tests {
         hex::decode(s).unwrap()
     }
 
-    // Vectors from polcore 73b1864b run under Wine (lab: scratch/pol/chat/vectors.json).
+    // Vectors from polcore 73b1864b run under Wine.
+
+    /// A refusal with bytes that aren't UTF-8 before its code is read from the bytes, not out of range.
+    #[test]
+    fn refusal_with_invalid_bytes() {
+        assert!(refusal(b"ERROR \xff\xff\xff\xff (POL ").is_some());
+        assert!(refusal(b"ERROR :Closing (POL NNNNNNNNNNNNNNNN)").unwrap().contains("POL error"));
+    }
 
     #[test]
     fn codecs() {

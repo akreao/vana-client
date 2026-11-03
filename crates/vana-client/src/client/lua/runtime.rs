@@ -43,12 +43,6 @@ fn rel(path: &str) -> mlua::Result<PathBuf> {
     Ok(out)
 }
 
-/// A file in the mod's own folder `dir` (hud.image, draw.image, chat.icon, audio.play), as `fs` takes paths: `..` and
-/// drive paths refused, a leading `/` from the folder; and no link on the way, which could lead outside it.
-pub(super) fn mod_file(dir: &Path, path: &str) -> mlua::Result<PathBuf> {
-    no_links(dir, &rel(path)?, path)
-}
-
 /// Where a path lives: "shared/..." is the shared area (files.shared), anything else the mod's data folder.
 fn place(lua: &Lua, data: &Path, path: &str) -> mlua::Result<PathBuf> {
     let r = rel(path)?;
@@ -85,7 +79,7 @@ fn no_links(base: &Path, r: &Path, path: &str) -> mlua::Result<PathBuf> {
 fn in_mod(src: &super::vm::Source, r: &Path) -> bool {
     let name = r.to_string_lossy().replace('\\', "/");
     match src {
-        super::vm::Source::Dir(d) => d.join(r).exists(),
+        super::vm::Source::Dir(d) => super::vm::inside(d, &name).is_ok_and(|p| p.exists()),
         super::vm::Source::Bundled(files) => files.iter().any(|f| f.0 == name || f.0.starts_with(&format!("{name}/"))),
     }
 }
@@ -109,7 +103,7 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
                     Ok(b) => Ok(Some(lua.create_string(b)?)),
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                         let r = rel(&path)?;
-                        match src.read(&r.to_string_lossy().replace('\\', "/")) {
+                        match src.read_bytes(&r.to_string_lossy().replace('\\', "/")) {
                             Ok(t) => Ok(Some(lua.create_string(t)?)),
                             Err(_) => Ok(None),
                         }
@@ -159,7 +153,7 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
                 if let super::vm::Source::Dir(d) = &src
                     && !rel(&path)?.starts_with("shared")
                 {
-                    dirs.push(d.join(rel(&path)?));
+                    dirs.push(super::vm::inside(d, &path).map_err(|e| io_err(&path, e))?);
                 }
                 for d in dirs {
                     for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
@@ -354,7 +348,7 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
     client.set(
         "copy",
         lua.create_function(|lua, s: String| {
-            state(lua).borrow_mut().ops.push(super::Op::Copy(s));
+            super::api::push_op(lua, super::Op::Copy(s))?;
             Ok(())
         })?,
     )?;
@@ -362,11 +356,9 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
         "paste",
         lua.create_function(|lua, handler: Function| {
             super::api::need(lua, "clipboard")?;
+            super::api::push_op(lua, super::Op::Paste)?;
             let key = lua.create_registry_value(handler)?;
-            let st = state(lua);
-            let mut s = st.borrow_mut();
-            s.paste_handlers.push(key);
-            s.ops.push(super::Op::Paste);
+            state(lua).borrow_mut().paste_handlers.push(key);
             Ok(())
         })?,
     )?;
@@ -385,7 +377,8 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
                 return Err(mlua::Error::runtime(format!("no option {name:?} ({})", super::OPTIONS.join(", "))));
             }
             let v: serde_json::Value = lua.from_value(v)?;
-            state(lua).borrow_mut().ops.push(super::Op::Option(me.clone(), name, v));
+            super::option_value_ok(&name, &v).map_err(|want| mlua::Error::runtime(format!("option {name}: {want}")))?;
+            super::api::push_op(lua, super::Op::Option(me.clone(), name, v))?;
             Ok(())
         })?,
     )?;
@@ -424,7 +417,7 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
                 protected: t.get::<Option<bool>>("capture")?.map(|c| !c),
                 ..Default::default()
             };
-            state(lua).borrow_mut().ops.push(super::Op::Window(req));
+            super::api::push_op(lua, super::Op::Window(req))?;
             Ok(())
         })?,
     )?;
@@ -432,7 +425,7 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
         "focus",
         lua.create_function(|lua, ()| {
             super::api::need(lua, "multibox")?;
-            state(lua).borrow_mut().ops.push(super::Op::Window(super::WinReq { focus: true, ..Default::default() }));
+            super::api::push_op(lua, super::Op::Window(super::WinReq { focus: true, ..Default::default() }))?;
             Ok(())
         })?,
     )?;
@@ -449,7 +442,7 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
                 }
                 None => jiff::Zoned::now().strftime("mod%y%m%d%H%M%S.png").to_string(),
             };
-            state(lua).borrow_mut().ops.push(super::Op::Shot(name.clone()));
+            super::api::push_op(lua, super::Op::Shot(name.clone()))?;
             Ok(name)
         })?,
     )?;
@@ -483,7 +476,7 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
             std::thread::Builder::new()
                 .name("lua-run".into())
                 .spawn(move || {
-                    let r = child.wait_with_output().map_err(|e| e.to_string()).map(|o| (o.status.code().unwrap_or(-1).clamp(0, 65535) as u16, o.stdout, vec![("stderr".to_string(), String::from_utf8_lossy(&o.stderr).into_owned())]));
+                    let r = child.wait_with_output().map_err(|e| e.to_string()).map(|o| (exit_status(o.status), o.stdout, vec![("stderr".to_string(), String::from_utf8_lossy(&o.stderr).into_owned())]));
                     let _ = tx.send((id, r));
                 })
                 .map_err(|e| mlua::Error::runtime(format!("client.run: {e}")))?;
@@ -493,6 +486,22 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
     super::process::install(lua, &client, &vm.manifest.id)?;
     g.set("client", client)?;
     Ok(())
+}
+
+/// A finished program's status for a mod: its exit code (Windows: the whole 32-bit code); ended by a signal (Unix),
+/// minus the signal's number.
+fn exit_status(s: std::process::ExitStatus) -> i64 {
+    #[cfg(unix)]
+    if let Some(sig) = std::os::unix::process::ExitStatusExt::signal(&s) {
+        return -i64::from(sig);
+    }
+    match s.code() {
+        #[cfg(windows)]
+        Some(c) => i64::from(c as u32),
+        #[cfg(not(windows))]
+        Some(c) => i64::from(c),
+        None => -1,
+    }
 }
 
 /// An auto-translate phrase as the line holds it: its block (kind, language, group, id) as four private-use chars,
@@ -526,7 +535,6 @@ fn call(lua: &Lua, id: &str, name: &str, args: mlua::Variadic<Value>) -> mlua::R
     };
     let f: Function = {
         let s = st.borrow();
-        // A suspended mod runs nothing, for the host or for another mod.
         if s.suspended {
             return Err(mlua::Error::runtime(format!("mods.call: {id} is suspended")));
         }
@@ -575,12 +583,6 @@ mod tests {
         assert!(p("out/x.txt").is_err());
         // A link as the mod's own folder is caught from the root down.
         assert!(super::no_links(&base, std::path::Path::new("out/files/a.txt"), "a.txt").is_err());
-        // The mod's own files (hud.image, audio.play, ...): links, `..` and roots refused.
-        assert_eq!(super::mod_file(&base, "dir/a.png").unwrap(), base.join("dir/a.png"));
-        assert!(super::mod_file(&base, "out/a.png").is_err());
-        assert!(super::mod_file(&base, "../a.png").is_err());
-        assert_eq!(super::mod_file(&base, "/dir/a.png").unwrap(), base.join("dir/a.png"));
-        assert!(super::mod_file(&base, "C:/a.png").is_err());
         let _ = std::fs::remove_dir_all(&base);
     }
 }
