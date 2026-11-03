@@ -9941,8 +9941,8 @@ impl App {
         if !event::active(world) {
             ko_step(world);
         }
-        // FUN_10095e90 for us, once a frame; bound = +0x120 bit 7 (inf: every event binds our character).
-        let bound = event::active(world);
+        // FUN_10095e90 for us, once a frame; bound = +0x120 bit 7, our character among the running event's actors.
+        let bound = world.event.as_ref().is_some_and(|l| l.st.bound.contains(&world.my_id));
         world.costume.step(world.my_motion.status, bound);
         gmtell::step(world);
         event::update(world, dt);
