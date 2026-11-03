@@ -150,7 +150,7 @@ detail inside implemented ops.
 | Item | Status | Source | Settle by |
 |---|---|---|---|
 | Footsteps: zone flag +0x1cf alt name (surface 3 -> 2), the model-scope fses retry, the culled-pass skip (+0x840 bits 20..21), 'fvib', the footstep-effects option DAT_10444158 (taken as on) | Not built | L3717, L3734..L3755 | DLL |
-| Sound levels: the resets at event end / SE slider change (FUN_100ae3f0 / FUN_10035e80) | Not built | L6303 | DLL |
+| Sound levels: the resets at event end / SE slider change (FUN_100ae3f0 / FUN_10035e80) *([batch 6](notes/2026-11-03-modlog-gaps-batch6.md) item 18: one reset a zone, so a normal event's end restores nothing; a slider move resets every channel)* | Built | L6303 | DLL |
 | Zone ambient loop: a time / weather / indoor change crossfades over 150 sound ticks; a zone change cuts the old loop *(answered, [batch 3](notes/2026-11-03-modlog-gaps-batch3.md) §7; ours cuts every change)* | Not built | L5932 | DLL |
 | Title buttons: press sounds on the character list rows, Config pages, the login screen | Not built | L7195 | DLL |
 | Number windows' sounds: retail plays nothing on Up / Down / Left / Right or at a limit, only OK 0002 / cancel 0003; ours plays the cursor sound *(answered, [batch 3](notes/2026-11-03-modlog-gaps-batch3.md) §8)* | Not built | L6841 | DLL |
