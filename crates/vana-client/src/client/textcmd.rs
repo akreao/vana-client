@@ -248,6 +248,11 @@ fn table() -> &'static Table {
     &commands().map
 }
 
+/// A game command's name (without the slash), as /item or /ma.
+pub(super) fn is_game_command(name: &str) -> bool {
+    table().contains_key(format!("/{name}").as_str())
+}
+
 /// FUN_10076830: tokens split at spaces (and tabs outside typed lines); a token opening with a quote runs to the
 /// matching one, and the quotes go (FUN_10076a70: only when the last char matches the first). At most 17; the
 /// 17th takes the rest.
@@ -571,7 +576,7 @@ fn state_gate(w: &mut World, flags: u16) -> bool {
     }
     let s = w.my_motion.status;
     let busy = busy(w);
-    let state = if w.dead() { 0x20 } else { 0 } | if matches!(s, 5 | 0x55) { 0x40 } else { 0 } | if busy { 0x80 } else { 0 };
+    let state = if w.dead() && !w.opts.dead_commands { 0x20 } else { 0 } | if matches!(s, 5 | 0x55) { 0x40 } else { 0 } | if busy { 0x80 } else { 0 };
     // Any disallowed state refuses; the line goes by the states held, first match.
     if state & !flags != 0 {
         if state & 0x20 != 0 {
@@ -788,6 +793,7 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
                 && let Some(bt) = w.battle.clone()
             {
                 let colour = bt.colour_in(0xce, &w.game);
+                let text = super::expand_phrases(w, &text);
                 w.chat.push_colour(text, colour);
             }
             Ok(())

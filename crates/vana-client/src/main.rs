@@ -281,7 +281,7 @@ enum Cmd {
         #[arg(long)]
         out: PathBuf,
     },
-    /// LuaLS stubs for the Lua mod API (docs/lua-mods.md), for editors.
+    /// LuaLS stubs for the Lua mod API (docs/modding), for editors.
     LuaStubs {
         #[arg(long)]
         out: PathBuf,
