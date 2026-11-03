@@ -202,13 +202,13 @@ detail inside implemented ops.
 | Equipment sets editor: the mouse; the wardrobe number glyph (unknown) | Not built | L10228, L10217 | DLL |
 | Delivery Box: the augment Ex rule and the equipped linkshell in the picker colours; the monstrosity / menu-lock gates; caret movement in the name; the one-frame Recv-pair miss | Not built | L5700 | DLL |
 | Automaton customization: flow B's double SE 0002; SE 0004 repeat under the pointer; unfocused cursor while a slot is picked; pupsibor's starting cursor | Unknown | L16873 | DLL / Live |
-| Blue magic sets: the open order *(inferred: bluequip last takes the focus)* | Inferred | L11083 | DLL |
+| Blue magic sets: the open order *(inferred: bluequip last takes the focus)* *([batch 6](notes/2026-11-03-modlog-gaps-batch6.md) item 11: confirmed, persona, bluehelp, bluinven, bluepoin, then bluequip with the focus; bluset.rs opens on Focus::Equip)* | Matches | L11083 | DLL |
 
 ### Shops, trade, bazaar, auction
 
 | Item | Status | Source | Settle by |
 |---|---|---|---|
-| NPC shops: the Up wrap at the list's top (not checked against FUN_101f67c0) | Not checked | L6339 | DLL |
+| NPC shops: the Up wrap at the list's top (not checked against FUN_101f67c0) *([batch 5](notes/2026-11-03-modlog-gaps-batch5.md) item 10: retail doesn't wrap; the list base FUN_101f6c70 scrolls at the edge rows and stops silently at the ends, as shop.rs move_list already does)* | Matches | L6339 | DLL |
 | NPC shops: DAT_1057876c + 0xc4; the focus back to shopmain; sell order = inventory view order; English width 274; tint helpers FUN_1022b680 / FUN_1022b570 / FUN_10223360 / FUN_102092b0; the Escape sound | Inferred | L6373, L6349 | DLL / Footage |
 | Guild shops: the cursor reset on source switch; kind 0x19 squeeze or clip; Trade refusal codes other than 0xfb / 0xfd; Stat 2 / bit 31 with Stat 0; DAT head byte 13 | Inferred / unknown | L6485, L6470 | DLL / LSB |
 | Field manuals: the query window's scroll bar | Not built | L6545 | DLL |
