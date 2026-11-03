@@ -1,4 +1,4 @@
-## The bump needs the load fade finished, and has no event test
+## The bump needs the load fade finished, and has no event test (2026-11-03)
 
 **+0x59c is the actor's load fade.** It starts at 0, rises by frame ticks x 1/32 to 1.0 while the model object
 reports ready, and falls by ticks x 1/16 to 0 once the actor is going away (vt+0x36c). The draw multiplies by it, and
