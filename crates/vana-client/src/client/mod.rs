@@ -9039,6 +9039,9 @@ impl App {
                     world.party.refresh_self(char_id, index, &name, zone);
                     world.event = None;
                     world.event_pending = None;
+                    // A zone-in drops the event without its tail (FUN_100ae960), so undo op 0x46 sub 1 here too:
+                    // otherwise the status icons stay hidden for the whole next zone.
+                    world.buffs_hidden = false;
                     world.screen = Default::default();
                     world.self_lock = None;
                     world.rebuild_models = false;
