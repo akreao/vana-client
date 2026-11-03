@@ -107,7 +107,7 @@ detail inside implemented ops.
 | Ship actors: whether a new task first updates in its frame; vt +0x178 and the default speed 1.0 assumed; the far plane; the lighting area; the 10-second no-skip window; +0x130 bit 21's writer | Unknown | L18113 | DLL |
 | Ships: per-run data for each voyage (no captures; pirates' run 227 / 228) | Blocked: no data | L13802, L13831 | Captures |
 | 0x00E SubKind 5 / 6: the 0x9000 word *(answered, [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §5: bits 0..11 NPC-table model id, bits 12..15 the look slot; kind 7 has a case)*; ours not audited against it | Answered | L15593 | Code check |
-| /sitchair: trusts ignoring chair / sit / heal statuses in 0x00E (asm 0x1009c148) | Not built | L18831 | DLL |
+| /sitchair: trusts ignoring chair / sit / heal statuses in 0x00E (asm 0x1009c148) *([batch 6](notes/2026-11-03-modlog-gaps-batch6.md) item 7: 0x1009c118..0x1009c16d)* | Built | L18831 | DLL |
 | Dual wield: a 'b' scheduler with +0x8b5 calls vtable +0x250(1), no effect seen | Not traced | L16279 | DLL |
 
 ## 4. Effects, lighting and rendering

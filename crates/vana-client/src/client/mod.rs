@@ -9294,7 +9294,12 @@ impl App {
                     if e.pos.is_some() {
                         (motion.speed, motion.speed_base) = (e.motion.speed, e.motion.speed_base);
                     }
-                    if e.hpp.is_some() && !entry.status_held {
+                    // 0x00E mask 4 (0x1009c118..0x1009c16d): a trust (@0x28 bit 0) never takes the server's healing
+                    // (0x21), sitting (0x2f) or chair (0x3f..0x53) statuses; its old status stays. 0x00D has no such rule.
+                    let trust_rest = e.kind != net::EntityKind::Player
+                        && e.marks.as_ref().is_some_and(|m| m.trust)
+                        && matches!(e.motion.status, 0x21 | 0x2f | 0x3f..=0x53);
+                    if e.hpp.is_some() && !entry.status_held && !trust_rest {
                         // A held actor (mid-swing) applies the change when its hold ends (combat::tick).
                         if !fresh && held {
                             world.held_status.insert(e.id, e.motion.status);
