@@ -2103,7 +2103,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
                 world.copied = fep::selected_text(world);
                 fep::delete_selection(world);
             }
-            egui::Event::Cut => chat_prefix(world, "/linkshell2 "),
+            egui::Event::Cut if !event::cinema(world) => chat_prefix(world, "/linkshell2 "),
             egui::Event::Key { key, pressed: true, modifiers, .. } => match key {
                 // The auto-translate list takes its keys first (FUN_101b5d10).
                 k if world.typing && world.fep.is_some() && fep::key(world, *k, modifiers.shift) => {}
@@ -2149,7 +2149,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
                     chat_prefix(world, p);
                     keys.clear();
                 }
-                egui::Key::R if modifiers.ctrl || modifiers.alt => {
+                egui::Key::R if (modifiers.ctrl || modifiers.alt) && (world.typing || !event::cinema(world)) => {
                     reply(world);
                     keys.clear();
                 }
@@ -2541,7 +2541,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
                         target::confirm_target(world);
                     }
                 }
-                egui::Key::Space => {
+                egui::Key::Space if !event::cinema(world) => {
                     world.typing = true;
                     world.space_open = true;
                     opened = true;
@@ -2549,7 +2549,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
                 }
                 // FUN_101aa930 -> FUN_101ac1a0: VK 0xBF opens the input; the '/' character that follows is typed.
                 // egui reports numpad / as Slash too; that key is 0x45 / 0x88, not chat.
-                egui::Key::Slash if !modifiers.ctrl && !modifiers.alt && !numpad_slash => {
+                egui::Key::Slash if !modifiers.ctrl && !modifiers.alt && !numpad_slash && !event::cinema(world) => {
                     world.typing = true;
                     keys.clear();
                 }
@@ -4123,7 +4123,18 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
         if let Some(m) = world.map.as_mut() {
             m.draw(gu, sw, sh);
         }
+        // cnqframe has flag 0x40 too.
+        if world.cnq.is_some() {
+            region::draw(gu, world, sw, sh);
+        }
         self::event_window(gu, world, sw, sh, logwin::text_width(sw, world.log.cfg.pct));
+        // Ours: an event choice still shows ("menu    query" is not among the exempt windows in retail's table, but
+        // a hidden choice would leave the player picking blind; inf: scripts end cinema before asking).
+        if let Some(c) = event::choice(world) {
+            let options: Vec<String> = c.options.iter().map(|o| o.1.clone()).collect();
+            let (question, scroll, cursor) = (c.question.clone(), c.scroll, c.cursor);
+            return draw_choice(gu, "menu    query", &question, &options, scroll, cursor, sw, sh, Some(scrollbar::Owner::Query)).into_iter().collect();
+        }
         return Vec::new();
     }
 
