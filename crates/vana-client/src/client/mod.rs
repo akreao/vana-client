@@ -10586,20 +10586,19 @@ impl App {
                 world.pos.y = y;
             }
             world.unsettled = false;
-            // FUN_1008abe0 (once a zone, DAT_104804c3), at the point the player's model is ready: the ambient to full
-            // at once, the world and interface effects over 30 ticks. The stream is left alone.
-            // A zone-in cutscene already waiting started before this point in retail (its model is not up yet), so
-            // the reset is left to its end (event::finish), which then restores the ambient and the world effects.
-            let zone_in_event = world.event.is_some() || world.event_pending.is_some();
-            if !zone_in_event && !std::mem::replace(&mut world.sound_reset, true) {
-                world.audio_cmds.push((4, 1.0, 0.0));
-                world.audio_cmds.push((1, 1.0, 30.0));
-                world.audio_cmds.push((2, 1.0, 30.0));
-            }
             // The camera placed at zone-in had the old (or no) ground and the server height: again behind the settled
             // player, now that the zone collision is in (ours; retail places it once, FUN_10021680).
             let yaw = world.yaw;
             camera::face(world, yaw);
+        }
+        // FUN_1008abe0 (once a zone, DAT_104804c3), at the point the player's model is ready: the ambient to full at
+        // once, the world and interface effects over 30 ticks. The stream is left alone. A zone-in cutscene already
+        // running or waiting started before this point in retail (its model is not up yet), so its end (event::finish)
+        // takes the reset instead; if it goes without finishing (no script), the reset runs here once it is gone.
+        if !world.unsettled && world.event.is_none() && world.event_pending.is_none() && !std::mem::replace(&mut world.sound_reset, true) {
+            world.audio_cmds.push((4, 1.0, 0.0));
+            world.audio_cmds.push((1, 1.0, 30.0));
+            world.audio_cmds.push((2, 1.0, 30.0));
         }
         let forward = Vec3::new(world.yaw.sin(), 0.0, world.yaw.cos());
         let right = forward.cross(Vec3::NEG_Y);
