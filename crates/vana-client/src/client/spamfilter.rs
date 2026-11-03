@@ -85,7 +85,11 @@ impl SpamFilter {
 
     fn read(&mut self, dir: &Path, name: &str) -> Result<Vec<Entry>, LoadError> {
         let path = dir.join(name);
-        let data = std::fs::read(&path).map_err(|_| LoadError::Missing(name.to_string()))?;
+        // FUN_101c4c80 failing to open is 0x15a, a failed read (FUN_101c47c0) 0x15b.
+        let data = std::fs::read(&path).map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => LoadError::Missing(name.to_string()),
+            _ => LoadError::Bad(name.to_string()),
+        })?;
         if data.len() > MAX_BYTES {
             return Err(LoadError::Bad(name.to_string()));
         }
@@ -159,11 +163,12 @@ pub(super) fn screen(w: &World, kind: u8, attr: u8, from: &str, text: &str) -> V
 }
 
 /// The checked text (FUN_100da5e0): auto-translate as its plain phrase (the caller), control codes dropped
-/// (FUN_1018fd30), at most 150 bytes in the client's Shift-JIS (FUN_101b7260 into 0x97).
+/// (FUN_1018fd30: the in-line 1e / 1f codes, our U+100400 characters, and any phrase block left unexpanded), at most 150 bytes in the client's Shift-JIS (FUN_101b7260 into 0x97).
 pub fn plain(text: &str) -> String {
     let mut out = String::new();
     let mut bytes = 0;
-    for c in text.chars().filter(|&c| !(c < ' ' || ('\u{E000}'..='\u{F8FF}').contains(&c))) {
+    let code = |c: char| (crate::dat::font::PHRASE_BASE..crate::dat::font::CODE_BASE + 0x200).contains(&(c as u32));
+    for c in text.chars().filter(|&c| !(c < ' ' || ('\u{E000}'..='\u{F8FF}').contains(&c) || code(c))) {
         let n = if c.is_ascii() || ('\u{FF61}'..='\u{FF9F}').contains(&c) { 1 } else { 2 };
         if bytes + n > 150 {
             break;
@@ -637,6 +642,10 @@ mod tests {
     #[test]
     fn plain_text_limit() {
         assert_eq!(plain("a\u{1}b\u{E008}c"), "abc");
+        // A colour code inside a word (decode_sjis keeps 1e xx as one character) does not split it.
+        let shout = crate::dat::font::decode_sjis(b"g\x1e\x02il");
+        assert_eq!(plain(&shout), "gil");
+        assert_eq!(filter("gil", "").check("Ann", &plain(&shout)), 1);
         assert_eq!(plain(&"x".repeat(200)).len(), 150);
         assert_eq!(plain(&"ゴ".repeat(100)).chars().count(), 75);
     }
