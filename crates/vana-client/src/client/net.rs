@@ -828,6 +828,34 @@ fn add_position(queue: &mut Vec<Vec<u8>>, pos: Vec<u8>, moving: bool) {
     }
 }
 
+/// c2s ids FUN_100fc3c0 is always asked to gate (force 0 at every call site, batch 6 item 12). Ids sent with force,
+/// or with a force that depends on the caller, are left out.
+const GATED: &[u16] = &[
+    0x0C, 0x0F, 0x11, 0x17, 0x1B, 0x1C, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x32, 0x34, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x3D, 0x41, 0x51, 0x52, 0x53, 0x58, 0x59,
+    0x5A, 0x5B, 0x5C, 0x5D, 0x60, 0x61, 0x63, 0x64, 0x66, 0x6E, 0x6F, 0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x77, 0x85, 0x8C, 0x8D, 0x96, 0x9B, 0xA0, 0xA1,
+    0xA2, 0xAA, 0xAB, 0xAC, 0xAD, 0xB5, 0xB6, 0xB7, 0xC3, 0xC4, 0xCD, 0xCE, 0xCF, 0xD0, 0xD2, 0xD4, 0xD5, 0xD8, 0xDD, 0xDE, 0xE0, 0xE2, 0xE4, 0xE7, 0xE9,
+    0xEA, 0xEB, 0xEC, 0xF0, 0xF1, 0xF5, 0xF6, 0x100, 0x102, 0x106, 0x109, 0x10A, 0x10B, 0x10C, 0x10D, 0x10F, 0x110, 0x112, 0x113, 0x114, 0x115, 0x117,
+    0x118, 0x119, 0x11A, 0x11B, 0x11C, 0x11D,
+];
+
+/// FUN_100fc3c0: a gated id sent again within 1000 ms of its last gated send is refused (retail returns NULL and the
+/// caller drops it: nothing queued, no message). Applied to the packets a command queued from `from` on.
+fn gate_from(queue: &mut Vec<Vec<u8>>, from: usize, last: &mut std::collections::HashMap<u16, Instant>, now: Instant) {
+    let mut k = from;
+    while k < queue.len() {
+        let id = u16::from_le_bytes([queue[k][0], queue[k][1]]) & 0x1ff;
+        if GATED.binary_search(&id).is_ok() {
+            if last.get(&id).is_some_and(|t| now.duration_since(*t) < Duration::from_millis(1000)) {
+                log::warn!("c2s {id:#05x} refused: sent again within 1000 ms (FUN_100fc3c0's gate)");
+                queue.remove(k);
+                continue;
+            }
+            last.insert(id, now);
+        }
+        k += 1;
+    }
+}
+
 /// A built sub-packet the server interrupts on movement (LSB HasMoved): 0x01A magic (3) or ranged attack (0x10),
 /// 0x037 item use.
 fn stopped_by_moving(p: &[u8]) -> bool {
@@ -1059,6 +1087,8 @@ fn session(addr: SocketAddr, login: &MapLogin, account: &str, codec: &Codec, tx:
     let mut answered = false;
     let mut zoned = false;
     let mut queue: Vec<Vec<u8>> = Vec::new();
+    // FUN_100fc3c0's per-id send times (char data +0x41b4), for the gated ids.
+    let mut gated: std::collections::HashMap<u16, Instant> = std::collections::HashMap::new();
     let mut last_send = Instant::now();
     let mut last_login = Instant::now();
     let mut my_index = 0u16;
@@ -1499,6 +1529,7 @@ fn session(addr: SocketAddr, login: &MapLogin, account: &str, codec: &Codec, tx:
             last_login = Instant::now();
         }
         while let Ok(cmd) = rx.try_recv() {
+            let before = queue.len();
             match cmd {
                 NetCommand::Decode(g, packets) => {
                     if g == sess {
@@ -1598,6 +1629,7 @@ fn session(addr: SocketAddr, login: &MapLogin, account: &str, codec: &Codec, tx:
                     queue.push(build(0x0F2, &b));
                 }
             }
+            gate_from(&mut queue, before, &mut gated, Instant::now());
         }
         // Retail sends one datagram every 400 ms (config +0xd0 = 400, net+0x417c), each with a fresh 0x015.
         let every = match stats.send_ms.load(Relaxed) {
@@ -1640,6 +1672,24 @@ fn session(addr: SocketAddr, login: &MapLogin, account: &str, codec: &Codec, tx:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A gated id goes once a second; others and a later second go through; GATED stays sorted for the search.
+    #[test]
+    fn send_gate() {
+        assert!(GATED.windows(2).all(|p| p[0] < p[1]));
+        let t0 = Instant::now();
+        let mut last = std::collections::HashMap::new();
+        let mut q = vec![build(0x0B5, &[0; 4]), build(0x015, &[0; 28]), build(0x0B5, &[0; 4])];
+        gate_from(&mut q, 0, &mut last, t0);
+        let ids = |q: &[Vec<u8>]| q.iter().map(|p| u16::from_le_bytes([p[0], p[1]]) & 0x1ff).collect::<Vec<_>>();
+        assert_eq!(ids(&q), [0x0B5, 0x015]);
+        q.push(build(0x0B5, &[0; 4]));
+        gate_from(&mut q, 2, &mut last, t0 + Duration::from_millis(999));
+        assert_eq!(ids(&q), [0x0B5, 0x015]);
+        q.push(build(0x0B5, &[0; 4]));
+        gate_from(&mut q, 2, &mut last, t0 + Duration::from_millis(1000));
+        assert_eq!(ids(&q), [0x0B5, 0x015, 0x0B5]);
+    }
 
     /// Standing still, a cast or a ranged attack goes after the position, sent twice; moving, or with only other
     /// packets, the position goes last as retail's.
