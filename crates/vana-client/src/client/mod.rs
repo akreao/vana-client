@@ -9986,6 +9986,8 @@ impl App {
                 (actor.alpha, actor.fade, actor.spop) = (0.0, None, true);
             }
             (actor.shadow_off, actor.noblob) = shadow;
+            // The off-hand flag is drawobj +0x840 bit 6, so a new model starts without it.
+            actor.off_hand = false;
             actor.source = Some(source);
             // A look already loaded is shared at once; one load serves every actor waiting for it.
             if let Some(m) = world.models.get(&key) {
