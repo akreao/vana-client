@@ -101,7 +101,7 @@ detail inside implemented ops.
 | Eye blink: the entity copies (+0x190..+0x1b4) the 0x8c / 0xa4 / 0xa5 setters also write | Not built | L11933 | DLL |
 | Op 0x7a pinned to our own actor | Not built (partly: "op 0x7a on us" later) | L11885 | DLL |
 | Model hide / show: the skeleton's `fvib` clone at the show; the +0x764 / +0x814 clones | Not built | L13203 | DLL |
-| Near-camera fade after the cylinder (vt+0x260, first person, fishing) | Not built | L12096 | DLL |
+| Near-camera fade after the cylinder (vt+0x260, first person, fishing) | Built *([batch 9](notes/2026-11-03-modlog-gaps-batch9.md) item 42: vt+0x260 never fires in this build, the fishing fade and the +0x130 bit 18 half draw are built; the first-person step needs the forced-follow target (0x037 @0x46), which ours does not model)* | L12096 | DLL |
 | Character bump during events; whether any actor reaches +0x59c >= 1 | Not built / not traced | L8858, L8889 | DLL |
 | Lifts: the camera's look point; LSB's Metalworks door data not checked against the doors | Not built / not checked | L8776 | DLL / LSB |
 | Ship actors: whether a new task first updates in its frame; vt +0x178 and the default speed 1.0 assumed; the far plane; the lighting area; the 10-second no-skip window; +0x130 bit 21's writer | Unknown | L18113 | DLL |
