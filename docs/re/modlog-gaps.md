@@ -51,7 +51,7 @@ detail inside implemented ops.
 | Select screen: chswin's file details line; other languages' count lines; DAT_10623ac4 (cursor kept on reopen); chfwin; the 149-frame head-point refresh; the arc-length camera speed | Not built | L529, L2832, L2780 | DLL |
 | Select screen: FFXI-3117 (five failed user-file operations) has no counterpart in ours | Not built (different login flow) | L2832 | DLL |
 | Rename flow | Built, untested live (no character with renamef) | L2832 | Live |
-| Creator: child 3's element state 0x10 (FUN_10118b60(0x10, 3)) | Not built, meaning not traced | L15623, L15640 | DLL |
+| Creator: child 3's element state 0x10 (FUN_10118b60(0x10, 3)) *([batch 5](notes/2026-11-03-modlog-gaps-batch5.md) item 6: state 0x10 is "inert": drawn at 0x80808080, never the cursor, no mouse hit, keys dropped, no help line. ptc6yesn's child 3 is the warning icon, which ours draws and never selects)* | Matches | L15623, L15640 | DLL |
 | Creator world step: the local name filter FUN_101ba240 (3322); the mouse and right click on chmkserv / chmkpass | Not traced | L15980, L16015 | DLL |
 | Config tool 0023 Simple Character Creation: the forced-on cases (app state 4, the fallback device) and the screen tint / music on leaving | Not built | L18552, L18561, L18570 | DLL |
 | PlayOnline sign-in: whether a server checks the token or the stale addr20 bytes 8..19 (ours zero); the handshake 0x0c..0x17; characters not yet linked to a handle; Friend List / POL messages through net/pol (ours use LSB's xi_profile) | Unknown, not verified | L19522 | Live on a POL server, DLL |
@@ -64,9 +64,9 @@ detail inside implemented ops.
 | Item | Status | Source | Settle by |
 |---|---|---|---|
 | Installed DATs are older than LSB's text ids, so message ids can be shifted (msgshift table); ids between two segments stay unknown | Known limitation | L835, L1086 | Data |
-| Motion length (+0x2a0) comes from the motion; the headless host keeps it busy for 30 frames | Approximation | L1266 | DLL |
+| Motion length (+0x2a0) comes from the motion; the headless host keeps it busy for 30 frames | Answered *([batch 8](notes/2026-11-03-modlog-gaps-batch8.md) item 38: there is no length field at all. vt+0x2a0 is busy while the model's files load or a live 'Ms' scheduler task for that 4cc and actor pair exists, and ends at once when no scheduler resource exists; the live wait on the playing motion is our equivalent, the headless 30 frames stay a test stub)* | L1266 | DLL |
 | Name plates in cutscenes *(answered, [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §3: no event check in the plate draw; bound actors keep it unless op 0x92 / bit 17; non-participants lose the model by event Mode & 2 / & 0x10)*; audited 2026-11-03 with [batch 5](notes/2026-11-03-modlog-gaps-batch5-build.md) §2: ours unloaded doors, elevators, ships and op 0xac sub 2 actors too, now exempt. Left: the hold count +0xf2, the +0x1ff status rule | Built | L2408 | Code check |
-| The mouth's 8-tick blend out (0x23 and unbind) | Not built | L2343, L2408, L14046 | DLL |
+| The mouth's 8-tick blend out (0x23 and unbind) *([batch 5](notes/2026-11-03-modlog-gaps-batch5.md) item 4: FUN_100ce160 fades every motion in the mouth region over 8 ticks. Needs per-motion weights in our poser, which blends whole poses, so ours still drops the mouth motion; the countdowns are already cleared)* | Not built (needs weighted regions) | L2343, L2408, L14046 | DLL |
 | 0x5b / 0x66 finishing in one call when the file is cached (ours take 2 frames) | Built *([batch 8](notes/2026-11-03-modlog-gaps-batch8.md) item 39: FUN_100b5210 requests the file and runs FUN_100d12d0's ready test in the same call, keeping its per-kind requested flag so a waiting op does not re-request)* | L2408 | DLL |
 | Motion-file model kinds | Not built | L2408 | DLL |
 | 0x46 sub 1's HUD window FUN_10217e90 *(inf: hides a HUD window)* *([batch 5](notes/2026-11-03-modlog-gaps-batch5.md) item 5: "menu    buff" hidden until the event ends)* | Built | L2408 | DLL |
@@ -97,9 +97,9 @@ detail inside implemented ops.
 | Riding yaws (Tiger 0x40 for Hume F, Elvaan F, Mithra) | Not checked against footage | L12469 | Footage |
 | Ops 0x9c / 0x9d (no file uses them); the 0x038 handler's filters | Not built | L13095 | DLL |
 | Ground tilt: writers of +0x128 bit 14 and +0x120 bit 20; statuses 0x1a / 0x1b / 0x1d / 0x1e *(inferred: transport)*; whether vt+0x1c4's bones include +0x998; long bodies' no-roll and scale overshoot | Unknown | L12689, L12740 | DLL / Footage |
-| Motion regions: FUN_10019ed0 carries the old entry's frame into a status motion's start frame (ours starts at 0) *([batch 5](notes/2026-11-03-modlog-gaps-batch5.md) item 9: the enqueue is FUN_1001ad00 in this build; the carry is the old position as a fraction of its length, plus half the blend at the new rate)* | Built | L13899 | DLL |
-| Eye blink: the entity copies (+0x190..+0x1b4) the 0x8c / 0xa4 / 0xa5 setters also write | Not built | L11933 | DLL |
-| Op 0x7a pinned to our own actor | Not built (partly: "op 0x7a on us" later) | L11885 | DLL |
+| Motion regions: FUN_10019ed0 carries the old entry's frame into a status motion's start frame (ours carries it for the actor's one status-motion clock, MODLOG "Motions: a new one starts at the old one's phase"; not per region, so a motion that keys only some regions carries the same phase into all of them) *([batch 5](notes/2026-11-03-modlog-gaps-batch5.md) item 9: the enqueue is FUN_1001ad00 in this build; the carry is the old position as a fraction of its length, plus half the blend at the new rate)* | Built for one clock; per-region carry not built | L13899 | DLL |
+| Eye blink: the entity copies (+0x190..+0x1b4) the 0x8c / 0xa4 / 0xa5 setters also write | Matches *([batch 9](notes/2026-11-03-modlog-gaps-batch9.md) item 41: the ops write the entity base names so the new name survives every later status recompute; a mount overrides them, sitting and chair idles are never written, 0x79 is model-only and FUN_1008a160 resets the bases - which is our motion_bases / rebase path)* | L11933 | DLL |
+| Op 0x7a pinned to our own actor | Built *([batch 8](notes/2026-11-03-modlog-gaps-batch8.md) item 40: the pin moves the drawobj, FUN_1008cd90 copies it into the entity every frame and FUN_100983f0 sends that copy in c2s 0x015, which is what ours already does; the player stays where the pin left it)* | L11885 | DLL |
 | Model hide / show: the skeleton's `fvib` clone at the show; the +0x764 / +0x814 clones | Not built | L13203 | DLL |
 | Near-camera fade after the cylinder (vt+0x260, first person, fishing) | Built *([batch 9](notes/2026-11-03-modlog-gaps-batch9.md) item 42: vt+0x260 never fires in this build, the fishing fade and the +0x130 bit 18 half draw are built; the first-person step needs the forced-follow target (0x037 @0x46), which ours does not model)* | L12096 | DLL |
 | Character bump during events; whether any actor reaches +0x59c >= 1 | Built *([batch 9](notes/2026-11-03-modlog-gaps-batch9.md) item 43: +0x59c is the load fade and every actor reaches 1.0 about 32 ticks after its files load; the bump needs it at 1.0, and the bump has no event test of its own - it simply runs inside the move step, which returns early whenever we cannot move)* | L8858, L8889 | DLL |
@@ -202,19 +202,19 @@ detail inside implemented ops.
 | Equipment sets editor: the mouse; the wardrobe number glyph (unknown) | Not built | L10228, L10217 | DLL |
 | Delivery Box: the augment Ex rule and the equipped linkshell in the picker colours; the monstrosity / menu-lock gates; caret movement in the name; the one-frame Recv-pair miss | Not built | L5700 | DLL |
 | Automaton customization: flow B's double SE 0002; SE 0004 repeat under the pointer; unfocused cursor while a slot is picked; pupsibor's starting cursor | Unknown | L16873 | DLL / Live |
-| Blue magic sets: the open order *(inferred: bluequip last takes the focus)* | Inferred | L11083 | DLL |
+| Blue magic sets: the open order *(inferred: bluequip last takes the focus)* *([batch 6](notes/2026-11-03-modlog-gaps-batch6.md) item 11: confirmed, persona, bluehelp, bluinven, bluepoin, then bluequip with the focus; bluset.rs opens on Focus::Equip)* | Matches | L11083 | DLL |
 
 ### Shops, trade, bazaar, auction
 
 | Item | Status | Source | Settle by |
 |---|---|---|---|
-| NPC shops: the Up wrap at the list's top (not checked against FUN_101f67c0) | Not checked | L6339 | DLL |
+| NPC shops: the Up wrap at the list's top (not checked against FUN_101f67c0) *([batch 5](notes/2026-11-03-modlog-gaps-batch5.md) item 10: retail doesn't wrap; the list base FUN_101f6c70 scrolls at the edge rows and stops silently at the ends, as shop.rs move_list already does)* | Matches | L6339 | DLL |
 | NPC shops: DAT_1057876c + 0xc4; the focus back to shopmain; sell order = inventory view order; English width 274; tint helpers FUN_1022b680 / FUN_1022b570 / FUN_10223360 / FUN_102092b0; the Escape sound | Inferred | L6373, L6349 | DLL / Footage |
 | Guild shops: the cursor reset on source switch; kind 0x19 squeeze or clip; Trade refusal codes other than 0xfb / 0xfd; Stat 2 / bit 31 with Stat 0; DAT head byte 13 | Inferred / unknown | L6485, L6470 | DLL / LSB |
 | Field manuals: the query window's scroll bar | Not built | L6545 | DLL |
 | Player trade | Built, not tested live (needs a second account) | L6597 | Live |
 | Trade: the costume refusal bit 0x40 (FUN_101cc040) *(answered, [batch 1](notes/2026-11-03-modlog-gaps-batch1.md) §7: player +0x120 bit 5 from the costume state machine FUN_10095e90; its four helpers in [batch 3](notes/2026-11-03-modlog-gaps-batch3.md) §1: the status lists only take a costume off, +0x120 bit 7 = bound to the event; [batch 4](notes/2026-11-03-modlog-gaps-batch4.md) §1: 0x40 is checked after 0x04, before 0x08; §4: the costume id is an NPC model id, drawn as the whole body; [batch 5](notes/2026-11-03-modlog-gaps-batch5-build.md) §6: other players too, from 0x00D @0x30)*; built 2026-11-03 (the refusal, the model for us and others) | Built | L6568 | Live |
-| Set Bazaar: the name's bazaar glyph (0x9c); the row disabled in Monstrosity | Not built | L9921 | DLL |
+| Set Bazaar: the name's bazaar glyph (0x9c); the row disabled in Monstrosity | Matches *([batch 7](notes/2026-11-03-modlog-gaps-batch7.md) item 30: both bit writers are 0x00D @0x20 bit 31 and 0x037 @0x2c bit 29 as we read them, the glyph is last in FUN_10097500's chain, and socialme child 5 is already disabled in Monstrosity)* | L9921 | DLL |
 | Bazaar View Wares: FUN_10210880's flag (taken as "list is live"); hidden windows from the group walk; the Escape sound; shopbuy's registry flags vs ours stacking the confirm on the log | Inferred | L16503 | DLL / Footage |
 | Bazaar View Wares | Not seen live (needs a second character) | L16460 | Live |
 | Auction house: whether anything clears the remembered state on zoning; the menus' +0x24 rerun | Not traced | L14474, L14493 | DLL |
@@ -235,7 +235,7 @@ detail inside implemented ops.
 | Linkshell: the comment fetch on Enter in the Link List (FUN_1020b3e0 as scresult kind 4) | Not built | L10832 | DLL |
 | Block list window: the wheel / scroll bar drag; the window groups (blklist 0x1c suspends gaugewin and others); fewer words open blklist | Not built | L12511, L12520, L12121 | DLL |
 | Region Info: Campaign's windows; the mouse on cnqframe; Japanese placements; beseige2 / campsan sprites | Not built / not traced | L9654, L9718 | DLL |
-| Status window: the stats request retries | Not built | L9017 | DLL |
+| Status window: the stats request retries | Matches in effect *([batch 7](notes/2026-11-03-modlog-gaps-batch7.md) item 28: retail retries c2s 0x061 against its own 1 s per-id gate; our gate holds 0x061 and sends it when the window opens, so the request always goes out and the give-up path cannot be reached)* | L9017 | DLL |
 
 ### Help Desk, Primer, config and misc windows
 
@@ -254,7 +254,7 @@ detail inside implemented ops.
 | Status window: Monstrosity (mp_stat) from the main menu | Not built at the time | L9017 | *(closed: "Monstrosity, part 5: mp_stat")* |
 | Mouse picking: the hover's frame lag, the talk lock; kind 1 over objects | Not built | L5747, L4556 | DLL |
 | Mouse picking: "StreetLamp" without a box is not pickable (the box path) | Not built | L5730 | DLL |
-| Mouse: right-button release clearing the target (key 0x8c); ours drags the camera with it | Not built | L3221 | DLL |
+| Mouse: right-button release clearing the target (key 0x8c); ours drags the camera with it *([batch 7](notes/2026-11-03-modlog-gaps-batch7.md) item 27: our right release already clears the target, drops a sub-target prompt and stops autorun as FUN_101587f0 does. Retail has no right-drag camera at all: a right drag only turns the cursor into an 8-way arrow and stops the edge pan, and the camera turns when the cursor touches the window edge (FUN_10124bc0). Our mouse-drag camera is a deliberate deviation (modern MMOs); the edge pan is not built and is a design question for Steven / upstream)* | Deviation (release built) | L3221 | DLL |
 | GM prompt / Moblin Maze Mongers: d5 bits 4..10; message 7's middle-button source; the late 0x0D8 at the event end; helpwind's line with grid focus; the pulse timing assumes 30 fps | Unknown | L17934 | DLL |
 | Maze Mongers: LSB logs GP_CLI_COMMAND_DUNGEON_PARAM as not implemented | Blocked: LSB | L17848 | LSB |
 | Creator random names: FUN_101ba240 (validity check, ours skips it) | Not traced | L5346 | DLL |
@@ -268,7 +268,7 @@ detail inside implemented ops.
 | Change Map; the Mog House branch (myroom); group 7 messages 97 / 98; the no-key-item chat line (group 10 id 7) | Not built | L2564, L5029 | DLL |
 | The left-drag joystick | Not built | L5011 | DLL |
 | The view and scroll-to formula, fade levels and the arrow taken at open only: as decompiled, flagged open | Inferred | L5012 | Footage |
-| The collision map id under the player (key 0 used); the arrow's heading sign | Not decoded | L2545, L2558 | DLL |
+| The collision map id under the player (key 0 used); the arrow's heading sign *([batch 7](notes/2026-11-03-modlog-gaps-batch7.md) item 24: the key is Ground::map_key (MODLOG L4598); the arrow turns by +yaw taken at open (FUN_101f8ea0, no negation), as map.rs draws it)* | Matches | L2545, L2558 | DLL |
 
 ## 9. Mog House
 
