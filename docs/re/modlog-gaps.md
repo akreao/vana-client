@@ -278,7 +278,7 @@ detail inside implemented ops.
 | Layout mode: what reads target system +0x74 bit 4 and myroom +0x7e4 | Not traced | L14283 | DLL |
 | Layout mode: each furniture reload adds its textures to the GPU again (31 -> 75 over five moves) | Known bug | L14308 | Ours |
 | Mannequins: whether a mannequin shows its range weapon; the other races' banks 3..31; the ground shadow uses the zone light | Not checked / not built | L14748, L14743, L14732 | DLL / Footage |
-| Furniture: whether the 3 blended pieces keep z writes *(inf)* | Unknown | L15364 | DLL |
+| Furniture: whether the 3 blended pieces keep z writes *(inf)* *([batch 7](notes/2026-11-03-modlog-gaps-batch7.md) item 23: yes. FUN_101844c0 sets neither ZWRITEENABLE nor ZBIAS, so furniture keeps the actor pass's writes; zone scenery turns them off)* | Built | L15364 | DLL |
 | Gardening: what 0xbf8's 'main' shows *(inf: a vanish effect)*; a plnt window resumed on a stale pot; the item list's Escape sound; container 9's view order; /garden in mode 3 | Unknown | L17042 | DLL |
 | Camera collision: Mog House furniture in the camera ray | Not built | L11145 | DLL |
 
