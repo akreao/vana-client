@@ -235,7 +235,7 @@ Creates a picture from a PNG file in your mod's folder, shown on a flat rectangl
 **Returns** nothing.
 
 **Errors**
-- `<path>: outside the mod's folder` when `path` contains `..` or `:`, or starts with `/`.
+- `"<path>": outside the mod's folder` when `path` contains `..`, `"<path>": not a relative path` when it contains `:`, `"<path>": a link, which could lead outside the mod's folder` for a symbolic link. A leading `/` counts from the mod's folder.
 - `<path>: <reason>` when the file cannot be read (for example, it does not exist).
 - `<path>: <reason> (a PNG)` when the file is not a PNG the client can read.
 - `bundled mods carry no image files` for a mod that ships inside the client.
