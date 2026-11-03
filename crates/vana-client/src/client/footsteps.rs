@@ -104,7 +104,12 @@ pub(super) fn steps(w: &mut World, places: &HashMap<u32, Place>, points: Vec<(u6
             continue;
         }
         let c = if kind < 10 { b'0' + kind as u8 } else { b'a' + (kind - 10) as u8 };
-        let name = [b'0', b'0' + surface, c, b'1' + ch.cib[2].max(0) as u8];
+        // Scene +0x1cf (FUN_1018b500, batch 12 item 72): in areas 704..706 surface 3 borrows surface 2's sound (the
+        // name only; the dust and prints keep 3). Retail also wants the session flag word's bit 0x100 clear, which we
+        // don't have *(inf: taken as clear)*.
+        let alt = (704..=706).contains(&w.area.shown.unwrap_or(w.pos_zone));
+        let sound = if alt && surface == 3 { 2 } else { surface };
+        let name = [b'0', b'0' + sound, c, b'1' + ch.cib[2].max(0) as u8];
         let rain = matches!(crate::dat::weather::weather_tag(w.weather), "rain" | "squl" | "bolt") && !covered;
         // actor+0x824 < 0.5: walking, level 101.6 -> 101; else 127.
         let level = if pl.ratio < 0.5 { 101 } else { 127 };
