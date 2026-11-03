@@ -51,7 +51,7 @@ detail inside implemented ops.
 | Select screen: chswin's file details line; other languages' count lines; DAT_10623ac4 (cursor kept on reopen); chfwin; the 149-frame head-point refresh; the arc-length camera speed | Not built | L529, L2832, L2780 | DLL |
 | Select screen: FFXI-3117 (five failed user-file operations) has no counterpart in ours | Not built (different login flow) | L2832 | DLL |
 | Rename flow | Built, untested live (no character with renamef) | L2832 | Live |
-| Creator: child 3's element state 0x10 (FUN_10118b60(0x10, 3)) | Not built, meaning not traced | L15623, L15640 | DLL |
+| Creator: child 3's element state 0x10 (FUN_10118b60(0x10, 3)) *([batch 5](notes/2026-11-03-modlog-gaps-batch5.md) item 6: state 0x10 is "inert": drawn at 0x80808080, never the cursor, no mouse hit, keys dropped, no help line. ptc6yesn's child 3 is the warning icon, which ours draws and never selects)* | Matches | L15623, L15640 | DLL |
 | Creator world step: the local name filter FUN_101ba240 (3322); the mouse and right click on chmkserv / chmkpass | Not traced | L15980, L16015 | DLL |
 | Config tool 0023 Simple Character Creation: the forced-on cases (app state 4, the fallback device) and the screen tint / music on leaving | Not built | L18552, L18561, L18570 | DLL |
 | PlayOnline sign-in: whether a server checks the token or the stale addr20 bytes 8..19 (ours zero); the handshake 0x0c..0x17; characters not yet linked to a handle; Friend List / POL messages through net/pol (ours use LSB's xi_profile) | Unknown, not verified | L19522 | Live on a POL server, DLL |
