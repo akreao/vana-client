@@ -4693,6 +4693,9 @@ struct Actor {
     /// Event op 0x59: turn (+0xdc) and head-look (+0xe0) speed percents, used while an event runs; 0 = default.
     turn_pct: i32,
     look_pct: i32,
+    /// Scheduler op 0x89 (drawobj +0x840 bit 1): ticks left with no head-look, and the x / z it started at (taken on
+    /// the first frame); it ends early on a move of more than 1 in x or z (FUN_1005f540).
+    look_hold: Option<(f32, Option<(f32, f32)>)>,
     /// The attack scheduler used last (FUN_100d46f0 avoids repeating it).
     last_attack: String,
     /// Motion files on top of the model (event banks, battle files), newest last.
@@ -4844,6 +4847,7 @@ impl Actor {
             event_scale: None,
             turn_pct: 0,
             look_pct: 0,
+            look_hold: None,
             last_attack: String::new(),
             extra: Vec::new(),
             fx_files: Vec::new(),
@@ -10310,6 +10314,11 @@ impl App {
                 a.motion_names = None;
             }
         }
+        for (id, ticks) in std::mem::take(&mut world.effects.look_holds) {
+            if let Some(a) = world.actors.get_mut(&id) {
+                a.look_hold = Some((ticks, None));
+            }
+        }
         for (id, op, set) in std::mem::take(&mut world.effects.motion_sets) {
             // FUN_1005e6b0..: ops 0x8c / 0xa4 / 0xa5 write the entity's bases too.
             if op != 0x79 {
@@ -14283,7 +14292,15 @@ impl App {
                     // FUN_100d5b10: an event's look, else the target / face target; eased and weighted in world space.
                     let point = |k: usize| ch.skeleton.points.get(k).copied().unwrap_or((0, Vec3::ZERO));
                     let p3 = model.transform_point3(a.rest.get(point(3).0 as usize).map_or(Vec3::ZERO, |x| x.at(point(3).1)));
+                    // FUN_1005f540: op 0x89's hold counts down and ends on a move past 1 unit in x or z.
+                    if let Some((left, at)) = a.look_hold {
+                        let (x, z) = at.unwrap_or((pos.x, pos.z));
+                        let left = left - dt * 60.0;
+                        a.look_hold = (left > 0.0 && (pos.x - x).abs() <= 1.0 && (pos.z - z).abs() <= 1.0).then_some((left, Some((x, z))));
+                    }
+                    // FUN_100d5b10: while bit 1 is set the look has no target, forced look included.
                     let target = match a.look.mode {
+                        _ if a.look_hold.is_some() => None,
                         actmotion::LookMode::Actor(..) => look_points.get(id).copied(),
                         actmotion::LookMode::Facing(pitch, yaw) => {
                             let (p, y) = (pitch as f32 * TAU_4096, yaw as f32 * TAU_4096);
