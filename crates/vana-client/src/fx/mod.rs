@@ -545,13 +545,14 @@ struct Foot {
 
 /// FUN_10060990 (vtable 0x1032bb80): a point light's intensity (`k` 0, +0x1a4) or range (1, +0x1a8) multiplier
 /// linearly from `from` to `to` over `total` ticks; the end (or the scheduler's death) writes `to` (FUN_10060960).
+/// `light` (element, serial, start value) is None until the generator's light is out (ours: a generator started in
+/// the same step emits after the scheduler ops).
 #[derive(Clone, Copy, Debug)]
 struct LightRamp {
     owner: u64,
-    elem: u32,
-    serial: u32,
+    src: Ref,
+    light: Option<(u32, u32, f32)>,
     k: usize,
-    from: f32,
     to: f32,
     total: f32,
     left: f32,

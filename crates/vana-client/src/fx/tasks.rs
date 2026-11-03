@@ -710,14 +710,23 @@ impl Effects {
         // FUN_100609f0: a light ramp steps by the frame; its end or its scheduler's death writes the target (FUN_10060960).
         for mut r in std::mem::take(&mut self.light_ramps) {
             r.left -= f.dt;
-            let Some(c) = self.elems.get_mut(r.elem as usize).and_then(|c| c.as_mut()).filter(|c| c.serial == r.serial) else { continue };
             let done = r.left <= 0.0 || !live.contains(&r.owner);
-            let v = if done || r.total <= 0.0 { r.to } else { r.from + (r.to - r.from) * (1.0 - r.left / r.total) };
+            if r.light.is_none() {
+                r.light = self.ramp_light(r.src, r.k);
+            }
+            let Some((e, serial, from)) = r.light else {
+                if !done {
+                    self.light_ramps.push(r);
+                }
+                continue;
+            };
+            let Some(c) = self.elems.get_mut(e as usize).and_then(|c| c.as_mut()).filter(|c| c.serial == serial) else { continue };
+            let v = if done || r.total <= 0.0 { r.to } else { from + (r.to - from) * (1.0 - r.left / r.total) };
             if let Some(s) = c.light_scale.as_mut() {
                 s[r.k] = v;
             }
             let word = if r.k == 0 { super::elem::w::L_ISCALE } else { super::elem::w::L_RSCALE };
-            self.writes.push(super::Write::Words(r.elem, word, vec![v.to_bits()]));
+            self.writes.push(super::Write::Words(e, word, vec![v.to_bits()]));
             if !done {
                 self.light_ramps.push(r);
             }
@@ -764,6 +773,15 @@ impl Effects {
             }
             self.owned_motions = keep;
         }
+    }
+
+    /// Ops 0x6f / 0x70: the static generator's live point light (gen+0xb0) as (element, serial, multiplier `k`).
+    fn ramp_light(&self, g: Ref, k: usize) -> Option<(u32, u32, f32)> {
+        let i = self.template_inst(g)?;
+        self.insts[i].as_ref()?.live.iter().find_map(|&e| {
+            let c = self.elems.get(e as usize)?.as_ref()?;
+            Some((e, c.serial, c.light_scale?[k]))
+        })
     }
 
     /// A task's ops while its countdown allows, each adding its wait x speed.
@@ -1312,19 +1330,15 @@ impl Effects {
                 if !self.is_static(g) {
                     return Flow::Next;
                 }
-                let Some(i) = self.template_inst(g) else { return Flow::Next };
-                let live = self.insts[i].as_ref().map(|x| x.live.clone()).unwrap_or_default();
-                let Some((e, serial, from)) = live.iter().find_map(|&e| {
-                    let c = self.elems.get(e as usize)?.as_ref()?;
-                    Some((e, c.serial, c.light_scale?))
-                }) else {
+                if self.template_inst(g).is_none() {
                     return Flow::Next;
-                };
+                }
                 let k = (op.code - 0x6f) as usize;
                 let total = op.dur.max(0) as f32 * t.speed;
-                self.light_ramps.retain(|r| !(r.elem == e && r.k == k));
+                self.light_ramps.retain(|r| !(r.src == g && r.k == k));
                 let to = f32::from_bits(op.u32_at(0x10));
-                self.light_ramps.push(super::LightRamp { owner: t.uid, elem: e, serial, k, from: from[k], to, total, left: total });
+                let light = self.ramp_light(g, k);
+                self.light_ramps.push(super::LightRamp { owner: t.uid, src: g, light, k, to, total, left: total });
                 Flow::Next
             }
             // FUN_100aad40: actor1 moves itself along its facing for u16 @6 ticks at f32 @8 / 60 units a tick (a dismounted

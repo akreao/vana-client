@@ -11,3 +11,5 @@ Checked in Steven's unpacked FFXiMain.dll (sha256 8097dbf8..., 2026-11-03); note
 - Ours: the template instance's first live point-light element ramps; the start value is the CPU's copy of the
   multiplier (set at emission, and by earlier ramps; a GPU keyframe on it (update op 0x5d) is not seen). A second
   ramp on the same word replaces the first (retail runs both).
+  A ramp whose generator has no light out yet (started in the same step: ours emits after the scheduler ops) waits
+  for it, its time running from the op.
