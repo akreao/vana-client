@@ -2895,7 +2895,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
     // Mouse in an event: a click on a choice row picks it, anywhere else advances a prompt.
     if input.clicked && world.event.is_some() {
         // The modern layer's choice panel takes its own clicks.
-        let row = event::choice(world).filter(|_| !world.modern).and_then(|_| {
+        let row = event::choice(world).filter(|_| !world.modern && !event::cinema(world)).and_then(|_| {
             let r = gu.window_rect("menu    query", sw, sh)?;
             let p = input.pointer?;
             gu.children("menu    query").iter().position(|c| inside(&[r[0] + c[0], r[1] + c[1], c[2].max(132.0), c[3].max(16.0)], p))
@@ -4127,14 +4127,9 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
         if world.cnq.is_some() {
             region::draw(gu, world, sw, sh);
         }
+        // An event choice (op 0xd4, "menu    query", flags 0x11012) is neither drawn nor answered here: the event
+        // waits until the script clears cinema mode (batch 8). Retail scripts run op 0x68 first.
         self::event_window(gu, world, sw, sh, logwin::text_width(sw, world.log.cfg.pct));
-        // Ours: an event choice still shows ("menu    query" is not among the exempt windows in retail's table, but
-        // a hidden choice would leave the player picking blind; inf: scripts end cinema before asking).
-        if let Some(c) = event::choice(world) {
-            let options: Vec<String> = c.options.iter().map(|o| o.1.clone()).collect();
-            let (question, scroll, cursor) = (c.question.clone(), c.scroll, c.cursor);
-            return draw_choice(gu, "menu    query", &question, &options, scroll, cursor, sw, sh, Some(scrollbar::Owner::Query)).into_iter().collect();
-        }
         return Vec::new();
     }
 

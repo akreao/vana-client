@@ -2864,6 +2864,11 @@ fn key_live(w: &mut World, l: &mut Live, key: egui::Key) {
     if cancel {
         log::info!("event {:#x}: Escape, cancellable {allowed}", l.st.start.event);
     }
+    // Cinema mode: FUN_1015dd00 hands no menu key to the choice window (batch 8); the event waits on it.
+    if l.st.choice.is_some() && l.st.place_on {
+        log::warn!("event {:#x}: a choice is open in cinema mode; it can't be answered until op 0x68", l.st.start.event);
+        return;
+    }
     if let Some(c) = &mut l.st.choice {
         // FUN_1014e410: Down / Up one option, Right / Left a page of 3, SE 0001 when the cursor moved; Enter 0002 (the
         // generic handler's).
