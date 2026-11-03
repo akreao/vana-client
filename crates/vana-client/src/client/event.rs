@@ -569,6 +569,8 @@ pub struct Waiting {
 
 impl State {
     fn new(start: EventStart) -> Self {
+        // 0x100952e7..0x1009531f: a zone-in event with Mode bit 0x80 starts in cinema mode at (0, 0).
+        let cinema = start.login && start.mode & 0x80 != 0;
         State {
             start,
             msg: None,
@@ -605,7 +607,7 @@ impl State {
             rng: 1,
             clock: None,
             weather: None,
-            place_on: false,
+            place_on: cinema,
             place: (0, 0),
             code_xy: (0, 0),
             vm_ticks: 0.0,
@@ -801,12 +803,22 @@ impl Host for LiveHost<'_> {
         log::debug!("event: {}", crate::event_vm::describe(&e));
         let index = self.st.start.index;
         match e {
+            // FUN_10096620 / FUN_10096630: as s2c 0x0F9 (raise 2, tractor 3).
+            Effect::Offer(o) => {
+                self.w.ko_offer = o;
+                if o == 2 {
+                    self.w.raise_yes = true;
+                }
+            }
             Effect::Message { id, text, prompt, wait, speaker, op, place, mode, sounds, motions } => {
                 self.w.sounds.extend(sounds);
                 super::moogle::emote(self.w, &motions);
-                // FUN_100bf790: 02 / 03 set DAT_10476f98 / 9a and place the window there (FUN_10132030(1, x, y)).
+                // FUN_100c1650 (0x100c22c5 / 0x100c22ef): code 02 only stores x (DAT_104899b0); 03 stores y and turns
+                // cinema mode on at the stored x / y (FUN_10136870).
                 if place.iter().any(Option::is_some) {
                     self.st.code_xy = (place[0].unwrap_or(self.st.code_xy.0), place[1].unwrap_or(self.st.code_xy.1));
+                }
+                if place[1].is_some() {
                     self.st.place_on = true;
                     self.st.place = self.st.code_xy;
                 }
@@ -859,6 +871,12 @@ impl Host for LiveHost<'_> {
             Effect::Input { kind, max } => {
                 self.st.input = Some(Input { kind, max, text: Vec::new(), caret: 0 });
                 self.w.typing = false;
+            }
+            Effect::HideBuffs => {
+                self.w.buffs_hidden = true;
+                if self.w.log_focus == 2 {
+                    self.w.log_focus = 0;
+                }
             }
             Effect::Camera { flag, offset } => {
                 self.st.camera_flag = flag;
@@ -1798,6 +1816,15 @@ impl Host for LiveHost<'_> {
         self.wid(actor)
     }
 
+    fn yaw(&self, actor: u32) -> Option<f32> {
+        let id = self.wid(actor);
+        if id == self.w.my_id {
+            // Retail reads entity +0x18 for us too, so undo our north-zero player yaw.
+            return Some(super::entity_yaw(self.w.yaw));
+        }
+        self.w.entities.get(&id).map(|e| e.yaw)
+    }
+
     /// Hume F, Elvaan F, Tarutaru F, Mithra.
     fn female(&self) -> bool {
         matches!(self.w.my_race, 2 | 4 | 6 | 7)
@@ -2287,6 +2314,8 @@ fn finish(w: &mut World, live: Box<Live>) {
     w.wind.restore();
     // FUN_100acf20: first person as it was before the event.
     w.camst.first = live.st.first_saved;
+    // FUN_100ae960 (0x100ae98b): the status icons back after op 0x46 sub 1 hid them.
+    w.buffs_hidden = false;
     // Op 0x77's weather without its 0x78: the lighting goes back with the event, so the effects do too.
     if live.st.weather.is_some() {
         let wt = w.weather;
@@ -2601,6 +2630,15 @@ pub fn shot_name(w: &World) -> Option<String> {
     Some(w.screen.shot.as_ref()?.tag.clone())
 }
 
+/// FUN_1008e4d0's unload mark (+0x120 bit 23) on an actor that neither is bound to the running event nor takes part,
+/// as FUN_10095900 acts on it: /hidetrust's, then the event's filter of non-participants by (DAT_104808fc | Mode) & 0x02
+/// for player characters and & 0x10 for the rest, which an event-reserved actor (+0x138 bit 31, op 0xac sub 2) skips.
+/// Doors, elevators and ships (+0xee 3..5, FUN_10096200) are never unloaded.
+fn unloads(pc: bool, flags: u32, structure: bool, reserved: bool, trust: bool) -> bool {
+    let filtered = !reserved && flags & if pc { 0x02 } else { 0x10 } != 0;
+    !structure && (trust || filtered)
+}
+
 /// FUN_1008cdc0, per actor: a bound actor while the event runs is hidden only by the script (+0x120 bit
 /// 0x20000); otherwise by the server bits (+0x120 bits 14 / 15) or, unless it takes part, by (DAT_1046df04 |
 /// Mode) & 0x02 for player characters and & 0x10 for NPCs and monsters (+0x120 bit 0x800000).
@@ -2612,14 +2650,13 @@ pub fn hidden(w: &World) -> HashSet<u32> {
         _ => (0, None, None),
     };
     let takes_part = |id: &u32| part.is_some_and(|p| p.contains(id));
-    let filtered = |id: u32| if id >> 24 == 0 { flags & 0x02 != 0 } else { flags & 0x10 != 0 };
     for (id, e) in &w.entities {
         // FUN_1008e4d0: /hidetrust (config 0x99 bit 5) takes the model of every trust outside our own party (its plate
         // and targeting go with it; the radar dot stays).
         let trust = w.game.get(0x99) & 0x20 != 0 && e.marks.trust && !w.party.party().any(|m| m.index == e.index);
         let hide = match script {
             Some(h) if takes_part(id) => h.contains(id),
-            _ => e.flags & 2 != 0 || (!takes_part(id) && (filtered(*id) || trust)),
+            _ => e.flags & 2 != 0 || (!takes_part(id) && unloads(*id >> 24 == 0, flags, matches!(e.sub_kind, 2..=4), e.ev_reserved, trust)),
         };
         // FUN_100cd040: a listed-only NPC the s2c 0x077 list lacks is not drawn (+0xb2 bit 7), events included; nor
         // one outside our fenced content's gate (+0xb2 bit 5).
@@ -2630,7 +2667,7 @@ pub fn hidden(w: &World) -> HashSet<u32> {
     let me = w.my_id;
     let hide_me = match script {
         Some(h) if takes_part(&me) => h.contains(&me),
-        _ => !takes_part(&me) && filtered(me),
+        _ => !takes_part(&me) && unloads(true, flags, false, false, false),
     };
     // FUN_101d4d90: laying out the Mog House or gardening in it the player is not drawn (+0xb2 bit 4).
     if hide_me || w.layout.is_some() || super::garden::hides_player(w) {
@@ -2776,7 +2813,14 @@ pub fn message_id(w: &World) -> Option<u32> {
     w.event.as_ref()?.st.msg.as_ref().map(|m| m.id)
 }
 
-/// FUN_10132030: the event message window's placement (+0x48 on) in pixels; negative values are percentages
+/// Cinema mode (rem4line +0x48, FUN_1015dce0): ops 0x67 / 0x68, text code 03, a zone-in event with Mode 0x80; the
+/// event end clears it. FUN_101177d0 then draws no window but the event text (and mapframe / cnqframe), and the
+/// menu keys, targeting, macros and the chat line are blocked as with the UI hidden; movement still works.
+pub fn cinema(w: &World) -> bool {
+    w.event.as_ref().is_some_and(|l| l.st.place_on)
+}
+
+/// FUN_10136870: the event message window's placement (+0x48 on) in pixels; negative values are percentages
 /// of the UI width / height less 176 / 32.
 pub fn placement(w: &World, sw: f32, sh: f32) -> Option<(f32, f32)> {
     let l = w.event.as_ref()?;
@@ -2851,6 +2895,11 @@ fn key_live(w: &mut World, l: &mut Live, key: egui::Key) {
     let allowed = l.st.cancellable;
     if cancel {
         log::info!("event {:#x}: Escape, cancellable {allowed}", l.st.start.event);
+    }
+    // Cinema mode: FUN_1015dd00 hands no menu key to the choice window (batch 8); the event waits on it.
+    if l.st.choice.is_some() && l.st.place_on {
+        log::warn!("event {:#x}: a choice is open in cinema mode; it can't be answered until op 0x68", l.st.start.event);
+        return;
     }
     if let Some(c) = &mut l.st.choice {
         // FUN_1014e410: Down / Up one option, Right / Left a page of 3, SE 0001 when the cursor moved; Enter 0002 (the
@@ -3004,6 +3053,10 @@ struct EventTexts {
 impl dialog::Texts for EventTexts {
     fn kind(&self, kind: u8, id: u32) -> Option<Vec<u8>> {
         self.bt.as_ref()?.kind_name(kind, id)
+    }
+
+    fn compass(&self, k: usize) -> Option<Vec<u8>> {
+        self.bt.as_ref()?.compass_raw(k)
     }
 
     fn point(&self, sub: u8, id: u16) -> Option<Vec<u8>> {
@@ -3172,11 +3225,16 @@ pub fn coded_chat(text: &str) -> Option<CodedChat<'_>> {
 }
 
 /// FUN_100964a0(source, id): sources 2..7 and 10 are language slot files, 1 and 8 the zone's dialogue (the event's,
-/// when one is loaded from elsewhere: not done); 7 takes ids up to 0x10ff. Source 9 (FUN_100bd760) is not done.
+/// when one is loaded from elsewhere: not done); 7 takes ids up to 0x10ff. Source 9 (FUN_10096440 -> FUN_100c1620):
+/// the trust lines, language slot 0x22 (en file 55693) through the expander's +0x858 cache, the table grammar 0x88
+/// reads; an id past its count gives nothing.
 fn source_text(w: &mut World, source: u16, id: u16) -> Option<Vec<u8>> {
     let id = if source == 7 && id as i16 > 0x10ff { 0 } else { id };
     if (id as i16) < 0 {
         return None;
+    }
+    if source == 9 {
+        return w.battle.as_ref()?.grammar_line(0x88, id as u32);
     }
     if matches!(source, 1 | 8) {
         let zone = w.zone?;
@@ -3228,6 +3286,25 @@ pub fn source_line(w: &mut World, source: u16, id: u16, num: [u32; 5], mode: u8,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 0x100952e7: only a zone-in event with Mode bit 0x80 starts in cinema mode, at (0, 0).
+    #[test]
+    fn login_mode_80_starts_cinema() {
+        assert!(State::new(EventStart { mode: 0x80, login: true, ..Default::default() }).place_on);
+        assert!(!State::new(EventStart { mode: 0x80, ..Default::default() }).place_on);
+        assert!(!State::new(EventStart { mode: 0x03, login: true, ..Default::default() }).place_on);
+    }
+
+    /// FUN_1008e4d0 / FUN_10095900: the event filter takes non-participants (PCs by 0x02, others by 0x10) except doors,
+    /// elevators, ships and event-reserved actors; /hidetrust spares structures only.
+    #[test]
+    fn unload_exemptions() {
+        assert!(unloads(true, 0x02, false, false, false) && !unloads(true, 0x10, false, false, false));
+        assert!(unloads(false, 0x10, false, false, false) && !unloads(false, 0x02, false, false, false));
+        assert!(!unloads(false, 0x10, true, false, false), "a door keeps its model");
+        assert!(!unloads(false, 0x10, false, true, false), "op 0xac sub 2 holds it");
+        assert!(unloads(false, 0, false, true, true) && !unloads(false, 0, true, false, true));
+    }
 
     /// Op 0xa9 day val x 7 at 00:30: moon phase val % 12, weekday (val x 7) & 7; 0x77 alone leaves both to the server.
     #[test]
