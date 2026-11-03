@@ -13985,7 +13985,7 @@ impl App {
                 w.wind.advance(dt);
                 let wind = (w.wind.tick, w.wind.dir, w.wind.strength);
                 // FUN_100cd040's fishing fade needs our own drawobj (FUN_101cc4f0) and our place.
-                let (fish, my_pos) = (fishing::fishing_status(w.my_motion.status) && w.actors.get(&w.my_id).is_some_and(|a| a.character.is_some()), w.pos);
+                let (fish, my_pos) = (fishing::any_fishing_status(w.my_motion.status) && w.actors.get(&w.my_id).is_some_and(|a| a.character.is_some()), w.pos);
                 for (id, a) in w.actors.iter_mut() {
                     let Some(ch) = a.character.clone() else { continue };
                     let Some(&Place { pos, forward, tilt, status, ratio, size }) = places.get(id) else { continue };
@@ -14293,9 +14293,10 @@ impl App {
                     // FUN_100cd040 (MODLOG "The near-camera character fade"): the eye near posed point 12 fades
                     // the actor (not the player in first person, who fades on its own). A CPU pose only when the
                     // rest pose is close.
-                    // While we fish, every other character fades by its horizontal distance to us; +0x130 bit 18
-                    // draws at 0.5 over everything (near_fade_tail).
-                    let fishing = (fish && *id != w.my_id).then(|| Vec3::new(pos.x - my_pos.x, 0.0, pos.z - my_pos.z).length());
+                    // While we fish, every other character entity fades by its horizontal distance to us (not the
+                    // rod, chair, mount or aura actors, which have no entity); +0x130 bit 18 draws at 0.5 over
+                    // everything (near_fade_tail).
+                    let fishing = (fish && *id != w.my_id && w.entities.contains_key(id)).then(|| Vec3::new(pos.x - my_pos.x, 0.0, pos.z - my_pos.z).length());
                     let half = w.entities.get(id).is_some_and(|e| e.half_fade);
                     let cam_fade = if *id == w.my_id && w.camst.first || w.entities.get(id).is_some_and(|e| e.no_near_fade) {
                         1.0
