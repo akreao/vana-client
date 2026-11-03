@@ -268,7 +268,7 @@ detail inside implemented ops.
 | Change Map; the Mog House branch (myroom); group 7 messages 97 / 98; the no-key-item chat line (group 10 id 7) | Not built | L2564, L5029 | DLL |
 | The left-drag joystick | Not built | L5011 | DLL |
 | The view and scroll-to formula, fade levels and the arrow taken at open only: as decompiled, flagged open | Inferred | L5012 | Footage |
-| The collision map id under the player (key 0 used); the arrow's heading sign | Not decoded | L2545, L2558 | DLL |
+| The collision map id under the player (key 0 used); the arrow's heading sign *([batch 7](notes/2026-11-03-modlog-gaps-batch7.md) item 24: the key is Ground::map_key (MODLOG L4598); the arrow turns by +yaw taken at open (FUN_101f8ea0, no negation), as map.rs draws it)* | Matches | L2545, L2558 | DLL |
 
 ## 9. Mog House
 
