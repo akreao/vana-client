@@ -170,7 +170,7 @@ detail inside implemented ops.
 | Full log: ~100-line history (ours keeps 512 wrapped lines); its wheel handler *(inf)* | Deviation / not traced | L2581, L8726 | DLL |
 | Auto-translate: what window FUN_101ddcb0 is and the s2c 0x0CC chain to FUN_101dd780; FUN_101bceb0 (config 0xce); what FUN_1022aff0 tests and why ids 0x181..0x183 end the key item scan; the French / Japanese second key | Unknown | L6175 | DLL |
 | Auto-translate: the item / key item groups built at run time (the 200-record item cache); kind 6; the nested FD 06 block | Not built | L6116, L6149, L6192 | DLL |
-| Macro editor: Shift-JIS input; the palettes' flip zoom (FUN on set change, 20 + 20 ticks) | Not built | L10057, L10085 | DLL |
+| Macro editor: Shift-JIS input; the palettes' flip zoom (FUN on set change, 20 + 20 ticks) *([batch 12](notes/2026-11-03-modlog-gaps-batch12.md) item 78: the fields' byte limits 15 / 8 / 60 were already ours; the flip is a fade, now built for the play palette. The editor palettes' copy is not)* | Built apart from the editor palettes | L10057, L10085 | DLL |
 | Macro palette: the default cursors; FUN_101262e0 as the left click in the palettes' frame | Built *([batch 8](notes/2026-11-03-modlog-gaps-batch8.md) item 35: FUN_101262e0 is "the mouse is driving the menus", not a click, so the palettes switch on hover; no macro window has registry flag 0x10000, so each opens on its last cursor, and the edit palettes take column + 1)* | L10096 | DLL |
 | Equipment sets: who calls mcres20 vtable +0x2c FUN_101a7010; the status gate's bit 0x40; chat mode 0xca's colour | Unknown | L10170 | DLL |
 | Status icons: the 240 x 4 line and per-cell corner sprite; whether retail hides the buff window in cutscenes | Unknown | L7340, L7359 | Footage |
