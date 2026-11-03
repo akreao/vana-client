@@ -1256,8 +1256,8 @@ fn chat_channel(cmd: &str) -> Option<u8> {
 /// s2c 0x017 (LAB_100e37a0 -> FUN_100d9b20): the line and its log mode by Kind (byte table 0x100e3de8, jump table
 /// 0x100e3da0); None for the kinds retail drops (2, 9..0xb, 0xc the GM prompt menu, past 0x23). Attr bit 0 adds
 /// "[GM]"; the yell takes the zone's name; assist (0x22 / 0x23) the rank icon 0xEF (mentor x 10 + mastery + 0x24,
-/// 0x2f..0x4c) when Data is set. Not done: PvP (s2c 0x0B4) dropping the
-/// linkshell's "[n]", the profanity mask, the line cut at a control byte.
+/// 0x2f..0x4c) when Data is set. The name and text arrive already cut at a control byte (net.rs chat_text). Not done:
+/// PvP (s2c 0x0B4) dropping the linkshell's "[n]", the profanity mask.
 fn chat_line(kind: u8, attr: u8, data: u16, from: &str, text: &str, zone: &str) -> Option<(String, u8)> {
     let gm = if attr & 1 != 0 { "[GM]" } else { "" };
     let n = from;
@@ -5779,6 +5779,9 @@ struct World {
     swkbd: Option<swkbd::Keyboard>,
     swkbd_out: Vec<egui::Event>,
     swkbd_reopen: bool,
+    /// E (DAT_106627a8), which outlives the macro palettes: the focused palette (1 Ctrl, 2 Alt) and both columns.
+    /// mcr1edit / mcr2edit open and regain the focus on column + 1 (FUN_101a44b0).
+    macro_palette: (u8, [u16; 2]),
     /// The pointer is over a paged list's page arrows (children 9 / 10), which disables the list itself
     /// (FUN_10221cd0: window +0x62 = 0, list +0x5c bit 1): no hand, and the list ignores keys.
     list_arrow_hover: bool,
@@ -5960,6 +5963,9 @@ struct World {
     my_sync: u8,
     /// FUN_101347b0's repeat guard: the last check's id and time (DAT_105781c4).
     last_check: Option<(u32, Instant)>,
+    /// S+0x40daa: the index of the NPC we last talked to, tried first as the moogle actor (batch 6 item 17). Cleared
+    /// at zone-in, at the event end, and when that actor goes away.
+    talked_index: u16,
     /// /blockhelp (DAT_10578175): Right on Disengage refuses Call for help.
     block_help: bool,
     /// Party members' status icons by UniqueNo (s2c 0x076).
@@ -6406,6 +6412,8 @@ struct World {
     bid: auction::BidState,
     /// Event volume changes for the mixer: (mask, level, ticks).
     audio_cmds: Vec<(i32, f32, f32)>,
+    /// DAT_104804c3: the per-zone sound-level reset has run, so the event end doesn't restore levels (batch 6 item 18).
+    sound_reset: bool,
     /// Chat call sounds to play (FUN_100380f0, at the op 0x69 mask 0x10 level).
     call_sounds: Vec<u32>,
     names: Option<Arc<crate::dat::names::Names>>,
@@ -6755,6 +6763,10 @@ impl World {
         if let Some(s) = &self.pupset {
             kept.extend(pupset::kept(s));
         }
+        kept.extend(macroedit::kept(self));
+        if let Some(p) = macroedit::palette(self) {
+            self.macro_palette = p;
+        }
         kept.extend(maze::kept(self));
         self.cursor_mem.extend(kept);
     }
@@ -6867,6 +6879,9 @@ impl Drive {
 
 pub struct App {
     cfg: Config,
+    /// The config 10 / 9 slider values last applied (mutes left out): a change resets the event sound levels (batch 6
+    /// item 18).
+    applied_volumes: Option<(f32, f32)>,
     drive: Drive,
     /// The chat line's history between logins (FSTEXTINPUT lives for the whole run).
     line_hist: linehist::LineHistory,
@@ -7090,6 +7105,11 @@ enum LoadState {
     Failed,
 }
 
+/// The statuses 0x00E mask 4 never gives a trust (0x1009c118): healing, sitting and the chairs.
+fn rest_status(status: u8) -> bool {
+    matches!(status, 0x21 | 0x2f | 0x3f..=0x53)
+}
+
 /// Our yaw (face (sin Y, 0, cos Y)) for an entity yaw (facing (cos y, 0, -sin y)).
 fn player_yaw(entity_yaw: f32) -> f32 {
     entity_yaw.cos().atan2(-entity_yaw.sin())
@@ -7139,6 +7159,7 @@ impl App {
         });
         Self {
             cfg,
+            applied_volumes: None,
             drive,
             line_hist: linehist::LineHistory::default(),
             gfx: None,
@@ -7269,7 +7290,14 @@ impl App {
         crate::render::MAP_COMPRESSED.store(self.cfg.tool("0019") == 0, std::sync::atomic::Ordering::Relaxed);
         crate::render::SHINE_WRAP.store(self.cfg.tool("0040") == 0, std::sync::atomic::Ordering::Relaxed);
         let (m, e) = self.volume_factors();
+        let sliders = self.volume_sliders();
         if let Some(a) = self.audio.as_mut() {
+            // FUN_101aa650: applying config 9 / 10 also puts every event level back to 1.0. Only a slider that moved
+            // counts: other settings and our mutes leave an event's levels alone.
+            if self.applied_volumes.is_some_and(|v| v != sliders) {
+                a.reset_event_levels();
+            }
+            self.applied_volumes = Some(sliders);
             a.set_volumes(m, e);
             a.max_se = self.cfg.tool("0029").clamp(1, 20);
         }
@@ -7539,6 +7567,17 @@ impl App {
 
     /// Retail's levels under ours: in game ids 10 / 9 (FUN_10036480 / FUN_10035060), in the lobby 0xa8 for both
     /// (FUN_10196390).
+    /// Config 10 / 9 as set (music, effects), mutes left out: what FUN_101aa650 applies.
+    fn volume_sliders(&self) -> (f32, f32) {
+        match &self.phase {
+            Phase::World(w) => (w.game.get(10) as f32, w.game.get(9) as f32),
+            _ => {
+                let v = self.cfg.game.global.get(0xa8) as f32;
+                (v, v)
+            }
+        }
+    }
+
     fn volume_factors(&self) -> (f32, f32) {
         match &self.phase {
             Phase::World(w) => world_volumes(w),
@@ -7623,6 +7662,7 @@ impl App {
             let device = std::env::var("FFXI_AUDIO_DEVICE").unwrap_or_else(|_| self.cfg.audio_device.clone());
             let (m, e) = self.volume_factors();
             self.audio = crate::audio::Audio::open(self.cfg.ffxi_dir(), Some(&device), m, e);
+            self.applied_volumes = Some(self.volume_sliders());
             if let Some(a) = self.audio.as_mut() {
                 a.max_se = self.cfg.tool("0029").clamp(1, 20);
             }
@@ -8105,6 +8145,7 @@ impl App {
                             my_plate: net::SelfPlate::default(),
                             my_sync: 0,
                             last_check: None,
+                            talked_index: 0,
                             block_help: false,
                             party_buffs: HashMap::new(),
                             held_menu: None,
@@ -8297,6 +8338,7 @@ impl App {
                             swkbd_reopen: false,
                             key_shift: false,
                             key_repeat: false,
+                            macro_palette: (1, [0, 0]),
                             list_arrow_hover: false,
                             my_face: None,
                             ui_hidden: false,
@@ -8413,6 +8455,7 @@ impl App {
                             ah_slots: Default::default(),
                             bid: Default::default(),
                             audio_cmds: Vec::new(),
+                            sound_reset: false,
                             call_sounds: Vec::new(),
                             names: None,
                             actions: None,
@@ -9032,6 +9075,8 @@ impl App {
                     world.log.clear_spool();
                     world.log2.clear_spool();
                     world.mog_zone = mog_zone;
+                    // The s2c 0x00A handler clears S+0x40daa (batch 6 item 17).
+                    world.talked_index = 0;
                     world.mon_login = monstrosity;
                     monstrosity::zone_reset(world);
                     // FUN_100f9eb0: each map connection zeroes the session object, the party roster with it
@@ -9197,8 +9242,9 @@ impl App {
                     log::info!("zone-in: zone {zone} at {:?} dir {dir}", pos);
                     // FUN_1018b500 -> FUN_1001e4f0: the view shake stops at a zone load.
                     world.camst.shake = camera::Shake::default();
-                    // FUN_1008abe0: the event volume channels back to 1.0 at zone-in.
-                    world.audio_cmds.push((0xf, 1.0, 0.0));
+                    // FUN_10093720: the zone load clears the once-a-zone sound reset; it runs when the player's model
+                    // is up (below), or at an event end before that.
+                    world.sound_reset = false;
                     let f = forward_from_dir(dir);
                     camera::face(world, f.x.atan2(f.z));
                     world.my_id = char_id;
@@ -9374,11 +9420,21 @@ impl App {
                     }
                     // Falling dead plays the death motion once (the "dead" scheduler), then the corpse loop.
                     // Fields outside this update's mask bits are zero, not news.
+                    // 0x00E mask 4 (0x1009c118..0x1009c16d): a trust (@0x28 bit 0) never takes the server's healing
+                    // (0x21), sitting (0x2f) or chair (0x3f..0x53) statuses; its old status stays. 0x00D has no such rule.
+                    let trust_rest = e.kind != net::EntityKind::Player
+                        && e.marks.as_ref().is_some_and(|m| m.trust)
+                        && rest_status(e.motion.status);
                     let mut motion = if fresh { e.motion } else { entry.motion };
+                    // A trust we meet for the first time has no old status to keep, so it stands: retail's actor comes
+                    // up at status 0 and the skipped write leaves it there.
+                    if fresh && trust_rest {
+                        motion.status = 0;
+                    }
                     if e.pos.is_some() {
                         (motion.speed, motion.speed_base) = (e.motion.speed, e.motion.speed_base);
                     }
-                    if e.hpp.is_some() && !entry.status_held {
+                    if e.hpp.is_some() && !entry.status_held && !trust_rest {
                         // A held actor (mid-swing) applies the change when its hold ends (combat::tick).
                         if !fresh && held {
                             world.held_status.insert(e.id, e.motion.status);
@@ -10478,6 +10534,10 @@ impl App {
         ride::dig_update(world);
         actmotion::update(world, dt * world.opts.anim_rate);
         // FUN_10096640: the lock goes with its target; inferred, after 10 s (a talk the server never answers).
+        // FUN_10096640 (0x10096bd7): the talked-to index is dropped once that actor is gone.
+        if world.talked_index != 0 && !world.entities.values().any(|e| e.index == world.talked_index) {
+            world.talked_index = 0;
+        }
         if !event::active(world) && world.control_lock.is_some_and(|(t, id)| t.elapsed().as_secs_f32() > 10.0 || !world.entities.contains_key(&id)) {
             world.control_lock = None;
         }
@@ -10658,6 +10718,15 @@ impl App {
             // player, now that the zone collision is in (ours; retail places it once, FUN_10021680).
             let yaw = world.yaw;
             camera::face(world, yaw);
+        }
+        // FUN_1008abe0 (once a zone, DAT_104804c3), at the point the player's model is ready: the ambient to full at
+        // once, the world and interface effects over 30 ticks. The stream is left alone. A zone-in cutscene already
+        // running or waiting started before this point in retail (its model is not up yet), so its end (event::finish)
+        // takes the reset instead; if it goes without finishing (no script), the reset runs here once it is gone.
+        if !world.unsettled && world.event.is_none() && world.event_pending.is_none() && !std::mem::replace(&mut world.sound_reset, true) {
+            world.audio_cmds.push((4, 1.0, 0.0));
+            world.audio_cmds.push((1, 1.0, 30.0));
+            world.audio_cmds.push((2, 1.0, 30.0));
         }
         let forward = Vec3::new(world.yaw.sin(), 0.0, world.yaw.cos());
         let right = forward.cross(Vec3::NEG_Y);
@@ -14151,8 +14220,22 @@ impl App {
                             a.blend = 0.0;
                         }
                         a.blend_len = blend;
+                        // FUN_1001ad00 (batch 5 item 9): a new motion in a region that already held one starts at the
+                        // same fraction of its cycle as the old entry had reached, pushed on by half the blend at the
+                        // new rate, so the feet stay in step through a walk / run change. Retail's lengths and
+                        // positions are in frames / speed; our tick is twice that unit.
+                        let span = |m: &str| frames_of(m, 0.0, false).first().map(|(x, _)| (x.frames as f32, x.speed)).filter(|(f, sp)| *f > 0.0 && *sp > 0.0);
+                        let old = a.prev.as_ref().filter(|p| !p.0.is_empty()).and_then(|p| span(&p.0).map(|(f, sp)| (p.1 * 0.5, f / sp)));
+                        a.ticks = match (old, span(&name)) {
+                            (Some((at, old_len)), Some((frames, speed))) if !once && old_len > 0.001 => {
+                                let new_len = frames / speed;
+                                let k = 1.0 / old_len;
+                                let b = if blend > 0.0 { blend } else { 1.0 };
+                                2.0 * ((at * k * new_len + k * new_len * speed * 0.5 * rate * b) % new_len)
+                            }
+                            _ => 0.0,
+                        };
                         a.motion = name.clone();
-                        a.ticks = 0.0;
                     }
                     a.once = once;
                     a.ticks += dt * 60.0 * rate;
@@ -15521,6 +15604,13 @@ mod tests {
         let tilted = flat * glam::Mat4::from_rotation_x(0.3);
         let moved = tilted.transform_point3(p + point_drop(tilted, -0.65)) - tilted.transform_point3(p);
         assert!((moved - Vec3::new(0.0, -0.65, 0.0)).length() < 1e-5);
+    }
+
+    /// 0x00E mask 4's rest statuses: /heal, /sit and every chair, and nothing either side of them.
+    #[test]
+    fn trust_rest_statuses() {
+        assert!([0x21, 0x2f, 0x3f, 0x4a, 0x53].iter().all(|&s| rest_status(s)));
+        assert!(![0x00, 0x20, 0x22, 0x2e, 0x30, 0x3e, 0x54, 0xff].iter().any(|&s| rest_status(s)));
     }
 
     /// Op 0x7a on us: an entity yaw of pi faces west (-1, 0, 0); our face (sin Y, 0, cos Y) matches it.
