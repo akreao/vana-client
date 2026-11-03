@@ -10173,8 +10173,9 @@ impl App {
             }
             (ax, ay, cx, cy) = (0.0, 0.0, 0.0, 0.0);
         }
-        // Keyboard type 2, free camera: Shift held faces the camera (0x9c, player +0xfb; camera keys and Q / E off),
-        // and Q / E turn the player (0xaa / 0xa9, FUN_10253a60 / FUN_102539f0) while the camera axes are idle.
+        // Keyboard type 2, free camera: Shift held faces the camera (0x9c, player +0xfb; camera keys and Q / E off; a
+        // controller's B only in the field, client/gamepad.rs), and Q / E turn the player (0xaa / 0xa9, FUN_10253a60 /
+        // FUN_102539f0) while the camera axes are idle.
         let type2 = world.game.get(0x42) == 2 && !world.locked;
         let face_cam = type2 && self.input.test(0x9c, input::mode::HELD);
         let turn = if type2 && !face_cam && cx == 0.0 && cy == 0.0 && ax == 0.0 {
