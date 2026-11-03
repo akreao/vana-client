@@ -14,6 +14,8 @@ pub(super) struct Costume {
     pub pending: bool,
     /// +0x120 bit 5: in costume.
     pub on: bool,
+    /// The model drawn now (0 none): a new id stays pending, and the old model on, while the step refuses it.
+    pub shown: u16,
 }
 
 impl Costume {
@@ -33,13 +35,13 @@ impl Costume {
         let allowed = !blocked && !bound;
         if self.pending {
             if self.id == 0 {
-                (self.pending, self.on) = (false, false);
+                (self.pending, self.on, self.shown) = (false, false, 0);
             } else if allowed {
-                (self.pending, self.on) = (false, true);
+                (self.pending, self.on, self.shown) = (false, true, self.id);
             }
         } else if self.on && !allowed {
             // Off and pending again (inf: so in one of those statuses it goes back on the next frame).
-            (self.pending, self.on) = (true, false);
+            (self.pending, self.on, self.shown) = (true, false, 0);
         }
     }
 }
@@ -47,7 +49,7 @@ impl Costume {
 /// The costume model an actor wears now, if any.
 pub(super) fn worn(w: &World, id: u32) -> Option<u16> {
     let c = if id == w.my_id { Some(&w.costume) } else { w.costumes.get(&id) };
-    c.filter(|c| c.on && c.id != 0).map(|c| c.id)
+    c.filter(|c| c.on && c.shown != 0).map(|c| c.shown)
 }
 
 /// `source` is the costume's own model.
@@ -61,8 +63,8 @@ pub(super) fn step_all(w: &mut World) {
     let bound = |w: &World, id: u32| w.event.as_ref().is_some_and(|l| l.st.bound.contains(&id));
     let mut changes = Vec::new();
     let me = w.my_id;
-    // The applied model: a new id while on (FUN_1008cce0 marks it pending) reloads it too.
-    let applied = |c: &Costume| c.on.then_some(c.id);
+    // The applied model: a new id while on (FUN_1008cce0 marks it pending) reloads it once the step takes it.
+    let applied = |c: &Costume| (c.on && c.shown != 0).then_some(c.shown);
     let was = applied(&w.costume);
     let b = bound(w, me);
     w.costume.step(w.my_motion.status, b);
@@ -117,8 +119,10 @@ mod tests {
         c.step(0, false);
         assert!(c.on);
         c.set_id(0x124);
+        c.step(0, true);
+        assert!(c.on && c.pending && c.shown == 0x123, "bound: the new id waits, the old model stays");
         c.step(0, false);
-        assert!(c.on && c.id == 0x124 && !c.pending, "a new id while on swaps the model");
+        assert!(c.on && c.shown == 0x124 && !c.pending, "a new id while on swaps the model");
         c.set_id(0);
         c.step(0, true);
         assert_eq!(c, Costume::default(), "id 0 takes it off even while bound");
