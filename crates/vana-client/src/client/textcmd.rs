@@ -1474,11 +1474,6 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
                 refuse(w, 0x4b);
                 return Ok(());
             }
-            // FUN_1007bf30 after the mount test: our +0x128 bit 6 (invisible) prints 7031 0xac and sends nothing.
-            if w.my_plate.invisible {
-                system_line(w, 0xac);
-                return Ok(());
-            }
             let trusts: Vec<(u32, u16, String)> = w.party.party().filter(|m| (0x700..0x900).contains(&m.index)).map(|m| (m.id, m.index, m.name.clone())).collect();
             let picked: Vec<(u32, u16)> = match arg(1) {
                 Some("all") if args.len() == 2 => trusts.iter().map(|t| (t.0, t.1)).collect(),
@@ -1487,6 +1482,12 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
             };
             if picked.is_empty() {
                 return Err(());
+            }
+            // The invisible test lives in the per-target talk action FUN_1007bf30 (0x1007c028), so it only speaks for a
+            // name that matched: our +0x128 bit 6 prints 7031 0xac and sends nothing.
+            if w.my_plate.invisible {
+                system_line(w, 0xac);
+                return Ok(());
             }
             for t in picked {
                 act(w, t, 0, 1);
