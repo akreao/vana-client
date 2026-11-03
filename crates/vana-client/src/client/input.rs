@@ -51,7 +51,7 @@ const PAD: &[(u8, u64)] = &[
     (0x4f, 0x800_0000), (0xa4, 0x800_0000),
     (0x50, 0x1000_0000), (0xa5, 0x1000_0000),
     (0x55, 0x4000_0000),
-    // The second word (+0x224, slots 32 / 33 / 35 / 36): pad only (docs/re/gamepad/keyfn_table.md).
+    // The second word (+0x224, slots 32 / 33 / 35 / 36): pad only (MODLOG "Gamepad").
     (0xb7, 1 << 32), (0xb8, 1 << 33), (0xb9, 1 << 35), (0xba, 1 << 36),
 ];
 
@@ -116,6 +116,8 @@ pub struct Input {
     consumed: bool,
     /// NumLock, from the last numpad digit's logical key (winit reports no toggle state).
     numlock: bool,
+    /// A keyboard key went down this frame (before the chat line takes Enter / Esc).
+    pressed_any: bool,
     /// A game controller's sticks (client/gamepad.rs, not retail): left X / Y, right X / Y in -1 ..= 1, right and
     /// down positive, as the axes.
     stick: [f32; 4],
@@ -146,6 +148,7 @@ impl Default for Input {
             window: false,
             consumed: false,
             numlock: true,
+            pressed_any: false,
             stick: [0.0; 4],
             device: 0,
         }
@@ -268,6 +271,16 @@ impl Input {
         self.stick = stick;
     }
 
+    /// A keyboard key went down this frame.
+    pub fn key_pressed_any(&self) -> bool {
+        self.pressed_any
+    }
+
+    /// The controller's sticks alone: movement X / Y, camera X / Y.
+    pub fn device_stick(&self) -> [f32; 4] {
+        if self.typing { [0.0; 4] } else { self.stick }
+    }
+
     /// A window had the keys last frame (arrows go to it, not to the camera).
     pub fn window_active(&self) -> bool {
         self.window
@@ -311,6 +324,7 @@ impl Input {
                 self.counters[k] = 0.0;
             }
         }
+        self.pressed_any = self.keys.iter().any(|&s| s & PRESS != 0);
         // The chat line takes Enter / Esc before any key function sees them.
         if f.typing {
             for k in [0x1c, 0x9c, 0x01] {
@@ -392,13 +406,13 @@ impl Input {
         let stick = |p: u64, n: u64| -> f32 { if self.pad.held & p != 0 { 127.0 / 128.0 } else if self.pad.held & n != 0 { -1.0 } else { 0.0 } };
         // A controller's stick bytes (FUN_10005a40 +0x250..+0x253, client/gamepad.rs) count as the compact stick of
         // the same axis, the larger one winning; not while typing. A window does not stop them: the sticks never drive
-        // windows (the d-pad does).
-        let (left, right) = (!self.typing, !self.typing);
+        // windows (the d-pad does). The camera's 6 / 7 leave them out: the camera reads them with its own sense
+        // (device_stick).
         let pad_stick = match id {
-            4 | 0x79 | 0x9d if left => self.stick[0],
-            5 | 0x7a | 0x9e if left => self.stick[1],
-            6 if right => self.stick[2],
-            7 | 0x7c if right => self.stick[3],
+            _ if self.typing => 0.0,
+            4 | 0x79 | 0x9d => self.stick[0],
+            5 | 0x7a | 0x9e => self.stick[1],
+            0x7c => self.stick[3],
             _ => 0.0,
         };
         let arrows = !self.typing && (!self.window || self.shift());
@@ -512,7 +526,7 @@ impl Input {
     /// only this bit's edge, as retail does.
     fn pad_test(&mut self, id: usize, mode: i32) -> bool {
         // 0xb0..0xb3 (the ground-position cursor): LT or RT held (slot 9 / 13) and the d-pad's up / down / right /
-        // left (slots 6 / 7 / 4 / 5) in the mode asked (keyfn_table.md).
+        // left (slots 6 / 7 / 4 / 5) in the mode asked.
         let combo = match id {
             0xb0 => Some(0x40),
             0xb1 => Some(0x80),

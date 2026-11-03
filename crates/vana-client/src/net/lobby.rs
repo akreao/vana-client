@@ -672,7 +672,7 @@ mod create_tests {
         assert_eq!((m.char_id, m.map.1, m.key[..16].to_vec(), u32::from_le_bytes(m.key[16..].try_into().unwrap())), (2 << 16 | 0x1234, 54230, k16.to_vec(), c + 4));
     }
 
-    /// A lobby whose replies stop at the header: each one is an error, not a panic (issue #80).
+    /// A lobby whose replies stop at the header: each one is an error, not a panic.
     #[test]
     fn short_replies_are_errors() {
         use std::net::TcpListener;

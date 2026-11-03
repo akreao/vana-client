@@ -104,9 +104,9 @@ fn pick(w: &mut World, index: usize) {
 /// Escape and Num+.
 pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
     let Some(mut c) = w.concierge_ui.clone() else { return };
-    // Tab / Shift+Tab (the pad's RB / LB): the next / previous filter, the modern layer's tabs (lscswin's children
-    // 1 ..= 4 as Enter on them sets it).
-    if key == egui::Key::Tab {
+    // Modern only (retail has no tabs): Tab / Shift+Tab (the pad's RB / LB) the next / previous filter tab, as Enter on
+    // lscswin's children 1 ..= 4 sets it.
+    if key == egui::Key::Tab && w.modern {
         const FILTERS: [u8; 4] = [0, 1, 2, 5];
         let (k, n) = (FILTERS.iter().position(|&f| f == c.filter).unwrap_or(0), FILTERS.len());
         c.filter = FILTERS[if w.key_shift { (k + n - 1) % n } else { (k + 1) % n }];

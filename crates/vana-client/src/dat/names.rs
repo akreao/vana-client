@@ -46,8 +46,7 @@ impl DMsg {
         let (h, t, fixed, n) = (u32_at(d, 0x18).context("header")? as usize, u32_at(d, 0x1c).context("header")? as usize, u32_at(d, 0x20).context("header")? as usize, u32_at(d, 0x28).context("header")? as usize);
         let tab: Vec<u8> = d.get(h..h + t).context("table")?.iter().map(|b| b ^ xor).collect();
         let body: Vec<u8> = d.get(h + t..).context("body")?.iter().map(|b| b ^ xor).collect();
-        // Every entry takes at least one byte (an 8-byte table row or a fixed-size record), so a count past the file
-        // size is corrupt; it used to reserve and loop up to u32::MAX entries (issue #87).
+        // Every entry takes at least one byte, so a count past the file size is corrupt.
         ensure!(n <= d.len(), "d_msg: {n} entries in a {}-byte file", d.len());
         let mut entries = Vec::with_capacity(n);
         for i in 0..n {

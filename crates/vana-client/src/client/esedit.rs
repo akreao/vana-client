@@ -162,9 +162,9 @@ pub fn num_plus(w: &mut World) {
 
 pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
     let Some(e) = ed(w) else { return };
-    // Tab / Shift+Tab (the pad's RB / LB): the next / previous container, the modern layer's storage tabs (mcrmogc's
-    // order, as Enter on its children sets it).
-    if key == egui::Key::Tab && e.mogc.is_none() {
+    // Modern only: Tab / Shift+Tab (the pad's RB / LB) the next / previous storage tab, in mcrmogc's order (the tabs
+    // modern/macros.rs shows).
+    if key == egui::Key::Tab && w.modern && e.mogc.is_none() {
         const ORDER: [u8; 16] = [0, 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
         let back = w.key_shift;
         if let Some(e) = ed_mut(w) {
