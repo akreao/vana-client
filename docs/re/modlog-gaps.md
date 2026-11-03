@@ -43,7 +43,7 @@ detail inside implemented ops.
 |---|---|---|---|
 | Map packets: Huffman-compressed payload, MD5 and Blowfish over whole blocks ("Later") | Not built | L40 | DLL (polcore / zone coder) |
 | Send cadence: the adaptive +50 ms step when the server lags; the 1000 ms per-id refusal | Not built | L2242 | DLL |
-| Bazaar / trade sends: the per-id 1000 ms send refusal (FUN_100fc3c0) | Not built | L16460, L16478 | DLL |
+| Bazaar / trade sends: the per-id 1000 ms send refusal (FUN_100fc3c0) *([batch 6](notes/2026-11-03-modlog-gaps-batch6.md) item 12 and the [batch 11](notes/2026-11-03-modlog-gaps-batch11.md) addendum: every c2s id, gated or forced per call site; refused sends dropped, or retried by the event / zone-in / stats callers)* | Built | L16460, L16478 | DLL |
 | Djarum reached 0 HP twice with no mobs in the zone (once after /logout) | Unknown, not reproduced | L120 | Live (chat log now shows the source) |
 | Lobby netwait: retail's backdrops hnbackwi / ptcbgwin behind the run; op 5 as one Task with the log-in; the 3600-frame timeout (FFXI-3113); FFXI-3115 after a failed refresh | Not built | L15896, L15916, L15937 | DLL |
 | Lobby: what the PlayOnline calls return under xiloader (step 3 sub 14 flag 0x8000); error 0x68's field +0x144; FUN_1023be30's 0x6c path | Unknown | L15953, L15955 | DLL |

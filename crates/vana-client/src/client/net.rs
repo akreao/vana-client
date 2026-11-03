@@ -838,21 +838,70 @@ const GATED: &[u16] = &[
     0x118, 0x119, 0x11A, 0x11B, 0x11C, 0x11D,
 ];
 
-/// FUN_100fc3c0: a gated id sent again within 1000 ms of its last gated send is refused (retail returns NULL and the
-/// caller drops it: nothing queued, no message). Applied to the packets a command queued from `from` on.
-fn gate_from(queue: &mut Vec<Vec<u8>>, from: usize, last: &mut std::collections::HashMap<u16, Instant>, now: Instant) {
-    let mut k = from;
-    while k < queue.len() {
-        let id = u16::from_le_bytes([queue[k][0], queue[k][1]]) & 0x1ff;
-        if GATED.binary_search(&id).is_ok() {
-            if last.get(&id).is_some_and(|t| now.duration_since(*t) < Duration::from_millis(1000)) {
-                log::warn!("c2s {id:#05x} refused: sent again within 1000 ms (FUN_100fc3c0's gate)");
-                queue.remove(k);
+/// Gated ids whose retail callers retry a refused send (batch 11 addendum): event ops 0x43 / 0xa7 / 0x47 and the event
+/// end stay on it (0x05B / 0x05C), the zone-in keeps its pending flag (0x00C / 0x011), and persona / mp_stat /
+/// FUN_101d3260 ask for 0x061 again. Ours holds these and sends them once the gate allows; the rest are dropped.
+const RETRIED: &[u16] = &[0x00C, 0x011, 0x05B, 0x05C, 0x061];
+
+/// FUN_100fc3c0's per-id gate: a gated id sent again within 1000 ms of its last gated send is refused (retail returns
+/// NULL). Per the callers, a refused packet is dropped (nothing queued, no message) or held and retried.
+#[derive(Default)]
+struct SendGate {
+    /// char data +0x41b4: the last gated send per id.
+    last: std::collections::HashMap<u16, Instant>,
+    /// Refused packets of the retried ids, oldest first.
+    held: std::collections::VecDeque<Vec<u8>>,
+}
+
+fn packet_id(p: &[u8]) -> u16 {
+    u16::from_le_bytes([p[0], p[1]]) & 0x1ff
+}
+
+impl SendGate {
+    fn open(&self, id: u16, now: Instant) -> bool {
+        self.last.get(&id).is_none_or(|t| now.duration_since(*t) >= Duration::from_millis(1000))
+    }
+
+    /// Gates the packets a command queued from `from` on.
+    fn admit(&mut self, queue: &mut Vec<Vec<u8>>, from: usize, now: Instant) {
+        let mut k = from;
+        while k < queue.len() {
+            let id = packet_id(&queue[k]);
+            if GATED.binary_search(&id).is_err() {
+                k += 1;
                 continue;
             }
-            last.insert(id, now);
+            // Behind a held one of its id, or within its second: refused.
+            if self.held.iter().any(|h| packet_id(h) == id) || !self.open(id, now) {
+                let p = queue.remove(k);
+                if RETRIED.contains(&id) {
+                    log::info!("c2s {id:#05x} held: the 1000 ms gate (FUN_100fc3c0); sent when it opens");
+                    self.held.push_back(p);
+                } else {
+                    log::warn!("c2s {id:#05x} refused: sent again within 1000 ms (FUN_100fc3c0's gate)");
+                }
+                continue;
+            }
+            self.last.insert(id, now);
+            k += 1;
         }
-        k += 1;
+    }
+
+    /// The retried sends: each held packet goes once its id's gate is open (the first of its id first).
+    fn release(&mut self, queue: &mut Vec<Vec<u8>>, now: Instant) {
+        let mut seen = Vec::new();
+        let mut k = 0;
+        while k < self.held.len() {
+            let id = packet_id(&self.held[k]);
+            if !seen.contains(&id) && self.open(id, now) {
+                self.last.insert(id, now);
+                seen.push(id);
+                queue.extend(self.held.remove(k));
+                continue;
+            }
+            seen.push(id);
+            k += 1;
+        }
     }
 }
 
@@ -1088,7 +1137,7 @@ fn session(addr: SocketAddr, login: &MapLogin, account: &str, codec: &Codec, tx:
     let mut zoned = false;
     let mut queue: Vec<Vec<u8>> = Vec::new();
     // FUN_100fc3c0's per-id send times (char data +0x41b4), for the gated ids.
-    let mut gated: std::collections::HashMap<u16, Instant> = std::collections::HashMap::new();
+    let mut gate = SendGate::default();
     let mut last_send = Instant::now();
     let mut last_login = Instant::now();
     let mut my_index = 0u16;
@@ -1528,6 +1577,7 @@ fn session(addr: SocketAddr, login: &MapLogin, account: &str, codec: &Codec, tx:
             map.send_login(login.char_id, &login.name, account, if answered { 3 } else { 2 })?;
             last_login = Instant::now();
         }
+        gate.release(&mut queue, Instant::now());
         while let Ok(cmd) = rx.try_recv() {
             let before = queue.len();
             match cmd {
@@ -1629,7 +1679,7 @@ fn session(addr: SocketAddr, login: &MapLogin, account: &str, codec: &Codec, tx:
                     queue.push(build(0x0F2, &b));
                 }
             }
-            gate_from(&mut queue, before, &mut gated, Instant::now());
+            gate.admit(&mut queue, before, Instant::now());
         }
         // Retail sends one datagram every 400 ms (config +0xd0 = 400, net+0x417c), each with a fresh 0x015.
         let every = match stats.send_ms.load(Relaxed) {
@@ -1673,22 +1723,31 @@ fn session(addr: SocketAddr, login: &MapLogin, account: &str, codec: &Codec, tx:
 mod tests {
     use super::*;
 
-    /// A gated id goes once a second; others and a later second go through; GATED stays sorted for the search.
+    /// A gated id goes once a second (a dropped id's repeat is lost, a retried one's waits); others go through; GATED
+    /// stays sorted for the search.
     #[test]
     fn send_gate() {
         assert!(GATED.windows(2).all(|p| p[0] < p[1]));
         let t0 = Instant::now();
-        let mut last = std::collections::HashMap::new();
-        let mut q = vec![build(0x0B5, &[0; 4]), build(0x015, &[0; 28]), build(0x0B5, &[0; 4])];
-        gate_from(&mut q, 0, &mut last, t0);
-        let ids = |q: &[Vec<u8>]| q.iter().map(|p| u16::from_le_bytes([p[0], p[1]]) & 0x1ff).collect::<Vec<_>>();
-        assert_eq!(ids(&q), [0x0B5, 0x015]);
+        let ms = |n| t0 + Duration::from_millis(n);
+        let ids = |q: &[Vec<u8>]| q.iter().map(|p| packet_id(p)).collect::<Vec<_>>();
+        let mut g = SendGate::default();
+        let mut q = vec![build(0x0B5, &[0; 4]), build(0x015, &[0; 28]), build(0x0B5, &[0; 4]), build(0x05B, &[1; 4]), build(0x05B, &[2; 4])];
+        g.admit(&mut q, 0, t0);
+        assert_eq!(ids(&q), [0x0B5, 0x015, 0x05B]);
+        g.release(&mut q, ms(999));
+        assert_eq!(ids(&q), [0x0B5, 0x015, 0x05B]);
+        q.clear();
         q.push(build(0x0B5, &[0; 4]));
-        gate_from(&mut q, 2, &mut last, t0 + Duration::from_millis(999));
-        assert_eq!(ids(&q), [0x0B5, 0x015]);
+        g.admit(&mut q, 0, ms(999));
+        assert!(q.is_empty());
+        // At 1 s the held 0x05B goes (the second one, body 2), and a new chat line is let through.
+        g.release(&mut q, ms(1000));
+        assert_eq!((ids(&q), q[0][4]), (vec![0x05B], 2));
         q.push(build(0x0B5, &[0; 4]));
-        gate_from(&mut q, 2, &mut last, t0 + Duration::from_millis(1000));
-        assert_eq!(ids(&q), [0x0B5, 0x015, 0x0B5]);
+        g.admit(&mut q, 1, ms(1000));
+        assert_eq!(ids(&q), [0x05B, 0x0B5]);
+        assert!(g.held.is_empty());
     }
 
     /// Standing still, a cast or a ranged attack goes after the position, sent twice; moving, or with only other
