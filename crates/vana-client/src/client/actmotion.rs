@@ -478,8 +478,13 @@ pub(super) fn play_op(w: &mut World, id: u32, m: Option<sched::Motion>) {
 
 /// The status motion an actor would play now (FUN_100c6b70), for ending looping holds.
 pub(super) fn status_motion(w: &World, id: u32, ch: &Character) -> String {
-    let (status, ratio) = if let Some(p) = super::event::pose(w, id) {
-        (0, p.ratio)
+    status_motion_posed(w, id, ch, super::event::pose(w, id).map(|p| p.ratio))
+}
+
+/// [`status_motion`] with the event pose's ratio given: the event VM runs with the event taken out of `w`.
+fn status_motion_posed(w: &World, id: u32, ch: &Character, posed: Option<f32>) -> String {
+    let (status, ratio) = if let Some(r) = posed {
+        (0, r)
     } else if id == w.my_id {
         (w.my_motion.status, if w.moving { 1.0 } else { 0.0 })
     } else {
@@ -517,9 +522,9 @@ fn start_ready(w: &mut World, id: u32, index: &Arc<DatIndex>, ch: &Character, ba
 }
 
 /// start_ready for the event VM: false while the files are still loading.
-pub(super) fn start_pending(w: &mut World, id: u32, index: &Arc<DatIndex>) -> bool {
+pub(super) fn start_pending(w: &mut World, id: u32, index: &Arc<DatIndex>, posed: Option<f32>) -> bool {
     let Some(ch) = w.actors.get(&id).and_then(|a| a.character.clone()) else { return false };
-    let base = status_motion(w, id, &ch);
+    let base = status_motion_posed(w, id, &ch, posed);
     start_ready(w, id, index, &ch, &base)
 }
 

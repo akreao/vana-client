@@ -1704,7 +1704,9 @@ impl Host for LiveHost<'_> {
                     return true;
                 }
                 // Ready: start it now, before the VM's next tick this frame can queue another motion over it.
-                super::actmotion::start_pending(self.w, id, &index);
+                // The VM holds the event out of `w` here, so the bound actor's pose comes from our state.
+                let posed = self.st.poses.get(&id).map(|p| p.drawn(p.since).ratio);
+                super::actmotion::start_pending(self.w, id, &index, posed);
                 false
             }
             // FUN_10083650: the scheduler task of that name still exists (or its files still load).
