@@ -1700,7 +1700,12 @@ impl Host for LiveHost<'_> {
                 let id = self.wid(*actor);
                 let Some(files) = self.w.actors.get(&id).and_then(|a| a.pending.as_ref()).map(|p| p.files.clone()) else { return false };
                 let Some(index) = self.w.index.clone() else { return true };
-                self.w.motion_files.all(&index, &files).is_none()
+                if self.w.motion_files.all(&index, &files).is_none() {
+                    return true;
+                }
+                // Ready: start it now, before the VM's next tick this frame can queue another motion over it.
+                super::actmotion::start_pending(self.w, id, &index);
+                false
             }
             // FUN_10083650: the scheduler task of that name still exists (or its files still load).
             Busy::Playing { actor, name } => {

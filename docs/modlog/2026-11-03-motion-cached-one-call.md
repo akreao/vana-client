@@ -1,4 +1,4 @@
-## 0x5b / 0x66: a cached motion file costs one call
+## 0x5b / 0x66: a cached motion file costs one call (2026-11-03)
 
 `FUN_100b5210(kind, yield_after, with_speed)` (op 0x5b -> kind 0, op 0x66 -> kind 1) does the request and the test in
 one pass:
@@ -15,3 +15,6 @@ whole file set rather than the one file. Ours kept the op waiting a frame even f
 `MotionFiles`, because `Busy::MotionLoad` only asked whether the actor had a pending motion. It now asks whether that
 pending motion's files are still loading, which is the same test in the same call. The thread's state byte is the
 requested flag, so a waiting op still does not re-request.
+- Ours: because the VM can run two ticks in one drawn frame (30 fps) and an actor has one pending-motion slot, the
+  ready test (Busy::MotionLoad) also starts the motion at once (actmotion::start_pending), as retail's call does,
+  rather than leaving it for actmotion::update after the VM, where a second 0x5b / 0x66 could replace it.
