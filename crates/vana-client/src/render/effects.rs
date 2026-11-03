@@ -937,7 +937,7 @@ impl EffectsGpu {
             c10: m(c10),
             inv_view_rot: m(b90.inverse()),
             eye: [f.eye.x, f.eye.y, f.eye.z, 1.0],
-            extra: [f.moon_phase as f32, f.weekday as f32, 0.0, 0.0],
+            extra: [f.moon_phase as f32, f.weekday as f32, fx.weather_density, 0.0],
             area: [f.area_light.x, f.area_light.y, f.area_light.z, 0.0],
             light: self.light.map_or([0.0; 4], |(d, _, _)| [d.x, d.y, d.z, 1.0]),
         };

@@ -943,6 +943,9 @@ pub struct Effects {
     equip_calls: Vec<(u32, EquipCall)>,
     /// Config 0xbe == 1 (Misc. 3 "weapon effect" Off): `!w01` / `!w11` are skipped.
     pub weapon_effect_off: bool,
+    /// FUN_10002d80: Misc.'s weather density (config 0x3b as a float, DAT_10456a68), or 1.0 while an event forces it
+    /// (DAT_10487ef5, event op 0xab subs 9 / 10).
+    pub weather_density: f32,
     pub releases: Vec<u32>,
     /// Load holds taken here (op 0x80's skillchain burst, FUN_100a8e30); released like the action's.
     pub loads: Vec<u32>,
@@ -1115,6 +1118,7 @@ impl Effects {
             equip: HashMap::new(),
             equip_calls: Vec::new(),
             weapon_effect_off: false,
+            weather_density: 1.0,
             releases: Vec::new(),
             loads: Vec::new(),
             reacts: Vec::new(),
@@ -1878,7 +1882,8 @@ impl Effects {
             }
         } else {
             if inst.de & 2 != 0 {
-                dt *= 1.0; // weather density (config 0x3b) is 1.0 *(inf: the setting is not wired)*
+                // FUN_100496f0 (0x1004a654): a weather generator's clock runs at the weather density.
+                dt *= self.weather_density;
             }
             inst.countdown -= dt;
             let mut budget = inst.life;
