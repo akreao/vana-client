@@ -43,6 +43,12 @@ fn rel(path: &str) -> mlua::Result<PathBuf> {
     Ok(out)
 }
 
+/// A file in the mod's own folder `dir` (hud.image, draw.image, chat.icon, audio.play), as `fs` takes paths: `..` and
+/// drive paths refused, a leading `/` from the folder; and no link on the way, which could lead outside it.
+pub(super) fn mod_file(dir: &Path, path: &str) -> mlua::Result<PathBuf> {
+    no_links(dir, &rel(path)?, path)
+}
+
 /// Where a path lives: "shared/..." is the shared area (files.shared), anything else the mod's data folder.
 fn place(lua: &Lua, data: &Path, path: &str) -> mlua::Result<PathBuf> {
     let r = rel(path)?;
@@ -569,6 +575,12 @@ mod tests {
         assert!(p("out/x.txt").is_err());
         // A link as the mod's own folder is caught from the root down.
         assert!(super::no_links(&base, std::path::Path::new("out/files/a.txt"), "a.txt").is_err());
+        // The mod's own files (hud.image, audio.play, ...): links, `..` and roots refused.
+        assert_eq!(super::mod_file(&base, "dir/a.png").unwrap(), base.join("dir/a.png"));
+        assert!(super::mod_file(&base, "out/a.png").is_err());
+        assert!(super::mod_file(&base, "../a.png").is_err());
+        assert_eq!(super::mod_file(&base, "/dir/a.png").unwrap(), base.join("dir/a.png"));
+        assert!(super::mod_file(&base, "C:/a.png").is_err());
         let _ = std::fs::remove_dir_all(&base);
     }
 }
