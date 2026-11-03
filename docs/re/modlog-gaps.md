@@ -65,14 +65,14 @@ detail inside implemented ops.
 |---|---|---|---|
 | Installed DATs are older than LSB's text ids, so message ids can be shifted (msgshift table); ids between two segments stay unknown | Known limitation | L835, L1086 | Data |
 | Motion length (+0x2a0) comes from the motion; the headless host keeps it busy for 30 frames | Approximation | L1266 | DLL |
-| Name plates in cutscenes *(answered, [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §3: no event check in the plate draw; bound actors keep it unless op 0x92 / bit 17; non-participants lose the model by event Mode & 2 / & 0x10)*; ours not audited against it | Answered | L2408 | Code check |
+| Name plates in cutscenes *(answered, [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §3: no event check in the plate draw; bound actors keep it unless op 0x92 / bit 17; non-participants lose the model by event Mode & 2 / & 0x10)*; audited 2026-11-03 with [batch 5](notes/2026-11-03-modlog-gaps-batch5-build.md) §2: ours unloaded doors, elevators, ships and op 0xac sub 2 actors too, now exempt. Left: the hold count +0xf2, the +0x1ff status rule | Built | L2408 | Code check |
 | The mouth's 8-tick blend out (0x23 and unbind) | Not built | L2343, L2408, L14046 | DLL |
 | 0x5b / 0x66 finishing in one call when the file is cached (ours take 2 frames) | Not built | L2408 | DLL |
 | Motion-file model kinds | Not built | L2408 | DLL |
 | 0x46 sub 1's HUD window FUN_10217e90 *(inf: hides a HUD window)* | Not built | L2408 | DLL |
 | 0x1f7 (San d'Oria opening) not played live since the VM-speed fix; timing is the headless VM's | Not checked live | L2408 | Live |
 | Op 0x89 (actor +0x840 bit 1 and position held for dur ticks; *inferred: holds the actor in place*); also its head-look suppression | Not built | L7951, L4535 | DLL |
-| Event text codes 0x1d (speaker's compass direction), 0x13 (Japanese) | Not built | L15345 | DLL |
+| Event text codes 0x1d (speaker's compass direction), 0x13 *(answered, [batch 5](notes/2026-11-03-modlog-gaps-batch5.md) item 1: not Japanese, the raise / tractor offer)* | Built | L15345 | DLL |
 | Grammar 2 / 3 whole-text conversions (key items with their own article) | Not built | L14678 | DLL |
 | Event positions: the +0x128 bit 14 and +0x120 bit 0x100000 ground-snap skips (only 0x200000 is ours) | Not built | L19371 | DLL |
 | Op 0x71 subs 0x50..0x55 (a full-screen picture, zone 291) | Not built | L4983 | DLL |
@@ -90,7 +90,7 @@ detail inside implemented ops.
 | Item | Status | Source | Settle by |
 |---|---|---|---|
 | Motion schedulers bntg / klbt / hwat / res0; the move direction for atr / atb / atl (moving always picks f) | Not built | L1771 | DLL |
-| Faded actors: retail draws the model opaque into an offscreen target, then blends it as one SRCALPHA / INVSRCALPHA quad (no self-overlap); ours blends each triangle *(answered, [batch 3](notes/2026-11-03-modlog-gaps-batch3.md) §4)* | Not built | L1702, L1771 | DLL |
+| Faded actors: retail draws the model opaque into an offscreen target, then blends it as one SRCALPHA / INVSRCALPHA quad (no self-overlap); ours blended each triangle *(answered, [batch 3](notes/2026-11-03-modlog-gaps-batch3.md) §4)*; built 2026-11-03 for GPU-skinned actors (`ZoneRenderer::render_faded`). Left: CPU-posed actors, the second-RT path, the +0x9c effects | Built | L1702, L1771 | Live |
 | Hit reactions: two overlays at once (a new one replaces the old); the CPU pose for the locked camera ignores it | Not built | L4829 | DLL |
 | Model-file generators: the un-hide restart (FUN_10084320 re-runs FUN_10083970) | Not built | L7567 | DLL |
 | Riding: ground tilt of info[0] 1 / 2 models (FUN_100d54c0); op 0x6e for other actors; the riding `cdam`; the local player's wait for the stand motion before `coff` | Not built | L12422, L13095 | DLL |
@@ -174,7 +174,7 @@ detail inside implemented ops.
 | Macro palette: the default cursors; FUN_101262e0 as the left click in the palettes' frame | Unknown | L10096 | DLL |
 | Equipment sets: who calls mcres20 vtable +0x2c FUN_101a7010; the status gate's bit 0x40; chat mode 0xca's colour | Unknown | L10170 | DLL |
 | Status icons: the 240 x 4 line and per-cell corner sprite; whether retail hides the buff window in cutscenes | Unknown | L7340, L7359 | Footage |
-| Top bar: netstat in cutscenes; item overrides +0x4c / +0x50 *(answered, [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §4: no event check, only cinema mode / UI hidden; +0x4c help, +0x50 title overrides)*; ours not audited against it | Answered | L2494, L2502 | Code check |
+| Top bar: netstat in cutscenes; item overrides +0x4c / +0x50 *(answered, [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §4: no event check, only cinema mode / UI hidden; +0x4c help, +0x50 title overrides)*; audited 2026-11-03: ours had no cinema mode; built from [batch 5](notes/2026-11-03-modlog-gaps-batch5-build.md) §1 (`event::cinema`). Left: the +0x4c / +0x50 overrides audit | Partly built | L2494, L2502 | Code check |
 | Target window: the state codes and model range; the pet line; the event mode | Not built | L2541, L4485 | DLL |
 | Name plates: scheduler op 0xb4 (+0x8c0, 8 `cst0` schedulers); the mount sub-case per-race tables; k = FUN_10022340(race) | Not built / not decoded | L8708, L2172 | DLL |
 | Name plates under the screen fade: retail's one-frame delay | Not built | L5646 | DLL |
