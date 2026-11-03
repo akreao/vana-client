@@ -65,7 +65,7 @@ detail inside implemented ops.
 |---|---|---|---|
 | Installed DATs are older than LSB's text ids, so message ids can be shifted (msgshift table); ids between two segments stay unknown | Known limitation | L835, L1086 | Data |
 | Motion length (+0x2a0) comes from the motion; the headless host keeps it busy for 30 frames | Approximation | L1266 | DLL |
-| Name plates in cutscenes *(answered, [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §3: no event check in the plate draw; bound actors keep it unless op 0x92 / bit 17; non-participants lose the model by event Mode & 2 / & 0x10)*; ours not audited against it | Answered | L2408 | Code check |
+| Name plates in cutscenes *(answered, [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §3: no event check in the plate draw; bound actors keep it unless op 0x92 / bit 17; non-participants lose the model by event Mode & 2 / & 0x10)*; audited 2026-11-03 with [batch 5](notes/2026-11-03-modlog-gaps-batch5-build.md) §2: ours unloaded doors, elevators, ships and op 0xac sub 2 actors too, now exempt. Left: the hold count +0xf2, the +0x1ff status rule | Built | L2408 | Code check |
 | The mouth's 8-tick blend out (0x23 and unbind) | Not built | L2343, L2408, L14046 | DLL |
 | 0x5b / 0x66 finishing in one call when the file is cached (ours take 2 frames) | Not built | L2408 | DLL |
 | Motion-file model kinds | Not built | L2408 | DLL |
@@ -90,7 +90,7 @@ detail inside implemented ops.
 | Item | Status | Source | Settle by |
 |---|---|---|---|
 | Motion schedulers bntg / klbt / hwat / res0; the move direction for atr / atb / atl (moving always picks f) | Not built | L1771 | DLL |
-| Faded actors: retail draws the model opaque into an offscreen target, then blends it as one SRCALPHA / INVSRCALPHA quad (no self-overlap); ours blends each triangle *(answered, [batch 3](notes/2026-11-03-modlog-gaps-batch3.md) §4)* | Not built | L1702, L1771 | DLL |
+| Faded actors: retail draws the model opaque into an offscreen target, then blends it as one SRCALPHA / INVSRCALPHA quad (no self-overlap); ours blended each triangle *(answered, [batch 3](notes/2026-11-03-modlog-gaps-batch3.md) §4)*; built 2026-11-03 for GPU-skinned actors (`ZoneRenderer::render_faded`). Left: CPU-posed actors, the second-RT path, the +0x9c effects | Built | L1702, L1771 | Live |
 | Hit reactions: two overlays at once (a new one replaces the old); the CPU pose for the locked camera ignores it | Not built | L4829 | DLL |
 | Model-file generators: the un-hide restart (FUN_10084320 re-runs FUN_10083970) | Not built | L7567 | DLL |
 | Riding: ground tilt of info[0] 1 / 2 models (FUN_100d54c0); op 0x6e for other actors; the riding `cdam`; the local player's wait for the stand motion before `coff` | Not built | L12422, L13095 | DLL |
@@ -106,7 +106,7 @@ detail inside implemented ops.
 | Lifts: the camera's look point; LSB's Metalworks door data not checked against the doors | Not built / not checked | L8776 | DLL / LSB |
 | Ship actors: whether a new task first updates in its frame; vt +0x178 and the default speed 1.0 assumed; the far plane; the lighting area; the 10-second no-skip window; +0x130 bit 21's writer | Unknown | L18113 | DLL |
 | Ships: per-run data for each voyage (no captures; pirates' run 227 / 228) | Blocked: no data | L13802, L13831 | Captures |
-| 0x00E SubKind 5 / 6: the 0x9000 word *(answered, [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §5: bits 0..11 NPC-table model id, bits 12..15 the look slot; kind 7 has a case)*; ours not audited against it | Answered | L15593 | Code check |
+| 0x00E SubKind 5 / 6: the 0x9000 word *(answered, [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §5: bits 0..11 NPC-table model id, bits 12..15 the look slot; kind 7 has a case)*; audited 2026-11-03: ours took the whole word as the model id, now the low 12 bits. Left: SubKind 6's +0xf6 = 2 ranges, slot 9 attached over a race / slot 0 base | Partly built | L15593 | DLL |
 | /sitchair: trusts ignoring chair / sit / heal statuses in 0x00E (asm 0x1009c148) | Not built | L18831 | DLL |
 | Dual wield: a 'b' scheduler with +0x8b5 calls vtable +0x250(1), no effect seen | Not traced | L16279 | DLL |
 
