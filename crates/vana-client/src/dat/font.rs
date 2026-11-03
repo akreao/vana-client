@@ -457,6 +457,9 @@ impl Font {
 /// 0x20 pass through as control characters; undecodable pairs become U+FFFD.
 /// Private-use base for two-byte codes standard Shift-JIS has no character for (decode_sjis / encode_sjis).
 const PAIR_BASE: u32 = 0xF0000;
+/// Private-use base for single bytes Shift-JIS has no character for. Pairs always have a lead of 0x81 or more, so
+/// PAIR_BASE + 0x1000.. is free, and it stays clear of the chat icons at U+F0000..U+F0FFF (chaticons::BASE).
+const BYTE_BASE: u32 = PAIR_BASE + 0x1000;
 
 /// The game's own glyphs as Unicode for faces that lack them (the modern interface's): its apostrophe (0x8552) and
 /// curly quotes (0x87B2 / 0x87B3); the other private-use characters (gaiji, pairs Shift-JIS lacks, the in-line colour
@@ -538,10 +541,10 @@ pub fn decode_sjis(sjis: &[u8]) -> String {
                 out.push(b as char);
             } else {
                 // A byte Shift-JIS has no character for (0x80, 0xA0, 0xFD..0xFF, a lead byte with no pair) keeps
-                // its byte as U+F0000 + byte, the "pair" with lead 0, so encode_sjis gives it back.
+                // its byte as BYTE_BASE + byte, so encode_sjis gives it back.
                 let (s, bad) = encoding_rs::SHIFT_JIS.decode_without_bom_handling(&sjis[i..i + 1]);
                 if bad {
-                    out.push(char::from_u32(PAIR_BASE + b as u32).unwrap());
+                    out.push(char::from_u32(BYTE_BASE + b as u32).unwrap());
                 } else {
                     out.push_str(&s);
                 }
@@ -572,7 +575,7 @@ pub fn encode_sjis(text: &str) -> Vec<u8> {
             out.extend_from_slice(&[0x1e + ((cp - CODE_BASE) >> 8) as u8, cp as u8]);
         } else if (0xE000..0xE000 + (GAIJI_END - GAIJI_FIRST) as u32).contains(&cp) {
             out.extend_from_slice(&[0xEF, 0x1F + (cp - 0xE000) as u8]);
-        } else if (PAIR_BASE..PAIR_BASE + 0x100).contains(&cp) {
+        } else if (BYTE_BASE..BYTE_BASE + 0x100).contains(&cp) {
             out.push(cp as u8);
         } else if (PAIR_BASE..PAIR_BASE + 0x10000).contains(&cp) {
             out.extend_from_slice(&[(cp >> 8) as u8, cp as u8]);
@@ -607,6 +610,11 @@ mod tests {
             let one = [a];
             if !is_lead(a) {
                 assert_eq!(encode_sjis(&decode_sjis(&one)), one, "{a:02X}");
+                // Kept bytes stay out of the chat icon block (U+F0000..U+F0FFF) and are dropped by plain_char.
+                for c in decode_sjis(&one).chars() {
+                    assert!(!(0xF0000..0xF1000).contains(&(c as u32)), "{a:02X}");
+                    assert!(c as u32 <= 0xFFFF || plain_char(c).is_none(), "{a:02X}");
+                }
                 continue;
             }
             for b in 0x40u8..=0xFC {
