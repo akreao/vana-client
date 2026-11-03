@@ -128,14 +128,16 @@ pub(super) fn install(lua: &Lua, client: &Table, mod_id: &str) -> mlua::Result<(
             let stamp = jiff::Zoned::now().strftime("%Y%m%d-%H%M%S").to_string();
             let name = name.unwrap_or(stamp).replace(['/', '\\'], "_");
             let path = crate::config::data_dir().join("ffxiuser").join("videos").join(format!("{name}.mp4"));
-            super::api::state(lua).borrow_mut().ops.push(super::Op::Record(Some((me.clone(), path.clone(), fps))));
+            super::api::state(lua).borrow_mut().ops.push(super::Op::Record(me.clone(), Some((path.clone(), fps))));
             Ok(path.display().to_string())
         })?,
     )?;
+    let me2 = mod_id.to_string();
     client.set(
         "stop_recording",
-        lua.create_function(|lua, ()| {
-            super::api::state(lua).borrow_mut().ops.push(super::Op::Record(None));
+        lua.create_function(move |lua, ()| {
+            need(lua, "exec")?;
+            super::api::state(lua).borrow_mut().ops.push(super::Op::Record(me2.clone(), None));
             Ok(())
         })?,
     )?;

@@ -2091,7 +2091,7 @@ Returns `string`.
 
 #### `client.stop_recording()`
 
-Ends the recording (ffmpeg finishes the file).
+Ends this mod's recording (ffmpeg finishes the file); one another mod started goes on. Needs exec.
 
 #### `client.recording()`
 

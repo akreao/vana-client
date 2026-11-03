@@ -1380,7 +1380,7 @@ function devices.close(id) end
 ---@return string
 function client.record(name, options) end
 
---- Ends the recording (ffmpeg finishes the file).
+--- Ends this mod's recording (ffmpeg finishes the file); one another mod started goes on. Needs exec.
 function client.stop_recording() end
 
 --- The file being recorded, or nil (as of the last frame).
