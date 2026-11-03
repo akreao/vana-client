@@ -1,4 +1,4 @@
-## Missions: the held-key header stop
+## Missions: the held-key header stop (2026-11-03)
 
 miss00's OnKey (`FUN_1022e760`, the Up / Down path at 0x1022e99c..0x1022ea19) classifies the row the cursor landed on
 with `FUN_1022df70`: -1 is a header, -2 a blank row. The two cases differ by whether the key is a held repeat

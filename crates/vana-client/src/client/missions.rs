@@ -142,7 +142,8 @@ fn step(l: &mut List, down: bool, repeat: bool) -> bool {
     let edge = repeat && if down { l.cursor + 1 == n && l.dir == 1 } else { l.cursor == 0 && l.dir == 2 };
     if !edge {
         l.cursor = if down { (l.cursor + 1) % n } else { (l.cursor + n - 1) % n };
-        l.dir = u8::from(down) + 1;
+        // FUN_10222150: 1 is Down, 2 Up (the held-header bounce calls it with 1, Down).
+        l.dir = if down { 1 } else { 2 };
         if head(l, l.cursor) {
             if repeat {
                 // Back off the header, downwards whichever way we came, and remember Up.
