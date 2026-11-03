@@ -106,9 +106,9 @@ detail inside implemented ops.
 | Lifts: the camera's look point; LSB's Metalworks door data not checked against the doors | Not built / not checked | L8776 | DLL / LSB |
 | Ship actors: whether a new task first updates in its frame; vt +0x178 and the default speed 1.0 assumed; the far plane; the lighting area; the 10-second no-skip window; +0x130 bit 21's writer | Unknown | L18113 | DLL |
 | Ships: per-run data for each voyage (no captures; pirates' run 227 / 228) | Blocked: no data | L13802, L13831 | Captures |
-| 0x00E SubKind 5 / 6: the 0x9000 word *(answered, [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §5: bits 0..11 NPC-table model id, bits 12..15 the look slot; kind 7 has a case)*; audited 2026-11-03: ours took the whole word as the model id, now the low 12 bits. Left: SubKind 6's +0xf6 = 2 ranges, slot 9 attached over a race / slot 0 base | Partly built | L15593 | DLL |
-| /sitchair: trusts ignoring chair / sit / heal statuses in 0x00E (asm 0x1009c148) *([batch 6](notes/2026-11-03-modlog-gaps-batch6.md) item 7: 0x1009c118..0x1009c16d)* | Built | L18831 | DLL |
-| Dual wield: a 'b' scheduler with +0x8b5 calls vtable +0x250(1), no effect seen | Not traced | L16279 | DLL |
+| 0x00E SubKind 5 / 6: the 0x9000 word *(answered, [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §5: bits 0..11 NPC-table model id, bits 12..15 the look slot; kind 7 has a case)*; built: ours keeps the low 12 bits (MODLOG "0x00E SubKind 5 / 6: the model word's low 12 bits"). Not done: SubKind 6's +0xf6 = 2 for raw words 0x7b8..0x7cb / 0x7d3..0x7da, and slot 9 attached over a race or slot 0 base (op 0xb6 sub 0x0c, kind 7) | Built apart from the SubKind 6 flag and slot 9 attach | L15593 | DLL |
+| /sitchair: trusts ignoring chair / sit / heal statuses in 0x00E (asm 0x1009c148) *(built: MODLOG "Trusts ignore rest statuses in 0x00E")* | Built | L18831 | DLL |
+| Dual wield: a 'b' scheduler with +0x8b5 calls vtable +0x250(1), no effect seen *([batch 5](notes/2026-11-03-modlog-gaps-batch5.md) item 8: it sets drawobj +0x840 bit 6, read only as scheduler system value 0x3b)* | Built | L16279 | DLL |
 
 ## 4. Effects, lighting and rendering
 
