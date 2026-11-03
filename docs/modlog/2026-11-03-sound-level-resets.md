@@ -11,5 +11,10 @@
   - A volume slider's apply (config 9 / 10, FUN_101aa650 -> FUN_10035e80 / FUN_10035ec0) puts every channel's event
     level back to 1.0 at once, so moving a slider during a cutscene undoes the script's mute.
 - Ours: World::sound_reset is the flag. The zone-in path clears it, the settle step runs the zone reset, and
-  event::finish runs the event-end reset only while it is clear. audio::reset_event_levels is called from
-  apply_settings when the config volumes change.
+  event::finish runs the event-end reset only while it is clear. Our zone-in cutscene waits for the settle step
+  (event::zone_ready), so the settle step leaves the reset alone while an event is running or waiting: that event's
+  end is the one that restores, as retail's zone-in cutscene does. audio::reset_event_levels is called from
+  apply_settings only when config 9 / 10 themselves changed (App::applied_volumes, the raw slider values, recorded at
+  every apply and when the device opens); other settings and our mutes leave an event's levels alone.
+- Inferred: that retail's zone-in cutscene ends before the player's model comes up (the note's reading of
+  "whichever comes first").

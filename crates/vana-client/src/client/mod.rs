@@ -6807,7 +6807,8 @@ impl Drive {
 
 pub struct App {
     cfg: Config,
-    /// The config volumes last applied (config 9 / 10): a change resets the event sound levels (batch 6 item 18).
+    /// The config 10 / 9 slider values last applied (mutes left out): a change resets the event sound levels (batch 6
+    /// item 18).
     applied_volumes: Option<(f32, f32)>,
     drive: Drive,
     /// The chat line's history between logins (FSTEXTINPUT lives for the whole run).
@@ -7207,11 +7208,14 @@ impl App {
         crate::render::MAP_COMPRESSED.store(self.cfg.tool("0019") == 0, std::sync::atomic::Ordering::Relaxed);
         crate::render::SHINE_WRAP.store(self.cfg.tool("0040") == 0, std::sync::atomic::Ordering::Relaxed);
         let (m, e) = self.volume_factors();
+        let sliders = self.volume_sliders();
         if let Some(a) = self.audio.as_mut() {
-            // FUN_101aa650: applying config 9 / 10 also puts every event level back to 1.0.
-            if self.applied_volumes != Some((m, e)) {
+            // FUN_101aa650: applying config 9 / 10 also puts every event level back to 1.0. Only a slider that moved
+            // counts: other settings and our mutes leave an event's levels alone.
+            if self.applied_volumes.is_some_and(|v| v != sliders) {
                 a.reset_event_levels();
             }
+            self.applied_volumes = Some(sliders);
             a.set_volumes(m, e);
             a.max_se = self.cfg.tool("0029").clamp(1, 20);
         }
@@ -7481,6 +7485,17 @@ impl App {
 
     /// Retail's levels under ours: in game ids 10 / 9 (FUN_10036480 / FUN_10035060), in the lobby 0xa8 for both
     /// (FUN_10196390).
+    /// Config 10 / 9 as set (music, effects), mutes left out: what FUN_101aa650 applies.
+    fn volume_sliders(&self) -> (f32, f32) {
+        match &self.phase {
+            Phase::World(w) => (w.game.get(10) as f32, w.game.get(9) as f32),
+            _ => {
+                let v = self.cfg.game.global.get(0xa8) as f32;
+                (v, v)
+            }
+        }
+    }
+
     fn volume_factors(&self) -> (f32, f32) {
         match &self.phase {
             Phase::World(w) => world_volumes(w),
@@ -7565,6 +7580,7 @@ impl App {
             let device = std::env::var("FFXI_AUDIO_DEVICE").unwrap_or_else(|_| self.cfg.audio_device.clone());
             let (m, e) = self.volume_factors();
             self.audio = crate::audio::Audio::open(self.cfg.ffxi_dir(), Some(&device), m, e);
+            self.applied_volumes = Some(self.volume_sliders());
             if let Some(a) = self.audio.as_mut() {
                 a.max_se = self.cfg.tool("0029").clamp(1, 20);
             }
@@ -10572,7 +10588,10 @@ impl App {
             world.unsettled = false;
             // FUN_1008abe0 (once a zone, DAT_104804c3), at the point the player's model is ready: the ambient to full
             // at once, the world and interface effects over 30 ticks. The stream is left alone.
-            if !std::mem::replace(&mut world.sound_reset, true) {
+            // A zone-in cutscene already waiting started before this point in retail (its model is not up yet), so
+            // the reset is left to its end (event::finish), which then restores the ambient and the world effects.
+            let zone_in_event = world.event.is_some() || world.event_pending.is_some();
+            if !zone_in_event && !std::mem::replace(&mut world.sound_reset, true) {
                 world.audio_cmds.push((4, 1.0, 0.0));
                 world.audio_cmds.push((1, 1.0, 30.0));
                 world.audio_cmds.push((2, 1.0, 30.0));
