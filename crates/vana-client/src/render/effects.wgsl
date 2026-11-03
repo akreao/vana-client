@@ -39,6 +39,25 @@ struct Params {
 // This frame's scene depth (drawn before the update pass), for op 0x53.
 @group(0) @binding(10) var scene_depth: texture_depth_2d;
 
+// FUN_10044f10: the element's view-space position (+0x188) as the transform places it: camera-relative (flags bit 2)
+// elements are view_rot x pos (bit 3 too: pos itself), flag 0x20000 the parent's translation in view space plus pos
+// (y negated for a billboard), the rest view x the world position.
+fn view_pos(b: u32, parent: u32) -> vec3<f32> {
+    let flags = el[b + E_FLAGS];
+    let pos = ev3(b, E_POS);
+    if ((flags & 0x20000u) != 0u) {
+        var t = vec3<f32>(0.0);
+        if (parent != NONE && slots[parent * SLOT_WORDS + S_HAS_MATRIX] != 0u) { t = slot_mat(parent)[3].xyz; }
+        let bboard = (flags & 1u) != 0u && (flags & 0x1c0u) == 0u;
+        return (p.view * vec4<f32>(t, 1.0)).xyz + vec3<f32>(pos.x, select(pos.y, -pos.y, bboard), pos.z);
+    }
+    if ((flags & 4u) != 0u) {
+        if ((flags & 8u) != 0u) { return pos; }
+        return (p.view_rot * vec4<f32>(pos, 0.0)).xyz;
+    }
+    return (p.view * vec4<f32>(world_of(b, parent), 1.0)).xyz;
+}
+
 // Update op 0x53 (FUN_1004a980 0x1004afb4): the +-half cube around the element's view-space position (FUN_10044f10),
 // projected; a 16 x 16 grid over its screen rect clipped to the screen, each point tested at the cube centre's depth
 // against the scene (FUN_1006c300 / FUN_1006c530 / FUN_1006c8b0); the passing count *(inf: points tested at the
@@ -473,7 +492,7 @@ fn update(@builtin(global_invocation_id) gid: vec3<u32>) {
             // FADE x= the passing fraction (count / 256, FUN_1004e630) x word 2. Without a scene depth it is skipped.
             case 0x53u: {
                 if (p.screen.y > 0.0) {
-                    let c = (p.view * vec4<f32>(world_of(b, parent), 1.0)).xyz;
+                    let c = view_pos(b, parent);
                     let hits = occlusion_hits(c, opf(r));
                     let fr = opf(r + 1u);
                     if (fr == 0.0) {
@@ -491,8 +510,10 @@ fn update(@builtin(global_invocation_id) gid: vec3<u32>) {
                 let near = opf(r);
                 let far = opf(r + 1u);
                 let kp = ef(b, E_KEY_PREV);
+                // The eye distance takes the raw position as a world point even for camera-relative elements
+                // (FUN_10044c40), as retail does.
                 let wp = world_of(b, parent);
-                let v = (p.view * vec4<f32>(wp, 1.0)).xyz;
+                let v = view_pos(b, parent);
                 var z = -v.z;
                 if (far >= kp && kp >= 0.0 && ef(b, E_FADE) != 0.0 && z >= 0.0) {
                     z = max(z, 1.0);

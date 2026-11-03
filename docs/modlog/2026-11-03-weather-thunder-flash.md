@@ -29,6 +29,13 @@
   draws as the additive full-screen quad (alpha doubled; default alpha byte 0x80, 0x100149d4) that event op 0x72
   also uses. Users: zone 26 frsh [0x760, 50, 150, 4096, 65536, 0, 1] and zones 29 / 30 / 31
   `d_ba/weat/thdr/limg/nul1` [0x760, 1000, 1000, 4096, 65536, 0, 1].
+- Both ops take +0x188 as FUN_10044f10 builds it: camera-relative elements (flags bit 2, the Riverne bolts are
+  0x00800005) as view_rot x pos (bit 3 too: pos itself), 0x20000 the parent translation in view space plus pos,
+  else view x the world position; op 0x60's eye distance still takes the raw position as a world point
+  (FUN_10044c40), as retail does. Retail's op 0x60 reads +0x188 from its last refresh, likely a frame old; ours
+  this frame's.
+- Checked on the game data: the flash fires in zones 26 (about every 50 to 60 s) and 29 / 30 / 31 for 25 to 31
+  ticks, peaking at 128 per channel and fading out; a scene depth of 0 suppresses zone 26's through op 0x53.
 - Ours: the GPU update writes each element's flash bytes into its readback record (word 19), summed on the CPU
   (Effects::flash) and added to op 0x72's colour in Screen::flash, so the flash shows a frame or two late. Element
   word 42 keeps last frame's sort key, word 43 the instance's own-player bits for the player factor. The bytes

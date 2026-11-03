@@ -1505,23 +1505,49 @@ mod tests {
     /// nothing when the scene hides it (op 0x53 zeroes FADE, so op 0x60 skips).
     #[test]
     fn gpu_thunder_flash() {
-        let Ok(gpu) = Gpu::headless() else { return };
-        let f32w = |v: f32| v.to_bits();
+        if Gpu::headless().is_err() {
+            return;
+        }
         let eye = glam::Vec3::new(0.0, 0.0, -10.0);
         let view = glam::camera::rh::view::look_at_mat4(eye, glam::Vec3::ZERO, glam::Vec3::NEG_Y);
         let mut view_rot = view;
         view_rot.w_axis = glam::Vec4::W;
-        let proj = glam::camera::rh::proj::directx::perspective(1.0, 1.0, 0.1, 1000.0);
         let f = Frame { dt: 1.0, seconds: 1.0 / 60.0, dayfrac: 0.5, view, view_rot, eye, draw_distance: 2000.0, area_light: glam::Vec3::ONE, focal: 350.0, moon_phase: 0, weekday: 0 };
-        let flash = |clear: f32, far_key: f32| {
+        let flash = |clear: f32, far_key: f32| flash_at(f, (glam::Vec3::ZERO, 0), clear, (50.0, far_key));
+        // Visible: B, G, R bytes of the colour at full strength.
+        assert_eq!(flash(1.0, 150.0), 0x00c0_8040);
+        // Behind scenery: nothing.
+        assert_eq!(flash(0.0, 150.0), 0);
+        // Beyond the far distance (10 > 5): nothing.
+        assert_eq!(flash(1.0, 5.0), 0);
+        // Camera-relative (flags bit 2, the Riverne bolts): the offset turned by the view rotation, wherever the eye is;
+        // the eye distance still takes the offset as a world point (about 100.5 here, inside near 200).
+        let eye = glam::Vec3::new(100.0, 0.0, 0.0);
+        let view = glam::camera::rh::view::look_at_mat4(eye, eye + glam::Vec3::Z, glam::Vec3::NEG_Y);
+        let mut view_rot = view;
+        view_rot.w_axis = glam::Vec4::W;
+        let g = Frame { view, view_rot, eye, ..f };
+        assert_eq!(flash_at(g, (glam::Vec3::new(0.0, 0.0, 10.0), 4), 1.0, (200.0, 300.0)), 0x00c0_8040);
+        assert_eq!(flash_at(g, (glam::Vec3::new(0.0, 0.0, -10.0), 4), 1.0, (200.0, 300.0)), 0, "behind the eye");
+    }
+
+    /// One element with Tavnazian Safehold's frsh ops (op 0x53, then op 0x60 with near / far) at `pos` with `flags`,
+    /// over a scene depth cleared to `clear`: its readback flash word after one update.
+    fn flash_at(f: Frame, (pos, flags): (glam::Vec3, u32), clear: f32, (near, far): (f32, f32)) -> u32 {
+        let gpu = Gpu::headless().expect("a GPU");
+        let f32w = |v: f32| v.to_bits();
+        let proj = glam::camera::rh::proj::directx::perspective(1.0, 1.0, 0.1, 1000.0);
+        {
             let mut fx = Effects::new();
-            fx.reg.ops = vec![0x353, f32w(8.0), f32w(1.0), 0x760, f32w(50.0), f32w(far_key), f32w(4096.0), f32w(65536.0), f32w(0.0), 1, 0];
+            fx.reg.ops = vec![0x353, f32w(8.0), f32w(1.0), 0x760, f32w(near), f32w(far), f32w(4096.0), f32w(65536.0), f32w(0.0), 1, 0];
             fx.reg.ops_dirty = true;
             let mut el = Elem::default();
             el.0[w::STATE] = crate::fx::elem::st::ALIVE;
             el.0[w::COLOR] = 0xffc0_8040;
             el.0[w::STREAM] = 0;
             el.0[w::SERIAL] = 1;
+            el.0[w::FLAGS] = flags;
+            el.set_v3(w::POS, pos);
             fx.writes.push(Write::Full(0, Box::new(el)));
             fx.elems.push(None);
             let depth = gpu.device.create_texture(&wgpu::TextureDescriptor {
@@ -1550,13 +1576,7 @@ mod tests {
             gpu.queue.submit([enc.finish()]);
             gpu.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None }).unwrap();
             eg.read_back(&gpu, 1)[crate::fx::elem::back::FLASH]
-        };
-        // Visible: B, G, R bytes of the colour at full strength.
-        assert_eq!(flash(1.0, 150.0), 0x00c0_8040);
-        // Behind scenery: nothing.
-        assert_eq!(flash(0.0, 150.0), 0);
-        // Beyond the far distance (10 > 5): nothing.
-        assert_eq!(flash(1.0, 5.0), 0);
+        }
     }
 
     /// Port San d'Oria's auto-start generators (sea, water tint, lamps) run for a while on the GPU and through
