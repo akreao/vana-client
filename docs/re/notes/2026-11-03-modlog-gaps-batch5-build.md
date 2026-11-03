@@ -125,6 +125,58 @@ the actor's tag-3 extra motion file (after all 9 look slots load, kinds +0xee 0 
 - Writers: the sound init FUN_100355f0 sets 1; event op 0x69 sets the level (1 if u8@1 == 0, else 0). No reset at event
   end or zone change.
 
+## 5. Party window: the pet and fellow rows
+
+Corrections: FUN_10202af0 is the fishing "Fish" stamina gauge, not a party row. The party window frame doesn't grow:
+the pet and fellow rows float outside it, with no frame or background.
+
+### Row origin (FUN_102041d0, 0x10204462..0x10204597)
+- L, T, R, B = the party window rect. party +0x3c / +0x3e = the window manager's stack-column y values (0x10621838
+  +0xa0): column anchors 0 = logwindo, 1 = partywin, 2 = 0x10578478, 3 = 0x1057845c, 4 = logwin2; a column's y = its
+  anchor's top, or its bottom if window +0x69 == 0. +0x3c = column 0 when config 0xb4 == 2 or log 2 isn't open, else
+  column 4; +0x3e = column 4 (the top of log 2).
+- lr = word [logwindo +0x44] (the log frame's right). Y0 = party +0x3c. If logwin2 exists: Y0 = party +0x3e, and if
+  config 0xb4 == 2 extra = log2.right - log2.left, else lr = max(lr, log2.right), extra = 0.
+- E = lr + extra, A = L - 8, W = (R - L) - 8:
+  - A - E > W: x = A - W (rows end 8 px left of the party window), yb = B;
+  - else A - lr > W: x = min(A, E) - W, yb = Y0;
+  - else: x = (A > lr ? min(A, E) : lr) - W, yb = min(party +0x3c, Y0).
+- ROW_Y = yb - 0x17 (0x10204552). party +0x5c = x; party +0x5e = +0x3c by default, then the y of each row drawn. The
+  party buff rows FUN_10228340 read +0x5c / +0x5e: if log.left + 0xc8 + 0x90 >= +0x5c they move to +0x5e - 8.
+- Sequence: if !FUN_1015ed10(8, 0, 0): the pet row at (x, ROW_Y); if it drew, +0x5e = ROW_Y and the next y = ROW_Y -
+  0x10. Then the fellow row at (x, that y); if it drew, +0x5e = its y and FUN_10202110(0, x, y), else
+  FUN_10202110(0, -1, -1). Rows are 16 px apart; the fellow sits above the pet, or in its place.
+
+### Pieces (pet FUN_10202960, fellow FUN_10202a40)
+The name is drawn whenever the row is shown; the rest only when actor +0xa0 (model) != 0.
+- HP gauge FUN_101cb090(x + 0x1a, y + 7, hp = actor +0xec): the value is stored into the "current" byte first, so it
+  never eases. windowps sprite 38 (72 x 8) at (x + 26, y + 7), colour 0x80808080 (0x30505050 at hp 0); fill windowps
+  sprite 97 (64 x 6) at (x + 30, y + 8), x-scale hp x 0.01, 0x80808080, drawn when ftol(f x 100 + 0.5) != 0.
+- TP number (pet only), when the pet model is not 0xb22..0xb31 and config 0xae bit 0 (/showtp): FUN_10202900(x + 0x30,
+  y + 10, pet TP): "%d" right-aligned at right edge x + 48, top y + 10, fontshp glyphs, 0x80606060 or 0x802060d0 at
+  >= 1000. Pet TP = DAT_10482f34 only if player +0x1fa == DAT_10482f30 (the pet index from 0x068), else 0.
+- No MP gauge on either row; no TP on the fellow row.
+- Name FUN_101c9d50(0x66, x, y, name, colour), left-aligned at (x, y), fontshp glyphs: 0x66 is a width limit (102 px):
+  the running width starts at 8 and adds glyph width - 1; at >= 102 it draws fontshp sprite 108 (ellipsis) and stops.
+  Name = actor +0x214 if u16 +0x210 != 0, else +0x7c. Pet colour ncol[1] = 0xC0618080; fellow ncol[4] = 0xC0618061.
+- Hand at the fellow row: FUN_10202110 -> FUN_102022b0(x, y), blinking 0xe0d04040 / 0xe0d0d040, only in a party pick
+  (modes 2 / 3) with cursor -1 (batch 1 §4). The pet row can't be picked.
+
+### Data
+- Pet = actor[player +0x1fa] (0 = none), from s2c 0x037 u32 @0x34 >> 3.
+- Fellow = actor[player +0x2a0] (FUN_101cc550 / FUN_101cc560: an index is set and the actor exists), from s2c 0x037
+  u16 @0x48, or s2c 0x067 / 0x068 type 2 (u16 @4 & 0x3f == 2): u16 @0x0C -> actor[u16 @6] +0x2a0 when the id @8 matches.
+- HP % (+0xec): 0x00E u8 @0x1e (mask 4); 0x00D u8 @0x1e.
+- 0x067 / 0x068 type 4 (pet sync): @0x0C pet index, @0x0E HP%, @0x0F MP%, @0x10 TP. The row uses only the TP.
+
+### When the rows are skipped
+- FUN_1015ed10(8, 0, 0): any open window whose registry group mask has bit 8 (macro, fulllog, query, moneyctr,
+  chatctrl, magselec, iteminfo, levelsyn, link12, scresult, bluepoin, statpup, chocobor, racecard, comment, friend,
+  msglist, blklist, meritcat, merit2ca, jbpcat, fp_cat, fp_cat2, mapframe, cnqframe, faqsub, faqmain, quest00, miss00,
+  evitem, magic, ability, emote, mount, guide00, the config windows). Both rows are skipped.
+- FUN_10087070(3): an event running (s2c 0x032) or player +0x128 bit 15.
+- The two-step party pick (DAT_106643e8 != 0). No actor: no row. No model: the name only.
+
 ## 6. Costume on other players
 
 - FUN_10095e90 runs for every actor the frame loop buckets, other PCs included.
