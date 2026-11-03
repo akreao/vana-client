@@ -531,6 +531,8 @@ struct Entity {
     /// +0x12c bit 26 (event op 0xa4): the eye near it does not fade it (FUN_100c63d0 sets model +0x664 to 1); cleared
     /// when an event unbinds it (FUN_100ae3f0).
     no_near_fade: bool,
+    /// GroundFlag or HackMove (net.rs EntityUpdate::no_snap): no event ground snap and no ground tilt.
+    no_snap: bool,
     /// A door's id (0x00E SubKind 2, u32 @0x34); 0 for anything else.
     door: u32,
     /// A lift's (shaft id, move start, move end) (0x00E SubKind 3, client/lifts.rs).
@@ -1651,6 +1653,7 @@ fn self_entity(w: &World) -> Entity {
         ev_reserved: false,
         no_occlusion: false,
         no_near_fade: false,
+        no_snap: false,
         door: 0,
         lift: None,
         ship: None,
@@ -4533,6 +4536,7 @@ fn place_mogdoor(w: &mut World) {
             ev_reserved: false,
             no_occlusion: false,
             no_near_fade: false,
+            no_snap: false,
             door: 0,
             lift: None,
             ship: None,
@@ -9255,6 +9259,7 @@ impl App {
                         ev_reserved: false,
                         no_occlusion: false,
                         no_near_fade: false,
+                        no_snap: e.no_snap.unwrap_or(false),
                         door: 0,
                         lift: None,
                         ship: None,
@@ -9424,6 +9429,9 @@ impl App {
                     }
                     if let Some(x) = e.plate {
                         entry.plate = x;
+                    }
+                    if let Some(x) = e.no_snap {
+                        entry.no_snap = x;
                     }
                     if let Some((inv, off, mon)) = e.radar {
                         (entry.invisible, entry.radar_off, entry.monstrosity) = (inv, off, mon);
@@ -14225,7 +14233,9 @@ impl App {
                     let rider = (*id & ride::ANIMAL != 0).then_some(*id & !ride::ANIMAL);
                     let gate_status = rider.and_then(|r| places.get(&r)).map_or(status, |p| p.status);
                     a.tilt_rot = None;
-                    if tilt::eligible(ch.cib[0], gate_status) {
+                    // FUN_100cbde0 / FUN_10084640: GroundFlag, HackMove or op 0x33's bit 21 means no ground tilt.
+                    let no_snap = w.entities.get(id).is_some_and(|e| e.no_snap) || (*id == w.my_id && w.my_plate.no_snap);
+                    if tilt::eligible(ch.cib[0], gate_status) && !no_snap {
                         // Ours: the player's walk normal, else the face under the position each frame (the rider's for an
                         // animal at its place) *(retail skips far moving actors, up to 121 frames)*.
                         let n = if rider.unwrap_or(*id) == w.my_id {

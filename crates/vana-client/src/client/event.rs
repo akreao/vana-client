@@ -1874,7 +1874,13 @@ impl Host for LiveHost<'_> {
 
     /// Bounded as retail's (50 down, else 15 up): a place far off any floor keeps its height (the Ark Angels'
     /// illusion stands 200 above Windurst Woods).
-    fn ground(&self, _actor: u32, p: [f32; 3]) -> Option<f32> {
+    /// FUN_100b3fb0 / FUN_100b4130 and the walks skip the snap when the actor has GroundFlag, HackMove or op 0x33's
+    /// bit 21 (batch 6 item 14).
+    fn ground(&self, actor: u32, p: [f32; 3]) -> Option<f32> {
+        let no_snap = if actor == self.w.my_id { self.w.my_plate.no_snap } else { self.w.entities.get(&actor).is_some_and(|e| e.no_snap) };
+        if no_snap {
+            return None;
+        }
         self.w.ground.as_ref().and_then(|g| g.snap(p[0], p[2], p[1]))
     }
 
