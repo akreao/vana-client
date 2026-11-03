@@ -14068,6 +14068,7 @@ impl App {
                             }
                             _ => 0.0,
                         };
+                        a.motion = name.clone();
                     }
                     a.once = once;
                     a.ticks += dt * 60.0 * rate;
