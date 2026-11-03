@@ -71,7 +71,7 @@ detail inside implemented ops.
 | Motion-file model kinds | Not built | L2408 | DLL |
 | 0x46 sub 1's HUD window FUN_10217e90 *(inf: hides a HUD window)* *([batch 5](notes/2026-11-03-modlog-gaps-batch5.md) item 5: "menu    buff" hidden until the event ends)* | Built | L2408 | DLL |
 | 0x1f7 (San d'Oria opening) not played live since the VM-speed fix; timing is the headless VM's | Not checked live | L2408 | Live |
-| Op 0x89 (actor +0x840 bit 1 and position held for dur ticks; *inferred: holds the actor in place*); also its head-look suppression | Not built | L7951, L4535 | DLL |
+| Op 0x89 (actor +0x840 bit 1 and position held for dur ticks; *inferred: holds the actor in place*); also its head-look suppression *([batch 6](notes/2026-11-03-modlog-gaps-batch6.md) item 13: no hold; head-look off for dur x speed ticks or until a move > 1 in x / z)* | Built | L7951, L4535 | DLL |
 | Event text codes 0x1d (speaker's compass direction), 0x13 *(answered, [batch 5](notes/2026-11-03-modlog-gaps-batch5.md) item 1: not Japanese, the raise / tractor offer)* | Built | L15345 | DLL |
 | Grammar 2 / 3 whole-text conversions (key items with their own article) | Not built | L14678 | DLL |
 | Event positions: the +0x128 bit 14 and +0x120 bit 0x100000 ground-snap skips (only 0x200000 is ours) *([batch 6](notes/2026-11-03-modlog-gaps-batch6.md) item 14: the bits are GroundFlag and HackMove)* | Built | L19371 | DLL |
