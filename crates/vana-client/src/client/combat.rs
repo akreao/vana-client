@@ -1687,7 +1687,7 @@ fn menu_rows(layout: usize, target: Option<u32>, treasure: bool) -> Vec<u8> {
 }
 
 /// The rows now (FUN_1012b2d0 over FUN_1012af30): engaged, Disengage becomes Call for help while toggled and
-/// Treasure shows while the pool holds items (Sprint's area rule is not done).
+/// Treasure shows while the pool holds items; Quarry / Scout / Sprint only in Conflict.
 fn current_items(w: &World, call_help: bool) -> Vec<u8> {
     // In Monstrosity the engage broadcast and every opener reach mp_pmode instead (registry flag 0x4000000).
     if super::monstrosity::active(w) {
