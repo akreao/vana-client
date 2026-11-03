@@ -189,7 +189,7 @@ max(ticks, 0) (float), then FUN_1015e350("menu    casttime", 1, 0). Three opener
   - Charged gear needs FUN_101cc3a0(item, container) (ready) or it fails.
   - A non-charged item on a zone NPC (target id 0x01xxxxxx) without +0x120 bit 13 goes to the c2s 0x036 trade path
     (no bar).
-  - Otherwise: if DAT_1048098d is set, only items with r+8 bit 3 pass *(inf: a restricted-area / Mog Garden gate)*;
+  - Otherwise: if DAT_1048098d (in the Mog Garden, FUN_101cc1b0; MODLOG L15598) is set, only items with r+8 bit 3 pass;
     then **the bar opens (mode 1) before the send**, and the send is FUN_100eb660 (mode 3) or FUN_100eb5e0 (others),
     i.e. the c2s 0x037 path. The bar opens even if that send is then refused (no rollback found).
   - No 0x028 handling opens or closes the bar for items (only category 8 touches it); it runs out on its own
