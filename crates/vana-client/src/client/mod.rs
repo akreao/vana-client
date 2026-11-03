@@ -14397,7 +14397,10 @@ impl App {
                     // everything (near_fade_tail).
                     let fishing = (fish && *id != w.my_id && w.entities.contains_key(id)).then(|| Vec3::new(pos.x - my_pos.x, 0.0, pos.z - my_pos.z).length());
                     let half = w.entities.get(id).is_some_and(|e| e.half_fade);
-                    let cam_fade = if *id == w.my_id && w.camst.first || w.entities.get(id).is_some_and(|e| e.no_near_fade) {
+                    // In first person the player skips FUN_100cd040, tail included (0x100c7d83 -> the self fade); op
+                    // 0xa4's +0x12c bit 26 then sets 1.0 over the whole result, tail included (0x100c7dc0..0x100c7dd5).
+                    let self_first = *id == w.my_id && w.camst.first;
+                    let cam_fade = if self_first {
                         1.0
                     } else {
                         let (b12, off12) = ch.skeleton.points.get(12).copied().unwrap_or((0, Vec3::ZERO));
@@ -14411,7 +14414,13 @@ impl App {
                             near_camera_fade(at(&a.bones), eye)
                         }
                     };
-                    let cam_fade = near_fade_tail(cam_fade, fishing, half);
+                    let cam_fade = if w.entities.get(id).is_some_and(|e| e.no_near_fade) {
+                        1.0
+                    } else if self_first {
+                        cam_fade
+                    } else {
+                        near_fade_tail(cam_fade, fishing, half)
+                    };
                     // FUN_100d5b10: an event's look, else the target / face target; eased and weighted in world space.
                     let point = |k: usize| ch.skeleton.points.get(k).copied().unwrap_or((0, Vec3::ZERO));
                     let p3 = model.transform_point3(a.rest.get(point(3).0 as usize).map_or(Vec3::ZERO, |x| x.at(point(3).1)));

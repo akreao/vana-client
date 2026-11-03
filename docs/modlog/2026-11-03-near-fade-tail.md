@@ -14,7 +14,9 @@
 4. **Entity +0x130 bit 18** draws it at **0.5**, over anything the steps above said. The bit comes from s2c 0x00E
    u32 @0x28 bit 31 and our own 0x037 clears it.
 
-The op 0xa4 no-fade bit (+0x12c bit 26) stands in for the cylinder's result, so the tail still runs on it
-*(inf: batch 9 lists the tail as applied to the cylinder result; the asm order against bit 26 is unchecked)*.
+The op 0xa4 no-fade bit (+0x12c bit 26) is applied by the caller after the whole function, tail included: the
+actor update stores FUN_100cd040's result in model +0x664 (0x100c7d92), then sets +0x664 = 1.0 when the entity has
+bit 26 (0x100c7dc0..0x100c7dd5). So an event's no-fade actor is never faded by fishing or by bit 18. The player in
+first person skips FUN_100cd040, tail included (0x100c7d83).
 Then the result is capped at 1. Steps 3 and 4 are `near_fade_tail`, with the bit carried on `Entity::half_fade`.
 The team-outline and party-highlight flags that follow in the same function change no alpha.
