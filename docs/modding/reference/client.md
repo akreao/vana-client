@@ -5,7 +5,7 @@ screenshots and video recording, starting other programs, and the client's proce
 that ask the client to do something (`copy`, `paste`, `set_option`, `set_window`, `focus`, `screenshot`, `record`,
 `stop_recording`) are queued and carried out after the mod phase, and only once the character is in the world: before
 login, in the lobby, they do nothing. Permissions differ per function: `paste` needs `clipboard`, `set_window` and
-`focus` need `multibox`, `record` and `run` need `exec`, `set_affinity` and `set_priority` need `process`; the rest
+`focus` need `multibox`, `record`, `stop_recording` and `run` need `exec`, `set_affinity` and `set_priority` need `process`; the rest
 need none.
 
 ```lua
@@ -30,7 +30,7 @@ end)
 | [`client.focus()`](#clientfocus) | Asks for the keyboard focus for this game window. |
 | [`client.screenshot(name?)`](#clientscreenshot) | Saves a screenshot of the next frame. |
 | [`client.record(name?, options?)`](#clientrecord) | Starts recording the game window to a video file. |
-| [`client.stop_recording()`](#clientstop_recording) | Ends the recording. |
+| [`client.stop_recording()`](#clientstop_recording) | Ends this mod's recording. |
 | [`client.recording()`](#clientrecording) | The video file being recorded, if any. |
 | [`client.run(program, args?, handler?)`](#clientrun) | Starts another program. |
 | [`client.process()`](#clientprocess) | The client's process id, cores, affinity and priority. |
@@ -377,7 +377,8 @@ installed), nothing is recorded, `client.recording()` stays `nil`, and the reaso
 client.stop_recording() -> nothing
 ```
 
-Ends the recording; `ffmpeg` then finishes the file. It ends any recording, also one another mod started.
+Ends the recording this mod started; `ffmpeg` then finishes the file. A recording another mod started goes on.
+Needs `exec`.
 
 **Returns** nothing.
 

@@ -1417,13 +1417,13 @@ function devices.write(id, report) end
 ---@param id integer 
 function devices.close(id) end
 
---- Records the game window as drawn to an H.264 video (ffmpeg must be installed) under the client's ffxiuser/videos folder, as `name`.mp4 (the date and time when none): options {fps (30)}. It ends with stop_recording (any mod's), a new recording, a new window size, or the mod unloading; a file of that name is replaced; no sound. Returns the file's path (when ffmpeg cannot start, client.recording() stays nil and the reason is in vana-client.log). Needs exec.
+--- Records the game window as drawn to an H.264 video (ffmpeg must be installed) under the client's ffxiuser/videos folder, as `name`.mp4 (the date and time when none): options {fps (30)}. It ends with stop_recording (from the mod that started it), a new recording, a new window size, or the mod unloading; a file of that name is replaced; no sound. Returns the file's path (when ffmpeg cannot start, client.recording() stays nil and the reason is in vana-client.log). Needs exec.
 ---@param name? string 
 ---@param options? {fps: integer?} 
 ---@return string
 function client.record(name, options) end
 
---- Ends the recording (ffmpeg finishes the file).
+--- Ends this mod's recording (ffmpeg finishes the file); one another mod started goes on. Needs exec.
 function client.stop_recording() end
 
 --- The file being recorded, or nil (as of the last frame).

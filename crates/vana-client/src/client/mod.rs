@@ -14548,12 +14548,15 @@ impl App {
         textures.clear();
         // A mod's recording: started or stopped as asked, ended with its mod or a new size, a frame copied for it.
         if let Phase::World(w) = &mut self.phase
-            && let Some(req) = w.lua.record_req.take()
+            && let Some((owner, req)) = w.lua.record_req.take()
         {
-            if let Some(r) = self.recorder.take() {
+            // A stop ends only the asking mod's own recording.
+            if (req.is_some() || self.recorder.as_ref().is_some_and(|r| r.owner == owner))
+                && let Some(r) = self.recorder.take()
+            {
                 r.stop();
             }
-            if let Some((owner, path, fps)) = req.filter(|_| gfx.config.usage.contains(wgpu::TextureUsages::COPY_SRC)) {
+            if let Some((path, fps)) = req.filter(|_| gfx.config.usage.contains(wgpu::TextureUsages::COPY_SRC)) {
                 match record::Recorder::start(&gfx.gpu, size, gfx.config.format, path, fps, owner) {
                     Ok(r) => self.recorder = Some(r),
                     Err(e) => log::warn!("record: {e:#}"),
