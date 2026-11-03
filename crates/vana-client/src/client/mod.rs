@@ -4788,11 +4788,14 @@ struct Actor {
     cloth: Option<(usize, cloth::Cloth)>,
 }
 
-/// The motion frames an actor was last posed at, with their animations' addresses to notice a change.
+/// The pose an actor was last skinned with: its motion frames (with their animations' addresses to notice a change),
+/// the reaction overlay's frame and weight, and the head look.
 struct AnimHeld {
     to: Vec<(usize, f32)>,
     from: Vec<(usize, f32)>,
     t: f32,
+    overlay: Option<(usize, f32, f32)>,
+    look: Option<crate::render::anim::HeadLook>,
 }
 
 /// FUN_100c62e0 gives each new actor the least used of 4 slots (counts at 0x1048a368); ours deals them in turn.
@@ -14152,7 +14155,7 @@ impl App {
                         })
                         .unwrap_or_default();
                     // The reaction overlay, its first animation found; dropped once faded out.
-                    let overlay = a.overlay.as_mut().and_then(|o| {
+                    let mut overlay = a.overlay.as_mut().and_then(|o| {
                         o.ticks += dt * 60.0;
                         let x = actmotion::find_cached(&mut cache.borrow_mut(), &extra, &ch, &o.name).into_iter().next()?;
                         o.sample(x.frames as u32, x.speed).map(|(f, wt)| (x, f, wt))
@@ -14163,11 +14166,14 @@ impl App {
                     a.find_cache = cache.take();
                     let mut t = a.blend / a.blend_len;
                     // Misc. 2's animation frame rate: other actors (not one on a mount, status 0x55: FUN_100956a0) keep
-                    // last frame's motion frames when FUN_100cbde0 would not skin them.
+                    // last frame's whole pose (motion frames, reaction overlay, head look) when FUN_100cbde0 would not
+                    // skin them; the head look is held further down, once worked out.
                     let addr = |v: &[(&crate::dat::character::Animation, f32)]| v.iter().map(|(x, f)| (*x as *const _ as usize, *f)).collect::<Vec<_>>();
                     let same = |held: &[(usize, f32)], now: &[(&crate::dat::character::Animation, f32)]| held.len() == now.len() && held.iter().zip(now).all(|(h, (x, _))| h.0 == *x as *const _ as usize);
+                    let ov_addr = overlay.map(|(x, f, wt)| (x as *const _ as usize, f, wt));
+                    let mut skipped = false;
                     if *id != me && status != 0x55 && anim_skip(anim_cfg, anim_frame, a)
-                        && let Some(h) = a.anim_held.as_ref().filter(|h| same(&h.to, &anims) && same(&h.from, &from))
+                        && let Some(h) = a.anim_held.as_ref().filter(|h| same(&h.to, &anims) && same(&h.from, &from) && h.overlay.map(|o| o.0) == ov_addr.map(|o| o.0))
                     {
                         for (x, h) in anims.iter_mut().zip(&h.to) {
                             x.1 = h.1;
@@ -14175,9 +14181,13 @@ impl App {
                         for (x, h) in from.iter_mut().zip(&h.from) {
                             x.1 = h.1;
                         }
+                        if let (Some(o), Some(ho)) = (overlay.as_mut(), h.overlay) {
+                            (o.1, o.2) = (ho.1, ho.2);
+                        }
                         t = h.t;
+                        skipped = true;
                     } else {
-                        a.anim_held = Some(AnimHeld { to: addr(&anims), from: addr(&from), t });
+                        a.anim_held = Some(AnimHeld { to: addr(&anims), from: addr(&from), t, overlay: ov_addr, look: None });
                     }
                     a.scale = a.event_scale.unwrap_or_else(|| ch.scale(size)) * looks.get(id).and_then(|l| l.scale).unwrap_or(1.0);
                     // The rest pose's mesh top, once (stub models, plates without attach points).
@@ -14273,7 +14283,7 @@ impl App {
                     let rate = if in_event && a.look_pct != 0 { a.look_pct as f32 * 0.01 } else { 1.0 };
                     a.look.step(frame, p3, target, dt * 60.0, rate);
                     // One bone (the head) when riding or sitting; point 4 a unit higher on a chocobo or a mount.
-                    let look = (a.look.weight > 0.0).then(|| crate::render::anim::HeadLook {
+                    let mut look = (a.look.weight > 0.0).then(|| crate::render::anim::HeadLook {
                         bones: [3usize, 7].map(|k| ch.skeleton.points.get(k).map(|p| p.0)),
                         two: !matches!(status, 5 | 0x55 | 0x2f | 0x30 | 0x3f..=0x53),
                         weight: a.look.weight,
@@ -14283,6 +14293,13 @@ impl App {
                         drop: if matches!(status, 5 | 0x55) { 1.0 / a.scale.max(1e-3) } else { 0.0 },
                         limits: ch.skeleton.look_limits,
                     });
+                    if let Some(h) = a.anim_held.as_mut() {
+                        if skipped {
+                            look = h.look;
+                        } else {
+                            h.look = look;
+                        }
+                    }
                     let drawn = !a.vanished() && !hidden.contains(id) && !(*id == w.my_id && w.camst.self_alpha <= 0.0) && !looks.get(id).is_some_and(|l| l.hidden);
                     let bx = ch.skeleton.boxes.get(box_index(status)).or(ch.skeleton.boxes.first()).copied();
                     // FUN_100c63d0: past the draw distance by its box's farthest corner, neither drawn nor a target.
@@ -14334,8 +14351,9 @@ impl App {
                     lamps::offer(&w.lamps.list, pos, &mut g.lights);
                     g.area = actor_area(w.entities.get(id), w.ground.as_ref().and_then(|gr| gr.area(pos))).unwrap_or(0);
                     // The cloth (client/cloth.rs): a step on each tick of the 30 Hz clock, on screen simulated
-                    // (FUN_10023290), off screen carried along (FUN_100231f0) *(retail skips other actors' steps by
-                    // the frame-skip option, config 64; ours never does)*.
+                    // (FUN_10023290), off screen carried along (FUN_100231f0). A frame Misc. 2's animation frame rate
+                    // skips never reaches FUN_10023290, so the step waits for the next skinned frame *(inf: retail may
+                    // drop that tick instead)*.
                     let model_key = Arc::as_ptr(&ch) as usize;
                     if a.cloth.as_ref().is_none_or(|(k, _)| *k != model_key) {
                         a.cloth = cloth::Cloth::new(&ch.parts).map(|c| (model_key, c));
@@ -14343,7 +14361,7 @@ impl App {
                     g.cloth.clear();
                     if let Some((_, c)) = &mut a.cloth {
                         let at = model.w_axis.truncate();
-                        if c.tick != wind.0 {
+                        if c.tick != wind.0 && !skipped {
                             // FUN_100c63d0: a move under 0.01 counts as none.
                             let d = at - c.at;
                             let moved = if d.length() < 0.01 { Vec3::ZERO } else { d };

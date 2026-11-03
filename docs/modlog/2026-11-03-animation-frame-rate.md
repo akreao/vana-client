@@ -9,6 +9,8 @@
     twice running (+0xa00), nor while +0xa04 forces an update (set when the actor is made and by FUN_100a4b40). Not
     for an actor whose vt +0x358 holds, one on a mount (status 0x55, FUN_100956a0), or with entity +0x120 bit 7 / 8.
   - A skipped frame clears DAT_10457460, so FUN_100224d0 doesn't skin (FUN_10023290): the old pose stays.
-- Ours: anim_skip; an actor other than ours keeps last frame's motion frames (AnimHeld) on a skipped frame, as long
-  as it plays the same animations. Slots are dealt in turn; vt +0x358, +0x120 bits 7 / 8, the +0x34c / +0x768
-  check and FUN_100a4b40's callers are not mirrored *(inf)*.
+- Ours: anim_skip; an actor other than ours keeps last frame's whole pose (AnimHeld: motion frames, reaction
+  overlay frame and weight, head look) on a skipped frame, as long as it plays the same animations, and its cloth
+  step waits for the next posed frame *(inf: retail may drop that tick)*. The GPU still re-skins the held pose
+  each frame (the look matches; retail's saving of the skinning work is not mirrored). Slots are dealt in turn;
+  vt +0x358, +0x120 bits 7 / 8, the +0x34c / +0x768 check and FUN_100a4b40's callers are not mirrored *(inf)*.
