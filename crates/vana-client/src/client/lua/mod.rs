@@ -680,10 +680,21 @@ impl Host {
         Ok(id)
     }
 
-    /// Saved files of watched mods: each reloaded (or loaded, when it failed before).
+    /// Saved files of watched mods: each reloaded (or loaded, when it failed before). Before login (`w` None) only
+    /// the lobby mods: a world mod loaded there would run its load without a world, and `start` would then skip it as
+    /// already loaded; it loads at login from its saved files anyway.
     fn watch_upkeep(&mut self, w: Option<&World>, out: &mut Vec<(String, [u8; 4])>) {
         let ids: Vec<String> = self.watch.as_ref().map(|wa| wa.rx.try_iter().collect()).unwrap_or_default();
         for id in ids {
+            if w.is_none() {
+                let lobby = match self.vms.iter().find(|v| v.manifest.id.eq_ignore_ascii_case(&id)) {
+                    Some(v) => v.manifest.lobby,
+                    None => manifest::read(&mods_dir().join(&id)).is_ok_and(|m| m.lobby),
+                };
+                if !lobby {
+                    continue;
+                }
+            }
             let r = match self.vms.iter().position(|v| v.manifest.id.eq_ignore_ascii_case(&id)) {
                 Some(k) => self.reload(w, k),
                 None => self.load_named(w, &id).map(|()| id.clone()).map_err(|e| format!("{id}: {e}")),
@@ -716,6 +727,8 @@ impl Host {
             {
                 let _ = t.set("character", c);
             }
+            // The character's settings go with it: the lobby sees the account's and the defaults, as before login.
+            vm.st.borrow_mut().settings = load_settings(&vm.manifest, &data_dir().join(&vm.manifest.id), None);
         }
         self.started = false;
         self.prev = None;
