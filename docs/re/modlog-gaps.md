@@ -107,7 +107,7 @@ detail inside implemented ops.
 | Ship actors: whether a new task first updates in its frame; vt +0x178 and the default speed 1.0 assumed; the far plane; the lighting area; the 10-second no-skip window; +0x130 bit 21's writer | Unknown | L18113 | DLL |
 | Ships: per-run data for each voyage (no captures; pirates' run 227 / 228) | Blocked: no data | L13802, L13831 | Captures |
 | 0x00E SubKind 5 / 6: the 0x9000 word *(answered, [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §5: bits 0..11 NPC-table model id, bits 12..15 the look slot; kind 7 has a case)*; audited 2026-11-03: ours took the whole word as the model id, now the low 12 bits. Left: SubKind 6's +0xf6 = 2 ranges, slot 9 attached over a race / slot 0 base | Partly built | L15593 | DLL |
-| /sitchair: trusts ignoring chair / sit / heal statuses in 0x00E (asm 0x1009c148) | Not built | L18831 | DLL |
+| /sitchair: trusts ignoring chair / sit / heal statuses in 0x00E (asm 0x1009c148) *([batch 6](notes/2026-11-03-modlog-gaps-batch6.md) item 7: 0x1009c118..0x1009c16d)* | Built | L18831 | DLL |
 | Dual wield: a 'b' scheduler with +0x8b5 calls vtable +0x250(1), no effect seen | Not traced | L16279 | DLL |
 
 ## 4. Effects, lighting and rendering
@@ -150,7 +150,7 @@ detail inside implemented ops.
 | Item | Status | Source | Settle by |
 |---|---|---|---|
 | Footsteps: zone flag +0x1cf alt name (surface 3 -> 2), the model-scope fses retry, the culled-pass skip (+0x840 bits 20..21), 'fvib', the footstep-effects option DAT_10444158 (taken as on) | Not built | L3717, L3734..L3755 | DLL |
-| Sound levels: the resets at event end / SE slider change (FUN_100ae3f0 / FUN_10035e80) | Not built | L6303 | DLL |
+| Sound levels: the resets at event end / SE slider change (FUN_100ae3f0 / FUN_10035e80) *([batch 6](notes/2026-11-03-modlog-gaps-batch6.md) item 18: one reset a zone, so a normal event's end restores nothing; a slider move resets every channel)* | Built | L6303 | DLL |
 | Zone ambient loop: a time / weather / indoor change crossfades over 150 sound ticks; a zone change cuts the old loop *(answered, [batch 3](notes/2026-11-03-modlog-gaps-batch3.md) §7; ours cuts every change)* | Not built | L5932 | DLL |
 | Title buttons: press sounds on the character list rows, Config pages, the login screen | Not built | L7195 | DLL |
 | Number windows' sounds: retail plays nothing on Up / Down / Left / Right or at a limit, only OK 0002 / cancel 0003; ours plays the cursor sound *(answered, [batch 3](notes/2026-11-03-modlog-gaps-batch3.md) §8)* | Not built | L6841 | DLL |
@@ -161,8 +161,8 @@ detail inside implemented ops.
 |---|---|---|---|
 | Chat: the spam filter (config 0xce; kinds 1, 0x1a, 0x22, 0x23) | Not built | L5953, L5960 | DLL |
 | Chat: the profanity mask (vulgar2.dic, FUN_101ba200) | Not built | L5970 | DLL |
-| Chat: the line cut at a control byte (FUN_1018fc40) | Not built | L5974 | DLL |
-| Chat: the echoes' rank icon (mentor / mastery rank) *([batch 7](notes/2026-11-03-modlog-gaps-batch7.md) item 21: assist echoes only)* | Built | L5985 | DLL |
+| Chat: the line cut at a control byte (FUN_1018fc40) *([batch 6](notes/2026-11-03-modlog-gaps-batch6.md) item 20: the assist kinds cut name and text apart; which packet carries MODLOG's icon-bearing filtered shout / yell is not traced)* | Built apart from the filtered shout / yell icon lines | L5974 | DLL |
+| Chat: the echoes' rank icon (mentor / mastery rank) | Not built | L5985 | DLL |
 | Chat: Shift-JIS text (ours decode UTF-8); SJIS quotes 0x8167 / 0x8168 print '?' | Not built | L5953, L1634 | DLL |
 | Chat: c2s 0x0B5 / 0x0B6 at 150 bytes (ours 127) | Not built | L5953 | DLL |
 | s2c 0x027 / 0x043: the event-lock drop ((DAT_104808fc \| DAT_1047fb40) & 0x40) | Not built | L6010 | DLL |
@@ -278,7 +278,7 @@ detail inside implemented ops.
 | Layout mode: what reads target system +0x74 bit 4 and myroom +0x7e4 | Not traced | L14283 | DLL |
 | Layout mode: each furniture reload adds its textures to the GPU again (31 -> 75 over five moves) | Known bug | L14308 | Ours |
 | Mannequins: whether a mannequin shows its range weapon; the other races' banks 3..31; the ground shadow uses the zone light | Not checked / not built | L14748, L14743, L14732 | DLL / Footage |
-| Furniture: whether the 3 blended pieces keep z writes *(inf)* | Unknown | L15364 | DLL |
+| Furniture: whether the 3 blended pieces keep z writes *(inf)* *([batch 7](notes/2026-11-03-modlog-gaps-batch7.md) item 23: yes. FUN_101844c0 sets neither ZWRITEENABLE nor ZBIAS, so furniture keeps the actor pass's writes; zone scenery turns them off)* | Built | L15364 | DLL |
 | Gardening: what 0xbf8's 'main' shows *(inf: a vanish effect)*; a plnt window resumed on a stale pot; the item list's Escape sound; container 9's view order; /garden in mode 3 | Unknown | L17042 | DLL |
 | Camera collision: Mog House furniture in the camera ray | Not built | L11145 | DLL |
 
