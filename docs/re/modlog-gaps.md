@@ -235,7 +235,7 @@ detail inside implemented ops.
 | Linkshell: the comment fetch on Enter in the Link List (FUN_1020b3e0 as scresult kind 4) | Not built | L10832 | DLL |
 | Block list window: the wheel / scroll bar drag; the window groups (blklist 0x1c suspends gaugewin and others); fewer words open blklist | Not built | L12511, L12520, L12121 | DLL |
 | Region Info: Campaign's windows; the mouse on cnqframe; Japanese placements; beseige2 / campsan sprites | Not built / not traced | L9654, L9718 | DLL |
-| Status window: the stats request retries | Matches in effect *([batch 7](notes/2026-11-03-modlog-gaps-batch7.md) item 28: retail retries c2s 0x061 only because its 1 s per-id gate can refuse it; ours has no such gate and sends the queued 0x061 with the next 400 ms datagram, so the request always goes out and the give-up path cannot be reached)* | L9017 | DLL |
+| Status window: the stats request retries | Matches in effect *([batch 7](notes/2026-11-03-modlog-gaps-batch7.md) item 28: retail retries c2s 0x061 against its own 1 s per-id gate; our gate holds 0x061 and sends it when the window opens, so the request always goes out and the give-up path cannot be reached)* | L9017 | DLL |
 
 ### Help Desk, Primer, config and misc windows
 
