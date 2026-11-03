@@ -153,6 +153,13 @@ impl Recorder {
             s.buf.slice(..).map_async(wgpu::MapMode::Read, move |r| state.store(if r.is_ok() { MAPPED } else { FAILED }, Ordering::Release));
         }
         let _ = gpu.device.poll(wgpu::PollType::Poll);
+        self.collect();
+        // In drawing order: a later frame waits for an earlier one still mapping.
+        self.drain();
+    }
+
+    /// The buffers whose map finished: their pixels (or, when it failed, the last frame again) wait in `ready`.
+    fn collect(&mut self) {
         let (w, h, row) = (self.size[0] as usize * 4, self.size[1] as usize, self.row as usize);
         for s in &self.ring {
             match s.state.load(Ordering::Acquire) {
@@ -176,8 +183,6 @@ impl Recorder {
                 _ => {}
             }
         }
-        // In drawing order: a later frame waits for an earlier one still mapping.
-        self.drain();
     }
 
     /// Sends the frames done from the next number on, stopping at the first one not done yet.
@@ -201,6 +206,7 @@ impl Recorder {
     /// Ends the input; ffmpeg finishes the file on its thread.
     pub fn stop(mut self) {
         // The frames already mapped go out; a copy still mapping keeps its time with the last frame.
+        self.collect();
         let pending: Vec<(u64, u32)> = self.ring.iter().filter(|s| s.copied || s.state.load(Ordering::Acquire) == PENDING).map(|s| (s.seq, s.times)).collect();
         for (seq, times) in pending {
             self.ready.entry(seq).or_insert(Out::Again(times));
