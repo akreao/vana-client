@@ -67,7 +67,7 @@ detail inside implemented ops.
 | Motion length (+0x2a0) comes from the motion; the headless host keeps it busy for 30 frames | Approximation | L1266 | DLL |
 | Name plates in cutscenes *(answered, [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §3: no event check in the plate draw; bound actors keep it unless op 0x92 / bit 17; non-participants lose the model by event Mode & 2 / & 0x10)*; audited 2026-11-03 with [batch 5](notes/2026-11-03-modlog-gaps-batch5-build.md) §2: ours unloaded doors, elevators, ships and op 0xac sub 2 actors too, now exempt. Left: the hold count +0xf2, the +0x1ff status rule | Built | L2408 | Code check |
 | The mouth's 8-tick blend out (0x23 and unbind) | Not built | L2343, L2408, L14046 | DLL |
-| 0x5b / 0x66 finishing in one call when the file is cached (ours take 2 frames) | Not built | L2408 | DLL |
+| 0x5b / 0x66 finishing in one call when the file is cached (ours take 2 frames) | Built *([batch 8](notes/2026-11-03-modlog-gaps-batch8.md) item 39: FUN_100b5210 requests the file and runs FUN_100d12d0's ready test in the same call, keeping its per-kind requested flag so a waiting op does not re-request)* | L2408 | DLL |
 | Motion-file model kinds | Not built | L2408 | DLL |
 | 0x46 sub 1's HUD window FUN_10217e90 *(inf: hides a HUD window)* *([batch 5](notes/2026-11-03-modlog-gaps-batch5.md) item 5: "menu    buff" hidden until the event ends)* | Built | L2408 | DLL |
 | 0x1f7 (San d'Oria opening) not played live since the VM-speed fix; timing is the headless VM's | Not checked live | L2408 | Live |
@@ -97,17 +97,17 @@ detail inside implemented ops.
 | Riding yaws (Tiger 0x40 for Hume F, Elvaan F, Mithra) | Not checked against footage | L12469 | Footage |
 | Ops 0x9c / 0x9d (no file uses them); the 0x038 handler's filters | Not built | L13095 | DLL |
 | Ground tilt: writers of +0x128 bit 14 and +0x120 bit 20; statuses 0x1a / 0x1b / 0x1d / 0x1e *(inferred: transport)*; whether vt+0x1c4's bones include +0x998; long bodies' no-roll and scale overshoot | Unknown | L12689, L12740 | DLL / Footage |
-| Motion regions: FUN_10019ed0 carries the old entry's frame into a status motion's start frame (ours starts at 0) | Not built | L13899 | DLL |
+| Motion regions: FUN_10019ed0 carries the old entry's frame into a status motion's start frame (ours starts at 0) *([batch 5](notes/2026-11-03-modlog-gaps-batch5.md) item 9: the enqueue is FUN_1001ad00 in this build; the carry is the old position as a fraction of its length, plus half the blend at the new rate)* | Built | L13899 | DLL |
 | Eye blink: the entity copies (+0x190..+0x1b4) the 0x8c / 0xa4 / 0xa5 setters also write | Not built | L11933 | DLL |
 | Op 0x7a pinned to our own actor | Not built (partly: "op 0x7a on us" later) | L11885 | DLL |
 | Model hide / show: the skeleton's `fvib` clone at the show; the +0x764 / +0x814 clones | Not built | L13203 | DLL |
 | Near-camera fade after the cylinder (vt+0x260, first person, fishing) | Not built | L12096 | DLL |
-| Character bump during events; whether any actor reaches +0x59c >= 1 | Not built / not traced | L8858, L8889 | DLL |
+| Character bump during events; whether any actor reaches +0x59c >= 1 | Built *([batch 9](notes/2026-11-03-modlog-gaps-batch9.md) item 43: +0x59c is the load fade and every actor reaches 1.0 about 32 ticks after its files load; the bump needs it at 1.0, and the bump has no event test of its own - it simply runs inside the move step, which returns early whenever we cannot move)* | L8858, L8889 | DLL |
 | Lifts: the camera's look point; LSB's Metalworks door data not checked against the doors | Not built / not checked | L8776 | DLL / LSB |
 | Ship actors: whether a new task first updates in its frame; vt +0x178 and the default speed 1.0 assumed; the far plane; the lighting area; the 10-second no-skip window; +0x130 bit 21's writer | Unknown | L18113 | DLL |
 | Ships: per-run data for each voyage (no captures; pirates' run 227 / 228) | Blocked: no data | L13802, L13831 | Captures |
 | 0x00E SubKind 5 / 6: the 0x9000 word *(answered, [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §5: bits 0..11 NPC-table model id, bits 12..15 the look slot; kind 7 has a case)*; audited 2026-11-03: ours took the whole word as the model id, now the low 12 bits. Left: SubKind 6's +0xf6 = 2 ranges, slot 9 attached over a race / slot 0 base | Partly built | L15593 | DLL |
-| /sitchair: trusts ignoring chair / sit / heal statuses in 0x00E (asm 0x1009c148) | Not built | L18831 | DLL |
+| /sitchair: trusts ignoring chair / sit / heal statuses in 0x00E (asm 0x1009c148) *([batch 6](notes/2026-11-03-modlog-gaps-batch6.md) item 7: 0x1009c118..0x1009c16d)* | Built | L18831 | DLL |
 | Dual wield: a 'b' scheduler with +0x8b5 calls vtable +0x250(1), no effect seen | Not traced | L16279 | DLL |
 
 ## 4. Effects, lighting and rendering
@@ -150,7 +150,7 @@ detail inside implemented ops.
 | Item | Status | Source | Settle by |
 |---|---|---|---|
 | Footsteps: zone flag +0x1cf alt name (surface 3 -> 2), the model-scope fses retry, the culled-pass skip (+0x840 bits 20..21), 'fvib', the footstep-effects option DAT_10444158 (taken as on) | Not built | L3717, L3734..L3755 | DLL |
-| Sound levels: the resets at event end / SE slider change (FUN_100ae3f0 / FUN_10035e80) | Not built | L6303 | DLL |
+| Sound levels: the resets at event end / SE slider change (FUN_100ae3f0 / FUN_10035e80) *([batch 6](notes/2026-11-03-modlog-gaps-batch6.md) item 18: one reset a zone, so a normal event's end restores nothing; a slider move resets every channel)* | Built | L6303 | DLL |
 | Zone ambient loop: a time / weather / indoor change crossfades over 150 sound ticks; a zone change cuts the old loop *(answered, [batch 3](notes/2026-11-03-modlog-gaps-batch3.md) §7; ours cuts every change)* | Not built | L5932 | DLL |
 | Title buttons: press sounds on the character list rows, Config pages, the login screen | Not built | L7195 | DLL |
 | Number windows' sounds: retail plays nothing on Up / Down / Left / Right or at a limit, only OK 0002 / cancel 0003; ours plays the cursor sound *(answered, [batch 3](notes/2026-11-03-modlog-gaps-batch3.md) §8)* | Not built | L6841 | DLL |
@@ -161,8 +161,8 @@ detail inside implemented ops.
 |---|---|---|---|
 | Chat: the spam filter (config 0xce; kinds 1, 0x1a, 0x22, 0x23) | Not built | L5953, L5960 | DLL |
 | Chat: the profanity mask (vulgar2.dic, FUN_101ba200) | Not built | L5970 | DLL |
-| Chat: the line cut at a control byte (FUN_1018fc40) | Not built | L5974 | DLL |
-| Chat: the echoes' rank icon (mentor / mastery rank) *([batch 7](notes/2026-11-03-modlog-gaps-batch7.md) item 21: assist echoes only)* | Built | L5985 | DLL |
+| Chat: the line cut at a control byte (FUN_1018fc40) *([batch 6](notes/2026-11-03-modlog-gaps-batch6.md) item 20: the assist kinds cut name and text apart; which packet carries MODLOG's icon-bearing filtered shout / yell is not traced)* | Built apart from the filtered shout / yell icon lines | L5974 | DLL |
+| Chat: the echoes' rank icon (mentor / mastery rank) | Not built | L5985 | DLL |
 | Chat: Shift-JIS text (ours decode UTF-8); SJIS quotes 0x8167 / 0x8168 print '?' | Not built | L5953, L1634 | DLL |
 | Chat: c2s 0x0B5 / 0x0B6 at 150 bytes (ours 127) | Not built | L5953 | DLL |
 | s2c 0x027 / 0x043: the event-lock drop ((DAT_104808fc \| DAT_1047fb40) & 0x40) | Not built | L6010 | DLL |
@@ -171,7 +171,7 @@ detail inside implemented ops.
 | Auto-translate: what window FUN_101ddcb0 is and the s2c 0x0CC chain to FUN_101dd780; FUN_101bceb0 (config 0xce); what FUN_1022aff0 tests and why ids 0x181..0x183 end the key item scan; the French / Japanese second key | Unknown | L6175 | DLL |
 | Auto-translate: the item / key item groups built at run time (the 200-record item cache); kind 6; the nested FD 06 block | Not built | L6116, L6149, L6192 | DLL |
 | Macro editor: Shift-JIS input; the palettes' flip zoom (FUN on set change, 20 + 20 ticks) | Not built | L10057, L10085 | DLL |
-| Macro palette: the default cursors; FUN_101262e0 as the left click in the palettes' frame | Unknown | L10096 | DLL |
+| Macro palette: the default cursors; FUN_101262e0 as the left click in the palettes' frame | Built *([batch 8](notes/2026-11-03-modlog-gaps-batch8.md) item 35: FUN_101262e0 is "the mouse is driving the menus", not a click, so the palettes switch on hover; no macro window has registry flag 0x10000, so each opens on its last cursor, and the edit palettes take column + 1)* | L10096 | DLL |
 | Equipment sets: who calls mcres20 vtable +0x2c FUN_101a7010; the status gate's bit 0x40; chat mode 0xca's colour | Unknown | L10170 | DLL |
 | Status icons: the 240 x 4 line and per-cell corner sprite; whether retail hides the buff window in cutscenes | Unknown | L7340, L7359 | Footage |
 | Top bar: netstat in cutscenes; item overrides +0x4c / +0x50 *(answered, [batch 2](notes/2026-11-03-modlog-gaps-batch2.md) §4: no event check, only cinema mode / UI hidden; +0x4c help, +0x50 title overrides)*; audited 2026-11-03: ours had no cinema mode; built from [batch 5](notes/2026-11-03-modlog-gaps-batch5-build.md) §1 (`event::cinema`). Left: the +0x4c / +0x50 overrides audit | Partly built | L2494, L2502 | Code check |
@@ -278,7 +278,7 @@ detail inside implemented ops.
 | Layout mode: what reads target system +0x74 bit 4 and myroom +0x7e4 | Not traced | L14283 | DLL |
 | Layout mode: each furniture reload adds its textures to the GPU again (31 -> 75 over five moves) | Known bug | L14308 | Ours |
 | Mannequins: whether a mannequin shows its range weapon; the other races' banks 3..31; the ground shadow uses the zone light | Not checked / not built | L14748, L14743, L14732 | DLL / Footage |
-| Furniture: whether the 3 blended pieces keep z writes *(inf)* | Unknown | L15364 | DLL |
+| Furniture: whether the 3 blended pieces keep z writes *(inf)* *([batch 7](notes/2026-11-03-modlog-gaps-batch7.md) item 23: yes. FUN_101844c0 sets neither ZWRITEENABLE nor ZBIAS, so furniture keeps the actor pass's writes; zone scenery turns them off)* | Built | L15364 | DLL |
 | Gardening: what 0xbf8's 'main' shows *(inf: a vanish effect)*; a plnt window resumed on a stale pot; the item list's Escape sound; container 9's view order; /garden in mode 3 | Unknown | L17042 | DLL |
 | Camera collision: Mog House furniture in the camera ray | Not built | L11145 | DLL |
 
@@ -289,7 +289,7 @@ detail inside implemented ops.
 | The target cursor for Switch target | Not built | L1506 | DLL |
 | Skillchains: the 0x04 MagicBurst message (Swipe / Lunge); 67507's purpose | Not traced | L6959, L6943 | DLL |
 | Knockback: vt+0x304 / +0x103 / +0x104 in FUN_100a57f0 | Not traced | L7179 | DLL |
-| Cast bar: Chainspell (status 48) skipping it; items (mode 1) | Not built | L4837 | DLL |
+| Cast bar: Chainspell (status 48) skipping it; items (mode 1) | Built *([batch 7](notes/2026-11-03-modlog-gaps-batch7.md) item 29: FUN_1022b3d0 opens the bar only when FUN_1021e670(0x30) == 0, a scan of the 32-u16 icon list for 48; item use opens mode 1 for record +0x26 x 20 ticks before c2s 0x037; mode 4 draws the seconds only)* | L4837 | DLL |
 | K.O. window: raise / tractor offers (s2c 0x0F9) | Not built at the time | L4860 | *(closed: "The raise prompt", "The raise offer during a zone-in event")* |
 | Timers Extra: blue magic's and pet moves' added effects | Not built | L13649 | Ours |
 | Engaged state: FUN_1013eff0 *(inferred)*, DAT_106218ee's source, FUN_1015e6e0's exact effect | Not traced | L6784, L6790 | DLL |
