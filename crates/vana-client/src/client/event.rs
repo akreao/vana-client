@@ -2019,6 +2019,9 @@ fn begin(w: &mut World, mut wt: Box<Waiting>, index: &DatIndex) {
     }
     log::info!("event {:#x}: {} actors bound, {} start hidden", st.start.event, st.bound.len(), st.hidden.len());
     let mem = w.event_mem.clone();
+    // FUN_100aed00 clears op 0x97's saved flag (DAT_10488978) without restoring: gusts an unfinished event left
+    // become the originals. Before the start, whose init threads may run a 0x97 already.
+    w.wind.forget();
     let mut rt = {
         let mut host = LiveHost { w: &mut *w, st: &mut st, index };
         Runtime::start(blocks, dialog, start, mem, &mut host)
@@ -2034,10 +2037,8 @@ fn begin(w: &mut World, mut wt: Box<Waiting>, index: &DatIndex) {
     // FUN_100ad000 (load finished): DAT_104760f8 = 1, DAT_10473068 = DAT_10475cb0.
     st.loaded = true;
     st.cancellable = st.cb0;
-    // FUN_10094190 / FUN_100aed00: control locked, DAT_10488100 = 1 (released at the end). FUN_100aed00 also clears
-    // op 0x97's saved flag (DAT_10488978) without restoring: gusts an unfinished event left become the originals.
+    // FUN_10094190 / FUN_100aed00: control locked, DAT_10488100 = 1 (released at the end).
     (w.control_lock, w.lock_carry) = (Some((Instant::now(), st.start.target)), false);
-    w.wind.forget();
     w.event = Some(Box::new(Live { rt, st }));
 }
 

@@ -13876,11 +13876,12 @@ impl App {
                             }
                             (c.tick, c.at) = (wind.0, at);
                         }
-                        // Ours: between steps the particles ride along with the actor; then into model space.
+                        // Ours: between steps the particles ride along with the actor; then into model space. Before the
+                        // first step they hold no positions and the cloth draws skinned.
                         let inv = model.inverse();
                         let ride = at - c.at;
                         let mut n = 0;
-                        for sh in &c.sheets {
+                        for sh in c.sheets.iter().filter(|_| c.placed()) {
                             if n + sh.p.len() > crate::render::MAX_CLOTH {
                                 continue;
                             }

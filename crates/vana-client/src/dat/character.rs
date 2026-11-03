@@ -207,6 +207,10 @@ fn parse_cloth(name: &str, d: &[u8], counts: [usize; 2], poly: &[u8]) -> Result<
     if sph_at + sph_n * 2 > d.len() {
         bail!("cloth {name}: sphere list out of range");
     }
+    let params = [f32_at(d, 0x38), f32_at(d, 0x3c), f32_at(d, 0x40), f32_at(d, 0x44), f32_at(d, 0x48)];
+    if params.iter().chain(edges.iter().map(|e| &e.rest)).any(|f| !f.is_finite()) {
+        bail!("cloth {name}: a parameter or rest length is not finite");
+    }
     let tris = cloth_tris(poly);
     if tris.iter().flatten().any(|&v| v as usize >= n) {
         bail!("cloth {name}: a triangle refers past {n} particles");
@@ -216,10 +220,10 @@ fn parse_cloth(name: &str, d: &[u8], counts: [usize; 2], poly: &[u8]) -> Result<
         pins: [pins[0].min(counts[0]), pins[1].min(counts[1])],
         edges,
         group1: g1,
-        k: [f32_at(d, 0x38), f32_at(d, 0x3c)],
-        damping: f32_at(d, 0x40),
-        gravity: f32_at(d, 0x44),
-        inertia: f32_at(d, 0x48),
+        k: [params[0], params[1]],
+        damping: params[2],
+        gravity: params[3],
+        inertia: params[4],
         spheres: (0..sph_n).map(|i| u16_at(d, sph_at + i * 2)).collect(),
         tris,
     })

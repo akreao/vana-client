@@ -140,7 +140,7 @@ impl Cloth {
                 p.sim.as_ref().map(|s| Sheet { part: i, p: vec![Particle::default(); s.particles()], sphere_prev: vec![None; s.spheres.len()] })
             })
             .collect();
-        (!sheets.is_empty()).then_some(Self { sheets, reset: true, tick: 0, at: Vec3::ZERO })
+        (!sheets.is_empty()).then_some(Self { sheets, reset: true, tick: u64::MAX, at: Vec3::ZERO })
     }
 
     /// FUN_10023290 for each cloth mesh: the first step snaps every particle to the skin; later ones skin the pinned
@@ -169,6 +169,11 @@ impl Cloth {
             normals(spec, &mut sh.p);
         }
         self.reset = false;
+    }
+
+    /// The particles hold positions: the first step (the snap to the skin) has run.
+    pub fn placed(&self) -> bool {
+        !self.reset
     }
 
     /// FUN_100231f0 (the actor off screen): every particle moves with the actor, nothing simulated.
