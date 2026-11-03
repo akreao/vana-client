@@ -2369,6 +2369,8 @@ fn finish(w: &mut World, live: Box<Live>) {
             a.alpha = super::actmotion::OPAQUE;
         }
     }
+    // FUN_100ae3f0 (0x100ae93c): the talked-to index is forgotten.
+    w.talked_index = 0;
     // FUN_100ae3f0 on the bound entities: the mouth (+0x128 bit 17), footsteps (bit 0) and the blinks (model +0x8b4)
     // back on, the area free again (+0x13c bit 19, +0x20c), the near fade back (+0x12c bit 26).
     for id in &live.st.bound {
@@ -2385,9 +2387,13 @@ fn finish(w: &mut World, live: Box<Live>) {
         w.actors.remove(id);
     }
     w.event_mem = live.rt.mem.clone();
-    // Masks 1 (effects) and 4 (music) back to 1.0 over 30 ticks (taken with DAT_1046dacb == 0).
-    w.audio_cmds.push((1, 1.0, 30.0));
-    w.audio_cmds.push((4, 1.0, 30.0));
+    // FUN_100ae3f0 (0x100ae8a2), only when the zone's own reset hasn't run yet (a zone-in cutscene): the ambient and
+    // the world effects fade back to full over 30 ticks. After the zone reset an event's end restores nothing, so a
+    // script has to put back what it lowered (batch 6 item 18).
+    if !std::mem::replace(&mut w.sound_reset, true) {
+        w.audio_cmds.push((4, 1.0, 30.0));
+        w.audio_cmds.push((1, 1.0, 30.0));
+    }
     // FUN_100ae3f0: the lock goes unless op 0x30 carried it.
     if !w.lock_carry {
         w.control_lock = None;
@@ -3052,6 +3058,11 @@ pub fn talk(w: &mut World, target: u32) -> bool {
     }
     let index = e.index;
     let _ = w.net.commands.send(NetCommand::Act { target, index, action: 0 });
+    // FUN_1007bf30 (0x1007c189): the sent target's index into S+0x40daa, so a `17 n` motion goes to the NPC we spoke
+    // to. Not while dead.
+    if !matches!(w.my_motion.status, 2 | 3) {
+        w.talked_index = index;
+    }
     w.control_lock = Some((Instant::now(), target));
     log::info!("talk to {target:#x} ({index})");
     true
