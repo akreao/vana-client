@@ -1,4 +1,4 @@
-## Macro windows: remembered cursors, and the palettes switch on hover
+## Macro windows: remembered cursors, and the palettes switch on hover (2026-11-03)
 
 **FUN_101262e0 is not a left click.** It is "the mouse is driving the menus": mouse +0x4d == 2 (the pointer is over a
 focused window) and no event lock. All 23 callers are per-frame hover tests paired with `FUN_10118c10`, so MODLOG

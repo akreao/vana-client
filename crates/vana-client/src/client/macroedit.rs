@@ -151,6 +151,12 @@ pub(super) fn kept(w: &World) -> Vec<(&'static str, u16)> {
     v
 }
 
+/// [`kept`] into the cursor memory now, before a key or Num+ closes one of the op menus (SELOP, BEDIT, LEDIT).
+fn remember(w: &mut World) {
+    let k = kept(w);
+    w.cursor_mem.extend(k);
+}
+
 fn book_of(w: &World, sel: u16) -> usize {
     (sel as usize - 1) + 20 * w.mcr_page
 }
@@ -367,6 +373,9 @@ fn macro_of(e: &Edit) -> usize {
 
 pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
     use egui::Key as K;
+    // FUN_10118830 runs as a window hides, so an op menu an Enter is about to close (the modern page opens and acts
+    // in one frame) keeps its cursor here first.
+    remember(w);
     let Some(me) = w.macroedit.as_ref() else { return };
     if me.sets.is_some() {
         super::esmenu::key(w, gu, key);
@@ -514,6 +523,7 @@ pub fn num_plus(w: &mut World) {
         super::esedit::num_plus(w);
         return;
     }
+    remember(w);
     let (ledit, bedit) = (w.cursor_recall(LEDIT), w.cursor_recall(BEDIT));
     let Some(e) = edit_mut(w) else { return };
     match e.editor.as_mut() {
@@ -956,6 +966,7 @@ pub(super) fn set_opt(w: &mut World, o: u16) -> bool {
 
 /// The modern page's set strip given the cursor (or taken it).
 pub(super) fn set_tabs(w: &mut World, on: bool) {
+    remember(w);
     if let Some(e) = edit_mut(w).filter(|e| e.editor.is_none()) {
         e.tabs = on;
         if on {
