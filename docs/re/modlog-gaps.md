@@ -72,7 +72,7 @@ detail inside implemented ops.
 | 0x46 sub 1's HUD window FUN_10217e90 *(inf: hides a HUD window)* | Not built | L2408 | DLL |
 | 0x1f7 (San d'Oria opening) not played live since the VM-speed fix; timing is the headless VM's | Not checked live | L2408 | Live |
 | Op 0x89 (actor +0x840 bit 1 and position held for dur ticks; *inferred: holds the actor in place*); also its head-look suppression | Not built | L7951, L4535 | DLL |
-| Event text codes 0x1d (speaker's compass direction), 0x13 (Japanese) | Not built | L15345 | DLL |
+| Event text codes 0x1d (speaker's compass direction), 0x13 *(answered, [batch 5](notes/2026-11-03-modlog-gaps-batch5.md) item 1: not Japanese, the raise / tractor offer)* | Built | L15345 | DLL |
 | Grammar 2 / 3 whole-text conversions (key items with their own article) | Not built | L14678 | DLL |
 | Event positions: the +0x128 bit 14 and +0x120 bit 0x100000 ground-snap skips (only 0x200000 is ours) | Not built | L19371 | DLL |
 | Op 0x71 subs 0x50..0x55 (a full-screen picture, zone 291) | Not built | L4983 | DLL |
