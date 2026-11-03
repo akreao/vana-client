@@ -952,8 +952,6 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
         bind_lines = input::run_binds(&mut host, w, &mut out);
         // Lines typed for mods.
         for (line, from) in std::mem::take(&mut host.typed) {
-            // A bind is the player's key: its mod commands act as the player's input.
-            let input = from != From::Mod;
             let body = line.trim_start_matches('/');
             let mut words = body.split_whitespace();
             let name = words.next().unwrap_or("").to_ascii_lowercase();
