@@ -22,12 +22,7 @@ pub fn add(key: &str, w: u32, h: u32, rgba: Vec<u8>) -> Option<char> {
     let k = match all.iter().position(|i| i.key == key) {
         Some(k) => k,
         None if all.len() < MAX => {
-            all.push(Icon {
-                key: key.into(),
-                w,
-                h,
-                rgba: Arc::new(rgba),
-            });
+            all.push(Icon { key: key.into(), w, h, rgba: Arc::new(rgba) });
             all.len() - 1
         }
         None => return None,
@@ -43,11 +38,7 @@ pub fn index(c: char) -> Option<usize> {
 
 /// An icon's size and pixels.
 pub fn get(k: usize) -> Option<(u32, u32, Arc<Vec<u8>>)> {
-    ICONS
-        .lock()
-        .ok()?
-        .get(k)
-        .map(|i| (i.w, i.h, i.rgba.clone()))
+    ICONS.lock().ok()?.get(k).map(|i| (i.w, i.h, i.rgba.clone()))
 }
 
 /// The texture name an icon is uploaded under.

@@ -17,11 +17,7 @@ const SE_SWITCH: u32 = 10;
 pub fn call_for_help(w: &World) -> Option<u32> {
     let mut best: Option<(u32, f32)> = None;
     for (id, e) in &w.entities {
-        if !(e.mob
-            && e.marks.yell
-            && !matches!(e.motion.status, 2 | 3)
-            && w.actors.get(id).is_some_and(|a| a.gpu.is_some()))
-        {
+        if !(e.mob && e.marks.yell && !matches!(e.motion.status, 2 | 3) && w.actors.get(id).is_some_and(|a| a.gpu.is_some())) {
             continue;
         }
         let d = ((e.pos.x - w.pos.x).powi(2) + (e.pos.z - w.pos.z).powi(2)).sqrt();
@@ -49,11 +45,7 @@ pub enum SubThen {
     Ability(&'static str, String),
     /// LAB_10077950: a text command with the tag replaced by the server id (or the quoted name, flag 0x08); a
     /// line from a macro stops the macro when cancelled (FUN_101a1cb0).
-    Line {
-        stash: String,
-        quoted: bool,
-        from_macro: bool,
-    },
+    Line { stash: String, quoted: bool, from_macro: bool },
     /// iuse's Use (LAB_101f31e0): FUN_101f0260 on the slot with the pick; the list comes back either way.
     Item { container: u8, index: u8 },
     /// The emote list's line (LAB_10225c50): run while the pick is still the target, then the old one comes back.
@@ -80,10 +72,7 @@ pub struct PartyCursor {
 
 /// FUN_102031f0(id, 1, 0): a member of our six slots that is not a trust (FUN_10201eb0: ActIndex > 0x6ff).
 pub fn in_own_six(w: &World, id: u32) -> bool {
-    w.party.slots().slots[..6]
-        .iter()
-        .flatten()
-        .any(|m| m.id == id && m.index < 0x700)
+    w.party.slots().slots[..6].iter().flatten().any(|m| m.id == id && m.index < 0x700)
 }
 
 /// Ours (modern): the last target while it is still here and targetable, `<lt>`.
@@ -95,9 +84,7 @@ pub fn last_target(w: &World) -> Option<(u32, u16)> {
 
 /// FUN_101593c0 on the focus target: someone other than us in our six slots.
 pub fn focus_member(w: &World) -> Option<u32> {
-    w.focus
-        .map(|f| f.0)
-        .filter(|&id| id != w.my_id && in_own_six(w, id))
+    w.focus.map(|f| f.0).filter(|&id| id != w.my_id && in_own_six(w, id))
 }
 
 /// "Sub-target up" (T+0x59 || T+0xc4): the 3D prompt or the party-list cursor.
@@ -108,23 +95,8 @@ pub fn sub_up(w: &World) -> bool {
 /// FUN_10202d80: the cursor opens on the current target's slot when it is below `count`, else on us (slot 0).
 pub fn open_party_cursor(w: &mut World, count: usize, then: SubThen, range: Option<f32>) {
     let slots = w.party.slots();
-    let index = w
-        .target
-        .and_then(|t| {
-            slots
-                .slots
-                .iter()
-                .position(|m| m.as_ref().is_some_and(|m| m.id == t))
-        })
-        .filter(|&i| i < count)
-        .unwrap_or(0);
-    w.party_cursor = Some(PartyCursor {
-        index,
-        count,
-        then,
-        range,
-        moving: None,
-    });
+    let index = w.target.and_then(|t| slots.slots.iter().position(|m| m.as_ref().is_some_and(|m| m.id == t))).filter(|&i| i < count).unwrap_or(0);
+    w.party_cursor = Some(PartyCursor { index, count, then, range, moving: None });
 }
 
 /// FUN_10203570 / FUN_10203630 (FUN_102035c0 / FUN_10203680 in a stage-2 range): the next / previous used slot in
@@ -150,14 +122,10 @@ pub fn party_cursor_key(w: &mut World, key: egui::Key) -> bool {
     let mut used: Vec<bool> = w.party.slots().slots.iter().map(|m| m.is_some()).collect();
     // Slot 0 is always us.
     used[0] = true;
-    let Some(pc) = w.party_cursor.as_mut() else {
-        return false;
-    };
+    let Some(pc) = w.party_cursor.as_mut() else { return false };
     match key {
         K::ArrowDown | K::ArrowUp => {
-            let (lo, hi) = pc
-                .moving
-                .map_or((0, pc.count), |(_, base)| (base, base + 6));
+            let (lo, hi) = pc.moving.map_or((0, pc.count), |(_, base)| (base, base + 6));
             let i = party_step(&used, pc.index, lo, hi, key == K::ArrowDown);
             if i != pc.index {
                 pc.index = i;
@@ -200,11 +168,7 @@ pub fn party_cursor_key(w: &mut World, key: egui::Key) -> bool {
             }
             w.party_cursor = None;
             let line = match &then {
-                SubThen::Line {
-                    stash,
-                    quoted: true,
-                    ..
-                } => format!("{stash}\"{name}\""),
+                SubThen::Line { stash, quoted: true, .. } => format!("{stash}\"{name}\""),
                 SubThen::Line { stash, .. } => format!("{stash}{id}"),
                 SubThen::Party(p) => {
                     super::partymenu::picked(w, *p, Some((index, id, name)));
@@ -224,9 +188,7 @@ pub fn party_cursor_key(w: &mut World, key: egui::Key) -> bool {
             if let SubThen::Party(p) = pc.then {
                 super::partymenu::picked(w, p, None);
             }
-            if let SubThen::Line {
-                from_macro: true, ..
-            } = pc.then
+            if let SubThen::Line { from_macro: true, .. } = pc.then
                 && let Some(m) = w.macros.as_mut()
             {
                 m.stop();
@@ -240,46 +202,22 @@ pub fn party_cursor_key(w: &mut World, key: egui::Key) -> bool {
 /// The cursor with the mouse over the party windows' rows (the windows' generic events *(inf)*): hovering a used row
 /// moves it (SE 0001), a click on the cursor row is Enter, a right click on a party window Escape.
 #[allow(clippy::too_many_arguments)]
-pub fn party_cursor_pointer(
-    w: &mut World,
-    gu: &super::game_ui::GameUi,
-    sw: f32,
-    sh: f32,
-    p: (f32, f32),
-    moved: bool,
-    clicked: bool,
-    right: bool,
-) {
-    let Some(pc) = w.party_cursor.as_ref() else {
-        return;
-    };
+pub fn party_cursor_pointer(w: &mut World, gu: &super::game_ui::GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+    let Some(pc) = w.party_cursor.as_ref() else { return };
     let mut used: Vec<bool> = w.party.slots().slots.iter().map(|m| m.is_some()).collect();
     used[0] = true;
-    let (lo, hi) = pc
-        .moving
-        .map_or((0, pc.count), |(_, base)| (base, base + 6));
+    let (lo, hi) = pc.moving.map_or((0, pc.count), |(_, base)| (base, base + 6));
     let index = pc.index;
     let inside = |r: [f32; 4]| p.0 >= r[0] && p.0 < r[0] + r[2] && p.1 >= r[1] && p.1 < r[1] + r[3];
     let mut hit = None;
     let mut over = false;
-    for (name, base) in [
-        (w.party.slots().window(), 0usize),
-        ("menu    raid1".into(), 6),
-        ("menu    raid2".into(), 12),
-    ] {
-        let (Some((x, y)), Some(l)) = (gu.window_xy(&name, sw, sh), gu.layout(&name)) else {
-            continue;
-        };
+    for (name, base) in [(w.party.slots().window(), 0usize), ("menu    raid1".into(), 6), ("menu    raid2".into(), 12)] {
+        let (Some((x, y)), Some(l)) = (gu.window_xy(&name, sw, sh), gu.layout(&name)) else { continue };
         if !used.iter().skip(base).take(6).any(|&u| u) {
             continue;
         }
         over |= gu.window_rect(&name, sw, sh).is_some_and(inside);
-        for e in l
-            .elements
-            .iter()
-            .skip(1)
-            .filter(|e| (1..=6).contains(&e.id))
-        {
+        for e in l.elements.iter().skip(1).filter(|e| (1..=6).contains(&e.id)) {
             if inside([x + e.x as f32, y + e.y as f32, e.w as f32, e.h as f32]) {
                 hit = Some(base + e.id as usize - 1);
             }
@@ -291,10 +229,7 @@ pub fn party_cursor_pointer(
         }
         return;
     }
-    let Some(i) = hit.filter(|&i| used.get(i).copied().unwrap_or(false) && (lo..hi).contains(&i))
-    else {
-        return;
-    };
+    let Some(i) = hit.filter(|&i| used.get(i).copied().unwrap_or(false) && (lo..hi).contains(&i)) else { return };
     gu.hover.set(true);
     if (moved || clicked) && i != index {
         if let Some(pc) = w.party_cursor.as_mut() {
@@ -327,28 +262,13 @@ pub fn party_hand(w: &World) -> Option<(usize, u32, Option<u32>)> {
                 0 => Some(w.my_id),
                 // FUN_102033c0: an away member keeps the base tint and flashes nothing.
                 i => match slots.here(i, w.pos_zone) {
-                    Some(m) => w
-                        .entities
-                        .iter()
-                        .find(|(_, e)| e.index == m.index)
-                        .map(|(id, _)| *id),
-                    None => {
-                        return slots
-                            .slots
-                            .get(i)
-                            .cloned()
-                            .flatten()
-                            .map(|_| (pc.index, 0xa040_40d0, None));
-                    }
+                    Some(m) => w.entities.iter().find(|(_, e)| e.index == m.index).map(|(id, _)| *id),
+                    None => return slots.slots.get(i).cloned().flatten().map(|_| (pc.index, 0xa040_40d0, None)),
                 },
             };
             let tint = match (id, pc.range) {
                 (Some(id), Some(r)) => {
-                    let p = if id == w.my_id {
-                        w.pos
-                    } else {
-                        w.entities.get(&id).map_or(w.pos, |e| e.pos)
-                    };
+                    let p = if id == w.my_id { w.pos } else { w.entities.get(&id).map_or(w.pos, |e| e.pos) };
                     let raw = (p - w.pos).length();
                     let d = Vec3::new(p.x - w.pos.x, 0.0, p.z - w.pos.z).length();
                     if d > r + 0.5 || raw >= 25.0 {
@@ -365,14 +285,7 @@ pub fn party_hand(w: &World) -> Option<(usize, u32, Option<u32>)> {
         }
         None => {
             let t = w.target?;
-            let i = if t == w.my_id {
-                0
-            } else {
-                slots
-                    .slots
-                    .iter()
-                    .position(|m| m.as_ref().is_some_and(|m| m.id == t))?
-            };
+            let i = if t == w.my_id { 0 } else { slots.slots.iter().position(|m| m.as_ref().is_some_and(|m| m.id == t))? };
             Some((i, 0x8080_8080, None))
         }
     }
@@ -403,24 +316,12 @@ impl Sub {
 }
 
 /// Table 0x103720c0: a DAT valid-target flag's include / exclude kinds (FUN_10159170).
-const SUB_FLAGS: [(u32, u32, u32); 8] = [
-    (1, 0x200, 0),
-    (2, 0x100, 0),
-    (4, 4, 0),
-    (8, 8, 0),
-    (0x10, 1, 0),
-    (0x20, 0x10, 0),
-    (0x40, 2, 0),
-    (0x80, 2, 0x1800),
-];
+const SUB_FLAGS: [(u32, u32, u32); 8] = [(1, 0x200, 0), (2, 0x100, 0), (4, 4, 0), (8, 8, 0), (0x10, 1, 0), (0x20, 0x10, 0), (0x40, 2, 0), (0x80, 2, 0x1800)];
 
 /// Ours (the action registry): whether DAT target `flags` may take actor `id`, by the prompt's include / exclude
 /// kinds (SUB_FLAGS, Sub::takes).
 pub(super) fn takes(w: &World, flags: u32, id: u32) -> bool {
-    let (inc, exc) = SUB_FLAGS
-        .iter()
-        .filter(|f| flags & f.0 != 0)
-        .fold((0, 0), |(i, e), f| (i | f.1, e | f.2));
+    let (inc, exc) = SUB_FLAGS.iter().filter(|f| flags & f.0 != 0).fold((0, 0), |(i, e), f| (i | f.1, e | f.2));
     let kind = sub_kind(w, id);
     inc & kind != 0 && exc & kind == 0
 }
@@ -431,16 +332,8 @@ fn sub_kind(w: &World, id: u32) -> u32 {
     if id == w.my_id {
         return 0x200 | 1 | 4;
     }
-    let Some(e) = w.entities.get(&id) else {
-        return 0;
-    };
-    let party = w.party.members().find(|m| m.id == id).map_or(0, |m| {
-        if m.flags & 3 == w.party.own_flags & 3 {
-            4
-        } else {
-            8
-        }
-    });
+    let Some(e) = w.entities.get(&id) else { return 0 };
+    let party = w.party.members().find(|m| m.id == id).map_or(0, |m| if m.flags & 3 == w.party.own_flags & 3 { 4 } else { 8 });
     if id >> 24 == 0 {
         return 1 | party;
     }
@@ -458,38 +351,12 @@ fn sub_kind(w: &World, id: u32) -> u32 {
 /// FUN_10159440: opens the prompt for DAT target `flags`; the first pick (FUN_101591d0) keeps a fitting target
 /// (not an enemy when we may pick ourselves), else us when allowed, else the nearest candidate in front. False when
 /// nothing fits (the caller prints its line).
-pub fn open_sub(
-    w: &mut World,
-    flags: u32,
-    then: SubThen,
-    range: Option<f32>,
-    title: String,
-    help: u16,
-) -> bool {
-    let (inc, exc) = SUB_FLAGS
-        .iter()
-        .filter(|f| flags & f.0 != 0)
-        .fold((0, 0), |(i, e), f| (i | f.1, e | f.2));
-    let sub = Sub {
-        inc,
-        exc,
-        saved: w.target,
-        saved_lock: w.locked,
-        then,
-        range,
-        title,
-        help,
-        ground: false,
-    };
-    let current = w
-        .target
-        .filter(|&t| t == w.my_id || w.entities.contains_key(&t));
+pub fn open_sub(w: &mut World, flags: u32, then: SubThen, range: Option<f32>, title: String, help: u16) -> bool {
+    let (inc, exc) = SUB_FLAGS.iter().filter(|f| flags & f.0 != 0).fold((0, 0), |(i, e), f| (i | f.1, e | f.2));
+    let sub = Sub { inc, exc, saved: w.target, saved_lock: w.locked, then, range, title, help, ground: false };
+    let current = w.target.filter(|&t| t == w.my_id || w.entities.contains_key(&t));
     let first = match current {
-        Some(t)
-            if sub.takes(sub_kind(w, t)) && !(inc & 0x200 != 0 && sub_kind(w, t) & 0x10 != 0) =>
-        {
-            Some(t)
-        }
+        Some(t) if sub.takes(sub_kind(w, t)) && !(inc & 0x200 != 0 && sub_kind(w, t) & 0x10 != 0) => Some(t),
         _ if inc & 0x200 != 0 => Some(w.my_id),
         _ => None,
     };
@@ -507,11 +374,7 @@ pub fn open_sub(
 
 /// FUN_1022b850: an open prompt for `spell` takes the ground-position cursor when the spell record's +0x44 has bit 5.
 pub fn ground_mode(w: &mut World, spell: u16) {
-    let on = w
-        .actions
-        .as_ref()
-        .and_then(|a| a.spell(spell))
-        .is_some_and(|r| r.flags & 0x20 != 0);
+    let on = w.actions.as_ref().and_then(|a| a.spell(spell)).is_some_and(|r| r.flags & 0x20 != 0);
     if let Some(s) = w.prompt.as_mut() {
         s.ground = on;
     }
@@ -521,14 +384,8 @@ pub fn ground_mode(w: &mut World, spell: u16) {
 /// a new pick resets it (FUN_10159660).
 /// FUN_10159cc0: the cursor less target `t`'s position, zero with no cursor (or one started from another pick).
 pub fn ground_offset(w: &World, t: u32) -> Vec3 {
-    let Some(c) = w.ground_cursor.filter(|c| c.0 == t) else {
-        return Vec3::ZERO;
-    };
-    let at = if t == w.my_id {
-        w.pos
-    } else {
-        w.entities.get(&t).map_or(c.1, |e| e.pos)
-    };
+    let Some(c) = w.ground_cursor.filter(|c| c.0 == t) else { return Vec3::ZERO };
+    let at = if t == w.my_id { w.pos } else { w.entities.get(&t).map_or(c.1, |e| e.pos) };
     c.1 - at
 }
 
@@ -540,9 +397,7 @@ pub fn drop_stale_ground_cursor(w: &mut World) {
 }
 
 pub fn ground_cursor(w: &World) -> Option<Vec3> {
-    w.ground_cursor
-        .filter(|c| Some(c.0) == w.target)
-        .map(|c| c.1)
+    w.ground_cursor.filter(|c| Some(c.0) == w.target).map(|c| c.1)
 }
 
 /// FUN_10159a20: moves the ground-position cursor by `dir` (x right, z up, as FUN_10159970 builds it for 0xb2 / 0xb3
@@ -550,12 +405,7 @@ pub fn ground_cursor(w: &World) -> Option<Vec3> {
 /// (FUN_10159b10). The first move starts it at the pick's position. Its height follows the ground below
 /// (FUN_10177770 -> FUN_10181210; kept when the probe misses).
 pub fn move_ground_cursor(w: &mut World, dir: glam::Vec2, ticks: f32, look: Vec3) {
-    let Some(t) = w
-        .target
-        .filter(|_| w.prompt.as_ref().is_some_and(|s| s.ground))
-    else {
-        return;
-    };
+    let Some(t) = w.target.filter(|_| w.prompt.as_ref().is_some_and(|s| s.ground)) else { return };
     let from = match ground_cursor(w) {
         Some(c) => c,
         None if t == w.my_id => w.pos,
@@ -596,9 +446,7 @@ pub fn prefer(w: &mut World, id: u32) {
 
 /// FUN_10158db0(0): runs the callback on the pick, SE "0009", the saved target and lock come back.
 pub fn confirm_sub(w: &mut World) {
-    let (Some(s), Some(t)) = (w.prompt.take(), w.target) else {
-        return;
-    };
+    let (Some(s), Some(t)) = (w.prompt.take(), w.target) else { return };
     w.sounds.push(SE_TARGET);
     if let SubThen::Item { container, index } = s.then {
         restore(w, &s);
@@ -621,23 +469,11 @@ pub fn confirm_sub(w: &mut World) {
         return;
     }
     let line = match &s.then {
-        SubThen::Item { .. }
-        | SubThen::Command(_)
-        | SubThen::Check
-        | SubThen::Party(_)
-        | SubThen::Trade => String::new(),
+        SubThen::Item { .. } | SubThen::Command(_) | SubThen::Check | SubThen::Party(_) | SubThen::Trade => String::new(),
         SubThen::Magic(name) => format!("/magic \"{name}\" {t}"),
         SubThen::Ability(cmd, name) => format!("{cmd} \"{name}\" {t}"),
-        SubThen::Line {
-            stash,
-            quoted: true,
-            ..
-        } => format!("{stash}\"{}\"", super::textcmd::display_name(w, t)),
-        SubThen::Line {
-            stash,
-            quoted: false,
-            ..
-        } => format!("{stash}{t}"),
+        SubThen::Line { stash, quoted: true, .. } => format!("{stash}\"{}\"", super::textcmd::display_name(w, t)),
+        SubThen::Line { stash, quoted: false, .. } => format!("{stash}{t}"),
     };
     restore(w, &s);
     if matches!(s.then, SubThen::Magic(_)) {
@@ -646,11 +482,7 @@ pub fn confirm_sub(w: &mut World) {
     if matches!(s.then, SubThen::Ability(..)) {
         w.ability = None;
     }
-    let mode = if matches!(s.then, SubThen::Line { .. }) {
-        super::textcmd::Mode::SubTarget
-    } else {
-        super::textcmd::Mode::Internal
-    };
+    let mode = if matches!(s.then, SubThen::Line { .. }) { super::textcmd::Mode::SubTarget } else { super::textcmd::Mode::Internal };
     // The /magic it runs reads the ground-position cursor (FUN_10159cc0) before the prompt's state goes.
     w.ground_cursor = w.ground_cursor.filter(|c| c.0 == t && s.ground);
     super::textcmd::run(w, &line, mode);
@@ -668,13 +500,8 @@ pub fn cancel_sub(w: &mut World) {
     if let Some(m) = w.ability.as_mut() {
         m.hidden = false;
     }
-    if matches!(
-        s.then,
-        SubThen::Line {
-            from_macro: true,
-            ..
-        }
-    ) && let Some(m) = w.macros.as_mut()
+    if matches!(s.then, SubThen::Line { from_macro: true, .. })
+        && let Some(m) = w.macros.as_mut()
     {
         m.stop();
     }
@@ -682,9 +509,7 @@ pub fn cancel_sub(w: &mut World) {
 
 /// FUN_10159040.
 fn restore(w: &mut World, s: &Sub) {
-    w.target = s
-        .saved
-        .filter(|&t| t == w.my_id || w.entities.contains_key(&t));
+    w.target = s.saved.filter(|&t| t == w.my_id || w.entities.contains_key(&t));
     w.target_since = std::time::Instant::now();
     w.locked = s.saved_lock && w.target.is_some();
 }
@@ -711,16 +536,8 @@ pub fn sub_slot(w: &mut World, slot: usize) {
 /// (+0x208; the spell and ability records set the radii flag): red past range + 0.5 or at 25 and more, yellow past
 /// range - 0.5, else blue.
 pub fn range_tint(w: &World, t: u32) -> u32 {
-    let Some(r) = w.prompt.as_ref().and_then(|s| s.range) else {
-        return 0xe040_40d0;
-    };
-    let (p, radius) = if t == w.my_id {
-        (w.pos, w.my_plate.hitbox)
-    } else {
-        w.entities
-            .get(&t)
-            .map_or((w.pos, 0.0), |e| (e.pos, e.hitbox))
-    };
+    let Some(r) = w.prompt.as_ref().and_then(|s| s.range) else { return 0xe040_40d0 };
+    let (p, radius) = if t == w.my_id { (w.pos, w.my_plate.hitbox) } else { w.entities.get(&t).map_or((w.pos, 0.0), |e| (e.pos, e.hitbox)) };
     let raw = (p - w.pos).length();
     let d = Vec3::new(p.x - w.pos.x, 0.0, p.z - w.pos.z).length() - (w.my_plate.hitbox + radius);
     if d > r + 0.5 || raw >= 25.0 {
@@ -743,14 +560,7 @@ pub fn set(w: &mut World, t: Option<u32>) {
         _ => {}
     }
     let e = t.and_then(|t| w.entities.get(&t));
-    log::info!(
-        "target {:#x} {:?} at {:?} radius {:?} (ours {})",
-        t.unwrap_or(0),
-        e.map(|e| e.name.as_str()),
-        e.map(|e| (e.pos.x, e.pos.z)),
-        e.map(|e| e.hitbox),
-        w.my_plate.hitbox
-    );
+    log::info!("target {:#x} {:?} at {:?} radius {:?} (ours {})", t.unwrap_or(0), e.map(|e| e.name.as_str()), e.map(|e| (e.pos.x, e.pos.z)), e.map(|e| e.hitbox), w.my_plate.hitbox);
     if let Some(old) = w.target.filter(|&old| old != w.my_id) {
         w.last_target = Some(old);
     }
@@ -773,10 +583,7 @@ pub fn lock(w: &mut World, on: bool, why: &str) {
         return;
     }
     if on {
-        let ok = w
-            .target
-            .is_some_and(|t| t != w.my_id && w.entities.contains_key(&t))
-            && !w.dead();
+        let ok = w.target.is_some_and(|t| t != w.my_id && w.entities.contains_key(&t)) && !w.dead();
         if !ok {
             return;
         }
@@ -799,17 +606,9 @@ fn invalid(w: &World, t: u32) -> Option<bool> {
     if t == w.my_id {
         return super::event::hidden(w).contains(&t).then_some(false);
     }
-    let Some(e) = w.entities.get(&t) else {
-        return Some(false);
-    };
+    let Some(e) = w.entities.get(&t) else { return Some(false) };
     let hidden = e.flags & 2 != 0 || super::event::hidden(w).contains(&t);
-    drop_rule(
-        e.flags,
-        e.untargetable,
-        e.motion.status,
-        (e.pos - w.pos).length(),
-        hidden,
-    )
+    drop_rule(e.flags, e.untargetable, e.motion.status, (e.pos - w.pos).length(), hidden)
 }
 
 /// FUN_10152c70 on one target: hidden (+0xb2 bit 1, from the server bits or the event via FUN_10084360);
@@ -836,12 +635,7 @@ fn kind_bits(id: u32, e: &super::Entity) -> u32 {
     if id >> 24 == 0 {
         1
     } else {
-        (if e.mob { 0x10 } else { 2 })
-            | if e.door != 0 || e.sub_kind == 2 {
-                0x20
-            } else {
-                0
-            }
+        (if e.mob { 0x10 } else { 2 }) | if e.door != 0 || e.sub_kind == 2 { 0x20 } else { 0 }
     }
 }
 
@@ -849,19 +643,8 @@ fn kind_bits(id: u32, e: &super::Entity) -> u32 {
 /// dead or despawning monster, not TargetOffFlag (+0x128 bit 4, FUN_10084580), and in a prompt's include / exclude
 /// kinds (T+0x60 / +0x64). No name test. Not done: event ops 0x12..0x15's +0x128 bit 4 and the occlusion part of the
 /// cull.
-fn candidate(
-    w: &World,
-    hidden: &std::collections::HashSet<u32>,
-    id: u32,
-    e: &super::Entity,
-) -> bool {
-    id != w.my_id
-        && w.visible.contains(&id)
-        && !hidden.contains(&id)
-        && !e.target_off
-        && !(e.flags & 1 != 0 && matches!(e.motion.status, 2 | 3))
-        && w.prompt.as_ref().is_none_or(|s| s.takes(sub_kind(w, id)))
-        && !ignored(w, id, e)
+fn candidate(w: &World, hidden: &std::collections::HashSet<u32>, id: u32, e: &super::Entity) -> bool {
+    id != w.my_id && w.visible.contains(&id) && !hidden.contains(&id) && !e.target_off && !(e.flags & 1 != 0 && matches!(e.motion.status, 2 | 3)) && w.prompt.as_ref().is_none_or(|s| s.takes(sub_kind(w, id))) && !ignored(w, id, e)
 }
 
 /// FUN_101cc220: hostile to us. In PvP (both on a team, kind 0x400) another team is, but the same Ballista side; then,
@@ -891,13 +674,7 @@ pub fn hostile(w: &World, id: u32, e: &super::Entity) -> bool {
 /// members' too), /ignoretrust (0xaa) trusts outside our alliance. A target already held is not dropped for it.
 fn ignored(w: &World, id: u32, e: &super::Entity) -> bool {
     let k = super::radar::kind_bits(w, id, e);
-    let pet = w.game.get(0x97) != 0
-        && k & 0x100 != 0
-        && e.marks.charm
-        && !e.marks.npc_pet
-        && !e.marks.b2b1
-        && !hostile(w, id, e)
-        && !(w.my_pet != 0 && e.index == w.my_pet);
+    let pet = w.game.get(0x97) != 0 && k & 0x100 != 0 && e.marks.charm && !e.marks.npc_pet && !e.marks.b2b1 && !hostile(w, id, e) && !(w.my_pet != 0 && e.index == w.my_pet);
     let trust = w.game.get(0xaa) != 0 && e.marks.trust && k & 0xc == 0;
     pet || trust
 }
@@ -905,22 +682,15 @@ fn ignored(w: &World, id: u32, e: &super::Entity) -> bool {
 /// FUN_10083430 as the mouse pick calls it (FUN_10083750): self too, unless a prompt's kinds leave out 0x200.
 pub fn mouse_candidate(w: &World, hidden: &std::collections::HashSet<u32>, id: u32) -> bool {
     if id == w.my_id {
-        return w.visible.contains(&id)
-            && !hidden.contains(&id)
-            && w.prompt.as_ref().is_none_or(|s| s.takes(0x200));
+        return w.visible.contains(&id) && !hidden.contains(&id) && w.prompt.as_ref().is_none_or(|s| s.takes(0x200));
     }
-    w.entities
-        .get(&id)
-        .is_some_and(|e| candidate(w, hidden, id, e))
+    w.entities.get(&id).is_some_and(|e| candidate(w, hidden, id, e))
 }
 
 /// FUN_10158db0(0), the confirm on the target (Enter, a click on the target): an NPC is talked to; anything else,
 /// or no target, opens the action menu ("menu    playermo").
 pub fn confirm_target(w: &mut World) {
-    match w
-        .target
-        .filter(|t| t >> 24 != 0 && w.entities.get(t).is_some_and(|e| !e.mob))
-    {
+    match w.target.filter(|t| t >> 24 != 0 && w.entities.get(t).is_some_and(|e| !e.mob)) {
         // FUN_10158db0: SE 0009 once the talk went out (after FUN_1007bf30).
         Some(t) => {
             if super::event::talk(w, t) {
@@ -952,10 +722,7 @@ pub fn confirm_target(w: &mut World) {
 /// `double` (ours, the modern UI's double click on the target): instead of the action menu, the safe default runs as
 /// Ctrl+C does (talk to an NPC, check a player or a monster), closing the menu the first click opened.
 pub fn click(w: &mut World, picked: Option<u32>, left: bool, drag: bool, double: bool) -> bool {
-    log::debug!(
-        "world click left {left} drag {drag} picked {picked:?} target {:?}",
-        w.target
-    );
+    log::debug!("world click left {left} drag {drag} picked {picked:?} target {:?}", w.target);
     if !left {
         if sub_up(w) {
             cancel_sub(w);
@@ -1010,15 +777,8 @@ fn nearest(w: &World, keep: impl Fn(u32, &super::Entity) -> bool) -> Option<u32>
 /// none, the far end the other way (Tab wraps to the leftmost, Shift+Tab to the rightmost).
 fn screen_step(keys: &[(u32, f32)], from: f32, right: bool, wrap: bool) -> Option<u32> {
     let side = |k: f32| if right { k - from } else { from - k };
-    let next = keys
-        .iter()
-        .filter(|(_, k)| side(*k) > 0.0 && side(*k) < 3600.0)
-        .min_by(|a, b| side(a.1).total_cmp(&side(b.1)));
-    let wrapped = || {
-        keys.iter()
-            .filter(|(_, k)| wrap && side(*k) < 0.0)
-            .max_by(|a, b| side(a.1).abs().total_cmp(&side(b.1).abs()))
-    };
+    let next = keys.iter().filter(|(_, k)| side(*k) > 0.0 && side(*k) < 3600.0).min_by(|a, b| side(a.1).total_cmp(&side(b.1)));
+    let wrapped = || keys.iter().filter(|(_, k)| wrap && side(*k) < 0.0).max_by(|a, b| side(a.1).abs().total_cmp(&side(b.1).abs()));
     next.or_else(wrapped).map(|(id, _)| *id)
 }
 
@@ -1049,12 +809,7 @@ fn step_screen(w: &mut World, view: glam::Mat4, right: bool, wrap: bool) {
         let from = raw(w.entities[&t].pos).0;
         let key = |p: Vec3| Some(raw(p)).filter(|k| k.1 < 50.0).map(|k| k.0);
         let hidden = super::event::hidden(w);
-        let keys: Vec<(u32, f32)> = w
-            .entities
-            .iter()
-            .filter(|(id, e)| **id != t && candidate(w, &hidden, **id, e))
-            .filter_map(|(id, e)| key(e.pos).map(|k| (*id, k)))
-            .collect();
+        let keys: Vec<(u32, f32)> = w.entities.iter().filter(|(id, e)| **id != t && candidate(w, &hidden, **id, e)).filter_map(|(id, e)| key(e.pos).map(|k| (*id, k))).collect();
         screen_step(&keys, from, right, wrap)
     });
     // At the edge the pad keeps its target.
@@ -1089,8 +844,7 @@ pub fn nearest_kind(w: &mut World, prefer: u32, enemies: bool, pcs: bool) {
     } else if enemies {
         nearest(w, |id, e| nearest_hostile(w, id, e))
     } else {
-        nearest(w, |id, e| id >> 24 != 0 && kind_bits(id, e) & prefer != 0)
-            .or_else(|| nearest(w, |id, _| id >> 24 != 0))
+        nearest(w, |id, e| id >> 24 != 0 && kind_bits(id, e) & prefer != 0).or_else(|| nearest(w, |id, _| id >> 24 != 0))
     };
     if t.is_some() {
         set(w, t);
@@ -1137,15 +891,8 @@ pub fn slot_target(w: &World, slot: usize) -> Option<u32> {
     if m.id == w.my_id {
         return Some(m.id);
     }
-    let id = w
-        .entities
-        .iter()
-        .find(|(_, e)| e.index == m.index)
-        .map(|(id, _)| *id)?;
-    w.actors
-        .get(&id)
-        .is_some_and(|a| a.character.is_some())
-        .then_some(id)
+    let id = w.entities.iter().find(|(_, e)| e.index == m.index).map(|(id, _)| *id)?;
+    w.actors.get(&id).is_some_and(|a| a.character.is_some()).then_some(id)
 }
 
 /// The pad's field d-pad up / down (key functions 0x27 / 0x28, table 0x10371ee0, FUN_10158b60 -> FUN_10203920). None
@@ -1160,21 +907,8 @@ pub fn party_pad_step(w: &World, down: bool) -> Option<u32> {
     let fits = |s: usize| slots[s].filter(|_| !(party_only && s > 5));
     // FUN_10203920 walks all 18 slots to the next occupied one, wrapping; a pick outside them (or outside our six
     // when party_only) gives nothing.
-    let next = |at: usize| {
-        (1..=18)
-            .map(|i| {
-                if down {
-                    (at + i) % 18
-                } else {
-                    (at + 18 - i) % 18
-                }
-            })
-            .find(|&s| slots[s].is_some())
-    };
-    let at = slots
-        .iter()
-        .position(|s| *s == Some(pick))
-        .filter(|&at| fits(at).is_some());
+    let next = |at: usize| (1..=18).map(|i| if down { (at + i) % 18 } else { (at + 18 - i) % 18 }).find(|&s| slots[s].is_some());
+    let at = slots.iter().position(|s| *s == Some(pick)).filter(|&at| fits(at).is_some());
     let mut to = at.and_then(next);
     let mut found = to.and_then(fits);
     // Without 0x200, landing on us steps once more; us again is nothing.
@@ -1188,18 +922,8 @@ pub fn party_pad_step(w: &World, down: bool) -> Option<u32> {
 
 /// FUN_101514a0: while engaged with no target, the first attackable actor we claimed that is alive.
 fn auto_target(w: &World) -> Option<u32> {
-    let alive = |e: &super::Entity| {
-        e.flags & 1 != 0
-            && e.claim == w.my_id
-            && !e.untargetable
-            && !e.target_off
-            && !matches!(e.motion.status, 2 | 3)
-    };
-    w.entities
-        .iter()
-        .filter(|(id, e)| alive(e) && w.actors.get(id).is_some_and(|a| a.gpu.is_some()))
-        .min_by_key(|(_, e)| e.index)
-        .map(|(id, _)| *id)
+    let alive = |e: &super::Entity| e.flags & 1 != 0 && e.claim == w.my_id && !e.untargetable && !e.target_off && !matches!(e.motion.status, 2 | 3);
+    w.entities.iter().filter(|(id, e)| alive(e) && w.actors.get(id).is_some_and(|a| a.gpu.is_some())).min_by_key(|(_, e)| e.index).map(|(id, _)| *id)
 }
 
 /// FUN_10151100 -> FUN_101516d0 / FUN_10151910: Numpad * is /heal with no target or while healing
@@ -1220,29 +944,16 @@ pub fn numpad_star(w: &mut World) {
 /// What LAB_1009e570 does with an s2c 0x058: None = nothing (not about us, no target, or no such actor with a
 /// model, +0x120 bit 9), else Some(lock): set the target, and lock when it is a monster (+0x120 bit 13, inferred
 /// the 0x00E monster bit) and auto lock-on is on (+0x51, config 7 = 0, the default).
-fn assist_rule(
-    player: u32,
-    me: u32,
-    target: u32,
-    modelled: bool,
-    monster: bool,
-    auto_lock: bool,
-) -> Option<bool> {
+fn assist_rule(player: u32, me: u32, target: u32, modelled: bool, monster: bool, auto_lock: bool) -> Option<bool> {
     (player == me && target != 0 && modelled).then_some(monster && auto_lock)
 }
 
 /// s2c 0x058 (LSB sends it on engage, on a target change and on auto-target): our assist target.
 pub fn assist(w: &mut World, player: u32, target: u32) {
-    let modelled = w.entities.contains_key(&target)
-        && w.actors
-            .get(&target)
-            .is_some_and(|a| a.gpu.is_some() || a.character.is_some());
+    let modelled = w.entities.contains_key(&target) && w.actors.get(&target).is_some_and(|a| a.gpu.is_some() || a.character.is_some());
     let monster = w.entities.get(&target).is_some_and(|e| e.mob);
     let rule = assist_rule(player, w.my_id, target, modelled, monster, w.auto_lock);
-    log::info!(
-        "0x058 assist {target:#x}: {rule:?} (monster {monster}, auto lock-on {})",
-        w.auto_lock
-    );
+    log::info!("0x058 assist {target:#x}: {rule:?} (monster {monster}, auto lock-on {})", w.auto_lock);
     let Some(locks) = rule else { return };
     set(w, Some(target));
     if locks {
@@ -1260,10 +971,7 @@ pub fn update(w: &mut World) {
     }
     w.last_status = st;
     if let Some(attackoff) = w.target.and_then(|t| invalid(w, t)) {
-        log::info!(
-            "target {:#x} dropped (attackoff {attackoff})",
-            w.target.unwrap_or(0)
-        );
+        log::info!("target {:#x} dropped (attackoff {attackoff})", w.target.unwrap_or(0));
         lock(w, false, "target dropped");
         w.target = None;
         super::inspect::drop(w);
@@ -1292,21 +1000,10 @@ pub struct LockCam {
 /// An attach point's height above the feet (y down, so negative), from the posed bones when they are posed, else
 /// the rest pose; 0.7 of the model height without points (inferred).
 fn point_height(w: &World, id: u32, k: usize) -> f32 {
-    let Some(a) = w.actors.get(&id) else {
-        return -1.5;
-    };
-    let point = a
-        .character
-        .as_ref()
-        .and_then(|c| c.skeleton.points.get(k).copied());
-    let bones = if a.bones.is_empty() {
-        &a.rest
-    } else {
-        &a.bones
-    };
-    point
-        .and_then(|(b, off)| bones.get(b as usize).map(|x| x.at(off).y * a.scale))
-        .unwrap_or(a.top * 0.7)
+    let Some(a) = w.actors.get(&id) else { return -1.5 };
+    let point = a.character.as_ref().and_then(|c| c.skeleton.points.get(k).copied());
+    let bones = if a.bones.is_empty() { &a.rest } else { &a.bones };
+    point.and_then(|(b, off)| bones.get(b as usize).map(|x| x.at(off).y * a.scale)).unwrap_or(a.top * 0.7)
 }
 
 /// FUN_1001ee60's target height: a snapshot at lock-on of the actor's look point (+0x8a8: point 7 for PCs and
@@ -1314,11 +1011,7 @@ fn point_height(w: &World, id: u32, k: usize) -> f32 {
 /// doesn't move the camera.
 fn lock_height(w: &World, id: u32) -> f32 {
     let y = point_height(w, id, 7);
-    if matches!(w.my_race, 5 | 6) {
-        y * 0.8
-    } else {
-        y
-    }
+    if matches!(w.my_race, 5 | 6) { y * 0.8 } else { y }
 }
 
 /// FUN_1001e030, locked branch, run in 1/60 s ticks: look at the player / target midpoint, keep the eye
@@ -1327,31 +1020,13 @@ fn lock_height(w: &World, id: u32) -> f32 {
 /// The camera actor's box (vtable +0x3c8 (1): skeleton box 1) when its model kind is 2 or 7 (FUN_10084400): the wider
 /// of x and z, x 1.5 (_DAT_1032a3ac); ours a model-id look.
 fn mon_extent(w: &World) -> f32 {
-    let Some(a) = w.actors.get(&w.my_id).filter(|a| {
-        matches!(
-            a.source,
-            Some(super::Source::Npc(crate::dat::npc::NpcLook::Model(_)))
-        )
-    }) else {
-        return 0.0;
-    };
-    let Some(b) = a
-        .character
-        .as_ref()
-        .and_then(|c| c.skeleton.boxes.get(1).copied())
-    else {
-        return 0.0;
-    };
+    let Some(a) = w.actors.get(&w.my_id).filter(|a| matches!(a.source, Some(super::Source::Npc(crate::dat::npc::NpcLook::Model(_))))) else { return 0.0 };
+    let Some(b) = a.character.as_ref().and_then(|c| c.skeleton.boxes.get(1).copied()) else { return 0.0 };
     (b[4] - b[5]).max(b[2] - b[3]) * 1.5
 }
 
 pub fn step_camera(w: &mut World, ticks: f32, turn: f32, rise: f32) {
-    let Some(t) = w
-        .target
-        .and_then(|t| w.entities.get(&t).map(|e| (t, e.pos)))
-    else {
-        return;
-    };
+    let Some(t) = w.target.and_then(|t| w.entities.get(&t).map(|e| (t, e.pos))) else { return };
     let mut c = w.cam;
     let (_, tpos) = t;
     let me = super::drawn_pos(w);
@@ -1419,14 +1094,8 @@ mod tests {
         let look = Vec3::new(3.0, -1.0, 0.0);
         let fwd = Vec3::X;
         assert!(near(cursor_step(glam::Vec2::Y, look), fwd));
-        assert!(near(
-            cursor_step(glam::Vec2::X, look),
-            fwd.cross(Vec3::NEG_Y)
-        ));
-        assert!(near(
-            cursor_step(glam::Vec2::NEG_X, look),
-            -fwd.cross(Vec3::NEG_Y)
-        ));
+        assert!(near(cursor_step(glam::Vec2::X, look), fwd.cross(Vec3::NEG_Y)));
+        assert!(near(cursor_step(glam::Vec2::NEG_X, look), -fwd.cross(Vec3::NEG_Y)));
     }
 
     /// Tab steps to the next screen key to the right and wraps to the leftmost; Shift+Tab mirrors it.
@@ -1464,22 +1133,10 @@ mod tests {
         let me = 0x0100_0004;
         let auto = crate::gamecfg::Values::default().get(7) == 0;
         assert!(auto, "config 7 defaults to 0 = auto lock-on");
-        assert_eq!(
-            assist_rule(me, me, 0x0106_5013, true, true, auto),
-            Some(true)
-        );
-        assert_eq!(
-            assist_rule(me, me, 0x0106_5013, true, true, false),
-            Some(false)
-        );
-        assert_eq!(
-            assist_rule(me, me, 0x0106_5239, true, false, auto),
-            Some(false)
-        );
-        assert_eq!(
-            assist_rule(0x0100_0099, me, 0x0106_5013, true, true, auto),
-            None
-        );
+        assert_eq!(assist_rule(me, me, 0x0106_5013, true, true, auto), Some(true));
+        assert_eq!(assist_rule(me, me, 0x0106_5013, true, true, false), Some(false));
+        assert_eq!(assist_rule(me, me, 0x0106_5239, true, false, auto), Some(false));
+        assert_eq!(assist_rule(0x0100_0099, me, 0x0106_5013, true, true, auto), None);
         assert_eq!(assist_rule(me, me, 0, true, true, auto), None);
         assert_eq!(assist_rule(me, me, 0x0106_5013, false, true, auto), None);
     }

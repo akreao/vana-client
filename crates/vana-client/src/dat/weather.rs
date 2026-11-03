@@ -51,15 +51,7 @@ impl Env {
         if b.len() < 0xac {
             return None;
         }
-        let g = |o: usize| Group {
-            sun: c(b, o),
-            moon: c(b, o + 4),
-            ambient: c(b, o + 8),
-            fog: c(b, o + 12),
-            fog_end: f(b, o + 16),
-            fog_start: f(b, o + 20),
-            light_scale: f(b, o + 24),
-        };
+        let g = |o: usize| Group { sun: c(b, o), moon: c(b, o + 4), ambient: c(b, o + 8), fog: c(b, o + 12), fog_end: f(b, o + 16), fog_start: f(b, o + 20), light_scale: f(b, o + 24) };
         let mut sky = [[0u8; 4]; 8];
         let mut stops = [0f32; 8];
         for i in 0..8 {
@@ -90,14 +82,7 @@ impl Env {
     /// linear; with flags bit 0 the signed light directions turn along the great circle (FUN_10033360).
     pub fn lerp(prev: &Env, next: &Env, t: f32) -> Env {
         let lb = |a: u8, b: u8| (a as i32 + ((b as i32 - a as i32) as f32 * t) as i32) as u8;
-        let lc = |a: [u8; 4], b: [u8; 4]| {
-            [
-                lb(a[0], b[0]),
-                lb(a[1], b[1]),
-                lb(a[2], b[2]),
-                lb(a[3], b[3]),
-            ]
-        };
+        let lc = |a: [u8; 4], b: [u8; 4]| [lb(a[0], b[0]), lb(a[1], b[1]), lb(a[2], b[2]), lb(a[3], b[3])];
         let lf = |a: f32, b: f32| a + (b - a) * t;
         let lg = |a: &Group, b: &Group| Group {
             sun: lc(a.sun, b.sun),
@@ -116,11 +101,7 @@ impl Env {
         out.unk50 = lf(prev.unk50, next.unk50);
         out.unk54 = lf(prev.unk54, next.unk54);
         out.draw_dist = lf(prev.draw_dist, next.draw_dist);
-        out.bytes5c = [
-            lb(prev.bytes5c[0], next.bytes5c[0]),
-            lb(prev.bytes5c[1], next.bytes5c[1]),
-            lb(prev.bytes5c[2], next.bytes5c[2]),
-        ];
+        out.bytes5c = [lb(prev.bytes5c[0], next.bytes5c[0]), lb(prev.bytes5c[1], next.bytes5c[1]), lb(prev.bytes5c[2], next.bytes5c[2])];
         out.unk68 = lf(prev.unk68, next.unk68);
         for i in 0..8 {
             out.sky[i] = lc(prev.sky[i], next.sky[i]);
@@ -138,16 +119,10 @@ impl Env {
 /// (FUN_10033360 / FUN_10032fe0 / FUN_10028200), x 127, chopped; byte 3 keeps the byte lerp. Parallel or opposite
 /// directions do not turn *(inf: the sense toward next)*.
 fn turn_dir(a: [u8; 4], b: [u8; 4], w: u8, t: f32) -> [u8; 4] {
-    let v = |c: [u8; 4]| {
-        Vec3::new(c[0] as i8 as f32, c[1] as i8 as f32, c[2] as i8 as f32).normalize_or_zero()
-    };
+    let v = |c: [u8; 4]| Vec3::new(c[0] as i8 as f32, c[1] as i8 as f32, c[2] as i8 as f32).normalize_or_zero();
     let (p, n) = (v(a), v(b));
     let axis = p.cross(n).normalize_or_zero();
-    let r = if axis == Vec3::ZERO {
-        p
-    } else {
-        Quat::from_axis_angle(axis, p.dot(n).clamp(-1.0, 1.0).acos() * t) * p
-    };
+    let r = if axis == Vec3::ZERO { p } else { Quat::from_axis_angle(axis, p.dot(n).clamp(-1.0, 1.0).acos() * t) * p };
     let q = |x: f32| (x * 127.0) as i32 as i8 as u8;
     [q(r.x), q(r.y), q(r.z), w]
 }
@@ -183,27 +158,15 @@ impl ZoneWeather {
                 }
                 0x2f => {
                     let n = stack.len();
-                    let (Some(m), Some(e)) = (key_minutes(&ch.name()), Env::parse(ch.data)) else {
-                        continue;
-                    };
+                    let (Some(m), Some(e)) = (key_minutes(&ch.name()), Env::parse(ch.data)) else { continue };
                     let tag = || stack[n - 1].0.clone();
                     if n == 4 && stack[2].0 == "weat" && stack[1].0 != "weat" {
-                        areas
-                            .entry(stack[1].1)
-                            .or_default()
-                            .entry(tag())
-                            .or_default()
-                            .push((m, e));
+                        areas.entry(stack[1].1).or_default().entry(tag()).or_default().push((m, e));
                     } else if n >= 2 && stack[n - 2].0 == "weat" {
                         // Only direct children of weat/<tag>, not sub-folders such as "indo".
                         keys.entry(tag()).or_default().push((m, e));
                     } else if n == 3 && WEATHER_TAGS.contains(&stack[2].0.as_str()) {
-                        areas
-                            .entry(stack[1].1)
-                            .or_default()
-                            .entry(tag())
-                            .or_default()
-                            .push((m, e));
+                        areas.entry(stack[1].1).or_default().entry(tag()).or_default().push((m, e));
                     }
                 }
                 _ => {}
@@ -215,22 +178,8 @@ impl ZoneWeather {
             }
             k
         };
-        let areas = areas
-            .into_iter()
-            .map(|(id, k)| {
-                (
-                    id,
-                    Self {
-                        keys: sorted(k),
-                        areas: Default::default(),
-                    },
-                )
-            })
-            .collect();
-        Ok(Self {
-            keys: sorted(keys),
-            areas,
-        })
+        let areas = areas.into_iter().map(|(id, k)| (id, Self { keys: sorted(k), areas: Default::default() })).collect();
+        Ok(Self { keys: sorted(keys), areas })
     }
 
     /// Env at `minute` of the day for `weather`, falling back to "suny" (FUN_10183780).
@@ -243,10 +192,7 @@ impl ZoneWeather {
         let now = minute.rem_euclid(day);
         // FUN_10189e30: the latest key at or before now, the first in file order on equal times (keys are stably
         // sorted); FUN_1018a0f0: the earliest key strictly after now, else the day's first.
-        let i = keys
-            .iter()
-            .rposition(|k| k.0 as f32 <= now)
-            .unwrap_or(keys.len() - 1);
+        let i = keys.iter().rposition(|k| k.0 as f32 <= now).unwrap_or(keys.len() - 1);
         let i = keys.iter().position(|k| k.0 == keys[i].0).unwrap_or(i);
         let j = keys.iter().position(|k| k.0 as f32 > now).unwrap_or(0);
         let (p, n) = (keys[i].0 as f32, keys[j].0 as f32);
@@ -264,11 +210,7 @@ impl Env {
     pub fn area_light(&self) -> Vec3 {
         let c = rgb(self.actor.sun) + rgb(self.actor.ambient);
         let c2 = rgb(self.actor.moon) + rgb(self.actor.ambient);
-        if self.flags & 1 == 0 && c2.dot(c2) > c.dot(c) {
-            c2
-        } else {
-            c
-        }
+        if self.flags & 1 == 0 && c2.dot(c2) > c.dot(c) { c2 } else { c }
     }
 }
 
@@ -316,11 +258,7 @@ pub fn clipping(raw: f32, x: f32, zone: u16) -> (f32, f32) {
     if least > 0.0 {
         k = k.max(least);
     }
-    let d = if floor > 0.0 {
-        (k * raw).max(floor)
-    } else {
-        raw
-    };
+    let d = if floor > 0.0 { (k * raw).max(floor) } else { raw };
     (d, k)
 }
 
@@ -330,15 +268,9 @@ pub fn clipping_factor(v: u32) -> f32 {
 }
 
 /// FUN_10187720's stored 2 pi and pi (0x10329d2c, 0x10329d30): the switch falls at 05:59:59.4 and 18:00:00.6.
-#[allow(
-    clippy::approx_constant,
-    reason = "the DLL's stored values: they set when the switch falls"
-)]
+#[allow(clippy::approx_constant, reason = "the DLL's stored values: they set when the switch falls")]
 const TWO_PI: f32 = 6.283;
-#[allow(
-    clippy::approx_constant,
-    reason = "the DLL's stored values: they set when the switch falls"
-)]
+#[allow(clippy::approx_constant, reason = "the DLL's stored values: they set when the switch falls")]
 const PI: f32 = 3.1415;
 
 /// FUN_10187720: the sun and moon light directions (the way the light travels, +y down) at `minute`.
@@ -399,18 +331,11 @@ impl LightEase {
             return;
         }
         let (sun, moon) = sun_moon(minute);
-        let (d, bg, actor) = if sun.y < 0.0 {
-            (moon, rgb(env.bg.moon), rgb(env.actor.moon))
-        } else {
-            (sun, rgb(env.bg.sun), rgb(env.actor.sun))
-        };
+        let (d, bg, actor) = if sun.y < 0.0 { (moon, rgb(env.bg.moon), rgb(env.actor.moon)) } else { (sun, rgb(env.bg.sun), rgb(env.actor.sun)) };
         if !self.init {
             self.init = true;
             self.bg = EasedLight { dir: d, color: bg };
-            self.actor = EasedLight {
-                dir: d,
-                color: actor,
-            };
+            self.actor = EasedLight { dir: d, color: actor };
             return;
         }
         self.bg.step(d, bg);
@@ -441,16 +366,8 @@ impl Lighting {
         let (sun, moon) = sun_moon(minute);
         let night = sun.y < 0.0;
         let (dir, diffuse, actor_dir, actor_diffuse) = if env.flags & 1 != 0 {
-            let d = |c: [u8; 4]| {
-                Vec3::new(c[0] as i8 as f32, c[1] as i8 as f32, c[2] as i8 as f32)
-                    .normalize_or(Vec3::Y)
-            };
-            (
-                d(env.bg.moon),
-                rgb(env.bg.sun),
-                d(env.actor.moon),
-                rgb(env.actor.sun),
-            )
+            let d = |c: [u8; 4]| Vec3::new(c[0] as i8 as f32, c[1] as i8 as f32, c[2] as i8 as f32).normalize_or(Vec3::Y);
+            (d(env.bg.moon), rgb(env.bg.sun), d(env.actor.moon), rgb(env.actor.sun))
         } else if night {
             (moon, rgb(env.bg.moon), moon, rgb(env.actor.moon))
         } else {
@@ -464,10 +381,7 @@ impl Lighting {
         let sky = env.has_dome().then(|| (env.sky.map(rgb), env.stops));
         let scale = env.bg.light_scale;
         let two = if env.flags & 1 != 0 {
-            let d = |c: [u8; 4]| {
-                Vec3::new(c[0] as i8 as f32, c[1] as i8 as f32, c[2] as i8 as f32)
-                    .normalize_or(Vec3::Y)
-            };
+            let d = |c: [u8; 4]| Vec3::new(c[0] as i8 as f32, c[1] as i8 as f32, c[2] as i8 as f32).normalize_or(Vec3::Y);
             [d(env.bg.moon), rgb(env.bg.sun) * scale, moon, Vec3::ZERO]
         } else {
             [sun, rgb(env.bg.sun) * scale, moon, rgb(env.bg.moon) * scale]
@@ -493,10 +407,8 @@ impl Lighting {
 
 /// Weather tags by the server's weather number (FFXiMain table 0x1036bab8, FUN_10184ac0); the
 /// order is LSB's xi::Weather.
-pub const WEATHER_TAGS: [&str; 20] = [
-    "fine", "suny", "clod", "mist", "dryw", "heat", "rain", "squl", "dust", "sand", "wind", "stom",
-    "snow", "bliz", "thdr", "bolt", "aura", "ligt", "fogd", "dark",
-];
+pub const WEATHER_TAGS: [&str; 20] =
+    ["fine", "suny", "clod", "mist", "dryw", "heat", "rain", "squl", "dust", "sand", "wind", "stom", "snow", "bliz", "thdr", "bolt", "aura", "ligt", "fogd", "dark"];
 
 pub fn weather_tag(number: u16) -> &'static str {
     WEATHER_TAGS.get(number as usize).copied().unwrap_or("suny")
@@ -517,26 +429,16 @@ mod tests {
     /// FUN_10187720's step: 0.1 of the way; a large remaining turn fades the colour x 0.7.
     #[test]
     fn eased_light_steps() {
-        let mut l = EasedLight {
-            dir: Vec3::X,
-            color: Vec3::ZERO,
-        };
+        let mut l = EasedLight { dir: Vec3::X, color: Vec3::ZERO };
         l.step(Vec3::X, Vec3::ONE);
         assert!((l.color.x - 0.1).abs() < 1e-6);
         for _ in 0..9 {
             l.step(Vec3::X, Vec3::ONE);
         }
         assert!((l.color.x - 0.65132).abs() < 1e-4, "{}", l.color);
-        let mut l = EasedLight {
-            dir: Vec3::new(1.0, 0.01, 0.0).normalize(),
-            color: Vec3::splat(0.8),
-        };
+        let mut l = EasedLight { dir: Vec3::new(1.0, 0.01, 0.0).normalize(), color: Vec3::splat(0.8) };
         l.step(Vec3::new(-1.0, 0.01, 0.0).normalize(), Vec3::ZERO);
-        assert!(
-            (l.color.x - 0.56).abs() < 1e-5
-                && (l.dir - Vec3::new(0.99992, 0.0125, 0.0)).length() < 1e-4,
-            "{l:?}"
-        );
+        assert!((l.color.x - 0.56).abs() < 1e-5 && (l.dir - Vec3::new(0.99992, 0.0125, 0.0)).length() < 1e-4, "{l:?}");
     }
 
     /// The stored constants put the switch just before 06:00 and just after 18:00.
@@ -569,43 +471,16 @@ mod tests {
         assert!(sun_moon(359.0 + 71.0 / 72.0).0.y < 0.0 && sun_moon(360.0).0.y >= 0.0);
         assert!(dawn[73..=135].iter().all(|x| x.1.max_element() < 0.005));
         let near = |a: Vec3, b: Vec3, e: f32| (a - b).abs().max_element() <= e;
-        assert!(
-            near(dawn[180].1, Vec3::new(0.6655, 0.6346, 0.4024), 0.01),
-            "{}",
-            dawn[180].1
-        );
-        assert!(
-            near(dawn[240].1, Vec3::new(0.6745, 0.6431, 0.4078), 0.003),
-            "{}",
-            dawn[240].1
-        );
-        assert!(
-            near(dawn[240].0, Vec3::new(-1.0, 0.0097, 0.0), 0.002),
-            "{}",
-            dawn[240].0
-        );
+        assert!(near(dawn[180].1, Vec3::new(0.6655, 0.6346, 0.4024), 0.01), "{}", dawn[180].1);
+        assert!(near(dawn[240].1, Vec3::new(0.6745, 0.6431, 0.4078), 0.003), "{}", dawn[240].1);
+        assert!(near(dawn[240].0, Vec3::new(-1.0, 0.0097, 0.0), 0.002), "{}", dawn[240].0);
         let wall = |x: &(Vec3, Vec3)| x.1.max_element() * 1.5 * Vec3::X.dot(-x.0).max(0.0);
-        let jump = dawn
-            .windows(2)
-            .map(|p| (wall(&p[1]) - wall(&p[0])).abs())
-            .fold(0.0, f32::max);
+        let jump = dawn.windows(2).map(|p| (wall(&p[1]) - wall(&p[0])).abs()).fold(0.0, f32::max);
         assert!(jump < 0.1, "{jump}");
         let dusk = run(1079.0, 91);
-        assert!(
-            (dusk[72].1.max_element() - 0.8).abs() < 0.005,
-            "{}",
-            dusk[72].1
-        );
-        assert!(
-            (dusk[73].1.max_element() - 0.5603).abs() < 0.001,
-            "{}",
-            dusk[73].1
-        );
-        assert!(
-            (dusk[75].1.max_element() - 0.2745).abs() < 0.002,
-            "{}",
-            dusk[75].1
-        );
+        assert!((dusk[72].1.max_element() - 0.8).abs() < 0.005, "{}", dusk[72].1);
+        assert!((dusk[73].1.max_element() - 0.5603).abs() < 0.001, "{}", dusk[73].1);
+        assert!((dusk[75].1.max_element() - 0.2745).abs() < 0.002, "{}", dusk[75].1);
         assert!(dusk[90].1.max_element() < 0.005);
     }
 
@@ -614,20 +489,14 @@ mod tests {
     fn env_lerp_retail() {
         if let Some(w) = weather(200) {
             let e = w.at("suny", 330.0).unwrap();
-            assert_eq!(
-                (&e.bg.sun[..3], &e.bg.moon[..3], &e.bg.fog[..3]),
-                (&[113, 109, 77][..], &[53, 53, 53][..], &[78, 71, 59][..])
-            );
+            assert_eq!((&e.bg.sun[..3], &e.bg.moon[..3], &e.bg.fog[..3]), (&[113, 109, 77][..], &[53, 53, 53][..], &[78, 71, 59][..]));
             assert!((e.bg.fog_end - 371.25).abs() < 0.01, "{}", e.bg.fog_end);
         }
         if let Some(w) = weather(126) {
             let d = |m: f32| w.at("suny", m).unwrap().bg.moon.map(|b| b as i8);
             for m in [535.0, 537.0] {
                 let v = d(m);
-                assert!(
-                    (v[0] + 16).abs() <= 1 && (v[1] - 125).abs() <= 1 && v[2].abs() <= 1,
-                    "{m}: {v:?}"
-                );
+                assert!((v[0] + 16).abs() <= 1 && (v[1] - 125).abs() <= 1 && v[2].abs() <= 1, "{m}: {v:?}");
             }
             assert_eq!(&d(720.0)[..3], &[0, 126, 0]);
         }
@@ -639,31 +508,16 @@ mod tests {
         let Some(w) = weather(226) else { return };
         let e = w.at("ligt", 780.0).unwrap();
         assert_eq!(&e.bg.ambient[..3], &[163, 162, 165]);
-        assert!(
-            e.bg.fog_start == 0.0 && (e.bg.fog_end - 450.5).abs() < 0.1,
-            "{} {}",
-            e.bg.fog_start,
-            e.bg.fog_end
-        );
-        let (a, b) = (
-            w.at("ligt", 719.99).unwrap().bg.ambient,
-            w.at("ligt", 720.0).unwrap().bg.ambient,
-        );
-        assert!(
-            a.iter()
-                .zip(b)
-                .all(|(x, y)| (*x as i32 - y as i32).abs() <= 1),
-            "{a:?} {b:?}"
-        );
+        assert!(e.bg.fog_start == 0.0 && (e.bg.fog_end - 450.5).abs() < 0.1, "{} {}", e.bg.fog_start, e.bg.fog_end);
+        let (a, b) = (w.at("ligt", 719.99).unwrap().bg.ambient, w.at("ligt", 720.0).unwrap().bg.ambient);
+        assert!(a.iter().zip(b).all(|(x, y)| (*x as i32 - y as i32).abs() <= 1), "{a:?} {b:?}");
     }
 
     /// MODLOG "Effect area-light tint": zone 232 street, fine: 12:00 sun + ambient, 00:00 moon + ambient.
     #[test]
     fn port_sandoria_area_light() {
         let cfg = crate::config::Config::load();
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else {
-            return;
-        };
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
         let w = super::ZoneWeather::parse(&index.read(332).unwrap()).unwrap();
         let close = |a: Vec3, b: Vec3| (a - b).abs().max_element() < 1e-3;
         let noon = w.at("fine", 720.0).unwrap().area_light();
@@ -672,32 +526,16 @@ mod tests {
         assert!(close(night, Vec3::new(0.9255, 0.9333, 1.1412)), "{night}");
         // The ev01 area (shops, auction house): flags bit 0, so always sun + ambient.
         let ev01 = &w.areas[&u32::from_le_bytes(*b"ev01")];
-        assert!(close(
-            ev01.at("fine", 720.0).unwrap().area_light(),
-            Vec3::new(0.9843, 0.9529, 0.8588)
-        ));
-        assert!(close(
-            ev01.at("fine", 0.0).unwrap().area_light(),
-            Vec3::new(0.9020, 0.8706, 0.7765)
-        ));
-        let Ok(dll) = std::fs::read(cfg.ffxi_dir().join("FFXiMain.dll")) else {
-            return;
-        };
+        assert!(close(ev01.at("fine", 720.0).unwrap().area_light(), Vec3::new(0.9843, 0.9529, 0.8588)));
+        assert!(close(ev01.at("fine", 0.0).unwrap().area_light(), Vec3::new(0.9020, 0.8706, 0.7765)));
+        let Ok(dll) = std::fs::read(cfg.ffxi_dir().join("FFXiMain.dll")) else { return };
         let keys = crate::dat::zone::Keys::from_ffximain(&dll).unwrap();
         let scene = crate::dat::zone::load_scene(&keys, &index.read(332).unwrap()).unwrap();
         let objs = &scene.collision.unwrap().objects;
         // 159 ev01 records in table [5]; 76 of them are reached from the collision grid.
-        assert_eq!(
-            objs.iter()
-                .filter(|o| o.area == u32::from_le_bytes(*b"ev01"))
-                .count(),
-            76
-        );
+        assert_eq!(objs.iter().filter(|o| o.area == u32::from_le_bytes(*b"ev01")).count(), 76);
         // MODLOG "Point lights on scenery": collision objects name lamps by MZB list ref, e.g. (pl18, pl19).
         let pl18 = u32::from_le_bytes(*b"pl18");
-        assert!(
-            objs.iter()
-                .any(|o| o.lights[..2] == [pl18, u32::from_le_bytes(*b"pl19")])
-        );
+        assert!(objs.iter().any(|o| o.lights[..2] == [pl18, u32::from_le_bytes(*b"pl19")]));
     }
 }

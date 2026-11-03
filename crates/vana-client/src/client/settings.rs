@@ -223,13 +223,7 @@ struct Row {
 
 impl From<&SRow> for Row {
     fn from(r: &SRow) -> Self {
-        Row {
-            label: r.label.into(),
-            help: r.help.into(),
-            val: r.val,
-            choices: r.choices.iter().map(|c| (c.0, c.1.to_string())).collect(),
-            when: r.when,
-        }
+        Row { label: r.label.into(), help: r.help.into(), val: r.val, choices: r.choices.iter().map(|c| (c.0, c.1.to_string())).collect(), when: r.when }
     }
 }
 
@@ -252,49 +246,13 @@ pub struct ModRow {
 }
 
 const OFF_ON: &[(u32, &str)] = &[(1, "ON"), (0, "OFF")];
-const MODERN_SCALES: &[(u32, &str)] = &[
-    (50, "50%"),
-    (55, "55%"),
-    (60, "60%"),
-    (65, "65%"),
-    (70, "70%"),
-    (75, "75%"),
-    (80, "80%"),
-    (85, "85%"),
-    (90, "90%"),
-    (95, "95%"),
-    (100, "100%"),
-    (105, "105%"),
-    (110, "110%"),
-    (115, "115%"),
-    (120, "120%"),
-    (125, "125%"),
-    (130, "130%"),
-    (135, "135%"),
-    (140, "140%"),
-    (145, "145%"),
-    (150, "150%"),
-];
+const MODERN_SCALES: &[(u32, &str)] = &[(50, "50%"), (55, "55%"), (60, "60%"), (65, "65%"), (70, "70%"), (75, "75%"), (80, "80%"), (85, "85%"), (90, "90%"), (95, "95%"), (100, "100%"), (105, "105%"), (110, "110%"), (115, "115%"), (120, "120%"), (125, "125%"), (130, "130%"), (135, "135%"), (140, "140%"), (145, "145%"), (150, "150%")];
 
-const fn row(
-    label: &'static str,
-    help: &'static str,
-    val: Val,
-    choices: &'static [(u32, &'static str)],
-    when: When,
-) -> SRow {
-    SRow {
-        label,
-        help,
-        val,
-        choices,
-        when,
-    }
+const fn row(label: &'static str, help: &'static str, val: Val, choices: &'static [(u32, &'static str)], when: When) -> SRow {
+    SRow { label, help, val, choices, when }
 }
 
-const TABS: [&str; 8] = [
-    "General", "Screen", "Textures", "Effects", "Sound", "Misc.", "Client", "Mods",
-];
+const TABS: [&str; 8] = ["General", "Screen", "Textures", "Effects", "Sound", "Misc.", "Client", "Mods"];
 /// The Mods page (client/modsui.rs): its rows come from the mods folder, not a table.
 const MODS: usize = 7;
 const EXTRA_TABS: [&str; 3] = ["Maps", "Timers", "Misc."];
@@ -305,435 +263,86 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
     use Val::*;
     use When::*;
     const GENERAL: &[SRow] = &[
-        row(
-            "Window Mode",
-            "0034: full screen, a window, or borderless at the window size or the desktop's.",
-            Tool("0034"),
-            &[
-                (0, "Full Screen"),
-                (1, "Windowed"),
-                (2, "Borderless"),
-                (3, "Desktop"),
-            ],
-            Now,
-        ),
-        row(
-            "MIP Mapping",
-            "0000: lower-resolution textures on distant objects.",
-            Tool("0000"),
-            OFF_ON,
-            NextZone,
-        ),
-        row(
-            "Gamma Base",
-            "0028: base gamma, added to the Gameplay page's R / G / B.",
-            Gamma,
-            &[],
-            Now,
-        ),
+        row("Window Mode", "0034: full screen, a window, or borderless at the window size or the desktop's.", Tool("0034"), &[(0, "Full Screen"), (1, "Windowed"), (2, "Borderless"), (3, "Desktop")], Now),
+        row("MIP Mapping", "0000: lower-resolution textures on distant objects.", Tool("0000"), OFF_ON, NextZone),
+        row("Gamma Base", "0028: base gamma, added to the Gameplay page's R / G / B.", Gamma, &[], Now),
     ];
     const SCREEN: &[SRow] = &[
-        row(
-            "Resolution",
-            "0001 / 0002: the window's size.",
-            Size("0001", "0002", Sizes::Window),
-            &[],
-            Now,
-        ),
-        row(
-            "Monitor",
-            "The monitor the game opens on, in every window mode (not retail).",
-            Monitor,
-            &[],
-            Now,
-        ),
-        row(
-            "GPU",
-            "The graphics card to draw with; Default is the high-performance one (not retail).",
-            Gpu,
-            &[],
-            Restart,
-        ),
-        row(
-            "Background",
-            "0003 / 0004: the 3D scene's resolution, scaled to the window.",
-            Size("0003", "0004", Sizes::Background),
-            &[],
-            Now,
-        ),
-        row(
-            "Menu Size",
-            "0037 / 0038: the resolution menus and text are laid out at, then stretched.",
-            Size("0037", "0038", Sizes::Ui),
-            &[],
-            Now,
-        ),
-        row(
-            "3D Aspect",
-            "Window: the window's shape. Config: retail's ratio from Misc. 2 / the lobby Config.",
-            RetailAspect,
-            &[(0, "Window"), (1, "Config")],
-            Now,
-        ),
-        row(
-            "Draw Distance",
-            "How far scenery, characters and effects draw: Retail is the game's distance, the others farther (not retail).",
-            DrawDistance,
-            &[
-                (100, "Retail"),
-                (150, "1.5x"),
-                (200, "2x"),
-                (300, "3x"),
-                (0, "Unlimited"),
-            ],
-            Now,
-        ),
+        row("Resolution", "0001 / 0002: the window's size.", Size("0001", "0002", Sizes::Window), &[], Now),
+        row("Monitor", "The monitor the game opens on, in every window mode (not retail).", Monitor, &[], Now),
+        row("GPU", "The graphics card to draw with; Default is the high-performance one (not retail).", Gpu, &[], Restart),
+        row("Background", "0003 / 0004: the 3D scene's resolution, scaled to the window.", Size("0003", "0004", Sizes::Background), &[], Now),
+        row("Menu Size", "0037 / 0038: the resolution menus and text are laid out at, then stretched.", Size("0037", "0038", Sizes::Ui), &[], Now),
+        row("3D Aspect", "Window: the window's shape. Config: retail's ratio from Misc. 2 / the lobby Config.", RetailAspect, &[(0, "Window"), (1, "Config")], Now),
+        row("Draw Distance", "How far scenery, characters and effects draw: Retail is the game's distance, the others farther (not retail).", DrawDistance, &[(100, "Retail"), (150, "1.5x"), (200, "2x"), (300, "3x"), (0, "Unlimited")], Now),
     ];
     const TEXTURES: &[SRow] = &[
-        row(
-            "Textures",
-            "0018: compressed (BC1 / BC2) or uncompressed textures.",
-            Tool("0018"),
-            &[(0, "High"), (1, "Low"), (2, "Full")],
-            NextZone,
-        ),
-        row(
-            "2-D Mapping",
-            "0019: map images compressed (DXT3) or at full quality.",
-            Tool("0019"),
-            &[(0, "Compressed"), (1, "Full")],
-            NextZone,
-        ),
-        row(
-            "Fonts",
-            "0036: the font texture quality.",
-            Tool("0036"),
-            &[(0, "Compressed"), (1, "Full"), (2, "High")],
-            Restart,
-        ),
+        row("Textures", "0018: compressed (BC1 / BC2) or uncompressed textures.", Tool("0018"), &[(0, "High"), (1, "Low"), (2, "Full")], NextZone),
+        row("2-D Mapping", "0019: map images compressed (DXT3) or at full quality.", Tool("0019"), &[(0, "Compressed"), (1, "Full")], NextZone),
+        row("Fonts", "0036: the font texture quality.", Tool("0036"), &[(0, "Compressed"), (1, "Full"), (2, "High")], Restart),
     ];
     const EFFECTS: &[SRow] = &[
-        row(
-            "Lamp Lights",
-            "Baked: the lamplight painted onto the walls, as retail. Real: point lights at the lamps (not retail).",
-            LampLights,
-            &[(0, "Baked"), (1, "Real")],
-            Now,
-        ),
-        row(
-            "Environment Animation",
-            "0011: swaying vegetation (Normal 16 steps, Smooth 32).",
-            Tool("0011"),
-            &[(0, "Off"), (1, "Normal"), (2, "Smooth")],
-            Now,
-        ),
-        row(
-            "Bump Mapping",
-            "0017: normal-mapped scenery; off lights it with the sun and moon together.",
-            Tool("0017"),
-            OFF_ON,
-            NextZone,
-        ),
-        row(
-            "Graphics Stabilization",
-            "0040: On interpolates the shine overlay's coordinates plainly (no seam wrap).",
-            Tool("0040"),
-            OFF_ON,
-            Now,
-        ),
-        row(
-            "3D LCD Mode",
-            "0030: side-by-side stereo for 3D screens.",
-            Tool("0030"),
-            OFF_ON,
-            Now,
-        ),
+        row("Lamp Lights", "Baked: the lamplight painted onto the walls, as retail. Real: point lights at the lamps (not retail).", LampLights, &[(0, "Baked"), (1, "Real")], Now),
+        row("Environment Animation", "0011: swaying vegetation (Normal 16 steps, Smooth 32).", Tool("0011"), &[(0, "Off"), (1, "Normal"), (2, "Smooth")], Now),
+        row("Bump Mapping", "0017: normal-mapped scenery; off lights it with the sun and moon together.", Tool("0017"), OFF_ON, NextZone),
+        row("Graphics Stabilization", "0040: On interpolates the shine overlay's coordinates plainly (no seam wrap).", Tool("0040"), OFF_ON, Now),
+        row("3D LCD Mode", "0030: side-by-side stereo for 3D screens.", Tool("0030"), OFF_ON, Now),
     ];
     const SOUND: &[SRow] = &[
         row("Sound", "0007: sound on or off.", Tool("0007"), OFF_ON, Now),
-        row(
-            "Sound Effect Channels",
-            "0029: sound effects playing at once.",
-            Tool("0029"),
-            &[
-                (12, "12"),
-                (13, "13"),
-                (14, "14"),
-                (15, "15"),
-                (16, "16"),
-                (17, "17"),
-                (18, "18"),
-                (19, "19"),
-                (20, "20"),
-            ],
-            Now,
-        ),
-        row(
-            "Sound in Background",
-            "0035: keep playing sound while the window is not focused.",
-            Tool("0035"),
-            OFF_ON,
-            Now,
-        ),
+        row("Sound Effect Channels", "0029: sound effects playing at once.", Tool("0029"), &[(12, "12"), (13, "13"), (14, "14"), (15, "15"), (16, "16"), (17, "17"), (18, "18"), (19, "19"), (20, "20")], Now),
+        row("Sound in Background", "0035: keep playing sound while the window is not focused.", Tool("0035"), OFF_ON, Now),
         // The title's one volume (lobby config 0xa8); in game the Gameplay page has them (rows left out there).
-        row(
-            "Music Volume",
-            "The volume before you are in game (the lobby's; in game, the Gameplay page's sliders).",
-            Music,
-            &[],
-            Now,
-        ),
-        row(
-            "Sound Effects Volume",
-            "The volume before you are in game (the lobby's; in game, the Gameplay page's sliders).",
-            Effects,
-            &[],
-            Now,
-        ),
+        row("Music Volume", "The volume before you are in game (the lobby's; in game, the Gameplay page's sliders).", Music, &[], Now),
+        row("Sound Effects Volume", "The volume before you are in game (the lobby's; in game, the Gameplay page's sliders).", Effects, &[], Now),
     ];
     const MISC: &[SRow] = &[
-        row(
-            "Hardware Mouse",
-            "0021: the game folder's cursor files (.ani) instead of the cursor the game draws.",
-            Tool("0021"),
-            OFF_ON,
-            Now,
-        ),
-        row(
-            "Cursor Size",
-            "The drawn cursor's size (Hardware Mouse off); Auto grows it with the window (not retail).",
-            CursorSize,
-            &[
-                (0, "Auto"),
-                (100, "1x"),
-                (150, "1.5x"),
-                (200, "2x"),
-                (300, "3x"),
-                (400, "4x"),
-            ],
-            Now,
-        ),
-        row(
-            "Opening Movie",
-            "0022: play the opening movie before the title; any key skips it.",
-            Tool("0022"),
-            OFF_ON,
-            Restart,
-        ),
-        row(
-            "Simple Character Creation",
-            "0023: character creation with 2-D portraits instead of the 3D models.",
-            Tool("0023"),
-            OFF_ON,
-            Now,
-        ),
-        row(
-            "Screenshot Size",
-            "0043: also save each screenshot at the screen size (ffxiuser/screenshots).",
-            Tool("0043"),
-            OFF_ON,
-            Now,
-        ),
+        row("Hardware Mouse", "0021: the game folder's cursor files (.ani) instead of the cursor the game draws.", Tool("0021"), OFF_ON, Now),
+        row("Cursor Size", "The drawn cursor's size (Hardware Mouse off); Auto grows it with the window (not retail).", CursorSize, &[(0, "Auto"), (100, "1x"), (150, "1.5x"), (200, "2x"), (300, "3x"), (400, "4x")], Now),
+        row("Opening Movie", "0022: play the opening movie before the title; any key skips it.", Tool("0022"), OFF_ON, Restart),
+        row("Simple Character Creation", "0023: character creation with 2-D portraits instead of the 3D models.", Tool("0023"), OFF_ON, Now),
+        row("Screenshot Size", "0043: also save each screenshot at the screen size (ffxiuser/screenshots).", Tool("0043"), OFF_ON, Now),
     ];
     const CLIENT: &[SRow] = &[
-        row(
-            "Frame Limit",
-            "Frames drawn a second; game time stays at 60 ticks.",
-            FrameLimit,
-            &[],
-            Now,
-        ),
-        row(
-            "Anisotropic Filtering",
-            "Anisotropic texture filtering.",
-            Aniso,
-            &[(1, "Off"), (2, "2x"), (4, "4x"), (8, "8x"), (16, "16x")],
-            NextZone,
-        ),
-        row(
-            "Party TP",
-            "Show TP in the party window (retail config 0xae, off there).",
-            PartyTp,
-            OFF_ON,
-            Now,
-        ),
-        row(
-            "Interface",
-            "Classic: the game's own windows. Modern: the new interface's windows where it has them (not retail).",
-            ModernUi,
-            &[(0, "Classic"), (1, "Modern")],
-            Now,
-        ),
-        row(
-            "Interface Size",
-            "The modern interface's size (not retail).",
-            ModernScale,
-            MODERN_SCALES,
-            Now,
-        ),
-        row(
-            "Panel Opacity",
-            "How opaque the modern interface's window backgrounds are (not retail).",
-            ModernOpacity,
-            &[],
-            Now,
-        ),
-        row(
-            "Panel Places",
-            "Reset puts this character's modern windows back where they start (not retail).",
-            ResetPlaces,
-            &[(0, "As Moved"), (1, "Reset")],
-            Now,
-        ),
+        row("Frame Limit", "Frames drawn a second; game time stays at 60 ticks.", FrameLimit, &[], Now),
+        row("Anisotropic Filtering", "Anisotropic texture filtering.", Aniso, &[(1, "Off"), (2, "2x"), (4, "4x"), (8, "8x"), (16, "16x")], NextZone),
+        row("Party TP", "Show TP in the party window (retail config 0xae, off there).", PartyTp, OFF_ON, Now),
+        row("Interface", "Classic: the game's own windows. Modern: the new interface's windows where it has them (not retail).", ModernUi, &[(0, "Classic"), (1, "Modern")], Now),
+        row("Interface Size", "The modern interface's size (not retail).", ModernScale, MODERN_SCALES, Now),
+        row("Panel Opacity", "How opaque the modern interface's window backgrounds are (not retail).", ModernOpacity, &[], Now),
+        row("Panel Places", "Reset puts this character's modern windows back where they start (not retail).", ResetPlaces, &[(0, "As Moved"), (1, "Reset")], Now),
     ];
     const MAPS: &[SRow] = &[
-        row(
-            "Map Overlay",
-            "Ctrl / Alt + O shows the zone map over the screen, as the map add-ons do.",
-            MapOverlay,
-            OFF_ON,
-            Now,
-        ),
-        row(
-            "Map Overlay Opacity",
-            "How opaque the map overlay is.",
-            MapOpacity,
-            &[],
-            Now,
-        ),
-        row(
-            "Minimap",
-            "The zone map in a corner, centred on you, with what is near; the mouse wheel over it zooms.",
-            Minimap,
-            OFF_ON,
-            Now,
-        ),
-        row(
-            "Minimap Position",
-            "Where the minimap stands: the top right (beside the menus while one is open), or the top left under the cast bar.",
-            MinimapDock,
-            &[(0, "Top Right"), (1, "Top Left")],
-            Now,
-        ),
-        row(
-            "Minimap Size",
-            "How big the minimap is.",
-            MinimapSize,
-            &[(0, "Small"), (1, "Medium"), (2, "Large")],
-            Now,
-        ),
+        row("Map Overlay", "Ctrl / Alt + O shows the zone map over the screen, as the map add-ons do.", MapOverlay, OFF_ON, Now),
+        row("Map Overlay Opacity", "How opaque the map overlay is.", MapOpacity, &[], Now),
+        row("Minimap", "The zone map in a corner, centred on you, with what is near; the mouse wheel over it zooms.", Minimap, OFF_ON, Now),
+        row("Minimap Position", "Where the minimap stands: the top right (beside the menus while one is open), or the top left under the cast bar.", MinimapDock, &[(0, "Top Right"), (1, "Top Left")], Now),
+        row("Minimap Size", "How big the minimap is.", MinimapSize, &[(0, "Small"), (1, "Medium"), (2, "Large")], Now),
     ];
-    const TIMERS_ROW: SRow = row(
-        "Timers",
-        "Recasts, our effects and the ones we put on others and on monsters, in a window that slides in and out (/timers).",
-        Timers,
-        OFF_ON,
-        Now,
-    );
-    const REGIME_ROW: SRow = row(
-        "Training Regime",
-        "While a Fields or Grounds of Valor regime is on, its targets and kills in a window beside the timers (from a manual's page, or the kills).",
-        Regime,
-        OFF_ON,
-        Now,
-    );
-    const SKILLCHAIN_ROW: SRow = row(
-        "Skillchain Helper",
-        "In a party: the skillchains it can make and their elements, and on your target the open one, what closes it and when to burst.",
-        Skillchains,
-        OFF_ON,
-        Now,
-    );
+    const TIMERS_ROW: SRow = row("Timers", "Recasts, our effects and the ones we put on others and on monsters, in a window that slides in and out (/timers).", Timers, OFF_ON, Now);
+    const REGIME_ROW: SRow = row("Training Regime", "While a Fields or Grounds of Valor regime is on, its targets and kills in a window beside the timers (from a manual's page, or the kills).", Regime, OFF_ON, Now);
+    const SKILLCHAIN_ROW: SRow = row("Skillchain Helper", "In a party: the skillchains it can make and their elements, and on your target the open one, what closes it and when to burst.", Skillchains, OFF_ON, Now);
     const TIMERS: &[SRow] = &[
         TIMERS_ROW,
-        row(
-            "Timers Position",
-            "Where the timers window docks: the left edge, the right edge above the party list, or the top.",
-            TimersDock,
-            &[(0, "Left"), (1, "Right"), (2, "Top")],
-            Now,
-        ),
+        row("Timers Position", "Where the timers window docks: the left edge, the right edge above the party list, or the top.", TimersDock, &[(0, "Left"), (1, "Right"), (2, "Top")], Now),
         REGIME_ROW,
         SKILLCHAIN_ROW,
     ];
     const TIMERS_MODERN: &[SRow] = &[TIMERS_ROW, REGIME_ROW, SKILLCHAIN_ROW];
     const EXTRA_MISC: &[SRow] = &[
-        row(
-            "Synthesis Amount",
-            "After Synthesize, ask how many to make and make them one after another.",
-            SynthAmount,
-            OFF_ON,
-            Now,
-        ),
-        row(
-            "Timestamps on All Lines",
-            "Every log line gets the time, not only chat (the format of /timestamp; seconds while it is off).",
-            StampAll,
-            OFF_ON,
-            Now,
-        ),
-        row(
-            "Target Distance",
-            "How far your target is, centre to centre, in the target window.",
-            TargetDistance,
-            OFF_ON,
-            Now,
-        ),
-        row(
-            "Target HP %",
-            "The target's HP percent beside its gauge in the classic target window (the modern one shows it).",
-            TargetHpp,
-            OFF_ON,
-            Now,
-        ),
-        row(
-            "Clock",
-            "Earth time, the moon and the next Vana'diel day beside the game's clock.",
-            EarthClock,
-            OFF_ON,
-            Now,
-        ),
-        row(
-            "Trust Speech",
-            "What your trusts say to the party (on summoning, on a weapon skill, on defeat) in the log, or not.",
-            TrustSpeech,
-            &[(0, "Shown"), (1, "Hidden")],
-            Now,
-        ),
-        row(
-            "Ready Lines",
-            "The \"readies\" and \"starts casting\" lines: everyone's, or only yours and monsters' (what is coming at you).",
-            ReadyLines,
-            &[(0, "All"), (1, "Mine, Monsters'")],
-            Now,
-        ),
-        row(
-            "Battle Text",
-            "Battle lines as the game words them, or short: \"Name [Fast Blade] → Wild Rabbit: 123\". Lines with no short form stay as they are.",
-            ShortBattle,
-            &[(0, "Retail"), (1, "Short")],
-            Now,
-        ),
-        row(
-            "Battle Names",
-            "Names in battle lines in one colour, or coloured by who they are: you, your party, the alliance, a monster your party claimed, another's claim.",
-            NameColours,
-            &[(0, "Plain"), (1, "Coloured")],
-            Now,
-        ),
-        row(
-            "Text Auto-Advance",
-            "An event's message waiting for a key goes on by itself after this many seconds.",
-            AutoAdvance,
-            &[(0, "OFF"), (3, "3 s"), (5, "5 s"), (8, "8 s")],
-            Now,
-        ),
+        row("Synthesis Amount", "After Synthesize, ask how many to make and make them one after another.", SynthAmount, OFF_ON, Now),
+        row("Timestamps on All Lines", "Every log line gets the time, not only chat (the format of /timestamp; seconds while it is off).", StampAll, OFF_ON, Now),
+        row("Target Distance", "How far your target is, centre to centre, in the target window.", TargetDistance, OFF_ON, Now),
+        row("Target HP %", "The target's HP percent beside its gauge in the classic target window (the modern one shows it).", TargetHpp, OFF_ON, Now),
+        row("Clock", "Earth time, the moon and the next Vana'diel day beside the game's clock.", EarthClock, OFF_ON, Now),
+        row("Trust Speech", "What your trusts say to the party (on summoning, on a weapon skill, on defeat) in the log, or not.", TrustSpeech, &[(0, "Shown"), (1, "Hidden")], Now),
+        row("Ready Lines", "The \"readies\" and \"starts casting\" lines: everyone's, or only yours and monsters' (what is coming at you).", ReadyLines, &[(0, "All"), (1, "Mine, Monsters'")], Now),
+        row("Battle Text", "Battle lines as the game words them, or short: \"Name [Fast Blade] → Wild Rabbit: 123\". Lines with no short form stay as they are.", ShortBattle, &[(0, "Retail"), (1, "Short")], Now),
+        row("Battle Names", "Names in battle lines in one colour, or coloured by who they are: you, your party, the alliance, a monster your party claimed, another's claim.", NameColours, &[(0, "Plain"), (1, "Coloured")], Now),
+        row("Text Auto-Advance", "An event's message waiting for a key goes on by itself after this many seconds.", AutoAdvance, &[(0, "OFF"), (3, "3 s"), (5, "5 s"), (8, "8 s")], Now),
     ];
     match kind {
-        Kind::Extras if modern => [&MAPS[..3], TIMERS_MODERN, EXTRA_MISC]
-            .get(tab)
-            .copied()
-            .unwrap_or(&[]),
+        Kind::Extras if modern => [&MAPS[..3], TIMERS_MODERN, EXTRA_MISC].get(tab).copied().unwrap_or(&[]),
         Kind::Extras => [MAPS, TIMERS, EXTRA_MISC].get(tab).copied().unwrap_or(&[]),
         Kind::Settings if in_game && tab == 4 => &SOUND[..3],
         Kind::Settings if tab == MODS => &[],
@@ -744,23 +353,8 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
 }
 
 const RESOLUTIONS: [[u32; 2]; 17] = [
-    [640, 480],
-    [800, 600],
-    [1024, 768],
-    [1280, 720],
-    [1280, 800],
-    [1280, 1024],
-    [1366, 768],
-    [1440, 900],
-    [1600, 900],
-    [1680, 1050],
-    [1920, 1080],
-    [1920, 1200],
-    [2560, 1080],
-    [2560, 1440],
-    [2560, 1600],
-    [3440, 1440],
-    [3840, 2160],
+    [640, 480], [800, 600], [1024, 768], [1280, 720], [1280, 800], [1280, 1024], [1366, 768], [1440, 900], [1600, 900], [1680, 1050],
+    [1920, 1080], [1920, 1200], [2560, 1080], [2560, 1440], [2560, 1600], [3440, 1440], [3840, 2160],
 ];
 
 /// The Config pages' size (conf2win and its siblings, 366 x 296 at (16, 48)).
@@ -824,37 +418,14 @@ impl SettingsUi {
     }
 
     pub fn open_kind(c: &Config, window: [u32; 2], kind: Kind) -> Self {
-        let mut s = Self {
-            kind,
-            s: Settings::of(c),
-            monitors: Vec::new(),
-            gpus: Vec::new(),
-            window,
-            in_game: false,
-            tab: 0,
-            row: 0,
-            col: 0,
-            edit: false,
-            sounds: Vec::new(),
-            dirty: false,
-            hover: false,
-            mods_ui: None,
-            m_mods: (0, 0),
-            m_remove: None,
-            mod_pages: Vec::new(),
-            mod_changes: Vec::new(),
-        };
+        let mut s = Self { kind, s: Settings::of(c), monitors: Vec::new(), gpus: Vec::new(), window, in_game: false, tab: 0, row: 0, col: 0, edit: false, sounds: Vec::new(), dirty: false, hover: false, mods_ui: None, m_mods: (0, 0), m_remove: None, mod_pages: Vec::new(), mod_changes: Vec::new() };
         s.col = s.marked_col();
         s
     }
 
     fn tabs(&self) -> Vec<String> {
         if self.kind == Kind::Extras {
-            EXTRA_TABS
-                .iter()
-                .map(|t| t.to_string())
-                .chain(self.mod_pages.iter().map(|p| p.name.clone()))
-                .collect()
+            EXTRA_TABS.iter().map(|t| t.to_string()).chain(self.mod_pages.iter().map(|p| p.name.clone())).collect()
         } else {
             TABS.iter().map(|t| t.to_string()).collect()
         }
@@ -874,37 +445,15 @@ impl SettingsUi {
                 .rows
                 .iter()
                 .enumerate()
-                .map(|(i, r)| Row {
-                    label: r.label.clone(),
-                    help: r.help.clone(),
-                    val: Val::Mod(i),
-                    choices: r
-                        .choices
-                        .iter()
-                        .enumerate()
-                        .map(|(k, c)| (k as u32, c.0.clone()))
-                        .collect(),
-                    when: When::Now,
-                })
+                .map(|(i, r)| Row { label: r.label.clone(), help: r.help.clone(), val: Val::Mod(i), choices: r.choices.iter().enumerate().map(|(k, c)| (k as u32, c.0.clone())).collect(), when: When::Now })
                 .collect();
         }
-        rows(self.kind, self.tab, self.in_game, self.s.modern_ui)
-            .iter()
-            .map(Row::from)
-            .collect()
+        rows(self.kind, self.tab, self.in_game, self.s.modern_ui).iter().map(Row::from).collect()
     }
 
     fn ctl(r: &Row) -> Ctl {
         match r.val {
-            Val::Size(..)
-            | Val::Gamma
-            | Val::FrameLimit
-            | Val::Monitor
-            | Val::Gpu
-            | Val::Music
-            | Val::Effects
-            | Val::MapOpacity
-            | Val::ModernOpacity => Ctl::Slider,
+            Val::Size(..) | Val::Gamma | Val::FrameLimit | Val::Monitor | Val::Gpu | Val::Music | Val::Effects | Val::MapOpacity | Val::ModernOpacity => Ctl::Slider,
             _ if r.choices.len() <= 3 => Ctl::Buttons(r.choices.len()),
             _ => Ctl::Slider,
         }
@@ -970,10 +519,7 @@ impl SettingsUi {
             Val::Effects => self.s.effects,
             Val::RetailAspect => self.s.retail_aspect as u32,
             Val::CursorSize => self.s.cursor_size,
-            Val::Mod(i) => self
-                .mod_page()
-                .and_then(|p| p.rows.get(i))
-                .map_or(0, |r| r.at as u32),
+            Val::Mod(i) => self.mod_page().and_then(|p| p.rows.get(i)).map_or(0, |r| r.at as u32),
         }
     }
 
@@ -1009,17 +555,14 @@ impl SettingsUi {
             Val::RetailAspect => self.s.retail_aspect = x != 0,
             Val::CursorSize => self.s.cursor_size = x,
             Val::Mod(i) => {
-                let Some(k) = self.tab.checked_sub(EXTRA_TABS.len()) else {
-                    return;
-                };
+                let Some(k) = self.tab.checked_sub(EXTRA_TABS.len()) else { return };
                 if let Some(p) = self.mod_pages.get_mut(k)
                     && let Some(r) = p.rows.get_mut(i)
                     && let Some(c) = r.choices.get(x as usize)
                     && r.at != x as usize
                 {
                     r.at = x as usize;
-                    self.mod_changes
-                        .push((p.id.clone(), r.key.clone(), c.1.clone()));
+                    self.mod_changes.push((p.id.clone(), r.key.clone(), c.1.clone()));
                 }
             }
             _ => {}
@@ -1027,24 +570,11 @@ impl SettingsUi {
     }
 
     fn tool_get(&self, n: &str) -> u32 {
-        self.s
-            .tool
-            .get(n)
-            .copied()
-            .or_else(|| {
-                crate::config::TOOL_DEFAULTS
-                    .iter()
-                    .find(|d| d.0 == n)
-                    .map(|d| d.1)
-            })
-            .unwrap_or(0)
+        self.s.tool.get(n).copied().or_else(|| crate::config::TOOL_DEFAULTS.iter().find(|d| d.0 == n).map(|d| d.1)).unwrap_or(0)
     }
 
     fn tool_set(&mut self, n: &str, x: u32) {
-        if crate::config::TOOL_DEFAULTS
-            .iter()
-            .any(|d| d.0 == n && d.1 == x)
-        {
+        if crate::config::TOOL_DEFAULTS.iter().any(|d| d.0 == n && d.1 == x) {
             self.s.tool.remove(n);
         } else {
             self.s.tool.insert(n.to_string(), x);
@@ -1060,27 +590,10 @@ impl SettingsUi {
                 let cur = [self.tool_get(a), self.tool_get(b)];
                 (list.len(), list.iter().position(|&x| x == cur).unwrap_or(0))
             }
-            Val::Gamma => (
-                21,
-                ((f32::from_bits(self.tool_get("0028")) + 1.0) * 10.0)
-                    .round()
-                    .clamp(0.0, 20.0) as usize,
-            ),
+            Val::Gamma => (21, ((f32::from_bits(self.tool_get("0028")) + 1.0) * 10.0).round().clamp(0.0, 20.0) as usize),
             Val::FrameLimit => (FRAME_LIMITS.len(), pos(&FRAME_LIMITS, self.s.frame_limit)),
-            Val::Monitor => (
-                self.monitors.len().max(1),
-                self.monitors
-                    .iter()
-                    .position(|m| m.0 == self.s.monitor)
-                    .unwrap_or(0),
-            ),
-            Val::Gpu => (
-                self.gpus.len() + 1,
-                self.gpus
-                    .iter()
-                    .position(|g| *g == self.s.gpu)
-                    .map_or(0, |i| i + 1),
-            ),
+            Val::Monitor => (self.monitors.len().max(1), self.monitors.iter().position(|m| m.0 == self.s.monitor).unwrap_or(0)),
+            Val::Gpu => (self.gpus.len() + 1, self.gpus.iter().position(|g| *g == self.s.gpu).map_or(0, |i| i + 1)),
             Val::Music => (21, (self.s.music / 5) as usize),
             Val::Effects => (21, (self.s.effects / 5) as usize),
             Val::MapOpacity => (19, (self.s.map_opacity.clamp(10, 100) / 5 - 2) as usize),
@@ -1112,13 +625,7 @@ impl SettingsUi {
                     self.s.monitor = m.0.clone();
                 }
             }
-            Val::Gpu => {
-                self.s.gpu = if i == 0 {
-                    String::new()
-                } else {
-                    self.gpus.get(i - 1).cloned().unwrap_or_default()
-                }
-            }
+            Val::Gpu => self.s.gpu = if i == 0 { String::new() } else { self.gpus.get(i - 1).cloned().unwrap_or_default() },
             Val::Music => self.s.music = (i as u32 * 5).min(100),
             Val::Effects => self.s.effects = (i as u32 * 5).min(100),
             Val::MapOpacity => self.s.map_opacity = ((i as u32 + 2) * 5).clamp(10, 100),
@@ -1148,27 +655,13 @@ impl SettingsUi {
             Val::Effects => format!("{}%", self.s.effects),
             Val::MapOpacity => format!("{}%", self.s.map_opacity),
             Val::ModernOpacity => format!("{}%", self.s.modern_opacity),
-            Val::Monitor => self
-                .monitors
-                .iter()
-                .find(|m| m.0 == self.s.monitor)
-                .or(self.monitors.first())
-                .map_or_else(|| "Default".into(), |m| m.0.clone()),
+            Val::Monitor => self.monitors.iter().find(|m| m.0 == self.s.monitor).or(self.monitors.first()).map_or_else(|| "Default".into(), |m| m.0.clone()),
             Val::Gpu if self.s.gpu.is_empty() => "Default".into(),
             // The name without the driver's part ("AMD Radeon RX 6800 XT (RADV NAVI21)").
-            Val::Gpu => self
-                .s
-                .gpu
-                .split(" (")
-                .next()
-                .unwrap_or_default()
-                .to_string(),
+            Val::Gpu => self.s.gpu.split(" (").next().unwrap_or_default().to_string(),
             v => {
                 let x = self.get(v);
-                r.choices
-                    .iter()
-                    .find(|c| c.0 == x)
-                    .map_or(x.to_string(), |c| c.1.to_string())
+                r.choices.iter().find(|c| c.0 == x).map_or(x.to_string(), |c| c.1.to_string())
             }
         }
     }
@@ -1178,19 +671,9 @@ impl SettingsUi {
         if self.on_mods() {
             return self.mods_marked();
         }
-        let Some(r) = self
-            .row
-            .checked_sub(1)
-            .and_then(|i| self.rows().get(i).cloned())
-        else {
-            return 0;
-        };
+        let Some(r) = self.row.checked_sub(1).and_then(|i| self.rows().get(i).cloned()) else { return 0 };
         match Self::ctl(&r) {
-            Ctl::Buttons(_) => r
-                .choices
-                .iter()
-                .position(|c| c.0 == self.get(r.val))
-                .unwrap_or(0),
+            Ctl::Buttons(_) => r.choices.iter().position(|c| c.0 == self.get(r.val)).unwrap_or(0),
             Ctl::Slider => 0,
         }
     }
@@ -1224,13 +707,7 @@ impl SettingsUi {
         if self.on_mods() {
             return self.mods_enter();
         }
-        let Some(r) = self
-            .row
-            .checked_sub(1)
-            .and_then(|i| self.rows().get(i).cloned())
-        else {
-            return;
-        };
+        let Some(r) = self.row.checked_sub(1).and_then(|i| self.rows().get(i).cloned()) else { return };
         match Self::ctl(&r) {
             Ctl::Buttons(_) => {
                 let before = self.s.clone();
@@ -1273,11 +750,7 @@ impl SettingsUi {
                 egui::Key::ArrowLeft if i > 0 => self.set_stop(&r, i - 1),
                 egui::Key::Enter | egui::Key::Escape => {
                     self.edit = false;
-                    self.sounds.push(if key == egui::Key::Enter {
-                        Se::Select
-                    } else {
-                        Se::Cancel
-                    });
+                    self.sounds.push(if key == egui::Key::Enter { Se::Select } else { Se::Cancel });
                 }
                 _ => {}
             }
@@ -1286,11 +759,7 @@ impl SettingsUi {
         let span = self.rows().len() + 1;
         match key {
             egui::Key::ArrowDown | egui::Key::ArrowUp => {
-                let d = if key == egui::Key::ArrowDown {
-                    1
-                } else {
-                    span - 1
-                };
+                let d = if key == egui::Key::ArrowDown { 1 } else { span - 1 };
                 self.row = (self.row + d) % span;
                 self.col = self.marked_col().min(self.cols(self.row) - 1);
                 self.sounds.push(Se::Cursor);
@@ -1341,11 +810,7 @@ impl SettingsUi {
             let y = Self::TOP + PITCH * i as f32 + 14.0;
             // conf2win's two 88-px and conf3win's three 64-px columns; a caption that does not fit (12 px of the
             // button are its ends) widens every button of the row, from the bullets' column.
-            let need = r
-                .choices
-                .iter()
-                .map(|c| super::super::render::screens::label_width(&c.1) + 12.0)
-                .fold(0.0, f32::max);
+            let need = r.choices.iter().map(|c| super::super::render::screens::label_width(&c.1) + 12.0).fold(0.0, f32::max);
             match Self::ctl(r) {
                 Ctl::Buttons(n) if n <= 2 && need <= 88.0 => {
                     for (c, x) in WIDE.iter().enumerate().take(n) {
@@ -1370,21 +835,12 @@ impl SettingsUi {
     }
 
     /// The pointer: controls follow it; a click is Enter, on a slider it sets the stop under the pointer.
-    pub fn pointer(
-        &mut self,
-        gu: &GameUi,
-        p: (f32, f32),
-        moved: bool,
-        clicked: bool,
-        sw: f32,
-        sh: f32,
-    ) {
+    pub fn pointer(&mut self, gu: &GameUi, p: (f32, f32), moved: bool, clicked: bool, sw: f32, sh: f32) {
         self.sounds.clear();
         self.hover = false;
         let (x, y) = self.origin(gu, sw, sh);
-        if let Some(k) = self.arrow_rects().iter().position(|r| {
-            p.0 >= x + r[0] && p.1 >= y + r[1] && p.0 < x + r[0] + r[2] && p.1 < y + r[1] + r[3]
-        }) {
+        if let Some(k) = self.arrow_rects().iter().position(|r| p.0 >= x + r[0] && p.1 >= y + r[1] && p.0 < x + r[0] + r[2] && p.1 < y + r[1] + r[3])
+        {
             self.hover = true;
             if clicked {
                 self.edit = false;
@@ -1395,9 +851,7 @@ impl SettingsUi {
         if self.on_mods() && self.mods_ui.as_ref().is_some_and(|m| m.held.is_some()) {
             return;
         }
-        let hit = self.controls().into_iter().find(|(_, _, r)| {
-            p.0 >= x + r[0] && p.1 >= y + r[1] && p.0 < x + r[0] + r[2] && p.1 < y + r[1] + r[3]
-        });
+        let hit = self.controls().into_iter().find(|(_, _, r)| p.0 >= x + r[0] && p.1 >= y + r[1] && p.0 < x + r[0] + r[2] && p.1 < y + r[1] + r[3]);
         let Some((row, col, r)) = hit else { return };
         self.hover = true;
         if (moved || clicked) && (row, col) != (self.row, self.col) && !self.edit {
@@ -1430,13 +884,7 @@ impl SettingsUi {
         // miss00: the arrows and the page's name.
         gu.sprite("menu    frames", 25, x + ARROWS[0], y + ARROW_Y, N);
         gu.sprite("menu    frames", 26, x + ARROWS[1], y + ARROW_Y, N);
-        gu.text(
-            &self.tabs()[self.tab],
-            x + NAME_XY.0,
-            y + NAME_XY.1,
-            0,
-            [0x80; 4],
-        );
+        gu.text(&self.tabs()[self.tab], x + NAME_XY.0, y + NAME_XY.1, 0, [0x80; 4]);
         if self.row == 0 {
             gu.cursor(x + NAME_XY.0 - 4.0, y + NAME_XY.1);
         }
@@ -1451,14 +899,7 @@ impl SettingsUi {
             let hy = y + Self::TOP + PITCH * i as f32;
             // The bullet (465 cell 2, drawn at its own place (20, 27) on the page) moved to the heading.
             if let Some(b) = gu.cell_bounds("menu    windowps", 465, 2) {
-                gu.sprite_cells(
-                    "menu    windowps",
-                    465,
-                    2..3,
-                    x + 20.0 - b[0],
-                    hy + 2.0 - b[1],
-                    N,
-                );
+                gu.sprite_cells("menu    windowps", 465, 2..3, x + 20.0 - b[0], hy + 2.0 - b[1], N);
             }
             gu.label(&r.label, x + 32.0, hy, N, false);
             // A slider's value at the heading's end, right-aligned to the slider's (cut to the room left).
@@ -1474,18 +915,8 @@ impl SettingsUi {
                 match Self::ctl(r) {
                     Ctl::Buttons(_) => {
                         let d = if on { -1.0 } else { 0.0 };
-                        button(
-                            gu,
-                            [x + b[0] + d, y + b[1] + d, b[2], b[3]],
-                            if on { ON } else { N },
-                        );
-                        gu.label(
-                            &r.choices[*c].1,
-                            x + b[0] + 5.0 + d,
-                            y + b[1] + 1.0 + d,
-                            if on { ON } else { N },
-                            true,
-                        );
+                        button(gu, [x + b[0] + d, y + b[1] + d, b[2], b[3]], if on { ON } else { N });
+                        gu.label(&r.choices[*c].1, x + b[0] + 5.0 + d, y + b[1] + 1.0 + d, if on { ON } else { N }, true);
                         if r.choices[*c].0 == self.get(r.val) {
                             marker(gu, x + b[0], y + b[1], b[2]);
                         }
@@ -1493,31 +924,12 @@ impl SettingsUi {
                     Ctl::Slider => {
                         // The Config pages' slider: track windowps 383, fill 384 (brighter while edited).
                         let (n, k) = self.stops(r);
-                        let f = if n > 1 {
-                            k as f32 / (n - 1) as f32
-                        } else {
-                            1.0
-                        };
+                        let f = if n > 1 { k as f32 / (n - 1) as f32 } else { 1.0 };
                         let editing = self.edit && focus(i + 1, 0);
                         // The track is baked into each page's backing (465 cells 8..10 under conf2win child 3 at (88, 80)).
-                        gu.sprite_cells(
-                            "menu    windowps",
-                            465,
-                            8..11,
-                            x + b[0] - 88.0,
-                            y + b[1] - 80.0,
-                            N,
-                        );
+                        gu.sprite_cells("menu    windowps", 465, 8..11, x + b[0] - 88.0, y + b[1] - 80.0, N);
                         if f > 0.0 {
-                            gu.sprite_scaled(
-                                "menu    windowps",
-                                384,
-                                x + b[0],
-                                y + b[1],
-                                f,
-                                1.0,
-                                if editing { 0xa0a0_a0a0 } else { N },
-                            );
+                            gu.sprite_scaled("menu    windowps", 384, x + b[0], y + b[1], f, 1.0, if editing { 0xa0a0_a0a0 } else { N });
                         }
                     }
                 }
@@ -1542,11 +954,7 @@ impl SettingsUi {
         }
         self.row = row.min(self.row_count());
         self.col = self.marked_col();
-        if let Some(m) = self
-            .mods_ui
-            .as_mut()
-            .filter(|_| self.kind == Kind::Settings && self.tab == MODS)
-        {
+        if let Some(m) = self.mods_ui.as_mut().filter(|_| self.kind == Kind::Settings && self.tab == MODS) {
             m.follow(self.row);
         }
     }
@@ -1561,21 +969,10 @@ impl SettingsUi {
     /// The help bar's text for the cursor's row, with when a change shows.
     pub fn help(&self) -> String {
         if self.on_mods() {
-            return if self.s.modern_ui {
-                self.modern_mods_help()
-            } else {
-                self.mods_help()
-            };
+            return if self.s.modern_ui { self.modern_mods_help() } else { self.mods_help() };
         }
-        let Some(r) = self
-            .row
-            .checked_sub(1)
-            .and_then(|i| self.rows().get(i).cloned())
-        else {
-            return format!(
-                "Left / Right: another page of {}.",
-                self.title().to_lowercase()
-            );
+        let Some(r) = self.row.checked_sub(1).and_then(|i| self.rows().get(i).cloned()) else {
+            return format!("Left / Right: another page of {}.", self.title().to_lowercase());
         };
         let when = match r.when {
             When::Now => "",
@@ -1586,11 +983,7 @@ impl SettingsUi {
     }
 
     pub fn title(&self) -> &'static str {
-        if self.kind == Kind::Extras {
-            "Extras"
-        } else {
-            "Settings"
-        }
+        if self.kind == Kind::Extras { "Extras" } else { "Settings" }
     }
 }
 
@@ -1621,21 +1014,12 @@ pub struct View {
 /// A help line for the modern page: without the Config tool's value numbers ("0034: ") and our "(not retail)" notes.
 fn plain(help: &str) -> String {
     let body = match help.split_once(": ") {
-        Some((head, rest))
-            if head.starts_with(|c: char| c.is_ascii_digit())
-                && head
-                    .chars()
-                    .all(|c| c.is_ascii_digit() || c == ' ' || c == '/') =>
-        {
-            rest
-        }
+        Some((head, rest)) if head.starts_with(|c: char| c.is_ascii_digit()) && head.chars().all(|c| c.is_ascii_digit() || c == ' ' || c == '/') => rest,
         _ => help,
     };
     let body = body.replace(" (not retail)", "");
     let mut c = body.chars();
-    c.next()
-        .map(|f| f.to_uppercase().chain(c).collect())
-        .unwrap_or_default()
+    c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
 }
 
 impl SettingsUi {
@@ -1647,29 +1031,13 @@ impl SettingsUi {
                 .filter_map(|i| {
                     if i < n {
                         let on = self.s.mods[i].enabled;
-                        let ctl = VCtl::Buttons(vec![
-                            ("ON".into(), on),
-                            ("OFF".into(), !on),
-                            ("Move".into(), false),
-                        ]);
-                        Some(VRow {
-                            label: format!("{}. {}", i + 1, self.s.mods[i].name),
-                            ctl,
-                        })
+                        let ctl = VCtl::Buttons(vec![("ON".into(), on), ("OFF".into(), !on), ("Move".into(), false)]);
+                        Some(VRow { label: format!("{}. {}", i + 1, self.s.mods[i].name), ctl })
                     } else {
                         let p = m?.packs.get(i - n)?;
-                        let name = p
-                            .path
-                            .file_name()
-                            .map(|f| f.to_string_lossy().into_owned())
-                            .unwrap_or_default();
-                        let label = m
-                            .and_then(|m| m.progress(&p.slug))
-                            .map_or(name.clone(), |pm| format!("{}%  {name}", pm / 10));
-                        Some(VRow {
-                            label,
-                            ctl: VCtl::Buttons(vec![("Install".into(), false)]),
-                        })
+                        let name = p.path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+                        let label = m.and_then(|m| m.progress(&p.slug)).map_or(name.clone(), |pm| format!("{}%  {name}", pm / 10));
+                        Some(VRow { label, ctl: VCtl::Buttons(vec![("Install".into(), false)]) })
                     }
                 })
                 .collect()
@@ -1678,38 +1046,17 @@ impl SettingsUi {
                 .iter()
                 .map(|r| {
                     let ctl = match Self::ctl(r) {
-                        Ctl::Buttons(_) => VCtl::Buttons(
-                            r.choices
-                                .iter()
-                                .map(|c| (c.1.to_string(), c.0 == self.get(r.val)))
-                                .collect(),
-                        ),
+                        Ctl::Buttons(_) => VCtl::Buttons(r.choices.iter().map(|c| (c.1.to_string(), c.0 == self.get(r.val))).collect()),
                         Ctl::Slider => {
                             let (n, at) = self.stops(r);
-                            VCtl::Slider {
-                                n,
-                                at,
-                                shown: self.shown(r),
-                            }
+                            VCtl::Slider { n, at, shown: self.shown(r) }
                         }
                     };
-                    VRow {
-                        label: r.label.to_string(),
-                        ctl,
-                    }
+                    VRow { label: r.label.to_string(), ctl }
                 })
                 .collect()
         };
-        View {
-            title: self.title(),
-            tabs: self.tabs(),
-            tab: self.tab,
-            rows,
-            row: self.row,
-            col: self.col,
-            edit: self.edit,
-            help: plain(&self.help()),
-        }
+        View { title: self.title(), tabs: self.tabs(), tab: self.tab, rows, row: self.row, col: self.col, edit: self.edit, help: plain(&self.help()) }
     }
 
     /// The modern layer's mouse: page `t`.
@@ -1722,10 +1069,7 @@ impl SettingsUi {
 
     /// The cursor to a control (row from 1); true when it moved.
     pub fn m_point(&mut self, row: usize, col: usize) -> bool {
-        if self.edit
-            || self.mods_ui.as_ref().is_some_and(|m| m.held.is_some())
-            || (row, col) == (self.row, self.col)
-        {
+        if self.edit || self.mods_ui.as_ref().is_some_and(|m| m.held.is_some()) || (row, col) == (self.row, self.col) {
             return false;
         }
         (self.row, self.col) = (row, col);
@@ -1750,9 +1094,7 @@ impl SettingsUi {
     /// A slider set to stop `i` by the pointer.
     pub fn m_slide(&mut self, row: usize, i: usize) {
         self.sounds.clear();
-        let Some(r) = row.checked_sub(1).and_then(|k| self.rows().get(k).cloned()) else {
-            return;
-        };
+        let Some(r) = row.checked_sub(1).and_then(|k| self.rows().get(k).cloned()) else { return };
         (self.row, self.col, self.edit) = (row, 0, false);
         let (_, at) = self.stops(&r);
         if at != i {
@@ -1770,11 +1112,7 @@ impl SettingsUi {
 
     /// Rows below the page name.
     fn row_count(&self) -> usize {
-        if self.on_mods() {
-            self.mods_total()
-        } else {
-            self.rows().len()
-        }
+        if self.on_mods() { self.mods_total() } else { self.rows().len() }
     }
 
     fn mods_total(&self) -> usize {
@@ -1829,10 +1167,7 @@ impl SettingsUi {
                 K::Escape => {
                     if let Some(b) = keep.take() {
                         let name = self.s.mods[i].name.clone();
-                        self.row = b
-                            .iter()
-                            .position(|m| m.name == name)
-                            .map_or(self.row, |k| k + 1);
+                        self.row = b.iter().position(|m| m.name == name).map_or(self.row, |k| k + 1);
                         self.s.mods = b;
                     }
                     self.sounds.push(Se::Cancel);
@@ -1875,9 +1210,7 @@ impl SettingsUi {
     }
 
     fn mods_enter(&mut self) {
-        let Some(i) = self.row.checked_sub(1) else {
-            return;
-        };
+        let Some(i) = self.row.checked_sub(1) else { return };
         let n = self.s.mods.len();
         if i < n {
             if self.col < 2 {
@@ -1900,10 +1233,7 @@ impl SettingsUi {
         let top = self.mods_ui.as_ref().map_or(0, |m| m.top);
         let n = self.s.mods.len();
         let mut out = Vec::new();
-        for (vis, i) in (top..self.mods_total())
-            .take(super::modsui::VISIBLE)
-            .enumerate()
-        {
+        for (vis, i) in (top..self.mods_total()).take(super::modsui::VISIBLE).enumerate() {
             let y = Self::TOP + PITCH * vis as f32 + 14.0;
             if i < n {
                 for (c, bx) in NARROW.iter().enumerate() {
@@ -1926,27 +1256,13 @@ impl SettingsUi {
         for (vis, i) in (top..total).take(super::modsui::VISIBLE).enumerate() {
             let hy = y + Self::TOP + PITCH * vis as f32;
             if let Some(b) = gu.cell_bounds("menu    windowps", 465, 2) {
-                gu.sprite_cells(
-                    "menu    windowps",
-                    465,
-                    2..3,
-                    x + 20.0 - b[0],
-                    hy + 2.0 - b[1],
-                    N,
-                );
+                gu.sprite_cells("menu    windowps", 465, 2..3, x + 20.0 - b[0], hy + 2.0 - b[1], N);
             }
             let (mut label, tint) = match (i < n, m) {
-                (true, _) => (
-                    format!("{}. {}", i + 1, self.s.mods[i].name),
-                    if held && self.row == i + 1 { ON } else { N },
-                ),
+                (true, _) => (format!("{}. {}", i + 1, self.s.mods[i].name), if held && self.row == i + 1 { ON } else { N }),
                 (false, Some(m)) => {
                     let p = &m.packs[i - n];
-                    let name = p
-                        .path
-                        .file_name()
-                        .map(|f| f.to_string_lossy().into_owned())
-                        .unwrap_or_default();
+                    let name = p.path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
                     match m.progress(&p.slug) {
                         Some(pm) => (format!("{}%  {name}", pm / 10), ON),
                         None => (name, N),
@@ -1977,14 +1293,7 @@ impl SettingsUi {
             gu.cursor(hx, hy);
         }
         if total > super::modsui::VISIBLE {
-            gu.scroll_bar(
-                x + W - 12.0,
-                y + Self::TOP,
-                PITCH * super::modsui::VISIBLE as f32,
-                total,
-                super::modsui::VISIBLE,
-                top,
-            );
+            gu.scroll_bar(x + W - 12.0, y + Self::TOP, PITCH * super::modsui::VISIBLE as f32, total, super::modsui::VISIBLE, top);
         }
     }
 
@@ -1995,29 +1304,11 @@ impl SettingsUi {
 
     /// The installed packs (name, on) in priority order, then the archives found (name, per mille when installing).
     pub fn mods_rows(&self) -> (Vec<(String, bool)>, Vec<(String, Option<u32>)>) {
-        let packs = self
-            .s
-            .mods
-            .iter()
-            .map(|m| (m.name.clone(), m.enabled))
-            .collect();
+        let packs = self.s.mods.iter().map(|m| (m.name.clone(), m.enabled)).collect();
         let archives = self
             .mods_ui
             .as_ref()
-            .map(|m| {
-                m.packs
-                    .iter()
-                    .map(|p| {
-                        (
-                            p.path
-                                .file_name()
-                                .map(|f| f.to_string_lossy().into_owned())
-                                .unwrap_or_default(),
-                            m.progress(&p.slug),
-                        )
-                    })
-                    .collect()
-            })
+            .map(|m| m.packs.iter().map(|p| (p.path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default(), m.progress(&p.slug))).collect())
             .unwrap_or_default();
         (packs, archives)
     }
@@ -2033,11 +1324,7 @@ impl SettingsUi {
 
     /// Pack `i` a place up (higher priority) or down; true when it moved.
     pub fn mod_move(&mut self, i: usize, up: bool) -> bool {
-        let j = if up {
-            i.checked_sub(1)
-        } else {
-            Some(i + 1).filter(|&j| j < self.s.mods.len())
-        };
+        let j = if up { i.checked_sub(1) } else { Some(i + 1).filter(|&j| j < self.s.mods.len()) };
         let Some(j) = j.filter(|_| i < self.s.mods.len()) else {
             self.sounds.push(Se::Error);
             return false;
@@ -2077,8 +1364,7 @@ impl SettingsUi {
     /// The modern Mods page's help for its cursor (m_mods: the tabs, Install from File, the packs, the archives).
     fn modern_mods_help(&self) -> String {
         if self.mods_ui.as_ref().is_some_and(|m| m.browse.is_some()) {
-            return "Enter: open the folder, or install the archive (zip, 7z, rar). Escape: back."
-                .into();
+            return "Enter: open the folder, or install the archive (zip, 7z, rar). Escape: back.".into();
         }
         let n = self.s.mods.len();
         match self.m_mods {
@@ -2099,17 +1385,9 @@ impl SettingsUi {
         let m = self.mods_ui.as_ref();
         match self.row.checked_sub(1) {
             None => "Left / Right: another page of settings.".into(),
-            Some(_) if m.is_some_and(|m| m.held.is_some()) => {
-                "Up / Down: move the pack. Enter: place it here. Escape: put it back.".into()
-            }
-            Some(i) if i < n => format!(
-                "Mod pack {} of {n}: a higher one's textures win. ON / OFF, or Move it. Takes effect on restart.",
-                i + 1
-            ),
-            Some(i) => match (
-                m.and_then(|m| m.packs.get(i - n)),
-                m.and_then(|m| m.error.clone()),
-            ) {
+            Some(_) if m.is_some_and(|m| m.held.is_some()) => "Up / Down: move the pack. Enter: place it here. Escape: put it back.".into(),
+            Some(i) if i < n => format!("Mod pack {} of {n}: a higher one's textures win. ON / OFF, or Move it. Takes effect on restart.", i + 1),
+            Some(i) => match (m.and_then(|m| m.packs.get(i - n)), m.and_then(|m| m.error.clone())) {
                 (_, Some(e)) => format!("The last install failed: {e}"),
                 (Some(p), None) => format!(
                     "{} game file{} in {}: Install unpacks them into the mods folder, on and first. Takes effect on restart.",
@@ -2135,42 +1413,15 @@ pub(super) fn button(gu: &mut GameUi, r: [f32; 4], tint: u32) {
     };
     if let Some(k) = k {
         // Tint 1 / 128 takes the cells' colour to about 0; blend word 0x44 = PS2 (Cs - Cd) * As + Cd.
-        gu.sprite_base(
-            "menu    windowps",
-            k,
-            r[0] + 2.0,
-            r[1] + 2.0,
-            0x8001_0101,
-            0x44,
-        );
+        gu.sprite_base("menu    windowps", k, r[0] + 2.0, r[1] + 2.0, 0x8001_0101, 0x44);
         gu.sprite_base("menu    windowps", k, r[0], r[1], tint, 0);
         return;
     }
     // Other widths: 105's two buttonto cells stretched (the left one to all but the right end's 40 px), base first.
     let left = (r[2] - 40.0).max(8.0);
     for (dx, t, blend) in [(2.0, 0x8001_0101, 0x44), (0.0, tint, 0)] {
-        gu.cell_stretch_blend(
-            "menu    windowps",
-            105,
-            0,
-            r[0] + dx,
-            r[1] + dx,
-            left,
-            r[3],
-            t,
-            blend,
-        );
-        gu.cell_stretch_blend(
-            "menu    windowps",
-            105,
-            1,
-            r[0] + dx + left,
-            r[1] + dx,
-            r[2] - left,
-            r[3],
-            t,
-            blend,
-        );
+        gu.cell_stretch_blend("menu    windowps", 105, 0, r[0] + dx, r[1] + dx, left, r[3], t, blend);
+        gu.cell_stretch_blend("menu    windowps", 105, 1, r[0] + dx + left, r[1] + dx, r[2] - left, r[3], t, blend);
     }
 }
 
@@ -2185,36 +1436,9 @@ pub(super) fn marker(gu: &mut GameUi, x: f32, y: f32, w: f32) {
             gu.sprite("menu    windowps", 412, x + 37.0, y + 4.0, 0x8080_8080);
         }
         _ => {
-            gu.cell_stretch(
-                "menu    windowps",
-                387,
-                0,
-                x + 6.0,
-                y + 17.0,
-                9.0,
-                3.0,
-                0x8080_8080,
-            );
-            gu.cell_stretch(
-                "menu    windowps",
-                387,
-                2,
-                x + 15.0,
-                y + 17.0,
-                w - 30.0,
-                3.0,
-                0x8080_8080,
-            );
-            gu.cell_stretch(
-                "menu    windowps",
-                387,
-                1,
-                x + w - 15.0,
-                y + 17.0,
-                8.0,
-                3.0,
-                0x8080_8080,
-            );
+            gu.cell_stretch("menu    windowps", 387, 0, x + 6.0, y + 17.0, 9.0, 3.0, 0x8080_8080);
+            gu.cell_stretch("menu    windowps", 387, 2, x + 15.0, y + 17.0, w - 30.0, 3.0, 0x8080_8080);
+            gu.cell_stretch("menu    windowps", 387, 1, x + w - 15.0, y + 17.0, 8.0, 3.0, 0x8080_8080);
         }
     }
 }
@@ -2225,22 +1449,10 @@ mod tests {
 
     #[test]
     fn plain_help() {
-        assert_eq!(
-            plain("0034: full screen or a window."),
-            "Full screen or a window."
-        );
-        assert_eq!(
-            plain("0001 / 0002: the window's size."),
-            "The window's size."
-        );
-        assert_eq!(
-            plain("The monitor to use (not retail)."),
-            "The monitor to use."
-        );
-        assert_eq!(
-            plain("Window: the window's shape."),
-            "Window: the window's shape."
-        );
+        assert_eq!(plain("0034: full screen or a window."), "Full screen or a window.");
+        assert_eq!(plain("0001 / 0002: the window's size."), "The window's size.");
+        assert_eq!(plain("The monitor to use (not retail)."), "The monitor to use.");
+        assert_eq!(plain("Window: the window's shape."), "Window: the window's shape.");
     }
 
     #[test]
@@ -2268,10 +1480,7 @@ mod tests {
         assert_eq!(ui.s.frame_limit, 0);
         assert!(ui.dirty);
         ui.s.store(&mut c);
-        assert_eq!(
-            (c.window_mode(), c.background([1280, 800]), c.frame_limit),
-            (2, [640, 400], 0)
-        );
+        assert_eq!((c.window_mode(), c.background([1280, 800]), c.frame_limit), (2, [640, 400], 0));
         let back: Config = serde_json::from_slice(&serde_json::to_vec(&c).unwrap()).unwrap();
         assert_eq!(Settings::of(&back), ui.s);
     }
@@ -2353,20 +1562,11 @@ mod tests {
         use crate::config::ModRef;
         let c = Config::default();
         let mut ui = SettingsUi::open(&c, [1280, 800]);
-        let m = |n: &str, on: bool| ModRef {
-            name: n.into(),
-            enabled: on,
-        };
+        let m = |n: &str, on: bool| ModRef { name: n.into(), enabled: on };
         ui.s.mods = vec![m("a", true), m("b", false), m("c", true)];
         ui.mods_ui = Some(super::super::modsui::Mods::empty());
         (ui.tab, ui.row, ui.col) = (MODS, 1, 0);
-        let names = |ui: &SettingsUi| {
-            ui.s.mods
-                .iter()
-                .map(|m| m.name.clone())
-                .collect::<Vec<_>>()
-                .join("")
-        };
+        let names = |ui: &SettingsUi| ui.s.mods.iter().map(|m| m.name.clone()).collect::<Vec<_>>().join("");
         ui.key(egui::Key::ArrowRight);
         ui.key(egui::Key::Enter);
         assert!(!ui.s.mods[0].enabled && ui.dirty);

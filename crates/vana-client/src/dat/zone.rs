@@ -10,11 +10,7 @@ const KEY2_MD5: &str = "44b34e48298e775a58552e7d9a8f931c";
 
 /// File id of a zone's scene DAT (FUN_10171f00): 100 + zone, from zone 600 on zone + 0x144f7.
 pub fn file_id(zone: u32) -> u32 {
-    if zone >= 600 {
-        zone + 0x144f7
-    } else {
-        zone + 100
-    }
+    if zone >= 600 { zone + 0x144f7 } else { zone + 100 }
 }
 
 pub struct Keys {
@@ -26,28 +22,19 @@ impl Keys {
     /// Made-up tables for tests without FFXiMain.dll (dat/fuzz.rs).
     #[cfg(test)]
     pub(crate) fn for_tests() -> Self {
-        Self {
-            t1: std::array::from_fn(|i| i as u8),
-            t2: std::array::from_fn(|i| (i as u8).wrapping_mul(7)),
-        }
+        Self { t1: std::array::from_fn(|i| i as u8), t2: std::array::from_fn(|i| (i as u8).wrapping_mul(7)) }
     }
 
     pub fn from_ffximain(dll: &[u8]) -> Result<Self> {
         let table = |at: usize, want: &str| -> Result<[u8; 256]> {
-            let t: [u8; 256] = dll
-                .get(at..at + 256)
-                .and_then(|s| s.try_into().ok())
-                .ok_or_else(|| anyhow::anyhow!("FFXiMain.dll too short"))?;
+            let t: [u8; 256] = dll.get(at..at + 256).and_then(|s| s.try_into().ok()).ok_or_else(|| anyhow::anyhow!("FFXiMain.dll too short"))?;
             if hex::encode(Md5::digest(t)) != want {
                 bail!("model key table at {at:#x} does not match this FFXiMain.dll build");
             }
             Ok(t)
         };
         let t = super::tables::of(dll)?;
-        Ok(Self {
-            t1: table(t.key1_at, KEY1_MD5)?,
-            t2: table(t.key2_at, KEY2_MD5)?,
-        })
+        Ok(Self { t1: table(t.key1_at, KEY1_MD5)?, t2: table(t.key2_at, KEY2_MD5)? })
     }
 }
 
@@ -177,10 +164,7 @@ pub fn parse_mmb(p: &[u8]) -> Result<Mmb> {
 
     let name = name_at(p, 16, 16);
     let pieces = u32_at(p, 32) as usize;
-    let (min, max) = (
-        [f32_at(p, 36), f32_at(p, 44), f32_at(p, 52)],
-        [f32_at(p, 40), f32_at(p, 48), f32_at(p, 56)],
-    );
+    let (min, max) = ([f32_at(p, 36), f32_at(p, 44), f32_at(p, 52)], [f32_at(p, 40), f32_at(p, 48), f32_at(p, 56)]);
     let first = u32_at(p, 60) as usize;
 
     let mut offsets = std::collections::VecDeque::new();
@@ -190,12 +174,7 @@ pub fn parse_mmb(p: &[u8]) -> Result<Mmb> {
         } else {
             for i in 0..8 {
                 // A table cut by the end of the chunk has no more offsets (issue #87).
-                let Some(o) = p
-                    .get(64 + i * 4..68 + i * 4)
-                    .map(|_| u32_at(p, 64 + i * 4) as usize)
-                else {
-                    break;
-                };
+                let Some(o) = p.get(64 + i * 4..68 + i * 4).map(|_| u32_at(p, 64 + i * 4) as usize) else { break };
                 if o != 0 {
                     offsets.push_back(o);
                 }
@@ -245,18 +224,8 @@ pub fn parse_mmb(p: &[u8]) -> Result<Mmb> {
                     let v = at + i * stride;
                     let n = if wide_vertex { v + 24 } else { v + 12 };
                     let c = n + 12;
-                    let delta = if wide_vertex {
-                        vec3_at(p, v + 12)
-                    } else {
-                        [0.0; 3]
-                    };
-                    Vertex {
-                        pos: vec3_at(p, v),
-                        normal: vec3_at(p, n),
-                        color: u32_at(p, c),
-                        uv: [f32_at(p, c + 4), f32_at(p, c + 8)],
-                        delta,
-                    }
+                    let delta = if wide_vertex { vec3_at(p, v + 12) } else { [0.0; 3] };
+                    Vertex { pos: vec3_at(p, v), normal: vec3_at(p, n), color: u32_at(p, c), uv: [f32_at(p, c + 4), f32_at(p, c + 8)], delta }
                 })
                 .collect();
             at += nverts * stride;
@@ -267,30 +236,14 @@ pub fn parse_mmb(p: &[u8]) -> Result<Mmb> {
             }
             let indices = (0..nidx).map(|i| u16_at(p, at + i * 2)).collect();
             at += nidx * 2 + if nidx % 2 == 1 { 2 } else { 0 };
-            models.push(Model {
-                texture,
-                blending,
-                vertices,
-                indices,
-                strip: !triangle_list,
-            });
+            models.push(Model { texture, blending, vertices, indices, strip: !triangle_list });
         }
     }
-    Ok(Mmb {
-        name,
-        min,
-        max,
-        models,
-        animated: wide_vertex,
-        mesh_type: p[4],
-    })
+    Ok(Mmb { name, min, max, models, animated: wide_vertex, mesh_type: p[4] })
 }
 
 /// The 20 weather tags FUN_10160700 gathers sway curves for, in its order.
-pub const SWAY_TAGS: [&str; 20] = [
-    "fine", "suny", "clod", "mist", "dryw", "heat", "rain", "sqal", "dust", "sand", "wind", "stom",
-    "snow", "bliz", "thdr", "bolt", "aura", "ligt", "fogd", "dark",
-];
+pub const SWAY_TAGS: [&str; 20] = ["fine", "suny", "clod", "mist", "dryw", "heat", "rain", "sqal", "dust", "sand", "wind", "stom", "snow", "bliz", "thdr", "bolt", "aura", "ligt", "fogd", "dark"];
 
 /// The environment-animation curves (FUN_10160830): per weather tag the type-0x19 chunks of `weat/<tag>/kfrm`, else
 /// of `mode/kfrm`, at most 32 each; a curve is its (t, value) pairs up to the one at t = 1.
@@ -311,10 +264,7 @@ pub fn sway_curves(file: &[u8]) -> SwayCurves {
         }
         out
     };
-    let (mut weat, mut mode): (
-        std::collections::HashMap<String, Vec<Vec<[f32; 2]>>>,
-        Vec<Vec<[f32; 2]>>,
-    ) = (Default::default(), Vec::new());
+    let (mut weat, mut mode): (std::collections::HashMap<String, Vec<Vec<[f32; 2]>>>, Vec<Vec<[f32; 2]>>) = (Default::default(), Vec::new());
     let mut stack: Vec<String> = Vec::new();
     for c in chunks(file).unwrap_or_default() {
         match c.kind {
@@ -325,9 +275,7 @@ pub fn sway_curves(file: &[u8]) -> SwayCurves {
             0x19 => {
                 let n = stack.len();
                 if n >= 3 && stack[n - 1] == "kfrm" && stack[n - 3] == "weat" {
-                    weat.entry(stack[n - 2].clone())
-                        .or_default()
-                        .push(parse(c.data));
+                    weat.entry(stack[n - 2].clone()).or_default().push(parse(c.data));
                 } else if n >= 2 && stack[n - 1] == "kfrm" && stack[n - 2] == "mode" {
                     mode.push(parse(c.data));
                 }
@@ -336,16 +284,7 @@ pub fn sway_curves(file: &[u8]) -> SwayCurves {
         }
     }
     let pick = |v: &[Vec<[f32; 2]>]| v.iter().take(32).cloned().collect::<Vec<_>>();
-    SwayCurves {
-        by_tag: SWAY_TAGS
-            .iter()
-            .map(|t| {
-                weat.get(*t)
-                    .filter(|v| !v.is_empty())
-                    .map_or_else(|| pick(&mode), |v| pick(v))
-            })
-            .collect(),
-    }
+    SwayCurves { by_tag: SWAY_TAGS.iter().map(|t| weat.get(*t).filter(|v| !v.is_empty()).map_or_else(|| pick(&mode), |v| pick(v))).collect() }
 }
 
 #[derive(Clone, Debug)]
@@ -390,11 +329,7 @@ impl Placement {
             return [exact(), exact(), exact()];
         }
         let base = &self.name[..n - 1];
-        let sib = |c: char| {
-            Some(format!("{base}{c}"))
-                .filter(|s| has(s))
-                .map(Cow::Owned)
-        };
+        let sib = |c: char| Some(format!("{base}{c}")).filter(|s| has(s)).map(Cow::Owned);
         let m = sib('m');
         let h = sib('h').or_else(|| m.clone()).unwrap_or_else(exact);
         let l = sib('l').or_else(|| m.clone()).unwrap_or_else(exact);
@@ -408,18 +343,8 @@ impl Placement {
         let [tx, ty, tz] = self.translate;
         [
             [cy * cz * kx, cy * sz * kx, -sy * kx, 0.0],
-            [
-                (cz * sx * sy - cx * sz) * ky,
-                (cx * cz + sx * sy * sz) * ky,
-                cy * sx * ky,
-                0.0,
-            ],
-            [
-                (cx * cz * sy + sx * sz) * kz,
-                (-cz * sx + cx * sy * sz) * kz,
-                cx * cy * kz,
-                0.0,
-            ],
+            [(cz * sx * sy - cx * sz) * ky, (cx * cz + sx * sy * sz) * ky, cy * sx * ky, 0.0],
+            [(cx * cz * sy + sx * sz) * kz, (-cz * sx + cx * sy * sz) * kz, cx * cy * kz, 0.0],
             [tx, ty, tz, 1.0],
         ]
     }
@@ -430,26 +355,17 @@ impl Placement {
 /// the camera eye picks one, FUN_101813f0). Placement indices are 0-based into the MZB's records.
 pub fn camera_lists(p: &[u8]) -> std::collections::HashMap<u32, Vec<u32>> {
     let mut out = std::collections::HashMap::new();
-    let pool = if p.len() >= 0x18 && p[3] >= 0x15 {
-        u32_at(p, 0x14) as usize
-    } else {
-        0
-    };
+    let pool = if p.len() >= 0x18 && p[3] >= 0x15 { u32_at(p, 0x14) as usize } else { 0 };
     if pool == 0 || pool + 4 > p.len() {
         return out;
     }
     let mut at = pool + 4;
     for _ in 0..u32_at(p, pool) {
-        let Some(n) = p.get(at..at + 4).map(|_| u32_at(p, at) as usize) else {
-            break;
-        };
+        let Some(n) = p.get(at..at + 4).map(|_| u32_at(p, at) as usize) else { break };
         if at + 4 + n * 4 > p.len() {
             break;
         }
-        out.insert(
-            at as u32,
-            (0..n).map(|k| u32_at(p, at + 4 + k * 4)).collect(),
-        );
+        out.insert(at as u32, (0..n).map(|k| u32_at(p, at + 4 + k * 4)).collect());
         at += 4 + n * 4;
     }
     out
@@ -474,10 +390,7 @@ pub fn parse_mzb(p: &mut [u8]) -> Result<Vec<Placement>> {
     }
     let count = (p[4] as usize) | (p[5] as usize) << 8 | (p[6] as usize) << 16;
     let end = u32_at(p, 20) as usize;
-    let stride = [100usize, 84, 92]
-        .into_iter()
-        .find(|s| count * s + 32 == end)
-        .ok_or_else(|| anyhow::anyhow!("unknown MZB record size ({count} records end at {end})"))?;
+    let stride = [100usize, 84, 92].into_iter().find(|s| count * s + 32 == end).ok_or_else(|| anyhow::anyhow!("unknown MZB record size ({count} records end at {end})"))?;
     if end > p.len() {
         bail!("MZB: {count} records end at {end}, past the chunk");
     }
@@ -497,26 +410,10 @@ pub fn parse_mzb(p: &mut [u8]) -> Result<Vec<Placement>> {
         if stride == 100 && version >= 0x12 {
             for (k, l) in lights.iter_mut().enumerate() {
                 let rf = u32_at(p, r + 0x54 + 4 * k) as usize;
-                *l = if rf >= 1 {
-                    keys.get(rf - 1).copied().unwrap_or(0)
-                } else {
-                    0
-                };
+                *l = if rf >= 1 { keys.get(rf - 1).copied().unwrap_or(0) } else { 0 };
             }
         }
-        out.push(Placement {
-            name: name_at(p, r, 16),
-            translate: vec3_at(p, r + 16),
-            rotate: vec3_at(p, r + 28),
-            scale: vec3_at(p, r + 40),
-            lights,
-            link: u32_at(p, r + 0x50),
-            area: u32_at(p, r + 0x4c),
-            id: u32_at(p, r + 0x34),
-            lod: [f32_at(p, r + 0x38), f32_at(p, r + 0x3c)],
-            world,
-            own_dist: (p[r + 0x46] & 1 != 0).then(|| f32_at(p, r + 0x40)),
-        });
+        out.push(Placement { name: name_at(p, r, 16), translate: vec3_at(p, r + 16), rotate: vec3_at(p, r + 28), scale: vec3_at(p, r + 40), lights, link: u32_at(p, r + 0x50), area: u32_at(p, r + 0x4c), id: u32_at(p, r + 0x34), lod: [f32_at(p, r + 0x38), f32_at(p, r + 0x3c)], world, own_dist: (p[r + 0x46] & 1 != 0).then(|| f32_at(p, r + 0x40)) });
     }
     Ok(out)
 }
@@ -534,24 +431,13 @@ pub struct Texture {
 
 impl Texture {
     pub fn new(name: String, format: u8, width: u32, height: u32, rgba: Vec<u8>) -> Self {
-        Texture {
-            name,
-            format,
-            width,
-            height,
-            rgba,
-            dxt: None,
-        }
+        Texture { name, format, width, height, rgba, dxt: None }
     }
 }
 
 fn rgb565(c: u16) -> [u32; 3] {
     let (r, g, b) = ((c >> 11) as u32 & 31, (c >> 5) as u32 & 63, c as u32 & 31);
-    [
-        (r << 3) | (r >> 2),
-        (g << 2) | (g >> 4),
-        (b << 3) | (b >> 2),
-    ]
+    [(r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2)]
 }
 
 /// BC1 (DXT1) or BC2 (DXT3) blocks to RGBA8.
@@ -565,19 +451,10 @@ pub(crate) fn decode_dxt(data: &[u8], w: u32, h: u32, dxt3: bool) -> Vec<u8> {
             if at + block > data.len() {
                 return out;
             }
-            let (alpha, color) = if dxt3 {
-                (Some(&data[at..at + 8]), &data[at + 8..at + 16])
-            } else {
-                (None, &data[at..at + 8])
-            };
+            let (alpha, color) = if dxt3 { (Some(&data[at..at + 8]), &data[at + 8..at + 16]) } else { (None, &data[at..at + 8]) };
             let (c0, c1) = (u16_at(color, 0), u16_at(color, 2));
             let (a, b) = (rgb565(c0), rgb565(c1));
-            let mut palette = [
-                [a[0], a[1], a[2], 255],
-                [b[0], b[1], b[2], 255],
-                [0; 4],
-                [0; 4],
-            ];
+            let mut palette = [[a[0], a[1], a[2], 255], [b[0], b[1], b[2], 255], [0; 4], [0; 4]];
             if c0 > c1 || dxt3 {
                 for i in 0..3 {
                     palette[2][i] = (2 * a[i] + b[i]) / 3;
@@ -647,19 +524,10 @@ pub fn parse_img(p: &[u8]) -> Result<Texture> {
                 let i = ((h - 1 - y) * w + x) as usize;
                 let bgra: [u8; 4] = match bits {
                     4 | 8 => {
-                        let idx = if bits == 4 {
-                            (p[px_at + i / 2] >> if i % 2 == 0 { 4 } else { 0 }) & 0xf
-                        } else {
-                            p[px_at + i]
-                        } as usize;
+                        let idx = if bits == 4 { (p[px_at + i / 2] >> if i % 2 == 0 { 4 } else { 0 }) & 0xf } else { p[px_at + i] } as usize;
                         p[at + idx * 4..at + idx * 4 + 4].try_into().unwrap()
                     }
-                    24 => [
-                        p[px_at + i * 3],
-                        p[px_at + i * 3 + 1],
-                        p[px_at + i * 3 + 2],
-                        0x80,
-                    ],
+                    24 => [p[px_at + i * 3], p[px_at + i * 3 + 1], p[px_at + i * 3 + 2], 0x80],
                     _ => p[px_at + i * 4..px_at + i * 4 + 4].try_into().unwrap(),
                 };
                 let o = ((y * w + x) * 4) as usize;
@@ -677,9 +545,7 @@ pub fn parse_img(p: &[u8]) -> Result<Texture> {
             }
             let kind = &p[57..61];
             let size = u32_at(p, 61) as usize;
-            let data = p
-                .get(69..69 + size)
-                .ok_or_else(|| anyhow::anyhow!("IMG {name}: DXT data out of range"))?;
+            let data = p.get(69..69 + size).ok_or_else(|| anyhow::anyhow!("IMG {name}: DXT data out of range"))?;
             let blocks = (w.div_ceil(4) * h.div_ceil(4)) as usize;
             match kind {
                 b"1TXD" => {
@@ -695,10 +561,7 @@ pub fn parse_img(p: &[u8]) -> Result<Texture> {
                     });
                     decode_dxt(data, w, h, true)
                 }
-                other => bail!(
-                    "IMG {name}: unsupported compression {:?}",
-                    String::from_utf8_lossy(other)
-                ),
+                other => bail!("IMG {name}: unsupported compression {:?}", String::from_utf8_lossy(other)),
             }
         }
         0x01 | 0x81 | 0x91 => uncompressed(57)?,
@@ -711,14 +574,7 @@ pub fn parse_img(p: &[u8]) -> Result<Texture> {
             px[3] = px[3].saturating_mul(2);
         }
     }
-    Ok(Texture {
-        name,
-        format: flag,
-        width: w,
-        height: h,
-        rgba,
-        dxt,
-    })
+    Ok(Texture { name, format: flag, width: w, height: h, rgba, dxt })
 }
 
 /// A RID region: an oriented box. Names starting with 'z' are zone lines, '_' doors, 'E' events, 'm' / 'M'
@@ -746,9 +602,7 @@ impl Region {
         let (dx, dy, dz) = (p[0] - self.pos[0], p[1] - self.pos[1], p[2] - self.pos[2]);
         let (s, c) = (-self.rot[1]).sin_cos();
         let (lx, lz) = (dx * c + dz * s, -dx * s + dz * c);
-        lx.abs() <= self.scale[0].abs() / 2.0
-            && dy.abs() <= self.scale[1].abs() / 2.0
-            && lz.abs() <= self.scale[2].abs() / 2.0
+        lx.abs() <= self.scale[0].abs() / 2.0 && dy.abs() <= self.scale[1].abs() / 2.0 && lz.abs() <= self.scale[2].abs() / 2.0
     }
 
     /// FUN_10175910: the segment a..b touches the box: an end inside, or it crosses a face.
@@ -776,11 +630,7 @@ impl Region {
     fn local(&self, p: [f32; 3]) -> [f32; 3] {
         let (dx, dy, dz) = (p[0] - self.pos[0], p[1] - self.pos[1], p[2] - self.pos[2]);
         let (s, c) = (-self.rot[1]).sin_cos();
-        [
-            (dx * c + dz * s) / self.scale[0].abs(),
-            dy / self.scale[1].abs(),
-            (-dx * s + dz * c) / self.scale[2].abs(),
-        ]
+        [(dx * c + dz * s) / self.scale[0].abs(), dy / self.scale[1].abs(), (-dx * s + dz * c) / self.scale[2].abs()]
     }
 
     /// A lift shaft ('@'; MODLOG "Actor collision and lifts").
@@ -815,10 +665,7 @@ impl Region {
 
 /// RID chunk (0x36): count @0x30, 0x40-byte entries from 0x40 (pos, rot, scale, name[8] @0x24).
 pub fn parse_rid(p: &[u8]) -> Vec<Region> {
-    let count = p
-        .get(0x30..0x34)
-        .map(|_| u32_at(p, 0x30) as usize)
-        .unwrap_or(0);
+    let count = p.get(0x30..0x34).map(|_| u32_at(p, 0x30) as usize).unwrap_or(0);
     // Entries from p.len() / 0x40 on end past the chunk and are dropped below anyway; stopping there keeps a bad
     // count from looping up to u32::MAX times (issue #87).
     (0..count.min(p.len() / 0x40))
@@ -840,11 +687,7 @@ pub fn parse_rid(p: &[u8]) -> Vec<Region> {
 
 /// FUN_101760f0 over the kept sub-area triggers (class 0, list order): the first one holding `p`, its id.
 pub fn sub_area_at(regions: &[Region], p: [f32; 3]) -> Option<u32> {
-    regions
-        .iter()
-        .filter(|r| r.is_sub_area() && r.class == 0)
-        .find(|r| r.contains(p))
-        .map(|r| r.param)
+    regions.iter().filter(|r| r.is_sub_area() && r.class == 0).find(|r| r.contains(p)).map(|r| r.param)
 }
 
 /// FUN_101779b0: some 'm' / 'M' record (any class) names sub-area `id`.
@@ -877,35 +720,21 @@ impl ZoneScene {
     /// bri_gate_a_h / m_bri_gate_a); retail's camera lists show one or the other. A group is placements with the same
     /// transform whose meshes have nearly the same box; the bool marks its simplest mesh (fewest vertices).
     pub fn variant_groups(&self) -> Vec<Option<(u32, bool)>> {
-        let names: std::collections::HashSet<&str> =
-            self.meshes.iter().map(|m| m.name.as_str()).collect();
+        let names: std::collections::HashSet<&str> = self.meshes.iter().map(|m| m.name.as_str()).collect();
         let mesh = |p: &Placement| {
             let high = p.lod_names(|n| names.contains(n))[2].to_string();
-            self.meshes.iter().find(|m| m.name == high).map(|m| {
-                (
-                    m.min,
-                    m.max,
-                    m.models.iter().map(|x| x.vertices.len()).sum::<usize>(),
-                )
-            })
+            self.meshes.iter().find(|m| m.name == high).map(|m| (m.min, m.max, m.models.iter().map(|x| x.vertices.len()).sum::<usize>()))
         };
         let key = |p: &Placement| {
             let q = |v: f32| (v * 1000.0).round() as i64;
             (p.translate.map(q), p.rotate.map(q), p.scale.map(q))
         };
         let mut by_spot: std::collections::HashMap<_, Vec<usize>> = Default::default();
-        for (i, p) in self
-            .placements
-            .iter()
-            .enumerate()
-            .filter(|(_, p)| p.drawn() && p.id == 0)
-        {
+        for (i, p) in self.placements.iter().enumerate().filter(|(_, p)| p.drawn() && p.id == 0) {
             by_spot.entry(key(p)).or_default().push(i);
         }
         let iou = |a: ([f32; 3], [f32; 3]), b: ([f32; 3], [f32; 3])| {
-            let vol = |lo: [f32; 3], hi: [f32; 3]| {
-                (0..3).map(|k| (hi[k] - lo[k]).max(0.0)).product::<f32>()
-            };
+            let vol = |lo: [f32; 3], hi: [f32; 3]| (0..3).map(|k| (hi[k] - lo[k]).max(0.0)).product::<f32>();
             let lo = [0, 1, 2].map(|k| a.0[k].max(b.0[k]));
             let hi = [0, 1, 2].map(|k| a.1[k].min(b.1[k]));
             let inter = vol(lo, hi);
@@ -917,24 +746,14 @@ impl ZoneScene {
             let info: Vec<_> = spot.iter().map(|&i| mesh(&self.placements[i])).collect();
             let mut seen = vec![false; spot.len()];
             for a in 0..spot.len() {
-                let Some(ia) = info[a].filter(|_| !seen[a]) else {
-                    continue;
-                };
+                let Some(ia) = info[a].filter(|_| !seen[a]) else { continue };
                 let members: Vec<usize> = (a..spot.len())
-                    .filter(|&b| {
-                        b == a
-                            || (!seen[b]
-                                && self.placements[spot[b]].name != self.placements[spot[a]].name
-                                && info[b].is_some_and(|ib| iou((ia.0, ia.1), (ib.0, ib.1)) > 0.7))
-                    })
+                    .filter(|&b| b == a || (!seen[b] && self.placements[spot[b]].name != self.placements[spot[a]].name && info[b].is_some_and(|ib| iou((ia.0, ia.1), (ib.0, ib.1)) > 0.7)))
                     .collect();
                 if members.len() < 2 {
                     continue;
                 }
-                let simplest = *members
-                    .iter()
-                    .min_by_key(|&&b| info[b].map_or(usize::MAX, |x| x.2))
-                    .unwrap();
+                let simplest = *members.iter().min_by_key(|&&b| info[b].map_or(usize::MAX, |x| x.2)).unwrap();
                 for &b in &members {
                     seen[b] = true;
                     out[spot[b]] = Some((next, b == simplest));
@@ -947,43 +766,26 @@ impl ZoneScene {
 }
 
 pub fn load_scene(keys: &Keys, file: &[u8]) -> Result<ZoneScene> {
-    let mut scene = ZoneScene {
-        regions: Vec::new(),
-        collision: None,
-        placements: Vec::new(),
-        meshes: Vec::new(),
-        textures: Vec::new(),
-        warnings: Vec::new(),
-        light_keys: Vec::new(),
-        paths: Default::default(),
-        camera_lists: Default::default(),
-        sway: sway_curves(file),
-        bumps: Vec::new(),
-    };
+    let mut scene = ZoneScene { regions: Vec::new(), collision: None, placements: Vec::new(), meshes: Vec::new(), textures: Vec::new(), warnings: Vec::new(), light_keys: Vec::new(), paths: Default::default(), camera_lists: Default::default(), sway: sway_curves(file), bumps: Vec::new() };
     let list: Vec<Chunk> = chunks(file)?;
     for c in list {
         let mut data = c.data.to_vec();
         let result = match c.kind {
-            0x1C => decode_mzb(keys, &mut data)
-                .and_then(|_| parse_mzb(&mut data))
-                .map(|p| {
-                    // As the collision, the last MZB's.
-                    let base = scene.placements.len() as u32;
-                    scene.camera_lists = camera_lists(&data)
-                        .into_iter()
-                        .map(|(at, l)| (at, l.into_iter().map(|i| i + base).collect()))
-                        .collect();
-                    scene.placements.extend(p);
-                    for k in light_list(&data) {
-                        if k != 0 && !scene.light_keys.contains(&k) {
-                            scene.light_keys.push(k);
-                        }
+            0x1C => decode_mzb(keys, &mut data).and_then(|_| parse_mzb(&mut data)).map(|p| {
+                // As the collision, the last MZB's.
+                let base = scene.placements.len() as u32;
+                scene.camera_lists = camera_lists(&data).into_iter().map(|(at, l)| (at, l.into_iter().map(|i| i + base).collect())).collect();
+                scene.placements.extend(p);
+                for k in light_list(&data) {
+                    if k != 0 && !scene.light_keys.contains(&k) {
+                        scene.light_keys.push(k);
                     }
-                    match super::collision::parse(&data) {
-                        Ok(c) => scene.collision = Some(c),
-                        Err(e) => scene.warnings.push(format!("collision: {e}")),
-                    }
-                }),
+                }
+                match super::collision::parse(&data) {
+                    Ok(c) => scene.collision = Some(c),
+                    Err(e) => scene.warnings.push(format!("collision: {e}")),
+                }
+            }),
             0x2E => {
                 decode_mmb(keys, &mut data);
                 parse_mmb(&data).map(|m| scene.meshes.push(m))
@@ -1001,9 +803,7 @@ pub fn load_scene(keys: &Keys, file: &[u8]) -> Result<ZoneScene> {
             _ => Ok(()),
         };
         if let Err(e) = result {
-            scene
-                .warnings
-                .push(format!("chunk {} at {:#x}: {e}", c.name(), c.offset));
+            scene.warnings.push(format!("chunk {} at {:#x}: {e}", c.name(), c.offset));
         }
     }
     // Door boxes go into the grid once both the collision and the RID records are in.
@@ -1022,28 +822,13 @@ mod tests {
     #[test]
     fn escha_gate_variants() {
         let cfg = crate::config::Config::load();
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else {
-            return;
-        };
-        let Ok(dll) = std::fs::read(cfg.ffxi_dir().join("FFXiMain.dll")) else {
-            return;
-        };
-        let (Ok(keys), Ok(file)) = (Keys::from_ffximain(&dll), index.read(file_id(733))) else {
-            return;
-        };
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(dll) = std::fs::read(cfg.ffxi_dir().join("FFXiMain.dll")) else { return };
+        let (Ok(keys), Ok(file)) = (Keys::from_ffximain(&dll), index.read(file_id(733))) else { return };
         let z = load_scene(&keys, &file).unwrap();
         let v = z.variant_groups();
-        let at = |name: &str, sx: f32| {
-            z.placements
-                .iter()
-                .position(|p| p.name == name && p.scale[0] == sx && p.translate[2] == -362.0526)
-                .unwrap()
-        };
-        let (stand_in, detailed, part) = (
-            v[at("m_bri_gate_a", 1.0)].unwrap(),
-            v[at("bri_gate_a_h", 1.0)].unwrap(),
-            v[at("bri_gate_bf_h", 1.0)],
-        );
+        let at = |name: &str, sx: f32| z.placements.iter().position(|p| p.name == name && p.scale[0] == sx && p.translate[2] == -362.0526).unwrap();
+        let (stand_in, detailed, part) = (v[at("m_bri_gate_a", 1.0)].unwrap(), v[at("bri_gate_a_h", 1.0)].unwrap(), v[at("bri_gate_bf_h", 1.0)]);
         assert_eq!(stand_in.0, detailed.0);
         assert!(stand_in.1 && !detailed.1);
         assert!(part.is_none_or(|p| p.0 != stand_in.0));
@@ -1071,12 +856,7 @@ mod tests {
         p.extend(pal);
         p.extend([0x12, 0x21]);
         let t = parse_img(&p).unwrap();
-        assert_eq!(
-            t.rgba,
-            [
-                60, 50, 40, 0x80, 30, 20, 10, 255, 30, 20, 10, 255, 60, 50, 40, 0x80
-            ]
-        );
+        assert_eq!(t.rgba, [60, 50, 40, 0x80, 30, 20, 10, 255, 30, 20, 10, 255, 60, 50, 40, 0x80]);
         // 1 x 2 BGRA.
         let mut p = header(0x81, 1, 2, 32, 0);
         p.extend([1, 2, 3, 0x40, 4, 5, 6, 0x80]);
@@ -1084,22 +864,10 @@ mod tests {
     }
 
     #[test]
-    #[allow(
-        clippy::approx_constant,
-        reason = "a region's rotation as the zone DAT stores it"
-    )]
+    #[allow(clippy::approx_constant, reason = "a region's rotation as the zone DAT stores it")]
     fn zone_line_segments() {
         // Ru'Lude Gardens' Mog House lift: the box under the floor, our place at the button, the event's pose below.
-        let r = Region {
-            name: "zmrmzmrn".into(),
-            pos: [48.989, 17.19, -79.994],
-            rot: [0.0, 3.1416, 0.0],
-            scale: [12.0, 10.0, 10.0],
-            class: 0,
-            param: 0,
-            flags: 0,
-            floors: [0, 0],
-        };
+        let r = Region { name: "zmrmzmrn".into(), pos: [48.989, 17.19, -79.994], rot: [0.0, 3.1416, 0.0], scale: [12.0, 10.0, 10.0], class: 0, param: 0, flags: 0, floors: [0, 0] };
         let (button, down) = ([49.0, 9.65, -73.0], [51.531, 14.999, -77.941]);
         assert!(!r.touches(button, button));
         assert!(r.touches(button, down) && r.touches(down, down));

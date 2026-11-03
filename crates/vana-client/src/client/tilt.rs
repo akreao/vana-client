@@ -15,11 +15,7 @@ pub struct GroundTilt {
 
 impl Default for GroundTilt {
     fn default() -> Self {
-        GroundTilt {
-            n: UP,
-            w: 0.0,
-            e: UP,
-        }
+        GroundTilt { n: UP, w: 0.0, e: UP }
     }
 }
 
@@ -62,20 +58,14 @@ impl GroundTilt {
             n
         } else {
             let ax = UP.cross(n).normalize_or_zero();
-            if ax == Vec3::ZERO {
-                UP
-            } else {
-                (Quat::from_axis_angle(ax, std::f32::consts::FRAC_PI_6) * UP).normalize()
-            }
+            if ax == Vec3::ZERO { UP } else { (Quat::from_axis_angle(ax, std::f32::consts::FRAC_PI_6) * UP).normalize() }
         };
         let b = (UP * (1.0 - self.w) + nc * self.w).normalize_or_zero();
         self.e = (b * t + self.e * (1.0 - t)).normalize_or_zero();
         let dn = -self.e;
         let sx = dn.cross(zf.normalize_or_zero()).normalize_or_zero();
         let sz = sx.cross(dn).normalize_or_zero();
-        let g = nc
-            .cross(UP.cross(nc).normalize_or_zero())
-            .normalize_or_zero();
+        let g = nc.cross(UP.cross(nc).normalize_or_zero()).normalize_or_zero();
         let r = (bx[2] - bx[3]) / (bx[4] - bx[5]);
         self.w = if r > 0.6 && r < 1.4 {
             1.0
@@ -113,29 +103,17 @@ mod tests {
             let mut t = GroundTilt::default();
             let m = t.step(zf, Vec3::ONE, SQUARE, 0.1875);
             let plain = Mat3::from_rotation_y(yaw);
-            assert!(
-                (m.x_axis - plain.x_axis).length() < 1e-5
-                    && (m.z_axis - plain.z_axis).length() < 1e-5
-                    && (m.y_axis - Vec3::Y).length() < 1e-5
-            );
+            assert!((m.x_axis - plain.x_axis).length() < 1e-5 && (m.z_axis - plain.z_axis).length() < 1e-5 && (m.y_axis - Vec3::Y).length() < 1e-5);
         }
-        let mut t = GroundTilt {
-            n: slope(20.0),
-            ..Default::default()
-        };
-        let got: Vec<f32> = (0..4)
-            .map(|_| {
-                t.step(Vec3::Z, Vec3::ONE, SQUARE, 0.1875);
-                angle(t.e)
-            })
-            .collect();
+        let mut t = GroundTilt { n: slope(20.0), ..Default::default() };
+        let got: Vec<f32> = (0..4).map(|_| {
+            t.step(Vec3::Z, Vec3::ONE, SQUARE, 0.1875);
+            angle(t.e)
+        }).collect();
         for (g, want) in got.iter().zip([0.0, 3.711, 6.744, 9.218]) {
             assert!((g - want).abs() < 0.01, "{got:?}");
         }
-        let mut t = GroundTilt {
-            n: slope(60.0),
-            ..Default::default()
-        };
+        let mut t = GroundTilt { n: slope(60.0), ..Default::default() };
         for _ in 0..200 {
             t.step(Vec3::Z, Vec3::ONE, SQUARE, 0.1875);
         }
@@ -143,39 +121,16 @@ mod tests {
         // The tiger's box 0 (ratio 0.31: long along X). Facing up the slope (+x) it pitches; across (facing z) it
         // stays upright.
         let tiger = [-2.52, 0.0, 0.94, -0.81, 2.51, -3.07];
-        let mut up = GroundTilt {
-            n: slope(20.0),
-            ..Default::default()
-        };
-        let mut across = GroundTilt {
-            n: slope(20.0),
-            ..Default::default()
-        };
+        let mut up = GroundTilt { n: slope(20.0), ..Default::default() };
+        let mut across = GroundTilt { n: slope(20.0), ..Default::default() };
         for _ in 0..200 {
             up.step(Vec3::NEG_Z, Vec3::ONE, tiger, 0.1875);
             across.step(Vec3::X, Vec3::ONE, tiger, 0.1875);
         }
-        assert!(
-            (angle(up.e) - 20.0).abs() < 0.01 && angle(across.e) < 0.01,
-            "{} {}",
-            angle(up.e),
-            angle(across.e)
-        );
-        assert!(
-            eligible(0, 2)
-                && !eligible(0, 0)
-                && eligible(2, 0)
-                && !eligible(3, 0)
-                && !eligible(-1, 0)
-        );
+        assert!((angle(up.e) - 20.0).abs() < 0.01 && angle(across.e) < 0.01, "{} {}", angle(up.e), angle(across.e));
+        assert!(eligible(0, 2) && !eligible(0, 0) && eligible(2, 0) && !eligible(3, 0) && !eligible(-1, 0));
         let f = feet_normal(Vec3::new(1.0, -0.5, 0.0), Vec3::new(-1.0, 0.0, 0.0)).unwrap();
-        assert!(
-            (f - Vec3::new(-0.2425, -0.9701, 0.0)).length() < 1e-4,
-            "{f:?}"
-        );
-        assert_eq!(
-            feet_normal(Vec3::new(1.0, 0.0, 2.0), Vec3::new(1.0, -1.0, 2.0)),
-            None
-        );
+        assert!((f - Vec3::new(-0.2425, -0.9701, 0.0)).length() < 1e-4, "{f:?}");
+        assert_eq!(feet_normal(Vec3::new(1.0, 0.0, 2.0), Vec3::new(1.0, -1.0, 2.0)), None);
     }
 }

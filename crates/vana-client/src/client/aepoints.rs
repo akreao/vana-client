@@ -56,16 +56,9 @@ pub fn on_data(w: &mut World, d: AeData) {
 pub fn open(w: &mut World) {
     tables(w);
     if w.ae_data.is_none() {
-        let _ = w.net.commands.send(super::net::NetCommand::Packet {
-            id: 0x0C2,
-            body: Vec::new(),
-        });
+        let _ = w.net.commands.send(super::net::NetCommand::Packet { id: 0x0C2, body: Vec::new() });
     }
-    w.ae_ui = Some(AeUi {
-        cursor: 0,
-        top: 0,
-        attrs: None,
-    });
+    w.ae_ui = Some(AeUi { cursor: 0, top: 0, attrs: None });
 }
 
 /// fp_cat2 +0x5b: in the Mog House and not in Monstrosity.
@@ -75,48 +68,28 @@ fn can_spend(w: &World) -> bool {
 
 /// An attribute row's colours (FUN_1014bdb0): name, level (blue when maxed), cost (None = no cost cell).
 fn colours(w: &World, t: &AeTables, e: u16) -> (u32, u32, Option<u32>) {
-    let Some(d) = w.ae_data.filter(|_| can_spend(w)) else {
-        return (GREY, GREY, None);
-    };
+    let Some(d) = w.ae_data.filter(|_| can_spend(w)) else { return (GREY, GREY, None) };
     let i = e as usize % 32;
     if d.upgrades[i] >= t.max.get(e as usize).copied().unwrap_or(0) {
         return (WHITE, BLUE, None);
     }
-    (
-        WHITE,
-        WHITE,
-        Some(if d.costs[i] > d.points { GREY } else { WHITE }),
-    )
+    (WHITE, WHITE, Some(if d.costs[i] > d.points { GREY } else { WHITE }))
 }
 
 /// merityn's Yes (LAB_1014c180): c2s 0x0C1 {u16 entry}.
 pub fn answer(w: &mut World, a: Ask) {
     let mut body = a.entry.to_le_bytes().to_vec();
     body.extend([0, 0]);
-    let _ = w
-        .net
-        .commands
-        .send(super::net::NetCommand::Packet { id: 0x0C1, body });
+    let _ = w.net.commands.send(super::net::NetCommand::Packet { id: 0x0C1, body });
 }
 
 /// Group 10 0x7b "Use <n> alter ego point(s) to raise your "<name>" by one level?" with costs[e].
 pub fn ask_text(w: &World, a: Ask) -> String {
-    let (Some(bt), Some(t)) = (&w.battle, &w.ae_tables) else {
-        return String::new();
-    };
-    let Some(raw) = bt.group10_raw(0x7b) else {
-        return String::new();
-    };
+    let (Some(bt), Some(t)) = (&w.battle, &w.ae_tables) else { return String::new() };
+    let Some(raw) = bt.group10_raw(0x7b) else { return String::new() };
     let name = crate::dat::font::encode_sjis(&t.name(a.entry));
-    let cost = w
-        .ae_data
-        .map_or(0, |d| d.costs[a.entry as usize % 32] as i32);
-    crate::dat::font::decode_sjis(&crate::dat::msgfmt::format(
-        &raw,
-        &[&name],
-        &[cost],
-        &|_, _, _| None,
-    ))
+    let cost = w.ae_data.map_or(0, |d| d.costs[a.entry as usize % 32] as i32);
+    crate::dat::font::decode_sjis(&crate::dat::msgfmt::format(&raw, &[&name], &[cost], &|_, _, _| None))
 }
 
 fn scroll(cursor: &mut usize, top: &mut usize, to: usize) {
@@ -149,9 +122,7 @@ pub fn key(w: &mut World, key: egui::Key, page_mod: bool) {
         K::Enter => {
             match u.attrs {
                 None => {
-                    let Some(&(k, _)) = t.cats.get(cursor) else {
-                        return;
-                    };
+                    let Some(&(k, _)) = t.cats.get(cursor) else { return };
                     w.sounds.push(Ui::Select as u32);
                     if let Some(u) = w.ae_ui.as_mut() {
                         u.attrs = Some((k, 0, 0));
@@ -163,12 +134,7 @@ pub fn key(w: &mut World, key: egui::Key, page_mod: bool) {
                         w.sounds.push(Ui::Error as u32);
                         return;
                     }
-                    match t
-                        .entries(k)
-                        .get(c)
-                        .copied()
-                        .filter(|&e| colours(w, &t, e).2 == Some(WHITE))
-                    {
+                    match t.entries(k).get(c).copied().filter(|&e| colours(w, &t, e).2 == Some(WHITE)) {
                         Some(entry) => {
                             w.sounds.push(Ui::Select as u32);
                             w.confirm = Some((super::Confirm::AlterEgo(Ask { entry }), false));
@@ -183,11 +149,7 @@ pub fn key(w: &mut World, key: egui::Key, page_mod: bool) {
     }
     // The row list's page (FUN_101f6c70 0x19 / 0x18): the top by a page, the screen row kept.
     if matches!(key, K::ArrowLeft | K::ArrowRight) {
-        let m = if key == K::ArrowRight {
-            super::scrollbar::Msg::PageDown
-        } else {
-            super::scrollbar::Msg::PageUp
-        };
+        let m = if key == K::ArrowRight { super::scrollbar::Msg::PageDown } else { super::scrollbar::Msg::PageUp };
         let moved = w.ae_ui.as_mut().is_some_and(|u| match u.attrs.as_mut() {
             Some((_, c, top)) => super::scrollbar::rows_abs(m, top, c, n, ROWS),
             None => super::scrollbar::rows_abs(m, &mut u.top, &mut u.cursor, n, ROWS),
@@ -197,11 +159,7 @@ pub fn key(w: &mut World, key: egui::Key, page_mod: bool) {
         }
         return;
     }
-    let to = if key == K::ArrowDown {
-        (cursor + 1).min(n.saturating_sub(1))
-    } else {
-        cursor.saturating_sub(1)
-    };
+    let to = if key == K::ArrowDown { (cursor + 1).min(n.saturating_sub(1)) } else { cursor.saturating_sub(1) };
     if to == cursor {
         return;
     }
@@ -216,12 +174,8 @@ pub fn key(w: &mut World, key: egui::Key, page_mod: bool) {
 
 /// The focused list's bar (FUN_101f6c70).
 pub(super) fn bar(w: &mut World, m: super::scrollbar::Msg) -> bool {
-    let Some(t) = w.ae_tables.clone() else {
-        return false;
-    };
-    let Some(u) = w.ae_ui.as_mut() else {
-        return false;
-    };
+    let Some(t) = w.ae_tables.clone() else { return false };
+    let Some(u) = w.ae_ui.as_mut() else { return false };
     match u.attrs.as_mut() {
         Some((k, c, top)) => super::scrollbar::rows_abs(m, top, c, t.entries(*k).len(), ROWS),
         None => super::scrollbar::rows_abs(m, &mut u.top, &mut u.cursor, t.cats.len(), ROWS),
@@ -239,27 +193,9 @@ pub(super) fn look(w: &World) -> Option<Look> {
     let u = w.ae_ui.as_ref()?;
     let t = w.ae_tables.clone()?;
     let free = w.confirm.is_none();
-    let rows = t
-        .cats
-        .iter()
-        .map(|&(k, _)| PointRow {
-            name: t.name(k),
-            tint: WHITE,
-            ..Default::default()
-        })
-        .collect();
-    let help = t
-        .cats
-        .get(u.cursor)
-        .map_or((String::new(), String::new()), |&(k, _)| {
-            (t.name(k), t.desc(k))
-        });
-    let cats = PointList {
-        rows,
-        cursor: u.cursor,
-        focused: free && u.attrs.is_none(),
-        help,
-    };
+    let rows = t.cats.iter().map(|&(k, _)| PointRow { name: t.name(k), tint: WHITE, ..Default::default() }).collect();
+    let help = t.cats.get(u.cursor).map_or((String::new(), String::new()), |&(k, _)| (t.name(k), t.desc(k)));
+    let cats = PointList { rows, cursor: u.cursor, focused: free && u.attrs.is_none(), help };
     let attrs = u.attrs.map(|(k, cursor, _)| {
         let es = t.entries(k);
         let rows = es
@@ -270,53 +206,26 @@ pub(super) fn look(w: &World) -> Option<Look> {
                 let level = w.ae_data.map_or(0, |d| d.upgrades[i]);
                 let max = t.max.get(e as usize).copied().unwrap_or(0);
                 let next = w.ae_data.map_or(0, |d| d.costs[i]);
-                PointRow {
-                    name: t.name(e),
-                    tint: c,
-                    level: Some((format!("{level}/{max}"), lc)),
-                    cost: cost.map(|cc| (format!("{next} P"), cc)),
-                    ..Default::default()
-                }
+                PointRow { name: t.name(e), tint: c, level: Some((format!("{level}/{max}"), lc)), cost: cost.map(|cc| (format!("{next} P"), cc)), ..Default::default() }
             })
             .collect();
-        let help = es
-            .get(cursor)
-            .map_or((String::new(), String::new()), |&e| (t.name(e), t.desc(e)));
-        PointList {
-            rows,
-            cursor,
-            focused: free,
-            help,
-        }
+        let help = es.get(cursor).map_or((String::new(), String::new()), |&e| (t.name(e), t.desc(e)));
+        PointList { rows, cursor, focused: free, help }
     });
-    Some(Look {
-        points: w.ae_data.map(|d| d.points),
-        cats,
-        attrs,
-    })
+    Some(Look { points: w.ae_data.map(|d| d.points), cats, attrs })
 }
 
 /// The mouse's cursor moves: a category (fp_cat), an attribute (fp_cat2). True when it moved.
 pub(super) fn set_cat(w: &mut World, k: usize) -> bool {
     let n = w.ae_tables.as_ref().map_or(0, |t| t.cats.len());
-    let Some(u) = w
-        .ae_ui
-        .as_mut()
-        .filter(|u| u.attrs.is_none() && u.cursor != k && k < n)
-    else {
-        return false;
-    };
+    let Some(u) = w.ae_ui.as_mut().filter(|u| u.attrs.is_none() && u.cursor != k && k < n) else { return false };
     scroll(&mut u.cursor, &mut u.top, k);
     true
 }
 
 pub(super) fn set_row(w: &mut World, k: usize) -> bool {
-    let Some(t) = w.ae_tables.clone() else {
-        return false;
-    };
-    let Some((cat, c, top)) = w.ae_ui.as_mut().and_then(|u| u.attrs.as_mut()) else {
-        return false;
-    };
+    let Some(t) = w.ae_tables.clone() else { return false };
+    let Some((cat, c, top)) = w.ae_ui.as_mut().and_then(|u| u.attrs.as_mut()) else { return false };
     if *c == k || k >= t.entries(*cat).len() {
         return false;
     }
@@ -335,43 +244,19 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
     let keys = |w: &mut World, _: &GameUi, k: egui::Key| key(w, k, false);
     match u.attrs {
         Some((k, cursor, top)) => {
-            super::winhits::generic(
-                w,
-                gu,
-                ATTRS,
-                (cursor - top + 1) as u16,
-                1..=ROWS as u16,
-                p,
-                moved,
-                clicked,
-                right,
-                |w, id| {
-                    if let Some(u) = w.ae_ui.as_mut() {
-                        u.attrs = Some((k, top + id as usize - 1, top));
-                    }
-                },
-                keys,
-            );
+            super::winhits::generic(w, gu, ATTRS, (cursor - top + 1) as u16, 1..=ROWS as u16, p, moved, clicked, right, |w, id| {
+                if let Some(u) = w.ae_ui.as_mut() {
+                    u.attrs = Some((k, top + id as usize - 1, top));
+                }
+            }, keys);
         }
         None if !t.cats.is_empty() => {
             let (top, cursor) = (u.top, u.cursor);
-            super::winhits::generic(
-                w,
-                gu,
-                CATS,
-                (cursor - top + 1) as u16,
-                1..=ROWS as u16,
-                p,
-                moved,
-                clicked,
-                right,
-                |w, id| {
-                    if let Some(u) = w.ae_ui.as_mut() {
-                        u.cursor = top + id as usize - 1;
-                    }
-                },
-                keys,
-            );
+            super::winhits::generic(w, gu, CATS, (cursor - top + 1) as u16, 1..=ROWS as u16, p, moved, clicked, right, |w, id| {
+                if let Some(u) = w.ae_ui.as_mut() {
+                    u.cursor = top + id as usize - 1;
+                }
+            }, keys);
         }
         None => {}
     }
@@ -391,65 +276,34 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         return rects;
     }
     let Some(u) = &w.ae_ui else { return rects };
-    let Some(t) = w.ae_tables.clone() else {
-        return rects;
-    };
+    let Some(t) = w.ae_tables.clone() else { return rects };
     let free = w.confirm.is_none();
-    let right =
-        |gu: &mut GameUi, s: &str, x: f32, y: f32, tint: u32| gu.shape_text(s, x, y, tint, true);
+    let right = |gu: &mut GameUi, s: &str, x: f32, y: f32, tint: u32| gu.shape_text(s, x, y, tint, true);
     // fp_info (FUN_1014c1b0): points / 1000 at (x1 - 8, y0 + 0x14), blue above 999.
     if let Some(win) = gu.lobby_window_off(INFO, sw, sh, (0.0, 0.0), None, false, &[]) {
         let [x, y, fw, _] = win.frame;
         let p = w.ae_data.map_or(0, |d| d.points);
-        right(
-            gu,
-            &format!("{p}/1000"),
-            x + fw - 8.0,
-            y + 20.0,
-            if p > 999 { BLUE } else { WHITE },
-        );
+        right(gu, &format!("{p}/1000"), x + fw - 8.0, y + 20.0, if p > 999 { BLUE } else { WHITE });
         rects.push(win.frame);
     }
     // fp_cat: the categories, white, rows 17 apart from (0, 4); suspended (not drawn) while fp_cat2, of its group, is up.
     let k = t.cats.get(u.cursor).map_or(0, |c| c.0);
     let (cat_name, cat_desc) = (t.name(k), t.desc(k));
     let n = t.cats.len();
-    let hide: Vec<u16> = (1..=ROWS as u16)
-        .filter(|&k| u.top + k as usize > n)
-        .collect();
+    let hide: Vec<u16> = (1..=ROWS as u16).filter(|&k| u.top + k as usize > n).collect();
     let sel = (n > 0 && u.attrs.is_none()).then(|| (u.cursor - u.top + 1) as u16);
-    if let Some(win) = gu.lobby_window_off(
-        CATS,
-        sw,
-        sh,
-        (0.0, 0.0),
-        sel,
-        free && u.attrs.is_none(),
-        &hide,
-    ) {
+    if let Some(win) = gu.lobby_window_off(CATS, sw, sh, (0.0, 0.0), sel, free && u.attrs.is_none(), &hide) {
         super::winhits::record(w, CATS, &win);
         let [x0, y0, fw, fh] = win.frame;
         for (i, &(k, _)) in t.cats.iter().enumerate().skip(u.top).take(ROWS) {
             let y = y0 + 4.0 + 17.0 * (i - u.top) as f32;
-            let c = if i == u.cursor && u.attrs.is_none() {
-                CURSOR
-            } else {
-                WHITE
-            };
+            let c = if i == u.cursor && u.attrs.is_none() { CURSOR } else { WHITE };
             gu.text(&t.name(k), x0 + COLS[1], y + 2.0, 0, c.to_le_bytes());
         }
         if n > ROWS {
             gu.scroll_bar(x0 + fw - 8.0, y0, fh, n, ROWS, u.top);
             if free && u.attrs.is_none() {
-                gu.bar_site(
-                    super::scrollbar::Owner::Points,
-                    x0 + fw - 8.0,
-                    y0,
-                    fh,
-                    n,
-                    ROWS,
-                    u.top,
-                );
+                gu.bar_site(super::scrollbar::Owner::Points, x0 + fw - 8.0, y0, fh, n, ROWS, u.top);
             }
         }
         rects.push(win.frame);
@@ -458,63 +312,32 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         Some((k, cursor, top)) => {
             let es = t.entries(k);
             let n = es.len();
-            let hide: Vec<u16> = (1..=ROWS as u16)
-                .filter(|&r| top + r as usize > n)
-                .collect();
+            let hide: Vec<u16> = (1..=ROWS as u16).filter(|&r| top + r as usize > n).collect();
             let sel = (n > 0).then(|| (cursor - top + 1) as u16);
-            let Some(win) = gu.lobby_window_off(ATTRS, sw, sh, (0.0, 0.0), sel, free, &hide) else {
-                return rects;
-            };
+            let Some(win) = gu.lobby_window_off(ATTRS, sw, sh, (0.0, 0.0), sel, free, &hide) else { return rects };
             super::winhits::record(w, ATTRS, &win);
             let [x0, y0, fw, fh] = win.frame;
             for (i, &e) in es.iter().enumerate().skip(top).take(ROWS) {
                 let y = y0 + 17.0 + 17.0 * (i - top) as f32;
                 let (c, lc, cost) = colours(w, &t, e);
                 let level = w.ae_data.map_or(0, |d| d.upgrades[e as usize % 32]);
-                gu.text(
-                    &t.name(e),
-                    x0 + COLS[1],
-                    y + 2.0,
-                    0,
-                    if i == cursor { CURSOR } else { c }.to_le_bytes(),
-                );
+                gu.text(&t.name(e), x0 + COLS[1], y + 2.0, 0, if i == cursor { CURSOR } else { c }.to_le_bytes());
                 right(gu, &level.to_string(), x0 + COLS[2], y + 4.0, lc);
-                gu.shape_text(
-                    &format!("/{}", t.max.get(e as usize).copied().unwrap_or(0)),
-                    x0 + COLS[3],
-                    y + 4.0,
-                    lc,
-                    false,
-                );
+                gu.shape_text(&format!("/{}", t.max.get(e as usize).copied().unwrap_or(0)), x0 + COLS[3], y + 4.0, lc, false);
                 if let Some(cc) = cost {
                     let next = w.ae_data.map_or(0, |d| d.costs[e as usize % 32]);
-                    gu.shape_text(
-                        &gu.lobby_msg(0xc, 0x5a, "NEXT"),
-                        x0 + COLS[4],
-                        y + 4.0,
-                        cc,
-                        false,
-                    );
+                    gu.shape_text(&gu.lobby_msg(0xc, 0x5a, "NEXT"), x0 + COLS[4], y + 4.0, cc, false);
                     right(gu, &format!("{next} P"), x0 + COLS[5], y + 4.0, cc);
                 }
             }
             if n > ROWS {
                 gu.scroll_bar(x0 + fw - 8.0, y0, fh, n, ROWS, top);
                 if free {
-                    gu.bar_site(
-                        super::scrollbar::Owner::Points,
-                        x0 + fw - 8.0,
-                        y0,
-                        fh,
-                        n,
-                        ROWS,
-                        top,
-                    );
+                    gu.bar_site(super::scrollbar::Owner::Points, x0 + fw - 8.0, y0, fh, n, ROWS, top);
                 }
             }
             rects.push(win.frame);
-            es.get(cursor)
-                .map_or((String::new(), String::new()), |&e| (t.name(e), t.desc(e)))
+            es.get(cursor).map_or((String::new(), String::new()), |&e| (t.name(e), t.desc(e)))
         }
         None => (cat_name, cat_desc),
     };

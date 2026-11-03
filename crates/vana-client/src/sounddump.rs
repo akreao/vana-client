@@ -7,25 +7,15 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-pub fn dump(
-    id: Option<u32>,
-    music: bool,
-    file: Option<PathBuf>,
-    out: &Path,
-    seconds: Option<f32>,
-) -> Result<()> {
+pub fn dump(id: Option<u32>, music: bool, file: Option<PathBuf>, out: &Path, seconds: Option<f32>) -> Result<()> {
     let dir = Config::load().ffxi_dir();
     let path = match (file, id) {
         (Some(f), _) => f,
-        (None, Some(i)) if music => {
-            format::music_path(&dir, i).with_context(|| format!("no music{i:03}.bgw"))?
-        }
+        (None, Some(i)) if music => format::music_path(&dir, i).with_context(|| format!("no music{i:03}.bgw"))?,
         (None, Some(i)) => format::se_path(&dir, i).with_context(|| format!("no se{i:06}.spw"))?,
         _ => anyhow::bail!("give --id or --file"),
     };
-    let bytes: Arc<[u8]> = std::fs::read(&path)
-        .with_context(|| format!("reading {}", path.display()))?
-        .into();
+    let bytes: Arc<[u8]> = std::fs::read(&path).with_context(|| format!("reading {}", path.display()))?.into();
     let mut dec = format::Decoder::new(bytes)?;
     let h = dec.header.clone();
     println!(
@@ -56,25 +46,12 @@ pub fn dump(
     let looped = h.loop_frame().map(|l| (l, h.frames()));
     format::write_wav(out, &samples, ch as u16, h.rate, looped)?;
     let peak = samples.iter().map(|s| s.unsigned_abs()).max().unwrap_or(0);
-    let rms = (samples.iter().map(|&s| (s as f64).powi(2)).sum::<f64>()
-        / samples.len().max(1) as f64)
-        .sqrt();
-    println!(
-        "wrote {} ({} frames, peak {peak}, rms {rms:.0})",
-        out.display(),
-        got
-    );
+    let rms = (samples.iter().map(|&s| (s as f64).powi(2)).sum::<f64>() / samples.len().max(1) as f64).sqrt();
+    println!("wrote {} ({} frames, peak {peak}, rms {rms:.0})", out.display(), got);
     Ok(())
 }
 
-pub fn audio_test(
-    id: u32,
-    seconds: f32,
-    se: bool,
-    fade: i32,
-    device: Option<String>,
-    list: bool,
-) -> Result<()> {
+pub fn audio_test(id: u32, seconds: f32, se: bool, fade: i32, device: Option<String>, list: bool) -> Result<()> {
     if list {
         for d in audio::output::list() {
             println!("{d}");
@@ -83,8 +60,7 @@ pub fn audio_test(
     }
     let cfg = Config::load();
     let device = device.unwrap_or(cfg.audio_device.clone());
-    let mut a =
-        audio::Audio::open(cfg.ffxi_dir(), Some(&device), 1.0, 1.0).context("no audio output")?;
+    let mut a = audio::Audio::open(cfg.ffxi_dir(), Some(&device), 1.0, 1.0).context("no audio output")?;
     if se {
         a.play_se(id, 127);
     } else {
@@ -104,10 +80,6 @@ pub fn audio_test(
         }
     }
     use std::sync::atomic::Ordering;
-    println!(
-        "played {} for {seconds} s (mixer saw music {:?})",
-        if se { "effect" } else { "music" },
-        a.status.bgm.load(Ordering::Relaxed).checked_sub(1)
-    );
+    println!("played {} for {seconds} s (mixer saw music {:?})", if se { "effect" } else { "music" }, a.status.bgm.load(Ordering::Relaxed).checked_sub(1));
     Ok(())
 }

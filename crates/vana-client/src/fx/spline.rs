@@ -21,9 +21,7 @@ pub fn build(q: &[Vec3]) -> Option<Vec<Seg>> {
         return None;
     }
     // Chords c_k = max(|Q_k+1 - Q_k|, 0.01), with c_-1 = c_0 and c_N-1 = c_N-2; reflected phantom ends.
-    let c: Vec<f32> = (0..n - 1)
-        .map(|k| (q[k + 1] - q[k]).length().max(0.01))
-        .collect();
+    let c: Vec<f32> = (0..n - 1).map(|k| (q[k + 1] - q[k]).length().max(0.01)).collect();
     let total: f32 = c.iter().sum();
     let cq = |k: isize| c[k.clamp(0, n as isize - 2) as usize];
     let pq = |k: isize| match k {
@@ -67,10 +65,7 @@ pub fn eval(segs: &[Seg], u: f32) -> Vec3 {
     let (j, t) = pick.unwrap_or((segs.len() - 1, 1.0));
     let s = &segs[j];
     let (t2, t3) = (t * t, t * t * t);
-    s.p0 * (2.0 * t3 - 3.0 * t2 + 1.0)
-        + s.m0 * (t3 - 2.0 * t2 + t)
-        + s.p1 * (-2.0 * t3 + 3.0 * t2)
-        + s.m1 * (t3 - t2)
+    s.p0 * (2.0 * t3 - 3.0 * t2 + 1.0) + s.m0 * (t3 - 2.0 * t2 + t) + s.p1 * (-2.0 * t3 + 3.0 * t2) + s.m1 * (t3 - t2)
 }
 
 /// The GPU form: a header (segment count) then four vec4s a segment (p0, u0), (m0, len), (p1, 0), (m1, 0).
@@ -87,17 +82,9 @@ pub fn gpu_words(segs: &[Seg]) -> Vec<[f32; 4]> {
 
 /// Vtx data: u32 count, then vec4 points from +0x10 (w = 1 in every file).
 pub fn points(d: &[u8]) -> Vec<Vec3> {
-    let n = d
-        .get(0..4)
-        .map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap())) as usize;
-    let f = |o: usize| {
-        d.get(o..o + 4)
-            .map_or(0.0, |b| f32::from_le_bytes(b.try_into().unwrap()))
-    };
-    (0..n)
-        .take_while(|i| 0x10 + i * 16 + 12 <= d.len())
-        .map(|i| Vec3::new(f(0x10 + i * 16), f(0x14 + i * 16), f(0x18 + i * 16)))
-        .collect()
+    let n = d.get(0..4).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap())) as usize;
+    let f = |o: usize| d.get(o..o + 4).map_or(0.0, |b| f32::from_le_bytes(b.try_into().unwrap()));
+    (0..n).take_while(|i| 0x10 + i * 16 + 12 <= d.len()).map(|i| Vec3::new(f(0x10 + i * 16), f(0x14 + i * 16), f(0x18 + i * 16))).collect()
 }
 
 #[cfg(test)]
@@ -121,23 +108,14 @@ mod tests {
     fn worked_paths() {
         let Some(q) = vtx(202, b"lin2") else { return };
         let s = build(&q).unwrap();
-        for (u, p) in [
-            (0.0, Vec3::new(122.9643, -1.5996, 446.3557)),
-            (0.25, Vec3::new(137.8889, -6.2966, 313.4352)),
-            (0.5, Vec3::new(70.5023, -4.3057, 178.0302)),
-            (0.75, Vec3::new(-27.9632, -9.8760, 111.9538)),
-            (1.0, Vec3::new(-127.1780, -18.9483, 26.7836)),
-        ] {
+        for (u, p) in [(0.0, Vec3::new(122.9643, -1.5996, 446.3557)), (0.25, Vec3::new(137.8889, -6.2966, 313.4352)), (0.5, Vec3::new(70.5023, -4.3057, 178.0302)), (0.75, Vec3::new(-27.9632, -9.8760, 111.9538)), (1.0, Vec3::new(-127.1780, -18.9483, 26.7836))] {
             assert!(close(eval(&s, u), p), "lin2 u {u}: {}", eval(&s, u));
         }
         let Some(q) = vtx(265, b"a7  ") else { return };
         let s = build(&q).unwrap();
-        for (u, p) in [
-            (0.25, Vec3::new(-492.9381, -170.8691, -233.2339)),
-            (0.5, Vec3::new(-494.5517, -170.8691, -233.7639)),
-            (1.0, Vec3::new(-497.9810, -170.8691, -233.8575)),
-        ] {
+        for (u, p) in [(0.25, Vec3::new(-492.9381, -170.8691, -233.2339)), (0.5, Vec3::new(-494.5517, -170.8691, -233.7639)), (1.0, Vec3::new(-497.9810, -170.8691, -233.8575))] {
             assert!(close(eval(&s, u), p), "a7 u {u}: {}", eval(&s, u));
         }
     }
 }
+

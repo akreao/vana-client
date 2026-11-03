@@ -176,16 +176,12 @@ fn instinct_cost(w: &World, n: u16) -> u32 {
     if n == 0 || n == 0xffff {
         return 0;
     }
-    w.item_info
-        .as_ref()
-        .map_or(0xff, |c| c.instinct_cost(n) as u32)
+    w.item_info.as_ref().map_or(0xff, |c| c.instinct_cost(n) as u32)
 }
 
 /// FUN_101444b0: what the 0x044 slots cost.
 fn used(w: &World) -> u32 {
-    (0..12)
-        .map(|i| instinct_cost(w, monstrosity::slot(w, i)))
-        .sum()
+    (0..12).map(|i| instinct_cost(w, monstrosity::slot(w, i))).sum()
 }
 
 fn cap(w: &World) -> u32 {
@@ -199,14 +195,7 @@ fn left(w: &World, s: &Screen) -> i64 {
 
 /// FUN_10141cc0's rule over the 0x044 slots `cur` and the pending ones: the same instinct on its slot is a removal, one
 /// already set or pending elsewhere refuses, and the effective set must stay within `cap`. True when it changed.
-fn equip_rule(
-    cur: &[u16; 12],
-    pending: &mut [u16; 12],
-    slot: usize,
-    n: u16,
-    cost: impl Fn(u16) -> u32,
-    cap: u32,
-) -> bool {
+fn equip_rule(cur: &[u16; 12], pending: &mut [u16; 12], slot: usize, n: u16, cost: impl Fn(u16) -> u32, cap: u32) -> bool {
     if slot > 11 {
         return false;
     }
@@ -218,10 +207,7 @@ fn equip_rule(
     } else {
         pending[slot] = n;
     }
-    let total: u32 = (0..12)
-        .map(|i| if pending[i] != 0 { pending[i] } else { cur[i] })
-        .map(|v| if v == 0 || v == 0xffff { 0 } else { cost(v) })
-        .sum();
+    let total: u32 = (0..12).map(|i| if pending[i] != 0 { pending[i] } else { cur[i] }).map(|v| if v == 0 || v == 0xffff { 0 } else { cost(v) }).sum();
     if total > cap {
         *pending = saved;
         return false;
@@ -239,14 +225,7 @@ fn equip(w: &World, s: &mut Screen, slot: usize, item: u16) -> bool {
         return false;
     }
     let cur = current_slots(w);
-    let ok = equip_rule(
-        &cur,
-        &mut s.slots,
-        slot,
-        item - 0x7400,
-        |n| instinct_cost(w, n),
-        cap(w),
-    );
+    let ok = equip_rule(&cur, &mut s.slots, slot, item - 0x7400, |n| instinct_cost(w, n), cap(w));
     if ok {
         s.flags |= 4;
         s.dirty = true;
@@ -255,14 +234,7 @@ fn equip(w: &World, s: &mut Screen, slot: usize, item: u16) -> bool {
 }
 
 /// FUN_100fd0b0: c2s 0x102's body (packet @(4 + k) at k).
-fn packet(
-    head: [u8; 2],
-    flags: u16,
-    species: u16,
-    rank: u8,
-    slots: &[u16; 12],
-    desc: [u8; 2],
-) -> Vec<u8> {
+fn packet(head: [u8; 2], flags: u16, species: u16, rank: u8, slots: &[u16; 12], desc: [u8; 2]) -> Vec<u8> {
     let mut b = vec![0u8; 0xa0];
     b[4..6].copy_from_slice(&head);
     b[6..8].copy_from_slice(&flags.to_le_bytes());
@@ -278,22 +250,13 @@ fn packet(
 /// mp_cstm's per frame (FUN_10143950 / FUN_101420a0 / FUN_101420d0): a dirty buffer commits at most once a second;
 /// outside the Feretory the change is dropped. A species change plays 'star' on us.
 pub fn tick(w: &mut World) {
-    let Some(mut s) = w.moncustom.take() else {
-        return;
-    };
+    let Some(mut s) = w.moncustom.take() else { return };
     // Out of Monstrosity (a zone, the bout ended): the screen is gone.
     if !monstrosity::active(w) {
         return;
     }
     // The star started by a species commit; mp_mncst greys until it ends.
-    if s.star
-        && !w.effects.event_scheduler_running(
-            STAR_FILE,
-            u32::from_le_bytes(*b"star"),
-            crate::fx::sched::Who::Actor(w.my_id),
-            crate::fx::sched::Who::Actor(w.my_id),
-        )
-    {
+    if s.star && !w.effects.event_scheduler_running(STAR_FILE, u32::from_le_bytes(*b"star"), crate::fx::sched::Who::Actor(w.my_id), crate::fx::sched::Who::Actor(w.my_id)) {
         s.star = false;
     }
     if s.dirty && s.committed.is_none_or(|t| t.elapsed() >= COMMIT) {
@@ -301,24 +264,10 @@ pub fn tick(w: &mut World) {
             if monstrosity::in_feretory(w)
                 && let Some(head) = monstrosity::block_head(w)
             {
-                log::info!(
-                    "monstrosity: c2s 0x102 flags {:#x} species {:#x} slots {:?} desc {:?}",
-                    s.flags,
-                    s.species,
-                    s.slots,
-                    s.desc
-                );
-                let _ = w.net.commands.send(NetCommand::Packet {
-                    id: 0x102,
-                    body: packet(head, s.flags, s.species, s.rank, &s.slots, s.desc),
-                });
+                log::info!("monstrosity: c2s 0x102 flags {:#x} species {:#x} slots {:?} desc {:?}", s.flags, s.species, s.slots, s.desc);
+                let _ = w.net.commands.send(NetCommand::Packet { id: 0x102, body: packet(head, s.flags, s.species, s.rank, &s.slots, s.desc) });
                 if s.flags & 1 != 0 && w.actors.contains_key(&w.my_id) {
-                    w.effects.on_event_scheduler(
-                        STAR_FILE,
-                        u32::from_le_bytes(*b"star"),
-                        crate::fx::sched::Who::Actor(w.my_id),
-                        crate::fx::sched::Who::Actor(w.my_id),
-                    );
+                    w.effects.on_event_scheduler(STAR_FILE, u32::from_le_bytes(*b"star"), crate::fx::sched::Who::Actor(w.my_id), crate::fx::sched::Who::Actor(w.my_id));
                     s.star = true;
                 }
             }
@@ -343,24 +292,13 @@ fn species_base(w: &World, v: u16) -> Option<u16> {
 fn species_rows(w: &World, gu: &GameUi, s: &Screen) -> Vec<Row> {
     let mut rows = vec![Row::Type];
     let f = s.types[0];
-    rows.extend(
-        gu.mon_order()
-            .iter()
-            .copied()
-            .filter(|&v| {
-                monstrosity::species_owned(w, v)
-                    && (f < 0 || monstrosity::species_type(v) as i8 == f)
-            })
-            .map(Row::Species),
-    );
+    rows.extend(gu.mon_order().iter().copied().filter(|&v| monstrosity::species_owned(w, v) && (f < 0 || monstrosity::species_type(v) as i8 == f)).map(Row::Species));
     rows
 }
 
 /// The instinct list (FUN_10142e80): the two filters, Remove All, then the catalogues' owned instincts by type and cost.
 fn instinct_rows(w: &World, s: &Screen) -> Vec<Row> {
-    let Some(cache) = w.item_info.as_ref() else {
-        return Vec::new();
-    };
+    let Some(cache) = w.item_info.as_ref() else { return Vec::new() };
     let cat = cache.catalogues();
     if cat.is_empty() {
         return Vec::new();
@@ -369,17 +307,9 @@ fn instinct_rows(w: &World, s: &Screen) -> Vec<Row> {
     let f = s.types[1];
     rows.extend(cat.iter().filter_map(|&(item, cost)| {
         let n = item.wrapping_sub(0x7400);
-        let ty = if n < 0x300 {
-            monstrosity::species_type(n / 3)
-        } else {
-            19
-        };
+        let ty = if n < 0x300 { monstrosity::species_type(n / 3) } else { 19 };
         let c = (cost & 0xff) as u8;
-        ((f < 0 || ty as i8 == f)
-            && s.cost.0 <= c
-            && c <= s.cost.1
-            && monstrosity::instinct_owned(w, n))
-        .then_some(Row::Instinct(item, cost))
+        ((f < 0 || ty as i8 == f) && s.cost.0 <= c && c <= s.cost.1 && monstrosity::instinct_owned(w, n)).then_some(Row::Instinct(item, cost))
     }));
     rows
 }
@@ -400,10 +330,7 @@ fn rows(w: &World, gu: &GameUi, s: &Screen, src: Source) -> Vec<Row> {
 /// FUN_101f7080: the cursor on `row`, scrolled into view.
 fn place(c: &mut (usize, usize), row: usize, n: usize) {
     c.0 = row.min(n.saturating_sub(1));
-    c.1 =
-        c.1.min(c.0)
-            .max((c.0 + 1).saturating_sub(VISIBLE))
-            .min(n.saturating_sub(VISIBLE));
+    c.1 = c.1.min(c.0).max((c.0 + 1).saturating_sub(VISIBLE)).min(n.saturating_sub(VISIBLE));
 }
 
 /// The generic list's keys: Up / Down a row (silent at the ends), Left / Right a page (FUN_101f6c70, +0x47).
@@ -441,9 +368,7 @@ fn child_slot(child: u16) -> usize {
 
 /// The keys of whichever Customization window has the focus.
 pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
-    let Some(mut s) = w.moncustom.take() else {
-        return;
-    };
+    let Some(mut s) = w.moncustom.take() else { return };
     let keep = keys(w, gu, &mut s, key);
     if keep && w.moncustom.is_none() {
         w.moncustom = Some(s);
@@ -520,18 +445,14 @@ fn keys(w: &mut World, gu: &GameUi, s: &mut Screen, key: egui::Key) -> bool {
                 se(w, Ui::Select);
                 match s.mncst {
                     1 => {
-                        s.base = species_base(w, monstrosity::current_species(w))
-                            .map_or(-1, |b| b as i32);
+                        s.base = species_base(w, monstrosity::current_species(w)).map_or(-1, |b| b as i32);
                         s.types[0] = -1;
                         (s.list, s.focus) = (Some(Source::Species), Focus::List);
                         // The first build after the open: the cursor on the current species.
                         if !s.placed {
                             let rws = species_rows(w, gu, s);
                             let cur = monstrosity::current_species(w);
-                            let at = rws
-                                .iter()
-                                .position(|r| *r == Row::Species(cur))
-                                .unwrap_or(0);
+                            let at = rws.iter().position(|r| *r == Row::Species(cur)).unwrap_or(0);
                             s.cursors[0] = (0, 0);
                             place(&mut s.cursors[0], at, rws.len());
                             s.placed = true;
@@ -540,8 +461,7 @@ fn keys(w: &mut World, gu: &GameUi, s: &mut Screen, key: egui::Key) -> bool {
                     2 => {
                         s.types[1] = -1;
                         s.cost = COST_ALL;
-                        (s.list, s.faculties, s.focus) =
-                            (Some(Source::Instincts), true, Focus::Cstm);
+                        (s.list, s.faculties, s.focus) = (Some(Source::Instincts), true, Focus::Cstm);
                     }
                     _ => {
                         (s.list, s.mnnm, s.focus) = (Some(Source::Names), Some(1), Focus::Mnnm);
@@ -573,13 +493,7 @@ fn list_key(w: &mut World, gu: &GameUi, s: &mut Screen, key: egui::Key) {
             }
             (_, Some(Row::Cost)) => {
                 w.sounds.push(Ui::Select as u32);
-                s.kncst = Some(Kncst {
-                    min: s.cost.0,
-                    max: s.cost.1,
-                    saved: s.cost,
-                    child: 1,
-                    editing: 0,
-                });
+                s.kncst = Some(Kncst { min: s.cost.0, max: s.cost.1, saved: s.cost, child: 1, editing: 0 });
                 s.focus = Focus::Kncst;
             }
             (_, Some(Row::RemoveAll)) => {
@@ -608,15 +522,13 @@ fn list_key(w: &mut World, gu: &GameUi, s: &mut Screen, key: egui::Key) {
                         w.sounds.push(Ui::Select as u32);
                         s.inst_pick = item;
                         // FUN_10143e90: mp_cstm's cursor to the slot holding it.
-                        if let Some(k) = (0..12).find(|&k| monstrosity::slot(w, k) == item - 0x7400)
-                        {
+                        if let Some(k) = (0..12).find(|&k| monstrosity::slot(w, k) == item - 0x7400) {
                             s.cstm = SLOT_CHILD[k];
                         }
                     }
                     Some(slot) => {
                         let ok = equip(w, s, slot, item);
-                        w.sounds
-                            .push(if ok { Ui::Select } else { Ui::Error } as u32);
+                        w.sounds.push(if ok { Ui::Select } else { Ui::Error } as u32);
                         (s.inst_pick, s.pick_cost) = (0, 0);
                     }
                 }
@@ -663,24 +575,16 @@ fn set_species(w: &World, s: &mut Screen, v: u16) {
 
 /// The exp prompt's Yes (LAB_10142cc0).
 pub fn species_yes(w: &mut World, v: u16) {
-    let Some(mut s) = w.moncustom.take() else {
-        return;
-    };
+    let Some(mut s) = w.moncustom.take() else { return };
     set_species(w, &mut s, v);
     w.moncustom = Some(s);
 }
 
 /// Remove All's Yes (LAB_10143380, FUN_10141e00): every set slot to 0xffff.
 pub fn remove_all(w: &mut World) {
-    let Some(mut s) = w.moncustom.take() else {
-        return;
-    };
+    let Some(mut s) = w.moncustom.take() else { return };
     for i in 0..12 {
-        s.slots[i] = if monstrosity::slot(w, i) != 0 {
-            0xffff
-        } else {
-            0
-        };
+        s.slots[i] = if monstrosity::slot(w, i) != 0 { 0xffff } else { 0 };
     }
     s.flags |= 4;
     s.dirty = true;
@@ -700,8 +604,7 @@ fn cstm_key(w: &mut World, gu: &GameUi, s: &mut Screen, key: egui::Key) {
             let slot = child_slot(s.cstm);
             if s.inst_pick != 0 {
                 let ok = equip(w, s, slot, s.inst_pick);
-                w.sounds
-                    .push(if ok { Ui::Select } else { Ui::Error } as u32);
+                w.sounds.push(if ok { Ui::Select } else { Ui::Error } as u32);
                 (s.slot_pick, s.inst_pick, s.pick_cost) = (None, 0, 0);
                 return;
             }
@@ -713,10 +616,7 @@ fn cstm_key(w: &mut World, gu: &GameUi, s: &mut Screen, key: egui::Key) {
                 return;
             }
             let n = monstrosity::slot(w, slot);
-            let at = rws
-                .iter()
-                .position(|r| matches!(r, Row::Instinct(item, _) if n != 0 && *item == 0x7400 + n))
-                .unwrap_or(s.cursors[1].0);
+            let at = rws.iter().position(|r| matches!(r, Row::Instinct(item, _) if n != 0 && *item == 0x7400 + n)).unwrap_or(s.cursors[1].0);
             place(&mut s.cursors[1], at, rws.len());
             s.slot_pick = Some(slot);
             let c = instinct_cost(w, n);
@@ -767,11 +667,7 @@ fn kncst_key(w: &mut World, s: &mut Screen, key: egui::Key) {
         }
         if matches!(key, K::Enter | K::Escape) {
             k.editing = 0;
-            w.sounds.push(if key == K::Enter {
-                Ui::Select
-            } else {
-                Ui::Cancel
-            } as u32);
+            w.sounds.push(if key == K::Enter { Ui::Select } else { Ui::Cancel } as u32);
         }
         s.kncst = Some(k);
         return;
@@ -829,9 +725,7 @@ fn kncst_key(w: &mut World, s: &mut Screen, key: egui::Key) {
 
 /// Num+ (message 8): between mp_cstm and the instinct list in Faculties (SE 0013), picks reset from the list.
 pub fn num_plus(w: &mut World) {
-    let Some(s) = w.moncustom.as_mut() else {
-        return;
-    };
+    let Some(s) = w.moncustom.as_mut() else { return };
     match s.focus {
         Focus::Cstm if s.faculties => {
             s.focus = Focus::List;
@@ -849,15 +743,11 @@ pub fn num_plus(w: &mut World) {
 pub fn info_source(w: &World) -> Option<u16> {
     let s = w.moncustom.as_ref().filter(|s| s.faculties)?;
     match s.focus {
-        Focus::Cstm => Some(monstrosity::slot(w, child_slot(s.cstm)))
-            .filter(|&n| n != 0)
-            .map(|n| 0x7400 + n),
-        Focus::List if s.list == Some(Source::Instincts) => {
-            match instinct_rows(w, s).get(s.cursors[1].0) {
-                Some(Row::Instinct(item, _)) => Some(*item),
-                _ => None,
-            }
-        }
+        Focus::Cstm => Some(monstrosity::slot(w, child_slot(s.cstm))).filter(|&n| n != 0).map(|n| 0x7400 + n),
+        Focus::List if s.list == Some(Source::Instincts) => match instinct_rows(w, s).get(s.cursors[1].0) {
+            Some(Row::Instinct(item, _)) => Some(*item),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -871,23 +761,11 @@ pub fn bars(gu: &GameUi, w: &World, bars: &mut super::hudtop::BarText) {
         Focus::Cstm => (help(0x2be), 0xa5),
         Focus::Mnnm => (help(0x2bf), 0xa5),
         Focus::Mntp2 => (help(0x2c3), 0x69),
-        Focus::Kncst => (
-            help(if s.kncst.is_some_and(|k| k.child == 4) {
-                0x17b
-            } else {
-                0x328
-            }),
-            0x69,
-        ),
+        Focus::Kncst => (help(if s.kncst.is_some_and(|k| k.child == 4) { 0x17b } else { 0x328 }), 0x69),
         Focus::List => {
             let line = match s.list {
                 Some(Source::Species) => match species_rows(w, gu, s).get(s.cursors[0].0) {
-                    Some(Row::Species(v)) => w
-                        .item_info
-                        .as_ref()
-                        .and_then(|c| c.item(0xf000 + v))
-                        .map(|it| it.description.clone())
-                        .unwrap_or_default(),
+                    Some(Row::Species(v)) => w.item_info.as_ref().and_then(|c| c.item(0xf000 + v)).map(|it| it.description.clone()).unwrap_or_default(),
                     _ => help(0x2c3),
                 },
                 Some(Source::Instincts) => match s.cursors[1].0 {
@@ -910,9 +788,7 @@ fn text(gu: &mut GameUi, s: &str, x: f32, y: f32, tint: u32) {
 
 /// An item's icon at half scale (FUN_1015bd70, 16x16).
 fn item_icon(gu: &mut GameUi, w: &World, id: u16, x: f32, y: f32) {
-    let Some(cache) = w.item_info.as_ref() else {
-        return;
-    };
+    let Some(cache) = w.item_info.as_ref() else { return };
     super::items::upload_icons(gu, cache, std::iter::once(id));
     let icon = crate::render::invwin::icon_texture(id);
     if gu.has_image(&icon) {
@@ -932,32 +808,15 @@ fn owned_tint(w: &World, set: bool) -> u32 {
 }
 
 /// mp_invnt over its source: 11 rows at (3, 6 + 18 k), the band (keytops3 428) and the hand while focused, the bar.
-fn draw_list(
-    gu: &mut GameUi,
-    w: &World,
-    s: &Screen,
-    src: Source,
-    sw: f32,
-    sh: f32,
-    focused: bool,
-    rects: &mut Vec<[f32; 4]>,
-) {
+fn draw_list(gu: &mut GameUi, w: &World, s: &Screen, src: Source, sw: f32, sh: f32, focused: bool, rects: &mut Vec<[f32; 4]>) {
     let rws = rows(w, gu, s, src);
     let c = s.cursors[source_index(src)];
     let hide: Vec<u16> = (1..=VISIBLE as u16).collect();
-    let Some(win) = gu.lobby_window_off(INVNT, sw, sh, (0.0, 0.0), None, false, &hide) else {
-        return;
-    };
+    let Some(win) = gu.lobby_window_off(INVNT, sw, sh, (0.0, 0.0), None, false, &hide) else { return };
     super::winhits::record(w, INVNT, &win);
     let [x, y, fw, fh] = win.frame;
     if focused {
-        gu.sprite(
-            "menu    keytops3",
-            428,
-            x,
-            y + 6.0 + 18.0 * (c.0 - c.1) as f32,
-            WHITE,
-        );
+        gu.sprite("menu    keytops3", 428, x, y + 6.0 + 18.0 * (c.0 - c.1) as f32, WHITE);
         gu.cursor(x + 3.0, y + 6.0 + 18.0 * (c.0 - c.1) as f32);
     }
     let names_col = if src == Source::Names { 5.0 } else { 0.0 };
@@ -967,48 +826,16 @@ fn draw_list(
         match *r {
             Row::Type => {
                 let f = s.types[if src == Source::Species { 0 } else { 1 }];
-                gu.sprite(
-                    "menu    framesus",
-                    130,
-                    x,
-                    ry + 2.0,
-                    if f >= 0 { GREEN } else { WHITE },
-                );
+                gu.sprite("menu    framesus", 130, x, ry + 2.0, if f >= 0 { GREEN } else { WHITE });
             }
             Row::Cost => {
-                gu.sprite(
-                    "menu    framesus",
-                    186,
-                    x,
-                    ry + 2.0,
-                    if s.cost == COST_ALL { WHITE } else { GREEN },
-                );
+                gu.sprite("menu    framesus", 186, x, ry + 2.0, if s.cost == COST_ALL { WHITE } else { GREEN });
             }
-            Row::RemoveAll => text(
-                gu,
-                &w.battle
-                    .as_ref()
-                    .and_then(|b| b.group9(0xe3))
-                    .unwrap_or_default(),
-                x + 18.0,
-                ry + 2.0,
-                YELLOW,
-            ),
+            Row::RemoveAll => text(gu, &w.battle.as_ref().and_then(|b| b.group9(0xe3)).unwrap_or_default(), x + 18.0, ry + 2.0, YELLOW),
             Row::Species(v) => {
                 item_icon(gu, w, 0xf000 + v, x, ry);
-                let name = w
-                    .item_info
-                    .as_ref()
-                    .and_then(|c| c.item(0xf000 + v))
-                    .map(|it| it.name.clone())
-                    .unwrap_or_default();
-                text(
-                    gu,
-                    &name,
-                    x + 18.0,
-                    ry + 2.0,
-                    owned_tint(w, v == monstrosity::current_species(w)),
-                );
+                let name = w.item_info.as_ref().and_then(|c| c.item(0xf000 + v)).map(|it| it.name.clone()).unwrap_or_default();
+                text(gu, &name, x + 18.0, ry + 2.0, owned_tint(w, v == monstrosity::current_species(w)));
                 if monstrosity::data_in(w) {
                     let lv = species_base(w, v).map_or(0, |b| monstrosity::level(w, b));
                     gu.shape_text("Lv", x + 170.0 - 32.0, ry + 4.0, WHITE, false);
@@ -1023,60 +850,27 @@ fn draw_list(
                 if tint == WHITE && left < instinct_cost(w, n) as i64 {
                     tint = GREY;
                 }
-                let name = w
-                    .item_info
-                    .as_ref()
-                    .and_then(|c| c.item(item))
-                    .map(|it| it.name.clone())
-                    .unwrap_or_default();
+                let name = w.item_info.as_ref().and_then(|c| c.item(item)).map(|it| it.name.clone()).unwrap_or_default();
                 text(gu, &name, x + 18.0, ry + 2.0, tint);
             }
             Row::Name(id) => {
                 let slot = s.mnnm.unwrap_or(1) as usize - 1;
-                text(
-                    gu,
-                    monstrosity::prefix_text(id),
-                    x + names_col,
-                    ry + 2.0,
-                    owned_tint(w, monstrosity::descriptor(w, slot) == id),
-                );
+                text(gu, monstrosity::prefix_text(id), x + names_col, ry + 2.0, owned_tint(w, monstrosity::descriptor(w, slot) == id));
             }
         }
     }
     gu.scroll_bar(x + fw - 8.0, y, fh, rws.len(), VISIBLE, c.1);
     if focused {
-        gu.bar_site(
-            super::scrollbar::Owner::MonCustom,
-            x + fw - 8.0,
-            y,
-            fh,
-            rws.len(),
-            VISIBLE,
-            c.1,
-        );
+        gu.bar_site(super::scrollbar::Owner::MonCustom, x + fw - 8.0, y, fh, rws.len(), VISIBLE, c.1);
     }
     rects.push(win.frame);
 }
 
 /// mp_cstm (FUN_10143af0): the 0x044 instincts' icons in their slots, the species icon, the ten number fields.
-fn draw_cstm(
-    gu: &mut GameUi,
-    w: &World,
-    s: &Screen,
-    sw: f32,
-    sh: f32,
-    focused: bool,
-    rects: &mut Vec<[f32; 4]>,
-) {
+fn draw_cstm(gu: &mut GameUi, w: &World, s: &Screen, sw: f32, sh: f32, focused: bool, rects: &mut Vec<[f32; 4]>) {
     // +0x63 = 0: the cursor child shows only while focused; a slot picked first stays marked meanwhile.
-    let sel = if focused {
-        Some(s.cstm)
-    } else {
-        s.slot_pick.map(|k| SLOT_CHILD[k])
-    };
-    let Some(win) = gu.lobby_window_off(CSTM, sw, sh, (0.0, 0.0), sel, focused, &[]) else {
-        return;
-    };
+    let sel = if focused { Some(s.cstm) } else { s.slot_pick.map(|k| SLOT_CHILD[k]) };
+    let Some(win) = gu.lobby_window_off(CSTM, sw, sh, (0.0, 0.0), sel, focused, &[]) else { return };
     super::winhits::record(w, CSTM, &win);
     let [x, y, ..] = win.frame;
     let child = |c: u16| win.children.iter().find(|e| e.0 == c).map(|e| e.1);
@@ -1115,9 +909,7 @@ fn draw_cstm(
 
 /// An item's icon at full size (32x32) in a slot.
 fn item_icon_big(gu: &mut GameUi, w: &World, id: u16, x: f32, y: f32) {
-    let Some(cache) = w.item_info.as_ref() else {
-        return;
-    };
+    let Some(cache) = w.item_info.as_ref() else { return };
     super::items::upload_icons(gu, cache, std::iter::once(id));
     let icon = crate::render::invwin::icon_texture(id);
     if gu.has_image(&icon) {
@@ -1127,18 +919,12 @@ fn item_icon_big(gu: &mut GameUi, w: &World, id: u16, x: f32, y: f32) {
 
 /// The cost panel in level's place (FUN_10144530): "Cost", used / cap.
 fn draw_cost(gu: &mut GameUi, w: &World, sw: f32, sh: f32, rects: &mut Vec<[f32; 4]>) {
-    let Some([lx, ly, ..]) = gu.window_rect(LEVEL, sw, sh) else {
-        return;
-    };
+    let Some([lx, ly, ..]) = gu.window_rect(LEVEL, sw, sh) else { return };
     let (x, y, fw, fh) = (lx, ly + 52.0, 112.0, 88.0);
     if !gu.window_sized(HELP, x, y, fw, fh) {
         return;
     }
-    let label = w
-        .battle
-        .as_ref()
-        .and_then(|b| b.group9(0x102))
-        .unwrap_or_default();
+    let label = w.battle.as_ref().and_then(|b| b.group9(0x102)).unwrap_or_default();
     gu.shape_text(&label, x + 7.0, y + 7.0, WHITE, false);
     gu.shape_text(&used(w).to_string(), x + 58.0, y + 24.0, WHITE, true);
     gu.shape_text("/", x + 59.0, y + 24.0, WHITE, false);
@@ -1148,27 +934,11 @@ fn draw_cost(gu: &mut GameUi, w: &World, sw: f32, sh: f32, rects: &mut Vec<[f32;
 
 /// mp_kncst: the boxes' numbers right-aligned, the edited one coloured.
 fn draw_kncst(gu: &mut GameUi, w: &World, k: &Kncst, sw: f32, sh: f32, rects: &mut Vec<[f32; 4]>) {
-    let Some(win) = gu.lobby_window_off(
-        KNCST,
-        sw,
-        sh,
-        (0.0, 0.0),
-        Some(k.child),
-        k.editing == 0,
-        &[],
-    ) else {
-        return;
-    };
+    let Some(win) = gu.lobby_window_off(KNCST, sw, sh, (0.0, 0.0), Some(k.child), k.editing == 0, &[]) else { return };
     super::winhits::record(w, KNCST, &win);
     for (c, v) in [(1u16, k.min), (2, k.max)] {
         if let Some(r) = win.children.iter().find(|e| e.0 == c).map(|e| e.1) {
-            gu.shape_text(
-                &v.to_string(),
-                r[0] + r[2] - 2.0,
-                r[1] + 2.0,
-                if k.editing == c as u8 { EDITING } else { WHITE },
-                true,
-            );
+            gu.shape_text(&v.to_string(), r[0] + r[2] - 2.0, r[1] + 2.0, if k.editing == c as u8 { EDITING } else { WHITE }, true);
         }
     }
     rects.push(win.frame);
@@ -1188,15 +958,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
     // The group walk hides mp_mncst while the list (its group 0x81) is up.
     if s.list.is_none() || s.list == Some(Source::Instincts) && s.focus == Focus::Cstm && false {
         let off: Vec<u16> = if s.star { vec![1, 2, 3] } else { Vec::new() };
-        if let Some(win) = gu.lobby_window_off(
-            MNCST,
-            sw,
-            sh,
-            (0.0, 0.0),
-            Some(s.mncst),
-            free && s.focus == Focus::Mncst,
-            &[],
-        ) {
+        if let Some(win) = gu.lobby_window_off(MNCST, sw, sh, (0.0, 0.0), Some(s.mncst), free && s.focus == Focus::Mncst, &[]) {
             super::winhits::record(w, MNCST, &win);
             if !off.is_empty() {
                 gu.disabled_children(MNCST, win.frame[0], win.frame[1], &off, Some(s.mncst));
@@ -1205,27 +967,10 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         }
     }
     if let Some(src) = s.list {
-        draw_list(
-            gu,
-            w,
-            s,
-            src,
-            sw,
-            sh,
-            free && s.focus == Focus::List,
-            &mut rects,
-        );
+        draw_list(gu, w, s, src, sw, sh, free && s.focus == Focus::List, &mut rects);
     }
     if let Some(r) = s.mnnm
-        && let Some(win) = gu.lobby_window_off(
-            MNNM,
-            sw,
-            sh,
-            (0.0, 0.0),
-            Some(r),
-            free && s.focus == Focus::Mnnm,
-            &[],
-        )
+        && let Some(win) = gu.lobby_window_off(MNNM, sw, sh, (0.0, 0.0), Some(r), free && s.focus == Focus::Mnnm, &[])
     {
         super::winhits::record(w, MNNM, &win);
         rects.push(win.frame);
@@ -1251,101 +996,25 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
     let Some(s) = w.moncustom.clone() else { return };
     let enter = |w: &mut World, gu: &GameUi, k: egui::Key| key(w, gu, k);
     match s.focus {
-        Focus::Mncst => super::winhits::generic(
-            w,
-            gu,
-            MNCST,
-            s.mncst,
-            1..=3,
-            p,
-            moved,
-            clicked,
-            right,
-            |w, id| set(w, |s| s.mncst = id),
-            enter,
-        ),
-        Focus::Cstm => super::winhits::generic(
-            w,
-            gu,
-            CSTM,
-            s.cstm,
-            1..=12,
-            p,
-            moved,
-            clicked,
-            right,
-            |w, id| set(w, |s| s.cstm = id),
-            enter,
-        ),
-        Focus::Mnnm => super::winhits::generic(
-            w,
-            gu,
-            MNNM,
-            s.mnnm.unwrap_or(1),
-            1..=2,
-            p,
-            moved,
-            clicked,
-            right,
-            |w, id| set(w, |s| s.mnnm = Some(id)),
-            enter,
-        ),
-        Focus::Mntp2 => super::winhits::generic(
-            w,
-            gu,
-            MNTP2,
-            s.mntp2.unwrap_or(1),
-            1..=20,
-            p,
-            moved,
-            clicked,
-            right,
-            |w, id| set(w, |s| s.mntp2 = Some(id)),
-            enter,
-        ),
-        Focus::Kncst if s.kncst.is_some_and(|k| k.editing == 0) => super::winhits::generic(
-            w,
-            gu,
-            KNCST,
-            s.kncst.map_or(1, |k| k.child),
-            1..=5,
-            p,
-            moved,
-            clicked,
-            right,
-            |w, id| {
-                set(w, |s| {
-                    if let Some(k) = s.kncst.as_mut() {
-                        k.child = id
-                    }
-                })
-            },
-            enter,
-        ),
+        Focus::Mncst => super::winhits::generic(w, gu, MNCST, s.mncst, 1..=3, p, moved, clicked, right, |w, id| set(w, |s| s.mncst = id), enter),
+        Focus::Cstm => super::winhits::generic(w, gu, CSTM, s.cstm, 1..=12, p, moved, clicked, right, |w, id| set(w, |s| s.cstm = id), enter),
+        Focus::Mnnm => super::winhits::generic(w, gu, MNNM, s.mnnm.unwrap_or(1), 1..=2, p, moved, clicked, right, |w, id| set(w, |s| s.mnnm = Some(id)), enter),
+        Focus::Mntp2 => super::winhits::generic(w, gu, MNTP2, s.mntp2.unwrap_or(1), 1..=20, p, moved, clicked, right, |w, id| set(w, |s| s.mntp2 = Some(id)), enter),
+        Focus::Kncst if s.kncst.is_some_and(|k| k.editing == 0) => {
+            super::winhits::generic(w, gu, KNCST, s.kncst.map_or(1, |k| k.child), 1..=5, p, moved, clicked, right, |w, id| set(w, |s| if let Some(k) = s.kncst.as_mut() { k.child = id }), enter)
+        }
         Focus::List => {
             let Some(src) = s.list else { return };
             let c = s.cursors[source_index(src)];
             let n = rows(w, gu, &s, src).len();
-            super::winhits::generic(
-                w,
-                gu,
-                INVNT,
-                (c.0 - c.1 + 1) as u16,
-                1..=VISIBLE as u16,
-                p,
-                moved,
-                clicked,
-                right,
-                |w, id| {
-                    set(w, |s| {
-                        let row = s.cursors[source_index(src)].1 + id as usize - 1;
-                        if row < n {
-                            s.cursors[source_index(src)].0 = row;
-                        }
-                    })
-                },
-                enter,
-            );
+            super::winhits::generic(w, gu, INVNT, (c.0 - c.1 + 1) as u16, 1..=VISIBLE as u16, p, moved, clicked, right, |w, id| {
+                set(w, |s| {
+                    let row = s.cursors[source_index(src)].1 + id as usize - 1;
+                    if row < n {
+                        s.cursors[source_index(src)].0 = row;
+                    }
+                })
+            }, enter);
         }
         Focus::Kncst => {}
     }
@@ -1359,9 +1028,7 @@ fn set(w: &mut World, f: impl FnOnce(&mut Screen)) {
 
 /// The scroll bar or wheel on the focused list.
 pub(super) fn bar(w: &mut World, n: usize, m: super::scrollbar::Msg) -> bool {
-    let Some(s) = w.moncustom.as_mut() else {
-        return false;
-    };
+    let Some(s) = w.moncustom.as_mut() else { return false };
     let Some(src) = s.list else { return false };
     let c = &mut s.cursors[source_index(src)];
     let mut row = c.0.saturating_sub(c.1);
@@ -1376,14 +1043,7 @@ mod tests {
 
     #[test]
     fn packet_bytes() {
-        let b = packet(
-            [0x17, 0],
-            5,
-            0x101,
-            1,
-            &[3, 0xffff, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x30],
-            [4, 9],
-        );
+        let b = packet([0x17, 0], 5, 0x101, 1, &[3, 0xffff, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x30], [4, 9]);
         assert_eq!(b.len(), 0xa0);
         assert_eq!(&b[4..12], &[0x17, 0, 5, 0, 0x01, 0x01, 1, 0]);
         assert_eq!(&b[12..16], &[3, 0, 0xff, 0xff]);

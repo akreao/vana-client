@@ -71,11 +71,7 @@ impl AucPacket {
         let b = |o: usize| p.get(o).copied().unwrap_or(0);
         let w = |o: usize| u16::from_le_bytes([b(o), b(o + 1)]);
         let d = |o: usize| u32::from_le_bytes([b(o), b(o + 1), b(o + 2), b(o + 3)]);
-        let name: String = (0x18..0x28)
-            .map(b)
-            .take_while(|&c| c != 0)
-            .map(|c| c as char)
-            .collect();
+        let name: String = (0x18..0x28).map(b).take_while(|&c| c != 0).map(|c| c as char).collect();
         AucPacket {
             cmd: b(4),
             slot: b(5) as i8,
@@ -85,17 +81,7 @@ impl AucPacket {
             pc: w(0xc),
             pe: w(0xe),
             p10: d(0x10),
-            parcel: Parcel {
-                stat: b(0x14),
-                name,
-                item: w(0x28),
-                qty: b(0x2a),
-                cat: b(0x2b),
-                price: d(0x2c),
-                market: d(0x30),
-                lot: d(0x34),
-                time: d(0x38),
-            },
+            parcel: Parcel { stat: b(0x14), name, item: w(0x28), qty: b(0x2a), cat: b(0x2b), price: d(0x2c), market: d(0x30), lot: d(0x34), time: d(0x38) },
         }
     }
 }
@@ -109,23 +95,13 @@ fn send(w: &World, cmd: u8, slot: i8, p8: u32, pc: u16, pe: u16, p10: u32) {
     b[10..12].copy_from_slice(&pe.to_le_bytes());
     b[12..16].copy_from_slice(&p10.to_le_bytes());
     log::info!("auction: c2s 0x04E cmd {cmd:#x} slot {slot} {p8} {pc} {pe} {p10}");
-    let _ = w
-        .net
-        .commands
-        .send(NetCommand::Packet { id: 0x04E, body: b });
+    let _ = w.net.commands.send(NetCommand::Packet { id: 0x04E, body: b });
 }
 
 /// FUN_101d7280: the market of an auction zone (the city zones' table 0x1037ed68): 4, else 0.
 pub fn market(zone: Option<u16>) -> u8 {
-    const ZONES: [u16; 26] = [
-        230, 231, 232, 234, 235, 236, 238, 239, 240, 241, 243, 244, 245, 246, 247, 250, 252, 26,
-        48, 50, 53, 256, 257, 80, 87, 94,
-    ];
-    if zone.is_some_and(|z| ZONES.contains(&z)) {
-        4
-    } else {
-        0
-    }
+    const ZONES: [u16; 26] = [230, 231, 232, 234, 235, 236, 238, 239, 240, 241, 243, 244, 245, 246, 247, 250, 252, 26, 48, 50, 53, 256, 257, 80, 87, 94];
+    if zone.is_some_and(|z| ZONES.contains(&z)) { 4 } else { 0 }
 }
 
 /// A list row: bid mode single (3) / stack (4) {item, single count, stack count}, or a sales mode slot.
@@ -190,19 +166,8 @@ pub enum Ask {
     /// "Make a bid of N gil for the X?" (10 0x1e).
     Bid { item: u16, price: u32, single: bool },
     /// The fee line (10 0x1c / 0x1d), then "Place X up on auction for N gil?" (10 0x1f).
-    Fee {
-        inv: u8,
-        item: u16,
-        price: u32,
-        fee: u32,
-        single: bool,
-    },
-    Place {
-        inv: u8,
-        item: u16,
-        price: u32,
-        single: bool,
-    },
+    Fee { inv: u8, item: u16, price: u32, fee: u32, single: bool },
+    Place { inv: u8, item: u16, price: u32, single: bool },
     /// "Remove merchandise from auction?" (9 0x3a).
     Cancel { slot: u8 },
 }
@@ -254,10 +219,7 @@ pub struct Sorts {
 
 impl Default for Sorts {
     fn default() -> Self {
-        Sorts {
-            bytes: vec![[0; SORTS]; CATS],
-            count: vec![0; CATS],
-        }
+        Sorts { bytes: vec![[0; SORTS]; CATS], count: vec![0; CATS] }
     }
 }
 
@@ -311,10 +273,7 @@ impl Sorts {
     /// FUN_101d76f0: a type saved once, at most 20; Race (3) and Job (4) never.
     fn add(&mut self, cat: u8, ty: u8) {
         let c = (cat as usize).min(CATS - 1);
-        if matches!(ty, 3 | 4)
-            || self.of(cat).iter().any(|b| b & 0xf == ty)
-            || self.count[c] as usize >= SORTS
-        {
+        if matches!(ty, 3 | 4) || self.of(cat).iter().any(|b| b & 0xf == ty) || self.count[c] as usize >= SORTS {
             return;
         }
         self.bytes[c][self.count[c] as usize] = ty | (descending(ty) as u8) << 4;
@@ -371,96 +330,15 @@ enum Pick {
 fn menu_rows(name: &str) -> &'static [(u16, Pick)] {
     use Pick::*;
     match name {
-        "menu    auc2" => &[
-            (1, Menu("menu    aucweapo")),
-            (2, Menu("menu    aucarmor")),
-            (3, Menu("menu    aucmagic")),
-            (4, Cat(0x21)),
-            (5, Cat(0x22)),
-            (6, Menu("menu    aucmater")),
-            (7, Menu("menu    aucfood")),
-            (8, Cat(0x23)),
-            (9, Menu("menu    aucitem")),
-        ],
-        "menu    aucweapo" => &[
-            (1, Cat(1)),
-            (2, Cat(2)),
-            (3, Cat(3)),
-            (4, Cat(4)),
-            (5, Cat(5)),
-            (6, Cat(6)),
-            (7, Cat(7)),
-            (8, Cat(8)),
-            (9, Cat(9)),
-            (10, Cat(10)),
-            (11, Cat(11)),
-            (12, Cat(12)),
-            (13, Cat(13)),
-            (14, Cat(14)),
-            (15, Menu("menu    aucammo")),
-        ],
-        "menu    aucammo" => &[
-            (1, Cat(0xf)),
-            (2, Cat(0x2f)),
-            (3, Cat(0x30)),
-            (4, Cat(0x3e)),
-        ],
-        "menu    aucarmor" => &[
-            (1, Cat(0x10)),
-            (2, Cat(0x11)),
-            (3, Cat(0x16)),
-            (4, Cat(0x12)),
-            (5, Cat(0x13)),
-            (6, Cat(0x17)),
-            (7, Cat(0x14)),
-            (8, Cat(0x15)),
-            (9, Cat(0x1a)),
-            (10, Cat(0x18)),
-            (11, Cat(0x19)),
-        ],
-        "menu    aucmagic" => &[
-            (1, Cat(0x1c)),
-            (2, Cat(0x1d)),
-            (3, Cat(0x20)),
-            (4, Cat(0x1f)),
-            (5, Cat(0x1e)),
-            (6, Cat(0x3c)),
-            (7, Cat(0x2d)),
-        ],
-        "menu    aucmater" => &[
-            (1, Cat(0x26)),
-            (2, Cat(0x27)),
-            (3, Cat(0x28)),
-            (4, Cat(0x29)),
-            (5, Cat(0x2a)),
-            (6, Cat(0x2b)),
-            (7, Cat(0x2c)),
-            (8, Cat(0x3f)),
-        ],
-        "menu    aucfood" => &[
-            (1, Menu("menu    aucmeals")),
-            (2, Cat(0x3b)),
-            (3, Cat(0x33)),
-        ],
-        "menu    aucmeals" => &[
-            (1, Cat(0x34)),
-            (2, Cat(0x35)),
-            (3, Cat(0x36)),
-            (4, Cat(0x37)),
-            (5, Cat(0x38)),
-            (6, Cat(0x39)),
-            (7, Cat(0x3a)),
-        ],
-        "menu    aucitem" => &[
-            (1, Cat(0x2e)),
-            (7, Cat(0x40)),
-            (8, Cat(0x41)),
-            (2, Cat(0x32)),
-            (3, Cat(0x24)),
-            (4, Cat(0x31)),
-            (5, Cat(0x25)),
-            (6, Cat(0x3d)),
-        ],
+        "menu    auc2" => &[(1, Menu("menu    aucweapo")), (2, Menu("menu    aucarmor")), (3, Menu("menu    aucmagic")), (4, Cat(0x21)), (5, Cat(0x22)), (6, Menu("menu    aucmater")), (7, Menu("menu    aucfood")), (8, Cat(0x23)), (9, Menu("menu    aucitem"))],
+        "menu    aucweapo" => &[(1, Cat(1)), (2, Cat(2)), (3, Cat(3)), (4, Cat(4)), (5, Cat(5)), (6, Cat(6)), (7, Cat(7)), (8, Cat(8)), (9, Cat(9)), (10, Cat(10)), (11, Cat(11)), (12, Cat(12)), (13, Cat(13)), (14, Cat(14)), (15, Menu("menu    aucammo"))],
+        "menu    aucammo" => &[(1, Cat(0xf)), (2, Cat(0x2f)), (3, Cat(0x30)), (4, Cat(0x3e))],
+        "menu    aucarmor" => &[(1, Cat(0x10)), (2, Cat(0x11)), (3, Cat(0x16)), (4, Cat(0x12)), (5, Cat(0x13)), (6, Cat(0x17)), (7, Cat(0x14)), (8, Cat(0x15)), (9, Cat(0x1a)), (10, Cat(0x18)), (11, Cat(0x19))],
+        "menu    aucmagic" => &[(1, Cat(0x1c)), (2, Cat(0x1d)), (3, Cat(0x20)), (4, Cat(0x1f)), (5, Cat(0x1e)), (6, Cat(0x3c)), (7, Cat(0x2d))],
+        "menu    aucmater" => &[(1, Cat(0x26)), (2, Cat(0x27)), (3, Cat(0x28)), (4, Cat(0x29)), (5, Cat(0x2a)), (6, Cat(0x2b)), (7, Cat(0x2c)), (8, Cat(0x3f))],
+        "menu    aucfood" => &[(1, Menu("menu    aucmeals")), (2, Cat(0x3b)), (3, Cat(0x33))],
+        "menu    aucmeals" => &[(1, Cat(0x34)), (2, Cat(0x35)), (3, Cat(0x36)), (4, Cat(0x37)), (5, Cat(0x38)), (6, Cat(0x39)), (7, Cat(0x3a))],
+        "menu    aucitem" => &[(1, Cat(0x2e)), (7, Cat(0x40)), (8, Cat(0x41)), (2, Cat(0x32)), (3, Cat(0x24)), (4, Cat(0x31)), (5, Cat(0x25)), (6, Cat(0x3d))],
         _ => &[],
     }
 }
@@ -481,21 +359,14 @@ fn first_row(name: &str) -> u16 {
 
 /// Up / Down along a menu's rows (screen order).
 fn step_row(name: &str, sel: u16, down: bool) -> u16 {
-    let rows: Vec<u16> = if menu_rows(name).is_empty() {
-        (1..=plain_rows(name)).collect()
-    } else {
-        menu_rows(name).iter().map(|r| r.0).collect()
-    };
+    let rows: Vec<u16> = if menu_rows(name).is_empty() { (1..=plain_rows(name)).collect() } else { menu_rows(name).iter().map(|r| r.0).collect() };
     let i = rows.iter().position(|&r| r == sel).unwrap_or(0);
     let n = rows.len();
     rows[if down { (i + 1) % n } else { (i + n - 1) % n }]
 }
 
 fn item_name(w: &World, id: u16) -> String {
-    w.item_info
-        .as_ref()
-        .and_then(|c| c.name(id))
-        .unwrap_or_default()
+    w.item_info.as_ref().and_then(|c| c.name(id)).unwrap_or_default()
 }
 
 fn refuse(w: &mut World, id: usize) {
@@ -533,19 +404,10 @@ impl Auction {
 
     /// FUN_101d8140(0, 0): the list from the search server with the condition; the menu stays open under it.
     fn requery(&mut self, w: &World) {
-        log::info!(
-            "auction: list of category {:#x}, condition {:?}",
-            self.cat,
-            self.cond
-        );
-        let payload =
-            crate::net::search::ah_list_payload(self.cat as u16, market(w.zone), &self.cond);
-        self.query = Some((
-            false,
-            crate::net::search::ah_spawn(w.search_addr, 0x15, payload, 1),
-        ));
-        self.layers
-            .retain(|l| !matches!(l, Layer::List | Layer::History));
+        log::info!("auction: list of category {:#x}, condition {:?}", self.cat, self.cond);
+        let payload = crate::net::search::ah_list_payload(self.cat as u16, market(w.zone), &self.cond);
+        self.query = Some((false, crate::net::search::ah_spawn(w.search_addr, 0x15, payload, 1)));
+        self.layers.retain(|l| !matches!(l, Layer::List | Layer::History));
         self.list = Some(List::default());
         self.layers.push(Layer::List);
     }
@@ -553,17 +415,8 @@ impl Auction {
     /// FUN_101d8800: the history of an item's form; `ret` where Escape goes back to.
     fn ask_history(&mut self, w: &World, item: u16, stack: bool, ret: i8, mode: u8) {
         let payload = crate::net::search::ah_history_payload(item, market(w.zone), stack);
-        self.query = Some((
-            true,
-            crate::net::search::ah_spawn(w.search_addr, if stack { 6 } else { 5 }, payload, 0),
-        ));
-        self.history = Some(History {
-            item,
-            stack,
-            ret,
-            mode,
-            ..Default::default()
-        });
+        self.query = Some((true, crate::net::search::ah_spawn(w.search_addr, if stack { 6 } else { 5 }, payload, 0)));
+        self.history = Some(History { item, stack, ret, mode, ..Default::default() });
         self.layers.retain(|l| !matches!(l, Layer::History));
         self.layers.push(Layer::History);
     }
@@ -575,27 +428,8 @@ fn open(w: &mut World) {
         refuse(w, 0x45);
         return;
     }
-    let sorts = sort_path(w)
-        .and_then(|p| std::fs::read(p).ok())
-        .map_or_else(Sorts::default, |b| Sorts::parse(&b));
-    w.auction = Some(Box::new(Auction {
-        origin: w.pos,
-        layers: vec![Layer::Menu(AUC1, 1)],
-        list: None,
-        history: None,
-        kept: None,
-        query: None,
-        cat: 0,
-        money: None,
-        money_btn: None,
-        bid_top: None,
-        bid_query: None,
-        find: None,
-        shopsell: None,
-        checked: [false; 8],
-        sorts,
-        cond: Vec::new(),
-    }));
+    let sorts = sort_path(w).and_then(|p| std::fs::read(p).ok()).map_or_else(Sorts::default, |b| Sorts::parse(&b));
+    w.auction = Some(Box::new(Auction { origin: w.pos, layers: vec![Layer::Menu(AUC1, 1)], list: None, history: None, kept: None, query: None, cat: 0, money: None, money_btn: None, bid_top: None, bid_query: None, find: None, shopsell: None, checked: [false; 8], sorts, cond: Vec::new() }));
     w.bid.pending = false;
     send(w, 0xa, -1, 0, 0, 0, 0);
 }
@@ -632,20 +466,14 @@ fn all_cats() -> Vec<u8> {
 /// The index kept on disk per search server: a line "complete" once every category was read, then "item<TAB>category"
 /// lines.
 fn cache_path(w: &World) -> std::path::PathBuf {
-    crate::config::data_dir().join(format!(
-        "ah-index-{}-{}.tsv",
-        w.search_addr.0, w.search_addr.1
-    ))
+    crate::config::data_dir().join(format!("ah-index-{}-{}.tsv", w.search_addr.0, w.search_addr.1))
 }
 
 fn cache_load(path: &std::path::Path) -> Option<(Vec<(u16, u8)>, bool)> {
     let text = std::fs::read_to_string(path).ok()?;
     let mut lines = text.lines();
     let complete = lines.next()? == "complete";
-    let items = lines
-        .filter_map(|l| l.split_once('\t'))
-        .filter_map(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?)))
-        .collect();
+    let items = lines.filter_map(|l| l.split_once('\t')).filter_map(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?))).collect();
     Some((items, complete))
 }
 
@@ -654,9 +482,7 @@ fn cache_save(path: &std::path::Path, items: &[(u16, u8)], complete: bool) {
     for (item, cat) in items {
         text.push_str(&format!("{item}\t{cat}\n"));
     }
-    if let Err(e) = std::fs::create_dir_all(path.parent().unwrap_or(path))
-        .and_then(|_| std::fs::write(path, text))
-    {
+    if let Err(e) = std::fs::create_dir_all(path.parent().unwrap_or(path)).and_then(|_| std::fs::write(path, text)) {
         log::warn!("auction search index {}: {e}", path.display());
     }
 }
@@ -668,13 +494,7 @@ fn index_seen(w: &mut World, cat: u8, items: &[u16]) {
     }
     let mut v: Vec<(u16, u8)> = w.ah_index.items.as_deref().cloned().unwrap_or_default();
     let before = v.len();
-    v.extend(
-        items
-            .iter()
-            .filter(|id| !v.iter().any(|(i, _)| i == *id))
-            .map(|&id| (id, cat))
-            .collect::<Vec<_>>(),
-    );
+    v.extend(items.iter().filter(|id| !v.iter().any(|(i, _)| i == *id)).map(|&id| (id, cat)).collect::<Vec<_>>());
     if v.len() != before {
         cache_save(&cache_path(w), &v, false);
         w.ah_index.items = Some(Arc::new(v));
@@ -697,11 +517,7 @@ pub(super) fn index_build(w: &mut World) {
     if w.ah_index.items.is_none()
         && let Some((items, complete)) = cache_load(&cache_path(w))
     {
-        log::info!(
-            "auction search index: {} items from the cache ({})",
-            items.len(),
-            if complete { "complete" } else { "partial" }
-        );
+        log::info!("auction search index: {} items from the cache ({})", items.len(), if complete { "complete" } else { "partial" });
         (w.ah_index.items, w.ah_index.complete) = (Some(Arc::new(items)), complete);
         if complete {
             return;
@@ -715,26 +531,16 @@ pub(super) fn index_build(w: &mut World) {
         let mut out: Vec<(u16, u8)> = Vec::new();
         let mut left = all_cats();
         for round in 0..4 {
-            let payloads: Vec<Vec<u8>> = left
-                .iter()
-                .map(|&c| crate::net::search::ah_list_payload(c as u16, market, &[]))
-                .collect();
+            let payloads: Vec<Vec<u8>> = left.iter().map(|&c| crate::net::search::ah_list_payload(c as u16, market, &[])).collect();
             let replies = crate::net::search::ah_query_many(addr, 0x15, &payloads, 1);
             let mut done = 0;
             for (r, &cat) in replies.into_iter().zip(&left) {
                 match r {
                     Ok(r) => {
-                        out.extend(
-                            r.items
-                                .into_iter()
-                                .map(|(item, ..)| (item, cat))
-                                .filter(|&(item, _)| item != 0),
-                        );
+                        out.extend(r.items.into_iter().map(|(item, ..)| (item, cat)).filter(|&(item, _)| item != 0));
                         done += 1;
                     }
-                    Err(e) => {
-                        log::debug!("auction search index, category {cat:#x} (round {round}): {e}")
-                    }
+                    Err(e) => log::debug!("auction search index, category {cat:#x} (round {round}): {e}"),
                 }
             }
             left.drain(..done);
@@ -745,11 +551,7 @@ pub(super) fn index_build(w: &mut World) {
         }
         let mut seen = std::collections::HashSet::new();
         out.retain(|(item, _)| seen.insert(*item));
-        log::info!(
-            "auction search index: {} items, {} categories not read",
-            out.len(),
-            left.len()
-        );
+        log::info!("auction search index: {} items, {} categories not read", out.len(), left.len());
         cache_save(&path, &out, left.is_empty());
         let _ = tx.send((out, left.is_empty()));
     });
@@ -768,9 +570,7 @@ pub(super) fn searchable(w: &World) -> bool {
     if w.playonline {
         return false;
     }
-    let Some(a) = w.auction.as_ref() else {
-        return false;
-    };
+    let Some(a) = w.auction.as_ref() else { return false };
     let bid = match a.top() {
         Some(Layer::Menu(name, _)) => !menu_rows(name).is_empty(),
         Some(Layer::List) => a.list.as_ref().is_some_and(|l| !l.sales),
@@ -800,20 +600,13 @@ fn cat_path(cat: u8) -> Vec<(&'static str, u16)> {
 
 /// A category's place as its menus' row captions ("Others > Pet Items").
 pub(super) fn cat_label(gu: &GameUi, cat: u8) -> String {
-    cat_path(cat)
-        .into_iter()
-        .map(|(m, row)| gu.child_caption(m, row).unwrap_or_default())
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join(" \u{203a} ")
+    cat_path(cat).into_iter().map(|(m, row)| gu.child_caption(m, row).unwrap_or_default()).filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" \u{203a} ")
 }
 
 /// A search pick: the menus opened down to the item's category as Bid and its rows would, the list asked, and the
 /// cursor put on the item once the list is in.
 pub(super) fn show(w: &mut World, cat: u8, item: u16) {
-    let Some(mut a) = w.auction.take() else {
-        return;
-    };
+    let Some(mut a) = w.auction.take() else { return };
     a.layers.retain(|l| matches!(l, Layer::Menu(AUC1, _)));
     if let Some(Layer::Menu(_, sel)) = a.layers.first_mut() {
         *sel = 1;
@@ -832,8 +625,7 @@ pub(super) fn show(w: &mut World, cat: u8, item: u16) {
 pub fn close(w: &mut World) {
     if let Some(a) = w.auction.take() {
         if let Some(p) = sort_path(w)
-            && let Err(e) = std::fs::create_dir_all(p.parent().unwrap_or(&p))
-                .and_then(|_| std::fs::write(&p, a.sorts.bytes()))
+            && let Err(e) = std::fs::create_dir_all(p.parent().unwrap_or(&p)).and_then(|_| std::fs::write(&p, a.sorts.bytes()))
         {
             log::warn!("auction: {}: {e}", p.display());
         }
@@ -843,16 +635,7 @@ pub fn close(w: &mut World) {
 
 /// FUN_100a3ac0: s2c 0x04C.
 pub fn on_packet(w: &mut World, p: AucPacket) {
-    log::info!(
-        "auction: s2c 0x04C cmd {:#x} slot {} result {:#x} item {} price {} p10 {} stat {}",
-        p.cmd,
-        p.slot,
-        p.result,
-        p.pc,
-        p.p8,
-        p.p10,
-        p.parcel.stat
-    );
+    log::info!("auction: s2c 0x04C cmd {:#x} slot {} result {:#x} item {} price {} p10 {} stat {}", p.cmd, p.slot, p.result, p.pc, p.p8, p.p10, p.parcel.stat);
     if p.result == 0xff {
         line9(w, 0x3e);
         close(w);
@@ -900,9 +683,7 @@ fn bid_result(w: &mut World, p: &AucPacket) {
 
 /// FUN_101d7ac0: the bid result's line once its time is up (or `now`).
 fn print_result(w: &mut World, now: bool) {
-    let Some((kind, ticks, item, count, price)) = w.bid.result else {
-        return;
-    };
+    let Some((kind, ticks, item, count, price)) = w.bid.result else { return };
     if !now && ticks >= 0.0 {
         return;
     }
@@ -920,22 +701,14 @@ fn print_result(w: &mut World, now: bool) {
 fn open_sales(w: &mut World) {
     let Some(a) = w.auction.as_mut() else { return };
     a.checked = [false; 8];
-    a.layers
-        .retain(|l| !matches!(l, Layer::List | Layer::History));
-    a.list = Some(List {
-        sales: true,
-        ready: true,
-        ..Default::default()
-    });
+    a.layers.retain(|l| !matches!(l, Layer::List | Layer::History));
+    a.list = Some(List { sales: true, ready: true, ..Default::default() });
     a.layers.push(Layer::List);
 }
 
 /// The sales rows (FUN_101d7e50): slots with Stat other than 0 / 6 / 7.
 fn sales_rows(w: &World) -> Vec<Row> {
-    (0..8u8)
-        .filter(|&k| !matches!(w.ah_slots[k as usize].stat, 0 | 6 | 7))
-        .map(Row::Slot)
-        .collect()
+    (0..8u8).filter(|&k| !matches!(w.ah_slots[k as usize].stat, 0 | 6 | 7)).map(Row::Slot).collect()
 }
 
 /// The parcel stat's tint and help (group 14) in the sales list.
@@ -958,9 +731,7 @@ pub fn update(w: &mut World, dt: f32) {
     if let Some((_, t, ..)) = w.bid.result.as_mut() {
         *t -= dt * 60.0;
     }
-    let Some(mut a) = w.auction.take() else {
-        return;
-    };
+    let Some(mut a) = w.auction.take() else { return };
     let d = w.pos - a.origin;
     if (w.opts.menu_reach && d.x * d.x + d.z * d.z > 36.0) || super::event::active(w) {
         w.auction = Some(a);
@@ -973,9 +744,7 @@ pub fn update(w: &mut World, dt: f32) {
             Ok(r) => {
                 a.bid_query = None;
                 // The history window's top row: the first of the last ten.
-                let top = r
-                    .ok()
-                    .and_then(|r| r.sales.iter().rev().take(10).last().map(|s| s.price));
+                let top = r.ok().and_then(|r| r.sales.iter().rev().take(10).last().map(|s| s.price));
                 if let Some(t) = a.bid_top.as_mut() {
                     t.1 = top;
                 }
@@ -994,17 +763,7 @@ pub fn update(w: &mut World, dt: f32) {
                         h.ready = true;
                         match r {
                             Ok(r) => {
-                                (h.head, h.sales) = (
-                                    r.head,
-                                    r.sales
-                                        .into_iter()
-                                        .rev()
-                                        .take(10)
-                                        .collect::<Vec<_>>()
-                                        .into_iter()
-                                        .rev()
-                                        .collect(),
-                                );
+                                (h.head, h.sales) = (r.head, r.sales.into_iter().rev().take(10).collect::<Vec<_>>().into_iter().rev().collect());
                             }
                             Err(_) => h.failed = true,
                         }
@@ -1015,27 +774,13 @@ pub fn update(w: &mut World, dt: f32) {
                         Ok(r) => {
                             for (item, single, stack) in r.items {
                                 if single >= 0 {
-                                    l.rows.push(Row::Single {
-                                        item,
-                                        single,
-                                        stack,
-                                    });
+                                    l.rows.push(Row::Single { item, single, stack });
                                 }
                                 if stack >= 0 {
-                                    l.rows.push(Row::Stack {
-                                        item,
-                                        single,
-                                        stack,
-                                    });
+                                    l.rows.push(Row::Stack { item, single, stack });
                                 }
                             }
-                            seen = Some((
-                                a.cat,
-                                l.rows
-                                    .iter()
-                                    .map(|r| r.item(&w.ah_slots))
-                                    .collect::<Vec<u16>>(),
-                            ));
+                            seen = Some((a.cat, l.rows.iter().map(|r| r.item(&w.ah_slots)).collect::<Vec<u16>>()));
                             if let Some(id) = a.find.take() {
                                 match l.rows.iter().position(|r| r.item(&w.ah_slots) == id) {
                                     Some(k) => {
@@ -1081,11 +826,9 @@ pub fn update(w: &mut World, dt: f32) {
 /// world a while (one connection, a second or two), once a session.
 pub fn index_tick(w: &mut World) {
     if let Some((items, complete)) = w.ah_index.rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
-        (w.ah_index.items, w.ah_index.complete, w.ah_index.rx) =
-            (Some(Arc::new(items)), complete, None);
+        (w.ah_index.items, w.ah_index.complete, w.ah_index.rx) = (Some(Arc::new(items)), complete, None);
     }
-    if w.playonline || w.ah_index.complete || w.ah_index.tried || !w.in_scene() || w.zone.is_none()
-    {
+    if w.playonline || w.ah_index.complete || w.ah_index.tried || !w.in_scene() || w.zone.is_none() {
         w.ah_index.since = None;
         return;
     }
@@ -1120,18 +863,11 @@ pub fn info_source(w: &World) -> Option<(u16, Option<[u8; 24]>, u8)> {
 
 /// The auction window with the keys for mods (ui.native.list): its layer (a menu's name, list, history, sell),
 /// rows, cursor and top; a menu has no rows (its cursor is the child id).
-pub(in crate::client) fn native_list(
-    w: &World,
-) -> Option<(String, Vec<serde_json::Value>, usize, usize)> {
+pub(in crate::client) fn native_list(w: &World) -> Option<(String, Vec<serde_json::Value>, usize, usize)> {
     use serde_json::json;
     let a = w.auction.as_ref()?;
     Some(match a.top()? {
-        Layer::Menu(name, cursor) => (
-            name.trim_start_matches("menu").trim().to_string(),
-            Vec::new(),
-            cursor as usize,
-            0,
-        ),
+        Layer::Menu(name, cursor) => (name.trim_start_matches("menu").trim().to_string(), Vec::new(), cursor as usize, 0),
         Layer::List => {
             let l = a.list.as_ref()?;
             let rows = l
@@ -1150,10 +886,7 @@ pub(in crate::client) fn native_list(
             ("history".into(), rows, h.scroll + h.cursor, h.scroll)
         }
         Layer::Sell(scroll, cursor) => {
-            let rows = sell_rows(w)
-                .iter()
-                .map(|s| json!({"item": s.id, "count": s.count, "bag": 0, "slot": s.index}))
-                .collect();
+            let rows = sell_rows(w).iter().map(|s| json!({"item": s.id, "count": s.count, "bag": 0, "slot": s.index})).collect();
             ("sell".into(), rows, scroll + cursor, scroll)
         }
     })
@@ -1161,11 +894,7 @@ pub(in crate::client) fn native_list(
 
 /// The inventory rows offered for sale (the view's order, gil left out).
 fn sell_rows(w: &World) -> Vec<crate::inventory::Slot> {
-    w.inv
-        .viewed(0)
-        .into_iter()
-        .filter(|s| s.index != 0)
-        .collect()
+    w.inv.viewed(0).into_iter().filter(|s| s.index != 0).collect()
 }
 
 /// FUN_101d9690: a sell row's tint: grey for linkshells, bazaar-priced, equipped, NoAuction (flag 0x40) or augmented
@@ -1183,55 +912,20 @@ fn sell_tint(w: &World, s: &crate::inventory::Slot) -> u32 {
 
 /// The yes / no prompt's text.
 pub fn ask_text(w: &World, a: Ask) -> String {
-    let Some(bt) = w.battle.as_ref() else {
-        return String::new();
-    };
+    let Some(bt) = w.battle.as_ref() else { return String::new() };
     let namer = |id: i32, count: i32, _: bool| -> Option<Vec<u8>> {
         let n = item_name(w, id as u16);
-        Some(crate::dat::font::encode_sjis(&if count > 1 {
-            format!("{n}s")
-        } else {
-            n
-        }))
+        Some(crate::dat::font::encode_sjis(&if count > 1 { format!("{n}s") } else { n }))
     };
-    let fmt = |id: usize, strs: &[&[u8]], ints: &[i32]| {
-        bt.group10_raw(id)
-            .map(|raw| {
-                crate::dat::font::decode_sjis(&crate::dat::msgfmt::format(&raw, strs, ints, &namer))
-            })
-            .unwrap_or_default()
-    };
+    let fmt = |id: usize, strs: &[&[u8]], ints: &[i32]| bt.group10_raw(id).map(|raw| crate::dat::font::decode_sjis(&crate::dat::msgfmt::format(&raw, strs, ints, &namer))).unwrap_or_default();
     match a {
-        Ask::Bid {
-            item,
-            price,
-            single,
-        } => fmt(
-            0x1e,
-            &[price.to_string().as_bytes()],
-            &[item as i32, if single { 1 } else { 2 }, price as i32],
-        ),
-        Ask::Fee {
-            fee, single: true, ..
-        } => fmt(0x1c, &[fee.to_string().as_bytes()], &[fee as i32]),
+        Ask::Bid { item, price, single } => fmt(0x1e, &[price.to_string().as_bytes()], &[item as i32, if single { 1 } else { 2 }, price as i32]),
+        Ask::Fee { fee, single: true, .. } => fmt(0x1c, &[fee.to_string().as_bytes()], &[fee as i32]),
         Ask::Fee { item, fee, .. } => {
-            let n = w
-                .item_info
-                .as_ref()
-                .and_then(|c| c.item(item))
-                .map_or(1, |it| it.stack.max(1) as i32);
+            let n = w.item_info.as_ref().and_then(|c| c.item(item)).map_or(1, |it| it.stack.max(1) as i32);
             fmt(0x1d, &[fee.to_string().as_bytes()], &[n, fee as i32])
         }
-        Ask::Place {
-            item,
-            price,
-            single,
-            ..
-        } => fmt(
-            0x1f,
-            &[price.to_string().as_bytes()],
-            &[item as i32, if single { 1 } else { 2 }, price as i32],
-        ),
+        Ask::Place { item, price, single, .. } => fmt(0x1f, &[price.to_string().as_bytes()], &[item as i32, if single { 1 } else { 2 }, price as i32]),
         Ask::Cancel { .. } => bt.group9(0x3a).unwrap_or_default(),
     }
 }
@@ -1240,47 +934,16 @@ pub fn ask_text(w: &World, a: Ask) -> String {
 pub fn answered(w: &mut World, ask: Ask, yes: bool) {
     match (ask, yes) {
         // LAB_101d95b0: the first empty slot of 8, c2s Bid, the result pending.
-        (
-            Ask::Bid {
-                item,
-                price,
-                single,
-            },
-            true,
-        ) => match w.ah_slots.iter().position(|s| s.stat == 0) {
+        (Ask::Bid { item, price, single }, true) => match w.ah_slots.iter().position(|s| s.stat == 0) {
             Some(k) => {
                 send(w, 0xe, k as i8, price, item, 0, single as u32);
                 w.bid.pending = true;
             }
             None => refuse(w, 0x6c),
         },
-        (
-            Ask::Fee {
-                inv,
-                item,
-                price,
-                single,
-                ..
-            },
-            true,
-        ) => {
-            w.confirm = Some((
-                super::Confirm::Auction(Ask::Place {
-                    inv,
-                    item,
-                    price,
-                    single,
-                }),
-                false,
-            ))
-        }
+        (Ask::Fee { inv, item, price, single, .. }, true) => w.confirm = Some((super::Confirm::Auction(Ask::Place { inv, item, price, single }), false)),
         // FUN_101d7510: c2s LotIn into the first empty slot of 7; the sell list closes.
-        (
-            Ask::Place {
-                inv, price, single, ..
-            },
-            true,
-        ) => match w.ah_slots[..7].iter().position(|s| s.stat == 0) {
+        (Ask::Place { inv, price, single, .. }, true) => match w.ah_slots[..7].iter().position(|s| s.stat == 0) {
             Some(k) => {
                 send(w, 0xb, k as i8, price, inv as u16, 0, single as u32);
                 if let Some(a) = w.auction.as_mut() {
@@ -1296,19 +959,11 @@ pub fn answered(w: &mut World, ask: Ask, yes: bool) {
 
 /// s2c AskCommit Result 1 (FUN_101d73a0): the fee line in the log, then asked.
 fn fee(w: &mut World, inv: u8, item: u16, fee: u32, single: bool) {
-    let Some(price) = w.auction.as_ref().and_then(|a| a.shopsell.map(|s| s.3)) else {
-        return;
-    };
+    let Some(price) = w.auction.as_ref().and_then(|a| a.shopsell.map(|s| s.3)) else { return };
     if let Some(a) = w.auction.as_mut() {
         a.shopsell = None;
     }
-    let ask = Ask::Fee {
-        inv,
-        item,
-        price,
-        fee,
-        single,
-    };
+    let ask = Ask::Fee { inv, item, price, fee, single };
     let text = ask_text(w, ask);
     if let Some(bt) = w.battle.clone() {
         w.chat.push_colour(text, bt.colour_in(0x79, &w.game));
@@ -1318,9 +973,7 @@ fn fee(w: &mut World, inv: u8, item: u16, fee: u32, single: bool) {
 
 /// The windows' keys; true when taken.
 pub fn key(w: &mut World, key: egui::Key) -> bool {
-    let Some(mut a) = w.auction.take() else {
-        return false;
-    };
+    let Some(mut a) = w.auction.take() else { return false };
     let took = key_inner(w, &mut a, key);
     if w.auction.is_none() {
         let gone = a.layers.is_empty();
@@ -1358,28 +1011,11 @@ fn key_inner(w: &mut World, a: &mut Auction, key: egui::Key) -> bool {
             match key {
                 K::ArrowLeft | K::ArrowRight => {
                     let (lo, n) = if b < 6 { (0, 6) } else { (6, 2) };
-                    return walk(
-                        w,
-                        a,
-                        lo + (b - lo + if key == K::ArrowRight { 1 } else { n - 1 }) % n,
-                    );
+                    return walk(w, a, lo + (b - lo + if key == K::ArrowRight { 1 } else { n - 1 }) % n);
                 }
-                K::ArrowUp | K::ArrowDown => {
-                    return walk(
-                        w,
-                        a,
-                        match b {
-                            0..=2 => 6,
-                            3..=5 => 7,
-                            6 => 0,
-                            _ => 4,
-                        },
-                    );
-                }
+                K::ArrowUp | K::ArrowDown => return walk(w, a, match b { 0..=2 => 6, 3..=5 => 7, 6 => 0, _ => 4 }),
                 K::Enter => match b {
-                    0..=3 => {
-                        key = [K::ArrowDown, K::ArrowUp, K::ArrowLeft, K::ArrowRight][b as usize]
-                    }
+                    0..=3 => key = [K::ArrowDown, K::ArrowUp, K::ArrowLeft, K::ArrowRight][b as usize],
                     4 | 5 => {
                         a.money = Some((step, max, if b == 4 { max } else { 0 }, purpose));
                         w.sounds.push(Ui::Cursor as u32);
@@ -1396,15 +1032,7 @@ fn key_inner(w: &mut World, a: &mut Auction, key: egui::Key) -> bool {
             K::ArrowUp if v < max => v = (v + step).min(max),
             K::ArrowRight if step > 1 => step /= 10,
             // Not retail: Right on the ones place takes the top price of the item's price history (selling or bidding).
-            K::ArrowRight
-                if let Some(top) = a
-                    .history
-                    .as_ref()
-                    .filter(|h| h.item == priced)
-                    .and_then(|h| h.sales.first())
-                    .map(|s| s.price)
-                    .or(a.bid_top.filter(|t| t.0 == priced).and_then(|t| t.1)) =>
-            {
+            K::ArrowRight if let Some(top) = a.history.as_ref().filter(|h| h.item == priced).and_then(|h| h.sales.first()).map(|s| s.price).or(a.bid_top.filter(|t| t.0 == priced).and_then(|t| t.1)) => {
                 v = top.min(max);
             }
             K::ArrowRight => v = 0,
@@ -1414,32 +1042,17 @@ fn key_inner(w: &mut World, a: &mut Auction, key: egui::Key) -> bool {
         }
         a.money = Some((step, max, v, purpose));
         match key {
-            K::ArrowUp | K::ArrowDown | K::ArrowRight | K::ArrowLeft => {
-                w.sounds.push(Ui::Cursor as u32)
-            }
+            K::ArrowUp | K::ArrowDown | K::ArrowRight | K::ArrowLeft => w.sounds.push(Ui::Cursor as u32),
             K::Enter | K::Escape => {
-                w.sounds.push(if key == K::Enter {
-                    Ui::Select
-                } else {
-                    Ui::Cancel
-                } as u32);
+                w.sounds.push(if key == K::Enter { Ui::Select } else { Ui::Cancel } as u32);
                 a.money = None;
                 a.money_btn = None;
                 let price = if key == K::Enter { v } else { 0 };
                 match purpose {
                     MoneyFor::Bid(r) if price > 0 => {
-                        w.confirm = Some((
-                            super::Confirm::Auction(Ask::Bid {
-                                item: r.item(&w.ah_slots),
-                                price,
-                                single: !r.stack(),
-                            }),
-                            false,
-                        ));
+                        w.confirm = Some((super::Confirm::Auction(Ask::Bid { item: r.item(&w.ah_slots), price, single: !r.stack() }), false));
                     }
-                    MoneyFor::Sell { inv, item, single } if price > 0 => {
-                        a.shopsell = Some((2, inv, item, price, single))
-                    }
+                    MoneyFor::Sell { inv, item, single } if price > 0 => a.shopsell = Some((2, inv, item, price, single)),
                     MoneyFor::Sell { .. } => a.layers.retain(|l| !matches!(l, Layer::History)),
                     _ => {}
                 }
@@ -1494,23 +1107,14 @@ fn set_top(a: &mut Auction, l: Layer) {
 fn menu_key(w: &mut World, a: &mut Auction, name: &'static str, sel: u16, key: egui::Key) {
     use egui::Key as K;
     // Not retail: in the modern layer Up off a bid menu's top row goes into the search field.
-    if w.modern
-        && !w.playonline
-        && key == K::ArrowUp
-        && !menu_rows(name).is_empty()
-        && sel == first_row(name)
-        && w.confirm.is_none()
-    {
+    if w.modern && !w.playonline && key == K::ArrowUp && !menu_rows(name).is_empty() && sel == first_row(name) && w.confirm.is_none() {
         w.list_search = Some(Default::default());
         w.sounds.push(Ui::Cursor as u32);
         return;
     }
     match key {
         K::ArrowUp | K::ArrowDown => {
-            set_top(
-                a,
-                Layer::Menu(name, step_row(name, sel, key == K::ArrowDown)),
-            );
+            set_top(a, Layer::Menu(name, step_row(name, sel, key == K::ArrowDown)));
             w.sounds.push(Ui::Cursor as u32);
         }
         K::Escape => {
@@ -1563,12 +1167,7 @@ fn auc3_pick(w: &mut World, a: &mut Auction, sel: u16) {
             a.money = Some((1, w.inv.gil(), 0, MoneyFor::Bid(r)));
             let item = r.item(&w.ah_slots);
             let payload = crate::net::search::ah_history_payload(item, market(w.zone), r.stack());
-            a.bid_query = Some(crate::net::search::ah_spawn(
-                w.search_addr,
-                if r.stack() { 6 } else { 5 },
-                payload,
-                0,
-            ));
+            a.bid_query = Some(crate::net::search::ah_spawn(w.search_addr, if r.stack() { 6 } else { 5 }, payload, 0));
             a.bid_top = Some((item, None));
         }
         _ => match sort_kind(a.cat) {
@@ -1614,12 +1213,7 @@ fn sort_pick(w: &mut World, a: &mut Auction, name: &str, sel: u16) {
             a.rebuild();
         }
         // Job needs s2c 0x119 (DAT_10485824 bit 0); Race our actor's race byte.
-        5 => match w
-            .stats
-            .as_ref()
-            .map(|s| s.main.0 as u32)
-            .filter(|_| w.recasts_seen)
-        {
+        5 => match w.stats.as_ref().map(|s| s.main.0 as u32).filter(|_| w.recasts_seen) {
             Some(job) => cond_add(&mut a.cond, filter_param(4, job)),
             None => return w.sounds.push(Ui::Error as u32),
         },
@@ -1631,8 +1225,7 @@ fn sort_pick(w: &mut World, a: &mut Auction, name: &str, sel: u16) {
         a.sorts.add(a.cat, ty);
         cond_add(&mut a.cond, sort_param(ty));
     }
-    a.layers
-        .retain(|l| !matches!(l, Layer::Menu(n, _) if *n == name));
+    a.layers.retain(|l| !matches!(l, Layer::Menu(n, _) if *n == name));
     a.requery(w);
 }
 
@@ -1649,9 +1242,7 @@ fn auc3_dim(w: &World, r: Row) -> bool {
 /// auc4 (FUN_101d9100): 1 Price History, 2 Stop Sale (asks first).
 fn auc4_pick(w: &mut World, a: &mut Auction, sel: u16) {
     a.layers.pop();
-    let Some(Row::Slot(k)) = cursor_row(a) else {
-        return;
-    };
+    let Some(Row::Slot(k)) = cursor_row(a) else { return };
     let p = w.ah_slots[k as usize].clone();
     let here = p.market == market(w.zone) as u32;
     match sel {
@@ -1660,9 +1251,7 @@ fn auc4_pick(w: &mut World, a: &mut Auction, sel: u16) {
             a.kept = a.list.take();
             a.ask_history(w, p.item, p.qty != 1, 1, 0);
         }
-        2 if p.stat == 3 && here => {
-            w.confirm = Some((super::Confirm::Auction(Ask::Cancel { slot: k }), false))
-        }
+        2 if p.stat == 3 && here => w.confirm = Some((super::Confirm::Auction(Ask::Cancel { slot: k }), false)),
         _ => w.sounds.push(Ui::Error as u32),
     }
 }
@@ -1670,9 +1259,7 @@ fn auc4_pick(w: &mut World, a: &mut Auction, sel: u16) {
 /// Up / Down a row; Right / Left a page (FUN_101f6c70 messages 3 / 4, as every list window).
 fn scroll_keys(scroll: &mut usize, cursor: &mut usize, n: usize, key: egui::Key) -> bool {
     match key {
-        egui::Key::ArrowRight | egui::Key::ArrowLeft => {
-            super::items::page_keys(scroll, cursor, n, key == egui::Key::ArrowRight)
-        }
+        egui::Key::ArrowRight | egui::Key::ArrowLeft => super::items::page_keys(scroll, cursor, n, key == egui::Key::ArrowRight),
         _ => super::items::list_keys(scroll, cursor, n, key),
     }
 }
@@ -1681,14 +1268,7 @@ fn scroll_keys(scroll: &mut usize, cursor: &mut usize, n: usize, key: egui::Key)
 fn list_key(w: &mut World, a: &mut Auction, key: egui::Key) {
     use egui::Key as K;
     // Not retail: in the modern layer Up off a bid list's first row goes into the search field.
-    if w.modern
-        && !w.playonline
-        && key == K::ArrowUp
-        && w.confirm.is_none()
-        && a.list
-            .as_ref()
-            .is_some_and(|l| !l.sales && l.scroll + l.cursor == 0)
-    {
+    if w.modern && !w.playonline && key == K::ArrowUp && w.confirm.is_none() && a.list.as_ref().is_some_and(|l| !l.sales && l.scroll + l.cursor == 0) {
         w.list_search = Some(Default::default());
         w.sounds.push(Ui::Cursor as u32);
         return;
@@ -1719,21 +1299,11 @@ fn list_key(w: &mut World, a: &mut Auction, key: egui::Key) {
                         a.layers.push(Layer::Menu(AUC4, 1));
                     }
                     0xa | 0xc | 0x15 => {
-                        super::post::system_line(
-                            w,
-                            if p.qty > 1 { 0xba } else { 0xad },
-                            work,
-                            String::new(),
-                        );
+                        super::post::system_line(w, if p.qty > 1 { 0xba } else { 0xad }, work, String::new());
                         send(w, 0x10, k as i8, 0, 0, 0, 0);
                     }
                     0xb | 0xd | 0x16 => {
-                        super::post::system_line(
-                            w,
-                            if p.qty > 1 { 0xbb } else { 0xae },
-                            work,
-                            String::new(),
-                        );
+                        super::post::system_line(w, if p.qty > 1 { 0xbb } else { 0xae }, work, String::new());
                         send(w, 0x10, k as i8, 0, 0, 0, 0);
                     }
                     _ => w.sounds.push(Ui::Select as u32),
@@ -1752,9 +1322,7 @@ fn list_key(w: &mut World, a: &mut Auction, key: egui::Key) {
 /// auchisto: rows; Enter prints the sale; Escape back to the bid list (no new query) or Sales Status.
 fn history_key(w: &mut World, a: &mut Auction, key: egui::Key) {
     use egui::Key as K;
-    let Some(mut h) = a.history.take() else {
-        return;
-    };
+    let Some(mut h) = a.history.take() else { return };
     match key {
         K::Escape => {
             w.sounds.push(Ui::Cancel as u32);
@@ -1775,12 +1343,7 @@ fn history_key(w: &mut World, a: &mut Auction, key: egui::Key) {
                 if let Some(bt) = w.battle.clone() {
                     let arrow = bt.group9(0x3b).unwrap_or_else(|| ">".into());
                     let price = crate::inventory::gil_text(s.price as i64);
-                    let line = format!(
-                        "({date}) {}{arrow}{} [{}G]",
-                        s.seller,
-                        s.buyer,
-                        price.trim_end_matches(" G").trim_end()
-                    );
+                    let line = format!("({date}) {}{arrow}{} [{}G]", s.seller, s.buyer, price.trim_end_matches(" G").trim_end());
                     w.chat.push_colour(line, bt.colour_in(0x79, &w.game));
                 }
             } else {
@@ -1798,18 +1361,10 @@ fn history_key(w: &mut World, a: &mut Auction, key: egui::Key) {
 
 /// FUN_101c8fd0(date, flags): 2 the date only, 1 the long date and time.
 fn sale_date(w: &World, unix: u32, flags: u32) -> String {
-    let Some(bt) = w.battle.as_ref() else {
-        return String::new();
-    };
+    let Some(bt) = w.battle.as_ref() else { return String::new() };
     let g = |id: u16| bt.group10_raw(id as usize);
     let (key, h12) = ((w.game.get(0x95) & 3) as usize, w.game.get(0x96) & 1 != 0);
-    crate::dat::font::decode_sjis(&crate::dat::msgfmt::earth_datetime(
-        &g,
-        unix as i64,
-        flags,
-        key,
-        h12,
-    ))
+    crate::dat::font::decode_sjis(&crate::dat::msgfmt::earth_datetime(&g, unix as i64, flags, key, h12))
 }
 
 /// The sell list (FUN_101d9850): the checks, then the history in sell mode and the price.
@@ -1823,9 +1378,7 @@ fn sell_key(w: &mut World, a: &mut Auction, mut scroll: usize, mut cursor: usize
         }
         K::Enter if a.busy() => {}
         K::Enter => {
-            let Some(s) = rows.get(scroll + cursor).cloned() else {
-                return;
-            };
+            let Some(s) = rows.get(scroll + cursor).cloned() else { return };
             if sell_tint(w, &s) == GREY {
                 w.sounds.push(Ui::Error as u32);
                 return;
@@ -1834,11 +1387,7 @@ fn sell_key(w: &mut World, a: &mut Auction, mut scroll: usize, mut cursor: usize
             let stack = it.as_ref().map_or(1, |i| i.stack.max(1) as u32);
             let full = stack >= 2 && s.count == stack;
             if stack > 1 && s.count != 1 && !full {
-                let text = w
-                    .battle
-                    .as_ref()
-                    .and_then(|b| b.group10(0x1b))
-                    .map(|f| super::textcmd::printf(&f, &[stack.to_string()]));
+                let text = w.battle.as_ref().and_then(|b| b.group10(0x1b)).map(|f| super::textcmd::printf(&f, &[stack.to_string()]));
                 if let (Some(t), Some(bt)) = (text, w.battle.clone()) {
                     w.chat.push_colour(t, bt.colour_in(0x7b, &w.game));
                 }
@@ -1850,16 +1399,7 @@ fn sell_key(w: &mut World, a: &mut Auction, mut scroll: usize, mut cursor: usize
             }
             w.sounds.push(Ui::Select as u32);
             a.ask_history(w, s.id, full, -1, 2);
-            a.money = Some((
-                1,
-                999_999_999,
-                0,
-                MoneyFor::Sell {
-                    inv: s.index,
-                    item: s.id,
-                    single: !full,
-                },
-            ));
+            a.money = Some((1, 999_999_999, 0, MoneyFor::Sell { inv: s.index, item: s.id, single: !full }));
         }
         _ => {
             if scroll_keys(&mut scroll, &mut cursor, rows.len(), key) {
@@ -1873,25 +1413,11 @@ fn sell_key(w: &mut World, a: &mut Auction, mut scroll: usize, mut cursor: usize
 /// The focused list's bar (auclist, the sell list; FUN_101f6c70).
 pub(super) fn bar(w: &mut World, m: super::scrollbar::Msg) -> bool {
     let n = sell_rows(w).len();
-    let Some(a) = w
-        .auction
-        .as_mut()
-        .filter(|a| a.money.is_none() && a.shopsell.is_none())
-    else {
-        return false;
-    };
+    let Some(a) = w.auction.as_mut().filter(|a| a.money.is_none() && a.shopsell.is_none()) else { return false };
     match a.top() {
-        Some(Layer::List) => a.list.as_mut().is_some_and(|l| {
-            super::scrollbar::rows(m, &mut l.scroll, &mut l.cursor, l.rows.len(), ROWS)
-        }),
+        Some(Layer::List) => a.list.as_mut().is_some_and(|l| super::scrollbar::rows(m, &mut l.scroll, &mut l.cursor, l.rows.len(), ROWS)),
         Some(Layer::Sell(mut scroll, mut cursor)) => {
-            let moved = super::scrollbar::rows(
-                m,
-                &mut scroll,
-                &mut cursor,
-                n,
-                crate::inventory::VISIBLE_ROWS,
-            );
+            let moved = super::scrollbar::rows(m, &mut scroll, &mut cursor, n, crate::inventory::VISIBLE_ROWS);
             set_top(a, Layer::Sell(scroll, cursor));
             moved
         }
@@ -1903,16 +1429,7 @@ pub(super) fn bar(w: &mut World, m: super::scrollbar::Msg) -> bool {
 /// rows and the sell list's as lists (hover moves the cursor, a click on it is Enter, a right click Escape); moneyctr
 /// only the right click.
 #[allow(clippy::too_many_arguments)]
-pub fn pointer(
-    w: &mut World,
-    gu: &GameUi,
-    sw: f32,
-    sh: f32,
-    p: (f32, f32),
-    moved: bool,
-    clicked: bool,
-    right: bool,
-) {
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
     use super::winhits::generic;
     // The modern layer draws these and takes their mouse.
     if w.modern {
@@ -1927,106 +1444,48 @@ pub fn pointer(
         return;
     }
     if let Some((sel, ..)) = a.shopsell {
-        generic(
-            w,
-            gu,
-            SHOPSELL,
-            sel,
-            1..=2,
-            p,
-            moved,
-            clicked,
-            right,
-            |w, id| {
-                if let Some(s) = w.auction.as_mut().and_then(|a| a.shopsell.as_mut()) {
-                    s.0 = id;
-                }
-            },
-            keys,
-        );
+        generic(w, gu, SHOPSELL, sel, 1..=2, p, moved, clicked, right, |w, id| {
+            if let Some(s) = w.auction.as_mut().and_then(|a| a.shopsell.as_mut()) {
+                s.0 = id;
+            }
+        }, keys);
         return;
     }
     match a.top() {
         Some(Layer::Menu(name, sel)) => {
-            let last = menu_rows(name)
-                .iter()
-                .map(|r| r.0)
-                .max()
-                .unwrap_or(plain_rows(name));
-            generic(
-                w,
-                gu,
-                name,
-                sel,
-                1..=last,
-                p,
-                moved,
-                clicked,
-                right,
-                |w, id| {
-                    if let Some(a) = w.auction.as_mut() {
-                        set_top(a, Layer::Menu(name, id));
-                    }
-                },
-                keys,
-            );
+            let last = menu_rows(name).iter().map(|r| r.0).max().unwrap_or(plain_rows(name));
+            generic(w, gu, name, sel, 1..=last, p, moved, clicked, right, |w, id| {
+                if let Some(a) = w.auction.as_mut() {
+                    set_top(a, Layer::Menu(name, id));
+                }
+            }, keys);
         }
         Some(Layer::List) => {
             let cursor = a.list.as_ref().map_or(0, |l| l.cursor) as u16 + 1;
-            generic(
-                w,
-                gu,
-                LIST,
-                cursor,
-                1..=ROWS as u16,
-                p,
-                moved,
-                clicked,
-                right,
-                |w, id| {
-                    if let Some(l) = w.auction.as_mut().and_then(|a| a.list.as_mut()) {
-                        l.cursor = id as usize - 1;
-                    }
-                },
-                keys,
-            );
+            generic(w, gu, LIST, cursor, 1..=ROWS as u16, p, moved, clicked, right, |w, id| {
+                if let Some(l) = w.auction.as_mut().and_then(|a| a.list.as_mut()) {
+                    l.cursor = id as usize - 1;
+                }
+            }, keys);
         }
         Some(Layer::History) => {
             let cursor = a.history.as_ref().map_or(0, |h| h.cursor) as u16 + 1;
-            generic(
-                w,
-                gu,
-                HISTORY,
-                cursor,
-                1..=ROWS as u16,
-                p,
-                moved,
-                clicked,
-                right,
-                |w, id| {
-                    if let Some(h) = w.auction.as_mut().and_then(|a| a.history.as_mut()) {
-                        h.cursor = id as usize - 1;
-                    }
-                },
-                keys,
-            );
+            generic(w, gu, HISTORY, cursor, 1..=ROWS as u16, p, moved, clicked, right, |w, id| {
+                if let Some(h) = w.auction.as_mut().and_then(|a| a.history.as_mut()) {
+                    h.cursor = id as usize - 1;
+                }
+            }, keys);
         }
         Some(Layer::Sell(scroll, cursor)) => {
             let n = sell_rows(w).len();
-            let Some(r) = gu.window_rect("menu    inventor", sw, sh) else {
-                return;
-            };
+            let Some(r) = gu.window_rect("menu    inventor", sw, sh) else { return };
             let on = p.0 >= r[0] && p.0 < r[0] + r[2] && p.1 >= r[1] && p.1 < r[1] + r[3];
             if right && on {
                 key(w, egui::Key::Escape);
                 return;
             }
             let row = ((p.1 - r[1] - 4.0) / crate::inventory::ROW_PITCH).floor();
-            if !on
-                || row < 0.0
-                || row as usize >= crate::inventory::VISIBLE_ROWS
-                || scroll + row as usize >= n
-            {
+            if !on || row < 0.0 || row as usize >= crate::inventory::VISIBLE_ROWS || scroll + row as usize >= n {
                 return;
             }
             gu.hover.set(true);
@@ -2061,30 +1520,15 @@ pub fn bars(gu: &GameUi, w: &World, bars: &mut super::hudtop::BarText) {
             if l.is_some_and(|l| !l.sales) {
                 bars.title[1] = gu.title_msg(0x79).unwrap_or_default();
                 bars.help[1] = gu.menu_msg(3, "");
-            } else if let Some(Row::Slot(k)) =
-                l.and_then(|l| l.rows.get(l.scroll + l.cursor).copied())
-            {
-                bars.help[1] = stat_look(w, &w.ah_slots[k as usize])
-                    .1
-                    .map_or_else(String::new, |h| gu.menu_msg(h, ""));
+            } else if let Some(Row::Slot(k)) = l.and_then(|l| l.rows.get(l.scroll + l.cursor).copied()) {
+                bars.help[1] = stat_look(w, &w.ah_slots[k as usize]).1.map_or_else(String::new, |h| gu.menu_msg(h, ""));
             }
         }
         Some(Layer::History) => {
             bars.title[1] = gu.title_msg(0x77).unwrap_or_default();
             bars.help[1] = gu.menu_msg(0x224, "");
         }
-        Some(Layer::Sell(..)) => {
-            bars.help[1] = gu.menu_msg(
-                if a.money.is_some() {
-                    0x37
-                } else if a.shopsell.is_some() {
-                    0x38
-                } else {
-                    0x36
-                },
-                "",
-            )
-        }
+        Some(Layer::Sell(..)) => bars.help[1] = gu.menu_msg(if a.money.is_some() { 0x37 } else if a.shopsell.is_some() { 0x38 } else { 0x36 }, ""),
         None => {}
     }
 }
@@ -2102,32 +1546,10 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         let focused = focus && i + 1 == n;
         match *l {
             Layer::Menu(name, sel) => {
-                let off = if name == AUC3 && cursor_row(a).is_some_and(|r| auc3_dim(w, r)) {
-                    vec![2u16]
-                } else {
-                    Vec::new()
-                };
+                let off = if name == AUC3 && cursor_row(a).is_some_and(|r| auc3_dim(w, r)) { vec![2u16] } else { Vec::new() };
                 // FUN_101d9200: the name toggle's label, windowps 151 "Reset List" with a saved sort, else 537 "Sort".
-                let swaps: Vec<(u16, Option<&str>, usize)> =
-                    if name == AUC3 && sort_kind(a.cat) == 2 {
-                        vec![(
-                            3,
-                            Some(WINDOWPS),
-                            if a.sorts.any(a.cat) { 151 } else { 537 },
-                        )]
-                    } else {
-                        Vec::new()
-                    };
-                if let Some(win) = gu.lobby_window_lib_swaps(
-                    name,
-                    sw,
-                    sh,
-                    (0.0, 0.0),
-                    Some(sel),
-                    focused,
-                    &off,
-                    &swaps,
-                ) {
+                let swaps: Vec<(u16, Option<&str>, usize)> = if name == AUC3 && sort_kind(a.cat) == 2 { vec![(3, Some(WINDOWPS), if a.sorts.any(a.cat) { 151 } else { 537 })] } else { Vec::new() };
+                if let Some(win) = gu.lobby_window_lib_swaps(name, sw, sh, (0.0, 0.0), Some(sel), focused, &off, &swaps) {
                     super::winhits::record(w, name, &win);
                     let [x, y, ..] = win.frame;
                     gu.disabled_children(name, x, y, &off, focused.then_some(sel));
@@ -2136,9 +1558,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
             }
             Layer::List => rects.extend(draw_list(gu, w, a, focused, sw, sh)),
             Layer::History => rects.extend(draw_history(gu, w, a, focused, sw, sh)),
-            Layer::Sell(scroll, cursor) => {
-                rects.extend(draw_sell(gu, w, scroll, cursor, focused, sw, sh))
-            }
+            Layer::Sell(scroll, cursor) => rects.extend(draw_sell(gu, w, scroll, cursor, focused, sw, sh)),
         }
     }
     if let Some((step, max, v, _)) = a.money
@@ -2168,32 +1588,13 @@ fn list_frame(gu: &mut GameUi, name: &str, sw: f32, sh: f32) -> Option<[f32; 4]>
 }
 
 /// auclist (3.2.2 / 3.6): the half-size icon, the name, "[n]" right-aligned at 275 (bid) or the price (sales).
-fn draw_list(
-    gu: &mut GameUi,
-    w: &World,
-    a: &Auction,
-    focused: bool,
-    sw: f32,
-    sh: f32,
-) -> Option<[f32; 4]> {
+fn draw_list(gu: &mut GameUi, w: &World, a: &Auction, focused: bool, sw: f32, sh: f32) -> Option<[f32; 4]> {
     let l = a.list.as_ref()?;
     let info = w.item_info.clone()?;
     let r = list_frame(gu, LIST, sw, sh)?;
     let (ox, oy) = (r[0] + 4.0, r[1] + 4.0);
     let shown: Vec<Row> = l.rows.iter().skip(l.scroll).take(ROWS).copied().collect();
-    super::winhits::record_rects(
-        w,
-        LIST,
-        r,
-        (0..shown.len())
-            .map(|k| {
-                (
-                    k as u16 + 1,
-                    [ox, oy + PITCH * k as f32, r[2] - 12.0, PITCH],
-                )
-            })
-            .collect(),
-    );
+    super::winhits::record_rects(w, LIST, r, (0..shown.len()).map(|k| (k as u16 + 1, [ox, oy + PITCH * k as f32, r[2] - 12.0, PITCH])).collect());
     super::items::upload_icons(gu, &info, shown.iter().map(|x| x.item(&w.ah_slots)));
     for (k, row) in shown.iter().enumerate() {
         let y = oy + PITCH * k as f32;
@@ -2206,45 +1607,21 @@ fn draw_list(
         let stack = info.item(item).map_or(1, |it| it.stack.max(1));
         match *row {
             Row::Single { single, .. } => {
-                gu.text(
-                    &name,
-                    ox + 18.0,
-                    y + 2.0,
-                    0,
-                    super::shop::name_tint(w, item).to_le_bytes(),
-                );
+                gu.text(&name, ox + 18.0, y + 2.0, 0, super::shop::name_tint(w, item).to_le_bytes());
                 gu.shape_text(&format!("[{single}]"), ox + 275.0, y + 4.0, WHITE, true);
             }
             Row::Stack { stack: n, .. } => {
-                gu.text(
-                    &name,
-                    ox + 18.0,
-                    y + 2.0,
-                    0,
-                    w.lua.item_tint(item).unwrap_or(STACK_NAME).to_le_bytes(),
-                );
+                gu.text(&name, ox + 18.0, y + 2.0, 0, w.lua.item_tint(item).unwrap_or(STACK_NAME).to_le_bytes());
                 gu.shape_text(&stack.to_string(), ox + 16.0, y + 4.0, WHITE, true);
                 gu.shape_text(&format!("[{n}]"), ox + 275.0, y + 4.0, WHITE, true);
             }
             Row::Slot(s) => {
                 let p = &w.ah_slots[s as usize];
-                gu.text(
-                    &name,
-                    ox + 18.0,
-                    y + 2.0,
-                    0,
-                    stat_look(w, p).0.to_le_bytes(),
-                );
+                gu.text(&name, ox + 18.0, y + 2.0, 0, stat_look(w, p).0.to_le_bytes());
                 if p.qty != 1 {
                     gu.shape_text(&stack.to_string(), ox + 16.0, y + 4.0, WHITE, true);
                 }
-                gu.shape_text(
-                    &crate::inventory::gil_text(p.price as i64),
-                    ox + 275.0,
-                    y + 4.0,
-                    WHITE,
-                    true,
-                );
+                gu.shape_text(&crate::inventory::gil_text(p.price as i64), ox + 275.0, y + 4.0, WHITE, true);
             }
         }
         if focused && k == l.cursor {
@@ -2265,50 +1642,19 @@ fn draw_list(
     }
     gu.scroll_bar(r[0] + r[2] - 6.0, r[1], r[3], l.rows.len(), ROWS, l.scroll);
     if focused {
-        gu.bar_site(
-            super::scrollbar::Owner::Auction,
-            r[0] + r[2] - 6.0,
-            r[1],
-            r[3],
-            l.rows.len(),
-            ROWS,
-            l.scroll,
-        );
+        gu.bar_site(super::scrollbar::Owner::Auction, r[0] + r[2] - 6.0, r[1], r[3], l.rows.len(), ROWS, l.scroll);
     }
     Some(r)
 }
 
 /// auchisto (3.4): the date, seller, "→", buyer, "N G"; in sell mode a head row with the category and the count.
-fn draw_history(
-    gu: &mut GameUi,
-    w: &World,
-    a: &Auction,
-    focused: bool,
-    sw: f32,
-    sh: f32,
-) -> Option<[f32; 4]> {
+fn draw_history(gu: &mut GameUi, w: &World, a: &Auction, focused: bool, sw: f32, sh: f32) -> Option<[f32; 4]> {
     let h = a.history.as_ref()?;
     let r = list_frame(gu, HISTORY, sw, sh)?;
     let (ox, oy) = (r[0] + 4.0, r[1] + 4.0);
-    let arrow = w
-        .battle
-        .as_ref()
-        .and_then(|b| b.group9(0x3b))
-        .unwrap_or_else(|| ">".into());
+    let arrow = w.battle.as_ref().and_then(|b| b.group9(0x3b)).unwrap_or_else(|| ">".into());
     let n = h.sales.len().saturating_sub(h.scroll).min(ROWS);
-    super::winhits::record_rects(
-        w,
-        HISTORY,
-        r,
-        (0..n)
-            .map(|k| {
-                (
-                    k as u16 + 1,
-                    [ox, oy + PITCH * k as f32, r[2] - 12.0, PITCH],
-                )
-            })
-            .collect(),
-    );
+    super::winhits::record_rects(w, HISTORY, r, (0..n).map(|k| (k as u16 + 1, [ox, oy + PITCH * k as f32, r[2] - 12.0, PITCH])).collect());
     for (k, s) in h.sales.iter().skip(h.scroll).take(ROWS).enumerate() {
         // The small sprite font (FUN_101c9780) in columns {0, 65, 145, 165, 250, 350}, the price right-aligned at the
         // last column's end - 2; the arrow in the game font (the sprite font has no glyph for it).
@@ -2317,13 +1663,7 @@ fn draw_history(
         gu.shape_text(&short(&s.seller), ox + 65.0, y + 4.0, WHITE, false);
         gu.text(&arrow, ox + 145.0, y + 2.0, 0, WHITE.to_le_bytes());
         gu.shape_text(&short(&s.buyer), ox + 165.0, y + 4.0, WHITE, false);
-        gu.shape_text(
-            &crate::inventory::gil_text(s.price as i64),
-            ox + 348.0,
-            y + 4.0,
-            WHITE,
-            true,
-        );
+        gu.shape_text(&crate::inventory::gil_text(s.price as i64), ox + 348.0, y + 4.0, WHITE, true);
         if focused && k == h.cursor {
             gu.cursor(ox, y);
         }
@@ -2345,30 +1685,14 @@ fn draw_history(
 
 /// FUN_101ca180: a name past 8 characters cut to 7 and an ellipsis.
 fn short(s: &str) -> String {
-    if s.chars().count() > 8 {
-        format!("{}...", s.chars().take(7).collect::<String>())
-    } else {
-        s.to_string()
-    }
+    if s.chars().count() > 8 { format!("{}...", s.chars().take(7).collect::<String>()) } else { s.to_string() }
 }
 
 /// The inventory list with the auction source (3.5).
-fn draw_sell(
-    gu: &mut GameUi,
-    w: &World,
-    scroll: usize,
-    cursor: usize,
-    focused: bool,
-    sw: f32,
-    sh: f32,
-) -> Option<[f32; 4]> {
+fn draw_sell(gu: &mut GameUi, w: &World, scroll: usize, cursor: usize, focused: bool, sw: f32, sh: f32) -> Option<[f32; 4]> {
     let info = w.item_info.clone()?;
     let rows = sell_rows(w);
-    let mut list = crate::inventory::ItemList {
-        rows: crate::inventory::build_rows(&rows, info.as_ref(), false),
-        scroll,
-        cursor,
-    };
+    let mut list = crate::inventory::ItemList { rows: crate::inventory::build_rows(&rows, info.as_ref(), false), scroll, cursor };
     for (r, s) in list.rows.iter_mut().zip(&rows) {
         r.tint = sell_tint(w, s);
     }
@@ -2377,28 +1701,9 @@ fn draw_sell(
     let frame = gu.cursor_frame();
     let (b, ui, style, font) = gu.parts();
     let m = ui.menu("menu    inventor").filter(|_| open)?;
-    let [bx, by, bh] = crate::render::invwin::push_inventory(
-        b,
-        ui,
-        style,
-        font,
-        GameUi::ATLAS,
-        m,
-        &list,
-        sw,
-        sh,
-        if focused { frame } else { usize::MAX },
-    );
+    let [bx, by, bh] = crate::render::invwin::push_inventory(b, ui, style, font, GameUi::ATLAS, m, &list, sw, sh, if focused { frame } else { usize::MAX });
     if focused {
-        gu.bar_site(
-            super::scrollbar::Owner::Auction,
-            bx,
-            by,
-            bh,
-            list.rows.len(),
-            crate::inventory::VISIBLE_ROWS,
-            scroll,
-        );
+        gu.bar_site(super::scrollbar::Owner::Auction, bx, by, bh, list.rows.len(), crate::inventory::VISIBLE_ROWS, scroll);
     }
     gu.window_rect("menu    inventor", sw, sh)
 }
@@ -2415,26 +1720,11 @@ pub(super) struct PaneRow {
 /// A window of the stack as the modern layer shows it.
 pub(super) enum Pane {
     /// A command menu: its name, cursor, rows off and windowps label swaps.
-    Menu {
-        name: &'static str,
-        sel: u16,
-        off: Vec<u16>,
-        labels: Vec<(u16, usize)>,
-    },
+    Menu { name: &'static str, sel: u16, off: Vec<u16>, labels: Vec<(u16, usize)> },
     /// auclist (bid or sales mode) and the line shown when it is empty or failed.
-    List {
-        sales: bool,
-        rows: Vec<PaneRow>,
-        cursor: usize,
-        note: Option<String>,
-    },
+    List { sales: bool, rows: Vec<PaneRow>, cursor: usize, note: Option<String> },
     /// auchisto: date, seller, buyer, price per sale.
-    History {
-        item: u16,
-        rows: Vec<[String; 4]>,
-        cursor: usize,
-        note: Option<String>,
-    },
+    History { item: u16, rows: Vec<[String; 4]>, cursor: usize, note: Option<String> },
     /// The inventory offered for sale.
     Sell { rows: Vec<PaneRow>, cursor: usize },
 }
@@ -2469,27 +1759,12 @@ pub(super) fn look(w: &World) -> Option<Look> {
     for l in &a.layers {
         panes.push(match *l {
             Layer::Menu(name, sel) => {
-                let off = if name == AUC3 && cursor_row(a).is_some_and(|r| auc3_dim(w, r)) {
-                    vec![2u16]
-                } else {
-                    Vec::new()
-                };
-                let labels = if name == AUC3 && sort_kind(a.cat) == 2 {
-                    vec![(3, if a.sorts.any(a.cat) { 151 } else { 537 })]
-                } else {
-                    Vec::new()
-                };
-                Pane::Menu {
-                    name,
-                    sel,
-                    off,
-                    labels,
-                }
+                let off = if name == AUC3 && cursor_row(a).is_some_and(|r| auc3_dim(w, r)) { vec![2u16] } else { Vec::new() };
+                let labels = if name == AUC3 && sort_kind(a.cat) == 2 { vec![(3, if a.sorts.any(a.cat) { 151 } else { 537 })] } else { Vec::new() };
+                Pane::Menu { name, sel, off, labels }
             }
             Layer::List => {
-                let Some(list) = a.list.as_ref() else {
-                    continue;
-                };
+                let Some(list) = a.list.as_ref() else { continue };
                 let rows = list
                     .rows
                     .iter()
@@ -2497,81 +1772,31 @@ pub(super) fn look(w: &World) -> Option<Look> {
                         let item = r.item(&w.ah_slots);
                         let stack = info.item(item).map_or(1, |it| it.stack.max(1) as u32);
                         match *r {
-                            Row::Single { single, .. } => PaneRow {
-                                item,
-                                tint: super::shop::name_tint(w, item),
-                                stack: None,
-                                right: format!("[{single}]"),
-                            },
-                            Row::Stack { stack: n, .. } => PaneRow {
-                                item,
-                                tint: w.lua.item_tint(item).unwrap_or(STACK_NAME),
-                                stack: Some(stack),
-                                right: format!("[{n}]"),
-                            },
+                            Row::Single { single, .. } => PaneRow { item, tint: super::shop::name_tint(w, item), stack: None, right: format!("[{single}]") },
+                            Row::Stack { stack: n, .. } => PaneRow { item, tint: w.lua.item_tint(item).unwrap_or(STACK_NAME), stack: Some(stack), right: format!("[{n}]") },
                             Row::Slot(k) => {
                                 let p = &w.ah_slots[k as usize];
-                                PaneRow {
-                                    item,
-                                    tint: stat_look(w, p).0,
-                                    stack: (p.qty != 1).then_some(stack),
-                                    right: crate::inventory::gil_text(p.price as i64),
-                                }
+                                PaneRow { item, tint: stat_look(w, p).0, stack: (p.qty != 1).then_some(stack), right: crate::inventory::gil_text(p.price as i64) }
                             }
                         }
                     })
                     .collect();
-                Pane::List {
-                    sales: list.sales,
-                    rows,
-                    cursor: list.scroll + list.cursor,
-                    note: empty(list.ready, list.failed, list.rows.is_empty(), list.sales),
-                }
+                Pane::List { sales: list.sales, rows, cursor: list.scroll + list.cursor, note: empty(list.ready, list.failed, list.rows.is_empty(), list.sales) }
             }
             Layer::History => {
-                let Some(h) = a.history.as_ref() else {
-                    continue;
-                };
-                let rows = h
-                    .sales
-                    .iter()
-                    .map(|x| {
-                        [
-                            sale_date(w, x.date, 2),
-                            x.seller.clone(),
-                            x.buyer.clone(),
-                            crate::inventory::gil_text(x.price as i64),
-                        ]
-                    })
-                    .collect();
-                Pane::History {
-                    item: h.item,
-                    rows,
-                    cursor: h.scroll + h.cursor,
-                    note: empty(h.ready, h.failed, h.sales.is_empty(), false),
-                }
+                let Some(h) = a.history.as_ref() else { continue };
+                let rows = h.sales.iter().map(|x| [sale_date(w, x.date, 2), x.seller.clone(), x.buyer.clone(), crate::inventory::gil_text(x.price as i64)]).collect();
+                Pane::History { item: h.item, rows, cursor: h.scroll + h.cursor, note: empty(h.ready, h.failed, h.sales.is_empty(), false) }
             }
             Layer::Sell(scroll, cursor) => {
                 let rows = sell_rows(w)
                     .iter()
                     .map(|x| {
                         let stack = info.item(x.id).map_or(1, |it| it.stack.max(1) as u32);
-                        PaneRow {
-                            item: x.id,
-                            tint: sell_tint(w, x),
-                            stack: None,
-                            right: if stack > 1 {
-                                x.count.to_string()
-                            } else {
-                                String::new()
-                            },
-                        }
+                        PaneRow { item: x.id, tint: sell_tint(w, x), stack: None, right: if stack > 1 { x.count.to_string() } else { String::new() } }
                     })
                     .collect();
-                Pane::Sell {
-                    rows,
-                    cursor: scroll + cursor,
-                }
+                Pane::Sell { rows, cursor: scroll + cursor }
             }
         });
     }
@@ -2582,26 +1807,12 @@ pub(super) fn look(w: &World) -> Option<Look> {
         };
         (step, max, v, item)
     });
-    Some(Look {
-        panes,
-        money,
-        money_btn: a.money_btn,
-        shopsell: a
-            .shopsell
-            .map(|(sel, _, item, price, _)| (sel, item, price)),
-        busy: a.busy(),
-    })
+    Some(Look { panes, money, money_btn: a.money_btn, shopsell: a.shopsell.map(|(sel, _, item, price, _)| (sel, item, price)), busy: a.busy() })
 }
 
 /// The top menu's cursor onto `sel` while it has the keys. True when it moved.
 pub(super) fn set_menu(w: &mut World, sel: u16) -> bool {
-    let Some(a) = w
-        .auction
-        .as_mut()
-        .filter(|a| a.money.is_none() && a.shopsell.is_none())
-    else {
-        return false;
-    };
+    let Some(a) = w.auction.as_mut().filter(|a| a.money.is_none() && a.shopsell.is_none()) else { return false };
     match a.layers.last_mut() {
         Some(Layer::Menu(_, s)) if *s != sel => {
             *s = sel;
@@ -2614,13 +1825,7 @@ pub(super) fn set_menu(w: &mut World, sel: u16) -> bool {
 /// The top list's (auclist, auchisto, the sell list) cursor onto row `at`, the scroll following. True when it moved.
 pub(super) fn set_row(w: &mut World, at: usize) -> bool {
     let n_sell = sell_rows(w).len();
-    let Some(a) = w
-        .auction
-        .as_mut()
-        .filter(|a| a.money.is_none() && a.shopsell.is_none())
-    else {
-        return false;
-    };
+    let Some(a) = w.auction.as_mut().filter(|a| a.money.is_none() && a.shopsell.is_none()) else { return false };
     let place = |scroll: &mut usize, cursor: &mut usize, n: usize, rows: usize| {
         if at >= n || *scroll + *cursor == at {
             return false;
@@ -2632,21 +1837,10 @@ pub(super) fn set_row(w: &mut World, at: usize) -> bool {
         true
     };
     match a.layers.last().copied() {
-        Some(Layer::List) => a
-            .list
-            .as_mut()
-            .is_some_and(|l| place(&mut l.scroll, &mut l.cursor, l.rows.len(), ROWS)),
-        Some(Layer::History) => a
-            .history
-            .as_mut()
-            .is_some_and(|h| place(&mut h.scroll, &mut h.cursor, h.sales.len(), ROWS)),
+        Some(Layer::List) => a.list.as_mut().is_some_and(|l| place(&mut l.scroll, &mut l.cursor, l.rows.len(), ROWS)),
+        Some(Layer::History) => a.history.as_mut().is_some_and(|h| place(&mut h.scroll, &mut h.cursor, h.sales.len(), ROWS)),
         Some(Layer::Sell(mut scroll, mut cursor)) => {
-            let moved = place(
-                &mut scroll,
-                &mut cursor,
-                n_sell,
-                crate::inventory::VISIBLE_ROWS,
-            );
+            let moved = place(&mut scroll, &mut cursor, n_sell, crate::inventory::VISIBLE_ROWS);
             set_top(a, Layer::Sell(scroll, cursor));
             moved
         }
@@ -2688,20 +1882,7 @@ mod tests {
         p[0x18..0x1c].copy_from_slice(b"Nine");
         p[0x28..0x2a].copy_from_slice(&4096u16.to_le_bytes());
         let a = AucPacket::parse(&p);
-        assert_eq!(
-            (
-                a.cmd,
-                a.slot,
-                a.result,
-                a.p8,
-                a.pc,
-                a.p10,
-                a.parcel.stat,
-                a.parcel.name.as_str(),
-                a.parcel.item
-            ),
-            (0xe, 2, 1, 15, 4096, 12, 3, "Nine", 4096)
-        );
+        assert_eq!((a.cmd, a.slot, a.result, a.p8, a.pc, a.p10, a.parcel.stat, a.parcel.name.as_str(), a.parcel.item), (0xe, 2, 1, 15, 4096, 12, 3, "Nine", 4096));
         assert_eq!(step_row("menu    aucitem", 1, true), 7);
         assert_eq!(step_row("menu    aucitem", 8, true), 2);
         assert_eq!(step_row("menu    aucitem", 1, false), 6);
@@ -2725,19 +1906,8 @@ mod tests {
         let mut bad = b.clone();
         bad[9] ^= 1;
         assert_eq!(Sorts::parse(&bad), Sorts::default());
-        assert_eq!(
-            (sort_param(5), sort_param(9), filter_param(4, 6)),
-            ((5, 2), (9, 0), (4, 1 | 6 << 2))
-        );
-        assert_eq!(
-            (
-                sort_kind(4),
-                sort_kind(0x30),
-                sort_kind(0x12),
-                sort_kind(0x21)
-            ),
-            (0, 0, 1, 2)
-        );
+        assert_eq!((sort_param(5), sort_param(9), filter_param(4, 6)), ((5, 2), (9, 0), (4, 1 | 6 << 2)));
+        assert_eq!((sort_kind(4), sort_kind(0x30), sort_kind(0x12), sort_kind(0x21)), (0, 0, 1, 2));
         let mut c = Vec::new();
         cond_add(&mut c, sort_param(5));
         cond_add(&mut c, sort_param(5));

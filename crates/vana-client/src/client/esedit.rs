@@ -65,33 +65,12 @@ fn slot_of(child: u16) -> usize {
 /// mcresmn's Edit (FUN_10134d90 / FUN_10135de0): the list on the inventory, the grid focused in mode 2.
 pub fn open(w: &mut World, row: usize) -> Option<Editor> {
     let work = w.equipsets.as_ref()?.sets.get(row)?.slots;
-    Some(Editor {
-        row,
-        work,
-        mode: 2,
-        grid: 1,
-        on_list: false,
-        container: 0,
-        filter: None,
-        scroll: 0,
-        cursor: 0,
-        picked: None,
-        mask: 0,
-        last: None,
-        mogc: None,
-    })
+    Some(Editor { row, work, mode: 2, grid: 1, on_list: false, container: 0, filter: None, scroll: 0, cursor: 0, picked: None, mask: 0, last: None, mogc: None })
 }
 
 /// FUN_10134e70 and the close hook (FUN_101358e0): the list and the grid close, the working copy goes into the set.
 fn close(w: &mut World) {
-    let Some(e) = w
-        .macroedit
-        .as_mut()
-        .and_then(|m| m.sets.as_mut())
-        .and_then(|s| s.ed.take())
-    else {
-        return;
-    };
+    let Some(e) = w.macroedit.as_mut().and_then(|m| m.sets.as_mut()).and_then(|s| s.ed.take()) else { return };
     if let Some(s) = w.equipsets.as_mut().and_then(|es| es.sets.get_mut(e.row)) {
         s.slots = e.work;
     }
@@ -100,19 +79,13 @@ fn close(w: &mut World) {
 /// The list's items: view 2 of the container (FUN_10134f00 = FUN_1021c7e0, sorted by (resource, item id)) through the
 /// slot filter, rows without a level or races dropped (FUN_10135120: record +0x14d0 / +0x14d8).
 fn items(w: &World, e: &Editor) -> Vec<crate::inventory::Slot> {
-    let Some(info) = w.item_info.as_ref() else {
-        return Vec::new();
-    };
+    let Some(info) = w.item_info.as_ref() else { return Vec::new() };
     let mut out: Vec<crate::inventory::Slot> = w
         .inv
         .slots_of(e.container)
         .into_iter()
         .filter(|s| s.index != 0 && s.id != 0)
-        .filter(|s| {
-            info.item(s.id).is_some_and(|it| {
-                it.level != 0 && it.races != 0 && e.filter.is_none_or(|m| it.slots & m != 0)
-            })
-        })
+        .filter(|s| info.item(s.id).is_some_and(|it| it.level != 0 && it.races != 0 && e.filter.is_none_or(|m| it.slots & m != 0)))
         .collect();
     out.sort_by_key(|s| (info.item(s.id).map_or(0, |it| it.resource), s.id));
     out
@@ -129,18 +102,12 @@ fn in_set(e: &Editor, c: u8, index: u8) -> bool {
 fn assign(w: &mut World, kind: u8, index: Option<u8>) -> bool {
     let inv_id = |w: &World, c: u8, i: u8| w.inv.slots.get(&(c, i)).map(|v| v.0);
     let Some(e) = ed(w) else { return false };
-    if e.last
-        .is_some_and(|t| t.elapsed() <= Duration::from_millis(700))
-    {
+    if e.last.is_some_and(|t| t.elapsed() <= Duration::from_millis(700)) {
         return false;
     }
     let (slot, c) = (slot_of(e.grid), e.container);
     let item = index.and_then(|i| Some((i, inv_id(w, c, i)?)));
-    let known = item.is_some_and(|(_, id)| {
-        w.item_info
-            .as_ref()
-            .is_some_and(|info| info.item(id).is_some())
-    });
+    let known = item.is_some_and(|(_, id)| w.item_info.as_ref().is_some_and(|info| info.item(id).is_some()));
     let Some(e) = ed_mut(w) else { return false };
     e.last = Some(Instant::now());
     match kind {
@@ -148,8 +115,7 @@ fn assign(w: &mut World, kind: u8, index: Option<u8>) -> bool {
         2 => e.work[slot] = [2, 0, 0, 0],
         _ => {
             let Some((i, id)) = item else { return false };
-            let same =
-                |s: &[u8; 4]| s[0] >> 2 == c && s[1] == i && u16::from_le_bytes([s[2], s[3]]) == id;
+            let same = |s: &[u8; 4]| s[0] >> 2 == c && s[1] == i && u16::from_le_bytes([s[2], s[3]]) == id;
             if same(&e.work[slot]) {
                 e.work[slot] = [0; 4];
                 return true;
@@ -168,10 +134,7 @@ fn assign(w: &mut World, kind: u8, index: Option<u8>) -> bool {
                 b[8 + 4 * k..12 + 4 * k].copy_from_slice(s);
             }
             log::info!("equip set editor: c2s 0x052 slot {slot} item {:?}", (c, i));
-            let _ = w
-                .net
-                .commands
-                .send(super::net::NetCommand::Packet { id: 0x052, body: b });
+            let _ = w.net.commands.send(super::net::NetCommand::Packet { id: 0x052, body: b });
         }
     }
     true
@@ -245,15 +208,7 @@ fn grid_key(w: &mut World, key: egui::Key) {
         // A picked item: Left / Right walk the allowed slots in ORDER (wrapping, not onto itself); Up / Down nothing.
         K::ArrowLeft | K::ArrowRight => {
             let at = ORDER.iter().position(|&c| c == grid).unwrap_or(0);
-            let next = (1..16)
-                .map(|k| {
-                    if key == K::ArrowRight {
-                        ORDER[(at + k) % 16]
-                    } else {
-                        ORDER[(at + 16 - k) % 16]
-                    }
-                })
-                .find(|&c| mask & 1 << slot_of(c) != 0);
+            let next = (1..16).map(|k| if key == K::ArrowRight { ORDER[(at + k) % 16] } else { ORDER[(at + 16 - k) % 16] }).find(|&c| mask & 1 << slot_of(c) != 0);
             if let (Some(c), Some(e)) = (next, ed_mut(w)) {
                 e.grid = c;
                 w.sounds.push(Ui::Cursor as u32);
@@ -263,8 +218,7 @@ fn grid_key(w: &mut World, key: egui::Key) {
         K::Enter if mode == 2 => {
             let slot = slot_of(grid);
             if let Some(e) = ed_mut(w) {
-                (e.container, e.filter, e.scroll, e.cursor, e.on_list) =
-                    (e.work[slot][0] >> 2, Some(1 << slot), 0, 0, true);
+                (e.container, e.filter, e.scroll, e.cursor, e.on_list) = (e.work[slot][0] >> 2, Some(1 << slot), 0, 0, true);
             }
             w.sounds.push(Ui::Select as u32);
         }
@@ -276,8 +230,7 @@ fn grid_key(w: &mut World, key: egui::Key) {
                 Some(Picked::Item(i)) => assign(w, 1, Some(i)),
                 None => false,
             };
-            w.sounds
-                .push(if ok { Ui::Select } else { Ui::Error } as u32);
+            w.sounds.push(if ok { Ui::Select } else { Ui::Error } as u32);
             if let Some(e) = ed_mut(w) {
                 (e.mask, e.picked, e.on_list) = (0, None, true);
             }
@@ -307,9 +260,7 @@ fn list_key(w: &mut World, key: egui::Key) {
         K::ArrowUp | K::ArrowDown | K::ArrowLeft | K::ArrowRight => {
             let Some(e) = ed_mut(w) else { return };
             let moved = match key {
-                K::ArrowUp | K::ArrowDown => {
-                    super::items::list_keys(&mut e.scroll, &mut e.cursor, n, key)
-                }
+                K::ArrowUp | K::ArrowDown => super::items::list_keys(&mut e.scroll, &mut e.cursor, n, key),
                 _ => super::items::page_keys(&mut e.scroll, &mut e.cursor, n, key == K::ArrowRight),
             };
             if moved {
@@ -330,11 +281,7 @@ fn list_key(w: &mut World, key: egui::Key) {
         }
         // Remove / Keep (FUN_10135550 / FUN_101355d0): mode 1 picks them (no slot limit); mode 2 sets the grid slot.
         K::Enter if at < EXTRA => {
-            let p = if at == 1 {
-                Picked::Remove
-            } else {
-                Picked::Keep
-            };
+            let p = if at == 1 { Picked::Remove } else { Picked::Keep };
             let ok = mode == 1 || assign(w, if at == 1 { 2 } else { 0 }, None);
             if let Some(e) = ed_mut(w) {
                 if mode == 1 {
@@ -342,28 +289,17 @@ fn list_key(w: &mut World, key: egui::Key) {
                 }
                 (e.filter, e.on_list) = (if mode == 1 { e.filter } else { None }, false);
             }
-            w.sounds
-                .push(if ok { Ui::Select } else { Ui::Error } as u32);
+            w.sounds.push(if ok { Ui::Select } else { Ui::Error } as u32);
         }
         // An item (FUN_10135190): mode 1 picks it, the grid limited to its slots (or the slot already holding it) with the
         // cursor on the first of them; mode 2 puts it in the grid slot.
         K::Enter => {
-            let Some(s) = shown.get(at - EXTRA).cloned() else {
-                return;
-            };
+            let Some(s) = shown.get(at - EXTRA).cloned() else { return };
             let c = e.container;
             if mode == 1 {
-                let bits = w
-                    .item_info
-                    .as_ref()
-                    .and_then(|i| i.item(s.id))
-                    .map_or(0, |it| it.slots);
+                let bits = w.item_info.as_ref().and_then(|i| i.item(s.id)).map_or(0, |it| it.slots);
                 let Some(e) = ed_mut(w) else { return };
-                let held = (0..16).find(|&k| {
-                    e.work[k][0] >> 2 == c
-                        && e.work[k][1] == s.index
-                        && u16::from_le_bytes([e.work[k][2], e.work[k][3]]) == s.id
-                });
+                let held = (0..16).find(|&k| e.work[k][0] >> 2 == c && e.work[k][1] == s.index && u16::from_le_bytes([e.work[k][2], e.work[k][3]]) == s.id);
                 e.mask = held.map_or(bits, |k| 1 << k);
                 e.picked = Some(Picked::Item(s.index));
                 if let Some(&first) = ORDER.iter().find(|&&ch| e.mask & 1 << slot_of(ch) != 0) {
@@ -379,8 +315,7 @@ fn list_key(w: &mut World, key: egui::Key) {
                 if let Some(e) = ed_mut(w) {
                     e.on_list = false;
                 }
-                w.sounds
-                    .push(if ok { Ui::Select } else { Ui::Error } as u32);
+                w.sounds.push(if ok { Ui::Select } else { Ui::Error } as u32);
             }
         }
         // FUN_10135230: mode 1 closes everything; mode 2 drops the filter and goes back to the grid.
@@ -401,9 +336,7 @@ fn mogc_key(w: &mut World, gu: &GameUi, key: egui::Key, o: u16) {
     use egui::Key as K;
     match key {
         K::ArrowUp | K::ArrowDown => {
-            let to = gu
-                .menu_links(MOGC, o)
-                .map_or(o, |l| l[if key == K::ArrowUp { 2 } else { 3 }] as u16);
+            let to = gu.menu_links(MOGC, o).map_or(o, |l| l[if key == K::ArrowUp { 2 } else { 3 }] as u16);
             if (1..=16).contains(&to) && to != o {
                 if let Some(e) = ed_mut(w) {
                     e.mogc = Some(to);
@@ -436,16 +369,7 @@ fn mogc_key(w: &mut World, gu: &GameUi, key: egui::Key, o: u16) {
 /// The mouse: mcrmogc's or the grid's children as the generic window; the list's rows as the item list (hover moves
 /// the cursor, a click on the cursor row is Enter); the pointer over the other of grid and list moves the focus
 /// (message 8), as the Equipment screen.
-pub fn pointer(
-    w: &mut World,
-    gu: &GameUi,
-    sw: f32,
-    sh: f32,
-    p: (f32, f32),
-    moved: bool,
-    clicked: bool,
-    right: bool,
-) {
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
     use super::macroedit::{child_under, generic};
     if w.modern {
         return;
@@ -459,47 +383,30 @@ pub fn pointer(
         });
         return;
     }
-    let (on_list, grid, mode, picked, scroll, cursor) =
-        (e.on_list, e.grid, e.mode, e.picked, e.scroll, e.cursor);
+    let (on_list, grid, mode, picked, scroll, cursor) = (e.on_list, e.grid, e.mode, e.picked, e.scroll, e.cursor);
     let n = EXTRA + items(w, e).len();
     let row = super::post::picker_row(gu, sw, sh, p);
     let (_, in_grid) = child_under(w, GRID, p, 1..=16);
-    if (moved || clicked)
-        && ((!on_list && row.is_some() && mode == 2)
-            || (on_list && in_grid && mode == 1 && picked.is_none()))
-    {
+    if (moved || clicked) && ((!on_list && row.is_some() && mode == 2) || (on_list && in_grid && mode == 1 && picked.is_none())) {
         num_plus(w);
         return;
     }
     if !on_list {
         let free = mode == 2 || ed(w).is_some_and(|e| e.mask == 0);
-        generic(
-            w,
-            gu,
-            GRID,
-            grid,
-            1..=16,
-            p,
-            moved,
-            clicked,
-            right,
-            |w, id| {
-                if let Some(e) = ed_mut(w)
-                    && (free || e.mask & 1 << slot_of(id) != 0)
-                {
-                    e.grid = id;
-                }
-            },
-        );
+        generic(w, gu, GRID, grid, 1..=16, p, moved, clicked, right, |w, id| {
+            if let Some(e) = ed_mut(w)
+                && (free || e.mask & 1 << slot_of(id) != 0)
+            {
+                e.grid = id;
+            }
+        });
         return;
     }
     if right && row.is_some() {
         key(w, gu, egui::Key::Escape);
         return;
     }
-    let Some(r) = row.filter(|r| scroll + r < n) else {
-        return;
-    };
+    let Some(r) = row.filter(|r| scroll + r < n) else { return };
     gu.hover.set(true);
     if r != cursor && (moved || clicked) {
         if let Some(e) = ed_mut(w) {
@@ -527,27 +434,8 @@ pub(super) struct View {
 pub(super) fn view(w: &World) -> Option<View> {
     let e = ed(w)?;
     let info = w.item_info.as_ref()?;
-    let group9 = |id: usize| {
-        w.battle
-            .as_ref()
-            .and_then(|b| b.group9(id))
-            .unwrap_or_default()
-    };
-    let mut rows: Vec<(u16, String, u32, u32)> = [(0x113, Picked::Remove), (0x114, Picked::Keep)]
-        .into_iter()
-        .map(|(k, p)| {
-            (
-                0,
-                group9(k),
-                0,
-                if e.picked == Some(p) {
-                    0x8080_4020
-                } else {
-                    0x8090_9040
-                },
-            )
-        })
-        .collect();
+    let group9 = |id: usize| w.battle.as_ref().and_then(|b| b.group9(id)).unwrap_or_default();
+    let mut rows: Vec<(u16, String, u32, u32)> = [(0x113, Picked::Remove), (0x114, Picked::Keep)].into_iter().map(|(k, p)| (0, group9(k), 0, if e.picked == Some(p) { 0x8080_4020 } else { 0x8090_9040 })).collect();
     let shown = items(w, e);
     for s in &shown {
         let tint = if e.picked == Some(Picked::Item(s.index)) {
@@ -557,12 +445,7 @@ pub(super) fn view(w: &World) -> Option<View> {
         } else {
             WHITE
         };
-        rows.push((
-            s.id,
-            info.item(s.id).map_or(String::new(), |it| it.name.clone()),
-            s.count,
-            tint,
-        ));
+        rows.push((s.id, info.item(s.id).map_or(String::new(), |it| it.name.clone()), s.count, tint));
     }
     Some(View {
         slots: std::array::from_fn(|k| {
@@ -571,9 +454,7 @@ pub(super) fn view(w: &World) -> Option<View> {
         }),
         grid: e.grid,
         on_list: e.on_list && e.mogc.is_none(),
-        allowed: std::array::from_fn(|k| {
-            e.mode == 2 || e.mask == 0 || e.mask & 1 << slot_of(k as u16 + 1) != 0
-        }),
+        allowed: std::array::from_fn(|k| e.mode == 2 || e.mask == 0 || e.mask & 1 << slot_of(k as u16 + 1) != 0),
         container: e.container,
         rows,
         cur: (e.scroll + e.cursor).checked_sub(1),
@@ -583,9 +464,7 @@ pub(super) fn view(w: &World) -> Option<View> {
 /// The modern layer's mouse: the grid's cursor onto child `c` (in mode 1 only onto the picked item's slots), the focus
 /// back on the grid; true when it moved.
 pub(super) fn set_grid(w: &mut World, c: u16) -> bool {
-    let Some(e) = ed_mut(w).filter(|e| e.mogc.is_none()) else {
-        return false;
-    };
+    let Some(e) = ed_mut(w).filter(|e| e.mogc.is_none()) else { return false };
     if e.mode == 1 && e.mask != 0 && e.mask & 1 << slot_of(c) == 0 {
         return false;
     }
@@ -599,9 +478,7 @@ pub(super) fn set_grid(w: &mut World, c: u16) -> bool {
 
 /// The list's cursor onto row `k` of the view's rows (the storage strip above them), the focus on the list.
 pub(super) fn set_row(w: &mut World, k: usize) -> bool {
-    let Some(e) = ed_mut(w).filter(|e| e.mogc.is_none()) else {
-        return false;
-    };
+    let Some(e) = ed_mut(w).filter(|e| e.mogc.is_none()) else { return false };
     let (scroll, cursor) = super::post::list_at(k + 1);
     let moved = e.scroll + e.cursor != k + 1 || !e.on_list;
     (e.scroll, e.cursor, e.on_list) = (scroll, cursor, true);
@@ -652,44 +529,24 @@ pub fn bars(gu: &GameUi, w: &World, bars: &mut super::hudtop::BarText) {
                 1 | 2 => gu.lobby_msg(0x0c, 0x54, ""),
                 _ => gu.menu_msg(3, ""),
             };
-            bars.title[1] = gu
-                .title_msg(super::items::title_id(e.container))
-                .unwrap_or_default();
+            bars.title[1] = gu.title_msg(super::items::title_id(e.container)).unwrap_or_default();
         }
     }
 }
 
 pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32, free: bool) -> Vec<[f32; 4]> {
     let mut rects = Vec::new();
-    let (Some(e), Some(info)) = (ed(w), w.item_info.clone()) else {
-        return rects;
-    };
+    let (Some(e), Some(info)) = (ed(w), w.item_info.clone()) else { return rects };
     // The grid (FUN_101359c0): "remove" keytops3 429 at (+1, 0), an item its icon, "keep" the slot's label.
-    super::items::upload_icons(
-        gu,
-        &info,
-        e.work
-            .iter()
-            .filter(|s| s[0] & 3 == 1)
-            .map(|s| u16::from_le_bytes([s[2], s[3]])),
-    );
-    if let Some(win) = gu.lobby_window_off(
-        GRID,
-        sw,
-        sh,
-        (0.0, 0.0),
-        Some(e.grid),
-        free && !e.on_list && e.mogc.is_none(),
-        &[],
-    ) {
+    super::items::upload_icons(gu, &info, e.work.iter().filter(|s| s[0] & 3 == 1).map(|s| u16::from_le_bytes([s[2], s[3]])));
+    if let Some(win) = gu.lobby_window_off(GRID, sw, sh, (0.0, 0.0), Some(e.grid), free && !e.on_list && e.mogc.is_none(), &[]) {
         super::macroedit::hit(w, GRID, &win);
         for &(child, r) in win.children.iter().filter(|(c, _)| (1..=16).contains(c)) {
             let s = e.work[slot_of(child)];
             match s[0] & 3 {
                 2 => _ = gu.sprite("menu    keytops3", 429, r[0] + 1.0, r[1], WHITE),
                 1 => {
-                    let name =
-                        crate::render::invwin::icon_texture(u16::from_le_bytes([s[2], s[3]]));
+                    let name = crate::render::invwin::icon_texture(u16::from_le_bytes([s[2], s[3]]));
                     if gu.has_image(&name) {
                         gu.image_rect(&name, r[0], r[1], 32.0, 32.0, [1.0; 4]);
                     }
@@ -701,34 +558,12 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32, free: bool) -> Vec<[f3
     }
     // The list: picked orange, in the set green, else white; Remove / Keep yellow (orange when picked).
     let shown = items(w, e);
-    let mut rows = vec![Row {
-        id: 0,
-        name: String::new(),
-        count: None,
-        tint: WHITE,
-    }];
-    let group9 = |id: usize| {
-        w.battle
-            .as_ref()
-            .and_then(|b| b.group9(id))
-            .unwrap_or_default()
-    };
+    let mut rows = vec![Row { id: 0, name: String::new(), count: None, tint: WHITE }];
+    let group9 = |id: usize| w.battle.as_ref().and_then(|b| b.group9(id)).unwrap_or_default();
     for (k, p) in [(0x113, Picked::Remove), (0x114, Picked::Keep)] {
-        rows.push(Row {
-            id: 0,
-            name: group9(k),
-            count: None,
-            tint: if e.picked == Some(p) {
-                0x8080_4020
-            } else {
-                0x8090_9040
-            },
-        });
+        rows.push(Row { id: 0, name: group9(k), count: None, tint: if e.picked == Some(p) { 0x8080_4020 } else { 0x8090_9040 } });
     }
-    for (mut r, s) in crate::inventory::build_rows(&shown, info.as_ref(), false)
-        .into_iter()
-        .zip(&shown)
-    {
+    for (mut r, s) in crate::inventory::build_rows(&shown, info.as_ref(), false).into_iter().zip(&shown) {
         r.tint = if e.picked == Some(Picked::Item(s.index)) {
             0x8080_4020
         } else if in_set(e, e.container, s.index) {
@@ -738,16 +573,8 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32, free: bool) -> Vec<[f3
         };
         rows.push(r);
     }
-    let list = ItemList {
-        rows,
-        scroll: e.scroll,
-        cursor: e.cursor,
-    };
-    super::items::upload_icons(
-        gu,
-        &info,
-        list.visible().iter().map(|r| r.id).filter(|&id| id != 0),
-    );
+    let list = ItemList { rows, scroll: e.scroll, cursor: e.cursor };
+    super::items::upload_icons(gu, &info, list.visible().iter().map(|r| r.id).filter(|&id| id != 0));
     let open = gu.gate_layout(LIST, sw, sh, Some(LIST_X));
     let frame = gu.cursor_frame();
     let (b, ui, style, font) = gu.parts();
@@ -756,21 +583,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32, free: bool) -> Vec<[f3
         if let Some(el) = m.elements.first_mut() {
             el.x = LIST_X;
         }
-        crate::render::invwin::push_item_list(
-            b,
-            ui,
-            style,
-            font,
-            GameUi::ATLAS,
-            &m,
-            &list,
-            sw,
-            sh,
-            frame,
-            3.0,
-            free && e.on_list && e.mogc.is_none(),
-            crate::render::invwin::INVENTOR_BAR,
-        );
+        crate::render::invwin::push_item_list(b, ui, style, font, GameUi::ATLAS, &m, &list, sw, sh, frame, 3.0, free && e.on_list && e.mogc.is_none(), crate::render::invwin::INVENTOR_BAR);
         // The storage strip (cell 1 kind 0x41: framesus 185, its text baked in) at the row origin + (0, 2); cell 0 kind
         // 0x40 the wardrobe number right-aligned at (row x + 13, y + 4) (its badge sprites have alpha 0).
         if e.scroll == 0 {
@@ -784,14 +597,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32, free: bool) -> Vec<[f3
                 _ => 0,
             };
             if n > 0 {
-                crate::render::screens::push_shape_text_right(
-                    b,
-                    ui,
-                    n.to_string().as_bytes(),
-                    wx + 3.0 + 13.0,
-                    wy + 4.0 + 4.0,
-                    WHITE,
-                );
+                crate::render::screens::push_shape_text_right(b, ui, n.to_string().as_bytes(), wx + 3.0 + 13.0, wy + 4.0 + 4.0, WHITE);
             }
         }
     }

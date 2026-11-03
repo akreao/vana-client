@@ -22,21 +22,8 @@ fn raw(file: &[u8], id: u16) -> Option<&[u8]> {
 pub fn entry(file: &[u8], id: u16) -> Option<Entry> {
     let mut head = raw(file, id)?.get(..0x1fc)?.to_vec();
     super::actions::unmask(&mut head);
-    let desc = string_table(&head[4..])
-        .into_iter()
-        .find_map(|f| {
-            if let Field::Text(s) = f {
-                Some(s)
-            } else {
-                None
-            }
-        })
-        .unwrap_or_default();
-    Some(Entry {
-        cancel: head[2] != 0,
-        no_timer: head[3] == 0xff,
-        desc,
-    })
+    let desc = string_table(&head[4..]).into_iter().find_map(|f| if let Field::Text(s) = f { Some(s) } else { None }).unwrap_or_default();
+    Some(Entry { cancel: head[2] != 0, no_timer: head[3] == 0xff, desc })
 }
 
 /// The icon @0x284 as RGBA: flag byte, 16-byte name, BITMAPINFOHEADER (32 bpp), BGRA rows bottom-up. The size field
@@ -62,11 +49,7 @@ pub fn icon(file: &[u8], id: u16) -> Option<(u32, u32, Vec<u8>)> {
             out[o] = px[s + 2];
             out[o + 1] = px[s + 1];
             out[o + 2] = px[s];
-            out[o + 3] = if doubled {
-                (px[s + 3] as u32 * 2).min(255) as u8
-            } else {
-                px[s + 3]
-            };
+            out[o + 3] = if doubled { (px[s + 3] as u32 * 2).min(255) as u8 } else { px[s + 3] };
         }
     }
     Some((wu as u32, hu as u32, out))
@@ -79,20 +62,13 @@ mod tests {
     #[test]
     fn haste_and_ko() {
         let cfg = crate::config::Config::load();
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else {
-            return;
-        };
-        let Ok(dll) = std::fs::read(cfg.ffxi_dir().join("FFXiMain.dll")) else {
-            return;
-        };
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(dll) = std::fs::read(cfg.ffxi_dir().join("FFXiMain.dll")) else { return };
         let files = [0x3a, 0x3b].map(|s| crate::dat::msg::current_slot_file(&dll, 1, s));
         assert_eq!(files, [Some(87), Some(39557)]);
         let big = index.read(87).unwrap();
         let haste = super::entry(&big, 33).unwrap();
-        assert!(
-            haste.cancel && !haste.no_timer && !haste.desc.is_empty(),
-            "{haste:?}"
-        );
+        assert!(haste.cancel && !haste.no_timer && !haste.desc.is_empty(), "{haste:?}");
         assert!(super::entry(&big, 0).unwrap().no_timer);
         assert_eq!(super::icon(&big, 33).map(|i| (i.0, i.1)), Some((32, 32)));
         let small = index.read(39557).unwrap();

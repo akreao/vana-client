@@ -59,16 +59,8 @@ impl FxLibs {
     /// Off the UI thread, with the zone DAT already read.
     pub fn load(index: &Arc<DatIndex>, keys: &Arc<zone::Keys>, zone_file: &[u8]) -> Option<Self> {
         let lib = crate::fx::lib::Library::load;
-        let libs = index
-            .read(0)
-            .and_then(|g| Ok((lib(0, g)?, lib(zone::file_id(ZONE), zone_file.to_vec())?)));
-        libs.map(|(global, zone)| Self {
-            global,
-            zone,
-            files: (index.clone(), keys.clone()),
-        })
-        .map_err(|e| log::warn!("lobby effects: {e:#}"))
-        .ok()
+        let libs = index.read(0).and_then(|g| Ok((lib(0, g)?, lib(zone::file_id(ZONE), zone_file.to_vec())?)));
+        libs.map(|(global, zone)| Self { global, zone, files: (index.clone(), keys.clone()) }).map_err(|e| log::warn!("lobby effects: {e:#}")).ok()
     }
 }
 
@@ -90,12 +82,7 @@ impl LobbyFx {
         fx.set_global(libs.global);
         fx.load_zone(libs.zone);
         fx.set_weather("suny", 0.0);
-        Self {
-            fx,
-            gpu: None,
-            dt: 0.0,
-            minute,
-        }
+        Self { fx, gpu: None, dt: 0.0, minute }
     }
 
     pub fn advance(&mut self, dt: f32) {
@@ -116,22 +103,9 @@ impl LobbyFx {
 
     /// One frame over the drawn zone.
     #[allow(clippy::too_many_arguments)]
-    pub fn draw(
-        &mut self,
-        gpu: &Gpu,
-        format: wgpu::TextureFormat,
-        encoder: &mut wgpu::CommandEncoder,
-        target: Target,
-        depth: &wgpu::TextureView,
-        zone: &ZoneRenderer,
-        camera: &Camera,
-        aspect: f32,
-        alive: Option<Vec<u32>>,
-    ) {
+    pub fn draw(&mut self, gpu: &Gpu, format: wgpu::TextureFormat, encoder: &mut wgpu::CommandEncoder, target: Target, depth: &wgpu::TextureView, zone: &ZoneRenderer, camera: &Camera, aspect: f32, alive: Option<Vec<u32>>) {
         let (fx, (view, color_tex, bg)) = (&mut self.fx, target);
-        let eg = self
-            .gpu
-            .get_or_insert_with(|| crate::render::effects::EffectsGpu::new(gpu, format));
+        let eg = self.gpu.get_or_insert_with(|| crate::render::effects::EffectsGpu::new(gpu, format));
         if fx.reg.light_keys != zone.light_keys {
             fx.reg.light_keys = zone.light_keys.clone();
         }
@@ -158,23 +132,8 @@ impl LobbyFx {
         }
         fx.tick(&f, &crate::fx::NoActors);
         eg.update(gpu, encoder, fx, &f);
-        let (fog_color, fog) = zone
-            .lighting
-            .as_ref()
-            .map_or(([0.0; 3], [150.0, 600.0]), |l| {
-                (l.fog.to_array(), [l.fog_start, l.fog_end])
-            });
-        eg.draw(
-            gpu,
-            encoder,
-            (view, depth, bg),
-            color_tex,
-            fx,
-            (camera.proj(aspect), view_m, camera.eye),
-            [crate::render::NEAR, crate::render::FAR],
-            fog_color,
-            fog,
-        );
+        let (fog_color, fog) = zone.lighting.as_ref().map_or(([0.0; 3], [150.0, 600.0]), |l| (l.fog.to_array(), [l.fog_start, l.fog_end]));
+        eg.draw(gpu, encoder, (view, depth, bg), color_tex, fx, (camera.proj(aspect), view_m, camera.eye), [crate::render::NEAR, crate::render::FAR], fog_color, fog);
     }
 }
 
@@ -184,12 +143,7 @@ pub type Target<'a> = (&'a wgpu::TextureView, Option<&'a wgpu::Texture>, [u32; 2
 /// Facing the ring centre (model +x toward it), scaled by the model's size.
 fn placement(feet: Vec3, scale: f32) -> Mat4 {
     let f = Vec3::new(-feet.x, 0.0, -feet.z).normalize_or(Vec3::X);
-    Mat4::from_cols(
-        f.extend(0.0),
-        Vec3::Y.extend(0.0),
-        f.cross(Vec3::Y).extend(0.0),
-        feet.extend(1.0),
-    ) * Mat4::from_scale(Vec3::splat(scale))
+    Mat4::from_cols(f.extend(0.0), Vec3::Y.extend(0.0), f.cross(Vec3::Y).extend(0.0), feet.extend(1.0)) * Mat4::from_scale(Vec3::splat(scale))
 }
 
 /// Skeleton point `k` in world space at rest: bone rest transform x point offset, then `place` (as attach_point).
@@ -201,29 +155,15 @@ pub fn rest_point(model: &Model, k: usize, place: Mat4) -> Option<Vec3> {
 
 impl SelectData {
     /// `looks[i]`: the character in list slot i and its size, if any.
-    pub fn load(
-        index: &Arc<DatIndex>,
-        keys: &Arc<zone::Keys>,
-        looks: &[Option<(Look, u8)>],
-    ) -> Result<Self> {
+    pub fn load(index: &Arc<DatIndex>, keys: &Arc<zone::Keys>, looks: &[Option<(Look, u8)>]) -> Result<Self> {
         let file = index.read(zone::file_id(ZONE))?;
         let scene = zone::load_scene(keys, &file)?;
         let fx = FxLibs::load(index, keys, &file);
-        let lighting = ZoneWeather::parse(&file)
-            .ok()
-            .and_then(|w| w.at("suny", MINUTE))
-            .map(|e| Lighting::from_env(&e, MINUTE));
+        let lighting = ZoneWeather::parse(&file).ok().and_then(|w| w.at("suny", MINUTE)).map(|e| Lighting::from_env(&e, MINUTE));
         let ground = Ground::build(&scene);
         let models: Vec<Option<(Model, u8)>> = looks
             .iter()
-            .map(|l| {
-                l.as_ref().and_then(|(look, size)| {
-                    load_character(index, look)
-                        .map_err(|e| log::warn!("select model: {e:#}"))
-                        .ok()
-                        .map(|m| (m, *size))
-                })
-            })
+            .map(|l| l.as_ref().and_then(|(look, size)| load_character(index, look).map_err(|e| log::warn!("select model: {e:#}")).ok().map(|m| (m, *size))))
             .collect();
         // FUN_10238580: the centre and (4, 0, 0) turned by pi/8 per slot, each dropped onto the ground.
         let centre = Vec3::new(0.0, ground.settle(0.0, 0.0, -1.0).unwrap_or(0.0), 0.0);
@@ -232,26 +172,10 @@ impl SelectData {
             let (x, z) = (4.0 * a.cos(), -4.0 * a.sin());
             let feet = Vec3::new(x, ground.settle(x, z, -1.0).unwrap_or(0.0), z);
             let out = Vec3::new(x, 0.0, z).normalize() * 1.4;
-            let point = models
-                .get(i)
-                .and_then(Option::as_ref)
-                .and_then(|(m, size)| rest_point(m, POINT, placement(feet, m.scale(*size))))
-                .map(|p| p - feet);
-            Slot {
-                feet,
-                near: feet - out,
-                far: feet - out * 2.0,
-                point,
-            }
+            let point = models.get(i).and_then(Option::as_ref).and_then(|(m, size)| rest_point(m, POINT, placement(feet, m.scale(*size)))).map(|p| p - feet);
+            Slot { feet, near: feet - out, far: feet - out * 2.0, point }
         });
-        Ok(Self {
-            scene,
-            lighting,
-            centre,
-            slots,
-            models,
-            fx,
-        })
+        Ok(Self { scene, lighting, centre, slots, models, fx })
     }
 }
 
@@ -265,10 +189,7 @@ struct Curve {
 
 impl Curve {
     fn new(from: Vec3, mid: Vec3, to: Vec3) -> Self {
-        Self {
-            p: [from * 2.0 - mid, mid, to * 2.0 - mid],
-            t: 0.0,
-        }
+        Self { p: [from * 2.0 - mid, mid, to * 2.0 - mid], t: 0.0 }
     }
 
     fn at(&self) -> Vec3 {
@@ -339,13 +260,7 @@ impl SelectScene {
     /// FUN_10238580 on opening: slot 0's far full-body shot whatever is there, nothing read yet.
     pub fn reset(&mut self) {
         let s = self.data.slots[0];
-        (
-            self.cam_slot,
-            self.latched,
-            self.curves,
-            self.idle,
-            self.acc,
-        ) = (0, [false; SLOTS], None, 0, 0.0);
+        (self.cam_slot, self.latched, self.curves, self.idle, self.acc) = (0, [false; SLOTS], None, 0, 0.0);
         (self.eye, self.target) = (s.far + HEAD, s.feet + HEAD);
     }
 
@@ -356,9 +271,7 @@ impl SelectScene {
     /// Point 7 minus the feet (FUN_100d23f0), latched once read; (0, -1, 0) and false without it.
     fn head(&mut self, i: usize) -> (Vec3, bool) {
         self.latched[i] = self.data.slots[i].point.is_some();
-        self.data.slots[i]
-            .point
-            .map_or((HEAD, false), |p| (p, true))
+        self.data.slots[i].point.map_or((HEAD, false), |p| (p, true))
     }
 
     /// FUN_10237a80. `force` (the refresh) only while the camera's own slot has no point read yet.
@@ -367,36 +280,17 @@ impl SelectScene {
         if (!force && old == new) || (force && (!self.used(old) || self.latched[old])) {
             return;
         }
-        let oh = if self.used(old) {
-            self.head(old).0
-        } else {
-            HEAD
-        };
-        let (nh, valid) = if self.used(new) {
-            self.head(new)
-        } else {
-            (HEAD, false)
-        };
+        let oh = if self.used(old) { self.head(old).0 } else { HEAD };
+        let (nh, valid) = if self.used(new) { self.head(new) } else { (HEAD, false) };
         let (a, b, c) = (self.data.slots[old], self.data.slots[new], self.data.centre);
         let d = new as i32 - old as i32;
         let close = matches!(d.abs(), 0 | 1 | 15);
-        let eye_mid = if close {
-            (a.far + b.far + oh + nh) * 0.5
-        } else {
-            c + LIFT
-        };
+        let eye_mid = if close { (a.far + b.far + oh + nh) * 0.5 } else { c + LIFT };
         let eye_end = if valid { b.near } else { b.far } + nh;
         // Far apart: the bare feet of the slot halfway; both pulled 20 % toward the centre.
-        let x = if close {
-            (self.target + b.feet + nh) * 0.5
-        } else {
-            self.data.slots[old.min(new) + d.unsigned_abs() as usize / 2].feet
-        };
+        let x = if close { (self.target + b.feet + nh) * 0.5 } else { self.data.slots[old.min(new) + d.unsigned_abs() as usize / 2].feet };
         let target_mid = c + (x - c) * 0.8;
-        self.curves = Some((
-            Curve::new(self.target, target_mid, b.feet + nh),
-            Curve::new(self.eye, eye_mid, eye_end),
-        ));
+        self.curves = Some((Curve::new(self.target, target_mid, b.feet + nh), Curve::new(self.eye, eye_mid, eye_end)));
         self.cam_slot = new;
     }
 
@@ -451,67 +345,27 @@ impl SelectScene {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn render(
-        &mut self,
-        gpu: &Gpu,
-        format: wgpu::TextureFormat,
-        encoder: &mut wgpu::CommandEncoder,
-        target: Target,
-        depth: &wgpu::TextureView,
-        aspect: f32,
-        alive: Option<Vec<u32>>,
-    ) {
+    pub fn render(&mut self, gpu: &Gpu, format: wgpu::TextureFormat, encoder: &mut wgpu::CommandEncoder, target: Target, depth: &wgpu::TextureView, aspect: f32, alive: Option<Vec<u32>>) {
         let view = target.0;
-        let zone = self
-            .zone
-            .get_or_insert_with(|| ZoneRenderer::new(gpu, &self.data.scene, format));
+        let zone = self.zone.get_or_insert_with(|| ZoneRenderer::new(gpu, &self.data.scene, format));
         zone.lighting = self.data.lighting;
         if self.actors.len() != self.data.models.len() {
-            self.actors = self
-                .data
-                .models
-                .iter()
-                .map(|m| m.as_ref().map(|(model, _)| zone.new_actor(gpu, model)))
-                .collect();
+            self.actors = self.data.models.iter().map(|m| m.as_ref().map(|(model, _)| zone.new_actor(gpu, model))).collect();
         }
         // Standard PC actors in their default idle, facing the ring centre.
-        for (i, (m, a)) in self
-            .data
-            .models
-            .iter()
-            .zip(self.actors.iter_mut())
-            .enumerate()
-        {
-            let (Some((model, size)), Some(actor)) = (m, a) else {
-                continue;
-            };
+        for (i, (m, a)) in self.data.models.iter().zip(self.actors.iter_mut()).enumerate() {
+            let (Some((model, size)), Some(actor)) = (m, a) else { continue };
             let ticks = self.time * 60.0 + i as f32 * 17.0;
-            let anims: Vec<_> = model
-                .find_animations("idl")
-                .into_iter()
-                .map(|x| {
-                    (
-                        x,
-                        crate::motion::loop_frame(ticks * x.speed * 0.5, x.frames),
-                    )
-                })
-                .collect();
+            let anims: Vec<_> = model.find_animations("idl").into_iter().map(|x| (x, crate::motion::loop_frame(ticks * x.speed * 0.5, x.frames))).collect();
             let mesh = crate::render::character::pose_character(model, &anims);
             let feet = self.data.slots[i % SLOTS].feet;
             zone.update_actor(gpu, actor, &mesh, placement(feet, model.scale(*size)));
         }
-        let camera = Camera {
-            eye: self.eye,
-            target: self.target,
-            up: Vec3::NEG_Y,
-            fov_y: crate::dat::title::fov_y(350.0),
-        };
+        let camera = Camera { eye: self.eye, target: self.target, up: Vec3::NEG_Y, fov_y: crate::dat::title::fov_y(350.0) };
         let actors: Vec<&ActorGpu> = self.actors.iter().flatten().collect();
         zone.render(gpu, encoder, view, depth, &camera, aspect, &actors);
         if let Some(fx) = &mut self.effects {
-            fx.draw(
-                gpu, format, encoder, target, depth, zone, &camera, aspect, alive,
-            );
+            fx.draw(gpu, format, encoder, target, depth, zone, &camera, aspect, alive);
         }
     }
 }
@@ -528,12 +382,7 @@ pub struct List {
 impl List {
     pub fn new(chars: &[Character]) -> Self {
         let mut l = List::default();
-        for (i, c) in chars
-            .iter()
-            .enumerate()
-            .take(SLOTS)
-            .filter(|(_, c)| matches!(c.status, 1 | 2))
-        {
+        for (i, c) in chars.iter().enumerate().take(SLOTS).filter(|(_, c)| matches!(c.status, 1 | 2)) {
             if c.is_empty_slot() {
                 l.purchased += (c.status == 1) as u32;
                 continue;
@@ -669,13 +518,7 @@ pub struct SelectUi {
 
 impl Default for SelectUi {
     fn default() -> Self {
-        Self {
-            cursor: 0,
-            focus: Focus::List,
-            rects: Rects::default(),
-            press: None,
-            modern: false,
-        }
+        Self { cursor: 0, focus: Focus::List, rects: Rects::default(), press: None, modern: false }
     }
 }
 
@@ -701,11 +544,7 @@ pub fn printf(fmt: &str, args: &[&str]) -> String {
             Some('d') => {
                 let v = it.next().copied().unwrap_or("0");
                 let w: usize = spec.parse().unwrap_or(0);
-                out.push_str(&if spec.starts_with('0') {
-                    format!("{v:0>w$}")
-                } else {
-                    format!("{v:>w$}")
-                });
+                out.push_str(&if spec.starts_with('0') { format!("{v:0>w$}") } else { format!("{v:>w$}") });
             }
             Some(o) => out.push(o),
             None => out.push('%'),
@@ -717,65 +556,24 @@ pub fn printf(fmt: &str, args: &[&str]) -> String {
 impl SelectUi {
     /// One frame: keys, the draw, then the mouse over what was drawn.
     #[allow(clippy::too_many_arguments)]
-    pub fn step(
-        &mut self,
-        gu: &mut GameUi,
-        input: &Input,
-        list: &List,
-        chars: &[Character],
-        deleting: bool,
-        w: f32,
-        h: f32,
-        status: Option<(&str, [u8; 4])>,
-    ) -> Out {
+    pub fn step(&mut self, gu: &mut GameUi, input: &Input, list: &List, chars: &[Character], deleting: bool, w: f32, h: f32, status: Option<(&str, [u8; 4])>) -> Out {
         let mut out = Out::default();
         self.cursor = self.cursor.min(SLOTS - 1);
         self.modern = input.modern;
         for ev in input.events {
             match ev {
-                egui::Event::Key {
-                    key,
-                    pressed: true,
-                    modifiers,
-                    ..
-                } => self.key(
-                    gu, *key, *modifiers, list, chars, deleting, input.busy, &mut out,
-                ),
+                egui::Event::Key { key, pressed: true, modifiers, .. } => self.key(gu, *key, *modifiers, list, chars, deleting, input.busy, &mut out),
                 // egui-winit may turn Ctrl+C into a copy command.
-                egui::Event::Copy => self.key(
-                    gu,
-                    egui::Key::C,
-                    egui::Modifiers::CTRL,
-                    list,
-                    chars,
-                    deleting,
-                    input.busy,
-                    &mut out,
-                ),
+                egui::Event::Copy => self.key(gu, egui::Key::C, egui::Modifiers::CTRL, list, chars, deleting, input.busy, &mut out),
                 egui::Event::Text(t) => {
                     if let Focus::Rename(name) = &mut self.focus {
                         name.extend(t.chars().filter(|c| c.is_ascii_alphabetic()));
                         name.truncate(15);
                         // FUN_1022dc60: first letter upper case, the rest lower.
-                        *name = name
-                            .chars()
-                            .enumerate()
-                            .map(|(i, c)| {
-                                if i == 0 {
-                                    c.to_ascii_uppercase()
-                                } else {
-                                    c.to_ascii_lowercase()
-                                }
-                            })
-                            .collect();
+                        *name = name.chars().enumerate().map(|(i, c)| if i == 0 { c.to_ascii_uppercase() } else { c.to_ascii_lowercase() }).collect();
                     }
                 }
-                egui::Event::PointerButton {
-                    button: egui::PointerButton::Secondary,
-                    pressed: true,
-                    pos,
-                    ..
-                } => {
+                egui::Event::PointerButton { button: egui::PointerButton::Secondary, pressed: true, pos, .. } => {
                     let p = input.pointer.unwrap_or((pos.x, pos.y));
                     self.right_click(p, list, deleting, &mut out);
                 }
@@ -807,33 +605,15 @@ impl SelectUi {
             egui::Key::ArrowLeft => 5,
             _ => return None,
         };
-        gu.menu_links(menu, child)
-            .map(|l| l[k] as u16)
-            .filter(|&c| c != 0 && c != 0xff)
+        gu.menu_links(menu, child).map(|l| l[k] as u16).filter(|&c| c != 0 && c != 0xff)
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn key(
-        &mut self,
-        gu: &GameUi,
-        key: egui::Key,
-        mods: egui::Modifiers,
-        list: &List,
-        chars: &[Character],
-        deleting: bool,
-        busy: bool,
-        out: &mut Out,
-    ) {
+    fn key(&mut self, gu: &GameUi, key: egui::Key, mods: egui::Modifiers, list: &List, chars: &[Character], deleting: bool, busy: bool, out: &mut Out) {
         use egui::Key::*;
         match self.focus.clone() {
             // Modern: the Settings button is the stop after the last character (Down from it, Up from the first).
-            Focus::List
-                if self.modern
-                    && !deleting
-                    && !list.entries.is_empty()
-                    && (key == ArrowDown && self.cursor + 1 >= list.entries.len()
-                        || key == ArrowUp && self.cursor == 0) =>
-            {
+            Focus::List if self.modern && !deleting && !list.entries.is_empty() && (key == ArrowDown && self.cursor + 1 >= list.entries.len() || key == ArrowUp && self.cursor == 0) => {
                 out.input = true;
                 out.sounds.push(Se::Cursor);
                 self.focus = Focus::Button;
@@ -842,11 +622,7 @@ impl SelectUi {
                 out.input = true;
                 match key {
                     ArrowUp | ArrowDown => {
-                        let to = if key == ArrowUp {
-                            list.entries.len().saturating_sub(1)
-                        } else {
-                            0
-                        };
+                        let to = if key == ArrowUp { list.entries.len().saturating_sub(1) } else { 0 };
                         self.focus = Focus::List;
                         self.move_cursor(to, out);
                         out.sounds.push(Se::Cursor);
@@ -871,11 +647,7 @@ impl SelectUi {
                 } else if key == Plus && !deleting {
                     // Numpad + (key function 0x11, message 8; chfwin's caption "+ : Settings Management").
                     self.open_options(list, out);
-                } else if key == C
-                    && (mods.ctrl || mods.alt)
-                    && !deleting
-                    && self.used(list, self.cursor)
-                {
+                } else if key == C && (mods.ctrl || mods.alt) && !deleting && self.used(list, self.cursor) {
                     // Key function 0x3f (C with Ctrl or Alt), FUN_102370d0 -> FUN_10239700(10).
                     out.sounds.push(Se::Select);
                     self.focus = Focus::Prompt(Prompt::Reset, false);
@@ -903,13 +675,7 @@ impl SelectUi {
                     self.focus = Focus::Slots(mode, c);
                 } else if key == Enter {
                     out.sounds.push(Se::Select);
-                    self.focus = Focus::Prompt(
-                        Prompt::Settings {
-                            save: mode == 1,
-                            slot: k - 1,
-                        },
-                        false,
-                    );
+                    self.focus = Focus::Prompt(Prompt::Settings { save: mode == 1, slot: k - 1 }, false);
                 } else if key == Escape {
                     out.sounds.push(Se::Cancel);
                     self.focus = Focus::Options(mode as u16 + 1);
@@ -964,14 +730,7 @@ impl SelectUi {
 
     /// Case 5 on the list, then FUN_10238ea0's checks: "cannot use" (FFXI-3116), "must rename" (popup 0xda, then
     /// chmkname), else "Log in with ...?" with Yes highlighted. Deleting asks type 4 with No highlighted.
-    fn confirm(
-        &mut self,
-        gu: &GameUi,
-        list: &List,
-        chars: &[Character],
-        deleting: bool,
-        out: &mut Out,
-    ) {
+    fn confirm(&mut self, gu: &GameUi, list: &List, chars: &[Character], deleting: bool, out: &mut Out) {
         let Some(c) = list.get(chars, self.cursor) else {
             out.sounds.push(Se::Error);
             return;
@@ -983,10 +742,7 @@ impl SelectUi {
         } else if c.status == 2 {
             Focus::Ok(gu.error_text(3000 + 0x74), Box::new(Focus::List))
         } else if c.rename_required {
-            Focus::Ok(
-                gu.lobby_msg(8, 0xda, ""),
-                Box::new(Focus::Rename(String::new())),
-            )
+            Focus::Ok(gu.lobby_msg(8, 0xda, ""), Box::new(Focus::Rename(String::new())))
         } else {
             Focus::Prompt(Prompt::Login, true)
         };
@@ -1001,16 +757,9 @@ impl SelectUi {
             (Prompt::Login, true, Some(i)) => out.action = Some(Action::Login(i)),
             (Prompt::Delete, true, Some(i)) => out.action = Some(Action::Delete(i)),
             // FUN_101bb470 on the local settings file: this client keeps none, so retail's "not found" (0xe0).
-            (Prompt::Reset, true, _) => {
-                self.focus = Focus::Ok(gu.lobby_msg(8, 0xe0, ""), Box::new(Focus::List))
-            }
+            (Prompt::Reset, true, _) => self.focus = Focus::Ok(gu.lobby_msg(8, 0xe0, ""), Box::new(Focus::List)),
             // FUN_102398a0 needs the PlayOnline storage; without it retail's "not found" results (0xef / 0xf0).
-            (Prompt::Settings { save, .. }, true, _) => {
-                self.focus = Focus::Ok(
-                    gu.lobby_msg(8, if save { 0xef } else { 0xf0 }, ""),
-                    Box::new(Focus::List),
-                )
-            }
+            (Prompt::Settings { save, .. }, true, _) => self.focus = Focus::Ok(gu.lobby_msg(8, if save { 0xef } else { 0xf0 }, ""), Box::new(Focus::List)),
             (Prompt::Register(name), true, Some(i)) => out.action = Some(Action::Rename(i, name)),
             (Prompt::Register(name), false, _) => self.focus = Focus::Rename(name),
             _ => {}
@@ -1049,24 +798,13 @@ impl SelectUi {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn mouse(
-        &mut self,
-        gu: &GameUi,
-        p: (f32, f32),
-        input: &Input,
-        list: &List,
-        chars: &[Character],
-        deleting: bool,
-        out: &mut Out,
-    ) {
+    fn mouse(&mut self, gu: &GameUi, p: (f32, f32), input: &Input, list: &List, chars: &[Character], deleting: bool, out: &mut Out) {
         if !(input.moved || input.clicked) {
             return;
         }
         match self.focus.clone() {
             Focus::List => {
-                let Some(i) = self.rects.list.iter().position(|r| inside(r, p)) else {
-                    return;
-                };
+                let Some(i) = self.rects.list.iter().position(|r| inside(r, p)) else { return };
                 gu.hover.set(true);
                 out.input = true;
                 if input.moved || i != self.cursor {
@@ -1077,9 +815,7 @@ impl SelectUi {
                 }
             }
             focus => {
-                let Some(&(c, _)) = self.rects.children.iter().find(|(_, r)| inside(r, p)) else {
-                    return;
-                };
+                let Some(&(c, _)) = self.rects.children.iter().find(|(_, r)| inside(r, p)) else { return };
                 gu.hover.set(true);
                 let enter = || egui::Key::Enter;
                 match focus {
@@ -1098,16 +834,7 @@ impl SelectUi {
                     _ => {}
                 }
                 if input.clicked {
-                    self.key(
-                        gu,
-                        enter(),
-                        egui::Modifiers::NONE,
-                        list,
-                        chars,
-                        deleting,
-                        input.busy,
-                        out,
-                    );
+                    self.key(gu, enter(), egui::Modifiers::NONE, list, chars, deleting, input.busy, out);
                 }
             }
         }
@@ -1119,35 +846,15 @@ impl SelectUi {
             .filter_map(|i| list.get(chars, i))
             .map(|c| {
                 let sjis = |b: Vec<u8>| crate::dat::font::plain(&crate::dat::font::decode_sjis(&b));
-                let info = [
-                    c.world.clone(),
-                    sjis(gu.lobby_msg_raw(6, (c.race as usize).saturating_sub(1), "")),
-                    sjis(gu.lobby_msg_raw(3, c.main_job as usize, "")),
-                    c.main_level.max(1).to_string(),
-                    sjis(gu.area_name(c.zone)),
-                ];
-                RowView {
-                    name: c.name.clone(),
-                    tint: name_tint(c),
-                    info,
-                }
+                let info = [c.world.clone(), sjis(gu.lobby_msg_raw(6, (c.race as usize).saturating_sub(1), "")), sjis(gu.lobby_msg_raw(3, c.main_job as usize, "")), c.main_level.max(1).to_string(), sjis(gu.area_name(c.zone))];
+                RowView { name: c.name.clone(), tint: name_tint(c), info }
             })
             .collect();
-        let labels = std::array::from_fn(|k| {
-            crate::dat::font::plain(&crate::dat::font::decode_sjis(&gu.lobby_msg_raw(1, k, "")))
-        });
+        let labels = std::array::from_fn(|k| crate::dat::font::plain(&crate::dat::font::decode_sjis(&gu.lobby_msg_raw(1, k, ""))));
         let more = list.purchased as i64 - list.registered as i64;
         let fmts = gu.count_formats();
-        let counts = [
-            printf(&fmts[0], &[&list.purchased.to_string()]),
-            printf(&fmts[1], &[&list.registered.to_string()]),
-            printf(&fmts[if more == 1 { 3 } else { 2 }], &[&more.to_string()]),
-        ];
-        let captions = |menu: &str, n: u16| {
-            (1..=n)
-                .map(|k| gu.child_caption(menu, k).unwrap_or_default())
-                .collect::<Vec<_>>()
-        };
+        let counts = [printf(&fmts[0], &[&list.purchased.to_string()]), printf(&fmts[1], &[&list.registered.to_string()]), printf(&fmts[if more == 1 { 3 } else { 2 }], &[&more.to_string()])];
+        let captions = |menu: &str, n: u16| (1..=n).map(|k| gu.child_caption(menu, k).unwrap_or_default()).collect::<Vec<_>>();
         let name = list.get(chars, self.cursor).map_or("", |c| c.name.as_str());
         View {
             rows,
@@ -1159,46 +866,20 @@ impl SelectUi {
             counts,
             options: match self.focus {
                 Focus::Options(k) => Some((captions("menu    chfwin", 2), k)),
-                Focus::Slots(..) | Focus::Prompt(Prompt::Settings { .. }, _) => {
-                    Some((captions("menu    chfwin", 2), 0))
-                }
+                Focus::Slots(..) | Focus::Prompt(Prompt::Settings { .. }, _) => Some((captions("menu    chfwin", 2), 0)),
                 _ => None,
             },
-            slots: if let Focus::Slots(_, k) = self.focus {
-                Some((captions("menu    chswin", 5), k))
-            } else {
-                None
-            },
-            prompt: if let Focus::Prompt(p, yes) = &self.focus {
-                Some((prompt_text(gu, p, name), *yes))
-            } else {
-                None
-            },
-            ok: if let Focus::Ok(t, _) = &self.focus {
-                Some(t.clone())
-            } else {
-                None
-            },
-            rename: if let Focus::Rename(n) = &self.focus {
-                Some(n.clone())
-            } else {
-                None
-            },
+            slots: if let Focus::Slots(_, k) = self.focus { Some((captions("menu    chswin", 5), k)) } else { None },
+            prompt: if let Focus::Prompt(p, yes) = &self.focus { Some((prompt_text(gu, p, name), *yes)) } else { None },
+            ok: if let Focus::Ok(t, _) = &self.focus { Some(t.clone()) } else { None },
+            rename: if let Focus::Rename(n) = &self.focus { Some(n.clone()) } else { None },
             button: self.focus == Focus::Button,
         }
     }
 
     /// The modern layer's mouse, as the retail mouse: a row moves the cursor and a click on it is Enter; a window's
     /// child moves its cursor and a click is Enter; the options as the right button.
-    pub fn pointer(
-        &mut self,
-        gu: &GameUi,
-        p: Pointer,
-        list: &List,
-        chars: &[Character],
-        deleting: bool,
-        busy: bool,
-    ) -> Out {
+    pub fn pointer(&mut self, gu: &GameUi, p: Pointer, list: &List, chars: &[Character], deleting: bool, busy: bool) -> Out {
         let mut out = Out::default();
         if p.options {
             match self.focus {
@@ -1212,13 +893,7 @@ impl SelectUi {
             self.focus = Focus::List;
         }
         if self.focus == Focus::List {
-            for i in p
-                .row
-                .0
-                .into_iter()
-                .chain(p.row.1)
-                .filter(|&i| i < list.entries.len())
-            {
+            for i in p.row.0.into_iter().chain(p.row.1).filter(|&i| i < list.entries.len()) {
                 out.input = true;
                 self.move_cursor(i, &mut out);
             }
@@ -1245,16 +920,7 @@ impl SelectUi {
             }
         }
         if p.child.1.is_some() {
-            self.key(
-                gu,
-                egui::Key::Enter,
-                egui::Modifiers::NONE,
-                list,
-                chars,
-                deleting,
-                busy,
-                &mut out,
-            );
+            self.key(gu, egui::Key::Enter, egui::Modifiers::NONE, list, chars, deleting, busy, &mut out);
         }
         out
     }
@@ -1279,17 +945,9 @@ fn prompt_text(gu: &GameUi, p: &Prompt, name: &str) -> String {
         Prompt::Reset => printf(&m(0x1b, 6), &[name]),
         // Lines 3 and 4 (the stored file's details, 0xee / 0xcb) need the PlayOnline storage: not drawn.
         Prompt::Settings { save, slot } => {
-            let (first, server, hdd) = if *save {
-                (0xc7, 0xec, 0xc8)
-            } else {
-                (0xc9, 0xed, 0xca)
-            };
+            let (first, server, hdd) = if *save { (0xc7, 0xec, 0xc8) } else { (0xc9, 0xed, 0xca) };
             let letter = ((b'@' + *slot as u8) as char).to_string();
-            let second = if *slot == 0 {
-                m(8, server)
-            } else {
-                printf(&m(8, hdd), &[&letter])
-            };
+            let second = if *slot == 0 { m(8, server) } else { printf(&m(8, hdd), &[&letter]) };
             format!("{}\n{second}", printf(&m(8, first), &[name]))
         }
         Prompt::Register(n) => register_text(gu, n),
@@ -1298,11 +956,7 @@ fn prompt_text(gu: &GameUi, p: &Prompt, name: &str) -> String {
 
 /// Type 5: `Register "Name"` / `and begin play?` (8 0xaf / 0xb0), for the rename and the creator.
 pub(crate) fn register_text(gu: &GameUi, name: &str) -> String {
-    format!(
-        "{}\n{}",
-        printf(&gu.lobby_msg(8, 0xaf, ""), &[name]),
-        gu.lobby_msg(8, 0xb0, "")
-    )
+    format!("{}\n{}", printf(&gu.lobby_msg(8, 0xaf, ""), &[name]), gu.lobby_msg(8, 0xb0, ""))
 }
 
 /// Name colours (FUN_102374a0): grey when it cannot be used, yellow when it must be renamed.
@@ -1318,46 +972,21 @@ fn name_tint(c: &Character) -> u32 {
 
 /// The screen as FUN_102372c0 and its windows draw it.
 #[allow(clippy::too_many_arguments)]
-fn draw(
-    gu: &mut GameUi,
-    st: &SelectUi,
-    list: &List,
-    chars: &[Character],
-    deleting: bool,
-    w: f32,
-    h: f32,
-    status: Option<(&str, [u8; 4])>,
-) -> Rects {
+fn draw(gu: &mut GameUi, st: &SelectUi, list: &List, chars: &[Character], deleting: bool, w: f32, h: f32, status: Option<(&str, [u8; 4])>) -> Rects {
     gu.clear();
     let mut rects = Rects::default();
     let help = st.help(gu, deleting);
     let (text, colour) = status.unwrap_or((&help, WHITE));
     gu.help_line(text, w, h, colour, None);
     // chfwin opens with the list (select only); unfocused it keeps no highlight (registry flag 0x80000).
-    let options = if let Focus::Options(k) = st.focus {
-        Some(k)
-    } else {
-        None
-    };
-    if !deleting
-        && let Some(win) = gu.lobby_window(
-            "menu    chfwin",
-            w,
-            h,
-            false,
-            options,
-            options.is_some(),
-            &[],
-        )
-    {
+    let options = if let Focus::Options(k) = st.focus { Some(k) } else { None };
+    if !deleting && let Some(win) = gu.lobby_window("menu    chfwin", w, h, false, options, options.is_some(), &[]) {
         if options.is_some() {
             rects.children = win.children;
         }
     }
     let used: Vec<bool> = (0..SLOTS).map(|i| i < list.entries.len()).collect();
-    let press = st
-        .press
-        .map(|t| (9.0 - t.elapsed().as_secs_f32() * 60.0).max(0.0));
+    let press = st.press.map(|t| (9.0 - t.elapsed().as_secs_f32() * 60.0).max(0.0));
     let (list_rects, area) = gu.select_list(w, h, st.cursor, &used, st.focus == Focus::List, press);
     gu.sprite_from("menu    lobbywin", 143, 1, 0.0, 0.0, 0x8080_8080);
     gu.frame_tint(0.0, -16.0, w, h + 32.0, 0x2080_8080);
@@ -1430,11 +1059,7 @@ fn info_panel(gu: &mut GameUi, c: &Character, h: f32) {
 fn counts(gu: &mut GameUi, list: &List, w: f32) {
     let more = list.purchased as i64 - list.registered as i64;
     let fmts = gu.count_formats();
-    let lines = [
-        printf(&fmts[0], &[&list.purchased.to_string()]),
-        printf(&fmts[1], &[&list.registered.to_string()]),
-        printf(&fmts[if more == 1 { 3 } else { 2 }], &[&more.to_string()]),
-    ];
+    let lines = [printf(&fmts[0], &[&list.purchased.to_string()]), printf(&fmts[1], &[&list.registered.to_string()]), printf(&fmts[if more == 1 { 3 } else { 2 }], &[&more.to_string()])];
     for (k, l) in lines.iter().enumerate() {
         gu.shape_text(l, w - 240.0, 35.0 + 16.0 * k as f32, 0x8080_8080, false);
     }
@@ -1460,24 +1085,7 @@ pub struct ScreenShot {
     pub height: u32,
 }
 
-const SHOT_NAMES: [&str; 16] = [
-    "Lnxtest",
-    "Lnxcsfix",
-    "Aldo",
-    "Bellatrix",
-    "Corvin",
-    "Delphine",
-    "Ewald",
-    "Fiora",
-    "Gaspard",
-    "Hesper",
-    "Ivo",
-    "Juniper",
-    "Kestrel",
-    "Linnea",
-    "Maelis",
-    "Norbert",
-];
+const SHOT_NAMES: [&str; 16] = ["Lnxtest", "Lnxcsfix", "Aldo", "Bellatrix", "Corvin", "Delphine", "Ewald", "Fiora", "Gaspard", "Hesper", "Ivo", "Juniper", "Kestrel", "Linnea", "Maelis", "Norbert"];
 
 pub fn screen_shot(shot: &ScreenShot, out: &std::path::Path) -> Result<()> {
     use super::game_ui::GameUiData;
@@ -1506,55 +1114,15 @@ pub fn screen_shot(shot: &ScreenShot, out: &std::path::Path) -> Result<()> {
         })
         .collect();
     // Three empty purchased slots after them, as LSB pads the list.
-    chars.extend((0..3).map(|_| Character {
-        content_id: 0,
-        name: " ".into(),
-        world: String::new(),
-        status: 1,
-        rename_required: false,
-        race: 0,
-        main_job: 0,
-        main_level: 0,
-        sub_job: 0,
-        face: 0,
-        nation: 0,
-        size: 0,
-        zone: 0,
-        looks: [0; 8],
-    }));
+    chars.extend((0..3).map(|_| Character { content_id: 0, name: " ".into(), world: String::new(), status: 1, rename_required: false, race: 0, main_job: 0, main_level: 0, sub_job: 0, face: 0, nation: 0, size: 0, zone: 0, looks: [0; 8] }));
     let list = List::new(&chars);
     let looks: Vec<Option<(Look, u8)>> = (0..SLOTS)
-        .map(|i| {
-            list.get(&chars, i).map(|c| {
-                (
-                    Look {
-                        race: c.race as u8,
-                        face: c.face,
-                        head: c.looks[1],
-                        body: c.looks[2],
-                        hands: c.looks[3],
-                        legs: c.looks[4],
-                        feet: c.looks[5],
-                        main: c.looks[6],
-                        sub: c.looks[7],
-                        range: 0,
-                    },
-                    c.size,
-                )
-            })
-        })
+        .map(|i| list.get(&chars, i).map(|c| (Look { race: c.race as u8, face: c.face, head: c.looks[1], body: c.looks[2], hands: c.looks[3], legs: c.looks[4], feet: c.looks[5], main: c.looks[6], sub: c.looks[7], range: 0 }, c.size)))
         .collect();
     let mut data = SelectData::load(&index, &keys, &looks)?;
-    data.lighting = ZoneWeather::parse(&index.read(zone::file_id(ZONE))?)
-        .ok()
-        .and_then(|w| w.at("suny", shot.hour * 60.0))
-        .map(|e| Lighting::from_env(&e, shot.hour * 60.0));
+    data.lighting = ZoneWeather::parse(&index.read(zone::file_id(ZONE))?).ok().and_then(|w| w.at("suny", shot.hour * 60.0)).map(|e| Lighting::from_env(&e, shot.hour * 60.0));
     for (i, s) in data.slots.iter().enumerate().take(n) {
-        println!(
-            "slot {i}: feet {:.3} point7 {:?}",
-            s.feet,
-            s.point.map(|p| (p.x, p.y, p.z))
-        );
+        println!("slot {i}: feet {:.3} point7 {:?}", s.feet, s.point.map(|p| (p.x, p.y, p.z)));
     }
     let mut scene = SelectScene::new(data);
     let mut st = SelectUi::default();
@@ -1563,18 +1131,12 @@ pub fn screen_shot(shot: &ScreenShot, out: &std::path::Path) -> Result<()> {
     let format = wgpu::TextureFormat::Rgba8Unorm;
     let target_tex = gpu.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("select shot"),
-        size: wgpu::Extent3d {
-            width: w,
-            height: h,
-            depth_or_array_layers: 1,
-        },
+        size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-            | wgpu::TextureUsages::COPY_SRC
-            | wgpu::TextureUsages::COPY_DST,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
     let view = target_tex.create_view(&Default::default());
@@ -1583,20 +1145,9 @@ pub fn screen_shot(shot: &ScreenShot, out: &std::path::Path) -> Result<()> {
     let frame = |scene: &mut SelectScene, cursor: usize| {
         scene.advance(FRAME, cursor);
         let mut enc = gpu.device.create_command_encoder(&Default::default());
-        scene.render(
-            &gpu,
-            format,
-            &mut enc,
-            (&view, Some(&target_tex), [w, h]),
-            &depth,
-            w as f32 / h.max(1) as f32,
-            None,
-        );
+        scene.render(&gpu, format, &mut enc, (&view, Some(&target_tex), [w, h]), &depth, w as f32 / h.max(1) as f32, None);
         gpu.queue.submit([enc.finish()]);
-        let _ = gpu.device.poll(wgpu::PollType::Wait {
-            submission_index: None,
-            timeout: None,
-        });
+        let _ = gpu.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None });
         if let Some(fx) = scene.effects() {
             fx.after_submit(&gpu);
         }
@@ -1619,79 +1170,23 @@ pub fn screen_shot(shot: &ScreenShot, out: &std::path::Path) -> Result<()> {
         "login" => Focus::Prompt(Prompt::Login, true),
         "delete" => Focus::Prompt(Prompt::Delete, false),
         "reset" => Focus::Prompt(Prompt::Reset, false),
-        "settings" => Focus::Prompt(
-            Prompt::Settings {
-                save: true,
-                slot: 0,
-            },
-            false,
-        ),
+        "settings" => Focus::Prompt(Prompt::Settings { save: true, slot: 0 }, false),
         "ok" => Focus::Ok(gu.error_text(3000 + 0x74), Box::new(Focus::List)),
         "rename" => Focus::Rename("Newname".into()),
         _ => Focus::List,
     };
     let mut enc = gpu.device.create_command_encoder(&Default::default());
     scene.advance(FRAME, st.cursor);
-    scene.render(
-        &gpu,
-        format,
-        &mut enc,
-        (&view, Some(&target_tex), [w, h]),
-        &depth,
-        w as f32 / h.max(1) as f32,
-        None,
-    );
-    let input = Input {
-        events: &[],
-        pointer: None,
-        moved: false,
-        clicked: false,
-        busy: false,
-        modern: false,
-    };
-    st.step(
-        &mut gu,
-        &input,
-        &list,
-        &chars,
-        shot.deleting,
-        w as f32,
-        h as f32,
-        None,
-    );
-    gu.render(
-        &gpu,
-        format,
-        &mut enc,
-        &view,
-        [w, h],
-        [w, h],
-        true,
-        1.0,
-        1.0,
-    );
+    scene.render(&gpu, format, &mut enc, (&view, Some(&target_tex), [w, h]), &depth, w as f32 / h.max(1) as f32, None);
+    let input = Input { events: &[], pointer: None, moved: false, clicked: false, busy: false, modern: false };
+    st.step(&mut gu, &input, &list, &chars, shot.deleting, w as f32, h as f32, None);
+    gu.render(&gpu, format, &mut enc, &view, [w, h], [w, h], true, 1.0, 1.0);
     let row = (w * 4).div_ceil(256) * 256;
-    let buf = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-        label: None,
-        size: (row * h) as u64,
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
+    let buf = gpu.device.create_buffer(&wgpu::BufferDescriptor { label: None, size: (row * h) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
     enc.copy_texture_to_buffer(
         target_tex.as_image_copy(),
-        wgpu::TexelCopyBufferInfo {
-            buffer: &buf,
-            layout: wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(row),
-                rows_per_image: Some(h),
-            },
-        },
-        wgpu::Extent3d {
-            width: w,
-            height: h,
-            depth_or_array_layers: 1,
-        },
+        wgpu::TexelCopyBufferInfo { buffer: &buf, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(h) } },
+        wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
     );
     gpu.queue.submit([enc.finish()]);
     super::save_capture(&gpu, &buf, [w, h], row, format, out, None, None)?;
@@ -1706,22 +1201,14 @@ mod tests {
     #[test]
     fn glide_is_constant_speed() {
         // A straight curve: equal steps of L / 75 over the modelled arc L / 2, so 38 frames.
-        let mut c = Curve::new(
-            Vec3::ZERO,
-            Vec3::new(1.0, 0.0, 0.0),
-            Vec3::new(2.0, 0.0, 0.0),
-        );
+        let mut c = Curve::new(Vec3::ZERO, Vec3::new(1.0, 0.0, 0.0), Vec3::new(2.0, 0.0, 0.0));
         let mut last = c.at();
         let mut frames = 0;
         while c.t < 1.0 {
             c.step();
             let p = c.at();
             if c.t < 1.0 {
-                assert!(
-                    ((p - last).length() - 4.0 / 75.0).abs() < 1e-3,
-                    "step {} at {frames}",
-                    (p - last).length()
-                );
+                assert!(((p - last).length() - 4.0 / 75.0).abs() < 1e-3, "step {} at {frames}", (p - last).length());
             }
             last = p;
             frames += 1;
@@ -1729,40 +1216,14 @@ mod tests {
         assert_eq!(frames, 38);
         assert!((c.at() - Vec3::new(2.0, 0.0, 0.0)).length() < 1e-5);
         // Ends at the start and end points, through neither control point.
-        let b = Curve::new(
-            Vec3::ZERO,
-            Vec3::new(1.0, -1.0, 0.0),
-            Vec3::new(2.0, 0.0, 0.0),
-        );
+        let b = Curve::new(Vec3::ZERO, Vec3::new(1.0, -1.0, 0.0), Vec3::new(2.0, 0.0, 0.0));
         assert!(b.at().length() < 1e-6);
     }
 
     #[test]
     fn list_compacts_and_counts() {
-        let ch = |name: &str, status| Character {
-            content_id: 0,
-            name: name.into(),
-            world: String::new(),
-            status,
-            rename_required: false,
-            race: 1,
-            main_job: 1,
-            main_level: 1,
-            sub_job: 0,
-            face: 0,
-            nation: 0,
-            size: 0,
-            zone: 0,
-            looks: [0; 8],
-        };
-        let chars = [
-            ch("Aa", 1),
-            ch(" ", 1),
-            ch("Bb", 2),
-            ch("Cc", 1),
-            ch(" ", 1),
-            ch("Dd", 0),
-        ];
+        let ch = |name: &str, status| Character { content_id: 0, name: name.into(), world: String::new(), status, rename_required: false, race: 1, main_job: 1, main_level: 1, sub_job: 0, face: 0, nation: 0, size: 0, zone: 0, looks: [0; 8] };
+        let chars = [ch("Aa", 1), ch(" ", 1), ch("Bb", 2), ch("Cc", 1), ch(" ", 1), ch("Dd", 0)];
         let l = List::new(&chars);
         assert_eq!(l.entries, vec![0, 2, 3]);
         assert_eq!((l.purchased, l.registered), (4, 2));
@@ -1772,44 +1233,17 @@ mod tests {
 
     #[test]
     fn printf_formats() {
-        assert_eq!(
-            printf("No. of characters registered: %2d", &["3"]),
-            "No. of characters registered:  3"
-        );
-        assert_eq!(
-            printf("Error code: FFXI-%04d", &["3116"]),
-            "Error code: FFXI-3116"
-        );
-        assert_eq!(
-            printf("Log in with \"%s\"?", &["Lnxtest"]),
-            "Log in with \"Lnxtest\"?"
-        );
+        assert_eq!(printf("No. of characters registered: %2d", &["3"]), "No. of characters registered:  3");
+        assert_eq!(printf("Error code: FFXI-%04d", &["3116"]), "Error code: FFXI-3116");
+        assert_eq!(printf("Log in with \"%s\"?", &["Lnxtest"]), "Log in with \"Lnxtest\"?");
         assert_eq!(printf("slot %c?", &["A"]), "slot A?");
     }
 
     #[test]
     fn point7_is_the_chest() {
-        let Ok(index) = DatIndex::open(&crate::config::Config::load().ffxi_dir()) else {
-            return;
-        };
-        let look = |race| Look {
-            race,
-            face: 0,
-            head: 0,
-            body: 8,
-            hands: 8,
-            legs: 8,
-            feet: 8,
-            main: 0,
-            sub: 0,
-            range: 0,
-        };
-        let (Ok(hume), Ok(galka)) = (
-            load_character(&index, &look(1)),
-            load_character(&index, &look(8)),
-        ) else {
-            return;
-        };
+        let Ok(index) = DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let look = |race| Look { race, face: 0, head: 0, body: 8, hands: 8, legs: 8, feet: 8, main: 0, sub: 0, range: 0 };
+        let (Ok(hume), Ok(galka)) = (load_character(&index, &look(1)), load_character(&index, &look(8))) else { return };
         // Rest point 7 above the feet: Hume M 1.322 x size, Galka 1.701 (skeleton DATs 7072 / 26352).
         for (m, y) in [(&hume, -1.322f32), (&galka, -1.701)] {
             let s = m.scale(1);

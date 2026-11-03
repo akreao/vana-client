@@ -45,16 +45,7 @@ pub struct Request {
 
 impl Default for Request {
     fn default() -> Self {
-        Request {
-            cmd: 0,
-            result: 0,
-            val: 0,
-            total: 0,
-            done: 0,
-            header: 0,
-            own: [0; ENTRY],
-            buf: vec![0; BUFFER],
-        }
+        Request { cmd: 0, result: 0, val: 0, total: 0, done: 0, header: 0, own: [0; ENTRY], buf: vec![0; BUFFER] }
     }
 }
 
@@ -109,33 +100,13 @@ pub fn busy(w: &World) -> bool {
 
 impl Transfer {
     fn new() -> Self {
-        Transfer {
-            state: 0,
-            stamp: 0,
-            total: 0,
-            piece: 0,
-            done: 0,
-            asked: 0,
-            slots: [None; SLOTS],
-            heard: Instant::now(),
-            late: 0.0,
-            starts: 2,
-        }
+        Transfer { state: 0, stamp: 0, total: 0, piece: 0, done: 0, asked: 0, slots: [None; SLOTS], heard: Instant::now(), late: 0.0, starts: 2 }
     }
 
     /// FUN_100a2b70: a slot for the next bytes; commands 1 and 2 get two tries, the others one.
     fn slot(&self, size: i32) -> Slot {
         let tries = if matches!(self.state, 1 | 2) { 2 } else { 1 };
-        Slot {
-            cmd: self.state,
-            offset: self.asked,
-            size: size.min(MAX_PIECE),
-            stamp: self.stamp,
-            total: self.total,
-            tries,
-            sent: None,
-            answered: false,
-        }
+        Slot { cmd: self.state, offset: self.asked, size: size.min(MAX_PIECE), stamp: self.stamp, total: self.total, tries, sent: None, answered: false }
     }
 
     /// FUN_100a28e0: command 1 asks the first piece (one start used), 10..13 one piece of 0 (no restart).
@@ -175,11 +146,7 @@ impl State {
         if !(cmd == 1 || (10..=13).contains(&cmd)) || self.xfer.is_some() {
             return;
         }
-        self.req = Request {
-            cmd,
-            val,
-            ..Request::default()
-        };
+        self.req = Request { cmd, val, ..Request::default() };
         let mut t = Transfer::new();
         t.init(&self.req);
         self.xfer = Some(t);
@@ -219,9 +186,7 @@ impl State {
     /// The c2s 0x04B bodies to send.
     fn tick(&mut self) -> Vec<Vec<u8>> {
         let mut out = Vec::new();
-        let Some(mut t) = self.xfer.take() else {
-            return out;
-        };
+        let Some(mut t) = self.xfer.take() else { return out };
         if t.heard.elapsed().as_secs_f32() * 60.0 + t.late > TIMEOUT {
             if t.starts >= 1 {
                 t.init(&self.req);
@@ -282,29 +247,18 @@ impl State {
         let st = self;
         let Some(mut t) = st.xfer.take() else { return };
         let u8_at = |o: usize| p.get(o).copied().unwrap_or(0);
-        let i32_at = |o: usize| {
-            p.get(o..o + 4)
-                .map_or(0, |b| i32::from_le_bytes(b.try_into().unwrap()))
-        };
+        let i32_at = |o: usize| p.get(o..o + 4).map_or(0, |b| i32::from_le_bytes(b.try_into().unwrap()));
         let (cmd, result, kind, val) = (u8_at(4), u8_at(5) as i8, u8_at(6), u8_at(7));
         let (stamp, total, offset, size) = (i32_at(8), i32_at(0xc), i32_at(0x10), i32_at(0x14));
-        let own = |p: &[u8]| -> Option<(u32, [u8; ENTRY])> {
-            Some((
-                u32::from_le_bytes(p.get(0x18..0x1c)?.try_into().ok()?),
-                p.get(0x1c..0x40)?.try_into().ok()?,
-            ))
-        };
+        let own =
+            |p: &[u8]| -> Option<(u32, [u8; ENTRY])> { Some((u32::from_le_bytes(p.get(0x18..0x1c)?.try_into().ok()?), p.get(0x1c..0x40)?.try_into().ok()?)) };
         t.heard = Instant::now();
         t.late = 0.0;
         // FUN_100a2c30: a timestamp, a size, the state's command, kind and value.
         let head = stamp > 0 && total >= 0 && cmd == t.state && kind == KIND && val == st.req.val;
         // FUN_100a2be0: the slot of (command, offset) is answered and takes the reply's size.
         let answer = |t: &mut Transfer, offset: i32, size: i32| {
-            let s = t
-                .slots
-                .iter_mut()
-                .flatten()
-                .find(|s| s.cmd == cmd && s.offset == offset)?;
+            let s = t.slots.iter_mut().flatten().find(|s| s.cmd == cmd && s.offset == offset)?;
             s.answered = true;
             s.size = size;
             Some(())
@@ -358,9 +312,7 @@ impl State {
                     st.req.buf[offset as usize..offset as usize + n].copy_from_slice(&data[..n]);
                 }
                 // FUN_100a2f00: answered slots at the bytes in order move them on.
-                while let Some(k) = t.slots.iter().position(|s| {
-                    s.is_some_and(|s| s.sent.is_some() && s.answered && s.offset == t.done)
-                }) {
+                while let Some(k) = t.slots.iter().position(|s| s.is_some_and(|s| s.sent.is_some() && s.answered && s.offset == t.done)) {
                     t.done += t.slots[k].map_or(0, |s| s.size);
                     t.slots[k] = None;
                 }
@@ -386,22 +338,9 @@ pub fn values(w: &World, full: bool) -> Option<[i32; 8]> {
     }
     let e = &r.own;
     // FUN_100a3410: the main job only for values 1..4, 6 and 7.
-    let mjob = if matches!(r.val, 1..=4 | 6 | 7) {
-        e[0x10]
-    } else {
-        0
-    };
+    let mjob = if matches!(r.val, 1..=4 | 6 | 7) { e[0x10] } else { 0 };
     let u32_at = |o: usize| u32::from_le_bytes(e[o..o + 4].try_into().unwrap()) as i32;
-    Some([
-        r.result as i32,
-        r.header as u16 as i16 as i32,
-        e[0x20] as i32,
-        mjob as i32,
-        e[0x23] as i32,
-        e[0x22] as i32,
-        u32_at(0x18),
-        u32_at(0x1c),
-    ])
+    Some([r.result as i32, r.header as u16 as i16 as i32, e[0x20] as i32, mjob as i32, e[0x23] as i32, e[0x22] as i32, u32_at(0x18), u32_at(0x1c)])
 }
 
 /// Op 0xb3 2 (FUN_1020a2a0 with FUN_100a3490): a kind 2 request with a value of 1..7 opens the window of that type;
@@ -409,11 +348,7 @@ pub fn values(w: &World, full: bool) -> Option<[i32; 8]> {
 pub fn open(w: &mut World) {
     let r = &w.ranking.req;
     if (1..=7).contains(&r.val) {
-        w.ranking.win = Some(Win {
-            kind: r.val,
-            top: 0,
-            cursor: 0,
-        });
+        w.ranking.win = Some(Win { kind: r.val, top: 0, cursor: 0 });
     }
 }
 
@@ -494,9 +429,7 @@ pub fn set_cursor(w: &mut World, k: usize) {
 /// generic window handler)*, which ends the script's op 0xb3 9 loop.
 pub fn key(w: &mut World, key: egui::Key) {
     let n = rows(w).len();
-    let Some(mut a) = w.ranking.win.clone() else {
-        return;
-    };
+    let Some(mut a) = w.ranking.win.clone() else { return };
     match key {
         egui::Key::ArrowDown if a.cursor + 1 < n => {
             a.cursor += 1;
@@ -507,11 +440,7 @@ pub fn key(w: &mut World, key: egui::Key) {
             w.sounds.push(Ui::Cursor as u32);
         }
         egui::Key::ArrowRight | egui::Key::ArrowLeft => {
-            let m = if key == egui::Key::ArrowRight {
-                super::scrollbar::Msg::PageDown
-            } else {
-                super::scrollbar::Msg::PageUp
-            };
+            let m = if key == egui::Key::ArrowRight { super::scrollbar::Msg::PageDown } else { super::scrollbar::Msg::PageUp };
             if super::scrollbar::rows_abs(m, &mut a.top, &mut a.cursor, n, ROWS) {
                 w.sounds.push(Ui::Cursor as u32);
             }
@@ -555,46 +484,10 @@ pub enum Cell {
 pub fn layout(kind: u8) -> ([f32; 6], [Option<Cell>; 5]) {
     use Cell::*;
     match kind {
-        1..=3 => (
-            [0.0, 18.0, 160.0, 243.0, 275.0, 305.0],
-            [
-                Some(Rank),
-                Some(Job),
-                Some(Name),
-                Some(Score("[%d]")),
-                Some(VanaDate),
-            ],
-        ),
-        4 => (
-            [0.0, 18.0, 24.0, 120.0, 243.0, 305.0],
-            [
-                Some(Rank),
-                None,
-                Some(Icon),
-                Some(Name),
-                Some(Score("[%d]")),
-            ],
-        ),
-        5 => (
-            [0.0, 18.0, 185.0, 200.0, 265.0, 305.0],
-            [
-                Some(Rank),
-                Some(Name),
-                Some(Score("%d")),
-                Some(Triple),
-                Some(EarthDate { from_2002: false }),
-            ],
-        ),
-        _ => (
-            [0.0, 24.0, 160.0, 250.0, 265.0, 305.0],
-            [
-                Some(Rank),
-                Some(Name),
-                Some(Score("%d P")),
-                None,
-                Some(EarthDate { from_2002: true }),
-            ],
-        ),
+        1..=3 => ([0.0, 18.0, 160.0, 243.0, 275.0, 305.0], [Some(Rank), Some(Job), Some(Name), Some(Score("[%d]")), Some(VanaDate)]),
+        4 => ([0.0, 18.0, 24.0, 120.0, 243.0, 305.0], [Some(Rank), None, Some(Icon), Some(Name), Some(Score("[%d]"))]),
+        5 => ([0.0, 18.0, 185.0, 200.0, 265.0, 305.0], [Some(Rank), Some(Name), Some(Score("%d")), Some(Triple), Some(EarthDate { from_2002: false })]),
+        _ => ([0.0, 24.0, 160.0, 250.0, 265.0, 305.0], [Some(Rank), Some(Name), Some(Score("%d P")), None, Some(EarthDate { from_2002: true })]),
     }
 }
 
@@ -602,11 +495,7 @@ pub fn layout(kind: u8) -> ([f32; 6], [Option<Cell>; 5]) {
 pub fn text(w: &World, c: Cell, r: &Row) -> Option<String> {
     let dates = || {
         let bt = w.battle.as_ref()?;
-        Some((
-            bt,
-            (w.game.get(0x95) & 3) as usize,
-            w.game.get(0x96) & 1 != 0,
-        ))
+        Some((bt, (w.game.get(0x95) & 3) as usize, w.game.get(0x96) & 1 != 0))
     };
     match c {
         Cell::Rank => Some(r.rank.to_string()),
@@ -616,25 +505,17 @@ pub fn text(w: &World, c: Cell, r: &Row) -> Option<String> {
         Cell::VanaDate => {
             let (bt, key, _) = dates()?;
             let g = |id: u16| bt.group10_raw(id as usize);
-            Some(crate::dat::font::decode_sjis(
-                &crate::dat::msgfmt::vana_datetime(&g, r.time as u64, 2, key),
-            ))
+            Some(crate::dat::font::decode_sjis(&crate::dat::msgfmt::vana_datetime(&g, r.time as u64, 2, key)))
         }
         Cell::EarthDate { from_2002 } => {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_secs() as i64);
-            let t = (r.time as i32)
-                .wrapping_sub(super::vana_now(w) as i32)
-                .wrapping_add(now as i32);
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+            let t = (r.time as i32).wrapping_sub(super::vana_now(w) as i32).wrapping_add(now as i32);
             if from_2002 && t < 0x3ca7_2470 {
                 return None;
             }
             let (bt, key, h12) = dates()?;
             let g = |id: u16| bt.group10_raw(id as usize);
-            Some(crate::dat::font::decode_sjis(
-                &crate::dat::msgfmt::earth_datetime(&g, t as i64, 7, key, h12),
-            ))
+            Some(crate::dat::font::decode_sjis(&crate::dat::msgfmt::earth_datetime(&g, t as i64, 7, key, h12)))
         }
         Cell::Job | Cell::Icon => None,
     }
@@ -648,19 +529,13 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
     if w.modern {
         return rects;
     }
-    let Some(a) = &w.ranking.win else {
-        return rects;
-    };
+    let Some(a) = &w.ranking.win else { return rects };
     let rows = rows(w);
     let focused = w.confirm.is_none();
     let sel = (!rows.is_empty()).then(|| (a.cursor - a.top + 1) as u16);
-    let Some(win) = gu.lobby_window_off(WINDOW, sw, sh, (0.0, 0.0), sel, focused, &[]) else {
-        return rects;
-    };
+    let Some(win) = gu.lobby_window_off(WINDOW, sw, sh, (0.0, 0.0), sel, focused, &[]) else { return rects };
     rects.push(win.frame);
-    let Some((wx, wy)) = gu.window_xy(WINDOW, sw, sh) else {
-        return rects;
-    };
+    let Some((wx, wy)) = gu.window_xy(WINDOW, sw, sh) else { return rects };
     let (cols, cells) = layout(a.kind);
     for (k, r) in rows.iter().enumerate().skip(a.top).take(ROWS) {
         let (rx, ry) = (wx, wy + 4.0 + PITCH * (k - a.top) as f32);
@@ -673,13 +548,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
                     gu.shape_text(&r.rank.to_string(), end - 2.0, ry + 4.0, tint, true);
                 }
                 Cell::Icon => {
-                    gu.sprite(
-                        "menu    keytops3",
-                        0xc0 + r.fish_rank as usize + 1,
-                        x,
-                        ry + 2.0,
-                        WHITE,
-                    );
+                    gu.sprite("menu    keytops3", 0xc0 + r.fish_rank as usize + 1, x, ry + 2.0, WHITE);
                 }
                 Cell::Job => {
                     let rec = crate::net::search::Record {
@@ -707,13 +576,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         }
     }
     if focused && !rows.is_empty() {
-        gu.sprite(
-            "menu    windowps",
-            75,
-            wx,
-            wy + 4.0 + PITCH * (a.cursor - a.top) as f32,
-            WHITE,
-        );
+        gu.sprite("menu    windowps", 75, wx, wy + 4.0 + PITCH * (a.cursor - a.top) as f32, WHITE);
     }
     rects
 }
@@ -734,14 +597,7 @@ mod tests {
 
     /// LSB's 0x04D FISHRANKING: {cmd, result 1, kind 2, value, timestamp, size, offset, piece, entry count, our
     /// entry, the piece's entries}.
-    fn reply(
-        cmd: u8,
-        result: i8,
-        val: u8,
-        total: i32,
-        offset: i32,
-        entries: &[[u8; ENTRY]],
-    ) -> Vec<u8> {
+    fn reply(cmd: u8, result: i8, val: u8, total: i32, offset: i32, entries: &[[u8; ENTRY]]) -> Vec<u8> {
         let mut p = vec![0x4d, 0, 0, 0, cmd, result as u8, KIND, val];
         let size = (entries.len() * ENTRY) as i32;
         for v in [77, total, offset, size] {
@@ -759,55 +615,27 @@ mod tests {
     /// order with a contest rank; our entry's values for op 0xb3 1.
     #[test]
     fn table_in_pieces() {
-        let es: Vec<_> = (0..7)
-            .map(|i| {
-                entry(
-                    &format!("Fisher{i}"),
-                    if i == 6 { 0 } else { i as u8 + 1 },
-                    3,
-                    900 - i,
-                )
-            })
-            .collect();
+        let es: Vec<_> = (0..7).map(|i| entry(&format!("Fisher{i}"), if i == 6 { 0 } else { i as u8 + 1 }, 3, 900 - i)).collect();
         let total = (7 * ENTRY) as i32;
         let mut st = State::default();
         st.start(1, 4);
         let sent = st.tick();
         assert_eq!(sent.len(), 1);
         assert_eq!(sent[0][..4], [1, 0, KIND, 4]);
-        assert_eq!(
-            sent[0][12..20],
-            [[0u8; 4], PIECE.to_le_bytes()].concat()[..]
-        );
+        assert_eq!(sent[0][12..20], [[0u8; 4], PIECE.to_le_bytes()].concat()[..]);
         assert!(st.tick().is_empty(), "asked once until 3 s pass");
         st.reply(&reply(1, 1, 4, total, 0, &es[..5]));
-        assert_eq!(
-            (
-                st.xfer.as_ref().map(|t| t.state),
-                st.req.done,
-                st.req.result
-            ),
-            (Some(2), PIECE, 0)
-        );
+        assert_eq!((st.xfer.as_ref().map(|t| t.state), st.req.done, st.req.result), (Some(2), PIECE, 0));
         let sent = st.tick();
         assert_eq!(sent.len(), 1);
         assert_eq!(sent[0][0], 2);
-        assert_eq!(
-            sent[0][4..20],
-            [77i32, total, PIECE, total - PIECE]
-                .iter()
-                .flat_map(|v| v.to_le_bytes())
-                .collect::<Vec<_>>()[..]
-        );
+        assert_eq!(sent[0][4..20], [77i32, total, PIECE, total - PIECE].iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<_>>()[..]);
         st.reply(&reply(2, 1, 4, total, PIECE, &es[5..]));
         assert!(st.xfer.is_none());
         assert_eq!(st.req.result, 1);
         let rows = st.req.rows();
         assert_eq!(rows.len(), 6, "the rankless entry is left out");
-        assert_eq!(
-            (rows[0].name.as_str(), rows[0].rank, rows[5].score),
-            ("Fisher0", 1, 895)
-        );
+        assert_eq!((rows[0].name.as_str(), rows[0].rank, rows[5].score), ("Fisher0", 1, 895));
         let w = st.req.clone();
         assert_eq!((w.header, w.own[0x20]), (7, 2));
     }

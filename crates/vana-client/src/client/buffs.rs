@@ -15,11 +15,7 @@ pub(super) fn icons(w: &World) -> Vec<(u16, u32)> {
             if id == 0xffff || id == 0 {
                 return None;
             }
-            let end = w
-                .buff_timers
-                .as_ref()
-                .filter(|t| t.0[i] == id)
-                .map_or(0x7fff_ffff, |t| t.1[i]);
+            let end = w.buff_timers.as_ref().filter(|t| t.0[i] == id).map_or(0x7fff_ffff, |t| t.1[i]);
             Some((id, end))
         })
         .collect()
@@ -37,10 +33,7 @@ pub(super) fn cancel(gu: &GameUi, w: &mut World, id: u16) -> bool {
     if !gu.status_entry(small, id).is_some_and(|e| e.cancel) || !w.buffs.contains(&id) {
         return false;
     }
-    let _ = w
-        .net
-        .commands
-        .send(super::net::NetCommand::CancelStatus(id));
+    let _ = w.net.commands.send(super::net::NetCommand::CancelStatus(id));
     if let Some(b) = w.buffs.iter_mut().find(|b| **b == id) {
         *b = 0xffff;
     }
@@ -86,16 +79,11 @@ pub fn bars(gu: &GameUi, w: &World, bars: &mut super::hudtop::BarText) {
         return;
     }
     let list = icons(w);
-    let Some(&(id, _)) = list.get(w.buff_cursor.min(list.len().saturating_sub(1))) else {
-        return;
-    };
+    let Some(&(id, _)) = list.get(w.buff_cursor.min(list.len().saturating_sub(1))) else { return };
     if let Some(bt) = &w.battle {
         bars.title[2] = bt.status_title(id);
     }
-    bars.help[2] = gu
-        .status_entry(w.game.get(0x99) & 4 != 0, id)
-        .map(|e| e.desc)
-        .unwrap_or_default();
+    bars.help[2] = gu.status_entry(w.game.get(0x99) & 4 != 0, id).map(|e| e.desc).unwrap_or_default();
 }
 
 /// LAB_10228080's label: "%dh" from an hour (at most 99), "%dm" from a minute, seconds below; none at 5 s or less.
@@ -116,9 +104,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) {
     if list.is_empty() || !gu.want(WINDOW) {
         return;
     }
-    let Some((x0, y0)) = gu.window_xy(WINDOW, sw, sh) else {
-        return;
-    };
+    let Some((x0, y0)) = gu.window_xy(WINDOW, sw, sh) else { return };
     let small = w.game.get(0x99) & 4 != 0;
     let timers = w.game.get(0xc3) != 0;
     let now = (super::vana_now(w) as u32).wrapping_mul(60);
@@ -126,21 +112,11 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) {
     let t = 40.0 - (w.started.elapsed().as_secs_f32() * 60.0) % 40.0;
     let phase = if t <= 20.0 { t } else { 40.0 - t } * 0.05;
     for (k, (id, end)) in list.into_iter().take(36).enumerate() {
-        let (cx, cy) = (
-            x0 + 2.0 + 26.0 * (k % 9) as f32,
-            y0 + 2.0 + 26.0 * (k / 9) as f32,
-        );
-        let Some(tex) = gu.status_icon(small, id) else {
-            continue;
-        };
-        let timed =
-            timers && end != 0x7fff_ffff && !gu.status_entry(small, id).is_some_and(|e| e.no_timer);
+        let (cx, cy) = (x0 + 2.0 + 26.0 * (k % 9) as f32, y0 + 2.0 + 26.0 * (k / 9) as f32);
+        let Some(tex) = gu.status_icon(small, id) else { continue };
+        let timed = timers && end != 0x7fff_ffff && !gu.status_entry(small, id).is_some_and(|e| e.no_timer);
         let rem = (end.wrapping_sub(now).wrapping_add(59) as i32) / 60;
-        let c = if timed && rem <= 15 {
-            (0x40 + (64.0 * phase) as u32) as f32 / 128.0
-        } else {
-            1.0
-        };
+        let c = if timed && rem <= 15 { (0x40 + (64.0 * phase) as u32) as f32 / 128.0 } else { 1.0 };
         gu.image_rect(&tex, cx + 1.0, cy + 1.0, 24.0, 24.0, [c, c, c, 1.0]);
         if let Some(s) = label(rem).filter(|_| timed) {
             gu.shape_scaled_centred(s.as_bytes(), cx + 14.0, cy + 20.0, 0.85, 0x8080_8080);
@@ -166,25 +142,15 @@ pub fn draw_party(gu: &mut GameUi, w: &World, sw: f32, sh: f32, log: [f32; 4]) {
     let (id, bracketed) = match super::target::focus_member(w) {
         Some(f) => (f, true),
         None => {
-            let t = if w.party_cursor.is_some() {
-                super::target::party_hand(w).and_then(|(_, _, id)| id)
-            } else {
-                w.target
-            };
+            let t = if w.party_cursor.is_some() { super::target::party_hand(w).and_then(|(_, _, id)| id) } else { w.target };
             match t.filter(|&t| valid(t)) {
                 Some(t) => (t, false),
                 None => return,
             }
         }
     };
-    let Some(row) = w.party_buffs.get(&id) else {
-        return;
-    };
-    let ids: Vec<u16> = row
-        .iter()
-        .copied()
-        .filter(|&b| b != 0xffff && b != 0)
-        .collect();
+    let Some(row) = w.party_buffs.get(&id) else { return };
+    let ids: Vec<u16> = row.iter().copied().filter(|&b| b != 0xffff && b != 0).collect();
     if ids.is_empty() {
         return;
     }
@@ -198,26 +164,11 @@ pub fn draw_party(gu: &mut GameUi, w: &World, sw: f32, sh: f32, log: [f32; 4]) {
     }
     let small = w.game.get(0x99) & 4 != 0;
     for (j, &icon) in ids.iter().enumerate() {
-        let Some(tex) = gu.status_icon(small, icon) else {
-            continue;
-        };
-        gu.image_rect(
-            &tex,
-            x0 + 1.0 + 14.0 * (j % 8) as f32,
-            y0 + 1.0 + 14.0 * (j / 8) as f32,
-            14.4,
-            14.4,
-            [1.0; 4],
-        );
+        let Some(tex) = gu.status_icon(small, icon) else { continue };
+        gu.image_rect(&tex, x0 + 1.0 + 14.0 * (j % 8) as f32, y0 + 1.0 + 14.0 * (j / 8) as f32, 14.4, 14.4, [1.0; 4]);
     }
-    let Some(m) = w.party.members().find(|m| m.id == id) else {
-        return;
-    };
-    let tint = if m.zone == w.pos_zone && m.away == 0 {
-        0x8080_8080
-    } else {
-        0x8040_4040
-    };
+    let Some(m) = w.party.members().find(|m| m.id == id) else { return };
+    let tint = if m.zone == w.pos_zone && m.away == 0 { 0x8080_8080 } else { 0x8040_4040 };
     if bracketed {
         gu.shape_text("< ", x0, y0 - 16.0, tint, true);
     }
@@ -232,18 +183,6 @@ mod tests {
     /// The user's retail labels: 25m, 1m, 5h, 2m, 16; 1h59m is 1h; none at 5 s.
     #[test]
     fn labels() {
-        assert_eq!(
-            [1500, 60, 18000, 150, 16, 7140, 5, 400_000].map(super::label),
-            [
-                Some("25m".into()),
-                Some("1m".into()),
-                Some("5h".into()),
-                Some("2m".into()),
-                Some("16".into()),
-                Some("1h".into()),
-                None,
-                Some("99h".into())
-            ]
-        );
+        assert_eq!([1500, 60, 18000, 150, 16, 7140, 5, 400_000].map(super::label), [Some("25m".into()), Some("1m".into()), Some("5h".into()), Some("2m".into()), Some("16".into()), Some("1h".into()), None, Some("99h".into())]);
     }
 }

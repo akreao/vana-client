@@ -72,13 +72,7 @@ impl Tree {
             }
             let i = nodes.len();
             let parent = open.last().copied();
-            nodes.push(Node {
-                name: c.name,
-                kind: c.kind,
-                parent,
-                children: Vec::new(),
-                data: c.offset + 16..c.offset + 16 + c.data.len(),
-            });
+            nodes.push(Node { name: c.name, kind: c.kind, parent, children: Vec::new(), data: c.offset + 16..c.offset + 16 + c.data.len() });
             if let Some(p) = parent {
                 nodes[p].children.push(i);
             }
@@ -92,11 +86,7 @@ impl Tree {
     /// FUN_100712e0 -> FUN_10071310: from the folder holding `from` (or `from` if it is a folder), its whole subtree
     /// in child order, then each enclosing folder's; kind 0 = any type, name 0 = the first of the type.
     pub fn find(&self, from: usize, kind: u8, name: [u8; 4]) -> Option<usize> {
-        let mut folder = if self.nodes[from].kind == self::kind::FOLDER {
-            Some(from)
-        } else {
-            self.nodes[from].parent
-        };
+        let mut folder = if self.nodes[from].kind == self::kind::FOLDER { Some(from) } else { self.nodes[from].parent };
         let mut visited = vec![false; self.nodes.len()];
         while let Some(f) = folder {
             if let Some(hit) = self.search(f, kind, name, &mut visited) {
@@ -105,22 +95,10 @@ impl Tree {
             folder = self.nodes[f].parent;
         }
         // Chunks outside any folder count as the root's children.
-        self.nodes
-            .iter()
-            .enumerate()
-            .find(|(_, n)| {
-                n.parent.is_none() && n.kind != self::kind::FOLDER && matches(n, kind, name)
-            })
-            .map(|(i, _)| i)
+        self.nodes.iter().enumerate().find(|(_, n)| n.parent.is_none() && n.kind != self::kind::FOLDER && matches(n, kind, name)).map(|(i, _)| i)
     }
 
-    fn search(
-        &self,
-        folder: usize,
-        kind: u8,
-        name: [u8; 4],
-        visited: &mut [bool],
-    ) -> Option<usize> {
+    fn search(&self, folder: usize, kind: u8, name: [u8; 4], visited: &mut [bool]) -> Option<usize> {
         if visited[folder] {
             return None;
         }
@@ -141,11 +119,7 @@ impl Tree {
 
     /// Every node of a type, in file order.
     pub fn of_kind(&self, kind: u8) -> impl Iterator<Item = usize> + '_ {
-        self.nodes
-            .iter()
-            .enumerate()
-            .filter(move |(_, n)| n.kind == kind)
-            .map(|(i, _)| i)
+        self.nodes.iter().enumerate().filter(move |(_, n)| n.kind == kind).map(|(i, _)| i)
     }
 
     /// The folder names from the root down to `i`'s folder ("t_sa", "effe", "sea").
@@ -263,9 +237,7 @@ impl Generator {
 
     /// The emission stream's op 0x01: the element template.
     pub fn template(&self) -> Option<&Op> {
-        self.streams[stream::EMISSION]
-            .first()
-            .filter(|o| o.code == 0x01)
+        self.streams[stream::EMISSION].first().filter(|o| o.code == 0x01)
     }
 }
 
@@ -284,14 +256,8 @@ pub fn parse_ops(d: &[u8], mut at: usize) -> Vec<Op> {
         if code == 0 || len == 0 || at + 4 * len > d.len() {
             break;
         }
-        let words = (0..len)
-            .map(|k| u32::from_le_bytes(d[at + 4 * k..at + 4 * k + 4].try_into().unwrap()))
-            .collect();
-        out.push(Op {
-            code,
-            slot: ((w0 >> 13) & 0x3f) as u8,
-            words,
-        });
+        let words = (0..len).map(|k| u32::from_le_bytes(d[at + 4 * k..at + 4 * k + 4].try_into().unwrap())).collect();
+        out.push(Op { code, slot: ((w0 >> 13) & 0x3f) as u8, words });
         at += 4 * len;
     }
     out
@@ -324,10 +290,7 @@ impl KeyFrame {
             0 => None,
             1 => Some((k[0], k[0])),
             _ => {
-                let i = k
-                    .windows(2)
-                    .position(|w| x <= w[1].0)
-                    .unwrap_or(k.len() - 2);
+                let i = k.windows(2).position(|w| x <= w[1].0).unwrap_or(k.len() - 2);
                 Some((k[i], k[i + 1]))
             }
         }
@@ -336,21 +299,13 @@ impl KeyFrame {
     /// FUN_10053550: linear, x clamped to 0..1; equal times give k1's value.
     pub fn linear(&self, x: f32) -> f32 {
         let x = x.clamp(0.0, 1.0);
-        let Some((a, b)) = self.bracket(x) else {
-            return 0.0;
-        };
-        if b.0 == a.0 {
-            b.1
-        } else {
-            a.1 + (b.1 - a.1) * (x - a.0) / (b.0 - a.0)
-        }
+        let Some((a, b)) = self.bracket(x) else { return 0.0 };
+        if b.0 == a.0 { b.1 } else { a.1 + (b.1 - a.1) * (x - a.0) / (b.0 - a.0) }
     }
 
     /// FUN_100537f0: quadratic ease-in-out between the pair, x not clamped.
     pub fn eased(&self, x: f32) -> f32 {
-        let Some((a, b)) = self.bracket(x) else {
-            return 0.0;
-        };
+        let Some((a, b)) = self.bracket(x) else { return 0.0 };
         if b.0 == a.0 {
             return b.1;
         }
@@ -406,17 +361,8 @@ impl D3m {
             bail!("d3m: {} bytes", d.len());
         }
         let format = (d[0] & 0xf) as u8;
-        let (n, m, tris) = (
-            d[4] as usize,
-            d[5] as usize,
-            u16::from_le_bytes([d[6], d[7]]) as usize,
-        );
-        let counts: Vec<u16> = (0..n)
-            .map(|k| {
-                d.get(8 + 2 * k..10 + 2 * k)
-                    .map_or(0, |b| u16::from_le_bytes([b[0], b[1]]))
-            })
-            .collect();
+        let (n, m, tris) = (d[4] as usize, d[5] as usize, u16::from_le_bytes([d[6], d[7]]) as usize);
+        let counts: Vec<u16> = (0..n).map(|k| d.get(8 + 2 * k..10 + 2 * k).map_or(0, |b| u16::from_le_bytes([b[0], b[1]]))).collect();
         let table = if (5..=7).contains(&format) {
             if format == 7 && n == 0 {
                 8
@@ -428,17 +374,8 @@ impl D3m {
         } else {
             0x10
         };
-        let textures: Vec<String> = (0..n)
-            .map(|k| {
-                d.get(table + 16 * k..table + 16 * k + 16)
-                    .map_or(String::new(), |b| String::from_utf8_lossy(b).into_owned())
-            })
-            .collect();
-        let first = if (5..=7).contains(&format) {
-            table + 16 * n
-        } else {
-            0x50
-        };
+        let textures: Vec<String> = (0..n).map(|k| d.get(table + 16 * k..table + 16 * k + 16).map_or(String::new(), |b| String::from_utf8_lossy(b).into_owned())).collect();
+        let first = if (5..=7).contains(&format) { table + 16 * n } else { 0x50 };
         let need = first + tris * 3 * 36;
         if need > d.len() {
             bail!("d3m: {tris} triangles need {need} bytes, have {}", d.len());
@@ -447,21 +384,10 @@ impl D3m {
         let vertices = (0..tris * 3)
             .map(|k| {
                 let o = first + 36 * k;
-                D3mVertex {
-                    pos: [f(o), f(o + 4), f(o + 8)],
-                    normal: [f(o + 12), f(o + 16), f(o + 20)],
-                    bgra: d[o + 24..o + 28].try_into().unwrap(),
-                    uv: [f(o + 28), f(o + 32)],
-                }
+                D3mVertex { pos: [f(o), f(o + 4), f(o + 8)], normal: [f(o + 12), f(o + 16), f(o + 20)], bgra: d[o + 24..o + 28].try_into().unwrap(), uv: [f(o + 28), f(o + 32)] }
             })
             .collect();
-        Ok(Self {
-            format,
-            textures,
-            per_texture: counts,
-            untextured_tail: m != 0,
-            vertices,
-        })
+        Ok(Self { format, textures, per_texture: counts, untextured_tail: m != 0, vertices })
     }
 }
 
@@ -470,10 +396,7 @@ mod tests {
     use super::*;
 
     fn read(id: u32) -> Option<Vec<u8>> {
-        crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir())
-            .ok()?
-            .read(id)
-            .ok()
+        crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()).ok()?.read(id).ok()
     }
 
     /// Zone 232 (DAT 332) effe/sea sea1: world, auto-start, one persistent element; op 1 names 'sea1',
@@ -482,38 +405,13 @@ mod tests {
     fn port_san_doria_sea() {
         let Some(file) = read(332) else { return };
         let tree = Tree::build(&file).unwrap();
-        let trim = |n: &[u8; 4]| {
-            String::from_utf8_lossy(n)
-                .trim_end_matches(['\0', ' '])
-                .to_string()
-        };
-        let node = tree
-            .of_kind(kind::GENERATOR)
-            .find(|&i| {
-                tree.nodes[i].name == fourcc("sea1")
-                    && tree
-                        .path(i)
-                        .iter()
-                        .map(trim)
-                        .collect::<Vec<_>>()
-                        .ends_with(&["effe".to_string(), "sea".to_string()])
-            })
-            .unwrap();
+        let trim = |n: &[u8; 4]| String::from_utf8_lossy(n).trim_end_matches(['\0', ' ']).to_string();
+        let node = tree.of_kind(kind::GENERATOR).find(|&i| tree.nodes[i].name == fourcc("sea1") && tree.path(i).iter().map(trim).collect::<Vec<_>>().ends_with(&["effe".to_string(), "sea".to_string()])).unwrap();
         let g = Generator::parse(&tree, node, &file).unwrap();
-        assert_eq!(
-            (g.attach_mode(), g.life, g.flags & 0x1000),
-            (0, 0.0, 0x1000)
-        );
+        assert_eq!((g.attach_mode(), g.life, g.flags & 0x1000), (0, 0.0, 0x1000));
         let t = g.template().unwrap();
-        assert_eq!(
-            (t.byte(0x21), fourcc_u32(t.u32(3)), t.i16_at(0x22)),
-            (0x0b, fourcc("sea1"), 0)
-        );
-        assert!(
-            t.f32(5).abs() < 1e-4
-                && (t.f32(6) - 1.5).abs() < 1e-4
-                && (t.f32(7) - 100.0).abs() < 1e-4
-        );
+        assert_eq!((t.byte(0x21), fourcc_u32(t.u32(3)), t.i16_at(0x22)), (0x0b, fourcc("sea1"), 0));
+        assert!(t.f32(5).abs() < 1e-4 && (t.f32(6) - 1.5).abs() < 1e-4 && (t.f32(7) - 100.0).abs() < 1e-4);
         let codes: Vec<u8> = g.streams[stream::EMISSION].iter().map(|o| o.code).collect();
         assert_eq!(codes, [0x01, 0x30, 0x09, 0x0f, 0x16, 0x63]);
         let codes: Vec<u8> = g.streams[stream::ELEMENT].iter().map(|o| o.code).collect();
@@ -537,18 +435,8 @@ mod tests {
         let tree = Tree::build(&file).unwrap();
         for i in tree.of_kind(kind::GENERATOR) {
             let g = Generator::parse(&tree, i, &file).unwrap();
-            let gen_ops: Vec<String> = g.streams[stream::GENERATOR]
-                .iter()
-                .map(|o| format!("{:02x}", o.code))
-                .collect();
-            println!(
-                "{} attach {:08x} mode {} blend {:?} gen ops {}",
-                String::from_utf8_lossy(&g.name),
-                g.attach,
-                g.attach_mode(),
-                g.blend,
-                gen_ops.join(" ")
-            );
+            let gen_ops: Vec<String> = g.streams[stream::GENERATOR].iter().map(|o| format!("{:02x}", o.code)).collect();
+            println!("{} attach {:08x} mode {} blend {:?} gen ops {}", String::from_utf8_lossy(&g.name), g.attach, g.attach_mode(), g.blend, gen_ops.join(" "));
         }
     }
 
@@ -558,36 +446,21 @@ mod tests {
     fn fire_effect_file() {
         let Some(file) = read(2944) else { return };
         let tree = Tree::build(&file).unwrap();
-        let gens: Vec<Generator> = tree
-            .of_kind(kind::GENERATOR)
-            .map(|i| Generator::parse(&tree, i, &file).unwrap())
-            .collect();
+        let gens: Vec<Generator> = tree.of_kind(kind::GENERATOR).map(|i| Generator::parse(&tree, i, &file).unwrap()).collect();
         assert_eq!(gens.len(), 8);
         let g003 = gens.iter().find(|g| g.name == fourcc("g003")).unwrap();
         let t = g003.template().unwrap();
-        assert_eq!(
-            (t.byte(0x21), fourcc_u32(t.u32(3)), t.i16_at(0x22)),
-            (0x0b, fourcc("fa04"), 90)
-        );
+        assert_eq!((t.byte(0x21), fourcc_u32(t.u32(3)), t.i16_at(0x22)), (0x0b, fourcc("fa04"), 90));
         let fa04 = tree.find(g003.node, kind::D3M, fourcc("fa04")).unwrap();
         let m = D3m::parse(&file[tree.nodes[fa04].data.clone()]).unwrap();
         assert_eq!((m.format, m.textures.len(), m.vertices.len()), (6, 1, 6));
         let g005 = gens.iter().find(|g| g.name == fourcc("g005")).unwrap();
-        assert!(
-            tree.find(
-                g005.node,
-                kind::D3M,
-                fourcc_u32(g005.template().unwrap().u32(3))
-            )
-            .is_none()
-        );
+        assert!(tree.find(g005.node, kind::D3M, fourcc_u32(g005.template().unwrap().u32(3))).is_none());
     }
 
     #[test]
     fn keyframe_samplers() {
-        let k = KeyFrame {
-            keys: vec![(0.0, 0.0), (0.5, 1.0), (1.0, 0.0)],
-        };
+        let k = KeyFrame { keys: vec![(0.0, 0.0), (0.5, 1.0), (1.0, 0.0)] };
         assert_eq!(k.linear(0.25), 0.5);
         assert_eq!(k.linear(2.0), 0.0);
         // Eased: a quarter of the way into a pair is 2 x 0.5^2 = 0.5 of the rise.

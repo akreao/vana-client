@@ -34,19 +34,11 @@ pub struct Request<'a> {
 
 #[derive(Debug)]
 pub enum Reply {
-    LoggedIn {
-        account_id: u32,
-        session_hash: [u8; 16],
-        trust_token: Option<String>,
-    },
+    LoggedIn { account_id: u32, session_hash: [u8; 16], trust_token: Option<String> },
     AccountCreated,
     PasswordChanged,
-    TotpCreated {
-        uri: String,
-    },
-    TotpVerified {
-        recovery_code: Option<String>,
-    },
+    TotpCreated { uri: String },
+    TotpVerified { recovery_code: Option<String> },
     TotpRemoved,
 }
 
@@ -71,12 +63,7 @@ fn read_reply(stream: &mut impl Read) -> Result<Value> {
     let mut chunk = [0u8; 4096];
     loop {
         let n = match stream.read(&mut chunk) {
-            Err(e)
-                if matches!(
-                    e.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) =>
-            {
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {
                 bail!("the login server did not reply (it ignores requests it considers malformed)")
             }
             r => r.context("reading the login reply")?,
@@ -95,8 +82,7 @@ fn read_reply(stream: &mut impl Read) -> Result<Value> {
 }
 
 pub fn send(host: &str, port: u16, command: Command, req: &Request) -> Result<Reply> {
-    let mut stream =
-        tls::connect(host, port).with_context(|| format!("connecting to {host}:{port}"))?;
+    let mut stream = tls::connect(host, port).with_context(|| format!("connecting to {host}:{port}"))?;
     let mut body = json!({
         "command": command as u8,
         "username": req.username,
@@ -119,9 +105,7 @@ pub fn send(host: &str, port: u16, command: Command, req: &Request) -> Result<Re
     if let Some(msg) = reply["error_message"].as_str() {
         bail!("{msg}");
     }
-    let result = reply["result"]
-        .as_u64()
-        .context("reply has no result code")?;
+    let result = reply["result"].as_u64().context("reply has no result code")?;
     Ok(match result {
         0x01 => {
             let bytes: Vec<u8> = reply["session_hash"]
@@ -131,26 +115,15 @@ pub fn send(host: &str, port: u16, command: Command, req: &Request) -> Result<Re
                 .map(|b| b.as_u64().unwrap_or(0) as u8)
                 .collect();
             Reply::LoggedIn {
-                account_id: reply["account_id"]
-                    .as_u64()
-                    .context("reply has no account id")? as u32,
-                session_hash: bytes
-                    .try_into()
-                    .map_err(|_| anyhow::anyhow!("session hash is not 16 bytes"))?,
-                trust_token: reply["trust_token"]
-                    .as_str()
-                    .filter(|t| !t.is_empty())
-                    .map(str::to_string),
+                account_id: reply["account_id"].as_u64().context("reply has no account id")? as u32,
+                session_hash: bytes.try_into().map_err(|_| anyhow::anyhow!("session hash is not 16 bytes"))?,
+                trust_token: reply["trust_token"].as_str().filter(|t| !t.is_empty()).map(str::to_string),
             }
         }
         0x03 => Reply::AccountCreated,
         0x06 => Reply::PasswordChanged,
-        0x10 => Reply::TotpCreated {
-            uri: reply["TOTP_uri"].as_str().unwrap_or_default().to_string(),
-        },
-        0x11 => Reply::TotpVerified {
-            recovery_code: reply["recovery_code"].as_str().map(str::to_string),
-        },
+        0x10 => Reply::TotpCreated { uri: reply["TOTP_uri"].as_str().unwrap_or_default().to_string() },
+        0x11 => Reply::TotpVerified { recovery_code: reply["recovery_code"].as_str().map(str::to_string) },
         0x12 => Reply::TotpRemoved,
         other => bail!("{} (code 0x{other:02X})", describe(other)),
     })

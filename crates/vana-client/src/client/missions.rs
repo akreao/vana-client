@@ -34,11 +34,7 @@ pub struct List {
 
 /// FUN_1022da40: children 2..5 and 7 need Zilart, Promathia, Aht Urhgan, Altana, Adoulin (bits 1..4, 0xb).
 fn menu_off(enabled: u32) -> Vec<u16> {
-    [(2u16, 1u32), (3, 2), (4, 3), (5, 4), (7, 0xb)]
-        .into_iter()
-        .filter(|&(_, b)| enabled >> b & 1 == 0)
-        .map(|(c, _)| c)
-        .collect()
+    [(2u16, 1u32), (3, 2), (4, 3), (5, 4), (7, 0xb)].into_iter().filter(|&(_, b)| enabled >> b & 1 == 0).map(|(c, _)| c).collect()
 }
 
 /// The journal's name files, read on the first open.
@@ -53,21 +49,12 @@ pub(super) fn logs(w: &mut World) -> Option<Arc<crate::dat::journal::Logs>> {
 /// Social child 1: missionm with its cursor on child 1.
 pub fn open_menu(w: &mut World) {
     logs(w);
-    w.missions = Some(Missions {
-        menu: Some(w.cursor_recall(MENU)),
-        list: None,
-    });
+    w.missions = Some(Missions { menu: Some(w.cursor_recall(MENU)), list: None });
 }
 
 /// FUN_1022dbd0 + miss00's open (FUN_1022dcf0): the list on `log`, or waiting while the store is incomplete.
 pub(super) fn open_list(w: &mut World, log: usize) {
-    let mut l = List {
-        log,
-        state: 0,
-        rows: Vec::new(),
-        top: 0,
-        cursor: 1,
-    };
+    let mut l = List { log, state: 0, rows: Vec::new(), top: 0, cursor: 1 };
     build(w, &mut l);
     if let Some(m) = w.missions.as_mut() {
         m.list = Some(l);
@@ -77,29 +64,17 @@ pub(super) fn open_list(w: &mut World, log: usize) {
 /// The logs the modern page lists: the three nations, then those whose expansion is enabled (TVR once RoV is past
 /// 340), as the Left / Right cycle allows.
 pub(super) fn shown_logs(w: &World) -> Vec<usize> {
-    (0..15)
-        .filter(|&l| {
-            (l < 3 || w.expansions >> journal::MISSION_BITS[l] & 1 != 0)
-                && !(l == 11 && w.journal.rov < 0x154)
-        })
-        .collect()
+    (0..15).filter(|&l| (l < 3 || w.expansions >> journal::MISSION_BITS[l] & 1 != 0) && !(l == 11 && w.journal.rov < 0x154)).collect()
 }
 
 /// The modern page: a log with the cursor on an entry (else the first row that is not a header).
 pub(super) fn show_log(w: &mut World, log: usize, entry: Option<usize>) {
     if w.missions.is_none() {
-        w.missions = Some(Missions {
-            menu: None,
-            list: None,
-        });
+        w.missions = Some(Missions { menu: None, list: None });
     }
     open_list(w, log);
     if let Some(l) = w.missions.as_mut().and_then(|m| m.list.as_mut()) {
-        let at = entry.and_then(|e| {
-            l.rows
-                .iter()
-                .position(|r| matches!(r, Row::Current(i) | Row::Done(i) if *i == e))
-        });
+        let at = entry.and_then(|e| l.rows.iter().position(|r| matches!(r, Row::Current(i) | Row::Done(i) if *i == e)));
         if let Some(k) = at {
             (l.cursor, l.top) = (k, k);
         }
@@ -123,29 +98,15 @@ pub fn command(w: &mut World, gu: &GameUi, arg: Option<&str>) {
     logs(w);
     let nation = w.journal.nation as usize;
     let log = arg
-        .and_then(|a| {
-            (0..15)
-                .filter(|&l| l < 3 || w.expansions >> journal::MISSION_BITS[l] & 1 != 0)
-                .find(|&l| gu.title_msg(journal::MISSION_TITLES[l]).as_deref() == Some(a))
-        })
+        .and_then(|a| (0..15).filter(|&l| l < 3 || w.expansions >> journal::MISSION_BITS[l] & 1 != 0).find(|&l| gu.title_msg(journal::MISSION_TITLES[l]).as_deref() == Some(a)))
         .unwrap_or(nation.min(2));
-    w.missions = Some(Missions {
-        menu: None,
-        list: None,
-    });
+    w.missions = Some(Missions { menu: None, list: None });
     open_list(w, log);
 }
 
 /// Per frame: a waiting list builds once the store is complete (state 0 polls byte 0x1047fe8f).
 pub fn update(w: &mut World) {
-    let Some(mut l) = w
-        .missions
-        .as_ref()
-        .and_then(|m| m.list.clone())
-        .filter(|l| l.state == 0)
-    else {
-        return;
-    };
+    let Some(mut l) = w.missions.as_ref().and_then(|m| m.list.clone()).filter(|l| l.state == 0) else { return };
     build(w, &mut l);
     if l.state != 0
         && let Some(m) = w.missions.as_mut()
@@ -156,10 +117,7 @@ pub fn update(w: &mut World) {
 
 /// The list is waiting: the busy strip (helpwind busy bit 1).
 pub fn busy(w: &World) -> bool {
-    w.missions
-        .as_ref()
-        .and_then(|m| m.list.as_ref())
-        .is_some_and(|l| l.state == 0)
+    w.missions.as_ref().and_then(|m| m.list.as_ref()).is_some_and(|l| l.state == 0)
 }
 
 /// Down / Up with wrap, then a header row is passed over (FUN_1022e760: "Completed:" repeats the move, "Current:"
@@ -171,11 +129,7 @@ fn step(l: &mut List, down: bool) -> bool {
     }
     let before = l.cursor;
     for _ in 0..n {
-        l.cursor = if down {
-            (l.cursor + 1) % n
-        } else {
-            (l.cursor + n - 1) % n
-        };
+        l.cursor = if down { (l.cursor + 1) % n } else { (l.cursor + n - 1) % n };
         if !matches!(l.rows[l.cursor], Row::CurHead | Row::DoneHead) {
             break;
         }
@@ -195,14 +149,7 @@ fn show(l: &mut List) {
 
 /// A scroll bar or wheel message (FUN_10222150 0x16..0x1b; no header skip there).
 pub(super) fn bar(w: &mut World, m: super::scrollbar::Msg) -> bool {
-    let Some(l) = w
-        .missions
-        .as_mut()
-        .and_then(|m| m.list.as_mut())
-        .filter(|l| l.state == 1)
-    else {
-        return false;
-    };
+    let Some(l) = w.missions.as_mut().and_then(|m| m.list.as_mut()).filter(|l| l.state == 1) else { return false };
     let n = l.rows.len();
     let mut row = l.cursor.saturating_sub(l.top);
     let moved = super::scrollbar::paged(m, &mut l.top, &mut row, n, VISIBLE);
@@ -236,9 +183,7 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key, page: bool) {
             w.sounds.push(Ui::Cancel as u32);
             w.missions = None;
         }
-        egui::Key::Enter if menu_off(w.expansions).contains(&sel) => {
-            w.sounds.push(Ui::Error as u32)
-        }
+        egui::Key::Enter if menu_off(w.expansions).contains(&sel) => w.sounds.push(Ui::Error as u32),
         egui::Key::Enter => {
             w.sounds.push(Ui::Select as u32);
             // FUN_1022db00 / FUN_1022dbd0: the category's log.
@@ -274,11 +219,7 @@ fn list_key(w: &mut World, l: &mut List, key: egui::Key, page: bool) {
         }
         // With 0xa8 (Ctrl / Alt) a page; else the next / previous log.
         (1, egui::Key::ArrowLeft | egui::Key::ArrowRight) if page => {
-            let m = if key == egui::Key::ArrowRight {
-                super::scrollbar::Msg::PageDown
-            } else {
-                super::scrollbar::Msg::PageUp
-            };
+            let m = if key == egui::Key::ArrowRight { super::scrollbar::Msg::PageDown } else { super::scrollbar::Msg::PageUp };
             let (was, mut row) = (l.cursor, l.cursor.saturating_sub(l.top));
             if super::scrollbar::paged(m, &mut l.top, &mut row, l.rows.len(), VISIBLE) {
                 l.cursor = l.top + row;
@@ -292,12 +233,7 @@ fn list_key(w: &mut World, l: &mut List, key: egui::Key, page: bool) {
             }
         }
         (1, egui::Key::ArrowLeft | egui::Key::ArrowRight) => {
-            l.log = journal::next_log(
-                &w.journal,
-                l.log,
-                w.expansions,
-                key == egui::Key::ArrowRight,
-            );
+            l.log = journal::next_log(&w.journal, l.log, w.expansions, key == egui::Key::ArrowRight);
             build(w, l);
             w.sounds.push(Ui::Cursor as u32);
         }
@@ -308,11 +244,7 @@ fn list_key(w: &mut World, l: &mut List, key: egui::Key, page: bool) {
             }
         }
         (2, egui::Key::Enter | egui::Key::Escape) => {
-            w.sounds.push(if key == egui::Key::Enter {
-                Ui::Select
-            } else {
-                Ui::Cancel
-            } as u32);
+            w.sounds.push(if key == egui::Key::Enter { Ui::Select } else { Ui::Cancel } as u32);
             l.state = 1;
         }
         _ => {}
@@ -321,39 +253,18 @@ fn list_key(w: &mut World, l: &mut List, key: egui::Key, page: bool) {
 
 /// Mouse on the list: hover moves the cursor to a row (headers passed over), a click on the cursor row is Enter, a
 /// click on the arrows (children 9 / 10) Left / Right; on missionm the generic hover and click.
-pub fn pointer(
-    w: &mut World,
-    gu: &GameUi,
-    sw: f32,
-    sh: f32,
-    p: (f32, f32),
-    moved: bool,
-    clicked: bool,
-) {
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool) {
     let Some(m) = w.missions.clone() else { return };
     let inside = |x: f32, y: f32, e: &crate::dat::ui::MenuElement| {
         let (ex, ey) = (x + e.x as f32, y + e.y as f32);
         p.0 >= ex && p.0 < ex + e.w as f32 && p.1 >= ey && p.1 < ey + e.h as f32
     };
     if let Some(l) = &m.list {
-        let (Some((x, y)), Some(lay)) = (gu.window_xy(LIST, sw, sh), gu.layout(LIST)) else {
-            return;
-        };
-        let Some(e) = lay.elements.iter().skip(1).find(|e| inside(x, y, e)) else {
-            return;
-        };
+        let (Some((x, y)), Some(lay)) = (gu.window_xy(LIST, sw, sh), gu.layout(LIST)) else { return };
+        let Some(e) = lay.elements.iter().skip(1).find(|e| inside(x, y, e)) else { return };
         gu.hover.set(true);
         match e.id {
-            9 | 10 if clicked && l.state == 1 => key(
-                w,
-                gu,
-                if e.id == 9 {
-                    egui::Key::ArrowLeft
-                } else {
-                    egui::Key::ArrowRight
-                },
-                false,
-            ),
+            9 | 10 if clicked && l.state == 1 => key(w, gu, if e.id == 9 { egui::Key::ArrowLeft } else { egui::Key::ArrowRight }, false),
             c @ 1..=8 if l.state == 1 => {
                 let row = l.top + c as usize - 1;
                 if row >= l.rows.len() || matches!(l.rows[row], Row::CurHead | Row::DoneHead) {
@@ -373,20 +284,8 @@ pub fn pointer(
         }
         return;
     }
-    let (Some(sel), Some((x, y)), Some(lay)) =
-        (m.menu, gu.window_xy(MENU, sw, sh), gu.layout(MENU))
-    else {
-        return;
-    };
-    let Some(e) = lay
-        .elements
-        .iter()
-        .skip(1)
-        .filter(|e| e.links[2] != 0xff)
-        .find(|e| inside(x, y, e))
-    else {
-        return;
-    };
+    let (Some(sel), Some((x, y)), Some(lay)) = (m.menu, gu.window_xy(MENU, sw, sh), gu.layout(MENU)) else { return };
+    let Some(e) = lay.elements.iter().skip(1).filter(|e| e.links[2] != 0xff).find(|e| inside(x, y, e)) else { return };
     gu.hover.set(true);
     if e.id != sel && (moved || clicked) {
         w.missions.as_mut().unwrap().menu = Some(e.id);
@@ -401,10 +300,7 @@ pub fn pointer(
 pub fn bars(gu: &GameUi, w: &World, bars: &mut super::hudtop::BarText) {
     let Some(m) = &w.missions else { return };
     if m.list.is_some() {
-        (bars.help[1], bars.title[1]) = (
-            String::new(),
-            gu.focus_text(LIST, 0)[1].clone().unwrap_or_default(),
-        );
+        (bars.help[1], bars.title[1]) = (String::new(), gu.focus_text(LIST, 0)[1].clone().unwrap_or_default());
     } else if let Some(sel) = m.menu {
         let [help, title] = gu.focus_text(MENU, sel);
         (bars.help[1], bars.title[1]) = (help.unwrap_or_default(), title.unwrap_or_default());
@@ -438,59 +334,27 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
     let Some(l) = &m.list else { return rects };
     let logs = w.logs.clone();
     let empty = crate::dat::journal::LogFile::default();
-    let f = logs
-        .as_ref()
-        .and_then(|g| g.missions.get(l.log))
-        .unwrap_or(&empty);
-    let shown: Vec<u16> = if l.state == 1 {
-        (1..=VISIBLE as u16)
-            .filter(|&c| l.top + (c as usize) - 1 < l.rows.len())
-            .collect()
-    } else {
-        Vec::new()
-    };
-    let hide: Vec<u16> = (1..=VISIBLE as u16)
-        .filter(|c| !shown.contains(c))
-        .collect();
+    let f = logs.as_ref().and_then(|g| g.missions.get(l.log)).unwrap_or(&empty);
+    let shown: Vec<u16> = if l.state == 1 { (1..=VISIBLE as u16).filter(|&c| l.top + (c as usize) - 1 < l.rows.len()).collect() } else { Vec::new() };
+    let hide: Vec<u16> = (1..=VISIBLE as u16).filter(|c| !shown.contains(c)).collect();
     let sel = (l.state == 1).then(|| (l.cursor - l.top + 1) as u16);
-    let Some(win) = gu.lobby_window_off(LIST, sw, sh, (0.0, 0.0), sel, w.confirm.is_none(), &hide)
-    else {
-        return rects;
-    };
+    let Some(win) = gu.lobby_window_off(LIST, sw, sh, (0.0, 0.0), sel, w.confirm.is_none(), &hide) else { return rects };
     let [fx, fy, fw, fh] = win.frame;
-    let Some((x, y)) = gu.window_xy(LIST, sw, sh) else {
-        return rects;
-    };
+    let Some((x, y)) = gu.window_xy(LIST, sw, sh) else { return rects };
     rects.push(win.frame);
     let bt = w.battle.clone();
     match l.state {
         0 => {
             if let Some(bt) = &bt {
-                gu.text(
-                    &bt.group9(0x61).unwrap_or_default(),
-                    x + 20.0,
-                    y + 20.0,
-                    0,
-                    WHITE.to_le_bytes(),
-                );
-                gu.text(
-                    &bt.group9(0x62).unwrap_or_default(),
-                    x + 20.0,
-                    y + 40.0,
-                    0,
-                    WHITE.to_le_bytes(),
-                );
+                gu.text(&bt.group9(0x61).unwrap_or_default(), x + 20.0, y + 20.0, 0, WHITE.to_le_bytes());
+                gu.text(&bt.group9(0x62).unwrap_or_default(), x + 20.0, y + 40.0, 0, WHITE.to_le_bytes());
             }
         }
         1 => {
             if let Some(t) = gu.title_msg(journal::MISSION_TITLES[l.log]) {
                 gu.text(&t, x + 60.0, y + 10.0, 0, WHITE.to_le_bytes());
             }
-            for &(id, [cx, cy, ..]) in win
-                .children
-                .iter()
-                .filter(|(id, _)| (1..=VISIBLE as u16).contains(id))
-            {
+            for &(id, [cx, cy, ..]) in win.children.iter().filter(|(id, _)| (1..=VISIBLE as u16).contains(id)) {
                 let row = l.top + id as usize - 1;
                 let Some(&r) = l.rows.get(row) else { continue };
                 let tint = if row == l.cursor { CURSOR } else { WHITE };
@@ -506,11 +370,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
                     Row::Current(i) | Row::Done(i) => {
                         let Some(e) = f.entries.get(i) else { continue };
                         let (name, n) = journal::indent(&e.name);
-                        let n = if matches!(r, Row::Current(_)) {
-                            0.0
-                        } else {
-                            6.0 * n as f32
-                        };
+                        let n = if matches!(r, Row::Current(_)) { 0.0 } else { 6.0 * n as f32 };
                         gu.sprite("menu    framesus", 35, cx + 4.0 + n, cy + 5.0, WHITE);
                         lines(gu, name, cx + 18.0 + n, cy, 319.0 - 18.0 - n, tint);
                     }
@@ -518,15 +378,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
             }
             let (bx, total, top) = (fx + fw - 8.0, l.rows.len(), l.top);
             gu.scroll_bar(bx, fy, fh, total, VISIBLE, top);
-            gu.bar_site(
-                super::scrollbar::Owner::Journal,
-                bx,
-                fy,
-                fh,
-                total,
-                VISIBLE,
-                top,
-            );
+            gu.bar_site(super::scrollbar::Owner::Journal, bx, fy, fh, total, VISIBLE, top);
         }
         _ => {
             let i = match l.rows.get(l.cursor) {
@@ -535,13 +387,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
             };
             if let Some(e) = f.entries.get(i) {
                 gu.sprite("menu    framesus", 35, x + 36.0, y + 25.0, WHITE);
-                gu.text(
-                    journal::indent(&e.name).0,
-                    x + 50.0,
-                    y + 20.0,
-                    0,
-                    WHITE.to_le_bytes(),
-                );
+                gu.text(journal::indent(&e.name).0, x + 50.0, y + 20.0, 0, WHITE.to_le_bytes());
                 lines(gu, &e.desc, x + 40.0, y + 50.0, 327.0, WHITE);
             }
         }

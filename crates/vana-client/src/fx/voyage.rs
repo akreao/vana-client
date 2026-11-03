@@ -22,13 +22,7 @@ impl Path {
     /// camera keys, clear in every voyage path), keys of 0x30 bytes from @0x20 (A @+0, B @+0x10). None below two keys.
     pub fn parse(d: &[u8]) -> Option<Self> {
         let n = (u32::from_le_bytes(d.get(0x10..0x14)?.try_into().ok()?) & 0xff) as usize;
-        let point = |o: usize| {
-            Some(Vec3::new(
-                f32_at(d, o)?,
-                f32_at(d, o + 4)?,
-                f32_at(d, o + 8)?,
-            ))
-        };
+        let point = |o: usize| Some(Vec3::new(f32_at(d, o)?, f32_at(d, o + 4)?, f32_at(d, o + 8)?));
         let mut a = Vec::with_capacity(n);
         let mut b = Vec::with_capacity(n);
         for k in 0..n {
@@ -37,12 +31,7 @@ impl Path {
             b.push(point(o + 0x10)?);
         }
         let chord = a.windows(2).map(|w| (w[1] - w[0]).length().max(0.01)).sum();
-        Some(Path {
-            a: spline::build(&a)?,
-            b: spline::build(&b)?,
-            keys: n,
-            chord,
-        })
+        Some(Path { a: spline::build(&a)?, b: spline::build(&b)?, keys: n, chord })
     }
 
     /// The ship's place on the path at `t` (reversed: 1 - t).
@@ -70,10 +59,7 @@ mod tests {
         let cfg = crate::config::Config::load();
         let index = crate::dat::DatIndex::open(&cfg.ffxi_dir()).ok()?;
         let d = index.read(file).ok()?;
-        let keys = crate::dat::zone::Keys::from_ffximain(
-            &std::fs::read(cfg.ffxi_dir().join("FFXiMain.dll")).ok()?,
-        )
-        .ok()?;
+        let keys = crate::dat::zone::Keys::from_ffximain(&std::fs::read(cfg.ffxi_dir().join("FFXiMain.dll")).ok()?).ok()?;
         let scene = crate::dat::zone::load_scene(&keys, &d).ok()?;
         let k = (name[3] - b'0') as usize;
         Path::parse(scene.paths[k].as_deref()?)
@@ -86,10 +72,7 @@ mod tests {
     fn scene(file: u32) -> Option<crate::dat::zone::ZoneScene> {
         let cfg = crate::config::Config::load();
         let index = crate::dat::DatIndex::open(&cfg.ffxi_dir()).ok()?;
-        let keys = crate::dat::zone::Keys::from_ffximain(
-            &std::fs::read(cfg.ffxi_dir().join("FFXiMain.dll")).ok()?,
-        )
-        .ok()?;
+        let keys = crate::dat::zone::Keys::from_ffximain(&std::fs::read(cfg.ffxi_dir().join("FFXiMain.dll")).ok()?).ok()?;
         crate::dat::zone::load_scene(&keys, &index.read(file).ok()?).ok()
     }
 
@@ -124,29 +107,15 @@ mod tests {
         let eye = Vec3::new(0.0, -2.0, -10.0);
         let at = super::super::sky_point(true, 0.25, eye, p.matrix(0.5, false));
         assert!(close(at, Vec3::new(27.224, -2.0, -999.679), 0.01), "{at}");
-        assert!(close(
-            super::super::sky_point(true, 0.25, eye, Mat4::IDENTITY),
-            Vec3::new(1000.0, -2.0, -10.0),
-            0.01
-        ));
+        assert!(close(super::super::sky_point(true, 0.25, eye, Mat4::IDENTITY), Vec3::new(1000.0, -2.0, -10.0), 0.01));
     }
 
     /// Zone 1's four paths (keys, chord totals; MODLOG "Ship voyages").
     #[test]
     fn paths_101() {
         let Some(p0) = path(101, b"c000") else { return };
-        let want = [
-            (57, 2530.348),
-            (60, 2136.954),
-            (41, 2202.018),
-            (28, 1665.571),
-        ];
-        let p = [
-            Some(p0),
-            path(101, b"c001"),
-            path(101, b"c002"),
-            path(101, b"c003"),
-        ];
+        let want = [(57, 2530.348), (60, 2136.954), (41, 2202.018), (28, 1665.571)];
+        let p = [Some(p0), path(101, b"c001"), path(101, b"c002"), path(101, b"c003")];
         for (k, (n, chord)) in want.into_iter().enumerate() {
             let p = p[k].as_ref().unwrap();
             assert_eq!(p.keys, n);
@@ -159,42 +128,14 @@ mod tests {
     fn poses() {
         let Some(p) = path(320, b"c000") else { return };
         let check = |m: Mat4, x: Vec3, z: Vec3, w: Vec3| {
-            assert!(
-                close(m.x_axis.truncate(), x, 1e-4) && close(m.z_axis.truncate(), z, 1e-4),
-                "{m}"
-            );
+            assert!(close(m.x_axis.truncate(), x, 1e-4) && close(m.z_axis.truncate(), z, 1e-4), "{m}");
             assert!(close(m.w_axis.truncate(), w, 0.01), "{}", m.w_axis);
         };
-        check(
-            p.matrix(0.0, false),
-            Vec3::new(-0.998915, 0.0, 0.04657),
-            Vec3::new(-0.04657, 0.0, -0.998915),
-            Vec3::new(3588.467, 0.0, 1092.05),
-        );
-        check(
-            p.matrix(0.25, false),
-            Vec3::new(-0.406212, 0.0, -0.913779),
-            Vec3::new(0.913779, 0.0, -0.406212),
-            Vec3::new(1049.094, 0.0, 1802.976),
-        );
-        check(
-            p.matrix(0.5, false),
-            Vec3::new(0.037217, 0.0, -0.999307),
-            Vec3::new(0.999307, 0.0, 0.037217),
-            Vec3::new(826.869, 0.0, -261.705),
-        );
-        check(
-            p.matrix(1.0, false),
-            Vec3::new(0.868821, 0.0, 0.495127),
-            Vec3::new(-0.495127, 0.0, 0.868821),
-            Vec3::new(4054.643, 0.0, 296.392),
-        );
-        check(
-            p.matrix(0.5, true),
-            Vec3::new(-0.037217, 0.0, 0.999307),
-            Vec3::new(-0.999307, 0.0, -0.037217),
-            Vec3::new(-826.869, 0.0, 261.705),
-        );
+        check(p.matrix(0.0, false), Vec3::new(-0.998915, 0.0, 0.04657), Vec3::new(-0.04657, 0.0, -0.998915), Vec3::new(3588.467, 0.0, 1092.05));
+        check(p.matrix(0.25, false), Vec3::new(-0.406212, 0.0, -0.913779), Vec3::new(0.913779, 0.0, -0.406212), Vec3::new(1049.094, 0.0, 1802.976));
+        check(p.matrix(0.5, false), Vec3::new(0.037217, 0.0, -0.999307), Vec3::new(0.999307, 0.0, 0.037217), Vec3::new(826.869, 0.0, -261.705));
+        check(p.matrix(1.0, false), Vec3::new(0.868821, 0.0, 0.495127), Vec3::new(-0.495127, 0.0, 0.868821), Vec3::new(4054.643, 0.0, 296.392));
+        check(p.matrix(0.5, true), Vec3::new(-0.037217, 0.0, 0.999307), Vec3::new(-0.999307, 0.0, -0.037217), Vec3::new(-826.869, 0.0, 261.705));
         // V carries the ship's place to the origin and its heading onto +Z.
         for t in [0.0, 0.13, 0.5, 0.77, 1.0] {
             for rev in [false, true] {
@@ -203,34 +144,14 @@ mod tests {
             }
         }
         if let Some(p) = path(101, b"c002") {
-            check(
-                p.matrix(0.5, false),
-                Vec3::new(0.87232, 0.0, -0.488935),
-                Vec3::new(0.488935, 0.0, 0.87232),
-                Vec3::new(-286.906, 0.0, 192.504),
-            );
+            check(p.matrix(0.5, false), Vec3::new(0.87232, 0.0, -0.488935), Vec3::new(0.488935, 0.0, 0.87232), Vec3::new(-286.906, 0.0, 192.504));
         }
         if let Some(p) = path(147, b"c000") {
-            check(
-                p.matrix(0.5, true),
-                Vec3::new(0.107841, 0.0, -0.994168),
-                Vec3::new(0.994168, 0.0, 0.107841),
-                Vec3::new(1179.334, 0.0, 475.422),
-            );
+            check(p.matrix(0.5, true), Vec3::new(0.107841, 0.0, -0.994168), Vec3::new(0.994168, 0.0, 0.107841), Vec3::new(1179.334, 0.0, 475.422));
         }
         if let Some(p) = path(326, b"c000") {
-            check(
-                p.matrix(0.0, false),
-                Vec3::new(-0.374498, 0.0, 0.927228),
-                Vec3::new(-0.927228, 0.0, -0.374498),
-                Vec3::new(1238.856, 60.0, 2637.019),
-            );
-            check(
-                p.matrix(0.5, false),
-                Vec3::new(-0.651872, 0.0, 0.758329),
-                Vec3::new(-0.758329, 0.0, -0.651872),
-                Vec3::new(790.793, 75.305, 288.221),
-            );
+            check(p.matrix(0.0, false), Vec3::new(-0.374498, 0.0, 0.927228), Vec3::new(-0.927228, 0.0, -0.374498), Vec3::new(1238.856, 60.0, 2637.019));
+            check(p.matrix(0.5, false), Vec3::new(-0.651872, 0.0, 0.758329), Vec3::new(-0.758329, 0.0, -0.651872), Vec3::new(790.793, 75.305, 288.221));
         }
     }
 }

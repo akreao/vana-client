@@ -22,13 +22,7 @@ pub struct Gauge {
 
 impl Default for Gauge {
     fn default() -> Self {
-        Gauge {
-            prev_tp: 0,
-            pulse: 1.0,
-            up: true,
-            acc: 0.0,
-            last: std::time::Instant::now(),
-        }
+        Gauge { prev_tp: 0, pulse: 1.0, up: true, acc: 0.0, last: std::time::Instant::now() }
     }
 }
 
@@ -83,26 +77,8 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Option<[f32; 4]> {
     let g = w.gauge.as_ref()?;
     let (hp, mp, tp, hpp, mpp) = w.vitals?;
     let (x, y) = gu.window(WINDOW, sw, sh)?;
-    gu.sprite_scaled_blend(
-        WINDOWPS,
-        97,
-        x + 25.0,
-        y + 8.0,
-        hpp as f32 * 0.01,
-        1.0,
-        0x8080_8080,
-        8,
-    );
-    gu.sprite_scaled_blend(
-        WINDOWPS,
-        97,
-        x + 25.0,
-        y + 18.0,
-        mpp as f32 * 0.01,
-        1.0,
-        0x8080_e080,
-        8,
-    );
+    gu.sprite_scaled_blend(WINDOWPS, 97, x + 25.0, y + 8.0, hpp as f32 * 0.01, 1.0, 0x8080_8080, 8);
+    gu.sprite_scaled_blend(WINDOWPS, 97, x + 25.0, y + 18.0, mpp as f32 * 0.01, 1.0, 0x8080_e080, 8);
     gu.sprite(FRAMESUS, 8, x + 4.0, y + 8.0, 0x8080_8080);
     let tp = tp.min(3000);
     let (tx, ty) = (x + 25.0, y + 28.0);
@@ -113,26 +89,11 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Option<[f32; 4]> {
         // Retail's `% 1001` (0x3e9) for the part above the tier.
         if tp < 3000 {
             let tint = if tp < 2000 { TIER[1] } else { TIER[2] };
-            gu.sprite_scaled_blend(
-                WINDOWPS,
-                97,
-                tx,
-                ty,
-                (tp % 1001) as f32 * 0.001,
-                1.0,
-                tint,
-                0,
-            );
+            gu.sprite_scaled_blend(WINDOWPS, 97, tx, ty, (tp % 1001) as f32 * 0.001, 1.0, tint, 0);
         }
     }
     for (k, v) in [hp, mp, tp].into_iter().enumerate() {
-        gu.shape_text(
-            &format!("{v:4}"),
-            x + 123.0,
-            y + 7.0 + 10.0 * k as f32,
-            0xc080_8080,
-            true,
-        );
+        gu.shape_text(&format!("{v:4}"), x + 123.0, y + 7.0 + 10.0 * k as f32, 0xc080_8080, true);
     }
     gu.window_rect(WINDOW, sw, sh)
 }

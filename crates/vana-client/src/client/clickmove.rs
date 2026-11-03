@@ -42,24 +42,15 @@ pub enum Steer {
 
 impl ClickMove {
     pub fn new(path: Vec<Vec3>, from: Vec3) -> Self {
-        Self {
-            path,
-            check: (from, Instant::now()),
-        }
+        Self { path, check: (from, Instant::now()) }
     }
 
     /// The way to run from `here`: points reached drop off; no progress for a while gives up.
     pub fn steer(&mut self, here: Vec3) -> Steer {
-        while self
-            .path
-            .first()
-            .is_some_and(|p| flat(*p - here).length() < ARRIVE)
-        {
+        while self.path.first().is_some_and(|p| flat(*p - here).length() < ARRIVE) {
             self.path.remove(0);
         }
-        let Some(next) = self.path.first() else {
-            return Steer::Arrived;
-        };
+        let Some(next) = self.path.first() else { return Steer::Arrived };
         if self.check.1.elapsed() >= STUCK {
             if flat(here - self.check.0).length() < 0.5 {
                 return Steer::Stuck;
@@ -67,11 +58,7 @@ impl ClickMove {
             self.check = (here, Instant::now());
         }
         let d = flat(*next - here);
-        if d.length() < 1e-4 {
-            Steer::Arrived
-        } else {
-            Steer::Toward(d.normalize())
-        }
+        if d.length() < 1e-4 { Steer::Arrived } else { Steer::Toward(d.normalize()) }
     }
 }
 
@@ -143,10 +130,7 @@ pub fn path(g: &Ground, from: Vec3, to: Vec3) -> Option<Vec<Vec3>> {
         return Some(vec![to]);
     }
     let at = |c: (i32, i32)| (from.x + c.0 as f32 * CELL, from.z + c.1 as f32 * CELL);
-    let goal = (
-        ((to.x - from.x) / CELL).round() as i32,
-        ((to.z - from.z) / CELL).round() as i32,
-    );
+    let goal = (((to.x - from.x) / CELL).round() as i32, ((to.z - from.z) / CELL).round() as i32);
     let h = |c: (i32, i32)| (((c.0 - goal.0) as f32).hypot((c.1 - goal.1) as f32)) * CELL;
     let mut open = BinaryHeap::new();
     let mut cost: HashMap<(i32, i32), f32> = HashMap::new();
@@ -165,33 +149,18 @@ pub fn path(g: &Ground, from: Vec3, to: Vec3) -> Option<Vec<Vec3>> {
             end = Some(c);
             break;
         }
-        for (dx, dz) in [
-            (1, 0),
-            (-1, 0),
-            (0, 1),
-            (0, -1),
-            (1, 1),
-            (1, -1),
-            (-1, 1),
-            (-1, -1),
-        ] {
+        for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)] {
             let n = (c.0 + dx, c.1 + dz);
             let (x, z) = at(n);
             if flat(Vec3::new(x, 0.0, z) - from).length() > REACH + 10.0 {
                 continue;
             }
-            let Some(y) = floor_near(g, x, z, here.y) else {
-                continue;
-            };
+            let Some(y) = floor_near(g, x, z, here.y) else { continue };
             let p = Vec3::new(x, y, z);
             if !clear(g, here, p) {
                 continue;
             }
-            let step = if dx != 0 && dz != 0 {
-                std::f32::consts::SQRT_2
-            } else {
-                1.0
-            } * CELL;
+            let step = if dx != 0 && dz != 0 { std::f32::consts::SQRT_2 } else { 1.0 } * CELL;
             let c2 = cost[&c] + step;
             if cost.get(&n).is_none_or(|&old| c2 < old) {
                 cost.insert(n, c2);
@@ -233,10 +202,7 @@ mod tests {
 
     #[test]
     fn steer_drops_reached_points_and_arrives() {
-        let mut m = ClickMove::new(
-            vec![Vec3::new(0.3, 0.0, 0.0), Vec3::new(5.0, 0.0, 0.0)],
-            Vec3::ZERO,
-        );
+        let mut m = ClickMove::new(vec![Vec3::new(0.3, 0.0, 0.0), Vec3::new(5.0, 0.0, 0.0)], Vec3::ZERO);
         assert_eq!(m.steer(Vec3::ZERO), Steer::Toward(Vec3::X));
         assert_eq!(m.path.len(), 1);
         assert_eq!(m.steer(Vec3::new(4.8, -3.0, 0.0)), Steer::Arrived);

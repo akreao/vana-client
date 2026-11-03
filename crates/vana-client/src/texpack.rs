@@ -22,24 +22,9 @@ const THREADS: usize = 12;
 /// A file's IMG chunks: (chunk index, the chunk's payload). Textures of the file's sprite libraries (chunk 0x31) are
 /// left out: their cells address them in stock texels, so a bigger copy would show a quarter of itself.
 fn images(bytes: &[u8]) -> Vec<(usize, &[u8])> {
-    let Ok(chunks) = dat::chunks(bytes) else {
-        return Vec::new();
-    };
-    let sprite_tex: std::collections::HashSet<String> = chunks
-        .iter()
-        .filter(|c| c.kind == 0x31)
-        .filter_map(|c| dat::ui::parse_sprite_lib(c.data).ok())
-        .flat_map(|l| l.textures)
-        .collect();
-    chunks
-        .iter()
-        .enumerate()
-        .filter(|(_, c)| {
-            c.kind == 0x20
-                && !sprite_tex.contains(&dat::ui::norm_name(c.data.get(1..17).unwrap_or_default()))
-        })
-        .map(|(k, c)| (k, c.data))
-        .collect()
+    let Ok(chunks) = dat::chunks(bytes) else { return Vec::new() };
+    let sprite_tex: std::collections::HashSet<String> = chunks.iter().filter(|c| c.kind == 0x31).filter_map(|c| dat::ui::parse_sprite_lib(c.data).ok()).flat_map(|l| l.textures).collect();
+    chunks.iter().enumerate().filter(|(_, c)| c.kind == 0x20 && !sprite_tex.contains(&dat::ui::norm_name(c.data.get(1..17).unwrap_or_default()))).map(|(k, c)| (k, c.data)).collect()
 }
 
 fn image_name(p: &[u8]) -> String {
@@ -49,13 +34,7 @@ fn image_name(p: &[u8]) -> String {
 /// FNV-1a over the size and pixels: the key an image is saved under once.
 fn key(t: &Texture) -> String {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in t
-        .width
-        .to_le_bytes()
-        .iter()
-        .chain(&t.height.to_le_bytes())
-        .chain(&t.rgba)
-    {
+    for b in t.width.to_le_bytes().iter().chain(&t.height.to_le_bytes()).chain(&t.rgba) {
         h ^= *b as u64;
         h = h.wrapping_mul(0x0100_0000_01b3);
     }
@@ -74,18 +53,12 @@ fn save_png(path: &Path, w: u32, h: u32, rgba: &[u8]) -> Result<()> {
 
 fn load_png(path: &Path) -> Result<(u32, u32, Vec<u8>)> {
     let mut d = png::Decoder::new(std::io::BufReader::new(std::fs::File::open(path)?));
-    d.set_transformations(
-        png::Transformations::normalize_to_color8() | png::Transformations::ALPHA,
-    );
+    d.set_transformations(png::Transformations::normalize_to_color8() | png::Transformations::ALPHA);
     let mut r = d.read_info()?;
     let mut buf = vec![0u8; r.output_buffer_size().context("png size")?];
     let info = r.next_frame(&mut buf)?;
     buf.truncate(info.buffer_size());
-    anyhow::ensure!(
-        info.color_type == png::ColorType::Rgba,
-        "{}: not RGBA",
-        path.display()
-    );
+    anyhow::ensure!(info.color_type == png::ColorType::Rgba, "{}: not RGBA", path.display());
     Ok((info.width, info.height, buf))
 }
 
@@ -103,32 +76,15 @@ pub fn status_dump(out: &Path) -> Result<()> {
     writeln!(tsv, "id\tname\tdescription\ticon")?;
     let mut n = 0;
     for id in 0..(bytes.len() / dat::statusinfo::ENTRY) as u16 {
-        let Some((w, h, rgba)) = dat::statusinfo::icon(&bytes, id) else {
-            continue;
-        };
+        let Some((w, h, rgba)) = dat::statusinfo::icon(&bytes, id) else { continue };
         // A fully clear icon is an unused slot.
         if rgba.chunks(4).all(|p| p[3] == 0) {
             continue;
         }
-        let t = Texture {
-            name: String::new(),
-            format: 0,
-            width: w,
-            height: h,
-            rgba,
-            dxt: None,
-        };
+        let t = Texture { name: String::new(), format: 0, width: w, height: h, rgba, dxt: None };
         save_png(&out.join(format!("{id}.png")), w, h, &t.rgba)?;
-        let desc = dat::statusinfo::entry(&bytes, id)
-            .map(|e| e.desc)
-            .unwrap_or_default();
-        writeln!(
-            tsv,
-            "{id}\t{}\t{}\t{}",
-            names.status_title(id),
-            desc.replace(['\t', '\n'], " "),
-            key(&t)
-        )?;
+        let desc = dat::statusinfo::entry(&bytes, id).map(|e| e.desc).unwrap_or_default();
+        writeln!(tsv, "{id}\t{}\t{}\t{}", names.status_title(id), desc.replace(['\t', '\n'], " "), key(&t))?;
         n += 1;
     }
     println!("{n} status icons from file {file} in {}", out.display());
@@ -145,10 +101,7 @@ pub fn export(out: &Path) -> Result<()> {
     let next = std::sync::atomic::AtomicU32::new(0);
     let rows = Mutex::new(Vec::new());
     let seen: Mutex<std::collections::HashSet<String>> = Mutex::new(Default::default());
-    let (skipped, saved) = (
-        std::sync::atomic::AtomicU32::new(0),
-        std::sync::atomic::AtomicU32::new(0),
-    );
+    let (skipped, saved) = (std::sync::atomic::AtomicU32::new(0), std::sync::atomic::AtomicU32::new(0));
     std::thread::scope(|s| {
         for _ in 0..THREADS {
             s.spawn(|| {
@@ -162,28 +115,20 @@ pub fn export(out: &Path) -> Result<()> {
                     if imgs.is_empty() {
                         continue;
                     }
-                    if imgs
-                        .iter()
-                        .any(|(_, p)| SKIP_PREFIXES.iter().any(|x| image_name(p).starts_with(x)))
-                    {
+                    if imgs.iter().any(|(_, p)| SKIP_PREFIXES.iter().any(|x| image_name(p).starts_with(x))) {
                         skipped.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         continue;
                     }
                     for (k, p) in imgs {
-                        let Ok(t) = dat::zone::parse_img(p) else {
-                            continue;
-                        };
+                        let Ok(t) = dat::zone::parse_img(p) else { continue };
                         if t.width * 4 > MAX_SIDE || t.height * 4 > MAX_SIDE {
                             continue;
                         }
                         let key = key(&t);
-                        rows.lock()
-                            .unwrap()
-                            .push(format!("{id}\t{k}\t{key}\t{}", t.name.trim()));
+                        rows.lock().unwrap().push(format!("{id}\t{k}\t{key}\t{}", t.name.trim()));
                         if seen.lock().unwrap().insert(key.clone()) {
                             let path = out.join(format!("{key}.png"));
-                            if !path.exists() && save_png(&path, t.width, t.height, &t.rgba).is_ok()
-                            {
+                            if !path.exists() && save_png(&path, t.width, t.height, &t.rgba).is_ok() {
                                 saved.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             }
                         }
@@ -193,22 +138,12 @@ pub fn export(out: &Path) -> Result<()> {
         }
     });
     let mut rows = rows.into_inner().unwrap();
-    rows.sort_by_key(|r| {
-        r.split('\t')
-            .take(2)
-            .map(|v| v.parse::<u64>().unwrap_or(0))
-            .fold(0, |a, v| a * 1_000_000 + v)
-    });
+    rows.sort_by_key(|r| r.split('\t').take(2).map(|v| v.parse::<u64>().unwrap_or(0)).fold(0, |a, v| a * 1_000_000 + v));
     let mut f = std::io::BufWriter::new(std::fs::File::create(out.join("manifest.tsv"))?);
     for r in &rows {
         writeln!(f, "{r}")?;
     }
-    println!(
-        "{} image chunks, {} unique saved now, {} files skipped (UI, fonts, maps)",
-        rows.len(),
-        saved.into_inner(),
-        skipped.into_inner()
-    );
+    println!("{} image chunks, {} unique saved now, {} files skipped (UI, fonts, maps)", rows.len(), saved.into_inner(), skipped.into_inner());
     Ok(())
 }
 
@@ -226,11 +161,7 @@ fn is_dxt1(stock: &[u8]) -> bool {
 /// `levels` (the stock image's few, halved, with their shares) quantized to them in the same shares: the faintest
 /// pixels take the lowest level, so specks the upscaler filled in stay clear.
 fn encode(dxt1: bool, w: u32, h: u32, rgba: &[u8], levels: Option<&[(u8, f32)]>) -> Vec<u8> {
-    let format = if dxt1 {
-        texpresso::Format::Bc1
-    } else {
-        texpresso::Format::Bc2
-    };
+    let format = if dxt1 { texpresso::Format::Bc1 } else { texpresso::Format::Bc2 };
     let mut px = rgba.to_vec();
     if !dxt1 {
         for p in px.chunks_exact_mut(4) {
@@ -243,13 +174,10 @@ fn encode(dxt1: bool, w: u32, h: u32, rgba: &[u8], levels: Option<&[(u8, f32)]>)
                     sorted.sort_unstable();
                     let n = sorted.len();
                     let mut acc = 0.0;
-                    let cuts: Vec<u8> = l[..l.len() - 1]
-                        .iter()
-                        .map(|&(_, share)| {
-                            acc += share;
-                            sorted[((acc * n as f32) as usize).min(n - 1)]
-                        })
-                        .collect();
+                    let cuts: Vec<u8> = l[..l.len() - 1].iter().map(|&(_, share)| {
+                        acc += share;
+                        sorted[((acc * n as f32) as usize).min(n - 1)]
+                    }).collect();
                     for p in px.chunks_exact_mut(4) {
                         p[3] = l[cuts.iter().position(|&c| p[3] < c).unwrap_or(l.len() - 1)].0;
                     }
@@ -259,11 +187,7 @@ fn encode(dxt1: bool, w: u32, h: u32, rgba: &[u8], levels: Option<&[(u8, f32)]>)
         }
     }
     let mut data = vec![0u8; format.compressed_size(w as usize, h as usize)];
-    let params = texpresso::Params {
-        algorithm: texpresso::Algorithm::ClusterFit,
-        weigh_colour_by_alpha: !dxt1,
-        ..Default::default()
-    };
+    let params = texpresso::Params { algorithm: texpresso::Algorithm::ClusterFit, weigh_colour_by_alpha: !dxt1, ..Default::default() };
     format.compress(&px, w as usize, h as usize, params, &mut data);
     data
 }
@@ -275,9 +199,7 @@ fn stock_levels(stock: &[u8]) -> Option<Vec<(u8, f32)>> {
     let t = dat::zone::parse_img(stock).ok()?;
     let mut count = std::collections::BTreeMap::new();
     for p in t.rgba.chunks_exact(4) {
-        *count
-            .entry((p[3] as u16).div_ceil(2) as u8)
-            .or_insert(0usize) += 1;
+        *count.entry((p[3] as u16).div_ceil(2) as u8).or_insert(0usize) += 1;
     }
     let n = (t.rgba.len() / 4).max(1) as f32;
     (count.len() <= 3).then(|| count.into_iter().map(|(v, c)| (v, c as f32 / n)).collect())
@@ -325,11 +247,7 @@ fn dither_alpha(px: &mut [u8], w: usize) {
 /// The chunk payload around encoded `data`.
 fn image_chunk_from(stock: &[u8], w: u32, h: u32, data: &[u8]) -> Vec<u8> {
     let dxt1 = is_dxt1(stock);
-    let (kind, pitch) = if dxt1 {
-        (b"1TXD", w * 2)
-    } else {
-        (b"3TXD", w * 4)
-    };
+    let (kind, pitch) = if dxt1 { (b"1TXD", w * 2) } else { (b"3TXD", w * 4) };
     let size = data.len();
     let mut out = stock[..57].to_vec();
     out[0] = 0xA1;
@@ -344,40 +262,17 @@ fn image_chunk_from(stock: &[u8], w: u32, h: u32, data: &[u8]) -> Vec<u8> {
 
 /// An image's encoding, made once per key and format (files share images): `cache/<key>.bc1|bc2|bc2q` (bc2q: alpha
 /// quantized to the stock levels) holds w, h, data.
-fn encoded(
-    cache: &Path,
-    key: &str,
-    png: &Path,
-    dxt1: bool,
-    levels: Option<&[(u8, f32)]>,
-) -> Result<(u32, u32, Vec<u8>)> {
-    let path = cache.join(format!(
-        "{key}.{}",
-        if dxt1 {
-            "bc1"
-        } else if levels.is_some() {
-            "bc2q"
-        } else {
-            "bc2"
-        }
-    ));
+fn encoded(cache: &Path, key: &str, png: &Path, dxt1: bool, levels: Option<&[(u8, f32)]>) -> Result<(u32, u32, Vec<u8>)> {
+    let path = cache.join(format!("{key}.{}", if dxt1 { "bc1" } else if levels.is_some() { "bc2q" } else { "bc2" }));
     if let Ok(b) = std::fs::read(&path)
         && b.len() > 8
     {
-        return Ok((
-            u32::from_le_bytes(b[0..4].try_into()?),
-            u32::from_le_bytes(b[4..8].try_into()?),
-            b[8..].to_vec(),
-        ));
+        return Ok((u32::from_le_bytes(b[0..4].try_into()?), u32::from_le_bytes(b[4..8].try_into()?), b[8..].to_vec()));
     }
     let (mut w, mut h, mut rgba) = load_png(png)?;
     anyhow::ensure!(w <= MAX_SIDE && h <= MAX_SIDE, "{key}: {w}x{h} too large");
     // Halved until its chunk fits (4x of a 512 x 1024 DXT3 is past 8 MB).
-    let format = if dxt1 {
-        texpresso::Format::Bc1
-    } else {
-        texpresso::Format::Bc2
-    };
+    let format = if dxt1 { texpresso::Format::Bc1 } else { texpresso::Format::Bc2 };
     while 16 + 69 + format.compressed_size(w as usize, h as usize) > MAX_CHUNK && w > 4 && h > 4 {
         (w, h, rgba) = half(w, h, &rgba);
     }
@@ -386,8 +281,7 @@ fn encoded(
     b.extend_from_slice(&w.to_le_bytes());
     b.extend_from_slice(&h.to_le_bytes());
     b.extend_from_slice(&data);
-    let tmp = path
-        .with_extension(format!("part{:?}", std::thread::current().id()).replace(['(', ')'], ""));
+    let tmp = path.with_extension(format!("part{:?}", std::thread::current().id()).replace(['(', ')'], ""));
     if std::fs::write(&tmp, &b).is_ok() {
         let _ = std::fs::rename(&tmp, &path);
     }
@@ -401,11 +295,8 @@ fn half(w: u32, h: u32, rgba: &[u8]) -> (u32, u32, Vec<u8>) {
     for y in 0..nh as usize {
         for x in 0..nw as usize {
             for c in 0..4 {
-                let at = |dx: usize, dy: usize| {
-                    rgba[((2 * y + dy) * w as usize + 2 * x + dx) * 4 + c] as u32
-                };
-                out[(y * nw as usize + x) * 4 + c] =
-                    ((at(0, 0) + at(1, 0) + at(0, 1) + at(1, 1) + 2) / 4) as u8;
+                let at = |dx: usize, dy: usize| rgba[((2 * y + dy) * w as usize + 2 * x + dx) * 4 + c] as u32;
+                out[(y * nw as usize + x) * 4 + c] = ((at(0, 0) + at(1, 0) + at(0, 1) + at(1, 1) + 2) / 4) as u8;
             }
         }
     }
@@ -415,10 +306,7 @@ fn half(w: u32, h: u32, rgba: &[u8]) -> (u32, u32, Vec<u8>) {
 /// A chunk with `payload` (the stock chunk's 16-byte header, its size word redone; padded to 16 bytes).
 fn chunk_bytes(stock_header: &[u8], payload: &[u8]) -> Vec<u8> {
     let total = (16 + payload.len()).div_ceil(16) * 16;
-    assert!(
-        total <= MAX_CHUNK,
-        "chunk of {total} bytes past the size field"
-    );
+    assert!(total <= MAX_CHUNK, "chunk of {total} bytes past the size field");
     let mut out = stock_header[..16].to_vec();
     let word = u32::from_le_bytes(out[4..8].try_into().unwrap());
     let word = (word & 0x7f) | (((total / 16) as u32) << 7);
@@ -440,21 +328,13 @@ pub fn pack(manifest_dir: &Path, up: &Path, out: &Path, redo: Option<&Path>) -> 
     for e in std::fs::read_dir(up)?.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
         if name.ends_with(".png") {
-            by_key.insert(
-                name.split(['_', '.'])
-                    .next()
-                    .unwrap_or_default()
-                    .to_string(),
-                e.path(),
-            );
+            by_key.insert(name.split(['_', '.']).next().unwrap_or_default().to_string(), e.path());
         }
     }
     let mut files: Vec<(u32, Vec<(usize, String)>)> = Vec::new();
     for line in std::fs::read_to_string(manifest_dir.join("manifest.tsv"))?.lines() {
         let f: Vec<&str> = line.split('\t').collect();
-        let (Ok(id), Ok(k)) = (f[0].parse::<u32>(), f[1].parse::<usize>()) else {
-            continue;
-        };
+        let (Ok(id), Ok(k)) = (f[0].parse::<u32>(), f[1].parse::<usize>()) else { continue };
         match files.last_mut() {
             Some((last, v)) if *last == id => v.push((k, f[2].to_string())),
             _ => files.push((id, vec![(k, f[2].to_string())])),
@@ -464,73 +344,38 @@ pub fn pack(manifest_dir: &Path, up: &Path, out: &Path, redo: Option<&Path>) -> 
     let mut paths = std::collections::HashSet::new();
     files.retain(|(id, _)| index.path(*id).is_some_and(|p| paths.insert(p)));
     let redo: std::collections::HashSet<String> = match redo {
-        Some(p) => std::fs::read_to_string(p)?
-            .lines()
-            .filter_map(|l| l.split('\t').next())
-            .map(str::to_string)
-            .collect(),
+        Some(p) => std::fs::read_to_string(p)?.lines().filter_map(|l| l.split('\t').next()).map(str::to_string).collect(),
         None => Default::default(),
     };
     let cache = manifest_dir.join("encoded");
     std::fs::create_dir_all(&cache)?;
     let next = std::sync::atomic::AtomicUsize::new(0);
-    let (built, missing) = (
-        std::sync::atomic::AtomicU32::new(0),
-        std::sync::atomic::AtomicU32::new(0),
-    );
+    let (built, missing) = (std::sync::atomic::AtomicU32::new(0), std::sync::atomic::AtomicU32::new(0));
     std::thread::scope(|s| {
         for _ in 0..THREADS {
             s.spawn(|| {
                 loop {
                     let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    let Some((id, wanted)) = files.get(i) else {
-                        break;
-                    };
-                    let Some(stock) = index.path(*id) else {
-                        continue;
-                    };
-                    let Ok(rel) = stock.strip_prefix(&stock_root) else {
-                        continue;
-                    };
+                    let Some((id, wanted)) = files.get(i) else { break };
+                    let Some(stock) = index.path(*id) else { continue };
+                    let Ok(rel) = stock.strip_prefix(&stock_root) else { continue };
                     let dest = out.join(rel);
                     if dest.exists() && !wanted.iter().any(|(_, key)| redo.contains(key)) {
                         continue;
                     }
-                    let Ok(bytes) = std::fs::read(&stock) else {
-                        continue;
-                    };
-                    let Ok(chunks) = dat::chunks(&bytes) else {
-                        continue;
-                    };
-                    let allowed: std::collections::HashSet<usize> =
-                        images(&bytes).into_iter().map(|(k, _)| k).collect();
-                    let keys: HashMap<usize, &String> = wanted
-                        .iter()
-                        .filter(|(k, _)| allowed.contains(k))
-                        .map(|(k, key)| (*k, key))
-                        .collect();
+                    let Ok(bytes) = std::fs::read(&stock) else { continue };
+                    let Ok(chunks) = dat::chunks(&bytes) else { continue };
+                    let allowed: std::collections::HashSet<usize> = images(&bytes).into_iter().map(|(k, _)| k).collect();
+                    let keys: HashMap<usize, &String> = wanted.iter().filter(|(k, _)| allowed.contains(k)).map(|(k, key)| (*k, key)).collect();
                     let mut outb = Vec::with_capacity(bytes.len() * 8);
                     let mut changed = false;
                     for (k, c) in chunks.iter().enumerate() {
                         let header = &bytes[c.offset..c.offset + 16];
                         let end = c.offset + 16 + c.data.len();
-                        let up = keys
-                            .get(&k)
-                            .and_then(|key| by_key.get(*key).map(|p| (key, p)));
-                        match up.map(|(key, p)| {
-                            encoded(
-                                &cache,
-                                key,
-                                p,
-                                is_dxt1(c.data),
-                                stock_levels(c.data).as_deref(),
-                            )
-                        }) {
+                        let up = keys.get(&k).and_then(|key| by_key.get(*key).map(|p| (key, p)));
+                        match up.map(|(key, p)| encoded(&cache, key, p, is_dxt1(c.data), stock_levels(c.data).as_deref())) {
                             Some(Ok((w, h, data))) => {
-                                outb.extend(chunk_bytes(
-                                    header,
-                                    &image_chunk_from(c.data, w, h, &data),
-                                ));
+                                outb.extend(chunk_bytes(header, &image_chunk_from(c.data, w, h, &data)));
                                 changed = true;
                             }
                             _ => {
@@ -558,11 +403,7 @@ pub fn pack(manifest_dir: &Path, up: &Path, out: &Path, redo: Option<&Path>) -> 
             });
         }
     });
-    println!(
-        "{} files built, {} images had no upscaled copy (kept stock)",
-        built.into_inner(),
-        missing.into_inner()
-    );
+    println!("{} files built, {} images had no upscaled copy (kept stock)", built.into_inner(), missing.into_inner());
     Ok(())
 }
 
@@ -574,10 +415,7 @@ pub fn slim(pack: &Path, out: &Path) -> Result<()> {
     let mut files = Vec::new();
     let mut dirs = vec![pack.to_path_buf()];
     while let Some(d) = dirs.pop() {
-        for e in std::fs::read_dir(&d)
-            .with_context(|| format!("reading {}", d.display()))?
-            .flatten()
-        {
+        for e in std::fs::read_dir(&d).with_context(|| format!("reading {}", d.display()))?.flatten() {
             let p = e.path();
             if p.is_dir() {
                 dirs.push(p);
@@ -600,56 +438,32 @@ pub fn slim(pack: &Path, out: &Path) -> Result<()> {
                     if dest.exists() {
                         continue;
                     }
-                    let (Ok(stock), Ok(full)) = (
-                        std::fs::read(stock_root.join(rel)),
-                        std::fs::read(pack.join(rel)),
-                    ) else {
-                        failed
-                            .lock()
-                            .unwrap()
-                            .push(format!("{}: unreadable", rel.display()));
+                    let (Ok(stock), Ok(full)) = (std::fs::read(stock_root.join(rel)), std::fs::read(pack.join(rel))) else {
+                        failed.lock().unwrap().push(format!("{}: unreadable", rel.display()));
                         continue;
                     };
                     let Some((bytes, kept)) = dat::overlay::slim(&stock, &full) else {
-                        failed
-                            .lock()
-                            .unwrap()
-                            .push(format!("{}: not a chunk file", rel.display()));
+                        failed.lock().unwrap().push(format!("{}: not a chunk file", rel.display()));
                         continue;
                     };
                     if kept == 0 {
                         counts.lock().unwrap()[1] += 1;
                         continue;
                     }
-                    if dat::overlay::merge(&stock, &[bytes.clone()])
-                        != dat::overlay::merge(&stock, &[full.clone()])
-                    {
-                        failed
-                            .lock()
-                            .unwrap()
-                            .push(format!("{}: merges differently", rel.display()));
+                    if dat::overlay::merge(&stock, &[bytes.clone()]) != dat::overlay::merge(&stock, &[full.clone()]) {
+                        failed.lock().unwrap().push(format!("{}: merges differently", rel.display()));
                         continue;
                     }
                     if let Some(dir) = dest.parent() {
                         let _ = std::fs::create_dir_all(dir);
                     }
                     let tmp = dest.with_extension("part");
-                    if std::fs::write(&tmp, &bytes)
-                        .and_then(|_| std::fs::rename(&tmp, &dest))
-                        .is_err()
-                    {
-                        failed
-                            .lock()
-                            .unwrap()
-                            .push(format!("{}: not written", rel.display()));
+                    if std::fs::write(&tmp, &bytes).and_then(|_| std::fs::rename(&tmp, &dest)).is_err() {
+                        failed.lock().unwrap().push(format!("{}: not written", rel.display()));
                         continue;
                     }
                     let mut c = counts.lock().unwrap();
-                    (c[0], c[2], c[3]) = (
-                        c[0] + 1,
-                        c[2] + full.len() as u64,
-                        c[3] + bytes.len() as u64,
-                    );
+                    (c[0], c[2], c[3]) = (c[0] + 1, c[2] + full.len() as u64, c[3] + bytes.len() as u64);
                     if c[0] % 2000 == 0 {
                         println!("{} files written", c[0]);
                     }
@@ -662,14 +476,7 @@ pub fn slim(pack: &Path, out: &Path) -> Result<()> {
     for f in &failed {
         println!("{f}");
     }
-    println!(
-        "{} files written ({:.1} GB of {:.1} GB), {} with no image changed, {} failed",
-        c[0],
-        c[3] as f64 / 1e9,
-        c[2] as f64 / 1e9,
-        c[1],
-        failed.len()
-    );
+    println!("{} files written ({:.1} GB of {:.1} GB), {} with no image changed, {} failed", c[0], c[3] as f64 / 1e9, c[2] as f64 / 1e9, c[1], failed.len());
     Ok(())
 }
 
@@ -688,25 +495,15 @@ mod tests {
         stock[31] = 8;
         stock[57..61].copy_from_slice(b"3TXD");
         stock[61..65].copy_from_slice(&16u32.to_le_bytes());
-        let rgba: Vec<u8> = (0..64)
-            .flat_map(|i| [i as u8 * 4, 128, 255 - i as u8 * 4, 255])
-            .collect();
+        let rgba: Vec<u8> = (0..64).flat_map(|i| [i as u8 * 4, 128, 255 - i as u8 * 4, 255]).collect();
         let p = image_chunk(&stock, 8, 8, &rgba);
         let t = dat::zone::parse_img(&p).unwrap();
-        assert_eq!(
-            (t.width, t.height, t.name.trim()),
-            (8, 8, "tim     testtex".trim())
-        );
+        assert_eq!((t.width, t.height, t.name.trim()), (8, 8, "tim     testtex".trim()));
         assert!(t.rgba.chunks(4).all(|px| px[3] >= 254));
-        let header = [
-            b'i', b'm', b'g', b'1', 0x20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        ];
+        let header = [b'i', b'm', b'g', b'1', 0x20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
         let c = chunk_bytes(&header, &p);
         assert_eq!(c.len() % 16, 0);
         let parsed = dat::chunks(&c).unwrap();
-        assert_eq!(
-            (parsed[0].kind, parsed[0].data.len() >= p.len()),
-            (0x20, true)
-        );
+        assert_eq!((parsed[0].kind, parsed[0].data.len() >= p.len()), (0x20, true));
     }
 }

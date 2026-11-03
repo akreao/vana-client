@@ -91,13 +91,7 @@ fn team(p: &Plate) -> Option<Option<u8>> {
         return None;
     }
     let a = p.marks.alleg;
-    let i = if p.extra.ballista != 0 {
-        p.extra.ballista
-    } else if a < 7 {
-        a - 1
-    } else {
-        0
-    };
+    let i = if p.extra.ballista != 0 { p.extra.ballista } else if a < 7 { a - 1 } else { 0 };
     let g = match a {
         0x20 | 0x22 | 0x24 | 0x26 => Some(0xa6),
         0x21 | 0x23 | 0x25 | 0x27 => Some(0xa7),
@@ -161,11 +155,7 @@ pub fn prefix(p: &Plate) -> (Vec<u8>, u32) {
         out.push(b' ');
     }
     let [r, g, b] = p.marks.ls_colour;
-    let colour = if a == 0x92 {
-        0x8000_0000 | (r as u32) << 16 | (g as u32) << 8 | b as u32
-    } else {
-        0x8080_8080
-    };
+    let colour = if a == 0x92 { 0x8000_0000 | (r as u32) << 16 | (g as u32) << 8 | b as u32 } else { 0x8080_8080 };
     (out, colour)
 }
 
@@ -187,137 +177,44 @@ mod tests {
     use super::*;
 
     fn pc(m: Marks) -> Plate {
-        Plate {
-            pc: true,
-            marks: Marks { alleg: 1, ..m },
-            ..Plate::default()
-        }
+        Plate { pc: true, marks: Marks { alleg: 1, ..m }, ..Plate::default() }
     }
 
     #[test]
     fn gm_badges_by_level() {
-        let got: Vec<Vec<u8>> = (0..8)
-            .map(|g| {
-                prefix(&pc(Marks {
-                    gm: g,
-                    ..Marks::default()
-                }))
-                .0
-            })
-            .collect();
+        let got: Vec<Vec<u8>> = (0..8).map(|g| prefix(&pc(Marks { gm: g, ..Marks::default() })).0).collect();
         assert_eq!(got[0], Vec::<u8>::new());
         assert_eq!(got[1], [0x93, b' ']);
         assert_eq!(got[3], [0x95, b' ']);
         assert_eq!(got[6], [0x98, b' ']);
         assert_eq!(got[7], [0x99, b' ']);
         // GmIconFlag drops the badge only.
-        assert!(
-            prefix(&pc(Marks {
-                gm: 5,
-                gm_icon_off: true,
-                ..Marks::default()
-            }))
-            .0
-            .is_empty()
-        );
+        assert!(prefix(&pc(Marks { gm: 5, gm_icon_off: true, ..Marks::default() })).0.is_empty());
     }
 
     #[test]
     fn priority_and_pearl() {
         // Away beats GM; the pearl only when nothing else matched, in the shell's colour.
-        assert_eq!(
-            prefix(&pc(Marks {
-                gm: 4,
-                away: true,
-                ..Marks::default()
-            }))
-            .0,
-            [0x90, b' ']
-        );
-        let (b, c) = prefix(&pc(Marks {
-            ls: true,
-            ls_colour: [0x10, 0x20, 0x30],
-            ..Marks::default()
-        }));
+        assert_eq!(prefix(&pc(Marks { gm: 4, away: true, ..Marks::default() })).0, [0x90, b' ']);
+        let (b, c) = prefix(&pc(Marks { ls: true, ls_colour: [0x10, 0x20, 0x30], ..Marks::default() }));
         assert_eq!((b, c), (vec![0x92, b' '], 0x8010_2030));
-        let (b, c) = prefix(&pc(Marks {
-            ls: true,
-            bazaar: true,
-            ..Marks::default()
-        }));
+        let (b, c) = prefix(&pc(Marks { ls: true, bazaar: true, ..Marks::default() }));
         assert_eq!((b, c), (vec![0x9c, b' '], 0x8080_8080));
-        assert_eq!(
-            prefix(&pc(Marks {
-                mentor: true,
-                new_char: true,
-                ..Marks::default()
-            }))
-            .0,
-            [0xa2, b' ']
-        );
-        assert_eq!(
-            prefix(&pc(Marks {
-                new_char: true,
-                bazaar: true,
-                ..Marks::default()
-            }))
-            .0,
-            [0xa1, b' ']
-        );
-        assert_eq!(
-            prefix(&pc(Marks {
-                lfg_master: true,
-                lfg: true,
-                ..Marks::default()
-            }))
-            .0,
-            [0xac, b' ']
-        );
-        assert_eq!(
-            target_glyph(&pc(Marks {
-                ls: true,
-                ..Marks::default()
-            })),
-            None
-        );
+        assert_eq!(prefix(&pc(Marks { mentor: true, new_char: true, ..Marks::default() })).0, [0xa2, b' ']);
+        assert_eq!(prefix(&pc(Marks { new_char: true, bazaar: true, ..Marks::default() })).0, [0xa1, b' ']);
+        assert_eq!(prefix(&pc(Marks { lfg_master: true, lfg: true, ..Marks::default() })).0, [0xac, b' ']);
+        assert_eq!(target_glyph(&pc(Marks { ls: true, ..Marks::default() })), None);
     }
 
     #[test]
     fn campaign_and_ranks() {
         // A San d'Oria side (allegiance 2) with a seeking-party badge; Campaign alone gives the sword.
-        let p = Plate {
-            pc: true,
-            marks: Marks {
-                alleg: 2,
-                lfg: true,
-                ..Marks::default()
-            },
-            ..Plate::default()
-        };
+        let p = Plate { pc: true, marks: Marks { alleg: 2, lfg: true, ..Marks::default() }, ..Plate::default() };
         assert_eq!(prefix(&p).0, [0x9e, 0x91, b' ']);
-        let p = Plate {
-            pc: true,
-            marks: Marks {
-                alleg: 1,
-                ..Marks::default()
-            },
-            sync: 2 | 4,
-            ..Plate::default()
-        };
+        let p = Plate { pc: true, marks: Marks { alleg: 1, ..Marks::default() }, sync: 2 | 4, ..Plate::default() };
         assert_eq!(prefix(&p).0, [0x94, 0xa8, b' ']);
         // Belligerency gladiator rank 2: the rank glyph, no main glyph, no space.
-        let p = Plate {
-            pc: true,
-            marks: Marks {
-                alleg: 8,
-                ..Marks::default()
-            },
-            extra: PlateExtra {
-                ranks: 2,
-                ..PlateExtra::default()
-            },
-            ..Plate::default()
-        };
+        let p = Plate { pc: true, marks: Marks { alleg: 8, ..Marks::default() }, extra: PlateExtra { ranks: 2, ..PlateExtra::default() }, ..Plate::default() };
         assert_eq!(prefix(&p).0, [0xcd]);
         assert_eq!(target_glyph(&p), Some(0xa9));
     }

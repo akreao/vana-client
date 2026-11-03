@@ -28,20 +28,14 @@ pub fn checksum(b: &[u8]) -> u32 {
     for c in &mut chunks {
         sum = sum.wrapping_add(u32::from_le_bytes([c[0], c[1], c[2], c[3]]));
     }
-    let tail = chunks
-        .remainder()
-        .iter()
-        .fold(0u32, |t, &x| t >> 8 | (x as u32) << 24);
+    let tail = chunks.remainder().iter().fold(0u32, |t, &x| t >> 8 | (x as u32) << 24);
     sum.wrapping_add(tail)
 }
 
 /// An IRC line's four checksum characters.
 pub fn line_checksum(s: &str) -> String {
     let sum = checksum(s.as_bytes());
-    [26, 20, 14, 8]
-        .iter()
-        .map(|&k| (((sum >> k) & 0x3f) as u8 + 0x3f) as char)
-        .collect()
+    [26, 20, 14, 8].iter().map(|&k| (((sum >> k) & 0x3f) as u8 + 0x3f) as char).collect()
 }
 
 const B64: &[u8; 64] = b"TSG8IncW3HFKokOg79qzeCmZs2yBYEQVAUxR5rbwi4P@jMDLtpvad0f_J1hlN6uX";
@@ -50,9 +44,7 @@ const B64: &[u8; 64] = b"TSG8IncW3HFKokOg79qzeCmZs2yBYEQVAUxR5rbwi4P@jMDLtpvad0f
 pub fn b64(bytes: &[u8], padded: bool) -> String {
     let mut out = String::new();
     for c in bytes.chunks(3) {
-        let v = (c[0] as u32) << 16
-            | (*c.get(1).unwrap_or(&0) as u32) << 8
-            | *c.get(2).unwrap_or(&0) as u32;
+        let v = (c[0] as u32) << 16 | (*c.get(1).unwrap_or(&0) as u32) << 8 | *c.get(2).unwrap_or(&0) as u32;
         let n = c.len() + 1;
         for k in 0..4 {
             if k < n {
@@ -101,8 +93,7 @@ pub fn character_key(id: u32) -> u32 {
 }
 
 fn connect(c: &Cred, port: u16) -> Result<tls::TlsStream> {
-    let mut s = tls::connect(&c.host, port)
-        .with_context(|| format!("connecting to xi_profile {}:{port}", c.host))?;
+    let mut s = tls::connect(&c.host, port).with_context(|| format!("connecting to xi_profile {}:{port}", c.host))?;
     let mut hello = [0u8; 20];
     hello[..4].copy_from_slice(&c.account.to_le_bytes());
     hello[4..].copy_from_slice(&c.hash);
@@ -126,8 +117,7 @@ pub fn request(c: &Cred, cmd: u8, sub: u8, body: &[u8]) -> Result<(u8, Vec<u8>)>
     open[4] = 1;
     s.write_all(&open)?;
     let mut ans = [0u8; 0x18];
-    s.read_exact(&mut ans)
-        .context("xi_profile closed the connection (refused the credentials?)")?;
+    s.read_exact(&mut ans).context("xi_profile closed the connection (refused the credentials?)")?;
     if ans[0] != 0x81 || ans[1] != 0 {
         bail!("xi_profile open answer {:#x} error {}", ans[0], ans[1]);
     }
@@ -138,14 +128,12 @@ pub fn request(c: &Cred, cmd: u8, sub: u8, body: &[u8]) -> Result<(u8, Vec<u8>)>
     s.write_all(body)?;
     s.flush()?;
     let mut recv = [0u8; 0x18];
-    s.read_exact(&mut recv)
-        .with_context(|| format!("no answer to request {cmd:#x}/{sub:#x}"))?;
+    s.read_exact(&mut recv).with_context(|| format!("no answer to request {cmd:#x}/{sub:#x}"))?;
     if recv[0] != 0x83 {
         bail!("xi_profile answer code {:#x}", recv[0]);
     }
     let size = u32::from_le_bytes(recv[4..8].try_into().unwrap()) as usize;
-    let out = read_answer(&mut s, size)
-        .with_context(|| format!("the answer to request {cmd:#x}/{sub:#x}"))?;
+    let out = read_answer(&mut s, size).with_context(|| format!("the answer to request {cmd:#x}/{sub:#x}"))?;
     s.conn.send_close_notify();
     let _ = s.flush();
     Ok((recv[1], out))
@@ -160,10 +148,7 @@ fn read_answer(r: &mut impl Read, size: usize) -> Result<Vec<u8>> {
     let mut out = Vec::new();
     r.take(size as u64).read_to_end(&mut out)?;
     if out.len() != size {
-        bail!(
-            "xi_profile closed the connection {} bytes into a {size}-byte answer",
-            out.len()
-        );
+        bail!("xi_profile closed the connection {} bytes into a {size}-byte answer", out.len());
     }
     Ok(out)
 }
@@ -183,8 +168,7 @@ fn ok(r: (u8, Vec<u8>), what: &str) -> Result<Vec<u8>> {
 }
 
 fn count(b: &[u8]) -> usize {
-    b.get(..4)
-        .map_or(0, |c| u32::from_le_bytes(c.try_into().unwrap()) as usize)
+    b.get(..4).map_or(0, |c| u32::from_le_bytes(c.try_into().unwrap()) as usize)
 }
 
 fn name16(b: &[u8]) -> String {
@@ -214,12 +198,7 @@ pub const FRIEND_INFO: usize = 0xa8;
 impl FriendInfo {
     pub fn to_bytes(&self) -> [u8; FRIEND_INFO] {
         let mut b = [0u8; FRIEND_INFO];
-        let bits = (self.op as u64 & 0xf)
-            | (self.black as u64) << 4
-            | 1 << 5
-            | (self.handle_id & 0xfff_ffff_ffff) << 13
-            | 0xe << 57
-            | (self.pending as u64) << 62;
+        let bits = (self.op as u64 & 0xf) | (self.black as u64) << 4 | 1 << 5 | (self.handle_id & 0xfff_ffff_ffff) << 13 | 0xe << 57 | (self.pending as u64) << 62;
         b[..8].copy_from_slice(&bits.to_le_bytes());
         (b[8], b[9], b[10]) = (self.num, self.order, self.result);
         b[0x10..0x18].copy_from_slice(&self.pol.to_le_bytes());
@@ -248,18 +227,11 @@ impl FriendInfo {
 /// LoadFriendList (0x02 / 0x03): friends, then the block list.
 pub fn load_friend_list(c: &Cred) -> Result<Vec<FriendInfo>> {
     let b = ok(request(c, 2, 3, &[])?, "LoadFriendList")?;
-    Ok((0..count(&b))
-        .filter_map(|k| FriendInfo::from_bytes(b.get(8 + k * FRIEND_INFO..)?))
-        .collect())
+    Ok((0..count(&b)).filter_map(|k| FriendInfo::from_bytes(b.get(8 + k * FRIEND_INFO..)?)).collect())
 }
 
 /// StoreFriendList (0x02 / 0x06): every list index's display order and the changed entries; the entries answered.
-pub fn store_friend_list(
-    c: &Cred,
-    friend_order: &[u8; 200],
-    black_order: &[u8; 100],
-    entries: &[FriendInfo],
-) -> Result<Vec<FriendInfo>> {
+pub fn store_friend_list(c: &Cred, friend_order: &[u8; 200], black_order: &[u8; 100], entries: &[FriendInfo]) -> Result<Vec<FriendInfo>> {
     let mut b = Vec::with_capacity(0x130 + entries.len() * FRIEND_INFO + 8);
     b.extend_from_slice(friend_order);
     b.extend_from_slice(black_order);
@@ -270,19 +242,14 @@ pub fn store_friend_list(
     }
     b.extend_from_slice(&[0; 4]);
     let a = ok(request(c, 2, 6, &sealed(b))?, "StoreFriendList")?;
-    Ok((0..count(&a))
-        .filter_map(|k| FriendInfo::from_bytes(a.get(8 + k * FRIEND_INFO..)?))
-        .collect())
+    Ok((0..count(&a)).filter_map(|k| FriendInfo::from_bytes(a.get(8 + k * FRIEND_INFO..)?)).collect())
 }
 
 /// LoadHandleNameList (0x00 / 0x09): our handle's id and name (LSB: the account's first character).
 pub fn load_handle(c: &Cred) -> Result<(u64, String)> {
     let b = ok(request(c, 0, 9, &[])?, "LoadHandleNameList")?;
     let h = b.get(8..8 + 0x88).context("no handle")?;
-    Ok((
-        u64::from_le_bytes(h[8..16].try_into().unwrap()) & 0xfff_ffff_ffff,
-        name16(&h[0x10..0x20]),
-    ))
+    Ok((u64::from_le_bytes(h[8..16].try_into().unwrap()) & 0xfff_ffff_ffff, name16(&h[0x10..0x20])))
 }
 
 /// LoadCharacterList (0x01 / 0x03): (slot, character id, name) in the account's order.
@@ -291,11 +258,7 @@ pub fn load_characters(c: &Cred) -> Result<Vec<(u8, u32, String)>> {
     Ok((0..count(&b))
         .filter_map(|k| {
             let e = b.get(8 + k * 0x68..8 + (k + 1) * 0x68)?;
-            Some((
-                e[0],
-                u64::from_le_bytes(e[0x10..0x18].try_into().unwrap()) as u32,
-                name16(&e[0x18..0x28]),
-            ))
+            Some((e[0], u64::from_le_bytes(e[0x10..0x18].try_into().unwrap()) as u32, name16(&e[0x18..0x28])))
         })
         .collect())
 }
@@ -309,10 +272,7 @@ pub fn search_pol_id(c: &Cred, char_id: u32) -> Result<Option<(u64, String)>> {
     if a.len() < 0x30 || a[0x20] == 0 {
         return Ok(None);
     }
-    Ok(Some((
-        u64::from_le_bytes(a[..8].try_into().unwrap()),
-        name16(&a[0x10..0x20]),
-    )))
+    Ok(Some((u64::from_le_bytes(a[..8].try_into().unwrap()), name16(&a[0x10..0x20]))))
 }
 
 /// LoadMyStatus (0x04 / 0x06): our open status (0 Online, 1 Away, 4 Invisible).
@@ -355,11 +315,7 @@ pub fn mail_list(c: &Cred) -> Result<Vec<(u32, u32, String)>> {
     Ok((0..count(&a))
         .filter_map(|k| {
             let e = a.get(8 + k * 0x108..8 + (k + 1) * 0x108)?;
-            Some((
-                u32::from_le_bytes(e[..4].try_into().unwrap()),
-                u32::from_le_bytes(e[4..8].try_into().unwrap()),
-                name16(&e[8..]),
-            ))
+            Some((u32::from_le_bytes(e[..4].try_into().unwrap()), u32::from_le_bytes(e[4..8].try_into().unwrap()), name16(&e[8..])))
         })
         .collect())
 }
@@ -467,10 +423,7 @@ pub fn encode_body(title: &[u8], text: &[u8]) -> Vec<u8> {
 
 pub fn decode_body(b: &[u8]) -> (Vec<u8>, Vec<u8>) {
     let mut parts = b.split(|&c| c == 0);
-    (
-        parts.next().unwrap_or_default().to_vec(),
-        parts.next().unwrap_or_default().to_vec(),
-    )
+    (parts.next().unwrap_or_default().to_vec(), parts.next().unwrap_or_default().to_vec())
 }
 
 /// Posts a message: its header names the file, the data follows.
@@ -485,13 +438,7 @@ pub enum Irc {
     SignedOn,
     /// A friend's status (Status - 1: 0 offline, 1 online, 2 away), where we list them, the character they play, and
     /// the notice's age (only newer ones apply).
-    Status {
-        account: u64,
-        list_index: u8,
-        status: u8,
-        char_id: Option<u32>,
-        age: u64,
-    },
+    Status { account: u64, list_index: u8, status: u8, char_id: Option<u32>, age: u64 },
     /// A new message: its 0x48-byte header.
     Mail(Vec<u8>),
     Closed(String),
@@ -545,11 +492,7 @@ fn irc_run(c: &Cred, tx: &mpsc::Sender<Irc>, stop: &mpsc::Receiver<()>) -> Resul
             last = Instant::now();
         }
         // Bounded, so a server that never sends the newline can't grow the line without limit.
-        match r
-            .by_ref()
-            .take((MAX_IRC_LINE + 1 - line.len()) as u64)
-            .read_line(&mut line)
-        {
+        match r.by_ref().take((MAX_IRC_LINE + 1 - line.len()) as u64).read_line(&mut line) {
             Ok(0) => bail!("closed by the server"),
             Ok(_) if line.ends_with('\n') => {
                 let l = line.trim_end_matches(['\r', '\n']);
@@ -561,22 +504,14 @@ fn irc_run(c: &Cred, tx: &mpsc::Sender<Irc>, stop: &mpsc::Receiver<()>) -> Resul
             }
             Ok(_) if line.len() > MAX_IRC_LINE => bail!("an IRC line over {MAX_IRC_LINE} bytes"),
             Ok(_) => {}
-            Err(e)
-                if matches!(
-                    e.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) => {}
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {}
             Err(e) => return Err(e.into()),
         }
     }
 }
 
 fn irc_line(s: &mut tls::TlsStream, text: &str, tx: &mpsc::Sender<Irc>) -> Result<()> {
-    let words: Vec<&str> = text
-        .split(' ')
-        .filter(|w| !w.is_empty())
-        .skip(text.starts_with(':') as usize)
-        .collect();
+    let words: Vec<&str> = text.split(' ').filter(|w| !w.is_empty()).skip(text.starts_with(':') as usize).collect();
     match words.first().copied() {
         Some("PING") => send_line(s, "PONG a")?,
         Some("NOTICE") => {
@@ -606,15 +541,8 @@ fn notice(payload: &str) -> Option<Irc> {
     }
     let account = u64::from_le_bytes(h[..8].try_into().unwrap()) ^ POL_MASK;
     let ext = b64_decode(&payload[96..]).unwrap_or_default();
-    let char_id = (ext.first().is_some_and(|f| f & 8 != 0) && ext.len() >= 0x18)
-        .then(|| u64::from_le_bytes(ext[0x10..0x18].try_into().unwrap()) as u32);
-    Some(Irc::Status {
-        account,
-        list_index: h[0x1c],
-        status: h[0x11].saturating_sub(1),
-        char_id,
-        age: u64::from_le_bytes(h[0x30..0x38].try_into().unwrap()),
-    })
+    let char_id = (ext.first().is_some_and(|f| f & 8 != 0) && ext.len() >= 0x18).then(|| u64::from_le_bytes(ext[0x10..0x18].try_into().unwrap()) as u32);
+    Some(Irc::Status { account, list_index: h[0x1c], status: h[0x11].saturating_sub(1), char_id, age: u64::from_le_bytes(h[0x30..0x38].try_into().unwrap()) })
 }
 
 #[cfg(test)]
@@ -630,10 +558,7 @@ mod tests {
         assert!(read_answer(&mut &[1u8, 2][..], 3).is_err());
         assert_eq!(read_answer(&mut &[1u8, 2, 3, 4][..], 3).unwrap(), [1, 2, 3]);
         let whole = vec![7u8; MAX_ANSWER];
-        assert_eq!(
-            read_answer(&mut &whole[..], MAX_ANSWER).unwrap().len(),
-            MAX_ANSWER
-        );
+        assert_eq!(read_answer(&mut &whole[..], MAX_ANSWER).unwrap().len(), MAX_ANSWER);
     }
 
     /// Vectors derived from LSB's codec (MODLOG "The Friend List and PlayOnline messages").
@@ -646,16 +571,9 @@ mod tests {
         assert_eq!(line_checksum("PONG :x"), "nw`n");
         assert_eq!(b64(&[0, 1, 2, 3, 4, 5], true), "TTIGTt7n");
         assert_eq!(b64_decode("TTIGTt7n").unwrap(), vec![0, 1, 2, 3, 4, 5]);
-        let f = FriendInfo {
-            op: 1,
-            handle_id: 1003,
-            ..Default::default()
-        };
+        let f = FriendInfo { op: 1, handle_id: 1003, ..Default::default() };
         assert_eq!(&f.to_bytes()[..8], &[0x21, 0x60, 0x7d, 0, 0, 0, 0, 0x1c]);
-        assert_eq!(
-            FriendInfo::from_bytes(&f.to_bytes()).unwrap().handle_id,
-            1003
-        );
+        assert_eq!(FriendInfo::from_bytes(&f.to_bytes()).unwrap().handle_id, 1003);
         assert_eq!(character_key(0x12_3456), 0x1200_3456);
     }
 
@@ -663,66 +581,27 @@ mod tests {
     #[test]
     #[ignore]
     fn profile_live() {
-        let j: serde_json::Value =
-            serde_json::from_slice(&std::fs::read("/home/lenon/ffxi/lab/lnxtest01.json").unwrap())
-                .unwrap();
-        let req = super::super::auth::Request {
-            username: j["username"].as_str().unwrap(),
-            password: j["password"].as_str().unwrap(),
-            ..Default::default()
-        };
-        let super::super::auth::Reply::LoggedIn {
-            account_id,
-            session_hash,
-            ..
-        } = super::super::auth::send("127.0.0.1", 54231, super::super::auth::Command::Login, &req)
-            .unwrap()
-        else {
-            panic!()
-        };
-        let c = Cred {
-            host: "127.0.0.1".into(),
-            port: 51220,
-            irc_port: 51240,
-            account: account_id,
-            hash: session_hash,
-        };
+        let j: serde_json::Value = serde_json::from_slice(&std::fs::read("/home/lenon/ffxi/lab/lnxtest01.json").unwrap()).unwrap();
+        let req = super::super::auth::Request { username: j["username"].as_str().unwrap(), password: j["password"].as_str().unwrap(), ..Default::default() };
+        let super::super::auth::Reply::LoggedIn { account_id, session_hash, .. } = super::super::auth::send("127.0.0.1", 54231, super::super::auth::Command::Login, &req).unwrap() else { panic!() };
+        let c = Cred { host: "127.0.0.1".into(), port: 51220, irc_port: 51240, account: account_id, hash: session_hash };
         let link = irc(c.clone());
-        println!(
-            "irc: {:?}",
-            link.events.recv_timeout(Duration::from_secs(10))
-        );
+        println!("irc: {:?}", link.events.recv_timeout(Duration::from_secs(10)));
         println!("status {:?}", load_my_status(&c));
         println!("friends {:?}", load_friend_list(&c));
         println!("handle {:?}", load_handle(&c));
         println!("chars {:?}", load_characters(&c));
         println!("mail {:?}", mail_list(&c));
         let _ = link.quit.send(());
-        println!(
-            "irc: {:?}",
-            link.events.recv_timeout(Duration::from_secs(5))
-        );
+        println!("irc: {:?}", link.events.recv_timeout(Duration::from_secs(5)));
     }
 
     #[test]
     fn message_header() {
-        let h = MsgHeader {
-            from: 1000,
-            to: 1003,
-            sender: "Lnxcsfix".into(),
-            title: "Hi".into(),
-            seq: 7,
-            date: 1_800_000_000,
-            length: 12,
-            kind: FRIEND_REQUEST,
-            no_reply: false,
-        };
+        let h = MsgHeader { from: 1000, to: 1003, sender: "Lnxcsfix".into(), title: "Hi".into(), seq: 7, date: 1_800_000_000, length: 12, kind: FRIEND_REQUEST, no_reply: false };
         assert_eq!(h.file_name().len(), 96);
         assert_eq!(MsgHeader::from_name(&h.file_name()), Some(h));
-        assert_eq!(
-            decode_body(&encode_body(b"T", b"text")),
-            (b"T".to_vec(), b"text".to_vec())
-        );
+        assert_eq!(decode_body(&encode_body(b"T", b"text")), (b"T".to_vec(), b"text".to_vec()));
     }
 
     #[test]

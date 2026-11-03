@@ -47,17 +47,8 @@ fn sides(mode: u8, name: &str, me: &str) -> (bool, bool) {
 
 /// FUN_10137c70's +0x26: line `k` is a player's, but not another's line naming us.
 pub fn lit(w: &World, k: usize) -> bool {
-    let Some((name, _)) = w.chat.who(k) else {
-        return false;
-    };
-    let Some(mode) = w
-        .chat
-        .modes()
-        .get(k)
-        .and_then(|&m| super::combat::log_mode(m))
-    else {
-        return false;
-    };
+    let Some((name, _)) = w.chat.who(k) else { return false };
+    let Some(mode) = w.chat.modes().get(k).and_then(|&m| super::combat::log_mode(m)) else { return false };
     sides(mode, name, &w.name).0 || name != w.name
 }
 
@@ -74,16 +65,7 @@ pub fn open(w: &mut World, line: Option<(usize, String)>) {
         return;
     };
     let (own, chat) = sides(mode, &name, &w.name);
-    w.charlnk = Some(CharLnk {
-        cursor: 1,
-        name,
-        mode,
-        ranked: flags & 0x20 != 0,
-        own,
-        chat,
-        text,
-        line: k,
-    });
+    w.charlnk = Some(CharLnk { cursor: 1, name, mode, ranked: flags & 0x20 != 0, own, chat, text, line: k });
     w.sounds.push(Ui::Select as u32);
 }
 
@@ -137,11 +119,7 @@ pub fn key(w: &mut World, key: egui::Key) {
     let n = ORDER.len();
     match key {
         egui::Key::ArrowDown | egui::Key::ArrowUp => {
-            let next = if key == egui::Key::ArrowDown {
-                (at + 1) % n
-            } else {
-                (at + n - 1) % n
-            };
+            let next = if key == egui::Key::ArrowDown { (at + 1) % n } else { (at + n - 1) % n };
             if let Some(s) = w.charlnk.as_mut() {
                 s.cursor = ORDER[next];
             }
@@ -166,8 +144,7 @@ fn pick(w: &mut World, c: &CharLnk) {
     if c.cursor != 9 && name.is_empty() {
         return;
     }
-    let run =
-        |w: &mut World, line: String| super::textcmd::run(w, &line, super::textcmd::Mode::Internal);
+    let run = |w: &mut World, line: String| super::textcmd::run(w, &line, super::textcmd::Mode::Internal);
     match c.cursor {
         // "%s %s" with "/tell" into the chat line.
         1 => {
@@ -179,10 +156,7 @@ fn pick(w: &mut World, c: &CharLnk) {
             w.full_log = None;
             w.charlnk = None;
             if !super::search::busy(w) {
-                let cond = crate::net::search::Cond {
-                    last_area: -1,
-                    ..crate::net::search::Cond::name(name)
-                };
+                let cond = crate::net::search::Cond { last_area: -1, ..crate::net::search::Cond::name(name) };
                 super::search::run(w, cond, super::search::Scope::World);
             }
         }
@@ -254,47 +228,21 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Option<[f32; 4]> {
     let c = w.charlnk.as_ref()?;
     let off = off(w, c);
     let focused = w.confirm.is_none();
-    let win = gu.lobby_window(
-        CHARLNK,
-        sw,
-        sh,
-        false,
-        Some(c.cursor),
-        focused && !off.contains(&c.cursor),
-        &[],
-    )?;
+    let win = gu.lobby_window(CHARLNK, sw, sh, false, Some(c.cursor), focused && !off.contains(&c.cursor), &[])?;
     super::winhits::record(w, CHARLNK, &win);
     gu.disabled_children(CHARLNK, win.frame[0], win.frame[1], &off, Some(c.cursor));
-    gu.shape_fit(
-        shown_name(w, c),
-        win.frame[0] + 4.0,
-        win.frame[1] + 6.0,
-        100.0,
-        0x8080_8080,
-    );
+    gu.shape_fit(shown_name(w, c), win.frame[0] + 4.0, win.frame[1] + 6.0, 100.0, 0x8080_8080);
     Some(win.frame)
 }
 
 /// The mouse (winhits.rs): the generic window.
 pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
     let Some(c) = w.charlnk.as_ref() else { return };
-    super::winhits::generic(
-        w,
-        gu,
-        CHARLNK,
-        c.cursor,
-        1..=9,
-        p,
-        moved,
-        clicked,
-        right,
-        |w, id| {
-            if let Some(c) = w.charlnk.as_mut() {
-                c.cursor = id;
-            }
-        },
-        |w, _, k| key(w, k),
-    );
+    super::winhits::generic(w, gu, CHARLNK, c.cursor, 1..=9, p, moved, clicked, right, |w, id| {
+        if let Some(c) = w.charlnk.as_mut() {
+            c.cursor = id;
+        }
+    }, |w, _, k| key(w, k));
 }
 
 /// Help slot 1 and the title: the row's own.

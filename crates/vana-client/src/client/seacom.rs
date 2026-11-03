@@ -28,14 +28,7 @@ pub struct Store {
 
 impl Default for Store {
     fn default() -> Self {
-        Store {
-            lines: Default::default(),
-            sent: Default::default(),
-            kind: 0,
-            sent_kind: 0xff,
-            own_in: false,
-            entered: false,
-        }
+        Store { lines: Default::default(), sent: Default::default(), kind: 0, sent_kind: 0xff, own_in: false, entered: false }
     }
 }
 
@@ -58,24 +51,14 @@ pub fn open_bazaar(w: &mut World) {
 }
 
 fn store(w: &mut World, mode: u8) -> &mut Store {
-    if mode == 0 {
-        &mut w.bazaar_msg
-    } else {
-        &mut w.seacom
-    }
+    if mode == 0 { &mut w.bazaar_msg } else { &mut w.seacom }
 }
 
 /// FUN_101ddae0(msg, 1): our own s2c 0x0CA message (MyFlag) cut into three lines of 40, trailing spaces trimmed, into
 /// the bazaar store's lines and its last-sent copy.
 pub fn own_message(w: &mut World, raw: &[u8]) {
     let lines: [String; 3] = std::array::from_fn(|k| {
-        let line: Vec<u8> = raw
-            .iter()
-            .skip(LINE * k)
-            .take(LINE)
-            .copied()
-            .take_while(|&c| c != 0)
-            .collect();
+        let line: Vec<u8> = raw.iter().skip(LINE * k).take(LINE).copied().take_while(|&c| c != 0).collect();
         crate::dat::font::decode_sjis(&line).trim_end().to_string()
     });
     let s = &mut w.bazaar_msg;
@@ -105,13 +88,7 @@ fn bytes(line: &str) -> usize {
 /// bytes, typing closes it. True when the list took the event.
 fn complete(w: &mut World, e: Editor, ev: &egui::Event) -> bool {
     use super::fep::{self, FieldPick};
-    let egui::Event::Key {
-        key,
-        pressed: true,
-        modifiers,
-        ..
-    } = ev
-    else {
+    let egui::Event::Key { key, pressed: true, modifiers, .. } = ev else {
         if matches!(ev, egui::Event::Text(_) | egui::Event::Paste(_)) {
             w.field_fep = None;
         }
@@ -167,36 +144,16 @@ pub fn text_events(w: &mut World, events: &[egui::Event]) {
                     }
                 }
             }
-            egui::Event::Key {
-                key: egui::Key::Backspace,
-                pressed: true,
-                ..
-            } => {
+            egui::Event::Key { key: egui::Key::Backspace, pressed: true, .. } => {
                 // A phrase block (four chars here) goes whole.
-                let n = line
-                    .chars()
-                    .rev()
-                    .take_while(|&c| c as u32 >= crate::dat::font::PHRASE_BASE)
-                    .count();
+                let n = line.chars().rev().take_while(|&c| c as u32 >= crate::dat::font::PHRASE_BASE).count();
                 for _ in 0..if n >= 4 { 4 } else { 1 } {
                     line.pop();
                 }
             }
-            egui::Event::Key {
-                key: egui::Key::ArrowDown | egui::Key::Enter,
-                pressed: true,
-                ..
-            } => e.line = (e.line + 1).min(2),
-            egui::Event::Key {
-                key: egui::Key::ArrowUp,
-                pressed: true,
-                ..
-            } => e.line = e.line.saturating_sub(1),
-            egui::Event::Key {
-                key: egui::Key::Escape,
-                pressed: true,
-                ..
-            } => {
+            egui::Event::Key { key: egui::Key::ArrowDown | egui::Key::Enter, pressed: true, .. } => e.line = (e.line + 1).min(2),
+            egui::Event::Key { key: egui::Key::ArrowUp, pressed: true, .. } => e.line = e.line.saturating_sub(1),
+            egui::Event::Key { key: egui::Key::Escape, pressed: true, .. } => {
                 w.sounds.push(Ui::Cancel as u32);
                 close(w);
                 return;
@@ -223,9 +180,7 @@ fn padded(lines: &[String; 3]) -> Vec<u8> {
 /// 0x0E0 (FUN_100e5980).
 fn close(w: &mut World) {
     w.field_fep = None;
-    let Some(e) = w.seacom_edit.take() else {
-        return;
-    };
+    let Some(e) = w.seacom_edit.take() else { return };
     if e.mode == 0 {
         let s = &mut w.bazaar_msg;
         if s.lines == s.sent {
@@ -234,10 +189,7 @@ fn close(w: &mut World) {
         s.sent = s.lines.clone();
         let mut b = vec![0u8; 0x7c];
         b[..123].copy_from_slice(&padded(&s.lines));
-        let _ = w
-            .net
-            .commands
-            .send(NetCommand::Packet { id: 0x0DE, body: b });
+        let _ = w.net.commands.send(NetCommand::Packet { id: 0x0DE, body: b });
         return;
     }
     commit(w);
@@ -271,17 +223,10 @@ pub fn zone_in(w: &mut World) {
         (s.lines, s.kind) = (Default::default(), 0);
         (s.sent, s.sent_kind) = (Default::default(), 0);
     }
-    let text = if s.lines.iter().all(|l| l.trim_matches(' ').is_empty()) {
-        Vec::new()
-    } else {
-        padded(&s.lines)
-    };
+    let text = if s.lines.iter().all(|l| l.trim_matches(' ').is_empty()) { Vec::new() } else { padded(&s.lines) };
     let kind = s.kind;
     send(w, kind, &text);
-    let _ = w.net.commands.send(NetCommand::Packet {
-        id: 0x00F,
-        body: vec![0; 0x20],
-    });
+    let _ = w.net.commands.send(NetCommand::Packet { id: 0x00F, body: vec![0; 0x20] });
 }
 
 /// /seacom N ["text"] (FUN_1007efb0 -> FUN_101ddb30): line N (0..2) set to the text or cleared; nothing while the
@@ -290,11 +235,7 @@ pub fn set_line(w: &mut World, n: usize, text: &str) {
     if w.seacom_edit.is_some() || n > 2 {
         return;
     }
-    w.seacom.lines[n] = text
-        .chars()
-        .filter(|c| (' '..='~').contains(c))
-        .take(LINE)
-        .collect();
+    w.seacom.lines[n] = text.chars().filter(|c| (' '..='~').contains(c)).take(LINE).collect();
 }
 
 /// /seacomup (FUN_1007f020): the type, then the send as the editor's close does.
@@ -313,10 +254,7 @@ fn send(w: &World, kind: u8, text: &[u8]) {
     b[0x88..0x8c].copy_from_slice(&w.expansions.to_le_bytes());
     b[0x8c..0x90].copy_from_slice(&w.features.to_le_bytes());
     b[0x90..0x94].copy_from_slice(&(kind as u32).to_le_bytes());
-    let _ = w
-        .net
-        .commands
-        .send(NetCommand::Packet { id: 0x0E0, body: b });
+    let _ = w.net.commands.send(NetCommand::Packet { id: 0x0E0, body: b });
 }
 
 /// FUN_100e3220: the u32 time() kept in "ffxiusr.sys" (8 bytes {time, -1}), made on first use.
@@ -327,9 +265,7 @@ fn install_time() -> u32 {
     {
         return u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
     }
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as u32);
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as u32);
     let _ = std::fs::write(&path, [now.to_le_bytes(), u32::MAX.to_le_bytes()].concat());
     now
 }
@@ -337,21 +273,9 @@ fn install_time() -> u32 {
 /// The editor as the modern layer draws it: the mode, the three lines, the line being edited.
 pub(super) fn view(w: &World) -> Option<(u8, [String; 3], usize, Option<(Vec<String>, usize)>)> {
     let e = w.seacom_edit?;
-    let s = if e.mode == 0 {
-        &w.bazaar_msg
-    } else {
-        &w.seacom
-    };
-    let fep = w
-        .field_fep
-        .as_ref()
-        .map(|f| (f.cands.iter().map(|c| c.text.clone()).collect(), f.sel));
-    Some((
-        e.mode,
-        s.lines.clone().map(|l| super::fep::plain(w, &l)),
-        e.line,
-        fep,
-    ))
+    let s = if e.mode == 0 { &w.bazaar_msg } else { &w.seacom };
+    let fep = w.field_fep.as_ref().map(|f| (f.cands.iter().map(|c| c.text.clone()).collect(), f.sel));
+    Some((e.mode, s.lines.clone().map(|l| super::fep::plain(w, &l)), e.line, fep))
 }
 
 /// The mouse onto line `k`.
@@ -380,38 +304,20 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         return rects;
     };
     gu.force_flags(EDITOR, Some(0x1000));
-    let Some(win) = gu.lobby_window_off(EDITOR, sw, sh, (0.0, 0.0), None, false, &[]) else {
-        return rects;
-    };
+    let Some(win) = gu.lobby_window_off(EDITOR, sw, sh, (0.0, 0.0), None, false, &[]) else { return rects };
     let [x0, y0, ww, _] = win.frame;
-    let (s, dx, width) = if e.mode == 0 {
-        (&w.bazaar_msg, 4.0, ww - 8.0)
-    } else {
-        (&w.seacom, 20.0, 335.0)
-    };
+    let (s, dx, width) = if e.mode == 0 { (&w.bazaar_msg, 4.0, ww - 8.0) } else { (&w.seacom, 20.0, 335.0) };
     for (k, l) in s.lines.iter().enumerate() {
         let (x, y) = (x0 + dx, y0 + 4.0 + 16.0 * k as f32);
         let l = super::fep::plain(w, l);
         if k == e.line {
-            let caret = if (w.started.elapsed().as_secs_f32() * 60.0) as u32 % 30 < 20 {
-                "|"
-            } else {
-                ""
-            };
+            let caret = if (w.started.elapsed().as_secs_f32() * 60.0) as u32 % 30 < 20 { "|" } else { "" };
             gu.text(&format!("{l}{caret}"), x, y, 0, [0x80; 4]);
         } else {
             gu.text_fit(&l, x, y, width, WHITE);
         }
     }
-    let list = w.field_fep.as_ref().map(|f| {
-        super::fep::draw_list(
-            gu,
-            &f.cands,
-            f.sel,
-            x0 + dx - 8.0,
-            y0 + 2.0 + 16.0 * e.line as f32,
-        )
-    });
+    let list = w.field_fep.as_ref().map(|f| super::fep::draw_list(gu, &f.cands, f.sel, x0 + dx - 8.0, y0 + 2.0 + 16.0 * e.line as f32));
     let g = (w.seacom.kind >> 4 & 0xf) as usize;
     if e.mode == 2
         && let Some(&s) = super::search::GENRE.get(g.wrapping_sub(1))

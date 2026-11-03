@@ -7,12 +7,7 @@
 fn arg(s: &[u8], p: usize, ints: &[i32]) -> (i32, usize) {
     let b = |k: usize| s.get(p + k).copied().unwrap_or(0);
     match b(0) {
-        1 => (
-            ints.get(((b(1) & 0x7f) as usize).wrapping_sub(1))
-                .copied()
-                .unwrap_or(0),
-            2,
-        ),
+        1 => (ints.get(((b(1) & 0x7f) as usize).wrapping_sub(1)).copied().unwrap_or(0), 2),
         2 => ((b(1) & 0x7f) as i32, 2),
         3 => (((b(1) & 0x7f) as i32) | ((b(2) & 0x7f) as i32) << 7, 3),
         _ => (0, 0),
@@ -20,8 +15,7 @@ fn arg(s: &[u8], p: usize, ints: &[i32]) -> (i32, usize) {
 }
 
 fn u14(s: &[u8], q: usize) -> usize {
-    (s.get(q).copied().unwrap_or(0) & 0x7f) as usize
-        | ((s.get(q + 1).copied().unwrap_or(0) & 0x7f) as usize) << 7
+    (s.get(q).copied().unwrap_or(0) & 0x7f) as usize | ((s.get(q + 1).copied().unwrap_or(0) & 0x7f) as usize) << 7
 }
 
 fn sjis_pair(a: u8, b: u8) -> bool {
@@ -34,12 +28,7 @@ fn sjis_pair(a: u8, b: u8) -> bool {
 /// compare flags and the choice end (`ints` and `strs` never change), so a string that loops comes back to one of
 /// those states after a backward jump. Such a string stops at the second visit instead of looping forever
 /// (issue #88), and the output so far is returned. A string that ends never repeats a state, so its output is unchanged.
-pub fn format(
-    s: &[u8],
-    strs: &[&[u8]],
-    ints: &[i32],
-    item: &dyn Fn(i32, i32, bool) -> Option<Vec<u8>>,
-) -> Vec<u8> {
+pub fn format(s: &[u8], strs: &[&[u8]], ints: &[i32], item: &dyn Fn(i32, i32, bool) -> Option<Vec<u8>>) -> Vec<u8> {
     let mut out = Vec::new();
     let (mut eq, mut lt, mut gt) = (false, false, false);
     let mut end = 0usize;
@@ -66,11 +55,7 @@ pub fn format(
                 let q = p + n;
                 let cnt = u14(s, q);
                 end = p + u14(s, q + 2);
-                if (0..cnt as i32).contains(&idx) {
-                    p + u14(s, q + 4 + 2 * idx as usize)
-                } else {
-                    end
-                }
+                if (0..cnt as i32).contains(&idx) { p + u14(s, q + 4 + 2 * idx as usize) } else { end }
             }
             0x83 => {
                 let (a, n) = arg(s, p, ints);
@@ -89,11 +74,7 @@ pub fn format(
                     0x89 => gt || eq,
                     _ => lt || eq,
                 };
-                if taken {
-                    (p as isize + 1 + l).max(0) as usize
-                } else {
-                    p + 1
-                }
+                if taken { (p as isize + 1 + l).max(0) as usize } else { p + 1 }
             }
             0x8b => {
                 let (v, n) = arg(s, p, ints);
@@ -127,15 +108,8 @@ pub fn format(
 }
 
 /// The format rows by key (tables 0x1037d31c date order, 0x1037d34c 12 / 24 hour): group 10 ids at +2 .. +10.
-const DATE_ROWS: [[u16; 5]; 3] = [
-    [0x3b, 0x4d, 0x48, 0x43, 0x43],
-    [0x3c, 0x4e, 0x49, 0x44, 0x44],
-    [0x3d, 0x4f, 0x4a, 0x45, 0x45],
-];
-const TIME_ROWS: [[u16; 5]; 2] = [
-    [0x3e, 0x3e, 0x4b, 0x46, 0x40],
-    [0x3f, 0x3f, 0x4b, 0x46, 0x40],
-];
+const DATE_ROWS: [[u16; 5]; 3] = [[0x3b, 0x4d, 0x48, 0x43, 0x43], [0x3c, 0x4e, 0x49, 0x44, 0x44], [0x3d, 0x4f, 0x4a, 0x45, 0x45]];
+const TIME_ROWS: [[u16; 5]; 2] = [[0x3e, 0x3e, 0x4b, 0x46, 0x40], [0x3f, 0x3f, 0x4b, 0x46, 0x40]];
 
 /// The Vana'diel calendar of a game time t (Earth seconds since the epoch, FUN_101039e0): year, month, day,
 /// hour, minute, weekday (group 0x10), moon phase (group 0x11) and the moon percent (FUN_10103ba0).
@@ -155,13 +129,7 @@ impl VanaParts {
         let d = ((t / 3456) % 84) as i32;
         let v = (d - 4) as f32 * 2.380_952_4_f32;
         let r = if v >= 0.0 { v + 0.5 } else { v - 0.5 };
-        let moon = if d < 4 {
-            (-r).trunc() as i32
-        } else if d <= 46 {
-            r.trunc() as i32
-        } else {
-            200 - r.trunc() as i32
-        };
+        let moon = if d < 4 { (-r).trunc() as i32 } else if d <= 46 { r.trunc() as i32 } else { 200 - r.trunc() as i32 };
         VanaParts {
             year: (t / 0x12fc00) as i32 + 886,
             month: (t % 0x12fc00 / 0x19500) as i32 + 1,
@@ -179,17 +147,13 @@ impl VanaParts {
 pub type Group<'a> = dyn Fn(u16) -> Option<Vec<u8>> + 'a;
 
 fn fmt(g: &Group<'_>, id: u16, strs: &[&[u8]], ints: &[i32]) -> Vec<u8> {
-    g(id)
-        .map(|s| format(&s, strs, ints, &|_, _, _| None))
-        .unwrap_or_default()
+    g(id).map(|s| format(&s, strs, ints, &|_, _, _| None)).unwrap_or_default()
 }
 
 /// FUN_101c92b0(t, flags, raw = 1): the Vana'diel date (row +8 of the date key), then the time (0x46) unless flags & 2.
 pub fn vana_datetime(g: &Group<'_>, t: u64, flags: u32, date_key: usize) -> Vec<u8> {
     let p = VanaParts::of(t);
-    let Some(row) = DATE_ROWS.get(date_key) else {
-        return b"--/--/--".to_vec();
-    };
+    let Some(row) = DATE_ROWS.get(date_key) else { return b"--/--/--".to_vec() };
     let date = fmt(g, row[3], &[], &[p.year, p.month, p.day]);
     if flags & 2 != 0 {
         return date;
@@ -200,28 +164,15 @@ pub fn vana_datetime(g: &Group<'_>, t: u64, flags: u32, date_key: usize) -> Vec<
 
 /// FUN_101c8d10: the Earth date in local time as (year, month 1..12, day, hour, minute, second).
 pub fn earth_parts(unix: i64) -> Option<[i32; 6]> {
-    let z = jiff::Timestamp::from_second(unix)
-        .ok()?
-        .to_zoned(jiff::tz::TimeZone::system());
-    Some([
-        z.year() as i32,
-        z.month() as i32,
-        z.day() as i32,
-        z.hour() as i32,
-        z.minute() as i32,
-        z.second() as i32,
-    ])
+    let z = jiff::Timestamp::from_second(unix).ok()?.to_zoned(jiff::tz::TimeZone::system());
+    Some([z.year() as i32, z.month() as i32, z.day() as i32, z.hour() as i32, z.minute() as i32, z.second() as i32])
 }
 
 /// FUN_101c8fd0(unix, flags): the Earth date in local time (flags & 1 the long form with the month's name, & 4 its
 /// other name list), the time (flags & 8 without seconds), joined unless flags & 2 (date only) / & 0x18 (time only).
 pub fn earth_datetime(g: &Group<'_>, unix: i64, flags: u32, date_key: usize, h12: bool) -> Vec<u8> {
     let (Some(row), Ok(ts)) = (DATE_ROWS.get(date_key), jiff::Timestamp::from_second(unix)) else {
-        return if flags & 1 != 0 {
-            b"----/--/-- --:--:--".to_vec()
-        } else {
-            b"--/--/-- --:--:--".to_vec()
-        };
+        return if flags & 1 != 0 { b"----/--/-- --:--:--".to_vec() } else { b"--/--/-- --:--:--".to_vec() };
     };
     let z = ts.to_zoned(jiff::tz::TimeZone::system());
     let (year, month, day) = (z.year() as i32, z.month() as i32, z.day() as i32);
@@ -235,11 +186,7 @@ pub fn earth_datetime(g: &Group<'_>, unix: i64, flags: u32, date_key: usize, h12
         fmt(g, row[1], &[m.as_bytes()], &[year % 100, day])
     };
     let trow = &TIME_ROWS[h12 as usize];
-    let time = if flags & 8 != 0 {
-        fmt(g, trow[4], &[], &[hour, hour12, minute])
-    } else {
-        fmt(g, trow[0], &[], &[hour, hour12, minute, second])
-    };
+    let time = if flags & 8 != 0 { fmt(g, trow[4], &[], &[hour, hour12, minute]) } else { fmt(g, trow[0], &[], &[hour, hour12, minute, second]) };
     if flags & 2 != 0 {
         date
     } else if flags & 0x18 != 0 {
@@ -268,9 +215,7 @@ mod tests {
     #[test]
     fn date_time_rows() {
         let Some(m) = group10() else { return };
-        let f = |id: usize, strs: &[&[u8]], ints: &[i32]| {
-            s(format(&m.raw(id).unwrap(), strs, ints, &|_, _, _| None))
-        };
+        let f = |id: usize, strs: &[&[u8]], ints: &[i32]| s(format(&m.raw(id).unwrap(), strs, ints, &|_, _, _| None));
         assert_eq!(f(0x3b, &[b"Oct."], &[2026, 23]), "2026, Oct. 23");
         assert_eq!(f(0x3c, &[b"Oct."], &[2026, 23]), "Oct. 23, 2026");
         assert_eq!(f(0x3e, &[], &[19, 7, 45, 12]), "19:45:12");
@@ -289,34 +234,21 @@ mod tests {
         let g = |id: u16| m.raw(id as usize);
         assert_eq!(s(vana_datetime(&g, 782_991_912, 2, 0)), "1515/5/1");
         let p = VanaParts::of(782_991_912);
-        assert_eq!(
-            (p.weekday, p.hour, p.minute, p.phase, p.moon),
-            (0, 3, 50, 1, 19)
-        );
+        assert_eq!((p.weekday, p.hour, p.minute, p.phase, p.moon), (0, 3, 50, 1, 19));
         // Local time differs per machine: only the shape is checked.
         let e = s(earth_datetime(&g, 1_792_802_712, 1, 0, false));
-        assert!(
-            e.starts_with("2026, Oct. 2") && e.matches(':').count() == 2,
-            "{e}"
-        );
+        assert!(e.starts_with("2026, Oct. 2") && e.matches(':').count() == 2, "{e}");
     }
 
     /// The invites (LAB_10203a50): the name as string 0, the pronoun (0 / 1 / 2) as int 1.
     #[test]
     fn invite_lines() {
         let Some(m) = group10() else { return };
-        let f = |id: usize, p: i32| {
-            s(format(&m.raw(id).unwrap(), &[b"Ann"], &[p], &|_, _, _| {
-                None
-            }))
-        };
+        let f = |id: usize, p: i32| s(format(&m.raw(id).unwrap(), &[b"Ann"], &[p], &|_, _, _| None));
         assert_eq!(f(4, 0), "Ann invites you to his party.");
         assert_eq!(f(4, 1), "Ann invites you to her party.");
         assert_eq!(f(4, 2), "Ann invites you to join a party.");
-        assert_eq!(
-            f(3, 2),
-            "Ann invites you to form an alliance with their party."
-        );
+        assert_eq!(f(3, 2), "Ann invites you to form an alliance with their party.");
     }
 
     fn plain(s: &[u8], ints: &[i32]) -> Vec<u8> {
@@ -367,9 +299,6 @@ mod tests {
     #[test]
     fn moon_percent() {
         let at = |d: u64| VanaParts::of(d * 3456).moon;
-        assert_eq!(
-            [at(0), at(3), at(4), at(46), at(47), at(83)],
-            [10, 2, 0, 100, 98, 12]
-        );
+        assert_eq!([at(0), at(3), at(4), at(46), at(47), at(83)], [10, 2, 0, 100, 98, 12]);
     }
 }

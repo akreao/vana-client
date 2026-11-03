@@ -45,19 +45,11 @@ impl Rng {
     }
     /// Uniform [0, x).
     pub fn uf(&mut self, x: f32) -> f32 {
-        if x == 0.0 {
-            0.0
-        } else {
-            (self.next() % 100_000) as f32 * 1e-5 * x
-        }
+        if x == 0.0 { 0.0 } else { (self.next() % 100_000) as f32 * 1e-5 * x }
     }
     /// Uniform [-x, x).
     pub fn us(&mut self, x: f32) -> f32 {
-        if x == 0.0 {
-            0.0
-        } else {
-            ((self.next() % 200_000) as f32 * 1e-5 - 1.0) * x
-        }
+        if x == 0.0 { 0.0 } else { ((self.next() % 200_000) as f32 * 1e-5 - 1.0) * x }
     }
     /// 0..n-1 (unsigned).
     pub fn un(&mut self, n: u32) -> u32 {

@@ -14,31 +14,20 @@ impl Op<'_> {
     /// The 4cc at +8 (motion / scheduler / sound name).
     pub fn name(&self) -> Option<&str> {
         let b = self.raw.get(8..12)?;
-        std::str::from_utf8(b)
-            .ok()
-            .map(|s| s.trim_end_matches('\0'))
+        std::str::from_utf8(b).ok().map(|s| s.trim_end_matches('\0'))
     }
 }
 
 pub fn ops(data: &[u8]) -> Vec<Op<'_>> {
     let mut out = Vec::new();
     // FUN_10055aa0: the offsets count from the chunk start (16 bytes before the data).
-    let Some(mut at) = data
-        .get(0x14..0x18)
-        .map(|b| (u32::from_le_bytes(b.try_into().unwrap()) as usize).saturating_sub(0x10))
-    else {
-        return out;
-    };
+    let Some(mut at) = data.get(0x14..0x18).map(|b| (u32::from_le_bytes(b.try_into().unwrap()) as usize).saturating_sub(0x10)) else { return out };
     while at + 8 <= data.len() {
         let (code, len) = (data[at], (data[at + 1] & 0x1f) as usize * 4);
         if code == 0 || len == 0 || at + len > data.len() {
             break;
         }
-        out.push(Op {
-            code,
-            wait: u16::from_le_bytes([data[at + 4], data[at + 5]]),
-            raw: &data[at..at + len],
-        });
+        out.push(Op { code, wait: u16::from_le_bytes([data[at + 4], data[at + 5]]), raw: &data[at..at + len] });
         at += len;
     }
     out
@@ -48,12 +37,7 @@ pub fn ops(data: &[u8]) -> Vec<Op<'_>> {
 /// over at its end (FUN_10057c20).
 pub fn loops(data: &[u8]) -> bool {
     // An offset inside the chunk header (below 0x10) points at no stream: no loop. It used to wrap (issue #87).
-    let Some(mut at) = data
-        .get(0x18..0x1c)
-        .and_then(|b| (u32::from_le_bytes(b.try_into().unwrap()) as usize).checked_sub(0x10))
-    else {
-        return false;
-    };
+    let Some(mut at) = data.get(0x18..0x1c).and_then(|b| (u32::from_le_bytes(b.try_into().unwrap()) as usize).checked_sub(0x10)) else { return false };
     while at + 4 <= data.len() {
         let (code, len) = (data[at], (data[at + 1] & 0x1f) as usize * 4);
         if code == 1 {
@@ -76,12 +60,7 @@ pub fn auto_start(data: &[u8]) -> bool {
 
 /// FUN_10056ae0: max(start + dur) over the main stream, op 0 included (it overwrites the header's length).
 pub fn span(data: &[u8]) -> i32 {
-    let Some(mut at) = data
-        .get(0x14..0x18)
-        .map(|b| (u32::from_le_bytes(b.try_into().unwrap()) as usize).saturating_sub(0x10))
-    else {
-        return 0;
-    };
+    let Some(mut at) = data.get(0x14..0x18).map(|b| (u32::from_le_bytes(b.try_into().unwrap()) as usize).saturating_sub(0x10)) else { return 0 };
     let (mut t, mut best) = (0i32, 0i32);
     while at + 8 <= data.len() {
         let (code, len) = (data[at], (data[at + 1] & 0x1f) as usize * 4);
@@ -99,8 +78,7 @@ pub fn span(data: &[u8]) -> i32 {
 
 /// Header u32 @0x1c: the scheduler's length in ticks.
 pub fn length(data: &[u8]) -> u32 {
-    data.get(0x1c..0x20)
-        .map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()))
+    data.get(0x1c..0x20).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()))
 }
 
 /// A motion a scheduler plays (op 0x05 -> FUN_100cb8e0): name with the region '?' stripped ("at0?" ->
@@ -132,49 +110,23 @@ pub struct Plan {
 }
 
 pub fn plan(data: &[u8], hit: &[&str]) -> Plan {
-    let mut p = Plan {
-        length: length(data),
-        ..Default::default()
-    };
+    let mut p = Plan { length: length(data), ..Default::default() };
     let mut t = 0u32;
     for op in ops(data) {
         match op.code {
             0x05 => {
                 if let Some(n) = op.name() {
-                    let speed = op
-                        .raw
-                        .get(16..20)
-                        .map_or(1.0, |b| f32::from_le_bytes(b.try_into().unwrap()));
-                    let u16_at = |o: usize| {
-                        op.raw
-                            .get(o..o + 2)
-                            .map_or(0, |b| u16::from_le_bytes([b[0], b[1]]))
-                    };
+                    let speed = op.raw.get(16..20).map_or(1.0, |b| f32::from_le_bytes(b.try_into().unwrap()));
+                    let u16_at = |o: usize| op.raw.get(o..o + 2).map_or(0, |b| u16::from_le_bytes([b[0], b[1]]));
                     let count = op.raw.get(0x1e).map_or(1, |b| b & 0x7f);
-                    p.motions.push(Motion {
-                        name: n.trim_end_matches('?').to_string(),
-                        at: t,
-                        speed,
-                        ticks: u16_at(6),
-                        count,
-                        blend: u16_at(0x18),
-                    });
+                    p.motions.push(Motion { name: n.trim_end_matches('?').to_string(), at: t, speed, ticks: u16_at(6), count, blend: u16_at(0x18) });
                 }
             }
-            0x03 if op.name().is_some_and(|n| hit.contains(&n)) && p.hit_at.is_none() => {
-                p.hit_at = Some(t)
-            }
+            0x03 if op.name().is_some_and(|n| hit.contains(&n)) && p.hit_at.is_none() => p.hit_at = Some(t),
             0x28 => p.stance_at = Some(t),
             0x59 | 0x20 => {
-                let end = t + op
-                    .raw
-                    .get(6..8)
-                    .map_or(0, |b| u16::from_le_bytes([b[0], b[1]]) as u32);
-                let slot = if op.code == 0x59 {
-                    &mut p.attacker_hold
-                } else {
-                    &mut p.target_hold
-                };
+                let end = t + op.raw.get(6..8).map_or(0, |b| u16::from_le_bytes([b[0], b[1]]) as u32);
+                let slot = if op.code == 0x59 { &mut p.attacker_hold } else { &mut p.target_hold };
                 *slot = Some(slot.map_or(end, |e| e.max(end)));
             }
             _ => {}
@@ -190,11 +142,7 @@ pub fn hand_calls(data: &[u8]) -> Vec<(u32, bool, bool)> {
     let mut out = Vec::new();
     for op in ops(data) {
         if op.code == 0x84 {
-            let u16_at = |o: usize| {
-                op.raw
-                    .get(o..o + 2)
-                    .map_or(0, |b| u16::from_le_bytes([b[0], b[1]]))
-            };
+            let u16_at = |o: usize| op.raw.get(o..o + 2).map_or(0, |b| u16::from_le_bytes([b[0], b[1]]));
             out.push((t, u16_at(8) != 0, u16_at(10) != 0));
         }
         t += op.wait as u32;
@@ -205,9 +153,7 @@ pub fn hand_calls(data: &[u8]) -> Vec<(u32, bool, bool)> {
 /// Scheduler names matching a 4cc pattern ('?' = any byte), as FUN_100cc740 counts them.
 pub fn matching<'a>(names: impl Iterator<Item = &'a str>, pattern: &str) -> Vec<&'a str> {
     let p = pattern.as_bytes();
-    names
-        .filter(|n| n.len() == 4 && n.bytes().zip(p).all(|(a, &b)| b == b'?' || a == b))
-        .collect()
+    names.filter(|n| n.len() == 4 && n.bytes().zip(p).all(|(a, &b)| b == b'?' || a == b)).collect()
 }
 
 #[cfg(test)]
@@ -218,45 +164,17 @@ mod tests {
     #[test]
     fn mob_attack_plan() {
         let cfg = crate::config::Config::load();
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else {
-            return;
-        };
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
         let file = index.read(1300).unwrap();
         let chunks = crate::dat::chunks(&file).unwrap();
-        let get = |n: &str| {
-            chunks
-                .iter()
-                .find(|c| c.kind == 7 && c.name() == n)
-                .unwrap()
-                .data
-        };
+        let get = |n: &str| chunks.iter().find(|c| c.kind == 7 && c.name() == n).unwrap().data;
         let p = plan(get("ati0"), &["dada"]);
-        assert_eq!(
-            p.motions,
-            vec![Motion {
-                name: "at0".into(),
-                at: 0,
-                speed: 1.0,
-                ticks: 80,
-                count: 1,
-                blend: 10
-            }]
-        );
+        assert_eq!(p.motions, vec![Motion { name: "at0".into(), at: 0, speed: 1.0, ticks: 80, count: 1, blend: 10 }]);
         assert_eq!((p.hit_at, p.length), (Some(36), 80));
         assert_eq!(p.target_hold, Some(40));
         let d = plan(get("dead"), &[]);
-        assert_eq!(
-            d.motions
-                .iter()
-                .map(|m| (m.name.as_str(), m.at))
-                .collect::<Vec<_>>(),
-            [("ded", 0), ("cor0", 111)]
-        );
-        let names: Vec<String> = chunks
-            .iter()
-            .filter(|c| c.kind == 7)
-            .map(|c| c.name())
-            .collect();
+        assert_eq!(d.motions.iter().map(|m| (m.name.as_str(), m.at)).collect::<Vec<_>>(), [("ded", 0), ("cor0", 111)]);
+        let names: Vec<String> = chunks.iter().filter(|c| c.kind == 7).map(|c| c.name()).collect();
         let mut m = matching(names.iter().map(|s| s.as_str()), "ati?");
         m.sort();
         assert_eq!(m, ["ati0", "ati1", "ati2"]);

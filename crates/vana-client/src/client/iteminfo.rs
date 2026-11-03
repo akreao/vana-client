@@ -96,11 +96,7 @@ fn fmt(f: &str, args: &[&dyn std::fmt::Display]) -> String {
 
 /// FUN_101c93c0: "%d:%02d:%02d" from an hour up, else "%d:%02d".
 fn time(s: u32) -> String {
-    if s >= 3600 {
-        format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60)
-    } else {
-        format!("{}:{:02}", s / 60, s % 60)
-    }
+    if s >= 3600 { format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60) } else { format!("{}:{:02}", s / 60, s % 60) }
 }
 
 /// Greedy wrap at `max` px, breaking after any of `breaks` (FUN_101ca520); a piece with no break point is cut.
@@ -135,9 +131,7 @@ fn sig_name(b: &[u8]) -> String {
     let mut out = String::new();
     for k in 0..b.len() * 8 / 6 {
         let bit = k * 6;
-        let v = ((u16::from(b[bit / 8]) << 8 | u16::from(*b.get(bit / 8 + 1).unwrap_or(&0)))
-            >> (10 - bit % 8))
-            & 0x3f;
+        let v = ((u16::from(b[bit / 8]) << 8 | u16::from(*b.get(bit / 8 + 1).unwrap_or(&0))) >> (10 - bit % 8)) & 0x3f;
         out.push(match v {
             0 => break,
             1..=10 => (b'0' + v as u8 - 1) as char,
@@ -166,38 +160,13 @@ fn skill_text(skill: u8) -> Option<usize> {
 
 /// FUN_1013cec0's line 2 tables: slots (group 12 #0xe..0x17, first match) and races (#0..0xd: the first three exact,
 /// then the first whose bits are all set *(inf)*).
-const SLOTS: [(u16, usize); 10] = [
-    (0x10, 0xe),
-    (0x20, 0xf),
-    (0x80, 0x10),
-    (0x40, 0x11),
-    (0x2000, 0x12),
-    (0x800, 0x13),
-    (0x200, 0x14),
-    (0x8000, 0x15),
-    (0x400, 0x16),
-    (0x100, 0x17),
-];
-const RACES: [u16; 14] = [
-    0x1fe, 0x12a, 0xd4, 6, 2, 4, 0x18, 8, 0x10, 0x60, 0x20, 0x40, 0x100, 0x80,
-];
+const SLOTS: [(u16, usize); 10] = [(0x10, 0xe), (0x20, 0xf), (0x80, 0x10), (0x40, 0x11), (0x2000, 0x12), (0x800, 0x13), (0x200, 0x14), (0x8000, 0x15), (0x400, 0x16), (0x100, 0x17)];
+const RACES: [u16; 14] = [0x1fe, 0x12a, 0xd4, 6, 2, 4, 0x18, 8, 0x10, 0x60, 0x20, 0x40, 0x100, 0x80];
 
 /// FUN_1013d790 and FUN_1013c500. `msg(group, id)`: groups 9..12 and 0x1c (file slot 0x1c, 55688 in English);
 /// `width` the game font's.
-pub fn build(
-    it: &Item,
-    ext: Option<&[u8; 24]>,
-    cx: &Ctx,
-    msg: &dyn Fn(u8, usize) -> Option<String>,
-    width: &dyn Fn(&str) -> f32,
-    aug_ctx: Option<&super::augment::AugCtx>,
-) -> Info {
-    let mut info = Info {
-        name_tint: WHITE,
-        icon_tint: WHITE,
-        extra_tint: WHITE,
-        ..Default::default()
-    };
+pub fn build(it: &Item, ext: Option<&[u8; 24]>, cx: &Ctx, msg: &dyn Fn(u8, usize) -> Option<String>, width: &dyn Fn(&str) -> f32, aug_ctx: Option<&super::augment::AugCtx>) -> Info {
+    let mut info = Info { name_tint: WHITE, icon_tint: WHITE, extra_tint: WHITE, ..Default::default() };
     let mut name = it.singular.clone();
     if let Some(c) = name.get(..1) {
         name.replace_range(..1, &c.to_uppercase());
@@ -230,25 +199,11 @@ pub fn build(
     }
     info.alt = it.flags & 0x10 != 0 && !(it.flags & 0x800 != 0 && aug && it.flags & 1 == 0);
     if gear {
-        let first = if t == 4 {
-            skill_text(it.skill)
-        } else {
-            SLOTS.iter().find(|(b, _)| it.slots & b != 0).map(|s| s.1)
-        };
+        let first = if t == 4 { skill_text(it.skill) } else { SLOTS.iter().find(|(b, _)| it.slots & b != 0).map(|s| s.1) };
         if let Some(s) = first.and_then(|id| msg(12, id)) {
             info.line2.push(s);
         }
-        let race = RACES
-            .iter()
-            .position(|&r| it.races == r)
-            .filter(|&k| k < 3)
-            .or_else(|| {
-                RACES
-                    .iter()
-                    .skip(3)
-                    .position(|&r| it.races & r == r)
-                    .map(|k| k + 3)
-            });
+        let race = RACES.iter().position(|&r| it.races == r).filter(|&k| k < 3).or_else(|| RACES.iter().skip(3).position(|&r| it.races & r == r).map(|k| k + 3));
         if let Some(s) = race.and_then(|k| msg(12, k)) {
             info.line2.push(s);
         }
@@ -259,12 +214,7 @@ pub fn build(
         }
     }
     // Description: the item's lines, pre-wrapped at 316 px (FUN_1015b410), at most 20.
-    info.desc = it
-        .description
-        .split('\n')
-        .flat_map(|l| wrap(l, 316.0, &[' '], width))
-        .take(20)
-        .collect();
+    info.desc = it.description.split('\n').flat_map(|l| wrap(l, 316.0, &[' '], width)).take(20).collect();
     let extra = |k: u16| it.extra.iter().find(|e| e.0 == k).map_or(0, |e| e.1);
     let mut line = String::new();
     if gear {
@@ -274,39 +224,23 @@ pub fn build(
             let jobs = if it.jobs & 0x7f_fffe == 0x7f_fffe {
                 msg(9, 0xe2).unwrap_or_default()
             } else {
-                (1..super::items::JOBS.len())
-                    .filter(|j| it.jobs & (1 << j) != 0)
-                    .map(|j| super::items::JOBS[j])
-                    .collect::<Vec<_>>()
-                    .join("/")
+                (1..super::items::JOBS.len()).filter(|j| it.jobs & (1 << j) != 0).map(|j| super::items::JOBS[j]).collect::<Vec<_>>().join("/")
             };
-            let lv = fmt(
-                &msg(10, 0x53).unwrap_or_else(|| "Lv.%d ".into()),
-                &[&it.level],
-            );
+            let lv = fmt(&msg(10, 0x53).unwrap_or_else(|| "Lv.%d ".into()), &[&it.level]);
             info.jobs = super::augment::wrap(&format!("{lv}{jobs}"), 309.0, width);
         }
         let ilvl = extra(0xd50);
         if ilvl != 0 {
-            info.ilvl = format!(
-                "<{}>",
-                fmt(&msg(0x1c, 0x3e).unwrap_or_else(|| "%d".into()), &[&ilvl])
-            );
+            info.ilvl = format!("<{}>", fmt(&msg(0x1c, 0x3e).unwrap_or_else(|| "%d".into()), &[&ilvl]));
         }
         // FUN_1013bbf0: charges (extdata kind none / 1); augments (2 / 3) are not decoded yet.
         // Charges only with no extdata (an event's item) or kind 1.
         if it.max_charges != 0 && ext.is_none_or(|e| e[0] == 1) {
-            let u32_at =
-                |e: &[u8; 24], o: usize| u32::from_le_bytes(e[o..o + 4].try_into().unwrap());
+            let u32_at = |e: &[u8; 24], o: usize| u32::from_le_bytes(e[o..o + 4].try_into().unwrap());
             let left = |ts: u32| ts.saturating_sub(cx.now);
             let mut tt = ext.map_or(0, |e| left(u32_at(e, 4)));
             match ext {
-                Some(e)
-                    if cx.equipped
-                        && cx.container.is_some_and(|c| matches!(c, 0 | 8 | 10..=16)) =>
-                {
-                    tt = tt.max(left(u32_at(e, 8)))
-                }
+                Some(e) if cx.equipped && cx.container.is_some_and(|c| matches!(c, 0 | 8 | 10..=16)) => tt = tt.max(left(u32_at(e, 8))),
                 _ => tt = tt.max(it.use_delay as u32),
             }
             let max = it.max_charges;
@@ -314,22 +248,13 @@ pub fn build(
             if cur == 0 && ext.is_some() {
                 tt = 0;
             }
-            line = if max == 0xff {
-                crate::dat::font::decode_sjis(&[0x81, 0xe4])
-            } else {
-                format!("{cur}/{max}")
-            };
+            line = if max == 0xff { crate::dat::font::decode_sjis(&[0x81, 0xe4]) } else { format!("{cur}/{max}") };
             if cur == 0 {
                 info.extra_tint = 0x8080_4020;
             } else if cur == max {
                 info.extra_tint = 0x8040_7090;
             }
-            line += &format!(
-                " {}/[{}, {}]",
-                time(tt),
-                time(it.use_delay as u32),
-                time(it.reuse_delay)
-            );
+            line += &format!(" {}/[{}, {}]", time(tt), time(it.use_delay as u32), time(it.reuse_delay));
         }
     }
     // Augments (FUN_1013b170 -> FUN_100ff140, FUN_1013b280 modes 0 / 1; a stone, type 0x1a, modes 2 / 3): the block
@@ -341,10 +266,7 @@ pub fn build(
         let stone = t == 0x1a;
         if !stone || !r.pairs.is_empty() {
             let block = crate::dat::font::decode_sjis(&super::augment::block(&r, stone, a));
-            info.augs = super::augment::wrap(&block, 309.0, width)
-                .into_iter()
-                .take(20)
-                .collect();
+            info.augs = super::augment::wrap(&block, 309.0, width).into_iter().take(20).collect();
             if let Some((s, tint)) = super::augment::short(&r, stone, a) {
                 line = crate::dat::font::decode_sjis(&s);
                 if let Some(c) = tint {
@@ -356,11 +278,7 @@ pub fn build(
     match (t, ext) {
         // Fish: size and weight.
         (3, Some(e)) if u16::from_le_bytes([e[0], e[1]]) != 0 => {
-            line = format!(
-                "{}[Im]/{}[Pz]",
-                u16::from_le_bytes([e[0], e[1]]),
-                u16::from_le_bytes([e[2], e[3]])
-            );
+            line = format!("{}[Im]/{}[Pz]", u16::from_le_bytes([e[0], e[1]]), u16::from_le_bytes([e[2], e[3]]));
             if e[4] & 1 != 0
                 && let Some(s) = msg(11, 0xb7)
             {
@@ -379,24 +297,13 @@ pub fn build(
         }
         // Maze Tabulae (cases 0x16 / 0x17): the voucher and the runes on it, "%s [%d]"; an R one adds d5 bits 4..10, "(%d)".
         (0x16 | 0x17, Some(e)) if cx.voucher.is_some() => {
-            let (name, n) = (
-                cx.voucher.clone().unwrap_or_default(),
-                crate::dat::maze::count(e),
-            );
-            line = if t == 0x17 {
-                format!("{name} [{n}]({})", crate::dat::maze::extra(e))
-            } else {
-                format!("{name} [{n}]")
-            };
+            let (name, n) = (cx.voucher.clone().unwrap_or_default(), crate::dat::maze::count(e));
+            line = if t == 0x17 { format!("{name} [{n}]({})", crate::dat::maze::extra(e)) } else { format!("{name} [{n}]") };
         }
         // Furnishings: the element glyph and the storage.
         (10 | 12 | 14, _) => {
             let el = extra(0xd10);
-            let glyph = if el <= 7 {
-                crate::dat::font::decode_sjis(&[0xef, 0x1f + el as u8])
-            } else {
-                String::new()
-            };
+            let glyph = if el <= 7 { crate::dat::font::decode_sjis(&[0xef, 0x1f + el as u8]) } else { String::new() };
             if let Some(f) = msg(10, 0x38) {
                 line = fmt(&f, &[&glyph, &extra(0xd14)]);
             }
@@ -409,11 +316,7 @@ pub fn build(
     // The crafter's signature.
     let sig_types = matches!(t, 0 | 1 | 2 | 4 | 5 | 7 | 0x10 | 0x1c | 0x1f);
     let off = if t == 0x10 { 0xa } else { 0xc };
-    if let Some(e) = ext.filter(|e| {
-        sig_types
-            && e[off] != 0
-            && !matches!(it.id, 0x200..=0x203 | 0x108c | 0x108d | 0x1525 | 0x1526)
-    }) {
+    if let Some(e) = ext.filter(|e| sig_types && e[off] != 0 && !matches!(it.id, 0x200..=0x203 | 0x108c | 0x108d | 0x1525 | 0x1526)) {
         info.sig = format!("[{}]", sig_name(&e[off..]));
     }
     if cx.flags & 1 != 0 {
@@ -432,12 +335,7 @@ fn pages(info: &Info, two_rows: bool, _plus: bool, _flags: u16) -> Vec<Vec<u8>> 
     let n = head.len();
     let min_rows = 3;
     let (d, j, a) = (info.desc.len(), info.jobs.len(), info.augs.len());
-    let lines: Vec<(bool, u8)> = [
-        (!info.extra.is_empty(), 0x3c),
-        (!info.sig.is_empty(), 0x3d),
-        (!info.ilvl.is_empty(), 0x3e),
-    ]
-    .to_vec();
+    let lines: Vec<(bool, u8)> = [(!info.extra.is_empty(), 0x3c), (!info.sig.is_empty(), 0x3d), (!info.ilvl.is_empty(), 0x3e)].to_vec();
     let used = lines.iter().filter(|l| l.0).count();
     let mut avail = 12usize.saturating_sub(used + j + n);
     let (mut alone, mut tail) = (false, false);
@@ -517,23 +415,14 @@ pub fn draw(gu: &mut GameUi, info: &Info, page: usize, icon: Option<&str>, x: f3
         let w = gu.text_width(s);
         gu.text(s, rx - w, ry, 0, col(c));
     };
-    let Some(codes) = info.pages.get(page) else {
-        return;
-    };
+    let Some(codes) = info.pages.get(page) else { return };
     for (k, &c) in codes.iter().enumerate() {
         let ry = y + 4.0 + 16.0 * k as f32;
         match c {
             1 => {
                 if let Some(t) = icon {
                     let tint = info.icon_tint.to_le_bytes().map(|b| b as f32 / 128.0);
-                    gu.image_rect(
-                        t,
-                        x + 8.0,
-                        y + 12.0,
-                        32.0,
-                        32.0,
-                        [tint[2], tint[1], tint[0], tint[3]],
-                    );
+                    gu.image_rect(t, x + 8.0, y + 12.0, 32.0, 32.0, [tint[2], tint[1], tint[0], tint[3]]);
                 }
                 gu.text(&info.name, x + 51.0, y + 4.0, 0, col(info.name_tint));
                 let mut mx = x + 314.0;
@@ -591,9 +480,7 @@ mod tests {
     fn item(id: u32) -> Option<Item> {
         let dir = crate::config::Config::load().ffxi_dir();
         let index = crate::dat::DatIndex::open(&dir).ok()?;
-        crate::dat::items::Items::load(&index, crate::dat::items::Lang::En)
-            .ok()?
-            .item(id)
+        crate::dat::items::Items::load(&index, crate::dat::items::Lang::En).ok()?.item(id)
     }
 
     /// 7 px a character, about the game font's.
@@ -617,10 +504,7 @@ mod tests {
         let i = build(&it, None, &Ctx::default(), &msg, &width, None);
         assert_eq!(i.name, "Bronze sword");
         assert_eq!(i.line2, vec!["(Sword)".to_string(), "All Races ".into()]);
-        assert_eq!(
-            i.jobs.concat().replace(' ', ""),
-            "Lv.1WAR/RDM/THF/PLD/DRK/BRD/RNG/NIN/DRG/BLU/RUN"
-        );
+        assert_eq!(i.jobs.concat().replace(' ', ""), "Lv.1WAR/RDM/THF/PLD/DRK/BRD/RNG/NIN/DRG/BLU/RUN");
         assert_eq!(&i.pages[0][..3], &[1, 0, 10]);
         assert_eq!(i.pages.len(), 1);
     }
@@ -630,10 +514,7 @@ mod tests {
         let Some(it) = item(0x3de0) else { return };
         let i = build(&it, None, &Ctx::default(), &msg, &width, None);
         assert_eq!(i.marks, vec![294, 295]);
-        assert_eq!(
-            (i.extra.as_str(), i.extra_tint),
-            ("<11/11 0:05/[0:05, 15:00]>", 0x8040_7090)
-        );
+        assert_eq!((i.extra.as_str(), i.extra_tint), ("<11/11 0:05/[0:05, 15:00]>", 0x8040_7090));
         assert_eq!(i.pages[0], vec![1, 0, 10, 11, 12, 0x32, 0x3c]);
     }
 
@@ -641,10 +522,7 @@ mod tests {
     fn long_description_pages() {
         let mut it = Item::default();
         it.item_type = 1;
-        it.description = (0..14)
-            .map(|k| format!("line {k}"))
-            .collect::<Vec<_>>()
-            .join("\n");
+        it.description = (0..14).map(|k| format!("line {k}")).collect::<Vec<_>>().join("\n");
         let i = build(&it, None, &Ctx::default(), &msg, &width, None);
         assert_eq!(i.pages[0].len(), 12);
         assert_eq!(*i.pages[0].last().unwrap(), 0x50);
@@ -663,19 +541,13 @@ mod tests {
         it.item_type = 6;
         let i = build(&it, Some(&e), &Ctx::default(), &msg, &width, None);
         assert_eq!(i.extra, "<Ab>");
-        assert_eq!(
-            i.icon_tint,
-            0x8000_0000 | (15 * 13 + 0x38) << 16 | (2 * 13 + 0x38) << 8 | (13 + 0x38)
-        );
+        assert_eq!(i.icon_tint, 0x8000_0000 | (15 * 13 + 0x38) << 16 | (2 * 13 + 0x38) << 8 | (13 + 0x38));
         let mut s = [0u8; 24];
         // "A1": 11, 2.
         let bits: u32 = (11 << 18) | (2 << 12);
         s[0xc..0xf].copy_from_slice(&bits.to_be_bytes()[1..]);
         let mut it = Item::default();
         (it.item_type, it.id) = (1, 1);
-        assert_eq!(
-            build(&it, Some(&s), &Ctx::default(), &msg, &width, None).sig,
-            "[A1]"
-        );
+        assert_eq!(build(&it, Some(&s), &Ctx::default(), &msg, &width, None).sig, "[A1]");
     }
 }

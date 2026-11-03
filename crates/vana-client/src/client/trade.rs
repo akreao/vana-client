@@ -73,9 +73,7 @@ pub(super) fn start_on(w: &mut World, target: Option<u32>) -> bool {
         accept(w);
         return true;
     }
-    let Some((t, index, mob, pos)) =
-        target.and_then(|t| w.entities.get(&t).map(|e| (t, e.index, e.mob, e.pos)))
-    else {
+    let Some((t, index, mob, pos)) = target.and_then(|t| w.entities.get(&t).map(|e| (t, e.index, e.mob, e.pos))) else {
         super::post::system_line(w, 0x1d, [0; 5], String::new());
         return false;
     };
@@ -85,11 +83,7 @@ pub(super) fn start_on(w: &mut World, target: Option<u32>) -> bool {
     }
     if t < 0x0100_0000 {
         // Not a player on the blacklist (group 7 0xb3).
-        let name = w
-            .entities
-            .get(&t)
-            .map(|e| e.name.clone())
-            .unwrap_or_default();
+        let name = w.entities.get(&t).map(|e| e.name.clone()).unwrap_or_default();
         if super::partyreq::blacklisted(w, &name) == 1 {
             super::textcmd::refuse(w, 0xb3);
             return false;
@@ -104,16 +98,7 @@ pub(super) fn start_on(w: &mut World, target: Option<u32>) -> bool {
         return false;
     }
     w.menu = None;
-    w.handover = Some(Handover {
-        npc: (t, index),
-        slots: [None; 8],
-        gil: 0,
-        cursor: 1,
-        focus: Focus::Window,
-        list: (0, 0),
-        qty: None,
-        money: None,
-    });
+    w.handover = Some(Handover { npc: (t, index), slots: [None; 8], gil: 0, cursor: 1, focus: Focus::Window, list: (0, 0), qty: None, money: None });
     true
 }
 
@@ -132,11 +117,7 @@ fn picker_tint(h: &Handover, r: &crate::inventory::Slot) -> u32 {
 /// then the cursor slot takes it.
 fn place(h: &mut Handover, inv: u8, item: u16, n: u32) {
     let c = (h.cursor as usize).wrapping_sub(1);
-    if let Some(k) = h
-        .slots
-        .iter()
-        .position(|s| s.is_some_and(|s| s.1 == inv && s.0 == item))
-    {
+    if let Some(k) = h.slots.iter().position(|s| s.is_some_and(|s| s.1 == inv && s.0 == item)) {
         h.slots[k] = None;
         if k == c {
             return;
@@ -149,11 +130,7 @@ fn place(h: &mut Handover, inv: u8, item: u16, n: u32) {
 
 /// c2s 0x036 (FUN_10139cd0): UniqueNo, counts, inventory slots, ActIndex, the number of entries; gil first (slot 0).
 fn send(w: &World, h: &Handover) -> bool {
-    let entries: Vec<(u32, u8)> = (h.gil > 0)
-        .then_some((h.gil, 0))
-        .into_iter()
-        .chain(h.slots.iter().flatten().map(|s| (s.2, s.1)))
-        .collect();
+    let entries: Vec<(u32, u8)> = (h.gil > 0).then_some((h.gil, 0)).into_iter().chain(h.slots.iter().flatten().map(|s| (s.2, s.1))).collect();
     if entries.is_empty() {
         return false;
     }
@@ -165,21 +142,13 @@ fn send(w: &World, h: &Handover) -> bool {
     }
     b[0x36..0x38].copy_from_slice(&h.npc.1.to_le_bytes());
     b[0x38] = entries.len() as u8;
-    let _ = w
-        .net
-        .commands
-        .send(NetCommand::Packet { id: 0x036, body: b });
+    let _ = w.net.commands.send(NetCommand::Packet { id: 0x036, body: b });
     true
 }
 
 /// A hand-over without the window (a Lua mod's): the NPC within reach, up to 8 entries with the gil, inventory
 /// items that are neither worn nor linkshell items; sent as the window's Trade does.
-pub(super) fn hand_over(
-    w: &World,
-    npc: u32,
-    items: &[(u8, u32)],
-    gil: u32,
-) -> Result<(), &'static str> {
+pub(super) fn hand_over(w: &World, npc: u32, items: &[(u8, u32)], gil: u32) -> Result<(), &'static str> {
     let e = w.entities.get(&npc).ok_or("no such NPC")?;
     if e.pos.distance_squared(w.pos) > REACH * REACH {
         return Err("too far away");
@@ -189,47 +158,22 @@ pub(super) fn hand_over(
     }
     let mut slots = [None; 8];
     for (k, &(slot, n)) in items.iter().enumerate() {
-        let &(id, held) = w
-            .inv
-            .slots
-            .get(&(super::items::INVENTORY, slot))
-            .ok_or("an empty inventory slot")?;
-        let worn = w
-            .inv
-            .equip
-            .iter()
-            .flatten()
-            .any(|&(b, i)| b == super::items::INVENTORY && i == slot);
+        let &(id, held) = w.inv.slots.get(&(super::items::INVENTORY, slot)).ok_or("an empty inventory slot")?;
+        let worn = w.inv.equip.iter().flatten().any(|&(b, i)| b == super::items::INVENTORY && i == slot);
         if (0x201..=0x203).contains(&id) || worn || n == 0 || n > held {
             return Err("an item that cannot be traded (worn, a linkshell item, or not that many)");
         }
         slots[k] = Some((id, slot, n));
     }
-    let h = Handover {
-        npc: (npc, e.index),
-        slots,
-        gil,
-        cursor: 1,
-        focus: Focus::Window,
-        list: (0, 0),
-        qty: None,
-        money: None,
-    };
-    if send(w, &h) {
-        Ok(())
-    } else {
-        Err("nothing to trade")
-    }
+    let h = Handover { npc: (npc, e.index), slots, gil, cursor: 1, focus: Focus::Window, list: (0, 0), qty: None, money: None };
+    if send(w, &h) { Ok(()) } else { Err("nothing to trade") }
 }
 
 /// Per frame (FUN_10139b00): the NPC out of reach (or gone) closes it with "Target out of range."; an event closes it
 /// (the 0x838 hook).
 fn handover_update(w: &mut World) {
     let Some(h) = &w.handover else { return };
-    let far = w
-        .entities
-        .get(&h.npc.0)
-        .is_none_or(|e| e.pos.distance_squared(w.pos) > REACH * REACH);
+    let far = w.entities.get(&h.npc.0).is_none_or(|e| e.pos.distance_squared(w.pos) > REACH * REACH);
     if far {
         w.handover = None;
         super::post::system_line(w, 9, [0; 5], String::new());
@@ -243,29 +187,11 @@ fn handover_update(w: &mut World) {
 pub(super) fn modern_link(cursor: u16, key: egui::Key, gil: bool) -> u16 {
     use egui::Key as K;
     match (cursor, key) {
-        (1..=8, K::ArrowLeft) => {
-            if (cursor - 1) % 4 == 0 {
-                cursor + 3
-            } else {
-                cursor - 1
-            }
-        }
-        (1..=8, K::ArrowRight) => {
-            if cursor % 4 == 0 {
-                cursor - 3
-            } else {
-                cursor + 1
-            }
-        }
+        (1..=8, K::ArrowLeft) => if (cursor - 1) % 4 == 0 { cursor + 3 } else { cursor - 1 },
+        (1..=8, K::ArrowRight) => if cursor % 4 == 0 { cursor - 3 } else { cursor + 1 },
         (1..=4, K::ArrowDown) => cursor + 4,
         (5..=8, K::ArrowUp) => cursor - 4,
-        (5..=8, K::ArrowDown) => {
-            if gil {
-                11
-            } else {
-                9
-            }
-        }
+        (5..=8, K::ArrowDown) => if gil { 11 } else { 9 },
         (11, K::ArrowUp) => 5,
         (11, K::ArrowDown) => 9,
         (9 | 10, K::ArrowUp) if gil => 11,
@@ -278,20 +204,14 @@ pub(super) fn modern_link(cursor: u16, key: egui::Key, gil: bool) -> u16 {
 
 fn handover_key(w: &mut World, gu: &GameUi, key: egui::Key) {
     use egui::Key as K;
-    let Some(mut h) = w.handover.take() else {
-        return;
-    };
+    let Some(mut h) = w.handover.take() else { return };
     let mut close = false;
     match h.focus {
         // FUN_10139a40: Enter on a slot picks into it, OK sends and closes, Cancel closes, the gil child asks the
         // amount; Escape puts the cursor on Cancel first.
         Focus::Window => match key {
             K::ArrowUp | K::ArrowDown | K::ArrowRight | K::ArrowLeft => {
-                let to = if w.modern {
-                    modern_link(h.cursor, key, true)
-                } else {
-                    super::post::link(gu, HANDOVER, h.cursor, key)
-                };
+                let to = if w.modern { modern_link(h.cursor, key, true) } else { super::post::link(gu, HANDOVER, h.cursor, key) };
                 if to != h.cursor && to != 0 {
                     h.cursor = to;
                     w.sounds.push(Ui::Cursor as u32);
@@ -320,11 +240,7 @@ fn handover_key(w: &mut World, gu: &GameUi, key: egui::Key) {
             },
             K::Escape => {
                 w.sounds.push(Ui::Cancel as u32);
-                if h.cursor == 10 {
-                    close = true
-                } else {
-                    h.cursor = 10
-                }
+                if h.cursor == 10 { close = true } else { h.cursor = 10 }
             }
             _ => {}
         },
@@ -334,10 +250,10 @@ fn handover_key(w: &mut World, gu: &GameUi, key: egui::Key) {
             let (mut sc, mut cu) = h.list;
             match key {
                 K::ArrowUp | K::ArrowDown => {
-                    if super::items::list_keys(&mut sc, &mut cu, rows.len(), key) {
-                        w.sounds.push(crate::audio::Ui::Cursor as u32);
-                    }
+                if super::items::list_keys(&mut sc, &mut cu, rows.len(), key) {
+                    w.sounds.push(crate::audio::Ui::Cursor as u32);
                 }
+            }
                 K::ArrowRight | K::ArrowLeft => {
                     if super::items::page_keys(&mut sc, &mut cu, rows.len(), key == K::ArrowRight) {
                         w.sounds.push(Ui::Cursor as u32);
@@ -378,16 +294,10 @@ fn handover_key(w: &mut World, gu: &GameUi, key: egui::Key) {
             }
             h.qty = Some((inv, v, max));
             match key {
-                K::ArrowUp | K::ArrowDown | K::ArrowRight | K::ArrowLeft => {
-                    w.sounds.push(Ui::Cursor as u32)
-                }
+                K::ArrowUp | K::ArrowDown | K::ArrowRight | K::ArrowLeft => w.sounds.push(Ui::Cursor as u32),
                 K::Enter => {
                     w.sounds.push(Ui::Select as u32);
-                    let item = w
-                        .inv
-                        .slots
-                        .get(&(super::items::INVENTORY, inv))
-                        .map_or(0, |x| x.0);
+                    let item = w.inv.slots.get(&(super::items::INVENTORY, inv)).map_or(0, |x| x.0);
                     place(&mut h, inv, item, v);
                     (h.qty, h.focus) = (None, Focus::Window);
                 }
@@ -412,15 +322,9 @@ fn handover_key(w: &mut World, gu: &GameUi, key: egui::Key) {
             }
             h.money = Some((step, max, v));
             match key {
-                K::ArrowUp | K::ArrowDown | K::ArrowRight | K::ArrowLeft => {
-                    w.sounds.push(Ui::Cursor as u32)
-                }
+                K::ArrowUp | K::ArrowDown | K::ArrowRight | K::ArrowLeft => w.sounds.push(Ui::Cursor as u32),
                 K::Enter | K::Escape => {
-                    w.sounds.push(if key == K::Enter {
-                        Ui::Select
-                    } else {
-                        Ui::Cancel
-                    } as u32);
+                    w.sounds.push(if key == K::Enter { Ui::Select } else { Ui::Cancel } as u32);
                     if key == K::Enter {
                         h.gil = v;
                     }
@@ -440,12 +344,7 @@ fn handover_info(w: &World) -> Option<(u16, Option<[u8; 24]>)> {
     let h = w.handover.as_ref()?;
     let inv = match h.focus {
         Focus::Picker | Focus::Qty => super::post::picker_rows(w).get(h.list.0 + h.list.1)?.index,
-        _ => {
-            h.slots
-                .get((h.cursor as usize).checked_sub(1)?)?
-                .as_ref()?
-                .1
-        }
+        _ => h.slots.get((h.cursor as usize).checked_sub(1)?)?.as_ref()?.1,
     };
     let id = w.inv.slots.get(&(super::items::INVENTORY, inv))?.0;
     Some((id, w.inv.ext.get(&(super::items::INVENTORY, inv)).copied()))
@@ -479,60 +378,19 @@ fn handover_bars(gu: &GameUi, w: &World, bars: &mut super::hudtop::BarText) {
 fn handover_draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
     const WHITE: u32 = 0x8080_8080;
     let mut rects = Vec::new();
-    let (Some(h), Some(info)) = (&w.handover, w.item_info.clone()) else {
-        return rects;
-    };
+    let (Some(h), Some(info)) = (&w.handover, w.item_info.clone()) else { return rects };
     let rows = super::post::picker_rows(w);
     let tints: Vec<u32> = rows.iter().map(|r| picker_tint(h, r)).collect();
-    rects.extend(super::post::draw_list(
-        gu,
-        w,
-        &info,
-        h.list,
-        h.focus == Focus::Picker,
-        Some(&tints),
-        sw,
-        sh,
-    ));
+    rects.extend(super::post::draw_list(gu, w, &info, h.list, h.focus == Focus::Picker, Some(&tints), sw, sh));
     rects.extend(super::post::draw_money(gu, w, sw, sh));
     let focused = h.focus == Focus::Window;
-    if let Some(win) = gu.lobby_window_off(
-        HANDOVER,
-        sw,
-        sh,
-        (0.0, 0.0),
-        focused.then_some(h.cursor),
-        focused,
-        &[],
-    ) {
-        let slots: Vec<(u16, u32, bool)> = h
-            .slots
-            .iter()
-            .map(|s| s.map_or((0, 0, false), |s| (s.0, s.2, true)))
-            .collect();
-        super::post::draw_slots(
-            gu,
-            &info,
-            HANDOVER,
-            win.frame,
-            &slots,
-            None,
-            focused.then_some(h.cursor),
-            |_| [1.0; 4],
-        );
+    if let Some(win) = gu.lobby_window_off(HANDOVER, sw, sh, (0.0, 0.0), focused.then_some(h.cursor), focused, &[]) {
+        let slots: Vec<(u16, u32, bool)> = h.slots.iter().map(|s| s.map_or((0, 0, false), |s| (s.0, s.2, true))).collect();
+        super::post::draw_slots(gu, &info, HANDOVER, win.frame, &slots, None, focused.then_some(h.cursor), |_| [1.0; 4]);
         // FUN_10140910: the gil "N  G" right-aligned at child 11's right edge + 10.
-        if let Some(e) = gu
-            .layout(HANDOVER)
-            .and_then(|l| l.elements.iter().find(|e| e.id == 11).cloned())
-        {
+        if let Some(e) = gu.layout(HANDOVER).and_then(|l| l.elements.iter().find(|e| e.id == 11).cloned()) {
             let g = crate::inventory::gil_text(h.gil as i64);
-            gu.shape_text(
-                &g,
-                win.frame[0] + e.x as f32 + e.w as f32 + 10.0,
-                win.frame[1] + e.y as f32,
-                WHITE,
-                true,
-            );
+            gu.shape_text(&g, win.frame[0] + e.x as f32 + e.w as f32 + 10.0, win.frame[1] + e.y as f32, WHITE, true);
         }
         rects.push(win.frame);
     }
@@ -601,12 +459,7 @@ pub(super) struct View {
 pub(super) fn view(w: &World) -> Option<View> {
     let free = w.confirm.is_none();
     let rows = super::post::picker_rows(w);
-    let name = |id: u32| {
-        w.entities
-            .get(&id)
-            .map(|e| e.name.clone())
-            .unwrap_or_default()
-    };
+    let name = |id: u32| w.entities.get(&id).map(|e| e.name.clone()).unwrap_or_default();
     if let Some(h) = &w.handover {
         let tints = rows.iter().map(|r| picker_tint(h, r)).collect();
         return Some(View {
@@ -630,11 +483,7 @@ pub(super) fn view(w: &World) -> Option<View> {
     let tints = rows.iter().map(|r| p2p_tint(w, r)).collect();
     let theirs = std::array::from_fn(|i| {
         let e = &p.theirs[i + 1];
-        if e.0 > 0 && e.1 != 0 && e.1 != GIL {
-            (e.1, e.0)
-        } else {
-            (0, 0)
-        }
+        if e.0 > 0 && e.1 != 0 && e.1 != GIL { (e.1, e.0) } else { (0, 0) }
     });
     Some(View {
         with: p.partner.map(|x| name(x.0)).unwrap_or_default(),
@@ -643,11 +492,7 @@ pub(super) fn view(w: &World) -> Option<View> {
             let e = &p.mine[i + 1];
             if offered(e) { (e.1, e.0) } else { (0, 0) }
         }),
-        gil: if p.mine[0].1 == GIL && p.mine[0].2 == 0 {
-            p.mine[0].0
-        } else {
-            0
-        },
+        gil: if p.mine[0].1 == GIL && p.mine[0].2 == 0 { p.mine[0].0 } else { 0 },
         our_ok: p.state == 4,
         theirs: Some((theirs, p.theirs[0].0, p.partner_ok)),
         cursor: u.cursor,
@@ -672,14 +517,7 @@ pub(super) fn set_cursor(w: &mut World, c: u16) -> bool {
         return moved;
     }
     let locked = w.p2p.state == 4;
-    let Some(u) = w
-        .p2p
-        .ui
-        .as_mut()
-        .filter(|u| matches!(u.focus, PFocus::Trade | PFocus::Gift | PFocus::Picker))
-    else {
-        return false;
-    };
+    let Some(u) = w.p2p.ui.as_mut().filter(|u| matches!(u.focus, PFocus::Trade | PFocus::Gift | PFocus::Picker)) else { return false };
     if locked && !matches!(c, 9 | 10) {
         return false;
     }
@@ -691,14 +529,7 @@ pub(super) fn set_cursor(w: &mut World, c: u16) -> bool {
 /// Their window's cursor onto slot `g` (player trade, before our OK).
 pub(super) fn set_gift(w: &mut World, g: u16) -> bool {
     let locked = w.p2p.state == 4;
-    let Some(u) = w
-        .p2p
-        .ui
-        .as_mut()
-        .filter(|u| !locked && matches!(u.focus, PFocus::Trade | PFocus::Gift))
-    else {
-        return false;
-    };
+    let Some(u) = w.p2p.ui.as_mut().filter(|u| !locked && matches!(u.focus, PFocus::Trade | PFocus::Gift)) else { return false };
     let moved = u.gift != g || u.focus != PFocus::Gift;
     (u.focus, u.gift) = (PFocus::Gift, g);
     moved
@@ -713,11 +544,7 @@ pub(super) fn set_row(w: &mut World, k: usize) -> bool {
             return false;
         }
         if !(1..=8).contains(&h.cursor) {
-            h.cursor = h
-                .slots
-                .iter()
-                .position(|s| s.is_none())
-                .map_or(1, |i| i as u16 + 1);
+            h.cursor = h.slots.iter().position(|s| s.is_none()).map_or(1, |i| i as u16 + 1);
         }
         let moved = h.focus != Focus::Picker || h.list.0 + h.list.1 != k;
         (h.focus, h.list) = (Focus::Picker, at);
@@ -725,13 +552,7 @@ pub(super) fn set_row(w: &mut World, k: usize) -> bool {
     }
     let free: Option<u16> = (1..=8u16).find(|&c| !offered(&w.p2p.mine[c as usize]));
     let locked = w.p2p.state == 4;
-    let Some(u) =
-        w.p2p.ui.as_mut().filter(|u| {
-            !locked && matches!(u.focus, PFocus::Trade | PFocus::Gift | PFocus::Picker)
-        })
-    else {
-        return false;
-    };
+    let Some(u) = w.p2p.ui.as_mut().filter(|u| !locked && matches!(u.focus, PFocus::Trade | PFocus::Gift | PFocus::Picker)) else { return false };
     if !(1..=8).contains(&u.cursor) {
         u.cursor = free.unwrap_or(1);
     }
@@ -754,45 +575,19 @@ pub(super) fn set_money(w: &mut World, v: u32) {
 }
 
 /// The child of window `name` (ids in `ids`) under the pointer, from its layout at its drawn place.
-pub(super) fn child_at(
-    gu: &GameUi,
-    name: &str,
-    sw: f32,
-    sh: f32,
-    p: (f32, f32),
-    ids: std::ops::RangeInclusive<u16>,
-) -> Option<u16> {
+pub(super) fn child_at(gu: &GameUi, name: &str, sw: f32, sh: f32, p: (f32, f32), ids: std::ops::RangeInclusive<u16>) -> Option<u16> {
     let ((x, y), lay) = (gu.window_xy(name, sw, sh)?, gu.layout(name)?);
-    let hit = |e: &crate::dat::ui::MenuElement| {
-        p.0 >= x + e.x as f32
-            && p.0 < x + e.x as f32 + e.w as f32
-            && p.1 >= y + e.y as f32
-            && p.1 < y + e.y as f32 + e.h as f32
-    };
-    lay.elements
-        .iter()
-        .skip(1)
-        .find(|e| ids.contains(&e.id) && hit(e))
-        .map(|e| e.id)
+    let hit = |e: &crate::dat::ui::MenuElement| p.0 >= x + e.x as f32 && p.0 < x + e.x as f32 + e.w as f32 && p.1 >= y + e.y as f32 && p.1 < y + e.y as f32 + e.h as f32;
+    lay.elements.iter().skip(1).find(|e| ids.contains(&e.id) && hit(e)).map(|e| e.id)
 }
 
 pub(super) fn over(gu: &GameUi, name: &str, sw: f32, sh: f32, p: (f32, f32)) -> bool {
-    gu.window_rect(name, sw, sh)
-        .is_some_and(|[x, y, ww, hh]| p.0 >= x && p.0 < x + ww && p.1 >= y && p.1 < y + hh)
+    gu.window_rect(name, sw, sh).is_some_and(|[x, y, ww, hh]| p.0 >= x && p.0 < x + ww && p.1 >= y && p.1 < y + hh)
 }
 
 /// The mouse on the focused trade window: a child under it takes the cursor, a click on the cursor's child is Enter
 /// and a right click on the window Escape; the picker's rows as the item list's (items::pointer).
-pub fn pointer(
-    w: &mut World,
-    gu: &GameUi,
-    sw: f32,
-    sh: f32,
-    p: (f32, f32),
-    moved: bool,
-    clicked: bool,
-    right: bool,
-) {
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
     // The modern layer draws these and takes their mouse.
     if w.modern {
         return;
@@ -818,9 +613,7 @@ pub fn pointer(
             key(w, gu, egui::Key::Escape);
             return;
         }
-        let Some(id) = child_at(gu, name, sw, sh, p, ids) else {
-            return;
-        };
+        let Some(id) = child_at(gu, name, sw, sh, p, ids) else { return };
         gu.hover.set(true);
         if id != cursor && (moved || clicked) {
             match (&mut w.handover, &mut w.p2p.ui) {
@@ -839,11 +632,7 @@ pub fn pointer(
             key(w, gu, egui::Key::Escape);
             return;
         }
-        let Some(row) = super::post::picker_row(gu, sw, sh, p)
-            .filter(|r| sc + r < super::post::picker_rows(w).len())
-        else {
-            return;
-        };
+        let Some(row) = super::post::picker_row(gu, sw, sh, p).filter(|r| sc + r < super::post::picker_rows(w).len()) else { return };
         gu.hover.set(true);
         if row != cu && (moved || clicked) {
             match (&mut w.handover, &mut w.p2p.ui) {
@@ -903,11 +692,7 @@ pub(super) fn picker(w: &mut World) -> Option<&mut (usize, usize)> {
     if let Some(h) = w.handover.as_mut().filter(|h| h.focus == Focus::Picker) {
         return Some(&mut h.list);
     }
-    w.p2p
-        .ui
-        .as_mut()
-        .filter(|u| u.focus == PFocus::Picker)
-        .map(|u| &mut u.list)
+    w.p2p.ui.as_mut().filter(|u| u.focus == PFocus::Picker).map(|u| &mut u.list)
 }
 
 #[derive(Default)]
@@ -927,11 +712,7 @@ pub struct P2p {
 impl P2p {
     fn reset(&mut self) {
         let (incoming, cancelled_at) = (self.incoming, self.cancelled_at);
-        *self = P2p {
-            incoming,
-            cancelled_at,
-            ..Default::default()
-        };
+        *self = P2p { incoming, cancelled_at, ..Default::default() };
     }
 }
 
@@ -968,9 +749,7 @@ fn line(w: &mut World, id: u16, actor: u32) {
 }
 
 fn in_reach(w: &World, id: u32) -> bool {
-    w.entities
-        .get(&id)
-        .is_some_and(|e| e.pos.distance_squared(w.pos) <= REACH * REACH)
+    w.entities.get(&id).is_some_and(|e| e.pos.distance_squared(w.pos) <= REACH * REACH)
 }
 
 fn close(w: &mut World) {
@@ -982,9 +761,7 @@ fn close(w: &mut World) {
 /// offer to trade with %s.".
 fn request(w: &mut World, t: u32, index: u16, pos: glam::Vec3) -> bool {
     let now = Instant::now();
-    let since = |at: Option<Instant>, s: u64| {
-        at.is_none_or(|a| now.duration_since(a) > Duration::from_secs(s))
-    };
+    let since = |at: Option<Instant>, s: u64| at.is_none_or(|a| now.duration_since(a) > Duration::from_secs(s));
     if let Some((p, _)) = w.p2p.partner {
         if in_reach(w, p) && since(w.p2p.asked_at, 1) && since(w.p2p.cancelled_at, 5) {
             if !since(w.p2p.asked_at, 60) {
@@ -1007,11 +784,7 @@ fn request(w: &mut World, t: u32, index: u16, pos: glam::Vec3) -> bool {
     b[4..6].copy_from_slice(&index.to_le_bytes());
     packet(w, 0x032, b);
     (w.p2p.partner, w.p2p.asked_at, w.p2p.state) = (Some((t, index)), Some(now), 1);
-    let name = w
-        .entities
-        .get(&t)
-        .map(|e| e.name.clone())
-        .unwrap_or_default();
+    let name = w.entities.get(&t).map(|e| e.name.clone()).unwrap_or_default();
     if let Some(bt) = w.battle.clone()
         && let Some(f) = bt.group10(0x14)
     {
@@ -1030,9 +803,7 @@ pub(super) fn cancel_request(w: &mut World) {
 
 /// Trade with a request pending: the requester still here and in reach gets c2s 0x033 Start; else it is dropped.
 fn accept(w: &mut World) {
-    let Some((id, _)) = w.p2p.incoming else {
-        return;
-    };
+    let Some((id, _)) = w.p2p.incoming else { return };
     if in_reach(w, id) {
         respond(w, 0);
     } else {
@@ -1053,12 +824,7 @@ pub(super) fn on_request(w: &mut World, id: u32, index: u16) {
 
 /// The windows that keep a trade from opening (registry flag 0x20000).
 fn window_open(w: &World) -> bool {
-    w.shop.is_some()
-        || w.win.is_some()
-        || w.handover.is_some()
-        || super::post::active(w)
-        || super::synth::active(w)
-        || w.moogle.is_some()
+    w.shop.is_some() || w.win.is_some() || w.handover.is_some() || super::post::active(w) || super::synth::active(w) || w.moogle.is_some()
 }
 
 /// s2c 0x022 (FUN_101521c0 / FUN_10152240): 0 Start opens both windows (unless out of reach or a window is in the
@@ -1085,16 +851,8 @@ pub(super) fn on_response(w: &mut World, id: u32, kind: u32, index: u16) {
                 return;
             }
             w.menu = None;
-            w.p2p.ui = Some(TradeUi {
-                focus: PFocus::Trade,
-                cursor: 1,
-                gift: 1,
-                list: (0, 0),
-                qty: None,
-                money: None,
-            });
-            (w.p2p.state, w.p2p.partner_ok, w.p2p.mine, w.p2p.theirs) =
-                (3, false, Default::default(), Default::default());
+            w.p2p.ui = Some(TradeUi { focus: PFocus::Trade, cursor: 1, gift: 1, list: (0, 0), qty: None, money: None });
+            (w.p2p.state, w.p2p.partner_ok, w.p2p.mine, w.p2p.theirs) = (3, false, Default::default(), Default::default());
         }
         2 => w.p2p.partner_ok = true,
         3 => {}
@@ -1122,14 +880,7 @@ pub(super) fn on_response(w: &mut World, id: u32, kind: u32, index: u16) {
 }
 
 /// s2c 0x023 (LAB_100ec9f0 / FUN_10152450): their slot; any change voids both OKs.
-pub(super) fn on_their_slot(
-    w: &mut World,
-    n: u32,
-    counter: u16,
-    item: u16,
-    slot: u8,
-    attr: [u8; 24],
-) {
+pub(super) fn on_their_slot(w: &mut World, n: u32, counter: u16, item: u16, slot: u8, attr: [u8; 24]) {
     w.p2p.counter = counter;
     if let Some(e) = w.p2p.theirs.get_mut(slot as usize) {
         *e = (n, item, attr);
@@ -1174,9 +925,7 @@ fn place_offer(w: &mut World, cursor: u16, inv: u8, item: u16, n: u32) {
 
 /// Per frame (FUN_101518b0): the partner out of reach cancels (7031 9); an event cancels (7031 0x1a, the 0x838 hook).
 fn p2p_update(w: &mut World) {
-    let Some((p, _)) = w.p2p.partner.filter(|_| w.p2p.ui.is_some()) else {
-        return;
-    };
+    let Some((p, _)) = w.p2p.partner.filter(|_| w.p2p.ui.is_some()) else { return };
     if !in_reach(w, p) {
         super::post::system_line(w, 9, [0; 5], String::new());
         respond(w, 1);
@@ -1215,11 +964,7 @@ fn p2p_key(w: &mut World, gu: &GameUi, key: egui::Key) {
                 w.sounds.push(Ui::Cursor as u32);
             }
             K::ArrowUp | K::ArrowDown | K::ArrowRight | K::ArrowLeft if !locked => {
-                let to = if w.modern {
-                    modern_link(u.cursor, key, true)
-                } else {
-                    super::post::link(gu, TRADE, u.cursor, key)
-                };
+                let to = if w.modern { modern_link(u.cursor, key, true) } else { super::post::link(gu, TRADE, u.cursor, key) };
                 if to != u.cursor && to != 0 {
                     u.cursor = to;
                     w.sounds.push(Ui::Cursor as u32);
@@ -1248,11 +993,7 @@ fn p2p_key(w: &mut World, gu: &GameUi, key: egui::Key) {
                     w.sounds.push(Ui::Select as u32);
                 }
                 (11, false) => {
-                    let current = if w.p2p.mine[0].1 == GIL {
-                        w.p2p.mine[0].0
-                    } else {
-                        0
-                    };
+                    let current = if w.p2p.mine[0].1 == GIL { w.p2p.mine[0].0 } else { 0 };
                     u.money = Some((1, w.inv.gil(), current));
                     u.focus = PFocus::Money;
                     w.sounds.push(Ui::Select as u32);
@@ -1275,11 +1016,7 @@ fn p2p_key(w: &mut World, gu: &GameUi, key: egui::Key) {
                 w.sounds.push(Ui::Cursor as u32);
             }
             K::ArrowUp | K::ArrowDown | K::ArrowRight | K::ArrowLeft => {
-                let to = if w.modern {
-                    modern_link(u.gift, key, false)
-                } else {
-                    super::post::link(gu, GIFT, u.gift, key)
-                };
+                let to = if w.modern { modern_link(u.gift, key, false) } else { super::post::link(gu, GIFT, u.gift, key) };
                 if to != u.gift && (1..=8).contains(&to) {
                     u.gift = to;
                     w.sounds.push(Ui::Cursor as u32);
@@ -1296,10 +1033,10 @@ fn p2p_key(w: &mut World, gu: &GameUi, key: egui::Key) {
             let (mut sc, mut cu) = u.list;
             match key {
                 K::ArrowUp | K::ArrowDown => {
-                    if super::items::list_keys(&mut sc, &mut cu, rows.len(), key) {
-                        w.sounds.push(crate::audio::Ui::Cursor as u32);
-                    }
+                if super::items::list_keys(&mut sc, &mut cu, rows.len(), key) {
+                    w.sounds.push(crate::audio::Ui::Cursor as u32);
                 }
+            }
                 K::ArrowRight | K::ArrowLeft => {
                     if super::items::page_keys(&mut sc, &mut cu, rows.len(), key == K::ArrowRight) {
                         w.sounds.push(Ui::Cursor as u32);
@@ -1339,16 +1076,10 @@ fn p2p_key(w: &mut World, gu: &GameUi, key: egui::Key) {
             }
             u.qty = Some((inv, v, max));
             match key {
-                K::ArrowUp | K::ArrowDown | K::ArrowRight | K::ArrowLeft => {
-                    w.sounds.push(Ui::Cursor as u32)
-                }
+                K::ArrowUp | K::ArrowDown | K::ArrowRight | K::ArrowLeft => w.sounds.push(Ui::Cursor as u32),
                 K::Enter => {
                     w.sounds.push(Ui::Select as u32);
-                    let item = w
-                        .inv
-                        .slots
-                        .get(&(super::items::INVENTORY, inv))
-                        .map_or(0, |x| x.0);
+                    let item = w.inv.slots.get(&(super::items::INVENTORY, inv)).map_or(0, |x| x.0);
                     place_offer(w, u.cursor, inv, item, v);
                     (u.qty, u.focus) = (None, PFocus::Trade);
                 }
@@ -1372,15 +1103,9 @@ fn p2p_key(w: &mut World, gu: &GameUi, key: egui::Key) {
             }
             u.money = Some((step, max, v));
             match key {
-                K::ArrowUp | K::ArrowDown | K::ArrowRight | K::ArrowLeft => {
-                    w.sounds.push(Ui::Cursor as u32)
-                }
+                K::ArrowUp | K::ArrowDown | K::ArrowRight | K::ArrowLeft => w.sounds.push(Ui::Cursor as u32),
                 K::Enter | K::Escape => {
-                    w.sounds.push(if key == K::Enter {
-                        Ui::Select
-                    } else {
-                        Ui::Cancel
-                    } as u32);
+                    w.sounds.push(if key == K::Enter { Ui::Select } else { Ui::Cancel } as u32);
                     if key == K::Enter {
                         offer(w, v, GIL, 0, 0);
                     }
@@ -1445,74 +1170,21 @@ fn p2p_bars(gu: &GameUi, w: &World, bars: &mut super::hudtop::BarText) {
 fn p2p_draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
     const WHITE: u32 = 0x8080_8080;
     let mut rects = Vec::new();
-    let (Some(u), Some(info)) = (&w.p2p.ui, w.item_info.clone()) else {
-        return rects;
-    };
+    let (Some(u), Some(info)) = (&w.p2p.ui, w.item_info.clone()) else { return rects };
     let rows = super::post::picker_rows(w);
     let tints: Vec<u32> = rows.iter().map(|r| p2p_tint(w, r)).collect();
-    rects.extend(super::post::draw_list(
-        gu,
-        w,
-        &info,
-        u.list,
-        u.focus == PFocus::Picker,
-        Some(&tints),
-        sw,
-        sh,
-    ));
+    rects.extend(super::post::draw_list(gu, w, &info, u.list, u.focus == PFocus::Picker, Some(&tints), sw, sh));
     rects.extend(super::post::draw_money(gu, w, sw, sh));
-    let name_of = |id: Option<u32>| {
-        id.and_then(|i| w.entities.get(&i))
-            .map(|e| e.name.clone())
-            .unwrap_or_default()
-    };
+    let name_of = |id: Option<u32>| id.and_then(|i| w.entities.get(&i)).map(|e| e.name.clone()).unwrap_or_default();
     let focused = u.focus == PFocus::Trade;
-    if let Some(win) = gu.lobby_window_off(
-        TRADE,
-        sw,
-        sh,
-        (0.0, 0.0),
-        focused.then_some(u.cursor),
-        focused,
-        &[],
-    ) {
+    if let Some(win) = gu.lobby_window_off(TRADE, sw, sh, (0.0, 0.0), focused.then_some(u.cursor), focused, &[]) {
         let [x, y, ..] = win.frame;
-        let slots: Vec<(u16, u32, bool)> = w.p2p.mine[1..]
-            .iter()
-            .map(|e| {
-                if offered(e) {
-                    (e.1, e.0, true)
-                } else {
-                    (0, 0, false)
-                }
-            })
-            .collect();
-        super::post::draw_slots(
-            gu,
-            &info,
-            TRADE,
-            win.frame,
-            &slots,
-            None,
-            focused.then_some(u.cursor),
-            |_| [1.0; 4],
-        );
-        let gil = if w.p2p.mine[0].1 == GIL && w.p2p.mine[0].2 == 0 {
-            w.p2p.mine[0].0
-        } else {
-            0
-        };
-        let gil_child = gu
-            .layout(TRADE)
-            .and_then(|l| l.elements.iter().find(|e| e.id == 11).cloned());
+        let slots: Vec<(u16, u32, bool)> = w.p2p.mine[1..].iter().map(|e| if offered(e) { (e.1, e.0, true) } else { (0, 0, false) }).collect();
+        super::post::draw_slots(gu, &info, TRADE, win.frame, &slots, None, focused.then_some(u.cursor), |_| [1.0; 4]);
+        let gil = if w.p2p.mine[0].1 == GIL && w.p2p.mine[0].2 == 0 { w.p2p.mine[0].0 } else { 0 };
+        let gil_child = gu.layout(TRADE).and_then(|l| l.elements.iter().find(|e| e.id == 11).cloned());
         if let Some(e) = &gil_child {
-            gu.shape_text(
-                &crate::inventory::gil_text(gil as i64),
-                x + e.x as f32 + e.w as f32 + 10.0,
-                y + e.y as f32,
-                WHITE,
-                true,
-            );
+            gu.shape_text(&crate::inventory::gil_text(gil as i64), x + e.x as f32 + e.w as f32 + 10.0, y + e.y as f32, WHITE, true);
         }
         let tint = if w.p2p.state == 4 { ORANGE } else { WHITE };
         let room = gil_child.map_or(80.0, |e| e.x as f32 - 8.0);
@@ -1520,54 +1192,15 @@ fn p2p_draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         rects.push(win.frame);
     }
     let gift_focus = u.focus == PFocus::Gift;
-    if let Some(win) = gu.lobby_window_off(
-        GIFT,
-        sw,
-        sh,
-        (0.0, 0.0),
-        gift_focus.then_some(u.gift),
-        gift_focus,
-        &[],
-    ) {
+    if let Some(win) = gu.lobby_window_off(GIFT, sw, sh, (0.0, 0.0), gift_focus.then_some(u.gift), gift_focus, &[]) {
         let [x, y, fw, _] = win.frame;
-        let slots: Vec<(u16, u32, bool)> = w.p2p.theirs[1..]
-            .iter()
-            .map(|e| {
-                if e.0 > 0 && e.1 != 0 && e.1 != GIL {
-                    (e.1, e.0, true)
-                } else {
-                    (0, 0, false)
-                }
-            })
-            .collect();
-        super::post::draw_slots(
-            gu,
-            &info,
-            GIFT,
-            win.frame,
-            &slots,
-            None,
-            gift_focus.then_some(u.gift),
-            |_| [1.0; 4],
-        );
+        let slots: Vec<(u16, u32, bool)> = w.p2p.theirs[1..].iter().map(|e| if e.0 > 0 && e.1 != 0 && e.1 != GIL { (e.1, e.0, true) } else { (0, 0, false) }).collect();
+        super::post::draw_slots(gu, &info, GIFT, win.frame, &slots, None, gift_focus.then_some(u.gift), |_| [1.0; 4]);
         // Their gil at the top right (inf: x + w - 14, y + 8).
         let gil = w.p2p.theirs[0].0;
-        let end = gu.shape_text(
-            &crate::inventory::gil_text(gil as i64),
-            x + fw - 14.0,
-            y + 8.0,
-            WHITE,
-            true,
-        );
+        let end = gu.shape_text(&crate::inventory::gil_text(gil as i64), x + fw - 14.0, y + 8.0, WHITE, true);
         let tint = if w.p2p.partner_ok { ORANGE } else { WHITE };
-        clip_text(
-            gu,
-            &name_of(w.p2p.partner.map(|p| p.0)),
-            x + 4.0,
-            y + 5.0,
-            (end - x - 12.0).max(40.0),
-            tint,
-        );
+        clip_text(gu, &name_of(w.p2p.partner.map(|p| p.0)), x + 4.0, y + 5.0, (end - x - 12.0).max(40.0), tint);
         rects.push(win.frame);
     }
     if let Some((_, v, max)) = u.qty
@@ -1615,16 +1248,7 @@ mod tests {
     }
 
     fn h() -> Handover {
-        Handover {
-            npc: (0x0100_4011, 0x11),
-            slots: [None; 8],
-            gil: 0,
-            cursor: 1,
-            focus: Focus::Window,
-            list: (0, 0),
-            qty: None,
-            money: None,
-        }
+        Handover { npc: (0x0100_4011, 0x11), slots: [None; 8], gil: 0, cursor: 1, focus: Focus::Window, list: (0, 0), qty: None, money: None }
     }
 
     /// A slot counts as offered with an inventory slot, a count and a real item (LSB's empty echo is 0xffff / 0).
@@ -1639,19 +1263,10 @@ mod tests {
     /// Closing a trade keeps a request someone else made meanwhile and the cancel time.
     #[test]
     fn reset_keeps_incoming() {
-        let mut p = P2p {
-            state: 4,
-            partner_ok: true,
-            partner: Some((1, 2)),
-            incoming: Some((3, 4)),
-            ..Default::default()
-        };
+        let mut p = P2p { state: 4, partner_ok: true, partner: Some((1, 2)), incoming: Some((3, 4)), ..Default::default() };
         p.mine[1] = (1, 0x1234, 5);
         p.reset();
-        assert_eq!(
-            (p.state, p.partner_ok, p.partner, p.incoming, p.mine[1]),
-            (0, false, None, Some((3, 4)), (0, 0, 0))
-        );
+        assert_eq!((p.state, p.partner_ok, p.partner, p.incoming, p.mine[1]), (0, false, None, Some((3, 4)), (0, 0, 0)));
     }
 
     /// FUN_10139e30: placing again under the cursor takes it out; elsewhere it moves.

@@ -30,12 +30,7 @@ pub struct Seen {
 
 impl Default for Seen {
     fn default() -> Self {
-        Seen {
-            local: [0; 128],
-            last: [0; 128],
-            merge: 0,
-            received: false,
-        }
+        Seen { local: [0; 128], last: [0; 128], merge: 0, received: false }
     }
 }
 
@@ -45,11 +40,7 @@ impl Seen {
     pub fn packet(&mut self, table: usize, new: &[u32; 16]) {
         let r = table * 16..table * 16 + 16;
         for (k, i) in r.clone().enumerate() {
-            self.local[i] = if self.merge >> table & 1 != 0 {
-                self.local[i] | (!self.last[i] & new[k])
-            } else {
-                new[k]
-            };
+            self.local[i] = if self.merge >> table & 1 != 0 { self.local[i] | (!self.last[i] & new[k]) } else { new[k] };
         }
         self.last[r].copy_from_slice(new);
         if !self.received {
@@ -59,9 +50,7 @@ impl Seen {
     }
 
     pub fn seen(&self, id: u16) -> bool {
-        self.local
-            .get(id as usize >> 5)
-            .is_some_and(|w| w >> (id & 31) & 1 != 0)
+        self.local.get(id as usize >> 5).is_some_and(|w| w >> (id & 31) & 1 != 0)
     }
 }
 
@@ -95,23 +84,13 @@ pub fn categories(list: &[(u32, String)]) -> Vec<(String, Vec<(u16, String)>)> {
 }
 
 pub(super) fn all(w: &World) -> Vec<(String, Vec<(u16, String)>)> {
-    w.names
-        .as_ref()
-        .map_or(Vec::new(), |n| categories(&n.key_item_list()))
+    w.names.as_ref().map_or(Vec::new(), |n| categories(&n.key_item_list()))
 }
 
 /// /keyitem (FUN_1007d220): evitem, waiting until a 0x055 has come.
 pub fn open(w: &mut World) {
     let state = if w.ki_seen.received { 1 } else { 0 };
-    w.keyitems = Some(KeyItems {
-        state,
-        cat: 0,
-        top: 0,
-        cursor: 0,
-        items: Vec::new(),
-        ask: None,
-        event: false,
-    });
+    w.keyitems = Some(KeyItems { state, cat: 0, top: 0, cursor: 0, items: Vec::new(), ask: None, event: false });
 }
 
 /// Op 0xcc 0x20 (FUN_100b9d90 -> FUN_1022a640 / FUN_1022a660 / FUN_1022a7b0): evitem in event mode (+0x89 = 1) on
@@ -122,21 +101,8 @@ pub fn event_show(w: &mut World, id: u16) {
         w.keyitems = None;
         return;
     }
-    let name = w
-        .names
-        .as_ref()
-        .and_then(|n| n.key_item_list().into_iter().find(|(k, _)| *k == id as u32))
-        .map(|(_, n)| n)
-        .unwrap_or_default();
-    w.keyitems = Some(KeyItems {
-        state: 3,
-        cat: 0,
-        top: 0,
-        cursor: 0,
-        items: vec![(id, name)],
-        ask: None,
-        event: true,
-    });
+    let name = w.names.as_ref().and_then(|n| n.key_item_list().into_iter().find(|(k, _)| *k == id as u32)).map(|(_, n)| n).unwrap_or_default();
+    w.keyitems = Some(KeyItems { state: 3, cat: 0, top: 0, cursor: 0, items: vec![(id, name)], ask: None, event: true });
 }
 
 pub fn update(w: &mut World) {
@@ -155,10 +121,7 @@ pub fn busy(w: &World) -> bool {
 
 /// FUN_10233380: a row's height: 16 a wrapped line at 283 px, 18 at least.
 fn heights(gu: &GameUi, items: &[(u16, String)]) -> Vec<f32> {
-    items
-        .iter()
-        .map(|(_, n)| (gu.wrap(n, NAME_W).len().max(1) as f32 * 16.0).max(18.0))
-        .collect()
+    items.iter().map(|(_, n)| (gu.wrap(n, NAME_W).len().max(1) as f32 * 16.0).max(18.0)).collect()
 }
 
 /// FUN_1022a590: the rows a page from `start` holds: add a row's height; stop at the budget or 8 rows, else add the
@@ -178,9 +141,7 @@ pub fn fit(h: &[f32], start: usize) -> usize {
 
 /// FUN_10221a80(n, 1)'s max top: the first start whose page reaches the end.
 pub fn max_top(h: &[f32]) -> usize {
-    (0..h.len())
-        .find(|&i| i + fit(h, i) >= h.len())
-        .unwrap_or(0)
+    (0..h.len()).find(|&i| i + fit(h, i) >= h.len()).unwrap_or(0)
 }
 
 /// FUN_10221e50 / FUN_10221dc0 *(inf: the exact rule)*: a cursor above the page makes it the top; one below it moves
@@ -189,10 +150,7 @@ pub fn follow(h: &[f32], top: usize, cursor: usize) -> usize {
     if cursor < top {
         cursor
     } else if cursor >= top + fit(h, top) {
-        (0..=cursor)
-            .find(|&i| i + fit(h, i) > cursor)
-            .unwrap_or(cursor)
-            .min(max_top(h))
+        (0..=cursor).find(|&i| i + fit(h, i) > cursor).unwrap_or(cursor).min(max_top(h))
     } else {
         top
     }
@@ -200,21 +158,12 @@ pub fn follow(h: &[f32], top: usize, cursor: usize) -> usize {
 
 /// 0x19 / 0x18: the next page start (top + its rows), the previous one (the first start whose page reaches the top).
 pub fn page(h: &[f32], top: usize, forward: bool) -> usize {
-    if forward {
-        (top + fit(h, top)).min(max_top(h))
-    } else {
-        (0..top).find(|&i| i + fit(h, i) >= top).unwrap_or(0)
-    }
+    if forward { (top + fit(h, top)).min(max_top(h)) } else { (0..top).find(|&i| i + fit(h, i) >= top).unwrap_or(0) }
 }
 
 pub(super) fn show_category(w: &mut World, cat: usize) {
     let cats = all(w);
-    let items: Vec<(u16, String)> = cats.get(cat).map_or(Vec::new(), |c| {
-        c.1.iter()
-            .filter(|(id, _)| w.has_key_item(*id))
-            .cloned()
-            .collect()
-    });
+    let items: Vec<(u16, String)> = cats.get(cat).map_or(Vec::new(), |c| c.1.iter().filter(|(id, _)| w.has_key_item(*id)).cloned().collect());
     if let Some(k) = w.keyitems.as_mut() {
         (k.state, k.cat, k.items, k.top, k.cursor) = (2, cat, items, 0, 0);
     }
@@ -235,17 +184,12 @@ pub(super) fn mark_seen(w: &mut World, id: u16) {
     }
     b[0x44..0x46].copy_from_slice(&w.my_index.to_le_bytes());
     b[0x46..0x48].copy_from_slice(&(table as u16).to_le_bytes());
-    let _ = w
-        .net
-        .commands
-        .send(super::net::NetCommand::Packet { id: 0x064, body: b });
+    let _ = w.net.commands.send(super::net::NetCommand::Packet { id: 0x064, body: b });
 }
 
 /// FUN_1022aaa0 (and FUN_10222710 for evitem01).
 pub fn key(w: &mut World, gu: &GameUi, key: egui::Key, page_mod: bool) {
-    let Some(mut k) = w.keyitems.clone() else {
-        return;
-    };
+    let Some(mut k) = w.keyitems.clone() else { return };
     // FUN_1022aaa0 state 3: Enter / Escape do nothing while +0x89 is set.
     if k.event {
         return;
@@ -257,11 +201,7 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key, page_mod: bool) {
                 w.sounds.push(Ui::Cursor as u32);
             }
             egui::Key::Enter | egui::Key::Escape => {
-                w.sounds.push(if key == egui::Key::Enter {
-                    Ui::Select
-                } else {
-                    Ui::Cancel
-                } as u32);
+                w.sounds.push(if key == egui::Key::Enter { Ui::Select } else { Ui::Cancel } as u32);
                 k.ask = None;
                 if key == egui::Key::Enter && yes {
                     if let Some(&(id, _)) = k.items.get(k.cursor) {
@@ -284,11 +224,7 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key, page_mod: bool) {
         }
         (1, egui::Key::ArrowUp | egui::Key::ArrowDown) => {
             let n = all(w).len().max(1);
-            k.cursor = if key == egui::Key::ArrowDown {
-                (k.cursor + 1) % n
-            } else {
-                (k.cursor + n - 1) % n
-            };
+            k.cursor = if key == egui::Key::ArrowDown { (k.cursor + 1) % n } else { (k.cursor + n - 1) % n };
             if k.cursor < k.top {
                 k.top = k.cursor;
             } else if k.cursor >= k.top + CAT_ROWS {
@@ -300,11 +236,7 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key, page_mod: bool) {
             let n = all(w).len();
             let max = n.saturating_sub(CAT_ROWS);
             let row = k.cursor - k.top;
-            k.top = if key == egui::Key::ArrowRight {
-                (k.top + CAT_ROWS).min(max)
-            } else {
-                k.top.saturating_sub(CAT_ROWS)
-            };
+            k.top = if key == egui::Key::ArrowRight { (k.top + CAT_ROWS).min(max) } else { k.top.saturating_sub(CAT_ROWS) };
             k.cursor = (k.top + row).min(n.saturating_sub(1));
             w.sounds.push(Ui::Cursor as u32);
         }
@@ -321,11 +253,7 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key, page_mod: bool) {
         }
         (2, egui::Key::ArrowUp | egui::Key::ArrowDown) if !k.items.is_empty() => {
             let n = k.items.len();
-            k.cursor = if key == egui::Key::ArrowDown {
-                (k.cursor + 1) % n
-            } else {
-                (k.cursor + n - 1) % n
-            };
+            k.cursor = if key == egui::Key::ArrowDown { (k.cursor + 1) % n } else { (k.cursor + n - 1) % n };
             k.top = follow(&h, k.top, k.cursor);
             w.sounds.push(Ui::Cursor as u32);
         }
@@ -340,19 +268,11 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key, page_mod: bool) {
         (2, egui::Key::Enter) => {
             w.sounds.push(Ui::Select as u32);
             if let Some(&(id, _)) = k.items.get(k.cursor) {
-                if w.ki_seen.seen(id) {
-                    k.state = 3
-                } else {
-                    k.ask = Some(true)
-                }
+                if w.ki_seen.seen(id) { k.state = 3 } else { k.ask = Some(true) }
             }
         }
         (3, egui::Key::Enter | egui::Key::Escape) => {
-            w.sounds.push(if key == egui::Key::Enter {
-                Ui::Select
-            } else {
-                Ui::Cancel
-            } as u32);
+            w.sounds.push(if key == egui::Key::Enter { Ui::Select } else { Ui::Cancel } as u32);
             k.state = 2;
         }
         _ => {}
@@ -362,53 +282,18 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key, page_mod: bool) {
 
 /// Mouse *(inf: the paged lists' hover and click)*: hover moves the cursor to a row, a click on the cursor row is Enter;
 /// on evitem01 the same over Yes / No.
-pub fn pointer(
-    w: &mut World,
-    gu: &GameUi,
-    sw: f32,
-    sh: f32,
-    p: (f32, f32),
-    moved: bool,
-    clicked: bool,
-) {
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool) {
     let Some(k) = w.keyitems.clone() else { return };
     let inside = |r: [f32; 4]| p.0 >= r[0] && p.0 < r[0] + r[2] && p.1 >= r[1] && p.1 < r[1] + r[3];
     let rows: Vec<(usize, [f32; 4])> = if k.ask.is_some() {
-        let Some((x, y)) = gu.window_xy(ASK, sw, sh) else {
-            return;
-        };
-        gu.layout(ASK).map_or(Vec::new(), |l| {
-            l.elements
-                .iter()
-                .skip(1)
-                .map(|e| {
-                    (
-                        e.id as usize - 1,
-                        [x + e.x as f32, y + e.y as f32, e.w as f32, e.h as f32],
-                    )
-                })
-                .collect()
-        })
+        let Some((x, y)) = gu.window_xy(ASK, sw, sh) else { return };
+        gu.layout(ASK).map_or(Vec::new(), |l| l.elements.iter().skip(1).map(|e| (e.id as usize - 1, [x + e.x as f32, y + e.y as f32, e.w as f32, e.h as f32])).collect())
     } else {
-        let Some((x, y)) = gu.window_xy(WINDOW, sw, sh) else {
-            return;
-        };
+        let Some((x, y)) = gu.window_xy(WINDOW, sw, sh) else { return };
         match k.state {
             1 => {
                 let n = all(w).len();
-                gu.layout(WINDOW).map_or(Vec::new(), |l| {
-                    l.elements
-                        .iter()
-                        .skip(1)
-                        .map(|e| {
-                            (
-                                k.top + e.id as usize - 1,
-                                [x + e.x as f32, y + e.y as f32, e.w as f32, e.h as f32],
-                            )
-                        })
-                        .filter(|(r, _)| *r < n)
-                        .collect()
-                })
+                gu.layout(WINDOW).map_or(Vec::new(), |l| l.elements.iter().skip(1).map(|e| (k.top + e.id as usize - 1, [x + e.x as f32, y + e.y as f32, e.w as f32, e.h as f32])).filter(|(r, _)| *r < n).collect())
             }
             2 => {
                 let h = heights(gu, &k.items);
@@ -432,13 +317,7 @@ pub fn pointer(
     };
     gu.hover.set(true);
     let cur = match k.ask {
-        Some(yes) => {
-            if yes {
-                0
-            } else {
-                1
-            }
-        }
+        Some(yes) => if yes { 0 } else { 1 },
         None => k.cursor,
     };
     if row != cur && (moved || clicked) {
@@ -456,13 +335,7 @@ pub fn pointer(
 
 /// The scroll bar: the categories (10 rows, 8 shown) or the items (variable pages: shown = total - max top).
 pub(super) fn bar(w: &mut World, m: super::scrollbar::Msg) -> bool {
-    let Some(k) = w
-        .keyitems
-        .as_mut()
-        .filter(|k| k.state == 1 && k.ask.is_none())
-    else {
-        return false;
-    };
+    let Some(k) = w.keyitems.as_mut().filter(|k| k.state == 1 && k.ask.is_none()) else { return false };
     let mut row = k.cursor.saturating_sub(k.top);
     let moved = super::scrollbar::paged(m, &mut k.top, &mut row, 10, CAT_ROWS);
     k.cursor = k.top + row;
@@ -473,10 +346,7 @@ pub(super) fn bar(w: &mut World, m: super::scrollbar::Msg) -> bool {
 /// set when an event opened it *(inf: FUN_1022a660 never picks a category)*.
 pub fn bars(gu: &GameUi, w: &World, bars: &mut super::hudtop::BarText) {
     let Some(k) = &w.keyitems else { return };
-    (bars.help[1], bars.title[1]) = (
-        String::new(),
-        gu.focus_text(WINDOW, 0)[1].clone().unwrap_or_default(),
-    );
+    (bars.help[1], bars.title[1]) = (String::new(), gu.focus_text(WINDOW, 0)[1].clone().unwrap_or_default());
     if k.state >= 2
         && !k.event
         && let Some(c) = all(w).get(k.cat)
@@ -499,20 +369,10 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
     let focused = k.ask.is_none() && w.confirm.is_none();
     let rows: Vec<u16> = (1..=8).collect();
     let sel = (k.state == 1 && k.ask.is_none()).then(|| (k.cursor - k.top + 1) as u16);
-    let hide: Vec<u16> = if k.state == 1 {
-        (1..=8u16)
-            .filter(|&c| k.top + c as usize - 1 >= cats.len())
-            .collect()
-    } else {
-        rows
-    };
-    let Some(win) = gu.lobby_window_off(WINDOW, sw, sh, (0.0, 0.0), sel, focused, &hide) else {
-        return rects;
-    };
+    let hide: Vec<u16> = if k.state == 1 { (1..=8u16).filter(|&c| k.top + c as usize - 1 >= cats.len()).collect() } else { rows };
+    let Some(win) = gu.lobby_window_off(WINDOW, sw, sh, (0.0, 0.0), sel, focused, &hide) else { return rects };
     let [fx, fy, fw, fh] = win.frame;
-    let Some((x, y)) = gu.window_xy(WINDOW, sw, sh) else {
-        return rects;
-    };
+    let Some((x, y)) = gu.window_xy(WINDOW, sw, sh) else { return rects };
     rects.push(win.frame);
     let bt = w.battle.clone();
     // evitem01 turns evitem's hand, rows and bar off while it is up (FUN_10221c30 / FUN_10221c50).
@@ -520,20 +380,8 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         _ if k.ask.is_some() => {}
         0 => {
             if let Some(bt) = &bt {
-                text(
-                    gu,
-                    &bt.group9(0x61).unwrap_or_default(),
-                    x + 20.0,
-                    y + 20.0,
-                    WHITE,
-                );
-                text(
-                    gu,
-                    &bt.group9(0x62).unwrap_or_default(),
-                    x + 20.0,
-                    y + 40.0,
-                    WHITE,
-                );
+                text(gu, &bt.group9(0x61).unwrap_or_default(), x + 20.0, y + 20.0, WHITE);
+                text(gu, &bt.group9(0x62).unwrap_or_default(), x + 20.0, y + 40.0, WHITE);
             }
         }
         1 => {
@@ -541,35 +389,15 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
                 let row = k.top + id as usize - 1;
                 let Some(c) = cats.get(row) else { continue };
                 gu.sprite("menu    framesus", 35, cx + 22.0, cy + 5.0, WHITE);
-                text(
-                    gu,
-                    &c.0,
-                    cx + 36.0,
-                    cy,
-                    if row == k.cursor { CURSOR } else { WHITE },
-                );
+                text(gu, &c.0, cx + 36.0, cy, if row == k.cursor { CURSOR } else { WHITE });
             }
             let bx = fx + fw - 8.0;
             gu.scroll_bar(bx, fy, fh, cats.len(), CAT_ROWS, k.top);
-            gu.bar_site(
-                super::scrollbar::Owner::Journal,
-                bx,
-                fy,
-                fh,
-                cats.len(),
-                CAT_ROWS,
-                k.top,
-            );
+            gu.bar_site(super::scrollbar::Owner::Journal, bx, fy, fh, cats.len(), CAT_ROWS, k.top);
         }
         2 if k.items.is_empty() => {
             if let Some(bt) = &bt {
-                text(
-                    gu,
-                    &bt.group9(0x60).unwrap_or_default(),
-                    x + 20.0,
-                    y + 20.0,
-                    WHITE,
-                );
+                text(gu, &bt.group9(0x60).unwrap_or_default(), x + 20.0, y + 20.0, WHITE);
             }
         }
         2 => {
@@ -585,14 +413,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
                 } else {
                     gu.sprite("menu    keytops3", 170, cx + 18.0, ry + 1.0, WHITE);
                 }
-                super::missions::lines(
-                    gu,
-                    name,
-                    cx + 36.0,
-                    ry,
-                    NAME_W,
-                    if i == k.cursor { CURSOR } else { WHITE },
-                );
+                super::missions::lines(gu, name, cx + 36.0, ry, NAME_W, if i == k.cursor { CURSOR } else { WHITE });
                 if on && focused {
                     gu.cursor(cx, ry);
                 }
@@ -605,46 +426,24 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
             if let Some((id, name)) = k.items.get(k.cursor) {
                 gu.sprite("menu    framesus", 35, x + 36.0, y + 25.0, WHITE);
                 text(gu, name, x + 50.0, y + 20.0, WHITE);
-                let desc = w
-                    .names
-                    .as_ref()
-                    .and_then(|n| n.key_item_description(*id as u32))
-                    .unwrap_or_default();
+                let desc = w.names.as_ref().and_then(|n| n.key_item_description(*id as u32)).unwrap_or_default();
                 super::missions::lines(gu, &desc, x + 40.0, y + 50.0, 327.0, WHITE);
             }
         }
     }
     // evitem01 (FUN_10222600): "Examine %s?" (group 9 0x5f) at (28, 30), Yes / No (0xc 0x2b / 0x2c) at its children.
     if let Some(yes) = k.ask
-        && let Some(win) = gu.lobby_window_off(
-            ASK,
-            sw,
-            sh,
-            (0.0, 0.0),
-            Some(if yes { 1 } else { 2 }),
-            w.confirm.is_none(),
-            &[],
-        )
+        && let Some(win) = gu.lobby_window_off(ASK, sw, sh, (0.0, 0.0), Some(if yes { 1 } else { 2 }), w.confirm.is_none(), &[])
     {
         rects.push(win.frame);
         if let Some((ax, ay)) = gu.window_xy(ASK, sw, sh) {
             let name = k.items.get(k.cursor).map_or("", |i| i.1.as_str());
-            let q = bt
-                .as_ref()
-                .and_then(|b| b.group9(0x5f))
-                .unwrap_or_default()
-                .replacen("%s", name, 1);
+            let q = bt.as_ref().and_then(|b| b.group9(0x5f)).unwrap_or_default().replacen("%s", name, 1);
             text(gu, &q, ax + 28.0, ay + 30.0, WHITE);
         }
         for &(id, [cx, cy, ..]) in &win.children {
             let label = gu.lobby_msg(0xc, if id == 1 { 0x2b } else { 0x2c }, "");
-            text(
-                gu,
-                &label,
-                cx,
-                cy,
-                if (id == 1) == yes { CURSOR } else { WHITE },
-            );
+            text(gu, &label, cx, cy, if (id == 1) == yes { CURSOR } else { WHITE });
         }
     }
     rects
@@ -658,15 +457,7 @@ mod tests {
     fn pages() {
         // Seven one-line rows fit (pitch 30): 7 * 18 + 6 * 12 = 198, the eighth would end at 228.
         let one = vec![18.0; 20];
-        assert_eq!(
-            (
-                fit(&one, 0),
-                max_top(&one),
-                page(&one, 0, true),
-                page(&one, 7, false)
-            ),
-            (7, 13, 7, 0)
-        );
+        assert_eq!((fit(&one, 0), max_top(&one), page(&one, 0, true), page(&one, 7, false)), (7, 13, 7, 0));
         let mut mixed = vec![18.0; 10];
         mixed[2] = 48.0;
         assert_eq!(fit(&mixed, 0), 6);
@@ -693,13 +484,8 @@ mod tests {
     /// The English table (55705): ten sections, each closed by its header.
     #[test]
     fn real_sections() {
-        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir())
-        else {
-            return;
-        };
-        let Ok(n) = crate::dat::names::Names::load(&index, crate::dat::items::Lang::En) else {
-            return;
-        };
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let Ok(n) = crate::dat::names::Names::load(&index, crate::dat::items::Lang::En) else { return };
         let c = categories(&n.key_item_list());
         let counts: Vec<usize> = c.iter().map(|s| s.1.len()).collect();
         assert_eq!(c[0].0, "Temporary Key Items");
@@ -708,18 +494,9 @@ mod tests {
 
     #[test]
     fn sections() {
-        let list = vec![
-            (1, "a".to_string()),
-            (2, "b".to_string()),
-            (0, "-First".to_string()),
-            (3, "c".to_string()),
-            (0, "-Second".to_string()),
-        ];
+        let list = vec![(1, "a".to_string()), (2, "b".to_string()), (0, "-First".to_string()), (3, "c".to_string()), (0, "-Second".to_string())];
         let c = categories(&list);
         assert_eq!(c.len(), 2);
-        assert_eq!(
-            (c[0].0.as_str(), c[0].1.len(), c[1].0.as_str(), c[1].1.len()),
-            ("First", 2, "Second", 1)
-        );
+        assert_eq!((c[0].0.as_str(), c[0].1.len(), c[1].0.as_str(), c[1].1.len()), ("First", 2, "Second", 1));
     }
 }

@@ -30,19 +30,11 @@ enum Step {
     Copy,
     Paste(String),
     Shot(PathBuf),
-    Repeat {
-        key: egui::Key,
-        every: f32,
-        until: String,
-        last: Option<Instant>,
-    },
+    Repeat { key: egui::Key, every: f32, until: String, last: Option<Instant> },
     Action(String),
     Every(Option<(egui::Key, f32)>),
     /// A file read as it grows, and how much of it was taken.
-    Follow {
-        path: PathBuf,
-        read: usize,
-    },
+    Follow { path: PathBuf, read: usize },
 }
 
 pub struct Script {
@@ -64,9 +56,7 @@ impl Script {
         for raw in spec.split(';').map(str::trim).filter(|s| !s.is_empty()) {
             let (op, arg) = raw.split_once(':').unwrap_or((raw, ""));
             let xy = || -> Result<(f32, f32)> {
-                let (x, y) = arg
-                    .split_once(',')
-                    .ok_or_else(|| anyhow!("{raw}: want X,Y"))?;
+                let (x, y) = arg.split_once(',').ok_or_else(|| anyhow!("{raw}: want X,Y"))?;
                 Ok((x.trim().parse()?, y.trim().parse()?))
             };
             match op {
@@ -88,17 +78,12 @@ impl Script {
                 }
                 "key" => {
                     let (mut mods, mut name) = (egui::Modifiers::NONE, arg);
-                    for (p, m) in [
-                        ("shift+", egui::Modifiers::SHIFT),
-                        ("ctrl+", egui::Modifiers::CTRL),
-                        ("alt+", egui::Modifiers::ALT),
-                    ] {
+                    for (p, m) in [("shift+", egui::Modifiers::SHIFT), ("ctrl+", egui::Modifiers::CTRL), ("alt+", egui::Modifiers::ALT)] {
                         if let Some(n) = name.strip_prefix(p) {
                             (mods, name) = (mods | m, n);
                         }
                     }
-                    let key =
-                        egui::Key::from_name(name).ok_or_else(|| anyhow!("unknown key {name}"))?;
+                    let key = egui::Key::from_name(name).ok_or_else(|| anyhow!("unknown key {name}"))?;
                     steps.push(Step::Key(key, mods));
                 }
                 "move" => {
@@ -108,12 +93,7 @@ impl Script {
                 "click" => {
                     let (x, y) = xy()?;
                     // Held 50 ms as a hand does: egui misses a press and release in successive 3 ms frames.
-                    steps.extend([
-                        Step::Move(x, y),
-                        Step::Button(true),
-                        Step::Wait(0.05),
-                        Step::Button(false),
-                    ]);
+                    steps.extend([Step::Move(x, y), Step::Button(true), Step::Wait(0.05), Step::Button(false)]);
                 }
                 // The left button pressed at X,Y and left down; lup releases it where the pointer is.
                 "ldown" => {
@@ -124,65 +104,34 @@ impl Script {
                 // Held 50 ms as `click` is: a press and release in one frame is no click to egui.
                 "rclick" => {
                     let (x, y) = xy()?;
-                    steps.extend([
-                        Step::Move(x, y),
-                        Step::Right(true),
-                        Step::Wait(0.05),
-                        Step::Right(false),
-                    ]);
+                    steps.extend([Step::Move(x, y), Step::Right(true), Step::Wait(0.05), Step::Right(false)]);
                 }
                 "shot" => steps.push(Step::Shot(PathBuf::from(arg))),
                 "copy" => steps.push(Step::Copy),
                 "paste" => steps.push(Step::Paste(arg.to_string())),
-                "follow" => steps.push(Step::Follow {
-                    path: PathBuf::from(arg),
-                    read: 0,
-                }),
+                "follow" => steps.push(Step::Follow { path: PathBuf::from(arg), read: 0 }),
                 "act" => steps.push(Step::Action(arg.to_string())),
                 "every" if arg == "off" => steps.push(Step::Every(None)),
                 "every" => {
-                    let (name, secs) = arg
-                        .split_once(',')
-                        .ok_or_else(|| anyhow!("{raw}: want KEY,SECS"))?;
-                    let key =
-                        egui::Key::from_name(name).ok_or_else(|| anyhow!("unknown key {name}"))?;
+                    let (name, secs) = arg.split_once(',').ok_or_else(|| anyhow!("{raw}: want KEY,SECS"))?;
+                    let key = egui::Key::from_name(name).ok_or_else(|| anyhow!("unknown key {name}"))?;
                     steps.push(Step::Every(Some((key, secs.parse()?))));
                 }
                 "press" => {
                     let f: Vec<&str> = arg.split(',').collect();
-                    let [name, every, until] = f[..] else {
-                        bail!("{raw}: want KEY,SECS,PHASE")
-                    };
-                    let key =
-                        egui::Key::from_name(name).ok_or_else(|| anyhow!("unknown key {name}"))?;
-                    steps.push(Step::Repeat {
-                        key,
-                        every: every.parse()?,
-                        until: until.to_string(),
-                        last: None,
-                    });
+                    let [name, every, until] = f[..] else { bail!("{raw}: want KEY,SECS,PHASE") };
+                    let key = egui::Key::from_name(name).ok_or_else(|| anyhow!("unknown key {name}"))?;
+                    steps.push(Step::Repeat { key, every: every.parse()?, until: until.to_string(), last: None });
                 }
                 _ => bail!("unknown step {raw}"),
             }
         }
-        Ok(Self {
-            steps,
-            at: 0,
-            since: Instant::now(),
-            pointer: egui::Pos2::ZERO,
-            every: None,
-            logs_in,
-        })
+        Ok(Self { steps, at: 0, since: Instant::now(), pointer: egui::Pos2::ZERO, every: None, logs_in })
     }
 
     /// This frame's events (one step per frame), a screenshot to take and an action, given the current phase
     /// and what else `until:` can wait for (`cam:TAG`, `msg:ID`).
-    pub fn next(
-        &mut self,
-        phase: &str,
-        probes: &[String],
-        pixels_per_point: f32,
-    ) -> (Vec<egui::Event>, Option<PathBuf>, Option<String>) {
+    pub fn next(&mut self, phase: &str, probes: &[String], pixels_per_point: f32) -> (Vec<egui::Event>, Option<PathBuf>, Option<String>) {
         let mut events = Vec::new();
         let mut shot = None;
         let mut action = None;
@@ -191,24 +140,13 @@ impl Script {
         {
             *last = Instant::now();
             for pressed in [true, false] {
-                events.push(egui::Event::Key {
-                    key: *key,
-                    physical_key: None,
-                    pressed,
-                    repeat: false,
-                    modifiers: egui::Modifiers::NONE,
-                });
+                events.push(egui::Event::Key { key: *key, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::NONE });
             }
         }
         if let Some(Step::Follow { path, read }) = self.steps.get_mut(self.at) {
             let text = std::fs::read_to_string(&*path).unwrap_or_default();
-            let Some(cut) = text.get(*read..).and_then(|t| t.rfind('\n')) else {
-                return (events, shot, action);
-            };
-            let lines: Vec<String> = text[*read..*read + cut]
-                .lines()
-                .map(str::to_string)
-                .collect();
+            let Some(cut) = text.get(*read..).and_then(|t| t.rfind('\n')) else { return (events, shot, action) };
+            let lines: Vec<String> = text[*read..*read + cut].lines().map(str::to_string).collect();
             *read += cut + 1;
             let (mut insert, mut end) = (Vec::new(), false);
             for l in lines {
@@ -229,19 +167,14 @@ impl Script {
             self.since = Instant::now();
             return (events, shot, action);
         }
-        let Some(step) = self.steps.get_mut(self.at) else {
-            return (events, shot, action);
-        };
+        let Some(step) = self.steps.get_mut(self.at) else { return (events, shot, action) };
         let done = match step {
             Step::Wait(s) => self.since.elapsed().as_secs_f32() >= *s,
             Step::Until(p, limit) => {
                 let hit = phase == p || probes.iter().any(|x| x == p);
                 let out = limit.is_some_and(|l| self.since.elapsed().as_secs_f32() >= l);
                 if out && !hit {
-                    log::info!(
-                        "script: until {p} gave up after {:.0} s",
-                        limit.unwrap_or(0.0)
-                    );
+                    log::info!("script: until {p} gave up after {:.0} s", limit.unwrap_or(0.0));
                 }
                 hit || out
             }
@@ -251,25 +184,12 @@ impl Script {
                 true
             }
             Step::Ime(t, commit) => {
-                events.push(egui::Event::Ime(if *commit {
-                    egui::ImeEvent::Commit(t.clone())
-                } else {
-                    egui::ImeEvent::Preedit {
-                        text: t.clone(),
-                        active_range_chars: None,
-                    }
-                }));
+                events.push(egui::Event::Ime(if *commit { egui::ImeEvent::Commit(t.clone()) } else { egui::ImeEvent::Preedit { text: t.clone(), active_range_chars: None } }));
                 true
             }
             Step::Key(key, modifiers) => {
                 for pressed in [true, false] {
-                    events.push(egui::Event::Key {
-                        key: *key,
-                        physical_key: None,
-                        pressed,
-                        repeat: false,
-                        modifiers: *modifiers,
-                    });
+                    events.push(egui::Event::Key { key: *key, physical_key: None, pressed, repeat: false, modifiers: *modifiers });
                 }
                 // winit sends the space and '/' as text too.
                 if *key == egui::Key::Space {
@@ -294,21 +214,11 @@ impl Script {
                 true
             }
             Step::Button(pressed) => {
-                events.push(egui::Event::PointerButton {
-                    pos: self.pointer,
-                    button: egui::PointerButton::Primary,
-                    pressed: *pressed,
-                    modifiers: egui::Modifiers::NONE,
-                });
+                events.push(egui::Event::PointerButton { pos: self.pointer, button: egui::PointerButton::Primary, pressed: *pressed, modifiers: egui::Modifiers::NONE });
                 true
             }
             Step::Right(pressed) => {
-                events.push(egui::Event::PointerButton {
-                    pos: self.pointer,
-                    button: egui::PointerButton::Secondary,
-                    pressed: *pressed,
-                    modifiers: egui::Modifiers::NONE,
-                });
+                events.push(egui::Event::PointerButton { pos: self.pointer, button: egui::PointerButton::Secondary, pressed: *pressed, modifiers: egui::Modifiers::NONE });
                 true
             }
             Step::Shot(p) => {
@@ -324,25 +234,14 @@ impl Script {
                 true
             }
             Step::Follow { .. } => true,
-            Step::Repeat {
-                key,
-                every,
-                until,
-                last,
-            } => {
+            Step::Repeat { key, every, until, last } => {
                 if phase == until || probes.iter().any(|x| x == until) {
                     true
                 } else {
                     if last.is_none_or(|t| t.elapsed().as_secs_f32() >= *every) {
                         *last = Some(Instant::now());
                         for pressed in [true, false] {
-                            events.push(egui::Event::Key {
-                                key: *key,
-                                physical_key: None,
-                                pressed,
-                                repeat: false,
-                                modifiers: egui::Modifiers::NONE,
-                            });
+                            events.push(egui::Event::Key { key: *key, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::NONE });
                         }
                     }
                     false

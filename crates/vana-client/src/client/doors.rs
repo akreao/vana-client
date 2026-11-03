@@ -26,33 +26,12 @@ pub fn update(w: &mut World) {
     if !in_event {
         w.doors.event.clear();
     }
-    let doors: Vec<(u32, u32, u8, bool)> = w
-        .entities
-        .iter()
-        .filter(|(_, e)| e.door != 0)
-        .map(|(id, e)| {
-            (
-                *id,
-                e.door,
-                w.doors
-                    .event
-                    .get(id)
-                    .copied()
-                    .filter(|_| in_event)
-                    .unwrap_or(e.motion.status),
-                e.quiet_status,
-            )
-        })
-        .collect();
+    let doors: Vec<(u32, u32, u8, bool)> = w.entities.iter().filter(|(_, e)| e.door != 0).map(|(id, e)| (*id, e.door, w.doors.event.get(id).copied().filter(|_| in_event).unwrap_or(e.motion.status), e.quiet_status)).collect();
     w.doors.state.retain(|id, _| w.entities.contains_key(id));
     for (id, door, want, quiet) in doors {
         // FUN_100acba0: doors with a group play open / clos, the others (effects only) evst / eved.
-        let grouped = w
-            .renderer
-            .as_ref()
-            .is_some_and(|r| r.door_parts.contains_key(&door));
-        let name =
-            |grouped_name: &str, plain: &str| four(if grouped { grouped_name } else { plain });
+        let grouped = w.renderer.as_ref().is_some_and(|r| r.door_parts.contains_key(&door));
+        let name = |grouped_name: &str, plain: &str| four(if grouped { grouped_name } else { plain });
         match w.doors.state.get(&id).copied() {
             None => {
                 // FUN_1008f740 at the first model init: the instant state, or the animated open when it is missing.
@@ -119,9 +98,7 @@ pub fn moves(w: &mut World, gpu: &crate::render::Gpu) {
     let moves = std::mem::take(&mut w.effects.door_moves);
     let Some(r) = w.renderer.as_mut() else { return };
     for m in moves {
-        let Some(door) = w.entities.get(&m.actor).map(|e| e.door).filter(|d| *d != 0) else {
-            continue;
-        };
+        let Some(door) = w.entities.get(&m.actor).map(|e| e.door).filter(|d| *d != 0) else { continue };
         if let Some(&slot) = r.door_parts.get(&door).and_then(|p| p.get(m.part as usize)) {
             r.move_part(gpu, slot, m.rotate, m.to, m.ticks);
         }
@@ -134,15 +111,8 @@ mod tests {
     #[test]
     fn count_manor_door() {
         let cfg = crate::config::Config::load();
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else {
-            return;
-        };
-        let Ok(keys) = std::fs::read(cfg.ffxi_dir().join("FFXiMain.dll"))
-            .map_err(anyhow::Error::from)
-            .and_then(|d| crate::dat::zone::Keys::from_ffximain(&d))
-        else {
-            return;
-        };
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(keys) = std::fs::read(cfg.ffxi_dir().join("FFXiMain.dll")).map_err(anyhow::Error::from).and_then(|d| crate::dat::zone::Keys::from_ffximain(&d)) else { return };
         let file = index.read(crate::dat::zone::file_id(230)).unwrap();
         let scene = crate::dat::zone::load_scene(&keys, &file).unwrap();
         let id = super::four("_6e1");
@@ -151,10 +121,7 @@ mod tests {
         // Attach points (FUN_100acab0 -> FUN_10171030) are the parts' origins: part 0's is in the doorway (RID box at
         // -275.7, -7.9, 98.0). The target arrow uses the actor position instead (FUN_100ac390).
         let o = geo.door_bases[&id][0].w_axis.truncate();
-        assert!(
-            (o - glam::Vec3::new(-275.7, -7.9, 98.0)).length() < 2.5,
-            "{o}"
-        );
+        assert!((o - glam::Vec3::new(-275.7, -7.9, 98.0)).length() < 2.5, "{o}");
         let c = scene.collision.as_ref().unwrap();
         let boxes = c.objects.iter().filter(|o| o.door == id).count();
         assert_eq!(boxes, 1);

@@ -57,10 +57,7 @@ pub fn build(id: u16, body: &[u8]) -> Vec<u8> {
 }
 
 fn now() -> u32 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as u32)
-        .unwrap_or(0)
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as u32).unwrap_or(0)
 }
 
 pub struct MapSession {
@@ -105,11 +102,7 @@ fn sub_ids(plain: &[u8]) -> String {
         if len == 0 {
             break;
         }
-        out.push(format!(
-            "{:03X}/{}",
-            word & 0x1ff,
-            u16::from_le_bytes([plain[at + 2], plain[at + 3]])
-        ));
+        out.push(format!("{:03X}/{}", word & 0x1ff, u16::from_le_bytes([plain[at + 2], plain[at + 3]])));
         at += len;
     }
     out.join(" ")
@@ -122,24 +115,7 @@ impl MapSession {
     pub fn connect(server: SocketAddr, key: &[u8; 20], codec: Codec) -> Result<Self> {
         let sock = UdpSocket::bind("0.0.0.0:0")?;
         sock.connect(server)?;
-        Ok(Self {
-            sock,
-            cipher: Blowfish::for_session_key(key),
-            key: super::blowfish::session_key(key),
-            codec,
-            seq: 0,
-            server_seq: 0,
-            bytes_out: 0,
-            bytes_in: 0,
-            bad_in: 0,
-            bad_run: 0,
-            unacked: Vec::new(),
-            server_ack: 0,
-            last_in: None,
-            logged: (0, 0),
-            cert: None,
-            clock: None,
-        })
+        Ok(Self { sock, cipher: Blowfish::for_session_key(key), key: super::blowfish::session_key(key), codec, seq: 0, server_seq: 0, bytes_out: 0, bytes_in: 0, bad_in: 0, bad_run: 0, unacked: Vec::new(), server_ack: 0, last_in: None, logged: (0, 0), cert: None, clock: None })
     }
 
     /// @0 our sequence, @2 the last server datagram handled, @4 / @8 the clock's ms and seconds; after the zone-in
@@ -166,11 +142,7 @@ impl MapSession {
     pub fn zoned_in(&mut self, p: &SubPacket) {
         self.cert = Some([p.u32(0x94), p.u32(0x98)]);
         self.clock = Some((p.u32(0x38), p.u32(0x34), std::time::Instant::now()));
-        log::info!(
-            "map: zone-in, header words {:08x} {:08x}",
-            p.u32(0x94),
-            p.u32(0x98)
-        );
+        log::info!("map: zone-in, header words {:08x} {:08x}", p.u32(0x94), p.u32(0x98));
     }
 
     fn stamp(&self, packets: &[Vec<u8>]) -> Vec<u8> {
@@ -185,13 +157,7 @@ impl MapSession {
 
     /// The opening 0x00A goes out unencrypted and uncompressed; `attempt` @6 is DAT_104df920: 0 at first, then 2, or 3
     /// once a datagram was read (FUN_100fa940).
-    pub fn send_login(
-        &mut self,
-        char_id: u32,
-        char_name: &str,
-        account: &str,
-        attempt: u16,
-    ) -> Result<()> {
+    pub fn send_login(&mut self, char_id: u32, char_name: &str, account: &str, attempt: u16) -> Result<()> {
         let mut body = vec![0u8; 88];
         body[2..4].copy_from_slice(&attempt.to_le_bytes());
         body[8..12].copy_from_slice(&char_id.to_le_bytes());
@@ -217,11 +183,7 @@ impl MapSession {
 
         let mut dgram = self.header();
         dgram.extend_from_slice(&self.stamp(&[packet]));
-        log::info!(
-            "map out (login): header {} [{}]",
-            hex::encode(&dgram[..HEADER]),
-            sub_ids(&dgram[HEADER..])
-        );
+        log::info!("map out (login): header {} [{}]", hex::encode(&dgram[..HEADER]), sub_ids(&dgram[HEADER..]));
         let digest = Md5::digest(&dgram[HEADER..]);
         dgram.extend_from_slice(&digest);
         self.sock.send(&dgram)?;
@@ -257,11 +219,7 @@ impl MapSession {
         }
         if self.logged.1 < LOG_DATAGRAMS {
             self.logged.1 += 1;
-            log::info!(
-                "map out: header {} [{}]",
-                hex::encode(&dgram[..HEADER]),
-                sub_ids(&raw)
-            );
+            log::info!("map out: header {} [{}]", hex::encode(&dgram[..HEADER]), sub_ids(&raw));
         }
         let (mut body, bits) = self.codec.compress(&raw);
         body.extend_from_slice(&bits.to_le_bytes());
@@ -294,14 +252,7 @@ impl MapSession {
         let mut buf = vec![0u8; 4096];
         let n = match self.sock.recv(&mut buf) {
             Ok(n) => n,
-            Err(e)
-                if matches!(
-                    e.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) =>
-            {
-                return Ok(None);
-            }
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => return Ok(None),
             Err(e) => return Err(e.into()),
         };
         // LSB sends an empty datagram when nothing is queued (send_parse sets the size to 0). It carries nothing, so
@@ -330,16 +281,9 @@ impl MapSession {
         let seq = u16::from_le_bytes([dgram[0], dgram[1]]);
         if self.logged.0 < LOG_DATAGRAMS {
             self.logged.0 += 1;
-            log::info!(
-                "map in: header {} [{}]",
-                hex::encode(&dgram[..HEADER]),
-                sub_ids(&plain)
-            );
+            log::info!("map in: header {} [{}]", hex::encode(&dgram[..HEADER]), sub_ids(&plain));
         }
-        let newer = |s: u16| {
-            self.last_in
-                .is_none_or(|last| last.wrapping_sub(s) >= 0x8000)
-        };
+        let newer = |s: u16| self.last_in.is_none_or(|last| last.wrapping_sub(s) >= 0x8000);
         if !newer(seq) {
             // LSB resends its last datagram when our ack lags (map_networking.cpp parse).
             log::debug!("dropped resent datagram {seq}");
@@ -356,11 +300,7 @@ impl MapSession {
             }
             let sync = u16::from_le_bytes([plain[at + 2], plain[at + 3]]);
             if newer(sync) {
-                out.push(SubPacket {
-                    id: word & 0x1FF,
-                    sync,
-                    data: plain[at..at + len].to_vec(),
-                });
+                out.push(SubPacket { id: word & 0x1FF, sync, data: plain[at..at + len].to_vec() });
             }
             at += len;
         }
@@ -383,9 +323,7 @@ mod tests {
     /// Set FFXI_MAIN_DLL to run: a resent datagram (same header sequence) and an older one carry nothing.
     #[test]
     fn resent_datagram_dropped() {
-        let Ok(dll) = std::env::var("FFXI_MAIN_DLL") else {
-            return;
-        };
+        let Ok(dll) = std::env::var("FFXI_MAIN_DLL") else { return };
         let codec = Codec::from_ffximain(&std::fs::read(dll).unwrap()).unwrap();
         let key = [7u8; 20];
         let server = UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -408,9 +346,7 @@ mod tests {
         for seq in [5, 5, 4, 6] {
             server.send_to(&dgram(seq), to).unwrap();
         }
-        let got: Vec<usize> = (0..4)
-            .map(|_| s.recv(Duration::from_secs(1)).unwrap().unwrap().len())
-            .collect();
+        let got: Vec<usize> = (0..4).map(|_| s.recv(Duration::from_secs(1)).unwrap().unwrap().len()).collect();
         assert_eq!(got, [1, 0, 0, 1]);
         assert_eq!(s.server_seq, 6);
     }

@@ -50,20 +50,14 @@ pub fn lang_lib(name: &str) -> Option<&'static str> {
 /// A cell corner colour as FUN_1011adf0 loads it: RGB + 1 below 255, alpha 1..254 -> min((a + 1) * 1.5, 255).
 pub fn cell_color([r, g, b, a]: [u8; 4]) -> [u8; 4] {
     let up = |v: u8| if v < 0xff { v + 1 } else { v };
-    let a = if a == 0 || a == 0xff {
-        a
-    } else {
-        ((a as f32 + 1.0) * 1.5).min(255.0) as u8
-    };
+    let a = if a == 0 || a == 0xff { a } else { ((a as f32 + 1.0) * 1.5).min(255.0) as u8 };
     [up(r), up(g), up(b), a]
 }
 
 /// 16-byte resource names ("menu    yubi    "): compared case-insensitively, trailing blanks dropped.
 pub fn norm_name(b: &[u8]) -> String {
     let end = b.iter().position(|&c| c == 0).unwrap_or(b.len());
-    String::from_utf8_lossy(&b[..end])
-        .trim_end()
-        .to_ascii_lowercase()
+    String::from_utf8_lossy(&b[..end]).trim_end().to_ascii_lowercase()
 }
 
 pub struct UiImage {
@@ -111,10 +105,7 @@ pub fn parse_sprite_lib(p: &[u8]) -> Result<SpriteLib> {
     let mut at = 17;
     let mut textures = Vec::with_capacity(ntex);
     for _ in 0..ntex {
-        textures.push(norm_name(
-            p.get(at..at + 16)
-                .ok_or_else(|| anyhow::anyhow!("{name}: texture list cut"))?,
-        ));
+        textures.push(norm_name(p.get(at..at + 16).ok_or_else(|| anyhow::anyhow!("{name}: texture list cut"))?));
         at += 16;
     }
     if at + 2 > p.len() {
@@ -124,24 +115,13 @@ pub fn parse_sprite_lib(p: &[u8]) -> Result<SpriteLib> {
     at += 2;
     let mut sprites = Vec::with_capacity(nsprites);
     for i in 0..nsprites {
-        let Some(&ncells) = p.get(at) else {
-            bail!("{name}: sprite {i} of {nsprites} cut")
-        };
+        let Some(&ncells) = p.get(at) else { bail!("{name}: sprite {i} of {nsprites} cut") };
         at += 1;
         let mut cells = Vec::with_capacity(ncells as usize);
         for _ in 0..ncells {
-            let c = p
-                .get(at..at + CELL_SIZE)
-                .ok_or_else(|| anyhow::anyhow!("{name}: cell cut in sprite {i}"))?;
+            let c = p.get(at..at + CELL_SIZE).ok_or_else(|| anyhow::anyhow!("{name}: cell cut in sprite {i}"))?;
             let corner = |k: usize| [i16_at(c, k * 4), i16_at(c, k * 4 + 2)];
-            let color = |k: usize| {
-                cell_color([
-                    c[0x19 + k * 4],
-                    c[0x1A + k * 4],
-                    c[0x1B + k * 4],
-                    c[0x1C + k * 4],
-                ])
-            };
+            let color = |k: usize| cell_color([c[0x19 + k * 4], c[0x1A + k * 4], c[0x1B + k * 4], c[0x1C + k * 4]]);
             cells.push(Cell {
                 corners: [corner(0), corner(1), corner(2), corner(3)],
                 size: [u16_at(c, 0x10), u16_at(c, 0x12)],
@@ -155,11 +135,7 @@ pub fn parse_sprite_lib(p: &[u8]) -> Result<SpriteLib> {
         }
         sprites.push(Sprite { cells });
     }
-    Ok(SpriteLib {
-        name,
-        textures,
-        sprites,
-    })
+    Ok(SpriteLib { name, textures, sprites })
 }
 
 /// A sprite reference of a menu element: (state kind, sprite index, library).
@@ -194,26 +170,14 @@ pub struct Menu {
 
 /// Window header keeps its counts at 0x14..0x16, child headers at 0x1B..0x1E (FUN_10118090 / FUN_10118390).
 fn parse_element(p: &[u8], at: usize, child: bool) -> Result<(MenuElement, usize)> {
-    let e = p
-        .get(at..at + 32)
-        .ok_or_else(|| anyhow::anyhow!("element header cut"))?;
+    let e = p.get(at..at + 32).ok_or_else(|| anyhow::anyhow!("element header cut"))?;
     let size = u16_at(e, 0) as usize;
-    let (n, l1, l2) = if child {
-        (e[0x1B], e[0x1D], e[0x1E])
-    } else {
-        (e[0x14], e[0x15], e[0x16])
-    };
+    let (n, l1, l2) = if child { (e[0x1B], e[0x1D], e[0x1E]) } else { (e[0x14], e[0x15], e[0x16]) };
     let mut o = at + 32;
     let mut refs = Vec::new();
     for _ in 0..n {
-        let r = p
-            .get(o..o + 20)
-            .ok_or_else(|| anyhow::anyhow!("sprite ref cut"))?;
-        refs.push(SpriteRef {
-            kind: u16_at(r, 0),
-            index: u16_at(r, 2),
-            lib: norm_name(&r[4..20]),
-        });
+        let r = p.get(o..o + 20).ok_or_else(|| anyhow::anyhow!("sprite ref cut"))?;
+        refs.push(SpriteRef { kind: u16_at(r, 0), index: u16_at(r, 2), lib: norm_name(&r[4..20]) });
         o += 20;
     }
     let s1 = norm_name(p.get(o..o + l1 as usize).unwrap_or(&[]));
@@ -273,14 +237,7 @@ impl UiFile {
                 0x20 => match parse_img(c.data) {
                     Ok(t) => {
                         let key = norm_name(&c.data[1..17]);
-                        out.images.insert(
-                            key,
-                            UiImage {
-                                width: t.width,
-                                height: t.height,
-                                rgba: t.rgba,
-                            },
-                        );
+                        out.images.insert(key, UiImage { width: t.width, height: t.height, rgba: t.rgba });
                     }
                     Err(e) => out.warnings.push(format!("{}: {e}", c.name())),
                 },
@@ -342,37 +299,23 @@ mod tests {
     fn cell_colour_as_ffximain_loads_it() {
         assert_eq!(cell_color([0x7f, 0x40, 0, 0x7f]), [0x80, 0x41, 1, 192]);
         assert_eq!(cell_color([0xff, 0xfe, 0x7f, 0x20]), [0xff, 0xff, 0x80, 49]);
-        assert_eq!(
-            [0, 8, 0x40, 0x70, 0xa9, 0xff].map(|a| cell_color([0, 0, 0, a])[3]),
-            [0, 13, 97, 169, 255, 255]
-        );
+        assert_eq!([0, 8, 0x40, 0x70, 0xa9, 0xff].map(|a| cell_color([0, 0, 0, a])[3]), [0, 13, 97, 169, 255, 255]);
     }
 
     /// Needs the installed game; skipped without it.
     #[test]
     fn lobby_layout_matches_ffximain_tables() {
-        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir())
-        else {
-            return;
-        };
-        let Ok(file) = index.read(LOBBY_US) else {
-            return;
-        };
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let Ok(file) = index.read(LOBBY_US) else { return };
         let ui = UiFile::parse(&file).unwrap();
         assert!(ui.warnings.is_empty(), "{:?}", ui.warnings);
         let lib = ui.lib("menu    lobbywin").unwrap();
         assert_eq!(lib.sprites.len(), 236);
         // Expansion logo table 0x1037bf00 points at single ex*us cells in the right column.
-        for i in [
-            0x8d, 0x9d, 0x9f, 0xac, 0xad, 0xae, 0xaf, 0xb1, 0xb2, 0xb3, 0xb4,
-        ] {
+        for i in [0x8d, 0x9d, 0x9f, 0xac, 0xad, 0xae, 0xaf, 0xb1, 0xb2, 0xb3, 0xb4] {
             let c = &lib.sprites[i].cells;
             assert_eq!(c.len(), 1);
-            assert!(
-                c[0].texture.starts_with("menu    ex"),
-                "{i}: {}",
-                c[0].texture
-            );
+            assert!(c[0].texture.starts_with("menu    ex"), "{i}: {}", c[0].texture);
             assert_eq!(c[0].corners[0][0], 768);
         }
         // Title buttons: loby2win child refs are the 1-based ids of 0x1037beec minus one.

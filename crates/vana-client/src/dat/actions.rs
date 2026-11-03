@@ -30,18 +30,12 @@ pub(crate) fn unmask(r: &mut [u8]) {
 
 fn records(index: &DatIndex, kind: u8, size: usize) -> Result<Vec<Vec<u8>>> {
     let file = index.read(FILE)?;
-    let c = super::chunks(&file)?
-        .into_iter()
-        .find(|c| c.kind == kind)
-        .with_context(|| format!("file {FILE}: no chunk {kind:#x}"))?;
-    Ok(c.data
-        .chunks_exact(size)
-        .map(|r| {
-            let mut r = r.to_vec();
-            unmask(&mut r);
-            r
-        })
-        .collect())
+    let c = super::chunks(&file)?.into_iter().find(|c| c.kind == kind).with_context(|| format!("file {FILE}: no chunk {kind:#x}"))?;
+    Ok(c.data.chunks_exact(size).map(|r| {
+        let mut r = r.to_vec();
+        unmask(&mut r);
+        r
+    }).collect())
 }
 
 fn u16_at(r: &[u8], o: usize) -> u16 {
@@ -130,19 +124,7 @@ impl Actions {
             .collect();
         let abilities = records(index, ABILITY_CHUNK, ABILITY_SIZE)?
             .iter()
-            .map(|r| Ability {
-                id: u16_at(r, 0),
-                kind: r[2],
-                icon: r[3],
-                icon_hd: u16_at(r, 4),
-                cost: u16_at(r, 6),
-                timer: u16_at(r, 8),
-                targets: u16_at(r, 0xa),
-                tp: r[0xc],
-                tp16: u16_at(r, 0xc),
-                sub: r[0xe],
-                level: r[0xf],
-            })
+            .map(|r| Ability { id: u16_at(r, 0), kind: r[2], icon: r[3], icon_hd: u16_at(r, 4), cost: u16_at(r, 6), timer: u16_at(r, 8), targets: u16_at(r, 0xa), tp: r[0xc], tp16: u16_at(r, 0xc), sub: r[0xe], level: r[0xf] })
             .collect();
         Ok(Actions { spells, abilities })
     }
@@ -153,9 +135,7 @@ impl Actions {
 
     /// FUN_1022b7d0: the main or sub job reaches the spell's level; a job-point spell needs main 99 and the points.
     pub fn can_cast(&self, id: u16, main: (u8, u8), sub: (u8, u8), job_points: u16) -> bool {
-        let Some(s) = self.spell(id) else {
-            return false;
-        };
+        let Some(s) = self.spell(id) else { return false };
         let lv = |job: u8| s.levels.get(job as usize).copied().unwrap_or(-1);
         let reach = |(job, level): (u8, u8)| lv(job) >= 0 && level as i16 >= lv(job);
         if s.jp_mask & (1 << main.0) != 0 {
@@ -181,22 +161,10 @@ mod tests {
         let Some(a) = real() else { return };
         assert_eq!(a.spells.len(), 1024);
         let cure = a.spell(1).unwrap();
-        assert_eq!(
-            (cure.kind, cure.mp, cure.levels[3], cure.levels[1]),
-            (1, 8, 1, -1)
-        );
+        assert_eq!((cure.kind, cure.mp, cure.levels[3], cure.levels[1]), (1, 8, 1, -1));
         let trust = a.spell(896).unwrap();
         assert_eq!((trust.kind, trust.targets, trust.levels[1]), (8, 1, 1));
-        assert!(
-            a.spells
-                .iter()
-                .enumerate()
-                .all(|(i, s)| s.id == 0 || s.id as usize == i)
-        );
-        assert!(
-            a.can_cast(1, (3, 1), (0, 0), 0)
-                && !a.can_cast(1, (1, 75), (0, 0), 0)
-                && a.can_cast(1, (1, 75), (3, 37), 0)
-        );
+        assert!(a.spells.iter().enumerate().all(|(i, s)| s.id == 0 || s.id as usize == i));
+        assert!(a.can_cast(1, (3, 1), (0, 0), 0) && !a.can_cast(1, (1, 75), (0, 0), 0) && a.can_cast(1, (1, 75), (3, 37), 0));
     }
 }

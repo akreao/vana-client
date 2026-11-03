@@ -23,10 +23,7 @@ pub struct Tables {
 
 impl Default for Tables {
     fn default() -> Self {
-        Self {
-            data: vec![[0; 0x80]; 64],
-            complete: [false; 2],
-        }
+        Self { data: vec![[0; 0x80]; 64], complete: [false; 2] }
     }
 }
 
@@ -52,11 +49,7 @@ impl Tables {
         let mut r: Vec<(u8, u32)> = (0..12)
             .map(|u| {
                 let members = if u == 0 { 0 } else { self.value(week, 1, u) };
-                let avg = if members == 0 {
-                    0
-                } else {
-                    (self.value(week, 2, u) as f64 / members as f64) as u32
-                };
+                let avg = if members == 0 { 0 } else { (self.value(week, 2, u) as f64 / members as f64) as u32 };
                 (u as u8, avg)
             })
             .collect();
@@ -118,10 +111,7 @@ pub fn open(w: &mut World) {
     for week in 0..2u32 {
         if w.unity_tables.complete[week as usize] {
             w.unity_tables.complete[week as usize] = false;
-            let _ = w.net.commands.send(super::net::NetCommand::Packet {
-                id: 0x116,
-                body: week.to_le_bytes().to_vec(),
-            });
+            let _ = w.net.commands.send(super::net::NetCommand::Packet { id: 0x116, body: week.to_le_bytes().to_vec() });
         }
     }
     w.unity = Some(Unity { sel: 1, info: None });
@@ -138,23 +128,13 @@ fn unity_of(w: &World) -> u8 {
 
 /// Per frame (FUN_102302b0): the chat setting goes out (c2s 0x118 {u8}) once its hold of 30 is over.
 pub fn update(w: &mut World, ticks: f32) {
-    let Some(i) = w
-        .unity
-        .as_mut()
-        .and_then(|u| u.info.as_mut())
-        .filter(|i| i.mode == 1)
-    else {
-        return;
-    };
+    let Some(i) = w.unity.as_mut().and_then(|u| u.info.as_mut()).filter(|i| i.mode == 1) else { return };
     i.hold -= ticks;
     if i.hold <= 0.0 {
         i.hold = 30.0;
         if i.chat != i.sent {
             i.sent = i.chat;
-            let _ = w.net.commands.send(super::net::NetCommand::Packet {
-                id: 0x118,
-                body: vec![i.chat as u8, 0, 0, 0],
-            });
+            let _ = w.net.commands.send(super::net::NetCommand::Packet { id: 0x118, body: vec![i.chat as u8, 0, 0, 0] });
         }
     }
 }
@@ -185,24 +165,13 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key, page: bool) {
                 u.info.as_mut().unwrap().ranks = None;
             }
             K::ArrowUp | K::ArrowDown if n > 0 => {
-                r.cursor = if key == K::ArrowDown {
-                    (r.cursor + 1) % n
-                } else {
-                    (r.cursor + n - 1) % n
-                };
-                r.top = r
-                    .top
-                    .min(r.cursor)
-                    .max((r.cursor + 1).saturating_sub(VISIBLE));
+                r.cursor = if key == K::ArrowDown { (r.cursor + 1) % n } else { (r.cursor + n - 1) % n };
+                r.top = r.top.min(r.cursor).max((r.cursor + 1).saturating_sub(VISIBLE));
                 w.sounds.push(Ui::Cursor as u32);
             }
             K::ArrowLeft | K::ArrowRight if page => {
                 let mut row = r.cursor - r.top;
-                let m = if key == K::ArrowRight {
-                    super::scrollbar::Msg::PageDown
-                } else {
-                    super::scrollbar::Msg::PageUp
-                };
+                let m = if key == K::ArrowRight { super::scrollbar::Msg::PageDown } else { super::scrollbar::Msg::PageUp };
                 if n > 0 && super::scrollbar::paged(m, &mut r.top, &mut row, n, VISIBLE) {
                     r.cursor = r.top + row;
                     w.sounds.push(Ui::Cursor as u32);
@@ -232,11 +201,7 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key, page: bool) {
                 if mode == Some(1) {
                     i.chat = i.sel % 2 == 1;
                 } else {
-                    i.ranks = Some(Ranks {
-                        week: i.sel as usize - 1,
-                        top: 0,
-                        cursor: 0,
-                    });
+                    i.ranks = Some(Ranks { week: i.sel as usize - 1, top: 0, cursor: 0 });
                 }
             }
             _ => {}
@@ -262,14 +227,7 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key, page: bool) {
             match sel {
                 1 | 2 => {
                     let chat = w.game.get(0xb2) != 0;
-                    let i = Info {
-                        mode: sel as u8,
-                        sel: 1,
-                        chat,
-                        sent: chat,
-                        hold: 0.0,
-                        ranks: None,
-                    };
+                    let i = Info { mode: sel as u8, sel: 1, chat, sent: chat, hold: 0.0, ranks: None };
                     if let Some(u) = w.unity.as_mut() {
                         u.info = Some(i);
                     }
@@ -320,13 +278,7 @@ fn rank_text(gu: &GameUi, r: u8) -> String {
 
 /// A quest00 row at window (39, y): the child's plate (quest 0, lit and shifted while selected), the hand.
 fn plate(gu: &mut GameUi, x: f32, y: f32, on: bool, focused: bool) {
-    gu.sprite(
-        "menu    quest",
-        0,
-        x - on as u8 as f32,
-        y - on as u8 as f32,
-        if on { 0x8080_5020 } else { WHITE },
-    );
+    gu.sprite("menu    quest", 0, x - on as u8 as f32, y - on as u8 as f32, if on { 0x8080_5020 } else { WHITE });
     if on && focused {
         gu.cursor(x, y);
     }
@@ -340,153 +292,55 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
     }
     let Some(u) = &w.unity else { return rects };
     let free = w.confirm.is_none() && w.arealist.is_none();
-    if let Some(win) = gu.lobby_window_off(
-        MENU,
-        sw,
-        sh,
-        (0.0, 0.0),
-        Some(u.sel),
-        free && u.info.is_none(),
-        &[],
-    ) {
+    if let Some(win) = gu.lobby_window_off(MENU, sw, sh, (0.0, 0.0), Some(u.sel), free && u.info.is_none(), &[]) {
         super::winhits::record(w, MENU, &win);
         rects.push(win.frame);
     }
     if let Some(win) = gu.lobby_window_off(POINT, sw, sh, (0.0, 0.0), None, false, &[]) {
         let [x, y, ..] = win.frame;
-        let acc = if w.recasts_seen {
-            w.stats.as_ref().map_or(0, |s| s.unity >> 10 & 0x1ffff)
-        } else {
-            0
-        };
+        let acc = if w.recasts_seen { w.stats.as_ref().map_or(0, |s| s.unity >> 10 & 0x1ffff) } else { 0 };
         gu.shape_text(&format!("{acc}/99999"), x + 100.0, y + 20.0, WHITE, true);
         rects.push(win.frame);
     }
     let Some(i) = &u.info else { return rects };
-    let Some(win) = gu.lobby_window_off(CHOOSER, sw, sh, (0.0, 0.0), None, false, &[1, 2, 3, 4, 5])
-    else {
-        return rects;
-    };
+    let Some(win) = gu.lobby_window_off(CHOOSER, sw, sh, (0.0, 0.0), None, false, &[1, 2, 3, 4, 5]) else { return rects };
     rects.push(win.frame);
-    let Some((x, y)) = gu.window_xy(CHOOSER, sw, sh) else {
-        return rects;
-    };
+    let Some((x, y)) = gu.window_xy(CHOOSER, sw, sh) else { return rects };
     let bt = w.battle.clone();
     let focused = free && i.ranks.is_none();
     let lines = |gu: &mut GameUi, x: f32, y: f32| {
         if let Some(bt) = &bt {
-            text(
-                gu,
-                &bt.group9(0x61).unwrap_or_default(),
-                x + 0x14 as f32,
-                y,
-                WHITE,
-            );
-            text(
-                gu,
-                &bt.group9(0x62).unwrap_or_default(),
-                x + 0x14 as f32,
-                y + 0x19 as f32,
-                WHITE,
-            );
+            text(gu, &bt.group9(0x61).unwrap_or_default(), x + 0x14 as f32, y, WHITE);
+            text(gu, &bt.group9(0x62).unwrap_or_default(), x + 0x14 as f32, y + 0x19 as f32, WHITE);
         }
     };
-    let rows_y: [f32; 2] = if i.mode == 1 {
-        [195.0, 218.0]
-    } else {
-        [52.0, 82.0]
-    };
+    let rows_y: [f32; 2] = if i.mode == 1 { [195.0, 218.0] } else { [52.0, 82.0] };
     // The two rows are drawn by code: their plates (quest 0, 320 x 18) are the hit rects.
-    let plates = if i.ranks.is_none() {
-        rows_y
-            .iter()
-            .enumerate()
-            .map(|(k, ry)| (k as u16 + 1, [x + 39.0, y + ry, 320.0, 18.0]))
-            .collect()
-    } else {
-        Vec::new()
-    };
+    let plates = if i.ranks.is_none() { rows_y.iter().enumerate().map(|(k, ry)| (k as u16 + 1, [x + 39.0, y + ry, 320.0, 18.0])).collect() } else { Vec::new() };
     super::winhits::record_rects(w, CHOOSER, win.frame, plates);
     if i.mode == 1 {
         // FUN_1022fb50.
-        text(
-            gu,
-            &gu.lobby_msg(0xc, 0x18b, ""),
-            x + 0x50 as f32,
-            y + 0xf as f32,
-            WHITE,
-        );
-        text(
-            gu,
-            &gu.lobby_msg(0xc, 0x1b7, ""),
-            x + 0x14 as f32,
-            y + 0xa8 as f32,
-            WHITE,
-        );
+        text(gu, &gu.lobby_msg(0xc, 0x18b, ""), x + 0x50 as f32, y + 0xf as f32, WHITE);
+        text(gu, &gu.lobby_msg(0xc, 0x1b7, ""), x + 0x14 as f32, y + 0xa8 as f32, WHITE);
         if ready(w) {
-            for (id, ly) in [
-                (0x18d, 0x2b),
-                (0x18e, 0x44),
-                (0x18f, 0x5d),
-                (0x1c4, 0x76),
-                (0x1c5, 0x8f),
-            ] {
-                text(
-                    gu,
-                    &gu.lobby_msg(0xc, id, ""),
-                    x + 0x14 as f32,
-                    y + ly as f32,
-                    WHITE,
-                );
+            for (id, ly) in [(0x18d, 0x2b), (0x18e, 0x44), (0x18f, 0x5d), (0x1c4, 0x76), (0x1c5, 0x8f)] {
+                text(gu, &gu.lobby_msg(0xc, id, ""), x + 0x14 as f32, y + ly as f32, WHITE);
             }
             let me = unity_of(w);
-            text(
-                gu,
-                &gu.lobby_msg(0xc, 0x192 + me as usize, ""),
-                x + 0xb4 as f32,
-                y + 0x2b as f32,
-                WHITE,
-            );
+            text(gu, &gu.lobby_msg(0xc, 0x192 + me as usize, ""), x + 0xb4 as f32, y + 0x2b as f32, WHITE);
             if me == 0 {
                 for ly in [0x44, 0x5d] {
-                    text(
-                        gu,
-                        &gu.lobby_msg(0xc, 0x1b2, "--"),
-                        x + 0xdc as f32,
-                        y + ly as f32,
-                        WHITE,
-                    );
+                    text(gu, &gu.lobby_msg(0xc, 0x1b2, "--"), x + 0xdc as f32, y + ly as f32, WHITE);
                 }
             } else {
                 for (week, ly) in [(0usize, 0x44), (1, 0x5d)] {
                     let r = w.unity_tables.ranking(week);
-                    text(
-                        gu,
-                        &rank_text(gu, rank(&r, me)),
-                        x + 0xdc as f32,
-                        y + ly as f32,
-                        WHITE,
-                    );
-                    right(
-                        gu,
-                        &format!("{}pt", average(&r, me).min(999_999)),
-                        x + 0x15e as f32,
-                        y + ly as f32,
-                    );
+                    text(gu, &rank_text(gu, rank(&r, me)), x + 0xdc as f32, y + ly as f32, WHITE);
+                    right(gu, &format!("{}pt", average(&r, me).min(999_999)), x + 0x15e as f32, y + ly as f32);
                 }
                 let eval = w.stats.as_ref().map_or(0, |s| s.unity_eval);
-                right(
-                    gu,
-                    &format!("{}pt", eval >> 16),
-                    x + 0x15e as f32,
-                    y + 0x76 as f32,
-                );
-                right(
-                    gu,
-                    &format!("{}pt", eval & 0xffff),
-                    x + 0x15e as f32,
-                    y + 0x8f as f32,
-                );
+                right(gu, &format!("{}pt", eval >> 16), x + 0x15e as f32, y + 0x76 as f32);
+                right(gu, &format!("{}pt", eval & 0xffff), x + 0x15e as f32, y + 0x8f as f32);
             }
         } else {
             lines(gu, x, y + 0x2b as f32);
@@ -501,111 +355,47 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
             } else {
                 gu.sprite("menu    framesus", 35, cx + 4.0, cy + 5.0, WHITE);
             }
-            text(
-                gu,
-                &gu.lobby_msg(0xc, 0x1b8 + r, ""),
-                cx + 0x18 as f32,
-                cy,
-                if on { CURSOR } else { WHITE },
-            );
+            text(gu, &gu.lobby_msg(0xc, 0x1b8 + r, ""), cx + 0x18 as f32, cy, if on { CURSOR } else { WHITE });
         }
     } else if i.ranks.is_none() {
         // FUN_10230060: "Ranking Information" and the two weeks' rows (0xc 400 + r).
-        text(
-            gu,
-            &gu.lobby_msg(0xc, 0x18c, ""),
-            x + 0x50 as f32,
-            y + 0xf as f32,
-            WHITE,
-        );
+        text(gu, &gu.lobby_msg(0xc, 0x18c, ""), x + 0x50 as f32, y + 0xf as f32, WHITE);
         for (r, &ry) in rows_y.iter().enumerate() {
             let (cx, cy) = (x + 39.0, y + ry);
             let on = i.sel as usize == r + 1;
             plate(gu, cx, cy, on, focused);
             gu.sprite("menu    framesus", 35, cx + 4.0, cy + 5.0, WHITE);
-            text(
-                gu,
-                &gu.lobby_msg(0xc, 400 + r, ""),
-                cx + 0x10 as f32,
-                cy,
-                if on { CURSOR } else { WHITE },
-            );
+            text(gu, &gu.lobby_msg(0xc, 400 + r, ""), cx + 0x10 as f32, cy, if on { CURSOR } else { WHITE });
         }
     }
     let Some(rk) = &i.ranks else { return rects };
     // quest01 modes 5 / 6 (FUN_10232720): the unities in ranking order, the week's title, the bar.
-    let order: Vec<(u8, u32)> = if ready(w) {
-        w.unity_tables
-            .ranking(rk.week)
-            .into_iter()
-            .filter(|e| e.0 != 0)
-            .collect()
-    } else {
-        Vec::new()
-    };
-    let hide: Vec<u16> = (1..=VISIBLE as u16)
-        .filter(|&c| rk.top + c as usize > order.len())
-        .collect();
+    let order: Vec<(u8, u32)> = if ready(w) { w.unity_tables.ranking(rk.week).into_iter().filter(|e| e.0 != 0).collect() } else { Vec::new() };
+    let hide: Vec<u16> = (1..=VISIBLE as u16).filter(|&c| rk.top + c as usize > order.len()).collect();
     let sel = (!order.is_empty()).then(|| (rk.cursor - rk.top + 1) as u16);
-    let Some(win) = gu.lobby_window_off(LIST, sw, sh, (0.0, 0.0), sel, free, &hide) else {
-        return rects;
-    };
+    let Some(win) = gu.lobby_window_off(LIST, sw, sh, (0.0, 0.0), sel, free, &hide) else { return rects };
     super::winhits::record(w, LIST, &win);
     rects.push(win.frame);
-    let Some((lx, ly)) = gu.window_xy(LIST, sw, sh) else {
-        return rects;
-    };
+    let Some((lx, ly)) = gu.window_xy(LIST, sw, sh) else { return rects };
     if order.is_empty() {
         lines(gu, lx, ly + 0x2d as f32);
         return rects;
     }
-    text(
-        gu,
-        &gu.lobby_msg(0xc, if rk.week == 0 { 400 } else { 0x191 }, ""),
-        lx + 0x3c as f32,
-        ly + 10.0,
-        WHITE,
-    );
+    text(gu, &gu.lobby_msg(0xc, if rk.week == 0 { 400 } else { 0x191 }, ""), lx + 0x3c as f32, ly + 10.0, WHITE);
     let full = w.unity_tables.ranking(rk.week);
-    for &(id, [cx, cy, ..]) in win
-        .children
-        .iter()
-        .filter(|(id, _)| (1..=VISIBLE as u16).contains(id))
-    {
+    for &(id, [cx, cy, ..]) in win.children.iter().filter(|(id, _)| (1..=VISIBLE as u16).contains(id)) {
         let row = rk.top + id as usize - 1;
-        let Some(&(un, avg)) = order.get(row) else {
-            continue;
-        };
+        let Some(&(un, avg)) = order.get(row) else { continue };
         let tint = if row == rk.cursor { CURSOR } else { WHITE };
         gu.sprite("menu    framesus", 35, cx + 4.0, cy + 5.0, WHITE);
-        text(
-            gu,
-            &rank_text(gu, rank(&full, un)),
-            cx + 0x10 as f32,
-            cy,
-            tint,
-        );
-        text(
-            gu,
-            &gu.lobby_msg(0xc, 0x192 + un as usize, ""),
-            cx + 0x3a as f32,
-            cy,
-            tint,
-        );
+        text(gu, &rank_text(gu, rank(&full, un)), cx + 0x10 as f32, cy, tint);
+        text(gu, &gu.lobby_msg(0xc, 0x192 + un as usize, ""), cx + 0x3a as f32, cy, tint);
         text(gu, &format!("{}pt", avg), cx + 0xfa as f32, cy, tint);
     }
     let [fx, fy, fw, fh] = win.frame;
     gu.scroll_bar(fx + fw - 8.0, fy, fh, order.len(), VISIBLE, rk.top);
     if free {
-        gu.bar_site(
-            super::scrollbar::Owner::Points,
-            fx + fw - 8.0,
-            fy,
-            fh,
-            order.len(),
-            VISIBLE,
-            rk.top,
-        );
+        gu.bar_site(super::scrollbar::Owner::Points, fx + fw - 8.0, fy, fh, order.len(), VISIBLE, rk.top);
     }
     rects
 }
@@ -637,15 +427,9 @@ pub(super) struct InfoLook {
 
 pub(super) fn look(w: &World, gu: &GameUi) -> Option<Look> {
     let u = w.unity.as_ref()?;
-    let accolades = if w.recasts_seen {
-        w.stats.as_ref().map_or(0, |s| s.unity >> 10 & 0x1ffff)
-    } else {
-        0
-    };
+    let accolades = if w.recasts_seen { w.stats.as_ref().map_or(0, |s| s.unity >> 10 & 0x1ffff) } else { 0 };
     let msg = |id: usize| gu.lobby_msg(0xc, id, "");
-    let waiting: Vec<String> = w.battle.as_ref().map_or(Vec::new(), |bt| {
-        [0x61, 0x62].iter().filter_map(|&k| bt.group9(k)).collect()
-    });
+    let waiting: Vec<String> = w.battle.as_ref().map_or(Vec::new(), |bt| [0x61, 0x62].iter().filter_map(|&k| bt.group9(k)).collect());
     let info = u.info.as_ref().map(|i| {
         let ok = ready(w);
         let mut lines = Vec::new();
@@ -654,14 +438,7 @@ pub(super) fn look(w: &World, gu: &GameUi) -> Option<Look> {
             lines.push([msg(0x18d), msg(0x192 + me as usize), String::new()]);
             for (week, id) in [(0usize, 0x18e), (1, 0x18f)] {
                 let r = w.unity_tables.ranking(week);
-                let (rk, pt) = if me == 0 {
-                    (msg(0x1b2), String::new())
-                } else {
-                    (
-                        rank_text(gu, rank(&r, me)),
-                        format!("{}pt", average(&r, me).min(999_999)),
-                    )
-                };
+                let (rk, pt) = if me == 0 { (msg(0x1b2), String::new()) } else { (rank_text(gu, rank(&r, me)), format!("{}pt", average(&r, me).min(999_999))) };
                 lines.push([msg(id), rk, pt]);
             }
             if me != 0 {
@@ -670,93 +447,47 @@ pub(super) fn look(w: &World, gu: &GameUi) -> Option<Look> {
                 lines.push([msg(0x1c5), String::new(), format!("{}pt", eval & 0xffff)]);
             }
         }
-        let rows = if i.mode == 1 {
-            [msg(0x1b8), msg(0x1b9)]
-        } else {
-            [msg(400), msg(401)]
-        };
+        let rows = if i.mode == 1 { [msg(0x1b8), msg(0x1b9)] } else { [msg(400), msg(401)] };
         let ranks = i.ranks.as_ref().map(|rk| {
             let full = w.unity_tables.ranking(rk.week);
             let order: Vec<[String; 3]> = if ok {
-                full.iter()
-                    .filter(|e| e.0 != 0)
-                    .map(|&(un, avg)| {
-                        [
-                            rank_text(gu, rank(&full, un)),
-                            msg(0x192 + un as usize),
-                            format!("{avg}pt"),
-                        ]
-                    })
-                    .collect()
+                full.iter().filter(|e| e.0 != 0).map(|&(un, avg)| [rank_text(gu, rank(&full, un)), msg(0x192 + un as usize), format!("{avg}pt")]).collect()
             } else {
                 Vec::new()
             };
-            (
-                msg(if rk.week == 0 { 400 } else { 0x191 }),
-                order,
-                rk.cursor,
-            )
+            (msg(if rk.week == 0 { 400 } else { 0x191 }), order, rk.cursor)
         });
         InfoLook {
             mode: i.mode,
             heading: msg(if i.mode == 1 { 0x18b } else { 0x18c }),
             lines,
             waiting: if ok { Vec::new() } else { waiting.clone() },
-            chat_label: if i.mode == 1 {
-                msg(0x1b7)
-            } else {
-                String::new()
-            },
+            chat_label: if i.mode == 1 { msg(0x1b7) } else { String::new() },
             chat: i.chat,
             rows,
             sel: i.sel,
             ranks,
         }
     });
-    Some(Look {
-        sel: u.sel,
-        accolades,
-        info,
-    })
+    Some(Look { sel: u.sel, accolades, info })
 }
 
 /// The mouse's cursor moves: ut_menu, quest00's two rows, quest01's rows. True when it moved.
 pub(super) fn set_menu(w: &mut World, k: u16) -> bool {
-    let Some(u) = w
-        .unity
-        .as_mut()
-        .filter(|u| u.info.is_none() && u.sel != k && (1..=3).contains(&k))
-    else {
-        return false;
-    };
+    let Some(u) = w.unity.as_mut().filter(|u| u.info.is_none() && u.sel != k && (1..=3).contains(&k)) else { return false };
     u.sel = k;
     true
 }
 
 pub(super) fn set_info(w: &mut World, k: u16) -> bool {
-    let Some(i) = w
-        .unity
-        .as_mut()
-        .and_then(|u| u.info.as_mut())
-        .filter(|i| i.ranks.is_none() && i.sel != k && (1..=2).contains(&k))
-    else {
-        return false;
-    };
+    let Some(i) = w.unity.as_mut().and_then(|u| u.info.as_mut()).filter(|i| i.ranks.is_none() && i.sel != k && (1..=2).contains(&k)) else { return false };
     i.sel = k;
     true
 }
 
 pub(super) fn set_rank(w: &mut World, k: usize) -> bool {
     let n = if ready(w) { 11 } else { 0 };
-    let Some(r) = w
-        .unity
-        .as_mut()
-        .and_then(|u| u.info.as_mut())
-        .and_then(|i| i.ranks.as_mut())
-        .filter(|r| r.cursor != k && k < n)
-    else {
-        return false;
-    };
+    let Some(r) = w.unity.as_mut().and_then(|u| u.info.as_mut()).and_then(|i| i.ranks.as_mut()).filter(|r| r.cursor != k && k < n) else { return false };
     r.cursor = k;
     r.top = r.top.min(k).max((k + 1).saturating_sub(VISIBLE));
     true
@@ -765,14 +496,7 @@ pub(super) fn set_rank(w: &mut World, k: usize) -> bool {
 /// The ranking's bar (the paged list, as its Ctrl / Alt keys).
 pub(super) fn bar(w: &mut World, m: super::scrollbar::Msg) -> bool {
     let n = if ready(w) { 11 } else { 0 };
-    let Some(r) = w
-        .unity
-        .as_mut()
-        .and_then(|u| u.info.as_mut())
-        .and_then(|i| i.ranks.as_mut())
-    else {
-        return false;
-    };
+    let Some(r) = w.unity.as_mut().and_then(|u| u.info.as_mut()).and_then(|i| i.ranks.as_mut()) else { return false };
     let mut row = r.cursor - r.top;
     let moved = super::scrollbar::paged(m, &mut r.top, &mut row, n, VISIBLE);
     r.cursor = r.top + row;
@@ -789,65 +513,24 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
     }
     let keys = |w: &mut World, gu: &GameUi, k: egui::Key| key(w, gu, k, false);
     match &u.info {
-        None => generic(
-            w,
-            gu,
-            MENU,
-            u.sel,
-            1..=3,
-            p,
-            moved,
-            clicked,
-            right,
-            |w, id| {
-                if let Some(u) = w.unity.as_mut() {
-                    u.sel = id;
-                }
-            },
-            keys,
-        ),
+        None => generic(w, gu, MENU, u.sel, 1..=3, p, moved, clicked, right, |w, id| {
+            if let Some(u) = w.unity.as_mut() {
+                u.sel = id;
+            }
+        }, keys),
         Some(i) => match &i.ranks {
-            None => generic(
-                w,
-                gu,
-                CHOOSER,
-                i.sel,
-                1..=2,
-                p,
-                moved,
-                clicked,
-                right,
-                |w, id| {
-                    if let Some(i) = w.unity.as_mut().and_then(|u| u.info.as_mut()) {
-                        i.sel = id;
-                    }
-                },
-                keys,
-            ),
+            None => generic(w, gu, CHOOSER, i.sel, 1..=2, p, moved, clicked, right, |w, id| {
+                if let Some(i) = w.unity.as_mut().and_then(|u| u.info.as_mut()) {
+                    i.sel = id;
+                }
+            }, keys),
             Some(r) => {
                 let top = r.top;
-                generic(
-                    w,
-                    gu,
-                    LIST,
-                    (r.cursor - top + 1) as u16,
-                    1..=VISIBLE as u16,
-                    p,
-                    moved,
-                    clicked,
-                    right,
-                    |w, id| {
-                        if let Some(r) = w
-                            .unity
-                            .as_mut()
-                            .and_then(|u| u.info.as_mut())
-                            .and_then(|i| i.ranks.as_mut())
-                        {
-                            r.cursor = top + id as usize - 1;
-                        }
-                    },
-                    keys,
-                );
+                generic(w, gu, LIST, (r.cursor - top + 1) as u16, 1..=VISIBLE as u16, p, moved, clicked, right, |w, id| {
+                    if let Some(r) = w.unity.as_mut().and_then(|u| u.info.as_mut()).and_then(|i| i.ranks.as_mut()) {
+                        r.cursor = top + id as usize - 1;
+                    }
+                }, keys);
             }
         },
     }
@@ -871,10 +554,7 @@ mod tests {
         t.store(1, 2, &points);
         let r = t.ranking(1);
         assert_eq!(&r[..3], &[(1, 100), (2, 100), (3, 50)]);
-        assert_eq!(
-            [rank(&r, 1), rank(&r, 2), rank(&r, 3), rank(&r, 4)],
-            [1, 1, 3, 4]
-        );
+        assert_eq!([rank(&r, 1), rank(&r, 2), rank(&r, 3), rank(&r, 4)], [1, 1, 3, 4]);
         assert_eq!(rank(&t.ranking(0), 1), 0);
     }
 }

@@ -26,17 +26,11 @@ impl Set {
         let mut name = [0u8; 16];
         let s = format!("Set{:03}", id + 1);
         name[..s.len()].copy_from_slice(s.as_bytes());
-        Set {
-            name,
-            slots: [[0; 4]; 16],
-        }
+        Set { name, slots: [[0; 4]; 16] }
     }
 
     fn parse(b: &[u8]) -> Self {
-        let mut s = Set {
-            name: [0; 16],
-            slots: [[0; 4]; 16],
-        };
+        let mut s = Set { name: [0; 16], slots: [[0; 4]; 16] };
         s.name.copy_from_slice(&b[..16]);
         for (k, e) in s.slots.iter_mut().enumerate() {
             e.copy_from_slice(&b[16 + 4 * k..20 + 4 * k]);
@@ -74,15 +68,7 @@ pub struct EquipSets {
 
 impl EquipSets {
     pub fn new(dir: PathBuf) -> Self {
-        EquipSets {
-            dir,
-            page: None,
-            sets: Vec::new(),
-            clip: None,
-            last_equip: None,
-            last_lock: None,
-            print: false,
-        }
+        EquipSets { dir, page: None, sets: Vec::new(), clip: None, last_equip: None, last_lock: None, print: false }
     }
 
     fn path(&self, page: usize) -> PathBuf {
@@ -92,9 +78,7 @@ impl EquipSets {
     /// FUN_101a8820: the page's file with its MD5 checked, else the defaults in memory.
     pub fn load_page(&mut self, page: usize) {
         self.page = Some(page);
-        self.sets = match super::macros::read_file(&self.path(page), 1)
-            .filter(|p| p.len() == 20 * RECORD)
-        {
+        self.sets = match super::macros::read_file(&self.path(page), 1).filter(|p| p.len() == 20 * RECORD) {
             Some(p) => p.chunks(RECORD).map(Set::parse).collect(),
             None => (0..20).map(|i| Set::new(page * 20 + i)).collect(),
         };
@@ -128,9 +112,7 @@ impl EquipSets {
     /// FUN_101a8990: the name, "Set%03d" when empty, at most 15 chars.
     pub fn rename(&mut self, row: usize, raw: &[u8]) {
         let Some(page) = self.page else { return };
-        let Some(s) = self.sets.get_mut(row) else {
-            return;
-        };
+        let Some(s) = self.sets.get_mut(row) else { return };
         if raw.is_empty() {
             s.name = Set::new(page * 20 + row).name;
         } else {
@@ -149,8 +131,7 @@ impl EquipSets {
 
     /// The lockstyle wait (9 s) is still running: mcresmn's Set appearance is dimmed.
     pub fn lock_waiting(&self) -> bool {
-        self.last_lock
-            .is_some_and(|t| t.elapsed() < Duration::from_secs(9))
+        self.last_lock.is_some_and(|t| t.elapsed() < Duration::from_secs(9))
     }
 }
 
@@ -161,10 +142,7 @@ fn send(w: &World, id: u16, body: Vec<u8>) {
 /// FUN_100ad660 in chat mode 0xca: a group 0xc line with the set number.
 fn set_line(w: &mut World, msg: usize, set: usize) {
     let Some(bt) = w.battle.clone() else { return };
-    let line = super::textcmd::printf(
-        &bt.group12(msg).unwrap_or_default(),
-        &[(set + 1).to_string()],
-    );
+    let line = super::textcmd::printf(&bt.group12(msg).unwrap_or_default(), &[(set + 1).to_string()]);
     let colour = bt.colour_in(0xca, &w.game);
     w.chat.push_colour(line, colour);
 }
@@ -195,27 +173,15 @@ fn fix_up(w: &mut World, set: &Set, print: bool) -> Vec<[u8; 3]> {
             1 => {
                 let (c, i, id) = set.entry(slot);
                 let inv = &w.inv.slots;
-                let find = |bag: u8, used: &[(u8, u8)]| {
-                    inv.range((bag, 1)..=(bag, 255))
-                        .find(|(k, v)| v.0 == id && !used.contains(k))
-                        .map(|(&k, _)| k)
-                };
-                let stays = BAGS.contains(&c)
-                    && inv.get(&(c, i)).is_some_and(|v| v.0 == id)
-                    && !used.contains(&(c, i));
-                let at = if stays {
-                    Some((c, i))
-                } else {
-                    find(c, &used).or_else(|| BAGS.iter().find_map(|&b| find(b, &used)))
-                };
+                let find = |bag: u8, used: &[(u8, u8)]| inv.range((bag, 1)..=(bag, 255)).find(|(k, v)| v.0 == id && !used.contains(k)).map(|(&k, _)| k);
+                let stays = BAGS.contains(&c) && inv.get(&(c, i)).is_some_and(|v| v.0 == id) && !used.contains(&(c, i));
+                let at = if stays { Some((c, i)) } else { find(c, &used).or_else(|| BAGS.iter().find_map(|&b| find(b, &used))) };
                 match at {
                     Some((c, i)) => {
                         used.push((c, i));
                         out.push([i, slot as u8, c]);
                     }
-                    None if print => {
-                        super::post::system_line(w, 0x113, [id as i32, 0, 0, 0, 0], String::new())
-                    }
+                    None if print => super::post::system_line(w, 0x113, [id as i32, 0, 0, 0, 0], String::new()),
                     None => {}
                 }
             }
@@ -232,15 +198,9 @@ pub fn equip(w: &mut World, id: usize, print: bool) -> bool {
     if super::monstrosity::active(w) {
         return false;
     }
-    let Some(es) = w.equipsets.as_mut() else {
-        return false;
-    };
+    let Some(es) = w.equipsets.as_mut() else { return false };
     let Some(set) = es.get(id) else { return false };
-    if w.opts.equipset_delay
-        && es
-            .last_equip
-            .is_some_and(|t| t.elapsed() < Duration::from_millis(900))
-    {
+    if w.opts.equipset_delay && es.last_equip.is_some_and(|t| t.elapsed() < Duration::from_millis(900)) {
         return false;
     }
     (es.last_equip, es.print) = (Some(Instant::now()), print);
@@ -278,9 +238,7 @@ pub fn lock_set(w: &mut World, id: usize, print: bool) -> bool {
     if super::monstrosity::active(w) {
         return false;
     }
-    let Some(set) = w.equipsets.as_ref().and_then(|e| e.get(id)) else {
-        return false;
-    };
+    let Some(set) = w.equipsets.as_ref().and_then(|e| e.get(id)) else { return false };
     if lock_wait(w) {
         return true;
     }
@@ -302,11 +260,7 @@ pub fn lock_set(w: &mut World, id: usize, print: bool) -> bool {
     for (k, e) in entries.iter().enumerate() {
         b[4 + 8 * k..12 + 8 * k].copy_from_slice(e);
     }
-    log::info!(
-        "lockstyle set {}: c2s 0x053 mode 3, {} entries",
-        id + 1,
-        entries.len()
-    );
+    log::info!("lockstyle set {}: c2s 0x053 mode 3, {} entries", id + 1, entries.len());
     send(w, 0x053, b);
     super::textcmd::cfg(w, 0xbf, 1);
     if print {
@@ -347,11 +301,7 @@ pub fn on_res(w: &mut World, count: u8, changed: &[[u8; 4]; 16], equipped: &[[u8
     if !w.equipsets.as_ref().is_some_and(|e| e.print) {
         return;
     }
-    for e in changed
-        .iter()
-        .take(count as usize)
-        .filter(|e| e[0] != 0 && !equipped.contains(e))
-    {
+    for e in changed.iter().take(count as usize).filter(|e| e[0] != 0 && !equipped.contains(e)) {
         if let Some(&(id, _)) = w.inv.slots.get(&(e[2], e[0])) {
             super::post::system_line(w, 0x112, [id as i32, 0, 0, 0, 0], String::new());
         }
@@ -387,17 +337,11 @@ mod tests {
         es.rename(1, b"Melee");
         es.sets[1].slots[0] = [1 | 8 << 2, 3, 0x34, 0x12];
         es.save_page();
-        assert_eq!(
-            std::fs::metadata(dir.join("es0.dat")).unwrap().len(),
-            0x18 + 0x640
-        );
+        assert_eq!(std::fs::metadata(dir.join("es0.dat")).unwrap().len(), 0x18 + 0x640);
         es.load_page(1);
         assert_eq!(es.sets[0].raw_name(), b"Set021");
         let s = es.get(1).unwrap();
-        assert_eq!(
-            (s.raw_name(), s.state(0), s.entry(0), s.state(1)),
-            (&b"Melee"[..], 1, (8, 3, 0x1234), 0)
-        );
+        assert_eq!((s.raw_name(), s.state(0), s.entry(0), s.state(1)), (&b"Melee"[..], 1, (8, 3, 0x1234), 0));
         assert!(es.get(45).is_none());
         es.load_page(0);
         es.rename(1, b"");

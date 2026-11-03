@@ -20,12 +20,7 @@ pub struct BlkList {
 
 /// FUN_101def10: a list already up is closed and made again, at the top.
 pub fn open(w: &mut World) {
-    w.blklist = Some(BlkList {
-        rows: Vec::new(),
-        top: 0,
-        cursor: 0,
-        main: false,
-    });
+    w.blklist = Some(BlkList { rows: Vec::new(), top: 0, cursor: 0, main: false });
     rebuild(w);
 }
 
@@ -38,11 +33,7 @@ pub fn rebuild(w: &mut World) {
     if !w.partyreq.black_loaded {
         super::partyreq::ask_blacklist(w);
     }
-    let rows = if w.partyreq.black_loaded {
-        w.partyreq.blacklist.clone()
-    } else {
-        Vec::new()
-    };
+    let rows = if w.partyreq.black_loaded { w.partyreq.blacklist.clone() } else { Vec::new() };
     if let Some(b) = w.blklist.as_mut() {
         let hand = b.cursor - b.top;
         b.rows = rows;
@@ -116,31 +107,13 @@ pub fn key(w: &mut World, key: egui::Key) {
 /// The block list as the modern layer draws it: the names, the cursor, blkmain up; the empty line (group 7 0x67).
 pub(super) fn view(w: &World) -> Option<(Vec<String>, usize, bool, String)> {
     let b = w.blklist.as_ref()?;
-    let empty = if b.rows.is_empty() {
-        w.battle
-            .as_ref()
-            .and_then(|bt| bt.group7(0x67))
-            .unwrap_or_default()
-    } else {
-        String::new()
-    };
-    Some((
-        b.rows.iter().map(|r| r.1.clone()).collect(),
-        b.cursor,
-        b.main,
-        empty,
-    ))
+    let empty = if b.rows.is_empty() { w.battle.as_ref().and_then(|bt| bt.group7(0x67)).unwrap_or_default() } else { String::new() };
+    Some((b.rows.iter().map(|r| r.1.clone()).collect(), b.cursor, b.main, empty))
 }
 
 /// The mouse's cursor move onto row `k` (not while blkmain is up). True when it moved.
 pub(super) fn set_cursor(w: &mut World, k: usize) -> bool {
-    let Some(b) = w
-        .blklist
-        .as_mut()
-        .filter(|b| !b.main && b.cursor != k && k < b.rows.len())
-    else {
-        return false;
-    };
+    let Some(b) = w.blklist.as_mut().filter(|b| !b.main && b.cursor != k && k < b.rows.len()) else { return false };
     b.cursor = k;
     b.top = b.top.min(k).max((k + 1).saturating_sub(ROWS));
     true
@@ -148,46 +121,26 @@ pub(super) fn set_cursor(w: &mut World, k: usize) -> bool {
 
 /// The mouse (the list base, message 9 / 5 / 6): hovering a row (not past the count) moves the hand there, a click on
 /// the hand's row or on Delete is Enter, a right click on the window is Escape.
-pub fn pointer(
-    w: &mut World,
-    gu: &GameUi,
-    sw: f32,
-    sh: f32,
-    p: (f32, f32),
-    moved: bool,
-    clicked: bool,
-    right: bool,
-) {
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
     // The modern layer draws it and takes its mouse.
     if w.modern {
         return;
     }
     let Some(b) = w.blklist.as_ref() else { return };
-    let (win, child) = if b.main {
-        (MAIN, None)
-    } else {
-        (LIST, Some(()))
-    };
-    let (Some((x, y)), Some(lay)) = (gu.window_xy(win, sw, sh), gu.layout(win)) else {
-        return;
-    };
+    let (win, child) = if b.main { (MAIN, None) } else { (LIST, Some(())) };
+    let (Some((x, y)), Some(lay)) = (gu.window_xy(win, sw, sh), gu.layout(win)) else { return };
     let inside = |e: &crate::dat::ui::MenuElement| {
         let (ex, ey) = (x + e.x as f32, y + e.y as f32);
         p.0 >= ex && p.0 < ex + e.w as f32 && p.1 >= ey && p.1 < ey + e.h as f32
     };
-    if gu
-        .window_rect(win, sw, sh)
-        .is_some_and(|[fx, fy, fw, fh]| p.0 >= fx && p.0 < fx + fw && p.1 >= fy && p.1 < fy + fh)
-    {
+    if gu.window_rect(win, sw, sh).is_some_and(|[fx, fy, fw, fh]| p.0 >= fx && p.0 < fx + fw && p.1 >= fy && p.1 < fy + fh) {
         gu.hover.set(true);
         if right {
             key(w, egui::Key::Escape);
             return;
         }
     }
-    let Some(e) = lay.elements.iter().skip(1).find(|e| inside(e)) else {
-        return;
-    };
+    let Some(e) = lay.elements.iter().skip(1).find(|e| inside(e)) else { return };
     if child.is_none() {
         if e.id == 1 && clicked {
             key(w, egui::Key::Enter);
@@ -218,53 +171,24 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
     let Some(b) = &w.blklist else { return rects };
     let focused = !b.main && w.confirm.is_none();
     let n = b.rows.len();
-    let sel = if focused && n > 0 {
-        (b.cursor - b.top + 1) as u16
-    } else {
-        0
-    };
-    let Some((wx, wy)) = gu.menu_sel(LIST, sw, sh, sel) else {
-        return rects;
-    };
+    let sel = if focused && n > 0 { (b.cursor - b.top + 1) as u16 } else { 0 };
+    let Some((wx, wy)) = gu.menu_sel(LIST, sw, sh, sel) else { return rects };
     rects.extend(gu.window_rect(LIST, sw, sh));
     if n == 0 {
-        let s = w
-            .battle
-            .as_ref()
-            .and_then(|bt| bt.group7(0x67))
-            .unwrap_or_default();
-        gu.text(
-            &s,
-            wx + 35.0,
-            wy + 28.0,
-            0,
-            crate::dat::battle::argb_bytes(0x8080_4040),
-        );
+        let s = w.battle.as_ref().and_then(|bt| bt.group7(0x67)).unwrap_or_default();
+        gu.text(&s, wx + 35.0, wy + 28.0, 0, crate::dat::battle::argb_bytes(0x8080_4040));
     }
     for (i, (_, name)) in b.rows.iter().enumerate().skip(b.top).take(ROWS) {
-        gu.shape_text(
-            name,
-            wx + 21.0,
-            wy + 4.0 + 16.0 * (i - b.top) as f32,
-            WHITE,
-            false,
-        );
+        gu.shape_text(name, wx + 21.0, wy + 4.0 + 16.0 * (i - b.top) as f32, WHITE, false);
     }
     if focused && n > 0 {
-        gu.sprite(
-            "menu    windowps",
-            75,
-            wx,
-            wy + 4.0 + 16.0 * (b.cursor - b.top) as f32,
-            WHITE,
-        );
+        gu.sprite("menu    windowps", 75, wx, wy + 4.0 + 16.0 * (b.cursor - b.top) as f32, WHITE);
     }
     if let Some([fx, fy, fw, fh]) = gu.window_rect(LIST, sw, sh) {
         gu.scroll_bar(fx + fw - 8.0, fy, fh, n, ROWS, b.top);
     }
     if b.main
-        && let Some(win) =
-            gu.lobby_window_off(MAIN, sw, sh, (0.0, 0.0), Some(1), w.confirm.is_none(), &[])
+        && let Some(win) = gu.lobby_window_off(MAIN, sw, sh, (0.0, 0.0), Some(1), w.confirm.is_none(), &[])
     {
         rects.push(win.frame);
     }
@@ -274,11 +198,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
 /// The bars from the focused window's strings: blklist "Blacklist" with no help, blkmain "Delete from blacklist.".
 pub fn bars(gu: &GameUi, w: &World, bars: &mut super::hudtop::BarText) {
     let Some(b) = &w.blklist else { return };
-    let [help, title] = if b.main {
-        gu.focus_text(MAIN, 1)
-    } else {
-        gu.focus_text(LIST, (b.cursor - b.top + 1) as u16)
-    };
+    let [help, title] = if b.main { gu.focus_text(MAIN, 1) } else { gu.focus_text(LIST, (b.cursor - b.top + 1) as u16) };
     (bars.help[1], bars.title[1]) = (help.unwrap_or_default(), title.unwrap_or_default());
     bars.help[2] = String::new();
 }

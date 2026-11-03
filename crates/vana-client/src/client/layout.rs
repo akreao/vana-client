@@ -48,12 +48,7 @@ pub struct Pulse {
 
 impl Pulse {
     pub fn new(left: i32) -> Self {
-        Pulse {
-            level: 0x80,
-            step: -8,
-            left,
-            acc: 0.0,
-        }
+        Pulse { level: 0x80, step: -8, left, acc: 0.0 }
     }
 
     /// `ticks` more (whole ticks, the rest kept); the level while it runs.
@@ -96,10 +91,7 @@ pub struct Held {
 /// all furniture?" (0xe 0x267).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Ask {
-    Dispose {
-        c: u8,
-        slot: u8,
-    },
+    Dispose { c: u8, slot: u8 },
     ClearAll,
     DisposeAll,
     /// The dressed mannequin's "Remove all equipment from the mannequin?" (9 0xe0).
@@ -112,18 +104,11 @@ const MANNEQUIN: u16 = 14;
 
 /// FUN_101d4d90: the player stands at the room centre while laying out (DAT_1037eba8[floor]).
 fn park(floor: u8) -> Vec3 {
-    if floor == 0 {
-        Vec3::ZERO
-    } else {
-        Vec3::new(0.0, 0.0, -9.0)
-    }
+    if floor == 0 { Vec3::ZERO } else { Vec3::new(0.0, 0.0, -9.0) }
 }
 
 fn item_type(w: &World, id: u16) -> u16 {
-    w.item_info
-        .as_ref()
-        .and_then(|i| i.item(id))
-        .map_or(0, |it| it.item_type)
+    w.item_info.as_ref().and_then(|i| i.item(id)).map_or(0, |it| it.item_type)
 }
 
 /// The installed pieces of a floor (exdata[1] bit 6, floor exdata[1] & 3; place exdata[6..9]), containers 1 then 9.
@@ -131,29 +116,12 @@ pub fn placed(w: &World, table: &FurnTable, floor: u8) -> Vec<Placed> {
     let mut out = Vec::new();
     for c in [1u8, 9] {
         for slot in 1..0x51u8 {
-            let (Some(&(item, _)), Some(ext)) =
-                (w.inv.slots.get(&(c, slot)), w.inv.ext.get(&(c, slot)))
-            else {
-                continue;
-            };
+            let (Some(&(item, _)), Some(ext)) = (w.inv.slots.get(&(c, slot)), w.inv.ext.get(&(c, slot))) else { continue };
             if !TYPES.contains(&item_type(w, item)) || ext[1] & 0x40 == 0 || ext[1] & 3 != floor {
                 continue;
             }
-            let Some(furn) = table.entry(item) else {
-                continue;
-            };
-            out.push(Placed {
-                piece: Piece {
-                    c,
-                    slot,
-                    furn,
-                    x: ext[6] as i8,
-                    level: ext[7] as i8,
-                    z: ext[8] as i8,
-                    rot: ext[9] & 3,
-                },
-                item,
-            });
+            let Some(furn) = table.entry(item) else { continue };
+            out.push(Placed { piece: Piece { c, slot, furn, x: ext[6] as i8, level: ext[7] as i8, z: ext[8] as i8, rot: ext[9] & 3 }, item });
         }
     }
     out
@@ -174,22 +142,15 @@ pub fn grid_of(pieces: &[Placed], floor: u8) -> Grid {
 impl Layout {
     /// A piece's origin in the room (FUN_101cdd90: its footprint centre at its level, or its wall slot).
     pub fn pos(&self, p: &Piece) -> Option<Vec3> {
-        super::furniture::place(&p.furn, self.map, self.floor, p.x, p.level, p.z, p.rot)
-            .map(|v| v.0)
+        super::furniture::place(&p.furn, self.map, self.floor, p.x, p.level, p.z, p.rot).map(|v| v.0)
     }
 
     /// The pieces as drawn: the installed ones with the held piece and those on it where they are held.
     fn pieces(&self, w: &World) -> Vec<Placed> {
         let mut v = placed(w, &self.table, self.floor);
         if let Some(h) = &self.held {
-            let moved: Vec<Placed> = std::iter::once(h.piece)
-                .chain(h.tops.iter().copied())
-                .collect();
-            v.retain(|p| {
-                !moved
-                    .iter()
-                    .any(|m| (m.piece.c, m.piece.slot) == (p.piece.c, p.piece.slot))
-            });
+            let moved: Vec<Placed> = std::iter::once(h.piece).chain(h.tops.iter().copied()).collect();
+            v.retain(|p| !moved.iter().any(|m| (m.piece.c, m.piece.slot) == (p.piece.c, p.piece.slot)));
             v.extend(moved);
         }
         v
@@ -197,26 +158,19 @@ impl Layout {
 
     fn selected(&self, pieces: &[Placed]) -> Option<Placed> {
         let s = self.sel?;
-        pieces
-            .iter()
-            .copied()
-            .find(|p| (p.piece.c, p.piece.slot) == s)
+        pieces.iter().copied().find(|p| (p.piece.c, p.piece.slot) == s)
     }
 
     /// The selected piece's origin.
     pub fn sel_pos(&self, w: &World) -> Option<Vec3> {
-        self.selected(&self.pieces(w))
-            .and_then(|p| self.pos(&p.piece))
+        self.selected(&self.pieces(w)).and_then(|p| self.pos(&p.piece))
     }
 
     /// The grid without the held piece and those on it (their cells freed while held).
     fn grid(&self, w: &World) -> Grid {
         let mut v = placed(w, &self.table, self.floor);
         if let Some(h) = &self.held {
-            let moved: Vec<(u8, u8)> = std::iter::once(&h.piece)
-                .chain(&h.tops)
-                .map(|m| (m.piece.c, m.piece.slot))
-                .collect();
+            let moved: Vec<(u8, u8)> = std::iter::once(&h.piece).chain(&h.tops).map(|m| (m.piece.c, m.piece.slot)).collect();
             v.retain(|p| !moved.contains(&(p.piece.c, p.piece.slot)));
         }
         grid_of(&v, self.floor)
@@ -226,29 +180,14 @@ impl Layout {
 /// The furniture to draw (furniture::changed): exdata[1] / [6..9] of the held piece and those on it replaced by where
 /// they are held, a new piece added.
 pub fn overrides(w: &World, want: &mut Vec<super::furniture::Key>) {
-    let Some(h) = w
-        .layout
-        .as_ref()
-        .and_then(|l| l.held.as_ref().map(|h| (l.floor, h)))
-    else {
-        return;
-    };
+    let Some(h) = w.layout.as_ref().and_then(|l| l.held.as_ref().map(|h| (l.floor, h))) else { return };
     let (floor, h) = h;
     for p in std::iter::once(&h.piece).chain(&h.tops) {
         let (c, slot) = (p.piece.c, p.piece.slot);
         want.retain(|k| (k.0, k.1) != (c, slot));
-        let mut ext = w
-            .inv
-            .ext
-            .get(&(c, slot))
-            .map_or([0u8; 10], |e| e[..10].try_into().unwrap());
+        let mut ext = w.inv.ext.get(&(c, slot)).map_or([0u8; 10], |e| e[..10].try_into().unwrap());
         ext[1] = ext[1] & !0x43 | 0x40 | floor;
-        (ext[6], ext[7], ext[8], ext[9]) = (
-            p.piece.x as u8,
-            p.piece.level as u8,
-            p.piece.z as u8,
-            p.piece.rot,
-        );
+        (ext[6], ext[7], ext[8], ext[9]) = (p.piece.x as u8, p.piece.level as u8, p.piece.z as u8, p.piece.rot);
         want.push((c, slot, p.item, ext));
     }
     want.sort();
@@ -256,19 +195,10 @@ pub fn overrides(w: &World, want: &mut Vec<super::furniture::Key>) {
 
 /// The record as the server will write it (s2c 0x020): the client moved the piece itself (FUN_101ccf50(5)).
 fn record(w: &mut World, p: &Placed, floor: u8, installed: bool) {
-    let e = w
-        .inv
-        .ext
-        .entry((p.piece.c, p.piece.slot))
-        .or_insert([0; 24]);
+    let e = w.inv.ext.entry((p.piece.c, p.piece.slot)).or_insert([0; 24]);
     if installed {
         e[1] = e[1] & !0x43 | 0x40 | floor;
-        (e[6], e[7], e[8], e[9]) = (
-            p.piece.x as u8,
-            p.piece.level as u8,
-            p.piece.z as u8,
-            p.piece.rot,
-        );
+        (e[6], e[7], e[8], e[9]) = (p.piece.x as u8, p.piece.level as u8, p.piece.z as u8, p.piece.rot);
     } else {
         e[1] &= !0x43;
         (e[6], e[7], e[8], e[9]) = (0, 0, 0, 0);
@@ -277,21 +207,9 @@ fn record(w: &mut World, p: &Placed, floor: u8, installed: bool) {
 
 /// c2s 0x0FA for a piece where it now stands (FUN_100f0cc0).
 fn send_layout(w: &mut World, p: &Placed, floor: u8) {
-    let b = layout_body(
-        p.item,
-        p.piece.slot,
-        p.piece.c,
-        floor,
-        p.piece.x,
-        p.piece.level,
-        p.piece.z,
-        p.piece.rot,
-    );
+    let b = layout_body(p.item, p.piece.slot, p.piece.c, floor, p.piece.x, p.piece.level, p.piece.z, p.piece.rot);
     log::info!("layout: 0x0FA {:02x?}", b);
-    let _ = w.net.commands.send(NetCommand::Packet {
-        id: 0x0FA,
-        body: b.to_vec(),
-    });
+    let _ = w.net.commands.send(NetCommand::Packet { id: 0x0FA, body: b.to_vec() });
     record(w, p, floor, true);
 }
 
@@ -299,10 +217,7 @@ fn send_layout(w: &mut World, p: &Placed, floor: u8) {
 fn send_bankin(w: &mut World, p: &Placed, floor: u8) {
     let b = bankin_body(p.item, p.piece.slot, p.piece.c);
     log::info!("layout: 0x0FB {:02x?}", b);
-    let _ = w.net.commands.send(NetCommand::Packet {
-        id: 0x0FB,
-        body: b.to_vec(),
-    });
+    let _ = w.net.commands.send(NetCommand::Packet { id: 0x0FB, body: b.to_vec() });
     record(w, p, floor, false);
 }
 
@@ -319,34 +234,11 @@ pub fn enter(w: &mut World) {
             return;
         }
     };
-    (
-        w.menu,
-        w.action_menu,
-        w.held_menu,
-        w.moogle,
-        w.target,
-        w.locked,
-    ) = (None, None, None, None, None, false);
-    let sel = placed(w, &table, r.floor)
-        .first()
-        .map(|p| (p.piece.c, p.piece.slot));
+    (w.menu, w.action_menu, w.held_menu, w.moogle, w.target, w.locked) = (None, None, None, None, None, false);
+    let sel = placed(w, &table, r.floor).first().map(|p| (p.piece.c, p.piece.slot));
     log::info!("layout: entered, floor {}, selected {sel:?}", r.floor);
     let win = sel.is_none().then_some((1, 1));
-    w.layout = Some(Layout {
-        table,
-        floor: r.floor,
-        map: r.map,
-        view: w.layout_view,
-        sel,
-        ticks: 0.0,
-        held: None,
-        win,
-        bank: None,
-        list: None,
-        dress: None,
-        color_all: WHITE,
-        colors: Default::default(),
-    });
+    w.layout = Some(Layout { table, floor: r.floor, map: r.map, view: w.layout_view, sel, ticks: 0.0, held: None, win, bank: None, list: None, dress: None, color_all: WHITE, colors: Default::default() });
     w.pos = park(r.floor);
 }
 
@@ -360,10 +252,7 @@ pub fn leave(w: &mut World) {
     w.pos = park(l.floor);
     let yaw = w.yaw;
     super::camera::face(w, yaw);
-    let _ = w.net.commands.send(NetCommand::Packet {
-        id: 0x0FA,
-        body: vec![0; 12],
-    });
+    let _ = w.net.commands.send(NetCommand::Packet { id: 0x0FA, body: vec![0; 12] });
     if w.moogle.is_none() && !super::event::active(w) {
         super::moogle::open(w, false);
     }
@@ -375,31 +264,13 @@ pub fn leave(w: &mut World) {
 fn hold(w: &mut World, l: &mut Layout, p: Placed, new: bool) {
     let grid = l.grid(w);
     let pieces = l.pieces(w);
-    let tops = if p.piece.surface() {
-        grid.on(p.piece.slot, p.piece.c)
-            .iter()
-            .filter_map(|&(s, c)| {
-                pieces
-                    .iter()
-                    .copied()
-                    .find(|q| (q.piece.slot, q.piece.c) == (s, c))
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
+    let tops = if p.piece.surface() { grid.on(p.piece.slot, p.piece.c).iter().filter_map(|&(s, c)| pieces.iter().copied().find(|q| (q.piece.slot, q.piece.c) == (s, c))).collect() } else { Vec::new() };
     l.sel = Some((p.piece.c, p.piece.slot));
     set_colors(l, 0x8060_6060);
     for t in std::iter::once(&p).chain(&tops) {
-        w.furniture
-            .pulses
-            .insert((t.piece.c, t.piece.slot), Pulse::new(-1));
+        w.furniture.pulses.insert((t.piece.c, t.piece.slot), Pulse::new(-1));
     }
-    l.held = Some(Held {
-        piece: p,
-        tops,
-        new,
-    });
+    l.held = Some(Held { piece: p, tops, new });
 }
 
 /// FUN_101ccf50(5): placed when it fits (0x0FA for it and every piece on it, SE 8060), else SE 0004 and still held.
@@ -415,13 +286,7 @@ fn place_held(w: &mut World, l: &mut Layout) {
         w.sounds.push(8060);
     } else {
         let p = &h.piece.piece;
-        log::info!(
-            "layout: does not fit at column {} level {} row {} turn {}",
-            p.x,
-            p.level,
-            p.z,
-            p.rot
-        );
+        log::info!("layout: does not fit at column {} level {} row {} turn {}", p.x, p.level, p.z, p.rot);
         w.sounds.push(Ui::Error as u32);
         l.held = Some(h);
     }
@@ -446,12 +311,7 @@ fn held_keys(w: &mut World, l: &mut Layout, input: &mut Input) {
     let mut moved = None;
     for (id, dir) in [(0x34, 3), (0x33, 1), (0x31, 0), (0x32, 2)] {
         if input.test(id, mode::REPEAT) {
-            moved = Some(step(
-                &grid,
-                &mut h.piece.piece,
-                l.floor,
-                remap(dir, ctrl, eye, look),
-            ));
+            moved = Some(step(&grid, &mut h.piece.piece, l.floor, remap(dir, ctrl, eye, look)));
         }
     }
     if let Some(m) = moved {
@@ -487,28 +347,10 @@ fn held_keys(w: &mut World, l: &mut Layout, input: &mut Input) {
 fn remove(w: &mut World, l: &mut Layout, c: u8, slot: u8, ask: bool) {
     let pieces = l.pieces(w);
     let grid = l.grid(w);
-    let Some(p) = pieces
-        .iter()
-        .copied()
-        .find(|p| (p.piece.c, p.piece.slot) == (c, slot))
-    else {
-        return;
-    };
+    let Some(p) = pieces.iter().copied().find(|p| (p.piece.c, p.piece.slot) == (c, slot)) else { return };
     let mut all = vec![p];
-    all.extend(grid.on(slot, c).iter().filter_map(|&(s, k)| {
-        pieces
-            .iter()
-            .copied()
-            .find(|q| (q.piece.slot, q.piece.c) == (s, k))
-    }));
-    if ask
-        && all.iter().any(|q| {
-            w.inv
-                .ext
-                .get(&(q.piece.c, q.piece.slot))
-                .is_some_and(|e| e[0] != 0)
-        })
-    {
+    all.extend(grid.on(slot, c).iter().filter_map(|&(s, k)| pieces.iter().copied().find(|q| (q.piece.slot, q.piece.c) == (s, k))));
+    if ask && all.iter().any(|q| w.inv.ext.get(&(q.piece.c, q.piece.slot)).is_some_and(|e| e[0] != 0)) {
         w.confirm = Some((super::Confirm::Layout(Ask::Dispose { c, slot }), false));
         return;
     }
@@ -521,14 +363,7 @@ fn remove(w: &mut World, l: &mut Layout, c: u8, slot: u8, ask: bool) {
 /// FUN_101d3cc0: every piece of this floor back to the Mog Safe; a pot growing something asks first.
 fn clear_all(w: &mut World, l: &mut Layout, ask_plants: bool) {
     let pieces = l.pieces(w);
-    if ask_plants
-        && pieces.iter().any(|q| {
-            w.inv
-                .ext
-                .get(&(q.piece.c, q.piece.slot))
-                .is_some_and(|e| e[0] != 0)
-        })
-    {
+    if ask_plants && pieces.iter().any(|q| w.inv.ext.get(&(q.piece.c, q.piece.slot)).is_some_and(|e| e[0] != 0)) {
         w.confirm = Some((super::Confirm::Layout(Ask::DisposeAll), false));
         return;
     }
@@ -596,34 +431,14 @@ pub fn update(w: &mut World, input: &mut Input, dt: f32) {
         w.layout = Some(l);
         return;
     }
-    let dx = if input.test(0x33, mode::REPEAT) {
-        1
-    } else if input.test(0x34, mode::REPEAT) {
-        -1
-    } else {
-        0
-    };
-    let dz = if input.test(0x31, mode::REPEAT) {
-        1
-    } else if input.test(0x32, mode::REPEAT) {
-        -1
-    } else {
-        0
-    };
+    let dx = if input.test(0x33, mode::REPEAT) { 1 } else if input.test(0x34, mode::REPEAT) { -1 } else { 0 };
+    let dz = if input.test(0x31, mode::REPEAT) { 1 } else if input.test(0x32, mode::REPEAT) { -1 } else { 0 };
     if dx != 0 || dz != 0 {
         w.sounds.push(Ui::Cursor as u32);
         let grid = l.grid(w);
         let cand = |p: &Placed| {
             let pos = l.pos(&p.piece)?;
-            Some(Cand {
-                id: (p.piece.c as u32) << 8 | p.piece.slot as u32,
-                pos,
-                level: p.piece.level,
-                wall: p.piece.furn.wall(),
-                rot: p.piece.rot,
-                size: p.piece.furn.footprint(p.piece.rot),
-                has_tops: !grid.on(p.piece.slot, p.piece.c).is_empty(),
-            })
+            Some(Cand { id: (p.piece.c as u32) << 8 | p.piece.slot as u32, pos, level: p.piece.level, wall: p.piece.furn.wall(), rot: p.piece.rot, size: p.piece.furn.footprint(p.piece.rot), has_tops: !grid.on(p.piece.slot, p.piece.c).is_empty() })
         };
         let all: Vec<Cand> = pieces.iter().filter_map(cand).collect();
         if let Some(cur) = l.selected(&pieces).as_ref().and_then(cand)
@@ -633,9 +448,7 @@ pub fn update(w: &mut World, input: &mut Input, dt: f32) {
             // A new selection: every piece back to 0x80 and pulsing for ever (only the selected one shows it).
             set_colors(&mut l, WHITE);
             for p in &pieces {
-                w.furniture
-                    .pulses
-                    .insert((p.piece.c, p.piece.slot), Pulse::new(-1));
+                w.furniture.pulses.insert((p.piece.c, p.piece.slot), Pulse::new(-1));
             }
         }
     }
@@ -663,24 +476,14 @@ fn frame_colors(w: &mut World, l: &mut Layout, ticks: f32) {
     }
     let sel = l.dress.as_ref().map(|d| (d.c, d.slot)).or(l.sel);
     if let Some(k) = sel {
-        let mannequin = l.dress.is_some()
-            || w.inv
-                .slots
-                .get(&k)
-                .is_some_and(|&(id, _)| item_type(w, id) == MANNEQUIN);
+        let mannequin = l.dress.is_some() || w.inv.slots.get(&k).is_some_and(|&(id, _)| item_type(w, id) == MANNEQUIN);
         let alpha = if mannequin { 0x80u32 } else { 0x40 };
         if let Some(level) = w.furniture.pulses.get_mut(&k).and_then(|p| p.tick(ticks)) {
             l.colors.insert(k, alpha << 24 | level as u32 * 0x1_0101);
             let grid = l.grid(w);
             for (s, c) in grid.on(k.1, k.0) {
-                if let Some(level) = w
-                    .furniture
-                    .pulses
-                    .get_mut(&(c, s))
-                    .and_then(|p| p.tick(ticks))
-                {
-                    l.colors
-                        .insert((c, s), 0x40 << 24 | level as u32 * 0x1_0101);
+                if let Some(level) = w.furniture.pulses.get_mut(&(c, s)).and_then(|p| p.tick(ticks)) {
+                    l.colors.insert((c, s), 0x40 << 24 | level as u32 * 0x1_0101);
                 }
             }
         }
@@ -702,14 +505,8 @@ fn apply_colors(w: &mut World, l: &Layout) {
 /// FUN_101d4310: the cells from the mannequin's to the room's middle (10, 13), their floor and top pieces 0x20202020;
 /// the piece under the mannequin and the mannequin 0x80808080.
 fn see_through(w: &World, l: &mut Layout, key: (u8, u8)) {
-    let Some(ext) = w.inv.ext.get(&key) else {
-        return;
-    };
-    let (x0, level, z0) = (
-        ext[6] as i8 as i32,
-        ext[7] as i8 as i32,
-        ext[8] as i8 as i32,
-    );
+    let Some(ext) = w.inv.ext.get(&key) else { return };
+    let (x0, level, z0) = (ext[6] as i8 as i32, ext[7] as i8 as i32, ext[8] as i8 as i32);
     let grid = l.grid(w);
     for (x, z) in walk(x0, z0) {
         if let Some(c) = grid.cell(x, z) {
@@ -788,13 +585,7 @@ fn rows(kind: u8) -> &'static [Row] {
     match kind {
         1 => &[Row::Place, Row::ClearAll, Row::Quit],
         2 => &[Row::Move, Row::Remove, Row::Place, Row::ClearAll],
-        _ => &[
-            Row::Equip,
-            Row::Move,
-            Row::Remove,
-            Row::Place,
-            Row::ClearAll,
-        ],
+        _ => &[Row::Equip, Row::Move, Row::Remove, Row::Place, Row::ClearAll],
     }
 }
 
@@ -809,33 +600,14 @@ fn win_name(kind: u8) -> &'static str {
 /// FUN_101f44f0 / FUN_101f4540 / FUN_101f45d0: the dim rows. Clear All while Storage holds anything; Clear away when
 /// Storage would lose more room (the pieces' storage slots, item DAT +0x10 *(inf)*) than it has free.
 fn dim_rows(w: &World, l: &Layout, kind: u8) -> Vec<u16> {
-    let stored = w
-        .inv
-        .slots
-        .keys()
-        .filter(|(c, s)| *c == 2 && *s != 0)
-        .count() as i32;
+    let stored = w.inv.slots.keys().filter(|(c, s)| *c == 2 && *s != 0).count() as i32;
     let size = w.inv.sizes[2] as i32 - 1;
-    let slots = |id: u16| {
-        w.item_info
-            .as_ref()
-            .and_then(|i| i.item(id))
-            .and_then(|it| it.extra.iter().find(|e| e.0 == 0xd14).map(|e| e.1 as i32))
-            .unwrap_or(0)
-    };
+    let slots = |id: u16| w.item_info.as_ref().and_then(|i| i.item(id)).and_then(|it| it.extra.iter().find(|e| e.0 == 0xd14).map(|e| e.1 as i32)).unwrap_or(0);
     let pieces = l.pieces(w);
     let need = match l.selected(&pieces) {
         Some(p) => {
             let grid = l.grid(w);
-            slots(p.item)
-                + grid
-                    .on(p.piece.slot, p.piece.c)
-                    .iter()
-                    .filter_map(|&(s, c)| {
-                        pieces.iter().find(|q| (q.piece.slot, q.piece.c) == (s, c))
-                    })
-                    .map(|q| slots(q.item))
-                    .sum::<i32>()
+            slots(p.item) + grid.on(p.piece.slot, p.piece.c).iter().filter_map(|&(s, c)| pieces.iter().find(|q| (q.piece.slot, q.piece.c) == (s, c))).map(|q| slots(q.item)).sum::<i32>()
         }
         None => 1,
     };
@@ -853,15 +625,11 @@ fn dim_rows(w: &World, l: &Layout, kind: u8) -> Vec<u16> {
 /// 0x90) of select mode or of the held piece. The arrows and turns are key functions (`update`).
 /// No rmlo window, bankmenu or list up: the keys are the field's.
 pub fn in_field(w: &World) -> bool {
-    w.layout.as_ref().is_some_and(|l| {
-        l.win.is_none() && l.bank.is_none() && l.list.is_none() && l.dress.is_none()
-    })
+    w.layout.as_ref().is_some_and(|l| l.win.is_none() && l.bank.is_none() && l.list.is_none() && l.dress.is_none())
 }
 
 pub fn key(w: &mut World, key: egui::Key) -> bool {
-    let Some(mut l) = w.layout.take() else {
-        return false;
-    };
+    let Some(mut l) = w.layout.take() else { return false };
     if l.list.is_some() {
         list_key(w, &mut l, key);
         w.layout = Some(l);
@@ -891,13 +659,7 @@ pub fn key(w: &mut World, key: egui::Key) -> bool {
     let n = rows(kind).len() as u16;
     match key {
         egui::Key::ArrowUp | egui::Key::ArrowDown => {
-            let s = if key == egui::Key::ArrowUp {
-                if sel <= 1 { n } else { sel - 1 }
-            } else if sel >= n {
-                1
-            } else {
-                sel + 1
-            };
+            let s = if key == egui::Key::ArrowUp { if sel <= 1 { n } else { sel - 1 } } else if sel >= n { 1 } else { sel + 1 };
             l.win = Some((kind, s));
             w.sounds.push(Ui::Cursor as u32);
         }
@@ -924,9 +686,7 @@ pub fn key(w: &mut World, key: egui::Key) -> bool {
                             remove(w, &mut l, p.piece.c, p.piece.slot, true);
                         }
                     }
-                    Row::ClearAll => {
-                        w.confirm = Some((super::Confirm::Layout(Ask::ClearAll), false))
-                    }
+                    Row::ClearAll => w.confirm = Some((super::Confirm::Layout(Ask::ClearAll), false)),
                     Row::Quit => {
                         w.layout = Some(l);
                         leave(w);
@@ -943,9 +703,7 @@ pub fn key(w: &mut World, key: egui::Key) -> bool {
                         if let Some(p) = cur {
                             super::mannequin::open(&mut l, p.piece.c, p.piece.slot);
                             // FUN_101d3910: the mannequin pulses 4 times.
-                            w.furniture
-                                .pulses
-                                .insert((p.piece.c, p.piece.slot), Pulse::new(4));
+                            w.furniture.pulses.insert((p.piece.c, p.piece.slot), Pulse::new(4));
                         }
                     }
                 }
@@ -1006,35 +764,21 @@ fn list_rows(w: &World, l: &Layout, c: u8) -> Vec<(crate::inventory::Slot, u32)>
             continue;
         };
         let lock = w.inv.locks.get(&(c, s.index)).copied().unwrap_or(0);
-        out.push((
-            s,
-            if matches!(lock, 0 | 5 | 0x1b) {
-                tint
-            } else {
-                0x8040_4040
-            },
-        ));
+        out.push((s, if matches!(lock, 0 | 5 | 0x1b) { tint } else { 0x8040_4040 }));
     }
     out
 }
 
 /// Installed pieces of a type in containers 1 and 9, any floor (FUN_101f4190).
 fn installed(w: &World, ty: u16) -> usize {
-    w.inv
-        .slots
-        .iter()
-        .filter(|((c, _), (id, _))| matches!(c, 1 | 9) && item_type(w, *id) == ty)
-        .filter(|(k, _)| w.inv.ext.get(k).is_some_and(|e| e[1] & 0x40 != 0))
-        .count()
+    w.inv.slots.iter().filter(|((c, _), (id, _))| matches!(c, 1 | 9) && item_type(w, *id) == ty).filter(|(k, _)| w.inv.ext.get(k).is_some_and(|e| e[1] & 0x40 != 0)).count()
 }
 
 /// The list's keys (FUN_101f42e0): Enter holds the piece (a new one at its start, 3.5); with 10 flowerpots or 8
 /// mannequins installed, any row of that type is refused by the moogle (0x62 / 0x63); Escape back to select mode.
 fn list_key(w: &mut World, l: &mut Layout, key: egui::Key) {
     use egui::Key as K;
-    let Some((c, mut scroll, mut cursor)) = l.list else {
-        return;
-    };
+    let Some((c, mut scroll, mut cursor)) = l.list else { return };
     let rows = list_rows(w, l, c);
     match key {
         K::Escape => {
@@ -1042,9 +786,7 @@ fn list_key(w: &mut World, l: &mut Layout, key: egui::Key) {
             w.sounds.push(Ui::Cancel as u32);
         }
         K::Enter => {
-            let Some((s, tint)) = rows.get(scroll + cursor).cloned() else {
-                return;
-            };
+            let Some((s, tint)) = rows.get(scroll + cursor).cloned() else { return };
             let ty = item_type(w, s.id);
             if tint == 0x8040_4040 {
                 w.sounds.push(Ui::Error as u32);
@@ -1056,24 +798,12 @@ fn list_key(w: &mut World, l: &mut Layout, key: egui::Key) {
                 w.sounds.push(Ui::Select as u32);
                 l.list = None;
                 let pieces = l.pieces(w);
-                match pieces
-                    .iter()
-                    .copied()
-                    .find(|p| (p.piece.c, p.piece.slot) == (c, s.index))
-                {
+                match pieces.iter().copied().find(|p| (p.piece.c, p.piece.slot) == (c, s.index)) {
                     Some(p) => hold(w, l, p, false),
                     None => {
                         let grid = l.grid(w);
                         let sel = l.selected(&pieces).map(|p| p.piece);
-                        let mut piece = Piece {
-                            c,
-                            slot: s.index,
-                            furn: f,
-                            x: 0,
-                            level: 0,
-                            z: 0,
-                            rot: 0,
-                        };
+                        let mut piece = Piece { c, slot: s.index, furn: f, x: 0, level: 0, z: 0, rot: 0 };
                         start(&grid, &mut piece, l.floor, sel.as_ref());
                         hold(w, l, Placed { piece, item: s.id }, true);
                     }
@@ -1091,9 +821,7 @@ fn list_key(w: &mut World, l: &mut Layout, key: egui::Key) {
 
 /// The rmlo window at its layout with its dim rows, bankmenu over it, or the furniture list.
 pub fn draw(gu: &mut super::game_ui::GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
-    let Some(l) = &w.layout else {
-        return Vec::new();
-    };
+    let Some(l) = &w.layout else { return Vec::new() };
     let mut out = super::mannequin::draw(gu, w, sw, sh);
     if w.modern {
         return out;
@@ -1111,8 +839,7 @@ pub fn draw(gu: &mut super::game_ui::GameUi, w: &World, sw: f32, sh: f32) -> Vec
     }
     if let Some(row) = l.bank {
         let off = bank_dim(w);
-        if let Some(win) = gu.lobby_window_off(BANKMENU, sw, sh, (0.0, 0.0), Some(row), true, &off)
-        {
+        if let Some(win) = gu.lobby_window_off(BANKMENU, sw, sh, (0.0, 0.0), Some(row), true, &off) {
             super::winhits::record(w, BANKMENU, &win);
             let [x, y, ..] = win.frame;
             gu.disabled_children(BANKMENU, x, y, &off, Some(row));
@@ -1124,11 +851,7 @@ pub fn draw(gu: &mut super::game_ui::GameUi, w: &World, sw: f32, sh: f32) -> Vec
     {
         let rows = list_rows(w, l, c);
         let slots: Vec<_> = rows.iter().map(|r| r.0.clone()).collect();
-        let mut list = crate::inventory::ItemList {
-            rows: crate::inventory::build_rows(&slots, info.as_ref(), false),
-            scroll,
-            cursor,
-        };
+        let mut list = crate::inventory::ItemList { rows: crate::inventory::build_rows(&slots, info.as_ref(), false), scroll, cursor };
         for (r, (_, tint)) in list.rows.iter_mut().zip(&rows) {
             r.tint = *tint;
         }
@@ -1137,22 +860,7 @@ pub fn draw(gu: &mut super::game_ui::GameUi, w: &World, sw: f32, sh: f32) -> Vec
         let frame = gu.cursor_frame();
         let (b, ui, style, font) = gu.parts();
         if let Some(m) = ui.menu(INVENTOR).filter(|_| open) {
-            let _ = crate::render::invwin::push_inventory(
-                b,
-                ui,
-                style,
-                font,
-                super::game_ui::GameUi::ATLAS,
-                m,
-                &list,
-                sw,
-                sh,
-                if w.confirm.is_none() {
-                    frame
-                } else {
-                    usize::MAX
-                },
-            );
+            let _ = crate::render::invwin::push_inventory(b, ui, style, font, super::game_ui::GameUi::ATLAS, m, &list, sw, sh, if w.confirm.is_none() { frame } else { usize::MAX });
             out.extend(gu.window_rect(INVENTOR, sw, sh));
         }
     }
@@ -1173,67 +881,32 @@ pub(super) fn look(w: &World) -> Option<Look> {
     let l = w.layout.as_ref().filter(|l| l.dress.is_none())?;
     let list = l.list.map(|(c, scroll, cursor)| {
         let rows = list_rows(w, l, c);
-        (
-            rows.iter().map(|r| r.0.clone()).collect(),
-            rows.iter().map(|r| r.1).collect(),
-            scroll + cursor,
-        )
+        (rows.iter().map(|r| r.0.clone()).collect(), rows.iter().map(|r| r.1).collect(), scroll + cursor)
     });
-    Some(Look {
-        win: l
-            .win
-            .map(|(kind, sel)| (win_name(kind), sel, dim_rows(w, l, kind))),
-        bank: l.bank.map(|r| (r, bank_dim(w))),
-        list,
-    })
+    Some(Look { win: l.win.map(|(kind, sel)| (win_name(kind), sel, dim_rows(w, l, kind))), bank: l.bank.map(|r| (r, bank_dim(w))), list })
 }
 
 /// The mouse's cursor moves: the rmlo window, bankmenu, the furniture list's row. True when it moved.
 pub(super) fn set_win(w: &mut World, k: u16) -> bool {
-    let Some(l) = w
-        .layout
-        .as_mut()
-        .filter(|l| l.bank.is_none() && l.list.is_none())
-    else {
-        return false;
-    };
-    let Some((_, sel)) = l
-        .win
-        .as_mut()
-        .filter(|(kind, sel)| *sel != k && (1..=rows(*kind).len() as u16).contains(&k))
-    else {
-        return false;
-    };
+    let Some(l) = w.layout.as_mut().filter(|l| l.bank.is_none() && l.list.is_none()) else { return false };
+    let Some((_, sel)) = l.win.as_mut().filter(|(kind, sel)| *sel != k && (1..=rows(*kind).len() as u16).contains(&k)) else { return false };
     *sel = k;
     true
 }
 
 pub(super) fn set_bank(w: &mut World, k: u16) -> bool {
-    let Some(r) = w
-        .layout
-        .as_mut()
-        .and_then(|l| l.bank.as_mut())
-        .filter(|r| **r != k && (1..=2).contains(&k))
-    else {
-        return false;
-    };
+    let Some(r) = w.layout.as_mut().and_then(|l| l.bank.as_mut()).filter(|r| **r != k && (1..=2).contains(&k)) else { return false };
     *r = k;
     true
 }
 
 pub(super) fn set_row(w: &mut World, k: usize) -> bool {
-    let Some(l) = w.layout.as_ref() else {
-        return false;
-    };
-    let Some((c, scroll, cursor)) = l.list else {
-        return false;
-    };
+    let Some(l) = w.layout.as_ref() else { return false };
+    let Some((c, scroll, cursor)) = l.list else { return false };
     if scroll + cursor == k || k >= list_rows(w, l, c).len() {
         return false;
     }
-    let top = scroll
-        .min(k)
-        .max((k + 1).saturating_sub(crate::inventory::VISIBLE_ROWS));
+    let top = scroll.min(k).max((k + 1).saturating_sub(crate::inventory::VISIBLE_ROWS));
     if let Some(l) = w.layout.as_mut() {
         l.list = Some((c, top, k - top));
     }
@@ -1242,16 +915,7 @@ pub(super) fn set_row(w: &mut World, k: usize) -> bool {
 
 /// The mouse (winhits.rs): an rmlo window or bankmenu as the generic window; the furniture list's rows as the item
 /// list (hover moves the row, a click on it is Enter, a right click Escape). The dressing windows have their own.
-pub fn pointer(
-    w: &mut World,
-    gu: &super::game_ui::GameUi,
-    sw: f32,
-    sh: f32,
-    p: (f32, f32),
-    moved: bool,
-    clicked: bool,
-    right: bool,
-) {
+pub fn pointer(w: &mut World, gu: &super::game_ui::GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
     use super::winhits::generic;
     let Some(l) = &w.layout else { return };
     // The modern layer draws these and takes their mouse.
@@ -1263,20 +927,14 @@ pub fn pointer(
     };
     if let Some((c, scroll, cursor)) = l.list {
         let n = list_rows(w, l, c).len();
-        let Some(r) = gu.window_rect(INVENTOR, sw, sh) else {
-            return;
-        };
+        let Some(r) = gu.window_rect(INVENTOR, sw, sh) else { return };
         let row = ((p.1 - r[1] - 4.0) / crate::inventory::ROW_PITCH).floor();
         let on = p.0 >= r[0] && p.0 < r[0] + r[2] && p.1 >= r[1] && p.1 < r[1] + r[3];
         if right && on {
             key(w, egui::Key::Escape);
             return;
         }
-        if !on
-            || row < 0.0
-            || row as usize >= crate::inventory::VISIBLE_ROWS
-            || scroll + row as usize >= n
-        {
+        if !on || row < 0.0 || row as usize >= crate::inventory::VISIBLE_ROWS || scroll + row as usize >= n {
             return;
         }
         gu.hover.set(true);
@@ -1289,42 +947,18 @@ pub fn pointer(
             key(w, egui::Key::Enter);
         }
     } else if let Some(row) = l.bank {
-        generic(
-            w,
-            gu,
-            BANKMENU,
-            row,
-            1..=2,
-            p,
-            moved,
-            clicked,
-            right,
-            |w, id| {
-                if let Some(l) = w.layout.as_mut() {
-                    l.bank = Some(id);
-                }
-            },
-            keys,
-        );
+        generic(w, gu, BANKMENU, row, 1..=2, p, moved, clicked, right, |w, id| {
+            if let Some(l) = w.layout.as_mut() {
+                l.bank = Some(id);
+            }
+        }, keys);
     } else if let Some((kind, sel)) = l.win {
         let n = rows(kind).len() as u16;
-        generic(
-            w,
-            gu,
-            win_name(kind),
-            sel,
-            1..=n,
-            p,
-            moved,
-            clicked,
-            right,
-            |w, id| {
-                if let Some(l) = w.layout.as_mut() {
-                    l.win = Some((kind, id));
-                }
-            },
-            keys,
-        );
+        generic(w, gu, win_name(kind), sel, 1..=n, p, moved, clicked, right, |w, id| {
+            if let Some(l) = w.layout.as_mut() {
+                l.win = Some((kind, id));
+            }
+        }, keys);
     }
 }
 
@@ -1338,14 +972,7 @@ pub fn info_source(w: &World) -> Option<(u16, Option<[u8; 24]>)> {
 
 /// The context: 0x3e while a window or a prompt is up, else 0x42.
 pub fn context(w: &World) -> u16 {
-    if w.layout.as_ref().is_some_and(|l| {
-        l.win.is_some() || l.bank.is_some() || l.list.is_some() || l.dress.is_some()
-    }) || w.confirm.is_some()
-    {
-        0x3e
-    } else {
-        0x42
-    }
+    if w.layout.as_ref().is_some_and(|l| l.win.is_some() || l.bank.is_some() || l.list.is_some() || l.dress.is_some()) || w.confirm.is_some() { 0x3e } else { 0x42 }
 }
 
 /// The layout camera each frame (FUN_101d4080, the dressing one in mode 4) into the world camera; true while laying
@@ -1363,35 +990,14 @@ pub fn camera(w: &mut World, ticks: f32) -> bool {
 }
 
 /// The cursor (FUN_101d3fc0): anc_l at the selected piece's origin, a frame every 3 ticks.
-pub fn draw_cursor(
-    gu: &mut super::game_ui::GameUi,
-    w: &World,
-    sw: f32,
-    sh: f32,
-    view_proj: glam::Mat4,
-) {
+pub fn draw_cursor(gu: &mut super::game_ui::GameUi, w: &World, sw: f32, sh: f32, view_proj: glam::Mat4) {
     // Mode 1 only (FUN_101d5680).
-    let Some(l) = w.layout.as_ref().filter(|l| l.dress.is_none()) else {
-        return;
-    };
+    let Some(l) = w.layout.as_ref().filter(|l| l.dress.is_none()) else { return };
     let Some(p) = l.sel_pos(w) else { return };
     let clip = view_proj * p.extend(1.0);
-    let (x, y) = if clip.w > 0.0 {
-        (
-            (clip.x / clip.w + 1.0) / 2.0 * sw,
-            (1.0 - clip.y / clip.w) / 2.0 * sh,
-        )
-    } else {
-        (100.0, 100.0)
-    };
+    let (x, y) = if clip.w > 0.0 { ((clip.x / clip.w + 1.0) / 2.0 * sw, (1.0 - clip.y / clip.w) / 2.0 * sh) } else { (100.0, 100.0) };
     let frame = (l.ticks / 3.0) as usize % gu.lib_len("anc     anc_l").max(1);
-    gu.sprite(
-        "anc     anc_l",
-        frame,
-        x.trunc().max(0.0),
-        y.trunc().max(0.0),
-        0x8080_8080,
-    );
+    gu.sprite("anc     anc_l", frame, x.trunc().max(0.0), y.trunc().max(0.0), 0x8080_8080);
 }
 
 /// The overlay's colours (0xAABBGGRR as FUN_10177b40 takes them).
@@ -1418,39 +1024,19 @@ fn outline(out: &mut Vec<crate::render::LineVertex>, corners: [Vec3; 4], c: u32)
     let color = [c & 0xff, c >> 8 & 0xff, c >> 16 & 0xff, c >> 24].map(|b| b as f32 / 255.0);
     for k in 0..4 {
         for v in [corners[k], corners[(k + 1) % 4]] {
-            out.push(crate::render::LineVertex {
-                pos: v.to_array(),
-                color,
-            });
+            out.push(crate::render::LineVertex { pos: v.to_array(), color });
         }
     }
 }
 
 /// FUN_101cf350 / FUN_101cf410: a cell's outline over its surface (blue 0.04 up, the others 0.06), inset by `i`.
-fn cell_outline(
-    out: &mut Vec<crate::render::LineVertex>,
-    grid: &Grid,
-    floor: u8,
-    x: i32,
-    z: i32,
-    c: u32,
-    i: f32,
-) {
+fn cell_outline(out: &mut Vec<crate::render::LineVertex>, grid: &Grid, floor: u8, x: i32, z: i32, c: u32, i: f32) {
     let o = super::furniture::ORIGIN[(floor != 0) as usize];
     let h = grid.cell(x, z).map_or(0, |c| c.height);
     let y = -(h as f32) * 0.01 - if c == BLUE { 0.04 } else { 0.06 };
     let (x0, z0) = ((x as f32 - o[0]) * 0.6 + i, (z as f32 - o[2]) * 0.6 + i);
     let s = 0.6 - 2.0 * i;
-    outline(
-        out,
-        [
-            Vec3::new(x0, y, z0),
-            Vec3::new(x0 + s, y, z0),
-            Vec3::new(x0 + s, y, z0 + s),
-            Vec3::new(x0, y, z0 + s),
-        ],
-        c,
-    );
+    outline(out, [Vec3::new(x0, y, z0), Vec3::new(x0 + s, y, z0), Vec3::new(x0 + s, y, z0 + s), Vec3::new(x0, y, z0 + s)], c);
 }
 
 /// The overlay while a piece is held (FUN_101cf110, drawn with ZENABLE off): a wall piece shows every wall slot blue
@@ -1458,24 +1044,16 @@ fn cell_outline(
 /// footprint red-pink where it fits (on the floor, or on a top) or grey.
 pub fn overlay(w: &World) -> Vec<crate::render::LineVertex> {
     let mut out = Vec::new();
-    let Some((l, h)) = w.layout.as_ref().and_then(|l| Some((l, l.held.as_ref()?))) else {
-        return out;
-    };
+    let Some((l, h)) = w.layout.as_ref().and_then(|l| Some((l, l.held.as_ref()?))) else { return out };
     let p = h.piece.piece;
     if p.furn.wall() {
         let n = if l.floor == 0 { 5 } else { WALLS as u8 };
         for s in 0..n {
-            let Some(at) = super::furniture::wall_pos(l.map, l.floor, s) else {
-                continue;
-            };
+            let Some(at) = super::furniture::wall_pos(l.map, l.floor, s) else { continue };
             let corners = WALL_OUTLINE[(l.floor != 0) as usize * 4 + wall_rot(l.floor, s) as usize];
             let held = s == p.x as u8;
             for scale in if held { &[1.0, 0.9][..] } else { &[1.0][..] } {
-                outline(
-                    &mut out,
-                    corners.map(|c| at + Vec3::from(c) * *scale),
-                    if held { RED } else { BLUE },
-                );
+                outline(&mut out, corners.map(|c| at + Vec3::from(c) * *scale), if held { RED } else { BLUE });
             }
         }
         return out;
@@ -1487,25 +1065,13 @@ pub fn overlay(w: &World) -> Vec<crate::render::LineVertex> {
         cell_outline(&mut out, &grid, l.floor, x, z, BLUE, 0.0);
     }
     if p.stackable() {
-        for (x, z) in cells().filter(|&(x, z)| {
-            grid.cell(x, z)
-                .is_some_and(|c| c.flags & 2 != 0 && c.flags & 1 == 0)
-        }) {
+        for (x, z) in cells().filter(|&(x, z)| grid.cell(x, z).is_some_and(|c| c.flags & 2 != 0 && c.flags & 1 == 0)) {
             cell_outline(&mut out, &grid, l.floor, x, z, GREEN, 0.0);
         }
     }
-    let fits = grid.fits(&Piece { level: 0, ..p })
-        || (p.stackable() && grid.fits(&Piece { level: 1, ..p }));
+    let fits = grid.fits(&Piece { level: 0, ..p }) || (p.stackable() && grid.fits(&Piece { level: 1, ..p }));
     for (x, z) in p.cells() {
-        cell_outline(
-            &mut out,
-            &grid,
-            l.floor,
-            x,
-            z,
-            if fits { RED } else { GREY },
-            0.0,
-        );
+        cell_outline(&mut out, &grid, l.floor, x, z, if fits { RED } else { GREY }, 0.0);
         if fits {
             cell_outline(&mut out, &grid, l.floor, x, z, RED, 0.05);
         }
@@ -1601,15 +1167,7 @@ pub struct Grid {
 impl Grid {
     /// FUN_101cecf0: every cell free (flags 3); on 1F the walkway x 6..13, z 0..17 is blocked (0x80).
     pub fn new(floor: u8) -> Self {
-        let mut cells = vec![
-            Cell {
-                floor: (0, 0),
-                top: (0, 0),
-                flags: 3,
-                height: 0
-            };
-            COLS * ROWS
-        ];
+        let mut cells = vec![Cell { floor: (0, 0), top: (0, 0), flags: 3, height: 0 }; COLS * ROWS];
         if floor == 0 {
             for x in 6..=13 {
                 for z in 0..=17 {
@@ -1617,13 +1175,7 @@ impl Grid {
                 }
             }
         }
-        Grid {
-            cells,
-            walls: [Wall {
-                piece: (0, 0),
-                state: 4,
-            }; WALLS],
-        }
+        Grid { cells, walls: [Wall { piece: (0, 0), state: 4 }; WALLS] }
     }
 
     pub fn cell(&self, x: i32, z: i32) -> Option<&Cell> {
@@ -1638,20 +1190,13 @@ impl Grid {
     /// cell top-free over one and the same surface piece. A cell past the grid does not fit.
     pub fn fits(&self, p: &Piece) -> bool {
         if p.furn.wall() {
-            return self
-                .walls
-                .get(p.x as u8 as usize)
-                .is_some_and(|w| w.state == 4);
+            return self.walls.get(p.x as u8 as usize).is_some_and(|w| w.state == 4);
         }
         let mask = if p.level > 0 { 2 } else { 1 };
         let mut under = None;
         for (x, z) in p.cells() {
-            let Some(c) = self.cell(x, z) else {
-                return false;
-            };
-            if c.flags & mask == 0
-                || (mask == 2 && (c.flags & 1 != 0 || under.is_some_and(|u| u != c.floor)))
-            {
+            let Some(c) = self.cell(x, z) else { return false };
+            if c.flags & mask == 0 || (mask == 2 && (c.flags & 1 != 0 || under.is_some_and(|u| u != c.floor))) {
                 return false;
             }
             under = Some(c.floor);
@@ -1666,18 +1211,13 @@ impl Grid {
         }
         if p.furn.wall() {
             if let Some(w) = self.walls.get_mut(p.x as u8 as usize) {
-                *w = Wall {
-                    piece: p.key(),
-                    state: 0,
-                };
+                *w = Wall { piece: p.key(), state: 0 };
             }
             return true;
         }
         let (surface, height) = (p.surface(), p.furn.height);
         for (x, z) in p.cells() {
-            let Some(c) = self.cell_mut(x, z) else {
-                continue;
-            };
+            let Some(c) = self.cell_mut(x, z) else { continue };
             if p.level == 0 {
                 c.floor = p.key();
                 if surface {
@@ -1698,10 +1238,7 @@ impl Grid {
     pub fn free(&mut self, p: &Piece) {
         if p.furn.wall() {
             for w in self.walls.iter_mut().filter(|w| w.piece == p.key()) {
-                *w = Wall {
-                    piece: (0, 0),
-                    state: 4,
-                };
+                *w = Wall { piece: (0, 0), state: 4 };
             }
             return;
         }
@@ -1718,11 +1255,7 @@ impl Grid {
     /// FUN_101cec50: the pieces standing on a floor piece (slot, container), each once, at most 0x20.
     pub fn on(&self, slot: u8, c: u8) -> Vec<(u8, u8)> {
         let mut out = Vec::new();
-        for cell in self
-            .cells
-            .iter()
-            .filter(|x| x.floor == (slot, c) && x.top != (0, 0))
-        {
+        for cell in self.cells.iter().filter(|x| x.floor == (slot, c) && x.top != (0, 0)) {
             if !out.contains(&cell.top) && out.len() < 0x20 {
                 out.push(cell.top);
             }
@@ -1739,13 +1272,7 @@ const FLIP: [u8; 4] = [2, 3, 0, 1];
 const DIRS: [(i32, i32); 4] = [(0, 1), (1, 0), (0, -1), (-1, 0)];
 
 /// The wall slot moves (PTR_DAT_10337de4) and turns (PTR_DAT_10337dec): 1F, then 2F.
-const MOVE_1F: [[u8; 4]; 5] = [
-    [0, 0, 1, 4],
-    [0, 1, 1, 2],
-    [3, 1, 2, 2],
-    [4, 0, 2, 3],
-    [4, 0, 3, 4],
-];
+const MOVE_1F: [[u8; 4]; 5] = [[0, 0, 1, 4], [0, 1, 1, 2], [3, 1, 2, 2], [4, 0, 2, 3], [4, 0, 3, 4]];
 const ROT_1F: [u8; 5] = [1, 1, 3, 3, 3];
 #[rustfmt::skip]
 const MOVE_2F: [[u8; 4]; 92] = [
@@ -1779,11 +1306,7 @@ pub fn wall_rot(floor: u8, slot: u8) -> u8 {
 
 /// FUN_101cd060: with /layoutctrl type 1 (config 0xc1 != 1) the arrows flip while the camera looks toward -z.
 pub fn remap(dir: u8, ctrl: u32, eye: Vec3, look: Vec3) -> u8 {
-    if ctrl != 1 && look.z <= eye.z {
-        FLIP[dir as usize & 3]
-    } else {
-        dir & 3
-    }
+    if ctrl != 1 && look.z <= eye.z { FLIP[dir as usize & 3] } else { dir & 3 }
 }
 
 /// The level a stackable piece takes over the cells under it (FUN_101cec20: the last raised cell, height / 10).
@@ -1813,11 +1336,7 @@ pub fn shift(grid: &Grid, p: &mut Piece, floor: u8, dx: i32, dz: i32) -> bool {
         return false;
     }
     (p.x, p.z) = (x as i8, z as i8);
-    p.level = if p.stackable() {
-        level_over(grid, p)
-    } else {
-        0
-    };
+    p.level = if p.stackable() { level_over(grid, p) } else { 0 };
     true
 }
 
@@ -1826,11 +1345,7 @@ pub fn shift(grid: &Grid, p: &mut Piece, floor: u8, dx: i32, dz: i32) -> bool {
 pub fn step(grid: &Grid, p: &mut Piece, floor: u8, dir: u8) -> Option<(i32, i32)> {
     if p.furn.wall() {
         let s = p.x as u8 as usize;
-        let next = if floor == 0 {
-            MOVE_1F.get(s).map(|m| m[dir as usize & 3])
-        } else {
-            MOVE_2F.get(s).map(|m| m[dir as usize & 3])
-        };
+        let next = if floor == 0 { MOVE_1F.get(s).map(|m| m[dir as usize & 3]) } else { MOVE_2F.get(s).map(|m| m[dir as usize & 3]) };
         let s = next.unwrap_or(s as u8);
         (p.x, p.level, p.z, p.rot) = (s as i8, 0, 0, wall_rot(floor, s));
         return Some((0, 0));
@@ -1850,13 +1365,7 @@ pub fn rotate(grid: &Grid, p: &mut Piece, floor: u8, by: i8) -> (i32, i32) {
     }
     let (w1, d1) = p.furn.footprint(p.rot);
     let (ox, oz) = (p.x, p.z);
-    shift(
-        grid,
-        p,
-        floor,
-        w0 as i32 / 2 - w1 as i32 / 2,
-        d0 as i32 / 2 - d1 as i32 / 2,
-    );
+    shift(grid, p, floor, w0 as i32 / 2 - w1 as i32 / 2, d0 as i32 / 2 - d1 as i32 / 2);
     if !p.stackable() {
         p.level = 0;
     }
@@ -1910,11 +1419,7 @@ pub fn pick(cur: &Cand, others: &[Cand], dx: i32, dz: i32, view: u8) -> Option<u
             _ => p.x -= d,
         }
     }
-    let (ex, ez) = if cur.has_tops {
-        (0.0, 0.0)
-    } else {
-        (cur.size.0 as f32 * 0.3, cur.size.1 as f32 * 0.3)
-    };
+    let (ex, ez) = if cur.has_tops { (0.0, 0.0) } else { (cur.size.0 as f32 * 0.3, cur.size.1 as f32 * 0.3) };
     let mut best: Option<(f32, u32)> = None;
     let mut floor_best: Option<(f32, u32)> = None;
     for c in others.iter().filter(|c| c.id != cur.id) {
@@ -1952,11 +1457,7 @@ pub fn pick(cur: &Cand, others: &[Cand], dx: i32, dz: i32, view: u8) -> Option<u
 /// FUN_101d4080's target eye and look for a view (0 top-down, 1 from the door side, 2 from the far side) and the
 /// selected piece's position.
 pub fn camera_target(view: u8, floor: u8, sel: Option<Vec3>) -> (Vec3, Vec3) {
-    let b = if floor == 0 {
-        [4.0, 7.0, 5.0]
-    } else {
-        [4.0, 9.0, 6.0]
-    };
+    let b = if floor == 0 { [4.0, 7.0, 5.0] } else { [4.0, 9.0, 6.0] };
     let mut l = sel.unwrap_or(Vec3::ZERO);
     l.y = match sel {
         Some(s) if view != 0 => s.y - 0.3,
@@ -1978,14 +1479,7 @@ pub fn ease(ticks: f32) -> f32 {
 }
 
 /// One frame of the layout camera: both points eased; view 0 then keeps the eye 7 (2F 9) from the look.
-pub fn camera_step(
-    eye: &mut Vec3,
-    look: &mut Vec3,
-    view: u8,
-    floor: u8,
-    sel: Option<Vec3>,
-    ticks: f32,
-) {
+pub fn camera_step(eye: &mut Vec3, look: &mut Vec3, view: u8, floor: u8, sel: Option<Vec3>, ticks: f32) {
     let (e, l) = camera_target(view, floor, sel);
     let k = ease(ticks);
     *look += (l - *look) * k;
@@ -1997,31 +1491,9 @@ pub fn camera_step(
 }
 
 /// c2s 0x0FA's body after the header (FUN_100f0cc0): item, slot, container, floor, x, level, z, rotation, 3 zero.
-pub fn layout_body(
-    item: u16,
-    slot: u8,
-    c: u8,
-    floor: u8,
-    x: i8,
-    level: i8,
-    z: i8,
-    rot: u8,
-) -> [u8; 12] {
+pub fn layout_body(item: u16, slot: u8, c: u8, floor: u8, x: i8, level: i8, z: i8, rot: u8) -> [u8; 12] {
     let i = item.to_le_bytes();
-    [
-        i[0],
-        i[1],
-        slot,
-        c,
-        floor,
-        x as u8,
-        level as u8,
-        z as u8,
-        rot,
-        0,
-        0,
-        0,
-    ]
+    [i[0], i[1], slot, c, floor, x as u8, level as u8, z as u8, rot, 0, 0, 0]
 }
 
 /// c2s 0x0FB's body (FUN_100f0d40): item, slot, container.
@@ -2035,20 +1507,7 @@ mod tests {
     use super::*;
 
     fn piece(flags: u16, size: [u8; 2], height: u16, slot: u8, x: i8, z: i8) -> Piece {
-        Piece {
-            c: 1,
-            slot,
-            furn: Furn {
-                flags,
-                model: 1,
-                size,
-                height,
-            },
-            x,
-            level: 0,
-            z,
-            rot: 0,
-        }
+        Piece { c: 1, slot, furn: Furn { flags, model: 1, size, height }, x, level: 0, z, rot: 0 }
     }
 
     /// The 1F walkway, a desk's surface, a pot on it and across two tables, freeing, a taken wall slot.
@@ -2056,21 +1515,11 @@ mod tests {
     fn grid() {
         let g = Grid::new(0);
         assert_eq!(g.cells.iter().filter(|c| c.flags == 0x80).count(), 144);
-        assert_eq!(
-            Grid::new(1)
-                .cells
-                .iter()
-                .filter(|c| c.flags == 0x80)
-                .count(),
-            0
-        );
+        assert_eq!(Grid::new(1).cells.iter().filter(|c| c.flags == 0x80).count(), 0);
         let mut g = Grid::new(1);
         let desk = piece(2, [3, 3], 50, 1, 0, 0);
         assert!(g.occupy(&desk));
-        assert_eq!(
-            (g.cell(1, 1).unwrap().flags, g.cell(1, 1).unwrap().height),
-            (2, 50)
-        );
+        assert_eq!((g.cell(1, 1).unwrap().flags, g.cell(1, 1).unwrap().height), (2, 50));
         let mut pot = piece(0xc, [1, 1], 100, 2, 1, 1);
         pot.level = 5;
         assert!(g.fits(&pot));
@@ -2134,26 +1583,10 @@ mod tests {
     /// The live test room: the bed held, moved right and up and turned, must fit beside the desk, pot, lamp and flag.
     #[test]
     fn live_room() {
-        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir())
-        else {
-            return;
-        };
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
         let t = FurnTable::load(&index).unwrap();
-        let mk = |slot, item: u16, x, level, z, rot| Piece {
-            c: 1,
-            slot,
-            furn: t.entry(item).unwrap(),
-            x,
-            level,
-            z,
-            rot,
-        };
-        let others = [
-            mk(2, 21, 16, 0, 4, 0),
-            mk(3, 216, 17, 5, 5, 0),
-            mk(4, 207, 0, 0, 20, 0),
-            mk(6, 129, 3, 0, 0, 3),
-        ];
+        let mk = |slot, item: u16, x, level, z, rot| Piece { c: 1, slot, furn: t.entry(item).unwrap(), x, level, z, rot };
+        let others = [mk(2, 21, 16, 0, 4, 0), mk(3, 216, 17, 5, 5, 0), mk(4, 207, 0, 0, 20, 0), mk(6, 129, 3, 0, 0, 3)];
         let mut g = Grid::new(0);
         for p in others.iter().filter(|p| p.level == 0) {
             assert!(g.occupy(p), "{p:?}");
@@ -2173,68 +1606,39 @@ mod tests {
     #[test]
     fn remap_dirs() {
         let (eye, look) = (Vec3::new(0.0, -4.5, 4.0), Vec3::ZERO);
-        assert_eq!(
-            (0..4).map(|d| remap(d, 0, eye, look)).collect::<Vec<_>>(),
-            [2, 3, 0, 1]
-        );
-        assert_eq!(
-            (0..4).map(|d| remap(d, 1, eye, look)).collect::<Vec<_>>(),
-            [0, 1, 2, 3]
-        );
+        assert_eq!((0..4).map(|d| remap(d, 0, eye, look)).collect::<Vec<_>>(), [2, 3, 0, 1]);
+        assert_eq!((0..4).map(|d| remap(d, 1, eye, look)).collect::<Vec<_>>(), [0, 1, 2, 3]);
         assert_eq!(remap(0, 0, Vec3::new(0.0, -4.5, -4.0), look), 0);
     }
 
     /// Pieces at (0, 0) current, (2, 0.5), (0.5, 2), (-3, 0); a pot at the table's centre; view 2 swaps.
     #[test]
     fn picks() {
-        let c = |id, x, z, level| Cand {
-            id,
-            pos: Vec3::new(x, 0.0, z),
-            level,
-            wall: false,
-            rot: 0,
-            size: (1, 1),
-            has_tops: false,
-        };
+        let c = |id, x, z, level| Cand { id, pos: Vec3::new(x, 0.0, z), level, wall: false, rot: 0, size: (1, 1), has_tops: false };
         let cur = c(1, 0.0, 0.0, 0);
         let others = [c(2, 2.0, 0.5, 0), c(3, 0.5, 2.0, 0), c(4, -3.0, 0.0, 0)];
         assert_eq!(pick(&cur, &others, 1, 0, 0), Some(2));
         assert_eq!(pick(&cur, &others, 0, 1, 0), Some(3));
         assert_eq!(pick(&cur, &others, -1, 0, 0), Some(4));
         assert_eq!(pick(&cur, &others, 1, 0, 2), Some(4));
-        let table = Cand {
-            size: (3, 3),
-            ..c(5, 0.0, 0.0, 0)
-        };
-        assert_eq!(
-            pick(&table, &[c(6, 0.0, 0.0, 5), c(2, 2.0, 0.5, 0)], 1, 0, 0),
-            Some(6)
-        );
+        let table = Cand { size: (3, 3), ..c(5, 0.0, 0.0, 0) };
+        assert_eq!(pick(&table, &[c(6, 0.0, 0.0, 5), c(2, 2.0, 0.5, 0)], 1, 0, 0), Some(6));
     }
 
     #[test]
     fn camera() {
         let sel = Some(Vec3::new(5.0, -0.5, 6.0));
         let (e, l) = camera_target(0, 0, sel);
-        assert_eq!(
-            (l, e),
-            (Vec3::new(4.0, -0.3, 5.0), Vec3::new(4.0, -5.0, 4.9))
-        );
+        assert_eq!((l, e), (Vec3::new(4.0, -0.3, 5.0), Vec3::new(4.0, -5.0, 4.9)));
         let (e, l) = camera_target(1, 0, sel);
-        assert_eq!(
-            (l, e),
-            (Vec3::new(4.0, -0.8, 5.0), Vec3::new(2.8, -4.5, 1.0))
-        );
+        assert_eq!((l, e), (Vec3::new(4.0, -0.8, 5.0), Vec3::new(2.8, -4.5, 1.0)));
         let (e, _) = camera_target(2, 0, sel);
         assert_eq!(e, Vec3::new(2.8, -4.5, 5.2));
     }
 
     #[test]
     fn packets() {
-        assert_eq!(
-            layout_body(0x1234, 5, 1, 0, 7, 5, 9, 3),
-            [0x34, 0x12, 5, 1, 0, 7, 5, 9, 3, 0, 0, 0]
-        );
+        assert_eq!(layout_body(0x1234, 5, 1, 0, 7, 5, 9, 3), [0x34, 0x12, 5, 1, 0, 7, 5, 9, 3, 0, 0, 0]);
         assert_eq!(bankin_body(0x1234, 5, 9), [0x34, 0x12, 5, 9]);
     }
 
@@ -2255,25 +1659,9 @@ mod tests {
 
     #[test]
     fn see_through_walk() {
-        assert_eq!(
-            walk(1, 18),
-            [
-                (2, 18),
-                (3, 17),
-                (4, 17),
-                (5, 16),
-                (6, 16),
-                (7, 15),
-                (8, 15),
-                (9, 14),
-                (10, 14)
-            ]
-        );
+        assert_eq!(walk(1, 18), [(2, 18), (3, 17), (4, 17), (5, 16), (6, 16), (7, 15), (8, 15), (9, 14), (10, 14)]);
         // Towards lower x the error grows: the row steps at every cell once it passes the run.
-        assert_eq!(
-            walk(15, 10),
-            [(14, 10), (13, 11), (12, 12), (11, 13), (10, 14)]
-        );
+        assert_eq!(walk(15, 10), [(14, 10), (13, 11), (12, 12), (11, 13), (10, 14)]);
         assert!(walk(10, 13).is_empty());
     }
 }

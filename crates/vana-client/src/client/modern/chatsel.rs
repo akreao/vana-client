@@ -18,11 +18,7 @@ pub struct LogSel {
 
 impl LogSel {
     fn ends(&self) -> ((usize, usize), (usize, usize)) {
-        if self.anchor <= self.head {
-            (self.anchor, self.head)
-        } else {
-            (self.head, self.anchor)
-        }
+        if self.anchor <= self.head { (self.anchor, self.head) } else { (self.head, self.anchor) }
     }
 
     pub fn empty(&self) -> bool {
@@ -83,63 +79,33 @@ pub fn hit(drawn: &Drawn, p: Pos2) -> Option<(usize, usize)> {
     if p.y > bottom.1.y + bottom.2.size().y {
         return Some((bottom.0, bottom.2.text().chars().count()));
     }
-    let (k, at, g) = drawn
-        .iter()
-        .min_by(|a, b| dist(a, p).total_cmp(&dist(b, p)))?;
+    let (k, at, g) = drawn.iter().min_by(|a, b| dist(a, p).total_cmp(&dist(b, p)))?;
     Some((*k, g.cursor_from_pos(p - *at).index.0))
 }
 
 fn dist(line: &(usize, Pos2, Arc<Galley>), p: Pos2) -> f32 {
     let (y0, y1) = (line.1.y, line.1.y + line.2.size().y);
-    if p.y < y0 {
-        y0 - p.y
-    } else if p.y > y1 {
-        p.y - y1
-    } else {
-        0.0
-    }
+    if p.y < y0 { y0 - p.y } else if p.y > y1 { p.y - y1 } else { 0.0 }
 }
 
 /// The text of the line under `p`, if any.
 pub fn line_at(drawn: &Drawn, p: Pos2) -> Option<String> {
-    drawn
-        .iter()
-        .find(|(_, at, g)| p.y >= at.y && p.y <= at.y + g.size().y)
-        .map(|l| l.2.text().to_string())
+    drawn.iter().find(|(_, at, g)| p.y >= at.y && p.y <= at.y + g.size().y).map(|l| l.2.text().to_string())
 }
 
 /// The selection's wash behind chars `s..e` of a galley drawn at `at`.
 pub fn wash(p: &egui::Painter, m: &Modern, g: &Galley, at: Pos2, (s, e): (usize, usize)) {
-    let (a, b) = (
-        g.pos_from_cursor(CCursor::new(s)),
-        g.pos_from_cursor(CCursor::new(e)),
-    );
+    let (a, b) = (g.pos_from_cursor(CCursor::new(s)), g.pos_from_cursor(CCursor::new(e)));
     let colour = m.theme.color("focus").gamma_multiply(0.45);
     for row in &g.rows {
         let r = row.rect();
-        if r.max.y <= a.center().y - 0.5 * a.height() || r.min.y >= b.center().y + 0.5 * b.height()
-        {
+        if r.max.y <= a.center().y - 0.5 * a.height() || r.min.y >= b.center().y + 0.5 * b.height() {
             continue;
         }
-        let x0 = if (r.min.y..=r.max.y).contains(&a.center().y) {
-            a.min.x
-        } else {
-            r.min.x
-        };
-        let x1 = if (r.min.y..=r.max.y).contains(&b.center().y) {
-            b.min.x
-        } else {
-            r.max.x
-        };
+        let x0 = if (r.min.y..=r.max.y).contains(&a.center().y) { a.min.x } else { r.min.x };
+        let x1 = if (r.min.y..=r.max.y).contains(&b.center().y) { b.min.x } else { r.max.x };
         if x1 > x0 {
-            p.rect_filled(
-                Rect::from_min_max(
-                    pos2(at.x + x0, at.y + r.min.y),
-                    pos2(at.x + x1, at.y + r.max.y),
-                ),
-                2.0,
-                colour,
-            );
+            p.rect_filled(Rect::from_min_max(pos2(at.x + x0, at.y + r.min.y), pos2(at.x + x1, at.y + r.max.y)), 2.0, colour);
         }
     }
 }
@@ -149,9 +115,7 @@ pub fn wash(p: &egui::Painter, m: &Modern, g: &Galley, at: Pos2, (s, e): (usize,
 pub fn log_mouse(m: &Modern, resp: &egui::Response, drawn: &Drawn) -> bool {
     let ctx = &resp.ctx;
     if resp.drag_started_by(egui::PointerButton::Primary)
-        && let Some(a) = ctx
-            .input(|i| i.pointer.press_origin())
-            .and_then(|p| hit(drawn, p))
+        && let Some(a) = ctx.input(|i| i.pointer.press_origin()).and_then(|p| hit(drawn, p))
     {
         *m.log_sel.borrow_mut() = Some(LogSel { anchor: a, head: a });
     }
@@ -165,10 +129,7 @@ pub fn log_mouse(m: &Modern, resp: &egui::Response, drawn: &Drawn) -> bool {
         && let Some(at) = resp.interact_pointer_pos()
     {
         *m.ctx_menu.borrow_mut() = None;
-        *m.chat_menu.borrow_mut() = Some(Menu::Log {
-            at,
-            line: line_at(drawn, at),
-        });
+        *m.chat_menu.borrow_mut() = Some(Menu::Log { at, line: line_at(drawn, at) });
     }
     if resp.clicked() {
         let had = m.log_sel.borrow().is_some_and(|s| !s.empty());
@@ -185,13 +146,7 @@ pub fn log_mouse(m: &Modern, resp: &egui::Response, drawn: &Drawn) -> bool {
 pub fn line_stops(ui: &Ui, pieces: &[(String, bool)], font: &FontId, x0: f32) -> Vec<(usize, f32)> {
     let mut out = vec![(0, x0)];
     let (mut x, mut chars) = (x0, 0);
-    let width = |s: &str| {
-        ui.fonts_mut(|f| {
-            f.layout_no_wrap(s.to_string(), font.clone(), egui::Color32::WHITE)
-                .size()
-                .x
-        })
-    };
+    let width = |s: &str| ui.fonts_mut(|f| f.layout_no_wrap(s.to_string(), font.clone(), egui::Color32::WHITE).size().x);
     for (text, phrase) in pieces {
         if *phrase {
             x += width(text);
@@ -212,10 +167,7 @@ pub fn line_stops(ui: &Ui, pieces: &[(String, bool)], font: &FontId, x0: f32) ->
 
 /// The stop nearest `x`.
 pub fn nearest(stops: &[(usize, f32)], x: f32) -> usize {
-    stops
-        .iter()
-        .min_by(|a, b| (a.1 - x).abs().total_cmp(&(b.1 - x).abs()))
-        .map_or(0, |s| s.0)
+    stops.iter().min_by(|a, b| (a.1 - x).abs().total_cmp(&(b.1 - x).abs())).map_or(0, |s| s.0)
 }
 
 /// The chat line's mouse (`resp` its rect's): a press puts the caret there, a drag selects from the press, a right
@@ -225,9 +177,7 @@ pub fn line_mouse(m: &Modern, resp: &egui::Response, stops: &[(usize, f32)]) {
     if resp.hovered() {
         ctx.set_cursor_icon(egui::CursorIcon::Text);
     }
-    let press = ctx
-        .input(|i| i.pointer.press_origin())
-        .map(|p| nearest(stops, p.x));
+    let press = ctx.input(|i| i.pointer.press_origin()).map(|p| nearest(stops, p.x));
     if (resp.clicked() || resp.drag_started_by(egui::PointerButton::Primary))
         && let Some(c) = press
     {
@@ -258,18 +208,11 @@ fn menu(ctx: &egui::Context, m: &Modern, at: Pos2, rows: &[(&str, bool)]) -> Opt
 
 /// The open menu drawn; its pick becomes `m.chat_act`.
 pub fn draw_menu(ctx: &egui::Context, m: &Modern) {
-    let Some(menu) = m.chat_menu.borrow().clone() else {
-        return;
-    };
+    let Some(menu) = m.chat_menu.borrow().clone() else { return };
     let act = match menu {
         Menu::Log { at, line } => {
             let sel = m.log_text.borrow().clone().filter(|t| !t.is_empty());
-            match self::menu(
-                ctx,
-                m,
-                at,
-                &[("Copy", sel.is_some()), ("Copy Line", line.is_some())],
-            ) {
+            match self::menu(ctx, m, at, &[("Copy", sel.is_some()), ("Copy Line", line.is_some())]) {
                 Some(0) => sel.map(Act::Copy),
                 Some(1) => line.map(Act::Copy),
                 _ => None,
@@ -277,17 +220,7 @@ pub fn draw_menu(ctx: &egui::Context, m: &Modern) {
         }
         Menu::Line { at } => {
             let sel = m.line_sel.get();
-            match self::menu(
-                ctx,
-                m,
-                at,
-                &[
-                    ("Cut", sel),
-                    ("Copy", sel),
-                    ("Paste", true),
-                    ("Select All", true),
-                ],
-            ) {
+            match self::menu(ctx, m, at, &[("Cut", sel), ("Copy", sel), ("Paste", true), ("Select All", true)]) {
                 Some(0) => Some(Act::Cut),
                 Some(1) => Some(Act::CopyLine),
                 Some(2) => Some(Act::Paste),

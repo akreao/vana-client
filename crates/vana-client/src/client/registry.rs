@@ -27,16 +27,8 @@ impl Info {
 }
 
 /// DAT valid-target bits (spell +6, ability +0xa) by the kinds target::SUB_FLAGS maps them to.
-const TARGETS: [(u16, &str); 8] = [
-    (1, "Self"),
-    (4, "Party"),
-    (8, "Alliance"),
-    (0x10, "Player"),
-    (2, "Ally NPC"),
-    (0x40, "NPC"),
-    (0x80, "NPC"),
-    (0x20, "Enemy"),
-];
+const TARGETS: [(u16, &str); 8] =
+    [(1, "Self"), (4, "Party"), (8, "Alliance"), (0x10, "Player"), (2, "Ally NPC"), (0x40, "NPC"), (0x80, "NPC"), (0x20, "Enemy")];
 
 fn target_names(bits: u16) -> Vec<&'static str> {
     let mut out: Vec<&'static str> = Vec::new();
@@ -65,32 +57,22 @@ fn effect_reason(w: &World, magic: bool) -> Option<&'static str> {
 
 /// A refusal id's group 7 line, or a short line of ours when the DAT has none (a silent refusal).
 fn line(w: &World, id: usize) -> String {
-    w.battle
-        .as_ref()
-        .and_then(|bt| bt.group7(id))
-        .map(|l| l.trim().to_string())
-        .filter(|l| !l.is_empty())
-        .unwrap_or_else(|| "Can't be used now.".into())
+    w.battle.as_ref().and_then(|bt| bt.group7(id)).map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).unwrap_or_else(|| "Can't be used now.".into())
 }
 
 /// The current target's flat distance when `bits` may take it (target::takes).
 fn distance(w: &World, bits: u16) -> Option<f32> {
-    let t = w
-        .target
-        .filter(|&t| t != w.my_id && super::target::takes(w, bits as u32, t))?;
+    let t = w.target.filter(|&t| t != w.my_id && super::target::takes(w, bits as u32, t))?;
     let p = w.entities.get(&t)?.pos;
     Some(glam::Vec2::new(p.x - w.pos.x, p.z - w.pos.z).length())
 }
 
 pub fn spell(w: &World, s: u16) -> Option<Info> {
     let r = w.actions.as_ref()?.spell(s)?.clone();
-    let why = magic::magic_check(w, s)
-        .map(|id| line(w, id))
-        .or_else(|| effect_reason(w, true).map(String::from));
+    let why = magic::magic_check(w, s).map(|id| line(w, id)).or_else(|| effect_reason(w, true).map(String::from));
     Some(Info {
         targets: target_names(r.targets),
-        range: Some(crate::dat::actions::RANGES[(r.range & 0xf) as usize] as f32)
-            .filter(|&r| r < 255.0),
+        range: Some(crate::dat::actions::RANGES[(r.range & 0xf) as usize] as f32).filter(|&r| r < 255.0),
         distance: distance(w, r.targets),
         why,
     })
@@ -100,20 +82,10 @@ pub fn ability(w: &World, i: u16) -> Option<Info> {
     let a = w.actions.as_ref()?.abilities.get(i as usize)?.clone();
     if a.kind == 4 || a.sub != 0 {
         // Traits are always on; a sub-list row only opens its list.
-        return Some(Info {
-            targets: Vec::new(),
-            ..Default::default()
-        });
+        return Some(Info { targets: Vec::new(), ..Default::default() });
     }
-    let why = magic::ability_check(w, i)
-        .map(|id| line(w, id))
-        .or_else(|| effect_reason(w, false).map(String::from));
-    Some(Info {
-        targets: target_names(a.targets),
-        range: None,
-        distance: distance(w, a.targets),
-        why,
-    })
+    let why = magic::ability_check(w, i).map(|id| line(w, id)).or_else(|| effect_reason(w, false).map(String::from));
+    Some(Info { targets: target_names(a.targets), range: None, distance: distance(w, a.targets), why })
 }
 
 #[cfg(test)]
@@ -130,20 +102,9 @@ mod tests {
 
     #[test]
     fn out_of_range_past_half_a_yalm() {
-        let i = |d, r| Info {
-            distance: Some(d),
-            range: Some(r),
-            ..Default::default()
-        };
+        let i = |d, r| Info { distance: Some(d), range: Some(r), ..Default::default() };
         assert!(!i(20.4, 20.0).out_of_range());
         assert!(i(20.6, 20.0).out_of_range());
-        assert!(
-            !Info {
-                distance: Some(50.0),
-                range: None,
-                ..Default::default()
-            }
-            .out_of_range()
-        );
+        assert!(!Info { distance: Some(50.0), range: None, ..Default::default() }.out_of_range());
     }
 }

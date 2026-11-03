@@ -40,9 +40,7 @@ pub enum Scope {
 /// The results window (W) and its list (DAT_106644dc).
 /// A scroll bar or wheel message to the results (FUN_101f6c70; row 0 is the summary line). True when it moved.
 pub(super) fn bar(w: &mut World, m: Msg) -> bool {
-    let Some(res) = w.search.as_mut().filter(|r| r.option.is_none()) else {
-        return false;
-    };
+    let Some(res) = w.search.as_mut().filter(|r| r.option.is_none()) else { return false };
     let n = res.rows.len() + 1;
     rows_abs(m, &mut res.scroll, &mut res.cursor, n, ROWS)
 }
@@ -77,12 +75,7 @@ pub const ROWS: usize = 15;
 /// area by name only.
 pub fn lookup(w: &mut World, name: &str, then: impl FnOnce(String) -> Then) {
     let mut chars = name.chars().take(15);
-    let name: String = chars
-        .next()
-        .map(|c| c.to_ascii_uppercase())
-        .into_iter()
-        .chain(chars.map(|c| c.to_ascii_lowercase()))
-        .collect();
+    let name: String = chars.next().map(|c| c.to_ascii_uppercase()).into_iter().chain(chars.map(|c| c.to_ascii_lowercase())).collect();
     log::info!("search: name lookup {name}");
     let rx = search::spawn(w.search_addr, Cond::name(name.clone()));
     w.searches.push((rx, then(name)));
@@ -100,20 +93,8 @@ pub fn command(w: &mut World, tail: &str) {
         run(w, Cond::zone(w.pos_zone), Scope::Area);
         return;
     };
-    let ls = |num: usize| {
-        w.linkshells
-            .get(num)
-            .filter(|l| l.0 != 0)
-            .and_then(|&(index, bag)| w.inv.ext.get(&(bag, index)))
-            .map_or(0, |e| u32::from_le_bytes([e[0], e[1], e[2], e[3]]))
-    };
-    let ctx = Ctx {
-        zone: w.pos_zone,
-        region: words.region_of(w.pos_zone),
-        ls: [ls(1), ls(2)],
-        unity: NO_UNITY,
-        known: w.known_zones.as_ref().map(|k| &k[..]),
-    };
+    let ls = |num: usize| w.linkshells.get(num).filter(|l| l.0 != 0).and_then(|&(index, bag)| w.inv.ext.get(&(bag, index))).map_or(0, |e| u32::from_le_bytes([e[0], e[1], e[2], e[3]]));
+    let ctx = Ctx { zone: w.pos_zone, region: words.region_of(w.pos_zone), ls: [ls(1), ls(2)], unity: NO_UNITY, known: w.known_zones.as_ref().map(|k| &k[..]) };
     let cond = parse(tail, &words, &ctx);
     let scope = scope_of(&cond);
     run(w, cond, scope);
@@ -159,8 +140,7 @@ fn word<'s>(s: &'s str, word: &str) -> Option<&'s str> {
 
 /// The first entry of a word list matching the token: its value and the text after it.
 fn find_word<'s>(list: &[(i32, String)], s: &'s str) -> Option<(i32, &'s str)> {
-    list.iter()
-        .find_map(|(v, w)| word(s, w).map(|rest| (*v, rest)))
+    list.iter().find_map(|(v, w)| word(s, w).map(|rest| (*v, rest)))
 }
 
 /// FUN_10105bd0's token: digits with at most one `-` / `<`: (first, second, separator seen, rest), -1 for a missing
@@ -189,44 +169,21 @@ fn range(s: &str) -> Option<(i32, i32, bool, &str)> {
 /// s2c 0x008); ALL is -1.
 fn area<'s>(s: &'s str, words: &SearchWords, known: Option<&[u8]>) -> Option<(i32, &'s str)> {
     let (id, rest) = find_word(&words.areas, s)?;
-    let bit = |z: i32| {
-        known
-            .and_then(|k| k.get(z as usize >> 3))
-            .is_some_and(|b| b >> (z & 7) & 1 != 0)
-    };
+    let bit = |z: i32| known.and_then(|k| k.get(z as usize >> 3)).is_some_and(|b| b >> (z & 7) & 1 != 0);
     (!(0 < id && id < 0x180 && !bit(id))).then_some((id, rest))
 }
 
 /// FUN_10105640: a category's value at `s` into the condition; the text after it, None when it does not parse.
-fn value<'s>(
-    c: &mut Cond,
-    t: u8,
-    unity: bool,
-    s: &'s str,
-    words: &SearchWords,
-    ctx: &Ctx,
-) -> Option<&'s str> {
+fn value<'s>(c: &mut Cond, t: u8, unity: bool, s: &'s str, words: &SearchWords, ctx: &Ctx) -> Option<&'s str> {
     match t {
         // Quotes allowed; the first 15 characters as typed.
         0 => {
             let s = skip_ws(s);
             let (quoted, body) = s.strip_prefix('"').map_or((false, s), |r| (true, r));
-            let end = body
-                .find(|ch: char| {
-                    if quoted {
-                        ch == '"'
-                    } else {
-                        ch.is_ascii_whitespace()
-                    }
-                })
-                .unwrap_or(body.len());
+            let end = body.find(|ch: char| if quoted { ch == '"' } else { ch.is_ascii_whitespace() }).unwrap_or(body.len());
             c.name = body[..end].chars().take(15).collect();
             let rest = &body[end..];
-            Some(if quoted {
-                rest.strip_prefix('"').unwrap_or(rest)
-            } else {
-                rest
-            })
+            Some(if quoted { rest.strip_prefix('"').unwrap_or(rest) } else { rest })
         }
         // Put first unless listed already (16 at most).
         1 => {
@@ -258,10 +215,7 @@ fn value<'s>(
                 let v = if a > 255 { 0 } else { a.max(0) as u8 };
                 (v, v)
             } else if (a < 256 || b < a) && (b < 256 || a < b) {
-                (
-                    a.clamp(0, 255) as u8,
-                    if (0..=255).contains(&b) { b as u8 } else { 255 },
-                )
+                (a.clamp(0, 255) as u8, if (0..=255).contains(&b) { b as u8 } else { 255 })
             } else {
                 (0, 0)
             };
@@ -270,24 +224,13 @@ fn value<'s>(
         // FUN_10105de0: a pair clamps to 0..100, a single value is kept as a byte.
         0x10 => {
             let (a, b, pair, rest) = range(s)?;
-            c.rank = if pair {
-                (
-                    (if a > 99 { 100 } else { a.max(0) }) as u8,
-                    if (0..=99).contains(&b) { b as u8 } else { 100 },
-                )
-            } else {
-                (a as u8, a as u8)
-            };
+            c.rank = if pair { ((if a > 99 { 100 } else { a.max(0) }) as u8, if (0..=99).contains(&b) { b as u8 } else { 100 }) } else { (a as u8, a as u8) };
             Some(rest)
         }
         // FUN_10105ab0: a unity leader, the own unity for UNITY or nothing; an unknown word sets 0x0f800000 and is
         // read again as the next token.
         6 if unity => {
-            let (v, rest) = if s.is_empty() {
-                (0, s)
-            } else {
-                find_word(&words.unity, s).unwrap_or((-1, ""))
-            };
+            let (v, rest) = if s.is_empty() { (0, s) } else { find_word(&words.unity, s).unwrap_or((-1, "")) };
             if v < 0 {
                 c.status |= NO_UNITY;
                 return Some(s);
@@ -313,26 +256,16 @@ fn value<'s>(
 /// a level, a master level, a job, a nation, a race and a name, in that order; the first word that fits nothing
 /// ends it. No area: the current zone.
 pub fn parse(text: &str, words: &SearchWords, ctx: &Ctx) -> Cond {
-    use crate::net::search::{
-        AREA, FRIEND, JOB, LEVEL, LS1, LS2, MLEVEL, NAME, NATION, RACE, STATUS,
-    };
-    let mut c = Cond {
-        last_area: -1,
-        ..Default::default()
-    };
+    use crate::net::search::{AREA, FRIEND, JOB, LEVEL, LS1, LS2, MLEVEL, NAME, NATION, RACE, STATUS};
+    let mut c = Cond { last_area: -1, ..Default::default() };
     let mut s = text;
     loop {
         s = skip_ws(s);
-        let Some(&first) = s.as_bytes().first() else {
-            break;
-        };
-        let sign = first == b'+'
-            || (first == b'-' && !s.as_bytes().get(1).is_some_and(u8::is_ascii_digit));
+        let Some(&first) = s.as_bytes().first() else { break };
+        let sign = first == b'+' || (first == b'-' && !s.as_bytes().get(1).is_some_and(u8::is_ascii_digit));
         if sign {
             // STATUS / UNITY, LINKSHELL, LINKSHELL2, FRIEND, a set or sorted category: the end.
-            let Some((t, rest)) = find_word(&words.categories, &s[1..]) else {
-                break;
-            };
+            let Some((t, rest)) = find_word(&words.categories, &s[1..]) else { break };
             let t = t as u8;
             if matches!(t, 6 | 0xb | 0xc | 0x13 | 0x14) || c.flags & (1 << t) != 0 || c.sorted(t) {
                 break;
@@ -398,14 +331,7 @@ pub fn parse(text: &str, words: &SearchWords, ctx: &Ctx) -> Cond {
             continue;
         }
         let mut next = None;
-        for (flag, t) in [
-            (LEVEL, 4),
-            (MLEVEL, 7),
-            (JOB, 3),
-            (NATION, 2),
-            (RACE, 5),
-            (NAME, 0),
-        ] {
+        for (flag, t) in [(LEVEL, 4), (MLEVEL, 7), (JOB, 3), (NATION, 2), (RACE, 5), (NAME, 0)] {
             if c.flags & flag == 0
                 && !c.sorted(t)
                 && let Some(r) = value(&mut c, t, false, s, words, ctx)
@@ -442,20 +368,7 @@ pub fn run(w: &mut World, mut cond: Cond, scope: Scope) {
     }
     let rx = search::spawn(w.search_addr, cond);
     w.searches.push((rx, Then::Results));
-    w.search = Some(Results {
-        busy: true,
-        failed: false,
-        scope,
-        rows: Vec::new(),
-        total: 0,
-        cursor: 0,
-        scroll: 0,
-        alt: false,
-        option: None,
-        ac: false,
-        title: 0,
-        mode: 1,
-    });
+    w.search = Some(Results { busy: true, failed: false, scope, rows: Vec::new(), total: 0, cursor: 0, scroll: 0, alt: false, option: None, ac: false, title: 0, mode: 1 });
 }
 
 /// FUN_1020c390 (View Request, /recruitlist): once s2c 0x119 came, the request list in every area (mode 2, title
@@ -464,15 +377,7 @@ pub fn run_requests(w: &mut World) {
     if !w.recasts_seen || busy(w) {
         return;
     }
-    run(
-        w,
-        Cond {
-            flags: search::REQUEST,
-            last_area: -1,
-            ..Default::default()
-        },
-        Scope::World,
-    );
+    run(w, Cond { flags: search::REQUEST, last_area: -1, ..Default::default() }, Scope::World);
     if let Some(r) = w.search.as_mut() {
         r.mode = 2;
     }
@@ -494,20 +399,7 @@ pub fn run_group(w: &mut World, ids: [u32; 4], title: usize) {
     w.search_cond = cond.clone();
     let rx = search::spawn(w.search_addr, cond);
     w.searches.push((rx, Then::Results));
-    w.search = Some(Results {
-        busy: true,
-        failed: false,
-        scope: Scope::Area,
-        rows: Vec::new(),
-        total: 0,
-        cursor: 0,
-        scroll: 0,
-        alt: false,
-        option: None,
-        ac: false,
-        title,
-        mode: 3,
-    });
+    w.search = Some(Results { busy: true, failed: false, scope: Scope::Area, rows: Vec::new(), total: 0, cursor: 0, scroll: 0, alt: false, option: None, ac: false, title, mode: 3 });
 }
 
 /// The same with p6 = 1: the old results window closes (FUN_1020b3a0), none opens; only the summary line comes.
@@ -524,9 +416,7 @@ pub fn run_quiet(w: &mut World, cond: Cond, scope: Scope) {
 
 /// DAT_10385a04 != 4: a query for the results window or a summary is out.
 pub fn busy(w: &World) -> bool {
-    w.searches
-        .iter()
-        .any(|s| matches!(s.1, Then::Results | Then::Summary(_) | Then::LinkList))
+    w.searches.iter().any(|s| matches!(s.1, Then::Results | Then::Summary(_) | Then::LinkList))
 }
 
 /// The summary scope from the areas searched: one area, several, none (all areas).
@@ -562,11 +452,7 @@ fn finish(w: &mut World, reply: Option<Reply>, then: Then) {
             let Some(reply) = reply else { return };
             // An exact match: c2s 0x06E with its id, ActIndex 0, kind 5 to a party leader (rec+0x30 bit 3), else 0.
             let Some(r) = reply.records.iter().find(|r| r.name == name) else {
-                log::info!(
-                    "search: {name} not found ({} of {})",
-                    reply.records.len(),
-                    reply.total
-                );
+                log::info!("search: {name} not found ({} of {})", reply.records.len(), reply.total);
                 return;
             };
             log::info!("search: {name} is {:#x} in zone {}", r.id, r.zone);
@@ -574,16 +460,8 @@ fn finish(w: &mut World, reply: Option<Reply>, then: Then) {
         }
         // 3.5: an exact name; a request checks the blacklist first (no self check here, LSB refuses it).
         Then::Request(name, kind) => {
-            let Some(id) =
-                reply.and_then(|r| r.records.iter().find(|r| r.name == name).map(|r| r.id))
-            else {
-                return;
-            };
-            match if kind == 0 {
-                super::partyreq::blacklisted(w, &name)
-            } else {
-                0
-            } {
+            let Some(id) = reply.and_then(|r| r.records.iter().find(|r| r.name == name).map(|r| r.id)) else { return };
+            match if kind == 0 { super::partyreq::blacklisted(w, &name) } else { 0 } {
                 1 => super::textcmd::refuse(w, 0xc5),
                 2 => super::textcmd::refuse(w, 0xc6),
                 _ => super::partyreq::send(w, id, 0, kind, &name),
@@ -591,19 +469,14 @@ fn finish(w: &mut World, reply: Option<Reply>, then: Then) {
         }
         // An exact name: c2s 0x03D; none: group 9 0x75 / 0x77.
         // No record (or ourselves): 7 0xa2; else the friend request's lookup (FUN_101ffa20 flag 1).
-        Then::Befriend(name) => match reply
-            .and_then(|r| r.records.iter().find(|r| r.name == name).cloned())
-            .filter(|r| r.id != w.my_id)
-        {
+        Then::Befriend(name) => match reply.and_then(|r| r.records.iter().find(|r| r.name == name).cloned()).filter(|r| r.id != w.my_id) {
             Some(r) => super::friends::befriend(w, r.id, r.name, true),
             None => super::textcmd::refuse(w, 0xa2),
         },
-        Then::Black(name, mode) => {
-            match reply.and_then(|r| r.records.iter().find(|r| r.name == name).map(|r| r.id)) {
-                Some(id) => super::partyreq::black_edit(w, id, &name, mode),
-                None => super::textcmd::log9(w, if mode == 0 { 0x75 } else { 0x77 }),
-            }
-        }
+        Then::Black(name, mode) => match reply.and_then(|r| r.records.iter().find(|r| r.name == name).map(|r| r.id)) {
+            Some(id) => super::partyreq::black_edit(w, id, &name, mode),
+            None => super::textcmd::log9(w, if mode == 0 { 0x75 } else { 0x77 }),
+        },
         Then::LevelSync => super::levelsync::filled(w, reply),
         Then::LinkList => super::linklist::filled(w, reply),
         Then::Summary(scope) => {
@@ -624,8 +497,7 @@ fn finish(w: &mut World, reply: Option<Reply>, then: Then) {
             if res.cursor == 0 && !res.rows.is_empty() {
                 res.cursor = 1;
             }
-            let (scope, shown, total, mode) =
-                (res.scope, res.rows.len(), reply.total as usize, res.mode);
+            let (scope, shown, total, mode) = (res.scope, res.rows.len(), reply.total as usize, res.mode);
             if mode != 3 {
                 summary(w, scope, total, shown);
             }
@@ -645,17 +517,11 @@ fn summary(w: &mut World, scope: Scope, total: usize, shown: usize) {
     };
     let colour = bt.colour_in(SUMMARY_MODE, &w.game);
     if let Some(raw) = bt.group10_raw(id) {
-        let text = crate::dat::font::decode_sjis(&msgfmt::format(
-            &raw,
-            &[],
-            &[total as i32],
-            &|_, _, _| None,
-        ));
+        let text = crate::dat::font::decode_sjis(&msgfmt::format(&raw, &[], &[total as i32], &|_, _, _| None));
         w.chat.push_colour(text, colour);
     }
     if shown < total {
-        w.chat
-            .push_colour(bt.group9(0xbf).unwrap_or_default(), colour);
+        w.chat.push_colour(bt.group9(0xbf).unwrap_or_default(), colour);
     }
 }
 
@@ -667,10 +533,7 @@ fn invite(w: &World, id: u32, flags: u32) {
     let mut b = vec![0u8; 8];
     b[0..4].copy_from_slice(&id.to_le_bytes());
     b[6] = if flags & 8 != 0 { 5 } else { 0 };
-    let _ = w
-        .net
-        .commands
-        .send(NetCommand::Packet { id: 0x06E, body: b });
+    let _ = w.net.commands.send(NetCommand::Packet { id: 0x06E, body: b });
 }
 
 /// scoption's rows by child id (the layout's order top to bottom: 1, 4, 5, 2, 3).
@@ -678,36 +541,24 @@ pub const OPTION_ORDER: [u16; 5] = [1, 4, 5, 2, 3];
 
 /// FUN_1020c440: results of a search (mode 1) for the muted (status flag 0x40 with 0x20000000: /mutelist).
 fn mute_list(w: &World, res: &Results) -> bool {
-    res.mode == 1
-        && w.search_cond.flags & search::STATUS != 0
-        && w.search_cond.status == 0x2000_0000
+    res.mode == 1 && w.search_cond.flags & search::STATUS != 0 && w.search_cond.status == 0x2000_0000
 }
 
 /// The open option window and its rows: acoption's one (Remove), else scoption's.
 pub fn option_window(res: &Results) -> (&'static str, &'static [u16]) {
-    if res.ac {
-        (ACOPTION, &[1])
-    } else {
-        (SCOPTION, &OPTION_ORDER)
-    }
+    if res.ac { (ACOPTION, &[1]) } else { (SCOPTION, &OPTION_ORDER) }
 }
 
 /// Whether option `c` is on for `r`: acoption's Remove by FUN_1020cc90's rule, scoption's by FUN_1020c540's.
 pub fn option_on(w: &World, res: &Results, c: u16, r: &Record) -> bool {
-    if res.ac {
-        super::charlnk::can_mute(w)
-    } else {
-        option_enabled(w, c, r)
-    }
+    if res.ac { super::charlnk::can_mute(w) } else { option_enabled(w, c, r) }
 }
 
 /// Keys while the results window (or scoption over it) is up. The list base: Up / Down stop at the ends, Left / Right
 /// page by 15, Escape closes (FUN_101f67c0); Num+ (list message 8) flips the job cells.
 pub fn key(w: &mut World, key: egui::Key) {
     use egui::Key as K;
-    let Some(mut res) = w.search.take() else {
-        return;
-    };
+    let Some(mut res) = w.search.take() else { return };
     if let Some(c) = res.option
         && res.ac
     {
@@ -746,22 +597,12 @@ pub fn key(w: &mut World, key: egui::Key) {
                 w.sounds.push(Ui::Cancel as u32);
             }
             K::Enter => {
-                if let Some(r) = res
-                    .cursor
-                    .checked_sub(1)
-                    .and_then(|i| res.rows.get(i))
-                    .cloned()
-                {
+                if let Some(r) = res.cursor.checked_sub(1).and_then(|i| res.rows.get(i)).cloned() {
                     if option_enabled(w, c, &r) {
                         w.sounds.push(Ui::Select as u32);
                         match c {
                             // Clear History: the prompt over scoption, which stays open.
-                            4 if request_mode(w, &res) => {
-                                w.confirm = Some((
-                                    super::Confirm::Request(super::partyreq::Ask::Clear),
-                                    false,
-                                ))
-                            }
+                            4 if request_mode(w, &res) => w.confirm = Some((super::Confirm::Request(super::partyreq::Ask::Clear), false)),
                             // Delete Request: delete (9 0x141), everything closes (FUN_1020c010), View Request again.
                             5 if request_mode(w, &res) => {
                                 super::partyreq::delete_named(w, &r.name);
@@ -796,11 +637,7 @@ pub fn key(w: &mut World, key: egui::Key) {
         }
         // A page of 15 (+0x18).
         K::ArrowRight | K::ArrowLeft => {
-            let c = if key == K::ArrowRight {
-                (res.cursor + ROWS).min(n - 1)
-            } else {
-                res.cursor.saturating_sub(ROWS)
-            };
+            let c = if key == K::ArrowRight { (res.cursor + ROWS).min(n - 1) } else { res.cursor.saturating_sub(ROWS) };
             if c != res.cursor {
                 res.cursor = c;
                 w.sounds.push(Ui::Cursor as u32);
@@ -818,77 +655,39 @@ pub fn key(w: &mut World, key: egui::Key) {
             w.sounds.push(Ui::Select as u32);
         }
         K::Enter if !res.busy => {
-            res.ac = mute_list(w, &res)
-                && res
-                    .rows
-                    .get(res.cursor - 1)
-                    .is_some_and(|r| r.flags & 0x2000_0000 != 0);
+            res.ac = mute_list(w, &res) && res.rows.get(res.cursor - 1).is_some_and(|r| r.flags & 0x2000_0000 != 0);
             res.option = Some(1);
             w.sounds.push(Ui::Select as u32);
         }
         K::Enter => w.sounds.push(Ui::Error as u32),
         _ => {}
     }
-    res.scroll = res
-        .scroll
-        .min(res.cursor)
-        .max((res.cursor + 1).saturating_sub(ROWS));
+    res.scroll = res.scroll.min(res.cursor).max((res.cursor + 1).saturating_sub(ROWS));
     w.search = Some(res);
 }
 
 /// The mouse (winhits.rs): scoption as the generic window, else the results' rows (hover moves the cursor, a click on
 /// it is Enter, a right click Escape).
 #[allow(clippy::too_many_arguments)]
-pub fn pointer(
-    w: &mut World,
-    gu: &super::game_ui::GameUi,
-    p: (f32, f32),
-    moved: bool,
-    clicked: bool,
-    right: bool,
-) {
+pub fn pointer(w: &mut World, gu: &super::game_ui::GameUi, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
     use super::winhits::generic;
     let Some(res) = w.search.as_ref() else { return };
     let keys = |w: &mut World, _: &super::game_ui::GameUi, k: egui::Key| key(w, k);
     if let Some(c) = res.option {
         let (name, rows) = option_window(res);
-        generic(
-            w,
-            gu,
-            name,
-            c,
-            1..=rows.len() as u16,
-            p,
-            moved,
-            clicked,
-            right,
-            |w, id| {
-                if let Some(r) = w.search.as_mut() {
-                    r.option = Some(id);
-                }
-            },
-            keys,
-        );
+        generic(w, gu, name, c, 1..=rows.len() as u16, p, moved, clicked, right, |w, id| {
+            if let Some(r) = w.search.as_mut() {
+                r.option = Some(id);
+            }
+        }, keys);
         return;
     }
     let (scroll, cursor) = (res.scroll, res.cursor);
-    generic(
-        w,
-        gu,
-        SCRESULT,
-        (cursor - scroll + 1) as u16,
-        1..=ROWS as u16,
-        p,
-        moved,
-        clicked,
-        right,
-        |w, id| {
-            if let Some(r) = w.search.as_mut() {
-                r.cursor = scroll + id as usize - 1;
-            }
-        },
-        keys,
-    );
+    generic(w, gu, SCRESULT, (cursor - scroll + 1) as u16, 1..=ROWS as u16, p, moved, clicked, right, |w, id| {
+        if let Some(r) = w.search.as_mut() {
+            r.cursor = scroll + id as usize - 1;
+        }
+    }, keys);
 }
 
 /// Num+ in the list (list message 8).
@@ -905,11 +704,7 @@ pub fn option_enabled(w: &World, c: u16, r: &Record) -> bool {
         2 => r.name != w.name,
         3 => {
             let in_party = w.party.members().any(|m| m.id == r.id && m.id != 0);
-            !(in_party
-                || (r.flags & 0x2000 != 0 && r.flags & 8 == 0)
-                || r.flags & 0x1000_0000 != 0
-                || r.job.0 == 0x17
-                || r.name == w.name)
+            !(in_party || (r.flags & 0x2000 != 0 && r.flags & 8 == 0) || r.flags & 0x1000_0000 != 0 || r.job.0 == 0x17 || r.name == w.name)
         }
         _ => true,
     }
@@ -925,11 +720,7 @@ fn option(w: &mut World, c: u16, r: &Record) {
         2 => super::friends::befriend(w, r.id, r.name.clone(), false),
         3 => invite(w, r.id, r.flags),
         4 | 5 => {
-            let line = format!(
-                "/partyrequestcmd {} {}",
-                if c == 4 { "add" } else { "remove" },
-                r.name
-            );
+            let line = format!("/partyrequestcmd {} {}", if c == 4 { "add" } else { "remove" }, r.name);
             super::textcmd::run(w, &line, super::textcmd::Mode::Internal);
         }
         _ => {}
@@ -1000,14 +791,7 @@ fn digits(gu: &mut super::game_ui::GameUi, v: u8, x: f32, y: f32, step: f32, lea
 }
 
 /// FUN_101ca6c0 (default) / FUN_101caa10 (Num+): the job / level cell at (x, y) = (row + 18, row + 2).
-pub(super) fn job_cell(
-    gu: &mut super::game_ui::GameUi,
-    r: &Record,
-    x: f32,
-    y: f32,
-    c: u32,
-    alt: bool,
-) {
+pub(super) fn job_cell(gu: &mut super::game_ui::GameUi, r: &Record, x: f32, y: f32, c: u32, alt: bool) {
     const G: u32 = 0x8080_8080;
     gu.sprite("menu    pname", if alt { 45 } else { 0 }, x, y, G);
     if r.present & 1 << 6 == 0 || r.flags & 0x4000 != 0 {
@@ -1028,13 +812,7 @@ pub(super) fn job_cell(
             gu.sprite("menu    pname", j, x + 59.0, y + 1.0, c);
             digits(gu, r.level.1, x + 82.0, y + 1.0, 7.0, true, c);
         }
-        gu.sprite(
-            "menu    pname",
-            27 + r.nation as usize,
-            x + 103.0,
-            y + 1.0,
-            G,
-        );
+        gu.sprite("menu    pname", 27 + r.nation as usize, x + 103.0, y + 1.0, G);
         digits(gu, rank, x + 115.0, y + 3.0, 6.0, false, G);
         return;
     }
@@ -1060,41 +838,25 @@ pub(super) fn job_cell(
 /// and scoption over it.
 pub fn draw(gu: &mut super::game_ui::GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
     const G: u32 = 0x8080_8080;
-    let Some(res) = &w.search else {
-        return Vec::new();
-    };
+    let Some(res) = &w.search else { return Vec::new() };
     let mut rects = Vec::new();
     // The bar and hand only while it has the focus (scoption, scsibori or arealist over it take it).
     let focused = res.option.is_none() && !super::searchmenu::refining(w) && w.arealist.is_none();
-    let sel = if focused {
-        (res.cursor - res.scroll + 1) as u16
-    } else {
-        0
-    };
-    let Some((wx, wy)) = gu.menu_sel(SCRESULT, sw, sh, sel) else {
-        return rects;
-    };
+    let sel = if focused { (res.cursor - res.scroll + 1) as u16 } else { 0 };
+    let Some((wx, wy)) = gu.menu_sel(SCRESULT, sw, sh, sel) else { return rects };
     rects.extend(gu.window_rect(SCRESULT, sw, sh));
     let bt = w.battle.clone();
     let rx = wx + 4.0;
     if res.failed {
         // "Search failed." (group 7 0x65) in the game font, the list cleared.
         let s = bt.as_ref().and_then(|b| b.group7(0x65)).unwrap_or_default();
-        gu.text(
-            &s,
-            wx + 36.0,
-            wy + 28.0,
-            0,
-            crate::dat::battle::argb_bytes(0x8080_4040),
-        );
+        gu.text(&s, wx + 36.0, wy + 28.0, 0, crate::dat::battle::argb_bytes(0x8080_4040));
         return rects;
     }
     let count = res.rows.len() + 1;
     // The rows are drawn by code: 16 apart from (0, 4), the header first.
     if let Some(frame) = gu.window_rect(SCRESULT, sw, sh) {
-        let rows = (0..count.saturating_sub(res.scroll).min(ROWS))
-            .map(|k| (k as u16 + 1, [wx, wy + 4.0 + 16.0 * k as f32, 356.0, 16.0]))
-            .collect();
+        let rows = (0..count.saturating_sub(res.scroll).min(ROWS)).map(|k| (k as u16 + 1, [wx, wy + 4.0 + 16.0 * k as f32, 356.0, 16.0])).collect();
         super::winhits::record_rects(w, SCRESULT, frame, rows);
     }
     for i in res.scroll..count.min(res.scroll + ROWS) {
@@ -1102,11 +864,7 @@ pub fn draw(gu: &mut super::game_ui::GameUi, w: &World, sw: f32, sh: f32) -> Vec
         if i == 0 {
             // The header: windowps 323 and " [Searching]" / " [%d]" at +150 in 0x60808080.
             gu.sprite("menu    windowps", 323, rx - 3.0, ry, G);
-            let s = if res.busy {
-                bt.as_ref().and_then(|b| b.group9(0x27)).unwrap_or_default()
-            } else {
-                format!(" [{}]", res.total)
-            };
+            let s = if res.busy { bt.as_ref().and_then(|b| b.group9(0x27)).unwrap_or_default() } else { format!(" [{}]", res.total) };
             gu.shape_text(&s, rx + 150.0, ry, 0x6080_8080, false);
             continue;
         }
@@ -1135,15 +893,7 @@ pub fn draw(gu: &mut super::game_ui::GameUi, w: &World, sw: f32, sh: f32) -> Vec
             };
             if let Some((lib, s)) = icon(k2).filter(|_| k2 > 1) {
                 let b = gu.cell_bounds(lib, s, 0).unwrap_or([0.0; 4]);
-                gu.sprite_scaled(
-                    lib,
-                    s,
-                    rx + ((b[2] - b[0]) / 2.0).trunc(),
-                    ry + 2.0 + ((b[3] - b[1]) / 2.0).trunc(),
-                    0.8,
-                    0.8,
-                    G,
-                );
+                gu.sprite_scaled(lib, s, rx + ((b[2] - b[0]) / 2.0).trunc(), ry + 2.0 + ((b[3] - b[1]) / 2.0).trunc(), 0.8, 0.8, G);
             }
         }
         job_cell(gu, r, rx + 18.0, ry + 2.0, tc, res.alt);
@@ -1164,13 +914,7 @@ pub fn draw(gu: &mut super::game_ui::GameUi, w: &World, sw: f32, sh: f32) -> Vec
         if f & 0x1000_8021 != 0 || res.mode == 2 {
             for b in 0..5 {
                 if r.languages >> b & 1 != 0 {
-                    gu.sprite(
-                        "menu    windowps",
-                        595 + b,
-                        rx + 238.0 + 6.0 * b as f32,
-                        ry + 5.0,
-                        G,
-                    );
+                    gu.sprite("menu    windowps", 595 + b, rx + 238.0 + 6.0 * b as f32, ry + 5.0, G);
                 }
             }
         }
@@ -1184,45 +928,21 @@ pub fn draw(gu: &mut super::game_ui::GameUi, w: &World, sw: f32, sh: f32) -> Vec
     }
     // The cursor bar (windowps 75) while the list has the focus.
     if focused {
-        gu.sprite(
-            "menu    windowps",
-            75,
-            wx,
-            wy + 4.0 + 16.0 * (res.cursor - res.scroll) as f32,
-            G,
-        );
+        gu.sprite("menu    windowps", 75, wx, wy + 4.0 + 16.0 * (res.cursor - res.scroll) as f32, G);
     }
     // The scroll bar past 15 rows at x1 - 8.
     gu.scroll_bar(wx + 358.0, wy, 248.0, count, ROWS, res.scroll);
     if focused {
-        gu.bar_site(
-            super::scrollbar::Owner::Search,
-            wx + 358.0,
-            wy,
-            248.0,
-            count,
-            ROWS,
-            res.scroll,
-        );
+        gu.bar_site(super::scrollbar::Owner::Search, wx + 358.0, wy, 248.0, count, ROWS, res.scroll);
     }
     if let Some(c) = res.option {
         let r = res.cursor.checked_sub(1).and_then(|i| res.rows.get(i));
         let (name, rows) = option_window(res);
-        let off: Vec<u16> = rows
-            .iter()
-            .copied()
-            .filter(|&o| r.is_some_and(|r| !option_on(w, res, o, r)))
-            .collect();
+        let off: Vec<u16> = rows.iter().copied().filter(|&o| r.is_some_and(|r| !option_on(w, res, o, r))).collect();
         // FUN_1020c7a0: Clear History / Delete Request in the request list.
-        let swaps: &[(u16, usize)] = if request_mode(w, res) && !res.ac {
-            &[(4, 785), (5, 786)]
-        } else {
-            &[]
-        };
+        let swaps: &[(u16, usize)] = if request_mode(w, res) && !res.ac { &[(4, 785), (5, 786)] } else { &[] };
         let hand = !off.contains(&c) && w.confirm.is_none();
-        if let Some(win) =
-            gu.lobby_window_swaps(name, sw, sh, (0.0, 0.0), Some(c), hand, &off, swaps)
-        {
+        if let Some(win) = gu.lobby_window_swaps(name, sw, sh, (0.0, 0.0), Some(c), hand, &off, swaps) {
             super::winhits::record(w, name, &win);
             gu.disabled_children(name, win.frame[0], win.frame[1], &off, Some(c));
             rects.push(win.frame);
@@ -1241,11 +961,7 @@ pub fn bars(gu: &super::game_ui::GameUi, w: &World, bars: &mut super::hudtop::Ba
     {
         // FUN_1020cc90: a Remove we cannot use says why (0xe 0x41c).
         let [help, title] = gu.focus_text(ACOPTION, c);
-        let help = if super::charlnk::can_mute(w) {
-            help.unwrap_or_default()
-        } else {
-            gu.menu_msg(0x41c, "")
-        };
+        let help = if super::charlnk::can_mute(w) { help.unwrap_or_default() } else { gu.menu_msg(0x41c, "") };
         (bars.help[1], bars.title[1]) = (help, title.unwrap_or_default());
         return;
     }
@@ -1260,12 +976,7 @@ pub fn bars(gu: &super::game_ui::GameUi, w: &World, bars: &mut super::hudtop::Ba
     bars.help[2] = match res.cursor {
         0 if res.mode == 3 => String::new(),
         0 => gu.menu_msg(0x13, ""),
-        i => res
-            .rows
-            .get(i - 1)
-            .filter(|r| status_icon(r.flags).0 == 8)
-            .map(|_| gu.menu_msg(0x259, ""))
-            .unwrap_or_default(),
+        i => res.rows.get(i - 1).filter(|r| status_icon(r.flags).0 == 8).map(|_| gu.menu_msg(0x259, "")).unwrap_or_default(),
     };
 }
 
@@ -1275,12 +986,7 @@ mod tests {
     use crate::net::search::{AREA, JOB, LEVEL, LS1, MLEVEL, NAME, RACE, STATUS, condition};
 
     fn words() -> Option<SearchWords> {
-        let dll = std::fs::read(
-            crate::config::Config::load()
-                .ffxi_dir()
-                .join("FFXiMain.dll"),
-        )
-        .ok()?;
+        let dll = std::fs::read(crate::config::Config::load().ffxi_dir().join("FFXiMain.dll")).ok()?;
         crate::dat::tables::search_words(&dll).ok()
     }
 
@@ -1289,42 +995,21 @@ mod tests {
     fn grammar() {
         let Some(w) = words() else { return };
         let known = [0xffu8; 0x30];
-        let ctx = Ctx {
-            zone: 230,
-            region: w.region_of(230),
-            ls: [7, 8],
-            unity: NO_UNITY,
-            known: Some(&known),
-        };
+        let ctx = Ctx { zone: 230, region: w.region_of(230), ls: [7, 8], unity: NO_UNITY, known: Some(&known) };
         let p = |t: &str| parse(t, &w, &ctx);
         assert_eq!(p(""), Cond::zone(230));
         assert_eq!(p("ALL"), Cond::all());
         let c = p("all war 70-75");
-        assert_eq!(
-            (c.flags, c.job, c.level, c.areas.len(), c.area_given),
-            (AREA | JOB | LEVEL, 1, (70, 75), 0, false)
-        );
-        assert_eq!(
-            condition(&c),
-            (0, vec![7, 0x00, 0x45, 0x19, 0x2c, 0x68, 0x42, 0x00])
-        );
+        assert_eq!((c.flags, c.job, c.level, c.areas.len(), c.area_given), (AREA | JOB | LEVEL, 1, (70, 75), 0, false));
+        assert_eq!(condition(&c), (0, vec![7, 0x00, 0x45, 0x19, 0x2c, 0x68, 0x42, 0x00]));
         let c = p("\"Lower Jeuno\" inv");
-        assert_eq!(
-            (c.areas.clone(), c.status, c.area_given),
-            (vec![245], 0x8020, true)
-        );
+        assert_eq!((c.areas.clone(), c.status, c.area_given), (vec![245], 0x8020, true));
         assert_eq!(p("name Lnx").name, "Lnx");
         let c = p("all -level 1-75 elv");
-        assert_eq!(
-            (c.sorts.clone(), c.level, c.race, c.flags & (LEVEL | RACE)),
-            (vec![0x84], (1, 75), 1, LEVEL | RACE)
-        );
+        assert_eq!((c.sorts.clone(), c.level, c.race, c.flags & (LEVEL | RACE)), (vec![0x84], (1, 75), 1, LEVEL | RACE));
         // Level and master level share their fields.
         let c = p("75 30-40");
-        assert_eq!(
-            (c.flags & (LEVEL | MLEVEL), c.level),
-            (LEVEL | MLEVEL, (30, 40))
-        );
+        assert_eq!((c.flags & (LEVEL | MLEVEL), c.level), (LEVEL | MLEVEL, (30, 40)));
         assert_eq!(p("all unity ayame").status, 0x80_0000);
         assert_eq!(p("all unity").status, NO_UNITY);
         let c = p("all linkshell");
@@ -1336,9 +1021,6 @@ mod tests {
         // Zones not visited (no s2c 0x008 bit) are no area: the word becomes the name.
         let none = Ctx { known: None, ..ctx };
         let c = parse("\"Lower Jeuno\"", &w, &none);
-        assert_eq!(
-            (c.name.as_str(), c.areas.clone(), c.flags & (NAME | STATUS)),
-            ("Lower Jeuno", vec![230], NAME)
-        );
+        assert_eq!((c.name.as_str(), c.areas.clone(), c.flags & (NAME | STATUS)), ("Lower Jeuno", vec![230], NAME));
     }
 }

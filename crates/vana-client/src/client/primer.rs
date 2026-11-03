@@ -46,24 +46,16 @@ pub struct Primer {
 
 /// FUN_10234010: the contiguous run of categories from 0xf620 with topics, at most 8.
 fn load(w: &World) -> Vec<Category> {
-    let Some(info) = w.item_info.clone() else {
-        return Vec::new();
-    };
+    let Some(info) = w.item_info.clone() else { return Vec::new() };
     let mut cats = Vec::new();
     for k in 0..ROWS as u16 {
-        let Some((name, ids)) = info.guide(0xf620 + k).filter(|g| !g.1.is_empty()) else {
-            break;
-        };
+        let Some((name, ids)) = info.guide(0xf620 + k).filter(|g| !g.1.is_empty()) else { break };
         let topics = ids
             .iter()
             .filter_map(|&id| {
                 let it = info.item(id)?;
                 let extra = |at: u16| it.extra.iter().find(|e| e.0 == at).map_or(0, |e| e.1);
-                Some(Topic {
-                    name: it.name.clone(),
-                    num: extra(0xd88) as u8,
-                    images: extra(0xd8c) as u8,
-                })
+                Some(Topic { name: it.name.clone(), num: extra(0xd88) as u8, images: extra(0xd8c) as u8 })
             })
             .collect();
         cats.push(Category { name, topics });
@@ -80,14 +72,7 @@ pub fn open(w: &mut World, from_desk: bool) {
     let cats = load(w);
     log::info!("primer: {} categories", cats.len());
     let back = w.menu.take().map(|m| (m, w.menu_page));
-    w.primer = Some(Primer {
-        cats,
-        frames: 0.0,
-        cursor: 0,
-        back,
-        list: None,
-        desk_title: from_desk,
-    });
+    w.primer = Some(Primer { cats, frames: 0.0, cursor: 0, back, list: None, desk_title: from_desk });
 }
 
 /// FUN_10234080 / FUN_10233e90: guide00 and guide01 close, the menu closed at open comes back.
@@ -144,22 +129,14 @@ pub fn key(w: &mut World, key: egui::Key, page_mod: bool) {
         let n = p.cats[l.cat].topics.len();
         match key {
             K::ArrowUp | K::ArrowDown if n > 0 => {
-                l.cursor = if key == K::ArrowDown {
-                    (l.cursor + 1) % n
-                } else {
-                    (l.cursor + n - 1) % n
-                };
+                l.cursor = if key == K::ArrowDown { (l.cursor + 1) % n } else { (l.cursor + n - 1) % n };
                 l.top = l.top.min(l.cursor).max((l.cursor + 1).saturating_sub(ROWS));
                 w.sounds.push(Ui::Cursor as u32);
             }
             // With 0xa8 the list's page (0x19 / 0x18); plain, the next / previous category with SE 0001 always
             // (FUN_10234280: FUN_10233f90 / FUN_10233fd0, the cursor and top back to 0).
             K::ArrowLeft | K::ArrowRight if page_mod => {
-                let m = if key == K::ArrowRight {
-                    super::scrollbar::Msg::PageDown
-                } else {
-                    super::scrollbar::Msg::PageUp
-                };
+                let m = if key == K::ArrowRight { super::scrollbar::Msg::PageDown } else { super::scrollbar::Msg::PageUp };
                 let mut row = l.cursor - l.top;
                 if super::scrollbar::paged(m, &mut l.top, &mut row, n, ROWS) {
                     l.cursor = l.top + row;
@@ -168,11 +145,7 @@ pub fn key(w: &mut World, key: egui::Key, page_mod: bool) {
             }
             K::ArrowLeft | K::ArrowRight => {
                 let c = p.cats.len();
-                l.cat = if key == K::ArrowRight {
-                    (l.cat + 1) % c
-                } else {
-                    (l.cat + c - 1) % c
-                };
+                l.cat = if key == K::ArrowRight { (l.cat + 1) % c } else { (l.cat + c - 1) % c };
                 (l.top, l.cursor) = (0, 0);
                 w.sounds.push(Ui::Cursor as u32);
             }
@@ -182,11 +155,7 @@ pub fn key(w: &mut World, key: egui::Key, page_mod: bool) {
                     w.sounds.push(Ui::Select as u32);
                     l.page = true;
                     p.desk_title = false;
-                    w.map_cmds.push(super::map::Cmd::Primer {
-                        first: (t.num as u32 + 0x83b1) * 3,
-                        count: t.images,
-                        at: 0,
-                    });
+                    w.map_cmds.push(super::map::Cmd::Primer { first: (t.num as u32 + 0x83b1) * 3, count: t.images, at: 0 });
                 }
             }
             // FUN_10234230(1): guide00's hand and bar back, its cursor kept.
@@ -201,11 +170,7 @@ pub fn key(w: &mut World, key: egui::Key, page_mod: bool) {
     let n = p.cats.len();
     match key {
         K::ArrowUp | K::ArrowDown if n > 0 => {
-            p.cursor = if key == K::ArrowDown {
-                (p.cursor + 1) % n
-            } else {
-                (p.cursor + n - 1) % n
-            };
+            p.cursor = if key == K::ArrowDown { (p.cursor + 1) % n } else { (p.cursor + n - 1) % n };
             w.sounds.push(Ui::Cursor as u32);
         }
         // 3 / 4 as 0x19 / 0x18 with the whole list visible: the last / first row.
@@ -219,12 +184,7 @@ pub fn key(w: &mut World, key: egui::Key, page_mod: bool) {
         // FUN_10233ba0: guide01 on that category (FUN_10234540).
         K::Enter if n > 0 => {
             w.sounds.push(Ui::Select as u32);
-            p.list = Some(List {
-                cat: p.cursor,
-                top: 0,
-                cursor: 0,
-                page: false,
-            });
+            p.list = Some(List { cat: p.cursor, top: 0, cursor: 0, page: false });
         }
         K::Escape => {
             w.sounds.push(Ui::Cancel as u32);
@@ -236,12 +196,8 @@ pub fn key(w: &mut World, key: egui::Key, page_mod: bool) {
 
 /// guide01's bar and the wheel (the paged base, as quest01).
 pub(super) fn bar(w: &mut World, m: super::scrollbar::Msg) -> bool {
-    let Some(p) = w.primer.as_mut() else {
-        return false;
-    };
-    let Some(l) = p.list.as_mut().filter(|l| !l.page) else {
-        return false;
-    };
+    let Some(p) = w.primer.as_mut() else { return false };
+    let Some(l) = p.list.as_mut().filter(|l| !l.page) else { return false };
     let n = p.cats[l.cat].topics.len();
     let mut row = l.cursor - l.top;
     let moved = super::scrollbar::paged(m, &mut l.top, &mut row, n, ROWS);
@@ -260,52 +216,21 @@ pub(super) struct Look {
 
 pub(super) fn look(w: &World) -> Option<Look> {
     let p = w.primer.as_ref()?;
-    let cats = if ready(p) {
-        p.cats.iter().map(|c| c.name.clone()).collect()
-    } else {
-        Vec::new()
-    };
-    let list = p.list.as_ref().and_then(|l| {
-        p.cats.get(l.cat).map(|c| {
-            (
-                c.name.clone(),
-                c.topics.iter().map(|t| t.name.clone()).collect(),
-                l.cursor,
-            )
-        })
-    });
-    Some(Look {
-        cats,
-        cursor: p.cursor,
-        list,
-        page: p.list.as_ref().is_some_and(|l| l.page),
-    })
+    let cats = if ready(p) { p.cats.iter().map(|c| c.name.clone()).collect() } else { Vec::new() };
+    let list = p.list.as_ref().and_then(|l| p.cats.get(l.cat).map(|c| (c.name.clone(), c.topics.iter().map(|t| t.name.clone()).collect(), l.cursor)));
+    Some(Look { cats, cursor: p.cursor, list, page: p.list.as_ref().is_some_and(|l| l.page) })
 }
 
 /// The mouse's cursor moves: guide00's row (while guide01 is closed), guide01's row. True when it moved.
 pub(super) fn set_cat(w: &mut World, k: usize) -> bool {
-    let Some(p) = w
-        .primer
-        .as_mut()
-        .filter(|p| p.list.is_none() && p.cursor != k && k < p.cats.len())
-    else {
-        return false;
-    };
+    let Some(p) = w.primer.as_mut().filter(|p| p.list.is_none() && p.cursor != k && k < p.cats.len()) else { return false };
     p.cursor = k;
     true
 }
 
 pub(super) fn set_topic(w: &mut World, k: usize) -> bool {
-    let Some(p) = w.primer.as_mut() else {
-        return false;
-    };
-    let Some(l) = p
-        .list
-        .as_mut()
-        .filter(|l| !l.page && l.cursor != k && k < p.cats[l.cat].topics.len())
-    else {
-        return false;
-    };
+    let Some(p) = w.primer.as_mut() else { return false };
+    let Some(l) = p.list.as_mut().filter(|l| !l.page && l.cursor != k && k < p.cats[l.cat].topics.len()) else { return false };
     l.cursor = k;
     l.top = l.top.min(k).max((k + 1).saturating_sub(ROWS));
     true
@@ -313,14 +238,7 @@ pub(super) fn set_topic(w: &mut World, k: usize) -> bool {
 
 /// The mouse (winhits.rs): guide00 / guide01 rows as the generic window, guide01's arrows (children 9 / 10) as Left /
 /// Right; with a page up a click is its Enter (FUN_101fa900: every left release) and a right click its Escape.
-pub fn pointer(
-    w: &mut World,
-    gu: &GameUi,
-    pt: (f32, f32),
-    moved: bool,
-    clicked: bool,
-    right: bool,
-) {
+pub fn pointer(w: &mut World, gu: &GameUi, pt: (f32, f32), moved: bool, clicked: bool, right: bool) {
     use super::winhits::{child_under, generic};
     let Some(p) = w.primer.as_ref() else { return };
     // The modern layer draws the lists and takes their mouse; a page stays the map window's.
@@ -330,13 +248,7 @@ pub fn pointer(
     let keys = |w: &mut World, _: &GameUi, k: egui::Key| key(w, k, false);
     match &p.list {
         Some(l) if l.page => {
-            let k = if clicked {
-                egui::Key::Enter
-            } else if right {
-                egui::Key::Escape
-            } else {
-                return;
-            };
+            let k = if clicked { egui::Key::Enter } else if right { egui::Key::Escape } else { return };
             if let Some(m) = w.map.as_mut().filter(|m| m.primer_page().is_some())
                 && !m.key(k)
             {
@@ -347,54 +259,22 @@ pub fn pointer(
         Some(l) => {
             if clicked && let (Some(a), _) = child_under(w, PAGES, pt, 9..=10) {
                 gu.hover.set(true);
-                key(
-                    w,
-                    if a == 9 {
-                        egui::Key::ArrowLeft
-                    } else {
-                        egui::Key::ArrowRight
-                    },
-                    false,
-                );
+                key(w, if a == 9 { egui::Key::ArrowLeft } else { egui::Key::ArrowRight }, false);
                 return;
             }
             let top = l.top;
-            generic(
-                w,
-                gu,
-                PAGES,
-                (l.cursor - top + 1) as u16,
-                1..=ROWS as u16,
-                pt,
-                moved,
-                clicked,
-                right,
-                |w, id| {
-                    if let Some(l) = w.primer.as_mut().and_then(|p| p.list.as_mut()) {
-                        l.cursor = top + id as usize - 1;
-                    }
-                },
-                keys,
-            );
+            generic(w, gu, PAGES, (l.cursor - top + 1) as u16, 1..=ROWS as u16, pt, moved, clicked, right, |w, id| {
+                if let Some(l) = w.primer.as_mut().and_then(|p| p.list.as_mut()) {
+                    l.cursor = top + id as usize - 1;
+                }
+            }, keys);
         }
         None => {
-            generic(
-                w,
-                gu,
-                LIST,
-                p.cursor as u16 + 1,
-                1..=ROWS as u16,
-                pt,
-                moved,
-                clicked,
-                right,
-                |w, id| {
-                    if let Some(p) = w.primer.as_mut() {
-                        p.cursor = id as usize - 1;
-                    }
-                },
-                keys,
-            );
+            generic(w, gu, LIST, p.cursor as u16 + 1, 1..=ROWS as u16, pt, moved, clicked, right, |w, id| {
+                if let Some(p) = w.primer.as_mut() {
+                    p.cursor = id as usize - 1;
+                }
+            }, keys);
         }
     }
 }
@@ -403,20 +283,11 @@ pub fn pointer(
 /// (the layouts carry no strings).
 pub fn bars(_gu: &GameUi, w: &World, bars: &mut super::hudtop::BarText) {
     let Some(p) = &w.primer else { return };
-    let g9 = |id: usize| {
-        w.battle
-            .as_ref()
-            .and_then(|b| b.group9(id))
-            .unwrap_or_default()
-    };
+    let g9 = |id: usize| w.battle.as_ref().and_then(|b| b.group9(id)).unwrap_or_default();
     if !p.list.as_ref().is_some_and(|l| l.page) {
         bars.title[1] = g9(0xc5);
     }
-    bars.title[2] = if p.desk_title {
-        g9(0xdd)
-    } else {
-        String::new()
-    };
+    bars.title[2] = if p.desk_title { g9(0xdd) } else { String::new() };
     (bars.help[1], bars.help[2]) = (String::new(), String::new());
 }
 
@@ -442,73 +313,36 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         let sel = (n > 0 && p.list.is_none()).then_some(p.cursor as u16 + 1);
         if let Some(win) = gu.lobby_window_off(LIST, sw, sh, (0.0, 0.0), sel, focused, &hide) {
             super::winhits::record(w, LIST, &win);
-            for &(id, [cx, cy, ..]) in win
-                .children
-                .iter()
-                .filter(|(id, _)| (1..=ROWS as u16).contains(id))
-            {
+            for &(id, [cx, cy, ..]) in win.children.iter().filter(|(id, _)| (1..=ROWS as u16).contains(id)) {
                 let k = id as usize - 1;
-                let Some(c) = p.cats.get(k).filter(|_| k < n) else {
-                    continue;
-                };
+                let Some(c) = p.cats.get(k).filter(|_| k < n) else { continue };
                 gu.sprite("menu    framesus", 35, cx + 4.0, cy + 5.0, WHITE);
-                text(
-                    gu,
-                    &c.name,
-                    cx + 16.0,
-                    cy,
-                    if k == p.cursor { CURSOR } else { WHITE },
-                );
+                text(gu, &c.name, cx + 16.0, cy, if k == p.cursor { CURSOR } else { WHITE });
             }
             rects.push(win.frame);
         }
     }
     let Some(l) = &p.list else { return rects };
-    let Some(cat) = p.cats.get(l.cat) else {
-        return rects;
-    };
+    let Some(cat) = p.cats.get(l.cat) else { return rects };
     let n = cat.topics.len();
-    let hide: Vec<u16> = (1..=ROWS as u16)
-        .filter(|&k| l.top + k as usize > n)
-        .collect();
+    let hide: Vec<u16> = (1..=ROWS as u16).filter(|&k| l.top + k as usize > n).collect();
     let sel = (!page && n > 0).then(|| (l.cursor - l.top + 1) as u16);
-    let Some(win) = gu.lobby_window_off(PAGES, sw, sh, (0.0, 0.0), sel, free && !page, &hide)
-    else {
-        return rects;
-    };
+    let Some(win) = gu.lobby_window_off(PAGES, sw, sh, (0.0, 0.0), sel, free && !page, &hide) else { return rects };
     super::winhits::record(w, PAGES, &win);
     let [fx, fy, fw, fh] = win.frame;
     if let Some((x, y)) = gu.window_xy(PAGES, sw, sh) {
         text(gu, &cat.name, x + 60.0, y + 10.0, WHITE);
     }
-    for &(id, [cx, cy, ..]) in win
-        .children
-        .iter()
-        .filter(|(id, _)| (1..=ROWS as u16).contains(id))
-    {
+    for &(id, [cx, cy, ..]) in win.children.iter().filter(|(id, _)| (1..=ROWS as u16).contains(id)) {
         let k = l.top + id as usize - 1;
         let Some(t) = cat.topics.get(k) else { continue };
         gu.sprite("menu    framesus", 35, cx + 4.0, cy + 5.0, WHITE);
-        text(
-            gu,
-            &t.name,
-            cx + 16.0,
-            cy,
-            if k == l.cursor { CURSOR } else { WHITE },
-        );
+        text(gu, &t.name, cx + 16.0, cy, if k == l.cursor { CURSOR } else { WHITE });
     }
     if !page {
         gu.scroll_bar(fx + fw - 8.0, fy, fh, n, ROWS, l.top);
         if free {
-            gu.bar_site(
-                super::scrollbar::Owner::Primer,
-                fx + fw - 8.0,
-                fy,
-                fh,
-                n,
-                ROWS,
-                l.top,
-            );
+            gu.bar_site(super::scrollbar::Owner::Primer, fx + fw - 8.0, fy, fh, n, ROWS, l.top);
         }
     }
     rects.push(win.frame);

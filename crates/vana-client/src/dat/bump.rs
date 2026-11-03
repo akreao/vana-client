@@ -10,11 +10,7 @@ pub struct BumpMap {
 }
 
 pub fn file_id(zone: u32) -> u32 {
-    if zone >= 600 {
-        83991 + zone
-    } else {
-        39831 + zone
-    }
+    if zone >= 600 { 83991 + zone } else { 39831 + zone }
 }
 
 /// The file's Bp chunks: "bp\0\0", u16 width @4, u16 height @6, name[16] @16, width x height heights @32.
@@ -25,21 +21,13 @@ pub fn parse(file: &[u8]) -> Vec<BumpMap> {
         if c.kind != 0x5d || p.len() < 32 || &p[..2] != b"bp" {
             continue;
         }
-        let (w, h) = (
-            u16::from_le_bytes([p[4], p[5]]) as usize,
-            u16::from_le_bytes([p[6], p[7]]) as usize,
-        );
+        let (w, h) = (u16::from_le_bytes([p[4], p[5]]) as usize, u16::from_le_bytes([p[6], p[7]]) as usize);
         if w == 0 || h == 0 || p.len() < 32 + w * h {
             continue;
         }
         let mut key = [0u8; 8];
         key.copy_from_slice(&p[24..32]);
-        out.push(BumpMap {
-            key,
-            width: w as u32,
-            height: h as u32,
-            rgba: normal_map(w, h, &p[32..32 + w * h]),
-        });
+        out.push(BumpMap { key, width: w as u32, height: h as u32, rgba: normal_map(w, h, &p[32..32 + w * h]) });
     }
     out
 }
@@ -53,17 +41,10 @@ pub fn normal_map(w: usize, h: usize, hts: &[u8]) -> Vec<u8> {
         let (yp, yn) = ((y + h - 1) % h, (y + 1) % h);
         for x in 0..w {
             let (xp, xn) = ((x + w - 1) % w, (x + 1) % w);
-            let gy =
-                2.0 * (at(x, yp) - at(x, yn)) + at(xp, yp) + at(xn, yp) - at(xp, yn) - at(xn, yn);
-            let gx =
-                2.0 * (at(xp, y) - at(xn, y)) + at(xp, yp) + at(xp, yn) - at(xn, yp) - at(xn, yn);
+            let gy = 2.0 * (at(x, yp) - at(x, yn)) + at(xp, yp) + at(xn, yp) - at(xp, yn) - at(xn, yn);
+            let gx = 2.0 * (at(xp, y) - at(xn, y)) + at(xp, yp) + at(xp, yn) - at(xn, yp) - at(xn, yn);
             let s = 127.0 / (gx * gx + gy * gy + 255.0 * 255.0).sqrt();
-            out.extend([
-                ((gy * s) as i32 + 128) as u8,
-                ((gx * s) as i32 + 128) as u8,
-                (128 + (255.0 * s) as i32) as u8,
-                0,
-            ]);
+            out.extend([((gy * s) as i32 + 128) as u8, ((gx * s) as i32 + 128) as u8, (128 + (255.0 * s) as i32) as u8, 0]);
         }
     }
     out

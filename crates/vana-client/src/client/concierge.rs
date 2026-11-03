@@ -42,14 +42,8 @@ pub fn on_packet(w: &mut World, p: &[u8]) {
 }
 
 fn apply(slots: &mut [Slot; 16], p: &[u8]) {
-    let u16_at = |o: usize| {
-        p.get(o..o + 2)
-            .map_or(0, |b| u16::from_le_bytes([b[0], b[1]]))
-    };
-    let u32_at = |o: usize| {
-        p.get(o..o + 4)
-            .map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()))
-    };
+    let u16_at = |o: usize| p.get(o..o + 2).map_or(0, |b| u16::from_le_bytes([b[0], b[1]]));
+    let u32_at = |o: usize| p.get(o..o + 4).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()));
     for k in 0..4 {
         let index = p.get(4 + k).copied().unwrap_or(0xff);
         if index == 0xfe {
@@ -59,21 +53,14 @@ fn apply(slots: &mut [Slot; 16], p: &[u8]) {
             if let Some(e) = p.get(0x10 + 0x18 * k..0x28 + 0x18 * k) {
                 ext.copy_from_slice(e);
             }
-            slots[index as usize] = Slot {
-                item: u16_at(8 + 2 * k),
-                ext,
-                attrs: u32_at(0x70 + 4 * k),
-            };
+            slots[index as usize] = Slot { item: u16_at(8 + 2 * k), ext, attrs: u32_at(0x70 + 4 * k) };
         }
     }
 }
 
 /// `7f 81 n` (FUN_100bda90 -> FUN_101cbac0): a slot's shell name while its extdata Flag is set.
 pub fn names(w: &World) -> Vec<Option<String>> {
-    w.concierge
-        .iter()
-        .map(|s| (s.ext[8] != 0).then(|| ls_name(&s.ext[9..24])))
-        .collect()
+    w.concierge.iter().map(|s| (s.ext[8] != 0).then(|| ls_name(&s.ext[9..24]))).collect()
 }
 
 /// FUN_101e3650: the lowest of attribute bits 1..5 set (1 Japanese, 2 English, 5 Other), else 0.
@@ -85,13 +72,7 @@ fn language(attrs: u32) -> u8 {
 fn rows(w: &World) -> Vec<Option<usize>> {
     let filter = w.concierge_ui.as_ref().map_or(0, |c| c.filter);
     std::iter::once(None)
-        .chain(
-            w.concierge
-                .iter()
-                .enumerate()
-                .filter(|(_, s)| s.item != 0 && (filter == 0 || language(s.attrs) == filter))
-                .map(|(i, _)| Some(i)),
-        )
+        .chain(w.concierge.iter().enumerate().filter(|(_, s)| s.item != 0 && (filter == 0 || language(s.attrs) == filter)).map(|(i, _)| Some(i)))
         .collect()
 }
 
@@ -100,13 +81,7 @@ fn rows(w: &World) -> Vec<Option<usize>> {
 pub fn open(w: &mut World, title: u8) {
     w.linkshell = None;
     w.concierge_pick = [0; 3];
-    w.concierge_ui = Some(Concierge {
-        title,
-        top: 0,
-        cursor: 0,
-        filter: 0,
-        lsc: None,
-    });
+    w.concierge_ui = Some(Concierge { title, top: 0, cursor: 0, filter: 0, lsc: None });
 }
 
 /// FUN_101e4570 after a pick or the close hook FUN_101e4380 (cb(0, 0): the pick stays as it was).
@@ -128,22 +103,13 @@ fn pick(w: &mut World, index: usize) {
 /// lscswin: its ring, Enter sets the filter (1 all, 2 Japanese, 3 English, 4 Other) and gives the focus back, as do
 /// Escape and Num+.
 pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
-    let Some(mut c) = w.concierge_ui.clone() else {
-        return;
-    };
+    let Some(mut c) = w.concierge_ui.clone() else { return };
     // Tab / Shift+Tab (the pad's RB / LB): the next / previous filter, the modern layer's tabs (lscswin's children
     // 1 ..= 4 as Enter on them sets it).
     if key == egui::Key::Tab {
         const FILTERS: [u8; 4] = [0, 1, 2, 5];
-        let (k, n) = (
-            FILTERS.iter().position(|&f| f == c.filter).unwrap_or(0),
-            FILTERS.len(),
-        );
-        c.filter = FILTERS[if w.key_shift {
-            (k + n - 1) % n
-        } else {
-            (k + 1) % n
-        }];
+        let (k, n) = (FILTERS.iter().position(|&f| f == c.filter).unwrap_or(0), FILTERS.len());
+        c.filter = FILTERS[if w.key_shift { (k + n - 1) % n } else { (k + 1) % n }];
         (c.lsc, c.top, c.cursor) = (None, 0, 0);
         w.sounds.push(Ui::Cursor as u32);
         w.concierge_ui = Some(c);
@@ -184,11 +150,7 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
             w.sounds.push(Ui::Cursor as u32);
         }
         egui::Key::ArrowRight | egui::Key::ArrowLeft => {
-            let m = if key == egui::Key::ArrowRight {
-                super::scrollbar::Msg::PageDown
-            } else {
-                super::scrollbar::Msg::PageUp
-            };
+            let m = if key == egui::Key::ArrowRight { super::scrollbar::Msg::PageDown } else { super::scrollbar::Msg::PageUp };
             if super::scrollbar::rows_abs(m, &mut c.top, &mut c.cursor, n, ROWS) {
                 w.sounds.push(Ui::Cursor as u32);
             }
@@ -214,9 +176,7 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
 
 /// Message 8 (Num+) on the list: lscswin takes the focus on child 1, SE 0013; on lscswin it gives it back.
 pub fn num_plus(w: &mut World) {
-    let Some(c) = w.concierge_ui.as_mut() else {
-        return;
-    };
+    let Some(c) = w.concierge_ui.as_mut() else { return };
     if c.lsc.is_some() {
         c.lsc = None;
     } else {
@@ -228,19 +188,8 @@ pub fn num_plus(w: &mut World) {
 /// Mouse: link5's rows and lscswin's children as the generic handler takes them, a right click the focused window's
 /// Escape (message 6); the pointer over lscswin while the list has the focus hands it over (FUN_101e4610, SE 0013).
 #[allow(clippy::too_many_arguments)]
-pub fn pointer(
-    w: &mut World,
-    gu: &GameUi,
-    sw: f32,
-    sh: f32,
-    p: (f32, f32),
-    moved: bool,
-    clicked: bool,
-    right: bool,
-) {
-    let Some(c) = w.concierge_ui.clone() else {
-        return;
-    };
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+    let Some(c) = w.concierge_ui.clone() else { return };
     // The modern layer draws it and takes its mouse.
     if w.modern {
         return;
@@ -252,14 +201,10 @@ pub fn pointer(
     let hit = |name: &str| -> Option<u16> {
         let (x, y) = gu.window_xy(name, sw, sh)?;
         let lay = gu.layout(name)?;
-        lay.elements
-            .iter()
-            .skip(1)
-            .find(|e| {
-                let (ex, ey) = (x + e.x as f32, y + e.y as f32);
-                p.0 >= ex && p.0 < ex + e.w as f32 && p.1 >= ey && p.1 < ey + e.h as f32
-            })
-            .map(|e| e.id)
+        lay.elements.iter().skip(1).find(|e| {
+            let (ex, ey) = (x + e.x as f32, y + e.y as f32);
+            p.0 >= ex && p.0 < ex + e.w as f32 && p.1 >= ey && p.1 < ey + e.h as f32
+        }).map(|e| e.id)
     };
     if let Some(id) = hit(FILTER) {
         gu.hover.set(true);
@@ -331,47 +276,24 @@ pub(super) fn look(w: &World) -> Option<Look> {
                     5 => "?",
                     _ => "",
                 };
-                RowLook {
-                    item: s.item,
-                    tint: super::linkshell::tint(s.ext[6], s.ext[6] >> 4, s.ext[7]),
-                    name: ls_name(&s.ext[9..24]),
-                    ours: ls1 == Some(group),
-                    lang,
-                    wanted: s.attrs >> 6 & 0xf,
-                }
+                RowLook { item: s.item, tint: super::linkshell::tint(s.ext[6], s.ext[6] >> 4, s.ext[7]), name: ls_name(&s.ext[9..24]), ours: ls1 == Some(group), lang, wanted: s.attrs >> 6 & 0xf }
             })
         })
         .collect();
-    let title = w
-        .battle
-        .as_ref()
-        .and_then(|b| b.group9(0x119 + c.title as usize))
-        .unwrap_or_default();
+    let title = w.battle.as_ref().and_then(|b| b.group9(0x119 + c.title as usize)).unwrap_or_default();
     let filter = match c.filter {
         1 => 2,
         2 => 3,
         5 => 4,
         _ => 1,
     };
-    Some(Look {
-        title,
-        filter,
-        lsc: c.lsc,
-        rows,
-        cursor: c.cursor,
-    })
+    Some(Look { title, filter, lsc: c.lsc, rows, cursor: c.cursor })
 }
 
 /// The mouse's cursor move onto row `k` of the list. True when it moved.
 pub(super) fn set_row(w: &mut World, k: usize) -> bool {
     let n = rows(w).len();
-    let Some(c) = w
-        .concierge_ui
-        .as_mut()
-        .filter(|c| c.lsc.is_none() && c.cursor != k && k < n)
-    else {
-        return false;
-    };
+    let Some(c) = w.concierge_ui.as_mut().filter(|c| c.lsc.is_none() && c.cursor != k && k < n) else { return false };
     c.cursor = k;
     c.top = c.top.min(k).max((k + 1).saturating_sub(ROWS));
     true
@@ -388,9 +310,7 @@ pub(super) fn pick_filter(w: &mut World, gu: &GameUi, k: u16) {
 /// The list's bar (messages 0x16..0x1b).
 pub(super) fn bar(w: &mut World, m: super::scrollbar::Msg) -> bool {
     let n = rows(w).len();
-    let Some(c) = w.concierge_ui.as_mut().filter(|c| c.lsc.is_none()) else {
-        return false;
-    };
+    let Some(c) = w.concierge_ui.as_mut().filter(|c| c.lsc.is_none()) else { return false };
     super::scrollbar::rows_abs(m, &mut c.top, &mut c.cursor, n, ROWS)
 }
 
@@ -412,28 +332,14 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
     if w.modern {
         return rects;
     }
-    let Some(c) = &w.concierge_ui else {
-        return rects;
-    };
+    let Some(c) = &w.concierge_ui else { return rects };
     let focused = w.confirm.is_none();
     if let Some(info) = &w.item_info {
-        super::items::upload_icons(
-            gu,
-            info,
-            w.concierge
-                .iter()
-                .map(|s| s.item)
-                .filter(|&i| i != 0)
-                .chain(std::iter::once(0x200)),
-        );
+        super::items::upload_icons(gu, info, w.concierge.iter().map(|s| s.item).filter(|&i| i != 0).chain(std::iter::once(0x200)));
     }
     if let Some(win) = gu.lobby_window_off(HEADER, sw, sh, (0.0, 0.0), None, false, &[]) {
         let [x, y, ..] = win.frame;
-        let title = w
-            .battle
-            .as_ref()
-            .and_then(|b| b.group9(0x119 + c.title as usize))
-            .unwrap_or_default();
+        let title = w.battle.as_ref().and_then(|b| b.group9(0x119 + c.title as usize)).unwrap_or_default();
         gu.text(&title, x + 64.0, y + 20.0, 0, WHITE.to_le_bytes());
         super::linkshell::icon(gu, 0x200, x + 10.0, y + 12.0, 32.0, WHITE);
         rects.push(win.frame);
@@ -441,11 +347,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
     let rows = rows(w);
     let ls1 = super::linkshell::group_of(w, 1);
     let list_focus = focused && c.lsc.is_none();
-    let sel = if list_focus {
-        (c.cursor.saturating_sub(c.top) + 1) as u16
-    } else {
-        0
-    };
+    let sel = if list_focus { (c.cursor.saturating_sub(c.top) + 1) as u16 } else { 0 };
     if let Some((wx, wy)) = gu.menu_sel(LIST, sw, sh, sel) {
         rects.extend(gu.window_rect(LIST, sw, sh));
         for (k, r) in rows.iter().enumerate().skip(c.top).take(ROWS) {
@@ -457,26 +359,9 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
             let s = &w.concierge[*i];
             let group = u32::from_le_bytes([s.ext[0], s.ext[1], s.ext[2], s.ext[3]]);
             gu.sprite("menu    keytops3", 0x219, rx + COLS[0], ry + 2.0, WHITE);
-            super::linkshell::icon(
-                gu,
-                s.item,
-                rx + COLS[0],
-                ry + 2.0,
-                16.0,
-                super::linkshell::tint(s.ext[6], s.ext[6] >> 4, s.ext[7]),
-            );
-            let tint = if ls1.is_some_and(|g| g == group) {
-                GREEN
-            } else {
-                WHITE
-            };
-            gu.text_fit(
-                &ls_name(&s.ext[9..24]),
-                rx + COLS[1],
-                ry + 2.0,
-                COLS[2] - COLS[1] - 8.0,
-                tint,
-            );
+            super::linkshell::icon(gu, s.item, rx + COLS[0], ry + 2.0, 16.0, super::linkshell::tint(s.ext[6], s.ext[6] >> 4, s.ext[7]));
+            let tint = if ls1.is_some_and(|g| g == group) { GREEN } else { WHITE };
+            gu.text_fit(&ls_name(&s.ext[9..24]), rx + COLS[1], ry + 2.0, COLS[2] - COLS[1] - 8.0, tint);
             let lang = match language(s.attrs) {
                 1 => "J",
                 2 => "E",
@@ -484,48 +369,20 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
                 _ => " ",
             };
             gu.text(lang, rx + COLS[2], ry + 2.0, 0, WHITE.to_le_bytes());
-            gu.text(
-                &(s.attrs >> 6 & 0xf).to_string(),
-                rx + COLS[3],
-                ry + 2.0,
-                0,
-                WHITE.to_le_bytes(),
-            );
+            gu.text(&(s.attrs >> 6 & 0xf).to_string(), rx + COLS[3], ry + 2.0, 0, WHITE.to_le_bytes());
         }
         if list_focus {
-            gu.sprite(
-                "menu    windowps",
-                75,
-                wx,
-                wy + 4.0 + PITCH * c.cursor.saturating_sub(c.top) as f32,
-                WHITE,
-            );
+            gu.sprite("menu    windowps", 75, wx, wy + 4.0 + PITCH * c.cursor.saturating_sub(c.top) as f32, WHITE);
         }
         if let Some([fx, fy, fw, fh]) = gu.window_rect(LIST, sw, sh) {
             gu.scroll_bar(fx + fw - 8.0, fy, fh, rows.len(), ROWS, c.top);
             if list_focus {
-                gu.bar_site(
-                    super::scrollbar::Owner::Linkshell,
-                    fx + fw - 8.0,
-                    fy,
-                    fh,
-                    rows.len(),
-                    ROWS,
-                    c.top,
-                );
+                gu.bar_site(super::scrollbar::Owner::Linkshell, fx + fw - 8.0, fy, fh, rows.len(), ROWS, c.top);
             }
         }
     }
     let lsc_focus = focused && c.lsc.is_some();
-    if let Some(win) = gu.lobby_window_off(
-        FILTER,
-        sw,
-        sh,
-        (0.0, 0.0),
-        c.lsc.filter(|_| lsc_focus),
-        lsc_focus,
-        &[],
-    ) {
+    if let Some(win) = gu.lobby_window_off(FILTER, sw, sh, (0.0, 0.0), c.lsc.filter(|_| lsc_focus), lsc_focus, &[]) {
         rects.push(win.frame);
     }
     rects
@@ -547,10 +404,7 @@ mod tests {
         p[0x0e..0x10].copy_from_slice(&515u16.to_le_bytes());
         let mut slots = [Slot::default(); 16];
         apply(&mut slots, &p);
-        assert_eq!(
-            (slots[3].item, slots[3].attrs, slots[3].ext[8]),
-            (515, 0x84, 1)
-        );
+        assert_eq!((slots[3].item, slots[3].attrs, slots[3].ext[8]), (515, 0x84, 1));
         assert_eq!(slots[5].item, 515);
         assert_eq!(slots.iter().filter(|s| s.item != 0).count(), 2);
         p[4] = 0xfe;

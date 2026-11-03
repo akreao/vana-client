@@ -39,9 +39,7 @@ pub fn b64_decode(text: &[u8], n: usize) -> Vec<u8> {
         t.push(b'T');
     }
     let idx = |c: u8| B64.iter().position(|&x| x == c).unwrap_or(0) as u32;
-    t.chunks(4)
-        .flat_map(|g| (g.iter().fold(0, |v, &c| v << 6 | idx(c)) << 8).to_be_bytes()[..3].to_vec())
-        .collect()
+    t.chunks(4).flat_map(|g| (g.iter().fold(0, |v, &c| v << 6 | idx(c)) << 8).to_be_bytes()[..3].to_vec()).collect()
 }
 
 /// 0x10007590: 5 bytes to 8 characters, a short last group zero-padded.
@@ -65,9 +63,7 @@ pub fn b32_decode(text: &[u8], n: usize) -> Vec<u8> {
         t.push(b'N');
     }
     let idx = |c: u8| B32.iter().position(|&x| x == c).unwrap_or(0) as u64;
-    t.chunks(8)
-        .flat_map(|g| g.iter().fold(0, |v, &c| v << 5 | idx(c)).to_be_bytes()[3..].to_vec())
-        .collect()
+    t.chunks(8).flat_map(|g| g.iter().fold(0, |v, &c| v << 5 | idx(c)).to_be_bytes()[3..].to_vec()).collect()
 }
 
 /// The 4-character line trailer: the profile checksum's bits 8..31, six at a time from the top, plus 0x3f.
@@ -78,9 +74,7 @@ pub fn trailer(body: &[u8]) -> [u8; 4] {
 
 /// The PlayOnline ID's value (0x1001a020): base 36 in polcore's digit order, most significant first.
 pub fn pol_id_value(id: &str) -> Option<u64> {
-    id.bytes().try_fold(0u64, |v, c| {
-        Some(v * 36 + ID_ALPHABET.iter().position(|&x| x == c)? as u64)
-    })
+    id.bytes().try_fold(0u64, |v, c| Some(v * 36 + ID_ALPHABET.iter().position(|&x| x == c)? as u64))
 }
 
 /// The NICK handle (0x1001a390): 'U' and 8 digits of the value with each byte xored by the one above.
@@ -142,12 +136,7 @@ pub fn nick_line(id: &str, challenge: &[u8], password: &str) -> Option<String> {
     let mut m = Md5::new();
     m.update(challenge);
     m.update(password.as_bytes());
-    Some(format!(
-        "NICK {}:{}:{}",
-        nick_handle(id)?,
-        hex::encode(m.finalize()),
-        nick_token(id)
-    ))
+    Some(format!("NICK {}:{}:{}", nick_handle(id)?, hex::encode(m.finalize()), nick_token(id)))
 }
 
 /// Unsigned integers as little-endian u32 limbs, for the 256-bit RSA.
@@ -156,10 +145,7 @@ struct Big(Vec<u32>);
 
 impl Big {
     fn from_le(b: &[u8]) -> Self {
-        let mut v: Vec<u32> = b
-            .chunks(4)
-            .map(|c| c.iter().rev().fold(0, |a, &x| a << 8 | x as u32))
-            .collect();
+        let mut v: Vec<u32> = b.chunks(4).map(|c| c.iter().rev().fold(0, |a, &x| a << 8 | x as u32)).collect();
         while v.last() == Some(&0) {
             v.pop();
         }
@@ -177,9 +163,7 @@ impl Big {
     }
 
     fn bits(&self) -> usize {
-        self.0
-            .last()
-            .map_or(0, |w| self.0.len() * 32 - w.leading_zeros() as usize)
+        self.0.last().map_or(0, |w| self.0.len() * 32 - w.leading_zeros() as usize)
     }
 
     fn bit(&self, i: usize) -> bool {
@@ -187,10 +171,7 @@ impl Big {
     }
 
     fn cmp(&self, o: &Big) -> std::cmp::Ordering {
-        self.0
-            .len()
-            .cmp(&o.0.len())
-            .then_with(|| self.0.iter().rev().cmp(o.0.iter().rev()))
+        self.0.len().cmp(&o.0.len()).then_with(|| self.0.iter().rev().cmp(o.0.iter().rev()))
     }
 
     fn sub(&self, o: &Big) -> Big {
@@ -256,10 +237,7 @@ impl Big {
     }
 
     fn rem_small(&self, m: u32) -> u32 {
-        self.0
-            .iter()
-            .rev()
-            .fold(0u64, |r, &w| ((r << 32) | w as u64) % m as u64) as u32
+        self.0.iter().rev().fold(0u64, |r, &w| ((r << 32) | w as u64) % m as u64) as u32
     }
 
     fn div_small(&self, m: u32) -> Big {
@@ -361,9 +339,7 @@ impl RsaKey {
             let phi = p.sub(&Big::small(1)).mul(&q.sub(&Big::small(1)));
             // d = (1 + k·φ) / e with k = -φ⁻¹ mod e.
             let r = phi.rem_small(E) as i64;
-            let Some(inv) = (1..E as i64).find(|x| r * x % E as i64 == 1) else {
-                continue;
-            };
+            let Some(inv) = (1..E as i64).find(|x| r * x % E as i64 == 1) else { continue };
             let k = (E as i64 - inv) as u32;
             let d = phi.mul(&Big::small(k)).add_small(1).div_small(E);
             return Ok(Self { n: p.mul(&q), d });
@@ -407,11 +383,7 @@ fn rest(line: &[u8], skip: usize) -> &[u8] {
 
 /// The command word after the prefix.
 fn command(line: &[u8]) -> &[u8] {
-    let s = if line.first() == Some(&b':') {
-        rest(line, 0)
-    } else {
-        line
-    };
+    let s = if line.first() == Some(&b':') { rest(line, 0) } else { line };
     s.split(|&c| c == b' ').next().unwrap_or(&[])
 }
 
@@ -425,9 +397,7 @@ fn refusal(body: &[u8]) -> Option<String> {
         }
         if let Some(i) = text.find("(POL ") {
             let code = b32_decode(&body[i + 5..], 16).get(6).copied().unwrap_or(0);
-            return Some(format!(
-                "PlayOnline refused the sign-in (POL error {code:#x})."
-            ));
+            return Some(format!("PlayOnline refused the sign-in (POL error {code:#x})."));
         }
         return Some(format!("PlayOnline closed the connection: {text}"));
     }
@@ -463,8 +433,7 @@ pub struct Chat {
 impl Chat {
     /// The session's time: the greeting's clock plus whole seconds since.
     pub fn now(&self) -> u32 {
-        self.clock
-            .wrapping_add(self.clock_at.elapsed().as_secs() as u32)
+        self.clock.wrapping_add(self.clock_at.elapsed().as_secs() as u32)
     }
 
     fn read_raw(sock: &mut TcpStream, buf: &mut Vec<u8>) -> Result<Vec<u8>> {
@@ -524,8 +493,7 @@ impl Chat {
         let mut target = (host.to_string(), port);
         let mut redirected = false;
         let (mut sock, mut buf, greeting) = loop {
-            let sock = TcpStream::connect((target.0.as_str(), target.1))
-                .with_context(|| format!("connecting to PlayOnline ({}:{})", target.0, target.1))?;
+            let sock = TcpStream::connect((target.0.as_str(), target.1)).with_context(|| format!("connecting to PlayOnline ({}:{})", target.0, target.1))?;
             sock.set_read_timeout(Some(Duration::from_secs(30)))?;
             let mut s = sock;
             let mut buf = Vec::new();
@@ -552,23 +520,15 @@ impl Chat {
         let mut addr20 = [0u8; 20];
         addr20[..2].copy_from_slice(&1u16.to_le_bytes());
         addr20[2..4].copy_from_slice(&u16::from_be_bytes([blob[0x14], blob[0x15]]).to_le_bytes());
-        addr20[4..8]
-            .copy_from_slice(&u32::from_be_bytes(blob[4..8].try_into().unwrap()).to_le_bytes());
+        addr20[4..8].copy_from_slice(&u32::from_be_bytes(blob[4..8].try_into().unwrap()).to_le_bytes());
         let clock_at = Instant::now();
 
         let modulus = key.modulus_le();
-        sock.write_all(&Self::frame(&format!(
-            "USER x 8 * :{}",
-            b64_encode(&modulus)
-        )))?;
+        sock.write_all(&Self::frame(&format!("USER x 8 * :{}", b64_encode(&modulus))))?;
         // Numeric 300: the session key, RSA-encrypted to our modulus.
         let session = loop {
             let l = Self::read_plain(&mut sock, &mut buf)?;
-            log::info!(
-                "PlayOnline chat: {} ({} bytes, plain)",
-                String::from_utf8_lossy(command(&l)),
-                l.len()
-            );
+            log::info!("PlayOnline chat: {} ({} bytes, plain)", String::from_utf8_lossy(command(&l)), l.len());
             if let Some(why) = refusal(&l[..l.len().saturating_sub(4)]) {
                 bail!(why);
             }
@@ -596,8 +556,7 @@ impl Chat {
             host_byte: 0,
             skip_member_login: false,
         };
-        let nick = nick_line(pol_id, &challenge, pol_password)
-            .context("a PlayOnline ID is four letters and four digits")?;
+        let nick = nick_line(pol_id, &challenge, pol_password).context("a PlayOnline ID is four letters and four digits")?;
         chat.send_line(&nick)?;
         let mut registered = false;
         loop {
@@ -605,11 +564,7 @@ impl Chat {
                 log::info!("PlayOnline chat: a line failed its trailer");
                 continue;
             };
-            log::info!(
-                "PlayOnline chat: {} ({} bytes)",
-                String::from_utf8_lossy(command(&l)),
-                l.len()
-            );
+            log::info!("PlayOnline chat: {} ({} bytes)", String::from_utf8_lossy(command(&l)), l.len());
             if let Some(why) = refusal(&l) {
                 bail!(why);
             }
@@ -618,10 +573,7 @@ impl Chat {
                 // The routing struct counts only before 422.
                 b"300" if !registered => {
                     let r = b32_decode(rest(&l, 2), 0x2e);
-                    log::info!(
-                        "PlayOnline chat: routing {}",
-                        hex::encode(&r[..r.len().min(0x18)])
-                    );
+                    log::info!("PlayOnline chat: routing {}", hex::encode(&r[..r.len().min(0x18)]));
                     // A short routing reply is logged and skipped, not indexed out of range.
                     let [a, b, host, ..] = r[..] else { continue };
                     chat.region = u16::from_be_bytes([a, b]);
@@ -638,13 +590,7 @@ impl Chat {
                     }
                     // The profile service's "available" notice (0x1001b6f0).
                     let ty = u16::from_le_bytes([h[0x3e], h[0x3f]]) >> 7 & 0x1f;
-                    if h[0x42] & 1 != 0
-                        && ty == 31
-                        && h[0x1b] != 0
-                        && h[0x18] == 0xff
-                        && h[0x1c] == 0xff
-                        && h[0x10] == 1
-                    {
+                    if h[0x42] & 1 != 0 && ty == 31 && h[0x1b] != 0 && h[0x18] == 0xff && h[0x1c] == 0xff && h[0x10] == 1 {
                         chat.skip_member_login = h[0x21] != 0;
                         chat.sock.set_read_timeout(None)?;
                         return Ok(chat);
@@ -665,9 +611,7 @@ impl Chat {
     pub fn keep_alive(mut self) {
         std::thread::spawn(move || {
             while let Ok(l) = self.read_line() {
-                if l.as_deref().is_some_and(|l| command(l) == b"PING")
-                    && self.send_line("PONG a").is_err()
-                {
+                if l.as_deref().is_some_and(|l| command(l) == b"PING") && self.send_line("PONG a").is_err() {
                     break;
                 }
             }
@@ -690,23 +634,11 @@ mod tests {
     fn codecs() {
         assert_eq!(b64_encode(&h("00")), "TT");
         assert_eq!(b64_encode(&h("00010203")), "TTIGTt");
-        assert_eq!(
-            b64_encode(&(0..32).collect::<Vec<u8>>()),
-            "TTIGTt7nSAY3G7iK8TdO8pT9IUoen9sZcS5ycptEWUN"
-        );
-        assert_eq!(
-            b64_decode(b"TTIGTt7nSAY3G7iK8TdO8pT9IUoen9sZcS5ycptEWUN", 43)[..32].to_vec(),
-            (0..32).collect::<Vec<u8>>()
-        );
+        assert_eq!(b64_encode(&(0..32).collect::<Vec<u8>>()), "TTIGTt7nSAY3G7iK8TdO8pT9IUoen9sZcS5ycptEWUN");
+        assert_eq!(b64_decode(b"TTIGTt7nSAY3G7iK8TdO8pT9IUoen9sZcS5ycptEWUN", 43)[..32].to_vec(), (0..32).collect::<Vec<u8>>());
         assert_eq!(b32_encode(&h("0001020304")), "NNNEVNZV");
-        assert_eq!(
-            b32_encode(&(0..25).collect::<Vec<u8>>()),
-            "NNNEVNZVNFONS3NY41HEZO1S4A143VEQ3E2D0HZZ"
-        );
-        assert_eq!(
-            b32_decode(b"NNNEVNZVNFONS3NY41HEZO1S4A143VEQ3E2D0HZZ", 40),
-            (0..25).collect::<Vec<u8>>()
-        );
+        assert_eq!(b32_encode(&(0..25).collect::<Vec<u8>>()), "NNNEVNZVNFONS3NY41HEZO1S4A143VEQ3E2D0HZZ");
+        assert_eq!(b32_decode(b"NNNEVNZVNFONS3NY41HEZO1S4A143VEQ3E2D0HZZ", 40), (0..25).collect::<Vec<u8>>());
         assert_eq!(trailer(b"USER x 8 * :TSG8").len(), 4);
     }
 
@@ -720,36 +652,17 @@ mod tests {
         assert_eq!(identity_pad(b"EFKAOYMJ").to_vec(), h("6cc447f2f5608141"));
         // As 1.18.15e sends it after app.dll's area "01" (chat runs/15e/full).
         assert_eq!(nick_token("ABCD1234"), "TTTTTAISTTTTTTTTTTTTTHBy5pjMnc0G");
-        assert_eq!(
-            nick_line("ABCD1234", b"CHALLENGE", "testpass").as_deref(),
-            Some(
-                "NICK US77G53VV:82c40f69877fc2359531c90cc3f090dc:TTTTTAISTTTTTTTTTTTTTHBy5pjMnc0G"
-            )
-        );
+        assert_eq!(nick_line("ABCD1234", b"CHALLENGE", "testpass").as_deref(), Some("NICK US77G53VV:82c40f69877fc2359531c90cc3f090dc:TTTTTAISTTTTTTTTTTTTTHBy5pjMnc0G"));
     }
 
     #[test]
     fn rsa_matches_polcore() {
         let k = RsaKey {
-            n: Big::from_le(&h(
-                "a9117fcd9fc86ba6ff0444ab91083b0f1b440d15457364a6e1cfc47d0c4d094a",
-            )),
-            d: Big::from_le(&h(
-                "af83a34b7d9da940222e3fa56a724d79fd396e56595f026a272f96431bb43c40",
-            )),
+            n: Big::from_le(&h("a9117fcd9fc86ba6ff0444ab91083b0f1b440d15457364a6e1cfc47d0c4d094a")),
+            d: Big::from_le(&h("af83a34b7d9da940222e3fa56a724d79fd396e56595f026a272f96431bb43c40")),
         };
-        assert_eq!(
-            k.decrypt(&h(
-                "0e4cc04625bcb376824893ff1c49e6e4777d7bdb03968d85c47a100193d45984"
-            )),
-            Some(h("1122334455667788"))
-        );
-        assert_eq!(
-            b64_encode(&h(
-                "97400b4f21d135a21c85ba38b12b7ed1e31e309b078f7f68c73dab4b0971d444"
-            )),
-            "rdTKzvW9ky3YUBiJjqMudQoQoHjWR_6ipaf@qtrp0I7"
-        );
+        assert_eq!(k.decrypt(&h("0e4cc04625bcb376824893ff1c49e6e4777d7bdb03968d85c47a100193d45984")), Some(h("1122334455667788")));
+        assert_eq!(b64_encode(&h("97400b4f21d135a21c85ba38b12b7ed1e31e309b078f7f68c73dab4b0971d444")), "rdTKzvW9ky3YUBiJjqMudQoQoHjWR_6ipaf@qtrp0I7");
         // A fresh pair decrypts what the server encrypts with e = 0xffff.
         let k = RsaKey::generate().unwrap();
         assert_eq!(k.n.bits(), 255);
@@ -758,12 +671,7 @@ mod tests {
         em.push(0);
         em.extend_from_slice(&h("0807060504030201"));
         let m = Big::from_le(&em.iter().rev().copied().collect::<Vec<u8>>());
-        let c: Vec<u8> = m
-            .pow_mod(&Big::small(E), &k.n)
-            .to_le(32)
-            .into_iter()
-            .rev()
-            .collect();
+        let c: Vec<u8> = m.pow_mod(&Big::small(E), &k.n).to_le(32).into_iter().rev().collect();
         assert_eq!(k.decrypt(&c), Some(h("0807060504030201")));
         // A block short of 32 bytes is refused, not sliced out of range.
         assert_eq!(k.decrypt(&c[..31]), None);
