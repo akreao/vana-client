@@ -204,6 +204,10 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key, page: bool) {
 }
 
 fn list_key(w: &mut World, l: &mut List, key: egui::Key, page: bool) {
+    // The list ignores every message while it is disabled by an arrow hover (list +0x5c bit 1).
+    if w.list_arrow_hover {
+        return;
+    }
     match (l.state, key) {
         (0, egui::Key::Escape) | (1, egui::Key::Escape) => {
             w.sounds.push(Ui::Cancel as u32);
@@ -253,7 +257,7 @@ fn list_key(w: &mut World, l: &mut List, key: egui::Key, page: bool) {
 
 /// Mouse on the list: hover moves the cursor to a row (headers passed over), a click on the cursor row is Enter, a
 /// click on the arrows (children 9 / 10) Left / Right; on missionm the generic hover and click.
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, page: bool) {
     let Some(m) = w.missions.clone() else { return };
     let inside = |x: f32, y: f32, e: &crate::dat::ui::MenuElement| {
         let (ex, ey) = (x + e.x as f32, y + e.y as f32);
@@ -262,9 +266,17 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
     if let Some(l) = &m.list {
         let (Some((x, y)), Some(lay)) = (gu.window_xy(LIST, sw, sh), gu.layout(LIST)) else { return };
         let Some(e) = lay.elements.iter().skip(1).find(|e| inside(x, y, e)) else { return };
+        // FUN_10221cd0: over the page arrows the list is disabled, so no hand and no list keys; a click on them is
+        // Left / Right through the 0xa8 test, which with Ctrl / Alt held is a page on the disabled list, i.e. nothing.
+        if matches!(e.id, 9 | 10) && l.state == 1 {
+            w.list_arrow_hover = true;
+            if clicked && !page {
+                key(w, gu, if e.id == 9 { egui::Key::ArrowLeft } else { egui::Key::ArrowRight }, false);
+            }
+            return;
+        }
         gu.hover.set(true);
         match e.id {
-            9 | 10 if clicked && l.state == 1 => key(w, gu, if e.id == 9 { egui::Key::ArrowLeft } else { egui::Key::ArrowRight }, false),
             c @ 1..=8 if l.state == 1 => {
                 let row = l.top + c as usize - 1;
                 if row >= l.rows.len() || matches!(l.rows[row], Row::CurHead | Row::DoneHead) {

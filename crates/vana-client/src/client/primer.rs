@@ -121,9 +121,11 @@ pub fn map_back(w: &mut World) {
 /// guide00 (FUN_10233e30) and guide01 (FUN_10234370). `page_mod`: Ctrl / Alt held (key function 0xa8).
 pub fn key(w: &mut World, key: egui::Key, page_mod: bool) {
     use egui::Key as K;
+    let arrow_hover = w.list_arrow_hover;
     let Some(p) = w.primer.as_mut() else { return };
     if let Some(l) = p.list.as_mut() {
-        if l.page {
+        // The list ignores every message while an arrow hover disables it (list +0x5c bit 1).
+        if l.page || arrow_hover {
             return;
         }
         let n = p.cats[l.cat].topics.len();
@@ -238,7 +240,7 @@ pub(super) fn set_topic(w: &mut World, k: usize) -> bool {
 
 /// The mouse (winhits.rs): guide00 / guide01 rows as the generic window, guide01's arrows (children 9 / 10) as Left /
 /// Right; with a page up a click is its Enter (FUN_101fa900: every left release) and a right click its Escape.
-pub fn pointer(w: &mut World, gu: &GameUi, pt: (f32, f32), moved: bool, clicked: bool, right: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, pt: (f32, f32), moved: bool, clicked: bool, right: bool, page: bool) {
     use super::winhits::{child_under, generic};
     let Some(p) = w.primer.as_ref() else { return };
     // The modern layer draws the lists and takes their mouse; a page stays the map window's.
@@ -257,9 +259,13 @@ pub fn pointer(w: &mut World, gu: &GameUi, pt: (f32, f32), moved: bool, clicked:
             }
         }
         Some(l) => {
-            if clicked && let (Some(a), _) = child_under(w, PAGES, pt, 9..=10) {
-                gu.hover.set(true);
-                key(w, if a == 9 { egui::Key::ArrowLeft } else { egui::Key::ArrowRight }, false);
+            // FUN_10221cd0: over the page arrows the list is disabled (no hand, no list keys); the click is Left /
+            // Right through the 0xa8 test, so with Ctrl / Alt held it pages the disabled list, i.e. does nothing.
+            if let (Some(a), _) = child_under(w, PAGES, pt, 9..=10) {
+                w.list_arrow_hover = true;
+                if clicked && !page {
+                    key(w, if a == 9 { egui::Key::ArrowLeft } else { egui::Key::ArrowRight }, false);
+                }
                 return;
             }
             let top = l.top;

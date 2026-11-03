@@ -248,7 +248,7 @@ detail inside implemented ops.
 | Config: chat-type filters (server); the mouse movement reference; 0x3e clip scale; 0x40 animation step | Not built | L3069 | DLL |
 | Config lists: the key item / quest / mission list pages | Not built | L8495 | DLL |
 | List scroll bars: the post / delivery / trade / synthesis lists and the synthesis history | Not built | L8731 | DLL |
-| The page modifier (0xa8): the arrows' hover state (a Ctrl-click on an arrow does nothing in retail; ours switches) | Not built | L13962 | DLL |
+| The page modifier (0xa8): the arrows' hover state (a Ctrl-click on an arrow does nothing in retail; ours switches) | Built *([batch 7](notes/2026-11-03-modlog-gaps-batch7.md) item 25: FUN_10221cd0 / FUN_10221ce0 disable and enable the paged list; over the arrows there is no hand and the list ignores keys, and a Ctrl / Alt click pages the disabled list, i.e. does nothing. RoE's arrows and jbpcat's page areas skip the test and are left alone)* | L13962 | DLL |
 | Cursor memory: the other KEEP windows' cursors (myroom, configwi, cmbmenu) | Not built | L9171 | DLL |
 | Missions: the held-key header stop | Not built | L9102, L9153 | DLL |
 | Status window: Monstrosity (mp_stat) from the main menu | Not built at the time | L9017 | *(closed: "Monstrosity, part 5: mp_stat")* |
