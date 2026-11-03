@@ -10314,9 +10314,22 @@ impl App {
                 a.motion_names = None;
             }
         }
+        // FUN_1005f540: op 0x89's hold is a scheduler task, so it counts down every frame whether the actor is drawn
+        // or still loading, and ends early once the body has moved more than 1 unit in x or z from where it started.
+        // The countdown runs before this frame's new holds, so a one-tick hold still covers the frame that set it.
+        let holding: Vec<u32> = world.actors.iter().filter(|(_, a)| a.look_hold.is_some()).map(|(id, _)| *id).collect();
+        for id in holding {
+            let now = if id == world.my_id { Some(world.pos) } else { world.entities.get(&id).map(|e| e.pos) };
+            let Some(a) = world.actors.get_mut(&id) else { continue };
+            let Some((left, at)) = a.look_hold else { continue };
+            let moved = at.is_some_and(|(x, z)| now.is_some_and(|p| (p.x - x).abs() > 1.0 || (p.z - z).abs() > 1.0));
+            let left = left - dt * 60.0;
+            a.look_hold = (!moved && left > 0.0).then_some((left, at));
+        }
         for (id, ticks) in std::mem::take(&mut world.effects.look_holds) {
+            let at = if id == world.my_id { Some(world.pos) } else { world.entities.get(&id).map(|e| e.pos) };
             if let Some(a) = world.actors.get_mut(&id) {
-                a.look_hold = Some((ticks, None));
+                a.look_hold = Some((ticks, at.map(|p| (p.x, p.z))));
             }
         }
         for (id, op, set) in std::mem::take(&mut world.effects.motion_sets) {
@@ -14292,12 +14305,6 @@ impl App {
                     // FUN_100d5b10: an event's look, else the target / face target; eased and weighted in world space.
                     let point = |k: usize| ch.skeleton.points.get(k).copied().unwrap_or((0, Vec3::ZERO));
                     let p3 = model.transform_point3(a.rest.get(point(3).0 as usize).map_or(Vec3::ZERO, |x| x.at(point(3).1)));
-                    // FUN_1005f540: op 0x89's hold counts down and ends on a move past 1 unit in x or z.
-                    if let Some((left, at)) = a.look_hold {
-                        let (x, z) = at.unwrap_or((pos.x, pos.z));
-                        let left = left - dt * 60.0;
-                        a.look_hold = (left > 0.0 && (pos.x - x).abs() <= 1.0 && (pos.z - z).abs() <= 1.0).then_some((left, Some((x, z))));
-                    }
                     // FUN_100d5b10: while bit 1 is set the look has no target, forced look included.
                     let target = match a.look.mode {
                         _ if a.look_hold.is_some() => None,
