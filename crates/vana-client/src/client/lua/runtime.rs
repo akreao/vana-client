@@ -43,8 +43,8 @@ fn rel(path: &str) -> mlua::Result<PathBuf> {
     Ok(out)
 }
 
-/// A file in the mod's own folder `dir` (hud.image, draw.image, chat.icon, audio.play): relative, no `..`, and no link
-/// on the way, which could lead outside the folder.
+/// A file in the mod's own folder `dir` (hud.image, draw.image, chat.icon, audio.play), as `fs` takes paths: `..` and
+/// drive paths refused, a leading `/` from the folder; and no link on the way, which could lead outside it.
 pub(super) fn mod_file(dir: &Path, path: &str) -> mlua::Result<PathBuf> {
     no_links(dir, &rel(path)?, path)
 }
