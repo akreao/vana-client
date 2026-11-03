@@ -59,7 +59,7 @@ Asm 0x101cc0d0..0x101cc1ae. The first match sets esi = line id and jumps to the 
   | FUN_100a1860 (28 callers: local / system lines) at 0x100a18ae / 0x100a18b4 | — | the result of FUN_100a0080() | same value (inf: "the current message actor"; 0 → the line is skipped at 0x100a18a1) |
   | 0x100a1c76 / 0x100a1c85 (inside the 0x03B-area handlers, inf) | | | |
 
-- **So for a battle message, 7F 90 = the acting entity and 7F 91 = the target. For an NPC / special message both are the speaking entity.** An index >= 0x901 (none) falls back to the player.
+- **So for a battle message (0x029), an action line (0x02D) or an emote (0x05A), 7F 90 = the acting entity and 7F 91 = the target. For an NPC / special message (0x036 / 0x043 / 0x02A) both are the speaking entity.** An index >= 0x901 (none) falls back to the player.
 - The expander: `7F 90` (0x100c19cf..0x100c1a2e) and `7F 91` (0x100c1a38..) look up DAT_10480af0[index]. A missing actor gives alternative 0 for 7F 91. Gender bit 25 picks the `[a/b]` alternative (male first).
 
 ## 4. The costume id (+0x166)
