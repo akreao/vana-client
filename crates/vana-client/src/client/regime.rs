@@ -253,10 +253,10 @@ pub fn on_zone(w: &mut World) {
         return;
     }
     w.regime.who = w.name.clone();
-    let path = crate::config::regime_path(&w.name);
+    let path = crate::config::regime_read_path(&w.name);
     w.regime.state = std::fs::read(&path).ok().and_then(|b| serde_json::from_slice::<Option<Regime>>(&b).ok()).flatten();
     if let Some(r) = &w.regime.state {
-        log::info!("regime: kept for {}: {r:?}", w.name);
+        log::info!("regime: kept for {} ({}): {r:?}", w.name, path.display());
     }
 }
 
