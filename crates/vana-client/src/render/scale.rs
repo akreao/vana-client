@@ -1,7 +1,8 @@
 //! Background resolution: the 3D scene drawn offscreen at its own size, then scaled to the window in one pass
 //! (Config-tool values 0003 / 0004; the UI and text stay at window size). Downscaling averages the destination
-//! pixel's footprint, upscaling is Catmull-Rom. With anti-aliasing on (config `antialias`, not retail) an FXAA filter
-//! runs in the same pass whenever the scene is not being downscaled (downscaling is already supersampling).
+//! pixel's footprint, upscaling is Catmull-Rom. With anti-aliasing on (config `antialias`, not retail) SMAA
+//! (render/smaa.rs) runs on the scene first whenever it is not being downscaled (downscaling is already
+//! supersampling), and this pass reads its output.
 
 use super::Gpu;
 use super::Put;
@@ -49,32 +50,6 @@ fn up(uv: vec2<f32>) -> vec3<f32> {
     c += tap(vec2<f32>(t0.x, t3.y)) * w0.x * w3.y + tap(vec2<f32>(t12.x, t3.y)) * w12.x * w3.y + tap(vec2<f32>(t3.x, t3.y)) * w3.x * w3.y;
     return max(c, vec3<f32>(0.0));
 }
-// FXAA (Lottes' FXAA 3 PC lite) on the scene's gamma-space colour, at the source's texel size: the luma of the four
-// diagonal neighbours finds the edge direction, then two or four taps along it blend across the edge. Flat areas and
-// texture detail with little contrast come back as they were. Upscaled scenes go through it bilinearly.
-const FXAA_SPAN: f32 = 8.0;
-const FXAA_REDUCE_MUL: f32 = 1.0 / 8.0;
-const FXAA_REDUCE_MIN: f32 = 1.0 / 128.0;
-fn luma(c: vec3<f32>) -> f32 { return dot(c, vec3<f32>(0.299, 0.587, 0.114)); }
-fn fxaa(uv: vec2<f32>) -> vec3<f32> {
-    let px = 1.0 / u.src;
-    let m = tap(uv);
-    let nw = luma(tap(uv + vec2<f32>(-1.0, -1.0) * px));
-    let ne = luma(tap(uv + vec2<f32>(1.0, -1.0) * px));
-    let sw = luma(tap(uv + vec2<f32>(-1.0, 1.0) * px));
-    let se = luma(tap(uv + vec2<f32>(1.0, 1.0) * px));
-    let lm = luma(m);
-    let lo = min(lm, min(min(nw, ne), min(sw, se)));
-    let hi = max(lm, max(max(nw, ne), max(sw, se)));
-    var dir = vec2<f32>(-((nw + ne) - (sw + se)), (nw + sw) - (ne + se));
-    let reduce = max((nw + ne + sw + se) * 0.25 * FXAA_REDUCE_MUL, FXAA_REDUCE_MIN);
-    let rcp = 1.0 / (min(abs(dir.x), abs(dir.y)) + reduce);
-    dir = clamp(dir * rcp, vec2<f32>(-FXAA_SPAN), vec2<f32>(FXAA_SPAN)) * px;
-    let a = 0.5 * (tap(uv + dir * (1.0 / 3.0 - 0.5)) + tap(uv + dir * (2.0 / 3.0 - 0.5)));
-    let b = a * 0.5 + 0.25 * (tap(uv - dir * 0.5) + tap(uv + dir * 0.5));
-    let lb = luma(b);
-    return select(b, a, lb < lo || lb > hi);
-}
 // Gamma: c^(1 / g) per channel (FUN_10016400's ramp exponent).
 // 3D LCD Mode (lcd.x = 1, config 0030): the scene was drawn 0.6 % wider (lcd.z = its extra share, 0.006); eye 0
 // (projection shifted -0.006 in NDC x) squeezed into the left half, eye 1 (+0.006) into the right, bilinear
@@ -96,8 +71,6 @@ fn fxaa(uv: vec2<f32>) -> vec3<f32> {
     var c: vec3<f32>;
     if (u.src.x > u.dst.x || u.src.y > u.dst.y) {
         c = down(i.uv);
-    } else if (u.lcd.w > 0.5) {
-        c = fxaa(i.uv);
     } else {
         c = up(i.uv);
     }
@@ -120,6 +93,7 @@ pub struct SceneScale {
     uniform: wgpu::Buffer,
     format: wgpu::TextureFormat,
     target: Option<Target>,
+    smaa: Option<super::smaa::Smaa>,
 }
 
 impl SceneScale {
@@ -169,7 +143,7 @@ impl SceneScale {
             ..Default::default()
         });
         let uniform = device.create_buffer(&wgpu::BufferDescriptor { label: Some("scene scale"), size: 48, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
-        Self { pipeline, layout, sampler, uniform, format, target: None }
+        Self { pipeline, layout, sampler, uniform, format, target: None, smaa: None }
     }
 
     /// The offscreen colour and depth views at `size`, made on first use or a size change, and the colour texture.
@@ -211,13 +185,31 @@ impl SceneScale {
     }
 
     /// Scales the offscreen scene onto `dst` (window size) with a gamma per channel, replacing what is there. `lcd`:
-    /// 3D LCD Mode's side-by-side eyes (the scene `extra` wider) and whether this frame carries the strip. `fxaa`: the
-    /// anti-aliasing filter (not retail; skipped in 3D LCD Mode and when downscaling).
-    pub fn blit(&self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, dst: &wgpu::TextureView, dst_size: [u32; 2], gamma: [f32; 3], lcd: Option<(f32, bool)>, fxaa: bool) {
+    /// 3D LCD Mode's side-by-side eyes (the scene `extra` wider) and whether this frame carries the strip. `smaa`: the
+    /// anti-aliasing filter (not retail; skipped in 3D LCD Mode and when downscaling). The SMAA passes are made on
+    /// first use; turning it off leaves them idle.
+    pub fn blit(&mut self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, dst: &wgpu::TextureView, dst_size: [u32; 2], gamma: [f32; 3], lcd: Option<(f32, bool)>, smaa: bool) {
         let Some(t) = &self.target else { return };
+        let dst_size = [dst_size[0].max(1), dst_size[1].max(1)];
+        let smaa = smaa && lcd.is_none() && t.size[0] <= dst_size[0] && t.size[1] <= dst_size[1];
         let (on, strip, extra) = lcd.map_or((0.0, 0.0, 0.0), |(e, s)| (1.0, s as u32 as f32, e));
-        let u = [t.size[0] as f32, t.size[1] as f32, dst_size[0].max(1) as f32, dst_size[1].max(1) as f32, gamma[0], gamma[1], gamma[2], 1.0, on, strip, extra, fxaa as u32 as f32];
+        let u = [t.size[0] as f32, t.size[1] as f32, dst_size[0] as f32, dst_size[1] as f32, gamma[0], gamma[1], gamma[2], 1.0, on, strip, extra, 0.0];
         gpu.queue.put(&self.uniform, 0, bytemuck::cast_slice(&u));
+        let smaa_group = smaa.then(|| {
+            let (tex, size) = (t.tex.clone(), t.size);
+            let s = self.smaa.get_or_insert_with(|| super::smaa::Smaa::new(gpu, self.format));
+            let out = s.run(gpu, encoder, &tex, size).clone();
+            gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("scene scale smaa"),
+                layout: &self.layout,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: self.uniform.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&out) },
+                    wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+                ],
+            })
+        });
+        let Some(t) = &self.target else { return };
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("scene scale"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: dst, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store } })],
@@ -227,7 +219,7 @@ impl SceneScale {
             multiview_mask: None,
         });
         pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &t.group, &[]);
+        pass.set_bind_group(0, smaa_group.as_ref().unwrap_or(&t.group), &[]);
         pass.draw(0..3, 0..1);
     }
 }
@@ -312,13 +304,14 @@ mod tests {
         }
     }
 
-    /// FXAA leaves a flat colour alone and softens a hard diagonal edge (pixels on it end up between the two sides).
+    /// SMAA leaves a flat colour alone and smooths a hard staircase edge (pixels on it end up between the two sides),
+    /// while leaving pixels away from the edge as they were.
     #[test]
-    fn fxaa_softens_edges() {
+    fn smaa_smooths_edges() {
         let Ok(gpu) = Gpu::headless() else { return };
         let format = wgpu::TextureFormat::Rgba8Unorm;
         let mut s = SceneScale::new(&gpu, format);
-        let n = 16u32;
+        let n = 32u32;
         let _ = s.target(&gpu, [n, n]);
         let out = gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: None,
@@ -330,23 +323,31 @@ mod tests {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
-        let run = |s: &SceneScale, px: &[u8], fxaa: bool| {
-            let tex = &s.target.as_ref().unwrap().tex;
+        let mut run = |s: &mut SceneScale, px: &[u8], smaa: bool| {
+            let tex = s.target.as_ref().unwrap().tex.clone();
             gpu.queue.write_texture(tex.as_image_copy(), px, wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(n * 4), rows_per_image: Some(n) }, wgpu::Extent3d { width: n, height: n, depth_or_array_layers: 1 });
             let mut enc = gpu.device.create_command_encoder(&Default::default());
-            s.blit(&gpu, &mut enc, &out.create_view(&Default::default()), [n, n], [1.0; 3], None, fxaa);
+            s.blit(&gpu, &mut enc, &out.create_view(&Default::default()), [n, n], [1.0; 3], None, smaa);
             gpu.queue.submit([enc.finish()]);
             read(&gpu, &out, n, n)
         };
         let flat: Vec<u8> = (0..n * n).flat_map(|_| [153u8, 102, 51, 255]).collect();
-        for p in run(&s, &flat, true).chunks_exact(4) {
+        for p in run(&mut s, &flat, true).chunks_exact(4) {
             assert!((p[0] as i32 - 153).abs() <= 2 && (p[1] as i32 - 102).abs() <= 2 && (p[2] as i32 - 51).abs() <= 2, "{p:?}");
         }
-        // A staircase: white below the line y = x / 2, black above.
-        let edge: Vec<u8> = (0..n * n).flat_map(|i| if i / n > (i % n) / 2 { [255u8, 255, 255, 255] } else { [0, 0, 0, 255] }).collect();
+        // A staircase: white below the line y = x / 4, black above.
+        let edge: Vec<u8> = (0..n * n).flat_map(|i| if i / n > (i % n) / 4 { [255u8, 255, 255, 255] } else { [0, 0, 0, 255] }).collect();
         let grey = |px: &[u8]| px.chunks_exact(4).filter(|p| p[0] > 20 && p[0] < 235).count();
-        let (off, on) = (grey(&run(&s, &edge, false)), grey(&run(&s, &edge, true)));
-        assert!(off <= 2, "no filter: {off} in-between pixels");
-        assert!(on >= 8, "FXAA: {on} in-between pixels");
+        let off = run(&mut s, &edge, false);
+        let on = run(&mut s, &edge, true);
+        assert!(grey(&off) == 0, "no filter: {} in-between pixels", grey(&off));
+        assert!(grey(&on) >= 12, "SMAA: {} in-between pixels", grey(&on));
+        // Far from the edge nothing changes.
+        for (i, (a, b)) in off.chunks_exact(4).zip(on.chunks_exact(4)).enumerate() {
+            let (x, y) = (i as u32 % n, i as u32 / n);
+            if (y as i32 - (x / 4) as i32).abs() > 2 {
+                assert_eq!(a, b, "pixel {x},{y} changed");
+            }
+        }
     }
 }
