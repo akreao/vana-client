@@ -76,13 +76,14 @@ fn fxaa(uv: vec2<f32>) -> vec3<f32> {
     return select(b, a, lb < lo || lb > hi);
 }
 // Colour grading (config `grading`, not retail): saturation x, contrast y about mid grey, warmth z (red up, blue
-// down), on the gamma-space scene before the gamma ramp; grade.w = 1 when on.
+// down, none on black), on the gamma-space scene before the gamma ramp; grade.w = 1 when on.
 fn grade(c: vec3<f32>) -> vec3<f32> {
     if (u.grade.w < 0.5) { return c; }
     let l = luma(c);
     var g = mix(vec3<f32>(l), c, u.grade.x);
     g = (g - 0.5) * u.grade.y + 0.5;
-    g = g + vec3<f32>(u.grade.z, 0.0, -u.grade.z);
+    // The warmth fades in over the darkest quarter, so black (a faded frame) stays black.
+    g = g + vec3<f32>(u.grade.z, 0.0, -u.grade.z) * min(l * 4.0, 1.0);
     return clamp(g, vec3<f32>(0.0), vec3<f32>(1.0));
 }
 // Gamma: c^(1 / g) per channel (FUN_10016400's ramp exponent).
@@ -415,6 +416,24 @@ mod tests {
         let vivid = run(&s, 1);
         assert!(vivid[0] > off[0] && vivid[2] < off[2], "{vivid:?}");
         let warm = run(&s, 2);
+        // Black (a faded frame) stays black under every preset.
+        for preset in 1..=4 {
+            let mut enc = gpu.device.create_command_encoder(&Default::default());
+            {
+                let _clear = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: None,
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &view, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store } })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+            }
+            s.blit(&gpu, &mut enc, &out.create_view(&Default::default()), [4, 4], [1.0; 3], None, false, preset);
+            gpu.queue.submit([enc.finish()]);
+            let px = read(&gpu, &out, 4, 4);
+            assert_eq!(&px[..3], &[0, 0, 0], "preset {preset}");
+        }
         assert!(warm[0] - off[0] > warm[2] - off[2], "{warm:?}");
     }
 }
