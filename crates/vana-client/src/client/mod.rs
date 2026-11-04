@@ -6150,8 +6150,6 @@ struct World {
     /// vector (DAT_1047555c), and this frame's speed fraction (FUN_100a5f60: 1, 1/3 or 0).
     walk: bool,
     autorun: bool,
-    /// Ours (modern MMOs): a right drag turns the camera and the character faces where it looks.
-    mouse_look: bool,
     /// The modern Journal's Records of Eminence tab and its entry (Current objectives, Objective List, Vana'Bout).
     journal_roe: Option<usize>,
     /// The modern Journal's rows have the keys (else its logs, areas or categories on the left).
@@ -8330,7 +8328,6 @@ impl App {
                             move_acc: 0.0,
                             walk: false,
                             autorun: false,
-                            mouse_look: false,
                             journal_roe: None,
                             journal_on_list: false,
                             equip_claims: Vec::new(),
@@ -11252,7 +11249,7 @@ impl App {
                 // 0x9c held (B / Shift, control type 2): a strafe lock. Retail's FUN_100a6240 returns before the turn
                 // to the move direction while actor +0xfb is set, so the heading stays and the stick strafes.
                 None
-            } else if lock_target.is_some() || world.mouse_look || (turn != 0.0 && !stepping) {
+            } else if lock_target.is_some() || (turn != 0.0 && !stepping) {
                 Some(face)
             } else if stepping {
                 Some(step.normalize())
@@ -11660,10 +11657,10 @@ impl App {
     /// (FUN_101585f0: key functions 0x8b / 0x8c -> results 0x16 / 0x17); a drag is 65 UI px^2 from the press or 25
     /// ticks held (FUN_10125040).
     /// A look drag's motion (pixels, or raw counts while locked): the camera turns as a drag always did (Mouse/Cam.
-    /// inverts its axes); with the right button the character faces where it looks (modern MMOs); in first person it
-    /// turns the look itself.
+    /// inverts its axes). Retail's drag only turns the camera: the facing stays with the move (FUN_100a6240 turns the
+    /// player to the step), so a right drag while moving or autorunning never strafes. In first person it turns the
+    /// look itself.
     fn look(&mut self, dx: f64, dy: f64) {
-        let right = self.dragging;
         let Phase::World(world) = &mut self.phase else { return };
         let inv = |w: &World, id: u16| if w.game.get(id) == 1 { -1.0 } else { 1.0 };
         match () {
@@ -11687,7 +11684,6 @@ impl App {
             _ => {
                 let (ix, iy) = (inv(world, 0x8b), inv(world, 0x8c));
                 camera::drag(world, (dx * 0.008 * ix) as f32, -(dy * 0.03 * iy) as f32);
-                world.mouse_look = right;
             }
         }
     }
@@ -11795,11 +11791,6 @@ impl App {
                 self.middle_down = pressed;
             }
             _ => {}
-        }
-        if !self.dragging
-            && let Phase::World(w) = &mut self.phase
-        {
-            w.mouse_look = false;
         }
         if !self.left_down && !self.dragging && !self.middle_down {
             self.release_pointer();
