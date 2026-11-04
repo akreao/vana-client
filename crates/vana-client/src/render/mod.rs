@@ -20,6 +20,7 @@ pub mod gputime;
 pub mod cull;
 pub mod shadow;
 pub mod sunshadow;
+pub mod ssao;
 pub mod sway;
 
 use crate::dat::zone::ZoneScene;
@@ -416,6 +417,8 @@ pub struct ZoneRenderer {
     /// (the client then leaves retail's out).
     sun_depth_pipeline: wgpu::RenderPipeline,
     sun_shadow: Option<sunshadow::SunShadow>,
+    /// Ambient occlusion on the scenery (render/ssao.rs; prepare_ssao).
+    ssao: Option<ssao::Ssao>,
     pub sun_shadow_drawn: std::cell::Cell<bool>,
     /// The real shadows' level from the Vana'diel clock (sunshadow::twilight; 0 at the sun / moon change) and their PCF
     /// spacing (softer by the moon).
@@ -1866,6 +1869,7 @@ impl ZoneRenderer {
             shadows: None,
             sun_depth_pipeline: p.sun_depth_pipeline,
             sun_shadow: None,
+            ssao: None,
             sun_shadow_drawn: std::cell::Cell::new(false),
             shadow_level: 1.0,
             shadow_soft: 1.0,
@@ -2856,12 +2860,16 @@ impl ZoneRenderer {
         pass.set_vertex_buffer(0, self.vertices.slice(..));
         pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint16);
         for mode in 0..4u8 {
-            // The opaque and cut-out scenery is down: the real shadows go on it, then the pass resumes.
-            if mode == 2
-                && let Some((s, m, d, st, _)) = &sun
-            {
+            // The opaque and cut-out scenery is down: the ambient occlusion and the real shadows go on it, then the
+            // pass resumes.
+            if mode == 2 && (sun.is_some() || self.ssao.is_some()) {
                 drop(pass);
-                s.receive(gpu, encoder, color, depth, vp, *m, *d, *st, camera.eye, self.shadow_soft);
+                if let Some(a) = &self.ssao {
+                    a.draw(gpu, encoder, color, depth, vp, camera.eye);
+                }
+                if let Some((s, m, d, st, _)) = &sun {
+                    s.receive(gpu, encoder, color, depth, vp, *m, *d, *st, camera.eye, self.shadow_soft);
+                }
                 pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("zone (after shadows)"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: color, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store } })],
@@ -3078,6 +3086,16 @@ impl ZoneRenderer {
         (base > 0.0).then_some(())?;
         let st = base * self.shadow_level.clamp(0.0, 1.0);
         Some((sunshadow::light_matrix(l.dir, target, s.size)?, sunshadow::sun_direction(l.dir)?, st))
+    }
+
+    /// Ambient occlusion (ours) on or off at the scene's `size`; made at the first use.
+    pub fn prepare_ssao(&mut self, gpu: &Gpu, on: bool, size: [u32; 2]) {
+        if !on {
+            self.ssao = None;
+            return;
+        }
+        let format = self.color_format;
+        self.ssao.get_or_insert_with(|| ssao::Ssao::new(gpu, format)).resize(gpu, size);
     }
 
     /// Real character shadows (ours) on or off with a `size` map; made at the first use or a size change. render draws

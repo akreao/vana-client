@@ -138,6 +138,9 @@ pub struct Config {
     pub anisotropy: u16,
     /// Anti-aliasing of the 3D scene: 0 off (retail), 1 FXAA. Not a retail option.
     pub antialias: u32,
+    /// Colour grading of the 3D scene: 0 off (retail), 1 Vivid, 2 Warm, 3 Cool, 4 Film (render/scale.rs). Not a
+    /// retail option.
+    pub grading: u32,
     /// How far scenery, actors and effects draw, in percent of retail's distance (the zone's, scaled by the
     /// Clipping setting); 0 = no limit. Not a retail option.
     pub draw_distance: u32,
@@ -163,6 +166,8 @@ pub struct Config {
     pub actor_shadows: u32,
     /// The real shadows' map size in texels (1024, 2048 or 4096; render/sunshadow.rs). Not a retail option.
     pub shadow_map: u32,
+    /// Ambient occlusion on the scenery (render/ssao.rs). Not a retail option.
+    pub ssao: bool,
     /// Extra (the clock add-ons): Earth time, the moon and the next day beside the Vana'diel clock (client/clock.rs).
     pub earth_clock: bool,
     /// Extra (the trust chatter filters): trusts' party lines (battle message 711) are not printed.
@@ -386,6 +391,7 @@ impl Default for Config {
             frame_limit: 300,
             anisotropy: 16,
             antialias: 0,
+            grading: 0,
             draw_distance: 0,
             party_tp: true,
             map_overlay: false,
@@ -398,6 +404,7 @@ impl Default for Config {
             lamp_lights: true,
             actor_shadows: 0,
             shadow_map: 2048,
+            ssao: false,
             hide_trust_speech: false,
             hide_ready_lines: false,
             short_battle: false,

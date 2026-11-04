@@ -13952,7 +13952,7 @@ impl App {
         // The world always draws offscreen: through the plain view, in gamma space.
         let world_phase = matches!(self.phase, Phase::World(_));
         // Anti-aliasing (not retail) runs in the scaling pass, so it sends the title and lobby scenes offscreen too.
-        let scaled = bg != size || gamma.iter().any(|g| (g - 1.0).abs() > 1e-3) || world_phase || lcd || self.cfg.antialias != 0;
+        let scaled = bg != size || gamma.iter().any(|g| (g - 1.0).abs() > 1e-3) || world_phase || lcd || self.cfg.antialias != 0 || self.cfg.grading != 0;
         let (scene_view, scene_depth, scene_tex) = if scaled {
             self.scene_scale.get_or_insert_with(|| crate::render::scale::SceneScale::new(&gfx.gpu, gfx.config.format)).target(&gfx.gpu, bg)
         } else {
@@ -14794,6 +14794,8 @@ impl App {
                 // Real character shadows (ours, render/sunshadow.rs), unless config 0x3a turns shadows off. The actors their
                 // map covers this frame take no retail shadow (nor its casters or layers).
                 r.prepare_sun_shadow(&gfx.gpu, self.cfg.actor_shadows != 0 && w.game.get(0x3a) != 1, self.cfg.shadow_map);
+                // Ambient occlusion on the scenery (ours, render/ssao.rs), at the scene's size.
+                r.prepare_ssao(&gfx.gpu, self.cfg.ssao, bg);
                 if let Some((m, _, _)) = r.sun_shadow_light(camera.target) {
                     seen.retain(|_, s| !crate::render::sunshadow::covers(m, s.pos, s.corners.iter().map(|c| c.distance(s.pos)).fold(0.0, f32::max)));
                 }
@@ -15035,7 +15037,7 @@ impl App {
             && scaled
             && let Some(sc) = &self.scene_scale
         {
-            sc.blit(&gfx.gpu, &mut encoder, &view, size, gamma, lcd.then_some((LCD_SHIFT, self.lcd_frame % 2 == 1)), self.cfg.antialias != 0);
+            sc.blit(&gfx.gpu, &mut encoder, &view, size, gamma, lcd.then_some((LCD_SHIFT, self.lcd_frame % 2 == 1)), self.cfg.antialias != 0, self.cfg.grading);
         }
         self.window_size = size;
         self.mouse_kind(size);
