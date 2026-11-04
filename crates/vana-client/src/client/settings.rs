@@ -395,6 +395,8 @@ const RESOLUTIONS: [[u32; 2]; 17] = [
 
 /// The Config pages' size (conf2win and its siblings, 366 x 296 at (16, 48)).
 const W: f32 = 366.0;
+/// The Background row's warning while real shadows are on (ours).
+const WARNING: &str = "Real shadows affected. Performance will be affected.";
 const H: f32 = 296.0;
 /// A row's pitch: its heading, then its buttons or slider under it.
 const PITCH: f32 = 34.0;
@@ -952,9 +954,10 @@ impl SettingsUi {
                 gu.sprite_cells("menu    windowps", 465, 2..3, x + 20.0 - b[0], hy + 2.0 - b[1], N);
             }
             gu.label(&r.label, x + 32.0, hy, N, false);
+            let icon = if self.warns(r) { gu.warning_icon(x + 32.0 + gu.label_width(&r.label) + 4.0, hy) + 4.0 } else { 0.0 };
             // A slider's value at the heading's end, right-aligned to the slider's (cut to the room left).
             if matches!(Self::ctl(r), Ctl::Slider) {
-                let room = SLIDER_X + SLIDER_W - 32.0 - gu.label_width(&r.label) - 16.0;
+                let room = SLIDER_X + SLIDER_W - 32.0 - gu.label_width(&r.label) - icon - 16.0;
                 let mut v = self.shown(r);
                 while gu.label_width(&v) > room && v.pop().is_some() {}
                 let vw = gu.label_width(&v);
@@ -1017,6 +1020,12 @@ impl SettingsUi {
     }
 
     /// The help bar's text for the cursor's row, with when a change shows.
+    /// Ours, not retail: the Background row carries a warning while real character shadows are on (their full-screen
+    /// receive pass runs at the Background size, so a larger one costs more).
+    fn warns(&self, r: &Row) -> bool {
+        matches!(r.val, Val::Size(_, _, Sizes::Background)) && self.s.actor_shadows != 0
+    }
+
     pub fn help(&self) -> String {
         if self.on_mods() {
             return if self.s.modern_ui { self.modern_mods_help() } else { self.mods_help() };
@@ -1029,7 +1038,8 @@ impl SettingsUi {
             When::NextZone => " Takes effect at the next zone load.",
             When::Restart => " Takes effect on restart.",
         };
-        format!("{}{when}", r.help)
+        let warn = if self.warns(&r) { format!("{WARNING} ") } else { String::new() };
+        format!("{warn}{}{when}", r.help)
     }
 
     pub fn title(&self) -> &'static str {
@@ -1063,6 +1073,10 @@ pub struct View {
 
 /// A help line for the modern page: without the Config tool's value numbers ("0034: ") and our "(not retail)" notes.
 fn plain(help: &str) -> String {
+    // The Background row's warning goes first; the numbers come off the help behind it.
+    if let Some(rest) = help.strip_prefix(WARNING).map(str::trim_start) {
+        return format!("{WARNING} {}", plain(rest));
+    }
     let body = match help.split_once(": ") {
         Some((head, rest)) if head.starts_with(|c: char| c.is_ascii_digit()) && head.chars().all(|c| c.is_ascii_digit() || c == ' ' || c == '/') => rest,
         _ => help,
@@ -1102,7 +1116,8 @@ impl SettingsUi {
                             VCtl::Slider { n, at, shown: self.shown(r) }
                         }
                     };
-                    VRow { label: r.label.to_string(), ctl }
+                    let label = if self.warns(r) { format!("{} \u{26a0}", r.label) } else { r.label.to_string() };
+                    VRow { label, ctl }
                 })
                 .collect()
         };
@@ -1503,6 +1518,32 @@ mod tests {
         assert_eq!(plain("0001 / 0002: the window's size."), "The window's size.");
         assert_eq!(plain("The monitor to use (not retail)."), "The monitor to use.");
         assert_eq!(plain("Window: the window's shape."), "Window: the window's shape.");
+    }
+
+    /// The Background row warns (help and modern label) only while real character shadows are on.
+    #[test]
+    fn background_warns_with_real_shadows() {
+        let mut c = Config::default();
+        for shadows in [0, 1] {
+            c.actor_shadows = shadows;
+            let mut ui = SettingsUi::open(&c, [1280, 800]);
+            let (tab, i) = (0..TABS.len())
+                .find_map(|t| {
+                    ui.tab = t;
+                    ui.rows().iter().position(|r| r.label == "Background").map(|i| (t, i))
+                })
+                .expect("a Background row");
+            ui.goto(tab, i + 1);
+            assert_eq!(ui.help().starts_with(WARNING), shadows != 0, "{}", ui.help());
+            // The modern help drops the Config numbers behind the warning too.
+            let help = ui.view().help;
+            assert!(!help.contains("0003"), "{help}");
+            assert_eq!(help.starts_with(WARNING), shadows != 0, "{help}");
+            let label = &ui.view().rows[i].label;
+            assert_eq!(label.contains('\u{26a0}'), shadows != 0, "{label}");
+            // Other rows never warn.
+            assert!(ui.rows().iter().filter(|r| r.label != "Background").all(|r| !ui.warns(r)));
+        }
     }
 
     #[test]
