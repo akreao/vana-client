@@ -158,6 +158,9 @@ pub struct Config {
     /// Not retail (Settings' Lamp Lights): real point lights at the zones' lamps in place of their baked lamplight
     /// (client/lamps.rs).
     pub lamp_lights: bool,
+    /// Character shadows: 0 retail's (blob / silhouette), 1 real (a shadow map from the sun, render/sunshadow.rs,
+    /// retail's where there is no sun). Not a retail option.
+    pub actor_shadows: u32,
     /// Extra (the clock add-ons): Earth time, the moon and the next day beside the Vana'diel clock (client/clock.rs).
     pub earth_clock: bool,
     /// Extra (the trust chatter filters): trusts' party lines (battle message 711) are not printed.
@@ -391,6 +394,7 @@ impl Default for Config {
             target_hpp: false,
             earth_clock: false,
             lamp_lights: true,
+            actor_shadows: 0,
             hide_trust_speech: false,
             hide_ready_lines: false,
             short_battle: false,

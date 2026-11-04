@@ -14157,6 +14157,8 @@ impl App {
                         crate::dat::weather::Lighting::from_env_eased(e, minute, ease, crate::dat::weather::clipping(e.draw_dist, x, zone).1)
                     };
                     r.lighting = mix(&|t| zw.at(t, minute)).map(|e| step(&mut w.light_ease, &e));
+                    // Real character shadows (render/sunshadow.rs) are cast by the sun only.
+                    r.daylight = crate::dat::weather::sun_moon(minute).0.y >= 0.0;
                     // FUN_1018b8f0: 100 before the env is up. Settings' Draw Distance scales it, or lifts it (0).
                     let (d, k) = crate::dat::weather::clipping(r.lighting.map_or(100.0, |l| l.draw_dist), x, zone);
                     let scale = self.cfg.draw_distance as f32 / 100.0;
@@ -14787,6 +14789,12 @@ impl App {
                 let culled = |id: &u32, a: &Actor| a.character.is_some() && *id != w.my_id && !w.visible.contains(id);
                 let has = |id: u32| w.actors.contains_key(&id);
                 let flags = |id: u32| w.actors.get(&id).map_or((false, false), |a| (a.shadow_off, a.noblob));
+                // Real character shadows (ours, render/sunshadow.rs), unless config 0x3a turns shadows off. The actors their
+                // map covers this frame take no retail shadow (nor its casters or layers).
+                r.prepare_sun_shadow(&gfx.gpu, self.cfg.actor_shadows != 0 && w.game.get(0x3a) != 1);
+                if let Some((m, _, _)) = r.sun_shadow_light(camera.target) {
+                    seen.retain(|_, s| !crate::render::sunshadow::covers(m, s.pos, s.corners.iter().map(|c| c.distance(s.pos)).fold(0.0, f32::max)));
+                }
                 let shadow_modes = match w.ground.as_ref() {
                     Some(g) => shadows::modes(&shadows::Ctx { ground: g, setting: w.game.get(0x3a), me: w.my_id, zone: w.pos_zone, has: &has, flags: &flags, layers: r.shadow_layers(bg) }, &seen, camera.eye),
                     None => Vec::new(),
