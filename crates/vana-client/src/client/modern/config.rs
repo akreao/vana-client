@@ -167,7 +167,8 @@ fn lines_of(items: &[Item], s: Option<&SettingsUi>) -> Vec<Line> {
 }
 
 /// What the topic area shows: the chosen page, or while a search is typed its hits under their pages' names; Retail
-/// only leaves ours out.
+/// only leaves ours out (the mods' pages too). The hits stay as found while the text does, so a setting changed in
+/// them stays put even when its help then reads otherwise.
 fn view_items(c: &ConfigUi) -> Vec<Item> {
     let mut items: Vec<Item> = match c.m_find.as_ref().filter(|f| !f.trim().is_empty()) {
         Some(_) => {
@@ -185,7 +186,7 @@ fn view_items(c: &ConfigUi) -> Vec<Item> {
         None => PAGES[c.m_entry.min(PAGES.len() - 1)].2.to_vec(),
     };
     if c.m_retail {
-        items.retain(|i| !matches!(i, Ours(_)));
+        items.retain(|i| !matches!(i, Ours(_) | Open(SUB_MODS | SUB_MOD_PAGES)));
     }
     items
 }
@@ -2078,6 +2079,8 @@ mod tests {
         let items = view_items(&c);
         assert!(items.contains(&Retail("conf3win", 6)));
         assert!(items.iter().all(|i| !matches!(i, Ours(_))));
+        c.m_entry = PAGES.iter().position(|p| p.1 == "Mods").unwrap();
+        assert!(view(&c, Some(&s)).is_empty());
     }
 
     /// A page of ours in the Settings window shows only its own tabs, and turning them keeps that offset.
