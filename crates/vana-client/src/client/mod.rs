@@ -14875,6 +14875,15 @@ impl App {
                 r.prepare_sun_shadow(&gfx.gpu, self.cfg.actor_shadows != 0 && w.game.get(0x3a) != 1, self.cfg.shadow_map);
                 // Ambient occlusion on the scenery (ours, render/ssao.rs), at the scene's size.
                 r.prepare_ssao(&gfx.gpu, self.cfg.ssao, bg);
+                // Lamp shadows (ours, render/lampshadow.rs): with Real shadows and Real lamp lights, the nearest lamps'
+                // light is cut behind the characters near them.
+                r.lamp_shadows = if self.cfg.actor_shadows != 0 && self.cfg.lamp_lights && w.game.get(0x3a) != 1 {
+                    let feet: Vec<Vec3> = seen.values().map(|s| s.pos).collect();
+                    let lamps: Vec<(Vec3, u32)> = w.lamps.list.iter().map(|l| (l.pos, l.slot)).collect();
+                    crate::render::lampshadow::pick(&lamps, &feet, camera.target)
+                } else {
+                    Vec::new()
+                };
                 if let Some((m, _, _)) = r.sun_shadow_light(camera.target) {
                     seen.retain(|_, s| !crate::render::sunshadow::covers(m, s.pos, s.corners.iter().map(|c| c.distance(s.pos)).fold(0.0, f32::max)));
                 }

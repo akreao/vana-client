@@ -312,7 +312,7 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
     ];
     const EFFECTS: &[SRow] = &[
         row("Lamp Lights", "Baked: the lamplight painted onto the walls, as retail. Real: point lights at the lamps (not retail).", LampLights, &[(0, "Baked"), (1, "Real")], Now),
-        row("Character Shadows", "Retail: the game's blob and silhouette shadows. Real: characters cast shadows from the sun, or fainter from the moon, onto the world (not retail).", ActorShadows, &[(0, "Retail"), (1, "Real")], Now),
+        row("Character Shadows", "Retail: the game's blob and silhouette shadows. Real: characters cast shadows from the sun, or fainter from the moon, onto the world, and with Real lamp lights from the nearest lamps too (not retail).", ActorShadows, &[(0, "Retail"), (1, "Real")], Now),
         row("Shadow Quality", "The real shadows' map: Low 1024, Medium 2048, High 4096 texels over 80 x 80 around the camera (not retail).", ShadowMap, &[(1024, "Low"), (2048, "Medium"), (4096, "High")], Now),
         row("Ambient Occlusion", "Soft shading in the world's corners and creases; characters are not touched (not retail).", Ssao, OFF_ON, Now),
         row("Colour Grading", "A colour look for the 3D scene; menus and text are not touched (not retail).", Grading, &[(0, "Off"), (1, "Vivid"), (2, "Warm"), (3, "Cool"), (4, "Film")], Now),
