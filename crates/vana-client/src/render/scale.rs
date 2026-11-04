@@ -8,7 +8,7 @@ use super::Gpu;
 use super::Put;
 
 const SHADER: &str = r#"
-struct U { src: vec2<f32>, dst: vec2<f32>, gamma: vec4<f32>, lcd: vec4<f32> };
+struct U { src: vec2<f32>, dst: vec2<f32>, gamma: vec4<f32>, lcd: vec4<f32>, grade: vec4<f32> };
 @group(0) @binding(0) var<uniform> u: U;
 @group(0) @binding(1) var tex: texture_2d<f32>;
 @group(0) @binding(2) var samp: sampler;
@@ -50,6 +50,18 @@ fn up(uv: vec2<f32>) -> vec3<f32> {
     c += tap(vec2<f32>(t0.x, t3.y)) * w0.x * w3.y + tap(vec2<f32>(t12.x, t3.y)) * w12.x * w3.y + tap(vec2<f32>(t3.x, t3.y)) * w3.x * w3.y;
     return max(c, vec3<f32>(0.0));
 }
+fn luma(c: vec3<f32>) -> f32 { return dot(c, vec3<f32>(0.299, 0.587, 0.114)); }
+// Colour grading (config `grading`, not retail): saturation x, contrast y about mid grey, warmth z (red up, blue
+// down, none on black), on the gamma-space scene before the gamma ramp; grade.w = 1 when on.
+fn grade(c: vec3<f32>) -> vec3<f32> {
+    if (u.grade.w < 0.5) { return c; }
+    let l = luma(c);
+    var g = mix(vec3<f32>(l), c, u.grade.x);
+    g = (g - 0.5) * u.grade.y + 0.5;
+    // The warmth fades in over the darkest quarter, so black (a faded frame) stays black.
+    g = g + vec3<f32>(u.grade.z, 0.0, -u.grade.z) * min(l * 4.0, 1.0);
+    return clamp(g, vec3<f32>(0.0), vec3<f32>(1.0));
+}
 // Gamma: c^(1 / g) per channel (FUN_10016400's ramp exponent).
 // 3D LCD Mode (lcd.x = 1, config 0030): the scene was drawn 0.6 % wider (lcd.z = its extra share, 0.006); eye 0
 // (projection shifted -0.006 in NDC x) squeezed into the left half, eye 1 (+0.006) into the right, bilinear
@@ -65,7 +77,7 @@ fn up(uv: vec2<f32>) -> vec3<f32> {
         let left = i.uv.x < 0.5;
         let x = select(i.uv.x - 0.5, i.uv.x, left) * 2.0;
         let ux = select(x, x + u.lcd.z, left) / (1.0 + u.lcd.z);
-        let e = tap(vec2<f32>(ux, i.uv.y));
+        let e = grade(tap(vec2<f32>(ux, i.uv.y)));
         return vec4<f32>(pow(clamp(e, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0 / u.gamma.rgb), 1.0);
     }
     var c: vec3<f32>;
@@ -74,9 +86,21 @@ fn up(uv: vec2<f32>) -> vec3<f32> {
     } else {
         c = up(i.uv);
     }
+    c = grade(c);
     return vec4<f32>(pow(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0 / u.gamma.rgb), 1.0);
 }
 "#;
+
+/// A colour grading preset's (saturation, contrast, warmth, on): 0 off, 1 Vivid, 2 Warm, 3 Cool, 4 Film.
+pub fn grade(preset: u32) -> [f32; 4] {
+    match preset {
+        1 => [1.2, 1.08, 0.0, 1.0],
+        2 => [1.05, 1.04, 0.035, 1.0],
+        3 => [1.0, 1.04, -0.035, 1.0],
+        4 => [0.85, 1.12, 0.015, 1.0],
+        _ => [1.0, 1.0, 0.0, 0.0],
+    }
+}
 
 struct Target {
     size: [u32; 2],
@@ -142,7 +166,7 @@ impl SceneScale {
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             ..Default::default()
         });
-        let uniform = device.create_buffer(&wgpu::BufferDescriptor { label: Some("scene scale"), size: 48, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+        let uniform = device.create_buffer(&wgpu::BufferDescriptor { label: Some("scene scale"), size: 64, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
         Self { pipeline, layout, sampler, uniform, format, target: None, smaa: None }
     }
 
@@ -187,13 +211,15 @@ impl SceneScale {
     /// Scales the offscreen scene onto `dst` (window size) with a gamma per channel, replacing what is there. `lcd`:
     /// 3D LCD Mode's side-by-side eyes (the scene `extra` wider) and whether this frame carries the strip. `smaa`: the
     /// anti-aliasing filter (not retail; skipped in 3D LCD Mode and when downscaling). The SMAA passes are made on
-    /// first use; turning it off leaves them idle.
-    pub fn blit(&mut self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, dst: &wgpu::TextureView, dst_size: [u32; 2], gamma: [f32; 3], lcd: Option<(f32, bool)>, smaa: bool) {
+    /// first use; turning it off leaves them idle. `grading`: the colour grading preset (`grading`, 0 off).
+    #[allow(clippy::too_many_arguments)]
+    pub fn blit(&mut self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, dst: &wgpu::TextureView, dst_size: [u32; 2], gamma: [f32; 3], lcd: Option<(f32, bool)>, smaa: bool, grading: u32) {
         let Some(t) = &self.target else { return };
         let dst_size = [dst_size[0].max(1), dst_size[1].max(1)];
         let smaa = smaa && lcd.is_none() && t.size[0] <= dst_size[0] && t.size[1] <= dst_size[1];
         let (on, strip, extra) = lcd.map_or((0.0, 0.0, 0.0), |(e, s)| (1.0, s as u32 as f32, e));
-        let u = [t.size[0] as f32, t.size[1] as f32, dst_size[0] as f32, dst_size[1] as f32, gamma[0], gamma[1], gamma[2], 1.0, on, strip, extra, 0.0];
+        let mut u = [t.size[0] as f32, t.size[1] as f32, dst_size[0] as f32, dst_size[1] as f32, gamma[0], gamma[1], gamma[2], 1.0, on, strip, extra, 0.0, 0.0, 0.0, 0.0, 0.0];
+        u[12..16].copy_from_slice(&grade(grading));
         gpu.queue.put(&self.uniform, 0, bytemuck::cast_slice(&u));
         let smaa_group = smaa.then(|| {
             let (tex, size) = (t.tex.clone(), t.size);
@@ -273,7 +299,7 @@ mod tests {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
                 view_formats: &[],
             });
-            s.blit(&gpu, &mut enc, &out.create_view(&Default::default()), dst, [1.0; 3], None, false);
+            s.blit(&gpu, &mut enc, &out.create_view(&Default::default()), dst, [1.0; 3], None, false, 0);
             gpu.queue.submit([enc.finish()]);
             let px = read(&gpu, &out, dst[0], dst[1]);
             for p in px.chunks_exact(4) {
@@ -297,7 +323,7 @@ mod tests {
             view_formats: &[],
         });
         let mut enc = gpu.device.create_command_encoder(&Default::default());
-        s.blit(&gpu, &mut enc, &out.create_view(&Default::default()), [4, 4], [1.0; 3], None, false);
+        s.blit(&gpu, &mut enc, &out.create_view(&Default::default()), [4, 4], [1.0; 3], None, false, 0);
         gpu.queue.submit([enc.finish()]);
         for p in read(&gpu, &out, 4, 4).chunks_exact(4) {
             assert!((p[0] as i32 - 128).abs() <= 3, "{p:?}");
@@ -327,7 +353,7 @@ mod tests {
             let tex = s.target.as_ref().unwrap().tex.clone();
             gpu.queue.write_texture(tex.as_image_copy(), px, wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(n * 4), rows_per_image: Some(n) }, wgpu::Extent3d { width: n, height: n, depth_or_array_layers: 1 });
             let mut enc = gpu.device.create_command_encoder(&Default::default());
-            s.blit(&gpu, &mut enc, &out.create_view(&Default::default()), [n, n], [1.0; 3], None, smaa);
+            s.blit(&gpu, &mut enc, &out.create_view(&Default::default()), [n, n], [1.0; 3], None, smaa, 0);
             gpu.queue.submit([enc.finish()]);
             read(&gpu, &out, n, n)
         };
@@ -349,5 +375,65 @@ mod tests {
                 assert_eq!(a, b, "pixel {x},{y} changed");
             }
         }
+    }
+
+    /// Off leaves the scene alone; Vivid pushes a colour away from grey; Warm adds red and takes blue.
+    #[test]
+    fn grading_presets() {
+        let Ok(gpu) = Gpu::headless() else { return };
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let mut s = SceneScale::new(&gpu, format);
+        let (view, _, _) = s.target(&gpu, [4, 4]);
+        let out = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size: wgpu::Extent3d { width: 4, height: 4, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let run = |s: &mut SceneScale, preset: u32| {
+            let mut enc = gpu.device.create_command_encoder(&Default::default());
+            {
+                let _clear = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: None,
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &view, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.6, g: 0.4, b: 0.2, a: 1.0 }), store: wgpu::StoreOp::Store } })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+            }
+            s.blit(&gpu, &mut enc, &out.create_view(&Default::default()), [4, 4], [1.0; 3], None, false, preset);
+            gpu.queue.submit([enc.finish()]);
+            let px = read(&gpu, &out, 4, 4);
+            [px[0] as i32, px[1] as i32, px[2] as i32]
+        };
+        let off = run(&mut s, 0);
+        assert!((off[0] - 153).abs() <= 2 && (off[1] - 102).abs() <= 2 && (off[2] - 51).abs() <= 2, "{off:?}");
+        let vivid = run(&mut s, 1);
+        assert!(vivid[0] > off[0] && vivid[2] < off[2], "{vivid:?}");
+        let warm = run(&mut s, 2);
+        // Black (a faded frame) stays black under every preset.
+        for preset in 1..=4 {
+            let mut enc = gpu.device.create_command_encoder(&Default::default());
+            {
+                let _clear = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: None,
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &view, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store } })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+            }
+            s.blit(&gpu, &mut enc, &out.create_view(&Default::default()), [4, 4], [1.0; 3], None, false, preset);
+            gpu.queue.submit([enc.finish()]);
+            let px = read(&gpu, &out, 4, 4);
+            assert_eq!(&px[..3], &[0, 0, 0], "preset {preset}");
+        }
+        assert!(warm[0] - off[0] > warm[2] - off[2], "{warm:?}");
     }
 }
