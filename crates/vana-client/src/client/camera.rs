@@ -44,7 +44,7 @@ pub struct State {
     last_dy: f32,
     zoom_reset: bool,
     zoomed: bool,
-    /// Face-camera (keyboard type 2, Shift): the eye offset stored when Shift went down.
+    /// Strafe lock (0x9c, control type 2, Shift / B held): the eye offset stored when it went down.
     face: Option<Vec3>,
     /// First person (DAT_10475578) and its eased look offsets (pitch, yaw).
     pub first: bool,

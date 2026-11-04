@@ -1870,7 +1870,7 @@ From the research notes:
 - Ids by default key ([C|A] = Ctrl or Alt + key):
   - Movement and camera: axes 4 / 5 (Num4 / 6, Num8 / 2 raw; compact A / D, W / S), axes 6 / 7 (arrows raw; compact J
     / L, I / K); 0x10 Num5 / V [C|A] first person; 0x1c Num7 autorun; 0x45 Num/ / Z [C|A] walk; 0x4f / 0x50 PageUp /
-    PageDown, Num9 / Num3, . / , [C|A] zoom; 0x51 Home recentre; 0x9c LShift held, face-camera strafe (type 2); 0xa9 /
+    PageDown, Num9 / Num3, . / , [C|A] zoom; 0x51 Home recentre; 0x9c LShift held, strafe lock (type 2); 0xa9 /
     0xaa Q / E turn (type 2); 0xa4 / 0xa5 the zoom axis (map zoom); 0x35 LShift, a list's Shift selection
     (FUN_10188060, FUN_101a70d0) *(inf)*; 0x83 the lobby free camera *(inf: debug)*; 0xa0..0xa3 fallback move axes,
     never bound.
@@ -1978,7 +1978,7 @@ From the research notes:
   max 1.413675 rad pitch / 1.8849 yaw off the body; look = eye + R(yaw, pitch)(5, 0.25, 0); eye and look ease 0.125 a
   tick; focal 280; hold 8. Our own model fades out at 0.0625 a tick (actor +0x167 -= ticks x _DAT_1031f860, FUN at
   all.c ~146770) *(inf: back in at the same rate)*.
-- Face-camera: the eye = look + the offset stored when Shift went down; no axes or spring.
+- Strafe lock (0x9c): the eye = look + the offset stored when Shift / B went down (FUN_100a5e10); no axes or spring.
 - Ours, not retail: face() (zone-in, event end, drives) puts the eye 5 back and 1 up, in front of what the look -> eye
   ray hits *(inf)*; the sweep is skipped when the look cannot see the start eye. Without both an eye placed inside the
   hill behind a zone-in point stayed underground for good (the sweep undid every move out).
