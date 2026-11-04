@@ -29,6 +29,7 @@ pub struct Settings {
     pub earth_clock: bool,
     pub lamp_lights: bool,
     pub actor_shadows: u32,
+    pub shadow_map: u32,
     pub ssao: bool,
     pub hide_trust_speech: bool,
     pub hide_ready_lines: bool,
@@ -80,6 +81,7 @@ impl Settings {
             earth_clock: c.earth_clock,
             lamp_lights: c.lamp_lights,
             actor_shadows: c.actor_shadows,
+            shadow_map: c.shadow_map,
             ssao: c.ssao,
             hide_trust_speech: c.hide_trust_speech,
             hide_ready_lines: c.hide_ready_lines,
@@ -129,6 +131,7 @@ impl Settings {
         c.earth_clock = self.earth_clock;
         c.lamp_lights = self.lamp_lights;
         c.actor_shadows = self.actor_shadows;
+        c.shadow_map = self.shadow_map;
         c.ssao = self.ssao;
         c.hide_trust_speech = self.hide_trust_speech;
         c.hide_ready_lines = self.hide_ready_lines;
@@ -189,6 +192,7 @@ enum Val {
     EarthClock,
     LampLights,
     ActorShadows,
+    ShadowMap,
     Ssao,
     TrustSpeech,
     ReadyLines,
@@ -308,7 +312,8 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
     ];
     const EFFECTS: &[SRow] = &[
         row("Lamp Lights", "Baked: the lamplight painted onto the walls, as retail. Real: point lights at the lamps (not retail).", LampLights, &[(0, "Baked"), (1, "Real")], Now),
-        row("Character Shadows", "Retail: the game's blob and silhouette shadows. Real: characters cast shadows from the sun onto the world; retail's where there is no sun (not retail).", ActorShadows, &[(0, "Retail"), (1, "Real")], Now),
+        row("Character Shadows", "Retail: the game's blob and silhouette shadows. Real: characters cast shadows from the sun, or fainter from the moon, onto the world (not retail).", ActorShadows, &[(0, "Retail"), (1, "Real")], Now),
+        row("Shadow Quality", "The real shadows' map: Low 1024, Medium 2048, High 4096 texels over 80 x 80 around the camera (not retail).", ShadowMap, &[(1024, "Low"), (2048, "Medium"), (4096, "High")], Now),
         row("Ambient Occlusion", "Soft shading in the world's corners and creases; characters are not touched (not retail).", Ssao, OFF_ON, Now),
         row("Colour Grading", "A colour look for the 3D scene; menus and text are not touched (not retail).", Grading, &[(0, "Off"), (1, "Vivid"), (2, "Warm"), (3, "Cool"), (4, "Film")], Now),
         row("Environment Animation", "0011: swaying vegetation (Normal 16 steps, Smooth 32).", Tool("0011"), &[(0, "Off"), (1, "Normal"), (2, "Smooth")], Now),
@@ -539,6 +544,7 @@ impl SettingsUi {
             Val::EarthClock => self.s.earth_clock as u32,
             Val::LampLights => self.s.lamp_lights as u32,
             Val::ActorShadows => self.s.actor_shadows,
+            Val::ShadowMap => self.s.shadow_map,
             Val::Ssao => self.s.ssao as u32,
             Val::TrustSpeech => self.s.hide_trust_speech as u32,
             Val::ReadyLines => self.s.hide_ready_lines as u32,
@@ -582,6 +588,7 @@ impl SettingsUi {
             Val::EarthClock => self.s.earth_clock = x != 0,
             Val::LampLights => self.s.lamp_lights = x != 0,
             Val::ActorShadows => self.s.actor_shadows = x,
+            Val::ShadowMap => self.s.shadow_map = x,
             Val::Ssao => self.s.ssao = x != 0,
             Val::TrustSpeech => self.s.hide_trust_speech = x != 0,
             Val::ReadyLines => self.s.hide_ready_lines = x != 0,

@@ -164,6 +164,8 @@ pub struct Config {
     /// Character shadows: 0 retail's (blob / silhouette), 1 real (a shadow map from the sun, render/sunshadow.rs,
     /// retail's where there is no sun). Not a retail option.
     pub actor_shadows: u32,
+    /// The real shadows' map size in texels (1024, 2048 or 4096; render/sunshadow.rs). Not a retail option.
+    pub shadow_map: u32,
     /// Ambient occlusion on the scenery (render/ssao.rs). Not a retail option.
     pub ssao: bool,
     /// Extra (the clock add-ons): Earth time, the moon and the next day beside the Vana'diel clock (client/clock.rs).
@@ -401,6 +403,7 @@ impl Default for Config {
             earth_clock: false,
             lamp_lights: true,
             actor_shadows: 0,
+            shadow_map: 2048,
             ssao: false,
             hide_trust_speech: false,
             hide_ready_lines: false,
