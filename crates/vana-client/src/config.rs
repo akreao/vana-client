@@ -136,7 +136,7 @@ pub struct Config {
     pub frame_limit: u32,
     /// Anisotropic filtering for scenery, models and the creator (1 = off, up to 16). Not a retail option.
     pub anisotropy: u16,
-    /// Anti-aliasing of the 3D scene: 0 off (retail), 1 FXAA. Not a retail option.
+    /// Anti-aliasing of the 3D scene: 0 off (retail), 1 SMAA (was FXAA before 2026-11-04). Not a retail option.
     pub antialias: u32,
     /// Colour grading of the 3D scene: 0 off (retail), 1 Vivid, 2 Warm, 3 Cool, 4 Film (render/scale.rs). Not a
     /// retail option.

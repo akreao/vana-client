@@ -339,7 +339,7 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
     const CLIENT: &[SRow] = &[
         row("Frame Limit", "Frames drawn a second; game time stays at 60 ticks.", FrameLimit, &[], Now),
         row("Anisotropic Filtering", "Anisotropic texture filtering.", Aniso, &[(1, "Off"), (2, "2x"), (4, "4x"), (8, "8x"), (16, "16x")], NextZone),
-        row("Anti-aliasing", "Smooths the jagged edges of the 3D scene with FXAA; menus and text are not touched (not retail). For supersampling, set Background above the window size.", Antialias, &[(0, "Off"), (1, "FXAA")], Now),
+        row("Anti-aliasing", "Smooths the jagged edges of the 3D scene with SMAA; menus and text are not touched (not retail). For supersampling, set Background above the window size.", Antialias, &[(0, "Off"), (1, "SMAA")], Now),
         row("Party TP", "Show TP in the party window (retail config 0xae, off there).", PartyTp, OFF_ON, Now),
         row("Interface", "Classic: the game's own windows. Modern: the new interface's windows where it has them (not retail).", ModernUi, &[(0, "Classic"), (1, "Modern")], Now),
         row("Interface Size", "The modern interface's size (not retail).", ModernScale, MODERN_SCALES, Now),

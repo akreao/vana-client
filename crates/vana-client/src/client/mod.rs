@@ -15035,7 +15035,7 @@ impl App {
         }
         if drew_world
             && scaled
-            && let Some(sc) = &self.scene_scale
+            && let Some(sc) = &mut self.scene_scale
         {
             sc.blit(&gfx.gpu, &mut encoder, &view, size, gamma, lcd.then_some((LCD_SHIFT, self.lcd_frame % 2 == 1)), self.cfg.antialias != 0, self.cfg.grading);
         }
