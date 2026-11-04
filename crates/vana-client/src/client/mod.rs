@@ -14792,6 +14792,8 @@ impl App {
                 // Real character shadows (ours, render/sunshadow.rs), unless config 0x3a turns shadows off. The actors their
                 // map covers this frame take no retail shadow (nor its casters or layers).
                 r.prepare_sun_shadow(&gfx.gpu, self.cfg.actor_shadows != 0 && w.game.get(0x3a) != 1);
+                // Ambient occlusion on the scenery (ours, render/ssao.rs), at the scene's size.
+                r.prepare_ssao(&gfx.gpu, self.cfg.ssao, bg);
                 if let Some((m, _, _)) = r.sun_shadow_light(camera.target) {
                     seen.retain(|_, s| !crate::render::sunshadow::covers(m, s.pos, s.corners.iter().map(|c| c.distance(s.pos)).fold(0.0, f32::max)));
                 }
