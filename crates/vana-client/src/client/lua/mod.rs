@@ -1143,13 +1143,13 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
         w.chat.filter = host.chat_filter();
         w.chat.mode_colours = w.battle.as_ref().map(|b| std::rc::Rc::new(b.code_tables(&w.game).1));
     }
-    // `/lua settings`: the modern UI shows Extras inside the Config window (its Extras entry, page open); the classic
+    // `/lua settings`: the modern UI shows the mods' pages in the Settings window (Mods, Mod Settings); the classic
     // page stands alone.
     host.packet_upkeep(w);
     if host.open_page.is_some() && w.settings.is_none() {
         if w.modern {
             let mut c = super::configui::ConfigUi::open("configwi");
-            (c.m_entry, c.m_open, c.m_row) = (super::modern::extras_entry(), true, 0);
+            super::modern::open_mod_settings(&mut c);
             w.config = Some(c);
             w.menu = None;
         }

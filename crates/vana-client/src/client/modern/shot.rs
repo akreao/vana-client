@@ -322,6 +322,10 @@ if !opts.titles {
     if opts.favs {
         favs_sample(&mut p);
     }
+    if opts.settings {
+        let s = super::super::settings::SettingsUi::open(&crate::config::Config::default(), [1920, 1080]);
+        super::config::sample(&mut p, &s);
+    }
     if opts.menus {
         let r = p.this.get("party").copied().unwrap_or(Rect::NOTHING);
         super::ctxmenu::popup(ctx, m, pos2(r.min.x - 560.0, r.min.y - 40.0), None, &[("Use", true), ("Drop", true), ("Sort", true), ("Move to...", true)]);
@@ -339,7 +343,7 @@ if !opts.titles {
         timers_sample(m, ctx, screen.center().x - 190.0 - super::extras::WIDTH, super::extras::WIDTH, super::extras::Side::Left);
         timers_sample(m, ctx, screen.center().x - 180.0, 360.0, super::extras::Side::Left);
     }
-    if opts.list || opts.kit || opts.favs || opts.modes || opts.rows.is_some() || opts.borders.is_some() {
+    if opts.list || opts.kit || opts.favs || opts.modes || opts.settings || opts.rows.is_some() || opts.borders.is_some() {
         return;
     }
     // Every frame at a few sizes: nine-slice corners, tiled edges, the stretched gradient.
@@ -374,6 +378,8 @@ pub struct Opts {
     pub kit: bool,
     /// The UI Modes editor.
     pub modes: bool,
+    /// The Settings window (config.rs).
+    pub settings: bool,
     /// The favourites strip and starred list rows.
     pub favs: bool,
     /// The right-click menus beside the party window.
