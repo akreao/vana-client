@@ -21,6 +21,7 @@ pub mod gputime;
 pub mod cull;
 pub mod shadow;
 pub mod sunshadow;
+pub mod lampshadow;
 pub mod ssao;
 pub mod sway;
 
@@ -421,6 +422,10 @@ pub struct ZoneRenderer {
     /// Ambient occlusion on the scenery (render/ssao.rs; prepare_ssao).
     ssao: Option<ssao::Ssao>,
     pub sun_shadow_drawn: std::cell::Cell<bool>,
+    /// Lamp shadows (render/lampshadow.rs): the maps (always made; bound in `globals`) and this frame's lamps (light
+    /// slot, matrix; empty = none), which the client sets.
+    lamp_shadow: lampshadow::LampShadows,
+    pub lamp_shadows: Vec<(u32, Mat4)>,
     /// The real shadows' level from the Vana'diel clock (sunshadow::twilight; 0 at the sun / moon change) and their PCF
     /// spacing (softer by the moon).
     pub shadow_level: f32,
@@ -945,6 +950,20 @@ impl ZonePipes {
                     ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None },
                     count: None,
                 },
+                // Lamp shadows (render/lampshadow.rs): their uniform, maps and comparison sampler.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Depth, view_dimension: wgpu::TextureViewDimension::D2Array, multisampled: false },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry { binding: 7, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison), count: None },
             ],
         });
         let texture_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1768,6 +1787,7 @@ impl ZoneRenderer {
         if !geo.deltas.is_empty() {
             gpu.queue.put(&deltas, 0, bytemuck::cast_slice(&geo.deltas));
         }
+        let lamp_shadow = lampshadow::LampShadows::new(gpu, &p.sil_layout);
         let globals = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("globals"),
             layout: &p.globals_layout,
@@ -1777,6 +1797,9 @@ impl ZoneRenderer {
                 wgpu::BindGroupEntry { binding: 2, resource: areas.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 3, resource: parts_gpu.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 4, resource: deltas.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: lamp_shadow.uniform.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::TextureView(&lamp_shadow.array) },
+                wgpu::BindGroupEntry { binding: 7, resource: wgpu::BindingResource::Sampler(&lamp_shadow.cmp) },
             ],
         });
         let sampler = mip_sampler(device);
@@ -1872,6 +1895,8 @@ impl ZoneRenderer {
             sun_shadow: None,
             ssao: None,
             sun_shadow_drawn: std::cell::Cell::new(false),
+            lamp_shadow,
+            lamp_shadows: Vec::new(),
             shadow_level: 1.0,
             shadow_soft: 1.0,
             refract_buf,
@@ -2810,17 +2835,25 @@ impl ZoneRenderer {
             pass.set_pipeline(&self.sun_depth_pipeline);
             pass.set_bind_group(0, &self.globals, &[]);
             pass.set_bind_group(3, &s.matrix_group, &[0]);
-            for a in actors.iter().filter(|a| a.mips <= done && a.refract.is_none() && a.alpha >= 0.5) {
-                let Some(skin) = a.skin.as_ref().filter(|s| s.frame == self.pose_frame) else { continue };
-                pass.set_bind_group(2, *group, &[skin.offset]);
-                pass.set_vertex_buffer(0, skin.vertices.slice(..));
-                for (tex, range, wep) in &a.draws {
-                    if *wep != NO_WEP && a.hidden_weps & (1 << wep) != 0 {
-                        continue;
-                    }
-                    pass.set_bind_group(1, &a.textures[*tex], &[]);
-                    pass.draw(range.clone(), 0..1);
-                }
+            self.draw_actor_depth(&mut pass, actors, group, done);
+        }
+        // Lamp shadows (render/lampshadow.rs): each shadowed lamp's characters into its layer; the zone shader reads them.
+        let lamps: &[(u32, Mat4)] = if self.pose_gpu.is_some() { &self.lamp_shadows } else { &[] };
+        self.lamp_shadow.set(gpu, lamps);
+        if let Some((_, group, _)) = &self.pose_gpu {
+            for (k, _) in lamps.iter().enumerate().take(lampshadow::LAYERS) {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("lamp shadow depth"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: &self.lamp_shadow.layers[k], depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Store }), stencil_ops: None }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_pipeline(&self.sun_depth_pipeline);
+                pass.set_bind_group(0, &self.globals, &[]);
+                pass.set_bind_group(3, &self.lamp_shadow.matrix_group, &[256 * k as u32]);
+                self.draw_actor_depth(&mut pass, actors, group, done);
             }
         }
         let [r, g, b] = clear;
@@ -3074,6 +3107,22 @@ impl ZoneRenderer {
             pass.set_bind_group(2, group, &[skin.offset]);
             pass.set_bind_group(3, &self.faded_group, &[off as u32]);
             pass.draw(0..3, 0..1);
+        }
+    }
+
+    /// The skinned actors into a shadow depth pass (the sun's or a lamp's; its pipeline and groups 0 and 3 set).
+    fn draw_actor_depth(&self, pass: &mut wgpu::RenderPass<'_>, actors: &[&ActorGpu], group: &wgpu::BindGroup, done: u64) {
+        for a in actors.iter().filter(|a| a.mips <= done && a.refract.is_none() && a.alpha >= 0.5) {
+            let Some(skin) = a.skin.as_ref().filter(|s| s.frame == self.pose_frame) else { continue };
+            pass.set_bind_group(2, group, &[skin.offset]);
+            pass.set_vertex_buffer(0, skin.vertices.slice(..));
+            for (tex, range, wep) in &a.draws {
+                if *wep != NO_WEP && a.hidden_weps & (1 << wep) != 0 {
+                    continue;
+                }
+                pass.set_bind_group(1, &a.textures[*tex], &[]);
+                pass.draw(range.clone(), 0..1);
+            }
         }
     }
 
@@ -3462,5 +3511,25 @@ mod faded_tests {
             let p = gpu.pipes.zone(f);
             assert_eq!(p.color_format, f);
         }
+    }
+
+    /// An empty zone builds its globals (the lamp shadow maps bound in them) and renders a frame with a lamp shadow
+    /// set, without validation errors.
+    #[test]
+    fn zone_renders_with_lamp_shadows() {
+        let Ok(gpu) = super::Gpu::headless() else { return };
+        let scene = crate::dat::zone::ZoneScene { regions: vec![], collision: None, placements: vec![], meshes: vec![], textures: vec![], warnings: vec![], light_keys: vec![], paths: Default::default(), camera_lists: Default::default(), sway: Default::default(), bumps: vec![] };
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let mut r = super::ZoneRenderer::new(&gpu, &scene, format);
+        r.lamp_shadows = vec![(0, glam::Mat4::IDENTITY)];
+        let tex = gpu.device.create_texture(&wgpu::TextureDescriptor { label: None, size: wgpu::Extent3d { width: 8, height: 8, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format, usage: wgpu::TextureUsages::RENDER_ATTACHMENT, view_formats: &[] });
+        let depth = super::depth_view(&gpu.device, 8, 8);
+        let camera = super::Camera { eye: glam::Vec3::new(0.0, -2.0, 5.0), target: glam::Vec3::ZERO, up: glam::Vec3::NEG_Y, fov_y: 1.0 };
+        let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let mut enc = gpu.device.create_command_encoder(&Default::default());
+        r.render(&gpu, &mut enc, &tex.create_view(&Default::default()), &depth, &camera, 1.0, &[]);
+        gpu.queue.submit([enc.finish()]);
+        let err = pollster::block_on(scope.pop());
+        assert!(err.is_none(), "{err:?}");
     }
 }
