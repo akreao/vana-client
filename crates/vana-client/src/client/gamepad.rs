@@ -262,8 +262,6 @@ pub struct Gamepad {
     clock: f32,
     counter: f32,
     armed: bool,
-    /// B (cancel) was held with a window up, and is still down: kept out of the pad word until let go (not retail).
-    cancel_menu: bool,
 }
 
 impl Gamepad {
@@ -337,26 +335,15 @@ impl Gamepad {
         let (keys, pad_bits) = if keyboard { (Vec::new(), held) } else { keys_of(held, menu, palette, tabs && menu) };
         let mut f = self.step(held, &keys, dt);
         self.prev = held;
-        f.pad = self.menu_cancel(pad_bits, held, menu);
+        f.pad = pad_bits;
         // Outside the field the sticks do nothing (they never drive menus).
         f.stick = if field { [v[2] / 128.0, v[3] / 128.0, v[0] / 128.0, v[1] / 128.0] } else { [0.0; 4] };
         f
     }
 
-    /// The pad word less B (cancel) while it belongs to a window: held with a window up, it stays out until let go, so
-    /// closing a window with B does not reach the field. Retail tests the same bit as 0x9c (keyboard type 2's
-    /// face-camera, FUN_100a6240) with no window check, so B in a menu turned the player to the camera; we keep that
-    /// for B in the field only. The windows still get B as Escape (keys_of).
-    fn menu_cancel(&mut self, pad: u64, held: u64, menu: bool) -> u64 {
-        let b = bit(slot::CANCEL);
-        self.cancel_menu = held & b != 0 && (menu || self.cancel_menu);
-        if self.cancel_menu { pad & !b } else { pad }
-    }
-
     fn release_all(&mut self) -> Frame {
         let f = self.step(0, &[], 0.0);
         self.prev = 0;
-        self.cancel_menu = false;
         f
     }
 
@@ -550,23 +537,6 @@ mod tests {
     }
 
     /// Held, an arrow repeats at 18 ticks and every 4 after, at any frame rate.
-    #[test]
-    fn cancel_in_a_window_stays_out_of_the_pad_word() {
-        let mut g = Gamepad::default();
-        let (b, a) = (bit(slot::CANCEL), bit(slot::CONFIRM));
-        // In the field B reaches the key functions (0x9c: keyboard type 2's face-camera).
-        assert_eq!(g.menu_cancel(b, b, false), b);
-        g.menu_cancel(0, 0, false);
-        // Pressed with a window up, it does not, nor after the window closes while it is still held.
-        assert_eq!(g.menu_cancel(b | a, b | a, true), a);
-        assert_eq!(g.menu_cancel(b, b, false), 0);
-        // Let go and pressed again in the field, it does.
-        assert_eq!(g.menu_cancel(0, 0, false), 0);
-        assert_eq!(g.menu_cancel(b, b, false), b);
-        // Held in the field and a window opens: it goes to the window from then on.
-        assert_eq!(g.menu_cancel(b, b, true), 0);
-    }
-
     #[test]
     fn repeats_at_retail_rate() {
         for fps in [30.0f32, 60.0, 300.0] {
