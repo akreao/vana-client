@@ -23,7 +23,8 @@
         "skill": 0,
         "element": 0,
         "mp": 0,
-        "targets": 0
+        "targets": 0,
+        "area": false
       },
       {
         "id": 44,
@@ -31,7 +32,8 @@
         "skill": 0,
         "element": 0,
         "mp": 0,
-        "targets": 0
+        "targets": 0,
+        "area": false
       },
       {
         "id": 48,
@@ -39,14 +41,17 @@
         "skill": 0,
         "element": 0,
         "mp": 0,
-        "targets": 0
+        "targets": 0,
+        "area": false
       }
     ],
     "abilities": [],
     "weapon_skills": [],
     "target": null,
     "resonance": null,
-    "partners": []
+    "partners": [],
+    "weather_element": null,
+    "day_element": null
   },
   "expect": [
     {
@@ -54,14 +59,21 @@
         "Spell": 44
       },
       "target": null,
-      "reason": "Protect is not on you."
+      "reason": "Protect is not on you.",
+      "group": [
+        43,
+        44
+      ],
+      "label": "Protect"
     },
     {
       "action": {
         "Spell": 48
       },
       "target": null,
-      "reason": "Shell is not on you."
+      "reason": "Shell is not on you.",
+      "group": [],
+      "label": null
     }
   ]
 }

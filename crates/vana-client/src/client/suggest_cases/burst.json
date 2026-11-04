@@ -23,7 +23,8 @@
         "skill": 36,
         "element": 0,
         "mp": 9,
-        "targets": 32
+        "targets": 32,
+        "area": false
       },
       {
         "id": 145,
@@ -31,7 +32,8 @@
         "skill": 36,
         "element": 0,
         "mp": 22,
-        "targets": 32
+        "targets": 32,
+        "area": false
       },
       {
         "id": 149,
@@ -39,7 +41,8 @@
         "skill": 36,
         "element": 1,
         "mp": 8,
-        "targets": 32
+        "targets": 32,
+        "area": false
       },
       {
         "id": 230,
@@ -47,7 +50,8 @@
         "skill": 37,
         "element": 7,
         "mp": 15,
-        "targets": 32
+        "targets": 32,
+        "area": false
       }
     ],
     "abilities": [],
@@ -57,7 +61,8 @@
       "hpp": 90,
       "ours": [],
       "hitting": null,
-      "hitting_me": false
+      "hitting_me": false,
+      "ranks": null
     },
     "resonance": {
       "against": [
@@ -67,7 +72,9 @@
       "age": 1.0,
       "left": 8.0
     },
-    "partners": []
+    "partners": [],
+    "weather_element": null,
+    "day_element": null
   },
   "expect": [
     {
@@ -75,14 +82,21 @@
         "Spell": 145
       },
       "target": null,
-      "reason": "Burst Fusion (Light, Fire): 8 s left."
+      "reason": "Burst Fusion (Light, Fire): 8 s left.",
+      "group": [
+        145,
+        144
+      ],
+      "label": "Fire"
     },
     {
       "action": {
         "Spell": 230
       },
       "target": null,
-      "reason": "Bio is not on the Goblin Thug."
+      "reason": "Bio is not on the Goblin Thug.",
+      "group": [],
+      "label": null
     }
   ]
 }

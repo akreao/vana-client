@@ -23,7 +23,8 @@
         "skill": 0,
         "element": 0,
         "mp": 0,
-        "targets": 0
+        "targets": 0,
+        "area": false
       },
       {
         "id": 339,
@@ -31,7 +32,8 @@
         "skill": 0,
         "element": 0,
         "mp": 0,
-        "targets": 0
+        "targets": 0,
+        "area": false
       }
     ],
     "abilities": [],
@@ -41,10 +43,13 @@
       "hpp": 90,
       "ours": [],
       "hitting": null,
-      "hitting_me": false
+      "hitting_me": false,
+      "ranks": null
     },
     "resonance": null,
-    "partners": []
+    "partners": [],
+    "weather_element": null,
+    "day_element": null
   },
   "expect": [
     {
@@ -52,7 +57,12 @@
         "Spell": 339
       },
       "target": null,
-      "reason": "No shadows up."
+      "reason": "No shadows up.",
+      "group": [
+        338,
+        339
+      ],
+      "label": "Utsusemi"
     }
   ]
 }

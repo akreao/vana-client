@@ -44,10 +44,13 @@
       "hpp": 90,
       "ours": [],
       "hitting": "Raven",
-      "hitting_me": false
+      "hitting_me": false,
+      "ranks": null
     },
     "resonance": null,
-    "partners": []
+    "partners": [],
+    "weather_element": null,
+    "day_element": null
   },
   "expect": [
     {
@@ -55,7 +58,9 @@
         "Ability": 5
       },
       "target": null,
-      "reason": "The Goblin Thug is attacking Raven."
+      "reason": "The Goblin Thug is attacking Raven.",
+      "group": [],
+      "label": null
     }
   ]
 }

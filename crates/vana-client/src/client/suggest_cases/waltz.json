@@ -61,7 +61,9 @@
     "weapon_skills": [],
     "target": null,
     "resonance": null,
-    "partners": []
+    "partners": [],
+    "weather_element": null,
+    "day_element": null
   },
   "expect": [
     {
@@ -69,7 +71,9 @@
         "Ability": 192
       },
       "target": "Raven",
-      "reason": "Raven is at 40% HP (600 missing)."
+      "reason": "Raven is at 40% HP (600 missing).",
+      "group": [],
+      "label": null
     }
   ]
 }

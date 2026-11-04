@@ -541,7 +541,7 @@ pub fn topbar_shot(out: &std::path::Path, fade: &str, menu: Option<u16>, menu_sw
     use crate::render::screens::HudState;
     let cfg = crate::config::Config::load();
     let index = crate::dat::DatIndex::open(&cfg.ffxi_dir())?;
-    let dll = std::fs::read(cfg.ffxi_dir().join("FFXiMain.dll"))?;
+    let dll = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir()))?;
     let mut gu = GameUi::new(super::game_ui::GameUiData::load(&index, &dll)?);
     // One frame: windows drawn open, without their zoom.
     gu.open_ticks = 0.0;
@@ -686,7 +686,7 @@ pub fn topbar_shot(out: &std::path::Path, fade: &str, menu: Option<u16>, menu_sw
         if f.get(5) == Some(&"markers") {
             m.shot_markers();
         }
-        m.draw(&mut gu, sw, sh);
+        m.draw(&mut gu, sw, sh, false);
         let [help, title] = gu.focus_text("menu    map0", m.cursor);
         (bars.help[1], bars.title[1]) = (help.unwrap_or_default(), title.unwrap_or_default());
         match place {

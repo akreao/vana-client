@@ -158,6 +158,7 @@ mod durations;
 mod voyage;
 mod zonefade;
 mod minimap;
+mod voicechat;
 
 /// A fresh voyage state for the fx tests.
 #[cfg(test)]
@@ -308,8 +309,9 @@ fn text_field_open(w: &World) -> bool {
         || macroedit::typing(w)
         || faqmain::typing(w)
         || polmail::composing(w)
-        // A Lua mod window's line being typed.
+        // A Lua mod window's line being typed, or the voice chat window's.
         || w.lua.typing()
+        || w.voice.typing()
         // The modern list search (magic, abilities, items, journal, the auction's bid pages) takes the letters.
         || w.list_search.is_some()
         // The modern Wide Scan name filter and the full log's find.
@@ -332,7 +334,7 @@ fn macro_gate(w: &World) -> bool {
 /// The open windows but the action menu (playermo), which stays up while engaged: macros run while it is the only one
 /// (FUN_101a33e0 lets the focus be playermo, mp_pmode or a palette).
 fn window_over_actions(w: &World) -> bool {
-    w.swkbd.is_some() || w.lua.focused() || w.ko_open || w.ko_offer == 2 || w.menu.is_some() || w.confirm.is_some() || w.win.is_some() || w.config.is_some() || w.settings.is_some() || w.map.is_some() || w.full_log.is_some() || w.magic.is_some() || w.ability.is_some() || w.cats.is_some() || w.moogle.is_some() || post::active(w) || synth::active(w) || shop::active(w) || trade::active(w) || w.search.is_some() || w.inspect.up() || w.mogdoor.is_some() || treasure::active(w) || w.chatctrl.is_some() || w.partymenu.is_some() || w.levelsync.is_some() || w.viewhouse.is_some() || w.bazaar.is_some() || w.helpdesk.is_some() || w.primer.is_some() || w.macroedit.is_some() || w.status.is_some() || w.missions.is_some() || w.quests.is_some() || w.keyitems.is_some() || w.searchmenu.is_some() || w.linkshell.is_some() || w.arealist.is_some() || w.region_menu.is_some() || w.cnq.is_some() || w.blklist.is_some() || w.auction.is_some() || w.remodel.is_some() || w.moncustom.is_some() || gmtell::open(w) || w.friendui.is_some() || polmail::focused(w)
+    w.swkbd.is_some() || w.lua.focused() || w.voice.focused() || w.ko_open || w.ko_offer == 2 || w.menu.is_some() || w.confirm.is_some() || w.win.is_some() || w.config.is_some() || w.settings.is_some() || w.map.is_some() || w.full_log.is_some() || w.magic.is_some() || w.ability.is_some() || w.cats.is_some() || w.moogle.is_some() || post::active(w) || synth::active(w) || shop::active(w) || trade::active(w) || w.search.is_some() || w.inspect.up() || w.mogdoor.is_some() || treasure::active(w) || w.chatctrl.is_some() || w.partymenu.is_some() || w.levelsync.is_some() || w.viewhouse.is_some() || w.bazaar.is_some() || w.helpdesk.is_some() || w.primer.is_some() || w.macroedit.is_some() || w.status.is_some() || w.missions.is_some() || w.quests.is_some() || w.keyitems.is_some() || w.searchmenu.is_some() || w.linkshell.is_some() || w.arealist.is_some() || w.region_menu.is_some() || w.cnq.is_some() || w.blklist.is_some() || w.auction.is_some() || w.remodel.is_some() || w.moncustom.is_some() || gmtell::open(w) || w.friendui.is_some() || polmail::focused(w)
 }
 
 /// FUN_100c63d0: a jump starts when none runs (draw actor +0x8bc = 32 ticks).
@@ -2027,6 +2029,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
     let faq_typing = faqmain::typing(world);
     let mail_typing = polmail::composing(world);
     let lua_typing = world.lua.typing();
+    let voice_typing = world.voice.typing();
     // The Wide Scan flyout's name filter.
     let scan_typing = world.scan_typing && world.modern;
     if scan_typing {
@@ -2053,7 +2056,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
     if list_typing {
         keys.clear();
     }
-    let input_open = event::input(world).is_some() || map_typing || post_typing || search_typing || ls_typing || comment_typing || macro_typing || faq_typing || mail_typing || lua_typing || list_typing || scan_typing || find_typing;
+    let input_open = event::input(world).is_some() || map_typing || post_typing || search_typing || ls_typing || comment_typing || macro_typing || faq_typing || mail_typing || lua_typing || voice_typing || list_typing || scan_typing || find_typing;
     if post_typing {
         post::text_events(world, &input.events);
         keys.clear();
@@ -2074,6 +2077,9 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
         keys.clear();
     } else if mail_typing {
         polmail::text_events(world, &input.events);
+        keys.clear();
+    } else if voice_typing {
+        voicechat::text(world, &input.events);
         keys.clear();
     } else if lua_typing {
         lua::window_text(world, &input.events);
@@ -2138,6 +2144,8 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
             }
             egui::Event::Cut if !event::cinema(world) => chat_prefix(world, "/linkshell2 "),
             egui::Event::Key { key, pressed: true, modifiers, .. } => match key {
+                // Ctrl+Alt+Shift+V as a test script sends it (the window's own is taken before egui).
+                egui::Key::V if modifiers.ctrl && modifiers.alt && modifiers.shift => voicechat::toggle(world),
                 // The auto-translate list takes its keys first (FUN_101b5d10).
                 k if world.typing && world.fep.is_some() && fep::key(world, *k, modifiers.shift) => {}
                 egui::Key::Tab if world.typing => fep::open(world),
@@ -2160,7 +2168,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
                     world.line_hist.record(&text);
                     let text = fep::outgoing(world, text);
                     if world.lua.synth_enter {
-                        lua::run_line(world, &text, textcmd::Mode::Typed, lua::From::Mod);
+                        lua::run_line(world, &text, textcmd::Mode::Typed, lua::From::Mod { mods: false });
                     } else {
                         textcmd::run(world, &text, textcmd::Mode::Typed);
                     }
@@ -2187,6 +2195,8 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
                     keys.clear();
                 }
                 _ if world.typing => {}
+                // The voice chat window (ours, hidden) takes the keys while open.
+                _ if world.voice.focused() => voicechat::key(world, *key),
                 // The event's area picker (op 0xcc 0x10) and the concierge's list take the keys before the event.
                 _ if world.arealist.is_some() && arealist::picking(world) => arealist::key(world, gu, *key),
                 _ if world.concierge_ui.is_some() => concierge::key(world, gu, *key),
@@ -2194,6 +2204,18 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
                 _ if ranking::is_open(world) => ranking::key(world, *key),
                 // The event's tabula preview (op 0x71 0x20) takes the keys; its Enter goes on to the event's message.
                 _ if world.maze.screen.is_some() && event::active(world) && world.confirm.is_none() => _ = maze::key(world, *key),
+                // The chat line opens during an event too: FUN_101ab630 (Space) and FUN_101aa930 ('/') test the field
+                // and the idle input, not the event (the pad's RB, FUN_1015dce0, is the one an event holds).
+                egui::Key::Space if event::active(world) => {
+                    world.typing = true;
+                    world.space_open = true;
+                    opened = true;
+                    keys.clear();
+                }
+                egui::Key::Slash if event::active(world) && !modifiers.ctrl && !modifiers.alt && !numpad_slash => {
+                    world.typing = true;
+                    keys.clear();
+                }
                 // An event takes the keys: Enter advances or picks, arrows move, Escape cancels.
                 _ if event::active(world) => event::key(world, *key),
                 _ if gmtell::open(world) => gmtell::key(world, *key),
@@ -2207,13 +2229,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
                     region::key(world, *key);
                 }
                 egui::Key::ArrowUp | egui::Key::ArrowDown | egui::Key::ArrowLeft | egui::Key::ArrowRight | egui::Key::Enter | egui::Key::Escape if world.map.is_some() => {
-                    // map0's Escape (FUN_101fa420): the zoom into config 0x8a, then the fade-out.
-                    if let Some(m) = world.map.as_mut()
-                        && !m.key(*key)
-                    {
-                        world.game.set(0x8a, m.zoom_cfg());
-                        m.begin_close();
-                    }
+                    map::key(world, *key);
                 }
                 egui::Key::ArrowUp | egui::Key::ArrowDown | egui::Key::ArrowLeft | egui::Key::ArrowRight | egui::Key::Enter | egui::Key::Escape if world.log_focus == 2 => {
                     buffs::key(gu, world, *key);
@@ -2457,10 +2473,14 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
                     // Ours (the modern UI): the suggestions above the commands are rows of the same ring.
                     let sugg = if world.modern { world.root_sugg.len() } else { 0 };
                     let on_sugg = world.suggest_sel.filter(|&k| k < sugg);
-                    let m = world.action_menu.as_mut().unwrap();
+                    // A family suggestion's submenu takes its keys first.
+                    let family = suggest::family_key(world, on_sugg, *key);
+                    // A spell picked in the family's submenu has closed the menu.
+                    let Some(m) = world.action_menu.as_mut() else { continue };
                     let n = m.items.len().max(1);
                     let row = m.items.get(m.sel).copied();
                     match key {
+                        _ if family => {}
                         egui::Key::ArrowDown | egui::Key::ArrowUp => {
                             let down = *key == egui::Key::ArrowDown;
                             world.suggest_sel = match (on_sugg, down) {
@@ -2752,6 +2772,12 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
     if !world.modern
         && let Some(p) = input.pointer
         && lua::pointer_classic(world, gu, p, input.moved, input.clicked, (input.pressed, input.down, input.released))
+    {
+        gu.hover.set(true);
+    }
+    if !world.modern
+        && let Some(p) = input.pointer
+        && voicechat::pointer_classic(world, gu, p, input.moved, input.clicked, (input.pressed, input.down, input.released))
     {
         gu.hover.set(true);
     }
@@ -3233,8 +3259,9 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
         region::poll_image(gu, m);
     }
     region::draw(gu, world, sw, sh);
+    let modern = world.modern;
     if let Some(m) = world.map.as_mut() {
-        m.draw(gu, sw, sh);
+        m.draw(gu, sw, sh, modern);
         world.sounds.append(&mut m.sounds);
         let zone = m.zone();
         for out in std::mem::take(&mut m.outs) {
@@ -3756,6 +3783,7 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
     // The Lua mods' windows (the modern UI draws them as panels).
     if !world.modern {
         blockers.extend(lua::draw_classic(gu, world));
+        blockers.extend(voicechat::draw_classic(gu, world, sw, sh));
     }
     // The map covers the screen (mapframe takes the mouse), as does cnqframe.
     if world.map.is_some() || world.cnq.is_some() {
@@ -4189,8 +4217,9 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
         if !world.lua.hides("plates") {
             name_plates(gu, world, sw, sh, view_proj);
         }
+        let modern = world.modern;
         if let Some(m) = world.map.as_mut() {
-            m.draw(gu, sw, sh);
+            m.draw(gu, sw, sh, modern);
         }
         // cnqframe has flag 0x40 too; its info windows don't.
         region::draw_map(gu, world);
@@ -4346,7 +4375,7 @@ fn bar_text(gu: &GameUi, world: &World, items: &[(usize, [f32; 4])]) -> hudtop::
         (bars.help[1], bars.title[1]) = (s.help(), s.title().into());
     }
     // A Lua mod window with the keys: its title and the help under its cursor.
-    if let Some((title, help)) = world.lua.focused_help() {
+    if let Some((title, help)) = world.voice.focused_help().or_else(|| world.lua.focused_help()) {
         (bars.help[1], bars.title[1]) = (help, title);
     }
     // The palette's caption (FUN_101a3d00): group 10 0x27 "Macro Set %s (#%d)"; titles "MacroPalette" (group 0xd
@@ -6400,6 +6429,8 @@ struct World {
     root_sugg: Vec<suggest::Suggestion>,
     root_sugg_at: Option<Instant>,
     suggest_sel: Option<usize>,
+    /// The open family submenu of the suggestion under the cursor: its cursor in the group.
+    suggest_sub: Option<usize>,
     /// Party and alliance members' HP as last seen at 100 % (their max; the server sends only HP and HP %).
     party_hp_max: HashMap<u32, u32>,
     /// Where retail's target cursors (anc_l) go this frame, for the modern layer's own: screen fractions, the kind (0
@@ -6706,6 +6737,8 @@ struct World {
     /// What others are casting or readying (0x028 categories 7 / 8), for the modern target panel (not retail).
     casts: HashMap<u32, combat::Casting>,
     item_info: Option<Arc<items::ItemCache>>,
+    /// LAN voice chat (ours, hidden: Ctrl+Alt+Shift+V).
+    voice: voicechat::VoiceChat,
     msgshift: Option<Arc<crate::dat::msgshift::MsgShift>>,
     zone_text: Option<(u16, Arc<crate::dat::dialog::Dialog>)>,
     my_race: u8,
@@ -7000,6 +7033,8 @@ pub struct App {
     next_frame: Option<Instant>,
     /// The last '/' key pressed was the numpad one (egui maps both to Key::Slash).
     numpad_slash: bool,
+    /// Ctrl+Alt+Shift+V was pressed: the voice chat window opens or closes next world frame.
+    voice_key: bool,
     /// Retail key functions (DAT_103619f0 and FUN_1011ff30).
     input: input::Input,
     gamepad: gamepad::Gamepad,
@@ -7270,6 +7305,7 @@ impl App {
             last_frame: Instant::now(),
             next_frame: None,
             numpad_slash: false,
+            voice_key: false,
             input: input::Input::default(),
             gamepad: gamepad::Gamepad::default(),
             synth_events: Vec::new(),
@@ -7861,7 +7897,7 @@ impl App {
     fn game_data(&mut self) -> Result<(Arc<DatIndex>, Arc<zone::Keys>)> {
         if self.index.is_none() {
             self.index = Some(Arc::new(DatIndex::open(&self.cfg.ffxi_dir())?));
-            let dll = std::fs::read(self.cfg.ffxi_dir().join("FFXiMain.dll"))?;
+            let dll = std::fs::read(crate::dat::ffximain(&self.cfg.ffxi_dir()))?;
             self.keys_table = Some(Arc::new(zone::Keys::from_ffximain(&dll)?));
             self.knock_table = crate::dat::tables::knockback(&dll).ok();
             self.search_words = crate::dat::tables::search_words(&dll).map_err(|e| log::warn!("{e:#}")).ok().map(Arc::new);
@@ -7912,7 +7948,7 @@ impl App {
                     otp: (!otp.is_empty()).then_some(otp),
                 };
                 let (session, pol) = crate::net::pol::sign_in(&creds)?;
-                let dll = std::fs::read(cfg.ffxi_dir().join("FFXiMain.dll")).unwrap_or_default();
+                let dll = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())).unwrap_or_default();
                 let mut lobby = Lobby::connect(crate::net::pol::LOBBY_HOST, crate::net::pol::LOBBY_PORT, 0, session, &dll, &cfg.client_version, 5, crate::dat::installed(&cfg.ffxi_dir()), replies)?;
                 lobby.pol = Some(pol);
                 let chars = lobby.characters()?;
@@ -7957,7 +7993,7 @@ impl App {
                     anyhow::bail!("unexpected reply from the login server");
                 };
                 let session = crate::net::lobby::Session::Lsb { account_id, hash: session_hash };
-                let dll = std::fs::read(cfg.ffxi_dir().join("FFXiMain.dll")).unwrap_or_default();
+                let dll = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())).unwrap_or_default();
                 // Region 5: not the Japanese client (FUN_1023e610).
                 let mut lobby = Lobby::connect(&cfg.server, cfg.view_port, cfg.data_port, session, &dll, &cfg.client_version, 5, crate::dat::installed(&cfg.ffxi_dir()), replies)?;
                 let chars = lobby.characters()?;
@@ -8132,7 +8168,7 @@ impl App {
                 }
             }
             Task::Selected(Ok(login)) => {
-                match crate::net::map::compress::Codec::from_ffximain(&std::fs::read(self.cfg.ffxi_dir().join("FFXiMain.dll")).unwrap_or_default()) {
+                match crate::net::map::compress::Codec::from_ffximain(&std::fs::read(crate::dat::ffximain(&self.cfg.ffxi_dir())).unwrap_or_default()) {
                     Ok(codec) => {
                         let net = net::spawn(login.clone(), self.cfg.username.clone(), codec);
                         self.status = format!("Connecting to {}:{}...", login.map.0, login.map.1);
@@ -8492,6 +8528,7 @@ impl App {
                             root_sugg: Vec::new(),
                             root_sugg_at: None,
                             suggest_sel: None,
+                            suggest_sub: None,
                             party_hp_max: HashMap::new(),
                             modern_pointers: Vec::new(),
                             actor_menu: None,
@@ -8670,6 +8707,7 @@ impl App {
                             index_masks: HashMap::new(),
                             casts: HashMap::new(),
                             item_info: None,
+                            voice: voicechat::VoiceChat::new(self.cfg.voice.clone(), std::env::var("FFXI_AUDIO_DEVICE").unwrap_or_else(|_| self.cfg.audio_device.clone())),
                             msgshift: None,
                             zone_text: None,
                             my_race: 0,
@@ -8701,7 +8739,7 @@ impl App {
                             if let Phase::World(w) = &mut self.phase {
                                 w.index = Some(index.clone());
                             }
-                            let dll = self.cfg.ffxi_dir().join("FFXiMain.dll");
+                            let dll = crate::dat::ffximain(&self.cfg.ffxi_dir());
                             let tx = self.tasks_tx.clone();
                             let idx = index.clone();
                             std::thread::spawn(move || {
@@ -11391,7 +11429,7 @@ impl App {
         if let Some(line) = world.macros.as_mut().filter(|_| !sub_up).and_then(|m| m.step(dt * 60.0)) {
             let line = crate::dat::font::decode_sjis(&line);
             if by_mod {
-                lua::run_line(world, &line, textcmd::Mode::Macro, lua::From::Mod);
+                lua::run_line(world, &line, textcmd::Mode::Macro, lua::From::Mod { mods: false });
             } else {
                 textcmd::run(world, &line, textcmd::Mode::Macro);
             }
@@ -12992,6 +13030,11 @@ impl App {
                         });
                     });
                 }
+                // Voice chat: its window opens or closes, the engine follows its settings.
+                if std::mem::take(&mut self.voice_key) {
+                    voicechat::toggle(world);
+                }
+                voicechat::tick(world);
                 if let Some(gu) = self.game_ui.as_mut() {
                     self.ui_drawn = true;
                     gu.modern_scale = ctx.pixels_per_point() * self.ui_k.1;
@@ -13080,6 +13123,12 @@ impl App {
                 }
                 if std::mem::take(&mut world.recent_save) {
                     self.cfg.modern_recent.insert(world.name.clone(), world.recent_picks.clone());
+                    if let Err(e) = self.cfg.save() {
+                        log::warn!("config: {e:#}");
+                    }
+                }
+                if std::mem::take(&mut world.voice.dirty) {
+                    self.cfg.voice = world.voice.cfg.clone();
                     if let Err(e) = self.cfg.save() {
                         log::warn!("config: {e:#}");
                     }
@@ -13318,7 +13367,7 @@ impl App {
                 return;
             }
         };
-        let dll = self.cfg.ffxi_dir().join("FFXiMain.dll");
+        let dll = crate::dat::ffximain(&self.cfg.ffxi_dir());
         let tx = self.tasks_tx.clone();
         // Config-tool 0036 (FUN_10119400): the font texture.
         let quality = match self.cfg.tool("0036") {
@@ -13597,6 +13646,10 @@ impl App {
             pending::update(w);
             servmes::frame(w);
             ranking::frame(w);
+            // A server's certificate pin that could not be saved: told once a run.
+            if let Some(n) = crate::net::tls::take_notice() {
+                w.chat.push_colour(n, lua::ERROR);
+            }
             lua::frame(w, self.game_ui.as_ref());
             // Keys the mods pressed: the key functions now, egui with this frame's input.
             for k in std::mem::take(&mut w.lua.synth) {
@@ -15343,6 +15396,26 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
+        // Voice chat's push-to-talk sees every key and button (and takes none); Ctrl+Alt+Shift+V is its window's,
+        // seen by nothing else.
+        match &event {
+            WindowEvent::KeyboardInput { event: k, .. } => {
+                if let PhysicalKey::Code(code) = k.physical_key {
+                    if !k.repeat {
+                        crate::voice::raw_key(code, k.state == ElementState::Pressed);
+                    }
+                    if code == KeyCode::KeyV && self.mods.control_key() && self.mods.alt_key() && self.mods.shift_key() {
+                        if k.state == ElementState::Pressed && !k.repeat && matches!(self.phase, Phase::World(_)) {
+                            self.voice_key = true;
+                        }
+                        return;
+                    }
+                }
+            }
+            WindowEvent::MouseInput { state, button, .. } => crate::voice::raw_button(*button, *state == ElementState::Pressed),
+            WindowEvent::Focused(false) => crate::voice::release(),
+            _ => {}
+        }
         // Lua mods see keys and the mouse first, and may take them.
         if self.opening.is_none()
             && let Phase::World(w) = &mut self.phase
@@ -15706,6 +15779,11 @@ fn area_resample(src: &[u8], from: [u32; 2], to: [u32; 2]) -> Vec<u8> {
 }
 
 pub fn run(cfg: Config, drive: Drive) -> Result<()> {
+    if desktop::supported()
+        && let Err(e) = desktop::settle()
+    {
+        log::warn!("installing the client copy: {e:#}");
+    }
     let event_loop = EventLoop::new()?;
     let mut app = App::new(cfg, drive);
     event_loop.run_app(&mut app)?;
@@ -15925,7 +16003,7 @@ mod page_tests {
 pub fn map_grid(zone: u32, points: &[[f32; 3]]) -> Result<()> {
     let cfg = Config::load();
     let index = crate::dat::DatIndex::open(&cfg.ffxi_dir())?;
-    let dll = std::fs::read(cfg.ffxi_dir().join("FFXiMain.dll"))?;
+    let dll = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir()))?;
     let keys = crate::dat::zone::Keys::from_ffximain(&dll)?;
     let g = ground::Ground::build(&crate::dat::zone::load_scene(&keys, &index.read(crate::dat::zone::file_id(zone))?)?);
     let regions = map::regions(&dll);
@@ -15947,7 +16025,7 @@ pub fn map_grid(zone: u32, points: &[[f32; 3]]) -> Result<()> {
 pub fn map_borders(zone: u32, a: u8, b: u8) -> Result<()> {
     let cfg = Config::load();
     let index = crate::dat::DatIndex::open(&cfg.ffxi_dir())?;
-    let dll = std::fs::read(cfg.ffxi_dir().join("FFXiMain.dll"))?;
+    let dll = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir()))?;
     let keys = crate::dat::zone::Keys::from_ffximain(&dll)?;
     let g = ground::Ground::build(&crate::dat::zone::load_scene(&keys, &index.read(crate::dat::zone::file_id(zone))?)?);
     let regions = map::regions(&dll);

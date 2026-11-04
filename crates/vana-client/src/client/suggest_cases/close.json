@@ -45,7 +45,8 @@
       "hpp": 90,
       "ours": [],
       "hitting": null,
-      "hitting_me": false
+      "hitting_me": false,
+      "ranks": null
     },
     "resonance": {
       "against": [
@@ -55,7 +56,9 @@
       "age": 4.0,
       "left": 6.0
     },
-    "partners": []
+    "partners": [],
+    "weather_element": null,
+    "day_element": null
   },
   "expect": [
     {
@@ -63,7 +66,9 @@
         "Ability": 1
       },
       "target": null,
-      "reason": "Closes the open chain: Fusion (Light, Fire)."
+      "reason": "Closes the open chain: Fusion (Light, Fire).",
+      "group": [],
+      "label": null
     }
   ]
 }

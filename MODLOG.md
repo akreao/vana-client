@@ -4238,7 +4238,8 @@ needs FixVt.java after analysis (3,478 vtable-only methods, 17,877 functions in 
 - Unchanged: motion, effect, audio (atrac3, mixer), dancer, inventory, map, HUD, weather, title buttons and logos,
   message group -> slot table (0x10371da8), name vtables, language tables.
 - The updater now patches code files too; the start-up check also compares code files against the stamped
-  manifest, so installs patched data-only get the current FFXiMain.
+  manifest, so installs patched data-only get the current FFXiMain. (Changed 2026-11-03: only FFXiMain.dll, kept in
+  the data dir; see "Updates: signed releases, pre-release order, manifest paths".)
 
 ## Event ops 0x34 / 0x35: another area during an event (2026-10-22)
 
@@ -5474,7 +5475,10 @@ Full spec: scratchpad iuse/SPEC.md of that session (sort windows, manual sort, t
 - List cursor memory (FUN_10221b90; magic +0x74 / +0x98 + 4 x type for list / cast mode, abilities +0x70 + 4 x type,
   written by the close hooks FUN_1022c990 / FUN_102243d0): the list reopens on the remembered row (scrolled into
   view: inferred). Ours records it as the cursor moves. Live: Ctrl+M, three rows down, Escape, Ctrl+M: back on the
-  fourth row; the Manual order from the earlier session came back from mix.dat (written at logout).
+  fourth row; the Manual order from the earlier session came back from mix.dat (written at logout). (2026-11-03) The
+  modern list's kit keys and the mouse moved the cursor without recording it, so the list reopened on its first row;
+  the row is now also kept on Enter and Escape, as the close hooks keep it. Live (modern, Lnxcsfix): Abilities, Job
+  Abilities, two rows down, Escape, Abilities, Job Abilities: back on Provoke.
 
 - The item count (FUN_101cb590, from the main list\x27s update FUN_101f2740 tail and the bank\x27s FUN_101dcb40): while an
   item list is focused, titlewin\x27s right edge shows "items/size": "/" at (x1 - 0x16, y0 + 8), the count
@@ -18295,6 +18299,18 @@ From the research notes:
     click on Berserk opened its prompt.
 - Not seen live: bursts (no caster in the test), the classic window in a live party (offscreen only), blue magic as a
   skill.
+- (2026-11-03) Casters: the debuffs come whenever a monster is the target, engaged or not, two at most at once (Poison
+  / Poison II added). A nuke rule: the elemental spell of the element the target resists least, by LSB's
+  rank_element (data/resistances.txt from `python3 -I data/resist_gen.py ~/landsandboat OUT`: data/ecosystems.yaml's
+  ecosystem, family and species layers merged as dataset.cpp merges them, and zones/*/mobs.yaml's templates by zone
+  and shown name: 499 species, 13,070 monsters; dat/resists.rs), then the element today's weather (LSB weather ids
+  4..19 in pairs) or day strengthens, then single-target, then MP. A spell suggestion stands for its family when the
+  family has more than the one spell castable now: an elemental nuke's element (tiers, -ga, ancient magic), else the
+  name without its tier and area form (Protect / Protectra, Cure / Curaga, Dia / Diaga ...). Its row reads the family's
+  name with the more mark; Right, Enter or a click opens the spells beside the battle menu (single-target first,
+  strongest first), the cursor on the one suggested. Seen live on Lnxcsfix as BLM 75 / WHM 37, unengaged, a Wild
+  Rabbit targeted on Watersday: Dia, Bio, Water ("weak to water": water and thunder tie at -3, the day breaks it),
+  Protect, whose submenu listed Protect II, Protect, Protectra II, Protectra.
 
 ## Extras: Clock and Trust Speech (ours, 2026-10-29)
 
@@ -20461,6 +20477,10 @@ Lessons from other games' mod layers (BG3 Script Extender, WoW, Skyrim, Factorio
   its source (Op::Run, bind lines, a macro started by actions.macro: Macros::start_for_mod, a chat line submitted by
   an Enter a mod pressed: Host::synth_enter). actions.macro_edit refuses a /lua line (lua::lua_line: any leading
   slashes, any case), since the player runs macros. A bind's text is trimmed as stored.
+- (2026-11-03) /lua load, unload, reload, hide and show from a mod's line need the mods permission (Windower and
+  Ashita add-ons load each other): commands.run raises the permission error and Op::Run carries whether the mod holds
+  it (From::Mod / Bind { mods }); a bind line needs it too. A macro a mod started and a chat line it submitted name no
+  one mod and never may. The player's own lines are unaffected.
 - wait_until: the test runs on the game thread each frame, under FILTER_CAP (20 ms), with the deadline it found
   restored after and its time added to the mod's frame time. A test that errors or runs past the budget ends the
   handler with that error (it was resumed as passed, the error dropped).
@@ -20506,6 +20526,10 @@ Lessons from other games' mod layers (BG3 Script Extender, WoW, Skyrim, Factorio
 - A pin is recorded under a lock against the store as it is then: if it changed since the connection began (another
   login thread, or `trust-server` meanwhile), the certificate is judged by the new pin, so a fixed pin made meanwhile
   is never overwritten by a connection that started before it.
+- (2026-11-03) A pin that can't be written is kept for the rest of the run, by store and server (tls::session_pins),
+  so the auth, profile and later connections are checked against it, and the player gets one red log line in game
+  naming the file and the error (tls::take_notice). trust-server drops the run's pins for the host too. Seen live with
+  known_servers.json a directory: the three servers (54231, 51220, 51240) pinned once each, the line in the log.
 - `vana-client trust-server HOST [--port P] [--fingerprint F]` forgets the host's pins (every port: an LSB reinstall
   changes the login port's and xi_profile's 51220 / 51240), or sets a fixed key pin.
 - Character names from the server become file names (chat history, regime state) only as letters and digits, and not
@@ -20536,6 +20560,13 @@ Lessons from other games' mod layers (BG3 Script Extender, WoW, Skyrim, Factorio
   49,413 paths of the 30261006_0 manifest is refused.
 - Not taken from the same batch: pinning game code files (.exe / .dll) against a list hashed from the patch server by
   a scheduled job: the client never runs them, and a missing list broke the first-start install.
+- (2026-11-03) Code files are never written into the game folder: retail, Windower and Ashita run them from there,
+  and the manifest and files come over plain TCP with MD5s only (corruption, not tampering). The client reads one of
+  them, FFXiMain.dll, as data (dat/tables.rs: each table found by content and checked by its MD5). The updater keeps
+  the current one in the data dir (dat::own_ffximain) and the client reads that copy, else the game folder's
+  (dat::ffximain); the start-up check compares only that file with the stamped manifest. The other 18 code files of
+  the 30261006_0 manifest (polboot.exe, FFXi.dll, FFXiResource.dll, the Config and PadConfig tools, xinputdll.dll,
+  ImeUiDll*.dll) are the Viewer's.
 
 ## Gamepad (2026-11-03)
 
@@ -20731,3 +20762,71 @@ From the 30261006_0 decompile; ours in client/swkbd.rs (classic) and modern/keyb
   1.35 about the screen's centre for its text, with the lobby buttons and a rounded progress bar. The OK pages no
   longer draw a blank second button. Seen live through a local mock release (VANA_RELEASE_API, FFXI_UPDATE_CHECK=1):
   the pick page and the failed-download page.
+- Correction (same day): the talk test above made the Mog House door (the client's own actor, 0x1000000) open the
+  action menu, since FUN_10158db0 (30261006_0; FUN_101524e0 in 2019) skips 0x1000000 before FUN_1007bf30. The door
+  object FUN_101d2cc0 makes (DAT_106631d4) answers by another route, not traced (FUN_101d6000 has no direct caller:
+  a method). Ours: target::talks_to lets the door through in the Mog House to event::talk, which opens mogdoor or
+  the exit prompt, as before *(route inferred)*. Seen live: Lnxtest, Tab twice, Enter: "Heading outside, kupo?".
+
+## The chat line during events (2026-11-03)
+
+- FUN_101ab630 (Space, WM_CHAR) opens the chat line when the game is in the field (*DAT_10444110 == 0x60) and the
+  input is idle (FUN_101adc00: +0xf108 == 3), then through the input's +0x40 method (not traced) and FUN_101ad790
+  mode 4 (held off by the window manager's +0xae flag); '/' (FUN_101aa930) likewise. Neither tests an event; the
+  pad's RB (FUN_1015dce0) is the one an event holds. Ours had every key go to the event while one ran; Space and '/'
+  now open the chat line first, and while it types it takes the keys, so its Enter sends the line and the event's
+  message stays. Retail's per-command event refusals (group 7 0x43 for a prompt, the 0x80 command flag) still apply.
+- Seen live (Lnxcsfix, a signpost's event 115 by !exec, auto-advance off): "hello from a cutscene" sent during the
+  message, which stayed until the next Enter.
+
+## LAN voice chat (ours, 2026-11-03)
+
+- Not retail. Hidden by design: no menu row; Ctrl+Alt+Shift+V in the world opens and closes its window (taken in
+  `window_event` before egui and the Lua mods see it; a script's synthetic chord reaches the world key loop instead).
+  The window and the talking list are Lua window models (client/voicechat.rs), so both UIs draw them as a mod's
+  windows (modwin::panel, Window::draw_classic). Settings live in config `voice` and persist; on, the engine starts
+  on entering the world and stops when the World goes.
+- LAN only: packets go to and are taken from private, loopback and link-local IPv4 addresses only (wire::lan); the
+  multicast TTL is 1. No NAT traversal or relays.
+- Discovery: every 2 s a hello ("VVC1", kind 1, session u64, name, channel) from the voice socket (an ephemeral port)
+  to 239.255.70.88:54390, to 255.255.255.255:54390, to each address typed in (port 54390 unless given) and to every
+  known peer (keeps both ways open where the beacons don't reach). The beacon port is bound with SO_REUSEADDR so
+  several clients on one computer share it. A peer's address is the hello's source; 7 s without one and it goes; kind 3
+  says goodbye.
+- Audio: kind 2, a u32 sequence and 480 samples (10 ms of 48 kHz mono 16-bit PCM, 977 bytes), to every peer on the
+  same channel (case-insensitive; empty is a channel too). No codec: about 770 kbit/s per talker per listener, fine on
+  a LAN. A frame from an unknown session or another address is dropped.
+- Microphone: cpal input (any rate, linear to 48 kHz), the gain, then voice activity (opens at the threshold, held
+  400 ms, the 30 ms before the first loud frame sent too) or push-to-talk (mouse 4 / 5, right Ctrl / Alt / Shift,
+  backquote, Caps Lock; raw winit input, never taken from the game).
+- The microphone is open while voice chat is on and not muted, and closes 10 s after a mute (2026-11-04). User
+  report: voice on dropped a Bluetooth headset from A2DP to HSP/HFP (low quality, a buzz): WirePlumber's
+  bluetooth.autoswitch-to-headset-profile switches when any recording opens, so it is unavoidable on the headset's own
+  microphone; another Microphone Device avoids it. (Opening it only while someone on the channel was there was tried
+  and dropped: the user wants it open at once.)
+  Listing the devices opens nothing (cpal's ALSA enumeration reads hints and ctl info only). Seen with pactl: Firefox
+  (Roll20) and KDE's microphone test switch the same headset 1 s after they start recording, back 2 s after.
+- Microphone Device lists the default host's inputs only, less those that are outputs too (PipeWire lists every sink
+  as recordable), monitors and the host's own default entry: on the user's PC 4 microphones instead of 40 entries
+  from three hosts. A new device reopens the microphone; the engine (and its session) stays. Names lose PipeWire's
+  " via USB" and "[Microphone]" parts (unless two would then read the same); the modern Choice row ends a name too
+  long for it with an ellipsis (kit::elide) instead of clipping both ends.
+- Playback: its own cpal output on the game's device (so the game's Sound Off and focus muting don't silence it);
+  a jitter buffer per sender (starts at 3 frames or 60 ms, a lost frame is silence or skipped, past 8 frames the oldest
+  go); mixed, then linear to the device's rate.
+- Test hooks: FFXI_VOICE_MIC (tone, tone:HZ or a 16-bit WAV) replaces the microphone, FFXI_VOICE_REC records what is
+  heard; test runs' null audio opens no microphone. The hidden `voice-probe` command is a windowless peer.
+- Seen live (Lnxcsfix with a probe on the same computer, both UIs): found in 1.4 s by the beacons, each side's tone
+  heard whole (1.00 s bursts, no gaps, about 40 ms late), the talking list, a channel typed in ending the audio both
+  ways. Push-to-talk by a real key, a second computer and a real microphone not tried yet.
+
+## Riding: a dismount while autorunning (2026-11-03)
+
+- FUN_1008b460 going to state 0xf (the ride ended) calls FUN_100a6070(0) for our own actor when +0xee is not 3 / 4 / 5
+  (read as the status, inferred): autorun (DAT_10487f81) and /follow end, "Follow canceled." when one ran. State 0xf
+  then waits for the stand (FUN_100d65b0(0)) as before. Ours skipped the FUN_100a6070 call, so with autorun or /follow
+  the stand never came and the dismount waited until the player stopped them; a held key still waits, as retail.
+- Live (Lnxcsfix, West Ronfaure, chocobo): /dismount while autorunning played `coff` 0.57 s after the command
+  (standing: 0.44 s); before, only when autorun was switched off. A mount took 0.53 s running and 0.82 s standing
+  (the next 400 ms datagram and the server's update); the first mount of a session waits for the chocobo's model
+  (retail's state 0xe hides only a mount's rider, cVar7, so a chocobo's rider shows without the bird meanwhile).
