@@ -37,16 +37,20 @@ pub struct LampShadowU {
 /// The light matrix of a lamp at `lamp` for the characters at `feet` (positions), aimed at their centre and widened
 /// to take them all in (up to MAX_HALF). None when none is within REACH.
 pub fn matrix(lamp: Vec3, feet: &[Vec3]) -> Option<Mat4> {
-    let centres: Vec<Vec3> = feet.iter().map(|p| *p - Vec3::Y * CENTRE).filter(|c| c.distance(lamp) < REACH && c.distance(lamp) > RADIUS).collect();
+    let centres: Vec<Vec3> = feet.iter().map(|p| *p - Vec3::Y * CENTRE).filter(|c| c.distance(lamp) < REACH).collect();
     if centres.is_empty() {
         return None;
     }
     let mid = centres.iter().copied().sum::<Vec3>() / centres.len() as f32;
-    let dir = (mid - lamp).try_normalize()?;
+    // Casters around the lamp itself (a low lamp over a head) give no direction: look straight down (y is down).
+    let dir = (mid - lamp).try_normalize().filter(|_| mid.distance(lamp) > RADIUS).unwrap_or(Vec3::Y);
     let half = centres
         .iter()
         .map(|c| {
             let d = c.distance(lamp);
+            if d <= RADIUS {
+                return MAX_HALF;
+            }
             dir.dot((*c - lamp) / d).clamp(-1.0, 1.0).acos() + (RADIUS / d).min(1.0).asin()
         })
         .fold(0.0f32, f32::max)
@@ -143,6 +147,10 @@ mod tests {
             let p = project(m, f - Vec3::Y * CENTRE);
             assert!(p.x.abs() < 1.0 && p.y.abs() < 1.0 && (0.0..1.0).contains(&p.z), "{f} -> {p}");
         }
+        // A low lamp right over a character still casts, looking down at it.
+        let m = matrix(Vec3::new(0.0, -1.8, 0.0), &[Vec3::ZERO]).unwrap();
+        let p = project(m, Vec3::ZERO);
+        assert!(p.x.abs() < 1.0 && p.y.abs() < 1.0 && (0.0..1.0).contains(&p.z), "feet -> {p}");
         // Too far: none.
         assert!(matrix(lamp, &[Vec3::new(40.0, 0.0, 0.0)]).is_none());
     }
