@@ -5408,6 +5408,12 @@ fn actor_place(w: &World, id: u32, my_dir: u8) -> Option<Place> {
 }
 
 /// Our run speed in units per second (FUN_100a48d0): Speed x0.1, doubled while riding (status 5 / 0x55), at most 30.
+/// An autorun steered to somewhere (/follow, click-to-move, a mod's run or run_to): mouse look neither steers it nor
+/// turns the character off its path.
+fn directed_run(w: &World) -> bool {
+    w.autorun && (w.follow.is_some() || w.click_move.is_some() || w.run_to.is_some() || w.mod_run)
+}
+
 fn own_speed(w: &World) -> f32 {
     let s = if w.my_motion.speed > 0 { w.my_motion.speed as f32 * 0.1 } else { RUN_SPEED };
     let riding = matches!(w.my_motion.status, 5 | 0x55);
@@ -6152,6 +6158,8 @@ struct World {
     autorun: bool,
     /// Ours (modern MMOs): a right drag turns the camera and the character faces where it looks.
     mouse_look: bool,
+    /// A mod's actions.run(heading) drives this autorun: mouse look leaves its heading alone.
+    mod_run: bool,
     /// The modern Journal's Records of Eminence tab and its entry (Current objectives, Objective List, Vana'Bout).
     journal_roe: Option<usize>,
     /// The modern Journal's rows have the keys (else its logs, areas or categories on the left).
@@ -8334,6 +8342,7 @@ impl App {
                             walk: false,
                             autorun: false,
                             mouse_look: false,
+                            mod_run: false,
                             journal_roe: None,
                             journal_on_list: false,
                             equip_claims: Vec::new(),
@@ -10973,6 +10982,7 @@ impl App {
             world.autorun = !world.autorun;
             world.autorun_dir = Vec3::ZERO;
             world.click_move = None;
+            world.mod_run = false;
         }
         // A click-to-move walk ends at any move or turn of the player's own.
         if world.click_move.is_some() && (ax != 0.0 || ay != 0.0 || turn != 0.0) {
@@ -11037,7 +11047,7 @@ impl App {
             // Ours (modern MMOs, with the right drag's facing): mouse look steers autorun to the camera's forward, so the
             // run goes where the character faces, and X input strafes off it (forward + sideways) instead of turning
             // it. A follow, click-to-move or a mod's run keeps its own steering.
-            let look_steer = world.mouse_look && world.follow.is_none() && world.click_move.is_none() && world.run_to.is_none();
+            let look_steer = world.mouse_look && !directed_run(world);
             if look_steer {
                 world.autorun_dir = forward;
             }
@@ -11064,6 +11074,7 @@ impl App {
         if !world.autorun {
             world.autorun_dir = Vec3::ZERO;
             world.run_to = None;
+            world.mod_run = false;
             // Autorun ending for any reason ends the follow: group 9 0x41 "Follow canceled.".
             if world.follow.take().is_some() {
                 textcmd::log9(world, 0x41);
@@ -11268,7 +11279,7 @@ impl App {
                 // 0x9c held (B / Shift, control type 2): a strafe lock. Retail's FUN_100a6240 returns before the turn
                 // to the move direction while actor +0xfb is set, so the heading stays and the stick strafes.
                 None
-            } else if lock_target.is_some() || world.mouse_look || (turn != 0.0 && !stepping) {
+            } else if lock_target.is_some() || (world.mouse_look && !directed_run(world)) || (turn != 0.0 && !stepping) {
                 Some(face)
             } else if stepping {
                 Some(step.normalize())
