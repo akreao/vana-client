@@ -14157,6 +14157,8 @@ impl App {
                         crate::dat::weather::Lighting::from_env_eased(e, minute, ease, crate::dat::weather::clipping(e.draw_dist, x, zone).1)
                     };
                     r.lighting = mix(&|t| zw.at(t, minute)).map(|e| step(&mut w.light_ease, &e));
+                    // Real character shadows (render/sunshadow.rs) are cast by the sun only.
+                    r.daylight = crate::dat::weather::sun_moon(minute).0.y >= 0.0;
                     // FUN_1018b8f0: 100 before the env is up. Settings' Draw Distance scales it, or lifts it (0).
                     let (d, k) = crate::dat::weather::clipping(r.lighting.map_or(100.0, |l| l.draw_dist), x, zone);
                     let scale = self.cfg.draw_distance as f32 / 100.0;
@@ -14827,8 +14829,11 @@ impl App {
                     r.set_shadow_texture(&gfx.gpu, &t, scene_fmt);
                 }
                 if let Some(g) = w.ground.as_ref() {
-                    // With the real shadows drawn this frame, retail's are left out.
-                    let modes = if r.sun_shadow_drawn.get() { Vec::new() } else { shadow_modes };
+                    // With the real shadows drawn this frame, retail's are left out for the actors the map covers.
+                    let modes = match r.sun_shadow_matrix.get() {
+                        Some(m) => shadow_modes.into_iter().filter(|(_, _, s)| !crate::render::sunshadow::covers(m, s.pos, s.corners.iter().map(|c| c.distance(s.pos)).fold(0.0, f32::max))).collect(),
+                        None => shadow_modes,
+                    };
                     let casters = shadows::casters(&mut w.shadow_slots, g, modes, &drawn_map);
                     let sun = r.lighting.map_or([0.0; 4], |l| [l.actor_dir.x, l.actor_dir.y, l.actor_dir.z, 1.0]);
                     perf::timed(|| "shadows".into(), || r.draw_shadows(&gfx.gpu, &mut encoder, &scene_raw, &scene_depth, bg, g, &casters, sun, (dt * 60.0).max(1e-3)));

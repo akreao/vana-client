@@ -94,6 +94,14 @@ pub fn light_matrix(dir: Vec3, target: Vec3) -> Option<Mat4> {
     Some(proj * view)
 }
 
+/// Whether an actor at `pos` with a box of `radius` casts well inside the map `light_vp` covers (inside the part
+/// before the edge fade); the client keeps retail's shadow for the others.
+pub fn covers(light_vp: Mat4, pos: Vec3, radius: f32) -> bool {
+    let p = light_vp.project_point3(pos);
+    let r = radius / HALF_EXTENT;
+    p.x.abs() + r < 0.8 && p.y.abs() + r < 0.8 && p.z > 0.0 && p.z < 1.0
+}
+
 /// The sun's travel direction, held at least MIN_ELEVATION above the horizon. The world's y points down (a light
 /// toward -y is above; render/shadow.rs), so a sun shining down travels toward +y.
 pub fn sun_direction(dir: Vec3) -> Option<Vec3> {
@@ -270,6 +278,7 @@ mod tests {
         let low = sun_direction(Vec3::new(1.0, 0.01, 0.0)).unwrap();
         assert!((low.y / (low.x * low.x + low.z * low.z).sqrt() - 30f32.to_radians().tan()).abs() < 1e-4);
         assert!(sun_direction(Vec3::ZERO).is_none());
+        assert!(covers(m, target, 2.0) && !covers(m, target + Vec3::new(60.0, 0.0, 0.0), 2.0));
         assert_eq!(strength(Vec3::ZERO), 0.0);
         assert!((strength(Vec3::ONE) - STRENGTH).abs() < 1e-6);
     }
