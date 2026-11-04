@@ -32,7 +32,8 @@
         "skill": 0,
         "element": 0,
         "mp": 0,
-        "targets": 0
+        "targets": 0,
+        "area": false
       },
       {
         "id": 13,
@@ -40,14 +41,17 @@
         "skill": 0,
         "element": 0,
         "mp": 0,
-        "targets": 0
+        "targets": 0,
+        "area": false
       }
     ],
     "abilities": [],
     "weapon_skills": [],
     "target": null,
     "resonance": null,
-    "partners": []
+    "partners": [],
+    "weather_element": null,
+    "day_element": null
   },
   "expect": [
     {
@@ -55,7 +59,12 @@
         "Spell": 13
       },
       "target": "Raven",
-      "reason": "Raven is KO'd."
+      "reason": "Raven is KO'd.",
+      "group": [
+        12,
+        13
+      ],
+      "label": "Raise"
     }
   ]
 }

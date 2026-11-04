@@ -54,7 +54,8 @@
       "hpp": 90,
       "ours": [],
       "hitting": null,
-      "hitting_me": false
+      "hitting_me": false,
+      "ranks": null
     },
     "resonance": null,
     "partners": [
@@ -72,7 +73,9 @@
           ]
         ]
       }
-    ]
+    ],
+    "weather_element": null,
+    "day_element": null
   },
   "expect": [
     {
@@ -80,7 +83,9 @@
         "Ability": 10
       },
       "target": null,
-      "reason": "Opens Fusion (Light, Fire) with Raven's Shoulder Tackle (TP 1200)."
+      "reason": "Opens Fusion (Light, Fire) with Raven's Shoulder Tackle (TP 1200).",
+      "group": [],
+      "label": null
     }
   ]
 }

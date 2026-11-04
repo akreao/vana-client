@@ -45,7 +45,8 @@
         "skill": 0,
         "element": 0,
         "mp": 0,
-        "targets": 0
+        "targets": 0,
+        "area": false
       },
       {
         "id": 15,
@@ -53,14 +54,17 @@
         "skill": 0,
         "element": 0,
         "mp": 0,
-        "targets": 0
+        "targets": 0,
+        "area": false
       }
     ],
     "abilities": [],
     "weapon_skills": [],
     "target": null,
     "resonance": null,
-    "partners": []
+    "partners": [],
+    "weather_element": null,
+    "day_element": null
   },
   "expect": [
     {
@@ -68,14 +72,18 @@
         "Spell": 15
       },
       "target": "Koru",
-      "reason": "Koru is paralyzed."
+      "reason": "Koru is paralyzed.",
+      "group": [],
+      "label": null
     },
     {
       "action": {
         "Spell": 14
       },
       "target": "Raven",
-      "reason": "Raven is poisoned."
+      "reason": "Raven is poisoned.",
+      "group": [],
+      "label": null
     }
   ]
 }

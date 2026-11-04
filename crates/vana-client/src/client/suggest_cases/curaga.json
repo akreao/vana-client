@@ -41,7 +41,8 @@
         "skill": 0,
         "element": 0,
         "mp": 0,
-        "targets": 0
+        "targets": 0,
+        "area": false
       },
       {
         "id": 7,
@@ -49,7 +50,8 @@
         "skill": 0,
         "element": 0,
         "mp": 0,
-        "targets": 0
+        "targets": 0,
+        "area": false
       },
       {
         "id": 8,
@@ -57,7 +59,8 @@
         "skill": 0,
         "element": 0,
         "mp": 0,
-        "targets": 0
+        "targets": 0,
+        "area": false
       },
       {
         "id": 9,
@@ -65,14 +68,17 @@
         "skill": 0,
         "element": 0,
         "mp": 0,
-        "targets": 0
+        "targets": 0,
+        "area": false
       }
     ],
     "abilities": [],
     "weapon_skills": [],
     "target": null,
     "resonance": null,
-    "partners": []
+    "partners": [],
+    "weather_element": null,
+    "day_element": null
   },
   "expect": [
     {
@@ -80,7 +86,14 @@
         "Spell": 9
       },
       "target": null,
-      "reason": "3 members are below 75% HP."
+      "reason": "3 members are below 75% HP.",
+      "group": [
+        1,
+        7,
+        8,
+        9
+      ],
+      "label": "Cure"
     }
   ]
 }

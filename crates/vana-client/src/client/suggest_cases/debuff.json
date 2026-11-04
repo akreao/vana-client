@@ -23,7 +23,8 @@
         "skill": 0,
         "element": 0,
         "mp": 0,
-        "targets": 0
+        "targets": 0,
+        "area": false
       },
       {
         "id": 24,
@@ -31,7 +32,8 @@
         "skill": 0,
         "element": 0,
         "mp": 0,
-        "targets": 0
+        "targets": 0,
+        "area": false
       },
       {
         "id": 56,
@@ -39,7 +41,8 @@
         "skill": 0,
         "element": 0,
         "mp": 0,
-        "targets": 0
+        "targets": 0,
+        "area": false
       }
     ],
     "abilities": [],
@@ -49,10 +52,13 @@
       "hpp": 80,
       "ours": [],
       "hitting": null,
-      "hitting_me": false
+      "hitting_me": false,
+      "ranks": null
     },
     "resonance": null,
-    "partners": []
+    "partners": [],
+    "weather_element": null,
+    "day_element": null
   },
   "expect": [
     {
@@ -60,7 +66,21 @@
         "Spell": 24
       },
       "target": null,
-      "reason": "Dia is not on the Crab."
+      "reason": "Dia is not on the Crab.",
+      "group": [
+        23,
+        24
+      ],
+      "label": "Dia"
+    },
+    {
+      "action": {
+        "Spell": 56
+      },
+      "target": null,
+      "reason": "The Crab is not slowed.",
+      "group": [],
+      "label": null
     }
   ]
 }

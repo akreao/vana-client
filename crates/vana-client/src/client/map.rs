@@ -413,19 +413,23 @@ impl MapWin {
 
     /// FUN_101fad70(d): the set by d, wrapping, past sets with nothing to show (0 needs the map, 2 any member, 3 an
     /// alliance member; 1 always).
-    fn step_set(&mut self, d: i32) {
-        let has = |m: &Self, s: u8| match s {
-            0 => m.owned && m.need != Need::Nothing,
-            2 => !m.party.is_empty(),
-            3 => m.party.iter().any(|p| p.2),
+    /// Marker set `s` can be shown (FUN_101fad70 skips the others).
+    fn set_shown(&self, s: u8) -> bool {
+        match s {
+            0 => self.owned && self.need != Need::Nothing,
+            2 => !self.party.is_empty(),
+            3 => self.party.iter().any(|p| p.2),
             _ => true,
-        };
+        }
+    }
+
+    fn step_set(&mut self, d: i32) {
         let step = if d < 0 { 3 } else { 1 };
         if d != 0 {
             self.set = (self.set + step) % 4;
         }
         for _ in 0..4 {
-            if has(self, self.set) {
+            if self.set_shown(self.set) {
                 break;
             }
             self.set = (self.set + step) % 4;
@@ -760,6 +764,20 @@ impl MapWin {
             .collect();
         s.cursor = s.cursor.min(s.rows.len().saturating_sub(1));
         s.scroll = s.scroll.min(s.cursor);
+    }
+
+    /// map0 item 2 (Wide Scan) is enabled.
+    pub fn scan_ok(&self) -> bool {
+        self.scan_ok
+    }
+
+    /// The mouse's cursor move onto map0 row `k` (1..3). True when it moved.
+    pub fn set_cursor(&mut self, k: u16) -> bool {
+        if !self.has_menu() || self.cursor == k || !(1..=3).contains(&k) {
+            return false;
+        }
+        self.cursor = k;
+        true
     }
 
     /// The focused sub-window and its cursor child, for the bars.
@@ -1318,7 +1336,8 @@ impl MapWin {
 
     /// mapframe: the image (0xa0404040; alpha min(0xff - level, 0xa0) while fading) at (base - view) x zoom; at fade
     /// level 0 the player arrow and the grid text under titlewin; then map0.
-    pub fn draw(&mut self, gu: &mut GameUi, sw: f32, sh: f32) {
+    /// `modern`: the modern layer draws map0, Markers and Change Map's list (and takes their mouse).
+    pub fn draw(&mut self, gu: &mut GameUi, sw: f32, sh: f32, modern: bool) {
         if let Some(Ok(Some((name, iw, ih, rgba)))) = self.rx.as_ref().map(|r| r.try_recv()) {
             gu.image(&name, iw, ih, rgba);
             self.texture = Some(name);
@@ -1358,7 +1377,7 @@ impl MapWin {
         if let Some((px, py)) = self.tracked.filter(|_| level == 0.0) {
             gu.sprite("menu    keytops3", 105, (px - self.shift.0 - self.view.0) * z + 0.5, (py - self.shift.1 - self.view.1) * z + 0.5, 0x8080_8080);
         }
-        if self.has_menu() {
+        if self.has_menu() && !modern {
             let hide: &[u16] = if self.scan_ok { &[] } else { &[2] };
             if let Some(win) = gu.lobby_window_off("menu    map0", sw, sh, (0.0, 0.0), Some(self.cursor), true, hide)
                 && !self.scan_ok
@@ -1371,9 +1390,9 @@ impl MapWin {
                 gu.sprite("menu    keytops3", 20, r[0] + d, r[1] + 16.0 + d, if on { 0x8080_5020 } else { 0x8080_8080 });
             }
         }
-        self.draw_scan(gu, sw, sh);
-        self.draw_list(gu, sw, sh);
-        if let Some(l) = &self.maplist {
+        self.draw_scan(gu, sw, sh, modern);
+        self.draw_list(gu, sw, sh, modern);
+        if let Some(l) = self.maplist.as_ref().filter(|_| !modern) {
             l.draw(gu, sw, sh);
         }
     }
@@ -1391,12 +1410,16 @@ impl MapWin {
 
     /// scanlist (16, 48), 10 rows of 24 with the anc_trac cursor, names fitted like the target window's (width 88 at
     /// +7, +6); mapscan over map0's place; the narrow cursor (anc_scan) at the cursor point.
-    fn draw_scan(&self, gu: &mut GameUi, sw: f32, sh: f32) {
+    fn draw_scan(&self, gu: &mut GameUi, sw: f32, sh: f32, modern: bool) {
         let Some(s) = &self.scan else { return };
         let frame = gu.cursor_frame();
         if let Some(c) = s.narrow {
             let n = gu.lib_len("anc     anc_scan").max(1);
             gu.sprite("anc     anc_scan", frame % n, c.0, c.1, 0x8080_8080);
+            return;
+        }
+        // The modern layer draws scanlist and mapscan as panels (modern/minor.rs).
+        if modern {
             return;
         }
         if let Some(win) = gu.lobby_window_off("menu    scanlist", sw, sh, (0.0, 0.0), None, false, &[]) {
@@ -1541,37 +1564,53 @@ impl MapWin {
         self.rx.is_none()
     }
 
+    /// mapv3's row `i` of the shown set: its icon (keytops3) and name (the one being typed, with the caret).
+    fn marker_row(&self, l: &List, i: usize) -> (Option<usize>, String) {
+        let (s, slot) = (self.set as usize, self.slot(self.set as usize, i));
+        let party = self.party.iter().filter(|p| !p.2).count();
+        let icon = match s {
+            0 | 1 => Some(ROW_ICON[2 * s + slot.is_some() as usize]),
+            2 => slot.map(|_| ROW_ICON[if i < party { 5 } else { 7 }]),
+            _ => slot.map(|_| ROW_ICON[7]),
+        };
+        let name = match l.rename.as_ref().filter(|r| r.0 == i) {
+            Some((_, t)) => format!("{t}|"),
+            None => slot.and_then(|s| s.1).unwrap_or_default().to_string(),
+        };
+        (icon, name)
+    }
+
+    /// The Markers window as the modern layer draws it (none while mapv3 is shut).
+    pub fn markers_look(&self) -> Option<MarkersLook> {
+        let l = self.list.as_ref()?;
+        let rows = (0..10).map(|i| self.marker_row(l, i)).collect();
+        let keys = l.v2.is_none() && l.placing.is_none() && l.rename.is_none();
+        let sets = [0, 1, 2, 3].map(|s| self.set_shown(s));
+        let v2 = l.v2.map(|(row, c)| (row, c, self.marks.sets[0][row].valid));
+        Some(MarkersLook { set: self.set as usize, sets, rows, cursor: keys.then(|| l.cursor as usize - 1), v2, placing: l.placing.is_some() })
+    }
+
     /// mapv3 (FUN_101fbec0): per row the icon at (16, 5 + 16 i) and the name at (0x1f, 7 + 16 i) (font 0x44 taken as
-    /// fontshp *(inf)*); mapv2 beside the
-    /// row (its place is inferred); the placing cursor (keytops3 151).
-    fn draw_list(&self, gu: &mut GameUi, sw: f32, sh: f32) {
+    /// fontshp *(inf)*); mapv2 beside the row (its place is inferred); the placing cursor (keytops3 151). `modern`: the
+    /// modern layer draws the windows, the placing cursor stays here.
+    fn draw_list(&self, gu: &mut GameUi, sw: f32, sh: f32, modern: bool) {
         let Some(l) = &self.list else { return };
         if let Some((_, (cx, cy))) = l.placing {
             gu.sprite("menu    keytops3", 151, cx, cy, 0x8080_8080);
         }
+        if modern {
+            return;
+        }
         let sel = if l.v2.is_some() || l.placing.is_some() { 0 } else { l.cursor };
         let Some((x, y)) = gu.menu_sel("menu    mapv3", sw, sh, sel) else { return };
-        let s = self.set as usize;
-        let party = self.party.iter().filter(|p| !p.2).count();
         for i in 0..10 {
-            let (ry, slot) = (y + 16.0 * i as f32, self.slot(s, i));
-            let icon = match s {
-                0 | 1 => Some(ROW_ICON[2 * s + slot.is_some() as usize]),
-                2 => slot.map(|_| ROW_ICON[if i < party { 5 } else { 7 }]),
-                _ => slot.map(|_| ROW_ICON[7]),
-            };
+            let ry = y + 16.0 * i as f32;
+            let (icon, name) = self.marker_row(l, i);
             if let Some(k) = icon {
                 gu.sprite("menu    keytops3", k, x + 16.0, ry + 5.0, 0x8080_8080);
             }
-            match l.rename.as_ref().filter(|r| r.0 == i) {
-                Some((_, t)) => {
-                    gu.shape_text(&format!("{t}|"), x + 31.0, ry + 7.0, 0x8080_8080, false);
-                }
-                None => {
-                    if let Some((_, Some(name), _)) = slot {
-                        gu.shape_text(name, x + 31.0, ry + 7.0, 0x8080_8080, false);
-                    }
-                }
+            if !name.is_empty() {
+                gu.shape_text(&name, x + 31.0, ry + 7.0, 0x8080_8080, false);
             }
         }
         if let Some((row, c)) = l.v2 {
@@ -1973,6 +2012,126 @@ pub(super) fn apply(w: &mut World, regions: &[Region], c: Cmd, sw: f32, sh: f32)
     }
 }
 
+/// The Markers window for the modern layer: the shown set (0 yours, 1 event, 2 party, 3 alliance) and which can show,
+/// the rows (icon, name), the rows' cursor while they have the keys, mapv2 (its row, cursor 1..3, the row's marker
+/// placed) and whether a marker is being placed.
+pub struct MarkersLook {
+    pub set: usize,
+    pub sets: [bool; 4],
+    pub rows: Vec<(Option<usize>, String)>,
+    pub cursor: Option<usize>,
+    pub v2: Option<(usize, u16, bool)>,
+    pub placing: bool,
+}
+
+/// The marker sets' icons (keytops3), for the modern set strip.
+pub const SET_ICONS: [usize; 4] = SET_SPRITE;
+
+/// A click on Markers row `k` (0-based): mapv2 on another row closes first, then the row takes Enter. Nothing while a
+/// marker is placed or named.
+pub fn marker_click(w: &mut World, k: usize) {
+    let Some(l) = w.map.as_ref().and_then(|m| m.list.as_ref()) else { return };
+    if l.placing.is_some() || l.rename.is_some() || k >= 10 || l.v2.is_some_and(|v| v.0 == k) {
+        return;
+    }
+    if l.v2.is_some() {
+        key(w, egui::Key::Escape);
+    }
+    if let Some(l) = w.map.as_mut().and_then(|m| m.list.as_mut()) {
+        l.cursor = k as u16 + 1;
+    }
+    key(w, egui::Key::Enter);
+}
+
+/// A click on mapv2's row `c` (1..3): the cursor there, then Enter.
+pub fn marker_menu_click(w: &mut World, c: u16) {
+    let Some(v) = w.map.as_mut().and_then(|m| m.list.as_mut()).and_then(|l| l.v2.as_mut()) else { return };
+    if (1..=3).contains(&c) {
+        v.1 = c;
+        key(w, egui::Key::Enter);
+    }
+}
+
+/// Change Map's list for the modern layer: per row its name and its value ("[n]" maps, "(area)"), and the cursor.
+pub struct MapListLook {
+    pub rows: Vec<(String, String)>,
+    pub cursor: usize,
+}
+
+impl MapWin {
+    pub fn maplist_look(&self) -> Option<MapListLook> {
+        let l = self.maplist.as_ref()?;
+        let rows = l.rows.iter().map(|r| (r.a.clone(), if r.number { format!("[{}]", r.b) } else { format!("({})", r.b) })).collect();
+        Some(MapListLook { rows, cursor: l.cursor })
+    }
+}
+
+/// Wide Scan's list for the modern layer: per row its keytops3 icon and name, the cursor, and mapscan's cursor with
+/// Track's state (off for a player) while it is open.
+pub struct ScanLook {
+    pub rows: Vec<(usize, String)>,
+    pub cursor: usize,
+    pub mapscan: Option<(u16, bool)>,
+}
+
+impl MapWin {
+    pub fn scan_look(&self) -> Option<ScanLook> {
+        let s = self.scan.as_ref().filter(|s| !s.hidden && s.narrow.is_none())?;
+        let rows = s.rows.iter().map(|r| (r.sprite, r.name.clone())).collect();
+        let track = s.rows.get(s.cursor).is_some_and(|r| r.trackable);
+        Some(ScanLook { rows, cursor: s.cursor, mapscan: s.mapscan.map(|c| (c, track)) })
+    }
+
+    /// The mouse's cursor move onto mapscan row `c` (1 Track, 2 Remote Scan). True when it moved.
+    pub fn set_mapscan(&mut self, c: u16) -> bool {
+        let Some(s) = self.scan.as_mut().filter(|s| s.mapscan.is_some_and(|m| m != c) && (1..=2).contains(&c)) else { return false };
+        s.mapscan = Some(c);
+        true
+    }
+}
+
+/// A click on Wide Scan's row `k`: mapscan closes if it was open, the cursor goes there, then Enter (the map scrolls
+/// to it, mapscan opens).
+pub fn scan_click(w: &mut World, k: usize) {
+    let Some(s) = w.map.as_mut().and_then(|m| m.scan.as_mut()).filter(|s| k < s.rows.len() && s.narrow.is_none()) else { return };
+    s.mapscan = None;
+    s.cursor = k;
+    s.scroll = s.scroll.min(k).max((k + 1).saturating_sub(SCAN_ROWS));
+    key(w, egui::Key::Enter);
+}
+
+/// A click on Change Map's row `k`: the cursor there, then Enter.
+pub fn maplist_click(w: &mut World, k: usize) {
+    let Some(l) = w.map.as_mut().and_then(|m| m.maplist.as_mut()).filter(|l| k < l.rows.len()) else { return };
+    l.cursor = k;
+    l.scroll = l.scroll.min(k).max((k + 1).saturating_sub(ROWS));
+    key(w, egui::Key::Enter);
+}
+
+/// A click on the set strip: that set shown, as Left / Right would show it.
+pub fn marker_set_click(w: &mut World, s: usize) {
+    let Some(m) = w.map.as_mut() else { return };
+    let busy = m.list.as_ref().is_none_or(|l| l.v2.is_some() || l.placing.is_some() || l.rename.is_some());
+    if busy || s > 3 || m.set as usize == s || !m.set_shown(s as u8) {
+        return;
+    }
+    m.want_party();
+    (m.set, m.label_only) = (s as u8, None);
+    m.want_party();
+    m.sounds.push(crate::audio::Ui::Cursor as u32);
+}
+
+/// A key for the map's windows: MapWin::key, and on its false (Escape, a pick) the zoom into config 0x8a and the
+/// fade-out (FUN_101fa420).
+pub fn key(w: &mut World, key: egui::Key) {
+    if let Some(m) = w.map.as_mut()
+        && !m.key(key)
+    {
+        w.game.set(0x8a, m.zoom_cfg());
+        m.begin_close();
+    }
+}
+
 /// The region's key item is held, or it needs none (FUN_101ee560).
 /// FUN_101f7600(1): the grid position after the clock. Empty without ground or in a room (zone flag 0x100); "(?-?)"
 /// with no record for exactly the sub-key under the player, or one that needs no map; no key-item test.
@@ -2304,7 +2463,7 @@ mod tests {
     #[test]
     fn windurst_waters_pages() {
         let cfg = crate::config::Config::load();
-        let Ok(dll) = std::fs::read(cfg.ffxi_dir().join("FFXiMain.dll")) else { return };
+        let Ok(dll) = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())) else { return };
         let regs = regions(&dll);
         let pages: Vec<(i8, u32)> = regs.iter().filter(|r| r.zone == 238).map(|r| (r.key, r.file_id())).collect();
         assert_eq!(pages, [(1, 5501), (2, 5502)]);
@@ -2319,7 +2478,7 @@ mod tests {
     #[test]
     fn map_category_10_through_dxt3() {
         let cfg = crate::config::Config::load();
-        let Ok(dll) = std::fs::read(cfg.ffxi_dir().join("FFXiMain.dll")) else { return };
+        let Ok(dll) = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())) else { return };
         let Ok(index) = crate::dat::DatIndex::open_stock(&cfg.ffxi_dir()) else { return };
         let mut files: Vec<u32> = regions(&dll).iter().map(|r| r.file_id()).collect();
         files.sort_unstable();
@@ -2362,7 +2521,7 @@ mod tests {
     #[test]
     fn preview_points() {
         let cfg = crate::config::Config::load();
-        let (Ok(dll), Ok(index)) = (std::fs::read(cfg.ffxi_dir().join("FFXiMain.dll")), DatIndex::open(&cfg.ffxi_dir())) else { return };
+        let (Ok(dll), Ok(index)) = (std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())), DatIndex::open(&cfg.ffxi_dir())) else { return };
         let Ok(items) = crate::dat::items::Items::load(&index, crate::dat::items::Lang::En) else { return };
         let table = Arc::new(tpoints::load(&items));
         let region = Region::find(&regions(&dll), 230).unwrap();
@@ -2409,7 +2568,7 @@ mod tests {
     fn sub_keys() {
         use crate::client::ground::map_key_of;
         assert_eq!([0xe, 0x3e, 0x400_0004, 0x400_003c, 0x800_0004].map(map_key_of), [1, 7, 8, 15, 16]);
-        let Ok(dll) = std::fs::read(crate::config::Config::load().ffxi_dir().join("FFXiMain.dll")) else { return };
+        let Ok(dll) = std::fs::read(crate::dat::ffximain(&crate::config::Config::load().ffxi_dir())) else { return };
         let regs = regions(&dll);
         assert!(Region::find_key(&regs, 9, 0).is_none());
         assert!((1..=16).all(|k| Region::find_key(&regs, 9, k).is_some()));
@@ -2418,7 +2577,7 @@ mod tests {
     /// Change Map's groups: 50, the first San d'Oria's four zones with name 0.
     #[test]
     fn region_groups_found() {
-        let Ok(dll) = std::fs::read(crate::config::Config::load().ffxi_dir().join("FFXiMain.dll")) else { return };
+        let Ok(dll) = std::fs::read(crate::dat::ffximain(&crate::config::Config::load().ffxi_dir())) else { return };
         let g = region_groups(&dll);
         assert_eq!(g.len(), 50);
         assert_eq!(g[0], (0, vec![230, 231, 232, 233]));
@@ -2427,7 +2586,7 @@ mod tests {
     /// Jugner Forest (104): record key 0, scale 1, key item 1 (0x181), file 5 -> 5317, origin (-264, -256).
     #[test]
     fn jugner_region() {
-        let Ok(dll) = std::fs::read(crate::config::Config::load().ffxi_dir().join("FFXiMain.dll")) else { return };
+        let Ok(dll) = std::fs::read(crate::dat::ffximain(&crate::config::Config::load().ffxi_dir())) else { return };
         let regs = regions(&dll);
         assert!(regs.len() > 700, "{}", regs.len());
         let r = Region::find(&regs, 104).unwrap();

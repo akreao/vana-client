@@ -470,6 +470,7 @@ fn focus_panel(w: &World) -> Option<&'static str> {
     Some(match () {
         _ if w.confirm.is_some() => "confirm",
         _ if w.typing => "chat",
+        _ if w.voice.focused() => "voice",
         _ if w.palette.0 != 0 => "macro palette",
         _ if w.ko_offer == 2 && w.dead() => "raise",
         _ if w.ko_open && w.ko_offer != 2 => "ko",
@@ -579,6 +580,13 @@ fn default_place(id: &str) -> Place {
         "comment" => on("combat"),
         // The favourites strip over the chat window's right end.
         "favourites" => at(0.42, 0.66),
+        // The map's menu at the top right, as retail's map0; Markers and Change Map's list in its place.
+        "map0" | "mapv3" | "maplist" | "mapscan" => at(-0.004, 0.1),
+        // Wide Scan's list at retail's (16, 48).
+        "scanlist" => at(0.0083, 0.1),
+        // The voice chat window (ours) near the middle, its talking list on the left edge.
+        "voice" => at(0.36, 0.16),
+        "voice talk" => at(0.005, 0.42),
         _ => at(0.3, 0.3),
     }
 }
@@ -1134,7 +1142,10 @@ impl Modern {
         }
         egui::Area::new(Id::new("modern tip")).order(Order::Tooltip).fixed_pos(at + vec2(16.0, 20.0)).constrain(true).interactable(false).show(ctx, |ui| {
             let bg = ui.painter().add(Shape::Noop);
-            let inner = egui::Frame::NONE.inner_margin(egui::Margin::symmetric(10, 7)).show(ui, |ui| {
+            // Clear room inside the frame's border art all the way round.
+            let inset = self.art.frame("window_tooltip").map_or(6.0, |f| f.inset);
+            let margin = egui::Margin::symmetric((inset + 12.0).round() as i8, (inset + 10.0).round() as i8);
+            let inner = egui::Frame::NONE.inner_margin(margin).show(ui, |ui| {
                 ui.set_max_width(300.0);
                 ui.spacing_mut().item_spacing.y = 3.0;
                 if !title.is_empty() {

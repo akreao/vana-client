@@ -29,6 +29,155 @@ pub fn draw(p: &mut Panels, w: &mut World) {
     garden_windows(p, w);
     pup_menu(p, w);
     fish_gauge(p, w);
+    map_menu(p, w);
+    map_markers(p, w);
+    map_list(p, w);
+    map_scan(p, w);
+}
+
+/// The map's menu (map0: Markers, Wide Scan, Change Map) as a column; Wide Scan dim until a scan is possible.
+fn map_menu(p: &mut Panels, w: &mut World) {
+    use super::super::map;
+    let Some(gu) = p.gu else { return };
+    let Some((sel, scan)) = w.map.as_ref().filter(|m| m.has_menu()).map(|m| (m.cursor, m.scan_ok())) else { return };
+    let m = p.m;
+    let free = w.confirm.is_none();
+    let title = gu.focus_text("menu    map0", sel)[1].clone().unwrap_or_else(|| "Map".into());
+    let mut got = None;
+    p.panel("map0", Some(Title { icon: None, text: &title, note: None }), social::width(1), |ui| {
+        let col = MenuWin { name: "menu    map0", sel, off: if scan { Vec::new() } else { vec![2] }, labels: Vec::new(), marked: Vec::new(), values: Vec::new() };
+        got = social::column(ui, m, gu, &col, free);
+    });
+    if free {
+        social::act(w, gu, got, |w, k| w.map.as_mut().is_some_and(|m| m.set_cursor(k)), |w, _| map::key(w, egui::Key::Enter));
+    }
+}
+
+/// Markers (mapv3): the set strip (the four sets' icons, the shown one lit, those with nothing to show dim), the ten
+/// rows with their icons and names, and mapv2 (View, Place / Remove, Rename) at the left of its row, as retail's.
+fn map_markers(p: &mut Panels, w: &mut World) {
+    use super::super::map;
+    let Some(gu) = p.gu else { return };
+    let Some(v) = w.map.as_ref().and_then(|m| m.markers_look()) else { return };
+    let m = p.m;
+    let free = w.confirm.is_none();
+    let full = egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+    let (mut set_click, mut row_click, mut v2_row) = (None, None, None);
+    let follow = v.cursor.is_some_and(|c| m.moved("map markers", c));
+    p.panel("mapv3", Some(Title { icon: None, text: "Markers", note: None }), W, |ui| {
+        ui.horizontal(|ui| {
+            for (s, &on) in v.sets.iter().enumerate() {
+                let (r, resp) = ui.allocate_exact_size(vec2(36.0, 26.0), Sense::click());
+                let face = match () {
+                    _ if s == v.set => "controls/list_row_selected",
+                    _ if !on => "controls/list_row_disabled",
+                    _ if resp.hovered() => "controls/list_row_hover",
+                    _ => "controls/list_row_normal",
+                };
+                super::rows::face(ui.painter(), m, r, face, Color32::WHITE);
+                if let Some(t) = m.sprite_icon(ui.ctx(), gu, "menu    keytops3", map::SET_ICONS[s]) {
+                    let tint = if on { Color32::WHITE } else { Color32::from_white_alpha(90) };
+                    ui.painter().image(t, egui::Rect::from_center_size(r.center(), vec2(16.0, 16.0)), full, tint);
+                }
+                if resp.clicked() && on {
+                    set_click = Some(s);
+                }
+            }
+        });
+        ui.add_space(4.0);
+        let out = super::kit::list(ui, m, "map markers", v.rows.len(), v.cursor, free, follow, ROW, TALL, |_| false, |ui, row| {
+            let (icon, name) = &v.rows[row.index];
+            if let Some(t) = icon.and_then(|k| m.sprite_icon(ui.ctx(), gu, "menu    keytops3", k)) {
+                ui.painter().image(t, egui::Rect::from_min_size(row.rect.min + vec2(8.0, (ROW - 16.0) / 2.0), vec2(16.0, 16.0)), full, Color32::WHITE);
+            }
+            ui.painter().text(row.rect.left_center() + vec2(32.0, 0.0), Align2::LEFT_CENTER, name, FontId::proportional(m.theme.small), super::kit::ink(m, row));
+            if v.v2.is_some_and(|x| x.0 == row.index) {
+                v2_row = Some(row.rect);
+            }
+        });
+        row_click = out.clicked;
+    });
+    let mut menu_click = None;
+    if let (Some((_, c, placed)), Some(r)) = (v.v2, v2_row) {
+        let width = social::width(1);
+        p.panel_at("mapv2", None, width, pos2(r.min.x - width - 20.0, r.min.y - 8.0), |ui| {
+            // View needs a marker placed.
+            let col = MenuWin { name: "menu    mapv2", sel: c, off: if placed { Vec::new() } else { vec![1] }, labels: Vec::new(), marked: Vec::new(), values: Vec::new() };
+            menu_click = social::column(ui, m, gu, &col, free);
+        });
+    }
+    if free && !v.placing {
+        if let Some(s) = set_click {
+            map::marker_set_click(w, s);
+        }
+        if let Some(k) = row_click {
+            map::marker_click(w, k);
+        }
+        if let Some(c) = menu_click {
+            map::marker_menu_click(w, c);
+        }
+    }
+}
+
+/// Wide Scan from the map (scanlist): a row per name with its icon (player, NPC, monster); on a pick mapscan (Track,
+/// Remote Scan) at map0's place, Track dim for a player as retail's.
+fn map_scan(p: &mut Panels, w: &mut World) {
+    use super::super::map;
+    let Some(gu) = p.gu else { return };
+    let Some(v) = w.map.as_ref().and_then(|m| m.scan_look()) else { return };
+    let m = p.m;
+    let free = w.confirm.is_none();
+    let full = egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+    let follow = m.moved("map scan", v.cursor);
+    let title = gu.focus_text("menu    scanlist", 1)[1].clone().unwrap_or_else(|| "Wide Scan".into());
+    let mut click = None;
+    p.panel("scanlist", Some(Title { icon: None, text: &title, note: None }), W, |ui| {
+        let out = super::kit::list(ui, m, "map scan", v.rows.len(), Some(v.cursor), free && v.mapscan.is_none(), follow, ROW, TALL, |_| false, |ui, row| {
+            let (icon, name) = &v.rows[row.index];
+            if let Some(t) = m.sprite_icon(ui.ctx(), gu, "menu    keytops3", *icon) {
+                ui.painter().image(t, egui::Rect::from_min_size(row.rect.min + vec2(8.0, (ROW - 16.0) / 2.0), vec2(16.0, 16.0)), full, Color32::WHITE);
+            }
+            ui.painter().text(row.rect.left_center() + vec2(32.0, 0.0), Align2::LEFT_CENTER, name, FontId::proportional(m.theme.small), super::kit::ink(m, row));
+        });
+        click = out.clicked;
+    });
+    let mut got = None;
+    if let Some((c, track)) = v.mapscan {
+        let title = gu.focus_text("menu    mapscan", c)[1].clone().unwrap_or_else(|| "Map".into());
+        p.panel("mapscan", Some(Title { icon: None, text: &title, note: None }), social::width(1), |ui| {
+            let col = MenuWin { name: "menu    mapscan", sel: c, off: if track { Vec::new() } else { vec![1] }, labels: Vec::new(), marked: Vec::new(), values: Vec::new() };
+            got = social::column(ui, m, gu, &col, free);
+        });
+    }
+    if !free {
+        return;
+    }
+    if let Some(k) = click {
+        map::scan_click(w, k);
+    }
+    social::act(w, gu, got, |w, k| w.map.as_mut().is_some_and(|m| m.set_mapscan(k)), |w, _| map::key(w, egui::Key::Enter));
+}
+
+/// Change Map's list (maplist): a row per area or map, the name at the left and its count or area at the right.
+fn map_list(p: &mut Panels, w: &mut World) {
+    use super::super::map;
+    let Some(v) = w.map.as_ref().and_then(|m| m.maplist_look()) else { return };
+    let m = p.m;
+    let free = w.confirm.is_none();
+    let follow = m.moved("map list", v.cursor);
+    let mut click = None;
+    p.panel("maplist", Some(Title { icon: None, text: "Change Map", note: None }), W + 80.0, |ui| {
+        let out = super::kit::list(ui, m, "map list", v.rows.len(), Some(v.cursor), free, follow, ROW, TALL, |_| false, |ui, row| {
+            let (name, value) = &v.rows[row.index];
+            let font = FontId::proportional(m.theme.small);
+            ui.painter().text(row.rect.left_center() + vec2(10.0, 0.0), Align2::LEFT_CENTER, name, font.clone(), super::kit::ink(m, row));
+            ui.painter().text(row.rect.right_center() - vec2(10.0, 0.0), Align2::RIGHT_CENTER, value, font, m.theme.color("muted"));
+        });
+        click = out.clicked;
+    });
+    if free && let Some(k) = click {
+        map::maplist_click(w, k);
+    }
 }
 
 /// Plain rows (text, grey), the cursor's lit while focused and kept in view; the row clicked while focused.

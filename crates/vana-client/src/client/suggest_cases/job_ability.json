@@ -50,10 +50,13 @@
       "hpp": 90,
       "ours": [],
       "hitting": null,
-      "hitting_me": true
+      "hitting_me": true,
+      "ranks": null
     },
     "resonance": null,
-    "partners": []
+    "partners": [],
+    "weather_element": null,
+    "day_element": null
   },
   "expect": [
     {
@@ -61,7 +64,9 @@
         "Ability": 1
       },
       "target": null,
-      "reason": "Attack up."
+      "reason": "Attack up.",
+      "group": [],
+      "label": null
     }
   ]
 }

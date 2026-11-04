@@ -45,10 +45,13 @@
       "hpp": 90,
       "ours": [],
       "hitting": null,
-      "hitting_me": false
+      "hitting_me": false,
+      "ranks": null
     },
     "resonance": null,
-    "partners": []
+    "partners": [],
+    "weather_element": null,
+    "day_element": null
   },
   "expect": [
     {
@@ -56,7 +59,9 @@
         "Ability": 21
       },
       "target": null,
-      "reason": "Your strongest weapon skill (TP 1500)."
+      "reason": "Your strongest weapon skill (TP 1500).",
+      "group": [],
+      "label": null
     }
   ]
 }
