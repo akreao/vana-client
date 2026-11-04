@@ -72,8 +72,10 @@ fn world_at(uv: vec2<f32>, d: f32) -> vec3<f32> {
         let suv = vec2<f32>(q.x * 0.5 + 0.5, 0.5 - q.y * 0.5);
         let sd = depth_at(suv * size());
         let hit = world_at(suv, sd);
-        // Occluded when the scene there is nearer than the sample, within the radius (no halos off far edges).
-        let near = select(0.0, 1.0, sd < q.z - 1e-6);
+        // Occluded when the scene there is nearer than the sample, within the radius (no halos off far edges);
+        // samples off the screen have no depth to test and count as open.
+        let on = all(suv >= vec2<f32>(0.0)) && all(suv <= vec2<f32>(1.0));
+        let near = select(0.0, 1.0, on && sd < q.z - 1e-6);
         let range = 1.0 - smoothstep(0.5 * r, r, distance(hit, p));
         occ += near * range;
     }
