@@ -417,8 +417,10 @@ pub struct ZoneRenderer {
     sun_depth_pipeline: wgpu::RenderPipeline,
     sun_shadow: Option<sunshadow::SunShadow>,
     pub sun_shadow_drawn: std::cell::Cell<bool>,
-    /// The sun is up (the client's Vana'diel clock): at night `lighting` carries the moon, which casts none.
-    pub daylight: bool,
+    /// The real shadows' level from the Vana'diel clock (sunshadow::twilight; 0 at the sun / moon change) and their PCF
+    /// spacing (softer by the moon).
+    pub shadow_level: f32,
+    pub shadow_soft: f32,
     refract_buf: wgpu::Buffer,
     refract_group: wgpu::BindGroup,
     /// The refraction pass's scene copy (DAT_10456e6c: scene size, one per frame per refracting actor).
@@ -1865,7 +1867,8 @@ impl ZoneRenderer {
             sun_depth_pipeline: p.sun_depth_pipeline,
             sun_shadow: None,
             sun_shadow_drawn: std::cell::Cell::new(false),
-            daylight: true,
+            shadow_level: 1.0,
+            shadow_soft: 1.0,
             refract_buf,
             refract_group,
             refract_copy: None,
@@ -2858,7 +2861,7 @@ impl ZoneRenderer {
                 && let Some((s, m, d, st, _)) = &sun
             {
                 drop(pass);
-                s.receive(gpu, encoder, color, depth, vp, *m, *d, *st, camera.eye);
+                s.receive(gpu, encoder, color, depth, vp, *m, *d, *st, camera.eye, self.shadow_soft);
                 pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("zone (after shadows)"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: color, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store } })],
@@ -3066,21 +3069,26 @@ impl ZoneRenderer {
     }
 
     /// The real shadows' light this frame around `target` (the camera's): matrix, sun direction, strength. None when
-    /// they are off, there is no lit sun (night, no zone lighting, a dim light) or no poses.
+    /// they are off, there is no lit sun or moon (no zone lighting, a dim light) or no poses. By night `lighting` carries the moon, whose dimmer colour gives fainter shadows.
     pub fn sun_shadow_light(&self, target: Vec3) -> Option<(Mat4, Vec3, f32)> {
-        let l = self.lighting.as_ref().filter(|_| self.sun_shadow.is_some() && self.pose_gpu.is_some() && self.daylight)?;
-        let st = sunshadow::strength(l.diffuse);
-        (st > 0.0).then_some(())?;
-        Some((sunshadow::light_matrix(l.dir, target)?, sunshadow::sun_direction(l.dir)?, st))
+        let s = self.sun_shadow.as_ref().filter(|_| self.pose_gpu.is_some())?;
+        let l = self.lighting.as_ref()?;
+        // A light too dim to cast falls back to retail's; the dawn / dusk fade does not (it passes through zero).
+        let base = sunshadow::strength(l.diffuse);
+        (base > 0.0).then_some(())?;
+        let st = base * self.shadow_level.clamp(0.0, 1.0);
+        Some((sunshadow::light_matrix(l.dir, target, s.size)?, sunshadow::sun_direction(l.dir)?, st))
     }
 
-    /// Real character shadows (ours) on or off; made at the first use. render draws them only with a lit sun.
-    pub fn prepare_sun_shadow(&mut self, gpu: &Gpu, on: bool) {
+    /// Real character shadows (ours) on or off with a `size` map; made at the first use or a size change. render draws
+    /// them only with a lit sun or moon.
+    pub fn prepare_sun_shadow(&mut self, gpu: &Gpu, on: bool, size: u32) {
+        let size = if sunshadow::MAP_SIZES.contains(&size) { size } else { sunshadow::MAP_SIZE };
         if !on {
             self.sun_shadow = None;
             self.sun_shadow_drawn.set(false);
-        } else if self.sun_shadow.is_none() {
-            self.sun_shadow = Some(sunshadow::SunShadow::new(gpu, &self.sil_layout, self.color_format));
+        } else if self.sun_shadow.as_ref().is_none_or(|s| s.size != size) {
+            self.sun_shadow = Some(sunshadow::SunShadow::new(gpu, &self.sil_layout, self.color_format, size));
         }
     }
 

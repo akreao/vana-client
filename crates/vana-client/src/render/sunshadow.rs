@@ -8,8 +8,10 @@
 use super::Gpu;
 use glam::{Mat4, Vec3, Vec4};
 
-/// The map's size in texels and half the side of the square it covers, in world units.
+/// The map's size in texels by default (config `shadow_map`: 1024, 2048 or 4096), and half the side of the square it
+/// covers, in world units.
 pub const MAP_SIZE: u32 = 2048;
+pub const MAP_SIZES: [u32; 3] = [1024, 2048, 4096];
 pub const HALF_EXTENT: f32 = 40.0;
 /// How far the light's eye sits back from the target, and the depth range it covers.
 const BACK: f32 = 150.0;
@@ -27,6 +29,8 @@ struct U {
     sun: vec4<f32>,
     // xyz: the eye; w: one map texel in world units.
     eye: vec4<f32>,
+    // x: the PCF taps' spacing in texels (wider is softer: the moon's).
+    misc: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> u: U;
 @group(0) @binding(1) var scene_depth: texture_depth_2d;
@@ -57,7 +61,7 @@ struct VOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
     // Pushed out along the normal by a texel or two against acne.
     let lp = u.light_vp * vec4<f32>(world + n * (1.5 * u.eye.w), 1.0);
     let uv = vec2<f32>(lp.x * 0.5 + 0.5, 0.5 - lp.y * 0.5);
-    let texel = 1.0 / f32(textureDimensions(map).x);
+    let texel = u.misc.x / f32(textureDimensions(map).x);
     var lit = 0.0;
     for (var y = -1; y <= 1; y++) {
         for (var x = -1; x <= 1; x++) {
@@ -73,13 +77,14 @@ struct VOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
 "#;
 
 /// The light's view-projection (orthographic, depth 0..1) for a sun travelling along `dir`, around `target`, the
-/// centre snapped to whole texels so the shadows do not shimmer as the camera moves. None without a usable direction.
-pub fn light_matrix(dir: Vec3, target: Vec3) -> Option<Mat4> {
+/// centre snapped to whole texels of a `size` map so the shadows do not shimmer as the camera moves. None without a
+/// usable direction.
+pub fn light_matrix(dir: Vec3, target: Vec3, size: u32) -> Option<Mat4> {
     let d = sun_direction(dir)?;
     let up = if d.x.abs() < 1e-3 && d.z.abs() < 1e-3 { Vec3::Z } else { Vec3::Y };
     let view = glam::camera::rh::view::look_at_mat4(Vec3::ZERO, d, up);
     // Snap the target in light space.
-    let texel = 2.0 * HALF_EXTENT / MAP_SIZE as f32;
+    let texel = 2.0 * HALF_EXTENT / size.max(1) as f32;
     let t = view.transform_point3(target);
     let t = Vec3::new((t.x / texel).round() * texel, (t.y / texel).round() * texel, t.z);
     // Light space: x right, y up, looking down -z; the box is [t.x +- E] x [t.y +- E] x [t.z + BACK .. t.z + BACK - DEPTH].
@@ -118,6 +123,21 @@ pub fn sun_direction(dir: Vec3) -> Option<Vec3> {
     Some(d)
 }
 
+/// How much of the shadow shows at Vana'diel `minute`: none at 6:00 and 18:00, when the light changes between sun
+/// and moon, rising to full over the 45 minutes either side, so the change of direction is never seen.
+pub fn twilight(minute: f32) -> f32 {
+    let m = minute.rem_euclid(1440.0);
+    let gap = |at: f32| {
+        let d = (m - at).abs();
+        d.min(1440.0 - d)
+    };
+    let f = |d: f32| {
+        let t = (d / 45.0).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    };
+    f(gap(360.0)) * f(gap(1080.0))
+}
+
 /// The shadow's strength for a sun of this colour: full in daylight, none for a dim light (night, dusk).
 pub fn strength(diffuse: Vec3) -> f32 {
     let lum = diffuse.dot(Vec3::new(0.299, 0.587, 0.114));
@@ -131,10 +151,13 @@ struct Params {
     light_vp: [[f32; 4]; 4],
     sun: [f32; 4],
     eye: [f32; 4],
+    misc: [f32; 4],
 }
 
 pub struct SunShadow {
     pub map: wgpu::TextureView,
+    /// The map's size in texels.
+    pub size: u32,
     /// The light matrix for the depth pass (group 3 of the silhouette layout, 256 bytes).
     pub matrix: wgpu::Buffer,
     pub matrix_group: wgpu::BindGroup,
@@ -146,12 +169,12 @@ pub struct SunShadow {
 
 impl SunShadow {
     /// `format`: the scene's colour format (the plain view the world draws through).
-    pub fn new(gpu: &Gpu, sil_layout: &wgpu::BindGroupLayout, format: wgpu::TextureFormat) -> Self {
+    pub fn new(gpu: &Gpu, sil_layout: &wgpu::BindGroupLayout, format: wgpu::TextureFormat, size: u32) -> Self {
         let device = &gpu.device;
         let map = device
             .create_texture(&wgpu::TextureDescriptor {
                 label: Some("sun shadow map"),
-                size: wgpu::Extent3d { width: MAP_SIZE, height: MAP_SIZE, depth_or_array_layers: 1 },
+                size: wgpu::Extent3d { width: size, height: size, depth_or_array_layers: 1 },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
@@ -219,7 +242,7 @@ impl SunShadow {
             compare: Some(wgpu::CompareFunction::LessEqual),
             ..Default::default()
         });
-        Self { map, matrix, matrix_group, layout, pipeline, uniform, cmp }
+        Self { map, size, matrix, matrix_group, layout, pipeline, uniform, cmp }
     }
 
     /// Writes this frame's light matrix for the depth pass.
@@ -227,14 +250,15 @@ impl SunShadow {
         super::Put::put(&gpu.queue, &self.matrix, 0, bytemuck::cast_slice(&light_vp.to_cols_array()));
     }
 
-    /// Darkens `color` where the map shadows the scenery in `depth` (the scene's).
+    /// Darkens `color` where the map shadows the scenery in `depth` (the scene's). `soft`: the PCF spacing in texels.
     #[allow(clippy::too_many_arguments)]
-    pub fn receive(&self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, color: &wgpu::TextureView, depth: &wgpu::TextureView, view_proj: Mat4, light_vp: Mat4, sun: Vec3, strength: f32, eye: Vec3) {
+    pub fn receive(&self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, color: &wgpu::TextureView, depth: &wgpu::TextureView, view_proj: Mat4, light_vp: Mat4, sun: Vec3, strength: f32, eye: Vec3, soft: f32) {
         let p = Params {
             inv_view_proj: view_proj.inverse().to_cols_array_2d(),
             light_vp: light_vp.to_cols_array_2d(),
             sun: [sun.x, sun.y, sun.z, strength],
-            eye: [eye.x, eye.y, eye.z, 2.0 * HALF_EXTENT / MAP_SIZE as f32],
+            eye: [eye.x, eye.y, eye.z, 2.0 * HALF_EXTENT / self.size as f32],
+            misc: [soft, 0.0, 0.0, 0.0],
         };
         super::Put::put(&gpu.queue, &self.uniform, 0, bytemuck::bytes_of(&p));
         let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -269,7 +293,7 @@ mod tests {
     #[test]
     fn light_matrix_frames_the_target() {
         let target = Vec3::new(100.0, -5.0, 40.0);
-        let m = light_matrix(Vec3::new(0.3, 1.0, 0.2), target).unwrap();
+        let m = light_matrix(Vec3::new(0.3, 1.0, 0.2), target, MAP_SIZE).unwrap();
         let c = m.project_point3(target);
         assert!(c.x.abs() < 0.01 && c.y.abs() < 0.01, "{c}");
         assert!(c.z > 0.0 && c.z < 1.0, "{c}");
@@ -279,6 +303,8 @@ mod tests {
         let low = sun_direction(Vec3::new(1.0, 0.01, 0.0)).unwrap();
         assert!((low.y / (low.x * low.x + low.z * low.z).sqrt() - 30f32.to_radians().tan()).abs() < 1e-4);
         assert!(sun_direction(Vec3::ZERO).is_none());
+        assert_eq!((twilight(360.0), twilight(1080.0), twilight(720.0), twilight(0.0)), (0.0, 0.0, 1.0, 1.0));
+        assert!(twilight(380.0) > 0.0 && twilight(380.0) < 1.0 && twilight(1060.0) < 1.0);
         assert!(covers(m, target, 2.0) && !covers(m, target + Vec3::new(60.0, 0.0, 0.0), 2.0));
         assert_eq!(strength(Vec3::ZERO), 0.0);
         assert!((strength(Vec3::ONE) - STRENGTH).abs() < 1e-6);
@@ -315,14 +341,14 @@ mod tests {
                 count: None,
             }],
         });
-        let sh = SunShadow::new(&gpu, &silly, format);
+        let sh = SunShadow::new(&gpu, &silly, format, 1024);
         let n = 16u32;
         // y is down: the eye 10 above the floor at y = 0, looking down.
         let cam = crate::render::Camera { eye: Vec3::new(0.0, -10.0, 0.0), target: Vec3::ZERO, up: Vec3::Z, fov_y: 0.8 };
         let vp = cam.view_proj(1.0);
         let floor_z = vp.project_point3(Vec3::ZERO).z;
         let sun = Vec3::Y;
-        let light = light_matrix(sun, Vec3::ZERO).unwrap();
+        let light = light_matrix(sun, Vec3::ZERO, MAP_SIZE).unwrap();
         let depth = crate::render::depth_view(&gpu.device, n, n);
         let color = gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: None,
@@ -357,7 +383,7 @@ mod tests {
                     multiview_mask: None,
                 });
             }
-            sh.receive(&gpu, &mut enc, &cv, &depth, vp, light, sun, STRENGTH, cam.eye);
+            sh.receive(&gpu, &mut enc, &cv, &depth, vp, light, sun, STRENGTH, cam.eye, 1.0);
             gpu.queue.submit([enc.finish()]);
             read(&gpu, &color, n, n)
         };
