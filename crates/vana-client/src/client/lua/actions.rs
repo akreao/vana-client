@@ -297,6 +297,7 @@ pub(super) fn apply(w: &mut World, gu: Option<&GameUi>, a: Action) {
             // Already there: the run is done, so whatever moved us before (autorun, /follow, click-to-move) stops too.
             if d.length() > within.max(0.1) {
                 (w.autorun, w.autorun_dir, w.follow, w.run_to) = (true, d.normalize(), None, Some((x, z, within)));
+                w.mod_run = false;
             } else {
                 (w.autorun, w.follow, w.run_to) = (false, None, None);
             }

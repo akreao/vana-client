@@ -11856,7 +11856,7 @@ impl App {
                 world.follow = None;
                 world.click_move = Some(clickmove::ClickMove::new(path, world.pos));
                 world.run_to = None;
-                world.autorun = true;
+                (world.autorun, world.mod_run) = (true, false);
                 world.autorun_dir = Vec3::ZERO;
             }
             None => {
@@ -13863,6 +13863,7 @@ impl App {
                 let d = world.cam.look - world.cam.eye;
                 world.autorun = !world.autorun;
                 world.autorun_dir = Vec3::new(d.x, 0.0, d.z).normalize_or_zero();
+                world.mod_run = false;
             }
             // act:fxdump logs every live effect element and the player's position.
             if let (Some("fxdump"), Phase::World(world)) = (action.as_deref(), &self.phase) {

@@ -1446,7 +1446,7 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
         id::AUTOMOVE => {
             w.autorun = true;
             w.autorun_dir = glam::Vec3::new(w.yaw.sin(), 0.0, w.yaw.cos());
-            (w.click_move, w.run_to) = (None, None);
+            (w.click_move, w.run_to, w.mod_run) = (None, None, false);
             Ok(())
         }
         // FUN_1007e190: a target that is not us (else the command fails); not followable (dead, no model) group 7
@@ -1458,7 +1458,7 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
                 return Ok(());
             }
             w.follow = Some(t);
-            w.autorun = true;
+            (w.autorun, w.mod_run) = (true, false);
             w.autorun_dir = glam::Vec3::ZERO;
             // Ours: following ends a click-to-move walk or a mod's run_to, which would steer over it.
             (w.click_move, w.run_to) = (None, None);
