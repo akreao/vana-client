@@ -357,7 +357,7 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
     ];
     const TIMERS_ROW: SRow = row("Timers", "Shows spell and ability recasts, your effects and the ones you put on others and on monsters, in a window that slides in and out (/timers).", Timers, OFF_ON, Now);
     const REGIME_ROW: SRow = row("Training Regime", "While a Fields or Grounds of Valor regime is active, shows its targets and your kills in a window beside the timers.", Regime, OFF_ON, Now);
-    const SKILLCHAIN_ROW: SRow = row("Skillchain Helper", "In a party, shows which skillchains your weapon skills can make. On your target, it shows an open skillchain, what closes it, and when to magic burst.", Skillchains, OFF_ON, Now);
+    const SKILLCHAIN_ROW: SRow = row("Skillchain Helper", "In a party, shows which skillchains your party can make together. On your target, it shows an open skillchain, what closes it, and when to magic burst.", Skillchains, OFF_ON, Now);
     const TIMERS: &[SRow] = &[
         TIMERS_ROW,
         row("Timers Position", "Docks the timers window on the left, on the right above the party list, or at the top.", TimersDock, &[(0, "Left"), (1, "Right"), (2, "Top")], Now),
