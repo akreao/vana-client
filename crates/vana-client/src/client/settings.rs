@@ -1052,6 +1052,10 @@ pub struct View {
 
 /// A help line for the modern page: without the Config tool's value numbers ("0034: ") and our "(not retail)" notes.
 fn plain(help: &str) -> String {
+    // The Background row's warning goes first; the numbers come off the help behind it.
+    if let Some(rest) = help.strip_prefix(WARNING).map(str::trim_start) {
+        return format!("{WARNING} {}", plain(rest));
+    }
     let body = match help.split_once(": ") {
         Some((head, rest)) if head.starts_with(|c: char| c.is_ascii_digit()) && head.chars().all(|c| c.is_ascii_digit() || c == ' ' || c == '/') => rest,
         _ => help,
@@ -1510,6 +1514,10 @@ mod tests {
                 .expect("a Background row");
             ui.goto(tab, i + 1);
             assert_eq!(ui.help().starts_with(WARNING), shadows != 0, "{}", ui.help());
+            // The modern help drops the Config numbers behind the warning too.
+            let help = ui.view().help;
+            assert!(!help.contains("0003"), "{help}");
+            assert_eq!(help.starts_with(WARNING), shadows != 0, "{help}");
             let label = &ui.view().rows[i].label;
             assert_eq!(label.contains('\u{26a0}'), shadows != 0, "{label}");
             // Other rows never warn.
