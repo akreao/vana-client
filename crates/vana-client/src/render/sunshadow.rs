@@ -71,12 +71,19 @@ struct VOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
     var dark = 0.0;
     for (var y = -1; y <= 1; y++) {
         for (var x = -1; x <= 1; x++) {
-            let t = uv + vec2<f32>(f32(x), f32(y)) * texel;
-            let lit = textureSampleCompareLevel(map, cmp, t, lp.z);
-            // How far the caster is in front of the surface: shadows from far above fade away.
-            let caster = textureLoad(map, vec2<i32>(clamp(t * dim, vec2<f32>(0.0), dim - 1.0)), 0);
-            let gap = max(lp.z - caster, 0.0) * u.misc.y;
-            dark += (1.0 - lit) * (1.0 - smoothstep(u.misc.z, u.misc.w, gap));
+            // Bilinear over the tap's four texels, each compared and faded by its own caster's height (a filtered
+            // comparison would mix a high caster's edge into the cleared texels beside it, unfaded).
+            let f = (uv + vec2<f32>(f32(x), f32(y)) * texel) * dim - 0.5;
+            let b = floor(f);
+            let w = f - b;
+            var c = vec4<f32>(0.0);
+            for (var k = 0; k < 4; k++) {
+                let o = vec2<f32>(f32(k & 1), f32(k >> 1u));
+                let caster = textureLoad(map, vec2<i32>(clamp(b + o, vec2<f32>(0.0), dim - 1.0)), 0);
+                let gap = (lp.z - caster) * u.misc.y;
+                c[k] = select(0.0, 1.0 - smoothstep(u.misc.z, u.misc.w, gap), lp.z > caster);
+            }
+            dark += mix(mix(c.x, c.y, w.x), mix(c.z, c.w, w.x), w.y);
         }
     }
     let shadow = dark / 9.0;
