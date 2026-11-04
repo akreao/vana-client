@@ -798,7 +798,7 @@ pub fn confirm_target(w: &mut World) {
 /// FUN_101585f0 for a mouse release (results 0x16 left / 0x17 right). Left: locked (no prompt) confirms without a
 /// pick; else the actor under the pointer becomes the target / the prompt's pick, and a click that leaves it as it
 /// was confirms (the prompt, the target, or with none the action menu). After a drag only the pick runs. Right:
-/// cancels the prompt, clears an unlocked target, or with none stops autorun. True when it confirmed.
+/// cancels the prompt, clears an unlocked target, or with none stops autorun (not after a drag, ours). True when it confirmed.
 /// `double` (ours, the modern UI's double click on the target): instead of the action menu, the safe default runs as
 /// Ctrl+C does (talk to an NPC, check a player or a monster), closing the menu the first click opened.
 pub fn click(w: &mut World, picked: Option<u32>, left: bool, drag: bool, double: bool) -> bool {
@@ -810,7 +810,9 @@ pub fn click(w: &mut World, picked: Option<u32>, left: bool, drag: bool, double:
             if picks_allowed(w) {
                 set(w, None);
             }
-        } else if w.autorun {
+        } else if w.autorun && !drag {
+            // Ours: retail has no right-drag camera (FUN_10124bc0 pans at the window edge), so its release always
+            // stops autorun. Ours turns the camera with that drag; ending one keeps the run going.
             w.autorun = false;
         }
         return false;

@@ -42,6 +42,6 @@ With the mouse, hovering only highlights a control; a click moves the cursor the
 - Right click on an actor opens its menu (a monster: Target, Attack, Check; a player: Target, Check, Tell, Invite to Party, Trade; an NPC: Talk, Target, Trade). Item and party rows have right-click menus too.
 - Ctrl + left click on the ground walks there.
 - Mog House storage: click a row, or drag it onto the other pane, to move the stack.
-- In both interfaces, a right drag turns the camera and the character, and the wheel zooms the camera.
+- In both interfaces, a right drag turns the camera and the character (autorun steers with it), and the wheel zooms the camera.
 
 The modern UI's full plan, decisions and state are in [docs/modern-ui.md](https://github.com/akreao/vana-client/blob/master/docs/modern-ui.md).
