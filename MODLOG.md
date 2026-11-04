@@ -1912,7 +1912,8 @@ From the research notes:
   target there is no direction and the follow ends (retail's |vector| <= 0.001 test).
 - Q / E (0xaa / 0xa9, keyboard type 2, free camera, X input 0, camera axes idle): player yaw += ticks x 0.0174528 x
   1.57075 x (E - Q) (_DAT_10322260 = 1.57075; 94 degrees a second); the camera turns with it (FUN_1001d4c0).
-- Face-camera 0x9c (LShift held, type 2, free): the player faces the camera yaw, so A / D strafe; camera axes and Q / E off.
+- Strafe lock 0x9c (LShift / pad B held, control type 2, free): the camera keeps its offset and the heading stays, so the
+  stick strafes; camera axes and Q / E off (docs/modlog 2026-11-04-strafe-lock-b).
 - The heading (actor +0xe4 rotation, vt+0x1c0 FUN_100a3350) is set at once to the move vector's direction (FUN_100a48d0
   end, -atan2), the move vector being the input turned by the camera's forward (camera +0x24 / +0x2c, FUN_100a6030).
   What is drawn eases: FUN_100c4390 (vt+0x330, player +0xf9 set) takes the step's direction when the actor moved 0.01
