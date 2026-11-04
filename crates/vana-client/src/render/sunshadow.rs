@@ -20,6 +20,10 @@ const DEPTH: f32 = 300.0;
 pub const STRENGTH: f32 = 0.45;
 /// The lowest sun the shadows follow (above the horizon); lower suns cast at this angle.
 const MIN_ELEVATION: f32 = 30.0;
+/// How far behind its caster (along the light, world units) a shadow stays full, and where it has faded out: a
+/// character atop a wall casts nothing onto the ground far below.
+const FADE_START: f32 = 3.0;
+const FADE_END: f32 = 7.0;
 
 const WGSL: &str = r#"
 struct U {
@@ -29,7 +33,8 @@ struct U {
     sun: vec4<f32>,
     // xyz: the eye; w: one map texel in world units.
     eye: vec4<f32>,
-    // x: the PCF taps' spacing in texels (wider is softer: the moon's).
+    // x: the PCF taps' spacing in texels (wider is softer: the moon's); y: the map's depth range in world units;
+    // z, w: the caster-to-surface distances where the shadow starts and ends fading.
     misc: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> u: U;
@@ -62,13 +67,26 @@ struct VOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
     let lp = u.light_vp * vec4<f32>(world + n * (1.5 * u.eye.w), 1.0);
     let uv = vec2<f32>(lp.x * 0.5 + 0.5, 0.5 - lp.y * 0.5);
     let texel = u.misc.x / f32(textureDimensions(map).x);
-    var lit = 0.0;
+    let dim = vec2<f32>(textureDimensions(map));
+    var dark = 0.0;
     for (var y = -1; y <= 1; y++) {
         for (var x = -1; x <= 1; x++) {
-            lit += textureSampleCompareLevel(map, cmp, uv + vec2<f32>(f32(x), f32(y)) * texel, lp.z);
+            // Bilinear over the tap's four texels, each compared and faded by its own caster's height (a filtered
+            // comparison would mix a high caster's edge into the cleared texels beside it, unfaded).
+            let f = (uv + vec2<f32>(f32(x), f32(y)) * texel) * dim - 0.5;
+            let b = floor(f);
+            let w = f - b;
+            var c = vec4<f32>(0.0);
+            for (var k = 0; k < 4; k++) {
+                let o = vec2<f32>(f32(k & 1), f32(k >> 1u));
+                let caster = textureLoad(map, vec2<i32>(clamp(b + o, vec2<f32>(0.0), dim - 1.0)), 0);
+                let gap = (lp.z - caster) * u.misc.y;
+                c[k] = select(0.0, 1.0 - smoothstep(u.misc.z, u.misc.w, gap), lp.z > caster);
+            }
+            dark += mix(mix(c.x, c.y, w.x), mix(c.z, c.w, w.x), w.y);
         }
     }
-    let shadow = 1.0 - lit / 9.0;
+    let shadow = dark / 9.0;
     // Fades: toward the map's edge, on surfaces turning away from the sun, and off the sky (depth 1).
     let edge = 1.0 - smoothstep(0.8, 1.0, max(abs(lp.x), abs(lp.y)));
     let k = u.sun.w * shadow * edge * smoothstep(0.0, 0.25, facing) * select(1.0, 0.0, d >= 1.0 || lp.z > 1.0 || lp.z < 0.0);
@@ -258,7 +276,7 @@ impl SunShadow {
             light_vp: light_vp.to_cols_array_2d(),
             sun: [sun.x, sun.y, sun.z, strength],
             eye: [eye.x, eye.y, eye.z, 2.0 * HALF_EXTENT / self.size as f32],
-            misc: [soft, 0.0, 0.0, 0.0],
+            misc: [soft, DEPTH, FADE_START, FADE_END],
         };
         super::Put::put(&gpu.queue, &self.uniform, 0, bytemuck::bytes_of(&p));
         let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -327,7 +345,7 @@ mod tests {
     }
 
     /// The receive pass over a floor seen from above, lit from above: an empty map leaves it as it was, a map that
-    /// shadows everything darkens it by the strength.
+    /// shadows everything just above it darkens it by the strength, and a caster far above leaves it lit.
     #[test]
     fn receive_darkens_shadowed_floor() {
         let Ok(gpu) = Gpu::headless() else { return };
@@ -361,6 +379,8 @@ mod tests {
             view_formats: &[],
         });
         let cv = color.create_view(&Default::default());
+        // The floor's depth in the map: a caster just above it shadows, one far above does not.
+        let floor_lz = light.project_point3(Vec3::ZERO).z;
         let run = |map_depth: f32| {
             let mut enc = gpu.device.create_command_encoder(&Default::default());
             {
@@ -392,8 +412,11 @@ mod tests {
         for p in run(1.0).chunks_exact(4) {
             assert!((p[0] as i32 - lit).abs() <= 2, "unshadowed {p:?}");
         }
-        for p in run(0.0).chunks_exact(4) {
+        for p in run(floor_lz - 1.0 / DEPTH).chunks_exact(4) {
             assert!((p[0] as i32 - dark).abs() <= 3, "shadowed {p:?} want {dark}");
+        }
+        for p in run(floor_lz - 20.0 / DEPTH).chunks_exact(4) {
+            assert!((p[0] as i32 - lit).abs() <= 2, "caster far above {p:?}");
         }
     }
 }
