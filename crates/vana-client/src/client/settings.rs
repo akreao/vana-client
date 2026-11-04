@@ -17,6 +17,7 @@ pub struct Settings {
     pub frame_limit: u32,
     pub anisotropy: u16,
     pub antialias: u32,
+    pub grading: u32,
     pub draw_distance: u32,
     pub party_tp: bool,
     pub map_overlay: bool,
@@ -67,6 +68,7 @@ impl Settings {
             frame_limit: c.frame_limit,
             anisotropy: c.anisotropy,
             antialias: c.antialias,
+            grading: c.grading,
             draw_distance: c.draw_distance,
             party_tp: c.party_tp,
             map_overlay: c.map_overlay,
@@ -115,6 +117,7 @@ impl Settings {
         c.frame_limit = self.frame_limit;
         c.anisotropy = self.anisotropy;
         c.antialias = self.antialias;
+        c.grading = self.grading;
         c.draw_distance = self.draw_distance;
         c.party_tp = self.party_tp;
         c.map_overlay = self.map_overlay;
@@ -174,6 +177,7 @@ enum Val {
     FrameLimit,
     Aniso,
     Antialias,
+    Grading,
     DrawDistance,
     PartyTp,
     MapOverlay,
@@ -306,6 +310,7 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
         row("Lamp Lights", "Baked: the lamplight painted onto the walls, as retail. Real: point lights at the lamps (not retail).", LampLights, &[(0, "Baked"), (1, "Real")], Now),
         row("Character Shadows", "Retail: the game's blob and silhouette shadows. Real: characters cast shadows from the sun onto the world; retail's where there is no sun (not retail).", ActorShadows, &[(0, "Retail"), (1, "Real")], Now),
         row("Ambient Occlusion", "Soft shading in the world's corners and creases; characters are not touched (not retail).", Ssao, OFF_ON, Now),
+        row("Colour Grading", "A colour look for the 3D scene; menus and text are not touched (not retail).", Grading, &[(0, "Off"), (1, "Vivid"), (2, "Warm"), (3, "Cool"), (4, "Film")], Now),
         row("Environment Animation", "0011: swaying vegetation (Normal 16 steps, Smooth 32).", Tool("0011"), &[(0, "Off"), (1, "Normal"), (2, "Smooth")], Now),
         row("Bump Mapping", "0017: normal-mapped scenery; off lights it with the sun and moon together.", Tool("0017"), OFF_ON, NextZone),
         row("Graphics Stabilization", "0040: On interpolates the shine overlay's coordinates plainly (no seam wrap).", Tool("0040"), OFF_ON, Now),
@@ -516,6 +521,7 @@ impl SettingsUi {
             Val::FrameLimit => self.s.frame_limit,
             Val::Aniso => self.s.anisotropy as u32,
             Val::Antialias => self.s.antialias,
+            Val::Grading => self.s.grading,
             Val::DrawDistance => self.s.draw_distance,
             Val::PartyTp => self.s.party_tp as u32,
             Val::ModernUi => self.s.modern_ui as u32,
@@ -559,6 +565,7 @@ impl SettingsUi {
             Val::Tool(n) => self.tool_set(n, x),
             Val::Aniso => self.s.anisotropy = x as u16,
             Val::Antialias => self.s.antialias = x,
+            Val::Grading => self.s.grading = x,
             Val::DrawDistance => self.s.draw_distance = x,
             Val::PartyTp => self.s.party_tp = x != 0,
             Val::ModernUi => self.s.modern_ui = x != 0,
