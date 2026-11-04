@@ -94,12 +94,13 @@ pub fn light_matrix(dir: Vec3, target: Vec3) -> Option<Mat4> {
     Some(proj * view)
 }
 
-/// Whether an actor at `pos` with a box of `radius` casts well inside the map `light_vp` covers (inside the part
-/// before the edge fade); the client keeps retail's shadow for the others.
+/// Whether an actor at `pos` with a box of `radius` lies wholly inside the map `light_vp` covers; the client keeps
+/// retail's shadow for the others. Near the edge the real shadow has faded (from 0.8 of the half side) before retail's
+/// comes back, so the two barely overlap.
 pub fn covers(light_vp: Mat4, pos: Vec3, radius: f32) -> bool {
     let p = light_vp.project_point3(pos);
     let r = radius / HALF_EXTENT;
-    p.x.abs() + r < 0.8 && p.y.abs() + r < 0.8 && p.z > 0.0 && p.z < 1.0
+    p.x.abs() + r < 1.0 && p.y.abs() + r < 1.0 && p.z > 0.0 && p.z < 1.0
 }
 
 /// The sun's travel direction, held at least MIN_ELEVATION above the horizon. The world's y points down (a light

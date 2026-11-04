@@ -13,8 +13,10 @@
   away from the sun (their baked lighting already darkens them). Blended scenery (water, glass) and every actor draw
   after it, so characters never shadow themselves or each other and their painted light is untouched.
 - Only by day (the Vana'diel clock's sun up, `sun_moon(minute).0.y >= 0`): at night `Lighting` carries the moon, and
-  retail's shadows draw. When the pass ran, the client leaves out retail's blob and silhouette shadows for the actors
-  well inside the map (`sunshadow::covers`, inside the edge fade with their box); farther actors keep retail's.
+  retail's shadows draw. When the pass runs (`ZoneRenderer::sun_shadow_light`), the actors whose box lies wholly
+  inside the map (`sunshadow::covers`) are dropped before retail's caster selection, so they take no retail shadow,
+  caster slot or silhouette layer; the others keep retail's. The real shadow fades from 0.8 of the map's half side,
+  so it is mostly gone before retail's returns at the edge.
 - Known limits: every drawn character casts, including ones whose retail shadow is latched off; area-lit interiors
   still take the zone's direction.
 - Tests: render::sunshadow::light_matrix_frames_the_target, render::sunshadow::receive_darkens_shadowed_floor.

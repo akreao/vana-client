@@ -14789,6 +14789,12 @@ impl App {
                 let culled = |id: &u32, a: &Actor| a.character.is_some() && *id != w.my_id && !w.visible.contains(id);
                 let has = |id: u32| w.actors.contains_key(&id);
                 let flags = |id: u32| w.actors.get(&id).map_or((false, false), |a| (a.shadow_off, a.noblob));
+                // Real character shadows (ours, render/sunshadow.rs), unless config 0x3a turns shadows off. The actors their
+                // map covers this frame take no retail shadow (nor its casters or layers).
+                r.prepare_sun_shadow(&gfx.gpu, self.cfg.actor_shadows != 0 && w.game.get(0x3a) != 1);
+                if let Some((m, _, _)) = r.sun_shadow_light(camera.target) {
+                    seen.retain(|_, s| !crate::render::sunshadow::covers(m, s.pos, s.corners.iter().map(|c| c.distance(s.pos)).fold(0.0, f32::max)));
+                }
                 let shadow_modes = match w.ground.as_ref() {
                     Some(g) => shadows::modes(&shadows::Ctx { ground: g, setting: w.game.get(0x3a), me: w.my_id, zone: w.pos_zone, has: &has, flags: &flags, layers: r.shadow_layers(bg) }, &seen, camera.eye),
                     None => Vec::new(),
@@ -14818,8 +14824,6 @@ impl App {
                 r.set_sway(dt * 60.0, steps, crate::dat::zone::SWAY_TAGS.iter().position(|t| *t == crate::dat::weather::weather_tag(w.weather)));
                 // FUN_1001d240's helper target for faded actors (drawn opaque, then blended as one quad).
                 r.prepare_faded(&gfx.gpu, &scene_tex);
-                // Real character shadows (ours, render/sunshadow.rs), unless config 0x3a turns shadows off.
-                r.prepare_sun_shadow(&gfx.gpu, self.cfg.actor_shadows != 0 && w.game.get(0x3a) != 1);
                 perf::timed(|| "zone render".into(), || r.render(&gfx.gpu, &mut encoder, &scene_raw, &scene_depth, &camera, aspect, &actors));
                 mark!("scene");
                 // The actors' ground shadows over the scene (client/shadows.rs, render/shadow.rs).
@@ -14829,12 +14833,7 @@ impl App {
                     r.set_shadow_texture(&gfx.gpu, &t, scene_fmt);
                 }
                 if let Some(g) = w.ground.as_ref() {
-                    // With the real shadows drawn this frame, retail's are left out for the actors the map covers.
-                    let modes = match r.sun_shadow_matrix.get() {
-                        Some(m) => shadow_modes.into_iter().filter(|(_, _, s)| !crate::render::sunshadow::covers(m, s.pos, s.corners.iter().map(|c| c.distance(s.pos)).fold(0.0, f32::max))).collect(),
-                        None => shadow_modes,
-                    };
-                    let casters = shadows::casters(&mut w.shadow_slots, g, modes, &drawn_map);
+                    let casters = shadows::casters(&mut w.shadow_slots, g, shadow_modes, &drawn_map);
                     let sun = r.lighting.map_or([0.0; 4], |l| [l.actor_dir.x, l.actor_dir.y, l.actor_dir.z, 1.0]);
                     perf::timed(|| "shadows".into(), || r.draw_shadows(&gfx.gpu, &mut encoder, &scene_raw, &scene_depth, bg, g, &casters, sun, (dt * 60.0).max(1e-3)));
                 }

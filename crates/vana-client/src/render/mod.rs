@@ -417,8 +417,6 @@ pub struct ZoneRenderer {
     sun_depth_pipeline: wgpu::RenderPipeline,
     sun_shadow: Option<sunshadow::SunShadow>,
     pub sun_shadow_drawn: std::cell::Cell<bool>,
-    /// The light matrix the real shadows drew with this frame (the client keeps retail's for actors outside it).
-    pub sun_shadow_matrix: std::cell::Cell<Option<Mat4>>,
     /// The sun is up (the client's Vana'diel clock): at night `lighting` carries the moon, which casts none.
     pub daylight: bool,
     refract_buf: wgpu::Buffer,
@@ -1867,7 +1865,6 @@ impl ZoneRenderer {
             sun_depth_pipeline: p.sun_depth_pipeline,
             sun_shadow: None,
             sun_shadow_drawn: std::cell::Cell::new(false),
-            sun_shadow_matrix: std::cell::Cell::new(None),
             daylight: true,
             refract_buf,
             refract_group,
@@ -2787,15 +2784,11 @@ impl ZoneRenderer {
         }
         // Real character shadows (render/sunshadow.rs): the actors' depth from the zone's sun, laid on the scenery
         // below between the cut-out and the blended scenery.
-        let sun = match (&self.sun_shadow, &self.lighting, &self.pose_gpu) {
-            (Some(s), Some(l), Some((_, group, _))) if self.daylight => {
-                let st = sunshadow::strength(l.diffuse);
-                sunshadow::light_matrix(l.dir, camera.target).zip(sunshadow::sun_direction(l.dir)).filter(|_| st > 0.0).map(|(m, d)| (s, m, d, st, group))
-            }
+        let sun = match (&self.sun_shadow, self.sun_shadow_light(camera.target), &self.pose_gpu) {
+            (Some(s), Some((m, d, st)), Some((_, group, _))) => Some((s, m, d, st, group)),
             _ => None,
         };
         self.sun_shadow_drawn.set(sun.is_some());
-        self.sun_shadow_matrix.set(sun.as_ref().map(|s| s.1));
         if let Some((s, m, _, _, group)) = &sun {
             s.set_light(gpu, *m);
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -3070,6 +3063,15 @@ impl ZoneRenderer {
             pass.set_bind_group(3, &self.faded_group, &[off as u32]);
             pass.draw(0..3, 0..1);
         }
+    }
+
+    /// The real shadows' light this frame around `target` (the camera's): matrix, sun direction, strength. None when
+    /// they are off, there is no lit sun (night, no zone lighting, a dim light) or no poses.
+    pub fn sun_shadow_light(&self, target: Vec3) -> Option<(Mat4, Vec3, f32)> {
+        let l = self.lighting.as_ref().filter(|_| self.sun_shadow.is_some() && self.pose_gpu.is_some() && self.daylight)?;
+        let st = sunshadow::strength(l.diffuse);
+        (st > 0.0).then_some(())?;
+        Some((sunshadow::light_matrix(l.dir, target)?, sunshadow::sun_direction(l.dir)?, st))
     }
 
     /// Real character shadows (ours) on or off; made at the first use. render draws them only with a lit sun.
