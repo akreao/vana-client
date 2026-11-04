@@ -7019,6 +7019,8 @@ pub struct App {
     /// When the left button went down, and the right one (where and when): the drag rule (FUN_10125040).
     press_time: Option<Instant>,
     right_press: Option<((f64, f64), Instant)>,
+    /// The camera turned during this right press: its release is a drag even with the pointer held still (locked).
+    right_looked: bool,
     /// Ours (modern UI): the actor the last plain left click picked and when, for the double click.
     last_pick: Option<(u32, Instant)>,
     /// Ours (modern MMOs): a look drag holds the pointer, hidden, where it began. Some(true) locked (raw motion turns
@@ -7300,6 +7302,7 @@ impl App {
             press_at: None,
             press_time: None,
             right_press: None,
+            right_looked: false,
             last_pick: None,
             look_grab: None,
             grab_at: None,
@@ -11661,6 +11664,9 @@ impl App {
     /// player to the step), so a right drag while moving or autorunning never strafes. In first person it turns the
     /// look itself.
     fn look(&mut self, dx: f64, dy: f64) {
+        if self.dragging && (dx != 0.0 || dy != 0.0) {
+            self.right_looked = true;
+        }
         let Phase::World(world) = &mut self.phase else { return };
         let inv = |w: &World, id: u16| if w.game.get(id) == 1 { -1.0 } else { 1.0 };
         match () {
@@ -11778,8 +11784,10 @@ impl App {
             MouseButton::Right => {
                 if pressed {
                     self.right_press = self.last_cursor.map(|c| (c, Instant::now()));
+                    self.right_looked = false;
                 } else if let Some((b, drag)) = release(self.right_press.take(), self.last_cursor, self.ui_k) {
-                    self.swallow_click |= world_click(&mut self.phase, b, false, drag);
+                    let looked = std::mem::take(&mut self.right_looked);
+                    self.swallow_click |= world_click(&mut self.phase, b, false, drag || looked);
                 }
                 self.dragging = pressed;
             }

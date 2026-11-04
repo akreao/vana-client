@@ -505,9 +505,8 @@ Milestone 1:
 - Chat tabs as retail's full log (decoded 2026-10-26, FUN_101299f0 by the line's chat mode): All, Say, Tell, Party,
   Linkshell, Linkshell 2, Assist E, Assist J, Unity, Shout; each chat line keeps its mode (combat.rs ChatLog).
 - The mouse, both interfaces (user, 2026-10-26: as modern MMOs; clicks unchanged): a drag holds the pointer hidden
-  where it began (locked, raw motion; confined and warped back on X11); a right drag turns only the camera (user,
-  2026-11-04: the facing follows the move as retail, so a drag while moving never strafes or backpedals, and its
-  release does not stop autorun); first person looks with the mouse (0x8d / 0x8e invert it); the wheel moves the camera in and
+  where it began (locked, raw motion; confined and warped back on X11); a right drag turns the camera and the character
+  faces where it looks; first person looks with the mouse (0x8d / 0x8e invert it); the wheel moves the camera in and
   out (0.5 .. 3 of retail's 3..6 rest, saved as cam_dist), fully in into first person and out of it; no screen edge
   panning; Mouse/Cam.'s Mouse Control and Screen Edge Panning greyed in Classic, left out in Modern.
 - Edge windows: dragged by the heading, the background or the tab, a see-through copy follows the pointer and the
