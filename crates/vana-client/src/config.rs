@@ -43,22 +43,36 @@ pub fn chat_history_path(name: &str) -> PathBuf {
     dir.join(name_file(name))
 }
 
-/// A character's training regime state (client/regime.rs): in the data dir, a folder per server ("127.0.0.1-54002",
-/// its search address) and a file per character. Every run uses it, an FFXI_CONFIG one too: it mirrors what that
-/// server keeps for that character, so the wrapper's runs and plain ones see the same, and a same-named character on
-/// another server has its own.
-pub fn regime_path(server: &str, name: &str) -> PathBuf {
-    data_dir().join("regime").join(server).join(name_file(name))
+/// The regime folder: in the data dir, or beside an FFXI_CONFIG copy, so a test run never writes the player's.
+fn regime_dir() -> PathBuf {
+    match std::env::var_os("FFXI_CONFIG") {
+        Some(p) => PathBuf::from(p).with_file_name("regime"),
+        None => data_dir().join("regime"),
+    }
 }
 
-/// Where earlier builds kept a character's regime (by name alone: beside an FFXI_CONFIG copy, or in the data dir),
-/// read when the server's own file is not there yet.
+/// A character's training regime state (client/regime.rs): a folder per server ("127.0.0.1-54002", its search
+/// address) and a file per character, so a same-named character on another server has its own.
+pub fn regime_path(server: &str, name: &str) -> PathBuf {
+    regime_dir().join(server).join(name_file(name))
+}
+
+/// Where earlier builds kept a character's regime by name alone, read when the server's own file is not there yet
+/// (and, fork only, the data dir's when an FFXI_CONFIG copy moved the folder).
 pub fn regime_legacy_paths(name: &str) -> Vec<PathBuf> {
-    let home = data_dir().join("regime").join(name_file(name));
-    match std::env::var_os("FFXI_CONFIG") {
-        Some(p) => vec![PathBuf::from(p).with_file_name("regime").join(name_file(name)), home],
-        None => vec![home],
+    let mut out = vec![regime_dir().join(name_file(name))];
+    let data = data_dir().join("regime");
+    if data != regime_dir() {
+        out.push(data.join(name_file(name)));
     }
+    out
+}
+
+/// Fork only, until upstream reads it: this server's file in the data dir when an FFXI_CONFIG copy moved the folder.
+/// The fork's builds kept every run's regimes there, and the wrapper sets FFXI_CONFIG for real play.
+pub fn regime_data_dir_path(server: &str, name: &str) -> Option<PathBuf> {
+    let data = data_dir().join("regime");
+    (data != regime_dir()).then(|| data.join(server).join(name_file(name)))
 }
 
 /// The servers' certificate fingerprints (net/tls.rs): in the data dir, or beside an FFXI_CONFIG copy.
@@ -147,6 +161,9 @@ pub struct Config {
     /// How far scenery, actors and effects draw, in percent of retail's distance (the zone's, scaled by the
     /// Clipping setting); 0 = no limit. Not a retail option.
     pub draw_distance: u32,
+    /// Milliseconds between the datagrams sent to a private server's zone server (50..400; 400 is the game's, which a
+    /// PlayOnline sign-in always keeps). The server answers each one, so its updates come sooner. Not a retail option.
+    pub send_interval: u32,
     /// Party and alliance rows show TP (retail config 0xae bit 0, default off; ours on, as the add-ons do).
     pub party_tp: bool,
     /// Extra: the map overlay (Ctrl / Alt + O; the add-ons' map overlay) and its opacity 0..1.
@@ -403,6 +420,7 @@ impl Default for Config {
             antialias: 0,
             grading: 0,
             draw_distance: 0,
+            send_interval: 400,
             party_tp: true,
             map_overlay: false,
             map_overlay_opacity: 0.6,

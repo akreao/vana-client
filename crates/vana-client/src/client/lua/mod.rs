@@ -2143,7 +2143,8 @@ mod stub_tests {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/modding/reference");
         let mut text = String::new();
         for e in std::fs::read_dir(&dir).unwrap().flatten() {
-            text += &std::fs::read_to_string(e.path()).unwrap();
+            // A Windows checkout (core.autocrlf) has CRLF lines.
+            text += &std::fs::read_to_string(e.path()).unwrap().replace("\r\n", "\n");
         }
         // A Windows checkout may carry CRLF line ends.
         let text = text.replace("\r\n", "\n");

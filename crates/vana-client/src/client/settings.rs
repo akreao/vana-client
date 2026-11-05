@@ -19,6 +19,7 @@ pub struct Settings {
     pub antialias: u32,
     pub grading: u32,
     pub draw_distance: u32,
+    pub send_interval: u32,
     pub party_tp: bool,
     pub map_overlay: bool,
     pub map_opacity: u32,
@@ -73,6 +74,7 @@ impl Settings {
             antialias: c.antialias,
             grading: c.grading,
             draw_distance: c.draw_distance,
+            send_interval: c.send_interval,
             party_tp: c.party_tp,
             map_overlay: c.map_overlay,
             map_opacity: pct(c.map_overlay_opacity),
@@ -124,6 +126,7 @@ impl Settings {
         c.antialias = self.antialias;
         c.grading = self.grading;
         c.draw_distance = self.draw_distance;
+        c.send_interval = self.send_interval;
         c.party_tp = self.party_tp;
         c.map_overlay = self.map_overlay;
         c.map_overlay_opacity = self.map_opacity as f32 / 100.0;
@@ -186,6 +189,7 @@ enum Val {
     Antialias,
     Grading,
     DrawDistance,
+    SendRate,
     PartyTp,
     MapOverlay,
     MapOpacity,
@@ -286,10 +290,10 @@ const fn row(label: &'static str, help: &'static str, val: Val, choices: &'stati
     SRow { label, help, val, choices, when }
 }
 
-const TABS: [&str; 8] = ["General", "Screen", "Textures", "Effects", "Sound", "Misc.", "Client", "Mods"];
+const TABS: [&str; 10] = ["General", "Screen", "Textures", "Effects", "Sound", "Misc.", "Client", "Gamepad", "Graphics", "Mods"];
 /// The Mods page (client/modsui.rs): its rows come from the mods folder, not a table.
-const MODS: usize = 7;
-const EXTRA_TABS: [&str; 3] = ["Maps", "Timers", "Misc."];
+const MODS: usize = 9;
+const EXTRA_TABS: [&str; 4] = ["Maps", "Timers", "Battle", "Misc."];
 
 /// `in_game`: the volumes are the Gameplay page's there, so the Sound page leaves them out. `modern`: the minimap's and
 /// the Timers' place and size are set by dragging them there, so those rows are left out.
@@ -317,10 +321,6 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
     ];
     const EFFECTS: &[SRow] = &[
         row("Lamp Lights", "Baked keeps the lamplight painted onto the walls, as retail. Real makes the lamps give off light of their own (not retail).", LampLights, &[(0, "Baked"), (1, "Real")], Now),
-        row("Character Shadows", "Retail gives characters the game's own simple shadows. Real makes characters cast proper shadows from the sun and moon, and from lamps when Lamp Lights is Real (not retail).", ActorShadows, &[(0, "Retail"), (1, "Real")], Now),
-        row("Shadow Quality", "How sharp Real shadows are. Higher is sharper and uses more video memory (not retail).", ShadowMap, &[(1024, "Low"), (2048, "Medium"), (4096, "High")], Now),
-        row("Ambient Occlusion", "Adds soft shade in corners and creases of the world, so buildings look more solid (not retail).", Ssao, OFF_ON, Now),
-        row("Colour Grading", "Gives the 3D world a colour tint. Menus and text keep their colours (not retail).", Grading, &[(0, "Off"), (1, "Vivid"), (2, "Warm"), (3, "Cool"), (4, "Film")], Now),
         row("Environment Animation", "Makes grass, trees and other plants sway. Smooth sways them more smoothly than Normal.", Tool("0011"), &[(0, "Off"), (1, "Normal"), (2, "Smooth")], Now),
         row("Bump Mapping", "Gives some walls and floors a raised, textured look. Off also lights them a little differently.", Tool("0017"), OFF_ON, NextZone),
         row("Graphics Stabilization", "Retail's fix for glitches on some old graphics cards. It only changes the moving shine some spells and effects put on characters. Leave it Off unless that shine looks broken.", Tool("0040"), OFF_ON, Now),
@@ -341,16 +341,27 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
         row("Opening Movie", "Plays the opening movie before the title screen. Any key skips it.", Tool("0022"), OFF_ON, Restart),
         row("Simple Character Creation", "Shows flat pictures instead of 3D models during character creation.", Tool("0023"), OFF_ON, Now),
         row("Screenshot Size", "Also saves each screenshot at your screen's size, in ffxiuser/screenshots.", Tool("0043"), OFF_ON, Now),
+        row("Send Rate", "How often the client sends to a private server, which answers each time: faster brings what happens around you sooner. A PlayOnline sign-in keeps the game's rate (not retail).", SendRate, &[(400, "Retail"), (200, "2x"), (100, "4x"), (50, "8x")], Now),
     ];
     const CLIENT: &[SRow] = &[
         row("Frame Limit", "The most frames drawn each second. The game itself always runs at the same speed.", FrameLimit, &[], Now),
         row("Anisotropic Filtering", "Keeps ground and walls sharp when you look at them at a slant. Higher is sharper.", Aniso, &[(1, "Off"), (2, "2x"), (4, "4x"), (8, "8x"), (16, "16x")], NextZone),
-        row("Anti-aliasing", "Smooths jagged edges in the 3D world. Menus and text are left alone (not retail). For even smoother edges, set Background higher than the window.", Antialias, &[(0, "Off"), (1, "SMAA")], Now),
         row("Party TP", "Shows each member's TP in the party window.", PartyTp, OFF_ON, Now),
         row("Interface", "Classic uses the game's own windows. Modern uses the new windows where there is one (not retail).", ModernUi, &[(0, "Classic"), (1, "Modern")], Now),
         row("Interface Size", "How big the modern windows are (not retail).", ModernScale, MODERN_SCALES, Now),
         row("Panel Opacity", "How see-through the modern windows' backgrounds are (not retail).", ModernOpacity, &[], Now),
         row("Panel Places", "Reset puts this character's modern windows back where they started (not retail).", ResetPlaces, &[(0, "As Moved"), (1, "Reset")], Now),
+    ];
+    // Ours: the graphics options retail has no page for (a page holds 7 rows).
+    const GRAPHICS: &[SRow] = &[
+        row("Character Shadows", "Retail gives characters the game's own simple shadows. Real makes characters cast proper shadows from the sun and moon, and from lamps when Lamp Lights is Real (not retail).", ActorShadows, &[(0, "Retail"), (1, "Real")], Now),
+        row("Shadow Quality", "How sharp Real shadows are. Higher is sharper and uses more video memory (not retail).", ShadowMap, &[(1024, "Low"), (2048, "Medium"), (4096, "High")], Now),
+        row("Ambient Occlusion", "Adds soft shade in corners and creases of the world, so buildings look more solid (not retail).", Ssao, OFF_ON, Now),
+        row("Colour Grading", "Gives the 3D world a colour tint. Menus and text keep their colours (not retail).", Grading, &[(0, "Off"), (1, "Vivid"), (2, "Warm"), (3, "Cool"), (4, "Film")], Now),
+        row("Anti-aliasing", "Smooths jagged edges in the 3D world. Menus and text are left alone (not retail). For even smoother edges, set Background higher than the window.", Antialias, &[(0, "Off"), (1, "SMAA")], Now),
+    ];
+    // A page holds 7 rows; the gamepad's have their own.
+    const GAMEPAD: &[SRow] = &[
         row("Gamepad", "Lets you play with a game controller. The button layout follows the game's pad config tool.", Gamepad, OFF_ON, Now),
         row("Stick Dead Zone", "How far you must push a stick before it moves you. Raise it if you drift with the stick let go. 33% matches retail (not retail).", PadDeadZone, &[(15, "15%"), (20, "20%"), (25, "25%"), (33, "33%"), (40, "40%"), (50, "50%")], Now),
     ];
@@ -371,26 +382,29 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
         SKILLCHAIN_ROW,
     ];
     const TIMERS_MODERN: &[SRow] = &[TIMERS_ROW, REGIME_ROW, SKILLCHAIN_ROW];
-    const EXTRA_MISC: &[SRow] = &[
-        row("Synthesis Amount", "After you press Synthesize, asks how many to make and crafts them one after another.", SynthAmount, OFF_ON, Now),
-        row("Timestamps on All Lines", "Puts the time on every chat log line, not only chat.", StampAll, OFF_ON, Now),
+    // A page holds 7 rows: what touches battle has its own.
+    const EXTRA_BATTLE: &[SRow] = &[
         row("Target Distance", "Shows how far away your target is in the target window.", TargetDistance, OFF_ON, Now),
         row("Target HP %", "Shows your target's HP percent next to its HP bar in the classic target window. The modern one always shows it.", TargetHpp, OFF_ON, Now),
-        row("Clock", "Shows Earth time, the moon phase and the next Vana'diel day next to the game's clock.", EarthClock, OFF_ON, Now),
         row("Trust Speech", "Shows or hides what your trusts say in the chat log.", TrustSpeech, &[(0, "Shown"), (1, "Hidden")], Now),
         row("Ready Lines", "Shows every \"readies\" and \"starts casting\" line, or only yours and monsters' so you see what is coming at you.", ReadyLines, &[(0, "All"), (1, "Mine, Monsters'")], Now),
         row("Battle Text", "Shows battle lines the way the game words them, or shortened, like \"Name [Fast Blade] → Wild Rabbit: 123\".", ShortBattle, &[(0, "Retail"), (1, "Short")], Now),
         row("Battle Names", "Shows names in battle lines in one colour, or coloured by who they are: you, your party, your alliance, monsters you claimed, and others' claims.", NameColours, &[(0, "Plain"), (1, "Coloured")], Now),
+    ];
+    const EXTRA_MISC: &[SRow] = &[
+        row("Synthesis Amount", "After you press Synthesize, asks how many to make and crafts them one after another.", SynthAmount, OFF_ON, Now),
+        row("Timestamps on All Lines", "Puts the time on every chat log line, not only chat.", StampAll, OFF_ON, Now),
+        row("Clock", "Shows Earth time, the moon phase and the next Vana'diel day next to the game's clock.", EarthClock, OFF_ON, Now),
         row("Text Auto-Advance", "Event messages that wait for a key move on by themselves after this many seconds.", AutoAdvance, &[(0, "OFF"), (3, "3 s"), (5, "5 s"), (8, "8 s")], Now),
     ];
     match kind {
-        Kind::Extras if modern => [&MAPS[..3], TIMERS_MODERN, EXTRA_MISC].get(tab).copied().unwrap_or(&[]),
-        Kind::Extras => [MAPS, TIMERS, EXTRA_MISC].get(tab).copied().unwrap_or(&[]),
+        Kind::Extras if modern => [&MAPS[..3], TIMERS_MODERN, EXTRA_BATTLE, EXTRA_MISC].get(tab).copied().unwrap_or(&[]),
+        Kind::Extras => [MAPS, TIMERS, EXTRA_BATTLE, EXTRA_MISC].get(tab).copied().unwrap_or(&[]),
         Kind::Settings if in_game && tab == 4 => &SOUND[..3],
         Kind::Settings if tab == MODS => &[],
         // Panel Places (the last Linux row) is a character's: in game only.
         Kind::Settings if !in_game && tab == 6 => &CLIENT[..CLIENT.len() - 1],
-        Kind::Settings => [GENERAL, SCREEN, TEXTURES, EFFECTS, SOUND, MISC, CLIENT][tab.min(6)],
+        Kind::Settings => [GENERAL, SCREEN, TEXTURES, EFFECTS, SOUND, MISC, CLIENT, GAMEPAD, GRAPHICS][tab.min(8)],
     }
 }
 
@@ -536,6 +550,7 @@ impl SettingsUi {
             Val::Antialias => self.s.antialias,
             Val::Grading => self.s.grading,
             Val::DrawDistance => self.s.draw_distance,
+            Val::SendRate => self.s.send_interval,
             Val::PartyTp => self.s.party_tp as u32,
             Val::ModernUi => self.s.modern_ui as u32,
             Val::ModernScale => self.s.modern_scale,
@@ -582,6 +597,7 @@ impl SettingsUi {
             Val::Antialias => self.s.antialias = x,
             Val::Grading => self.s.grading = x,
             Val::DrawDistance => self.s.draw_distance = x,
+            Val::SendRate => self.s.send_interval = x,
             Val::PartyTp => self.s.party_tp = x != 0,
             Val::ModernUi => self.s.modern_ui = x != 0,
             Val::ModernScale => self.s.modern_scale = x,
@@ -1582,6 +1598,21 @@ pub(super) fn marker(gu: &mut GameUi, x: f32, y: f32, w: f32) {
 mod tests {
     use super::*;
 
+    /// A page's frame holds 7 rows; at the title the Client page leaves out Panel Places and nothing else.
+    #[test]
+    fn pages_fit_their_frame() {
+        for kind in [Kind::Settings, Kind::Extras] {
+            for tab in 0..TABS.len() {
+                for (in_game, modern) in [(false, false), (true, false), (false, true), (true, true)] {
+                    assert!(rows(kind, tab, in_game, modern).len() <= 7, "{kind:?} page {tab}");
+                }
+            }
+        }
+        let (title, game) = (rows(Kind::Settings, 6, false, false), rows(Kind::Settings, 6, true, false));
+        assert_eq!(title.len() + 1, game.len());
+        assert!(!title.iter().any(|r| matches!(r.val, Val::ResetPlaces)) && matches!(game.last().unwrap().val, Val::ResetPlaces));
+    }
+
     #[test]
     fn plain_help() {
         assert_eq!(plain("0034: full screen or a window."), "Full screen or a window.");
@@ -1646,15 +1677,15 @@ mod tests {
         assert_eq!(Settings::of(&back), ui.s);
     }
 
-    /// Extras: pages as Settings (Maps, Timers, Misc.), opened on the page name; buttons pick with Left / Right and
-    /// Enter; Up from the page name wraps to the last row.
+    /// Extras: pages as Settings (Maps, Timers, Battle, Misc.), opened on the page name; buttons pick with Left / Right
+    /// and Enter; Up from the page name wraps to the last row.
     #[test]
     fn extras_buttons() {
         let c = Config::default();
         let mut ui = SettingsUi::open_kind(&c, [1280, 800], Kind::Extras);
         assert_eq!((ui.tab, ui.row), (0, 0));
         ui.key(egui::Key::ArrowLeft);
-        assert_eq!(ui.tab, 2);
+        assert_eq!(ui.tab, 3);
         ui.key(egui::Key::ArrowRight);
         ui.key(egui::Key::ArrowDown);
         assert_eq!((ui.row, ui.col), (1, 1));
@@ -1686,7 +1717,7 @@ mod tests {
         ui.key(egui::Key::Enter);
         assert!(ui.s.timers);
         // Misc.: Timestamps on All Lines.
-        ui.goto(2, 2);
+        ui.goto(3, 2);
         ui.key(egui::Key::ArrowLeft);
         ui.key(egui::Key::Enter);
         assert!(ui.s.stamp_all_lines);
