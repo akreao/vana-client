@@ -139,7 +139,7 @@ fn rail(ui: &mut Ui, m: &super::Modern, g: &gm::Gm, click: &mut Option<Click>) {
             ui.add_space(2.0);
         }
         ui.add_space(10.0);
-        ui.label(egui::RichText::new(format!("Ours: not in the retail client. Shown to GMs only; level {} sees {} commands.", g.level, g.commands.len())).size(m.theme.small).color(m.theme.color("muted")));
+        ui.label(egui::RichText::new(format!("Vana Client only: not in the retail client. Shown to GMs only; level {} sees {} commands.", g.level, g.commands.len())).size(m.theme.small).color(m.theme.color("muted")));
     });
 }
 
