@@ -3039,13 +3039,11 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
     if held && !monstrosity::active(world) {
         combat::right(world);
     }
-    if right_click {
-        if world.my_motion.status == 1 {
-            world.autorun = false;
-        } else {
-            world.action_menu = None;
-            world.sounds.push(crate::audio::Ui::Cancel as u32);
-        }
+    // Engaged, retail's right click (Escape) stops autorun here; ours never stops it with the mouse (user,
+    // 2026-11-05), so engaged it does nothing.
+    if right_click && world.my_motion.status != 1 {
+        world.action_menu = None;
+        world.sounds.push(crate::audio::Ui::Cancel as u32);
     }
     if let Some(c) = act {
         // The generic window handler's Enter (FUN_10118260): 0002.
