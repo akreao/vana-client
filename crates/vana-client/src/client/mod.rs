@@ -9415,6 +9415,8 @@ impl App {
                     world.noreact.clear();
                     world.loads.clear();
                     world.knocks.clear();
+                    // A rest machine starts afresh in the new zone (rest.rs).
+                    world.rests.clear();
                     let current = world.zone == Some(zone) && world.scene == Some(scene);
                     let pending = world.loading == Some(zone) && world.loading_scene == scene;
                     if !current && !pending {
@@ -9450,6 +9452,7 @@ impl App {
                         if !event::holds(world, e.id) {
                             world.entities.remove(&e.id);
                             world.actors.remove(&e.id);
+                            world.rests.remove(&e.id);
                             world.effects.forget_actor(e.id);
                             timers::on_gone(world, e.id, false);
                         }
@@ -11000,8 +11003,9 @@ impl App {
             world.click_move = None;
             world.autorun = false;
         }
-        // Turning while autorunning steers it: the move goes forward and the turn counts as X input.
-        if world.autorun && turn != 0.0 {
+        // Turning while autorunning steers it: the move goes forward and the turn counts as X input. Not while a move
+        // lock (op 0x2e, our stand-up) holds the walk.
+        if world.autorun && turn != 0.0 && !move_locked {
             (ax, ay) = (turn, -1.0);
         }
         let mut step = right * ax - forward * ay;
