@@ -100,9 +100,55 @@ pub fn choose(names: &MotionNames, status: u8, ratio: f32) -> (&'static str, f32
     }
 }
 
+/// FUN_100a80d0: the quarter of a step about the heading `f` (both level): 1 forward, 2 right, 3 back, 4 left, the
+/// sectors 90 degrees wide and centred on the axes; 0 under 0.001.
+pub fn strafe_dir(f: glam::Vec3, step: glam::Vec3) -> u8 {
+    if step.length() < 0.001 {
+        return 0;
+    }
+    // Right of the heading, as update_movement's camera right (forward x -Y).
+    let r = f.cross(glam::Vec3::NEG_Y);
+    let (ahead, side) = (step.dot(f), step.dot(r));
+    if ahead.abs() >= side.abs() {
+        if ahead >= 0.0 { 1 } else { 3 }
+    } else if side > 0.0 {
+        2
+    } else {
+        4
+    }
+}
+
+/// FUN_100c8bb0's override of the walk / run while the heading is held (actor +0xfb), by the direction above: on foot
+/// 'mvr' / 'mvb' / 'mvl', riding (status 5 / 0x55) 'mvb' backing and 'wlk' sideways; forward keeps the walk / run.
+/// No fallback: a model without it keeps its last motion (FUN_100c83c0).
+pub fn strafe(dir: u8, riding: bool) -> Option<&'static str> {
+    match (dir, riding) {
+        (3, _) => Some("mvb"),
+        (2, false) => Some("mvr"),
+        (4, false) => Some("mvl"),
+        (2 | 4, true) => Some("wlk"),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strafe_quarters() {
+        use glam::Vec3;
+        let f = Vec3::Z;
+        let r = f.cross(Vec3::NEG_Y);
+        assert_eq!(strafe_dir(f, f), 1);
+        assert_eq!(strafe_dir(f, r), 2);
+        assert_eq!(strafe_dir(f, -f), 3);
+        assert_eq!(strafe_dir(f, -r), 4);
+        // Diagonals forward of 45 degrees stay forward.
+        assert_eq!(strafe_dir(f, f + r * 0.9), 1);
+        assert_eq!(strafe_dir(f, Vec3::ZERO), 0);
+        assert_eq!((strafe(2, false), strafe(3, true), strafe(4, true), strafe(1, false)), (Some("mvr"), Some("mvb"), Some("wlk"), None));
+    }
 
     #[test]
     fn thresholds() {
