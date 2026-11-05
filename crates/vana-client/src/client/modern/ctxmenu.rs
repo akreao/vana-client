@@ -13,8 +13,8 @@ use egui::{Align2, Color32, FontFamily, FontId, Id, Order, Pos2, Sense, pos2, ve
 /// The open menu: where it was opened and on what.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Menu {
-    /// An Items window row: its place on screen, the slot (inventory index, item id); `moving` shows the bags.
-    Item { at: Pos2, index: u8, id: u16, moving: bool },
+    /// An Items window row: its place on screen, the slot (bag, index, item id); `moving` shows the bags.
+    Item { at: Pos2, bag: u8, index: u8, id: u16, moving: bool },
     /// A party window slot (0..17).
     Party { at: Pos2, slot: usize },
     /// An actor under the pointer (client/mod.rs fills `World::actor_menu` on a right click that did not drag).
@@ -119,7 +119,7 @@ pub fn draw(m: &Modern, ctx: &egui::Context, w: &mut World) {
     }
     let Some(menu) = m.ctx_menu.borrow().clone() else { return };
     let (title, rows) = match &menu {
-        Menu::Item { index, id, moving, .. } => match item_rows(w, *index, *id, *moving) {
+        Menu::Item { bag, index, id, moving, .. } => match item_rows(w, *bag, *index, *id, *moving) {
             Some(r) => (None, r),
             None => return close(m),
         },
@@ -139,8 +139,8 @@ pub fn draw(m: &Modern, ctx: &egui::Context, w: &mut World) {
     let (picked, closing) = popup(ctx, m, at, title.as_deref(), &labels);
     let act = picked.and_then(|k| rows.get(k)).map(|r| r.1);
     // Move to and Back swap the rows in place.
-    if let (Some(a @ (Act::MoveTo | Act::Back)), Menu::Item { at, index, id, .. }) = (act, &menu) {
-        *m.ctx_menu.borrow_mut() = Some(Menu::Item { at: *at, index: *index, id: *id, moving: a == Act::MoveTo });
+    if let (Some(a @ (Act::MoveTo | Act::Back)), Menu::Item { at, bag, index, id, .. }) = (act, &menu) {
+        *m.ctx_menu.borrow_mut() = Some(Menu::Item { at: *at, bag: *bag, index: *index, id: *id, moving: a == Act::MoveTo });
         return;
     }
     if closing {
@@ -164,10 +164,13 @@ fn items_list(w: &World) -> Option<bool> {
 }
 
 /// The slot's row in the list shown, while it is still there with the same item.
-fn item_row(w: &World, index: u8, id: u16) -> Option<usize> {
+fn item_row(w: &World, bag: u8, index: u8, id: u16) -> Option<usize> {
     let direct = items_list(w)?;
-    // Inventory rows only: the temporary items (listed first) keep retail's keys.
-    gitems::listed_at(w, direct).iter().position(|(c, s)| *c == gitems::INVENTORY && s.index == index && s.id == id)
+    // Inventory rows only (and the direct list's wardrobe rows): the temporary items (listed first) keep retail's keys.
+    if bag == gitems::TEMP || (bag != gitems::INVENTORY && !direct) {
+        return None;
+    }
+    gitems::listed_at(w, direct).iter().position(|(c, s)| *c == bag && s.index == index && s.id == id)
 }
 
 /// A storage view state for the item rules (gitems::usable / tint): `bank` against the inventory, away from the
@@ -182,9 +185,9 @@ fn destinations(w: &World, index: u8) -> Vec<(u8, &'static str)> {
     BAGS.iter().copied().filter(|&(c, _)| gitems::usable(w, &away(0xff), c) && gitems::tint(w, info, &away(c), false, &slot) != crate::inventory::TINT_DIM).collect()
 }
 
-fn item_rows(w: &World, index: u8, id: u16, moving: bool) -> Option<Vec<Row>> {
+fn item_rows(w: &World, bag: u8, index: u8, id: u16, moving: bool) -> Option<Vec<Row>> {
     let direct = items_list(w)?;
-    item_row(w, index, id)?;
+    item_row(w, bag, index, id)?;
     if moving {
         let mut rows: Vec<Row> = destinations(w, index).into_iter().map(|(c, name)| (name.to_string(), Act::Move(c), true)).collect();
         if rows.is_empty() {
@@ -193,8 +196,8 @@ fn item_rows(w: &World, index: u8, id: u16, moving: bool) -> Option<Vec<Row>> {
         rows.push(("Back".into(), Act::Back, true));
         return Some(rows);
     }
-    let [can_use, can_drop] = gitems::iuse_states(w, gitems::INVENTORY, index, id);
-    let bazaar = super::items::bazaar_price(w, gitems::INVENTORY, index).is_some();
+    let [can_use, can_drop] = gitems::iuse_states(w, bag, index, id);
+    let bazaar = super::items::bazaar_price(w, bag, index).is_some();
     if direct {
         return Some(vec![("Use".into(), Act::Use, can_use && !bazaar)]);
     }
@@ -263,7 +266,7 @@ fn tell(w: &mut World, name: &str) {
 
 fn run(w: &mut World, menu: &Menu, act: Act) {
     match *menu {
-        Menu::Item { index, id, .. } => item_act(w, index, id, act),
+        Menu::Item { bag, index, id, .. } => item_act(w, bag, index, id, act),
         Menu::Party { slot, .. } => {
             let Some((name, here)) = member(w, slot) else { return };
             match act {
@@ -304,7 +307,7 @@ fn run(w: &mut World, menu: &Menu, act: Act) {
 
 /// An item row's pick through the list's own keys: the cursor onto the row, then iuse's child or itmsort2's Auto-sort
 /// and Enter (Drop and Sort still ask first).
-fn item_act(w: &mut World, index: u8, id: u16, act: Act) {
+fn item_act(w: &mut World, bag: u8, index: u8, id: u16, act: Act) {
     if let Act::Move(c) = act {
         let n = gitems::store_rows(w, gitems::INVENTORY).into_iter().find(|s| s.index == index && s.id == id).map_or(0, |s| s.count.max(1));
         if n > 0 && destinations(w, index).iter().any(|d| d.0 == c) {
@@ -313,7 +316,7 @@ fn item_act(w: &mut World, index: u8, id: u16, act: Act) {
         }
         return;
     }
-    let Some(row) = item_row(w, index, id) else { return };
+    let Some(row) = item_row(w, bag, index, id) else { return };
     let Some(Win::Items { scroll, cursor, sub, sort, direct, .. }) = w.win.as_mut() else { return };
     // The row into view with the cursor on it.
     let rows = crate::inventory::VISIBLE_ROWS;

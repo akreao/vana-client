@@ -326,17 +326,28 @@ pub(super) fn listed(w: &World, direct: bool) -> Vec<Slot> {
 
 /// The list's rows with their containers. FUN_101f1230's rebuild: with container 3 loaded and the source's +0x20 not 0
 /// (both the main list's and the direct list's), the temporary items come first (+0x54 rows, every one, in their
-/// view's order), then the inventory's.
+/// view's order), then the inventory's, then each Mog Wardrobe's in turn (DAT_103820b0: 8, 10..16) through the source's
+/// +0x48 / +0x50 filter. The main list's +0x40 (FUN_1012e4e0) counts no wardrobe rows; the direct list's
+/// (FUN_101f0d00) counts every one and its filter (FUN_101f0d20) keeps the usable ones: equipped charged gear.
 pub(super) fn listed_at(w: &World, direct: bool) -> Vec<(u8, Slot)> {
     let temp = w.inv.viewed(TEMP).into_iter().filter(|s| s.index != 0 && s.id != 0).map(|s| (TEMP, s));
-    temp.chain(inventory_rows(w, direct).into_iter().map(|s| (INVENTORY, s))).collect()
+    let bags: &[u8] = if direct { &DIRECT_BAGS } else { &[INVENTORY] };
+    temp.chain(bags.iter().flat_map(|&c| bag_rows(w, c, direct).into_iter().map(move |s| (c, s)))).collect()
 }
+
+/// The direct list's bags after the temporary items: the inventory, then Mog Wardrobes 1..8 (FUN_101effd0: 8 of them).
+const DIRECT_BAGS: [u8; 9] = [INVENTORY, 8, 10, 11, 12, 13, 14, 15, 16];
 
 /// The inventory's rows alone (the storage view's inventory side has no temporary rows: its sources' +0x20 is 0).
 fn inventory_rows(w: &World, direct: bool) -> Vec<Slot> {
+    bag_rows(w, INVENTORY, direct)
+}
+
+/// A bag's occupied rows, for the direct list only the usable ones (FUN_101f0d20).
+fn bag_rows(w: &World, c: u8, direct: bool) -> Vec<Slot> {
     let info = w.item_info.as_ref();
     w.inv
-        .viewed(INVENTORY)
+        .viewed(c)
         .into_iter()
         .filter(|s| s.index != 0 && s.id != 0)
         .filter(|s| {
@@ -803,9 +814,9 @@ pub(super) fn list_rows(w: &World, info: &ItemCache, shown: &[(u8, Slot)], direc
         (r.tint, r.count) = (TINT_TEMP, None);
     }
     if direct {
-        for (r, s) in rows.iter_mut().zip(&slots).skip(temp_rows(shown)) {
+        for (r, (c, s)) in rows.iter_mut().zip(shown).skip(temp_rows(shown)) {
             let gear = info.item(s.id).is_some_and(|it| matches!(it.item_type, 4 | 5));
-            let ready = w.inv.ext.get(&(INVENTORY, s.index)).is_some_and(charged_ready);
+            let ready = w.inv.ext.get(&(*c, s.index)).is_some_and(charged_ready);
             r.tint = match (gear, ready) {
                 (false, _) => crate::inventory::TINT_FLAGGED,
                 (true, true) => 0x8040_7090,
