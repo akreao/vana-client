@@ -57,9 +57,17 @@ pub fn regime_path(server: &str, name: &str) -> PathBuf {
     regime_dir().join(server).join(name_file(name))
 }
 
-/// Where earlier builds kept a character's regime (by name alone), read when the server's own file is not there yet.
-pub fn regime_legacy_paths(name: &str) -> Vec<PathBuf> {
-    vec![regime_dir().join(name_file(name))]
+/// Where earlier builds kept a character's regime, read when the server's own file is not there yet: by name alone,
+/// and (fork only, until upstream reads it) the data dir's files when an FFXI_CONFIG copy moved the folder, since the
+/// fork's builds kept every run's regimes there (the wrapper sets FFXI_CONFIG for real play).
+pub fn regime_legacy_paths(server: &str, name: &str) -> Vec<PathBuf> {
+    let mut out = vec![regime_dir().join(name_file(name))];
+    let data = data_dir().join("regime");
+    if data != regime_dir() {
+        out.push(data.join(server).join(name_file(name)));
+        out.push(data.join(name_file(name)));
+    }
+    out
 }
 
 /// The servers' certificate fingerprints (net/tls.rs): in the data dir, or beside an FFXI_CONFIG copy.

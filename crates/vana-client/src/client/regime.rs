@@ -266,7 +266,7 @@ pub fn on_zone(w: &mut World) {
     let kept = match read(&own) {
         Some(r) => Some((r, own)),
         None => {
-            let mut old: Vec<_> = crate::config::regime_legacy_paths(&w.name).into_iter().filter_map(|p| Some((std::fs::metadata(&p).and_then(|m| m.modified()).ok()?, p))).collect();
+            let mut old: Vec<_> = crate::config::regime_legacy_paths(&format!("{}-{}", w.search_addr.0, w.search_addr.1), &w.name).into_iter().filter_map(|p| Some((std::fs::metadata(&p).and_then(|m| m.modified()).ok()?, p))).collect();
             old.sort_by(|a, b| b.0.cmp(&a.0));
             old.into_iter().find_map(|(_, p)| Some((read(&p)?, p)))
         }
