@@ -263,10 +263,14 @@ pub fn on_zone(w: &mut World) {
     // cancel, not a failure).
     let read = |p: &std::path::PathBuf| std::fs::read(p).ok().and_then(|b| serde_json::from_slice::<Option<Regime>>(&b).ok());
     let own = path(w, &w.name);
+    // Then this server's file where the fork's builds kept it (before any by-name file, whatever their times).
+    let (ip, port) = w.search_addr;
+    let moved = crate::config::regime_data_dir_path(&format!("{ip}-{port}"), &w.name).and_then(|p| Some((read(&p)?, p)));
     let kept = match read(&own) {
         Some(r) => Some((r, own)),
+        None if moved.is_some() => moved,
         None => {
-            let mut old: Vec<_> = crate::config::regime_legacy_paths(&format!("{}-{}", w.search_addr.0, w.search_addr.1), &w.name).into_iter().filter_map(|p| Some((std::fs::metadata(&p).and_then(|m| m.modified()).ok()?, p))).collect();
+            let mut old: Vec<_> = crate::config::regime_legacy_paths(&w.name).into_iter().filter_map(|p| Some((std::fs::metadata(&p).and_then(|m| m.modified()).ok()?, p))).collect();
             old.sort_by(|a, b| b.0.cmp(&a.0));
             old.into_iter().find_map(|(_, p)| Some((read(&p)?, p)))
         }
