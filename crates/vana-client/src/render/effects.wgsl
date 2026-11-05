@@ -314,8 +314,9 @@ fn update(@builtin(global_invocation_id) gid: vec3<u32>) {
             return;
         }
     }
-    // Spawned this frame with a life: t = 0, which retail never samples (ctl::BORN); updated, not drawn.
-    let born = (el[b + E_CTRL] & CTL_BORN) != 0u && ef(b, E_MAX_LIFE) != 0.0;
+    // Spawned this frame with a life: t = 0, which retail never samples (ctl::BORN); updated, not drawn, unless the
+    // next frame's decrement ends it (a one-tick element keeps its only frame).
+    let born = (el[b + E_CTRL] & CTL_BORN) != 0u && ef(b, E_MAX_LIFE) != 0.0 && ef(b, E_LIFE) - dt >= 1.0;
     el[b + E_CTRL] = 0u;
     set_ef(b, E_FADE, 1.0);
     let parent = el[b + E_PARENT];

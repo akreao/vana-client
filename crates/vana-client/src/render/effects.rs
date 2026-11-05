@@ -1535,7 +1535,7 @@ mod tests {
 
     /// A timed element spawned this frame (ctl::BORN) is updated but not drawn: its t = 0 sample is the key's
     /// placeholder (Heavens Tower's waterfall sheets flashed at full strength each respawn). It shows from the next
-    /// frame; an element without a life (t stays 0) shows at once.
+    /// frame; an element without a life (t stays 0) shows at once, and so does a one-tick element (its only frame).
     #[test]
     fn gpu_born_hidden_one_frame() {
         let Ok(gpu) = Gpu::headless() else { return };
@@ -1547,7 +1547,7 @@ mod tests {
         let mut fx = Effects::new();
         fx.reg.ops = vec![0];
         fx.reg.ops_dirty = true;
-        for (k, life) in [60.0f32, 0.0].into_iter().enumerate() {
+        for (k, life) in [60.0f32, 0.0, 1.0].into_iter().enumerate() {
             let mut el = Elem::default();
             el.0[w::STATE] = crate::fx::elem::st::ALIVE;
             el.0[w::COLOR] = 0x8080_8080;
@@ -1567,10 +1567,11 @@ mod tests {
             eg.update(&gpu, &mut enc, &mut fx, &f);
             gpu.queue.submit([enc.finish()]);
             gpu.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None }).unwrap();
-            let o = eg.read_outs(&gpu, 2);
-            shown.push((o[23], o[OUT_WORDS + 23]));
+            let o = eg.read_outs(&gpu, 3);
+            shown.push((o[23], o[OUT_WORDS + 23], o[2 * OUT_WORDS + 23]));
         }
-        assert_eq!(shown, vec![(0.0, 1.0), (1.0, 1.0)]);
+        // The one-tick element expires on the GPU's second update (life 0).
+        assert_eq!(shown, vec![(0.0, 1.0, 1.0), (1.0, 1.0, 0.0)]);
     }
 
     /// Update ops 0x53 and 0x60 as Tavnazian Safehold's thunder flash (t_ta/weat/thdr/wez4/frsh) carries them: an element 10 in

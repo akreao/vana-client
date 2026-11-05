@@ -10,5 +10,7 @@ frame every respawn (life 60, a new sheet every ~22 ticks).
   to stay in step); its first update then sampled t = 0. Retail counts the life down before the keys, so a timed
   element's samples run t = dt / life .. (life - 1) / life *(inf: from the guard points; no DLL pass)*.
 - Fix: a spawn also sets ctl::BORN; the update pass runs the element's stream as before but leaves it undrawn that
-  frame when it has a life (outs[23] = 0). Elements without a life (t stays 0) draw at once. Test:
+  frame when it has a life and lives on past the next decrement (outs[23] = 0). Elements without a life (t stays 0)
+  and one-tick elements (life - dt < 1: their only frame) draw at once. Point lights and op 0x60 flashes are not
+  gated (they do not read outs[23]). Test:
   `gpu_born_hidden_one_frame`.

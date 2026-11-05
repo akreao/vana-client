@@ -131,7 +131,8 @@ pub mod ctl {
     /// Spawned this frame: updated but not drawn. Retail counts the life down before sampling the keys, so a timed
     /// element's first sample is t = dt / life, never 0; ours keeps the GPU's life in step with the CPU's (LIFE_SET)
     /// and samples t = 0 that frame, which the data keeps as a placeholder (keys like the Heavens Tower waterfalls'
-    /// `tk01` hold the start colour at 0 and drop to 0 at 1e-7), so that sample is not shown.
+    /// `tk01` hold the start colour at 0 and drop to 0 at 1e-7), so that sample is not shown. An element the next
+    /// decrement ends (life - dt < 1) still shows it, being its only frame.
     pub const BORN: u32 = 2;
 }
 
