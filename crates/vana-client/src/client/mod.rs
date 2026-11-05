@@ -13,6 +13,7 @@ mod clickmove;
 mod battlemod;
 pub mod opening;
 mod flyover;
+mod rest;
 mod resttick;
 mod creator;
 mod netwait;
@@ -5953,6 +5954,8 @@ struct World {
     anglers: HashMap<u32, fishrod::Angler>,
     /// /sitchair sitters' chairs (client/chair.rs).
     seats: HashMap<u32, chair::Seat>,
+    /// Resting actors' sit-down and stand-up (client/rest.rs).
+    rests: HashMap<u32, rest::Phase>,
     /// Event music fades (ops 0x5d, 0x5c 0xa0 / 0xa1): volume, ticks.
     music_fades: Vec<(i32, i32)>,
     /// The audio still changing music (event op 0x9a waits), as of the last frame.
@@ -8506,6 +8509,7 @@ impl App {
                             rides: HashMap::new(),
                             anglers: HashMap::new(),
                             seats: HashMap::new(),
+                            rests: HashMap::new(),
                             music_fades: Vec::new(),
                             music_changing: false,
                             music_state: -1,
@@ -10717,6 +10721,7 @@ impl App {
         ride::update(world, dt);
         fishrod::update(world, dt);
         chair::update(world);
+        rest::update(world);
         indi::update(world, dt);
         border::update(world);
         racing::step(world, dt * 60.0);
@@ -10945,7 +10950,8 @@ impl App {
             self.stand_sent = false;
         }
         // Scheduler op 0x2e: the effect of our own action holds the walk input (FUN_100a5ec0 skips FUN_100a6240).
-        let move_locked = world.opts.move_lock && world.effects.rooted.contains(&world.my_id);
+        // `res2` (rest.rs) holds the walk the same way, from the frame it starts.
+        let move_locked = world.opts.move_lock && (world.effects.rooted.contains(&world.my_id) || rest::rising(world));
         if resting || move_locked {
             (ax, ay) = (0.0, 0.0);
         }
