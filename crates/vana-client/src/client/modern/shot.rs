@@ -322,6 +322,9 @@ if !opts.titles {
     if opts.favs {
         favs_sample(&mut p);
     }
+    if opts.gm {
+        super::gmwin::sample(&mut p);
+    }
     if opts.settings {
         let s = super::super::settings::SettingsUi::open(&crate::config::Config::default(), [1920, 1080]);
         super::config::sample(&mut p, &s);
@@ -343,7 +346,7 @@ if !opts.titles {
         timers_sample(m, ctx, screen.center().x - 190.0 - super::extras::WIDTH, super::extras::WIDTH, super::extras::Side::Left);
         timers_sample(m, ctx, screen.center().x - 180.0, 360.0, super::extras::Side::Left);
     }
-    if opts.list || opts.kit || opts.favs || opts.modes || opts.settings || opts.rows.is_some() || opts.borders.is_some() {
+    if opts.list || opts.kit || opts.favs || opts.modes || opts.settings || opts.gm || opts.rows.is_some() || opts.borders.is_some() {
         return;
     }
     // Every frame at a few sizes: nine-slice corners, tiled edges, the stretched gradient.
@@ -380,6 +383,8 @@ pub struct Opts {
     pub modes: bool,
     /// The Settings window (config.rs).
     pub settings: bool,
+    /// Ours: the GM window (gmwin.rs) with a level 5 sample.
+    pub gm: bool,
     /// The favourites strip and starred list rows.
     pub favs: bool,
     /// The right-click menus beside the party window.

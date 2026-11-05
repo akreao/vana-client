@@ -17,6 +17,7 @@ mod resttick;
 mod creator;
 mod netwait;
 mod twofa;
+mod gm;
 mod gmtell;
 #[cfg(windows)]
 mod windpi;
@@ -2056,12 +2057,17 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
     if settings_typing {
         keys.clear();
     }
+    // Ours: the GM window takes the text and keys while it is open.
+    let gm_typing = modern::gm_events(world, &input.events);
+    if gm_typing {
+        keys.clear();
+    }
     // The modern magic and ability windows' search takes the keys and text while it runs.
     let list_typing = listsearch::events(world, &input.events);
     if list_typing {
         keys.clear();
     }
-    let input_open = event::input(world).is_some() || map_typing || post_typing || search_typing || ls_typing || comment_typing || macro_typing || faq_typing || mail_typing || lua_typing || voice_typing || list_typing || scan_typing || find_typing || settings_typing;
+    let input_open = event::input(world).is_some() || map_typing || post_typing || search_typing || ls_typing || comment_typing || macro_typing || faq_typing || mail_typing || lua_typing || voice_typing || list_typing || scan_typing || find_typing || settings_typing || gm_typing;
     if post_typing {
         post::text_events(world, &input.events);
         keys.clear();
@@ -6783,6 +6789,8 @@ struct World {
     /// Our Settings or Extras page when opened from the Config window, and a request to open one.
     settings: Option<settings::SettingsUi>,
     want_settings: Option<settings::Kind>,
+    /// Ours: the GM window (gm.rs, modern/gmwin.rs).
+    gm: gm::Gm,
     /// Ours: the camera keys' Y / X sense (Mouse/Cam.'s Camera Keys; the client's config keeps it).
     cam_keys: [u8; 2],
     /// The Lua mods of this session (docs/lua-mods.md).
@@ -8748,6 +8756,7 @@ impl App {
                             game_save: false,
                             settings: None,
                             want_settings: None,
+                            gm: gm::Gm::default(),
                             cam_keys: [self.cfg.cam_keys_y as u8, self.cfg.cam_keys_x as u8],
                             lua: std::mem::take(&mut self.lobby_mods),
                             spam: spamfilter::SpamFilter::new(self.cfg.ffxi_dir()),
@@ -9889,6 +9898,8 @@ impl App {
                 NetEvent::ItemMax(s, s2) => (world.inv.sizes, world.inv.sizes2) = (s, s2),
                 NetEvent::Mounts(bits) => world.mount_bits = Some(bits),
                 NetEvent::EmoteUnlocks { jobs, chairs } => (world.emote_jobs, world.emote_chairs) = (jobs, chairs),
+                NetEvent::GmCatalog(p) => world.gm.on_catalog(&p),
+                NetEvent::GmResult(p) => world.gm.on_result(&p),
                 NetEvent::PetSync(p) => (world.timers.pet_tp, world.pet_sync) = (p.map(|p| p.tp), p),
                 NetEvent::MountRecast(s) => world.mount_recast = (s > 0).then(|| Instant::now() + std::time::Duration::from_secs(s as u64)),
                 // LAB_1009b6xx: the entity at ActIndex `index` with server id `id` takes its master.
