@@ -33,6 +33,8 @@ pub enum Pick {
     Item,
     /// A mob or NPC id: "Use target" fills it.
     Entity,
+    /// A mob or NPC by name (gotoname): the zone's names, spaces as _.
+    EntityName,
     /// A quest or mission log (globals/log_ids.lua's keys).
     Log,
     Job,
@@ -59,6 +61,7 @@ impl Pick {
             "zone" => Pick::Zone,
             "item" => Pick::Item,
             "entity" => Pick::Entity,
+            "entityname" => Pick::EntityName,
             "log" => Pick::Log,
             "job" => Pick::Job,
             "weather" => Pick::Weather,
@@ -265,6 +268,7 @@ pub struct Gm {
     pub augments: bool,
     /// Each picker's choices once built (the item list takes a moment, so only when first needed).
     pub lists: HashMap<Pick, Choices>,
+    loading: Vec<(Pick, std::sync::mpsc::Receiver<Choices>)>,
     next_id: u16,
     /// Replies by request id, newest last; a few kept.
     pub replies: Vec<(u16, Reply)>,
@@ -396,7 +400,16 @@ impl Gm {
 
     /// Builds the choices the chosen command's pickers need: fixed lists, the name tables, the party and the
     /// people and things in the zone (those two every time, as they change).
-    pub fn fill_lists(&mut self, names: Option<&crate::dat::names::Names>, people: Choices, around: Choices) {
+    pub fn fill_lists(&mut self, names: Option<&std::sync::Arc<crate::dat::names::Names>>, people: Choices, around: Choices) {
+        // Lists read from the DATs on a worker (items are 65535 reads), taken here once ready.
+        self.loading.retain(|(pick, rx)| match rx.try_recv() {
+            Ok(c) => {
+                self.lists.insert(*pick, c);
+                false
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => true,
+            Err(_) => false,
+        });
         let picks: Vec<Pick> = self.selected().map(|c| c.fields.iter().map(|f| f.pick).collect()).unwrap_or_default();
         for pick in picks {
             match pick {
@@ -406,10 +419,25 @@ impl Gm {
                 Pick::Entity => {
                     self.lists.insert(pick, around.clone());
                 }
-                _ if self.lists.contains_key(&pick) => {}
+                Pick::EntityName => {
+                    let mut c: Choices = around.iter().map(|(_, n)| (n.replace(' ', "_"), n.clone())).collect();
+                    c.sort();
+                    c.dedup();
+                    self.lists.insert(pick, c);
+                }
+                _ if self.lists.contains_key(&pick) || self.loading.iter().any(|l| l.0 == pick) => {}
                 _ => {
-                    if let Some(c) = fixed(pick).or_else(|| names.and_then(|n| from_names(pick, n))) {
+                    if let Some(c) = fixed(pick) {
                         self.lists.insert(pick, c);
+                    } else if let Some(n) = names.filter(|_| matches!(pick, Pick::Zone | Pick::Item | Pick::Spell | Pick::KeyItem | Pick::Title)) {
+                        let (tx, rx) = std::sync::mpsc::channel();
+                        let n = n.clone();
+                        std::thread::spawn(move || {
+                            if let Some(c) = from_names(pick, &n) {
+                                let _ = tx.send(c);
+                            }
+                        });
+                        self.loading.push((pick, rx));
                     }
                 }
             }

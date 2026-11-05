@@ -80,7 +80,7 @@ gc_step	debug	0	Tell Lua to run a garbage collection step
 getcraftrank	player	0	returns target's RANK of specified craft skill	craft skill or ID~skill~0|player~player~1
 geteffects	player	0	Lists all active status effects on the specified target (or self if no target specified)	target~player~1
 getenmity	mobs	0	prints the target mob's current CE and VE towards you	
-getfame	quests	0	Gets fame level of a target player	player~player~1|fame_zone 0-15~zone~0
+getfame	quests	0	Gets fame level of a target player	player~player~1|fame region 0-15~number~0
 getfamily	mobs	0	Prints the mob's family ID	mob ID~entity~1
 getfishers	moderation	0	Returns a list of all players who have recently fished	MinutesToLookback~number~0
 getid	mobs	0	Prints the ID of the currently selected target under the cursor	
@@ -108,7 +108,7 @@ gmhome	travel	0	Sends you to zone 210 (GM_HOME), if you are a GM
 godmode	player	0	Toggles god mode on the player, granting them several special abilities	tier~number~1
 goto	travel	0	Goes to the target player	player~player~1|forceZone (1 or 0)~number~1
 gotoid	travel	0	Go to given mob or npc ID	mobId|npcId~entity~0
-gotoname	travel	0	Go to given mob or npc by name	mob or npc name~entity~0|index~number~1
+gotoname	travel	0	Go to given mob or npc by name	mob or npc name~entityname~0|index~number~1
 hasitem	items	0	Checks if a player has a specific item	itemID~item~0|player~player~1
 haskeyitem	unlocks	0	Checks if player has specified KeyItem	key item ID~keyitem~0|player~player~1
 hastitle	unlocks	0	Check if player already has a title	title ID~title~0|player~player~1
@@ -170,7 +170,7 @@ setbag	items	0	Sets the players bag size	bagsize~number~1
 setbattlefieldtime	world	0	Set time limit for an active battlefield	minutes~number~0
 setcapacitypoints	unlocks	0	Sets the target players job points count	amount~number~0|player~player~1
 setcraftrank	player	0	sets target's RANK of specified craft skill	craft skill or ID~skill~0|craft rank~skill~0|target~player~1
-setfamelevel	quests	0	Sets fame level on a target player	fame_zone 0-15~zone~0|level 1-9~number~0|player~player~1
+setfamelevel	quests	0	Sets fame level on a target player	fame region 0-15~number~0|level 1-9~number~0|player~player~1
 setgil	items	1	Sets the players gil	amount~number~0
 setjobpoints	unlocks	0	Sets the target players job points count	amount~number~0|player~player~1
 setlocalvar	debug	0	set player npc or mob local variable and value	variable name~text~0|value~number~0|arg3~text~1|arg4~text~1

@@ -385,7 +385,7 @@ pub fn draw(p: &mut Panels, w: &mut World) {
         people.dedup();
         let mut around: gm::Choices = w.entities.iter().filter(|(_, e)| !e.name.trim().is_empty()).map(|(id, e)| (id.to_string(), e.name.trim().to_string())).collect();
         around.sort_by(|a, b| a.1.cmp(&b.1));
-        w.gm.fill_lists(w.names.as_deref(), people, around);
+        w.gm.fill_lists(w.names.as_ref(), people, around);
     }
     if let Some(c) = window(p, &w.gm, w.target) {
         apply(w, c);
