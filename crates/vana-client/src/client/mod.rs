@@ -11215,7 +11215,7 @@ impl App {
                 let s = step.normalize();
                 let d = match lock_dir {
                     3 => speed / 3.0 * ground::STEP_TICKS / 60.0,
-                    2 | 4 => if riding { 0.125 } else { 0.0625 } * ground::STEP_TICKS,
+                    2 | 4 => (if riding { 0.125 } else { 0.0625 }) * ground::STEP_TICKS,
                     _ => speed * tier * ground::STEP_TICKS / 60.0,
                 };
                 next = match lock_target {
