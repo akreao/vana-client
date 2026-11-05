@@ -211,7 +211,7 @@ fn detail(ui: &mut Ui, m: &super::Modern, g: &gm::Gm, target: Option<u32>, click
             if f.pick == Pick::Augment && !g.augments && !result.as_ref().err().is_some_and(|e| e.0 == i) && values[i].is_empty() {
                 continue;
             }
-            field(ui, m, c, f, i, &values[i], g.typing == Some(i), result.as_ref().err().is_some_and(|e| e.0 == i), target, click);
+            field(ui, m, g, c, f, i, &values[i], result.as_ref().err().is_some_and(|e| e.0 == i), target, click);
             coords |= f.pick == Pick::Coord;
         }
         if augs > 0 {
@@ -249,7 +249,9 @@ fn detail(ui: &mut Ui, m: &super::Modern, g: &gm::Gm, target: Option<u32>, click
 }
 
 #[allow(clippy::too_many_arguments)]
-fn field(ui: &mut Ui, m: &super::Modern, c: &Command, f: &gm::Field, i: usize, value: &str, typing: bool, bad: bool, target: Option<u32>, click: &mut Option<Click>) {
+fn field(ui: &mut Ui, m: &super::Modern, g: &gm::Gm, c: &Command, f: &gm::Field, i: usize, value: &str, bad: bool, target: Option<u32>, click: &mut Option<Click>) {
+    let typing = g.typing == Some(i);
+    let list = g.lists.get(&f.pick);
     let label = if f.optional { format!("{} (optional)", f.label) } else { f.label.clone() };
     ui.label(egui::RichText::new(label).size(m.theme.small).color(if bad { m.theme.color("hp") } else { m.theme.color("text") }));
     ui.horizontal(|ui| {
@@ -266,10 +268,39 @@ fn field(ui: &mut Ui, m: &super::Modern, c: &Command, f: &gm::Field, i: usize, v
             }
         }
     });
-    if !f.pick.hint().is_empty() {
-        ui.label(egui::RichText::new(f.pick.hint()).size(m.theme.small * 0.9).color(m.theme.color("muted")));
+    // The name behind a typed id (or the id behind a typed name), so a number reads as what it is.
+    let known = list.and_then(|l| {
+        let t = value.trim();
+        l.iter().find(|(id, n)| !t.is_empty() && (id == t || n.eq_ignore_ascii_case(t)))
+    });
+    let hint = match known {
+        Some((id, n)) if id == value.trim() => n.clone(),
+        Some((id, _)) => format!("Sends {id}."),
+        None => f.pick.hint().to_string(),
+    };
+    if !hint.is_empty() {
+        ui.label(egui::RichText::new(hint).size(m.theme.small * 0.9).color(m.theme.color(if known.is_some() { "gold" } else { "muted" })));
+    }
+    if let (true, Some(l)) = (typing, list) {
+        let hits = gm::suggest(l, value, SUGGEST);
+        if !hits.is_empty() && known.is_none_or(|k| hits.len() > 1 || hits[0] != k) {
+            ui.horizontal_wrapped(|ui| {
+                for (id, n) in hits {
+                    let b = Btn::default();
+                    let font = FontId::proportional(m.theme.small);
+                    let name = kit::elide(ui, n, &font, 180.0);
+                    let label = if id == n { name } else { format!("{name} ({id})") };
+                    if kit::clicked(&kit::button(ui, m, &label, 0.0, b), b) {
+                        *click = Some(Click::Fill(i, id.clone()));
+                    }
+                }
+            });
+        }
     }
 }
+
+/// How many suggestions show under the field being typed in.
+const SUGGEST: usize = 6;
 
 /// The last replies, newest first: the line, what happened, what the command printed.
 fn replies(ui: &mut Ui, m: &super::Modern, g: &gm::Gm) {
@@ -347,6 +378,13 @@ fn apply(w: &mut World, click: Click) {
 pub fn draw(p: &mut Panels, w: &mut World) {
     if !shown(w) {
         return;
+    }
+    if w.gm.selected.is_some() {
+        let mut people: gm::Choices = std::iter::once(w.name.clone()).chain(w.party.members().filter(|r| r.id != w.my_id).map(|r| r.name.clone())).filter(|n| !n.is_empty()).map(|n| (n.clone(), n)).collect();
+        people.dedup();
+        let mut around: gm::Choices = w.entities.iter().filter(|(_, e)| !e.name.trim().is_empty()).map(|(id, e)| (id.to_string(), e.name.trim().to_string())).collect();
+        around.sort_by(|a, b| a.1.cmp(&b.1));
+        w.gm.fill_lists(w.names.as_deref(), people, around);
     }
     if let Some(c) = window(p, &w.gm, w.target) {
         apply(w, c);

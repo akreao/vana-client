@@ -21,7 +21,7 @@ pub const GROUPS: [(&str, &str); 9] = [
 ];
 
 /// What a field's input offers besides typing.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Pick {
     Text,
     Number,
@@ -43,6 +43,12 @@ pub enum Pick {
     Augment,
     /// true / false.
     Toggle,
+    Spell,
+    KeyItem,
+    Title,
+    /// A combat or craft skill (xi.skill's names).
+    Skill,
+    Nation,
 }
 
 impl Pick {
@@ -59,6 +65,11 @@ impl Pick {
             "coord" => Pick::Coord,
             "augment" => Pick::Augment,
             "toggle" => Pick::Toggle,
+            "spell" => Pick::Spell,
+            "keyitem" => Pick::KeyItem,
+            "title" => Pick::Title,
+            "skill" => Pick::Skill,
+            "nation" => Pick::Nation,
             _ => Pick::Text,
         }
     }
@@ -71,6 +82,11 @@ impl Pick {
             Pick::Item => "Item id, or its name with _ for spaces.",
             Pick::Entity => "Empty: your target.",
             Pick::Log => "The log's name.",
+            Pick::Spell => "Spell id or name.",
+            Pick::KeyItem => "Key item id or name.",
+            Pick::Title => "Title id or name.",
+            Pick::Job => "Job, such as WAR or 1.",
+            Pick::Skill => "Skill name or id.",
             _ => "",
         }
     }
@@ -230,9 +246,73 @@ pub struct Gm {
     pub armed: bool,
     /// The augment fields shown (folded away by default).
     pub augments: bool,
+    /// Each picker's choices once built (the item list takes a moment, so only when first needed).
+    pub lists: HashMap<Pick, Choices>,
     next_id: u16,
     /// Replies by request id, newest last; a few kept.
     pub replies: Vec<(u16, Reply)>,
+}
+
+/// lsb's xi.job names, by id from 1.
+const JOBS: [&str; 22] = ["WAR", "MNK", "WHM", "BLM", "RDM", "THF", "PLD", "DRK", "BST", "BRD", "RNG", "SAM", "NIN", "DRG", "SMN", "BLU", "COR", "PUP", "DNC", "SCH", "GEO", "RUN"];
+/// lsb's xi.weather names.
+const WEATHER: [&str; 20] = ["NONE", "SUNSHINE", "CLOUDS", "FOG", "HOT_SPELL", "HEAT_WAVE", "RAIN", "SQUALL", "DUST_STORM", "SAND_STORM", "WIND", "GALES", "SNOW", "BLIZZARDS", "THUNDER", "THUNDERSTORMS", "AURORAS", "STELLAR_GLARE", "GLOOM", "DARKNESS"];
+/// lsb's xi.skill names (the commands take them as well as ids).
+const SKILLS: [&str; 48] = ["HAND_TO_HAND", "DAGGER", "SWORD", "GREAT_SWORD", "AXE", "GREAT_AXE", "SCYTHE", "POLEARM", "KATANA", "GREAT_KATANA", "CLUB", "STAFF", "AUTOMATON_MELEE", "AUTOMATON_RANGED", "AUTOMATON_MAGIC", "ARCHERY", "MARKSMANSHIP", "THROWING", "GUARD", "EVASION", "SHIELD", "PARRY", "DIVINE_MAGIC", "HEALING_MAGIC", "ENHANCING_MAGIC", "ENFEEBLING_MAGIC", "ELEMENTAL_MAGIC", "DARK_MAGIC", "SUMMONING_MAGIC", "NINJUTSU", "SINGING", "STRING_INSTRUMENT", "WIND_INSTRUMENT", "BLUE_MAGIC", "GEOMANCY", "HANDBELL", "FISHING", "WOODWORKING", "SMITHING", "GOLDSMITHING", "CLOTHCRAFT", "LEATHERCRAFT", "BONECRAFT", "ALCHEMY", "COOKING", "SYNERGY", "RID", "DIG"];
+/// globals/log_ids.lua's keys (quest and mission logs) and names.
+const LOGS: &[(&str, &str)] = &[("SANDORIA", "San d'Oria"), ("BASTOK", "Bastok"), ("WINDURST", "Windurst"), ("JEUNO", "Jeuno"), ("SELBINA", "Selbina"), ("MHAURA", "Mhaura"), ("RABAO", "Rabao"), ("KAZHAM", "Kazham"), ("NORG", "Norg"), ("OTHER_AREAS_LOG", "Other Areas"), ("TAVNAZIA", "Tavnazian Safehold"), ("OUTLANDS", "Outlands"), ("ZILART", "Rise of the Zilart"), ("COP", "Chains of Promathia"), ("TOAU", "Treasures of Aht Urhgan"), ("AHT_URHGAN", "Aht Urhgan"), ("WOTG", "Wings of the Goddess"), ("CRYSTAL_WAR", "Crystal War"), ("ABYSSEA", "Abyssea"), ("ABYSSEA_KONSCHTAT", "Abyssea - Konschtat"), ("ABYSSEA_TAHRONGI", "Abyssea - Tahrongi"), ("ABYSSEA_LATHEINE", "Abyssea - La'Theine"), ("ABYSSEA_MISAREAUX", "Abyssea - Misareaux"), ("ABYSSEA_VUNKERL", "Abyssea - Vunkerl"), ("ABYSSEA_ATTOHWA", "Abyssea - Attohwa"), ("ABYSSEA_ALTEPA", "Abyssea - Altepa"), ("ABYSSEA_GRAUBERG", "Abyssea - Grauberg"), ("ABYSSEA_ULEGUERAND", "Abyssea - Uleguerand"), ("SOA", "Seekers of Adoulin"), ("ADOULIN", "Adoulin"), ("COALITION", "Coalition"), ("ASSAULT", "Assault"), ("CAMPAIGN", "Campaign"), ("ACP", "A Crystalline Prophecy"), ("AMK", "A Moogle Kupo d'Etat"), ("ASA", "A Shantotto Ascension"), ("ROV", "Rhapsodies of Vana'diel"), ("TVR", "The Voracious Resurgence")];
+
+/// A picker's choices: (what the field sends, what the list shows).
+pub type Choices = Vec<(String, String)>;
+
+/// The choices a picker needs nothing loaded for.
+fn fixed(pick: Pick) -> Option<Choices> {
+    let named = |l: &[&str]| l.iter().map(|s| (s.to_string(), s.replace('_', " "))).collect();
+    Some(match pick {
+        Pick::Job => JOBS.iter().map(|s| (s.to_string(), s.to_string())).collect(),
+        Pick::Weather => named(&WEATHER),
+        Pick::Skill => named(&SKILLS),
+        Pick::Log => LOGS.iter().map(|(k, n)| (k.to_string(), n.to_string())).collect(),
+        Pick::Toggle => vec![("true".into(), "true".into()), ("false".into(), "false".into())],
+        Pick::Nation => vec![("0".into(), "San d'Oria".into()), ("1".into(), "Bastok".into()), ("2".into(), "Windurst".into())],
+        _ => return None,
+    })
+}
+
+/// The choices read from the game's name tables, once: zones, items, spells, key items and titles by id.
+pub fn from_names(pick: Pick, n: &crate::dat::names::Names) -> Option<Choices> {
+    use crate::dat::names::NameSource;
+    let keep = |id: u32, s: Option<String>| s.map(|s| s.trim().to_string()).filter(|s| !s.is_empty() && s != ".").map(|s| (id.to_string(), s));
+    Some(match pick {
+        Pick::Zone => (0..0x300).filter_map(|i| keep(i, n.place(i))).collect(),
+        Pick::Item => (1..0x10000).filter_map(|i| keep(i, n.items.item(i).map(|it| it.name))).collect(),
+        Pick::Spell => (1..0x400).filter_map(|i| keep(i, n.spell(i))).collect(),
+        Pick::KeyItem => n.key_item_list().into_iter().filter(|(id, _)| *id != 0).filter_map(|(id, s)| keep(id, Some(s))).collect(),
+        Pick::Title => (1..0x800).filter_map(|i| keep(i, n.title(i))).collect(),
+        _ => return None,
+    })
+}
+
+/// Up to `max` choices for typed text: an id starting with it, or a name holding it (names starting with it first).
+pub fn suggest<'a>(choices: &'a [(String, String)], typed: &str, max: usize) -> Vec<&'a (String, String)> {
+    let t = typed.trim().to_lowercase();
+    if t.is_empty() {
+        return choices.iter().take(max).collect();
+    }
+    let mut hits: Vec<(u8, &(String, String))> = choices
+        .iter()
+        .filter_map(|c| {
+            let n = c.1.to_lowercase();
+            match () {
+                _ if c.0.to_lowercase() == t || n == t => Some((0, c)),
+                _ if n.starts_with(&t) || c.0.to_lowercase().starts_with(&t) => Some((1, c)),
+                _ if n.contains(&t) => Some((2, c)),
+                _ => None,
+            }
+        })
+        .collect();
+    hits.sort_by_key(|h| h.0);
+    hits.into_iter().take(max).map(|h| h.1).collect()
 }
 
 /// Rows per page in the list.
@@ -297,6 +377,28 @@ impl Gm {
             .collect()
     }
 
+    /// Builds the choices the chosen command's pickers need: fixed lists, the name tables, the party and the
+    /// people and things in the zone (those two every time, as they change).
+    pub fn fill_lists(&mut self, names: Option<&crate::dat::names::Names>, people: Choices, around: Choices) {
+        let picks: Vec<Pick> = self.selected().map(|c| c.fields.iter().map(|f| f.pick).collect()).unwrap_or_default();
+        for pick in picks {
+            match pick {
+                Pick::Player => {
+                    self.lists.insert(pick, people.clone());
+                }
+                Pick::Entity => {
+                    self.lists.insert(pick, around.clone());
+                }
+                _ if self.lists.contains_key(&pick) => {}
+                _ => {
+                    if let Some(c) = fixed(pick).or_else(|| names.and_then(|n| from_names(pick, n))) {
+                        self.lists.insert(pick, c);
+                    }
+                }
+            }
+        }
+    }
+
     pub fn selected(&self) -> Option<&Command> {
         self.selected.as_ref().and_then(|n| self.commands.iter().find(|c| &c.name == n))
     }
@@ -333,9 +435,10 @@ pub fn sample() -> Gm {
     if let Some(c) = g.commands.iter_mut().find(|c| c.name == "additem") {
         c.types = "siiiiiiiiii".into();
     }
-    (g.group, g.selected, g.typing) = (Some(2), Some("additem".into()), Some(1));
-    g.values.insert(("additem".into(), 0), "4096".into());
+    (g.group, g.selected, g.typing) = (Some(2), Some("additem".into()), Some(0));
+    g.values.insert(("additem".into(), 0), "crystal".into());
     g.values.insert(("additem".into(), 1), "12".into());
+    g.lists.insert(Pick::Item, [(4096, "Fire Crystal"), (4097, "Ice Crystal"), (4098, "Wind Crystal"), (4238, "Inferno Crystal"), (4100, "Lightning Crystal"), (4101, "Water Crystal"), (12, "Fire Cluster")].map(|(i, n)| (i.to_string(), n.to_string())).to_vec());
     g.replies.push((1, Reply { line: "additem 4096 12".into(), result: Some(0), output: vec!["Gave player item 4096 (Fire Crystal) x12.".into()], cut: false }));
     g
 }
@@ -368,6 +471,19 @@ mod tests {
         let a = &e["additem"];
         assert_eq!((a.group, a.fields[0].pick, a.fields[0].optional), ("items", Pick::Item, false));
         assert!(e["exec"].danger);
+    }
+
+    #[test]
+    fn suggestions_match_ids_and_names() {
+        let c: Choices = vec![("4096".into(), "Fire Crystal".into()), ("4097".into(), "Ice Crystal".into()), ("4112".into(), "Potion".into())];
+        fn names<'a>(v: Vec<&'a (String, String)>) -> Vec<&'a str> {
+            v.into_iter().map(|c| c.1.as_str()).collect()
+        }
+        assert_eq!(names(suggest(&c, "crystal", 5)), ["Fire Crystal", "Ice Crystal"]);
+        assert_eq!(names(suggest(&c, "ice", 5)), ["Ice Crystal"]);
+        assert_eq!(names(suggest(&c, "409", 5)), ["Fire Crystal", "Ice Crystal"]);
+        assert_eq!(names(suggest(&c, "potion", 5)), ["Potion"]);
+        assert_eq!(fixed(Pick::Job).unwrap()[0].0, "WAR");
     }
 
     #[test]
