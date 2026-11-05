@@ -116,22 +116,31 @@ fn palette(p: &mut Panels, w: &mut World) {
             ui.label(egui::RichText::new("Type a spell, ability, item or command. Recent picks show here.").size(m.theme.small).color(m.theme.color("muted")));
         }
     });
-    search_mouse(w, &found, &hits);
+    search_mouse(w, p.gu, &found, &hits);
 }
 
 /// The search field and its hits in place of the window's rows: what was clicked, what the pointer is over.
 pub(super) fn search_rows(ui: &mut Ui, m: &super::Modern, w: &World, icons: &[Option<egui::TextureId>], text: &str, sel: usize, hits: &[Hit]) -> Mouse {
+    // From a category window, the list each hit is in; spells and abilities grey as in their lists.
+    let note = |h: &Hit| match (h.cat, w.cats) {
+        (Some(c), Some(cats)) => magic::cat_rows(cats.menu).get(c).map_or("", |r| magic::cat_label(cats.menu, r.1)).to_string(),
+        _ => h.note.clone(),
+    };
+    let dim = |h: &Hit| h.slot.is_none() && h.journal.is_none() && off(w, h.kind, h.id);
+    let fav = |h: &Hit| super::super::favs::of_hit(w, h).map(|f| (f, super::super::favs::is(w, f)));
+    hit_rows(ui, m, icons, text, sel, hits, note, dim, fav)
+}
+
+/// The field and the hits (each with its note and greyed by `dim` or its list): what was clicked.
+#[allow(clippy::too_many_arguments)]
+fn hit_rows(ui: &mut Ui, m: &super::Modern, icons: &[Option<egui::TextureId>], text: &str, sel: usize, hits: &[Hit], note: impl Fn(&Hit) -> String, dim: impl Fn(&Hit) -> bool, fav: impl Fn(&Hit) -> Option<(super::super::favs::Fav, bool)>) -> Mouse {
     search_field(ui, m, text);
     let mut mouse = Mouse::default();
     if hits.is_empty() {
         ui.label(egui::RichText::new("Nothing matches.").size(m.theme.ui).color(m.theme.color("muted")));
     }
     for (k, h) in hits.iter().enumerate().take(listsearch::MAX) {
-        // From a category window, the list each hit is in.
-        let right = match (h.cat, w.cats) {
-            (Some(c), Some(cats)) => magic::cat_rows(cats.menu).get(c).map_or("", |r| magic::cat_label(cats.menu, r.1)),
-            _ => &h.note,
-        };
+        let right = note(h);
         // A recent pick says so (it ranks first among the matches).
         let right = match (h.recent, right.is_empty()) {
             (true, true) => "recent".to_string(),
@@ -139,16 +148,20 @@ pub(super) fn search_rows(ui: &mut Ui, m: &super::Modern, w: &World, icons: &[Op
             _ => right.to_string(),
         };
         let look = if k == sel { Look::Cursor } else { Look::Normal };
-        // Spells and abilities grey as in their lists (items keep their window's rules).
-        let dim = h.slot.is_none() && h.journal.is_none() && off(w, h.kind, h.id);
-        let fav = super::super::favs::of_hit(w, h);
+        // The other lists' rows grey as theirs.
+        let dim = matches!(h.journal, Some(listsearch::Journal::Row { dim: true, .. })) || dim(h);
+        let fav = fav(h);
         // A favourite says so (it ranks first among the matches).
         let right = if h.fav { if right.is_empty() { "favourite".to_string() } else { format!("favourite · {right}") } } else { right };
-        let (resp, star) = row(ui, m, icons.get(k).copied().flatten(), None, &h.name, &right, look, dim, fav.map(|f| super::super::favs::is(w, f)));
+        let (resp, star) = row(ui, m, icons.get(k).copied().flatten(), None, &h.name, &right, look, dim, fav.map(|f| f.1));
         mouse.take(k, &resp);
         if star {
-            mouse.star = fav;
+            mouse.star = fav.map(|f| f.0);
         }
+    }
+    if hits.len() > listsearch::MAX {
+        let more = format!("{} more: type more to narrow it.", hits.len() - listsearch::MAX);
+        ui.label(egui::RichText::new(more).size(m.theme.small).color(m.theme.color("muted")));
     }
     mouse
 }
@@ -164,7 +177,7 @@ pub(super) fn search_hits(p: &Panels, w: &World) -> Option<(String, usize, Vec<H
     let s = w.list_search.as_ref()?;
     let hits = listsearch::hits(w, &s.text);
     let icon = |h: &Hit| match h.slot {
-        _ if matches!(h.journal, Some(listsearch::Journal::Auction(_))) => w.item_info.as_ref().and_then(|info| p.m.item_icon(p.ctx, info, h.id)),
+        _ if matches!(h.journal, Some(listsearch::Journal::Auction(_) | listsearch::Journal::Row { item: true, .. })) => w.item_info.as_ref().and_then(|info| p.m.item_icon(p.ctx, info, h.id)),
         _ if h.journal.is_some() => None,
         Some(_) => w.item_info.as_ref().and_then(|info| p.m.item_icon(p.ctx, info, h.id)),
         None => p.gu.and_then(|gu| magic::row_icon(w, h.kind, h.id).and_then(|(lib, k)| p.m.sprite_icon(p.ctx, gu, lib, k))),
@@ -185,14 +198,55 @@ pub(super) fn search_hits(p: &Panels, w: &World) -> Option<(String, usize, Vec<H
     Some((s.text.clone(), s.sel, hits, icons))
 }
 
+/// A search running in one of the other lists (SEARCH_LISTS): its hits, drawn in place of that list's rows.
+pub(super) struct Found {
+    text: String,
+    sel: usize,
+    hits: Vec<Hit>,
+    icons: Vec<Option<egui::TextureId>>,
+    mouse: Mouse,
+}
+
+/// The search's hits when it runs in the list tagged `tag`.
+pub(super) fn found(p: &Panels, w: &World, tag: &str) -> Option<Found> {
+    if listsearch::tag(listsearch::other(w)?) != tag {
+        return None;
+    }
+    let (text, sel, hits, icons) = search_hits(p, w)?;
+    Some(Found { text, sel, hits, icons, mouse: Mouse::default() })
+}
+
+impl Found {
+    /// The field and the hits.
+    pub(super) fn rows(&mut self, ui: &mut Ui, m: &super::Modern) {
+        self.mouse = hit_rows(ui, m, &self.icons, &self.text, self.sel, &self.hits, |h| h.note.clone(), |_| false, |_| None);
+    }
+
+    /// A hit clicked is picked.
+    pub(super) fn pick(self, w: &mut World, gu: Option<&super::super::game_ui::GameUi>) {
+        search_mouse(w, gu, &self.mouse, &self.hits);
+    }
+}
+
+/// `found` drawn in place of a list's rows, or the rows: true when the hits were drawn.
+pub(super) fn rows_or(ui: &mut Ui, m: &super::Modern, found: &mut Option<Found>) -> bool {
+    match found.as_mut() {
+        Some(f) => {
+            f.rows(ui, m);
+            true
+        }
+        None => false,
+    }
+}
+
 /// A search's mouse: a click picks.
-pub(super) fn search_mouse(w: &mut World, mouse: &Mouse, hits: &[Hit]) {
+pub(super) fn search_mouse(w: &mut World, gu: Option<&super::super::game_ui::GameUi>, mouse: &Mouse, hits: &[Hit]) {
     if let Some(f) = mouse.star {
         super::super::favs::toggle(w, f);
         return;
     }
     if let Some(h) = mouse.click.and_then(|k| hits.get(k)) {
-        listsearch::pick(w, h);
+        listsearch::pick(w, h, gu);
     }
 }
 
@@ -221,7 +275,7 @@ fn cats(p: &mut Panels, w: &mut World) {
         }
     });
     if let Some((_, _, hits, _)) = &search {
-        search_mouse(w, &found, hits);
+        search_mouse(w, p.gu, &found, hits);
         return;
     }
     if let Some(k) = mouse.click {
@@ -417,7 +471,7 @@ fn list(p: &mut Panels, w: &mut World) {
     });
     let Some(_) = rect else { return };
     if let Some((_, _, hits, _)) = &search {
-        search_mouse(w, &found, hits);
+        search_mouse(w, p.gu, &found, hits);
         return;
     }
     // Mouse: the sort strip and its question go through the keys as retail's window does.

@@ -43,6 +43,8 @@ mod paint;
 pub mod plates;
 mod points;
 mod rows;
+mod search;
+pub use search::SEARCH_LISTS;
 mod post;
 mod shop;
 mod social;

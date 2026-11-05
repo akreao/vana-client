@@ -5,6 +5,7 @@
 //! spells, abilities, usable items and the menu's commands; a pick opens what the menu would and acts through it.
 
 use super::magic::{self, Cat, Kind};
+use super::game_ui::GameUi;
 use super::{World, items, journal, keyitems, missions, quests};
 use super::suggest::Action;
 use crate::audio::Ui as Se;
@@ -44,7 +45,7 @@ pub fn pick_action(w: &mut World, action: Action) {
         })
     });
     if in_list || cat.is_some() {
-        pick(w, &Hit { kind, cat, id, name: String::new(), score: 0, slot: None, note: String::new(), journal: None, recent: false, fav: false });
+        pick(w, &Hit { kind, cat, id, name: String::new(), score: 0, slot: None, note: String::new(), journal: None, recent: false, fav: false }, None);
     }
 }
 
@@ -84,8 +85,70 @@ pub enum Journal {
     Mission(usize, usize),
     /// An auction house item (not retail) and its bid category.
     Auction(u8),
+    /// A row of one of the other lists (LISTS): the list, the row, whether `id` is an item (its icon), whether the
+    /// list greys the row.
+    Row { list: u8, k: usize, item: bool, dim: bool },
     /// The command palette's action menu command (combat::cmd), or HEAL.
     Command(u8),
+}
+
+/// A row of one of the other lists as the search sees it: its name, the item it is (its icon), its note (a count,
+/// where it is) and whether its list greys it.
+#[derive(Clone, Debug, Default)]
+pub struct Entry {
+    pub name: String,
+    pub item: Option<u16>,
+    pub note: String,
+    pub dim: bool,
+}
+
+impl Entry {
+    pub fn named(name: impl Into<String>) -> Self {
+        Entry { name: name.into(), ..Default::default() }
+    }
+
+    /// An item's row, named from the item table.
+    pub fn item(w: &World, id: u16) -> Self {
+        let name = w.item_info.as_ref().and_then(|c| c.item(id)).map(|it| it.name.clone()).unwrap_or_default();
+        Entry { name, item: Some(id), ..Default::default() }
+    }
+
+    pub fn note(mut self, note: impl Into<String>) -> Self {
+        self.note = note.into();
+        self
+    }
+
+    pub fn dim(mut self, dim: bool) -> Self {
+        self.dim = dim;
+        self
+    }
+}
+
+/// A count as a note: none for one.
+pub fn count_note(n: u32) -> String {
+    if n > 1 { n.to_string() } else { String::new() }
+}
+
+/// One of the other lists: its tag (the recent picks' key), whether it has the keys now (nothing over it), its rows,
+/// and a row picked (the cursor onto it, then what Enter or a click on it does).
+pub struct List {
+    pub tag: &'static str,
+    pub open: fn(&World) -> bool,
+    pub rows: fn(&World) -> Vec<Entry>,
+    pub pick: fn(&mut World, Option<&GameUi>, usize),
+}
+
+/// The other list that has the keys now.
+pub fn other(w: &World) -> Option<usize> {
+    if !w.modern {
+        return None;
+    }
+    super::modern::SEARCH_LISTS.iter().position(|l| (l.open)(w))
+}
+
+/// A list's tag.
+pub fn tag(list: usize) -> &'static str {
+    super::modern::SEARCH_LISTS.get(list).map_or("", |l| l.tag)
 }
 
 /// The palette's /heal (not an action menu row).
@@ -298,6 +361,7 @@ pub fn key_of(h: &Hit) -> String {
         (Some(Journal::Mission(l, e)), _, _) => format!("n:{l}:{e}"),
         (Some(Journal::Auction(_)), _, _) => format!("h:{}", h.id),
         (Some(Journal::Command(c)), _, _) => format!("c:{c}"),
+        (Some(Journal::Row { list, .. }), _, _) => format!("r:{}:{}", tag(list as usize), h.name),
         (None, Some(_), _) => format!("i:{}", h.id),
         (None, None, Kind::Magic) => format!("m:{}", h.id),
         (None, None, Kind::Ability) => format!("a:{}", h.id),
@@ -341,6 +405,17 @@ fn matches(w: &World, query: &str) -> Vec<Hit> {
         return palette_matches(w, query);
     }
     let mut out = Vec::new();
+    // One of the other lists: its rows.
+    if let Some(l) = other(w) {
+        for (k, e) in (super::modern::SEARCH_LISTS[l].rows)(w).into_iter().enumerate() {
+            if let Some(score) = score(&e.name, query) {
+                let journal = Some(Journal::Row { list: l as u8, k, item: e.item.is_some(), dim: e.dim });
+                out.push(Hit { kind: Kind::Ability, cat: None, id: e.item.unwrap_or(0), name: e.name, score, slot: None, note: e.note, journal, recent: false, fav: false });
+            }
+        }
+        out.sort_by(|a, b| b.score.cmp(&a.score));
+        return out;
+    }
     // The auction house's bid menus: every item of every category (its place as the note, filled by the modern layer);
     // none until the index is in.
     if super::auction::searchable(w) {
@@ -461,8 +536,8 @@ pub fn can_run(w: &World) -> bool {
     w.modern
         && w.prompt.is_none()
         && w.confirm.is_none()
-        && !w.typing
-        && (w.command_palette || super::auction::searchable(w) || w.cats.is_some() || list.is_some_and(|l| !l.hidden && l.sort_focus.is_none() && l.ask.is_none() && l.manual == 0) || (w.win.is_some() && item_list(w).is_some()) || key_items(w) || quest_list(w) || mission_list(w))
+        && !super::typing_elsewhere(w)
+        && (w.command_palette || other(w).is_some() || super::auction::searchable(w) || w.cats.is_some() || list.is_some_and(|l| !l.hidden && l.sort_focus.is_none() && l.ask.is_none() && l.manual == 0) || (w.win.is_some() && item_list(w).is_some()) || key_items(w) || quest_list(w) || mission_list(w))
 }
 
 /// The modern quest list (no Records of Eminence list over it).
@@ -481,7 +556,7 @@ fn key_items(w: &World) -> bool {
 }
 
 /// The search's keys and typed text this frame. True when it took them (the game then sees none).
-pub fn events(w: &mut World, events: &[egui::Event]) -> bool {
+pub fn events(w: &mut World, gu: &GameUi, events: &[egui::Event]) -> bool {
     if !can_run(w) {
         w.list_search = None;
         w.command_palette = false;
@@ -500,16 +575,18 @@ pub fn events(w: &mut World, events: &[egui::Event]) -> bool {
         return false;
     }
     for e in events {
+        // A typed letter's key press comes before its text: only a search its keys ended stops the walk.
+        let was = w.list_search.is_some();
         match e {
             egui::Event::Text(t) => {
                 let s = w.list_search.get_or_insert_with(Default::default);
                 s.text.push_str(t);
                 s.sel = 0;
             }
-            egui::Event::Key { key, pressed: true, .. } => key_in(w, *key),
+            egui::Event::Key { key, pressed: true, .. } => key_in(w, gu, *key),
             _ => {}
         }
-        if w.list_search.is_none() {
+        if was && w.list_search.is_none() {
             break;
         }
     }
@@ -517,7 +594,7 @@ pub fn events(w: &mut World, events: &[egui::Event]) -> bool {
 }
 
 /// Up / Down move among the hits, Enter picks, Backspace deletes a letter, Escape ends the search.
-fn key_in(w: &mut World, key: egui::Key) {
+fn key_in(w: &mut World, gu: &GameUi, key: egui::Key) {
     let Some(s) = w.list_search.clone() else { return };
     let n = hits(w, &s.text).len().min(MAX);
     match key {
@@ -536,7 +613,7 @@ fn key_in(w: &mut World, key: egui::Key) {
         }
         egui::Key::Enter => {
             if let Some(h) = hits(w, &s.text).into_iter().nth(s.sel) {
-                pick(w, &h);
+                pick(w, &h, Some(gu));
             }
         }
         // The palette stays up with an empty field; Backspace on it, or Escape, closes it.
@@ -565,7 +642,7 @@ pub fn set_sel(w: &mut World, sel: usize) {
 
 /// A hit picked: from a category window its list opens first (Enter on its row); then the cursor goes to the row and
 /// Enter acts on it, as the keys would.
-pub fn pick(w: &mut World, h: &Hit) {
+pub fn pick(w: &mut World, h: &Hit, gu: Option<&GameUi>) {
     if w.list_search.take().is_some() {
         remember(w, h);
     }
@@ -591,6 +668,12 @@ pub fn pick(w: &mut World, h: &Hit) {
         }
     }
     match h.journal {
+        Some(Journal::Row { list, k, .. }) => {
+            if let Some(l) = super::modern::SEARCH_LISTS.get(list as usize) {
+                (l.pick)(w, gu, k);
+            }
+            return;
+        }
         Some(Journal::Auction(cat)) => {
             super::auction::show(w, cat, h.id);
             return;
