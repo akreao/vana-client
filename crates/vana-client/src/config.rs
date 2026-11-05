@@ -255,6 +255,8 @@ pub struct Config {
     /// Favourites by character, in the strip's order (client/favs.rs), and whether the strip shows (/favs).
     pub modern_favourites: std::collections::BTreeMap<String, Vec<String>>,
     pub modern_fav_strip: bool,
+    /// How fast a mouse drag turns the camera, in % of the old fixed speed (ours; the controller is not touched).
+    pub mouse_camera_speed: u32,
     /// Read a game controller (client/gamepad.rs; retail: padmode000's first flag).
     pub gamepad: bool,
     /// Stick travel ignored around the centre as a fraction of full: retail's 42 of 127 (ours round).
@@ -448,6 +450,7 @@ impl Default for Config {
             modern_modes: Default::default(),
             modern_favourites: Default::default(),
             modern_fav_strip: true,
+            mouse_camera_speed: 100,
             gamepad: true,
             gamepad_deadzone: 0.33,
             gamepad_background: false,
