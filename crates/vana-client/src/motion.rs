@@ -131,6 +131,12 @@ pub fn strafe(dir: u8, riding: bool) -> Option<&'static str> {
     }
 }
 
+/// `choose`, then `strafe` over it when it picked the walk or run (a status motion such as seated stays).
+pub fn choose_strafed(names: &MotionNames, status: u8, ratio: f32, dir: u8) -> (&'static str, f32) {
+    let (n, r) = choose(names, status, ratio);
+    if n == names.walk || n == names.run { (strafe(dir, matches!(status, 5 | 0x55)).unwrap_or(n), r) } else { (n, r) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -148,6 +154,11 @@ mod tests {
         assert_eq!(strafe_dir(f, f + r * 0.9), 1);
         assert_eq!(strafe_dir(f, Vec3::ZERO), 0);
         assert_eq!((strafe(2, false), strafe(3, true), strafe(4, true), strafe(1, false)), (Some("mvr"), Some("mvb"), Some("wlk"), None));
+        // Only over the walk / run: seated (47) keeps si1, standing keeps idl.
+        let n = MotionNames::default();
+        assert_eq!(choose_strafed(&n, 0, 0.5, 4).0, "mvl");
+        assert_eq!(choose_strafed(&n, 47, 0.5, 4).0, "si1");
+        assert_eq!(choose_strafed(&n, 0, 0.0, 4).0, "idl");
     }
 
     #[test]

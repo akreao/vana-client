@@ -14425,9 +14425,8 @@ impl App {
                         // otherwise; ours takes the prefix).
                         (None, None) if a.jump >= 0.0 && matches!(status, 0 | 1) => ("jmp".to_string(), 1.0, false, crate::motion::BLEND_TICKS),
                         (None, None) => {
-                            let (n, r) = crate::motion::choose(&a.motion_names.unwrap_or(ch.motions), status, ratio);
                             // FUN_100c8bb0: our strafe / backpedal motions over the walk / run, at its rate.
-                            let n = if *id == me && ratio > 1e-4 { crate::motion::strafe(my_strafe, matches!(status, 5 | 0x55)).unwrap_or(n) } else { n };
+                            let (n, r) = crate::motion::choose_strafed(&a.motion_names.unwrap_or(ch.motions), status, ratio, if *id == me { my_strafe } else { 0 });
                             // FUN_100c6380: a status motion the model lacks is not queued (FUN_100cb8e0 fails, +0x1f6
                             // stays), so what plays goes on: the walk of an NPC without a run.
                             if !has(n) && !a.motion.is_empty() && has(&a.motion) {
@@ -14531,7 +14530,7 @@ impl App {
                     let (base, base_rate) = match a.play.as_ref().filter(|_| held) {
                         Some(p) => (p.base.clone(), a.base_rate_now),
                         None => {
-                            let (b, r) = crate::motion::choose(&a.motion_names.unwrap_or(ch.motions), status, ratio);
+                            let (b, r) = crate::motion::choose_strafed(&a.motion_names.unwrap_or(ch.motions), status, ratio, if *id == me { my_strafe } else { 0 });
                             (b.to_string(), r)
                         }
                     };
