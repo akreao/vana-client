@@ -89,7 +89,8 @@ fn places(w: &World) -> Vec<(Option<usize>, usize, u8, Slot)> {
 }
 
 pub(in crate::client) fn search_open(w: &World) -> bool {
-    w.modern && view(w).is_some()
+    // Not while the quantity strip asks how many: a pick would move the whole stack.
+    w.modern && view(w).is_some_and(|(b, ..)| b.qty.is_none())
 }
 
 /// Every place's item: its bag (and count) as the note, greyed when it can't move across.
