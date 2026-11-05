@@ -11188,6 +11188,15 @@ impl App {
         }
         world.step_ticks += dt * 60.0;
         let speed = own_speed(world);
+        // FUN_100a8000, under the strafe lock only (ours: not the right drag): backing up goes at a third of the speed
+        // (vt+0x1b0), sideways at a fixed 0.0625 a tick (0.125 riding), whatever the speed or the stick.
+        let riding = matches!(world.my_motion.status, 5 | 0x55);
+        let lock_dir = if face_cam && stepping && lock_target.is_none() {
+            let dir = world.net.me.lock().map_or(0, |m| m.dir);
+            crate::motion::strafe_dir(forward_from_dir(dir), step)
+        } else {
+            0
+        };
         let falls = !in_event && !world.unsettled && world.in_scene();
         let shafts = world.lifts.shafts();
         let ride = |a: Vec3, b: Vec3| lifts::ride_in(&shafts, a, b);
@@ -11204,7 +11213,11 @@ impl App {
             let mut next = from;
             if stepping {
                 let s = step.normalize();
-                let d = speed * tier * ground::STEP_TICKS / 60.0;
+                let d = match lock_dir {
+                    3 => speed / 3.0 * ground::STEP_TICKS / 60.0,
+                    2 | 4 => if riding { 0.125 } else { 0.0625 } * ground::STEP_TICKS,
+                    _ => speed * tier * ground::STEP_TICKS / 60.0,
+                };
                 next = match lock_target {
                     Some(tp) => target::locked_step(from, tp, s.dot(forward), s.dot(right), d),
                     None => from + s * d,
