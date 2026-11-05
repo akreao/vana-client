@@ -9223,6 +9223,7 @@ impl App {
                 }
                 NetEvent::SelfLook(tbl) => looks.push((world.my_id, look_source(tbl))),
                 NetEvent::ZoneIn { zone, pos, dir, char_id, index, name, look, motion, game_time, weather, music, event: login_event, area, sub_map, scene, myroom, room_flag, dead_counter, play_time, mog_zone, send_count, ship, monstrosity } => {
+                    world.gm.zoned();
                     // The PlayOnline side (xi_profile): signed on and loaded once per session.
                     friends::start(world);
                     // The spools close at a zone change (FUN_1015f3e0(0x200)).

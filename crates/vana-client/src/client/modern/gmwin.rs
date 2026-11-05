@@ -37,7 +37,8 @@ pub fn shown(w: &World) -> bool {
 
 /// Typed text, Backspace, Tab, Enter and Escape while the window is open. True when it took them.
 pub fn events(w: &mut World, events: &[egui::Event]) -> bool {
-    if !shown(w) || w.typing {
+    // Another window or dialog over it (opened later, or an event) keeps its own keys.
+    if !shown(w) || w.typing || super::super::window_over_actions(w) || w.prompt.is_some() || super::super::event::active(w) {
         return false;
     }
     let mut run = false;

@@ -144,9 +144,17 @@ impl Command {
             }
             parts.push(v);
         }
-        Ok(parts.join(" "))
+        let line = parts.join(" ");
+        let bytes = crate::dat::font::encode_sjis(&line).len();
+        if bytes > MAX_LINE {
+            return Err((last.unwrap_or(0), format!("Too long: {bytes} bytes, the packet holds {MAX_LINE}.")));
+        }
+        Ok(line)
     }
 }
+
+/// The most bytes of a line c2s 0x1F1 carries (Shift-JIS).
+pub const MAX_LINE: usize = 248;
 
 /// gm_fields.txt by command.
 struct Extra {
@@ -162,16 +170,25 @@ fn extras() -> HashMap<&'static str, Extra> {
         let col: Vec<&'static str> = line.split('\t').collect();
         let [name, group, danger, desc, fields] = col[..] else { continue };
         let group = GROUPS.iter().find(|g| g.0 == group).map_or("debug", |g| g.0);
-        let fields = fields
-            .split('|')
-            .filter(|f| !f.is_empty())
-            .map(|f| {
-                let mut p = f.split('~');
-                let label = p.next().unwrap_or_default().to_string();
-                let pick = Pick::parse(p.next().unwrap_or_default());
-                Field { label, pick, optional: p.next() == Some("1") }
-            })
-            .collect();
+        // A label can hold '|' (alternatives such as "mobId|npcId"): a piece without '~' joins the next one.
+        let mut list: Vec<Field> = Vec::new();
+        let mut held = String::new();
+        for f in fields.split('|').filter(|f| !f.is_empty()) {
+            if !f.contains('~') {
+                held.push_str(f);
+                held.push('/');
+                continue;
+            }
+            let mut p = f.split('~');
+            let label = std::mem::take(&mut held) + p.next().unwrap_or_default();
+            let pick = Pick::parse(p.next().unwrap_or_default());
+            list.push(Field { label, pick, optional: p.next() == Some("1") });
+        }
+        // Fields are positional: one followed by a needed field is needed too (giveitem's player, for one).
+        if let Some(l) = list.iter().rposition(|f| !f.optional) {
+            list[..l].iter_mut().for_each(|f| f.optional = false);
+        }
+        let fields = list;
         out.insert(name, Extra { group, danger: danger == "1", desc, fields });
     }
     out
@@ -399,6 +416,14 @@ impl Gm {
         }
     }
 
+    /// A new zone (maybe another map server): forget the level and list until this one answers 0x1F0.
+    /// The typed values and the replies stay.
+    pub fn zoned(&mut self) {
+        (self.level, self.open, self.typing, self.find_typing, self.armed) = (0, false, None, false, false);
+        self.commands.clear();
+        self.incoming.clear();
+    }
+
     pub fn selected(&self) -> Option<&Command> {
         self.selected.as_ref().and_then(|n| self.commands.iter().find(|c| &c.name == n))
     }
@@ -412,7 +437,7 @@ impl Gm {
         self.next_id = self.next_id.wrapping_add(1);
         let id = self.next_id;
         let mut text = crate::dat::font::encode_sjis(&line);
-        text.truncate(248);
+        text.truncate(MAX_LINE);
         let mut body = id.to_le_bytes().to_vec();
         body.push(text.len() as u8);
         body.push(0);
@@ -471,6 +496,23 @@ mod tests {
         let a = &e["additem"];
         assert_eq!((a.group, a.fields[0].pick, a.fields[0].optional), ("items", Pick::Item, false));
         assert!(e["exec"].danger);
+    }
+
+    #[test]
+    fn piped_labels_and_positional_optionals() {
+        let e = extras();
+        let goto = &e["gotoid"].fields;
+        assert_eq!((goto.len(), goto[0].label.as_str()), (1, "mobId/npcId"));
+        assert!(!e["giveitem"].fields[0].optional);
+        assert!(e["givegil"].fields[1].optional);
+        let c = command(&e, "gotoid".into(), 1, "s".into());
+        assert_eq!(c.line(&["12345".into()]).unwrap(), "gotoid 12345");
+    }
+
+    #[test]
+    fn long_lines_are_refused_not_cut() {
+        let c = command(&extras(), "exec".into(), 5, "b".into());
+        assert!(c.line(&["x".repeat(300)]).is_err());
     }
 
     #[test]

@@ -34,7 +34,7 @@ animatesubnpc	mobs	0	Changes the animationSub of the given npc. (For testing pur
 animation	player	0	Sets the players current animation	animationID~text~1
 besieged	world	0	Drives Besieged by hand until the system runs itself	mamool|troll|undead~text~0|start|win|loss~text~0|leader 0/1~text~1|arg3~number~1
 breaklinkshell	moderation	1	Breaks a linkshell and all pearls/sacks	linkshell name~text~0
-bring	travel	0	Brings the target to the player	player~player~1|forceZone~zone~1
+bring	travel	0	Brings the target to the player	player~player~1|forceZone (1 or 0)~number~1
 build	world	0	Print the server's current build information	
 cansee	travel	0	Can you see (via ximesh raycasting) your cursor target?	target~player~1
 capallskills	player	0	Caps all the players skills	
@@ -106,7 +106,7 @@ givemagianitem	items	0	Gives the Magian Item associated with the given Trial ID	
 givexp	unlocks	0	Gives the GM or target player experience points	amount~number~0|player~player~1
 gmhome	travel	0	Sends you to zone 210 (GM_HOME), if you are a GM	
 godmode	player	0	Toggles god mode on the player, granting them several special abilities	tier~number~1
-goto	travel	0	Goes to the target player	player~player~1|forceZone~zone~1
+goto	travel	0	Goes to the target player	player~player~1|forceZone (1 or 0)~number~1
 gotoid	travel	0	Go to given mob or npc ID	mobId|npcId~entity~0
 gotoname	travel	0	Go to given mob or npc by name	mob or npc name~entity~0|index~number~1
 hasitem	items	0	Checks if a player has a specific item	itemID~item~0|player~player~1
