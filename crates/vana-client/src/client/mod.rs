@@ -11699,6 +11699,9 @@ impl App {
             self.right_looked = true;
         }
         let right = self.dragging;
+        // Settings' Mouse Camera Speed (ours): scales the drag only; the controller's camera is not touched.
+        let k = self.cfg.mouse_camera_speed.clamp(10, 400) as f64 / 100.0;
+        let (dx, dy) = (dx * k, dy * k);
         let Phase::World(world) = &mut self.phase else { return };
         let inv = |w: &World, id: u16| if w.game.get(id) == 1 { -1.0 } else { 1.0 };
         match () {
