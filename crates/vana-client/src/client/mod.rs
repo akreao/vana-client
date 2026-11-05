@@ -2544,6 +2544,22 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
                 egui::Key::Escape if dead && world.ko_offer == 2 && world.confirm.is_none() => world.sounds.push(crate::audio::Ui::Error as u32),
                 // Escape also takes a line off the log (key 0x95, FUN_1015b830). Clearing the target is key 0x92,
                 // refused while locked (FUN_10151f20).
+                // Ours (Modern UI only, not retail): with no target and nothing else up, the keyboard's Escape opens the
+                // main menu as Minus does. The controller's cancel keeps retail's behaviour.
+                egui::Key::Escape
+                    if world.modern
+                        && world.target.is_none()
+                        && !world.pad_esc
+                        && !dead
+                        && !world.typing
+                        && world.prompt.is_none()
+                        && world.action_menu.is_none()
+                        && !window_over_actions(world)
+                        && !event::active(world) =>
+                {
+                    world.menu = Some(world.menu_mem[world.menu_page as usize & 1]);
+                    shrink_log = true;
+                }
                 egui::Key::Escape => {
                     if target::picks_allowed(world) {
                         target::set(world, None);
@@ -6188,6 +6204,8 @@ struct World {
     /// dead") open, "go home" chosen or expired (handler +0x24), and when 0x01A 0x0B was last sent (every 10 s).
     ko_deadline: u64,
     ko_open: bool,
+    /// This frame's Escape press came from the controller's cancel slot (it never opens the main menu).
+    pad_esc: bool,
     homing: bool,
     home_sent: Option<Instant>,
     /// FUN_10096c90's modes 2 / 3: a raise (2, "menu    resynus", Accept highlighted when `raise_yes`) or tractor (3)
@@ -8361,6 +8379,7 @@ impl App {
                             vitals: None,
                             ko_deadline: 0,
                             ko_open: false,
+                            pad_esc: false,
                             homing: false,
                             home_sent: None,
                             ko_offer: 0,
@@ -13786,6 +13805,9 @@ impl App {
         self.input.set_stick(pad.stick);
         if pad.pressed && !self.dragging && !self.left_down {
             self.mouse.visible = false;
+        }
+        if let Phase::World(w) = &mut self.phase {
+            w.pad_esc = pad.events.iter().any(|e| matches!(e, egui::Event::Key { key: egui::Key::Escape, pressed: true, .. }));
         }
         raw.events.extend(pad.events);
         // What the software keyboard typed, as the keys a field reads.
