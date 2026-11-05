@@ -11192,8 +11192,10 @@ impl App {
         // (vt+0x1b0), sideways at a fixed 0.0625 a tick (0.125 riding), whatever the speed or the stick.
         let riding = matches!(world.my_motion.status, 5 | 0x55);
         let lock_dir = if face_cam && stepping && lock_target.is_none() {
+            // The same facing as my_strafe below: the float one while the byte is still ours.
             let dir = world.net.me.lock().map_or(0, |m| m.dir);
-            crate::motion::strafe_dir(forward_from_dir(dir), step)
+            let f = world.my_face.filter(|f| f.0 == dir).map_or_else(|| forward_from_dir(dir), |f| f.1);
+            crate::motion::strafe_dir(f, step)
         } else {
             0
         };
