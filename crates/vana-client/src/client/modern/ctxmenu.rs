@@ -163,11 +163,12 @@ fn items_list(w: &World) -> Option<bool> {
     }
 }
 
-/// The slot's row in the list shown, while it is still there with the same item.
-fn item_row(w: &World, index: u8, id: u16) -> Option<usize> {
+/// The slot's row in the list shown and its bag, while it is still there with the same item.
+fn item_row(w: &World, index: u8, id: u16) -> Option<(usize, u8)> {
     let direct = items_list(w)?;
-    // Inventory rows only: the temporary items (listed first) keep retail's keys.
-    gitems::listed_at(w, direct).iter().position(|(c, s)| *c == gitems::INVENTORY && s.index == index && s.id == id)
+    // Inventory rows only (and the direct list's wardrobe rows): the temporary items (listed first) keep retail's keys.
+    let at = |c: u8| c == gitems::INVENTORY || (direct && c != gitems::TEMP);
+    gitems::listed_at(w, direct).iter().enumerate().find(|(_, (c, s))| at(*c) && s.index == index && s.id == id).map(|(k, (c, _))| (k, *c))
 }
 
 /// A storage view state for the item rules (gitems::usable / tint): `bank` against the inventory, away from the
@@ -184,7 +185,7 @@ fn destinations(w: &World, index: u8) -> Vec<(u8, &'static str)> {
 
 fn item_rows(w: &World, index: u8, id: u16, moving: bool) -> Option<Vec<Row>> {
     let direct = items_list(w)?;
-    item_row(w, index, id)?;
+    let (_, bag) = item_row(w, index, id)?;
     if moving {
         let mut rows: Vec<Row> = destinations(w, index).into_iter().map(|(c, name)| (name.to_string(), Act::Move(c), true)).collect();
         if rows.is_empty() {
@@ -193,8 +194,8 @@ fn item_rows(w: &World, index: u8, id: u16, moving: bool) -> Option<Vec<Row>> {
         rows.push(("Back".into(), Act::Back, true));
         return Some(rows);
     }
-    let [can_use, can_drop] = gitems::iuse_states(w, gitems::INVENTORY, index, id);
-    let bazaar = super::items::bazaar_price(w, gitems::INVENTORY, index).is_some();
+    let [can_use, can_drop] = gitems::iuse_states(w, bag, index, id);
+    let bazaar = super::items::bazaar_price(w, bag, index).is_some();
     if direct {
         return Some(vec![("Use".into(), Act::Use, can_use && !bazaar)]);
     }
@@ -313,7 +314,7 @@ fn item_act(w: &mut World, index: u8, id: u16, act: Act) {
         }
         return;
     }
-    let Some(row) = item_row(w, index, id) else { return };
+    let Some((row, _)) = item_row(w, index, id) else { return };
     let Some(Win::Items { scroll, cursor, sub, sort, direct, .. }) = w.win.as_mut() else { return };
     // The row into view with the cursor on it.
     let rows = crate::inventory::VISIBLE_ROWS;
