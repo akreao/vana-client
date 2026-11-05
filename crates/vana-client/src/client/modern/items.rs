@@ -130,7 +130,13 @@ fn list(p: &mut Panels, w: &mut World) {
         if rows.is_empty() {
             ui.label(egui::RichText::new("No items.").size(m.theme.ui).color(m.theme.color("muted")));
         }
+        // Vana Client: the usable list names each bag above its rows (and the top row's bag), once it lists more than one.
+        let headed = direct && shown.windows(2).any(|p| p[0].0 != p[1].0);
         for (k, (row, (c, slot))) in rows.iter().zip(&shown).skip(scroll).take(VISIBLE_ROWS).enumerate() {
+            if headed && (k == 0 || shown[scroll + k - 1].0 != *c) {
+                ui.add_space(if k == 0 { 0.0 } else { 4.0 });
+                ui.label(egui::RichText::new(super::super::textcmd::bag_name(*c)).size(m.theme.small).color(m.theme.color("muted")));
+            }
             let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW), Sense::click());
             let sprite = match () {
                 _ if k == cursor && sort.is_none() => "controls/list_row_selected",

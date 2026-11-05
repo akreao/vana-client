@@ -2427,8 +2427,8 @@ fn atoi(s: &str) -> i64 {
     if neg { -n } else { n }
 }
 
-/// A container's name for /find (the wardrobes and safes numbered).
-fn bag_name(c: u8) -> String {
+/// A container's name for /find (the wardrobes and safes numbered) and the Modern UI's bag headers.
+pub(super) fn bag_name(c: u8) -> String {
     match c {
         0 => "Inventory".into(),
         1 => "Mog Safe".into(),
