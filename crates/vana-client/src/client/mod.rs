@@ -15076,6 +15076,8 @@ impl App {
                 };
                 // The shadowed lights' positions: our character (or mount), casting from one, takes no retail shadow either.
                 let lamp_cast: Vec<(Vec3, glam::Mat4)> = r.lamp_shadows.iter().map(|(_, m, p)| (*p, *m)).collect();
+                // Which casters a lamp casts, from `seen` before the filters below take them out of it.
+                let lamp_lit = casters.map(|id| seen.get(&id).is_some_and(|s| lamp_cast.iter().any(|(l, m)| crate::render::lampshadow::casts(*l, *m, s.pos))));
 
                 // Diagnostics (log target "sunshadow"): the real shadows' state and ours on each change.
                 if self.cfg.actor_shadows != 0 && log::log_enabled!(target: "sunshadow", log::Level::Debug) {
@@ -15103,10 +15105,9 @@ impl App {
                     None => Vec::new(),
                 };
                 // A lamp casting ours takes over its main shadow: the sun's map leaves it out (back past the lamp's reach).
-                for id in casters {
-                    let pos = seen.get(&id).map(|s| s.pos);
+                for (id, lit) in casters.into_iter().zip(lamp_lit) {
                     if let Some(g) = w.actors.get_mut(&id).and_then(|a| a.gpu.as_mut()) {
-                        g.lamp_lit = pos.is_some_and(|p| lamp_cast.iter().any(|(l, m)| crate::render::lampshadow::casts(*l, *m, p)));
+                        g.lamp_lit = lit;
                     }
                 }
                 let drawn_map: HashMap<u32, &crate::render::ActorGpu> = w.actors.iter().filter(|(id, a)| !a.vanished() && !hidden.contains(id) && !far_out.contains(id) && !culled(id, a)).filter_map(|(id, a)| Some((*id, a.gpu.as_ref()?))).filter(|(_, g)| g.alpha >= 1e-4).collect();

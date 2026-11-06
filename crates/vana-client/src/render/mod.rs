@@ -2973,7 +2973,7 @@ impl ZoneRenderer {
                     s.receive(gpu, encoder, color, depth, vp, *m, *d, *st, camera.eye, self.shadow_soft);
                 }
                 if sun_now {
-                    self.lamp_shadow.receive(gpu, encoder, color, depth, vp, lamps, camera.eye);
+                    self.lamp_shadow.receive(gpu, encoder, color, depth, vp, lamps, camera.eye, &self.lights);
                 }
                 pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("zone (after shadows)"),

@@ -18,7 +18,8 @@ pub const SIZE: u32 = 512;
 pub const REACH: f32 = 16.0;
 /// How much a full lamp shadow darkens a surface: the sun's (sunshadow::STRENGTH), so both look alike.
 pub const STRENGTH: f32 = super::sunshadow::STRENGTH;
-/// The shadow fades out between these distances of the surface from the lamp (as fractions of REACH).
+/// The shadow fades out between these distances of the surface from the lamp (as fractions of its light's range,
+/// at most REACH).
 const FADE_START: f32 = 0.6;
 const FADE_END: f32 = 1.0;
 /// A character as a sphere: its centre this far above the feet (FFXI's y points down), this radius.
@@ -172,18 +173,21 @@ impl LampShadows {
     /// Darkens `color` where this frame's `lamps` (as given to `set`, whose maps are drawn) shadow the scenery in
     /// `depth` (the scene's). Nothing without lamps.
     #[allow(clippy::too_many_arguments)]
-    pub fn receive(&self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, color: &wgpu::TextureView, depth: &wgpu::TextureView, view_proj: Mat4, lamps: &[(u32, Mat4, Vec3)], eye: Vec3) {
+    /// `lights`: the zone's point lights (zone.wgsl plights), whose live range and intensity limit each shadow to
+    /// where its light reaches.
+    pub fn receive(&self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, color: &wgpu::TextureView, depth: &wgpu::TextureView, view_proj: Mat4, lamps: &[(u32, Mat4, Vec3)], eye: Vec3, lights: &wgpu::Buffer) {
         if lamps.is_empty() {
             return;
         }
         let mut u = ReceiveU::zeroed();
         u.inv_view_proj = view_proj.inverse().to_cols_array_2d();
-        for (k, (_, m, p)) in lamps.iter().take(LAYERS).enumerate() {
+        for (k, (slot, m, p)) in lamps.iter().take(LAYERS).enumerate() {
+            u.slots[k] = slot + 1;
             u.vp[k] = m.to_cols_array_2d();
             u.lamp[k] = [p.x, p.y, p.z, 1.0];
         }
         u.eye = [eye.x, eye.y, eye.z, STRENGTH];
-        u.misc = [1.0 / SIZE as f32, FADE_START * REACH, FADE_END * REACH, 0.0];
+        u.misc = [1.0 / SIZE as f32, FADE_START, FADE_END, REACH];
         super::Put::put(&gpu.queue, &self.receive_uniform, 0, bytemuck::bytes_of(&u));
         let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("lamp shadow receive"),
@@ -193,6 +197,7 @@ impl LampShadows {
                 wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(depth) },
                 wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&self.array) },
                 wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&self.cmp) },
+                wgpu::BindGroupEntry { binding: 4, resource: lights.as_entire_binding() },
             ],
         });
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -209,11 +214,12 @@ impl LampShadows {
     }
 }
 
-/// The receive pass's uniform: per layer the lamp's matrix and position (w 1 = in use), the eye (w the strength) and
-/// misc = (PCF step in uv, fade start, fade end, 0).
+/// The receive pass's uniform: per layer the light slot + 1 (0 = unused), the lamp's matrix and position, the eye
+/// (w the strength) and misc = (PCF step in uv, fade start and end as fractions of the range, REACH).
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct ReceiveU {
+    slots: [u32; 4],
     inv_view_proj: [[f32; 4]; 4],
     vp: [[[f32; 4]; 4]; LAYERS],
     lamp: [[f32; 4]; LAYERS],
@@ -223,6 +229,7 @@ struct ReceiveU {
 
 const RECEIVE_WGSL: &str = r#"
 struct U {
+    slots: vec4<u32>,
     inv_view_proj: mat4x4<f32>,
     vp: array<mat4x4<f32>, 4>,
     lamp: array<vec4<f32>, 4>,
@@ -233,6 +240,8 @@ struct U {
 @group(0) @binding(1) var scene_depth: texture_depth_2d;
 @group(0) @binding(2) var maps: texture_depth_2d_array;
 @group(0) @binding(3) var cmp: sampler_comparison;
+// The zone's point lights (zone.wgsl plights): per slot (position, range), (colour, intensity).
+@group(0) @binding(4) var<storage, read> plights: array<vec4<f32>>;
 
 struct VOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
 @vertex fn vs(@builtin(vertex_index) i: u32) -> VOut {
@@ -255,9 +264,16 @@ struct VOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
     n = select(n, -n, dot(n, u.eye.xyz - world) < 0.0);
     var lit = 1.0;
     for (var j = 0; j < 4; j++) {
-        if (u.lamp[j].w == 0.0) { continue; }
+        let s = u.slots[j];
+        if (s == 0u) { continue; }
+        // No shadow where the light does not reach: off (no intensity or colour) or past its range.
+        let a = plights[2u * (s - 1u)];
+        let col = plights[2u * (s - 1u) + 1u];
+        if (col.w <= 0.0 || max(col.r, max(col.g, col.b)) <= 0.0) { continue; }
+        let range = min(a.w, u.misc.w);
         let to_lamp = u.lamp[j].xyz - world;
         let dist = length(to_lamp);
+        if (dist >= range) { continue; }
         let facing = dot(n, to_lamp / max(dist, 1e-6));
         let c = u.vp[j] * vec4<f32>(world + n * 0.05, 1.0);
         if (c.w <= 0.0) { continue; }
@@ -272,7 +288,7 @@ struct VOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
         }
         let shadow = 1.0 - vis / 9.0;
         let edge = 1.0 - smoothstep(0.8, 1.0, max(abs(q.x), abs(q.y)));
-        let k = u.eye.w * shadow * edge * smoothstep(0.0, 0.25, facing) * (1.0 - smoothstep(u.misc.y, u.misc.z, dist));
+        let k = u.eye.w * shadow * edge * smoothstep(0.0, 0.25, facing) * (1.0 - smoothstep(u.misc.y * range, u.misc.z * range, dist));
         lit = lit * (1.0 - k);
     }
     lit = select(lit, 1.0, d >= 1.0);
@@ -288,6 +304,7 @@ fn receive_pipeline(device: &wgpu::Device, format: wgpu::TextureFormat) -> (wgpu
             wgpu::BindGroupLayoutEntry { binding: 1, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Depth, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false }, count: None },
             wgpu::BindGroupLayoutEntry { binding: 2, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Depth, view_dimension: wgpu::TextureViewDimension::D2Array, multisampled: false }, count: None },
             wgpu::BindGroupLayoutEntry { binding: 3, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison), count: None },
+            wgpu::BindGroupLayoutEntry { binding: 4, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None },
         ],
     });
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("lamp shadow receive"), source: wgpu::ShaderSource::Wgsl(RECEIVE_WGSL.into()) });
