@@ -22,6 +22,9 @@ pub const STRENGTH: f32 = super::sunshadow::STRENGTH;
 /// at most REACH).
 const FADE_START: f32 = 0.6;
 const FADE_END: f32 = 1.0;
+/// Within this fraction of a lit lamp's range our character's main shadow is the lamp's (zone.wgsl
+/// vs_skinned_sun_lamped); further out the sun's comes back, as the lamp's fades.
+const TAKEOVER: f32 = 0.8;
 /// A character as a sphere: its centre this far above the feet (FFXI's y points down), this radius.
 const CENTRE: f32 = 0.9;
 const RADIUS: f32 = 1.2;
@@ -31,7 +34,7 @@ const MAX_HALF: f32 = 60.0 * std::f32::consts::PI / 180.0;
 const MIN_HALF: f32 = 5.0 * std::f32::consts::PI / 180.0;
 
 /// The zone shader's view (group 0 binding 5): per layer the lamp's light slot + 1 (0 = unused) and its matrix;
-/// misc = (strength, PCF step in uv, 0, 0). The strength is 0: the receive pass darkens instead (zone.wgsl lamp_vis
+/// misc = (strength, PCF step in uv, REACH, TAKEOVER). The strength is 0: the receive pass darkens instead (zone.wgsl lamp_vis
 /// would take the light out a second time).
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -166,7 +169,7 @@ impl LampShadows {
             u.vp[k] = m.to_cols_array_2d();
             super::Put::put(&gpu.queue, &self.matrices, 256 * k as u64, bytemuck::cast_slice(&m.to_cols_array()));
         }
-        u.misc = [0.0, 1.0 / SIZE as f32, 0.0, 0.0];
+        u.misc = [0.0, 1.0 / SIZE as f32, REACH, TAKEOVER];
         super::Put::put(&gpu.queue, &self.uniform, 0, bytemuck::bytes_of(&u));
     }
 
@@ -373,6 +376,13 @@ mod tests {
     #[test]
     fn receive_shader_is_valid() {
         let m = wgpu::naga::front::wgsl::parse_str(RECEIVE_WGSL).expect("parse");
+        wgpu::naga::valid::Validator::new(Default::default(), wgpu::naga::valid::Capabilities::all()).validate(&m).expect("valid");
+    }
+
+    /// The zone shader (its lamp-lit sun depth entry included) parses and validates.
+    #[test]
+    fn zone_shader_is_valid() {
+        let m = wgpu::naga::front::wgsl::parse_str(include_str!("zone.wgsl")).expect("parse");
         wgpu::naga::valid::Validator::new(Default::default(), wgpu::naga::valid::Capabilities::all()).validate(&m).expect("valid");
     }
 
