@@ -1,11 +1,11 @@
-# Publishes wiki/ to the repository's GitHub wiki on every push to master that changes it. The wiki is generated:
+# Publishes wiki/ to the repository's GitHub wiki on every push to custom that changes it. The wiki is generated:
 # edits made in its web editor are overwritten. GitHub creates the wiki's git repository only when its first page is
 # saved, so create any page once in the web UI before the first run.
 name: Wiki
 
 on:
   push:
-    branches: [master]
+    branches: [custom]
     paths: [wiki/**, .github/workflows/wiki.yml]
   workflow_dispatch:
 

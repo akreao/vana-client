@@ -5,7 +5,7 @@
 - docs/modern-ui/*.md  -> appended to the State section of docs/modern-ui.md (each is '- ' bullets),
                           above its closing '- Not yet:' lines
 
-Fragments are folded oldest file name first and then deleted. Run on master, not on a feature branch.
+Fragments are folded oldest file name first and then deleted. Run on custom (the fork's default branch), not on a feature branch.
 See docs/modlog/README.md and docs/modern-ui/README.md.
 """
 
