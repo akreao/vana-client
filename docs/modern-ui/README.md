@@ -6,16 +6,15 @@ the end of State (or edit the same open question), so any two of them conflicted
 
 ## Adding an update
 
-1. Create `docs/modern-ui/YYYY-MM-DD-short-name.md`, for example `2026-11-02-click-to-move.md`.
+1. Create `docs/modern-ui/YYYY-MM-DD-short-name.md`, for example `2026-11-02-command-palette.md`.
 2. Write the State bullets exactly as they would appear in `docs/modern-ui.md`, starting with `- `:
 
    ```markdown
-   - Click-to-move (2026-11-02, ours; user's pick: Ctrl + left click only): with the modern UI, Ctrl + left click
-     on the ground walks there. ...
+   - Command palette (2026-11-02, ours): with the modern UI, Ctrl + Space opens a search over every command. ...
    ```
 
 3. If the change answers an open question, finishes a "Not yet" item or makes an older bullet wrong, say so in a
-   bullet of its own (for example `- Open question answered: click-to-move is Ctrl + left click (user, 2026-11-02).`).
+   bullet of its own (for example `- Open question answered: ... (user, 2026-11-02).`).
    Whoever folds the fragments tidies the older text by hand. Don't edit `docs/modern-ui.md` on the branch.
 
 The reverse-engineered facts behind the change still go in a `docs/modlog/` fragment (see `docs/modlog/README.md`).
