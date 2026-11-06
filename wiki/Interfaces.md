@@ -40,7 +40,6 @@ With the mouse, hovering only highlights a control; a click moves the cursor the
 
 - Left click selects a target. Double click on an actor talks to an NPC or checks anyone else.
 - Right click on an actor opens its menu (a monster: Target, Attack, Check; a player: Target, Check, Tell, Invite to Party, Trade; an NPC: Talk, Target, Trade). Item and party rows have right-click menus too.
-- Ctrl + left click on the ground walks there.
 - Mog House storage: click a row, or drag it onto the other pane, to move the stack.
 - In both interfaces, a right drag turns the camera and the character, and the wheel zooms the camera. Settings' Mouse Camera Speed sets how fast a drag turns it.
 
