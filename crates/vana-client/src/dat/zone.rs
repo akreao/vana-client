@@ -159,9 +159,9 @@ pub fn parse_mmb(p: &[u8]) -> Result<Mmb> {
     let is_mmb_id = &p[..3] == b"MMB";
     let list_type = p[3] & 0x7F;
     let wide_vertex = p[4] == 2;
-    // Without the `MMB` id, header byte 4 = 0 or 2 (animated) is a triangle list; anything else
-    // stays a strip, as before. Buburimu's open
-    // sea (effect mesh `umi1`, byte 4 = 0) read as a strip drew long dark wedges and seams across the water.
+    // Without the `MMB` id, header byte 4 = 0 or 2 (animated) is a triangle list; anything else stays a strip, as
+    // before. Buburimu's open sea (effect mesh `umi1`, byte 4 = 0) read as a strip drew long dark wedges and seams
+    // across the water.
     let triangle_list = (is_mmb_id && list_type == 0) || (!is_mmb_id && matches!(p[4], 0 | 2));
 
     let name = name_at(p, 16, 16);
