@@ -1,8 +1,9 @@
-//! Lamp shadows (ours, not retail): with Real character shadows and Real lamp lights (client/lamps.rs), the few lamps
-//! nearest the camera that have characters near them each get a small perspective depth map of the characters, seen
-//! from the lamp. The zone shader's per-pixel point lights (zone.wgsl point_lights) look a lamp's slot up here and
-//! scale that lamp's light by the map's visibility, so a character cuts only the lamp's own light out of the scenery
-//! behind it: the baked lighting and the other lights are untouched, and characters themselves are not shaded by it.
+//! Lamp shadows (ours, not retail): with Real character shadows, the few point lights nearest our own character (the
+//! zone's data lights, and the lamps of Real lamp lights, client/lamps.rs) each get a small perspective depth map of
+//! it, seen from the light, so standing between two lights casts two shadows. The zone shader's per-pixel point lights
+//! (zone.wgsl point_lights) look a light's slot up here and scale that light by the map's visibility, so the
+//! character cuts only that light out of the scenery behind it: the baked lighting and the other lights are
+//! untouched, and characters themselves are not shaded by it. Other characters cast none (ActorGpu::lamp_caster).
 
 use super::Gpu;
 use bytemuck::{Pod, Zeroable};
@@ -59,8 +60,24 @@ pub fn matrix(lamp: Vec3, feet: &[Vec3]) -> Option<Mat4> {
     Some(glam::camera::rh::proj::directx::perspective(2.0 * half, 1.0, NEAR, REACH + RADIUS) * glam::camera::rh::view::look_at_mat4(lamp, lamp + dir, up))
 }
 
-/// This frame's shadowed lamps from `lamps` (position, light slot): those with a character of `feet` in reach, the
-/// nearest to `target` (the camera's) first, at most LAYERS.
+/// Whether a character with its feet at `feet` casts into a shadowed lamp's map (`vp`, from `matrix`): its centre
+/// within REACH of the `lamp` and inside the map's cone. The client then drops its retail shadow, whose light eases
+/// toward the lamp over seconds.
+pub fn casts(lamp: Vec3, vp: Mat4, feet: Vec3) -> bool {
+    let c = feet - Vec3::Y * CENTRE;
+    if c.distance(lamp) >= REACH {
+        return false;
+    }
+    let q = vp * c.extend(1.0);
+    if q.w <= 0.0 {
+        return false;
+    }
+    let p = q.truncate() / q.w;
+    p.x.abs() < 1.0 && p.y.abs() < 1.0 && p.z > 0.0 && p.z < 1.0
+}
+
+/// This frame's shadowed lights from `lamps` (position, light slot): those with a character of `feet` in reach, the
+/// nearest to `target` first, at most LAYERS.
 pub fn pick(lamps: &[(Vec3, u32)], feet: &[Vec3], target: Vec3) -> Vec<(u32, Mat4)> {
     let mut near: Vec<(f32, Vec3, u32)> = lamps.iter().filter(|(p, _)| feet.iter().any(|f| f.distance(*p) < REACH)).map(|&(p, s)| (p.distance(target), p, s)).collect();
     near.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -149,6 +166,20 @@ mod tests {
     fn project(m: Mat4, p: Vec3) -> Vec3 {
         let c = m * p.extend(1.0);
         c.truncate() / c.w
+    }
+
+    /// Only characters inside the lamp's map lose their retail shadow: two either side of a low lamp lie outside the
+    /// 60-degree cone it aims between them.
+    #[test]
+    fn casts_only_inside_the_map() {
+        let lamp = Vec3::new(0.0, -4.0, 0.0);
+        let feet = [Vec3::new(-10.0, 0.0, 0.0), Vec3::new(10.0, 0.0, 0.0)];
+        let m = matrix(lamp, &feet).unwrap();
+        assert!(feet.iter().all(|f| !casts(lamp, m, *f)));
+        let one = [Vec3::new(3.0, 0.0, 1.0)];
+        let m = matrix(lamp, &one).unwrap();
+        assert!(casts(lamp, m, one[0]));
+        assert!(!casts(lamp, m, Vec3::new(30.0, 0.0, 0.0)));
     }
 
     /// The map takes in every character near the lamp, in front of it and inside the depth range.
