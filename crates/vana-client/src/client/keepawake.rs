@@ -15,6 +15,8 @@ pub struct KeepAwake {
     on: bool,
     #[cfg(target_os = "linux")]
     tx: Option<std::sync::mpsc::Sender<bool>>,
+    #[cfg(target_os = "linux")]
+    sent: Option<Instant>,
     #[cfg(windows)]
     poked: Option<Instant>,
 }
@@ -31,15 +33,18 @@ impl KeepAwake {
         if on {
             self.poke(now);
         }
-        if on != self.on {
-            self.on = on;
+        // Linux: on a change, and once a minute through the hold (the worker ignores a repeat while it holds one), so
+        // a failed inhibit is retried without waiting for the hold to end.
+        #[cfg(target_os = "linux")]
+        if on != self.on || (on && self.sent.is_none_or(|t| now - t >= Duration::from_secs(60))) {
+            self.sent = Some(now);
             // A worker that lost its bus (none at start, or it went away) has hung up: start a new one and resend.
-            #[cfg(target_os = "linux")]
             if self.tx.get_or_insert_with(linux::spawn).send(on).is_err() {
                 self.tx = Some(linux::spawn());
                 self.tx.as_ref().unwrap().send(on).ok();
             }
         }
+        self.on = on;
     }
 
     /// Windows: one call resets the display and sleep timers, as a key would; every 10 s through the hold is plenty.
