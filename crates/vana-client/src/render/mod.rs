@@ -2857,7 +2857,7 @@ impl ZoneRenderer {
             c.run(encoder, &self.globals, &self.cull_pipes);
         }
         // Real character shadows (render/sunshadow.rs): the actors' depth from the zone's sun, laid on the scenery
-        // below between the cut-out and the blended scenery.
+        // below after all the scenery (the blended too) and before the actors.
         let sun = match (&self.sun_shadow, self.sun_shadow_light(camera.target), &self.pose_gpu) {
             (Some(s), Some((m, d, st)), Some((_, group, _))) => Some((s, m, d, st, group)),
             _ => None,
@@ -2934,15 +2934,20 @@ impl ZoneRenderer {
         pass.set_vertex_buffer(1, zone_inst.slice(..));
         pass.set_vertex_buffer(0, self.vertices.slice(..));
         pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint16);
-        for mode in 0..4u8 {
-            // The opaque and cut-out scenery is down: the ambient occlusion and the real shadows go on it, then the
-            // pass resumes.
-            if mode == 2 && (sun.is_some() || self.ssao.is_some()) {
+        // Mode 4 is no scenery: the point after the blended scenery, before the actors.
+        for mode in 0..5u8 {
+            // The ambient occlusion goes on the opaque and cut-out scenery (mode 2). The real shadows wait until the
+            // blended scenery is down too (mode 4): many ground pieces are blended layers laid over the terrain, which
+            // would otherwise cover the shadow and cut it off along their edges. They write no depth, so the pass
+            // reads the ground under them. Then the pass resumes.
+            let ssao_now = mode == 2 && self.ssao.is_some();
+            let sun_now = mode == 4 && sun.is_some();
+            if ssao_now || sun_now {
                 drop(pass);
-                if let Some(a) = &self.ssao {
+                if let Some(a) = self.ssao.as_ref().filter(|_| ssao_now) {
                     a.draw(gpu, encoder, color, depth, vp, camera.eye);
                 }
-                if let Some((s, m, d, st, _)) = &sun {
+                if let Some((s, m, d, st, _)) = sun.as_ref().filter(|_| sun_now) {
                     s.receive(gpu, encoder, color, depth, vp, *m, *d, *st, camera.eye, self.shadow_soft);
                 }
                 pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -2957,6 +2962,9 @@ impl ZoneRenderer {
                 pass.set_vertex_buffer(1, zone_inst.slice(..));
                 pass.set_vertex_buffer(0, self.vertices.slice(..));
                 pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint16);
+            }
+            if mode == 4 {
+                break;
             }
             let mut bound = usize::MAX;
             let mut pipe = usize::MAX;

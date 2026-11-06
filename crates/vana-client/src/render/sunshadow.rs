@@ -1,6 +1,7 @@
 //! Real character shadows (ours, not retail; Settings > Effects > Character Shadows, config `actor_shadows`): the
 //! skinned actors drawn into a depth map from the zone's sun (one orthographic map around the camera's target), then
-//! laid over the scenery as a darkening pass after the opaque and cut-out scenery and before anything else, so
+//! laid over the scenery as a darkening pass after all the scenery (the blended ground layers too, which would
+//! otherwise cover it) and before the actors, so
 //! characters never shadow themselves or each other and their painted light is untouched. Only surfaces facing the
 //! sun are darkened: the baked lighting already darkens the rest. Without a sun (interiors, some nights) the client
 //! keeps retail's shadows (render/shadow.rs).
