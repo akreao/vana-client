@@ -28,17 +28,21 @@ impl KeepAwake {
         }
         let on = self.last.is_some_and(|t| now - t < HOLD);
         #[cfg(windows)]
-        if used {
+        if on {
             self.poke(now);
         }
         if on != self.on {
             self.on = on;
+            // A worker that lost its bus (none at start, or it went away) has hung up: start a new one and resend.
             #[cfg(target_os = "linux")]
-            self.tx.get_or_insert_with(linux::spawn).send(on).ok();
+            if self.tx.get_or_insert_with(linux::spawn).send(on).is_err() {
+                self.tx = Some(linux::spawn());
+                self.tx.as_ref().unwrap().send(on).ok();
+            }
         }
     }
 
-    /// Windows: one call resets the display and sleep timers, as a key would; a few seconds apart is plenty.
+    /// Windows: one call resets the display and sleep timers, as a key would; every 10 s through the hold is plenty.
     #[cfg(windows)]
     fn poke(&mut self, now: Instant) {
         use windows_sys::Win32::System::Power::{ES_DISPLAY_REQUIRED, ES_SYSTEM_REQUIRED, SetThreadExecutionState};
@@ -77,6 +81,10 @@ mod linux {
             for on in rx {
                 if on && held.is_none() {
                     held = inhibit(&conn);
+                    // Hang up so the next use starts over on a fresh connection (the bus may have gone away).
+                    if held.is_none() {
+                        return;
+                    }
                 } else if !on && let Some(h) = held.take() {
                     release(&conn, h);
                 }
