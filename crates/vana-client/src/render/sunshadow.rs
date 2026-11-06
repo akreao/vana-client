@@ -16,14 +16,19 @@ pub const HALF_EXTENT: f32 = 40.0;
 /// How far the light's eye sits back from the target, and the depth range it covers.
 const BACK: f32 = 150.0;
 const DEPTH: f32 = 300.0;
-/// The most a shadow takes off a surface (multiplied by 1 - this), at full sun.
-pub const STRENGTH: f32 = 0.45;
+/// The most a shadow takes off a surface (multiplied by 1 - this), at full sun: a shadowed surface keeps 27.5% of its
+/// light, half of the 55% it kept at first (0.45), which Steven found too faint.
+pub const STRENGTH: f32 = 0.725;
 /// The lowest sun the shadows follow (above the horizon); lower suns cast at this angle.
 const MIN_ELEVATION: f32 = 30.0;
-/// How far behind its caster (along the light, world units) a shadow stays full, and where it has faded out: a
-/// character atop a wall casts nothing onto the ground far below.
+/// How far below its caster's feet (world units, straight down) a shadow stays full, and where it has faded out: a
+/// character atop a wall casts nothing onto the ground far below. Measured from the feet rather than along the light,
+/// so a low sun or a small step in the ground (a seam between terrain pieces) does not cut a shadow off.
 const FADE_START: f32 = 3.0;
 const FADE_END: f32 = 7.0;
+
+/// The format of the map's companion target: per texel, the feet height (world y) of the caster nearest the sun.
+pub const FEET_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 
 const WGSL: &str = r#"
 struct U {
@@ -33,14 +38,15 @@ struct U {
     sun: vec4<f32>,
     // xyz: the eye; w: one map texel in world units.
     eye: vec4<f32>,
-    // x: the PCF taps' spacing in texels (wider is softer: the moon's); y: the map's depth range in world units;
-    // z, w: the caster-to-surface distances where the shadow starts and ends fading.
+    // x: the PCF taps' spacing in texels (wider is softer: the moon's); y: unused;
+    // z, w: the drops below the caster's feet where the shadow starts and ends fading.
     misc: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> u: U;
 @group(0) @binding(1) var scene_depth: texture_depth_2d;
 @group(0) @binding(2) var map: texture_depth_2d;
 @group(0) @binding(3) var cmp: sampler_comparison;
+@group(0) @binding(4) var feet: texture_2d<f32>;
 
 struct VOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
 @vertex fn vs(@builtin(vertex_index) i: u32) -> VOut {
@@ -71,17 +77,19 @@ struct VOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
     var dark = 0.0;
     for (var y = -1; y <= 1; y++) {
         for (var x = -1; x <= 1; x++) {
-            // Bilinear over the tap's four texels, each compared and faded by its own caster's height (a filtered
-            // comparison would mix a high caster's edge into the cleared texels beside it, unfaded).
+            // Bilinear over the tap's four texels, each compared and faded by how far the surface lies below its own
+            // caster's feet (a filtered comparison would mix a high caster's edge into the cleared texels beside it,
+            // unfaded). The world's y points down, so the drop is the surface's y less the feet's.
             let f = (uv + vec2<f32>(f32(x), f32(y)) * texel) * dim - 0.5;
             let b = floor(f);
             let w = f - b;
             var c = vec4<f32>(0.0);
             for (var k = 0; k < 4; k++) {
                 let o = vec2<f32>(f32(k & 1), f32(k >> 1u));
-                let caster = textureLoad(map, vec2<i32>(clamp(b + o, vec2<f32>(0.0), dim - 1.0)), 0);
-                let gap = (lp.z - caster) * u.misc.y;
-                c[k] = select(0.0, 1.0 - smoothstep(u.misc.z, u.misc.w, gap), lp.z > caster);
+                let t = vec2<i32>(clamp(b + o, vec2<f32>(0.0), dim - 1.0));
+                let caster = textureLoad(map, t, 0);
+                let drop = world.y - textureLoad(feet, t, 0).x;
+                c[k] = select(0.0, 1.0 - smoothstep(u.misc.z, u.misc.w, drop), lp.z > caster);
             }
             dark += mix(mix(c.x, c.y, w.x), mix(c.z, c.w, w.x), w.y);
         }
@@ -174,6 +182,8 @@ struct Params {
 
 pub struct SunShadow {
     pub map: wgpu::TextureView,
+    /// Beside the map: each texel's caster's feet height (FEET_FORMAT), written by the same pass.
+    pub feet: wgpu::TextureView,
     /// The map's size in texels.
     pub size: u32,
     /// The light matrix for the depth pass (group 3 of the silhouette layout, 256 bytes).
@@ -197,6 +207,18 @@ impl SunShadow {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: super::DEPTH_FORMAT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            })
+            .create_view(&Default::default());
+        let feet = device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("sun shadow feet"),
+                size: wgpu::Extent3d { width: size, height: size, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: FEET_FORMAT,
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             })
@@ -225,6 +247,12 @@ impl SunShadow {
                 tex(1),
                 tex(2),
                 wgpu::BindGroupLayoutEntry { binding: 3, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison), count: None },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: false }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
+                    count: None,
+                },
             ],
         });
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("sun shadow receive"), source: wgpu::ShaderSource::Wgsl(WGSL.into()) });
@@ -260,7 +288,7 @@ impl SunShadow {
             compare: Some(wgpu::CompareFunction::LessEqual),
             ..Default::default()
         });
-        Self { map, size, matrix, matrix_group, layout, pipeline, uniform, cmp }
+        Self { map, feet, size, matrix, matrix_group, layout, pipeline, uniform, cmp }
     }
 
     /// Writes this frame's light matrix for the depth pass.
@@ -276,7 +304,7 @@ impl SunShadow {
             light_vp: light_vp.to_cols_array_2d(),
             sun: [sun.x, sun.y, sun.z, strength],
             eye: [eye.x, eye.y, eye.z, 2.0 * HALF_EXTENT / self.size as f32],
-            misc: [soft, DEPTH, FADE_START, FADE_END],
+            misc: [soft, 0.0, FADE_START, FADE_END],
         };
         super::Put::put(&gpu.queue, &self.uniform, 0, bytemuck::bytes_of(&p));
         let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -287,6 +315,7 @@ impl SunShadow {
                 wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(depth) },
                 wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&self.map) },
                 wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&self.cmp) },
+                wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&self.feet) },
             ],
         });
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -345,7 +374,8 @@ mod tests {
     }
 
     /// The receive pass over a floor seen from above, lit from above: an empty map leaves it as it was, a map that
-    /// shadows everything just above it darkens it by the strength, and a caster far above leaves it lit.
+    /// shadows everything just above it darkens it by the strength, a caster standing on a ledge far above leaves it
+    /// lit, and one standing a small step above stays dark however far along the light its body is (a terrain seam).
     #[test]
     fn receive_darkens_shadowed_floor() {
         let Ok(gpu) = Gpu::headless() else { return };
@@ -381,7 +411,7 @@ mod tests {
         let cv = color.create_view(&Default::default());
         // The floor's depth in the map: a caster just above it shadows, one far above does not.
         let floor_lz = light.project_point3(Vec3::ZERO).z;
-        let run = |map_depth: f32| {
+        let run = |map_depth: f32, feet_y: f32| {
             let mut enc = gpu.device.create_command_encoder(&Default::default());
             {
                 let _p = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -396,7 +426,7 @@ mod tests {
             {
                 let _p = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: None,
-                    color_attachments: &[],
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &sh.feet, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color { r: feet_y as f64, g: 0.0, b: 0.0, a: 1.0 }), store: wgpu::StoreOp::Store } })],
                     depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: &sh.map, depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(map_depth), store: wgpu::StoreOp::Store }), stencil_ops: None }),
                     timestamp_writes: None,
                     occlusion_query_set: None,
@@ -409,14 +439,18 @@ mod tests {
         };
         let lit = (0.8f32 * 255.0).round() as i32;
         let dark = (0.8 * (1.0 - STRENGTH) * 255.0).round() as i32;
-        for p in run(1.0).chunks_exact(4) {
+        for p in run(1.0, 0.0).chunks_exact(4) {
             assert!((p[0] as i32 - lit).abs() <= 2, "unshadowed {p:?}");
         }
-        for p in run(floor_lz - 1.0 / DEPTH).chunks_exact(4) {
+        for p in run(floor_lz - 1.0 / DEPTH, 0.0).chunks_exact(4) {
             assert!((p[0] as i32 - dark).abs() <= 3, "shadowed {p:?} want {dark}");
         }
-        for p in run(floor_lz - 20.0 / DEPTH).chunks_exact(4) {
+        // y is down: feet 20 above the floor.
+        for p in run(floor_lz - 20.0 / DEPTH, -20.0).chunks_exact(4) {
             assert!((p[0] as i32 - lit).abs() <= 2, "caster far above {p:?}");
+        }
+        for p in run(floor_lz - 20.0 / DEPTH, -1.0).chunks_exact(4) {
+            assert!((p[0] as i32 - dark).abs() <= 3, "caster a step above {p:?} want {dark}");
         }
     }
 }

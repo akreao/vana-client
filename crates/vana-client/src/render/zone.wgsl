@@ -334,6 +334,27 @@ fn vs_skinned_silhouette(v: SkinIn) -> VertexOut {
     return out;
 }
 
+// Real shadows from the sun (render/sunshadow.rs): the actor's depth through the light matrix, and its feet height
+// (its origin's y) for the shadow's height fade.
+struct SunOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) @interpolate(flat) feet: f32,
+};
+
+@vertex
+fn vs_skinned_sun(v: SkinIn) -> SunOut {
+    let s = skin(v);
+    var out: SunOut;
+    out.clip = sil_vp * vec4<f32>(s.world, 1.0);
+    out.feet = pose[3].y;
+    return out;
+}
+
+@fragment
+fn fs_sun_feet(i: SunOut) -> @location(0) vec4<f32> {
+    return vec4<f32>(i.feet, 0.0, 0.0, 1.0);
+}
+
 // TFACTOR 0x80FFFFFF selected for colour and alpha (textures ignored, so cutouts fill solid).
 @fragment
 fn fs_silhouette() -> @location(0) vec4<f32> {
