@@ -532,7 +532,7 @@ struct Entity {
     server_y: f32,
     raw_y: f32,
     floor_noted: bool,
-    /// +0x2a0: the master's ActIndex (s2c 0x067 kind 3 @0x0C; LSB sends it for our trusts), 0 none.
+    /// +0x2a4: the master's ActIndex (s2c 0x067 kind 3 @0x0C; LSB sends it for our trusts), 0 none.
     master: u16,
     /// +0x128 bit 29: the model's "init" ran (FUN_1008c480).
     init_done: bool,

@@ -1619,6 +1619,7 @@ pub mod cmd {
     pub const TREASURE: u8 = 0xc;
     pub const TRADE_NPC: u8 = 0x14;
     pub const TRADE: u8 = 0x13;
+    pub const RELEASE: u8 = 0x1a;
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1746,6 +1747,10 @@ fn current_items(w: &World, call_help: bool) -> Vec<u8> {
     {
         items.retain(|&c| c != cmd::CHECK);
     }
+    // FUN_1012af30 case 0x1a (FUN_1012aed0): Release on a trust (+0x12c bit 22) whose master (+0x2a4) is us.
+    if l == 7 && releasable(w) {
+        items.push(cmd::RELEASE);
+    }
     if l == 6
         && call_help
         && let Some(c) = items.iter_mut().find(|c| **c == cmd::DISENGAGE)
@@ -1753,6 +1758,11 @@ fn current_items(w: &World, call_help: bool) -> Vec<u8> {
         *c = cmd::CALL_HELP;
     }
     items
+}
+
+/// FUN_1012aed0: the target is one of our own trusts.
+fn releasable(w: &World) -> bool {
+    w.target.and_then(|t| w.entities.get(&t)).is_some_and(|e| e.marks.trust && e.master != 0 && e.master == w.my_index)
 }
 
 /// FUN_101cc350: a Conflict team byte (2..99, not 8 / 9 or 0x28..0x2b).
@@ -1846,11 +1856,11 @@ pub(super) fn battle_frame(w: &mut World) {
     refresh_menu(w);
 }
 
-/// FUN_1012b880: the commands that leave the menu up (Attack, Call for help, Disengage, Check, Switch Target); the
+/// FUN_1012b880: the commands that leave the menu up (Attack, Call for help, Disengage, Check, Switch Target, Release); the
 /// lists (Magic, Abilities, Trust, Items) close it and, engaged, bring it back when they are done; Chat, Tell, Talk
 /// close it.
 pub(super) fn keeps_menu(c: u8) -> bool {
-    matches!(c, cmd::ATTACK | cmd::CALL_HELP | cmd::DISENGAGE | 0xa | cmd::CHECK | cmd::SWITCH_TARGET | cmd::TREASURE | 0x16..=0x18 | mon::ATTACK | mon::SWITCH | mon::DISENGAGE | mon::CHECK | mon::TREASURE)
+    matches!(c, cmd::ATTACK | cmd::CALL_HELP | cmd::DISENGAGE | 0xa | cmd::CHECK | cmd::SWITCH_TARGET | cmd::TREASURE | cmd::RELEASE | 0x16..=0x18 | mon::ATTACK | mon::SWITCH | mon::DISENGAGE | mon::CHECK | mon::TREASURE)
 }
 
 /// Window name per row count (table 0x103636b0: actionm1 .. actiom10).
@@ -1912,6 +1922,11 @@ pub(super) fn choose(w: &mut World, c: u8) -> bool {
         // FUN_10127b60 case 5: FUN_1007aac0 on the target.
         (cmd::TALK, Some((t, _))) => {
             super::event::talk(w, t);
+        }
+        // FUN_1012b880 case 0x19: FUN_1007bf30 as Talk, with 1 in the action's parameter (c2s 0x01A @0x0C); the
+        // menu stays (Talk closes playermo, Release does not).
+        (cmd::RELEASE, Some((t, _))) => {
+            super::event::talk_with(w, t, 1);
         }
         // FUN_1012b880 case 0x13: the hand-over (FUN_1013fd30).
         (cmd::TRADE_NPC | cmd::TRADE, Some(_)) => {
