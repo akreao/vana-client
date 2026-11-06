@@ -22,7 +22,16 @@ pub struct Voyage {
 impl Default for Voyage {
     /// The .data initials: t 0, a 900 s route, forward, route 0, no hold.
     fn default() -> Self {
-        Voyage { t: 0.0, rate: 1.0 / 54000.0, reverse: false, route: 0, hold: false, path: None, matrix: Mat4::IDENTITY, last: None }
+        Voyage {
+            t: 0.0,
+            rate: 1.0 / 54000.0,
+            reverse: false,
+            route: 0,
+            hold: false,
+            path: None,
+            matrix: Mat4::IDENTITY,
+            last: None,
+        }
     }
 }
 
@@ -39,10 +48,20 @@ impl Voyage {
 
     /// The zone's path once its scene is in: `c00<route>`, else `c000` (by presence only, FUN_10055040).
     pub fn set_path(&mut self, paths: &[Option<Vec<u8>>; 4]) {
-        let raw = paths[self.route as usize & 3].as_deref().or(paths[0].as_deref());
+        let raw = paths[self.route as usize & 3]
+            .as_deref()
+            .or(paths[0].as_deref());
         self.path = raw.and_then(Path::parse);
         if let Some(p) = &self.path {
-            log::debug!("voyage: route {} ({} keys, chord {:.1}), t {:.4}, rate {:.3e}, reverse {}", self.route, p.keys, p.chord, self.t, self.rate, self.reverse);
+            log::debug!(
+                "voyage: route {} ({} keys, chord {:.1}), t {:.4}, rate {:.3e}, reverse {}",
+                self.route,
+                p.keys,
+                p.chord,
+                self.t,
+                self.rate,
+                self.reverse
+            );
         }
     }
 
@@ -50,7 +69,9 @@ impl Voyage {
     /// counts at least one tick a frame, which only holds at its 30 fps); past 1 it starts over at 0. Held or
     /// without a path: identity, t still.
     pub fn step(&mut self, now: Instant) -> Mat4 {
-        let ticks = self.last.map_or(0.0, |l| now.duration_since(l).as_secs_f64() * 60.0);
+        let ticks = self
+            .last
+            .map_or(0.0, |l| now.duration_since(l).as_secs_f64() * 60.0);
         self.last = Some(now);
         self.matrix = match self.path.as_ref().filter(|_| !self.hold) {
             Some(p) => {
@@ -73,7 +94,12 @@ mod tests {
     use std::time::Duration;
 
     fn ship() -> ShipData {
-        ShipData { start: 1_000_000, end: 1_000_944, reverse: false, route: 0 }
+        ShipData {
+            start: 1_000_000,
+            end: 1_000_944,
+            reverse: false,
+            route: 0,
+        }
     }
 
     /// A leg 236 s in is a quarter done, 1 / 56640 a tick.
@@ -96,7 +122,13 @@ mod tests {
         // A one-key path is no path: identity, t still.
         let at = Instant::now();
         assert_eq!(v.step(at), Mat4::IDENTITY);
-        let key = |x: f32, z: f32| -> Vec<u8> { [x, 0.0, z, 350.0, x + 1.0, 0.0, z, 0.0].iter().flat_map(|f| f.to_le_bytes()).chain([0u8; 16]).collect() };
+        let key = |x: f32, z: f32| -> Vec<u8> {
+            [x, 0.0, z, 350.0, x + 1.0, 0.0, z, 0.0]
+                .iter()
+                .flat_map(|f| f.to_le_bytes())
+                .chain([0u8; 16])
+                .collect()
+        };
         let mut d = vec![0u8; 0x20];
         d[0x10] = 2;
         d.extend(key(0.0, 0.0));

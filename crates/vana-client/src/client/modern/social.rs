@@ -3,7 +3,10 @@
 //! searchmenu.rs and linkshell.rs, which keep every rule and key. A window opened over another shows beside it.
 
 use super::super::game_ui::GameUi;
-use super::super::{World, arealist, bazaar, friendlist, helpdesk, levelsync, linklist, linkshell, moogle, partymenu, polmail, region, search, searchmenu, viewhouse};
+use super::super::{
+    World, arealist, bazaar, friendlist, helpdesk, levelsync, linklist, linkshell, moogle,
+    partymenu, polmail, region, search, searchmenu, viewhouse,
+};
 use super::{MenuWin, Panels, Title};
 use crate::inventory::ItemInfo;
 use egui::{Align2, Color32, FontFamily, FontId, Rect, Sense, Ui, pos2, vec2};
@@ -15,13 +18,27 @@ const AREA_W: f32 = 300.0;
 
 /// A window's selectable rows top to bottom: (child, its name).
 fn rows(m: &super::Modern, gu: &GameUi, v: &MenuWin) -> Vec<(u16, String)> {
-    let Some(layout) = gu.layout(v.name) else { return Vec::new() };
-    let mut els: Vec<_> = layout.elements.iter().skip(1).filter(|e| e.links[2] != 0xff).collect();
+    let Some(layout) = gu.layout(v.name) else {
+        return Vec::new();
+    };
+    let mut els: Vec<_> = layout
+        .elements
+        .iter()
+        .skip(1)
+        .filter(|e| e.links[2] != 0xff)
+        .collect();
     els.sort_by_key(|e| (e.y, e.x));
     els.iter()
         .map(|e| {
-            let label = v.labels.iter().find(|l| l.0 == e.id).and_then(|l| m.caption(gu, "menu    windowps", l.1));
-            let name = label.or_else(|| gu.child_caption(v.name, e.id)).or_else(|| gu.focus_text(v.name, e.id)[1].clone()).unwrap_or_default();
+            let label = v
+                .labels
+                .iter()
+                .find(|l| l.0 == e.id)
+                .and_then(|l| m.caption(gu, "menu    windowps", l.1));
+            let name = label
+                .or_else(|| gu.child_caption(v.name, e.id))
+                .or_else(|| gu.focus_text(v.name, e.id)[1].clone())
+                .unwrap_or_default();
             (e.id, name)
         })
         .collect()
@@ -33,21 +50,57 @@ fn title(gu: &GameUi, v: &MenuWin) -> String {
 }
 
 /// One window's rows as a column; the focused one takes clicks: the row clicked.
-pub(super) fn column(ui: &mut Ui, m: &super::Modern, gu: &GameUi, v: &MenuWin, focused: bool) -> Option<u16> {
+pub(super) fn column(
+    ui: &mut Ui,
+    m: &super::Modern,
+    gu: &GameUi,
+    v: &MenuWin,
+    focused: bool,
+) -> Option<u16> {
     let mut click = None;
     ui.vertical(|ui| {
         ui.set_width(COL_W);
         let t = title(gu, v);
         // The panel already carries the page's name; a window's own title shows when it adds something.
-        if !t.is_empty() && !matches!(t.as_str(), "Party" | "Search" | "Linkshell" | "Set Bazaar" | "Region Info" | "Synthesis" | "MacroPalette" | "Unity" | "Chat" | "Equipment" | "Map" | "Wide Scan") {
-            ui.label(egui::RichText::new(t).size(m.theme.small).family(FontFamily::Name(super::STRONG.into())).color(m.theme.color("gold")));
+        if !t.is_empty()
+            && !matches!(
+                t.as_str(),
+                "Party"
+                    | "Search"
+                    | "Linkshell"
+                    | "Set Bazaar"
+                    | "Region Info"
+                    | "Synthesis"
+                    | "MacroPalette"
+                    | "Unity"
+                    | "Chat"
+                    | "Equipment"
+                    | "Map"
+                    | "Wide Scan"
+            )
+        {
+            ui.label(
+                egui::RichText::new(t)
+                    .size(m.theme.small)
+                    .family(FontFamily::Name(super::STRONG.into()))
+                    .color(m.theme.color("gold")),
+            );
             ui.add_space(4.0);
         }
         let rows = rows(m, gu, v);
         // The keys walk the column as drawn (GameUi::menu_links).
-        gu.modern_order.borrow_mut().insert(v.name.to_string(), rows.iter().map(|r| r.0).collect());
+        gu.modern_order
+            .borrow_mut()
+            .insert(v.name.to_string(), rows.iter().map(|r| r.0).collect());
         for (id, name) in rows {
-            let (r, resp) = ui.allocate_exact_size(vec2(COL_W, ROW), if focused { Sense::click() } else { Sense::hover() });
+            let (r, resp) = ui.allocate_exact_size(
+                vec2(COL_W, ROW),
+                if focused {
+                    Sense::click()
+                } else {
+                    Sense::hover()
+                },
+            );
             let off = v.off.contains(&id);
             let face = match () {
                 _ if id == v.sel && focused => "controls/list_row_selected",
@@ -57,14 +110,38 @@ pub(super) fn column(ui: &mut Ui, m: &super::Modern, gu: &GameUi, v: &MenuWin, f
                 _ => "controls/list_row_normal",
             };
             super::rows::face(ui.painter(), m, r, face, Color32::WHITE);
-            let c = if off { m.theme.color("muted") } else { m.theme.color("text") };
+            let c = if off {
+                m.theme.color("muted")
+            } else {
+                m.theme.color("text")
+            };
             let clip = Rect::from_min_max(r.min, pos2(r.max.x - 8.0, r.max.y));
-            ui.painter().with_clip_rect(clip).text(pos2(r.min.x + 24.0, r.center().y), Align2::LEFT_CENTER, &name, FontId::proportional(m.theme.small), c);
+            ui.painter().with_clip_rect(clip).text(
+                pos2(r.min.x + 24.0, r.center().y),
+                Align2::LEFT_CENTER,
+                &name,
+                FontId::proportional(m.theme.small),
+                c,
+            );
             if let Some((_, val)) = v.values.iter().find(|x| x.0 == id) {
-                let vc = if v.marked.contains(&id) { m.theme.color("gold") } else { m.theme.color("text") };
-                ui.painter().text(pos2(r.max.x - 12.0, r.center().y), Align2::RIGHT_CENTER, val, FontId::monospace(m.theme.small), vc);
+                let vc = if v.marked.contains(&id) {
+                    m.theme.color("gold")
+                } else {
+                    m.theme.color("text")
+                };
+                ui.painter().text(
+                    pos2(r.max.x - 12.0, r.center().y),
+                    Align2::RIGHT_CENTER,
+                    val,
+                    FontId::monospace(m.theme.small),
+                    vc,
+                );
             } else if v.marked.contains(&id) {
-                ui.painter().circle_filled(pos2(r.max.x - 16.0, r.center().y), 4.5, m.theme.color("gold"));
+                ui.painter().circle_filled(
+                    pos2(r.max.x - 16.0, r.center().y),
+                    4.5,
+                    m.theme.color("gold"),
+                );
             }
             if focused && resp.clicked() {
                 click = Some(id);
@@ -76,7 +153,13 @@ pub(super) fn column(ui: &mut Ui, m: &super::Modern, gu: &GameUi, v: &MenuWin, f
 }
 
 /// The stack's windows side by side (the last three), the top one focused when `focused`.
-pub(super) fn stack(ui: &mut Ui, m: &super::Modern, gu: &GameUi, wins: &[MenuWin], focused: bool) -> Option<u16> {
+pub(super) fn stack(
+    ui: &mut Ui,
+    m: &super::Modern,
+    gu: &GameUi,
+    wins: &[MenuWin],
+    focused: bool,
+) -> Option<u16> {
     let mut out = None;
     ui.horizontal_top(|ui| {
         let n = wins.len();
@@ -99,47 +182,88 @@ pub(super) fn stack(ui: &mut Ui, m: &super::Modern, gu: &GameUi, wins: &[MenuWin
 
 /// The area picker (arealist.rs keeps its rules and keys): every row, not retail's five, the cursor's kept in view; its
 /// title over them; the row clicked.
-fn area_column(ui: &mut Ui, m: &super::Modern, gu: &GameUi, a: &arealist::AreaList, focused: bool) -> Option<usize> {
+fn area_column(
+    ui: &mut Ui,
+    m: &super::Modern,
+    gu: &GameUi,
+    a: &arealist::AreaList,
+    focused: bool,
+) -> Option<usize> {
     let mut click = None;
     ui.vertical(|ui| {
         ui.set_width(AREA_W);
-        let t = gu.focus_text(arealist::WINDOW, 0)[1].clone().unwrap_or_else(|| "Area".into());
-        ui.label(egui::RichText::new(t).size(m.theme.small).family(FontFamily::Name(super::STRONG.into())).color(m.theme.color("gold")));
+        let t = gu.focus_text(arealist::WINDOW, 0)[1]
+            .clone()
+            .unwrap_or_else(|| "Area".into());
+        ui.label(
+            egui::RichText::new(t)
+                .size(m.theme.small)
+                .family(FontFamily::Name(super::STRONG.into()))
+                .color(m.theme.color("gold")),
+        );
         ui.add_space(4.0);
         let seen = egui::Id::unique("area cursor seen");
         let follow = ui.ctx().data(|d| d.get_temp::<usize>(seen)) != Some(a.cursor);
         ui.ctx().data_mut(|d| d.insert_temp(seen, a.cursor));
         let tall = 12.0 * (ROW + 2.0);
-        egui::ScrollArea::vertical().id_salt("area rows").max_height(tall).min_scrolled_height(tall).auto_shrink([false, true]).show(ui, |ui| {
-            for (k, r) in a.rows.iter().enumerate() {
-                let (rr, resp) = ui.allocate_exact_size(vec2(AREA_W - 14.0, ROW), if focused { Sense::click() } else { Sense::hover() });
-                let face = match () {
-                    _ if k == a.cursor && focused => "controls/list_row_selected",
-                    _ if k == a.cursor || focused && resp.hovered() => "controls/list_row_hover",
-                    _ => "controls/list_row_normal",
-                };
-                super::rows::face(ui.painter(), m, rr, face, Color32::WHITE);
-                ui.painter().text(pos2(rr.min.x + 24.0, rr.center().y), Align2::LEFT_CENTER, &r.name, FontId::proportional(m.theme.small), m.theme.color("text"));
-                let cell = match &r.cell {
-                    arealist::Cell::Paren(s) => format!("({s})"),
-                    arealist::Cell::Count(n) => format!("[{n}]"),
-                    arealist::Cell::Level(s) => s.clone(),
-                };
-                ui.painter().text(pos2(rr.max.x - 12.0, rr.center().y), Align2::RIGHT_CENTER, cell, FontId::proportional(m.theme.small), m.theme.color("muted"));
-                if k == a.cursor && follow {
-                    ui.scroll_to_rect(rr, None);
+        egui::ScrollArea::vertical()
+            .id_salt("area rows")
+            .max_height(tall)
+            .min_scrolled_height(tall)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                for (k, r) in a.rows.iter().enumerate() {
+                    let (rr, resp) = ui.allocate_exact_size(
+                        vec2(AREA_W - 14.0, ROW),
+                        if focused {
+                            Sense::click()
+                        } else {
+                            Sense::hover()
+                        },
+                    );
+                    let face = match () {
+                        _ if k == a.cursor && focused => "controls/list_row_selected",
+                        _ if k == a.cursor || focused && resp.hovered() => {
+                            "controls/list_row_hover"
+                        }
+                        _ => "controls/list_row_normal",
+                    };
+                    super::rows::face(ui.painter(), m, rr, face, Color32::WHITE);
+                    ui.painter().text(
+                        pos2(rr.min.x + 24.0, rr.center().y),
+                        Align2::LEFT_CENTER,
+                        &r.name,
+                        FontId::proportional(m.theme.small),
+                        m.theme.color("text"),
+                    );
+                    let cell = match &r.cell {
+                        arealist::Cell::Paren(s) => format!("({s})"),
+                        arealist::Cell::Count(n) => format!("[{n}]"),
+                        arealist::Cell::Level(s) => s.clone(),
+                    };
+                    ui.painter().text(
+                        pos2(rr.max.x - 12.0, rr.center().y),
+                        Align2::RIGHT_CENTER,
+                        cell,
+                        FontId::proportional(m.theme.small),
+                        m.theme.color("muted"),
+                    );
+                    if k == a.cursor && follow {
+                        ui.scroll_to_rect(rr, None);
+                    }
+                    if focused && resp.clicked() {
+                        click = Some(k);
+                    }
+                    ui.add_space(2.0);
                 }
-                if focused && resp.clicked() {
-                    click = Some(k);
-                }
-                ui.add_space(2.0);
-            }
-        });
+            });
     });
     click
 }
 
-const RACES: [&str; 9] = ["", "Hume", "Hume", "Elvaan", "Elvaan", "Tarutaru", "Tarutaru", "Mithra", "Galka"];
+const RACES: [&str; 9] = [
+    "", "Hume", "Hume", "Elvaan", "Elvaan", "Tarutaru", "Tarutaru", "Mithra", "Galka",
+];
 const NATIONS: [&str; 3] = ["San d'Oria", "Bastok", "Windurst"];
 const RES_ROWS: f32 = 15.0;
 const RES_ROW: f32 = 26.0;
@@ -157,7 +281,13 @@ struct Person {
 
 /// A search record as a row (FUN_1020a740's cells in words): `icon` the row's own (the search's status icon, the link
 /// list's shell item), `alt` the other job view (Num+).
-fn person(w: &World, gu: &GameUi, r: &crate::net::search::Record, icon: Option<(egui::TextureId, egui::Rect)>, alt: bool) -> Person {
+fn person(
+    w: &World,
+    gu: &GameUi,
+    r: &crate::net::search::Record,
+    icon: Option<(egui::TextureId, egui::Rect)>,
+    alt: bool,
+) -> Person {
     let (_, team) = search::status_icon(r.flags);
     let nc = match () {
         _ if team.is_some() => team.map_or(0x8080_8080, |t| gu.ncol(t.0)),
@@ -165,20 +295,57 @@ fn person(w: &World, gu: &GameUi, r: &crate::net::search::Record, icon: Option<(
         _ if r.flags & 0x2000 != 0 => gu.ncol(1),
         _ => 0x8080_8080,
     };
-    let job = |j: u8, lv: u8| super::super::items::JOBS.get(j as usize).filter(|s| !s.is_empty()).map(|s| format!("{s}{lv}"));
+    let job = |j: u8, lv: u8| {
+        super::super::items::JOBS
+            .get(j as usize)
+            .filter(|s| !s.is_empty())
+            .map(|s| format!("{s}{lv}"))
+    };
     let jobs = if r.present & 1 << 6 == 0 || r.flags & 0x4000 != 0 {
         "--".to_string()
     } else if alt {
-        let ml = if r.flags & 0x4000_0000 != 0 { format!(" ML{}", r.master_level) } else { String::new() };
+        let ml = if r.flags & 0x4000_0000 != 0 {
+            format!(" ML{}", r.master_level)
+        } else {
+            String::new()
+        };
         format!("{}{ml}", job(r.job.0, r.level.0).unwrap_or_default())
     } else {
-        [job(r.job.0, r.level.0), job(r.job.1, r.level.1)].into_iter().flatten().collect::<Vec<_>>().join("/")
+        [job(r.job.0, r.level.0), job(r.job.1, r.level.1)]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join("/")
     };
-    let race = RACES.get(r.race as usize).filter(|_| r.job.0 != 0x17 && r.job.1 != 0x17).copied().unwrap_or("");
+    let race = RACES
+        .get(r.race as usize)
+        .filter(|_| r.job.0 != 0x17 && r.job.1 != 0x17)
+        .copied()
+        .unwrap_or("");
     let rank = format!("Rank {}", r.rank.max(1));
-    let who = [race, NATIONS.get(r.nation as usize).copied().unwrap_or(""), &rank].iter().filter(|s| !s.is_empty()).copied().collect::<Vec<_>>().join("  ");
-    let zone = if r.zone != w.pos_zone { crate::dat::font::plain(&crate::dat::font::decode_sjis(&gu.area_name(r.zone))) } else { String::new() };
-    Person { icon, name: r.name.clone(), colour: super::chat::colour(crate::dat::battle::argb_bytes(nc)), jobs, who, zone }
+    let who = [
+        race,
+        NATIONS.get(r.nation as usize).copied().unwrap_or(""),
+        &rank,
+    ]
+    .iter()
+    .filter(|s| !s.is_empty())
+    .copied()
+    .collect::<Vec<_>>()
+    .join("  ");
+    let zone = if r.zone != w.pos_zone {
+        crate::dat::font::plain(&crate::dat::font::decode_sjis(&gu.area_name(r.zone)))
+    } else {
+        String::new()
+    };
+    Person {
+        icon,
+        name: r.name.clone(),
+        colour: super::chat::colour(crate::dat::battle::argb_bytes(nc)),
+        jobs,
+        who,
+        zone,
+    }
 }
 
 /// What a people list's mouse did: a row clicked (with a header, 0 is the header), an option clicked, a right click.
@@ -218,10 +385,18 @@ fn crowd(w: &World) -> Option<Crowd> {
     if w.confirm.is_some() {
         return None;
     }
-    if friendlist::focused(w) && w.friendui.as_ref().is_some_and(|u| u.list.is_some() && u.mes.is_none() && u.stat.is_none()) {
+    if friendlist::focused(w)
+        && w.friendui
+            .as_ref()
+            .is_some_and(|u| u.list.is_some() && u.mes.is_none() && u.stat.is_none())
+    {
         return Some(Crowd::Friends);
     }
-    if polmail::focused(w) && !polmail::composing(w) && w.polmail.read.is_none() && w.polmail.list.is_some() {
+    if polmail::focused(w)
+        && !polmail::composing(w)
+        && w.polmail.read.is_none()
+        && w.polmail.list.is_some()
+    {
         return Some(Crowd::Mail);
     }
     if linklist::search_names(w).is_some() {
@@ -231,7 +406,12 @@ fn crowd(w: &World) -> Option<Crowd> {
         return Some(Crowd::Sync);
     }
     let res = w.search.as_ref()?;
-    (res.option.is_none() && !res.busy && !searchmenu::refining(w) && w.arealist.is_none() && w.seacom_edit.is_none()).then_some(Crowd::Results)
+    (res.option.is_none()
+        && !res.busy
+        && !searchmenu::refining(w)
+        && w.arealist.is_none()
+        && w.seacom_edit.is_none())
+    .then_some(Crowd::Results)
 }
 
 pub(super) fn search_open(w: &World) -> bool {
@@ -240,26 +420,61 @@ pub(super) fn search_open(w: &World) -> bool {
 
 /// The search's hits for people list `c`, only while it is the one with the keys.
 fn crowd_found(p: &Panels, w: &World, c: Crowd) -> Option<super::lists::Found> {
-    (crowd(w) == Some(c)).then(|| super::lists::found(p, w, "people")).flatten()
+    (crowd(w) == Some(c))
+        .then(|| super::lists::found(p, w, "people"))
+        .flatten()
 }
 
 /// The list's people by name (the Friend List's bars have none, so they never match).
 pub(super) fn search_rows(w: &World) -> Vec<super::super::listsearch::Entry> {
     use super::super::listsearch::Entry;
-    let job = |r: &crate::net::search::Record| super::super::items::JOBS.get(r.job.0 as usize).filter(|s| !s.is_empty() && r.present & 1 << 6 != 0 && r.flags & 0x4000 == 0).map_or(String::new(), |s| format!("{s}{}", r.level.0));
+    let job = |r: &crate::net::search::Record| {
+        super::super::items::JOBS
+            .get(r.job.0 as usize)
+            .filter(|s| !s.is_empty() && r.present & 1 << 6 != 0 && r.flags & 0x4000 == 0)
+            .map_or(String::new(), |s| format!("{s}{}", r.level.0))
+    };
     match crowd(w) {
         Some(Crowd::Friends) => friendlist::rows_view(w).map_or(Vec::new(), |(rows, _)| {
             rows.iter()
                 .map(|r| match *r {
                     friendlist::Row::Header(_) => Entry::default(),
-                    friendlist::Row::Entry(i) => Entry::named(w.friends.list.get(i).map_or(String::new(), |f| f.name.clone())),
+                    friendlist::Row::Entry(i) => Entry::named(
+                        w.friends
+                            .list
+                            .get(i)
+                            .map_or(String::new(), |f| f.name.clone()),
+                    ),
                 })
                 .collect()
         }),
-        Some(Crowd::Mail) => w.polmail.list.as_ref().map_or(Vec::new(), |(rows, ..)| rows.iter().skip(1).map(|n| Entry::named(polmail::mail(w, n).map_or(String::new(), |ml| polmail::from_name(w, ml)))).collect()),
-        Some(Crowd::Links) => linklist::search_names(w).unwrap_or_default().into_iter().map(Entry::named).collect(),
-        Some(Crowd::Sync) => w.levelsync.as_ref().map_or(Vec::new(), |l| l.rows.iter().map(|r| Entry::named(r.name.clone()).note(job(r))).collect()),
-        Some(Crowd::Results) => w.search.as_ref().map_or(Vec::new(), |res| res.rows.iter().map(|r| Entry::named(r.name.clone()).note(job(r))).collect()),
+        Some(Crowd::Mail) => w.polmail.list.as_ref().map_or(Vec::new(), |(rows, ..)| {
+            rows.iter()
+                .skip(1)
+                .map(|n| {
+                    Entry::named(
+                        polmail::mail(w, n).map_or(String::new(), |ml| polmail::from_name(w, ml)),
+                    )
+                })
+                .collect()
+        }),
+        Some(Crowd::Links) => linklist::search_names(w)
+            .unwrap_or_default()
+            .into_iter()
+            .map(Entry::named)
+            .collect(),
+        Some(Crowd::Sync) => w.levelsync.as_ref().map_or(Vec::new(), |l| {
+            l.rows
+                .iter()
+                .map(|r| Entry::named(r.name.clone()).note(job(r)))
+                .collect()
+        }),
+        Some(Crowd::Results) => w.search.as_ref().map_or(Vec::new(), |res| {
+            res.rows
+                .iter()
+                .map(|r| Entry::named(r.name.clone()).note(job(r)))
+                .collect()
+        }),
         None => Vec::new(),
     }
 }
@@ -298,93 +513,189 @@ pub(super) fn search_pick(w: &mut World, gu: Option<&GameUi>, k: usize) {
 fn people(p: &mut Panels, v: People, found: &mut Option<super::lists::Found>) -> PeopleMouse {
     let m = p.m;
     let screen = p.ctx.content_rect();
-    let at = m.rects.borrow().get("window").map_or(pos2(screen.width() * 0.0047, screen.height() * 0.0347), |r| pos2(r.max.x + 8.0, r.min.y));
+    let at = m.rects.borrow().get("window").map_or(
+        pos2(screen.width() * 0.0047, screen.height() * 0.0347),
+        |r| pos2(r.max.x + 8.0, r.min.y),
+    );
     let mut mouse = PeopleMouse::default();
     let width = RES_W + if v.opts.is_empty() { 0.0 } else { COL_W + 12.0 } + 44.0;
     let first = v.header.is_some() as usize;
-    p.panel_at(v.id, Some(Title { icon: Some(v.icon), text: v.title, note: None }), width, at, |ui| {
-        ui.horizontal_top(|ui| {
-            ui.vertical(|ui| {
-                ui.set_width(RES_W);
-                if v.focused && super::lists::rows_or(ui, m, found) {
-                    return;
-                }
-                if let Some(e) = &v.empty {
-                    ui.label(egui::RichText::new(e).size(m.theme.small).color(m.theme.color("muted")));
-                }
-                let seen = egui::Id::unique(("people cursor seen", v.id));
-                let follow = ui.ctx().data(|d| d.get_temp::<usize>(seen)) != Some(v.cursor);
-                ui.ctx().data_mut(|d| d.insert_temp(seen, v.cursor));
-                let tall = RES_ROWS * (RES_ROW + 2.0);
-                egui::ScrollArea::vertical().id_salt(("people rows", v.id)).max_height(tall).min_scrolled_height(tall.min((v.rows.len() + first) as f32 * (RES_ROW + 2.0))).auto_shrink([false, true]).show(ui, |ui| {
-                    for k in 0..v.rows.len() + first {
-                        let (r, resp) = ui.allocate_exact_size(vec2(RES_W - 14.0, RES_ROW), if v.focused { Sense::click() } else { Sense::hover() });
-                        let face = match () {
-                            _ if k == v.cursor && v.focused => "controls/list_row_selected",
-                            _ if k == v.cursor || v.focused && resp.hovered() => "controls/list_row_hover",
-                            _ => "controls/list_row_normal",
-                        };
-                        super::rows::face(ui.painter(), m, r, face, Color32::WHITE);
-                        let font = FontId::proportional(m.theme.small);
-                        let y = r.center().y;
-                        match (&v.header, k.checked_sub(first)) {
-                            (Some((text, note)), None) => {
-                                ui.painter().text(pos2(r.min.x + 32.0, y), Align2::LEFT_CENTER, text, FontId::new(m.theme.small, FontFamily::Name(super::STRONG.into())), m.theme.color("gold"));
-                                ui.painter().text(pos2(r.max.x - 12.0, y), Align2::RIGHT_CENTER, *note, font, m.theme.color("muted"));
-                            }
-                            (_, Some(i)) => {
-                                let pr = &v.rows[i];
-                                if let Some((t, uv)) = pr.icon {
-                                    ui.painter().image(t, Rect::from_center_size(pos2(r.min.x + 16.0, y), vec2(18.0, 18.0)), uv, Color32::WHITE);
-                                }
-                                ui.painter().text(pos2(r.min.x + 32.0, y), Align2::LEFT_CENTER, &pr.name, font.clone(), pr.colour);
-                                ui.painter().text(pos2(r.min.x + 190.0, y), Align2::LEFT_CENTER, &pr.jobs, FontId::monospace(m.theme.small), m.theme.color("text"));
-                                ui.painter().text(pos2(r.min.x + 330.0, y), Align2::LEFT_CENTER, &pr.who, font.clone(), m.theme.color("muted"));
-                                ui.painter().text(pos2(r.max.x - 12.0, y), Align2::RIGHT_CENTER, &pr.zone, font, m.theme.color("muted"));
-                            }
-                            _ => {}
-                        }
-                        if k == v.cursor && follow {
-                            ui.scroll_to_rect(r, None);
-                        }
-                        if v.focused && resp.clicked() {
-                            mouse.click = Some(k);
-                        }
-                        if v.focused && resp.secondary_clicked() {
-                            mouse.back = true;
-                        }
-                        ui.add_space(2.0);
-                    }
-                });
-            });
-            if !v.opts.is_empty() {
-                ui.add_space(12.0);
+    p.panel_at(
+        v.id,
+        Some(Title {
+            icon: Some(v.icon),
+            text: v.title,
+            note: None,
+        }),
+        width,
+        at,
+        |ui| {
+            ui.horizontal_top(|ui| {
                 ui.vertical(|ui| {
-                    ui.set_width(COL_W);
-                    ui.add_space(RES_ROW * (v.cursor as f32).min(RES_ROWS - v.opts.len() as f32).max(0.0));
-                    for (c, name, on) in &v.opts {
-                        let (r, resp) = ui.allocate_exact_size(vec2(COL_W, ROW), Sense::click());
-                        let face = match () {
-                            _ if v.opt_sel == Some(*c) => "controls/list_row_selected",
-                            _ if !on => "controls/list_row_disabled",
-                            _ if resp.hovered() => "controls/list_row_hover",
-                            _ => "controls/list_row_normal",
-                        };
-                        super::rows::face(ui.painter(), m, r, face, Color32::WHITE);
-                        let tc = if *on { m.theme.color("text") } else { m.theme.color("muted") };
-                        ui.painter().text(pos2(r.min.x + 24.0, r.center().y), Align2::LEFT_CENTER, name, FontId::proportional(m.theme.small), tc);
-                        if resp.clicked() {
-                            mouse.opt_click = Some(*c);
-                        }
-                        if resp.secondary_clicked() {
-                            mouse.back = true;
-                        }
-                        ui.add_space(2.0);
+                    ui.set_width(RES_W);
+                    if v.focused && super::lists::rows_or(ui, m, found) {
+                        return;
                     }
+                    if let Some(e) = &v.empty {
+                        ui.label(
+                            egui::RichText::new(e)
+                                .size(m.theme.small)
+                                .color(m.theme.color("muted")),
+                        );
+                    }
+                    let seen = egui::Id::unique(("people cursor seen", v.id));
+                    let follow = ui.ctx().data(|d| d.get_temp::<usize>(seen)) != Some(v.cursor);
+                    ui.ctx().data_mut(|d| d.insert_temp(seen, v.cursor));
+                    let tall = RES_ROWS * (RES_ROW + 2.0);
+                    egui::ScrollArea::vertical()
+                        .id_salt(("people rows", v.id))
+                        .max_height(tall)
+                        .min_scrolled_height(
+                            tall.min((v.rows.len() + first) as f32 * (RES_ROW + 2.0)),
+                        )
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            for k in 0..v.rows.len() + first {
+                                let (r, resp) = ui.allocate_exact_size(
+                                    vec2(RES_W - 14.0, RES_ROW),
+                                    if v.focused {
+                                        Sense::click()
+                                    } else {
+                                        Sense::hover()
+                                    },
+                                );
+                                let face = match () {
+                                    _ if k == v.cursor && v.focused => "controls/list_row_selected",
+                                    _ if k == v.cursor || v.focused && resp.hovered() => {
+                                        "controls/list_row_hover"
+                                    }
+                                    _ => "controls/list_row_normal",
+                                };
+                                super::rows::face(ui.painter(), m, r, face, Color32::WHITE);
+                                let font = FontId::proportional(m.theme.small);
+                                let y = r.center().y;
+                                match (&v.header, k.checked_sub(first)) {
+                                    (Some((text, note)), None) => {
+                                        ui.painter().text(
+                                            pos2(r.min.x + 32.0, y),
+                                            Align2::LEFT_CENTER,
+                                            text,
+                                            FontId::new(
+                                                m.theme.small,
+                                                FontFamily::Name(super::STRONG.into()),
+                                            ),
+                                            m.theme.color("gold"),
+                                        );
+                                        ui.painter().text(
+                                            pos2(r.max.x - 12.0, y),
+                                            Align2::RIGHT_CENTER,
+                                            *note,
+                                            font,
+                                            m.theme.color("muted"),
+                                        );
+                                    }
+                                    (_, Some(i)) => {
+                                        let pr = &v.rows[i];
+                                        if let Some((t, uv)) = pr.icon {
+                                            ui.painter().image(
+                                                t,
+                                                Rect::from_center_size(
+                                                    pos2(r.min.x + 16.0, y),
+                                                    vec2(18.0, 18.0),
+                                                ),
+                                                uv,
+                                                Color32::WHITE,
+                                            );
+                                        }
+                                        ui.painter().text(
+                                            pos2(r.min.x + 32.0, y),
+                                            Align2::LEFT_CENTER,
+                                            &pr.name,
+                                            font.clone(),
+                                            pr.colour,
+                                        );
+                                        ui.painter().text(
+                                            pos2(r.min.x + 190.0, y),
+                                            Align2::LEFT_CENTER,
+                                            &pr.jobs,
+                                            FontId::monospace(m.theme.small),
+                                            m.theme.color("text"),
+                                        );
+                                        ui.painter().text(
+                                            pos2(r.min.x + 330.0, y),
+                                            Align2::LEFT_CENTER,
+                                            &pr.who,
+                                            font.clone(),
+                                            m.theme.color("muted"),
+                                        );
+                                        ui.painter().text(
+                                            pos2(r.max.x - 12.0, y),
+                                            Align2::RIGHT_CENTER,
+                                            &pr.zone,
+                                            font,
+                                            m.theme.color("muted"),
+                                        );
+                                    }
+                                    _ => {}
+                                }
+                                if k == v.cursor && follow {
+                                    ui.scroll_to_rect(r, None);
+                                }
+                                if v.focused && resp.clicked() {
+                                    mouse.click = Some(k);
+                                }
+                                if v.focused && resp.secondary_clicked() {
+                                    mouse.back = true;
+                                }
+                                ui.add_space(2.0);
+                            }
+                        });
                 });
-            }
-        });
-    });
+                if !v.opts.is_empty() {
+                    ui.add_space(12.0);
+                    ui.vertical(|ui| {
+                        ui.set_width(COL_W);
+                        ui.add_space(
+                            RES_ROW
+                                * (v.cursor as f32)
+                                    .min(RES_ROWS - v.opts.len() as f32)
+                                    .max(0.0),
+                        );
+                        for (c, name, on) in &v.opts {
+                            let (r, resp) =
+                                ui.allocate_exact_size(vec2(COL_W, ROW), Sense::click());
+                            let face = match () {
+                                _ if v.opt_sel == Some(*c) => "controls/list_row_selected",
+                                _ if !on => "controls/list_row_disabled",
+                                _ if resp.hovered() => "controls/list_row_hover",
+                                _ => "controls/list_row_normal",
+                            };
+                            super::rows::face(ui.painter(), m, r, face, Color32::WHITE);
+                            let tc = if *on {
+                                m.theme.color("text")
+                            } else {
+                                m.theme.color("muted")
+                            };
+                            ui.painter().text(
+                                pos2(r.min.x + 24.0, r.center().y),
+                                Align2::LEFT_CENTER,
+                                name,
+                                FontId::proportional(m.theme.small),
+                                tc,
+                            );
+                            if resp.clicked() {
+                                mouse.opt_click = Some(*c);
+                            }
+                            if resp.secondary_clicked() {
+                                mouse.back = true;
+                            }
+                            ui.add_space(2.0);
+                        }
+                    });
+                }
+            });
+        },
+    );
     mouse
 }
 
@@ -394,7 +705,11 @@ fn people(p: &mut Panels, v: People, found: &mut Option<super::lists::Found>) ->
 fn results(p: &mut Panels, w: &mut World, gu: &GameUi) {
     let Some(res) = w.search.as_ref() else { return };
     let m = p.m;
-    let focused = res.option.is_none() && !searchmenu::refining(w) && w.arealist.is_none() && w.seacom_edit.is_none() && w.confirm.is_none();
+    let focused = res.option.is_none()
+        && !searchmenu::refining(w)
+        && w.arealist.is_none()
+        && w.seacom_edit.is_none()
+        && w.confirm.is_none();
     let bt = w.battle.clone();
     let header = if res.failed {
         bt.as_ref().and_then(|b| b.group7(0x65)).unwrap_or_default()
@@ -408,7 +723,9 @@ fn results(p: &mut Panels, w: &mut World, gu: &GameUi) {
         .iter()
         .map(|r| {
             let (k, _) = search::status_icon(r.flags);
-            let icon = search::icon(k).filter(|_| k > 1).and_then(|(lib, s)| m.sprite_icon(p.ctx, gu, lib, s));
+            let icon = search::icon(k)
+                .filter(|_| k > 1)
+                .and_then(|(lib, s)| m.sprite_icon(p.ctx, gu, lib, s));
             person(w, gu, r, icon.map(|t| (t, super::FULL_UV)), res.alt)
         })
         .collect();
@@ -424,14 +741,28 @@ fn results(p: &mut Panels, w: &mut World, gu: &GameUi) {
                     5 if req => m.caption(gu, "menu    windowps", 786),
                     _ => None,
                 };
-                let name = swap.or_else(|| gu.child_caption(window, c)).or_else(|| gu.focus_text(window, c)[1].clone()).unwrap_or_default();
+                let name = swap
+                    .or_else(|| gu.child_caption(window, c))
+                    .or_else(|| gu.focus_text(window, c)[1].clone())
+                    .unwrap_or_default();
                 (c, name, r.is_some_and(|r| search::option_on(w, res, c, r)))
             })
             .collect()
     });
     let title = gu.title_msg(res.title).unwrap_or_else(|| "Search".into());
     let note = if res.mode == 3 { "" } else { "Refine" };
-    let v = People { id: "results", title: &title, icon: "icons/find", header: Some((header, note)), empty: None, rows, cursor: res.cursor, focused, opts, opt_sel: res.option };
+    let v = People {
+        id: "results",
+        title: &title,
+        icon: "icons/find",
+        header: Some((header, note)),
+        empty: None,
+        rows,
+        cursor: res.cursor,
+        focused,
+        opts,
+        opt_sel: res.option,
+    };
     let mut found = crowd_found(p, w, Crowd::Results);
     let mouse = people(p, v, &mut found);
     if let Some(f) = found {
@@ -470,36 +801,89 @@ fn friends(p: &mut Panels, w: &mut World, gu: &GameUi) {
     let m = p.m;
     let free = w.confirm.is_none() && !polmail::composing(w) && !polmail::list_up(w);
     let menu = match (ui.stat, ui.main) {
-        (Some(c), _) => Some(MenuWin { name: friendlist::STAT, sel: c, off: Vec::new(), labels: Vec::new(), marked: vec![1 + friendlist::STATS.iter().position(|&s| s == w.friends.my_status).unwrap_or(0) as u16], values: Vec::new() }),
-        (None, Some(c)) if ui.list.is_none() => Some(MenuWin { name: friendlist::MAIN, sel: c, off: Vec::new(), labels: Vec::new(), marked: Vec::new(), values: Vec::new() }),
+        (Some(c), _) => Some(MenuWin {
+            name: friendlist::STAT,
+            sel: c,
+            off: Vec::new(),
+            labels: Vec::new(),
+            marked: vec![
+                1 + friendlist::STATS
+                    .iter()
+                    .position(|&s| s == w.friends.my_status)
+                    .unwrap_or(0) as u16,
+            ],
+            values: Vec::new(),
+        }),
+        (None, Some(c)) if ui.list.is_none() => Some(MenuWin {
+            name: friendlist::MAIN,
+            sel: c,
+            off: Vec::new(),
+            labels: Vec::new(),
+            marked: Vec::new(),
+            values: Vec::new(),
+        }),
         _ => None,
     };
     if let Some(v) = menu {
-        let title = gu.focus_text(v.name, 0)[1].clone().unwrap_or_else(|| "Friend List".into());
+        let title = gu.focus_text(v.name, 0)[1]
+            .clone()
+            .unwrap_or_else(|| "Friend List".into());
         let mut got = None;
-        p.panel("window", Some(Title { icon: Some("icons/party"), text: &title, note: None }), width(1), |ui| got = stack(ui, m, gu, std::slice::from_ref(&v), free));
-        act(w, gu, got, |w, c| friendlist::set_cursor(w, c as usize), |w, _| friendlist::key(w, egui::Key::Enter));
+        p.panel(
+            "window",
+            Some(Title {
+                icon: Some("icons/party"),
+                text: &title,
+                note: None,
+            }),
+            width(1),
+            |ui| got = stack(ui, m, gu, std::slice::from_ref(&v), free),
+        );
+        act(
+            w,
+            gu,
+            got,
+            |w, c| friendlist::set_cursor(w, c as usize),
+            |w, _| friendlist::key(w, egui::Key::Enter),
+        );
         if ui.stat.is_some() {
             return;
         }
     }
-    let Some((rows, cursor)) = friendlist::rows_view(w).map(|(r, c)| (r.to_vec(), c)) else { return };
-    let icon = |n: usize| m.sprite_icon(p.ctx, gu, "menu    keytops3", n).map(|t| (t, super::FULL_UV));
+    let Some((rows, cursor)) = friendlist::rows_view(w).map(|(r, c)| (r.to_vec(), c)) else {
+        return;
+    };
+    let icon = |n: usize| {
+        m.sprite_icon(p.ctx, gu, "menu    keytops3", n)
+            .map(|t| (t, super::FULL_UV))
+    };
     let people_rows = rows
         .iter()
         .map(|r| match *r {
             friendlist::Row::Header(c) => Person {
                 icon: None,
-                name: m.caption(gu, "menu    windowps", friendlist::BARS[c as usize]).unwrap_or_else(|| "Block List".into()),
+                name: m
+                    .caption(gu, "menu    windowps", friendlist::BARS[c as usize])
+                    .unwrap_or_else(|| "Block List".into()),
                 colour: m.theme.color("gold"),
                 jobs: String::new(),
-                who: if w.friends.hidden[c as usize] { "[Hidden]".into() } else { String::new() },
+                who: if w.friends.hidden[c as usize] {
+                    "[Hidden]".into()
+                } else {
+                    String::new()
+                },
                 zone: String::new(),
             },
             friendlist::Row::Entry(i) => {
                 let f = &w.friends.list[i];
                 let cat = friendlist::category(f);
-                let ic = if f.mail { Some(158) } else if cat == 0 { friendlist::status_icon(f.status) } else { None };
+                let ic = if f.mail {
+                    Some(158)
+                } else if cat == 0 {
+                    friendlist::status_icon(f.status)
+                } else {
+                    None
+                };
                 let rec = f.record.as_ref().filter(|_| f.fresh && cat == 0);
                 Person {
                     icon: ic.and_then(icon),
@@ -507,18 +891,56 @@ fn friends(p: &mut Panels, w: &mut World, gu: &GameUi) {
                     colour: m.theme.color("text"),
                     jobs: rec.map(|r| r.name.clone()).unwrap_or_default(),
                     who: String::new(),
-                    zone: rec.filter(|r| r.zone != w.pos_zone).map(|r| crate::dat::font::plain(&crate::dat::font::decode_sjis(&gu.area_name(r.zone)))).unwrap_or_default(),
+                    zone: rec
+                        .filter(|r| r.zone != w.pos_zone)
+                        .map(|r| {
+                            crate::dat::font::plain(&crate::dat::font::decode_sjis(
+                                &gu.area_name(r.zone),
+                            ))
+                        })
+                        .unwrap_or_default(),
                 }
             }
         })
         .collect();
     let opts: Vec<(u16, String, bool)> = ui.mes.map_or(Vec::new(), |_| {
         let off = friendlist::mes_off(w);
-        (1..=3).map(|c| (c, gu.child_caption(friendlist::MES, c).or_else(|| gu.focus_text(friendlist::MES, c)[1].clone()).unwrap_or_default(), !off.contains(&c))).collect()
+        (1..=3)
+            .map(|c| {
+                (
+                    c,
+                    gu.child_caption(friendlist::MES, c)
+                        .or_else(|| gu.focus_text(friendlist::MES, c)[1].clone())
+                        .unwrap_or_default(),
+                    !off.contains(&c),
+                )
+            })
+            .collect()
     });
-    let title = w.friends.handle.as_ref().map(|h| format!("{} ({})", h.1, friendlist::handle_id_text(h.0))).unwrap_or_default();
-    let empty = rows.is_empty().then(|| w.battle.as_ref().and_then(|bt| bt.group7(0x66)).unwrap_or_default());
-    let v = People { id: "friendlist", title: &title, icon: "icons/party", header: None, empty, rows: people_rows, cursor, focused: free && ui.mes.is_none(), opts, opt_sel: ui.mes };
+    let title = w
+        .friends
+        .handle
+        .as_ref()
+        .map(|h| format!("{} ({})", h.1, friendlist::handle_id_text(h.0)))
+        .unwrap_or_default();
+    let empty = rows.is_empty().then(|| {
+        w.battle
+            .as_ref()
+            .and_then(|bt| bt.group7(0x66))
+            .unwrap_or_default()
+    });
+    let v = People {
+        id: "friendlist",
+        title: &title,
+        icon: "icons/party",
+        header: None,
+        empty,
+        rows: people_rows,
+        cursor,
+        focused: free && ui.mes.is_none(),
+        opts,
+        opt_sel: ui.mes,
+    };
     let mut found = crowd_found(p, w, Crowd::Friends);
     let mouse = people(p, v, &mut found);
     if let Some(f) = found {
@@ -547,40 +969,109 @@ fn friends(p: &mut Panels, w: &mut World, gu: &GameUi) {
 fn messages(p: &mut Panels, w: &mut World, gu: &GameUi) {
     let m = p.m;
     if let Some((text, naming)) = polmail::line_view(w) {
-        let label = if naming { w.battle.as_ref().and_then(|b| b.group9(0x22)).unwrap_or_default() } else { "Message".into() };
+        let label = if naming {
+            w.battle
+                .as_ref()
+                .and_then(|b| b.group9(0x22))
+                .unwrap_or_default()
+        } else {
+            "Message".into()
+        };
         let screen = p.ctx.content_rect();
-        let edge = m.chat_edge.get().filter(|c| !c.1).map_or(screen.max.y, |(r, _)| r.min.y).min(screen.max.y);
+        let edge = m
+            .chat_edge
+            .get()
+            .filter(|c| !c.1)
+            .map_or(screen.max.y, |(r, _)| r.min.y)
+            .min(screen.max.y);
         let h = m.rects.borrow().get("msgline").map_or(80.0, |r| r.height());
-        let caret = if (w.started.elapsed().as_secs_f32() * 2.0) as u32 % 2 == 0 { "|" } else { "" };
+        let caret = if (w.started.elapsed().as_secs_f32() * 2.0) as u32 % 2 == 0 {
+            "|"
+        } else {
+            ""
+        };
         let shown = format!("{text}{caret}");
-        p.panel_at("msgline", Some(Title { icon: Some("icons/party"), text: &label, note: None }), 520.0, pos2(screen.width() * 0.0121, edge - h - 6.0), |ui| {
-            ui.label(egui::RichText::new(shown).size(m.theme.ui).color(m.theme.color("text")));
-        });
+        p.panel_at(
+            "msgline",
+            Some(Title {
+                icon: Some("icons/party"),
+                text: &label,
+                note: None,
+            }),
+            520.0,
+            pos2(screen.width() * 0.0121, edge - h - 6.0),
+            |ui| {
+                ui.label(
+                    egui::RichText::new(shown)
+                        .size(m.theme.ui)
+                        .color(m.theme.color("text")),
+                );
+            },
+        );
     }
-    let Some((rows, _, cursor, _)) = w.polmail.list.clone() else { return };
+    let Some((rows, _, cursor, _)) = w.polmail.list.clone() else {
+        return;
+    };
     let free = w.confirm.is_none() && !polmail::composing(w);
-    let me = w.friends.handle.as_ref().map(|h| h.1.clone()).unwrap_or_default();
+    let me = w
+        .friends
+        .handle
+        .as_ref()
+        .map(|h| h.1.clone())
+        .unwrap_or_default();
     let people_rows = rows
         .iter()
         .skip(1)
         .filter_map(|n| polmail::mail(w, n))
-        .map(|ml| Person { icon: None, name: polmail::from_name(w, ml), colour: m.theme.color("text"), jobs: polmail::type_label(ml.header.kind).into(), who: format!("To {me}"), zone: polmail::date(w, ml.header.date) })
+        .map(|ml| Person {
+            icon: None,
+            name: polmail::from_name(w, ml),
+            colour: m.theme.color("text"),
+            jobs: polmail::type_label(ml.header.kind).into(),
+            who: format!("To {me}"),
+            zone: polmail::date(w, ml.header.date),
+        })
         .collect();
     let read = w.polmail.read.clone();
     let opts: Vec<(u16, String, bool)> = read.as_ref().map_or(Vec::new(), |(_, frnd, _)| {
         let name = if *frnd { polmail::FRND } else { polmail::RCV };
         let off = polmail::read_off(w);
-        (1..=4).map(|c| (c, gu.child_caption(name, c).or_else(|| gu.focus_text(name, c)[1].clone()).unwrap_or_default(), !off.contains(&c))).collect()
+        (1..=4)
+            .map(|c| {
+                (
+                    c,
+                    gu.child_caption(name, c)
+                        .or_else(|| gu.focus_text(name, c)[1].clone())
+                        .unwrap_or_default(),
+                    !off.contains(&c),
+                )
+            })
+            .collect()
     });
     let title = gu.title_msg(0x52).unwrap_or_else(|| "Messages".into());
-    let v = People { id: "msglist", title: &title, icon: "icons/party", header: Some(("Messages".into(), "")), empty: None, rows: people_rows, cursor, focused: free && read.is_none(), opts, opt_sel: read.map(|r| r.2) };
+    let v = People {
+        id: "msglist",
+        title: &title,
+        icon: "icons/party",
+        header: Some(("Messages".into(), "")),
+        empty: None,
+        rows: people_rows,
+        cursor,
+        focused: free && read.is_none(),
+        opts,
+        opt_sel: read.map(|r| r.2),
+    };
     let mut found = crowd_found(p, w, Crowd::Mail);
     let mouse = people(p, v, &mut found);
     if let Some(f) = found {
         f.pick(w, Some(gu));
         return;
     }
-    for k in mouse.click.into_iter().chain(mouse.opt_click.map(|c| c as usize)) {
+    for k in mouse
+        .click
+        .into_iter()
+        .chain(mouse.opt_click.map(|c| c as usize))
+    {
         if polmail::set_cursor(w, k) {
             w.sounds.push(crate::audio::Ui::Cursor as u32);
         }
@@ -595,13 +1086,40 @@ fn messages(p: &mut Panels, w: &mut World, gu: &GameUi) {
 /// A linkshell's member list (linklist.rs keeps the rules and keys): each member with the shell item of their rank,
 /// the member window's rows beside the cursor's.
 fn link_list(p: &mut Panels, w: &mut World, gu: &GameUi) {
-    let Some(v) = linklist::view(w, gu) else { return };
+    let Some(v) = linklist::view(w, gu) else {
+        return;
+    };
     let m = p.m;
     let info = w.item_info.clone();
-    let rows = v.rows.iter().map(|(r, item)| person(w, gu, r, info.as_ref().and_then(|i| m.item_icon(p.ctx, i, *item)).map(|t| (t, super::FULL_UV)), v.alt)).collect();
+    let rows = v
+        .rows
+        .iter()
+        .map(|(r, item)| {
+            person(
+                w,
+                gu,
+                r,
+                info.as_ref()
+                    .and_then(|i| m.item_icon(p.ctx, i, *item))
+                    .map(|t| (t, super::FULL_UV)),
+                v.alt,
+            )
+        })
+        .collect();
     let empty = v.empty.clone();
     let title = gu.title_msg(0x47).unwrap_or_else(|| "Linkshell".into());
-    let pv = People { id: "linklist", title: &title, icon: "icons/linkshell", header: None, empty, rows, cursor: v.cursor, focused: v.focused, opts: v.acts.clone(), opt_sel: v.act_sel };
+    let pv = People {
+        id: "linklist",
+        title: &title,
+        icon: "icons/linkshell",
+        header: None,
+        empty,
+        rows,
+        cursor: v.cursor,
+        focused: v.focused,
+        opts: v.acts.clone(),
+        opt_sel: v.act_sel,
+    };
     let mut found = crowd_found(p, w, Crowd::Links);
     let mouse = people(p, pv, &mut found);
     if let Some(f) = found {
@@ -628,7 +1146,9 @@ fn link_list(p: &mut Panels, w: &mut World, gu: &GameUi) {
 /// Level Sync (levelsync.rs keeps its rules and keys): the party's members as people rows, Level Sync's own status
 /// icon on the synced one, grey under level 10 or anonymous.
 fn level_sync(p: &mut Panels, w: &mut World, gu: &GameUi) {
-    let Some(l) = w.levelsync.as_ref() else { return };
+    let Some(l) = w.levelsync.as_ref() else {
+        return;
+    };
     let m = p.m;
     let synced = levelsync::synced(w).map(|s| s.name.clone());
     let icon = m.status_icon(p.ctx, gu, false, 269);
@@ -636,16 +1156,37 @@ fn level_sync(p: &mut Panels, w: &mut World, gu: &GameUi) {
         .rows
         .iter()
         .map(|r| {
-            let mut pr = person(w, gu, r, icon.filter(|_| synced.as_ref() == Some(&r.name)), false);
+            let mut pr = person(
+                w,
+                gu,
+                r,
+                icon.filter(|_| synced.as_ref() == Some(&r.name)),
+                false,
+            );
             if r.level.0 < 10 || r.flags & 0x4000 != 0 {
                 pr.colour = m.theme.color("muted");
             }
             pr
         })
         .collect();
-    let empty = if l.busy { Some("Please wait...".to_string()) } else { None };
+    let empty = if l.busy {
+        Some("Please wait...".to_string())
+    } else {
+        None
+    };
     let title = gu.title_msg(0x95).unwrap_or_else(|| "Level Sync".into());
-    let pv = People { id: "levelsync", title: &title, icon: "icons/party", header: None, empty, rows, cursor: l.cursor, focused: w.confirm.is_none(), opts: Vec::new(), opt_sel: None };
+    let pv = People {
+        id: "levelsync",
+        title: &title,
+        icon: "icons/party",
+        header: None,
+        empty,
+        rows,
+        cursor: l.cursor,
+        focused: w.confirm.is_none(),
+        opts: Vec::new(),
+        opt_sel: None,
+    };
     let mut found = crowd_found(p, w, Crowd::Sync);
     let mouse = people(p, pv, &mut found);
     if let Some(f) = found {
@@ -671,61 +1212,133 @@ fn help_page(p: &mut Panels, v: &helpdesk::PageView) -> Option<i32> {
     let m = p.m;
     let mut click = None;
     let t = p.ctx.input(|i| i.time);
-    p.panel("window", Some(Title { icon: Some("icons/help"), text: &v.title, note: None }), W + 44.0, |ui| {
-        let seen = egui::Id::unique("help page cursor seen");
-        let follow = ui.ctx().data(|d| d.get_temp::<i32>(seen)) != Some(v.cursor);
-        ui.ctx().data_mut(|d| d.insert_temp(seen, v.cursor));
-        let tall = ui.ctx().content_rect().height() * 0.6;
-        egui::ScrollArea::vertical().id_salt("help page").max_height(tall).auto_shrink([false, true]).show(ui, |ui| {
-            ui.set_width(W);
-            for line in &v.lines {
-                match line {
-                    helpdesk::Line::Text(text, grey) => {
-                        let c = if *grey { m.theme.color("muted") } else { m.theme.color("text") };
-                        ui.label(egui::RichText::new(text).size(m.theme.small).color(c));
-                        ui.add_space(6.0);
-                    }
-                    helpdesk::Line::Row { id, text, on, value } => {
-                        let font = FontId::proportional(m.theme.small);
-                        let tc = if *on { m.theme.color("text") } else { m.theme.color("muted") };
-                        let galley = ui.fonts_mut(|f| f.layout(text.clone(), font.clone(), tc, W - 40.0));
-                        let h = galley.size().y.max(ROW - 10.0) + 10.0;
-                        let (r, resp) = ui.allocate_exact_size(vec2(W, h), if v.focused { Sense::click() } else { Sense::hover() });
-                        let current = *id == v.cursor;
-                        let face = match () {
-                            _ if current && v.focused => "controls/list_row_selected",
-                            _ if current || v.focused && resp.hovered() => "controls/list_row_hover",
-                            _ if !on => "controls/list_row_disabled",
-                            _ => "controls/list_row_normal",
-                        };
-                        super::rows::face(ui.painter(), m, r, face, Color32::WHITE);
-                        ui.painter().galley(pos2(r.min.x + 24.0, r.center().y - galley.size().y / 2.0), galley, tc);
-                        if let Some(val) = value {
-                            ui.add_space(2.0);
-                            let (fr, _) = ui.allocate_exact_size(vec2(W - 24.0, 24.0), Sense::hover());
-                            let fr = fr.translate(vec2(24.0, 0.0));
-                            let editing = current && v.field.is_some();
-                            ui.painter().rect_filled(fr, 5.0, m.theme.color("charcoal"));
-                            ui.painter().rect_stroke(fr, 5.0, egui::Stroke::new(1.0, if editing { m.theme.color("focus") } else { m.theme.color("bronze").gamma_multiply(0.6) }), egui::StrokeKind::Inside);
-                            let shown = if editing { v.field.clone().unwrap_or_default() } else { val.clone() };
-                            let tr = ui.painter().with_clip_rect(fr.shrink(3.0)).text(pos2(fr.min.x + 8.0, fr.center().y), Align2::LEFT_CENTER, &shown, font.clone(), m.theme.color("text"));
-                            if editing && (t * 2.0) as i64 % 2 == 0 {
-                                let x = if shown.is_empty() { fr.min.x + 8.0 } else { tr.max.x + 1.0 };
-                                ui.painter().vline(x, (fr.center().y - 7.0)..=(fr.center().y + 7.0), egui::Stroke::new(1.5, m.theme.color("text")));
+    p.panel(
+        "window",
+        Some(Title {
+            icon: Some("icons/help"),
+            text: &v.title,
+            note: None,
+        }),
+        W + 44.0,
+        |ui| {
+            let seen = egui::Id::unique("help page cursor seen");
+            let follow = ui.ctx().data(|d| d.get_temp::<i32>(seen)) != Some(v.cursor);
+            ui.ctx().data_mut(|d| d.insert_temp(seen, v.cursor));
+            let tall = ui.ctx().content_rect().height() * 0.6;
+            egui::ScrollArea::vertical()
+                .id_salt("help page")
+                .max_height(tall)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    ui.set_width(W);
+                    for line in &v.lines {
+                        match line {
+                            helpdesk::Line::Text(text, grey) => {
+                                let c = if *grey {
+                                    m.theme.color("muted")
+                                } else {
+                                    m.theme.color("text")
+                                };
+                                ui.label(egui::RichText::new(text).size(m.theme.small).color(c));
+                                ui.add_space(6.0);
+                            }
+                            helpdesk::Line::Row {
+                                id,
+                                text,
+                                on,
+                                value,
+                            } => {
+                                let font = FontId::proportional(m.theme.small);
+                                let tc = if *on {
+                                    m.theme.color("text")
+                                } else {
+                                    m.theme.color("muted")
+                                };
+                                let galley = ui.fonts_mut(|f| {
+                                    f.layout(text.clone(), font.clone(), tc, W - 40.0)
+                                });
+                                let h = galley.size().y.max(ROW - 10.0) + 10.0;
+                                let (r, resp) = ui.allocate_exact_size(
+                                    vec2(W, h),
+                                    if v.focused {
+                                        Sense::click()
+                                    } else {
+                                        Sense::hover()
+                                    },
+                                );
+                                let current = *id == v.cursor;
+                                let face = match () {
+                                    _ if current && v.focused => "controls/list_row_selected",
+                                    _ if current || v.focused && resp.hovered() => {
+                                        "controls/list_row_hover"
+                                    }
+                                    _ if !on => "controls/list_row_disabled",
+                                    _ => "controls/list_row_normal",
+                                };
+                                super::rows::face(ui.painter(), m, r, face, Color32::WHITE);
+                                ui.painter().galley(
+                                    pos2(r.min.x + 24.0, r.center().y - galley.size().y / 2.0),
+                                    galley,
+                                    tc,
+                                );
+                                if let Some(val) = value {
+                                    ui.add_space(2.0);
+                                    let (fr, _) = ui
+                                        .allocate_exact_size(vec2(W - 24.0, 24.0), Sense::hover());
+                                    let fr = fr.translate(vec2(24.0, 0.0));
+                                    let editing = current && v.field.is_some();
+                                    ui.painter().rect_filled(fr, 5.0, m.theme.color("charcoal"));
+                                    ui.painter().rect_stroke(
+                                        fr,
+                                        5.0,
+                                        egui::Stroke::new(
+                                            1.0,
+                                            if editing {
+                                                m.theme.color("focus")
+                                            } else {
+                                                m.theme.color("bronze").gamma_multiply(0.6)
+                                            },
+                                        ),
+                                        egui::StrokeKind::Inside,
+                                    );
+                                    let shown = if editing {
+                                        v.field.clone().unwrap_or_default()
+                                    } else {
+                                        val.clone()
+                                    };
+                                    let tr = ui.painter().with_clip_rect(fr.shrink(3.0)).text(
+                                        pos2(fr.min.x + 8.0, fr.center().y),
+                                        Align2::LEFT_CENTER,
+                                        &shown,
+                                        font.clone(),
+                                        m.theme.color("text"),
+                                    );
+                                    if editing && (t * 2.0) as i64 % 2 == 0 {
+                                        let x = if shown.is_empty() {
+                                            fr.min.x + 8.0
+                                        } else {
+                                            tr.max.x + 1.0
+                                        };
+                                        ui.painter().vline(
+                                            x,
+                                            (fr.center().y - 7.0)..=(fr.center().y + 7.0),
+                                            egui::Stroke::new(1.5, m.theme.color("text")),
+                                        );
+                                    }
+                                }
+                                if current && follow {
+                                    ui.scroll_to_rect(r, None);
+                                }
+                                if v.focused && resp.clicked() {
+                                    click = Some(*id);
+                                }
+                                ui.add_space(2.0);
                             }
                         }
-                        if current && follow {
-                            ui.scroll_to_rect(r, None);
-                        }
-                        if v.focused && resp.clicked() {
-                            click = Some(*id);
-                        }
-                        ui.add_space(2.0);
                     }
-                }
-            }
-        });
-    });
+                });
+        },
+    );
     click
 }
 
@@ -751,7 +1364,13 @@ pub(super) fn width(n: usize) -> f32 {
 }
 
 /// What a page's mouse does to its top window: a click moves the cursor and is Enter.
-pub(super) fn act(w: &mut World, gu: &GameUi, click: Option<u16>, set: impl Fn(&mut World, u16) -> bool, enter: impl Fn(&mut World, &GameUi)) {
+pub(super) fn act(
+    w: &mut World,
+    gu: &GameUi,
+    click: Option<u16>,
+    set: impl Fn(&mut World, u16) -> bool,
+    enter: impl Fn(&mut World, &GameUi),
+) {
     if let Some(c) = click {
         set(w, c);
         enter(w, gu);
@@ -774,12 +1393,29 @@ pub(super) const NAME_W: f32 = 360.0;
 fn naming(p: &mut Panels, w: &mut World, gu: &GameUi, nm: &linkshell::Naming) {
     let m = p.m;
     let focused = w.confirm.is_none();
-    let icon = w.item_info.as_ref().and_then(|i| m.item_icon(p.ctx, i, 0x201));
-    let v = NameView { name: &nm.name, rgb: nm.rgb, sel: nm.sel, edit: nm.edit };
+    let icon = w
+        .item_info
+        .as_ref()
+        .and_then(|i| m.item_icon(p.ctx, i, 0x201));
+    let v = NameView {
+        name: &nm.name,
+        rgb: nm.rgb,
+        sel: nm.sel,
+        edit: nm.edit,
+    };
     let mut out = (None, None);
-    p.panel("window", Some(Title { icon: Some("icons/linkshell"), text: "New Linkshell", note: None }), NAME_W + 44.0, |ui| {
-        out = naming_body(ui, m, &v, icon, focused);
-    });
+    p.panel(
+        "window",
+        Some(Title {
+            icon: Some("icons/linkshell"),
+            text: "New Linkshell",
+            note: None,
+        }),
+        NAME_W + 44.0,
+        |ui| {
+            out = naming_body(ui, m, &v, icon, focused);
+        },
+    );
     if !focused {
         return;
     }
@@ -793,7 +1429,13 @@ fn naming(p: &mut Panels, w: &mut World, gu: &GameUi, nm: &linkshell::Naming) {
 }
 
 /// The window's contents; the child clicked (1 name, 5 OK, 6 Cancel) and the channel a slider set.
-pub(super) fn naming_body(ui: &mut Ui, m: &super::Modern, nm: &NameView, icon: Option<egui::TextureId>, focused: bool) -> (Option<u16>, Option<(usize, u8)>) {
+pub(super) fn naming_body(
+    ui: &mut Ui,
+    m: &super::Modern,
+    nm: &NameView,
+    icon: Option<egui::TextureId>,
+    focused: bool,
+) -> (Option<u16>, Option<(usize, u8)>) {
     let t = linkshell::tint(nm.rgb[0], nm.rgb[1], nm.rgb[2]);
     // The icon's tint is retail's (0x80 full); the swatch and the name show the colour itself.
     let tint = super::chat::colour(t.to_le_bytes());
@@ -812,13 +1454,33 @@ pub(super) fn naming_body(ui: &mut Ui, m: &super::Modern, nm: &NameView, icon: O
             }
         }
         ui.add_space(6.0);
-        let (text, c) = if nm.name.is_empty() { ("No name yet", m.theme.color("muted")) } else { (nm.name, swatch) };
-        ui.label(egui::RichText::new(text).size(m.theme.title).family(FontFamily::Name(super::STRONG.into())).color(c));
+        let (text, c) = if nm.name.is_empty() {
+            ("No name yet", m.theme.color("muted"))
+        } else {
+            (nm.name, swatch)
+        };
+        ui.label(
+            egui::RichText::new(text)
+                .size(m.theme.title)
+                .family(FontFamily::Name(super::STRONG.into()))
+                .color(c),
+        );
     });
     ui.add_space(10.0);
     let typing = nm.edit == 1;
-    let r = super::kit::field(ui, m, nm.name, typing.then(|| nm.name.chars().count()), NAME_W, FontId::proportional(m.theme.ui), None);
-    if ui.interact(r, egui::Id::unique("ls name"), Sense::click()).clicked() {
+    let r = super::kit::field(
+        ui,
+        m,
+        nm.name,
+        typing.then(|| nm.name.chars().count()),
+        NAME_W,
+        FontId::proportional(m.theme.ui),
+        None,
+    );
+    if ui
+        .interact(r, egui::Id::unique("ls name"), Sense::click())
+        .clicked()
+    {
         pick = Some(1);
     }
     if on(1) {
@@ -829,12 +1491,25 @@ pub(super) fn naming_body(ui: &mut Ui, m: &super::Modern, nm: &NameView, icon: O
         2..=4 => "Left / Right change it, Enter keeps it, Escape puts it back.",
         _ => "Click the name to type it; pick the shell's colour below.",
     };
-    ui.label(egui::RichText::new(hint).size(m.theme.small).color(m.theme.color("muted")));
+    ui.label(
+        egui::RichText::new(hint)
+            .size(m.theme.small)
+            .color(m.theme.color("muted")),
+    );
     ui.add_space(8.0);
     for (k, heading) in ["Red", "Green", "Blue"].into_iter().enumerate() {
         let c = k as u8 + 2;
         let focus = focused && (nm.edit == c || on(c as u16));
-        let (got, _) = super::kit::slider_setting(ui, m, heading, focus, false, 16, nm.rgb[k] as usize, &nm.rgb[k].to_string());
+        let (got, _) = super::kit::slider_setting(
+            ui,
+            m,
+            heading,
+            focus,
+            false,
+            16,
+            nm.rgb[k] as usize,
+            &nm.rgb[k].to_string(),
+        );
         if let Some(v) = got {
             chan = Some((k, v as u8));
         }
@@ -842,11 +1517,18 @@ pub(super) fn naming_body(ui: &mut Ui, m: &super::Modern, nm: &NameView, icon: O
     }
     ui.add_space(8.0);
     ui.horizontal(|ui| {
-        let ok = super::kit::Btn { cursor: on(5), off: nm.name.is_empty(), lit: false };
+        let ok = super::kit::Btn {
+            cursor: on(5),
+            off: nm.name.is_empty(),
+            lit: false,
+        };
         if super::kit::clicked(&super::kit::button(ui, m, "OK", 110.0, ok), ok) {
             pick = Some(5);
         }
-        let cancel = super::kit::Btn { cursor: focused && nm.edit == 0 && nm.sel > 5, ..Default::default() };
+        let cancel = super::kit::Btn {
+            cursor: focused && nm.edit == 0 && nm.sel > 5,
+            ..Default::default()
+        };
         if super::kit::button(ui, m, "Cancel", 110.0, cancel).clicked() {
             pick = Some(6);
         }
@@ -863,9 +1545,14 @@ pub fn draw(p: &mut Panels, w: &mut World) {
     // The area picker opened by Unity or an event: beside the window, else in its place (Search shows it in its own).
     if let Some(a) = w.arealist.clone().filter(|_| w.searchmenu.is_none()) {
         let screen = p.ctx.content_rect();
-        let at = m.rects.borrow().get("window").map_or(pos2(screen.width() * 0.0047, screen.height() * 0.0347), |r| pos2(r.max.x + 8.0, r.min.y));
+        let at = m.rects.borrow().get("window").map_or(
+            pos2(screen.width() * 0.0047, screen.height() * 0.0347),
+            |r| pos2(r.max.x + 8.0, r.min.y),
+        );
         let mut got = None;
-        p.panel_at("arealist", None, AREA_W + 44.0, at, |ui| got = area_column(ui, m, gu, &a, w.confirm.is_none()));
+        p.panel_at("arealist", None, AREA_W + 44.0, at, |ui| {
+            got = area_column(ui, m, gu, &a, w.confirm.is_none())
+        });
         area_act(w, gu, got);
     }
     results(p, w, gu);
@@ -903,9 +1590,18 @@ pub fn draw(p: &mut Panels, w: &mut World) {
         }
         let focused = w.confirm.is_none();
         let mut got = None;
-        p.panel("window", Some(Title { icon: Some("icons/mog_house"), text: "Moogle", note: None }), width(wins.len()), |ui| {
-            got = stack(ui, m, gu, &wins, focused);
-        });
+        p.panel(
+            "window",
+            Some(Title {
+                icon: Some("icons/mog_house"),
+                text: "Moogle",
+                note: None,
+            }),
+            width(wins.len()),
+            |ui| {
+                got = stack(ui, m, gu, &wins, focused);
+            },
+        );
         act(w, gu, got, moogle::set_cursor, |w, gu| {
             moogle::key(w, gu, egui::Key::Enter);
         });
@@ -913,12 +1609,28 @@ pub fn draw(p: &mut Panels, w: &mut World) {
     }
     // Region Info's menu (its maps are retail's, as the map is).
     if let Some(sel) = region::shown(w) {
-        let v = MenuWin { name: region::MENU, sel, off: Vec::new(), labels: Vec::new(), marked: Vec::new(), values: Vec::new() };
+        let v = MenuWin {
+            name: region::MENU,
+            sel,
+            off: Vec::new(),
+            labels: Vec::new(),
+            marked: Vec::new(),
+            values: Vec::new(),
+        };
         let focused = w.confirm.is_none();
         let mut got = None;
-        p.panel("window", Some(Title { icon: Some("icons/find"), text: "Region Info", note: None }), width(1), |ui| {
-            got = stack(ui, m, gu, std::slice::from_ref(&v), focused);
-        });
+        p.panel(
+            "window",
+            Some(Title {
+                icon: Some("icons/find"),
+                text: "Region Info",
+                note: None,
+            }),
+            width(1),
+            |ui| {
+                got = stack(ui, m, gu, std::slice::from_ref(&v), focused);
+            },
+        );
         let set = |w: &mut World, c: u16| match w.region_menu.as_mut() {
             Some(r) if r.sel != c => {
                 r.sel = c;
@@ -927,16 +1639,27 @@ pub fn draw(p: &mut Panels, w: &mut World) {
             _ => false,
         };
         let (sw, sh) = w.ui_wh;
-        act(w, gu, got, set, |w, gu| region::menu_key(w, gu, egui::Key::Enter, sw, sh));
+        act(w, gu, got, set, |w, gu| {
+            region::menu_key(w, gu, egui::Key::Enter, sw, sh)
+        });
         return;
     }
     // Set Bazaar.
     if let Some(v) = bazaar::view(w) {
         let focused = bazaar::focused(w);
         let mut got = None;
-        p.panel("window", Some(Title { icon: Some("icons/currency"), text: "Set Bazaar", note: None }), width(1), |ui| {
-            got = stack(ui, m, gu, std::slice::from_ref(&v), focused);
-        });
+        p.panel(
+            "window",
+            Some(Title {
+                icon: Some("icons/currency"),
+                text: "Set Bazaar",
+                note: None,
+            }),
+            width(1),
+            |ui| {
+                got = stack(ui, m, gu, std::slice::from_ref(&v), focused);
+            },
+        );
         let set = |w: &mut World, c: u16| match w.bazaar.as_mut() {
             Some(b) if b.sel != c => {
                 b.sel = c;
@@ -952,17 +1675,29 @@ pub fn draw(p: &mut Panels, w: &mut World) {
     if !wins.is_empty() {
         let focused = partymenu::focused(w);
         let mut got = None;
-        p.panel("window", Some(Title { icon: Some("icons/party"), text: "Party", note: None }), width(wins.len()), |ui| {
-            got = stack(ui, m, gu, &wins, focused);
+        p.panel(
+            "window",
+            Some(Title {
+                icon: Some("icons/party"),
+                text: "Party",
+                note: None,
+            }),
+            width(wins.len()),
+            |ui| {
+                got = stack(ui, m, gu, &wins, focused);
+            },
+        );
+        let set =
+            |w: &mut World, c: u16| match w.partymenu.as_mut().and_then(|x| x.stack.last_mut()) {
+                Some(t) if t.sel != c => {
+                    t.sel = c;
+                    true
+                }
+                _ => false,
+            };
+        act(w, gu, got, set, |w, gu| {
+            partymenu::key(w, gu, egui::Key::Enter)
         });
-        let set = |w: &mut World, c: u16| match w.partymenu.as_mut().and_then(|x| x.stack.last_mut()) {
-            Some(t) if t.sel != c => {
-                t.sel = c;
-                true
-            }
-            _ => false,
-        };
-        act(w, gu, got, set, |w, gu| partymenu::key(w, gu, egui::Key::Enter));
         return;
     }
     // Search.
@@ -973,24 +1708,36 @@ pub fn draw(p: &mut Panels, w: &mut World) {
         let mut got = None;
         let mut area_got = None;
         let extra = if area.is_some() { AREA_W + 12.0 } else { 0.0 };
-        p.panel("window", Some(Title { icon: Some("icons/find"), text: "Search", note: None }), width(wins.len()) + extra, |ui| {
-            ui.horizontal_top(|ui| {
-                got = stack(ui, m, gu, &wins, focused);
-                if let Some(a) = &area {
-                    ui.add_space(12.0);
-                    area_got = area_column(ui, m, gu, a, w.confirm.is_none());
-                }
-            });
-        });
+        p.panel(
+            "window",
+            Some(Title {
+                icon: Some("icons/find"),
+                text: "Search",
+                note: None,
+            }),
+            width(wins.len()) + extra,
+            |ui| {
+                ui.horizontal_top(|ui| {
+                    got = stack(ui, m, gu, &wins, focused);
+                    if let Some(a) = &area {
+                        ui.add_space(12.0);
+                        area_got = area_column(ui, m, gu, a, w.confirm.is_none());
+                    }
+                });
+            },
+        );
         area_act(w, gu, area_got);
-        let set = |w: &mut World, c: u16| match w.searchmenu.as_mut().and_then(|x| x.stack.last_mut()) {
-            Some(t) if t.sel != c => {
-                t.sel = c;
-                true
-            }
-            _ => false,
-        };
-        act(w, gu, got, set, |w, gu| searchmenu::key(w, gu, egui::Key::Enter));
+        let set =
+            |w: &mut World, c: u16| match w.searchmenu.as_mut().and_then(|x| x.stack.last_mut()) {
+                Some(t) if t.sel != c => {
+                    t.sel = c;
+                    true
+                }
+                _ => false,
+            };
+        act(w, gu, got, set, |w, gu| {
+            searchmenu::key(w, gu, egui::Key::Enter)
+        });
         return;
     }
     // link11: naming a new shell takes the window.
@@ -1002,65 +1749,147 @@ pub fn draw(p: &mut Panels, w: &mut World) {
     if let Some((rows, cursor, sub)) = linkshell::modern_view(w) {
         let focused = linkshell::focused(w);
         let info = w.item_info.clone();
-        let icons: Vec<Option<egui::TextureId>> = rows.iter().map(|r| info.as_ref().and_then(|i| m.item_icon(p.ctx, i, r.0.item))).collect();
+        let icons: Vec<Option<egui::TextureId>> = rows
+            .iter()
+            .map(|r| info.as_ref().and_then(|i| m.item_icon(p.ctx, i, r.0.item)))
+            .collect();
         let mut row_click: Option<usize> = None;
         let mut got = None;
-        p.panel("window", Some(Title { icon: Some("icons/linkshell"), text: "Linkshell", note: None }), LS_W + if sub.is_some() { COL_W + 14.0 } else { 0.0 } + 44.0, |ui| {
-            ui.horizontal_top(|ui| {
-                ui.vertical(|ui| {
-                    ui.set_width(LS_W);
-                    match rows.get(cursor) {
-                        Some((r, name, t)) => {
-                            ui.horizontal(|ui| {
-                                if let Some(tex) = icons.get(cursor).copied().flatten() {
-                                    ui.add(egui::Image::new((tex, vec2(32.0, 32.0))).tint(super::chat::colour(t.to_le_bytes())));
+        p.panel(
+            "window",
+            Some(Title {
+                icon: Some("icons/linkshell"),
+                text: "Linkshell",
+                note: None,
+            }),
+            LS_W + if sub.is_some() { COL_W + 14.0 } else { 0.0 } + 44.0,
+            |ui| {
+                ui.horizontal_top(|ui| {
+                    ui.vertical(|ui| {
+                        ui.set_width(LS_W);
+                        match rows.get(cursor) {
+                            Some((r, name, t)) => {
+                                ui.horizontal(|ui| {
+                                    if let Some(tex) = icons.get(cursor).copied().flatten() {
+                                        ui.add(
+                                            egui::Image::new((tex, vec2(32.0, 32.0)))
+                                                .tint(super::chat::colour(t.to_le_bytes())),
+                                        );
+                                    }
+                                    let shown = if name.is_empty() {
+                                        info.as_ref()
+                                            .and_then(|c| c.name(r.item))
+                                            .unwrap_or_default()
+                                    } else {
+                                        name.clone()
+                                    };
+                                    ui.label(
+                                        egui::RichText::new(shown)
+                                            .size(m.theme.title)
+                                            .family(FontFamily::Name(super::STRONG.into()))
+                                            .color(m.theme.color("text")),
+                                    );
+                                });
+                            }
+                            None => {
+                                let s = w
+                                    .battle
+                                    .as_ref()
+                                    .and_then(|b| b.group7(0x71))
+                                    .unwrap_or_default();
+                                ui.label(
+                                    egui::RichText::new(s)
+                                        .size(m.theme.small)
+                                        .color(m.theme.color("hp")),
+                                );
+                            }
+                        }
+                        ui.add_space(8.0);
+                        if rows.is_empty() {
+                            let s = w
+                                .battle
+                                .as_ref()
+                                .and_then(|b| b.group7(0x68))
+                                .unwrap_or_default();
+                            ui.label(
+                                egui::RichText::new(s)
+                                    .size(m.theme.small)
+                                    .color(m.theme.color("muted")),
+                            );
+                        }
+                        let follow = m.moved("linkshell rows", cursor);
+                        egui::ScrollArea::vertical()
+                            .id_salt("ls rows")
+                            .max_height(10.0 * (ROW + 2.0))
+                            .min_scrolled_height(10.0 * (ROW + 2.0))
+                            .show(ui, |ui| {
+                                for (k, (r, name, t)) in rows.iter().enumerate() {
+                                    let (rr, resp) =
+                                        ui.allocate_exact_size(vec2(LS_W, ROW), Sense::click());
+                                    if k == cursor && follow {
+                                        ui.scroll_to_rect(rr, None);
+                                    }
+                                    let face = if k == cursor && sub.is_none() && focused {
+                                        "controls/list_row_selected"
+                                    } else if k == cursor || resp.hovered() {
+                                        "controls/list_row_hover"
+                                    } else {
+                                        "controls/list_row_normal"
+                                    };
+                                    super::rows::face(ui.painter(), m, rr, face, Color32::WHITE);
+                                    if let Some(tex) = icons.get(k).copied().flatten() {
+                                        let ir = Rect::from_min_size(
+                                            pos2(rr.min.x + 8.0, rr.center().y - 11.0),
+                                            vec2(22.0, 22.0),
+                                        );
+                                        ui.painter().image(
+                                            tex,
+                                            ir,
+                                            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                                            super::chat::colour(t.to_le_bytes()),
+                                        );
+                                    }
+                                    if r.num != 0 {
+                                        ui.painter().text(
+                                            pos2(rr.min.x + 36.0, rr.center().y),
+                                            Align2::LEFT_CENTER,
+                                            r.num.to_string(),
+                                            FontId::monospace(m.theme.small),
+                                            m.theme.color("gold"),
+                                        );
+                                    }
+                                    let item = info
+                                        .as_ref()
+                                        .and_then(|c| c.name(r.item))
+                                        .unwrap_or_default();
+                                    ui.painter().text(
+                                        pos2(rr.min.x + 52.0, rr.center().y),
+                                        Align2::LEFT_CENTER,
+                                        item,
+                                        FontId::proportional(m.theme.small),
+                                        super::chat::colour(r.name_tint.to_le_bytes()),
+                                    );
+                                    ui.painter().text(
+                                        pos2(rr.max.x - 10.0, rr.center().y),
+                                        Align2::RIGHT_CENTER,
+                                        name,
+                                        FontId::proportional(m.theme.small),
+                                        m.theme.color("text"),
+                                    );
+                                    if focused && sub.is_none() && resp.clicked() {
+                                        row_click = Some(k);
+                                    }
+                                    ui.add_space(2.0);
                                 }
-                                let shown = if name.is_empty() { info.as_ref().and_then(|c| c.name(r.item)).unwrap_or_default() } else { name.clone() };
-                                ui.label(egui::RichText::new(shown).size(m.theme.title).family(FontFamily::Name(super::STRONG.into())).color(m.theme.color("text")));
                             });
-                        }
-                        None => {
-                            let s = w.battle.as_ref().and_then(|b| b.group7(0x71)).unwrap_or_default();
-                            ui.label(egui::RichText::new(s).size(m.theme.small).color(m.theme.color("hp")));
-                        }
-                    }
-                    ui.add_space(8.0);
-                    if rows.is_empty() {
-                        let s = w.battle.as_ref().and_then(|b| b.group7(0x68)).unwrap_or_default();
-                        ui.label(egui::RichText::new(s).size(m.theme.small).color(m.theme.color("muted")));
-                    }
-                    let follow = m.moved("linkshell rows", cursor);
-                    egui::ScrollArea::vertical().id_salt("ls rows").max_height(10.0 * (ROW + 2.0)).min_scrolled_height(10.0 * (ROW + 2.0)).show(ui, |ui| {
-                        for (k, (r, name, t)) in rows.iter().enumerate() {
-                            let (rr, resp) = ui.allocate_exact_size(vec2(LS_W, ROW), Sense::click());
-                            if k == cursor && follow {
-                                ui.scroll_to_rect(rr, None);
-                            }
-                            let face = if k == cursor && sub.is_none() && focused { "controls/list_row_selected" } else if k == cursor || resp.hovered() { "controls/list_row_hover" } else { "controls/list_row_normal" };
-                            super::rows::face(ui.painter(), m, rr, face, Color32::WHITE);
-                            if let Some(tex) = icons.get(k).copied().flatten() {
-                                let ir = Rect::from_min_size(pos2(rr.min.x + 8.0, rr.center().y - 11.0), vec2(22.0, 22.0));
-                                ui.painter().image(tex, ir, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), super::chat::colour(t.to_le_bytes()));
-                            }
-                            if r.num != 0 {
-                                ui.painter().text(pos2(rr.min.x + 36.0, rr.center().y), Align2::LEFT_CENTER, r.num.to_string(), FontId::monospace(m.theme.small), m.theme.color("gold"));
-                            }
-                            let item = info.as_ref().and_then(|c| c.name(r.item)).unwrap_or_default();
-                            ui.painter().text(pos2(rr.min.x + 52.0, rr.center().y), Align2::LEFT_CENTER, item, FontId::proportional(m.theme.small), super::chat::colour(r.name_tint.to_le_bytes()));
-                            ui.painter().text(pos2(rr.max.x - 10.0, rr.center().y), Align2::RIGHT_CENTER, name, FontId::proportional(m.theme.small), m.theme.color("text"));
-                            if focused && sub.is_none() && resp.clicked() {
-                                row_click = Some(k);
-                            }
-                            ui.add_space(2.0);
-                        }
                     });
+                    if let Some(s) = &sub {
+                        ui.add_space(14.0);
+                        got = column(ui, m, gu, s, focused);
+                    }
                 });
-                if let Some(s) = &sub {
-                    ui.add_space(14.0);
-                    got = column(ui, m, gu, s, focused);
-                }
-            });
-        });
+            },
+        );
         if let Some(k) = row_click {
             if let Some(l) = w.linkshell.as_mut() {
                 l.cursor = k;
@@ -1074,6 +1903,8 @@ pub fn draw(p: &mut Panels, w: &mut World) {
             }
             _ => false,
         };
-        act(w, gu, got, set, |w, gu| linkshell::key(w, gu, egui::Key::Enter));
+        act(w, gu, got, set, |w, gu| {
+            linkshell::key(w, gu, egui::Key::Enter)
+        });
     }
 }

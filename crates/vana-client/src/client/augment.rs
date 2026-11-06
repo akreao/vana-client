@@ -23,9 +23,16 @@ pub struct AugTables {
 fn table<'a>(dll: &'a [u8], hint: &str, len: usize, md5: &str) -> Option<&'a [u8]> {
     let h = hex::decode(hint).ok()?;
     let mut from = 0;
-    while let Some(p) = dll.get(from..)?.windows(h.len()).position(|w| w == h.as_slice()) {
+    while let Some(p) = dll
+        .get(from..)?
+        .windows(h.len())
+        .position(|w| w == h.as_slice())
+    {
         let at = from + p;
-        if let Some(t) = dll.get(at..at + len).filter(|t| hex::encode(Md5::digest(t)) == md5) {
+        if let Some(t) = dll
+            .get(at..at + len)
+            .filter(|t| hex::encode(Md5::digest(t)) == md5)
+        {
             return Some(t);
         }
         from = at + 1;
@@ -38,7 +45,9 @@ fn pairs<const N: usize>(t: &[u8]) -> Vec<[u8; N]> {
 }
 
 fn words(t: &[u8]) -> Vec<u16> {
-    t.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect()
+    t.chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect()
 }
 
 impl AugTables {
@@ -53,21 +62,59 @@ impl AugTables {
             r
         };
         Some(Self {
-            attr: pairs(t("010002000400080010002000400000010002000400080010002000400106010a", 0x100, "7e5ad611e599ce744e22e895bf6ae247")?),
-            pet: pairs(t("0100020004000800100020004000000100020004000800100020004007000000", 0x40, "537ff5ec0c0d3e2e6f3e976563167777")?),
-            elem: pairs(t("01000200040008001000200040008000", 0x80, "45426bec9f3c632be49a4720c48177d3")?),
-            prefix: pairs(t("0400f0020601f002", 0x200, "6923d18738a382f2d7419fc491acde4d")?),
-            evolith: pairs(t("fe03000000000000", 0x1978, "3124bafdc39bcc04b03dd21cf9d5b89d")?),
-            mezz: words(t("0000ff0309000900", 0x200, "6bd34070083775d9d714477e8046a8d6")?),
-            mezz_rp: words(t("1e00320050007800", 0x3e, "066af22f9cd4980ab895ef6a7e935ec3")?),
-            no_mark: words(t("df405f419941fc41", 0x66, "eddd707b4645d3070c4bd5b824492db6")?).into_iter().take_while(|&w| w != 0).collect(),
+            attr: pairs(t(
+                "010002000400080010002000400000010002000400080010002000400106010a",
+                0x100,
+                "7e5ad611e599ce744e22e895bf6ae247",
+            )?),
+            pet: pairs(t(
+                "0100020004000800100020004000000100020004000800100020004007000000",
+                0x40,
+                "537ff5ec0c0d3e2e6f3e976563167777",
+            )?),
+            elem: pairs(t(
+                "01000200040008001000200040008000",
+                0x80,
+                "45426bec9f3c632be49a4720c48177d3",
+            )?),
+            prefix: pairs(t(
+                "0400f0020601f002",
+                0x200,
+                "6923d18738a382f2d7419fc491acde4d",
+            )?),
+            evolith: pairs(t(
+                "fe03000000000000",
+                0x1978,
+                "3124bafdc39bcc04b03dd21cf9d5b89d",
+            )?),
+            mezz: words(t(
+                "0000ff0309000900",
+                0x200,
+                "6bd34070083775d9d714477e8046a8d6",
+            )?),
+            mezz_rp: words(t(
+                "1e00320050007800",
+                0x3e,
+                "066af22f9cd4980ab895ef6a7e935ec3",
+            )?),
+            no_mark: words(t(
+                "df405f419941fc41",
+                0x66,
+                "eddd707b4645d3070c4bd5b824492db6",
+            )?)
+            .into_iter()
+            .take_while(|&w| w != 0)
+            .collect(),
         })
     }
 }
 
 /// The "mnc2" chunk of file 81 (the bundle RP curves, bundles and records), its data after the 16-byte header.
 pub fn mnc2(file: &[u8]) -> Option<Vec<u8>> {
-    (0..file.len().saturating_sub(16)).step_by(16).find(|&o| &file[o..o + 4] == b"mnc2").map(|o| file[o + 16..].to_vec())
+    (0..file.len().saturating_sub(16))
+        .step_by(16)
+        .find(|&o| &file[o..o + 4] == b"mnc2")
+        .map(|o| file[o + 16..].to_vec())
 }
 
 /// What decoding needs besides the extdata.
@@ -91,10 +138,28 @@ pub struct Slot {
 pub enum Kind {
     Plain,
     Evolith(Vec<Slot>),
-    Serial { server: u8, no: u16 },
-    Mezz { t: u8, rank: u8, rp: i32, groups: [usize; 3] },
-    Craft { stage: u8, craft: u16 },
-    Bundle { t: u8, rank: u8, max: u8, rp: i32, flags: u32, groups: [usize; 4] },
+    Serial {
+        server: u8,
+        no: u16,
+    },
+    Mezz {
+        t: u8,
+        rank: u8,
+        rp: i32,
+        groups: [usize; 3],
+    },
+    Craft {
+        stage: u8,
+        craft: u16,
+    },
+    Bundle {
+        t: u8,
+        rank: u8,
+        max: u8,
+        rp: i32,
+        flags: u32,
+        groups: [usize; 4],
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -107,7 +172,10 @@ const NO_AUG_IDS: [u16; 8] = [0xffff, 0, 0x200, 0x201, 0x202, 0x203, 0x108c, 0x1
 
 /// FUN_100fedc0 and byte 0 (FUN_100fee70 / FUN_100feef0): weapons and armour, not the listed ids, kind 2 or 3.
 pub fn applies(id: u16, item_type: u16, ext: &[u8; 24]) -> bool {
-    !NO_AUG_IDS.contains(&id) && !matches!(id, 0x1525 | 0x1526) && matches!(item_type, 4 | 5) && matches!(ext[0], 2 | 3)
+    !NO_AUG_IDS.contains(&id)
+        && !matches!(id, 0x1525 | 0x1526)
+        && matches!(item_type, 4 | 5)
+        && matches!(ext[0], 2 | 3)
 }
 
 /// FUN_101cb8a0 / FUN_101cb990: Some(ext[1]) when the Aug mark shows (kind 2 not for the no-mark weapons nor a
@@ -156,7 +224,11 @@ impl Work {
     /// FUN_10100850: the pet list, a stable ascending insert.
     fn pet(&mut self, kind: u8, id: u16, v: i32) {
         self.pet = kind;
-        let at = self.pets.iter().position(|e| e.0 > id).unwrap_or(self.pets.len());
+        let at = self
+            .pets
+            .iter()
+            .position(|e| e.0 > id)
+            .unwrap_or(self.pets.len());
         self.pets.insert(at, (id, v));
     }
 }
@@ -227,7 +299,9 @@ fn handler(r: &mut Work, i: u16, v: i32) {
         0x4d => r.addw(0x12, -32 - v),
         0x31 => r.addb(0x34, v),
         0x3a => r.addb(0x3e, -v),
-        0x44 => [0x28, 0x29, 0x2b, 0x2c].into_iter().for_each(|o| r.addb(o, v)),
+        0x44 => [0x28, 0x29, 0x2b, 0x2c]
+            .into_iter()
+            .for_each(|o| r.addb(o, v)),
         0x45 => {
             r.addb(0x2a, v);
             r.addb(0x2d, v);
@@ -344,8 +418,14 @@ fn classic(r: &mut Work, ext: &[u8; 24], t: &AugTables) {
             0x200..0x280 | 0x700..0x720 => {
                 let pet = i >= 0x700;
                 let j = (i & 0xff) as usize;
-                let [add, sub] = if pet { t.pet.get(j) } else { t.attr.get(j) }.copied().unwrap_or([0, 0]);
-                let halve = if pet { (0xe..=0x1f).contains(&j) } else { (0xe..=0x25).contains(&j) };
+                let [add, sub] = if pet { t.pet.get(j) } else { t.attr.get(j) }
+                    .copied()
+                    .unwrap_or([0, 0]);
+                let halve = if pet {
+                    (0xe..=0x1f).contains(&j)
+                } else {
+                    (0xe..=0x25).contains(&j)
+                };
                 let vs = if halve { ((v + 1) / 2).max(1) } else { v };
                 let base = if pet { 0xb8 } else { 0x18 };
                 if pet {
@@ -412,7 +492,8 @@ fn classic(r: &mut Work, ext: &[u8; 24], t: &AugTables) {
                 if r.pre.len() < 5
                     && let Some(e) = t.prefix.get(j)
                 {
-                    r.pre.push((e[1] as u16, u16::from_le_bytes([e[2], e[3]]) >> 4, v * 5));
+                    r.pre
+                        .push((e[1] as u16, u16::from_le_bytes([e[2], e[3]]) >> 4, v * 5));
                 }
             }
             0x480..0x4e0 => {
@@ -459,7 +540,10 @@ impl Packer {
 
 /// FUN_100ff2f0: the work record in its fixed order.
 fn emit(r: &Work) -> Vec<(u16, i32)> {
-    let mut p = Packer { out: Vec::new(), budget: 5 };
+    let mut p = Packer {
+        out: Vec::new(),
+        budget: 5,
+    };
     let w = |o: usize| r.w[o / 2] as i32;
     let b = |o: usize| r.b[o] as i32;
     if (1..0x11).contains(&r.slot) {
@@ -513,10 +597,18 @@ fn emit(r: &Work) -> Vec<(u16, i32)> {
         }
         for &(i, v) in &r.pets {
             match i {
-                0x81 => [(0x12, 2), (0x14, 2)].into_iter().for_each(|(d, w)| p.add(d, v, w)),
-                0x82 => [(0x13, 2), (0x15, 2)].into_iter().for_each(|(d, w)| p.add(d, v, w)),
-                0x83 => [(0x18, 4), (0x85, 4)].into_iter().for_each(|(d, w)| p.add(d, v, w)),
-                0x84 => [(0x8f, 2), (0x1a, 2)].into_iter().for_each(|(d, w)| p.add(d, v, w)),
+                0x81 => [(0x12, 2), (0x14, 2)]
+                    .into_iter()
+                    .for_each(|(d, w)| p.add(d, v, w)),
+                0x82 => [(0x13, 2), (0x15, 2)]
+                    .into_iter()
+                    .for_each(|(d, w)| p.add(d, v, w)),
+                0x83 => [(0x18, 4), (0x85, 4)]
+                    .into_iter()
+                    .for_each(|(d, w)| p.add(d, v, w)),
+                0x84 => [(0x8f, 2), (0x1a, 2)]
+                    .into_iter()
+                    .for_each(|(d, w)| p.add(d, v, w)),
                 0xac => p.add(0x34, v, 2),
                 0xad => p.add(0x35, v, 2),
                 _ => p.add(i, v, 5),
@@ -540,45 +632,104 @@ fn evolith(slots: &[(u16, u8, u8, u8, u8)], t: &AugTables) -> Record {
         match t.evolith.get(aug as usize).filter(|_| aug != 0) {
             Some(e) => {
                 pairs.push((u16::from_le_bytes([e[0], e[1]]), 0));
-                pairs.push((u16::from_le_bytes([e[2], e[3]]), e[4 + rank as usize % 16] as i8 as i32));
+                pairs.push((
+                    u16::from_le_bytes([e[2], e[3]]),
+                    e[4 + rank as usize % 16] as i8 as i32,
+                ));
             }
             None => pairs.extend([(0x3ff, 0), (0x3fe, 0)]),
         }
-        shown.push(Slot { shape, level, element });
+        shown.push(Slot {
+            shape,
+            level,
+            element,
+        });
     }
-    Record { pairs, kind: Kind::Evolith(shown) }
+    Record {
+        pairs,
+        kind: Kind::Evolith(shown),
+    }
 }
 
 /// FUN_100ff140: the form by item id and the extdata flags.
 pub fn decode(ext: &[u8; 24], item: u16, ctx: &AugCtx) -> Record {
     let t = ctx.tables;
-    let plain = |pairs| Record { pairs, kind: Kind::Plain };
+    let plain = |pairs| Record {
+        pairs,
+        kind: Kind::Plain,
+    };
     if item < 0x2800 {
         let d = u32_at(ext, 0);
         let lvl = (d >> 17 & 0xf) as u8;
-        return evolith(&[((d & 0x3ff) as u16, lvl, (d >> 10 & 0xf) as u8, (d >> 14 & 7) as u8, lvl)], t);
+        return evolith(
+            &[(
+                (d & 0x3ff) as u16,
+                lvl,
+                (d >> 10 & 0xf) as u8,
+                (d >> 14 & 7) as u8,
+                lvl,
+            )],
+            t,
+        );
     }
     match (ext[0], ext[1]) {
         (2, f) if f & 0x80 != 0 => {
             let w: [u16; 3] = std::array::from_fn(|k| u16_at(ext, 2 + 2 * k));
             let w10 = u16_at(ext, 10);
             let slots = [
-                (w[0] & 0x7ff, (w[0] >> 11 & 0xf) as u8, ext[8] & 0xf, ext[11] & 7, ext[9] >> 4),
-                (w[1] & 0x7ff, (w[1] >> 11 & 0xf) as u8, ext[8] >> 4, (w10 >> 11 & 7) as u8, ext[10] & 0xf),
-                (w[2] & 0x7ff, (w[2] >> 11 & 0xf) as u8, ext[9] & 0xf, ((w10 >> 14) + (w[2] >> 15) * 4) as u8, ext[10] >> 4),
+                (
+                    w[0] & 0x7ff,
+                    (w[0] >> 11 & 0xf) as u8,
+                    ext[8] & 0xf,
+                    ext[11] & 7,
+                    ext[9] >> 4,
+                ),
+                (
+                    w[1] & 0x7ff,
+                    (w[1] >> 11 & 0xf) as u8,
+                    ext[8] >> 4,
+                    (w10 >> 11 & 7) as u8,
+                    ext[10] & 0xf,
+                ),
+                (
+                    w[2] & 0x7ff,
+                    (w[2] >> 11 & 0xf) as u8,
+                    ext[9] & 0xf,
+                    ((w10 >> 14) + (w[2] >> 15) * 4) as u8,
+                    ext[10] >> 4,
+                ),
             ];
             evolith(&slots, t)
         }
-        (2, f) if f & 0x10 != 0 => Record { pairs: Vec::new(), kind: Kind::Serial { server: ext[4].max(1), no: u16_at(ext, 6) } },
+        (2, f) if f & 0x10 != 0 => Record {
+            pairs: Vec::new(),
+            kind: Kind::Serial {
+                server: ext[4].max(1),
+                no: u16_at(ext, 6),
+            },
+        },
         (2, f) if f & 0x20 != 0 => mezzotint(ext, t),
         (2, f) if f & 0x08 != 0 => escutcheon(ext),
         (2, f) => {
             let trial = if f & 0x40 != 0 { u16_at(ext, 10) } else { 0 };
-            let mut r = Work { item, trial, w: [0; 0x40], b: [0; 0x100], list: Vec::new(), pre: Vec::new(), x1c4: (0, 0), pet: 0, pets: Vec::new(), slot: 0 };
+            let mut r = Work {
+                item,
+                trial,
+                w: [0; 0x40],
+                b: [0; 0x100],
+                list: Vec::new(),
+                pre: Vec::new(),
+                x1c4: (0, 0),
+                pet: 0,
+                pets: Vec::new(),
+                slot: 0,
+            };
             classic(&mut r, ext, t);
             plain(emit(&r))
         }
-        (3, f) if f & 0x80 != 0 => ctx.mnc2.map_or_else(|| plain(Vec::new()), |m| bundle(ext, m)),
+        (3, f) if f & 0x80 != 0 => ctx
+            .mnc2
+            .map_or_else(|| plain(Vec::new()), |m| bundle(ext, m)),
         _ => plain(Vec::new()),
     }
 }
@@ -587,7 +738,11 @@ pub fn decode(ext: &[u8; 24], item: u16, ctx: &AugCtx) -> Record {
 /// prefixes, the odd-index +256 twins, negation).
 fn mezzotint(ext: &[u8; 24], t: &AugTables) -> Record {
     let (ty, rank) = (ext[2] & 3, ext[2] >> 2 & 0x1f);
-    let rp = if ext[2] & 0x7c == 0x3c { 0 } else { (t.mezz_rp.get(rank as usize).copied().unwrap_or(0) as i32 - u16_at(ext, 4) as i32).max(0) };
+    let rp = if ext[2] & 0x7c == 0x3c {
+        0
+    } else {
+        (t.mezz_rp.get(rank as usize).copied().unwrap_or(0) as i32 - u16_at(ext, 4) as i32).max(0)
+    };
     let mut pairs = Vec::new();
     let mut groups = [0; 3];
     for (s, g) in groups.iter_mut().enumerate() {
@@ -603,25 +758,47 @@ fn mezzotint(ext: &[u8; 24], t: &AugTables) -> Record {
             2 => pairs.push((0x80, 0)),
             _ => {}
         }
-        let mut v = val + 1 + if (2..=0x5f).contains(&idx) && idx & 1 == 1 { 0x100 } else { 0 };
+        let mut v = val
+            + 1
+            + if (2..=0x5f).contains(&idx) && idx & 1 == 1 {
+                0x100
+            } else {
+                0
+            };
         if e & 0x1000 != 0 {
             v = -v;
         }
         if mask {
-            (0..7).filter(|b| x >> b & 1 != 0).for_each(|b| pairs.push((0xb + b, v)));
+            (0..7)
+                .filter(|b| x >> b & 1 != 0)
+                .for_each(|b| pairs.push((0xb + b, v)));
         } else {
             pairs.push((x, v));
         }
         *g = pairs.len();
     }
-    Record { pairs, kind: Kind::Mezz { t: ty, rank, rp, groups } }
+    Record {
+        pairs,
+        kind: Kind::Mezz {
+            t: ty,
+            rank,
+            rp,
+            groups,
+        },
+    }
 }
 
 /// FUN_10101aa0 / FUN_10101a00: the success-rate penalty by stage and the craftsmanship objective.
 fn escutcheon(ext: &[u8; 24]) -> Record {
-    let mut p = Packer { out: Vec::new(), budget: 5 };
+    let mut p = Packer {
+        out: Vec::new(),
+        budget: 5,
+    };
     if ext[4] == 0 || ext[8] & 0xf == 0 {
-        return Record { pairs: Vec::new(), kind: Kind::Plain };
+        return Record {
+            pairs: Vec::new(),
+            kind: Kind::Plain,
+        };
     }
     let (stage, craft) = (ext[8] & 0xf, u16_at(ext, 6));
     let pen = match stage {
@@ -643,7 +820,10 @@ fn escutcheon(ext: &[u8; 24]) -> Record {
         p.brk();
         p.add(0x79d + ext[5] as u16, 1, 1);
     }
-    Record { pairs: p.out, kind: Kind::Craft { stage, craft } }
+    Record {
+        pairs: p.out,
+        kind: Kind::Craft { stage, craft },
+    }
 }
 
 /// FUN_10101360 / FUN_10101470: the bundle's type, rank, max rank and RP to the next rank, then up to four records.
@@ -651,15 +831,28 @@ fn bundle(ext: &[u8; 24], m: &[u8]) -> Record {
     let d4 = u32_at(ext, 4);
     let (ty, rank) = ((d4 & 3) as u8, (d4 >> 18 & 0x1f) as u8);
     let max = ((((d4 >> 23 & 3) + 3) * 5).min(30)) as u8;
-    let curve = |r: u8| m.get(((d4 >> 26 & 3) as usize * 32 + r as usize) * 2..).map_or(0, |b| u16_at(b, 0) as i32);
-    let rp = if rank == max { 0 } else { curve(rank) - (d4 >> 2 & 0xffff) as i32 };
+    let curve = |r: u8| {
+        m.get(((d4 >> 26 & 3) as usize * 32 + r as usize) * 2..)
+            .map_or(0, |b| u16_at(b, 0) as i32)
+    };
+    let rp = if rank == max {
+        0
+    } else {
+        curve(rank) - (d4 >> 2 & 0xffff) as i32
+    };
     let n = i16::from_le_bytes([ext[8], ext[9]]) as i32;
-    let flags = if n >= 0 { m.get(0x88 + n as usize * 12..).map_or(0, |b| u32_at(b, 0)) } else { 0 };
+    let flags = if n >= 0 {
+        m.get(0x88 + n as usize * 12..).map_or(0, |b| u32_at(b, 0))
+    } else {
+        0
+    };
     let mut pairs = Vec::new();
     let mut groups = [0; 4];
     if n > 0 {
         for (s, g) in groups.iter_mut().enumerate() {
-            let ri = m.get(0x80 + (s + n as usize * 6) * 2..).map_or(0, |b| u16_at(b, 0)) as usize;
+            let ri = m
+                .get(0x80 + (s + n as usize * 6) * 2..)
+                .map_or(0, |b| u16_at(b, 0)) as usize;
             if ri == 0 {
                 break;
             }
@@ -669,7 +862,17 @@ fn bundle(ext: &[u8; 24], m: &[u8]) -> Record {
             *g = pairs.len();
         }
     }
-    Record { pairs, kind: Kind::Bundle { t: ty, rank, max, rp, flags, groups } }
+    Record {
+        pairs,
+        kind: Kind::Bundle {
+            t: ty,
+            rank,
+            max,
+            rp,
+            flags,
+            groups,
+        },
+    }
 }
 
 /// FUN_10101950: one bundle record at a rank (masks, attribute lists, prefixes, weapon-skill DMG).
@@ -710,7 +913,9 @@ fn bundle_rec(out: &mut Vec<(u16, i32)>, rec: &[u8], rank: u8, typ: Option<i16>)
         0x161 => out.push((0x161, v * 10)),
         0x81c => out.extend([(p as u16, 1), (0x2f, v)]),
         x @ 0x810..=0x81b => {
-            const PREF: [u16; 12] = [0x80, 0x7fc, 0x87, 0x7fd, 0x7fb, 0x7fa, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80];
+            const PREF: [u16; 12] = [
+                0x80, 0x7fc, 0x87, 0x7fd, 0x7fb, 0x7fa, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+            ];
             out.push((PREF[(x - 0x810) as usize], 1));
             bundle_rec(out, rec, rank, Some(p));
         }
@@ -750,14 +955,27 @@ fn cfmt(f: &[u8], v: i32) -> Vec<u8> {
         while f.get(j).is_some_and(u8::is_ascii_digit) {
             j += 1;
         }
-        let width: usize = std::str::from_utf8(&f[ws..j]).ok().and_then(|s| s.parse().ok()).unwrap_or(0);
+        let width: usize = std::str::from_utf8(&f[ws..j])
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
         let conv = f.get(j).copied().unwrap_or(b'd');
         if matches!(conv, b'd' | b'i') {
             let body = v.unsigned_abs().to_string();
-            let sign = if v < 0 { "-" } else if flags.contains(&b'+') { "+" } else { "" };
+            let sign = if v < 0 {
+                "-"
+            } else if flags.contains(&b'+') {
+                "+"
+            } else {
+                ""
+            };
             let mut t = format!("{sign}{body}");
             if t.len() < width {
-                t = if flags.contains(&b'0') { format!("{sign}{}{body}", "0".repeat(width - t.len())) } else { format!("{t:>width$}") };
+                t = if flags.contains(&b'0') {
+                    format!("{sign}{}{body}", "0".repeat(width - t.len()))
+                } else {
+                    format!("{t:>width$}")
+                };
             }
             out.extend_from_slice(t.as_bytes());
         }
@@ -768,7 +986,9 @@ fn cfmt(f: &[u8], v: i32) -> Vec<u8> {
 
 /// FUN_1013b9c0: "{FIR}".."{DKN}" become the element glyphs EF 1F..EF 26.
 fn tags(b: &[u8]) -> Vec<u8> {
-    const T: [&[u8]; 8] = [b"{FIR}", b"{ICE}", b"{WND}", b"{ERT}", b"{LTG}", b"{WTR}", b"{LIT}", b"{DKN}"];
+    const T: [&[u8]; 8] = [
+        b"{FIR}", b"{ICE}", b"{WND}", b"{ERT}", b"{LTG}", b"{WTR}", b"{LIT}", b"{DKN}",
+    ];
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
     while i < b.len() {
@@ -802,7 +1022,10 @@ const SHAPES: [[u8; 2]; 14] = [
 ];
 
 fn shape(k: u8) -> Vec<u8> {
-    SHAPES.get(k as usize).filter(|s| s[0] != 0).map_or(Vec::new(), |s| s.to_vec())
+    SHAPES
+        .get(k as usize)
+        .filter(|s| s[0] != 0)
+        .map_or(Vec::new(), |s| s.to_vec())
 }
 
 /// FUN_1013b280 mode 0 (2 for a stone): the block, groups prefixed "[n]" for bundles, mezzotints and evolith slots;
@@ -811,7 +1034,14 @@ pub fn block(r: &Record, stone: bool, ctx: &AugCtx) -> Vec<u8> {
     let mut buf = Vec::new();
     let mut room = 0xbf_i32;
     let mut put = |buf: &mut Vec<u8>, room: &mut i32, (i, v): (u16, i32)| {
-        let t = if i == 0 { b"\n".to_vec() } else { ctx.text.raw(i as usize).map(|f| cfmt(&f, v)).unwrap_or_default() };
+        let t = if i == 0 {
+            b"\n".to_vec()
+        } else {
+            ctx.text
+                .raw(i as usize)
+                .map(|f| cfmt(&f, v))
+                .unwrap_or_default()
+        };
         if (t.len() as i32) < *room {
             buf.extend_from_slice(&t);
         }
@@ -823,7 +1053,11 @@ pub fn block(r: &Record, stone: bool, ctx: &AugCtx) -> Vec<u8> {
         }
         return tags(&buf);
     }
-    let groups = |buf: &mut Vec<u8>, room: &mut i32, counts: &[usize], head: Option<u16>, put: &mut dyn FnMut(&mut Vec<u8>, &mut i32, (u16, i32))| {
+    let groups = |buf: &mut Vec<u8>,
+                  room: &mut i32,
+                  counts: &[usize],
+                  head: Option<u16>,
+                  put: &mut dyn FnMut(&mut Vec<u8>, &mut i32, (u16, i32))| {
         if let Some(h) = head {
             put(buf, room, (h, 0));
             buf.push(b'\n');
@@ -847,8 +1081,18 @@ pub fn block(r: &Record, stone: bool, ctx: &AugCtx) -> Vec<u8> {
         }
     };
     match &r.kind {
-        Kind::Bundle { flags, groups: g, .. } if g.iter().any(|&c| c != 0) => groups(&mut buf, &mut room, g, (flags & 1 != 0).then_some(0x520), &mut put),
-        Kind::Mezz { groups: g, .. } if g.iter().any(|&c| c != 0) => groups(&mut buf, &mut room, g, None, &mut put),
+        Kind::Bundle {
+            flags, groups: g, ..
+        } if g.iter().any(|&c| c != 0) => groups(
+            &mut buf,
+            &mut room,
+            g,
+            (flags & 1 != 0).then_some(0x520),
+            &mut put,
+        ),
+        Kind::Mezz { groups: g, .. } if g.iter().any(|&c| c != 0) => {
+            groups(&mut buf, &mut room, g, None, &mut put)
+        }
         Kind::Evolith(slots) if !slots.is_empty() => {
             for k in 0..slots.len() {
                 let lab = format!("[{}]", k + 1);
@@ -885,7 +1129,10 @@ fn fill(f: &[u8], args: &[Arg]) -> Vec<u8> {
                 (2, None)
             } else if rest.starts_with(b"02d") {
                 (4, Some(true))
-            } else if rest.first().is_some_and(|c| matches!(c, b'd' | b'c' | b's')) {
+            } else if rest
+                .first()
+                .is_some_and(|c| matches!(c, b'd' | b'c' | b's'))
+            {
                 (2, Some(false))
             } else {
                 out.push(b'%');
@@ -918,21 +1165,69 @@ enum Arg {
 
 /// FUN_1013b280 mode 1 (3 for a stone): the short line and its colour (0x80407090 at the top rank).
 pub fn short(r: &Record, stone: bool, ctx: &AugCtx) -> Option<(Vec<u8>, Option<u32>)> {
-    let f88 = |k: usize, fallback: &str| ctx.fmt88.and_then(|m| m.raw(k)).unwrap_or_else(|| fallback.as_bytes().to_vec());
+    let f88 = |k: usize, fallback: &str| {
+        ctx.fmt88
+            .and_then(|m| m.raw(k))
+            .unwrap_or_else(|| fallback.as_bytes().to_vec())
+    };
     let elem = |e: u8| vec![0xef, 0x1f + (e & 7)];
     match &r.kind {
-        Kind::Evolith(slots) if stone => slots.first().map(|s| ([elem(s.element), shape(s.shape), (s.level as i32 + 1).to_string().into_bytes()].concat(), None)),
+        Kind::Evolith(slots) if stone => slots.first().map(|s| {
+            (
+                [
+                    elem(s.element),
+                    shape(s.shape),
+                    (s.level as i32 + 1).to_string().into_bytes(),
+                ]
+                .concat(),
+                None,
+            )
+        }),
         Kind::Evolith(slots) if !slots.is_empty() => {
-            let mut s: Vec<u8> = slots.iter().enumerate().flat_map(|(k, s)| [format!("[{}]", k + 1).into_bytes(), elem(s.element), shape(s.shape), format!("{} ", s.level as i32 + 1).into_bytes()].concat()).collect();
+            let mut s: Vec<u8> = slots
+                .iter()
+                .enumerate()
+                .flat_map(|(k, s)| {
+                    [
+                        format!("[{}]", k + 1).into_bytes(),
+                        elem(s.element),
+                        shape(s.shape),
+                        format!("{} ", s.level as i32 + 1).into_bytes(),
+                    ]
+                    .concat()
+                })
+                .collect();
             s.pop();
             Some((s, None))
         }
         Kind::Serial { server, no } => {
-            let name = ctx.servers.and_then(|m| m.raw(*server as usize)).unwrap_or_default();
+            let name = ctx
+                .servers
+                .and_then(|m| m.raw(*server as usize))
+                .unwrap_or_default();
             Some(([name, format!(" No. {no:05}").into_bytes()].concat(), None))
         }
-        Kind::Mezz { t, rank, rp, .. } => Some((fill(&f88(0x3f, "%c/%d/%d"), &[Arg::C(b'A' + t), Arg::N(*rank as i32), Arg::N(*rp)]), (*rank >= 15).then_some(0x8040_7090))),
-        Kind::Bundle { t, rank, max, rp, .. } => Some((fill(&f88(0x3b, "%c/%d(%d)/%d"), &[Arg::C(b'A' + t), Arg::N(*rank as i32), Arg::N(*max as i32), Arg::N(*rp)]), (max <= rank).then_some(0x8040_7090))),
+        Kind::Mezz { t, rank, rp, .. } => Some((
+            fill(
+                &f88(0x3f, "%c/%d/%d"),
+                &[Arg::C(b'A' + t), Arg::N(*rank as i32), Arg::N(*rp)],
+            ),
+            (*rank >= 15).then_some(0x8040_7090),
+        )),
+        Kind::Bundle {
+            t, rank, max, rp, ..
+        } => Some((
+            fill(
+                &f88(0x3b, "%c/%d(%d)/%d"),
+                &[
+                    Arg::C(b'A' + t),
+                    Arg::N(*rank as i32),
+                    Arg::N(*max as i32),
+                    Arg::N(*rp),
+                ],
+            ),
+            (max <= rank).then_some(0x8040_7090),
+        )),
         Kind::Craft { stage, craft } => {
             let cap = match stage {
                 1 => 3000,
@@ -942,7 +1237,10 @@ pub fn short(r: &Record, stone: bool, ctx: &AugCtx) -> Option<(Vec<u8>, Option<u
                 _ => 9999,
             };
             let q = (*craft as i32 * 10000 / cap).min(10000);
-            Some((fill(&f88(0x3d, "%d.%d"), &[Arg::N(q / 100), Arg::N(q % 100)]), None))
+            Some((
+                fill(&f88(0x3d, "%d.%d"), &[Arg::N(q / 100), Arg::N(q % 100)]),
+                None,
+            ))
         }
         _ => None,
     }
@@ -970,7 +1268,11 @@ pub fn wrap(s: &str, max: f32, width: &dyn Fn(&str) -> f32) -> Vec<String> {
             let rest = line.split_off(cut);
             out.push(std::mem::take(&mut line));
             line = rest;
-            last_break = line.char_indices().filter(|(_, ch)| matches!(ch, ' ' | '\t' | ',' | '/')).last().map(|(i, ch)| i + ch.len_utf8());
+            last_break = line
+                .char_indices()
+                .filter(|(_, ch)| matches!(ch, ' ' | '\t' | ',' | '/'))
+                .last()
+                .map(|(i, ch)| i + ch.len_utf8());
         } else if matches!(c, ' ' | '\t' | ',' | '/') {
             last_break = Some(line.len());
         }
@@ -1024,7 +1326,13 @@ mod tests {
     }
 
     fn text(env: &Env, ext: &[u8; 24], item: u16) -> (String, Option<String>) {
-        let ctx = AugCtx { tables: &env.tables, mnc2: env.mnc2.as_deref(), text: &env.text, fmt88: env.fmt88.as_ref(), servers: env.servers.as_ref() };
+        let ctx = AugCtx {
+            tables: &env.tables,
+            mnc2: env.mnc2.as_deref(),
+            text: &env.text,
+            fmt88: env.fmt88.as_ref(),
+            servers: env.servers.as_ref(),
+        };
         let r = decode(ext, item, &ctx);
         let b = crate::dat::font::decode_sjis(&block(&r, false, &ctx));
         let s = short(&r, false, &ctx).map(|s| crate::dat::font::decode_sjis(&s.0));
@@ -1034,15 +1342,54 @@ mod tests {
     #[test]
     fn classic_vectors() {
         let Some(e) = env() else { return };
-        assert_eq!(text(&e, &std_ext(&[w(1, 10), w(9, 5), w(23, 3), w(25, 3)], 3, None), 0x3000).0, "HP+10 MP+5 Accuracy+3 Attack+3 ");
-        assert_eq!(text(&e, &std_ext(&[w(23, 5), w(25, 5), w(27, 5), w(29, 5), w(31, 5)], 3, None), 0x3000).0, "Accuracy+5 Attack+5 Rng. Acc.+5 \nRng. Atk.+5 Evasion+5 ");
-        assert_eq!(text(&e, &std_ext(&[w(44, 3), w(45, 4), w(48, 3)], 3, None), 0x4000).0, "DMG:+4 Delay:-3% \n\"Store TP\"+3 \n\"Subtle Blow\"+3 ");
-        assert_eq!(text(&e, &std_ext(&[w(0x400, 2), w(0x480, 2)], 3, None), 0x4000).0, "DEF+20 \nBackhand Blow: DMG:+10% ");
-        assert_eq!(text(&e, &std_ext(&[w(1792, 4), w(99, 3)], 3, None), 0x3000).0, "Pet: STR+4 \nDEF+3 ");
-        assert_eq!(text(&e, &std_ext(&[w(1, 5)], 0x43, Some(1234)), 0x3000).0, "HP+5 \n[Trial 1234]");
-        assert_eq!(text(&e, &std_ext(&[w(1, 5)], 0x43, Some(0x8000 | 77)), 0x3000).0, "HP+5 ");
+        assert_eq!(
+            text(
+                &e,
+                &std_ext(&[w(1, 10), w(9, 5), w(23, 3), w(25, 3)], 3, None),
+                0x3000
+            )
+            .0,
+            "HP+10 MP+5 Accuracy+3 Attack+3 "
+        );
+        assert_eq!(
+            text(
+                &e,
+                &std_ext(&[w(23, 5), w(25, 5), w(27, 5), w(29, 5), w(31, 5)], 3, None),
+                0x3000
+            )
+            .0,
+            "Accuracy+5 Attack+5 Rng. Acc.+5 \nRng. Atk.+5 Evasion+5 "
+        );
+        assert_eq!(
+            text(
+                &e,
+                &std_ext(&[w(44, 3), w(45, 4), w(48, 3)], 3, None),
+                0x4000
+            )
+            .0,
+            "DMG:+4 Delay:-3% \n\"Store TP\"+3 \n\"Subtle Blow\"+3 "
+        );
+        assert_eq!(
+            text(&e, &std_ext(&[w(0x400, 2), w(0x480, 2)], 3, None), 0x4000).0,
+            "DEF+20 \nBackhand Blow: DMG:+10% "
+        );
+        assert_eq!(
+            text(&e, &std_ext(&[w(1792, 4), w(99, 3)], 3, None), 0x3000).0,
+            "Pet: STR+4 \nDEF+3 "
+        );
+        assert_eq!(
+            text(&e, &std_ext(&[w(1, 5)], 0x43, Some(1234)), 0x3000).0,
+            "HP+5 \n[Trial 1234]"
+        );
+        assert_eq!(
+            text(&e, &std_ext(&[w(1, 5)], 0x43, Some(0x8000 | 77)), 0x3000).0,
+            "HP+5 "
+        );
         assert_eq!(text(&e, &std_ext(&[0x07ff], 3, None), 0x3000).0, "???");
-        assert_eq!(text(&e, &std_ext(&[w(18, 1), w(4, 1)], 3, None), 0x3000).0, "HP+130 MP+33 ");
+        assert_eq!(
+            text(&e, &std_ext(&[w(18, 1), w(4, 1)], 3, None), 0x3000).0,
+            "HP+130 MP+33 "
+        );
     }
 
     #[test]
@@ -1052,27 +1399,55 @@ mod tests {
         (m[0], m[1], m[2]) = (2, 0x23, (5 << 2) | 1);
         m[4..6].copy_from_slice(&100u16.to_le_bytes());
         m[6..12].copy_from_slice(&[0x0c, 9, 0x1c, 4, 0xbf, 2]);
-        assert_eq!(text(&e, &m, 0x3000), ("[1]Accuracy+10 \n[2]DMG:+5 \n[3]STR+3 \n".into(), Some("Type:B/Rank:5/RP:120".into())));
+        assert_eq!(
+            text(&e, &m, 0x3000),
+            (
+                "[1]Accuracy+10 \n[2]DMG:+5 \n[3]STR+3 \n".into(),
+                Some("Type:B/Rank:5/RP:120".into())
+            )
+        );
         let mut s = [0u8; 24];
         (s[0], s[1], s[4]) = (2, 0x13, 0x64);
         s[6..8].copy_from_slice(&42u16.to_le_bytes());
-        assert_eq!(text(&e, &s, 0x4000), (String::new(), Some("Bahamut No. 00042".into())));
+        assert_eq!(
+            text(&e, &s, 0x4000),
+            (String::new(), Some("Bahamut No. 00042".into()))
+        );
         let mut c = [0u8; 24];
         (c[0], c[1], c[4], c[5]) = (2, 0x0b, 3, 0x0a);
         c[6..8].copy_from_slice(&1500u16.to_le_bytes());
         c[8] = 1;
-        assert_eq!(text(&e, &c, 0x3000), ("Synthesis success rate -15\nFor craftsmanship upgrade:\nCraft w/fire crystals".into(), Some("Craftsmanship: 50.00%".into())));
+        assert_eq!(
+            text(&e, &c, 0x3000),
+            (
+                "Synthesis success rate -15\nFor craftsmanship upgrade:\nCraft w/fire crystals"
+                    .into(),
+                Some("Craftsmanship: 50.00%".into())
+            )
+        );
         let mut b = [0u8; 24];
         (b[0], b[1]) = (3, 0x80);
         b[4..8].copy_from_slice(&(1u32 | (500 << 2) | (10 << 18)).to_le_bytes());
         b[8] = 7;
-        assert_eq!(text(&e, &b, 0x4000), ("[1]Chance of double damage +20% \n[2]\"Store TP\"+10 \n[3]DMG:+4 \n".into(), Some("Type:B/Rank:10[15]/NextRP:60".into())));
+        assert_eq!(
+            text(&e, &b, 0x4000),
+            (
+                "[1]Chance of double damage +20% \n[2]\"Store TP\"+10 \n[3]DMG:+4 \n".into(),
+                Some("Type:B/Rank:10[15]/NextRP:60".into())
+            )
+        );
     }
 
     #[test]
     fn wraps_like_retail() {
         let width = |s: &str| s.chars().count() as f32;
-        assert_eq!(wrap("WAR/MNK/WHM", 6.0, &width), vec!["WAR/".to_string(), "MNK/".into(), "WHM".into()]);
-        assert_eq!(wrap("ab\ncd", 9.0, &width), vec!["ab\n".to_string(), "cd".into()]);
+        assert_eq!(
+            wrap("WAR/MNK/WHM", 6.0, &width),
+            vec!["WAR/".to_string(), "MNK/".into(), "WHM".into()]
+        );
+        assert_eq!(
+            wrap("ab\ncd", 9.0, &width),
+            vec!["ab\n".to_string(), "cd".into()]
+        );
     }
 }

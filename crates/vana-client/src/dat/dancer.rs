@@ -10,7 +10,9 @@ const BAD: u32 = 0xEFBE_DDBA; // file bytes "baddbeef": slot filled in at load
 const SKEL_MARK: u32 = 0xEDFE_EDFE;
 
 fn u32_at(d: &[u8], o: usize) -> Result<u32> {
-    d.get(o..o + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap())).with_context(|| format!("read past end at {o:#x}"))
+    d.get(o..o + 4)
+        .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+        .with_context(|| format!("read past end at {o:#x}"))
 }
 fn i32_at(d: &[u8], o: usize) -> Result<i32> {
     Ok(u32_at(d, o)? as i32)
@@ -20,7 +22,10 @@ fn f32_at(d: &[u8], o: usize) -> Result<f32> {
 }
 fn floats(d: &[u8], o: usize, n: usize) -> Result<Vec<f32>> {
     ensure!(o + n * 4 <= d.len(), "float array past end at {o:#x}");
-    Ok(d[o..o + n * 4].chunks_exact(4).map(|c| f32::from_le_bytes(c.try_into().unwrap())).collect())
+    Ok(d[o..o + n * 4]
+        .chunks_exact(4)
+        .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+        .collect())
 }
 fn al16(x: usize) -> usize {
     (x + 15) & !15
@@ -92,7 +97,8 @@ pub fn load_model(dmb: &[u8], dmp: &[u8], tex_prefix: &str) -> Result<Model> {
     let b = 0x10;
     let n = |o: usize| -> Result<usize> { Ok(i32_at(dmb, b + o)?.max(0) as usize) };
     let (ntex, nshd, nshd2, nupd, nupd2) = (n(0x24)?, n(0x34)?, n(0x38)?, n(0x44)?, n(0x48)?);
-    let (nshp, nshp2, naux, naux2, ntag, ntag2) = (n(0x58)?, n(0x5c)?, n(0x68)?, n(0x6c)?, n(0x7c)?, n(0x80)?);
+    let (nshp, nshp2, naux, naux2, ntag, ntag2) =
+        (n(0x58)?, n(0x5c)?, n(0x68)?, n(0x6c)?, n(0x7c)?, n(0x80)?);
     let (nfile, nfile2, nscene, ntex2) = (n(0x90)?, n(0x94)?, n(0xa4)?, n(0x28)?);
     // Pointer arrays follow the 0xAC-byte model header, each sized by max(count, capacity).
     let mut p = al16(b + 0xac);
@@ -148,7 +154,11 @@ pub fn load_model(dmb: &[u8], dmp: &[u8], tex_prefix: &str) -> Result<Model> {
     if sc > 0 {
         arr(sc);
     }
-    let matrices_at = if sh > 0 { al16(b + 0xac) + 4 * (2 * t + 2 * s + 2 * u) + 4 * sh } else { 0 };
+    let matrices_at = if sh > 0 {
+        al16(b + 0xac) + 4 * (2 * t + 2 * s + 2 * u) + 4 * sh
+    } else {
+        0
+    };
 
     // Textures (FUN_1027dfc0): 0x24-byte head, optional 0x3C image head, inline data and CLUT.
     p = al16(p);
@@ -158,20 +168,36 @@ pub fn load_model(dmb: &[u8], dmp: &[u8], tex_prefix: &str) -> Result<Model> {
         p = t0 + 0x24;
         let mut tex = None;
         if i32_at(dmb, t0 + 0x1c)? != -1 {
-            let (w, h, bpp, dm) = (u32_at(dmb, t0 + 0x40)?, u32_at(dmb, t0 + 0x44)?, u32_at(dmb, t0 + 0x48)?, u32_at(dmb, t0 + 0x4c)?);
+            let (w, h, bpp, dm) = (
+                u32_at(dmb, t0 + 0x40)?,
+                u32_at(dmb, t0 + 0x44)?,
+                u32_at(dmb, t0 + 0x48)?,
+                u32_at(dmb, t0 + 0x4c)?,
+            );
             p = t0 + 0x60;
             let mut data = None;
             if dm == BAD {
                 p = al16(p);
                 let sz = (w * h * bpp) as usize;
-                data = Some(dmb.get(p..p + sz).context("texture data past end")?.to_vec());
+                data = Some(
+                    dmb.get(p..p + sz)
+                        .context("texture data past end")?
+                        .to_vec(),
+                );
                 p += sz;
             }
-            let (esz, cnt, cm) = (u32_at(dmb, t0 + 0x54)? as usize, u32_at(dmb, t0 + 0x58)? as usize, i32_at(dmb, t0 + 0x5c)?);
+            let (esz, cnt, cm) = (
+                u32_at(dmb, t0 + 0x54)? as usize,
+                u32_at(dmb, t0 + 0x58)? as usize,
+                i32_at(dmb, t0 + 0x5c)?,
+            );
             let mut clut = None;
             if cm != -1 {
                 p = al16(p);
-                clut = Some((esz, dmb.get(p..p + esz * cnt).context("clut past end")?.to_vec()));
+                clut = Some((
+                    esz,
+                    dmb.get(p..p + esz * cnt).context("clut past end")?.to_vec(),
+                ));
                 p += esz * cnt;
             }
             tex = data.map(|d| (w, h, bpp, d, clut));
@@ -189,7 +215,9 @@ pub fn load_model(dmb: &[u8], dmp: &[u8], tex_prefix: &str) -> Result<Model> {
             0xF0005 => 0x1b,
             k => bail!("unsupported shader kind {k:#x}"),
         };
-        let words = (0..size).map(|i| u32_at(dmb, p + 4 * i)).collect::<Result<Vec<_>>>()?;
+        let words = (0..size)
+            .map(|i| u32_at(dmb, p + 4 * i))
+            .collect::<Result<Vec<_>>>()?;
         shaders.push(Shader { kind, words });
         p += size * 4;
     }
@@ -205,7 +233,11 @@ pub fn load_model(dmb: &[u8], dmp: &[u8], tex_prefix: &str) -> Result<Model> {
     let mut strs = |cnt: usize| -> Result<Vec<String>> {
         let mut out = Vec::new();
         for _ in 0..cnt {
-            let e = dmb[p..].iter().position(|&c| c == 0).context("unterminated string")? + p;
+            let e = dmb[p..]
+                .iter()
+                .position(|&c| c == 0)
+                .context("unterminated string")?
+                + p;
             out.push(String::from_utf8_lossy(&dmb[p..e]).into_owned());
             p = (e + 1 + 3) & !3;
         }
@@ -213,13 +245,24 @@ pub fn load_model(dmb: &[u8], dmp: &[u8], tex_prefix: &str) -> Result<Model> {
     };
     let tags = strs(ntag)?;
     let files = strs(nfile)?;
-    let tag_types: Vec<u32> = (0..ntag).map(|i| u32_at(dmb, tag_types_at + 4 * i)).collect::<Result<_>>()?;
-    let named = |ty: u32| -> Vec<String> { tags.iter().zip(&tag_types).filter(|(_, t)| **t == ty).map(|(n, _)| n.clone()).collect() };
+    let tag_types: Vec<u32> = (0..ntag)
+        .map(|i| u32_at(dmb, tag_types_at + 4 * i))
+        .collect::<Result<_>>()?;
+    let named = |ty: u32| -> Vec<String> {
+        tags.iter()
+            .zip(&tag_types)
+            .filter(|(_, t)| **t == ty)
+            .map(|(n, _)| n.clone())
+            .collect()
+    };
     let (tex_names, materials, shape_names) = (named(0), named(1), named(3));
 
     let mut textures = Vec::new();
     for (i, t) in raw_tex.into_iter().enumerate() {
-        let name = format!("{tex_prefix}{}", tex_names.get(i).cloned().unwrap_or_else(|| i.to_string()));
+        let name = format!(
+            "{tex_prefix}{}",
+            tex_names.get(i).cloned().unwrap_or_else(|| i.to_string())
+        );
         let Some((w, h, bpp, d, clut)) = t else {
             textures.push(Texture::new(name, 0, 1, 1, vec![255, 0, 255, 255]));
             continue;
@@ -265,7 +308,9 @@ pub fn load_model(dmb: &[u8], dmp: &[u8], tex_prefix: &str) -> Result<Model> {
             continue; // "_sort" updater built from a shape, no block
         }
         let size = u32_at(dmp, q + 4)? as usize;
-        let obj = dmp.get(q + 0x40..q + 0x40 + size).context("updater past end")?;
+        let obj = dmp
+            .get(q + 0x40..q + 0x40 + size)
+            .context("updater past end")?;
         if uf == SKEL_MARK {
             ensure!(bones.is_empty(), "two skeletons");
             bones = parse_skeleton(obj)?;
@@ -283,7 +328,14 @@ pub fn load_model(dmb: &[u8], dmp: &[u8], tex_prefix: &str) -> Result<Model> {
         shape.sorted = sorted[i];
         shapes.push(shape);
     }
-    Ok(Model { textures, shaders, materials, shapes, bones, files })
+    Ok(Model {
+        textures,
+        shaders,
+        materials,
+        shapes,
+        bones,
+        files,
+    })
 }
 
 fn sqle(obj: &[u8], kind: u32) -> Result<()> {
@@ -317,10 +369,25 @@ fn parse_tristrip(b: &[u8]) -> Result<Shape> {
     normal.resize(nv, Vec3::ZERO);
     uv.resize(nv, [0.0; 2]);
     let nc = u32_at(b, p)? as usize;
-    let codes: Vec<i32> = (0..nc).map(|i| i32_at(b, p + 4 + 4 * i)).collect::<Result<_>>()?;
+    let codes: Vec<i32> = (0..nc)
+        .map(|i| i32_at(b, p + 4 + 4 * i))
+        .collect::<Result<_>>()?;
     let (tris, list_runs) = strip_triangles(&codes)?;
-    ensure!(tris.iter().flatten().all(|&i| (i as usize) < nv), "strip index out of range");
-    Ok(Shape { name: String::new(), pos, normal, uv, tris, shader: 0, skin: Vec::new(), sorted: false, list_runs })
+    ensure!(
+        tris.iter().flatten().all(|&i| (i as usize) < nv),
+        "strip index out of range"
+    );
+    Ok(Shape {
+        name: String::new(),
+        pos,
+        normal,
+        uv,
+        tris,
+        shader: 0,
+        skin: Vec::new(),
+        sorted: false,
+        list_runs,
+    })
 }
 
 /// FUN_102a17b0: codes[0] = run count; run n > 0 is n/3 listed triangles, n <= 0 a strip of -n indices.
@@ -402,7 +469,9 @@ fn parse_skin(b: &[u8]) -> Result<Vec<(usize, Vec<u32>, Vec<f32>)>> {
     let mut out = Vec::new();
     for _ in 0..ncl {
         let (j, n) = (u32_at(b, p)? as usize, u32_at(b, p + 4)? as usize);
-        let ids = (0..n).map(|i| u32_at(b, p + 8 + 4 * i)).collect::<Result<_>>()?;
+        let ids = (0..n)
+            .map(|i| u32_at(b, p + 8 + 4 * i))
+            .collect::<Result<_>>()?;
         let w = floats(b, p + 8 + 4 * n, n)?;
         p += 8 + 8 * n;
         out.push((j, ids, w));
@@ -430,16 +499,29 @@ pub fn parse_channels(b: &[u8]) -> Result<Channels> {
             ensure!(ver == 4, "FrameChannel v{ver}");
             let (time, width) = (f32_at(b, p)?, u32_at(b, p + 4)? as usize);
             p += 8;
-            let types = (0..width).map(|i| i32_at(b, p + 4 * i)).collect::<Result<_>>()?;
+            let types = (0..width)
+                .map(|i| i32_at(b, p + 4 * i))
+                .collect::<Result<_>>()?;
             p += 4 * width;
             let frames = u32_at(b, p)? as usize;
             let data = floats(b, p + 4, width * frames)?;
-            Ok(Channels { time, frames, width, types, data })
+            Ok(Channels {
+                time,
+                frames,
+                width,
+                types,
+                data,
+            })
         }
         // PlaybackChannel v3 (FUN_1027ace0): time, n, frames, step, packed flag, per-channel delta streams, types.
         0x50003 => {
             ensure!(ver == 3, "PBChannel v{ver}");
-            let (time, width, frames, packed) = (f32_at(b, p)?, u32_at(b, p + 4)? as usize, u32_at(b, p + 8)? as usize, u32_at(b, p + 16)?);
+            let (time, width, frames, packed) = (
+                f32_at(b, p)?,
+                u32_at(b, p + 4)? as usize,
+                u32_at(b, p + 8)? as usize,
+                u32_at(b, p + 16)?,
+            );
             p += 20;
             let mut data = vec![0f32; width * frames];
             if packed == 0 {
@@ -447,7 +529,12 @@ pub fn parse_channels(b: &[u8]) -> Result<Channels> {
                 p += 4 * width * frames;
             } else {
                 for c in 0..width {
-                    let (len, bits, step, init) = (u32_at(b, p)? as usize, u32_at(b, p + 4)?, f32_at(b, p + 8)?, f32_at(b, p + 12)?);
+                    let (len, bits, step, init) = (
+                        u32_at(b, p)? as usize,
+                        u32_at(b, p + 4)?,
+                        f32_at(b, p + 8)?,
+                        f32_at(b, p + 12)?,
+                    );
                     let s = b.get(p + 16..p + 16 + len).context("PB stream past end")?;
                     p += 16 + len;
                     // FUN_102886a0: value(n) = init + sum of deltas 0..n-1 (FUN_10288db0 and siblings).
@@ -460,8 +547,16 @@ pub fn parse_channels(b: &[u8]) -> Result<Channels> {
                     }
                 }
             }
-            let types = (0..width).map(|i| i32_at(b, p + 4 * i)).collect::<Result<_>>()?;
-            Ok(Channels { time, frames, width, types, data })
+            let types = (0..width)
+                .map(|i| i32_at(b, p + 4 * i))
+                .collect::<Result<_>>()?;
+            Ok(Channels {
+                time,
+                frames,
+                width,
+                types,
+                data,
+            })
         }
         k => bail!("channel kind {k:#x} not supported"),
     }
@@ -473,7 +568,15 @@ fn delta(s: &[u8], bits: u32, i: usize) -> i32 {
     let sm = |v: i32, sign: i32, mag: i32| if v & sign != 0 { -(v & mag) } else { v & mag };
     match bits {
         2 => sm(at(i >> 2) >> (6 - 2 * (i & 3)) & 3, 2, 1),
-        4 => sm(if i & 1 == 1 { at(i >> 1) & 15 } else { at(i >> 1) >> 4 }, 8, 7),
+        4 => sm(
+            if i & 1 == 1 {
+                at(i >> 1) & 15
+            } else {
+                at(i >> 1) >> 4
+            },
+            8,
+            7,
+        ),
         8 => sm(at(i), 0x80, 0x7f),
         16 => {
             let (hi, lo) = (at(2 * i), at(2 * i + 1));
@@ -519,7 +622,11 @@ fn joint_world(bones: &[Bone], local: impl Fn(usize, &Bone) -> Mat4) -> Vec<Mat4
     let mut w: Vec<Mat4> = Vec::with_capacity(bones.len());
     for (i, b) in bones.iter().enumerate() {
         let l = local(i, b);
-        let m = if b.parent >= 0 && (b.parent as usize) < i { w[b.parent as usize] * l } else { l };
+        let m = if b.parent >= 0 && (b.parent as usize) < i {
+            w[b.parent as usize] * l
+        } else {
+            l
+        };
         w.push(m);
     }
     w
@@ -559,7 +666,11 @@ pub fn tangents(s: &Shape) -> (Vec<Vec3>, Vec<Vec3>) {
     for tri in &s.tris {
         let (a, bb, c) = (tri[0] as usize, tri[1] as usize, tri[2] as usize);
         let uv = |i: usize| glam::Vec2::from(s.uv[i]);
-        let (e_ab, e_bc, e_ca) = (s.pos[a] - s.pos[bb], s.pos[bb] - s.pos[c], s.pos[c] - s.pos[a]);
+        let (e_ab, e_bc, e_ca) = (
+            s.pos[a] - s.pos[bb],
+            s.pos[bb] - s.pos[c],
+            s.pos[c] - s.pos[a],
+        );
         let (t_ab, t_bc, t_ca) = (uv(a) - uv(bb), uv(bb) - uv(c), uv(c) - uv(a));
         let r = inv(t_ab.y * t_ca.x - t_ca.y * t_ab.x);
         t[a] += e_ab * -(t_ca.y * r) - e_ca * -(t_ab.y * r);
@@ -600,7 +711,11 @@ pub struct SkinPrep {
 
 /// The skinning matrices of a frame: current joint world x inverse bind, per joint.
 pub fn joint_mats(m: &Model, prep: &SkinPrep, frame: Option<&[f32]>) -> Vec<Mat4> {
-    pose(&m.bones, frame).iter().zip(&prep.bind_inv).map(|(c, b)| *c * *b).collect()
+    pose(&m.bones, frame)
+        .iter()
+        .zip(&prep.bind_inv)
+        .map(|(c, b)| *c * *b)
+        .collect()
 }
 
 /// One shape's skinned positions from `joint_mats` (as skin_shapes_with, positions only).
@@ -621,7 +736,10 @@ pub fn skin_positions(s: &Shape, mats: &[Mat4]) -> Vec<Vec3> {
 }
 
 pub fn skin_prep(m: &Model) -> SkinPrep {
-    SkinPrep { bind_inv: pose(&m.bones, None).iter().map(|x| x.inverse()).collect(), tangents: m.shapes.iter().map(tangents).collect() }
+    SkinPrep {
+        bind_inv: pose(&m.bones, None).iter().map(|x| x.inverse()).collect(),
+        tangents: m.shapes.iter().map(tangents).collect(),
+    }
 }
 
 /// Skins every shape; bind-pose tangents are skinned like normals (inferred).
@@ -638,12 +756,24 @@ pub fn skin_shapes_with(m: &Model, prep: &SkinPrep, frame: Option<&[f32]>) -> Ve
         .map(|(s, (t0, b0))| {
             let n = s.pos.len();
             if s.skin.is_empty() {
-                return Skinned { pos: s.pos.clone(), normal: s.normal.clone(), tangent: t0.clone(), binormal: b0.clone() };
+                return Skinned {
+                    pos: s.pos.clone(),
+                    normal: s.normal.clone(),
+                    tangent: t0.clone(),
+                    binormal: b0.clone(),
+                };
             }
             let z = || vec![Vec3::ZERO; n];
-            let mut o = Skinned { pos: z(), normal: z(), tangent: z(), binormal: z() };
+            let mut o = Skinned {
+                pos: z(),
+                normal: z(),
+                tangent: z(),
+                binormal: z(),
+            };
             for (j, ids, w) in &s.skin {
-                let Some(mat) = cur.get(*j).map(|c| *c * bind[*j]) else { continue };
+                let Some(mat) = cur.get(*j).map(|c| *c * bind[*j]) else {
+                    continue;
+                };
                 for (&v, &wt) in ids.iter().zip(w) {
                     let v = v as usize;
                     if v < n {
@@ -654,7 +784,12 @@ pub fn skin_shapes_with(m: &Model, prep: &SkinPrep, frame: Option<&[f32]>) -> Ve
                     }
                 }
             }
-            for v in o.normal.iter_mut().chain(o.tangent.iter_mut()).chain(o.binormal.iter_mut()) {
+            for v in o
+                .normal
+                .iter_mut()
+                .chain(o.tangent.iter_mut())
+                .chain(o.binormal.iter_mut())
+            {
                 *v = v.normalize_or_zero();
             }
             o
@@ -673,7 +808,9 @@ pub fn skin_model(m: &Model, frame: Option<&[f32]>, out: &mut crate::render::cha
             n.clone_from(&s.normal);
         }
         for (j, ids, w) in &s.skin {
-            let Some(mat) = cur.get(*j).map(|c| *c * bind[*j]) else { continue };
+            let Some(mat) = cur.get(*j).map(|c| *c * bind[*j]) else {
+                continue;
+            };
             for (&v, &wt) in ids.iter().zip(w) {
                 let v = v as usize;
                 if v < p.len() {
@@ -682,8 +819,14 @@ pub fn skin_model(m: &Model, frame: Option<&[f32]>, out: &mut crate::render::cha
                 }
             }
         }
-        let Some(shader) = m.shaders.get(s.shader) else { continue };
-        let tex = shader.base_texture().and_then(|t| m.textures.get(t)).map(|t| t.name.clone()).unwrap_or_default();
+        let Some(shader) = m.shaders.get(s.shader) else {
+            continue;
+        };
+        let tex = shader
+            .base_texture()
+            .and_then(|t| m.textures.get(t))
+            .map(|t| t.name.clone())
+            .unwrap_or_default();
         let mut tris = Vec::with_capacity(s.tris.len() * 3);
         for t in &s.tris {
             for &i in t {
@@ -693,7 +836,11 @@ pub fn skin_model(m: &Model, frame: Option<&[f32]>, out: &mut crate::render::cha
                 tris.push([q.x, q.y, q.z, nn.x, nn.y, nn.z, uv[0], uv[1]]);
             }
         }
-        let key = if shader.alpha_test() { tex } else { format!("{tex}#opaque") };
+        let key = if shader.alpha_test() {
+            tex
+        } else {
+            format!("{tex}#opaque")
+        };
         out.batches.push((key, [1.0, 0.0], tris));
     }
 }

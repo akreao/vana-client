@@ -195,7 +195,12 @@ pub type Table = HashMap<String, (u16, u16)>;
 
 #[cfg(test)]
 fn parse_table(dll: &[u8]) -> Option<Table> {
-    Some(parse_rows(dll)?.into_iter().map(|(n, id, f)| (n, (id, f))).collect())
+    Some(
+        parse_rows(dll)?
+            .into_iter()
+            .map(|(n, id, f)| (n, (id, f)))
+            .collect(),
+    )
 }
 
 /// The table's named rows in order (name, id, flags), found by its "/say" entry (id 1, flags 0xc3) with "/ver"
@@ -204,7 +209,10 @@ fn parse_rows(dll: &[u8]) -> Option<Vec<(String, u16, u16)>> {
     let mut say = [0u8; 0x18];
     say[..4].copy_from_slice(b"/say");
     (say[0x14], say[0x16]) = (1, 0xc3);
-    let at = dll.windows(0x18).position(|w| w == say)?.checked_sub(0x18)?;
+    let at = dll
+        .windows(0x18)
+        .position(|w| w == say)?
+        .checked_sub(0x18)?;
     let mut t = Vec::new();
     for e in dll[at..].chunks_exact(0x18) {
         let id = i16::from_le_bytes([e[0x14], e[0x15]]);
@@ -213,7 +221,11 @@ fn parse_rows(dll: &[u8]) -> Option<Vec<(String, u16, u16)>> {
         }
         let end = e[..0x14].iter().position(|&b| b == 0).unwrap_or(0x14);
         if end > 0 {
-            t.push((String::from_utf8_lossy(&e[..end]).into_owned(), id as u16, u16::from_le_bytes([e[0x16], e[0x17]])));
+            t.push((
+                String::from_utf8_lossy(&e[..end]).into_owned(),
+                id as u16,
+                u16::from_le_bytes([e[0x16], e[0x17]]),
+            ));
         }
     }
     Some(t)
@@ -230,15 +242,23 @@ struct Commands {
 fn commands() -> &'static Commands {
     static T: OnceLock<Commands> = OnceLock::new();
     T.get_or_init(|| {
-        let dll = std::fs::read(crate::dat::ffximain(&crate::config::Config::load().ffxi_dir())).unwrap_or_default();
+        let dll = std::fs::read(crate::dat::ffximain(
+            &crate::config::Config::load().ffxi_dir(),
+        ))
+        .unwrap_or_default();
         let rows = parse_rows(&dll).unwrap_or_else(|| {
             log::warn!("text command table not found in FFXiMain.dll");
             Vec::new()
         });
         Commands {
-            map: rows.iter().map(|(n, id, f)| (n.clone(), (*id, *f))).collect(),
+            map: rows
+                .iter()
+                .map(|(n, id, f)| (n.clone(), (*id, *f)))
+                .collect(),
             rows,
-            help: crate::dat::tables::text_help(&dll).map_err(|e| log::warn!("{e:#}")).unwrap_or_default(),
+            help: crate::dat::tables::text_help(&dll)
+                .map_err(|e| log::warn!("{e:#}"))
+                .unwrap_or_default(),
             help_file: crate::dat::msg::current_slot_file(&dll, 1, 0x24),
         }
     })
@@ -318,7 +338,10 @@ fn number(s: &str) -> Option<i64> {
 }
 
 fn by_index(w: &World, index: u16) -> Option<(u32, &super::Entity)> {
-    w.entities.iter().find(|(_, e)| e.index == index).map(|(id, e)| (*id, e))
+    w.entities
+        .iter()
+        .find(|(_, e)| e.index == index)
+        .map(|(id, e)| (*id, e))
 }
 
 fn current_target(w: &World) -> Option<(u32, u16)> {
@@ -331,14 +354,27 @@ fn current_target(w: &World) -> Option<(u32, u16)> {
 
 /// FUN_10077d80: the first living actor claimed by a party member.
 fn battle_target(w: &World) -> Option<(u32, u16)> {
-    let party: Vec<u32> = w.party.members().map(|m| m.id).filter(|&id| id != 0).chain([w.my_id]).collect();
-    let mut found: Vec<(u32, u16)> = w.entities.iter().filter(|(_, e)| e.hpp > 0 && e.claim != 0 && party.contains(&e.claim)).map(|(id, e)| (*id, e.index)).collect();
+    let party: Vec<u32> = w
+        .party
+        .members()
+        .map(|m| m.id)
+        .filter(|&id| id != 0)
+        .chain([w.my_id])
+        .collect();
+    let mut found: Vec<(u32, u16)> = w
+        .entities
+        .iter()
+        .filter(|(_, e)| e.hpp > 0 && e.claim != 0 && party.contains(&e.claim))
+        .map(|(id, e)| (*id, e.index))
+        .collect();
     found.sort_by_key(|f| f.1);
     found.first().copied()
 }
 
 fn pet(w: &World) -> Option<(u32, u16)> {
-    (w.my_pet != 0).then(|| by_index(w, w.my_pet).map(|(id, _)| (id, w.my_pet))).flatten()
+    (w.my_pet != 0)
+        .then(|| by_index(w, w.my_pet).map(|(id, _)| (id, w.my_pet)))
+        .flatten()
 }
 
 /// The name a flag-0x08 command gets for a pick (`"%s\"%s\""`).
@@ -349,7 +385,13 @@ pub fn display_name(w: &World, id: u32) -> String {
 /// FUN_10159380: the focus target's name while it holds a party window slot.
 fn focus_name(w: &World) -> Option<String> {
     let id = w.focus?.0;
-    w.party.slots().slots.iter().flatten().find(|m| m.id == id).map(|m| m.name.clone())
+    w.party
+        .slots()
+        .slots
+        .iter()
+        .flatten()
+        .find(|m| m.id == id)
+        .map(|m| m.name.clone())
 }
 
 /// `<t>` `<bt>` `<pet>` and the /check title (FUN_10076ff0, FUN_10133a80): a Monipulator's shown name.
@@ -359,22 +401,47 @@ fn name_of(w: &World, t: (u32, u16)) -> Option<String> {
 
 /// FUN_10076ff0: a tag's text, None to leave it literal. In a target command the targets stay for the resolver.
 fn tag(w: &World, tag: &str, target_cmd: bool) -> Option<String> {
-    let party_slot = |i: usize| w.party.slots().slots.get(i).cloned().flatten().map(|m| m.name).filter(|n| !n.is_empty());
+    let party_slot = |i: usize| {
+        w.party
+            .slots()
+            .slots
+            .get(i)
+            .cloned()
+            .flatten()
+            .map(|m| m.name)
+            .filter(|n| !n.is_empty())
+    };
     let stats = w.stats.as_ref();
     let vit = w.vitals;
-    let job = |(j, lv): (u8, u8)| (j != 0).then(|| format!("{}{lv}", super::items::JOBS.get(j as usize).copied().unwrap_or("")));
+    let job = |(j, lv): (u8, u8)| {
+        (j != 0).then(|| {
+            format!(
+                "{}{lv}",
+                super::items::JOBS.get(j as usize).copied().unwrap_or("")
+            )
+        })
+    };
     match tag {
         "<t>" if !target_cmd => current_target(w).and_then(|t| name_of(w, t)),
         "<me>" if !target_cmd => Some(w.name.clone()),
         "<bt>" if !target_cmd => battle_target(w).and_then(|t| name_of(w, t)),
         "<pet>" if !target_cmd => pet(w).and_then(|t| name_of(w, t)),
         // FUN_10076ff0 type 0x16: the zone NPC-list name of the call-for-help monster.
-        "<ht>" if !target_cmd => super::target::call_for_help(w).and_then(|id| w.entities.get(&id)).and_then(|e| w.npc_names.iter().find(|(n, _)| (*n & 0x3ff) as u16 == e.index & 0x3ff)).map(|(_, n)| n.clone()),
+        "<ht>" if !target_cmd => super::target::call_for_help(w)
+            .and_then(|id| w.entities.get(&id))
+            .and_then(|e| {
+                w.npc_names
+                    .iter()
+                    .find(|(n, _)| (*n & 0x3ff) as u16 == e.index & 0x3ff)
+            })
+            .map(|(_, n)| n.clone()),
         // Type 0x1d, in target commands too.
         "<focust>" => focus_name(w),
         // Ours, modern only: <ft> is <focust>; <lt> the last target's name (a target command resolves it itself).
         "<ft>" if w.modern => focus_name(w),
-        "<lt>" if w.modern && !target_cmd => super::target::last_target(w).and_then(|t| name_of(w, t)),
+        "<lt>" if w.modern && !target_cmd => {
+            super::target::last_target(w).and_then(|t| name_of(w, t))
+        }
         "<r>" => w.tells.first().cloned(),
         "<tp>" => vit.map(|v| v.2.to_string()),
         "<hp>" => Some(format!("{}/{}", vit?.0, stats?.hp_max)),
@@ -392,13 +459,20 @@ fn tag(w: &World, tag: &str, target_cmd: bool) -> Option<String> {
         }
         "<pos>" if !w.room_flag => Some(w.hud_top.grid().to_string()).filter(|g| !g.is_empty()),
         // FUN_10076ff0 type 0x15: the tracked target's name from the zone NPC list.
-        "<scan>" => w.scan.tracking().and_then(|t| w.npc_names.iter().find(|(id, _)| (*id & 0x3ff) as u16 == t.index & 0x3ff).map(|(_, n)| n.clone())),
+        "<scan>" => w.scan.tracking().and_then(|t| {
+            w.npc_names
+                .iter()
+                .find(|(id, _)| (*id & 0x3ff) as u16 == t.index & 0x3ff)
+                .map(|(_, n)| n.clone())
+        }),
         _ => {
             // <p0>..<p5>, <a10>..<a15>, <a20>..<a25>: party window slots 0..17.
             let inner = tag.strip_prefix('<')?.strip_suffix('>')?;
             let slot = match inner.as_bytes() {
                 [b'p', d @ b'0'..=b'5'] => (d - b'0') as usize,
-                [b'a', p @ b'1'..=b'2', d @ b'0'..=b'5'] => (p - b'0') as usize * 6 + (d - b'0') as usize,
+                [b'a', p @ b'1'..=b'2', d @ b'0'..=b'5'] => {
+                    (p - b'0') as usize * 6 + (d - b'0') as usize
+                }
                 _ => return None,
             };
             party_slot(slot)
@@ -445,17 +519,29 @@ fn expand(w: &World, line: &str, target_cmd: bool) -> String {
 
 /// FUN_1007a1c0(text, fallback, wide): a target tag, a player's name (with `wide` also our trusts and pet), a
 /// server id from a menu line, else with `fallback` the current target.
-pub(super) fn resolve(w: &World, text: Option<&str>, fallback: bool, wide: bool, mode: Mode) -> Option<(u32, u16)> {
+pub(super) fn resolve(
+    w: &World,
+    text: Option<&str>,
+    fallback: bool,
+    wide: bool,
+    mode: Mode,
+) -> Option<(u32, u16)> {
     if let Some(s) = text {
         let t = match s {
             "<t>" => current_target(w),
             "<me>" => Some((w.my_id, w.my_index)),
             "<bt>" => battle_target(w),
             // FUN_1007a1c0: the tracked actor while tracking, when it is here.
-            "<scan>" => w.scan.tracking().and_then(|t| w.entities.iter().find(|(_, e)| e.index == t.index).map(|(id, e)| (*id, e.index))),
+            "<scan>" => w.scan.tracking().and_then(|t| {
+                w.entities
+                    .iter()
+                    .find(|(_, e)| e.index == t.index)
+                    .map(|(id, e)| (*id, e.index))
+            }),
             "<pet>" => pet(w),
             "<lt>" if w.modern => super::target::last_target(w),
-            "<ht>" => super::target::call_for_help(w).and_then(|id| w.entities.get(&id).map(|e| (id, e.index))),
+            "<ht>" => super::target::call_for_help(w)
+                .and_then(|id| w.entities.get(&id).map(|e| (id, e.index))),
             _ => None,
         };
         if t.is_some() {
@@ -469,7 +555,8 @@ pub(super) fn resolve(w: &World, text: Option<&str>, fallback: bool, wide: bool,
         // +0x12c bit 22 / FUN_1008e260).
         let ours = |id: u32, index: u16| index == w.my_pet || w.party.members().any(|m| m.id == id);
         let hit = w.entities.iter().find(|(id, e)| {
-            let range = (0x400..0x700).contains(&e.index) || (wide && (0x700..0x900).contains(&e.index) && ours(**id, e.index));
+            let range = (0x400..0x700).contains(&e.index)
+                || (wide && (0x700..0x900).contains(&e.index) && ours(**id, e.index));
             let same = e.name == name || (wide && name_case(&e.name).is_some_and(|n| n == name));
             range && e.targetable() && same
         });
@@ -507,7 +594,11 @@ fn act_at(w: &World, t: (u32, u16), category: u16, param: u32, at: glam::Vec3) {
     for (i, v) in at.to_array().into_iter().enumerate() {
         body[12 + i * 4..16 + i * 4].copy_from_slice(&v.to_le_bytes());
     }
-    log::info!("0x01A category {category:#x} param {param} on {:#x} / {:#x}", t.0, t.1);
+    log::info!(
+        "0x01A category {category:#x} param {param} on {:#x} / {:#x}",
+        t.0,
+        t.1
+    );
     send(w, NetCommand::Packet { id: 0x01A, body });
 }
 
@@ -568,7 +659,10 @@ pub(super) fn gate_line(w: &World, mask: u8) -> Option<usize> {
 
 /// FUN_10087070(0): an event, frozen, charmed, or fishing / digging (FUN_100956f0 / FUN_10095750).
 pub(super) fn busy(w: &World) -> bool {
-    event::active(w) || w.my_plate.frozen || w.my_plate.charmed || matches!(w.my_motion.status, 6 | 0x26..=0x2b | 0x32..=0x35 | 0x38..=0x3e)
+    event::active(w)
+        || w.my_plate.frozen
+        || w.my_plate.charmed
+        || matches!(w.my_motion.status, 6 | 0x26..=0x2b | 0x32..=0x35 | 0x38..=0x3e)
 }
 
 /// FUN_10081230: dead (0x20), mounted (0x40) and event (0x80) states a command's flags don't allow; then UI-free.
@@ -578,7 +672,12 @@ fn state_gate(w: &mut World, flags: u16) -> bool {
     }
     let s = w.my_motion.status;
     let busy = busy(w);
-    let state = if w.dead() && !w.opts.dead_commands { 0x20 } else { 0 } | if matches!(s, 5 | 0x55) { 0x40 } else { 0 } | if busy { 0x80 } else { 0 };
+    let state = if w.dead() && !w.opts.dead_commands {
+        0x20
+    } else {
+        0
+    } | if matches!(s, 5 | 0x55) { 0x40 } else { 0 }
+        | if busy { 0x80 } else { 0 };
     // Any disallowed state refuses; the line goes by the states held, first match.
     if state & !flags != 0 {
         if state & 0x20 != 0 {
@@ -624,7 +723,13 @@ pub fn run(w: &mut World, line: &str, mode: Mode) {
         return;
     }
     // The mods' typed-line filters may rewrite or block it (once: not again when a sub-target prompt completes it).
-    let Some(filtered) = (if mode == Mode::SubTarget { Some(line.to_string()) } else { super::lua::filter_typed(w, line) }) else { return };
+    let Some(filtered) = (if mode == Mode::SubTarget {
+        Some(line.to_string())
+    } else {
+        super::lua::filter_typed(w, line)
+    }) else {
+        return;
+    };
     run_unfiltered(w, &filtered, mode);
 }
 
@@ -635,11 +740,20 @@ pub(super) fn run_unfiltered(w: &mut World, line: &str, mode: Mode) {
         return;
     }
     // A line without a command goes to the chat mode (/chatmode).
-    let line = if line.starts_with('/') { line.to_string() } else { format!("{}{line}", w.chat_prefix) };
+    let line = if line.starts_with('/') {
+        line.to_string()
+    } else {
+        format!("{}{line}", w.chat_prefix)
+    };
     let first = line.split([' ', '\t']).next().unwrap_or("");
     // Ours (Extras, not retail): /timers [in | out] slides the timers window's drawer; alone it toggles.
     if first.eq_ignore_ascii_case("/timers") && w.extra_timers {
-        match line.split_whitespace().nth(1).map(str::to_ascii_lowercase).as_deref() {
+        match line
+            .split_whitespace()
+            .nth(1)
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+        {
             Some("in") if w.timers.out => w.timers.toggle(),
             Some("out") if !w.timers.out => w.timers.toggle(),
             None => w.timers.toggle(),
@@ -665,7 +779,10 @@ pub(super) fn run_unfiltered(w: &mut World, line: &str, mode: Mode) {
     let first_flags = table().get(first).map_or(0, |e| e.1);
     let target_cmd = first_flags & flag::TARGET != 0;
     // With the prompt up a typed line runs only with flag 0x02 (else group 7 0xa4); a macro line is dropped.
-    if target::sub_up(w) && matches!(mode, Mode::Typed | Mode::Macro) && first_flags & flag::IN_PROMPT == 0 {
+    if target::sub_up(w)
+        && matches!(mode, Mode::Typed | Mode::Macro)
+        && first_flags & flag::IN_PROMPT == 0
+    {
         if mode == Mode::Typed {
             refuse(w, 0xa4);
         }
@@ -676,7 +793,14 @@ pub(super) fn run_unfiltered(w: &mut World, line: &str, mode: Mode) {
         && mode != Mode::SubTarget
         && let Some((at, mask)) = sub_tag(&line)
     {
-        open_prompt(w, &line[..at], mask, target_cmd, first_flags & flag::NAME_TAGS != 0, mode);
+        open_prompt(
+            w,
+            &line[..at],
+            mask,
+            target_cmd,
+            first_flags & flag::NAME_TAGS != 0,
+            mode,
+        );
         return;
     }
     let mut expanded = expand(w, &line, target_cmd);
@@ -696,8 +820,14 @@ pub(super) fn run_unfiltered(w: &mut World, line: &str, mode: Mode) {
     }
     // FUN_10080d20 (table 0x10357bb8): in Monstrosity these drop silently; /heal still runs while healing (0x21 / 7).
     // FUN_10080d90: with only us and trusts the party commands get group 7 0x9e.
-    const MON_DENY: [u16; 16] = [0x56, 0x57, 0x58, 0x59, 0x5d, 0x5e, 0x21, 0x2c, 0x22, 0x32, 0x33, 0x34, 0x35, 0x36, 0x9d, 0x61];
-    if super::monstrosity::active(w) && MON_DENY.contains(&cid) && !(cid == id::HEAL && matches!(w.my_motion.status, 0x21 | 7)) {
+    const MON_DENY: [u16; 16] = [
+        0x56, 0x57, 0x58, 0x59, 0x5d, 0x5e, 0x21, 0x2c, 0x22, 0x32, 0x33, 0x34, 0x35, 0x36, 0x9d,
+        0x61,
+    ];
+    if super::monstrosity::active(w)
+        && MON_DENY.contains(&cid)
+        && !(cid == id::HEAL && matches!(w.my_motion.status, 0x21 | 7))
+    {
         return;
     }
     if w.party.slots().trusts_only() && [0x56, 0x57, 0x58, 0x59, 0x5d, 0x5e].contains(&cid) {
@@ -712,8 +842,18 @@ pub(super) fn run_unfiltered(w: &mut World, line: &str, mode: Mode) {
 /// FUN_10076ab0's sub-target tags (prefix compare at each '<'): `<st>` 0x7f, `<stpc>` 0x1d, `<stnpc>` 0xa0,
 /// `<stpt>` 5, `<stal>` 0xd: where the first one starts, and its target flags.
 fn sub_tag(line: &str) -> Option<(usize, u32)> {
-    const TAGS: [(&str, u32); 5] = [("<st>", 0x7f), ("<stpc>", 0x1d), ("<stnpc>", 0xa0), ("<stpt>", 5), ("<stal>", 0xd)];
-    line.match_indices('<').find_map(|(i, _)| TAGS.iter().find(|(t, _)| line[i..].starts_with(t)).map(|(_, m)| (i, *m)))
+    const TAGS: [(&str, u32); 5] = [
+        ("<st>", 0x7f),
+        ("<stpc>", 0x1d),
+        ("<stnpc>", 0xa0),
+        ("<stpt>", 5),
+        ("<stal>", 0xd),
+    ];
+    line.match_indices('<').find_map(|(i, _)| {
+        TAGS.iter()
+            .find(|(t, _)| line[i..].starts_with(t))
+            .map(|(_, m)| (i, *m))
+    })
 }
 
 /// The tag's prompt: refused in an event (group 7 0x43) or a place without actions (0x44); the stash must be a
@@ -734,12 +874,24 @@ fn open_prompt(w: &mut World, stash: &str, mask: u32, target_cmd: bool, quoted: 
         return;
     }
     let args = tokens(&stash, mode != Mode::Typed);
-    let spell = match args.first().and_then(|a| table().get(a.as_str())).map(|e| e.0) {
-        Some(id::MAGIC | id::NINJUTSU | id::SONG) => args.get(1).and_then(|n| find_spell(w, n, 0).ok()),
+    let spell = match args
+        .first()
+        .and_then(|a| table().get(a.as_str()))
+        .map(|e| e.0)
+    {
+        Some(id::MAGIC | id::NINJUTSU | id::SONG) => {
+            args.get(1).and_then(|n| find_spell(w, n, 0).ok())
+        }
         _ => None,
     };
-    let range = spell.and_then(|s| w.actions.as_ref()?.spell(s)).map(|r| crate::dat::actions::RANGES[(r.range & 0xf) as usize] as f32);
-    let then = target::SubThen::Line { stash, quoted, from_macro: mode == Mode::Macro };
+    let range = spell
+        .and_then(|s| w.actions.as_ref()?.spell(s))
+        .map(|r| crate::dat::actions::RANGES[(r.range & 0xf) as usize] as f32);
+    let then = target::SubThen::Line {
+        stash,
+        quoted,
+        from_macro: mode == Mode::Macro,
+    };
     if matches!(mask, 5 | 0xd) {
         target::open_party_cursor(w, if mask == 5 { 6 } else { 18 }, then, range);
         return;
@@ -764,7 +916,8 @@ fn error(w: &mut World, expanded: &str, mode: Mode) {
     if mode == Mode::Internal {
         let Some(bt) = w.battle.clone() else { return };
         let colour = bt.colour_in(0x9d, &w.game);
-        w.chat.push_colour(bt.group9(0x78).unwrap_or_default(), colour);
+        w.chat
+            .push_colour(bt.group9(0x78).unwrap_or_default(), colour);
     } else {
         combat::command_error(w, expanded);
     }
@@ -792,7 +945,16 @@ type Done = Result<(), ()>;
 fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> Done {
     let arg = |i: usize| args.get(i).map(String::as_str);
     match cid {
-        id::SAY | id::SHOUT | id::YELL | id::PARTY | id::LS | id::LS2 | id::UNITY | id::ASSISTJ | id::ASSISTE | id::EMOTE_TEXT => chat(w, cid, tail(line, 1)),
+        id::SAY
+        | id::SHOUT
+        | id::YELL
+        | id::PARTY
+        | id::LS
+        | id::LS2
+        | id::UNITY
+        | id::ASSISTJ
+        | id::ASSISTE
+        | id::EMOTE_TEXT => chat(w, cid, tail(line, 1)),
         id::TELL => tell(w, args, line),
         id::ECHO => {
             let text = tail(line, 1).to_string();
@@ -819,7 +981,11 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
         }
         // FUN_1007d270: miss00 alone, on the log titled by the one argument, else the nation's.
         id::MISSION => {
-            w.mission_cmd = Some(if args.len() == 2 { args.get(1).cloned() } else { None });
+            w.mission_cmd = Some(if args.len() == 2 {
+                args.get(1).cloned()
+            } else {
+                None
+            });
             Ok(())
         }
         id::MAP => {
@@ -839,7 +1005,13 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
             }
             let names = w.names.clone().ok_or(())?;
             let want = name.trim_matches('"').to_ascii_lowercase();
-            let idx = (0..names.mount_count() as u32).find(|&i| names.mount(i).is_some_and(|m| m.0.to_ascii_lowercase() == want)).ok_or(())?;
+            let idx = (0..names.mount_count() as u32)
+                .find(|&i| {
+                    names
+                        .mount(i)
+                        .is_some_and(|m| m.0.to_ascii_lowercase() == want)
+                })
+                .ok_or(())?;
             act(w, (w.my_id, w.my_index), 0x1a, idx);
             Ok(())
         }
@@ -891,7 +1063,11 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
                 id::LOCKER => 4,
                 _ => 2,
             };
-            if super::items::open_dae10(w, c, false) { Ok(()) } else { Err(()) }
+            if super::items::open_dae10(w, c, false) {
+                Ok(())
+            } else {
+                Err(())
+            }
         }
         // /satchel needs ItemNum[5] >= 30; /sack, /case, /wardrobe, /wardrobe2..8, /recycle (0x7a, the bin).
         id::SATCHEL..=id::RECYCLE => {
@@ -900,7 +1076,11 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
                 0x73..=0x79 => (cid - 0x69) as u8,
                 _ => 17,
             };
-            if super::items::open_daf70(w, c, c == 5, false) { Ok(()) } else { Err(()) }
+            if super::items::open_daf70(w, c, c == 5, false) {
+                Ok(())
+            } else {
+                Err(())
+            }
         }
         // /bank2 (FUN_1007e440): without Safe 2 (s2c 0x067 @0x27 bit 0) group 7 0xa8, counted as done.
         // FUN_1007e490 / FUN_1007e560 (/mailbox, /deliverybox, /sendpost): one's own Mog House, not visiting (0xbc),
@@ -976,7 +1156,11 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
                 return Ok(());
             }
             // Ours: refused while gardening already (as read a second /garden would break the camera).
-            if super::moogle::job_cooling(w) || w.layout.is_some() || w.remodel.is_some() || w.garden.is_some() {
+            if super::moogle::job_cooling(w)
+                || w.layout.is_some()
+                || w.remodel.is_some()
+                || w.garden.is_some()
+            {
                 return Err(());
             }
             if !super::myroom::in_city(w.zone) {
@@ -1021,16 +1205,28 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
             Ok(())
         }
         id::BANK2 => {
-            if super::items::open_dae10(w, 9, false) { Ok(()) } else { Err(()) }
+            if super::items::open_dae10(w, 9, false) {
+                Ok(())
+            } else {
+                Err(())
+            }
         }
         id::RANDOM => {
             let v = arg(1).map_or(0, |a| number(a).unwrap_or(-1)) as u32;
-            send(w, NetCommand::Packet { id: 0x0A2, body: v.to_le_bytes().to_vec() });
+            send(
+                w,
+                NetCommand::Packet {
+                    id: 0x0A2,
+                    body: v.to_le_bytes().to_vec(),
+                },
+            );
             Ok(())
         }
         id::MACRO => {
             // FUN_10079f10: "/macro set|book N", exactly three tokens; out of range wraps once.
-            let n = arg(2).and_then(|a| a.parse::<usize>().ok()).filter(|n| *n > 0);
+            let n = arg(2)
+                .and_then(|a| a.parse::<usize>().ok())
+                .filter(|n| *n > 0);
             match (args.len(), arg(1), n, w.macros.as_mut()) {
                 (3, Some("set"), Some(n), Some(m)) => {
                     let book = m.book;
@@ -1057,7 +1253,10 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
             w.game.set(0x99, if off { v | 0x80 } else { v & !0x80 });
             w.game_save = true;
             if let Some(bt) = w.battle.clone() {
-                w.chat.push(bt.group9(if off { 0x137 } else { 0x136 }).unwrap_or_default());
+                w.chat.push(
+                    bt.group9(if off { 0x137 } else { 0x136 })
+                        .unwrap_or_default(),
+                );
             }
             Ok(())
         }
@@ -1083,7 +1282,13 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
                 if m != 2 {
                     w.shutdown = shutdown;
                 }
-                send(w, NetCommand::Logout { mode: m, kind: if shutdown { 3 } else { 1 } });
+                send(
+                    w,
+                    NetCommand::Logout {
+                        mode: m,
+                        kind: if shutdown { 3 } else { 1 },
+                    },
+                );
             }
             Ok(())
         }
@@ -1097,7 +1302,13 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
         id::SIT => {
             // FUN_1007c2f0: gate 0x50; standing or sitting; c2s 0x0EA.
             if status_gate(w, 0x50) && matches!(w.my_motion.status, 0 | 0x2f) {
-                send(w, NetCommand::Packet { id: 0x0EA, body: on_off(args.get(1)).to_le_bytes().to_vec() });
+                send(
+                    w,
+                    NetCommand::Packet {
+                        id: 0x0EA,
+                        body: on_off(args.get(1)).to_le_bytes().to_vec(),
+                    },
+                );
             }
             Ok(())
         }
@@ -1135,7 +1346,14 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
         }
         id::CHECKPARAM => {
             let t = resolve(w, arg(1), true, false, mode).ok_or(())?;
-            send(w, NetCommand::Check { target: t.0, index: t.1, kind: 2 });
+            send(
+                w,
+                NetCommand::Check {
+                    target: t.0,
+                    index: t.1,
+                    kind: 2,
+                },
+            );
             Ok(())
         }
         // FUN_1007ef50 and its neighbours: Conflict only (else group 7 0xa7); c2s 0x01A on us, 0x15 / 0x17 / 0x16.
@@ -1147,7 +1365,14 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
                     _ => 0x16,
                 };
                 let index = w.my_index;
-                send(w, NetCommand::Act { target: w.my_id, index, action });
+                send(
+                    w,
+                    NetCommand::Act {
+                        target: w.my_id,
+                        index,
+                        action,
+                    },
+                );
             } else {
                 refuse(w, 0xa7);
             }
@@ -1156,7 +1381,13 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
         // FUN_1007f480: exactly one "on" / "off", else a toggle; group 9 0xf7 / 0xf8.
         id::BLOCKHELP => {
             let cur = w.block_help;
-            toggle(w, only_on_off(args), cur, |w, on| w.block_help = on, [0xf7, 0xf8]);
+            toggle(
+                w,
+                only_on_off(args),
+                cur,
+                |w, on| w.block_help = on,
+                [0xf7, 0xf8],
+            );
             Ok(())
         }
         // FUN_100790e0: on shows, off hides, else toggles; hidden with "otherpc" (the last word) only other players'.
@@ -1173,37 +1404,78 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
         // FUN_100791d0: config 0x97 (target::ignored: the candidates skip other players' pets).
         id::IGNOREPET => {
             let cur = w.game.get(0x97) != 0;
-            switch(w, on_off(args.get(1)), cur, |w, on| cfg(w, 0x97, on as u32), [0xea, 0xeb], [0xe8, 0xe9]);
+            switch(
+                w,
+                on_off(args.get(1)),
+                cur,
+                |w, on| cfg(w, 0x97, on as u32),
+                [0xea, 0xeb],
+                [0xe8, 0xe9],
+            );
             Ok(())
         }
         // FUN_10079270: config 0xaa (target::ignored: the candidates skip trusts outside our alliance).
         id::IGNOREFAITH | id::IGNORETRUST => {
             let cur = w.game.get(0xaa) != 0;
-            switch(w, on_off(args.get(1)), cur, |w, on| cfg(w, 0xaa, on as u32), [0x10d, 0x10e], [0x10b, 0x10c]);
+            switch(
+                w,
+                on_off(args.get(1)),
+                cur,
+                |w, on| cfg(w, 0xaa, on as u32),
+                [0x10d, 0x10e],
+                [0x10b, 0x10c],
+            );
             Ok(())
         }
         // FUN_100793a0: config 0xc0, the prompt's area-of-effect display.
         id::AOE => {
             let cur = w.game.get(0xc0) == 1;
-            toggle(w, on_off(args.get(1)), cur, |w, on| cfg(w, 0xc0, on as u32), [0x129, 0x12a]);
+            toggle(
+                w,
+                on_off(args.get(1)),
+                cur,
+                |w, on| cfg(w, 0xc0, on as u32),
+                [0x129, 0x12a],
+            );
             Ok(())
         }
         // FUN_1007de50: config 0x99 bit 5 hides the trusts outside our party (event::hidden).
         id::HIDEFAITH | id::HIDETRUST => {
             let cur = bit(w, 0x99, 5);
-            switch(w, on_off(args.get(1)), cur, |w, on| cfg_bit(w, 0x99, 5, on), [0x111, 0x112], [0x10f, 0x110]);
+            switch(
+                w,
+                on_off(args.get(1)),
+                cur,
+                |w, on| cfg_bit(w, 0x99, 5, on),
+                [0x111, 0x112],
+                [0x10f, 0x110],
+            );
             Ok(())
         }
         // FUN_1007dee0: config 0x99 bit 9, set = trust emotes not linked.
         id::EMOTEFAITH | id::EMOTETRUST => {
             let cur = !bit(w, 0x99, 9);
-            switch(w, on_off(args.get(1)), cur, |w, on| cfg_bit(w, 0x99, 9, !on), [0x14b, 0x14c], [0x14b, 0x14c]);
+            switch(
+                w,
+                on_off(args.get(1)),
+                cur,
+                |w, on| cfg_bit(w, 0x99, 9, !on),
+                [0x14b, 0x14c],
+                [0x14b, 0x14c],
+            );
             Ok(())
         }
         // FUN_1007e9b0: config 0x99 bit 6, set = no camera collision with furniture.
         id::FURCC => {
             let cur = !bit(w, 0x99, 6);
-            switch(w, on_off(args.get(1)), cur, |w, on| cfg_bit(w, 0x99, 6, !on), [0x12d, 0x12e], [0x12f, 0x130]);
+            switch(
+                w,
+                on_off(args.get(1)),
+                cur,
+                |w, on| cfg_bit(w, 0x99, 6, !on),
+                [0x12d, 0x12e],
+                [0x12f, 0x130],
+            );
             Ok(())
         }
         // FUN_1007ea40: config 0xc1, type1 0 / type2 1; anything else reports.
@@ -1223,17 +1495,34 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
         }
         // FUN_1007eae0 / FUN_1007ec10: configs 0xc2 / 0xc3.
         id::STATUSPARTY | id::STATUSTIMER => {
-            let (cfg_id, lines) = if cid == id::STATUSPARTY { (0xc2, [0x138, 0x139]) } else { (0xc3, [0x13c, 0x13d]) };
+            let (cfg_id, lines) = if cid == id::STATUSPARTY {
+                (0xc2, [0x138, 0x139])
+            } else {
+                (0xc3, [0x13c, 0x13d])
+            };
             let cur = w.game.get(cfg_id) != 0;
-            toggle(w, on_off(args.get(1)), cur, |w, on| cfg(w, cfg_id, on as u32), lines);
+            toggle(
+                w,
+                on_off(args.get(1)),
+                cur,
+                |w, on| cfg(w, cfg_id, on as u32),
+                lines,
+            );
             Ok(())
         }
         // FUN_1007eb60: a member of our party by name (FUN_1007bed0), else the resolver with the current target as the
         // fallback; the focus again clears it (9 0x13b), anyone but us in our six slots sets it (9 0x13a + "(name)"),
         // else group 7 0xc3.
         id::FOCUSTARGET => {
-            let named = arg(1).and_then(|n| w.party.party().find(|m| m.name.eq_ignore_ascii_case(n)).map(|m| (m.id, m.index)));
-            let Some((id, index)) = named.or_else(|| resolve(w, arg(1), true, false, mode)) else { return Err(()) };
+            let named = arg(1).and_then(|n| {
+                w.party
+                    .party()
+                    .find(|m| m.name.eq_ignore_ascii_case(n))
+                    .map(|m| (m.id, m.index))
+            });
+            let Some((id, index)) = named.or_else(|| resolve(w, arg(1), true, false, mode)) else {
+                return Err(());
+            };
             if id == 0 {
                 return Ok(());
             }
@@ -1245,7 +1534,10 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
                 let name = focus_name(w).unwrap_or_default();
                 if let Some(bt) = w.battle.clone() {
                     let colour = bt.colour_in(0x79, &w.game);
-                    w.chat.push_colour(format!("{}({name})", bt.group9(0x13a).unwrap_or_default()), colour);
+                    w.chat.push_colour(
+                        format!("{}({name})", bt.group9(0x13a).unwrap_or_default()),
+                        colour,
+                    );
                 }
             } else {
                 refuse(w, 0xc3);
@@ -1259,7 +1551,9 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
         }
         // FUN_1007ec90: config 0xc4 (atoi, 1..100), or the current value.
         id::GTST => {
-            let Some(bt) = w.battle.clone() else { return Ok(()) };
+            let Some(bt) = w.battle.clone() else {
+                return Ok(());
+            };
             let (line, n) = match arg(1) {
                 Some(v) => {
                     let n = atoi(v).clamp(1, 100) as u32;
@@ -1269,7 +1563,10 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
                 None => (0x13f, w.game.get(0xc4)),
             };
             let colour = bt.colour_in(0x79, &w.game);
-            w.chat.push_colour(printf(&bt.group9(line).unwrap_or_default(), &[n.to_string()]), colour);
+            w.chat.push_colour(
+                printf(&bt.group9(line).unwrap_or_default(), &[n.to_string()]),
+                colour,
+            );
             Ok(())
         }
         // FUN_1007f0e0 / FUN_1007f1a0 / FUN_1007f260: chat filter bits 0x2e / 0x31 / 0x32 (the Chat Filters page's).
@@ -1281,7 +1578,13 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
             };
             let (cfg_id, b) = if b < 30 { (0x32, b) } else { (0x33, b - 30) };
             let cur = bit(w, cfg_id, b);
-            toggle(w, on_off(args.get(1)), cur, |w, on| cfg_bit(w, cfg_id, b, on), lines);
+            toggle(
+                w,
+                on_off(args.get(1)),
+                cur,
+                |w, on| cfg_bit(w, cfg_id, b, on),
+                lines,
+            );
             Ok(())
         }
         // FUN_1007f3e0: c2s 0x01A category 0x18 on us, off 0 / on 1 / else 2 (toggle); the server answers.
@@ -1297,13 +1600,25 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
         // FUN_1007f500: config 0x99 bit 0, battle music for our own engagement only (else client::party_battle too).
         id::BATTLEBGM => {
             let cur = bit(w, 0x99, 0);
-            toggle(w, only_on_off(args), cur, |w, on| cfg_bit(w, 0x99, 0, on), [0xf2, 0xf3]);
+            toggle(
+                w,
+                only_on_off(args),
+                cur,
+                |w, on| cfg_bit(w, 0x99, 0, on),
+                [0xf2, 0xf3],
+            );
             Ok(())
         }
         // FUN_1007f5c0: config 0x99 bit 1, bell sounds (scheduler op 0xb3).
         id::BELLSW => {
             let cur = bit(w, 0x99, 1);
-            toggle(w, only_on_off(args), cur, |w, on| cfg_bit(w, 0x99, 1, on), [0xf4, 0xf5]);
+            toggle(
+                w,
+                only_on_off(args),
+                cur,
+                |w, on| cfg_bit(w, 0x99, 1, on),
+                [0xf4, 0xf5],
+            );
             Ok(())
         }
         // FUN_1007f680 / FUN_1007f750: exactly one "on" mutes, "off" unmutes, another word reports; none toggles.
@@ -1322,14 +1637,24 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
                 w.se_mute = mute;
             }
             w.volume_dirty = true;
-            log9(w, if bgm { if mute { 0x147 } else { 0x148 } } else if mute { 0x149 } else { 0x14a });
+            log9(
+                w,
+                if bgm {
+                    if mute { 0x147 } else { 0x148 }
+                } else if mute {
+                    0x149
+                } else {
+                    0x14a
+                },
+            );
             Ok(())
         }
         // FUN_10078170: "version %s" in mode 0xbf.
         id::VER => {
             if let Some(bt) = w.battle.clone() {
                 let colour = bt.colour_in(0xbf, &w.game);
-                w.chat.push_colour(format!("version {}", w.client_version), colour);
+                w.chat
+                    .push_colour(format!("version {}", w.client_version), colour);
             }
             Ok(())
         }
@@ -1372,7 +1697,9 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
                 return Ok(());
             }
             let n = (1..=200).contains(&n).then_some(n as usize).ok_or(())?;
-            super::equipsets::equip(w, n - 1, arg(2) == Some("echo")).then_some(()).ok_or(())
+            super::equipsets::equip(w, n - 1, arg(2) == Some("echo"))
+                .then_some(())
+                .ok_or(())
         }
         // FUN_1007f820: "on" Enable (4), or Continue (1) when locked; "off" Disable (0); else Query (2); no gate.
         id::LOCKSTYLE => {
@@ -1395,7 +1722,8 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
                 Some("echo") => super::equipsets::lock_mode(w, 4, false, 1),
                 Some(n) => {
                     let n = atoi(n);
-                    let ok = (1..=200).contains(&n) && super::equipsets::lock_set(w, n as usize - 1, arg(2) == Some("echo"));
+                    let ok = (1..=200).contains(&n)
+                        && super::equipsets::lock_set(w, n as usize - 1, arg(2) == Some("echo"));
                     return ok.then_some(()).ok_or(());
                 }
             }
@@ -1423,13 +1751,25 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
                 return Ok(());
             }
             let n = arg(1).and_then(number).unwrap_or(0) as u8;
-            send(w, NetCommand::Packet { id: 0x0C3, body: vec![n, if cid == id::MAKELS { 1 } else { 2 }, 0, 0] });
+            send(
+                w,
+                NetCommand::Packet {
+                    id: 0x0C3,
+                    body: vec![n, if cid == id::MAKELS { 1 } else { 2 }, 0, 0],
+                },
+            );
             Ok(())
         }
         // FUN_1007d160: a valid name only (else nothing): c2s 0x071 kind 1 with the name (linkshell 1).
         id::BREAKLS => {
             if let Some(name) = arg(1).and_then(name_case) {
-                send(w, NetCommand::Packet { id: 0x071, body: super::party::kick_body(1, &name) });
+                send(
+                    w,
+                    NetCommand::Packet {
+                        id: 0x071,
+                        body: super::party::kick_body(1, &name),
+                    },
+                );
             }
             Ok(())
         }
@@ -1452,8 +1792,15 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
         // FUN_1007e190: a target that is not us (else the command fails); not followable (dead, no model) group 7
         // 0xa5; else follow it with autorun on.
         id::FOLLOW => {
-            let Some((t, _)) = resolve(w, arg(1), true, false, mode).filter(|t| t.0 != w.my_id) else { return Err(()) };
-            if !w.actors.contains_key(&t) || w.entities.get(&t).is_none_or(|e| matches!(e.motion.status, 2 | 3)) {
+            let Some((t, _)) = resolve(w, arg(1), true, false, mode).filter(|t| t.0 != w.my_id)
+            else {
+                return Err(());
+            };
+            if !w.actors.contains_key(&t)
+                || w.entities
+                    .get(&t)
+                    .is_none_or(|e| matches!(e.motion.status, 2 | 3))
+            {
                 refuse(w, 0xa5);
                 return Ok(());
             }
@@ -1474,10 +1821,19 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
                 refuse(w, 0x4b);
                 return Ok(());
             }
-            let trusts: Vec<(u32, u16, String)> = w.party.party().filter(|m| (0x700..0x900).contains(&m.index)).map(|m| (m.id, m.index, m.name.clone())).collect();
+            let trusts: Vec<(u32, u16, String)> = w
+                .party
+                .party()
+                .filter(|m| (0x700..0x900).contains(&m.index))
+                .map(|m| (m.id, m.index, m.name.clone()))
+                .collect();
             let picked: Vec<(u32, u16)> = match arg(1) {
                 Some("all") if args.len() == 2 => trusts.iter().map(|t| (t.0, t.1)).collect(),
-                Some(n) => trusts.iter().filter(|t| t.2.eq_ignore_ascii_case(n)).map(|t| (t.0, t.1)).collect(),
+                Some(n) => trusts
+                    .iter()
+                    .filter(|t| t.2.eq_ignore_ascii_case(n))
+                    .map(|t| (t.0, t.1))
+                    .collect(),
                 None => Vec::new(),
             };
             if picked.is_empty() {
@@ -1530,7 +1886,9 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
                 Some("party" | "p") => Some(1),
                 Some("linkshell" | "l") => Some(2),
                 Some("linkshell2" | "l2") => Some(3),
-                Some("tell" | "t" | "unity" | "assistj" | "aj" | "assiste" | "ae" | "emote" | "em") => {
+                Some(
+                    "tell" | "t" | "unity" | "assistj" | "aj" | "assiste" | "ae" | "emote" | "em",
+                ) => {
                     system_line(w, 0x69);
                     return Ok(());
                 }
@@ -1577,7 +1935,11 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
                 },
                 _ => return Err(()),
             };
-            if name.is_empty() || name.len() > 15 || !name.starts_with(|c: char| c.is_ascii_alphabetic()) || super::partyreq::blacklisted(w, &name) != 0 {
+            if name.is_empty()
+                || name.len() > 15
+                || !name.starts_with(|c: char| c.is_ascii_alphabetic())
+                || super::partyreq::blacklisted(w, &name) != 0
+            {
                 return Err(());
             }
             let mut b = vec![0u8; 0x10];
@@ -1590,7 +1952,9 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
         }
         // FUN_1007efb0: N 1..3 and the text (none clears); no line, nothing sent.
         id::SEACOM => {
-            let Some(n) = arg(1).and_then(number).filter(|&v| v >= 1) else { return Err(()) };
+            let Some(n) = arg(1).and_then(number).filter(|&v| v >= 1) else {
+                return Err(());
+            };
             super::seacom::set_line(w, n as usize - 1, arg(2).unwrap_or(""));
             Ok(())
         }
@@ -1663,7 +2027,9 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
         }
         // FUN_1007b0a0: c2s 0x02C {Language 1 (English) @4, Name[0x40] @8}; s2c 0x049 answers (item_search_result).
         id::ITEMSEARCH => {
-            let Some(name) = args.get(1) else { return Err(()) };
+            let Some(name) = args.get(1) else {
+                return Err(());
+            };
             let mut b = vec![0u8; 0x44];
             b[0] = 1;
             for (k, c) in name.bytes().take(0x3f).enumerate() {
@@ -1691,7 +2057,14 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
         // 0x0DC which 5 and its line; another word fails. The server re-targets (s2c 0x058).
         id::AUTOTARGET => {
             if args.len() != 2 {
-                system_line(w, if w.conf_sys[1] & 0x40 != 0 { 0x80 } else { 0x7f });
+                system_line(
+                    w,
+                    if w.conf_sys[1] & 0x40 != 0 {
+                        0x80
+                    } else {
+                        0x7f
+                    },
+                );
                 return Ok(());
             }
             match arg(1) {
@@ -1717,7 +2090,13 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
             };
             if show != (w.game.get(0x99) & 0x100 == 0) {
                 cfg_bit(w, 0x99, 8, !show);
-                send(w, NetCommand::Packet { id: 0x11B, body: vec![show as u8, 0, 0, 0] });
+                send(
+                    w,
+                    NetCommand::Packet {
+                        id: 0x11B,
+                        body: vec![show as u8, 0, 0, 0],
+                    },
+                );
                 log9(w, if show { 0x143 } else { 0x144 });
             }
             Ok(())
@@ -1762,7 +2141,12 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
         }
         id::MUTELIST => {
             if !super::search::busy(w) {
-                let cond = crate::net::search::Cond { flags: crate::net::search::STATUS, status: 0x2000_0000, last_area: -1, ..Default::default() };
+                let cond = crate::net::search::Cond {
+                    flags: crate::net::search::STATUS,
+                    status: 0x2000_0000,
+                    last_area: -1,
+                    ..Default::default()
+                };
                 super::search::run(w, cond, super::search::Scope::World);
             }
             Ok(())
@@ -1770,7 +2154,13 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
         id::PRCMD => prcmd(w, args, mode),
         id::JOIN | id::DECLINE => {
             // FUN_1007d640 / FUN_1007d670: c2s 0x074 {u8 Res 1 / 0}; the invite is no longer pending.
-            send(w, NetCommand::Packet { id: 0x074, body: vec![(cid == id::JOIN) as u8, 0, 0, 0] });
+            send(
+                w,
+                NetCommand::Packet {
+                    id: 0x074,
+                    body: vec![(cid == id::JOIN) as u8, 0, 0, 0],
+                },
+            );
             w.invite = None;
             Ok(())
         }
@@ -1879,12 +2269,21 @@ fn chat(w: &mut World, cid: u16, msg: &str) -> Done {
     // FUN_10078be0 / FUN_10078d80: the assist echoes lead with the rank icon when our mentor and mastery ranks (s2c
     // 0x01B @0x65 / @0x66) are both set and MentorFlg is on (s2c 0x0B4 byte 7 bit 1). No other echo has it.
     let rank = match w.job_info {
-        Some(j) if j.mentor != 0 && j.mastery != 0 && w.conf_sys[3] & 2 != 0 => super::rank_icon(j.mentor, j.mastery),
+        Some(j) if j.mentor != 0 && j.mastery != 0 && w.conf_sys[3] & 2 != 0 => {
+            super::rank_icon(j.mentor, j.mastery)
+        }
         _ => String::new(),
     };
     let (line, mode) = match cid {
         id::YELL => {
-            let zone = w.zone.and_then(|z| w.names.as_ref().and_then(|n| crate::dat::names::NameSource::place(&**n, z as u32))).unwrap_or_default();
+            let zone = w
+                .zone
+                .and_then(|z| {
+                    w.names
+                        .as_ref()
+                        .and_then(|n| crate::dat::names::NameSource::place(&**n, z as u32))
+                })
+                .unwrap_or_default();
             (format!("{me}[{zone}]: {msg}"), 3)
         }
         id::SHOUT => (format!("{me} : {msg}"), 2),
@@ -1900,7 +2299,13 @@ fn chat(w: &mut World, cid: u16, msg: &str) -> Done {
     };
     super::push_chat_from(w, line, mode, kind, &me);
     if send_it {
-        send(w, NetCommand::Chat { kind, text: msg.to_string() });
+        send(
+            w,
+            NetCommand::Chat {
+                kind,
+                text: msg.to_string(),
+            },
+        );
         restore_temp_mode(w);
         // Ours (Modern; retail changes it only by /chatmode and the Chat window): the channel used last becomes the
         // line's default, tells, shouts and emotes aside.
@@ -1968,7 +2373,8 @@ fn tell(w: &mut World, args: &[String], line: &str) -> Done {
     let Some(name) = name_case(&args[1]) else {
         if let Some(bt) = w.battle.clone() {
             let colour = bt.colour_in(0x79, &w.game);
-            w.chat.push_colour(bt.group9(0x65).unwrap_or_default(), colour);
+            w.chat
+                .push_colour(bt.group9(0x65).unwrap_or_default(), colour);
         }
         return Err(());
     };
@@ -2006,7 +2412,9 @@ fn attack(w: &mut World, args: &[String], mode: Mode) -> Done {
     match on_off(args.get(1)) {
         2 => act(w, me, cat::DISENGAGE, 0),
         1 => {
-            if let Some(t) = current_target(w).or_else(|| resolve(w, args.get(2).map(String::as_str), true, false, mode)) {
+            if let Some(t) = current_target(w)
+                .or_else(|| resolve(w, args.get(2).map(String::as_str), true, false, mode))
+            {
                 start(w, t);
             }
         }
@@ -2017,7 +2425,16 @@ fn attack(w: &mut World, args: &[String], mode: Mode) -> Done {
                 refuse(w, 0x95);
                 return Ok(());
             }
-            act(w, t, if engaged { cat::CHANGE_TARGET } else { cat::ATTACK }, 0);
+            act(
+                w,
+                t,
+                if engaged {
+                    cat::CHANGE_TARGET
+                } else {
+                    cat::ATTACK
+                },
+                0,
+            );
             target::set(w, Some(t.0));
         }
         _ if engaged => act(w, me, cat::DISENGAGE, 0),
@@ -2040,7 +2457,17 @@ const EQUIP_BAGS: [u8; 9] = [0, 8, 10, 11, 12, 13, 14, 15, 16];
 /// A bag slot holding an item named `name` (record name, case-insensitive), in the bags' order.
 fn find_item(w: &World, name: &str, bags: &[u8]) -> Option<(u8, u8, u16)> {
     let info = w.item_info.as_ref()?;
-    bags.iter().find_map(|&bag| w.inv.slots.iter().filter(|((c, i), _)| *c == bag && *i != 0).find(|(_, (id, _))| info.item(*id).is_some_and(|it| it.name.eq_ignore_ascii_case(name))).map(|((c, i), (id, _))| (*c, *i, *id)))
+    bags.iter().find_map(|&bag| {
+        w.inv
+            .slots
+            .iter()
+            .filter(|((c, i), _)| *c == bag && *i != 0)
+            .find(|(_, (id, _))| {
+                info.item(*id)
+                    .is_some_and(|it| it.name.eq_ignore_ascii_case(name))
+            })
+            .map(|((c, i), (id, _))| (*c, *i, *id))
+    })
 }
 
 /// FUN_1007bc10: /recast NAME: a spell (FUN_1022b430, then FUN_1022b2f0: (ticks + 59) / 60) or an ability
@@ -2073,17 +2500,35 @@ pub(super) fn printf(f: &str, args: &[String]) -> String {
 /// clock, "on" / "off" (exact) set it.
 fn clock(w: &mut World, args: &[String]) -> Done {
     use crate::dat::msgfmt;
-    let Some(bt) = w.battle.clone() else { return Ok(()) };
+    let Some(bt) = w.battle.clone() else {
+        return Ok(());
+    };
     let g = |id: u16| bt.group10_raw(id as usize);
     let (date_key, h12) = ((w.game.get(0x95) & 3) as usize, w.game.get(0x96) & 1 != 0);
     let t = super::vana_now(w);
     let p = msgfmt::VanaParts::of(t);
     let dec = |b: Vec<u8>| crate::dat::font::decode_sjis(&b);
     let date = dec(msgfmt::vana_datetime(&g, t, 2, date_key));
-    let time = dec(g(0x46).map(|s| msgfmt::format(&s, &[], &[p.hour, p.minute], &|_, _, _| None)).unwrap_or_default());
-    let vana = printf(&bt.group10(0x42).unwrap_or_default(), &[date, bt.day_name(p.weekday).unwrap_or_default(), time, bt.moon_name(p.phase).unwrap_or_default(), p.moon.to_string()]);
-    let unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
-    let earth = printf(&bt.group10(0x3a).unwrap_or_default(), &[dec(msgfmt::earth_datetime(&g, unix, 1, date_key, h12))]);
+    let time = dec(g(0x46)
+        .map(|s| msgfmt::format(&s, &[], &[p.hour, p.minute], &|_, _, _| None))
+        .unwrap_or_default());
+    let vana = printf(
+        &bt.group10(0x42).unwrap_or_default(),
+        &[
+            date,
+            bt.day_name(p.weekday).unwrap_or_default(),
+            time,
+            bt.moon_name(p.phase).unwrap_or_default(),
+            p.moon.to_string(),
+        ],
+    );
+    let unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    let earth = printf(
+        &bt.group10(0x3a).unwrap_or_default(),
+        &[dec(msgfmt::earth_datetime(&g, unix, 1, date_key, h12))],
+    );
     let colour = bt.colour_in(0x8c, &w.game);
     w.chat.push_colour(vana, colour);
     w.chat.push_colour(earth, colour);
@@ -2098,17 +2543,30 @@ fn clock(w: &mut World, args: &[String]) -> Done {
 
 fn recast(w: &mut World, args: &[String]) -> Done {
     let name = args.get(1).ok_or(())?.clone();
-    let left = |t: Option<&std::time::Instant>| t.map_or(0, |t| t.saturating_duration_since(std::time::Instant::now()).as_secs_f32().ceil() as u32);
+    let left = |t: Option<&std::time::Instant>| {
+        t.map_or(0, |t| {
+            t.saturating_duration_since(std::time::Instant::now())
+                .as_secs_f32()
+                .ceil() as u32
+        })
+    };
     let mut unusable = false;
     let mut secs = None;
     let mut ready = None;
-    let spell = w.names.as_ref().zip(w.actions.as_ref()).and_then(|(names, acts)| {
-        acts.spells
-            .iter()
-            .filter(|s| s.id != 0 && s.levels.iter().any(|&l| l >= 0))
-            .find(|s| crate::dat::names::NameSource::spell(&**names, s.id as u32).is_some_and(|n| n.eq_ignore_ascii_case(&name)))
-            .map(|s| s.id)
-    });
+    let spell = w
+        .names
+        .as_ref()
+        .zip(w.actions.as_ref())
+        .and_then(|(names, acts)| {
+            acts.spells
+                .iter()
+                .filter(|s| s.id != 0 && s.levels.iter().any(|&l| l >= 0))
+                .find(|s| {
+                    crate::dat::names::NameSource::spell(&**names, s.id as u32)
+                        .is_some_and(|n| n.eq_ignore_ascii_case(&name))
+                })
+                .map(|s| s.id)
+        });
     if let Some(id) = spell {
         match find_spell(w, &name, 0) {
             Ok(_) => secs = Some(left(w.spell_recast.get(&id))),
@@ -2118,24 +2576,47 @@ fn recast(w: &mut World, args: &[String]) -> Done {
     if secs.is_none()
         && let Some(id) = ability_named(w, &name, 0x200..0x600)
     {
-        let rec = w.actions.as_ref().and_then(|a| a.abilities.get(id as usize)).map(|a| a.timer);
+        let rec = w
+            .actions
+            .as_ref()
+            .and_then(|a| a.abilities.get(id as usize))
+            .map(|a| a.timer);
         let bit = id.wrapping_sub(0x200) as usize;
-        let known = id >= 0x400 || w.commands_known.get(64 + bit / 8).is_some_and(|b| b & (1 << (bit % 8)) != 0);
+        let known = id >= 0x400
+            || w.commands_known
+                .get(64 + bit / 8)
+                .is_some_and(|b| b & (1 << (bit % 8)) != 0);
         match rec {
             Some(t) if known => {
-                let s = if t == 900 { 0 } else { left(w.ability_recast.get(&t)) };
+                let s = if t == 900 {
+                    0
+                } else {
+                    left(w.ability_recast.get(&t))
+                };
                 secs = Some(s);
                 let calc = w.ability_calc.get(&t).copied().unwrap_or((0, 0));
-                let kind = w.actions.as_ref().and_then(|a| a.abilities.get(id as usize)).map_or(0, |a| if a.sub != 0 { a.sub } else { a.kind });
+                let kind = w
+                    .actions
+                    .as_ref()
+                    .and_then(|a| a.abilities.get(id as usize))
+                    .map_or(0, |a| if a.sub != 0 { a.sub } else { a.kind });
                 // A job without the charges (n 0) divides by zero in retail; ours prints the plain line (inferred).
-                if let Some((next, n, _)) = super::timers::charge_rule(w, kind).and_then(|(n, full)| super::timers::charges(s as i32, n, full, calc)) {
+                if let Some((next, n, _)) = super::timers::charge_rule(w, kind)
+                    .and_then(|(n, full)| super::timers::charges(s as i32, n, full, calc))
+                {
                     (secs, ready) = (Some(next as u32), Some(n));
                 }
             }
             _ => unusable = true,
         }
     }
-    let time = |s: u32| if s >= 3600 { format!("{}:{:02}:{:02}", s / 3600, s % 3600 / 60, s % 60) } else { format!("{}:{:02}", s / 60, s % 60) };
+    let time = |s: u32| {
+        if s >= 3600 {
+            format!("{}:{:02}:{:02}", s / 3600, s % 3600 / 60, s % 60)
+        } else {
+            format!("{}:{:02}", s / 60, s % 60)
+        }
+    };
     let line = match (secs, ready) {
         (Some(s), Some(n)) => format!("[{name}] {} ({n})", time(s)),
         (Some(s), None) => format!("[{name}] {}", time(s)),
@@ -2152,7 +2633,8 @@ fn recast(w: &mut World, args: &[String]) -> Done {
 pub(super) fn log9(w: &mut World, id: usize) {
     if let Some(bt) = w.battle.clone() {
         let colour = bt.colour_in(0x79, &w.game);
-        w.chat.push_colour(bt.group9(id).unwrap_or_default(), colour);
+        w.chat
+            .push_colour(bt.group9(id).unwrap_or_default(), colour);
     }
 }
 
@@ -2165,7 +2647,12 @@ fn equip(w: &mut World, args: &[String]) -> Done {
     }
     let bt = w.battle.clone().ok_or(())?;
     let want = args.get(1).ok_or(())?;
-    let k = (0..16).find(|&k| bt.slot_name(k).is_some_and(|n| n.eq_ignore_ascii_case(want))).ok_or(())?;
+    let k = (0..16)
+        .find(|&k| {
+            bt.slot_name(k)
+                .is_some_and(|n| n.eq_ignore_ascii_case(want))
+        })
+        .ok_or(())?;
     let slot = SLOT_OF[k];
     // FUN_100e48d0: SAVE_CONF byte 1 bits 3..4 (s2c 0x0B4, session +0x2cfd9) silence the success lines.
     let quiet = w.conf_sys[1] >> 3 & 3 != 0;
@@ -2185,11 +2672,16 @@ fn equip(w: &mut World, args: &[String]) -> Done {
     };
     let bags: Vec<u8> = match args.get(3).map(String::as_str) {
         None => EQUIP_BAGS.to_vec(),
-        Some(b) if b.len() == 1 && b.as_bytes()[0].is_ascii_digit() && b.as_bytes()[0] <= b'8' => vec![EQUIP_BAGS[(b.as_bytes()[0] - b'0') as usize]],
+        Some(b) if b.len() == 1 && b.as_bytes()[0].is_ascii_digit() && b.as_bytes()[0] <= b'8' => {
+            vec![EQUIP_BAGS[(b.as_bytes()[0] - b'0') as usize]]
+        }
         Some(_) => return Err(()),
     };
     // FUN_1007b1c0: the slot already wears an item of that name: nothing.
-    let worn = w.inv.equip[slot as usize].and_then(|s| w.inv.slots.get(&s)).and_then(|&(id, _)| w.item_info.as_ref()?.item(id)).is_some_and(|it| it.name.eq_ignore_ascii_case(name));
+    let worn = w.inv.equip[slot as usize]
+        .and_then(|s| w.inv.slots.get(&s))
+        .and_then(|&(id, _)| w.item_info.as_ref()?.item(id))
+        .is_some_and(|it| it.name.eq_ignore_ascii_case(name));
     if worn {
         return Ok(());
     }
@@ -2199,7 +2691,8 @@ fn equip(w: &mut World, args: &[String]) -> Done {
     };
     if super::equipwin::try_equip(w, slot as usize, bag, index, id) {
         let now = std::time::Instant::now();
-        w.equip_claims.retain(|c| now.duration_since(c.1).as_secs_f32() < 2.0);
+        w.equip_claims
+            .retain(|c| now.duration_since(c.1).as_secs_f32() < 2.0);
         w.equip_claims.truncate(5);
         w.equip_claims.push(((bag, index), now));
         if !quiet {
@@ -2215,9 +2708,23 @@ fn equip(w: &mut World, args: &[String]) -> Done {
 /// LockFlg, +8) nor taken by an /equip under 2 s ago (FUN_101eff30), so `/equip sub` finds the second of a pair.
 fn find_free(w: &World, name: &str, bags: &[u8]) -> Option<(u8, u8, u16)> {
     let info = w.item_info.as_ref()?;
-    let claimed = |k: &(u8, u8)| w.equip_claims.iter().any(|c| c.0 == *k && c.1.elapsed().as_secs_f32() < 2.0);
+    let claimed = |k: &(u8, u8)| {
+        w.equip_claims
+            .iter()
+            .any(|c| c.0 == *k && c.1.elapsed().as_secs_f32() < 2.0)
+    };
     bags.iter().find_map(|&bag| {
-        w.inv.slots.iter().filter(|((c, i), _)| *c == bag && *i != 0).find(|(k, (id, _))| info.item(*id).is_some_and(|it| it.name.eq_ignore_ascii_case(name)) && w.inv.locks.get(k).is_none_or(|&l| l == 0) && !claimed(k)).map(|((c, i), (id, _))| (*c, *i, *id))
+        w.inv
+            .slots
+            .iter()
+            .filter(|((c, i), _)| *c == bag && *i != 0)
+            .find(|(k, (id, _))| {
+                info.item(*id)
+                    .is_some_and(|it| it.name.eq_ignore_ascii_case(name))
+                    && w.inv.locks.get(k).is_none_or(|&l| l == 0)
+                    && !claimed(k)
+            })
+            .map(|((c, i), (id, _))| (*c, *i, *id))
     })
 }
 
@@ -2273,12 +2780,23 @@ pub(super) fn poll_start(w: &mut World, name: &str, kind: u8, text: &str) {
 
 /// s2c 0x079 (LAB_100f8ff0): the current / final results line by Kind (party 0x97 / 0x98, linkshell 0x99 / 0x9a, 2
 /// 0x122 / 0x123, say 0x93 / 0x94, shout 0x95 / 0x96), then the text and, while active, " n[votes]" per option.
-pub(super) fn poll_state(w: &mut World, votes: [u16; 9], kind: u8, state: u8, questions: u8, name: &str, text: &str) {
+pub(super) fn poll_state(
+    w: &mut World,
+    votes: [u16; 9],
+    kind: u8,
+    state: u8,
+    questions: u8,
+    name: &str,
+    text: &str,
+) {
     let done = state == 2;
     let (line, mode) = match kind {
         1 => (if done { 0x98 } else { 0x97 }, 0x0f),
         2 => (if done { 0x9a } else { 0x99 }, 0x10),
-        3 | 4 => (if done { 0x123 } else { 0x122 }, if kind == 3 { 0x1c } else { 0x1f }),
+        3 | 4 => (
+            if done { 0x123 } else { 0x122 },
+            if kind == 3 { 0x1c } else { 0x1f },
+        ),
         5 => (if done { 0x94 } else { 0x93 }, 0x0d),
         6 => (if done { 0x96 } else { 0x95 }, 0x0e),
         _ => return,
@@ -2296,7 +2814,14 @@ pub(super) fn poll_state(w: &mut World, votes: [u16; 9], kind: u8, state: u8, qu
 /// /translate's answer (LAB_10079d40), mode 0x79: no item group 10 0x67 (the name, the letters); else the item's
 /// auto-translate block (FD k lang+1 hi lo FD: k 7, 9 with hi 0 written 0xff, 10 with lo 0) with 0x69 when from ==
 /// to, else 0x68 (both names and letters) then 0x6a.
-pub(super) fn translate_result(w: &mut World, item: u16, from: u8, to: u8, from_text: &str, to_text: &str) {
+pub(super) fn translate_result(
+    w: &mut World,
+    item: u16,
+    from: u8,
+    to: u8,
+    from_text: &str,
+    to_text: &str,
+) {
     if !std::mem::take(&mut w.translating) {
         return;
     }
@@ -2317,16 +2842,32 @@ pub(super) fn translate_result(w: &mut World, item: u16, from: u8, to: u8, from_
         vec![fmt(0x67, &[from_text, &letter(from), &letter(to)])]
     } else {
         let (hi, lo) = ((item >> 8) as u8, item as u8);
-        let kind = if hi == 0 { 9 } else if lo == 0 { 10 } else { 7 };
-        let block: String = [kind, to + 1, if hi == 0 { 0xff } else { hi }, if lo == 0 { 0xff } else { lo }]
-            .iter()
-            .enumerate()
-            .map(|(k, &b)| char::from_u32(crate::dat::font::PHRASE_BASE + 0x100 * k as u32 + b as u32).unwrap())
-            .collect();
+        let kind = if hi == 0 {
+            9
+        } else if lo == 0 {
+            10
+        } else {
+            7
+        };
+        let block: String = [
+            kind,
+            to + 1,
+            if hi == 0 { 0xff } else { hi },
+            if lo == 0 { 0xff } else { lo },
+        ]
+        .iter()
+        .enumerate()
+        .map(|(k, &b)| {
+            char::from_u32(crate::dat::font::PHRASE_BASE + 0x100 * k as u32 + b as u32).unwrap()
+        })
+        .collect();
         if from == to {
             vec![fmt(0x69, &[&block])]
         } else {
-            vec![fmt(0x68, &[from_text, &letter(from), to_text, &letter(to)]), fmt(0x6a, &[&block])]
+            vec![
+                fmt(0x68, &[from_text, &letter(from), to_text, &letter(to)]),
+                fmt(0x6a, &[&block]),
+            ]
         }
     };
     for l in lines {
@@ -2340,8 +2881,33 @@ pub(super) fn item_search_result(w: &mut World, item: u16, flag: u8) {
     if !std::mem::take(&mut w.item_search) || flag != 0 {
         return;
     }
-    const BAGS: [(u8, u16); 17] = [(0, 0x114), (1, 0x115), (9, 0x124), (2, 0x116), (4, 0x117), (5, 0x118), (6, 0x119), (7, 0x11a), (8, 0x11b), (10, 0x12f), (11, 0x130), (12, 0x131), (13, 0x13f), (14, 0x140), (15, 0x141), (16, 0x142), (17, 0x143)];
-    let held: Vec<u16> = if item == 0 { Vec::new() } else { BAGS.iter().filter(|(b, _)| w.inv.slots.iter().any(|(k, v)| k.0 == *b && v.0 == item)).map(|b| b.1).collect() };
+    const BAGS: [(u8, u16); 17] = [
+        (0, 0x114),
+        (1, 0x115),
+        (9, 0x124),
+        (2, 0x116),
+        (4, 0x117),
+        (5, 0x118),
+        (6, 0x119),
+        (7, 0x11a),
+        (8, 0x11b),
+        (10, 0x12f),
+        (11, 0x130),
+        (12, 0x131),
+        (13, 0x13f),
+        (14, 0x140),
+        (15, 0x141),
+        (16, 0x142),
+        (17, 0x143),
+    ];
+    let held: Vec<u16> = if item == 0 {
+        Vec::new()
+    } else {
+        BAGS.iter()
+            .filter(|(b, _)| w.inv.slots.iter().any(|(k, v)| k.0 == *b && v.0 == item))
+            .map(|b| b.1)
+            .collect()
+    };
     if held.is_empty() {
         super::post::system_line(w, 0x11d, [item as i32, 0, 0, 0, 0], String::new());
         return;
@@ -2392,11 +2958,22 @@ fn bit(w: &World, id: u16, b: u32) -> bool {
 
 /// The inline compare some handlers use: "on" / "off" only as the one argument (1 / 2), else 0.
 fn only_on_off(args: &[String]) -> u32 {
-    if args.len() == 2 { on_off(args.get(1)) } else { 0 }
+    if args.len() == 2 {
+        on_off(args.get(1))
+    } else {
+        0
+    }
 }
 
 /// "on" / "off" set the state (`on` = the state "on" asks for) and print `lines[0]` / `[1]`; else report `cur`.
-fn switch(w: &mut World, word: u32, cur: bool, set: impl FnOnce(&mut World, bool), lines: [usize; 2], report: [usize; 2]) {
+fn switch(
+    w: &mut World,
+    word: u32,
+    cur: bool,
+    set: impl FnOnce(&mut World, bool),
+    lines: [usize; 2],
+    report: [usize; 2],
+) {
     if word == 0 {
         log9(w, report[!cur as usize]);
     } else {
@@ -2406,7 +2983,13 @@ fn switch(w: &mut World, word: u32, cur: bool, set: impl FnOnce(&mut World, bool
 }
 
 /// "on" / "off" set the state, anything else flips it; then `lines[0]` for on, `[1]` for off.
-fn toggle(w: &mut World, word: u32, cur: bool, set: impl FnOnce(&mut World, bool), lines: [usize; 2]) {
+fn toggle(
+    w: &mut World,
+    word: u32,
+    cur: bool,
+    set: impl FnOnce(&mut World, bool),
+    lines: [usize; 2],
+) {
     let on = match word {
         1 => true,
         2 => false,
@@ -2423,7 +3006,11 @@ fn atoi(s: &str) -> i64 {
         Some(r) => (true, r),
         None => (false, s.strip_prefix('+').unwrap_or(s)),
     };
-    let n = d.bytes().take_while(u8::is_ascii_digit).take(18).fold(0i64, |a, c| a * 10 + (c - b'0') as i64);
+    let n = d
+        .bytes()
+        .take_while(u8::is_ascii_digit)
+        .take(18)
+        .fold(0i64, |a, c| a * 10 + (c - b'0') as i64);
     if neg { -n } else { n }
 }
 
@@ -2447,32 +3034,50 @@ pub(super) fn bag_name(c: u8) -> String {
 
 /// /find: one line per matching item, its bags with the count in each; "(none)" without a match.
 fn find(w: &mut World, what: &str) {
-    let Some(info) = w.item_info.clone() else { return };
+    let Some(info) = w.item_info.clone() else {
+        return;
+    };
     let want = what.to_lowercase();
     if want.is_empty() {
         return;
     }
-    let mut found: std::collections::BTreeMap<String, std::collections::BTreeMap<u8, u32>> = Default::default();
+    let mut found: std::collections::BTreeMap<String, std::collections::BTreeMap<u8, u32>> =
+        Default::default();
     for (&(c, _), &(id, n)) in &w.inv.slots {
-        let Some(it) = info.item(id).filter(|_| id != 0 && id != 0xffff) else { continue };
+        let Some(it) = info.item(id).filter(|_| id != 0 && id != 0xffff) else {
+            continue;
+        };
         if it.name.to_lowercase().contains(&want) {
-            *found.entry(it.name.clone()).or_default().entry(c).or_default() += n.max(1);
+            *found
+                .entry(it.name.clone())
+                .or_default()
+                .entry(c)
+                .or_default() += n.max(1);
         }
     }
-    let colour = w.battle.as_ref().map_or([0x80; 4], |bt| bt.colour_in(0x8b, &w.game));
+    let colour = w
+        .battle
+        .as_ref()
+        .map_or([0x80; 4], |bt| bt.colour_in(0x8b, &w.game));
     if found.is_empty() {
         w.chat.push_colour(format!("/find {what}: (none)"), colour);
         return;
     }
     for (name, bags) in found {
-        let at: Vec<String> = bags.iter().map(|(c, n)| format!("{} {n}", bag_name(*c))).collect();
-        w.chat.push_colour(format!("{name}: {}", at.join(", ")), colour);
+        let at: Vec<String> = bags
+            .iter()
+            .map(|(c, n)| format!("{} {n}", bag_name(*c)))
+            .collect();
+        w.chat
+            .push_colour(format!("{name}: {}", at.join(", ")), colour);
     }
 }
 
 /// FUN_1007cab0: PlayTime from the 0x00A plus the time since, group 10 0x2e (h, m, s) or 0x2f (with days), mode 0x8b.
 fn playtime(w: &mut World) -> Done {
-    let (Some(bt), Some(text)) = (w.battle.clone(), playtime_text(w)) else { return Ok(()) };
+    let (Some(bt), Some(text)) = (w.battle.clone(), playtime_text(w)) else {
+        return Ok(());
+    };
     let colour = bt.colour_in(0x8b, &w.game);
     w.chat.push_colour(text, colour);
     Ok(())
@@ -2480,23 +3085,40 @@ fn playtime(w: &mut World) -> Done {
 
 /// The seconds played: the 0x00A's PlayTime plus the time since it came.
 pub(super) fn played(w: &World) -> Option<i64> {
-    w.play_time.map(|(base, at)| base as i64 + at.elapsed().as_secs() as i64)
+    w.play_time
+        .map(|(base, at)| base as i64 + at.elapsed().as_secs() as i64)
 }
 
 /// /playtime's line: group 10 0x2e (h, m, s) or 0x2f (with days).
 pub(super) fn playtime_text(w: &World) -> Option<String> {
     use crate::dat::msgfmt;
     let t = played(w)?;
-    let (d, h, m, s) = ((t / 86400) as i32, (t % 86400 / 3600) as i32, (t % 3600 / 60) as i32, (t % 60) as i32);
-    let (id, ints) = if d == 0 { (0x2e, vec![h, m, s]) } else { (0x2f, vec![d, h, m, s]) };
+    let (d, h, m, s) = (
+        (t / 86400) as i32,
+        (t % 86400 / 3600) as i32,
+        (t % 3600 / 60) as i32,
+        (t % 60) as i32,
+    );
+    let (id, ints) = if d == 0 {
+        (0x2e, vec![h, m, s])
+    } else {
+        (0x2f, vec![d, h, m, s])
+    };
     let raw = w.battle.as_ref()?.group10_raw(id)?;
-    Some(crate::dat::font::decode_sjis(&msgfmt::format(&raw, &[], &ints, &|_, _, _| None)))
+    Some(crate::dat::font::decode_sjis(&msgfmt::format(
+        &raw,
+        &[],
+        &ints,
+        &|_, _, _| None,
+    )))
 }
 
 /// FUN_10080830: no argument prints "(chatmode : prefix)" (mode 0x9d); else the mode by its word (table 0x10357ac8),
 /// tell with a name (bad spelling: group 9 0x65 and a failure). Unknown words do nothing.
 fn chat_mode(w: &mut World, args: &[String]) -> Done {
-    let Some(bt) = w.battle.clone() else { return Ok(()) };
+    let Some(bt) = w.battle.clone() else {
+        return Ok(());
+    };
     let colour = bt.colour_in(0x9d, &w.game);
     let Some(word) = args.get(1) else {
         let line = format!("(chatmode : {})", w.chat_prefix);
@@ -2516,7 +3138,8 @@ fn chat_mode(w: &mut World, args: &[String]) -> Done {
         "assiste" | "ae" => 0xf,
         "tell" | "t" => {
             let Some(name) = args.get(2).and_then(|n| name_case(n)) else {
-                w.chat.push_colour(bt.group9(0x65).unwrap_or_default(), colour);
+                w.chat
+                    .push_colour(bt.group9(0x65).unwrap_or_default(), colour);
                 return Err(());
             };
             set_chat_mode(w, 4, Some(&name));
@@ -2543,7 +3166,9 @@ fn local_settings(w: &mut World, args: &[String]) -> Done {
             cfg(w, 0x3a, n);
         }
         (Some("charanum"), Some(v)) if three => cfg(w, 0x3c, atoi(v).clamp(25, 50) as u32),
-        (Some("distance"), Some(v)) if three => cfg(w, 0x3e, (atoi(v) as f32 * 2.0).clamp(0.0, 25.0) as u32),
+        (Some("distance"), Some(v)) if three => {
+            cfg(w, 0x3e, (atoi(v) as f32 * 2.0).clamp(0.0, 25.0) as u32)
+        }
         (Some("footeffect"), Some(v)) if three => {
             let n = match v {
                 "on" => 0,
@@ -2553,7 +3178,11 @@ fn local_settings(w: &mut World, args: &[String]) -> Done {
             cfg(w, 0x3f, n);
         }
         (Some(which @ ("hidearmor" | "blureffect")), _) if args.len() <= 3 => {
-            let (id, lines) = if which == "hidearmor" { (0xa5, [0xff, 0x100]) } else { (0xc8, [0x145, 0x146]) };
+            let (id, lines) = if which == "hidearmor" {
+                (0xa5, [0xff, 0x100])
+            } else {
+                (0xc8, [0x145, 0x146])
+            };
             let on = match (three, val) {
                 (true, Some("on")) => true,
                 (true, Some("off")) => false,
@@ -2591,7 +3220,10 @@ pub(super) fn system_line(w: &mut World, id: u16) {
         return;
     }
     let Some(bt) = w.battle.clone() else { return };
-    let ctx = crate::dat::battle::Ctx { me: w.name.clone(), ..Default::default() };
+    let ctx = crate::dat::battle::Ctx {
+        me: w.name.clone(),
+        ..Default::default()
+    };
     if let Some(line) = bt.system(id, &ctx) {
         let colour = bt.colour_in(line.mode.unwrap_or(0x79), &w.game);
         for l in line.lines.into_iter().filter(|l| !l.is_empty()) {
@@ -2605,7 +3237,12 @@ pub(super) fn system_line(w: &mut World, id: u16) {
 /// us and trusts refuses them (group 7 0x9e). An unknown or missing subcommand does nothing. An add whose name isn't
 /// here goes through the search server (client/search.rs).
 fn party(w: &mut World, kind: u8, args: &[String], mode: Mode) -> Done {
-    let others: Vec<u16> = w.party.members().filter(|m| m.id != w.my_id && m.id != 0).map(|m| m.index).collect();
+    let others: Vec<u16> = w
+        .party
+        .members()
+        .filter(|m| m.id != w.my_id && m.id != 0)
+        .map(|m| m.index)
+        .collect();
     if !others.is_empty() && others.iter().all(|&i| i >= 0x700) {
         refuse(w, 0x9e);
         return Ok(());
@@ -2623,7 +3260,9 @@ fn party(w: &mut World, kind: u8, args: &[String], mode: Mode) -> Done {
         Some("add") => {
             let Some(t) = resolve(w, args.get(2).map(String::as_str), true, false, mode) else {
                 // Nobody here by that name: the search server's name lookup (FUN_1007c740, LAB_1007d5b0).
-                let Some(name) = args.get(2) else { return Err(()) };
+                let Some(name) = args.get(2) else {
+                    return Err(());
+                };
                 super::search::lookup(w, name, super::search::Then::PartyAdd);
                 return Ok(());
             };
@@ -2631,23 +3270,57 @@ fn party(w: &mut World, kind: u8, args: &[String], mode: Mode) -> Done {
                 refuse(w, 0x9f);
                 return Ok(());
             }
-            send(w, NetCommand::Packet { id: 0x06E, body: super::party::invite_body(t.0, t.1, kind) });
+            send(
+                w,
+                NetCommand::Packet {
+                    id: 0x06E,
+                    body: super::party::invite_body(t.0, t.1, kind),
+                },
+            );
         }
-        Some("leave") => send(w, NetCommand::Packet { id: 0x06F, body: vec![kind, 0, 0, 0] }),
+        Some("leave") => send(
+            w,
+            NetCommand::Packet {
+                id: 0x06F,
+                body: vec![kind, 0, 0, 0],
+            },
+        ),
         Some("breakup") => {
             let leader = if kind == 0 { 4 } else { 8 };
             if w.party.own_flags & leader != 0 {
-                send(w, NetCommand::Packet { id: 0x070, body: vec![kind, 0, 0, 0] });
+                send(
+                    w,
+                    NetCommand::Packet {
+                        id: 0x070,
+                        body: vec![kind, 0, 0, 0],
+                    },
+                );
             }
         }
         Some("kick") => {
             let name = named(w, 2)?;
-            send(w, NetCommand::Packet { id: 0x071, body: super::party::kick_body(kind, &name) });
+            send(
+                w,
+                NetCommand::Packet {
+                    id: 0x071,
+                    body: super::party::kick_body(kind, &name),
+                },
+            );
         }
         Some(sub @ ("leader" | "looter")) => {
             let name = named(w, 2)?;
-            let change = if sub == "looter" { 4 } else { (kind == 5) as u8 };
-            send(w, NetCommand::Packet { id: 0x077, body: super::party::change_body(&name, kind, change) });
+            let change = if sub == "looter" {
+                4
+            } else {
+                (kind == 5) as u8
+            };
+            send(
+                w,
+                NetCommand::Packet {
+                    id: 0x077,
+                    body: super::party::change_body(&name, kind, change),
+                },
+            );
         }
         _ => {}
     }
@@ -2658,7 +3331,8 @@ fn party(w: &mut World, kind: u8, args: &[String], mode: Mode) -> Done {
 fn misspelt(w: &mut World) {
     let Some(bt) = w.battle.clone() else { return };
     let colour = bt.colour_in(0x9d, &w.game);
-    w.chat.push_colour(bt.group9(0x65).unwrap_or_default(), colour);
+    w.chat
+        .push_colour(bt.group9(0x65).unwrap_or_default(), colour);
 }
 
 /// FUN_1007c6c0 (/blacklist, /blist): "add Name" / "delete Name" look the name up (FUN_1007c740, the search server),
@@ -2712,11 +3386,22 @@ fn prcmd(w: &mut World, args: &[String], mode: Mode) -> Done {
         }
         return Ok(());
     };
-    let name = if id == w.my_id { w.name.clone() } else { w.entities.get(&id).map(|e| e.name.clone()).unwrap_or_default() };
+    let name = if id == w.my_id {
+        w.name.clone()
+    } else {
+        w.entities
+            .get(&id)
+            .map(|e| e.name.clone())
+            .unwrap_or_default()
+    };
     // Anonymous (bit 5) or Away (bit 7): "You were unable to make a request to join." and nothing is sent. Checked
     // here before the blacklist *(inf: the order between the two tests, and that remove skips it)*.
     let anon_away = kind == 0 && w.self_flags & (1 << 5 | 1 << 7) != 0;
-    match if kind == 0 { super::partyreq::blacklisted(w, &name) } else { 0 } {
+    match if kind == 0 {
+        super::partyreq::blacklisted(w, &name)
+    } else {
+        0
+    } {
         _ if anon_away => refuse(w, 0xc6),
         1 => refuse(w, 0xc5),
         2 => refuse(w, 0xc6),
@@ -2733,11 +3418,57 @@ fn is_emote(c: u16) -> bool {
 
 /// /bell's notes (table 0x1032ca18, _stricmp): the param, 6..0x1e.
 const BELL: [(&str, u16); 51] = [
-    ("c3", 19), ("c3+", 26), ("d3-", 26), ("d3", 20), ("d3+", 27), ("e3-", 27), ("e3", 21), ("f3-", 21), ("f3", 22), ("e3+", 22),
-    ("f3+", 28), ("g3-", 28), ("g3", 23), ("g3+", 29), ("a3-", 29), ("a3", 24), ("a3+", 30), ("b3-", 30), ("b3", 25), ("c4-", 25),
-    ("b3+", 6), ("c4", 6), ("c4+", 14), ("d4-", 14), ("d4", 7), ("d4+", 15), ("e4-", 15), ("e4", 8), ("f4-", 8), ("e4+", 9),
-    ("f4", 9), ("f4+", 16), ("g4-", 16), ("g4", 10), ("g4+", 17), ("a4-", 17), ("a4", 11), ("a4+", 18), ("b4-", 18), ("b4", 12),
-    ("c5-", 12), ("b4+", 13), ("c5", 13), ("1", 6), ("2", 7), ("3", 8), ("4", 9), ("5", 10), ("6", 11), ("7", 12), ("8", 13),
+    ("c3", 19),
+    ("c3+", 26),
+    ("d3-", 26),
+    ("d3", 20),
+    ("d3+", 27),
+    ("e3-", 27),
+    ("e3", 21),
+    ("f3-", 21),
+    ("f3", 22),
+    ("e3+", 22),
+    ("f3+", 28),
+    ("g3-", 28),
+    ("g3", 23),
+    ("g3+", 29),
+    ("a3-", 29),
+    ("a3", 24),
+    ("a3+", 30),
+    ("b3-", 30),
+    ("b3", 25),
+    ("c4-", 25),
+    ("b3+", 6),
+    ("c4", 6),
+    ("c4+", 14),
+    ("d4-", 14),
+    ("d4", 7),
+    ("d4+", 15),
+    ("e4-", 15),
+    ("e4", 8),
+    ("f4-", 8),
+    ("e4+", 9),
+    ("f4", 9),
+    ("f4+", 16),
+    ("g4-", 16),
+    ("g4", 10),
+    ("g4+", 17),
+    ("a4-", 17),
+    ("a4", 11),
+    ("a4+", 18),
+    ("b4-", 18),
+    ("b4", 12),
+    ("c5-", 12),
+    ("b4+", 13),
+    ("c5", 13),
+    ("1", 6),
+    ("2", 7),
+    ("3", 8),
+    ("4", 9),
+    ("5", 10),
+    ("6", 11),
+    ("7", 12),
+    ("8", 13),
 ];
 
 /// FUN_1007fcc0: emote (command id - 0xa2), an optional mode word ("text" 1, "motion" 2, else 0), then the target
@@ -2755,14 +3486,24 @@ fn emote(w: &mut World, cid: u16, args: &[String], mode: Mode) -> Done {
         73 => {
             param = match rest.first() {
                 None => 6,
-                Some(n) => BELL.iter().find(|(b, _)| b.eq_ignore_ascii_case(n)).map(|b| b.1).ok_or(())?,
+                Some(n) => BELL
+                    .iter()
+                    .find(|(b, _)| b.eq_ignore_ascii_case(n))
+                    .map(|b| b.1)
+                    .ok_or(())?,
             };
-            let _ = w.net.commands.send(NetCommand::Packet { id: 0x05D, body: emote_body(0, 0, number, 0, param) });
+            let _ = w.net.commands.send(NetCommand::Packet {
+                id: 0x05D,
+                body: emote_body(0, 0, number, 0, param),
+            });
             return Ok(());
         }
         74 => {
             let job = rest.first().ok_or(())?;
-            let j = super::items::JOBS.iter().position(|n| !n.is_empty() && n.eq_ignore_ascii_case(job)).ok_or(())?;
+            let j = super::items::JOBS
+                .iter()
+                .position(|n| !n.is_empty() && n.eq_ignore_ascii_case(job))
+                .ok_or(())?;
             param = j as u16 + 0x1e;
             rest.remove(0);
         }
@@ -2780,8 +3521,13 @@ fn emote(w: &mut World, cid: u16, args: &[String], mode: Mode) -> Done {
         None => (0, None),
     };
     let m = if number == 74 { 0 } else { m };
-    let t = resolve(w, target, true, false, mode).filter(|t| t.0 != w.my_id).unwrap_or((0, 0));
-    let _ = w.net.commands.send(NetCommand::Packet { id: 0x05D, body: emote_body(t.0, t.1, number, m, param) });
+    let t = resolve(w, target, true, false, mode)
+        .filter(|t| t.0 != w.my_id)
+        .unwrap_or((0, 0));
+    let _ = w.net.commands.send(NetCommand::Packet {
+        id: 0x05D,
+        body: emote_body(t.0, t.1, number, m, param),
+    });
     Ok(())
 }
 
@@ -2797,11 +3543,18 @@ fn emote_body(target: u32, index: u16, number: u8, mode: u8, param: u16) -> Vec<
 /// FUN_1022b430: a spell by name (case-insensitive, exact) of `kind` (0 any); its id, or Err when unknown, not
 /// learned (s2c 0x0AA) or out of the jobs' reach.
 fn find_spell(w: &World, name: &str, kind: u16) -> Result<u16, ()> {
-    let (id, acts) = (spell_named(w, name, kind).ok_or(())?, w.actions.as_ref().ok_or(())?);
+    let (id, acts) = (
+        spell_named(w, name, kind).ok_or(())?,
+        w.actions.as_ref().ok_or(())?,
+    );
     let learned = spell_learned(w, id);
     let st = w.stats.as_ref().ok_or(())?;
     if !learned || !acts.can_cast(id, st.main, st.sub, 0) {
-        log::info!("spell {id}: learned {learned}, jobs {:?} / {:?}", st.main, st.sub);
+        log::info!(
+            "spell {id}: learned {learned}, jobs {:?} / {:?}",
+            st.main,
+            st.sub
+        );
         return Err(());
     }
     Ok(id)
@@ -2814,12 +3567,17 @@ fn spell_named(w: &World, name: &str, kind: u16) -> Option<u16> {
         .spells
         .iter()
         .filter(|s| s.id != 0 && (kind == 0 || s.kind == kind) && s.levels.iter().any(|&l| l >= 0))
-        .find(|s| crate::dat::names::NameSource::spell(&**names, s.id as u32).is_some_and(|n| n.eq_ignore_ascii_case(name)))?;
+        .find(|s| {
+            crate::dat::names::NameSource::spell(&**names, s.id as u32)
+                .is_some_and(|n| n.eq_ignore_ascii_case(name))
+        })?;
     Some(s.id)
 }
 
 pub(super) fn spell_learned(w: &World, id: u16) -> bool {
-    w.spells_known.get(id as usize / 8).is_some_and(|b| b & (1 << (id % 8)) != 0)
+    w.spells_known
+        .get(id as usize / 8)
+        .is_some_and(|b| b & (1 << (id % 8)) != 0)
 }
 
 /// Ours (the modern macro keys): a line's spell or ability record as /ma, /ws, /ja and /pet find it by name, learned
@@ -2831,7 +3589,9 @@ pub(super) fn line_action(w: &World, line: &str) -> Option<(super::magic::Kind, 
     match table().get(args.first()?.as_str())?.0 {
         id::MAGIC | id::NINJUTSU | id::SONG => spell_named(w, name, 0).map(|s| (Kind::Magic, s)),
         id::WS => ability_named(w, name, 0..0x200).map(|a| (Kind::Ability, a)),
-        id::JA | id::PET => ability_named(w, name, 0x400..0x600).or_else(|| ability_named(w, name, 0x200..0x400)).map(|a| (Kind::Ability, a)),
+        id::JA | id::PET => ability_named(w, name, 0x400..0x600)
+            .or_else(|| ability_named(w, name, 0x200..0x400))
+            .map(|a| (Kind::Ability, a)),
         _ => None,
     }
 }
@@ -2861,8 +3621,12 @@ fn ability_named(w: &World, name: &str, ids: impl Iterator<Item = u16>) -> Optio
     let acts = w.actions.as_ref()?;
     let mut hit = None;
     for i in ids {
-        let Some(a) = acts.abilities.get(i as usize).filter(|a| a.id != 0) else { continue };
-        if crate::dat::names::NameSource::ability(&**names, a.id as u32).is_some_and(|n| n.eq_ignore_ascii_case(name)) {
+        let Some(a) = acts.abilities.get(i as usize).filter(|a| a.id != 0) else {
+            continue;
+        };
+        if crate::dat::names::NameSource::ability(&**names, a.id as u32)
+            .is_some_and(|n| n.eq_ignore_ascii_case(name))
+        {
             hit = Some(a.id);
         }
     }
@@ -2893,12 +3657,21 @@ fn ability(w: &mut World, _pet: bool, args: &[String], mode: Mode) -> Done {
         return Ok(());
     }
     let name = args.get(1).ok_or(())?;
-    let hidden = |i: u16| w.actions.as_ref().and_then(|a| a.abilities.get(i as usize)).is_some_and(|a| a.sub != 0);
+    let hidden = |i: u16| {
+        w.actions
+            .as_ref()
+            .and_then(|a| a.abilities.get(i as usize))
+            .is_some_and(|a| a.sub != 0)
+    };
     let ja = ability_named(w, name, (0x200..0x400).filter(|&i| !hidden(i)));
     let id = ability_named(w, name, 0x400..0x600).or(ja).ok_or(())?;
     if (0x200..0x400).contains(&id) {
         let bit = (id - 0x200) as usize;
-        if !w.commands_known.get(64 + bit / 8).is_some_and(|b| b & (1 << (bit % 8)) != 0) {
+        if !w
+            .commands_known
+            .get(64 + bit / 8)
+            .is_some_and(|b| b & (1 << (bit % 8)) != 0)
+        {
             return Err(());
         }
     }
@@ -2915,8 +3688,15 @@ fn monster_skill(w: &mut World, args: &[String], mode: Mode) -> Done {
         return Ok(());
     }
     let name = args.get(1).ok_or(())?;
-    let moves: Vec<u16> = w.mon_moves.iter().map(|m| m.0).filter(|&m| m != 0).collect();
-    let id = ability_named(w, name, moves.into_iter()).filter(|id| (0x700..0xb00).contains(id)).ok_or(())?;
+    let moves: Vec<u16> = w
+        .mon_moves
+        .iter()
+        .map(|m| m.0)
+        .filter(|&m| m != 0)
+        .collect();
+    let id = ability_named(w, name, moves.into_iter())
+        .filter(|id| (0x700..0xb00).contains(id))
+        .ok_or(())?;
     let t = resolve(w, args.get(2).map(String::as_str), false, true, mode).ok_or(())?;
     act(w, t, 0x19, (id - 0x600) as u32);
     Ok(())
@@ -2926,7 +3706,9 @@ fn monster_skill(w: &mut World, args: &[String], mode: Mode) -> Done {
 /// table order; else the exact name ('/' added, 18 characters) prints its help, and a name not found lists every
 /// command containing it (flags & 7). Lines in mode 0x9d; never fails.
 fn question(w: &mut World, args: &[String]) -> Done {
-    let Some(bt) = w.battle.clone() else { return Ok(()) };
+    let Some(bt) = w.battle.clone() else {
+        return Ok(());
+    };
     let colour = bt.colour_in(0x9d, &w.game);
     let c = commands();
     let mut list = |want: u16, part: Option<&str>| {
@@ -2941,7 +3723,11 @@ fn question(w: &mut World, args: &[String]) -> Done {
         Some("normal") => return Ok(list(1, None)),
         Some(word) => word,
     };
-    let name: String = if word.starts_with('/') { String::new() } else { "/".into() } + &word.chars().take(0x12).collect::<String>();
+    let name: String = if word.starts_with('/') {
+        String::new()
+    } else {
+        "/".into()
+    } + &word.chars().take(0x12).collect::<String>();
     match c.rows.iter().find(|r| r.0 == name) {
         None => list(7, Some(&name[1..])),
         Some(&(_, id, _)) if id != 0 && id != 0x10b => {
@@ -2961,8 +3747,15 @@ fn help_text(w: &World, id: u16) -> Option<String> {
     if id >= 0x1d4 {
         return None;
     }
-    let entry = c.help.iter().find(|r| r.0 == id as i16).map_or(0, |r| r.1 as usize);
-    let text = crate::dat::msg::Messages::load(w.index.as_ref()?, c.help_file?).map_err(|e| log::warn!("/? help: {e:#}")).ok()?.get(entry)?;
+    let entry = c
+        .help
+        .iter()
+        .find(|r| r.0 == id as i16)
+        .map_or(0, |r| r.1 as usize);
+    let text = crate::dat::msg::Messages::load(w.index.as_ref()?, c.help_file?)
+        .map_err(|e| log::warn!("/? help: {e:#}"))
+        .ok()?
+        .get(entry)?;
     // 0x07 is the text's line break.
     Some(text.replace('\u{7}', "\n"))
 }
@@ -2974,14 +3767,24 @@ fn bstpet(w: &mut World, args: &[String], mode: Mode) -> Done {
     if !status_gate(w, 0x7f) {
         return Ok(());
     }
-    let (Some(acts), Some(names), Some(bt)) = (w.actions.clone(), w.names.clone(), w.battle.clone()) else { return Err(()) };
-    let ready: Vec<&crate::dat::actions::Ability> = super::magic::ability_rows(w, 0x12).iter().filter_map(|&i| acts.abilities.get(i as usize)).collect();
-    let name = |a: &crate::dat::actions::Ability| crate::dat::names::NameSource::ability(&*names, a.id as u32).unwrap_or_default();
+    let (Some(acts), Some(names), Some(bt)) =
+        (w.actions.clone(), w.names.clone(), w.battle.clone())
+    else {
+        return Err(());
+    };
+    let ready: Vec<&crate::dat::actions::Ability> = super::magic::ability_rows(w, 0x12)
+        .iter()
+        .filter_map(|&i| acts.abilities.get(i as usize))
+        .collect();
+    let name = |a: &crate::dat::actions::Ability| {
+        crate::dat::names::NameSource::ability(&*names, a.id as u32).unwrap_or_default()
+    };
     let Some(word) = args.get(1) else {
         let colour = bt.colour_in(0x9d, &w.game);
         for (n, a) in ready.iter().enumerate() {
             let charges = printf(&bt.group9(0x135).unwrap_or_default(), &[a.cost.to_string()]);
-            w.chat.push_colour(format!("[{}]{} {charges}", n + 1, name(a)), colour);
+            w.chat
+                .push_colour(format!("[{}]{} {charges}", n + 1, name(a)), colour);
         }
         return if ready.is_empty() { Err(()) } else { Ok(()) };
     };
@@ -3003,9 +3806,18 @@ mod tests {
 
     #[test]
     fn quoted_tokens() {
-        assert_eq!(tokens("/ma \"Cure II\" <t>", false), ["/ma", "Cure II", "<t>"]);
-        assert_eq!(tokens("/ma Cure II <t>", false), ["/ma", "Cure", "II", "<t>"]);
-        assert_eq!(tokens("/ja 'Provoke' <t>", false), ["/ja", "Provoke", "<t>"]);
+        assert_eq!(
+            tokens("/ma \"Cure II\" <t>", false),
+            ["/ma", "Cure II", "<t>"]
+        );
+        assert_eq!(
+            tokens("/ma Cure II <t>", false),
+            ["/ma", "Cure", "II", "<t>"]
+        );
+        assert_eq!(
+            tokens("/ja 'Provoke' <t>", false),
+            ["/ja", "Provoke", "<t>"]
+        );
         assert_eq!(tokens("/echo\tx", false), ["/echo\tx"]);
         assert_eq!(tokens("/echo\tx", true), ["/echo", "x"]);
         assert_eq!(tokens("/ma \"Cure", false), ["/ma", "\"Cure"]);
@@ -3017,7 +3829,10 @@ mod tests {
         assert!(is_emote(0xa2) && is_emote(0x102) && !is_emote(0xa1));
         assert_eq!(((0xaa_u16 + 0x5e) & 0xff) as u8, 8);
         assert_eq!(BELL.iter().find(|b| b.0 == "a4").map(|b| b.1), Some(11));
-        assert_eq!(emote_body(0x0100_0005, 0x405, 8, 1, 0x35), [5, 0, 0, 1, 5, 4, 8, 1, 0x35, 0, 0, 0]);
+        assert_eq!(
+            emote_body(0x0100_0005, 0x405, 8, 1, 0x35),
+            [5, 0, 0, 1, 5, 4, 8, 1, 0x35, 0, 0, 0]
+        );
     }
 
     #[test]
@@ -3025,7 +3840,16 @@ mod tests {
         assert_eq!(name_case("shantotto").as_deref(), Some("Shantotto"));
         assert_eq!(name_case("ab"), None);
         assert_eq!(name_case("Ajido-Marujido"), None);
-        assert_eq!((number("0x10"), number("$10"), number("%101"), number("42"), number("x")), (Some(16), Some(16), Some(5), Some(42), None));
+        assert_eq!(
+            (
+                number("0x10"),
+                number("$10"),
+                number("%101"),
+                number("42"),
+                number("x")
+            ),
+            (Some(16), Some(16), Some(5), Some(42), None)
+        );
     }
 
     #[test]
@@ -3049,7 +3873,11 @@ mod tests {
     /// The installed FFXiMain's table: /ma is magic, a target command; /y is no command; /h is /help.
     #[test]
     fn table_from_ffximain() {
-        let Ok(dll) = std::fs::read(crate::dat::ffximain(&crate::config::Config::load().ffxi_dir())) else { return };
+        let Ok(dll) = std::fs::read(crate::dat::ffximain(
+            &crate::config::Config::load().ffxi_dir(),
+        )) else {
+            return;
+        };
         let t = parse_table(&dll).unwrap();
         assert_eq!((t.len(), t["/ver"].0, t["/say"].0), (277, 0x1ae, 1));
         assert_eq!(t["/ma"], (id::MAGIC, 0x0101));
@@ -3059,6 +3887,9 @@ mod tests {
         assert!(!t.contains_key("/y") && !t.contains_key("/MA"));
         // /?'s help rows: /ma's text is entry 47.
         let h = crate::dat::tables::text_help(&dll).unwrap();
-        assert_eq!((h.len(), h.iter().find(|r| r.0 == id::MAGIC as i16)), (216, Some(&(0x25, 47))));
+        assert_eq!(
+            (h.len(), h.iter().find(|r| r.0 == id::MAGIC as i16)),
+            (216, Some(&(0x25, 47)))
+        );
     }
 }

@@ -121,7 +121,10 @@ pub fn locked(w: &World) -> bool {
 /// /fish (FUN_1007abf0) after the status gate: "You cannot fish here." (group 7 0x49) without water ahead or in the
 /// Cloister of Tides; nothing while the latch is set or already fishing; else c2s 0x01A category 0x0e and the latch.
 pub fn command(w: &mut World) {
-    let water = w.ground.as_ref().is_some_and(|g| g.water_ahead(w.pos, forward(w)));
+    let water = w
+        .ground
+        .as_ref()
+        .is_some_and(|g| g.water_ahead(w.pos, forward(w)));
     if !water || w.zone == Some(211) {
         super::textcmd::refuse(w, 0x49);
         return;
@@ -164,7 +167,8 @@ pub fn on_fish(w: &mut World, p: FishParams) {
     });
     if p.sense & 2 != 0 {
         let me = Who::Actor(w.my_id);
-        w.effects.on_event_scheduler(0xaf0 + 0x389, name(b"main"), me, me);
+        w.effects
+            .on_event_scheduler(0xaf0 + 0x389, name(b"main"), me, me);
     }
 }
 
@@ -195,7 +199,28 @@ pub fn update(w: &mut World, input: &mut Input, dt: f32, window: bool) {
         Some(f) => f,
         None => {
             let seed = w.started.elapsed().as_nanos() as u32 ^ w.my_id;
-            let mut f = Fishing { sub: 0, early: false, lockout: 180, frames: 0, game: None, arrow: -1, acc: 0, t: 0, good: 0, bad: 0, latch: false, clear: 0, answered: false, rng: seed, step: 0.0, enter: false, enter_free: false, escape: false, click: false, axis: 0.0 };
+            let mut f = Fishing {
+                sub: 0,
+                early: false,
+                lockout: 180,
+                frames: 0,
+                game: None,
+                arrow: -1,
+                acc: 0,
+                t: 0,
+                good: 0,
+                bad: 0,
+                latch: false,
+                clear: 0,
+                answered: false,
+                rng: seed,
+                step: 0.0,
+                enter: false,
+                enter_free: false,
+                escape: false,
+                click: false,
+                axis: 0.0,
+            };
             if w.hook_wait <= 0 {
                 w.hook_wait = f.rand() % 601 + 900;
             }
@@ -246,14 +271,25 @@ fn start_both(w: &mut World, s: &[u8; 4]) {
 }
 
 fn stop_all(w: &mut World) {
-    stop(w, &[b"fsh0", b"fsh1", b"fsh2", b"fsh3", b"fsh4", b"fsh5", b"fsh6", b"fsh7", b"fsh8", b"fsh9"]);
+    stop(
+        w,
+        &[
+            b"fsh0", b"fsh1", b"fsh2", b"fsh3", b"fsh4", b"fsh5", b"fsh6", b"fsh7", b"fsh8",
+            b"fsh9",
+        ],
+    );
 }
 
 /// FUN_1008a080: DAT 3727's `maiN` on us; the clear counter to 1.
 fn arrow_fx(w: &mut World, f: &mut Fishing, n: u32) {
     let digit = b"0123456789ab"[n.min(11) as usize];
     let me = Who::Actor(w.my_id);
-    w.effects.on_event_scheduler(0xaf0 + 0x39f, u32::from_le_bytes([b'm', b'a', b'i', digit]), me, me);
+    w.effects.on_event_scheduler(
+        0xaf0 + 0x39f,
+        u32::from_le_bytes([b'm', b'a', b'i', digit]),
+        me,
+        me,
+    );
     f.clear = 1;
 }
 
@@ -294,7 +330,9 @@ fn axis_edge(f: &mut Fishing) -> f32 {
 
 /// FUN_10177730 in the fight (no map: true).
 fn water(w: &World) -> bool {
-    w.ground.as_ref().is_none_or(|g| g.water_ahead(w.pos, forward(w)))
+    w.ground
+        .as_ref()
+        .is_none_or(|g| g.water_ahead(w.pos, forward(w)))
 }
 
 /// One retail frame of FUN_10089100's sub-states.
@@ -348,7 +386,11 @@ fn frame(w: &mut World, f: &mut Fishing) {
             tick(w, f);
             let Some(g) = f.game.as_mut() else { return };
             if f.enter {
-                let pct = if g.max == 0 { 0 } else { (g.cur as f64 * 100.0 / g.max as f64) as i32 };
+                let pct = if g.max == 0 {
+                    0
+                } else {
+                    (g.cur as f64 * 100.0 / g.max as f64) as i32
+                };
                 let special = g.special;
                 send(w, pct, 3, special);
             } else if !f.escape {
@@ -381,7 +423,11 @@ fn frame(w: &mut World, f: &mut Fishing) {
         3 => {
             clear_arrows(w, f, true);
             stop(w, &[b"fsh0", b"fsh7", b"fsh8", b"fsh9"]);
-            if fishing_status(status) && [b"fsh2", b"fsh3", b"fsh4", b"fsh5", b"fsh6"].iter().any(|s| running(w, s)) {
+            if fishing_status(status)
+                && [b"fsh2", b"fsh3", b"fsh4", b"fsh5", b"fsh6"]
+                    .iter()
+                    .any(|s| running(w, s))
+            {
                 return;
             }
             send(w, 0, 4, 0);
@@ -434,13 +480,22 @@ fn tick(w: &mut World, f: &mut Fishing) {
                     f.acc = (f.acc as f32 * 0.7) as i32;
                 }
                 (f.arrow, f.answered) = (2, false);
-                log::debug!("fishing: arrow {} gold {} for {} ticks", if g.dir == 0 { "right" } else { "left" }, g.gold, f.acc);
+                log::debug!(
+                    "fishing: arrow {} gold {} for {} ticks",
+                    if g.dir == 0 { "right" } else { "left" },
+                    g.gold,
+                    f.acc
+                );
             }
         }
         if f.arrow == 2 {
             g.hit_timer -= U;
             if g.hit_timer < 0 {
-                w.effects.on_scheduler(w.my_id, w.my_id, name(if g.large { b"hitl" } else { b"hits" }));
+                w.effects.on_scheduler(
+                    w.my_id,
+                    w.my_id,
+                    name(if g.large { b"hitl" } else { b"hits" }),
+                );
                 g.hit_timer = (f.rand() % 6 + 5) * 60;
             }
             f.acc -= U;
@@ -466,7 +521,12 @@ fn tick(w: &mut World, f: &mut Fishing) {
                     (f.good, f.bad, f.answered) = (0, 0, true);
                     log::debug!("fishing: arrow hit, stamina {}", g.cur.max(0));
                 } else if f.bad > f.good {
-                    g.cur += (if g.gold { (g.heal as f32 * 0.25) as i32 } else { g.heal }).max(1);
+                    g.cur += (if g.gold {
+                        (g.heal as f32 * 0.25) as i32
+                    } else {
+                        g.heal
+                    })
+                    .max(1);
                     f.acc = 0;
                     arrow_fx(w, f, arrow_index(g.dir, g.gold, 2));
                     (f.good, f.bad, f.answered) = (0, 0, true);
@@ -488,19 +548,37 @@ fn tick(w: &mut World, f: &mut Fishing) {
 
 /// The fish's gauge (percent) while it shows: fishing, no event holding the UI.
 pub(super) fn gauge(w: &World) -> Option<u8> {
-    w.fish_gauge.filter(|_| fishing_status(w.my_motion.status) && !super::event::active(w))
+    w.fish_gauge
+        .filter(|_| fishing_status(w.my_motion.status) && !super::event::active(w))
 }
 
 /// FUN_10202af0 at the end of the party window's draw: "Fish" and its gauge at (W / 2 - 58, 0.2 H), while fishing
 /// and no event holds the UI.
 pub fn draw_gauge(gu: &mut GameUi, w: &World, sw: f32, sh: f32) {
-    let Some(pct) = gauge(w).filter(|_| !w.modern) else { return };
+    let Some(pct) = gauge(w).filter(|_| !w.modern) else {
+        return;
+    };
     let (x, y) = ((sw / 2.0).trunc() - 58.0, (sh / 2.0 * 0.4).trunc());
     // FUN_101cb0d0: windowps 97 at 2 x pct / 100 wide from (4, 1), framesus 98 dimmed at 0.
     if pct > 0 {
-        gu.sprite_scaled_blend("menu    windowps", 97, x + 4.0, y + 8.0, 2.0 * pct as f32 / 100.0, 1.0, 0x8080_8080, 8);
+        gu.sprite_scaled_blend(
+            "menu    windowps",
+            97,
+            x + 4.0,
+            y + 8.0,
+            2.0 * pct as f32 / 100.0,
+            1.0,
+            0x8080_8080,
+            8,
+        );
     }
-    gu.sprite("menu    framesus", 98, x, y + 7.0, if pct == 0 { 0x3050_5050 } else { 0x8080_8080 });
+    gu.sprite(
+        "menu    framesus",
+        98,
+        x,
+        y + 7.0,
+        if pct == 0 { 0x3050_5050 } else { 0x8080_8080 },
+    );
     let tint = gu.ncol(if pct > 0 { 0 } else { 9 });
     gu.shape_fit("Fish", x, y, 102.0, tint);
 }

@@ -3,8 +3,8 @@
 //! settings), advance widths from FFXiMain, and the "font    usgaiji" shapes for SJIS 0xEF1F..0xEF2F.
 //! Text is Shift-JIS bytes; `encode_sjis` / `decode_sjis` convert from / to UTF-8.
 
-use super::{DatIndex, chunks};
 use super::zone::{Texture, parse_img};
+use super::{DatIndex, chunks};
 use anyhow::{Context, Result, bail};
 use md5::{Digest, Md5};
 use std::collections::HashMap;
@@ -21,7 +21,19 @@ pub fn set_code_tables(ids: [[u8; 4]; 256], modes: [[u8; 4]; 256]) {
 /// An entry of those tables: `k` 0 the colour ids (`1e` from 0x11), 1 the modes (`1f xx`); 0x80808080 before they
 /// are set.
 pub fn code_table(k: usize, xx: usize) -> [u8; 4] {
-    CODE_TABLES.read().ok().and_then(|t| t.as_ref().map(|t| if k == 0 { t.0[xx & 0xff] } else { t.1[xx & 0xff] })).unwrap_or([0x80; 4])
+    CODE_TABLES
+        .read()
+        .ok()
+        .and_then(|t| {
+            t.as_ref().map(|t| {
+                if k == 0 {
+                    t.0[xx & 0xff]
+                } else {
+                    t.1[xx & 0xff]
+                }
+            })
+        })
+        .unwrap_or([0x80; 4])
 }
 
 /// Glyph cell size in screen pixels (and in atlas texels for the 1024x2048 atlases).
@@ -65,7 +77,10 @@ pub struct Shape {
 impl Shape {
     /// Advance: horizontal extent of all parts (invisible parts act as spacers).
     pub fn width(&self) -> i32 {
-        let xs = self.parts.iter().flat_map(|p| p.corners.iter().map(|c| c[0] as i32));
+        let xs = self
+            .parts
+            .iter()
+            .flat_map(|p| p.corners.iter().map(|c| c[0] as i32));
         let (lo, hi) = xs.fold((i32::MAX, i32::MIN), |(lo, hi), x| (lo.min(x), hi.max(x)));
         if lo > hi { 0 } else { hi - lo }
     }
@@ -209,7 +224,8 @@ pub fn glyphs(sjis: &[u8]) -> Vec<i32> {
 fn parse_shapes(d: &[u8]) -> Result<Vec<Shape>> {
     let ntex = *d.get(16).context("shape chunk too short")? as usize;
     let mut p = 17 + ntex * 16;
-    let count = u16::from_le_bytes(d.get(p..p + 2).context("shape count")?.try_into().unwrap()) as usize;
+    let count =
+        u16::from_le_bytes(d.get(p..p + 2).context("shape count")?.try_into().unwrap()) as usize;
     p += 2;
     let mut shapes = Vec::with_capacity(count);
     for _ in 0..count {
@@ -224,7 +240,8 @@ fn parse_shapes(d: &[u8]) -> Result<Vec<Shape>> {
             shape.parts.push(ShapePart {
                 corners: [[s(0), s(2)], [s(4), s(6)], [s(8), s(10)], [s(12), s(14)]],
                 rect: [s(16), s(18), s(20), s(22)],
-                colors: [0, 1, 2, 3].map(|k| super::ui::cell_color(r[25 + k * 4..29 + k * 4].try_into().unwrap())),
+                colors: [0, 1, 2, 3]
+                    .map(|k| super::ui::cell_color(r[25 + k * 4..29 + k * 4].try_into().unwrap())),
                 blend: [r[42], r[43], r[44]],
                 texture: String::from_utf8_lossy(&name[..end]).trim_end().to_string(),
             });
@@ -237,7 +254,9 @@ fn parse_shapes(d: &[u8]) -> Result<Vec<Shape>> {
 
 fn decode_png(data: &[u8]) -> Result<Texture> {
     let mut dec = png::Decoder::new(std::io::Cursor::new(data));
-    dec.set_transformations(png::Transformations::normalize_to_color8() | png::Transformations::ALPHA);
+    dec.set_transformations(
+        png::Transformations::normalize_to_color8() | png::Transformations::ALPHA,
+    );
     let mut reader = dec.read_info()?;
     let mut buf = vec![0u8; reader.output_buffer_size().context("PNG too large")?];
     let info = reader.next_frame(&mut buf)?;
@@ -245,19 +264,33 @@ fn decode_png(data: &[u8]) -> Result<Texture> {
         bail!("PNG font is {:?}, expected RGBA", info.color_type);
     }
     buf.truncate(info.buffer_size());
-    Ok(Texture::new("font    moji".into(), 0, info.width, info.height, buf))
+    Ok(Texture::new(
+        "font    moji".into(),
+        0,
+        info.width,
+        info.height,
+        buf,
+    ))
 }
 
 impl Font {
     /// `lang`: 0 Japanese, 1 English, 2 French, 3 German (selects the menu DAT, FUN_10250de0).
     pub fn load(index: &DatIndex, ffximain: &[u8], lang: u8, quality: Quality) -> Result<Self> {
         let t = super::tables::of(ffximain)?;
-        let widths = ffximain.get(t.widths_at..t.widths_at + WIDTHS_LEN).context("FFXiMain.dll too short")?;
+        let widths = ffximain
+            .get(t.widths_at..t.widths_at + WIDTHS_LEN)
+            .context("FFXiMain.dll too short")?;
         if hex::encode(Md5::digest(widths)) != WIDTHS_MD5 {
-            bail!("glyph width table at {:#x} does not match this FFXiMain.dll build", t.widths_at);
+            bail!(
+                "glyph width table at {:#x} does not match this FFXiMain.dll build",
+                t.widths_at
+            );
         }
         let u32_at = |o: usize| u32::from_le_bytes(ffximain[o..o + 4].try_into().unwrap());
-        let table = *t.lang_at.get(lang as usize).context("language must be 0..3")?;
+        let table = *t
+            .lang_at
+            .get(lang as usize)
+            .context("language must be 0..3")?;
         let menu_id = u32_at(table);
         let menu = index.read(menu_id)?;
         let mut moji = None;
@@ -265,7 +298,13 @@ impl Font {
         let mut gaiji = Vec::new();
         for c in chunks(&menu)? {
             match c.kind {
-                0x20 if c.data.get(1..17).is_some_and(|n| n.starts_with(b"font    moji")) => moji = Some(parse_img(c.data)?),
+                0x20 if c
+                    .data
+                    .get(1..17)
+                    .is_some_and(|n| n.starts_with(b"font    moji")) =>
+                {
+                    moji = Some(parse_img(c.data)?)
+                }
                 0x20 => {
                     if let Ok(t) = parse_img(c.data) {
                         textures.insert(t.name.clone(), t);
@@ -276,23 +315,42 @@ impl Font {
             }
         }
         let atlas = match quality {
-            Quality::Compressed => moji.with_context(|| format!("no font moji in menu DAT {menu_id}"))?,
+            Quality::Compressed => {
+                moji.with_context(|| format!("no font moji in menu DAT {menu_id}"))?
+            }
             Quality::Uncompressed => decode_png(&index.read(u32_at(t.png_fonts_at))?)?,
             Quality::High => decode_png(&index.read(u32_at(t.png_fonts_at + 12))?)?,
         };
         let cell_px = atlas.width / COLUMNS as u32;
         if cell_px == 0 || atlas.height != cell_px * ROWS as u32 {
-            bail!("font atlas is {}x{}, expected 64x128 cells", atlas.width, atlas.height);
+            bail!(
+                "font atlas is {}x{}, expected 64x128 cells",
+                atlas.width,
+                atlas.height
+            );
         }
-        let codes = super::tables::code_colours(ffximain).map_err(|e| log::warn!("{e:#}")).unwrap_or_default();
-        Ok(Self { atlas, cell_px, widths: widths.iter().map(|&b| b as i8).collect(), gaiji, textures, lang, codes })
+        let codes = super::tables::code_colours(ffximain)
+            .map_err(|e| log::warn!("{e:#}"))
+            .unwrap_or_default();
+        Ok(Self {
+            atlas,
+            cell_px,
+            widths: widths.iter().map(|&b| b as i8).collect(),
+            gaiji,
+            textures,
+            lang,
+            codes,
+        })
     }
 
     /// Pen advance of a glyph index (FUN_1011a1f0).
     pub fn advance(&self, idx: i32) -> i32 {
         match idx {
             _ if idx < 0 => 0,
-            GAIJI_FIRST..GAIJI_END => self.gaiji.get((idx - GAIJI_FIRST) as usize).map_or(0, Shape::width),
+            GAIJI_FIRST..GAIJI_END => self
+                .gaiji
+                .get((idx - GAIJI_FIRST) as usize)
+                .map_or(0, Shape::width),
             _ if (idx as usize) < WIDTHS_LEN => self.widths[idx as usize] as i32,
             _ => 14,
         }
@@ -305,32 +363,62 @@ impl Font {
     /// The colour a `1e xx` (kind 0) or `1f xx` (kind 1) code sets, keeping `base`'s alpha (layout_line's rule).
     pub fn code_colour(&self, kind: u8, xx: u8, base: [u8; 4]) -> [u8; 4] {
         let tables = CODE_TABLES.read().ok();
-        let table = |k: usize, xx: usize| tables.as_ref().and_then(|t| t.as_ref()).map_or([0x80; 4], |t| if k == 0 { t.0[xx] } else { t.1[xx] });
+        let table = |k: usize, xx: usize| {
+            tables
+                .as_ref()
+                .and_then(|t| t.as_ref())
+                .map_or([0x80; 4], |t| if k == 0 { t.0[xx] } else { t.1[xx] })
+        };
         let xx = xx as usize;
         let c = match kind {
             0 if xx < 0x11 => self.codes[xx].to_le_bytes(),
             0 => table(0, xx),
             _ => table(1, xx),
         };
-        if kind == 0 && c == [0; 4] { base } else { [c[0], c[1], c[2], base[3]] }
+        if kind == 0 && c == [0; 4] {
+            base
+        } else {
+            [c[0], c[1], c[2], base[3]]
+        }
     }
 
     /// One line at pen (x, y), as FUN_10118d60: 16 px cells, pen += round(advance * scale).
     /// `color` is BGRA with 0x80 = 1.0; gaiji shapes ignore it (drawn with 0x80808080).
-    pub fn layout_line(&self, sjis: &[u8], x: i32, y: i32, color: [u8; 4], scale: [f32; 2], out: &mut Vec<Quad>) -> i32 {
+    pub fn layout_line(
+        &self,
+        sjis: &[u8],
+        x: i32,
+        y: i32,
+        color: [u8; 4],
+        scale: [f32; 2],
+        out: &mut Vec<Quad>,
+    ) -> i32 {
         let mut pen = x;
         let mut color = color;
         let base = color;
         let tables = CODE_TABLES.read().ok();
-        let table = |k: usize, xx: usize| tables.as_ref().and_then(|t| t.as_ref()).map_or([0x80; 4], |t| if k == 0 { t.0[xx] } else { t.1[xx] });
+        let table = |k: usize, xx: usize| {
+            tables
+                .as_ref()
+                .and_then(|t| t.as_ref())
+                .map_or([0x80; 4], |t| if k == 0 { t.0[xx] } else { t.1[xx] })
+        };
         for g in glyphs(sjis) {
             // FUN_10162140: `1e xx` replaces the colour, keeping the draw's alpha: below 0x11 the 17-entry table (0 = the
             // line's own), from 0x11 the colour-id table (FUN_10129d00, 0x80808080 when absent); `1f xx` mode xx's
             // colour (FUN_10129c70).
             if (-0x1ff..=-0x100).contains(&g) {
                 let xx = (-0x100 - g) as usize;
-                let c = if xx < 0x11 { self.codes[xx].to_le_bytes() } else { table(0, xx) };
-                color = if c == [0; 4] { base } else { [c[0], c[1], c[2], base[3]] };
+                let c = if xx < 0x11 {
+                    self.codes[xx].to_le_bytes()
+                } else {
+                    table(0, xx)
+                };
+                color = if c == [0; 4] {
+                    base
+                } else {
+                    [c[0], c[1], c[2], base[3]]
+                };
                 continue;
             }
             if (-0x2ff..=-0x200).contains(&g) {
@@ -349,14 +437,25 @@ impl Font {
                     y: y as f32,
                     w: CELL as f32 * scale[0],
                     h: CELL as f32 * scale[1],
-                    uv: [col / COLUMNS as f32, row / ROWS as f32, (col + 1.0) / COLUMNS as f32, (row + 1.0) / ROWS as f32],
+                    uv: [
+                        col / COLUMNS as f32,
+                        row / ROWS as f32,
+                        (col + 1.0) / COLUMNS as f32,
+                        (row + 1.0) / ROWS as f32,
+                    ],
                     color,
                     source: Source::Atlas,
                     blend: BLEND_ADD,
                 });
-            } else if let Some(shape) = (GAIJI_FIRST..GAIJI_END).contains(&g).then(|| self.gaiji.get((g - GAIJI_FIRST) as usize)).flatten() {
+            } else if let Some(shape) = (GAIJI_FIRST..GAIJI_END)
+                .contains(&g)
+                .then(|| self.gaiji.get((g - GAIJI_FIRST) as usize))
+                .flatten()
+            {
                 for part in &shape.parts {
-                    let Some(tex) = self.textures.get(&part.texture) else { continue };
+                    let Some(tex) = self.textures.get(&part.texture) else {
+                        continue;
+                    };
                     let [w, h, u, v] = part.rect.map(|c| c as f32);
                     let (x0, y0) = (part.corners[0][0] as f32, part.corners[0][1] as f32);
                     let (x1, y1) = (part.corners[3][0] as f32, part.corners[3][1] as f32);
@@ -365,7 +464,12 @@ impl Font {
                         y: y as f32 + y0,
                         w: x1 - x0,
                         h: y1 - y0,
-                        uv: [u / tex.width as f32, v / tex.height as f32, (u + w) / tex.width as f32, (v + h) / tex.height as f32],
+                        uv: [
+                            u / tex.width as f32,
+                            v / tex.height as f32,
+                            (u + w) / tex.width as f32,
+                            (v + h) / tex.height as f32,
+                        ],
                         color: part.colors[0],
                         source: Source::Texture(part.texture.clone()),
                         blend: part.blend,
@@ -378,7 +482,14 @@ impl Font {
     }
 
     /// Lines split at '\n', 16 px apart (FUN_10211860). Returns the bounding size.
-    pub fn layout(&self, sjis: &[u8], x: i32, y: i32, color: [u8; 4], out: &mut Vec<Quad>) -> (i32, i32) {
+    pub fn layout(
+        &self,
+        sjis: &[u8],
+        x: i32,
+        y: i32,
+        color: [u8; 4],
+        out: &mut Vec<Quad>,
+    ) -> (i32, i32) {
         let mut w = 0;
         let lines: Vec<&[u8]> = sjis.split(|&b| b == b'\n').collect();
         for (i, line) in lines.iter().enumerate() {
@@ -398,13 +509,27 @@ impl Font {
             let o = (yi * tex.width as usize + xi) * 4;
             [0, 1, 2, 3].map(|k| tex.rgba[o + k] as f32 / 255.0)
         };
-        let (a, b, c, d) = (px(x0, y0), px(x0 + 1.0, y0), px(x0, y0 + 1.0), px(x0 + 1.0, y0 + 1.0));
-        [0, 1, 2, 3].map(|k| (a[k] * (1.0 - ax) + b[k] * ax) * (1.0 - ay) + (c[k] * (1.0 - ax) + d[k] * ax) * ay)
+        let (a, b, c, d) = (
+            px(x0, y0),
+            px(x0 + 1.0, y0),
+            px(x0, y0 + 1.0),
+            px(x0 + 1.0, y0 + 1.0),
+        );
+        [0, 1, 2, 3].map(|k| {
+            (a[k] * (1.0 - ax) + b[k] * ax) * (1.0 - ay) + (c[k] * (1.0 - ax) + d[k] * ax) * ay
+        })
     }
 
     /// Software compositor for previews: draws quads onto an RGBA8 image as the client's D3D states
     /// do (MODULATE2X with the vertex colour, alpha test > 0; glyphs ONE/ONE unless `alpha_glyphs`).
-    pub fn draw(&self, quads: &[Quad], img: &mut [u8], width: u32, height: u32, alpha_glyphs: bool) {
+    pub fn draw(
+        &self,
+        quads: &[Quad],
+        img: &mut [u8],
+        width: u32,
+        height: u32,
+        alpha_glyphs: bool,
+    ) {
         for q in quads {
             let tex = match &q.source {
                 Source::Atlas => &self.atlas,
@@ -414,9 +539,13 @@ impl Font {
                 },
             };
             // MODULATE2X: texture * diffuse * 2.
-            let vc = [q.color[2], q.color[1], q.color[0], q.color[3]].map(|c| c as f32 * 2.0 / 255.0);
+            let vc =
+                [q.color[2], q.color[1], q.color[0], q.color[3]].map(|c| c as f32 * 2.0 / 255.0);
             let (x0, y0) = (q.x.floor().max(0.0) as u32, q.y.floor().max(0.0) as u32);
-            let (x1, y1) = (((q.x + q.w).ceil().max(0.0) as u32).min(width), ((q.y + q.h).ceil().max(0.0) as u32).min(height));
+            let (x1, y1) = (
+                ((q.x + q.w).ceil().max(0.0) as u32).min(width),
+                ((q.y + q.h).ceil().max(0.0) as u32).min(height),
+            );
             for py in y0..y1 {
                 for px in x0..x1 {
                     let s = (px as f32 + 0.5 - q.x) / q.w;
@@ -424,7 +553,11 @@ impl Font {
                     if !(0.0..1.0).contains(&s) || !(0.0..1.0).contains(&t) {
                         continue;
                     }
-                    let texel = Self::sample(tex, q.uv[0] + s * (q.uv[2] - q.uv[0]), q.uv[1] + t * (q.uv[3] - q.uv[1]));
+                    let texel = Self::sample(
+                        tex,
+                        q.uv[0] + s * (q.uv[2] - q.uv[0]),
+                        q.uv[1] + t * (q.uv[3] - q.uv[1]),
+                    );
                     let src = [0, 1, 2, 3].map(|k| (texel[k] * vc[k]).min(1.0));
                     // The UI runs with ALPHATESTENABLE, ALPHAFUNC GREATER, ALPHAREF 0 (FUN_10159ae0).
                     if src[3] <= 0.0 {
@@ -432,7 +565,11 @@ impl Font {
                     }
                     let o = ((py * width + px) * 4) as usize;
                     let dst = [0, 1, 2].map(|k| img[o + k] as f32 / 255.0);
-                    let blend = if q.blend == BLEND_ADD && alpha_glyphs { BLEND_ALPHA } else { q.blend };
+                    let blend = if q.blend == BLEND_ADD && alpha_glyphs {
+                        BLEND_ALPHA
+                    } else {
+                        q.blend
+                    };
                     let out = if blend == BLEND_ADD {
                         [0, 1, 2].map(|k| dst[k] + src[k])
                     } else {
@@ -442,7 +579,9 @@ impl Font {
                             1 => dst[k],
                             _ => 0.0,
                         };
-                        [0, 1, 2].map(|k| (pick(blend[0], k) - pick(blend[1], k)) * src[3] + pick(blend[2], k))
+                        [0, 1, 2].map(|k| {
+                            (pick(blend[0], k) - pick(blend[1], k)) * src[3] + pick(blend[2], k)
+                        })
                     };
                     for k in 0..3 {
                         img[o + k] = (out[k].clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
@@ -503,7 +642,9 @@ pub fn colour_code(xx: u8) -> char {
 
 /// The text without its in-line codes.
 pub fn strip_codes(s: &str) -> String {
-    s.chars().filter(|c| !(CODE_BASE..CODE_BASE + 0x200).contains(&(*c as u32))).collect()
+    s.chars()
+        .filter(|c| !(CODE_BASE..CODE_BASE + 0x200).contains(&(*c as u32)))
+        .collect()
 }
 
 /// An auto-translate phrase (`FD kind lang hi lo FD`) kept in a String: its four inner bytes as U+100000 + 0x100 x
@@ -523,7 +664,9 @@ pub fn decode_sjis(sjis: &[u8]) -> String {
             continue;
         }
         if matches!(b, 0x1e | 0x1f) && i + 1 < sjis.len() {
-            out.push(char::from_u32(CODE_BASE + 0x100 * (b - 0x1e) as u32 + sjis[i + 1] as u32).unwrap());
+            out.push(
+                char::from_u32(CODE_BASE + 0x100 * (b - 0x1e) as u32 + sjis[i + 1] as u32).unwrap(),
+            );
             i += 2;
             continue;
         }
@@ -541,7 +684,10 @@ pub fn decode_sjis(sjis: &[u8]) -> String {
                 // kept as its bytes too.
                 let (s, bad) = encoding_rs::SHIFT_JIS.decode_without_bom_handling(pair);
                 if bad || encoding_rs::SHIFT_JIS.encode(&s).0.as_ref() != pair {
-                    out.push(char::from_u32(PAIR_BASE + ((pair[0] as u32) << 8 | pair[1] as u32)).unwrap());
+                    out.push(
+                        char::from_u32(PAIR_BASE + ((pair[0] as u32) << 8 | pair[1] as u32))
+                            .unwrap(),
+                    );
                 } else {
                     out.push_str(&s);
                 }
@@ -594,7 +740,11 @@ pub fn encode_sjis(text: &str) -> Vec<u8> {
             out.push(cp as u8);
         } else {
             let (bytes, _, bad) = encoding_rs::SHIFT_JIS.encode(ch.encode_utf8(&mut buf));
-            if bad { out.push(b'?') } else { out.extend_from_slice(&bytes) }
+            if bad {
+                out.push(b'?')
+            } else {
+                out.extend_from_slice(&bytes)
+            }
         }
     }
     out
@@ -607,7 +757,11 @@ mod tests {
     /// A pair kept as its bytes still reaches the modern faces as its character; the game's own glyphs stay theirs.
     #[test]
     fn kept_pairs_plain() {
-        for (pair, ch) in [([0x87u8, 0x90], '≒'), ([0x87, 0x9A], '∵'), ([0xFA, 0x4A], 'Ⅰ')] {
+        for (pair, ch) in [
+            ([0x87u8, 0x90], '≒'),
+            ([0x87, 0x9A], '∵'),
+            ([0xFA, 0x4A], 'Ⅰ'),
+        ] {
             let d = decode_sjis(&pair);
             assert_eq!(encode_sjis(&d), pair, "{pair:02X?}");
             assert_eq!(plain(&d), ch.to_string(), "{pair:02X?}");
@@ -644,10 +798,20 @@ mod tests {
                 assert_eq!(encode_sjis(&decode_sjis(&p)), p, "{a:02X}{b:02X}");
             }
         }
-        assert_eq!(encode_sjis(&decode_sjis(b"\x81\x67hi\x81\x68")), b"\x81\x67hi\x81\x68");
+        assert_eq!(
+            encode_sjis(&decode_sjis(b"\x81\x67hi\x81\x68")),
+            b"\x81\x67hi\x81\x68"
+        );
         assert_eq!((sjis_index(0x81, 0x67), sjis_index(0x81, 0x68)), (135, 136));
         // The inverse pairs 0x1011cb50 was checked against, and the fallback glyph.
-        assert_eq!((sjis_index(0x85, 0x40), sjis_index(0x87, 0x40), sjis_index(0xE0, 0x40)), (704, 936, 5399));
+        assert_eq!(
+            (
+                sjis_index(0x85, 0x40),
+                sjis_index(0x87, 0x40),
+                sjis_index(0xE0, 0x40)
+            ),
+            (704, 936, 5399)
+        );
         assert_eq!(sjis_index(0xFA, 0x40), 0xCB);
     }
 
@@ -684,6 +848,9 @@ mod tests {
         let s = decode_sjis(&b);
         assert!(!s.contains('\u{FFFD}'));
         assert_eq!(encode_sjis(&s), b);
-        assert_eq!(glyphs(&b), vec![b'a' as i32 - 0x20, 723, b'b' as i32 - 0x20, 724]);
+        assert_eq!(
+            glyphs(&b),
+            vec![b'a' as i32 - 0x20, 723, b'b' as i32 - 0x20, 724]
+        );
     }
 }

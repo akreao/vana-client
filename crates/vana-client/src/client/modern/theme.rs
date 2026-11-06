@@ -2,7 +2,10 @@
 //! logical sizes and nine-slice insets, 2x atlases, theme.json's palette), the window frames built from it, and the
 //! bundled OFL fonts (assets/fonts).
 
-use egui::{Color32, ColorImage, Context, FontData, FontDefinitions, FontFamily, Rect, TextureHandle, TextureId, TextureOptions, Vec2, pos2, vec2};
+use egui::{
+    Color32, ColorImage, Context, FontData, FontDefinitions, FontFamily, Rect, TextureHandle,
+    TextureId, TextureOptions, Vec2, pos2, vec2,
+};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -10,26 +13,74 @@ use std::sync::Arc;
 const THEME: &str = include_str!("../../../assets/modern/theme.json");
 const MANIFEST: &str = include_str!("../../../assets/modern/manifest.json");
 const ATLASES: [(&str, &[u8]); 9] = [
-    ("atlases/frames_0@2x.png", include_bytes!("../../../assets/modern/atlases/frames_0@2x.png")),
-    ("atlases/controls_0@2x.png", include_bytes!("../../../assets/modern/atlases/controls_0@2x.png")),
-    ("atlases/gauges_0@2x.png", include_bytes!("../../../assets/modern/atlases/gauges_0@2x.png")),
-    ("atlases/icons_0@2x.png", include_bytes!("../../../assets/modern/atlases/icons_0@2x.png")),
-    ("atlases/indicators_0@2x.png", include_bytes!("../../../assets/modern/atlases/indicators_0@2x.png")),
-    ("atlases/jobs_0@2x.png", include_bytes!("../../../assets/modern/atlases/jobs_0@2x.png")),
-    ("atlases/status_0@2x.png", include_bytes!("../../../assets/modern/atlases/status_0@2x.png")),
-    ("atlases/weather_0@2x.png", include_bytes!("../../../assets/modern/atlases/weather_0@2x.png")),
-    ("atlases/markers_0@2x.png", include_bytes!("../../../assets/modern/atlases/markers_0@2x.png")),
+    (
+        "atlases/frames_0@2x.png",
+        include_bytes!("../../../assets/modern/atlases/frames_0@2x.png"),
+    ),
+    (
+        "atlases/controls_0@2x.png",
+        include_bytes!("../../../assets/modern/atlases/controls_0@2x.png"),
+    ),
+    (
+        "atlases/gauges_0@2x.png",
+        include_bytes!("../../../assets/modern/atlases/gauges_0@2x.png"),
+    ),
+    (
+        "atlases/icons_0@2x.png",
+        include_bytes!("../../../assets/modern/atlases/icons_0@2x.png"),
+    ),
+    (
+        "atlases/indicators_0@2x.png",
+        include_bytes!("../../../assets/modern/atlases/indicators_0@2x.png"),
+    ),
+    (
+        "atlases/jobs_0@2x.png",
+        include_bytes!("../../../assets/modern/atlases/jobs_0@2x.png"),
+    ),
+    (
+        "atlases/status_0@2x.png",
+        include_bytes!("../../../assets/modern/atlases/status_0@2x.png"),
+    ),
+    (
+        "atlases/weather_0@2x.png",
+        include_bytes!("../../../assets/modern/atlases/weather_0@2x.png"),
+    ),
+    (
+        "atlases/markers_0@2x.png",
+        include_bytes!("../../../assets/modern/atlases/markers_0@2x.png"),
+    ),
 ];
 const FONTS: [(&str, &[u8]); 5] = [
-    ("FiraSans-Regular", include_bytes!("../../../assets/fonts/FiraSans-Regular.ttf")),
-    ("FiraSans-SemiBold", include_bytes!("../../../assets/fonts/FiraSans-SemiBold.ttf")),
-    ("Inter-SemiBold", include_bytes!("../../../assets/fonts/Inter-SemiBold.ttf")),
-    ("Inter-BoldItalic", include_bytes!("../../../assets/fonts/Inter-BoldItalic.ttf")),
-    ("JetBrainsMono-Regular", include_bytes!("../../../assets/fonts/JetBrainsMono-Regular.ttf")),
+    (
+        "FiraSans-Regular",
+        include_bytes!("../../../assets/fonts/FiraSans-Regular.ttf"),
+    ),
+    (
+        "FiraSans-SemiBold",
+        include_bytes!("../../../assets/fonts/FiraSans-SemiBold.ttf"),
+    ),
+    (
+        "Inter-SemiBold",
+        include_bytes!("../../../assets/fonts/Inter-SemiBold.ttf"),
+    ),
+    (
+        "Inter-BoldItalic",
+        include_bytes!("../../../assets/fonts/Inter-BoldItalic.ttf"),
+    ),
+    (
+        "JetBrainsMono-Regular",
+        include_bytes!("../../../assets/fonts/JetBrainsMono-Regular.ttf"),
+    ),
 ];
 /// The window frames (80 x 80 logical, 24 insets, NINE_SLICE.md); their border is cut out with the border-only
 /// frame's alpha, which every variant shares.
-const FRAMES: [&str; 5] = ["window_normal", "window_focused", "window_inactive", "window_alert", "window_tooltip"];
+const FRAMES: [&str; 5] = [
+    "window_normal",
+    "window_focused",
+    "window_inactive",
+    "window_alert",
+    "window_tooltip",
+];
 const FRAME_MASK: &str = "frames/window_normal_border";
 
 /// Emphasis beside egui's Proportional (Fira Sans) and Monospace (JetBrains Mono): titles and names; the bars' labels.
@@ -69,11 +120,24 @@ impl Theme {
             log::error!("modern UI theme.json: {e}");
             ThemeFile::default()
         });
-        let mut colors: HashMap<String, Color32> = f.palette.iter().filter_map(|(k, v)| Some((k.clone(), hex(v)?))).collect();
+        let mut colors: HashMap<String, Color32> = f
+            .palette
+            .iter()
+            .filter_map(|(k, v)| Some((k.clone(), hex(v)?)))
+            .collect();
         // The pack's previews: parchment white text, a slate grey for the quiet parts.
-        colors.entry("text".into()).or_insert(Color32::from_rgb(0xe6, 0xe1, 0xd6));
-        colors.entry("muted".into()).or_insert(Color32::from_rgb(0x8f, 0x9d, 0xa6));
-        Self { colors, ui: 16.0, title: 18.0, small: 14.5 }
+        colors
+            .entry("text".into())
+            .or_insert(Color32::from_rgb(0xe6, 0xe1, 0xd6));
+        colors
+            .entry("muted".into())
+            .or_insert(Color32::from_rgb(0x8f, 0x9d, 0xa6));
+        Self {
+            colors,
+            ui: 16.0,
+            title: 18.0,
+            small: 14.5,
+        }
     }
 
     /// A palette colour (theme.json "palette").
@@ -140,19 +204,28 @@ pub struct Art {
 
 fn decode(png: &[u8]) -> Option<([usize; 2], Vec<u8>)> {
     let mut d = png::Decoder::new(std::io::Cursor::new(png));
-    d.set_transformations(png::Transformations::normalize_to_color8() | png::Transformations::ALPHA);
+    d.set_transformations(
+        png::Transformations::normalize_to_color8() | png::Transformations::ALPHA,
+    );
     let mut r = d.read_info().ok()?;
     let mut buf = vec![0u8; r.output_buffer_size()?];
     let info = r.next_frame(&mut buf).ok()?;
     buf.truncate(info.buffer_size());
-    (info.color_type == png::ColorType::Rgba).then_some(([info.width as usize, info.height as usize], buf))
+    (info.color_type == png::ColorType::Rgba)
+        .then_some(([info.width as usize, info.height as usize], buf))
 }
 
 /// A rect of an RGBA image.
 fn crop(img: &([usize; 2], Vec<u8>), r: [u32; 4]) -> Vec<u8> {
     let [x, y, w, h] = r.map(|v| v as usize);
     let stride = img.0[0] * 4;
-    (y..y + h).flat_map(|row| img.1[row * stride + x * 4..row * stride + (x + w) * 4].iter().copied()).collect()
+    (y..y + h)
+        .flat_map(|row| {
+            img.1[row * stride + x * 4..row * stride + (x + w) * 4]
+                .iter()
+                .copied()
+        })
+        .collect()
 }
 
 /// A window frame for the game UI's own pass (the retail windows' frames while Modern is on): the border image
@@ -173,22 +246,39 @@ pub fn frame_image(name: &str) -> Option<FrameImage> {
     let find = |id: &str| m.items.iter().find(|it| it.id == id);
     let bytes = |file: &str| ATLASES.iter().find(|(n, _)| *n == file).map(|(_, b)| *b);
     let (mask, it) = (find(FRAME_MASK)?, find(&format!("frames/{name}"))?);
-    let alpha: Vec<u8> = crop(&decode(bytes(&mask.atlas.file)?)?, mask.atlas.rect).chunks(4).map(|p| p[3]).collect();
+    let alpha: Vec<u8> = crop(&decode(bytes(&mask.atlas.file)?)?, mask.atlas.rect)
+        .chunks(4)
+        .map(|p| p[3])
+        .collect();
     let (w, h) = (it.atlas.rect[2] as usize, it.atlas.rect[3] as usize);
     let mut rgba = crop(&decode(bytes(&it.atlas.file)?)?, it.atlas.rect);
     let cx = w / 2;
-    let inside: Vec<usize> = (0..h).filter(|&y| rgba[(y * w + cx) * 4 + 3] > 0 && alpha.get(y * w + cx) == Some(&0)).collect();
+    let inside: Vec<usize> = (0..h)
+        .filter(|&y| rgba[(y * w + cx) * 4 + 3] > 0 && alpha.get(y * w + cx) == Some(&0))
+        .collect();
     let (&top, &bottom) = (inside.first()?, inside.last()?);
     let col = |y: usize| {
         let k = (y * w + cx) * 4;
-        [rgba[k] as f32 / 255.0, rgba[k + 1] as f32 / 255.0, rgba[k + 2] as f32 / 255.0, 1.0]
+        [
+            rgba[k] as f32 / 255.0,
+            rgba[k + 1] as f32 / 255.0,
+            rgba[k + 2] as f32 / 255.0,
+            1.0,
+        ]
     };
     let (ct, cb) = (col(top), col(bottom));
     for (p, a) in rgba.chunks_mut(4).zip(&alpha) {
         p[3] = *a;
     }
     let corner_uv = it.nine_slice.map_or(24.0, |n| n[0]) / it.size[0];
-    Some(FrameImage { size: [w, h], rgba, corner_uv, top: ct, bottom: cb, inset: top as f32 / w as f32 })
+    Some(FrameImage {
+        size: [w, h],
+        rgba,
+        corner_uv,
+        top: ct,
+        bottom: cb,
+        inset: top as f32 / w as f32,
+    })
 }
 
 impl Art {
@@ -201,7 +291,11 @@ impl Art {
                 log::error!("modern UI: {name} does not decode");
                 continue;
             };
-            let t = ctx.load_texture(format!("modern/{name}"), ColorImage::from_rgba_unmultiplied(img.0, &img.1), TextureOptions::LINEAR);
+            let t = ctx.load_texture(
+                format!("modern/{name}"),
+                ColorImage::from_rgba_unmultiplied(img.0, &img.1),
+                TextureOptions::LINEAR,
+            );
             atlases.insert(name, (t.id(), vec2(img.0[0] as f32, img.0[1] as f32)));
             textures.push(t);
             images.insert(name, img);
@@ -212,35 +306,88 @@ impl Art {
         });
         let mut sprites = HashMap::new();
         for it in &m.items {
-            let Some(&(tex, at)) = atlases.get(it.atlas.file.as_str()) else { continue };
+            let Some(&(tex, at)) = atlases.get(it.atlas.file.as_str()) else {
+                continue;
+            };
             let [x, y, w, h] = it.atlas.rect.map(|v| v as f32);
-            let uv = Rect::from_min_max(pos2(x / at.x, y / at.y), pos2((x + w) / at.x, (y + h) / at.y));
-            sprites.insert(it.id.clone(), Sprite { tex, uv, size: vec2(it.size[0], it.size[1]), margins: it.nine_slice, px: it.png_size[0] / it.size[0], atlas: at });
+            let uv = Rect::from_min_max(
+                pos2(x / at.x, y / at.y),
+                pos2((x + w) / at.x, (y + h) / at.y),
+            );
+            sprites.insert(
+                it.id.clone(),
+                Sprite {
+                    tex,
+                    uv,
+                    size: vec2(it.size[0], it.size[1]),
+                    margins: it.nine_slice,
+                    px: it.png_size[0] / it.size[0],
+                    atlas: at,
+                },
+            );
         }
         let mut frames = HashMap::new();
         let find = |id: &str| m.items.iter().find(|it| it.id == id);
-        if let Some(mask) = find(FRAME_MASK).and_then(|it| Some((images.get(it.atlas.file.as_str())?, it))) {
-            let alpha: Vec<u8> = crop(mask.0, mask.1.atlas.rect).chunks(4).map(|p| p[3]).collect();
+        if let Some(mask) =
+            find(FRAME_MASK).and_then(|it| Some((images.get(it.atlas.file.as_str())?, it)))
+        {
+            let alpha: Vec<u8> = crop(mask.0, mask.1.atlas.rect)
+                .chunks(4)
+                .map(|p| p[3])
+                .collect();
             for name in FRAMES {
-                let Some(it) = find(&format!("frames/{name}")) else { continue };
-                let Some(img) = images.get(it.atlas.file.as_str()) else { continue };
+                let Some(it) = find(&format!("frames/{name}")) else {
+                    continue;
+                };
+                let Some(img) = images.get(it.atlas.file.as_str()) else {
+                    continue;
+                };
                 let (w, h) = (it.atlas.rect[2] as usize, it.atlas.rect[3] as usize);
                 let mut rgba = crop(img, it.atlas.rect);
                 // The interior: the centre column inside the border (its first and last pixels where the mask ends).
                 let cx = w / 2;
-                let inside: Vec<usize> = (0..h).filter(|&y| rgba[(y * w + cx) * 4 + 3] > 0 && alpha[y * w + cx] == 0).collect();
-                let (Some(&top), Some(&bottom)) = (inside.first(), inside.last()) else { continue };
-                let gradient = (top..=bottom).map(|y| Color32::from_rgb(rgba[(y * w + cx) * 4], rgba[(y * w + cx) * 4 + 1], rgba[(y * w + cx) * 4 + 2])).collect();
+                let inside: Vec<usize> = (0..h)
+                    .filter(|&y| rgba[(y * w + cx) * 4 + 3] > 0 && alpha[y * w + cx] == 0)
+                    .collect();
+                let (Some(&top), Some(&bottom)) = (inside.first(), inside.last()) else {
+                    continue;
+                };
+                let gradient = (top..=bottom)
+                    .map(|y| {
+                        Color32::from_rgb(
+                            rgba[(y * w + cx) * 4],
+                            rgba[(y * w + cx) * 4 + 1],
+                            rgba[(y * w + cx) * 4 + 2],
+                        )
+                    })
+                    .collect();
                 for (p, a) in rgba.chunks_mut(4).zip(&alpha) {
                     p[3] = *a;
                 }
                 let px = it.png_size[0] / it.size[0];
-                let border = ctx.load_texture(format!("modern/{name}"), ColorImage::from_rgba_unmultiplied([w, h], &rgba), TextureOptions::LINEAR);
+                let border = ctx.load_texture(
+                    format!("modern/{name}"),
+                    ColorImage::from_rgba_unmultiplied([w, h], &rgba),
+                    TextureOptions::LINEAR,
+                );
                 let corner = it.nine_slice.map_or(24.0, |n| n[0]);
-                frames.insert(name.to_string(), Frame { border, gradient, size: it.size[0], corner, inset: top as f32 / px });
+                frames.insert(
+                    name.to_string(),
+                    Frame {
+                        border,
+                        gradient,
+                        size: it.size[0],
+                        corner,
+                        inset: top as f32 / px,
+                    },
+                );
             }
         }
-        Self { _textures: textures, sprites, frames }
+        Self {
+            _textures: textures,
+            sprites,
+            frames,
+        }
     }
 
     pub fn sprite(&self, id: &str) -> Option<Sprite> {
@@ -262,11 +409,23 @@ pub fn font(name: &str) -> Option<&'static [u8]> {
 const CJK: [(&str, u32); 12] = [
     ("/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc", 0),
     ("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", 0),
-    ("/usr/share/fonts/google-noto-sans-cjk-fonts/NotoSansCJK-Regular.ttc", 0),
-    ("/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc", 0),
+    (
+        "/usr/share/fonts/google-noto-sans-cjk-fonts/NotoSansCJK-Regular.ttc",
+        0,
+    ),
+    (
+        "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
+        0,
+    ),
     ("/usr/share/fonts/noto-cjk/NotoSansCJKjp-Regular.otf", 0),
-    ("/usr/share/fonts/adobe-source-han-sans/SourceHanSansJP-Regular.otf", 0),
-    ("/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf", 0),
+    (
+        "/usr/share/fonts/adobe-source-han-sans/SourceHanSansJP-Regular.otf",
+        0,
+    ),
+    (
+        "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+        0,
+    ),
     ("/usr/share/fonts/wenquanyi/wqy-zenhei/wqy-zenhei.ttc", 0),
     ("C:\\Windows\\Fonts\\YuGothM.ttc", 0),
     ("C:\\Windows\\Fonts\\meiryo.ttc", 0),
@@ -278,8 +437,12 @@ const CJK: [(&str, u32); 12] = [
 fn cjk_font() -> Option<Arc<FontData>> {
     static FONT: std::sync::OnceLock<Option<Arc<FontData>>> = std::sync::OnceLock::new();
     FONT.get_or_init(|| {
-        let (path, index) = CJK.iter().find(|(p, _)| std::path::Path::new(p).is_file())?;
-        let bytes = std::fs::read(path).map_err(|e| log::warn!("CJK font {path}: {e}")).ok()?;
+        let (path, index) = CJK
+            .iter()
+            .find(|(p, _)| std::path::Path::new(p).is_file())?;
+        let bytes = std::fs::read(path)
+            .map_err(|e| log::warn!("CJK font {path}: {e}"))
+            .ok()?;
         log::info!("modern UI: Japanese glyphs from {path}");
         let mut f = FontData::from_owned(bytes);
         f.index = *index;
@@ -300,28 +463,55 @@ pub fn install_fonts(ctx: &Context) {
 pub fn install_fonts_with(ctx: &Context, body: Option<(Vec<u8>, Vec<u8>)>) {
     let mut defs = FontDefinitions::default();
     for (name, bytes) in FONTS {
-        defs.font_data.insert(name.to_string(), Arc::new(FontData::from_static(bytes)));
+        defs.font_data
+            .insert(name.to_string(), Arc::new(FontData::from_static(bytes)));
     }
     let (regular, strong) = match body {
         Some((r, s)) => {
-            defs.font_data.insert("body-regular".into(), Arc::new(FontData::from_owned(r)));
-            defs.font_data.insert("body-strong".into(), Arc::new(FontData::from_owned(s)));
+            defs.font_data
+                .insert("body-regular".into(), Arc::new(FontData::from_owned(r)));
+            defs.font_data
+                .insert("body-strong".into(), Arc::new(FontData::from_owned(s)));
             ("body-regular", "body-strong")
         }
         None => ("FiraSans-Regular", "FiraSans-SemiBold"),
     };
-    let mut fallbacks = defs.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
-    let cjk = cjk_font().map(|f| defs.font_data.insert("cjk".into(), f)).is_some();
+    let mut fallbacks = defs
+        .families
+        .get(&FontFamily::Proportional)
+        .cloned()
+        .unwrap_or_default();
+    let cjk = cjk_font()
+        .map(|f| defs.font_data.insert("cjk".into(), f))
+        .is_some();
     if cjk {
         fallbacks.push("cjk".into());
     }
-    let with = |first: &str| -> Vec<String> { std::iter::once(first.to_string()).chain(fallbacks.iter().cloned()).collect() };
-    defs.families.insert(FontFamily::Proportional, with(regular));
-    defs.families.insert(FontFamily::Name(STRONG.into()), with(strong));
-    defs.families.insert(FontFamily::Name(NAME.into()), with("Inter-SemiBold"));
-    defs.families.insert(FontFamily::Name(LABEL.into()), with("Inter-BoldItalic"));
-    let mono = defs.families.get(&FontFamily::Monospace).cloned().unwrap_or_default();
-    defs.families.insert(FontFamily::Monospace, std::iter::once("JetBrainsMono-Regular".to_string()).chain(mono).chain(cjk.then(|| "cjk".to_string())).collect());
+    let with = |first: &str| -> Vec<String> {
+        std::iter::once(first.to_string())
+            .chain(fallbacks.iter().cloned())
+            .collect()
+    };
+    defs.families
+        .insert(FontFamily::Proportional, with(regular));
+    defs.families
+        .insert(FontFamily::Name(STRONG.into()), with(strong));
+    defs.families
+        .insert(FontFamily::Name(NAME.into()), with("Inter-SemiBold"));
+    defs.families
+        .insert(FontFamily::Name(LABEL.into()), with("Inter-BoldItalic"));
+    let mono = defs
+        .families
+        .get(&FontFamily::Monospace)
+        .cloned()
+        .unwrap_or_default();
+    defs.families.insert(
+        FontFamily::Monospace,
+        std::iter::once("JetBrainsMono-Regular".to_string())
+            .chain(mono)
+            .chain(cjk.then(|| "cjk".to_string()))
+            .collect(),
+    );
     ctx.set_fonts(defs);
 }
 
@@ -332,17 +522,32 @@ mod tests {
     #[test]
     fn theme_and_manifest_parse() {
         let t = Theme::load();
-        for c in ["charcoal", "surface", "bronze", "gold", "focus", "hp", "mp", "tp", "text", "muted"] {
+        for c in [
+            "charcoal", "surface", "bronze", "gold", "focus", "hp", "mp", "tp", "text", "muted",
+        ] {
             assert_ne!(t.color(c), Color32::MAGENTA, "{c}");
         }
         let m: ManifestFile = serde_json::from_str(MANIFEST).unwrap();
         assert_eq!(m.items.len(), 518);
-        assert!(m.items.iter().all(|it| ATLASES.iter().any(|(n, _)| *n == it.atlas.file)));
+        assert!(
+            m.items
+                .iter()
+                .all(|it| ATLASES.iter().any(|(n, _)| *n == it.atlas.file))
+        );
         for (_, bytes) in ATLASES {
             assert!(decode(bytes).is_some());
         }
-        for f in FRAMES.iter().map(|f| format!("frames/{f}")).chain([FRAME_MASK.to_string()]) {
-            assert!(m.items.iter().any(|it| it.id == f && it.nine_slice == Some([24.0; 4])), "{f}");
+        for f in FRAMES
+            .iter()
+            .map(|f| format!("frames/{f}"))
+            .chain([FRAME_MASK.to_string()])
+        {
+            assert!(
+                m.items
+                    .iter()
+                    .any(|it| it.id == f && it.nine_slice == Some([24.0; 4])),
+                "{f}"
+            );
         }
     }
 }

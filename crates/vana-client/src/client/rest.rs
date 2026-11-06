@@ -29,15 +29,23 @@ fn healing(status: u8) -> bool {
 }
 
 fn status_of(w: &World, id: u32) -> u8 {
-    if id == w.my_id { w.my_motion.status } else { w.entities.get(&id).map_or(0, |e| e.motion.status) }
+    if id == w.my_id {
+        w.my_motion.status
+    } else {
+        w.entities.get(&id).map_or(0, |e| e.motion.status)
+    }
 }
 
 /// The scheduler `name` from the actor's files, its motions here and the rest (holds, locks) in fx. False when the
 /// actor has no model or no such scheduler yet.
 fn play(w: &mut World, id: u32, name: &str) -> bool {
-    let Some(ch) = w.actors.get(&id).and_then(|a| a.character.clone()) else { return false };
+    let Some(ch) = w.actors.get(&id).and_then(|a| a.character.clone()) else {
+        return false;
+    };
     let base = super::actmotion::status_motion(w, id, &ch);
-    let Some(a) = w.actors.get_mut(&id) else { return false };
+    let Some(a) = w.actors.get_mut(&id) else {
+        return false;
+    };
     if !super::actmotion::start(a, &ch, name, &base) {
         return false;
     }
@@ -48,8 +56,13 @@ fn play(w: &mut World, id: u32, name: &str) -> bool {
 /// FUN_100d12d0 and the `waot` check (vt+0x2a0): the actor's model is in and no `waot` waits or runs on it.
 fn ready(w: &World, id: u32) -> bool {
     let waot = u32::from_le_bytes(*b"waot");
-    w.actors.get(&id).is_some_and(|a| a.character.is_some() && !a.play.as_ref().is_some_and(|p| p.name == "waot" && p.busy()))
-        && !w.effects.actor_scheduler_running(id, waot)
+    w.actors.get(&id).is_some_and(|a| {
+        a.character.is_some()
+            && !a
+                .play
+                .as_ref()
+                .is_some_and(|p| p.name == "waot" && p.busy())
+    }) && !w.effects.actor_scheduler_running(id, waot)
 }
 
 /// What the machine does next.
@@ -76,7 +89,12 @@ fn transition(phase: Phase, healing: bool, now: Instant) -> Step {
 /// Per frame, after the statuses are applied and before the motions: new rests, `res0` once ready, `res2` on leaving.
 pub fn update(w: &mut World) {
     let now = Instant::now();
-    let mut ids: Vec<u32> = w.entities.iter().filter(|(id, e)| **id != w.my_id && healing(e.motion.status)).map(|(id, _)| *id).collect();
+    let mut ids: Vec<u32> = w
+        .entities
+        .iter()
+        .filter(|(id, e)| **id != w.my_id && healing(e.motion.status))
+        .map(|(id, _)| *id)
+        .collect();
     if healing(w.my_motion.status) {
         ids.push(w.my_id);
     }
@@ -95,7 +113,11 @@ pub fn update(w: &mut World) {
             Step::Play(name, then) => {
                 // `res0` waits for the model and for `waot` (state 7 stays); `res2` goes at once, played or not.
                 let rise = name == "res2";
-                if (rise || ready(w, id)) && (play(w, id, name) || rise) { Some(then) } else { Some(phase) }
+                if (rise || ready(w, id)) && (play(w, id, name) || rise) {
+                    Some(then)
+                } else {
+                    Some(phase)
+                }
             }
             Step::Stay(p) => Some(p),
             Step::End => None,
@@ -119,10 +141,19 @@ mod tests {
     #[test]
     fn sit_rest_rise() {
         let now = Instant::now();
-        assert_eq!(transition(Phase::Down, true, now), Step::Play("res0", Phase::Resting));
+        assert_eq!(
+            transition(Phase::Down, true, now),
+            Step::Play("res0", Phase::Resting)
+        );
         assert_eq!(transition(Phase::Down, false, now), Step::End);
-        assert_eq!(transition(Phase::Resting, true, now), Step::Stay(Phase::Resting));
-        assert_eq!(transition(Phase::Resting, false, now), Step::Play("res2", Phase::Rising(now + RISE)));
+        assert_eq!(
+            transition(Phase::Resting, true, now),
+            Step::Stay(Phase::Resting)
+        );
+        assert_eq!(
+            transition(Phase::Resting, false, now),
+            Step::Play("res2", Phase::Rising(now + RISE))
+        );
         // The walk stays locked for res2's 56 ticks, then the machine is idle.
         let up = Phase::Rising(now + RISE);
         assert_eq!(transition(up, false, now + RISE / 2), Step::Stay(up));

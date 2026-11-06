@@ -12,10 +12,20 @@ pub const NAME_MAX: usize = 32;
 #[derive(Clone, Debug, PartialEq)]
 pub enum Packet {
     /// A beacon: who this is and the channel it talks on.
-    Hello { session: u64, name: String, channel: String },
+    Hello {
+        session: u64,
+        name: String,
+        channel: String,
+    },
     /// One frame (super::FRAME samples, 48 kHz mono 16-bit).
-    Audio { session: u64, seq: u32, pcm: Vec<i16> },
-    Bye { session: u64 },
+    Audio {
+        session: u64,
+        seq: u32,
+        pcm: Vec<i16>,
+    },
+    Bye {
+        session: u64,
+    },
 }
 
 /// Private, loopback and link-local IPv4: the only addresses voice goes to or is taken from.
@@ -51,7 +61,11 @@ fn text(b: &mut Vec<u8>, s: &str) {
 
 pub fn encode(p: &Packet) -> Vec<u8> {
     match p {
-        Packet::Hello { session, name, channel } => {
+        Packet::Hello {
+            session,
+            name,
+            channel,
+        } => {
             let mut b = head(HELLO, *session);
             text(&mut b, name);
             text(&mut b, channel);
@@ -79,11 +93,18 @@ pub fn decode(b: &[u8]) -> Option<Packet> {
         HELLO => {
             let (name, rest) = read_text(rest)?;
             let (channel, _) = read_text(rest)?;
-            Some(Packet::Hello { session, name, channel })
+            Some(Packet::Hello {
+                session,
+                name,
+                channel,
+            })
         }
         AUDIO if rest.len() == 4 + super::FRAME * 2 => {
             let seq = u32::from_le_bytes(rest[..4].try_into().ok()?);
-            let pcm = rest[4..].chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect();
+            let pcm = rest[4..]
+                .chunks_exact(2)
+                .map(|c| i16::from_le_bytes([c[0], c[1]]))
+                .collect();
             Some(Packet::Audio { session, seq, pcm })
         }
         BYE => Some(Packet::Bye { session }),
@@ -103,17 +124,35 @@ mod tests {
 
     #[test]
     fn round_trip() {
-        let pcm: Vec<i16> = (0..super::super::FRAME as i32).map(|i| (i * 37 - 9000) as i16).collect();
+        let pcm: Vec<i16> = (0..super::super::FRAME as i32)
+            .map(|i| (i * 37 - 9000) as i16)
+            .collect();
         for p in [
-            Packet::Hello { session: 7, name: "Nine".into(), channel: "".into() },
-            Packet::Hello { session: u64::MAX, name: "Ünïcode".into(), channel: "party".into() },
-            Packet::Audio { session: 3, seq: 99, pcm },
+            Packet::Hello {
+                session: 7,
+                name: "Nine".into(),
+                channel: "".into(),
+            },
+            Packet::Hello {
+                session: u64::MAX,
+                name: "Ünïcode".into(),
+                channel: "party".into(),
+            },
+            Packet::Audio {
+                session: 3,
+                seq: 99,
+                pcm,
+            },
             Packet::Bye { session: 1 },
         ] {
             assert_eq!(decode(&encode(&p)), Some(p));
         }
         // Short audio, other magic and truncated names are refused.
-        let mut a = encode(&Packet::Audio { session: 3, seq: 1, pcm: vec![0; super::super::FRAME] });
+        let mut a = encode(&Packet::Audio {
+            session: 3,
+            seq: 1,
+            pcm: vec![0; super::super::FRAME],
+        });
         a.pop();
         assert_eq!(decode(&a), None);
         assert_eq!(decode(b"XXXX\x01\0\0\0\0\0\0\0\0\x05ab"), None);
@@ -122,10 +161,22 @@ mod tests {
 
     #[test]
     fn lan_only() {
-        for ip in ["192.168.1.196", "10.0.0.2", "172.16.4.1", "127.0.0.1", "169.254.3.3"] {
+        for ip in [
+            "192.168.1.196",
+            "10.0.0.2",
+            "172.16.4.1",
+            "127.0.0.1",
+            "169.254.3.3",
+        ] {
             assert!(lan(ip.parse().unwrap()), "{ip}");
         }
-        for ip in ["8.8.8.8", "100.64.0.1", "172.32.0.1", "239.255.70.88", "255.255.255.255"] {
+        for ip in [
+            "8.8.8.8",
+            "100.64.0.1",
+            "172.32.0.1",
+            "239.255.70.88",
+            "255.255.255.255",
+        ] {
             assert!(!lan(ip.parse().unwrap()), "{ip}");
         }
         assert_eq!(clip("ab\u{7}cdé", 5), "abcd");

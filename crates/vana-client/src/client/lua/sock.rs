@@ -24,9 +24,18 @@ pub(super) enum Msg {
 
 pub(super) enum Kind {
     /// A stream (TCP, a Unix socket, a pipe): its writer's queue and what shuts it.
-    Tcp { tx: Sender<Vec<u8>>, stream: Option<Closer>, stop: Arc<AtomicBool> },
-    Listen { stop: Arc<AtomicBool> },
-    Udp { socket: UdpSocket, stop: Arc<AtomicBool> },
+    Tcp {
+        tx: Sender<Vec<u8>>,
+        stream: Option<Closer>,
+        stop: Arc<AtomicBool>,
+    },
+    Listen {
+        stop: Arc<AtomicBool>,
+    },
+    Udp {
+        socket: UdpSocket,
+        stop: Arc<AtomicBool>,
+    },
 }
 
 pub(super) struct Sock {
@@ -70,7 +79,12 @@ fn tcp_closer(s: TcpStream) -> Closer {
 }
 
 /// A TCP stream's reader and writer threads.
-fn run_tcp(id: u64, s: &TcpStream, report: Sender<Msg>, out: Receiver<Vec<u8>>) -> std::io::Result<()> {
+fn run_tcp(
+    id: u64,
+    s: &TcpStream,
+    report: Sender<Msg>,
+    out: Receiver<Vec<u8>>,
+) -> std::io::Result<()> {
     run_stream(id, s.try_clone()?, s.try_clone()?, report, out).map(|_| ())
 }
 
@@ -90,61 +104,102 @@ pub(super) fn reader_closer(slot: ReaderSlot) -> Closer {
 }
 
 /// A connected stream's reader and writer threads (the writer takes what `out` queues); the reader's handle.
-fn run_stream<R: Read + Send + 'static, W: Write + Send + 'static>(id: u64, mut r: R, mut w: W, report: Sender<Msg>, out: Receiver<Vec<u8>>) -> std::io::Result<std::thread::JoinHandle<()>> {
-    std::thread::Builder::new().name("lua-tcp-w".into()).spawn(move || {
-        for b in out {
-            if w.write_all(&b).is_err() {
-                return;
-            }
-        }
-    })?;
-    std::thread::Builder::new().name("lua-tcp-r".into()).spawn(move || {
-        let mut buf = vec![0u8; 65536];
-        loop {
-            match r.read(&mut buf) {
-                Ok(0) => {
-                    let _ = report.send(Msg::Closed(id, None));
+fn run_stream<R: Read + Send + 'static, W: Write + Send + 'static>(
+    id: u64,
+    mut r: R,
+    mut w: W,
+    report: Sender<Msg>,
+    out: Receiver<Vec<u8>>,
+) -> std::io::Result<std::thread::JoinHandle<()>> {
+    std::thread::Builder::new()
+        .name("lua-tcp-w".into())
+        .spawn(move || {
+            for b in out {
+                if w.write_all(&b).is_err() {
                     return;
                 }
-                Ok(n) => {
-                    if report.send(Msg::Data(id, buf[..n].to_vec(), None)).is_err() {
+            }
+        })?;
+    std::thread::Builder::new()
+        .name("lua-tcp-r".into())
+        .spawn(move || {
+            let mut buf = vec![0u8; 65536];
+            loop {
+                match r.read(&mut buf) {
+                    Ok(0) => {
+                        let _ = report.send(Msg::Closed(id, None));
+                        return;
+                    }
+                    Ok(n) => {
+                        if report.send(Msg::Data(id, buf[..n].to_vec(), None)).is_err() {
+                            return;
+                        }
+                    }
+                    Err(e) => {
+                        let _ = report.send(Msg::Closed(id, Some(e.to_string())));
                         return;
                     }
                 }
-                Err(e) => {
-                    let _ = report.send(Msg::Closed(id, Some(e.to_string())));
-                    return;
-                }
             }
-        }
-    })
+        })
 }
 
 fn addr(host: &str, port: u16) -> mlua::Result<SocketAddr> {
-    (host, port).to_socket_addrs().map_err(|e| mlua::Error::runtime(format!("{host}:{port}: {e}")))?.next().ok_or_else(|| mlua::Error::runtime(format!("{host}:{port}: no address")))
+    (host, port)
+        .to_socket_addrs()
+        .map_err(|e| mlua::Error::runtime(format!("{host}:{port}: {e}")))?
+        .next()
+        .ok_or_else(|| mlua::Error::runtime(format!("{host}:{port}: no address")))
 }
 
 pub(super) fn keep(lua: &Lua, id: u64, handlers: Table, kind: Kind) -> mlua::Result<()> {
     let key = lua.create_registry_value(handlers)?;
-    state(lua).borrow_mut().socks.push(Sock { id, handlers: Some(key), kind });
+    state(lua).borrow_mut().socks.push(Sock {
+        id,
+        handlers: Some(key),
+        kind,
+    });
     Ok(())
 }
 
 /// The system's control sockets, refused: each lets a client run programs (the session bus, systemd, agents, docker).
-const PIPES_REFUSED: [&str; 12] = ["bus", "dbus-1", "systemd", "gnupg", "keyring", "gcr", "ssh-agent", "openssh-ssh-agent", "docker.sock", "docker_engine", "podman", "containerd"];
+const PIPES_REFUSED: [&str; 12] = [
+    "bus",
+    "dbus-1",
+    "systemd",
+    "gnupg",
+    "keyring",
+    "gcr",
+    "ssh-agent",
+    "openssh-ssh-agent",
+    "docker.sock",
+    "docker_engine",
+    "podman",
+    "containerd",
+];
 
 /// A pipe name: a path inside the runtime folder (as `app/com.discordapp.Discord/discord-ipc-0`), never out of it,
 /// and not one of the system's control sockets.
 fn pipe_allowed(name: &str) -> Result<(), &'static str> {
     let parts: Vec<&str> = name.split('/').collect();
-    if name.is_empty() || name.starts_with('/') || name.contains('\\') || parts.iter().any(|p| p.is_empty() || *p == "." || *p == "..") {
+    if name.is_empty()
+        || name.starts_with('/')
+        || name.contains('\\')
+        || parts
+            .iter()
+            .any(|p| p.is_empty() || *p == "." || *p == "..")
+    {
         return Err("a name in the runtime folder, not a path out of it");
     }
     if cfg!(windows) && parts.len() > 1 {
         return Err("a pipe name has no folders");
     }
     let first = parts[0].to_ascii_lowercase();
-    if PIPES_REFUSED.iter().any(|r| first == *r || first.starts_with(&format!("{r}."))) || first.starts_with("ssh-") {
+    if PIPES_REFUSED
+        .iter()
+        .any(|r| first == *r || first.starts_with(&format!("{r}.")))
+        || first.starts_with("ssh-")
+    {
         return Err("a system control socket, refused");
     }
     Ok(())
@@ -153,21 +208,39 @@ fn pipe_allowed(name: &str) -> Result<(), &'static str> {
 /// A local endpoint another program offers: a Unix socket (a bare name in the runtime folder, as Discord's
 /// `discord-ipc-0`), or on Windows the named pipe `\\.\pipe\<name>`.
 #[cfg(unix)]
-fn open_pipe(name: &str, _: ReaderSlot) -> std::io::Result<(Box<dyn Read + Send>, Box<dyn Write + Send>, Closer)> {
+fn open_pipe(
+    name: &str,
+    _: ReaderSlot,
+) -> std::io::Result<(Box<dyn Read + Send>, Box<dyn Write + Send>, Closer)> {
     use std::os::unix::net::UnixStream;
-    let dir = std::env::var_os("XDG_RUNTIME_DIR").or_else(|| std::env::var_os("TMPDIR")).map_or_else(|| std::path::PathBuf::from("/tmp"), std::path::PathBuf::from);
+    let dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .or_else(|| std::env::var_os("TMPDIR"))
+        .map_or_else(
+            || std::path::PathBuf::from("/tmp"),
+            std::path::PathBuf::from,
+        );
     let path = dir.join(name);
     let s = UnixStream::connect(path)?;
     let (r, w, c) = (s.try_clone()?, s.try_clone()?, s);
-    Ok((Box::new(r), Box::new(w), Box::new(move || {
-        let _ = c.shutdown(Shutdown::Both);
-    })))
+    Ok((
+        Box::new(r),
+        Box::new(w),
+        Box::new(move || {
+            let _ = c.shutdown(Shutdown::Both);
+        }),
+    ))
 }
 
 #[cfg(windows)]
-fn open_pipe(name: &str, slot: ReaderSlot) -> std::io::Result<(Box<dyn Read + Send>, Box<dyn Write + Send>, Closer)> {
+fn open_pipe(
+    name: &str,
+    slot: ReaderSlot,
+) -> std::io::Result<(Box<dyn Read + Send>, Box<dyn Write + Send>, Closer)> {
     let path = format!(r"\\.\pipe\{name}");
-    let f = std::fs::OpenOptions::new().read(true).write(true).open(path)?;
+    let f = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)?;
     let w = f.try_clone()?;
     Ok((Box::new(f), Box::new(w), reader_closer(slot)))
 }
@@ -185,7 +258,14 @@ pub(super) fn install(lua: &Lua, t: &Table) -> mlua::Result<()> {
             std::thread::Builder::new()
                 .name("lua-tcp".into())
                 .spawn(move || {
-                    let s = (host.as_str(), port).to_socket_addrs().map_err(|e| e.to_string()).and_then(|mut a| a.next().ok_or_else(|| "no address".to_string())).and_then(|a| TcpStream::connect_timeout(&a, Duration::from_secs(10)).map_err(|e| e.to_string()));
+                    let s = (host.as_str(), port)
+                        .to_socket_addrs()
+                        .map_err(|e| e.to_string())
+                        .and_then(|mut a| a.next().ok_or_else(|| "no address".to_string()))
+                        .and_then(|a| {
+                            TcpStream::connect_timeout(&a, Duration::from_secs(10))
+                                .map_err(|e| e.to_string())
+                        });
                     match s {
                         Ok(s) if !flag.load(Ordering::Relaxed) => {
                             let _ = s.set_nodelay(true);
@@ -205,7 +285,16 @@ pub(super) fn install(lua: &Lua, t: &Table) -> mlua::Result<()> {
                     }
                 })
                 .map_err(|e| mlua::Error::runtime(format!("net.connect: {e}")))?;
-            keep(lua, id, handlers, Kind::Tcp { tx, stream: None, stop })?;
+            keep(
+                lua,
+                id,
+                handlers,
+                Kind::Tcp {
+                    tx,
+                    stream: None,
+                    stop,
+                },
+            )?;
             Ok(id)
         })?,
     )?;
@@ -213,7 +302,8 @@ pub(super) fn install(lua: &Lua, t: &Table) -> mlua::Result<()> {
         "pipe",
         lua.create_function(|lua, (name, handlers): (String, Table)| {
             need(lua, "net")?;
-            pipe_allowed(&name).map_err(|e| mlua::Error::runtime(format!("net.pipe {name:?}: {e}")))?;
+            pipe_allowed(&name)
+                .map_err(|e| mlua::Error::runtime(format!("net.pipe {name:?}: {e}")))?;
             let id = next_id(&state(lua));
             let report = reports(lua);
             let (tx, rx) = channel::<Vec<u8>>();
@@ -235,7 +325,16 @@ pub(super) fn install(lua: &Lua, t: &Table) -> mlua::Result<()> {
                     }
                 })
                 .map_err(|e| mlua::Error::runtime(format!("net.pipe: {e}")))?;
-            keep(lua, id, handlers, Kind::Tcp { tx, stream: None, stop })?;
+            keep(
+                lua,
+                id,
+                handlers,
+                Kind::Tcp {
+                    tx,
+                    stream: None,
+                    stop,
+                },
+            )?;
             Ok(id)
         })?,
     )?;
@@ -243,10 +342,17 @@ pub(super) fn install(lua: &Lua, t: &Table) -> mlua::Result<()> {
         "listen",
         lua.create_function(|lua, (port, handlers, opts): (u16, Table, Option<Table>)| {
             need(lua, "net")?;
-            let host = opts.as_ref().map(|o| o.get::<Option<String>>("host")).transpose()?.flatten().unwrap_or_else(|| "127.0.0.1".into());
-            let l = TcpListener::bind(addr(&host, port)?).map_err(|e| mlua::Error::runtime(format!("net.listen {host}:{port}: {e}")))?;
+            let host = opts
+                .as_ref()
+                .map(|o| o.get::<Option<String>>("host"))
+                .transpose()?
+                .flatten()
+                .unwrap_or_else(|| "127.0.0.1".into());
+            let l = TcpListener::bind(addr(&host, port)?)
+                .map_err(|e| mlua::Error::runtime(format!("net.listen {host}:{port}: {e}")))?;
             let bound = l.local_addr().map(|a| a.port()).unwrap_or(port);
-            l.set_nonblocking(true).map_err(|e| mlua::Error::runtime(e.to_string()))?;
+            l.set_nonblocking(true)
+                .map_err(|e| mlua::Error::runtime(e.to_string()))?;
             let id = next_id(&state(lua));
             let report = reports(lua);
             let stop = Arc::new(AtomicBool::new(false));
@@ -262,7 +368,9 @@ pub(super) fn install(lua: &Lua, t: &Table) -> mlua::Result<()> {
                                 let cid = NEXT.fetch_add(1, Ordering::Relaxed);
                                 let (tx, rx) = channel::<Vec<u8>>();
                                 // Accept is reported before the reader starts, so no data comes ahead of it.
-                                let Ok(c) = s.try_clone().map(tcp_closer) else { continue };
+                                let Ok(c) = s.try_clone().map(tcp_closer) else {
+                                    continue;
+                                };
                                 if report.send(Msg::Accept(id, cid, peer, tx, c)).is_err() {
                                     return;
                                 }
@@ -270,7 +378,9 @@ pub(super) fn install(lua: &Lua, t: &Table) -> mlua::Result<()> {
                                     let _ = report.send(Msg::Closed(cid, Some(e.to_string())));
                                 }
                             }
-                            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(50)),
+                            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                                std::thread::sleep(Duration::from_millis(50))
+                            }
                             Err(e) => {
                                 let _ = report.send(Msg::Closed(id, Some(e.to_string())));
                                 return;
@@ -285,55 +395,90 @@ pub(super) fn install(lua: &Lua, t: &Table) -> mlua::Result<()> {
     )?;
     t.set(
         "udp",
-        lua.create_function(|lua, (port, handlers, opts): (Option<u16>, Table, Option<Table>)| {
-            need(lua, "net")?;
-            let host = opts.as_ref().map(|o| o.get::<Option<String>>("host")).transpose()?.flatten().unwrap_or_else(|| "127.0.0.1".into());
-            let port = port.unwrap_or(0);
-            let socket = UdpSocket::bind(addr(&host, port)?).map_err(|e| mlua::Error::runtime(format!("net.udp {host}:{port}: {e}")))?;
-            let bound = socket.local_addr().map(|a| a.port()).unwrap_or(port);
-            let r = socket.try_clone().map_err(|e| mlua::Error::runtime(e.to_string()))?;
-            let _ = r.set_read_timeout(Some(Duration::from_millis(200)));
-            let id = next_id(&state(lua));
-            let report = reports(lua);
-            let stop = Arc::new(AtomicBool::new(false));
-            let flag = stop.clone();
-            std::thread::Builder::new()
-                .name("lua-udp".into())
-                .spawn(move || {
-                    let mut buf = vec![0u8; 65536];
-                    while !flag.load(Ordering::Relaxed) {
-                        match r.recv_from(&mut buf) {
-                            Ok((n, from)) => {
-                                if report.send(Msg::Data(id, buf[..n].to_vec(), Some(from))).is_err() {
-                                    return;
+        lua.create_function(
+            |lua, (port, handlers, opts): (Option<u16>, Table, Option<Table>)| {
+                need(lua, "net")?;
+                let host = opts
+                    .as_ref()
+                    .map(|o| o.get::<Option<String>>("host"))
+                    .transpose()?
+                    .flatten()
+                    .unwrap_or_else(|| "127.0.0.1".into());
+                let port = port.unwrap_or(0);
+                let socket = UdpSocket::bind(addr(&host, port)?)
+                    .map_err(|e| mlua::Error::runtime(format!("net.udp {host}:{port}: {e}")))?;
+                let bound = socket.local_addr().map(|a| a.port()).unwrap_or(port);
+                let r = socket
+                    .try_clone()
+                    .map_err(|e| mlua::Error::runtime(e.to_string()))?;
+                let _ = r.set_read_timeout(Some(Duration::from_millis(200)));
+                let id = next_id(&state(lua));
+                let report = reports(lua);
+                let stop = Arc::new(AtomicBool::new(false));
+                let flag = stop.clone();
+                std::thread::Builder::new()
+                    .name("lua-udp".into())
+                    .spawn(move || {
+                        let mut buf = vec![0u8; 65536];
+                        while !flag.load(Ordering::Relaxed) {
+                            match r.recv_from(&mut buf) {
+                                Ok((n, from)) => {
+                                    if report
+                                        .send(Msg::Data(id, buf[..n].to_vec(), Some(from)))
+                                        .is_err()
+                                    {
+                                        return;
+                                    }
                                 }
+                                Err(e)
+                                    if matches!(
+                                        e.kind(),
+                                        std::io::ErrorKind::WouldBlock
+                                            | std::io::ErrorKind::TimedOut
+                                    ) => {}
+                                Err(_) => {}
                             }
-                            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {}
-                            Err(_) => {}
                         }
-                    }
-                })
-                .map_err(|e| mlua::Error::runtime(format!("net.udp: {e}")))?;
-            keep(lua, id, handlers, Kind::Udp { socket, stop })?;
-            Ok((id, bound))
-        })?,
+                    })
+                    .map_err(|e| mlua::Error::runtime(format!("net.udp: {e}")))?;
+                keep(lua, id, handlers, Kind::Udp { socket, stop })?;
+                Ok((id, bound))
+            },
+        )?,
     )?;
     t.set(
         "send",
-        lua.create_function(|lua, (id, data, host, port): (u64, mlua::LuaString, Option<String>, Option<u16>)| {
-            need(lua, "net")?;
-            let st = state(lua);
-            let s = st.borrow();
-            let sock = s.socks.iter().find(|x| x.id == id).ok_or_else(|| mlua::Error::runtime(format!("no socket {id}")))?;
-            match &sock.kind {
-                Kind::Tcp { tx, .. } => tx.send(data.as_bytes().to_vec()).map_err(|_| mlua::Error::runtime("the connection is closed")),
-                Kind::Udp { socket, .. } => {
-                    let (Some(h), Some(p)) = (host, port) else { return Err(mlua::Error::runtime("a UDP send takes (id, data, host, port)")) };
-                    socket.send_to(&data.as_bytes(), addr(&h, p)?).map(|_| ()).map_err(|e| mlua::Error::runtime(e.to_string()))
+        lua.create_function(
+            |lua, (id, data, host, port): (u64, mlua::LuaString, Option<String>, Option<u16>)| {
+                need(lua, "net")?;
+                let st = state(lua);
+                let s = st.borrow();
+                let sock = s
+                    .socks
+                    .iter()
+                    .find(|x| x.id == id)
+                    .ok_or_else(|| mlua::Error::runtime(format!("no socket {id}")))?;
+                match &sock.kind {
+                    Kind::Tcp { tx, .. } => tx
+                        .send(data.as_bytes().to_vec())
+                        .map_err(|_| mlua::Error::runtime("the connection is closed")),
+                    Kind::Udp { socket, .. } => {
+                        let (Some(h), Some(p)) = (host, port) else {
+                            return Err(mlua::Error::runtime(
+                                "a UDP send takes (id, data, host, port)",
+                            ));
+                        };
+                        socket
+                            .send_to(&data.as_bytes(), addr(&h, p)?)
+                            .map(|_| ())
+                            .map_err(|e| mlua::Error::runtime(e.to_string()))
+                    }
+                    Kind::Listen { .. } => Err(mlua::Error::runtime(
+                        "send on a connection, not its listener",
+                    )),
                 }
-                Kind::Listen { .. } => Err(mlua::Error::runtime("send on a connection, not its listener")),
-            }
-        })?,
+            },
+        )?,
     )?;
     t.set("close", lua.create_function(|lua, id: u64| close(lua, id))?)?;
     Ok(())
@@ -344,7 +489,9 @@ pub(super) fn close(lua: &Lua, id: u64) -> mlua::Result<()> {
     let st = state(lua);
     let gone: Vec<Sock> = {
         let mut s = st.borrow_mut();
-        let (gone, kept) = std::mem::take(&mut s.socks).into_iter().partition(|x| x.id == id);
+        let (gone, kept) = std::mem::take(&mut s.socks)
+            .into_iter()
+            .partition(|x| x.id == id);
         s.socks = kept;
         gone
     };
@@ -371,12 +518,26 @@ pub(super) fn poll(vm: &super::vm::Vm) {
         let id = match &m {
             Msg::Open(id, _) | Msg::Data(id, ..) | Msg::Accept(id, ..) | Msg::Closed(id, _) => *id,
         };
-        let handlers: Option<Table> = vm.st.borrow().socks.iter().find(|s| s.id == id).and_then(|s| s.handlers.as_ref()).and_then(|k| vm.lua.registry_value(k).ok());
+        let handlers: Option<Table> = vm
+            .st
+            .borrow()
+            .socks
+            .iter()
+            .find(|s| s.id == id)
+            .and_then(|s| s.handlers.as_ref())
+            .and_then(|k| vm.lua.registry_value(k).ok());
         let Some(h) = handlers else { continue };
         let f = |name: &str| h.get::<Option<Function>>(name).ok().flatten();
         match m {
             Msg::Open(id, stream) => {
-                if let Some(Kind::Tcp { stream: s, .. }) = vm.st.borrow_mut().socks.iter_mut().find(|s| s.id == id).map(|s| &mut s.kind) {
+                if let Some(Kind::Tcp { stream: s, .. }) = vm
+                    .st
+                    .borrow_mut()
+                    .socks
+                    .iter_mut()
+                    .find(|s| s.id == id)
+                    .map(|s| &mut s.kind)
+                {
                     *s = Some(stream);
                 }
                 if let Some(f) = f("open") {
@@ -392,8 +553,18 @@ pub(super) fn poll(vm: &super::vm::Vm) {
                 }
             }
             Msg::Accept(lid, cid, peer, tx, stream) => {
-                let Ok(key) = vm.lua.create_registry_value(h.clone()) else { continue };
-                vm.st.borrow_mut().socks.push(Sock { id: cid, handlers: Some(key), kind: Kind::Tcp { tx, stream: Some(stream), stop: Arc::new(AtomicBool::new(false)) } });
+                let Ok(key) = vm.lua.create_registry_value(h.clone()) else {
+                    continue;
+                };
+                vm.st.borrow_mut().socks.push(Sock {
+                    id: cid,
+                    handlers: Some(key),
+                    kind: Kind::Tcp {
+                        tx,
+                        stream: Some(stream),
+                        stop: Arc::new(AtomicBool::new(false)),
+                    },
+                });
                 if let Some(f) = f("accept") {
                     vm.call(f, (lid, cid, peer.ip().to_string(), peer.port()));
                 }
@@ -401,13 +572,23 @@ pub(super) fn poll(vm: &super::vm::Vm) {
             Msg::Closed(id, err) => {
                 let gone: Vec<Sock> = {
                     let mut s = vm.st.borrow_mut();
-                    let (gone, kept) = std::mem::take(&mut s.socks).into_iter().partition(|x| x.id == id);
+                    let (gone, kept) = std::mem::take(&mut s.socks)
+                        .into_iter()
+                        .partition(|x| x.id == id);
                     s.socks = kept;
                     gone
                 };
                 drop_all(&vm.lua, gone);
                 if let Some(f) = f("close") {
-                    vm.call(f, (id, err.map_or(Value::Nil, |e| vm.lua.create_string(&e).map_or(Value::Nil, Value::String))));
+                    vm.call(
+                        f,
+                        (
+                            id,
+                            err.map_or(Value::Nil, |e| {
+                                vm.lua.create_string(&e).map_or(Value::Nil, Value::String)
+                            }),
+                        ),
+                    );
                 }
             }
         }

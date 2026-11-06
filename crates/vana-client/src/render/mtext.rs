@@ -40,7 +40,15 @@ struct Atlas {
 
 fn atlas() -> &'static Mutex<Atlas> {
     static A: OnceLock<Mutex<Atlas>> = OnceLock::new();
-    A.get_or_init(|| Mutex::new(Atlas { rgba: vec![0; 1024 * 1024 * 4], side: 1024, pen: (1, 1, 0), glyphs: HashMap::new(), dirty: true }))
+    A.get_or_init(|| {
+        Mutex::new(Atlas {
+            rgba: vec![0; 1024 * 1024 * 4],
+            side: 1024,
+            pen: (1, 1, 0),
+            glyphs: HashMap::new(),
+            dirty: true,
+        })
+    })
 }
 
 fn face(f: Face) -> FontRef<'static> {
@@ -84,10 +92,17 @@ impl Atlas {
         let id = font.glyph_id(c);
         let adv = font.as_scaled(scale).h_advance(id);
         let Some(o) = font.outline_glyph(id.with_scale_and_position(scale, point(0.0, 0.0))) else {
-            return Some(Glyph { at: [0; 4], off: [0.0; 2], adv });
+            return Some(Glyph {
+                at: [0; 4],
+                off: [0.0; 2],
+                adv,
+            });
         };
         let b = o.px_bounds();
-        let (w, h) = (b.width().ceil() as usize + 1, b.height().ceil() as usize + 1);
+        let (w, h) = (
+            b.width().ceil() as usize + 1,
+            b.height().ceil() as usize + 1,
+        );
         if self.pen.0 + w + 1 > self.side {
             self.pen = (1, self.pen.1 + self.pen.2 + 1, 0);
         }
@@ -103,19 +118,32 @@ impl Atlas {
         o.draw(|x, y, v| {
             let k = ((y0 + y as usize) * side + x0 + x as usize) * 4;
             if k + 3 < self.rgba.len() {
-                self.rgba[k..k + 4].copy_from_slice(&[255, 255, 255, (v.clamp(0.0, 1.0) * 255.0) as u8]);
+                self.rgba[k..k + 4].copy_from_slice(&[
+                    255,
+                    255,
+                    255,
+                    (v.clamp(0.0, 1.0) * 255.0) as u8,
+                ]);
             }
         });
         self.pen = (x0 + w + 1, y0, self.pen.2.max(h));
         self.dirty = true;
-        Some(Glyph { at: [x0 as u16, y0 as u16, w as u16, h as u16], off: [b.min.x, b.min.y], adv })
+        Some(Glyph {
+            at: [x0 as u16, y0 as u16, w as u16, h as u16],
+            off: [b.min.x, b.min.y],
+            adv,
+        })
     }
 }
 
 /// The raster size for an em of `em` layout pixels, and layout pixels per raster pixel.
 fn bucket(em: f32) -> (u16, f32) {
     let want = em * scale();
-    let px = BUCKETS.iter().copied().find(|&b| b as f32 >= want).unwrap_or(BUCKETS[BUCKETS.len() - 1]);
+    let px = BUCKETS
+        .iter()
+        .copied()
+        .find(|&b| b as f32 >= want)
+        .unwrap_or(BUCKETS[BUCKETS.len() - 1]);
     (px, em / px as f32)
 }
 
@@ -143,7 +171,9 @@ pub fn layout(s: &str, f: Face, em: f32, x: f32, top: f32) -> (Vec<([f32; 4], [f
     let font = face(f);
     let sf = font.as_scaled(PxScale::from(px as f32));
     let base = top + sf.ascent() * k;
-    let Ok(mut a) = atlas().lock() else { return (Vec::new(), x) };
+    let Ok(mut a) = atlas().lock() else {
+        return (Vec::new(), x);
+    };
     let mut out = Vec::with_capacity(s.len());
     let mut pen = 0.0f32;
     let mut prev = None;
@@ -157,8 +187,16 @@ pub fn layout(s: &str, f: Face, em: f32, x: f32, top: f32) -> (Vec<([f32; 4], [f
         if g.at[2] > 0 {
             let side = a.side as f32;
             let [gx, gy, gw, gh] = g.at.map(|v| v as f32);
-            let rect = [x + (pen + g.off[0]) * k, base + g.off[1] * k, gw * k, gh * k];
-            out.push((rect, [gx / side, gy / side, (gx + gw) / side, (gy + gh) / side]));
+            let rect = [
+                x + (pen + g.off[0]) * k,
+                base + g.off[1] * k,
+                gw * k,
+                gh * k,
+            ];
+            out.push((
+                rect,
+                [gx / side, gy / side, (gx + gw) / side, (gy + gh) / side],
+            ));
         }
         pen += g.adv;
     }

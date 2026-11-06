@@ -16,7 +16,12 @@ pub struct Sample {
 /// FUN_10215200's placeholders until the first open.
 impl Default for Sample {
     fn default() -> Self {
-        Sample { scale: 1.0, range: 32.0, fade: 16.0, mobs: false }
+        Sample {
+            scale: 1.0,
+            range: 32.0,
+            fade: 16.0,
+            mobs: false,
+        }
     }
 }
 
@@ -27,7 +32,12 @@ pub fn sample(main: u8, sub: u8, sub_level: u8) -> Sample {
     let scale = if nin { 1.0 } else { 0.8 };
     let range = scale * 36.0;
     let seer = |j: u8| matches!(j, 6 | 9 | 11 | 13 | 15 | 16);
-    Sample { scale, range, fade: range * 0.5, mobs: seer(main) || (sub_level != 0 && seer(sub)) }
+    Sample {
+        scale,
+        range,
+        fade: range * 0.5,
+        mobs: seer(main) || (sub_level != 0 && seer(sub)),
+    }
 }
 
 /// FUN_1008e290: the entity's kind word (+0x1d0), rebuilt every frame.
@@ -74,7 +84,13 @@ pub fn kind_bits(w: &World, id: u32, e: &Entity) -> u32 {
 /// invisible, not untargetable or radar-off, not an object model, not hidden for the s2c 0x077 list (+0xb2 bit 7).
 /// Not modelled: +0x120 bit 15.
 pub fn shown(e: &Entity) -> bool {
-    !matches!(e.sub_kind, 2..=4) && e.flags & 6 == 0 && !e.invisible && !e.untargetable && !e.radar_off && !e.object && !e.unlisted
+    !matches!(e.sub_kind, 2..=4)
+        && e.flags & 6 == 0
+        && !e.invisible
+        && !e.untargetable
+        && !e.radar_off
+        && !e.object
+        && !e.unlisted
 }
 
 /// FUN_102203b0's alpha (asm 0x10216a40..0x10216ad7, x87 with truncation) from the compass alpha `a` (0..0x80):
@@ -96,13 +112,21 @@ pub fn alpha(a: u32, dist: f64, h: f64, s: &Sample) -> u32 {
 /// The dot's RGB (asm 0x10216add..0x10216b3e), or none.
 pub fn colour(bits: u32, monstrosity: u16, status: u8, mobs: bool) -> Option<u32> {
     if bits & 1 != 0 && monstrosity == 0 {
-        Some(if bits & 0xc != 0 { 0x30_60e0 } else { 0x00_40f0 })
+        Some(if bits & 0xc != 0 {
+            0x30_60e0
+        } else {
+            0x00_40f0
+        })
     } else if bits & 0x100 != 0 {
         Some(0x30_d000)
     } else if bits & 2 != 0 {
         (status != 0x31).then_some(0x00_b040)
     } else if mobs {
-        Some(if matches!(status, 2 | 3) { 0x20_6060 } else { 0x80_8080 })
+        Some(if matches!(status, 2 | 3) {
+            0x20_6060
+        } else {
+            0x80_8080
+        })
     } else {
         None
     }
@@ -110,18 +134,30 @@ pub fn colour(bits: u32, monstrosity: u16, status: u8, mobs: bool) -> Option<u32
 
 /// The dots as (local x, local y, ARGB) in slot order: local (P.x - E.x, E.z - P.z), kept within the range and 4 high.
 pub fn dots(w: &World, a: u32, s: &Sample) -> Vec<(f64, f64, u32)> {
-    let mut ents: Vec<(&u32, &Entity)> = w.entities.iter().filter(|(id, _)| **id != w.my_id).collect();
+    let mut ents: Vec<(&u32, &Entity)> = w
+        .entities
+        .iter()
+        .filter(|(id, _)| **id != w.my_id)
+        .collect();
     ents.sort_by_key(|(_, e)| e.index);
     let p = w.pos;
     ents.into_iter()
         .filter(|(_, e)| shown(e))
         .filter_map(|(&id, e)| {
             let (lx, ly) = (p.x as f64 - e.pos.x as f64, e.pos.z as f64 - p.z as f64);
-            let (dist, h) = ((lx * lx + ly * ly).sqrt(), (p.y as f64 - e.pos.y as f64).abs());
+            let (dist, h) = (
+                (lx * lx + ly * ly).sqrt(),
+                (p.y as f64 - e.pos.y as f64).abs(),
+            );
             if dist > s.range as f64 || h > 4.0 {
                 return None;
             }
-            let rgb = colour(kind_bits(w, id, e), e.monstrosity, e.motion.status, s.mobs || w.opts.radar_mobs)?;
+            let rgb = colour(
+                kind_bits(w, id, e),
+                e.monstrosity,
+                e.motion.status,
+                s.mobs || w.opts.radar_mobs,
+            )?;
             Some((lx, ly, alpha(a, dist, h, s) << 24 | rgb))
         })
         .collect()
@@ -135,11 +171,25 @@ mod tests {
     #[test]
     fn fades() {
         let war = sample(1, 0, 0);
-        assert!((war.range - 28.8).abs() < 1e-4 && (war.fade - 14.4).abs() < 1e-4 && war.scale == 0.8 && !war.mobs);
-        assert_eq!([10.0, 14.4, 20.0, 28.7].map(|d| alpha(128, d, 0.0, &war)), [128, 128, 78, 0]);
-        assert_eq!([(10.0, 3.0), (20.0, 3.0), (10.0, 4.0)].map(|(d, h)| alpha(128, d, h, &war)), [64, 39, 0]);
+        assert!(
+            (war.range - 28.8).abs() < 1e-4
+                && (war.fade - 14.4).abs() < 1e-4
+                && war.scale == 0.8
+                && !war.mobs
+        );
+        assert_eq!(
+            [10.0, 14.4, 20.0, 28.7].map(|d| alpha(128, d, 0.0, &war)),
+            [128, 128, 78, 0]
+        );
+        assert_eq!(
+            [(10.0, 3.0), (20.0, 3.0), (10.0, 4.0)].map(|(d, h)| alpha(128, d, h, &war)),
+            [64, 39, 0]
+        );
         let nin = sample(13, 0, 0);
-        assert_eq!((nin.range, alpha(128, 27.0, 0.0, &nin), nin.mobs), (36.0, 64, true));
+        assert_eq!(
+            (nin.range, alpha(128, 27.0, 0.0, &nin), nin.mobs),
+            (36.0, 64, true)
+        );
         assert!(sample(1, 6, 10).mobs && !sample(1, 6, 0).mobs);
     }
 

@@ -34,11 +34,31 @@ enum Entry {
 
 /// The pages opened from a topic page's button: (name, page, help).
 const SUBS: [(&str, Entry, &str); 5] = [
-    ("Chat Filters", Entry::List("cfilter", None), "Choose which kinds of chat and battle messages show in the log."),
-    ("Effects", Entry::List("fxfilter", None), "Choose whose visual effects you see: yours, your party's and other players'."),
-    ("Font Colors", Entry::Colors, "Choose the colour of each kind of chat and battle message."),
-    ("Mods", Entry::Mods, "Turn mod packs on or off, change their order, and install or remove them."),
-    ("Mod Settings", Entry::ModPages, "Settings for your Lua mods, one page per mod."),
+    (
+        "Chat Filters",
+        Entry::List("cfilter", None),
+        "Choose which kinds of chat and battle messages show in the log.",
+    ),
+    (
+        "Effects",
+        Entry::List("fxfilter", None),
+        "Choose whose visual effects you see: yours, your party's and other players'.",
+    ),
+    (
+        "Font Colors",
+        Entry::Colors,
+        "Choose the colour of each kind of chat and battle message.",
+    ),
+    (
+        "Mods",
+        Entry::Mods,
+        "Turn mod packs on or off, change their order, and install or remove them.",
+    ),
+    (
+        "Mod Settings",
+        Entry::ModPages,
+        "Settings for your Lua mods, one page per mod.",
+    ),
 ];
 const SUB_CHAT: usize = 0;
 const SUB_EFFECTS: usize = 1;
@@ -60,68 +80,232 @@ use Item::{Head, Open, Ours, Retail};
 /// The topic pages: (group, name, lines). Every retail setting of the old list and every row of ours has one place
 /// (the test `every_setting_has_a_page`).
 const PAGES: [(&str, &str, &[Item]); 14] = [
-    ("Game", "Gameplay", &[
-        Head("Targeting"), Retail("conf2win", 1), Retail("conf12wi", 7), Retail("conf12wi", 5),
-        Head("Inventory & Equipment"), Retail("conf2win", 8), Retail("conf2win", 10), Retail("conf12wi", 3), Ours("Synthesis Amount"),
-        Head("Events & Trusts"), Ours("Text Auto-Advance"), Ours("Trust Speech"),
-    ]),
-    ("Game", "Interface", &[
-        Head("Look"), Ours("Interface"), Ours("Interface Size"), Ours("Panel Opacity"), Ours("Panel Places"), Retail("conf3win", 12),
-        Head("Party & Target"), Ours("Party TP"), Retail("conf12wi", 9), Retail("conf12wi", 11), Ours("Target Distance"), Ours("Target HP %"),
-        Head("Other"), Retail("conf3win", 3), Ours("Clock"), Retail("conf6win", 12), Retail("conf6win", 14),
-    ]),
-    ("Game", "Chat & Log", &[
-        Head("Filters"), Open(SUB_CHAT), Retail("conf13wi", 4), Retail("conf4", 1), Retail("conf3win", 1),
-        Head("Colours"), Open(SUB_COLOURS), Ours("Battle Names"),
-        Head("Lines"), Ours("Battle Text"), Ours("Ready Lines"), Ours("Timestamps on All Lines"),
-    ]),
-    ("Game", "Maps & Timers", &[
-        Head("Maps"), Ours("Map Overlay"), Ours("Map Overlay Opacity"), Ours("Minimap"), Ours("Minimap Position"), Ours("Minimap Size"),
-        Head("Timers & Helpers"), Ours("Timers"), Ours("Timers Position"), Ours("Training Regime"), Ours("Skillchain Helper"),
-    ]),
-    ("Graphics", "Display", &[
-        Head("Window"), Ours("Window Mode"), Ours("Resolution"), Ours("Monitor"), Ours("GPU"), Ours("Frame Limit"),
-        Head("Scaling"), Ours("Background"), Ours("Menu Size"), Ours("3D Aspect"), Retail("conf6win", 7), Ours("3D LCD Mode"),
-        Head("Brightness"), Ours("Gamma Base"), Retail("conf2win", 5), Retail("conf2win", 6), Retail("conf2win", 7),
-    ]),
-    ("Graphics", "Image Quality", &[
-        Head("Textures"), Ours("Textures"), Ours("2-D Mapping"), Ours("Fonts"), Ours("MIP Mapping"), Ours("Anisotropic Filtering"),
-        Head("Edges & Stability"), Ours("Anti-aliasing"), Ours("Graphics Stabilization"),
-    ]),
-    ("Graphics", "Lighting & Shadows", &[
-        Head("Lights"), Ours("Lamp Lights"), Ours("Bump Mapping"),
-        Head("Shadows"), Ours("Character Shadows"), Retail("conf3win", 6), Ours("Shadow Quality"), Ours("Ambient Occlusion"),
-    ]),
-    ("Graphics", "Characters & World", &[
-        Head("Characters"), Retail("conf3win", 11), Retail("conf3win", 14), Retail("conf6win", 4), Retail("conf6win", 2),
-        Head("World"), Ours("Draw Distance"), Retail("conf6win", 1), Retail("conf3win", 9), Retail("conf12wi", 13),
-    ]),
-    ("Graphics", "Effects & Colour", &[
-        Head("World"), Ours("Environment Animation"), Ours("Colour Grading"),
-        Head("Effects"), Retail("conf12wi", 1), Open(SUB_EFFECTS),
-    ]),
-    ("Sound", "Sound", &[
-        Head("Volume"), Retail("conf2win", 3), Retail("conf2win", 4), Ours("Music Volume"), Ours("Sound Effects Volume"),
-        Head("Output"), Ours("Sound"), Ours("Sound Effect Channels"), Ours("Sound in Background"),
-    ]),
-    ("Input", "Mouse, Camera & Keys", &[
-        Head("Mouse"), Ours("Hardware Mouse"), Ours("Cursor Size"), Ours("Mouse Camera Speed"),
-        Head("Camera"), Retail("conf7", 5), Retail("conf7", 7), Retail("conf7", 9), Retail("conf7", 11), Retail("conf7", 13),
-        Retail("conf7", configui::CAM_KEYS), Retail("conf7", configui::CAM_KEYS + 3),
-        Head("Keyboard"), Retail("conf6win", 5), Retail("conf6win", 8), Retail("conf6win", 9), Retail("conf6win", 10), Retail("conf13wi", 1),
-    ]),
-    ("Input", "Controller", &[Head("Controller"), Ours("Gamepad"), Ours("Stick Dead Zone")]),
-    ("System", "Startup & Account", &[
-        Head("Startup"), Ours("Opening Movie"), Ours("Simple Character Creation"), Ours("Screenshot Size"),
-        Head("Account"), Retail("conf4", 3),
-        Head("Network"), Ours("Send Rate"),
-    ]),
-    ("System", "Mods", &[Head("Mods"), Open(SUB_MODS), Open(SUB_MOD_PAGES)]),
+    (
+        "Game",
+        "Gameplay",
+        &[
+            Head("Targeting"),
+            Retail("conf2win", 1),
+            Retail("conf12wi", 7),
+            Retail("conf12wi", 5),
+            Head("Inventory & Equipment"),
+            Retail("conf2win", 8),
+            Retail("conf2win", 10),
+            Retail("conf12wi", 3),
+            Ours("Synthesis Amount"),
+            Head("Events & Trusts"),
+            Ours("Text Auto-Advance"),
+            Ours("Trust Speech"),
+        ],
+    ),
+    (
+        "Game",
+        "Interface",
+        &[
+            Head("Look"),
+            Ours("Interface"),
+            Ours("Interface Size"),
+            Ours("Panel Opacity"),
+            Ours("Panel Places"),
+            Retail("conf3win", 12),
+            Head("Party & Target"),
+            Ours("Party TP"),
+            Retail("conf12wi", 9),
+            Retail("conf12wi", 11),
+            Ours("Target Distance"),
+            Ours("Target HP %"),
+            Head("Other"),
+            Retail("conf3win", 3),
+            Ours("Clock"),
+            Retail("conf6win", 12),
+            Retail("conf6win", 14),
+        ],
+    ),
+    (
+        "Game",
+        "Chat & Log",
+        &[
+            Head("Filters"),
+            Open(SUB_CHAT),
+            Retail("conf13wi", 4),
+            Retail("conf4", 1),
+            Retail("conf3win", 1),
+            Head("Colours"),
+            Open(SUB_COLOURS),
+            Ours("Battle Names"),
+            Head("Lines"),
+            Ours("Battle Text"),
+            Ours("Ready Lines"),
+            Ours("Timestamps on All Lines"),
+        ],
+    ),
+    (
+        "Game",
+        "Maps & Timers",
+        &[
+            Head("Maps"),
+            Ours("Map Overlay"),
+            Ours("Map Overlay Opacity"),
+            Ours("Minimap"),
+            Ours("Minimap Position"),
+            Ours("Minimap Size"),
+            Head("Timers & Helpers"),
+            Ours("Timers"),
+            Ours("Timers Position"),
+            Ours("Training Regime"),
+            Ours("Skillchain Helper"),
+        ],
+    ),
+    (
+        "Graphics",
+        "Display",
+        &[
+            Head("Window"),
+            Ours("Window Mode"),
+            Ours("Resolution"),
+            Ours("Monitor"),
+            Ours("GPU"),
+            Ours("Frame Limit"),
+            Head("Scaling"),
+            Ours("Background"),
+            Ours("Menu Size"),
+            Ours("3D Aspect"),
+            Retail("conf6win", 7),
+            Ours("3D LCD Mode"),
+            Head("Brightness"),
+            Ours("Gamma Base"),
+            Retail("conf2win", 5),
+            Retail("conf2win", 6),
+            Retail("conf2win", 7),
+        ],
+    ),
+    (
+        "Graphics",
+        "Image Quality",
+        &[
+            Head("Textures"),
+            Ours("Textures"),
+            Ours("2-D Mapping"),
+            Ours("Fonts"),
+            Ours("MIP Mapping"),
+            Ours("Anisotropic Filtering"),
+            Head("Edges & Stability"),
+            Ours("Anti-aliasing"),
+            Ours("Graphics Stabilization"),
+        ],
+    ),
+    (
+        "Graphics",
+        "Lighting & Shadows",
+        &[
+            Head("Lights"),
+            Ours("Lamp Lights"),
+            Ours("Bump Mapping"),
+            Head("Shadows"),
+            Ours("Character Shadows"),
+            Retail("conf3win", 6),
+            Ours("Shadow Quality"),
+            Ours("Ambient Occlusion"),
+        ],
+    ),
+    (
+        "Graphics",
+        "Characters & World",
+        &[
+            Head("Characters"),
+            Retail("conf3win", 11),
+            Retail("conf3win", 14),
+            Retail("conf6win", 4),
+            Retail("conf6win", 2),
+            Head("World"),
+            Ours("Draw Distance"),
+            Retail("conf6win", 1),
+            Retail("conf3win", 9),
+            Retail("conf12wi", 13),
+        ],
+    ),
+    (
+        "Graphics",
+        "Effects & Colour",
+        &[
+            Head("World"),
+            Ours("Environment Animation"),
+            Ours("Colour Grading"),
+            Head("Effects"),
+            Retail("conf12wi", 1),
+            Open(SUB_EFFECTS),
+        ],
+    ),
+    (
+        "Sound",
+        "Sound",
+        &[
+            Head("Volume"),
+            Retail("conf2win", 3),
+            Retail("conf2win", 4),
+            Ours("Music Volume"),
+            Ours("Sound Effects Volume"),
+            Head("Output"),
+            Ours("Sound"),
+            Ours("Sound Effect Channels"),
+            Ours("Sound in Background"),
+        ],
+    ),
+    (
+        "Input",
+        "Mouse, Camera & Keys",
+        &[
+            Head("Mouse"),
+            Ours("Hardware Mouse"),
+            Ours("Cursor Size"),
+            Ours("Mouse Camera Speed"),
+            Head("Camera"),
+            Retail("conf7", 5),
+            Retail("conf7", 7),
+            Retail("conf7", 9),
+            Retail("conf7", 11),
+            Retail("conf7", 13),
+            Retail("conf7", configui::CAM_KEYS),
+            Retail("conf7", configui::CAM_KEYS + 3),
+            Head("Keyboard"),
+            Retail("conf6win", 5),
+            Retail("conf6win", 8),
+            Retail("conf6win", 9),
+            Retail("conf6win", 10),
+            Retail("conf13wi", 1),
+        ],
+    ),
+    (
+        "Input",
+        "Controller",
+        &[Head("Controller"), Ours("Gamepad"), Ours("Stick Dead Zone")],
+    ),
+    (
+        "System",
+        "Startup & Account",
+        &[
+            Head("Startup"),
+            Ours("Opening Movie"),
+            Ours("Simple Character Creation"),
+            Ours("Screenshot Size"),
+            Head("Account"),
+            Retail("conf4", 3),
+            Head("Network"),
+            Ours("Send Rate"),
+        ],
+    ),
+    (
+        "System",
+        "Mods",
+        &[Head("Mods"), Open(SUB_MODS), Open(SUB_MOD_PAGES)],
+    ),
 ];
 
 /// The page shown: a page opened from a topic page while one is, else the topic page chosen.
 fn current(c: &ConfigUi) -> Entry {
-    c.m_sub.and_then(|k| SUBS.get(k)).map_or(Entry::Topic, |s| s.1)
+    c.m_sub
+        .and_then(|k| SUBS.get(k))
+        .map_or(Entry::Topic, |s| s.1)
 }
 
 /// Retail's setting `child` of Config page `menu` (its first control).
@@ -147,14 +331,26 @@ fn lines_of(items: &[Item], s: Option<&SettingsUi>) -> Vec<Line> {
     for &item in items {
         let line = match item {
             Retail(menu, child) => match shape_of(menu, child) {
-                Some(sh) => Line { item, shape: Some(sh), ours: None },
+                Some(sh) => Line {
+                    item,
+                    shape: Some(sh),
+                    ours: None,
+                },
                 None => continue,
             },
             Ours(label) => match s.and_then(|s| s.item(label)) {
-                Some(o) => Line { item, shape: None, ours: Some(o) },
+                Some(o) => Line {
+                    item,
+                    shape: None,
+                    ours: Some(o),
+                },
                 None => continue,
             },
-            _ => Line { item, shape: None, ours: None },
+            _ => Line {
+                item,
+                shape: None,
+                ours: None,
+            },
         };
         if matches!(item, Head(_)) && out.last().is_some_and(|l| matches!(l.item, Head(_))) {
             out.pop();
@@ -203,12 +399,23 @@ fn matches(q: &str, name: &str, help: &str) -> bool {
     if q.is_empty() {
         return false;
     }
-    name.to_lowercase().contains(&q) || (q.chars().count() >= 3 && help.to_lowercase().split(|c: char| !c.is_alphanumeric()).any(|w| w.starts_with(&q)))
+    name.to_lowercase().contains(&q)
+        || (q.chars().count() >= 3
+            && help
+                .to_lowercase()
+                .split(|c: char| !c.is_alphanumeric())
+                .any(|w| w.starts_with(&q)))
 }
 
 /// The search's hits over every page, (page, line): a setting whose name or help matches, or every setting under a
 /// heading that does. Retail's words need the game's layouts (`gu`; none offscreen).
-fn find_hits(gu: Option<&GameUi>, c: &ConfigUi, v: &Values, s: Option<&SettingsUi>, q: &str) -> Vec<(usize, usize)> {
+fn find_hits(
+    gu: Option<&GameUi>,
+    c: &ConfigUi,
+    v: &Values,
+    s: Option<&SettingsUi>,
+    q: &str,
+) -> Vec<(usize, usize)> {
     let mut out = Vec::new();
     for (p, page) in PAGES.iter().enumerate() {
         let mut head = false;
@@ -225,7 +432,9 @@ fn find_hits(gu: Option<&GameUi>, c: &ConfigUi, v: &Values, s: Option<&SettingsU
                     }
                     _ => false,
                 },
-                Ours(label) => s.and_then(|s| s.item(label)).is_some_and(|(_, help)| matches(q, label, &help)),
+                Ours(label) => s
+                    .and_then(|s| s.item(label))
+                    .is_some_and(|(_, help)| matches(q, label, &help)),
                 Open(sub) => matches(q, SUBS[sub].0, SUBS[sub].2),
             };
             if hit || head {
@@ -240,13 +449,27 @@ fn find_hits(gu: Option<&GameUi>, c: &ConfigUi, v: &Values, s: Option<&SettingsU
 fn refresh_hits(gu: Option<&GameUi>, c: &mut ConfigUi, v: &Values, s: Option<&SettingsUi>) {
     let q = c.m_find.clone().unwrap_or_default();
     if c.m_hits.0 != q || (q.is_empty() && !c.m_hits.1.is_empty()) {
-        c.m_hits = (q.clone(), if q.trim().is_empty() { Vec::new() } else { find_hits(gu, c, v, s, &q) });
+        c.m_hits = (
+            q.clone(),
+            if q.trim().is_empty() {
+                Vec::new()
+            } else {
+                find_hits(gu, c, v, s, &q)
+            },
+        );
     }
 }
 
 /// The search has text being typed (see `find_events`): its keys are no game keys.
 pub fn finding(w: &World) -> bool {
-    w.modern && shown(w) && w.config.as_ref().is_some_and(|c| c.m_find.is_some() && c.m_sub.is_none() && c.m_keys.is_none() && c.extra.ask_keys.is_none())
+    w.modern
+        && shown(w)
+        && w.config.as_ref().is_some_and(|c| {
+            c.m_find.is_some()
+                && c.m_sub.is_none()
+                && c.m_keys.is_none()
+                && c.extra.ask_keys.is_none()
+        })
 }
 
 /// The search's typed text, Backspace, Escape and Ctrl+R (Retail only) while the Settings window shows a topic page.
@@ -255,16 +478,27 @@ pub fn find_events(w: &mut World, events: &[egui::Event]) -> bool {
     if !find_open(w) {
         return false;
     }
-    let Some(c) = w.config.as_mut() else { return false };
+    let Some(c) = w.config.as_mut() else {
+        return false;
+    };
     let mut took = false;
     for e in events {
         match e {
-            egui::Event::Text(t) if c.m_find.is_some() || t.chars().next().is_some_and(|ch| ch.is_alphanumeric()) => {
-                c.m_find.get_or_insert_with(String::new).extend(t.chars().filter(|ch| !ch.is_control()));
+            egui::Event::Text(t)
+                if c.m_find.is_some()
+                    || t.chars().next().is_some_and(|ch| ch.is_alphanumeric()) =>
+            {
+                c.m_find
+                    .get_or_insert_with(String::new)
+                    .extend(t.chars().filter(|ch| !ch.is_control()));
                 (c.m_open, c.m_row) = (true, 0);
                 took = true;
             }
-            egui::Event::Key { key: egui::Key::Backspace, pressed: true, .. } if c.m_find.is_some() => {
+            egui::Event::Key {
+                key: egui::Key::Backspace,
+                pressed: true,
+                ..
+            } if c.m_find.is_some() => {
                 if let Some(f) = c.m_find.as_mut() {
                     f.pop();
                 }
@@ -274,12 +508,21 @@ pub fn find_events(w: &mut World, events: &[egui::Event]) -> bool {
                 c.m_row = 0;
                 took = true;
             }
-            egui::Event::Key { key: egui::Key::Escape, pressed: true, .. } if c.m_find.is_some() => {
+            egui::Event::Key {
+                key: egui::Key::Escape,
+                pressed: true,
+                ..
+            } if c.m_find.is_some() => {
                 (c.m_find, c.m_row) = (None, 0);
                 w.sounds.push(Se::Cancel as u32);
                 took = true;
             }
-            egui::Event::Key { key: egui::Key::R, pressed: true, modifiers, .. } if modifiers.ctrl || modifiers.command => {
+            egui::Event::Key {
+                key: egui::Key::R,
+                pressed: true,
+                modifiers,
+                ..
+            } if modifiers.ctrl || modifiers.command => {
                 (c.m_retail, c.m_row) = (!c.m_retail, 0);
                 w.sounds.push(Se::Cursor as u32);
                 took = true;
@@ -302,10 +545,24 @@ fn topic_stops(c: &ConfigUi, v: &Values, all: &[Line], sw: f32) -> Vec<Stop> {
         .map(|l| match (&l.shape, &l.ours) {
             (Some(sh), _) => native_stops(c, v, std::slice::from_ref(sh), sw)[0],
             (_, Some((r, _))) => match &r.ctl {
-                settings::VCtl::Buttons(bs) => Stop::Value { n: bs.len(), at: bs.iter().position(|b| b.1).unwrap_or(0), slider: false, off: 0 },
-                settings::VCtl::Slider { n, at, .. } => Stop::Value { n: *n, at: *at, slider: true, off: 0 },
+                settings::VCtl::Buttons(bs) => Stop::Value {
+                    n: bs.len(),
+                    at: bs.iter().position(|b| b.1).unwrap_or(0),
+                    slider: false,
+                    off: 0,
+                },
+                settings::VCtl::Slider { n, at, .. } => Stop::Value {
+                    n: *n,
+                    at: *at,
+                    slider: true,
+                    off: 0,
+                },
             },
-            _ => Stop::Buttons { n: 1, off: 0, pair: None },
+            _ => Stop::Buttons {
+                n: 1,
+                off: 0,
+                pair: None,
+            },
         })
         .collect()
 }
@@ -325,7 +582,12 @@ fn topic_do(w: &mut World, pick: Pick, sw: f32) {
     let k = match pick {
         Pick::Set(k, ..) | Pick::Press(k) => k,
     };
-    let Some(l) = stop_lines(&all).get(k).map(|l| (l.item, l.shape.as_ref().map(|s| (s.menu, s.ctls.clone())))) else { return };
+    let Some(l) = stop_lines(&all)
+        .get(k)
+        .map(|l| (l.item, l.shape.as_ref().map(|s| (s.menu, s.ctls.clone()))))
+    else {
+        return;
+    };
     if let Some(c) = w.config.as_mut() {
         (c.m_open, c.m_row) = (true, k);
     }
@@ -370,7 +632,10 @@ fn close_sub(w: &mut World) {
     let Some(c) = w.config.as_mut() else { return };
     let Some(sub) = c.m_sub.take() else { return };
     let all = view(c, w.settings.as_ref());
-    c.m_row = stop_lines(&all).iter().position(|l| l.item == Open(sub)).unwrap_or(0);
+    c.m_row = stop_lines(&all)
+        .iter()
+        .position(|l| l.item == Open(sub))
+        .unwrap_or(0);
     w.sounds.push(Se::Cancel as u32);
     if let Some(s) = w.settings.as_mut().filter(|s| s.on_mods_page()) {
         s.goto(0, 0);
@@ -380,7 +645,10 @@ fn close_sub(w: &mut World) {
 
 /// `/lua settings`: the Settings window opened on the Lua mods' pages (the app turns Extras to the mod's).
 pub fn open_mod_settings(c: &mut ConfigUi) {
-    let page = PAGES.iter().position(|p| p.2.contains(&Open(SUB_MOD_PAGES))).unwrap_or(0);
+    let page = PAGES
+        .iter()
+        .position(|p| p.2.contains(&Open(SUB_MOD_PAGES)))
+        .unwrap_or(0);
     (c.m_entry, c.m_sub, c.m_open, c.m_row) = (page, Some(SUB_MOD_PAGES), true, 0);
 }
 
@@ -389,14 +657,30 @@ fn group_head(ui: &mut Ui, m: &super::Modern, text: &str, first: bool) {
     if !first {
         ui.add_space(10.0);
     }
-    ui.label(egui::RichText::new(text.to_uppercase()).size(m.theme.small - 2.0).color(m.theme.color("bronze")).family(FontFamily::Name(super::STRONG.into())));
+    ui.label(
+        egui::RichText::new(text.to_uppercase())
+            .size(m.theme.small - 2.0)
+            .color(m.theme.color("bronze"))
+            .family(FontFamily::Name(super::STRONG.into())),
+    );
     ui.add_space(2.0);
 }
 
 /// A topic page: its headings and settings, the cursor's ringed while it has the keys. What the mouse did, and the
 /// help of the line under the pointer.
 #[allow(clippy::too_many_arguments)]
-fn topic_page(ui: &mut Ui, m: &super::Modern, gu: Option<&GameUi>, c: &ConfigUi, v: &Values, all: &[Line], focus: Option<usize>, follow: bool, sw: f32, pick: &mut Option<Pick>) -> Option<usize> {
+fn topic_page(
+    ui: &mut Ui,
+    m: &super::Modern,
+    gu: Option<&GameUi>,
+    c: &ConfigUi,
+    v: &Values,
+    all: &[Line],
+    focus: Option<usize>,
+    follow: bool,
+    sw: f32,
+    pick: &mut Option<Pick>,
+) -> Option<usize> {
     let stops = topic_stops(c, v, all, sw);
     let shapes: Vec<Shape> = all.iter().filter_map(|l| l.shape.clone()).collect();
     // Retail's words come from the game's layouts (none offscreen, `modern-shot`: its lines are left out there).
@@ -410,8 +694,21 @@ fn topic_page(ui: &mut Ui, m: &super::Modern, gu: Option<&GameUi>, c: &ConfigUi,
         let on = focus == Some(k);
         let r = match (&l.shape, &l.ours, l.item) {
             (Some(sh), ..) => {
-                let (Some(gu), Some(t)) = (gu, t.as_ref()) else { continue };
-                let (got, r) = native_row(ui, m, gu, v, sh, &t.heads[ret], &t.labels[ret], stops[k], on, follow);
+                let (Some(gu), Some(t)) = (gu, t.as_ref()) else {
+                    continue;
+                };
+                let (got, r) = native_row(
+                    ui,
+                    m,
+                    gu,
+                    v,
+                    sh,
+                    &t.heads[ret],
+                    &t.labels[ret],
+                    stops[k],
+                    on,
+                    follow,
+                );
                 ret += 1;
                 match got {
                     Some(Got::Opt(x)) => *pick = Some(Pick::Set(k, x, false)),
@@ -425,7 +722,13 @@ fn topic_page(ui: &mut Ui, m: &super::Modern, gu: Option<&GameUi>, c: &ConfigUi,
                 settings::VCtl::Buttons(bs) => {
                     kit::setting(ui, m, &row.label, on, true, follow, |ui| {
                         let labels: Vec<String> = bs.iter().map(|b| b.0.clone()).collect();
-                        if let Some(x) = kit::choice(ui, m, &labels, bs.iter().position(|b| b.1).unwrap_or(usize::MAX), 0) {
+                        if let Some(x) = kit::choice(
+                            ui,
+                            m,
+                            &labels,
+                            bs.iter().position(|b| b.1).unwrap_or(usize::MAX),
+                            0,
+                        ) {
                             *pick = Some(Pick::Set(k, x, false));
                         }
                     })
@@ -459,9 +762,14 @@ fn topic_page(ui: &mut Ui, m: &super::Modern, gu: Option<&GameUi>, c: &ConfigUi,
 
 /// The help of a topic page's stop `k`.
 fn topic_help(gu: &GameUi, c: &ConfigUi, v: &Values, all: &[Line], k: usize) -> String {
-    let Some(l) = stop_lines(all).get(k).copied() else { return String::new() };
+    let Some(l) = stop_lines(all).get(k).copied() else {
+        return String::new();
+    };
     match (&l.shape, &l.ours, l.item) {
-        (Some(sh), ..) => texts(gu, c, v, std::slice::from_ref(sh)).helps.pop().unwrap_or_default(),
+        (Some(sh), ..) => texts(gu, c, v, std::slice::from_ref(sh))
+            .helps
+            .pop()
+            .unwrap_or_default(),
         (_, Some((_, help)), _) => help.clone(),
         (_, _, Open(sub)) => SUBS[sub].2.to_string(),
         _ => String::new(),
@@ -482,13 +790,28 @@ struct Detail {
 impl Detail {
     /// No setting has the cursor: the page (or the search).
     fn page(name: &str, find: bool) -> Self {
-        let text = if find { "Pick a setting to see what it does. Escape clears the search." } else { "Pick a setting to see what it does." };
-        Detail { name: if find { "Search".into() } else { name.into() }, text: text.into(), facts: Vec::new() }
+        let text = if find {
+            "Pick a setting to see what it does. Escape clears the search."
+        } else {
+            "Pick a setting to see what it does."
+        };
+        Detail {
+            name: if find { "Search".into() } else { name.into() },
+            text: text.into(),
+            facts: Vec::new(),
+        }
     }
 }
 
 /// The details of a topic page's stop `k`; while searching, the page it is on too (the heading over it).
-fn topic_detail(gu: Option<&GameUi>, c: &ConfigUi, v: &Values, all: &[Line], k: usize, find: bool) -> Detail {
+fn topic_detail(
+    gu: Option<&GameUi>,
+    c: &ConfigUi,
+    v: &Values,
+    all: &[Line],
+    k: usize,
+    find: bool,
+) -> Detail {
     let (mut page, mut n) = ("", 0usize);
     for l in all {
         match l.item {
@@ -504,7 +827,10 @@ fn topic_detail(gu: Option<&GameUi>, c: &ConfigUi, v: &Values, all: &[Line], k: 
                     Some(gu) => topic_help(gu, c, v, all, k),
                     None => topic_help_ours(all, k),
                 };
-                let mut facts = vec![("Retail", if retail { "Yes" } else { "No (Vana Client)" }.to_string())];
+                let mut facts = vec![(
+                    "Retail",
+                    if retail { "Yes" } else { "No (Vana Client)" }.to_string(),
+                )];
                 if find {
                     facts.push(("Page", page.to_string()));
                 }
@@ -522,15 +848,31 @@ fn details(ui: &mut Ui, m: &super::Modern, d: &Detail) {
         ui.set_width(DETAIL_W);
         group_head(ui, m, "Details", true);
         ui.add_space(4.0);
-        ui.label(egui::RichText::new(&d.name).size(m.theme.ui).color(m.theme.color("gold")));
+        ui.label(
+            egui::RichText::new(&d.name)
+                .size(m.theme.ui)
+                .color(m.theme.color("gold")),
+        );
         ui.add_space(4.0);
-        ui.label(egui::RichText::new(&d.text).size(m.theme.small).color(m.theme.color("text")));
+        ui.label(
+            egui::RichText::new(&d.text)
+                .size(m.theme.small)
+                .color(m.theme.color("text")),
+        );
         ui.add_space(8.0);
         for (k, v) in &d.facts {
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(*k).size(m.theme.small - 1.0).color(m.theme.color("muted")));
+                ui.label(
+                    egui::RichText::new(*k)
+                        .size(m.theme.small - 1.0)
+                        .color(m.theme.color("muted")),
+                );
                 ui.add_space(6.0);
-                ui.label(egui::RichText::new(v).size(m.theme.small - 1.0).color(m.theme.color("text")));
+                ui.label(
+                    egui::RichText::new(v)
+                        .size(m.theme.small - 1.0)
+                        .color(m.theme.color("text")),
+                );
             });
         }
     });
@@ -542,12 +884,36 @@ fn find_bar(ui: &mut Ui, m: &super::Modern, find: Option<&str>, retail: bool, wi
     ui.horizontal(|ui| {
         let text = find.unwrap_or("");
         let font = FontId::proportional(m.theme.ui);
-        let r = kit::field(ui, m, text, find.map(|f| f.chars().count()), width - 128.0, font.clone(), Some("controls/search"));
+        let r = kit::field(
+            ui,
+            m,
+            text,
+            find.map(|f| f.chars().count()),
+            width - 128.0,
+            font.clone(),
+            Some("controls/search"),
+        );
         if find.is_none() {
-            ui.painter().text(pos2(r.min.x + 32.0, r.center().y), Align2::LEFT_CENTER, "Type to search", font, m.theme.color("muted"));
+            ui.painter().text(
+                pos2(r.min.x + 32.0, r.center().y),
+                Align2::LEFT_CENTER,
+                "Type to search",
+                font,
+                m.theme.color("muted"),
+            );
         }
         ui.add_space(8.0);
-        clicked = kit::button(ui, m, "Retail only", 120.0, Btn { lit: retail, ..Default::default() }).clicked();
+        clicked = kit::button(
+            ui,
+            m,
+            "Retail only",
+            120.0,
+            Btn {
+                lit: retail,
+                ..Default::default()
+            },
+        )
+        .clicked();
     });
     ui.add_space(6.0);
     clicked
@@ -578,7 +944,10 @@ fn shapes(menus: &[&'static str]) -> Vec<Shape> {
     let mut out: Vec<Shape> = Vec::new();
     for &menu in menus {
         let mut last: Option<u64> = None;
-        for &(child, ctl) in configui::page(menu).iter().filter(|(c, _)| !left_out(menu, *c)) {
+        for &(child, ctl) in configui::page(menu)
+            .iter()
+            .filter(|(c, _)| !left_out(menu, *c))
+        {
             let key = match ctl {
                 Ctl::Pick(id, ..) => Some(id as u64),
                 Ctl::Bit(id, mask, ..) => Some((id as u64) << 32 | mask as u64),
@@ -587,8 +956,13 @@ fn shapes(menus: &[&'static str]) -> Vec<Shape> {
                 _ => None,
             };
             match out.last_mut() {
-                Some(s) if key.is_some() && key == last && s.menu == menu => s.ctls.push((child, ctl)),
-                _ => out.push(Shape { menu, ctls: vec![(child, ctl)] }),
+                Some(s) if key.is_some() && key == last && s.menu == menu => {
+                    s.ctls.push((child, ctl))
+                }
+                _ => out.push(Shape {
+                    menu,
+                    ctls: vec![(child, ctl)],
+                }),
             }
             last = key;
         }
@@ -607,13 +981,48 @@ const HEADINGS: [(&str, u16, &str, &str); 11] = [
     ("conf2win", 6, "Gamma Adjustment: Green", ""),
     ("conf2win", 7, "Gamma Adjustment: Blue", ""),
     ("conf2win", 8, "Inventory: Auto-sort", ""),
-    ("conf2win", 10, "Inventory: Sort Type", "Type 1 sorts by category. Type 2 keeps the order and gathers copies of an item beside the first."),
-    ("conf7", 7, "Camera Behind You: Up / Down", "Inverts the up / down turn of the camera behind you (the mouse and the camera keys)."),
-    ("conf7", 9, "Camera Behind You: Left / Right", "Inverts the left / right turn of the camera behind you (the mouse and the camera keys)."),
-    ("conf7", 11, "First Person: Up / Down", "Inverts looking up and down in first person (the mouse and the camera keys)."),
-    ("conf7", 13, "First Person: Left / Right", "Inverts looking left and right in first person (the mouse and the camera keys)."),
-    ("conf7", configui::CAM_KEYS, "Camera Keys: Up / Down", "The camera keys' up / down: Same as the rows above (as the mouse), or Normal or Inverted for the keys alone, in both views."),
-    ("conf7", configui::CAM_KEYS + 3, "Camera Keys: Left / Right", "The camera keys' left / right: Same as the rows above (as the mouse), or Normal or Inverted for the keys alone, in both views."),
+    (
+        "conf2win",
+        10,
+        "Inventory: Sort Type",
+        "Type 1 sorts by category. Type 2 keeps the order and gathers copies of an item beside the first.",
+    ),
+    (
+        "conf7",
+        7,
+        "Camera Behind You: Up / Down",
+        "Inverts the up / down turn of the camera behind you (the mouse and the camera keys).",
+    ),
+    (
+        "conf7",
+        9,
+        "Camera Behind You: Left / Right",
+        "Inverts the left / right turn of the camera behind you (the mouse and the camera keys).",
+    ),
+    (
+        "conf7",
+        11,
+        "First Person: Up / Down",
+        "Inverts looking up and down in first person (the mouse and the camera keys).",
+    ),
+    (
+        "conf7",
+        13,
+        "First Person: Left / Right",
+        "Inverts looking left and right in first person (the mouse and the camera keys).",
+    ),
+    (
+        "conf7",
+        configui::CAM_KEYS,
+        "Camera Keys: Up / Down",
+        "The camera keys' up / down: Same as the rows above (as the mouse), or Normal or Inverted for the keys alone, in both views.",
+    ),
+    (
+        "conf7",
+        configui::CAM_KEYS + 3,
+        "Camera Keys: Left / Right",
+        "The camera keys' left / right: Same as the rows above (as the mouse), or Normal or Inverted for the keys alone, in both views.",
+    ),
 ];
 
 /// Settings left out here: Mouse/Cam.'s Mouse Control and Screen Edge Panning (the mouse acts as modern MMOs').
@@ -628,17 +1037,36 @@ fn heading(gu: &GameUi, s: &Shape) -> String {
         return h.2.to_string();
     }
     let name = full(s.menu);
-    let Some((cx, cy)) = s.ctls.first().and_then(|c| gu.child_place(&name, c.0)) else { return String::new() };
+    let Some((cx, cy)) = s.ctls.first().and_then(|c| gu.child_place(&name, c.0)) else {
+        return String::new();
+    };
     // A slider's ends ("Min", "Max") are not headings; a slider's heading is above it.
-    let heads: Vec<_> = gu.window_captions(&name).into_iter().filter(|(t, _, _)| !matches!(t.as_str(), "Min" | "Max")).collect();
+    let heads: Vec<_> = gu
+        .window_captions(&name)
+        .into_iter()
+        .filter(|(t, _, _)| !matches!(t.as_str(), "Min" | "Max"))
+        .collect();
     let slider = matches!(s.ctls[0].1, Ctl::Slider(..));
-    let left = heads.iter().filter(|(_, x, y)| !slider && (*y - cy).abs() <= 6.0 && *x < cx).max_by(|a, b| a.1.total_cmp(&b.1));
-    let above = || heads.iter().filter(|(_, x, y)| *y > 12.0 && *y < cy && cy - *y < 34.0 && *x <= cx + 40.0).max_by(|a, b| a.2.total_cmp(&b.2));
-    left.or_else(above).map(|h| h.0.clone()).or_else(|| gu.focus_text(&name, s.ctls[0].0)[1].clone()).unwrap_or_default()
+    let left = heads
+        .iter()
+        .filter(|(_, x, y)| !slider && (*y - cy).abs() <= 6.0 && *x < cx)
+        .max_by(|a, b| a.1.total_cmp(&b.1));
+    let above = || {
+        heads
+            .iter()
+            .filter(|(_, x, y)| *y > 12.0 && *y < cy && cy - *y < 34.0 && *x <= cx + 40.0)
+            .max_by(|a, b| a.2.total_cmp(&b.2))
+    };
+    left.or_else(above)
+        .map(|h| h.0.clone())
+        .or_else(|| gu.focus_text(&name, s.ctls[0].0)[1].clone())
+        .unwrap_or_default()
 }
 
 fn override_of(s: &Shape) -> Option<&'static (&'static str, u16, &'static str, &'static str)> {
-    s.ctls.first().and_then(|c| HEADINGS.iter().find(|h| h.0 == s.menu && h.1 == c.0))
+    s.ctls
+        .first()
+        .and_then(|c| HEADINGS.iter().find(|h| h.0 == s.menu && h.1 == c.0))
 }
 
 /// Whether an option holds now.
@@ -654,12 +1082,19 @@ fn holds(c: &ConfigUi, v: &Values, ctl: Ctl) -> bool {
 
 /// The page shows (the list's window, configwi, on top).
 fn shown(w: &World) -> bool {
-    w.config.as_ref().is_some_and(|c| c.top().is_some_and(|t| t.name == "configwi") && !c.covered)
+    w.config
+        .as_ref()
+        .is_some_and(|c| c.top().is_some_and(|t| t.name == "configwi") && !c.covered)
 }
 
 /// The search takes a typed letter or digit now (see `find_events`).
 pub fn find_open(w: &World) -> bool {
-    w.modern && shown(w) && !w.typing && w.config.as_ref().is_some_and(|c| c.m_sub.is_none() && c.m_keys.is_none() && c.extra.ask_keys.is_none())
+    w.modern
+        && shown(w)
+        && !w.typing
+        && w.config
+            .as_ref()
+            .is_some_and(|c| c.m_sub.is_none() && c.m_keys.is_none() && c.extra.ask_keys.is_none())
 }
 
 /// A click on what the mouse took (the cursor goes there too).
@@ -687,7 +1122,12 @@ enum Click {
 
 /// A list page's categories: the menu's rows' captions.
 fn categories(gu: &GameUi, menu: &str) -> Vec<String> {
-    (1..=4u16).map(|k| gu.child_caption(&full(menu), k).unwrap_or_else(|| format!("{k}"))).collect()
+    (1..=4u16)
+        .map(|k| {
+            gu.child_caption(&full(menu), k)
+                .unwrap_or_else(|| format!("{k}"))
+        })
+        .collect()
 }
 
 /// A colour's channels as they show from its config value (0x80RRGGBB, 0x80 the full channel), and the value's for a
@@ -718,13 +1158,36 @@ fn native_stops(c: &ConfigUi, v: &Values, all: &[Shape], sw: f32) -> Vec<Stop> {
         .map(|s| match s.ctls[0].1 {
             Ctl::Slider(id, lo, hi, step) => {
                 let step = step.max(1);
-                Stop::Value { n: ((hi - lo) / step) as usize + 1, at: ((v.get_i(id).clamp(lo, hi) - lo) / step) as usize, slider: true, off: 0 }
+                Stop::Value {
+                    n: ((hi - lo) / step) as usize + 1,
+                    at: ((v.get_i(id).clamp(lo, hi) - lo) / step) as usize,
+                    slider: true,
+                    off: 0,
+                }
             }
             Ctl::Pick(..) | Ctl::Bit(..) | Ctl::Act(Act::Anon(_) | Act::CamKeys(..)) => {
-                let off = s.ctls.iter().enumerate().filter(|(_, (k, _))| c.off(s.menu, *k, sw)).fold(0u64, |m, (j, _)| m | 1 << j);
-                Stop::Value { n: s.ctls.len(), at: s.ctls.iter().position(|(_, ctl)| holds(c, v, *ctl)).unwrap_or(0), slider: false, off }
+                let off = s
+                    .ctls
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, (k, _))| c.off(s.menu, *k, sw))
+                    .fold(0u64, |m, (j, _)| m | 1 << j);
+                Stop::Value {
+                    n: s.ctls.len(),
+                    at: s
+                        .ctls
+                        .iter()
+                        .position(|(_, ctl)| holds(c, v, *ctl))
+                        .unwrap_or(0),
+                    slider: false,
+                    off,
+                }
             }
-            _ => Stop::Buttons { n: 1, off: c.off(s.menu, s.ctls[0].0, sw) as u64, pair: None },
+            _ => Stop::Buttons {
+                n: 1,
+                off: c.off(s.menu, s.ctls[0].0, sw) as u64,
+                pair: None,
+            },
         })
         .collect()
 }
@@ -737,7 +1200,12 @@ fn native_set(c: &mut ConfigUi, v: &mut Values, s: &Shape, x: usize, sw: f32) ->
             out.sounds.push(Se::Cursor);
             out
         }
-        _ => s.ctls.get(x).map_or_else(configui::Out::default, |(child, _)| c.apply(v, s.menu, *child, sw)),
+        _ => s
+            .ctls
+            .get(x)
+            .map_or_else(configui::Out::default, |(child, _)| {
+                c.apply(v, s.menu, *child, sw)
+            }),
     }
 }
 
@@ -762,7 +1230,15 @@ fn native_press(c: &mut ConfigUi, v: &mut Values, s: &Shape, sw: f32) -> configu
 /// A list page's stops: the category strip where it has one, then a toggle per row.
 fn list_stops(v: &Values, page: &str, cats: bool, cat: usize) -> Vec<Stop> {
     let rows = configui2::modern_rows(v, page, cat);
-    cats.then_some(Stop::Tabs { n: 4, at: cat }).into_iter().chain(rows.iter().map(|r| Stop::Value { n: 2, at: (r.1 == 88) as usize, slider: false, off: 0 })).collect()
+    cats.then_some(Stop::Tabs { n: 4, at: cat })
+        .into_iter()
+        .chain(rows.iter().map(|r| Stop::Value {
+            n: 2,
+            at: (r.1 == 88) as usize,
+            slider: false,
+            off: 0,
+        }))
+        .collect()
 }
 
 /// A colour's hue / saturation / value steps: the ones being edited while they still make its colour (a grey has no
@@ -780,7 +1256,12 @@ fn colour_stops(c: &ConfigUi, v: &Values, cat: usize) -> Vec<Stop> {
     let mut out = vec![Stop::Tabs { n: 4, at: cat }];
     for &(_, _, id) in configui2::colour_rows(cat) {
         for at in steps_of(c, v, id) {
-            out.push(Stop::Value { n: kit::STEPS + 1, at, slider: true, off: 0 });
+            out.push(Stop::Value {
+                n: kit::STEPS + 1,
+                at,
+                slider: true,
+                off: 0,
+            });
         }
     }
     out
@@ -788,31 +1269,68 @@ fn colour_stops(c: &ConfigUi, v: &Values, cat: usize) -> Vec<Stop> {
 
 /// Our Settings / Extras page's stops: the page tabs, then each row's options or slider.
 fn ours_stops(v: &settings::View, skip: usize) -> Vec<Stop> {
-    let tabs = (!v.tabs.is_empty()).then_some(Stop::Tabs { n: v.tabs.len().saturating_sub(skip).max(1), at: v.tab.saturating_sub(skip) });
+    let tabs = (!v.tabs.is_empty()).then_some(Stop::Tabs {
+        n: v.tabs.len().saturating_sub(skip).max(1),
+        at: v.tab.saturating_sub(skip),
+    });
     let rows = v.rows.iter().map(|r| match &r.ctl {
-        settings::VCtl::Buttons(bs) => Stop::Value { n: bs.len(), at: bs.iter().position(|b| b.1).unwrap_or(0), slider: false, off: 0 },
-        settings::VCtl::Slider { n, at, .. } => Stop::Value { n: *n, at: *at, slider: true, off: 0 },
+        settings::VCtl::Buttons(bs) => Stop::Value {
+            n: bs.len(),
+            at: bs.iter().position(|b| b.1).unwrap_or(0),
+            slider: false,
+            off: 0,
+        },
+        settings::VCtl::Slider { n, at, .. } => Stop::Value {
+            n: *n,
+            at: *at,
+            slider: true,
+            off: 0,
+        },
     });
     tabs.into_iter().chain(rows).collect()
 }
 
 /// The tabs a page of ours shows (`skip`: the Settings window leaves the ones before its own out) and the one on.
 fn shown_tabs(v: &settings::View, skip: usize) -> (Vec<&str>, usize) {
-    (v.tabs.iter().skip(skip).map(String::as_str).collect(), v.tab.saturating_sub(skip))
+    (
+        v.tabs.iter().skip(skip).map(String::as_str).collect(),
+        v.tab.saturating_sub(skip),
+    )
 }
 
 /// The Mods page's stops: the tabs, Install from File, each pack's toggle / up / down / uninstall, each archive's
 /// Install; the picker's list while it is open.
 fn mods_stops(s: &SettingsUi, skip: usize) -> Vec<Stop> {
     if let Some(b) = s.mods_state().and_then(|m| m.browse.as_ref()) {
-        return vec![Stop::List { n: b.entries.len(), page: 10 }];
+        return vec![Stop::List {
+            n: b.entries.len(),
+            page: 10,
+        }];
     }
     let (packs, archives) = s.mods_rows();
     let busy = s.mods_state().is_some_and(|m| m.installing().is_some());
     let n = packs.len();
-    let mut out = vec![Stop::Tabs { n: s.view().tabs.len().saturating_sub(skip).max(1), at: s.view().tab.saturating_sub(skip) }, Stop::Buttons { n: 1, off: busy as u64, pair: None }];
-    out.extend((0..n).map(|i| Stop::Buttons { n: 4, off: ((i == 0) as u64) << 1 | ((i + 1 == n) as u64) << 2, pair: Some(1) }));
-    out.extend(archives.iter().map(|_| Stop::Buttons { n: 1, off: busy as u64, pair: None }));
+    let mut out = vec![
+        Stop::Tabs {
+            n: s.view().tabs.len().saturating_sub(skip).max(1),
+            at: s.view().tab.saturating_sub(skip),
+        },
+        Stop::Buttons {
+            n: 1,
+            off: busy as u64,
+            pair: None,
+        },
+    ];
+    out.extend((0..n).map(|i| Stop::Buttons {
+        n: 4,
+        off: ((i == 0) as u64) << 1 | ((i + 1 == n) as u64) << 2,
+        pair: Some(1),
+    }));
+    out.extend(archives.iter().map(|_| Stop::Buttons {
+        n: 1,
+        off: busy as u64,
+        pair: None,
+    }));
     out
 }
 
@@ -892,7 +1410,9 @@ fn remove_key(s: &mut SettingsUi, key: egui::Key) {
 }
 
 fn remove_answer(s: &mut SettingsUi, yes: bool) {
-    let Some((i, _)) = s.m_remove.take() else { return };
+    let Some((i, _)) = s.m_remove.take() else {
+        return;
+    };
     if yes {
         s.mod_remove(i);
         let n = s.mods_rows().0.len();
@@ -979,13 +1499,17 @@ fn keys_key(c: &mut ConfigUi, v: &mut Values, key: egui::Key) -> configui::Out {
 /// The reset prompt's keys: Left / Right move, Enter answers, Escape is No.
 fn reset_key(c: &mut ConfigUi, v: &mut Values, key: egui::Key) -> configui::Out {
     let mut out = configui::Out::default();
-    let Some(yes) = c.extra.ask_keys else { return out };
+    let Some(yes) = c.extra.ask_keys else {
+        return out;
+    };
     match key {
         egui::Key::ArrowLeft | egui::Key::ArrowRight => {
             c.extra.ask_keys = Some(!yes);
             out.sounds.push(Se::Cursor);
         }
-        egui::Key::Enter | egui::Key::Escape => reset_answer(c, v, yes && key == egui::Key::Enter, &mut out),
+        egui::Key::Enter | egui::Key::Escape => {
+            reset_answer(c, v, yes && key == egui::Key::Enter, &mut out)
+        }
         _ => {}
     }
     out
@@ -1008,7 +1532,11 @@ fn reset_answer(c: &mut ConfigUi, v: &mut Values, yes: bool, out: &mut configui:
 fn settings_follow(w: &mut World) {
     let Some(c) = w.config.as_ref() else { return };
     let page = current(c);
-    let kind = if matches!(page, Entry::ModPages) { settings::Kind::Extras } else { settings::Kind::Settings };
+    let kind = if matches!(page, Entry::ModPages) {
+        settings::Kind::Extras
+    } else {
+        settings::Kind::Settings
+    };
     match w.settings.as_mut() {
         Some(s) if s.kind == kind => match page {
             Entry::Mods if !s.on_mods_page() => s.goto_mods(),
@@ -1032,24 +1560,58 @@ const LABELS: [(&str, u16, &str); 2] = [("lobycwin", 5, "Newest"), ("lobycwin", 
 
 fn texts(gu: &GameUi, c: &ConfigUi, v: &Values, shapes: &[Shape]) -> Texts {
     let heads = shapes.iter().map(|s| heading(gu, s)).collect();
-    let label = |menu: &str, k: u16, ctl: Ctl| match LABELS.iter().find(|l| l.0 == menu && l.1 == k) {
+    let label = |menu: &str, k: u16, ctl: Ctl| match LABELS.iter().find(|l| l.0 == menu && l.1 == k)
+    {
         Some(l) => l.2.to_string(),
-        None => gu.child_caption(&full(menu), k).unwrap_or_else(|| fallback(ctl)),
+        None => gu
+            .child_caption(&full(menu), k)
+            .unwrap_or_else(|| fallback(ctl)),
     };
-    let labels = shapes.iter().map(|s| s.ctls.iter().map(|(k, ctl)| label(s.menu, *k, *ctl)).collect()).collect();
+    let labels = shapes
+        .iter()
+        .map(|s| {
+            s.ctls
+                .iter()
+                .map(|(k, ctl)| label(s.menu, *k, *ctl))
+                .collect()
+        })
+        .collect();
     let helps = shapes
         .iter()
         .map(|s| {
-            let held = s.ctls.iter().position(|(_, ctl)| holds(c, v, *ctl)).unwrap_or(0);
-            let opt = s.ctls.get(held).and_then(|(k, _)| gu.focus_text(&full(s.menu), *k)[0].clone()).unwrap_or_default();
-            override_of(s).map(|h| h.3).filter(|h| !h.is_empty()).map(str::to_string).unwrap_or(opt)
+            let held = s
+                .ctls
+                .iter()
+                .position(|(_, ctl)| holds(c, v, *ctl))
+                .unwrap_or(0);
+            let opt = s
+                .ctls
+                .get(held)
+                .and_then(|(k, _)| gu.focus_text(&full(s.menu), *k)[0].clone())
+                .unwrap_or_default();
+            override_of(s)
+                .map(|h| h.3)
+                .filter(|h| !h.is_empty())
+                .map(str::to_string)
+                .unwrap_or(opt)
         })
         .collect();
-    Texts { heads, labels, helps }
+    Texts {
+        heads,
+        labels,
+        helps,
+    }
 }
 
 /// The list on the left: the chosen entry lit, a click choosing one.
-fn entry_list(ui: &mut Ui, m: &super::Modern, labels: &[&str], entry: usize, open: bool, click: &mut Option<Click>) {
+fn entry_list(
+    ui: &mut Ui,
+    m: &super::Modern,
+    labels: &[&str],
+    entry: usize,
+    open: bool,
+    click: &mut Option<Click>,
+) {
     ui.vertical(|ui| {
         ui.set_width(150.0);
         for (k, label) in labels.iter().enumerate() {
@@ -1060,7 +1622,13 @@ fn entry_list(ui: &mut Ui, m: &super::Modern, labels: &[&str], entry: usize, ope
                 _ => "controls/list_row_normal",
             };
             super::rows::face(ui.painter(), m, r, face, Color32::WHITE);
-            ui.painter().text(pos2(r.min.x + 24.0, r.center().y), Align2::LEFT_CENTER, *label, FontId::proportional(m.theme.ui), m.theme.color("text"));
+            ui.painter().text(
+                pos2(r.min.x + 24.0, r.center().y),
+                Align2::LEFT_CENTER,
+                *label,
+                FontId::proportional(m.theme.ui),
+                m.theme.color("text"),
+            );
             if resp.clicked() {
                 *click = Some(Click::Entry(k));
             }
@@ -1078,14 +1646,27 @@ enum Got {
 
 /// A native setting: its heading and its options as buttons, its slider, or its button; ringed with the cursor.
 #[allow(clippy::too_many_arguments)]
-fn native_row(ui: &mut Ui, m: &super::Modern, gu: &GameUi, v: &Values, s: &Shape, head: &str, labels: &[String], stop: Stop, focus: bool, follow: bool) -> (Option<Got>, Rect) {
+fn native_row(
+    ui: &mut Ui,
+    m: &super::Modern,
+    gu: &GameUi,
+    v: &Values,
+    s: &Shape,
+    head: &str,
+    labels: &[String],
+    stop: Stop,
+    focus: bool,
+    follow: bool,
+) -> (Option<Got>, Rect) {
     let mut got = None;
     let r = match (s.ctls[0].1, stop) {
         (Ctl::Slider(id, ..), Stop::Value { n, at, .. }) => {
             // The aspect ratios by name, as retail's text under the slider.
             let val = v.get_i(id);
             let shown = match id {
-                0x43 | 0xab => configui::ASPECTS.get(val.max(0) as usize).map_or(String::new(), |a| a.0.trim_matches(['(', ')']).to_string()),
+                0x43 | 0xab => configui::ASPECTS
+                    .get(val.max(0) as usize)
+                    .map_or(String::new(), |a| a.0.trim_matches(['(', ')']).to_string()),
                 _ => val.to_string(),
             };
             let (x, r) = kit::slider_setting(ui, m, head, focus, follow, n, at, &shown);
@@ -1098,16 +1679,28 @@ fn native_row(ui: &mut Ui, m: &super::Modern, gu: &GameUi, v: &Values, s: &Shape
                 // keylayou (Misc. 2's Compact 1): the functions the compact keyboard picture shows and their keys.
                 if s.menu == "conf6win" && s.ctls.iter().any(|(k, _)| *k == 6) && v.get(0x42) == 1 {
                     ui.add_space(4.0);
-                    egui::Grid::new("keylayou").num_columns(4).spacing(vec2(12.0, 2.0)).show(ui, |ui| {
-                        for (k, cfg) in configui::KEYLAYOU_CELLS.iter().enumerate() {
-                            let label = configui2::k1_label(gu, *cfg).unwrap_or_default();
-                            ui.label(egui::RichText::new(label).size(m.theme.small - 1.5).color(m.theme.color("muted")));
-                            ui.label(egui::RichText::new(configui2::dik_char(v.get(*cfg))).size(m.theme.small - 1.5).family(FontFamily::Name(super::STRONG.into())).color(m.theme.color("text")));
-                            if k % 2 == 1 {
-                                ui.end_row();
+                    egui::Grid::new("keylayou")
+                        .num_columns(4)
+                        .spacing(vec2(12.0, 2.0))
+                        .show(ui, |ui| {
+                            for (k, cfg) in configui::KEYLAYOU_CELLS.iter().enumerate() {
+                                let label = configui2::k1_label(gu, *cfg).unwrap_or_default();
+                                ui.label(
+                                    egui::RichText::new(label)
+                                        .size(m.theme.small - 1.5)
+                                        .color(m.theme.color("muted")),
+                                );
+                                ui.label(
+                                    egui::RichText::new(configui2::dik_char(v.get(*cfg)))
+                                        .size(m.theme.small - 1.5)
+                                        .family(FontFamily::Name(super::STRONG.into()))
+                                        .color(m.theme.color("text")),
+                                );
+                                if k % 2 == 1 {
+                                    ui.end_row();
+                                }
                             }
-                        }
-                    });
+                        });
                 }
             })
             .1
@@ -1115,7 +1708,8 @@ fn native_row(ui: &mut Ui, m: &super::Modern, gu: &GameUi, v: &Values, s: &Shape
         (_, stop) => {
             kit::setting(ui, m, head, focus, false, follow, |ui| {
                 let off = matches!(stop, Stop::Buttons { off: 1, .. }) as u64;
-                if kit::buttons(ui, m, &[labels[0].as_str()], focus.then_some(0), 0, off).is_some() {
+                if kit::buttons(ui, m, &[labels[0].as_str()], focus.then_some(0), 0, off).is_some()
+                {
                     got = Some(Got::Press);
                 }
             })
@@ -1127,11 +1721,34 @@ fn native_row(ui: &mut Ui, m: &super::Modern, gu: &GameUi, v: &Values, s: &Shape
 
 /// A native page's settings (the title's Config); the setting under the pointer (for the help line).
 #[allow(clippy::too_many_arguments)]
-fn native_rows(ui: &mut Ui, m: &super::Modern, gu: &GameUi, c: &ConfigUi, v: &Values, shapes: &[Shape], t: &Texts, focus_row: Option<usize>, follow: bool, sw: f32, click: &mut Option<Click>) -> Option<usize> {
+fn native_rows(
+    ui: &mut Ui,
+    m: &super::Modern,
+    gu: &GameUi,
+    c: &ConfigUi,
+    v: &Values,
+    shapes: &[Shape],
+    t: &Texts,
+    focus_row: Option<usize>,
+    follow: bool,
+    sw: f32,
+    click: &mut Option<Click>,
+) -> Option<usize> {
     let stops = native_stops(c, v, shapes, sw);
     let mut hover = None;
     for (i, s) in shapes.iter().enumerate() {
-        let (got, r) = native_row(ui, m, gu, v, s, &t.heads[i], &t.labels[i], stops[i], focus_row == Some(i), follow);
+        let (got, r) = native_row(
+            ui,
+            m,
+            gu,
+            v,
+            s,
+            &t.heads[i],
+            &t.labels[i],
+            stops[i],
+            focus_row == Some(i),
+            follow,
+        );
         match got {
             Some(Got::Opt(x)) => *click = Some(Click::Opt(i, x)),
             Some(Got::Slide(x)) => *click = Some(Click::Slide(i, x)),
@@ -1149,17 +1766,32 @@ fn native_rows(ui: &mut Ui, m: &super::Modern, gu: &GameUi, c: &ConfigUi, v: &Va
 fn help_line(ui: &mut Ui, m: &super::Modern, text: &str) {
     if !text.is_empty() {
         ui.separator();
-        ui.label(egui::RichText::new(text).size(m.theme.small).color(m.theme.color("muted")));
+        ui.label(
+            egui::RichText::new(text)
+                .size(m.theme.small)
+                .color(m.theme.color("muted")),
+        );
     }
 }
 
 /// A list page's rows: the label, its state as a button at the right (a click steps it as Enter does).
 #[allow(clippy::too_many_arguments)]
-fn list_rows(ui: &mut Ui, m: &super::Modern, gu: &GameUi, rows: &[(u16, usize)], focus: Option<usize>, follow: bool, click: &mut Option<Click>) {
+fn list_rows(
+    ui: &mut Ui,
+    m: &super::Modern,
+    gu: &GameUi,
+    rows: &[(u16, usize)],
+    focus: Option<usize>,
+    follow: bool,
+    click: &mut Option<Click>,
+) {
     for (r, &(label, state)) in rows.iter().enumerate() {
         let text = gu.group_b(label as usize).unwrap_or_default();
         kit::line(ui, m, &text, focus == Some(r), follow, |ui| {
-            let s = Btn { lit: state == 88, ..Default::default() };
+            let s = Btn {
+                lit: state == 88,
+                ..Default::default()
+            };
             if kit::clicked(&kit::button(ui, m, &state_word(m, gu, state), 104.0, s), s) {
                 *click = Some(Click::Toggle(r));
             }
@@ -1167,7 +1799,8 @@ fn list_rows(ui: &mut Ui, m: &super::Modern, gu: &GameUi, rows: &[(u16, usize)],
                 && let Some(s) = m.art.sprite("icons/chat")
             {
                 let (r, _) = ui.allocate_exact_size(vec2(20.0, 20.0), Sense::hover());
-                ui.painter().add(super::paint::image(&s, r.min, 18.0, Color32::WHITE));
+                ui.painter()
+                    .add(super::paint::image(&s, r.min, 18.0, Color32::WHITE));
             }
         });
     }
@@ -1183,11 +1816,36 @@ const COL_GAP: f32 = 24.0;
 
 fn colour_columns(ctx: &egui::Context, m: &super::Modern, gu: &GameUi, cat: usize) -> (f32, f32) {
     let font = FontId::proportional(m.theme.small);
-    let width = |id: u16| ctx.fonts_mut(|f| f.layout_no_wrap(gu.group_b(id as usize).unwrap_or_default(), font.clone(), Color32::WHITE).size().x);
-    configui2::colour_rows(cat).iter().fold((0.0f32, 0.0f32), |(a, b), &(label, sample, _)| (a.max(width(label)), b.max(width(sample))))
+    let width = |id: u16| {
+        ctx.fonts_mut(|f| {
+            f.layout_no_wrap(
+                gu.group_b(id as usize).unwrap_or_default(),
+                font.clone(),
+                Color32::WHITE,
+            )
+            .size()
+            .x
+        })
+    };
+    configui2::colour_rows(cat)
+        .iter()
+        .fold((0.0f32, 0.0f32), |(a, b), &(label, sample, _)| {
+            (a.max(width(label)), b.max(width(sample)))
+        })
 }
 
-fn colour_rows(ui: &mut Ui, m: &super::Modern, gu: &GameUi, cu: &ConfigUi, v: &Values, rows: &[(u16, u16, u16)], name_w: f32, focus: Option<usize>, follow: bool, click: &mut Option<Click>) {
+fn colour_rows(
+    ui: &mut Ui,
+    m: &super::Modern,
+    gu: &GameUi,
+    cu: &ConfigUi,
+    v: &Values,
+    rows: &[(u16, u16, u16)],
+    name_w: f32,
+    focus: Option<usize>,
+    follow: bool,
+    click: &mut Option<Click>,
+) {
     const NAMES: [&str; 3] = ["Hue", "Saturation", "Brightness"];
     for (i, &(label, sample, id)) in rows.iter().enumerate() {
         let c = rgb(v.get(id));
@@ -1199,15 +1857,53 @@ fn colour_rows(ui: &mut Ui, m: &super::Modern, gu: &GameUi, cu: &ConfigUi, v: &V
         let full = ui.available_width();
         let name_room = name_w.min(full * 0.5);
         let sample_room = (full - SWATCH_W - name_room - COL_GAP - 8.0).max(40.0);
-        let name = ui.painter().layout(gu.group_b(label as usize).unwrap_or_default(), font.clone(), if open { m.theme.color("gold") } else { m.theme.color("text") }, name_room);
-        let line = ui.painter().layout(gu.group_b(sample as usize).unwrap_or_default(), font, col, sample_room);
-        let (r, resp) = ui.allocate_exact_size(vec2(full, name.size().y.max(line.size().y) + 14.0), Sense::click());
-        let face = if open { "controls/list_row_selected" } else if resp.hovered() { "controls/list_row_hover" } else { "controls/list_row_normal" };
+        let name = ui.painter().layout(
+            gu.group_b(label as usize).unwrap_or_default(),
+            font.clone(),
+            if open {
+                m.theme.color("gold")
+            } else {
+                m.theme.color("text")
+            },
+            name_room,
+        );
+        let line = ui.painter().layout(
+            gu.group_b(sample as usize).unwrap_or_default(),
+            font,
+            col,
+            sample_room,
+        );
+        let (r, resp) = ui.allocate_exact_size(
+            vec2(full, name.size().y.max(line.size().y) + 14.0),
+            Sense::click(),
+        );
+        let face = if open {
+            "controls/list_row_selected"
+        } else if resp.hovered() {
+            "controls/list_row_hover"
+        } else {
+            "controls/list_row_normal"
+        };
         super::rows::face(ui.painter(), m, r, face, Color32::WHITE);
         let p = ui.painter();
-        p.rect_filled(Rect::from_min_size(pos2(r.min.x + 12.0, r.center().y - 8.0), vec2(16.0, 16.0)), 3.0, Color32::from_rgb(c[0], c[1], c[2]));
-        p.galley(pos2(r.min.x + SWATCH_W, r.center().y - name.size().y / 2.0), name.clone(), Color32::WHITE);
-        p.galley(pos2(r.min.x + SWATCH_W + name_room + COL_GAP, r.center().y - line.size().y / 2.0), line, Color32::WHITE);
+        p.rect_filled(
+            Rect::from_min_size(pos2(r.min.x + 12.0, r.center().y - 8.0), vec2(16.0, 16.0)),
+            3.0,
+            Color32::from_rgb(c[0], c[1], c[2]),
+        );
+        p.galley(
+            pos2(r.min.x + SWATCH_W, r.center().y - name.size().y / 2.0),
+            name.clone(),
+            Color32::WHITE,
+        );
+        p.galley(
+            pos2(
+                r.min.x + SWATCH_W + name_room + COL_GAP,
+                r.center().y - line.size().y / 2.0,
+            ),
+            line,
+            Color32::WHITE,
+        );
         if resp.clicked() && !open {
             *click = Some(Click::Focus(i * 3));
         }
@@ -1227,7 +1923,16 @@ fn colour_rows(ui: &mut Ui, m: &super::Modern, gu: &GameUi, cu: &ConfigUi, v: &V
         for (ch, name) in NAMES.iter().enumerate() {
             let k = i * 3 + ch;
             let shown = format!("{}%", steps[ch] * 100 / kit::STEPS);
-            if let (Some(x), _) = kit::slider_setting(ui, m, name, focus == Some(k), follow, kit::STEPS + 1, steps[ch], &shown) {
+            if let (Some(x), _) = kit::slider_setting(
+                ui,
+                m,
+                name,
+                focus == Some(k),
+                follow,
+                kit::STEPS + 1,
+                steps[ch],
+                &shown,
+            ) {
                 let mut s = steps;
                 s[ch] = x;
                 *click = Some(Click::Hsv(i, s));
@@ -1244,7 +1949,15 @@ enum Do {
     Slide(usize, usize),
 }
 
-fn settings_page(ui: &mut Ui, m: &super::Modern, v: &settings::View, open: bool, follow: bool, skip: usize, act: &mut Vec<Do>) {
+fn settings_page(
+    ui: &mut Ui,
+    m: &super::Modern,
+    v: &settings::View,
+    open: bool,
+    follow: bool,
+    skip: usize,
+    act: &mut Vec<Do>,
+) {
     if !v.tabs.is_empty() {
         ui.set_max_width(PAGE_W);
         let (tabs, tab) = shown_tabs(v, skip);
@@ -1259,13 +1972,21 @@ fn settings_page(ui: &mut Ui, m: &super::Modern, v: &settings::View, open: bool,
             settings::VCtl::Buttons(bs) => {
                 kit::setting(ui, m, &r.label, focus, true, follow, |ui| {
                     let labels: Vec<String> = bs.iter().map(|b| b.0.clone()).collect();
-                    if let Some(c) = kit::choice(ui, m, &labels, bs.iter().position(|b| b.1).unwrap_or(usize::MAX), 0) {
+                    if let Some(c) = kit::choice(
+                        ui,
+                        m,
+                        &labels,
+                        bs.iter().position(|b| b.1).unwrap_or(usize::MAX),
+                        0,
+                    ) {
                         act.push(Do::Click(row, c));
                     }
                 });
             }
             settings::VCtl::Slider { n, at, shown } => {
-                if let (Some(i), _) = kit::slider_setting(ui, m, &r.label, focus, follow, *n, *at, shown) {
+                if let (Some(i), _) =
+                    kit::slider_setting(ui, m, &r.label, focus, follow, *n, *at, shown)
+                {
                     act.push(Do::Slide(row, i));
                 }
             }
@@ -1294,40 +2015,104 @@ enum ModDo {
 
 /// The Mods page: Install from File at the top (or the file picker), each pack with its toggle, chevrons and
 /// Uninstall, the archives found with Install; the removal prompt in place while asked.
-fn mods_page(ui: &mut Ui, m: &super::Modern, s: &SettingsUi, open: bool, follow: bool, skip: usize, act: &mut Vec<ModDo>) {
+fn mods_page(
+    ui: &mut Ui,
+    m: &super::Modern,
+    s: &SettingsUi,
+    open: bool,
+    follow: bool,
+    skip: usize,
+    act: &mut Vec<ModDo>,
+) {
     let v = s.view();
     let at = if open { Some(s.m_mods) } else { None };
     let (tabs, tab) = shown_tabs(&v, skip);
-    if let Some(k) = kit::tab_strip(ui, m, "settings tabs", &tabs, tab, at.is_some_and(|a| a.0 == 0)) {
+    if let Some(k) = kit::tab_strip(
+        ui,
+        m,
+        "settings tabs",
+        &tabs,
+        tab,
+        at.is_some_and(|a| a.0 == 0),
+    ) {
         act.push(ModDo::Tab(k + skip));
     }
     let state = s.mods_state();
     if let Some(b) = state.and_then(|m| m.browse.as_ref()) {
-        ui.label(egui::RichText::new(b.dir.display().to_string()).size(m.theme.small).color(m.theme.color("gold")));
+        ui.label(
+            egui::RichText::new(b.dir.display().to_string())
+                .size(m.theme.small)
+                .color(m.theme.color("gold")),
+        );
         ui.add_space(4.0);
         let tall = ui.ctx().content_rect().height() * 0.5;
-        let out = kit::list(ui, m, "mods browse", b.entries.len(), Some(b.cursor), open, follow, 28.0, tall, |_| false, |ui, row| {
-            let (name, dir) = &b.entries[row.index];
-            let p = ui.painter();
-            // A folder's tabbed outline, or an archive's box with its strap.
-            let r = Rect::from_center_size(pos2(row.rect.min.x + 22.0, row.rect.center().y), vec2(16.0, 12.0));
-            let st = egui::Stroke::new(1.5, if *dir { m.theme.color("gold") } else { m.theme.color("muted") });
-            p.rect_stroke(r, 2.0, st, egui::StrokeKind::Inside);
-            if *dir {
-                p.line_segment([r.left_top() + vec2(1.0, -2.0), r.left_top() + vec2(7.0, -2.0)], st);
-            } else {
-                p.line_segment([pos2(r.center().x, r.min.y), pos2(r.center().x, r.max.y)], st);
-            }
-            let label = if *dir && name != ".." { format!("{name}/") } else { name.clone() };
-            p.text(pos2(row.rect.min.x + 40.0, row.rect.center().y), Align2::LEFT_CENTER, label, FontId::proportional(m.theme.small), kit::ink(m, row));
-        });
+        let out = kit::list(
+            ui,
+            m,
+            "mods browse",
+            b.entries.len(),
+            Some(b.cursor),
+            open,
+            follow,
+            28.0,
+            tall,
+            |_| false,
+            |ui, row| {
+                let (name, dir) = &b.entries[row.index];
+                let p = ui.painter();
+                // A folder's tabbed outline, or an archive's box with its strap.
+                let r = Rect::from_center_size(
+                    pos2(row.rect.min.x + 22.0, row.rect.center().y),
+                    vec2(16.0, 12.0),
+                );
+                let st = egui::Stroke::new(
+                    1.5,
+                    if *dir {
+                        m.theme.color("gold")
+                    } else {
+                        m.theme.color("muted")
+                    },
+                );
+                p.rect_stroke(r, 2.0, st, egui::StrokeKind::Inside);
+                if *dir {
+                    p.line_segment(
+                        [
+                            r.left_top() + vec2(1.0, -2.0),
+                            r.left_top() + vec2(7.0, -2.0),
+                        ],
+                        st,
+                    );
+                } else {
+                    p.line_segment(
+                        [pos2(r.center().x, r.min.y), pos2(r.center().x, r.max.y)],
+                        st,
+                    );
+                }
+                let label = if *dir && name != ".." {
+                    format!("{name}/")
+                } else {
+                    name.clone()
+                };
+                p.text(
+                    pos2(row.rect.min.x + 40.0, row.rect.center().y),
+                    Align2::LEFT_CENTER,
+                    label,
+                    FontId::proportional(m.theme.small),
+                    kit::ink(m, row),
+                );
+            },
+        );
         if let Some(k) = out.clicked {
             act.push(ModDo::Browse(k));
         }
         return;
     }
     if let Some((i, yes)) = s.m_remove {
-        let name = s.mods_rows().0.get(i).map_or(String::new(), |p| p.0.clone());
+        let name = s
+            .mods_rows()
+            .0
+            .get(i)
+            .map_or(String::new(), |p| p.0.clone());
         let q = format!("Uninstall {name}? Its folder in the mods folder is deleted.");
         if let Some(a) = kit::yes_no(ui, m, &q, ["Yes", "No"], yes, m.theme.small) {
             act.push(ModDo::Remove(a));
@@ -1337,14 +2122,31 @@ fn mods_page(ui: &mut Ui, m: &super::Modern, s: &SettingsUi, open: bool, follow:
     let busy = state.and_then(|m| m.installing());
     let on = |st: usize| at.filter(|a| a.0 == st).map(|a| a.1);
     kit::setting(ui, m, "Install", on(1).is_some(), false, follow, |ui| {
-        if kit::buttons(ui, m, &["Install from File..."], on(1), 0, busy.is_some() as u64).is_some() {
+        if kit::buttons(
+            ui,
+            m,
+            &["Install from File..."],
+            on(1),
+            0,
+            busy.is_some() as u64,
+        )
+        .is_some()
+        {
             act.push(ModDo::Press(1, 0));
         }
         if let Some((slug, pm)) = &busy {
-            ui.label(egui::RichText::new(format!("Installing {slug}: {}%", pm / 10)).size(m.theme.small).color(m.theme.color("gold")));
+            ui.label(
+                egui::RichText::new(format!("Installing {slug}: {}%", pm / 10))
+                    .size(m.theme.small)
+                    .color(m.theme.color("gold")),
+            );
         }
         if let Some(e) = state.and_then(|m| m.error.as_ref()) {
-            ui.label(egui::RichText::new(format!("The last install failed: {e}")).size(m.theme.small).color(m.theme.color("hp")));
+            ui.label(
+                egui::RichText::new(format!("The last install failed: {e}"))
+                    .size(m.theme.small)
+                    .color(m.theme.color("hp")),
+            );
         }
     });
     let (packs, archives) = s.mods_rows();
@@ -1352,35 +2154,61 @@ fn mods_page(ui: &mut Ui, m: &super::Modern, s: &SettingsUi, open: bool, follow:
     for (i, (name, enabled)) in packs.iter().enumerate() {
         let st = i + 2;
         let cur = on(st);
-        kit::line(ui, m, &format!("{}. {name}", i + 1), cur.is_some(), follow, |ui| {
-            let un = Btn { cursor: cur == Some(3), ..Default::default() };
-            if kit::clicked(&kit::button(ui, m, "Uninstall", 0.0, un), un) {
-                act.push(ModDo::Press(st, 3));
-            }
-            let ch = match cur {
-                Some(1) => Some(true),
-                Some(2) => Some(false),
-                _ => None,
-            };
-            if let Some(up) = kit::chevrons(ui, m, ("mod move", i), ch, i == 0, i + 1 == n) {
-                act.push(ModDo::Press(st, if up { 1 } else { 2 }));
-            }
-            let t = Btn { lit: *enabled, cursor: cur == Some(0), off: false };
-            if kit::clicked(&kit::button(ui, m, if *enabled { "ON" } else { "OFF" }, 64.0, t), t) {
-                act.push(ModDo::Press(st, 0));
-            }
-        });
+        kit::line(
+            ui,
+            m,
+            &format!("{}. {name}", i + 1),
+            cur.is_some(),
+            follow,
+            |ui| {
+                let un = Btn {
+                    cursor: cur == Some(3),
+                    ..Default::default()
+                };
+                if kit::clicked(&kit::button(ui, m, "Uninstall", 0.0, un), un) {
+                    act.push(ModDo::Press(st, 3));
+                }
+                let ch = match cur {
+                    Some(1) => Some(true),
+                    Some(2) => Some(false),
+                    _ => None,
+                };
+                if let Some(up) = kit::chevrons(ui, m, ("mod move", i), ch, i == 0, i + 1 == n) {
+                    act.push(ModDo::Press(st, if up { 1 } else { 2 }));
+                }
+                let t = Btn {
+                    lit: *enabled,
+                    cursor: cur == Some(0),
+                    off: false,
+                };
+                if kit::clicked(
+                    &kit::button(ui, m, if *enabled { "ON" } else { "OFF" }, 64.0, t),
+                    t,
+                ) {
+                    act.push(ModDo::Press(st, 0));
+                }
+            },
+        );
     }
     if !archives.is_empty() {
         ui.add_space(6.0);
-        ui.label(egui::RichText::new("Found in the Downloads folder").size(m.theme.small).family(FontFamily::Name(super::STRONG.into())).color(m.theme.color("muted")));
+        ui.label(
+            egui::RichText::new("Found in the Downloads folder")
+                .size(m.theme.small)
+                .family(FontFamily::Name(super::STRONG.into()))
+                .color(m.theme.color("muted")),
+        );
         ui.add_space(4.0);
     }
     for (k, (name, pm)) in archives.iter().enumerate() {
         let st = 2 + n + k;
         let label = pm.map_or(name.clone(), |pm| format!("{}%  {name}", pm / 10));
         kit::line(ui, m, &label, on(st).is_some(), follow, |ui| {
-            let b = Btn { cursor: on(st).is_some(), off: busy.is_some(), ..Default::default() };
+            let b = Btn {
+                cursor: on(st).is_some(),
+                off: busy.is_some(),
+                ..Default::default()
+            };
             if kit::clicked(&kit::button(ui, m, "Install", 0.0, b), b) {
                 act.push(ModDo::Press(st, 0));
             }
@@ -1408,21 +2236,72 @@ fn mods_do(s: &mut SettingsUi, act: Vec<ModDo>) {
 }
 
 /// The key assignment list: each function and its key; a key pressed assigns to the cursor's row.
-fn keys_page(ui: &mut Ui, m: &super::Modern, gu: &GameUi, v: &Values, name: &str, row: usize, follow: bool, click: &mut Option<Click>) {
-    let title = if name == "k1assign" { "Key Assignment 1" } else { "Key Assignment 2" };
-    ui.label(egui::RichText::new(title).size(m.theme.ui).family(FontFamily::Name(super::STRONG.into())).color(m.theme.color("gold")));
+fn keys_page(
+    ui: &mut Ui,
+    m: &super::Modern,
+    gu: &GameUi,
+    v: &Values,
+    name: &str,
+    row: usize,
+    follow: bool,
+    click: &mut Option<Click>,
+) {
+    let title = if name == "k1assign" {
+        "Key Assignment 1"
+    } else {
+        "Key Assignment 2"
+    };
+    ui.label(
+        egui::RichText::new(title)
+            .size(m.theme.ui)
+            .family(FontFamily::Name(super::STRONG.into()))
+            .color(m.theme.color("gold")),
+    );
     ui.add_space(6.0);
     let n = configui2::assign_rows(v, name);
     let tall = ui.ctx().content_rect().height() * 0.55;
-    let out = kit::list(ui, m, ("config keys", name), n, Some(row), true, follow, 28.0, tall, |_| false, |ui, r| {
-        let (label, id) = configui2::assign_row(gu, name, r.index);
-        let key = configui2::dik_char(v.get(id));
-        let p = ui.painter();
-        let cap = Rect::from_center_size(pos2(r.rect.min.x + 30.0, r.rect.center().y), vec2(30.0, 22.0));
-        p.rect(cap, 4.0, m.theme.color("charcoal"), egui::Stroke::new(1.5, m.theme.color("bronze")), egui::StrokeKind::Inside);
-        p.text(cap.center(), Align2::CENTER_CENTER, key, FontId::new(m.theme.small, FontFamily::Name(super::STRONG.into())), m.theme.color("text"));
-        p.text(pos2(r.rect.min.x + 60.0, r.rect.center().y), Align2::LEFT_CENTER, label, FontId::proportional(m.theme.small), kit::ink(m, r));
-    });
+    let out = kit::list(
+        ui,
+        m,
+        ("config keys", name),
+        n,
+        Some(row),
+        true,
+        follow,
+        28.0,
+        tall,
+        |_| false,
+        |ui, r| {
+            let (label, id) = configui2::assign_row(gu, name, r.index);
+            let key = configui2::dik_char(v.get(id));
+            let p = ui.painter();
+            let cap = Rect::from_center_size(
+                pos2(r.rect.min.x + 30.0, r.rect.center().y),
+                vec2(30.0, 22.0),
+            );
+            p.rect(
+                cap,
+                4.0,
+                m.theme.color("charcoal"),
+                egui::Stroke::new(1.5, m.theme.color("bronze")),
+                egui::StrokeKind::Inside,
+            );
+            p.text(
+                cap.center(),
+                Align2::CENTER_CENTER,
+                key,
+                FontId::new(m.theme.small, FontFamily::Name(super::STRONG.into())),
+                m.theme.color("text"),
+            );
+            p.text(
+                pos2(r.rect.min.x + 60.0, r.rect.center().y),
+                Align2::LEFT_CENTER,
+                label,
+                FontId::proportional(m.theme.small),
+                kit::ink(m, r),
+            );
+        },
+    );
     if let Some(k) = out.clicked {
         *click = Some(Click::KeyRow(k));
     }
@@ -1445,12 +2324,22 @@ pub fn lobby_settings(c: &ConfigUi) -> bool {
 
 /// The help for our page's cursor.
 fn ours_help(s: &SettingsUi) -> String {
-    if s.on_mods_page() { s.help() } else { s.view().help }
+    if s.on_mods_page() {
+        s.help()
+    } else {
+        s.view().help
+    }
 }
 
 /// The title's Config (lobycwin) in the modern style: the list, then retail's page or our Settings (`s`). Its step
 /// comes back: the sounds, the changed ids.
-pub fn lobby(p: &mut Panels, c: &mut ConfigUi, v: &mut Values, mut s: Option<&mut SettingsUi>, sw: f32) -> configui::Out {
+pub fn lobby(
+    p: &mut Panels,
+    c: &mut ConfigUi,
+    v: &mut Values,
+    mut s: Option<&mut SettingsUi>,
+    sw: f32,
+) -> configui::Out {
     let mut out = configui::Out::default();
     let Some(gu) = p.gu else { return out };
     let m = p.m;
@@ -1459,35 +2348,88 @@ pub fn lobby(p: &mut Panels, c: &mut ConfigUi, v: &mut Values, mut s: Option<&mu
     let shapes = lobby_shapes();
     let t = texts(gu, c, v, &shapes);
     let ours = s.as_deref().filter(|_| lobby_settings(c));
-    let follow = m.moved("lobby config", entry * 1_000_000 + ours.map_or(row, |o| o.view().row * 100 + o.view().tab + o.m_mods.0 * 10_000));
+    let follow = m.moved(
+        "lobby config",
+        entry * 1_000_000
+            + ours.map_or(row, |o| {
+                o.view().row * 100 + o.view().tab + o.m_mods.0 * 10_000
+            }),
+    );
     let (mut sact, mut mact, mut click, mut hover) = (Vec::new(), Vec::new(), None, None);
     // Centred, by last frame's size.
     let screen = p.ctx.content_rect();
-    let size = m.rects.borrow().get("lobby config").map_or(vec2(640.0, 360.0), |r| r.size());
+    let size = m
+        .rects
+        .borrow()
+        .get("lobby config")
+        .map_or(vec2(640.0, 360.0), |r| r.size());
     let at = (screen.center() - size / 2.0).round();
-    p.panel_at("lobby config", Some(Title { icon: Some("icons/config"), text: "Config", note: None }), 640.0, at, |ui| {
-        ui.horizontal_top(|ui| {
-            entry_list(ui, m, &LOBBY, entry, open, &mut click);
-            ui.add_space(16.0);
-            let tall = ui.ctx().content_rect().height() * TALL;
-            egui::ScrollArea::vertical().id_salt("lobby config page").max_height(tall).min_scrolled_height(tall).auto_shrink([false, true]).show(ui, |ui| {
-                ui.vertical(|ui| {
-                    ui.set_width(PAGE_W);
-                    match ours {
-                        Some(s) if s.on_mods_page() => mods_page(ui, m, s, open, follow, 0, &mut mact),
-                        Some(s) => settings_page(ui, m, &s.view(), open, follow, 0, &mut sact),
-                        None if lobby_settings(c) => {}
-                        None => hover = native_rows(ui, m, gu, c, v, &shapes, &t, open.then_some(row), follow, sw, &mut click),
-                    }
-                })
+    p.panel_at(
+        "lobby config",
+        Some(Title {
+            icon: Some("icons/config"),
+            text: "Config",
+            note: None,
+        }),
+        640.0,
+        at,
+        |ui| {
+            ui.horizontal_top(|ui| {
+                entry_list(ui, m, &LOBBY, entry, open, &mut click);
+                ui.add_space(16.0);
+                let tall = ui.ctx().content_rect().height() * TALL;
+                egui::ScrollArea::vertical()
+                    .id_salt("lobby config page")
+                    .max_height(tall)
+                    .min_scrolled_height(tall)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        ui.vertical(|ui| {
+                            ui.set_width(PAGE_W);
+                            match ours {
+                                Some(s) if s.on_mods_page() => {
+                                    mods_page(ui, m, s, open, follow, 0, &mut mact)
+                                }
+                                Some(s) => {
+                                    settings_page(ui, m, &s.view(), open, follow, 0, &mut sact)
+                                }
+                                None if lobby_settings(c) => {}
+                                None => {
+                                    hover = native_rows(
+                                        ui,
+                                        m,
+                                        gu,
+                                        c,
+                                        v,
+                                        &shapes,
+                                        &t,
+                                        open.then_some(row),
+                                        follow,
+                                        sw,
+                                        &mut click,
+                                    )
+                                }
+                            }
+                        })
+                    });
             });
-        });
-        match ours {
-            Some(s) => help_line(ui, m, &ours_help(s)),
-            None => help_line(ui, m, hover.or(open.then_some(row)).and_then(|i| t.helps.get(i)).map_or("", |h| h.as_str())),
-        }
-    });
-    if let Some(s) = s.as_deref_mut().filter(|_| !sact.is_empty() || !mact.is_empty()) {
+            match ours {
+                Some(s) => help_line(ui, m, &ours_help(s)),
+                None => help_line(
+                    ui,
+                    m,
+                    hover
+                        .or(open.then_some(row))
+                        .and_then(|i| t.helps.get(i))
+                        .map_or("", |h| h.as_str()),
+                ),
+            }
+        },
+    );
+    if let Some(s) = s
+        .as_deref_mut()
+        .filter(|_| !sact.is_empty() || !mact.is_empty())
+    {
         s.sounds.clear();
         settings_do(s, sact);
         mods_do(s, mact);
@@ -1507,7 +2449,8 @@ pub fn lobby(p: &mut Panels, c: &mut ConfigUi, v: &mut Values, mut s: Option<&mu
         }
         Some(Click::Slide(i, x)) => {
             (c.m_open, c.m_row) = (true, i);
-            out.changed.extend(native_set(c, v, &shapes[i], x, sw).changed);
+            out.changed
+                .extend(native_set(c, v, &shapes[i], x, sw).changed);
         }
         Some(Click::Press(i)) => {
             (c.m_open, c.m_row) = (true, i);
@@ -1536,7 +2479,14 @@ fn entry_key(entry: &mut usize, n: usize, key: egui::Key) -> (kit::Act, bool) {
 }
 
 /// The title's Config keys: the list's, then retail's page or ours, each the kit's.
-pub fn lobby_key(c: &mut ConfigUi, v: &mut Values, s: Option<&mut SettingsUi>, key: egui::Key, shift: bool, sw: f32) -> configui::Out {
+pub fn lobby_key(
+    c: &mut ConfigUi,
+    v: &mut Values,
+    s: Option<&mut SettingsUi>,
+    key: egui::Key,
+    shift: bool,
+    sw: f32,
+) -> configui::Out {
     let mut out = configui::Out::default();
     if !c.m_open {
         match entry_key(&mut c.m_entry, LOBBY.len(), key) {
@@ -1566,7 +2516,14 @@ pub fn lobby_key(c: &mut ConfigUi, v: &mut Values, s: Option<&mut SettingsUi>, k
 }
 
 /// A native page's keys through the kit; Escape goes back to the list.
-fn native_key(c: &mut ConfigUi, v: &mut Values, all: &[Shape], key: egui::Key, shift: bool, sw: f32) -> configui::Out {
+fn native_key(
+    c: &mut ConfigUi,
+    v: &mut Values,
+    all: &[Shape],
+    key: egui::Key,
+    shift: bool,
+    sw: f32,
+) -> configui::Out {
     let stops = native_stops(c, v, all, sw);
     let mut at = At::new(c.m_row.min(all.len().saturating_sub(1)), 0);
     let act = kit::key(&stops, &mut at, key, shift);
@@ -1576,15 +2533,22 @@ fn native_key(c: &mut ConfigUi, v: &mut Values, all: &[Shape], key: egui::Key, s
         kit::Act::Press(i, _) => native_press(c, v, &all[i], sw),
         kit::Act::Back => {
             c.m_open = false;
-            configui::Out { sounds: vec![Se::Cancel], ..Default::default() }
+            configui::Out {
+                sounds: vec![Se::Cancel],
+                ..Default::default()
+            }
         }
-        a => configui::Out { sounds: a.sound().into_iter().collect(), ..Default::default() },
+        a => configui::Out {
+            sounds: a.sound().into_iter().collect(),
+            ..Default::default()
+        },
     }
 }
 
 pub fn draw(p: &mut Panels, w: &mut World) {
     // Ours goes with the window, once the app has stored what changed.
-    if w.modern && w.config.is_none() && w.settings.as_ref().is_some_and(|s| s.in_game && !s.dirty) {
+    if w.modern && w.config.is_none() && w.settings.as_ref().is_some_and(|s| s.in_game && !s.dirty)
+    {
         w.settings = None;
     }
     let Some(gu) = p.gu else { return };
@@ -1616,25 +2580,41 @@ pub fn draw(p: &mut Panels, w: &mut World) {
     let find = c.m_find.clone().filter(|_| c.m_sub.is_none());
     let cat = c.m_cat.min(3);
     let (list, cats): (Vec<(u16, usize)>, Vec<String>) = match page {
-        Entry::List(lp, menu) => (configui2::modern_rows(v, lp, cat), menu.map_or(Vec::new(), |m| categories(gu, m))),
+        Entry::List(lp, menu) => (
+            configui2::modern_rows(v, lp, cat),
+            menu.map_or(Vec::new(), |m| categories(gu, m)),
+        ),
         Entry::Colors => (Vec::new(), categories(gu, "conftxtc")),
         _ => (Vec::new(), Vec::new()),
     };
     // The cursor kept in view as it moves (only then, so the wheel stays free).
     let at = match ours {
-        Some(s) if s.on_mods_page() => s.mods_state().and_then(|m| m.browse.as_ref()).map_or(s.m_mods.0 * 1000 + s.m_mods.1, |b| 900_000 + b.cursor),
+        Some(s) if s.on_mods_page() => s
+            .mods_state()
+            .and_then(|m| m.browse.as_ref())
+            .map_or(s.m_mods.0 * 1000 + s.m_mods.1, |b| 900_000 + b.cursor),
         Some(s) => s.view().row * 100 + s.view().tab,
         None => c.m_keys.map_or(row, |_| 500_000 + c.m_key_row),
     };
-    let follow = m.moved("config page", (entry * 1_000_000 + c.m_sub.map_or(0, |k| (k + 1) * 100_000) + at) ^ find.as_ref().map_or(0, |f| (f.len() + 1) << 40) ^ (c.m_retail as usize) << 50);
+    let follow = m.moved(
+        "config page",
+        (entry * 1_000_000 + c.m_sub.map_or(0, |k| (k + 1) * 100_000) + at)
+            ^ find.as_ref().map_or(0, |f| (f.len() + 1) << 40)
+            ^ (c.m_retail as usize) << 50,
+    );
     let (keys, ask) = (c.m_keys, c.extra.ask_keys);
     let (mut click, mut pick, mut hover) = (None, None, None);
     let mut help = String::new();
     let mut detail = Detail::default();
     // Font Colors is as wide as its names and samples side by side need (within the screen).
-    let colours = if matches!(page, Entry::Colors) { colour_columns(p.ctx, m, gu, cat) } else { (0.0, 0.0) };
+    let colours = if matches!(page, Entry::Colors) {
+        colour_columns(p.ctx, m, gu, cat)
+    } else {
+        (0.0, 0.0)
+    };
     let page_w = match page {
-        Entry::Colors => (SWATCH_W + colours.0 + COL_GAP + colours.1 + 20.0).clamp(PAGE_W, (p.ctx.content_rect().width() - 260.0).max(PAGE_W)),
+        Entry::Colors => (SWATCH_W + colours.0 + COL_GAP + colours.1 + 20.0)
+            .clamp(PAGE_W, (p.ctx.content_rect().width() - 260.0).max(PAGE_W)),
         _ => PAGE_W,
     };
     p.panel("window", Some(Title { icon: Some("icons/config"), text: "Settings", note: None }), NAV_W + 32.0 + page_w + 16.0 + DETAIL_W, |ui| {
@@ -1818,26 +2798,42 @@ pub fn sample(p: &mut Panels, s: &SettingsUi) {
     let (mut c, v) = (ConfigUi::default(), Values::default());
     c.m_find = Some("shadow".into());
     refresh_hits(None, &mut c, &v, Some(s));
-    let all: Vec<Line> = view(&c, Some(s)).into_iter().filter(|l| l.shape.is_none()).collect();
-    p.panel("window", Some(Title { icon: Some("icons/config"), text: "Settings", note: None }), NAV_W + 32.0 + PAGE_W + 16.0 + DETAIL_W, |ui| {
-        ui.horizontal_top(|ui| {
-            nav_list(ui, m, usize::MAX, true, &mut None);
-            ui.add_space(16.0);
-            ui.vertical(|ui| {
-                ui.set_width(PAGE_W);
-                find_bar(ui, m, c.m_find.as_deref(), false, PAGE_W);
-                topic_page(ui, m, None, &c, &v, &all, Some(1), false, 1920.0, &mut None);
+    let all: Vec<Line> = view(&c, Some(s))
+        .into_iter()
+        .filter(|l| l.shape.is_none())
+        .collect();
+    p.panel(
+        "window",
+        Some(Title {
+            icon: Some("icons/config"),
+            text: "Settings",
+            note: None,
+        }),
+        NAV_W + 32.0 + PAGE_W + 16.0 + DETAIL_W,
+        |ui| {
+            ui.horizontal_top(|ui| {
+                nav_list(ui, m, usize::MAX, true, &mut None);
+                ui.add_space(16.0);
+                ui.vertical(|ui| {
+                    ui.set_width(PAGE_W);
+                    find_bar(ui, m, c.m_find.as_deref(), false, PAGE_W);
+                    topic_page(ui, m, None, &c, &v, &all, Some(1), false, 1920.0, &mut None);
+                });
+                ui.add_space(16.0);
+                details(ui, m, &topic_detail(None, &c, &v, &all, 1, true));
             });
-            ui.add_space(16.0);
-            details(ui, m, &topic_detail(None, &c, &v, &all, 1, true));
-        });
-        help_line(ui, m, topic_keys(true));
-    });
+            help_line(ui, m, topic_keys(true));
+        },
+    );
 }
 
 /// Our line's help (the sample's; no game layouts).
 fn topic_help_ours(all: &[Line], k: usize) -> String {
-    stop_lines(all).get(k).and_then(|l| l.ours.as_ref()).map(|o| o.1.clone()).unwrap_or_default()
+    stop_lines(all)
+        .get(k)
+        .and_then(|l| l.ours.as_ref())
+        .map(|o| o.1.clone())
+        .unwrap_or_default()
 }
 
 /// The nav's width.
@@ -1860,8 +2856,18 @@ fn nav_list(ui: &mut Ui, m: &super::Modern, entry: usize, open: bool, click: &mu
                 _ => "controls/list_row_normal",
             };
             super::rows::face(ui.painter(), m, r, face, Color32::WHITE);
-            let ink = if k == entry { m.theme.color("gold") } else { m.theme.color("text") };
-            ui.painter().text(pos2(r.min.x + 16.0, r.center().y), Align2::LEFT_CENTER, *label, FontId::proportional(m.theme.ui), ink);
+            let ink = if k == entry {
+                m.theme.color("gold")
+            } else {
+                m.theme.color("text")
+            };
+            ui.painter().text(
+                pos2(r.min.x + 16.0, r.center().y),
+                Align2::LEFT_CENTER,
+                *label,
+                FontId::proportional(m.theme.ui),
+                ink,
+            );
             if resp.clicked() {
                 *click = Some(Click::Entry(k));
             }
@@ -1897,7 +2903,10 @@ fn fallback(ctl: Ctl) -> String {
 fn choose(w: &mut World, k: usize) {
     let Some(c) = w.config.as_mut() else { return };
     (c.m_entry, c.m_open, c.m_row, c.m_keys, c.m_sub, c.m_find) = (k, true, 0, None, None, None);
-    let out = configui::Out { sounds: vec![Se::Select], ..Default::default() };
+    let out = configui::Out {
+        sounds: vec![Se::Select],
+        ..Default::default()
+    };
     super::super::config_out(w, out);
     if let Some(s) = w.settings.as_mut().filter(|s| s.on_mods_page()) {
         s.goto(0, 0);
@@ -1913,12 +2922,18 @@ pub fn key(w: &mut World, key: egui::Key, shift: bool) -> bool {
         return false;
     }
     let sw = w.ui_wh.0;
-    let Some(c) = w.config.as_mut() else { return false };
+    let Some(c) = w.config.as_mut() else {
+        return false;
+    };
     let n = PAGES.len();
     if !c.m_open {
         match entry_key(&mut c.m_entry, n, key) {
             (_, true) => {
-                let out = configui::Out { closed: true, sounds: vec![Se::Close], ..Default::default() };
+                let out = configui::Out {
+                    closed: true,
+                    sounds: vec![Se::Close],
+                    ..Default::default()
+                };
                 c.stack.clear();
                 super::super::config_out(w, out);
             }
@@ -2032,9 +3047,16 @@ mod tests {
     fn every_setting_has_a_page() {
         let items: Vec<Item> = PAGES.iter().flat_map(|p| p.2.iter().copied()).collect();
         let count = |it: Item| items.iter().filter(|&&i| i == it).count();
-        for menu in ["conf2win", "conf3win", "conf6win", "conf12wi", "conf13wi", "conf7", "conf4"] {
+        for menu in [
+            "conf2win", "conf3win", "conf6win", "conf12wi", "conf13wi", "conf7", "conf4",
+        ] {
             for s in shapes(&[menu]) {
-                assert_eq!(count(Retail(menu, s.ctls[0].0)), 1, "{menu} {}", s.ctls[0].0);
+                assert_eq!(
+                    count(Retail(menu, s.ctls[0].0)),
+                    1,
+                    "{menu} {}",
+                    s.ctls[0].0
+                );
             }
         }
         for it in &items {
@@ -2042,7 +3064,10 @@ mod tests {
                 assert!(shape_of(menu, child).is_some(), "{menu} {child}");
             }
         }
-        let mut ours: Vec<&str> = [(true, false), (true, true), (false, false), (false, true)].iter().flat_map(|&(g, m)| SettingsUi::all_labels(g, m)).collect();
+        let mut ours: Vec<&str> = [(true, false), (true, true), (false, false), (false, true)]
+            .iter()
+            .flat_map(|&(g, m)| SettingsUi::all_labels(g, m))
+            .collect();
         ours.sort();
         ours.dedup();
         for label in &ours {
@@ -2068,7 +3093,12 @@ mod tests {
         refresh_hits(None, &mut c, &v, Some(&s));
         let items = view_items(&c);
         assert_eq!(items[0], Head("Lighting & Shadows"));
-        for it in [Ours("Character Shadows"), Ours("Shadow Quality"), Ours("Ambient Occlusion"), Retail("conf3win", 6)] {
+        for it in [
+            Ours("Character Shadows"),
+            Ours("Shadow Quality"),
+            Ours("Ambient Occlusion"),
+            Retail("conf3win", 6),
+        ] {
             assert!(items.contains(&it), "{it:?}");
         }
         assert!(!items.contains(&Ours("Lamp Lights")));
@@ -2080,14 +3110,21 @@ mod tests {
         c.m_find = Some("zo".into());
         refresh_hits(None, &mut c, &v, Some(&s));
         // Stick Dead Zone has it in its name; none comes from its help.
-        assert!(view_items(&c).iter().all(|i| match i {
-            Head(_) => true,
-            Ours(l) => l.to_lowercase().contains("zo"),
-            _ => false,
-        }), "{:?}", view_items(&c));
+        assert!(
+            view_items(&c).iter().all(|i| match i {
+                Head(_) => true,
+                Ours(l) => l.to_lowercase().contains("zo"),
+                _ => false,
+            }),
+            "{:?}",
+            view_items(&c)
+        );
         c.m_find = None;
         refresh_hits(None, &mut c, &v, Some(&s));
-        c.m_entry = PAGES.iter().position(|p| p.1 == "Lighting & Shadows").unwrap();
+        c.m_entry = PAGES
+            .iter()
+            .position(|p| p.1 == "Lighting & Shadows")
+            .unwrap();
         c.m_retail = true;
         let items = view_items(&c);
         assert!(items.contains(&Retail("conf3win", 6)));
@@ -2105,13 +3142,19 @@ mod tests {
         let v = s.view();
         let (tabs, at) = shown_tabs(&v, skip);
         assert_eq!((tabs, at), (vec!["Mods"], 0));
-        assert!(matches!(mods_stops(&s, skip)[0], Stop::Tabs { n: 1, at: 0 }));
+        assert!(matches!(
+            mods_stops(&s, skip)[0],
+            Stop::Tabs { n: 1, at: 0 }
+        ));
     }
 
     /// A page's headings with nothing under them go (ours left out in game, here the lobby's volumes).
     #[test]
     fn empty_headings_go() {
-        let all = lines(PAGES.iter().position(|p| p.1 == "Controller").unwrap(), None);
+        let all = lines(
+            PAGES.iter().position(|p| p.1 == "Controller").unwrap(),
+            None,
+        );
         assert!(all.is_empty());
         let all = lines(PAGES.iter().position(|p| p.1 == "Gameplay").unwrap(), None);
         assert!(matches!(all[0].item, Head("Targeting")));

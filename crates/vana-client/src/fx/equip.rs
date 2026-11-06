@@ -74,11 +74,16 @@ impl Effects {
         let s = self.equip_state(id);
         match call {
             EquipCall::Glow { n, on } => {
-                let (Some(on_name), Some(off_name)) = (glow_names(n, true), glow_names(n, false)) else { return Ok(()) };
+                let (Some(on_name), Some(off_name)) = (glow_names(n, true), glow_names(n, false))
+                else {
+                    return Ok(());
+                };
                 let bit = 1u16 << n;
                 if on {
                     // Config 0xbe 1 (Misc. 3 weapon effect Off): the bit clears without the scheduler.
-                    if s.glow_off & bit != 0 && (self.weapon_effect_off || self.start_part(id, &[on_name], actors)?) {
+                    if s.glow_off & bit != 0
+                        && (self.weapon_effect_off || self.start_part(id, &[on_name], actors)?)
+                    {
                         self.equip.entry(id).or_default().glow_off &= !bit;
                     }
                 } else if s.glow_off & bit == 0 && self.start_part(id, &[off_name], actors)? {
@@ -95,7 +100,8 @@ impl Effects {
             EquipCall::Kill => {
                 if s.in_on {
                     // Each of the three is looked up and started on its own.
-                    let found = [cc(b"!kl1"), cc(b"!kl2"), cc(b"!kl3")].map(|name| self.part_scheduler(id, name, actors));
+                    let found = [cc(b"!kl1"), cc(b"!kl2"), cc(b"!kl3")]
+                        .map(|name| self.part_scheduler(id, name, actors));
                     if found.iter().any(|f| f.is_err()) {
                         return Err(());
                     }
@@ -113,7 +119,10 @@ impl Effects {
     fn start_part(&mut self, id: u32, names: &[u32], actors: &dyn Actors) -> Result<bool, ()> {
         for &name in names {
             if let Some(r) = self.part_scheduler(id, name, actors)? {
-                log::debug!("effects: {} on {id:#x}", String::from_utf8_lossy(&name.to_le_bytes()));
+                log::debug!(
+                    "effects: {} on {id:#x}",
+                    String::from_utf8_lossy(&name.to_le_bytes())
+                );
                 self.spawn_task(r, Who::Actor(id), Who::Actor(id), None, 1.0, None);
                 return Ok(true);
             }
@@ -122,7 +131,12 @@ impl Effects {
     }
 
     /// FUN_100ce9b0: the part files, then the model's own files.
-    fn part_scheduler(&mut self, id: u32, name: u32, actors: &dyn Actors) -> Result<Option<Ref>, ()> {
+    fn part_scheduler(
+        &mut self,
+        id: u32,
+        name: u32,
+        actors: &dyn Actors,
+    ) -> Result<Option<Ref>, ()> {
         let (parts, _) = actors.files(id);
         let mut waiting = false;
         for file in parts.into_iter().chain(actors.model_files(id)) {
@@ -146,7 +160,12 @@ impl Effects {
             if t.left >= 0.0 && live.contains(&t.owner) {
                 self.wep_timers.push(t);
             } else if t.show {
-                self.weapons.push(WeaponOp { actor: t.actor, n: t.n, byte: 0, hide: false });
+                self.weapons.push(WeaponOp {
+                    actor: t.actor,
+                    n: t.n,
+                    byte: 0,
+                    hide: false,
+                });
             }
         }
     }
@@ -159,7 +178,12 @@ fn glow_names(n: u8, on: bool) -> Option<u32> {
         1 => b'1',
         _ => return None,
     };
-    Some(u32::from_le_bytes([b'!', b'w', d, if on { b'1' } else { b'2' }]))
+    Some(u32::from_le_bytes([
+        b'!',
+        b'w',
+        d,
+        if on { b'1' } else { b'2' },
+    ]))
 }
 
 #[cfg(test)]
@@ -207,7 +231,9 @@ mod tests {
     }
 
     fn loaded(files: &[u32]) -> Option<Effects> {
-        let index = std::sync::Arc::new(crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()).ok()?);
+        let index = std::sync::Arc::new(
+            crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()).ok()?,
+        );
         let mut fx = Effects::new();
         fx.set_index(index.clone());
         fx.set_global(Library::load(0, index.read(0).ok()?).ok()?);
@@ -220,31 +246,68 @@ mod tests {
     }
 
     fn frame() -> Frame {
-        Frame { dt: 1.0, seconds: 1.0 / 60.0, dayfrac: 0.5, view: Mat4::IDENTITY, view_rot: Mat4::IDENTITY, eye: Vec3::new(0.0, -2.0, -10.0), draw_distance: 2000.0, area_light: Vec3::ONE, focal: 350.0, moon_phase: 0, weekday: 0 }
+        Frame {
+            dt: 1.0,
+            seconds: 1.0 / 60.0,
+            dayfrac: 0.5,
+            view: Mat4::IDENTITY,
+            view_rot: Mat4::IDENTITY,
+            eye: Vec3::new(0.0, -2.0, -10.0),
+            draw_distance: 2000.0,
+            area_light: Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        }
     }
 
     fn tasks(fx: &Effects) -> Vec<String> {
-        fx.tasks.iter().flatten().map(|t| String::from_utf8_lossy(&fx.reg.libs[t.res.0].tree.nodes[t.res.1].name).into_owned()).collect()
+        fx.tasks
+            .iter()
+            .flatten()
+            .map(|t| {
+                String::from_utf8_lossy(&fx.reg.libs[t.res.0].tree.nodes[t.res.1].name).into_owned()
+            })
+            .collect()
     }
 
     /// Hume M main 8875: off runs `!w02` and sets the bit; on runs `!w01` (glwc glwa bld1 bld4, SeSep 6191) and
     /// clears it; a second on does nothing.
     #[test]
     fn weapon_glow_cycle() {
-        let Some(mut fx) = loaded(&[8875, 9672, 7072]) else { return };
-        let pc = Pc { part: 8875, status: 1 };
+        let Some(mut fx) = loaded(&[8875, 9672, 7072]) else {
+            return;
+        };
+        let pc = Pc {
+            part: 8875,
+            status: 1,
+        };
         fx.equip(HUME, EquipCall::Glow { n: 0, on: false });
         fx.run_equip(&pc);
-        assert_eq!((tasks(&fx), fx.equip_state(HUME).glow_off), (vec!["!w02".to_string()], 1));
+        assert_eq!(
+            (tasks(&fx), fx.equip_state(HUME).glow_off),
+            (vec!["!w02".to_string()], 1)
+        );
         fx.tasks.clear();
         fx.equip(HUME, EquipCall::Glow { n: 0, on: true });
         fx.tick(&frame(), &pc);
         assert_eq!(fx.equip_state(HUME).glow_off, 0);
-        let names: Vec<String> = fx.insts.iter().flatten().map(|x| String::from_utf8_lossy(&x.name).into_owned()).collect();
+        let names: Vec<String> = fx
+            .insts
+            .iter()
+            .flatten()
+            .map(|x| String::from_utf8_lossy(&x.name).into_owned())
+            .collect();
         for g in ["glwc", "glwa", "bld1", "bld4"] {
             assert!(names.iter().any(|n| n == g), "{g}: {names:?}");
         }
-        assert!(fx.sound_cmds.iter().any(|c| matches!(c, SoundCmd::Play { se: 6191, .. })), "{:?}", fx.sound_cmds);
+        assert!(
+            fx.sound_cmds
+                .iter()
+                .any(|c| matches!(c, SoundCmd::Play { se: 6191, .. })),
+            "{:?}",
+            fx.sound_cmds
+        );
         fx.tasks.clear();
         fx.equip(HUME, EquipCall::Glow { n: 0, on: true });
         fx.run_equip(&pc);
@@ -255,8 +318,13 @@ mod tests {
     /// 0xbe Off clears the bit without `!w01`.
     #[test]
     fn weapon_glow_fresh_and_off() {
-        let Some(mut fx) = loaded(&[8875, 9672, 7072]) else { return };
-        let pc = Pc { part: 8875, status: 1 };
+        let Some(mut fx) = loaded(&[8875, 9672, 7072]) else {
+            return;
+        };
+        let pc = Pc {
+            part: 8875,
+            status: 1,
+        };
         fx.equip(HUME, EquipCall::Glow { n: 0, on: true });
         fx.run_equip(&pc);
         assert!(tasks(&fx).is_empty());
@@ -272,8 +340,13 @@ mod tests {
     /// No `!w02` in the files (fists 8392): the bit stays clear, so a later on plays nothing.
     #[test]
     fn weapon_glow_not_found_keeps_bit() {
-        let Some(mut fx) = loaded(&[8392, 9672, 7072]) else { return };
-        let pc = Pc { part: 8392, status: 0 };
+        let Some(mut fx) = loaded(&[8392, 9672, 7072]) else {
+            return;
+        };
+        let pc = Pc {
+            part: 8392,
+            status: 0,
+        };
         fx.equip(HUME, EquipCall::Glow { n: 0, on: false });
         fx.run_equip(&pc);
         assert_eq!((tasks(&fx).len(), fx.equip_state(HUME).glow_off), (0, 0));
@@ -282,20 +355,31 @@ mod tests {
     /// 8866: `!in1` once; `!kl1` (with `!kl2` / `!kl3` where they exist) once after it; a hidden model kills.
     #[test]
     fn in_and_kill() {
-        let Some(mut fx) = loaded(&[8866, 9672, 7072]) else { return };
-        let pc = Pc { part: 8866, status: 0 };
+        let Some(mut fx) = loaded(&[8866, 9672, 7072]) else {
+            return;
+        };
+        let pc = Pc {
+            part: 8866,
+            status: 0,
+        };
         fx.equip(HUME, EquipCall::In { hidden: true });
         fx.run_equip(&pc);
         assert!(tasks(&fx).is_empty());
         fx.equip(HUME, EquipCall::In { hidden: false });
         fx.equip(HUME, EquipCall::In { hidden: false });
         fx.run_equip(&pc);
-        assert_eq!((tasks(&fx), fx.equip_state(HUME).in_on), (vec!["!in1".to_string()], true));
+        assert_eq!(
+            (tasks(&fx), fx.equip_state(HUME).in_on),
+            (vec!["!in1".to_string()], true)
+        );
         fx.tasks.clear();
         fx.equip(HUME, EquipCall::In { hidden: true });
         fx.equip(HUME, EquipCall::Kill);
         fx.run_equip(&pc);
-        assert_eq!((tasks(&fx), fx.equip_state(HUME).in_on), (vec!["!kl1".to_string()], false));
+        assert_eq!(
+            (tasks(&fx), fx.equip_state(HUME).in_on),
+            (vec!["!kl1".to_string()], false)
+        );
     }
 
     fn weapon_task(fx: &mut Effects, raw8: u32, gate: u16) {
@@ -303,8 +387,28 @@ mod tests {
         op[..8].copy_from_slice(&[0x75, 4, 0, 0, 10, 0, 100, 0]);
         op[8..12].copy_from_slice(&raw8.to_le_bytes());
         op[0xe..0x10].copy_from_slice(&gate.to_le_bytes());
-        let ops = vec![SOp { code: 0x75, wait: 10, dur: 100, raw: op }, SOp { code: 0x00, wait: 0, dur: 0, raw: vec![0, 2, 0, 0, 0, 0, 0, 0] }];
-        fx.tasks.push(Some(Task::new((fx.reg.global.unwrap(), 0), Rc::new(ops), Who::Actor(HUME), Who::Actor(HUME), None, 1.0)));
+        let ops = vec![
+            SOp {
+                code: 0x75,
+                wait: 10,
+                dur: 100,
+                raw: op,
+            },
+            SOp {
+                code: 0x00,
+                wait: 0,
+                dur: 0,
+                raw: vec![0, 2, 0, 0, 0, 0, 0, 0],
+            },
+        ];
+        fx.tasks.push(Some(Task::new(
+            (fx.reg.global.unwrap(), 0),
+            Rc::new(ops),
+            Who::Actor(HUME),
+            Who::Actor(HUME),
+            None,
+            1.0,
+        )));
     }
 
     /// Op 0x75 with a length: hidden now, shown when its scheduler ends after its wait of 10 (not at 100); with @8 set it stays
@@ -312,7 +416,10 @@ mod tests {
     #[test]
     fn weapon_timed_hide_shows_on_task_death() {
         let Some(mut fx) = loaded(&[]) else { return };
-        let idle = Pc { part: 8392, status: 0 };
+        let idle = Pc {
+            part: 8392,
+            status: 0,
+        };
         weapon_task(&mut fx, 0, 0);
         let mut seen = Vec::new();
         for t in 1..=20 {

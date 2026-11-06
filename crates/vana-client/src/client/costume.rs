@@ -31,7 +31,8 @@ impl Costume {
     pub fn step(&mut self, status: u8, bound: bool) {
         // Table 0x10095fe0 (status - 2), then FUN_10095680 (5), FUN_100956a0 (0x55), FUN_100956c0 (fishing, digging)
         // and FUN_10095790 (chairs): only checked while the costume is on.
-        let blocked = self.on && matches!(status, 2 | 3 | 5 | 6 | 7 | 0x21 | 0x26..=0x2c | 0x2f | 0x30 | 0x32..=0x35 | 0x38..=0x53 | 0x55);
+        let blocked = self.on
+            && matches!(status, 2 | 3 | 5 | 6 | 7 | 0x21 | 0x26..=0x2c | 0x2f | 0x30 | 0x32..=0x35 | 0x38..=0x53 | 0x55);
         let allowed = !blocked && !bound;
         if self.pending {
             if self.id == 0 {
@@ -48,7 +49,11 @@ impl Costume {
 
 /// The costume model an actor wears now, if any.
 pub(super) fn worn(w: &World, id: u32) -> Option<u16> {
-    let c = if id == w.my_id { Some(&w.costume) } else { w.costumes.get(&id) };
+    let c = if id == w.my_id {
+        Some(&w.costume)
+    } else {
+        w.costumes.get(&id)
+    };
     c.filter(|c| c.on && c.shown != 0).map(|c| c.shown)
 }
 
@@ -72,9 +77,21 @@ pub(super) fn step_all(w: &mut World) {
         changes.push((me, applied(&w.costume)));
     }
     w.costumes.retain(|id, _| w.entities.contains_key(id));
-    let ids: Vec<(u32, u8, bool)> = w.costumes.keys().map(|&id| (id, w.entities.get(&id).map_or(0, |e| e.motion.status), bound(w, id))).collect();
+    let ids: Vec<(u32, u8, bool)> = w
+        .costumes
+        .keys()
+        .map(|&id| {
+            (
+                id,
+                w.entities.get(&id).map_or(0, |e| e.motion.status),
+                bound(w, id),
+            )
+        })
+        .collect();
     for (id, status, b) in ids {
-        let Some(c) = w.costumes.get_mut(&id) else { continue };
+        let Some(c) = w.costumes.get_mut(&id) else {
+            continue;
+        };
         let was = applied(c);
         c.step(status, b);
         if applied(c) != was {
@@ -86,11 +103,16 @@ pub(super) fn step_all(w: &mut World) {
             Some(model) => {
                 // The look underneath is kept once; a costume swapped for another keeps the same one.
                 if !w.costume_base.contains_key(&id)
-                    && let Some(s) = w.actors.get(&id).and_then(|a| a.source).filter(|s| !is_model(s, model))
+                    && let Some(s) = w
+                        .actors
+                        .get(&id)
+                        .and_then(|a| a.source)
+                        .filter(|s| !is_model(s, model))
                 {
                     w.costume_base.insert(id, s);
                 }
-                w.event_looks.push((id, Source::Npc(crate::dat::npc::NpcLook::Model(model))));
+                w.event_looks
+                    .push((id, Source::Npc(crate::dat::npc::NpcLook::Model(model))));
             }
             None => {
                 // With the held looks, ahead of this frame's server looks: a newer look from the server wins.
@@ -113,16 +135,25 @@ mod tests {
         c.step(0, true);
         assert!(c.pending && !c.on, "bound to the event: stays pending");
         c.step(0x2f, false);
-        assert!(!c.pending && c.on, "the status lists never stop it going on");
+        assert!(
+            !c.pending && c.on,
+            "the status lists never stop it going on"
+        );
         c.step(0x2f, false);
         assert!(c.pending && !c.on, "sitting takes it off");
         c.step(0, false);
         assert!(c.on);
         c.set_id(0x124);
         c.step(0, true);
-        assert!(c.on && c.pending && c.shown == 0x123, "bound: the new id waits, the old model stays");
+        assert!(
+            c.on && c.pending && c.shown == 0x123,
+            "bound: the new id waits, the old model stays"
+        );
         c.step(0, false);
-        assert!(c.on && c.shown == 0x124 && !c.pending, "a new id while on swaps the model");
+        assert!(
+            c.on && c.shown == 0x124 && !c.pending,
+            "a new id while on swaps the model"
+        );
         c.set_id(0);
         c.step(0, true);
         assert_eq!(c, Costume::default(), "id 0 takes it off even while bound");

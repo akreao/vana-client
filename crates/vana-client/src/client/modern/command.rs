@@ -23,7 +23,11 @@ enum Kind {
 }
 
 const fn row(label: &'static str, icon: &'static str, page: u8, id: u16) -> Entry {
-    Entry { label, icon, kind: Kind::Row(page, id) }
+    Entry {
+        label,
+        icon,
+        kind: Kind::Row(page, id),
+    }
 }
 
 const SOCIAL: &[Entry] = &[
@@ -38,10 +42,18 @@ const SOCIAL: &[Entry] = &[
 const JOURNAL: &[Entry] = &[
     row("Missions", "icons/quest", 1, 1),
     row("Quests", "icons/quest_log", 1, 2),
-    Entry { label: "Records of Eminence", icon: "icons/quest_log", kind: Kind::Roe },
+    Entry {
+        label: "Records of Eminence",
+        icon: "icons/quest_log",
+        kind: Kind::Roe,
+    },
     row("Key Items", "icons/key", 1, 3),
 ];
-const WORLD: &[Entry] = &[row("Map", "icons/map", 0, 12), row("Region Info", "icons/find", 0, 11), row("Current Time", "icons/timer", 1, 10)];
+const WORLD: &[Entry] = &[
+    row("Map", "icons/map", 0, 12),
+    row("Region Info", "icons/find", 0, 11),
+    row("Current Time", "icons/timer", 1, 10),
+];
 const SYSTEM: &[Entry] = &[
     row("Macros", "icons/macro", 1, 6),
     row("Config", "icons/config", 1, 7),
@@ -55,15 +67,34 @@ const TOP: &[Entry] = &[
     row("Items", "icons/items", 0, 4),
     row("Magic", "icons/magic", 0, 3),
     row("Abilities", "icons/abilities", 0, 5),
-    Entry { label: "Social", icon: "icons/party", kind: Kind::Sub(SOCIAL) },
-    Entry { label: "Journal", icon: "icons/quest_log", kind: Kind::Sub(JOURNAL) },
-    Entry { label: "Map", icon: "icons/map", kind: Kind::Sub(WORLD) },
+    Entry {
+        label: "Social",
+        icon: "icons/party",
+        kind: Kind::Sub(SOCIAL),
+    },
+    Entry {
+        label: "Journal",
+        icon: "icons/quest_log",
+        kind: Kind::Sub(JOURNAL),
+    },
+    Entry {
+        label: "Map",
+        icon: "icons/map",
+        kind: Kind::Sub(WORLD),
+    },
     row("Synthesis", "icons/craft", 0, 10),
-    Entry { label: "System", icon: "icons/system", kind: Kind::Sub(SYSTEM) },
+    Entry {
+        label: "System",
+        icon: "icons/system",
+        kind: Kind::Sub(SYSTEM),
+    },
 ];
 /// In the Mog House retail's row 12 is Mog House, not Map (FUN_1013ff90): a row of its own here, the map's
 /// category keeping Region Info and Current Time.
-const WORLD_MH: &[Entry] = &[row("Region Info", "icons/find", 0, 11), row("Current Time", "icons/timer", 1, 10)];
+const WORLD_MH: &[Entry] = &[
+    row("Region Info", "icons/find", 0, 11),
+    row("Current Time", "icons/timer", 1, 10),
+];
 const TOP_MH: &[Entry] = &[
     row("Status", "icons/status", 0, 1),
     row("Equipment", "icons/equipment", 0, 2),
@@ -71,25 +102,53 @@ const TOP_MH: &[Entry] = &[
     row("Magic", "icons/magic", 0, 3),
     row("Abilities", "icons/abilities", 0, 5),
     row("Mog House", "icons/mog_house", 0, 12),
-    Entry { label: "Social", icon: "icons/party", kind: Kind::Sub(SOCIAL) },
-    Entry { label: "Journal", icon: "icons/quest_log", kind: Kind::Sub(JOURNAL) },
-    Entry { label: "World", icon: "icons/map", kind: Kind::Sub(WORLD_MH) },
+    Entry {
+        label: "Social",
+        icon: "icons/party",
+        kind: Kind::Sub(SOCIAL),
+    },
+    Entry {
+        label: "Journal",
+        icon: "icons/quest_log",
+        kind: Kind::Sub(JOURNAL),
+    },
+    Entry {
+        label: "World",
+        icon: "icons/map",
+        kind: Kind::Sub(WORLD_MH),
+    },
     row("Synthesis", "icons/craft", 0, 10),
-    Entry { label: "System", icon: "icons/system", kind: Kind::Sub(SYSTEM) },
+    Entry {
+        label: "System",
+        icon: "icons/system",
+        kind: Kind::Sub(SYSTEM),
+    },
 ];
 
-const GM: Entry = Entry { label: "Game Master", icon: "icons/system", kind: Kind::Gm };
+const GM: Entry = Entry {
+    label: "Game Master",
+    icon: "icons/system",
+    kind: Kind::Gm,
+};
 
 /// The top level: the Mog House's in the Mog House (not in Monstrosity, whose row 12 stays the map), and Game
 /// Master last for a GM.
 fn top(w: &World) -> Vec<&'static Entry> {
-    let list = if w.myroom.is_some() && !monstrosity::active(w) { TOP_MH } else { TOP };
+    let list = if w.myroom.is_some() && !monstrosity::active(w) {
+        TOP_MH
+    } else {
+        TOP
+    };
     list.iter().chain((w.gm.level > 0).then_some(&GM)).collect()
 }
 
 /// The top level's and Journal's rows (label, icon, opens a submenu), for modern-shot's row comparison.
 pub(super) fn sample() -> [Vec<(&'static str, &'static str, bool)>; 2] {
-    let rows = |l: &[Entry]| l.iter().map(|e| (e.label, e.icon, matches!(e.kind, Kind::Sub(_)))).collect();
+    let rows = |l: &[Entry]| {
+        l.iter()
+            .map(|e| (e.label, e.icon, matches!(e.kind, Kind::Sub(_))))
+            .collect()
+    };
     [rows(TOP), rows(JOURNAL)]
 }
 
@@ -134,12 +193,20 @@ pub fn key(w: &mut World, key: egui::Key) {
     match (c.sub, key) {
         (None, K::ArrowDown | K::ArrowUp) => {
             let n = top.len();
-            c.top = if key == K::ArrowDown { (c.top + 1) % n } else { (c.top + n - 1) % n };
+            c.top = if key == K::ArrowDown {
+                (c.top + 1) % n
+            } else {
+                (c.top + n - 1) % n
+            };
             w.sounds.push(Se::Cursor as u32);
         }
         (Some(k), K::ArrowDown | K::ArrowUp) => {
             let n = sub.map_or(1, |s| s.len());
-            c.sub = Some(if key == K::ArrowDown { (k + 1) % n } else { (k + n - 1) % n });
+            c.sub = Some(if key == K::ArrowDown {
+                (k + 1) % n
+            } else {
+                (k + n - 1) % n
+            });
             w.sounds.push(Se::Cursor as u32);
         }
         (None, K::ArrowRight | K::Enter) if sub.is_some() => {
@@ -178,9 +245,18 @@ pub fn bar_focus(w: &World) -> BarFocus {
     };
     match e.kind {
         Kind::Row(page, id) => BarFocus::Row(page, id),
-        Kind::Roe => BarFocus::Text("Records of Eminence", "View your Records of Eminence objectives and progress.".into()),
-        Kind::Gm => BarFocus::Text("Game Master", format!("GM commands for your level ({}).", w.gm.level)),
-        Kind::Sub(s) => BarFocus::Text(e.label, s.iter().map(|r| label(w, r)).collect::<Vec<_>>().join(", ") + "."),
+        Kind::Roe => BarFocus::Text(
+            "Records of Eminence",
+            "View your Records of Eminence objectives and progress.".into(),
+        ),
+        Kind::Gm => BarFocus::Text(
+            "Game Master",
+            format!("GM commands for your level ({}).", w.gm.level),
+        ),
+        Kind::Sub(s) => BarFocus::Text(
+            e.label,
+            s.iter().map(|r| label(w, r)).collect::<Vec<_>>().join(", ") + ".",
+        ),
     }
 }
 
@@ -206,11 +282,29 @@ fn pick(w: &mut World, e: &Entry) {
 }
 
 /// One list of rows; the row clicked.
-fn rows(ui: &mut egui::Ui, m: &super::Modern, w: &World, list: &[&Entry], cursor: Option<usize>, open: Option<usize>, left: bool) -> Option<usize> {
+fn rows(
+    ui: &mut egui::Ui,
+    m: &super::Modern,
+    w: &World,
+    list: &[&Entry],
+    cursor: Option<usize>,
+    open: Option<usize>,
+    left: bool,
+) -> Option<usize> {
     let mut clicked = None;
     for (k, e) in list.iter().enumerate() {
         let on = cursor == Some(k) || open == Some(k);
-        let resp = super::rows::menu_row(ui, m, e.icon, label(w, e), on, disabled(w, e), matches!(e.kind, Kind::Sub(_)), left, false);
+        let resp = super::rows::menu_row(
+            ui,
+            m,
+            e.icon,
+            label(w, e),
+            on,
+            disabled(w, e),
+            matches!(e.kind, Kind::Sub(_)),
+            left,
+            false,
+        );
         if resp.clicked() {
             clicked = Some(k);
         }
@@ -231,9 +325,26 @@ pub fn draw(p: &mut Panels, w: &mut World) {
     w.cmd.top = w.cmd.top.min(list_top.len() - 1);
     let c = w.cmd;
     let mut top_click = None;
-    let rect = p.panel("command", Some(Title { icon: None, text: "Menu", note: None }), 250.0, |ui| {
-        top_click = rows(ui, m, w, &list_top, c.sub.is_none().then_some(c.top), c.sub.map(|_| c.top), c.left);
-    });
+    let rect = p.panel(
+        "command",
+        Some(Title {
+            icon: None,
+            text: "Menu",
+            note: None,
+        }),
+        250.0,
+        |ui| {
+            top_click = rows(
+                ui,
+                m,
+                w,
+                &list_top,
+                c.sub.is_none().then_some(c.top),
+                c.sub.map(|_| c.top),
+                c.left,
+            );
+        },
+    );
     let mut c = w.cmd;
     // A click takes a row (a category opens beside the menu); hovering only lights it.
     if let Some(k) = top_click {
@@ -254,13 +365,37 @@ pub fn draw(p: &mut Panels, w: &mut World) {
     };
     c.left = r.max.x + SUB_GAP + SUB_WIDTH > p.ctx.content_rect().max.x;
     w.cmd = c;
-    let Kind::Sub(list) = list_top[c.top].kind else { return };
+    let Kind::Sub(list) = list_top[c.top].kind else {
+        return;
+    };
     let Some(sub) = c.sub else { return };
-    let x = if c.left { r.min.x - SUB_GAP - SUB_WIDTH } else { r.max.x + SUB_GAP };
+    let x = if c.left {
+        r.min.x - SUB_GAP - SUB_WIDTH
+    } else {
+        r.max.x + SUB_GAP
+    };
     let mut sub_click = None;
-    p.panel_at("command sub", Some(Title { icon: Some(list_top[c.top].icon), text: list_top[c.top].label, note: None }), SUB_WIDTH, egui::pos2(x, r.min.y), |ui| {
-        sub_click = rows(ui, m, w, &list.iter().collect::<Vec<_>>(), Some(sub), None, false);
-    });
+    p.panel_at(
+        "command sub",
+        Some(Title {
+            icon: Some(list_top[c.top].icon),
+            text: list_top[c.top].label,
+            note: None,
+        }),
+        SUB_WIDTH,
+        egui::pos2(x, r.min.y),
+        |ui| {
+            sub_click = rows(
+                ui,
+                m,
+                w,
+                &list.iter().collect::<Vec<_>>(),
+                Some(sub),
+                None,
+                false,
+            );
+        },
+    );
     if let Some(k) = sub_click
         && let Some(e) = list.get(k)
     {

@@ -123,38 +123,70 @@ pub struct SceneScale {
 impl SceneScale {
     pub fn new(gpu: &Gpu, format: wgpu::TextureFormat) -> Self {
         let device = &gpu.device;
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("scene scale"), source: wgpu::ShaderSource::Wgsl(SHADER.into()) });
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("scene scale"),
+            source: wgpu::ShaderSource::Wgsl(SHADER.into()),
+        });
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("scene scale"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
                     visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry { binding: 2, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
             ],
         });
-        let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("scene scale"), bind_group_layouts: &[Some(&layout)], immediate_size: 0 });
+        let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("scene scale"),
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
+        });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("scene scale"),
             layout: Some(&pl),
-            vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs"), compilation_options: Default::default(), buffers: &[] },
-            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            primitive: wgpu::PrimitiveState {
+                cull_mode: None,
+                ..Default::default()
+            },
             depth_stencil: None,
             multisample: Default::default(),
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: Some("fs"),
                 compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::ALL })],
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
             }),
             multiview_mask: None,
             cache: None,
@@ -166,22 +198,46 @@ impl SceneScale {
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             ..Default::default()
         });
-        let uniform = device.create_buffer(&wgpu::BufferDescriptor { label: Some("scene scale"), size: 64, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
-        Self { pipeline, layout, sampler, uniform, format, target: None, smaa: None }
+        let uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("scene scale"),
+            size: 64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        Self {
+            pipeline,
+            layout,
+            sampler,
+            uniform,
+            format,
+            target: None,
+            smaa: None,
+        }
     }
 
     /// The offscreen colour and depth views at `size`, made on first use or a size change, and the colour texture.
-    pub fn target(&mut self, gpu: &Gpu, size: [u32; 2]) -> (wgpu::TextureView, wgpu::TextureView, wgpu::Texture) {
+    pub fn target(
+        &mut self,
+        gpu: &Gpu,
+        size: [u32; 2],
+    ) -> (wgpu::TextureView, wgpu::TextureView, wgpu::Texture) {
         let size = [size[0].max(1), size[1].max(1)];
         if self.target.as_ref().is_none_or(|t| t.size != size) {
             let tex = gpu.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("background"),
-                size: wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 },
+                size: wgpu::Extent3d {
+                    width: size[0],
+                    height: size[1],
+                    depth_or_array_layers: 1,
+                },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: self.format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_SRC
+                    | wgpu::TextureUsages::COPY_DST,
                 // The world draws through a plain view (gamma space, blended as D3D8); the blit reads the sRGB one.
                 view_formats: &[self.format.remove_srgb_suffix()],
             });
@@ -191,12 +247,27 @@ impl SceneScale {
                 label: Some("scene scale"),
                 layout: &self.layout,
                 entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: self.uniform.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&view) },
-                    wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.uniform.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
                 ],
             });
-            self.target = Some(Target { size, tex, view, depth, group });
+            self.target = Some(Target {
+                size,
+                tex,
+                view,
+                depth,
+                group,
+            });
         }
         let t = self.target.as_ref().unwrap();
         (t.view.clone(), t.depth.clone(), t.tex.clone())
@@ -205,7 +276,10 @@ impl SceneScale {
     /// The scene texture through a plain (not sRGB) view: written and blended in gamma space.
     pub fn raw_view(&self) -> Option<wgpu::TextureView> {
         let t = self.target.as_ref()?;
-        Some(t.tex.create_view(&wgpu::TextureViewDescriptor { format: Some(self.format.remove_srgb_suffix()), ..Default::default() }))
+        Some(t.tex.create_view(&wgpu::TextureViewDescriptor {
+            format: Some(self.format.remove_srgb_suffix()),
+            ..Default::default()
+        }))
     }
 
     /// Scales the offscreen scene onto `dst` (window size) with a gamma per channel, replacing what is there. `lcd`:
@@ -213,32 +287,78 @@ impl SceneScale {
     /// anti-aliasing filter (not retail; skipped in 3D LCD Mode and when downscaling). The SMAA passes are made on
     /// first use; turning it off leaves them idle. `grading`: the colour grading preset (`grading`, 0 off).
     #[allow(clippy::too_many_arguments)]
-    pub fn blit(&mut self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, dst: &wgpu::TextureView, dst_size: [u32; 2], gamma: [f32; 3], lcd: Option<(f32, bool)>, smaa: bool, grading: u32) {
+    pub fn blit(
+        &mut self,
+        gpu: &Gpu,
+        encoder: &mut wgpu::CommandEncoder,
+        dst: &wgpu::TextureView,
+        dst_size: [u32; 2],
+        gamma: [f32; 3],
+        lcd: Option<(f32, bool)>,
+        smaa: bool,
+        grading: u32,
+    ) {
         let Some(t) = &self.target else { return };
         let dst_size = [dst_size[0].max(1), dst_size[1].max(1)];
         let smaa = smaa && lcd.is_none() && t.size[0] <= dst_size[0] && t.size[1] <= dst_size[1];
         let (on, strip, extra) = lcd.map_or((0.0, 0.0, 0.0), |(e, s)| (1.0, s as u32 as f32, e));
-        let mut u = [t.size[0] as f32, t.size[1] as f32, dst_size[0] as f32, dst_size[1] as f32, gamma[0], gamma[1], gamma[2], 1.0, on, strip, extra, 0.0, 0.0, 0.0, 0.0, 0.0];
+        let mut u = [
+            t.size[0] as f32,
+            t.size[1] as f32,
+            dst_size[0] as f32,
+            dst_size[1] as f32,
+            gamma[0],
+            gamma[1],
+            gamma[2],
+            1.0,
+            on,
+            strip,
+            extra,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+        ];
         u[12..16].copy_from_slice(&grade(grading));
         gpu.queue.put(&self.uniform, 0, bytemuck::cast_slice(&u));
         let smaa_group = smaa.then(|| {
             let (tex, size) = (t.tex.clone(), t.size);
-            let s = self.smaa.get_or_insert_with(|| super::smaa::Smaa::new(gpu, self.format));
+            let s = self
+                .smaa
+                .get_or_insert_with(|| super::smaa::Smaa::new(gpu, self.format));
             let out = s.run(gpu, encoder, &tex, size).clone();
             gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("scene scale smaa"),
                 layout: &self.layout,
                 entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: self.uniform.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&out) },
-                    wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.uniform.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&out),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
                 ],
             })
         });
         let Some(t) = &self.target else { return };
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("scene scale"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: dst, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store } })],
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: dst,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
@@ -256,18 +376,41 @@ mod tests {
 
     fn read(gpu: &Gpu, tex: &wgpu::Texture, w: u32, h: u32) -> Vec<u8> {
         let row = (w * 4).div_ceil(256) * 256;
-        let buf = gpu.device.create_buffer(&wgpu::BufferDescriptor { label: None, size: (row * h) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
+        let buf = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: (row * h) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
         let mut enc = gpu.device.create_command_encoder(&Default::default());
         enc.copy_texture_to_buffer(
             tex.as_image_copy(),
-            wgpu::TexelCopyBufferInfo { buffer: &buf, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(h) } },
-            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buf,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(row),
+                    rows_per_image: Some(h),
+                },
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
         );
         gpu.queue.submit([enc.finish()]);
         buf.slice(..).map_async(wgpu::MapMode::Read, |_| {});
-        gpu.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None }).unwrap();
+        gpu.device
+            .poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: None,
+            })
+            .unwrap();
         let d = buf.slice(..).get_mapped_range().unwrap();
-        (0..h).flat_map(|y| d[(y * row) as usize..(y * row + w * 4) as usize].to_vec()).collect()
+        (0..h)
+            .flat_map(|y| d[(y * row) as usize..(y * row + w * 4) as usize].to_vec())
+            .collect()
     }
 
     /// A flat colour survives both directions; a 2x downscale of a checker averages to grey.
@@ -282,7 +425,20 @@ mod tests {
             {
                 let _clear = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: None,
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &view, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.6, g: 0.4, b: 0.2, a: 1.0 }), store: wgpu::StoreOp::Store } })],
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color {
+                                r: 0.6,
+                                g: 0.4,
+                                b: 0.2,
+                                a: 1.0,
+                            }),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
                     depth_stencil_attachment: None,
                     timestamp_writes: None,
                     occlusion_query_set: None,
@@ -291,7 +447,11 @@ mod tests {
             }
             let out = gpu.device.create_texture(&wgpu::TextureDescriptor {
                 label: None,
-                size: wgpu::Extent3d { width: dst[0], height: dst[1], depth_or_array_layers: 1 },
+                size: wgpu::Extent3d {
+                    width: dst[0],
+                    height: dst[1],
+                    depth_or_array_layers: 1,
+                },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
@@ -299,22 +459,61 @@ mod tests {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
                 view_formats: &[],
             });
-            s.blit(&gpu, &mut enc, &out.create_view(&Default::default()), dst, [1.0; 3], None, false, 0);
+            s.blit(
+                &gpu,
+                &mut enc,
+                &out.create_view(&Default::default()),
+                dst,
+                [1.0; 3],
+                None,
+                false,
+                0,
+            );
             gpu.queue.submit([enc.finish()]);
             let px = read(&gpu, &out, dst[0], dst[1]);
             for p in px.chunks_exact(4) {
-                assert!((p[0] as i32 - 153).abs() <= 2 && (p[1] as i32 - 102).abs() <= 2 && (p[2] as i32 - 51).abs() <= 2, "{p:?}");
+                assert!(
+                    (p[0] as i32 - 153).abs() <= 2
+                        && (p[1] as i32 - 102).abs() <= 2
+                        && (p[2] as i32 - 51).abs() <= 2,
+                    "{p:?}"
+                );
             }
         }
         // Checker 8x8 -> 4x4: each output pixel covers two of each.
         let (view, _, _) = s.target(&gpu, [8, 8]);
-        let tex_rgba: Vec<u8> = (0..64).flat_map(|i| if (i % 8 + i / 8) % 2 == 0 { [255u8, 255, 255, 255] } else { [0, 0, 0, 255] }).collect();
+        let tex_rgba: Vec<u8> = (0..64)
+            .flat_map(|i| {
+                if (i % 8 + i / 8) % 2 == 0 {
+                    [255u8, 255, 255, 255]
+                } else {
+                    [0, 0, 0, 255]
+                }
+            })
+            .collect();
         let _ = view;
         let tex = &s.target.as_ref().unwrap().tex;
-        gpu.queue.write_texture(tex.as_image_copy(), &tex_rgba, wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(32), rows_per_image: Some(8) }, wgpu::Extent3d { width: 8, height: 8, depth_or_array_layers: 1 });
+        gpu.queue.write_texture(
+            tex.as_image_copy(),
+            &tex_rgba,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(32),
+                rows_per_image: Some(8),
+            },
+            wgpu::Extent3d {
+                width: 8,
+                height: 8,
+                depth_or_array_layers: 1,
+            },
+        );
         let out = gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: None,
-            size: wgpu::Extent3d { width: 4, height: 4, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: 4,
+                height: 4,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -323,7 +522,16 @@ mod tests {
             view_formats: &[],
         });
         let mut enc = gpu.device.create_command_encoder(&Default::default());
-        s.blit(&gpu, &mut enc, &out.create_view(&Default::default()), [4, 4], [1.0; 3], None, false, 0);
+        s.blit(
+            &gpu,
+            &mut enc,
+            &out.create_view(&Default::default()),
+            [4, 4],
+            [1.0; 3],
+            None,
+            false,
+            0,
+        );
         gpu.queue.submit([enc.finish()]);
         for p in read(&gpu, &out, 4, 4).chunks_exact(4) {
             assert!((p[0] as i32 - 128).abs() <= 3, "{p:?}");
@@ -341,7 +549,11 @@ mod tests {
         let _ = s.target(&gpu, [n, n]);
         let out = gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: None,
-            size: wgpu::Extent3d { width: n, height: n, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: n,
+                height: n,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -351,22 +563,65 @@ mod tests {
         });
         let mut run = |s: &mut SceneScale, px: &[u8], smaa: bool| {
             let tex = s.target.as_ref().unwrap().tex.clone();
-            gpu.queue.write_texture(tex.as_image_copy(), px, wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(n * 4), rows_per_image: Some(n) }, wgpu::Extent3d { width: n, height: n, depth_or_array_layers: 1 });
+            gpu.queue.write_texture(
+                tex.as_image_copy(),
+                px,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(n * 4),
+                    rows_per_image: Some(n),
+                },
+                wgpu::Extent3d {
+                    width: n,
+                    height: n,
+                    depth_or_array_layers: 1,
+                },
+            );
             let mut enc = gpu.device.create_command_encoder(&Default::default());
-            s.blit(&gpu, &mut enc, &out.create_view(&Default::default()), [n, n], [1.0; 3], None, smaa, 0);
+            s.blit(
+                &gpu,
+                &mut enc,
+                &out.create_view(&Default::default()),
+                [n, n],
+                [1.0; 3],
+                None,
+                smaa,
+                0,
+            );
             gpu.queue.submit([enc.finish()]);
             read(&gpu, &out, n, n)
         };
         let flat: Vec<u8> = (0..n * n).flat_map(|_| [153u8, 102, 51, 255]).collect();
         for p in run(&mut s, &flat, true).chunks_exact(4) {
-            assert!((p[0] as i32 - 153).abs() <= 2 && (p[1] as i32 - 102).abs() <= 2 && (p[2] as i32 - 51).abs() <= 2, "{p:?}");
+            assert!(
+                (p[0] as i32 - 153).abs() <= 2
+                    && (p[1] as i32 - 102).abs() <= 2
+                    && (p[2] as i32 - 51).abs() <= 2,
+                "{p:?}"
+            );
         }
         // A staircase: white below the line y = x / 4, black above.
-        let edge: Vec<u8> = (0..n * n).flat_map(|i| if i / n > (i % n) / 4 { [255u8, 255, 255, 255] } else { [0, 0, 0, 255] }).collect();
-        let grey = |px: &[u8]| px.chunks_exact(4).filter(|p| p[0] > 20 && p[0] < 235).count();
+        let edge: Vec<u8> = (0..n * n)
+            .flat_map(|i| {
+                if i / n > (i % n) / 4 {
+                    [255u8, 255, 255, 255]
+                } else {
+                    [0, 0, 0, 255]
+                }
+            })
+            .collect();
+        let grey = |px: &[u8]| {
+            px.chunks_exact(4)
+                .filter(|p| p[0] > 20 && p[0] < 235)
+                .count()
+        };
         let off = run(&mut s, &edge, false);
         let on = run(&mut s, &edge, true);
-        assert!(grey(&off) == 0, "no filter: {} in-between pixels", grey(&off));
+        assert!(
+            grey(&off) == 0,
+            "no filter: {} in-between pixels",
+            grey(&off)
+        );
         assert!(grey(&on) >= 12, "SMAA: {} in-between pixels", grey(&on));
         // Far from the edge nothing changes.
         for (i, (a, b)) in off.chunks_exact(4).zip(on.chunks_exact(4)).enumerate() {
@@ -386,7 +641,11 @@ mod tests {
         let (view, _, _) = s.target(&gpu, [4, 4]);
         let out = gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: None,
-            size: wgpu::Extent3d { width: 4, height: 4, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: 4,
+                height: 4,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -399,20 +658,45 @@ mod tests {
             {
                 let _clear = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: None,
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &view, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.6, g: 0.4, b: 0.2, a: 1.0 }), store: wgpu::StoreOp::Store } })],
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color {
+                                r: 0.6,
+                                g: 0.4,
+                                b: 0.2,
+                                a: 1.0,
+                            }),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
                     depth_stencil_attachment: None,
                     timestamp_writes: None,
                     occlusion_query_set: None,
                     multiview_mask: None,
                 });
             }
-            s.blit(&gpu, &mut enc, &out.create_view(&Default::default()), [4, 4], [1.0; 3], None, false, preset);
+            s.blit(
+                &gpu,
+                &mut enc,
+                &out.create_view(&Default::default()),
+                [4, 4],
+                [1.0; 3],
+                None,
+                false,
+                preset,
+            );
             gpu.queue.submit([enc.finish()]);
             let px = read(&gpu, &out, 4, 4);
             [px[0] as i32, px[1] as i32, px[2] as i32]
         };
         let off = run(&mut s, 0);
-        assert!((off[0] - 153).abs() <= 2 && (off[1] - 102).abs() <= 2 && (off[2] - 51).abs() <= 2, "{off:?}");
+        assert!(
+            (off[0] - 153).abs() <= 2 && (off[1] - 102).abs() <= 2 && (off[2] - 51).abs() <= 2,
+            "{off:?}"
+        );
         let vivid = run(&mut s, 1);
         assert!(vivid[0] > off[0] && vivid[2] < off[2], "{vivid:?}");
         let warm = run(&mut s, 2);
@@ -422,14 +706,31 @@ mod tests {
             {
                 let _clear = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: None,
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &view, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store } })],
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
                     depth_stencil_attachment: None,
                     timestamp_writes: None,
                     occlusion_query_set: None,
                     multiview_mask: None,
                 });
             }
-            s.blit(&gpu, &mut enc, &out.create_view(&Default::default()), [4, 4], [1.0; 3], None, false, preset);
+            s.blit(
+                &gpu,
+                &mut enc,
+                &out.create_view(&Default::default()),
+                [4, 4],
+                [1.0; 3],
+                None,
+                false,
+                preset,
+            );
             gpu.queue.submit([enc.finish()]);
             let px = read(&gpu, &out, 4, 4);
             assert_eq!(&px[..3], &[0, 0, 0], "preset {preset}");

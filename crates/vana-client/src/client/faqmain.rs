@@ -67,8 +67,14 @@ fn tokens(line: &[u8]) -> Vec<Vec<u8>> {
         match line[i] {
             b' ' | b'\t' | b'\r' => i += 1,
             b'"' => {
-                let k = out.iter().filter(|t: &&Vec<u8>| t.first() == Some(&0)).count();
-                let input = slot && out.get(2).is_some_and(|t: &Vec<u8>| t[1..].starts_with(b"Input:"));
+                let k = out
+                    .iter()
+                    .filter(|t: &&Vec<u8>| t.first() == Some(&0))
+                    .count();
+                let input = slot
+                    && out
+                        .get(2)
+                        .is_some_and(|t: &Vec<u8>| t[1..].starts_with(b"Input:"));
                 let sjis = k == 0 || (input && k == 2);
                 let mut s = vec![0u8];
                 i += 1;
@@ -111,12 +117,33 @@ pub fn parse(b: &[u8]) -> Script {
     for line in b.split(|&c| c == b'\n') {
         let t = tokens(line);
         // Quoted strings carry a 0 marker byte in front.
-        let word = |k: usize| t.get(k).map_or(&b""[..], |v| if v.first() == Some(&0) { &v[1..] } else { &v[..] });
+        let word = |k: usize| {
+            t.get(k).map_or(&b""[..], |v| {
+                if v.first() == Some(&0) {
+                    &v[1..]
+                } else {
+                    &v[..]
+                }
+            })
+        };
         let text = |k: usize| crate::dat::font::decode_sjis(word(k));
-        let num = |k: usize| std::str::from_utf8(word(k)).ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
+        let num = |k: usize| {
+            std::str::from_utf8(word(k))
+                .ok()
+                .and_then(|v| v.parse::<u32>().ok())
+                .unwrap_or(0)
+        };
         match (word(0), word(1)) {
             (b"DEF", b"DATASET") => s.version = num(2),
-            (b"DEF", b"SELECTNODE" | b"QUESTIONNODE") => cur = Some((num(2) as u16, Node { question: word(1) == b"QUESTIONNODE", ..Default::default() })),
+            (b"DEF", b"SELECTNODE" | b"QUESTIONNODE") => {
+                cur = Some((
+                    num(2) as u16,
+                    Node {
+                        question: word(1) == b"QUESTIONNODE",
+                        ..Default::default()
+                    },
+                ))
+            }
             (b"END", b"NODE") => {
                 if let Some((id, n)) = cur.take() {
                     s.nodes.insert(id, n);
@@ -128,9 +155,22 @@ pub fn parse(b: &[u8]) -> Script {
                 match k {
                     b"HEADER" => n.header = text(2),
                     b"EVAL" => n.evals.push(text(1)),
-                    b"SLOT" if word(2).starts_with(b"Input:") => n.slots.push(Slot { id: num(1) as u16, text: text(5), var: Some(text(3)) }),
-                    b"SLOT" => n.slots.push(Slot { id: num(1) as u16, text: text(3), var: None }),
-                    b"DISP" => n.disp.push(Disp { slot: num(1) as u16, var: text(2), eq: word(3) == b"S:eq", value: text(4) }),
+                    b"SLOT" if word(2).starts_with(b"Input:") => n.slots.push(Slot {
+                        id: num(1) as u16,
+                        text: text(5),
+                        var: Some(text(3)),
+                    }),
+                    b"SLOT" => n.slots.push(Slot {
+                        id: num(1) as u16,
+                        text: text(3),
+                        var: None,
+                    }),
+                    b"DISP" => n.disp.push(Disp {
+                        slot: num(1) as u16,
+                        var: text(2),
+                        eq: word(3) == b"S:eq",
+                        value: text(4),
+                    }),
                     _ => {}
                 }
             }
@@ -177,8 +217,18 @@ impl FaqMain {
 
     /// FUN_1010f350(node, 2, 1, 0): the slots whose DISP conditions hold, in file order.
     fn visible(&self) -> Vec<&Slot> {
-        let Some(n) = self.node() else { return Vec::new() };
-        n.slots.iter().filter(|s| n.disp.iter().filter(|d| d.slot == s.id).all(|d| (value(&d.var) == d.value) == d.eq)).collect()
+        let Some(n) = self.node() else {
+            return Vec::new();
+        };
+        n.slots
+            .iter()
+            .filter(|s| {
+                n.disp
+                    .iter()
+                    .filter(|d| d.slot == s.id)
+                    .all(|d| (value(&d.var) == d.value) == d.eq)
+            })
+            .collect()
     }
 
     /// FUN_1010ea10's states: a select node with slots draws as the select page *(inf: 3 -> state 4)*, any other select
@@ -244,14 +294,24 @@ fn assemble(r: &mut Reply, id: u32, seq: u16, last: bool, text: &[u8]) {
 pub fn on_message(w: &mut World, id: u32, seq: u16, last: bool, text: &[u8]) {
     assemble(&mut w.gm_reply, id, seq, last, text);
     if last {
-        log::info!("help desk: a GM reply is waiting ({} bytes)", w.gm_reply.as_ref().map_or(0, |r| r.2.len()));
+        log::info!(
+            "help desk: a GM reply is waiting ({} bytes)",
+            w.gm_reply.as_ref().map_or(0, |r| r.2.len())
+        );
     }
 }
 
 /// FUN_10115020's gmNotice.fdt: `DEF SELECTNODE 0`, `LABEL "NOTICE"`, `HEADER "<the text>"`: a leaf page.
 fn reply_script(text: &[u8]) -> Script {
-    let node = Node { header: crate::dat::font::decode_sjis(text), ..Default::default() };
-    Script { version: 0, nodes: HashMap::from([(0, node)]), links: Vec::new() }
+    let node = Node {
+        header: crate::dat::font::decode_sjis(text),
+        ..Default::default()
+    };
+    Script {
+        version: 0,
+        nodes: HashMap::from([(0, node)]),
+        links: Vec::new(),
+    }
 }
 
 /// faqsub's Help Desk row (FUN_10217a40): c2s 0x0D4 {u16 counter (never 0), u16 0}, the script read from the root; the
@@ -262,17 +322,46 @@ pub fn open(w: &mut World) -> Option<FaqMain> {
         w.faq_counter = w.faq_counter.wrapping_add(1).max(1);
         let mut b = vec![0u8; 4];
         b[..2].copy_from_slice(&w.faq_counter.to_le_bytes());
-        let _ = w.net.commands.send(super::net::NetCommand::Packet { id: 0x0D4, body: b });
-        let mut f = FaqMain { script, path: vec![0], cursor: 0, scroll: 0.0, follow: true, field: None, inputs: HashMap::new(), remembered: None };
+        let _ = w
+            .net
+            .commands
+            .send(super::net::NetCommand::Packet { id: 0x0D4, body: b });
+        let mut f = FaqMain {
+            script,
+            path: vec![0],
+            cursor: 0,
+            scroll: 0.0,
+            follow: true,
+            field: None,
+            inputs: HashMap::new(),
+            remembered: None,
+        };
         f.enter_page();
         return Some(f);
     }
-    let bytes = w.index.clone()?.read(FILE).map_err(|e| log::warn!("help desk: DAT {FILE}: {e:#}")).ok()?;
+    let bytes = w
+        .index
+        .clone()?
+        .read(FILE)
+        .map_err(|e| log::warn!("help desk: DAT {FILE}: {e:#}"))
+        .ok()?;
     w.faq_counter = w.faq_counter.wrapping_add(1).max(1);
     let mut b = vec![0u8; 4];
     b[..2].copy_from_slice(&w.faq_counter.to_le_bytes());
-    let _ = w.net.commands.send(super::net::NetCommand::Packet { id: 0x0D4, body: b });
-    let mut f = FaqMain { script: parse(&bytes), path: vec![0], cursor: 0, scroll: 0.0, follow: true, field: None, inputs: HashMap::new(), remembered: None };
+    let _ = w
+        .net
+        .commands
+        .send(super::net::NetCommand::Packet { id: 0x0D4, body: b });
+    let mut f = FaqMain {
+        script: parse(&bytes),
+        path: vec![0],
+        cursor: 0,
+        scroll: 0.0,
+        follow: true,
+        field: None,
+        inputs: HashMap::new(),
+        remembered: None,
+    };
     f.enter_page();
     Some(f)
 }
@@ -304,18 +393,34 @@ pub fn text_events(w: &mut World, events: &[egui::Event]) {
                     }
                 }
             }
-            egui::Event::Key { key: K::Backspace, pressed: true, .. } => _ = buf.pop(),
-            egui::Event::Key { key: K::Enter, pressed: true, .. } => {
+            egui::Event::Key {
+                key: K::Backspace,
+                pressed: true,
+                ..
+            } => _ = buf.pop(),
+            egui::Event::Key {
+                key: K::Enter,
+                pressed: true,
+                ..
+            } => {
                 let text = String::from_utf8_lossy(&std::mem::take(buf)).into_owned();
                 f.field = None;
                 let row = f.cursor;
-                if let Some(var) = f.visible().get(row as usize - 1).and_then(|s| s.var.clone()) {
+                if let Some(var) = f
+                    .visible()
+                    .get(row as usize - 1)
+                    .and_then(|s| s.var.clone())
+                {
                     f.inputs.insert(var, text.clone());
                 }
                 f.remembered = Some((row, text));
                 w.sounds.push(Ui::Select as u32);
             }
-            egui::Event::Key { key: K::Escape, pressed: true, .. } => {
+            egui::Event::Key {
+                key: K::Escape,
+                pressed: true,
+                ..
+            } => {
                 f.field = None;
                 w.sounds.push(Ui::Cancel as u32);
             }
@@ -390,8 +495,15 @@ fn enter(w: &mut World) {
         }
         (Page::Select, c) => {
             let from = *f.path.last().unwrap_or(&0);
-            let Some(slot) = f.visible().get(c as usize - 1).map(|s| s.id) else { return };
-            let to = f.script.links.iter().find(|l| l.0 == slot && l.1 == from).map(|l| l.2);
+            let Some(slot) = f.visible().get(c as usize - 1).map(|s| s.id) else {
+                return;
+            };
+            let to = f
+                .script
+                .links
+                .iter()
+                .find(|l| l.0 == slot && l.1 == from)
+                .map(|l| l.2);
             if let Some(to) = to.filter(|t| f.script.nodes.contains_key(t)) {
                 f.path.push(to);
                 f.enter_page();
@@ -401,14 +513,21 @@ fn enter(w: &mut World) {
         // The GM reply page's "Delete this message." (c2s 0x0D5, then type 1 and close).
         (_, 0) => {
             w.sounds.push(Ui::Select as u32);
-            let _ = w.net.commands.send(super::net::NetCommand::Packet { id: 0x0D5, body: vec![0; 8] });
+            let _ = w.net.commands.send(super::net::NetCommand::Packet {
+                id: 0x0D5,
+                body: vec![0; 8],
+            });
             w.gm_reply = None;
             report(w, 1);
             close(w);
         }
         // A field row: the field opens on the text last committed for this row (else empty).
         (Page::Question, c) if c > 0 && (c as usize) <= f.visible().len() => {
-            let start = f.remembered.as_ref().filter(|r| r.0 == c).map_or(String::new(), |r| r.1.clone());
+            let start = f
+                .remembered
+                .as_ref()
+                .filter(|r| r.0 == c)
+                .map_or(String::new(), |r| r.1.clone());
             f.field = Some(start.into_bytes());
             w.sounds.push(Ui::Select as u32);
         }
@@ -431,11 +550,25 @@ fn enter(w: &mut World) {
 /// not checked here.
 fn execute(w: &mut World) {
     let Some(f) = main_mut(w) else { return };
-    for (k, v) in [("GENERIC.CLILANG", "1"), ("GENERIC.AREACODE", "0"), ("GENERIC.SELLANG", "0")] {
+    for (k, v) in [
+        ("GENERIC.CLILANG", "1"),
+        ("GENERIC.AREACODE", "0"),
+        ("GENERIC.SELLANG", "0"),
+    ] {
         f.inputs.insert(k.into(), v.into());
     }
-    let has = |f: &FaqMain, k: &str| f.path.iter().filter_map(|n| f.script.nodes.get(n)).any(|n| n.evals.iter().any(|e| e == k));
-    let (call, notice, logout, rescue) = (has(f, "GMREPORT.GMCALL"), has(f, "GMREPORT.NOTICE"), has(f, "EXEC.LOGOUT"), has(f, "EXEC.RESCUE"));
+    let has = |f: &FaqMain, k: &str| {
+        f.path
+            .iter()
+            .filter_map(|n| f.script.nodes.get(n))
+            .any(|n| n.evals.iter().any(|e| e == k))
+    };
+    let (call, notice, logout, rescue) = (
+        has(f, "GMREPORT.GMCALL"),
+        has(f, "GMREPORT.NOTICE"),
+        has(f, "EXEC.LOGOUT"),
+        has(f, "EXEC.RESCUE"),
+    );
     if call {
         report(w, 2);
         super::post::system_line(w, 0x14, [0; 5], String::new());
@@ -446,7 +579,10 @@ fn execute(w: &mut World) {
     if logout {
         super::textcmd::run(w, "/logout", super::textcmd::Mode::Internal);
     } else if rescue {
-        let _ = w.net.commands.send(super::net::NetCommand::Packet { id: 0x0F0, body: vec![0; 4] });
+        let _ = w.net.commands.send(super::net::NetCommand::Packet {
+            id: 0x0F0,
+            body: vec![0; 4],
+        });
     }
 }
 
@@ -459,7 +595,10 @@ fn report(w: &mut World, kind: u8) {
     let mut blocks: Vec<Vec<u8>> = Vec::new();
     let mut pos = vec![0u8; 0x20];
     pos[1] = 0x20;
-    for (k, v) in [w.pos.x, w.pos.y, w.pos.z, w.pos.x, w.pos.y, w.pos.z].iter().enumerate() {
+    for (k, v) in [w.pos.x, w.pos.y, w.pos.z, w.pos.x, w.pos.y, w.pos.z]
+        .iter()
+        .enumerate()
+    {
         pos[8 + 4 * k..12 + 4 * k].copy_from_slice(&v.to_le_bytes());
     }
     blocks.push(pos);
@@ -471,7 +610,12 @@ fn report(w: &mut World, kind: u8) {
     ver[1] = ver.len() as u8;
     blocks.push(ver);
     let mut params: Vec<(String, String)> = Vec::new();
-    for e in f.path.iter().filter_map(|n| f.script.nodes.get(n)).flat_map(|n| n.evals.iter()) {
+    for e in f
+        .path
+        .iter()
+        .filter_map(|n| f.script.nodes.get(n))
+        .flat_map(|n| n.evals.iter())
+    {
         if !params.iter().any(|p| &p.0 == e) {
             params.push((e.clone(), value(e).to_string()));
         }
@@ -505,12 +649,23 @@ fn report(w: &mut World, kind: u8) {
     }
     let last = packets.len() - 1;
     for (seq, p) in packets.into_iter().enumerate() {
-        let mut body = vec![kind & 0xf, id, seq as u8 & 0x7f | if seq == last { 0x80 } else { 0 }, p.len() as u8];
+        let mut body = vec![
+            kind & 0xf,
+            id,
+            seq as u8 & 0x7f | if seq == last { 0x80 } else { 0 },
+            p.len() as u8,
+        ];
         for b in p {
             body.extend_from_slice(&b);
         }
-        log::info!("help desk: c2s 0x0D3 type {kind} packet {seq}, {} bytes", body.len() + 4);
-        let _ = w.net.commands.send(super::net::NetCommand::Packet { id: 0x0D3, body });
+        log::info!(
+            "help desk: c2s 0x0D3 type {kind} packet {seq}, {} bytes",
+            body.len() + 4
+        );
+        let _ = w
+            .net
+            .commands
+            .send(super::net::NetCommand::Packet { id: 0x0D3, body });
     }
 }
 
@@ -520,34 +675,77 @@ pub fn view(w: &World, gu: &GameUi) -> Option<super::helpdesk::PageView> {
     use super::helpdesk::{Line, PageView};
     let f = main(w)?;
     let page = f.page();
-    let g9 = |id: usize| w.battle.as_ref().and_then(|b| b.group9(id)).unwrap_or_default();
+    let g9 = |id: usize| {
+        w.battle
+            .as_ref()
+            .and_then(|b| b.group9(id))
+            .unwrap_or_default()
+    };
     let mut lines = Vec::new();
     let header = f.node().map_or(String::new(), |n| n.header.clone());
     if !header.is_empty() {
         lines.push(Line::Text(header, false));
     }
-    let slots: Vec<(String, Option<String>)> = f.visible().iter().map(|s| (s.text.clone(), s.var.clone())).collect();
+    let slots: Vec<(String, Option<String>)> = f
+        .visible()
+        .iter()
+        .map(|s| (s.text.clone(), s.var.clone()))
+        .collect();
     if page != Page::Leaf {
         for (k, (text, var)) in slots.iter().enumerate() {
-            let value = var.as_ref().filter(|_| page == Page::Question).map(|v| f.inputs.get(v).cloned().unwrap_or_default());
-            lines.push(Line::Row { id: k as i32 + 1, text: text.clone(), on: true, value });
+            let value = var
+                .as_ref()
+                .filter(|_| page == Page::Question)
+                .map(|v| f.inputs.get(v).cloned().unwrap_or_default());
+            lines.push(Line::Row {
+                id: k as i32 + 1,
+                text: text.clone(),
+                on: true,
+                value,
+            });
         }
     }
     if page == Page::Question {
-        lines.push(Line::Row { id: slots.len() as i32 + 1, text: g9(0x7d), on: true, value: None });
+        lines.push(Line::Row {
+            id: slots.len() as i32 + 1,
+            text: g9(0x7d),
+            on: true,
+            value: None,
+        });
     }
     if f.history() || page == Page::Leaf {
-        lines.push(Line::Row { id: 0, text: if f.history() { g9(0x79) } else { g9(0x7b) }, on: true, value: None });
+        lines.push(Line::Row {
+            id: 0,
+            text: if f.history() { g9(0x79) } else { g9(0x7b) },
+            on: true,
+            value: None,
+        });
     }
-    lines.push(Line::Row { id: -1, text: g9(0x7a), on: true, value: None });
-    let field = f.field.as_ref().map(|b| String::from_utf8_lossy(b).into_owned());
+    lines.push(Line::Row {
+        id: -1,
+        text: g9(0x7a),
+        on: true,
+        value: None,
+    });
+    let field = f
+        .field
+        .as_ref()
+        .map(|b| String::from_utf8_lossy(b).into_owned());
     let title = gu.title_msg(0x3c).unwrap_or_else(|| "Help Desk".into());
-    Some(PageView { title, lines, cursor: f.cursor as i32, focused: w.confirm.is_none() && w.search.is_none(), field })
+    Some(PageView {
+        title,
+        lines,
+        cursor: f.cursor as i32,
+        focused: w.confirm.is_none() && w.search.is_none(),
+        field,
+    })
 }
 
 /// The modern layer's mouse: the cursor to row `id` (not while typing); true when it moved.
 pub fn set_cursor(w: &mut World, id: i32) -> bool {
-    let Some(f) = main_mut(w).filter(|f| f.field.is_none()) else { return false };
+    let Some(f) = main_mut(w).filter(|f| f.field.is_none()) else {
+        return false;
+    };
     let moved = f.cursor as i32 != id;
     (f.cursor, f.follow) = (id as i16, true);
     moved
@@ -578,14 +776,37 @@ fn layout(gu: &GameUi, w: &World, f: &FaqMain, width: f32) -> (Vec<Entry>, f32) 
     };
     let inner = width - left - right;
     let row_w = inner - RIGHT - INDENT;
-    let g9 = |id: usize| w.battle.as_ref().and_then(|b| b.group9(id)).unwrap_or_default();
+    let g9 = |id: usize| {
+        w.battle
+            .as_ref()
+            .and_then(|b| b.group9(id))
+            .unwrap_or_default()
+    };
     let mut out = Vec::new();
     let header = f.node().map_or(String::new(), |n| n.header.clone());
-    let lines = if header.is_empty() { Vec::new() } else { gu.wrap(&header, inner) };
+    let lines = if header.is_empty() {
+        Vec::new()
+    } else {
+        gu.wrap(&header, inner)
+    };
     let mut y = top + 16.0 * lines.len() as f32;
-    out.push(Entry { row: None, x: left, y: top, lines, value: None, bullet: false, h: 0.0 });
+    out.push(Entry {
+        row: None,
+        x: left,
+        y: top,
+        lines,
+        value: None,
+        bullet: false,
+        h: 0.0,
+    });
     let rx = left + INDENT;
-    let push = |out: &mut Vec<Entry>, y: &mut f32, gap: f32, row: i16, text: String, value: Option<String>, bullet: bool| {
+    let push = |out: &mut Vec<Entry>,
+                y: &mut f32,
+                gap: f32,
+                row: i16,
+                text: String,
+                value: Option<String>,
+                bullet: bool| {
         *y += gap;
         let lines = gu.wrap(&text, row_w);
         let mut h = 16.0 * lines.len() as f32;
@@ -594,18 +815,49 @@ fn layout(gu: &GameUi, w: &World, f: &FaqMain, width: f32) -> (Vec<Entry>, f32) 
             h += 20.0;
             (vy, v)
         });
-        out.push(Entry { row: Some(row), x: rx, y: *y, lines, value, bullet, h });
+        out.push(Entry {
+            row: Some(row),
+            x: rx,
+            y: *y,
+            lines,
+            value,
+            bullet,
+            h,
+        });
         *y += h;
     };
-    let slots: Vec<(String, Option<String>)> = f.visible().iter().map(|s| (s.text.clone(), s.var.clone())).collect();
+    let slots: Vec<(String, Option<String>)> = f
+        .visible()
+        .iter()
+        .map(|s| (s.text.clone(), s.var.clone()))
+        .collect();
     if page != Page::Leaf {
         for (k, (text, var)) in slots.iter().enumerate() {
-            let value = var.as_ref().filter(|_| page == Page::Question).map(|v| f.inputs.get(v).cloned().unwrap_or_default());
-            push(&mut out, &mut y, GAP, k as i16 + 1, text.clone(), value, true);
+            let value = var
+                .as_ref()
+                .filter(|_| page == Page::Question)
+                .map(|v| f.inputs.get(v).cloned().unwrap_or_default());
+            push(
+                &mut out,
+                &mut y,
+                GAP,
+                k as i16 + 1,
+                text.clone(),
+                value,
+                true,
+            );
         }
     }
     if page == Page::Question {
-        push(&mut out, &mut y, GAP2, slots.len() as i16 + 1, g9(0x7d), None, false);
+        push(
+            &mut out,
+            &mut y,
+            GAP2,
+            slots.len() as i16 + 1,
+            g9(0x7d),
+            None,
+            false,
+        );
     }
     // Leaf pages start their row 0 at the header + 15 as well.
     if f.history() || page == Page::Leaf {
@@ -633,7 +885,9 @@ fn value_text(gu: &GameUi, v: &str, width: f32) -> String {
 /// FUN_10217ec0 on a cursor move, then the scroll kept inside the page (FUN_102180b0's clamp).
 pub fn keep_scroll(w: &mut World, gu: &GameUi, sw: f32, sh: f32) {
     let Some(f) = main(w) else { return };
-    let Some([_, _, fw, fh]) = gu.window_rect(WIN, sw, sh) else { return };
+    let Some([_, _, fw, fh]) = gu.window_rect(WIN, sw, sh) else {
+        return;
+    };
     let view = fh - 5.0;
     let (entries, total) = layout(gu, w, f, fw);
     let top = match f.page() {
@@ -663,7 +917,15 @@ pub fn keep_scroll(w: &mut World, gu: &GameUi, sw: f32, sh: f32) {
 /// bar at x1 - 8.
 pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Option<[f32; 4]> {
     let f = main(w)?;
-    let win = gu.lobby_window_off(WIN, sw, sh, (0.0, 0.0), None, false, &(1..=15).collect::<Vec<u16>>())?;
+    let win = gu.lobby_window_off(
+        WIN,
+        sw,
+        sh,
+        (0.0, 0.0),
+        None,
+        false,
+        &(1..=15).collect::<Vec<u16>>(),
+    )?;
     let [fx, fy, fw, fh] = win.frame;
     let view = fh - 5.0;
     let (entries, total) = layout(gu, w, f, fw);
@@ -679,10 +941,21 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Option<[f32; 4]> {
         let on = row == f.cursor && focused;
         let editing = on && f.field.is_some();
         if let Some((vy, v)) = &e.value {
-            let (vx, vy, vw) = (x + INDENT, fy + vy - f.scroll, fw - 16.0 - 2.0 * INDENT - RIGHT - 12.0);
+            let (vx, vy, vw) = (
+                x + INDENT,
+                fy + vy - f.scroll,
+                fw - 16.0 - 2.0 * INDENT - RIGHT - 12.0,
+            );
             if editing {
-                let t = String::from_utf8_lossy(f.field.as_deref().unwrap_or_default()).into_owned();
-                gu.text_fit(&format!("{t}{}", super::macroedit::caret(w)), vx, vy, vw, WHITE);
+                let t =
+                    String::from_utf8_lossy(f.field.as_deref().unwrap_or_default()).into_owned();
+                gu.text_fit(
+                    &format!("{t}{}", super::macroedit::caret(w)),
+                    vx,
+                    vy,
+                    vw,
+                    WHITE,
+                );
                 gu.cursor(vx, vy);
             } else {
                 gu.text(&value_text(gu, v, vw), vx, vy, 0, WHITE.to_le_bytes());
@@ -695,9 +968,24 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Option<[f32; 4]> {
         }
     }
     gu.clip(None);
-    gu.scroll_bar(fx + fw - 8.0, fy, fh, total as usize, view as usize, f.scroll as usize);
+    gu.scroll_bar(
+        fx + fw - 8.0,
+        fy,
+        fh,
+        total as usize,
+        view as usize,
+        f.scroll as usize,
+    );
     if focused && f.field.is_none() {
-        gu.bar_site(super::scrollbar::Owner::Faq, fx + fw - 8.0, fy, fh, total as usize, view as usize, f.scroll as usize);
+        gu.bar_site(
+            super::scrollbar::Owner::Faq,
+            fx + fw - 8.0,
+            fy,
+            fh,
+            total as usize,
+            view as usize,
+            f.scroll as usize,
+        );
     }
     Some(win.frame)
 }
@@ -732,19 +1020,37 @@ mod tests {
         assert_eq!(s.version, 2003022101);
         let root = &s.nodes[&0];
         assert_eq!(root.header, "Pick \"one\".\n");
-        assert_eq!((root.slots[0].text.as_str(), root.slots.len(), root.disp[0].eq), ("Stuck.", 2, true));
+        assert_eq!(
+            (
+                root.slots[0].text.as_str(),
+                root.slots.len(),
+                root.disp[0].eq
+            ),
+            ("Stuck.", 2, true)
+        );
         let q = &s.nodes[&3];
         assert!(q.question);
-        assert_eq!((q.slots[0].text.as_str(), q.slots[0].var.as_deref()), ("Describe it.", Some("GMCALL.INPUT")));
+        assert_eq!(
+            (q.slots[0].text.as_str(), q.slots[0].var.as_deref()),
+            ("Describe it.", Some("GMCALL.INPUT"))
+        );
         assert_eq!(s.links, vec![(1, 0, 3)]);
-        let mut f = FaqMain { script: s, path: vec![0], cursor: 0, scroll: 0.0, follow: false, field: None, inputs: HashMap::new(), remembered: None };
+        let mut f = FaqMain {
+            script: s,
+            path: vec![0],
+            cursor: 0,
+            scroll: 0.0,
+            follow: false,
+            field: None,
+            inputs: HashMap::new(),
+            remembered: None,
+        };
         assert_eq!(f.visible().len(), 1);
         assert_eq!((f.page(), f.rows()), (Page::Select, vec![1, -1]));
         f.path.push(3);
         assert_eq!((f.page(), f.rows()), (Page::Question, vec![1, 2, 0, -1]));
     }
 }
-
 
 #[cfg(test)]
 mod reply_tests {
@@ -758,10 +1064,19 @@ mod reply_tests {
         assemble(&mut r, 7, 1, false, b"again ");
         assemble(&mut r, 7, 3, false, b"gap ");
         assemble(&mut r, 7, 2, true, b"there.");
-        assert_eq!(r.as_ref().map(|r| (r.2.as_slice(), r.3)), Some((&b"Hello there."[..], true)));
+        assert_eq!(
+            r.as_ref().map(|r| (r.2.as_slice(), r.3)),
+            Some((&b"Hello there."[..], true))
+        );
         assemble(&mut r, 8, 1, false, b"New");
-        assert_eq!(r.as_ref().map(|r| (r.0, r.2.as_slice(), r.3)), Some((8, &b"New"[..], false)));
+        assert_eq!(
+            r.as_ref().map(|r| (r.0, r.2.as_slice(), r.3)),
+            Some((8, &b"New"[..], false))
+        );
         let s = reply_script(b"Hi");
-        assert_eq!(s.nodes.get(&0).map(|n| (n.header.as_str(), n.slots.len())), Some(("Hi", 0)));
+        assert_eq!(
+            s.nodes.get(&0).map(|n| (n.header.as_str(), n.slots.len())),
+            Some(("Hi", 0))
+        );
     }
 }

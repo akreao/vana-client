@@ -27,8 +27,24 @@ const SPRITES: [(&str, u32, f32); 7] = [
 
 /// The Windows cursors at 0x1034fbb0: 0 normal, 1 hit, 2..9 oarw (loaded, never used), 10..17 arw_n..arw_nw.
 const FILES: [&str; 18] = [
-    "mousenor.ani", "mousehit.ani", "oarw_n.ani", "oarw_ne.ani", "oarw_e.ani", "oarw_se.ani", "oarw_s.ani", "oarw_sw.ani", "oarw_w.ani", "oarw_nw.ani",
-    "arw_n.ani", "arw_ne.ani", "arw_e.ani", "arw_se.ani", "arw_s.ani", "arw_sw.ani", "arw_w.ani", "arw_nw.ani",
+    "mousenor.ani",
+    "mousehit.ani",
+    "oarw_n.ani",
+    "oarw_ne.ani",
+    "oarw_e.ani",
+    "oarw_se.ani",
+    "oarw_s.ani",
+    "oarw_sw.ani",
+    "oarw_w.ani",
+    "oarw_nw.ani",
+    "arw_n.ani",
+    "arw_ne.ani",
+    "arw_e.ani",
+    "arw_se.ani",
+    "arw_s.ani",
+    "arw_sw.ani",
+    "arw_w.ani",
+    "arw_nw.ani",
 ];
 
 /// A cursor file as loaded, and whether a mod supplied it.
@@ -64,7 +80,10 @@ pub struct MouseCursor {
 
 impl MouseCursor {
     /// FUN_10125360's arrow for a camera drag from `from` to `at`: angle atan2(dy, dx) - pi/2 and +0xa6 by 45 deg bins.
-    #[allow(clippy::approx_constant, reason = "FUN_10125360's truncated pi values, kept as written")]
+    #[allow(
+        clippy::approx_constant,
+        reason = "FUN_10125360's truncated pi values, kept as written"
+    )]
     pub fn camera_drag(&mut self, from: (f32, f32), at: (f32, f32)) {
         let (dx, dy) = (at.0 - from.0, at.1 - from.1);
         let mut a = dy.atan2(dx) - 1.57075;
@@ -72,7 +91,9 @@ impl MouseCursor {
             a += 6.283;
         }
         self.angle = a;
-        let bins = [-2.7488f32, -1.9634, -1.1781, -0.3927, 0.3927, 1.1781, 1.9634, 2.7488];
+        let bins = [
+            -2.7488f32, -1.9634, -1.1781, -0.3927, 0.3927, 1.1781, 1.9634, 2.7488,
+        ];
         self.hw_index = 10 + bins.iter().position(|b| a < *b).unwrap_or(8) % 8;
         self.kind = CAMERA_DRAG;
     }
@@ -83,19 +104,45 @@ impl MouseCursor {
     /// sprite resets the counter).
     /// `size` scales the sprite and `file_size` the pack's images (UI pixels per screen pixel times the setting).
     #[allow(clippy::too_many_arguments)]
-    pub fn draw(&mut self, gu: &mut GameUi, index: Option<&Arc<crate::dat::DatIndex>>, x: f32, y: f32, dt: f32, size: f32, file_size: f32) {
+    pub fn draw(
+        &mut self,
+        gu: &mut GameUi,
+        index: Option<&Arc<crate::dat::DatIndex>>,
+        x: f32,
+        y: f32,
+        dt: f32,
+        size: f32,
+        file_size: f32,
+    ) {
         if !self.visible {
             return;
         }
         let idx = self.file_index();
         let clock = self.clock();
-        if let Some(f) = self.files(index).get(idx).and_then(|f| f.as_ref()).filter(|f| f.from_mod) {
-            let k = f.cursor.steps[step_of(&f.cursor.steps, clock)].0.min(f.cursor.frames.len() - 1);
+        if let Some(f) = self
+            .files(index)
+            .get(idx)
+            .and_then(|f| f.as_ref())
+            .filter(|f| f.from_mod)
+        {
+            let k = f.cursor.steps[step_of(&f.cursor.steps, clock)]
+                .0
+                .min(f.cursor.frames.len() - 1);
             let fr = &f.cursor.frames[k];
             let name = format!("cursor {idx} {k}");
             gu.image(&name, fr.width, fr.height, fr.rgba.clone());
-            let (hx, hy) = (fr.hotspot.0 as f32 * file_size, fr.hotspot.1 as f32 * file_size);
-            gu.image_rect(&name, x - hx, y - hy, fr.width as f32 * file_size, fr.height as f32 * file_size, [1.0; 4]);
+            let (hx, hy) = (
+                fr.hotspot.0 as f32 * file_size,
+                fr.hotspot.1 as f32 * file_size,
+            );
+            gu.image_rect(
+                &name,
+                x - hx,
+                y - hy,
+                fr.width as f32 * file_size,
+                fr.height as f32 * file_size,
+                [1.0; 4],
+            );
             return;
         }
         let k = self.kind.min(6) as usize;
@@ -118,8 +165,19 @@ impl MouseCursor {
             }
         }
         let shown = self.shown[k].min(n - 1);
-        let (s, c) = if matches!(self.kind, MOVE_DRAG | CAMERA_DRAG) { self.angle.sin_cos() } else { (0.0, 1.0) };
-        gu.sprite_affine(lib, shown, x - 0.5, y - 0.5, [c * scale, -s * scale, s * scale, c * scale], tint);
+        let (s, c) = if matches!(self.kind, MOVE_DRAG | CAMERA_DRAG) {
+            self.angle.sin_cos()
+        } else {
+            (0.0, 1.0)
+        };
+        gu.sprite_affine(
+            lib,
+            shown,
+            x - 0.5,
+            y - 0.5,
+            [c * scale, -s * scale, s * scale, c * scale],
+            tint,
+        );
     }
 
     /// FUN_100097f0's file: 0 for kinds 0 / 3 / 6, 1 for 1 / 2, +0xa6 for 4 / 5.
@@ -133,7 +191,11 @@ impl MouseCursor {
 
     /// 60 Hz ticks since the first cursor draw (the .ani steps).
     fn clock(&mut self) -> f32 {
-        self.epoch.get_or_insert_with(std::time::Instant::now).elapsed().as_secs_f32() * 60.0
+        self.epoch
+            .get_or_insert_with(std::time::Instant::now)
+            .elapsed()
+            .as_secs_f32()
+            * 60.0
     }
 
     /// The 18 cursor files, through the mods (DatIndex::root_file), loaded once.
@@ -144,9 +206,14 @@ impl MouseCursor {
                 .iter()
                 .map(|name| {
                     let path = index?.root_file(name);
-                    let mut cursor = crate::dat::cursor::parse(&std::fs::read(&path).ok()?).map_err(|e| log::warn!("cursor {}: {e:#}", path.display())).ok()?;
+                    let mut cursor = crate::dat::cursor::parse(&std::fs::read(&path).ok()?)
+                        .map_err(|e| log::warn!("cursor {}: {e:#}", path.display()))
+                        .ok()?;
                     cursor.frames.iter_mut().for_each(fix_hotspot);
-                    Some(Loaded { cursor, from_mod: path.starts_with(&mods) })
+                    Some(Loaded {
+                        cursor,
+                        from_mod: path.starts_with(&mods),
+                    })
                 })
                 .collect()
         })
@@ -154,7 +221,12 @@ impl MouseCursor {
 
     /// The Windows cursor for this frame (FUN_100097f0), the .ani stepping by its jiffies; a missing file is the
     /// system arrow.
-    pub fn apply_hardware(&mut self, window: &Window, event_loop: &winit::event_loop::ActiveEventLoop, index: Option<&Arc<crate::dat::DatIndex>>) {
+    pub fn apply_hardware(
+        &mut self,
+        window: &Window,
+        event_loop: &winit::event_loop::ActiveEventLoop,
+        index: Option<&Arc<crate::dat::DatIndex>>,
+    ) {
         if self.hw.is_none() {
             let hw = self
                 .files(index)
@@ -165,10 +237,22 @@ impl MouseCursor {
                         .cursor
                         .frames
                         .iter()
-                        .filter_map(|f| CustomCursor::from_rgba(f.rgba.clone(), f.width as u16, f.height as u16, f.hotspot.0.min(f.width as u16 - 1), f.hotspot.1.min(f.height as u16 - 1)).ok())
+                        .filter_map(|f| {
+                            CustomCursor::from_rgba(
+                                f.rgba.clone(),
+                                f.width as u16,
+                                f.height as u16,
+                                f.hotspot.0.min(f.width as u16 - 1),
+                                f.hotspot.1.min(f.height as u16 - 1),
+                            )
+                            .ok()
+                        })
                         .map(|src| event_loop.create_custom_cursor(src))
                         .collect();
-                    (frames.len() == f.cursor.frames.len()).then(|| Hw { frames, steps: f.cursor.steps.clone() })
+                    (frames.len() == f.cursor.frames.len()).then(|| Hw {
+                        frames,
+                        steps: f.cursor.steps.clone(),
+                    })
                 })
                 .collect();
             self.hw = Some(hw);
@@ -176,7 +260,10 @@ impl MouseCursor {
         let idx = self.file_index();
         let clock = self.clock();
         let hw = self.hw.as_ref().unwrap();
-        let step = hw.get(idx).and_then(|h| h.as_ref()).map_or(0, |h| step_of(&h.steps, clock));
+        let step = hw
+            .get(idx)
+            .and_then(|h| h.as_ref())
+            .map_or(0, |h| step_of(&h.steps, clock));
         let want = (idx, step, self.visible);
         if self.hw_applied == Some(want) {
             return;
@@ -216,7 +303,9 @@ fn fix_hotspot(f: &mut crate::dat::cursor::Frame) {
         return;
     }
     let w = f.width as usize;
-    let tip = (0..f.rgba.len() / 4).filter(|i| f.rgba[i * 4 + 3] >= 128).min_by_key(|i| (i % w + i / w, i / w));
+    let tip = (0..f.rgba.len() / 4)
+        .filter(|i| f.rgba[i * 4 + 3] >= 128)
+        .min_by_key(|i| (i % w + i / w, i / w));
     if let Some(i) = tip {
         f.hotspot = ((i % w) as u16, (i / w) as u16);
     }
@@ -227,7 +316,10 @@ mod tests {
     /// Camera-drag arrows: down the screen is arw_s, right arw_e, up arw_n; no motion points right (index 12).
     #[test]
     fn xiprime_hand_hotspot() {
-        let Ok(b) = std::fs::read(crate::config::mods_dir().join("xiprime-cursors/mousenor.ani")) else { return };
+        let Ok(b) = std::fs::read(crate::config::mods_dir().join("xiprime-cursors/mousenor.ani"))
+        else {
+            return;
+        };
         let mut c = crate::dat::cursor::parse(&b).unwrap();
         assert_eq!(c.frames[0].hotspot, (0, 0));
         super::fix_hotspot(&mut c.frames[0]);
@@ -239,7 +331,13 @@ mod tests {
     #[test]
     fn drag_arrows() {
         let mut c = super::MouseCursor::default();
-        for (to, idx) in [((0.0, 10.0), 14), ((10.0, 0.0), 12), ((0.0, -10.0), 10), ((-10.0, 0.0), 16), ((0.0, 0.0), 12)] {
+        for (to, idx) in [
+            ((0.0, 10.0), 14),
+            ((10.0, 0.0), 12),
+            ((0.0, -10.0), 10),
+            ((-10.0, 0.0), 16),
+            ((0.0, 0.0), 12),
+        ] {
             c.camera_drag((0.0, 0.0), to);
             assert_eq!(c.hw_index, idx, "{to:?}");
         }

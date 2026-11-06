@@ -48,7 +48,10 @@ pub struct Lifts {
 /// FUN_10176620: the first shaft holding `new` or `old` (inclusive; the face test is dead in retail, world-space
 /// coordinates against a unit cube at the origin), its height and surface type.
 pub fn ride_in(shafts: &[Shaft], old: Vec3, new: Vec3) -> Option<(f32, i8)> {
-    shafts.iter().find(|s| s.region.contains(new.to_array()) || s.region.contains(old.to_array())).map(|s| (s.height, s.surface))
+    shafts
+        .iter()
+        .find(|s| s.region.contains(new.to_array()) || s.region.contains(old.to_array()))
+        .map(|s| (s.height, s.surface))
 }
 
 fn tag_of(name: &str) -> u32 {
@@ -59,8 +62,21 @@ fn tag_of(name: &str) -> u32 {
 impl Lifts {
     /// The zone's '@' records in RID order (FUN_10173c10); a height starts at its box centre.
     pub fn load(regions: &[Region]) -> Self {
-        let shafts = regions.iter().filter(|r| r.is_lift()).map(|r| Shaft { tag: tag_of(&r.name), region: r.clone(), floors: [r.floor_y(0), r.floor_y(1)], surface: r.surface(), height: r.pos[1] }).collect();
-        Self { shafts, ..Default::default() }
+        let shafts = regions
+            .iter()
+            .filter(|r| r.is_lift())
+            .map(|r| Shaft {
+                tag: tag_of(&r.name),
+                region: r.clone(),
+                floors: [r.floor_y(0), r.floor_y(1)],
+                surface: r.surface(),
+                height: r.pos[1],
+            })
+            .collect();
+        Self {
+            shafts,
+            ..Default::default()
+        }
     }
 
     pub fn ride(&self, old: Vec3, new: Vec3) -> Option<(f32, i8)> {
@@ -81,30 +97,67 @@ fn mv(from: u8, to: u8) -> u32 {
 /// `mv0<floor>`), floor changes once their start time has come (FUN_1008b460 -> FUN_100c3d50), and the heights now.
 pub fn update(w: &mut World) {
     let now_vana = super::vana_now(w) as u32;
-    let lifts: Vec<(u32, u32, u8, u32, u32)> = w.entities.iter().filter_map(|(id, e)| e.lift.map(|(tag, start, end)| (*id, tag, e.motion.status, start, end))).collect();
-    w.lifts.lifts.retain(|id, _| w.entities.get(id).is_some_and(|e| e.lift.is_some()));
+    let lifts: Vec<(u32, u32, u8, u32, u32)> = w
+        .entities
+        .iter()
+        .filter_map(|(id, e)| {
+            e.lift
+                .map(|(tag, start, end)| (*id, tag, e.motion.status, start, end))
+        })
+        .collect();
+    w.lifts
+        .lifts
+        .retain(|id, _| w.entities.get(id).is_some_and(|e| e.lift.is_some()));
     for (id, tag, status, start, end) in lifts {
         let floor_of = |s: u8| s.saturating_sub(10).min(7);
         match w.lifts.lifts.get(&id).map(|l| (l.state, l.floor)) {
             None => {
                 // Without a door group nothing else happens.
-                let grouped = w.renderer.as_ref().is_some_and(|r| r.door_parts.contains_key(&tag));
-                let Some(s) = w.lifts.shafts.iter_mut().find(|s| s.tag == tag).filter(|_| grouped) else { continue };
+                let grouped = w
+                    .renderer
+                    .as_ref()
+                    .is_some_and(|r| r.door_parts.contains_key(&tag));
+                let Some(s) = w
+                    .lifts
+                    .shafts
+                    .iter_mut()
+                    .find(|s| s.tag == tag)
+                    .filter(|_| grouped)
+                else {
+                    continue;
+                };
                 s.height = s.floors[0];
                 let floor = floor_of(status);
-                w.lifts.lifts.insert(id, Lift { tag, state: status, floor, end: 0, mv: None });
+                w.lifts.lifts.insert(
+                    id,
+                    Lift {
+                        tag,
+                        state: status,
+                        floor,
+                        end: 0,
+                        mv: None,
+                    },
+                );
                 w.lifts.spawned = true;
                 let played = w.effects.door_scheduler(id, tag, mv(0, floor));
-                log::debug!("lift {:#x}: first sight, state {status}, mv0{floor} {played}", tag);
+                log::debug!(
+                    "lift {:#x}: first sight, state {status}, mv0{floor} {played}",
+                    tag
+                );
             }
             // Before the start time it waits.
-            Some((state, floor)) if (10..=17).contains(&state) && status != state && now_vana >= start => {
+            Some((state, floor))
+                if (10..=17).contains(&state) && status != state && now_vana >= start =>
+            {
                 let new = floor_of(status);
                 if let Some(l) = w.lifts.lifts.get_mut(&id) {
                     (l.end, l.floor, l.state) = (end, new, status);
                 }
                 let played = w.effects.door_scheduler(id, tag, mv(floor, new));
-                log::debug!("lift {:#x}: state {state} -> {status}, mv{floor}{new} {played}, end {end} (now {now_vana})", tag);
+                log::debug!(
+                    "lift {:#x}: state {state} -> {status}, mv{floor}{new} {played}, end {end} (now {now_vana})",
+                    tag
+                );
             }
             Some(_) => {}
         }
@@ -113,7 +166,11 @@ pub fn update(w: &mut World) {
     let Lifts { shafts, lifts, .. } = &mut w.lifts;
     for l in lifts.values_mut() {
         let Some(m) = l.mv else { continue };
-        let k = if m.total <= 0.0 { 1.0 } else { ((now - m.t0) / m.total).clamp(0.0, 1.0) };
+        let k = if m.total <= 0.0 {
+            1.0
+        } else {
+            ((now - m.t0) / m.total).clamp(0.0, 1.0)
+        };
         if let Some(s) = shafts.iter_mut().find(|s| s.tag == l.tag) {
             s.height = m.from + (m.to - m.from) * k;
         }
@@ -133,14 +190,35 @@ pub fn moves(w: &mut World, gpu: &crate::render::Gpu) {
     let now_vana = super::vana_now(w) as i64;
     let now = w.started.elapsed().as_secs_f32() * 60.0;
     for m in moves {
-        let Some(l) = w.lifts.lifts.get_mut(&m.actor) else { continue };
-        let Some(s) = w.lifts.shafts.iter().find(|s| s.tag == l.tag) else { continue };
+        let Some(l) = w.lifts.lifts.get_mut(&m.actor) else {
+            continue;
+        };
+        let Some(s) = w.lifts.shafts.iter().find(|s| s.tag == l.tag) else {
+            continue;
+        };
         let to = s.floors[(m.floor as usize).min(1)];
         let total = ((l.end as i64 - now_vana).max(0) * 60) as f32;
-        l.mv = Some(Move { from: s.height, to, t0: now, total, floor: m.floor });
-        log::debug!("lift {:#x}: y {} -> {to} over {total} ticks", l.tag, s.height);
-        let Some(r) = w.renderer.as_mut() else { continue };
-        let (Some(slots), Some(bases)) = (r.door_parts.get(&l.tag).cloned(), r.door_bases.get(&l.tag).cloned()) else { continue };
+        l.mv = Some(Move {
+            from: s.height,
+            to,
+            t0: now,
+            total,
+            floor: m.floor,
+        });
+        log::debug!(
+            "lift {:#x}: y {} -> {to} over {total} ticks",
+            l.tag,
+            s.height
+        );
+        let Some(r) = w.renderer.as_mut() else {
+            continue;
+        };
+        let (Some(slots), Some(bases)) = (
+            r.door_parts.get(&l.tag).cloned(),
+            r.door_bases.get(&l.tag).cloned(),
+        ) else {
+            continue;
+        };
         for (slot, base) in slots.iter().zip(&bases) {
             // base * T(t): the part's world translation y becomes `to`.
             let t = Mat3::from_mat4(*base).inverse() * Vec3::new(0.0, to - base.w_axis.y, 0.0);
@@ -157,23 +235,59 @@ mod tests {
     #[test]
     fn metalworks_shaft() {
         let cfg = crate::config::Config::load();
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
-        let Ok(keys) = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())).map_err(anyhow::Error::from).and_then(|d| crate::dat::zone::Keys::from_ffximain(&d)) else { return };
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else {
+            return;
+        };
+        let Ok(keys) = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir()))
+            .map_err(anyhow::Error::from)
+            .and_then(|d| crate::dat::zone::Keys::from_ffximain(&d))
+        else {
+            return;
+        };
         let file = index.read(crate::dat::zone::file_id(237)).unwrap();
         let scene = crate::dat::zone::load_scene(&keys, &file).unwrap();
         let mut lifts = Lifts::load(&scene.regions);
-        let s = lifts.shafts.iter_mut().find(|s| s.tag == tag_of("@6l0")).unwrap();
-        assert!((s.floors[0] - 1.962).abs() < 0.01 && (s.floors[1] + 9.983).abs() < 0.01, "{:?}", s.floors);
+        let s = lifts
+            .shafts
+            .iter_mut()
+            .find(|s| s.tag == tag_of("@6l0"))
+            .unwrap();
+        assert!(
+            (s.floors[0] - 1.962).abs() < 0.01 && (s.floors[1] + 9.983).abs() < 0.01,
+            "{:?}",
+            s.floors
+        );
         assert_eq!(s.surface, 0);
         s.height = s.floors[0];
         let at = Vec3::new(-55.98, 1.962, -12.02);
-        assert_eq!(lifts.ride(at, at).map(|r| r.0), Some(lifts.shafts.iter().find(|s| s.tag == tag_of("@6l0")).unwrap().floors[0]));
-        assert!(lifts.ride(Vec3::new(-55.98, 3.0, -12.02), Vec3::new(-55.98, 3.0, -12.02)).is_none());
+        assert_eq!(
+            lifts.ride(at, at).map(|r| r.0),
+            Some(
+                lifts
+                    .shafts
+                    .iter()
+                    .find(|s| s.tag == tag_of("@6l0"))
+                    .unwrap()
+                    .floors[0]
+            )
+        );
+        assert!(
+            lifts
+                .ride(
+                    Vec3::new(-55.98, 3.0, -12.02),
+                    Vec3::new(-55.98, 3.0, -12.02)
+                )
+                .is_none()
+        );
         // The group's schedulers.
         let mut fx = crate::fx::Effects::new();
         fx.load_zone(crate::fx::lib::Library::load(crate::dat::zone::file_id(237), file).unwrap());
         assert!(fx.door_scheduler(1, tag_of("@6l0"), mv(0, 1)));
         let geo = crate::render::ZoneGeometry::build(&scene);
-        assert!(geo.door_parts.get(&tag_of("@6l0")).is_some_and(|p| !p.is_empty()));
+        assert!(
+            geo.door_parts
+                .get(&tag_of("@6l0"))
+                .is_some_and(|p| !p.is_empty())
+        );
     }
 }

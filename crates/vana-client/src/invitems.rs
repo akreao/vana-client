@@ -24,5 +24,7 @@ impl ItemInfo for Items {
 
 /// English item data of the install, if its files are there.
 pub fn load(index: &crate::dat::DatIndex) -> Option<Box<dyn ItemInfo>> {
-    Items::load(index, Lang::En).ok().map(|i| Box::new(i) as Box<dyn ItemInfo>)
+    Items::load(index, Lang::En)
+        .ok()
+        .map(|i| Box::new(i) as Box<dyn ItemInfo>)
 }

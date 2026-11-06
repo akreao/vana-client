@@ -57,7 +57,11 @@ pub fn category(f: &Friend) -> u8 {
 /// commenu child 1 (FUN_101ebdc0): flistmai, commenu suspended under it.
 pub fn open_main(w: &mut World) {
     let back = w.cats.take();
-    w.friendui = Some(FriendUi { back, main: Some(1), ..Default::default() });
+    w.friendui = Some(FriendUi {
+        back,
+        main: Some(1),
+        ..Default::default()
+    });
 }
 
 /// FUN_101eb660 (flistmai's To List, /friendlist): the rows built afresh (a snapshot), the view at the top.
@@ -72,7 +76,10 @@ pub fn open_list(w: &mut World) {
 fn rows(w: &World) -> Vec<Row> {
     let list = &w.friends.list;
     let mut order: Vec<usize> = (0..list.len()).collect();
-    order.sort_by(|&a, &b| (category(&list[a]), list[a].name.as_bytes()).cmp(&(category(&list[b]), list[b].name.as_bytes())));
+    order.sort_by(|&a, &b| {
+        (category(&list[a]), list[a].name.as_bytes())
+            .cmp(&(category(&list[b]), list[b].name.as_bytes()))
+    });
     let mut out = Vec::new();
     let mut last = None;
     for k in order {
@@ -104,7 +111,9 @@ fn mes_friend(w: &World) -> Option<&Friend> {
 /// FUN_101eb880's disabled rows: 1 Tell unless they play FFXI with a record (kind 5), 2 Send Message when pending or on
 /// the Ignore List, 3 View Messages with no unread message from them.
 pub fn mes_off(w: &World) -> Vec<u16> {
-    let Some(f) = mes_friend(w) else { return vec![1, 2, 3] };
+    let Some(f) = mes_friend(w) else {
+        return vec![1, 2, 3];
+    };
     let mut off = Vec::new();
     if !(category(f) == 0 && f.fresh && f.record.is_some()) {
         off.push(1);
@@ -173,7 +182,9 @@ pub fn key(w: &mut World, key: egui::Key) {
         let last = n.saturating_sub(1);
         let max_top = n.saturating_sub(ROWS);
         let moved = match key {
-            K::ArrowDown if cursor < last => Some((top.max((cursor + 2).saturating_sub(ROWS)), cursor + 1)),
+            K::ArrowDown if cursor < last => {
+                Some((top.max((cursor + 2).saturating_sub(ROWS)), cursor + 1))
+            }
             K::ArrowUp if cursor > 0 => Some((top.min(cursor - 1), cursor - 1)),
             K::ArrowRight if n > 0 && top < max_top => {
                 let t = (top + ROWS).min(max_top);
@@ -235,7 +246,10 @@ pub fn key(w: &mut World, key: egui::Key) {
                         super::polmail::open_list(w, None);
                     }
                     _ => {
-                        let now = 1 + STATS.iter().position(|&s| s == w.friends.my_status).unwrap_or(0) as u16;
+                        let now = 1 + STATS
+                            .iter()
+                            .position(|&s| s == w.friends.my_status)
+                            .unwrap_or(0) as u16;
                         set(w, |u| u.stat = Some(now));
                     }
                 }
@@ -253,7 +267,9 @@ pub fn key(w: &mut World, key: egui::Key) {
 
 /// The modern layer's mouse: the cursor onto a row of the top window (list rows from 0). True when it moved.
 pub(super) fn set_cursor(w: &mut World, k: usize) -> bool {
-    let Some(u) = w.friendui.as_mut() else { return false };
+    let Some(u) = w.friendui.as_mut() else {
+        return false;
+    };
     let id = k as u16;
     if let Some(c) = u.stat {
         u.stat = Some(id);
@@ -292,7 +308,10 @@ fn set(w: &mut World, f: impl FnOnce(&mut FriendUi)) {
 
 /// The list closed with no flistmai under it (/friendlist): nothing is left.
 fn close_empty(w: &mut World) {
-    if w.friendui.as_ref().is_some_and(|u| u.main.is_none() && u.list.is_none() && u.stat.is_none()) {
+    if w.friendui
+        .as_ref()
+        .is_some_and(|u| u.main.is_none() && u.list.is_none() && u.stat.is_none())
+    {
         let back = w.friendui.take().and_then(|u| u.back);
         w.cats = back;
     }
@@ -300,16 +319,26 @@ fn close_empty(w: &mut World) {
 
 /// flmes's rows: 1 the chat line on "/tell <character name> ", 2 the composer (a message to them), 3 their messages.
 fn mes_pick(w: &mut World, c: u16) {
-    let Some(f) = mes_friend(w).cloned() else { return };
+    let Some(f) = mes_friend(w).cloned() else {
+        return;
+    };
     match c {
         1 => {
-            let name = f.record.as_ref().map(|r| r.name.clone()).unwrap_or_default();
+            let name = f
+                .record
+                .as_ref()
+                .map(|r| r.name.clone())
+                .unwrap_or_default();
             (w.chat_input, w.chat_caret, w.chat_anchor) = (format!("/tell {name} "), None, None);
             w.typing = true;
             set(w, |u| u.mes = None);
         }
         2 => {
-            if super::polmail::compose(w, super::polmail::Mode::Friend { account: f.account }, String::new()) {
+            if super::polmail::compose(
+                w,
+                super::polmail::Mode::Friend { account: f.account },
+                String::new(),
+            ) {
                 set(w, |u| u.mes = None);
             }
         }
@@ -323,29 +352,76 @@ fn mes_pick(w: &mut World, c: u16) {
 
 /// The mouse: the generic windows (olstat, flmes, flistmai) and the list's rows (hover moves, a click on the cursor row
 /// is Enter, a right click Escape).
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+pub fn pointer(
+    w: &mut World,
+    gu: &GameUi,
+    sw: f32,
+    sh: f32,
+    p: (f32, f32),
+    moved: bool,
+    clicked: bool,
+    right: bool,
+) {
     use super::winhits::generic;
     let Some(ui) = w.friendui.clone() else { return };
     let keys = |w: &mut World, _: &GameUi, k: egui::Key| key(w, k);
     if let Some(c) = ui.stat {
-        generic(w, gu, STAT, c, 1..=3, p, moved, clicked, right, |w, id| set(w, |u| u.stat = Some(id)), keys);
+        generic(
+            w,
+            gu,
+            STAT,
+            c,
+            1..=3,
+            p,
+            moved,
+            clicked,
+            right,
+            |w, id| set(w, |u| u.stat = Some(id)),
+            keys,
+        );
         return;
     }
     if let Some(c) = ui.mes {
-        generic(w, gu, MES, c, 1..=3, p, moved, clicked, right, |w, id| set(w, |u| u.mes = Some(id)), keys);
+        generic(
+            w,
+            gu,
+            MES,
+            c,
+            1..=3,
+            p,
+            moved,
+            clicked,
+            right,
+            |w, id| set(w, |u| u.mes = Some(id)),
+            keys,
+        );
         return;
     }
     if let Some((rows, top, cursor)) = ui.list {
-        let (Some((x, y)), Some(lay)) = (gu.window_xy(LIST, sw, sh), gu.layout(LIST)) else { return };
-        if gu.window_rect(LIST, sw, sh).is_some_and(|[fx, fy, fw, fh]| p.0 >= fx && p.0 < fx + fw && p.1 >= fy && p.1 < fy + fh) {
+        let (Some((x, y)), Some(lay)) = (gu.window_xy(LIST, sw, sh), gu.layout(LIST)) else {
+            return;
+        };
+        if gu
+            .window_rect(LIST, sw, sh)
+            .is_some_and(|[fx, fy, fw, fh]| {
+                p.0 >= fx && p.0 < fx + fw && p.1 >= fy && p.1 < fy + fh
+            })
+        {
             gu.hover.set(true);
             if right {
                 key(w, egui::Key::Escape);
                 return;
             }
         }
-        let inside = |e: &crate::dat::ui::MenuElement| p.0 >= x + e.x as f32 && p.0 < x + e.x as f32 + e.w as f32 && p.1 >= y + e.y as f32 && p.1 < y + e.y as f32 + e.h as f32;
-        let Some(e) = lay.elements.iter().skip(1).find(|e| inside(e)) else { return };
+        let inside = |e: &crate::dat::ui::MenuElement| {
+            p.0 >= x + e.x as f32
+                && p.0 < x + e.x as f32 + e.w as f32
+                && p.1 >= y + e.y as f32
+                && p.1 < y + e.y as f32 + e.h as f32
+        };
+        let Some(e) = lay.elements.iter().skip(1).find(|e| inside(e)) else {
+            return;
+        };
         let row = top + e.id as usize - 1;
         if row >= rows.len() {
             return;
@@ -363,7 +439,19 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
         return;
     }
     if let Some(c) = ui.main {
-        generic(w, gu, MAIN, c, 1..=3, p, moved, clicked, right, |w, id| set(w, |u| u.main = Some(id)), keys);
+        generic(
+            w,
+            gu,
+            MAIN,
+            c,
+            1..=3,
+            p,
+            moved,
+            clicked,
+            right,
+            |w, id| set(w, |u| u.main = Some(id)),
+            keys,
+        );
     }
 }
 
@@ -406,12 +494,26 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
     if let Some((rows, top, cursor)) = &ui.list {
         let focused = free && ui.mes.is_none();
         let n = rows.len();
-        let sel = if focused && n > 0 { (cursor - top + 1) as u16 } else { 0 };
+        let sel = if focused && n > 0 {
+            (cursor - top + 1) as u16
+        } else {
+            0
+        };
         if let Some((wx, wy)) = gu.menu_sel(LIST, sw, sh, sel) {
             rects.extend(gu.window_rect(LIST, sw, sh));
             if n == 0 {
-                let s = w.battle.as_ref().and_then(|bt| bt.group7(0x66)).unwrap_or_default();
-                gu.text(&s, wx + 36.0, wy + 27.0, 0, crate::dat::battle::argb_bytes(0x8080_4040));
+                let s = w
+                    .battle
+                    .as_ref()
+                    .and_then(|bt| bt.group7(0x66))
+                    .unwrap_or_default();
+                gu.text(
+                    &s,
+                    wx + 36.0,
+                    wy + 27.0,
+                    0,
+                    crate::dat::battle::argb_bytes(0x8080_4040),
+                );
             }
             for (k, row) in rows.iter().enumerate().skip(*top).take(ROWS) {
                 let y = wy + 3.0 + 16.0 * (k - top) as f32;
@@ -424,9 +526,17 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
                         }
                     }
                     Row::Entry(i) => {
-                        let Some(f) = w.friends.list.get(i) else { continue };
+                        let Some(f) = w.friends.list.get(i) else {
+                            continue;
+                        };
                         let cat = category(f);
-                        let icon = if f.mail { Some(158) } else if cat == 0 { status_icon(f.status) } else { None };
+                        let icon = if f.mail {
+                            Some(158)
+                        } else if cat == 0 {
+                            status_icon(f.status)
+                        } else {
+                            None
+                        };
                         if let Some(s) = icon {
                             gu.sprite("menu    keytops3", s, cell(0), y + 2.0, WHITE);
                         }
@@ -448,7 +558,13 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
                 }
             }
             if focused && n > 0 {
-                gu.sprite("menu    windowps", 75, wx, wy + 4.0 + 16.0 * (cursor - top) as f32, WHITE);
+                gu.sprite(
+                    "menu    windowps",
+                    75,
+                    wx,
+                    wy + 4.0 + 16.0 * (cursor - top) as f32,
+                    WHITE,
+                );
             }
             if let Some([fx, fy, fw, fh]) = gu.window_rect(LIST, sw, sh) {
                 gu.scroll_bar(fx + fw - 8.0, fy, fh, n, ROWS, *top);
@@ -457,13 +573,27 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
     }
     if let Some(c) = ui.mes {
         let off = mes_off(w);
-        if let Some(win) = gu.lobby_window(MES, sw, sh, false, Some(c), free && !off.contains(&c), &off) {
+        if let Some(win) =
+            gu.lobby_window(MES, sw, sh, false, Some(c), free && !off.contains(&c), &off)
+        {
             super::winhits::record(w, MES, &win);
             gu.disabled_children(MES, win.frame[0], win.frame[1], &off, Some(c));
             // FUN_101eb980: the handle name fitted to 108 and the handle id text above the buttons.
             if let Some(f) = mes_friend(w) {
-                gu.shape_fit(&f.name, win.frame[0] + 2.0, win.frame[1] + 6.0, 108.0, WHITE);
-                gu.shape_text(&handle_id_text(f.account), win.frame[0] + 2.0, win.frame[1] + 18.0, WHITE, false);
+                gu.shape_fit(
+                    &f.name,
+                    win.frame[0] + 2.0,
+                    win.frame[1] + 6.0,
+                    108.0,
+                    WHITE,
+                );
+                gu.shape_text(
+                    &handle_id_text(f.account),
+                    win.frame[0] + 2.0,
+                    win.frame[1] + 18.0,
+                    WHITE,
+                    false,
+                );
             }
             rects.push(win.frame);
         }
@@ -473,7 +603,10 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
     {
         super::winhits::record(w, STAT, &win);
         // FUN_101ebc20: the marker (keytops3 101) under the status in force; the half-size hand.
-        let now = 1 + STATS.iter().position(|&s| s == w.friends.my_status).unwrap_or(0) as u16;
+        let now = 1 + STATS
+            .iter()
+            .position(|&s| s == w.friends.my_status)
+            .unwrap_or(0) as u16;
         if let Some(r) = win.children.iter().find(|c| c.0 == now).map(|c| c.1) {
             gu.sprite("menu    keytops3", 101, r[0] + 8.0, r[1] + 24.0, WHITE);
         }
@@ -488,7 +621,13 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         && let Some(win) = gu.lobby_window(TITLE, sw, sh, false, None, false, &[])
     {
         gu.shape_fit(&name, win.frame[0] + 4.0, win.frame[1] + 5.0, 106.0, WHITE);
-        gu.shape_text(&handle_id_text(id), win.frame[0] + 20.0, win.frame[1] + 17.0, WHITE, false);
+        gu.shape_text(
+            &handle_id_text(id),
+            win.frame[0] + 20.0,
+            win.frame[1] + 17.0,
+            WHITE,
+            false,
+        );
     }
     rects
 }

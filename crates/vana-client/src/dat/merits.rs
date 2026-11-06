@@ -6,11 +6,13 @@ use super::DatIndex;
 use super::names::DMsg;
 
 fn u16_at(d: &[u8], o: usize) -> u16 {
-    d.get(o..o + 2).map_or(0, |b| u16::from_le_bytes([b[0], b[1]]))
+    d.get(o..o + 2)
+        .map_or(0, |b| u16::from_le_bytes([b[0], b[1]]))
 }
 
 fn u32_at(d: &[u8], o: usize) -> u32 {
-    d.get(o..o + 4).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()))
+    d.get(o..o + 4)
+        .map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()))
 }
 
 /// A merit category (file 89, 96 x 12, the record number = the list position, FUN_10160f00): u16 @0 its name id
@@ -39,13 +41,40 @@ pub struct MeritTables {
 
 impl MeritTables {
     pub fn load(index: &DatIndex, names: Option<u32>) -> MeritTables {
-        let read = |f: u32| index.read(f).map_err(|e| log::warn!("merit table {f}: {e:#}")).unwrap_or_default();
+        let read = |f: u32| {
+            index
+                .read(f)
+                .map_err(|e| log::warn!("merit table {f}: {e:#}"))
+                .unwrap_or_default()
+        };
         let (c, e) = (read(89), read(88));
-        let cats = c.chunks_exact(12).map(|r| MeritCat { name: u16_at(r, 0), id: r[3], cap: r[4] }).collect();
-        let entries = e.chunks_exact(12).map(|r| MeritEntry { max: r[4], jobs: u32_at(r, 8) }).collect();
+        let cats = c
+            .chunks_exact(12)
+            .map(|r| MeritCat {
+                name: u16_at(r, 0),
+                id: r[3],
+                cap: r[4],
+            })
+            .collect();
+        let entries = e
+            .chunks_exact(12)
+            .map(|r| MeritEntry {
+                max: r[4],
+                jobs: u32_at(r, 8),
+            })
+            .collect();
         let keys = e.chunks_exact(12).map(|r| u16_at(r, 0)).collect();
-        let names = names.and_then(|f| DMsg::load(index, f).map_err(|e| log::warn!("merit names {f}: {e:#}")).ok());
-        MeritTables { cats, entries, keys, names }
+        let names = names.and_then(|f| {
+            DMsg::load(index, f)
+                .map_err(|e| log::warn!("merit names {f}: {e:#}"))
+                .ok()
+        });
+        MeritTables {
+            cats,
+            entries,
+            keys,
+            names,
+        }
     }
 
     /// The category at list position `pos` (1..31).
@@ -64,17 +93,27 @@ impl MeritTables {
 
     /// Name (2i) and description (2i + 1) of name id `i`: a category's u16 @0, a merit's index.
     pub fn name(&self, i: u16) -> String {
-        self.names.as_ref().and_then(|n| n.text(2 * i as usize)).unwrap_or_default()
+        self.names
+            .as_ref()
+            .and_then(|n| n.text(2 * i as usize))
+            .unwrap_or_default()
     }
 
     pub fn desc(&self, i: u16) -> String {
-        self.names.as_ref().and_then(|n| n.text(2 * i as usize + 1)).unwrap_or_default()
+        self.names
+            .as_ref()
+            .and_then(|n| n.text(2 * i as usize + 1))
+            .unwrap_or_default()
     }
 
     /// FUN_10161070 (text code 7f b0): below 0x20 the category at that list position, else the merit record keyed
     /// `id`.
     pub fn name_of_id(&self, id: u16) -> Option<String> {
-        let n = if id < 0x20 { self.at(id).filter(|c| c.cap != 0)?.name } else { self.keys.get(id as usize).copied().filter(|&k| k == id)? };
+        let n = if id < 0x20 {
+            self.at(id).filter(|c| c.cap != 0)?.name
+        } else {
+            self.keys.get(id as usize).copied().filter(|&k| k == id)?
+        };
         Some(self.name(n)).filter(|t| !t.is_empty())
     }
 }
@@ -91,15 +130,32 @@ pub struct JobPointTables {
 
 impl JobPointTables {
     pub fn load(index: &DatIndex, names: Option<u32>) -> JobPointTables {
-        let read = |f: u32| index.read(f).map_err(|e| log::warn!("job point table {f}: {e:#}")).unwrap_or_default();
+        let read = |f: u32| {
+            index
+                .read(f)
+                .map_err(|e| log::warn!("job point table {f}: {e:#}"))
+                .unwrap_or_default()
+        };
         let (c, e) = (read(94), read(93));
         let jobs = c
             .chunks_exact(0x44)
             .filter(|r| r[2] != 0)
-            .map(|r| (r[2], (0..32).map(|k| u16_at(r, 4 + 2 * k)).filter(|&id| id != 0).collect()))
+            .map(|r| {
+                (
+                    r[2],
+                    (0..32)
+                        .map(|k| u16_at(r, 4 + 2 * k))
+                        .filter(|&id| id != 0)
+                        .collect(),
+                )
+            })
             .collect();
         let max = e.chunks_exact(4).map(|r| r[3]).collect();
-        let names = names.and_then(|f| DMsg::load(index, f).map_err(|e| log::warn!("job point names {f}: {e:#}")).ok());
+        let names = names.and_then(|f| {
+            DMsg::load(index, f)
+                .map_err(|e| log::warn!("job point names {f}: {e:#}"))
+                .ok()
+        });
         JobPointTables { jobs, max, names }
     }
 
@@ -108,11 +164,17 @@ impl JobPointTables {
     }
 
     pub fn name(&self, i: u16) -> String {
-        self.names.as_ref().and_then(|n| n.text(2 * i as usize)).unwrap_or_default()
+        self.names
+            .as_ref()
+            .and_then(|n| n.text(2 * i as usize))
+            .unwrap_or_default()
     }
 
     pub fn desc(&self, i: u16) -> String {
-        self.names.as_ref().and_then(|n| n.text(2 * i as usize + 1)).unwrap_or_default()
+        self.names
+            .as_ref()
+            .and_then(|n| n.text(2 * i as usize + 1))
+            .unwrap_or_default()
     }
 }
 
@@ -127,15 +189,32 @@ pub struct AeTables {
 
 impl AeTables {
     pub fn load(index: &DatIndex, names: Option<u32>) -> AeTables {
-        let read = |f: u32| index.read(f).map_err(|e| log::warn!("alter ego table {f}: {e:#}")).unwrap_or_default();
+        let read = |f: u32| {
+            index
+                .read(f)
+                .map_err(|e| log::warn!("alter ego table {f}: {e:#}"))
+                .unwrap_or_default()
+        };
         let (c, e) = (read(98), read(97));
         let cats = c
             .chunks_exact(0x24)
-            .map(|r| (u16_at(r, 0), (0..16).map(|k| u16_at(r, 4 + 2 * k)).filter(|&id| id != 0).collect::<Vec<_>>()))
+            .map(|r| {
+                (
+                    u16_at(r, 0),
+                    (0..16)
+                        .map(|k| u16_at(r, 4 + 2 * k))
+                        .filter(|&id| id != 0)
+                        .collect::<Vec<_>>(),
+                )
+            })
             .filter(|(k, es)| *k != 0 && !es.is_empty())
             .collect();
         let max = e.chunks_exact(4).map(|r| r[3]).collect();
-        let names = names.and_then(|f| DMsg::load(index, f).map_err(|e| log::warn!("alter ego names {f}: {e:#}")).ok());
+        let names = names.and_then(|f| {
+            DMsg::load(index, f)
+                .map_err(|e| log::warn!("alter ego names {f}: {e:#}"))
+                .ok()
+        });
         AeTables { cats, max, names }
     }
 
@@ -144,11 +223,17 @@ impl AeTables {
     }
 
     pub fn name(&self, i: u16) -> String {
-        self.names.as_ref().and_then(|n| n.text(2 * i as usize)).unwrap_or_default()
+        self.names
+            .as_ref()
+            .and_then(|n| n.text(2 * i as usize))
+            .unwrap_or_default()
     }
 
     pub fn desc(&self, i: u16) -> String {
-        self.names.as_ref().and_then(|n| n.text(2 * i as usize + 1)).unwrap_or_default()
+        self.names
+            .as_ref()
+            .and_then(|n| n.text(2 * i as usize + 1))
+            .unwrap_or_default()
     }
 }
 
@@ -163,9 +248,16 @@ pub struct Gifts {
 impl Gifts {
     pub fn load(index: &DatIndex, job: u8, names: Option<u32>) -> Gifts {
         let f = 100407 + job as u32;
-        let d = index.read(f).map_err(|e| log::warn!("gift table {f}: {e:#}")).unwrap_or_default();
+        let d = index
+            .read(f)
+            .map_err(|e| log::warn!("gift table {f}: {e:#}"))
+            .unwrap_or_default();
         let needs = (0..256).map(|i| u16_at(&d, 2 * i)).collect();
-        let names = names.and_then(|f| DMsg::load(index, f).map_err(|e| log::warn!("gift names {f}: {e:#}")).ok());
+        let names = names.and_then(|f| {
+            DMsg::load(index, f)
+                .map_err(|e| log::warn!("gift names {f}: {e:#}"))
+                .ok()
+        });
         Gifts { job, needs, names }
     }
 
@@ -174,11 +266,17 @@ impl Gifts {
     }
 
     pub fn name(&self, i: usize) -> String {
-        self.names.as_ref().and_then(|n| n.text(self.at(i))).unwrap_or_default()
+        self.names
+            .as_ref()
+            .and_then(|n| n.text(self.at(i)))
+            .unwrap_or_default()
     }
 
     pub fn desc(&self, i: usize) -> String {
-        self.names.as_ref().and_then(|n| n.text(self.at(i) + 1)).unwrap_or_default()
+        self.names
+            .as_ref()
+            .and_then(|n| n.text(self.at(i) + 1))
+            .unwrap_or_default()
     }
 }
 
@@ -196,7 +294,10 @@ mod tests {
         let Some(ix) = index() else { return };
         let t = MeritTables::load(&ix, None);
         let (hp, ws, run) = (t.at(1).unwrap(), t.at(6).unwrap(), t.at(28).unwrap());
-        assert_eq!((hp.id, hp.cap, ws.id, ws.cap, run.id, run.cap), (1, 75, 0x1a, 15, 0x1c, 10));
+        assert_eq!(
+            (hp.id, hp.cap, ws.id, ws.cap, run.id, run.cap),
+            (1, 75, 0x1a, 15, 0x1c, 10)
+        );
         assert_eq!(t.entry(32).map(|e| e.max), Some(15));
         assert!(t.entry(35).is_none());
     }
@@ -205,7 +306,11 @@ mod tests {
     #[test]
     fn merit_name_of_id() {
         let Some(ix) = index() else { return };
-        let Ok(dll) = std::fs::read(crate::dat::ffximain(&crate::config::Config::load().ffxi_dir())) else { return };
+        let Ok(dll) = std::fs::read(crate::dat::ffximain(
+            &crate::config::Config::load().ffxi_dir(),
+        )) else {
+            return;
+        };
         let t = MeritTables::load(&ix, crate::dat::msg::current_slot_file(&dll, 1, 0x1d));
         assert_eq!(t.name_of_id(1).as_deref(), Some("HP/MP"));
         assert_eq!(t.name_of_id(0x40).as_deref(), Some("STR"));

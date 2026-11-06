@@ -17,11 +17,19 @@ pub const MENU: &str = "menu    region";
 /// The maps by mode (DAT_1037f454): menumap conquest, m_ex3_rg, m_ex4_rg, m_ex5_rg.
 const IMAGES: [u32; 4] = [5312, 53416, 53443, 53569];
 /// The icon set (DAT_10381e10): keytops3 sprites by icon index.
-const ICONS: [usize; 24] = [63, 63, 307, 113, 110, 111, 112, 432, 115, 113, 118, 117, 116, 114, 115, 180, 179, 178, 383, 385, 384, 502, 433, 0];
+const ICONS: [usize; 24] = [
+    63, 63, 307, 113, 110, 111, 112, 432, 115, 113, 118, 117, 116, 114, 115, 180, 179, 178, 383,
+    385, 384, 502, 433, 0,
+];
 /// Label colours (DAT_10382084).
 const COLOURS: [u32; 5] = [0x2020c0, 0x6060a0, 0x606070, 0x504010, 0x7020c0];
 /// The legend windows and the title (group 0xd) per mode.
-const LEGENDS: [&str; 4] = ["menu    conq3pts", "menu    imperial", "menu    allied", "menu    colopoin"];
+const LEGENDS: [&str; 4] = [
+    "menu    conq3pts",
+    "menu    imperial",
+    "menu    allied",
+    "menu    colopoin",
+];
 const TITLES: [usize; 4] = [0x8e, 0x8c, 0x8f, 0xa2];
 const CONQUER1: &str = "menu    conquer1";
 const CONQ6STA: &str = "menu    conq6sta";
@@ -62,7 +70,12 @@ pub struct Data {
 impl Data {
     pub fn new(tables: Option<Arc<CnqTables>>) -> Self {
         let markers = tables.as_ref().map(|t| t.modes.clone()).unwrap_or_default();
-        Data { tables, markers, d: vec![0; 0xb0], ..Default::default() }
+        Data {
+            tables,
+            markers,
+            d: vec![0; 0xb0],
+            ..Default::default()
+        }
     }
 
     fn byte(&self, o: usize) -> u8 {
@@ -78,11 +91,24 @@ impl Data {
 /// counts as missing until it comes, and every icon shows "?" (mode 2: none, mode 3: plain).
 fn request(w: &mut World) {
     let d = &mut w.conquest;
-    if d.pending || d.stamp.is_some_and(|t| t.elapsed() <= Duration::from_secs(120)) {
+    if d.pending
+        || d.stamp
+            .is_some_and(|t| t.elapsed() <= Duration::from_secs(120))
+    {
         return;
     }
-    let _ = w.net.commands.send(NetCommand::Packet { id: 0x05A, body: Vec::new() });
-    (d.pending, d.colon_pending, d.camp_wanted, d.have, d.campaign, d.busy) = (true, true, true, false, None, true);
+    let _ = w.net.commands.send(NetCommand::Packet {
+        id: 0x05A,
+        body: Vec::new(),
+    });
+    (
+        d.pending,
+        d.colon_pending,
+        d.camp_wanted,
+        d.have,
+        d.campaign,
+        d.busy,
+    ) = (true, true, true, false, None, true);
     let m = &mut d.markers;
     for e in m[0].iter_mut().skip(4) {
         e.icon = 8;
@@ -105,7 +131,9 @@ pub fn on_conquest(w: &mut World, p: &[u8]) {
     if !d.pending {
         return;
     }
-    d.d = (0..0xb0).map(|i| p.get(4 + i).copied().unwrap_or(0)).collect();
+    d.d = (0..0xb0)
+        .map(|i| p.get(4 + i).copied().unwrap_or(0))
+        .collect();
     (d.stamp, d.have, d.pending, d.busy) = (Some(Instant::now()), true, false, false);
     if let Some(m) = w.cnq.as_mut() {
         m.help = None;
@@ -124,11 +152,17 @@ pub fn on_conquest(w: &mut World, p: &[u8]) {
         let clamp = |v: i32| if (0..=0x17).contains(&v) { v as u8 } else { 8 };
         for r in 0..19 {
             let owner = d.byte(0x19 + 4 * r) as i8 as i32;
-            let Some(region) = d.markers[0].get_mut(4 + r) else { break };
+            let Some(region) = d.markers[0].get_mut(4 + r) else {
+                break;
+            };
             region.icon = clamp(owner + 3);
             let id = region.id;
             for z in d.markers[0].iter_mut().skip(23).filter(|z| z.id == id) {
-                z.icon = clamp(if (1..=3).contains(&owner) && z.b7 & 1 != 0 { owner + 0xe } else { owner + 9 });
+                z.icon = clamp(if (1..=3).contains(&owner) && z.b7 & 1 != 0 {
+                    owner + 0xe
+                } else {
+                    owner + 9
+                });
             }
         }
     }
@@ -145,12 +179,15 @@ pub fn on_influence(w: &mut World, p: &[u8]) {
             if d.camp_build.len() != 0x24 + 26 * 12 {
                 d.camp_build = vec![0; 0x24 + 26 * 12];
             }
-            d.camp_build[..0x24].copy_from_slice(&(0..0x24).map(|i| at(0xc + i)).collect::<Vec<u8>>());
+            d.camp_build[..0x24]
+                .copy_from_slice(&(0..0x24).map(|i| at(0xc + i)).collect::<Vec<u8>>());
             let off = at(9) as usize;
             if off < 26 {
                 for k in 0..13.min(26 - off) {
                     let o = 0x24 + 12 * (off + k);
-                    d.camp_build[o..o + 12].copy_from_slice(&(0..12).map(|i| at(0x30 + 12 * k + i)).collect::<Vec<u8>>());
+                    d.camp_build[o..o + 12].copy_from_slice(
+                        &(0..12).map(|i| at(0x30 + 12 * k + i)).collect::<Vec<u8>>(),
+                    );
                 }
             }
             // LAB_101e8200 (kept once set): the 26 areas' battle squares and owner icons.
@@ -158,7 +195,11 @@ pub fn on_influence(w: &mut World, p: &[u8]) {
                 let buf = d.camp_build.clone();
                 for (i, e) in d.markers[2].iter_mut().skip(16).take(26).enumerate() {
                     let rec = u32::from_le_bytes(std::array::from_fn(|j| buf[0x24 + 12 * i + j]));
-                    (e.flags, e.icon) = if rec & 1 != 0 { (e.flags | 0x200, 0x16) } else { (e.flags & !0x200, 0xff) };
+                    (e.flags, e.icon) = if rec & 1 != 0 {
+                        (e.flags | 0x200, 0x16)
+                    } else {
+                        (e.flags & !0x200, 0xff)
+                    };
                     e.icon2 = ((rec >> 1) & 7).min(4) as u8 + 9;
                 }
                 d.campaign = Some(buf);
@@ -194,14 +235,20 @@ pub struct Menu {
 pub fn open_menu(w: &mut World) {
     w.sounds.push(Ui::Select as u32);
     let sel = w.cursor_recall(MENU);
-    w.region_menu = Some(Menu { sel, return_menu: w.menu, hidden: false });
+    w.region_menu = Some(Menu {
+        sel,
+        return_menu: w.menu,
+        hidden: false,
+    });
     w.menu = None;
 }
 
 /// The generic handler: links (SE 0001), Enter (SE 0002) opens the row's map (FUN_10140780; no tables: SE 0004),
 /// Escape (SE 0003) closes back to the main menu (FUN_10140830).
 pub fn menu_key(w: &mut World, gu: &GameUi, key: egui::Key, sw: f32, sh: f32) {
-    let Some(mut m) = w.region_menu.clone() else { return };
+    let Some(mut m) = w.region_menu.clone() else {
+        return;
+    };
     match key {
         egui::Key::ArrowUp | egui::Key::ArrowDown => {
             let k = if key == egui::Key::ArrowUp { 2 } else { 3 };
@@ -232,7 +279,16 @@ pub fn menu_key(w: &mut World, gu: &GameUi, key: egui::Key, sw: f32, sh: f32) {
 
 /// The mouse: the region menu as the generic window; on a map a right click is its Escape (message 6 takes any).
 #[allow(clippy::too_many_arguments)]
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+pub fn pointer(
+    w: &mut World,
+    gu: &GameUi,
+    sw: f32,
+    sh: f32,
+    p: (f32, f32),
+    moved: bool,
+    clicked: bool,
+    right: bool,
+) {
     if w.cnq.is_some() {
         if right {
             key(w, egui::Key::Escape);
@@ -240,12 +296,26 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
         return;
     }
     // The modern layer draws the menu and takes its mouse.
-    let Some(sel) = shown(w).filter(|_| !w.modern) else { return };
-    super::winhits::generic(w, gu, MENU, sel, 1..=4, p, moved, clicked, right, |w, id| {
-        if let Some(r) = w.region_menu.as_mut() {
-            r.sel = id;
-        }
-    }, |w, gu, k| menu_key(w, gu, k, sw, sh));
+    let Some(sel) = shown(w).filter(|_| !w.modern) else {
+        return;
+    };
+    super::winhits::generic(
+        w,
+        gu,
+        MENU,
+        sel,
+        1..=4,
+        p,
+        moved,
+        clicked,
+        right,
+        |w, id| {
+            if let Some(r) = w.region_menu.as_mut() {
+                r.sel = id;
+            }
+        },
+        |w, gu, k| menu_key(w, gu, k, sw, sh),
+    );
 }
 
 /// The menu's cursor while it shows (not while its map is up).
@@ -281,7 +351,10 @@ impl View {
     fn clamp(&mut self) {
         let (sw, sh) = self.screen;
         let z = self.zoom;
-        let b = [((512.0 * z - sw) / z).max(0.0), ((512.0 * z - sh) / z).max(0.0)];
+        let b = [
+            ((512.0 * z - sw) / z).max(0.0),
+            ((512.0 * z - sh) / z).max(0.0),
+        ];
         self.view = (self.view.0.clamp(0.0, b[0]), self.view.1.clamp(0.0, b[1]));
     }
 
@@ -301,7 +374,10 @@ impl View {
     }
 
     fn under_point(&self) -> (f32, f32) {
-        (self.point.0 / self.zoom + self.view.0 + 0.5, self.point.1 / self.zoom + self.view.1 + 0.5)
+        (
+            self.point.0 / self.zoom + self.view.0 + 0.5,
+            self.point.1 / self.zoom + self.view.1 + 0.5,
+        )
     }
 
     /// FUN_101ef990.
@@ -317,7 +393,11 @@ impl View {
     fn frame(&mut self) {
         let (level, target, step) = self.fade;
         if level != target {
-            self.fade.0 = if (target - level).abs() <= step { target } else { level + step * (target - level).signum() };
+            self.fade.0 = if (target - level).abs() <= step {
+                target
+            } else {
+                level + step * (target - level).signum()
+            };
         }
         if let Some(t) = self.zoom_to {
             let dz = (t - self.zoom) * 0.2;
@@ -336,7 +416,8 @@ impl View {
             }
             let before = self.view;
             self.scroll_by(d);
-            let moved = ((self.view.0 - before.0).powi(2) + (self.view.1 - before.1).powi(2)).sqrt();
+            let moved =
+                ((self.view.0 - before.0).powi(2) + (self.view.1 - before.1).powi(2)).sqrt();
             if moved < 0.8f32.sqrt() {
                 let p = self.under_point();
                 self.scroll_by(((to.0 - p.0) * self.zoom, (to.1 - p.1) * self.zoom));
@@ -347,7 +428,10 @@ impl View {
 
     /// A map pixel on screen (truncated as __ftol).
     fn screen_of(&self, px: f32, py: f32) -> (f32, f32) {
-        (((px - self.view.0) * self.zoom + 0.5).trunc(), ((py - self.view.1) * self.zoom + 0.5).trunc())
+        (
+            ((px - self.view.0) * self.zoom + 0.5).trunc(),
+            ((py - self.view.1) * self.zoom + 0.5).trunc(),
+        )
     }
 }
 
@@ -394,13 +478,19 @@ pub struct CnqMap {
 
 /// FUN_101e6ca0(zone, named): the zone has a conquest zone record (and, `named`, a name).
 fn conquest_zone(w: &World, zone: u16, named: bool) -> bool {
-    w.conquest.markers[0].iter().skip(23).find(|m| m.par == zone as i16).is_some_and(|m| !named || m.name != -1)
+    w.conquest.markers[0]
+        .iter()
+        .skip(23)
+        .find(|m| m.par == zone as i16)
+        .is_some_and(|m| !named || m.name != -1)
 }
 
 /// FUN_101e6d80: the zone's region id (mode 3 first the (region, zone) pairs, then entries from index 8; else the zone
 /// records'), -1 none.
 fn region_of(w: &World, mode: usize, zone: u16) -> i32 {
-    let (Some(t), m) = (w.conquest.tables.as_ref(), &w.conquest.markers[mode]) else { return -1 };
+    let (Some(t), m) = (w.conquest.tables.as_ref(), &w.conquest.markers[mode]) else {
+        return -1;
+    };
     let from = if mode == 3 {
         if let Some(p) = t.pairs.iter().find(|p| p.1 == zone as i16) {
             return p.0 as i32;
@@ -409,12 +499,17 @@ fn region_of(w: &World, mode: usize, zone: u16) -> i32 {
     } else {
         t.counts[mode].1
     };
-    m.iter().skip(from).find(|e| e.par == zone as i16).map_or(-1, |e| e.id as i32)
+    m.iter()
+        .skip(from)
+        .find(|e| e.par == zone as i16)
+        .map_or(-1, |e| e.id as i32)
 }
 
 /// FUN_101e7980: a map mode for the current zone. False when there are no tables (retail: no cnqframe).
 pub fn open_map(w: &mut World, gu: &GameUi, mode: usize, sw: f32, sh: f32) -> bool {
-    let Some(t) = w.conquest.tables.clone() else { return false };
+    let Some(t) = w.conquest.tables.clone() else {
+        return false;
+    };
     let zone = w.pos_zone;
     if mode == 0 && !conquest_zone(w, zone, false) {
         super::textcmd::refuse(w, 0x7b);
@@ -438,12 +533,20 @@ pub fn open_map(w: &mut World, gu: &GameUi, mode: usize, sw: f32, sh: f32) -> bo
     }
     let start = if rid > 0 {
         select_zones(&mut w.conquest.markers[mode], regions, rid);
-        w.conquest.markers[mode].iter().take(regions).find(|e| e.id as i32 == rid).map(|e| (e.px, e.py))
+        w.conquest.markers[mode]
+            .iter()
+            .take(regions)
+            .find(|e| e.id as i32 == rid)
+            .map(|e| (e.px, e.py))
     } else if rid == 0 {
-        w.conquest.markers[mode].iter_mut().skip(regions).find(|e| e.par == zone as i16).map(|e| {
-            e.flags |= 1;
-            (e.px, e.py)
-        })
+        w.conquest.markers[mode]
+            .iter_mut()
+            .skip(regions)
+            .find(|e| e.par == zone as i16)
+            .map(|e| {
+                e.flags |= 1;
+                (e.px, e.py)
+            })
     } else {
         None
     };
@@ -452,10 +555,24 @@ pub fn open_map(w: &mut World, gu: &GameUi, mode: usize, sw: f32, sh: f32) -> bo
     let zoom = fit * 2.3;
     // FUN_101ee440 at the window's open: the point (W x 200 / 512, H / 2), a fade-in.
     let point = ((sw * 200.0 / 512.0).trunc(), (sh / 2.0).trunc());
-    let mut view = View { screen: (sw, sh), fit, zoom, zoom_base: zoom, zoom_to: None, view: (px - point.0, py - point.1), point, scroll_to: None, fade: (128.0, 0.0, 8.0), closing: None };
+    let mut view = View {
+        screen: (sw, sh),
+        fit,
+        zoom,
+        zoom_base: zoom,
+        zoom_to: None,
+        view: (px - point.0, py - point.1),
+        point,
+        scroll_to: None,
+        fade: (128.0, 0.0, 8.0),
+        closing: None,
+    };
     view.clamp();
     view.scroll_to_px((px, py));
-    let rx = w.index.clone().map(|index| super::map::load(index, IMAGES[mode]));
+    let rx = w
+        .index
+        .clone()
+        .map(|index| super::map::load(index, IMAGES[mode]));
     w.cnq = Some(CnqMap {
         mode,
         view,
@@ -486,21 +603,33 @@ pub fn open_map(w: &mut World, gu: &GameUi, mode: usize, sw: f32, sh: f32) -> bo
 /// FUN_101e6eb0: the zones of region `id` (with a name) selected, the others not.
 fn select_zones(m: &mut [CnqMarker], regions: usize, id: i32) {
     for e in m.iter_mut().skip(regions).filter(|e| e.name != -1) {
-        if e.id as i32 == id { e.flags |= 1 } else { e.flags &= !1 }
+        if e.id as i32 == id {
+            e.flags |= 1
+        } else {
+            e.flags &= !1
+        }
     }
 }
 
 /// FUN_101e6f10 (Campaign): zone entries of record +2 `par` selected.
 fn select_par(m: &mut [CnqMarker], regions: usize, par: i32) {
     for e in m.iter_mut().skip(regions).filter(|e| e.name != -1) {
-        if e.par as i32 == par { e.flags |= 1 } else { e.flags &= !1 }
+        if e.par as i32 == par {
+            e.flags |= 1
+        } else {
+            e.flags &= !1
+        }
     }
 }
 
 /// FUN_101e6e50: the selected entry of the zone blinks.
 fn blink_zone(m: &mut [CnqMarker], regions: usize, zone: u16) {
     for e in m.iter_mut().skip(regions) {
-        if e.par == zone as i16 && e.flags & 1 != 0 { e.flags |= 4 } else { e.flags &= !4 }
+        if e.par == zone as i16 && e.flags & 1 != 0 {
+            e.flags |= 4
+        } else {
+            e.flags &= !4
+        }
     }
 }
 
@@ -520,7 +649,11 @@ fn data<'a>(w: &'a World, help: &mut Option<String>, mode: usize) -> Option<&'a 
         *help = line(6);
         return None;
     }
-    let ok = if mode == 0 { d.byte(0x94) == 0 } else { d.word(0x98) != 0 };
+    let ok = if mode == 0 {
+        d.byte(0x94) == 0
+    } else {
+        d.word(0x98) != 0
+    };
     if !ok {
         *help = line(5);
     }
@@ -533,7 +666,12 @@ impl CnqMap {
     fn under_cursor(&self, m: &[CnqMarker]) -> Option<usize> {
         let (mx, my) = self.view.under_point();
         let (mx, my) = (mx.trunc() as i32, my.trunc() as i32);
-        m.iter().position(|e| e.flags & 0x800 == 0 && (e.flags & 1 != 0 || e.flags & 0x20 == 0) && (e.px as i32 - mx).abs() < 5 && (e.py as i32 - my).abs() < 5)
+        m.iter().position(|e| {
+            e.flags & 0x800 == 0
+                && (e.flags & 1 != 0 || e.flags & 0x20 == 0)
+                && (e.px as i32 - mx).abs() < 5
+                && (e.py as i32 - my).abs() < 5
+        })
     }
 }
 
@@ -543,7 +681,15 @@ fn fill_conquer1(w: &World, id: i32, player_region: i32) -> Conquer1 {
     let d = &w.conquest;
     let r = (id - 5).max(0) as usize;
     let g = d.byte(0x18 + 4 * r);
-    let mut c = Conquer1 { precise: false, top: 0, levels: [-1.0; 3], beast: 0.0, owner: 4, beast_flag: g & 0x40 != 0, tally: d.byte(0x88) };
+    let mut c = Conquer1 {
+        precise: false,
+        top: 0,
+        levels: [-1.0; 3],
+        beast: 0.0,
+        owner: 4,
+        beast_flag: g & 0x40 != 0,
+        tally: d.byte(0x88),
+    };
     if id == player_region && conquest_zone(w, w.pos_zone, true) {
         let rank = d.byte(0x16 + 4 * r);
         let mut firsts = 0;
@@ -563,9 +709,17 @@ fn fill_conquer1(w: &World, id: i32, player_region: i32) -> Conquer1 {
         }
         total += d.word(0x90) as i32 as f32;
         for k in 0..3 {
-            c.levels[k] = if total == 0.0 { 0.0 } else { d.byte(0x82 + k) as i8 as f32 / total };
+            c.levels[k] = if total == 0.0 {
+                0.0
+            } else {
+                d.byte(0x82 + k) as i8 as f32 / total
+            };
         }
-        c.beast = if total == 0.0 { 0.0 } else { d.word(0x90) as f32 / total };
+        c.beast = if total == 0.0 {
+            0.0
+        } else {
+            d.word(0x90) as f32 / total
+        };
         c.precise = true;
     } else if g & 0x80 != 0 {
         c.levels = [4.0; 3];
@@ -605,7 +759,12 @@ fn frame_logic(w: &mut World, m: &mut CnqMap, recentre: bool) {
                         }
                         let bt = w.battle.clone();
                         // sprintf of group 10 8 "This region is currently under the control of %s." with group 0x13 k.
-                        let control = |k: usize| Some(super::textcmd::printf(&bt.as_ref()?.group10(8)?, &[m.nations[k].clone()]));
+                        let control = |k: usize| {
+                            Some(super::textcmd::printf(
+                                &bt.as_ref()?.group10(8)?,
+                                &[m.nations[k].clone()],
+                            ))
+                        };
                         help = match e.icon {
                             c @ 4..=6 => control(c as usize - 4),
                             2 => control(3),
@@ -700,7 +859,11 @@ fn frame_logic(w: &mut World, m: &mut CnqMap, recentre: bool) {
                             blink_zone(&mut w.conquest.markers[3], regions, m.zone);
                         }
                     }
-                    (m.colorank, m.coloresu) = if e.id == 1 { (true, None) } else { (false, Some(e.id)) };
+                    (m.colorank, m.coloresu) = if e.id == 1 {
+                        (true, None)
+                    } else {
+                        (false, Some(e.id))
+                    };
                 }
             }
         }
@@ -755,23 +918,40 @@ fn alpha_step(e: &mut CnqMarker, ticks: f32) {
 /// scrolls), the retail frames, the marker alphas. False once the fade-out has ended.
 pub fn update(w: &mut World, input: &mut super::input::Input, ticks: f32) -> bool {
     use super::input::mode::{HELD, PRESS};
-    let Some(mut m) = w.cnq.take() else { return true };
+    let Some(mut m) = w.cnq.take() else {
+        return true;
+    };
     if let Some(deadline) = m.view.closing {
-        if (m.view.fade.0 == m.view.fade.1 && m.view.scroll_to.is_none() && m.view.zoom_to.is_none()) || Instant::now() >= deadline {
+        if (m.view.fade.0 == m.view.fade.1
+            && m.view.scroll_to.is_none()
+            && m.view.zoom_to.is_none())
+            || Instant::now() >= deadline
+        {
             close_done(w);
             return false;
         }
     } else {
-        let recentre = input.test(0x7d, PRESS) || (input.test(0xa4, HELD) && input.test(0xa5, HELD));
+        let recentre =
+            input.test(0x7d, PRESS) || (input.test(0xa4, HELD) && input.test(0xa5, HELD));
         frame_logic(w, &mut m, recentre);
         let fast = if input.test(0x9a, HELD) { 2.0 } else { 1.0 };
         if m.view.zoom_to.is_none() {
             if input.test(0x7d, PRESS) || (input.test(0xa4, HELD) && input.test(0xa5, HELD)) {
                 m.view.zoom_to = Some(m.view.zoom_base);
             } else {
-                let keys: f32 = -(if input.test(0xa4, HELD) { 1.0 } else if input.test(0xa5, HELD) { -1.0 } else { 0.0 });
+                let keys: f32 = -(if input.test(0xa4, HELD) {
+                    1.0
+                } else if input.test(0xa5, HELD) {
+                    -1.0
+                } else {
+                    0.0
+                });
                 let stick = input.axis(0x7c);
-                let a = if stick.abs() > keys.abs() { stick } else { keys };
+                let a = if stick.abs() > keys.abs() {
+                    stick
+                } else {
+                    keys
+                };
                 if a != 0.0 {
                     m.view.zoom_by(-a * 0.08 * fast * ticks * 0.5);
                 }
@@ -780,8 +960,14 @@ pub fn update(w: &mut World, input: &mut super::input::Input, ticks: f32) -> boo
         // Cursor mode (flag 0x100) reads only the cursor axes, not the scroll ones (0x79 / 0x7a).
         let dead = |v: f32| if (v * fast).abs() < 2.0 { 0.0 } else { v };
         let (sw, sh) = m.view.screen;
-        let v = (dead(input.axis(0x9d) * 15.0) * fast * ticks * 0.5, dead(input.axis(0x9e) * 15.0) * fast * ticks * 0.5);
-        let (bx, by) = ([sw / 512.0 * 40.0, sw - sw / 512.0 * 60.0], [sh / 448.0 * 65.0, sh - sh / 448.0 * 180.0]);
+        let v = (
+            dead(input.axis(0x9d) * 15.0) * fast * ticks * 0.5,
+            dead(input.axis(0x9e) * 15.0) * fast * ticks * 0.5,
+        );
+        let (bx, by) = (
+            [sw / 512.0 * 40.0, sw - sw / 512.0 * 60.0],
+            [sh / 448.0 * 65.0, sh - sh / 448.0 * 180.0],
+        );
         let want = (m.view.point.0 + v.0, m.view.point.1 + v.1);
         let moved = (want.0.clamp(bx[0], bx[1]), want.1.clamp(by[0], by[1]));
         let over = (want.0 - moved.0, want.1 - moved.1);
@@ -819,7 +1005,9 @@ pub fn key(w: &mut World, key: egui::Key) {
         w.sounds.push(Ui::Cancel as u32);
         m.view.closing = Some(Instant::now() + Duration::from_secs(3));
         m.view.fade = (m.view.fade.0, 255.0, 16.0);
-        (m.conquer1, m.conq6sta, m.legend, m.beseige1, m.beseige2, m.coloresu, m.colorank) = (None, false, false, false, None, None, false);
+        (
+            m.conquer1, m.conq6sta, m.legend, m.beseige1, m.beseige2, m.coloresu, m.colorank,
+        ) = (None, false, false, false, None, None, false);
     }
 }
 
@@ -860,14 +1048,23 @@ fn number(gu: &mut GameUi, s: &str, x: f32, y: f32) {
 /// A gauge (FUN_101cb040: windowps frame 38, fill 97): `fill` drawn, or only its ghost (0x30808080).
 fn gauge(gu: &mut GameUi, x: f32, y: f32, f: f32, ghost: bool) {
     let (b, ui, _, _) = gu.parts();
-    let Some(l) = ui.lib("menu    windowps") else { return };
+    let Some(l) = ui.lib("menu    windowps") else {
+        return;
+    };
     let (value, anim) = if ghost { (0.0, f) } else { (f, f) };
     crate::render::screens::push_gauge_eased(b, ui, l, x, y, 38, 97, value, anim);
 }
 
 /// An info window at its layout place, or at x 16 while the cursor is on the right half; `size` overrides its frame
 /// (FUN_1011a5a0). Returns its top-left and width.
-fn info(gu: &mut GameUi, name: &str, sw: f32, sh: f32, left: bool, size: Option<(f32, f32)>) -> Option<(f32, f32, f32)> {
+fn info(
+    gu: &mut GameUi,
+    name: &str,
+    sw: f32,
+    sh: f32,
+    left: bool,
+    size: Option<(f32, f32)>,
+) -> Option<(f32, f32, f32)> {
     let [_, ly, lw, lh] = gu.window_rect(name, sw, sh)?;
     let (w, h) = size.unwrap_or((lw, lh));
     // Right: 496 - width from the right edge (as the layout's 384 for 112 wide); in by the modern frame's margin.
@@ -901,8 +1098,19 @@ pub fn draw_map(gu: &mut GameUi, w: &World) {
     let level = m.view.fade.0;
     let z = m.view.zoom;
     if let Some(t) = &m.texture {
-        let a = if level == 0.0 { 160.0 } else { (255.0 - level).min(160.0) } / 128.0;
-        gu.image_rect(t, -m.view.view.0 * z + 0.5, -m.view.view.1 * z + 0.5, 512.0 * z, 512.0 * z, [0.5, 0.5, 0.5, a.min(1.0)]);
+        let a = if level == 0.0 {
+            160.0
+        } else {
+            (255.0 - level).min(160.0)
+        } / 128.0;
+        gu.image_rect(
+            t,
+            -m.view.view.0 * z + 0.5,
+            -m.view.view.1 * z + 0.5,
+            512.0 * z,
+            512.0 * z,
+            [0.5, 0.5, 0.5, a.min(1.0)],
+        );
     }
     if level == 0.0 {
         let mode = m.mode;
@@ -913,7 +1121,13 @@ pub fn draw_map(gu: &mut GameUi, w: &World) {
         if m.view.closing.is_none() {
             let n = gu.lib_len("anc     anc_regi").max(1);
             let frame = gu.cursor_frame();
-            gu.sprite("anc     anc_regi", frame % n, m.view.point.0 - 8.0, m.view.point.1 - 8.0, WHITE);
+            gu.sprite(
+                "anc     anc_regi",
+                frame % n,
+                m.view.point.0 - 8.0,
+                m.view.point.1 - 8.0,
+                WHITE,
+            );
         }
     }
 }
@@ -921,7 +1135,16 @@ pub fn draw_map(gu: &mut GameUi, w: &World) {
 /// "menu    region" (hidden while its map is up).
 pub fn draw_menu(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Option<[f32; 4]> {
     let r = w.region_menu.as_ref().filter(|r| !r.hidden)?;
-    gu.lobby_window_off(MENU, sw, sh, (0.0, 0.0), Some(r.sel), w.confirm.is_none(), &[]).map(|win| {
+    gu.lobby_window_off(
+        MENU,
+        sw,
+        sh,
+        (0.0, 0.0),
+        Some(r.sel),
+        w.confirm.is_none(),
+        &[],
+    )
+    .map(|win| {
         super::winhits::record(w, MENU, &win);
         win.frame
     })
@@ -933,7 +1156,11 @@ fn label(gu: &GameUi, mode: usize, e: &CnqMarker) -> Option<String> {
     if e.name < 0 {
         return None;
     }
-    let region = if mode == 3 { e.par == -1 && (e.id == 1 && e.name == 49 || e.id == 9) } else { matches!(e.par, -1 | -2) };
+    let region = if mode == 3 {
+        e.par == -1 && (e.id == 1 && e.name == 49 || e.id == 9)
+    } else {
+        matches!(e.par, -1 | -2)
+    };
     gu.item_msg(if region { 0x13 } else { 0x15 }, e.name as usize)
 }
 
@@ -942,8 +1169,16 @@ fn label(gu: &GameUi, mode: usize, e: &CnqMarker) -> Option<String> {
 /// alpha (halved with 0x800), placed by +0xa / +0xc or by the place code (0x40).
 fn draw_marker(gu: &mut GameUi, v: &View, e: &CnqMarker, name: Option<&str>) {
     let sprite = |i: u8| ICONS.get(i as usize).copied().filter(|_| (i as i8) >= 0);
-    let Some(bound) = sprite(if e.flags & 0x100 != 0 { e.icon2 } else { e.icon }) else { return };
-    let b = gu.cell_bounds("menu    keytops3", bound, 0).unwrap_or([0.0; 4]);
+    let Some(bound) = sprite(if e.flags & 0x100 != 0 {
+        e.icon2
+    } else {
+        e.icon
+    }) else {
+        return;
+    };
+    let b = gu
+        .cell_bounds("menu    keytops3", bound, 0)
+        .unwrap_or([0.0; 4]);
     let (iw, ih) = ((b[2] - b[0]) as i32, (b[3] - b[1]) as i32);
     let (mut x, mut y) = v.screen_of(e.px as f32, e.py as f32);
     if e.flags & 0x10 == 0 {
@@ -959,11 +1194,26 @@ fn draw_marker(gu: &mut GameUi, v: &View, e: &CnqMarker, name: Option<&str>) {
         if e.flags & 0x200 != 0 {
             gu.sprite("menu    keytops3", k, x, y, WHITE);
         } else {
-            gu.sprite_scaled_blend("menu    keytops3", k, x, y, 1.0, 1.0, (e.alpha as u32) << 24 | 0x80_8080, 0x44);
+            gu.sprite_scaled_blend(
+                "menu    keytops3",
+                k,
+                x,
+                y,
+                1.0,
+                1.0,
+                (e.alpha as u32) << 24 | 0x80_8080,
+                0x44,
+            );
         }
     }
-    let Some(name) = name.filter(|_| e.alpha != 0 && e.flags & 8 == 0) else { return };
-    let a = if e.flags & 0x800 != 0 { e.alpha as u32 / 2 } else { e.alpha as u32 };
+    let Some(name) = name.filter(|_| e.alpha != 0 && e.flags & 8 == 0) else {
+        return;
+    };
+    let a = if e.flags & 0x800 != 0 {
+        e.alpha as u32 / 2
+    } else {
+        e.alpha as u32
+    };
     let rgb = COLOURS.get(e.colour as usize).copied().unwrap_or(0);
     let c = |s: u32| (((rgb >> s) & 0xff) * a >> 7) << s;
     let colour = a << 24 | c(16) | c(8) | c(0);
@@ -988,7 +1238,12 @@ fn draw_marker(gu: &mut GameUi, v: &View, e: &CnqMarker, name: Option<&str>) {
 
 /// sprintf of a group 10 line with one number (e.g. 0x56 "%d day.").
 fn line10(w: &World, id: usize, n: i32) -> String {
-    w.battle.as_ref().and_then(|b| b.group10(id)).map_or(String::new(), |f| super::textcmd::printf(&f, &[n.to_string()]))
+    w.battle
+        .as_ref()
+        .and_then(|b| b.group10(id))
+        .map_or(String::new(), |f| {
+            super::textcmd::printf(&f, &[n.to_string()])
+        })
 }
 
 /// The mode's info windows (sections R5): conquer1 / conq6sta / conq3pts, beseige1 / beseige2 / imperial, coloresu /
@@ -1002,11 +1257,27 @@ fn draw_windows(gu: &mut GameUi, w: &World, m: &CnqMap, sw: f32, sh: f32) {
         if let Some((x, y, _)) = info(gu, CONQUER1, sw, sh, left, Some((112.0, h))) {
             // FUN_101e9410: the owner banner, the days to the tally, the rows (or "The beastmen are dominant.").
             if c.owner < 3 {
-                gu.sprite("menu    keytops3", 74 + c.owner as usize, x + 12.0, y + 19.0, WHITE);
+                gu.sprite(
+                    "menu    keytops3",
+                    74 + c.owner as usize,
+                    x + 12.0,
+                    y + 19.0,
+                    WHITE,
+                );
             } else {
-                gu.sprite("menu    framesus", LABELS[c.owner as usize], x + 12.0, y + 19.0, WHITE);
+                gu.sprite(
+                    "menu    framesus",
+                    LABELS[c.owner as usize],
+                    x + 12.0,
+                    y + 19.0,
+                    WHITE,
+                );
             }
-            let days = if c.tally == 1 { line10(w, 0x56, 1) } else { line10(w, 0x57, c.tally as i32) };
+            let days = if c.tally == 1 {
+                line10(w, 0x56, 1)
+            } else {
+                line10(w, 0x57, c.tally as i32)
+            };
             number(gu, &days, x + 0x65 as f32, y + 0x32 as f32);
             let (rx, mut ry) = (x + 12.0, y + 0x54 as f32);
             if c.beast_flag && !c.precise {
@@ -1015,7 +1286,17 @@ fn draw_windows(gu: &mut GameUi, w: &World, m: &CnqMap, sw: f32, sh: f32) {
                 for k in 0..if c.precise { 4 } else { 3 } {
                     // FUN_101e9010: the label (the nation ahead pulsing), then a gauge or the level mark.
                     let on = c.precise && k == c.top as usize;
-                    gu.sprite("menu    framesus", LABELS[k], rx, ry, if on { (m.pulse.0 as u32) << 24 | 0x80_8080 } else { WHITE });
+                    gu.sprite(
+                        "menu    framesus",
+                        LABELS[k],
+                        rx,
+                        ry,
+                        if on {
+                            (m.pulse.0 as u32) << 24 | 0x80_8080
+                        } else {
+                            WHITE
+                        },
+                    );
                     let (gx, gy) = (rx + 20.0, ry + 13.0);
                     if c.precise {
                         gauge(gu, gx, gy, if k < 3 { c.levels[k] } else { c.beast }, !on);
@@ -1048,7 +1329,13 @@ fn draw_windows(gu: &mut GameUi, w: &World, m: &CnqMap, sw: f32, sh: f32) {
             gu.sprite("menu    framesus", LABELS[k], x + 0x18 as f32, ry, WHITE);
         }
         if d.byte(1) != 0 {
-            gu.sprite("menu    keytops3", 119, x + 0x55 as f32, y + 0x24 as f32, WHITE);
+            gu.sprite(
+                "menu    keytops3",
+                119,
+                x + 0x55 as f32,
+                y + 0x24 as f32,
+                WHITE,
+            );
         }
     }
     if m.beseige1
@@ -1056,8 +1343,21 @@ fn draw_windows(gu: &mut GameUi, w: &World, m: &CnqMap, sw: f32, sh: f32) {
     {
         // FUN_101e99c0: Al Zahbi's orders, then each army's level and orders.
         let ov = d.word(0x9c);
-        gu.sprite("menu    keytops3", 370 + (ov >> 2 & 3) as usize, x + 8.0, y + 0x18 as f32, WHITE);
-        for (k, (dy, lv, ord)) in [(0x44, ov >> 4 & 0xf, ov >> 16 & 7), (0x72, ov >> 8 & 0xf, ov >> 19 & 7), (0xa0, ov >> 12 & 0xf, ov >> 22 & 7)].into_iter().enumerate() {
+        gu.sprite(
+            "menu    keytops3",
+            370 + (ov >> 2 & 3) as usize,
+            x + 8.0,
+            y + 0x18 as f32,
+            WHITE,
+        );
+        for (k, (dy, lv, ord)) in [
+            (0x44, ov >> 4 & 0xf, ov >> 16 & 7),
+            (0x72, ov >> 8 & 0xf, ov >> 19 & 7),
+            (0xa0, ov >> 12 & 0xf, ov >> 22 & 7),
+        ]
+        .into_iter()
+        .enumerate()
+        {
             army(gu, x + 8.0, y + dy as f32, k, lv, ord);
         }
     }
@@ -1079,17 +1379,42 @@ fn draw_windows(gu: &mut GameUi, w: &World, m: &CnqMap, sw: f32, sh: f32) {
         && let Some((x, y, _)) = info(gu, COLORESU, sw, sh, left, None)
     {
         // FUN_101ea6e0 with FUN_101e6b80's area: the rate, its gauge (framesus 148), the bivouacs.
-        let area = [(2, 0), (3, 1), (4, 2), (5, 4), (6, 3), (7, 5), (8, 6), (9, 7)].iter().find(|p| p.0 == id).map(|p| p.1);
+        let area = [
+            (2, 0),
+            (3, 1),
+            (4, 2),
+            (5, 4),
+            (6, 3),
+            (7, 5),
+            (8, 6),
+            (9, 7),
+        ]
+        .iter()
+        .find(|p| p.0 == id)
+        .map(|p| p.1);
         let (rate, biv, max) = area.map_or((0, 0, 0), |a| d.areas[a]);
         number(gu, &format!("{rate:3}%"), x + 100.0, y + 5.0);
-        gu.sprite_scaled("menu    framesus", 148, x + 0x1f as f32, y + 0x13 as f32, rate as f32 * 0.01, 1.0, WHITE);
+        gu.sprite_scaled(
+            "menu    framesus",
+            148,
+            x + 0x1f as f32,
+            y + 0x13 as f32,
+            rate as f32 * 0.01,
+            1.0,
+            WHITE,
+        );
         number(gu, &format!("{biv}/{max}"), x + 100.0, y + 0x22 as f32);
     }
     if m.colorank
         && let Some((x, y, _)) = info(gu, COLORANK, sw, sh, left, None)
     {
         for (k, r) in d.ranks.iter().enumerate() {
-            number(gu, &r.to_string(), x + 100.0, y + 0x14 as f32 + 16.0 * k as f32);
+            number(
+                gu,
+                &r.to_string(),
+                x + 100.0,
+                y + 0x14 as f32 + 16.0 * k as f32,
+            );
         }
     }
     // The legend (registry flag 0x2000: on the party window): conquest points, imperial standing, bayld.
@@ -1105,7 +1430,10 @@ fn draw_windows(gu: &mut GameUi, w: &World, m: &CnqMap, sw: f32, sh: f32) {
         let v = match m.mode {
             0 => d.word(0x8c),
             1 => d.word(0xac),
-            2 => d.campaign.as_ref().map_or(0, |c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])),
+            2 => d
+                .campaign
+                .as_ref()
+                .map_or(0, |c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])),
             _ => d.bayld,
         };
         number(gu, &format!("{v:10}"), x + 0x5f as f32, y + 0x16 as f32);
@@ -1145,7 +1473,10 @@ pub struct RegionView {
 
 /// The map's title (group 0xd by mode).
 pub fn map_title(gu: &GameUi, mode: usize) -> String {
-    TITLES.get(mode).and_then(|&t| gu.title_msg(t)).unwrap_or_default()
+    TITLES
+        .get(mode)
+        .and_then(|&t| gu.title_msg(t))
+        .unwrap_or_default()
 }
 
 /// What draw_windows would draw, as data.
@@ -1154,7 +1485,11 @@ pub fn info_view(w: &World) -> Option<InfoView> {
     let d = &w.conquest;
     let region = m.conquer1.map(|c| RegionView {
         owner: c.owner,
-        tally: if c.tally == 1 { line10(w, 0x56, 1) } else { line10(w, 0x57, c.tally as i32) },
+        tally: if c.tally == 1 {
+            line10(w, 0x56, 1)
+        } else {
+            line10(w, 0x57, c.tally as i32)
+        },
         precise: c.precise,
         beast_flag: c.beast_flag,
         top: c.top,
@@ -1162,20 +1497,48 @@ pub fn info_view(w: &World) -> Option<InfoView> {
         beast: c.beast,
     });
     let ranking = (m.conq6sta && d.have).then(|| {
-        let mut out: Vec<(u8, usize)> = (0..3).map(|k| ((d.byte(0) >> (2 * k) & 3), k)).filter(|r| r.0 != 0).collect();
+        let mut out: Vec<(u8, usize)> = (0..3)
+            .map(|k| ((d.byte(0) >> (2 * k) & 3), k))
+            .filter(|r| r.0 != 0)
+            .collect();
         out.sort();
         (out, d.byte(1) != 0)
     });
     let besieged = m.beseige1.then(|| {
         let ov = d.word(0x9c);
-        (ov >> 2 & 3, [(ov >> 4 & 0xf, ov >> 16 & 7), (ov >> 8 & 0xf, ov >> 19 & 7), (ov >> 12 & 0xf, ov >> 22 & 7)])
+        (
+            ov >> 2 & 3,
+            [
+                (ov >> 4 & 0xf, ov >> 16 & 7),
+                (ov >> 8 & 0xf, ov >> 19 & 7),
+                (ov >> 12 & 0xf, ov >> 22 & 7),
+            ],
+        )
     });
     let stronghold = m.beseige2.map(|k| {
         let s = d.word(0xa0 + 4 * k);
-        (k, s >> 3 & 0xff, (s >> 11 & 0xf, s & 7), s >> 15 & 0xf, s >> 19 & 0xf)
+        (
+            k,
+            s >> 3 & 0xff,
+            (s >> 11 & 0xf, s & 7),
+            s >> 15 & 0xf,
+            s >> 19 & 0xf,
+        )
     });
     let colony = m.coloresu.map(|id| {
-        let area = [(2, 0), (3, 1), (4, 2), (5, 4), (6, 3), (7, 5), (8, 6), (9, 7)].iter().find(|p| p.0 == id).map(|p| p.1);
+        let area = [
+            (2, 0),
+            (3, 1),
+            (4, 2),
+            (5, 4),
+            (6, 3),
+            (7, 5),
+            (8, 6),
+            (9, 7),
+        ]
+        .iter()
+        .find(|p| p.0 == id)
+        .map(|p| p.1);
         area.map_or((0, 0, 0), |a| d.areas[a])
     });
     let shown = match m.mode {
@@ -1187,10 +1550,23 @@ pub fn info_view(w: &World) -> Option<InfoView> {
     let legend = shown.then(|| match m.mode {
         0 => d.word(0x8c),
         1 => d.word(0xac),
-        2 => d.campaign.as_ref().map_or(0, |c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])),
+        2 => d
+            .campaign
+            .as_ref()
+            .map_or(0, |c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])),
         _ => d.bayld,
     });
-    Some(InfoView { mode: m.mode, left: m.left, region, ranking, besieged, stronghold, colony, coalitions: m.colorank.then_some(d.ranks), legend })
+    Some(InfoView {
+        mode: m.mode,
+        left: m.left,
+        region,
+        ranking,
+        besieged,
+        stronghold,
+        colony,
+        coalitions: m.colorank.then_some(d.ranks),
+        legend,
+    })
 }
 
 /// FUN_101e97c0: the army (keytops3 367 + k), "Lv" (0xc 0x59) and its level, its orders (keytops3 377 + orders).
@@ -1202,26 +1578,61 @@ fn army(gu: &mut GameUi, x: f32, y: f32, k: usize, level: u32, orders: u32) {
     gu.shape_text(&lv, x + 8.0, y + 13.0, WHITE, false);
     number(gu, &level.to_string(), x + 0x2c as f32, y + 13.0);
     if orders < 6 {
-        gu.sprite("menu    keytops3", 377 + orders as usize, x + 8.0, y + 26.0, WHITE);
+        gu.sprite(
+            "menu    keytops3",
+            377 + orders as usize,
+            x + 8.0,
+            y + 26.0,
+            WHITE,
+        );
     }
 }
 
 /// FUN_101e9af0: forces under 100 a blue fill (0x800060b0); 100..199 full blue under a white one; 200 and up full blue
 /// and white under gold (0x80707000, blend 8); the frame over it *(inf: windowps 38 as FUN_101cb040's)*.
 fn forces_gauge(gu: &mut GameUi, x: f32, y: f32, v: i32) {
-    let f = if v < 100 { v as f32 * 0.01 } else { ((v - 100) % 101) as f32 * 0.01 };
+    let f = if v < 100 {
+        v as f32 * 0.01
+    } else {
+        ((v - 100) % 101) as f32 * 0.01
+    };
     let (tint, blend) = match v {
         ..100 => (0x8000_60b0, 0),
         100..200 => {
-            gu.sprite_scaled("menu    windowps", 97, x + 4.0, y + 1.0, 1.0, 1.0, 0x8000_60b0);
+            gu.sprite_scaled(
+                "menu    windowps",
+                97,
+                x + 4.0,
+                y + 1.0,
+                1.0,
+                1.0,
+                0x8000_60b0,
+            );
             (WHITE, 0)
         }
         _ => {
-            gu.sprite_scaled("menu    windowps", 97, x + 4.0, y + 1.0, 1.0, 1.0, 0x8000_60b0);
+            gu.sprite_scaled(
+                "menu    windowps",
+                97,
+                x + 4.0,
+                y + 1.0,
+                1.0,
+                1.0,
+                0x8000_60b0,
+            );
             gu.sprite_scaled("menu    windowps", 97, x + 4.0, y + 1.0, 1.0, 1.0, WHITE);
             (0x8070_7000, 8)
         }
     };
-    gu.sprite_scaled_blend("menu    windowps", 97, x + 4.0, y + 1.0, f, 1.0, tint, blend);
+    gu.sprite_scaled_blend(
+        "menu    windowps",
+        97,
+        x + 4.0,
+        y + 1.0,
+        f,
+        1.0,
+        tint,
+        blend,
+    );
     gu.sprite("menu    windowps", 38, x, y, WHITE);
 }

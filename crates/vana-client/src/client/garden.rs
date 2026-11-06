@@ -14,7 +14,14 @@ use std::sync::Arc;
 
 pub(super) const BANK: &str = "menu    bankmenu";
 const INVENTOR: &str = "menu    inventor";
-const WINDOWS: [&str; 6] = ["menu    plnt1", "menu    plnt2", "menu    plnt3", "menu    plnt4", "menu    plnt5", "menu    plnt6"];
+const WINDOWS: [&str; 6] = [
+    "menu    plnt1",
+    "menu    plnt2",
+    "menu    plnt3",
+    "menu    plnt4",
+    "menu    plnt5",
+    "menu    plnt6",
+];
 /// Table 0x103854f4: the window (1..6) a stage opens; plnt5 is never opened.
 const TABLE: [u8; 12] = [1, 6, 2, 2, 3, 2, 2, 3, 2, 2, 4, 6];
 const POT: u16 = 12;
@@ -105,7 +112,10 @@ pub struct Garden {
 }
 
 fn item_type(w: &World, id: u16) -> u16 {
-    w.item_info.as_ref().and_then(|i| i.item(id)).map_or(0, |it| it.item_type)
+    w.item_info
+        .as_ref()
+        .and_then(|i| i.item(id))
+        .map_or(0, |it| it.item_type)
 }
 
 fn ext(w: &World, c: u8, slot: u8) -> [u8; 24] {
@@ -129,7 +139,20 @@ fn list_rows(w: &World, src: Src, c: u8) -> Vec<(Slot, u32)> {
         })
         .map(|(s, id, count)| {
             let lock = w.inv.locks.get(&(c, s)).copied().unwrap_or(0);
-            (Slot { index: s, id, count, equipped: false, equipped_ex: false }, if matches!(lock, 0 | 5 | 0x1b) { WHITE } else { GREY })
+            (
+                Slot {
+                    index: s,
+                    id,
+                    count,
+                    equipped: false,
+                    equipped_ex: false,
+                },
+                if matches!(lock, 0 | 5 | 0x1b) {
+                    WHITE
+                } else {
+                    GREY
+                },
+            )
         })
         .collect()
 }
@@ -201,7 +224,12 @@ pub fn crop_body(pot: (u8, u8, u16), cancel: bool) -> Vec<u8> {
 
 /// The room's pots and their stages now.
 fn pot_stages(w: &World) -> std::collections::HashMap<(u8, u8), u8> {
-    w.inv.slots.iter().filter(|&(&(c, s), &(id, _))| matches!(c, 1 | 9) && is_pot(w, c, s, id)).map(|(&k, _)| (k, ext(w, k.0, k.1)[0])).collect()
+    w.inv
+        .slots
+        .iter()
+        .filter(|&(&(c, s), &(id, _))| matches!(c, 1 | 9) && is_pot(w, c, s, id))
+        .map(|(&k, _)| (k, ext(w, k.0, k.1)[0]))
+        .collect()
 }
 
 /// FUN_101d3380(2, -1, 1) (/garden, after its gate): bankmenu for the Safe.
@@ -233,17 +261,25 @@ pub fn start(w: &mut World) {
         win: None,
         stages,
     });
-    log::info!("garden: started, floor {}, furnished {}", r.floor, super::myroom::has_floors(&r));
+    log::info!(
+        "garden: started, floor {}, furnished {}",
+        r.floor,
+        super::myroom::has_floors(&r)
+    );
 }
 
 /// A gardening window has the keys: bankmenu, the list or a plnt window.
 pub fn has_window(w: &World) -> bool {
-    w.garden.as_ref().is_some_and(|g| g.bank.is_some() || g.list.is_some() || g.win.is_some())
+    w.garden
+        .as_ref()
+        .is_some_and(|g| g.bank.is_some() || g.list.is_some() || g.win.is_some())
 }
 
 /// Mode 3 in a furnished room: the player is not drawn (FUN_101d4d90: +0xb2 bit 4).
 pub fn hides_player(w: &World) -> bool {
-    w.garden.as_ref().is_some_and(|g| g.mode == 3 && g.furnished)
+    w.garden
+        .as_ref()
+        .is_some_and(|g| g.mode == 3 && g.furnished)
 }
 
 /// The control lock (DAT_10482f18) while the moogle goes over or comes back.
@@ -253,7 +289,10 @@ pub fn locked(w: &World) -> bool {
 
 /// Mode 3's context 0x42 (FUN_101236e0) in a furnished room or upstairs: no walking, no camera keys.
 pub fn context(w: &World) -> Option<u16> {
-    w.garden.as_ref().filter(|g| g.mode == 3 && (g.furnished || g.floor != 0)).map(|_| 0x42)
+    w.garden
+        .as_ref()
+        .filter(|g| g.mode == 3 && (g.furnished || g.floor != 0))
+        .map(|_| 0x42)
 }
 
 /// DAT_1037eb94[3]: the focal while gardening in a furnished room.
@@ -263,7 +302,11 @@ pub fn focal(w: &World) -> Option<f32> {
 
 /// DAT_1037eba8[floor]: the room's middle.
 fn park(floor: u8) -> Vec3 {
-    if floor == 0 { Vec3::ZERO } else { Vec3::new(0.0, 0.0, -9.0) }
+    if floor == 0 {
+        Vec3::ZERO
+    } else {
+        Vec3::new(0.0, 0.0, -9.0)
+    }
 }
 
 /// FUN_101d55d0: the moogle going over (1: 0x50 on 1F, the control lock, file 0xbf8's 'main' on it) or coming back
@@ -275,7 +318,12 @@ fn moogle_away(w: &mut World, going: bool, floor: u8) {
             super::moogle::line(w, 0x50);
         }
         if let Some(id) = super::moogle::moogle_actor(w) {
-            w.effects.on_event_scheduler(AWAY_FILE, AWAY_TAG, crate::fx::sched::Who::Actor(id), crate::fx::sched::Who::Actor(id));
+            w.effects.on_event_scheduler(
+                AWAY_FILE,
+                AWAY_TAG,
+                crate::fx::sched::Who::Actor(id),
+                crate::fx::sched::Who::Actor(id),
+            );
         }
     } else {
         w.moogle_hidden = false;
@@ -308,7 +356,14 @@ fn enter(w: &mut World, g: &mut Garden, c: u8) {
         g.ending = true;
         return;
     }
-    (w.menu, w.action_menu, w.held_menu, w.moogle, w.target, w.locked) = (None, None, None, None, None, false);
+    (
+        w.menu,
+        w.action_menu,
+        w.held_menu,
+        w.moogle,
+        w.target,
+        w.locked,
+    ) = (None, None, None, None, None, false);
     g.mode = 3;
     if g.furnished {
         w.pos = park(g.floor);
@@ -391,7 +446,11 @@ pub fn update(w: &mut World, dt: f32) {
         g.list_up = true;
     }
     for (k, stage) in pot_stages(w) {
-        if g.stages.insert(k, stage).is_some_and(|old| old != stage) && stage != 0 && g.mode == 3 && pot(&g).is_some_and(|p| (p.0, p.1) == k) {
+        if g.stages.insert(k, stage).is_some_and(|old| old != stage)
+            && stage != 0
+            && g.mode == 3
+            && pot(&g).is_some_and(|p| (p.0, p.1) == k)
+        {
             g.win = None;
             if matches!(w.confirm, Some((super::Confirm::Garden(_), _))) {
                 w.confirm = None;
@@ -407,9 +466,12 @@ pub fn update(w: &mut World, dt: f32) {
 /// FUN_101d5410's states: going, the list opens on the first frame, then the moogle is hidden and says 0x51; coming
 /// back it fades in ((180 - t) x 0x80 / 180) and says 0x52.
 fn away_step(w: &mut World, ticks: f32) {
-    let Some((state, t)) = w.garden_away else { return };
+    let Some((state, t)) = w.garden_away else {
+        return;
+    };
     let floor = w.garden.as_ref().map_or(0, |g| g.floor);
-    if state == 1 && t == AWAY
+    if state == 1
+        && t == AWAY
         && let Some(mut g) = w.garden.take()
     {
         open_list(w, &mut g, Src::Pots);
@@ -440,11 +502,14 @@ fn away_step(w: &mut World, ticks: f32) {
 /// The camera in mode 3 of a furnished room (FUN_101d4500): on the current pot, eased 0.3 a retail frame; still without
 /// one. False otherwise.
 pub fn camera(w: &mut World, ticks: f32) -> bool {
-    let Some(g) = w.garden.as_ref().filter(|g| g.mode == 3 && g.furnished) else { return false };
+    let Some(g) = w.garden.as_ref().filter(|g| g.mode == 3 && g.furnished) else {
+        return false;
+    };
     let target = pot(g).filter(|_| g.floor == 0).and_then(|(c, s, id)| {
         let e = ext(w, c, s);
         let f = g.table.entry(id)?;
-        let (p, _) = super::furniture::place(&f, g.map, g.floor, e[6] as i8, e[7] as i8, e[8] as i8, e[9])?;
+        let (p, _) =
+            super::furniture::place(&f, g.map, g.floor, e[6] as i8, e[7] as i8, e[8] as i8, e[9])?;
         camera_target(p)
     });
     if let Some((eye, look)) = target {
@@ -519,7 +584,9 @@ fn bank_key(w: &mut World, g: &mut Garden, row: u16, f: For, key: egui::Key) {
 /// The item list (FUN_10207510 and the seed / crystal sources' handlers).
 fn list_key(w: &mut World, g: &mut Garden, key: egui::Key) {
     use egui::Key as K;
-    let Some((src, mut top, mut cur)) = g.list else { return };
+    let Some((src, mut top, mut cur)) = g.list else {
+        return;
+    };
     let c = match src {
         Src::Pots => g.c,
         Src::Seeds => g.src_c[0],
@@ -549,7 +616,9 @@ fn list_key(w: &mut World, g: &mut Garden, key: egui::Key) {
             }
         },
         K::Enter => {
-            let Some((s, tint)) = rows.get(top + cur).cloned() else { return };
+            let Some((s, tint)) = rows.get(top + cur).cloned() else {
+                return;
+            };
             if tint == GREY {
                 w.sounds.push(Ui::Error as u32);
                 return;
@@ -567,14 +636,28 @@ fn list_key(w: &mut World, g: &mut Garden, key: egui::Key) {
                 }
                 Src::Seeds => {
                     close_list(g);
-                    w.confirm = Some((super::Confirm::Garden(Ask::Sow { c, slot: s.index, id: s.id }), false));
+                    w.confirm = Some((
+                        super::Confirm::Garden(Ask::Sow {
+                            c,
+                            slot: s.index,
+                            id: s.id,
+                        }),
+                        false,
+                    ));
                     super::moogle::line(w, 0x53);
                     w.sounds.push(Ui::Select as u32);
                 }
                 // FUN_10207270: no sound (as read).
                 Src::Crystals => {
                     close_list(g);
-                    w.confirm = Some((super::Confirm::Garden(Ask::Feed { c, slot: s.index, id: s.id }), false));
+                    w.confirm = Some((
+                        super::Confirm::Garden(Ask::Feed {
+                            c,
+                            slot: s.index,
+                            id: s.id,
+                        }),
+                        false,
+                    ));
                     super::moogle::line(w, 0x54);
                 }
             }
@@ -612,7 +695,10 @@ fn win_key(w: &mut World, g: &mut Garden, win: u8, row: u16, key: egui::Key) {
                 Row::Examine => {
                     send(w, 0x0FD, pot_body(p));
                     let e = ext(w, p.0, p.1);
-                    let coin = (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos()) & 1) as u16;
+                    let coin = (std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |d| d.subsec_nanos())
+                        & 1) as u16;
                     if let Some(n) = examine_line(e[0], e[1] & 0x80 != 0, coin) {
                         super::moogle::line(w, n);
                     }
@@ -645,7 +731,9 @@ pub fn confirmed(w: &mut World, a: Ask, yes: bool) {
     let Some(mut g) = w.garden.take() else { return };
     if yes && let Some(p) = pot(&g) {
         match a {
-            Ask::Sow { c, slot, id } | Ask::Feed { c, slot, id } => send(w, 0x0FC, add_body(p, (c, slot, id))),
+            Ask::Sow { c, slot, id } | Ask::Feed { c, slot, id } => {
+                send(w, 0x0FC, add_body(p, (c, slot, id)))
+            }
             Ask::Harvest => send(w, 0x0FE, crop_body(p, false)),
             Ask::Dry => send(w, 0x0FF, pot_body(p)),
             Ask::Throw => send(w, 0x0FE, crop_body(p, true)),
@@ -714,7 +802,15 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
     }
     if let Some((row, _)) = g.bank {
         let off = bank_dim(w);
-        if let Some(lw) = gu.lobby_window_off(BANK, sw, sh, (0.0, 0.0), Some(row), w.confirm.is_none(), &off) {
+        if let Some(lw) = gu.lobby_window_off(
+            BANK,
+            sw,
+            sh,
+            (0.0, 0.0),
+            Some(row),
+            w.confirm.is_none(),
+            &off,
+        ) {
             super::winhits::record(w, BANK, &lw);
             let [x, y, ..] = lw.frame;
             gu.disabled_children(BANK, x, y, &off, Some(row));
@@ -731,7 +827,11 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         };
         let rows = list_rows(w, src, c);
         let slots: Vec<_> = rows.iter().map(|r| r.0.clone()).collect();
-        let mut list = crate::inventory::ItemList { rows: crate::inventory::build_rows(&slots, info.as_ref(), false), scroll: top, cursor: cur };
+        let mut list = crate::inventory::ItemList {
+            rows: crate::inventory::build_rows(&slots, info.as_ref(), false),
+            scroll: top,
+            cursor: cur,
+        };
         for (r, (_, tint)) in list.rows.iter_mut().zip(&rows) {
             r.tint = *tint;
         }
@@ -740,7 +840,22 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         let frame = gu.cursor_frame();
         let (b, ui, style, font) = gu.parts();
         if let Some(m) = ui.menu(INVENTOR).filter(|_| open) {
-            let _ = crate::render::invwin::push_inventory(b, ui, style, font, GameUi::ATLAS, m, &list, sw, sh, if w.confirm.is_none() { frame } else { usize::MAX });
+            let _ = crate::render::invwin::push_inventory(
+                b,
+                ui,
+                style,
+                font,
+                GameUi::ATLAS,
+                m,
+                &list,
+                sw,
+                sh,
+                if w.confirm.is_none() {
+                    frame
+                } else {
+                    usize::MAX
+                },
+            );
             out.extend(gu.window_rect(INVENTOR, sw, sh));
         }
     }
@@ -749,7 +864,16 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
 
 /// The mouse: the plnt window and bankmenu as the generic window; the list's rows as the item list (hover moves the
 /// row, a click on it is Enter, a right click Escape).
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+pub fn pointer(
+    w: &mut World,
+    gu: &GameUi,
+    sw: f32,
+    sh: f32,
+    p: (f32, f32),
+    moved: bool,
+    clicked: bool,
+    right: bool,
+) {
     use super::winhits::generic;
     if w.modern {
         return;
@@ -757,11 +881,23 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
     let Some(g) = &w.garden else { return };
     let keys = |w: &mut World, _: &GameUi, k: egui::Key| key(w, k);
     if let Some((row, f)) = g.bank {
-        generic(w, gu, BANK, row, 1..=2, p, moved, clicked, right, |w, id| {
-            if let Some(g) = w.garden.as_mut() {
-                g.bank = Some((id, f));
-            }
-        }, keys);
+        generic(
+            w,
+            gu,
+            BANK,
+            row,
+            1..=2,
+            p,
+            moved,
+            clicked,
+            right,
+            |w, id| {
+                if let Some(g) = w.garden.as_mut() {
+                    g.bank = Some((id, f));
+                }
+            },
+            keys,
+        );
     } else if let Some((src, top, cur)) = g.list {
         let c = match src {
             Src::Pots => g.c,
@@ -769,14 +905,20 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
             Src::Crystals => g.src_c[1],
         };
         let n = list_rows(w, src, c).len();
-        let Some(r) = gu.window_rect(INVENTOR, sw, sh) else { return };
+        let Some(r) = gu.window_rect(INVENTOR, sw, sh) else {
+            return;
+        };
         let row = ((p.1 - r[1] - 4.0) / crate::inventory::ROW_PITCH).floor();
         let on = p.0 >= r[0] && p.0 < r[0] + r[2] && p.1 >= r[1] && p.1 < r[1] + r[3];
         if right && on {
             key(w, egui::Key::Escape);
             return;
         }
-        if !on || row < 0.0 || row as usize >= crate::inventory::VISIBLE_ROWS || top + row as usize >= n {
+        if !on
+            || row < 0.0
+            || row as usize >= crate::inventory::VISIBLE_ROWS
+            || top + row as usize >= n
+        {
             return;
         }
         gu.hover.set(true);
@@ -790,11 +932,23 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
         }
     } else if let Some((win, row)) = g.win {
         let n = rows(win).len() as u16;
-        generic(w, gu, WINDOWS[win as usize - 1], row, 1..=n, p, moved, clicked, right, |w, id| {
-            if let Some(g) = w.garden.as_mut() {
-                g.win = Some((win, id));
-            }
-        }, keys);
+        generic(
+            w,
+            gu,
+            WINDOWS[win as usize - 1],
+            row,
+            1..=n,
+            p,
+            moved,
+            clicked,
+            right,
+            |w, id| {
+                if let Some(g) = w.garden.as_mut() {
+                    g.win = Some((win, id));
+                }
+            },
+            keys,
+        );
     }
 }
 
@@ -814,27 +968,58 @@ pub(super) fn look(w: &World) -> Option<Look> {
             Src::Crystals => g.src_c[1],
         };
         let rows = list_rows(w, src, c);
-        (rows.iter().map(|r| r.0.clone()).collect(), rows.iter().map(|r| r.1).collect(), top + cur)
+        (
+            rows.iter().map(|r| r.0.clone()).collect(),
+            rows.iter().map(|r| r.1).collect(),
+            top + cur,
+        )
     });
-    Some(Look { win: g.win.map(|(win, row)| (WINDOWS[win as usize - 1], row)), bank: g.bank.map(|(r, _)| (r, bank_dim(w))), list })
+    Some(Look {
+        win: g.win.map(|(win, row)| (WINDOWS[win as usize - 1], row)),
+        bank: g.bank.map(|(r, _)| (r, bank_dim(w))),
+        list,
+    })
 }
 
 pub(super) fn set_win(w: &mut World, k: u16) -> bool {
-    let Some(g) = w.garden.as_mut().filter(|g| g.bank.is_none() && g.list.is_none()) else { return false };
-    let Some((_, row)) = g.win.as_mut().filter(|(win, row)| *row != k && (1..=rows(*win).len() as u16).contains(&k)) else { return false };
+    let Some(g) = w
+        .garden
+        .as_mut()
+        .filter(|g| g.bank.is_none() && g.list.is_none())
+    else {
+        return false;
+    };
+    let Some((_, row)) = g
+        .win
+        .as_mut()
+        .filter(|(win, row)| *row != k && (1..=rows(*win).len() as u16).contains(&k))
+    else {
+        return false;
+    };
     *row = k;
     true
 }
 
 pub(super) fn set_bank(w: &mut World, k: u16) -> bool {
-    let Some((r, _)) = w.garden.as_mut().and_then(|g| g.bank.as_mut()).filter(|(r, _)| *r != k && (1..=2).contains(&k)) else { return false };
+    let Some((r, _)) = w
+        .garden
+        .as_mut()
+        .and_then(|g| g.bank.as_mut())
+        .filter(|(r, _)| *r != k && (1..=2).contains(&k))
+    else {
+        return false;
+    };
     *r = k;
     true
 }
 
 pub(super) fn set_row(w: &mut World, k: usize) -> bool {
-    let Some(g) = w.garden.as_ref() else { return false };
-    let Some((src, top, cur)) = g.list else { return false };
+    let Some(g) = w.garden.as_ref() else {
+        return false;
+    };
+    let Some((src, top, cur)) = g.list else {
+        return false;
+    };
     let c = match src {
         Src::Pots => g.c,
         Src::Seeds => g.src_c[0],
@@ -843,7 +1028,9 @@ pub(super) fn set_row(w: &mut World, k: usize) -> bool {
     if top + cur == k || k >= list_rows(w, src, c).len() {
         return false;
     }
-    let t = top.min(k).max((k + 1).saturating_sub(crate::inventory::VISIBLE_ROWS));
+    let t = top
+        .min(k)
+        .max((k + 1).saturating_sub(crate::inventory::VISIBLE_ROWS));
     if let Some(g) = w.garden.as_mut() {
         g.list = Some((src, t, k - t));
     }
@@ -856,17 +1043,47 @@ mod tests {
 
     #[test]
     fn stages_lines_and_bodies() {
-        assert_eq!((0..12).map(|s| window_for(s, false).unwrap()).collect::<Vec<_>>(), [1, 6, 2, 2, 3, 2, 2, 3, 2, 2, 4, 6]);
-        assert_eq!((window_for(4, true), window_for(12, false)), (Some(6), None));
-        assert_eq!((examine_line(0, false, 1), examine_line(10, false, 1), examine_line(4, true, 0)), (Some(0x3e), Some(0x48), Some(0x8b)));
+        assert_eq!(
+            (0..12)
+                .map(|s| window_for(s, false).unwrap())
+                .collect::<Vec<_>>(),
+            [1, 6, 2, 2, 3, 2, 2, 3, 2, 2, 4, 6]
+        );
+        assert_eq!(
+            (window_for(4, true), window_for(12, false)),
+            (Some(6), None)
+        );
+        assert_eq!(
+            (
+                examine_line(0, false, 1),
+                examine_line(10, false, 1),
+                examine_line(4, true, 0)
+            ),
+            (Some(0x3e), Some(0x48), Some(0x8b))
+        );
         // Porcelain Flowerpot 216 slot 5 of the Safe, Herb Seeds 572 slot 7.
-        assert_eq!(add_body((1, 5, 216), (1, 7, 572)), [0xd8, 0x00, 0x3c, 0x02, 0x05, 0x07, 0x01, 0x01]);
+        assert_eq!(
+            add_body((1, 5, 216), (1, 7, 572)),
+            [0xd8, 0x00, 0x3c, 0x02, 0x05, 0x07, 0x01, 0x01]
+        );
         assert_eq!(pot_body((1, 5, 216)), [0xd8, 0x00, 0x05, 0x01]);
-        assert_eq!(crop_body((1, 5, 216), true), [0xd8, 0x00, 0x05, 0x01, 0x01, 0, 0, 0]);
+        assert_eq!(
+            crop_body((1, 5, 216), true),
+            [0xd8, 0x00, 0x05, 0x01, 0x01, 0, 0, 0]
+        );
         let (eye, look) = camera_target(Vec3::new(4.5, -0.5, -3.9)).unwrap();
         assert!((look - Vec3::new(4.5, -0.9, -3.9)).length() < 1e-5);
-        assert!((eye - Vec3::new(3.36647, -0.9, -2.9176)).length() < 1e-4, "{eye}");
+        assert!(
+            (eye - Vec3::new(3.36647, -0.9, -2.9176)).length() < 1e-4,
+            "{eye}"
+        );
         assert_eq!(restore_top(3, 40), (3, 0));
-        assert_eq!(restore_top(38, 40), (40 - crate::inventory::VISIBLE_ROWS, 38 - (40 - crate::inventory::VISIBLE_ROWS)));
+        assert_eq!(
+            restore_top(38, 40),
+            (
+                40 - crate::inventory::VISIBLE_ROWS,
+                38 - (40 - crate::inventory::VISIBLE_ROWS)
+            )
+        );
     }
 }

@@ -38,14 +38,22 @@ pub const KINDS: [(&str, u8, Option<usize>); 12] = [
 
 /// FUN_101f97a0's row: kinds 12 and up count as 0.
 pub fn kind_row(kind: u16) -> u16 {
-    if (kind as usize) < KINDS.len() { kind } else { 0 }
+    if (kind as usize) < KINDS.len() {
+        kind
+    } else {
+        0
+    }
 }
 
 /// The point is registered: its bit in the kind's mask is set (bit / 32 words on from the offset).
 pub fn registered(masks: &[u8; 64], kind: u16, bit: u8) -> bool {
-    let Some(off) = KINDS[kind_row(kind) as usize].2 else { return true };
+    let Some(off) = KINDS[kind_row(kind) as usize].2 else {
+        return true;
+    };
     let at = off + (bit as usize >> 5) * 4;
-    masks.get(at..at + 4).is_some_and(|b| u32::from_le_bytes(b.try_into().unwrap()) >> (bit & 31) & 1 != 0)
+    masks
+        .get(at..at + 4)
+        .is_some_and(|b| u32::from_le_bytes(b.try_into().unwrap()) >> (bit & 31) & 1 != 0)
 }
 
 /// One decrypted record's points (empty slots, zone 0, left out).
@@ -56,13 +64,25 @@ pub fn parse(r: &[u8]) -> Vec<Point> {
         .map(|k| 4 + 20 * k)
         .take_while(|&o| o + 20 <= r.len())
         .filter(|&o| u16_at(o + 4) != 0)
-        .map(|o| Point { id: u16_at(o), kind: u16_at(o + 2), zone: u16_at(o + 4), map: r[o + 6], bit: r[o + 7], x: f(o + 8), z: f(o + 12), y: f(o + 16) })
+        .map(|o| Point {
+            id: u16_at(o),
+            kind: u16_at(o + 2),
+            zone: u16_at(o + 4),
+            map: r[o + 6],
+            bit: r[o + 7],
+            x: f(o + 8),
+            z: f(o + 12),
+            y: f(o + 16),
+        })
         .collect()
 }
 
 /// The whole table, in record order.
 pub fn load(items: &Items) -> Vec<Point> {
-    (0xf600..0xf614).filter_map(|id| items.record(id)).flat_map(|(_, r)| parse(&r)).collect()
+    (0xf600..0xf614)
+        .filter_map(|id| items.record(id))
+        .flat_map(|(_, r)| parse(&r))
+        .collect()
 }
 
 #[cfg(test)]
@@ -73,13 +93,20 @@ mod tests {
 
     #[test]
     fn table() {
-        let Ok(index) = DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
-        let Ok(items) = Items::load(&index, Lang::En) else { return };
+        let Ok(index) = DatIndex::open(&crate::config::Config::load().ffxi_dir()) else {
+            return;
+        };
+        let Ok(items) = Items::load(&index, Lang::En) else {
+            return;
+        };
         let p = load(&items);
         assert_eq!(p.len(), 576);
         let near = |a: f32, b: f32| (a - b).abs() < 1e-3;
         let hp1 = p[0];
-        assert_eq!((hp1.id, hp1.kind, hp1.zone, hp1.map, hp1.bit), (0, 0, 230, 0, 0));
+        assert_eq!(
+            (hp1.id, hp1.kind, hp1.zone, hp1.map, hp1.bit),
+            (0, 0, 230, 0, 0)
+        );
         assert!(near(hp1.x, -85.468) && near(hp1.z, -66.454) && near(hp1.y, 1.0));
         let hp4 = p.iter().find(|p| p.id == 97).unwrap();
         assert!(hp4.kind == 0 && hp4.zone == 230 && near(hp4.x, -165.0) && near(hp4.z, 11.0));

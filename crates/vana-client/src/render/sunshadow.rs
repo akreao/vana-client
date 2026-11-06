@@ -20,10 +20,14 @@ const DEPTH: f32 = 300.0;
 pub const STRENGTH: f32 = 0.45;
 /// The lowest sun the shadows follow (above the horizon); lower suns cast at this angle.
 const MIN_ELEVATION: f32 = 30.0;
-/// How far behind its caster (along the light, world units) a shadow stays full, and where it has faded out: a
-/// character atop a wall casts nothing onto the ground far below.
+/// How far below its caster's feet (world units, straight down) a shadow stays full, and where it has faded out: a
+/// character atop a wall casts nothing onto the ground far below. Measured from the feet rather than along the light,
+/// so a low sun or a small step in the ground (a seam between terrain pieces) does not cut a shadow off.
 const FADE_START: f32 = 3.0;
 const FADE_END: f32 = 7.0;
+
+/// The format of the map's companion target: per texel, the feet height (world y) of the caster nearest the sun.
+pub const FEET_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 
 const WGSL: &str = r#"
 struct U {
@@ -33,14 +37,15 @@ struct U {
     sun: vec4<f32>,
     // xyz: the eye; w: one map texel in world units.
     eye: vec4<f32>,
-    // x: the PCF taps' spacing in texels (wider is softer: the moon's); y: the map's depth range in world units;
-    // z, w: the caster-to-surface distances where the shadow starts and ends fading.
+    // x: the PCF taps' spacing in texels (wider is softer: the moon's); y: unused;
+    // z, w: the drops below the caster's feet where the shadow starts and ends fading.
     misc: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> u: U;
 @group(0) @binding(1) var scene_depth: texture_depth_2d;
 @group(0) @binding(2) var map: texture_depth_2d;
 @group(0) @binding(3) var cmp: sampler_comparison;
+@group(0) @binding(4) var feet: texture_2d<f32>;
 
 struct VOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
 @vertex fn vs(@builtin(vertex_index) i: u32) -> VOut {
@@ -71,17 +76,19 @@ struct VOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
     var dark = 0.0;
     for (var y = -1; y <= 1; y++) {
         for (var x = -1; x <= 1; x++) {
-            // Bilinear over the tap's four texels, each compared and faded by its own caster's height (a filtered
-            // comparison would mix a high caster's edge into the cleared texels beside it, unfaded).
+            // Bilinear over the tap's four texels, each compared and faded by how far the surface lies below its own
+            // caster's feet (a filtered comparison would mix a high caster's edge into the cleared texels beside it,
+            // unfaded). The world's y points down, so the drop is the surface's y less the feet's.
             let f = (uv + vec2<f32>(f32(x), f32(y)) * texel) * dim - 0.5;
             let b = floor(f);
             let w = f - b;
             var c = vec4<f32>(0.0);
             for (var k = 0; k < 4; k++) {
                 let o = vec2<f32>(f32(k & 1), f32(k >> 1u));
-                let caster = textureLoad(map, vec2<i32>(clamp(b + o, vec2<f32>(0.0), dim - 1.0)), 0);
-                let gap = (lp.z - caster) * u.misc.y;
-                c[k] = select(0.0, 1.0 - smoothstep(u.misc.z, u.misc.w, gap), lp.z > caster);
+                let t = vec2<i32>(clamp(b + o, vec2<f32>(0.0), dim - 1.0));
+                let caster = textureLoad(map, t, 0);
+                let drop = world.y - textureLoad(feet, t, 0).x;
+                c[k] = select(0.0, 1.0 - smoothstep(u.misc.z, u.misc.w, drop), lp.z > caster);
             }
             dark += mix(mix(c.x, c.y, w.x), mix(c.z, c.w, w.x), w.y);
         }
@@ -99,20 +106,38 @@ struct VOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
 /// usable direction.
 pub fn light_matrix(dir: Vec3, target: Vec3, size: u32) -> Option<Mat4> {
     let d = sun_direction(dir)?;
-    let up = if d.x.abs() < 1e-3 && d.z.abs() < 1e-3 { Vec3::Z } else { Vec3::Y };
+    let up = if d.x.abs() < 1e-3 && d.z.abs() < 1e-3 {
+        Vec3::Z
+    } else {
+        Vec3::Y
+    };
     let view = glam::camera::rh::view::look_at_mat4(Vec3::ZERO, d, up);
     // Snap the target in light space.
     let texel = 2.0 * HALF_EXTENT / size.max(1) as f32;
     let t = view.transform_point3(target);
-    let t = Vec3::new((t.x / texel).round() * texel, (t.y / texel).round() * texel, t.z);
+    let t = Vec3::new(
+        (t.x / texel).round() * texel,
+        (t.y / texel).round() * texel,
+        t.z,
+    );
     // Light space: x right, y up, looking down -z; the box is [t.x +- E] x [t.y +- E] x [t.z + BACK .. t.z + BACK - DEPTH].
-    let (l, r, b, tp) = (t.x - HALF_EXTENT, t.x + HALF_EXTENT, t.y - HALF_EXTENT, t.y + HALF_EXTENT);
+    let (l, r, b, tp) = (
+        t.x - HALF_EXTENT,
+        t.x + HALF_EXTENT,
+        t.y - HALF_EXTENT,
+        t.y + HALF_EXTENT,
+    );
     let (zn, zf) = (-(t.z + BACK), -(t.z + BACK) + DEPTH);
     let proj = Mat4::from_cols(
         Vec4::new(2.0 / (r - l), 0.0, 0.0, 0.0),
         Vec4::new(0.0, 2.0 / (tp - b), 0.0, 0.0),
         Vec4::new(0.0, 0.0, -1.0 / (zf - zn), 0.0),
-        Vec4::new(-(r + l) / (r - l), -(tp + b) / (tp - b), -zn / (zf - zn), 1.0),
+        Vec4::new(
+            -(r + l) / (r - l),
+            -(tp + b) / (tp - b),
+            -zn / (zf - zn),
+            1.0,
+        ),
     );
     Some(proj * view)
 }
@@ -174,6 +199,8 @@ struct Params {
 
 pub struct SunShadow {
     pub map: wgpu::TextureView,
+    /// Beside the map: each texel's caster's feet height (FEET_FORMAT), written by the same pass.
+    pub feet: wgpu::TextureView,
     /// The map's size in texels.
     pub size: u32,
     /// The light matrix for the depth pass (group 3 of the silhouette layout, 256 bytes).
@@ -187,30 +214,73 @@ pub struct SunShadow {
 
 impl SunShadow {
     /// `format`: the scene's colour format (the plain view the world draws through).
-    pub fn new(gpu: &Gpu, sil_layout: &wgpu::BindGroupLayout, format: wgpu::TextureFormat, size: u32) -> Self {
+    pub fn new(
+        gpu: &Gpu,
+        sil_layout: &wgpu::BindGroupLayout,
+        format: wgpu::TextureFormat,
+        size: u32,
+    ) -> Self {
         let device = &gpu.device;
         let map = device
             .create_texture(&wgpu::TextureDescriptor {
                 label: Some("sun shadow map"),
-                size: wgpu::Extent3d { width: size, height: size, depth_or_array_layers: 1 },
+                size: wgpu::Extent3d {
+                    width: size,
+                    height: size,
+                    depth_or_array_layers: 1,
+                },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: super::DEPTH_FORMAT,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             })
             .create_view(&Default::default());
-        let matrix = device.create_buffer(&wgpu::BufferDescriptor { label: Some("sun shadow matrix"), size: 256, usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+        let feet = device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("sun shadow feet"),
+                size: wgpu::Extent3d {
+                    width: size,
+                    height: size,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: FEET_FORMAT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            })
+            .create_view(&Default::default());
+        let matrix = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("sun shadow matrix"),
+            size: 256,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         let matrix_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("sun shadow matrix"),
             layout: sil_layout,
-            entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding { buffer: &matrix, offset: 0, size: wgpu::BufferSize::new(64) }) }],
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &matrix,
+                    offset: 0,
+                    size: wgpu::BufferSize::new(64),
+                }),
+            }],
         });
         let tex = |binding: u32| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Depth, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Depth,
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
             count: None,
         };
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -219,38 +289,89 @@ impl SunShadow {
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
                     count: None,
                 },
                 tex(1),
                 tex(2),
-                wgpu::BindGroupLayoutEntry { binding: 3, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison), count: None },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("sun shadow receive"), source: wgpu::ShaderSource::Wgsl(WGSL.into()) });
-        let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("sun shadow receive"), bind_group_layouts: &[Some(&layout)], immediate_size: 0 });
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("sun shadow receive"),
+            source: wgpu::ShaderSource::Wgsl(WGSL.into()),
+        });
+        let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("sun shadow receive"),
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
+        });
         // dst x src: the frame darkened, alpha kept.
         let blend = wgpu::BlendState {
-            color: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::Zero, dst_factor: wgpu::BlendFactor::Src, operation: wgpu::BlendOperation::Add },
-            alpha: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::Zero, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add },
+            color: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::Zero,
+                dst_factor: wgpu::BlendFactor::Src,
+                operation: wgpu::BlendOperation::Add,
+            },
+            alpha: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::Zero,
+                dst_factor: wgpu::BlendFactor::One,
+                operation: wgpu::BlendOperation::Add,
+            },
         };
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("sun shadow receive"),
             layout: Some(&pl),
-            vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs"), compilation_options: Default::default(), buffers: &[] },
-            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            primitive: wgpu::PrimitiveState {
+                cull_mode: None,
+                ..Default::default()
+            },
             depth_stencil: None,
             multisample: Default::default(),
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: Some("fs"),
                 compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState { format, blend: Some(blend), write_mask: wgpu::ColorWrites::ALL })],
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(blend),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
             }),
             multiview_mask: None,
             cache: None,
         });
-        let uniform = device.create_buffer(&wgpu::BufferDescriptor { label: Some("sun shadow receive"), size: std::mem::size_of::<Params>() as u64, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+        let uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("sun shadow receive"),
+            size: std::mem::size_of::<Params>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         let cmp = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("sun shadow compare"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -260,38 +381,89 @@ impl SunShadow {
             compare: Some(wgpu::CompareFunction::LessEqual),
             ..Default::default()
         });
-        Self { map, size, matrix, matrix_group, layout, pipeline, uniform, cmp }
+        Self {
+            map,
+            feet,
+            size,
+            matrix,
+            matrix_group,
+            layout,
+            pipeline,
+            uniform,
+            cmp,
+        }
     }
 
     /// Writes this frame's light matrix for the depth pass.
     pub fn set_light(&self, gpu: &Gpu, light_vp: Mat4) {
-        super::Put::put(&gpu.queue, &self.matrix, 0, bytemuck::cast_slice(&light_vp.to_cols_array()));
+        super::Put::put(
+            &gpu.queue,
+            &self.matrix,
+            0,
+            bytemuck::cast_slice(&light_vp.to_cols_array()),
+        );
     }
 
     /// Darkens `color` where the map shadows the scenery in `depth` (the scene's). `soft`: the PCF spacing in texels.
     #[allow(clippy::too_many_arguments)]
-    pub fn receive(&self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, color: &wgpu::TextureView, depth: &wgpu::TextureView, view_proj: Mat4, light_vp: Mat4, sun: Vec3, strength: f32, eye: Vec3, soft: f32) {
+    pub fn receive(
+        &self,
+        gpu: &Gpu,
+        encoder: &mut wgpu::CommandEncoder,
+        color: &wgpu::TextureView,
+        depth: &wgpu::TextureView,
+        view_proj: Mat4,
+        light_vp: Mat4,
+        sun: Vec3,
+        strength: f32,
+        eye: Vec3,
+        soft: f32,
+    ) {
         let p = Params {
             inv_view_proj: view_proj.inverse().to_cols_array_2d(),
             light_vp: light_vp.to_cols_array_2d(),
             sun: [sun.x, sun.y, sun.z, strength],
             eye: [eye.x, eye.y, eye.z, 2.0 * HALF_EXTENT / self.size as f32],
-            misc: [soft, DEPTH, FADE_START, FADE_END],
+            misc: [soft, 0.0, FADE_START, FADE_END],
         };
         super::Put::put(&gpu.queue, &self.uniform, 0, bytemuck::bytes_of(&p));
         let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("sun shadow receive"),
             layout: &self.layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: self.uniform.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(depth) },
-                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&self.map) },
-                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&self.cmp) },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.uniform.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(depth),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&self.map),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(&self.cmp),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&self.feet),
+                },
             ],
         });
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("sun shadow receive"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: color, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store } })],
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: color,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
@@ -319,9 +491,20 @@ mod tests {
         let toward = m.project_point3(target - Vec3::new(0.3, 1.0, 0.2).normalize() * 5.0);
         assert!(toward.z < c.z);
         let low = sun_direction(Vec3::new(1.0, 0.01, 0.0)).unwrap();
-        assert!((low.y / (low.x * low.x + low.z * low.z).sqrt() - 30f32.to_radians().tan()).abs() < 1e-4);
+        assert!(
+            (low.y / (low.x * low.x + low.z * low.z).sqrt() - 30f32.to_radians().tan()).abs()
+                < 1e-4
+        );
         assert!(sun_direction(Vec3::ZERO).is_none());
-        assert_eq!((twilight(360.0), twilight(1080.0), twilight(720.0), twilight(0.0)), (0.0, 0.0, 1.0, 1.0));
+        assert_eq!(
+            (
+                twilight(360.0),
+                twilight(1080.0),
+                twilight(720.0),
+                twilight(0.0)
+            ),
+            (0.0, 0.0, 1.0, 1.0)
+        );
         assert!(twilight(380.0) > 0.0 && twilight(380.0) < 1.0 && twilight(1060.0) < 1.0);
         assert!(covers(m, target, 2.0) && !covers(m, target + Vec3::new(60.0, 0.0, 0.0), 2.0));
         assert_eq!(strength(Vec3::ZERO), 0.0);
@@ -330,39 +513,74 @@ mod tests {
 
     fn read(gpu: &Gpu, tex: &wgpu::Texture, w: u32, h: u32) -> Vec<u8> {
         let row = (w * 4).div_ceil(256) * 256;
-        let buf = gpu.device.create_buffer(&wgpu::BufferDescriptor { label: None, size: (row * h) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
+        let buf = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: (row * h) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
         let mut enc = gpu.device.create_command_encoder(&Default::default());
         enc.copy_texture_to_buffer(
             tex.as_image_copy(),
-            wgpu::TexelCopyBufferInfo { buffer: &buf, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(h) } },
-            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buf,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(row),
+                    rows_per_image: Some(h),
+                },
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
         );
         gpu.queue.submit([enc.finish()]);
         buf.slice(..).map_async(wgpu::MapMode::Read, |_| {});
-        gpu.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None }).unwrap();
+        gpu.device
+            .poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: None,
+            })
+            .unwrap();
         let d = buf.slice(..).get_mapped_range().unwrap();
-        (0..h).flat_map(|y| d[(y * row) as usize..(y * row + w * 4) as usize].to_vec()).collect()
+        (0..h)
+            .flat_map(|y| d[(y * row) as usize..(y * row + w * 4) as usize].to_vec())
+            .collect()
     }
 
     /// The receive pass over a floor seen from above, lit from above: an empty map leaves it as it was, a map that
-    /// shadows everything just above it darkens it by the strength, and a caster far above leaves it lit.
+    /// shadows everything just above it darkens it by the strength, a caster standing on a ledge far above leaves it
+    /// lit, and one standing a small step above stays dark however far along the light its body is (a terrain seam).
     #[test]
     fn receive_darkens_shadowed_floor() {
         let Ok(gpu) = Gpu::headless() else { return };
         let format = wgpu::TextureFormat::Rgba8Unorm;
-        let silly = gpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: None,
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: true, min_binding_size: wgpu::BufferSize::new(64) },
-                count: None,
-            }],
-        });
+        let silly = gpu
+            .device
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: None,
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: true,
+                        min_binding_size: wgpu::BufferSize::new(64),
+                    },
+                    count: None,
+                }],
+            });
         let sh = SunShadow::new(&gpu, &silly, format, 1024);
         let n = 16u32;
         // y is down: the eye 10 above the floor at y = 0, looking down.
-        let cam = crate::render::Camera { eye: Vec3::new(0.0, -10.0, 0.0), target: Vec3::ZERO, up: Vec3::Z, fov_y: 0.8 };
+        let cam = crate::render::Camera {
+            eye: Vec3::new(0.0, -10.0, 0.0),
+            target: Vec3::ZERO,
+            up: Vec3::Z,
+            fov_y: 0.8,
+        };
         let vp = cam.view_proj(1.0);
         let floor_z = vp.project_point3(Vec3::ZERO).z;
         let sun = Vec3::Y;
@@ -370,7 +588,11 @@ mod tests {
         let depth = crate::render::depth_view(&gpu.device, n, n);
         let color = gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: None,
-            size: wgpu::Extent3d { width: n, height: n, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: n,
+                height: n,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -381,13 +603,33 @@ mod tests {
         let cv = color.create_view(&Default::default());
         // The floor's depth in the map: a caster just above it shadows, one far above does not.
         let floor_lz = light.project_point3(Vec3::ZERO).z;
-        let run = |map_depth: f32| {
+        let run = |map_depth: f32, feet_y: f32| {
             let mut enc = gpu.device.create_command_encoder(&Default::default());
             {
                 let _p = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: None,
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &cv, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.8, g: 0.8, b: 0.8, a: 1.0 }), store: wgpu::StoreOp::Store } })],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: &depth, depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(floor_z), store: wgpu::StoreOp::Store }), stencil_ops: None }),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &cv,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color {
+                                r: 0.8,
+                                g: 0.8,
+                                b: 0.8,
+                                a: 1.0,
+                            }),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &depth,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(floor_z),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
                     timestamp_writes: None,
                     occlusion_query_set: None,
                     multiview_mask: None,
@@ -396,27 +638,59 @@ mod tests {
             {
                 let _p = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: None,
-                    color_attachments: &[],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: &sh.map, depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(map_depth), store: wgpu::StoreOp::Store }), stencil_ops: None }),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &sh.feet,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color {
+                                r: feet_y as f64,
+                                g: 0.0,
+                                b: 0.0,
+                                a: 1.0,
+                            }),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &sh.map,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(map_depth),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
                     timestamp_writes: None,
                     occlusion_query_set: None,
                     multiview_mask: None,
                 });
             }
-            sh.receive(&gpu, &mut enc, &cv, &depth, vp, light, sun, STRENGTH, cam.eye, 1.0);
+            sh.receive(
+                &gpu, &mut enc, &cv, &depth, vp, light, sun, STRENGTH, cam.eye, 1.0,
+            );
             gpu.queue.submit([enc.finish()]);
             read(&gpu, &color, n, n)
         };
         let lit = (0.8f32 * 255.0).round() as i32;
         let dark = (0.8 * (1.0 - STRENGTH) * 255.0).round() as i32;
-        for p in run(1.0).chunks_exact(4) {
+        for p in run(1.0, 0.0).chunks_exact(4) {
             assert!((p[0] as i32 - lit).abs() <= 2, "unshadowed {p:?}");
         }
-        for p in run(floor_lz - 1.0 / DEPTH).chunks_exact(4) {
-            assert!((p[0] as i32 - dark).abs() <= 3, "shadowed {p:?} want {dark}");
+        for p in run(floor_lz - 1.0 / DEPTH, 0.0).chunks_exact(4) {
+            assert!(
+                (p[0] as i32 - dark).abs() <= 3,
+                "shadowed {p:?} want {dark}"
+            );
         }
-        for p in run(floor_lz - 20.0 / DEPTH).chunks_exact(4) {
+        // y is down: feet 20 above the floor.
+        for p in run(floor_lz - 20.0 / DEPTH, -20.0).chunks_exact(4) {
             assert!((p[0] as i32 - lit).abs() <= 2, "caster far above {p:?}");
+        }
+        for p in run(floor_lz - 20.0 / DEPTH, -1.0).chunks_exact(4) {
+            assert!(
+                (p[0] as i32 - dark).abs() <= 3,
+                "caster a step above {p:?} want {dark}"
+            );
         }
     }
 }

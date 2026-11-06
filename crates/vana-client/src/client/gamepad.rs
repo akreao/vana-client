@@ -9,12 +9,16 @@ use winit::keyboard::KeyCode;
 /// FFXiPadConfig's XInput layout: A confirm, B cancel, X main menu, Y active window, LB autorun, LT / RT macros, L3
 /// rest / lock on, R3 first person, RB slot 12, Start log out, Back hide windows, d-pad, left stick moves, right stick
 /// turns the camera (Y axes inverted, XInput's up being positive).
-pub const DEFAULT_PADSIN: &str = "8,9,13,12,10,0,1,3,2,15,-1,-1,14,-33,-33,32,32,-36,-36,35,35,6,7,5,4,11,-1,-1,-1,-1,-1,-1";
+pub const DEFAULT_PADSIN: &str =
+    "8,9,13,12,10,0,1,3,2,15,-1,-1,14,-33,-33,32,32,-36,-36,35,35,6,7,5,4,11,-1,-1,-1,-1,-1,-1";
 /// The alternate map used while slot 34 is held (padexsin000): the sticks and d-pad only.
 pub const DEFAULT_PADEXSIN: &str = "-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-33,-33,32,32,-36,-36,35,35,6,7,5,4,-1,-1,-1,-1,-1,-1,-1";
 
 /// padsin position -> slot (0x1034f930).
-const PERM: [u8; 32] = [8, 9, 14, 13, 10, 3, 1, 0, 2, 16, 25, 26, 15, 23, 24, 22, 21, 19, 20, 18, 17, 6, 7, 5, 4, 12, 31, 32, 33, 34, 35, 36];
+const PERM: [u8; 32] = [
+    8, 9, 14, 13, 10, 3, 1, 0, 2, 16, 25, 26, 15, 23, 24, 22, 21, 19, 20, 18, 17, 6, 7, 5, 4, 12,
+    31, 32, 33, 34, 35, 36,
+];
 
 /// XInput's virtual button numbers as padsin uses them (table 0x10329810), by gilrs button.
 const VIRTUAL: &[(Button, u8)] = &[
@@ -76,10 +80,20 @@ pub struct PadMap {
 impl PadMap {
     pub fn parse(s: &str) -> PadMap {
         let mut slotval = [-1i32; 37];
-        for (p, tok) in s.split([',', ' ']).filter(|t| !t.is_empty()).take(PERM.len()).enumerate() {
+        for (p, tok) in s
+            .split([',', ' '])
+            .filter(|t| !t.is_empty())
+            .take(PERM.len())
+            .enumerate()
+        {
             slotval[PERM[p] as usize] = tok.trim().parse().unwrap_or(-1);
         }
-        let mut m = PadMap { buttons: [0; 32], axes: [0; 37], dpad_mode: false, camera_mode: false };
+        let mut m = PadMap {
+            buttons: [0; 32],
+            axes: [0; 37],
+            dpad_mode: false,
+            camera_mode: false,
+        };
         for (slot, &v) in slotval.iter().enumerate() {
             if v == -1 {
                 continue;
@@ -106,12 +120,26 @@ pub struct Device<'a> {
 
 /// What FUN_10005a40's XInput branch makes of a poll: the held pad word and the stick values (-127 ..= 127): camera
 /// X / Y, movement X / Y. `mode` is DAT_10455c3e; `modes` the maps' (dpad, camera) flags; `dead` our round dead zone.
-pub fn read(map: &PadMap, alt: &PadMap, dev: &Device, mode: u8, modes: (bool, bool), dead: f32) -> (u64, [f32; 4]) {
+pub fn read(
+    map: &PadMap,
+    alt: &PadMap,
+    dev: &Device,
+    mode: u8,
+    modes: (bool, bool),
+    dead: f32,
+) -> (u64, [f32; 4]) {
     // While slot 34 is held the buttons (only) come from the alternate map.
-    let use_alt = dev.buttons.iter().any(|&b| map.buttons.get(b as usize) == Some(&bit(slot::ALT_MAP)));
+    let use_alt = dev
+        .buttons
+        .iter()
+        .any(|&b| map.buttons.get(b as usize) == Some(&bit(slot::ALT_MAP)));
     let mut held = 0u64;
     for &b in dev.buttons {
-        let m = if use_alt && map.buttons[b as usize] != bit(slot::ALT_MAP) { alt } else { map };
+        let m = if use_alt && map.buttons[b as usize] != bit(slot::ALT_MAP) {
+            alt
+        } else {
+            map
+        };
         held |= m.buttons.get(b as usize).copied().unwrap_or(0);
     }
     // [cam X, cam Y, move X, move Y, d-pad X, d-pad Y]. Axes (jump table 0x100077fc, padsin's map only): each slot's
@@ -120,13 +148,26 @@ pub fn read(map: &PadMap, alt: &PadMap, dev: &Device, mode: u8, modes: (bool, bo
     for (s, d) in [(17, 0), (19, 1), (21, 2), (23, 3), (4, 4), (6, 5)] {
         for code in [map.axes[s], map.axes[s + 1]] {
             if code != 0 {
-                let a = if matches!(code.unsigned_abs(), 1 | 2 | 4 | 5) { (dev.axis)(code.unsigned_abs()) } else { 0.0 };
+                let a = if matches!(code.unsigned_abs(), 1 | 2 | 4 | 5) {
+                    (dev.axis)(code.unsigned_abs())
+                } else {
+                    0.0
+                };
                 v[d] = a * code.signum() as f32;
             }
         }
     }
     // Then a button on a stick slot pushes that way, over the axis.
-    for (s, d, x) in [(17, 0, 127.0), (18, 0, -127.0), (19, 1, -127.0), (20, 1, 127.0), (21, 2, 127.0), (22, 2, -127.0), (23, 3, -127.0), (24, 3, 127.0)] {
+    for (s, d, x) in [
+        (17, 0, 127.0),
+        (18, 0, -127.0),
+        (19, 1, -127.0),
+        (20, 1, 127.0),
+        (21, 2, 127.0),
+        (22, 2, -127.0),
+        (23, 3, -127.0),
+        (24, 3, 127.0),
+    ] {
         if held & bit(s) != 0 {
             v[d] = x;
         }
@@ -160,8 +201,20 @@ pub fn read(map: &PadMap, alt: &PadMap, dev: &Device, mode: u8, modes: (bool, bo
         *x = x.clamp(-127.0, 127.0);
     }
     // The d-pad from an axis (no dead zone there: ±64).
-    held |= if v[4] >= 64.0 { bit(slot::RIGHT) } else if v[4] <= -64.0 { bit(slot::LEFT) } else { 0 };
-    held |= if v[5] >= 64.0 { bit(slot::DOWN) } else if v[5] <= -64.0 { bit(slot::UP) } else { 0 };
+    held |= if v[4] >= 64.0 {
+        bit(slot::RIGHT)
+    } else if v[4] <= -64.0 {
+        bit(slot::LEFT)
+    } else {
+        0
+    };
+    held |= if v[5] >= 64.0 {
+        bit(slot::DOWN)
+    } else if v[5] <= -64.0 {
+        bit(slot::UP)
+    } else {
+        0
+    };
     (held, [v[0], v[1], v[2], v[3]])
 }
 
@@ -185,13 +238,24 @@ fn next_mode(mode: u8, modes: (bool, bool)) -> u8 {
 /// key functions (LB would toggle autorun, 0x1c).
 pub fn keys_of(held: u64, menu: bool, palette: bool, tabs: bool) -> (Vec<KeyCode>, u64) {
     let mut keys = Vec::new();
-    let (ctrl, alt) = (held & bit(slot::MACRO_CTRL) != 0, held & bit(slot::MACRO_ALT) != 0);
+    let (ctrl, alt) = (
+        held & bit(slot::MACRO_CTRL) != 0,
+        held & bit(slot::MACRO_ALT) != 0,
+    );
     // 0xa8 (either trigger) is the page modifier, 0xb5 / 0xb6 (both, as Alt+Right / Left) the bag switch. The right-hand
     // codes only mark the egui modifier.
     if menu && (ctrl || alt) {
-        keys.push(if ctrl && alt { KeyCode::AltRight } else { KeyCode::ControlRight });
+        keys.push(if ctrl && alt {
+            KeyCode::AltRight
+        } else {
+            KeyCode::ControlRight
+        });
     }
-    for (s, k) in [(slot::CONFIRM, KeyCode::Enter), (slot::CANCEL, KeyCode::Escape), (slot::MENU, KeyCode::NumpadSubtract)] {
+    for (s, k) in [
+        (slot::CONFIRM, KeyCode::Enter),
+        (slot::CANCEL, KeyCode::Escape),
+        (slot::MENU, KeyCode::NumpadSubtract),
+    ] {
         if held & bit(s) != 0 {
             keys.push(k);
         }
@@ -202,13 +266,22 @@ pub fn keys_of(held: u64, menu: bool, palette: bool, tabs: bool) -> (Vec<KeyCode
         keys.push(KeyCode::Tab);
     }
     if menu {
-        for (s, k) in [(slot::UP, KeyCode::ArrowUp), (slot::DOWN, KeyCode::ArrowDown), (slot::LEFT, KeyCode::ArrowLeft), (slot::RIGHT, KeyCode::ArrowRight)] {
+        for (s, k) in [
+            (slot::UP, KeyCode::ArrowUp),
+            (slot::DOWN, KeyCode::ArrowDown),
+            (slot::LEFT, KeyCode::ArrowLeft),
+            (slot::RIGHT, KeyCode::ArrowRight),
+        ] {
             if held & bit(s) != 0 {
                 keys.push(k);
             }
         }
     }
-    let mut taken = if palette { bit(slot::CONFIRM) | bit(slot::CANCEL) | DPAD } else { 0 };
+    let mut taken = if palette {
+        bit(slot::CONFIRM) | bit(slot::CANCEL) | DPAD
+    } else {
+        0
+    };
     if tabs {
         taken |= bit(slot::TAB_BACK) | bit(slot::TAB_NEXT);
     }
@@ -216,7 +289,10 @@ pub fn keys_of(held: u64, menu: bool, palette: bool, tabs: bool) -> (Vec<KeyCode
 }
 
 fn nav(k: KeyCode) -> bool {
-    matches!(k, KeyCode::ArrowUp | KeyCode::ArrowDown | KeyCode::ArrowLeft | KeyCode::ArrowRight)
+    matches!(
+        k,
+        KeyCode::ArrowUp | KeyCode::ArrowDown | KeyCode::ArrowLeft | KeyCode::ArrowRight
+    )
 }
 
 /// A frame's worth of pad input for the client.
@@ -268,7 +344,13 @@ impl Gamepad {
     /// Reads the pads. `focused`: the window has the focus (a pad in the background does nothing, as padmode's
     /// foreground default, unless config gamepad_background).
     pub fn poll(&mut self, cfg: &Config, focused: bool, ctx: Ctx, dt: f32) -> Frame {
-        let Ctx { menu, palette, tabs, field, keyboard } = ctx;
+        let Ctx {
+            menu,
+            palette,
+            tabs,
+            field,
+            keyboard,
+        } = ctx;
         if !cfg.gamepad {
             return self.release_all();
         }
@@ -285,11 +367,25 @@ impl Gamepad {
                 Err(e) => log::warn!("gamepad: {e}"),
             }
         }
-        let (padsin, padexsin) = (or_default(&cfg.gamepad_padsin, DEFAULT_PADSIN), or_default(&cfg.gamepad_padexsin, DEFAULT_PADEXSIN));
-        if self.maps.as_ref().is_none_or(|m| m.0 != padsin || m.1 != padexsin) {
-            self.maps = Some((padsin.to_string(), padexsin.to_string(), PadMap::parse(padsin), PadMap::parse(padexsin)));
+        let (padsin, padexsin) = (
+            or_default(&cfg.gamepad_padsin, DEFAULT_PADSIN),
+            or_default(&cfg.gamepad_padexsin, DEFAULT_PADEXSIN),
+        );
+        if self
+            .maps
+            .as_ref()
+            .is_none_or(|m| m.0 != padsin || m.1 != padexsin)
+        {
+            self.maps = Some((
+                padsin.to_string(),
+                padexsin.to_string(),
+                PadMap::parse(padsin),
+                PadMap::parse(padexsin),
+            ));
         }
-        let Some(g) = &mut self.gilrs else { return Frame::default() };
+        let Some(g) = &mut self.gilrs else {
+            return Frame::default();
+        };
         // The pad last touched is the one that plays.
         while let Some(ev) = g.next_event() {
             match ev.event {
@@ -310,7 +406,11 @@ impl Gamepad {
             Some(p) if focused || cfg.gamepad_background => p,
             _ => return self.release_all(),
         };
-        let buttons: Vec<u8> = VIRTUAL.iter().filter(|(b, _)| pad.is_pressed(*b)).map(|(_, n)| *n).collect();
+        let buttons: Vec<u8> = VIRTUAL
+            .iter()
+            .filter(|(b, _)| pad.is_pressed(*b))
+            .map(|(_, n)| *n)
+            .collect();
         let axis = |code: u8| {
             let a = match code {
                 1 => Axis::LeftStickX,
@@ -323,21 +423,42 @@ impl Gamepad {
         };
         let (_, _, map, alt) = self.maps.as_ref().unwrap();
         // FUN_10005320 adds the alternate map's mode flags to padsin's.
-        let modes = (map.dpad_mode || alt.dpad_mode, map.camera_mode || alt.camera_mode);
+        let modes = (
+            map.dpad_mode || alt.dpad_mode,
+            map.camera_mode || alt.camera_mode,
+        );
         if !modes.0 && !modes.1 {
             self.mode = 0;
         }
-        let (held, v) = read(map, alt, &Device { buttons: &buttons, axis: &axis }, self.mode, modes, cfg.gamepad_deadzone);
+        let (held, v) = read(
+            map,
+            alt,
+            &Device {
+                buttons: &buttons,
+                axis: &axis,
+            },
+            self.mode,
+            modes,
+            cfg.gamepad_deadzone,
+        );
         if held & !self.prev & bit(slot::STICK_MODE) != 0 {
             self.mode = next_mode(self.mode, modes);
         }
         let menu = menu || palette || !field;
-        let (keys, pad_bits) = if keyboard { (Vec::new(), held) } else { keys_of(held, menu, palette, tabs && menu) };
+        let (keys, pad_bits) = if keyboard {
+            (Vec::new(), held)
+        } else {
+            keys_of(held, menu, palette, tabs && menu)
+        };
         let mut f = self.step(held, &keys, dt);
         self.prev = held;
         f.pad = pad_bits;
         // Outside the field the sticks do nothing (they never drive menus).
-        f.stick = if field { [v[2] / 128.0, v[3] / 128.0, v[0] / 128.0, v[1] / 128.0] } else { [0.0; 4] };
+        f.stick = if field {
+            [v[2] / 128.0, v[3] / 128.0, v[0] / 128.0, v[1] / 128.0]
+        } else {
+            [0.0; 4]
+        };
         f
     }
 
@@ -352,11 +473,21 @@ impl Gamepad {
     /// every 4), as Input's pad word does.
     fn step(&mut self, held: u64, keys: &[KeyCode], dt: f32) -> Frame {
         let mut f = Frame::default();
-        let mods = egui::Modifiers { ctrl: keys.contains(&KeyCode::ControlRight), alt: keys.contains(&KeyCode::AltRight), ..Default::default() };
-        let shift = egui::Modifiers { shift: keys.contains(&KeyCode::ShiftRight), ..Default::default() };
+        let mods = egui::Modifiers {
+            ctrl: keys.contains(&KeyCode::ControlRight),
+            alt: keys.contains(&KeyCode::AltRight),
+            ..Default::default()
+        };
+        let shift = egui::Modifiers {
+            shift: keys.contains(&KeyCode::ShiftRight),
+            ..Default::default()
+        };
         let event = |k: KeyCode, pressed: bool, repeat: bool| {
             // The modifier markers are modifiers only, not keys of their own.
-            if matches!(k, KeyCode::ShiftRight | KeyCode::ControlRight | KeyCode::AltRight) {
+            if matches!(
+                k,
+                KeyCode::ShiftRight | KeyCode::ControlRight | KeyCode::AltRight
+            ) {
                 return None;
             }
             // The page modifier rides on the arrows only (Ctrl + Minus would zoom egui), LB's Shift on its Tab.
@@ -368,7 +499,13 @@ impl Gamepad {
                 egui::Modifiers::default()
             };
             // egui reads the numpad's minus as Minus, as egui-winit maps it.
-            egui::Key::from_name(&format!("{k:?}")).map(|key| egui::Event::Key { key, physical_key: Some(key), pressed, repeat, modifiers: mods })
+            egui::Key::from_name(&format!("{k:?}")).map(|key| egui::Event::Key {
+                key,
+                physical_key: Some(key),
+                pressed,
+                repeat,
+                modifiers: mods,
+            })
         };
         for &k in &self.down {
             if !keys.contains(&k) {
@@ -430,9 +567,15 @@ mod tests {
         let m = PadMap::parse(DEFAULT_PADSIN);
         let b = |n: usize| m.buttons[n].trailing_zeros();
         assert_eq!((b(3), b(0), b(1), b(2)), (0, 3, 1, 2));
-        assert_eq!((b(8), b(9), b(10), b(11), b(12), b(13), b(14), b(15)), (8, 9, 10, 12, 13, 14, 15, 16));
+        assert_eq!(
+            (b(8), b(9), b(10), b(11), b(12), b(13), b(14), b(15)),
+            (8, 9, 10, 12, 13, 14, 15, 16)
+        );
         assert_eq!((b(4), b(5), b(6), b(7)), (4, 5, 6, 7));
-        assert_eq!((m.axes[23], m.axes[24], m.axes[21], m.axes[19], m.axes[17]), (-2, -2, 1, -5, 4));
+        assert_eq!(
+            (m.axes[23], m.axes[24], m.axes[21], m.axes[19], m.axes[17]),
+            (-2, -2, 1, -5, 4)
+        );
         // No slot 31: no stick modes.
         assert!(!m.dpad_mode && !m.camera_mode);
         let alt = PadMap::parse(DEFAULT_PADEXSIN);
@@ -441,7 +584,10 @@ mod tests {
 
     #[test]
     fn sticks_and_dead_zone() {
-        let (m, alt) = (PadMap::parse(DEFAULT_PADSIN), PadMap::parse(DEFAULT_PADEXSIN));
+        let (m, alt) = (
+            PadMap::parse(DEFAULT_PADSIN),
+            PadMap::parse(DEFAULT_PADEXSIN),
+        );
         // Left stick up (XInput +) is forward (move Y -127), right stick right is camera right.
         let ax = |c: u8| match c {
             2 => 127.0,
@@ -453,7 +599,10 @@ mod tests {
         assert_eq!((v[2], v[3], v[0]), (0.0, -127.0, 127.0));
         // Under 42 is nothing.
         let small = |c: u8| if c == 1 { 40.0 } else { 0.0 };
-        assert_eq!(read(&m, &alt, &dev(&[], &small), 0, (false, false), DEAD).1, [0.0; 4]);
+        assert_eq!(
+            read(&m, &alt, &dev(&[], &small), 0, (false, false), DEAD).1,
+            [0.0; 4]
+        );
         // The dead zone is round: a push near an axis keeps its small side, so the direction does not snap.
         let near = |c: u8| match c {
             1 => 120.0,
@@ -469,7 +618,10 @@ mod tests {
         // Code 3 (lZ) reads nothing in XInput.
         let z = PadMap::parse("8,9,13,12,10,0,1,3,2,15,-1,-1,14,-33,-33,32,32,-36,-36,35,35,6,7,5,4,11,-1,-1,-1,-1,-1,-1".replace("32,32", "34,34").as_str());
         let full = |_: u8| 127.0;
-        assert_eq!(read(&z, &alt, &dev(&[], &full), 0, (false, false), DEAD).1[2], 0.0);
+        assert_eq!(
+            read(&z, &alt, &dev(&[], &full), 0, (false, false), DEAD).1[2],
+            0.0
+        );
     }
 
     /// Slot 25 takes the movement stick as the d-pad (its own d-pad bits dropped), over slot 26 and the modes; the
@@ -495,7 +647,15 @@ mod tests {
         // Slot 34 held: alt's buttons, padsin's axes (alt has none on movement Y).
         let (held, v) = read(&m, &alt, &dev(&[15, 3], &up), 0, (false, false), DEAD);
         assert_eq!((held & bit(slot::CONFIRM), v[3]), (0, -127.0));
-        assert_eq!((next_mode(0, (false, true)), next_mode(2, (false, true)), next_mode(0, (true, false)), next_mode(1, (true, false))), (2, 0, 1, 0));
+        assert_eq!(
+            (
+                next_mode(0, (false, true)),
+                next_mode(2, (false, true)),
+                next_mode(0, (true, false)),
+                next_mode(1, (true, false))
+            ),
+            (2, 0, 1, 0)
+        );
         // padsin with slot 31 set and slot 17 on the movement X axis allows the camera mode.
         s[pos(31)] = "13".into();
         s[pos(17)] = "32".into();
@@ -510,28 +670,52 @@ mod tests {
         let rd = |b: &[u8]| read(&m, &m, &dev(b, &none), 0, (false, false), 0.33).0;
         // A and the d-pad up: Enter; the arrow only in a window; the bits stay for the key functions.
         let held = rd(&[3, 6]);
-        assert_eq!(keys_of(held, false, false, false), (vec![KeyCode::Enter], bit(0) | bit(6)));
-        assert_eq!(keys_of(held, true, false, false).0, vec![KeyCode::Enter, KeyCode::ArrowUp]);
+        assert_eq!(
+            keys_of(held, false, false, false),
+            (vec![KeyCode::Enter], bit(0) | bit(6))
+        );
+        assert_eq!(
+            keys_of(held, true, false, false).0,
+            vec![KeyCode::Enter, KeyCode::ArrowUp]
+        );
         // A palette up takes confirm and the d-pad from the key functions (no action menu, no field targeting).
         assert_eq!(keys_of(held, true, true, false).1, 0);
         // LT in a window: Ctrl on the arrows (0xa8, page); the trigger's bit stays (0x89 item compare).
         let held = rd(&[9, 6]);
-        assert_eq!(keys_of(held, true, false, false), (vec![KeyCode::ControlRight, KeyCode::ArrowUp], held));
+        assert_eq!(
+            keys_of(held, true, false, false),
+            (vec![KeyCode::ControlRight, KeyCode::ArrowUp], held)
+        );
         // Both triggers: Alt (0xb5 / 0xb6, the bag switch). In the field neither is a key.
         let held = rd(&[9, 12, 4]);
-        assert_eq!(keys_of(held, true, false, false).0, vec![KeyCode::AltRight, KeyCode::ArrowRight]);
+        assert_eq!(
+            keys_of(held, true, false, false).0,
+            vec![KeyCode::AltRight, KeyCode::ArrowRight]
+        );
         assert!(keys_of(held, false, false, false).0.is_empty());
         // LB / RB with a window: Shift+Tab / Tab, and not their key functions (LB's autorun); without one, nothing.
         let held = rd(&[8]);
-        assert_eq!(keys_of(held, true, false, true), (vec![KeyCode::ShiftRight, KeyCode::Tab], 0));
+        assert_eq!(
+            keys_of(held, true, false, true),
+            (vec![KeyCode::ShiftRight, KeyCode::Tab], 0)
+        );
         assert_eq!(keys_of(held, false, false, false), (vec![], held));
         let held = rd(&[11]);
         assert_eq!(keys_of(held, true, false, true), (vec![KeyCode::Tab], 0));
         let mut g = Gamepad::default();
         let f = g.step(bit(8), &[KeyCode::ShiftRight, KeyCode::Tab], 1.0 / 60.0);
-        assert!(matches!(f.events[..], [egui::Event::Key { key: egui::Key::Tab, modifiers, .. }] if modifiers.shift), "{:?}", f.events);
+        assert!(
+            matches!(f.events[..], [egui::Event::Key { key: egui::Key::Tab, modifiers, .. }] if modifiers.shift),
+            "{:?}",
+            f.events
+        );
         // Every key has a DIK code.
-        for k in [KeyCode::Enter, KeyCode::Escape, KeyCode::NumpadSubtract, KeyCode::ArrowUp] {
+        for k in [
+            KeyCode::Enter,
+            KeyCode::Escape,
+            KeyCode::NumpadSubtract,
+            KeyCode::ArrowUp,
+        ] {
             assert!(crate::client::input::dik(k).is_some(), "{k:?}");
         }
     }
@@ -555,8 +739,20 @@ mod tests {
         }
         // A window's page modifier: Ctrl on the arrow, not on Enter.
         let mut g = Gamepad::default();
-        let f = g.step(bit(0) | bit(7) | bit(9), &[KeyCode::ControlRight, KeyCode::Enter, KeyCode::ArrowDown], 1.0 / 60.0);
-        let ctrl = |key| f.events.iter().find_map(|e| matches!(e, egui::Event::Key { key: k, .. } if *k == key).then(|| matches!(e, egui::Event::Key { modifiers, .. } if modifiers.ctrl))).unwrap();
+        let f = g.step(
+            bit(0) | bit(7) | bit(9),
+            &[KeyCode::ControlRight, KeyCode::Enter, KeyCode::ArrowDown],
+            1.0 / 60.0,
+        );
+        let ctrl = |key| {
+            f.events
+                .iter()
+                .find_map(|e| {
+                    matches!(e, egui::Event::Key { key: k, .. } if *k == key)
+                        .then(|| matches!(e, egui::Event::Key { modifiers, .. } if modifiers.ctrl))
+                })
+                .unwrap()
+        };
         assert!(ctrl(egui::Key::ArrowDown) && !ctrl(egui::Key::Enter));
     }
 }

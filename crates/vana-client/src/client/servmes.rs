@@ -39,7 +39,16 @@ pub struct Transfer {
 
 impl Transfer {
     fn new() -> Self {
-        Transfer { timestamp: 0, total: 0, done: 0, asked: 0, slots: Vec::new(), buf: vec![0; BUFFER], heard: Instant::now(), starts: 0 }
+        Transfer {
+            timestamp: 0,
+            total: 0,
+            done: 0,
+            asked: 0,
+            slots: Vec::new(),
+            buf: vec![0; BUFFER],
+            heard: Instant::now(),
+            starts: 0,
+        }
     }
 }
 
@@ -47,11 +56,18 @@ impl Transfer {
 /// offset, data_size.
 fn ask(w: &World, cmd: u8, t: &Transfer, offset: i32) {
     let mut b = vec![cmd, 0, KIND, LANG];
-    let len = if t.total > 0 { PIECE.min(t.total - offset) } else { PIECE };
+    let len = if t.total > 0 {
+        PIECE.min(t.total - offset)
+    } else {
+        PIECE
+    };
     for v in [t.timestamp, t.total, offset, len] {
         b.extend_from_slice(&v.to_le_bytes());
     }
-    let _ = w.net.commands.send(NetCommand::Packet { id: 0x04B, body: b });
+    let _ = w
+        .net
+        .commands
+        .send(NetCommand::Packet { id: 0x04B, body: b });
 }
 
 /// FUN_100a3040 (/servmes): starts a transfer unless one is running (the Fishing Ranking's too).
@@ -62,7 +78,11 @@ pub(super) fn start(w: &mut World) {
     let mut t = Transfer::new();
     t.starts = 1;
     ask(w, 1, &t, 0);
-    t.slots.push(Slot { offset: 0, sent: Instant::now(), tries: 1 });
+    t.slots.push(Slot {
+        offset: 0,
+        sent: Instant::now(),
+        tries: 1,
+    });
     w.servmes = Some(t);
 }
 
@@ -70,11 +90,18 @@ pub(super) fn start(w: &mut World) {
 /// (twice at most, then it fails silently).
 pub(super) fn frame(w: &mut World) {
     // Ours: also once the message tables are in, which print it.
-    if w.servmes_armed && w.battle.is_some() && super::event::zone_ready(w) && w.event.is_none() && w.event_pending.is_none() {
+    if w.servmes_armed
+        && w.battle.is_some()
+        && super::event::zone_ready(w)
+        && w.event.is_none()
+        && w.event_pending.is_none()
+    {
         w.servmes_armed = false;
         start(w);
     }
-    let Some(mut t) = w.servmes.take() else { return };
+    let Some(mut t) = w.servmes.take() else {
+        return;
+    };
     if t.heard.elapsed().as_secs_f32() > 450.0 / 60.0 {
         if t.starts >= 2 {
             log::info!("server message: no reply");
@@ -84,13 +111,21 @@ pub(super) fn frame(w: &mut World) {
         t = Transfer::new();
         t.starts = starts;
         ask(w, 1, &t, 0);
-        t.slots.push(Slot { offset: 0, sent: Instant::now(), tries: 1 });
+        t.slots.push(Slot {
+            offset: 0,
+            sent: Instant::now(),
+            tries: 1,
+        });
     }
     for i in 0..t.slots.len() {
         let s = t.slots[i];
         if s.tries < 2 && s.sent.elapsed().as_secs() > 3 {
             ask(w, if s.offset == 0 { 1 } else { 2 }, &t, s.offset);
-            t.slots[i] = Slot { sent: Instant::now(), tries: 2, ..s };
+            t.slots[i] = Slot {
+                sent: Instant::now(),
+                tries: 2,
+                ..s
+            };
         }
     }
     w.servmes = Some(t);
@@ -99,19 +134,33 @@ pub(super) fn frame(w: &mut World) {
 /// s2c 0x04D (FUN_100a2dd0): Command @4 (1 / 2), Result @5, kind @6, language @7, timestamp @8, size_total @0xc,
 /// offset @0x10, data_size @0x14, data @0x18. Any check failing ends the transfer silently.
 pub(super) fn on_fragment(w: &mut World, p: &[u8]) {
-    let Some(mut t) = w.servmes.take() else { return };
+    let Some(mut t) = w.servmes.take() else {
+        return;
+    };
     let u8_at = |o: usize| p.get(o).copied().unwrap_or(0);
-    let i32_at = |o: usize| p.get(o..o + 4).map_or(0, |b| i32::from_le_bytes(b.try_into().unwrap()));
+    let i32_at = |o: usize| {
+        p.get(o..o + 4)
+            .map_or(0, |b| i32::from_le_bytes(b.try_into().unwrap()))
+    };
     let (cmd, kind, lang) = (u8_at(4), u8_at(6), u8_at(7));
     let (stamp, total, offset, size) = (i32_at(8), i32_at(0xc), i32_at(0x10), i32_at(0x14));
-    if !matches!(cmd, 1 | 2) || kind != KIND || lang != LANG || stamp <= 0 || total <= 0 || total as usize > BUFFER || size < 0 {
+    if !matches!(cmd, 1 | 2)
+        || kind != KIND
+        || lang != LANG
+        || stamp <= 0
+        || total <= 0
+        || total as usize > BUFFER
+        || size < 0
+    {
         log::info!("server message: piece refused (cmd {cmd}, kind {kind}, total {total})");
         return;
     }
     if t.done > 0 && (stamp != t.timestamp || total != t.total) {
         return;
     }
-    let Some(k) = t.slots.iter().position(|s| s.offset == offset) else { return };
+    let Some(k) = t.slots.iter().position(|s| s.offset == offset) else {
+        return;
+    };
     if offset != t.done || (offset + size) as usize > BUFFER {
         return;
     }
@@ -129,7 +178,11 @@ pub(super) fn on_fragment(w: &mut World, p: &[u8]) {
     while t.slots.len() < SLOTS && t.asked < t.total {
         let o = t.asked;
         ask(w, 2, &t, o);
-        t.slots.push(Slot { offset: o, sent: Instant::now(), tries: 1 });
+        t.slots.push(Slot {
+            offset: o,
+            sent: Instant::now(),
+            tries: 1,
+        });
         t.asked += PIECE.min(t.total - o);
     }
     w.servmes = Some(t);
@@ -141,9 +194,15 @@ fn show(w: &mut World, text: &[u8]) {
     let Some(bt) = w.battle.clone() else { return };
     let colour = bt.colour_in(200, &w.game);
     let text = &text[..text.iter().position(|&b| b == 0).unwrap_or(text.len())];
-    w.chat.push_colour(format!("<<< Welcome to {}! >>>", w.world_name), colour);
+    w.chat
+        .push_colour(format!("<<< Welcome to {}! >>>", w.world_name), colour);
     for seg in text.split_inclusive(|&b| matches!(b, 7 | b'\r' | b'\n')) {
-        let line = crate::dat::font::decode_sjis(seg.strip_suffix(&[7]).or(seg.strip_suffix(b"\r")).or(seg.strip_suffix(b"\n")).unwrap_or(seg));
+        let line = crate::dat::font::decode_sjis(
+            seg.strip_suffix(&[7])
+                .or(seg.strip_suffix(b"\r"))
+                .or(seg.strip_suffix(b"\n"))
+                .unwrap_or(seg),
+        );
         if !line.is_empty() {
             w.chat.push_colour(line, colour);
         }

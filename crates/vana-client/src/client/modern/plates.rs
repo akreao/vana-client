@@ -51,10 +51,15 @@ fn rasterize(text: &str, px: f32) -> Option<(Raster, Vec<u8>)> {
         caret += sf.h_advance(id) + TRACKING * px;
         prev = Some(id);
     }
-    let (w, h) = ((caret + 2.0 * pad).ceil() as usize, (sf.ascent() - sf.descent() + 2.0 * pad).ceil() as usize);
+    let (w, h) = (
+        (caret + 2.0 * pad).ceil() as usize,
+        (sf.ascent() - sf.descent() + 2.0 * pad).ceil() as usize,
+    );
     let mut cov = vec![0f32; w * h];
     for g in glyphs {
-        let Some(o) = font.outline_glyph(g) else { continue };
+        let Some(o) = font.outline_glyph(g) else {
+            continue;
+        };
         let b = o.px_bounds();
         o.draw(|x, y, c| {
             let (px, py) = (b.min.x as i32 + x as i32, b.min.y as i32 + y as i32);
@@ -88,30 +93,62 @@ fn rasterize(text: &str, px: f32) -> Option<(Raster, Vec<u8>)> {
             if a > 0.0 {
                 // White over a near-black outline.
                 let c = (255.0 * f + 12.0 * o * (1.0 - f)) / a;
-                out[k..k + 4].copy_from_slice(&[c as u8, c as u8, (c + 2.0 * o * (1.0 - f)).min(255.0) as u8, (a * 255.0) as u8]);
+                out[k..k + 4].copy_from_slice(&[
+                    c as u8,
+                    c as u8,
+                    (c + 2.0 * o * (1.0 - f)).min(255.0) as u8,
+                    (a * 255.0) as u8,
+                ]);
             }
         }
     }
-    Some((Raster { w: w as u32, h: h as u32, left: pad, right: pad + caret - TRACKING * px, baseline: pad + sf.ascent() }, out))
+    Some((
+        Raster {
+            w: w as u32,
+            h: h as u32,
+            left: pad,
+            right: pad + caret - TRACKING * px,
+            baseline: pad + sf.ascent(),
+        },
+        out,
+    ))
 }
 
 /// A plate: the name centred on x with its baseline BASELINE units below y, tinted (ARGB, 0x80 = 1.0) and pulsed;
 /// retail's badges just left of it and its master stars above, darkened with the name by the screen fade `shade`
 /// (`tint` and `icon` come faded already).
 #[allow(clippy::too_many_arguments)]
-pub fn draw(gu: &mut GameUi, prefix: &[u8], name: &str, x: f32, y: f32, scale: [f32; 2], tint: u32, pulse: f32, icon: u32, stars: bool, shade: [f32; 3]) {
+pub fn draw(
+    gu: &mut GameUi,
+    prefix: &[u8],
+    name: &str,
+    x: f32,
+    y: f32,
+    scale: [f32; 2],
+    tint: u32,
+    pulse: f32,
+    icon: u32,
+    stars: bool,
+    shade: [f32; 3],
+) {
     if name.is_empty() {
         return;
     }
     let em = EM * scale[1];
-    let px = BUCKETS.iter().copied().find(|&b| b >= em).unwrap_or(BUCKETS[3]);
+    let px = BUCKETS
+        .iter()
+        .copied()
+        .find(|&b| b >= em)
+        .unwrap_or(BUCKETS[3]);
     let key = format!("plate {px} {name}");
     let raster = {
         let mut m = metrics().lock().unwrap();
         match m.get(&key).copied().filter(|_| gu.has_image(&key)) {
             Some(r) => r,
             None => {
-                let Some((r, rgba)) = rasterize(name, px) else { return };
+                let Some((r, rgba)) = rasterize(name, px) else {
+                    return;
+                };
                 gu.image(&key, r.w, r.h, rgba);
                 m.insert(key.clone(), r);
                 r
@@ -123,7 +160,14 @@ pub fn draw(gu: &mut GameUi, prefix: &[u8], name: &str, x: f32, y: f32, scale: [
     let left = x - text_w / 2.0 - raster.left * k;
     let top = y + BASELINE * scale[1] - raster.baseline * k;
     let c = |sh: u32| ((tint >> sh & 0xff) as f32 / 128.0).min(1.0);
-    gu.image_rect(&key, left.round(), top.round(), raster.w as f32 * k, raster.h as f32 * k, [c(16), c(8), c(0), pulse.clamp(0.0, 1.0)]);
+    gu.image_rect(
+        &key,
+        left.round(),
+        top.round(),
+        raster.w as f32 * k,
+        raster.h as f32 * k,
+        [c(16), c(8), c(0), pulse.clamp(0.0, 1.0)],
+    );
     // Retail's badges (GM, new adventurer, linkshell ...) end just left of the name; the stars stay above.
     // The badges right to left from the name: the first at the text's height, those after it smaller; the job master
     // stars above the name.
@@ -135,8 +179,19 @@ pub fn draw(gu: &mut GameUi, prefix: &[u8], name: &str, x: f32, y: f32, scale: [
         let d = if i == 0 { size } else { size * 0.75 };
         bx -= d;
         // The pearl takes its linkshell's colour (retail's icon tint for 0x92).
-        let c = if b == 0x92 { [16, 8, 0].map(|sh| ((icon >> sh & 0xff) as f32 / 128.0).min(1.0)) } else { shade.map(|k| k.min(1.0)) };
-        gu.image_rect(&key, bx.round(), (cy - d / 2.0).round(), d, d, [c[0], c[1], c[2], pulse.clamp(0.0, 1.0)]);
+        let c = if b == 0x92 {
+            [16, 8, 0].map(|sh| ((icon >> sh & 0xff) as f32 / 128.0).min(1.0))
+        } else {
+            shade.map(|k| k.min(1.0))
+        };
+        gu.image_rect(
+            &key,
+            bx.round(),
+            (cy - d / 2.0).round(),
+            d,
+            d,
+            [c[0], c[1], c[2], pulse.clamp(0.0, 1.0)],
+        );
         bx -= 1.0 * scale[0];
     }
     if stars && let Some(key) = badge(gu, 0xad) {
@@ -144,45 +199,148 @@ pub fn draw(gu: &mut GameUi, prefix: &[u8], name: &str, x: f32, y: f32, scale: [
         for (dx, big) in [(-1.0, false), (0.0, true), (1.0, false)] {
             let s = if big { d * 1.25 } else { d };
             let [r, g, b] = shade.map(|k| k.min(1.0));
-            gu.image_rect(&key, x + dx * d * 1.1 - s / 2.0, top - s + 2.0 * scale[1], s, s, [r, g, b, pulse.clamp(0.0, 1.0)]);
+            gu.image_rect(
+                &key,
+                x + dx * d * 1.1 - s / 2.0,
+                top - s + 2.0 * scale[1],
+                s,
+                s,
+                [r, g, b, pulse.clamp(0.0, 1.0)],
+            );
         }
     }
 }
 
 /// The modern badges by retail's glyph byte (assets/modern/badges, from the VectorCraft set the user approved).
 const BADGES: [(u8, &[u8]); 32] = [
-    (0x8e, include_bytes!("../../../assets/modern/badges/badge_8e.png")),
-    (0x8f, include_bytes!("../../../assets/modern/badges/badge_8f.png")),
-    (0x90, include_bytes!("../../../assets/modern/badges/badge_90.png")),
-    (0x91, include_bytes!("../../../assets/modern/badges/badge_91.png")),
-    (0x92, include_bytes!("../../../assets/modern/badges/badge_92.png")),
-    (0x93, include_bytes!("../../../assets/modern/badges/badge_93.png")),
-    (0x94, include_bytes!("../../../assets/modern/badges/badge_94.png")),
-    (0x95, include_bytes!("../../../assets/modern/badges/badge_95.png")),
-    (0x96, include_bytes!("../../../assets/modern/badges/badge_96.png")),
-    (0x99, include_bytes!("../../../assets/modern/badges/badge_99.png")),
-    (0x9c, include_bytes!("../../../assets/modern/badges/badge_9c.png")),
-    (0x9d, include_bytes!("../../../assets/modern/badges/badge_9d.png")),
-    (0x9e, include_bytes!("../../../assets/modern/badges/badge_9e.png")),
-    (0x9f, include_bytes!("../../../assets/modern/badges/badge_9f.png")),
-    (0xa0, include_bytes!("../../../assets/modern/badges/badge_a0.png")),
-    (0xa1, include_bytes!("../../../assets/modern/badges/badge_a1.png")),
-    (0xa2, include_bytes!("../../../assets/modern/badges/badge_a2.png")),
-    (0xa3, include_bytes!("../../../assets/modern/badges/badge_a3.png")),
-    (0xa4, include_bytes!("../../../assets/modern/badges/badge_a4.png")),
-    (0xa5, include_bytes!("../../../assets/modern/badges/badge_a5.png")),
-    (0xa6, include_bytes!("../../../assets/modern/badges/badge_a6.png")),
-    (0xa7, include_bytes!("../../../assets/modern/badges/badge_a7.png")),
-    (0xa8, include_bytes!("../../../assets/modern/badges/badge_a8.png")),
-    (0xa9, include_bytes!("../../../assets/modern/badges/badge_a9.png")),
-    (0xaa, include_bytes!("../../../assets/modern/badges/badge_aa.png")),
-    (0xab, include_bytes!("../../../assets/modern/badges/badge_ab.png")),
-    (0xac, include_bytes!("../../../assets/modern/badges/badge_ac.png")),
-    (0xad, include_bytes!("../../../assets/modern/badges/badge_ad.png")),
-    (0xae, include_bytes!("../../../assets/modern/badges/badge_ae.png")),
-    (0xaf, include_bytes!("../../../assets/modern/badges/badge_af.png")),
-    (0xb0, include_bytes!("../../../assets/modern/badges/badge_b0.png")),
-    (0xb1, include_bytes!("../../../assets/modern/badges/badge_b1.png")),
+    (
+        0x8e,
+        include_bytes!("../../../assets/modern/badges/badge_8e.png"),
+    ),
+    (
+        0x8f,
+        include_bytes!("../../../assets/modern/badges/badge_8f.png"),
+    ),
+    (
+        0x90,
+        include_bytes!("../../../assets/modern/badges/badge_90.png"),
+    ),
+    (
+        0x91,
+        include_bytes!("../../../assets/modern/badges/badge_91.png"),
+    ),
+    (
+        0x92,
+        include_bytes!("../../../assets/modern/badges/badge_92.png"),
+    ),
+    (
+        0x93,
+        include_bytes!("../../../assets/modern/badges/badge_93.png"),
+    ),
+    (
+        0x94,
+        include_bytes!("../../../assets/modern/badges/badge_94.png"),
+    ),
+    (
+        0x95,
+        include_bytes!("../../../assets/modern/badges/badge_95.png"),
+    ),
+    (
+        0x96,
+        include_bytes!("../../../assets/modern/badges/badge_96.png"),
+    ),
+    (
+        0x99,
+        include_bytes!("../../../assets/modern/badges/badge_99.png"),
+    ),
+    (
+        0x9c,
+        include_bytes!("../../../assets/modern/badges/badge_9c.png"),
+    ),
+    (
+        0x9d,
+        include_bytes!("../../../assets/modern/badges/badge_9d.png"),
+    ),
+    (
+        0x9e,
+        include_bytes!("../../../assets/modern/badges/badge_9e.png"),
+    ),
+    (
+        0x9f,
+        include_bytes!("../../../assets/modern/badges/badge_9f.png"),
+    ),
+    (
+        0xa0,
+        include_bytes!("../../../assets/modern/badges/badge_a0.png"),
+    ),
+    (
+        0xa1,
+        include_bytes!("../../../assets/modern/badges/badge_a1.png"),
+    ),
+    (
+        0xa2,
+        include_bytes!("../../../assets/modern/badges/badge_a2.png"),
+    ),
+    (
+        0xa3,
+        include_bytes!("../../../assets/modern/badges/badge_a3.png"),
+    ),
+    (
+        0xa4,
+        include_bytes!("../../../assets/modern/badges/badge_a4.png"),
+    ),
+    (
+        0xa5,
+        include_bytes!("../../../assets/modern/badges/badge_a5.png"),
+    ),
+    (
+        0xa6,
+        include_bytes!("../../../assets/modern/badges/badge_a6.png"),
+    ),
+    (
+        0xa7,
+        include_bytes!("../../../assets/modern/badges/badge_a7.png"),
+    ),
+    (
+        0xa8,
+        include_bytes!("../../../assets/modern/badges/badge_a8.png"),
+    ),
+    (
+        0xa9,
+        include_bytes!("../../../assets/modern/badges/badge_a9.png"),
+    ),
+    (
+        0xaa,
+        include_bytes!("../../../assets/modern/badges/badge_aa.png"),
+    ),
+    (
+        0xab,
+        include_bytes!("../../../assets/modern/badges/badge_ab.png"),
+    ),
+    (
+        0xac,
+        include_bytes!("../../../assets/modern/badges/badge_ac.png"),
+    ),
+    (
+        0xad,
+        include_bytes!("../../../assets/modern/badges/badge_ad.png"),
+    ),
+    (
+        0xae,
+        include_bytes!("../../../assets/modern/badges/badge_ae.png"),
+    ),
+    (
+        0xaf,
+        include_bytes!("../../../assets/modern/badges/badge_af.png"),
+    ),
+    (
+        0xb0,
+        include_bytes!("../../../assets/modern/badges/badge_b0.png"),
+    ),
+    (
+        0xb1,
+        include_bytes!("../../../assets/modern/badges/badge_b1.png"),
+    ),
 ];
 
 /// The prefix's badges in order: rank bytes 0xc8..0xcd as the sword and shield with their 0..2 stars (FUN_10086210),
@@ -211,7 +369,9 @@ fn badge(gu: &mut GameUi, b: u8) -> Option<String> {
     }
     let png = BADGES.iter().find(|(k, _)| *k == b)?.1;
     let mut d = png::Decoder::new(std::io::Cursor::new(png));
-    d.set_transformations(png::Transformations::normalize_to_color8() | png::Transformations::ALPHA);
+    d.set_transformations(
+        png::Transformations::normalize_to_color8() | png::Transformations::ALPHA,
+    );
     let mut r = d.read_info().ok()?;
     let mut buf = vec![0u8; r.output_buffer_size()?];
     let info = r.next_frame(&mut buf).ok()?;

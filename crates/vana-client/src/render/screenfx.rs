@@ -69,67 +69,150 @@ pub struct ScreenFx {
 impl ScreenFx {
     pub fn new(gpu: &Gpu, format: wgpu::TextureFormat) -> Self {
         let device = &gpu.device;
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("screen fx"), source: wgpu::ShaderSource::Wgsl(SHADER.into()) });
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("screen fx"),
+            source: wgpu::ShaderSource::Wgsl(SHADER.into()),
+        });
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("screen fx"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
                     visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry { binding: 2, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
             ],
         });
-        let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("screen fx"), bind_group_layouts: &[Some(&layout)], immediate_size: 0 });
+        let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("screen fx"),
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
+        });
         let pipeline = |entry: &str, blend: wgpu::BlendState| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("screen fx"),
                 layout: Some(&pl),
-                vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs"), compilation_options: Default::default(), buffers: &[] },
-                primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                primitive: wgpu::PrimitiveState {
+                    cull_mode: None,
+                    ..Default::default()
+                },
                 depth_stencil: None,
                 multisample: Default::default(),
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
                     entry_point: Some(entry),
                     compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState { format, blend: Some(blend), write_mask: wgpu::ColorWrites::COLOR })],
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: Some(blend),
+                        write_mask: wgpu::ColorWrites::COLOR,
+                    })],
                 }),
                 multiview_mask: None,
                 cache: None,
             })
         };
-        let modulate2x = wgpu::BlendComponent { src_factor: wgpu::BlendFactor::Dst, dst_factor: wgpu::BlendFactor::Src, operation: wgpu::BlendOperation::Add };
-        let multiply = pipeline("multiply", wgpu::BlendState { color: modulate2x, alpha: wgpu::BlendComponent::REPLACE });
+        let modulate2x = wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::Dst,
+            dst_factor: wgpu::BlendFactor::Src,
+            operation: wgpu::BlendOperation::Add,
+        };
+        let multiply = pipeline(
+            "multiply",
+            wgpu::BlendState {
+                color: modulate2x,
+                alpha: wgpu::BlendComponent::REPLACE,
+            },
+        );
         let image = pipeline("image", wgpu::BlendState::ALPHA_BLENDING);
-        let add = wgpu::BlendComponent { src_factor: wgpu::BlendFactor::SrcAlpha, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add };
-        let flash = pipeline("flash", wgpu::BlendState { color: add, alpha: add });
+        let add = wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::SrcAlpha,
+            dst_factor: wgpu::BlendFactor::One,
+            operation: wgpu::BlendOperation::Add,
+        };
+        let flash = pipeline(
+            "flash",
+            wgpu::BlendState {
+                color: add,
+                alpha: add,
+            },
+        );
         let feedback = pipeline("feedback", wgpu::BlendState::ALPHA_BLENDING);
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor { mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear, ..Default::default() });
-        let ub = || device.create_buffer(&wgpu::BufferDescriptor { label: Some("screen fx"), size: 32, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
-        Self { multiply, image, flash, feedback, layout, sampler, uniforms: [ub(), ub(), ub(), ub()], format, capture: None, prev: None, blur_seen: None }
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        let ub = || {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("screen fx"),
+                size: 32,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        };
+        Self {
+            multiply,
+            image,
+            flash,
+            feedback,
+            layout,
+            sampler,
+            uniforms: [ub(), ub(), ub(), ub()],
+            format,
+            capture: None,
+            prev: None,
+            blur_seen: None,
+        }
     }
 
     /// The texture a frame is captured into, made for this size.
     pub fn capture_target(&mut self, gpu: &Gpu, size: [u32; 2]) -> &wgpu::TextureView {
-        let fits = self.capture.as_ref().is_some_and(|(t, _, _)| t.width() == size[0] && t.height() == size[1]);
+        let fits = self
+            .capture
+            .as_ref()
+            .is_some_and(|(t, _, _)| t.width() == size[0] && t.height() == size[1]);
         if !fits {
             let tex = gpu.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("event crossfade"),
-                size: wgpu::Extent3d { width: size[0].max(1), height: size[1].max(1), depth_or_array_layers: 1 },
+                size: wgpu::Extent3d {
+                    width: size[0].max(1),
+                    height: size[1].max(1),
+                    depth_or_array_layers: 1,
+                },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: self.format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             });
             let view = tex.create_view(&Default::default());
@@ -138,27 +221,59 @@ impl ScreenFx {
                     label: Some("screen fx"),
                     layout: &self.layout,
                     entries: &[
-                        wgpu::BindGroupEntry { binding: 0, resource: u.as_entire_binding() },
-                        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&view) },
-                        wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: u.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(&view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::Sampler(&self.sampler),
+                        },
                     ],
                 })
             };
-            let groups = [group(&self.uniforms[0]), group(&self.uniforms[1]), group(&self.uniforms[2])];
+            let groups = [
+                group(&self.uniforms[0]),
+                group(&self.uniforms[1]),
+                group(&self.uniforms[2]),
+            ];
             self.capture = Some((tex, view, groups));
         }
         &self.capture.as_ref().unwrap().1
     }
 
     /// Draws the captured frame at `cross` alpha, then multiplies the scene by `m` (1.0 = unchanged).
-    pub fn draw(&mut self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView, size: [u32; 2], cross: Option<f32>, m: [f32; 3]) {
+    pub fn draw(
+        &mut self,
+        gpu: &Gpu,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        size: [u32; 2],
+        cross: Option<f32>,
+        m: [f32; 3],
+    ) {
         self.draw_all(gpu, encoder, view, None, size, cross, None, None, m);
     }
 
     /// Retail's order: the crossfade, the flash (RGB, doubled alpha), the feedback blur (needs the texture behind
     /// `view` to copy from), then the multiply by `m`.
     #[allow(clippy::too_many_arguments)]
-    pub fn draw_all(&mut self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView, tex: Option<&wgpu::Texture>, size: [u32; 2], cross: Option<f32>, flash: Option<[f32; 4]>, blur: Option<Blur>, m: [f32; 3]) {
+    pub fn draw_all(
+        &mut self,
+        gpu: &Gpu,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        tex: Option<&wgpu::Texture>,
+        size: [u32; 2],
+        cross: Option<f32>,
+        flash: Option<[f32; 4]>,
+        blur: Option<Blur>,
+        m: [f32; 3],
+    ) {
         let multiply = m.iter().any(|c| (c - 1.0).abs() > 0.005);
         let blur = blur.zip(tex.filter(|t| t.usage().contains(wgpu::TextureUsages::COPY_SRC)));
         if blur.is_none() {
@@ -168,13 +283,33 @@ impl ScreenFx {
             return;
         }
         self.capture_target(gpu, size);
-        gpu.queue.put(&self.uniforms[0], 0, bytemuck::cast_slice(&[0.0f32, 0.0, 0.0, cross.unwrap_or(0.0)]));
-        gpu.queue.put(&self.uniforms[1], 0, bytemuck::cast_slice(&[m[0] * 0.5, m[1] * 0.5, m[2] * 0.5, 1.0]));
-        gpu.queue.put(&self.uniforms[2], 0, bytemuck::cast_slice(&flash.unwrap_or_default()));
+        gpu.queue.put(
+            &self.uniforms[0],
+            0,
+            bytemuck::cast_slice(&[0.0f32, 0.0, 0.0, cross.unwrap_or(0.0)]),
+        );
+        gpu.queue.put(
+            &self.uniforms[1],
+            0,
+            bytemuck::cast_slice(&[m[0] * 0.5, m[1] * 0.5, m[2] * 0.5, 1.0]),
+        );
+        gpu.queue.put(
+            &self.uniforms[2],
+            0,
+            bytemuck::cast_slice(&flash.unwrap_or_default()),
+        );
         let begin = |encoder: &mut wgpu::CommandEncoder, draw: &dyn Fn(&mut wgpu::RenderPass)| {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("screen fx"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment { view, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store } })],
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
@@ -200,7 +335,11 @@ impl ScreenFx {
         if let Some((b, t)) = blur {
             self.prev_target(gpu, t);
             let (prev, g) = self.prev.as_ref().unwrap();
-            gpu.queue.put(&self.uniforms[3], 0, bytemuck::cast_slice(&[b.rgb[0], b.rgb[1], b.rgb[2], b.a, b.zoom, 0.0, 0.0, 0.0]));
+            gpu.queue.put(
+                &self.uniforms[3],
+                0,
+                bytemuck::cast_slice(&[b.rgb[0], b.rgb[1], b.rgb[2], b.a, b.zoom, 0.0, 0.0, 0.0]),
+            );
             // A new op restarts the capture: this frame is its first picture.
             if self.blur_seen != Some(b.start) {
                 encoder.copy_texture_to_texture(t.as_image_copy(), prev.as_image_copy(), t.size());
@@ -231,12 +370,30 @@ impl ScreenFx {
     }
 
     /// The held picture over `view` at alpha `a` (SRCALPHA / INVSRCALPHA).
-    pub fn draw_held(&self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView, a: f32) {
+    pub fn draw_held(
+        &self,
+        gpu: &Gpu,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        a: f32,
+    ) {
         let Some((_, g)) = &self.prev else { return };
-        gpu.queue.put(&self.uniforms[3], 0, bytemuck::cast_slice(&[0.0f32, 0.0, 0.0, a, 0.0, 0.0, 0.0, 0.0]));
+        gpu.queue.put(
+            &self.uniforms[3],
+            0,
+            bytemuck::cast_slice(&[0.0f32, 0.0, 0.0, a, 0.0, 0.0, 0.0, 0.0]),
+        );
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("zone crossfade"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment { view, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store } })],
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
@@ -249,7 +406,11 @@ impl ScreenFx {
 
     /// Op 0x0e's copy of the scene texture `t` (same size and format, read as stored), remade when those change.
     fn prev_target(&mut self, gpu: &Gpu, t: &wgpu::Texture) {
-        if self.prev.as_ref().is_some_and(|(p, _)| p.size() == t.size() && p.format() == t.format()) {
+        if self
+            .prev
+            .as_ref()
+            .is_some_and(|(p, _)| p.size() == t.size() && p.format() == t.format())
+        {
             return;
         }
         let p = gpu.device.create_texture(&wgpu::TextureDescriptor {
@@ -262,14 +423,26 @@ impl ScreenFx {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[t.format().remove_srgb_suffix()],
         });
-        let view = p.create_view(&wgpu::TextureViewDescriptor { format: Some(t.format().remove_srgb_suffix()), ..Default::default() });
+        let view = p.create_view(&wgpu::TextureViewDescriptor {
+            format: Some(t.format().remove_srgb_suffix()),
+            ..Default::default()
+        });
         let g = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("screen fx feedback"),
             layout: &self.layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: self.uniforms[3].as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&view) },
-                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.uniforms[3].as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
             ],
         });
         self.prev = Some((p, g));
@@ -288,7 +461,11 @@ mod tests {
         let format = wgpu::TextureFormat::Rgba8Unorm;
         let tex = gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: None,
-            size: wgpu::Extent3d { width: 4, height: 4, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: 4,
+                height: 4,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -302,7 +479,20 @@ mod tests {
         {
             let _clear = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &view, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.8, g: 0.4, b: 0.2, a: 1.0 }), store: wgpu::StoreOp::Store } })],
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.8,
+                            g: 0.4,
+                            b: 0.2,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
@@ -310,31 +500,74 @@ mod tests {
             });
         }
         fx.draw(&gpu, &mut enc, &view, [4, 4], None, [0.5; 3]);
-        let buf = gpu.device.create_buffer(&wgpu::BufferDescriptor { label: None, size: 256 * 4, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
+        let buf = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: 256 * 4,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
         enc.copy_texture_to_buffer(
             tex.as_image_copy(),
-            wgpu::TexelCopyBufferInfo { buffer: &buf, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(256), rows_per_image: Some(4) } },
-            wgpu::Extent3d { width: 4, height: 4, depth_or_array_layers: 1 },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buf,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(256),
+                    rows_per_image: Some(4),
+                },
+            },
+            wgpu::Extent3d {
+                width: 4,
+                height: 4,
+                depth_or_array_layers: 1,
+            },
         );
         gpu.queue.submit([enc.finish()]);
         buf.slice(..).map_async(wgpu::MapMode::Read, |_| {});
-        gpu.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None }).unwrap();
+        gpu.device
+            .poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: None,
+            })
+            .unwrap();
         let d = buf.slice(..).get_mapped_range().unwrap();
         let px = [d[0] as i32, d[1] as i32, d[2] as i32];
-        let want = [(0.8f32 * 255.0 * 0.5).round() as i32, (0.4f32 * 255.0 * 0.5).round() as i32, (0.2f32 * 255.0 * 0.5).round() as i32];
+        let want = [
+            (0.8f32 * 255.0 * 0.5).round() as i32,
+            (0.4f32 * 255.0 * 0.5).round() as i32,
+            (0.2f32 * 255.0 * 0.5).round() as i32,
+        ];
         for i in 0..3 {
             assert!((px[i] - want[i]).abs() <= 2, "{px:?} vs {want:?}");
         }
     }
 
     /// A 4x4 scene texture cleared to `c`, `draw` run over it, and its first pixel's red.
-    fn frame(gpu: &Gpu, tex: &wgpu::Texture, c: f64, draw: impl FnOnce(&mut wgpu::CommandEncoder, &wgpu::TextureView)) -> i32 {
+    fn frame(
+        gpu: &Gpu,
+        tex: &wgpu::Texture,
+        c: f64,
+        draw: impl FnOnce(&mut wgpu::CommandEncoder, &wgpu::TextureView),
+    ) -> i32 {
         let view = tex.create_view(&Default::default());
         let mut enc = gpu.device.create_command_encoder(&Default::default());
         {
             let _clear = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &view, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color { r: c, g: c, b: c, a: 1.0 }), store: wgpu::StoreOp::Store } })],
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: c,
+                            g: c,
+                            b: c,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
@@ -342,15 +575,36 @@ mod tests {
             });
         }
         draw(&mut enc, &view);
-        let buf = gpu.device.create_buffer(&wgpu::BufferDescriptor { label: None, size: 256 * 4, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
+        let buf = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: 256 * 4,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
         enc.copy_texture_to_buffer(
             tex.as_image_copy(),
-            wgpu::TexelCopyBufferInfo { buffer: &buf, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(256), rows_per_image: Some(4) } },
-            wgpu::Extent3d { width: 4, height: 4, depth_or_array_layers: 1 },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buf,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(256),
+                    rows_per_image: Some(4),
+                },
+            },
+            wgpu::Extent3d {
+                width: 4,
+                height: 4,
+                depth_or_array_layers: 1,
+            },
         );
         gpu.queue.submit([enc.finish()]);
         buf.slice(..).map_async(wgpu::MapMode::Read, |_| {});
-        gpu.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None }).unwrap();
+        gpu.device
+            .poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: None,
+            })
+            .unwrap();
         let d = buf.slice(..).get_mapped_range().unwrap();
         d[0] as i32
     }
@@ -358,7 +612,11 @@ mod tests {
     fn scene(gpu: &Gpu) -> wgpu::Texture {
         gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: None,
-            size: wgpu::Extent3d { width: 4, height: 4, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: 4,
+                height: 4,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -374,7 +632,19 @@ mod tests {
         let Ok(gpu) = Gpu::headless() else { return };
         let tex = scene(&gpu);
         let mut fx = ScreenFx::new(&gpu, wgpu::TextureFormat::Rgba8Unorm);
-        let r = frame(&gpu, &tex, 0.5, |enc, v| fx.draw_all(&gpu, enc, v, None, [4, 4], None, Some([0.2, 0.2, 0.2, 0.5]), None, [1.0; 3]));
+        let r = frame(&gpu, &tex, 0.5, |enc, v| {
+            fx.draw_all(
+                &gpu,
+                enc,
+                v,
+                None,
+                [4, 4],
+                None,
+                Some([0.2, 0.2, 0.2, 0.5]),
+                None,
+                [1.0; 3],
+            )
+        });
         assert!((r - (0.6f32 * 255.0).round() as i32).abs() <= 2, "{r}");
     }
 
@@ -385,10 +655,42 @@ mod tests {
         let Ok(gpu) = Gpu::headless() else { return };
         let tex = scene(&gpu);
         let mut fx = ScreenFx::new(&gpu, wgpu::TextureFormat::Rgba8Unorm);
-        let b = Blur { rgb: [0.5; 3], a: 0.5, zoom: 1.0, start: 1 };
-        let first = frame(&gpu, &tex, 0.8, |enc, v| fx.draw_all(&gpu, enc, v, Some(&tex), [4, 4], None, None, Some(b), [1.0; 3]));
+        let b = Blur {
+            rgb: [0.5; 3],
+            a: 0.5,
+            zoom: 1.0,
+            start: 1,
+        };
+        let first = frame(&gpu, &tex, 0.8, |enc, v| {
+            fx.draw_all(
+                &gpu,
+                enc,
+                v,
+                Some(&tex),
+                [4, 4],
+                None,
+                None,
+                Some(b),
+                [1.0; 3],
+            )
+        });
         assert!((first - 204).abs() <= 2, "{first}");
-        let second = frame(&gpu, &tex, 0.2, |enc, v| fx.draw_all(&gpu, enc, v, Some(&tex), [4, 4], None, None, Some(b), [1.0; 3]));
-        assert!((second - (0.5f32 * 255.0).round() as i32).abs() <= 2, "{second}");
+        let second = frame(&gpu, &tex, 0.2, |enc, v| {
+            fx.draw_all(
+                &gpu,
+                enc,
+                v,
+                Some(&tex),
+                [4, 4],
+                None,
+                None,
+                Some(b),
+                [1.0; 3],
+            )
+        });
+        assert!(
+            (second - (0.5f32 * 255.0).round() as i32).abs() <= 2,
+            "{second}"
+        );
     }
 }

@@ -36,14 +36,25 @@ impl Dialog {
             d[4..].iter_mut().for_each(|b| *b ^= 0x80);
         }
         let body = &d[4..];
-        let u32_at = |o: usize| body.get(o..o + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize);
+        let u32_at = |o: usize| {
+            body.get(o..o + 4)
+                .map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize)
+        };
         let count = u32_at(0).context("no offset table")? / 4;
         // Each entry has a 4-byte offset; a bad count must not reserve more than the body holds.
         let mut entries = Vec::with_capacity(count.min(body.len() / 4));
         for i in 0..count {
             let start = u32_at(i * 4).context("offset table")?;
-            let end = if i + 1 < count { u32_at(i * 4 + 4).context("offset table")? } else { body.len() };
-            entries.push(body.get(start..end.max(start)).context("string out of range")?.to_vec());
+            let end = if i + 1 < count {
+                u32_at(i * 4 + 4).context("offset table")?
+            } else {
+                body.len()
+            };
+            entries.push(
+                body.get(start..end.max(start))
+                    .context("string out of range")?
+                    .to_vec(),
+            );
         }
         Ok(Dialog { entries })
     }
@@ -64,7 +75,9 @@ impl Dialog {
 
 /// Length of a `[a/b]` group starting the search at `from` (FUN_100bbc10): up to and past ']'.
 fn bracket_end(s: &[u8], from: usize) -> usize {
-    let Some(open) = s[from.min(s.len())..].iter().position(|&b| b == b'[') else { return s.len() };
+    let Some(open) = s[from.min(s.len())..].iter().position(|&b| b == b'[') else {
+        return s.len();
+    };
     let mut i = from + open + 1;
     while i < s.len() && s[i] != b']' && s[i] != 0 {
         i += if s[i] >= 0x80 { 2 } else { 1 };
@@ -76,7 +89,9 @@ fn bracket_end(s: &[u8], from: usize) -> usize {
 fn grammar_arg(s: &[u8]) -> String {
     match s {
         [b, ..] if b & 0x40 != 0 => format!("slot{}", b & 0x3f),
-        [b, b1, b2, b3, ..] if b & 0x3f == 2 => (((((b2 & 0x7f) as u16) | (*b3 as u16) << 7) << 7) | (b1 & 0x7f) as u16).to_string(),
+        [b, b1, b2, b3, ..] if b & 0x3f == 2 => {
+            (((((b2 & 0x7f) as u16) | (*b3 as u16) << 7) << 7) | (b1 & 0x7f) as u16).to_string()
+        }
         _ => "?".into(),
     }
 }
@@ -134,9 +149,19 @@ pub fn readable(s: &[u8]) -> String {
             0x01 => {
                 let n = arg(i) as usize;
                 let body = s.get(i + 2..(i + 2 + n).min(s.len())).unwrap_or_default();
-                (body.first().map_or("{grammar}".into(), |&k| grammar(k, &body[1..])), n + 2)
+                (
+                    body.first()
+                        .map_or("{grammar}".into(), |&k| grammar(k, &body[1..])),
+                    n + 2,
+                )
             }
-            0x02 | 0x03 => (format!("{{{c:02x} {}}}", u16::from_le_bytes([arg(i), s.get(i + 2).copied().unwrap_or(0)])), 3),
+            0x02 | 0x03 => (
+                format!(
+                    "{{{c:02x} {}}}",
+                    u16::from_le_bytes([arg(i), s.get(i + 2).copied().unwrap_or(0)])
+                ),
+                3,
+            ),
             0x05 => (format!("{{text2 work{}}}", arg(i)), 2),
             0x07 => ("\n".into(), 1),
             0x08 => ("{player}".into(), 1),
@@ -175,7 +200,10 @@ fn sub_code(s: &[u8], i: usize) -> (String, usize) {
     // Codes whose argument picks one of the `[a/b]` alternatives that follow.
     let pick = |what: String| -> (String, usize) {
         let end = bracket_end(s, i);
-        let open = s[i..end].iter().position(|&c| c == b'[').map_or(end, |p| i + p);
+        let open = s[i..end]
+            .iter()
+            .position(|&c| c == b'[')
+            .map_or(end, |p| i + p);
         (format!("{{{what}}}{}", decode_sjis(&s[open..end])), end - i)
     };
     match sub {
@@ -270,7 +298,10 @@ pub struct Dates {
 impl Ctx {
     /// num[a] of the message's 40.
     fn num_at(&self, a: usize) -> Option<i32> {
-        self.num.get(a).or_else(|| self.g.get(a.wrapping_sub(8))).copied()
+        self.num
+            .get(a)
+            .or_else(|| self.g.get(a.wrapping_sub(8)))
+            .copied()
     }
 }
 
@@ -282,7 +313,9 @@ fn grammar_expand(kind: u8, args: &[u8], ctx: &Ctx, lines: &mut [Vec<u8>], pendi
     use super::font::encode_sjis;
     // FUN_100bbd20: 0x?2 = packed index; slot args (0x40) are not filled here.
     let arg = match args {
-        [b, b1, b2, b3, ..] if b & 0x40 == 0 && b & 0x3f == 2 => Some(((((b2 & 0x7f) as u16) | (*b3 as u16) << 7) << 7) | (b1 & 0x7f) as u16),
+        [b, b1, b2, b3, ..] if b & 0x40 == 0 && b & 0x3f == 2 => {
+            Some(((((b2 & 0x7f) as u16) | (*b3 as u16) << 7) << 7) | (b1 & 0x7f) as u16)
+        }
         _ => None,
     };
     let at = |k: u8| -> Option<u32> {
@@ -298,7 +331,11 @@ fn grammar_expand(kind: u8, args: &[u8], ctx: &Ctx, lines: &mut [Vec<u8>], pendi
     let names = ctx.names.as_deref();
     // FUN_100be760 wraps each name in `1e c` .. `1e 01` (FUN_100be680 / FUN_100be690), after its article: items 2, key
     // items 3, Records of Eminence objectives 8.
-    let noun = |lines: &mut [Vec<u8>], pending: &mut Pending, n: super::names::Noun, form: u8, colour: u8| {
+    let noun = |lines: &mut [Vec<u8>],
+                pending: &mut Pending,
+                n: super::names::Noun,
+                form: u8,
+                colour: u8| {
         let (text, mode, an) = match form {
             0 => (n.bare, n.mode, n.an),
             1 => (n.singular, 3, n.singular_an),
@@ -307,7 +344,13 @@ fn grammar_expand(kind: u8, args: &[u8], ctx: &Ctx, lines: &mut [Vec<u8>], pendi
         if let Some((l, pos, definite)) = pending.take() {
             let art = match (definite, mode) {
                 (true, _) => "the",
-                (false, 3) => if an { "an" } else { "a" },
+                (false, 3) => {
+                    if an {
+                        "an"
+                    } else {
+                        "a"
+                    }
+                }
                 (false, _) => "some",
             };
             if l < lines.len() && pos <= lines[l].len() {
@@ -335,12 +378,19 @@ fn grammar_expand(kind: u8, args: &[u8], ctx: &Ctx, lines: &mut [Vec<u8>], pendi
         // the singular, else the plural.
         0x29 | 0x2a => {
             let idx = |b: &[u8]| match b {
-                [b0, b1, b2, b3, ..] if b0 & 0x40 == 0 && b0 & 0x3f == 2 => Some((((((b2 & 0x7f) as u16) | (*b3 as u16) << 7) << 7) | (b1 & 0x7f) as u16) as usize),
+                [b0, b1, b2, b3, ..] if b0 & 0x40 == 0 && b0 & 0x3f == 2 => Some(
+                    (((((b2 & 0x7f) as u16) | (*b3 as u16) << 7) << 7) | (b1 & 0x7f) as u16)
+                        as usize,
+                ),
                 _ => None,
             };
             let val = |i: Option<usize>| -> Option<u32> {
                 let i = i?;
-                if kind == 0x29 { ctx.num_at(i).map(|v| v as u32) } else { ctx.work.get(i).map(|&v| v as u32) }
+                if kind == 0x29 {
+                    ctx.num_at(i).map(|v| v as u32)
+                } else {
+                    ctx.work.get(i).map(|&v| v as u32)
+                }
             };
             let count = val(idx(args));
             let item = val(args.get(4..).and_then(idx));
@@ -349,7 +399,11 @@ fn grammar_expand(kind: u8, args: &[u8], ctx: &Ctx, lines: &mut [Vec<u8>], pendi
             }
         }
         0x30..=0x35 | 0x42..=0x44 => {
-            let k = if kind >= 0x42 { kind - 0x42 + 6 } else { kind - 0x30 };
+            let k = if kind >= 0x42 {
+                kind - 0x42 + 6
+            } else {
+                kind - 0x30
+            };
             if let Some(n) = at(k / 3).and_then(|id| names?.key_item(id)) {
                 noun(lines, pending, n, k % 3, 3);
             }
@@ -405,23 +459,48 @@ fn grammar_high(kind: u8, args: &[u8], ctx: &Ctx) -> (Vec<u8>, Option<usize>) {
     let index = |b: &[u8]| -> (Option<usize>, usize) {
         match b {
             [b0, ..] if b0 & 0x40 != 0 => (None, 1),
-            [b0, b1, b2, b3, ..] if b0 & 0x3f == 2 => (Some((((((b2 & 0x7f) as u16) | (*b3 as u16) << 7) << 7) | (b1 & 0x7f) as u16) as usize), 4),
+            [b0, b1, b2, b3, ..] if b0 & 0x3f == 2 => (
+                Some(
+                    (((((b2 & 0x7f) as u16) | (*b3 as u16) << 7) << 7) | (b1 & 0x7f) as u16)
+                        as usize,
+                ),
+                4,
+            ),
             _ => (None, 4),
         }
     };
     let (first, len) = index(args);
     let num = |i: Option<usize>| i.and_then(|i| ctx.num_at(i));
-    let table = |id: Option<i32>| id.and_then(|id| ctx.texts.as_deref()?.grammar(kind, u32::try_from(id).ok()?)).unwrap_or_default();
+    let table = |id: Option<i32>| {
+        id.and_then(|id| ctx.texts.as_deref()?.grammar(kind, u32::try_from(id).ok()?))
+            .unwrap_or_default()
+    };
     // The op 0xc3 slot that num[index] names; the index must be below 8, the slot is not checked in retail.
-    let slot = || first.filter(|&i| i < 8).and_then(|i| ctx.slots.get(usize::try_from(num(Some(i))?).ok()?));
+    let slot = || {
+        first
+            .filter(|&i| i < 8)
+            .and_then(|i| ctx.slots.get(usize::try_from(num(Some(i))?).ok()?))
+    };
     match kind {
         // Two words of file 55473 (FUN_100bd9d0, num[] as i16), joined by a space.
         0x82 => {
             let second = index(args.get(len..).unwrap_or_default()).0;
-            let (a, b) = (table(num(first).map(|v| v as i16 as i32)), table(num(second).map(|v| v as i16 as i32)));
-            if a.is_empty() || b.is_empty() { (Vec::new(), None) } else { ([a, b" ".to_vec(), b].concat(), None) }
+            let (a, b) = (
+                table(num(first).map(|v| v as i16 as i32)),
+                table(num(second).map(|v| v as i16 as i32)),
+            );
+            if a.is_empty() || b.is_empty() {
+                (Vec::new(), None)
+            } else {
+                ([a, b" ".to_vec(), b].concat(), None)
+            }
         }
-        0x84 => (slot().map(|(n, _)| n.split(|&b| b == 0).next().unwrap_or_default().to_vec()).unwrap_or_default(), None),
+        0x84 => (
+            slot()
+                .map(|(n, _)| n.split(|&b| b == 0).next().unwrap_or_default().to_vec())
+                .unwrap_or_default(),
+            None,
+        ),
         0x85 => (Vec::new(), slot().map(|&(_, w)| w as u8 as usize)),
         0x86 | 0x87 => (table(num(first)), None),
         0x88 | 0x8a => (table(first.and_then(|i| ctx.work.get(i).copied())), None),
@@ -429,7 +508,14 @@ fn grammar_high(kind: u8, args: &[u8], ctx: &Ctx) -> (Vec<u8>, Option<usize>) {
         0x89 => match num(first).filter(|&v| v != 0) {
             Some(v) => {
                 let t = table(Some(v));
-                (if t.is_empty() { t } else { [b"{".to_vec(), t, b"} ".to_vec()].concat() }, None)
+                (
+                    if t.is_empty() {
+                        t
+                    } else {
+                        [b"{".to_vec(), t, b"} ".to_vec()].concat()
+                    },
+                    None,
+                )
             }
             None => (Vec::new(), None),
         },
@@ -460,7 +546,8 @@ pub struct Expanded {
 }
 
 /// FUN_100c1650's `17 n` names (0x1035d518, 4 bytes each).
-const MOOGLE_MOTIONS: &str = "exp0exp1gak0gak1job0job1hap0hap1new0new1tlk0tlk1dan0dae0dan1dae1dan2dae2dan3dae3daz0";
+const MOOGLE_MOTIONS: &str =
+    "exp0exp1gak0gak1job0job1hap0hap1new0new1tlk0tlk1dan0dae0dan1dae1dan2dae2dan3dae3daz0";
 
 /// Expands the codes a plain NPC line uses; others are dropped. Not the full FUN_100bf790.
 pub fn expand(s: &[u8], ctx: &Ctx) -> Expanded {
@@ -498,9 +585,19 @@ pub fn expand(s: &[u8], ctx: &Ctx) -> Expanded {
     let push = |lines: &mut Vec<Vec<u8>>, b: &[u8]| lines.last_mut().unwrap().extend_from_slice(b);
     let alt = |from: usize, k: usize| -> (Vec<u8>, usize) {
         let end = bracket_end(s, from);
-        let open = s[from..end].iter().position(|&c| c == b'[').map_or(end, |p| from + p + 1);
+        let open = s[from..end]
+            .iter()
+            .position(|&c| c == b'[')
+            .map_or(end, |p| from + p + 1);
         let inner = &s[open..end.saturating_sub(1).max(open)];
-        (inner.split(|&c| c == b'/').nth(k).unwrap_or_default().to_vec(), end - from)
+        (
+            inner
+                .split(|&c| c == b'/')
+                .nth(k)
+                .unwrap_or_default()
+                .to_vec(),
+            end - from,
+        )
     };
     while i < s.len() {
         let c = s[i];
@@ -512,7 +609,11 @@ pub fn expand(s: &[u8], ctx: &Ctx) -> Expanded {
             }
             0x00 => break,
             0x07 => {
-                lines.push(if colour == 1 { Vec::new() } else { vec![0x1e, colour] });
+                lines.push(if colour == 1 {
+                    Vec::new()
+                } else {
+                    vec![0x1e, colour]
+                });
                 1
             }
             0x08 => {
@@ -524,7 +625,10 @@ pub fn expand(s: &[u8], ctx: &Ctx) -> Expanded {
                 1
             }
             0x0a => {
-                push(&mut lines, ctx.num_at(a).unwrap_or(0).to_string().as_bytes());
+                push(
+                    &mut lines,
+                    ctx.num_at(a).unwrap_or(0).to_string().as_bytes(),
+                );
                 2
             }
             0x0b => {
@@ -537,7 +641,10 @@ pub fn expand(s: &[u8], ctx: &Ctx) -> Expanded {
                 n + 2
             }
             0x1c => {
-                push(&mut lines, &encode_sjis(ctx.strings.get(a).map_or("", |s| s)));
+                push(
+                    &mut lines,
+                    &encode_sjis(ctx.strings.get(a).map_or("", |s| s)),
+                );
                 2
             }
             0x01 => {
@@ -564,15 +671,26 @@ pub fn expand(s: &[u8], ctx: &Ctx) -> Expanded {
                 step
             }
             0x02 | 0x03 => {
-                place[(c - 2) as usize] = Some(i16::from_le_bytes([a as u8, s.get(i + 2).copied().unwrap_or(0)]));
+                place[(c - 2) as usize] = Some(i16::from_le_bytes([
+                    a as u8,
+                    s.get(i + 2).copied().unwrap_or(0),
+                ]));
                 3
             }
             0x10 | 0x11 | 0x16 | 0x1a => {
-                let v = if c == 0x10 || c == 0x16 { ctx.work.get(a).copied() } else { ctx.num_at(a) };
+                let v = if c == 0x10 || c == 0x16 {
+                    ctx.work.get(a).copied()
+                } else {
+                    ctx.num_at(a)
+                };
                 let names = ctx.names.as_deref();
                 let t = match (c, v.map(|v| v as u16 as u32)) {
-                    (0x10 | 0x11, Some(id)) => names.and_then(|n| n.spell(id)).map(|t| encode_sjis(&t)),
-                    (_, Some(id)) if id < 0x100 => names.and_then(|n| n.ability(id)).map(|t| encode_sjis(&t)),
+                    (0x10 | 0x11, Some(id)) => {
+                        names.and_then(|n| n.spell(id)).map(|t| encode_sjis(&t))
+                    }
+                    (_, Some(id)) if id < 0x100 => {
+                        names.and_then(|n| n.ability(id)).map(|t| encode_sjis(&t))
+                    }
                     // Kind 7 (monster abilities) from 0x100.
                     (_, Some(id)) => texts.and_then(|t| t.kind(7, id - 0x100)),
                     _ => None,
@@ -605,7 +723,16 @@ pub fn expand(s: &[u8], ctx: &Ctx) -> Expanded {
             }
             0x14 => {
                 let t = work(a);
-                push(&mut lines, format!("{}:{:02}:{:02}", t / 3600, (t % 3600 / 60) as u32, (t % 60) as u32).as_bytes());
+                push(
+                    &mut lines,
+                    format!(
+                        "{}:{:02}:{:02}",
+                        t / 3600,
+                        (t % 3600 / 60) as u32,
+                        (t % 60) as u32
+                    )
+                    .as_bytes(),
+                );
                 2
             }
             // 18 n (FUN_100e8df0): the roster record whose MemberNumber is n (n = 0: ours); 19 n (FUN_100e8db0): record n.
@@ -633,7 +760,10 @@ pub fn expand(s: &[u8], ctx: &Ctx) -> Expanded {
             // word k (0 east, increasing toward south); nothing without an actor.
             0x1d => {
                 if let Some(yaw) = ctx.facing {
-                    let k = ((yaw + std::f32::consts::FRAC_PI_8).rem_euclid(std::f32::consts::TAU) * std::f32::consts::FRAC_2_PI * 2.0) as usize & 7;
+                    let k = ((yaw + std::f32::consts::FRAC_PI_8).rem_euclid(std::f32::consts::TAU)
+                        * std::f32::consts::FRAC_2_PI
+                        * 2.0) as usize
+                        & 7;
                     if let Some(t) = texts.and_then(|t| t.compass(k)) {
                         push(&mut lines, &t);
                     }
@@ -668,7 +798,11 @@ pub fn expand(s: &[u8], ctx: &Ctx) -> Expanded {
                 // unless the value is 1 (Japanese and language 3: above 1).
                 0x86 | 0x92 => {
                     let n = s.get(i + 2).copied().unwrap_or(0) as usize;
-                    let v = if a as u8 == 0x86 { ctx.work.get(n).copied() } else { ctx.num_at(n) };
+                    let v = if a as u8 == 0x86 {
+                        ctx.work.get(n).copied()
+                    } else {
+                        ctx.num_at(n)
+                    };
                     let (t, len) = alt(i, (v.unwrap_or(0) != 1) as usize);
                     push(&mut lines, &t);
                     len
@@ -679,7 +813,10 @@ pub fn expand(s: &[u8], ctx: &Ctx) -> Expanded {
                     3
                 }
                 0x38 => {
-                    wait = Some(u16::from_le_bytes([s.get(i + 2).copied().unwrap_or(0), s.get(i + 3).copied().unwrap_or(0)]) as u32);
+                    wait = Some(u16::from_le_bytes([
+                        s.get(i + 2).copied().unwrap_or(0),
+                        s.get(i + 3).copied().unwrap_or(0),
+                    ]) as u32);
                     4
                 }
                 0x80 => {
@@ -692,16 +829,34 @@ pub fn expand(s: &[u8], ctx: &Ctx) -> Expanded {
                 // year, a1..a5 month / day / hour / minute / second "%d", a6..aa the same "%02d"; ab the long Earth date
                 // (FUN_101c8fd0 flags 1); ac the Vana'diel date and time of num[n] (FUN_101c92b0(t, 1, 1)).
                 0xa0..=0xac => {
-                    let v = ctx.num_at(s.get(i + 2).copied().unwrap_or(0) as usize).unwrap_or(0);
+                    let v = ctx
+                        .num_at(s.get(i + 2).copied().unwrap_or(0) as usize)
+                        .unwrap_or(0);
                     let unix = v as i64 + 0x3c30_7d70;
                     let sub = a as u8;
                     let text = match (sub, &ctx.dates) {
-                        (0xab, Some(d)) => super::msgfmt::earth_datetime(&*d.group10, unix, 1, d.date_key, d.h12),
-                        (0xac, Some(d)) => super::msgfmt::vana_datetime(&*d.group10, v as u32 as u64, 1, d.date_key),
+                        (0xab, Some(d)) => {
+                            super::msgfmt::earth_datetime(&*d.group10, unix, 1, d.date_key, d.h12)
+                        }
+                        (0xac, Some(d)) => super::msgfmt::vana_datetime(
+                            &*d.group10,
+                            v as u32 as u64,
+                            1,
+                            d.date_key,
+                        ),
                         (0xab | 0xac, None) => Vec::new(),
                         _ => super::msgfmt::earth_parts(unix).map_or_else(Vec::new, |p| {
-                            let k = if sub == 0xa0 { 0 } else { (sub - 0xa1) as usize % 5 + 1 };
-                            if sub >= 0xa6 { format!("{:02}", p[k]) } else { p[k].to_string() }.into_bytes()
+                            let k = if sub == 0xa0 {
+                                0
+                            } else {
+                                (sub - 0xa1) as usize % 5 + 1
+                            };
+                            if sub >= 0xa6 {
+                                format!("{:02}", p[k])
+                            } else {
+                                p[k].to_string()
+                            }
+                            .into_bytes()
                         }),
                     };
                     push(&mut lines, &text);
@@ -710,13 +865,17 @@ pub fn expand(s: &[u8], ctx: &Ctx) -> Expanded {
                 // 7f 84 n: the kind-3 names of work[4]'s set bits (n x 0x20 + bit), space separated.
                 0x84 => {
                     let base = s.get(i + 2).copied().unwrap_or(0) as u32 * 0x20;
-                    let names: Vec<Vec<u8>> = (0..32).filter(|b| work(4) as u32 >> b & 1 != 0).filter_map(|b| texts.and_then(|t| t.kind(3, base + b))).collect();
+                    let names: Vec<Vec<u8>> = (0..32)
+                        .filter(|b| work(4) as u32 >> b & 1 != 0)
+                        .filter_map(|b| texts.and_then(|t| t.kind(3, base + b)))
+                        .collect();
                     push(&mut lines, &names.join(&b' '));
                     3
                 }
                 // 7f 8f n: the job ability of work[n] (FUN_100bd960: id + 0x200).
                 0x8f => {
-                    let id = (work(s.get(i + 2).copied().unwrap_or(0) as usize) as i16).clamp(0, 0x10ff) as u32;
+                    let id = (work(s.get(i + 2).copied().unwrap_or(0) as usize) as i16)
+                        .clamp(0, 0x10ff) as u32;
                     if let Some(t) = ctx.names.as_deref().and_then(|n| n.ability(id + 0x200)) {
                         push(&mut lines, &encode_sjis(&t));
                     }
@@ -752,12 +911,18 @@ pub fn expand(s: &[u8], ctx: &Ctx) -> Expanded {
                 }
                 // 7f b4 n: work[n] in 0..999999999 with separators (FUN_101c9440), group 10 0x5f "%s gil".
                 0xb4 => {
-                    let v = work(s.get(i + 2).copied().unwrap_or(0) as usize).clamp(0, 999_999_999) as u32;
-                    push(&mut lines, format!("{} gil", super::battle::separated(v)).as_bytes());
+                    let v = work(s.get(i + 2).copied().unwrap_or(0) as usize).clamp(0, 999_999_999)
+                        as u32;
+                    push(
+                        &mut lines,
+                        format!("{} gil", super::battle::separated(v)).as_bytes(),
+                    );
                     3
                 }
                 0xb5 => {
-                    if let Some(t) = texts.and_then(|t| t.monstrosity(num(s.get(i + 2).copied().unwrap_or(0) as usize) as i16)) {
+                    if let Some(t) = texts.and_then(|t| {
+                        t.monstrosity(num(s.get(i + 2).copied().unwrap_or(0) as usize) as i16)
+                    }) {
                         push(&mut lines, &t);
                     }
                     3
@@ -765,7 +930,9 @@ pub fn expand(s: &[u8], ctx: &Ctx) -> Expanded {
                 // 7f 81 n (FUN_100bda90): concierge slot num[n]'s shell name.
                 0x81 => {
                     let n = num(s.get(i + 2).copied().unwrap_or(0) as usize);
-                    if let Some(Some(t)) = usize::try_from(n).ok().and_then(|n| ctx.concierge.get(n)) {
+                    if let Some(Some(t)) =
+                        usize::try_from(n).ok().and_then(|n| ctx.concierge.get(n))
+                    {
                         push(&mut lines, &encode_sjis(t));
                     }
                     3
@@ -782,10 +949,24 @@ pub fn expand(s: &[u8], ctx: &Ctx) -> Expanded {
         i += step;
     }
     // A line of colour codes alone is blank.
-    while lines.len() > 1 && lines.last().is_some_and(|l| l.chunks(2).all(|c| c.len() == 2 && c[0] == 0x1e)) {
+    while lines.len() > 1
+        && lines
+            .last()
+            .is_some_and(|l| l.chunks(2).all(|c| c.len() == 2 && c[0] == 0x1e))
+    {
         lines.pop();
     }
-    Expanded { lines, prompt, choice, wait, place, mode, sounds, motions, offer }
+    Expanded {
+        lines,
+        prompt,
+        choice,
+        wait,
+        place,
+        mode,
+        sounds,
+        motions,
+        offer,
+    }
 }
 
 #[cfg(test)]
@@ -796,19 +977,55 @@ mod tests {
     #[test]
     fn date_builder_codes() {
         let cfg = crate::config::Config::load();
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
-        let Ok(dll) = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())) else { return };
-        let Some(file) = super::super::msg::group_file(&dll, 1, 10) else { return };
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else {
+            return;
+        };
+        let Ok(dll) = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())) else {
+            return;
+        };
+        let Some(file) = super::super::msg::group_file(&dll, 1, 10) else {
+            return;
+        };
         let m = std::sync::Arc::new(super::super::msg::Messages::load(&index, file).unwrap());
         let g = m.clone();
-        let dates = std::sync::Arc::new(Dates { group10: Box::new(move |id: u16| g.raw(id as usize)), date_key: 0, h12: false });
+        let dates = std::sync::Arc::new(Dates {
+            group10: Box::new(move |id: u16| g.raw(id as usize)),
+            date_key: 0,
+            h12: false,
+        });
         let t = 800_000_000;
         let d = Dialog::load(&index, 5).unwrap();
-        let e = expand(&d.raw(7410).unwrap(), &Ctx { num: [t, 0, 0, 0, 0, 0, 0, 0], dates: Some(dates.clone()), ..Default::default() });
-        let vana = decode_sjis(&crate::dat::msgfmt::vana_datetime(&*dates.group10, t as u64, 1, 0));
-        let earth = decode_sjis(&crate::dat::msgfmt::earth_datetime(&*dates.group10, t as i64 + 0x3c30_7d70, 1, 0, false));
-        let line = e.lines.iter().map(|l| decode_sjis(l)).collect::<Vec<_>>().join(" ");
-        assert!(line.contains(&format!("until {vana} ({earth} Earth time)")), "{line}");
+        let e = expand(
+            &d.raw(7410).unwrap(),
+            &Ctx {
+                num: [t, 0, 0, 0, 0, 0, 0, 0],
+                dates: Some(dates.clone()),
+                ..Default::default()
+            },
+        );
+        let vana = decode_sjis(&crate::dat::msgfmt::vana_datetime(
+            &*dates.group10,
+            t as u64,
+            1,
+            0,
+        ));
+        let earth = decode_sjis(&crate::dat::msgfmt::earth_datetime(
+            &*dates.group10,
+            t as i64 + 0x3c30_7d70,
+            1,
+            0,
+            false,
+        ));
+        let line = e
+            .lines
+            .iter()
+            .map(|l| decode_sjis(l))
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(
+            line.contains(&format!("until {vana} ({earth} Earth time)")),
+            "{line}"
+        );
     }
 
     /// Zone 1 6380, the Assist Channel's end: `7f a1` / `a2` / `a0` / `a3` "%d" and `7f a9` "%02d" of num[0] +
@@ -816,12 +1033,23 @@ mod tests {
     #[test]
     fn earth_date_codes() {
         let cfg = crate::config::Config::load();
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else {
+            return;
+        };
         let d = Dialog::load(&index, 1).unwrap();
         let t = 800_000_000;
-        let e = expand(&d.raw(6380).unwrap(), &Ctx { num: [t, 0, 0, 0, 0, 0, 0, 0], ..Default::default() });
+        let e = expand(
+            &d.raw(6380).unwrap(),
+            &Ctx {
+                num: [t, 0, 0, 0, 0, 0, 0, 0],
+                ..Default::default()
+            },
+        );
         let p = crate::dat::msgfmt::earth_parts(t as i64 + 0x3c30_7d70).unwrap();
-        let want = format!("You will be able to use the Assist Channel until {}/{}/{} at {}:{:02} (JST).", p[1], p[2], p[0], p[3], p[4]);
+        let want = format!(
+            "You will be able to use the Assist Channel until {}/{}/{} at {}:{:02} (JST).",
+            p[1], p[2], p[0], p[3], p[4]
+        );
         assert_eq!(decode_sjis(&e.lines[0]), want);
     }
 
@@ -830,15 +1058,33 @@ mod tests {
     #[test]
     fn talknumwork2_lines() {
         let cfg = crate::config::Config::load();
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
-        let names = crate::dat::names::Names::load(&index, crate::dat::items::Lang::En).ok().map(|n| std::sync::Arc::new(n) as std::sync::Arc<dyn crate::dat::names::NameSource>);
-        let ctx = |num0| Ctx { strings: vec!["Lnxtest".into()], num: [num0, 1, 0, 0, 0, 0, 0, 0], names: names.clone(), ..Default::default() };
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else {
+            return;
+        };
+        let names = crate::dat::names::Names::load(&index, crate::dat::items::Lang::En)
+            .ok()
+            .map(|n| std::sync::Arc::new(n) as std::sync::Arc<dyn crate::dat::names::NameSource>);
+        let ctx = |num0| Ctx {
+            strings: vec!["Lnxtest".into()],
+            num: [num0, 1, 0, 0, 0, 0, 0, 0],
+            names: names.clone(),
+            ..Default::default()
+        };
         let d = Dialog::load(&index, 236).unwrap();
         let e = expand(&d.raw(7164).unwrap(), &ctx(4401));
-        assert_eq!(crate::dat::font::strip_codes(&crate::dat::font::decode_sjis(&e.lines[0])), "Lnxtest caught a moat carp!");
+        assert_eq!(
+            crate::dat::font::strip_codes(&crate::dat::font::decode_sjis(&e.lines[0])),
+            "Lnxtest caught a moat carp!"
+        );
         let d = Dialog::load(&index, 103).unwrap();
         let e = expand(&d.raw(8099).unwrap(), &ctx(4112));
-        assert_eq!((crate::dat::font::strip_codes(&crate::dat::font::decode_sjis(&e.lines[0])).as_str(), e.mode), ("Lnxtest obtains a potion!", Some(0x79)));
+        assert_eq!(
+            (
+                crate::dat::font::strip_codes(&crate::dat::font::decode_sjis(&e.lines[0])).as_str(),
+                e.mode
+            ),
+            ("Lnxtest obtains a potion!", Some(0x79))
+        );
     }
 
     /// Selbina 6865 (Isacio, Elder Memories): `7f 80 01` then kind 0x36 on num[0] = key item 2825 (the script's
@@ -846,20 +1092,47 @@ mod tests {
     #[test]
     fn key_item_by_num() {
         let cfg = crate::config::Config::load();
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
-        let names = crate::dat::names::Names::load(&index, crate::dat::items::Lang::En).ok().map(|n| std::sync::Arc::new(n) as std::sync::Arc<dyn crate::dat::names::NameSource>);
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else {
+            return;
+        };
+        let names = crate::dat::names::Names::load(&index, crate::dat::items::Lang::En)
+            .ok()
+            .map(|n| std::sync::Arc::new(n) as std::sync::Arc<dyn crate::dat::names::NameSource>);
         let d = Dialog::load(&index, 248).unwrap();
-        let e = expand(&d.raw(6865).unwrap(), &Ctx { num: [2825, 0, 0, 0, 0, 0, 0, 0], names, ..Default::default() });
-        assert_eq!(crate::dat::font::strip_codes(&crate::dat::font::decode_sjis(&e.lines[0])), "A Gilgamesh's introductory letter would be fine, too...if you can find one.");
+        let e = expand(
+            &d.raw(6865).unwrap(),
+            &Ctx {
+                num: [2825, 0, 0, 0, 0, 0, 0, 0],
+                names,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            crate::dat::font::strip_codes(&crate::dat::font::decode_sjis(&e.lines[0])),
+            "A Gilgamesh's introductory letter would be fine, too...if you can find one."
+        );
     }
 
     /// East Ronfaure 7906 (a field manual page): `7f 92 00 [/s]` by num[0].
     #[test]
     fn plural_by_num() {
         let cfg = crate::config::Config::load();
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else {
+            return;
+        };
         let d = Dialog::load(&index, 101).unwrap();
-        let line = |n| crate::dat::font::decode_sjis(&expand(&d.raw(7906).unwrap(), &Ctx { num: [n, 0, 0, 0, 0, 0, 0, 0], ..Default::default() }).lines[0]);
+        let line = |n| {
+            crate::dat::font::decode_sjis(
+                &expand(
+                    &d.raw(7906).unwrap(),
+                    &Ctx {
+                        num: [n, 0, 0, 0, 0, 0, 0, 0],
+                        ..Default::default()
+                    },
+                )
+                .lines[0],
+            )
+        };
         assert_eq!(line(6), "6 members of the pugil family.");
         assert_eq!(line(1), "1 member of the pugil family.");
     }
@@ -869,14 +1142,28 @@ mod tests {
         let s = b"Care to learn?\x07\x0bSure!\x07No.\x7f\x31\x00\x07";
         assert_eq!(readable(s), "Care to learn?\n{choice}Sure!\nNo.{next}");
         let s = b"three \x01\x05\x25\x82\x80\x80\x80, \x7f\x85[sir/madam].";
-        assert_eq!(readable(s), "three {item pl num0}, {player m/f}[sir/madam].");
+        assert_eq!(
+            readable(s),
+            "three {item pl num0}, {player m/f}[sir/madam]."
+        );
     }
 
     /// `7f 85` reads the player's gender; `7f 90` / `7f 91` the message's actors 1 / 2 (male the first form).
     #[test]
     fn gender_picks() {
         let s = b"\x7f\x85[sir/madam] \x7f\x90[he/she] \x7f\x91[his/her]";
-        let line = |female, actors| expand(s, &Ctx { female, actors, ..Default::default() }).lines.concat();
+        let line = |female, actors| {
+            expand(
+                s,
+                &Ctx {
+                    female,
+                    actors,
+                    ..Default::default()
+                },
+            )
+            .lines
+            .concat()
+        };
         assert_eq!(line(true, Some([false, true])), b"madam he her");
         assert_eq!(line(false, None), b"sir he his");
         assert_eq!(line(true, None), b"madam she her");
@@ -885,8 +1172,17 @@ mod tests {
     #[test]
     fn expand_choice() {
         let s = b"Hi, \x08.\x07\x0bYes\x07No\x7f\x31\x00";
-        let e = expand(s, &Ctx { player: "Lenon".into(), ..Default::default() });
-        assert_eq!(e.lines, vec![b"Hi, Lenon.".to_vec(), b"Yes".to_vec(), b"No".to_vec()]);
+        let e = expand(
+            s,
+            &Ctx {
+                player: "Lenon".into(),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            e.lines,
+            vec![b"Hi, Lenon.".to_vec(), b"Yes".to_vec(), b"No".to_vec()]
+        );
         assert_eq!(e.choice, Some(1));
         assert!(e.prompt);
     }
@@ -894,7 +1190,10 @@ mod tests {
     /// Narration lines carry the window place: `02 80 00` x 80, `03 54 01` y 340.
     #[test]
     fn place_codes() {
-        let e = expand(b"\x02\x50\x00\x03\x54\x01The fortress\x7f\x34\x09\x7f\x31", &Ctx::default());
+        let e = expand(
+            b"\x02\x50\x00\x03\x54\x01The fortress\x7f\x34\x09\x7f\x31",
+            &Ctx::default(),
+        );
         assert_eq!(e.place, [Some(80), Some(340)]);
         assert_eq!(e.lines, vec![b"The fortress".to_vec()]);
         assert_eq!(e.wait, Some(540));
@@ -937,7 +1236,20 @@ mod tests {
         }
 
         fn compass(&self, k: usize) -> Option<Vec<u8>> {
-            Some(["east", "southeast", "south", "southwest", "west", "northwest", "north", "northeast"][k].as_bytes().to_vec())
+            Some(
+                [
+                    "east",
+                    "southeast",
+                    "south",
+                    "southwest",
+                    "west",
+                    "northwest",
+                    "north",
+                    "northeast",
+                ][k]
+                    .as_bytes()
+                    .to_vec(),
+            )
         }
     }
 
@@ -946,7 +1258,11 @@ mod tests {
     fn compass_and_offer() {
         use std::f32::consts::PI;
         let run = |yaw: Option<f32>| {
-            let ctx = Ctx { facing: yaw, texts: Some(std::sync::Arc::new(Stub)), ..Default::default() };
+            let ctx = Ctx {
+                facing: yaw,
+                texts: Some(std::sync::Arc::new(Stub)),
+                ..Default::default()
+            };
             String::from_utf8(expand(&[b'a', 0x1d, b'.'], &ctx).lines.concat()).unwrap()
         };
         assert_eq!(run(Some(0.0)), "aeast.");
@@ -955,7 +1271,16 @@ mod tests {
         assert_eq!(run(Some(-PI / 2.0)), "anorth.");
         assert_eq!(run(Some(-0.1)), "aeast.");
         assert_eq!(run(None), "a.");
-        let offer = |me: bool, n: u8| expand(&[0x13, n, b'x'], &Ctx { actor2_me: me, ..Default::default() }).offer;
+        let offer = |me: bool, n: u8| {
+            expand(
+                &[0x13, n, b'x'],
+                &Ctx {
+                    actor2_me: me,
+                    ..Default::default()
+                },
+            )
+            .offer
+        };
         assert_eq!(offer(true, 0), Some(2));
         assert_eq!(offer(true, 1), Some(3));
         assert_eq!(offer(false, 0), None);
@@ -966,7 +1291,13 @@ mod tests {
         let cfg = crate::config::Config::load();
         let index = crate::dat::DatIndex::open(&cfg.ffxi_dir()).ok()?;
         let e = expand(&Dialog::load(&index, zone).ok()?.raw(id)?, ctx);
-        Some(e.lines.iter().map(|l| crate::dat::font::strip_codes(&decode_sjis(l))).collect::<Vec<_>>().join("|"))
+        Some(
+            e.lines
+                .iter()
+                .map(|l| crate::dat::font::strip_codes(&decode_sjis(l)))
+                .collect::<Vec<_>>()
+                .join("|"),
+        )
     }
 
     /// FUN_100c1650's other codes on real lines: 7f b5 (zone 71), 7f b4 (280), 7f 94 (1), 18 (1), 7f 93 (43), 7f 95 /
@@ -974,21 +1305,66 @@ mod tests {
     #[test]
     fn more_codes() {
         let texts = Some(std::sync::Arc::new(Stub) as std::sync::Arc<dyn Texts>);
-        let ctx = Ctx { num: [3, 12, 0, 0, 0, 0, 0, 0], work: [1234567, 0, 0, 0, 0], texts: texts.clone(), ..Default::default() };
-        let Some(t) = line(71, 11627, &ctx) else { return };
+        let ctx = Ctx {
+            num: [3, 12, 0, 0, 0, 0, 0, 0],
+            work: [1234567, 0, 0, 0, 0],
+            texts: texts.clone(),
+            ..Default::default()
+        };
+        let Some(t) = line(71, 11627, &ctx) else {
+            return;
+        };
         assert_eq!(t, "m3 (lv. 12)");
         assert_eq!(line(280, 7592, &ctx).unwrap(), "GIL:1,234,567 gil");
-        let t = line(1, 70, &Ctx { num: [5, 0, 12, 0, 0, 0, 0, 7], ..Default::default() }).unwrap();
-        assert!(t.contains("05") && t.contains("12") && t.contains("07"), "{t}");
+        let t = line(
+            1,
+            70,
+            &Ctx {
+                num: [5, 0, 12, 0, 0, 0, 0, 7],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(
+            t.contains("05") && t.contains("12") && t.contains("07"),
+            "{t}"
+        );
         let party = vec![(0, 0x100, 0, "Me".into()), (3, 0x200, 1, "Ally".into())];
-        let ctx = Ctx { party, me: 0x100, msg_name: "Kupipi".into(), num: [10, 0, 0, 0, 0, 0, 0, 0], ..Default::default() };
-        assert_eq!(line(1, 22, &ctx).unwrap(), "The synergy furnace is currently in use by Ally.");
-        assert!(line(43, 7418, &ctx).unwrap().starts_with("Your ally, Kupipi, has obtained 10 Petras!"));
-        let t = line(210, 7492, &Ctx { num: [0x2d, 0, 0, 0, 0, 0, 0, 0], ..Default::default() }).unwrap();
+        let ctx = Ctx {
+            party,
+            me: 0x100,
+            msg_name: "Kupipi".into(),
+            num: [10, 0, 0, 0, 0, 0, 0, 0],
+            ..Default::default()
+        };
+        assert_eq!(
+            line(1, 22, &ctx).unwrap(),
+            "The synergy furnace is currently in use by Ally."
+        );
+        assert!(
+            line(43, 7418, &ctx)
+                .unwrap()
+                .starts_with("Your ally, Kupipi, has obtained 10 Petras!")
+        );
+        let t = line(
+            210,
+            7492,
+            &Ctx {
+                num: [0x2d, 0, 0, 0, 0, 0, 0, 0],
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert!(t.ends_with("$2d|Base-2 (binary): %101101"), "{t}");
         let cfg = crate::config::Config::load();
         let index = crate::dat::DatIndex::open(&cfg.ffxi_dir()).unwrap();
-        let e = expand(&Dialog::load(&index, 102).unwrap().raw(12608).unwrap(), &Ctx { num: [0, 41, 0, 0, 0, 0, 0, 0], ..Default::default() });
+        let e = expand(
+            &Dialog::load(&index, 102).unwrap().raw(12608).unwrap(),
+            &Ctx {
+                num: [0, 41, 0, 0, 0, 0, 0, 0],
+                ..Default::default()
+            },
+        );
         assert_eq!(e.sounds, [41]);
     }
 
@@ -1000,11 +1376,24 @@ mod tests {
         slots[3].0[..5].copy_from_slice(b"Gelbe");
         slots[3].1 = 1;
         let texts = Some(std::sync::Arc::new(Stub) as std::sync::Arc<dyn Texts>);
-        let ctx = Ctx { num: [3, 5, 14, 0, 0, 0, 0, 0], slots, texts, ..Default::default() };
-        let Some(t) = line(70, 8858, &ctx) else { return };
-        assert_eq!(t, "Incredible! Gelbe's speed is approaching dangerous limits!");
+        let ctx = Ctx {
+            num: [3, 5, 14, 0, 0, 0, 0, 0],
+            slots,
+            texts,
+            ..Default::default()
+        };
+        let Some(t) = line(70, 8858, &ctx) else {
+            return;
+        };
+        assert_eq!(
+            t,
+            "Incredible! Gelbe's speed is approaching dangerous limits!"
+        );
         assert!(line(70, 7887, &ctx).unwrap().ends_with("is...a female!"));
-        assert_eq!(line(70, 9767, &ctx).unwrap(), "You can purchase your g87:14 tickets here, kupo.");
+        assert_eq!(
+            line(70, 9767, &ctx).unwrap(),
+            "You can purchase your g87:14 tickets here, kupo."
+        );
         assert!(line(71, 7361, &ctx).unwrap().ends_with("g82:3 g82:5!"));
     }
 
@@ -1013,7 +1402,11 @@ mod tests {
     #[test]
     fn concierge_code() {
         let concierge = vec![None, Some("TuxClub".to_string())];
-        let ctx = Ctx { num: [0, 1, 0, 0, 0, 0, 0, 0], concierge, ..Default::default() };
+        let ctx = Ctx {
+            num: [0, 1, 0, 0, 0, 0, 0, 0],
+            concierge,
+            ..Default::default()
+        };
         let e = expand(b"\x7f\x81\x01, correct?", &ctx);
         assert_eq!(decode_sjis(&e.lines[0]), "TuxClub, correct?");
         let e = expand(b"\x7f\x81\x00, correct?", &ctx);

@@ -47,9 +47,14 @@ impl From<mlua::Error> for Fail {
 /// An error's text as Lua would hold it (mlua adds a traceback to one it caught).
 fn message(e: &mlua::Error) -> String {
     match e {
-        mlua::Error::RuntimeError(m) => m.split_once("\nstack traceback:\n").map_or(m.as_str(), |x| x.0).to_string(),
+        mlua::Error::RuntimeError(m) => m
+            .split_once("\nstack traceback:\n")
+            .map_or(m.as_str(), |x| x.0)
+            .to_string(),
         mlua::Error::MemoryError(_) => "not enough memory".into(),
-        mlua::Error::CallbackError { cause, .. } | mlua::Error::WithContext { cause, .. } => message(cause),
+        mlua::Error::CallbackError { cause, .. } | mlua::Error::WithContext { cause, .. } => {
+            message(cause)
+        }
         e => e.to_string(),
     }
 }
@@ -62,7 +67,15 @@ fn err(msg: impl Into<String>) -> Fail {
 
 impl<'a> State<'a> {
     fn new(src: &'a [u8], pat: &'a [u8], deadline: Option<Instant>) -> Self {
-        Self { src, pat, level: 0, capture: [(0, Cap::Unfinished); MAXCAPTURES], depth: MAXCCALLS, work: 0, deadline }
+        Self {
+            src,
+            pat,
+            level: 0,
+            capture: [(0, Cap::Unfinished); MAXCAPTURES],
+            depth: MAXCCALLS,
+            work: 0,
+            deadline,
+        }
     }
 
     /// Before each match attempt (reprepstate).
@@ -255,7 +268,10 @@ impl<'a> State<'a> {
     }
 
     fn end_capture(&mut self, s: usize, p: usize) -> R<Option<usize>> {
-        let l = (0..self.level).rev().find(|&l| self.capture[l].1 == Cap::Unfinished).ok_or_else(|| err("invalid pattern capture"))?;
+        let l = (0..self.level)
+            .rev()
+            .find(|&l| self.capture[l].1 == Cap::Unfinished)
+            .ok_or_else(|| err("invalid pattern capture"))?;
         self.capture[l].1 = Cap::Len(s - self.capture[l].0);
         let r = self.do_match(s, p)?;
         if r.is_none() {
@@ -278,7 +294,11 @@ impl<'a> State<'a> {
         // A position capture has no text: C compares (size_t)-2 bytes, which never fits.
         let Cap::Len(len) = cap else { return Ok(None) };
         self.charge(len / 256)?;
-        if self.src.len() - s >= len && self.src[init..init + len] == self.src[s..s + len] { Ok(Some(s + len)) } else { Ok(None) }
+        if self.src.len() - s >= len && self.src[init..init + len] == self.src[s..s + len] {
+            Ok(Some(s + len))
+        } else {
+            Ok(None)
+        }
     }
 
     /// lstrlib's `match`: where the match of `pat[p..]` at `src[s..]` ends, if it matches.
@@ -300,7 +320,11 @@ impl<'a> State<'a> {
             }
             match self.pat[p] {
                 b'(' => {
-                    return if self.p_at(p + 1) == b')' { self.start_capture(s, p + 2, Cap::Position) } else { self.start_capture(s, p + 1, Cap::Unfinished) };
+                    return if self.p_at(p + 1) == b')' {
+                        self.start_capture(s, p + 2, Cap::Position)
+                    } else {
+                        self.start_capture(s, p + 1, Cap::Unfinished)
+                    };
                 }
                 b')' => return self.end_capture(s, p + 1),
                 b'$' if p + 1 == self.pat.len() => return Ok((s == self.src.len()).then_some(s)),
@@ -326,14 +350,16 @@ impl<'a> State<'a> {
                     }
                     return Ok(None);
                 }
-                ESC if self.p_at(p + 1).is_ascii_digit() => match self.match_capture(s, self.pat[p + 1])? {
-                    Some(e) => {
-                        s = e;
-                        p += 2;
-                        continue;
+                ESC if self.p_at(p + 1).is_ascii_digit() => {
+                    match self.match_capture(s, self.pat[p + 1])? {
+                        Some(e) => {
+                            s = e;
+                            p += 2;
+                            continue;
+                        }
+                        None => return Ok(None),
                     }
-                    None => return Ok(None),
-                },
+                }
                 _ => {
                     let ep = self.class_end(p)?;
                     let q = self.p_at(ep);
@@ -383,7 +409,11 @@ impl<'a> State<'a> {
 
     /// Every capture (or the whole match when there are none); with no match span, only the captures.
     fn captures(&self, lua: &Lua, span: Option<(usize, usize)>) -> R<MultiValue> {
-        let n = if self.level == 0 && span.is_some() { 1 } else { self.level };
+        let n = if self.level == 0 && span.is_some() {
+            1
+        } else {
+            self.level
+        };
         let (s, e) = span.unwrap_or((0, 0));
         (0..n).map(|i| self.capture_value(lua, i, s, e)).collect()
     }
@@ -435,8 +465,13 @@ impl Args {
             Some(Value::LightUserData(_)) => "light userdata".into(),
             Some(v) => {
                 let named = match v {
-                    Value::Table(t) => t.metatable().and_then(|m| m.raw_get::<Value>("__name").ok()),
-                    Value::UserData(u) => u.metatable().ok().and_then(|m| m.get::<Value>("__name").ok()),
+                    Value::Table(t) => t
+                        .metatable()
+                        .and_then(|m| m.raw_get::<Value>("__name").ok()),
+                    Value::UserData(u) => u
+                        .metatable()
+                        .ok()
+                        .and_then(|m| m.get::<Value>("__name").ok()),
                     _ => None,
                 };
                 match named {
@@ -454,7 +489,11 @@ impl Args {
     /// luaL_checklstring: a string, or a number as its text.
     fn str(&self, lua: &Lua, n: usize) -> R<mlua::LuaString> {
         let v = self.get(n);
-        let s = if matches!(v, Value::String(_) | Value::Integer(_) | Value::Number(_)) { lua.coerce_string(v.clone())? } else { None };
+        let s = if matches!(v, Value::String(_) | Value::Integer(_) | Value::Number(_)) {
+            lua.coerce_string(v.clone())?
+        } else {
+            None
+        };
         s.ok_or_else(|| self.bad(n, &format!("string expected, got {}", self.type_name(n))))
     }
 
@@ -467,13 +506,18 @@ impl Args {
         if let Some(i) = lua.coerce_integer(v.clone())? {
             return Ok(i);
         }
-        let why = if lua.coerce_number(v.clone())?.is_some() { "number has no integer representation".to_string() } else { format!("number expected, got {}", self.type_name(n)) };
+        let why = if lua.coerce_number(v.clone())?.is_some() {
+            "number has no integer representation".to_string()
+        } else {
+            format!("number expected, got {}", self.type_name(n))
+        };
         Err(self.bad(n, &why))
     }
 }
 
 fn deadline(lua: &Lua) -> Option<Instant> {
-    lua.app_data_ref::<std::rc::Rc<std::cell::RefCell<super::vm::ModState>>>().and_then(|st| st.borrow().deadline)
+    lua.app_data_ref::<std::rc::Rc<std::cell::RefCell<super::vm::ModState>>>()
+        .and_then(|st| st.borrow().deadline)
 }
 
 fn find_aux(lua: &Lua, a: &Args, find: bool) -> R<MultiValue> {
@@ -489,7 +533,10 @@ fn find_aux(lua: &Lua, a: &Args, find: bool) -> R<MultiValue> {
     if find && (plain || !p.iter().any(|c| SPECIALS.contains(c))) {
         // A plain search (linear, so no budget needed).
         return Ok(match memchr::memmem::find(&s[init..], p) {
-            Some(k) => MultiValue::from_vec(vec![Value::Integer((init + k + 1) as i64), Value::Integer((init + k + p.len()) as i64)]),
+            Some(k) => MultiValue::from_vec(vec![
+                Value::Integer((init + k + 1) as i64),
+                Value::Integer((init + k + p.len()) as i64),
+            ]),
             None => MultiValue::from_vec(vec![Value::Nil]),
         });
     }
@@ -532,7 +579,12 @@ fn results(lua: &Lua, r: R<MultiValue>) -> mlua::Result<MultiValue> {
         Err(Fail::Raise(m)) => (1, m, 0),
         Err(Fail::Arg(n, m)) => (2, m, n as i64),
     };
-    Ok(MultiValue::from_vec(vec![failed(), Value::Integer(kind), Value::String(lua.create_string(m)?), Value::Integer(arg)]))
+    Ok(MultiValue::from_vec(vec![
+        failed(),
+        Value::Integer(kind),
+        Value::String(lua.create_string(m)?),
+        Value::Integer(arg),
+    ]))
 }
 
 /// The C function a mod calls: its Rust half (upvalue 1) returns a failure as values, raised here as luaL_error
@@ -549,7 +601,11 @@ unsafe extern "C-unwind" fn raise(l: *mut mlua::ffi::lua_State) -> std::ffi::c_i
         if got == 4 && ffi::lua_touserdata(l, 1) == failed_ptr() {
             match ffi::lua_tointeger(l, 2) {
                 2 => {
-                    ffi::luaL_argerror(l, ffi::lua_tointeger(l, 4) as std::ffi::c_int, ffi::lua_tostring(l, 3));
+                    ffi::luaL_argerror(
+                        l,
+                        ffi::lua_tointeger(l, 4) as std::ffi::c_int,
+                        ffi::lua_tostring(l, 3),
+                    );
                 }
                 kind => {
                     ffi::lua_settop(l, 3);
@@ -582,15 +638,31 @@ fn failed_ptr() -> *mut std::ffi::c_void {
 
 /// Replaces `string.find`, `match`, `gmatch` and `gsub` in the mod's string table (also its strings' methods).
 pub(super) fn install(lua: &Lua, string: &mlua::Table) -> mlua::Result<()> {
-    let find = lua.create_function(|lua, a: MultiValue| results(lua, find_aux(lua, &Args(a.into_vec()), true)))?;
-    let r#match = lua.create_function(|lua, a: MultiValue| results(lua, find_aux(lua, &Args(a.into_vec()), false)))?;
-    let gmatch = lua.create_function(|lua, a: MultiValue| results(lua, gmatch(lua, &Args(a.into_vec()))))?;
-    let gsub = lua.create_function(|lua, a: MultiValue| results(lua, gsub(lua, &Args(a.into_vec())).map(|(s, n)| MultiValue::from_vec(vec![s, Value::Integer(n)]))))?;
+    let find = lua.create_function(|lua, a: MultiValue| {
+        results(lua, find_aux(lua, &Args(a.into_vec()), true))
+    })?;
+    let r#match = lua.create_function(|lua, a: MultiValue| {
+        results(lua, find_aux(lua, &Args(a.into_vec()), false))
+    })?;
+    let gmatch =
+        lua.create_function(|lua, a: MultiValue| results(lua, gmatch(lua, &Args(a.into_vec()))))?;
+    let gsub = lua.create_function(|lua, a: MultiValue| {
+        results(
+            lua,
+            gsub(lua, &Args(a.into_vec()))
+                .map(|(s, n)| MultiValue::from_vec(vec![s, Value::Integer(n)])),
+        )
+    })?;
     // SAFETY: the stack holds the five arguments; each closure takes one of them as its upvalue.
     unsafe {
         lua.exec_raw::<()>((string.clone(), find, r#match, gmatch, gsub), |l| {
             use mlua::ffi;
-            for (i, name, f) in [(2, c"find", raise as ffi::lua_CFunction), (3, c"match", raise), (4, c"gmatch", raise_gmatch), (5, c"gsub", raise)] {
+            for (i, name, f) in [
+                (2, c"find", raise as ffi::lua_CFunction),
+                (3, c"match", raise),
+                (4, c"gmatch", raise_gmatch),
+                (5, c"gsub", raise),
+            ] {
                 ffi::lua_pushvalue(l, i);
                 ffi::lua_pushcclosure(l, f, 1);
                 ffi::lua_setfield(l, 1, name.as_ptr());
@@ -636,21 +708,37 @@ fn gsub(lua: &Lua, a: &Args) -> R<(Value, i64)> {
     // As C: the count (4) is read before the replacement's type (3) is checked.
     let max_s = a.int(lua, 4, src.as_bytes().len() as i64 + 1)?;
     let repl = a.get(3).clone();
-    if !matches!(repl, Value::Integer(_) | Value::Number(_) | Value::String(_) | Value::Table(_) | Value::Function(_)) {
-        return Err(a.bad(3, &format!("string/function/table expected, got {}", a.type_name(3))));
+    if !matches!(
+        repl,
+        Value::Integer(_)
+            | Value::Number(_)
+            | Value::String(_)
+            | Value::Table(_)
+            | Value::Function(_)
+    ) {
+        return Err(a.bad(
+            3,
+            &format!("string/function/table expected, got {}", a.type_name(3)),
+        ));
     }
     let (src_b, p_b) = (src.as_bytes(), p.as_bytes());
     let (s, p): (&[u8], &[u8]) = (&src_b, &p_b);
     // A number replacement is its string form.
     let repl = match repl {
-        Value::Integer(_) | Value::Number(_) => Value::String(lua.coerce_string(repl)?.ok_or_else(|| err("bad replacement"))?),
+        Value::Integer(_) | Value::Number(_) => Value::String(
+            lua.coerce_string(repl)?
+                .ok_or_else(|| err("bad replacement"))?,
+        ),
         r => r,
     };
     let anchor = p.first() == Some(&b'^');
     let p = if anchor { &p[1..] } else { p };
     let mut ms = State::new(s, p, deadline(lua));
     // Lua's own buffer counts against the mod's memory limit; ours is Rust's, so it is held to what is left of it.
-    let mut out = Out { buf: Vec::new(), cap: super::vm::MEMORY.saturating_sub(lua.used_memory()) };
+    let mut out = Out {
+        buf: Vec::new(),
+        cap: super::vm::MEMORY.saturating_sub(lua.used_memory()),
+    };
     let (mut at, mut last, mut n, mut changed) = (0usize, None::<usize>, 0i64, false);
     while n < max_s {
         ms.reset();
@@ -696,7 +784,14 @@ impl Out {
 }
 
 /// One replacement (lstrlib's add_value): whether it changed the text.
-fn add_value(lua: &Lua, ms: &mut State, out: &mut Out, s: usize, e: usize, repl: &Value) -> R<bool> {
+fn add_value(
+    lua: &Lua,
+    ms: &mut State,
+    out: &mut Out,
+    s: usize,
+    e: usize,
+    repl: &Value,
+) -> R<bool> {
     let src = ms.src;
     let v = match repl {
         Value::String(r) => {
@@ -704,7 +799,10 @@ fn add_value(lua: &Lua, ms: &mut State, out: &mut Out, s: usize, e: usize, repl:
             let mut i = 0;
             while i < r.len() {
                 // The text up to the next escape in one piece.
-                let k = r[i..].iter().position(|&c| c == ESC).map_or(r.len(), |k| i + k);
+                let k = r[i..]
+                    .iter()
+                    .position(|&c| c == ESC)
+                    .map_or(r.len(), |k| i + k);
                 out.push(ms, &r[i..k])?;
                 if k == r.len() {
                     break;
@@ -741,11 +839,16 @@ fn add_value(lua: &Lua, ms: &mut State, out: &mut Out, s: usize, e: usize, repl:
             Ok(true)
         }
         v @ (Value::Integer(_) | Value::Number(_)) => {
-            let t = lua.coerce_string(v)?.ok_or_else(|| err("invalid replacement value"))?;
+            let t = lua
+                .coerce_string(v)?
+                .ok_or_else(|| err("invalid replacement value"))?;
             out.push(ms, &t.as_bytes())?;
             Ok(true)
         }
-        v => Err(err(format!("invalid replacement value (a {})", v.type_name()))),
+        v => Err(err(format!(
+            "invalid replacement value (a {})",
+            v.type_name()
+        ))),
     }
 }
 
@@ -885,12 +988,20 @@ mod tests {
             "string.find({}, 'a')",
         ];
         for case in CASES {
-            let run = |lua: &Lua| lua.load(format!("return {case}")).set_name("=case").eval::<mlua::MultiValue>().map(|v| v.iter().map(show).collect::<Vec<_>>());
+            let run = |lua: &Lua| {
+                lua.load(format!("return {case}"))
+                    .set_name("=case")
+                    .eval::<mlua::MultiValue>()
+                    .map(|v| v.iter().map(show).collect::<Vec<_>>())
+            };
             match (run(&ours), run(&theirs)) {
                 (Ok(a), Ok(b)) => assert_eq!(a, b, "{case}"),
                 (Err(a), Err(b)) => {
                     let core = core(&b.to_string());
-                    assert!(a.to_string().contains(&core), "{case}: ours {a}, Lua's {core}");
+                    assert!(
+                        a.to_string().contains(&core),
+                        "{case}: ours {a}, Lua's {core}"
+                    );
                 }
                 (a, b) => panic!("{case}: ours {a:?}, Lua's {b:?}"),
             }
@@ -904,8 +1015,8 @@ mod tests {
         super::install(&ours, &ours.globals().get("string").unwrap()).unwrap();
         let theirs = Lua::new();
         const PIECES: &[&str] = &[
-            "a", "b", ".", "%a", "%d", "%s", "%W", "[ab]", "[^a]", "[a-c]", "[%d.]", "*", "+", "-", "?", "(", ")", "()", "%1", "%b()", "%f[%a]", "^",
-            "$", "%%", "x",
+            "a", "b", ".", "%a", "%d", "%s", "%W", "[ab]", "[^a]", "[a-c]", "[%d.]", "*", "+", "-",
+            "?", "(", ")", "()", "%1", "%b()", "%f[%a]", "^", "$", "%%", "x",
         ];
         let mut seed = 0x2545f4914f6cdd1du64;
         let mut next = |n: usize| {
@@ -915,22 +1026,38 @@ mod tests {
             (seed % n as u64) as usize
         };
         for _ in 0..4000 {
-            let pat: String = (0..1 + next(6)).map(|_| PIECES[next(PIECES.len())]).collect();
-            let subject: String = (0..next(12)).map(|_| ["a", "b", "c", "1", " ", "(", ")", "x", "."][next(9)]).collect();
+            let pat: String = (0..1 + next(6))
+                .map(|_| PIECES[next(PIECES.len())])
+                .collect();
+            let subject: String = (0..next(12))
+                .map(|_| ["a", "b", "c", "1", " ", "(", ")", "x", "."][next(9)])
+                .collect();
             let init = next(5) as i64 - 2;
             for f in ["find", "match", "gsub_s", "gsub_f", "gmatch"] {
                 let code = match f {
                     "gsub_s" => format!("return string.gsub({subject:?}, {pat:?}, '<%0>')"),
-                    "gsub_f" => format!("return string.gsub({subject:?}, {pat:?}, function(...) return select('#', ...) .. '' end, 3)"),
-                    "gmatch" => format!("local t = {{}} for a, b in string.gmatch({subject:?}, {pat:?}, {init}) do t[#t+1] = tostring(a) .. '/' .. tostring(b) end return table.concat(t, ',')"),
+                    "gsub_f" => format!(
+                        "return string.gsub({subject:?}, {pat:?}, function(...) return select('#', ...) .. '' end, 3)"
+                    ),
+                    "gmatch" => format!(
+                        "local t = {{}} for a, b in string.gmatch({subject:?}, {pat:?}, {init}) do t[#t+1] = tostring(a) .. '/' .. tostring(b) end return table.concat(t, ',')"
+                    ),
                     _ => format!("return string.{f}({subject:?}, {pat:?}, {init})"),
                 };
-                let run = |lua: &Lua| lua.load(code.as_str()).set_name("=case").eval::<mlua::MultiValue>().map(|v| v.iter().map(show).collect::<Vec<_>>());
+                let run = |lua: &Lua| {
+                    lua.load(code.as_str())
+                        .set_name("=case")
+                        .eval::<mlua::MultiValue>()
+                        .map(|v| v.iter().map(show).collect::<Vec<_>>())
+                };
                 match (run(&ours), run(&theirs)) {
                     (Ok(a), Ok(b)) => assert_eq!(a, b, "{code}"),
                     (Err(a), Err(b)) => {
                         let core = core(&b.to_string());
-                        assert!(a.to_string().contains(&core), "{code}: ours {a}, Lua's {core}");
+                        assert!(
+                            a.to_string().contains(&core),
+                            "{code}: ours {a}, Lua's {core}"
+                        );
                     }
                     (a, b) => panic!("{code}: ours {a:?}, Lua's {b:?}"),
                 }
@@ -953,7 +1080,10 @@ mod tests {
     fn core(e: &str) -> String {
         let first = e.lines().next().unwrap_or("");
         let msg = first.split_once("case:1: ").map_or(first, |x| x.1);
-        match msg.strip_prefix("bad argument").and_then(|m| m.split_once(" (")) {
+        match msg
+            .strip_prefix("bad argument")
+            .and_then(|m| m.split_once(" ("))
+        {
             Some((_, why)) => why.trim_end_matches(')').to_string(),
             None => msg.to_string(),
         }
@@ -963,45 +1093,71 @@ mod tests {
     #[test]
     fn deadline_stops_backtracking() {
         let lua = Lua::new();
-        let st = std::rc::Rc::new(std::cell::RefCell::new(super::super::vm::ModState::default()));
-        st.borrow_mut().deadline = Some(std::time::Instant::now() + std::time::Duration::from_millis(100));
+        let st = std::rc::Rc::new(std::cell::RefCell::new(
+            super::super::vm::ModState::default(),
+        ));
+        st.borrow_mut().deadline =
+            Some(std::time::Instant::now() + std::time::Duration::from_millis(100));
         lua.set_app_data(st);
         super::install(&lua, &lua.globals().get("string").unwrap()).unwrap();
         let t0 = std::time::Instant::now();
-        for code in ["return string.find(string.rep('a', 40000), '^.-.-b')", "return string.find(string.rep('a', 40000), '.-.-.-b')"] {
+        for code in [
+            "return string.find(string.rep('a', 40000), '^.-.-b')",
+            "return string.find(string.rep('a', 40000), '.-.-.-b')",
+        ] {
             let r = lua.load(code).eval::<mlua::MultiValue>();
             assert!(r.unwrap_err().to_string().contains("time budget"), "{code}");
         }
-        assert!(t0.elapsed() < std::time::Duration::from_secs(1), "took {:?}", t0.elapsed());
+        assert!(
+            t0.elapsed() < std::time::Duration::from_secs(1),
+            "took {:?}",
+            t0.elapsed()
+        );
     }
 
     /// A huge set is charged by its length, so it can't scan for long between deadline checks.
     #[test]
     fn deadline_counts_large_sets() {
         let lua = Lua::new();
-        let st = std::rc::Rc::new(std::cell::RefCell::new(super::super::vm::ModState::default()));
-        st.borrow_mut().deadline = Some(std::time::Instant::now() + std::time::Duration::from_millis(100));
+        let st = std::rc::Rc::new(std::cell::RefCell::new(
+            super::super::vm::ModState::default(),
+        ));
+        st.borrow_mut().deadline =
+            Some(std::time::Instant::now() + std::time::Duration::from_millis(100));
         lua.set_app_data(st);
         super::install(&lua, &lua.globals().get("string").unwrap()).unwrap();
         let t0 = std::time::Instant::now();
         let r = lua.load("return string.find(string.rep('b', 1000000), '[' .. string.rep('a', 1000000) .. ']')").eval::<mlua::MultiValue>();
         assert!(r.unwrap_err().to_string().contains("time budget"));
-        assert!(t0.elapsed() < std::time::Duration::from_secs(1), "took {:?}", t0.elapsed());
+        assert!(
+            t0.elapsed() < std::time::Duration::from_secs(1),
+            "took {:?}",
+            t0.elapsed()
+        );
     }
 
     /// A back-reference is charged by its length: long compares can't run for long between deadline checks.
     #[test]
     fn deadline_counts_back_references() {
         let lua = Lua::new();
-        let st = std::rc::Rc::new(std::cell::RefCell::new(super::super::vm::ModState::default()));
+        let st = std::rc::Rc::new(std::cell::RefCell::new(
+            super::super::vm::ModState::default(),
+        ));
         lua.set_app_data(st.clone());
         super::install(&lua, &lua.globals().get("string").unwrap()).unwrap();
         lua.load("s = string.rep('a', 16 << 20)").exec().unwrap();
-        st.borrow_mut().deadline = Some(std::time::Instant::now() + std::time::Duration::from_millis(100));
+        st.borrow_mut().deadline =
+            Some(std::time::Instant::now() + std::time::Duration::from_millis(100));
         let t0 = std::time::Instant::now();
-        let r = lua.load("return string.find(s, '^(.*)%1x')").eval::<mlua::MultiValue>();
+        let r = lua
+            .load("return string.find(s, '^(.*)%1x')")
+            .eval::<mlua::MultiValue>();
         assert!(r.unwrap_err().to_string().contains("time budget"));
-        assert!(t0.elapsed() < std::time::Duration::from_millis(500), "took {:?}", t0.elapsed());
+        assert!(
+            t0.elapsed() < std::time::Duration::from_millis(500),
+            "took {:?}",
+            t0.elapsed()
+        );
     }
 
     /// gsub's output is held to the mod's memory limit, even within one replacement.
@@ -1014,7 +1170,10 @@ mod tests {
             "return string.gsub(string.rep('a', 1000000), '.+', string.rep('%0', 100))",
         ] {
             let r = lua.load(code).eval::<mlua::MultiValue>();
-            assert!(r.unwrap_err().to_string().contains("not enough memory"), "{code}");
+            assert!(
+                r.unwrap_err().to_string().contains("not enough memory"),
+                "{code}"
+            );
         }
     }
 }

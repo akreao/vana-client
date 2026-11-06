@@ -48,7 +48,9 @@ impl ActionCtx {
     /// FUN_10061950: scheduler variables (MODLOG "Effect schedulers").
     pub fn var(&self, idx: u32, actor1: Option<u32>) -> i64 {
         let recs = self.records();
-        let r = recs.get(self.cur.min(recs.len().saturating_sub(1))).map(|r| r.1);
+        let r = recs
+            .get(self.cur.min(recs.len().saturating_sub(1)))
+            .map(|r| r.1);
         let side = |s: Option<&crate::net::action::Side>, k: u32| -> i64 {
             s.map_or(0, |s| match k {
                 0 => s.kind as i64,
@@ -89,10 +91,14 @@ pub struct SOp {
 
 impl SOp {
     pub fn u32_at(&self, o: usize) -> u32 {
-        self.raw.get(o..o + 4).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()))
+        self.raw
+            .get(o..o + 4)
+            .map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()))
     }
     pub fn u16_at(&self, o: usize) -> u16 {
-        self.raw.get(o..o + 2).map_or(0, |b| u16::from_le_bytes([b[0], b[1]]))
+        self.raw
+            .get(o..o + 2)
+            .map_or(0, |b| u16::from_le_bytes([b[0], b[1]]))
     }
     /// The 4cc at +8.
     pub fn name(&self) -> u32 {
@@ -104,7 +110,15 @@ impl SOp {
 pub fn parse(data: &[u8]) -> Vec<SOp> {
     crate::dat::sched::ops(data)
         .into_iter()
-        .map(|o| SOp { code: o.code, wait: o.wait as i16, dur: i16::from_le_bytes([o.raw.get(6).copied().unwrap_or(0), o.raw.get(7).copied().unwrap_or(0)]), raw: o.raw.to_vec() })
+        .map(|o| SOp {
+            code: o.code,
+            wait: o.wait as i16,
+            dur: i16::from_le_bytes([
+                o.raw.get(6).copied().unwrap_or(0),
+                o.raw.get(7).copied().unwrap_or(0),
+            ]),
+            raw: o.raw.to_vec(),
+        })
         .collect()
 }
 
@@ -156,16 +170,53 @@ pub struct Task {
 }
 
 impl Task {
-    pub fn new(res: Ref, ops: Rc<Vec<SOp>>, a1: Who, a2: Who, action: Option<Rc<RefCell<ActionCtx>>>, speed: f32) -> Self {
+    pub fn new(
+        res: Ref,
+        ops: Rc<Vec<SOp>>,
+        a1: Who,
+        a2: Who,
+        action: Option<Rc<RefCell<ActionCtx>>>,
+        speed: f32,
+    ) -> Self {
         // Melee: the attacker's swing is client/combat.rs's plan; the target's side (gurd / pary, a counter's swing)
         // plays its own motions and holds. A ranged finish plays from its files (shlg -> op 0x77 -> ls?? -> gu2).
         let motions = action.as_ref().is_none_or(|a| {
             let a = a.borrow();
-            a.action.category != 1 || a1.id().is_some_and(|id| id != a.action.actor) || !a.client_swing
+            a.action.category != 1
+                || a1.id().is_some_and(|id| id != a.action.actor)
+                || !a.client_swing
         });
         static UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         let uid = UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        Self { res, ops, ip: 0, countdown: 0.0, speed, a1, a2, action, parent: None, early: 0.0, waiting: false, stop_at: None, stack: Vec::new(), loop_at: None, done: false, motions, num: None, uid, looping: false, ends_loop: false, restart: false, stepped: false, vana: false, paused: 0, seq: false, event: false, event_root: false }
+        Self {
+            res,
+            ops,
+            ip: 0,
+            countdown: 0.0,
+            speed,
+            a1,
+            a2,
+            action,
+            parent: None,
+            early: 0.0,
+            waiting: false,
+            stop_at: None,
+            stack: Vec::new(),
+            loop_at: None,
+            done: false,
+            motions,
+            num: None,
+            uid,
+            looping: false,
+            ends_loop: false,
+            restart: false,
+            stepped: false,
+            vana: false,
+            paused: 0,
+            seq: false,
+            event: false,
+            event_root: false,
+        }
     }
 }
 

@@ -118,12 +118,22 @@ pub fn frame(gu: &mut GameUi, w: &mut World, input: &UiInput) -> Option<UiInput>
     let sites = std::mem::take(&mut gu.bars);
     let held = gu.bar_hold.map(|h| h.owner);
     let mut msgs: Vec<(Owner, Msg)> = Vec::new();
-    let on = input.pointer.and_then(|p| sites.iter().find_map(|s| Some((*s, hit(s, p))).filter(|h| h.1 != 0)));
+    let on = input.pointer.and_then(|p| {
+        sites
+            .iter()
+            .find_map(|s| Some((*s, hit(s, p))).filter(|h| h.1 != 0))
+    });
     if input.pressed
         && let Some((s, h)) = on
     {
         let drag = (h == 3).then(|| (s.bar.2, input.pointer.map_or(0.0, |p| p.1)));
-        gu.bar_hold = Some(Hold { owner: s.owner, hit: h, since: Instant::now(), sent: 0, drag });
+        gu.bar_hold = Some(Hold {
+            owner: s.owner,
+            hit: h,
+            since: Instant::now(),
+            sent: 0,
+            drag,
+        });
         msgs.extend(zone_msg(h).map(|m| (s.owner, m)));
     } else if let Some(hold) = gu.bar_hold.as_mut()
         && input.down
@@ -132,7 +142,10 @@ pub fn frame(gu: &mut GameUi, w: &mut World, input: &UiInput) -> Option<UiInput>
         match (hold.drag, site, input.pointer) {
             (Some((start, sy)), Some(s), Some(p)) => {
                 let (total, visible, top) = s.bar;
-                let t = (start as f32 + (p.1 - sy) * total as f32 / (s.rect[2] - 8.0)).trunc().clamp(0.0, total.saturating_sub(visible) as f32) as usize;
+                let t = (start as f32 + (p.1 - sy) * total as f32 / (s.rect[2] - 8.0))
+                    .trunc()
+                    .clamp(0.0, total.saturating_sub(visible) as f32)
+                    as usize;
                 if t != top {
                     msgs.push((s.owner, Msg::Set(t)));
                 }
@@ -140,7 +153,11 @@ pub fn frame(gu: &mut GameUi, w: &mut World, input: &UiInput) -> Option<UiInput>
             // The repeat sends only while the pointer stays on the zone it pressed.
             (None, Some(s), Some(p)) if hit(s, p) == hold.hit => {
                 let ticks = hold.since.elapsed().as_secs_f32() * 60.0;
-                let due = if ticks > 16.0 { ((ticks - 16.0) / 2.0) as u32 + 1 } else { 0 };
+                let due = if ticks > 16.0 {
+                    ((ticks - 16.0) / 2.0) as u32 + 1
+                } else {
+                    0
+                };
                 if due > hold.sent {
                     hold.sent = due;
                     msgs.extend(zone_msg(hold.hit).map(|m| (s.owner, m)));
@@ -156,24 +173,42 @@ pub fn frame(gu: &mut GameUi, w: &mut World, input: &UiInput) -> Option<UiInput>
         && let Some(s) = sites.first()
     {
         let m = if input.wheel > 0 { Msg::Up } else { Msg::Down };
-        msgs.extend(std::iter::repeat_n((s.owner, m), input.wheel.unsigned_abs() as usize));
+        msgs.extend(std::iter::repeat_n(
+            (s.owner, m),
+            input.wheel.unsigned_abs() as usize,
+        ));
     }
     for (owner, m) in msgs {
-        let bar = sites.iter().find(|s| s.owner == owner).map_or((0, 0, 0), |s| s.bar);
+        let bar = sites
+            .iter()
+            .find(|s| s.owner == owner)
+            .map_or((0, 0, 0), |s| s.bar);
         if dispatch(w, owner, m, bar) {
             w.sounds.push(crate::audio::Ui::Cursor as u32);
         }
     }
     // The bar holds the mouse: the windows under it see neither the press nor the pointer (no hover moving the hand
     // during a drag).
-    let grabbed = on.is_some() || gu.bar_hold.is_some() || (input.released && sites.iter().any(|s| Some(s.owner) == held));
-    grabbed.then(|| UiInput { pointer: None, moved: false, pressed: false, clicked: false, released: false, events: input.events.clone(), ..*input })
+    let grabbed = on.is_some()
+        || gu.bar_hold.is_some()
+        || (input.released && sites.iter().any(|s| Some(s.owner) == held));
+    grabbed.then(|| UiInput {
+        pointer: None,
+        moved: false,
+        pressed: false,
+        clicked: false,
+        released: false,
+        events: input.events.clone(),
+        ..*input
+    })
 }
 
 /// A list message to its owner, with the bar's (total, visible, top); true when the list moved (SE 0001).
 fn dispatch(w: &mut World, owner: Owner, m: Msg, bar: (usize, usize, usize)) -> bool {
     match owner {
-        Owner::Items | Owner::EquipPick | Owner::Bank | Owner::StoreInv => super::items::bar(w, owner, m),
+        Owner::Items | Owner::EquipPick | Owner::Bank | Owner::StoreInv => {
+            super::items::bar(w, owner, m)
+        }
         Owner::Actions => super::magic::bar(w, m),
         Owner::Shop => super::shop::bar(w, m),
         Owner::Query => super::event::bar(w, m),
@@ -181,8 +216,16 @@ fn dispatch(w: &mut World, owner: Owner, m: Msg, bar: (usize, usize, usize)) -> 
         Owner::MapList | Owner::ScanList => w.map.as_mut().is_some_and(|map| map.bar(owner, m)),
         Owner::Search => super::search::bar(w, m),
         Owner::Picker => super::post::picker_bar(w, m),
-        Owner::Journal => super::missions::bar(w, m) || super::quests::bar(w, m) || super::roe::bar(w, m) || super::keyitems::bar(w, m) || super::currencies::bar(w, m),
-        Owner::Linkshell => super::linkshell::bar(w, m) || super::linklist::bar(w, m) || super::concierge::bar(w, m),
+        Owner::Journal => {
+            super::missions::bar(w, m)
+                || super::quests::bar(w, m)
+                || super::roe::bar(w, m)
+                || super::keyitems::bar(w, m)
+                || super::currencies::bar(w, m)
+        }
+        Owner::Linkshell => {
+            super::linkshell::bar(w, m) || super::linklist::bar(w, m) || super::concierge::bar(w, m)
+        }
         Owner::BlueSet => super::bluset::bar(w, m),
         Owner::PupSet => super::pupset::bar(w, m),
         Owner::Maze => super::maze::bar(w, m),
@@ -190,7 +233,12 @@ fn dispatch(w: &mut World, owner: Owner, m: Msg, bar: (usize, usize, usize)) -> 
         Owner::Auction => super::auction::bar(w, m),
         Owner::Primer => super::primer::bar(w, m),
         Owner::Faq => super::faqmain::bar(w, m, bar),
-        Owner::Points => super::merits::bar(w, m) || super::jobpoints::bar(w, m) || super::aepoints::bar(w, m) || super::unity::bar(w, m),
+        Owner::Points => {
+            super::merits::bar(w, m)
+                || super::jobpoints::bar(w, m)
+                || super::aepoints::bar(w, m)
+                || super::unity::bar(w, m)
+        }
         Owner::Config => match &mut w.config {
             Some(c) => super::configui2::bar(c, &w.game, m),
             None => false,
@@ -309,7 +357,11 @@ mod tests {
     /// The thumb and the zones (FUN_102347f0) for a 190 px bar over 25 rows, 10 shown.
     #[test]
     fn hit_zones() {
-        let s = Site { owner: Owner::Items, rect: [100.0, 50.0, 190.0], bar: (25, 10, 0) };
+        let s = Site {
+            owner: Owner::Items,
+            rect: [100.0, 50.0, 190.0],
+            bar: (25, 10, 0),
+        };
         let (len, off) = thumb(190.0, 25, 10, 0);
         assert_eq!((len, off), (73, 0));
         assert_eq!(hit(&s, (103.0, 52.0)), 1);

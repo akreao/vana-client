@@ -24,24 +24,45 @@ pub fn draw(p: &mut Panels, w: &mut World) {
 
 /// A row's text colour: the game's tint, the theme's text for plain white.
 fn tint(m: &super::Modern, t: u32) -> Color32 {
-    if t == TINT_WHITE { m.theme.color("text") } else { chat::colour(t.to_le_bytes()) }
+    if t == TINT_WHITE {
+        m.theme.color("text")
+    } else {
+        chat::colour(t.to_le_bytes())
+    }
 }
 
 /// An inventory slot's bazaar price: priced in our bazaar (LockFlg 0x19) it can't be moved, dropped or sold until
 /// Set Bazaar takes the price off.
 pub(super) fn bazaar_price(w: &World, container: u8, index: u8) -> Option<u32> {
-    (w.inv.locks.get(&(container, index)) == Some(&0x19)).then(|| w.inv.prices.get(&(container, index)).copied().unwrap_or(0))
+    (w.inv.locks.get(&(container, index)) == Some(&0x19))
+        .then(|| w.inv.prices.get(&(container, index)).copied().unwrap_or(0))
 }
 
 /// The "Bazaar 1,000 G" tag ending at `right` on a row's middle `cy` (ours: retail shows nothing); its left.
 pub(super) fn bazaar_tag(ui: &Ui, m: &super::Modern, right: f32, cy: f32, price: u32) -> f32 {
     let label = format!("Bazaar {} G", crate::inventory::gil_text(price as i64));
     let f = FontId::new(m.theme.small - 2.0, FontFamily::Name(super::STRONG.into()));
-    let tw = ui.fonts_mut(|fo| fo.layout_no_wrap(label.clone(), f.clone(), Color32::WHITE).size().x);
+    let tw = ui.fonts_mut(|fo| {
+        fo.layout_no_wrap(label.clone(), f.clone(), Color32::WHITE)
+            .size()
+            .x
+    });
     let tag = Rect::from_min_max(pos2(right - tw - 10.0, cy - 9.0), pos2(right, cy + 9.0));
-    ui.painter().rect_filled(tag, 4.0, m.theme.color("charcoal"));
-    ui.painter().rect_stroke(tag, 4.0, egui::Stroke::new(1.0, m.theme.color("bronze")), egui::StrokeKind::Inside);
-    ui.painter().text(tag.center(), Align2::CENTER_CENTER, label, f, m.theme.color("gold"));
+    ui.painter()
+        .rect_filled(tag, 4.0, m.theme.color("charcoal"));
+    ui.painter().rect_stroke(
+        tag,
+        4.0,
+        egui::Stroke::new(1.0, m.theme.color("bronze")),
+        egui::StrokeKind::Inside,
+    );
+    ui.painter().text(
+        tag.center(),
+        Align2::CENTER_CENTER,
+        label,
+        f,
+        m.theme.color("gold"),
+    );
     tag.min.x
 }
 
@@ -50,7 +71,11 @@ pub(super) const BAZAAR_NOTE: &str = "In your bazaar: Set Bazaar > Set Prices, p
 
 /// The kit's button, the keyboard cursor on it while `lit`; true when clicked (and not off).
 fn button(ui: &mut Ui, m: &super::Modern, label: &str, lit: bool, off: bool) -> bool {
-    let s = super::kit::Btn { lit: lit && !off, cursor: lit, off };
+    let s = super::kit::Btn {
+        lit: lit && !off,
+        cursor: lit,
+        off,
+    };
     super::kit::clicked(&super::kit::button(ui, m, label, 0.0, s), s)
 }
 
@@ -73,31 +98,68 @@ struct Mouse {
 /// game's colours, Manual Sort's held row; itmsort2 as a strip (Auto-sort and its question, Manual Sort, the Recycle
 /// Bin); iuse (Use / Drop) and the drop question under the rows.
 fn list(p: &mut Panels, w: &mut World) {
-    let Some(Win::Items { scroll, cursor, sub, direct, sort, manual, store: None }) = w.win.as_ref() else { return };
-    let (scroll, cursor, sub, direct, sort, manual) = (*scroll, *cursor, *sub, *direct, *sort, *manual);
+    let Some(Win::Items {
+        scroll,
+        cursor,
+        sub,
+        direct,
+        sort,
+        manual,
+        store: None,
+    }) = w.win.as_ref()
+    else {
+        return;
+    };
+    let (scroll, cursor, sub, direct, sort, manual) =
+        (*scroll, *cursor, *sub, *direct, *sort, *manual);
     // The item's target prompt is up: retail hides the list meanwhile.
     if gitems::item_prompt(w) {
         return;
     }
-    let Some(info) = w.item_info.clone() else { return };
+    let Some(info) = w.item_info.clone() else {
+        return;
+    };
     let m = p.m;
     let gu = p.gu;
     let shown = gitems::listed_at(w, direct);
     let rows = gitems::list_rows(w, &info, &shown, direct);
-    let note = format!("{} / {}", shown.len() - gitems::temp_rows(&shown), w.inv.sizes[gitems::INVENTORY as usize].saturating_sub(1));
-    let icons: Vec<Option<egui::TextureId>> = rows.iter().skip(scroll).take(VISIBLE_ROWS).map(|r| m.item_icon(p.ctx, &info, r.id)).collect();
-    let bazaar: Vec<Option<u32>> = shown.iter().skip(scroll).take(VISIBLE_ROWS).map(|(c, s)| bazaar_price(w, *c, s.index)).collect();
+    let note = format!(
+        "{} / {}",
+        shown.len() - gitems::temp_rows(&shown),
+        w.inv.sizes[gitems::INVENTORY as usize].saturating_sub(1)
+    );
+    let icons: Vec<Option<egui::TextureId>> = rows
+        .iter()
+        .skip(scroll)
+        .take(VISIBLE_ROWS)
+        .map(|r| m.item_icon(p.ctx, &info, r.id))
+        .collect();
+    let bazaar: Vec<Option<u32>> = shown
+        .iter()
+        .skip(scroll)
+        .take(VISIBLE_ROWS)
+        .map(|(c, s)| bazaar_price(w, *c, s.index))
+        .collect();
     let use_bazaar = match sub {
         Some(Sub::Use { c, index, .. }) => bazaar_price(w, c, index).is_some(),
         _ => false,
     };
     let held = manual.flatten();
-    let favs: Vec<bool> = shown.iter().skip(scroll).take(VISIBLE_ROWS).map(|s| super::super::favs::is(w, super::super::favs::Fav::Item(s.1.id))).collect();
+    let favs: Vec<bool> = shown
+        .iter()
+        .skip(scroll)
+        .take(VISIBLE_ROWS)
+        .map(|s| super::super::favs::is(w, super::super::favs::Fav::Item(s.1.id)))
+        .collect();
     let msg = |g: u8, k: usize, or: &str| gu.map_or(or.to_string(), |gu| gu.lobby_msg(g, k, or));
     let mut mouse = Mouse::default();
     let search = lists::search_hits(p, w);
     let mut found = lists::Mouse::default();
-    let title = Title { icon: None, text: "Items", note: (!direct).then_some(note.as_str()) };
+    let title = Title {
+        icon: None,
+        text: "Items",
+        note: (!direct).then_some(note.as_str()),
+    };
     p.panel("window", Some(title), 380.0, |ui| {
         if let Some((text, sel, hits, icons)) = &search {
             found = lists::search_rows(ui, m, w, icons, text, *sel, hits);
@@ -106,8 +168,10 @@ fn list(p: &mut Panels, w: &mut World) {
         if !direct {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
-                for (child, label) in [(1u16, "Auto-sort"), (2, "Manual Sort"), (3, "Recycle Bin")] {
-                    let lit = sort.is_some_and(|s| s.cursor == child) || (child == 2 && manual.is_some());
+                for (child, label) in [(1u16, "Auto-sort"), (2, "Manual Sort"), (3, "Recycle Bin")]
+                {
+                    let lit =
+                        sort.is_some_and(|s| s.cursor == child) || (child == 2 && manual.is_some());
                     if button(ui, m, label, lit, sub.is_some()) {
                         mouse.sort = Some(child);
                     }
@@ -116,7 +180,11 @@ fn list(p: &mut Panels, w: &mut World) {
             if let Some(yes) = sort.and_then(|s| s.ask) {
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(msg(0x0c, 0x3d, "Sort items?")).size(m.theme.small).color(m.theme.color("muted")));
+                    ui.label(
+                        egui::RichText::new(msg(0x0c, 0x3d, "Sort items?"))
+                            .size(m.theme.small)
+                            .color(m.theme.color("muted")),
+                    );
                     for (answer, label) in [(true, "Yes"), (false, "No")] {
                         if button(ui, m, label, yes == answer, false) {
                             mouse.ask = Some(answer);
@@ -128,37 +196,83 @@ fn list(p: &mut Panels, w: &mut World) {
         }
         let top = ui.cursor().min;
         if rows.is_empty() {
-            ui.label(egui::RichText::new("No items.").size(m.theme.ui).color(m.theme.color("muted")));
+            ui.label(
+                egui::RichText::new("No items.")
+                    .size(m.theme.ui)
+                    .color(m.theme.color("muted")),
+            );
         }
         // Vana Client: the usable list names each bag above its rows (and the top row's bag), once it lists more than one.
         let headed = direct && shown.windows(2).any(|p| p[0].0 != p[1].0);
-        for (k, (row, (c, slot))) in rows.iter().zip(&shown).skip(scroll).take(VISIBLE_ROWS).enumerate() {
+        for (k, (row, (c, slot))) in rows
+            .iter()
+            .zip(&shown)
+            .skip(scroll)
+            .take(VISIBLE_ROWS)
+            .enumerate()
+        {
             if headed && (k == 0 || shown[scroll + k - 1].0 != *c) {
                 ui.add_space(if k == 0 { 0.0 } else { 4.0 });
-                ui.label(egui::RichText::new(super::super::textcmd::bag_name(*c)).size(m.theme.small).color(m.theme.color("muted")));
+                ui.label(
+                    egui::RichText::new(super::super::textcmd::bag_name(*c))
+                        .size(m.theme.small)
+                        .color(m.theme.color("muted")),
+                );
             }
             let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW), Sense::click());
             let sprite = match () {
                 _ if k == cursor && sort.is_none() => "controls/list_row_selected",
                 // Hovering lights a row only while the list has the focus (iuse and itmsort2 take it).
-                _ if (*c == gitems::INVENTORY && held == Some(slot.index)) || (resp.hovered() && sub.is_none() && sort.is_none()) => "controls/list_row_hover",
+                _ if (*c == gitems::INVENTORY && held == Some(slot.index))
+                    || (resp.hovered() && sub.is_none() && sort.is_none()) =>
+                {
+                    "controls/list_row_hover"
+                }
                 _ => "controls/list_row_normal",
             };
             let painter = ui.painter();
             super::rows::face(painter, m, r, sprite, Color32::WHITE);
             if let Some(t) = icons.get(k).copied().flatten() {
                 let at = pos2(r.min.x + 10.0, r.center().y - ICON / 2.0);
-                painter.image(t, Rect::from_min_size(at, vec2(ICON, ICON)), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+                painter.image(
+                    t,
+                    Rect::from_min_size(at, vec2(ICON, ICON)),
+                    Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                    Color32::WHITE,
+                );
             }
-            painter.text(pos2(r.min.x + 42.0, r.center().y), Align2::LEFT_CENTER, &row.name, FontId::proportional(m.theme.ui), tint(m, row.tint));
-            let starred = !direct && super::favs::star(ui, m, r, favs.get(k).copied().unwrap_or(false), resp.hovered() && sub.is_none());
+            painter.text(
+                pos2(r.min.x + 42.0, r.center().y),
+                Align2::LEFT_CENTER,
+                &row.name,
+                FontId::proportional(m.theme.ui),
+                tint(m, row.tint),
+            );
+            let starred = !direct
+                && super::favs::star(
+                    ui,
+                    m,
+                    r,
+                    favs.get(k).copied().unwrap_or(false),
+                    resp.hovered() && sub.is_none(),
+                );
             if starred {
                 mouse.star = Some(slot.id);
             }
             let painter = ui.painter();
             let mut right = r.max.x - 12.0 - if direct { 0.0 } else { super::favs::STAR_W };
             if let Some(n) = &row.count {
-                right = painter.text(pos2(right, r.center().y), Align2::RIGHT_CENTER, n, FontId::proportional(m.theme.ui), m.theme.color("text")).min.x - 8.0;
+                right = painter
+                    .text(
+                        pos2(right, r.center().y),
+                        Align2::RIGHT_CENTER,
+                        n,
+                        FontId::proportional(m.theme.ui),
+                        m.theme.color("text"),
+                    )
+                    .min
+                    .x
+                    - 8.0;
             }
             if let Some(price) = bazaar.get(k).copied().flatten() {
                 bazaar_tag(ui, m, right, r.center().y, price);
@@ -177,10 +291,18 @@ fn list(p: &mut Panels, w: &mut World) {
             ui.add_space(2.0);
         }
         // The bar: the rows shown out of all, at the right edge.
-        let track = Rect::from_min_max(pos2(ui.max_rect().max.x + 6.0, top.y), pos2(ui.max_rect().max.x + 14.0, ui.cursor().min.y));
+        let track = Rect::from_min_max(
+            pos2(ui.max_rect().max.x + 6.0, top.y),
+            pos2(ui.max_rect().max.x + 14.0, ui.cursor().min.y),
+        );
         super::kit::bar(ui.painter(), m, track, rows.len(), VISIBLE_ROWS, scroll);
         match sub {
-            Some(Sub::Use { child, c, index, id }) => {
+            Some(Sub::Use {
+                child,
+                c,
+                index,
+                id,
+            }) => {
                 let on = gitems::iuse_states(w, c, index, id);
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
@@ -192,13 +314,21 @@ fn list(p: &mut Panels, w: &mut World) {
                     }
                 });
                 if use_bazaar {
-                    ui.label(egui::RichText::new(BAZAAR_NOTE).size(m.theme.small).color(m.theme.color("gold")));
+                    ui.label(
+                        egui::RichText::new(BAZAAR_NOTE)
+                            .size(m.theme.small)
+                            .color(m.theme.color("gold")),
+                    );
                 }
             }
             Some(Sub::Drop { yes, .. }) => {
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(msg(0x0c, 0x3e, "Dispose of item?")).size(m.theme.small).color(m.theme.color("muted")));
+                    ui.label(
+                        egui::RichText::new(msg(0x0c, 0x3e, "Dispose of item?"))
+                            .size(m.theme.small)
+                            .color(m.theme.color("muted")),
+                    );
                     for (answer, label) in [(true, "Yes"), (false, "No")] {
                         if button(ui, m, label, yes == answer, false) {
                             mouse.drop = Some(answer);
@@ -209,9 +339,15 @@ fn list(p: &mut Panels, w: &mut World) {
             None => {}
         }
         if manual.is_some() && sort.is_none() {
-            let hint = gu.map_or(String::new(), |gu| gu.menu_msg(if held.is_some() { 6 } else { 5 }, ""));
+            let hint = gu.map_or(String::new(), |gu| {
+                gu.menu_msg(if held.is_some() { 6 } else { 5 }, "")
+            });
             ui.add_space(4.0);
-            ui.label(egui::RichText::new(hint).size(m.theme.small).color(m.theme.color("gold")));
+            ui.label(
+                egui::RichText::new(hint)
+                    .size(m.theme.small)
+                    .color(m.theme.color("gold")),
+            );
         }
         if ui.rect_contains_pointer(ui.max_rect()) {
             // The wheel's own events (line notches; pixel deltas as 50 points a notch), not egui's smoothed scroll.
@@ -219,7 +355,11 @@ fn list(p: &mut Panels, w: &mut World) {
                 i.events
                     .iter()
                     .map(|e| match e {
-                        egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Line, delta, .. } => delta.y,
+                        egui::Event::MouseWheel {
+                            unit: egui::MouseWheelUnit::Line,
+                            delta,
+                            ..
+                        } => delta.y,
                         egui::Event::MouseWheel { delta, .. } => delta.y / 50.0,
                         _ => 0.0,
                     })
@@ -236,7 +376,16 @@ fn list(p: &mut Panels, w: &mut World) {
         return;
     }
     if let Some((bag, index, id, at)) = mouse.menu.take() {
-        super::ctxmenu::open(m, super::ctxmenu::Menu::Item { at, bag, index, id, moving: false });
+        super::ctxmenu::open(
+            m,
+            super::ctxmenu::Menu::Item {
+                at,
+                bag,
+                index,
+                id,
+                moving: false,
+            },
+        );
     }
     apply(w, mouse, sort, sub);
 }
@@ -247,7 +396,9 @@ fn enter(w: &mut World) {
 
 fn win_mut(w: &mut World) -> Option<(&mut usize, &mut Option<Sub>, &mut Option<SortWin>)> {
     match w.win.as_mut() {
-        Some(Win::Items { cursor, sub, sort, .. }) => Some((cursor, sub, sort)),
+        Some(Win::Items {
+            cursor, sub, sort, ..
+        }) => Some((cursor, sub, sort)),
         _ => None,
     }
 }
@@ -277,7 +428,10 @@ fn apply(w: &mut World, mouse: Mouse, sort: Option<SortWin>, sub: Option<Sub>) {
     }
     if let Some(c) = mouse.sort {
         if let Some((_, _, s)) = win_mut(w) {
-            *s = Some(SortWin { cursor: c, ask: None });
+            *s = Some(SortWin {
+                cursor: c,
+                ask: None,
+            });
         }
         return enter(w);
     }
@@ -292,7 +446,11 @@ fn apply(w: &mut World, mouse: Mouse, sort: Option<SortWin>, sub: Option<Sub>) {
     }
     // A notch of the wheel is a row.
     if mouse.wheel != 0.0 {
-        let msg = if mouse.wheel > 0.0 { Msg::Up } else { Msg::Down };
+        let msg = if mouse.wheel > 0.0 {
+            Msg::Up
+        } else {
+            Msg::Down
+        };
         for _ in 0..(mouse.wheel.abs().round() as usize).clamp(1, 5) {
             gitems::bar(w, Owner::Items, msg);
         }
@@ -303,21 +461,61 @@ fn apply(w: &mut World, mouse: Mouse, sort: Option<SortWin>, sub: Option<Sub>) {
 /// / Temp marks, the second line, the description, the jobs, the augments, the extra line, the signature and the item
 /// level (iteminfo::build, wrapped by egui rather than paged); the equipped item it is compared with above it.
 fn info(p: &mut Panels, w: &World) {
-    let (Some(gu), Some(cache)) = (p.gu, w.item_info.clone()) else { return };
-    let Some((id, ext, container, equipped, _, flags)) = super::super::item_info_source(w) else { return };
+    let (Some(gu), Some(cache)) = (p.gu, w.item_info.clone()) else {
+        return;
+    };
+    let Some((id, ext, container, equipped, _, flags)) = super::super::item_info_source(w) else {
+        return;
+    };
     let Some(it) = cache.item(id) else { return };
     let m = p.m;
     let now = super::super::vana_now(w) as u32;
     let aug = gu.aug_ctx();
-    let build = |it: &crate::dat::items::Item, ext: Option<&[u8; 24]>, cx: &iteminfo::Ctx| iteminfo::build(it, ext, cx, &|g, k| gu.item_msg(g, k), &|_| 0.0, aug.as_ref());
+    let build = |it: &crate::dat::items::Item, ext: Option<&[u8; 24]>, cx: &iteminfo::Ctx| {
+        iteminfo::build(
+            it,
+            ext,
+            cx,
+            &|g, k| gu.item_msg(g, k),
+            &|_| 0.0,
+            aug.as_ref(),
+        )
+    };
     let voucher = super::super::maze::tabula_voucher(w, &it, ext.as_ref());
-    let info = build(&it, ext.as_ref(), &iteminfo::Ctx { now, equipped, shop: false, container, flags, voucher });
+    let info = build(
+        &it,
+        ext.as_ref(),
+        &iteminfo::Ctx {
+            now,
+            equipped,
+            shop: false,
+            container,
+            flags,
+            voucher,
+        },
+    );
     let cmp = gitems::compare(w).flatten().and_then(|(cid, cext, c)| {
         let cit = cache.item(cid)?;
-        Some((cid, build(&cit, cext.as_ref(), &iteminfo::Ctx { now, equipped: true, shop: false, container: Some(c), flags: 0, voucher: None })))
+        Some((
+            cid,
+            build(
+                &cit,
+                cext.as_ref(),
+                &iteminfo::Ctx {
+                    now,
+                    equipped: true,
+                    shop: false,
+                    container: Some(c),
+                    flags: 0,
+                    voucher: None,
+                },
+            ),
+        ))
     });
     let icon = m.item_icon(p.ctx, &cache, id);
-    let cmp_icon = cmp.as_ref().and_then(|(cid, _)| m.item_icon(p.ctx, &cache, *cid));
+    let cmp_icon = cmp
+        .as_ref()
+        .and_then(|(cid, _)| m.item_icon(p.ctx, &cache, *cid));
     p.panel("iteminfo", None, 420.0, |ui| {
         if let Some((_, ci)) = &cmp {
             body(ui, m, ci, cmp_icon);
@@ -333,10 +531,21 @@ fn info(p: &mut Panels, w: &World) {
 fn body(ui: &mut Ui, m: &super::Modern, info: &iteminfo::Info, icon: Option<egui::TextureId>) {
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 38.0), Sense::hover());
     if let Some(t) = icon {
-        ui.painter().image(t, Rect::from_min_size(pos2(r.min.x, r.center().y - 16.0), vec2(32.0, 32.0)), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+        ui.painter().image(
+            t,
+            Rect::from_min_size(pos2(r.min.x, r.center().y - 16.0), vec2(32.0, 32.0)),
+            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+            Color32::WHITE,
+        );
     }
     let font = FontId::new(m.theme.title, FontFamily::Name(super::STRONG.into()));
-    let name = ui.painter().text(pos2(r.min.x + 42.0, r.center().y), Align2::LEFT_CENTER, &info.name, font, tint(m, info.name_tint));
+    let name = ui.painter().text(
+        pos2(r.min.x + 42.0, r.center().y),
+        Align2::LEFT_CENTER,
+        &info.name,
+        font,
+        tint(m, info.name_tint),
+    );
     // The marks as tags after the name (windowps 293 Aug, 294 Rare, 295 Ex, 296 Tmp, 842 Alt).
     let mut x = name.max.x + 8.0;
     for mark in &info.marks {
@@ -349,17 +558,39 @@ fn body(ui: &mut Ui, m: &super::Modern, info: &iteminfo::Info, icon: Option<egui
             _ => continue,
         };
         let f = FontId::new(m.theme.small - 2.0, FontFamily::Name(super::STRONG.into()));
-        let tw = ui.fonts_mut(|fo| fo.layout_no_wrap(label.to_string(), f.clone(), Color32::WHITE).size().x);
+        let tw = ui.fonts_mut(|fo| {
+            fo.layout_no_wrap(label.to_string(), f.clone(), Color32::WHITE)
+                .size()
+                .x
+        });
         let tag = Rect::from_min_size(pos2(x, r.center().y - 9.0), vec2(tw + 10.0, 18.0));
-        ui.painter().rect_filled(tag, 4.0, m.theme.color("charcoal"));
-        ui.painter().rect_stroke(tag, 4.0, egui::Stroke::new(1.0, m.theme.color("bronze")), egui::StrokeKind::Inside);
-        ui.painter().text(tag.center(), Align2::CENTER_CENTER, label, f, m.theme.color("gold"));
+        ui.painter()
+            .rect_filled(tag, 4.0, m.theme.color("charcoal"));
+        ui.painter().rect_stroke(
+            tag,
+            4.0,
+            egui::Stroke::new(1.0, m.theme.color("bronze")),
+            egui::StrokeKind::Inside,
+        );
+        ui.painter().text(
+            tag.center(),
+            Align2::CENTER_CENTER,
+            label,
+            f,
+            m.theme.color("gold"),
+        );
         x = tag.max.x + 4.0;
     }
     // Game text: its element gaiji as the pack's icons.
-    let line = |ui: &mut Ui, s: &str, size: f32, c: Color32| super::gametext::label(ui, m, s, size, c);
+    let line =
+        |ui: &mut Ui, s: &str, size: f32, c: Color32| super::gametext::label(ui, m, s, size, c);
     if !info.line2.is_empty() {
-        line(ui, &info.line2.join("  "), m.theme.small, m.theme.color("muted"));
+        line(
+            ui,
+            &info.line2.join("  "),
+            m.theme.small,
+            m.theme.color("muted"),
+        );
     }
     ui.add_space(4.0);
     for d in &info.desc {
@@ -367,12 +598,21 @@ fn body(ui: &mut Ui, m: &super::Modern, info: &iteminfo::Info, icon: Option<egui
     }
     if !info.jobs.is_empty() {
         ui.add_space(4.0);
-        line(ui, &info.jobs.join(" "), m.theme.small, m.theme.color("muted"));
+        line(
+            ui,
+            &info.jobs.join(" "),
+            m.theme.small,
+            m.theme.color("muted"),
+        );
     }
     for a in &info.augs {
         line(ui, a, m.theme.small, m.theme.color("focus"));
     }
-    for (s, c) in [(&info.extra, tint(m, info.extra_tint)), (&info.sig, m.theme.color("muted")), (&info.ilvl, m.theme.color("gold"))] {
+    for (s, c) in [
+        (&info.extra, tint(m, info.extra_tint)),
+        (&info.sig, m.theme.color("muted")),
+        (&info.ilvl, m.theme.color("gold")),
+    ] {
         if !s.is_empty() {
             line(ui, s, m.theme.small, c);
         }

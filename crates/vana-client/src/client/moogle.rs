@@ -82,7 +82,14 @@ impl Menu {
 /// The 0x20000 windows (window registry) that drop a 0x02E: the item / equipment windows, the map, the config windows,
 /// the door menu, prompts, and ours that stand for them (the lists; inferred).
 fn blocked(w: &World) -> bool {
-    w.win.is_some() || w.map.is_some() || w.config.is_some() || w.settings.is_some() || w.mogdoor.is_some() || w.confirm.is_some() || w.magic.is_some() || w.ability.is_some()
+    w.win.is_some()
+        || w.map.is_some()
+        || w.config.is_some()
+        || w.settings.is_some()
+        || w.mogdoor.is_some()
+        || w.confirm.is_some()
+        || w.magic.is_some()
+        || w.ability.is_some()
 }
 
 /// Per frame: FUN_10097af0 (the pending 0x02E opens once no event runs) and FUN_10145680 (mogext and what it opened
@@ -106,10 +113,24 @@ pub fn update(w: &mut World) {
     }
     // The per-frame send: c2s 0x100 {main, sub} once the moogle's dance is over (or there is no moogle).
     if let Some(r) = w.job_req.filter(|r| r.pending) {
-        let busy = r.moogle.is_some_and(|id| w.entities.contains_key(&id) && w.effects.event_scheduler_running(DANCE_FILE, DANCE, Who::Actor(id), Who::Actor(w.my_id)));
+        let busy = r.moogle.is_some_and(|id| {
+            w.entities.contains_key(&id)
+                && w.effects.event_scheduler_running(
+                    DANCE_FILE,
+                    DANCE,
+                    Who::Actor(id),
+                    Who::Actor(w.my_id),
+                )
+        });
         if !busy {
-            let _ = w.net.commands.send(super::net::NetCommand::Packet { id: 0x100, body: vec![r.main, r.sub, 0, 0] });
-            w.job_req = Some(JobReq { pending: false, ..r });
+            let _ = w.net.commands.send(super::net::NetCommand::Packet {
+                id: 0x100,
+                body: vec![r.main, r.sub, 0, 0],
+            });
+            w.job_req = Some(JobReq {
+                pending: false,
+                ..r
+            });
         }
     }
 }
@@ -136,11 +157,19 @@ fn is_moogle(id: u32, e: &super::Entity) -> bool {
 pub(super) fn moogle_actor(w: &World) -> Option<u32> {
     let one = |(id, e): (&u32, &super::Entity)| is_moogle(*id, e).then_some(*id);
     if w.talked_index != 0
-        && let Some(id) = w.entities.iter().filter(|(_, e)| e.index == w.talked_index).find_map(one)
+        && let Some(id) = w
+            .entities
+            .iter()
+            .filter(|(_, e)| e.index == w.talked_index)
+            .find_map(one)
     {
         return Some(id);
     }
-    w.entities.iter().filter(|(id, e)| is_moogle(**id, e)).min_by_key(|(_, e)| e.index).map(|(&id, _)| id)
+    w.entities
+        .iter()
+        .filter(|(id, e)| is_moogle(**id, e))
+        .min_by_key(|(_, e)| e.index)
+        .map(|(&id, _)| id)
 }
 
 /// Event text's `17 n` codes: the moogle actor plays each motion (vtable +0x298), as the text is built.
@@ -150,7 +179,9 @@ pub(super) fn emote(w: &mut World, motions: &[&str]) {
         if let Some(a) = w.actors.get_mut(&id)
             && let Some(ch) = a.character.clone()
         {
-            let base = crate::motion::choose(&a.motion_names.unwrap_or(ch.motions), 0, 0.0).0.to_string();
+            let base = crate::motion::choose(&a.motion_names.unwrap_or(ch.motions), 0, 0.0)
+                .0
+                .to_string();
             if super::actmotion::start(a, &ch, name, &base) {
                 super::actmotion::fx_too(&mut w.effects, id, name);
             }
@@ -176,17 +207,28 @@ fn request(w: &mut World, main: u8, sub: u8) {
     if w.myroom.is_none() && !w.mog_zone {
         return;
     }
-    if w.job_req.is_some_and(|r| r.pending || (r.main, r.sub) == (main, sub)) {
+    if w.job_req
+        .is_some_and(|r| r.pending || (r.main, r.sub) == (main, sub))
+    {
         w.sounds.push(crate::audio::Ui::Error as u32);
         return;
     }
     let moogle = moogle_actor(w);
     log::debug!("job change ({main}, {sub}), moogle {moogle:?}");
     if let Some(id) = moogle {
-        w.effects.on_event_scheduler(DANCE_FILE, DANCE, Who::Actor(id), Who::Actor(w.my_id));
+        w.effects
+            .on_event_scheduler(DANCE_FILE, DANCE, Who::Actor(id), Who::Actor(w.my_id));
     }
-    w.job_req = Some(JobReq { main, sub, pending: true, moogle });
-    let _ = w.net.commands.send(super::net::NetCommand::Packet { id: 0x053, body: vec![0; 0x84] });
+    w.job_req = Some(JobReq {
+        main,
+        sub,
+        pending: true,
+        moogle,
+    });
+    let _ = w.net.commands.send(super::net::NetCommand::Packet {
+        id: 0x053,
+        body: vec![0; 0x84],
+    });
 }
 
 /// jobchang (FUN_101459d0) and jobcselu (FUN_10145a90) keys.
@@ -201,7 +243,13 @@ fn jobs_key(w: &mut World, gu: &GameUi, j: Jobs, key: egui::Key) {
     let Some((mode, sel)) = j.select else {
         match key {
             K::ArrowDown | K::ArrowUp => {
-                set(w, Some(Jobs { sel: 3 - j.sel, ..j }));
+                set(
+                    w,
+                    Some(Jobs {
+                        sel: 3 - j.sel,
+                        ..j
+                    }),
+                );
                 w.sounds.push(Ui::Cursor as u32);
             }
             // Escape refocuses myroom / mogext underneath.
@@ -209,10 +257,18 @@ fn jobs_key(w: &mut World, gu: &GameUi, j: Jobs, key: egui::Key) {
                 set(w, None);
                 w.sounds.push(Ui::Cancel as u32);
             }
-            K::Enter if j.sel == 2 && !w.job_info.is_some_and(|i| i.sub_ok) => w.sounds.push(Ui::Error as u32),
+            K::Enter if j.sel == 2 && !w.job_info.is_some_and(|i| i.sub_ok) => {
+                w.sounds.push(Ui::Error as u32)
+            }
             // The cursor starts on child 1 (inferred: the menu base's default).
             K::Enter => {
-                set(w, Some(Jobs { select: Some((j.sel as u8, 1)), ..j }));
+                set(
+                    w,
+                    Some(Jobs {
+                        select: Some((j.sel as u8, 1)),
+                        ..j
+                    }),
+                );
                 w.sounds.push(Ui::Select as u32);
             }
             _ => {}
@@ -229,7 +285,13 @@ fn jobs_key(w: &mut World, gu: &GameUi, j: Jobs, key: egui::Key) {
     if let Some(k) = link {
         let to = gu.menu_links(JOBCSELU, sel).map_or(sel, |l| l[k] as u16);
         if to != sel && to != 0 {
-            set(w, Some(Jobs { select: Some((mode, to)), ..j }));
+            set(
+                w,
+                Some(Jobs {
+                    select: Some((mode, to)),
+                    ..j
+                }),
+            );
             w.sounds.push(Ui::Cursor as u32);
         }
         return;
@@ -248,7 +310,11 @@ fn jobs_key(w: &mut World, gu: &GameUi, j: Jobs, key: egui::Key) {
                 w.sounds.push(Ui::Error as u32);
                 return;
             }
-            request(w, if mode == 1 { n } else { 0 }, if mode == 1 { 0 } else { n });
+            request(
+                w,
+                if mode == 1 { n } else { 0 },
+                if mode == 1 { 0 } else { n },
+            );
             set(w, Some(Jobs { select: None, ..j }));
             w.job_cooldown = Some(Instant::now() + Duration::from_secs(3));
         }
@@ -262,7 +328,15 @@ pub fn open(w: &mut World, nomad: bool) {
     if !nomad && w.mh_owner != 0 {
         return;
     }
-    w.moogle = Some(Menu { nomad, origin: w.pos, sel: 1, storage: None, open_pending: false, jobs: None, post: None });
+    w.moogle = Some(Menu {
+        nomad,
+        origin: w.pos,
+        sel: 1,
+        storage: None,
+        open_pending: false,
+        jobs: None,
+        post: None,
+    });
     w.menu = None;
     w.action_menu = None;
 }
@@ -340,7 +414,9 @@ fn storage_container(row: u16, nomad: bool) -> Option<u8> {
 pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) -> bool {
     use crate::audio::Ui;
     use egui::Key as K;
-    let Some(m) = w.moogle.clone() else { return false };
+    let Some(m) = w.moogle.clone() else {
+        return false;
+    };
     if let Some(j) = m.jobs {
         jobs_key(w, gu, j, key);
         return true;
@@ -358,8 +434,12 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) -> bool {
             K::Enter => {
                 w.sounds.push(Ui::Select as u32);
                 match (m.nomad, c) {
-                    (false, 1) => super::textcmd::run(w, "/mailbox", super::textcmd::Mode::Internal),
-                    (false, _) => super::textcmd::run(w, "/sendpost", super::textcmd::Mode::Internal),
+                    (false, 1) => {
+                        super::textcmd::run(w, "/mailbox", super::textcmd::Mode::Internal)
+                    }
+                    (false, _) => {
+                        super::textcmd::run(w, "/sendpost", super::textcmd::Mode::Internal)
+                    }
                     (true, 1) => super::post::open_cmd(w, 0xe),
                     (true, _) => super::post::open_cmd(w, 0xd),
                 }
@@ -378,7 +458,13 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) -> bool {
         let n: u16 = if m.nomad { 14 } else { 15 };
         match key {
             K::ArrowDown | K::ArrowUp => {
-                let s = if key == K::ArrowDown { sel % n + 1 } else if *sel <= 1 { n } else { sel - 1 };
+                let s = if key == K::ArrowDown {
+                    sel % n + 1
+                } else if *sel <= 1 {
+                    n
+                } else {
+                    sel - 1
+                };
                 if let Some(mm) = w.moogle.as_mut() {
                     mm.storage = Some((s, off.clone()));
                 }
@@ -392,7 +478,9 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) -> bool {
             }
             K::Enter if off.contains(sel) => w.sounds.push(Ui::Error as u32),
             K::Enter => {
-                let Some(c) = storage_container(*sel, m.nomad) else { return true };
+                let Some(c) = storage_container(*sel, m.nomad) else {
+                    return true;
+                };
                 w.sounds.push(Ui::Select as u32);
                 // A 0 from FUN_101dae10 plays SE 0004; FUN_101daf70's result is not looked at.
                 if matches!(c, 1 | 2 | 4 | 9) {
@@ -407,12 +495,22 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) -> bool {
         }
         return true;
     }
-    let off = if m.nomad { Vec::new() } else { myroom_off(w, &m) };
+    let off = if m.nomad {
+        Vec::new()
+    } else {
+        myroom_off(w, &m)
+    };
     let n = m.rows();
     match key {
         K::ArrowDown | K::ArrowUp => {
             if let Some(mm) = w.moogle.as_mut() {
-                mm.sel = if key == K::ArrowDown { m.sel % n + 1 } else if m.sel <= 1 { n } else { m.sel - 1 };
+                mm.sel = if key == K::ArrowDown {
+                    m.sel % n + 1
+                } else if m.sel <= 1 {
+                    n
+                } else {
+                    m.sel - 1
+                };
             }
             w.sounds.push(Ui::Cursor as u32);
         }
@@ -448,7 +546,10 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) -> bool {
                 // Open / Close Mog House: c2s 0x0CB {1 open | 2 close, 0, 0}; open waits for 0x067 @0x24.
                 (false, 6) => {
                     let kind = if w.mh_open { 2u8 } else { 1 };
-                    let _ = w.net.commands.send(super::net::NetCommand::Packet { id: 0x0CB, body: vec![kind, 0, 0, 0] });
+                    let _ = w.net.commands.send(super::net::NetCommand::Packet {
+                        id: 0x0CB,
+                        body: vec![kind, 0, 0, 0],
+                    });
                     if kind == 1
                         && let Some(mm) = w.moogle.as_mut()
                     {
@@ -461,7 +562,10 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) -> bool {
                         line(w, 0x32);
                     }
                     if let Some(mm) = w.moogle.as_mut() {
-                        mm.jobs = Some(Jobs { sel: 1, select: None });
+                        mm.jobs = Some(Jobs {
+                            sel: 1,
+                            select: None,
+                        });
                     }
                 }
                 // Delivery Box: mogpost (FUN_10145ba0).
@@ -486,8 +590,20 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
     if w.win.is_some() || w.modern {
         return rects;
     }
-    let mut off = if m.nomad { Vec::new() } else { myroom_off(w, m) };
-    let child6 = (!m.nomad).then(|| if w.mh_open { 608 } else if m.open_pending { 607 } else { 606 });
+    let mut off = if m.nomad {
+        Vec::new()
+    } else {
+        myroom_off(w, m)
+    };
+    let child6 = (!m.nomad).then(|| {
+        if w.mh_open {
+            608
+        } else if m.open_pending {
+            607
+        } else {
+            606
+        }
+    });
     if child6.is_some() {
         off.retain(|&c| c != 6);
     }
@@ -497,7 +613,13 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
     }
     let free = !super::post::active(w);
     let focused = free && m.storage.is_none() && m.jobs.is_none() && m.post.is_none();
-    let mut draw_one = |gu: &mut GameUi, name: &str, sel: u16, off: &[u16], hide: &[u16], focused: bool, extra: Option<(u16, usize)>| {
+    let mut draw_one = |gu: &mut GameUi,
+                        name: &str,
+                        sel: u16,
+                        off: &[u16],
+                        hide: &[u16],
+                        focused: bool,
+                        extra: Option<(u16, usize)>| {
         if let Some(win) = gu.lobby_window_off(name, sw, sh, (0.0, 0.0), Some(sel), focused, hide) {
             super::winhits::record(w, name, &win);
             let [x, y, ..] = win.frame;
@@ -506,13 +628,27 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
                 if let Some((child, sprite)) = extra
                     && let Some(e) = l.elements.iter().find(|e| e.id == child)
                 {
-                    gu.sprite("menu    windowps", sprite, x + e.x as f32, y + e.y as f32, 0x8080_8080);
+                    gu.sprite(
+                        "menu    windowps",
+                        sprite,
+                        x + e.x as f32,
+                        y + e.y as f32,
+                        0x8080_8080,
+                    );
                 }
             }
             rects.push(win.frame);
         }
     };
-    draw_one(gu, m.name(), m.sel, &off, &hide, focused, child6.map(|s| (6, s)));
+    draw_one(
+        gu,
+        m.name(),
+        m.sel,
+        &off,
+        &hide,
+        focused,
+        child6.map(|s| (6, s)),
+    );
     if let Some((sel, off)) = &m.storage {
         let name = if m.nomad { STORAGE2 } else { STORAGE };
         draw_one(gu, name, *sel, off, off, free, None);
@@ -521,8 +657,20 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         draw_one(gu, MOGPOST, c, &[], &[], free, None);
     }
     if let Some(j) = m.jobs {
-        let off: Vec<u16> = if w.job_info.is_some_and(|i| i.sub_ok) { Vec::new() } else { vec![2] };
-        draw_one(gu, JOBCHANG, j.sel, &off, &off, free && j.select.is_none(), None);
+        let off: Vec<u16> = if w.job_info.is_some_and(|i| i.sub_ok) {
+            Vec::new()
+        } else {
+            vec![2]
+        };
+        draw_one(
+            gu,
+            JOBCHANG,
+            j.sel,
+            &off,
+            &off,
+            free && j.select.is_none(),
+            None,
+        );
         if let Some((_, sel)) = j.select {
             let off = jobs_off(w);
             draw_one(gu, JOBCSELU, sel, &off, &off, free, None);
@@ -536,25 +684,65 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
 /// mogpost or jobchang and jobcselu (the levels as values) over it. None while a storage view is up.
 pub(super) fn views(w: &World, gu: &GameUi) -> Vec<super::modern::MenuWin> {
     use super::modern::MenuWin;
-    let Some(m) = &w.moogle else { return Vec::new() };
+    let Some(m) = &w.moogle else {
+        return Vec::new();
+    };
     if w.win.is_some() {
         return Vec::new();
     }
-    let mut off = if m.nomad { Vec::new() } else { myroom_off(w, m) };
-    let child6 = (!m.nomad).then(|| if w.mh_open { 608 } else if m.open_pending { 607 } else { 606 });
+    let mut off = if m.nomad {
+        Vec::new()
+    } else {
+        myroom_off(w, m)
+    };
+    let child6 = (!m.nomad).then(|| {
+        if w.mh_open {
+            608
+        } else if m.open_pending {
+            607
+        } else {
+            606
+        }
+    });
     if child6.is_some() {
         off.retain(|&c| c != 6);
     }
-    let mut out = vec![MenuWin { name: m.name(), sel: m.sel, off, labels: child6.map(|s| (6, s)).into_iter().collect(), marked: Vec::new(), values: Vec::new() }];
-    let win = |name, sel, off: Vec<u16>| MenuWin { name, sel, off, labels: Vec::new(), marked: Vec::new(), values: Vec::new() };
+    let mut out = vec![MenuWin {
+        name: m.name(),
+        sel: m.sel,
+        off,
+        labels: child6.map(|s| (6, s)).into_iter().collect(),
+        marked: Vec::new(),
+        values: Vec::new(),
+    }];
+    let win = |name, sel, off: Vec<u16>| MenuWin {
+        name,
+        sel,
+        off,
+        labels: Vec::new(),
+        marked: Vec::new(),
+        values: Vec::new(),
+    };
     if let Some((sel, off)) = &m.storage {
-        out.push(win(if m.nomad { STORAGE2 } else { STORAGE }, *sel, off.clone()));
+        out.push(win(
+            if m.nomad { STORAGE2 } else { STORAGE },
+            *sel,
+            off.clone(),
+        ));
     }
     if let Some(c) = m.post {
         out.push(win(MOGPOST, c, Vec::new()));
     }
     if let Some(j) = m.jobs {
-        out.push(win(JOBCHANG, j.sel, if w.job_info.is_some_and(|i| i.sub_ok) { Vec::new() } else { vec![2] }));
+        out.push(win(
+            JOBCHANG,
+            j.sel,
+            if w.job_info.is_some_and(|i| i.sub_ok) {
+                Vec::new()
+            } else {
+                vec![2]
+            },
+        ));
         if let Some((_, sel)) = j.select {
             let off = jobs_off(w);
             let fmt = gu.item_msg(10, 0x5a).unwrap_or_default();
@@ -563,15 +751,27 @@ pub(super) fn views(w: &World, gu: &GameUi) -> Vec<super::modern::MenuWin> {
                 .filter(|c| !off.contains(c))
                 .map(|c| {
                     let n = c as u8;
-                    let mut lv = w.job_info.map_or(0, |j| j.levels.get(n as usize).copied().unwrap_or(0));
+                    let mut lv = w
+                        .job_info
+                        .map_or(0, |j| j.levels.get(n as usize).copied().unwrap_or(0));
                     if n == main {
                         lv = w.stats.as_ref().map_or(lv, |s| s.main.1);
                     }
                     (c, fmt.replace("%d", &lv.to_string()))
                 })
                 .collect();
-            let marked = [main as u16, sub as u16].into_iter().filter(|&c| c != 0).collect();
-            out.push(MenuWin { name: JOBCSELU, sel, off, labels: Vec::new(), marked, values });
+            let marked = [main as u16, sub as u16]
+                .into_iter()
+                .filter(|&c| c != 0)
+                .collect();
+            out.push(MenuWin {
+                name: JOBCSELU,
+                sel,
+                off,
+                labels: Vec::new(),
+                marked,
+                values,
+            });
         }
     }
     out
@@ -579,7 +779,9 @@ pub(super) fn views(w: &World, gu: &GameUi) -> Vec<super::modern::MenuWin> {
 
 /// The modern layer's mouse on the top window: its cursor to `c`; true when it moved.
 pub(super) fn set_cursor(w: &mut World, c: u16) -> bool {
-    let Some(m) = w.moogle.as_mut() else { return false };
+    let Some(m) = w.moogle.as_mut() else {
+        return false;
+    };
     let at = if let Some(j) = m.jobs.as_mut() {
         match j.select.as_mut() {
             Some((_, sel)) => sel,
@@ -616,36 +818,121 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
     };
     if let Some(j) = m.jobs {
         match j.select {
-            Some((mode, sel)) => generic(w, gu, JOBCSELU, sel, 1..=32, p, moved, clicked, right, |w, id| edit(w, &|mm| mm.jobs = Some(Jobs { select: Some((mode, id)), ..j })), keys),
-            None => generic(w, gu, JOBCHANG, j.sel, 1..=2, p, moved, clicked, right, |w, id| edit(w, &|mm| mm.jobs = Some(Jobs { sel: id, ..j })), keys),
+            Some((mode, sel)) => generic(
+                w,
+                gu,
+                JOBCSELU,
+                sel,
+                1..=32,
+                p,
+                moved,
+                clicked,
+                right,
+                |w, id| {
+                    edit(w, &|mm| {
+                        mm.jobs = Some(Jobs {
+                            select: Some((mode, id)),
+                            ..j
+                        })
+                    })
+                },
+                keys,
+            ),
+            None => generic(
+                w,
+                gu,
+                JOBCHANG,
+                j.sel,
+                1..=2,
+                p,
+                moved,
+                clicked,
+                right,
+                |w, id| edit(w, &|mm| mm.jobs = Some(Jobs { sel: id, ..j })),
+                keys,
+            ),
         }
     } else if let Some(c) = m.post {
-        generic(w, gu, MOGPOST, c, 1..=2, p, moved, clicked, right, |w, id| edit(w, &|mm| mm.post = Some(id)), keys);
+        generic(
+            w,
+            gu,
+            MOGPOST,
+            c,
+            1..=2,
+            p,
+            moved,
+            clicked,
+            right,
+            |w, id| edit(w, &|mm| mm.post = Some(id)),
+            keys,
+        );
     } else if let Some((sel, off)) = m.storage.clone() {
         let name = if m.nomad { STORAGE2 } else { STORAGE };
-        generic(w, gu, name, sel, 1..=15, p, moved, clicked, right, |w, id| edit(w, &|mm| mm.storage = Some((id, off.clone()))), keys);
+        generic(
+            w,
+            gu,
+            name,
+            sel,
+            1..=15,
+            p,
+            moved,
+            clicked,
+            right,
+            |w, id| edit(w, &|mm| mm.storage = Some((id, off.clone()))),
+            keys,
+        );
     } else {
         let n = m.rows();
-        generic(w, gu, m.name(), m.sel, 1..=n, p, moved, clicked, right, |w, id| edit(w, &|mm| mm.sel = id), keys);
+        generic(
+            w,
+            gu,
+            m.name(),
+            m.sel,
+            1..=n,
+            p,
+            moved,
+            clicked,
+            right,
+            |w, id| edit(w, &|mm| mm.sel = id),
+            keys,
+        );
     }
 }
 
 /// FUN_101458f0: "L.%d" (group 10 0x5a) right-aligned at each unlocked row's (x1 + 0x1e, y0 + 2); gold for the main
 /// job (its level from s2c 0x061), blue for the support job.
 fn draw_levels(gu: &mut GameUi, w: &World, off: &[u16], sw: f32, sh: f32) {
-    let Some([x, y, ..]) = gu.window_rect(JOBCSELU, sw, sh) else { return };
-    let Some(l) = gu.layout(JOBCSELU).cloned() else { return };
+    let Some([x, y, ..]) = gu.window_rect(JOBCSELU, sw, sh) else {
+        return;
+    };
+    let Some(l) = gu.layout(JOBCSELU).cloned() else {
+        return;
+    };
     let fmt = gu.item_msg(10, 0x5a).unwrap_or_default();
     let (main, sub) = jobs_now(w);
     for e in l.elements.iter().skip(1).filter(|e| !off.contains(&e.id)) {
         let n = e.id as u8;
-        let mut lv = w.job_info.map_or(0, |j| j.levels.get(n as usize).copied().unwrap_or(0));
+        let mut lv = w
+            .job_info
+            .map_or(0, |j| j.levels.get(n as usize).copied().unwrap_or(0));
         if n == main {
             lv = w.stats.as_ref().map_or(lv, |s| s.main.1);
         }
-        let tint = if n == main { 0x80e0_9620 } else if n == sub { 0x8040_70a0 } else { 0x8080_8080 };
+        let tint = if n == main {
+            0x80e0_9620
+        } else if n == sub {
+            0x8040_70a0
+        } else {
+            0x8080_8080
+        };
         let text = fmt.replace("%d", &lv.to_string());
-        gu.shape_text(&text, x + e.x as f32 + e.w as f32 + 30.0, y + e.y as f32 + 2.0, tint, true);
+        gu.shape_text(
+            &text,
+            x + e.x as f32 + e.w as f32 + 30.0,
+            y + e.y as f32 + 2.0,
+            tint,
+            true,
+        );
     }
 }
 
@@ -658,14 +945,24 @@ pub fn bars(gu: &GameUi, w: &World, bars: &mut super::hudtop::BarText) {
     let (name, child) = match (&m.storage, m.jobs) {
         _ if m.post.is_some() => (MOGPOST, m.post.unwrap_or(1)),
         (Some((sel, _)), _) => (if m.nomad { STORAGE2 } else { STORAGE }, *sel),
-        (_, Some(Jobs { select: Some((_, sel)), .. })) => (JOBCSELU, sel),
+        (
+            _,
+            Some(Jobs {
+                select: Some((_, sel)),
+                ..
+            }),
+        ) => (JOBCSELU, sel),
         (_, Some(j)) => (JOBCHANG, j.sel),
         _ => (m.name(), m.sel),
     };
     let [help, title] = gu.focus_text(name, child);
     (bars.help[1], bars.title[1]) = (help.unwrap_or_default(), title.unwrap_or_default());
     if m.storage.is_none() && m.jobs.is_none() && m.post.is_none() && !m.nomad && m.sel == 6 {
-        let (t, h) = if w.mh_open { (0x94, 0x29b) } else { (0x93, 0x29a) };
+        let (t, h) = if w.mh_open {
+            (0x94, 0x29b)
+        } else {
+            (0x93, 0x29a)
+        };
         bars.title[1] = gu.title_msg(t).unwrap_or_default();
         bars.help[1] = gu.menu_msg(h, "");
     }
@@ -678,8 +975,16 @@ pub fn line(w: &mut World, n: u16) {
     }
     let Some(bt) = w.battle.clone() else { return };
     // Nothing without a moogle actor (all.c 120034).
-    let Some(name) = moogle_actor(w).and_then(|id| w.entities.get(&id)).map(|e| e.name.clone()) else { return };
-    let ctx = crate::dat::battle::Ctx { me: w.name.clone(), ..Default::default() };
+    let Some(name) = moogle_actor(w)
+        .and_then(|id| w.entities.get(&id))
+        .map(|e| e.name.clone())
+    else {
+        return;
+    };
+    let ctx = crate::dat::battle::Ctx {
+        me: w.name.clone(),
+        ..Default::default()
+    };
     if let Some(l) = bt.system(n, &ctx)
         && let Some(text) = l.lines.into_iter().find(|l| !l.is_empty())
     {

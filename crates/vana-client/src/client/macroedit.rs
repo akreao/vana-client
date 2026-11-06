@@ -92,7 +92,13 @@ pub(super) fn cell_title(gu: &mut GameUi, title: &str, r: [f32; 4], pad: f32) {
         return;
     }
     if title.chars().all(|c| c.is_ascii_alphanumeric()) {
-        alpha(gu, title.as_bytes(), r[0] + pad, r[1] + 4.0, r[2].max(38.0) - pad);
+        alpha(
+            gu,
+            title.as_bytes(),
+            r[0] + pad,
+            r[1] + 4.0,
+            r[2].max(38.0) - pad,
+        );
     } else {
         let max = r[2].max(48.0) - 14.0;
         let mut t = title.to_string();
@@ -109,7 +115,11 @@ pub(super) fn cell_title(gu: &mut GameUi, title: &str, r: [f32; 4], pad: f32) {
 /// palette is off.
 pub(super) fn palette_dx(w: &World, sw: f32) -> f32 {
     let up = w.gauge.is_some() || w.objective.counting();
-    if palette_moved(w.game.get(0x9d), w.game.get_i(0x9e), sw, up) { 130.0 } else { 0.0 }
+    if palette_moved(w.game.get(0x9d), w.game.get_i(0x9e), sw, up) {
+        130.0
+    } else {
+        0.0
+    }
 }
 
 fn palette_moved(cfg9d: u32, cfg9e: i32, sw: f32, up: bool) -> bool {
@@ -123,7 +133,11 @@ pub fn open(w: &mut World) {
     if w.macros.is_none() {
         return;
     }
-    w.macroedit = Some(MacroEdit { menu_sel: w.cursor_recall(MENU), book: None, sets: None });
+    w.macroedit = Some(MacroEdit {
+        menu_sel: w.cursor_recall(MENU),
+        book: None,
+        sets: None,
+    });
     w.sounds.push(Ui::Select as u32);
 }
 
@@ -136,7 +150,9 @@ pub(super) fn palette(w: &World) -> Option<(u8, [u16; 2])> {
 /// FUN_10118830 on every hide or close: each open macro window's cursor child, so the next open restores it. The
 /// palettes are not in it, because their cursor is always column + 1 (E, [`World::macro_palette`]).
 pub(super) fn kept(w: &World) -> Vec<(&'static str, u16)> {
-    let Some(m) = &w.macroedit else { return Vec::new() };
+    let Some(m) = &w.macroedit else {
+        return Vec::new();
+    };
     let mut v = vec![(MENU, m.menu_sel)];
     let Some(b) = &m.book else { return v };
     v.push((SELEC, b.sel));
@@ -164,12 +180,27 @@ fn book_of(w: &World, sel: u16) -> usize {
 /// The text fields take the keyboard: the book name (mode 4, 15 bytes) and the editor's (title 8, lines 60).
 pub fn typing(w: &World) -> bool {
     super::esmenu::typing(w)
-        || w.macroedit.as_ref().and_then(|m| m.book.as_ref()).is_some_and(|b| b.rename.is_some() || b.edit.as_ref().and_then(|e| e.editor.as_ref()).is_some_and(|d| d.editing.is_some() && d.lopt.is_none()))
+        || w.macroedit
+            .as_ref()
+            .and_then(|m| m.book.as_ref())
+            .is_some_and(|b| {
+                b.rename.is_some()
+                    || b.edit
+                        .as_ref()
+                        .and_then(|e| e.editor.as_ref())
+                        .is_some_and(|d| d.editing.is_some() && d.lopt.is_none())
+            })
 }
 
 /// The field's limits: 15 bytes for a book name, 8 for a title, 60 for a line (FUN_101c5be0 modes 4 / 8 / 9).
 fn field_max(rename: bool, field: usize) -> usize {
-    if rename { 15 } else if field == 0 { 8 } else { 60 }
+    if rename {
+        15
+    } else if field == 0 {
+        8
+    } else {
+        60
+    }
 }
 
 /// Text into the open field (printable ASCII; Shift-JIS input is not done), Tab's auto-translate list (fep.rs
@@ -186,14 +217,23 @@ pub fn text_events(w: &mut World, events: &[egui::Event]) {
         if complete(w, ev) {
             continue;
         }
-        let Some(b) = w.macroedit.as_mut().and_then(|m| m.book.as_mut()) else { return };
+        let Some(b) = w.macroedit.as_mut().and_then(|m| m.book.as_mut()) else {
+            return;
+        };
         if let Some(name) = b.rename.as_mut() {
             if line_edit(name, &mut b.caret, field_max(true, 0), ev) {
                 continue;
             }
             match ev {
-                egui::Event::Key { key: K::Enter | K::Escape, pressed: true, .. } => {
-                    let (book, raw) = ((b.sel as usize - 1) + 20 * page, b.rename.take().unwrap_or_default());
+                egui::Event::Key {
+                    key: K::Enter | K::Escape,
+                    pressed: true,
+                    ..
+                } => {
+                    let (book, raw) = (
+                        (b.sel as usize - 1) + 20 * page,
+                        b.rename.take().unwrap_or_default(),
+                    );
                     if let Some(m) = w.macros.as_mut() {
                         m.rename_book(book, &raw);
                     }
@@ -203,7 +243,9 @@ pub fn text_events(w: &mut World, events: &[egui::Event]) {
             }
             continue;
         }
-        let Some(d) = b.edit.as_mut().and_then(|e| e.editor.as_mut()) else { return };
+        let Some(d) = b.edit.as_mut().and_then(|e| e.editor.as_mut()) else {
+            return;
+        };
         let Some(f) = d.editing else { return };
         if line_edit(&mut d.fields[f], &mut d.caret, field_max(false, f), ev) {
             continue;
@@ -211,17 +253,33 @@ pub fn text_events(w: &mut World, events: &[egui::Event]) {
         match ev {
             // Down: the next field (none past line 6); Up: the previous (none above the title). The caret goes to the
             // end of the new field.
-            egui::Event::Key { key: K::ArrowDown, pressed: true, .. } if f < 6 => {
+            egui::Event::Key {
+                key: K::ArrowDown,
+                pressed: true,
+                ..
+            } if f < 6 => {
                 (d.editing, d.sel, d.caret) = (Some(f + 1), f as u16 + 4, d.fields[f + 1].len());
             }
-            egui::Event::Key { key: K::ArrowUp, pressed: true, .. } if f > 0 => {
+            egui::Event::Key {
+                key: K::ArrowUp,
+                pressed: true,
+                ..
+            } if f > 0 => {
                 (d.editing, d.sel, d.caret) = (Some(f - 1), f as u16 + 2, d.fields[f - 1].len());
             }
             // LAB_101a5450: committed and not line 6 -> the next field; line 6 stops editing (SE 0003).
-            egui::Event::Key { key: K::Enter, pressed: true, .. } if f < 6 => {
+            egui::Event::Key {
+                key: K::Enter,
+                pressed: true,
+                ..
+            } if f < 6 => {
                 (d.editing, d.sel, d.caret) = (Some(f + 1), f as u16 + 4, d.fields[f + 1].len());
             }
-            egui::Event::Key { key: K::Enter | K::Escape, pressed: true, .. } => {
+            egui::Event::Key {
+                key: K::Enter | K::Escape,
+                pressed: true,
+                ..
+            } => {
                 d.editing = None;
                 w.sounds.push(Ui::Cancel as u32);
             }
@@ -232,7 +290,15 @@ pub fn text_events(w: &mut World, events: &[egui::Event]) {
 
 /// The editor's field being typed in: (field, its bytes, the caret byte).
 fn edited(w: &World) -> Option<(usize, Vec<u8>, usize)> {
-    let d = w.macroedit.as_ref()?.book.as_ref()?.edit.as_ref()?.editor.as_ref()?;
+    let d = w
+        .macroedit
+        .as_ref()?
+        .book
+        .as_ref()?
+        .edit
+        .as_ref()?
+        .editor
+        .as_ref()?;
     let f = d.editing.filter(|_| d.lopt.is_none())?;
     Some((f, d.fields[f].clone(), d.caret.min(d.fields[f].len())))
 }
@@ -241,13 +307,19 @@ fn edited(w: &World) -> Option<(usize, Vec<u8>, usize)> {
 /// while it is open its keys are the list's and Enter puts the pick in place of the word (a phrase as its 6-byte
 /// block), refused past the field's bytes; typing closes it. True when the list took the event.
 fn complete(w: &mut World, ev: &egui::Event) -> bool {
-    use crate::dat::font::{decode_sjis, encode_sjis};
     use super::fep::{self, FieldPick};
+    use crate::dat::font::{decode_sjis, encode_sjis};
     let Some((f, buf, caret)) = edited(w) else {
         w.field_fep = None;
         return false;
     };
-    let egui::Event::Key { key, pressed: true, modifiers, .. } = ev else {
+    let egui::Event::Key {
+        key,
+        pressed: true,
+        modifiers,
+        ..
+    } = ev
+    else {
         if matches!(ev, egui::Event::Text(_) | egui::Event::Paste(_)) {
             w.field_fep = None;
         }
@@ -276,7 +348,13 @@ fn complete(w: &mut World, ev: &egui::Event) -> bool {
             let max = field_max(false, f);
             match fep::field_put(&text, at, &list.word, &put, |t| encode_sjis(t).len() <= max) {
                 Some((next, c)) => {
-                    if let Some(d) = w.macroedit.as_mut().and_then(|m| m.book.as_mut()).and_then(|b| b.edit.as_mut()).and_then(|e| e.editor.as_mut()) {
+                    if let Some(d) = w
+                        .macroedit
+                        .as_mut()
+                        .and_then(|m| m.book.as_mut())
+                        .and_then(|b| b.edit.as_mut())
+                        .and_then(|e| e.editor.as_mut())
+                    {
                         d.fields[f] = encode_sjis(&next);
                         d.caret = encode_sjis(&next.chars().take(c).collect::<String>()).len();
                     }
@@ -298,7 +376,11 @@ fn units(buf: &[u8]) -> Vec<usize> {
         let b = buf[i];
         i += match () {
             _ if b == 0xfd && buf.get(i + 5) == Some(&0xfd) => 6,
-            _ if (matches!(b, 0x1e | 0x1f) || crate::dat::font::is_lead(b)) && i + 1 < buf.len() => 2,
+            _ if (matches!(b, 0x1e | 0x1f) || crate::dat::font::is_lead(b))
+                && i + 1 < buf.len() =>
+            {
+                2
+            }
             _ => 1,
         };
         out.push(i);
@@ -309,10 +391,20 @@ fn units(buf: &[u8]) -> Vec<usize> {
 /// The text keys of a field (as the chat line's FUN_101ac4e0 / FUN_101ac520 / FUN_101abef0 / FUN_101abf40): typed or
 /// pasted printable ASCII goes in at the caret up to `max` bytes, Backspace / Delete take the unit before / at it,
 /// Left / Right move it one unit, Home / End to the ends. True when the event was one of these.
-pub(super) fn line_edit(buf: &mut Vec<u8>, caret: &mut usize, max: usize, ev: &egui::Event) -> bool {
+pub(super) fn line_edit(
+    buf: &mut Vec<u8>,
+    caret: &mut usize,
+    max: usize,
+    ev: &egui::Event,
+) -> bool {
     use egui::Key as K;
     let b = units(buf);
-    *caret = b.iter().copied().filter(|&x| x <= *caret).max().unwrap_or(0);
+    *caret = b
+        .iter()
+        .copied()
+        .filter(|&x| x <= *caret)
+        .max()
+        .unwrap_or(0);
     match ev {
         egui::Event::Text(t) | egui::Event::Paste(t) => {
             for c in t.bytes().filter(|c| (b' '..=b'~').contains(c)) {
@@ -322,7 +414,9 @@ pub(super) fn line_edit(buf: &mut Vec<u8>, caret: &mut usize, max: usize, ev: &e
                 }
             }
         }
-        egui::Event::Key { key, pressed: true, .. } => {
+        egui::Event::Key {
+            key, pressed: true, ..
+        } => {
             let prev = b.iter().copied().filter(|&x| x < *caret).max();
             let next = b.iter().copied().find(|&x| x > *caret);
             match key {
@@ -357,7 +451,12 @@ pub(super) fn shown(w: &World, buf: &[u8]) -> String {
 /// Per frame: Ctrl or Alt held (key function 0xa8) counts up in mcrbedit (+0x1e); 31 or more is the set mode
 /// *(inf: frames at 30 fps)*.
 pub fn update(w: &mut World, ticks: f32, held: bool) {
-    if let Some(e) = w.macroedit.as_mut().and_then(|m| m.book.as_mut()).and_then(|b| b.edit.as_mut()) {
+    if let Some(e) = w
+        .macroedit
+        .as_mut()
+        .and_then(|m| m.book.as_mut())
+        .and_then(|b| b.edit.as_mut())
+    {
         e.hold = if held { e.hold + ticks / 2.0 } else { 0.0 };
     }
 }
@@ -376,7 +475,9 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
     // FUN_10118830 runs as a window hides, so an op menu an Enter is about to close (the modern page opens and acts
     // in one frame) keeps its cursor here first.
     remember(w);
-    let Some(me) = w.macroedit.as_ref() else { return };
+    let Some(me) = w.macroedit.as_ref() else {
+        return;
+    };
     if me.sets.is_some() {
         super::esmenu::key(w, gu, key);
         return;
@@ -396,7 +497,9 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
                 w.macroedit = None;
             }
             // FUN_101a6490: Edit Equip. Set is off in Monstrosity.
-            K::Enter if menu_sel == 2 && super::monstrosity::active(w) => w.sounds.push(Ui::Error as u32),
+            K::Enter if menu_sel == 2 && super::monstrosity::active(w) => {
+                w.sounds.push(Ui::Error as u32)
+            }
             K::Enter => {
                 w.sounds.push(Ui::Select as u32);
                 // FUN_10118870: no macro window has registry flag 0x10000, so each opens on the cursor it last had
@@ -404,7 +507,13 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
                 let recall = w.cursor_recall(SELEC);
                 if menu_sel == 1 {
                     if let Some(m) = w.macroedit.as_mut() {
-                        m.book = Some(Book { sel: recall, rename: None, caret: 0, opt: None, edit: None });
+                        m.book = Some(Book {
+                            sel: recall,
+                            rename: None,
+                            caret: 0,
+                            opt: None,
+                            edit: None,
+                        });
                     }
                 } else {
                     super::esmenu::open(w);
@@ -433,7 +542,13 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
         let b = w.macroedit.as_mut().and_then(|m| m.book.as_mut()).unwrap();
         match key {
             K::ArrowUp | K::ArrowDown => {
-                b.opt = Some(if key == K::ArrowDown { o % 5 + 1 } else if o == 1 { 5 } else { o - 1 });
+                b.opt = Some(if key == K::ArrowDown {
+                    o % 5 + 1
+                } else if o == 1 {
+                    5
+                } else {
+                    o - 1
+                });
                 w.sounds.push(Ui::Cursor as u32);
             }
             K::Escape => {
@@ -455,10 +570,20 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
                         // mcr1edit / mcr2edit put their cursor on column + 1 on every open and focus gain.
                         let (focus, cols) = w.macro_palette;
                         let b = w.macroedit.as_mut().and_then(|m| m.book.as_mut()).unwrap();
-                        b.edit = Some(Edit { focus, cols, bopt: None, hold: 0.0, editor: None, tabs: false });
+                        b.edit = Some(Edit {
+                            focus,
+                            cols,
+                            bopt: None,
+                            hold: 0.0,
+                            editor: None,
+                            tabs: false,
+                        });
                     }
                     2 => {
-                        let name = w.macros.as_ref().map_or(Vec::new(), |m| m.raw_book_title(book).to_vec());
+                        let name = w
+                            .macros
+                            .as_ref()
+                            .map_or(Vec::new(), |m| m.raw_book_title(book).to_vec());
                         let b = w.macroedit.as_mut().and_then(|m| m.book.as_mut()).unwrap();
                         b.caret = name.len();
                         b.rename = Some(name);
@@ -468,8 +593,13 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
                             m.copy_book(book);
                         }
                     }
-                    4 => w.confirm = Some((super::Confirm::Macro(Ask::PasteBook(book as u8)), false)),
-                    _ => w.confirm = Some((super::Confirm::Macro(Ask::DeleteBook(book as u8)), false)),
+                    4 => {
+                        w.confirm = Some((super::Confirm::Macro(Ask::PasteBook(book as u8)), false))
+                    }
+                    _ => {
+                        w.confirm =
+                            Some((super::Confirm::Macro(Ask::DeleteBook(book as u8)), false))
+                    }
                 }
             }
             _ => {}
@@ -482,9 +612,17 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
         // Ours: the modern layer lists both pages as one column; Up / Down run on through it.
         K::ArrowUp | K::ArrowDown if w.modern => {
             let at = w.mcr_page * 20 + sel as usize - 1;
-            let to = if key == K::ArrowDown { (at + 1) % 40 } else { (at + 39) % 40 };
+            let to = if key == K::ArrowDown {
+                (at + 1) % 40
+            } else {
+                (at + 39) % 40
+            };
             w.mcr_page = to / 20;
-            w.macroedit.as_mut().and_then(|m| m.book.as_mut()).unwrap().sel = (to % 20 + 1) as u16;
+            w.macroedit
+                .as_mut()
+                .and_then(|m| m.book.as_mut())
+                .unwrap()
+                .sel = (to % 20 + 1) as u16;
             w.sounds.push(Ui::Cursor as u32);
         }
         K::ArrowLeft | K::ArrowRight if w.modern => {}
@@ -492,7 +630,11 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
             let k = if key == K::ArrowUp { 2 } else { 3 };
             let to = gu.menu_links(SELEC, sel).map_or(sel, |l| l[k] as u16);
             if (1..=20).contains(&to) && to != sel {
-                w.macroedit.as_mut().and_then(|m| m.book.as_mut()).unwrap().sel = to;
+                w.macroedit
+                    .as_mut()
+                    .and_then(|m| m.book.as_mut())
+                    .unwrap()
+                    .sel = to;
                 w.sounds.push(Ui::Cursor as u32);
             }
         }
@@ -502,7 +644,11 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
         }
         K::Enter => {
             let o = w.cursor_recall(SELOP);
-            w.macroedit.as_mut().and_then(|m| m.book.as_mut()).unwrap().opt = Some(o);
+            w.macroedit
+                .as_mut()
+                .and_then(|m| m.book.as_mut())
+                .unwrap()
+                .opt = Some(o);
             w.sounds.push(Ui::Select as u32);
         }
         K::Escape => {
@@ -519,7 +665,11 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
 /// Num+ (key function 0x11, event 8): a palette to mcrbedit and back (FUN_101a4950 / FUN_101a6180), the editor on a
 /// line to mcrledit and back (FUN_101a5690 / FUN_101a6350); SE 0013.
 pub fn num_plus(w: &mut World) {
-    if w.macroedit.as_ref().and_then(|m| m.sets.as_ref()).is_some_and(|s| s.ed.is_some()) {
+    if w.macroedit
+        .as_ref()
+        .and_then(|m| m.sets.as_ref())
+        .is_some_and(|s| s.ed.is_some())
+    {
         super::esedit::num_plus(w);
         return;
     }
@@ -561,7 +711,10 @@ pub fn ask_text(w: &World, a: Ask) -> String {
         Ask::EsDelete(_) => 0x116,
         Ask::EsOverwrite(_) => 0x117,
     };
-    w.battle.as_ref().and_then(|b| b.group9(id)).unwrap_or_default()
+    w.battle
+        .as_ref()
+        .and_then(|b| b.group9(id))
+        .unwrap_or_default()
 }
 
 /// Yes (LAB_101a6ad0 / LAB_101a6af0, FUN_101a2b60 / FUN_101a2b40).
@@ -598,11 +751,20 @@ fn palette_key(w: &mut World, gu: &GameUi, key: egui::Key) {
         }
         match key {
             K::ArrowUp | K::ArrowDown => {
-                e.bopt = Some(if key == K::ArrowDown { o % 3 + 1 } else if o == 1 { 3 } else { o - 1 });
+                e.bopt = Some(if key == K::ArrowDown {
+                    o % 3 + 1
+                } else if o == 1 {
+                    3
+                } else {
+                    o - 1
+                });
                 w.sounds.push(Ui::Cursor as u32);
             }
             K::Enter => {
-                let can_paste = w.macros.as_ref().is_some_and(|m| if set { m.set_copied } else { m.macro_copied() });
+                let can_paste = w
+                    .macros
+                    .as_ref()
+                    .is_some_and(|m| if set { m.set_copied } else { m.macro_copied() });
                 if o == 2 && !can_paste {
                     w.sounds.push(Ui::Error as u32);
                     return;
@@ -642,9 +804,15 @@ fn palette_key(w: &mut World, gu: &GameUi, key: egui::Key) {
     };
     match (e.focus, key) {
         (_, K::ArrowLeft | K::ArrowRight) => {
-            let name = if e.focus == 1 { "menu    mcr1edit" } else { "menu    mcr2edit" };
+            let name = if e.focus == 1 {
+                "menu    mcr1edit"
+            } else {
+                "menu    mcr2edit"
+            };
             let k = if key == K::ArrowLeft { 5 } else { 4 };
-            let to = gu.menu_links(name, col + 1).map_or(col + 1, |l| l[k] as u16);
+            let to = gu
+                .menu_links(name, col + 1)
+                .map_or(col + 1, |l| l[k] as u16);
             if (1..=10).contains(&to) {
                 e.cols[p] = to - 1;
                 w.sounds.push(Ui::Cursor as u32);
@@ -662,7 +830,14 @@ fn palette_key(w: &mut World, gu: &GameUi, key: egui::Key) {
             let fields = load_fields(w, i);
             let sel = w.cursor_recall(MACRO);
             if let Some(e) = edit_mut(w) {
-                e.editor = Some(Editor { i, sel, fields, editing: None, caret: 0, lopt: None });
+                e.editor = Some(Editor {
+                    i,
+                    sel,
+                    fields,
+                    editing: None,
+                    caret: 0,
+                    lopt: None,
+                });
             }
         }
         // FUN_101a4590: back to the book list.
@@ -678,8 +853,16 @@ fn palette_key(w: &mut World, gu: &GameUi, key: egui::Key) {
 
 /// FUN_101a5e00: macro i into the fields.
 fn load_fields(w: &World, i: usize) -> [Vec<u8>; 7] {
-    let Some(m) = w.macros.as_ref().and_then(|m| m.recs.get(i)) else { return Default::default() };
-    std::array::from_fn(|f| if f == 0 { m.raw_title().to_vec() } else { m.line(f - 1).to_vec() })
+    let Some(m) = w.macros.as_ref().and_then(|m| m.recs.get(i)) else {
+        return Default::default();
+    };
+    std::array::from_fn(|f| {
+        if f == 0 {
+            m.raw_title().to_vec()
+        } else {
+            m.line(f - 1).to_vec()
+        }
+    })
 }
 
 /// FUN_101a5da0: the fields stored (a title over 8 bytes or a line over 60 is refused, the old text stays).
@@ -695,7 +878,9 @@ fn store_fields(w: &mut World, d: &Editor) {
 fn editor_key(w: &mut World, gu: &GameUi, key: egui::Key) {
     use egui::Key as K;
     let clip = w.mcr_line.clone();
-    let Some(d) = edit_mut(w).and_then(|e| e.editor.as_mut()) else { return };
+    let Some(d) = edit_mut(w).and_then(|e| e.editor.as_mut()) else {
+        return;
+    };
     if let Some(o) = d.lopt {
         // mcrledit: on the line (sel 4..9): copy a non-empty line, paste, delete; then the focus goes back.
         if key == K::Escape {
@@ -707,7 +892,13 @@ fn editor_key(w: &mut World, gu: &GameUi, key: egui::Key) {
         let line = d.fields[f].clone();
         match key {
             K::ArrowUp | K::ArrowDown => {
-                d.lopt = Some(if key == K::ArrowDown { o % 3 + 1 } else if o == 1 { 3 } else { o - 1 });
+                d.lopt = Some(if key == K::ArrowDown {
+                    o % 3 + 1
+                } else if o == 1 {
+                    3
+                } else {
+                    o - 1
+                });
                 w.sounds.push(Ui::Cursor as u32);
             }
             K::Enter if o == 2 && clip.is_none() => w.sounds.push(Ui::Error as u32),
@@ -752,8 +943,19 @@ fn editor_key(w: &mut World, gu: &GameUi, key: egui::Key) {
         K::Enter => {
             let next = sel == 2;
             let at = d.i;
-            let snapshot = Editor { i: d.i, sel: d.sel, fields: d.fields.clone(), editing: None, caret: 0, lopt: None };
-            let to = if next { (at < 19).then_some(at + 1) } else { at.checked_sub(1) };
+            let snapshot = Editor {
+                i: d.i,
+                sel: d.sel,
+                fields: d.fields.clone(),
+                editing: None,
+                caret: 0,
+                lopt: None,
+            };
+            let to = if next {
+                (at < 19).then_some(at + 1)
+            } else {
+                at.checked_sub(1)
+            };
             let Some(to) = to else {
                 w.sounds.push(Ui::Error as u32);
                 return;
@@ -767,7 +969,14 @@ fn editor_key(w: &mut World, gu: &GameUi, key: egui::Key) {
         }
         // FUN_101a4630: stored, the editor closes, the palettes and mcrbedit come back.
         K::Escape => {
-            let snapshot = Editor { i: d.i, sel: d.sel, fields: d.fields.clone(), editing: None, caret: 0, lopt: None };
+            let snapshot = Editor {
+                i: d.i,
+                sel: d.sel,
+                fields: d.fields.clone(),
+                editing: None,
+                caret: 0,
+                lopt: None,
+            };
             w.sounds.push(Ui::Cancel as u32);
             store_fields(w, &snapshot);
             if let Some(e) = edit_mut(w) {
@@ -779,7 +988,9 @@ fn editor_key(w: &mut World, gu: &GameUi, key: egui::Key) {
 }
 
 pub fn bars(gu: &GameUi, w: &World, bars: &mut super::hudtop::BarText) {
-    let (Some(me), Some(m)) = (&w.macroedit, &w.macros) else { return };
+    let (Some(me), Some(m)) = (&w.macroedit, &w.macros) else {
+        return;
+    };
     if let Some(s) = &me.sets {
         super::esmenu::bars(gu, w, s, bars);
         return;
@@ -808,7 +1019,11 @@ pub fn bars(gu: &GameUi, w: &World, bars: &mut super::hudtop::BarText) {
         } else {
             // The palettes: "Macro Set %s (#%d)" (group 10 0x27) and the title "Edit Macros".
             let fmt = gu.lobby_msg(0x0a, 0x27, "Macro Set %s (#%d)");
-            bars.help[1] = fmt.replacen("%s", &m.book_title(m.book), 1).replacen("%d", &(m.set + 1).to_string(), 1);
+            bars.help[1] = fmt.replacen("%s", &m.book_title(m.book), 1).replacen(
+                "%d",
+                &(m.set + 1).to_string(),
+                1,
+            );
             bars.title[1] = gu.title_msg(75).unwrap_or_default();
         }
         return;
@@ -819,22 +1034,38 @@ pub fn bars(gu: &GameUi, w: &World, bars: &mut super::hudtop::BarText) {
     }
     // mcrselec's overrides: "Macro Book (#%d)" (group 10 0x6d) and the book's name.
     let book = book_of(w, b.sel);
-    bars.help[1] = gu.lobby_msg(0x0a, 0x6d, "Macro Book (#%d)").replacen("%d", &(book + 1).to_string(), 1);
+    bars.help[1] =
+        gu.lobby_msg(0x0a, 0x6d, "Macro Book (#%d)")
+            .replacen("%d", &(book + 1).to_string(), 1);
     bars.title[1] = m.book_title(book);
 }
 
 /// A text field's caret phase (40 frames on, 20 off at 60 a second, inf).
 pub(super) fn caret(w: &World) -> &'static str {
-    if (w.started.elapsed().as_secs_f32() * 60.0) as u32 % 60 < 40 { "|" } else { "" }
+    if (w.started.elapsed().as_secs_f32() * 60.0) as u32 % 60 < 40 {
+        "|"
+    } else {
+        ""
+    }
 }
 
 /// The caret drawn at byte `at` of a field shown from (x, y), kept within `max` px of x.
-pub(super) fn caret_at(gu: &mut GameUi, w: &World, text: &[u8], at: usize, x: f32, y: f32, max: f32) {
+pub(super) fn caret_at(
+    gu: &mut GameUi,
+    w: &World,
+    text: &[u8],
+    at: usize,
+    x: f32,
+    y: f32,
+    max: f32,
+) {
     let c = caret(w);
     if c.is_empty() {
         return;
     }
-    let dx = gu.text_width(&shown(w, &text[..at.min(text.len())])).min(max);
+    let dx = gu
+        .text_width(&shown(w, &text[..at.min(text.len())]))
+        .min(max);
     gu.text(c, x + dx - 2.0, y, 0, WHITE.to_le_bytes());
 }
 
@@ -897,7 +1128,11 @@ pub(super) fn view(w: &World, gu: &GameUi) -> Option<View> {
         return None;
     }
     let free = w.confirm.is_none();
-    let menu = (me.menu_sel, super::monstrosity::active(w), free && me.book.is_none());
+    let menu = (
+        me.menu_sel,
+        super::monstrosity::active(w),
+        free && me.book.is_none(),
+    );
     let text = |b: &[u8]| shown(w, b);
     let books = me.book.as_ref().map(|b| Books {
         names: (0..40).map(|k| m.book_title(k)).collect(),
@@ -906,7 +1141,10 @@ pub(super) fn view(w: &World, gu: &GameUi) -> Option<View> {
         opt: b.opt,
         paste_ok: m.book_copied(),
         rename: b.rename.as_ref().map(|t| text(t)),
-        rename_caret: b.rename.as_ref().map_or(0, |t| text(&t[..b.caret.min(t.len())]).chars().count()),
+        rename_caret: b
+            .rename
+            .as_ref()
+            .map_or(0, |t| text(&t[..b.caret.min(t.len())]).chars().count()),
         focused: free && b.opt.is_none() && b.edit.is_none() && b.rename.is_none(),
     });
     let edit = me.book.as_ref().and_then(|b| b.edit.as_ref());
@@ -915,7 +1153,11 @@ pub(super) fn view(w: &World, gu: &GameUi) -> Option<View> {
         focus: e.focus,
         cols: e.cols,
         bopt: e.bopt,
-        paste_ok: if set_mode(e) { m.set_copied } else { m.macro_copied() },
+        paste_ok: if set_mode(e) {
+            m.set_copied
+        } else {
+            m.macro_copied()
+        },
         book: m.book_title(m.book),
         set: m.set,
         focused: free && e.bopt.is_none() && !e.tabs,
@@ -924,23 +1166,44 @@ pub(super) fn view(w: &World, gu: &GameUi) -> Option<View> {
     let editor = edit.and_then(|e| e.editor.as_ref()).map(|d| {
         let (alt, n) = (d.i >= 10, (d.i % 10 + 1) % 10);
         EditorView {
-            label: gu.lobby_msg(0x0a, if alt { 0x5c } else { 0x5b }, "Ctrl %d").replacen("%d", &n.to_string(), 1),
+            label: gu
+                .lobby_msg(0x0a, if alt { 0x5c } else { 0x5b }, "Ctrl %d")
+                .replacen("%d", &n.to_string(), 1),
             fields: d.fields.iter().map(|f| text(f)).collect(),
             sel: d.sel,
             editing: d.editing,
-            caret: d.editing.map_or(0, |f| text(&d.fields[f][..d.caret.min(d.fields[f].len())]).chars().count()),
+            caret: d.editing.map_or(0, |f| {
+                text(&d.fields[f][..d.caret.min(d.fields[f].len())])
+                    .chars()
+                    .count()
+            }),
             lopt: d.lopt,
             paste_ok: w.mcr_line.is_some(),
             focused: free && d.lopt.is_none() && d.editing.is_none(),
-            fep: w.field_fep.as_ref().filter(|_| d.editing.is_some()).map(|f| (f.cands.iter().map(|c| c.text.clone()).collect(), f.sel)),
+            fep: w
+                .field_fep
+                .as_ref()
+                .filter(|_| d.editing.is_some())
+                .map(|f| (f.cands.iter().map(|c| c.text.clone()).collect(), f.sel)),
         }
     });
-    Some(View { menu, books, palettes, editor })
+    Some(View {
+        menu,
+        books,
+        palettes,
+        editor,
+    })
 }
 
 /// The modern layer's mouse: mcrmenu's cursor to `c`; true when it moved.
 pub(super) fn set_menu(w: &mut World, c: u16) -> bool {
-    let Some(m) = w.macroedit.as_mut().filter(|m| m.book.is_none() && m.sets.is_none()) else { return false };
+    let Some(m) = w
+        .macroedit
+        .as_mut()
+        .filter(|m| m.book.is_none() && m.sets.is_none())
+    else {
+        return false;
+    };
     let moved = m.menu_sel != c;
     m.menu_sel = c;
     moved
@@ -949,13 +1212,26 @@ pub(super) fn set_menu(w: &mut World, c: u16) -> bool {
 /// The 40 book names while the book list has the keys (type-to-search, modern/macros.rs).
 pub(super) fn search_books(w: &World) -> Option<Vec<String>> {
     let (me, m) = (w.macroedit.as_ref()?, w.macros.as_ref()?);
-    me.book.as_ref().filter(|b| me.sets.is_none() && w.confirm.is_none() && b.opt.is_none() && b.edit.is_none() && b.rename.is_none())?;
+    me.book.as_ref().filter(|b| {
+        me.sets.is_none()
+            && w.confirm.is_none()
+            && b.opt.is_none()
+            && b.edit.is_none()
+            && b.rename.is_none()
+    })?;
     Some((0..40).map(|k| m.book_title(k)).collect())
 }
 
 /// The book list's cursor onto book `k` (0..39: its page and row).
 pub(super) fn set_book(w: &mut World, k: usize) -> bool {
-    let Some(b) = w.macroedit.as_mut().and_then(|m| m.book.as_mut()).filter(|b| b.opt.is_none() && b.edit.is_none() && b.rename.is_none()) else { return false };
+    let Some(b) = w
+        .macroedit
+        .as_mut()
+        .and_then(|m| m.book.as_mut())
+        .filter(|b| b.opt.is_none() && b.edit.is_none() && b.rename.is_none())
+    else {
+        return false;
+    };
     let sel = (k % 20) as u16 + 1;
     let moved = b.sel != sel || w.mcr_page != k / 20;
     b.sel = sel;
@@ -965,7 +1241,14 @@ pub(super) fn set_book(w: &mut World, k: usize) -> bool {
 
 /// mcrselop's cursor onto row `o`.
 pub(super) fn set_opt(w: &mut World, o: u16) -> bool {
-    let Some(b) = w.macroedit.as_mut().and_then(|m| m.book.as_mut()).filter(|b| b.opt.is_some()) else { return false };
+    let Some(b) = w
+        .macroedit
+        .as_mut()
+        .and_then(|m| m.book.as_mut())
+        .filter(|b| b.opt.is_some())
+    else {
+        return false;
+    };
     let moved = b.opt != Some(o);
     b.opt = Some(o);
     moved
@@ -984,7 +1267,9 @@ pub(super) fn set_tabs(w: &mut World, on: bool) {
 
 /// The palettes' cursor onto palette `p` (1 Ctrl, 2 Alt) at cell `col` (0..9), mcrbedit closed.
 pub(super) fn set_cell(w: &mut World, p: u8, col: u16) -> bool {
-    let Some(e) = edit_mut(w).filter(|e| e.editor.is_none()) else { return false };
+    let Some(e) = edit_mut(w).filter(|e| e.editor.is_none()) else {
+        return false;
+    };
     let moved = e.focus != p || e.cols[p as usize - 1] != col || e.bopt.is_some() || e.tabs;
     (e.focus, e.bopt, e.tabs) = (p, None, false);
     e.cols[p as usize - 1] = col;
@@ -1009,7 +1294,12 @@ pub(super) fn set_set(w: &mut World, set: usize) {
 
 /// The editor's cursor onto child `c` (1 Prev, 2 Next, 3 the title, 4..9 the lines), mcrledit closed.
 pub(super) fn set_field(w: &mut World, c: u16) -> bool {
-    let Some(d) = edit_mut(w).and_then(|e| e.editor.as_mut()).filter(|d| d.editing.is_none()) else { return false };
+    let Some(d) = edit_mut(w)
+        .and_then(|e| e.editor.as_mut())
+        .filter(|d| d.editing.is_none())
+    else {
+        return false;
+    };
     let moved = d.sel != c || d.lopt.is_some();
     (d.sel, d.lopt) = (c, None);
     moved
@@ -1017,7 +1307,10 @@ pub(super) fn set_field(w: &mut World, c: u16) -> bool {
 
 /// mcrledit opened on the cursor's line with its cursor on `o`.
 pub(super) fn set_lopt(w: &mut World, o: u16) {
-    if let Some(d) = edit_mut(w).and_then(|e| e.editor.as_mut()).filter(|d| d.editing.is_none() && (4..=9).contains(&d.sel)) {
+    if let Some(d) = edit_mut(w)
+        .and_then(|e| e.editor.as_mut())
+        .filter(|d| d.editing.is_none() && (4..=9).contains(&d.sel))
+    {
         d.lopt = Some(o);
     }
 }
@@ -1028,10 +1321,24 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
     if w.modern {
         return rects;
     }
-    let (Some(me), Some(m)) = (&w.macroedit, &w.macros) else { return rects };
+    let (Some(me), Some(m)) = (&w.macroedit, &w.macros) else {
+        return rects;
+    };
     let free = w.confirm.is_none();
-    let off: &[u16] = if super::monstrosity::active(w) { &[2] } else { &[] };
-    if let Some(win) = gu.lobby_window_off(MENU, sw, sh, (0.0, 0.0), Some(me.menu_sel), free && me.book.is_none() && me.sets.is_none(), off) {
+    let off: &[u16] = if super::monstrosity::active(w) {
+        &[2]
+    } else {
+        &[]
+    };
+    if let Some(win) = gu.lobby_window_off(
+        MENU,
+        sw,
+        sh,
+        (0.0, 0.0),
+        Some(me.menu_sel),
+        free && me.book.is_none() && me.sets.is_none(),
+        off,
+    ) {
         gu.disabled_children(MENU, win.frame[0], win.frame[1], off, Some(me.menu_sel));
         hit(w, MENU, &win);
         rects.push(win.frame);
@@ -1044,7 +1351,8 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
     // mcrselec: the active book's red bar (keytops3 87), the names in mcralpha at (8, 2) cut before 75 px, or the
     // rename field.
     let list_focus = free && b.opt.is_none() && b.edit.is_none() && b.rename.is_none();
-    if let Some(win) = gu.lobby_window_off(SELEC, sw, sh, (0.0, 0.0), Some(b.sel), list_focus, &[]) {
+    if let Some(win) = gu.lobby_window_off(SELEC, sw, sh, (0.0, 0.0), Some(b.sel), list_focus, &[])
+    {
         hit(w, SELEC, &win);
         for &(id, r) in win.children.iter().filter(|(id, _)| (1..=20).contains(id)) {
             let book = book_of(w, id);
@@ -1062,11 +1370,17 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         rects.push(win.frame);
         // mcrselop left of the cursor row (FUN_10119110): x = row x - its width, y = min(row y, mcrselec bottom - its
         // height).
-        if let (Some(o), Some(&(_, r)), Some([lx, ly, lw, lh])) = (b.opt, win.children.iter().find(|(id, _)| *id == b.sel), gu.window_rect(SELOP, sw, sh)) {
+        if let (Some(o), Some(&(_, r)), Some([lx, ly, lw, lh])) = (
+            b.opt,
+            win.children.iter().find(|(id, _)| *id == b.sel),
+            gu.window_rect(SELOP, sw, sh),
+        ) {
             let [_, fy, _, fh] = win.frame;
             let (x, y) = (r[0] - lw, r[1].min(fy + fh - lh));
             let off: Vec<u16> = if m.book_copied() { Vec::new() } else { vec![4] };
-            if let Some(win) = gu.lobby_window_off(SELOP, sw, sh, (x - lx, y - ly), Some(o), free, &off) {
+            if let Some(win) =
+                gu.lobby_window_off(SELOP, sw, sh, (x - lx, y - ly), Some(o), free, &off)
+            {
                 hit(w, SELOP, &win);
                 gu.disabled_children(SELOP, win.frame[0], win.frame[1], &off, free.then_some(o));
                 rects.push(win.frame);
@@ -1097,11 +1411,29 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
             rects.push(win.frame);
         }
     }
-    let can_paste = if set_mode(e) { m.set_copied } else { m.macro_copied() };
+    let can_paste = if set_mode(e) {
+        m.set_copied
+    } else {
+        m.macro_copied()
+    };
     let off: Vec<u16> = if can_paste { Vec::new() } else { vec![2] };
-    if let Some(win) = gu.lobby_window_off(BEDIT, sw, sh, (0.0, 0.0), Some(e.bopt.unwrap_or(1)), free && e.bopt.is_some(), &off) {
+    if let Some(win) = gu.lobby_window_off(
+        BEDIT,
+        sw,
+        sh,
+        (0.0, 0.0),
+        Some(e.bopt.unwrap_or(1)),
+        free && e.bopt.is_some(),
+        &off,
+    ) {
         hit(w, BEDIT, &win);
-        gu.disabled_children(BEDIT, win.frame[0], win.frame[1], &off, e.bopt.filter(|_| free));
+        gu.disabled_children(
+            BEDIT,
+            win.frame[0],
+            win.frame[1],
+            &off,
+            e.bopt.filter(|_| free),
+        );
         rects.push(win.frame);
     }
     rects
@@ -1109,14 +1441,26 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
 
 /// FUN_101a5af0: "Ctrl %d" / "Alt %d" (group 10 0x5b / 0x5c) at (0x22, 0x24); the title at child 3 (+2, +5) (the live
 /// field, 120 wide, while edited); the lines at (28, 73 + 30 k) cut at 315 (the live field 325); mcrledit beside it.
-fn draw_editor(gu: &mut GameUi, w: &World, d: &Editor, sw: f32, sh: f32, free: bool) -> Vec<[f32; 4]> {
+fn draw_editor(
+    gu: &mut GameUi,
+    w: &World,
+    d: &Editor,
+    sw: f32,
+    sh: f32,
+    free: bool,
+) -> Vec<[f32; 4]> {
     let mut rects = Vec::new();
     let focused = free && d.lopt.is_none() && d.editing.is_none();
-    let Some(win) = gu.lobby_window_off(MACRO, sw, sh, (0.0, 0.0), Some(d.sel), focused, &[]) else { return rects };
+    let Some(win) = gu.lobby_window_off(MACRO, sw, sh, (0.0, 0.0), Some(d.sel), focused, &[])
+    else {
+        return rects;
+    };
     hit(w, MACRO, &win);
     let [x0, y0, ..] = win.frame;
     let (alt, n) = (d.i >= 10, (d.i % 10 + 1) % 10);
-    let label = gu.lobby_msg(0x0a, if alt { 0x5c } else { 0x5b }, "Ctrl %d").replacen("%d", &n.to_string(), 1);
+    let label = gu
+        .lobby_msg(0x0a, if alt { 0x5c } else { 0x5b }, "Ctrl %d")
+        .replacen("%d", &n.to_string(), 1);
     gu.text(&label, x0 + 34.0, y0 + 36.0, 0, WHITE.to_le_bytes());
     let text = |f: usize| shown(w, &d.fields[f]);
     if let Some(&(_, r)) = win.children.iter().find(|(id, _)| *id == 3) {
@@ -1124,7 +1468,13 @@ fn draw_editor(gu: &mut GameUi, w: &World, d: &Editor, sw: f32, sh: f32, free: b
         if d.editing == Some(0) {
             caret_at(gu, w, &d.fields[0], d.caret, r[0] + 2.0, r[1] + 5.0, 120.0);
             if let Some(f) = &w.field_fep {
-                rects.push(super::fep::draw_list(gu, &f.cands, f.sel, r[0] - 6.0, r[1] + 3.0));
+                rects.push(super::fep::draw_list(
+                    gu,
+                    &f.cands,
+                    f.sel,
+                    r[0] - 6.0,
+                    r[1] + 3.0,
+                ));
             }
         }
     }
@@ -1141,10 +1491,28 @@ fn draw_editor(gu: &mut GameUi, w: &World, d: &Editor, sw: f32, sh: f32, free: b
         }
     }
     rects.push(win.frame);
-    let off: Vec<u16> = if w.mcr_line.is_some() { Vec::new() } else { vec![2] };
-    if let Some(win) = gu.lobby_window_off(LEDIT, sw, sh, (0.0, 0.0), Some(d.lopt.unwrap_or(1)), free && d.lopt.is_some(), &off) {
+    let off: Vec<u16> = if w.mcr_line.is_some() {
+        Vec::new()
+    } else {
+        vec![2]
+    };
+    if let Some(win) = gu.lobby_window_off(
+        LEDIT,
+        sw,
+        sh,
+        (0.0, 0.0),
+        Some(d.lopt.unwrap_or(1)),
+        free && d.lopt.is_some(),
+        &off,
+    ) {
         hit(w, LEDIT, &win);
-        gu.disabled_children(LEDIT, win.frame[0], win.frame[1], &off, d.lopt.filter(|_| free));
+        gu.disabled_children(
+            LEDIT,
+            win.frame[0],
+            win.frame[1],
+            &off,
+            d.lopt.filter(|_| free),
+        );
         rects.push(win.frame);
     }
     rects
@@ -1159,28 +1527,61 @@ pub(super) use super::winhits::child_under;
 
 /// The generic window mouse with this chain's keys.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn generic(w: &mut World, gu: &GameUi, name: &str, cursor: u16, ids: std::ops::RangeInclusive<u16>, p: (f32, f32), moved: bool, clicked: bool, right: bool, set: impl FnOnce(&mut World, u16)) {
+pub(super) fn generic(
+    w: &mut World,
+    gu: &GameUi,
+    name: &str,
+    cursor: u16,
+    ids: std::ops::RangeInclusive<u16>,
+    p: (f32, f32),
+    moved: bool,
+    clicked: bool,
+    right: bool,
+    set: impl FnOnce(&mut World, u16),
+) {
     super::winhits::generic(w, gu, name, cursor, ids, p, moved, clicked, right, set, key);
 }
 
 /// The mouse on the chain (no typing field open). Over the other palette the focus moves there at that column
 /// *(inf: retail's window focus on a click)*.
-pub fn pointer(w: &mut World, gu: &GameUi, _sw: f32, _sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+pub fn pointer(
+    w: &mut World,
+    gu: &GameUi,
+    _sw: f32,
+    _sh: f32,
+    p: (f32, f32),
+    moved: bool,
+    clicked: bool,
+    right: bool,
+) {
     if w.modern {
         return;
     }
-    let Some(me) = w.macroedit.as_ref() else { return };
+    let Some(me) = w.macroedit.as_ref() else {
+        return;
+    };
     if me.sets.is_some() {
         super::esmenu::pointer(w, gu, _sw, _sh, p, moved, clicked, right);
         return;
     }
     let Some(b) = me.book.as_ref() else {
         let sel = me.menu_sel;
-        generic(w, gu, MENU, sel, 1..=2, p, moved, clicked, right, |w, id| {
-            if let Some(m) = w.macroedit.as_mut() {
-                m.menu_sel = id;
-            }
-        });
+        generic(
+            w,
+            gu,
+            MENU,
+            sel,
+            1..=2,
+            p,
+            moved,
+            clicked,
+            right,
+            |w, id| {
+                if let Some(m) = w.macroedit.as_mut() {
+                    m.menu_sel = id;
+                }
+            },
+        );
         return;
     };
     if b.rename.is_some() {
@@ -1194,11 +1595,22 @@ pub fn pointer(w: &mut World, gu: &GameUi, _sw: f32, _sh: f32, p: (f32, f32), mo
                     b.opt = Some(id);
                 }
             }),
-            None => generic(w, gu, SELEC, sel, 1..=20, p, moved, clicked, right, |w, id| {
-                if let Some(b) = w.macroedit.as_mut().and_then(|m| m.book.as_mut()) {
-                    b.sel = id;
-                }
-            }),
+            None => generic(
+                w,
+                gu,
+                SELEC,
+                sel,
+                1..=20,
+                p,
+                moved,
+                clicked,
+                right,
+                |w, id| {
+                    if let Some(b) = w.macroedit.as_mut().and_then(|m| m.book.as_mut()) {
+                        b.sel = id;
+                    }
+                },
+            ),
         }
         return;
     };
@@ -1212,17 +1624,31 @@ pub fn pointer(w: &mut World, gu: &GameUi, _sw: f32, _sh: f32, p: (f32, f32), mo
             }),
             None => {
                 // The editor's twin of the same hover (0x101a62f4): the pointer over mcrledit is Num+.
-                if super::winhits::over(w, LEDIT, p) && (moved || clicked) && (4..=9).contains(&d.sel) {
+                if super::winhits::over(w, LEDIT, p)
+                    && (moved || clicked)
+                    && (4..=9).contains(&d.sel)
+                {
                     gu.hover.set(true);
                     num_plus(w);
                     return;
                 }
                 let sel = d.sel;
-                generic(w, gu, MACRO, sel, 1..=9, p, moved, clicked, right, |w, id| {
-                    if let Some(d) = edit_mut(w).and_then(|e| e.editor.as_mut()) {
-                        d.sel = id;
-                    }
-                });
+                generic(
+                    w,
+                    gu,
+                    MACRO,
+                    sel,
+                    1..=9,
+                    p,
+                    moved,
+                    clicked,
+                    right,
+                    |w, id| {
+                        if let Some(d) = edit_mut(w).and_then(|e| e.editor.as_mut()) {
+                            d.sel = id;
+                        }
+                    },
+                );
             }
         },
         (None, Some(o)) => generic(w, gu, BEDIT, o, 1..=3, p, moved, clicked, right, |w, id| {
@@ -1252,11 +1678,22 @@ pub fn pointer(w: &mut World, gu: &GameUi, _sw: f32, _sh: f32, p: (f32, f32), mo
                 return;
             }
             let p_name = format!("palette{focus}");
-            generic(w, gu, &p_name, cols[focus as usize - 1] + 1, 1..=10, p, moved, clicked, right, |w, id| {
-                if let Some(e) = edit_mut(w) {
-                    e.cols[focus as usize - 1] = id - 1;
-                }
-            });
+            generic(
+                w,
+                gu,
+                &p_name,
+                cols[focus as usize - 1] + 1,
+                1..=10,
+                p,
+                moved,
+                clicked,
+                right,
+                |w, id| {
+                    if let Some(e) = edit_mut(w) {
+                        e.cols[focus as usize - 1] = id - 1;
+                    }
+                },
+            );
         }
     }
 }
@@ -1267,7 +1704,18 @@ mod tests {
 
     #[test]
     fn glyphs() {
-        assert_eq!([b'1', b'9', b'0', b'a', b'z', b'A', b'Z'].map(alpha_index), [Some(0), Some(8), Some(9), Some(10), Some(35), Some(36), Some(61)]);
+        assert_eq!(
+            [b'1', b'9', b'0', b'a', b'z', b'A', b'Z'].map(alpha_index),
+            [
+                Some(0),
+                Some(8),
+                Some(9),
+                Some(10),
+                Some(35),
+                Some(36),
+                Some(61)
+            ]
+        );
         assert_eq!(alpha_index(b' '), None);
     }
 

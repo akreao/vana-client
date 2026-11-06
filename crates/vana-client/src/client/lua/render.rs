@@ -22,19 +22,31 @@ impl Look {
     /// The plate's colour as the game's (ARGB, 0x80 = 1.0).
     pub fn plate_tint(&self) -> Option<u32> {
         let h = |v: u8| u8::try_from(u16::from(v).div_ceil(2)).unwrap_or(0x80);
-        self.name_colour.map(|c| u32::from_be_bytes([h(c[3]), h(c[0]), h(c[1]), h(c[2])]))
+        self.name_colour
+            .map(|c| u32::from_be_bytes([h(c[3]), h(c[0]), h(c[1]), h(c[2])]))
     }
 }
 
 fn info(lua: &Lua) -> std::rc::Rc<std::cell::RefCell<super::state::FrameInfo>> {
-    lua.app_data_ref::<std::rc::Rc<std::cell::RefCell<super::state::FrameInfo>>>().map(|f| f.clone()).unwrap_or_default()
+    lua.app_data_ref::<std::rc::Rc<std::cell::RefCell<super::state::FrameInfo>>>()
+        .map(|f| f.clone())
+        .unwrap_or_default()
 }
 
 pub(super) fn colour(v: Value) -> mlua::Result<Option<[u8; 4]>> {
     Ok(match v {
         Value::Table(t) => {
-            let get = |k: &str, i: i64, d: u8| -> mlua::Result<u8> { Ok(t.get::<Option<u8>>(k)?.or(t.get::<Option<u8>>(i)?).unwrap_or(d)) };
-            Some([get("r", 1, 255)?, get("g", 2, 255)?, get("b", 3, 255)?, get("a", 4, 255)?])
+            let get = |k: &str, i: i64, d: u8| -> mlua::Result<u8> {
+                Ok(t.get::<Option<u8>>(k)?
+                    .or(t.get::<Option<u8>>(i)?)
+                    .unwrap_or(d))
+            };
+            Some([
+                get("r", 1, 255)?,
+                get("g", 2, 255)?,
+                get("b", 3, 255)?,
+                get("a", 4, 255)?,
+            ])
         }
         _ => None,
     })
@@ -56,7 +68,11 @@ pub(super) fn install(lua: &Lua, g: &Table, mod_id: &str) -> mlua::Result<()> {
             };
             let tint = match s.get::<Value>("tint")? {
                 Value::Table(c) => {
-                    let get = |k: &str, i: i64| -> mlua::Result<f32> { Ok(c.get::<Option<f32>>(k)?.or(c.get::<Option<f32>>(i)?).unwrap_or(1.0)) };
+                    let get = |k: &str, i: i64| -> mlua::Result<f32> {
+                        Ok(c.get::<Option<f32>>(k)?
+                            .or(c.get::<Option<f32>>(i)?)
+                            .unwrap_or(1.0))
+                    };
                     Some([get("r", 1)?, get("g", 2)?, get("b", 3)?])
                 }
                 _ => None,
@@ -92,7 +108,13 @@ pub(super) fn install(lua: &Lua, g: &Table, mod_id: &str) -> mlua::Result<()> {
                 (Some(src), at) => {
                     f.shader_ver += 1;
                     let params = at.map_or([[0.0; 4]; 4], |k| f.shaders[k].4);
-                    let pass = (me.clone(), id, f.shader_ver, std::sync::Arc::<str>::from(src), params);
+                    let pass = (
+                        me.clone(),
+                        id,
+                        f.shader_ver,
+                        std::sync::Arc::<str>::from(src),
+                        params,
+                    );
                     match at {
                         Some(k) => f.shaders[k] = pass,
                         None => f.shaders.push(pass),
@@ -112,11 +134,16 @@ pub(super) fn install(lua: &Lua, g: &Table, mod_id: &str) -> mlua::Result<()> {
         lua.create_function(move |lua, (id, params): (String, Vec<Table>)| {
             let info = info(lua);
             let mut f = info.borrow_mut();
-            let Some(s) = f.shaders.iter_mut().find(|s| s.0 == me && s.1 == id) else { return Err(mlua::Error::runtime(format!("no shader {id}"))) };
+            let Some(s) = f.shaders.iter_mut().find(|s| s.0 == me && s.1 == id) else {
+                return Err(mlua::Error::runtime(format!("no shader {id}")));
+            };
             // Each a {x, y, z, w} or a plain list; a value left out keeps what it was.
             for (k, v) in params.iter().take(4).enumerate() {
                 for (j, name) in ["x", "y", "z", "w"].into_iter().enumerate() {
-                    if let Some(x) = v.get::<Option<f32>>(name)?.or(v.get::<Option<f32>>(j as i64 + 1)?) {
+                    if let Some(x) = v
+                        .get::<Option<f32>>(name)?
+                        .or(v.get::<Option<f32>>(j as i64 + 1)?)
+                    {
                         s.4[k][j] = x;
                     }
                 }
@@ -125,7 +152,10 @@ pub(super) fn install(lua: &Lua, g: &Table, mod_id: &str) -> mlua::Result<()> {
         })?,
     )?;
     // 1 (the game's distance) until a mod sets one, as render.camera() gives it.
-    t.set("camera_distance", lua.create_function(|lua, ()| Ok(super::super::camera::scale(&world(lua)?.camst)))?)?;
+    t.set(
+        "camera_distance",
+        lua.create_function(|lua, ()| Ok(super::super::camera::scale(&world(lua)?.camst)))?,
+    )?;
     t.set(
         "set_camera_distance",
         lua.create_function(|lua, k: f32| {
@@ -162,7 +192,10 @@ pub(super) fn install(lua: &Lua, g: &Table, mod_id: &str) -> mlua::Result<()> {
                 v => Some(Some(lua.unpack::<f32>(v)?)),
             };
             // The new limits first, so a distance given with them is clamped to them.
-            super::api::push_op(lua, super::Op::Camera(o.get("speed")?, o.get("max_distance")?, battle))?;
+            super::api::push_op(
+                lua,
+                super::Op::Camera(o.get("speed")?, o.get("max_distance")?, battle),
+            )?;
             if let Some(d) = o.get::<Option<f32>>("distance")? {
                 super::api::push_op(lua, super::Op::CameraDistance(d))?;
             }

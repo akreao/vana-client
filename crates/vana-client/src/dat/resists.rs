@@ -11,7 +11,9 @@ const BUNDLED: &str = include_str!("../../data/resistances.txt");
 /// below 0 is a weakness.
 pub type Ranks = [i8; 8];
 
-const ELEMENTS: [&str; 8] = ["fire", "ice", "wind", "earth", "thunder", "water", "light", "dark"];
+const ELEMENTS: [&str; 8] = [
+    "fire", "ice", "wind", "earth", "thunder", "water", "light", "dark",
+];
 
 #[derive(Default)]
 struct Data {
@@ -38,7 +40,9 @@ fn parse(text: &str) -> Data {
                 d.species.insert(f[1].to_string(), r);
             }
             Some(&"m") if f.len() >= 4 => {
-                let (Ok(zone), Some(&base)) = (f[1].parse::<u16>(), d.species.get(f[3])) else { continue };
+                let (Ok(zone), Some(&base)) = (f[1].parse::<u16>(), d.species.get(f[3])) else {
+                    continue;
+                };
                 let mut r = base;
                 for o in &f[4..] {
                     if let Some((e, v)) = o.split_once('=')
@@ -57,7 +61,10 @@ fn parse(text: &str) -> Data {
 
 /// A monster's ranks by its zone and name as the server sends it; None when LSB's data has no such monster there.
 pub fn of(zone: u16, name: &str) -> Option<Ranks> {
-    data().monsters.get(&(zone, name.trim().replace(' ', "_").to_ascii_lowercase())).copied()
+    data()
+        .monsters
+        .get(&(zone, name.trim().replace(' ', "_").to_ascii_lowercase()))
+        .copied()
 }
 
 #[cfg(test)]
@@ -65,7 +72,10 @@ mod tests {
     #[test]
     fn bundled() {
         // West Ronfaure's Wild Rabbit is a rabbit: weakest to thunder, water and dark (-3).
-        assert_eq!(super::of(100, "Wild Rabbit"), Some([-2, -1, -2, -1, -3, -3, -1, -3]));
+        assert_eq!(
+            super::of(100, "Wild Rabbit"),
+            Some([-2, -1, -2, -1, -3, -3, -1, -3])
+        );
         assert_eq!(super::of(100, "No Such Monster"), None);
     }
 }

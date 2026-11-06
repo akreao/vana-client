@@ -35,11 +35,19 @@ pub mod reference {
 
     pub fn to_lin(c: u8) -> f32 {
         let c = c as f32 / 255.0;
-        if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
     }
 
     pub fn to_srgb(l: f32) -> u8 {
-        let c = if l <= 0.003_130_8 { l * 12.92 } else { 1.055 * l.max(0.0).powf(1.0 / 2.4) - 0.055 };
+        let c = if l <= 0.003_130_8 {
+            l * 12.92
+        } else {
+            1.055 * l.max(0.0).powf(1.0 / 2.4) - 0.055
+        };
         (c.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
     }
 
@@ -71,7 +79,10 @@ pub mod reference {
     pub fn coverage(rgba: &[u8], scale: f32) -> f32 {
         let cut = ALPHA_REF * 255.0;
         let n = rgba.len() / 4;
-        rgba.chunks_exact(4).filter(|p| p[3] as f32 * scale >= cut).count() as f32 / n.max(1) as f32
+        rgba.chunks_exact(4)
+            .filter(|p| p[3] as f32 * scale >= cut)
+            .count() as f32
+            / n.max(1) as f32
     }
 
     /// Scales a level's alpha so its coverage matches `target` (binary search on the scale).
@@ -79,7 +90,11 @@ pub mod reference {
         let (mut lo, mut hi) = (0.25f32, 8.0f32);
         for _ in 0..16 {
             let mid = (lo + hi) / 2.0;
-            if coverage(rgba, mid) < target { lo = mid } else { hi = mid }
+            if coverage(rgba, mid) < target {
+                lo = mid
+            } else {
+                hi = mid
+            }
         }
         // The smallest scale found that reaches the target.
         let s = hi;
@@ -112,7 +127,11 @@ pub mod reference {
 
     pub fn expand(c: u16) -> [i32; 3] {
         let (r, g, b) = ((c >> 11) as i32 & 31, (c >> 5) as i32 & 63, c as i32 & 31);
-        [(r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2)]
+        [
+            (r << 3) | (r >> 2),
+            (g << 2) | (g >> 4),
+            (b << 3) | (b >> 2),
+        ]
     }
 
     /// A 4x4 colour block (bounding box inset by 1/16, nearest palette entry). `punch` = BC1 3-colour mode with
@@ -151,14 +170,25 @@ pub mod reference {
         let pal: Vec<[i32; 3]> = if three || (!four && c0 <= c1) {
             vec![a, b, std::array::from_fn(|k| (a[k] + b[k]) / 2)]
         } else {
-            vec![a, b, std::array::from_fn(|k| (2 * a[k] + b[k]) / 3), std::array::from_fn(|k| (a[k] + 2 * b[k]) / 3)]
+            vec![
+                a,
+                b,
+                std::array::from_fn(|k| (2 * a[k] + b[k]) / 3),
+                std::array::from_fn(|k| (a[k] + 2 * b[k]) / 3),
+            ]
         };
         let mut bits = 0u32;
         for (i, p) in px.iter().enumerate() {
             let idx = if three && p[3] < cut {
                 3
             } else {
-                (0..pal.len()).min_by_key(|&j| (0..3).map(|k| (p[k] as i32 - pal[j][k]).pow(2)).sum::<i32>()).unwrap_or(0) as u32
+                (0..pal.len())
+                    .min_by_key(|&j| {
+                        (0..3)
+                            .map(|k| (p[k] as i32 - pal[j][k]).pow(2))
+                            .sum::<i32>()
+                    })
+                    .unwrap_or(0) as u32
             };
             bits |= idx << (2 * i);
         }
@@ -173,7 +203,10 @@ pub mod reference {
         for by in 0..h.div_ceil(4) {
             for bx in 0..w.div_ceil(4) {
                 let px: [[u8; 4]; 16] = std::array::from_fn(|i| {
-                    let (x, y) = ((bx * 4 + i as u32 % 4).min(w - 1), (by * 4 + i as u32 / 4).min(h - 1));
+                    let (x, y) = (
+                        (bx * 4 + i as u32 % 4).min(w - 1),
+                        (by * 4 + i as u32 / 4).min(h - 1),
+                    );
                     rgba[((y * w + x) * 4) as usize..][..4].try_into().unwrap()
                 });
                 f(&px);
@@ -183,7 +216,9 @@ pub mod reference {
 
     pub fn encode_bc1(rgba: &[u8], w: u32, h: u32, punch: bool) -> Vec<u8> {
         let mut out = Vec::with_capacity((w.div_ceil(4) * h.div_ceil(4) * 8) as usize);
-        blocks(rgba, w, h, |px| out.extend_from_slice(&color_block(px, punch, false)));
+        blocks(rgba, w, h, |px| {
+            out.extend_from_slice(&color_block(px, punch, false))
+        });
         out
     }
 
@@ -209,20 +244,32 @@ pub mod reference {
             Some((dxt3, data)) if w % 4 == 0 && h % 4 == 0 => {
                 let punch = !dxt3 && rgba.chunks_exact(4).any(|p| p[3] < 128);
                 let mut lv = Vec::with_capacity(chain.len());
-                let mut first = data[..data.len().min(((w / 4) * (h / 4) * if dxt3 { 16 } else { 8 }) as usize)].to_vec();
+                let mut first = data[..data
+                    .len()
+                    .min(((w / 4) * (h / 4) * if dxt3 { 16 } else { 8 }) as usize)]
+                    .to_vec();
                 if dxt3 {
                     double_bc2_alpha(&mut first);
                 }
                 lv.push(first);
                 for (px, lw, lh) in chain.iter().skip(1) {
-                    lv.push(if dxt3 { encode_bc2(px, *lw, *lh) } else { encode_bc1(px, *lw, *lh, punch) });
+                    lv.push(if dxt3 {
+                        encode_bc2(px, *lw, *lh)
+                    } else {
+                        encode_bc1(px, *lw, *lh, punch)
+                    });
                 }
-                Levels { format: if dxt3 { Format::Bc2 } else { Format::Bc1 }, data: lv }
+                Levels {
+                    format: if dxt3 { Format::Bc2 } else { Format::Bc1 },
+                    data: lv,
+                }
             }
-            _ => Levels { format: Format::Rgba, data: chain.into_iter().map(|(p, _, _)| p).collect() },
+            _ => Levels {
+                format: Format::Rgba,
+                data: chain.into_iter().map(|(p, _, _)| p).collect(),
+            },
         }
     }
-
 }
 
 #[cfg(test)]
@@ -235,18 +282,31 @@ mod tests {
     fn bc_and_coverage() {
         let mut px = [[0u8; 4]; 16];
         for (i, p) in px.iter_mut().enumerate() {
-            *p = if i % 2 == 0 { [200, 40, 40, 255] } else { [20, 180, 60, 255] };
+            *p = if i % 2 == 0 {
+                [200, 40, 40, 255]
+            } else {
+                [20, 180, 60, 255]
+            };
         }
         let b = color_block(&px, false, false);
-        let (c0, c1) = (u16::from_le_bytes([b[0], b[1]]), u16::from_le_bytes([b[2], b[3]]));
+        let (c0, c1) = (
+            u16::from_le_bytes([b[0], b[1]]),
+            u16::from_le_bytes([b[2], b[3]]),
+        );
         assert!(c0 > c1);
         let (w, h) = (16u32, 16u32);
         // Leaves: opaque 2x2 clumps on a 4-texel grid plus a fade, a quarter or so covered.
-        let img: Vec<u8> = (0..w * h).flat_map(|i| {
-            let (x, y) = (i % w, i / w);
-            let a = if x % 4 < 2 && y % 4 < 2 { 255 } else { (x * 8) as u8 };
-            [90, 120, 60, a]
-        }).collect();
+        let img: Vec<u8> = (0..w * h)
+            .flat_map(|i| {
+                let (x, y) = (i % w, i / w);
+                let a = if x % 4 < 2 && y % 4 < 2 {
+                    255
+                } else {
+                    (x * 8) as u8
+                };
+                [90, 120, 60, a]
+            })
+            .collect();
         let chain = rgba_chain(&img, w, h);
         assert_eq!(chain.len(), 5);
         let c0 = coverage(&chain[0].0, 1.0);
