@@ -16,8 +16,9 @@ pub const HALF_EXTENT: f32 = 40.0;
 /// How far the light's eye sits back from the target, and the depth range it covers.
 const BACK: f32 = 150.0;
 const DEPTH: f32 = 300.0;
-/// The most a shadow takes off a surface (multiplied by 1 - this), at full sun.
-pub const STRENGTH: f32 = 0.45;
+/// The most a shadow takes off a surface (multiplied by 1 - this), at full sun: a shadowed surface keeps 27.5% of its
+/// light, half of the 55% it kept at first (0.45), which Steven found too faint.
+pub const STRENGTH: f32 = 0.725;
 /// The lowest sun the shadows follow (above the horizon); lower suns cast at this angle.
 const MIN_ELEVATION: f32 = 30.0;
 /// How far below its caster's feet (world units, straight down) a shadow stays full, and where it has faded out: a
