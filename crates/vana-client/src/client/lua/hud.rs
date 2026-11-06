@@ -186,7 +186,7 @@ fn put(lua: &Lua, id: String, kind: Kind, spec: Table) -> mlua::Result<()> {
 
 /// A PNG from the mod's folder: its texture key (with the file's hash, so a changed file is drawn anew) and pixels.
 pub(super) fn load_png(src: &super::vm::Source, mod_id: &str, path: &str) -> mlua::Result<(String, std::sync::Arc<(u32, u32, Vec<u8>)>)> {
-    if path.contains("..") || path.starts_with('/') || path.contains(':') {
+    if super::vm::outside(path) {
         return Err(mlua::Error::runtime(format!("{path:?}: outside the mod's folder")));
     }
     let bytes = match src {
@@ -236,7 +236,7 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
     chat.set(
         "icon",
         lua.create_function(move |_, path: String| {
-            if path.contains("..") || path.starts_with('/') || path.contains(':') {
+            if super::vm::outside(&path) {
                 return Err(mlua::Error::runtime(format!("{path:?}: outside the mod's folder")));
             }
             let bytes = match &src2 {

@@ -44,6 +44,12 @@ pub(super) enum Source {
     Bundled(&'static [(&'static str, &'static str)]),
 }
 
+/// A path a mod gave that names something outside its folder: absolute (a root or a drive), or with a ".." part. A
+/// name with two dots inside one part ("v1..2.wav") stays inside, so it passes.
+pub(super) fn outside(rel: &str) -> bool {
+    rel.starts_with(['/', '\\']) || rel.contains(':') || rel.split(['/', '\\']).any(|p| p == "..")
+}
+
 /// A file under the mod's folder `d`: a relative path, and no link below `d` (one could lead outside it).
 pub(super) fn inside(d: &std::path::Path, rel: &str) -> std::io::Result<PathBuf> {
     let refuse = |why: &str| std::io::Error::new(std::io::ErrorKind::PermissionDenied, format!("{rel:?}: {why}"));
@@ -554,5 +560,19 @@ fn clean(e: &mlua::Error) -> String {
         mlua::Error::CallbackError { cause, .. } => clean(cause),
         mlua::Error::MemoryError(s) => format!("out of memory ({s})"),
         e => e.to_string().lines().next().unwrap_or("").to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// Two dots inside a name stay in the mod's folder; a ".." part, a root or a drive do not.
+    #[test]
+    fn outside_paths() {
+        for p in ["sounds/v1..2.wav", "a..b.png", "./x/y.png", "x/.../y"] {
+            assert!(!super::outside(p), "{p}");
+        }
+        for p in ["../x.wav", "a/../../b", "a\\..\\b", "/etc/x", "\\x", "C:x", "C:\\x"] {
+            assert!(super::outside(p), "{p}");
+        }
     }
 }
