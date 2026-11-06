@@ -1919,7 +1919,8 @@ From the research notes:
 - Q / E (0xaa / 0xa9, keyboard type 2, free camera, X input 0, camera axes idle): player yaw += ticks x 0.0174528 x
   1.57075 x (E - Q) (_DAT_10322260 = 1.57075; 94 degrees a second); the camera turns with it (FUN_1001d4c0).
 - Strafe lock 0x9c (LShift / pad B held, control type 2, free): the camera keeps its offset and the heading stays, so the
-  stick strafes; camera axes and Q / E off (docs/modlog 2026-11-04-strafe-lock-b).
+  stick strafes; camera axes and Q / E off (cur 30261006: FUN_100a6240 sets vt+0x344(1) under FUN_1025e070 and keeps
+  the camera offset, FUN_1025e090).
 - The heading (actor +0xe4 rotation, vt+0x1c0 FUN_100a3350) is set at once to the move vector's direction (FUN_100a48d0
   end, -atan2), the move vector being the input turned by the camera's forward (camera +0x24 / +0x2c, FUN_100a6030).
   What is drawn eases: FUN_100c4390 (vt+0x330, player +0xf9 set) takes the step's direction when the actor moved 0.01
@@ -22354,3 +22355,353 @@ Checked in Steven's unpacked FFXiMain.dll (sha256 8097dbf8..., 2026-11-03).
   kept trimmed (dat::ui::norm_name), so the window lookup, its children (the mouse rows) and the drawing all missed.
   The keys still worked, so the menu answered while invisible. The name is now trimmed, and UiFile::menu trims the
   name it is given, so a padded name finds its layout. The Modern UI draws its own list and was not affected.
+
+## Keys Hide the Cursor (2026-11-06)
+
+- Retail hides the cursor on any key function press outside a drag (FUN_10125f70(0)), so walking with the keys makes
+  the pointer vanish until the mouse moves. Settings > Misc. > Keys Hide the Cursor (config `keys_hide_cursor`, on by
+  default) keeps that; off, key presses leave the cursor shown in both UIs (ours). The other hides are unchanged: a
+  controller press, a look drag (the pointer held) and the UI hidden.
+
+## Effect elements: no t = 0 frame (2026-11-05)
+
+Heavens Tower's waterfalls (sub-area 426, `r_5w/effe/wat0/tpB1` / `tpB2`, mesh `tk00`) flashed at full strength for one
+frame every respawn (life 60, a new sheet every ~22 ticks).
+
+- The sheets' alpha key `tk01` is (0, base), (1e-7, 0), (0.49, 0.22), (0.9999999, 0), (1, 1): the first and last points
+  are guards that a sample in (0, 1) never reaches. Op 0x2d's base is the element's colour alpha (0x80), so a sample at
+  exactly t = 0 shows the sheet at alpha 0x80 instead of ~0.
+- Ours spawned the element with LIFE_SET (the CPU's lives ran before the spawn, so the GPU skips its first decrement
+  to stay in step); its first update then sampled t = 0. Retail counts the life down before the keys, so a timed
+  element's samples run t = dt / life .. (life - 1) / life *(inf: from the guard points; no DLL pass)*.
+- Fix: a spawn also sets ctl::BORN; the update pass runs the element's stream as before but leaves it undrawn that
+  frame when it has a life and lives on past the next decrement (outs[23] = 0). Elements without a life (t stays 0)
+  and one-tick elements (life - dt < 1: their only frame) draw at once. Point lights and op 0x60 flashes are not
+  gated (they do not read outs[23]). Test:
+  `gpu_born_hidden_one_frame`.
+
+## Events: idle motion ops stop the event motion scheduler (2026-11-05)
+
+- Ops 0x6b (`FUN_100b7070`) and 0x5e (`FUN_100b71e0`), reached through the jump table at 0x100bc960, call
+  `FUN_10087d40` on the actor before they set the idle motion (+0x1a4, model +0x7c8, +0x7d8 = "    ").
+  `FUN_10087d40` calls model vtable +0x29c with actor +0x1ec (scheduler 4cc) and +0x1f4 (second actor's model).
+  It needs both fields set and +0x120 bit 9. This is the same call that op 0x50 makes, and it deletes the scheduler task.
+- +0x1ec / +0x1f4 are written only by the motion op body `FUN_100b5210` (0x100b5466). Ops 0x5b / 0x66 and 0x5f
+  subs 3..6 reach it. Unbinding clears both (0x100bd355).
+- Client: `State.event_sched` keeps the last motion-op scheduler for each actor, and `Effect::IdleMotion` stops it
+  through `LiveHost::stop_scheduler` (the op 0x50 path) before it cuts the motion.
+- Seen in the Records of Eminence intro (Bastok Markets 235 event 24). The memorandoll (npc 0x0b2, model 970) gets
+  `motion_file #252 'bru0'` and `set_idle_motion 'idl0'` 120 ticks later. Scheduler `bru0` (file 32356) plays `bru` once,
+  then loops `br1` (`br10`, a shake) from tick 480. Before this change that loop started anyway and ran to the end.
+
+## Motions: flagged tracks in a legs chunk still write the bone (2026-11-05)
+
+- `FUN_10019b30` (one layer's tracks onto the pose, through `FUN_10019a50` from the layer's vtable +0x38,
+  `FUN_1001ab60`): when a track's rotation index has bit 31 set, a chunk of region 1..4 sets the bone to identity
+  and leaves it unmarked, so another region or layer can still write it. A region 0 (legs) chunk masks the flag
+  off and uses the track like any other, constants included, and marks the bone as written.
+- So a gesture's legs chunk resets the bones it flags. The Taru event motions (file 32752: th10, wav0, tlk0, poi0, ...)
+  flag bones 0, 2, 72, 73, 77 and 82, and the Taru idle `idl0` keys bone 2 with a hip sway. We dropped every
+  flagged track, so the idle under a gesture kept moving bone 2, and the NPC's feet slid about 3 cm on the
+  idle's 2-second cycle (Kupipi's trust intro, Wetata). Retail footage of the same scene shows the feet still.
+- Client: `parse_animation` keeps flagged tracks in chunks whose name ends in `0`. It masks bit 31 off every
+  channel index there, and still skips flagged tracks in other regions. Test:
+  `legs_chunk_flagged_tracks_cover_the_idle`.
+
+## /heal: sitting down and standing up (2026-11-05)
+
+From FFXiMain.dll (Steven's unpacked copy, all_decomp.c) and the Hume M skeleton file 7072 (ROM/27/82).
+
+- FUN_1008b460 (the entity's transition machine, run from FUN_1008e9a0 before and after the applied status +0x170
+  takes the server's +0x16c): state 0 with an applied status of 0x21 or 7 goes to state 7. State 7 waits for
+  FUN_100d12d0 (the model ready) and for no `waot` on the actor (vt+0x2a0), then drops the actor's kind-1 files
+  (FUN_100d44b0(1); not ported), starts scheduler `res0` (vt+0x298) and goes to state 8. It does not test the
+  status, so `res0` plays even when healing ended while it waited (`res2` follows from state 8). State 8 starts `res2` once the applied status is no longer 0x21 / 7 and goes back to state 0.
+- FUN_1008b3a0 (read by FUN_100964f0, the local walk's gate in FUN_100a6240) refuses movement in states 7 and 8, and
+  FUN_100a5ec0 skips the walk while op 0x2e holds the actor (vt+0x310).
+- The schedulers (7072): `res0` 145 ticks: op 0x1f 145, op 0x07 145, op 0x2e 145, `rx0` for 52 ticks, then `rx1` 93.
+  `res2` 56 ticks: op 0x1f 56, op 0x2e 56, op 0x07 56, `rx2` 56. `res1` is `rx1` alone. So standing up from a rest
+  takes 56 ticks (0.93 s) in which the character cannot walk.
+- Ours (client/rest.rs): we never played `res0` / `res2`, only the status motion `rx1`; the server's status 0 let the
+  walk start at once, and the walk's motion replaced the blend back to standing. Now each actor runs states 7 / 8 per
+  frame (`res0` once its model is in, `res2` on leaving healing) through actmotion::start plus the scheduler's holds in
+  fx, as synth.rs does for `res0` / `res2`. Our own walk (keys, pad, autorun, follow, click-to-move) stays held for
+  `res2`'s 56 ticks from the frame it starts, under the same `move_lock` rule as op 0x2e (the scheduler's own op 0x2e
+  starts a frame later); only when `res2` played (a body without it, a Monstrosity monster, has no hold).
+
+## The key that opens the list search is no hotkey (2026-11-05)
+
+- The modern list search (listsearch.rs) opens on the first typed letter or digit, but `key_functions` runs before
+  the frame's egui events reach `listsearch::events`, so that first key still ran its key function (later keys were
+  fine: `list_search` is set and counts in `text_field_open`). `key_functions` now looks at the frame's typed text
+  still queued in egui-winit (`egui_input().events`): a letter or digit while `listsearch::can_run` makes the frame
+  a typing one, and key functions with mask 0x41 fail for it.
+
+## Action menu: which commands show on a target (2026-11-06)
+
+From FFXiMain.dll (Steven's unpacked copy, full_text.asm / all_decomp.c).
+
+- FUN_1012b4b0 picks the layout (table 0x1036f390, 13 bytes each): a target FUN_101cc220 calls hostile takes 2
+  (layouts 4 / 5); an NPC (+0x1d0 bit 1) that FUN_1008e150 does not call an ally takes layout 7 when +0x1d0 bit 8 is
+  set (FUN_1008e290: +0x12c bit 13, 0x00E @0x27 bit 3, a player owns it), else 0; anything else (players, us, allies)
+  1. Layout 7 jumps past the rest (LAB_1012b5fd), so it shows engaged too; otherwise engaged takes 6, and riding
+  (status 5 / 0x55) doubles plus one and passes flag 1.
+- FUN_1012af30 (jump index 0x1012b2a8, table 0x1012b26c, command - 3) per command: 3 Disengage (Call for help while
+  DAT_10578174); 4 Chat, none on an NPC (UniqueNo high byte 1), Tell on any other target; 6 Talk / 0x11 Disband /
+  0x14 NPC Trade only on FUN_101cc550 (our +0x2a0: the adventuring fellow, 0x037 @0x48) while its +0x170 is not 1;
+  0xa (player layouts' Check) none on us while riding, Fish (0xd) on us when FUN_10177730 and zone != 0xd3, else
+  hidden by FUN_1008e150; 0xb Check needs a target, not +0x1d0 bit 8, not FUN_1008e150; 0xc Treasure hidden by
+  FUN_101cc350(1, 0), else FUN_1013eff0; 0xd Fish hidden by FUN_101cc350(0, 0), else FUN_10177730 and zone != 0xd3;
+  0xe Dig (mount, [S] zones FUN_100fd3a0, +0x123 & 7 tests); 0x10 Invite hidden by FUN_10201f00, else a target other
+  than us with +0x124 bit 20 or 21 (0x00D flags1 bit 11 seeking party, flags2 bit 31 auto-party); 0x13 Trade hidden
+  by FUN_101cc350(0, 0), else a non-NPC target; 0x16 / 0x17 Quarry / Scout need FUN_101cc350(1, 1); 0x18 Sprint the
+  same, Scout with +0x27c; 0x1a Release: FUN_1012aed0, the target's +0x12c bit 22 (trust) and its +0x2a4 master (s2c
+  0x067 kind 3 @0x0C) our own entity; 0x1b Request a target with +0x140 bit 3 (0x00D flags3 bit 1, recruiting).
+  Every other command shows.
+- FUN_101cc350(a, b): our +0x1d0 bit 10 (team 2..99), not 8 / 9 when a, not 0x28..0x2b when b.
+- FUN_1012b880 (command - 1, table 0x1012bc2c): 0xd "/fish"; 0x10 FUN_100e8fd0 (c2s 0x06E, kind 0); 0x11 group 0xb
+  0xb8 yes / no, Yes (LAB_1012bcc0) FUN_1007bf30(target, 1) and closes playermo; 0x1a FUN_1007bf30(target, 1) with
+  the menu left up; 0x1b "/partyrequestcmd add <name>" (+0x214 when +0x210, else +0x7c). Talk (6) is
+  FUN_1007bf30(target, 0) and closes playermo.
+- FUN_1007bf30's second argument reaches FUN_100780a0 / FUN_100780d0 as the action packet's u32 @0x0C (c2s 0x01A
+  action 0): 1 releases a trust (LSB checks the trust's master).
+- Ours (client/combat.rs): all of the above except Dig's zone and ground tests and Sprint's Scout swap.
+
+## Plain setting descriptions (2026-11-04, ours)
+
+- Not retail. Our Settings and Extras rows (client/settings.rs) and the Settings window's sub-page buttons
+  (client/modern/config.rs `SUBS`) get plain help lines that say what a player sees, not how it is drawn. The Config
+  tool ids ("0034: ") are gone from the text; each row's `Tool("…")` still names its id. Graphics Stabilization now
+  says it is retail's fix for old cards and only touches the moving shine some effects put on characters.
+
+## Settings window: search, Retail only, details (2026-11-04, ours)
+
+- Not retail. The modern Settings window (client/modern/config.rs) gets a search field over its topic pages: typing
+  there (`find_events`, ahead of the game's keys) shows every page's matching settings under the page's name. A
+  setting matches by its name, by a word of its help starting with the text (3 letters or more), or by the heading
+  it is under. Backspace deletes a letter, Escape clears the search, a page picked in the list ends it.
+- A Retail only button (or Ctrl+R) leaves our settings out of the pages and the search.
+- A details column on the right shows the setting under the cursor or the pointer: its name, its help (the bottom
+  line now lists the keys instead), whether it is retail's, and its page while searching.
+- Mods and Mod Settings show only their own tabs (Mods; the Lua mods' pages), not the classic Settings' or Extras'.
+- Tests: client::modern::config::tests::search_and_retail_only, mod_tabs_only. `modern-shot --settings` now draws a
+  search for "shadow".
+
+## Modern Settings window (2026-11-04, ours)
+
+- Not retail. The modern interface's Config window (client/modern/config.rs) becomes "Settings": retail's Config list
+  (Gameplay, Chat Filters, Font Colors, Misc. 1..4, Effects, Mouse/Cam., Global) and our Settings / Extras entries are
+  replaced by fourteen topic pages in five groups (Game: Gameplay, Interface, Chat & Log, Maps & Timers; Graphics:
+  Display, Image Quality, Lighting & Shadows, Characters & World, Effects & Colour; Sound; Input: Mouse, Camera & Keys,
+  Controller; System: Startup & Account, Mods).
+- `PAGES` lists each page's lines: a heading, retail's setting by its Config page and first control (its captions,
+  options and help still read from the page's layout), ours by its row's label (`SettingsUi::item` / `item_set` find a
+  row of Settings or Extras whatever page that state is on), or a button opening Chat Filters, Effects, Font Colors,
+  Mods or the Lua mods' pages (`SUBS`, Escape or Back returns to the topic page). Rows of ours left out here (the
+  lobby's volumes in game, the minimap's and timers' places with the modern interface) go, and so do headings with
+  nothing under them.
+- Unchanged: the Windows and Log pages and Mouse/Cam.'s mouse rows stay left out; the title screen's Config keeps its
+  own list; the classic interface keeps retail's Config windows. `/lua settings` opens Mods > Mod Settings.
+- Tests: client::modern::config::tests::every_setting_has_a_page (each retail setting of the old list and each row of
+  ours on exactly one page), empty_headings_go. `modern-shot --settings` draws the Display page.
+
+## The Settings window search opens on its first key too (2026-11-05)
+
+- Ours: the Settings window's search (modern/config.rs, `find_open`) opens on the first typed letter like the list
+  search, and gets the same check in `key_functions`, so that letter runs no key function.
+
+## The Settings window's search keeps its keys (2026-11-05, ours)
+
+- The Settings window's search (modern/config.rs) took the typed text from the egui events, but the key functions
+  (input.rs, run first in `key_functions`) only knew the fields listed in `typing_elsewhere`, so each letter typed there
+  also fired its game hotkey. It now counts as typing while it has text (`config::finding`). Key functions with mask
+  0x41 then fail, as for the chat line.
+
+## Mouse Camera Speed setting (2026-11-05)
+
+Ours, not retail. Config `mouse_camera_speed` (%, default 100 = the speed drags had before) scales the motion a mouse
+look drag (left, middle or right button) feeds `App::look`, before the Mouse/Cam. axis inversions and the per-mode
+factors (0.008 / 0.02 / 0.03 / 0.004). Shown as "Mouse Camera Speed" in Settings (25% to 200%). The controller's
+camera (client/gamepad.rs) does not read it.
+## Graphics options: SMAA, real character shadows, ambient occlusion, colour grading (2026-11-06, ours)
+
+Not retail, all off by default. Settings > Graphics (the classic Settings page; the modern window's Graphics topics):
+Character Shadows (config `actor_shadows`: 0 Retail, 1 Real), Shadow Quality (`shadow_map`), Ambient Occlusion
+(`ssao`), Colour Grading (`grading`) and Anti-aliasing (`antialias`). With all of them off the frame is drawn as before.
+
+- Anti-aliasing: SMAA 1x (render/smaa.rs), a WGSL port of the reference SMAA.hlsl (Jimenez et al. 2012) at its HIGH
+  preset, luma edges, no predication or reprojection: edges (RG8), blend weights (RGBA8, with the precomputed area and
+  search tables in render/smaa/, MIT) and neighbourhood blending into a scene-size texture, which the scaling pass
+  (render/scale.rs) then reads. Skipped while downscaling (already supersampled) and in 3D LCD Mode; its targets are
+  freed while it is off. Checked against the `smaa` crate 0.21 on the same scene: identical pixels.
+  Test render::scale::smaa_smooths_edges.
+- Colour grading: in the scaling pass after SMAA, on the gamma-space scene before the gamma ramp, so menus and text
+  keep their colours. (saturation, contrast about mid grey, warmth faded in over the darkest quarter): Vivid (1.2,
+  1.08, 0), Warm (1.05, 1.04, +0.035), Cool (1.0, 1.04, -0.035), Film (0.85, 1.12, +0.015). Test
+  render::scale::grading_presets.
+- Real character shadows (render/sunshadow.rs): the zone lighting's light (`Lighting::dir` / `diffuse`: the sun by day,
+  the moon by night) casts through one depth map of the characters over 32 x 32 world units around the camera's
+  target (Shadow Quality: 1024, 2048 the default, 4096 texels: 3.1, 1.6, 0.8 cm a texel, sharp enough for a tail),
+  its centre snapped to whole texels; characters beyond it keep retail's shadows; a light under 60
+  degrees is held at 40.9, retail's silhouette rule (FUN_10033080), so shadows keep the game's length. The zone pass splits after the opaque and cut-out scenery (mode 4); a full-screen pass rebuilds
+  each pixel's position from depth, takes a 3 x 3 PCF (taps 2 texels apart under the moon) and multiplies the frame by
+  1 - k, k at most `STRENGTH` (retail's silhouette: MODULATE2X of 0x40, about 0.5) scaled by the light's brightness, faded toward the map's edge (from 0.8 of its
+  half side), on surfaces turning away and with the caster's height (full within 3 units below its feet, gone by 7,
+  measured straight down). Blended scenery and every actor draw after it, so characters never shadow themselves or
+  each other. `sunshadow::twilight` fades them to nothing at 6:00 and 18:00 over 45 Vana'diel minutes either side.
+- Retail's shadows meanwhile: while the real ones are under `HANDOFF` (a quarter of full: the twilight fade, a dim
+  light) none draw and retail's do. Otherwise an actor whose box lies inside the map and that the depth pass draws
+  (`ActorGpu::casts_shadow`: mips in, alpha 0.5 and up, skinned, not refracting, no no-shadow latch +0x12c bits 10 /
+  11) takes no retail shadow, caster slot or layer; the others keep retail's. Config 0x3a = 1 (Off) turns both off.
+  Known limit: area-lit interiors still take the zone's light direction.
+- Lamp shadows (render/lampshadow.rs): with Real shadows and Real lamp lights (client/lamps.rs), the up to 4 lamps
+  nearest the camera with a character within 16 yalms each get a 512 x 512 perspective depth layer of those
+  characters; zone.wgsl's per-pixel point lights scale that lamp's term by its 3 x 3 PCF visibility (0.85), so only
+  its own light is cut. Group 0 holds the maps (bindings 5-7, always made: 4 MiB); the depth passes bind a copy with a
+  1 x 1 blank in binding 6, since a pass may not sample the array it draws a layer of (wgpu refuses it).
+- Ambient occlusion (render/ssao.rs): at the same split, a scene-size R8 target of 12 cosine-weighted samples within
+  1.5 units (normals from depth, interleaved gradient noise, a range check against halos, faded out 40 to 80 units
+  from the eye), a depth-aware 4 x 4 blur, the frame multiplied by 1 - 0.55 x AO. Test
+  render::ssao::flat_floor_and_sky_untouched.
+- Settings: while Character Shadows is Real, Background (Config 0003 / 0004) shows a warning (the yes / no window's
+  sprite, menu ptc6yesn child 3; U+26A0 in the modern window) and its help starts "Real shadows affected. Performance
+  will be affected.", since the receive pass runs at the Background size. Test
+  client::settings::background_warns_with_real_shadows.
+- Tests: render::sunshadow::light_matrix_frames_the_target, render::sunshadow::receive_darkens_shadowed_floor,
+  render::lampshadow (framing, lamp choice), render::faded_tests::zone_renders_with_lamp_shadows (an empty zone: its
+  depth pass never runs). Seen live: West Ronfaure's gate lamps (two shadowed), no validation error; the Real shadows
+  in Southern San d'Oria by day keep the body, ears and tail, as dark as retail's silhouette beside them.
+
+## Game Master window (ours) (2026-11-06)
+
+Ours, not retail: the retail client has no GM menu. Needs config `gm_window` (off by default; no Settings row, only by hand) and
+a private server whose GM tools speak these packets; without them nothing is sent and the window never shows.
+
+- At each zone-in, on a private server (never a PlayOnline session) with `gm_window` on, the client sends c2s 0x1F0
+  {u8 Version = 1, padding}; a server without the extension logs it as an unknown packet, hence the setting. The server answers with s2c 0x1F0 pages:
+  u8 Version @4, GmLevel @5 (the real `m_GMlevel`, not the 0x037 badge, which reads 0 while hidden and the same
+  for levels 4 and 5), u16 Total @6, First @8, u8 Count @0xA, Flags @0xB (bit 0 last page), then entries of
+  u8 Permission, NameLen, ParamsLen, the name and its cmdprops parameter string. Only commands at or below the
+  level come; the server sends a fresh list when the level changes. `client/gm.rs`.
+- The Command Menu gains a last row, Game Master, while that level is above 0 (`modern/command.rs`).
+- The window (`modern/gmwin.rs`): groups down the left with counts, the commands 9 to a page with a search, the
+  chosen command's fields at the right with its line, Run and Clear, and the server's replies. Fields, labels,
+  groups and the risky commands' second press come from `client/gm_fields.txt`, from each command's usage line
+  (no description text: a row shows its fields); a command the server lists but the file doesn't gets plain fields
+  from its type string. The line is checked as lsb's parser reads it: fields in order, split on spaces, `i` fields
+  numbers. Pickers so far: Use target (mob/NPC ids), Use my position (x/y/z), augments folded away.
+- Run sends c2s 0x1F1 {u16 RequestId, u8 Length, padding, the line without '!'}, not a chat line. s2c 0x1F1
+  {u16 RequestId, u8 Result (0 ran, 1 failed, 2 refused), Flags (bit 0 last, bit 1 cut short), Count, padding,
+  lines of u8 length + text} carries what the command printed, shown under Server replies.
+- Keys: the fields and the search are typing (`gmwin::takes_keys`), so key functions with mask 0x41 fail for them.
+  Enter runs on its press, not its repeat (in the search it ends the search); a risky command's second press is
+  taken back by any change of its fields or focus; Up / Down pick a command, Left / Right turn the page.
+- The party and zone pickers are rebuilt twice a second, and a field's suggestions and exact match only when its
+  text or list changes (`Gm::lookup`; the item list holds every item).
+- `vana-client modern-shot --gm` draws a level 5 sample.
+
+## Gamepad: B / Shift held is a strafe lock, not a turn to the camera (2026-11-04)
+
+From FFXiMain.dll (Steven's unpacked copy, all_decomp.c / full_text.asm).
+
+- Key function 0x9c (LShift, or the pad's cancel slot 3 = B) is read only by FUN_100a6240 as a held test
+  (0x100a66fb, 0x100a70d9), gated by FUN_1025e070 (config 0x42 == 2: the control type, set by the controls menu
+  FUN_1019b200 items 5 / 6 / 0xb = 0 / 1 / 2; default 2, FUN_10195460(0x42, 2, ...)) and the player's vt+0x330 (free).
+  In types 0 / 1 it sets the flag only while the stick's X is past the dead zone, and saves no offset.
+- Held: FUN_1025e090 saves the camera's offset (FUN_10015250 = the camera, DAT_104568fc +0x50; +0x44 eye minus +0x50
+  look) at 0x1067a288 (a fresh press saves it as is, later frames keep its direction at the current length), and
+  vt+0x344(1) (0x100a46a0) sets actor +0xfb. FUN_100a5e10 (every frame) then puts the eye at look + offset, so the
+  camera keeps its world angle; FUN_1001ee60 turns off the stick / 0xa9 / 0xaa camera turns and the collision check
+  while +0xfb is set; FUN_100a6240 returns before the turn to the move direction (heading param_1[0x3a] kept) and picks
+  a direction-relative motion (FUN_100a80d0, param_1[0x166]). So holding B strafes / backpedals; it neither turns the
+  player to the camera nor re-centres the camera. A tap does nothing visible. FUN_101252f0(1) only marks the mouse
+  pointer active.
+- No window check on this path (0x9c's context mask is 0xffff), so retail does the same with a window up.
+- Ours: the heading no longer turns to the camera while 0x9c is held (mod.rs update_movement). The strafe / backpedal
+  motions (FUN_100a80d0) follow in the next change.
+
+## First-person tank controls (2026-11-05)
+
+From FFXiMain.dll (Steven's unpacked copy), full_text.asm: FUN_100a6240's first-person branch (DAT_10487f80 set,
+0x100a70ae..0x100a778c).
+
+- Shared with third person: FUN_100a78d0 normalises the stick (axes 4, -5) and tiers it (> 0.9 full, > 0.05 a third,
+  walk caps at a third; +0x594). Speed vt+0x1a0 (x2 riding, cap 30) / 60 x tier x the tick factor
+  ([DAT_104568fc+0x2c], 60 Hz ticks over 4 frames, cap 20).
+- Free (vt+0x330 true), in a moving status ({0, 1, 4, 0x1c, 0x1f} or riding, 0x100a7324) and without a /follow
+  target: heading +0xe8 += 2 x X x ticks x 0.017452778 (0x100a7381; X normalised and tiered, stick right turns
+  right), wrapped to +-pi, and the move goes along the new heading at once. Y forward and back at the same speed,
+  backing up still facing forward. The third-person turn to the move (0x100a6f49..) does not run.
+- 0x9c held (FUN_10123a70(0x3f, 0x9c, 4, -1)) with raw |axis 4| > 0.01: vt+0x344(1), X becomes the sideways move
+  (0x100a728f, stick right moves right) with no turn; Y still moves, the pair renormalised. Any control type: nothing
+  here reads config 0x42.
+- +0x598 is only cleared when idle (0x100a7319), so FUN_100c8bb0 plays walk / run for every direction (no mv?), and
+  the tier, not the step, picks the motion (FUN_100c8930): turning on the spot walks or runs in place.
+- Locked on (vt+0x330 false) FUN_100a7b80 wins (0x100a769f): no tank turn. Autorun (0x100a764c): X turns the autorun
+  vector and the heading by the same 2 degrees a tick.
+- FUN_10021110: axes 6 / 7 look around (yaw 1.8849, pitch 1.413675, 0.25 a call, inverted by 0x8d / 0x8e) and spring
+  back; eye and look ease 1 / 8 a tick. Never writes the heading. Ours already matched.
+- Ours: update_movement's `tank` branch. A mouse drag's first-person look (ours) stands for the heading, and the stick's
+  turn carries it along (camera::fp_turn).
+
+## Strafing while locked on; control types 0 / 1 (2026-11-05)
+
+From FFXiMain.dll (Steven's unpacked copy).
+
+- Control types 0 / 1 (config 0x42; FUN_101b7ee0: 1 and 2 turn on the compact keyboard table, so 0 full keyboard, 1
+  compact, 2 compact + the strafe lock) move the same in third person: FUN_100a6240 skips only the FUN_1025e070 block,
+  nothing else sets +0xfb, and free movement (+0xf9 = 1) is camera-relative (FUN_100a79a0) with the heading turned to
+  the move. So B does nothing for movement there. Ours already matches.
+- Locked on (+0xf9 = 0, set by the lock callbacks 0x100c5440 / 0x100c5410), FUN_100a7b80 moves relative to the target
+  (forward / back the distance, X orbits) facing it, in every control type: +0x598 from FUN_100a80d0 against the way
+  to the target (0x100a7ef9), FUN_100a8000's speeds (back a third, sideways 0.0625 / 0.125 riding), and since vt+0x330
+  is false FUN_100c8bb0 plays mvr / mvb / mvl. A sudden 2 <-> 4 flip forces 1 for +0x5b1 frames (0x100a7f23); see
+  "Lock-on flip guard" (2026-11-06).
+- Ours: update_movement's lock_dir and World::my_strafe now also run locked on. The quarter is read from the stick in
+  the locked step's own frame (forward toward the target, target::locked_step), not against each frame's way to the
+  target: a monster's position jumping in melee range swung that between sideways and forward every frame, cutting
+  mvr / mvl to the run and back (Steven's log, 2026-11-06).
+- FUN_10084400 is the actor's model kind ([+0x70]+0xee): FUN_100c8bb0 tests == 2 (a fixed model without the mv? motions), so
+  FUN_100c8bb0 (0x100c8d5e) plays the move motion (+0x7cc) for 2..4 instead. Ours: an actor drawn from one model
+  id (Source::Npc(NpcLook::Model), mod.rs fixed_model) takes its walk. *(inf: kind 2 taken as such a model.)*
+- Other actors: only local-player code writes +0x598 or +0xf9 / +0xfb (the base vtable 0x1032e3c8 returns 1 / 0), so
+  retail never plays mv? on other players or NPCs. (FUN_1004a980 writes +0xf9 / +0xfb on some script object at
+  0x1004bce3 / 0x1004bd7d, unconfirmed as an actor.)
+- First person (DAT_10487f80, key 0x10): tank controls, stick X turns (heading += 2 x X x speed x 0.0174528), Y moves
+  along the heading; 0x9c held with |X| > 0.01 zeroes the turn and X moves sideways (vt+0x344(1)), camera FUN_10021110;
+  +0x598 not updated. Done in ours: see "First-person tank controls".
+
+## Strafe and backpedal motions (2026-11-05)
+
+From FFXiMain.dll (Steven's unpacked copy; 0x100c6b70 / 0x100c4390 are inside FUN_100c63d0 / FUN_100c4380).
+
+- FUN_100a80d0(move, a point ahead on the heading), called by FUN_100a6240 only while vt+0x340 (actor +0xfb, the
+  strafe lock) is set, stores the step's quarter at +0x598 (0x100a6ee9): A / B = the heading turned +/- pi/4, the signs
+  of dot(A, move) and dot(B, move) give 1 forward, 2 right, 3 back, 4 left (90-degree sectors on the axes, no dead
+  zone; 0 under 0.001). It never writes +0x594 (the stick magnitude, FUN_100a78d0). Idle sets +0x598 = 0; normal
+  movement never computes it.
+- FUN_100c8bb0 (from FUN_100c83c0) picks the walk / run as usual, then while +0xfb is set: on foot 2 'mvr ', 3 'mvb ',
+  4 'mvl '; riding (status 5 or 0x55) 3 'mvb ', 2 / 4 'wlk '; FUN_10084400() == 2 takes the walk for 2..4 instead. The
+  rate is the walk / run's. No fallback: a model without the motion keeps its last one (only 'id1 ' and 'df1 ' retry).
+- FUN_100c63d0 (~0x100c69e9; cur 30261006): our model with +0xfb set, not riding, eases toward the heading, not the step.
+- FUN_100a8000 (after FUN_100a80d0; cur 30261006): back = speed x 1/3 (vt+0x1b0) / 60 (x2 riding); sideways a fixed 0.0625 a tick
+  (0.125 riding), whatever the speed or the stick. Ours: the same under the strafe lock (update_movement's step);
+  the right drag (ours, not retail) takes the same speeds, so it matches B / Shift.
+
+- Ours: World::my_strafe (motion::strafe_dir) while the strafe lock is held, and also while the right drag holds the
+  facing (ours, not retail), and motion::strafe over our walk / run. The FUN_10084400 == 2 case: see "Strafing while
+  locked on; control types 0 / 1".
+
+## Lock-on flip guard (2026-11-06)
+
+From FFXiMain.dll (Steven's unpacked copy), full_text.asm, FUN_100a7b80.
+
+- 0x100a7edf keeps the old +0x598 (last frame's, after any forcing; the idle paths in FUN_100a6240 at 0x100a65b3 /
+  0x100a6c05 / 0x100a7319 and the constructor write 0), FUN_100a80d0 gives the new quarter (0x100a7ef1), and only
+  2 -> 4 or 4 -> 2 sets the signed byte +0x5b1 to 2 (0x100a7f10).
+- While +0x5b1 > 0 it drops by one a call of FUN_100a7b80 and +0x598 is 1 (0x100a7f17..0x100a7f2d): forward for the
+  flip frame and the next, then the real quarter. No tick factor; nothing else touches +0x5b1 but the init (0x100a8ba6).
+- The facing (0x100a7f85) and FUN_100a8000 (0x100a7fd4, reads +0x598 at 0x100a801b) come after, so those two frames
+  run at the forward speed and face the target. The strafe lock's block (0x100a6ee4..0x100a6ef6) has no guard.
+- Ours: motion::lock_flip_guard in update_movement's lock_dir, 4 ticks for retail's two frames *(inf: 30 fps
+  frames)*.

@@ -57,22 +57,23 @@ pub fn regime_path(server: &str, name: &str) -> PathBuf {
     regime_dir().join(server).join(name_file(name))
 }
 
-/// Where earlier builds kept a character's regime by name alone, read when the server's own file is not there yet
-/// (and, fork only, the data dir's when an FFXI_CONFIG copy moved the folder).
+/// Where earlier builds kept a character's regime (by name alone), read when the server's own file is not there yet;
+/// with FFXI_CONFIG, the data dir's by-name file too.
 pub fn regime_legacy_paths(name: &str) -> Vec<PathBuf> {
-    let mut out = vec![regime_dir().join(name_file(name))];
-    let data = data_dir().join("regime");
-    if data != regime_dir() {
-        out.push(data.join(name_file(name)));
-    }
-    out
+    let mut v = vec![regime_dir().join(name_file(name))];
+    v.extend(regime_moved(std::env::var_os("FFXI_CONFIG").is_some()).map(|d| d.join(name_file(name))));
+    v
 }
 
-/// Fork only, until upstream reads it: this server's file in the data dir when an FFXI_CONFIG copy moved the folder.
-/// The fork's builds kept every run's regimes there, and the wrapper sets FFXI_CONFIG for real play.
-pub fn regime_data_dir_path(server: &str, name: &str) -> Option<PathBuf> {
-    let data = data_dir().join("regime");
-    (data != regime_dir()).then(|| data.join(server).join(name_file(name)))
+/// With FFXI_CONFIG, the data dir's file for this server and character: builds up to 1.0.5 kept every run's regime
+/// there, so it is read before the by-name files while the one beside the config is not there yet.
+pub fn regime_moved_path(server: &str, name: &str) -> Option<PathBuf> {
+    regime_moved(std::env::var_os("FFXI_CONFIG").is_some()).map(|d| d.join(server).join(name_file(name)))
+}
+
+/// The data dir's regime folder when FFXI_CONFIG puts the current one elsewhere.
+fn regime_moved(config_copy: bool) -> Option<PathBuf> {
+    config_copy.then(|| data_dir().join("regime"))
 }
 
 /// The servers' certificate fingerprints (net/tls.rs): in the data dir, or beside an FFXI_CONFIG copy.
@@ -190,6 +191,10 @@ pub struct Config {
     pub ssao: bool,
     /// Extra (the clock add-ons): Earth time, the moon and the next day beside the Vana'diel clock (client/clock.rs).
     pub earth_clock: bool,
+    /// The Game Master window (ours, client/gm.rs): its request (c2s 0x1F0) goes out at a zone-in only while this is
+    /// on and only to a private server. No Settings row: only a server with its GM extension can use it, so it is set
+    /// in config.json by hand.
+    pub gm_window: bool,
     /// Extra (the trust chatter filters): trusts' party lines (battle message 711) are not printed.
     pub hide_trust_speech: bool,
     /// Extra (Battlemod's filters): "readies" / "starts casting" lines only for us and monsters.
@@ -224,6 +229,8 @@ pub struct Config {
     /// The drawn cursor's size (config 0021 off) in percent of retail's pixels on screen; 0 = auto (grows with the
     /// window height from 720). Not retail: it was sized for 640 x 480. The .ani cursors keep their own size.
     pub cursor_size: u32,
+    /// A key press hides the mouse cursor until the mouse moves (retail, FUN_10125f70(0)); off keeps it shown (ours).
+    pub keys_hide_cursor: bool,
     /// Ours (user, 2026-11-02): Mouse/Cam.'s Camera Keys, the keys' X / Y sense apart from the mouse: 0 Same (the
     /// camera rows, keys and mouse alike, as retail), 1 normal, 2 inverted.
     pub cam_keys_x: u32,
@@ -429,6 +436,7 @@ impl Default for Config {
             target_distance: false,
             target_hpp: false,
             earth_clock: false,
+            gm_window: false,
             lamp_lights: true,
             actor_shadows: 0,
             shadow_map: 2048,
@@ -451,6 +459,7 @@ impl Default for Config {
             minimap_span: 160.0,
             rest_tick: None,
             cursor_size: 0,
+            keys_hide_cursor: true,
             cam_keys_x: 0,
             cam_keys_y: 0,
             auto_sort: 0,
@@ -666,6 +675,13 @@ mod tests {
         let Ok(before) = serde_json::from_slice::<serde_json::Value>(&b) else { return };
         let c: Config = serde_json::from_slice(&b).expect("the config parses");
         assert!(kept(&before, &written(&c)));
+    }
+
+    /// Only a config copy (FFXI_CONFIG) moves the regime folder, so only then is the data dir's read as well.
+    #[test]
+    fn regime_moved_with_a_config_copy() {
+        assert_eq!(super::regime_moved(false), None);
+        assert_eq!(super::regime_moved(true), Some(super::data_dir().join("regime")));
     }
 
     #[test]

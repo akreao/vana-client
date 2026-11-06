@@ -3060,11 +3060,13 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
     if held && !monstrosity::active(world) {
         combat::right(world);
     }
-    // Engaged, retail's right click (Escape) stops autorun here; ours never stops it with the mouse (user,
-    // 2026-11-05), so engaged it does nothing.
-    if right_click && world.my_motion.status != 1 {
-        world.action_menu = None;
-        world.sounds.push(crate::audio::Ui::Cancel as u32);
+    if right_click {
+        if world.my_motion.status == 1 {
+            world.autorun = false;
+        } else {
+            world.action_menu = None;
+            world.sounds.push(crate::audio::Ui::Cancel as u32);
+        }
     }
     if let Some(c) = act {
         // The generic window handler's Enter (FUN_10118260): 0002.
@@ -5445,13 +5447,6 @@ fn actor_place(w: &World, id: u32, my_dir: u8) -> Option<Place> {
     Some(p)
 }
 
-/// Our run speed in units per second (FUN_100a48d0): Speed x0.1, doubled while riding (status 5 / 0x55), at most 30.
-/// An autorun steered to somewhere (/follow, click-to-move, a mod's run or run_to): mouse look neither steers it nor
-/// turns the character off its path.
-fn directed_run(w: &World) -> bool {
-    w.autorun && (w.follow.is_some() || w.click_move.is_some() || w.run_to.is_some() || w.mod_run)
-}
-
 /// FUN_100964f0's effect checks: sleep (2), petrification (7), stun (10) or terror (28) (FUN_10096270), charm (14) or
 /// effect 633 among our effects, or the server's freeze flag (0x037 flags1 bit 13). The move input returns before
 /// reading the keys while any holds. FUN_10096270 also checks K.O. (0); ours leaves it to `dead()`, since some of our
@@ -5461,6 +5456,7 @@ fn effect_held(w: &World) -> bool {
     w.my_plate.frozen || w.buffs.iter().any(|&b| matches!(b, 2 | 7 | 10 | 14 | 28 | 633))
 }
 
+/// Our run speed in units per second (FUN_100a48d0): Speed x0.1, doubled while riding (status 5 / 0x55), at most 30.
 fn own_speed(w: &World) -> f32 {
     let s = if w.my_motion.speed > 0 { w.my_motion.speed as f32 * 0.1 } else { RUN_SPEED };
     let riding = matches!(w.my_motion.status, 5 | 0x55);
@@ -5484,7 +5480,7 @@ fn base_place(w: &World, id: u32, my_dir: u8) -> Option<Place> {
         let m = w.my_motion;
         // The eased drawn facing (my_draw_yaw), which itself follows the float facing while the byte is still ours.
         let forward = w.my_draw_yaw.map_or_else(|| forward_from_dir(my_dir), |t| Vec3::new(t.cos(), 0.0, -t.sin()));
-        return Some(Place { pos: drawn_pos(w), forward, tilt: [0.0; 2], status: m.status, ratio: if w.moving { w.move_tier * own_rate(w) } else { 0.0 }, size });
+        return Some(Place { pos: drawn_pos(w), forward, tilt: [0.0; 2], status: m.status, ratio: if w.moving || w.turn_in_place { w.move_tier * own_rate(w) } else { 0.0 }, size });
     }
     let e = w.entities.get(&id)?;
     Some(Place { pos: e.pos, forward: Vec3::new(e.yaw.cos(), 0.0, -e.yaw.sin()), tilt: [0.0; 2], status: e.motion.status, ratio: e.ratio, size })
@@ -6228,6 +6224,9 @@ struct World {
     unsettled: bool,
     actors: HashMap<u32, Actor>,
     moving: bool,
+    /// First person's turn on the spot this frame: the walk or run motion plays in place (FUN_100c8930 takes the
+    /// tier), though we do not move (combat and the effects read `moving`).
+    turn_in_place: bool,
     /// The ticks of our move so far (c2s 0x015 @0x12, actor +0x1b4).
     move_acc: f32,
     /// Walk mode (0x45, DAT_10565d34 +0x50 / player +0xfa), autorun (0x1c, DAT_10475579) and its world-space
@@ -6236,8 +6235,6 @@ struct World {
     autorun: bool,
     /// Ours (modern MMOs): a right drag turns the camera and the character faces where it looks.
     mouse_look: bool,
-    /// A mod's actions.run(heading) drives this autorun: mouse look leaves its heading alone.
-    mod_run: bool,
     /// The modern Journal's Records of Eminence tab and its entry (Current objectives, Objective List, Vana'Bout).
     journal_roe: Option<usize>,
     /// The modern Journal's rows have the keys (else its logs, areas or categories on the left).
@@ -7112,8 +7109,6 @@ pub struct App {
     /// When the left button went down, and the right one (where and when): the drag rule (FUN_10125040).
     press_time: Option<Instant>,
     right_press: Option<((f64, f64), Instant)>,
-    /// The camera turned during this right press: its release is a drag even with the pointer held still (locked).
-    right_looked: bool,
     /// Ours (modern UI): the actor the last plain left click picked and when, for the double click.
     last_pick: Option<(u32, Instant)>,
     /// Ours (modern MMOs): a look drag holds the pointer, hidden, where it began. Some(true) locked (raw motion turns
@@ -7341,7 +7336,8 @@ fn dir_from_forward(f: Vec3) -> u8 {
     ((theta / std::f32::consts::TAU * 256.0).rem_euclid(256.0)) as u8
 }
 
-/// A fixed-model actor (FUN_10084400 2 / 7: one model id, not race + gear), which has no mv? motions.
+/// A fixed-model actor (FUN_10084400 == 2, which FUN_100c8bb0 tests: one model id, not race + gear), which has no mv?
+/// motions. Inferred: that kind taken as an NPC sent as a model (NpcLook::Model).
 fn fixed_model(a: &Actor) -> bool {
     matches!(a.source, Some(Source::Npc(crate::dat::npc::NpcLook::Model(_))))
 }
@@ -7401,7 +7397,6 @@ impl App {
             press_at: None,
             press_time: None,
             right_press: None,
-            right_looked: false,
             last_pick: None,
             look_grab: None,
             grab_at: None,
@@ -8432,11 +8427,11 @@ impl App {
                             inv_loaded: 0,
                             actors: HashMap::new(),
                             moving: false,
+                            turn_in_place: false,
                             move_acc: 0.0,
                             walk: false,
                             autorun: false,
                             mouse_look: false,
-                            mod_run: false,
                             journal_roe: None,
                             journal_on_list: false,
                             equip_claims: Vec::new(),
@@ -9296,6 +9291,7 @@ impl App {
         let mut took: Option<(u16, u16, preload::Ready, Instant)> = None;
         let Phase::World(world) = &mut self.phase else { return };
         world.net.stats.rate_ms.store(self.cfg.send_interval, std::sync::atomic::Ordering::Relaxed);
+        world.net.stats.gm_window.store(self.cfg.gm_window, std::sync::atomic::Ordering::Relaxed);
         let mut load = None;
         let mut looks: Vec<(u32, Source)> = Vec::new();
         // Lines that need the message tables wait for them (they load on a thread at world start), in order.
@@ -11151,7 +11147,6 @@ impl App {
             world.autorun = !world.autorun;
             world.autorun_dir = Vec3::ZERO;
             world.click_move = None;
-            world.mod_run = false;
         }
         // A click-to-move walk ends at any move or turn of the player's own.
         if world.click_move.is_some() && (ax != 0.0 || ay != 0.0 || turn != 0.0) {
@@ -11220,9 +11215,16 @@ impl App {
         }
         // Input against a run already going (/follow's too) ends it: free camera within 23.6 degrees of straight back
         // (FUN_100a6030: dot < 0, |cross| < 0.4), locked on dot < 0.3 (FUN_100a6210), first person dot < -0.5
-        // (FUN_100a48d0).
-        if world.autorun && world.autorun_dir != Vec3::ZERO && step != Vec3::ZERO {
-            let (i, r) = (step.normalize(), world.autorun_dir.normalize());
+        // (FUN_100a48d0). First person tests the input turned by the heading with its X unless the strafe lock holds
+        // it (vt+0x340 zeroes it then), not the tank step, which drops X the other way round.
+        let against_in = if tank {
+            let f = Vec3::new(heading.sin(), 0.0, heading.cos());
+            -f * ay + if fp_side { Vec3::ZERO } else { f.cross(Vec3::NEG_Y) * ax }
+        } else {
+            step
+        };
+        if world.autorun && world.autorun_dir != Vec3::ZERO && against_in != Vec3::ZERO {
+            let (i, r) = (against_in.normalize(), world.autorun_dir.normalize());
             let dot = i.dot(r);
             let against = if world.camst.first {
                 dot < -0.5
@@ -11238,42 +11240,28 @@ impl App {
             }
         }
         if world.autorun && !world.locked && !move_locked {
-            // Ours (modern MMOs, with the right drag's facing): mouse look steers autorun to the camera's forward, so the
-            // run goes where the character faces, and X input strafes off it (forward + sideways) instead of turning
-            // it. A follow, click-to-move or a mod's run keeps its own steering.
-            let look_steer = world.mouse_look && !directed_run(world);
-            if look_steer {
-                world.autorun_dir = forward;
-            }
             if world.autorun_dir == Vec3::ZERO && step != Vec3::ZERO {
                 world.autorun_dir = step.normalize();
             }
             if world.autorun_dir == Vec3::ZERO {
                 world.autorun = false;
             } else {
-                if ax != 0.0 && !look_steer {
+                if ax != 0.0 {
                     let d = world.autorun_dir;
                     let delta = 2.0 * ax * ticks * 0.017452778;
                     let a = d.x.atan2(d.z) + delta;
                     world.autorun_dir = Vec3::new(a.sin(), 0.0, a.cos());
                     // First person (0x100a764c / 0x100a7381): the heading turns with it; a dragged look follows.
-                    if tank && !directed_run(world) {
+                    if tank && world.follow.is_none() && world.run_to.is_none() && world.click_move.is_none() {
                         camera::fp_turn(world, delta);
                     }
                 }
-                step = if touching {
-                    Vec3::ZERO
-                } else if look_steer && ax != 0.0 {
-                    (world.autorun_dir + right * ax).normalize()
-                } else {
-                    world.autorun_dir
-                };
+                step = if touching { Vec3::ZERO } else { world.autorun_dir };
             }
         }
         if !world.autorun {
             world.autorun_dir = Vec3::ZERO;
             world.run_to = None;
-            world.mod_run = false;
             // Autorun ending for any reason ends the follow: group 9 0x41 "Follow canceled.".
             if world.follow.take().is_some() {
                 textcmd::log9(world, 0x41);
@@ -11400,9 +11388,8 @@ impl App {
         }
         world.step_ticks += dt * 60.0;
         let speed = own_speed(world);
-        // FUN_100a8000, under the strafe lock or locked on (ours: the right drag's facing too, Steven 2026-11-05): backing
-        // up goes at a third of the speed (vt+0x1b0), sideways at a fixed 0.0625 a tick (0.125 riding), whatever the
-        // speed or the stick.
+        // FUN_100a8000, under the strafe lock or locked on (ours: the right drag's facing too): backing up goes at a third
+        // of the speed (vt+0x1b0), sideways at a fixed 0.0625 a tick (0.125 riding), whatever the speed or the stick.
         let riding = matches!(world.my_motion.status, 5 | 0x55);
         // Locked on (FUN_100a7b80), every control type: the same quarters and speeds, the stick read in the frame the
         // locked step moves in (forward toward the target, side about it, target::locked_step). Measured against this
@@ -11425,7 +11412,7 @@ impl App {
             let dir = world.net.me.lock().map_or(0, |m| m.dir);
             let f = world.my_face.filter(|f| f.0 == dir).map_or_else(|| forward_from_dir(dir), |f| f.1);
             crate::motion::strafe_dir(f, step)
-        } else if world.mouse_look && !directed_run(world) && !tank {
+        } else if world.mouse_look && !tank {
             // The right drag faces the camera's forward this frame (see `to` below), so the quarter is about that.
             crate::motion::strafe_dir(face, step)
         } else {
@@ -11532,7 +11519,8 @@ impl App {
             let to = if let Some((_, Some(y))) = pin {
                 Some(Vec3::new(y.cos(), 0.0, -y.sin()))
             } else if held {
-                // FUN_100a6210 returns before any turn while an effect holds us: the camera moves, the facing stays.
+                // FUN_100a6240 (cur 30261006) returns before any turn while an effect holds us: the camera moves, the
+                // facing stays.
                 None
             } else if let Some(f) = tank_face {
                 Some(f)
@@ -11540,7 +11528,7 @@ impl App {
                 // 0x9c held (B / Shift, control type 2): a strafe lock. Retail's FUN_100a6240 returns before the turn
                 // to the move direction while actor +0xfb is set, so the heading stays and the stick strafes.
                 None
-            } else if lock_target.is_some() || (world.mouse_look && !directed_run(world)) || (turn != 0.0 && !stepping) {
+            } else if lock_target.is_some() || world.mouse_look || (turn != 0.0 && !stepping) {
                 Some(face)
             } else if stepping {
                 Some(step.normalize())
@@ -11554,10 +11542,10 @@ impl App {
             // FUN_100a80d0: with the heading held (the strafe lock; ours also the right drag's facing), the step's
             // quarter about it, the sectors 90 degrees wide and centred on the axes.
             // First person never writes +0x598 (walk / run forward, back and sideways alike).
-            let held = (face_cam || (world.mouse_look && !directed_run(world))) && pin.is_none() && lock_target.is_none() && !tank;
+            let facing_held = (face_cam || world.mouse_look) && pin.is_none() && lock_target.is_none() && !tank;
             world.my_strafe = if lock_target.is_some() && pin.is_none() {
                 lock_dir
-            } else if held && stepping {
+            } else if facing_held && stepping {
                 let f = world.my_face.filter(|f| f.0 == me.dir).map_or_else(|| forward_from_dir(me.dir), |f| f.1);
                 crate::motion::strafe_dir(f, step)
             } else {
@@ -11581,7 +11569,7 @@ impl App {
             me.move_time = (flame.round() as u32 & 0xffff) as u16;
         }
         // FUN_100c8930 takes the tier, not the step: turning on the spot in first person walks or runs in place.
-        world.moving = moving || tank_turn != 0.0;
+        (world.moving, world.turn_in_place) = (moving, tank_turn != 0.0);
         // FUN_100c4390 (free camera): the heading turns at once, the model eases its drawn rotation (+0x61c) 0.125 a
         // tick toward it (the step's direction while moving). Snapped at zone-in, in events and when pinned.
         // Toward the float facing while the byte is still ours (a stick's slow turn would step on the byte), else
@@ -11967,9 +11955,6 @@ impl App {
     /// inverts its axes); with the right button the character faces where it looks and autorun steers with it (modern
     /// MMOs); in first person it turns the look itself.
     fn look(&mut self, dx: f64, dy: f64) {
-        if self.dragging && (dx != 0.0 || dy != 0.0) {
-            self.right_looked = true;
-        }
         let right = self.dragging;
         // Settings' Mouse Camera Speed (ours): scales the drag only; the controller's camera is not touched.
         let k = self.cfg.mouse_camera_speed.clamp(10, 400) as f64 / 100.0;
@@ -12092,10 +12077,8 @@ impl App {
             MouseButton::Right => {
                 if pressed {
                     self.right_press = self.last_cursor.map(|c| (c, Instant::now()));
-                    self.right_looked = false;
                 } else if let Some((b, drag)) = release(self.right_press.take(), self.last_cursor, self.ui_k) {
-                    let looked = std::mem::take(&mut self.right_looked);
-                    self.swallow_click |= world_click(&mut self.phase, b, false, drag || looked);
+                    self.swallow_click |= world_click(&mut self.phase, b, false, drag);
                 }
                 self.dragging = pressed;
             }
@@ -12136,7 +12119,7 @@ impl App {
                 world.follow = None;
                 world.click_move = Some(clickmove::ClickMove::new(path, world.pos));
                 world.run_to = None;
-                (world.autorun, world.mod_run) = (true, false);
+                world.autorun = true;
                 world.autorun_dir = Vec3::ZERO;
             }
             None => {
@@ -14151,7 +14134,6 @@ impl App {
                 let d = world.cam.look - world.cam.eye;
                 world.autorun = !world.autorun;
                 world.autorun_dir = Vec3::new(d.x, 0.0, d.z).normalize_or_zero();
-                world.mod_run = false;
             }
             // act:fxdump logs every live effect element and the player's position.
             if let (Some("fxdump"), Phase::World(world)) = (action.as_deref(), &self.phase) {
@@ -15091,6 +15073,7 @@ impl App {
                     let k = (a.alpha / actmotion::OPAQUE).max(0.0) * cam_fade;
                     let k = if k >= 0.8 { 1.0 } else { k * 1.25 } * a.appear;
                     g.alpha = (k * if *id == w.my_id { w.camst.self_alpha } else { 1.0 }).min(1.0);
+                    g.shadow_off = a.shadow_off;
                     g.tint = a.rgb.map(|c| c.max(0.0) / actmotion::OPAQUE);
                     if let Some(l) = looks.get(id) {
                         g.alpha = g.alpha.min(l.alpha.unwrap_or(1.0));
@@ -15216,8 +15199,11 @@ impl App {
                 } else {
                     Vec::new()
                 };
+                // Only the actors drawn into the map lose retail's: the rest (fading, refracting, latched off) keep it.
                 if let Some((m, _, _)) = r.sun_shadow_light(camera.target) {
-                    seen.retain(|_, s| !crate::render::sunshadow::covers(m, s.pos, s.corners.iter().map(|c| c.distance(s.pos)).fold(0.0, f32::max)));
+                    let done = gfx.gpu.mips_done();
+                    let casts = |id: &u32| w.actors.get(id).and_then(|a| a.gpu.as_ref()).is_some_and(|g| g.casts_shadow(done));
+                    seen.retain(|id, s| !casts(id) || !crate::render::sunshadow::covers(m, s.pos, s.corners.iter().map(|c| c.distance(s.pos)).fold(0.0, f32::max)));
                 }
                 let shadow_modes = match w.ground.as_ref() {
                     Some(g) => shadows::modes(&shadows::Ctx { ground: g, setting: w.game.get(0x3a), me: w.my_id, zone: w.pos_zone, has: &has, flags: &flags, layers: r.shadow_layers(bg) }, &seen, camera.eye),
@@ -15854,11 +15840,10 @@ impl ApplicationHandler for App {
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(code) = event.physical_key {
-                    // Other key functions hide the cursor (FUN_10125f70(0)), except during a drag. The Modern UI keeps
-                    // it shown on every screen, so walking with the keys leaves the pointer where it was (ours, not retail).
+                    // Other key functions hide the cursor (FUN_10125f70(0)), except during a drag; Keys Hide the Cursor
+                    // off keeps it shown (ours).
                     let modifier = matches!(code, KeyCode::ShiftLeft | KeyCode::ShiftRight | KeyCode::ControlLeft | KeyCode::ControlRight | KeyCode::AltLeft | KeyCode::AltRight | KeyCode::SuperLeft | KeyCode::SuperRight);
-                    let modern = self.cfg.modern_ui;
-                    if event.state == ElementState::Pressed && !modifier && !modern && !self.dragging && !self.left_down {
+                    if event.state == ElementState::Pressed && !modifier && self.cfg.keys_hide_cursor && !self.dragging && !self.left_down {
                         self.mouse.visible = false;
                     }
                     if code == KeyCode::F12 && event.state == ElementState::Pressed && !event.repeat {
