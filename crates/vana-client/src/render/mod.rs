@@ -699,6 +699,8 @@ pub struct ActorGpu {
     /// Its box's screen rect this frame (NDC x0, y0, x1, y1; FUN_100c63d0's), so a faded actor's passes cover only
     /// it; none: the whole screen.
     pub screen: Option<[f32; 4]>,
+    /// Casts lamp shadows this frame (ours: only our own character does; render/lampshadow.rs).
+    pub lamp_caster: bool,
 }
 
 impl ActorGpu {
@@ -2605,6 +2607,7 @@ impl ZoneRenderer {
                 mips: 0,
                 origin: Vec3::ZERO,
                 screen: None,
+                lamp_caster: false,
             };
             self.builds.push((key, Build { ch: ch.clone(), mesh, actor, registered: false, vert_at: 0, tex: 0, cur: None }));
         }
@@ -2726,7 +2729,7 @@ impl ZoneRenderer {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        ActorGpu { textures, slot, vertices: None, draws: Vec::new(), instance, hidden_weps: 0, shine: None, refract: None, skin: None, alpha: 1.0, shadow_off: false, tint: [1.0; 3], flash: [0.0, 1.0], lights: [0; 4], area: 0, cloth: Vec::new(), mips, origin: Vec3::ZERO, screen: None }
+        ActorGpu { textures, slot, vertices: None, draws: Vec::new(), instance, hidden_weps: 0, shine: None, refract: None, skin: None, alpha: 1.0, shadow_off: false, tint: [1.0; 3], flash: [0.0, 1.0], lights: [0; 4], area: 0, cloth: Vec::new(), mips, origin: Vec3::ZERO, screen: None, lamp_caster: false }
     }
 
     /// A shine image goes up once (effect file, IMG node).
@@ -2892,7 +2895,7 @@ impl ZoneRenderer {
             pass.set_pipeline(&self.sun_depth_pipeline);
             pass.set_bind_group(0, &self.globals, &[]);
             pass.set_bind_group(3, &s.matrix_group, &[0]);
-            self.draw_actor_depth(&mut pass, actors, group, done);
+            self.draw_actor_depth(&mut pass, actors, group, done, false);
         }
         // Lamp shadows (render/lampshadow.rs): each shadowed lamp's characters into its layer; the zone shader reads them.
         let lamps: &[(u32, Mat4)] = if self.pose_gpu.is_some() { &self.lamp_shadows } else { &[] };
@@ -2910,7 +2913,7 @@ impl ZoneRenderer {
                 pass.set_pipeline(&self.lamp_depth_pipeline);
                 pass.set_bind_group(0, &self.globals_depth, &[]);
                 pass.set_bind_group(3, &self.lamp_shadow.matrix_group, &[256 * k as u32]);
-                self.draw_actor_depth(&mut pass, actors, group, done);
+                self.draw_actor_depth(&mut pass, actors, group, done, true);
             }
         }
         let [r, g, b] = clear;
@@ -3184,8 +3187,9 @@ impl ZoneRenderer {
     }
 
     /// The skinned actors into a shadow depth pass (the sun's or a lamp's; its pipeline and groups 0 and 3 set).
-    fn draw_actor_depth(&self, pass: &mut wgpu::RenderPass<'_>, actors: &[&ActorGpu], group: &wgpu::BindGroup, done: u64) {
-        for a in actors.iter().filter(|a| a.casts_shadow(done)) {
+    /// The actors' depth into a shadow map; `lamp`: only the lamp casters (ActorGpu::lamp_caster).
+    fn draw_actor_depth(&self, pass: &mut wgpu::RenderPass<'_>, actors: &[&ActorGpu], group: &wgpu::BindGroup, done: u64, lamp: bool) {
+        for a in actors.iter().filter(|a| a.casts_shadow(done) && (!lamp || a.lamp_caster)) {
             let Some(skin) = a.skin.as_ref().filter(|s| s.frame == self.pose_frame) else { continue };
             pass.set_bind_group(2, group, &[skin.offset]);
             pass.set_vertex_buffer(0, skin.vertices.slice(..));
@@ -3200,14 +3204,39 @@ impl ZoneRenderer {
     }
 
     /// The real shadows' light this frame around `target` (the camera's): matrix, sun direction, strength. None when
-    /// they are off, there is no lit sun or moon (no zone lighting, a dim light) or no poses. By night `lighting` carries the moon, whose dimmer colour gives fainter shadows.
+    /// they are off, there is no lit sun or moon (no zone lighting, a dim outdoor light) or no poses; indoors the room's
+    /// fixed light casts. By night `lighting` carries the moon, whose dimmer colour gives fainter shadows.
     pub fn sun_shadow_light(&self, target: Vec3) -> Option<(Mat4, Vec3, f32)> {
         let s = self.sun_shadow.as_ref().filter(|_| self.pose_gpu.is_some())?;
         let l = self.lighting.as_ref()?;
         // A light too dim to cast, or the dawn / dusk fade near zero, falls back to retail's (sunshadow::HANDOFF).
-        let st = sunshadow::strength(l.diffuse) * self.shadow_level.clamp(0.0, 1.0);
+        // Indoors (no sun or moon) a dark room light still casts, from its data direction at a fixed strength.
+        let base = sunshadow::strength(l.diffuse);
+        let st = if l.fixed {
+            if base >= sunshadow::HANDOFF { base } else { sunshadow::INDOOR_STRENGTH }
+        } else {
+            base * self.shadow_level.clamp(0.0, 1.0)
+        };
         (st >= sunshadow::HANDOFF).then_some(())?;
         Some((sunshadow::light_matrix(l.dir, target, s.size)?, sunshadow::sun_direction(l.dir)?, st))
+    }
+
+    /// Why the real shadows are off this frame, or how `actor` stands in their map (diagnostics, log target
+    /// "sunshadow"): the light's state, then the actor's (mips pending, too faded, not posed).
+    pub fn sun_shadow_state(&self, gpu: &Gpu, target: Vec3, actor: Option<&ActorGpu>) -> String {
+        let light = match (&self.sun_shadow, &self.pose_gpu, &self.lighting) {
+            (None, _, _) => "off".to_string(),
+            (_, None, _) => "no poses".to_string(),
+            (_, _, None) => "no zone lighting".to_string(),
+            (_, _, Some(l)) => match self.sun_shadow_light(target) {
+                Some((_, _, st)) => format!("on (strength {st:.2})"),
+                None => format!("dim light (diffuse {:.3}, strength {:.2})", l.diffuse, sunshadow::strength(l.diffuse)),
+            },
+        };
+        let Some(a) = actor else { return format!("{light}; no actor") };
+        let done = gpu.mips_done();
+        let posed = a.skin.as_ref().is_some_and(|s| s.frame == self.pose_frame);
+        format!("{light}; actor mips {} (done {done}), alpha {:.2}, posed {posed}, refract {}, latched off {}", a.mips, a.alpha, a.refract.is_some(), a.shadow_off)
     }
 
     /// Ambient occlusion (ours) on or off at the scene's `size`; made at the first use.

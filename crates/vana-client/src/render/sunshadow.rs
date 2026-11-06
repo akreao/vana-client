@@ -23,6 +23,9 @@ const DEPTH: f32 = 300.0;
 pub const STRENGTH: f32 = 2.0 * 64.0 / 255.0;
 /// Below this strength (dawn and dusk, a dim light) retail's shadows draw instead, so no character goes without one.
 pub const HANDOFF: f32 = 0.25 * STRENGTH;
+/// Indoors (a fixed-light environment whose light has no colour, as in every Mog House: straight down, black) the
+/// shadows fall from the room's light direction at this strength, not retail's.
+pub const INDOOR_STRENGTH: f32 = 0.45;
 /// How far below its caster's feet (world units, straight down) a shadow stays full, and where it has faded out: a
 /// character atop a wall casts nothing onto the ground far below. Measured from the feet rather than along the light,
 /// so a low sun or a small step in the ground (a seam between terrain pieces) does not cut a shadow off.
