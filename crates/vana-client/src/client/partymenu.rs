@@ -61,11 +61,7 @@ pub enum Pick {
 
 /// FUN_10201690: 1 an invite pending, 2 solo, 3 in a party, 4 a party of us and trusts.
 fn state(w: &World) -> u8 {
-    if w.invite.is_some() {
-        1
-    } else {
-        w.party.slots().state()
-    }
+    if w.invite.is_some() { 1 } else { w.party.slots().state() }
 }
 
 /// The state a window closes itself on leaving ([7]; 0 none).
@@ -133,15 +129,7 @@ pub fn open(w: &mut World) {
     } else {
         PRTY1
     };
-    w.partymenu = Some(PartyMenu {
-        stack: vec![Win {
-            name,
-            sel: w.cursor_recall(name),
-        }],
-        return_menu: w.menu,
-        langs: 0,
-        hidden: false,
-    });
+    w.partymenu = Some(PartyMenu { stack: vec![Win { name, sel: w.cursor_recall(name) }], return_menu: w.menu, langs: 0, hidden: false });
     w.menu = None;
 }
 
@@ -159,19 +147,9 @@ fn disabled(w: &World, name: &str) -> Vec<u16> {
     let alone = s.leaders[0] != 0 && s.counts[0] == 1;
     let mut off = Vec::new();
     match name {
-        PRTY1
-            if w.search_words
-                .as_ref()
-                .is_some_and(|sw| sw.zone_flags(w.pos_zone) & 8 == 0) =>
-        {
-            off.push(3)
-        }
+        PRTY1 if w.search_words.as_ref().is_some_and(|sw| sw.zone_flags(w.pos_zone) & 8 == 0) => off.push(3),
         PRTY3 | PRTY7 => {
-            let form = if name == PRTY3 {
-                alliance || target_pc(w).is_some()
-            } else {
-                alliance
-            };
+            let form = if name == PRTY3 { alliance || target_pc(w).is_some() } else { alliance };
             if !form {
                 off.push(7);
             }
@@ -207,11 +185,7 @@ fn swaps(w: &World, name: &str) -> Vec<(u16, usize)> {
             } else {
                 474
             };
-            vec![
-                (1, if conf(w, 2) { 257 } else { 78 }),
-                (3, auto),
-                request(5),
-            ]
+            vec![(1, if conf(w, 2) { 257 } else { 78 }), (3, auto), request(5)]
         }
         PRTY2 => vec![request(6)],
         PRTY3 | PRTY7 => vec![request(11), (8, if synced(w) { 613 } else { 611 })],
@@ -229,10 +203,7 @@ fn help(gu: &GameUi, w: &World, win: &Win) -> Option<String> {
         PRTY3 | PRTY7 if win.sel == 8 && synced(w) => Some(gu.menu_msg(0x2a3, "")),
         JOIN => {
             let inv = w.invite.as_ref()?;
-            let q = w
-                .battle
-                .as_ref()?
-                .group10(if inv.alliance { 1 } else { 0 })?;
+            let q = w.battle.as_ref()?.group10(if inv.alliance { 1 } else { 0 })?;
             Some(q.replacen("%s", &inv.name, 1))
         }
         _ => None,
@@ -242,14 +213,9 @@ fn help(gu: &GameUi, w: &World, win: &Win) -> Option<String> {
 /// Per frame (slot 10, FUN_102056c0): a window watching the party state closes when it changes (an invite, a join, a
 /// leave), and the whole menu with it *(inf: retail closes each watching window, the others stay)*.
 pub fn update(w: &mut World) {
-    let Some(m) = w.partymenu.as_ref() else {
-        return;
-    };
+    let Some(m) = w.partymenu.as_ref() else { return };
     let s = state(w);
-    if m.stack
-        .iter()
-        .any(|win| watch(win.name) != 0 && watch(win.name) != s)
-    {
+    if m.stack.iter().any(|win| watch(win.name) != 0 && watch(win.name) != s) {
         while w.partymenu.is_some() {
             close_top(w);
         }
@@ -259,9 +225,7 @@ pub fn update(w: &mut World) {
 /// The top window closes (FUN_10205660 and the windows' own close hooks): prty5us sends a changed language mask; the
 /// bottom one closes the search results and the party-list cursor and brings the main menu back.
 fn close_top(w: &mut World) {
-    let Some(m) = w.partymenu.as_mut() else {
-        return;
-    };
+    let Some(m) = w.partymenu.as_mut() else { return };
     let Some(top) = m.stack.pop() else { return };
     let (empty, langs, back) = (m.stack.is_empty(), m.langs, m.return_menu);
     if top.name == LANGS && langs != w.game.get(0x98) {
@@ -270,10 +234,7 @@ fn close_top(w: &mut World) {
     }
     if top.name != ALARM && top.name != JOIN {
         w.search = None;
-        if w.party_cursor
-            .as_ref()
-            .is_some_and(|pc| matches!(pc.then, SubThen::Party(_)))
-        {
+        if w.party_cursor.as_ref().is_some_and(|pc| matches!(pc.then, SubThen::Party(_))) {
             w.party_cursor = None;
         }
     }
@@ -289,10 +250,7 @@ fn send_langs(w: &World, mask: u32) {
     b[2] = 1;
     b[4..16].copy_from_slice(&w.conf_sys);
     b[0x20..0x24].copy_from_slice(&mask.to_le_bytes());
-    let _ = w
-        .net
-        .commands
-        .send(NetCommand::Packet { id: 0x0DB, body: b });
+    let _ = w.net.commands.send(NetCommand::Packet { id: 0x0DB, body: b });
 }
 
 /// Table 0x10385388 for an English client: prty5us row 1..5 (English, French, German, Japanese, Other) -> bit.
@@ -306,11 +264,7 @@ fn packet(w: &World, id: u16, body: Vec<u8>) {
 /// 0x10, FUN_10203130), else group 9 0x00. Not done: the auto-pool area's group 9 0xc2 (actor +0x18c).
 fn show_distribution(w: &mut World) {
     let Some(bt) = w.battle.clone() else { return };
-    let qm = w
-        .party
-        .party()
-        .find(|m| m.flags & 0x10 != 0)
-        .map(|m| m.name.clone());
+    let qm = w.party.party().find(|m| m.flags & 0x10 != 0).map(|m| m.name.clone());
     let line = match qm {
         Some(n) => bt.group10(2).map(|s| s.replacen("%s", &n, 1)),
         None => bt.group9(0),
@@ -330,25 +284,11 @@ fn find_member(w: &mut World) {
         return;
     }
     use crate::net::search::{AREA, Cond, STATUS};
-    let region = w
-        .search_words
-        .as_ref()
-        .filter(|sw| sw.zone_flags(w.pos_zone) & 2 != 0)
-        .and_then(|sw| sw.region_of(w.pos_zone))
-        .filter(|r| !r.is_empty());
+    let region = w.search_words.as_ref().filter(|sw| sw.zone_flags(w.pos_zone) & 2 != 0).and_then(|sw| sw.region_of(w.pos_zone)).filter(|r| !r.is_empty());
     let (mut cond, scope) = match region {
         Some(r) => {
             let last = *r.last().unwrap() as i16;
-            (
-                Cond {
-                    flags: AREA,
-                    areas: r,
-                    last_area: last,
-                    area_given: true,
-                    ..Default::default()
-                },
-                super::search::Scope::Region,
-            )
+            (Cond { flags: AREA, areas: r, last_area: last, area_given: true, ..Default::default() }, super::search::Scope::Region)
         }
         None => (Cond::zone(w.pos_zone), super::search::Scope::Area),
     };
@@ -368,12 +308,7 @@ fn pick(w: &mut World, p: Pick) {
 
 /// Focus (six slots) and Rearrange (all 18): the menu closes while the cursor is up.
 fn pick_hidden(w: &mut World, p: Pick) {
-    super::target::open_party_cursor(
-        w,
-        if p == Pick::Rearrange { 18 } else { 6 },
-        SubThen::Party(p),
-        None,
-    );
+    super::target::open_party_cursor(w, if p == Pick::Rearrange { 18 } else { 6 }, SubThen::Party(p), None);
     if let Some(m) = w.partymenu.as_mut() {
         m.hidden = true;
     }
@@ -399,20 +334,13 @@ pub fn picked(w: &mut World, p: Pick, who: Option<(usize, u32, String)>) {
         }
         Pick::Quartermaster => packet(w, 0x077, super::party::change_body(&name, 0, 4)),
         // "%s %s" of "/focustarget" and the slot's tag (FUN_10076810), run through FUN_10080dc0.
-        Pick::Focus => super::textcmd::run(
-            w,
-            &format!("/focustarget <p{slot}>"),
-            super::textcmd::Mode::Internal,
-        ),
+        Pick::Focus => super::textcmd::run(w, &format!("/focustarget <p{slot}>"), super::textcmd::Mode::Internal),
         Pick::Rearrange => {}
     }
 }
 
 fn not_done(name: &str, sel: u16) {
-    log::info!(
-        "party menu: {} row {sel} is not implemented yet",
-        name.trim_start_matches("menu    ")
-    );
+    log::info!("party menu: {} row {sel} is not implemented yet", name.trim_start_matches("menu    "));
 }
 
 /// The row actions (FUN_102059a0, FUN_10205da0, FUN_10205ed0, FUN_10206110, FUN_10206280, FUN_10206330, FUN_10205ba0,
@@ -472,12 +400,7 @@ fn enter(w: &mut World, name: &'static str, sel: u16) {
             close_top(w);
         }
         (PRTY8, 1) => {
-            let qms: Vec<String> = w
-                .party
-                .party()
-                .filter(|m| m.flags & 0x10 != 0)
-                .map(|m| m.name.clone())
-                .collect();
+            let qms: Vec<String> = w.party.party().filter(|m| m.flags & 0x10 != 0).map(|m| m.name.clone()).collect();
             for n in qms {
                 packet(w, 0x077, super::party::change_body(&n, 0, 5));
             }
@@ -486,9 +409,7 @@ fn enter(w: &mut World, name: &'static str, sel: u16) {
         (PRTY8, 2) => pick(w, Pick::Quartermaster),
         // An emptied mask gets the first row's bit back (SE 0004 when that row was the one cleared).
         (LANGS, 1..=5) => {
-            let Some(m) = w.partymenu.as_mut() else {
-                return;
-            };
+            let Some(m) = w.partymenu.as_mut() else { return };
             m.langs ^= 1 << LANG_BITS[sel as usize - 1];
             if m.langs == 0 {
                 m.langs = 1 << LANG_BITS[0];
@@ -548,17 +469,11 @@ fn member_list(w: &mut World) {
 
 /// s2c 0x0E1 (LAB_100ea7f0): the stored callback runs on every answer.
 pub fn on_group_id(w: &mut World, gid: u32) {
-    let Some((mode, then)) = w.group_cb else {
-        return;
-    };
+    let Some((mode, then)) = w.group_cb else { return };
     match then {
         // FUN_10107650 (alliance id) for mode 5, else FUN_10107640 (party id).
         GroupThen::MemberList => {
-            let ids = if mode == 5 {
-                [0, gid, 0, 0]
-            } else {
-                [gid, 0, 0, 0]
-            };
+            let ids = if mode == 5 { [0, gid, 0, 0] } else { [gid, 0, 0, 0] };
             super::search::run_group(w, ids, 0x13);
         }
         GroupThen::LevelSync => super::levelsync::open(w, gid),
@@ -569,16 +484,7 @@ pub fn on_group_id(w: &mut World, gid: u32) {
 /// group list for "menu    levelsyn".
 fn level_sync(w: &mut World) {
     match super::levelsync::synced(w).map(|m| m.id) {
-        Some(id) => {
-            w.confirm = Some((
-                super::Confirm::Sync {
-                    id,
-                    race: 0,
-                    off: true,
-                },
-                false,
-            ))
-        }
+        Some(id) => w.confirm = Some((super::Confirm::Sync { id, race: 0, off: true }, false)),
         None => ask_group(w, 0, GroupThen::LevelSync),
     }
 }
@@ -597,46 +503,31 @@ pub(super) fn pronoun(race: u16) -> i32 {
 /// nothing opens by itself. Not done: the 0x7F 0xFC / 0xFB codes around the name in the party line (the log draws no
 /// 0x7F codes yet).
 pub fn invited(w: &mut World, anon: u8, kind: u8, name: String, race: u16) {
-    if matches!(kind, 0 | 5)
-        && anon & 2 == 0
+    if matches!(kind, 0 | 5) && anon & 2 == 0
         && let Some(bt) = w.battle.clone()
         && let Some(raw) = bt.group10_raw(if kind == 0 { 4 } else { 3 })
     {
         let p = if anon & 1 != 0 { 2 } else { pronoun(race) };
         let sjis = crate::dat::font::encode_sjis(&name);
-        let text = crate::dat::font::decode_sjis(&crate::dat::msgfmt::format(
-            &raw,
-            &[&sjis],
-            &[p],
-            &|_, _, _| None,
-        ));
+        let text = crate::dat::font::decode_sjis(&crate::dat::msgfmt::format(&raw, &[&sjis], &[p], &|_, _, _| None));
         let colour = bt.colour_in(0x87, &w.game);
         w.chat.push_colour(text, colour);
     }
     if kind == 0 {
         play_alarm(w, w.game.get(0xc7));
     }
-    w.invite = Some(Invite {
-        alliance: kind != 0,
-        name,
-    });
+    w.invite = Some(Invite { alliance: kind != 0, name });
 }
 
 /// The window events after the generic part (FUN_10118260): Up / Down along the links (SE 0001), Escape (SE 0003)
 /// closes the top window, Enter on a disabled row SE 0004 only, else SE 0002 (not alarm: +0x86 = 0) and the row.
 pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
-    let Some(top) = w.partymenu.as_ref().and_then(|m| m.stack.last()).cloned() else {
-        return;
-    };
+    let Some(top) = w.partymenu.as_ref().and_then(|m| m.stack.last()).cloned() else { return };
     match key {
         egui::Key::ArrowUp | egui::Key::ArrowDown => {
             let k = if key == egui::Key::ArrowUp { 2 } else { 3 };
-            let to = gu
-                .menu_links(top.name, top.sel)
-                .map_or(top.sel, |l| l[k] as u16);
-            if to != top.sel
-                && to != 0
-                && to != 0xff
+            let to = gu.menu_links(top.name, top.sel).map_or(top.sel, |l| l[k] as u16);
+            if to != top.sel && to != 0 && to != 0xff
                 && let Some(t) = w.partymenu.as_mut().and_then(|m| m.stack.last_mut())
             {
                 t.sel = to;
@@ -647,9 +538,7 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
             w.sounds.push(Ui::Cancel as u32);
             close_top(w);
         }
-        egui::Key::Enter if disabled(w, top.name).contains(&top.sel) => {
-            w.sounds.push(Ui::Error as u32)
-        }
+        egui::Key::Enter if disabled(w, top.name).contains(&top.sel) => w.sounds.push(Ui::Error as u32),
         egui::Key::Enter => {
             if top.name != ALARM {
                 w.sounds.push(Ui::Select as u32);
@@ -662,45 +551,21 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
 
 /// The top window takes the keys unless the results window, a prompt or a party-list pick is up over it.
 pub fn focused(w: &World) -> bool {
-    w.partymenu.is_some()
-        && w.search.is_none()
-        && w.confirm.is_none()
-        && w.party_cursor.is_none()
-        && w.levelsync.is_none()
+    w.partymenu.is_some() && w.search.is_none() && w.confirm.is_none() && w.party_cursor.is_none() && w.levelsync.is_none()
 }
 
 /// Mouse: hover over a row moves the cursor, a click on the cursor row is Enter *(inf: the generic child hit test)*.
-pub fn pointer(
-    w: &mut World,
-    gu: &GameUi,
-    sw: f32,
-    sh: f32,
-    p: (f32, f32),
-    moved: bool,
-    clicked: bool,
-) {
-    let Some(top) = w.partymenu.as_ref().and_then(|m| m.stack.last()).cloned() else {
-        return;
-    };
-    let Some((wx, wy)) = gu.window_xy(top.name, sw, sh) else {
-        return;
-    };
-    let Some(layout) = gu.layout(top.name) else {
-        return;
-    };
-    let hit = layout
-        .elements
-        .iter()
-        .skip(1)
-        .filter(|e| e.links[2] != 0xff)
-        .find(|e| {
-            let (x, y) = (wx + e.x as f32, wy + e.y as f32);
-            p.0 >= x && p.0 < x + e.w as f32 && p.1 >= y && p.1 < y + e.h as f32
-        });
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool) {
+    let Some(top) = w.partymenu.as_ref().and_then(|m| m.stack.last()).cloned() else { return };
+    let Some((wx, wy)) = gu.window_xy(top.name, sw, sh) else { return };
+    let Some(layout) = gu.layout(top.name) else { return };
+    let hit = layout.elements.iter().skip(1).filter(|e| e.links[2] != 0xff).find(|e| {
+        let (x, y) = (wx + e.x as f32, wy + e.y as f32);
+        p.0 >= x && p.0 < x + e.w as f32 && p.1 >= y && p.1 < y + e.h as f32
+    });
     let Some(e) = hit else { return };
     gu.hover.set(true);
-    if (moved || clicked)
-        && e.id != top.sel
+    if (moved || clicked) && e.id != top.sel
         && let Some(t) = w.partymenu.as_mut().and_then(|m| m.stack.last_mut())
     {
         t.sel = e.id;
@@ -712,14 +577,7 @@ pub fn pointer(
 
 /// The top window's help (slot 1, its own where it sets one) and title (frame string 1, group 0xd).
 pub fn bars(gu: &GameUi, w: &World, bars: &mut super::hudtop::BarText) {
-    let Some(top) = w
-        .partymenu
-        .as_ref()
-        .filter(|m| !m.hidden)
-        .and_then(|m| m.stack.last())
-    else {
-        return;
-    };
+    let Some(top) = w.partymenu.as_ref().filter(|m| !m.hidden).and_then(|m| m.stack.last()) else { return };
     let [h, title] = gu.focus_text(top.name, top.sel);
     bars.help[1] = help(gu, w, top).or(h).unwrap_or_default();
     bars.title[1] = title.unwrap_or_default();
@@ -730,9 +588,7 @@ pub fn bars(gu: &GameUi, w: &World, bars: &mut super::hudtop::BarText) {
 /// 431, FUN_10205b10) and alarm's mark (windowps 483 at child config 199 + 1, FUN_10205c50).
 pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
     let mut rects = Vec::new();
-    let Some(m) = w.partymenu.as_ref().filter(|m| !m.hidden) else {
-        return rects;
-    };
+    let Some(m) = w.partymenu.as_ref().filter(|m| !m.hidden) else { return rects };
     let n = m.stack.len();
     for (k, win) in m.stack.iter().enumerate() {
         let focused = k + 1 == n && focused(w);
@@ -740,41 +596,16 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         let find = find_child(win.name);
         let mut hide = off.clone();
         hide.extend(find);
-        let Some(lw) = gu.lobby_window_swaps(
-            win.name,
-            sw,
-            sh,
-            (0.0, 0.0),
-            Some(win.sel),
-            focused,
-            &hide,
-            &swaps(w, win.name),
-        ) else {
-            continue;
-        };
-        let Some((wx, wy)) = gu.window_xy(win.name, sw, sh) else {
-            continue;
-        };
+        let Some(lw) = gu.lobby_window_swaps(win.name, sw, sh, (0.0, 0.0), Some(win.sel), focused, &hide, &swaps(w, win.name)) else { continue };
+        let Some((wx, wy)) = gu.window_xy(win.name, sw, sh) else { continue };
         gu.disabled_children(win.name, wx, wy, &off, Some(win.sel).filter(|_| focused));
-        let at: Vec<(u16, f32, f32)> = gu.layout(win.name).map_or(Vec::new(), |l| {
-            l.elements
-                .iter()
-                .skip(1)
-                .map(|e| (e.id, wx + e.x as f32, wy + e.y as f32))
-                .collect()
-        });
+        let at: Vec<(u16, f32, f32)> = gu.layout(win.name).map_or(Vec::new(), |l| l.elements.iter().skip(1).map(|e| (e.id, wx + e.x as f32, wy + e.y as f32)).collect());
         let child = |id: u16| at.iter().find(|c| c.0 == id).map(|c| (c.1, c.2));
         if let Some(c) = find
             && let Some((cx, cy)) = child(c)
         {
             let on = win.sel == c;
-            gu.sprite(
-                "menu    windowps",
-                if seeker(w).is_some() { 79 } else { 82 },
-                cx,
-                cy,
-                if on { 0x8080_5020 } else { 0x8080_8080 },
-            );
+            gu.sprite("menu    windowps", if seeker(w).is_some() { 79 } else { 82 }, cx, cy, if on { 0x8080_5020 } else { 0x8080_8080 });
             if on && focused {
                 gu.cursor(cx, cy);
             }
@@ -804,34 +635,18 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
 /// The windows as the modern page draws them (none while a party-list pick hides the menu): the label sprites
 /// swapped in, the languages spoken, the alarm chosen.
 pub(super) fn views(w: &World) -> Vec<super::modern::MenuWin> {
-    let Some(m) = w.partymenu.as_ref().filter(|m| !m.hidden) else {
-        return Vec::new();
-    };
+    let Some(m) = w.partymenu.as_ref().filter(|m| !m.hidden) else { return Vec::new() };
     m.stack
         .iter()
         .map(|win| {
             let mut labels = swaps(w, win.name);
-            labels.extend(
-                find_child(win.name).map(|c| (c, if seeker(w).is_some() { 79 } else { 82 })),
-            );
+            labels.extend(find_child(win.name).map(|c| (c, if seeker(w).is_some() { 79 } else { 82 })));
             let marked = match win.name {
-                LANGS => LANG_BITS
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, b)| m.langs & 1 << **b != 0)
-                    .map(|(r, _)| r as u16 + 1)
-                    .collect(),
+                LANGS => LANG_BITS.iter().enumerate().filter(|(_, b)| m.langs & 1 << **b != 0).map(|(r, _)| r as u16 + 1).collect(),
                 ALARM => vec![w.game.get(0xc7) as u16 + 1],
                 _ => Vec::new(),
             };
-            super::modern::MenuWin {
-                name: win.name,
-                sel: win.sel,
-                off: disabled(w, win.name),
-                labels,
-                marked,
-                values: Vec::new(),
-            }
+            super::modern::MenuWin { name: win.name, sel: win.sel, off: disabled(w, win.name), labels, marked, values: Vec::new() }
         })
         .collect()
 }
@@ -842,17 +657,8 @@ pub fn draw_invite_icon(gu: &mut GameUi, w: &World, sw: f32, sh: f32) {
         return;
     }
     let name = gu.party_window_name().to_string();
-    if let (Some([x, y, ..]), Some(b)) = (
-        gu.window_rect(&name, sw, sh),
-        gu.cell_bounds("menu    keytops3", 69, 0),
-    ) {
-        gu.sprite(
-            "menu    keytops3",
-            69,
-            x - ((b[2] - b[0]) / 2.0).trunc(),
-            y - ((b[3] - b[1]) / 2.0).trunc(),
-            0x8080_8080,
-        );
+    if let (Some([x, y, ..]), Some(b)) = (gu.window_rect(&name, sw, sh), gu.cell_bounds("menu    keytops3", 69, 0)) {
+        gu.sprite("menu    keytops3", 69, x - ((b[2] - b[0]) / 2.0).trunc(), y - ((b[3] - b[1]) / 2.0).trunc(), 0x8080_8080);
     }
 }
 

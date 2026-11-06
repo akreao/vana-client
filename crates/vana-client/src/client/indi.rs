@@ -19,11 +19,7 @@ pub struct Indi {
 
 impl Indi {
     pub fn from_byte(b: u8) -> Self {
-        Indi {
-            element: b & 0xf,
-            size: b >> 4 & 3,
-            on: b & 0x40 != 0,
-        }
+        Indi { element: b & 0xf, size: b >> 4 & 3, on: b & 0x40 != 0 }
     }
 
     pub fn file(self) -> u32 {
@@ -52,10 +48,7 @@ pub enum Step {
 /// FUN_1009ad20: a new element or size while on drops the shown aura at once (true: remove it); the next frame
 /// makes it again.
 pub fn set(a: &mut Aura, v: Indi) -> bool {
-    let restart = v.on
-        && a.want.on
-        && (v.element, v.size) != (a.want.element, a.want.size)
-        && a.shown.is_some();
+    let restart = v.on && a.want.on && (v.element, v.size) != (a.want.element, a.want.size) && a.shown.is_some();
     if restart {
         (a.shown, a.dying, a.init_done) = (None, None, false);
     }
@@ -103,11 +96,7 @@ pub fn step(a: &mut Aura, show: bool, ticks: f32) -> Step {
 /// The aura's scale size for its owner (FUN_10084520: owner entity +0x130 >> 30).
 pub fn size(w: &World, aura: u32) -> Option<u8> {
     let owner = aura & !AURA;
-    let a = if owner == w.my_id {
-        &w.my_aura
-    } else {
-        &w.entities.get(&owner)?.aura
-    };
+    let a = if owner == w.my_id { &w.my_aura } else { &w.entities.get(&owner)?.aura };
     a.shown.map(|i| i.size)
 }
 
@@ -122,32 +111,18 @@ fn remove(w: &mut World, id: u32) {
 pub fn update(w: &mut World, dt: f32) {
     let (cfg, battle) = w.effects.filter;
     let party: Vec<u32> = w.party.party().map(|m| m.id).collect();
-    let mut owners: Vec<u32> = w
-        .entities
-        .iter()
-        .filter(|(id, e)| **id != w.my_id && e.kind == super::EntityKind::Player)
-        .map(|(id, _)| *id)
-        .collect();
+    let mut owners: Vec<u32> = w.entities.iter().filter(|(id, e)| **id != w.my_id && e.kind == super::EntityKind::Player).map(|(id, _)| *id).collect();
     owners.push(w.my_id);
     for owner in owners {
         let me = owner == w.my_id;
         let monster = !me && w.entities.get(&owner).is_some_and(|e| e.flags & 1 != 0);
         let c = crate::fx::filter_class(me, monster, me || party.contains(&owner), false);
         let show = crate::fx::effects_allowed(cfg, battle, c | c << 4);
-        let a = if me {
-            &mut w.my_aura
-        } else {
-            &mut w.entities.get_mut(&owner).expect("listed").aura
-        };
+        let a = if me { &mut w.my_aura } else { &mut w.entities.get_mut(&owner).expect("listed").aura };
         let id = AURA | owner;
         match step(a, show, dt * 60.0) {
             Step::Create(v) => {
-                log::info!(
-                    "indi aura {owner:#x}: element {} size {} (file {})",
-                    v.element,
-                    v.size,
-                    v.file()
-                );
+                log::info!("indi aura {owner:#x}: element {} size {} (file {})", v.element, v.size, v.file());
                 remove(w, id);
                 w.event_looks.push((id, Source::File(v.file())));
             }
@@ -155,17 +130,9 @@ pub fn update(w: &mut World, dt: f32) {
             Step::Remove => remove(w, id),
             Step::Keep => {}
         }
-        let a = if me {
-            &w.my_aura
-        } else {
-            &w.entities[&owner].aura
-        };
-        if a.shown.is_some()
-            && !a.init_done
-            && w.actors.get(&id).is_some_and(|x| x.character.is_some())
-        {
-            w.effects
-                .on_scheduler_quiet(id, u32::from_le_bytes(*b"init"));
+        let a = if me { &w.my_aura } else { &w.entities[&owner].aura };
+        if a.shown.is_some() && !a.init_done && w.actors.get(&id).is_some_and(|x| x.character.is_some()) {
+            w.effects.on_scheduler_quiet(id, u32::from_le_bytes(*b"init"));
             if me {
                 w.my_aura.init_done = true;
             } else if let Some(e) = w.entities.get_mut(&owner) {
@@ -174,14 +141,7 @@ pub fn update(w: &mut World, dt: f32) {
         }
     }
     // Owners that left (FUN_10092900): their auras go with them.
-    let gone: Vec<u32> = w
-        .actors
-        .keys()
-        .filter(|&&id| {
-            id & AURA != 0 && id & !AURA != w.my_id && !w.entities.contains_key(&(id & !AURA))
-        })
-        .copied()
-        .collect();
+    let gone: Vec<u32> = w.actors.keys().filter(|&&id| id & AURA != 0 && id & !AURA != w.my_id && !w.entities.contains_key(&(id & !AURA))).copied().collect();
     for id in gone {
         remove(w, id);
     }
@@ -193,9 +153,7 @@ pub fn apply(w: &mut World, owner: u32, b: u8) {
     let a = if owner == w.my_id {
         &mut w.my_aura
     } else {
-        let Some(e) = w.entities.get_mut(&owner) else {
-            return;
-        };
+        let Some(e) = w.entities.get_mut(&owner) else { return };
         &mut e.aura
     };
     if set(a, v) {
@@ -211,46 +169,12 @@ mod tests {
     #[test]
     fn indi_bits() {
         let i = Indi::from_byte(0x56);
-        assert_eq!(
-            (i, i.file()),
-            (
-                Indi {
-                    element: 6,
-                    size: 1,
-                    on: true
-                },
-                52217
-            )
-        );
+        assert_eq!((i, i.file()), (Indi { element: 6, size: 1, on: true }, 52217));
         assert_eq!(Indi::from_byte(0x5d).file(), 52224);
-        assert_eq!(
-            Indi::from_byte(0x10),
-            Indi {
-                element: 0,
-                size: 1,
-                on: false
-            }
-        );
-        assert_eq!(
-            Indi::from_byte(0x60),
-            Indi {
-                element: 0,
-                size: 2,
-                on: true
-            }
-        );
-        assert_eq!(
-            Indi::from_byte(0xd6 & 0x7f),
-            Indi {
-                element: 6,
-                size: 1,
-                on: true
-            }
-        );
-        assert_eq!(
-            (Indi::from_byte(0x0f).file(), Indi::from_byte(0).file()),
-            (52226, 52211)
-        );
+        assert_eq!(Indi::from_byte(0x10), Indi { element: 0, size: 1, on: false });
+        assert_eq!(Indi::from_byte(0x60), Indi { element: 0, size: 2, on: true });
+        assert_eq!(Indi::from_byte(0xd6 & 0x7f), Indi { element: 6, size: 1, on: true });
+        assert_eq!((Indi::from_byte(0x0f).file(), Indi::from_byte(0).file()), (52226, 52211));
     }
 
     #[test]
@@ -290,32 +214,16 @@ mod tests {
     /// Aura file 52211 (fire, allies): the size bytes, init -> star, the looping generators.
     #[test]
     fn indi_files() {
-        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir())
-        else {
-            return;
-        };
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
         let Ok(bytes) = index.read(52211) else { return };
         let lib = crate::fx::lib::Library::load(52211, bytes.clone()).unwrap();
-        let mut loops: Vec<String> = lib
-            .gens
-            .iter()
-            .filter(|g| g.flags & 0x1000 != 0)
-            .map(|g| String::from_utf8_lossy(&g.name).into_owned())
-            .collect();
+        let mut loops: Vec<String> = lib.gens.iter().filter(|g| g.flags & 0x1000 != 0).map(|g| String::from_utf8_lossy(&g.name).into_owned()).collect();
         loops.sort();
         assert_eq!(loops, ["gl01", "hk01", "sen8", "sen9", "yr01", "yr02"]);
         assert!(lib.gens.iter().all(|g| g.attach_mode() == 2));
         let ops = |name: &[u8; 4]| {
-            let n = lib
-                .find_global(
-                    crate::dat::generator::kind::SCHEDULER,
-                    u32::from_le_bytes(*name),
-                )
-                .unwrap();
-            crate::dat::sched::ops(&bytes[lib.tree.nodes[n].data.clone()])
-                .iter()
-                .map(|o| (o.code, o.name().unwrap_or("").to_string()))
-                .collect::<Vec<_>>()
+            let n = lib.find_global(crate::dat::generator::kind::SCHEDULER, u32::from_le_bytes(*name)).unwrap();
+            crate::dat::sched::ops(&bytes[lib.tree.nodes[n].data.clone()]).iter().map(|o| (o.code, o.name().unwrap_or("").to_string())).collect::<Vec<_>>()
         };
         assert!(ops(b"init").contains(&(0x57, "star".to_string())));
         assert!(ops(b"star").contains(&(0x0b, "7195".to_string())));

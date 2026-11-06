@@ -3,9 +3,7 @@
 
 use super::super::hudtop::TopView;
 use super::{Modern, STRONG, paint};
-use egui::{
-    Align2, Color32, Context, FontFamily, FontId, Id, LayerId, Order, Painter, Rect, pos2, vec2,
-};
+use egui::{Align2, Color32, Context, FontFamily, FontId, Id, LayerId, Order, Painter, Rect, pos2, vec2};
 
 /// Edge margin, bar height, the side boxes' width and the gaps, in points (retail: 16, 30, 112, 2 px).
 const PAD: f32 = 16.0;
@@ -26,27 +24,15 @@ pub struct Marquee {
 }
 
 pub fn draw(m: &Modern, ctx: &Context, v: &TopView) {
-    let p = ctx.layer_painter(LayerId::new(
-        Order::Background,
-        Id::unique("modern top bar"),
-    ));
+    let p = ctx.layer_painter(LayerId::new(Order::Background, Id::unique("modern top bar")));
     let screen = ctx.content_rect();
     // What the bar covers, for the windows on the top edge.
-    let (x0, x1) = (
-        if v.title_up { PAD } else { PAD + SIDE + GAP },
-        if v.net_up { PAD } else { PAD + NET + GAP },
-    );
-    let span = Rect::from_min_max(
-        pos2(screen.min.x + x0, screen.min.y),
-        pos2(screen.max.x - x1, screen.min.y + PAD + H),
-    );
+    let (x0, x1) = (if v.title_up { PAD } else { PAD + SIDE + GAP }, if v.net_up { PAD } else { PAD + NET + GAP });
+    let span = Rect::from_min_max(pos2(screen.min.x + x0, screen.min.y), pos2(screen.max.x - x1, screen.min.y + PAD + H));
     m.top_bar.set((v.alpha > 0.0).then_some((span, v.alpha)));
     let frame = |r: Rect| {
         if v.alpha > 0.0 {
-            p.add(paint::faded(
-                super::borders::window(m, "window_normal", r),
-                v.alpha,
-            ));
+            p.add(paint::faded(super::borders::window(m, "window_normal", r), v.alpha));
         }
     };
     // titlewin: the title, clipped to the box; the content is drawn whatever the fade.
@@ -54,45 +40,25 @@ pub fn draw(m: &Modern, ctx: &Context, v: &TopView) {
         let r = Rect::from_min_size(pos2(screen.min.x + PAD, screen.min.y + PAD), vec2(SIDE, H));
         frame(r);
         let font = FontId::new(m.theme.ui, FontFamily::Name(STRONG.into()));
-        p.with_clip_rect(r.shrink2(vec2(10.0, 0.0))).text(
-            pos2(r.min.x + 12.0, r.center().y),
-            Align2::LEFT_CENTER,
-            &v.title,
-            font,
-            m.theme.color("gold"),
-        );
+        p.with_clip_rect(r.shrink2(vec2(10.0, 0.0))).text(pos2(r.min.x + 12.0, r.center().y), Align2::LEFT_CENTER, &v.title, font, m.theme.color("gold"));
     }
     // helpwind between the two, its "Help" legend only while fully shown.
-    let r = Rect::from_min_max(
-        pos2(screen.min.x + PAD + SIDE + GAP, screen.min.y + PAD),
-        pos2(screen.max.x - PAD - NET - GAP, screen.min.y + PAD + H),
-    );
+    let r = Rect::from_min_max(pos2(screen.min.x + PAD + SIDE + GAP, screen.min.y + PAD), pos2(screen.max.x - PAD - NET - GAP, screen.min.y + PAD + H));
     frame(r);
     if v.shown {
         legend(&p, m, r, "Help", true);
     }
     help(m, ctx, &p, r, v);
     if v.net_up {
-        let r = Rect::from_min_size(
-            pos2(screen.max.x - PAD - NET, screen.min.y + PAD),
-            vec2(NET, H),
-        );
+        let r = Rect::from_min_size(pos2(screen.max.x - PAD - NET, screen.min.y + PAD), vec2(NET, H));
         frame(r);
         if v.alpha > 0.0 {
             legend(&p, m, r, "Network", false);
         }
         network(&p, m, r, v);
         // Its tooltip (ours) where no window covers it.
-        if let Some(at) = ctx.input(|i| i.pointer.hover_pos()).filter(|at| {
-            r.contains(*at)
-                && ctx
-                    .layer_id_at(*at)
-                    .is_none_or(|l| l.order == Order::Background)
-        }) {
-            let body = format!(
-                "Connection {}%: it falls while the server sends nothing.\nS {} / R {}: bytes sent and received a second.",
-                v.pct, v.sent, v.recv
-            );
+        if let Some(at) = ctx.input(|i| i.pointer.hover_pos()).filter(|at| r.contains(*at) && ctx.layer_id_at(*at).is_none_or(|l| l.order == Order::Background)) {
+            let body = format!("Connection {}%: it falls while the server sends nothing.\nS {} / R {}: bytes sent and received a second.", v.pct, v.sent, v.recv);
             m.tip_at(ctx, at, "Network", &body);
         }
     }
@@ -101,23 +67,9 @@ pub fn draw(m: &Modern, ctx: &Context, v: &TopView) {
 /// A small caption on a box's top border, at its right or left end (retail's "Help" and "Network" sprites).
 fn legend(p: &Painter, m: &Modern, r: Rect, text: &str, right: bool) {
     let font = FontId::proportional(SMALL);
-    let w = p
-        .layout_no_wrap(text.to_string(), font.clone(), Color32::WHITE)
-        .size()
-        .x;
-    let at = pos2(
-        if right {
-            r.max.x - 28.0 - w
-        } else {
-            r.min.x + 28.0
-        },
-        r.min.y + 1.0,
-    );
-    p.rect_filled(
-        Rect::from_min_size(at - vec2(6.0, 9.0), vec2(w + 12.0, 18.0)),
-        4.0,
-        m.theme.color("charcoal"),
-    );
+    let w = p.layout_no_wrap(text.to_string(), font.clone(), Color32::WHITE).size().x;
+    let at = pos2(if right { r.max.x - 28.0 - w } else { r.min.x + 28.0 }, r.min.y + 1.0);
+    p.rect_filled(Rect::from_min_size(at - vec2(6.0, 9.0), vec2(w + 12.0, 18.0)), 4.0, m.theme.color("charcoal"));
     p.text(at, Align2::LEFT_CENTER, text, font, m.theme.color("muted"));
 }
 
@@ -128,11 +80,7 @@ fn help(m: &Modern, ctx: &Context, p: &Painter, r: Rect, v: &TopView) {
     let now = ctx.input(|i| i.time);
     let ticks = q.last.map_or(0.0, |t| ((now - t) as f32 * 60.0).min(30.0));
     q.last = Some(now);
-    let shown = if v.busy.is_some() {
-        q.text.clone()
-    } else {
-        v.help.clone()
-    };
+    let shown = if v.busy.is_some() { q.text.clone() } else { v.help.clone() };
     if shown != q.text {
         (q.text, q.wait, q.off) = (shown, 60.0, 0.0);
     }
@@ -140,11 +88,7 @@ fn help(m: &Modern, ctx: &Context, p: &Painter, r: Rect, v: &TopView) {
     if let Some(f) = v.busy {
         // keytops3 165..169's five steps as five dots, the lit one walking.
         for k in 0..5 {
-            let c = if k == f {
-                m.theme.color("gold")
-            } else {
-                m.theme.color("bronze").gamma_multiply(0.4)
-            };
+            let c = if k == f { m.theme.color("gold") } else { m.theme.color("bronze").gamma_multiply(0.4) };
             p.circle_filled(pos2(r.center().x + (k as f32 - 2.0) * 12.0, cy), 3.5, c);
         }
         return;
@@ -162,30 +106,14 @@ fn help(m: &Modern, ctx: &Context, p: &Painter, r: Rect, v: &TopView) {
         return;
     }
     let looped = format!("{}    ", q.text);
-    let cycle = p
-        .layout_no_wrap(looped.clone(), font.clone(), col)
-        .size()
-        .x
-        .max(1.0);
+    let cycle = p.layout_no_wrap(looped.clone(), font.clone(), col).size().x.max(1.0);
     if q.wait > 0.0 {
         q.wait -= ticks;
     } else {
         q.off = (q.off + ticks) % cycle;
     }
-    clip.text(
-        pos2(bx.min.x - q.off, cy),
-        Align2::LEFT_CENTER,
-        &looped,
-        font.clone(),
-        col,
-    );
-    clip.text(
-        pos2(bx.min.x - q.off + cycle, cy),
-        Align2::LEFT_CENTER,
-        &looped,
-        font,
-        col,
-    );
+    clip.text(pos2(bx.min.x - q.off, cy), Align2::LEFT_CENTER, &looped, font.clone(), col);
+    clip.text(pos2(bx.min.x - q.off + cycle, cy), Align2::LEFT_CENTER, &looped, font, col);
 }
 
 /// netstat: the meter (four bars by level, the lit step walking as retail's frames do), the percentage, S / R.
@@ -193,68 +121,24 @@ fn network(p: &Painter, m: &Modern, r: Rect, v: &TopView) {
     // Retail's state 2 on the mail page: a Help Desk reply is waiting (/helpdesk shows it).
     if v.gm_reply {
         if let Some(s) = m.art.sprite("icons/help") {
-            p.add(super::paint::image(
-                &s,
-                pos2(r.min.x + 18.0, r.center().y - 10.0),
-                20.0,
-                Color32::WHITE,
-            ));
+            p.add(super::paint::image(&s, pos2(r.min.x + 18.0, r.center().y - 10.0), 20.0, Color32::WHITE));
         }
-        p.text(
-            pos2(r.min.x + 44.0, r.center().y + 2.0),
-            Align2::LEFT_CENTER,
-            "Help Desk reply",
-            FontId::proportional(SMALL),
-            m.theme.color("gold"),
-        );
+        p.text(pos2(r.min.x + 44.0, r.center().y + 2.0), Align2::LEFT_CENTER, "Help Desk reply", FontId::proportional(SMALL), m.theme.color("gold"));
         if let Some(s) = m.art.sprite("icons/notification") {
-            p.add(super::paint::image(
-                &s,
-                pos2(r.max.x - 32.0, r.center().y - 9.0),
-                18.0,
-                Color32::WHITE,
-            ));
+            p.add(super::paint::image(&s, pos2(r.max.x - 32.0, r.center().y - 9.0), 18.0, Color32::WHITE));
         }
         return;
     }
     // Retail's mail page (netstat page 0): an envelope (red with a system message) and the unread count.
     if let Some((n, sys)) = v.mail {
-        let c = if sys {
-            m.theme.color("hp")
-        } else {
-            m.theme.color("gold")
-        };
+        let c = if sys { m.theme.color("hp") } else { m.theme.color("gold") };
         let e = Rect::from_center_size(pos2(r.min.x + 30.0, r.center().y + 1.0), vec2(22.0, 15.0));
         p.rect_stroke(e, 2.0, egui::Stroke::new(1.5, c), egui::StrokeKind::Inside);
-        p.line_segment(
-            [
-                e.left_top() + vec2(2.0, 2.0),
-                pos2(e.center().x, e.center().y + 2.0),
-            ],
-            egui::Stroke::new(1.5, c),
-        );
-        p.line_segment(
-            [
-                e.right_top() + vec2(-2.0, 2.0),
-                pos2(e.center().x, e.center().y + 2.0),
-            ],
-            egui::Stroke::new(1.5, c),
-        );
-        p.text(
-            pos2(r.min.x + 50.0, r.center().y + 2.0),
-            Align2::LEFT_CENTER,
-            "PlayOnline",
-            FontId::proportional(SMALL),
-            m.theme.color("muted"),
-        );
+        p.line_segment([e.left_top() + vec2(2.0, 2.0), pos2(e.center().x, e.center().y + 2.0)], egui::Stroke::new(1.5, c));
+        p.line_segment([e.right_top() + vec2(-2.0, 2.0), pos2(e.center().x, e.center().y + 2.0)], egui::Stroke::new(1.5, c));
+        p.text(pos2(r.min.x + 50.0, r.center().y + 2.0), Align2::LEFT_CENTER, "PlayOnline", FontId::proportional(SMALL), m.theme.color("muted"));
         if n > 0 {
-            p.text(
-                pos2(r.max.x - 14.0, r.center().y + 2.0),
-                Align2::RIGHT_CENTER,
-                n.to_string(),
-                FontId::proportional(m.theme.ui + 2.0),
-                m.theme.color("text"),
-            );
+            p.text(pos2(r.max.x - 14.0, r.center().y + 2.0), Align2::RIGHT_CENTER, n.to_string(), FontId::proportional(m.theme.ui + 2.0), m.theme.color("text"));
         }
         return;
     }
@@ -269,10 +153,7 @@ fn network(p: &Painter, m: &Modern, r: Rect, v: &TopView) {
     let x0 = r.min.x + 14.0;
     for k in 0..4 {
         let h = 7.0 + k as f32 * 5.0;
-        let bar = Rect::from_min_size(
-            pos2(x0 + k as f32 * 7.0, r.center().y + 11.0 - h),
-            vec2(5.0, h),
-        );
+        let bar = Rect::from_min_size(pos2(x0 + k as f32 * 7.0, r.center().y + 11.0 - h), vec2(5.0, h));
         let on = level > 0 && (k as u8) < level + 1;
         let c = if !on {
             m.theme.color("bronze").gamma_multiply(0.3)
@@ -284,30 +165,12 @@ fn network(p: &Painter, m: &Modern, r: Rect, v: &TopView) {
         p.rect_filled(bar, 1.0, c);
     }
     let small = FontId::proportional(SMALL);
-    p.text(
-        pos2(x0 + 36.0, r.center().y + 2.0),
-        Align2::LEFT_CENTER,
-        format!("{}%", v.pct),
-        FontId::proportional(m.theme.ui + 2.0),
-        m.theme.color("text"),
-    );
+    p.text(pos2(x0 + 36.0, r.center().y + 2.0), Align2::LEFT_CENTER, format!("{}%", v.pct), FontId::proportional(m.theme.ui + 2.0), m.theme.color("text"));
     // S and R in a column, their numbers right-aligned beside them.
     let (lx, nx) = (r.max.x - 66.0, r.max.x - 14.0);
     for (k, (label, n)) in [("S", v.sent), ("R", v.recv)].into_iter().enumerate() {
         let y = r.center().y - 6.0 + 16.0 * k as f32;
-        p.text(
-            pos2(lx, y),
-            Align2::LEFT_CENTER,
-            label,
-            small.clone(),
-            m.theme.color("muted"),
-        );
-        p.text(
-            pos2(nx, y),
-            Align2::RIGHT_CENTER,
-            n.to_string(),
-            small.clone(),
-            m.theme.color("muted"),
-        );
+        p.text(pos2(lx, y), Align2::LEFT_CENTER, label, small.clone(), m.theme.color("muted"));
+        p.text(pos2(nx, y), Align2::RIGHT_CENTER, n.to_string(), small.clone(), m.theme.color("muted"));
     }
 }

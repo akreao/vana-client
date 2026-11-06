@@ -31,13 +31,9 @@ impl Codec {
         let at = if records_at(dll, KNOWN_OFFSET) {
             KNOWN_OFFSET
         } else {
-            (0..dll.len().saturating_sub(RECORDS))
-                .find(|&o| records_at(dll, o))
-                .ok_or_else(|| anyhow::anyhow!("no compression table in FFXiMain.dll"))?
+            (0..dll.len().saturating_sub(RECORDS)).find(|&o| records_at(dll, o)).ok_or_else(|| anyhow::anyhow!("no compression table in FFXiMain.dll"))?
         };
-        let field = |i: usize, o: usize| {
-            u32::from_le_bytes(dll[at + i * 9 + o..at + i * 9 + o + 4].try_into().unwrap())
-        };
+        let field = |i: usize, o: usize| u32::from_le_bytes(dll[at + i * 9 + o..at + i * 9 + o + 4].try_into().unwrap());
         let mut table = vec![0u8; 2048];
         for i in 0..256 {
             table[i * 4..i * 4 + 4].copy_from_slice(&field(i, 1).to_le_bytes());
@@ -52,11 +48,7 @@ impl Codec {
             bail!("compression table must be 2048 bytes, got {}", table.len());
         }
         let word = |i: usize| u32::from_le_bytes(table[i * 4..i * 4 + 4].try_into().unwrap());
-        let mut codec = Codec {
-            codes: [0; 256],
-            lens: [0; 256],
-            tree: vec![[0, 0]],
-        };
+        let mut codec = Codec { codes: [0; 256], lens: [0; 256], tree: vec![[0, 0]] };
         for b in 0..=255u8 {
             let len = word(signed_index(b, 0x180));
             if !(1..=32).contains(&len) {
@@ -98,11 +90,7 @@ impl Codec {
         let (mut acc, mut acc_bits, mut bits) = (0u64, 0u32, 0u32);
         for &b in input {
             let len = self.lens[b as usize] as u32;
-            let code = if len >= 32 {
-                self.codes[b as usize]
-            } else {
-                self.codes[b as usize] & ((1 << len) - 1)
-            };
+            let code = if len >= 32 { self.codes[b as usize] } else { self.codes[b as usize] & ((1 << len) - 1) };
             acc |= (code as u64) << acc_bits;
             acc_bits += len;
             bits += len;
@@ -155,9 +143,7 @@ mod tests {
     /// Set FFXI_MAIN_DLL to the game's FFXiMain.dll: its table must equal the server's.
     #[test]
     fn game_table_matches_server_table() {
-        let (Some(server), Ok(dll)) = (codec(), std::env::var("FFXI_MAIN_DLL")) else {
-            return;
-        };
+        let (Some(server), Ok(dll)) = (codec(), std::env::var("FFXI_MAIN_DLL")) else { return };
         let game = Codec::from_ffximain(&std::fs::read(dll).unwrap()).unwrap();
         assert_eq!(game.codes, server.codes);
         assert_eq!(game.lens, server.lens);
@@ -166,9 +152,7 @@ mod tests {
     #[test]
     fn round_trip() {
         let Some(c) = codec() else { return };
-        let input: Vec<u8> = (0..4000u32)
-            .map(|i| (i.wrapping_mul(2654435761) >> 13) as u8)
-            .collect();
+        let input: Vec<u8> = (0..4000u32).map(|i| (i.wrapping_mul(2654435761) >> 13) as u8).collect();
         let (packed, size) = c.compress(&input);
         assert_eq!(c.decompress(&packed, size).unwrap(), input);
     }
@@ -176,14 +160,9 @@ mod tests {
     /// Our trie must decode every code exactly as the decompress.dat tree used by LSB does.
     #[test]
     fn matches_server_tree() {
-        let (Some(c), Ok(path)) = (codec(), std::env::var("FFXI_DECOMPRESS_TABLE")) else {
-            return;
-        };
+        let (Some(c), Ok(path)) = (codec(), std::env::var("FFXI_DECOMPRESS_TABLE")) else { return };
         let raw = std::fs::read(path).unwrap();
-        let dec: Vec<u32> = raw
-            .chunks(4)
-            .map(|w| u32::from_le_bytes(w.try_into().unwrap()))
-            .collect();
+        let dec: Vec<u32> = raw.chunks(4).map(|w| u32::from_le_bytes(w.try_into().unwrap())).collect();
         let base = dec[0] - 4;
         for b in 0..=255u8 {
             let (code, len) = (c.codes[b as usize], c.lens[b as usize]);
@@ -193,10 +172,7 @@ mod tests {
                 assert!(next > 0xff, "byte {b:#04x} leaves the tree early");
                 node = ((next - base) / 4) as usize;
             }
-            assert!(
-                dec[node] == 0 && dec[node + 1] == 0,
-                "byte {b:#04x} does not end on a leaf"
-            );
+            assert!(dec[node] == 0 && dec[node + 1] == 0, "byte {b:#04x} does not end on a leaf");
             assert_eq!(dec[node + 3], b as u32, "byte {b:#04x} decodes differently");
         }
     }

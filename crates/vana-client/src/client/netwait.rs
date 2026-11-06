@@ -53,31 +53,10 @@ fn step(id: u8, fresh: bool) -> (u32, Vec<Call>) {
                 17 => Some(7),
                 _ => None,
             };
-            (
-                21,
-                (0..21)
-                    .map(|s| c(text(s), s + 1, matches!(s, 14 | 16 | 18)))
-                    .collect(),
-            )
+            (21, (0..21).map(|s| c(text(s), s + 1, matches!(s, 14 | 16 | 18))).collect())
         }
-        1 => (
-            21,
-            vec![
-                c(Some(0), 3, false),
-                c(Some(1), 4, false),
-                c(None, 5, false),
-                c(None, 21, false),
-            ],
-        ),
-        2 => (
-            4,
-            vec![
-                c(Some(8), 1, false),
-                c(None, 2, true),
-                c(None, 3, false),
-                c(None, 4, false),
-            ],
-        ),
+        1 => (21, vec![c(Some(0), 3, false), c(Some(1), 4, false), c(None, 5, false), c(None, 21, false)]),
+        2 => (4, vec![c(Some(8), 1, false), c(None, 2, true), c(None, 3, false), c(None, 4, false)]),
         3 => (
             22,
             vec![
@@ -103,28 +82,10 @@ fn step(id: u8, fresh: bool) -> (u32, Vec<Call>) {
                 0x14 => 0x17,
                 _ => 0x18,
             };
-            (
-                10,
-                vec![
-                    c(Some(t), 1, false),
-                    c(None, 2, false),
-                    c(None, 3, false),
-                    c(None, 4, true),
-                    c(None, 5, false),
-                    c(None, 10, false),
-                ],
-            )
+            (10, vec![c(Some(t), 1, false), c(None, 2, false), c(None, 3, false), c(None, 4, true), c(None, 5, false), c(None, 10, false)])
         }
         5 => (2, vec![c(Some(0x1c), 1, false), c(None, 2, true)]),
-        0x13 => (
-            4,
-            vec![
-                c(Some(9), 1, false),
-                c(None, 2, false),
-                c(None, 3, false),
-                c(None, 4, false),
-            ],
-        ),
+        0x13 => (4, vec![c(Some(9), 1, false), c(None, 2, false), c(None, 3, false), c(None, 4, false)]),
         _ => (1, Vec::new()),
     }
 }
@@ -163,52 +124,23 @@ impl NetWait {
             Op::NameCheck => &[1, 0x14],
             Op::Rename => &[1, 0x16, 0x13, 2],
         };
-        let built: Vec<(u32, Vec<Call>)> =
-            steps.iter().map(|&s| step(s, op == Op::Connect)).collect();
+        let built: Vec<(u32, Vec<Call>)> = steps.iter().map(|&s| step(s, op == Op::Connect)).collect();
         let total = built.iter().map(|b| b.0).sum::<u32>().max(1) as f32;
         let mut frames = Vec::new();
         let mut done = 0;
         for (k, (n, calls)) in built.into_iter().enumerate() {
             // Each step start: two pump frames with the old text and bar.
-            frames.extend(
-                [Frame {
-                    text: None,
-                    p: None,
-                    reply: false,
-                    refusable: false,
-                }; 2],
-            );
+            frames.extend([Frame { text: None, p: None, reply: false, refusable: false }; 2]);
             let refusable = matches!(steps[k], 4 | 0x14 | 0x16);
             for call in calls {
-                frames.push(Frame {
-                    text: call.text,
-                    p: Some((done + call.sub) as f32 / total),
-                    reply: call.reply,
-                    refusable: refusable && call.reply,
-                });
+                frames.push(Frame { text: call.text, p: Some((done + call.sub) as f32 / total), reply: call.reply, refusable: refusable && call.reply });
             }
             // The call that returns done (sub = N).
-            frames.push(Frame {
-                text: None,
-                p: Some((done + n) as f32 / total),
-                reply: false,
-                refusable: false,
-            });
+            frames.push(Frame { text: None, p: Some((done + n) as f32 / total), reply: false, refusable: false });
             done += n;
         }
         let base = replies.load(Ordering::Relaxed);
-        Self {
-            frames,
-            at: 0,
-            text: None,
-            p: 0.0,
-            replies,
-            base,
-            passed: 0,
-            parked: None,
-            hold: None,
-            acc: 0.0,
-        }
+        Self { frames, at: 0, text: None, p: 0.0, replies, base, passed: 0, parked: None, hold: None, acc: 0.0 }
     }
 
     /// The worker's Task waits here; `refused` for a lobby refusal (the step's subs 6..9, then no hold).
@@ -277,11 +209,7 @@ impl NetWait {
 
 /// What the wait shows: its text and the bar's progress (the modern layer's panel).
 pub fn view(gu: &GameUi, nw: &NetWait) -> (String, f32) {
-    (
-        nw.text
-            .map_or(String::new(), |t| gu.lobby_msg(8, t as usize, "")),
-        nw.p,
-    )
+    (nw.text.map_or(String::new(), |t| gu.lobby_msg(8, t as usize, "")), nw.p)
 }
 
 /// Both windows (FUN_102408a0 / FUN_102409a0), centred as the prompts: the status text in netwait's frame, then the

@@ -46,28 +46,14 @@ impl MsgShift {
             match f.as_slice() {
                 ["zone", z, md5, conf] => {
                     let Ok(z) = z.parse() else { continue };
-                    zones.insert(
-                        z,
-                        ZoneShift {
-                            md5: md5.to_string(),
-                            confidence: conf.to_string(),
-                            segs: Vec::new(),
-                        },
-                    );
+                    zones.insert(z, ZoneShift { md5: md5.to_string(), confidence: conf.to_string(), segs: Vec::new() });
                     cur = Some(z);
                 }
                 [a, b, d, n] if !a.starts_with('#') => {
-                    let (Some(z), Ok(from), Ok(to), Ok(delta), Ok(anchors)) =
-                        (cur, a.parse(), b.parse(), d.parse(), n.parse())
-                    else {
+                    let (Some(z), Ok(from), Ok(to), Ok(delta), Ok(anchors)) = (cur, a.parse(), b.parse(), d.parse(), n.parse()) else {
                         continue;
                     };
-                    zones.get_mut(&z).unwrap().segs.push(Seg {
-                        from,
-                        to,
-                        delta,
-                        anchors,
-                    });
+                    zones.get_mut(&z).unwrap().segs.push(Seg { from, to, delta, anchors });
                 }
                 _ => {}
             }
@@ -77,19 +63,13 @@ impl MsgShift {
 
     /// Keeps only zones whose dialogue file matches the install.
     pub fn verified(mut self, index: &DatIndex) -> MsgShift {
-        self.zones
-            .retain(|&z, s| index.read(file_id(z)).is_ok_and(|d| md5_8(&d) == s.md5));
+        self.zones.retain(|&z, s| index.read(file_id(z)).is_ok_and(|d| md5_8(&d) == s.md5));
         self
     }
 
     /// Installed message id for an LSB id, or None outside the matched segments.
     pub fn map(&self, zone: u16, lsb: u32) -> Option<u32> {
-        let s = self
-            .zones
-            .get(&zone)?
-            .segs
-            .iter()
-            .find(|s| s.from <= lsb && lsb <= s.to)?;
+        let s = self.zones.get(&zone)?.segs.iter().find(|s| s.from <= lsb && lsb <= s.to)?;
         lsb.checked_add_signed(s.delta)
     }
 
@@ -101,20 +81,10 @@ impl MsgShift {
             return Some(id);
         }
         let segs = &self.zones.get(&zone)?.segs;
-        if let Some(n) = segs
-            .iter()
-            .filter(|s| s.from > lsb && s.from - lsb <= 8)
-            .min_by_key(|s| s.from)
-        {
+        if let Some(n) = segs.iter().filter(|s| s.from > lsb && s.from - lsb <= 8).min_by_key(|s| s.from) {
             return lsb.checked_add_signed(n.delta);
         }
-        let near = segs.iter().min_by_key(|s| {
-            if lsb < s.from {
-                s.from - lsb
-            } else {
-                lsb.saturating_sub(s.to)
-            }
-        })?;
+        let near = segs.iter().min_by_key(|s| if lsb < s.from { s.from - lsb } else { lsb.saturating_sub(s.to) })?;
         lsb.checked_add_signed(near.delta)
     }
 }
@@ -143,31 +113,10 @@ fn dat_text(s: &[u8]) -> String {
             i += match c {
                 0x01 => 2 + a as usize,
                 0x02 | 0x03 => 3,
-                0x05
-                | 0x0a
-                | 0x0c
-                | 0x0d
-                | 0x0e
-                | 0x10..=0x14
-                | 0x16..=0x1a
-                | 0x1c
-                | 0x1e
-                | 0x1f => 2,
+                0x05 | 0x0a | 0x0c | 0x0d | 0x0e | 0x10..=0x14 | 0x16..=0x1a | 0x1c | 0x1e | 0x1f => 2,
                 0x7f => match a {
                     0x38 => 4,
-                    0x34..=0x36
-                    | 0x80
-                    | 0x81
-                    | 0x84
-                    | 0x86..=0x88
-                    | 0x8f
-                    | 0x92
-                    | 0x94..=0x97
-                    | 0xa0..=0xac
-                    | 0xb0
-                    | 0xb1
-                    | 0xb4
-                    | 0xb5 => 3,
+                    0x34..=0x36 | 0x80 | 0x81 | 0x84 | 0x86..=0x88 | 0x8f | 0x92 | 0x94..=0x97 | 0xa0..=0xac | 0xb0 | 0xb1 | 0xb4 | 0xb5 => 3,
                     _ => 2,
                 },
                 _ => 1,
@@ -197,17 +146,13 @@ fn norm(t: &str) -> String {
 
 /// `NAME = 123,` lines of scripts/enum/zone.codegen.lua.
 fn zone_ids(lsb: &Path) -> Result<BTreeMap<String, u16>> {
-    let text = std::fs::read_to_string(lsb.join("scripts/enum/zone.codegen.lua"))
-        .context("zone.codegen.lua")?;
+    let text = std::fs::read_to_string(lsb.join("scripts/enum/zone.codegen.lua")).context("zone.codegen.lua")?;
     let mut m = BTreeMap::new();
     for l in text.lines() {
         if let Some((k, v)) = l.trim().split_once('=') {
             let k = k.trim();
             let v = v.trim().trim_end_matches(',').trim();
-            if !k.is_empty()
-                && k.chars()
-                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
-            {
+            if !k.is_empty() && k.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_') {
                 if let Ok(v) = v.parse() {
                     m.insert(k.to_string(), v);
                 }
@@ -237,11 +182,7 @@ fn lsb_entries(text: &str) -> (Option<String>, Vec<(u32, String)>) {
             if let Some((num, com)) = rest.split_once(',') {
                 let com = com.trim();
                 if let (Ok(id), Some(c)) = (num.trim().parse::<u32>(), com.strip_prefix("--")) {
-                    if lhs
-                        .trim()
-                        .chars()
-                        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
-                    {
+                    if lhs.trim().chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_') {
                         out.push((id, c.trim().to_string()));
                     }
                 }
@@ -266,9 +207,7 @@ struct Analysis {
 
 /// Unique text matches become anchors (delta = dat id - lsb id); equal neighbours merge into segments.
 fn analyse(entries: &[(u32, String)], dialog: &Dialog) -> Analysis {
-    let nm: Vec<String> = (0..dialog.len() as u32)
-        .map(|i| norm(&dat_text(&dialog.raw(i).unwrap_or_default())))
-        .collect();
+    let nm: Vec<String> = (0..dialog.len() as u32).map(|i| norm(&dat_text(&dialog.raw(i).unwrap_or_default()))).collect();
     let mut by: BTreeMap<&str, Vec<u32>> = BTreeMap::new();
     for (i, t) in nm.iter().enumerate() {
         if !t.is_empty() {
@@ -286,30 +225,17 @@ fn analyse(entries: &[(u32, String)], dialog: &Dialog) -> Analysis {
         commented += 1;
         let mut c = by.get(t.as_str()).cloned().unwrap_or_default();
         if c.is_empty() && t.len() >= 20 {
-            c = nm
-                .iter()
-                .enumerate()
-                .filter(|(_, x)| x.starts_with(&t) || (x.len() >= 20 && t.starts_with(x.as_str())))
-                .map(|(i, _)| i as u32)
-                .collect();
+            c = nm.iter().enumerate().filter(|(_, x)| x.starts_with(&t) || (x.len() >= 20 && t.starts_with(x.as_str()))).map(|(i, _)| i as u32).collect();
         }
         let short = t.len() < 8 && c.len() > 1;
         rows.push((*lid, !short, c));
     }
-    let mut anchors: Vec<(u32, i32)> = rows
-        .iter()
-        .filter(|r| r.1 && r.2.len() == 1)
-        .map(|r| (r.0, r.2[0] as i32 - r.0 as i32))
-        .collect();
+    let mut anchors: Vec<(u32, i32)> =
+        rows.iter().filter(|r| r.1 && r.2.len() == 1).map(|r| (r.0, r.2[0] as i32 - r.0 as i32)).collect();
     anchors.sort();
     // A lone delta between two neighbours that agree is an outlier.
     let out: Vec<bool> = (0..anchors.len())
-        .map(|i| {
-            i > 0
-                && i + 1 < anchors.len()
-                && anchors[i - 1].1 == anchors[i + 1].1
-                && anchors[i].1 != anchors[i - 1].1
-        })
+        .map(|i| i > 0 && i + 1 < anchors.len() && anchors[i - 1].1 == anchors[i + 1].1 && anchors[i].1 != anchors[i - 1].1)
         .collect();
     let mut segs: Vec<Seg> = Vec::new();
     for (i, &(lid, d)) in anchors.iter().enumerate() {
@@ -321,12 +247,7 @@ fn analyse(entries: &[(u32, String)], dialog: &Dialog) -> Analysis {
                 s.to = lid;
                 s.anchors += 1;
             }
-            _ => segs.push(Seg {
-                from: lid,
-                to: lid,
-                delta: d,
-                anchors: 1,
-            }),
+            _ => segs.push(Seg { from: lid, to: lid, delta: d, anchors: 1 }),
         }
     }
     let seg_of = |lid: u32| segs.iter().find(|s| s.from <= lid && lid <= s.to);
@@ -360,13 +281,7 @@ fn confidence(a: &Analysis) -> &'static str {
     }
     let frac = a.matched as f32 / a.commented.max(1) as f32;
     let clean = a.outliers == 0 && a.inside_bad == 0 && a.amb_bad == 0;
-    let multi = a
-        .segs
-        .iter()
-        .filter(|s| s.anchors >= 2)
-        .map(|s| s.anchors)
-        .sum::<u32>() as f32
-        / a.anchors.max(1) as f32;
+    let multi = a.segs.iter().filter(|s| s.anchors >= 2).map(|s| s.anchors).sum::<u32>() as f32 / a.anchors.max(1) as f32;
     if frac >= 0.9 && clean && multi >= 0.8 {
         "high"
     } else if frac >= 0.6 && a.inside_bad <= 1 {
@@ -385,29 +300,18 @@ pub fn generate(index: &DatIndex, lsb: &Path, out: &Path) -> Result<()> {
          # FROM TO DELTA ANCHORS: LSB ids FROM..=TO map to id + DELTA; ids between segments are unknown.\n",
     );
     let (mut zones, mut commented, mut matched) = (0, 0, 0);
-    let mut dirs: Vec<_> = std::fs::read_dir(lsb.join("scripts/zones"))?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .collect();
+    let mut dirs: Vec<_> = std::fs::read_dir(lsb.join("scripts/zones"))?.filter_map(|e| e.ok()).map(|e| e.path()).collect();
     dirs.sort();
     let mut rows = Vec::new();
     for d in dirs {
-        let Ok(lua) = std::fs::read_to_string(d.join("IDs.lua")) else {
-            continue;
-        };
-        let (Some(name), entries) = lsb_entries(&lua) else {
-            continue;
-        };
+        let Ok(lua) = std::fs::read_to_string(d.join("IDs.lua")) else { continue };
+        let (Some(name), entries) = lsb_entries(&lua) else { continue };
         let Some(&z) = ids.get(&name) else { continue };
         if entries.is_empty() {
             continue;
         }
-        let Ok(raw) = index.read(file_id(z)) else {
-            continue;
-        };
-        let Ok(dialog) = Dialog::parse(&raw) else {
-            continue;
-        };
+        let Ok(raw) = index.read(file_id(z)) else { continue };
+        let Ok(dialog) = Dialog::parse(&raw) else { continue };
         let a = analyse(&entries, &dialog);
         zones += 1;
         commented += a.commented;
@@ -422,10 +326,7 @@ pub fn generate(index: &DatIndex, lsb: &Path, out: &Path) -> Result<()> {
         }
     }
     std::fs::write(out, &text)?;
-    println!(
-        "{zones} zones, {matched} of {commented} commented entries matched; wrote {}",
-        out.display()
-    );
+    println!("{zones} zones, {matched} of {commented} commented entries matched; wrote {}", out.display());
     Ok(())
 }
 
@@ -435,9 +336,7 @@ mod tests {
 
     #[test]
     fn parse_and_map() {
-        let s = MsgShift::parse(
-            "# c\nzone 230 0011223344556677 high\n6818 8244 -43 63\n8263 10355 -44 29\n",
-        );
+        let s = MsgShift::parse("# c\nzone 230 0011223344556677 high\n6818 8244 -43 63\n8263 10355 -44 29\n");
         assert_eq!(s.map(230, 8002), Some(7959));
         assert_eq!(s.map(230, 8250), None);
         assert_eq!(s.map(230, 8263), Some(8219));
@@ -447,10 +346,7 @@ mod tests {
     #[test]
     fn normalise() {
         assert_eq!(norm("You obtain <item>, [sir/madam]!"), "youobtain");
-        assert_eq!(
-            dat_text(b"Hi \x01\x05\x33\x82\x80\x80\x80 there\x7f\x31"),
-            "Hi   there "
-        );
+        assert_eq!(dat_text(b"Hi \x01\x05\x33\x82\x80\x80\x80 there\x7f\x31"), "Hi   there ");
     }
 
     #[test]

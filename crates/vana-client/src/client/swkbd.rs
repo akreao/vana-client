@@ -114,32 +114,20 @@ pub fn rb(w: &mut World) {
     if !super::text_field_open(w) {
         w.typing = true;
     }
-    w.swkbd = Some(Keyboard {
-        page: first_page(5),
-        cursor: 8,
-        at: Default::default(),
-    });
+    w.swkbd = Some(Keyboard { page: first_page(5), cursor: 8, at: Default::default() });
 }
 
 fn key_event(key: egui::Key, pressed: bool) -> egui::Event {
-    egui::Event::Key {
-        key,
-        physical_key: Some(key),
-        pressed,
-        repeat: false,
-        modifiers: egui::Modifiers::default(),
-    }
+    egui::Event::Key { key, physical_key: Some(key), pressed, repeat: false, modifiers: egui::Modifiers::default() }
 }
 
 /// What a key types into the field, as the keyboard would type it (T vt+4 kinds 5 and 3): next frame's input.
 fn send_key(w: &mut World, key: egui::Key) {
-    w.swkbd_out
-        .extend([key_event(key, true), key_event(key, false)]);
+    w.swkbd_out.extend([key_event(key, true), key_event(key, false)]);
 }
 
 fn send_char(w: &mut World, b: u8) {
-    w.swkbd_out
-        .push(egui::Event::Text(char::from(b).to_string()));
+    w.swkbd_out.push(egui::Event::Text(char::from(b).to_string()));
 }
 
 /// Kind 8, close (FUN_101b5cd0): the chat line closes with it, its text kept; a window field only loses the keyboard.
@@ -204,14 +192,9 @@ pub fn update(w: &mut World, gu: Option<&GameUi>, input: &mut super::input::Inpu
         return;
     }
     // The d-pad, one a frame (Up, Down, Left, Right): the layout's links [2] Up, [3] Down, [5] Left, [4] Right.
-    if let Some(&(_, l)) = [(0x2b, 2), (0x2c, 3), (0x2e, 5), (0x2d, 4)]
-        .iter()
-        .find(|(f, _)| input.test(*f, REPEAT))
-    {
+    if let Some(&(_, l)) = [(0x2b, 2), (0x2c, 3), (0x2e, 5), (0x2d, 4)].iter().find(|(f, _)| input.test(*f, REPEAT)) {
         let cursor = w.swkbd.as_ref().map_or(8, |k| k.cursor);
-        let to = gu
-            .and_then(|g| g.menu_links(NAME, cursor))
-            .map_or(0xff, |links| links[l]);
+        let to = gu.and_then(|g| g.menu_links(NAME, cursor)).map_or(0xff, |links| links[l]);
         if to != 0xff && to as u16 != cursor {
             if let Some(k) = w.swkbd.as_mut() {
                 k.cursor = to as u16;
@@ -232,13 +215,7 @@ pub fn update(w: &mut World, gu: Option<&GameUi>, input: &mut super::input::Inpu
         w.sounds.push(Ui::Cancel as u32);
         send_key(w, egui::Key::Escape);
     }
-    for (f, key) in [
-        (0x86, egui::Key::ArrowLeft),
-        (0x85, egui::Key::ArrowRight),
-        (0x22, egui::Key::Enter),
-        (0x14, egui::Key::Tab),
-        (0x1f, egui::Key::Backspace),
-    ] {
+    for (f, key) in [(0x86, egui::Key::ArrowLeft), (0x85, egui::Key::ArrowRight), (0x22, egui::Key::Enter), (0x14, egui::Key::Tab), (0x1f, egui::Key::Backspace)] {
         if input.test(f, PRESS) {
             send_key(w, key);
         }
@@ -269,13 +246,7 @@ fn scale(sw: f32) -> f32 {
 /// comment editor, above the log window (its bottom 2 px over the log's top, or 34 px over its bottom while it has no
 /// lines), above the chat line (32 more), else (32, 200).
 fn place(gu: &GameUi, w: &World, kh: f32, sh: f32) -> (f32, f32) {
-    let drawn = |name: &str| {
-        w.win_hits
-            .borrow()
-            .iter()
-            .find(|h| h.0 == name)
-            .map(|h| h.1)
-    };
+    let drawn = |name: &str| w.win_hits.borrow().iter().find(|h| h.0 == name).map(|h| h.1);
     let d = kh + 2.0;
     if !w.typing {
         if let Some(r) = drawn(super::macroedit::MACRO) {
@@ -286,9 +257,7 @@ fn place(gu: &GameUi, w: &World, kh: f32, sh: f32) -> (f32, f32) {
         }
     }
     if let (Some(top), Some(bottom)) = (gu.log_top, gu.log_bottom) {
-        let x = gu
-            .window_xy("menu    logwindo", 0.0, 0.0)
-            .map_or(16.0, |p| p.0);
+        let x = gu.window_xy("menu    logwindo", 0.0, 0.0).map_or(16.0, |p| p.0);
         return (x, (bottom - 32.0).min(top) - d);
     }
     if w.typing {
@@ -364,34 +333,11 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Option<[f32; 4]> {
     let hide: Vec<u16> = (1..=5).chain(8..=82).chain([0x54]).collect();
     let sel = SPECIAL.contains(&k.cursor).then_some(k.cursor);
     let win = gu.window_scaled(NAME, at, s, sel, &hide)?;
-    let kids: Vec<(u16, [f32; 4])> = gu
-        .menu_def(NAME)?
-        .elements
-        .iter()
-        .skip(1)
-        .filter(|e| !matches!(e.id, 1..=5 | 0x54))
-        .map(|e| {
-            (
-                e.id,
-                [
-                    at.0 + e.x as f32 * s,
-                    at.1 + e.y as f32 * s,
-                    e.w as f32 * s,
-                    e.h as f32 * s,
-                ],
-            )
-        })
-        .collect();
+    let kids: Vec<(u16, [f32; 4])> = gu.menu_def(NAME)?.elements.iter().skip(1).filter(|e| !matches!(e.id, 1..=5 | 0x54)).map(|e| (e.id, [at.0 + e.x as f32 * s, at.1 + e.y as f32 * s, e.w as f32 * s, e.h as f32 * s])).collect();
     let p = page(k.page);
     for (id, r) in kids.iter().filter(|(id, _)| (8..=82).contains(id)) {
         let cap = p.caps[(*id - 8) as usize];
-        let tint = if *id == k.cursor {
-            0x8080_5020
-        } else if dim(cap) {
-            0x4040_2810
-        } else {
-            0x8080_8080
-        };
+        let tint = if *id == k.cursor { 0x8080_5020 } else if dim(cap) { 0x4040_2810 } else { 0x8080_8080 };
         gu.sprite_scaled(CAPS, cap as usize, r[0] + s, r[1] + s, s, s, tint);
     }
     // The hand at the cursor child + the window header's (14, 14) *(inf)*.
@@ -405,9 +351,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Option<[f32; 4]> {
 /// The mouse on the keyboard (the generic window's): hovering a key moves the cursor, a click presses it; the right
 /// click does nothing here.
 pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: bool) -> bool {
-    let Some(cursor) = w.swkbd.as_ref().filter(|_| !w.modern).map(|k| k.cursor) else {
-        return false;
-    };
+    let Some(cursor) = w.swkbd.as_ref().filter(|_| !w.modern).map(|k| k.cursor) else { return false };
     if !super::winhits::over(w, NAME, p) {
         return false;
     }
@@ -445,11 +389,7 @@ pub fn zone_out(w: &mut World) {
 
 pub fn zone_in(w: &mut World) {
     if std::mem::take(&mut w.swkbd_reopen) && w.typing {
-        w.swkbd = Some(Keyboard {
-            page: first_page(5),
-            cursor: 8,
-            at: Default::default(),
-        });
+        w.swkbd = Some(Keyboard { page: first_page(5), cursor: 8, at: Default::default() });
     }
 }
 
@@ -464,10 +404,7 @@ mod tests {
         let p = page(11);
         assert_eq!(&p.keys[..15], b"1234567890.,'\"&");
         assert_eq!(&p.keys[15..30], b"abcdefghijklm@#");
-        assert_eq!(
-            (p.keys[45], p.keys[58], p.keys[73], p.keys[74]),
-            (0, b'[', b'!', b'?')
-        );
+        assert_eq!((p.keys[45], p.keys[58], p.keys[73], p.keys[74]), (0, b'[', b'!', b'?'));
         assert!(dim(p.caps[45]) && !dim(p.caps[15]));
         assert_eq!((p.shift, p.x, page(12).shift), (12, 12, 11));
         assert_eq!(&page(12).keys[15..28], b"ABCDEFGHIJKLM");

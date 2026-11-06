@@ -30,27 +30,15 @@ fn list_mut(w: &mut World) -> Option<&mut SetList> {
 
 /// mcrmenu child 2 (FUN_101a6c90): the page kept for the session read (or its defaults), the cursor on row 1.
 pub fn open(w: &mut World) {
-    let Some(es) = w.equipsets.as_mut() else {
-        return;
-    };
+    let Some(es) = w.equipsets.as_mut() else { return };
     es.load_page(es.page.unwrap_or(0));
     if let Some(m) = w.macroedit.as_mut() {
-        m.sets = Some(SetList {
-            sel: 1,
-            rename: None,
-            caret: 0,
-            row: 0,
-            opt: None,
-            ed: None,
-        });
+        m.sets = Some(SetList { sel: 1, rename: None, caret: 0, row: 0, opt: None, ed: None });
     }
 }
 
 pub fn typing(w: &World) -> bool {
-    w.macroedit
-        .as_ref()
-        .and_then(|m| m.sets.as_ref())
-        .is_some_and(|s| s.rename.is_some())
+    w.macroedit.as_ref().and_then(|m| m.sets.as_ref()).is_some_and(|s| s.rename.is_some())
 }
 
 /// FUN_101a7170(1): the field committed (Enter and Escape both; empty -> "Set%03d").
@@ -67,18 +55,12 @@ pub fn text_events(w: &mut World, events: &[egui::Event]) {
     use egui::Key as K;
     for ev in events {
         let Some(s) = list_mut(w) else { return };
-        let Some(name) = s.rename.as_mut() else {
-            return;
-        };
+        let Some(name) = s.rename.as_mut() else { return };
         if super::macroedit::line_edit(name, &mut s.caret, 15, ev) {
             continue;
         }
         match ev {
-            egui::Event::Key {
-                key: K::Enter | K::Escape,
-                pressed: true,
-                ..
-            } => {
+            egui::Event::Key { key: K::Enter | K::Escape, pressed: true, .. } => {
                 commit(w);
                 w.sounds.push(Ui::Select as u32);
             }
@@ -89,23 +71,15 @@ pub fn text_events(w: &mut World, events: &[egui::Event]) {
 
 /// FUN_101a71e0 / FUN_101a7230: the page written, the next / previous (wrapping 0..9) read.
 fn flip(w: &mut World, next: bool) {
-    let Some(es) = w.equipsets.as_mut() else {
-        return;
-    };
+    let Some(es) = w.equipsets.as_mut() else { return };
     es.save_page();
     let page = es.page.unwrap_or(0);
-    es.load_page(if next {
-        (page + 1) % 10
-    } else {
-        (page + 9) % 10
-    });
+    es.load_page(if next { (page + 1) % 10 } else { (page + 9) % 10 });
 }
 
 pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
     use egui::Key as K;
-    let Some(s) = w.macroedit.as_ref().and_then(|m| m.sets.as_ref()) else {
-        return;
-    };
+    let Some(s) = w.macroedit.as_ref().and_then(|m| m.sets.as_ref()) else { return };
     if s.ed.is_some() {
         super::esedit::key(w, gu, key);
         return;
@@ -166,24 +140,13 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
 }
 
 /// The mouse on mcres20 (rows and page arrows) or mcresmn; the slot editor's own.
-pub fn pointer(
-    w: &mut World,
-    gu: &GameUi,
-    sw: f32,
-    sh: f32,
-    p: (f32, f32),
-    moved: bool,
-    clicked: bool,
-    right: bool,
-) {
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
     use super::macroedit::generic;
     // The modern layer draws these and takes their mouse.
     if w.modern {
         return;
     }
-    let Some(s) = w.macroedit.as_ref().and_then(|m| m.sets.as_ref()) else {
-        return;
-    };
+    let Some(s) = w.macroedit.as_ref().and_then(|m| m.sets.as_ref()) else { return };
     if s.ed.is_some() {
         super::esedit::pointer(w, gu, sw, sh, p, moved, clicked, right);
         return;
@@ -199,22 +162,11 @@ pub fn pointer(
         }),
         None => {
             let sel = s.sel;
-            generic(
-                w,
-                gu,
-                LIST,
-                sel,
-                1..=22,
-                p,
-                moved,
-                clicked,
-                right,
-                |w, id| {
-                    if let Some(s) = list_mut(w) {
-                        s.sel = id;
-                    }
-                },
-            );
+            generic(w, gu, LIST, sel, 1..=22, p, moved, clicked, right, |w, id| {
+                if let Some(s) = list_mut(w) {
+                    s.sel = id;
+                }
+            });
         }
     }
 }
@@ -240,23 +192,13 @@ pub(super) fn view(w: &World) -> Option<View> {
     let es = w.equipsets.as_ref()?;
     Some(View {
         page: es.page.unwrap_or(0),
-        names: (0..20)
-            .map(|k| {
-                es.sets.get(k).map_or(String::new(), |x| {
-                    crate::dat::font::decode_sjis(x.raw_name())
-                })
-            })
-            .collect(),
+        names: (0..20).map(|k| es.sets.get(k).map_or(String::new(), |x| crate::dat::font::decode_sjis(x.raw_name()))).collect(),
         cur: (1..=20).contains(&s.sel).then(|| s.sel as usize - 1),
         row: s.row,
         opt: s.opt,
         off: menu_off(w),
         rename: s.rename.as_ref().map(|t| super::macroedit::shown(w, t)),
-        rename_caret: s.rename.as_ref().map_or(0, |t| {
-            super::macroedit::shown(w, &t[..s.caret.min(t.len())])
-                .chars()
-                .count()
-        }),
+        rename_caret: s.rename.as_ref().map_or(0, |t| super::macroedit::shown(w, &t[..s.caret.min(t.len())]).chars().count()),
         focused: w.confirm.is_none() && s.opt.is_none() && s.rename.is_none() && s.ed.is_none(),
         editor: super::esedit::view(w),
     })
@@ -264,10 +206,7 @@ pub(super) fn view(w: &World) -> Option<View> {
 
 /// The modern layer's mouse: the list's cursor onto row `r` (0..19); true when it moved.
 pub(super) fn set_row(w: &mut World, r: usize) -> bool {
-    let Some(s) = list_mut(w).filter(|s| s.opt.is_none() && s.rename.is_none() && s.ed.is_none())
-    else {
-        return false;
-    };
+    let Some(s) = list_mut(w).filter(|s| s.opt.is_none() && s.rename.is_none() && s.ed.is_none()) else { return false };
     let moved = s.sel != r as u16 + 1;
     s.sel = r as u16 + 1;
     moved
@@ -275,9 +214,7 @@ pub(super) fn set_row(w: &mut World, r: usize) -> bool {
 
 /// Another page (0..9), the open one written first.
 pub(super) fn go_page(w: &mut World, page: usize) {
-    let Some(es) = w.equipsets.as_mut().filter(|es| es.page != Some(page)) else {
-        return;
-    };
+    let Some(es) = w.equipsets.as_mut().filter(|es| es.page != Some(page)) else { return };
     es.save_page();
     es.load_page(page);
     w.sounds.push(Ui::Cursor as u32);
@@ -285,9 +222,7 @@ pub(super) fn go_page(w: &mut World, page: usize) {
 
 /// mcresmn's cursor onto row `o`.
 pub(super) fn set_opt(w: &mut World, o: u16) -> bool {
-    let Some(s) = list_mut(w).filter(|s| s.opt.is_some()) else {
-        return false;
-    };
+    let Some(s) = list_mut(w).filter(|s| s.opt.is_some()) else { return false };
     let moved = s.opt != Some(o);
     s.opt = Some(o);
     moved
@@ -306,9 +241,7 @@ fn close(w: &mut World) {
 
 /// mcresmn's dimmed rows: Paste without a copy (4), Set appearance during the lockstyle wait (8).
 fn menu_off(w: &World) -> Vec<u16> {
-    let Some(es) = w.equipsets.as_ref() else {
-        return Vec::new();
-    };
+    let Some(es) = w.equipsets.as_ref() else { return Vec::new() };
     let mut off = Vec::new();
     if es.clip.is_none() {
         off.push(4);
@@ -325,9 +258,7 @@ fn menu_key(w: &mut World, gu: &GameUi, key: egui::Key, o: u16, row: usize) {
     use egui::Key as K;
     match key {
         K::ArrowUp | K::ArrowDown => {
-            let to = gu
-                .menu_links(MENU, o)
-                .map_or(o, |l| l[if key == K::ArrowUp { 2 } else { 3 }] as u16);
+            let to = gu.menu_links(MENU, o).map_or(o, |l| l[if key == K::ArrowUp { 2 } else { 3 }] as u16);
             if (1..=8).contains(&to) && to != o {
                 if let Some(s) = list_mut(w) {
                     s.opt = Some(to);
@@ -347,9 +278,7 @@ fn menu_key(w: &mut World, gu: &GameUi, key: egui::Key, o: u16, row: usize) {
             if let Some(s) = list_mut(w) {
                 s.opt = None;
             }
-            let Some(es) = w.equipsets.as_mut() else {
-                return;
-            };
+            let Some(es) = w.equipsets.as_mut() else { return };
             let id = es.page.unwrap_or(0) * 20 + row;
             match o {
                 1 => {
@@ -359,10 +288,7 @@ fn menu_key(w: &mut World, gu: &GameUi, key: egui::Key, o: u16, row: usize) {
                     }
                 }
                 2 => {
-                    let name = es
-                        .sets
-                        .get(row)
-                        .map_or(Vec::new(), |s| s.raw_name().to_vec());
+                    let name = es.sets.get(row).map_or(Vec::new(), |s| s.raw_name().to_vec());
                     if let Some(s) = list_mut(w) {
                         s.caret = name.len();
                         s.rename = Some(name);
@@ -383,9 +309,7 @@ fn menu_key(w: &mut World, gu: &GameUi, key: egui::Key, o: u16, row: usize) {
 /// comyn's yes (LAB_101a7650 / 7690 / 7670): the copy over the set, the defaults, the worn gear.
 pub fn answer(w: &mut World, a: Ask) {
     let worn = super::equipsets::from_equipped(w);
-    let Some(es) = w.equipsets.as_mut() else {
-        return;
-    };
+    let Some(es) = w.equipsets.as_mut() else { return };
     match a {
         Ask::EsPaste(r) => {
             if let (Some(c), Some(s)) = (es.clip, es.sets.get_mut(r as usize)) {
@@ -404,12 +328,7 @@ pub fn answer(w: &mut World, a: Ask) {
 
 /// The set's name for the title bar's slot 2.
 fn name(w: &World, row: usize) -> String {
-    w.equipsets
-        .as_ref()
-        .and_then(|e| e.sets.get(row))
-        .map_or(String::new(), |s| {
-            crate::dat::font::decode_sjis(s.raw_name())
-        })
+    w.equipsets.as_ref().and_then(|e| e.sets.get(row)).map_or(String::new(), |s| crate::dat::font::decode_sjis(s.raw_name()))
 }
 
 /// FUN_101a6d60: on a row, title slot 2 = the set's name and the help "Equipment Set (#%d)" (group 10 0x75); on an
@@ -432,76 +351,37 @@ pub fn bars(gu: &GameUi, w: &World, s: &SetList, bars: &mut super::hudtop::BarTe
     if (1..=20).contains(&s.sel) {
         let page = w.equipsets.as_ref().and_then(|e| e.page).unwrap_or(0);
         let n = page * 20 + s.sel as usize;
-        bars.help[1] =
-            gu.lobby_msg(0x0a, 0x75, "Equipment Set (#%d)")
-                .replacen("%d", &n.to_string(), 1);
+        bars.help[1] = gu.lobby_msg(0x0a, 0x75, "Equipment Set (#%d)").replacen("%d", &n.to_string(), 1);
         bars.title[2] = name(w, s.sel as usize - 1);
     }
 }
 
 /// FUN_101a6e00: each row's name in mcralpha at (8, 2) cut before 75 px, or the name field; mcresmn left of the
 /// picked row (x = row x - its width, y = min(row y, mcres20 bottom - its height)).
-pub fn draw(
-    gu: &mut GameUi,
-    w: &World,
-    s: &SetList,
-    sw: f32,
-    sh: f32,
-    free: bool,
-) -> Vec<[f32; 4]> {
+pub fn draw(gu: &mut GameUi, w: &World, s: &SetList, sw: f32, sh: f32, free: bool) -> Vec<[f32; 4]> {
     let mut rects = Vec::new();
     if w.modern {
         return rects;
     }
-    let Some(es) = w.equipsets.as_ref() else {
-        return rects;
-    };
-    if let Some(win) = gu.lobby_window_off(
-        LIST,
-        sw,
-        sh,
-        (0.0, 0.0),
-        Some(s.sel),
-        free && s.opt.is_none() && s.rename.is_none() && s.ed.is_none(),
-        &[],
-    ) {
+    let Some(es) = w.equipsets.as_ref() else { return rects };
+    if let Some(win) = gu.lobby_window_off(LIST, sw, sh, (0.0, 0.0), Some(s.sel), free && s.opt.is_none() && s.rename.is_none() && s.ed.is_none(), &[]) {
         super::macroedit::hit(w, LIST, &win);
         for &(id, r) in win.children.iter().filter(|(id, _)| (1..=20).contains(id)) {
             let row = id as usize - 1;
             match &s.rename {
                 Some(t) if row == s.row => {
-                    gu.text(
-                        &super::macroedit::shown(w, t),
-                        r[0] + 8.0,
-                        r[1] + 2.0,
-                        0,
-                        WHITE.to_le_bytes(),
-                    );
+                    gu.text(&super::macroedit::shown(w, t), r[0] + 8.0, r[1] + 2.0, 0, WHITE.to_le_bytes());
                     super::macroedit::caret_at(gu, w, t, s.caret, r[0] + 8.0, r[1] + 2.0, f32::MAX);
                 }
-                _ => alpha(
-                    gu,
-                    es.sets.get(row).map_or(&[][..], |s| s.raw_name()),
-                    r[0] + 8.0,
-                    r[1] + 2.0,
-                    75.0,
-                ),
+                _ => alpha(gu, es.sets.get(row).map_or(&[][..], |s| s.raw_name()), r[0] + 8.0, r[1] + 2.0, 75.0),
             }
         }
         rects.push(win.frame);
-        if let (Some(o), Some(&(_, r)), Some([lx, ly, lw, lh])) = (
-            s.opt,
-            win.children
-                .iter()
-                .find(|(id, _)| *id as usize == s.row + 1),
-            gu.window_rect(MENU, sw, sh),
-        ) {
+        if let (Some(o), Some(&(_, r)), Some([lx, ly, lw, lh])) = (s.opt, win.children.iter().find(|(id, _)| *id as usize == s.row + 1), gu.window_rect(MENU, sw, sh)) {
             let [_, fy, _, fh] = win.frame;
             let (x, y) = (r[0] - lw, r[1].min(fy + fh - lh));
             let off = menu_off(w);
-            if let Some(win) =
-                gu.lobby_window_off(MENU, sw, sh, (x - lx, y - ly), Some(o), free, &off)
-            {
+            if let Some(win) = gu.lobby_window_off(MENU, sw, sh, (x - lx, y - ly), Some(o), free, &off) {
                 super::macroedit::hit(w, MENU, &win);
                 gu.disabled_children(MENU, win.frame[0], win.frame[1], &off, free.then_some(o));
                 rects.push(win.frame);

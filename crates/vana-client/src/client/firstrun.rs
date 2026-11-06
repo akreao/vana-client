@@ -16,11 +16,7 @@ const VOLUMES: usize = 5;
 const TOTAL: u64 = 7_734_210_712;
 
 fn volume(i: usize) -> String {
-    if i == 1 {
-        "FFXIFullSetup_US.part1.exe".into()
-    } else {
-        format!("FFXIFullSetup_US.part{i}.rar")
-    }
+    if i == 1 { "FFXIFullSetup_US.part1.exe".into() } else { format!("FFXIFullSetup_US.part{i}.rar") }
 }
 
 /// The first-start window's size (fixed; the configured size applies once the game files are in).
@@ -31,39 +27,24 @@ const MARKER: &str = ".vana-installing";
 
 /// No game files where the config says they are, or a first start that did not finish.
 pub fn needed(ffxi_dir: &Path) -> bool {
-    !ffxi_dir.join("VTABLE.DAT").is_file()
-        || ffxi_dir
-            .parent()
-            .is_some_and(|g| g.join(MARKER).is_file() || g.join(".download").is_dir())
+    !ffxi_dir.join("VTABLE.DAT").is_file() || ffxi_dir.parent().is_some_and(|g| g.join(MARKER).is_file() || g.join(".download").is_dir())
 }
 
 /// The game folder (the one that holds `FINAL FANTASY XI`) for an install picked in the window: the
 /// `FINAL FANTASY XI` folder itself, or a folder above it in the Windows layout (`PlayOnline/SquareEnix`).
 pub fn existing(picked: &Path) -> Result<PathBuf> {
     let candidates = [
-        picked
-            .parent()
-            .filter(|_| picked.file_name().is_some_and(|n| n == "FINAL FANTASY XI"))
-            .map(Path::to_path_buf),
+        picked.parent().filter(|_| picked.file_name().is_some_and(|n| n == "FINAL FANTASY XI")).map(Path::to_path_buf),
         Some(picked.to_path_buf()),
         Some(picked.join("SquareEnix")),
         Some(picked.join("PlayOnline").join("SquareEnix")),
     ];
-    let found = candidates
-        .into_iter()
-        .flatten()
-        .find(|g| g.join("FINAL FANTASY XI").join("VTABLE.DAT").is_file());
+    let found = candidates.into_iter().flatten().find(|g| g.join("FINAL FANTASY XI").join("VTABLE.DAT").is_file());
     let Some(game_dir) = found else {
-        anyhow::bail!(
-            "No game files in {}: pick the FINAL FANTASY XI folder (the one with VTABLE.DAT) or a folder above it.",
-            picked.display()
-        );
+        anyhow::bail!("No game files in {}: pick the FINAL FANTASY XI folder (the one with VTABLE.DAT) or a folder above it.", picked.display());
     };
     if needed(&game_dir.join("FINAL FANTASY XI")) {
-        anyhow::bail!(
-            "The install in {} did not finish: choose Download and install with that folder to resume it.",
-            game_dir.display()
-        );
+        anyhow::bail!("The install in {} did not finish: choose Download and install with that folder to resume it.", game_dir.display());
     }
     Ok(game_dir)
 }
@@ -123,17 +104,7 @@ enum Pick {
 
 impl FirstRun {
     pub fn new(game_dir: PathBuf) -> Self {
-        Self {
-            game_dir,
-            stage: Arc::new(Mutex::new(Stage::Ask)),
-            progress: Arc::new(Progress::default()),
-            picked: Default::default(),
-            picking: None,
-            found: false,
-            menu: true,
-            shortcut: false,
-            note: String::new(),
-        }
+        Self { game_dir, stage: Arc::new(Mutex::new(Stage::Ask)), progress: Arc::new(Progress::default()), picked: Default::default(), picking: None, found: false, menu: true, shortcut: false, note: String::new() }
     }
 
     /// Where the game files go (the config default, or the folder picked).
@@ -159,11 +130,7 @@ impl FirstRun {
 
     fn start(&self) {
         *self.stage.lock().unwrap() = Stage::Working;
-        let (game_dir, stage, progress) = (
-            self.game_dir.clone(),
-            self.stage.clone(),
-            self.progress.clone(),
-        );
+        let (game_dir, stage, progress) = (self.game_dir.clone(), self.stage.clone(), self.progress.clone());
         std::thread::spawn(move || {
             let r = run(&game_dir, &progress);
             *stage.lock().unwrap() = match r {
@@ -214,11 +181,7 @@ impl FirstRun {
         };
         let gold = egui::Color32::from_rgb(0xe8, 0xc8, 0x80);
         let screen = ctx.content_rect();
-        ctx.layer_painter(egui::LayerId::background()).rect_filled(
-            screen,
-            0.0,
-            egui::Color32::from_rgb(0x12, 0x14, 0x22),
-        );
+        ctx.layer_painter(egui::LayerId::background()).rect_filled(screen, 0.0, egui::Color32::from_rgb(0x12, 0x14, 0x22));
         egui::Area::new(egui::Id::unique("first run")).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
             {
                 egui::Frame::new()
@@ -347,26 +310,13 @@ fn run(game_dir: &Path, p: &Arc<Progress>) -> Result<()> {
             continue;
         }
         let base = before;
-        super::updater::download(&format!("{CDN}/{}", volume(i)), &dest, &|d, _| {
-            set(
-                p,
-                format!("Downloading from Square Enix (part {i} of {VOLUMES})"),
-                base + d,
-                TOTAL,
-            )
-        })?;
+        super::updater::download(&format!("{CDN}/{}", volume(i)), &dest, &|d, _| set(p, format!("Downloading from Square Enix (part {i} of {VOLUMES})"), base + d, TOTAL))?;
         before += std::fs::metadata(&dest)?.len();
     }
     // A finished install from an earlier, stopped run is not unpacked again.
     let root = game_dir.join("FINAL FANTASY XI");
     let installed = root.join("VTABLE.DAT").is_file() && !dl.join(volume(1)).is_file();
-    let opts = crate::install::Options {
-        source: dl.join(volume(1)),
-        staging: game_dir.join(".staging"),
-        game_dir: game_dir.to_path_buf(),
-        verify: true,
-        keep_staging: false,
-    };
+    let opts = crate::install::Options { source: dl.join(volume(1)), staging: game_dir.join(".staging"), game_dir: game_dir.to_path_buf(), verify: true, keep_staging: false };
     if !installed {
         crate::install::install(&opts, p.clone())?;
     }
@@ -374,9 +324,7 @@ fn run(game_dir: &Path, p: &Arc<Progress>) -> Result<()> {
     let plan = crate::patch::plan(&root, true)?;
     let total: u64 = plan.todo.iter().map(|t| t.2).sum();
     let n = plan.todo.len();
-    crate::patch::apply(&root, &plan, 4, &|f, b| {
-        set(p, format!("Updating game files ({f} of {n})"), b, total)
-    })?;
+    crate::patch::apply(&root, &plan, 4, &|f, b| set(p, format!("Updating game files ({f} of {n})"), b, total))?;
     set(p, "Cleaning up", 0, 0);
     std::fs::remove_dir_all(&dl).with_context(|| format!("removing {}", dl.display()))?;
     let _ = std::fs::remove_dir_all(game_dir.join(".staging"));
@@ -397,12 +345,7 @@ mod tests {
         assert!(existing(&base).is_err());
         std::fs::write(ffxi.join("VTABLE.DAT"), b"").unwrap();
         for picked in [&ffxi, &game, &base.join("PlayOnline"), &base] {
-            assert_eq!(
-                existing(picked).unwrap(),
-                game,
-                "picked {}",
-                picked.display()
-            );
+            assert_eq!(existing(picked).unwrap(), game, "picked {}", picked.display());
         }
         // An install vana-client stopped part-way is resumed, not used.
         std::fs::write(game.join(MARKER), b"").unwrap();

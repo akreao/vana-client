@@ -1,8 +1,8 @@
 //! A Lua mod's `mod.toml` (docs/lua-mods.md 3.4).
 
 use anyhow::{Context, Result, bail};
-use indexmap::IndexMap;
 use serde::Deserialize;
+use indexmap::IndexMap;
 use std::path::Path;
 
 /// The API version this client speaks; a mod declaring a newer one is not loaded.
@@ -64,32 +64,13 @@ pub struct Setting {
 }
 
 /// Every permission a mod may ask for.
-pub const PERMISSIONS: [&str; 14] = [
-    "actions",
-    "automation",
-    "packets.read",
-    "packets.write",
-    "input.capture",
-    "files.shared",
-    "net",
-    "exec",
-    "multibox",
-    "ui.native",
-    "clipboard",
-    "process",
-    "devices",
-    "mods",
-];
+pub const PERMISSIONS: [&str; 14] = ["actions", "automation", "packets.read", "packets.write", "input.capture", "files.shared", "net", "exec", "multibox", "ui.native", "clipboard", "process", "devices", "mods"];
 
 /// Reads `dir/mod.toml`.
 pub fn read(dir: &Path) -> Result<Manifest> {
     let path = dir.join("mod.toml");
-    let text =
-        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-    let folder = dir
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
+    let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let folder = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     parse(&text, &folder).with_context(|| format!("parsing {}", path.display()))
 }
 
@@ -102,39 +83,22 @@ pub fn parse(text: &str, folder: &str) -> Result<Manifest> {
     if m.name.is_empty() {
         m.name = m.id.clone();
     }
-    if !m
-        .id
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-    {
+    if !m.id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
         bail!("mod id {:?}: letters, digits, _ and - only", m.id);
     }
     if m.api > API {
         bail!("{} needs API {} (this client has {API})", m.id, m.api);
     }
-    if let Some(p) = m
-        .permissions
-        .iter()
-        .find(|p| !PERMISSIONS.contains(&p.as_str()))
-    {
+    if let Some(p) = m.permissions.iter().find(|p| !PERMISSIONS.contains(&p.as_str())) {
         bail!("{}: unknown permission {p:?}", m.id);
     }
     const TYPES: [&str; 7] = ["bool", "int", "number", "enum", "string", "colour", "key"];
     for (key, s) in &m.settings {
         if !["", "account", "character"].contains(&s.scope.as_str()) {
-            bail!(
-                "{}: setting {key}: scope is \"account\" or \"character\" ({:?} given)",
-                m.id,
-                s.scope
-            );
+            bail!("{}: setting {key}: scope is \"account\" or \"character\" ({:?} given)", m.id, s.scope);
         }
         if !s.kind.is_empty() && !TYPES.contains(&s.kind.as_str()) {
-            bail!(
-                "{}: setting {key}: type is one of {} ({:?} given)",
-                m.id,
-                TYPES.join(", "),
-                s.kind
-            );
+            bail!("{}: setting {key}: type is one of {} ({:?} given)", m.id, TYPES.join(", "), s.kind);
         }
     }
     Ok(m)

@@ -51,17 +51,7 @@ impl Opening {
                 }
             })
             .ok()?;
-        Some(Self {
-            frames: Some(rx),
-            fps,
-            rows: d_rows,
-            opened: Instant::now(),
-            clock: None,
-            taken: 0,
-            fresh: None,
-            skipped: None,
-            ended: false,
-        })
+        Some(Self { frames: Some(rx), fps, rows: d_rows, opened: Instant::now(), clock: None, taken: 0, fresh: None, skipped: None, ended: false })
     }
 
     /// Any input (FUN_10007c70(0)): the movie stops; the caller fades the music over SKIP_FADE ticks.
@@ -90,23 +80,11 @@ impl Opening {
         if self.ended {
             return false;
         }
-        if self.clock.is_none()
-            && (music_started || now.duration_since(self.opened) > Duration::from_secs(1))
-        {
-            log::info!(
-                "opening: the movie starts at {:.2} fps (music {})",
-                self.fps,
-                if music_started {
-                    "playing"
-                } else {
-                    "not started"
-                }
-            );
+        if self.clock.is_none() && (music_started || now.duration_since(self.opened) > Duration::from_secs(1)) {
+            log::info!("opening: the movie starts at {:.2} fps (music {})", self.fps, if music_started { "playing" } else { "not started" });
             self.clock = Some(now);
         }
-        let (Some(clock), Some(rx)) = (self.clock, &self.frames) else {
-            return true;
-        };
+        let (Some(clock), Some(rx)) = (self.clock, &self.frames) else { return true };
         let due = now.duration_since(clock).as_secs_f64() * self.fps;
         // Late pictures are dropped; a decoder behind holds the last one.
         while self.taken as f64 <= due {
@@ -144,9 +122,7 @@ mod tests {
     #[test]
     fn skip_stops_the_picture() {
         let cfg = crate::config::Config::load();
-        let Some(mut o) = super::Opening::open(&cfg.ffxi_dir().join("mov")) else {
-            return;
-        };
+        let Some(mut o) = super::Opening::open(&cfg.ffxi_dir().join("mov")) else { return };
         assert_eq!(o.rows, 336);
         for _ in 0..100 {
             assert!(o.update(true));
@@ -160,9 +136,6 @@ mod tests {
         assert!(!o.skip());
         assert!(!o.showing() && o.fresh.is_none());
         assert!(o.update(true));
-        assert_eq!(
-            super::picture_rect([1280, 720], 336).map(|v| v.round()),
-            [0.0, 102.0, 1280.0, 621.0]
-        );
+        assert_eq!(super::picture_rect([1280, 720], 336).map(|v| v.round()), [0.0, 102.0, 1280.0, 621.0]);
     }
 }

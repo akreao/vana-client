@@ -16,9 +16,7 @@ const NO_MAP: u32 = 0x1592;
 /// keytops3 sprites: the player marker (table 0x10375f6c[2]).
 const MARKER: usize = 159;
 /// The map's marker sprites (keytops3 ids, list 0x1038214c), indexed by a point kind's icon.
-const ICON_SPRITE: [usize; 20] = [
-    0, 151, 159, 150, 152, 154, 155, 0, 363, 326, 327, 105, 516, 517, 522, 523, 524, 525, 526, 522,
-];
+const ICON_SPRITE: [usize; 20] = [0, 151, 159, 150, 152, 154, 155, 0, 363, 326, 327, 105, 516, 517, 522, 523, 524, 525, 526, 522];
 /// Mode 6's margins: the view may pass the image by +0x7c + +0x80 map pixels, and scroll targets move by +0x7c.
 const PREVIEW_MARGIN: f32 = 126.0;
 const PREVIEW_PAD: f32 = 30.0;
@@ -53,29 +51,11 @@ pub enum Need {
 }
 
 pub fn regions(ffximain: &[u8]) -> Vec<Region> {
-    let Some(at) = crate::dat::tables::of(ffximain)
-        .map_err(|e| log::warn!("map regions: {e:#}"))
-        .ok()
-        .map(|t| t.regions)
-    else {
-        return Vec::new();
-    };
-    let Some(b) = crate::dat::battle::va_bytes(ffximain, at, REGIONS_MAX * 14) else {
-        return Vec::new();
-    };
+    let Some(at) = crate::dat::tables::of(ffximain).map_err(|e| log::warn!("map regions: {e:#}")).ok().map(|t| t.regions) else { return Vec::new() };
+    let Some(b) = crate::dat::battle::va_bytes(ffximain, at, REGIONS_MAX * 14) else { return Vec::new() };
     let s16 = |r: &[u8], o: usize| i16::from_le_bytes([r[o], r[o + 1]]);
     b.chunks(14)
-        .map(|r| Region {
-            zone: s16(r, 0),
-            key: r[2] as i8,
-            num: r[3],
-            flags: r[4],
-            scale: r[5] as i8,
-            ki: r[6] as i8,
-            file: s16(r, 8),
-            ox: s16(r, 10),
-            oy: s16(r, 12),
-        })
+        .map(|r| Region { zone: s16(r, 0), key: r[2] as i8, num: r[3], flags: r[4], scale: r[5] as i8, ki: r[6] as i8, file: s16(r, 8), ox: s16(r, 10), oy: s16(r, 12) })
         .take_while(|r| r.scale != 0)
         .collect()
 }
@@ -84,37 +64,25 @@ pub fn regions(ffximain: &[u8]) -> Vec<Region> {
 /// ids). The code is packed, so the data is found: the first two lists (San d'Oria 230..233, Bastok 234..237), the
 /// pointer table naming the first, and the 50 name bytes right after it.
 pub fn region_groups(ffximain: &[u8]) -> Vec<(u8, Vec<u16>)> {
-    const HINT: [u8; 20] = [
-        0xe6, 0, 0xe7, 0, 0xe8, 0, 0xe9, 0, 0, 0, 0, 0, 0xea, 0, 0xeb, 0, 0xec, 0, 0xed, 0,
-    ];
+    const HINT: [u8; 20] = [0xe6, 0, 0xe7, 0, 0xe8, 0, 0xe9, 0, 0, 0, 0, 0, 0xea, 0, 0xeb, 0, 0xec, 0, 0xed, 0];
     const GROUPS: usize = 50;
-    let found = ffximain
-        .windows(HINT.len())
-        .position(|w| w == HINT)
-        .and_then(|at| {
-            let va = crate::dat::tables::va_of(ffximain, at)?;
-            let ptrs = ffximain.windows(4).position(|w| w == va.to_le_bytes())?;
-            Some(ptrs)
-        });
+    let found = ffximain.windows(HINT.len()).position(|w| w == HINT).and_then(|at| {
+        let va = crate::dat::tables::va_of(ffximain, at)?;
+        let ptrs = ffximain.windows(4).position(|w| w == va.to_le_bytes())?;
+        Some(ptrs)
+    });
     let Some(ptrs) = found else {
         log::warn!("map: no region group table");
         return Vec::new();
     };
-    let u32_at = |o: usize| {
-        ffximain
-            .get(o..o + 4)
-            .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
-    };
+    let u32_at = |o: usize| ffximain.get(o..o + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()));
     let va = |v: u32, len: usize| crate::dat::battle::va_bytes(ffximain, v, len);
     (0..GROUPS)
         .filter_map(|i| {
             let p = u32_at(ptrs + 4 * i)?;
             let name = *ffximain.get(ptrs + 4 * GROUPS + i)?;
             let mut zones = Vec::new();
-            while let Some(z) = va(p + 2 * zones.len() as u32, 2)
-                .map(|b| u16::from_le_bytes([b[0], b[1]]))
-                .filter(|&z| z != 0)
-            {
+            while let Some(z) = va(p + 2 * zones.len() as u32, 2).map(|b| u16::from_le_bytes([b[0], b[1]])).filter(|&z| z != 0) {
                 zones.push(z);
             }
             Some((name, zones))
@@ -125,18 +93,12 @@ pub fn region_groups(ffximain: &[u8]) -> Vec<(u8, Vec<u16>)> {
 impl Region {
     /// The first record of the zone with key 0 (FUN_101ee510, and FUN_101f0af0's key-0 fallback).
     pub fn find(regions: &[Region], zone: u16) -> Option<Region> {
-        regions
-            .iter()
-            .find(|r| r.zone == zone as i16 && r.key == 0)
-            .copied()
+        regions.iter().find(|r| r.zone == zone as i16 && r.key == 0).copied()
     }
 
     /// FUN_101f7430(zone, key, 0): the record for exactly this zone and sub-key.
     pub fn find_key(regions: &[Region], zone: u16, key: u8) -> Option<Region> {
-        regions
-            .iter()
-            .find(|r| r.zone == zone as i16 && r.key == key as i8)
-            .copied()
+        regions.iter().find(|r| r.zone == zone as i16 && r.key == key as i8).copied()
     }
 
     /// The record for where `w` stands (the sub-key under the player), else the zone's key-0 map.
@@ -160,14 +122,7 @@ impl Region {
         match self.ki {
             k if k < 0 => Need::Always,
             0 => Need::Nothing,
-            k => Need::Item(
-                k as u16
-                    + match self.flags & 0xf0 {
-                        0x10 => 0x73f,
-                        0x20 => 0x8fd,
-                        _ => 0x180,
-                    },
-            ),
+            k => Need::Item(k as u16 + match self.flags & 0xf0 { 0x10 => 0x73f, 0x20 => 0x8fd, _ => 0x180 }),
         }
     }
 
@@ -178,10 +133,7 @@ impl Region {
             return (0, 0);
         }
         let k = 2560.0 / s;
-        (
-            (x * (1.0 / k) * 512.0 + 0.5) as i32,
-            -((z * (1.0 / k) * 512.0 + 0.5) as i32),
-        )
+        ((x * (1.0 / k) * 512.0 + 0.5) as i32, -((z * (1.0 / k) * 512.0 + 0.5) as i32))
     }
 
     /// FUN_101f1a60: "(%c-%d)" from 32-pixel cells 16 in from the origin.
@@ -208,32 +160,19 @@ impl Shade {
 
     fn new(w: u32, h: u32, rgba: &[u8]) -> Self {
         let (w, h) = (w as usize, h as usize);
-        let (cols, rows) = (
-            w.div_ceil(Self::BLOCK).max(1),
-            h.div_ceil(Self::BLOCK).max(1),
-        );
+        let (cols, rows) = (w.div_ceil(Self::BLOCK).max(1), h.div_ceil(Self::BLOCK).max(1));
         let mut sum = vec![(0.0f32, 0u32); cols * rows];
         for (i, p) in rgba.chunks_exact(4).enumerate().take(w * h) {
             let b = &mut sum[(i / w / Self::BLOCK) * cols + i % w / Self::BLOCK];
             b.0 += (0.299 * p[0] as f32 + 0.587 * p[1] as f32 + 0.114 * p[2] as f32) / 255.0;
             b.1 += 1;
         }
-        Self {
-            cols,
-            rows,
-            lum: sum
-                .into_iter()
-                .map(|(s, n)| if n == 0 { 0.0 } else { s / n as f32 })
-                .collect(),
-        }
+        Self { cols, rows, lum: sum.into_iter().map(|(s, n)| if n == 0 { 0.0 } else { s / n as f32 }).collect() }
     }
 
     /// The mean over the 3 x 3 blocks around image pixel (x, y), 0..1.
     fn at(&self, x: f32, y: f32) -> f32 {
-        let (bx, by) = (
-            (x / Self::BLOCK as f32).floor() as i64,
-            (y / Self::BLOCK as f32).floor() as i64,
-        );
+        let (bx, by) = ((x / Self::BLOCK as f32).floor() as i64, (y / Self::BLOCK as f32).floor() as i64);
         let (mut s, mut n) = (0.0, 0);
         for cy in by - 1..=by + 1 {
             for cx in bx - 1..=bx + 1 {
@@ -325,12 +264,7 @@ struct Points {
 
 impl Default for Points {
     fn default() -> Self {
-        Points {
-            table: None,
-            masks: [0; 64],
-            marks: Vec::new(),
-            last: (0xffff, 0xffff),
-        }
+        Points { table: None, masks: [0; 64], marks: Vec::new(), last: (0xffff, 0xffff) }
     }
 }
 
@@ -447,18 +381,7 @@ impl MapWin {
         let owned = owned(w, &region);
         log::info!("map: zone {} owned {owned}", w.pos_zone);
         let facing = w.net.me.lock().map_or(0.0, |m| super::event::rad_of(m.dir));
-        let mut m = Self::new(
-            region,
-            owned,
-            w.index.clone(),
-            (w.pos.x, w.pos.z),
-            facing,
-            sw,
-            sh,
-            Mode::Menu,
-            w.game.get(0x8a),
-            true,
-        );
+        let mut m = Self::new(region, owned, w.index.clone(), (w.pos.x, w.pos.z), facing, sw, sh, Mode::Menu, w.game.get(0x8a), true);
         m.attach(w);
         Some(m)
     }
@@ -468,12 +391,7 @@ impl MapWin {
         self.mark_dir = marks_dir(w);
         self.char_id = w.my_id;
         if let Some(d) = &self.mark_dir {
-            self.marks = super::mapmark::MarkFile::load(
-                d,
-                self.region.zone as u16,
-                self.region.key as u8,
-                w.my_id,
-            );
+            self.marks = super::mapmark::MarkFile::load(d, self.region.zone as u16, self.region.key as u8, w.my_id);
         }
         self.scan_ok = w.recasts_seen && self.region.zone == w.pos_zone as i16;
         self.tracking = w.scan.tracking().is_some();
@@ -482,27 +400,13 @@ impl MapWin {
             (x as f32, y as f32)
         });
         let own = w.party.own_flags;
-        for m in w
-            .party
-            .members()
-            .skip(1)
-            .filter(|m| m.zone == w.pos_zone && m.away == 0)
-        {
-            let Some(e) = w.entities.get(&m.id) else {
-                continue;
-            };
-            if w.ground
-                .as_ref()
-                .is_some_and(|g| g.map_key(e.pos) != self.region.key as u8)
-            {
+        for m in w.party.members().skip(1).filter(|m| m.zone == w.pos_zone && m.away == 0) {
+            let Some(e) = w.entities.get(&m.id) else { continue };
+            if w.ground.as_ref().is_some_and(|g| g.map_key(e.pos) != self.region.key as u8) {
                 continue;
             }
             let (px, py) = self.region.px(e.pos.x, e.pos.z);
-            self.party.push((
-                m.name.clone(),
-                (px as f32, py as f32),
-                (m.flags ^ own) & 3 != 0,
-            ));
+            self.party.push((m.name.clone(), (px as f32, py as f32), (m.flags ^ own) & 3 != 0));
         }
         self.step_set(0);
     }
@@ -554,50 +458,27 @@ impl MapWin {
         }
         let (px, py) = self.region.px(x, z);
         self.party.retain(|p| p.0 != name);
-        self.party
-            .push((name.into(), (px as f32, py as f32), alliance));
+        self.party.push((name.into(), (px as f32, py as f32), alliance));
     }
 
     /// Set s, slot i: its map pixel, label and sprite, when it holds a marker.
     fn slot(&self, s: usize, i: usize) -> Option<((f32, f32), Option<&str>, usize)> {
         match s {
-            0 | 1 => self.marks.sets[s].get(i).filter(|m| m.valid).map(|m| {
-                (
-                    (m.px.0 as f32, m.px.1 as f32),
-                    Some(m.name.as_str()),
-                    SET_SPRITE[s],
-                )
-            }),
+            0 | 1 => self.marks.sets[s].get(i).filter(|m| m.valid).map(|m| ((m.px.0 as f32, m.px.1 as f32), Some(m.name.as_str()), SET_SPRITE[s])),
             2 => {
-                let p = self
-                    .party
-                    .iter()
-                    .filter(|p| !p.2)
-                    .chain(self.party.iter().filter(|p| p.2))
-                    .nth(i)?;
+                let p = self.party.iter().filter(|p| !p.2).chain(self.party.iter().filter(|p| p.2)).nth(i)?;
                 Some((p.1, Some(p.0.as_str()), SET_SPRITE[if p.2 { 3 } else { 2 }]))
             }
-            _ => self
-                .party
-                .iter()
-                .filter(|p| p.2)
-                .nth(i)
-                .map(|p| (p.1, Some(p.0.as_str()), SET_SPRITE[3])),
+            _ => self.party.iter().filter(|p| p.2).nth(i).map(|p| (p.1, Some(p.0.as_str()), SET_SPRITE[3])),
         }
     }
 
     /// Op 0x8b / 0xb8 on an open event map (FUN_101f8d50 / FUN_101f8de0 / FUN_101f8e30): set 1's slot at the world
     /// (x, z), named, then scrolled to.
     fn mark(&mut self, slot: usize, x: f32, z: f32, name: &str) {
-        let Some(m) = self.marks.sets[1].get_mut(slot) else {
-            return;
-        };
+        let Some(m) = self.marks.sets[1].get_mut(slot) else { return };
         let (px, py) = self.region.px(x, z);
-        *m = super::mapmark::Slot {
-            px: (px as i16, py as i16),
-            name: name.into(),
-            valid: true,
-        };
+        *m = super::mapmark::Slot { px: (px as i16, py as i16), name: name.into(), valid: true };
         self.dirty = true;
         self.scroll_to_px((px as f32, py as f32));
     }
@@ -612,26 +493,12 @@ impl MapWin {
 
     /// Offscreen shots: three of your markers around the player, mapv3 open on them at full alpha.
     pub fn shot_markers(&mut self) {
-        for (i, (dx, dy, n)) in [
-            (-40.0, -20.0, "Gate"),
-            (30.0, 10.0, "Chocobo"),
-            (5.0, 45.0, "Home point"),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            self.marks.sets[0][i] = super::mapmark::Slot {
-                px: ((self.home.0 + dx) as i16, (self.home.1 + dy) as i16),
-                name: n.into(),
-                valid: true,
-            };
+        for (i, (dx, dy, n)) in [(-40.0, -20.0, "Gate"), (30.0, 10.0, "Chocobo"), (5.0, 45.0, "Home point")].into_iter().enumerate() {
+            self.marks.sets[0][i] = super::mapmark::Slot { px: ((self.home.0 + dx) as i16, (self.home.1 + dy) as i16), name: n.into(), valid: true };
             self.mark_alpha[0][i] = 128.0;
         }
         self.set = 0;
-        self.list = Some(List {
-            cursor: 2,
-            ..Default::default()
-        });
+        self.list = Some(List { cursor: 2, ..Default::default() });
     }
 
     /// The marker name entry is open: it takes the keys and characters.
@@ -642,9 +509,7 @@ impl MapWin {
     /// The name entry's keys: up to 15 characters, Backspace; Enter keeps it, Escape discards it (message 6).
     pub fn text_events(&mut self, events: &[egui::Event]) {
         let Some(l) = self.list.as_mut() else { return };
-        let Some((slot, text)) = l.rename.as_mut() else {
-            return;
-        };
+        let Some((slot, text)) = l.rename.as_mut() else { return };
         let slot = *slot;
         let mut done = None;
         for ev in events {
@@ -656,23 +521,11 @@ impl MapWin {
                         }
                     }
                 }
-                egui::Event::Key {
-                    key: egui::Key::Backspace,
-                    pressed: true,
-                    ..
-                } => {
+                egui::Event::Key { key: egui::Key::Backspace, pressed: true, .. } => {
                     text.pop();
                 }
-                egui::Event::Key {
-                    key: egui::Key::Enter,
-                    pressed: true,
-                    ..
-                } => done = Some(true),
-                egui::Event::Key {
-                    key: egui::Key::Escape,
-                    pressed: true,
-                    ..
-                } => done = Some(false),
+                egui::Event::Key { key: egui::Key::Enter, pressed: true, .. } => done = Some(true),
+                egui::Event::Key { key: egui::Key::Escape, pressed: true, .. } => done = Some(false),
                 _ => {}
             }
         }
@@ -688,49 +541,20 @@ impl MapWin {
 
     /// An event's map (FUN_100b2570 -> FUN_101f78e0): zone and sub-key (negative: the one under the player when in
     /// that zone *(inf)*, else 0); the arrow only with the op's flag.
-    pub fn open_event(
-        w: &World,
-        regions: &[Region],
-        zone: i16,
-        key: i16,
-        show_player: bool,
-        sw: f32,
-        sh: f32,
-    ) -> Option<Self> {
+    pub fn open_event(w: &World, regions: &[Region], zone: i16, key: i16, show_player: bool, sw: f32, sh: f32) -> Option<Self> {
         let mode = Mode::of_event_zone(zone);
-        let key = if key >= 0 {
-            key as u8
-        } else if zone == w.pos_zone as i16 {
-            w.ground.as_ref().map_or(0, |g| g.map_key(w.pos))
-        } else {
-            0
-        };
-        let region = Region::find_key(regions, zone as u16, key)
-            .or_else(|| Region::find(regions, zone as u16))?;
+        let key = if key >= 0 { key as u8 } else if zone == w.pos_zone as i16 { w.ground.as_ref().map_or(0, |g| g.map_key(w.pos)) } else { 0 };
+        let region = Region::find_key(regions, zone as u16, key).or_else(|| Region::find(regions, zone as u16))?;
         let owned = owned(w, &region);
         let facing = w.net.me.lock().map_or(0.0, |m| super::event::rad_of(m.dir));
         log::info!("map: event map zone {zone} key {key} mode {mode:?} owned {owned}");
-        let mut m = Self::new(
-            region,
-            owned,
-            w.index.clone(),
-            (w.pos.x, w.pos.z),
-            facing,
-            sw,
-            sh,
-            mode,
-            w.game.get(0x8a),
-            show_player,
-        );
+        let mut m = Self::new(region, owned, w.index.clone(), (w.pos.x, w.pos.z), facing, sw, sh, mode, w.game.get(0x8a), show_player);
         m.key = key;
         m.attach(w);
         // Mode 1 opens mapv3 on set 1 instead of map0 (map records only).
         if mode == Mode::Event && m.need != Need::Nothing {
             m.set = 1;
-            m.list = Some(List {
-                cursor: 1,
-                ..Default::default()
-            });
+            m.list = Some(List { cursor: 1, ..Default::default() });
         }
         Some(m)
     }
@@ -739,55 +563,15 @@ impl MapWin {
     /// a point shows it; the cursor point midway between the top bar and the menu (`point_y`); the key -1 is the
     /// sub-map under the player. A zone without a record opens anyway and only says so.
     #[allow(clippy::too_many_arguments)]
-    pub fn open_preview(
-        w: &World,
-        regions: &[Region],
-        zone: i16,
-        key: i16,
-        arrow: bool,
-        sw: f32,
-        sh: f32,
-        point_y: f32,
-    ) -> Self {
-        let key = if key >= 0 {
-            key as u8
-        } else if zone == w.pos_zone as i16 {
-            w.ground.as_ref().map_or(0, |g| g.map_key(w.pos))
-        } else {
-            0
-        };
-        let found = Region::find_key(regions, zone as u16, key)
-            .or_else(|| Region::find(regions, zone as u16));
-        let region = found.unwrap_or(Region {
-            zone,
-            key: 0,
-            num: 0,
-            flags: 0,
-            scale: 0,
-            ki: 0,
-            file: 0,
-            ox: 0,
-            oy: 0,
-        });
+    pub fn open_preview(w: &World, regions: &[Region], zone: i16, key: i16, arrow: bool, sw: f32, sh: f32, point_y: f32) -> Self {
+        let key = if key >= 0 { key as u8 } else if zone == w.pos_zone as i16 { w.ground.as_ref().map_or(0, |g| g.map_key(w.pos)) } else { 0 };
+        let found = Region::find_key(regions, zone as u16, key).or_else(|| Region::find(regions, zone as u16));
+        let region = found.unwrap_or(Region { zone, key: 0, num: 0, flags: 0, scale: 0, ki: 0, file: 0, ox: 0, oy: 0 });
         // FUN_101f7480: 0x180 leaves +0xa46 clear, so such a map never shows.
         let owned = found.is_some() && region.need() != Need::Nothing && owned(w, &region);
         let facing = w.net.me.lock().map_or(0.0, |m| super::event::rad_of(m.dir));
-        log::info!(
-            "map: preview zone {zone} key {key} owned {owned} record {}",
-            found.is_some()
-        );
-        let mut m = Self::new(
-            region,
-            owned,
-            w.index.clone(),
-            (w.pos.x, w.pos.z),
-            facing,
-            sw,
-            sh,
-            Mode::Preview,
-            0,
-            arrow,
-        );
+        log::info!("map: preview zone {zone} key {key} owned {owned} record {}", found.is_some());
+        let mut m = Self::new(region, owned, w.index.clone(), (w.pos.x, w.pos.z), facing, sw, sh, Mode::Preview, 0, arrow);
         (m.key, m.no_record) = (key, found.is_none());
         m.point.1 = point_y.trunc();
         if m.show_player {
@@ -803,25 +587,10 @@ impl MapWin {
     /// record), x 1.75 in mode 1, W / 512 otherwise; fade 0x80 -> 0 at 8 a frame (mode 6: hidden at once); then the
     /// player under the cursor point (FUN_101f8ea0, FUN_101ef990). Modes with points ask for the masks (FUN_101f93d0).
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        region: Region,
-        owned: bool,
-        index: Option<Arc<DatIndex>>,
-        pos: (f32, f32),
-        facing: f32,
-        sw: f32,
-        sh: f32,
-        mode: Mode,
-        zoom_cfg: u32,
-        show_player: bool,
-    ) -> Self {
+    pub fn new(region: Region, owned: bool, index: Option<Arc<DatIndex>>, pos: (f32, f32), facing: f32, sw: f32, sh: f32, mode: Mode, zoom_cfg: u32, show_player: bool) -> Self {
         let need = region.need();
         let file = if owned { region.file_id() } else { NO_MAP };
-        let (base, shift) = if owned {
-            ((region.ox as f32, region.oy as f32), (0.0, 0.0))
-        } else {
-            ((0.0, 0.0), (region.ox as f32, region.oy as f32))
-        };
+        let (base, shift) = if owned { ((region.ox as f32, region.oy as f32), (0.0, 0.0)) } else { ((0.0, 0.0), (region.ox as f32, region.oy as f32)) };
         let fit = sw / 512.0;
         let zoom = match mode {
             _ if need == Need::Nothing => fit,
@@ -863,11 +632,7 @@ impl MapWin {
             set: 0,
             sounds: Vec::new(),
             party_asked: false,
-            outs: if points {
-                vec![Out::AskPoints]
-            } else {
-                Vec::new()
-            },
+            outs: if points { vec![Out::AskPoints] } else { Vec::new() },
             scan_ok: false,
             scan: None,
             scan_kept: false,
@@ -891,11 +656,7 @@ impl MapWin {
             home,
             heading: facing,
             scroll_to: None,
-            fade: if preview {
-                (255.0, 255.0, 8.0)
-            } else {
-                (128.0, 0.0, 8.0)
-            },
+            fade: if preview { (255.0, 255.0, 8.0) } else { (128.0, 0.0, 8.0) },
             closing: None,
             scripted: None,
             screen: (sw, sh),
@@ -919,38 +680,9 @@ impl MapWin {
     /// FUN_101f7ad0 -> FUN_101fb140 -> FUN_101f9a50 mode 7: image `at` of a Primer page's `count` from file `first`;
     /// the base (-256, -256), no points, markers, arrow or place name, the scroll and zoom keys live, the zoom as mode 0's
     /// (config 0x8a), then map pixel (0, -70) eased under the cursor point (FUN_101ef990(0, -70)).
-    pub fn primer(
-        index: Option<Arc<DatIndex>>,
-        first: u32,
-        count: u8,
-        at: u8,
-        sw: f32,
-        sh: f32,
-        zoom_cfg: u32,
-    ) -> Self {
-        let region = Region {
-            zone: -100,
-            key: 0,
-            num: 0,
-            flags: 0,
-            scale: 0,
-            ki: -1,
-            file: 0,
-            ox: -256,
-            oy: -256,
-        };
-        let mut m = Self::new(
-            region,
-            true,
-            None,
-            (0.0, 0.0),
-            0.0,
-            sw,
-            sh,
-            Mode::Primer,
-            zoom_cfg,
-            false,
-        );
+    pub fn primer(index: Option<Arc<DatIndex>>, first: u32, count: u8, at: u8, sw: f32, sh: f32, zoom_cfg: u32) -> Self {
+        let region = Region { zone: -100, key: 0, num: 0, flags: 0, scale: 0, ki: -1, file: 0, ox: -256, oy: -256 };
+        let mut m = Self::new(region, true, None, (0.0, 0.0), 0.0, sw, sh, Mode::Primer, zoom_cfg, false);
         m.rx = index.map(|i| load(i, first + at as u32));
         m.primer = Some((first, count, at));
         m.scroll_to_px((0.0, -70.0));
@@ -967,10 +699,7 @@ impl MapWin {
         (self.alpha, self.rising) = (128.0, false);
         self.fade = (0.0, 0.0, 8.0);
         if let Some(to) = self.scroll_to.take() {
-            self.view = (
-                to.0 - self.point.0 / self.zoom - 0.5 - self.shift.0,
-                to.1 - self.point.1 / self.zoom - 0.5 - self.shift.1,
-            );
+            self.view = (to.0 - self.point.0 / self.zoom - 0.5 - self.shift.0, to.1 - self.point.1 / self.zoom - 0.5 - self.shift.1);
             self.clamp();
         }
         if let Some(Some((name, iw, ih, rgba))) = self.rx.take().and_then(|r| r.recv().ok()) {
@@ -982,12 +711,7 @@ impl MapWin {
     /// map0 is open: modes 0 / 5 with a map (not for a zone with no map, as FUN_101f0af0 decompiles), not while
     /// closing (FUN_101fa420 closes the sub-windows at once).
     pub fn has_menu(&self) -> bool {
-        self.need != Need::Nothing
-            && matches!(self.mode, Mode::Menu | Mode::Other)
-            && self.closing.is_none()
-            && self.list.is_none()
-            && self.maplist.is_none()
-            && self.scan.is_none()
+        self.need != Need::Nothing && matches!(self.mode, Mode::Menu | Mode::Other) && self.closing.is_none() && self.list.is_none() && self.maplist.is_none() && self.scan.is_none()
     }
 
     /// FUN_101fb910 / FUN_101fb7d0: scanlist opens; a new scan unless this map session kept results.
@@ -1019,14 +743,8 @@ impl MapWin {
     /// (not ourselves) with their own name, NPCs and monsters named from the zone NPC list by index & 0x3ff; those
     /// without a name or outside the narrowed circle are left out.
     pub(super) fn rebuild_scan(&mut self, w: &World) {
-        let Some(s) = self.scan.as_mut().filter(|s| !s.hidden) else {
-            return;
-        };
-        let names: HashMap<u16, &String> = w
-            .npc_names
-            .iter()
-            .map(|(id, n)| ((id & 0x3ff) as u16, n))
-            .collect();
+        let Some(s) = self.scan.as_mut().filter(|s| !s.hidden) else { return };
+        let names: HashMap<u16, &String> = w.npc_names.iter().map(|(id, n)| ((id & 0x3ff) as u16, n)).collect();
         s.rows = w
             .scan
             .entries
@@ -1035,36 +753,13 @@ impl MapWin {
             .filter_map(|e| {
                 let (sprite, name) = match e.kind {
                     0 => (363, e.name.clone()),
-                    1 => (
-                        326,
-                        names
-                            .get(&(e.index & 0x3ff))
-                            .map(|n| n.to_string())
-                            .unwrap_or_default(),
-                    ),
-                    2 => (
-                        327,
-                        names
-                            .get(&(e.index & 0x3ff))
-                            .map(|n| n.to_string())
-                            .unwrap_or_default(),
-                    ),
+                    1 => (326, names.get(&(e.index & 0x3ff)).map(|n| n.to_string()).unwrap_or_default()),
+                    2 => (327, names.get(&(e.index & 0x3ff)).map(|n| n.to_string()).unwrap_or_default()),
                     _ => return None,
                 };
-                let (px, py) = self.region.px(
-                    self.origin.0 as f32 + e.dx as f32,
-                    self.origin.1 as f32 + e.dz as f32,
-                );
-                let inside = s
-                    .filter
-                    .is_none_or(|((cx, cy), r2)| (px - cx).pow(2) + (py - cy).pow(2) < r2);
-                (!name.is_empty() && inside).then_some(ScanRow {
-                    index: e.index,
-                    px: (px as f32, py as f32),
-                    sprite,
-                    name,
-                    trackable: e.kind != 0,
-                })
+                let (px, py) = self.region.px(self.origin.0 as f32 + e.dx as f32, self.origin.1 as f32 + e.dz as f32);
+                let inside = s.filter.is_none_or(|((cx, cy), r2)| (px - cx).pow(2) + (py - cy).pow(2) < r2);
+                (!name.is_empty() && inside).then_some(ScanRow { index: e.index, px: (px as f32, py as f32), sprite, name, trackable: e.kind != 0 })
             })
             .collect();
         s.cursor = s.cursor.min(s.rows.len().saturating_sub(1));
@@ -1115,12 +810,7 @@ impl MapWin {
             if self.dirty
                 && let Some(d) = &self.mark_dir
             {
-                self.marks.save(
-                    d,
-                    self.region.zone as u16,
-                    self.region.key as u8,
-                    self.char_id,
-                );
+                self.marks.save(d, self.region.zone as u16, self.region.key as u8, self.char_id);
                 self.dirty = false;
             }
             self.list = None;
@@ -1197,10 +887,7 @@ impl MapWin {
             // FUN_101f7c60 1: mapv3 (asking party positions, c2s 0x0D2, is not done).
             egui::Key::Enter if self.cursor == 1 => {
                 self.want_party();
-                self.list = Some(List {
-                    cursor: 1,
-                    ..Default::default()
-                });
+                self.list = Some(List { cursor: 1, ..Default::default() });
                 self.sounds.push(Ui::Select as u32);
             }
             // FUN_101f7c60 2: Wide Scan (disabled: SE 0004); while tracking, the stop prompt first (group 0xe 0x45).
@@ -1230,19 +917,14 @@ impl MapWin {
     fn scan_key(&mut self, key: egui::Key) -> bool {
         use crate::audio::Ui;
         use egui::Key as K;
-        let Some(mut s) = self.scan.take() else {
-            return true;
-        };
+        let Some(mut s) = self.scan.take() else { return true };
         if let Some(c) = s.narrow {
             match key {
                 // Centre = the map pixel under the cursor, radius 0.65 x the anc_scan ring's 128 px / zoom.
                 K::Enter => {
                     let k = 1.0 / self.zoom;
                     let r = (128.0 * 0.65 * k + 0.5) as i32;
-                    let centre = (
-                        (c.0 * k + self.view.0 + 0.5) as i32,
-                        (c.1 * k + self.view.1 + 0.5) as i32,
-                    );
+                    let centre = ((c.0 * k + self.view.0 + 0.5) as i32, (c.1 * k + self.view.1 + 0.5) as i32);
                     (s.filter, s.narrow, s.hidden) = (Some((centre, r * r)), None, false);
                     self.sounds.push(Ui::Select as u32);
                 }
@@ -1264,8 +946,7 @@ impl MapWin {
                     None => self.sounds.push(Ui::Error as u32),
                 },
                 K::Enter => {
-                    (s.filter, s.hidden, s.mapscan, s.narrow) =
-                        (None, true, None, Some(self.point));
+                    (s.filter, s.hidden, s.mapscan, s.narrow) = (None, true, None, Some(self.point));
                     self.sounds.push(Ui::Select as u32);
                 }
                 _ => {}
@@ -1289,15 +970,9 @@ impl MapWin {
                     let last = (n - s.scroll).min(SCAN_ROWS) - 1;
                     let (scroll, cursor) = match key {
                         K::ArrowRight if s.scroll == max => (s.scroll, s.scroll + last),
-                        K::ArrowRight => (
-                            (s.scroll + SCAN_ROWS).min(max),
-                            (s.scroll + SCAN_ROWS).min(max) + row,
-                        ),
+                        K::ArrowRight => ((s.scroll + SCAN_ROWS).min(max), (s.scroll + SCAN_ROWS).min(max) + row),
                         _ if s.scroll == 0 => (0, 0),
-                        _ => (
-                            s.scroll.saturating_sub(SCAN_ROWS),
-                            s.scroll.saturating_sub(SCAN_ROWS) + row,
-                        ),
+                        _ => (s.scroll.saturating_sub(SCAN_ROWS), s.scroll.saturating_sub(SCAN_ROWS) + row),
                     };
                     if (scroll, cursor) != (s.scroll, s.cursor) {
                         self.sounds.push(Ui::Cursor as u32);
@@ -1319,10 +994,7 @@ impl MapWin {
                 }
                 _ => {}
             }
-            s.scroll = s
-                .scroll
-                .min(s.cursor)
-                .max((s.cursor + 1).saturating_sub(SCAN_ROWS));
+            s.scroll = s.scroll.min(s.cursor).max((s.cursor + 1).saturating_sub(SCAN_ROWS));
         }
         self.scan = Some(s);
         true
@@ -1332,9 +1004,7 @@ impl MapWin {
     fn list_key(&mut self, key: egui::Key) {
         use crate::audio::Ui;
         use egui::Key as K;
-        let Some(mut l) = self.list.take() else {
-            return;
-        };
+        let Some(mut l) = self.list.take() else { return };
         if l.rename.is_some() {
             self.list = Some(l);
             return;
@@ -1344,16 +1014,9 @@ impl MapWin {
             match key {
                 // FUN_101f8cf0: the marker at the map pixel under the cursor, then the name entry.
                 K::Enter => {
-                    let px = (
-                        cur.0 / self.zoom + self.view.0 + 0.5 + self.shift.0,
-                        cur.1 / self.zoom + self.view.1 + 0.5 + self.shift.1,
-                    );
+                    let px = (cur.0 / self.zoom + self.view.0 + 0.5 + self.shift.0, cur.1 / self.zoom + self.view.1 + 0.5 + self.shift.1);
                     let name = self.marks.sets[0][slot].name.clone();
-                    self.marks.sets[0][slot] = super::mapmark::Slot {
-                        px: (px.0 as i16, px.1 as i16),
-                        name: name.clone(),
-                        valid: true,
-                    };
+                    self.marks.sets[0][slot] = super::mapmark::Slot { px: (px.0 as i16, px.1 as i16), name: name.clone(), valid: true };
                     self.dirty = true;
                     (l.placing, l.v2, l.rename) = (None, None, Some((slot, name)));
                     self.sounds.push(Ui::Select as u32);
@@ -1443,12 +1106,7 @@ impl MapWin {
         let (sw, sh) = self.screen;
         let (z, m) = (self.zoom, self.margin);
         let max = |s: f32| (((512.0 + m) * z - s) / z).max(0.0);
-        [
-            self.base.0 - m,
-            self.base.1 - m,
-            self.base.0 + max(sw),
-            self.base.1 + max(sh),
-        ]
+        [self.base.0 - m, self.base.1 - m, self.base.0 + max(sw), self.base.1 + max(sh)]
     }
 
     fn clamp(&mut self) {
@@ -1474,10 +1132,7 @@ impl MapWin {
 
     /// The map pixel under the cursor point.
     fn under_point(&self) -> (f32, f32) {
-        (
-            self.point.0 / self.zoom + self.view.0 + 0.5 + self.shift.0,
-            self.point.1 / self.zoom + self.view.1 + 0.5 + self.shift.1,
-        )
+        (self.point.0 / self.zoom + self.view.0 + 0.5 + self.shift.0, self.point.1 / self.zoom + self.view.1 + 0.5 + self.shift.1)
     }
 
     /// FUN_101ef990: start easing `to` (moved by the mode 6 pad) under the cursor point unless it is already there.
@@ -1495,14 +1150,7 @@ impl MapWin {
     /// The keys, a fade and the closing all stop (the flags become 0x400).
     pub fn view_to(&mut self, x: f32, y: f32, zf: f32, speed: f32, flags: i32) {
         let cur = self.scripted.map_or([0.0, 0.0, 1.0], |s| s.cur);
-        let mut s = Scripted {
-            cur,
-            start: cur,
-            target: [x, y, zf],
-            speed: speed.max(0.0),
-            mode: (flags & 0x7f) as u8,
-            t: 0.0,
-        };
+        let mut s = Scripted { cur, start: cur, target: [x, y, zf], speed: speed.max(0.0), mode: (flags & 0x7f) as u8, t: 0.0 };
         if s.speed == 0.0 {
             (s.t, s.cur) = (1.0, s.target);
         }
@@ -1520,10 +1168,7 @@ impl MapWin {
         let Some(s) = self.scripted else { return };
         self.zoom = s.cur[2] * self.zoom_base;
         let (sw, sh) = self.screen;
-        self.view = (
-            s.cur[0] - sw / 2.0 / self.zoom,
-            s.cur[1] - sh / 2.0 / self.zoom,
-        );
+        self.view = (s.cur[0] - sw / 2.0 / self.zoom, s.cur[1] - sh / 2.0 / self.zoom);
     }
 
     /// One frame (FUN_101ef0a0): the zoom keys (0x7d back to the base, 0xa4 / 0xa5 or the compact stick 0.04 a tick,
@@ -1531,16 +1176,10 @@ impl MapWin {
     /// scripted view; the fade, zoom-to and scroll-to on 2-tick retail frames. False once the window is gone.
     /// `drag`: a left drag's offset from its press point in UI pixels (FUN_10126100 / FUN_10125fe0: past W / 21 on an
     /// axis it counts as full scroll that way, the anchor taken as the press point *(inf)*).
-    pub fn update(
-        &mut self,
-        input: &mut super::input::Input,
-        ticks: f32,
-        drag: Option<(f32, f32)>,
-    ) -> bool {
+    pub fn update(&mut self, input: &mut super::input::Input, ticks: f32, drag: Option<(f32, f32)>) -> bool {
         use super::input::mode::{HELD, PRESS};
         if let Some(deadline) = self.closing {
-            let idle =
-                self.zoom_to.is_none() && self.scroll_to.is_none() && self.fade.0 == self.fade.1;
+            let idle = self.zoom_to.is_none() && self.scroll_to.is_none() && self.fade.0 == self.fade.1;
             if idle || std::time::Instant::now() >= deadline {
                 return false;
             }
@@ -1552,60 +1191,26 @@ impl MapWin {
                 self.zoom_to = Some(self.zoom_base);
             } else {
                 // Axis 0x7c: the compact stick against -(0xa4 held ? 1 : 0xa5 held ? -1 : 0), the larger winning.
-                let keys: f32 = -(if input.test(0xa4, HELD) {
-                    1.0
-                } else if input.test(0xa5, HELD) {
-                    -1.0
-                } else {
-                    0.0
-                });
+                let keys: f32 = -(if input.test(0xa4, HELD) { 1.0 } else if input.test(0xa5, HELD) { -1.0 } else { 0.0 });
                 let stick = input.axis(0x7c);
-                let a = if stick.abs() > keys.abs() {
-                    stick
-                } else {
-                    keys
-                };
+                let a = if stick.abs() > keys.abs() { stick } else { keys };
                 if a != 0.0 {
                     self.zoom_by(-a * 0.08 * fast * ticks * 0.5);
                 }
             }
         }
         // Cursor mode (flag 0x100: placing a marker, narrowing a scan) reads the cursor axes instead (FUN_101ef0a0).
-        let cursor_mode = self.list.as_ref().is_some_and(|l| l.placing.is_some())
-            || self.scan.as_ref().is_some_and(|s| s.narrow.is_some());
+        let cursor_mode = self.list.as_ref().is_some_and(|l| l.placing.is_some()) || self.scan.as_ref().is_some_and(|s| s.narrow.is_some());
         if live && self.scroll_to.is_none() && !cursor_mode {
             // Under 2 px a retail frame is dead (judged per 2-tick frame, so it holds at any frame rate).
             let dead = |v: f32| if (v * fast).abs() < 2.0 { 0.0 } else { v };
-            let step = |d: f32| {
-                if d / (self.screen.0 * 0.047619) >= 1.0 {
-                    1.0
-                } else if d / (self.screen.0 * 0.047619) <= -1.0 {
-                    -1.0
-                } else {
-                    0.0
-                }
-            };
+            let step = |d: f32| if d / (self.screen.0 * 0.047619) >= 1.0 { 1.0 } else if d / (self.screen.0 * 0.047619) <= -1.0 { -1.0 } else { 0.0 };
             let (mx, my) = drag.map_or((0.0, 0.0), |d| (step(d.0), step(d.1)));
-            let ax = if input.axis(0x79) != 0.0 {
-                input.axis(0x79)
-            } else {
-                mx
-            };
-            let ay = if input.axis(0x7a) != 0.0 {
-                input.axis(0x7a)
-            } else {
-                my
-            };
-            let v = (
-                dead(ax * 15.0) * fast * ticks * 0.5,
-                dead(ay * 15.0) * fast * ticks * 0.5,
-            );
+            let ax = if input.axis(0x79) != 0.0 { input.axis(0x79) } else { mx };
+            let ay = if input.axis(0x7a) != 0.0 { input.axis(0x7a) } else { my };
+            let v = (dead(ax * 15.0) * fast * ticks * 0.5, dead(ay * 15.0) * fast * ticks * 0.5);
             if v != (0.0, 0.0) {
-                self.scroll_by(if self.texture.is_some() {
-                    v
-                } else {
-                    (-v.0, -v.1)
-                });
+                self.scroll_by(if self.texture.is_some() { v } else { (-v.0, -v.1) });
             }
         }
         if live && self.scroll_to.is_none() && input.test(0x7e, PRESS) && self.show_player {
@@ -1634,22 +1239,12 @@ impl MapWin {
         }
         // Cursor mode (placing a marker, narrowing a scan): axes 0x9d / 0x9e x the cursor speed 8, inside the cursor
         // box; past it the view scrolls.
-        let cur = self
-            .list
-            .as_ref()
-            .and_then(|l| l.placing.map(|p| p.1))
-            .or(self.scan.as_ref().and_then(|s| s.narrow));
+        let cur = self.list.as_ref().and_then(|l| l.placing.map(|p| p.1)).or(self.scan.as_ref().and_then(|s| s.narrow));
         if let Some(cur) = cur {
             let (sw, sh) = self.screen;
             let dead = |v: f32| if (v * fast).abs() < 2.0 { 0.0 } else { v };
-            let v = (
-                dead(input.axis(0x9d) * 8.0) * fast * ticks * 0.5,
-                dead(input.axis(0x9e) * 8.0) * fast * ticks * 0.5,
-            );
-            let (bx, by) = (
-                [sw / 512.0 * 40.0, sw - sw / 512.0 * 150.0],
-                [sh / 448.0 * 65.0, sh - sh / 448.0 * 180.0],
-            );
+            let v = (dead(input.axis(0x9d) * 8.0) * fast * ticks * 0.5, dead(input.axis(0x9e) * 8.0) * fast * ticks * 0.5);
+            let (bx, by) = ([sw / 512.0 * 40.0, sw - sw / 512.0 * 150.0], [sh / 448.0 * 65.0, sh - sh / 448.0 * 180.0]);
             let want = (cur.0 + v.0, cur.1 + v.1);
             let moved = (want.0.clamp(bx[0], bx[1]), want.1.clamp(by[0], by[1]));
             let over = (want.0 - moved.0, want.1 - moved.1);
@@ -1711,11 +1306,7 @@ impl MapWin {
     fn frame(&mut self) {
         let (level, target, step) = self.fade;
         if level != target {
-            self.fade.0 = if (target - level).abs() <= step {
-                target
-            } else {
-                level + step * (target - level).signum()
-            };
+            self.fade.0 = if (target - level).abs() <= step { target } else { level + step * (target - level).signum() };
         }
         if let Some(t) = self.zoom_to {
             let dz = (t - self.zoom) * 0.2;
@@ -1734,8 +1325,7 @@ impl MapWin {
             }
             let before = self.view;
             self.scroll_by(d);
-            let moved =
-                ((self.view.0 - before.0).powi(2) + (self.view.1 - before.1).powi(2)).sqrt();
+            let moved = ((self.view.0 - before.0).powi(2) + (self.view.1 - before.1).powi(2)).sqrt();
             if moved < 0.8f32.sqrt() {
                 let p = self.under_point();
                 self.scroll_by(((to.0 - p.0) * self.zoom, (to.1 - p.1) * self.zoom));
@@ -1755,32 +1345,13 @@ impl MapWin {
         }
         let z = self.zoom;
         let level = self.fade.0;
-        let a = if level == 0.0 {
-            160.0
-        } else {
-            (255.0 - level).min(160.0)
-        } / 128.0;
+        let a = if level == 0.0 { 160.0 } else { (255.0 - level).min(160.0) } / 128.0;
         if self.mode == Mode::Preview && level < 255.0 {
             let at = |b: f32, v: f32| ((b - PREVIEW_PAD - v) * z + 0.5).trunc();
-            gu.sprite_scaled(
-                BACKDROP,
-                0,
-                at(self.base.0, self.view.0),
-                at(self.base.1, self.view.1),
-                z,
-                z,
-                ((a * 128.0) as u32).min(0xff) << 24 | 0x40_4040,
-            );
+            gu.sprite_scaled(BACKDROP, 0, at(self.base.0, self.view.0), at(self.base.1, self.view.1), z, z, ((a * 128.0) as u32).min(0xff) << 24 | 0x40_4040);
         }
         if let Some(t) = &self.texture {
-            gu.image_rect(
-                t,
-                (self.base.0 - self.view.0) * z + 0.5,
-                (self.base.1 - self.view.1) * z + 0.5,
-                512.0 * z,
-                512.0 * z,
-                [0.5, 0.5, 0.5, a.min(1.0)],
-            );
+            gu.image_rect(t, (self.base.0 - self.view.0) * z + 0.5, (self.base.1 - self.view.1) * z + 0.5, 512.0 * z, 512.0 * z, [0.5, 0.5, 0.5, a.min(1.0)]);
         }
         if level == 0.0 {
             self.draw_points(gu);
@@ -1796,59 +1367,27 @@ impl MapWin {
             let sy = (py - self.shift.1 - self.view.1) * z + 0.5;
             // The sprite points east; turned to our facing (forward (cos r, 0, -sin r) is (cos r, sin r) on the map).
             let (s, c) = self.heading.sin_cos();
-            gu.sprite_affine(
-                "menu    keytops3",
-                MARKER,
-                sx,
-                sy,
-                [c, -s, s, c],
-                (self.alpha as u32) << 24 | 0x80_8080,
-            );
+            gu.sprite_affine("menu    keytops3", MARKER, sx, sy, [c, -s, s, c], (self.alpha as u32) << 24 | 0x80_8080);
             // FUN_101fa9c0: "(G-9)" at (titlewin x0, titlewin y1 + 3) in fontshp; not in mode 6.
             if self.mode != Mode::Preview {
-                gu.shape_text(
-                    &self.region.grid(px as i32, py as i32),
-                    16.0,
-                    49.0,
-                    0x8080_8080,
-                    false,
-                );
+                gu.shape_text(&self.region.grid(px as i32, py as i32), 16.0, 49.0, 0x8080_8080, false);
             }
         }
         // The tracked target's ring (keytops3 105, centred by its own bounds).
         if let Some((px, py)) = self.tracked.filter(|_| level == 0.0) {
-            gu.sprite(
-                "menu    keytops3",
-                105,
-                (px - self.shift.0 - self.view.0) * z + 0.5,
-                (py - self.shift.1 - self.view.1) * z + 0.5,
-                0x8080_8080,
-            );
+            gu.sprite("menu    keytops3", 105, (px - self.shift.0 - self.view.0) * z + 0.5, (py - self.shift.1 - self.view.1) * z + 0.5, 0x8080_8080);
         }
         if self.has_menu() && !modern {
             let hide: &[u16] = if self.scan_ok { &[] } else { &[2] };
-            if let Some(win) = gu.lobby_window_off(
-                "menu    map0",
-                sw,
-                sh,
-                (0.0, 0.0),
-                Some(self.cursor),
-                true,
-                hide,
-            ) && !self.scan_ok
+            if let Some(win) = gu.lobby_window_off("menu    map0", sw, sh, (0.0, 0.0), Some(self.cursor), true, hide)
+                && !self.scan_ok
                 && let Some(&(_, r)) = win.children.iter().find(|c| c.0 == 1)
             {
                 // Item 2 disabled: its state-4 sprite (keytops3 20) in place of 3; under the cursor at (+1, +1) in
                 // 0x80805020 (FUN_101177d0).
                 let on = self.cursor == 2;
                 let d = if on { 1.0 } else { 0.0 };
-                gu.sprite(
-                    "menu    keytops3",
-                    20,
-                    r[0] + d,
-                    r[1] + 16.0 + d,
-                    if on { 0x8080_5020 } else { 0x8080_8080 },
-                );
+                gu.sprite("menu    keytops3", 20, r[0] + d, r[1] + 16.0 + d, if on { 0x8080_5020 } else { 0x8080_8080 });
             }
         }
         self.draw_scan(gu, sw, sh, modern);
@@ -1865,13 +1404,7 @@ impl MapWin {
         let z = self.zoom;
         for (k, r) in s.rows.iter().enumerate() {
             let sprite = if k == s.cursor { 105 } else { r.sprite };
-            gu.sprite(
-                "menu    keytops3",
-                sprite,
-                (r.px.0 - self.shift.0 - self.view.0) * z + 0.5,
-                (r.px.1 - self.shift.1 - self.view.1) * z + 0.5,
-                0x8080_8080,
-            );
+            gu.sprite("menu    keytops3", sprite, (r.px.0 - self.shift.0 - self.view.0) * z + 0.5, (r.px.1 - self.shift.1 - self.view.1) * z + 0.5, 0x8080_8080);
         }
     }
 
@@ -1889,21 +1422,11 @@ impl MapWin {
         if modern {
             return;
         }
-        if let Some(win) =
-            gu.lobby_window_off("menu    scanlist", sw, sh, (0.0, 0.0), None, false, &[])
-        {
+        if let Some(win) = gu.lobby_window_off("menu    scanlist", sw, sh, (0.0, 0.0), None, false, &[]) {
             let [x, y, fw, fh] = win.frame;
             gu.scroll_bar(x + fw - 8.0, y, fh, s.rows.len(), SCAN_ROWS, s.scroll);
             if s.mapscan.is_none() {
-                gu.bar_site(
-                    super::scrollbar::Owner::ScanList,
-                    x + fw - 8.0,
-                    y,
-                    fh,
-                    s.rows.len(),
-                    SCAN_ROWS,
-                    s.scroll,
-                );
+                gu.bar_site(super::scrollbar::Owner::ScanList, x + fw - 8.0, y, fh, s.rows.len(), SCAN_ROWS, s.scroll);
             }
             for (k, r) in s.rows.iter().enumerate().skip(s.scroll).take(SCAN_ROWS) {
                 let ry = y + 4.0 + 24.0 * (k - s.scroll) as f32;
@@ -1919,19 +1442,12 @@ impl MapWin {
         if let Some(c) = s.mapscan {
             let off = s.rows.get(s.cursor).is_some_and(|r| !r.trackable);
             let hide: &[u16] = if off { &[1] } else { &[] };
-            if let Some(win) =
-                gu.lobby_window_off("menu    mapscan", sw, sh, (0.0, 0.0), Some(c), true, hide)
+            if let Some(win) = gu.lobby_window_off("menu    mapscan", sw, sh, (0.0, 0.0), Some(c), true, hide)
                 && off
                 && let Some(&(_, r)) = win.children.iter().find(|ch| ch.0 == 2)
             {
                 let d = if c == 1 { 1.0 } else { 0.0 };
-                gu.sprite(
-                    "menu    keytops3",
-                    300,
-                    r[0] + d,
-                    r[1] - 16.0 + d,
-                    if c == 1 { 0x4040_2810 } else { 0x3080_8080 },
-                );
+                gu.sprite("menu    keytops3", 300, r[0] + d, r[1] - 16.0 + d, if c == 1 { 0x4040_2810 } else { 0x3080_8080 });
             }
         }
     }
@@ -1942,9 +1458,7 @@ impl MapWin {
         for s in 0..4 {
             for i in 0..10 {
                 let a = self.mark_alpha[s][i];
-                let Some((px, label, k)) = self.slot(s, i).filter(|_| a > 0.0) else {
-                    continue;
-                };
+                let Some((px, label, k)) = self.slot(s, i).filter(|_| a > 0.0) else { continue };
                 let labelled = s < 2 || (s == self.set as usize && self.label_only == Some(i));
                 self.draw_mark(gu, px, k, label.filter(|_| labelled), a);
             }
@@ -1953,57 +1467,29 @@ impl MapWin {
 
     /// The point list (+0x9c), drawn before the sets.
     fn draw_points(&self, gu: &mut GameUi) {
-        for m in self
-            .points
-            .iter()
-            .flat_map(|p| &p.marks)
-            .filter(|m| m.alpha > 0.0)
-        {
+        for m in self.points.iter().flat_map(|p| &p.marks).filter(|m| m.alpha > 0.0) {
             self.draw_mark(gu, m.px, m.sprite, Some(m.name), m.alpha);
         }
     }
 
     /// FUN_101ee7b0: one marker.
-    fn draw_mark(
-        &self,
-        gu: &mut GameUi,
-        (px, py): (f32, f32),
-        k: usize,
-        label: Option<&str>,
-        a: f32,
-    ) {
+    fn draw_mark(&self, gu: &mut GameUi, (px, py): (f32, f32), k: usize, label: Option<&str>, a: f32) {
         let z = self.zoom;
         let b = gu.cell_bounds("menu    keytops3", k, 0).unwrap_or([0.0; 4]);
-        let x =
-            ((px - self.shift.0 - self.view.0) * z + 0.5).trunc() - ((b[2] - b[0]) / 2.0).trunc();
-        let y =
-            ((py - self.shift.1 - self.view.1) * z + 0.5).trunc() - ((b[3] - b[1]) / 2.0).trunc();
+        let x = ((px - self.shift.0 - self.view.0) * z + 0.5).trunc() - ((b[2] - b[0]) / 2.0).trunc();
+        let y = ((py - self.shift.1 - self.view.1) * z + 0.5).trunc() - ((b[3] - b[1]) / 2.0).trunc();
         let a = a as u32;
         gu.sprite("menu    keytops3", k, x, y, a << 24 | 0x80_8080);
         if let Some(t) = label.filter(|t| !t.is_empty()) {
             let c = |v: u32| (v * a) >> 7;
-            gu.shape_text(
-                t,
-                x + 16.0,
-                y + 1.0,
-                a << 24 | c(0x60) << 16 | c(0x60) << 8 | c(0x70),
-                false,
-            );
+            gu.shape_text(t, x + 16.0, y + 1.0, a << 24 | c(0x60) << 16 | c(0x60) << 8 | c(0x70), false);
         }
     }
 
     /// FUN_101f9420 (each update): once the masks are in, the table, then every point on this map unnamed.
-    pub(super) fn load_points(
-        &mut self,
-        table: impl FnOnce() -> Option<Arc<Vec<Point>>>,
-        masks: Option<[u8; 64]>,
-    ) {
-        let Some(p) = self.points.as_mut().filter(|p| p.table.is_none()) else {
-            return;
-        };
-        let (Some(masks), Some(t)) = (masks, table()) else {
-            return;
-        };
+    pub(super) fn load_points(&mut self, table: impl FnOnce() -> Option<Arc<Vec<Point>>>, masks: Option<[u8; 64]>) {
+        let Some(p) = self.points.as_mut().filter(|p| p.table.is_none()) else { return };
+        let (Some(masks), Some(t)) = (masks, table()) else { return };
         (p.table, p.masks) = (Some(t), masks);
         self.place_points((0xffff, 0xffff));
     }
@@ -2012,33 +1498,16 @@ impl MapWin {
     /// `sel` named with its kind (the cut can leave it out); unregistered ones blink.
     fn place_points(&mut self, sel: (u16, u16)) {
         let (zone, key, region) = (self.region.zone, self.key, self.region);
-        let Some(p) = self.points.as_mut() else {
-            return;
-        };
+        let Some(p) = self.points.as_mut() else { return };
         let Some(table) = p.table.clone() else { return };
-        let here: Vec<&Point> = table
-            .iter()
-            .filter(|t| t.zone as i16 == zone && t.map == key)
-            .collect();
+        let here: Vec<&Point> = table.iter().filter(|t| t.zone as i16 == zone && t.map == key).collect();
         let is_sel = |t: &Point| (tpoints::kind_row(t.kind), t.id) == sel;
         p.marks.clear();
-        for t in here
-            .iter()
-            .filter(|t| !is_sel(t))
-            .chain(here.iter().filter(|t| is_sel(t)))
-            .take(16)
-        {
+        for t in here.iter().filter(|t| !is_sel(t)).chain(here.iter().filter(|t| is_sel(t))).take(16) {
             let (name, icon, _) = tpoints::KINDS[tpoints::kind_row(t.kind) as usize];
             let (x, y) = region.px(t.x, t.z);
             let blink = !tpoints::registered(&p.masks, t.kind, t.bit);
-            p.marks.push(PointMark {
-                px: (x as f32, y as f32),
-                sprite: ICON_SPRITE[icon as usize],
-                name: if is_sel(t) { name } else { "" },
-                blink,
-                alpha: 0.0,
-                falling: false,
-            });
+            p.marks.push(PointMark { px: (x as f32, y as f32), sprite: ICON_SPRITE[icon as usize], name: if is_sel(t) { name } else { "" }, blink, alpha: 0.0, falling: false });
         }
     }
 
@@ -2046,16 +1515,8 @@ impl MapWin {
     /// another map reopens the preview there; on this one it eases toward the cursor point, named, and the map shows
     /// when owned (else the caller says why, once per zone).
     pub fn follow(&mut self, sel: (u16, u16)) -> Follow {
-        let Some(p) = self
-            .points
-            .as_mut()
-            .filter(|p| p.last != sel && self.closing.is_none())
-        else {
-            return Follow::Keep;
-        };
-        let Some(table) = p.table.clone() else {
-            return Follow::Keep;
-        };
+        let Some(p) = self.points.as_mut().filter(|p| p.last != sel && self.closing.is_none()) else { return Follow::Keep };
+        let Some(table) = p.table.clone() else { return Follow::Keep };
         let hide = (255.0, 255.0, self.fade.2);
         if sel.1 == 0xffff {
             p.last = (sel.0, 0xffff);
@@ -2126,14 +1587,7 @@ impl MapWin {
         let keys = l.v2.is_none() && l.placing.is_none() && l.rename.is_none();
         let sets = [0, 1, 2, 3].map(|s| self.set_shown(s));
         let v2 = l.v2.map(|(row, c)| (row, c, self.marks.sets[0][row].valid));
-        Some(MarkersLook {
-            set: self.set as usize,
-            sets,
-            rows,
-            cursor: keys.then(|| l.cursor as usize - 1),
-            v2,
-            placing: l.placing.is_some(),
-        })
+        Some(MarkersLook { set: self.set as usize, sets, rows, cursor: keys.then(|| l.cursor as usize - 1), v2, placing: l.placing.is_some() })
     }
 
     /// mapv3 (FUN_101fbec0): per row the icon at (16, 5 + 16 i) and the name at (0x1f, 7 + 16 i) (font 0x44 taken as
@@ -2147,14 +1601,8 @@ impl MapWin {
         if modern {
             return;
         }
-        let sel = if l.v2.is_some() || l.placing.is_some() {
-            0
-        } else {
-            l.cursor
-        };
-        let Some((x, y)) = gu.menu_sel("menu    mapv3", sw, sh, sel) else {
-            return;
-        };
+        let sel = if l.v2.is_some() || l.placing.is_some() { 0 } else { l.cursor };
+        let Some((x, y)) = gu.menu_sel("menu    mapv3", sw, sh, sel) else { return };
         for i in 0..10 {
             let ry = y + 16.0 * i as f32;
             let (icon, name) = self.marker_row(l, i);
@@ -2166,15 +1614,7 @@ impl MapWin {
             }
         }
         if let Some((row, c)) = l.v2 {
-            gu.lobby_window_off(
-                "menu    mapv2",
-                sw,
-                sh,
-                (x - 112.0, y + 16.0 * row as f32),
-                Some(c),
-                true,
-                &[],
-            );
+            gu.lobby_window_off("menu    mapv2", sw, sh, (x - 112.0, y + 16.0 * row as f32), Some(c), true, &[]);
         }
     }
 }
@@ -2299,25 +1739,17 @@ impl MapList {
                 sounds.push(crate::audio::Ui::Cursor as u32);
             }
             egui::Key::ArrowRight | egui::Key::ArrowLeft => {
-                let m = if key == egui::Key::ArrowRight {
-                    super::scrollbar::Msg::PageDown
-                } else {
-                    super::scrollbar::Msg::PageUp
-                };
+                let m = if key == egui::Key::ArrowRight { super::scrollbar::Msg::PageDown } else { super::scrollbar::Msg::PageUp };
                 if super::scrollbar::rows_abs(m, &mut self.scroll, &mut self.cursor, n, ROWS) {
                     sounds.push(crate::audio::Ui::Cursor as u32);
                 }
             }
             egui::Key::Enter => {
-                let Some(r) = self.rows.get(self.cursor) else {
-                    return ListOut::Keep;
-                };
+                let Some(r) = self.rows.get(self.cursor) else { return ListOut::Keep };
                 match r.id {
                     0x7fff_ffff => return ListOut::Close,
                     id if id >= 0 => return ListOut::Pick(id as i16, r.key as i16),
-                    id if id <= -2 && (-2 - id) < 0x40 && self.level == Level::Top => {
-                        self.go(Level::Region((-2 - id) as usize))
-                    }
+                    id if id <= -2 && (-2 - id) < 0x40 && self.level == Level::Top => self.go(Level::Region((-2 - id) as usize)),
                     id => {
                         self.from = Some((self.level.clone(), self.cursor));
                         self.go(Level::Zone((-id - 2) as u16));
@@ -2334,10 +1766,7 @@ impl MapList {
             },
             _ => {}
         }
-        self.scroll = self
-            .scroll
-            .min(self.cursor)
-            .max((self.cursor + 1).saturating_sub(ROWS));
+        self.scroll = self.scroll.min(self.cursor).max((self.cursor + 1).saturating_sub(ROWS));
         ListOut::Keep
     }
 
@@ -2348,93 +1777,39 @@ impl MapList {
     /// FUN_101fcae0 / FUN_101fc600 / FUN_101fc7e0 / FUN_101fc9d0.
     fn build(&mut self, w: &World, gu: &GameUi) {
         let regions = gu.map_regions();
-        let place = |z: u16| {
-            w.names
-                .as_ref()
-                .and_then(|n| crate::dat::names::NameSource::place(&**n, z as u32))
-                .filter(|s| !s.is_empty())
-        };
+        let place = |z: u16| w.names.as_ref().and_then(|n| crate::dat::names::NameSource::place(&**n, z as u32)).filter(|s| !s.is_empty());
         // FUN_101fc970: the zone's records with a map number: (key, number).
-        let floors = |z: u16| {
-            regions
-                .iter()
-                .filter(|r| r.zone == z as i16 && r.num != 0)
-                .map(|r| (r.key as i32, r.num))
-                .collect::<Vec<_>>()
-        };
+        let floors = |z: u16| regions.iter().filter(|r| r.zone == z as i16 && r.num != 0).map(|r| (r.key as i32, r.num)).collect::<Vec<_>>();
         // FUN_101f7340(zone, key, 1): a record whose key item is held (maps that need none are not listed); key -2 the
         // zone's first record with a map number.
         let has = |z: u16, key: i32| {
-            let r = if key == -2 {
-                regions.iter().find(|r| r.zone == z as i16 && r.num != 0)
-            } else {
-                regions
-                    .iter()
-                    .find(|r| r.zone == z as i16 && r.key as i32 == key)
-            };
+            let r = if key == -2 { regions.iter().find(|r| r.zone == z as i16 && r.num != 0) } else { regions.iter().find(|r| r.zone == z as i16 && r.key as i32 == key) };
             r.is_some_and(|r| matches!(r.need(), Need::Item(_)) && owned(w, r))
         };
         let mut rows = Vec::new();
         match self.level {
             Level::Top => {
-                rows.push(Row {
-                    id: w.pos_zone as i32,
-                    key: -1,
-                    a: gu.item_msg(9, 0x23).unwrap_or_default(),
-                    b: gu.item_msg(9, 0x24).unwrap_or_default(),
-                    number: false,
-                });
+                rows.push(Row { id: w.pos_zone as i32, key: -1, a: gu.item_msg(9, 0x23).unwrap_or_default(), b: gu.item_msg(9, 0x24).unwrap_or_default(), number: false });
                 for (i, (name, zones)) in gu.region_groups().iter().enumerate() {
-                    let n = zones
-                        .iter()
-                        .filter(|&&z| has(z, -2) && place(z).is_some())
-                        .count();
+                    let n = zones.iter().filter(|&&z| has(z, -2) && place(z).is_some()).count();
                     if n > 0 {
-                        rows.push(Row {
-                            id: -2 - i as i32,
-                            key: -1,
-                            a: gu.item_msg(0x13, *name as usize).unwrap_or_default(),
-                            b: n.to_string(),
-                            number: true,
-                        });
+                        rows.push(Row { id: -2 - i as i32, key: -1, a: gu.item_msg(0x13, *name as usize).unwrap_or_default(), b: n.to_string(), number: true });
                     }
                 }
             }
             Level::Region(i) => {
                 for &z in gu.region_groups().get(i).map_or(&[][..], |g| &g.1[..]) {
-                    let Some(name) = place(z).filter(|_| has(z, -2)) else {
-                        continue;
-                    };
-                    let owned: Vec<i32> = floors(z)
-                        .into_iter()
-                        .map(|f| f.0)
-                        .filter(|&k| has(z, k))
-                        .collect();
-                    let (id, key) = if owned.len() >= 2 {
-                        (-(z as i32) - 2, 0)
-                    } else {
-                        (z as i32, owned.last().copied().unwrap_or(0))
-                    };
+                    let Some(name) = place(z).filter(|_| has(z, -2)) else { continue };
+                    let owned: Vec<i32> = floors(z).into_iter().map(|f| f.0).filter(|&k| has(z, k)).collect();
+                    let (id, key) = if owned.len() >= 2 { (-(z as i32) - 2, 0) } else { (z as i32, owned.last().copied().unwrap_or(0)) };
                     let area = crate::dat::font::decode_sjis(&gu.area_name(z));
-                    rows.push(Row {
-                        id,
-                        key,
-                        a: name,
-                        b: area,
-                        number: false,
-                    });
+                    rows.push(Row { id, key, a: name, b: area, number: false });
                 }
             }
             Level::Zone(z) => {
                 for (key, num) in floors(z).into_iter().filter(|f| has(z, f.0)) {
                     if let Some(name) = place(z) {
-                        rows.push(Row {
-                            id: z as i32,
-                            key,
-                            a: name,
-                            b: num.to_string(),
-                            number: true,
-                        });
+                        rows.push(Row { id: z as i32, key, a: name, b: num.to_string(), number: true });
                     }
                 }
             }
@@ -2449,50 +1824,25 @@ impl MapList {
     fn draw(&self, gu: &mut GameUi, sw: f32, sh: f32) {
         const WHITE: u32 = 0x8080_8080;
         let sel = (!self.rows.is_empty()).then(|| (self.cursor - self.scroll + 1) as u16);
-        if gu
-            .lobby_window_off("menu    maplist", sw, sh, (0.0, 0.0), sel, true, &[])
-            .is_none()
-        {
+        if gu.lobby_window_off("menu    maplist", sw, sh, (0.0, 0.0), sel, true, &[]).is_none() {
             return;
         }
-        let Some((x, y)) = gu.window_xy("menu    maplist", sw, sh) else {
-            return;
-        };
+        let Some((x, y)) = gu.window_xy("menu    maplist", sw, sh) else { return };
         if let Some([fx, fy, fw, fh]) = gu.window_rect("menu    maplist", sw, sh) {
             gu.scroll_bar(fx + fw - 8.0, fy, fh, self.rows.len(), ROWS, self.scroll);
-            gu.bar_site(
-                super::scrollbar::Owner::MapList,
-                fx + fw - 8.0,
-                fy,
-                fh,
-                self.rows.len(),
-                ROWS,
-                self.scroll,
-            );
+            gu.bar_site(super::scrollbar::Owner::MapList, fx + fw - 8.0, fy, fh, self.rows.len(), ROWS, self.scroll);
         }
         for (k, r) in self.rows.iter().enumerate().skip(self.scroll).take(ROWS) {
             let (rx, ry) = (x + 3.0, y + 4.0 + 16.0 * (k - self.scroll) as f32);
             gu.text(&r.a, rx + COLS[0], ry + 2.0, 0, WHITE.to_le_bytes());
             if r.number {
-                gu.shape_text(
-                    &format!("[{}]", r.b),
-                    rx + COLS[2] - 2.0,
-                    ry + 4.0,
-                    WHITE,
-                    true,
-                );
+                gu.shape_text(&format!("[{}]", r.b), rx + COLS[2] - 2.0, ry + 4.0, WHITE, true);
             } else {
                 gu.shape_text(&format!("({})", r.b), rx + COLS[1], ry + 2.0, WHITE, false);
             }
         }
         if !self.rows.is_empty() {
-            gu.sprite(
-                "menu    windowps",
-                75,
-                x,
-                y + 4.0 + 16.0 * (self.cursor - self.scroll) as f32,
-                WHITE,
-            );
+            gu.sprite("menu    windowps", 75, x, y + 4.0 + 16.0 * (self.cursor - self.scroll) as f32, WHITE);
         }
     }
 }
@@ -2516,9 +1866,7 @@ pub(super) fn refresh(w: &mut World, gu: &GameUi) {
             _ => {}
         }
     }
-    let Some(mut l) = w.map.as_mut().and_then(|m| m.maplist.take()) else {
-        return;
-    };
+    let Some(mut l) = w.map.as_mut().and_then(|m| m.maplist.take()) else { return };
     if !l.built {
         l.build(w, gu);
     }
@@ -2532,66 +1880,27 @@ pub enum Cmd {
     /// /map (FUN_101f7810(0)): mode 0 as from the main menu.
     Menu,
     /// Change Map's reopen (FUN_101f79e0): mode 5 for (zone, key), key -1 the sub-key under the player.
-    Other {
-        zone: i16,
-        key: i16,
-        return_menu: Option<usize>,
-    },
-    Open {
-        zone: i16,
-        key: i16,
-        show_player: bool,
-    },
+    Other { zone: i16, key: i16, return_menu: Option<usize> },
+    Open { zone: i16, key: i16, show_player: bool },
     Close,
-    View {
-        x: f32,
-        y: f32,
-        zf: f32,
-        speed: f32,
-        flags: i32,
-    },
+    View { x: f32, y: f32, zf: f32, speed: f32, flags: i32 },
     /// Ops 0x8b / 0xb8: set 1's slot at world (x, z) named.
-    Mark {
-        zone: i16,
-        key: i16,
-        slot: usize,
-        x: f32,
-        z: f32,
-        name: String,
-    },
+    Mark { zone: i16, key: i16, slot: usize, x: f32, z: f32, name: String },
     /// Ops 0xa8 / 0xb9: set 1's slot emptied; `file` (sub 0) loads, edits and saves the zone's .MRK.
-    Unmark {
-        zone: i16,
-        key: i16,
-        slot: usize,
-        file: bool,
-    },
+    Unmark { zone: i16, key: i16, slot: usize, file: bool },
     /// Op 0xd4 sub 0 (FUN_100b2570(6, zone, -1)) and its reopen for another zone (FUN_101f79e0, no arrow); `point_y`
     /// is the cursor point's height.
-    Preview {
-        zone: i16,
-        key: i16,
-        arrow: bool,
-        point_y: f32,
-    },
+    Preview { zone: i16, key: i16, arrow: bool, point_y: f32 },
     /// FUN_100b2a60 -> FUN_101fa420(1): an answer closes the event map (any event mode), no reopen.
     CloseEvent,
     /// FUN_101fb140: a Primer page's image (mode 7); nothing while another map is up (FUN_101f9a20).
-    Primer {
-        first: u32,
-        count: u8,
-        at: u8,
-    },
+    Primer { first: u32, count: u8, at: u8 },
 }
 
 /// FUN_101f8650: group 10 #7 "You do not possess a map of %s." with the place name (FUN_10129e80, mode 0x79).
 fn not_owned(w: &mut World, zone: u16) {
     let Some(bt) = w.battle.clone() else { return };
-    let place = w
-        .names
-        .as_ref()
-        .and_then(|n| crate::dat::names::NameSource::place(&**n, zone as u32))
-        .unwrap_or_default();
+    let place = w.names.as_ref().and_then(|n| crate::dat::names::NameSource::place(&**n, zone as u32)).unwrap_or_default();
     let line = bt.group10(7).unwrap_or_default().replacen("%s", &place, 1);
     let colour = bt.colour_in(0x79, &w.game);
     w.chat.push_colour(line, colour);
@@ -2603,28 +1912,10 @@ fn marks_dir(w: &World) -> Option<std::path::PathBuf> {
 }
 
 /// FUN_100b2570(4, ...) / FUN_100b2a60: the zone's .MRK edited without a window, then saved.
-fn edit_file(
-    w: &World,
-    regions: &[Region],
-    zone: i16,
-    key: i16,
-    f: impl FnOnce(&mut super::mapmark::MarkFile, &Region),
-) {
-    let key = if key >= 0 {
-        key as u8
-    } else if zone == w.pos_zone as i16 {
-        w.ground.as_ref().map_or(0, |g| g.map_key(w.pos))
-    } else {
-        0
-    };
-    let (Some(dir), Some(region)) = (
-        marks_dir(w),
-        Region::find_key(regions, zone as u16, key).or_else(|| Region::find(regions, zone as u16)),
-    ) else {
-        return;
-    };
-    let mut file =
-        super::mapmark::MarkFile::load(&dir, region.zone as u16, region.key as u8, w.my_id);
+fn edit_file(w: &World, regions: &[Region], zone: i16, key: i16, f: impl FnOnce(&mut super::mapmark::MarkFile, &Region)) {
+    let key = if key >= 0 { key as u8 } else if zone == w.pos_zone as i16 { w.ground.as_ref().map_or(0, |g| g.map_key(w.pos)) } else { 0 };
+    let (Some(dir), Some(region)) = (marks_dir(w), Region::find_key(regions, zone as u16, key).or_else(|| Region::find(regions, zone as u16))) else { return };
+    let mut file = super::mapmark::MarkFile::load(&dir, region.zone as u16, region.key as u8, w.my_id);
     f(&mut file, &region);
     file.save(&dir, region.zone as u16, region.key as u8, w.my_id);
 }
@@ -2637,49 +1928,20 @@ pub(super) fn apply(w: &mut World, regions: &[Region], c: Cmd, sw: f32, sh: f32)
             Some(m) => w.map = Some(m),
             None => super::textcmd::refuse(w, 0x62),
         },
-        Cmd::Other {
-            zone,
-            key,
-            return_menu,
-        } => {
+        Cmd::Other { zone, key, return_menu } => {
             let here = zone == w.pos_zone as i16;
-            let k = if key >= 0 {
-                key as u8
-            } else if here {
-                w.ground.as_ref().map_or(0, |g| g.map_key(w.pos))
-            } else {
-                0
-            };
-            if let Some(region) = Region::find_key(regions, zone as u16, k)
-                .or_else(|| Region::find(regions, zone as u16))
-            {
+            let k = if key >= 0 { key as u8 } else if here { w.ground.as_ref().map_or(0, |g| g.map_key(w.pos)) } else { 0 };
+            if let Some(region) = Region::find_key(regions, zone as u16, k).or_else(|| Region::find(regions, zone as u16)) {
                 let facing = w.net.me.lock().map_or(0.0, |m| super::event::rad_of(m.dir));
-                let mut m = MapWin::new(
-                    region,
-                    owned(w, &region),
-                    w.index.clone(),
-                    (w.pos.x, w.pos.z),
-                    facing,
-                    sw,
-                    sh,
-                    Mode::Other,
-                    w.game.get(0x8a),
-                    here,
-                );
+                let mut m = MapWin::new(region, owned(w, &region), w.index.clone(), (w.pos.x, w.pos.z), facing, sw, sh, Mode::Other, w.game.get(0x8a), here);
                 m.attach(w);
                 m.return_menu = return_menu;
                 w.map = Some(m);
             }
         }
-        Cmd::Open {
-            zone,
-            key,
-            show_player,
-        } => {
+        Cmd::Open { zone, key, show_player } => {
             // FUN_100b2570 reopens only for another map.
-            if w.map.as_ref().is_some_and(|m| {
-                !m.closing() && m.region.zone == zone && (key < 0 || m.region.key as i16 == key)
-            }) {
+            if w.map.as_ref().is_some_and(|m| !m.closing() && m.region.zone == zone && (key < 0 || m.region.key as i16 == key)) {
                 return;
             }
             match MapWin::open_event(w, regions, zone, key, show_player, sw, sh) {
@@ -2694,29 +1956,9 @@ pub(super) fn apply(w: &mut World, regions: &[Region], c: Cmd, sw: f32, sh: f32)
             }
         }
         // With an event map open: reopened for that zone if needed, the marker set and scrolled to; else the file.
-        Cmd::Mark {
-            zone,
-            key,
-            slot,
-            x,
-            z,
-            name,
-        } => {
-            if w.map
-                .as_ref()
-                .is_some_and(|m| m.mode != Mode::Menu && !m.closing())
-            {
-                apply(
-                    w,
-                    regions,
-                    Cmd::Open {
-                        zone,
-                        key,
-                        show_player: false,
-                    },
-                    sw,
-                    sh,
-                );
+        Cmd::Mark { zone, key, slot, x, z, name } => {
+            if w.map.as_ref().is_some_and(|m| m.mode != Mode::Menu && !m.closing()) {
+                apply(w, regions, Cmd::Open { zone, key, show_player: false }, sw, sh);
                 if let Some(m) = w.map.as_mut() {
                     m.mark(slot, x, z, &name);
                 }
@@ -2724,21 +1966,12 @@ pub(super) fn apply(w: &mut World, regions: &[Region], c: Cmd, sw: f32, sh: f32)
                 edit_file(w, regions, zone, key, |f, r| {
                     if let Some(s) = f.sets[1].get_mut(slot) {
                         let (px, py) = r.px(x, z);
-                        *s = super::mapmark::Slot {
-                            px: (px as i16, py as i16),
-                            name,
-                            valid: true,
-                        };
+                        *s = super::mapmark::Slot { px: (px as i16, py as i16), name, valid: true };
                     }
                 });
             }
         }
-        Cmd::Unmark {
-            zone,
-            key,
-            slot,
-            file,
-        } => {
+        Cmd::Unmark { zone, key, slot, file } => {
             if let Some(m) = w.map.as_mut().filter(|m| m.region.zone == zone) {
                 m.unmark(slot);
             } else if file {
@@ -2752,29 +1985,14 @@ pub(super) fn apply(w: &mut World, regions: &[Region], c: Cmd, sw: f32, sh: f32)
         Cmd::Preview { .. } if w.riding => super::textcmd::refuse(w, 0x61),
         // FUN_100b2570 opens unless the preview is up; another event map is replaced. The reopen (no arrow) needs a
         // record for that zone and sub-map.
-        Cmd::Preview {
-            zone,
-            key,
-            arrow,
-            point_y,
-        } => {
-            if w.map
-                .as_ref()
-                .is_some_and(|m| m.mode == Mode::Preview && !m.closing())
-                || (!arrow && Region::find_key(regions, zone as u16, key as u8).is_none())
-            {
+        Cmd::Preview { zone, key, arrow, point_y } => {
+            if w.map.as_ref().is_some_and(|m| m.mode == Mode::Preview && !m.closing()) || (!arrow && Region::find_key(regions, zone as u16, key as u8).is_none()) {
                 return;
             }
-            w.map = Some(MapWin::open_preview(
-                w, regions, zone, key, arrow, sw, sh, point_y,
-            ));
+            w.map = Some(MapWin::open_preview(w, regions, zone, key, arrow, sw, sh, point_y));
         }
         Cmd::CloseEvent => {
-            if let Some(m) = w
-                .map
-                .as_mut()
-                .filter(|m| !matches!(m.mode, Mode::Menu | Mode::Other))
-            {
+            if let Some(m) = w.map.as_mut().filter(|m| !matches!(m.mode, Mode::Menu | Mode::Other)) {
                 w.game.set(0x8a, m.zoom_cfg());
                 m.reopen = None;
                 m.begin_close();
@@ -2782,25 +2000,11 @@ pub(super) fn apply(w: &mut World, regions: &[Region], c: Cmd, sw: f32, sh: f32)
         }
         Cmd::Primer { first, count, at } => {
             if w.map.as_ref().is_none_or(|m| m.closing()) {
-                w.map = Some(MapWin::primer(
-                    w.index.clone(),
-                    first,
-                    count,
-                    at,
-                    sw,
-                    sh,
-                    w.game.get(0x8a),
-                ));
+                w.map = Some(MapWin::primer(w.index.clone(), first, count, at, sw, sh, w.game.get(0x8a)));
             }
         }
         // Opening a map resets the scripted view, so one sent with no map open is dropped.
-        Cmd::View {
-            x,
-            y,
-            zf,
-            speed,
-            flags,
-        } => {
+        Cmd::View { x, y, zf, speed, flags } => {
             if let Some(m) = w.map.as_mut() {
                 m.view_to(x, y, zf, speed, flags);
             }
@@ -2826,9 +2030,7 @@ pub const SET_ICONS: [usize; 4] = SET_SPRITE;
 /// A click on Markers row `k` (0-based): mapv2 on another row closes first, then the row takes Enter. Nothing while a
 /// marker is placed or named.
 pub fn marker_click(w: &mut World, k: usize) {
-    let Some(l) = w.map.as_ref().and_then(|m| m.list.as_ref()) else {
-        return;
-    };
+    let Some(l) = w.map.as_ref().and_then(|m| m.list.as_ref()) else { return };
     if l.placing.is_some() || l.rename.is_some() || k >= 10 || l.v2.is_some_and(|v| v.0 == k) {
         return;
     }
@@ -2843,14 +2045,7 @@ pub fn marker_click(w: &mut World, k: usize) {
 
 /// A click on mapv2's row `c` (1..3): the cursor there, then Enter.
 pub fn marker_menu_click(w: &mut World, c: u16) {
-    let Some(v) = w
-        .map
-        .as_mut()
-        .and_then(|m| m.list.as_mut())
-        .and_then(|l| l.v2.as_mut())
-    else {
-        return;
-    };
+    let Some(v) = w.map.as_mut().and_then(|m| m.list.as_mut()).and_then(|l| l.v2.as_mut()) else { return };
     if (1..=3).contains(&c) {
         v.1 = c;
         key(w, egui::Key::Enter);
@@ -2866,24 +2061,8 @@ pub struct MapListLook {
 impl MapWin {
     pub fn maplist_look(&self) -> Option<MapListLook> {
         let l = self.maplist.as_ref()?;
-        let rows = l
-            .rows
-            .iter()
-            .map(|r| {
-                (
-                    r.a.clone(),
-                    if r.number {
-                        format!("[{}]", r.b)
-                    } else {
-                        format!("({})", r.b)
-                    },
-                )
-            })
-            .collect();
-        Some(MapListLook {
-            rows,
-            cursor: l.cursor,
-        })
+        let rows = l.rows.iter().map(|r| (r.a.clone(), if r.number { format!("[{}]", r.b) } else { format!("({})", r.b) })).collect();
+        Some(MapListLook { rows, cursor: l.cursor })
     }
 }
 
@@ -2897,28 +2076,15 @@ pub struct ScanLook {
 
 impl MapWin {
     pub fn scan_look(&self) -> Option<ScanLook> {
-        let s = self
-            .scan
-            .as_ref()
-            .filter(|s| !s.hidden && s.narrow.is_none())?;
+        let s = self.scan.as_ref().filter(|s| !s.hidden && s.narrow.is_none())?;
         let rows = s.rows.iter().map(|r| (r.sprite, r.name.clone())).collect();
         let track = s.rows.get(s.cursor).is_some_and(|r| r.trackable);
-        Some(ScanLook {
-            rows,
-            cursor: s.cursor,
-            mapscan: s.mapscan.map(|c| (c, track)),
-        })
+        Some(ScanLook { rows, cursor: s.cursor, mapscan: s.mapscan.map(|c| (c, track)) })
     }
 
     /// The mouse's cursor move onto mapscan row `c` (1 Track, 2 Remote Scan). True when it moved.
     pub fn set_mapscan(&mut self, c: u16) -> bool {
-        let Some(s) = self
-            .scan
-            .as_mut()
-            .filter(|s| s.mapscan.is_some_and(|m| m != c) && (1..=2).contains(&c))
-        else {
-            return false;
-        };
+        let Some(s) = self.scan.as_mut().filter(|s| s.mapscan.is_some_and(|m| m != c) && (1..=2).contains(&c)) else { return false };
         s.mapscan = Some(c);
         true
     }
@@ -2927,14 +2093,7 @@ impl MapWin {
 /// A click on Wide Scan's row `k`: mapscan closes if it was open, the cursor goes there, then Enter (the map scrolls
 /// to it, mapscan opens).
 pub fn scan_click(w: &mut World, k: usize) {
-    let Some(s) = w
-        .map
-        .as_mut()
-        .and_then(|m| m.scan.as_mut())
-        .filter(|s| k < s.rows.len() && s.narrow.is_none())
-    else {
-        return;
-    };
+    let Some(s) = w.map.as_mut().and_then(|m| m.scan.as_mut()).filter(|s| k < s.rows.len() && s.narrow.is_none()) else { return };
     s.mapscan = None;
     s.cursor = k;
     s.scroll = s.scroll.min(k).max((k + 1).saturating_sub(SCAN_ROWS));
@@ -2943,14 +2102,7 @@ pub fn scan_click(w: &mut World, k: usize) {
 
 /// A click on Change Map's row `k`: the cursor there, then Enter.
 pub fn maplist_click(w: &mut World, k: usize) {
-    let Some(l) = w
-        .map
-        .as_mut()
-        .and_then(|m| m.maplist.as_mut())
-        .filter(|l| k < l.rows.len())
-    else {
-        return;
-    };
+    let Some(l) = w.map.as_mut().and_then(|m| m.maplist.as_mut()).filter(|l| k < l.rows.len()) else { return };
     l.cursor = k;
     l.scroll = l.scroll.min(k).max((k + 1).saturating_sub(ROWS));
     key(w, egui::Key::Enter);
@@ -2959,10 +2111,7 @@ pub fn maplist_click(w: &mut World, k: usize) {
 /// A click on the set strip: that set shown, as Left / Right would show it.
 pub fn marker_set_click(w: &mut World, s: usize) {
     let Some(m) = w.map.as_mut() else { return };
-    let busy = m
-        .list
-        .as_ref()
-        .is_none_or(|l| l.v2.is_some() || l.placing.is_some() || l.rename.is_some());
+    let busy = m.list.as_ref().is_none_or(|l| l.v2.is_some() || l.placing.is_some() || l.rename.is_some());
     if busy || s > 3 || m.set as usize == s || !m.set_shown(s as u8) {
         return;
     }
@@ -2987,12 +2136,8 @@ pub fn key(w: &mut World, key: egui::Key) {
 /// FUN_101f7600(1): the grid position after the clock. Empty without ground or in a room (zone flag 0x100); "(?-?)"
 /// with no record for exactly the sub-key under the player, or one that needs no map; no key-item test.
 pub fn grid_text(w: &World, regions: &[Region]) -> String {
-    let Some(g) = w.ground.as_ref().filter(|_| !w.room_flag) else {
-        return String::new();
-    };
-    match Region::find_key(regions, w.pos_zone, g.map_key(w.pos))
-        .filter(|r| r.need() != Need::Nothing)
-    {
+    let Some(g) = w.ground.as_ref().filter(|_| !w.room_flag) else { return String::new() };
+    match Region::find_key(regions, w.pos_zone, g.map_key(w.pos)).filter(|r| r.need() != Need::Nothing) {
         Some(r) => {
             let (px, py) = r.px(w.pos.x, w.pos.z);
             r.grid(px, py)
@@ -3050,20 +2195,8 @@ impl Overlay {
     }
 
     pub fn new(zone: u16, region: Option<Region>, index: Option<Arc<DatIndex>>) -> Self {
-        let rx = region
-            .zip(index)
-            .map(|(r, index)| load_shaded(index, r.file_id()));
-        Self {
-            zone,
-            region,
-            texture: None,
-            shade: None,
-            rx,
-            zoom: 1.0,
-            view: None,
-            rect: [0.0; 4],
-            image: None,
-        }
+        let rx = region.zip(index).map(|(r, index)| load_shaded(index, r.file_id()));
+        Self { zone, region, texture: None, shade: None, rx, zoom: 1.0, view: None, rect: [0.0; 4], image: None }
     }
 
     /// The player crossed onto another page of the zone (Windurst Waters' north and south): that map, at the same
@@ -3090,8 +2223,7 @@ impl Overlay {
 
     /// Waits for the image (offscreen shots).
     pub fn wait_image(&mut self, gu: &mut GameUi) {
-        if let Some(Some((name, iw, ih, rgba, shade))) = self.rx.take().and_then(|r| r.recv().ok())
-        {
+        if let Some(Some((name, iw, ih, rgba, shade))) = self.rx.take().and_then(|r| r.recv().ok()) {
             self.image = Some(([iw as usize, ih as usize], Arc::new(rgba)));
             (self.texture, self.shade) = (Some(name), Some(shade));
         }
@@ -3100,8 +2232,7 @@ impl Overlay {
 
     /// The image once decoded, kept.
     fn receive(&mut self) {
-        if let Some(Ok(Some((name, iw, ih, rgba, shade)))) = self.rx.as_ref().map(|r| r.try_recv())
-        {
+        if let Some(Ok(Some((name, iw, ih, rgba, shade)))) = self.rx.as_ref().map(|r| r.try_recv()) {
             self.image = Some(([iw as usize, ih as usize], Arc::new(rgba)));
             (self.texture, self.shade) = (Some(name), Some(shade));
             self.rx = None;
@@ -3120,17 +2251,8 @@ impl Overlay {
     /// The modern layer's map: the image once decoded, and the region.
     pub fn modern_image(&mut self) -> Option<MapImage> {
         self.receive();
-        let (Some(name), Some((size, rgba)), Some(region)) =
-            (&self.texture, &self.image, self.region)
-        else {
-            return None;
-        };
-        Some(MapImage {
-            name: name.clone(),
-            size: *size,
-            rgba: rgba.clone(),
-            region,
-        })
+        let (Some(name), Some((size, rgba)), Some(region)) = (&self.texture, &self.image, self.region) else { return None };
+        Some(MapImage { name: name.clone(), size: *size, rgba: rgba.clone(), region })
     }
 
     /// The overlay box for the modern layer: the box (layout pixels), the map pixel at its top-left, layout pixels per
@@ -3138,12 +2260,7 @@ impl Overlay {
     pub fn modern_view(&mut self, sw: f32, sh: f32) -> Option<([f32; 4], (f32, f32), f32)> {
         let region = self.region?;
         let side = (sw.min(sh) * OVERLAY_SIZE).round();
-        let rect = [
-            ((sw - side) / 2.0).round(),
-            ((sh - side) / 2.0).round(),
-            side,
-            side,
-        ];
+        let rect = [((sw - side) / 2.0).round(), ((sh - side) / 2.0).round(), side, side];
         if rect != self.rect {
             self.rect = rect;
             self.zoom = self.fit();
@@ -3158,9 +2275,7 @@ impl Overlay {
 
     /// Keeps the image over the whole box.
     fn clamp(&mut self) {
-        let (Some(r), Some(v)) = (self.region, self.view.as_mut()) else {
-            return;
-        };
+        let (Some(r), Some(v)) = (self.region, self.view.as_mut()) else { return };
         let span = (512.0 - self.rect[2] / self.zoom).max(0.0);
         v.0 = v.0.clamp(r.ox as f32, r.ox as f32 + span);
         v.1 = v.1.clamp(r.oy as f32, r.oy as f32 + span);
@@ -3169,8 +2284,7 @@ impl Overlay {
     /// Wheel notches (+ in) at screen point `p`: the map pixel under it stays put.
     pub fn zoom_at(&mut self, p: (f32, f32), notches: f32) {
         let Some(v) = self.view else { return };
-        let z =
-            (self.zoom * 1.25f32.powf(notches)).clamp(self.fit(), self.fit() * OVERLAY_ZOOM_MAX);
+        let z = (self.zoom * 1.25f32.powf(notches)).clamp(self.fit(), self.fit() * OVERLAY_ZOOM_MAX);
         let (dx, dy) = (p.0 - self.rect[0], p.1 - self.rect[1]);
         self.view = Some((v.0 + dx / self.zoom - dx / z, v.1 + dy / self.zoom - dy / z));
         self.zoom = z;
@@ -3193,9 +2307,7 @@ impl Overlay {
 
     /// The image's luminance under map pixel (px, py), 0..1 (dark until the image is in).
     fn shade_at(&self, region: &Region, px: f32, py: f32) -> f32 {
-        self.shade
-            .as_ref()
-            .map_or(0.0, |s| s.at(px - region.ox as f32, py - region.oy as f32))
+        self.shade.as_ref().map_or(0.0, |s| s.at(px - region.ox as f32, py - region.oy as f32))
     }
 
     /// Extra, the minimap (client/minimap.rs): the style frame at `rect`, inside it `span` map pixels across centred on
@@ -3209,70 +2321,28 @@ impl Overlay {
 
     /// A window onto the image (a Lua HUD map): `rect`, centred on world (x, z), `span` map pixels across, at
     /// `alpha`; clipped to the rect.
-    pub fn draw_window(
-        &mut self,
-        gu: &mut GameUi,
-        rect: [f32; 4],
-        centre: (f32, f32),
-        span: f32,
-        alpha: f32,
-    ) {
+    pub fn draw_window(&mut self, gu: &mut GameUi, rect: [f32; 4], centre: (f32, f32), span: f32, alpha: f32) {
         self.poll(gu);
-        let (Some(region), Some(t)) = (self.region, self.texture.clone()) else {
-            return;
-        };
-        let (z, s) = (
-            rect[2] / span.max(1.0),
-            super::minimap::px_per_unit(&region),
-        );
+        let (Some(region), Some(t)) = (self.region, self.texture.clone()) else { return };
+        let (z, s) = (rect[2] / span.max(1.0), super::minimap::px_per_unit(&region));
         let (cx, cy) = (rect[0] + rect[2] / 2.0, rect[1] + rect[3] / 2.0);
         let (px, py) = (centre.0 * s, -centre.1 * s);
         gu.clip(Some(rect));
-        gu.image_rect(
-            &t,
-            cx + (region.ox as f32 - px) * z,
-            cy + (region.oy as f32 - py) * z,
-            512.0 * z,
-            512.0 * z,
-            [1.0, 1.0, 1.0, alpha],
-        );
+        gu.image_rect(&t, cx + (region.ox as f32 - px) * z, cy + (region.oy as f32 - py) * z, 512.0 * z, 512.0 * z, [1.0, 1.0, 1.0, alpha]);
         gu.clip(None);
     }
 
-    pub fn draw_mini(
-        &mut self,
-        gu: &mut GameUi,
-        rect: [f32; 4],
-        pos: (f32, f32),
-        facing: f32,
-        span: f32,
-        dots: &[(f32, f32, u32, bool)],
-        mix: f32,
-    ) {
+    pub fn draw_mini(&mut self, gu: &mut GameUi, rect: [f32; 4], pos: (f32, f32), facing: f32, span: f32, dots: &[(f32, f32, u32, bool)], mix: f32) {
         self.poll(gu);
-        let (Some(region), Some(t)) = (self.region, self.texture.clone()) else {
-            return;
-        };
+        let (Some(region), Some(t)) = (self.region, self.texture.clone()) else { return };
         const INSET: f32 = 5.0;
         gu.frame(rect[0], rect[1], rect[2], rect[3]);
-        let inner = [
-            rect[0] + INSET,
-            rect[1] + INSET,
-            rect[2] - 2.0 * INSET,
-            rect[3] - 2.0 * INSET,
-        ];
+        let inner = [rect[0] + INSET, rect[1] + INSET, rect[2] - 2.0 * INSET, rect[3] - 2.0 * INSET];
         let (z, s) = (inner[2] / span, super::minimap::px_per_unit(&region));
         let (cx, cy) = (inner[0] + inner[2] / 2.0, inner[1] + inner[3] / 2.0);
         let (px, py) = (pos.0 * s, -pos.1 * s);
         gu.clip(Some(inner));
-        gu.image_rect(
-            &t,
-            cx + (region.ox as f32 - px) * z,
-            cy + (region.oy as f32 - py) * z,
-            512.0 * z,
-            512.0 * z,
-            [1.0; 4],
-        );
+        gu.image_rect(&t, cx + (region.ox as f32 - px) * z, cy + (region.oy as f32 - py) * z, 512.0 * z, 512.0 * z, [1.0; 4]);
         // Squares in the radar's colours (at half strength: the monsters' 0x808080 stays grey on the parchment, where the
         // compass's added dot fades out) on a dark border, the target larger on a red one.
         let rgb = |c: u32| [0, 8, 16].map(|sh| ((c >> (16 - sh)) & 0xff) as f32 / 255.0);
@@ -3281,19 +2351,9 @@ impl Overlay {
             if dx.abs() > inner[2] / 2.0 + 8.0 || dy.abs() > inner[3] / 2.0 + 8.0 {
                 continue;
             }
-            let (d, border) = if target {
-                (6.0, [0.85, 0.1, 0.1, 1.0])
-            } else {
-                (4.0, [0.0, 0.0, 0.0, 0.85])
-            };
+            let (d, border) = if target { (6.0, [0.85, 0.1, 0.1, 1.0]) } else { (4.0, [0.0, 0.0, 0.0, 0.85]) };
             let [r, g, b] = rgb(colour);
-            gu.rect(
-                cx + dx - d / 2.0 - 1.0,
-                cy + dy - d / 2.0 - 1.0,
-                d + 2.0,
-                d + 2.0,
-                border,
-            );
+            gu.rect(cx + dx - d / 2.0 - 1.0, cy + dy - d / 2.0 - 1.0, d + 2.0, d + 2.0, border);
             gu.rect(cx + dx - d / 2.0, cy + dy - d / 2.0, d, d, [r, g, b, 1.0]);
         }
         let shade = self.shade_at(&region, px, py) * mix;
@@ -3302,48 +2362,23 @@ impl Overlay {
     }
 
     /// The box centred on the screen, the image clipped to it at `opacity`, and the player marker.
-    pub fn draw(
-        &mut self,
-        gu: &mut GameUi,
-        pos: (f32, f32),
-        facing: f32,
-        sw: f32,
-        sh: f32,
-        opacity: f32,
-    ) {
+    pub fn draw(&mut self, gu: &mut GameUi, pos: (f32, f32), facing: f32, sw: f32, sh: f32, opacity: f32) {
         self.poll(gu);
         let Some(region) = self.region else { return };
         let side = (sw.min(sh) * OVERLAY_SIZE).round();
-        let rect = [
-            ((sw - side) / 2.0).round(),
-            ((sh - side) / 2.0).round(),
-            side,
-            side,
-        ];
+        let rect = [((sw - side) / 2.0).round(), ((sh - side) / 2.0).round(), side, side];
         if rect != self.rect {
             // Opened or resized: the whole map.
             self.rect = rect;
             self.zoom = self.fit();
             self.view = Some((region.ox as f32, region.oy as f32));
         }
-        let (Some(t), Some(v)) = (&self.texture, self.view) else {
-            return;
-        };
+        let (Some(t), Some(v)) = (&self.texture, self.view) else { return };
         let z = self.zoom;
         gu.clip(Some(rect));
-        gu.image_rect(
-            t,
-            rect[0] + (region.ox as f32 - v.0) * z,
-            rect[1] + (region.oy as f32 - v.1) * z,
-            512.0 * z,
-            512.0 * z,
-            [1.0, 1.0, 1.0, opacity],
-        );
+        gu.image_rect(t, rect[0] + (region.ox as f32 - v.0) * z, rect[1] + (region.oy as f32 - v.1) * z, 512.0 * z, 512.0 * z, [1.0, 1.0, 1.0, opacity]);
         let (px, py) = region.px(pos.0, pos.1);
-        let (sx, sy) = (
-            rect[0] + (px as f32 - v.0) * z,
-            rect[1] + (py as f32 - v.1) * z,
-        );
+        let (sx, sy) = (rect[0] + (px as f32 - v.0) * z, rect[1] + (py as f32 - v.1) * z);
         // At low opacity the scene shows through: the map counts for that much of what lies under the marker.
         let shade = self.shade_at(&region, px as f32, py as f32) * opacity;
         marker(gu, sx, sy, facing, shade);
@@ -3360,40 +2395,21 @@ fn marker(gu: &mut GameUi, x: f32, y: f32, facing: f32, shade: f32) {
     let t = ((shade - 0.35) / 0.25).clamp(0.0, 1.0);
     let glow = (0x80 as f32 * (1.0 - t)) as u32;
     if glow > 0 {
-        gu.sprite_affine(
-            "menu    keytops3",
-            MARKER,
-            x,
-            y,
-            m,
-            0x8000_0000 | glow << 16 | glow << 8 | glow,
-        );
+        gu.sprite_affine("menu    keytops3", MARKER, x, y, m, 0x8000_0000 | glow << 16 | glow << 8 | glow);
     }
     let a = (0x80 as f32 * t) as u32;
     if a > 0 {
-        gu.sprite_affine_blend(
-            "menu    keytops3",
-            MARKER,
-            x,
-            y,
-            m,
-            a << 24 | 0x60_0800,
-            0x44,
-        );
+        gu.sprite_affine_blend("menu    keytops3", MARKER, x, y, m, a << 24 | 0x60_0800, 0x44);
     }
 }
 
 /// The map DAT's first image.
 fn decode(index: &DatIndex, file: u32) -> Loaded {
     let bytes = index.read(file).ok()?;
-    let ui = crate::dat::ui::UiFile::parse(&bytes)
-        .map_err(|e| log::warn!("map {file}: {e:#}"))
-        .ok()?;
+    let ui = crate::dat::ui::UiFile::parse(&bytes).map_err(|e| log::warn!("map {file}: {e:#}")).ok()?;
     let (name, img) = ui.images.into_iter().next()?;
     let mut rgba = img.rgba;
-    if crate::render::MAP_COMPRESSED.load(std::sync::atomic::Ordering::Relaxed)
-        && category_10(&bytes)
-    {
+    if crate::render::MAP_COMPRESSED.load(std::sync::atomic::Ordering::Relaxed) && category_10(&bytes) {
         rgba = through_dxt3(&rgba, img.width, img.height);
     }
     Some((format!("map:{file}:{name}"), img.width, img.height, rgba))
@@ -3402,10 +2418,7 @@ fn decode(index: &DatIndex, file: u32) -> Loaded {
 /// FUN_10038c40's category 10 (0019): the file's first IMG is flag 0xB1 with the u32 at payload 57 low nibble 10 (the
 /// 209 palettized `menumap` images; the DXT ones are used as stored).
 fn category_10(bytes: &[u8]) -> bool {
-    crate::dat::chunks(bytes)
-        .ok()
-        .and_then(|c| c.into_iter().find(|c| c.kind == 0x20))
-        .is_some_and(|c| c.data.len() > 61 && c.data[0] == 0xB1 && c.data[57] & 0xf == 10)
+    crate::dat::chunks(bytes).ok().and_then(|c| c.into_iter().find(|c| c.kind == 0x20)).is_some_and(|c| c.data.len() > 61 && c.data[0] == 0xB1 && c.data[57] & 0xf == 10)
 }
 
 /// 0019 Compressed: the image as a DXT3 surface holds it (retail converts to A8R8G8B8 and loads it into DXT3).
@@ -3413,16 +2426,7 @@ fn through_dxt3(rgba: &[u8], w: u32, h: u32) -> Vec<u8> {
     let f = texpresso::Format::Bc2;
     let (w, h) = (w as usize, h as usize);
     let mut data = vec![0u8; f.compressed_size(w, h)];
-    f.compress(
-        rgba,
-        w,
-        h,
-        texpresso::Params {
-            algorithm: texpresso::Algorithm::ClusterFit,
-            ..Default::default()
-        },
-        &mut data,
-    );
+    f.compress(rgba, w, h, texpresso::Params { algorithm: texpresso::Algorithm::ClusterFit, ..Default::default() }, &mut data);
     let mut out = vec![0u8; w * h * 4];
     f.decompress(&data, w, h, &mut out);
     out
@@ -3459,27 +2463,13 @@ mod tests {
     #[test]
     fn windurst_waters_pages() {
         let cfg = crate::config::Config::load();
-        let Ok(dll) = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())) else {
-            return;
-        };
+        let Ok(dll) = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())) else { return };
         let regs = regions(&dll);
-        let pages: Vec<(i8, u32)> = regs
-            .iter()
-            .filter(|r| r.zone == 238)
-            .map(|r| (r.key, r.file_id()))
-            .collect();
+        let pages: Vec<(i8, u32)> = regs.iter().filter(|r| r.zone == 238).map(|r| (r.key, r.file_id())).collect();
         assert_eq!(pages, [(1, 5501), (2, 5502)]);
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else {
-            return;
-        };
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
         let keys = crate::dat::zone::Keys::from_ffximain(&dll).unwrap();
-        let g = crate::client::ground::Ground::build(
-            &crate::dat::zone::load_scene(
-                &keys,
-                &index.read(crate::dat::zone::file_id(238)).unwrap(),
-            )
-            .unwrap(),
-        );
+        let g = crate::client::ground::Ground::build(&crate::dat::zone::load_scene(&keys, &index.read(crate::dat::zone::file_id(238)).unwrap()).unwrap());
         let key = |x: f32, z: f32| g.map_key(glam::Vec3::new(x, g.snap(x, z, 0.0).unwrap(), z));
         assert_eq!((key(0.0, 100.0), key(0.0, -150.0)), (1, 2));
     }
@@ -3488,25 +2478,13 @@ mod tests {
     #[test]
     fn map_category_10_through_dxt3() {
         let cfg = crate::config::Config::load();
-        let Ok(dll) = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())) else {
-            return;
-        };
-        let Ok(index) = crate::dat::DatIndex::open_stock(&cfg.ffxi_dir()) else {
-            return;
-        };
+        let Ok(dll) = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())) else { return };
+        let Ok(index) = crate::dat::DatIndex::open_stock(&cfg.ffxi_dir()) else { return };
         let mut files: Vec<u32> = regions(&dll).iter().map(|r| r.file_id()).collect();
         files.sort_unstable();
         files.dedup();
-        let cat10: Vec<u32> = files
-            .iter()
-            .copied()
-            .filter(|&f| index.read(f).is_ok_and(|b| category_10(&b)))
-            .collect();
-        assert!(
-            !cat10.is_empty(),
-            "no category-10 map among {}",
-            files.len()
-        );
+        let cat10: Vec<u32> = files.iter().copied().filter(|&f| index.read(f).is_ok_and(|b| category_10(&b))).collect();
+        assert!(!cat10.is_empty(), "no category-10 map among {}", files.len());
         let ui = crate::dat::ui::UiFile::parse(&index.read(cat10[0]).unwrap()).unwrap();
         let img = ui.images.values().next().unwrap();
         let lossy = through_dxt3(&img.rgba, img.width, img.height);
@@ -3517,28 +2495,13 @@ mod tests {
     /// The overlay keeps the map pixel under the cursor while zooming, and the image over the whole box.
     #[test]
     fn overlay_zoom_and_pan() {
-        let region = Region {
-            zone: 1,
-            key: 0,
-            num: 0,
-            flags: 0,
-            scale: 1,
-            ki: -1,
-            file: 0,
-            ox: -256,
-            oy: -256,
-        };
+        let region = Region { zone: 1, key: 0, num: 0, flags: 0, scale: 1, ki: -1, file: 0, ox: -256, oy: -256 };
         let mut o = Overlay::new(1, Some(region), None);
         o.rect = [100.0, 50.0, 512.0, 512.0];
         o.zoom = 1.0;
         o.view = Some((-256.0, -256.0));
         let p = (356.0, 306.0);
-        let under = |o: &Overlay| {
-            (
-                o.view.unwrap().0 + (p.0 - o.rect[0]) / o.zoom,
-                o.view.unwrap().1 + (p.1 - o.rect[1]) / o.zoom,
-            )
-        };
+        let under = |o: &Overlay| (o.view.unwrap().0 + (p.0 - o.rect[0]) / o.zoom, o.view.unwrap().1 + (p.1 - o.rect[1]) / o.zoom);
         let before = under(&o);
         o.zoom_at(p, 2.0);
         assert!((o.zoom - 1.5625).abs() < 1e-4);
@@ -3558,36 +2521,13 @@ mod tests {
     #[test]
     fn preview_points() {
         let cfg = crate::config::Config::load();
-        let (Ok(dll), Ok(index)) = (
-            std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())),
-            DatIndex::open(&cfg.ffxi_dir()),
-        ) else {
-            return;
-        };
-        let Ok(items) = crate::dat::items::Items::load(&index, crate::dat::items::Lang::En) else {
-            return;
-        };
+        let (Ok(dll), Ok(index)) = (std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())), DatIndex::open(&cfg.ffxi_dir())) else { return };
+        let Ok(items) = crate::dat::items::Items::load(&index, crate::dat::items::Lang::En) else { return };
         let table = Arc::new(tpoints::load(&items));
         let region = Region::find(&regions(&dll), 230).unwrap();
-        let open = |owned: bool| {
-            MapWin::new(
-                region,
-                owned,
-                None,
-                (0.0, 0.0),
-                0.0,
-                1024.0,
-                896.0,
-                Mode::Preview,
-                0,
-                false,
-            )
-        };
+        let open = |owned: bool| MapWin::new(region, owned, None, (0.0, 0.0), 0.0, 1024.0, 896.0, Mode::Preview, 0, false);
         let mut m = open(true);
-        assert_eq!(
-            (m.outs.clone(), m.fade.0, m.help_zone()),
-            (vec![Out::AskPoints], 255.0, None)
-        );
+        assert_eq!((m.outs.clone(), m.fade.0, m.help_zone()), (vec![Out::AskPoints], 255.0, None));
         m.load_points(|| Some(table.clone()), None);
         assert_eq!((m.follow((0, 0)), m.fade.0), (Follow::Keep, 255.0));
         // Home Point bits 0 and 1 registered.
@@ -3600,21 +2540,9 @@ mod tests {
 
         assert_eq!(m.follow((0, 0)), Follow::Keep);
         let k = marks(&m);
-        assert_eq!(
-            (k[6].name, k[6].sprite, k[6].blink),
-            ("Home Point", 516, false)
-        );
-        let blinks = |s: usize| {
-            k[..6]
-                .iter()
-                .filter(|k| k.sprite == s)
-                .map(|k| k.blink)
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(
-            (blinks(516), blinks(524)),
-            (vec![false, true, true], vec![false; 3])
-        );
+        assert_eq!((k[6].name, k[6].sprite, k[6].blink), ("Home Point", 516, false));
+        let blinks = |s: usize| k[..6].iter().filter(|k| k.sprite == s).map(|k| k.blink).collect::<Vec<_>>();
+        assert_eq!((blinks(516), blinks(524)), (vec![false, true, true], vec![false; 3]));
         let (x, y) = region.px(-85.468, -66.454);
         assert_eq!(m.scroll_to, Some((x as f32 + 30.0, y as f32 + 30.0)));
         assert_eq!((m.fade.0, m.help_zone()), (0.0, Some(230)));
@@ -3639,15 +2567,8 @@ mod tests {
     #[test]
     fn sub_keys() {
         use crate::client::ground::map_key_of;
-        assert_eq!(
-            [0xe, 0x3e, 0x400_0004, 0x400_003c, 0x800_0004].map(map_key_of),
-            [1, 7, 8, 15, 16]
-        );
-        let Ok(dll) = std::fs::read(crate::dat::ffximain(
-            &crate::config::Config::load().ffxi_dir(),
-        )) else {
-            return;
-        };
+        assert_eq!([0xe, 0x3e, 0x400_0004, 0x400_003c, 0x800_0004].map(map_key_of), [1, 7, 8, 15, 16]);
+        let Ok(dll) = std::fs::read(crate::dat::ffximain(&crate::config::Config::load().ffxi_dir())) else { return };
         let regs = regions(&dll);
         assert!(Region::find_key(&regs, 9, 0).is_none());
         assert!((1..=16).all(|k| Region::find_key(&regs, 9, k).is_some()));
@@ -3656,11 +2577,7 @@ mod tests {
     /// Change Map's groups: 50, the first San d'Oria's four zones with name 0.
     #[test]
     fn region_groups_found() {
-        let Ok(dll) = std::fs::read(crate::dat::ffximain(
-            &crate::config::Config::load().ffxi_dir(),
-        )) else {
-            return;
-        };
+        let Ok(dll) = std::fs::read(crate::dat::ffximain(&crate::config::Config::load().ffxi_dir())) else { return };
         let g = region_groups(&dll);
         assert_eq!(g.len(), 50);
         assert_eq!(g[0], (0, vec![230, 231, 232, 233]));
@@ -3669,18 +2586,11 @@ mod tests {
     /// Jugner Forest (104): record key 0, scale 1, key item 1 (0x181), file 5 -> 5317, origin (-264, -256).
     #[test]
     fn jugner_region() {
-        let Ok(dll) = std::fs::read(crate::dat::ffximain(
-            &crate::config::Config::load().ffxi_dir(),
-        )) else {
-            return;
-        };
+        let Ok(dll) = std::fs::read(crate::dat::ffximain(&crate::config::Config::load().ffxi_dir())) else { return };
         let regs = regions(&dll);
         assert!(regs.len() > 700, "{}", regs.len());
         let r = Region::find(&regs, 104).unwrap();
-        assert_eq!(
-            (r.scale, r.file_id(), r.ox, r.oy, r.need()),
-            (1, 5317, -264, -256, Need::Item(0x181))
-        );
+        assert_eq!((r.scale, r.file_id(), r.ox, r.oy, r.need()), (1, 5317, -264, -256, Need::Item(0x181)));
         // x / 5 and -z / 5 at scale 1; G-9 is 6 cells right and 8 down of (ox + 16, oy + 16).
         assert_eq!(r.px(-200.0, -1050.0), (-39, 209));
         assert_eq!(r.grid(-39, 209), "(G-15)");

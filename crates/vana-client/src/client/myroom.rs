@@ -85,11 +85,7 @@ pub const ROWS: [(u16, usize); 4] = [(1, 0xb8), (2, 0x46), (3, 0x125), (4, 0xb9)
 
 impl Menu {
     pub fn rows(&self) -> usize {
-        if self.list {
-            areas(self.bit).len()
-        } else {
-            ROWS.len()
-        }
+        if self.list { areas(self.bit).len() } else { ROWS.len() }
     }
 
     /// FUN_101d6540 on Enter.
@@ -130,8 +126,9 @@ impl Menu {
 /// FUN_10097b40 / FUN_10097b50: the zone is one of the exit-list cities (table 0x1035b680, four zones per exit bit).
 pub fn in_city(zone: Option<u16>) -> bool {
     const CITIES: [u16; 40] = [
-        230, 231, 232, 232, 234, 235, 236, 236, 238, 239, 240, 241, 243, 244, 245, 246, 48, 50, 50,
-        50, 80, 80, 80, 80, 87, 87, 87, 87, 94, 94, 94, 94, 256, 257, 257, 257, 280, 280, 280, 280,
+        230, 231, 232, 232, 234, 235, 236, 236, 238, 239, 240, 241, 243, 244, 245, 246, 48, 50, 50, 50, 80, 80, 80, 80, 87, 87, 87, 87, 94, 94, 94, 94, 256, 257, 257, 257, 280, 280, 280,
+        280,
     ];
     zone.is_some_and(|z| CITIES.contains(&z))
 }
+

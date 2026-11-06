@@ -2,10 +2,7 @@
 //! covers the baseline, opening into what is below it; the others sit back, darker and shorter. Drawn from the theme:
 //! the pack's tab and button sprites read as buttons.
 
-use egui::{
-    Align2, Color32, CornerRadius, FontId, Painter, Rect, Response, Sense, Stroke, StrokeKind, Ui,
-    pos2, vec2,
-};
+use egui::{Align2, Color32, CornerRadius, FontId, Painter, Rect, Response, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 
 /// A strip row's height; inactive tabs start this much lower.
 pub const H: f32 = 28.0;
@@ -24,109 +21,45 @@ pub struct State {
 
 /// The tab width for a label in `font`, at least `min`.
 pub fn width(ui: &Ui, label: &str, font: &FontId, min: f32) -> f32 {
-    let tw = ui.fonts_mut(|f| {
-        f.layout_no_wrap(label.to_string(), font.clone(), Color32::WHITE)
-            .size()
-            .x
-    });
+    let tw = ui.fonts_mut(|f| f.layout_no_wrap(label.to_string(), font.clone(), Color32::WHITE).size().x);
     (tw + 2.0 * PAD).max(min)
 }
 
 /// The baseline under a row of tabs (drawn before them, so the open tab covers it).
 pub fn baseline(p: &Painter, m: &super::Modern, row: Rect, alpha: f32) {
     let y = row.max.y - 0.5;
-    p.line_segment(
-        [pos2(row.min.x, y), pos2(row.max.x, y)],
-        Stroke::new(1.0, m.theme.color("bronze").gamma_multiply(0.6 * alpha)),
-    );
+    p.line_segment([pos2(row.min.x, y), pos2(row.max.x, y)], Stroke::new(1.0, m.theme.color("bronze").gamma_multiply(0.6 * alpha)));
 }
 
 /// A tab whose column is `r` (the row's full height): its face, edge and label.
-pub fn paint(
-    p: &Painter,
-    m: &super::Modern,
-    r: Rect,
-    label: &str,
-    font: &FontId,
-    s: State,
-    alpha: f32,
-) {
-    let radius = CornerRadius {
-        nw: 6,
-        ne: 6,
-        sw: 0,
-        se: 0,
-    };
+pub fn paint(p: &Painter, m: &super::Modern, r: Rect, label: &str, font: &FontId, s: State, alpha: f32) {
+    let radius = CornerRadius { nw: 6, ne: 6, sw: 0, se: 0 };
     let (face, edge, text) = if s.open {
-        (
-            m.theme.color("surface"),
-            m.theme.color("gold").gamma_multiply(0.9),
-            m.theme.color("gold"),
-        )
+        (m.theme.color("surface"), m.theme.color("gold").gamma_multiply(0.9), m.theme.color("gold"))
     } else if s.hover {
-        (
-            m.theme.color("surface").gamma_multiply(0.85),
-            m.theme.color("bronze").gamma_multiply(0.8),
-            m.theme.color("text"),
-        )
+        (m.theme.color("surface").gamma_multiply(0.85), m.theme.color("bronze").gamma_multiply(0.8), m.theme.color("text"))
     } else {
-        (
-            m.theme.color("charcoal").gamma_multiply(0.9),
-            m.theme.color("bronze").gamma_multiply(0.5),
-            m.theme.color("muted"),
-        )
+        (m.theme.color("charcoal").gamma_multiply(0.9), m.theme.color("bronze").gamma_multiply(0.5), m.theme.color("muted"))
     };
-    let t = if s.open {
-        r
-    } else {
-        Rect::from_min_max(pos2(r.min.x, r.min.y + DROP), r.max)
-    };
-    p.rect(
-        t,
-        radius,
-        face.gamma_multiply(alpha),
-        Stroke::new(1.0, edge.gamma_multiply(alpha)),
-        StrokeKind::Inside,
-    );
+    let t = if s.open { r } else { Rect::from_min_max(pos2(r.min.x, r.min.y + DROP), r.max) };
+    p.rect(t, radius, face.gamma_multiply(alpha), Stroke::new(1.0, edge.gamma_multiply(alpha)), StrokeKind::Inside);
     if s.open {
         // Open into the content: the bottom edge and the baseline under it painted over in the face.
-        p.line_segment(
-            [
-                pos2(t.min.x + 1.0, t.max.y - 0.5),
-                pos2(t.max.x - 1.0, t.max.y - 0.5),
-            ],
-            Stroke::new(2.0, face.gamma_multiply(alpha)),
-        );
+        p.line_segment([pos2(t.min.x + 1.0, t.max.y - 0.5), pos2(t.max.x - 1.0, t.max.y - 0.5)], Stroke::new(2.0, face.gamma_multiply(alpha)));
     }
     // Labels sit low, leaving the room above them.
     let c = t.center() + vec2(0.0, if s.open { 2.0 } else { 1.5 });
-    p.text(
-        c,
-        Align2::CENTER_CENTER,
-        label,
-        font.clone(),
-        text.gamma_multiply(alpha),
-    );
+    p.text(c, Align2::CENTER_CENTER, label, font.clone(), text.gamma_multiply(alpha));
     if s.cursor {
         let w = t.width() - 2.0 * PAD + 6.0;
         let y = t.max.y - 4.0;
-        p.line_segment(
-            [pos2(c.x - w / 2.0, y), pos2(c.x + w / 2.0, y)],
-            Stroke::new(2.0, m.theme.color("focus").gamma_multiply(alpha)),
-        );
+        p.line_segment([pos2(c.x - w / 2.0, y), pos2(c.x + w / 2.0, y)], Stroke::new(2.0, m.theme.color("focus").gamma_multiply(alpha)));
     }
 }
 
 /// A strip of `labels` across the available width, wrapping into more rows when it must: `open` the open tab,
 /// `cursor` the keyboard cursor's; each tab's response in order (hovered / clicked).
-pub fn strip(
-    ui: &mut Ui,
-    m: &super::Modern,
-    salt: &str,
-    labels: &[&str],
-    open: Option<usize>,
-    cursor: Option<usize>,
-) -> Vec<Response> {
+pub fn strip(ui: &mut Ui, m: &super::Modern, salt: &str, labels: &[&str], open: Option<usize>, cursor: Option<usize>) -> Vec<Response> {
     let font = FontId::proportional(m.theme.small);
     let avail = ui.available_width();
     let widths: Vec<f32> = labels.iter().map(|l| width(ui, l, &font, 56.0)).collect();
@@ -158,19 +91,7 @@ pub fn strip(
         // The open tab last, over its neighbours' edges and the baseline.
         rects.sort_by_key(|&(k, ..)| open == Some(k));
         for (k, r, hover) in rects {
-            paint(
-                p,
-                m,
-                r,
-                labels[k],
-                &font,
-                State {
-                    open: open == Some(k),
-                    hover,
-                    cursor: cursor == Some(k),
-                },
-                1.0,
-            );
+            paint(p, m, r, labels[k], &font, State { open: open == Some(k), hover, cursor: cursor == Some(k) }, 1.0);
         }
     }
     out.into_iter().flatten().collect()

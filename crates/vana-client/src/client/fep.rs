@@ -39,11 +39,7 @@ fn bounds(chars: &[char]) -> Vec<usize> {
     let mut out = vec![0];
     let mut i = 0;
     while i < chars.len() {
-        i += if is_phrase(chars[i]) && i + 4 <= chars.len() {
-            4
-        } else {
-            1
-        };
+        i += if is_phrase(chars[i]) && i + 4 <= chars.len() { 4 } else { 1 };
         out.push(i);
     }
     out
@@ -53,11 +49,7 @@ fn bounds(chars: &[char]) -> Vec<usize> {
 pub(super) fn caret(w: &World) -> usize {
     let chars: Vec<char> = w.chat_input.chars().collect();
     let at = w.chat_caret.map_or(chars.len(), |c| c.min(chars.len()));
-    bounds(&chars)
-        .into_iter()
-        .filter(|&b| b <= at)
-        .max()
-        .unwrap_or(0)
+    bounds(&chars).into_iter().filter(|&b| b <= at).max().unwrap_or(0)
 }
 
 fn set_caret(w: &mut World, at: usize) {
@@ -74,23 +66,13 @@ pub(super) fn selection(w: &World) -> Option<(usize, usize)> {
 /// The selection as plain text (phrases written out), for the clipboard.
 pub(super) fn selected_text(w: &World) -> Option<String> {
     let (s, e) = selection(w)?;
-    Some(plain(
-        w,
-        &w.chat_input.chars().skip(s).take(e - s).collect::<String>(),
-    ))
+    Some(plain(w, &w.chat_input.chars().skip(s).take(e - s).collect::<String>()))
 }
 
 /// Removes the selection; false when there is none.
 pub(super) fn delete_selection(w: &mut World) -> bool {
-    let Some((s, e)) = selection(w) else {
-        return false;
-    };
-    w.chat_input = w
-        .chat_input
-        .chars()
-        .take(s)
-        .chain(w.chat_input.chars().skip(e))
-        .collect();
+    let Some((s, e)) = selection(w) else { return false };
+    w.chat_input = w.chat_input.chars().take(s).chain(w.chat_input.chars().skip(e)).collect();
     w.chat_anchor = None;
     set_caret(w, s);
     true
@@ -106,11 +88,7 @@ pub(super) fn select_all(w: &mut World) {
 pub(super) fn caret_key(w: &mut World, key: egui::Key, shift: bool) {
     let chars: Vec<char> = w.chat_input.chars().collect();
     let (at, b) = (caret(w), bounds(&chars));
-    w.chat_anchor = if shift {
-        Some(w.chat_anchor.unwrap_or(at))
-    } else {
-        None
-    };
+    w.chat_anchor = if shift { Some(w.chat_anchor.unwrap_or(at)) } else { None };
     let to = match key {
         egui::Key::ArrowLeft => b.into_iter().filter(|&x| x < at).max().unwrap_or(0),
         egui::Key::ArrowRight => b.into_iter().find(|&x| x > at).unwrap_or(chars.len()),
@@ -121,11 +99,7 @@ pub(super) fn caret_key(w: &mut World, key: egui::Key, shift: bool) {
 }
 
 fn spliced(line: &str, at: usize, text: &str) -> String {
-    line.chars()
-        .take(at)
-        .chain(text.chars())
-        .chain(line.chars().skip(at))
-        .collect()
+    line.chars().take(at).chain(text.chars()).chain(line.chars().skip(at)).collect()
 }
 
 /// Typed or pasted text at the caret (FUN_101abc50): in whole only while the raw and the expanded line stay within
@@ -133,14 +107,7 @@ fn spliced(line: &str, at: usize, text: &str) -> String {
 pub(super) fn insert(w: &mut World, text: &str) {
     // A selection is replaced, when the result fits.
     let (line, at) = match selection(w) {
-        Some((s, e)) => (
-            w.chat_input
-                .chars()
-                .take(s)
-                .chain(w.chat_input.chars().skip(e))
-                .collect(),
-            s,
-        ),
+        Some((s, e)) => (w.chat_input.chars().take(s).chain(w.chat_input.chars().skip(e)).collect(), s),
         None => (w.chat_input.clone(), caret(w)),
     };
     let next = spliced(&line, at, text);
@@ -155,41 +122,24 @@ pub(super) fn insert(w: &mut World, text: &str) {
 /// The word being completed: the chars after the last space at the end of the line (FUN_101b7c20).
 fn word(line: &str) -> &str {
     let tail = line.rsplit(' ').next().unwrap_or("");
-    if tail.chars().any(is_phrase) {
-        ""
-    } else {
-        tail
-    }
+    if tail.chars().any(is_phrase) { "" } else { tail }
 }
 
 /// FUN_101b6ee0: the dictionary's candidates, then the typed word (plain) and the names that start with it (tell
 /// history, party: FUN_1018d7f0).
 fn query(w: &World, word: &str, filter: Option<u8>) -> Vec<Cand> {
-    let Some(d) = w.battle.as_ref().and_then(|b| b.phrases.as_ref()) else {
-        return Vec::new();
-    };
+    let Some(d) = w.battle.as_ref().and_then(|b| b.phrases.as_ref()) else { return Vec::new() };
     let (hits, matched) = d.query(word, filter);
-    let mut out: Vec<Cand> = hits
-        .into_iter()
-        .map(|(text, id)| Cand { text, id: Some(id) })
-        .collect();
+    let mut out: Vec<Cand> = hits.into_iter().map(|(text, id)| Cand { text, id: Some(id) }).collect();
     if filter.is_none() && !word.is_empty() {
         if matched {
-            out.push(Cand {
-                text: word.to_string(),
-                id: None,
-            });
+            out.push(Cand { text: word.to_string(), id: None });
         }
         let lw = word.to_lowercase();
         let party: Vec<String> = w.party.members().map(|m| m.name.clone()).collect();
         for n in w.tells.iter().chain(party.iter()) {
-            if n.to_lowercase().starts_with(&lw)
-                && !out.iter().any(|c| c.id.is_none() && c.text == *n)
-            {
-                out.push(Cand {
-                    text: n.clone(),
-                    id: None,
-                });
+            if n.to_lowercase().starts_with(&lw) && !out.iter().any(|c| c.id.is_none() && c.text == *n) {
+                out.push(Cand { text: n.clone(), id: None });
             }
         }
     }
@@ -204,13 +154,7 @@ pub(super) fn open(w: &mut World) {
         return;
     }
     w.sounds.push(Se::Select as u32);
-    w.fep = Some(Fep {
-        cands,
-        sel: 0,
-        filter: None,
-        root: (wd.clone(), 0),
-        word_len: wd.chars().count(),
-    });
+    w.fep = Some(Fep { cands, sel: 0, filter: None, root: (wd.clone(), 0), word_len: wd.chars().count() });
 }
 
 /// The line's raw (Shift-JIS, a phrase 6 bytes) and expanded lengths (FUN_101abc50 / FUN_101acc30).
@@ -224,28 +168,17 @@ pub(super) fn lengths(w: &World, line: &str) -> (usize, usize) {
 pub(super) fn plain(w: &World, line: &str) -> String {
     let names = w.names.clone();
     match w.battle.as_ref().and_then(|b| b.phrases.as_ref()) {
-        Some(d) => d.expand_plain(
-            line,
-            names
-                .as_deref()
-                .map(|n| n as &dyn crate::dat::names::NameSource),
-        ),
+        Some(d) => d.expand_plain(line, names.as_deref().map(|n| n as &dyn crate::dat::names::NameSource)),
         None => line.chars().filter(|c| !is_phrase(*c)).collect(),
     }
 }
 
 /// A key while the list is open; true when it was taken.
 pub(super) fn key(w: &mut World, key: egui::Key, shift: bool) -> bool {
-    let Some(mut f) = w.fep.take() else {
-        return false;
-    };
+    let Some(mut f) = w.fep.take() else { return false };
     let n = f.cands.len().max(1);
     match key {
-        egui::Key::Tab | egui::Key::Space | egui::Key::ArrowDown
-            if !(shift && key == egui::Key::Tab) =>
-        {
-            f.sel = (f.sel + 1) % n
-        }
+        egui::Key::Tab | egui::Key::Space | egui::Key::ArrowDown if !(shift && key == egui::Key::Tab) => f.sel = (f.sel + 1) % n,
         egui::Key::Tab | egui::Key::ArrowUp => f.sel = (f.sel + n - 1) % n,
         egui::Key::PageDown => f.sel = (f.sel + ROWS).min(n - 1),
         egui::Key::PageUp => f.sel = f.sel.saturating_sub(ROWS),
@@ -266,9 +199,7 @@ pub(super) fn key(w: &mut World, key: egui::Key, shift: bool) -> bool {
             }
         }
         egui::Key::Enter => {
-            let Some(c) = f.cands.get(f.sel).cloned() else {
-                return true;
-            };
+            let Some(c) = f.cands.get(f.sel).cloned() else { return true };
             // The word being completed goes from the end of the line (FUN_101ad0d0), then the candidate in at the
             // caret (FUN_101b6c00).
             let keep = w.chat_input.chars().count().saturating_sub(f.word_len);
@@ -296,13 +227,7 @@ pub(super) fn key(w: &mut World, key: egui::Key, shift: bool) -> bool {
                     return true;
                 }
                 Some(id) => {
-                    let block: String = id
-                        .iter()
-                        .enumerate()
-                        .map(|(k, &b)| {
-                            char::from_u32(PHRASE_BASE + 0x100 * k as u32 + b as u32).unwrap()
-                        })
-                        .collect();
+                    let block: String = id.iter().enumerate().map(|(k, &b)| char::from_u32(PHRASE_BASE + 0x100 * k as u32 + b as u32).unwrap()).collect();
                     let next = spliced(&line, at, &block);
                     let (raw, plain) = lengths(w, &next);
                     if raw > MAX || plain > MAX {
@@ -333,11 +258,7 @@ pub(super) fn erase(w: &mut World, back: bool) {
     }
     let chars: Vec<char> = w.chat_input.chars().collect();
     let (at, b) = (caret(w), bounds(&chars));
-    let unit = if back {
-        b.windows(2).find(|u| u[1] == at)
-    } else {
-        b.windows(2).find(|u| u[0] == at)
-    };
+    let unit = if back { b.windows(2).find(|u| u[1] == at) } else { b.windows(2).find(|u| u[0] == at) };
     let Some(&[s, e]) = unit else { return };
     let mut text = String::new();
     if e - s == 4 {
@@ -349,8 +270,7 @@ pub(super) fn erase(w: &mut World, back: bool) {
         }
     }
     let n = text.chars().count();
-    w.chat_input =
-        chars[..s].iter().collect::<String>() + &text + &chars[e..].iter().collect::<String>();
+    w.chat_input = chars[..s].iter().collect::<String>() + &text + &chars[e..].iter().collect::<String>();
     if w.chat_caret.is_some() {
         set_caret(w, if back { s + n } else { s });
     }
@@ -364,48 +284,13 @@ pub(super) fn outgoing(w: &World, line: String) -> String {
         return line;
     }
     let lead = line.len() - line.trim_start().len();
-    let (first, rest) = line[lead..]
-        .split_once(' ')
-        .map_or((&line[lead..], ""), |(a, b)| (a, b));
+    let (first, rest) = line[lead..].split_once(' ').map_or((&line[lead..], ""), |(a, b)| (a, b));
     let first = plain(w, first);
     if !first.starts_with('/') {
         return line;
     }
     const CHAT: [&str; 34] = [
-        "/say",
-        "/s",
-        "/shout",
-        "/sh",
-        "/tell",
-        "/t",
-        "/party",
-        "/p",
-        "/linkshell",
-        "/l",
-        "/linkshell2",
-        "/l2",
-        "/unity",
-        "/u",
-        "/assistj",
-        "/aj",
-        "/assiste",
-        "/ae",
-        "/emote",
-        "/em",
-        "/message",
-        "/me",
-        "/yell",
-        "/yl",
-        "//worldmes",
-        "//wm",
-        "/linkshellmes",
-        "/lsmes",
-        "/linkshell2mes",
-        "/ls2mes",
-        "/nominate",
-        "/propose",
-        "/seacom",
-        "/sc",
+        "/say", "/s", "/shout", "/sh", "/tell", "/t", "/party", "/p", "/linkshell", "/l", "/linkshell2", "/l2", "/unity", "/u", "/assistj", "/aj", "/assiste", "/ae", "/emote", "/em", "/message", "/me", "/yell", "/yl", "//worldmes", "//wm", "/linkshellmes", "/lsmes", "/linkshell2mes", "/ls2mes", "/nominate", "/propose", "/seacom", "/sc",
     ];
     if CHAT.contains(&first.to_lowercase().as_str()) {
         format!("{first} {rest}")
@@ -472,38 +357,23 @@ pub(super) fn field_open(w: &mut World, before: &str) -> Option<FieldFep> {
         return None;
     }
     w.sounds.push(Se::Select as u32);
-    Some(FieldFep {
-        cands,
-        sel: 0,
-        filter: None,
-        root: (wd.clone(), 0),
-        word: wd,
-    })
+    Some(FieldFep { cands, sel: 0, filter: None, root: (wd.clone(), 0), word: wd })
 }
 
 /// A phrase id as the four private-use chars a line holds (font::PHRASE_BASE).
 pub(super) fn block(id: [u8; 4]) -> String {
-    id.iter()
-        .enumerate()
-        .map(|(k, &b)| char::from_u32(PHRASE_BASE + 0x100 * k as u32 + b as u32).unwrap())
-        .collect()
+    id.iter().enumerate().map(|(k, &b)| char::from_u32(PHRASE_BASE + 0x100 * k as u32 + b as u32).unwrap()).collect()
 }
 
 /// A key while a field's list is open (as `key`'s list keys).
 pub(super) fn field_key(w: &mut World, f: &mut FieldFep, key: egui::Key, shift: bool) -> FieldPick {
     let n = f.cands.len().max(1);
     match key {
-        egui::Key::Tab | egui::Key::Space | egui::Key::ArrowDown
-            if !(shift && key == egui::Key::Tab) =>
-        {
-            f.sel = (f.sel + 1) % n
-        }
+        egui::Key::Tab | egui::Key::Space | egui::Key::ArrowDown if !(shift && key == egui::Key::Tab) => f.sel = (f.sel + 1) % n,
         egui::Key::Tab | egui::Key::ArrowUp => f.sel = (f.sel + n - 1) % n,
         egui::Key::PageDown => f.sel = (f.sel + ROWS).min(n - 1),
         egui::Key::PageUp => f.sel = f.sel.saturating_sub(ROWS),
-        egui::Key::ArrowLeft | egui::Key::ArrowRight | egui::Key::Home | egui::Key::End => {
-            return FieldPick::Keep;
-        }
+        egui::Key::ArrowLeft | egui::Key::ArrowRight | egui::Key::Home | egui::Key::End => return FieldPick::Keep,
         egui::Key::Escape | egui::Key::Backspace | egui::Key::Delete => {
             if f.filter.take().is_some() {
                 let (wd, sel) = f.root.clone();
@@ -515,9 +385,7 @@ pub(super) fn field_key(w: &mut World, f: &mut FieldFep, key: egui::Key, shift: 
             }
         }
         egui::Key::Enter => {
-            let Some(c) = f.cands.get(f.sel).cloned() else {
-                return FieldPick::Close;
-            };
+            let Some(c) = f.cands.get(f.sel).cloned() else { return FieldPick::Close };
             return match c.id {
                 None => FieldPick::Put(c.text),
                 // A category: its phrases replace the list (the word stays until a phrase is put).
@@ -541,13 +409,7 @@ pub(super) fn field_key(w: &mut World, f: &mut FieldFep, key: egui::Key, shift: 
 }
 
 /// `text` with `word` (ending at char `caret`) replaced by `put`; the new text and caret. None when `fits` refuses it.
-pub(super) fn field_put(
-    text: &str,
-    caret: usize,
-    word: &str,
-    put: &str,
-    fits: impl Fn(&str) -> bool,
-) -> Option<(String, usize)> {
+pub(super) fn field_put(text: &str, caret: usize, word: &str, put: &str, fits: impl Fn(&str) -> bool) -> Option<(String, usize)> {
     let n = word.chars().count().min(caret);
     let before: String = text.chars().take(caret - n).collect();
     let after: String = text.chars().skip(caret).collect();
@@ -563,34 +425,15 @@ pub(super) fn draw(gu: &mut GameUi, f: &Fep, x: f32, line_y: f32) -> [f32; 4] {
 }
 
 /// The list's draw for any field: above `line_y` from `x`.
-pub(super) fn draw_list(
-    gu: &mut GameUi,
-    cands: &[Cand],
-    sel: usize,
-    x: f32,
-    line_y: f32,
-) -> [f32; 4] {
-    let widest = cands
-        .iter()
-        .map(|c| gu.text_width(&c.text))
-        .fold(0.0, f32::max);
+pub(super) fn draw_list(gu: &mut GameUi, cands: &[Cand], sel: usize, x: f32, line_y: f32) -> [f32; 4] {
+    let widest = cands.iter().map(|c| gu.text_width(&c.text)).fold(0.0, f32::max);
     let w = (widest.max(90.0) + 12.0).min(200.0);
     let h = 134.0;
     let y = line_y - h - 2.0;
     gu.frame(x, y, w, h);
     const C: [u8; 4] = [0x80; 4];
     gu.text("\u{25b2}", x + 5.0, y + 4.0, 0, C);
-    gu.text(
-        &format!(
-            "{}/{}",
-            if cands.is_empty() { 0 } else { sel + 1 },
-            cands.len()
-        ),
-        x + 35.0,
-        y + 4.0,
-        0,
-        C,
-    );
+    gu.text(&format!("{}/{}", if cands.is_empty() { 0 } else { sel + 1 }, cands.len()), x + 35.0, y + 4.0, 0, C);
     let first = sel / ROWS * ROWS;
     for (k, c) in cands.iter().enumerate().skip(first).take(ROWS) {
         let mut t = c.text.clone();
@@ -625,10 +468,7 @@ mod tests {
 
     #[test]
     fn field_puts() {
-        assert_eq!(
-            field_put("/p hel x", 6, "hel", "Hello!", |_| true),
-            Some(("/p Hello! x".to_string(), 9))
-        );
+        assert_eq!(field_put("/p hel x", 6, "hel", "Hello!", |_| true), Some(("/p Hello! x".to_string(), 9)));
         assert_eq!(field_put("hel", 3, "hel", "Hello!", |t| t.len() <= 4), None);
         let b = block([2, 1, 3, 0]);
         assert_eq!(b.chars().count(), 4);

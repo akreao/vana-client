@@ -19,9 +19,7 @@ impl Writer {
 
     pub fn write(&mut self, s: &[f32]) {
         for x in s {
-            let _ = self
-                .f
-                .write_all(&((x.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes());
+            let _ = self.f.write_all(&((x.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes());
         }
         let before = self.n;
         self.n += s.len() as u32;
@@ -33,12 +31,7 @@ impl Writer {
 
     fn settle(&mut self) {
         let h = header(self.n);
-        let _ = self
-            .f
-            .seek(SeekFrom::Start(0))
-            .and_then(|_| self.f.write_all(&h))
-            .and_then(|_| self.f.seek(SeekFrom::End(0)))
-            .and_then(|_| self.f.flush());
+        let _ = self.f.seek(SeekFrom::Start(0)).and_then(|_| self.f.write_all(&h)).and_then(|_| self.f.seek(SeekFrom::End(0))).and_then(|_| self.f.flush());
     }
 }
 
@@ -69,39 +62,19 @@ fn header(samples: u32) -> [u8; 44] {
 /// A 16-bit PCM WAV as mono f32 and its rate.
 pub fn read(path: &Path) -> anyhow::Result<(Vec<f32>, u32)> {
     let b = std::fs::read(path)?;
-    anyhow::ensure!(
-        b.len() > 12 && &b[..4] == b"RIFF" && &b[8..12] == b"WAVE",
-        "not a WAV file"
-    );
+    anyhow::ensure!(b.len() > 12 && &b[..4] == b"RIFF" && &b[8..12] == b"WAVE", "not a WAV file");
     let (mut at, mut fmt) = (12, None);
     while at + 8 <= b.len() {
         let id = &b[at..at + 4];
         let len = u32::from_le_bytes(b[at + 4..at + 8].try_into()?) as usize;
-        let body = b
-            .get(at + 8..(at + 8 + len).min(b.len()))
-            .unwrap_or_default();
+        let body = b.get(at + 8..(at + 8 + len).min(b.len())).unwrap_or_default();
         if id == b"fmt " && body.len() >= 16 {
             let u16_at = |o: usize| u16::from_le_bytes([body[o], body[o + 1]]);
-            fmt = Some((
-                u16_at(0),
-                u16_at(2).max(1) as usize,
-                u32::from_le_bytes(body[4..8].try_into()?),
-                u16_at(14),
-            ));
+            fmt = Some((u16_at(0), u16_at(2).max(1) as usize, u32::from_le_bytes(body[4..8].try_into()?), u16_at(14)));
         }
         if id == b"data" {
-            let Some((1, ch, rate, 16)) = fmt else {
-                anyhow::bail!("only 16-bit PCM WAV files")
-            };
-            let s: Vec<f32> = body
-                .chunks_exact(2 * ch)
-                .map(|f| {
-                    f.chunks_exact(2)
-                        .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0)
-                        .sum::<f32>()
-                        / ch as f32
-                })
-                .collect();
+            let Some((1, ch, rate, 16)) = fmt else { anyhow::bail!("only 16-bit PCM WAV files") };
+            let s: Vec<f32> = body.chunks_exact(2 * ch).map(|f| f.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0).sum::<f32>() / ch as f32).collect();
             return Ok((s, rate));
         }
         at += 8 + len + (len & 1);

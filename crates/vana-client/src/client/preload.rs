@@ -39,11 +39,7 @@ pub fn step(w: &mut super::World) -> Option<(u16, u16)> {
         return None;
     }
     let zone = w.zone?;
-    if !w.in_scene()
-        || w.zoning_since.is_some()
-        || w.loading.is_some()
-        || w.preload.as_ref().is_some_and(|p| p.claimed)
-    {
+    if !w.in_scene() || w.zoning_since.is_some() || w.loading.is_some() || w.preload.as_ref().is_some_and(|p| p.claimed) {
         return None;
     }
     let want = nearest(&w.zone_lines, zone, w.pos, RANGE);
@@ -60,13 +56,7 @@ pub fn step(w: &mut super::World) -> Option<(u16, u16)> {
     }
     let (to, map) = want?;
     log::info!("preload: zone {to} (map {map}) behind a zone line of {zone}");
-    w.preload = Some(Preload {
-        zone: to,
-        map,
-        started: std::time::Instant::now(),
-        claimed: false,
-        ready: None,
-    });
+    w.preload = Some(Preload { zone: to, map, started: std::time::Instant::now(), claimed: false, ready: None });
     Some((to, map))
 }
 
@@ -82,8 +72,7 @@ fn table() -> &'static HashMap<(u16, u32), u16> {
                 let from = f.next()?.parse().ok()?;
                 let token = f.next()?.as_bytes();
                 let to = f.next()?.parse().ok()?;
-                (token.len() == 4)
-                    .then(|| ((from, u32::from_le_bytes(token.try_into().unwrap())), to))
+                (token.len() == 4).then(|| ((from, u32::from_le_bytes(token.try_into().unwrap())), to))
             })
             .collect()
     })
@@ -108,19 +97,12 @@ fn distance(r: &Region, p: Vec3) -> f32 {
 
 /// The destination of the nearest known zone line within `range`.
 pub fn nearest(lines: &[Region], zone: u16, p: Vec3, range: f32) -> Option<(u16, u16)> {
-    lines
-        .iter()
-        .filter_map(|r| Some((distance(r, p), destination(zone, r.tag())?)))
-        .filter(|(d, _)| *d <= range)
-        .min_by(|a, b| a.0.total_cmp(&b.0))
-        .map(|(_, to)| to)
+    lines.iter().filter_map(|r| Some((distance(r, p), destination(zone, r.tag())?))).filter(|(d, _)| *d <= range).min_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, to)| to)
 }
 
 /// Whether a line to `to` is still within KEEP.
 pub fn keep(lines: &[Region], zone: u16, p: Vec3, to: (u16, u16)) -> bool {
-    lines
-        .iter()
-        .any(|r| destination(zone, r.tag()) == Some(to) && distance(r, p) <= KEEP)
+    lines.iter().any(|r| destination(zone, r.tag()) == Some(to) && distance(r, p) <= KEEP)
 }
 
 #[cfg(test)]
@@ -128,12 +110,7 @@ mod tests {
     use super::*;
 
     fn line(name: &str, pos: [f32; 3]) -> Region {
-        Region {
-            pos,
-            scale: [1.0, 8.0, 8.0],
-            name: name.into(),
-            ..Default::default()
-        }
+        Region { pos, scale: [1.0, 8.0, 8.0], name: name.into(), ..Default::default() }
     }
 
     /// Bastok Markets' lines from LSB's data; its Mog House door leads nowhere new.
@@ -148,22 +125,10 @@ mod tests {
 
     #[test]
     fn nearest_line_in_range() {
-        let lines = [
-            line("z6j0abcd", [0.0, 0.0, 0.0]),
-            line("z6j2abcd", [100.0, 0.0, 0.0]),
-        ];
-        assert_eq!(
-            nearest(&lines, 235, Vec3::new(30.0, 0.0, 0.0), RANGE),
-            Some((234, 234))
-        );
-        assert_eq!(
-            nearest(&lines, 235, Vec3::new(70.0, 0.0, 0.0), RANGE),
-            Some((236, 236))
-        );
-        assert_eq!(
-            nearest(&lines, 235, Vec3::new(50.0, 0.0, 200.0), RANGE),
-            None
-        );
+        let lines = [line("z6j0abcd", [0.0, 0.0, 0.0]), line("z6j2abcd", [100.0, 0.0, 0.0])];
+        assert_eq!(nearest(&lines, 235, Vec3::new(30.0, 0.0, 0.0), RANGE), Some((234, 234)));
+        assert_eq!(nearest(&lines, 235, Vec3::new(70.0, 0.0, 0.0), RANGE), Some((236, 236)));
+        assert_eq!(nearest(&lines, 235, Vec3::new(50.0, 0.0, 200.0), RANGE), None);
         assert!(keep(&lines, 235, Vec3::new(70.0, 0.0, 0.0), (234, 234)));
         assert!(!keep(&lines, 235, Vec3::new(200.0, 0.0, 0.0), (234, 234)));
     }

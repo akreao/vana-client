@@ -28,9 +28,7 @@ const GREEN: u32 = 0x8050_9050;
 const GREY: u32 = 0x8040_4040;
 const RED: u32 = 0x8080_4040;
 /// The 15 name bytes an equip sends (FUN_101e5d60): "dummy" and what follows it at 0x1037f448.
-const DUMMY: [u8; 15] = [
-    b'd', b'u', b'm', b'm', b'y', 0, 0, 0, 0x0b, 0, 0, 0, 0xc0, 0x14, 0xa8,
-];
+const DUMMY: [u8; 15] = [b'd', b'u', b'm', b'm', b'y', 0, 0, 0, 0x0b, 0, 0, 0, 0xc0, 0x14, 0xa8];
 /// link11's channel bars (FUN_101e51b0 +0x20..+0x28).
 const BAR_TINTS: [u32; 3] = [0x7080_8080, 0x7000_8000, 0x7000_0080];
 
@@ -100,15 +98,12 @@ pub enum Ask {
 /// FUN_100e9730: linkshell n's (slot, bag, extdata) while its item is still in that slot.
 fn equipped(w: &World, n: usize) -> Option<(u8, u8, [u8; 24])> {
     let &(index, bag) = w.linkshells.get(n)?;
-    (index != 0 && w.inv.slots.get(&(bag, index)).is_some_and(|s| s.0 != 0))
-        .then(|| (index, bag, ext(w, bag, index)))
+    (index != 0 && w.inv.slots.get(&(bag, index)).is_some_and(|s| s.0 != 0)).then(|| (index, bag, ext(w, bag, index)))
 }
 
 /// FUN_100e9730(.., n): the GroupId of the shell worn as linkshell n.
 pub(super) fn group_of(w: &World, n: usize) -> Option<u32> {
-    equipped(w, n)
-        .map(|(_, _, e)| group(&e))
-        .filter(|&g| g != 0)
+    equipped(w, n).map(|(_, _, e)| group(&e)).filter(|&g| g != 0)
 }
 
 fn ext(w: &World, bag: u8, slot: u8) -> [u8; 24] {
@@ -135,9 +130,7 @@ fn rgba(t: u32) -> [f32; 4] {
 
 /// FUN_101e3a20: another item of this group is worn as linkshell 1 or 2.
 fn worn_elsewhere(w: &World, slot: u8, bag: u8, g: u32) -> bool {
-    [1, 2]
-        .into_iter()
-        .any(|n| equipped(w, n).is_some_and(|(s, b, e)| (s, b) != (slot, bag) && group(&e) == g))
+    [1, 2].into_iter().any(|n| equipped(w, n).is_some_and(|(s, b, e)| (s, b) != (slot, bag) && group(&e) == g))
 }
 
 /// FUN_100ed650: the 6-bit name (MSB first): 0x3f or past 0x34 ends it, 0x3e is a space, 0..26 '`'..'z', 27..52
@@ -196,17 +189,11 @@ pub fn rows(w: &World) -> Vec<Row> {
             if out.len() > 0x50 {
                 break;
             }
-            if s.index == 0
-                || w.inv.locks.get(&(bag, s.index)) == Some(&0x19)
-                || info.kind(s.id) != 6
-            {
+            if s.index == 0 || w.inv.locks.get(&(bag, s.index)) == Some(&0x19) || info.kind(s.id) != 6 {
                 continue;
             }
             let e = ext(w, bag, s.index);
-            let num = worn
-                .iter()
-                .position(|x| x.is_some_and(|(sl, b, _)| (sl, b) == (s.index, bag)))
-                .map_or(0, |k| k as u8 + 1);
+            let num = worn.iter().position(|x| x.is_some_and(|(sl, b, _)| (sl, b) == (s.index, bag))).map_or(0, |k| k as u8 + 1);
             let mut name_tint = if num != 0 { GREEN } else { WHITE };
             if worn_elsewhere(w, s.index, bag, group(&e)) {
                 name_tint = GREY;
@@ -225,16 +212,7 @@ pub fn rows(w: &World) -> Vec<Row> {
                 }
             };
             let tint = if state == 0 { WHITE } else { shell_tint(&e) };
-            out.push(Row {
-                slot: s.index,
-                bag,
-                state,
-                item: s.id,
-                name,
-                tint,
-                name_tint,
-                num,
-            });
+            out.push(Row { slot: s.index, bag, state, item: s.id, name, tint, name_tint, num });
         }
     }
     out
@@ -254,12 +232,7 @@ pub fn open(w: &mut World) {
         return;
     }
     w.sounds.push(Ui::Select as u32);
-    w.linkshell = Some(Linkshell {
-        top: 0,
-        cursor: 0,
-        sub: None,
-        naming: None,
-    });
+    w.linkshell = Some(Linkshell { top: 0, cursor: 0, sub: None, naming: None });
 }
 
 /// FUN_101e3370 (each frame while link5 is up, and on Enter): true once the change sent last has shown (linkshell n
@@ -279,18 +252,8 @@ fn settled(w: &mut World) -> bool {
 
 /// FUN_100e95e0: c2s 0x0C4 {@4 0xf000 | b << 8 | g << 4 | r, ItemIndex, Category, ActiveFlg, name (15), LinkshellId};
 /// refused for a slot past the bag's size. Then the pending change (FUN_101e5d60 / FUN_101e5490).
-fn send_active(
-    w: &mut World,
-    n: u8,
-    bag: u8,
-    slot: u8,
-    active: bool,
-    name: &[u8],
-    rgb: [u8; 3],
-) -> bool {
-    if name.first().is_none_or(|&c| c == 0)
-        || slot >= w.inv.sizes.get(bag as usize).copied().unwrap_or(0)
-    {
+fn send_active(w: &mut World, n: u8, bag: u8, slot: u8, active: bool, name: &[u8], rgb: [u8; 3]) -> bool {
+    if name.first().is_none_or(|&c| c == 0) || slot >= w.inv.sizes.get(bag as usize).copied().unwrap_or(0) {
         return false;
     }
     let mut b = vec![0u8; 0x18];
@@ -299,20 +262,12 @@ fn send_active(
     (b[2], b[3], b[4]) = (slot, bag, active as u8);
     b[8..23].copy_from_slice(&name[..15]);
     b[0x17] = n;
-    let _ = w
-        .net
-        .commands
-        .send(NetCommand::Packet { id: 0x0C4, body: b });
+    let _ = w.net.commands.send(NetCommand::Packet { id: 0x0C4, body: b });
     if active && let Some(a) = w.ls_msg.ask.get_mut(n as usize) {
         *a = 1;
     }
     let e = ext(w, bag, slot);
-    w.ls_pending = Some(Pending {
-        n,
-        group: group(&e),
-        active,
-        until: Instant::now() + Duration::from_secs(1),
-    });
+    w.ls_pending = Some(Pending { n, group: group(&e), active, until: Instant::now() + Duration::from_secs(1) });
     true
 }
 
@@ -332,18 +287,13 @@ fn ask_message(w: &mut World, n: u8, bag: u8, slot: u8, reason: u8) {
     let mut b = vec![0u8; 0x8c];
     b[1] = 0x3f ^ n.wrapping_mul(0x40).wrapping_sub(1);
     (b[2], b[3]) = (bag, slot);
-    let _ = w
-        .net
-        .commands
-        .send(NetCommand::Packet { id: 0x0E1, body: b });
+    let _ = w.net.commands.send(NetCommand::Packet { id: 0x0E1, body: b });
 }
 
 /// LAB_100ea780 after the slot is stored: with an item there, ask for the message the first time (reason 1) or after
 /// our own equip (reason 2); asked either way.
 pub fn on_equip(w: &mut World, n: u8, index: u8, bag: u8) {
-    let Some(&state) = w.ls_msg.ask.get(n as usize) else {
-        return;
-    };
+    let Some(&state) = w.ls_msg.ask.get(n as usize) else { return };
     if index != 0 && state < 2 {
         ask_message(w, n, bag, index, state + 1);
     }
@@ -362,14 +312,7 @@ fn mode_of(n: u8) -> u8 {
 fn push_line(w: &mut World, line: String, mode: u8) {
     let Some(bt) = w.battle.clone() else { return };
     let names = w.names.clone();
-    let line = bt.phrases.as_ref().map_or(line.clone(), |d| {
-        d.expand(
-            &line,
-            names
-                .as_deref()
-                .map(|n| n as &dyn crate::dat::names::NameSource),
-        )
-    });
+    let line = bt.phrases.as_ref().map_or(line.clone(), |d| d.expand(&line, names.as_deref().map(|n| n as &dyn crate::dat::names::NameSource)));
     let colour = bt.colour_in(mode, &w.game);
     w.chat.push_colour(line, colour);
 }
@@ -381,22 +324,11 @@ fn message_line(w: &mut World, n: u8, time: u32, ls: &str, poster: &str, text: O
     if n == 7 {
         return super::textcmd::refuse(w, 0x9c);
     }
-    let Some(text) = text else {
-        return super::textcmd::refuse(w, 0x9d);
-    };
-    let head = super::textcmd::printf(
-        &bt.group10(0x34).unwrap_or_default(),
-        &[ls.to_string(), poster.to_string()],
-    );
+    let Some(text) = text else { return super::textcmd::refuse(w, 0x9d) };
+    let head = super::textcmd::printf(&bt.group10(0x34).unwrap_or_default(), &[ls.to_string(), poster.to_string()]);
     let g = |id: u16| bt.group10_raw(id as usize);
     let (date_key, h12) = ((w.game.get(0x95) & 3) as usize, w.game.get(0x96) & 1 != 0);
-    let date = crate::dat::font::decode_sjis(&crate::dat::msgfmt::earth_datetime(
-        &g,
-        time as i64,
-        1,
-        date_key,
-        h12,
-    ));
+    let date = crate::dat::font::decode_sjis(&crate::dat::msgfmt::earth_datetime(&g, time as i64, 1, date_key, h12));
     let mode = mode_of(n);
     push_line(w, format!("[{n}]{head}"), mode);
     push_line(w, format!("{} ({date})", text.trim()), mode);
@@ -407,13 +339,7 @@ fn level_line(w: &mut World, n: u8, level: u8) {
     if n == 7 {
         return super::textcmd::refuse(w, 0x9c);
     }
-    let Some(line) = w
-        .battle
-        .as_ref()
-        .and_then(|b| b.group9(0xbc + level as usize).filter(|_| level < 3))
-    else {
-        return;
-    };
+    let Some(line) = w.battle.as_ref().and_then(|b| b.group9(0xbc + level as usize).filter(|_| level < 3)) else { return };
     push_line(w, line, 0xcd);
 }
 
@@ -498,9 +424,7 @@ fn send_lsmes(w: &mut World, id: u16, flag: u8, bag: u8, slot: u8, text: &[u8], 
 /// zone-in flag, is not modelled)*. No argument asks for the message (reason 0); /lsmes "level" asks the edit level,
 /// "level ls|ps|all" sets it, "clear" empties the message, "set TEXT" or TEXT sets it.
 pub fn lsmes(w: &mut World, n: usize, args: &[String], tail1: &str, tail2: &str) {
-    let Some((slot, bag, _)) = equipped(w, n) else {
-        return super::textcmd::refuse(w, 0x71);
-    };
+    let Some((slot, bag, _)) = equipped(w, n) else { return super::textcmd::refuse(w, 0x71) };
     if args.len() <= 1 {
         return ask_message(w, n as u8, bag, slot, 0);
     }
@@ -521,15 +445,7 @@ pub fn lsmes(w: &mut World, n: usize, args: &[String], tail1: &str, tail2: &str)
         "clear" => send_lsmes(w, 0x0E2, 0x40, bag, slot, &[], None),
         first => {
             let t = if first == "set" { tail2 } else { tail1 };
-            send_lsmes(
-                w,
-                0x0E2,
-                0x40,
-                bag,
-                slot,
-                &crate::dat::font::encode_sjis(t),
-                None,
-            );
+            send_lsmes(w, 0x0E2, 0x40, bag, slot, &crate::dat::font::encode_sjis(t), None);
         }
     }
 }
@@ -538,14 +454,7 @@ pub fn lsmes(w: &mut World, n: usize, args: &[String], tail1: &str, tail2: &str)
 fn set(w: &mut World, active: bool, n: u8) {
     let Some(r) = cursor_row(w) else { return };
     if active && equipped(w, n as usize).is_some() {
-        w.confirm = Some((
-            super::Confirm::Ls(Ask::Switch {
-                n,
-                bag: r.bag,
-                slot: r.slot,
-            }),
-            false,
-        ));
+        w.confirm = Some((super::Confirm::Ls(Ask::Switch { n, bag: r.bag, slot: r.slot }), false));
         return;
     }
     send_active(w, n, r.bag, r.slot, active, &DUMMY, [0; 3]);
@@ -556,23 +465,14 @@ fn drop_item(w: &World, bag: u8, slot: u8) {
     let mut b = vec![0u8; 8];
     b[0..4].copy_from_slice(&1u32.to_le_bytes());
     (b[4], b[5]) = (bag, slot);
-    let _ = w
-        .net
-        .commands
-        .send(NetCommand::Packet { id: 0x028, body: b });
+    let _ = w.net.commands.send(NetCommand::Packet { id: 0x028, body: b });
 }
 
 /// FUN_101e5ef0 / FUN_101e61b0 case 2: a holder asks 9 0x157, the others 9 0x08.
 fn ask_drop(w: &mut World) {
     let Some(r) = cursor_row(w) else { return };
     let stage = if r.state == 1 { 1 } else { 0 };
-    w.confirm = Some((
-        super::Confirm::Ls(Ask::Drop {
-            slot: r.slot,
-            stage,
-        }),
-        false,
-    ));
+    w.confirm = Some((super::Confirm::Ls(Ask::Drop { slot: r.slot, stage }), false));
 }
 
 /// The prompts' Yes (LAB_101e5cd0, LAB_101e5e50 / LAB_101e5ea0, LAB_101e6150).
@@ -581,9 +481,7 @@ pub fn answer(w: &mut World, a: Ask) {
         Ask::Switch { n, bag, slot } => {
             send_active(w, n, bag, slot, true, &DUMMY, [0; 3]);
         }
-        Ask::Drop { slot, stage: 1 } => {
-            w.confirm = Some((super::Confirm::Ls(Ask::Drop { slot, stage: 2 }), false))
-        }
+        Ask::Drop { slot, stage: 1 } => w.confirm = Some((super::Confirm::Ls(Ask::Drop { slot, stage: 2 }), false)),
         Ask::Drop { slot, .. } => {
             if let Some(r) = cursor_row(w) {
                 drop_item(w, r.bag, slot);
@@ -612,11 +510,7 @@ fn push(w: &mut World, name: &'static str, state: u8) {
         PEARL => 4,
         _ => 0,
     };
-    let help = if bit == 0 || w.ls_opened & bit == 0 {
-        1
-    } else {
-        2
-    };
+    let help = if bit == 0 || w.ls_opened & bit == 0 { 1 } else { 2 };
     w.ls_opened |= bit;
     let mut off = Vec::new();
     if state == 4 {
@@ -629,12 +523,7 @@ fn push(w: &mut World, name: &'static str, state: u8) {
         off.push(3);
     }
     if let Some(l) = w.linkshell.as_mut() {
-        l.sub = Some(Sub {
-            name,
-            sel: 1,
-            off,
-            help,
-        });
+        l.sub = Some(Sub { name, sel: 1, off, help });
     }
 }
 
@@ -672,13 +561,7 @@ fn select(w: &mut World, name: &'static str, child: u16) {
     match (name, child) {
         (NEW, 1) => {
             if let Some(l) = w.linkshell.as_mut() {
-                l.naming = Some(Naming {
-                    sel: 1,
-                    edit: 0,
-                    rgb: [7; 3],
-                    backup: 0,
-                    name: String::new(),
-                });
+                l.naming = Some(Naming { sel: 1, edit: 0, rgb: [7; 3], backup: 0, name: String::new() });
             }
         }
         (NEW, 2) | (UNWORN, 2) => ask_drop(w),
@@ -687,10 +570,7 @@ fn select(w: &mut World, name: &'static str, child: u16) {
         (HOLDER | SACK | PEARL, 2) if n != 0 => set(w, false, n),
         // FUN_101e5c10: c2s 0x0C3 {State 0, LinkshellId n}.
         (HOLDER | SACK, 3) if n != 0 => {
-            let _ = w.net.commands.send(NetCommand::Packet {
-                id: 0x0C3,
-                body: vec![0, n],
-            });
+            let _ = w.net.commands.send(NetCommand::Packet { id: 0x0C3, body: vec![0, n] });
         }
         // FUN_101e5c50(n): the member list (link12); our rank is the shell's Flag @8.
         (HOLDER | SACK | PEARL, 1) if n != 0 => {
@@ -725,9 +605,7 @@ fn step(w: &mut World, gu: &GameUi, name: &str, sel: &mut u16, key: egui::Key) {
 /// The list base (FUN_101f6c70): Up / Down stop at the ends, Right / Left turn a page of 10, Escape closes link5 and
 /// every link window (FUN_101e4380).
 pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
-    let Some(mut l) = w.linkshell.clone() else {
-        return;
-    };
+    let Some(mut l) = w.linkshell.clone() else { return };
     if l.naming.is_some() {
         naming_key(w, gu, key);
         return;
@@ -763,11 +641,7 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
             w.sounds.push(Ui::Cursor as u32);
         }
         egui::Key::ArrowRight | egui::Key::ArrowLeft => {
-            let m = if key == egui::Key::ArrowRight {
-                super::scrollbar::Msg::PageDown
-            } else {
-                super::scrollbar::Msg::PageUp
-            };
+            let m = if key == egui::Key::ArrowRight { super::scrollbar::Msg::PageDown } else { super::scrollbar::Msg::PageUp };
             if super::scrollbar::rows_abs(m, &mut l.top, &mut l.cursor, n, ROWS) {
                 w.sounds.push(Ui::Cursor as u32);
             }
@@ -780,8 +654,7 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
         egui::Key::Enter => {
             w.linkshell = Some(l);
             let ok = enter(w);
-            w.sounds
-                .push(if ok { Ui::Select } else { Ui::Error } as u32);
+            w.sounds.push(if ok { Ui::Select } else { Ui::Error } as u32);
             return;
         }
         _ => {}
@@ -793,9 +666,7 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
 /// FUN_101e5490 / FUN_101e5280: the rows; a channel takes Left / Right (-1 / +1, 0..15) until Enter keeps it or
 /// Escape restores it; OK sends the name (refused empty: SE 0004), Cancel reopens link5 from the top.
 fn naming_key(w: &mut World, gu: &GameUi, key: egui::Key) {
-    let Some(mut nm) = w.linkshell.as_ref().and_then(|l| l.naming.clone()) else {
-        return;
-    };
+    let Some(mut nm) = w.linkshell.as_ref().and_then(|l| l.naming.clone()) else { return };
     let mut close = false;
     match nm.edit {
         1 => return,
@@ -860,9 +731,7 @@ pub(super) fn naming_view(w: &World) -> Option<Naming> {
 /// The modern window's click on child `sel` (1 the name, 2..4 a channel, 5 OK, else Cancel): a channel being edited is
 /// kept and typing ends keeping its text (as their Enter / Escape), the cursor goes there, then retail's Enter.
 pub(super) fn naming_pick(w: &mut World, gu: &GameUi, sel: u16) {
-    let Some(nm) = w.linkshell.as_mut().and_then(|l| l.naming.as_mut()) else {
-        return;
-    };
+    let Some(nm) = w.linkshell.as_mut().and_then(|l| l.naming.as_mut()) else { return };
     if nm.edit == 1 && sel == 1 {
         return;
     }
@@ -873,9 +742,7 @@ pub(super) fn naming_pick(w: &mut World, gu: &GameUi, sel: u16) {
 
 /// The modern window's slider: channel `k` set to `v` (0..15) and kept, the cursor on its row.
 pub(super) fn naming_channel(w: &mut World, k: usize, v: u8) {
-    let Some(nm) = w.linkshell.as_mut().and_then(|l| l.naming.as_mut()) else {
-        return;
-    };
+    let Some(nm) = w.linkshell.as_mut().and_then(|l| l.naming.as_mut()) else { return };
     if k > 2 {
         return;
     }
@@ -891,17 +758,12 @@ pub(super) fn naming_channel(w: &mut World, k: usize, v: u8) {
 
 /// link11's name box (FUN_101c5be0(1, 0x13, ..)) takes the typed text.
 pub fn typing(w: &World) -> bool {
-    w.linkshell
-        .as_ref()
-        .and_then(|l| l.naming.as_ref())
-        .is_some_and(|n| n.edit == 1)
+    w.linkshell.as_ref().and_then(|l| l.naming.as_ref()).is_some_and(|n| n.edit == 1)
 }
 
 /// The box's keys: text (19 characters), Backspace; Enter commits, Escape ends it keeping the text (FUN_101e5130).
 pub fn text_events(w: &mut World, events: &[egui::Event]) {
-    let Some(nm) = w.linkshell.as_mut().and_then(|l| l.naming.as_mut()) else {
-        return;
-    };
+    let Some(nm) = w.linkshell.as_mut().and_then(|l| l.naming.as_mut()) else { return };
     let mut sound = None;
     for ev in events {
         match ev {
@@ -912,24 +774,12 @@ pub fn text_events(w: &mut World, events: &[egui::Event]) {
                     }
                 }
             }
-            egui::Event::Key {
-                key: egui::Key::Backspace,
-                pressed: true,
-                ..
-            } => {
+            egui::Event::Key { key: egui::Key::Backspace, pressed: true, .. } => {
                 nm.name.pop();
             }
-            egui::Event::Key {
-                key: k @ (egui::Key::Enter | egui::Key::Escape),
-                pressed: true,
-                ..
-            } => {
+            egui::Event::Key { key: k @ (egui::Key::Enter | egui::Key::Escape), pressed: true, .. } => {
                 nm.edit = 0;
-                sound = Some(if *k == egui::Key::Enter {
-                    Ui::Select
-                } else {
-                    Ui::Cancel
-                });
+                sound = Some(if *k == egui::Key::Enter { Ui::Select } else { Ui::Cancel });
             }
             _ => {}
         }
@@ -954,22 +804,11 @@ pub fn update(w: &mut World) {
 
 /// link5 has the keys while no submenu, link11 or prompt is up.
 pub fn focused(w: &World) -> bool {
-    w.linkshell
-        .as_ref()
-        .is_some_and(|l| l.sub.is_none() && l.naming.is_none())
-        && w.confirm.is_none()
+    w.linkshell.as_ref().is_some_and(|l| l.sub.is_none() && l.naming.is_none()) && w.confirm.is_none()
 }
 
 /// Mouse *(inf: the generic child hit test)*: hover moves the cursor, a click on the cursor row is Enter.
-pub fn pointer(
-    w: &mut World,
-    gu: &GameUi,
-    sw: f32,
-    sh: f32,
-    p: (f32, f32),
-    moved: bool,
-    clicked: bool,
-) {
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool) {
     let Some(l) = w.linkshell.clone() else { return };
     let (name, sel) = match (&l.naming, &l.sub) {
         (Some(nm), _) if nm.edit == 0 => (NAMING, nm.sel),
@@ -977,22 +816,12 @@ pub fn pointer(
         (None, Some(s)) => (s.name, s.sel),
         (None, None) => (LIST, (l.cursor.saturating_sub(l.top) + 1) as u16),
     };
-    let (Some((x, y)), Some(lay)) = (gu.window_xy(name, sw, sh), gu.layout(name)) else {
-        return;
-    };
+    let (Some((x, y)), Some(lay)) = (gu.window_xy(name, sw, sh), gu.layout(name)) else { return };
     let n = rows(w).len();
-    let Some(e) = lay
-        .elements
-        .iter()
-        .skip(1)
-        .filter(|e| e.links[2] != 0xff)
-        .find(|e| {
-            let (ex, ey) = (x + e.x as f32, y + e.y as f32);
-            p.0 >= ex && p.0 < ex + e.w as f32 && p.1 >= ey && p.1 < ey + e.h as f32
-        })
-    else {
-        return;
-    };
+    let Some(e) = lay.elements.iter().skip(1).filter(|e| e.links[2] != 0xff).find(|e| {
+        let (ex, ey) = (x + e.x as f32, y + e.y as f32);
+        p.0 >= ex && p.0 < ex + e.w as f32 && p.1 >= ey && p.1 < ey + e.h as f32
+    }) else { return };
     if name == LIST && l.top + e.id as usize > n {
         return;
     }
@@ -1014,13 +843,7 @@ pub fn pointer(
 /// The scroll bar (list messages 0x16..0x1b).
 pub(super) fn bar(w: &mut World, m: super::scrollbar::Msg) -> bool {
     let n = rows(w).len();
-    let Some(l) = w
-        .linkshell
-        .as_mut()
-        .filter(|l| l.sub.is_none() && l.naming.is_none())
-    else {
-        return false;
-    };
+    let Some(l) = w.linkshell.as_mut().filter(|l| l.sub.is_none() && l.naming.is_none()) else { return false };
     super::scrollbar::rows_abs(m, &mut l.top, &mut l.cursor, n, ROWS)
 }
 
@@ -1036,19 +859,12 @@ pub fn bars(gu: &GameUi, w: &World, bars: &mut super::hudtop::BarText) {
         (None, Some(s)) => {
             let [h, t] = gu.focus_text(s.name, s.sel);
             let equip = if s.name == UNWORN { 1 } else { 2 };
-            let h = if s.sel == equip && s.name != NEW {
-                Some(gu.menu_msg(s.help, ""))
-            } else {
-                h
-            };
+            let h = if s.sel == equip && s.name != NEW { Some(gu.menu_msg(s.help, "")) } else { h };
             (h, t)
         }
         (None, None) => {
             let row = l.cursor < rows(w).len();
-            (
-                Some(gu.menu_msg(if row { 0 } else { 0x126 }, "")),
-                gu.focus_text(LIST, 0)[1].clone(),
-            )
+            (Some(gu.menu_msg(if row { 0 } else { 0x126 }, "")), gu.focus_text(LIST, 0)[1].clone())
         }
     };
     (bars.help[1], bars.title[1]) = (help.unwrap_or_default(), title.unwrap_or_default());
@@ -1063,22 +879,12 @@ pub(super) fn icon(gu: &mut GameUi, item: u16, x: f32, y: f32, size: f32, t: u32
 
 /// link6 mode 0 (FUN_101e57b0): the cursor row's shell name (game font) at (+0x40, +0x14) and its icon at full scale at
 /// (+10, +0xc) in its colour (grey 7 / 7 / 7 without a group); no row: group 7 0x71 in 0x80804040.
-fn draw_header(
-    gu: &mut GameUi,
-    w: &World,
-    row: Option<&Row>,
-    sw: f32,
-    sh: f32,
-) -> Option<[f32; 4]> {
+fn draw_header(gu: &mut GameUi, w: &World, row: Option<&Row>, sw: f32, sh: f32) -> Option<[f32; 4]> {
     let win = gu.lobby_window_off(HEADER, sw, sh, (0.0, 0.0), None, false, &[])?;
     let (x, y) = gu.window_xy(HEADER, sw, sh)?;
     match row {
         None => {
-            let s = w
-                .battle
-                .as_ref()
-                .and_then(|b| b.group7(0x71))
-                .unwrap_or_default();
+            let s = w.battle.as_ref().and_then(|b| b.group7(0x71)).unwrap_or_default();
             gu.text(&s, x + 64.0, y + 20.0, 0, RED.to_le_bytes());
         }
         Some(r) => {
@@ -1086,13 +892,7 @@ fn draw_header(
             let t = if group(&e) == 0 {
                 tint(7, 7, 7)
             } else {
-                gu.text(
-                    &ls_name(&e[9..24]),
-                    x + 64.0,
-                    y + 20.0,
-                    0,
-                    WHITE.to_le_bytes(),
-                );
+                gu.text(&ls_name(&e[9..24]), x + 64.0, y + 20.0, 0, WHITE.to_le_bytes());
                 shell_tint(&e)
             };
             icon(gu, r.item, x + 10.0, y + 12.0, 32.0, t);
@@ -1111,44 +911,19 @@ fn draw_naming(gu: &mut GameUi, w: &World, nm: &Naming, sw: f32, sh: f32) -> Opt
     if let Some(info) = &w.item_info {
         super::items::upload_icons(gu, info, std::iter::once(0x201));
     }
-    icon(
-        gu,
-        0x201,
-        x + 10.0,
-        y + 12.0,
-        32.0,
-        tint(nm.rgb[0], nm.rgb[1], nm.rgb[2]),
-    );
+    icon(gu, 0x201, x + 10.0, y + 12.0, 32.0, tint(nm.rgb[0], nm.rgb[1], nm.rgb[2]));
     let child = |id: u16| win.children.iter().find(|c| c.0 == id).map(|c| c.1);
     if let Some([cx, cy, ..]) = child(1) {
         if nm.edit == 1 {
-            let caret = if (w.started.elapsed().as_secs_f32() * 60.0) as u32 % 30 < 20 {
-                "|"
-            } else {
-                ""
-            };
-            gu.text(
-                &format!("{}{caret}", nm.name),
-                cx + 1.0,
-                cy + 8.0,
-                0,
-                [0x80; 4],
-            );
+            let caret = if (w.started.elapsed().as_secs_f32() * 60.0) as u32 % 30 < 20 { "|" } else { "" };
+            gu.text(&format!("{}{caret}", nm.name), cx + 1.0, cy + 8.0, 0, [0x80; 4]);
         } else {
             gu.shape_fit(&nm.name, cx + 1.0, cy + 8.0, 162.0, WHITE);
         }
     }
     for k in 0..3 {
         if let Some([cx, cy, ..]) = child(k as u16 + 2) {
-            gu.sprite_scaled(
-                "menu    windowps",
-                97,
-                cx + 12.0,
-                cy + 1.0,
-                nm.rgb[k] as f32 / 15.0,
-                1.0,
-                BAR_TINTS[k],
-            );
+            gu.sprite_scaled("menu    windowps", 97, cx + 12.0, cy + 1.0, nm.rgb[k] as f32 / 15.0, 1.0, BAR_TINTS[k]);
         }
     }
     if focused && let Some([cx, cy, ..]) = child(nm.sel) {
@@ -1159,26 +934,13 @@ fn draw_naming(gu: &mut GameUi, w: &World, nm: &Naming, sw: f32, sh: f32) -> Opt
 
 /// The modern page's view (none while link11 or link12 has the window): each shell row with its shell's name and
 /// colour, the cursor, and the submenu.
-pub(super) fn modern_view(
-    w: &World,
-) -> Option<(
-    Vec<(Row, String, u32)>,
-    usize,
-    Option<super::modern::MenuWin>,
-)> {
-    let l = w
-        .linkshell
-        .as_ref()
-        .filter(|l| l.naming.is_none() && w.linklist.is_none())?;
+pub(super) fn modern_view(w: &World) -> Option<(Vec<(Row, String, u32)>, usize, Option<super::modern::MenuWin>)> {
+    let l = w.linkshell.as_ref().filter(|l| l.naming.is_none() && w.linklist.is_none())?;
     let rows = rows(w)
         .into_iter()
         .map(|r| {
             let e = ext(w, r.bag, r.slot);
-            let (name, t) = if group(&e) == 0 {
-                (String::new(), tint(7, 7, 7))
-            } else {
-                (ls_name(&e[9..24]), shell_tint(&e))
-            };
+            let (name, t) = if group(&e) == 0 { (String::new(), tint(7, 7, 7)) } else { (ls_name(&e[9..24]), shell_tint(&e)) };
             (r, name, t)
         })
         .collect();
@@ -1186,11 +948,7 @@ pub(super) fn modern_view(
         name: s.name,
         sel: s.sel,
         off: s.off.clone(),
-        labels: if matches!(s.name, HOLDER | SACK | PEARL) {
-            vec![(2, 122)]
-        } else {
-            Vec::new()
-        },
+        labels: if matches!(s.name, HOLDER | SACK | PEARL) { vec![(2, 122)] } else { Vec::new() },
         marked: Vec::new(),
         values: Vec::new(),
     });
@@ -1217,19 +975,11 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         return rects;
     }
     let focused = focused(w);
-    let sel = if focused && !rows.is_empty() {
-        (l.cursor.saturating_sub(l.top) + 1) as u16
-    } else {
-        0
-    };
+    let sel = if focused && !rows.is_empty() { (l.cursor.saturating_sub(l.top) + 1) as u16 } else { 0 };
     if let Some((wx, wy)) = gu.menu_sel(LIST, sw, sh, sel) {
         rects.extend(gu.window_rect(LIST, sw, sh));
         if rows.is_empty() {
-            let s = w
-                .battle
-                .as_ref()
-                .and_then(|b| b.group7(0x68))
-                .unwrap_or_default();
+            let s = w.battle.as_ref().and_then(|b| b.group7(0x68)).unwrap_or_default();
             gu.text(&s, wx + 35.0, wy + 27.0, 0, RED.to_le_bytes());
         }
         for (k, r) in rows.iter().enumerate().skip(l.top).take(ROWS) {
@@ -1240,68 +990,25 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
             if r.num != 0 {
                 gu.shape_text(&r.num.to_string(), x0 + 6.0, ry + 1.0, r.tint, false);
             }
-            let name = w
-                .item_info
-                .as_ref()
-                .and_then(|c| c.name(r.item))
-                .unwrap_or_default();
+            let name = w.item_info.as_ref().and_then(|c| c.name(r.item)).unwrap_or_default();
             gu.text(&name, rx + COLS[1], ry + 2.0, 0, r.name_tint.to_le_bytes());
-            gu.text_fit(
-                &r.name,
-                rx + COLS[2],
-                ry + 2.0,
-                COLS[3] - COLS[2] - 8.0,
-                WHITE,
-            );
+            gu.text_fit(&r.name, rx + COLS[2], ry + 2.0, COLS[3] - COLS[2] - 8.0, WHITE);
         }
         if focused && !rows.is_empty() {
-            gu.sprite(
-                "menu    windowps",
-                75,
-                wx,
-                wy + 4.0 + PITCH * l.cursor.saturating_sub(l.top) as f32,
-                WHITE,
-            );
+            gu.sprite("menu    windowps", 75, wx, wy + 4.0 + PITCH * l.cursor.saturating_sub(l.top) as f32, WHITE);
         }
         if let Some([fx, fy, fw, fh]) = gu.window_rect(LIST, sw, sh) {
             gu.scroll_bar(fx + fw - 8.0, fy, fh, rows.len(), ROWS, l.top);
             if focused {
-                gu.bar_site(
-                    super::scrollbar::Owner::Linkshell,
-                    fx + fw - 8.0,
-                    fy,
-                    fh,
-                    rows.len(),
-                    ROWS,
-                    l.top,
-                );
+                gu.bar_site(super::scrollbar::Owner::Linkshell, fx + fw - 8.0, fy, fh, rows.len(), ROWS, l.top);
             }
         }
     }
     if let Some(s) = &l.sub {
         let focus = w.confirm.is_none();
-        let swaps: &[(u16, usize)] = if matches!(s.name, HOLDER | SACK | PEARL) {
-            &[(2, 122)]
-        } else {
-            &[]
-        };
-        if let Some(win) = gu.lobby_window_swaps(
-            s.name,
-            sw,
-            sh,
-            (0.0, 0.0),
-            Some(s.sel),
-            focus,
-            &s.off,
-            swaps,
-        ) {
-            gu.disabled_children(
-                s.name,
-                win.frame[0],
-                win.frame[1],
-                &s.off,
-                Some(s.sel).filter(|_| focus),
-            );
+        let swaps: &[(u16, usize)] = if matches!(s.name, HOLDER | SACK | PEARL) { &[(2, 122)] } else { &[] };
+        if let Some(win) = gu.lobby_window_swaps(s.name, sw, sh, (0.0, 0.0), Some(s.sel), focus, &s.off, swaps) {
+            gu.disabled_children(s.name, win.frame[0], win.frame[1], &s.off, Some(s.sel).filter(|_| focus));
             rects.push(win.frame);
         }
     }

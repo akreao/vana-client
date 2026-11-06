@@ -41,28 +41,11 @@ pub enum Ui {
 }
 
 /// Music after an expansion's title track: {track, ticks before the switch, next} (FFXiMain 0x10351718).
-const SEQUENCE: [(u32, i32, u32); 7] = [
-    (0, 0, 0),
-    (108, 0, 108),
-    (242, 8100, 108),
-    (179, 7140, 108),
-    (140, 8160, 108),
-    (58, 8160, 108),
-    (34, 7740, 108),
-];
+const SEQUENCE: [(u32, i32, u32); 7] = [(0, 0, 0), (108, 0, 108), (242, 8100, 108), (179, 7140, 108), (140, 8160, 108), (58, 8160, 108), (34, 7740, 108)];
 /// Title track choice n -> (installed-mask bit, sequence entry) (FUN_102455a0).
 const TITLE_PICK: [(u32, usize); 6] = [(0, 1), (2, 2), (3, 3), (4, 4), (11, 5), (0, 6)];
 /// Title music option 0xaf -> (mode, n) (FFXiMain 0x1033cc48): mode 0 newest installed, 1 track n, 2 random.
-const TITLE_MODE: [(u8, u32); 8] = [
-    (0, 0),
-    (2, 0),
-    (1, 0),
-    (1, 1),
-    (1, 2),
-    (1, 3),
-    (1, 4),
-    (1, 5),
-];
+const TITLE_MODE: [(u8, u32); 8] = [(0, 0), (2, 0), (1, 0), (1, 1), (1, 2), (1, 3), (1, 4), (1, 5)];
 pub const TITLE_DEFAULT: u32 = 0x6c;
 
 /// The music change task: fade out, stop, start, optionally switch to a follow-up track.
@@ -156,38 +139,8 @@ impl Audio {
                 log::info!("audio: {} at {} Hz", out.host, out.rate);
                 let (tx, req) = channel();
                 let ls = status.clone();
-                std::thread::Builder::new()
-                    .name("audio-load".into())
-                    .spawn(move || loader(ffxi_dir, req, mixer_tx, ls))
-                    .ok()?;
-                Some(Self {
-                    tx,
-                    status,
-                    _out: out,
-                    wanted: 0,
-                    playing: 0,
-                    task: None,
-                    music,
-                    effects,
-                    tick_acc: 0.0,
-                    event_se: 1.0,
-                    event_stream: 1.0,
-                    event_ui: 1.0,
-                    call_level: 1.0,
-                    event_zone: 1.0,
-                    ambient_se: None,
-                    ambient_level: 0,
-                    ambient_handle: AMBIENT,
-                    ambient_scene: None,
-                    fades: [None; 4],
-                    streams: Default::default(),
-                    raw_levels: Default::default(),
-                    applied: (1.0, 1.0, 1.0),
-                    cur_vol: 0x7f,
-                    max_se: 12,
-                    pending: Default::default(),
-                    restarted: None,
-                })
+                std::thread::Builder::new().name("audio-load".into()).spawn(move || loader(ffxi_dir, req, mixer_tx, ls)).ok()?;
+                Some(Self { tx, status, _out: out, wanted: 0, playing: 0, task: None, music, effects, tick_acc: 0.0, event_se: 1.0, event_stream: 1.0, event_ui: 1.0, call_level: 1.0, event_zone: 1.0, ambient_se: None, ambient_level: 0, ambient_handle: AMBIENT, ambient_scene: None, fades: [None; 4], streams: Default::default(), raw_levels: Default::default(), applied: (1.0, 1.0, 1.0), cur_vol: 0x7f, max_se: 12, pending: Default::default(), restarted: None })
             }
             Err(e) => {
                 log::warn!("audio disabled: {e:#}");
@@ -208,55 +161,21 @@ impl Audio {
     fn start(&mut self, id: u32, vol: i32) {
         self.cur_vol = vol;
         log::info!("music: start {id} at level {}", self.level(vol));
-        let _ = self.tx.send(Req::Music {
-            id,
-            level: self.level(vol),
-        });
+        let _ = self.tx.send(Req::Music { id, level: self.level(vol) });
     }
 
     /// FUN_10036530: change music through the fade task (ignored when `id` is already wanted).
-    pub fn change_music(
-        &mut self,
-        id: u32,
-        vol: i32,
-        vol2: i32,
-        fade_in: i32,
-        fade_out: i32,
-        save: bool,
-    ) {
+    pub fn change_music(&mut self, id: u32, vol: i32, vol2: i32, fade_in: i32, fade_out: i32, save: bool) {
         self.change(id, vol, vol2, fade_in, fade_out, save, false, 0, false);
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn change(
-        &mut self,
-        id: u32,
-        vol: i32,
-        vol2: i32,
-        fade_in: i32,
-        fade_out: i32,
-        save: bool,
-        no_start: bool,
-        seq: usize,
-        single: bool,
-    ) {
+    fn change(&mut self, id: u32, vol: i32, vol2: i32, fade_in: i32, fade_out: i32, save: bool, no_start: bool, seq: usize, single: bool) {
         if self.wanted == id {
             return;
         }
         self.wanted = id;
-        self.task = Some(Task {
-            state: 0,
-            save,
-            no_start,
-            id,
-            vol,
-            vol2,
-            fade_in,
-            counter: fade_out.max(0x1e),
-            seq,
-            single,
-            wait: 0,
-        });
+        self.task = Some(Task { state: 0, save, no_start, id, vol, vol2, fade_in, counter: fade_out.max(0x1e), seq, single, wait: 0 });
     }
 
     /// FUN_10036b40: fade the music out for a track the caller will start (creator race music).
@@ -278,10 +197,7 @@ impl Audio {
 
     /// FUN_1023ae50 / FUN_10036980: title music for option 0xaf and the installed-content mask.
     pub fn title_music(&mut self, option: u32, installed: u32) {
-        let t = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u32)
-            .unwrap_or(0);
+        let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u32).unwrap_or(0);
         let (id, seq, single) = title_choice(option, installed, t);
         self.change(id, 0x7f, 0x7f, 0, 0, false, false, seq, single);
     }
@@ -321,12 +237,7 @@ impl Audio {
     }
 
     fn se_at(&mut self, id: u32, level: i32, event: f32) {
-        if self
-            .status
-            .voices
-            .load(std::sync::atomic::Ordering::Relaxed)
-            >= self.max_se
-        {
+        if self.status.voices.load(std::sync::atomic::Ordering::Relaxed) >= self.max_se {
             return;
         }
         let lv = ((level as f32 * self.effects * event) as i32).clamp(0, 127) as u8;
@@ -335,24 +246,12 @@ impl Audio {
 
     /// A sound file's bytes (WAV or SeWave, a Lua mod's) at a level 0..127 before the effects factor.
     pub fn play_bytes(&mut self, bytes: Arc<[u8]>, level: i32) {
-        if self
-            .status
-            .voices
-            .load(std::sync::atomic::Ordering::Relaxed)
-            >= self.max_se
-        {
+        if self.status.voices.load(std::sync::atomic::Ordering::Relaxed) >= self.max_se {
             return;
         }
         let lv = ((level as f32 * self.effects) as i32).clamp(0, 127) as u8;
         log::debug!("mod sound: {} bytes at level {lv}", bytes.len());
-        let _ = self.tx.send(Req::Cmd(Cmd::PlaySe {
-            bytes,
-            level: lv,
-            pan: 0x40,
-            priority: 0,
-            handle: 0,
-            limit: 0,
-        }));
+        let _ = self.tx.send(Req::Cmd(Cmd::PlaySe { bytes, level: lv, pan: 0x40, priority: 0, handle: 0, limit: 0 }));
     }
 
     /// A positioned effect voice (FUN_100370d0 -> FUN_10036130 -> cmd 2) under `handle`; level 0..127 before the
@@ -366,23 +265,13 @@ impl Audio {
         self.raw_levels.insert(handle, level);
         self.pending.borrow_mut().insert(handle);
         log::debug!("voice {handle:#x}: se {id} level {lv} pan {pan}");
-        let _ = self.tx.send(Req::Voice {
-            id,
-            level: lv,
-            pan: pan & 0x7f,
-            handle,
-            limit: self.max_se as u8,
-        });
+        let _ = self.tx.send(Req::Voice { id, level: lv, pan: pan & 0x7f, handle, limit: self.max_se as u8 });
         true
     }
 
     /// A voice's level: world effects take the event's effect volume, the stream only mask 8.
     fn voice_level_of(&self, handle: u32, level: i32) -> u8 {
-        if self.streams.contains(&handle) {
-            ((level as f32 * self.effects * self.event_stream) as i32).clamp(0, 127) as u8
-        } else {
-            self.se_level(level)
-        }
+        if self.streams.contains(&handle) { ((level as f32 * self.effects * self.event_stream) as i32).clamp(0, 127) as u8 } else { self.se_level(level) }
     }
 
     pub fn voice_level(&mut self, handle: u32, level: i32) {
@@ -392,10 +281,7 @@ impl Audio {
     }
 
     pub fn voice_pan(&mut self, handle: u32, pan: u8) {
-        self.send(Cmd::SePan {
-            handle,
-            pan: pan & 0x7f,
-        });
+        self.send(Cmd::SePan { handle, pan: pan & 0x7f });
     }
 
     /// Stop now (0) or fade out over 60 Hz ticks.
@@ -413,12 +299,7 @@ impl Audio {
                 pending.remove(&h);
             }
         }
-        let mut v = self
-            .status
-            .alive
-            .lock()
-            .map(|a| a.clone())
-            .unwrap_or_default();
+        let mut v = self.status.alive.lock().map(|a| a.clone()).unwrap_or_default();
         v.extend(pending.iter().copied());
         v
     }
@@ -449,12 +330,7 @@ impl Audio {
             }
             if ticks > 0.0 {
                 let from = *self.channel(i);
-                self.fades[i] = Some(Fade {
-                    from,
-                    to: level,
-                    total: ticks,
-                    left: ticks,
-                });
+                self.fades[i] = Some(Fade { from, to: level, total: ticks, left: ticks });
             } else {
                 *self.channel(i) = level;
             }
@@ -465,12 +341,7 @@ impl Audio {
     /// slider move during a cutscene undoes the script's mute (batch 6 item 18).
     pub fn reset_event_levels(&mut self) {
         self.fades = [None; 4];
-        (
-            self.event_se,
-            self.event_stream,
-            self.event_ui,
-            self.event_zone,
-        ) = (1.0, 1.0, 1.0, 1.0);
+        (self.event_se, self.event_stream, self.event_ui, self.event_zone) = (1.0, 1.0, 1.0, 1.0);
     }
 
     fn channel(&mut self, i: usize) -> &mut f32 {
@@ -502,10 +373,7 @@ impl Audio {
     pub fn music_fade(&mut self, vol: i32, ticks: i32) {
         self.cur_vol = vol;
         let level = self.level(vol);
-        self.send(Cmd::BgmVolume {
-            level,
-            ticks: ticks.max(0),
-        });
+        self.send(Cmd::BgmVolume { level, ticks: ticks.max(0) });
     }
 
     /// The mixer has a music track (FUN_10246710(0, -1): the stream's +0x94 is set).
@@ -517,13 +385,7 @@ impl Audio {
     /// Ours skips it while a change is under way, which starts its own track, and while its last restart is still
     /// loading.
     pub fn restart_music(&mut self) {
-        if self.music_playing()
-            || self.playing == 0
-            || self.task.is_some()
-            || self
-                .restarted
-                .is_some_and(|t| t.elapsed().as_secs_f32() < 2.0)
-        {
+        if self.music_playing() || self.playing == 0 || self.task.is_some() || self.restarted.is_some_and(|t| t.elapsed().as_secs_f32() < 2.0) {
             return;
         }
         self.restarted = Some(std::time::Instant::now());
@@ -550,55 +412,26 @@ impl Audio {
         if self.ambient_se == se && !moved {
             return;
         }
-        log::info!(
-            "ambient loop: {se:?}{}",
-            if moved { " (new scene)" } else { "" }
-        );
+        log::info!("ambient loop: {se:?}{}", if moved { " (new scene)" } else { "" });
         if self.ambient_se.is_some() {
             let cut = moved || se.is_none();
-            self.send(Cmd::SeStop {
-                handle: self.ambient_handle,
-                ticks: if cut { 0 } else { AMBIENT_FADE },
-            });
-            self.ambient_handle = if self.ambient_handle == AMBIENT {
-                AMBIENT + 1
-            } else {
-                AMBIENT
-            };
+            self.send(Cmd::SeStop { handle: self.ambient_handle, ticks: if cut { 0 } else { AMBIENT_FADE } });
+            self.ambient_handle = if self.ambient_handle == AMBIENT { AMBIENT + 1 } else { AMBIENT };
             // The other handle may still hold a loop fading out from a change moments ago (ours: cut, so the level
             // commands below only reach the new loop).
-            self.send(Cmd::SeStop {
-                handle: self.ambient_handle,
-                ticks: 0,
-            });
+            self.send(Cmd::SeStop { handle: self.ambient_handle, ticks: 0 });
         }
         self.ambient_se = se;
         let Some(id) = se else { return };
         // The ambient voices just stopped or fading still count in the mixer; they do not keep the new loop out.
-        let ours = self
-            .alive()
-            .iter()
-            .filter(|&&h| h == AMBIENT || h == AMBIENT + 1)
-            .count() as u32;
-        if self
-            .status
-            .voices
-            .load(std::sync::atomic::Ordering::Relaxed)
-            .saturating_sub(ours)
-            >= self.max_se
-        {
+        let ours = self.alive().iter().filter(|&&h| h == AMBIENT || h == AMBIENT + 1).count() as u32;
+        if self.status.voices.load(std::sync::atomic::Ordering::Relaxed).saturating_sub(ours) >= self.max_se {
             return;
         }
         self.ambient_level = self.zone_level();
         // Limit 0 in the mixer: the check above already applied the configured limit, so the loop takes any free slot
         // while the one it replaces fades out there.
-        let _ = self.tx.send(Req::Voice {
-            id,
-            level: self.ambient_level,
-            pan: 0x40,
-            handle: self.ambient_handle,
-            limit: 0,
-        });
+        let _ = self.tx.send(Req::Voice { id, level: self.ambient_level, pan: 0x40, handle: self.ambient_handle, limit: 0 });
     }
 
     fn zone_level(&self) -> u8 {
@@ -627,10 +460,7 @@ impl Audio {
         let lv = self.zone_level();
         if self.ambient_se.is_some() && lv != self.ambient_level {
             self.ambient_level = lv;
-            self.send(Cmd::SeLevel {
-                handle: self.ambient_handle,
-                level: lv,
-            });
+            self.send(Cmd::SeLevel { handle: self.ambient_handle, level: lv });
         }
         self.tick_acc += dt * 60.0;
         let ticks = self.tick_acc.floor().min(30.0) as i32;
@@ -645,9 +475,7 @@ impl Audio {
 
     /// One tick of FUN_100365e0.
     fn step(&mut self) {
-        let Some(mut t) = self.task.take() else {
-            return;
-        };
+        let Some(mut t) = self.task.take() else { return };
         let mut done = false;
         match t.state {
             0 => {
@@ -685,10 +513,7 @@ impl Audio {
                     t.wait -= 1;
                 } else {
                     if !t.no_start {
-                        self.send(Cmd::BgmVolume {
-                            level: self.level(t.vol2),
-                            ticks: t.fade_in,
-                        });
+                        self.send(Cmd::BgmVolume { level: self.level(t.vol2), ticks: t.fade_in });
                     }
                     let (_, wait, _) = SEQUENCE[t.seq];
                     if wait != 0 && !t.single {
@@ -743,21 +568,9 @@ impl Audio {
 
 enum Req {
     Cmd(Cmd),
-    Music {
-        id: u32,
-        level: u8,
-    },
-    Se {
-        id: u32,
-        level: u8,
-    },
-    Voice {
-        id: u32,
-        level: u8,
-        pan: u8,
-        handle: u32,
-        limit: u8,
-    },
+    Music { id: u32, level: u8 },
+    Se { id: u32, level: u8 },
+    Voice { id: u32, level: u8, pan: u8, handle: u32, limit: u8 },
 }
 
 /// FUN_100377a0's choice: (track, sequence entry, no follow-up) for option 0xaf;  stands for timeGetTime.
@@ -779,11 +592,7 @@ pub fn title_choice(option: u32, installed: u32, t: u32) -> (u32, usize, bool) {
         }
         n -= 1;
     }
-    let id = if SEQUENCE[seq].0 == 0 {
-        TITLE_DEFAULT
-    } else {
-        SEQUENCE[seq].0
-    };
+    let id = if SEQUENCE[seq].0 == 0 { TITLE_DEFAULT } else { SEQUENCE[seq].0 };
     (id, seq, single)
 }
 
@@ -800,48 +609,13 @@ fn loader(dir: PathBuf, rx: Receiver<Req>, tx: Sender<Cmd>, status: Arc<Status>)
     for r in rx {
         let cmd = match r {
             Req::Cmd(c) => Some(c),
-            Req::Music { id, level } => {
-                read(format::music_path(&dir, id), "music", id).map(|bytes| Cmd::PlayBgm {
-                    id,
-                    bytes,
-                    level,
-                    ticks: 0,
-                })
-            }
+            Req::Music { id, level } => read(format::music_path(&dir, id), "music", id).map(|bytes| Cmd::PlayBgm { id, bytes, level, ticks: 0 }),
             Req::Se { id, level } => {
                 log::debug!("se {id} at level {level}");
-                effects
-                    .entry(id)
-                    .or_insert_with(|| read(format::se_path(&dir, id), "sound", id))
-                    .clone()
-                    .map(|bytes| Cmd::PlaySe {
-                        bytes,
-                        level,
-                        pan: 0x40,
-                        priority: 0,
-                        handle: 0,
-                        limit: 0,
-                    })
+                effects.entry(id).or_insert_with(|| read(format::se_path(&dir, id), "sound", id)).clone().map(|bytes| Cmd::PlaySe { bytes, level, pan: 0x40, priority: 0, handle: 0, limit: 0 })
             }
-            Req::Voice {
-                id,
-                level,
-                pan,
-                handle,
-                limit,
-            } => {
-                let c = effects
-                    .entry(id)
-                    .or_insert_with(|| read(format::se_path(&dir, id), "sound", id))
-                    .clone()
-                    .map(|bytes| Cmd::PlaySe {
-                        bytes,
-                        level,
-                        pan,
-                        priority: 0,
-                        handle,
-                        limit,
-                    });
+            Req::Voice { id, level, pan, handle, limit } => {
+                let c = effects.entry(id).or_insert_with(|| read(format::se_path(&dir, id), "sound", id)).clone().map(|bytes| Cmd::PlaySe { bytes, level, pan, priority: 0, handle, limit });
                 // A failed read is taken too: the voice never comes.
                 if c.is_none()
                     && let Ok(mut t) = status.taken.lock()
@@ -890,14 +664,7 @@ pub struct ZoneMusic {
 
 impl Default for ZoneMusic {
     fn default() -> Self {
-        Self {
-            slots: [0; 8],
-            vols: [0x7f; 8],
-            last_id: 0xffff,
-            last_slot: 0xff,
-            field_slot: 0,
-            ready: false,
-        }
+        Self { slots: [0; 8], vols: [0x7f; 8], last_id: 0xffff, last_slot: 0xff, field_slot: 0, ready: false }
     }
 }
 
@@ -988,13 +755,7 @@ impl ZoneMusic {
         let back = self.field_slot as usize == slot && matches!(self.last_slot, 2 | 3 | 7);
         self.last_id = id;
         self.last_slot = slot as u8;
-        Some(Change {
-            id: id as u32,
-            vol: self.vols[slot] as i32,
-            fade_in: if back { 0x3c } else { 0 },
-            save,
-            clear: !back,
-        })
+        Some(Change { id: id as u32, vol: self.vols[slot] as i32, fade_in: if back { 0x3c } else { 0 }, save, clear: !back })
     }
 }
 
@@ -1012,18 +773,10 @@ mod tests {
         let pick = |o, m| title_choice(o, m, 0);
         // Newest: track 34 (base game, entry 6) then 108; fixed 1..6 = 108, 242, 179, 140, 58, 34.
         assert_eq!(pick(0, all), (34, 6, false));
-        assert_eq!(
-            [2, 3, 4, 5, 6, 7].map(|o| pick(o, all).0),
-            [108, 242, 179, 140, 58, 34]
-        );
+        assert_eq!([2, 3, 4, 5, 6, 7].map(|o| pick(o, all).0), [108, 242, 179, 140, 58, 34]);
         assert!([2, 3, 4, 5, 6, 7].iter().all(|&o| pick(o, all).2));
         // Random: timeGetTime % 6, falling back below a missing one.
-        assert_eq!(
-            (0..6)
-                .map(|t| title_choice(1, all, t).0)
-                .collect::<Vec<_>>(),
-            [108, 242, 179, 140, 58, 34]
-        );
+        assert_eq!((0..6).map(|t| title_choice(1, all, t).0).collect::<Vec<_>>(), [108, 242, 179, 140, 58, 34]);
         assert_eq!(title_choice(1, 0x7ff, 4).0, 140);
         // Without ROM9 Seekers' 58 falls back to 140; newest still needs only the base game.
         assert_eq!(pick(0, 0x7ff), (34, 6, false));
@@ -1035,70 +788,18 @@ mod tests {
     fn battle_and_back_resumes_the_field_track() {
         let mut z = ZoneMusic::default();
         z.zone_in([101, 102, 103, 104, 0]);
-        let day = MusicContext {
-            status: 0,
-            hour: 12,
-            party: 1,
-            party_battle: false,
-            myroom: false,
-            basket: false,
-        };
-        assert_eq!(
-            z.select(day),
-            Some(Change {
-                id: 101,
-                vol: 0x7f,
-                fade_in: 0,
-                save: false,
-                clear: true
-            })
-        );
+        let day = MusicContext { status: 0, hour: 12, party: 1, party_battle: false, myroom: false, basket: false };
+        assert_eq!(z.select(day), Some(Change { id: 101, vol: 0x7f, fade_in: 0, save: false, clear: true }));
         assert_eq!(z.select(day), None);
         let fight = MusicContext { status: 1, ..day };
-        assert_eq!(
-            z.select(fight),
-            Some(Change {
-                id: 103,
-                vol: 0x7f,
-                fade_in: 0,
-                save: true,
-                clear: true
-            })
-        );
-        assert_eq!(
-            z.select(day),
-            Some(Change {
-                id: 101,
-                vol: 0x7f,
-                fade_in: 0x3c,
-                save: false,
-                clear: false
-            })
-        );
+        assert_eq!(z.select(fight), Some(Change { id: 103, vol: 0x7f, fade_in: 0, save: true, clear: true }));
+        assert_eq!(z.select(day), Some(Change { id: 101, vol: 0x7f, fade_in: 0x3c, save: false, clear: false }));
         let night = MusicContext { hour: 20, ..day };
         assert_eq!(z.select(night).map(|c| c.id), Some(102));
-        assert_eq!(
-            z.select(MusicContext { status: 3, ..day }).map(|c| c.id),
-            Some(0x6f)
-        );
+        assert_eq!(z.select(MusicContext { status: 3, ..day }).map(|c| c.id), Some(0x6f));
         // Our party of 2+ engaged: slot 3; the party battle flag alone starts it too.
-        assert_eq!(
-            z.select(MusicContext {
-                status: 1,
-                party: 2,
-                ..day
-            })
-            .map(|c| c.id),
-            Some(104)
-        );
+        assert_eq!(z.select(MusicContext { status: 1, party: 2, ..day }).map(|c| c.id), Some(104));
         assert_eq!(z.select(day).map(|c| c.id), Some(101));
-        assert_eq!(
-            z.select(MusicContext {
-                party_battle: true,
-                ..day
-            })
-            .map(|c| c.id),
-            Some(103)
-        );
+        assert_eq!(z.select(MusicContext { party_battle: true, ..day }).map(|c| c.id), Some(103));
     }
 }

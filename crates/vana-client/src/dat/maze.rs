@@ -26,11 +26,7 @@ pub const MAX_RUNES: usize = 12;
 /// Width and height in cells at a rotation (swapped for odd ones).
 pub fn extent(shape: u8, rot: u8) -> (i8, i8) {
     let (w, h, _) = SHAPES[shape as usize % SHAPES.len()];
-    if rot & 1 == 1 {
-        (h as i8, w as i8)
-    } else {
-        (w as i8, h as i8)
-    }
+    if rot & 1 == 1 { (h as i8, w as i8) } else { (w as i8, h as i8) }
 }
 
 pub fn mask(shape: u8, rot: u8) -> u16 {
@@ -39,9 +35,7 @@ pub fn mask(shape: u8, rot: u8) -> u16 {
 
 /// FUN_101fda30: the cells a mask covers with its top left at (col, row), bit (24 - c) for cell c = 5 row + col.
 pub fn cells(mask: u16, col: i8, row: i8) -> u32 {
-    let base: u32 = (0..4)
-        .map(|r| (((mask >> (12 - 4 * r)) & 0xf) as u32) << (21 - 5 * r))
-        .sum();
+    let base: u32 = (0..4).map(|r| (((mask >> (12 - 4 * r)) & 0xf) as u32) << (21 - 5 * r)).sum();
     base >> (5 * row as i32 + col as i32).clamp(0, 31)
 }
 
@@ -60,11 +54,7 @@ pub struct Placed {
 }
 
 fn bits(ext: &[u8; 24], at: usize, n: usize) -> u32 {
-    (0..n)
-        .map(|i| ((ext[(at + i) / 8] >> ((at + i) % 8)) & 1) as u32)
-        .enumerate()
-        .map(|(i, b)| b << i)
-        .sum()
+    (0..n).map(|i| ((ext[(at + i) / 8] >> ((at + i) % 8)) & 1) as u32).enumerate().map(|(i, b)| b << i).sum()
 }
 
 fn put(ext: &mut [u8; 24], at: usize, n: usize, v: u32) {
@@ -94,19 +84,12 @@ pub fn extra(ext: &[u8; 24]) -> u32 {
 
 /// FUN_101fd290: the voucher and the runes in anchor order (cell c's bit 31 - c), each placed with its first top-row
 /// cell on the anchor; a rune that overlaps or whose shape is unknown is left out as retail's refusal skips it.
-pub fn decode(
-    ext: &[u8; 24],
-    shape_of: impl Fn(u16) -> Option<u8>,
-    blocked: u32,
-) -> (u16, Vec<Placed>) {
+pub fn decode(ext: &[u8; 24], shape_of: impl Fn(u16) -> Option<u8>, blocked: u32) -> (u16, Vec<Placed>) {
     let v = voucher(ext);
     if v == 0 {
         return (0, Vec::new());
     }
-    let anchors: Vec<i8> = (0..25)
-        .filter(|&c| bits(ext, 31 - c, 1) == 1)
-        .map(|c| c as i8)
-        .collect();
+    let anchors: Vec<i8> = (0..25).filter(|&c| bits(ext, 31 - c, 1) == 1).map(|c| c as i8).collect();
     let mut occupied = blocked;
     let mut out = Vec::new();
     for (k, &c) in anchors.iter().enumerate().take(MAX_RUNES) {
@@ -116,9 +99,7 @@ pub fn decode(
         }
         let rune = RUNE_BASE - 1 + n as u16;
         let rot = bits(ext, 140 + 2 * k, 2) as u8;
-        let Some(shape) = shape_of(rune) else {
-            continue;
-        };
+        let Some(shape) = shape_of(rune) else { continue };
         let m = mask(shape, rot);
         let (mut col, row) = (c % 5, c / 5);
         if m & 0x8000 == 0 {
@@ -129,12 +110,7 @@ pub fn decode(
             continue;
         }
         occupied |= cl;
-        out.push(Placed {
-            rune,
-            col,
-            row,
-            rot,
-        });
+        out.push(Placed { rune, col, row, rot });
     }
     (v, out)
 }
@@ -147,28 +123,18 @@ pub fn encode(voucher: u16, runes: &[Placed], shape_of: impl Fn(u16) -> Option<u
         return ext;
     }
     put(&mut ext, 0, 7, (voucher - VOUCHER_BASE + 1) as u32 & 0x7f);
-    let covers: Vec<u32> = runes
-        .iter()
-        .map(|p| shape_of(p.rune).map_or(0, |s| cells(mask(s, p.rot), p.col, p.row)))
-        .collect();
+    let covers: Vec<u32> = runes.iter().map(|p| shape_of(p.rune).map_or(0, |s| cells(mask(s, p.rot), p.col, p.row))).collect();
     let mut used = vec![false; runes.len()];
     let mut k = 0;
     for c in 0..25 {
         let bit = 1u32 << (24 - c);
-        let Some(i) = (0..runes.len()).find(|&i| !used[i] && covers[i] & bit != 0) else {
-            continue;
-        };
+        let Some(i) = (0..runes.len()).find(|&i| !used[i] && covers[i] & bit != 0) else { continue };
         used[i] = true;
         if k >= MAX_RUNES {
             break;
         }
         put(&mut ext, 31 - c, 1, 1);
-        put(
-            &mut ext,
-            32 + 9 * k,
-            9,
-            (runes[i].rune - RUNE_BASE + 1) as u32,
-        );
+        put(&mut ext, 32 + 9 * k, 9, (runes[i].rune - RUNE_BASE + 1) as u32);
         put(&mut ext, 140 + 2 * k, 2, runes[i].rot as u32);
         k += 1;
     }
@@ -192,22 +158,11 @@ mod tests {
     /// The test vector of MODLOG "Moblin Maze Mongers" (voucher 01; runes 21, 106, 109) both ways.
     #[test]
     fn vector() {
-        let ext: [u8; 24] = [
-            0x01, 0x80, 0x00, 0x90, 0x15, 0xd4, 0xb4, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10, 0x01,
-            0, 0, 0, 0, 0,
-        ];
+        let ext: [u8; 24] = [0x01, 0x80, 0x00, 0x90, 0x15, 0xd4, 0xb4, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10, 0x01, 0, 0, 0, 0, 0];
         let (v, runes) = decode(&ext, shape, 0);
         assert_eq!(v, VOUCHER_BASE);
-        let rune = |n: u16, col, row, rot| Placed {
-            rune: RUNE_BASE - 1 + n,
-            col,
-            row,
-            rot,
-        };
-        assert_eq!(
-            runes,
-            [rune(21, 0, 0, 1), rune(106, 3, 0, 0), rune(109, 0, 3, 1)]
-        );
+        let rune = |n: u16, col, row, rot| Placed { rune: RUNE_BASE - 1 + n, col, row, rot };
+        assert_eq!(runes, [rune(21, 0, 0, 1), rune(106, 3, 0, 0), rune(109, 0, 3, 1)]);
         assert_eq!(count(&ext), 3);
         assert_eq!(encode(v, &runes, shape), ext);
         // The order runes were placed in does not matter.

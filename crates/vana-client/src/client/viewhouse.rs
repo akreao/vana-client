@@ -52,9 +52,7 @@ fn disabled(w: &World) -> Vec<u16> {
 
 /// FUN_100f9680: in the nations' residential zones, whether our s2c 0x067 kind 2 has come (true elsewhere).
 fn owner_known(w: &World) -> bool {
-    !w.zone
-        .is_some_and(|z| matches!(z, 230 | 231 | 232 | 234 | 235 | 236 | 238 | 239 | 240 | 241))
-        || w.mh_seen
+    !w.zone.is_some_and(|z| matches!(z, 230 | 231 | 232 | 234 | 235 | 236 | 238 | 239 | 240 | 241)) || w.mh_seen
 }
 
 /// The row: in a room, before the owner info SE 0004 + 0002 only, visiting another's Mog House group 7 0xbc; else
@@ -71,11 +69,7 @@ pub fn open(w: &mut World) {
             return;
         }
     }
-    w.viewhouse = Some(ViewHouse {
-        sel: 1,
-        off: disabled(w),
-        return_menu: w.menu,
-    });
+    w.viewhouse = Some(ViewHouse { sel: 1, off: disabled(w), return_menu: w.menu });
     w.menu = None;
     w.sounds.push(Ui::Select as u32);
 }
@@ -93,20 +87,13 @@ pub(super) fn child_of(c: u8) -> Option<u16> {
 
 /// The containers whose rows are enabled (the modern storage view's tabs from here).
 pub(super) fn open_containers(w: &World) -> Vec<u8> {
-    let Some(v) = w.viewhouse.as_ref() else {
-        return Vec::new();
-    };
-    (1..=15u16)
-        .filter(|k| !v.off.contains(k))
-        .filter_map(container)
-        .collect()
+    let Some(v) = w.viewhouse.as_ref() else { return Vec::new() };
+    (1..=15u16).filter(|k| !v.off.contains(k)).filter_map(container).collect()
 }
 
 /// A row's Enter (the modern storage view's tabs): its view opens, a disabled one SE 0004.
 pub(super) fn open_row(w: &mut World, child: u16) {
-    let Some(v) = w.viewhouse.as_mut() else {
-        return;
-    };
+    let Some(v) = w.viewhouse.as_mut() else { return };
     if v.off.contains(&child) {
         w.sounds.push(Ui::Error as u32);
         return;
@@ -125,17 +112,13 @@ pub(super) fn open_row(w: &mut World, child: u16) {
 /// else SE 0002 and the row's opener (its result not looked at); Escape SE 0003 and socialme comes back.
 pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
     use egui::Key as K;
-    let Some(v) = w.viewhouse.as_ref() else {
-        return;
-    };
+    let Some(v) = w.viewhouse.as_ref() else { return };
     let sel = v.sel;
     match key {
         K::ArrowUp | K::ArrowDown => {
             let k = if key == K::ArrowUp { 2 } else { 3 };
             let to = gu.menu_links(WIN, sel).map_or(sel, |l| l[k] as u16);
-            if to != sel
-                && to != 0
-                && to != 0xff
+            if to != sel && to != 0 && to != 0xff
                 && let Some(v) = w.viewhouse.as_mut()
             {
                 v.sel = to;
@@ -169,30 +152,16 @@ pub fn focused(w: &World) -> bool {
 /// read-only list ("menu    inventor", group 0) leaves it drawn, unfocused *(inf: the registry groups)*.
 fn suspended(w: &World) -> bool {
     match &w.win {
-        Some(super::items::Win::Items {
-            store: Some(st), ..
-        }) => !st.read_only,
+        Some(super::items::Win::Items { store: Some(st), .. }) => !st.read_only,
         Some(_) => true,
         None => false,
     }
 }
 
 /// Mouse: hover over a row moves the cursor, a click on the cursor row is Enter.
-pub fn pointer(
-    w: &mut World,
-    gu: &GameUi,
-    sw: f32,
-    sh: f32,
-    p: (f32, f32),
-    moved: bool,
-    clicked: bool,
-) {
-    let Some(sel) = w.viewhouse.as_ref().map(|v| v.sel) else {
-        return;
-    };
-    let Some((wx, wy)) = gu.window_xy(WIN, sw, sh) else {
-        return;
-    };
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool) {
+    let Some(sel) = w.viewhouse.as_ref().map(|v| v.sel) else { return };
+    let Some((wx, wy)) = gu.window_xy(WIN, sw, sh) else { return };
     let Some(layout) = gu.layout(WIN) else { return };
     let hit = layout.elements.iter().skip(1).find(|e| {
         let (x, y) = (wx + e.x as f32, wy + e.y as f32);
@@ -200,8 +169,7 @@ pub fn pointer(
     });
     let Some(e) = hit else { return };
     gu.hover.set(true);
-    if (moved || clicked)
-        && e.id != sel
+    if (moved || clicked) && e.id != sel
         && let Some(v) = w.viewhouse.as_mut()
     {
         v.sel = e.id;
@@ -216,21 +184,13 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Option<[f32; 4]> {
     let v = w.viewhouse.as_ref().filter(|_| !suspended(w))?;
     let focused = focused(w);
     let win = gu.lobby_window_off(WIN, sw, sh, (0.0, 0.0), Some(v.sel), focused, &v.off)?;
-    gu.disabled_children(
-        WIN,
-        win.frame[0],
-        win.frame[1],
-        &v.off,
-        focused.then_some(v.sel),
-    );
+    gu.disabled_children(WIN, win.frame[0], win.frame[1], &v.off, focused.then_some(v.sel));
     Some(win.frame)
 }
 
 /// Help slot 1 the row's (group 0xe), title 0xd 0x6b "View House" (window strings) while focused.
 pub fn bars(gu: &GameUi, w: &World, bars: &mut super::hudtop::BarText) {
-    let Some(v) = w.viewhouse.as_ref().filter(|_| focused(w)) else {
-        return;
-    };
+    let Some(v) = w.viewhouse.as_ref().filter(|_| focused(w)) else { return };
     let [help, title] = gu.focus_text(WIN, v.sel);
     (bars.help[1], bars.title[1]) = (help.unwrap_or_default(), title.unwrap_or_default());
 }
@@ -241,10 +201,7 @@ mod tests {
 
     #[test]
     fn containers() {
-        let got: Vec<u8> = [1, 8, 2, 3, 4, 5, 6, 7, 9, 15]
-            .iter()
-            .filter_map(|&c| container(c))
-            .collect();
+        let got: Vec<u8> = [1, 8, 2, 3, 4, 5, 6, 7, 9, 15].iter().filter_map(|&c| container(c)).collect();
         assert_eq!(got, [1, 9, 2, 4, 5, 6, 7, 8, 10, 16]);
     }
 }

@@ -30,18 +30,7 @@ pub struct Wind {
 
 impl Default for Wind {
     fn default() -> Self {
-        Self {
-            dir: Vec3::new(-1.0, 0.0, 0.0),
-            strength: 0.0,
-            base: 4,
-            spread: 10,
-            on: false,
-            timer: 0.0,
-            saved: None,
-            tick: 0,
-            acc: 0.0,
-            rng: 1,
-        }
+        Self { dir: Vec3::new(-1.0, 0.0, 0.0), strength: 0.0, base: 4, spread: 10, on: false, timer: 0.0, saved: None, tick: 0, acc: 0.0, rng: 1 }
     }
 }
 
@@ -148,31 +137,17 @@ impl Cloth {
             .iter()
             .enumerate()
             .filter_map(|(i, p)| {
-                p.sim.as_ref().map(|s| Sheet {
-                    part: i,
-                    p: vec![Particle::default(); s.particles()],
-                    sphere_prev: vec![None; s.spheres.len()],
-                })
+                p.sim.as_ref().map(|s| Sheet { part: i, p: vec![Particle::default(); s.particles()], sphere_prev: vec![None; s.spheres.len()] })
             })
             .collect();
-        (!sheets.is_empty()).then_some(Self {
-            sheets,
-            reset: true,
-            tick: u64::MAX,
-            at: Vec3::ZERO,
-        })
+        (!sheets.is_empty()).then_some(Self { sheets, reset: true, tick: u64::MAX, at: Vec3::ZERO })
     }
 
     /// FUN_10023290 for each cloth mesh: the first step snaps every particle to the skin; later ones skin the pinned
     /// particles, carry the free ones by the actor's move, integrate them, then the normals.
     pub fn step(&mut self, parts: &[MeshPart], f: &Frame) {
         for sh in &mut self.sheets {
-            let (Some(part), Some(spec)) = (
-                parts.get(sh.part),
-                parts.get(sh.part).and_then(|p| p.sim.as_deref()),
-            ) else {
-                continue;
-            };
+            let (Some(part), Some(spec)) = (parts.get(sh.part), parts.get(sh.part).and_then(|p| p.sim.as_deref())) else { continue };
             if self.reset {
                 for (i, q) in sh.p.iter_mut().enumerate() {
                     q.cur = skin(f, &part.vertices[i]);
@@ -282,16 +257,9 @@ fn collide(spec: &ClothSpec, f: &Frame, p: &mut [Particle], prev: &mut [Option<V
         .iter()
         .map(|&s| {
             let r = f.skeleton.spheres.get(s as usize)?;
-            let used = r.bone >= 0
-                && (r.bone as usize) < f.skeleton.bones.len()
-                && r.radius > 0.0
-                && r.radius.is_finite();
+            let used = r.bone >= 0 && (r.bone as usize) < f.skeleton.bones.len() && r.radius > 0.0 && r.radius.is_finite();
             let at = used.then(|| {
-                let b = f
-                    .bones
-                    .get(r.bone as usize)
-                    .copied()
-                    .unwrap_or(BoneXf::IDENTITY);
+                let b = f.bones.get(r.bone as usize).copied().unwrap_or(BoneXf::IDENTITY);
                 (f.model.transform_point3(b.at(r.offset)), r.radius)
             });
             Some((s as i32, at))
@@ -312,9 +280,7 @@ fn collide(spec: &ClothSpec, f: &Frame, p: &mut [Particle], prev: &mut [Option<V
         })
         .collect();
     for (i, sph) in spheres.iter().enumerate() {
-        let Some((s, Some((cur, r)))) = *sph else {
-            continue;
-        };
+        let Some((s, Some((cur, r)))) = *sph else { continue };
         // Retail's last centres (instance +0x48) start as whatever the pool allocator left there (FUN_10028930 does
         // not clear); ours start at the current centre.
         let mut c = prev[i].unwrap_or(cur);
@@ -341,11 +307,7 @@ fn sweep(p: &mut [Particle], a: u16, b: u16, c: &mut Vec3, to: Vec3, r: f32) {
     // FUN_10024220 / FUN_10024330 / FUN_100243c0: the two bounding spheres must meet.
     let (l1, l2) = (a_cur - b_prev, b_cur - a_prev);
     let (f1, f2) = (l1.length_squared(), l2.length_squared());
-    let (mid_e, r_e) = if f2 < f1 {
-        (b_prev + 0.5 * l1, f1 * 0.5)
-    } else {
-        (a_prev + 0.5 * l2, f2 * 0.5)
-    };
+    let (mid_e, r_e) = if f2 < f1 { (b_prev + 0.5 * l1, f1 * 0.5) } else { (a_prev + 0.5 * l2, f2 * 0.5) };
     let d = to - *c;
     let fd = d.length_squared();
     let mid_s = *c + 0.5 * d;
@@ -461,11 +423,7 @@ mod tests {
             w.step(2.0);
             if w.on {
                 seen_on = true;
-                assert!(
-                    (0.01..=0.0325 + 1e-6).contains(&w.strength),
-                    "{}",
-                    w.strength
-                );
+                assert!((0.01..=0.0325 + 1e-6).contains(&w.strength), "{}", w.strength);
             }
             assert!(w.strength >= 0.0);
         }
@@ -482,11 +440,7 @@ mod tests {
 
     #[test]
     fn calm_decays_a_hundredth_a_step() {
-        let mut w = Wind {
-            strength: 0.025,
-            timer: 100.0,
-            ..Wind::default()
-        };
+        let mut w = Wind { strength: 0.025, timer: 100.0, ..Wind::default() };
         w.step(2.0);
         assert!((w.strength - 0.015).abs() < 1e-6);
         w.step(2.0);
@@ -527,11 +481,7 @@ mod tests {
 
     #[test]
     fn constraint_pulls_the_free_end_back() {
-        let s = spec(vec![ClothEdge {
-            a: 0x8000,
-            b: 1,
-            rest: 1.0,
-        }]);
+        let s = spec(vec![ClothEdge { a: 0x8000, b: 1, rest: 1.0 }]);
         let mut p = vec![Particle::default(); 2];
         p[1].cur = Vec3::new(2.0, 0.0, 0.0);
         p[1].prev = p[1].cur;
@@ -544,13 +494,7 @@ mod tests {
             boxes: Vec::new(),
             spheres: Vec::new(),
         };
-        let f = Frame {
-            skeleton: &skel,
-            bones: &[],
-            model: Mat4::IDENTITY,
-            moved: Vec3::ZERO,
-            wind: None,
-        };
+        let f = Frame { skeleton: &skel, bones: &[], model: Mat4::IDENTITY, moved: Vec3::ZERO, wind: None };
         integrate(&s, &f, &mut p);
         // Gravity 0.01 down, then four passes at k 0.5 halve the stretch each time: 1 + 1/16 along x.
         assert_eq!(p[0].cur, Vec3::ZERO);
@@ -571,72 +515,30 @@ mod tests {
             boxes: Vec::new(),
             spheres: Vec::new(),
         };
-        let f = Frame {
-            skeleton: &skel,
-            bones: &[],
-            model: Mat4::IDENTITY,
-            moved: Vec3::ZERO,
-            wind: Some((Vec3::NEG_X, 0.02)),
-        };
+        let f = Frame { skeleton: &skel, bones: &[], model: Mat4::IDENTITY, moved: Vec3::ZERO, wind: Some((Vec3::NEG_X, 0.02)) };
         integrate(&s, &f, &mut p);
-        assert!(
-            (p[1].cur - Vec3::new(-0.002, 0.01 + 0.002, 0.0)).length() < 1e-6,
-            "{:?}",
-            p[1].cur
-        );
+        assert!((p[1].cur - Vec3::new(-0.002, 0.01 + 0.002, 0.0)).length() < 1e-6, "{:?}", p[1].cur);
         // Against the wind: the difference instead.
         let mut p = vec![Particle::default(); 2];
         p[1].normal = Vec3::X;
         integrate(&s, &f, &mut p);
-        assert!(
-            (p[1].cur - Vec3::new(-0.004, 0.01, 0.0)).length() < 1e-6,
-            "{:?}",
-            p[1].cur
-        );
+        assert!((p[1].cur - Vec3::new(-0.004, 0.01, 0.0)).length() < 1e-6, "{:?}", p[1].cur);
     }
 
     #[test]
     fn segment_sphere_cases() {
         // Both ends outside, the middle inside: both pushed out along the closest point's direction.
-        let (k, push) = segment_sphere(
-            1.0,
-            Vec3::ZERO,
-            Vec3::new(-2.0, 0.5, 0.0),
-            Vec3::new(2.0, 0.5, 0.0),
-        );
+        let (k, push) = segment_sphere(1.0, Vec3::ZERO, Vec3::new(-2.0, 0.5, 0.0), Vec3::new(2.0, 0.5, 0.0));
         assert_eq!(k, 3);
-        assert!(
-            (push - Vec3::new(0.0, 0.5, 0.0)).length() < 1e-5,
-            "{push:?}"
-        );
+        assert!((push - Vec3::new(0.0, 0.5, 0.0)).length() < 1e-5, "{push:?}");
         // Both inside: nothing.
-        assert_eq!(
-            segment_sphere(1.0, Vec3::ZERO, Vec3::splat(0.1), Vec3::splat(0.2)).0,
-            0
-        );
+        assert_eq!(segment_sphere(1.0, Vec3::ZERO, Vec3::splat(0.1), Vec3::splat(0.2)).0, 0);
         // Far apart.
-        assert_eq!(
-            segment_sphere(
-                1.0,
-                Vec3::ZERO,
-                Vec3::new(-2.0, 3.0, 0.0),
-                Vec3::new(2.0, 3.0, 0.0)
-            )
-            .0,
-            4
-        );
+        assert_eq!(segment_sphere(1.0, Vec3::ZERO, Vec3::new(-2.0, 3.0, 0.0), Vec3::new(2.0, 3.0, 0.0)).0, 4);
         // B inside, A outside: B goes out.
-        let (k, push) = segment_sphere(
-            1.0,
-            Vec3::ZERO,
-            Vec3::new(0.0, 3.0, 0.0),
-            Vec3::new(0.0, 0.5, 0.0),
-        );
+        let (k, push) = segment_sphere(1.0, Vec3::ZERO, Vec3::new(0.0, 3.0, 0.0), Vec3::new(0.0, 0.5, 0.0));
         assert_eq!(k, 1);
-        assert!(
-            (push - Vec3::new(0.0, 0.5, 0.0)).length() < 1e-5,
-            "{push:?}"
-        );
+        assert!((push - Vec3::new(0.0, 0.5, 0.0)).length() < 1e-5, "{push:?}");
     }
 
     #[test]

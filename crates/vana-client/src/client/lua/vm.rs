@@ -4,10 +4,7 @@
 use super::manifest::Manifest;
 
 use mlua::thread::ThreadStatus;
-use mlua::{
-    Function, HookTriggers, IntoLuaMulti, Lua, LuaOptions, MultiValue, RegistryKey, StdLib, Thread,
-    Value, VmState,
-};
+use mlua::{Function, HookTriggers, IntoLuaMulti, Lua, LuaOptions, MultiValue, RegistryKey, StdLib, Thread, Value, VmState};
 use std::cell::RefCell;
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
@@ -49,12 +46,7 @@ pub(super) enum Source {
 
 /// A file under the mod's folder `d`: a relative path, and no link below `d` (one could lead outside it).
 pub(super) fn inside(d: &std::path::Path, rel: &str) -> std::io::Result<PathBuf> {
-    let refuse = |why: &str| {
-        std::io::Error::new(
-            std::io::ErrorKind::PermissionDenied,
-            format!("{rel:?}: {why}"),
-        )
-    };
+    let refuse = |why: &str| std::io::Error::new(std::io::ErrorKind::PermissionDenied, format!("{rel:?}: {why}"));
     let mut p = d.to_path_buf();
     for part in rel.split(['/', '\\']) {
         match part {
@@ -74,11 +66,7 @@ impl Source {
     pub fn read(&self, rel: &str) -> std::io::Result<String> {
         match self {
             Source::Dir(d) => std::fs::read_to_string(inside(d, rel)?),
-            Source::Bundled(files) => files
-                .iter()
-                .find(|f| f.0 == rel)
-                .map(|f| f.1.to_string())
-                .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound)),
+            Source::Bundled(files) => files.iter().find(|f| f.0 == rel).map(|f| f.1.to_string()).ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound)),
         }
     }
 
@@ -86,11 +74,7 @@ impl Source {
     pub fn read_bytes(&self, rel: &str) -> std::io::Result<Vec<u8>> {
         match self {
             Source::Dir(d) => std::fs::read(inside(d, rel)?),
-            Source::Bundled(files) => files
-                .iter()
-                .find(|f| f.0 == rel)
-                .map(|f| f.1.as_bytes().to_vec())
-                .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound)),
+            Source::Bundled(files) => files.iter().find(|f| f.0 == rel).map(|f| f.1.as_bytes().to_vec()).ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound)),
         }
     }
 
@@ -187,11 +171,7 @@ impl ModState {
         let text = clean(e);
         let now = Instant::now();
         self.errors.push_back(now);
-        while self
-            .errors
-            .front()
-            .is_some_and(|t| now.duration_since(*t) > ERROR_WINDOW)
-        {
+        while self.errors.front().is_some_and(|t| now.duration_since(*t) > ERROR_WINDOW) {
             self.errors.pop_front();
         }
         if self.reported.insert(text.clone()) {
@@ -246,15 +226,7 @@ pub(super) struct Stats {
 impl Vm {
     pub fn new(manifest: Manifest, dir: PathBuf, src: Source) -> mlua::Result<Self> {
         // The base library always loads; no io, os, package or debug.
-        let lua = Lua::new_with(
-            StdLib::TABLE
-                | StdLib::STRING
-                | StdLib::MATH
-                | StdLib::UTF8
-                | StdLib::COROUTINE
-                | StdLib::OS,
-            LuaOptions::default(),
-        )?;
+        let lua = Lua::new_with(StdLib::TABLE | StdLib::STRING | StdLib::MATH | StdLib::UTF8 | StdLib::COROUTINE | StdLib::OS, LuaOptions::default())?;
         lua.set_memory_limit(MEMORY)?;
         let g = lua.globals();
         // os: the clock and the date only.
@@ -282,32 +254,17 @@ impl Vm {
         string.raw_set("dump", Value::Nil)?;
         // Patterns run in C, out of reach of the budget hook: ours count their steps against the deadline.
         super::pattern::install(&lua, &string)?;
-        let gc = lua.create_function(|lua, opt: Option<String>| {
-            match opt.as_deref().unwrap_or("collect") {
-                "count" => Ok(lua.used_memory() as f64 / 1024.0),
-                _ => Ok(0.0),
-            }
+        let gc = lua.create_function(|lua, opt: Option<String>| match opt.as_deref().unwrap_or("collect") {
+            "count" => Ok(lua.used_memory() as f64 / 1024.0),
+            _ => Ok(0.0),
         })?;
         g.raw_set("collectgarbage", gc)?;
-        let st = Rc::new(RefCell::new(ModState {
-            next_id: 1,
-            ..Default::default()
-        }));
+        let st = Rc::new(RefCell::new(ModState { next_id: 1, ..Default::default() }));
         lua.set_app_data(st.clone());
         let token_table = lua.create_table()?;
-        lua.load(PRELUDE)
-            .set_name("=prelude")
-            .call::<()>(token_table.clone())?;
+        lua.load(PRELUDE).set_name("=prelude").call::<()>(token_table.clone())?;
         let token = lua.create_registry_value(token_table)?;
-        let vm = Self {
-            manifest,
-            dir,
-            src,
-            lua,
-            st,
-            suspended: None,
-            token,
-        };
+        let vm = Self { manifest, dir, src, lua, st, suspended: None, token };
         vm.set_hook_on_main()?;
         Ok(vm)
     }
@@ -321,28 +278,16 @@ impl Vm {
     }
 
     fn set_hook_on_main(&self) -> mlua::Result<()> {
-        self.lua.set_hook(
-            HookTriggers::new().every_nth_instruction(10_000),
-            self.hook(),
-        )
+        self.lua.set_hook(HookTriggers::new().every_nth_instruction(10_000), self.hook())
     }
 
     /// Runs the entry file.
     pub fn run_entry(&self) {
         let entry = self.manifest.entry.clone();
-        let r = self
-            .src
-            .read(&entry)
-            .map_err(|e| mlua::Error::runtime(format!("{entry}: {e}")))
-            .and_then(|src| {
-                let f = self
-                    .lua
-                    .load(src)
-                    .set_name(format!("@{}", self.manifest.entry))
-                    .set_mode(mlua::chunk::ChunkMode::Text)
-                    .into_function()?;
-                Ok(f)
-            });
+        let r = self.src.read(&entry).map_err(|e| mlua::Error::runtime(format!("{entry}: {e}"))).and_then(|src| {
+            let f = self.lua.load(src).set_name(format!("@{}", self.manifest.entry)).set_mode(mlua::chunk::ChunkMode::Text).into_function()?;
+            Ok(f)
+        });
         match r {
             Ok(f) => self.call(f, ()),
             Err(e) => self.error(&e),
@@ -375,12 +320,7 @@ impl Vm {
 
     /// Runs `func(args)` as a coroutine inside a game path (FILTER_CAP): what it returned, when it ended in this slice. One
     /// that sleeps goes on later and its result is lost.
-    pub fn call_filter(
-        &self,
-        func: Function,
-        args: impl IntoLuaMulti,
-        input: bool,
-    ) -> Option<MultiValue> {
+    pub fn call_filter(&self, func: Function, args: impl IntoLuaMulti, input: bool) -> Option<MultiValue> {
         if self.suspended.is_some() {
             return None;
         }
@@ -403,16 +343,8 @@ impl Vm {
     }
 
     /// As resume, with a time budget; what the thread returned when it ended.
-    fn resume_for(
-        &self,
-        thread: Thread,
-        args: impl IntoLuaMulti,
-        cap: Duration,
-    ) -> Option<MultiValue> {
-        if let Err(e) = thread.set_hook(
-            HookTriggers::new().every_nth_instruction(10_000),
-            self.hook(),
-        ) {
+    fn resume_for(&self, thread: Thread, args: impl IntoLuaMulti, cap: Duration) -> Option<MultiValue> {
+        if let Err(e) = thread.set_hook(HookTriggers::new().every_nth_instruction(10_000), self.hook()) {
             self.error(&e);
             return None;
         }
@@ -445,20 +377,12 @@ impl Vm {
     fn park(&self, thread: Thread, vals: MultiValue) {
         let token: Value = self.lua.registry_value(&self.token).unwrap_or(Value::Nil);
         let mut it = vals.into_iter();
-        let ours = it
-            .next()
-            .is_some_and(|v| v.to_pointer() == token.to_pointer());
+        let ours = it.next().is_some_and(|v| v.to_pointer() == token.to_pointer());
         let wake = if ours {
-            let kind = it
-                .next()
-                .and_then(|v| v.as_string().map(|s| s.to_string_lossy()));
+            let kind = it.next().and_then(|v| v.as_string().map(|s| s.to_string_lossy()));
             match kind.as_deref() {
                 Some("sleep") => {
-                    let s = it
-                        .next()
-                        .and_then(|v| v.as_number().or(v.as_integer().map(|i| i as f64)))
-                        .unwrap_or(0.0)
-                        .max(0.0);
+                    let s = it.next().and_then(|v| v.as_number().or(v.as_integer().map(|i| i as f64))).unwrap_or(0.0).max(0.0);
                     Wake::At(Instant::now() + Duration::from_secs_f64(s))
                 }
                 Some("until") => {
@@ -466,10 +390,7 @@ impl Vm {
                         self.error(&mlua::Error::runtime("wait_until needs a function"));
                         return;
                     };
-                    let limit = it
-                        .next()
-                        .and_then(|v| v.as_number().or(v.as_integer().map(|i| i as f64)))
-                        .map(|s| Instant::now() + Duration::from_secs_f64(s.max(0.0)));
+                    let limit = it.next().and_then(|v| v.as_number().or(v.as_integer().map(|i| i as f64))).map(|s| Instant::now() + Duration::from_secs_f64(s.max(0.0)));
                     match self.lua.create_registry_value(test) {
                         Ok(k) => Wake::Until(k, limit),
                         Err(e) => {
@@ -479,15 +400,7 @@ impl Vm {
                     }
                 }
                 // A whole float (2.0) counts as its integer.
-                _ => Wake::Frames(
-                    it.next()
-                        .and_then(|v| {
-                            v.as_integer()
-                                .or(v.as_number().filter(|n| n.fract() == 0.0).map(|n| n as i64))
-                        })
-                        .unwrap_or(1)
-                        .clamp(1, u32::MAX as i64) as u32,
-                ),
+                _ => Wake::Frames(it.next().and_then(|v| v.as_integer().or(v.as_number().filter(|n| n.fract() == 0.0).map(|n| n as i64))).unwrap_or(1).clamp(1, u32::MAX as i64) as u32),
             }
         } else {
             Wake::Frames(1)
@@ -496,12 +409,7 @@ impl Vm {
         match self.lua.create_registry_value(thread) {
             Ok(k) => {
                 let born = self.st.borrow().frame_no;
-                self.st.borrow_mut().sleepers.push(Sleeper {
-                    thread: k,
-                    wake,
-                    input,
-                    born,
-                });
+                self.st.borrow_mut().sleepers.push(Sleeper { thread: k, wake, input, born });
             }
             Err(e) => self.error(&e),
         }
@@ -530,11 +438,7 @@ impl Vm {
                     // The test runs on the game thread: under the filter budget, counted as the mod's time.
                     let passed = match self.lua.registry_value::<Function>(test) {
                         Ok(f) => {
-                            let prev = self
-                                .st
-                                .borrow_mut()
-                                .deadline
-                                .replace(Instant::now() + FILTER_CAP);
+                            let prev = self.st.borrow_mut().deadline.replace(Instant::now() + FILTER_CAP);
                             let t0 = Instant::now();
                             let r = f.call::<bool>(());
                             let mut st = self.st.borrow_mut();
@@ -589,20 +493,13 @@ impl Vm {
         for id in fire {
             let f = {
                 let st = self.st.borrow();
-                st.timers
-                    .iter()
-                    .find(|t| t.id == id)
-                    .and_then(|t| self.lua.registry_value::<Function>(&t.func).ok())
+                st.timers.iter().find(|t| t.id == id).and_then(|t| self.lua.registry_value::<Function>(&t.func).ok())
             };
             if let Some(f) = f {
                 self.call(f, ());
             }
             let mut st = self.st.borrow_mut();
-            if let Some(k) = st
-                .timers
-                .iter()
-                .position(|t| t.id == id && t.every.is_none())
-            {
+            if let Some(k) = st.timers.iter().position(|t| t.id == id && t.every.is_none()) {
                 let t = st.timers.remove(k);
                 drop(st);
                 let _ = self.lua.remove_registry_value(t.func);
@@ -616,9 +513,7 @@ impl Vm {
             let st = self.st.borrow();
             let mut hs: Vec<&Handler> = st.handlers.iter().filter(|h| h.event == event).collect();
             hs.sort_by_key(|h| -h.priority);
-            hs.iter()
-                .filter_map(|h| self.lua.registry_value::<Function>(&h.func).ok())
-                .collect()
+            hs.iter().filter_map(|h| self.lua.registry_value::<Function>(&h.func).ok()).collect()
         };
         for f in funcs {
             self.call(f, args.clone());
@@ -638,8 +533,7 @@ impl Vm {
     /// Whether the mod should be suspended now (too many errors).
     pub fn failing(&self) -> Option<String> {
         let st = self.st.borrow();
-        (st.errors.len() >= ERROR_LIMIT)
-            .then(|| format!("{} errors in {} s", st.errors.len(), ERROR_WINDOW.as_secs()))
+        (st.errors.len() >= ERROR_LIMIT).then(|| format!("{} errors in {} s", st.errors.len(), ERROR_WINDOW.as_secs()))
     }
 
     /// Ends the frame's accounting: the running average and peak (ms).
@@ -656,9 +550,7 @@ impl Vm {
 /// An error's message without mlua's wrapping ("runtime error: ", the callback's traceback).
 fn clean(e: &mlua::Error) -> String {
     match e {
-        mlua::Error::RuntimeError(s) | mlua::Error::SyntaxError { message: s, .. } => {
-            s.lines().next().unwrap_or("").to_string()
-        }
+        mlua::Error::RuntimeError(s) | mlua::Error::SyntaxError { message: s, .. } => s.lines().next().unwrap_or("").to_string(),
         mlua::Error::CallbackError { cause, .. } => clean(cause),
         mlua::Error::MemoryError(s) => format!("out of memory ({s})"),
         e => e.to_string().lines().next().unwrap_or("").to_string(),

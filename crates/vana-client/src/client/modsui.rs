@@ -34,34 +34,15 @@ impl Mods {
     pub fn open() -> Self {
         let (tx, rx) = channel();
         std::thread::spawn(move || {
-            let _ = tx.send(modpack::scan(
-                &modpack::pack_dirs(),
-                &crate::config::mods_dir(),
-            ));
+            let _ = tx.send(modpack::scan(&modpack::pack_dirs(), &crate::config::mods_dir()));
         });
-        Self {
-            packs: Vec::new(),
-            scan: Some(rx),
-            installing: None,
-            held: None,
-            error: None,
-            top: 0,
-            browse: None,
-        }
+        Self { packs: Vec::new(), scan: Some(rx), installing: None, held: None, error: None, top: 0, browse: None }
     }
 
     /// No archives and no scan (tests).
     #[cfg(test)]
     pub fn empty() -> Self {
-        Self {
-            packs: Vec::new(),
-            scan: None,
-            installing: None,
-            held: None,
-            error: None,
-            top: 0,
-            browse: None,
-        }
+        Self { packs: Vec::new(), scan: None, installing: None, held: None, error: None, top: 0, browse: None }
     }
 
     /// Waits for the scan (offscreen shots).
@@ -75,15 +56,10 @@ impl Mods {
     /// changed.
     pub fn tick(&mut self, mods: &mut Vec<ModRef>) -> bool {
         if let Some(Ok(p)) = self.scan.as_ref().map(|r| r.try_recv()) {
-            self.packs = p
-                .into_iter()
-                .filter(|p| !mods.iter().any(|m| m.name == p.slug))
-                .collect();
+            self.packs = p.into_iter().filter(|p| !mods.iter().any(|m| m.name == p.slug)).collect();
             self.scan = None;
         }
-        let Some((slug, _, rx)) = &self.installing else {
-            return false;
-        };
+        let Some((slug, _, rx)) = &self.installing else { return false };
         let Ok(res) = rx.try_recv() else { return false };
         let slug = slug.clone();
         self.installing = None;
@@ -91,13 +67,7 @@ impl Mods {
             Ok(_) => {
                 self.packs.retain(|p| p.slug != slug);
                 mods.retain(|m| m.name != slug);
-                mods.insert(
-                    0,
-                    ModRef {
-                        name: slug,
-                        enabled: true,
-                    },
-                );
+                mods.insert(0, ModRef { name: slug, enabled: true });
                 self.error = None;
                 true
             }
@@ -114,9 +84,7 @@ impl Mods {
         if self.installing.is_some() {
             return false;
         }
-        let Some(p) = self.packs.get(i).cloned() else {
-            return false;
-        };
+        let Some(p) = self.packs.get(i).cloned() else { return false };
         let progress = Arc::new(AtomicU32::new(0));
         let (tx, rx) = channel();
         let pr = progress.clone();
@@ -137,10 +105,7 @@ impl Mods {
         let (tx, rx) = channel();
         let pr = progress.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(
-                modpack::pack_of(&path)
-                    .and_then(|p| modpack::install(&p, &crate::config::mods_dir(), &pr)),
-            );
+            let _ = tx.send(modpack::pack_of(&path).and_then(|p| modpack::install(&p, &crate::config::mods_dir(), &pr)));
         });
         self.installing = Some((slug, progress, rx));
         true
@@ -148,17 +113,12 @@ impl Mods {
 
     /// The pack being installed and its per mille done.
     pub fn installing(&self) -> Option<(String, u32)> {
-        self.installing
-            .as_ref()
-            .map(|i| (i.0.clone(), i.1.load(Ordering::Relaxed)))
+        self.installing.as_ref().map(|i| (i.0.clone(), i.1.load(Ordering::Relaxed)))
     }
 
     /// The per mille done when pack `slug` is being installed.
     pub fn progress(&self, slug: &str) -> Option<u32> {
-        self.installing
-            .as_ref()
-            .filter(|i| i.0 == slug)
-            .map(|i| i.1.load(Ordering::Relaxed))
+        self.installing.as_ref().filter(|i| i.0 == slug).map(|i| i.1.load(Ordering::Relaxed))
     }
 
     /// Keeps cursor row `row` (1 = the first entry) in view.
@@ -179,12 +139,7 @@ impl Mods {
 pub fn remove_folder(name: &str) -> bool {
     let root = crate::config::mods_dir();
     let dir = root.join(name);
-    if name.is_empty()
-        || name.contains(['/', '\\'])
-        || name.starts_with('.')
-        || dir.parent() != Some(root.as_path())
-        || !dir.is_dir()
-    {
+    if name.is_empty() || name.contains(['/', '\\']) || name.starts_with('.') || dir.parent() != Some(root.as_path()) || !dir.is_dir() {
         return false;
     }
     std::thread::spawn(move || {
@@ -208,14 +163,8 @@ pub struct Browse {
 impl Browse {
     /// At the Downloads folder (else home).
     pub fn open() -> Self {
-        let dir = dirs::download_dir()
-            .or_else(dirs::home_dir)
-            .unwrap_or_else(|| PathBuf::from("/"));
-        let mut b = Self {
-            dir,
-            entries: Vec::new(),
-            cursor: 0,
-        };
+        let dir = dirs::download_dir().or_else(dirs::home_dir).unwrap_or_else(|| PathBuf::from("/"));
+        let mut b = Self { dir, entries: Vec::new(), cursor: 0 };
         b.read();
         b
     }
@@ -239,14 +188,7 @@ impl Browse {
         }
         dirs.sort_by_key(|n| n.to_lowercase());
         files.sort_by_key(|n| n.to_lowercase());
-        self.entries = self
-            .dir
-            .parent()
-            .map(|_| ("..".to_string(), true))
-            .into_iter()
-            .chain(dirs.into_iter().map(|d| (d, true)))
-            .chain(files.into_iter().map(|f| (f, false)))
-            .collect();
+        self.entries = self.dir.parent().map(|_| ("..".to_string(), true)).into_iter().chain(dirs.into_iter().map(|d| (d, true))).chain(files.into_iter().map(|f| (f, false))).collect();
         self.cursor = 0;
     }
 
@@ -256,15 +198,8 @@ impl Browse {
         if !dir {
             return Some(self.dir.join(name));
         }
-        let from = self
-            .dir
-            .file_name()
-            .map(|f| f.to_string_lossy().into_owned());
-        self.dir = if name == ".." {
-            self.dir.parent()?.to_path_buf()
-        } else {
-            self.dir.join(&name)
-        };
+        let from = self.dir.file_name().map(|f| f.to_string_lossy().into_owned());
+        self.dir = if name == ".." { self.dir.parent()?.to_path_buf() } else { self.dir.join(&name) };
         self.read();
         // Back up a level onto the folder left.
         if name == ".."

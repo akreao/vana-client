@@ -34,30 +34,17 @@ struct Entry {
 
 impl Default for Entry {
     fn default() -> Self {
-        Self {
-            flags: 0,
-            pat: [0; COLS + 1],
-            regex: false,
-            esc: [false; COLS],
-        }
+        Self { flags: 0, pat: [0; COLS + 1], regex: false, esc: [false; COLS] }
     }
 }
 
 impl Entry {
     fn pc(&self, i: isize) -> u16 {
-        if i < 0 {
-            0
-        } else {
-            self.pat.get(i as usize).copied().unwrap_or(0)
-        }
+        if i < 0 { 0 } else { self.pat.get(i as usize).copied().unwrap_or(0) }
     }
     /// The mark before the first unit is the pattern byte (+0x42), set whenever the matcher runs.
     fn ec(&self, i: isize) -> bool {
-        if i < 0 {
-            self.regex
-        } else {
-            self.esc.get(i as usize).copied().unwrap_or(false)
-        }
+        if i < 0 { self.regex } else { self.esc.get(i as usize).copied().unwrap_or(false) }
     }
 }
 
@@ -81,20 +68,13 @@ pub struct SpamFilter {
 
 impl SpamFilter {
     pub fn new(dir: PathBuf) -> Self {
-        Self {
-            dir,
-            ..Default::default()
-        }
+        Self { dir, ..Default::default() }
     }
 
     /// FUN_101bd820: both lists afresh; Err when prohibited.txt is not there (the setting goes off).
     pub fn load(&mut self) -> Result<(), LoadError> {
         let dir = self.dir.clone();
-        *self = Self {
-            dir,
-            pending: std::mem::take(&mut self.pending),
-            ..Default::default()
-        };
+        *self = Self { dir, pending: std::mem::take(&mut self.pending), ..Default::default() };
         self.prohibited = Some(self.read(&self.dir.clone(), "prohibited.txt")?);
         match self.read(&self.dir.clone(), "allowed.txt") {
             Ok(l) => self.allowed = Some(l),
@@ -150,15 +130,8 @@ pub(super) fn flush(w: &mut World) {
     let dir = w.spam.dir.display().to_string();
     for e in std::mem::take(&mut w.spam.pending) {
         let line = match &e {
-            LoadError::Missing(n) => bt
-                .group9(0x15a)
-                .unwrap_or_else(|| "Could not open %s (%s).".into())
-                .replacen("%s", n, 1)
-                .replacen("%s", &dir, 1),
-            LoadError::Bad(n) => bt
-                .group9(0x15b)
-                .unwrap_or_else(|| "Could not read %s.".into())
-                .replacen("%s", n, 1),
+            LoadError::Missing(n) => bt.group9(0x15a).unwrap_or_else(|| "Could not open %s (%s).".into()).replacen("%s", n, 1).replacen("%s", &dir, 1),
+            LoadError::Bad(n) => bt.group9(0x15b).unwrap_or_else(|| "Could not read %s.".into()).replacen("%s", n, 1),
         };
         super::push_chat_mode(w, line, 0x7b, 0);
     }
@@ -179,22 +152,12 @@ pub(super) fn screen(w: &World, kind: u8, attr: u8, from: &str, text: &str) -> V
     }
     let names = w.names.clone();
     let shown = match w.battle.as_ref().and_then(|b| b.phrases.as_ref()) {
-        Some(d) => d.expand_plain(
-            text,
-            names
-                .as_deref()
-                .map(|n| n as &dyn crate::dat::names::NameSource),
-        ),
+        Some(d) => d.expand_plain(text, names.as_deref().map(|n| n as &dyn crate::dat::names::NameSource)),
         None => text.to_string(),
     };
     match (w.spam.check(from, &plain(&shown)), mode) {
         (1, 1) => Verdict::Hide,
-        (1, _) => Verdict::Replace(
-            w.battle
-                .as_ref()
-                .and_then(|b| b.group9(0x159))
-                .unwrap_or_default(),
-        ),
+        (1, _) => Verdict::Replace(w.battle.as_ref().and_then(|b| b.group9(0x159)).unwrap_or_default()),
         _ => Verdict::Show,
     }
 }
@@ -204,18 +167,9 @@ pub(super) fn screen(w: &World, kind: u8, attr: u8, from: &str, text: &str) -> V
 pub fn plain(text: &str) -> String {
     let mut out = String::new();
     let mut bytes = 0;
-    let code = |c: char| {
-        (crate::dat::font::PHRASE_BASE..crate::dat::font::CODE_BASE + 0x200).contains(&(c as u32))
-    };
-    for c in text
-        .chars()
-        .filter(|&c| !(c < ' ' || ('\u{E000}'..='\u{F8FF}').contains(&c) || code(c)))
-    {
-        let n = if c.is_ascii() || ('\u{FF61}'..='\u{FF9F}').contains(&c) {
-            1
-        } else {
-            2
-        };
+    let code = |c: char| (crate::dat::font::PHRASE_BASE..crate::dat::font::CODE_BASE + 0x200).contains(&(c as u32));
+    for c in text.chars().filter(|&c| !(c < ' ' || ('\u{E000}'..='\u{F8FF}').contains(&c) || code(c))) {
+        let n = if c.is_ascii() || ('\u{FF61}'..='\u{FF9F}').contains(&c) { 1 } else { 2 };
         if bytes + n > 150 {
             break;
         }
@@ -240,13 +194,9 @@ impl Texts {
     fn new(name: &str, text: &str, fold_too: bool) -> Self {
         let name: Vec<u16> = name.encode_utf16().take(16).collect();
         let raw: Vec<u16> = text.encode_utf16().take(0x400).collect();
-        let (mut name_f, mut sp_f, mut ns_raw, mut ns_f) =
-            (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let (mut name_f, mut sp_f, mut ns_raw, mut ns_f) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         if fold_too {
-            name_f = name
-                .iter()
-                .map(|&c| if foldable(c) { fold(c) } else { c })
-                .collect();
+            name_f = name.iter().map(|&c| if foldable(c) { fold(c) } else { c }).collect();
             for &c in &raw {
                 if is_space(c) {
                     sp_f.push(c);
@@ -258,27 +208,14 @@ impl Texts {
                 }
             }
         }
-        Self {
-            name,
-            name_f,
-            raw,
-            sp_f,
-            ns_raw,
-            ns_f,
-        }
+        Self { name, name_f, raw, sp_f, ns_raw, ns_f }
     }
 }
 
 /// FUN_101bd1e0 / FUN_101bd360: an entry hits the name (unless n) or the text copy its flags pick.
 fn list_hit(list: &[Entry], t: &Texts) -> bool {
     list.iter().filter(|e| e.pat[0] != 0).any(|e| {
-        let hit = |s: &[u16]| {
-            if e.regex {
-                pattern_find(s, e)
-            } else {
-                contains(s, e)
-            }
-        };
+        let hit = |s: &[u16]| if e.regex { pattern_find(s, e) } else { contains(s, e) };
         if e.flags & 8 == 0 && hit(if e.flags & 4 != 0 { &t.name_f } else { &t.name }) {
             return true;
         }
@@ -299,11 +236,7 @@ fn contains(s: &[u16], e: &Entry) -> bool {
 
 /// FUN_10312bee (_isctype 8): the C table below 0x100, the system's classes above.
 fn is_space(c: u16) -> bool {
-    if c < 0x100 {
-        matches!(c, 9..=0xd | 0x20)
-    } else {
-        char::from_u32(c as u32).is_some_and(char::is_whitespace)
-    }
+    if c < 0x100 { matches!(c, 9..=0xd | 0x20) } else { char::from_u32(c as u32).is_some_and(char::is_whitespace) }
 }
 
 /// FUN_101be030: what FUN_101be0b0 changes.
@@ -337,11 +270,10 @@ fn fold(c: u16) -> u16 {
 }
 
 const KANA: [u16; 56] = [
-    0x30f2, 0x30a1, 0x30a3, 0x30a5, 0x30a7, 0x30a9, 0x30e3, 0x30e5, 0x30e7, 0x30c3, 0x30fc, 0x30a2,
-    0x30a4, 0x30a6, 0x30a8, 0x30aa, 0x30ab, 0x30ad, 0x30af, 0x30b1, 0x30b3, 0x30b5, 0x30b7, 0x30b9,
-    0x30bb, 0x30bd, 0x30bf, 0x30c1, 0x30c4, 0x30c6, 0x30c8, 0x30ca, 0x30cb, 0x30cc, 0x30cd, 0x30ce,
-    0x30cf, 0x30d2, 0x30d5, 0x30d8, 0x30db, 0x30de, 0x30df, 0x30e0, 0x30e1, 0x30e2, 0x30e4, 0x30e6,
-    0x30e8, 0x30e9, 0x30ea, 0x30eb, 0x30ec, 0x30ed, 0x30ef, 0x30f3,
+    0x30f2, 0x30a1, 0x30a3, 0x30a5, 0x30a7, 0x30a9, 0x30e3, 0x30e5, 0x30e7, 0x30c3, 0x30fc, 0x30a2, 0x30a4, 0x30a6,
+    0x30a8, 0x30aa, 0x30ab, 0x30ad, 0x30af, 0x30b1, 0x30b3, 0x30b5, 0x30b7, 0x30b9, 0x30bb, 0x30bd, 0x30bf, 0x30c1,
+    0x30c4, 0x30c6, 0x30c8, 0x30ca, 0x30cb, 0x30cc, 0x30cd, 0x30ce, 0x30cf, 0x30d2, 0x30d5, 0x30d8, 0x30db, 0x30de,
+    0x30df, 0x30e0, 0x30e1, 0x30e2, 0x30e4, 0x30e6, 0x30e8, 0x30e9, 0x30ea, 0x30eb, 0x30ec, 0x30ed, 0x30ef, 0x30f3,
 ];
 
 /// FUN_101be1c0 and its siblings: the character, unless marked plain.
@@ -356,10 +288,7 @@ fn special(c: u16, plain: bool) -> bool {
 
 /// FUN_101bd880: the lines into entries; `any_flags` set when a line opens with a "(...)" prefix.
 fn parse(data: &[u8], any_flags: &mut bool) -> Vec<Entry> {
-    let w: Vec<u16> = String::from_utf8_lossy(data)
-        .encode_utf16()
-        .take(MAX_UNITS)
-        .collect();
+    let w: Vec<u16> = String::from_utf8_lossy(data).encode_utf16().take(MAX_UNITS).collect();
     let n = w.len();
     if n == 0 {
         return Vec::new();
@@ -468,11 +397,7 @@ fn parse(data: &[u8], any_flags: &mut bool) -> Vec<Entry> {
             if e.flags & 2 != 0 && is_space(c) {
                 e.pat[col] = 0;
             } else {
-                e.pat[col] = if e.flags & 4 != 0 && foldable(c) {
-                    fold(c)
-                } else {
-                    c
-                };
+                e.pat[col] = if e.flags & 4 != 0 && foldable(c) { fold(c) } else { c };
                 if col + 1 < COLS {
                     e.pat[col + 1] = 0;
                 } else {
@@ -589,9 +514,7 @@ fn pattern_find(s: &[u16], e: &Entry) -> bool {
                             ok = true;
                             L::Cf
                         }
-                    } else if is(e.pc(p + 1), e.ec(p + 1), b'-')
-                        || is(e.pc(p - 1), e.ec(p - 1), b'-')
-                    {
+                    } else if is(e.pc(p + 1), e.ec(p + 1), b'-') || is(e.pc(p - 1), e.ec(p - 1), b'-') {
                         L::Bl
                     } else if neg {
                         if ch == c {
@@ -611,34 +534,10 @@ fn pattern_find(s: &[u16], e: &Entry) -> bool {
                     bl = true;
                     L::C1
                 }
-                L::C1 => {
-                    if ok {
-                        L::C8
-                    } else {
-                        L::D6
-                    }
-                }
-                L::C8 => {
-                    if in_br {
-                        L::Cf
-                    } else {
-                        L::D6
-                    }
-                }
-                L::Cf => {
-                    if neg {
-                        L::Df
-                    } else {
-                        L::D6
-                    }
-                }
-                L::D6 => {
-                    if bl {
-                        L::Df
-                    } else {
-                        L::Skip
-                    }
-                }
+                L::C1 => if ok { L::C8 } else { L::D6 },
+                L::C8 => if in_br { L::Cf } else { L::D6 },
+                L::Cf => if neg { L::Df } else { L::D6 },
+                L::D6 => if bl { L::Df } else { L::Skip },
                 L::Df => {
                     p += 1;
                     if e.pc(p) != 0 { L::Next } else { L::Done }
@@ -710,15 +609,7 @@ mod tests {
             (
                 "gil\n(i)buy\n(s)w w w\n(n)Bob",
                 "",
-                &[
-                    ("Ann", "cheap gil", 1),
-                    ("Ann", "BUY NOW", 1),
-                    ("Ann", "b u y", 0),
-                    ("Ann", "visit www.x", 1),
-                    ("Bob", "hi", 0),
-                    ("gilda", "hi", 1),
-                    ("Ann", "Gil", 0),
-                ],
+                &[("Ann", "cheap gil", 1), ("Ann", "BUY NOW", 1), ("Ann", "b u y", 0), ("Ann", "visit www.x", 1), ("Bob", "hi", 0), ("gilda", "hi", 1), ("Ann", "Gil", 0)],
             ),
             (
                 "(is)ゴールド\n[a-c]x\n[^0-9]z9\n(i)[.]q\nr[ab]s\n\\[t\\]",
@@ -737,27 +628,8 @@ mod tests {
                     ("Ann", "t", 0),
                 ],
             ),
-            (
-                "(i)rmt\nsell",
-                "(i)sell[ ]?\nmog",
-                &[
-                    ("Ann", "RMT here", 1),
-                    ("Ann", "sell items", 1),
-                    ("Ann", "sell", 1),
-                    ("Ann", "mog sell", 2),
-                ],
-            ),
-            (
-                "[ab\na-]\n[]x\n^y",
-                "",
-                &[
-                    ("Ann", "[ab", 1),
-                    ("Ann", "a-]", 1),
-                    ("Ann", "[]x", 1),
-                    ("Ann", "^y", 1),
-                    ("Ann", "b", 0),
-                ],
-            ),
+            ("(i)rmt\nsell", "(i)sell[ ]?\nmog", &[("Ann", "RMT here", 1), ("Ann", "sell items", 1), ("Ann", "sell", 1), ("Ann", "mog sell", 2)]),
+            ("[ab\na-]\n[]x\n^y", "", &[("Ann", "[ab", 1), ("Ann", "a-]", 1), ("Ann", "[]x", 1), ("Ann", "^y", 1), ("Ann", "b", 0)]),
         ];
         for (p, a, cases) in sets {
             let f = filter(p, a);

@@ -44,12 +44,7 @@ pub enum Phase {
     Riding,
     Stopping,
     /// The animal's place, its op 0x6e run (ticks left, units a tick), and ticks since.
-    Leaving {
-        pos: Vec3,
-        forward: Vec3,
-        run: Option<(f32, f32)>,
-        ticks: f32,
-    },
+    Leaving { pos: Vec3, forward: Vec3, run: Option<(f32, f32)>, ticks: f32 },
 }
 
 /// A rider's state.
@@ -79,60 +74,31 @@ fn past(zone: u16) -> bool {
 /// (cp1 bit 0).
 pub fn choco_look(cp: [u32; 2]) -> Look {
     if cp[1] & 1 != 0 {
-        return Look {
-            race: 0x20,
-            head: 3,
-            body: 3,
-            hands: 3,
-            legs: 1,
-            feet: 3,
-            ..Default::default()
-        };
+        return Look { race: 0x20, head: 3, body: 3, hands: 3, legs: 1, feet: 3, ..Default::default() };
     }
     let c = cp[0];
-    Look {
-        race: 0x20 + (c >> 9 & 7) as u8,
-        head: (c & 7) as u16,
-        body: 7,
-        hands: (c >> 6 & 7) as u16,
-        legs: 0,
-        feet: (c >> 3 & 7) as u16,
-        ..Default::default()
-    }
+    Look { race: 0x20 + (c >> 9 & 7) as u8, head: (c & 7) as u16, body: 7, hands: (c >> 6 & 7) as u16, legs: 0, feet: (c >> 3 & 7) as u16, ..Default::default() }
 }
 
 /// FUN_1008f740's gates: status 5 a chocobo (a personal one only once its look is a chocobo race), 0x55 a mount by
 /// its id (none: no animal).
 pub fn model(status: u8, ride: Ride, zone: u16, in_event: bool) -> Option<Model> {
     match status {
-        5 if (2..=4).contains(&ride.chocobo) => Some(choco_look(ride.custom))
-            .filter(|l| (0x20..=0x24).contains(&l.race))
-            .map(Model::Custom),
-        5 => Some(Model::Chocobo(if past(zone) && !in_event {
-            39_276
-        } else {
-            39_275
-        })),
+        5 if (2..=4).contains(&ride.chocobo) => Some(choco_look(ride.custom)).filter(|l| (0x20..=0x24).contains(&l.race)).map(Model::Custom),
+        5 => Some(Model::Chocobo(if past(zone) && !in_event { 39_276 } else { 39_275 })),
         0x55 if ride.mount != 0 => Some(Model::Mount(ride.mount)),
         _ => None,
     }
 }
 
 /// DAT_1035f5ac by race: legs and upper body.
-const FILES: [u32; 9] = [
-    38603, 38603, 38699, 38795, 38891, 38987, 38987, 39083, 39179,
-];
+const FILES: [u32; 9] = [38603, 38603, 38699, 38795, 38891, 38987, 38987, 39083, 39179];
 /// DAT_1035f5c0 by race * 2 + (skirt set 1 ? 0 : 1).
-const SKIRT: [u32; 18] = [
-    38635, 38667, 38635, 38667, 38731, 38763, 38827, 38859, 38923, 38955, 39019, 39051, 39019,
-    39051, 39115, 39147, 39211, 39243,
-];
+const SKIRT: [u32; 18] = [38635, 38667, 38635, 38667, 38731, 38763, 38827, 38859, 38923, 38955, 39019, 39051, 39019, 39051, 39115, 39147, 39211, 39243];
 
 /// FUN_100d2800: the rider's riding files (tag 7).
 pub fn files(w: &World, id: u32, pc: &PcMotion) -> Vec<u32> {
-    let Some(r) = w.rides.get(&id) else {
-        return Vec::new();
-    };
+    let Some(r) = w.rides.get(&id) else { return Vec::new() };
     motion_files(pc, r.v)
 }
 
@@ -163,42 +129,25 @@ pub fn names(k: u8) -> MotionNames {
         ["9hi", "9lk", "9un"],
     ];
     let [idle, walk, run] = N[if k > 9 { 0 } else { k as usize }];
-    MotionNames {
-        idle,
-        battle: idle,
-        walk,
-        run,
-    }
+    MotionNames { idle, battle: idle, walk, run }
 }
 
 /// Per frame, before the motion files: each rider's animal made and kept in step, the rider's names and weapons, the
 /// animal's names, size and rate; a rider no longer riding leaves through `coff`.
 pub fn update(w: &mut World, dt: f32) {
     let zone = w.zone.unwrap_or(0);
-    let mut riders: Vec<(u32, u8, Ride)> = w
-        .entities
-        .iter()
-        .filter(|(id, e)| **id != w.my_id && e.kind == EntityKind::Player)
-        .map(|(id, e)| (*id, e.motion.status, e.ride))
-        .collect();
+    let mut riders: Vec<(u32, u8, Ride)> = w.entities.iter().filter(|(id, e)| **id != w.my_id && e.kind == EntityKind::Player).map(|(id, e)| (*id, e.motion.status, e.ride)).collect();
     riders.push((w.my_id, w.my_motion.status, w.my_ride));
     // Bound actors an event put on a chocobo or mount (op 0x7e, op 0xac sub 1).
     for id in super::event::riding(w) {
         if !riders.iter().any(|r| r.0 == id) {
-            riders.push((
-                id,
-                0,
-                w.entities.get(&id).map_or_else(Ride::default, |e| e.ride),
-            ));
+            riders.push((id, 0, w.entities.get(&id).map_or_else(Ride::default, |e| e.ride)));
         }
     }
     let mut keep = HashSet::new();
     for (id, status, ride) in riders {
         // A dismount runs to its end whatever the status does meanwhile.
-        if w.rides
-            .get(&id)
-            .is_some_and(|r| matches!(r.phase, Phase::Leaving { .. }))
-        {
+        if w.rides.get(&id).is_some_and(|r| matches!(r.phase, Phase::Leaving { .. })) {
             keep.insert(id);
             continue;
         }
@@ -206,9 +155,7 @@ pub fn update(w: &mut World, dt: f32) {
         let bound = super::event::pose(w, id).is_some();
         let m = if bound {
             let st = super::event::event_status(w, id);
-            super::event::ride_model(w, id)
-                .filter(|_| matches!(st, 5 | 0x55))
-                .or_else(|| model(st, ride, zone, true))
+            super::event::ride_model(w, id).filter(|_| matches!(st, 5 | 0x55)).or_else(|| model(st, ride, zone, true))
         } else {
             model(status, ride, zone, false)
         };
@@ -222,62 +169,28 @@ pub fn update(w: &mut World, dt: f32) {
         if let Some(r) = w.rides.get_mut(&id).filter(|r| r.phase == Phase::Stopping) {
             r.phase = Phase::Riding;
         }
-        let Some(rider) = w
-            .actors
-            .get(&id)
-            .filter(|a| a.character.as_ref().is_some_and(|c| c.pc.is_some()))
-        else {
-            continue;
-        };
+        let Some(rider) = w.actors.get(&id).filter(|a| a.character.as_ref().is_some_and(|c| c.pc.is_some())) else { continue };
         let (ch, rider_scale) = (rider.character.clone().unwrap(), rider.scale);
         let pc = ch.pc.unwrap();
         keep.insert(id);
         let animal_id = ANIMAL | id;
         let src = m.source();
-        if w.actors
-            .get(&animal_id)
-            .is_none_or(|a| a.key != format!("{src:?}"))
-            && !w.event_looks.iter().any(|(i, _)| *i == animal_id)
-        {
+        if w.actors.get(&animal_id).is_none_or(|a| a.key != format!("{src:?}")) && !w.event_looks.iter().any(|(i, _)| *i == animal_id) {
             w.event_looks.push((animal_id, src));
         }
-        let animal = w
-            .actors
-            .get(&animal_id)
-            .filter(|a| a.key == format!("{src:?}"))
-            .and_then(|a| a.character.clone());
+        let animal = w.actors.get(&animal_id).filter(|a| a.key == format!("{src:?}")).and_then(|a| a.character.clone());
         let mi = animal.as_ref().and_then(|c| c.mount);
         let mount = matches!(m, Model::Mount(_));
         let weps = rider.wep_hide;
-        let fresh = |weps: [bool; 9]| Riding {
-            model: m,
-            phase: if mount {
-                Phase::Mounting(0.0)
-            } else {
-                Phase::Riding
-            },
-            race: pc.race,
-            v: 0,
-            offset: Vec3::ZERO,
-            yaw: 0.0,
-            points: [None; 2],
-            weps,
-            begun: Some(std::time::Instant::now()),
-        };
-        let r = w
-            .rides
-            .entry(id)
-            .or_insert_with(|| fresh(std::array::from_fn(|n| weps[n][0])));
+        let fresh = |weps: [bool; 9]| Riding { model: m, phase: if mount { Phase::Mounting(0.0) } else { Phase::Riding }, race: pc.race, v: 0, offset: Vec3::ZERO, yaw: 0.0, points: [None; 2], weps, begun: Some(std::time::Instant::now()) };
+        let r = w.rides.entry(id).or_insert_with(|| fresh(std::array::from_fn(|n| weps[n][0])));
         if r.model != m || r.race != pc.race {
             *r = fresh(r.weps);
         }
         if animal.is_some()
             && let Some(t) = r.begun.take()
         {
-            log::info!(
-                "rider {id:#x}: animal in after {:.2} s",
-                t.elapsed().as_secs_f32()
-            );
+            log::info!("rider {id:#x}: animal in after {:.2} s", t.elapsed().as_secs_f32());
         }
         // State 0xe: the counter runs to 150 updates, or jumps there once the mount is in; then the rider's fade
         // restarts (+0x59c = 0) and it shows.
@@ -288,13 +201,7 @@ pub fn update(w: &mut World, dt: f32) {
                 (r.phase, shown) = (Phase::Riding, true);
             }
         }
-        r.v = if mount {
-            5
-        } else if past(zone) && !bound {
-            3
-        } else {
-            0
-        };
+        r.v = if mount { 5 } else if past(zone) && !bound { 3 } else { 0 };
         r.yaw = mi.map_or(0.0, |mi| mi.yaw(pc.race));
         if let Some(a) = w.actors.get_mut(&id) {
             if shown {
@@ -309,22 +216,13 @@ pub fn update(w: &mut World, dt: f32) {
         // FUN_100cf210: the animal's size info[10 + rider info[13]] / 100 x the rider's; its motions the rider's names
         // at info[15] / 100 (a chocobo keeps step).
         if let (Some(an), Some(a)) = (animal, w.actors.get_mut(&animal_id)) {
-            let big = if ch.size_info[3] <= 3 {
-                ch.size_info[3]
-            } else {
-                0
-            };
+            let big = if ch.size_info[3] <= 3 { ch.size_info[3] } else { 0 };
             a.event_scale = Some(an.scale(big) * rider_scale);
             a.motion_names = Some(names(0));
             a.rate_scale = mi.map_or(1.0, |mi| mi.rate());
         }
     }
-    let gone: Vec<u32> = w
-        .rides
-        .iter()
-        .filter(|(id, r)| !keep.contains(id) && !matches!(r.phase, Phase::Leaving { .. }))
-        .map(|(id, _)| *id)
-        .collect();
+    let gone: Vec<u32> = w.rides.iter().filter(|(id, r)| !keep.contains(id) && !matches!(r.phase, Phase::Leaving { .. })).map(|(id, _)| *id).collect();
     for id in gone {
         // Into state 0xf our own actor gets FUN_100a6070(0): autorun and /follow end (the "Follow canceled." line), so
         // the stand comes even with no key held *(inf: +0xee, which must not be 3 / 4 / 5, read as the status)*.
@@ -332,10 +230,7 @@ pub fn update(w: &mut World, dt: f32) {
             w.autorun = false;
         }
         // State 0xf: our own rider with its animal waits until a `?hi` stand plays (FUN_100d65b0(0)).
-        let animal = w
-            .actors
-            .get(&(ANIMAL | id))
-            .is_some_and(|a| a.character.is_some());
+        let animal = w.actors.get(&(ANIMAL | id)).is_some_and(|a| a.character.is_some());
         if id == w.my_id && animal && !standing(w, id) {
             if let Some(r) = w.rides.get_mut(&id) {
                 r.phase = Phase::Stopping;
@@ -344,31 +239,16 @@ pub fn update(w: &mut World, dt: f32) {
             leave(w, id);
         }
     }
-    let stopped: Vec<u32> = w
-        .rides
-        .iter()
-        .filter(|(id, r)| r.phase == Phase::Stopping && keep.contains(id) && standing(w, **id))
-        .map(|(id, _)| *id)
-        .collect();
+    let stopped: Vec<u32> = w.rides.iter().filter(|(id, r)| r.phase == Phase::Stopping && keep.contains(id) && standing(w, **id)).map(|(id, _)| *id).collect();
     for id in stopped {
         leave(w, id);
     }
-    let leaving: Vec<u32> = w
-        .rides
-        .iter()
-        .filter(|(_, r)| matches!(r.phase, Phase::Leaving { .. }))
-        .map(|(id, _)| *id)
-        .collect();
+    let leaving: Vec<u32> = w.rides.iter().filter(|(_, r)| matches!(r.phase, Phase::Leaving { .. })).map(|(id, _)| *id).collect();
     for id in leaving {
         step_leave(w, id, dt);
     }
     // An animal whose rider stopped riding before it loaded.
-    let stray: Vec<u32> = w
-        .actors
-        .keys()
-        .filter(|id| **id & ANIMAL != 0 && !w.rides.contains_key(&(**id & !ANIMAL)))
-        .copied()
-        .collect();
+    let stray: Vec<u32> = w.actors.keys().filter(|id| **id & ANIMAL != 0 && !w.rides.contains_key(&(**id & !ANIMAL))).copied().collect();
     for id in stray {
         w.actors.remove(&id);
     }
@@ -381,37 +261,18 @@ fn leave(w: &mut World, id: u32) {
     let animal_id = ANIMAL | id;
     let my_dir = w.net.me.lock().map(|m| m.dir).unwrap_or(0);
     let place = super::base_place(w, id, my_dir);
-    let (Some(rch), Some(ach), Some(p)) = (
-        w.actors.get(&id).and_then(|a| a.character.clone()),
-        w.actors.get(&animal_id).and_then(|a| a.character.clone()),
-        place,
-    ) else {
+    let (Some(rch), Some(ach), Some(p)) = (w.actors.get(&id).and_then(|a| a.character.clone()), w.actors.get(&animal_id).and_then(|a| a.character.clone()), place) else {
         finish(w, id);
         return;
     };
-    let Some(r) = w.rides.get_mut(&id) else {
-        return;
-    };
+    let Some(r) = w.rides.get_mut(&id) else { return };
     let mount = matches!(r.model, Model::Mount(_));
-    (r.phase, r.offset, r.yaw, r.points) = (
-        Phase::Leaving {
-            pos: p.pos,
-            forward: p.forward,
-            run: None,
-            ticks: 0.0,
-        },
-        Vec3::ZERO,
-        0.0,
-        [None; 2],
-    );
+    (r.phase, r.offset, r.yaw, r.points) = (Phase::Leaving { pos: p.pos, forward: p.forward, run: None, ticks: 0.0 }, Vec3::ZERO, 0.0, [None; 2]);
     if let Some(a) = w.actors.get_mut(&id) {
         (a.motion_names, a.rebase) = (None, true);
     }
     let base = actmotion::status_motion(w, id, &rch);
-    let started = w
-        .actors
-        .get_mut(&id)
-        .is_some_and(|a| actmotion::start(a, &rch, "coff", &base));
+    let started = w.actors.get_mut(&id).is_some_and(|a| actmotion::start(a, &rch, "coff", &base));
     if started {
         if mount && let Some(a) = w.actors.get_mut(&id) {
             (a.alpha, a.rgb, a.fade) = (0.0, [actmotion::OPAQUE; 3], None);
@@ -419,16 +280,10 @@ fn leave(w: &mut World, id: u32) {
         actmotion::fx_too(&mut w.effects, id, "coff");
     }
     let base = actmotion::status_motion(w, animal_id, &ach);
-    if w.actors
-        .get_mut(&animal_id)
-        .is_some_and(|a| actmotion::start(a, &ach, "coff", &base))
-    {
+    if w.actors.get_mut(&animal_id).is_some_and(|a| actmotion::start(a, &ach, "coff", &base)) {
         actmotion::fx_too(&mut w.effects, animal_id, "coff");
     }
-    log::info!(
-        "rider {id:#x}: dismount, coff {}",
-        if started { "playing" } else { "missing" }
-    );
+    log::info!("rider {id:#x}: dismount, coff {}", if started { "playing" } else { "missing" });
     if !started {
         finish(w, id);
     }
@@ -436,23 +291,8 @@ fn leave(w: &mut World, id: u32) {
 
 /// State 0x10: the animal runs (op 0x6e); the ride ends with the rider's `coff` (or after 600 ticks).
 fn step_leave(w: &mut World, id: u32, dt: f32) {
-    let over = w
-        .actors
-        .get(&id)
-        .is_none_or(|a| a.play.as_ref().is_none_or(|p| p.name != "coff"));
-    let Some(Riding {
-        phase:
-            Phase::Leaving {
-                pos,
-                forward,
-                run,
-                ticks,
-            },
-        ..
-    }) = w.rides.get_mut(&id)
-    else {
-        return;
-    };
+    let over = w.actors.get(&id).is_none_or(|a| a.play.as_ref().is_none_or(|p| p.name != "coff"));
+    let Some(Riding { phase: Phase::Leaving { pos, forward, run, ticks }, .. }) = w.rides.get_mut(&id) else { return };
     *ticks += dt * 60.0;
     if let Some((left, speed)) = run {
         let n = (dt * 60.0).min(*left);
@@ -493,10 +333,7 @@ fn finish(w: &mut World, id: u32) {
 /// Op 0x6e on a leaving animal: it runs along its facing.
 pub fn self_move(w: &mut World, id: u32, ticks: f32, speed: f32) {
     if id & ANIMAL != 0
-        && let Some(Riding {
-            phase: Phase::Leaving { run, .. },
-            ..
-        }) = w.rides.get_mut(&(id & !ANIMAL))
+        && let Some(Riding { phase: Phase::Leaving { run, .. }, .. }) = w.rides.get_mut(&(id & !ANIMAL))
     {
         *run = Some((ticks, speed));
     }
@@ -512,22 +349,14 @@ pub fn left_at(w: &World, animal: u32) -> Option<(Vec3, Vec3)> {
 
 /// Riders waiting hidden for their mount (+0xb2 bit 6).
 pub fn hidden(w: &World) -> Vec<u32> {
-    w.rides
-        .iter()
-        .filter(|(_, r)| matches!(r.phase, Phase::Mounting(_)))
-        .map(|(id, _)| *id)
-        .collect()
+    w.rides.iter().filter(|(_, r)| matches!(r.phase, Phase::Mounting(_))).map(|(id, _)| *id).collect()
 }
 
 /// FUN_100c63d0: a rider's load fade waits for its animal (ours: not for one whose model failed or is not asked for).
 pub fn fade_held(w: &World, id: u32) -> bool {
     id & ANIMAL == 0
-        && w.rides
-            .get(&id)
-            .is_some_and(|r| !matches!(r.phase, Phase::Leaving { .. }))
-        && w.actors
-            .get(&(ANIMAL | id))
-            .is_some_and(|a| a.character.is_none() && !a.failed)
+        && w.rides.get(&id).is_some_and(|r| !matches!(r.phase, Phase::Leaving { .. }))
+        && w.actors.get(&(ANIMAL | id)).is_some_and(|a| a.character.is_none() && !a.failed)
 }
 
 /// FUN_100d65b0(0) while riding: a motion matching the idle name "chi " on letters 2..3 plays (`chi0`, `6hi0`, ...).
@@ -555,18 +384,12 @@ pub fn applied(w: &World, id: u32, status: u8) -> u8 {
 
 /// A riding rider's draw offset (+0x60c), zero otherwise.
 pub fn offset(w: &World, id: u32) -> Vec3 {
-    w.rides
-        .get(&id)
-        .filter(|r| matches!(r.phase, Phase::Riding | Phase::Stopping))
-        .map_or(Vec3::ZERO, |r| r.offset)
+    w.rides.get(&id).filter(|r| matches!(r.phase, Phase::Riding | Phase::Stopping)).map_or(Vec3::ZERO, |r| r.offset)
 }
 
 /// The linked mount's riding data.
 fn linked(w: &World, id: u32) -> Option<(&Riding, crate::dat::character::MountInfo)> {
-    let r = w
-        .rides
-        .get(&id)
-        .filter(|r| matches!(r.phase, Phase::Riding | Phase::Stopping))?;
+    let r = w.rides.get(&id).filter(|r| matches!(r.phase, Phase::Riding | Phase::Stopping))?;
     Some((r, w.actors.get(&(ANIMAL | id))?.character.as_ref()?.mount?))
 }
 
@@ -608,23 +431,13 @@ pub fn look_height(w: &World, id: u32, status: u8) -> Option<f32> {
     if !matches!(applied(w, id, status), 5 | 0x55) {
         return None;
     }
-    let b = *w
-        .actors
-        .get(&id)?
-        .character
-        .as_ref()?
-        .skeleton
-        .boxes
-        .get(1)?;
+    let b = *w.actors.get(&id)?.character.as_ref()?.skeleton.boxes.get(1)?;
     Some(b[1] - b[0] + linked(w, id).map_or(0.0, |(_, mi)| mi.cam_add()))
 }
 
 /// The animal's size (FUN_10020ba0's first-person eye), 0 without one.
 pub fn animal_scale(w: &World, id: u32) -> f32 {
-    w.actors
-        .get(&(ANIMAL | id))
-        .filter(|a| a.character.is_some())
-        .map_or(0.0, |a| a.scale)
+    w.actors.get(&(ANIMAL | id)).filter(|a| a.character.is_some()).map_or(0.0, |a| a.scale)
 }
 
 /// The readback key of a rider's point (slot 0) or its mount's saddle point (slot 1).
@@ -641,32 +454,18 @@ pub fn is_key(k: u64) -> bool {
 /// DAT_10330ed4[race] = 0x2f + race (0x30 for race 0); as (key, point index).
 pub fn query(rides: &HashMap<u32, Riding>, id: u32) -> Option<(u64, usize)> {
     let rider = id & !ANIMAL;
-    let r = rides
-        .get(&rider)
-        .filter(|r| matches!(r.model, Model::Mount(_)) && r.phase == Phase::Riding)?;
-    Some(if id & ANIMAL != 0 {
-        (key(rider, 1), 0x2f + r.race.max(1) as usize)
-    } else {
-        (key(rider, 0), 0x6b)
-    })
+    let r = rides.get(&rider).filter(|r| matches!(r.model, Model::Mount(_)) && r.phase == Phase::Riding)?;
+    Some(if id & ANIMAL != 0 { (key(rider, 1), 0x2f + r.race.max(1) as usize) } else { (key(rider, 0), 0x6b) })
 }
 
 /// The points read back (relative to each actor's drawn root, world axes): offset = saddle - rider point.
 pub fn points(w: &mut World, pts: Vec<(u64, Vec3)>) {
     for (k, p) in pts {
-        if let Some(r) = w
-            .rides
-            .get_mut(&((k >> 8) as u32))
-            .filter(|r| r.phase == Phase::Riding)
-        {
+        if let Some(r) = w.rides.get_mut(&((k >> 8) as u32)).filter(|r| r.phase == Phase::Riding) {
             r.points[(k & 1) as usize] = Some(p);
             if let [Some(rp), Some(mp)] = r.points {
                 if r.offset == Vec3::ZERO {
-                    log::info!(
-                        "rider {:#x}: saddle offset {:?} (point 0x6b {rp:?}, saddle {mp:?})",
-                        k >> 8 & 0xffff_ffff,
-                        mp - rp
-                    );
+                    log::info!("rider {:#x}: saddle offset {:?} (point 0x6b {rp:?}, saddle {mp:?})", k >> 8 & 0xffff_ffff, mp - rp);
                 }
                 r.offset = mp - rp;
             }
@@ -685,11 +484,7 @@ pub fn on_dig(w: &mut World, id: u32, index: u16, flags: u8) {
         return;
     };
     let ready = w.actors.get(&id).is_some_and(|a| a.character.is_some());
-    let bits = if flags & 0xf == 1 && matches!(status, 5 | 0x55) && ready {
-        0x30
-    } else {
-        0x20
-    };
+    let bits = if flags & 0xf == 1 && matches!(status, 5 | 0x55) && ready { 0x30 } else { 0x20 };
     log::info!("0x02F dig {id:#x}: flags {flags} status {status:#x} -> bits {bits:#x}");
     *w.digs.entry(id).or_default() |= bits;
 }
@@ -722,10 +517,7 @@ pub fn dig_update(w: &mut World) {
                 body.extend(w.my_index.to_le_bytes());
                 body.extend([0x11, 0]);
                 log::info!("dig done: c2s 0x063 mode 0x11");
-                let _ = w
-                    .net
-                    .commands
-                    .send(super::net::NetCommand::Packet { id: 0x063, body });
+                let _ = w.net.commands.send(super::net::NetCommand::Packet { id: 0x063, body });
                 b &= !0x20;
             }
         }
@@ -753,14 +545,8 @@ mod tests {
         assert_eq!(drop_for(0x55, Some((7, 0x1d)), 8), 0.05);
         assert_eq!(drop_for(0x55, Some((2, 0x25)), 8), 0.4);
         assert_eq!(drop_for(0x55, Some((3, 0x25)), 6), -0.8);
-        assert_eq!(
-            (drop_for(0x3f, None, 1), drop_for(0x53, None, 1)),
-            (-0.5, -0.5)
-        );
-        assert_eq!(
-            (drop_for(0x54, None, 1), drop_for(0, Some((3, 3)), 1)),
-            (0.0, 0.0)
-        );
+        assert_eq!((drop_for(0x3f, None, 1), drop_for(0x53, None, 1)), (-0.5, -0.5));
+        assert_eq!((drop_for(0x54, None, 1), drop_for(0, Some((3, 3)), 1)), (0.0, 0.0));
     }
 
     /// FUN_100d65b0's riding test: letters 2..3 of the idle name "chi ".
@@ -780,63 +566,26 @@ mod tests {
     fn chocobo_looks() {
         // Blue (2), beak 1, talons 3, tail 5.
         let l = choco_look([2 << 9 | 5 << 6 | 3 << 3 | 1, 0]);
-        assert_eq!(
-            (l.race, l.head, l.body, l.hands, l.legs, l.feet),
-            (0x22, 1, 7, 5, 0, 3)
-        );
+        assert_eq!((l.race, l.head, l.body, l.hands, l.legs, l.feet), (0x22, 1, 7, 5, 0, 3));
         let n = choco_look([0, 1]);
-        assert_eq!(
-            (n.race, n.head, n.body, n.hands, n.legs, n.feet),
-            (0x20, 3, 3, 3, 1, 3)
-        );
+        assert_eq!((n.race, n.head, n.body, n.hands, n.legs, n.feet), (0x20, 3, 3, 3, 1, 3));
     }
 
     #[test]
     fn models_and_names() {
-        let ride = |chocobo, mount| Ride {
-            chocobo,
-            mount,
-            custom: [0; 2],
-        };
-        assert_eq!(
-            model(5, ride(1, 0), 230, false),
-            Some(Model::Chocobo(39_275))
-        );
-        assert_eq!(
-            model(5, ride(1, 0), 87, false),
-            Some(Model::Chocobo(39_276))
-        );
+        let ride = |chocobo, mount| Ride { chocobo, mount, custom: [0; 2] };
+        assert_eq!(model(5, ride(1, 0), 230, false), Some(Model::Chocobo(39_275)));
+        assert_eq!(model(5, ride(1, 0), 87, false), Some(Model::Chocobo(39_276)));
         assert_eq!(model(5, ride(1, 0), 87, true), Some(Model::Chocobo(39_275)));
         assert_eq!(model(0x55, ride(3, 0), 100, false), None);
-        assert_eq!(
-            model(0x55, ride(3, 2), 100, false).map(|m| format!("{:?}", m.source())),
-            Some("File(102706)".into())
-        );
+        assert_eq!(model(0x55, ride(3, 2), 100, false).map(|m| format!("{:?}", m.source())), Some("File(102706)".into()));
         // A personal chocobo's colour 7 is no chocobo race: nothing until its look comes.
-        assert_eq!(
-            model(
-                5,
-                Ride {
-                    chocobo: 2,
-                    mount: 0,
-                    custom: [7 << 9, 0]
-                },
-                100,
-                false
-            ),
-            None
-        );
-        assert_eq!(
-            (names(6).idle, names(3).run, names(0).walk),
-            ("6hi", "3un", "wlk")
-        );
+        assert_eq!(model(5, Ride { chocobo: 2, mount: 0, custom: [7 << 9, 0] }, 100, false), None);
+        assert_eq!((names(6).idle, names(3).run, names(0).walk), ("6hi", "3un", "wlk"));
     }
 
     #[test]
     fn riding_files() {
-        assert_eq!(
-            (FILES[1], FILES[8], SKIRT[2], SKIRT[3]),
-            (38603, 39179, 38635, 38667)
-        );
+        assert_eq!((FILES[1], FILES[8], SKIRT[2], SKIRT[3]), (38603, 39179, 38635, 38667));
     }
 }

@@ -56,10 +56,7 @@ impl Scan {
     /// FUN_100f93c0 (c2s 0x0F5): the block zeroed with the index set.
     pub fn track(&mut self, index: u16) {
         log::debug!("tracking: asked for {index:#x}");
-        self.track = Track {
-            index,
-            ..Default::default()
-        };
+        self.track = Track { index, ..Default::default() };
         self.asked = Some(std::time::Instant::now());
     }
 
@@ -70,8 +67,7 @@ impl Scan {
 
     /// FUN_100f94d0: tracking once the server confirmed (state 1 with a level).
     pub fn tracking(&self) -> Option<&Track> {
-        (self.track.index != 0 && self.track.level != 0 && self.track.state == 1)
-            .then_some(&self.track)
+        (self.track.index != 0 && self.track.level != 0 && self.track.state == 1).then_some(&self.track)
     }
 
     /// LAB_100f9510: indexes 0x900 and up are dropped.
@@ -83,18 +79,12 @@ impl Scan {
 
     /// LAB_100f9560: state 1 for the tracked index updates it; any other state for it, or index 0, clears the block.
     pub fn on_pos(&mut self, index: u16, level: u8, pos: [f32; 3], state: u32) {
-        log::debug!(
-            "tracking: {index:#x} level {level} state {state} at {pos:?} (ours {:#x})",
-            self.track.index
-        );
+        log::debug!("tracking: {index:#x} level {level} state {state} at {pos:?} (ours {:#x})", self.track.index);
         if index != 0 && index == self.track.index && state == 1 {
             (self.track.level, self.track.state, self.track.pos) = (level, state, pos);
             self.asked = None;
         } else if index == 0 || index == self.track.index {
-            self.track = Track {
-                state,
-                ..Default::default()
-            };
+            self.track = Track { state, ..Default::default() };
         }
     }
 

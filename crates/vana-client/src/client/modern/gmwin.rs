@@ -38,10 +38,7 @@ pub fn shown(w: &World) -> bool {
 /// The window takes the typed text (no other window, dialog or event over it): its keys are no game keys.
 pub fn takes_keys(w: &World) -> bool {
     // Another window or dialog over it (opened later, or an event) keeps its own keys.
-    shown(w)
-        && !super::super::window_over_actions(w)
-        && w.prompt.is_none()
-        && !super::super::event::active(w)
+    shown(w) && !super::super::window_over_actions(w) && w.prompt.is_none() && !super::super::event::active(w)
 }
 
 /// Typed text, Backspace, Tab, Enter and Escape while the window is open. True when it took them.
@@ -70,11 +67,7 @@ pub fn events(w: &mut World, events: &[egui::Event]) -> bool {
                 }
                 g.armed = false;
             }
-            egui::Event::Key {
-                key: egui::Key::Backspace,
-                pressed: true,
-                ..
-            } => {
+            egui::Event::Key { key: egui::Key::Backspace, pressed: true, .. } => {
                 match &slot {
                     Some(k) => {
                         g.values.entry(k.clone()).or_default().pop();
@@ -86,12 +79,7 @@ pub fn events(w: &mut World, events: &[egui::Event]) -> bool {
                 }
                 g.armed = false;
             }
-            egui::Event::Key {
-                key: egui::Key::Tab,
-                pressed: true,
-                modifiers,
-                ..
-            } if fields > 0 => {
+            egui::Event::Key { key: egui::Key::Tab, pressed: true, modifiers, .. } if fields > 0 => {
                 let n = fields;
                 g.typing = Some(match g.typing {
                     Some(i) if modifiers.shift => (i + n - 1) % n,
@@ -100,16 +88,8 @@ pub fn events(w: &mut World, events: &[egui::Event]) -> bool {
                 });
                 g.find_typing = false;
             }
-            egui::Event::Key {
-                key: egui::Key::Enter,
-                pressed: true,
-                ..
-            } if sel.is_some() => run = true,
-            egui::Event::Key {
-                key: egui::Key::Escape,
-                pressed: true,
-                ..
-            } => {
+            egui::Event::Key { key: egui::Key::Enter, pressed: true, .. } if sel.is_some() => run = true,
+            egui::Event::Key { key: egui::Key::Escape, pressed: true, .. } => {
                 if g.typing.is_some() || g.find_typing {
                     (g.typing, g.find_typing) = (None, false);
                 } else {
@@ -127,18 +107,12 @@ pub fn events(w: &mut World, events: &[egui::Event]) -> bool {
 }
 
 fn text(ui: &Ui, at: egui::Pos2, align: Align2, s: &str, size: f32, c: Color32) {
-    ui.painter()
-        .text(at, align, s, FontId::proportional(size), c);
+    ui.painter().text(at, align, s, FontId::proportional(size), c);
 }
 
 fn heading(ui: &mut Ui, m: &super::Modern, s: &str) {
     ui.add_space(4.0);
-    ui.label(
-        egui::RichText::new(s)
-            .size(m.theme.small)
-            .family(egui::FontFamily::Name(super::STRONG.into()))
-            .color(m.theme.color("gold")),
-    );
+    ui.label(egui::RichText::new(s).size(m.theme.small).family(egui::FontFamily::Name(super::STRONG.into())).color(m.theme.color("gold")));
 }
 
 /// The groups: All, then gm::GROUPS with their counts (those with none are left out).
@@ -173,23 +147,8 @@ fn rail(ui: &mut Ui, m: &super::Modern, g: &gm::Gm, click: &mut Option<Click>) {
 fn list(ui: &mut Ui, m: &super::Modern, g: &gm::Gm, click: &mut Option<Click>) {
     ui.vertical(|ui| {
         ui.set_width(LIST_W);
-        let r = kit::field(
-            ui,
-            m,
-            if g.find.is_empty() && !g.find_typing {
-                "Search commands"
-            } else {
-                &g.find
-            },
-            g.find_typing.then(|| g.find.chars().count()),
-            LIST_W,
-            FontId::proportional(m.theme.small),
-            Some("icons/find"),
-        );
-        if ui
-            .interact(r, ui.scope_id().with("gm find"), Sense::click())
-            .clicked()
-        {
+        let r = kit::field(ui, m, if g.find.is_empty() && !g.find_typing { "Search commands" } else { &g.find }, g.find_typing.then(|| g.find.chars().count()), LIST_W, FontId::proportional(m.theme.small), Some("icons/find"));
+        if ui.interact(r, ui.scope_id().with("gm find"), Sense::click()).clicked() {
             *click = Some(Click::Focus(None));
         }
         ui.add_space(6.0);
@@ -197,70 +156,19 @@ fn list(ui: &mut Ui, m: &super::Modern, g: &gm::Gm, click: &mut Option<Click>) {
         let pages = shown.len().div_ceil(gm::PER_PAGE).max(1);
         let page = g.page.min(pages - 1);
         if shown.is_empty() {
-            ui.label(
-                egui::RichText::new("No commands match. Try another word, or All commands.")
-                    .size(m.theme.small)
-                    .color(m.theme.color("muted")),
-            );
+            ui.label(egui::RichText::new("No commands match. Try another word, or All commands.").size(m.theme.small).color(m.theme.color("muted")));
         }
         for c in shown.iter().skip(page * gm::PER_PAGE).take(gm::PER_PAGE) {
             let (r, resp) = ui.allocate_exact_size(vec2(LIST_W, ROW_H), Sense::click());
             let on = g.selected.as_deref() == Some(c.name.as_str());
-            let face = if on {
-                "controls/list_row_selected"
-            } else if resp.hovered() {
-                "controls/list_row_hover"
-            } else {
-                "controls/list_row_normal"
-            };
+            let face = if on { "controls/list_row_selected" } else if resp.hovered() { "controls/list_row_hover" } else { "controls/list_row_normal" };
             super::rows::face(ui.painter(), m, r, face, Color32::WHITE);
-            ui.painter().text(
-                pos2(r.min.x + 12.0, r.min.y + 14.0),
-                Align2::LEFT_CENTER,
-                format!("!{}", c.name),
-                FontId::monospace(m.theme.small),
-                if on {
-                    m.theme.color("gold")
-                } else {
-                    m.theme.color("text")
-                },
-            );
-            let desc = if c.desc.is_empty() {
-                "No description in the script."
-            } else {
-                &c.desc
-            };
-            let desc = kit::elide(
-                ui,
-                desc,
-                &FontId::proportional(m.theme.small),
-                LIST_W - 110.0,
-            );
-            text(
-                ui,
-                pos2(r.min.x + 12.0, r.max.y - 12.0),
-                Align2::LEFT_CENTER,
-                &desc,
-                m.theme.small,
-                m.theme.color("muted"),
-            );
-            let tag = if c.danger {
-                format!("Danger · GM {}", c.level)
-            } else {
-                format!("GM {}", c.level)
-            };
-            text(
-                ui,
-                pos2(r.max.x - 10.0, r.min.y + 14.0),
-                Align2::RIGHT_CENTER,
-                &tag,
-                m.theme.small,
-                if c.danger {
-                    m.theme.color("hp")
-                } else {
-                    m.theme.color("bronze")
-                },
-            );
+            ui.painter().text(pos2(r.min.x + 12.0, r.min.y + 14.0), Align2::LEFT_CENTER, format!("!{}", c.name), FontId::monospace(m.theme.small), if on { m.theme.color("gold") } else { m.theme.color("text") });
+            let desc = if c.desc.is_empty() { "No description in the script." } else { &c.desc };
+            let desc = kit::elide(ui, desc, &FontId::proportional(m.theme.small), LIST_W - 110.0);
+            text(ui, pos2(r.min.x + 12.0, r.max.y - 12.0), Align2::LEFT_CENTER, &desc, m.theme.small, m.theme.color("muted"));
+            let tag = if c.danger { format!("Danger · GM {}", c.level) } else { format!("GM {}", c.level) };
+            text(ui, pos2(r.max.x - 10.0, r.min.y + 14.0), Align2::RIGHT_CENTER, &tag, m.theme.small, if c.danger { m.theme.color("hp") } else { m.theme.color("bronze") });
             if resp.clicked() {
                 *click = Some(Click::Select(c.name.clone()));
             }
@@ -268,22 +176,12 @@ fn list(ui: &mut Ui, m: &super::Modern, g: &gm::Gm, click: &mut Option<Click>) {
         }
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            let prev = Btn {
-                off: page == 0,
-                ..Default::default()
-            };
+            let prev = Btn { off: page == 0, ..Default::default() };
             if kit::clicked(&kit::button(ui, m, "Previous", 90.0, prev), prev) {
                 *click = Some(Click::Page(page - 1));
             }
-            ui.label(
-                egui::RichText::new(format!("Page {} of {pages}", page + 1))
-                    .size(m.theme.small)
-                    .color(m.theme.color("muted")),
-            );
-            let next = Btn {
-                off: page + 1 >= pages,
-                ..Default::default()
-            };
+            ui.label(egui::RichText::new(format!("Page {} of {pages}", page + 1)).size(m.theme.small).color(m.theme.color("muted")));
+            let next = Btn { off: page + 1 >= pages, ..Default::default() };
             if kit::clicked(&kit::button(ui, m, "Next", 90.0, next), next) {
                 *click = Some(Click::Page(page + 1));
             }
@@ -292,13 +190,7 @@ fn list(ui: &mut Ui, m: &super::Modern, g: &gm::Gm, click: &mut Option<Click>) {
 }
 
 /// The chosen command: its fields, the line it sends, Run, and the replies.
-fn detail(
-    ui: &mut Ui,
-    m: &super::Modern,
-    g: &gm::Gm,
-    target: Option<u32>,
-    click: &mut Option<Click>,
-) {
+fn detail(ui: &mut Ui, m: &super::Modern, g: &gm::Gm, target: Option<u32>, click: &mut Option<Click>) {
     ui.vertical(|ui| {
         ui.set_width(DETAIL_W);
         let Some(c) = g.selected() else {
@@ -363,54 +255,16 @@ fn detail(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn field(
-    ui: &mut Ui,
-    m: &super::Modern,
-    g: &gm::Gm,
-    c: &Command,
-    f: &gm::Field,
-    i: usize,
-    value: &str,
-    bad: bool,
-    target: Option<u32>,
-    click: &mut Option<Click>,
-) {
+fn field(ui: &mut Ui, m: &super::Modern, g: &gm::Gm, c: &Command, f: &gm::Field, i: usize, value: &str, bad: bool, target: Option<u32>, click: &mut Option<Click>) {
     let typing = g.typing == Some(i);
     let list = g.lists.get(&f.pick);
-    let label = if f.optional {
-        format!("{} (optional)", f.label)
-    } else {
-        f.label.clone()
-    };
-    ui.label(
-        egui::RichText::new(label)
-            .size(m.theme.small)
-            .color(if bad {
-                m.theme.color("hp")
-            } else {
-                m.theme.color("text")
-            }),
-    );
+    let label = if f.optional { format!("{} (optional)", f.label) } else { f.label.clone() };
+    ui.label(egui::RichText::new(label).size(m.theme.small).color(if bad { m.theme.color("hp") } else { m.theme.color("text") }));
     ui.horizontal(|ui| {
         let extra = matches!(f.pick, Pick::Entity) && target.is_some();
         let width = if extra { DETAIL_W - 100.0 } else { DETAIL_W };
-        let r = kit::field(
-            ui,
-            m,
-            value,
-            typing.then(|| value.chars().count()),
-            width,
-            FontId::proportional(m.theme.small),
-            None,
-        );
-        if ui
-            .interact(
-                r,
-                ui.scope_id().with(("gm field", &c.name, i)),
-                Sense::click(),
-            )
-            .clicked()
-        {
+        let r = kit::field(ui, m, value, typing.then(|| value.chars().count()), width, FontId::proportional(m.theme.small), None);
+        if ui.interact(r, ui.scope_id().with(("gm field", &c.name, i)), Sense::click()).clicked() {
             *click = Some(Click::Focus(Some(i)));
         }
         if let (true, Some(t)) = (extra, target) {
@@ -423,8 +277,7 @@ fn field(
     // The name behind a typed id (or the id behind a typed name), so a number reads as what it is.
     let known = list.and_then(|l| {
         let t = value.trim();
-        l.iter()
-            .find(|(id, n)| !t.is_empty() && (id == t || n.eq_ignore_ascii_case(t)))
+        l.iter().find(|(id, n)| !t.is_empty() && (id == t || n.eq_ignore_ascii_case(t)))
     });
     let hint = match known {
         Some((id, n)) if id == value.trim() => n.clone(),
@@ -432,12 +285,7 @@ fn field(
         None => f.pick.hint().to_string(),
     };
     if !hint.is_empty() {
-        ui.label(
-            egui::RichText::new(hint).size(m.theme.small * 0.9).color(
-                m.theme
-                    .color(if known.is_some() { "gold" } else { "muted" }),
-            ),
-        );
+        ui.label(egui::RichText::new(hint).size(m.theme.small * 0.9).color(m.theme.color(if known.is_some() { "gold" } else { "muted" })));
     }
     if let (true, Some(l)) = (typing, list) {
         let hits = gm::suggest(l, value, SUGGEST);
@@ -447,11 +295,7 @@ fn field(
                     let b = Btn::default();
                     let font = FontId::proportional(m.theme.small);
                     let name = kit::elide(ui, n, &font, 180.0);
-                    let label = if id == n {
-                        name
-                    } else {
-                        format!("{name} ({id})")
-                    };
+                    let label = if id == n { name } else { format!("{name} ({id})") };
                     if kit::clicked(&kit::button(ui, m, &label, 0.0, b), b) {
                         *click = Some(Click::Fill(i, id.clone()));
                     }
@@ -473,33 +317,14 @@ fn replies(ui: &mut Ui, m: &super::Modern, g: &gm::Gm) {
     heading(ui, m, "Server replies");
     kit::scroll(ui, "gm replies", 220.0, |ui| {
         for (_, r) in g.replies.iter().rev() {
-            ui.label(
-                egui::RichText::new(format!("!{}", r.line))
-                    .size(m.theme.small)
-                    .family(egui::FontFamily::Monospace)
-                    .color(m.theme.color("gold")),
-            );
+            ui.label(egui::RichText::new(format!("!{}", r.line)).size(m.theme.small).family(egui::FontFamily::Monospace).color(m.theme.color("gold")));
             let ok = r.result == Some(0);
-            ui.label(egui::RichText::new(r.status()).size(m.theme.small).color(
-                if ok || r.result.is_none() {
-                    m.theme.color("muted")
-                } else {
-                    m.theme.color("hp")
-                },
-            ));
+            ui.label(egui::RichText::new(r.status()).size(m.theme.small).color(if ok || r.result.is_none() { m.theme.color("muted") } else { m.theme.color("hp") }));
             for l in &r.output {
-                ui.label(
-                    egui::RichText::new(l)
-                        .size(m.theme.small)
-                        .color(m.theme.color("text")),
-                );
+                ui.label(egui::RichText::new(l).size(m.theme.small).color(m.theme.color("text")));
             }
             if r.cut {
-                ui.label(
-                    egui::RichText::new("(more output was cut off)")
-                        .size(m.theme.small)
-                        .color(m.theme.color("muted")),
-                );
+                ui.label(egui::RichText::new("(more output was cut off)").size(m.theme.small).color(m.theme.color("muted")));
             }
             ui.add_space(6.0);
         }
@@ -524,16 +349,8 @@ fn apply(w: &mut World, click: Click) {
             let pos = [w.pos.x, w.pos.y, w.pos.z];
             let g = &mut w.gm;
             if let Some(c) = g.selected().cloned() {
-                for (k, (i, _)) in c
-                    .fields
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, f)| f.pick == Pick::Coord)
-                    .enumerate()
-                    .take(3)
-                {
-                    g.values
-                        .insert((c.name.clone(), i), format!("{:.3}", pos[k]));
+                for (k, (i, _)) in c.fields.iter().enumerate().filter(|(_, f)| f.pick == Pick::Coord).enumerate().take(3) {
+                    g.values.insert((c.name.clone(), i), format!("{:.3}", pos[k]));
                 }
             }
         }
@@ -546,9 +363,7 @@ fn apply(w: &mut World, click: Click) {
         Click::Close => g.open = false,
         Click::Augments => g.augments = !g.augments,
         Click::Run => {
-            let Some(c) = g.selected().cloned() else {
-                return;
-            };
+            let Some(c) = g.selected().cloned() else { return };
             let Ok(line) = c.line(&g.values_of(&c)) else {
                 w.sounds.push(Se::Error as u32);
                 return;
@@ -560,10 +375,7 @@ fn apply(w: &mut World, click: Click) {
             }
             g.armed = false;
             let body = g.run(line);
-            let _ = w
-                .net
-                .commands
-                .send(super::super::net::NetCommand::Packet { id: 0x1F1, body });
+            let _ = w.net.commands.send(super::super::net::NetCommand::Packet { id: 0x1F1, body });
             w.sounds.push(Se::Select as u32);
         }
     }
@@ -574,23 +386,9 @@ pub fn draw(p: &mut Panels, w: &mut World) {
         return;
     }
     if w.gm.selected.is_some() {
-        let mut people: gm::Choices = std::iter::once(w.name.clone())
-            .chain(
-                w.party
-                    .members()
-                    .filter(|r| r.id != w.my_id)
-                    .map(|r| r.name.clone()),
-            )
-            .filter(|n| !n.is_empty())
-            .map(|n| (n.clone(), n))
-            .collect();
+        let mut people: gm::Choices = std::iter::once(w.name.clone()).chain(w.party.members().filter(|r| r.id != w.my_id).map(|r| r.name.clone())).filter(|n| !n.is_empty()).map(|n| (n.clone(), n)).collect();
         people.dedup();
-        let mut around: gm::Choices = w
-            .entities
-            .iter()
-            .filter(|(_, e)| !e.name.trim().is_empty())
-            .map(|(id, e)| (id.to_string(), e.name.trim().to_string()))
-            .collect();
+        let mut around: gm::Choices = w.entities.iter().filter(|(_, e)| !e.name.trim().is_empty()).map(|(id, e)| (id.to_string(), e.name.trim().to_string())).collect();
         around.sort_by(|a, b| a.1.cmp(&b.1));
         w.gm.fill_lists(w.names.as_ref(), people, around);
     }

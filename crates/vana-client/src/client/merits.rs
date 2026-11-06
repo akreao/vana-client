@@ -29,19 +29,10 @@ const COLS: [f32; 8] = [0.0, 6.0, 16.0, 220.0, 240.0, 260.0, 320.0, 342.0];
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Row {
     /// The category list: a position and its category id.
-    Cat {
-        pos: u16,
-        id: u8,
-    },
+    Cat { pos: u16, id: u8 },
     /// A job's group header (windowps 592 / 593) with the group's cap.
-    Header {
-        group: u8,
-        cat: u8,
-    },
-    Merit {
-        index: u16,
-        group: u8,
-    },
+    Header { group: u8, cat: u8 },
+    Merit { index: u16, group: u8 },
 }
 
 struct List {
@@ -101,12 +92,7 @@ pub fn on_list(w: &mut World, recs: &[(u16, u8, u8)]) {
 /// statcom2 Enter on row 7 (FUN_10148d00 k 6): merit1 and levmerit.
 pub fn open(w: &mut World) {
     tables(w);
-    w.merits_ui = Some(MeritUi {
-        menu: w.cursor_recall(MENU),
-        mode: None,
-        list: None,
-        edit: None,
-    });
+    w.merits_ui = Some(MeritUi { menu: w.cursor_recall(MENU), mode: None, list: None, edit: None });
 }
 
 /// Merit points (0x063 type 2 @0xa & 0x7f) and the most (@0xc).
@@ -134,11 +120,7 @@ fn cap(w: &World, t: &MeritTables, cat: u8) -> u8 {
 
 /// FUN_10161010: the levels spent in category `cat`.
 fn spent(w: &World, cat: u8) -> u32 {
-    w.merit_list
-        .iter()
-        .filter(|(i, _)| (**i >> 5) as u8 == cat)
-        .map(|(_, &(_, l))| l as u32)
-        .sum()
+    w.merit_list.iter().filter(|(i, _)| (**i >> 5) as u8 == cat).map(|(_, &(_, l))| l as u32).sum()
 }
 
 /// A merit row's colours (FUN_101491a0): name, level (None = none), cost (None = no cost cell).
@@ -146,19 +128,13 @@ fn colours(w: &World, t: &MeritTables, index: u16, group: u8) -> (u32, u32, Opti
     let cat = (index >> 5) as u8;
     let (job, level) = main_job(w);
     let entry = t.entry(index).copied().unwrap_or_default();
-    let ok = w.myroom.is_some()
-        && entry.jobs >> job & 1 != 0
-        && (cat != 0x1a || (level >= 96 && w.has_key_item(0x80b)));
+    let ok = w.myroom.is_some() && entry.jobs >> job & 1 != 0 && (cat != 0x1a || (level >= 96 && w.has_key_item(0x80b)));
     let c = if ok { GROUP[group as usize % 3] } else { GREY };
-    let Some(&(next, lv)) = w.merit_list.get(&index) else {
-        return (c, c, None);
-    };
+    let Some(&(next, lv)) = w.merit_list.get(&index) else { return (c, c, None) };
     if lv >= entry.max {
         return (c, BLUE, None);
     }
-    let affordable = ok
-        && points(w).is_some_and(|(m, _)| next as u16 <= m)
-        && spent(w, cat) < cap(w, t, cat) as u32;
+    let affordable = ok && points(w).is_some_and(|(m, _)| next as u16 <= m) && spent(w, cat) < cap(w, t, cat) as u32;
     (c, c, Some(if affordable { WHITE } else { GREY }))
 }
 
@@ -167,19 +143,11 @@ fn colours(w: &World, t: &MeritTables, index: u16, group: u8) -> (u32, u32, Opti
 fn rows(t: &MeritTables, cat: u8) -> Vec<Row> {
     let merits = |id: u8, group: u8, out: &mut Vec<Row>| {
         let base = id as u16 * 32;
-        out.extend(
-            (base..base + 32)
-                .filter(|&i| t.entry(i).is_some())
-                .map(|index| Row::Merit { index, group }),
-        );
+        out.extend((base..base + 32).filter(|&i| t.entry(i).is_some()).map(|index| Row::Merit { index, group }));
     };
     let mut out = Vec::new();
     if cat == 0 {
-        out.extend((1..32).filter_map(|p| {
-            t.at(p)
-                .filter(|c| c.cap != 0)
-                .map(|c| Row::Cat { pos: p, id: c.id })
-        }));
+        out.extend((1..32).filter_map(|p| t.at(p).filter(|c| c.cap != 0).map(|c| Row::Cat { pos: p, id: c.id })));
     } else if cat <= 5 || cat == 0x1a {
         merits(cat, 0, &mut out);
     } else {
@@ -195,40 +163,21 @@ fn rows(t: &MeritTables, cat: u8) -> Vec<Row> {
 
 /// FUN_10149040(cat): the category list on its remembered row, or a category from its top.
 fn show(w: &mut World, cat: u8) {
-    let Some(t) = w.merit_tables.clone() else {
-        return;
-    };
+    let Some(t) = w.merit_tables.clone() else { return };
     let rows = rows(&t, cat);
-    let cursor = if cat == 0 {
-        w.merit_mem.min(rows.len().saturating_sub(1))
-    } else {
-        0
-    };
+    let cursor = if cat == 0 { w.merit_mem.min(rows.len().saturating_sub(1)) } else { 0 };
     let stamp = w.merit_stamp;
-    let Some(m) = w.merits_ui.as_mut() else {
-        return;
-    };
+    let Some(m) = w.merits_ui.as_mut() else { return };
     let info = m.list.as_ref().and_then(|l| l.info);
     let top = cursor.saturating_sub(ROWS - 1);
-    m.list = Some(List {
-        cat,
-        rows,
-        top,
-        cursor,
-        stamp,
-        info,
-    });
+    m.list = Some(List { cat, rows, top, cursor, stamp, info });
 }
 
 /// Per frame (meritcat +0x50): a new 0x08C rebuilds the rows on the same cursor; meritinf follows the category list.
 pub fn update(w: &mut World) {
-    let Some(t) = w.merit_tables.clone() else {
-        return;
-    };
+    let Some(t) = w.merit_tables.clone() else { return };
     let stamp = w.merit_stamp;
-    let Some(l) = w.merits_ui.as_mut().and_then(|m| m.list.as_mut()) else {
-        return;
-    };
+    let Some(l) = w.merits_ui.as_mut().and_then(|m| m.list.as_mut()) else { return };
     if l.stamp != stamp {
         l.stamp = stamp;
         l.rows = rows(&t, l.cat);
@@ -242,25 +191,14 @@ pub fn update(w: &mut World) {
 /// FUN_101490c0 / FUN_10149130: the cursor merit can be raised (a record with a cost, its cost cell white) / lowered
 /// (a level, its name not grey).
 fn can(w: &World, index: u16, group: u8) -> (bool, bool) {
-    let Some(t) = &w.merit_tables else {
-        return (false, false);
-    };
+    let Some(t) = &w.merit_tables else { return (false, false) };
     let (c, _, cost) = colours(w, t, index, group);
     let rec = w.merit_list.get(&index).copied();
-    (
-        rec.is_some_and(|r| r.0 != 0) && cost == Some(WHITE),
-        rec.is_some_and(|r| r.1 != 0) && c != GREY,
-    )
+    (rec.is_some_and(|r| r.0 != 0) && cost == Some(WHITE), rec.is_some_and(|r| r.1 != 0) && c != GREY)
 }
 
 fn cursor_merit(w: &World) -> Option<(u16, u8)> {
-    match w
-        .merits_ui
-        .as_ref()?
-        .list
-        .as_ref()
-        .and_then(|l| l.rows.get(l.cursor))?
-    {
+    match w.merits_ui.as_ref()?.list.as_ref().and_then(|l| l.rows.get(l.cursor))? {
         Row::Merit { index, group } => Some((*index, *group)),
         _ => None,
     }
@@ -276,10 +214,7 @@ fn send(w: &World, kind: u8, flag: u8, index: u16) {
     let mut body = vec![kind, flag];
     body.extend(index.to_le_bytes());
     body.extend([0; 4]);
-    let _ = w
-        .net
-        .commands
-        .send(super::net::NetCommand::Packet { id: 0x0BE, body });
+    let _ = w.net.commands.send(super::net::NetCommand::Packet { id: 0x0BE, body });
 }
 
 /// merityn's Yes (LAB_10149c40 / LAB_10149d10): raise or lower by one; merit3 closes.
@@ -293,40 +228,22 @@ pub fn answer(w: &mut World, a: Ask) {
 /// merityn's question: group 10 0x50 "Use <n> merit point(s) to raise your "<name>" by one level?" / 0x51 "Lower your
 /// "<name>" ...".
 pub fn ask_text(w: &World, a: Ask) -> String {
-    let (Some(bt), Some(t)) = (&w.battle, &w.merit_tables) else {
-        return String::new();
-    };
-    let Some(raw) = bt.group10_raw(if a.raise { 0x50 } else { 0x51 }) else {
-        return String::new();
-    };
+    let (Some(bt), Some(t)) = (&w.battle, &w.merit_tables) else { return String::new() };
+    let Some(raw) = bt.group10_raw(if a.raise { 0x50 } else { 0x51 }) else { return String::new() };
     let name = crate::dat::font::encode_sjis(&t.name(a.index));
     let cost = w.merit_list.get(&a.index).map_or(0, |r| r.0 as i32);
-    crate::dat::font::decode_sjis(&crate::dat::msgfmt::format(
-        &raw,
-        &[&name],
-        &[cost],
-        &|_, _, _| None,
-    ))
+    crate::dat::font::decode_sjis(&crate::dat::msgfmt::format(&raw, &[&name], &[cost], &|_, _, _| None))
 }
 
 fn links(gu: &GameUi, name: &str, sel: u16, up: bool) -> u16 {
-    let to = gu
-        .menu_links(name, sel)
-        .map_or(sel, |l| l[if up { 2 } else { 3 }] as u16);
+    let to = gu.menu_links(name, sel).map_or(sel, |l| l[if up { 2 } else { 3 }] as u16);
     if to == 0 || to == 0xff { sel } else { to }
 }
 
 pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
     use egui::Key as K;
-    let Some(m) = w.merits_ui.as_ref() else {
-        return;
-    };
-    let (menu, mode, has_list, edit) = (
-        m.menu,
-        m.mode,
-        m.list.is_some(),
-        m.edit.as_ref().map(|e| (e.sel, e.sortyn)),
-    );
+    let Some(m) = w.merits_ui.as_ref() else { return };
+    let (menu, mode, has_list, edit) = (m.menu, m.mode, m.list.is_some(), m.edit.as_ref().map(|e| (e.sel, e.sortyn)));
     // sortyn over merit3: Left / Right / Up / Down switch, Enter answers (Yes: merityn), Escape is No.
     if let Some((sel, Some(yes))) = edit {
         match key {
@@ -338,11 +255,7 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
             }
             K::Enter | K::Escape => {
                 let yes = key == K::Enter && yes;
-                w.sounds.push(if key == K::Enter {
-                    Ui::Select
-                } else {
-                    Ui::Cancel
-                } as u32);
+                w.sounds.push(if key == K::Enter { Ui::Select } else { Ui::Cancel } as u32);
                 if let Some(e) = w.merits_ui.as_mut().and_then(|m| m.edit.as_mut()) {
                     e.sortyn = None;
                     if !yes {
@@ -350,13 +263,7 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
                     }
                 }
                 if yes && let Some((index, _)) = cursor_merit(w) {
-                    w.confirm = Some((
-                        super::Confirm::Merit(Ask {
-                            index,
-                            raise: sel == 1,
-                        }),
-                        false,
-                    ));
+                    w.confirm = Some((super::Confirm::Merit(Ask { index, raise: sel == 1 }), false));
                 }
             }
             _ => {}
@@ -388,9 +295,7 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
                     m.edit = None;
                 }
             }
-            K::Enter if (sel == 1 && !raise) || (sel == 2 && !lower) => {
-                w.sounds.push(Ui::Error as u32)
-            }
+            K::Enter if (sel == 1 && !raise) || (sel == 2 && !lower) => w.sounds.push(Ui::Error as u32),
             K::Enter => {
                 w.sounds.push(Ui::Select as u32);
                 if let Some(e) = w.merits_ui.as_mut().and_then(|m| m.edit.as_mut()) {
@@ -468,29 +373,19 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
 
 /// merit2's disabled row: 2 (Limit Points) in merit mode (0x063 type 2 bit 15), else 1 (EXP).
 fn mode_off(w: &World) -> u16 {
-    if w.merits.is_some_and(|m| m.1 & 0x8000 != 0) {
-        2
-    } else {
-        1
-    }
+    if w.merits.is_some_and(|m| m.1 & 0x8000 != 0) { 2 } else { 1 }
 }
 
 /// The list base's keys (FUN_101f6c70) and meritcat's hook (FUN_10149750).
 fn list_key(w: &mut World, key: egui::Key) {
     use egui::Key as K;
-    let Some(l) = w.merits_ui.as_ref().and_then(|m| m.list.as_ref()) else {
-        return;
-    };
+    let Some(l) = w.merits_ui.as_ref().and_then(|m| m.list.as_ref()) else { return };
     let (n, cat, cursor) = (l.rows.len(), l.cat, l.cursor);
     let row = l.rows.get(cursor).copied();
     match key {
         // The base's page (+0x47 set): the top by a page, the screen row kept.
         K::ArrowLeft | K::ArrowRight => {
-            let m = if key == K::ArrowRight {
-                super::scrollbar::Msg::PageDown
-            } else {
-                super::scrollbar::Msg::PageUp
-            };
+            let m = if key == K::ArrowRight { super::scrollbar::Msg::PageDown } else { super::scrollbar::Msg::PageUp };
             if let Some(l) = w.merits_ui.as_mut().and_then(|m| m.list.as_mut())
                 && super::scrollbar::rows_abs(m, &mut l.top, &mut l.cursor, n, ROWS)
             {
@@ -498,14 +393,8 @@ fn list_key(w: &mut World, key: egui::Key) {
             }
         }
         K::ArrowUp | K::ArrowDown => {
-            let to = if key == K::ArrowDown {
-                (cursor + 1).min(n.saturating_sub(1))
-            } else {
-                cursor.saturating_sub(1)
-            };
-            if to != cursor
-                && let Some(l) = w.merits_ui.as_mut().and_then(|m| m.list.as_mut())
-            {
+            let to = if key == K::ArrowDown { (cursor + 1).min(n.saturating_sub(1)) } else { cursor.saturating_sub(1) };
+            if to != cursor && let Some(l) = w.merits_ui.as_mut().and_then(|m| m.list.as_mut()) {
                 l.cursor = to;
                 l.top = l.top.min(to).max((to + 1).saturating_sub(ROWS));
                 w.sounds.push(Ui::Cursor as u32);
@@ -542,11 +431,7 @@ fn list_key(w: &mut World, key: egui::Key) {
                 }
                 w.sounds.push(Ui::Select as u32);
                 if let Some(m) = w.merits_ui.as_mut() {
-                    m.edit = Some(Edit {
-                        sel: if raise { 1 } else { 2 },
-                        doing: 0,
-                        sortyn: None,
-                    });
+                    m.edit = Some(Edit { sel: if raise { 1 } else { 2 }, doing: 0, sortyn: None });
                 }
             }
         },
@@ -604,31 +489,13 @@ pub(super) fn look(w: &World) -> Option<Look> {
             .rows
             .iter()
             .map(|r| match *r {
-                Row::Cat { pos, id } => PointRow {
-                    name: t.at(pos).map_or(String::new(), |c| t.name(c.name)),
-                    tint: WHITE,
-                    level: Some(totals(w, &t, id)),
-                    ..Default::default()
-                },
-                Row::Header { group, cat } => PointRow {
-                    tint: GROUP[group as usize % 3],
-                    level: Some(totals(w, &t, cat)),
-                    header: Some(592 + group as usize),
-                    ..Default::default()
-                },
+                Row::Cat { pos, id } => PointRow { name: t.at(pos).map_or(String::new(), |c| t.name(c.name)), tint: WHITE, level: Some(totals(w, &t, id)), ..Default::default() },
+                Row::Header { group, cat } => PointRow { tint: GROUP[group as usize % 3], level: Some(totals(w, &t, cat)), header: Some(592 + group as usize), ..Default::default() },
                 Row::Merit { index, group } => {
                     let (c, lc, cost) = colours(w, &t, index, group);
                     let (next, level) = w.merit_list.get(&index).copied().unwrap_or((0, 0));
                     let max = t.entry(index).map_or(0, |e| e.max);
-                    PointRow {
-                        name: t.name(index),
-                        tint: c,
-                        level: Some((format!("{level}/{max}"), lc)),
-                        cost: cost
-                            .filter(|_| next != 0)
-                            .map(|cc| (format!("{next} P"), cc)),
-                        ..Default::default()
-                    }
+                    PointRow { name: t.name(index), tint: c, level: Some((format!("{level}/{max}"), lc)), cost: cost.filter(|_| next != 0).map(|cc| (format!("{next} P"), cc)), ..Default::default() }
                 }
             })
             .collect();
@@ -638,12 +505,7 @@ pub(super) fn look(w: &World) -> Option<Look> {
             _ => None,
         };
         let help = id.map_or((String::new(), String::new()), |i| (t.name(i), t.desc(i)));
-        PointList {
-            rows,
-            cursor: l.cursor,
-            focused: free && m.edit.is_none(),
-            help,
-        }
+        PointList { rows, cursor: l.cursor, focused: free && m.edit.is_none(), help }
     });
     let edit = m.edit.as_ref().map(|e| {
         let (raise, lower) = cursor_merit(w).map_or((false, false), |(i, g)| can(w, i, g));
@@ -662,102 +524,48 @@ pub(super) fn look(w: &World) -> Option<Look> {
 
 /// The mouse's cursor moves: merit1, merit2, the list, merit3 and sortyn. True when it moved.
 pub(super) fn set_menu(w: &mut World, k: u16) -> bool {
-    let Some(m) = w
-        .merits_ui
-        .as_mut()
-        .filter(|m| m.menu != k && (1..=2).contains(&k))
-    else {
-        return false;
-    };
+    let Some(m) = w.merits_ui.as_mut().filter(|m| m.menu != k && (1..=2).contains(&k)) else { return false };
     m.menu = k;
     true
 }
 
 pub(super) fn set_mode(w: &mut World, k: u16) -> bool {
-    let Some(sel) = w
-        .merits_ui
-        .as_mut()
-        .and_then(|m| m.mode.as_mut())
-        .filter(|s| **s != k && (1..=2).contains(&k))
-    else {
-        return false;
-    };
+    let Some(sel) = w.merits_ui.as_mut().and_then(|m| m.mode.as_mut()).filter(|s| **s != k && (1..=2).contains(&k)) else { return false };
     *sel = k;
     true
 }
 
 pub(super) fn set_row(w: &mut World, k: usize) -> bool {
-    let Some(l) = w
-        .merits_ui
-        .as_mut()
-        .and_then(|m| m.list.as_mut())
-        .filter(|l| l.cursor != k && k < l.rows.len())
-    else {
-        return false;
-    };
+    let Some(l) = w.merits_ui.as_mut().and_then(|m| m.list.as_mut()).filter(|l| l.cursor != k && k < l.rows.len()) else { return false };
     l.cursor = k;
     l.top = l.top.min(k).max((k + 1).saturating_sub(ROWS));
     true
 }
 
 pub(super) fn set_edit(w: &mut World, k: u16) -> bool {
-    let Some(e) = w
-        .merits_ui
-        .as_mut()
-        .and_then(|m| m.edit.as_mut())
-        .filter(|e| e.sel != k && e.sortyn.is_none())
-    else {
-        return false;
-    };
+    let Some(e) = w.merits_ui.as_mut().and_then(|m| m.edit.as_mut()).filter(|e| e.sel != k && e.sortyn.is_none()) else { return false };
     e.sel = k;
     true
 }
 
 pub(super) fn set_sortyn(w: &mut World, yes: bool) -> bool {
-    let Some(s) = w
-        .merits_ui
-        .as_mut()
-        .and_then(|m| m.edit.as_mut())
-        .and_then(|e| e.sortyn.as_mut())
-        .filter(|s| **s != yes)
-    else {
-        return false;
-    };
+    let Some(s) = w.merits_ui.as_mut().and_then(|m| m.edit.as_mut()).and_then(|e| e.sortyn.as_mut()).filter(|s| **s != yes) else { return false };
     *s = yes;
     true
 }
 
 /// Mouse: hover moves the cursor over the focused window's rows, a click is Enter, a right click Escape *(inf: the
 /// generic window and list events)*.
-pub fn pointer(
-    w: &mut World,
-    gu: &GameUi,
-    sw: f32,
-    sh: f32,
-    p: (f32, f32),
-    moved: bool,
-    clicked: bool,
-    right: bool,
-) {
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
     // The modern layer draws them and takes their mouse.
     if w.modern {
         return;
     }
-    let Some(m) = w.merits_ui.as_ref() else {
-        return;
-    };
+    let Some(m) = w.merits_ui.as_ref() else { return };
     if w.confirm.is_some() || m.edit.as_ref().is_some_and(|e| e.sortyn.is_some()) {
         return;
     }
-    let focus = if m.edit.is_some() {
-        EDIT
-    } else if m.list.is_some() {
-        LIST
-    } else if m.mode.is_some() {
-        MODE
-    } else {
-        MENU
-    };
+    let focus = if m.edit.is_some() { EDIT } else if m.list.is_some() { LIST } else if m.mode.is_some() { MODE } else { MENU };
     let inside = |r: [f32; 4]| p.0 >= r[0] && p.0 < r[0] + r[2] && p.1 >= r[1] && p.1 < r[1] + r[3];
     if right {
         if gu.window_rect(focus, sw, sh).is_some_and(inside) {
@@ -765,18 +573,9 @@ pub fn pointer(
         }
         return;
     }
-    let Some((wx, wy)) = gu.window_xy(focus, sw, sh) else {
-        return;
-    };
-    let Some(layout) = gu.layout(focus) else {
-        return;
-    };
-    let hit = layout
-        .elements
-        .iter()
-        .skip(1)
-        .find(|e| inside([wx + e.x as f32, wy + e.y as f32, e.w as f32, e.h as f32]))
-        .map(|e| e.id);
+    let Some((wx, wy)) = gu.window_xy(focus, sw, sh) else { return };
+    let Some(layout) = gu.layout(focus) else { return };
+    let hit = layout.elements.iter().skip(1).find(|e| inside([wx + e.x as f32, wy + e.y as f32, e.w as f32, e.h as f32])).map(|e| e.id);
     let Some(id) = hit else { return };
     gu.hover.set(true);
     let cur = match focus {
@@ -785,21 +584,14 @@ pub fn pointer(
         MODE => m.mode.unwrap_or(0),
         _ => m.menu,
     };
-    if focus == LIST
-        && m.list
-            .as_ref()
-            .is_some_and(|l| l.top + id as usize > l.rows.len())
-    {
+    if focus == LIST && m.list.as_ref().is_some_and(|l| l.top + id as usize > l.rows.len()) {
         return;
     }
     if (moved || clicked) && id != cur {
         if let Some(m) = w.merits_ui.as_mut() {
             match focus {
                 EDIT => m.edit.iter_mut().for_each(|e| e.sel = id),
-                LIST => m
-                    .list
-                    .iter_mut()
-                    .for_each(|l| l.cursor = l.top + id as usize - 1),
+                LIST => m.list.iter_mut().for_each(|l| l.cursor = l.top + id as usize - 1),
                 MODE => m.mode = Some(id),
                 _ => m.menu = id,
             }
@@ -812,14 +604,7 @@ pub fn pointer(
 
 /// The list's bar (FUN_101f6c70) while the list has the focus.
 pub(super) fn bar(w: &mut World, m: super::scrollbar::Msg) -> bool {
-    let Some(l) = w
-        .merits_ui
-        .as_mut()
-        .filter(|m| m.edit.is_none())
-        .and_then(|m| m.list.as_mut())
-    else {
-        return false;
-    };
+    let Some(l) = w.merits_ui.as_mut().filter(|m| m.edit.is_none()).and_then(|m| m.list.as_mut()) else { return false };
     super::scrollbar::rows_abs(m, &mut l.top, &mut l.cursor, l.rows.len(), ROWS)
 }
 
@@ -854,13 +639,7 @@ fn right(gu: &mut GameUi, s: &str, x: f32, y: f32, tint: u32) -> f32 {
 /// frame 16 per line + 24 high, at least the layout's 56, growing down.
 pub fn bluehelp(gu: &mut GameUi, sw: f32, sh: f32, name: &str, desc: &str) -> Option<[f32; 4]> {
     let [x, y, fw, fh] = gu.window_rect(HELP, sw, sh)?;
-    let lines = if desc.is_empty() {
-        Vec::new()
-    } else {
-        desc.split('\n')
-            .flat_map(|l| gu.wrap(l, fw - 24.0))
-            .collect()
-    };
+    let lines = if desc.is_empty() { Vec::new() } else { desc.split('\n').flat_map(|l| gu.wrap(l, fw - 24.0)).collect() };
     let h = (16.0 * lines.len() as f32 + 24.0).max(fh);
     if !gu.window_sized(HELP, x, y, fw, h) {
         return None;
@@ -869,29 +648,14 @@ pub fn bluehelp(gu: &mut GameUi, sw: f32, sh: f32, name: &str, desc: &str) -> Op
         gu.text(name, x + 4.0, y + 4.0, 0, WHITE.to_le_bytes());
     }
     for (i, l) in lines.iter().enumerate() {
-        gu.text(
-            l,
-            x + 20.0,
-            y + 20.0 + 16.0 * i as f32,
-            0,
-            WHITE.to_le_bytes(),
-        );
+        gu.text(l, x + 20.0, y + 20.0 + 16.0 * i as f32, 0, WHITE.to_le_bytes());
     }
     Some([x, y, fw, h])
 }
 
 /// A plain Yes / No window (sortyn) with the cursor on Yes or No.
 pub fn sortyn(gu: &mut GameUi, sw: f32, sh: f32, yes: bool) -> Option<[f32; 4]> {
-    gu.lobby_window_off(
-        SORTYN,
-        sw,
-        sh,
-        (0.0, 0.0),
-        Some(if yes { 1 } else { 2 }),
-        true,
-        &[],
-    )
-    .map(|w| w.frame)
+    gu.lobby_window_off(SORTYN, sw, sh, (0.0, 0.0), Some(if yes { 1 } else { 2 }), true, &[]).map(|w| w.frame)
 }
 
 pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
@@ -900,9 +664,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         return rects;
     }
     let Some(m) = &w.merits_ui else { return rects };
-    let Some(t) = w.merit_tables.clone() else {
-        return rects;
-    };
+    let Some(t) = w.merit_tables.clone() else { return rects };
     let free = w.confirm.is_none();
     // levmerit (FUN_10149f20): limit points / 10000 at (x1 - 8, 0x1c), merit points / most at (x1 - 8, 0x44).
     if let Some(win) = gu.lobby_window_off(LEV, sw, sh, (0.0, 0.0), None, false, &[]) {
@@ -913,33 +675,15 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
             None => right(gu, "----/10000", x1, y + 28.0, WHITE),
         };
         if let Some((n, max)) = points(w) {
-            right(
-                gu,
-                &format!("{n}/{max} P"),
-                x1,
-                y + 68.0,
-                if n >= max as u16 { BLUE } else { WHITE },
-            );
+            right(gu, &format!("{n}/{max} P"), x1, y + 68.0, if n >= max as u16 { BLUE } else { WHITE });
         }
         rects.push(win.frame);
     }
     // merit3 in merit1's place, or merit2, or merit1.
     if let Some(e) = &m.edit {
         let (raise, lower) = cursor_merit(w).map_or((false, false), |(i, g)| can(w, i, g));
-        let off: Vec<u16> = [(1u16, raise), (2, lower)]
-            .into_iter()
-            .filter(|c| !c.1)
-            .map(|c| c.0)
-            .collect();
-        if let Some(win) = gu.lobby_window_off(
-            EDIT,
-            sw,
-            sh,
-            (0.0, 0.0),
-            Some(e.sel),
-            free && e.sortyn.is_none(),
-            &[],
-        ) {
+        let off: Vec<u16> = [(1u16, raise), (2, lower)].into_iter().filter(|c| !c.1).map(|c| c.0).collect();
+        if let Some(win) = gu.lobby_window_off(EDIT, sw, sh, (0.0, 0.0), Some(e.sel), free && e.sortyn.is_none(), &[]) {
             gu.disabled_children(EDIT, win.frame[0], win.frame[1], &off, Some(e.sel));
             rects.push(win.frame);
         }
@@ -954,24 +698,14 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         }
     } else {
         let off: Vec<u16> = if monstrosity(w) { vec![2] } else { Vec::new() };
-        if let Some(win) = gu.lobby_window_off(
-            MENU,
-            sw,
-            sh,
-            (0.0, 0.0),
-            Some(m.menu),
-            free && m.list.is_none(),
-            &[],
-        ) {
+        if let Some(win) = gu.lobby_window_off(MENU, sw, sh, (0.0, 0.0), Some(m.menu), free && m.list.is_none(), &[]) {
             gu.disabled_children(MENU, win.frame[0], win.frame[1], &off, Some(m.menu));
             rects.push(win.frame);
         }
     }
     let Some(l) = &m.list else { return rects };
     let focused = free && m.edit.is_none();
-    let hide: Vec<u16> = (1..=ROWS as u16)
-        .filter(|&k| l.top + k as usize > l.rows.len())
-        .collect();
+    let hide: Vec<u16> = (1..=ROWS as u16).filter(|&k| l.top + k as usize > l.rows.len()).collect();
     let sel = (!l.rows.is_empty()).then(|| (l.cursor - l.top + 1) as u16);
     if let Some(win) = gu.lobby_window_off(LIST, sw, sh, (0.0, 0.0), sel, focused, &hide) {
         let [x0, y0, fw, fh] = win.frame;
@@ -981,49 +715,19 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
             match *row {
                 Row::Cat { pos, .. } => {
                     let name = t.at(pos).map_or(String::new(), |c| t.name(c.name));
-                    gu.text(
-                        &name,
-                        x0 + COLS[1],
-                        y + 2.0,
-                        0,
-                        if on { CURSOR } else { WHITE }.to_le_bytes(),
-                    );
+                    gu.text(&name, x0 + COLS[1], y + 2.0, 0, if on { CURSOR } else { WHITE }.to_le_bytes());
                 }
                 Row::Header { group, cat } => {
-                    gu.sprite(
-                        "menu    windowps",
-                        if group == 0 { 592 } else { 593 },
-                        x0 + COLS[0],
-                        y + 2.0,
-                        WHITE,
-                    );
-                    right(
-                        gu,
-                        &cap(w, &t, cat).to_string(),
-                        x0 + COLS[7] - 2.0,
-                        y + 4.0,
-                        WHITE,
-                    );
+                    gu.sprite("menu    windowps", if group == 0 { 592 } else { 593 }, x0 + COLS[0], y + 2.0, WHITE);
+                    right(gu, &cap(w, &t, cat).to_string(), x0 + COLS[7] - 2.0, y + 4.0, WHITE);
                 }
                 Row::Merit { index, group } => {
                     let (c, lc, cost) = colours(w, &t, index, group);
-                    gu.text(
-                        &t.name(index),
-                        x0 + COLS[1],
-                        y + 2.0,
-                        0,
-                        if on { CURSOR } else { c }.to_le_bytes(),
-                    );
+                    gu.text(&t.name(index), x0 + COLS[1], y + 2.0, 0, if on { CURSOR } else { c }.to_le_bytes());
                     let (next, level) = w.merit_list.get(&index).copied().unwrap_or((0, 0));
                     right(gu, &level.to_string(), x0 + COLS[4] - 2.0, y + 4.0, lc);
                     if let Some(cc) = cost.filter(|_| next != 0) {
-                        gu.shape_text(
-                            &gu.lobby_msg(0xc, 0x5a, "NEXT"),
-                            x0 + COLS[5],
-                            y + 4.0,
-                            cc,
-                            false,
-                        );
+                        gu.shape_text(&gu.lobby_msg(0xc, 0x5a, "NEXT"), x0 + COLS[5], y + 4.0, cc, false);
                         right(gu, &format!("{next} P"), x0 + COLS[6] - 2.0, y + 4.0, cc);
                     }
                 }
@@ -1032,15 +736,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         if l.rows.len() > ROWS {
             gu.scroll_bar(x0 + fw - 8.0, y0, fh, l.rows.len(), ROWS, l.top);
             if focused {
-                gu.bar_site(
-                    super::scrollbar::Owner::Points,
-                    x0 + fw - 8.0,
-                    y0,
-                    fh,
-                    l.rows.len(),
-                    ROWS,
-                    l.top,
-                );
+                gu.bar_site(super::scrollbar::Owner::Points, x0 + fw - 8.0, y0, fh, l.rows.len(), ROWS, l.top);
             }
         }
         rects.push(win.frame);
@@ -1056,13 +752,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
             let total = |gu: &mut GameUi, cat: u8, x: f32, tint: u32| {
                 let (s, c) = (spent(w, cat), cap(w, &t, cat) as u32);
                 let x = right(gu, &format!("/{c}"), x, y + 40.0, tint);
-                right(
-                    gu,
-                    &s.to_string(),
-                    x,
-                    y + 40.0,
-                    if s >= c { BLUE } else { tint },
-                );
+                right(gu, &s.to_string(), x, y + 40.0, if s >= c { BLUE } else { tint });
             };
             total(gu, id, x1, WHITE);
             if id >= 6 && id != 0x1a {

@@ -23,9 +23,7 @@ pub fn is_chair(status: u8) -> bool {
 
 /// FUN_100c5280: the chair's model (13 in the install: chairs 0..12, statuses 0x3f..0x4b).
 pub fn file(status: u8) -> Option<u32> {
-    (0x3f..=0x4b)
-        .contains(&status)
-        .then(|| 100_507 + (status - 0x3f) as u32)
+    (0x3f..=0x4b).contains(&status).then(|| 100_507 + (status - 0x3f) as u32)
 }
 
 /// FUN_1008b460's chair states: 0x17 (sitting down), 0x18 (seated), 0x19 / 0x1a (standing up, until the hold ends).
@@ -46,43 +44,28 @@ pub struct Seat {
 }
 
 fn status_of(w: &World, id: u32) -> u8 {
-    if id == w.my_id {
-        w.my_motion.status
-    } else {
-        w.entities.get(&id).map_or(0, |e| e.motion.status)
-    }
+    if id == w.my_id { w.my_motion.status } else { w.entities.get(&id).map_or(0, |e| e.motion.status) }
 }
 
 /// FUN_1008f740's gate: ActIndex <= 0x6ff and neither NpcPetFlag nor Flags3 bit 25 (every PC in practice).
 fn eligible(w: &World, id: u32) -> bool {
-    id == w.my_id
-        || w.entities.get(&id).is_some_and(|e| {
-            e.kind == EntityKind::Player && e.index <= 0x6ff && !e.marks.npc_pet && !e.marks.b2b1
-        })
+    id == w.my_id || w.entities.get(&id).is_some_and(|e| e.kind == EntityKind::Player && e.index <= 0x6ff && !e.marks.npc_pet && !e.marks.b2b1)
 }
 
 /// FUN_100d2bc0(4): the chair motion files (`ci0` / `ci1` / `ci2`, `chi0` / `chi2`) while the sitter has a seat.
 pub fn files(w: &World, id: u32, pc: &PcMotion) -> Vec<u32> {
-    if w.seats.contains_key(&id) {
-        super::ride::motion_files(pc, 4)
-    } else {
-        Vec::new()
-    }
+    if w.seats.contains_key(&id) { super::ride::motion_files(pc, 4) } else { Vec::new() }
 }
 
 /// The stand-up holds the new status (FUN_1008e9a0 waits for the machine).
 pub fn holding(w: &World, id: u32) -> bool {
-    w.seats
-        .get(&id)
-        .is_some_and(|s| matches!(s.phase, Phase::Rising(t) if Instant::now() < t))
+    w.seats.get(&id).is_some_and(|s| matches!(s.phase, Phase::Rising(t) if Instant::now() < t))
 }
 
 /// A status change for a sitter: one that leaves the chair starts the stand-up (state 0x19) and is held until it
 /// ends. True while it holds.
 pub fn rise(w: &mut World, id: u32, status: u8) -> bool {
-    let Some(seat) = w.seats.get(&id).copied() else {
-        return false;
-    };
+    let Some(seat) = w.seats.get(&id).copied() else { return false };
     if is_chair(status) {
         return false;
     }
@@ -97,19 +80,14 @@ pub fn rise(w: &mut World, id: u32, status: u8) -> bool {
 
 /// LAB_1008c2b5: `chi2` on the sitter and the chair, the weapons shown again (wep2 hidden).
 pub fn start_rise(w: &mut World, id: u32) {
-    let Some(seat) = w.seats.get_mut(&id) else {
-        return;
-    };
+    let Some(seat) = w.seats.get_mut(&id) else { return };
     if matches!(seat.phase, Phase::Rising(_)) {
         return;
     }
     seat.phase = Phase::Rising(Instant::now() + RISE);
     let chi2 = u32::from_le_bytes(*b"chi2");
     w.effects.on_scheduler(id, id, chi2);
-    if w.actors
-        .get(&(CHAIR | id))
-        .is_some_and(|a| a.character.is_some())
-    {
+    if w.actors.get(&(CHAIR | id)).is_some_and(|a| a.character.is_some()) {
         w.effects.on_scheduler(CHAIR | id, CHAIR | id, chi2);
     }
     show_weapons(w, id);
@@ -142,33 +120,19 @@ fn axes(w: &World, id: u32) -> Option<Vec3> {
 /// Per frame, before the motion files: seats for new sitters, each chair's model, `chi0` once the files are in, the
 /// chair's `init` and scale; a finished stand-up removes the chair (ours then sends one more "/sitchair off").
 pub fn update(w: &mut World) {
-    let mut sitters: Vec<u32> = w
-        .entities
-        .iter()
-        .filter(|(id, e)| **id != w.my_id && is_chair(e.motion.status))
-        .map(|(id, _)| *id)
-        .collect();
+    let mut sitters: Vec<u32> = w.entities.iter().filter(|(id, e)| **id != w.my_id && is_chair(e.motion.status)).map(|(id, _)| *id).collect();
     if is_chair(w.my_motion.status) {
         sitters.push(w.my_id);
     }
     for id in sitters {
         if !w.seats.contains_key(&id) && eligible(w, id) {
-            w.seats.insert(
-                id,
-                Seat {
-                    phase: Phase::Down,
-                    status: status_of(w, id),
-                    init_done: false,
-                },
-            );
+            w.seats.insert(id, Seat { phase: Phase::Down, status: status_of(w, id), init_done: false });
         }
     }
     let now = Instant::now();
     let ids: Vec<u32> = w.seats.keys().copied().collect();
     for id in ids {
-        let Some(mut seat) = w.seats.get(&id).copied() else {
-            continue;
-        };
+        let Some(mut seat) = w.seats.get(&id).copied() else { continue };
         let status = status_of(w, id);
         let chair = CHAIR | id;
         match seat.phase {
@@ -178,10 +142,7 @@ pub fn update(w: &mut World) {
                 if id == w.my_id {
                     let mut b = vec![0u8; 8];
                     b[0..4].copy_from_slice(&2u32.to_le_bytes());
-                    let _ = w
-                        .net
-                        .commands
-                        .send(super::net::NetCommand::Packet { id: 0x113, body: b });
+                    let _ = w.net.commands.send(super::net::NetCommand::Packet { id: 0x113, body: b });
                 }
                 continue;
             }
@@ -199,11 +160,7 @@ pub fn update(w: &mut World) {
             }
             _ => {}
         }
-        let Some(sitter) = w
-            .actors
-            .get(&id)
-            .filter(|a| a.character.as_ref().is_some_and(|c| c.pc.is_some()))
-        else {
+        let Some(sitter) = w.actors.get(&id).filter(|a| a.character.as_ref().is_some_and(|c| c.pc.is_some())) else {
             w.seats.insert(id, seat);
             continue;
         };
@@ -217,11 +174,7 @@ pub fn update(w: &mut World) {
         }
         if let Some(f) = file(seat.status) {
             let src = Source::File(f);
-            if w.actors
-                .get(&chair)
-                .is_none_or(|a| a.key != format!("{src:?}"))
-                && !w.event_looks.iter().any(|(i, _)| *i == chair)
-            {
+            if w.actors.get(&chair).is_none_or(|a| a.key != format!("{src:?}")) && !w.event_looks.iter().any(|(i, _)| *i == chair) {
                 w.event_looks.push((chair, src));
             }
         }
@@ -232,8 +185,7 @@ pub fn update(w: &mut World) {
         }
         let chair_in = w.actors.get(&chair).is_some_and(|a| a.character.is_some());
         if chair_in && !seat.init_done {
-            w.effects
-                .on_scheduler(chair, chair, u32::from_le_bytes(*b"init"));
+            w.effects.on_scheduler(chair, chair, u32::from_le_bytes(*b"init"));
             seat.init_done = true;
         }
         let ax = axes(w, id);
@@ -242,12 +194,7 @@ pub fn update(w: &mut World) {
         }
         w.seats.insert(id, seat);
     }
-    let stray: Vec<u32> = w
-        .actors
-        .keys()
-        .filter(|id| **id & CHAIR != 0 && !w.seats.contains_key(&(**id & !CHAIR)))
-        .copied()
-        .collect();
+    let stray: Vec<u32> = w.actors.keys().filter(|id| **id & CHAIR != 0 && !w.seats.contains_key(&(**id & !CHAIR))).copied().collect();
     for id in stray {
         w.actors.remove(&id);
         w.effects.forget_actor(id);
@@ -269,12 +216,7 @@ pub fn command(w: &mut World, arg: Option<&str>) -> Option<(u32, u32)> {
     let (mode, chair) = match arg {
         Some("on") => (1, 0),
         Some("off") => (2, 0),
-        a => (
-            0,
-            a.and_then(|a| a.parse::<u32>().ok())
-                .filter(|n| *n <= 20)
-                .unwrap_or(0),
-        ),
+        a => (0, a.and_then(|a| a.parse::<u32>().ok()).filter(|n| *n <= 20).unwrap_or(0)),
     };
     let me = w.my_id;
     let seated = is_chair(w.my_motion.status);

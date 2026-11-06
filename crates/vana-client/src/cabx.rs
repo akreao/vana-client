@@ -77,10 +77,7 @@ impl<R: Read> FolderStream<'_, R> {
             return Ok(true);
         }
         if data.len() < 2 || &data[..2] != b"CK" {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "bad MSZIP block signature",
-            ));
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "bad MSZIP block signature"));
         }
         // Each MSZIP block is its own deflate stream seeded with the previous 32 KiB;
         // a stored block replays that history into the window.
@@ -101,10 +98,7 @@ impl<R: Read> FolderStream<'_, R> {
             .decompress_vec(&data[2..], &mut out, flate2::FlushDecompress::Finish)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         if out.len() != unpacked {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "MSZIP block size mismatch",
-            ));
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "MSZIP block size mismatch"));
         }
         let keep = out.len().min(0x8000);
         let total = self.dict.len() + keep;
@@ -143,12 +137,7 @@ pub fn extract_all<R: Read + Seek>(
     if &hdr[..4] != b"MSCF" {
         bail!("not a cabinet");
     }
-    let (files_offset, n_folders, n_files, flags) = (
-        u32le(&hdr, 16),
-        u16le(&hdr, 26),
-        u16le(&hdr, 28),
-        u16le(&hdr, 30),
-    );
+    let (files_offset, n_folders, n_files, flags) = (u32le(&hdr, 16), u16le(&hdr, 26), u16le(&hdr, 28), u16le(&hdr, 30));
     let (mut folder_reserve, mut data_reserve) = (0usize, 0usize);
     if flags & 4 != 0 {
         let mut res = [0u8; 4];
@@ -164,11 +153,7 @@ pub fn extract_all<R: Read + Seek>(
     for _ in 0..n_folders {
         let mut f = vec![0u8; 8 + folder_reserve];
         r.read_exact(&mut f)?;
-        folders.push(Folder {
-            offset: u32le(&f, 0),
-            blocks: u16le(&f, 4),
-            compression: u16le(&f, 6) & 0x0f,
-        });
+        folders.push(Folder { offset: u32le(&f, 0), blocks: u16le(&f, 4), compression: u16le(&f, 6) & 0x0f });
     }
     if let Some(f) = folders.iter().find(|f| f.compression > 1) {
         bail!("unsupported cabinet compression type {}", f.compression);
@@ -179,21 +164,13 @@ pub fn extract_all<R: Read + Seek>(
         let mut f = [0u8; 16];
         r.read_exact(&mut f)?;
         let name = read_cstr(&mut r)?;
-        entries.push(Entry {
-            name,
-            size: u32le(&f, 0),
-            folder_offset: u32le(&f, 4),
-            folder: u16le(&f, 8),
-        });
+        entries.push(Entry { name, size: u32le(&f, 0), folder_offset: u32le(&f, 4), folder: u16le(&f, 8) });
     }
 
     let mut done = Vec::new();
     let mut buf = vec![0u8; 1 << 16];
     for (index, folder) in folders.iter().enumerate() {
-        let mut files: Vec<&Entry> = entries
-            .iter()
-            .filter(|e| e.folder as usize == index)
-            .collect();
+        let mut files: Vec<&Entry> = entries.iter().filter(|e| e.folder as usize == index).collect();
         files.sort_by_key(|e| e.folder_offset);
         r.seek(SeekFrom::Start(folder.offset as u64))?;
         let mut stream = FolderStream {
@@ -208,8 +185,7 @@ pub fn extract_all<R: Read + Seek>(
         };
         let mut at = 0u64;
         // WiX stores identical files once; later entries point back at the same bytes.
-        let mut stored: std::collections::HashMap<(u32, u32), (PathBuf, [u8; 16])> =
-            Default::default();
+        let mut stored: std::collections::HashMap<(u32, u32), (PathBuf, [u8; 16])> = Default::default();
         for e in files {
             if (e.folder_offset as u64) < at {
                 let Some((src, md5)) = stored.get(&(e.folder_offset, e.size)).cloned() else {
@@ -221,11 +197,7 @@ pub fn extract_all<R: Read + Seek>(
                     }
                     fs::copy(&src, &path)?;
                     on_bytes(e.size as u64);
-                    done.push(Extracted {
-                        name: e.name.clone(),
-                        path,
-                        md5,
-                    });
+                    done.push(Extracted { name: e.name.clone(), path, md5 });
                 }
                 continue;
             }
@@ -255,19 +227,11 @@ pub fn extract_all<R: Read + Seek>(
             }
             out.flush()?;
             if written != e.size as u64 {
-                bail!(
-                    "{}: cabinet ended after {written} of {} bytes",
-                    e.name,
-                    e.size
-                );
+                bail!("{}: cabinet ended after {written} of {} bytes", e.name, e.size);
             }
             let md5: [u8; 16] = md5.finalize().into();
             stored.insert((e.folder_offset, e.size), (path.clone(), md5));
-            done.push(Extracted {
-                name: e.name.clone(),
-                path,
-                md5,
-            });
+            done.push(Extracted { name: e.name.clone(), path, md5 });
         }
     }
     Ok(done)

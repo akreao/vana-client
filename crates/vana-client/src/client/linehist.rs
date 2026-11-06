@@ -62,11 +62,7 @@ impl LineHistory {
         }
         self.store(current);
         self.pos -= 1;
-        Some(if self.pos == 0 {
-            self.working.clone()
-        } else {
-            self.sent[self.pos - 1].clone()
-        })
+        Some(if self.pos == 0 { self.working.clone() } else { self.sent[self.pos - 1].clone() })
     }
 
     /// The working line is always kept; a recalled line only when it was edited.

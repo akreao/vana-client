@@ -23,9 +23,7 @@ pub struct Parts {
 impl Parts {
     pub fn place_of(&self, id: u32) -> Option<(Vec3, f32)> {
         let k = (id & !BORDER) as usize;
-        (id & BORDER != 0 && k < PARTS)
-            .then(|| self.place[k])
-            .flatten()
+        (id & BORDER != 0 && k < PARTS).then(|| self.place[k]).flatten()
     }
 }
 
@@ -38,8 +36,7 @@ fn file(blue: bool) -> u32 {
 pub fn remove(w: &mut World) {
     for k in 0..PARTS as u32 {
         let id = BORDER | k;
-        w.effects
-            .stop_actor_scheduler(id, u32::from_le_bytes(*b"lp00"));
+        w.effects.stop_actor_scheduler(id, u32::from_le_bytes(*b"lp00"));
         w.effects.forget_actor(id);
         w.actors.remove(&id);
     }
@@ -79,28 +76,16 @@ pub fn update(w: &mut World) {
     }
     if w.border.file.is_none() {
         let f = file(b.blue);
-        log::info!(
-            "border: radius {} at ({}, {}), file {f}",
-            b.radius,
-            b.x,
-            b.z
-        );
+        log::info!("border: radius {} at ({}, {}), file {f}", b.radius, b.x, b.z);
         for k in 0..PARTS as u32 {
             w.event_looks.push((BORDER | k, Source::File(f)));
         }
         w.border.file = Some(f);
     }
-    let ready: Vec<bool> = (0..PARTS as u32)
-        .map(|k| {
-            w.actors
-                .get(&(BORDER | k))
-                .is_some_and(|a| a.character.is_some())
-        })
-        .collect();
+    let ready: Vec<bool> = (0..PARTS as u32).map(|k| w.actors.get(&(BORDER | k)).is_some_and(|a| a.character.is_some())).collect();
     for (k, &r) in ready.iter().enumerate() {
         if r && !w.border.init[k] {
-            w.effects
-                .on_scheduler_quiet(BORDER | k as u32, u32::from_le_bytes(*b"init"));
+            w.effects.on_scheduler_quiet(BORDER | k as u32, u32::from_le_bytes(*b"init"));
             w.border.init[k] = true;
         }
     }
@@ -113,20 +98,14 @@ pub fn update(w: &mut World) {
     let d = Vec3::new(me.x - b.x, 0.0, me.z - b.z).length();
     let near = (b.radius - d).abs() < b.render;
     if near != w.border.near[0] {
-        log::debug!(
-            "border: {} at {me:?}, parts {:?} .. {:?}",
-            if near { "efon" } else { "efof" },
-            places[0],
-            places[7]
-        );
+        log::debug!("border: {} at {me:?}, parts {:?} .. {:?}", if near { "efon" } else { "efof" }, places[0], places[7]);
     }
     for (k, p) in places.into_iter().enumerate() {
         w.border.place[k] = Some(p);
         if near != w.border.near[k] {
             w.border.near[k] = near;
             let name = if near { *b"efon" } else { *b"efof" };
-            w.effects
-                .on_scheduler_quiet(BORDER | k as u32, u32::from_le_bytes(name));
+            w.effects.on_scheduler_quiet(BORDER | k as u32, u32::from_le_bytes(name));
         }
     }
 }
@@ -138,18 +117,9 @@ mod tests {
     /// The camera south of the player, both north of the centre: the arc centres on the north (+z) side.
     #[test]
     fn arc_faces_the_view() {
-        let p = arc(
-            (0.0, 0.0),
-            25.0,
-            25.0,
-            Vec3::new(0.0, -5.0, 10.0),
-            Vec3::new(0.0, 0.0, 20.0),
-        );
+        let p = arc((0.0, 0.0), 25.0, 25.0, Vec3::new(0.0, -5.0, 10.0), Vec3::new(0.0, 0.0, 20.0));
         // q = (0, 45) -> bearing 0, start -60: parts at -60..45 degrees.
-        assert!(
-            (p[0].1 + 60.0f32.to_radians()).abs() < 1e-3
-                && (p[7].1 - 45.0f32.to_radians()).abs() < 1e-3
-        );
+        assert!((p[0].1 + 60.0f32.to_radians()).abs() < 1e-3 && (p[7].1 - 45.0f32.to_radians()).abs() < 1e-3);
         assert!((p[4].0 - Vec3::new(0.0, 0.0, 25.0)).length() < 1e-3);
         assert_eq!(p[4].0.y, 0.0);
     }

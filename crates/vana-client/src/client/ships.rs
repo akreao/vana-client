@@ -61,35 +61,25 @@ pub type Job = (u32, u64, u32);
 /// FUN_100c41f0: the model file. State 0x37 at creation takes the furniture table (FUN_100c51c0(2, id): the props),
 /// else id + 0x791c.
 fn model_file(id: u32, state: u8) -> Option<u32> {
-    if state == 0x37 {
-        crate::dat::furniture::model_file(id as u16)
-    } else {
-        Some(id + 0x791c)
-    }
+    if state == 0x37 { crate::dat::furniture::model_file(id as u16) } else { Some(id + 0x791c) }
 }
 
 /// The state in force (all.c 110607): the server's, or the event's (+0x174, ops 0x4c / 0x4d / 0x4f / 0x8e / 0x8f)
 /// while an event runs.
 fn in_force(w: &World, id: u32) -> Option<u8> {
     let e = w.entities.get(&id)?;
-    let bound = super::event::active(w)
-        .then(|| w.doors.event.get(&id).copied())
-        .flatten();
+    let bound = super::event::active(w).then(|| w.doors.event.get(&id).copied()).flatten();
     Some(bound.unwrap_or(e.motion.status))
 }
 
 /// DAT_1032d42c: states 0x12..0x19 name `seq0`..`seq7`; the others no sequence.
 fn sequence(state: u8) -> Option<u32> {
-    (0x12..=0x19)
-        .contains(&state)
-        .then(|| u32::from_le_bytes([b's', b'e', b'q', b'0' + state - 0x12]))
+    (0x12..=0x19).contains(&state).then(|| u32::from_le_bytes([b's', b'e', b'q', b'0' + state - 0x12]))
 }
 
 /// FUN_10097a80: `elapsed = now - start` in ticks (start 0: now); under 600 from the first op, else caught up.
 fn start_seq(w: &mut World, id: u32, start: u32) {
-    let Some(a) = w.ships.actors.get(&id) else {
-        return;
-    };
+    let Some(a) = w.ships.actors.get(&id) else { return };
     let Some(name) = sequence(a.state) else {
         w.effects.kill_sequence(id);
         return;
@@ -98,34 +88,18 @@ fn start_seq(w: &mut World, id: u32, start: u32) {
     let s = if start == 0 { now } else { start as i64 * 60 };
     let elapsed = now - s;
     let skip = if elapsed < 600 { 0.0 } else { elapsed as f32 };
-    log::debug!(
-        "ship {id:#x}: state {:#x} {}, elapsed {elapsed} ticks, skip {skip}",
-        a.state,
-        String::from_utf8_lossy(&name.to_le_bytes())
-    );
+    log::debug!("ship {id:#x}: state {:#x} {}, elapsed {elapsed} ticks, skip {skip}", a.state, String::from_utf8_lossy(&name.to_le_bytes()));
     w.effects.start_sequence(id, a.file, name, skip);
 }
 
 /// Per frame, after the net events and doors: models to load for new ship entities (and rebuilt ones), gone ones
 /// dropped, state changes played (FUN_1008c6c0 kind 5, quiet under event op 0xab 5).
 pub fn update(w: &mut World) -> Vec<Job> {
-    let gone: Vec<u32> = w
-        .ships
-        .actors
-        .keys()
-        .copied()
-        .filter(|id| {
-            w.entities
-                .get(id)
-                .is_none_or(|e| e.ship.is_none() || e.ship_rebuild)
-        })
-        .collect();
+    let gone: Vec<u32> = w.ships.actors.keys().copied().filter(|id| w.entities.get(id).is_none_or(|e| e.ship.is_none() || e.ship_rebuild)).collect();
     for id in gone {
         drop_actor(w, id);
     }
-    w.ships
-        .loading
-        .retain(|id, _| w.entities.get(id).is_some_and(|e| e.ship.is_some()));
+    w.ships.loading.retain(|id, _| w.entities.get(id).is_some_and(|e| e.ship.is_some()));
     let mut jobs = Vec::new();
     // *(inf: seen on the retail client, the call not traced)* A position update moves a ship's model once no path
     // drive holds it; one that came mid-drive waits for the drive's end. Mhaura's ferry turns from -0.062 to the dock
@@ -135,44 +109,24 @@ pub fn update(w: &mut World) -> Vec<Job> {
             a.held = true;
         }
     }
-    let free: Vec<u32> = w
-        .ships
-        .actors
-        .iter()
-        .filter(|(id, a)| a.held && !w.effects.driving(**id))
-        .map(|(id, _)| *id)
-        .collect();
+    let free: Vec<u32> = w.ships.actors.iter().filter(|(id, a)| a.held && !w.effects.driving(**id)).map(|(id, _)| *id).collect();
     for id in free {
-        let Some(e) = w.entities.get(&id) else {
-            continue;
-        };
+        let Some(e) = w.entities.get(&id) else { continue };
         let (pos, yaw) = (e.pos, super::event::rad_of(e.dir));
         if let Some(a) = w.ships.actors.get_mut(&id) {
-            log::debug!(
-                "ship {id:#x}: server pose {pos} yaw {yaw:.3} (was {} yaw {:.3})",
-                a.pos,
-                a.rot.y
-            );
+            log::debug!("ship {id:#x}: server pose {pos} yaw {yaw:.3} (was {} yaw {:.3})", a.pos, a.rot.y);
             (a.pos, a.target, a.held) = (pos, Vec3::new(0.0, yaw, 0.0), false);
         }
     }
-    let ships: Vec<(u32, u32, u32)> = w
-        .entities
-        .iter()
-        .filter_map(|(id, e)| e.ship.map(|(ship, start)| (*id, ship, start)))
-        .collect();
+    let ships: Vec<(u32, u32, u32)> = w.entities.iter().filter_map(|(id, e)| e.ship.map(|(ship, start)| (*id, ship, start))).collect();
     for (id, ship, start) in ships {
         if let Some(e) = w.entities.get_mut(&id) {
             e.ship_rebuild = false;
         }
-        let Some(state) = in_force(w, id) else {
-            continue;
-        };
+        let Some(state) = in_force(w, id) else { continue };
         match w.ships.actors.get(&id).map(|a| a.state) {
             None if !w.ships.loading.contains_key(&id) => {
-                let Some(file) = model_file(ship, state) else {
-                    continue;
-                };
+                let Some(file) = model_file(ship, state) else { continue };
                 w.ships.seq += 1;
                 w.ships.loading.insert(id, w.ships.seq);
                 jobs.push((id, w.ships.seq, file));
@@ -213,16 +167,10 @@ pub fn create(w: &mut World, l: &Loaded) -> Option<Mat4> {
     let smooth = l.mesh == "fune" || l.mesh == "_fun";
     // Op 0xb6 0x11's new model: the actor stays as it is.
     if let Some(a) = w.ships.actors.get_mut(&l.entity) {
-        log::info!(
-            "ship {:#x}: model now file {}, mesh {}",
-            l.entity,
-            l.file,
-            l.mesh
-        );
+        log::info!("ship {:#x}: model now file {}, mesh {}", l.entity, l.file, l.mesh);
         (a.file, a.smooth, a.shown) = (l.file, smooth, false);
         if !smooth && l.init {
-            w.effects
-                .on_scheduler_quiet(l.entity, u32::from_le_bytes(*b"init"));
+            w.effects.on_scheduler_quiet(l.entity, u32::from_le_bytes(*b"init"));
         }
         return Some(a.matrix);
     }
@@ -234,34 +182,13 @@ pub fn create(w: &mut World, l: &Loaded) -> Option<Mat4> {
     }
     let (pos, rot) = (e.pos, Vec3::new(0.0, super::event::rad_of(e.dir), 0.0));
     let matrix = model_matrix(pos, rot);
-    log::info!(
-        "ship {:#x}: id {ship}, file {}, mesh {}, state {state:#x} at {pos} yaw {:.3}",
-        l.entity,
-        l.file,
-        l.mesh,
-        rot.y
-    );
-    w.ships.actors.insert(
-        l.entity,
-        ModelActor {
-            file: l.file,
-            pos,
-            rot,
-            target: rot,
-            smooth,
-            skip_draws: 4,
-            state,
-            matrix,
-            shown: false,
-            held: false,
-        },
-    );
+    log::info!("ship {:#x}: id {ship}, file {}, mesh {}, state {state:#x} at {pos} yaw {:.3}", l.entity, l.file, l.mesh, rot.y);
+    w.ships.actors.insert(l.entity, ModelActor { file: l.file, pos, rot, target: rot, smooth, skip_draws: 4, state, matrix, shown: false, held: false });
     let bound = super::event::active(w) && w.doors.event.contains_key(&l.entity);
     start_seq(w, l.entity, if bound { 0 } else { start });
     // A prop (the generic MMB branch) plays its file's 'init' once *(ours at creation; retail the second update)*.
     if !smooth && l.init {
-        w.effects
-            .on_scheduler_quiet(l.entity, u32::from_le_bytes(*b"init"));
+        w.effects.on_scheduler_quiet(l.entity, u32::from_le_bytes(*b"init"));
     }
     Some(matrix)
 }
@@ -269,9 +196,7 @@ pub fn create(w: &mut World, l: &Loaded) -> Option<Mat4> {
 /// Event op 0xb6 0x11 (FUN_1008a750 -> FUN_100c4380): a model actor's model becomes the furniture table's `model`
 /// (FUN_100c51c0(2, val)), picked by the same MMB rules; nothing on other actors (FUN_1002c8f0(XiModelActor)).
 pub fn swap_model(w: &mut World, id: u32, model: u16) {
-    let Some(file) = crate::dat::furniture::model_file(model) else {
-        return;
-    };
+    let Some(file) = crate::dat::furniture::model_file(model) else { return };
     if w.ships.actors.get(&id).is_none_or(|a| a.file == file) {
         return;
     }
@@ -283,10 +208,7 @@ pub fn swap_model(w: &mut World, id: u32, model: u16) {
 
 /// FUN_100c4b50: identity, then RotZ(z), RotY(y), RotX(x) post-multiplied, then the position: T * Rx * Ry * Rz.
 fn model_matrix(pos: Vec3, rot: Vec3) -> Mat4 {
-    Mat4::from_translation(pos)
-        * Mat4::from_rotation_x(rot.x)
-        * Mat4::from_rotation_y(rot.y)
-        * Mat4::from_rotation_z(rot.z)
+    Mat4::from_translation(pos) * Mat4::from_rotation_x(rot.x) * Mat4::from_rotation_y(rot.y) * Mat4::from_rotation_z(rot.z)
 }
 
 fn wrap_pi(a: f32) -> f32 {
@@ -296,11 +218,7 @@ fn wrap_pi(a: f32) -> f32 {
 /// After the effects tick (FUN_100c47f0): the drives' poses, the heading eased toward its target (1/8 a tick on
 /// `fune` / `_fun`, y the short way *(ours: continuous, the same at 60 fps)*), and whether it draws. Returns the
 /// actors whose matrix or visibility changed: (entity, matrix, shown).
-pub fn apply(
-    w: &mut World,
-    ticks: f32,
-    hidden: &std::collections::HashSet<u32>,
-) -> Vec<(u32, Mat4, bool)> {
+pub fn apply(w: &mut World, ticks: f32, hidden: &std::collections::HashSet<u32>) -> Vec<(u32, Mat4, bool)> {
     let poses = &w.effects.actor_poses;
     let mut out = Vec::new();
     for (id, a) in w.ships.actors.iter_mut() {
@@ -339,32 +257,13 @@ pub fn apply(
 }
 
 /// The ships for the effects: entity, model file, matrix, drawn rotation, hidden.
-pub fn fx_actors(
-    ships: &Ships,
-    entities: &HashMap<u32, super::Entity>,
-) -> Vec<(u32, u32, Mat4, Vec3, bool)> {
-    ships
-        .actors
-        .iter()
-        .map(|(id, a)| {
-            (
-                *id,
-                a.file,
-                a.matrix,
-                a.rot,
-                entities.get(id).is_none_or(|e| e.flags & 2 != 0),
-            )
-        })
-        .collect()
+pub fn fx_actors(ships: &Ships, entities: &HashMap<u32, super::Entity>) -> Vec<(u32, u32, Mat4, Vec3, bool)> {
+    ships.actors.iter().map(|(id, a)| (*id, a.file, a.matrix, a.rot, entities.get(id).is_none_or(|e| e.flags & 2 != 0))).collect()
 }
 
 /// FUN_100c4410's MMB: `fune`, else `_fun` (alpha tested), else the first.
 fn pick_mesh(names: &[String]) -> Option<usize> {
-    names
-        .iter()
-        .position(|n| n == "fune")
-        .or_else(|| names.iter().position(|n| n == "_fun"))
-        .or((!names.is_empty()).then_some(0))
+    names.iter().position(|n| n == "fune").or_else(|| names.iter().position(|n| n == "_fun")).or((!names.is_empty()).then_some(0))
 }
 
 /// The loader thread: the file's scene, its one MMB placed at the origin (the instance takes the actor's matrix).
@@ -376,31 +275,10 @@ pub fn load(index: &DatIndex, keys: &Keys, (entity, seq, file): Job) -> Result<L
     let mesh = scene.meshes.swap_remove(k);
     scene.meshes = vec![mesh];
     let name = scene.meshes[0].name.clone();
-    scene.placements = vec![Placement {
-        name: name.clone(),
-        translate: [0.0; 3],
-        rotate: [0.0; 3],
-        scale: [1.0; 3],
-        lights: [0; 4],
-        link: 0,
-        area: 0,
-        id: 0,
-        lod: [0.0; 2],
-        world: false,
-        own_dist: None,
-    }];
+    scene.placements = vec![Placement { name: name.clone(), translate: [0.0; 3], rotate: [0.0; 3], scale: [1.0; 3], lights: [0; 4], link: 0, area: 0, id: 0, lod: [0.0; 2], world: false, own_dist: None }];
     let geo = Arc::new(ZoneGeometry::build(&scene));
-    let init = crate::dat::chunks(&bytes)
-        .is_ok_and(|c| c.iter().any(|c| c.kind == 0x07 && c.name() == "init"));
-    Ok(Loaded {
-        entity,
-        seq,
-        file,
-        mesh: name,
-        init,
-        geo,
-        textures: std::mem::take(&mut scene.textures),
-    })
+    let init = crate::dat::chunks(&bytes).is_ok_and(|c| c.iter().any(|c| c.kind == 0x07 && c.name() == "init"));
+    Ok(Loaded { entity, seq, file, mesh: name, init, geo, textures: std::mem::take(&mut scene.textures) })
 }
 
 #[cfg(test)]
@@ -412,25 +290,14 @@ mod tests {
     #[test]
     fn files() {
         let cfg = crate::config::Config::load();
-        let Ok(index) = DatIndex::open(&cfg.ffxi_dir()) else {
-            return;
-        };
-        let Ok(dll) = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())) else {
-            return;
-        };
-        let Ok(keys) = Keys::from_ffximain(&dll) else {
-            return;
-        };
+        let Ok(index) = DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(dll) = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())) else { return };
+        let Ok(keys) = Keys::from_ffximain(&dll) else { return };
         for id in 0..22u32 {
             let file = model_file(id, 0x12).unwrap();
             assert_eq!(file, 31004 + id);
-            let l =
-                load(&index, &keys, (1, 1, file)).unwrap_or_else(|e| panic!("ship {id}: {e:#}"));
-            let want = if (7..=12).contains(&id) {
-                "_fun"
-            } else {
-                "fune"
-            };
+            let l = load(&index, &keys, (1, 1, file)).unwrap_or_else(|e| panic!("ship {id}: {e:#}"));
+            let want = if (7..=12).contains(&id) { "_fun" } else { "fune" };
             assert_eq!(l.mesh, want, "ship {id}");
         }
     }

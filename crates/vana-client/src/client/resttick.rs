@@ -22,10 +22,7 @@ pub struct RestTick {
 
 impl RestTick {
     pub fn new(learnt: Option<[f32; 3]>) -> Self {
-        Self {
-            learnt,
-            ..Default::default()
-        }
+        Self { learnt, ..Default::default() }
     }
 }
 
@@ -64,12 +61,7 @@ pub fn update(w: &mut World) {
         if r.learnt.is_none()
             && let Some(l) = learn(&r.rises)
         {
-            log::info!(
-                "rest ticks: first heal after {:.1} s, then every {:.1} s, looked at every {:.1} s",
-                l[0],
-                l[1],
-                l[2]
-            );
+            log::info!("rest ticks: first heal after {:.1} s, then every {:.1} s, looked at every {:.1} s", l[0], l[1], l[2]);
             (r.learnt, r.dirty) = (Some(l), true);
         }
     }
@@ -77,11 +69,7 @@ pub fn update(w: &mut World) {
 
 /// An interval near a whole second is that second (LSB's tick delays are whole seconds; the network's jitter is not).
 fn whole(t: f32) -> f32 {
-    if (t - t.round()).abs() < 0.3 {
-        t.round()
-    } else {
-        t
-    }
+    if (t - t.round()).abs() < 0.3 { t.round() } else { t }
 }
 
 /// [first heal, interval, look period] from a rest's rises: four or more, the interval their mean gap, the period the
@@ -101,14 +89,8 @@ fn learn(rises: &[f32]) -> Option<[f32; 3]> {
             n >= 1.0 && (g - n * p).abs() < 0.4
         })
     };
-    let p = (4..=(t * 2.0) as u32)
-        .rev()
-        .map(|q| q as f32 / 4.0)
-        .find(|&p| fits(p))
-        .unwrap_or(0.0);
-    gaps.iter()
-        .all(|g| (g - t).abs() <= p + 0.5)
-        .then_some([rises[0], t, p])
+    let p = (4..=(t * 2.0) as u32).rev().map(|q| q as f32 / 4.0).find(|&p| fits(p)).unwrap_or(0.0);
+    gaps.iter().all(|g| (g - t).abs() <= p + 0.5).then_some([rises[0], t, p])
 }
 
 /// While resting: timing, or the next tick and how far the wait since the last one is.
@@ -116,21 +98,10 @@ pub fn shown(w: &World) -> Option<Shown> {
     let r = &w.rest;
     let start = r.start?;
     let now = start.elapsed().as_secs_f32();
-    let Some(model) = r.learnt else {
-        return Some(Shown::Timing(now));
-    };
-    let grid = r.grid.filter(|g| g.0 == w.pos_zone).map(|(_, g)| {
-        if g >= start {
-            g.duration_since(start).as_secs_f32()
-        } else {
-            -start.duration_since(g).as_secs_f32()
-        }
-    });
+    let Some(model) = r.learnt else { return Some(Shown::Timing(now)) };
+    let grid = r.grid.filter(|g| g.0 == w.pos_zone).map(|(_, g)| if g >= start { g.duration_since(start).as_secs_f32() } else { -start.duration_since(g).as_secs_f32() });
     let (prev, next) = window(model, &r.rises, grid, now);
-    Some(Shown::Next(
-        ((now - prev) / (next - prev)).clamp(0.0, 1.0),
-        next - now,
-    ))
+    Some(Shown::Next(((now - prev) / (next - prev)).clamp(0.0, 1.0), next - now))
 }
 
 /// The ticks around `now` (seconds from the rest's start): the server's start bounded by the rises seen (each lands
@@ -196,19 +167,13 @@ mod tests {
         for k in 6..12 {
             let now = server(s, phase, k as f32 - 1.0) + 0.5;
             let (prev, next) = window(model, &rises, grid, now);
-            assert!(
-                (next - server(s, phase, k as f32)).abs() < 0.05,
-                "phase {phase} tick {k}: {next}"
-            );
+            assert!((next - server(s, phase, k as f32)).abs() < 0.05, "phase {phase} tick {k}: {next}");
             assert!(prev <= now && now < next);
         }
         // A later rest in the zone: its first heal from the looks already known.
         let (s2, at) = (-0.05, 100.0);
         let rest_grid = Some(phase + ((at - phase) / 3.0).floor() * 3.0 - at);
         let (_, next) = window(model, &[], rest_grid, 1.0);
-        assert!(
-            (next - (server(s2 + at, phase, 2.0) - at)).abs() < 0.05,
-            "phase {phase} later rest: {next}"
-        );
+        assert!((next - (server(s2 + at, phase, 2.0) - at)).abs() < 0.05, "phase {phase} later rest: {next}");
     }
 }

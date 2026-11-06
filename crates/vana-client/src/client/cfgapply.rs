@@ -74,15 +74,8 @@ pub fn chat_colour(v: &Values, kind: u8) -> [u8; 4] {
 
 /// The local time (hour, minute, second).
 pub fn local_hms() -> [u8; 3] {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64)
-        + utc_offset();
-    [
-        (secs / 3600).rem_euclid(24) as u8,
-        (secs / 60).rem_euclid(60) as u8,
-        secs.rem_euclid(60) as u8,
-    ]
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64) + utc_offset();
+    [(secs / 3600).rem_euclid(24) as u8, (secs / 60).rem_euclid(60) as u8, secs.rem_euclid(60) as u8]
 }
 
 /// A timestamp (0xb5: 1 hh:mm, 2 hh:mm:ss; English is 12-hour, FUN_101bf740) with its space; empty for 0.
@@ -114,9 +107,7 @@ fn utc_offset() -> i64 {
         }
         #[allow(unreachable_code)]
         let out = std::process::Command::new("date").arg("+%z").output().ok();
-        let s = out
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-            .unwrap_or_default();
+        let s = out.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
         let (sign, digits) = match s.strip_prefix('-') {
             Some(d) => (-1, d),
             None => (1, s.strip_prefix('+').unwrap_or(&s)),
@@ -132,9 +123,7 @@ pub fn aspect(window: [u32; 2], retail: bool, ratio: u32) -> f32 {
     if !retail {
         return window[0] as f32 / window[1].max(1) as f32;
     }
-    let r = super::configui::ASPECTS
-        .get(ratio as usize)
-        .map_or(4.0 / 3.0, |a| a.1);
+    let r = super::configui::ASPECTS.get(ratio as usize).map_or(4.0 / 3.0, |a| a.1);
     0.75 * r / 0.791
 }
 
@@ -152,14 +141,7 @@ mod tests {
         assert_eq!(chat_colour(&v, 3), [0xa0, 0x40, 0xa0, 0x80]);
         assert_eq!(v.get(0xb5), 0);
         // 12-hour (FUN_101bf740): 00:05 is 12:05, 13:07:09 is 01:07:09.
-        assert_eq!(
-            (
-                stamp_text(0, [0, 5, 0]),
-                stamp_text(1, [0, 5, 0]),
-                stamp_text(2, [13, 7, 9])
-            ),
-            (String::new(), "[12:05] ".into(), "[01:07:09] ".into())
-        );
+        assert_eq!((stamp_text(0, [0, 5, 0]), stamp_text(1, [0, 5, 0]), stamp_text(2, [13, 7, 9])), (String::new(), "[12:05] ".into(), "[01:07:09] ".into()));
         assert!((aspect([1600, 900], false, 0) - 16.0 / 9.0).abs() < 1e-6);
         assert!((aspect([1600, 900], true, 0) - 1.0 / 0.791).abs() < 1e-5);
     }

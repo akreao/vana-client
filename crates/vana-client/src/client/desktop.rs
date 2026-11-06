@@ -69,18 +69,13 @@ pub fn settle() -> Result<()> {
         }
         if replaces(copy.as_deref(), VERSION) {
             put(&exe, &home)?;
-            log::info!(
-                "updated {} to {VERSION} from {}",
-                home.display(),
-                exe.display()
-            );
+            log::info!("updated {} to {VERSION} from {}", home.display(), exe.display());
         }
         return Ok(());
     }
     std::fs::create_dir_all(home.parent().context("no data directory")?)?;
     put(&exe, &home)?;
-    let menu = std::fs::read_to_string(data_home()?.join("applications/vana-client.desktop"))
-        .map_or(true, |t| !t.contains("NoDisplay=true"));
+    let menu = std::fs::read_to_string(data_home()?.join("applications/vana-client.desktop")).map_or(true, |t| !t.contains("NoDisplay=true"));
     install(menu)?;
     if dirs::desktop_dir().is_some_and(|d| d.join("vana-client.desktop").exists()) {
         desktop_shortcut()?;
@@ -106,11 +101,7 @@ fn quoted(p: &Path) -> String {
 
 fn entry(menu: bool) -> Result<String> {
     let home = home_exe();
-    let exe = if home.is_file() {
-        home
-    } else {
-        std::env::current_exe()?
-    };
+    let exe = if home.is_file() { home } else { std::env::current_exe()? };
     Ok(format!(
         "[Desktop Entry]\nType=Application\nName=vana-client\nGenericName=FINAL FANTASY XI client\nComment=Native FINAL FANTASY XI client \
          for LandSandBoat servers\nExec={}\nIcon=vana-client\nTerminal=false\nCategories=Game;RolePlaying;\nStartupWMClass=vana-client\n{}",
@@ -144,12 +135,7 @@ pub fn desktop_shortcut() -> Result<()> {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))?;
     }
-    let _ = std::process::Command::new("gio")
-        .arg("set")
-        .arg(&path)
-        .arg("metadata::trusted")
-        .arg("true")
-        .output();
+    let _ = std::process::Command::new("gio").arg("set").arg(&path).arg("metadata::trusted").arg("true").output();
     Ok(())
 }
 

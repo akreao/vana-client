@@ -137,121 +137,60 @@ impl Ssao {
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
+                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
                     visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
+                    ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Depth, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
                     visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
+                    ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: false }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
                     count: None,
                 },
             ],
         });
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("ssao"),
-            source: wgpu::ShaderSource::Wgsl(WGSL.into()),
-        });
-        let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("ssao"),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
-        });
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("ssao"), source: wgpu::ShaderSource::Wgsl(WGSL.into()) });
+        let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("ssao"), bind_group_layouts: &[Some(&layout)], immediate_size: 0 });
         let pipe = |entry: &str, format: wgpu::TextureFormat, blend: Option<wgpu::BlendState>| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("ssao"),
                 layout: Some(&pl),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs"),
-                    compilation_options: Default::default(),
-                    buffers: &[],
-                },
-                primitive: wgpu::PrimitiveState {
-                    cull_mode: None,
-                    ..Default::default()
-                },
+                vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs"), compilation_options: Default::default(), buffers: &[] },
+                primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
                 depth_stencil: None,
                 multisample: Default::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some(entry),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format,
-                        blend,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
+                fragment: Some(wgpu::FragmentState { module: &shader, entry_point: Some(entry), compilation_options: Default::default(), targets: &[Some(wgpu::ColorTargetState { format, blend, write_mask: wgpu::ColorWrites::ALL })] }),
                 multiview_mask: None,
                 cache: None,
             })
         };
         // dst x src: the frame darkened, alpha kept.
         let multiply = wgpu::BlendState {
-            color: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::Zero,
-                dst_factor: wgpu::BlendFactor::Src,
-                operation: wgpu::BlendOperation::Add,
-            },
-            alpha: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::Zero,
-                dst_factor: wgpu::BlendFactor::One,
-                operation: wgpu::BlendOperation::Add,
-            },
+            color: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::Zero, dst_factor: wgpu::BlendFactor::Src, operation: wgpu::BlendOperation::Add },
+            alpha: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::Zero, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add },
         };
         let ao_pipeline = pipe("fs_ao", wgpu::TextureFormat::R8Unorm, None);
         let apply_pipeline = pipe("fs_apply", format, Some(multiply));
-        let uniform = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("ssao"),
-            size: std::mem::size_of::<Params>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let uniform = device.create_buffer(&wgpu::BufferDescriptor { label: Some("ssao"), size: std::mem::size_of::<Params>() as u64, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
         let blank = Self::ao_texture(device, [1, 1]);
-        Self {
-            layout,
-            ao_pipeline,
-            apply_pipeline,
-            uniform,
-            target: None,
-            blank,
-        }
+        Self { layout, ao_pipeline, apply_pipeline, uniform, target: None, blank }
     }
 
     fn ao_texture(device: &wgpu::Device, size: [u32; 2]) -> wgpu::TextureView {
         device
             .create_texture(&wgpu::TextureDescriptor {
                 label: Some("ssao"),
-                size: wgpu::Extent3d {
-                    width: size[0].max(1),
-                    height: size[1].max(1),
-                    depth_or_array_layers: 1,
-                },
+                size: wgpu::Extent3d { width: size[0].max(1), height: size[1].max(1), depth_or_array_layers: 1 },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: wgpu::TextureFormat::R8Unorm,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             })
             .create_view(&Default::default())
@@ -266,15 +205,7 @@ impl Ssao {
 
     /// Darkens `color` by the occlusion of the scenery in `depth` (the scene's, the size given to `resize`).
     #[allow(clippy::too_many_arguments)]
-    pub fn draw(
-        &self,
-        gpu: &Gpu,
-        encoder: &mut wgpu::CommandEncoder,
-        color: &wgpu::TextureView,
-        depth: &wgpu::TextureView,
-        view_proj: Mat4,
-        eye: Vec3,
-    ) {
+    pub fn draw(&self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, color: &wgpu::TextureView, depth: &wgpu::TextureView, view_proj: Mat4, eye: Vec3) {
         let Some((_, ao)) = &self.target else { return };
         let p = Params {
             view_proj: view_proj.to_cols_array_2d(),
@@ -288,37 +219,17 @@ impl Ssao {
                 label: Some("ssao"),
                 layout: &self.layout,
                 entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: self.uniform.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(depth),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::TextureView(tex),
-                    },
+                    wgpu::BindGroupEntry { binding: 0, resource: self.uniform.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(depth) },
+                    wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(tex) },
                 ],
             })
         };
         let (g_ao, g_apply) = (group(&self.blank), group(ao));
-        for (view, pipeline, g) in [
-            (ao, &self.ao_pipeline, &g_ao),
-            (color, &self.apply_pipeline, &g_apply),
-        ] {
+        for (view, pipeline, g) in [(ao, &self.ao_pipeline, &g_ao), (color, &self.apply_pipeline, &g_apply)] {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("ssao"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment { view, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store } })],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
@@ -337,41 +248,18 @@ mod tests {
 
     fn read(gpu: &Gpu, tex: &wgpu::Texture, w: u32, h: u32) -> Vec<u8> {
         let row = (w * 4).div_ceil(256) * 256;
-        let buf = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-            label: None,
-            size: (row * h) as u64,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
+        let buf = gpu.device.create_buffer(&wgpu::BufferDescriptor { label: None, size: (row * h) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
         let mut enc = gpu.device.create_command_encoder(&Default::default());
         enc.copy_texture_to_buffer(
             tex.as_image_copy(),
-            wgpu::TexelCopyBufferInfo {
-                buffer: &buf,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(row),
-                    rows_per_image: Some(h),
-                },
-            },
-            wgpu::Extent3d {
-                width: w,
-                height: h,
-                depth_or_array_layers: 1,
-            },
+            wgpu::TexelCopyBufferInfo { buffer: &buf, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(h) } },
+            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
         );
         gpu.queue.submit([enc.finish()]);
         buf.slice(..).map_async(wgpu::MapMode::Read, |_| {});
-        gpu.device
-            .poll(wgpu::PollType::Wait {
-                submission_index: None,
-                timeout: None,
-            })
-            .unwrap();
+        gpu.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None }).unwrap();
         let d = buf.slice(..).get_mapped_range().unwrap();
-        (0..h)
-            .flat_map(|y| d[(y * row) as usize..(y * row + w * 4) as usize].to_vec())
-            .collect()
+        (0..h).flat_map(|y| d[(y * row) as usize..(y * row + w * 4) as usize].to_vec()).collect()
     }
 
     /// A flat floor seen from above is not occluded; the sky (depth 1) is left alone.
@@ -382,21 +270,12 @@ mod tests {
         let mut ao = Ssao::new(&gpu, format);
         let n = 32u32;
         ao.resize(&gpu, [n, n]);
-        let cam = crate::render::Camera {
-            eye: Vec3::new(0.0, -10.0, 0.0),
-            target: Vec3::ZERO,
-            up: Vec3::Z,
-            fov_y: 0.8,
-        };
+        let cam = crate::render::Camera { eye: Vec3::new(0.0, -10.0, 0.0), target: Vec3::ZERO, up: Vec3::Z, fov_y: 0.8 };
         let vp = cam.view_proj(1.0);
         let depth = crate::render::depth_view(&gpu.device, n, n);
         let color = gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: None,
-            size: wgpu::Extent3d {
-                width: n,
-                height: n,
-                depth_or_array_layers: 1,
-            },
+            size: wgpu::Extent3d { width: n, height: n, depth_or_array_layers: 1 },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -410,28 +289,8 @@ mod tests {
             {
                 let _p = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: None,
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &cv,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color {
-                                r: 0.8,
-                                g: 0.8,
-                                b: 0.8,
-                                a: 1.0,
-                            }),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &depth,
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(z),
-                            store: wgpu::StoreOp::Store,
-                        }),
-                        stencil_ops: None,
-                    }),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &cv, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.8, g: 0.8, b: 0.8, a: 1.0 }), store: wgpu::StoreOp::Store } })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: &depth, depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(z), store: wgpu::StoreOp::Store }), stencil_ops: None }),
                     timestamp_writes: None,
                     occlusion_query_set: None,
                     multiview_mask: None,

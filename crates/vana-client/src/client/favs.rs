@@ -46,12 +46,7 @@ impl Fav {
 pub fn of_row(w: &World, kind: Kind, id: u16) -> Option<Fav> {
     match kind {
         Kind::Magic => Some(Fav::Spell(id)),
-        Kind::Ability => w
-            .actions
-            .as_ref()
-            .and_then(|a| a.abilities.get(id as usize))
-            .filter(|a| a.kind != 4)
-            .map(|_| Fav::Ability(id)),
+        Kind::Ability => w.actions.as_ref().and_then(|a| a.abilities.get(id as usize)).filter(|a| a.kind != 4).map(|_| Fav::Ability(id)),
         _ => None,
     }
 }
@@ -89,29 +84,11 @@ pub fn toggle(w: &mut World, f: Fav) {
 /// was there to star.
 pub fn toggle_current(w: &mut World) -> bool {
     let f = if let Some(s) = w.list_search.clone() {
-        listsearch::hits(w, &s.text)
-            .get(s.sel)
-            .and_then(|h| of_hit(w, h))
-    } else if let Some(win) = w
-        .ability
-        .as_ref()
-        .or(w.magic.as_ref())
-        .filter(|l| !l.hidden)
-    {
-        win.rows
-            .get(win.scroll + win.cursor)
-            .and_then(|&id| of_row(w, win.kind, id))
-    } else if let Some(super::items::Win::Items {
-        scroll,
-        cursor,
-        direct,
-        store: None,
-        ..
-    }) = w.win.as_ref()
-    {
-        super::items::listed(w, *direct)
-            .get(scroll + cursor)
-            .map(|s| Fav::Item(s.id))
+        listsearch::hits(w, &s.text).get(s.sel).and_then(|h| of_hit(w, h))
+    } else if let Some(win) = w.ability.as_ref().or(w.magic.as_ref()).filter(|l| !l.hidden) {
+        win.rows.get(win.scroll + win.cursor).and_then(|&id| of_row(w, win.kind, id))
+    } else if let Some(super::items::Win::Items { scroll, cursor, direct, store: None, .. }) = w.win.as_ref() {
+        super::items::listed(w, *direct).get(scroll + cursor).map(|s| Fav::Item(s.id))
     } else {
         None
     };
@@ -142,19 +119,8 @@ pub fn all(w: &World) -> Vec<Fav> {
 
 /// An item's name and how many we carry (inventory, temporary items and the wardrobes /item looks in).
 pub fn item(w: &World, id: u16) -> (String, u32) {
-    let name = w
-        .item_info
-        .as_ref()
-        .and_then(|c| c.item(id))
-        .map(|it| it.name.clone())
-        .unwrap_or_default();
-    let n = w
-        .inv
-        .slots
-        .iter()
-        .filter(|(k, v)| v.0 == id && matches!(k.0, 0 | 3 | 8 | 10..=16))
-        .map(|(_, v)| v.1.max(1))
-        .sum();
+    let name = w.item_info.as_ref().and_then(|c| c.item(id)).map(|it| it.name.clone()).unwrap_or_default();
+    let n = w.inv.slots.iter().filter(|(k, v)| v.0 == id && matches!(k.0, 0 | 3 | 8 | 10..=16)).map(|(_, v)| v.1.max(1)).sum();
     (name, n)
 }
 
@@ -175,11 +141,7 @@ fn tag(targets: u16) -> &'static str {
 pub fn line(w: &World, f: Fav) -> Option<String> {
     let actions = w.actions.as_ref();
     Some(match f {
-        Fav::Spell(id) => format!(
-            "/ma \"{}\" {}",
-            magic::spell_name(w, id),
-            tag(actions?.spell(id)?.targets)
-        ),
+        Fav::Spell(id) => format!("/ma \"{}\" {}", magic::spell_name(w, id), tag(actions?.spell(id)?.targets)),
         Fav::Ability(id) => {
             let a = actions?.abilities.get(id as usize)?;
             let cmd = match a.kind {
@@ -187,18 +149,10 @@ pub fn line(w: &World, f: Fav) -> Option<String> {
                 2 => "/pet",
                 _ => "/ja",
             };
-            format!(
-                "{cmd} \"{}\" {}",
-                magic::ability_name(w, id),
-                tag(a.targets)
-            )
+            format!("{cmd} \"{}\" {}", magic::ability_name(w, id), tag(a.targets))
         }
         Fav::Item(id) => {
-            let targets = w
-                .item_info
-                .as_ref()
-                .and_then(|c| c.item(id))
-                .map_or(1, |it| it.targets);
+            let targets = w.item_info.as_ref().and_then(|c| c.item(id)).map_or(1, |it| it.targets);
             format!("/item \"{}\" {}", item(w, id).0, tag(targets))
         }
     })

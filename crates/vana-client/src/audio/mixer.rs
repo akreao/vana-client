@@ -8,21 +8,18 @@ use std::sync::mpsc::Receiver;
 
 /// Volume level 0..127 -> linear 0..4096 (FFXiMain 0x1037c338).
 pub const LEVEL: [i32; 128] = [
-    0, 2340, 2511, 2633, 2727, 2804, 2869, 2925, 2975, 3019, 3060, 3096, 3130, 3161, 3191, 3218,
-    3243, 3268, 3290, 3312, 3333, 3352, 3371, 3389, 3406, 3423, 3439, 3454, 3469, 3483, 3497, 3510,
-    3523, 3536, 3548, 3560, 3572, 3583, 3594, 3605, 3615, 3625, 3635, 3645, 3654, 3664, 3673, 3682,
-    3690, 3699, 3707, 3715, 3723, 3731, 3739, 3747, 3754, 3761, 3769, 3776, 3783, 3790, 3796, 3803,
-    3809, 3816, 3822, 3829, 3835, 3841, 3847, 3853, 3858, 3864, 3870, 3875, 3881, 3886, 3892, 3897,
-    3902, 3908, 3913, 3918, 3923, 3928, 3933, 3937, 3942, 3947, 3951, 3956, 3961, 3965, 3970, 3974,
-    3978, 3983, 3987, 3991, 3996, 4000, 4004, 4008, 4012, 4016, 4020, 4024, 4028, 4032, 4035, 4039,
-    4043, 4047, 4050, 4054, 4058, 4061, 4065, 4068, 4072, 4075, 4079, 4082, 4085, 4089, 4092, 4096,
+    0, 2340, 2511, 2633, 2727, 2804, 2869, 2925, 2975, 3019, 3060, 3096, 3130, 3161, 3191, 3218, 3243, 3268, 3290, 3312, 3333, 3352, 3371, 3389,
+    3406, 3423, 3439, 3454, 3469, 3483, 3497, 3510, 3523, 3536, 3548, 3560, 3572, 3583, 3594, 3605, 3615, 3625, 3635, 3645, 3654, 3664, 3673, 3682,
+    3690, 3699, 3707, 3715, 3723, 3731, 3739, 3747, 3754, 3761, 3769, 3776, 3783, 3790, 3796, 3803, 3809, 3816, 3822, 3829, 3835, 3841, 3847, 3853,
+    3858, 3864, 3870, 3875, 3881, 3886, 3892, 3897, 3902, 3908, 3913, 3918, 3923, 3928, 3933, 3937, 3942, 3947, 3951, 3956, 3961, 3965, 3970, 3974,
+    3978, 3983, 3987, 3991, 3996, 4000, 4004, 4008, 4012, 4016, 4020, 4024, 4028, 4032, 4035, 4039, 4043, 4047, 4050, 4054, 4058, 4061, 4065, 4068,
+    4072, 4075, 4079, 4082, 4085, 4089, 4092, 4096,
 ];
 
 /// Pan distance from centre -> volume scale (FFXiMain 0x1037c238).
 const PAN_SCALE: [i32; 64] = [
-    4096, 4094, 4092, 4090, 4088, 4086, 4084, 4082, 4081, 4079, 4077, 4075, 4073, 4071, 4069, 4067,
-    4065, 4063, 4061, 4059, 4057, 4055, 4053, 4051, 4050, 4048, 4046, 4044, 4042, 4040, 4038, 4036,
-    4034, 4032, 4030, 4028, 4026, 4024, 4022, 4020, 4019, 4017, 4015, 4013, 4011, 4009, 4007, 4005,
+    4096, 4094, 4092, 4090, 4088, 4086, 4084, 4082, 4081, 4079, 4077, 4075, 4073, 4071, 4069, 4067, 4065, 4063, 4061, 4059, 4057, 4055, 4053, 4051,
+    4050, 4048, 4046, 4044, 4042, 4040, 4038, 4036, 4034, 4032, 4030, 4028, 4026, 4024, 4022, 4020, 4019, 4017, 4015, 4013, 4011, 4009, 4007, 4005,
     4003, 4001, 3999, 3997, 3995, 3993, 3991, 3989, 3988, 3986, 3984, 3982, 3980, 3978, 3976, 3974,
 ];
 
@@ -70,11 +67,7 @@ impl Ramp {
         let target = LEVEL[(level & 0x7f) as usize];
         let n = steps(ticks60);
         if n == 0 {
-            *self = Ramp {
-                cur: target << 12,
-                left: 1,
-                delta: 0,
-            };
+            *self = Ramp { cur: target << 12, left: 1, delta: 0 };
         } else {
             self.left = n;
             self.delta = ((target * 0x1000 - self.cur) + 0x800) / n;
@@ -99,21 +92,11 @@ impl Ramp {
 
 pub enum Cmd {
     /// Start music (cmd 7): ignored while the same id plays. `ticks` fades in from level 1.
-    PlayBgm {
-        id: u32,
-        bytes: Arc<[u8]>,
-        level: u8,
-        ticks: i32,
-    },
+    PlayBgm { id: u32, bytes: Arc<[u8]>, level: u8, ticks: i32 },
     /// Ramp the music to a level (cmd 8).
-    BgmVolume {
-        level: u8,
-        ticks: i32,
-    },
+    BgmVolume { level: u8, ticks: i32 },
     /// Ramp to level 1 and stop (cmd 9; 0 ticks = silence now).
-    BgmFadeOut {
-        ticks: i32,
-    },
+    BgmFadeOut { ticks: i32 },
     BgmStop,
     /// Remember where the music is, for when it comes back (cmd 10).
     SavePosition,
@@ -121,28 +104,12 @@ pub enum Cmd {
     ClearPositions(Option<u32>),
     /// Start an effect (cmd 2); `handle` (0 = none) names the voice for the commands below.
     /// `limit`: busy voices above which a new one steals instead of taking a free slot (0 = every slot).
-    PlaySe {
-        bytes: Arc<[u8]>,
-        level: u8,
-        pan: u8,
-        priority: i32,
-        handle: u32,
-        limit: u8,
-    },
+    PlaySe { bytes: Arc<[u8]>, level: u8, pan: u8, priority: i32, handle: u32, limit: u8 },
     /// Cmd 4 / 3: a voice's level / pan, at once.
-    SeLevel {
-        handle: u32,
-        level: u8,
-    },
-    SePan {
-        handle: u32,
-        pan: u8,
-    },
+    SeLevel { handle: u32, level: u8 },
+    SePan { handle: u32, pan: u8 },
     /// Cmd 0 (ticks 0, stop now) / cmd 5 (fade to level 1 over ticks, then stop).
-    SeStop {
-        handle: u32,
-        ticks: i32,
-    },
+    SeStop { handle: u32, ticks: i32 },
 }
 
 struct Source {
@@ -158,14 +125,7 @@ struct Source {
 impl Source {
     fn new(dec: Decoder, out_rate: u32) -> Self {
         let step = dec.header.rate as f64 / out_rate as f64;
-        let mut s = Self {
-            dec,
-            frac: 0.0,
-            step,
-            prev: [0.0; 2],
-            next: [0.0; 2],
-            done: false,
-        };
+        let mut s = Self { dec, frac: 0.0, step, prev: [0.0; 2], next: [0.0; 2], done: false };
         s.advance();
         s.advance();
         s
@@ -181,20 +141,13 @@ impl Source {
             return;
         }
         let l = f[0] as f32 / 32768.0;
-        self.next = if ch == 2 {
-            [l, f[1] as f32 / 32768.0]
-        } else {
-            [l, l]
-        };
+        self.next = if ch == 2 { [l, f[1] as f32 / 32768.0] } else { [l, l] };
     }
 
     /// One output frame, linearly interpolated.
     fn frame(&mut self) -> [f32; 2] {
         let t = self.frac as f32;
-        let out = [
-            self.prev[0] + (self.next[0] - self.prev[0]) * t,
-            self.prev[1] + (self.next[1] - self.prev[1]) * t,
-        ];
+        let out = [self.prev[0] + (self.next[0] - self.prev[0]) * t, self.prev[1] + (self.next[1] - self.prev[1]) * t];
         self.frac += self.step;
         while self.frac >= 1.0 {
             self.frac -= 1.0;
@@ -258,34 +211,16 @@ pub struct Mixer {
 impl Mixer {
     pub fn new(rx: Receiver<Cmd>, rate: u32, status: Arc<Status>) -> Self {
         let tick_len = (rate / 50).max(1);
-        Self {
-            rx,
-            rate,
-            bgm: None,
-            voices: (0..VOICES).map(|_| None).collect(),
-            resume: vec![0; 0x400],
-            tick_len,
-            tick_left: tick_len,
-            serial: 0,
-            status,
-            taken_now: Vec::new(),
-        }
+        Self { rx, rate, bgm: None, voices: (0..VOICES).map(|_| None).collect(), resume: vec![0; 0x400], tick_len, tick_left: tick_len, serial: 0, status, taken_now: Vec::new() }
     }
 
     fn command(&mut self, cmd: Cmd) {
         match cmd {
-            Cmd::PlayBgm {
-                id,
-                bytes,
-                level,
-                ticks,
-            } => {
+            Cmd::PlayBgm { id, bytes, level, ticks } => {
                 if self.bgm.as_ref().is_some_and(|b| b.id == id && id != 0x400) {
                     return;
                 }
-                let Ok(mut dec) = Decoder::new(bytes) else {
-                    return;
-                };
+                let Ok(mut dec) = Decoder::new(bytes) else { return };
                 let slot = (id as usize) & 0x3ff;
                 if self.resume[slot] != 0 {
                     dec.seek_unit(self.resume[slot]);
@@ -294,26 +229,12 @@ impl Mixer {
                 let target = LEVEL[(level & 0x7f) as usize];
                 let n = steps(ticks);
                 let ramp = if n == 0 {
-                    Ramp {
-                        cur: target << 12,
-                        left: 1,
-                        delta: 0,
-                    }
+                    Ramp { cur: target << 12, left: 1, delta: 0 }
                 } else {
-                    Ramp {
-                        cur: LEVEL[1] << 12,
-                        left: n,
-                        delta: (((target - LEVEL[1]) * 0x1000) | 0x800) / n,
-                    }
+                    Ramp { cur: LEVEL[1] << 12, left: n, delta: (((target - LEVEL[1]) * 0x1000) | 0x800) / n }
                 };
                 let file_level = dec.header.volume & 0x7f;
-                self.bgm = Some(Bgm {
-                    id,
-                    src: Source::new(dec, self.rate),
-                    ramp,
-                    stop_after: false,
-                    file_level,
-                });
+                self.bgm = Some(Bgm { id, src: Source::new(dec, self.rate), ramp, stop_after: false, file_level });
             }
             Cmd::BgmVolume { level, ticks } => {
                 if let Some(b) = &mut self.bgm {
@@ -324,11 +245,7 @@ impl Mixer {
                 if let Some(b) = &mut self.bgm {
                     let n = steps(ticks);
                     if n == 0 {
-                        b.ramp = Ramp {
-                            cur: LEVEL[0] << 12,
-                            left: 1,
-                            delta: 0,
-                        };
+                        b.ramp = Ramp { cur: LEVEL[0] << 12, left: 1, delta: 0 };
                     } else {
                         b.ramp.left = n;
                         b.ramp.delta = ((LEVEL[1] * 0x1000 - b.ramp.cur) + 0x800) / n;
@@ -350,30 +267,17 @@ impl Mixer {
                 _ => {}
             },
             Cmd::SeLevel { handle, level } => {
-                for v in self
-                    .voices
-                    .iter_mut()
-                    .flatten()
-                    .filter(|v| v.handle == handle && handle != 0)
-                {
+                for v in self.voices.iter_mut().flatten().filter(|v| v.handle == handle && handle != 0) {
                     v.ramp.set(level, 0);
                 }
             }
             Cmd::SePan { handle, pan } => {
-                for v in self
-                    .voices
-                    .iter_mut()
-                    .flatten()
-                    .filter(|v| v.handle == handle && handle != 0)
-                {
+                for v in self.voices.iter_mut().flatten().filter(|v| v.handle == handle && handle != 0) {
                     v.pan = pan;
                 }
             }
             Cmd::SeStop { handle, ticks } => {
-                for slot in self.voices.iter_mut().filter(|v| {
-                    v.as_ref()
-                        .is_some_and(|v| v.handle == handle && handle != 0)
-                }) {
+                for slot in self.voices.iter_mut().filter(|v| v.as_ref().is_some_and(|v| v.handle == handle && handle != 0)) {
                     let n = steps(ticks);
                     let v = slot.as_mut().unwrap();
                     if n == 0 {
@@ -385,32 +289,16 @@ impl Mixer {
                     }
                 }
             }
-            Cmd::PlaySe {
-                bytes,
-                level,
-                pan,
-                priority,
-                handle,
-                limit,
-            } => {
+            Cmd::PlaySe { bytes, level, pan, priority, handle, limit } => {
                 if handle != 0 {
                     self.taken_now.push(handle);
                 }
                 let Ok(dec) = Decoder::new(bytes) else { return };
                 let flags = dec.header.flags;
-                let mut ramp = Ramp {
-                    cur: LEVEL[(level & 0x7f) as usize] << 12,
-                    left: 0,
-                    delta: 0,
-                };
+                let mut ramp = Ramp { cur: LEVEL[(level & 0x7f) as usize] << 12, left: 0, delta: 0 };
                 if flags & 0x20 != 0 && flags & 0x80 == 0 {
                     // Fade in over 150 steps (FUN_10240090).
-                    ramp = Ramp {
-                        cur: LEVEL[1] << 12,
-                        left: 0x96,
-                        delta: (((LEVEL[(level & 0x7f) as usize] - LEVEL[1]) * 0x1000) | 0x800)
-                            / 0x96,
-                    };
+                    ramp = Ramp { cur: LEVEL[1] << 12, left: 0x96, delta: (((LEVEL[(level & 0x7f) as usize] - LEVEL[1]) * 0x1000) | 0x800) / 0x96 };
                 }
                 // Flag 0x20 (ambient loops): priority 20000 and kept from stealing.
                 let kept = flags & 0x20 != 0;
@@ -419,33 +307,15 @@ impl Mixer {
                 // oldest first (FUN_1023fb90).
                 let busy = self.voices.iter().flatten().count();
                 let free = limit == 0 || busy < limit as usize;
-                let slot = (0..VOICES)
-                    .rev()
-                    .find(|&i| free && self.voices[i].is_none())
-                    .or_else(|| {
-                        (0..VOICES)
-                            .filter(|&i| {
-                                self.voices[i]
-                                    .as_ref()
-                                    .is_some_and(|v| !v.kept && v.priority <= priority)
-                            })
-                            .min_by_key(|&i| {
-                                let v = self.voices[i].as_ref().unwrap();
-                                (v.priority, v.started)
-                            })
-                    });
+                let slot = (0..VOICES).rev().find(|&i| free && self.voices[i].is_none()).or_else(|| {
+                    (0..VOICES).filter(|&i| self.voices[i].as_ref().is_some_and(|v| !v.kept && v.priority <= priority)).min_by_key(|&i| {
+                        let v = self.voices[i].as_ref().unwrap();
+                        (v.priority, v.started)
+                    })
+                });
                 if let Some(i) = slot {
                     self.serial += 1;
-                    self.voices[i] = Some(Voice {
-                        src: Source::new(dec, self.rate),
-                        ramp,
-                        pan,
-                        priority,
-                        started: self.serial,
-                        handle,
-                        stop_after: false,
-                        kept,
-                    });
+                    self.voices[i] = Some(Voice { src: Source::new(dec, self.rate), ramp, pan, priority, started: self.serial, handle, stop_after: false, kept });
                 }
             }
         }
@@ -515,22 +385,11 @@ impl Mixer {
         for s in out.iter_mut() {
             *s = s.clamp(-1.0, 1.0);
         }
-        self.status
-            .bgm
-            .store(self.bgm.as_ref().map_or(0, |b| b.id + 1), Ordering::Relaxed);
-        self.status.voices.store(
-            self.voices.iter().flatten().count() as u32,
-            Ordering::Relaxed,
-        );
+        self.status.bgm.store(self.bgm.as_ref().map_or(0, |b| b.id + 1), Ordering::Relaxed);
+        self.status.voices.store(self.voices.iter().flatten().count() as u32, Ordering::Relaxed);
         if let Ok(mut a) = self.status.alive.lock() {
             a.clear();
-            a.extend(
-                self.voices
-                    .iter()
-                    .flatten()
-                    .map(|v| v.handle)
-                    .filter(|&h| h != 0),
-            );
+            a.extend(self.voices.iter().flatten().map(|v| v.handle).filter(|&h| h != 0));
         }
         // After `alive`, so a taken handle is always in the list it is checked against.
         if let Ok(mut t) = self.status.taken.lock() {
@@ -554,11 +413,7 @@ mod tests {
 
     #[test]
     fn ramp_reaches_target() {
-        let mut r = Ramp {
-            cur: LEVEL[1] << 12,
-            left: 0,
-            delta: 0,
-        };
+        let mut r = Ramp { cur: LEVEL[1] << 12, left: 0, delta: 0 };
         r.set(127, 60);
         let mut n = 0;
         while !r.tick() {

@@ -37,12 +37,7 @@ struct Channel {
 
 impl Channel {
     fn new() -> Self {
-        Self {
-            prev_bands: 0,
-            buf: vec![0.0; BUF],
-            overlap: [[0.0; 4]; 128],
-            gains: NO_GAIN,
-        }
+        Self { prev_bands: 0, buf: vec![0.0; BUF], overlap: [[0.0; 4]; 128], gains: NO_GAIN }
     }
 }
 
@@ -54,11 +49,7 @@ struct Joint {
     nb: usize,
 }
 
-const JOINT_INIT: Joint = Joint {
-    m: [3; 4],
-    w: 0,
-    nb: 4,
-};
+const JOINT_INIT: Joint = Joint { m: [3; 4], w: 0, nb: 4 };
 
 pub struct Atrac3 {
     out_channels: usize,
@@ -139,15 +130,7 @@ fn values(sel: usize) -> &'static [u32] {
 }
 
 /// FUN_102c4da0: adds sf * value for coefficients start..end (pairs for selector 0, 8 per step).
-fn mantissas(
-    bits: &mut Bits,
-    set: u32,
-    sel: usize,
-    sf: f32,
-    spec: &mut [f32],
-    start: usize,
-    end: usize,
-) -> Result<(), Err> {
+fn mantissas(bits: &mut Bits, set: u32, sel: usize, sf: f32, spec: &mut [f32], start: usize, end: usize) -> Result<(), Err> {
     let (lut, len, k) = vlc(set, sel);
     let mut i = start;
     if sel == 0 {
@@ -192,13 +175,7 @@ fn mantissas(
 }
 
 /// FUN_102c4bc0: tonal components; returns the highest coefficient end seen.
-fn tonal(
-    bits: &mut Bits,
-    count: u32,
-    nb: usize,
-    mut max_end: i32,
-    spec: &mut [f32],
-) -> Result<i32, Err> {
+fn tonal(bits: &mut Bits, count: u32, nb: usize, mut max_end: i32, spec: &mut [f32]) -> Result<i32, Err> {
     let sel = bits.read(2);
     if sel == 2 {
         return Err(());
@@ -237,15 +214,7 @@ fn tonal(
                 if total == 64 {
                     return Err(());
                 }
-                mantissas(
-                    bits,
-                    mode,
-                    step as usize - 1,
-                    f(SF[sfi]),
-                    spec,
-                    (p + blk) as usize,
-                    end as usize,
-                )?;
+                mantissas(bits, mode, step as usize - 1, f(SF[sfi]), spec, (p + blk) as usize, end as usize)?;
                 total += 1;
             }
             blk += 0x40;
@@ -387,14 +356,8 @@ fn joint(c0: &mut [f32], c1: &mut [f32], cur: Joint, prev: Joint) {
     for l in 0..4 {
         let (w0p, w1p) = if prev.nb < l { wt(prev.w) } else { (2.0, 2.0) };
         let (w0, w1) = if cur.nb < l { wt(cur.w) } else { (2.0, 2.0) };
-        let mc = (
-            f(MATRIX[cur.m[l] as usize]),
-            f(MATRIX[cur.m[l] as usize + 1]),
-        );
-        let mp = (
-            f(MATRIX[prev.m[l] as usize]),
-            f(MATRIX[prev.m[l] as usize + 1]),
-        );
+        let mc = (f(MATRIX[cur.m[l] as usize]), f(MATRIX[cur.m[l] as usize + 1]));
+        let mp = (f(MATRIX[prev.m[l] as usize]), f(MATRIX[prev.m[l] as usize + 1]));
         let mut start = 0;
         if w0p != w0 || cur.m[l] != prev.m[l] {
             let d0 = (mc.0 - mp.0) * 0.125;
@@ -461,11 +424,7 @@ impl Atrac3 {
             _ => (0x180, false),
         };
         let out_channels = if channels == 2 { 2 } else { 1 };
-        let frame = if out_channels == 2 {
-            frame2
-        } else {
-            frame2 / 2
-        };
+        let frame = if out_channels == 2 { frame2 } else { frame2 / 2 };
         let unit = if joint { frame2 } else { frame2 / 2 };
         Self {
             out_channels,
@@ -583,10 +542,7 @@ impl Atrac3 {
 
     /// FUN_102c4640: one sound unit; returns the bit position reached.
     fn unit_decode(&mut self, c: usize, off: usize, second: bool) -> Result<usize, Err> {
-        let mut bits = Bits {
-            b: &self.data,
-            pos: 0,
-        };
+        let mut bits = Bits { b: &self.data, pos: 0 };
         let hdr;
         if second {
             hdr = self.data[1];
@@ -647,11 +603,7 @@ impl Atrac3 {
             joint(&mut c0.buf, &mut c1.buf, self.js, self.js_prev);
             self.js_prev = self.js;
             let (b0, b1) = (self.data[0] as u32, self.data[1] as u32);
-            let mut js = Joint {
-                m: [0; 4],
-                w: (b0 >> 4) as u8,
-                nb,
-            };
+            let mut js = Joint { m: [0; 4], w: (b0 >> 4) as u8, nb };
             let mut v = (b1 >> 4) | (b0 << 8 >> 4);
             for i in (0..4).rev() {
                 let code = (v & 3) as u8;
@@ -757,11 +709,8 @@ mod tests {
         let d = std::fs::read(format!("{GAME}{file}")).unwrap();
         let u32at = |o: usize| u32::from_le_bytes(d[o..o + 4].try_into().unwrap());
         let se = &d[..6] == b"SeWave";
-        let (key, ch, mode, off) = if se {
-            (u32at(0x20), d[0x2a], d[0x2c], u32at(0x24))
-        } else {
-            (u32at(0x24), d[0x2e], d[0x2f], u32at(0x28))
-        };
+        let (key, ch, mode, off) =
+            if se { (u32at(0x20), d[0x2a], d[0x2c], u32at(0x24)) } else { (u32at(0x24), d[0x2e], d[0x2f], u32at(0x28)) };
         let ks = key_stream(key);
         let mut dec = Atrac3::new(ch, mode);
         dec.prime = false;
@@ -770,20 +719,13 @@ mod tests {
         let n = ((d.len() - off as usize) / fb).min(frames);
         for i in 0..n {
             let at = off as usize + i * fb;
-            let fr: Vec<u8> = d[at..at + fb]
-                .iter()
-                .zip(ks.iter())
-                .map(|(a, b)| a ^ b)
-                .collect();
+            let fr: Vec<u8> = d[at..at + fb].iter().zip(ks.iter()).map(|(a, b)| a ^ b).collect();
             dec.decode_frame(&fr, &mut ours);
         }
         let dump: Vec<u8> = ours.iter().flat_map(|s| s.to_le_bytes()).collect();
         std::fs::write(format!("{SCRATCH}{raw}.ours"), dump).unwrap();
         let r = std::fs::read(format!("{SCRATCH}{raw}")).unwrap();
-        let theirs: Vec<i16> = r
-            .chunks_exact(2)
-            .map(|c| i16::from_le_bytes([c[0], c[1]]))
-            .collect();
+        let theirs: Vec<i16> = r.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect();
         let m = ours.len().min(theirs.len());
         let mut max = 0;
         let mut sum = 0f64;
@@ -811,9 +753,7 @@ mod tests {
     }
 
     fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
-        let Ok(rd) = std::fs::read_dir(dir) else {
-            return;
-        };
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
         for e in rd.flatten() {
             let p = e.path();
             if p.is_dir() {
@@ -830,10 +770,7 @@ mod tests {
     #[ignore]
     fn all_game_files_decode() {
         let mut files = Vec::new();
-        walk(
-            std::path::Path::new("/home/lenon/ffxi/game/FINAL FANTASY XI"),
-            &mut files,
-        );
+        walk(std::path::Path::new("/home/lenon/ffxi/game/FINAL FANTASY XI"), &mut files);
         let (mut n, mut frames, mut bad, mut bad_mid) = (0, 0u64, 0u64, 0u64);
         let t = std::time::Instant::now();
         for p in files {
@@ -843,11 +780,8 @@ mod tests {
             }
             let u32at = |o: usize| u32::from_le_bytes(d[o..o + 4].try_into().unwrap());
             let se = &d[..6] == b"SeWave";
-            let (key, ch, mode, off) = if se {
-                (u32at(0x20), d[0x2a], d[0x2c], u32at(0x24))
-            } else {
-                (u32at(0x24), d[0x2e], d[0x2f], u32at(0x28))
-            };
+            let (key, ch, mode, off) =
+                if se { (u32at(0x20), d[0x2a], d[0x2c], u32at(0x24)) } else { (u32at(0x24), d[0x2e], d[0x2f], u32at(0x28)) };
             let ks = key_stream(key);
             let mut dec = Atrac3::new(ch, mode);
             let fb = dec.frame_bytes();
@@ -873,10 +807,7 @@ mod tests {
             n += 1;
         }
         let s = t.elapsed().as_secs_f64();
-        eprintln!(
-            "{n} files, {frames} frames, {bad} bad, {:.1} us/frame",
-            s * 1e6 / frames as f64
-        );
+        eprintln!("{n} files, {frames} frames, {bad} bad, {:.1} us/frame", s * 1e6 / frames as f64);
         assert_eq!(bad_mid, 0);
     }
 }
@@ -971,12 +902,14 @@ const POST: [u32; 512] = [
 ];
 /// IMDCT output index order (0x103bfa28).
 const PERM: [i32; 128] = [
-    0, 127, 63, 64, 31, 96, 32, 95, 15, 112, 48, 79, 16, 111, 47, 80, 7, 120, 56, 71, 24, 103, 39,
-    88, 8, 119, 55, 72, 23, 104, 40, 87, 3, 124, 60, 67, 28, 99, 35, 92, 12, 115, 51, 76, 19, 108,
-    44, 83, 4, 123, 59, 68, 27, 100, 36, 91, 11, 116, 52, 75, 20, 107, 43, 84, 1, 126, 62, 65, 30,
-    97, 33, 94, 14, 113, 49, 78, 17, 110, 46, 81, 6, 121, 57, 70, 25, 102, 38, 89, 9, 118, 54, 73,
-    22, 105, 41, 86, 2, 125, 61, 66, 29, 98, 34, 93, 13, 114, 50, 77, 18, 109, 45, 82, 5, 122, 58,
-    69, 26, 101, 37, 90, 10, 117, 53, 74, 21, 106, 42, 85,
+    0, 127, 63, 64, 31, 96, 32, 95, 15, 112, 48, 79, 16, 111, 47, 80,
+    7, 120, 56, 71, 24, 103, 39, 88, 8, 119, 55, 72, 23, 104, 40, 87,
+    3, 124, 60, 67, 28, 99, 35, 92, 12, 115, 51, 76, 19, 108, 44, 83,
+    4, 123, 59, 68, 27, 100, 36, 91, 11, 116, 52, 75, 20, 107, 43, 84,
+    1, 126, 62, 65, 30, 97, 33, 94, 14, 113, 49, 78, 17, 110, 46, 81,
+    6, 121, 57, 70, 25, 102, 38, 89, 9, 118, 54, 73, 22, 105, 41, 86,
+    2, 125, 61, 66, 29, 98, 34, 93, 13, 114, 50, 77, 18, 109, 45, 82,
+    5, 122, 58, 69, 26, 101, 37, 90, 10, 117, 53, 74, 21, 106, 42, 85,
 ];
 /// QMF taps: [0..96) output stage, [96..192) and [192..288) band stages (0x103397e0).
 const QMF: [u32; 288] = [
@@ -1044,11 +977,14 @@ const GAIN_FRAC: [u32; 8] = [
 ];
 /// subband edges (0x10339cc0).
 const SUBBAND: [i32; 33] = [
-    0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256, 288, 320,
-    352, 384, 416, 448, 480, 512, 576, 640, 704, 768, 896, 1024,
+    0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176,
+    192, 224, 256, 288, 320, 352, 384, 416, 448, 480, 512, 576, 640, 704, 768, 896,
+    1024,
 ];
 /// joint-stereo matrix pairs, code c -> (MATRIX[c], MATRIX[c + 1]) (0x10339680).
-const MATRIX: [u32; 5] = [0x00000000, 0x3f800000, 0x3f800000, 0x3f000000, 0x3f000000];
+const MATRIX: [u32; 5] = [
+    0x00000000, 0x3f800000, 0x3f800000, 0x3f000000, 0x3f000000,
+];
 /// joint-stereo channel weight pairs (0x10339698).
 const WEIGHTS: [u32; 32] = [
     0x00000000, 0x403504f3, 0x3e924925, 0x403417e9, 0x3f124925, 0x4031495d, 0x3f5b6db7, 0x402c81d0,
@@ -1062,7 +998,9 @@ const PAIRS: [u32; 10] = [
     0x454b7000, 0xc54b7000,
 ];
 /// selector 1 values (0x103393d8).
-const VAL1: [u32; 5] = [0x00000000, 0x44f42000, 0x45742000, 0xc5742000, 0xc4f42000];
+const VAL1: [u32; 5] = [
+    0x00000000, 0x44f42000, 0x45742000, 0xc5742000, 0xc4f42000,
+];
 /// selector 2 values (0x103393ec).
 const VAL2: [u32; 7] = [
     0x4582c800, 0x44ae6000, 0x452e6000, 0x00000000, 0xc582c800, 0xc52e6000, 0xc4ae6000,
@@ -1096,50 +1034,20 @@ const VAL6: [u32; 63] = [
     0xc487a000, 0xc4688000, 0xc441c000, 0xc41b0000, 0xc3e88000, 0xc39b0000, 0xc31b0000,
 ];
 // set 0 (0x10339600): peek shift bytes [27, 13, 12, 11, 10, 9, 8]
-const LUT0_0: [i8; 32] = [
-    5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 6, 6, 2, 2, 2, 2, 4, 4, 1, 1, 7, 8, 3, 0,
-];
+const LUT0_0: [i8; 32] = [5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 6, 6, 2, 2, 2, 2, 4, 4, 1, 1, 7, 8, 3, 0];
 const LEN0_0: [i8; 9] = [5, 4, 3, 5, 4, 1, 3, 5, 5];
 const LUT0_1: [i8; 8] = [0, 0, 0, 0, 1, 4, 2, 3];
 const LEN0_1: [i8; 5] = [1, 3, 3, 3, 3];
 const LUT0_2: [i8; 16] = [3, 3, 3, 3, 3, 3, 3, 3, 1, 1, 6, 6, 2, 5, 0, 4];
 const LEN0_2: [i8; 7] = [4, 3, 4, 1, 4, 4, 3];
-const LUT0_3: [i8; 32] = [
-    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 1, 1, 1, 1, 8, 8, 8, 8, 2, 2, 7, 7, 3, 6, 0, 5,
-];
+const LUT0_3: [i8; 32] = [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 1, 1, 1, 1, 8, 8, 8, 8, 2, 2, 7, 7, 3, 6, 0, 5];
 const LEN0_3: [i8; 9] = [5, 3, 4, 5, 1, 5, 5, 4, 3];
-const LUT0_4: [i8; 64] = [
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 14, 14, 14, 14, 14, 14,
-    14, 14, 2, 2, 2, 2, 13, 13, 13, 13, 3, 3, 3, 3, 12, 12, 12, 12, 7, 7, 7, 7, 8, 8, 8, 8, 4, 4,
-    11, 11, 5, 10, 6, 9,
-];
+const LUT0_4: [i8; 64] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 14, 14, 14, 14, 14, 14, 14, 14, 2, 2, 2, 2, 13, 13, 13, 13, 3, 3, 3, 3, 12, 12, 12, 12, 7, 7, 7, 7, 8, 8, 8, 8, 4, 4, 11, 11, 5, 10, 6, 9];
 const LEN0_4: [i8; 15] = [2, 3, 4, 4, 5, 6, 6, 4, 4, 6, 6, 5, 4, 4, 3];
-const LUT0_5: [i8; 128] = [
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 30, 30, 30, 30, 30, 30,
-    30, 30, 2, 2, 2, 2, 2, 2, 2, 2, 29, 29, 29, 29, 29, 29, 29, 29, 3, 3, 3, 3, 3, 3, 3, 3, 28, 28,
-    28, 28, 28, 28, 28, 28, 15, 15, 15, 15, 15, 15, 15, 15, 16, 16, 16, 16, 16, 16, 16, 16, 4, 4,
-    4, 4, 27, 27, 27, 27, 5, 5, 5, 5, 26, 26, 26, 26, 6, 6, 6, 6, 25, 25, 25, 25, 7, 7, 24, 24, 8,
-    8, 23, 23, 9, 9, 22, 22, 10, 10, 21, 21, 11, 20, 12, 19, 13, 18, 14, 17,
-];
-const LEN0_5: [i8; 31] = [
-    3, 4, 4, 4, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 4, 4, 7, 7, 7, 7, 6, 6, 6, 6, 5, 5, 5, 4, 4, 4,
-];
-const LUT0_6: [i8; 256] = [
-    5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
-    31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 32, 32, 32, 32, 32, 32, 32, 32,
-    32, 32, 32, 32, 32, 32, 32, 32, 1, 1, 1, 1, 1, 1, 1, 1, 62, 62, 62, 62, 62, 62, 62, 62, 2, 2,
-    2, 2, 2, 2, 2, 2, 61, 61, 61, 61, 61, 61, 61, 61, 3, 3, 3, 3, 3, 3, 3, 3, 60, 60, 60, 60, 60,
-    60, 60, 60, 4, 4, 4, 4, 4, 4, 4, 4, 59, 59, 59, 59, 59, 59, 59, 59, 0, 0, 0, 0, 0, 0, 0, 0, 58,
-    58, 58, 58, 58, 58, 58, 58, 6, 6, 6, 6, 57, 57, 57, 57, 7, 7, 7, 7, 56, 56, 56, 56, 8, 8, 8, 8,
-    55, 55, 55, 55, 9, 9, 9, 9, 54, 54, 54, 54, 10, 10, 10, 10, 53, 53, 53, 53, 11, 11, 11, 11, 52,
-    52, 52, 52, 12, 12, 12, 12, 51, 51, 51, 51, 13, 13, 13, 13, 50, 50, 50, 50, 14, 14, 49, 49, 15,
-    15, 48, 48, 16, 16, 47, 47, 17, 17, 46, 46, 18, 18, 45, 45, 19, 19, 44, 44, 20, 20, 43, 43, 21,
-    42, 22, 41, 23, 40, 24, 39, 25, 38, 26, 37, 27, 36, 28, 35, 29, 34, 30, 33,
-];
-const LEN0_6: [i8; 63] = [
-    5, 5, 5, 5, 5, 3, 6, 6, 6, 6, 6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 4,
-    4, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 7, 7, 7, 7, 7, 7, 7, 6, 6, 6, 6, 6, 6, 6, 6, 5, 5, 5, 5, 5,
-];
+const LUT0_5: [i8; 128] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 30, 30, 30, 30, 30, 30, 30, 30, 2, 2, 2, 2, 2, 2, 2, 2, 29, 29, 29, 29, 29, 29, 29, 29, 3, 3, 3, 3, 3, 3, 3, 3, 28, 28, 28, 28, 28, 28, 28, 28, 15, 15, 15, 15, 15, 15, 15, 15, 16, 16, 16, 16, 16, 16, 16, 16, 4, 4, 4, 4, 27, 27, 27, 27, 5, 5, 5, 5, 26, 26, 26, 26, 6, 6, 6, 6, 25, 25, 25, 25, 7, 7, 24, 24, 8, 8, 23, 23, 9, 9, 22, 22, 10, 10, 21, 21, 11, 20, 12, 19, 13, 18, 14, 17];
+const LEN0_5: [i8; 31] = [3, 4, 4, 4, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 4, 4, 7, 7, 7, 7, 6, 6, 6, 6, 5, 5, 5, 4, 4, 4];
+const LUT0_6: [i8; 256] = [5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 1, 1, 1, 1, 1, 1, 1, 1, 62, 62, 62, 62, 62, 62, 62, 62, 2, 2, 2, 2, 2, 2, 2, 2, 61, 61, 61, 61, 61, 61, 61, 61, 3, 3, 3, 3, 3, 3, 3, 3, 60, 60, 60, 60, 60, 60, 60, 60, 4, 4, 4, 4, 4, 4, 4, 4, 59, 59, 59, 59, 59, 59, 59, 59, 0, 0, 0, 0, 0, 0, 0, 0, 58, 58, 58, 58, 58, 58, 58, 58, 6, 6, 6, 6, 57, 57, 57, 57, 7, 7, 7, 7, 56, 56, 56, 56, 8, 8, 8, 8, 55, 55, 55, 55, 9, 9, 9, 9, 54, 54, 54, 54, 10, 10, 10, 10, 53, 53, 53, 53, 11, 11, 11, 11, 52, 52, 52, 52, 12, 12, 12, 12, 51, 51, 51, 51, 13, 13, 13, 13, 50, 50, 50, 50, 14, 14, 49, 49, 15, 15, 48, 48, 16, 16, 47, 47, 17, 17, 46, 46, 18, 18, 45, 45, 19, 19, 44, 44, 20, 20, 43, 43, 21, 42, 22, 41, 23, 40, 24, 39, 25, 38, 26, 37, 27, 36, 28, 35, 29, 34, 30, 33];
+const LEN0_6: [i8; 63] = [5, 5, 5, 5, 5, 3, 6, 6, 6, 6, 6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 4, 4, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 7, 7, 7, 7, 7, 7, 7, 6, 6, 6, 6, 6, 6, 6, 6, 5, 5, 5, 5, 5];
 const BITS0: [u8; 7] = [27, 13, 12, 11, 10, 9, 8];
 // set 1 (0x10339640): peek shift bytes [28, 13, 13, 12, 12, 11, 10]
 const LUT1_0: [i8; 16] = [5, 6, -1, 2, 4, 7, -1, 8, -1, -1, -1, -1, 1, 3, -1, 0];
@@ -1152,20 +1060,8 @@ const LUT1_3: [i8; 16] = [4, 1, 2, 3, 0, -1, -1, -1, -1, -1, -1, -1, 5, 6, 7, 8]
 const LEN1_3: [i8; 9] = [4, 4, 4, 4, 4, 4, 4, 4, 4];
 const LUT1_4: [i8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, -1, 8, 9, 10, 11, 12, 13, 14];
 const LEN1_4: [i8; 15] = [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4];
-const LUT1_5: [i8; 32] = [
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, -1, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-    25, 26, 27, 28, 29, 30,
-];
-const LEN1_5: [i8; 31] = [
-    5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
-];
-const LUT1_6: [i8; 64] = [
-    5, 1, 2, 3, 4, 0, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-    26, 27, 28, 29, 30, 31, -1, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48,
-    49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62,
-];
-const LEN1_6: [i8; 63] = [
-    6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
-    6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
-];
+const LUT1_5: [i8; 32] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, -1, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30];
+const LEN1_5: [i8; 31] = [5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5];
+const LUT1_6: [i8; 64] = [5, 1, 2, 3, 4, 0, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, -1, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62];
+const LEN1_6: [i8; 63] = [6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6];
 const BITS1: [u8; 7] = [28, 13, 13, 12, 12, 11, 10];

@@ -4,10 +4,10 @@
 //! The command palette (Ctrl+Space in the field, modern) is the same search over everything the action menu reaches:
 //! spells, abilities, usable items and the menu's commands; a pick opens what the menu would and acts through it.
 
-use super::game_ui::GameUi;
 use super::magic::{self, Cat, Kind};
-use super::suggest::Action;
+use super::game_ui::GameUi;
 use super::{World, items, journal, keyitems, missions, quests};
+use super::suggest::Action;
 use crate::audio::Ui as Se;
 
 /// A suggestion taken from the battle menu (suggest.rs): the menu suspended and Magic or Abilities chosen as their
@@ -15,11 +15,7 @@ use crate::audio::Ui as Se;
 pub fn pick_root(w: &mut World, action: Action, target: Option<&str>) {
     (w.suggest_sel, w.suggest_sub) = (None, None);
     w.sounds.push(Se::Select as u32);
-    let c = if matches!(action, Action::Spell(_)) {
-        8
-    } else {
-        7
-    };
+    let c = if matches!(action, Action::Spell(_)) { 8 } else { 7 };
     w.held_menu = w.action_menu.take();
     super::combat::choose(w, c);
     pick_action(w, action);
@@ -36,41 +32,20 @@ pub fn pick_action(w: &mut World, action: Action) {
         Action::Spell(id) => (Kind::Magic, id),
         Action::Ability(id) => (Kind::Ability, id),
     };
-    let in_list = w
-        .ability
-        .as_ref()
-        .or(w.magic.as_ref())
-        .is_some_and(|l| l.kind == kind && l.rows.contains(&id));
+    let in_list = w.ability.as_ref().or(w.magic.as_ref()).is_some_and(|l| l.kind == kind && l.rows.contains(&id));
     let cat = (!in_list).then(|| w.cats).flatten().and_then(|c| {
         let ty = match action {
             Action::Spell(s) => w.actions.as_ref()?.spell(s)?.kind,
             Action::Ability(a) => w.actions.as_ref()?.abilities.get(a as usize)?.kind as u16,
         };
-        magic::cat_rows(c.menu)
-            .iter()
-            .position(|&(_, cat)| match cat {
-                Cat::Magic(t, _) => kind == Kind::Magic && t == ty,
-                Cat::Ability(t) => kind == Kind::Ability && (t == ty || (t == 3 && ty == 3)),
-                _ => false,
-            })
+        magic::cat_rows(c.menu).iter().position(|&(_, cat)| match cat {
+            Cat::Magic(t, _) => kind == Kind::Magic && t == ty,
+            Cat::Ability(t) => kind == Kind::Ability && (t == ty || (t == 3 && ty == 3)),
+            _ => false,
+        })
     });
     if in_list || cat.is_some() {
-        pick(
-            w,
-            &Hit {
-                kind,
-                cat,
-                id,
-                name: String::new(),
-                score: 0,
-                slot: None,
-                note: String::new(),
-                journal: None,
-                recent: false,
-                fav: false,
-            },
-            None,
-        );
+        pick(w, &Hit { kind, cat, id, name: String::new(), score: 0, slot: None, note: String::new(), journal: None, recent: false, fav: false }, None);
     }
 }
 
@@ -112,12 +87,7 @@ pub enum Journal {
     Auction(u8),
     /// A row of one of the other lists (LISTS): the list, the row, whether `id` is an item (its icon), whether the
     /// list greys the row.
-    Row {
-        list: u8,
-        k: usize,
-        item: bool,
-        dim: bool,
-    },
+    Row { list: u8, k: usize, item: bool, dim: bool },
     /// The command palette's action menu command (combat::cmd), or HEAL.
     Command(u8),
 }
@@ -134,25 +104,13 @@ pub struct Entry {
 
 impl Entry {
     pub fn named(name: impl Into<String>) -> Self {
-        Entry {
-            name: name.into(),
-            ..Default::default()
-        }
+        Entry { name: name.into(), ..Default::default() }
     }
 
     /// An item's row, named from the item table.
     pub fn item(w: &World, id: u16) -> Self {
-        let name = w
-            .item_info
-            .as_ref()
-            .and_then(|c| c.item(id))
-            .map(|it| it.name.clone())
-            .unwrap_or_default();
-        Entry {
-            name,
-            item: Some(id),
-            ..Default::default()
-        }
+        let name = w.item_info.as_ref().and_then(|c| c.item(id)).map(|it| it.name.clone()).unwrap_or_default();
+        Entry { name, item: Some(id), ..Default::default() }
     }
 
     pub fn note(mut self, note: impl Into<String>) -> Self {
@@ -239,69 +197,28 @@ fn close_palette(w: &mut World) {
 /// note) and the commands. An empty query keeps only the recent picks.
 fn palette_matches(w: &World, query: &str) -> Vec<Hit> {
     let mut out = Vec::new();
-    let mut push = |kind: Kind,
-                    id: u16,
-                    name: String,
-                    slot: Option<u8>,
-                    note: String,
-                    journal: Option<Journal>| {
-        let mut h = Hit {
-            kind,
-            cat: None,
-            id,
-            name,
-            score: 0,
-            slot,
-            note,
-            journal,
-            recent: false,
-            fav: false,
-        };
-        let score = if query.is_empty() {
-            w.recent_picks.contains(&key_of(&h)).then_some(0)
-        } else {
-            score(&h.name, query)
-        };
+    let mut push = |kind: Kind, id: u16, name: String, slot: Option<u8>, note: String, journal: Option<Journal>| {
+        let mut h = Hit { kind, cat: None, id, name, score: 0, slot, note, journal, recent: false, fav: false };
+        let score = if query.is_empty() { w.recent_picks.contains(&key_of(&h)).then_some(0) } else { score(&h.name, query) };
         if let Some(score) = score {
             h.score = score;
             out.push(h);
         }
     };
     for &(c, label) in &COMMANDS {
-        push(
-            Kind::Ability,
-            c as u16,
-            label.to_string(),
-            None,
-            "command".into(),
-            Some(Journal::Command(c)),
-        );
+        push(Kind::Ability, c as u16, label.to_string(), None, "command".into(), Some(Journal::Command(c)));
     }
     for &(_, cat) in magic::cat_rows("menu    magselec") {
         if let Cat::Magic(ty, list) = cat {
             for id in magic::magic_rows(w, ty, list, 0) {
-                push(
-                    Kind::Magic,
-                    id,
-                    name(w, Kind::Magic, id),
-                    None,
-                    magic::type_label(ty).into(),
-                    None,
-                );
+                push(Kind::Magic, id, name(w, Kind::Magic, id), None, magic::type_label(ty).into(), None);
             }
         }
     }
     for &(_, cat) in magic::cat_rows("menu    abiselec") {
         if let Cat::Ability(ty) = cat {
             for id in magic::ability_rows(w, ty) {
-                push(
-                    Kind::Ability,
-                    id,
-                    name(w, Kind::Ability, id),
-                    None,
-                    magic::ability_label(ty).into(),
-                    None,
-                );
+                push(Kind::Ability, id, name(w, Kind::Ability, id), None, magic::ability_label(ty).into(), None);
             }
         }
     }
@@ -314,22 +231,8 @@ fn palette_matches(w: &World, query: &str) -> Vec<Hit> {
         }
     }
     for (id, slot, n) in seen {
-        let name = info
-            .and_then(|c| c.item(id))
-            .map(|it| it.name.clone())
-            .unwrap_or_default();
-        push(
-            Kind::Ability,
-            id,
-            name,
-            Some(slot),
-            if n > 1 {
-                format!("item · {n}")
-            } else {
-                "item".into()
-            },
-            None,
-        );
+        let name = info.and_then(|c| c.item(id)).map(|it| it.name.clone()).unwrap_or_default();
+        push(Kind::Ability, id, name, Some(slot), if n > 1 { format!("item · {n}") } else { "item".into() }, None);
     }
     out.sort_by(|a, b| b.score.cmp(&a.score));
     out
@@ -368,9 +271,7 @@ fn edits(a: &[char], b: &[char]) -> usize {
     for i in 1..=a.len() {
         for j in 1..=b.len() {
             let cost = usize::from(a[i - 1] != b[j - 1]);
-            d[i][j] = (d[i - 1][j] + 1)
-                .min(d[i][j - 1] + 1)
-                .min(d[i - 1][j - 1] + cost);
+            d[i][j] = (d[i - 1][j] + 1).min(d[i][j - 1] + 1).min(d[i - 1][j - 1] + cost);
             if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
                 d[i][j] = d[i][j].min(d[i - 2][j - 2] + 1);
             }
@@ -382,31 +283,13 @@ fn edits(a: &[char], b: &[char]) -> usize {
 /// The typo fallback: every query word within an edit or two (by its length) of a name word or its start; the fewer
 /// edits the better. None: some word too far off.
 fn typo_score(name: &str, q: &str) -> Option<i32> {
-    let words: Vec<Vec<char>> = name
-        .split([' ', '-', ':', '\''])
-        .filter(|w| !w.is_empty())
-        .map(|w| w.chars().collect())
-        .collect();
+    let words: Vec<Vec<char>> = name.split([' ', '-', ':', '\'']).filter(|w| !w.is_empty()).map(|w| w.chars().collect()).collect();
     let mut total = 0;
     for qw in q.split(' ').filter(|w| !w.is_empty()) {
         let qc: Vec<char> = qw.chars().collect();
-        let allowed = if qc.len() <= 3 {
-            0
-        } else if qc.len() <= 5 {
-            1
-        } else {
-            2
-        };
+        let allowed = if qc.len() <= 3 { 0 } else if qc.len() <= 5 { 1 } else { 2 };
         // Against each name word cut near the query word's length (a word typed part way).
-        let best = words
-            .iter()
-            .map(|w| {
-                (qc.len().saturating_sub(1)..=w.len().min(qc.len() + 1))
-                    .map(|n| edits(&qc, &w[..n.min(w.len())]))
-                    .min()
-                    .unwrap_or(usize::MAX)
-            })
-            .min()?;
+        let best = words.iter().map(|w| (qc.len().saturating_sub(1)..=w.len().min(qc.len() + 1)).map(|n| edits(&qc, &w[..n.min(w.len())])).min().unwrap_or(usize::MAX)).min()?;
         if best > allowed {
             return None;
         }
@@ -463,9 +346,7 @@ fn name(w: &World, kind: Kind, id: u16) -> String {
         Kind::Magic => magic::spell_name(w, id),
         Kind::Ability => magic::ability_name(w, id),
         Kind::Mount => magic::mount_name(w, id),
-        Kind::Emote => magic::emote_entry(w, id)
-            .and_then(|e| w.names.as_ref()?.emote_text(e.name as u32))
-            .unwrap_or_default(),
+        Kind::Emote => magic::emote_entry(w, id).and_then(|e| w.names.as_ref()?.emote_text(e.name as u32)).unwrap_or_default(),
     }
 }
 
@@ -526,29 +407,10 @@ fn matches(w: &World, query: &str) -> Vec<Hit> {
     let mut out = Vec::new();
     // One of the other lists: its rows.
     if let Some(l) = other(w) {
-        for (k, e) in (super::modern::SEARCH_LISTS[l].rows)(w)
-            .into_iter()
-            .enumerate()
-        {
+        for (k, e) in (super::modern::SEARCH_LISTS[l].rows)(w).into_iter().enumerate() {
             if let Some(score) = score(&e.name, query) {
-                let journal = Some(Journal::Row {
-                    list: l as u8,
-                    k,
-                    item: e.item.is_some(),
-                    dim: e.dim,
-                });
-                out.push(Hit {
-                    kind: Kind::Ability,
-                    cat: None,
-                    id: e.item.unwrap_or(0),
-                    name: e.name,
-                    score,
-                    slot: None,
-                    note: e.note,
-                    journal,
-                    recent: false,
-                    fav: false,
-                });
+                let journal = Some(Journal::Row { list: l as u8, k, item: e.item.is_some(), dim: e.dim });
+                out.push(Hit { kind: Kind::Ability, cat: None, id: e.item.unwrap_or(0), name: e.name, score, slot: None, note: e.note, journal, recent: false, fav: false });
             }
         }
         out.sort_by(|a, b| b.score.cmp(&a.score));
@@ -559,23 +421,9 @@ fn matches(w: &World, query: &str) -> Vec<Hit> {
     if super::auction::searchable(w) {
         let info = w.item_info.as_ref();
         for &(id, cat) in super::auction::index(w).iter().flat_map(|v| v.iter()) {
-            let name = info
-                .and_then(|c| c.item(id))
-                .map(|it| it.name.clone())
-                .unwrap_or_default();
+            let name = info.and_then(|c| c.item(id)).map(|it| it.name.clone()).unwrap_or_default();
             if let Some(score) = score(&name, query) {
-                out.push(Hit {
-                    kind: Kind::Ability,
-                    cat: None,
-                    id,
-                    name,
-                    score,
-                    slot: None,
-                    note: String::new(),
-                    journal: Some(Journal::Auction(cat)),
-                    recent: false,
-                    fav: false,
-                });
+                out.push(Hit { kind: Kind::Ability, cat: None, id, name, score, slot: None, note: String::new(), journal: Some(Journal::Auction(cat)), recent: false, fav: false });
             }
         }
         out.sort_by(|a, b| b.score.cmp(&a.score));
@@ -586,18 +434,7 @@ fn matches(w: &World, query: &str) -> Vec<Hit> {
         for (k, (title, items)) in keyitems::all(w).into_iter().enumerate() {
             for (id, name) in items.into_iter().filter(|(id, _)| w.has_key_item(*id)) {
                 if let Some(score) = score(&name, query) {
-                    out.push(Hit {
-                        kind: Kind::Ability,
-                        cat: Some(k),
-                        id,
-                        name,
-                        score,
-                        slot: None,
-                        note: title.clone(),
-                        journal: Some(Journal::KeyItem),
-                        recent: false,
-                        fav: false,
-                    });
+                    out.push(Hit { kind: Kind::Ability, cat: Some(k), id, name, score, slot: None, note: title.clone(), journal: Some(Journal::KeyItem), recent: false, fav: false });
                 }
             }
         }
@@ -608,27 +445,14 @@ fn matches(w: &World, query: &str) -> Vec<Hit> {
     if quest_list(w) {
         let logs = w.logs.clone();
         for area in (0..11).filter(|&a| quests::area_on(w.expansions, a)) {
-            let Some(f) = logs.as_ref().and_then(|l| l.quests.get(area)) else {
-                continue;
-            };
+            let Some(f) = logs.as_ref().and_then(|l| l.quests.get(area)) else { continue };
             let (rows, split) = quests::merged(w, area);
             for (k, i) in rows.into_iter().enumerate() {
                 let Some(e) = f.entries.get(i) else { continue };
                 let name = e.name.trim_start_matches('+').to_string();
                 if let Some(score) = score(&name, query) {
                     let note = (if k < split { "current" } else { "completed" }).to_string();
-                    out.push(Hit {
-                        kind: Kind::Ability,
-                        cat: None,
-                        id: 0,
-                        name,
-                        score,
-                        slot: None,
-                        note,
-                        journal: Some(Journal::Quest(area, i)),
-                        recent: false,
-                        fav: false,
-                    });
+                    out.push(Hit { kind: Kind::Ability, cat: None, id: 0, name, score, slot: None, note, journal: Some(Journal::Quest(area, i)), recent: false, fav: false });
                 }
             }
         }
@@ -639,28 +463,13 @@ fn matches(w: &World, query: &str) -> Vec<Hit> {
     if mission_list(w) {
         let logs = w.logs.clone();
         for log in missions::shown_logs(w) {
-            let Some(f) = logs.as_ref().and_then(|l| l.missions.get(log)) else {
-                continue;
-            };
+            let Some(f) = logs.as_ref().and_then(|l| l.missions.get(log)) else { continue };
             for r in journal::mission_rows(&w.journal, log, f) {
-                let (journal::Row::Current(i) | journal::Row::Done(i)) = r else {
-                    continue;
-                };
+                let (journal::Row::Current(i) | journal::Row::Done(i)) = r else { continue };
                 let Some(e) = f.entries.get(i) else { continue };
                 let name = journal::indent(&e.name).0.to_string();
                 if let Some(score) = score(&name, query) {
-                    out.push(Hit {
-                        kind: Kind::Ability,
-                        cat: None,
-                        id: 0,
-                        name,
-                        score,
-                        slot: None,
-                        note: String::new(),
-                        journal: Some(Journal::Mission(log, i)),
-                        recent: false,
-                        fav: false,
-                    });
+                    out.push(Hit { kind: Kind::Ability, cat: None, id: 0, name, score, slot: None, note: String::new(), journal: Some(Journal::Mission(log, i)), recent: false, fav: false });
                 }
             }
         }
@@ -675,25 +484,11 @@ fn matches(w: &World, query: &str) -> Vec<Hit> {
                 Some((_, n)) => *n += s.count.max(1),
                 None => seen.push((s.id, s.count.max(1))),
             }
-            let n = info
-                .and_then(|c| c.item(s.id))
-                .map(|it| it.name.clone())
-                .unwrap_or_default();
+            let n = info.and_then(|c| c.item(s.id)).map(|it| it.name.clone()).unwrap_or_default();
             if out.iter().all(|h: &Hit| h.id != s.id)
                 && let Some(score) = score(&n, query)
             {
-                out.push(Hit {
-                    kind: Kind::Ability,
-                    cat: None,
-                    id: s.id,
-                    name: n,
-                    score,
-                    slot: Some(s.index),
-                    note: String::new(),
-                    journal: None,
-                    recent: false,
-                    fav: false,
-                });
+                out.push(Hit { kind: Kind::Ability, cat: None, id: s.id, name: n, score, slot: Some(s.index), note: String::new(), journal: None, recent: false, fav: false });
             }
         }
         for h in &mut out {
@@ -707,18 +502,7 @@ fn matches(w: &World, query: &str) -> Vec<Hit> {
         for id in rows {
             let n = name(w, kind, id);
             if let Some(score) = score(&n, query) {
-                out.push(Hit {
-                    kind,
-                    cat,
-                    id,
-                    name: n,
-                    score,
-                    slot: None,
-                    note: String::new(),
-                    journal: None,
-                    recent: false,
-                    fav: false,
-                });
+                out.push(Hit { kind, cat, id, name: n, score, slot: None, note: String::new(), journal: None, recent: false, fav: false });
             }
         }
     };
@@ -727,11 +511,7 @@ fn matches(w: &World, query: &str) -> Vec<Hit> {
     } else if let Some(c) = w.cats {
         for (k, &(_, cat)) in magic::cat_rows(c.menu).iter().enumerate() {
             match cat {
-                Cat::Magic(ty, list) => add(
-                    Kind::Magic,
-                    Some(k),
-                    magic::magic_rows(w, ty, list && !super::monstrosity::active(w), 0),
-                ),
+                Cat::Magic(ty, list) => add(Kind::Magic, Some(k), magic::magic_rows(w, ty, list && !super::monstrosity::active(w), 0)),
                 Cat::Ability(ty) => add(Kind::Ability, Some(k), magic::ability_rows(w, ty)),
                 Cat::Mount => add(Kind::Mount, Some(k), magic::mount_rows(w)),
                 _ => {}
@@ -745,14 +525,7 @@ fn matches(w: &World, query: &str) -> Vec<Hit> {
 /// The item list (direct: the action menu's) when it has the focus: no iuse, sort window or Manual Sort over it.
 fn item_list(w: &World) -> Option<bool> {
     match w.win.as_ref()? {
-        items::Win::Items {
-            sub: None,
-            sort: None,
-            manual: None,
-            store: None,
-            direct,
-            ..
-        } => Some(*direct),
+        items::Win::Items { sub: None, sort: None, manual: None, store: None, direct, .. } => Some(*direct),
         _ => None,
     }
 }
@@ -764,39 +537,22 @@ pub fn can_run(w: &World) -> bool {
         && w.prompt.is_none()
         && w.confirm.is_none()
         && !super::typing_elsewhere(w)
-        && (w.command_palette
-            || other(w).is_some()
-            || super::auction::searchable(w)
-            || w.cats.is_some()
-            || list.is_some_and(|l| {
-                !l.hidden && l.sort_focus.is_none() && l.ask.is_none() && l.manual == 0
-            })
-            || (w.win.is_some() && item_list(w).is_some())
-            || key_items(w)
-            || quest_list(w)
-            || mission_list(w))
+        && (w.command_palette || other(w).is_some() || super::auction::searchable(w) || w.cats.is_some() || list.is_some_and(|l| !l.hidden && l.sort_focus.is_none() && l.ask.is_none() && l.manual == 0) || (w.win.is_some() && item_list(w).is_some()) || key_items(w) || quest_list(w) || mission_list(w))
 }
 
 /// The modern quest list (no Records of Eminence list over it).
 fn quest_list(w: &World) -> bool {
-    w.quests.as_ref().is_some_and(|q| {
-        q.state == 1 && q.roe.is_none() && q.list.as_ref().is_some_and(|l| l.state == 0)
-    })
+    w.quests.as_ref().is_some_and(|q| q.state == 1 && q.roe.is_none() && q.list.as_ref().is_some_and(|l| l.state == 0))
 }
 
 /// The modern mission list.
 fn mission_list(w: &World) -> bool {
-    w.missions
-        .as_ref()
-        .and_then(|m| m.list.as_ref())
-        .is_some_and(|l| l.state == 1)
+    w.missions.as_ref().and_then(|m| m.list.as_ref()).is_some_and(|l| l.state == 1)
 }
 
 /// The key items window on its categories or a category's list (no question up).
 fn key_items(w: &World) -> bool {
-    w.keyitems
-        .as_ref()
-        .is_some_and(|k| matches!(k.state, 1 | 2) && k.ask.is_none())
+    w.keyitems.as_ref().is_some_and(|k| matches!(k.state, 1 | 2) && k.ask.is_none())
 }
 
 /// The search's keys and typed text this frame. True when it took them (the game then sees none).
@@ -827,9 +583,7 @@ pub fn events(w: &mut World, gu: &GameUi, events: &[egui::Event]) -> bool {
                 s.text.push_str(t);
                 s.sel = 0;
             }
-            egui::Event::Key {
-                key, pressed: true, ..
-            } => key_in(w, gu, *key),
+            egui::Event::Key { key, pressed: true, .. } => key_in(w, gu, *key),
             _ => {}
         }
         if was && w.list_search.is_none() {
@@ -841,9 +595,7 @@ pub fn events(w: &mut World, gu: &GameUi, events: &[egui::Event]) -> bool {
 
 /// Up / Down move among the hits, Enter picks, Backspace deletes a letter, Escape ends the search.
 fn key_in(w: &mut World, gu: &GameUi, key: egui::Key) {
-    let Some(s) = w.list_search.clone() else {
-        return;
-    };
+    let Some(s) = w.list_search.clone() else { return };
     let n = hits(w, &s.text).len().min(MAX);
     match key {
         // An empty field (the auction's, reached with Up) gives the keys back with Down.
@@ -872,8 +624,7 @@ fn key_in(w: &mut World, gu: &GameUi, key: egui::Key) {
         egui::Key::Backspace => {
             let mut t = s.text;
             t.pop();
-            w.list_search =
-                (!t.is_empty() || w.command_palette).then_some(ListSearch { text: t, sel: 0 });
+            w.list_search = (!t.is_empty() || w.command_palette).then_some(ListSearch { text: t, sel: 0 });
         }
         egui::Key::Escape => {
             close_palette(w);
@@ -951,21 +702,10 @@ pub fn pick(w: &mut World, h: &Hit, gu: Option<&GameUi>) {
         return;
     }
     if let (Some(slot), Some(direct)) = (h.slot, item_list(w)) {
-        let Some(k) = items::listed(w, direct)
-            .iter()
-            .position(|s| s.index == slot && s.id == h.id)
-        else {
-            return;
-        };
+        let Some(k) = items::listed(w, direct).iter().position(|s| s.index == slot && s.id == h.id) else { return };
         if let Some(items::Win::Items { scroll, cursor, .. }) = w.win.as_mut() {
             let vis = crate::inventory::VISIBLE_ROWS;
-            *scroll = if k < *scroll {
-                k
-            } else if k >= *scroll + vis {
-                k + 1 - vis
-            } else {
-                *scroll
-            };
+            *scroll = if k < *scroll { k } else if k >= *scroll + vis { k + 1 - vis } else { *scroll };
             *cursor = k - *scroll;
         }
         items::key(w, egui::Key::Enter, false, false, false);
@@ -975,11 +715,7 @@ pub fn pick(w: &mut World, h: &Hit, gu: Option<&GameUi>) {
         w.cats = Some(magic::Cats { sel: k, ..c });
         magic::key(w, egui::Key::Enter);
     }
-    let win = if w.ability.is_some() {
-        w.ability.as_mut()
-    } else {
-        w.magic.as_mut()
-    };
+    let win = if w.ability.is_some() { w.ability.as_mut() } else { w.magic.as_mut() };
     if let Some(win) = win.filter(|x| x.kind == h.kind)
         && magic::focus_row(win, h.id)
     {
@@ -1003,18 +739,7 @@ mod tests {
     }
 
     fn hit(id: u16, score: i32) -> Hit {
-        Hit {
-            kind: Kind::Magic,
-            cat: None,
-            id,
-            name: String::new(),
-            score,
-            slot: None,
-            note: String::new(),
-            journal: None,
-            recent: false,
-            fav: false,
-        }
+        Hit { kind: Kind::Magic, cat: None, id, name: String::new(), score, slot: None, note: String::new(), journal: None, recent: false, fav: false }
     }
 
     #[test]
@@ -1025,10 +750,7 @@ mod tests {
         assert_eq!(hits.iter().map(|h| h.id).collect::<Vec<_>>(), [4, 3, 1]);
         assert!(hits[0].recent && hits[1].recent && !hits[2].recent);
         // An item and a spell of the same id are different picks.
-        let item = Hit {
-            slot: Some(3),
-            ..hit(4, 0)
-        };
+        let item = Hit { slot: Some(3), ..hit(4, 0) };
         assert_ne!(key_of(&item), key_of(&hit(4, 0)));
     }
 

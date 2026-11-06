@@ -15,11 +15,7 @@ pub fn own_ffximain(ffxi_dir: &Path) -> PathBuf {
 /// The FFXiMain.dll the client reads: that install's copy, else the game folder's.
 pub fn ffximain(ffxi_dir: &Path) -> PathBuf {
     let own = own_ffximain(ffxi_dir);
-    if own.is_file() {
-        own
-    } else {
-        ffxi_dir.join("FFXiMain.dll")
-    }
+    if own.is_file() { own } else { ffxi_dir.join("FFXiMain.dll") }
 }
 
 /// `VTABLE{n}.DAT` holds one byte per file id (the ROM number when present);
@@ -36,11 +32,7 @@ impl DatIndex {
     pub fn open(ffxi_dir: &Path) -> Result<Self> {
         let mut entries: Vec<(u8, u16)> = Vec::new();
         for rom in 1..=9u8 {
-            let (dir, suffix) = if rom == 1 {
-                (ffxi_dir.to_path_buf(), String::new())
-            } else {
-                (ffxi_dir.join(format!("ROM{rom}")), rom.to_string())
-            };
+            let (dir, suffix) = if rom == 1 { (ffxi_dir.to_path_buf(), String::new()) } else { (ffxi_dir.join(format!("ROM{rom}")), rom.to_string()) };
             let vpath = dir.join(format!("VTABLE{suffix}.DAT"));
             if !vpath.exists() {
                 continue;
@@ -63,11 +55,7 @@ impl DatIndex {
             bail!("no VTABLE.DAT under {}", ffxi_dir.display());
         }
         let overlays = Self::overlays(&entries);
-        Ok(Self {
-            root: ffxi_dir.to_path_buf(),
-            entries,
-            overlays,
-        })
+        Ok(Self { root: ffxi_dir.to_path_buf(), entries, overlays })
     }
 
     fn overlays(entries: &[(u8, u16)]) -> Option<std::sync::Arc<overlay::Overlays>> {
@@ -76,25 +64,15 @@ impl DatIndex {
         if dirs.is_empty() {
             return None;
         }
-        static SCANNED: OnceLock<Mutex<Option<(Vec<PathBuf>, Arc<overlay::Overlays>)>>> =
-            OnceLock::new();
+        static SCANNED: OnceLock<Mutex<Option<(Vec<PathBuf>, Arc<overlay::Overlays>)>>> = OnceLock::new();
         let mut s = SCANNED.get_or_init(Default::default).lock().unwrap();
         if let Some((d, o)) = s.as_ref()
             && *d == dirs
         {
             return Some(o.clone());
         }
-        let ids: std::collections::HashMap<(u8, u16), u32> = entries
-            .iter()
-            .enumerate()
-            .filter(|(_, e)| e.0 != 0)
-            .map(|(i, &e)| (e, i as u32))
-            .collect();
-        let o = Arc::new(overlay::Overlays::scan(
-            &dirs,
-            &ids,
-            crate::config::merged_dir(),
-        ));
+        let ids: std::collections::HashMap<(u8, u16), u32> = entries.iter().enumerate().filter(|(_, e)| e.0 != 0).map(|(i, &e)| (e, i as u32)).collect();
+        let o = Arc::new(overlay::Overlays::scan(&dirs, &ids, crate::config::merged_dir()));
         *s = Some((dirs, o.clone()));
         Some(o)
     }
@@ -108,10 +86,7 @@ impl DatIndex {
 
     /// A game-root file (cursors and the like), from the highest-priority mod that has one.
     pub fn root_file(&self, name: &str) -> PathBuf {
-        self.overlays
-            .as_ref()
-            .and_then(|o| o.root_file(name))
-            .unwrap_or_else(|| self.root.join(name))
+        self.overlays.as_ref().and_then(|o| o.root_file(name)).unwrap_or_else(|| self.root.join(name))
     }
 
     pub fn len(&self) -> usize {
@@ -123,16 +98,8 @@ impl DatIndex {
         if rom == 0 {
             return None;
         }
-        let rom_dir = if rom == 1 {
-            "ROM".to_string()
-        } else {
-            format!("ROM{rom}")
-        };
-        let stock = self
-            .root
-            .join(rom_dir)
-            .join((packed >> 7).to_string())
-            .join(format!("{}.DAT", packed & 0x7F));
+        let rom_dir = if rom == 1 { "ROM".to_string() } else { format!("ROM{rom}") };
+        let stock = self.root.join(rom_dir).join((packed >> 7).to_string()).join(format!("{}.DAT", packed & 0x7F));
         match &self.overlays {
             Some(o) if o.has(id) => Some(o.resolve(id, &stock).unwrap_or(stock)),
             _ => Some(stock),
@@ -140,9 +107,7 @@ impl DatIndex {
     }
 
     pub fn read(&self, id: u32) -> Result<Vec<u8>> {
-        let path = self
-            .path(id)
-            .with_context(|| format!("file id {id} is not in the index"))?;
+        let path = self.path(id).with_context(|| format!("file id {id} is not in the index"))?;
         std::fs::read(&path).with_context(|| format!("reading {}", path.display()))
     }
 }
@@ -203,56 +168,51 @@ pub fn chunks(file: &[u8]) -> Result<Vec<Chunk<'_>>> {
         if size < 16 || at + size > file.len() {
             bail!("bad chunk size {size} at offset {at:#x}");
         }
-        out.push(Chunk {
-            name: file[at..at + 4].try_into().unwrap(),
-            kind: (word & 0x7F) as u8,
-            data: &file[at + 16..at + size],
-            offset: at,
-        });
+        out.push(Chunk { name: file[at..at + 4].try_into().unwrap(), kind: (word & 0x7F) as u8, data: &file[at + 16..at + size], offset: at });
         at += size;
     }
     Ok(out)
 }
 
-pub mod actions;
-pub mod animpack;
-pub mod autotrans;
-pub mod battle;
-pub mod blumagic;
-pub mod bump;
-pub mod character;
-pub mod collision;
-pub mod cursor;
-pub mod dancer;
-pub mod dialog;
-pub mod event;
-pub mod event_ops;
-pub mod font;
-pub mod furniture;
-pub mod generator;
-pub mod items;
-pub mod journal;
-pub mod maze;
-pub mod merits;
-pub mod motionfile;
-pub mod msg;
-pub mod msgfmt;
-pub mod msgshift;
-pub mod names;
-pub mod npc;
 pub mod overlay;
-pub mod resists;
-pub mod roe;
-pub mod sched;
-pub mod skillchains;
+pub mod cursor;
 pub mod statusinfo;
 pub mod tables;
-pub mod texmip;
-pub mod title;
-pub mod tpoints;
-pub mod ui;
-pub mod weather;
+pub mod bump;
 pub mod zone;
+pub mod collision;
+pub mod character;
+pub mod npc;
+pub mod font;
+pub mod ui;
+pub mod dancer;
+pub mod msg;
+pub mod msgfmt;
+pub mod dialog;
+pub mod msgshift;
+pub mod skillchains;
+pub mod resists;
+pub mod items;
+pub mod maze;
+pub mod names;
+pub mod merits;
+pub mod roe;
+pub mod blumagic;
+pub mod journal;
+pub mod event;
+pub mod event_ops;
+pub mod title;
+pub mod weather;
+pub mod battle;
+pub mod sched;
+pub mod motionfile;
+pub mod texmip;
+pub mod animpack;
+pub mod generator;
+pub mod actions;
+pub mod autotrans;
+pub mod furniture;
+pub mod tpoints;
 
 #[cfg(test)]
 mod fuzz;
