@@ -11203,8 +11203,13 @@ impl App {
                 _ => world.autorun = false,
             }
         }
-        // Click-to-move: autorun points along the walk; arriving, or no progress, ends it.
+        let held = effect_held(world);
+        // Click-to-move: autorun points along the walk; arriving, or no progress, ends it. Held in place, the
+        // progress check starts over, so waking up carries on along the walk.
         if let Some(cm) = world.click_move.as_mut() {
+            if held {
+                cm.check = (world.pos, Instant::now());
+            }
             match cm.steer(world.pos) {
                 _ if !world.autorun => world.click_move = None,
                 clickmove::Steer::Toward(d) => world.autorun_dir = d,
@@ -11298,7 +11303,6 @@ impl App {
         }
         // FUN_100964f0: no movement during a synthesis (status 0x2c), fishing or its request, or a dig; nor while an
         // effect holds us (FUN_10096270 and the two checks after it) or the server freezes us (+0x128 bit 15).
-        let held = effect_held(world);
         if world.my_motion.status == 0x2c || fishing::locked(world) || ride::digging(world) || held {
             tier = 0.0;
         }
@@ -11543,6 +11547,9 @@ impl App {
             // Standing still keeps the facing; only the camera turns. Locked, we face the target.
             let to = if let Some((_, Some(y))) = pin {
                 Some(Vec3::new(y.cos(), 0.0, -y.sin()))
+            } else if held {
+                // FUN_100a6210 returns before any turn while an effect holds us: the camera moves, the facing stays.
+                None
             } else if let Some(f) = tank_face {
                 Some(f)
             } else if face_cam {
