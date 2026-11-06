@@ -11398,6 +11398,11 @@ impl App {
         // locked step moves in (forward toward the target, side about it, target::locked_step). Measured against this
         // frame's way to the target instead, a target whose position jumps (a monster in melee range, worse up close)
         // swung the quarter between sideways and forward every frame: mvr / mvl cut to the run and back.
+        // Retail's +0x5b1 is reset only by a new actor (0x100a8ba6); ours clears it whenever the lock is off, so a guard
+        // from before a zone change or an unlock never carries into the next lock.
+        if lock_target.is_none() {
+            world.lock_flip = 0.0;
+        }
         let lock_dir = if !stepping {
             0
         } else if lock_target.is_some() {
