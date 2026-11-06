@@ -1432,6 +1432,8 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
         id::AUTOMOVE => {
             w.autorun = true;
             w.autorun_dir = glam::Vec3::new(w.yaw.sin(), 0.0, w.yaw.cos());
+            // A mod's run_to would steer over the new heading and end it at its point.
+            w.run_to = None;
             Ok(())
         }
         // FUN_1007e190: a target that is not us (else the command fails); not followable (dead, no model) group 7
@@ -1445,6 +1447,8 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
             w.follow = Some(t);
             w.autorun = true;
             w.autorun_dir = glam::Vec3::ZERO;
+            // A mod's run_to is steered after the follow, so it would win and end the follow at its point.
+            w.run_to = None;
             Ok(())
         }
         // FUN_1007bd80: nothing while engaged; "all" or a trust of ours by name: the talk action with param 1
