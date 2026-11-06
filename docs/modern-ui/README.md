@@ -22,7 +22,7 @@ The reverse-engineered facts behind the change still go in a `docs/modlog/` frag
 
 ## Folding
 
-`python3 docs/fold.py` (on master) puts every fragment here at the end of the State section, above its closing
+`python3 docs/fold.py` (on custom) puts every fragment here at the end of the State section, above its closing
 `- Not yet:` lines, oldest file name first, and deletes them. It folds `docs/modlog/` into `MODLOG.md` at the same
 time. Run it whenever convenient and always before sending work upstream. Until then, read these files alongside
 `docs/modern-ui.md`.
