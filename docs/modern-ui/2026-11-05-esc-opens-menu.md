@@ -1,1 +1,0 @@
-- Escape with no target and nothing else open opens the main menu (keyboard only; ours, not retail). The controller's cancel is unchanged.
