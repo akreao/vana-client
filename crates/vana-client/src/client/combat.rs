@@ -1958,11 +1958,12 @@ pub(super) fn choose(w: &mut World, c: u8) -> bool {
             let (t, i) = target.unwrap_or((w.my_id, 0));
             send(w, NetCommand::Act { target: t, index: i, action: 4 });
         }
-        // FUN_1012b880 cases 9 / 0xa: engaged, the sub-target prompt over monsters first (LAB_1012bec0); else at once.
-        (cmd::CHECK, Some(_)) if w.my_motion.status == 1 => {
+        // FUN_1012b880 cases 9 / 0xa (the player layouts' Check and Check): engaged, the sub-target prompt over monsters
+        // first (LAB_1012bec0); else at once (us too).
+        (0xa | cmd::CHECK, _) if w.target.is_some() && w.my_motion.status == 1 => {
             super::target::open_sub(w, 0x20, super::target::SubThen::Check, None, String::new(), 0);
         }
-        (cmd::CHECK, Some(_)) => check(w, None, 0, false),
+        (0xa | cmd::CHECK, _) if w.target.is_some() => check(w, None, 0, false),
         (0x16..=0x18, _) => super::textcmd::run(w, ["/quarry", "/scout", "/sprint"][(c - 0x16) as usize], super::textcmd::Mode::Internal),
         // FUN_1012b880 cases 3 / 4: the chat line, "/tell <target> " on a target (string 0x1036f5c8).
         (cmd::CHAT | cmd::TELL, _) => {
