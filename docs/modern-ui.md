@@ -564,4 +564,27 @@ Milestone 1:
   click on the same actor within 500 ms runs the safe default instead of opening the action menu: talk to an NPC or
   a door, check a player or a monster (retail's Ctrl+C, FUN_10130280). A slower second click stays retail's
   (confirm: talk, or the action menu); a locked target, a sub-target prompt, a drag and the classic UI are unchanged.
+- Cursor on movement (ours, not retail): Settings > Misc. > Keys Hide the Cursor, off, keeps the mouse cursor shown
+  while you walk with the keys. On, the default, hides it as retail does.
+- The first letter typed into a list's hidden search no longer also triggers its game hotkey.
+- Settings window search (ours, not retail): typing on a topic page searches every page's settings by name, help
+  and heading; a Retail only button (Ctrl+R) hides our settings; a details column shows the setting under the
+  cursor. Mods and Mod Settings show only their own tabs. This finishes what the 2026-11-04 Settings window entry
+  left to come.
+- Settings window (ours, not retail): the modern Config window is now "Settings", with every retail Config setting
+  and every setting of ours (the old Settings and Extras pages) on one of fourteen pages, grouped as Game, Graphics,
+  Sound, Input and System, each page in small headed groups. Chat Filters, Effects, Font Colors, Mods and the Lua
+  mods' settings open as pages from a button on their topic's page.
+- Typing in the Settings window's search no longer triggers game hotkeys (ours).
+- Mouse Camera Speed (ours, not retail): Settings' Mouse row (Input > Mouse, Camera & Keys, and the classic Settings
+  Controls page) scales every mouse look drag, 25% to 200%, 100% the old speed. The controller's camera is not touched,
+  so it stays retail's.
+- Ours: a Game Master window (Command Menu > Game Master), with config `gm_window` set in config.json by hand (off;
+  no Settings row) and a private server whose GM tools answer the 0x1F0 request with a GM level above 0. Groups, a search by name, 9
+  commands a page (Up / Down, Left / Right), a form per command, runs over 0x1F1 with the server's printed reply in
+  the window. Its fields and search are typing, so they trigger no game hotkeys. Not retail (retail has no GM menu).
+- Pickers: while a field is being typed in, up to 6 matches show under it (id or name, names starting with the text
+  first); a click fills the id. Zones, items, spells, key items and titles come from the game's name tables; jobs,
+  weather, skills, logs, nations and true/false are fixed lists; player fields offer you and your party; entity
+  fields offer the named things in the zone. A typed id shows its name under the field.
 - Not yet: alliance rows live.

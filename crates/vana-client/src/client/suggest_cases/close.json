@@ -68,7 +68,8 @@
       "target": null,
       "reason": "Closes the open chain: Fusion (Light, Fire).",
       "group": [],
-      "label": null
+      "label": null,
+      "family": null
     }
   ]
 }

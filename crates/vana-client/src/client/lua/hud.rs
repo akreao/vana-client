@@ -236,6 +236,9 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
     chat.set(
         "icon",
         lua.create_function(move |_, path: String| {
+            if path.contains("..") || path.starts_with('/') || path.contains(':') {
+                return Err(mlua::Error::runtime(format!("{path:?}: outside the mod's folder")));
+            }
             let bytes = match &src2 {
                 super::vm::Source::Dir(d) => super::vm::inside(d, &path).and_then(std::fs::read).map_err(|e| mlua::Error::runtime(format!("{path}: {e}")))?,
                 super::vm::Source::Bundled(_) => return Err(mlua::Error::runtime("bundled mods carry no image files")),

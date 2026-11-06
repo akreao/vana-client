@@ -60,7 +60,8 @@
       "target": null,
       "reason": "The Goblin Thug is attacking Raven.",
       "group": [],
-      "label": null
+      "label": null,
+      "family": null
     }
   ]
 }

@@ -71,7 +71,8 @@
         23,
         24
       ],
-      "label": "Dia"
+      "label": "Dia",
+      "family": "Dia"
     },
     {
       "action": {
@@ -80,7 +81,8 @@
       "target": null,
       "reason": "The Crab is not slowed.",
       "group": [],
-      "label": null
+      "label": null,
+      "family": "Slow"
     }
   ]
 }

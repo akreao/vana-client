@@ -616,7 +616,7 @@ enum Cmd {
         /// The UI Modes editor (the mode presets).
         #[arg(long)]
         modes: bool,
-        /// The Settings window on its Display page (our settings; retail's need the game's layouts).
+        /// The Settings window searching "shadow" (our settings; retail's need the game's layouts).
         #[arg(long)]
         settings: bool,
         /// Ours: the GM window with a level 5 GM's sample commands.

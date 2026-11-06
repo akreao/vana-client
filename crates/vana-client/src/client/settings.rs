@@ -50,6 +50,7 @@ pub struct Settings {
     pub monitor: String,
     pub gpu: String,
     pub cursor_size: u32,
+    pub keys_hide_cursor: bool,
     pub modern_ui: bool,
     pub modern_scale: u32,
     pub modern_opacity: u32,
@@ -106,6 +107,7 @@ impl Settings {
             monitor: c.monitor.clone(),
             gpu: c.gpu.clone(),
             cursor_size: c.cursor_size,
+            keys_hide_cursor: c.keys_hide_cursor,
             modern_ui: c.modern_ui,
             modern_scale: c.modern_scale,
             modern_opacity: pct(c.modern_opacity),
@@ -153,6 +155,7 @@ impl Settings {
         c.minimap_size = self.minimap_size;
         c.retail_aspect = self.retail_aspect;
         c.cursor_size = self.cursor_size;
+        c.keys_hide_cursor = self.keys_hide_cursor;
         c.modern_ui = self.modern_ui;
         c.modern_scale = self.modern_scale;
         c.modern_opacity = self.modern_opacity as f32 / 100.0;
@@ -218,6 +221,7 @@ enum Val {
     Effects,
     RetailAspect,
     CursorSize,
+    KeysHideCursor,
     /// The monitor for full screen, from the list the app passes in.
     Monitor,
     /// The graphics adapter ("Default" then the app's list).
@@ -290,7 +294,7 @@ const fn row(label: &'static str, help: &'static str, val: Val, choices: &'stati
     SRow { label, help, val, choices, when }
 }
 
-const TABS: [&str; 10] = ["General", "Screen", "Textures", "Effects", "Sound", "Misc.", "Client", "Gamepad", "Graphics", "Mods"];
+const TABS: [&str; 10] = ["General", "Screen", "Textures", "Effects", "Sound", "Misc.", "Client", "Controls", "Graphics", "Mods"];
 /// The Mods page (client/modsui.rs): its rows come from the mods folder, not a table.
 const MODS: usize = 9;
 const EXTRA_TABS: [&str; 4] = ["Maps", "Timers", "Battle", "Misc."];
@@ -312,7 +316,7 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
         row("Background", "How sharp the 3D world is drawn. Set it higher than the window for a sharper picture at a cost in speed, or lower for speed.", Size("0003", "0004", Sizes::Background), &[], Now),
         row("Menu Size", "The size menus and text are drawn at before they are stretched to the window. Smaller numbers make menus bigger.", Size("0037", "0038", Sizes::Ui), &[], Now),
         row("3D Aspect", "Window keeps the 3D world in proportion to the window. Config uses the shape set in the game's config tool, as retail does.", RetailAspect, &[(0, "Window"), (1, "Config")], Now),
-        row("Draw Distance", "How far away scenery, characters and effects still appear. Retail is the game's own distance, the others reach farther (not retail).", DrawDistance, &[(100, "Retail"), (150, "1.5x"), (200, "2x"), (300, "3x"), (0, "Unlimited")], Now),
+        row("Draw Distance", "How far away scenery, characters and effects still appear. Retail is the game's distance, the others reach farther (not retail).", DrawDistance, &[(100, "Retail"), (150, "1.5x"), (200, "2x"), (300, "3x"), (0, "Unlimited")], Now),
     ];
     const TEXTURES: &[SRow] = &[
         row("Textures", "Texture quality. High and Low save video memory, Full is the sharpest.", Tool("0018"), &[(0, "High"), (1, "Low"), (2, "Full")], NextZone),
@@ -336,8 +340,8 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
     ];
     const MISC: &[SRow] = &[
         row("Hardware Mouse", "Uses your system's mouse pointer with the game's cursor images, instead of a cursor the game draws.", Tool("0021"), OFF_ON, Now),
-        row("Mouse Camera Speed", "How fast the camera turns when you hold a mouse button and move the mouse. Lower it if the camera spins too fast. Controllers are not affected (not retail).", MouseCamSpeed, &[(25, "25%"), (50, "50%"), (75, "75%"), (100, "100%"), (150, "150%"), (200, "200%")], Now),
-        row("Cursor Size", "How big the game's own cursor is, when Hardware Mouse is Off. Auto makes it bigger in bigger windows (not retail).", CursorSize, &[(0, "Auto"), (100, "1x"), (150, "1.5x"), (200, "2x"), (300, "3x"), (400, "4x")], Now),
+        row("Cursor Size", "How big the game's cursor is, when Hardware Mouse is Off. Auto makes it bigger in bigger windows (not retail).", CursorSize, &[(0, "Auto"), (100, "1x"), (150, "1.5x"), (200, "2x"), (300, "3x"), (400, "4x")], Now),
+        row("Keys Hide the Cursor", "On, as the game does, a key press hides the mouse cursor until the mouse moves. Off keeps it shown while you walk with the keys (not retail).", KeysHideCursor, OFF_ON, Now),
         row("Opening Movie", "Plays the opening movie before the title screen. Any key skips it.", Tool("0022"), OFF_ON, Restart),
         row("Simple Character Creation", "Shows flat pictures instead of 3D models during character creation.", Tool("0023"), OFF_ON, Now),
         row("Screenshot Size", "Also saves each screenshot at your screen's size, in ffxiuser/screenshots.", Tool("0043"), OFF_ON, Now),
@@ -347,23 +351,24 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
         row("Frame Limit", "The most frames drawn each second. The game itself always runs at the same speed.", FrameLimit, &[], Now),
         row("Anisotropic Filtering", "Keeps ground and walls sharp when you look at them at a slant. Higher is sharper.", Aniso, &[(1, "Off"), (2, "2x"), (4, "4x"), (8, "8x"), (16, "16x")], NextZone),
         row("Party TP", "Shows each member's TP in the party window.", PartyTp, OFF_ON, Now),
-        row("Interface", "Classic uses the game's own windows. Modern uses the new windows where there is one (not retail).", ModernUi, &[(0, "Classic"), (1, "Modern")], Now),
+        row("Interface", "Classic uses the game's windows. Modern uses the new windows where there is one (not retail).", ModernUi, &[(0, "Classic"), (1, "Modern")], Now),
         row("Interface Size", "How big the modern windows are (not retail).", ModernScale, MODERN_SCALES, Now),
         row("Panel Opacity", "How see-through the modern windows' backgrounds are (not retail).", ModernOpacity, &[], Now),
         row("Panel Places", "Reset puts this character's modern windows back where they started (not retail).", ResetPlaces, &[(0, "As Moved"), (1, "Reset")], Now),
     ];
     // Ours: the graphics options retail has no page for (a page holds 7 rows).
     const GRAPHICS: &[SRow] = &[
-        row("Character Shadows", "Retail gives characters the game's own simple shadows. Real makes characters cast proper shadows from the sun and moon, and from lamps when Lamp Lights is Real (not retail).", ActorShadows, &[(0, "Retail"), (1, "Real")], Now),
+        row("Character Shadows", "Retail gives characters the game's simple shadows. Real makes characters cast proper shadows from the sun and moon, and from lamps when Lamp Lights is Real (not retail).", ActorShadows, &[(0, "Retail"), (1, "Real")], Now),
         row("Shadow Quality", "How sharp Real shadows are. Higher is sharper and uses more video memory (not retail).", ShadowMap, &[(1024, "Low"), (2048, "Medium"), (4096, "High")], Now),
         row("Ambient Occlusion", "Adds soft shade in corners and creases of the world, so buildings look more solid (not retail).", Ssao, OFF_ON, Now),
         row("Colour Grading", "Gives the 3D world a colour tint. Menus and text keep their colours (not retail).", Grading, &[(0, "Off"), (1, "Vivid"), (2, "Warm"), (3, "Cool"), (4, "Film")], Now),
         row("Anti-aliasing", "Smooths jagged edges in the 3D world. Menus and text are left alone (not retail). For even smoother edges, set Background higher than the window.", Antialias, &[(0, "Off"), (1, "SMAA")], Now),
     ];
-    // A page holds 7 rows; the gamepad's have their own.
+    // A page holds 7 rows; the controls' (the gamepad, mouse look) have their own.
     const GAMEPAD: &[SRow] = &[
         row("Gamepad", "Lets you play with a game controller. The button layout follows the game's pad config tool.", Gamepad, OFF_ON, Now),
         row("Stick Dead Zone", "How far you must push a stick before it moves you. Raise it if you drift with the stick let go. 33% matches retail (not retail).", PadDeadZone, &[(15, "15%"), (20, "20%"), (25, "25%"), (33, "33%"), (40, "40%"), (50, "50%")], Now),
+        row("Mouse Camera Speed", "How fast the camera turns when you hold a mouse button and move the mouse. Lower it if the camera spins too fast. Controllers are not affected (not retail).", MouseCamSpeed, &[(25, "25%"), (50, "50%"), (75, "75%"), (100, "100%"), (150, "150%"), (200, "200%")], Now),
     ];
     const MAPS: &[SRow] = &[
         row("Map Overlay", "Ctrl or Alt + O shows the zone map over the game, like the map add-ons do.", MapOverlay, OFF_ON, Now),
@@ -586,6 +591,7 @@ impl SettingsUi {
             Val::Effects => self.s.effects,
             Val::RetailAspect => self.s.retail_aspect as u32,
             Val::CursorSize => self.s.cursor_size,
+            Val::KeysHideCursor => self.s.keys_hide_cursor as u32,
             Val::Mod(i) => self.mod_page().and_then(|p| p.rows.get(i)).map_or(0, |r| r.at as u32),
         }
     }
@@ -630,6 +636,7 @@ impl SettingsUi {
             Val::MinimapSize => self.s.minimap_size = x,
             Val::RetailAspect => self.s.retail_aspect = x != 0,
             Val::CursorSize => self.s.cursor_size = x,
+            Val::KeysHideCursor => self.s.keys_hide_cursor = x != 0,
             Val::Mod(i) => {
                 let Some(k) = self.tab.checked_sub(EXTRA_TABS.len()) else { return };
                 if let Some(p) = self.mod_pages.get_mut(k)
@@ -1093,6 +1100,11 @@ impl SettingsUi {
         };
         let label = if self.warns(r) { format!("{} \u{26a0}", r.label) } else { r.label.to_string() };
         VRow { label, ctl }
+    }
+
+    /// Whether the row named `label` holds a retail setting (a config-tool value, a size, Gamma Base, Party TP).
+    pub fn retail(&self, label: &str) -> bool {
+        self.find(label).is_some_and(|r| matches!(r.val, Val::Tool(_) | Val::Size(..) | Val::Gamma | Val::PartyTp))
     }
 
     /// The row named `label` as the modern layer draws it, and its help line.
