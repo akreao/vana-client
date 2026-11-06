@@ -73,7 +73,8 @@
       "target": "Raven",
       "reason": "Raven is at 40% HP (600 missing).",
       "group": [],
-      "label": null
+      "label": null,
+      "family": null
     }
   ]
 }

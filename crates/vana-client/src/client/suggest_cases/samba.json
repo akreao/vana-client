@@ -61,7 +61,8 @@
       "target": null,
       "reason": "No samba up.",
       "group": [],
-      "label": null
+      "label": null,
+      "family": null
     }
   ]
 }

@@ -94,7 +94,8 @@
         4,
         5
       ],
-      "label": "Cure"
+      "label": "Cure",
+      "family": "Cure"
     }
   ]
 }

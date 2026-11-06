@@ -93,7 +93,8 @@
         8,
         9
       ],
-      "label": "Cure"
+      "label": "Cure",
+      "family": "Cure"
     }
   ]
 }

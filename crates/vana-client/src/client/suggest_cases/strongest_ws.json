@@ -61,7 +61,8 @@
       "target": null,
       "reason": "Your strongest weapon skill (TP 1500).",
       "group": [],
-      "label": null
+      "label": null,
+      "family": null
     }
   ]
 }

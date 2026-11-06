@@ -64,7 +64,8 @@
         43,
         44
       ],
-      "label": "Protect"
+      "label": "Protect",
+      "family": "Protect"
     },
     {
       "action": {
@@ -73,7 +74,8 @@
       "target": null,
       "reason": "Shell is not on you.",
       "group": [],
-      "label": null
+      "label": null,
+      "family": "Shell"
     }
   ]
 }
