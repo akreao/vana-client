@@ -125,6 +125,10 @@ pub trait Actors {
     fn sub_anim(&self, _id: u32) -> u8 {
         0
     }
+    /// Entity +0x124 bits 8..11: the applied sub-animation before its last change (scheduler var 0x3c).
+    fn sub_prev(&self, _id: u32) -> u8 {
+        0
+    }
     /// Drawobj +0x840 bit 6 (vtable +0x250 / +0x254, FUN_100d6850): this swing is the off-hand one, i.e. a dual-wield
     /// model playing a `b...` scheduler. Scheduler system value 0x3b (batch 5 item 8).
     fn off_hand(&self, _id: u32) -> bool {

@@ -589,6 +589,11 @@ struct Entity {
     sync: u8,
     /// +0x124: the sub-animation wanted (bits 1..3), applied (bits 4..7, 8 = none yet), and the model's own (+0x8a5).
     sub: [u8; 3],
+    /// +0x124 bits 8..11: the applied sub-animation before FUN_1008ef60's last change (scheduler var 0x3c).
+    sub_prev: u8,
+    /// +0x130 bit 2: 0x00E u32 @0x28 bit 26 (asm 0x1009c5a2), the server's sub-animation flag. With the monster bit
+    /// it lets FUN_1008ef60 run `ini<n>` and set the model's sub-animation.
+    sub_flag: bool,
     /// +0x124 bits 13..14 (0x00E MonStat): 2 takes the dft / df1 idles, ark walk and hsr run (FUN_1008a1a0); and the
     /// ticks to the next idle pick (+0x1ba, FUN_1008da00).
     mon_stat: u8,
@@ -1854,6 +1859,8 @@ fn self_entity(w: &World) -> Entity {
         mon_name: w.my_mon_name.clone(),
         mon_key: w.my_mon_key,
         sub: [0, 8, 0],
+        sub_prev: 0,
+        sub_flag: false,
         mon_stat: 0,
         ev_mon_stat: None,
         idle_swap: 0.0,
@@ -5306,6 +5313,8 @@ fn place_mogdoor(w: &mut World) {
             mon_name: None,
             mon_key: (0, [0; 2]),
             sub: [0, 8, 0],
+            sub_prev: 0,
+            sub_flag: false,
             mon_stat: 0,
             ev_mon_stat: None,
             idle_swap: 0.0,
@@ -6329,6 +6338,10 @@ impl crate::fx::Actors for FxActors<'_> {
 
     fn sub_anim(&self, id: u32) -> u8 {
         self.entities.get(&id).map_or(0, |e| e.sub[2])
+    }
+
+    fn sub_prev(&self, id: u32) -> u8 {
+        self.entities.get(&id).map_or(0, |e| e.sub_prev)
     }
 
     fn off_hand(&self, id: u32) -> bool {
@@ -10729,6 +10742,8 @@ impl App {
                         mon_name: None,
                         mon_key: (0, [0; 2]),
                         sub: [0, 8, 0],
+                        sub_prev: 0,
+                        sub_flag: false,
                         mon_stat: 0,
                         ev_mon_stat: None,
                         idle_swap: 0.0,
@@ -10950,6 +10965,9 @@ impl App {
                     }
                     if let Some(s) = e.sub_anim {
                         entry.sub[0] = s;
+                    }
+                    if let Some(f) = e.sub_flag {
+                        entry.sub_flag = f;
                     }
                     if let Some(h) = e.half_fade {
                         entry.half_fade = h;
@@ -11871,27 +11889,34 @@ impl App {
                 e.init_done = true;
                 first_init(*id, status, e.sub[0], &mut starts);
             }
-            let (want, applied) = (e.sub[0], e.sub[1]);
+            // FUN_1008ef60. Each change first keeps the applied value as the previous one (var 0x3c).
+            let (want, applied, own) = (e.sub[0], e.sub[1], e.sub[2]);
             if (want == 4 && applied == 0) || (want == 0 && applied == 4) {
+                e.sub_prev = applied;
                 e.sub = [want, want, want];
                 continue;
             }
+            // +0x120 bit 9 (a model: `ready`) and bit 13 (the monster bit) or +0x130 bit 2.
+            let flagged = e.mob || e.sub_flag;
             let running = |name: [u8; 4]| world.effects.actor_scheduler_running(*id, u32::from_le_bytes(name));
             if want < 4 {
-                if want == e.sub[2] && want == applied {
+                if want == own && want == applied {
                     continue;
                 }
+                e.sub_prev = applied;
                 e.sub[2] = want;
-                if e.mob && applied != 8 && !running(SUB[want as usize]) {
+                if flagged && applied != 8 && !running(SUB[want as usize]) {
                     starts.push((*id, SUB[want as usize]));
                 }
                 e.sub[1] = want;
-            } else if want != applied && e.mob && !running(SUB[want as usize]) {
+            } else if flagged && !(want == own && want == applied) && !running(SUB[want as usize]) {
+                e.sub_prev = applied;
+                e.sub[2] = want;
                 if applied != 8 {
                     stops.push((*id, SUB[applied as usize & 7]));
                 }
                 starts.push((*id, SUB[want as usize]));
-                e.sub = [want, want, want];
+                e.sub[1] = want;
             }
         }
         for id in readies {
