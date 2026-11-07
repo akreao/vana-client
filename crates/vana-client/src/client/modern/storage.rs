@@ -1,6 +1,7 @@
 //! The modern storage view in the command window, over items.rs's storage state and rules: the bags as tabs with the
 //! numbered ones merged (Mog Safe and Safe 2 one Mog Safe, Mog Wardrobe 1..8 one Mog Wardrobe; user, 2026-10-26),
-//! the chosen bag's items beside the inventory's. A click (or Ctrl-click) sends a stack to the other pane, a right
+//! the chosen bag's items beside the inventory's, with Auto-sort and Manual Sort on the focused side (a merged bag's
+//! parts each). A click (or Ctrl-click) sends a stack to the other pane, a right
 //! click one of it, a Shift-click asks how many; a row dragged onto the other pane moves its stack (with Shift held,
 //! asks how many), the pane outlined teal where the drop is taken and red where it is not. Into a merged bag it goes to
 //! the first part with room that takes it. Retail's colours say what may move (equipped pieces, the moogle's bags away
@@ -89,6 +90,202 @@ fn open_parts(w: &World, g: usize) -> Vec<u8> {
     BAGS[g].1.iter().copied().filter(|&c| gitems::has_free(w, c)).collect()
 }
 
+/// The containers a bag tab sorts: its parts that can hold items (a merged tab's each).
+fn sort_parts(w: &World, g: usize) -> Vec<u8> {
+    BAGS[g].1.iter().copied().filter(|&c| w.inv.sizes[c as usize] > 1).collect()
+}
+
+/// A side's rows with their containers: the bag tab's parts, or the inventory.
+fn side_rows(w: &World, bank_side: bool, g: usize) -> Vec<(u8, Slot)> {
+    if bank_side {
+        rows(w, g)
+    } else {
+        gitems::store_rows(w, gitems::INVENTORY).into_iter().map(|s| (gitems::INVENTORY, s)).collect()
+    }
+}
+
+/// Auto-sort the focused side and keep it sorted (ours): a merged bag's live parts each, the inventory itself. Several
+/// parts sort their views at once but queue the stack-merge packets (LSB drops 0x03A within a second); one part keeps
+/// retail's two immediate packets.
+fn auto_sort_side(w: &mut World, bank_side: bool, g: usize) {
+    if bank_side {
+        let all = sort_parts(w, g);
+        let live: Vec<u8> = all.iter().copied().filter(|&c| !gitems::store_rows(w, c).is_empty()).collect();
+        if live.len() <= 1 {
+            for c in live {
+                gitems::sort_request(w, c);
+                gitems::auto_sort_c(w, c);
+            }
+        } else {
+            for c in live {
+                gitems::auto_sort_local(w, c);
+            }
+        }
+        for c in all {
+            gitems::keep_sorted(w, c, true);
+        }
+    } else {
+        gitems::auto_sort_c(w, gitems::INVENTORY);
+        gitems::keep_sorted(w, gitems::INVENTORY, true);
+    }
+}
+
+/// Manual Sort (itmsortw's second row): ours stops keeping the side's containers sorted.
+fn manual_start(w: &mut World, bank_side: bool, g: usize) {
+    if bank_side {
+        for c in sort_parts(w, g) {
+            gitems::keep_sorted(w, c, false);
+        }
+    } else {
+        gitems::keep_sorted(w, gitems::INVENTORY, false);
+    }
+    if let Some(b) = store_mut(w) {
+        (b.manual, b.sortw, b.on_bank, b.note) = (Some((bank_side, None)), None, bank_side, None);
+    }
+    w.sounds.push(Se::Select as u32);
+}
+
+/// itmsortw's keys: Auto-sort (with sortyn) and Manual Sort; Switch is the tabs. True while it has the keys.
+fn sort_key(w: &mut World, key: egui::Key) -> bool {
+    use egui::Key as K;
+    let Some((b, ..)) = view(w) else { return false };
+    let Some(mut sw) = b.sortw else { return false };
+    sw.cursor = sw.cursor.clamp(1, 2);
+    if let Some(yes) = sw.ask {
+        match key {
+            K::ArrowUp | K::ArrowDown | K::ArrowLeft | K::ArrowRight => {
+                sw.ask = Some(!yes);
+                w.sounds.push(Se::Cursor as u32);
+            }
+            K::Enter | K::Escape => {
+                let yes = yes && key == K::Enter;
+                sw.ask = None;
+                let sound = if yes { Se::Select } else { Se::Cancel };
+                w.sounds.push(sound as u32);
+                if yes {
+                    auto_sort_side(w, sw.bank_side, group(b.bank));
+                    if let Some(b) = store_mut(w) {
+                        (b.sortw, b.on_bank, b.note, b.manual) = (None, sw.bank_side, None, None);
+                    }
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        if let Some(b) = store_mut(w) {
+            b.sortw = Some(sw);
+        }
+        return true;
+    }
+    match key {
+        K::ArrowUp | K::ArrowLeft => {
+            sw.cursor = if sw.cursor <= 1 { 2 } else { 1 };
+            w.sounds.push(Se::Cursor as u32);
+        }
+        K::ArrowDown | K::ArrowRight => {
+            sw.cursor = if sw.cursor >= 2 { 1 } else { 2 };
+            w.sounds.push(Se::Cursor as u32);
+        }
+        K::Enter => {
+            if sw.cursor == 1 {
+                sw.ask = Some(false);
+                w.sounds.push(Se::Select as u32);
+            } else {
+                manual_start(w, sw.bank_side, group(b.bank));
+                return true;
+            }
+        }
+        K::Escape => {
+            if let Some(b) = store_mut(w) {
+                (b.sortw, b.on_bank, b.note) = (None, sw.bank_side, None);
+            }
+            w.sounds.push(Se::Close as u32);
+            return true;
+        }
+        _ => {}
+    }
+    if let Some(b) = store_mut(w) {
+        b.sortw = Some(sw);
+    }
+    true
+}
+
+/// Manual Sort's keys on its side: Up / Down the rows, Enter picks and places, Escape drops the pick or goes back.
+fn manual_key(w: &mut World, key: egui::Key) -> bool {
+    use egui::Key as K;
+    let Some((b, iscroll, icursor)) = view(w) else { return false };
+    let Some((bank_side, held)) = b.manual else { return false };
+    let g = group(b.bank);
+    let n = side_rows(w, bank_side, g).len();
+    let cur = if bank_side { b.scroll + b.cursor } else { iscroll + icursor };
+    match key {
+        K::ArrowUp | K::ArrowDown if n > 0 => {
+            let to = if key == K::ArrowDown { (cur + 1).min(n - 1) } else { cur.saturating_sub(1) };
+            set_cursor(w, bank_side, to);
+            w.sounds.push(Se::Cursor as u32);
+        }
+        K::Enter if n > 0 => {
+            let at = cur.min(n - 1);
+            if let Some((c, s)) = side_rows(w, bank_side, g).get(at).cloned() {
+                manual_pick(w, bank_side, held, c, &s);
+            }
+        }
+        K::Escape => {
+            if held.is_some() {
+                if let Some(b) = store_mut(w)
+                    && let Some(m) = &mut b.manual
+                {
+                    *m = (bank_side, None);
+                }
+                w.sounds.push(Se::Cursor as u32);
+            } else {
+                if let Some(b) = store_mut(w) {
+                    (b.manual, b.sortw, b.on_bank) =
+                        (None, Some(gitems::SortW { cursor: 2, bank_side, ask: None }), bank_side);
+                }
+                w.sounds.push(Se::Close as u32);
+            }
+        }
+        _ => {}
+    }
+    true
+}
+
+/// A Manual Sort pick or place: the held row orange, a grey row refused; a place reorders its container's view.
+fn manual_pick(w: &mut World, bank_side: bool, held: Option<(u8, u8)>, c: u8, s: &Slot) {
+    match held {
+        None => {
+            if gitems::manual_tint(w, c, None, s) == TINT_DIM {
+                w.sounds.push(Se::Error as u32);
+                return;
+            }
+            if let Some(b) = store_mut(w)
+                && let Some(m) = &mut b.manual
+            {
+                *m = (bank_side, Some((c, s.index)));
+            }
+            w.sounds.push(Se::Select as u32);
+        }
+        Some((hc, from)) => {
+            if c != hc {
+                refuse(w, "Pick a row in the same bag.");
+                return;
+            }
+            if gitems::manual_tint(w, c, Some(from), s) == TINT_DIM {
+                w.sounds.push(Se::Error as u32);
+                return;
+            }
+            if let Some(b) = store_mut(w)
+                && let Some(m) = &mut b.manual
+            {
+                *m = (bank_side, None);
+            }
+            gitems::manual_move_c(w, hc, from, s);
+            w.sounds.push(Se::Select as u32);
+        }
+    }
+}
+
 /// Where an inventory item goes in the bag: the first part with room (`open`) that takes it.
 fn target(w: &World, b: &Storage, open: &[u8], s: &Slot) -> Option<u8> {
     open.iter().copied().find(|&c| tint(w, b, false, gitems::INVENTORY, c, s) != TINT_DIM)
@@ -108,7 +305,7 @@ fn places(w: &World) -> Vec<(Option<usize>, usize, u8, Slot)> {
 
 pub(in crate::client) fn search_open(w: &World) -> bool {
     // Not while the quantity strip asks how many: a pick would move the whole stack.
-    w.modern && view(w).is_some_and(|(b, ..)| b.qty.is_none())
+    w.modern && view(w).is_some_and(|(b, ..)| b.qty.is_none() && b.sortw.is_none() && b.manual.is_none())
 }
 
 /// Every place's item: its bag (and count) as the note, greyed when it can't move across.
@@ -203,6 +400,9 @@ struct Mouse {
     take: Option<(bool, usize, How)>,
     drop: Option<(Held, How)>,
     qty_key: Option<egui::Key>,
+    sort: Option<usize>,
+    ask: Option<bool>,
+    manual: Option<(bool, usize)>,
 }
 
 pub fn draw(p: &mut Panels, w: &mut World) {
@@ -219,14 +419,15 @@ pub fn draw(p: &mut Panels, w: &mut World) {
     let inv = gitems::store_rows(w, gitems::INVENTORY);
     let first = BAGS[g].1[0];
     let open = open_parts(w, g);
-    let why_bag: Vec<Option<&'static str>> = bag.iter().map(|(c, s)| refusal(w, &b, g, &open, true, *c, s)).collect();
-    let why_inv: Vec<Option<&'static str>> =
+    let mut why_bag: Vec<Option<&'static str>> =
+        bag.iter().map(|(c, s)| refusal(w, &b, g, &open, true, *c, s)).collect();
+    let mut why_inv: Vec<Option<&'static str>> =
         inv.iter().map(|s| refusal(w, &b, g, &open, false, gitems::INVENTORY, s)).collect();
-    let tints_bag: Vec<u32> = bag
+    let mut tints_bag: Vec<u32> = bag
         .iter()
         .map(|(c, s)| if b.read_only { TINT_DIM } else { tint(w, &b, true, *c, gitems::INVENTORY, s) })
         .collect();
-    let tints_inv: Vec<u32> = inv
+    let mut tints_inv: Vec<u32> = inv
         .iter()
         .zip(&why_inv)
         .map(|(s, why)| {
@@ -237,6 +438,22 @@ pub fn draw(p: &mut Panels, w: &mut World) {
             }
         })
         .collect();
+    let manual = b.manual;
+    if let Some((bank_side, held)) = manual {
+        let mtint = |c: u8, s: &Slot| {
+            let h = held.filter(|h| h.0 == c).map(|h| h.1);
+            gitems::manual_tint(w, c, h, s)
+        };
+        if bank_side {
+            for (i, (c, s)) in bag.iter().enumerate() {
+                (tints_bag[i], why_bag[i]) = (mtint(*c, s), None);
+            }
+        } else {
+            for (i, s) in inv.iter().enumerate() {
+                (tints_inv[i], why_inv[i]) = (mtint(gitems::INVENTORY, s), None);
+            }
+        }
+    }
     let icon = |id: u16| m.item_icon(ctx, &info, id);
     let bag_icons: Vec<_> = bag.iter().map(|(_, s)| icon(s.id)).collect();
     let inv_icons: Vec<_> = inv.iter().map(|s| icon(s.id)).collect();
@@ -250,6 +467,8 @@ pub fn draw(p: &mut Panels, w: &mut World) {
     let (used, room) = fill(w, g);
     let inv_room = (w.inv.sizes[0] as usize).saturating_sub(1);
     let on_bank = b.on_bank;
+    let sorting = b.sortw.is_some() || manual.is_some();
+    let sort_bank_side = b.sortw.map(|s| s.bank_side).or_else(|| manual.map(|m| m.0)).unwrap_or(on_bank);
     let (bcur, icur) = (b.scroll + b.cursor, iscroll + icursor);
     // The stack being split, and the move in flight, by name.
     let qty = b.qty.map(|q| {
@@ -278,6 +497,28 @@ pub fn draw(p: &mut Panels, w: &mut World) {
                 mouse.bag = Some(tabs[i]);
             }
         }
+        if !b.read_only && BAGS[g].1[0] != BIN {
+            let cursor = b.sortw.filter(|s| s.ask.is_none()).map(|s| (s.cursor.clamp(1, 2) - 1) as usize);
+            let lit = cursor.map_or(0, |k| 1u64 << k) | if b.manual.is_some() { 1 << 1 } else { 0 };
+            ui.horizontal_wrapped(|ui| {
+                if let Some(k) = super::kit::buttons(ui, m, &["Auto-sort", "Manual Sort"], cursor, lit, 0) {
+                    mouse.sort = Some(k);
+                }
+                let target = if sort_bank_side { BAGS[g].0 } else { "Inventory" };
+                ui.label(egui::RichText::new(format!("Sorts: {target}")).size(m.theme.small).color(m.theme.color("muted")));
+            });
+            if let Some(yes) = b.sortw.and_then(|s| s.ask) {
+                let q = gu.map_or("Sort items?".into(), |gu| gu.lobby_msg(0x0c, 0x3d, "Sort items?"));
+                if let Some(answer) = super::kit::yes_no(ui, m, &q, ["Yes", "No"], yes, m.theme.small) {
+                    mouse.ask = Some(answer);
+                }
+            }
+            if b.manual.is_some() && b.sortw.is_none() {
+                let held = b.manual.is_some_and(|(_, held)| held.is_some());
+                let hint = gu.map_or(String::new(), |gu| gu.menu_msg(if held { 6 } else { 5 }, ""));
+                ui.label(egui::RichText::new(hint).size(m.theme.small).color(m.theme.color("gold")));
+            }
+        }
         ui.add_space(8.0);
         let tall = ui.ctx().content_rect().height() * 0.55;
         ui.horizontal_top(|ui| {
@@ -296,12 +537,17 @@ pub fn draw(p: &mut Panels, w: &mut World) {
                         for (k, name) in names.iter().enumerate() {
                             let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW), Sense::click_and_drag());
                             let (c, s) = if bank_side { (bag[k].0, &bag[k].1) } else { (gitems::INVENTORY, &inv[k]) };
-                            resp.dnd_set_drag_payload(Held { bank_side, k, c, index: s.index, id: s.id });
+                            if !sorting {
+                                resp.dnd_set_drag_payload(Held { bank_side, k, c, index: s.index, id: s.id });
+                            }
                             let focus = on_bank == bank_side && k == cur;
                             if k == cur && follow {
                                 ui.scroll_to_rect(r, None);
                             }
                             let face = match () {
+                                _ if manual.is_some_and(|(side, held)| side == bank_side && held == Some((c, s.index))) => {
+                                    "controls/list_row_hover"
+                                }
                                 _ if focus => "controls/list_row_selected",
                                 _ if resp.hovered() => "controls/list_row_hover",
                                 _ => "controls/list_row_normal",
@@ -324,9 +570,13 @@ pub fn draw(p: &mut Panels, w: &mut World) {
                                 super::items::bazaar_tag(ui, m, right, r.center().y, price);
                             }
                             if resp.clicked() {
-                                mouse.take = Some((bank_side, k, if shift { How::Split } else { How::Stack }));
+                                if manual.is_some_and(|(side, _)| side == bank_side) {
+                                    mouse.manual = Some((bank_side, k));
+                                } else if !sorting {
+                                    mouse.take = Some((bank_side, k, if shift { How::Split } else { How::Stack }));
+                                }
                             }
-                            if resp.secondary_clicked() {
+                            if resp.secondary_clicked() && !sorting {
                                 mouse.take = Some((bank_side, k, How::One));
                             }
                             if let Some(why) = whys[k] {
@@ -343,7 +593,7 @@ pub fn draw(p: &mut Panels, w: &mut World) {
                 // it is not (the dragged row's own pane takes nothing).
                 let pane = col.response.rect.expand(4.0);
                 let drop = ui.interact(pane, egui::Id::unique(("storage drop", bank_side)), Sense::hover());
-                if let Some(h) = held.filter(|h| h.bank_side != bank_side) {
+                if let Some(h) = held.filter(|h| !sorting && h.bank_side != bank_side) {
                     let ok = if h.bank_side { why_bag.get(h.k).copied().flatten().is_none() } else { why_inv.get(h.k).copied().flatten().is_none() };
                     if drop.contains_pointer() {
                         let face = if ok { "controls/drag_outline_drop_valid" } else { "controls/drag_outline_drop_invalid" };
@@ -371,7 +621,7 @@ pub fn draw(p: &mut Panels, w: &mut World) {
         if bazaar_held {
             ui.label(egui::RichText::new(super::items::BAZAAR_NOTE).size(m.theme.small).color(m.theme.color("gold")));
         }
-        ui.label(egui::RichText::new("Click or drag moves a stack across, right click one; Shift (or Shift+Enter) asks how many. Tab changes the bag. Type to search every bag.").size(m.theme.small).color(m.theme.color("muted")));
+        ui.label(egui::RichText::new("Click or drag moves a stack across, right click one; Shift (or Shift+Enter) asks how many. Tab changes the bag. Type to search every bag. Num+ or the buttons sort the focused side.").size(m.theme.small).color(m.theme.color("muted")));
     });
     if let Some(f) = found {
         f.pick(w, p.gu);
@@ -393,12 +643,34 @@ pub fn draw(p: &mut Panels, w: &mut World) {
     if let Some(k) = mouse.qty_key {
         key(w, k, false);
     }
-    if let Some((bank_side, k, how)) = mouse.take {
-        set_cursor(w, bank_side, k);
-        take(w, bank_side, k, how);
+    if let Some(k) = mouse.sort {
+        if let Some(b) = store_mut(w) {
+            let bank_side = b.sortw.map_or(b.on_bank, |s| s.bank_side);
+            b.sortw = Some(gitems::SortW { cursor: k as u16 + 1, bank_side, ask: None });
+        }
+        sort_key(w, egui::Key::Enter);
     }
-    if let Some((h, how)) = mouse.drop {
-        dropped(w, h, how);
+    if let Some(answer) = mouse.ask {
+        if let Some(b) = store_mut(w)
+            && let Some(s) = &mut b.sortw
+        {
+            s.ask = Some(answer);
+        }
+        sort_key(w, egui::Key::Enter);
+    }
+    if let Some((bank_side, k)) = mouse.manual {
+        set_cursor(w, bank_side, k);
+        manual_key(w, egui::Key::Enter);
+    }
+    let sorting = view(w).is_some_and(|(b, ..)| b.sortw.is_some() || b.manual.is_some());
+    if !sorting {
+        if let Some((bank_side, k, how)) = mouse.take {
+            set_cursor(w, bank_side, k);
+            take(w, bank_side, k, how);
+        }
+        if let Some((h, how)) = mouse.drop {
+            dropped(w, h, how);
+        }
     }
 }
 
@@ -461,7 +733,8 @@ fn switch(w: &mut World, g: usize) {
     if let Some(b) = store_mut(w)
         && group(b.bank) != g
     {
-        (b.bank, b.scroll, b.cursor, b.on_bank, b.qty, b.note) = (BAGS[g].1[0], 0, 0, true, None, None);
+        (b.bank, b.scroll, b.cursor, b.on_bank, b.qty, b.note, b.sortw, b.manual) =
+            (BAGS[g].1[0], 0, 0, true, None, None, None, None);
         w.sounds.push(Se::Cursor as u32);
     }
 }
@@ -589,6 +862,12 @@ pub fn key(w: &mut World, key: egui::Key, shift: bool) -> bool {
             K::Escape => qty_act(w, QtyAct::Cancel),
             _ => {}
         }
+        return true;
+    }
+    if sort_key(w, key) {
+        return true;
+    }
+    if manual_key(w, key) {
         return true;
     }
     let g = group(b.bank);

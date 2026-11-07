@@ -7593,6 +7593,9 @@ struct World {
     auto_sort: u32,
     auto_sort_dirty: bool,
     sort_due: (u32, f32),
+    /// Queued c2s 0x03A {container} stack-merge requests (merged storage tabs), one per SORT_GAP.
+    sort_packets: Vec<u8>,
+    sort_packet_wait: f32,
     /// The frames posed so far (FUN_10014d50's count, for Misc. 2's animation frame rate).
     anim_frame: u32,
     /// DAT_10487ef5 (event op 0xab subs 9 / 10): the weather density forced to 1.0; cleared by each zone load.
@@ -9774,6 +9777,8 @@ impl App {
                             auto_sort: self.cfg.auto_sort,
                             auto_sort_dirty: false,
                             sort_due: (0, 0.0),
+                            sort_packets: Vec::new(),
+                            sort_packet_wait: 0.0,
                             anim_frame: 0,
                             weather_forced: false,
                             inv_free: None,

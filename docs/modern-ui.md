@@ -326,7 +326,10 @@ Milestone 1:
   the list pages open retail's windows over it.
 - Storage (modern/storage.rs): the bags as tabs, Mog Safe / Safe 2 and Mog Wardrobe 1..8 merged; the bag beside the
   inventory; a click (or Ctrl-click) moves a stack (right click one), into a merged bag the first part with room that
-  takes it; retail's colours say what may move. Milestone 2 (2026-11-02): a row dragged onto the other pane moves
+  takes it; retail's colours say what may move. Auto-sort / Manual Sort targets the focused side (bag or inventory)
+  and sorts each part of a merged bag; merged-part 0x03A requests are queued a second apart for LSB. Manual Sort
+  reorders rows within one part; Num+ opens retail's sort choices. Milestone 2 (2026-11-02): a row dragged onto the
+  other pane moves
   its stack, the pane outlined teal / red for a valid / invalid drop; Shift (on the drop, a click or Enter) asks how
   many; a refused row says why (hover, and under the lists after a try); a sent move shows as pending until the
   server moves it, and one the server ignores is explained (nothing moves optimistically, so nothing is restored).
