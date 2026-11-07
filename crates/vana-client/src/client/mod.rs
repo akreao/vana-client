@@ -11841,20 +11841,25 @@ impl App {
         let mut starts: Vec<(u32, [u8; 4])> = Vec::new();
         let mut stops: Vec<(u32, [u8; 4])> = Vec::new();
         let (mut readies, mut ins): (Vec<u32>, Vec<u32>) = (Vec::new(), Vec::new());
-        let mut first_init = |id: u32, status: u8, starts: &mut Vec<(u32, [u8; 4])>| {
+        // FUN_1008c480: `init` on a status of its own (not 0x22) sees the wanted sub-animation, then the model's goes
+        // back to what it was (Effects::on_init).
+        let mut inits: Vec<(u32, u8)> = Vec::new();
+        let mut first_init = |id: u32, status: u8, sub: u8, starts: &mut Vec<(u32, [u8; 4])>| {
             readies.push(id);
             if !matches!(status, 6 | 0x32 | 0x38 | 0x3f..=0x53) {
-                starts.push((id, *b"init"));
                 if status == 0x22 {
+                    starts.push((id, *b"init"));
                     starts.push((id, *b"inte"));
                 } else {
+                    inits.push((id, sub));
                     ins.push(id);
                 }
             }
         };
         if !world.my_init_done && world.actors.get(&world.my_id).is_some_and(|a| a.character.is_some()) {
             world.my_init_done = true;
-            first_init(world.my_id, world.my_motion.status, &mut starts);
+            let sub = world.entities.get(&world.my_id).map_or(0, |e| e.sub[0]);
+            first_init(world.my_id, world.my_motion.status, sub, &mut starts);
         }
         for (id, e) in world.entities.iter_mut() {
             let ready = world.actors.get(id).is_some_and(|a| a.character.is_some());
@@ -11864,8 +11869,7 @@ impl App {
             let status = e.motion.status;
             if !e.init_done {
                 e.init_done = true;
-                e.sub[2] = e.sub[0];
-                first_init(*id, status, &mut starts);
+                first_init(*id, status, e.sub[0], &mut starts);
             }
             let (want, applied) = (e.sub[0], e.sub[1]);
             if (want == 4 && applied == 0) || (want == 0 && applied == 4) {
@@ -11895,6 +11899,10 @@ impl App {
         }
         for (id, name) in stops {
             world.effects.stop_actor_scheduler(id, u32::from_le_bytes(name));
+        }
+        for (id, sub) in inits {
+            log::debug!(target: "motion", "actor {id:#x}: scheduler init (sub-animation {sub})");
+            world.effects.on_init(id, sub);
         }
         for (id, name) in starts {
             log::debug!(target: "motion", "actor {id:#x}: scheduler {}", String::from_utf8_lossy(&name));
