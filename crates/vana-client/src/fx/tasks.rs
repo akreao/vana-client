@@ -727,11 +727,12 @@ impl Effects {
                                 }
                                 _ => {
                                     let init = p.actor.filter(|_| p.name == INIT && p.own);
-                                    let sub = init.and_then(|a| Some((a, self.init_sub.remove(&a)?)));
-                                    let outer = self.sub_now;
-                                    self.sub_now = sub.or(outer);
+                                    if let Some(sub) = init.and_then(|a| Some((a, self.init_sub.remove(&a)?)))
+                                        && let Some(Some(t)) = self.tasks.get_mut(ti)
+                                    {
+                                        t.init_sub = Some(sub);
+                                    }
                                     _ = self.run_new(ti, actors);
-                                    self.sub_now = outer;
                                 }
                             }
                         }
@@ -866,6 +867,7 @@ impl Effects {
             self.reg.libs[r.0].file_id
         );
         let mut t = Task::new(r, ops, a1, a2, action, speed);
+        t.init_sub = self.sub_now;
         t.ends_loop = crate::dat::sched::loops(self.reg.libs[r.0].data(r.1));
         t.parent = parent;
         // A task an op creates belongs to its creator's event.
@@ -1072,6 +1074,20 @@ impl Effects {
 
     /// A task's ops while its countdown allows, each adding its wait x speed.
     fn run_ready(&mut self, i: usize, t: &mut Task, actors: &dyn Actors) {
+        // An `init` start's first step reads the wanted sub-animation (on_init); a file retry keeps it for the next go.
+        let outer = self.sub_now;
+        if t.init_sub.is_some() {
+            self.sub_now = t.init_sub;
+        }
+        let mut retry = false;
+        self.run_steps(i, t, actors, &mut retry);
+        if !retry {
+            t.init_sub = None;
+        }
+        self.sub_now = outer;
+    }
+
+    fn run_steps(&mut self, i: usize, t: &mut Task, actors: &dyn Actors, retry: &mut bool) {
         let mut guard = 0;
         while !t.done && !t.waiting && t.countdown <= 0.0 && guard < 512 {
             guard += 1;
@@ -1095,6 +1111,7 @@ impl Effects {
                 }
                 Flow::Retry => {
                     t.countdown = t.countdown.max(0.0) - op.wait as f32 * t.speed + 1e-3;
+                    *retry = true;
                     break;
                 }
                 Flow::Pause => break,

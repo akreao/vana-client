@@ -158,6 +158,9 @@ pub struct Task {
     /// camera. The event's own scheduler (`event_root`) leaves them to client/event.rs's runner, which plays it too.
     pub event: bool,
     pub event_root: bool,
+    /// An `init` start's wanted sub-animation (Effects::on_init), for the tasks of its first step. Retail loads
+    /// synchronously, so that step never waits on a file; ours keeps it over a file retry until the step passes it.
+    pub init_sub: Option<(u32, u8)>,
 }
 
 impl Task {
@@ -198,6 +201,7 @@ impl Task {
             uid,
             looping: false,
             ends_loop: false,
+            init_sub: None,
             restart: false,
             stepped: false,
             vana: false,
