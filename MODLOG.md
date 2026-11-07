@@ -22980,3 +22980,16 @@ From FFXiMain.dll (Steven's unpacked copy), full_text.asm, FUN_100a7b80.
   blocks and tables. Classic: the game's frame and title strip, the game font with in-line colours (bold `1e 01`,
   code `1e 02`), the list scroll bar, OK. Modern: the pack's frame, Fira Sans with the strong face and mono, a thin
   bar. Up / Down, Page Up / Page Down (Space), Home / End and the wheel scroll; Enter or Escape closes, as does OK.
+
+## Model sub-animation: `init` alone sees an NPC's sub-state (2026-11-07)
+
+- FUN_1008c480 (asm 0x1008c598..0x1008c5fe), statuses other than 6 / 0x32 / 0x38 / 0x22 / 0x3f..0x53: saves the
+  model's sub-animation (vtable +0xa4, +0x8a5), sets it to the wanted one (entity +0x124 bits 1..3), starts `init`
+  (a new task steps at once, so `init` and what it starts with op 0x57 read the wanted value as var 0x3a), then sets
+  +0x8a5 back to the saved value (vtable +0xa8).
+- FUN_1008ef60 sets +0x8a5 for a wanted value below 4, and for 4 and up only on an actor that passes the +0x120 /
+  +0x130 tests (monsters). So an NPC spawned in a sub-state (LSB sends 4 | animationsub) keeps its model's own 0 after
+  `init`.
+- Ours stored the wanted value as the model's for good at first sight: a synergy furnace (model 2348, LSB
+  animationsub 5) kept reading sub-animation 1 in its schedulers and looped its active glow (lenonk/vana-client#96).
+  Now `init` reads it through Effects::on_init for its first step only.

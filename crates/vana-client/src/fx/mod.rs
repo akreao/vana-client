@@ -919,6 +919,10 @@ pub struct Effects {
     stepping: Vec<usize>,
     dolls: Vec<tasks::Doll>,
     pending: Vec<tasks::Pending>,
+    /// FUN_1008c480: the wanted sub-animation an actor's `init` reads (on_init), and the one set while that `init`
+    /// takes its first step.
+    init_sub: HashMap<u32, u8>,
+    sub_now: Option<(u32, u8)>,
     /// Actor +0xa0: the cast 4cc stored by FUN_10083d60.
     casting: HashMap<u32, u32>,
     sched_cache: HashMap<Ref, std::rc::Rc<Vec<sched::SOp>>>,
@@ -1126,6 +1130,8 @@ impl Effects {
             stepping: Vec::new(),
             dolls: Vec::new(),
             pending: Vec::new(),
+            init_sub: HashMap::new(),
+            sub_now: None,
             casting: HashMap::new(),
             sched_cache: HashMap::new(),
             index: None,
