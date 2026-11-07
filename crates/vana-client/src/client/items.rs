@@ -1005,8 +1005,8 @@ pub(super) fn follow_held(w: &mut World) {
 /// Seconds after the last new item before a container kept sorted sorts (a pickup's updates come in a burst).
 pub(super) const SORT_DELAY: f32 = 0.5;
 
-/// Ours: the containers kept sorted (config auto_sort) sort again once their new items are in, and the queued
-/// c2s 0x03A stack-merge requests (merged storage tabs) go one per SORT_GAP.
+/// Ours: kept-sorted containers sort locally once their new items are in and queue c2s 0x03A stack-merge requests;
+/// requests (including merged-tab sorts) go one per SORT_GAP.
 pub(super) fn auto_sort_tick(w: &mut World, dt: f32) {
     w.sort_packet_wait -= dt;
     if w.sort_packet_wait <= 0.0 && !w.sort_packets.is_empty() {
@@ -1023,7 +1023,7 @@ pub(super) fn auto_sort_tick(w: &mut World, dt: f32) {
     let due = std::mem::take(&mut w.sort_due.0);
     for c in (0..32u8).filter(|c| due >> c & 1 != 0) {
         log::info!("items: container {c} kept sorted, sorting");
-        auto_sort_c(w, c);
+        auto_sort_local(w, c);
     }
 }
 
