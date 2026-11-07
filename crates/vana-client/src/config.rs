@@ -724,7 +724,8 @@ mod tests {
     #[test]
     fn favourite_loadouts_round_trip() {
         let mut c = Config::default();
-        c.modern_favourite_loadouts.insert("Steven".into(), [("1/3".to_string(), vec!["m:1".to_string()])].into_iter().collect());
+        c.modern_favourite_loadouts
+            .insert("Steven".into(), [("1/3".to_string(), vec!["m:1".to_string()])].into_iter().collect());
         let out = written(&c);
         let back: Config = serde_json::from_value(out).unwrap();
         assert_eq!(back.modern_favourite_loadouts, c.modern_favourite_loadouts);
