@@ -1,8 +1,6 @@
-//! Keeps the screen awake while a game controller plays (ours, not retail's). Pad input never reaches the desktop's
-//! idle timer, so without this the screen blanks mid-fight. Only the pad counts (the keyboard and mouse already
-//! reset the timer), and only for `HOLD` after its last input, so the screen still sleeps once the pad is put down.
-//! Linux: the session bus's org.freedesktop.ScreenSaver Inhibit (KDE, GNOME, Xfce, ...), else the desktop portal's
-//! Inhibit (idle flag). Windows: SetThreadExecutionState, which resets the display timer as input does.
+//! Keeps the screen awake while a game controller plays: pad input never reaches the idle timer on many desktops,
+//! so without this the screen blanks mid-fight. The hold lasts `HOLD` after the pad's last input, then the desktop's
+//! own timeout applies again.
 
 use std::time::{Duration, Instant};
 
@@ -16,7 +14,11 @@ pub struct KeepAwake {
     #[cfg(target_os = "linux")]
     tx: Option<std::sync::mpsc::Sender<bool>>,
     #[cfg(target_os = "linux")]
+    failed: bool,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     sent: Option<Instant>,
+    #[cfg(target_os = "macos")]
+    held: Option<macos::Hold>,
     #[cfg(windows)]
     poked: Option<Instant>,
 }
@@ -33,16 +35,35 @@ impl KeepAwake {
         if on {
             self.poke(now);
         }
-        // Linux: on a change, and once a minute through the hold (the worker ignores a repeat while it holds one), so
-        // a failed inhibit is retried without waiting for the hold to end.
+        // Linux: send on the edges and once a minute through the hold. If the worker is gone, leave it alone until
+        // the next hold instead of respawning it every minute.
         #[cfg(target_os = "linux")]
-        if on != self.on || (on && self.sent.is_none_or(|t| now - t >= Duration::from_secs(60))) {
-            self.sent = Some(now);
-            // A worker that lost its bus (none at start, or it went away) has hung up: start a new one and resend.
-            if self.tx.get_or_insert_with(linux::spawn).send(on).is_err() {
-                self.tx = Some(linux::spawn());
-                self.tx.as_ref().unwrap().send(on).ok();
+        if !on {
+            self.failed = false;
+            self.sent = None;
+            if self.on {
+                let dead = self.tx.as_ref().is_some_and(|tx| tx.send(false).is_err());
+                if dead {
+                    self.tx = None;
+                }
             }
+        } else if !self.failed {
+            let retry = self.sent.is_none_or(|t| now - t >= Duration::from_secs(60));
+            if on != self.on || retry {
+                self.sent = Some(now);
+                let failed = self.tx.get_or_insert_with(linux::spawn).send(true).is_err();
+                if failed {
+                    self.tx = None;
+                    self.failed = true;
+                }
+            }
+        }
+        // macOS: the assertions persist, so only the edges (and a retry after a failed create) need work.
+        #[cfg(target_os = "macos")]
+        if on != self.on || (on && self.held.is_none() && self.sent.is_none_or(|t| now - t >= Duration::from_secs(60)))
+        {
+            self.sent = Some(now);
+            self.held = if on { macos::Hold::acquire() } else { None };
         }
         self.on = on;
     }
@@ -59,11 +80,70 @@ impl KeepAwake {
     }
 }
 
+#[cfg(target_os = "macos")]
+mod macos {
+    use objc2_core_foundation::CFString;
+    use objc2_io_kit::{
+        IOPMAssertionCreateWithName, IOPMAssertionID, IOPMAssertionRelease, kIOPMAssertionLevelOn, kIOReturnSuccess,
+    };
+
+    const REASON: &str = "Vana Client: Playing with a game controller";
+
+    /// Both idle-sleep assertions held for one pad session; dropping releases them.
+    pub struct Hold {
+        system: IOPMAssertionID,
+        display: IOPMAssertionID,
+    }
+
+    impl Hold {
+        pub fn acquire() -> Option<Self> {
+            let system = assertion("PreventUserIdleSystemSleep")?;
+            let display = match assertion("PreventUserIdleDisplaySleep") {
+                Some(id) => id,
+                None => {
+                    release(system);
+                    return None;
+                }
+            };
+            Some(Self { system, display })
+        }
+    }
+
+    impl Drop for Hold {
+        fn drop(&mut self) {
+            release(self.system);
+            release(self.display);
+        }
+    }
+
+    fn assertion(kind: &'static str) -> Option<IOPMAssertionID> {
+        let ty = CFString::from_static_str(kind);
+        let name = CFString::from_static_str(REASON);
+        let mut id = 0;
+        // SAFETY: `ty` and `name` are valid CFStrings, and `id` is a valid out-pointer.
+        let r = unsafe { IOPMAssertionCreateWithName(Some(&*ty), kIOPMAssertionLevelOn, Some(&*name), &mut id) };
+        if r == kIOReturnSuccess {
+            Some(id)
+        } else {
+            log::warn!("keep awake: IOPMAssertionCreateWithName({kind}) failed: {r}");
+            None
+        }
+    }
+
+    fn release(id: IOPMAssertionID) {
+        let r = IOPMAssertionRelease(id);
+        if r != kIOReturnSuccess {
+            log::warn!("keep awake: IOPMAssertionRelease failed: {r}");
+        }
+    }
+}
+
 #[cfg(target_os = "linux")]
 mod linux {
     use std::collections::HashMap;
     use std::sync::mpsc;
-    use zbus::blocking::Connection;
+    use std::time::Duration;
+    use zbus::blocking::{Connection, connection::Builder};
     use zbus::zvariant::{OwnedObjectPath, Value};
 
     const REASON: &str = "Playing with a game controller";
@@ -78,7 +158,7 @@ mod linux {
     pub fn spawn() -> mpsc::Sender<bool> {
         let (tx, rx) = mpsc::channel::<bool>();
         let spawned = std::thread::Builder::new().name("keep-awake".into()).spawn(move || {
-            let conn = match Connection::session() {
+            let conn = match Builder::session().and_then(|b| b.method_timeout(Duration::from_secs(5)).build()) {
                 Ok(c) => c,
                 Err(e) => return log::warn!("keep awake: no session bus: {e}"),
             };
@@ -93,6 +173,9 @@ mod linux {
                 } else if !on && let Some(h) = held.take() {
                     release(&conn, h);
                 }
+            }
+            if let Some(h) = held {
+                release(&conn, h);
             }
         });
         if let Err(e) = spawned {
