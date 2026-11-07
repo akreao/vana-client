@@ -193,12 +193,20 @@ pub(super) fn job_key(main: u8, sub: u8) -> Option<String> {
     (main != 0).then(|| format!("{main}/{sub}"))
 }
 
+fn spells_ready(w: &World) -> bool {
+    w.actions.is_some() && w.stats.is_some() && !w.spells_known.is_empty()
+}
+
+fn commands_ready(w: &World) -> bool {
+    w.commands_known.len() >= 0xe0 && w.fav_commands_fresh
+}
+
 fn known_ready(w: &World) -> bool {
-    !w.spells_known.is_empty() && w.commands_known.len() >= 0xe0
+    spells_ready(w) && commands_ready(w)
 }
 
 fn ability_known(w: &World, id: u16) -> bool {
-    if !(0x200..0x400).contains(&id) || w.commands_known.len() < 0xe0 {
+    if !(0x200..0x400).contains(&id) || !commands_ready(w) {
         return true;
     }
     let bit = (id - 0x200) as usize;
@@ -239,13 +247,15 @@ pub(super) fn sync_jobs(w: &mut World) {
         w.favourites = saved.clone();
         w.fav_provisional = false;
     } else {
+        // The command bits may still be the old job's; wait for the next 0x0AC before pruning abilities.
+        w.fav_commands_fresh = false;
         prune(w);
         w.fav_provisional = true;
     }
     w.fav_save = true;
 }
 
-/// A seeded loadout is provisional until the learned spell/ability bits have arrived; drop what they rule out.
+/// A seeded loadout is provisional until the learned bits and the spell job data have arrived; drop what they rule out.
 pub(super) fn refresh(w: &mut World) {
     if !w.fav_provisional {
         return;

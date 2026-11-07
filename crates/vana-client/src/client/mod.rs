@@ -7311,11 +7311,13 @@ struct World {
     uimodes_open: bool,
     /// Favourites (favs.rs keys, the strip's order) for the active main/sub job, the saved loadouts by job, whether
     /// the strip shows, and whether either changed since the save. `fav_provisional` marks a seeded loadout still
-    /// waiting for the learned spell/ability bits before it is pruned (favs.rs).
+    /// waiting for the learned bits and spell job data before it is pruned; `fav_commands_fresh` is false from a job
+    /// change until the next 0x0AC, so stale command bits are not used (favs.rs).
     favourites: Vec<String>,
     fav_loadout: Option<String>,
     fav_loadouts: std::collections::BTreeMap<String, Vec<String>>,
     fav_provisional: bool,
+    fav_commands_fresh: bool,
     fav_strip: bool,
     fav_save: bool,
     /// The action we asked the server for and its answer so far (pending.rs).
@@ -9626,6 +9628,7 @@ impl App {
                             fav_loadout,
                             fav_loadouts,
                             fav_provisional,
+                            fav_commands_fresh: false,
                             fav_strip: self.cfg.modern_fav_strip,
                             fav_save: false,
                             asked: None,
@@ -11511,6 +11514,7 @@ impl App {
                 }
                 NetEvent::CommandsKnown(bits) => {
                     world.commands_known = bits;
+                    world.fav_commands_fresh = true;
                     favs::refresh(world);
                 }
                 NetEvent::Dungeon(store) => maze::on_store(world, &store),
