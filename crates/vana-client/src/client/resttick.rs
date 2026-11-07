@@ -61,7 +61,12 @@ pub fn update(w: &mut World) {
         if r.learnt.is_none()
             && let Some(l) = learn(&r.rises)
         {
-            log::info!("rest ticks: first heal after {:.1} s, then every {:.1} s, looked at every {:.1} s", l[0], l[1], l[2]);
+            log::info!(
+                "rest ticks: first heal after {:.1} s, then every {:.1} s, looked at every {:.1} s",
+                l[0],
+                l[1],
+                l[2]
+            );
             (r.learnt, r.dirty) = (Some(l), true);
         }
     }
@@ -99,7 +104,9 @@ pub fn shown(w: &World) -> Option<Shown> {
     let start = r.start?;
     let now = start.elapsed().as_secs_f32();
     let Some(model) = r.learnt else { return Some(Shown::Timing(now)) };
-    let grid = r.grid.filter(|g| g.0 == w.pos_zone).map(|(_, g)| if g >= start { g.duration_since(start).as_secs_f32() } else { -start.duration_since(g).as_secs_f32() });
+    let grid = r.grid.filter(|g| g.0 == w.pos_zone).map(|(_, g)| {
+        if g >= start { g.duration_since(start).as_secs_f32() } else { -start.duration_since(g).as_secs_f32() }
+    });
     let (prev, next) = window(model, &r.rises, grid, now);
     Some(Shown::Next(((now - prev) / (next - prev)).clamp(0.0, 1.0), next - now))
 }

@@ -2,10 +2,10 @@
 //! every rule and key: Buy / Sell as tabs (shopmain / guildsho), the whole list with its prices and requirements, the
 //! quantity, the price and the confirm asked inside the panel.
 
+use super::super::World;
 use super::super::game_ui::GameUi;
 use super::super::items::ItemCache;
 use super::super::shop::{self, Look, Req, View};
-use super::super::World;
 use super::craft::{button, caption, count_row, money_row, tint};
 use super::{Panels, Title};
 use crate::audio::Ui as Se;
@@ -34,7 +34,9 @@ struct Mouse {
 fn req_text(m: &super::Modern, gu: &GameUi, r: Req) -> String {
     match r {
         Req::Rank { need, .. } => m.caption(gu, "menu    keytops3", 192 + need as usize).unwrap_or_default(),
-        Req::Job { job, level } => format!("{} {level}", m.caption(gu, "menu    windowps", 212 + job as usize).unwrap_or_default()),
+        Req::Job { job, level } => {
+            format!("{} {level}", m.caption(gu, "menu    windowps", 212 + job as usize).unwrap_or_default())
+        }
         Req::Text(info) => gu.item_msg(0xc, 0x11d + info as usize).unwrap_or_default(),
     }
 }
@@ -60,24 +62,58 @@ fn list(ui: &mut Ui, m: &super::Modern, gu: &GameUi, info: &ItemCache, v: &Look,
                 && let Some(t) = m.item_icon(&ctx, info, r.id)
             {
                 let dim = if r.tint == crate::inventory::TINT_DIM { Color32::from_gray(110) } else { Color32::WHITE };
-                ui.painter().image(t, Rect::from_min_size(pos2(rect.min.x + 10.0, rect.center().y - ICON / 2.0), vec2(ICON, ICON)), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), dim);
+                ui.painter().image(
+                    t,
+                    Rect::from_min_size(pos2(rect.min.x + 10.0, rect.center().y - ICON / 2.0), vec2(ICON, ICON)),
+                    Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                    dim,
+                );
             }
             let name = r.text.clone().unwrap_or_else(|| info.item(r.id).map(|it| it.name.clone()).unwrap_or_default());
             let right = rect.max.x - 110.0;
             let clip = Rect::from_min_max(rect.min, pos2(right - 6.0, rect.max.y));
             let x = if r.id != 0 { rect.min.x + 42.0 } else { rect.min.x + 14.0 };
-            ui.painter().with_clip_rect(clip).text(pos2(x, rect.center().y), Align2::LEFT_CENTER, name, FontId::proportional(m.theme.ui), name_tint);
+            ui.painter().with_clip_rect(clip).text(
+                pos2(x, rect.center().y),
+                Align2::LEFT_CENTER,
+                name,
+                FontId::proportional(m.theme.ui),
+                name_tint,
+            );
             if let Some(req) = r.req {
-                ui.painter().text(pos2(right, rect.center().y), Align2::RIGHT_CENTER, req_text(m, gu, req), FontId::proportional(m.theme.small), name_tint);
+                ui.painter().text(
+                    pos2(right, rect.center().y),
+                    Align2::RIGHT_CENTER,
+                    req_text(m, gu, req),
+                    FontId::proportional(m.theme.small),
+                    name_tint,
+                );
             }
             let cell = r.price.clone().or_else(|| r.count.map(|n| n.to_string()));
             // A bazaar row's tax "(+T G)" in yellow at the right, the price before it.
             let mut end = rect.max.x - 12.0;
             if let Some(t) = &r.tax {
-                end = ui.painter().text(pos2(end, rect.center().y), Align2::RIGHT_CENTER, t, FontId::proportional(m.theme.small), tint(m, 0x8090_9040)).min.x - 8.0;
+                end = ui
+                    .painter()
+                    .text(
+                        pos2(end, rect.center().y),
+                        Align2::RIGHT_CENTER,
+                        t,
+                        FontId::proportional(m.theme.small),
+                        tint(m, 0x8090_9040),
+                    )
+                    .min
+                    .x
+                    - 8.0;
             }
             if let Some(c) = cell {
-                ui.painter().text(pos2(end, rect.center().y), Align2::RIGHT_CENTER, c, FontId::proportional(m.theme.ui), tint(m, r.price_tint));
+                ui.painter().text(
+                    pos2(end, rect.center().y),
+                    Align2::RIGHT_CENTER,
+                    c,
+                    FontId::proportional(m.theme.ui),
+                    tint(m, r.price_tint),
+                );
             }
             if k == v.cursor && follow {
                 ui.scroll_to_rect(rect, None);
@@ -87,7 +123,13 @@ fn list(ui: &mut Ui, m: &super::Modern, gu: &GameUi, info: &ItemCache, v: &Look,
             }
             ui.add_space(2.0);
         }
-        let note = if v.loading { Some("Preparing data...") } else if v.rows.is_empty() { Some("Nothing to list.") } else { None };
+        let note = if v.loading {
+            Some("Preparing data...")
+        } else if v.rows.is_empty() {
+            Some("Nothing to list.")
+        } else {
+            None
+        };
         if let Some(n) = note {
             ui.label(egui::RichText::new(n).size(m.theme.small).color(m.theme.color("muted")));
         }
@@ -95,7 +137,15 @@ fn list(ui: &mut Ui, m: &super::Modern, gu: &GameUi, info: &ItemCache, v: &Look,
 }
 
 /// The confirm (shopbuy / shopsell): what it is for, then Yes / No with the cursor's lit.
-fn confirm(ui: &mut Ui, m: &super::Modern, gu: &GameUi, info: &ItemCache, v: &Look, (n, child): (u32, u16), mouse: &mut Mouse) {
+fn confirm(
+    ui: &mut Ui,
+    m: &super::Modern,
+    gu: &GameUi,
+    info: &ItemCache,
+    v: &Look,
+    (n, child): (u32, u16),
+    mouse: &mut Mouse,
+) {
     let menu = if matches!(v.view, Some(View::Buy | View::Wares)) { SHOPBUY } else { SHOPSELL };
     let gil = |g: u64| crate::inventory::gil_text(g as i64);
     let (item, unit) = v.busy.unwrap_or((0, None));
@@ -148,7 +198,9 @@ pub fn draw(p: &mut Panels, w: &mut World) {
             let labels: Vec<&str> = names.iter().map(String::as_str).collect();
             let open = v.view.map(|view| if matches!(view, View::Buy) { 0 } else { 1 });
             let cursor = open.is_none().then(|| v.main.saturating_sub(1) as usize);
-            for (k, resp) in super::tabs::strip(ui, m, "shop tabs", &labels, open.or(cursor), cursor).into_iter().enumerate() {
+            for (k, resp) in
+                super::tabs::strip(ui, m, "shop tabs", &labels, open.or(cursor), cursor).into_iter().enumerate()
+            {
                 if resp.clicked() {
                     mouse.tab = Some(k as u16 + 1);
                 }

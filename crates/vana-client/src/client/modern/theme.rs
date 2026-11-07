@@ -2,7 +2,10 @@
 //! logical sizes and nine-slice insets, 2x atlases, theme.json's palette), the window frames built from it, and the
 //! bundled OFL fonts (assets/fonts).
 
-use egui::{Color32, ColorImage, Context, FontData, FontDefinitions, FontFamily, Rect, TextureHandle, TextureId, TextureOptions, Vec2, pos2, vec2};
+use egui::{
+    Color32, ColorImage, Context, FontData, FontDefinitions, FontFamily, Rect, TextureHandle, TextureId,
+    TextureOptions, Vec2, pos2, vec2,
+};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -69,7 +72,8 @@ impl Theme {
             log::error!("modern UI theme.json: {e}");
             ThemeFile::default()
         });
-        let mut colors: HashMap<String, Color32> = f.palette.iter().filter_map(|(k, v)| Some((k.clone(), hex(v)?))).collect();
+        let mut colors: HashMap<String, Color32> =
+            f.palette.iter().filter_map(|(k, v)| Some((k.clone(), hex(v)?))).collect();
         // The pack's previews: parchment white text, a slate grey for the quiet parts.
         colors.entry("text".into()).or_insert(Color32::from_rgb(0xe6, 0xe1, 0xd6));
         colors.entry("muted".into()).or_insert(Color32::from_rgb(0x8f, 0x9d, 0xa6));
@@ -177,7 +181,8 @@ pub fn frame_image(name: &str) -> Option<FrameImage> {
     let (w, h) = (it.atlas.rect[2] as usize, it.atlas.rect[3] as usize);
     let mut rgba = crop(&decode(bytes(&it.atlas.file)?)?, it.atlas.rect);
     let cx = w / 2;
-    let inside: Vec<usize> = (0..h).filter(|&y| rgba[(y * w + cx) * 4 + 3] > 0 && alpha.get(y * w + cx) == Some(&0)).collect();
+    let inside: Vec<usize> =
+        (0..h).filter(|&y| rgba[(y * w + cx) * 4 + 3] > 0 && alpha.get(y * w + cx) == Some(&0)).collect();
     let (&top, &bottom) = (inside.first()?, inside.last()?);
     let col = |y: usize| {
         let k = (y * w + cx) * 4;
@@ -201,7 +206,11 @@ impl Art {
                 log::error!("modern UI: {name} does not decode");
                 continue;
             };
-            let t = ctx.load_texture(format!("modern/{name}"), ColorImage::from_rgba_unmultiplied(img.0, &img.1), TextureOptions::LINEAR);
+            let t = ctx.load_texture(
+                format!("modern/{name}"),
+                ColorImage::from_rgba_unmultiplied(img.0, &img.1),
+                TextureOptions::LINEAR,
+            );
             atlases.insert(name, (t.id(), vec2(img.0[0] as f32, img.0[1] as f32)));
             textures.push(t);
             images.insert(name, img);
@@ -215,7 +224,17 @@ impl Art {
             let Some(&(tex, at)) = atlases.get(it.atlas.file.as_str()) else { continue };
             let [x, y, w, h] = it.atlas.rect.map(|v| v as f32);
             let uv = Rect::from_min_max(pos2(x / at.x, y / at.y), pos2((x + w) / at.x, (y + h) / at.y));
-            sprites.insert(it.id.clone(), Sprite { tex, uv, size: vec2(it.size[0], it.size[1]), margins: it.nine_slice, px: it.png_size[0] / it.size[0], atlas: at });
+            sprites.insert(
+                it.id.clone(),
+                Sprite {
+                    tex,
+                    uv,
+                    size: vec2(it.size[0], it.size[1]),
+                    margins: it.nine_slice,
+                    px: it.png_size[0] / it.size[0],
+                    atlas: at,
+                },
+            );
         }
         let mut frames = HashMap::new();
         let find = |id: &str| m.items.iter().find(|it| it.id == id);
@@ -228,16 +247,32 @@ impl Art {
                 let mut rgba = crop(img, it.atlas.rect);
                 // The interior: the centre column inside the border (its first and last pixels where the mask ends).
                 let cx = w / 2;
-                let inside: Vec<usize> = (0..h).filter(|&y| rgba[(y * w + cx) * 4 + 3] > 0 && alpha[y * w + cx] == 0).collect();
+                let inside: Vec<usize> =
+                    (0..h).filter(|&y| rgba[(y * w + cx) * 4 + 3] > 0 && alpha[y * w + cx] == 0).collect();
                 let (Some(&top), Some(&bottom)) = (inside.first(), inside.last()) else { continue };
-                let gradient = (top..=bottom).map(|y| Color32::from_rgb(rgba[(y * w + cx) * 4], rgba[(y * w + cx) * 4 + 1], rgba[(y * w + cx) * 4 + 2])).collect();
+                let gradient = (top..=bottom)
+                    .map(|y| {
+                        Color32::from_rgb(
+                            rgba[(y * w + cx) * 4],
+                            rgba[(y * w + cx) * 4 + 1],
+                            rgba[(y * w + cx) * 4 + 2],
+                        )
+                    })
+                    .collect();
                 for (p, a) in rgba.chunks_mut(4).zip(&alpha) {
                     p[3] = *a;
                 }
                 let px = it.png_size[0] / it.size[0];
-                let border = ctx.load_texture(format!("modern/{name}"), ColorImage::from_rgba_unmultiplied([w, h], &rgba), TextureOptions::LINEAR);
+                let border = ctx.load_texture(
+                    format!("modern/{name}"),
+                    ColorImage::from_rgba_unmultiplied([w, h], &rgba),
+                    TextureOptions::LINEAR,
+                );
                 let corner = it.nine_slice.map_or(24.0, |n| n[0]);
-                frames.insert(name.to_string(), Frame { border, gradient, size: it.size[0], corner, inset: top as f32 / px });
+                frames.insert(
+                    name.to_string(),
+                    Frame { border, gradient, size: it.size[0], corner, inset: top as f32 / px },
+                );
             }
         }
         Self { _textures: textures, sprites, frames }
@@ -315,13 +350,20 @@ pub fn install_fonts_with(ctx: &Context, body: Option<(Vec<u8>, Vec<u8>)>) {
     if cjk {
         fallbacks.push("cjk".into());
     }
-    let with = |first: &str| -> Vec<String> { std::iter::once(first.to_string()).chain(fallbacks.iter().cloned()).collect() };
+    let with =
+        |first: &str| -> Vec<String> { std::iter::once(first.to_string()).chain(fallbacks.iter().cloned()).collect() };
     defs.families.insert(FontFamily::Proportional, with(regular));
     defs.families.insert(FontFamily::Name(STRONG.into()), with(strong));
     defs.families.insert(FontFamily::Name(NAME.into()), with("Inter-SemiBold"));
     defs.families.insert(FontFamily::Name(LABEL.into()), with("Inter-BoldItalic"));
     let mono = defs.families.get(&FontFamily::Monospace).cloned().unwrap_or_default();
-    defs.families.insert(FontFamily::Monospace, std::iter::once("JetBrainsMono-Regular".to_string()).chain(mono).chain(cjk.then(|| "cjk".to_string())).collect());
+    defs.families.insert(
+        FontFamily::Monospace,
+        std::iter::once("JetBrainsMono-Regular".to_string())
+            .chain(mono)
+            .chain(cjk.then(|| "cjk".to_string()))
+            .collect(),
+    );
     ctx.set_fonts(defs);
 }
 

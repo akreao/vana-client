@@ -20,7 +20,16 @@ pub(super) fn search_open(w: &World) -> bool {
 }
 
 pub(super) fn search_rows(w: &World) -> Vec<super::super::listsearch::Entry> {
-    treasure::view(w).map_or(Vec::new(), |v| v.rows.iter().map(|r| super::super::listsearch::Entry::item(w, r.item).note(super::super::listsearch::count_note(r.qty)).dim(r.own_lot == -1)).collect())
+    treasure::view(w).map_or(Vec::new(), |v| {
+        v.rows
+            .iter()
+            .map(|r| {
+                super::super::listsearch::Entry::item(w, r.item)
+                    .note(super::super::listsearch::count_note(r.qty))
+                    .dim(r.own_lot == -1)
+            })
+            .collect()
+    })
 }
 
 /// A pick: the cursor onto row `k`, then Enter (lootope).
@@ -57,7 +66,12 @@ pub fn draw(p: &mut Panels, w: &mut World) {
             let it = info.item(r.item);
             if let Some(t) = m.item_icon(ctx, &info, r.item) {
                 let tint = if r.own_lot == -1 { Color32::from_gray(110) } else { Color32::WHITE };
-                ui.painter().image(t, Rect::from_min_size(pos2(rect.min.x + 10.0, rect.center().y - ICON / 2.0), vec2(ICON, ICON)), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), tint);
+                ui.painter().image(
+                    t,
+                    Rect::from_min_size(pos2(rect.min.x + 10.0, rect.center().y - ICON / 2.0), vec2(ICON, ICON)),
+                    Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                    tint,
+                );
             }
             let colour = match r.own_lot {
                 -1 => m.theme.color("muted"),
@@ -70,13 +84,25 @@ pub fn draw(p: &mut Panels, w: &mut World) {
             }
             let text_x = rect.min.x + 48.0;
             let clip = Rect::from_min_max(rect.min, pos2(rect.max.x - 150.0, rect.max.y));
-            ui.painter().with_clip_rect(clip).text(pos2(text_x, rect.min.y + 13.0), Align2::LEFT_CENTER, name, FontId::proportional(m.theme.ui), colour);
+            ui.painter().with_clip_rect(clip).text(
+                pos2(text_x, rect.min.y + 13.0),
+                Align2::LEFT_CENTER,
+                name,
+                FontId::proportional(m.theme.ui),
+                colour,
+            );
             let best = match &r.high {
                 Some((lot, who)) if !who.is_empty() => format!("Best lot {lot} ({who})"),
                 Some((lot, _)) => format!("Best lot {lot}"),
                 None => "No lots yet".into(),
             };
-            ui.painter().with_clip_rect(clip).text(pos2(text_x, rect.max.y - 12.0), Align2::LEFT_CENTER, best, FontId::proportional(m.theme.small), m.theme.color("muted"));
+            ui.painter().with_clip_rect(clip).text(
+                pos2(text_x, rect.max.y - 12.0),
+                Align2::LEFT_CENTER,
+                best,
+                FontId::proportional(m.theme.small),
+                m.theme.color("muted"),
+            );
             // Our part at the right: the lot cast or passed, or on the cursor's row lootope's two choices.
             let buttons = on && r.own_lot != -1;
             let mine = match r.own_lot {
@@ -85,16 +111,30 @@ pub fn draw(p: &mut Panels, w: &mut World) {
                 n => Some((format!("Your lot {n}"), super::chat::colour(LOTTED.to_le_bytes()))),
             };
             if let Some((t, c)) = mine.as_ref().filter(|_| !buttons) {
-                ui.painter().text(pos2(rect.max.x - 12.0, rect.center().y), Align2::RIGHT_CENTER, t, FontId::proportional(m.theme.small), *c);
+                ui.painter().text(
+                    pos2(rect.max.x - 12.0, rect.center().y),
+                    Align2::RIGHT_CENTER,
+                    t,
+                    FontId::proportional(m.theme.small),
+                    *c,
+                );
             }
             if buttons {
                 let ope = v.ope.filter(|o| o.0 == row);
                 let lotted = r.own_lot > 0;
                 let at = Rect::from_min_size(pos2(rect.max.x - 146.0, rect.center().y - 14.0), vec2(140.0, 28.0));
-                let mut b = ui.new_child(egui::UiBuilder::new().max_rect(at).layout(egui::Layout::left_to_right(egui::Align::Center)));
+                let mut b = ui.new_child(
+                    egui::UiBuilder::new().max_rect(at).layout(egui::Layout::left_to_right(egui::Align::Center)),
+                );
                 if lotted {
                     b.allocate_ui(vec2(70.0, 28.0), |ui| {
-                        ui.centered_and_justified(|ui| ui.label(egui::RichText::new(format!("Lot {}", r.own_lot)).size(m.theme.small).color(super::chat::colour(LOTTED.to_le_bytes()))));
+                        ui.centered_and_justified(|ui| {
+                            ui.label(
+                                egui::RichText::new(format!("Lot {}", r.own_lot))
+                                    .size(m.theme.small)
+                                    .color(super::chat::colour(LOTTED.to_le_bytes())),
+                            )
+                        });
                     });
                 } else if button(&mut b, m, "Lot", 66.0, ope.is_some_and(|o| o.1 == 1), false) {
                     act = Some((row, true));

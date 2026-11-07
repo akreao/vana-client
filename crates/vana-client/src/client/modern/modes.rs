@@ -19,7 +19,8 @@ pub enum Mode {
     Management = 2,
 }
 
-pub const MODES: [(Mode, &str); 3] = [(Mode::Exploration, "Exploration"), (Mode::Combat, "Combat"), (Mode::Management, "Management")];
+pub const MODES: [(Mode, &str); 3] =
+    [(Mode::Exploration, "Exploration"), (Mode::Combat, "Combat"), (Mode::Management, "Management")];
 
 /// The panels a mode may hide (panel id, name). Windows the player opens are never hidden.
 pub const PANELS: [(&str, &str); 11] = [
@@ -66,7 +67,13 @@ pub fn visibility(ctx: &Context, cfg: &ModernModes, mode: Mode) -> HashMap<&'sta
         .iter()
         .map(|&(id, _)| {
             let on = shows(cfg, mode, id);
-            let v = if cfg.fades { ctx.animate_bool_with_time(Id::unique(("modern mode fade", id)), on, FADE) } else if on { 1.0 } else { 0.0 };
+            let v = if cfg.fades {
+                ctx.animate_bool_with_time(Id::unique(("modern mode fade", id)), on, FADE)
+            } else if on {
+                1.0
+            } else {
+                0.0
+            };
             (id, v)
         })
         .collect()
@@ -84,7 +91,11 @@ pub fn editor(p: &mut Panels, open: &mut bool, cfg: &mut ModernModes, mode: Mode
     let note = format!("now: {}", MODES[mode as usize].1);
     let at = p.ctx.content_rect().center() - vec2(260.0, 230.0);
     p.panel_at("uimodes", Some(Title { icon: None, text: "UI Modes", note: Some(&note) }), 560.0, at, |ui| {
-        ui.label(egui::RichText::new("Which panels each mode shows. A pinned panel always shows.").size(m.theme.small).color(m.theme.color("muted")));
+        ui.label(
+            egui::RichText::new("Which panels each mode shows. A pinned panel always shows.")
+                .size(m.theme.small)
+                .color(m.theme.color("muted")),
+        );
         ui.add_space(6.0);
         let font = FontId::proportional(m.theme.small);
         egui::Grid::new(Id::unique("modern ui modes")).spacing(vec2(8.0, 4.0)).show(ui, |ui| {

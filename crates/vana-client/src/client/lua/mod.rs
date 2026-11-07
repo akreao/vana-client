@@ -4,19 +4,19 @@
 
 mod actions;
 mod api;
-mod devices;
 pub(super) mod audio;
+mod devices;
 mod docs;
 mod draw;
-mod ipc;
-pub(super) mod lobby;
-mod process;
-mod net;
 mod hud;
 pub(super) mod input;
+mod ipc;
+pub(super) mod lobby;
 mod manifest;
 mod native;
+mod net;
 mod pattern;
+mod process;
 pub(super) mod render;
 mod runtime;
 mod sock;
@@ -31,7 +31,11 @@ use vm::Vm;
 /// What a mod asked the client to do, applied after the mod phase.
 pub(super) enum Op {
     /// A line with a mode (its colour, filters and indent), or only a mode's colour.
-    Chat { text: String, mode: Option<u8>, colour: Option<u8> },
+    Chat {
+        text: String,
+        mode: Option<u8>,
+        colour: Option<u8>,
+    },
     Print(String),
     /// commands.run: the line, and whether the mod holds the mods permission.
     Run(String, bool),
@@ -39,7 +43,10 @@ pub(super) enum Op {
     /// A key the mod pressed (input.press / input.send).
     Key(input::Synth),
     /// The chat line opened with this text, or closed.
-    Line { text: String, open: bool },
+    Line {
+        text: String,
+        open: bool,
+    },
     /// Text for the clipboard.
     Copy(String),
     /// The whole interface shown or hidden (the UI-hide key's state).
@@ -65,7 +72,16 @@ pub(super) enum Op {
     Option(String, String, serde_json::Value),
     /// A timer in the Timers window added or replaced (mod, name, seconds, section, group, icon kind and id, total,
     /// fills), or removed (seconds None), or all the mod's removed (name None).
-    Timer { mod_id: String, name: Option<String>, secs: Option<f32>, section: usize, group: Option<String>, icon: Option<(String, u16)>, total: f32, fills: bool },
+    Timer {
+        mod_id: String,
+        name: Option<String>,
+        secs: Option<f32>,
+        section: usize,
+        group: Option<String>,
+        icon: Option<(String, u16)>,
+        total: f32,
+        fills: bool,
+    },
     /// A lobby action (sign in, play a character), for the app before login.
     Lobby(lobby::Act),
     /// A mod's recording started (file, frames a second) or stopped (client.record).
@@ -88,8 +104,25 @@ pub(in crate::client) struct WinReq {
 
 /// The behaviour switches (client.set_option) by name; false for an unknown name or value.
 pub(super) const OPTIONS: [&str; 19] = [
-    "macro_palette_delay", "ah_result_delay", "equipset_delay", "log_slide", "cutscene_speed", "animation_rate", "clear_colour", "ambient", "minimap_span",
-    "move_lock", "all_maps", "dead_commands", "compass_monsters", "player_collision", "occlusion", "menu_reach", "send_interval", "wireframe", "ttf_text",
+    "macro_palette_delay",
+    "ah_result_delay",
+    "equipset_delay",
+    "log_slide",
+    "cutscene_speed",
+    "animation_rate",
+    "clear_colour",
+    "ambient",
+    "minimap_span",
+    "move_lock",
+    "all_maps",
+    "dead_commands",
+    "compass_monsters",
+    "player_collision",
+    "occlusion",
+    "menu_reach",
+    "send_interval",
+    "wireframe",
+    "ttf_text",
 ];
 
 /// The switches retail has off.
@@ -105,7 +138,10 @@ fn rgb_of(v: &serde_json::Value) -> Option<Option<[f32; 3]>> {
 }
 
 fn rgb_json(c: Option<[f32; 3]>) -> serde_json::Value {
-    c.map_or(serde_json::Value::Bool(false), |c| serde_json::json!({"r": (c[0] * 255.0).round(), "g": (c[1] * 255.0).round(), "b": (c[2] * 255.0).round()}))
+    c.map_or(
+        serde_json::Value::Bool(false),
+        |c| serde_json::json!({"r": (c[0] * 255.0).round(), "g": (c[1] * 255.0).round(), "b": (c[2] * 255.0).round()}),
+    )
 }
 
 fn set_option(w: &mut World, name: &str, v: &serde_json::Value) -> bool {
@@ -145,7 +181,10 @@ fn set_option(w: &mut World, name: &str, v: &serde_json::Value) -> bool {
             None => return false,
         },
         ("minimap_span", _) => match v.as_f64() {
-            Some(k) => (w.minimap_span, w.minimap_dirty) = ((k as f32).clamp(super::minimap::SPAN.0, super::minimap::SPAN.1), true),
+            Some(k) => {
+                (w.minimap_span, w.minimap_dirty) =
+                    ((k as f32).clamp(super::minimap::SPAN.0, super::minimap::SPAN.1), true)
+            }
             None => return false,
         },
         _ => return false,
@@ -156,7 +195,9 @@ fn set_option(w: &mut World, name: &str, v: &serde_json::Value) -> bool {
 /// Whether a value suits a switch: a boolean, a number, or a colour ({r, g, b} or false).
 pub(super) fn option_value_ok(name: &str, v: &serde_json::Value) -> Result<(), &'static str> {
     match name {
-        "cutscene_speed" | "animation_rate" | "send_interval" | "minimap_span" => v.as_f64().map(|_| ()).ok_or("a number"),
+        "cutscene_speed" | "animation_rate" | "send_interval" | "minimap_span" => {
+            v.as_f64().map(|_| ()).ok_or("a number")
+        }
         "clear_colour" | "ambient" => rgb_of(v).map(|_| ()).ok_or("a colour {r, g, b} (0..255), or false"),
         _ => v.as_bool().map(|_| ()).ok_or("true or false"),
     }
@@ -195,7 +236,8 @@ pub(super) fn option(w: &World, name: &str) -> Option<serde_json::Value> {
 /// Switches whose mod is gone go back to retail's.
 fn release_options(w: &mut World) {
     let loaded = w.lua.mod_ids();
-    let gone: Vec<String> = w.lua.opt_owners.iter().filter(|(_, m)| !loaded.contains(*m)).map(|(n, _)| n.clone()).collect();
+    let gone: Vec<String> =
+        w.lua.opt_owners.iter().filter(|(_, m)| !loaded.contains(*m)).map(|(n, _)| n.clone()).collect();
     for n in gone {
         w.lua.opt_owners.remove(&n);
         let default = match n.as_str() {
@@ -342,7 +384,9 @@ fn newest(dir: &std::path::Path) -> std::time::SystemTime {
             if !name.starts_with("rom") && !name.starts_with('.') {
                 t = t.max(newest(&path));
             }
-        } else if (name.ends_with(".lua") || name.ends_with(".toml")) && let Ok(m) = e.metadata().and_then(|m| m.modified()) {
+        } else if (name.ends_with(".lua") || name.ends_with(".toml"))
+            && let Ok(m) = e.metadata().and_then(|m| m.modified())
+        {
             t = t.max(m);
         }
     }
@@ -396,7 +440,13 @@ fn changes(a: &Snap, b: &Snap) -> Vec<(&'static str, Vec<serde_json::Value>)> {
     use serde_json::Value as J;
     let mut out = Vec::new();
     if let (Some(o), Some(n)) = (a.vitals, b.vitals) {
-        for (name, nv, ov) in [("hp_change", n.0, o.0), ("mp_change", n.1, o.1), ("tp_change", n.2, o.2), ("hpp_change", n.3 as u32, o.3 as u32), ("mpp_change", n.4 as u32, o.4 as u32)] {
+        for (name, nv, ov) in [
+            ("hp_change", n.0, o.0),
+            ("mp_change", n.1, o.1),
+            ("tp_change", n.2, o.2),
+            ("hpp_change", n.3 as u32, o.3 as u32),
+            ("mpp_change", n.4 as u32, o.4 as u32),
+        ] {
             if nv != ov {
                 out.push((name, vec![nv.into(), ov.into()]));
             }
@@ -455,7 +505,9 @@ fn changes(a: &Snap, b: &Snap) -> Vec<(&'static str, Vec<serde_json::Value>)> {
         for (&(bag, slot), &(id, count)) in n {
             match o.get(&(bag, slot)) {
                 Some(&(oid, ocount)) if oid == id && ocount == count => {}
-                Some(&(oid, ocount)) if oid == id => out.push(("item_change", vec![bag.into(), slot.into(), id.into(), count.into(), ocount.into()])),
+                Some(&(oid, ocount)) if oid == id => {
+                    out.push(("item_change", vec![bag.into(), slot.into(), id.into(), count.into(), ocount.into()]))
+                }
                 Some(&(oid, ocount)) => {
                     out.push(("item_remove", vec![bag.into(), slot.into(), oid.into(), ocount.into()]));
                     out.push(("item_add", vec![bag.into(), slot.into(), id.into(), count.into()]));
@@ -474,7 +526,11 @@ fn changes(a: &Snap, b: &Snap) -> Vec<(&'static str, Vec<serde_json::Value>)> {
 
 /// Mods built into the client (assets/mods): our own features on the mod API (docs/lua-mods.md 7.4). Each is (id,
 /// mod.toml, files).
-const BUNDLED: &[(&str, &str, &[(&str, &str)])] = &[("dps", include_str!("../../../assets/mods/dps/mod.toml"), &[("init.lua", include_str!("../../../assets/mods/dps/init.lua"))])];
+const BUNDLED: &[(&str, &str, &[(&str, &str)])] = &[(
+    "dps",
+    include_str!("../../../assets/mods/dps/mod.toml"),
+    &[("init.lua", include_str!("../../../assets/mods/dps/init.lua"))],
+)];
 
 /// Where mods keep their settings and storage: beside an FFXI_CONFIG copy for test runs.
 fn data_dir() -> PathBuf {
@@ -511,7 +567,8 @@ impl Host {
             return true;
         }
         let first = line.trim_start_matches('/').split_whitespace().next().unwrap_or("").to_ascii_lowercase();
-        first == "lua" || self.vms.iter().any(|v| v.suspended.is_none() && v.st.borrow().commands.iter().any(|(n, _)| *n == first))
+        first == "lua"
+            || self.vms.iter().any(|v| v.suspended.is_none() && v.st.borrow().commands.iter().any(|(n, _)| *n == first))
     }
 
     /// A line the player typed (the chat line or a macro): the only source that may run /lua.
@@ -538,15 +595,28 @@ impl Host {
         self.load_with(w, m, PathBuf::from("bundled").join(id), vm::Source::Bundled(files))
     }
 
-    fn load_with(&mut self, w: Option<&World>, m: manifest::Manifest, dir: PathBuf, src: vm::Source) -> Result<(), String> {
+    fn load_with(
+        &mut self,
+        w: Option<&World>,
+        m: manifest::Manifest,
+        dir: PathBuf,
+        src: vm::Source,
+    ) -> Result<(), String> {
         if self.vms.iter().any(|v| v.manifest.id == m.id) {
             return Err(format!("{} is already loaded", m.id));
         }
         let data = data_dir().join(&m.id);
         let char_file = Self::char_file(w);
-        let storage = (read_json(&data.join("account.json")), char_file.as_ref().map_or(serde_json::Value::Null, |f| read_json(&data.join(f))));
+        let storage = (
+            read_json(&data.join("account.json")),
+            char_file.as_ref().map_or(serde_json::Value::Null, |f| read_json(&data.join(f))),
+        );
         let settings = load_settings(&m, &data, char_file.as_deref());
-        let given: Vec<String> = grants().get(&m.id).and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default();
+        let given: Vec<String> = grants()
+            .get(&m.id)
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+            .unwrap_or_default();
         let granted: Vec<String> = m.permissions.iter().filter(|p| given.contains(p)).cloned().collect();
         let missing: Vec<String> = m.permissions.iter().filter(|p| !granted.contains(p)).cloned().collect();
         let vm = Vm::new(m, dir, src).map_err(|e| format!("{e:#}"))?;
@@ -555,7 +625,12 @@ impl Host {
         vm.st.borrow_mut().granted = granted;
         if !missing.is_empty() {
             let id = vm.manifest.id.clone();
-            vm.st.borrow_mut().notices.push(format!("{} asks for {}: allow it on its Extras page (/lua settings {id}) or with /lua grant {id} {}.", vm.manifest.name, missing.join(", "), missing.join(" ")));
+            vm.st.borrow_mut().notices.push(format!(
+                "{} asks for {}: allow it on its Extras page (/lua settings {id}) or with /lua grant {id} {}.",
+                vm.manifest.name,
+                missing.join(", "),
+                missing.join(" ")
+            ));
         }
         vm.lua.set_app_data(self.input.clone());
         vm.lua.set_app_data(self.dir.clone());
@@ -566,7 +641,13 @@ impl Host {
             vm.lua.set_app_data(api::GuRef(p));
         }
         api::install(&vm.lua, &vm, storage).map_err(|e| format!("{e}"))?;
-        self.dir.borrow_mut().mods.push(runtime::Entry { id: vm.manifest.id.clone(), name: vm.manifest.name.clone(), version: vm.manifest.version.clone(), lua: vm.lua.weak(), st: vm.st.clone() });
+        self.dir.borrow_mut().mods.push(runtime::Entry {
+            id: vm.manifest.id.clone(),
+            name: vm.manifest.name.clone(),
+            version: vm.manifest.version.clone(),
+            lua: vm.lua.weak(),
+            st: vm.st.clone(),
+        });
         log::info!("lua mod {} {} loaded from {}", vm.manifest.id, vm.manifest.version, vm.dir.display());
         lend_opt(&vm, w, |vm| {
             vm.run_entry();
@@ -597,7 +678,13 @@ impl Host {
         save(&vm, w);
         // The keys it held for the game come up.
         let held = std::mem::take(&mut vm.st.borrow_mut().keys_down);
-        self.synth.extend(held.into_iter().map(|key| input::Synth { key, down: Some(false), ctrl: false, alt: false, shift: false }));
+        self.synth.extend(held.into_iter().map(|key| input::Synth {
+            key,
+            down: Some(false),
+            ctrl: false,
+            alt: false,
+            shift: false,
+        }));
         log::info!("lua mod {} unloaded", vm.manifest.id);
     }
 
@@ -614,7 +701,8 @@ impl Host {
         // Bundled mods (our own features on the mod API) run unless turned off in `mods` or replaced by a folder.
         for (id, ..) in BUNDLED {
             let off = cfg.mods.iter().any(|r| r.name == *id && !r.enabled);
-            let folder = cfg.mods.iter().any(|r| r.name == *id && r.enabled) && root.join(id).join("mod.toml").is_file();
+            let folder =
+                cfg.mods.iter().any(|r| r.name == *id && r.enabled) && root.join(id).join("mod.toml").is_file();
             if off || folder || loaded(self, id) {
                 continue;
             }
@@ -691,7 +779,11 @@ impl Host {
     /// A mod by id: its folder, else the bundled one.
     fn load_named(&mut self, w: Option<&World>, id: &str) -> Result<(), String> {
         let dir = mods_dir().join(id);
-        if !dir.join("mod.toml").is_file() && BUNDLED.iter().any(|b| b.0 == id) { self.load_bundled(w, id) } else { self.load(w, dir) }
+        if !dir.join("mod.toml").is_file() && BUNDLED.iter().any(|b| b.0 == id) {
+            self.load_bundled(w, id)
+        } else {
+            self.load(w, dir)
+        }
     }
 
     /// Reloads the mod at `k` from its files, in the same place in the load order; its id.
@@ -714,7 +806,8 @@ impl Host {
         let mut ids: Vec<String> = self.watch.as_ref().map(|wa| wa.rx.try_iter().collect()).unwrap_or_default();
         if w.is_some() && !self.watch_deferred.is_empty() {
             let loaded = |h: &Self, id: &str| h.vms.iter().any(|v| v.manifest.id.eq_ignore_ascii_case(id));
-            let deferred: Vec<String> = std::mem::take(&mut self.watch_deferred).into_iter().filter(|id| !loaded(self, id)).collect();
+            let deferred: Vec<String> =
+                std::mem::take(&mut self.watch_deferred).into_iter().filter(|id| !loaded(self, id)).collect();
             ids.splice(0..0, deferred);
         }
         for id in ids {
@@ -727,7 +820,10 @@ impl Host {
                 if !lobby {
                     if let Some(k) = at {
                         self.unload(None, k);
-                        out.push((format!("Unloaded {id}: no longer a lobby mod, it loads with the world."), super::WHITE));
+                        out.push((
+                            format!("Unloaded {id}: no longer a lobby mod, it loads with the world."),
+                            super::WHITE,
+                        ));
                     }
                     if !self.watch_deferred.iter().any(|d| d.eq_ignore_ascii_case(&id)) {
                         self.watch_deferred.push(id);
@@ -786,13 +882,26 @@ impl Host {
                 for v in &self.vms {
                     let st = v.st.borrow();
                     let state = v.suspended.as_deref().map_or("running".to_string(), |r| format!("suspended: {r}"));
-                    out.push((format!("{} {} ({state}): {:.2} ms avg, {:.1} ms peak, {} KB", v.manifest.id, v.manifest.version, st.stats.avg, st.stats.peak, v.lua.used_memory() / 1024), super::WHITE));
+                    out.push((
+                        format!(
+                            "{} {} ({state}): {:.2} ms avg, {:.1} ms peak, {} KB",
+                            v.manifest.id,
+                            v.manifest.version,
+                            st.stats.avg,
+                            st.stats.peak,
+                            v.lua.used_memory() / 1024
+                        ),
+                        super::WHITE,
+                    ));
                 }
             }
             // Every mod's drawing hidden or shown again (hideui); the mods keep running.
             "hide" | "show" => {
                 self.all_hidden = args[0] == "hide";
-                out.push((if self.all_hidden { "Mods hidden (/lua show brings them back)." } else { "Mods shown." }.into(), super::WHITE));
+                out.push((
+                    if self.all_hidden { "Mods hidden (/lua show brings them back)." } else { "Mods shown." }.into(),
+                    super::WHITE,
+                ));
             }
             "load" | "l" => match args.get(1) {
                 Some(id) => match self.load_named(Some(w), id) {
@@ -836,7 +945,11 @@ impl Host {
             // Reload a mod by itself whenever its files are saved; on or off per mod, kept across sessions.
             "watch" => match args.get(1) {
                 Some(id) => {
-                    let id = self.vms.iter().find(|v| v.manifest.id.eq_ignore_ascii_case(id)).map_or(id.to_string(), |v| v.manifest.id.clone());
+                    let id = self
+                        .vms
+                        .iter()
+                        .find(|v| v.manifest.id.eq_ignore_ascii_case(id))
+                        .map_or(id.to_string(), |v| v.manifest.id.clone());
                     if !mods_dir().join(&id).join("mod.toml").is_file() {
                         out.push((format!("{id}: no mods/{id}/mod.toml to watch."), ERROR));
                     } else {
@@ -847,14 +960,31 @@ impl Host {
                             list.push(id.clone());
                         }
                         let _ = std::fs::create_dir_all(data_dir());
-                        let _ = std::fs::write(data_dir().join("watch.json"), serde_json::to_vec(&list).unwrap_or_default());
+                        let _ = std::fs::write(
+                            data_dir().join("watch.json"),
+                            serde_json::to_vec(&list).unwrap_or_default(),
+                        );
                         self.set_watch(&id, on);
-                        out.push((if on { format!("Watching {id}: saving its files reloads it.") } else { format!("No longer watching {id}.") }, super::WHITE));
+                        out.push((
+                            if on {
+                                format!("Watching {id}: saving its files reloads it.")
+                            } else {
+                                format!("No longer watching {id}.")
+                            },
+                            super::WHITE,
+                        ));
                     }
                 }
                 None => {
                     let list = watched();
-                    out.push((if list.is_empty() { "/lua watch <mod>: reload it whenever its files are saved.".into() } else { format!("Watching: {}.", list.join(", ")) }, super::WHITE));
+                    out.push((
+                        if list.is_empty() {
+                            "/lua watch <mod>: reload it whenever its files are saved.".into()
+                        } else {
+                            format!("Watching: {}.", list.join(", "))
+                        },
+                        super::WHITE,
+                    ));
                 }
             },
             "run" => match args.get(1).and_then(|id| find(&self.vms, id)) {
@@ -872,7 +1002,12 @@ impl Host {
                 (Some(id), Some(key), Some(_)) => {
                     let raw = args[3..].join(" ");
                     let value = serde_json::from_str(&raw).unwrap_or(serde_json::Value::String(raw));
-                    match self.vms.iter().find(|v| v.manifest.id.eq_ignore_ascii_case(id)).map(|v| v.manifest.id.clone()) {
+                    match self
+                        .vms
+                        .iter()
+                        .find(|v| v.manifest.id.eq_ignore_ascii_case(id))
+                        .map(|v| v.manifest.id.clone())
+                    {
                         Some(id) => {
                             self.apply_setting(w, &id, key, value);
                             out.push((format!("{id}: {key} set."), super::WHITE));
@@ -883,7 +1018,11 @@ impl Host {
                 _ => out.push(("/lua set <mod> <key> <value>".into(), ERROR)),
             },
             "settings" => {
-                let id = args.get(1).and_then(|id| find(&self.vms, id)).or((!self.vms.is_empty()).then_some(0)).map(|k| self.vms[k].manifest.id.clone());
+                let id = args
+                    .get(1)
+                    .and_then(|id| find(&self.vms, id))
+                    .or((!self.vms.is_empty()).then_some(0))
+                    .map(|k| self.vms[k].manifest.id.clone());
                 match id {
                     Some(id) => self.open_page = Some(id),
                     None => out.push(("No Lua mods loaded.".into(), ERROR)),
@@ -896,11 +1035,19 @@ impl Host {
                     }
                     let id = self.vms[k].manifest.id.clone();
                     let list = self.vms[k].st.borrow().granted.clone();
-                    out.push((format!("{id}: granted {}.", if list.is_empty() { "nothing".into() } else { list.join(", ") }), super::WHITE));
+                    out.push((
+                        format!("{id}: granted {}.", if list.is_empty() { "nothing".into() } else { list.join(", ") }),
+                        super::WHITE,
+                    ));
                 }
-                None => out.push(("/lua grant <mod> <permission...> | /lua revoke <mod> <permission...>".into(), ERROR)),
+                None => {
+                    out.push(("/lua grant <mod> <permission...> | /lua revoke <mod> <permission...>".into(), ERROR))
+                }
             },
-            other => out.push((format!("/lua {other}: list, load, unload, reload, watch, run, set, settings, grant, revoke"), ERROR)),
+            other => out.push((
+                format!("/lua {other}: list, load, unload, reload, watch, run, set, settings, grant, revoke"),
+                ERROR,
+            )),
         }
     }
 }
@@ -948,7 +1095,11 @@ fn save(vm: &Vm, w: Option<&World>) {
         }
         if !skipped.is_empty() {
             log::warn!("lua mod {}: left out of the save: {}", vm.manifest.id, skipped.join(", "));
-            vm.st.borrow_mut().notices.push(format!("{}: left out of the save (not plain data): {}", vm.manifest.name, skipped.join(", ")));
+            vm.st.borrow_mut().notices.push(format!(
+                "{}: left out of the save (not plain data): {}",
+                vm.manifest.name,
+                skipped.join(", ")
+            ));
         }
     }
 }
@@ -1010,20 +1161,36 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
                 if player_only && from != From::Player {
                     out.push(("/lua grant, revoke, run, set and watch only work when you type them.".into(), ERROR));
                 } else if sub.as_deref().is_some_and(|s| MOD_CONTROL.contains(&s)) && !from.controls_mods() {
-                    out.push(("/lua load, unload, reload, hide and show from a mod need its mods permission.".into(), ERROR));
+                    out.push((
+                        "/lua load, unload, reload, hide and show from a mod need its mods permission.".into(),
+                        ERROR,
+                    ));
                 } else {
                     host.lua_command(w, &args, &mut out);
                 }
                 continue;
             }
             let input = !matches!(from, From::Mod { .. });
-            let owner = host.vms.iter().find(|v| v.suspended.is_none() && v.st.borrow().commands.iter().any(|(n, _)| *n == name));
+            let owner = host
+                .vms
+                .iter()
+                .find(|v| v.suspended.is_none() && v.st.borrow().commands.iter().any(|(n, _)| *n == name));
             match owner {
                 Some(vm) => lend(vm, w, |vm| {
-                    let f = vm.st.borrow().commands.iter().find(|(n, _)| *n == name).and_then(|(_, k)| vm.lua.registry_value::<mlua::Function>(k).ok());
+                    let f = vm
+                        .st
+                        .borrow()
+                        .commands
+                        .iter()
+                        .find(|(n, _)| *n == name)
+                        .and_then(|(_, k)| vm.lua.registry_value::<mlua::Function>(k).ok());
                     if let Some(f) = f {
                         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-                        if input { vm.call_input(f, mlua::Variadic::from_iter(args)) } else { vm.call(f, mlua::Variadic::from_iter(args)) }
+                        if input {
+                            vm.call_input(f, mlua::Variadic::from_iter(args))
+                        } else {
+                            vm.call(f, mlua::Variadic::from_iter(args))
+                        }
                     }
                 }),
                 None => out.push((format!("No mod command {name}."), ERROR)),
@@ -1041,15 +1208,26 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
             if !to.is_empty() && !to.eq_ignore_ascii_case(&w.name) {
                 continue;
             }
-            let Some(vm) = host.vms.iter().find(|v| v.manifest.id == m && v.suspended.is_none() && v.st.borrow().granted.iter().any(|g| g == "multibox")) else { continue };
+            let Some(vm) = host.vms.iter().find(|v| {
+                v.manifest.id == m && v.suspended.is_none() && v.st.borrow().granted.iter().any(|g| g == "multibox")
+            }) else {
+                continue;
+            };
             lend(vm, w, |vm| vm.emit("ipc_message", (text.clone(), from.clone())));
         }
         for (m, id, button) in std::mem::take(&mut host.hud_clicks) {
             let Some(vm) = host.vms.iter().find(|v| v.manifest.id == m && v.suspended.is_none()) else { continue };
-            let f = vm.st.borrow().hud_handlers.iter().find(|h| h.0 == id).and_then(|h| vm.lua.registry_value::<mlua::Function>(&h.1).ok());
+            let f = vm
+                .st
+                .borrow()
+                .hud_handlers
+                .iter()
+                .find(|h| h.0 == id)
+                .and_then(|h| vm.lua.registry_value::<mlua::Function>(&h.1).ok());
             if let Some(f) = f {
                 lend(vm, w, |vm| {
-                    let e = api::to_lua(&vm.lua, &serde_json::json!({"kind": "click", "id": id, "button": button})).unwrap_or(mlua::Value::Nil);
+                    let e = api::to_lua(&vm.lua, &serde_json::json!({"kind": "click", "id": id, "button": button}))
+                        .unwrap_or(mlua::Value::Nil);
                     vm.call_input(f, (id.clone(), e));
                 });
             }
@@ -1057,9 +1235,11 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
         // Events mods sent each other (mods.emit), to every other mod listening.
         let emitted = std::mem::take(&mut host.dir.borrow_mut().emitted);
         for (from, name, args) in &emitted {
-            for vm in host.vms.iter().filter(|v| v.suspended.is_none() && v.manifest.id != *from && v.has_handler(name)) {
+            for vm in host.vms.iter().filter(|v| v.suspended.is_none() && v.manifest.id != *from && v.has_handler(name))
+            {
                 lend(vm, w, |vm| {
-                    let vals: Vec<mlua::Value> = args.iter().map(|a| api::to_lua(&vm.lua, a).unwrap_or(mlua::Value::Nil)).collect();
+                    let vals: Vec<mlua::Value> =
+                        args.iter().map(|a| api::to_lua(&vm.lua, a).unwrap_or(mlua::Value::Nil)).collect();
                     vm.emit(name, mlua::MultiValue::from_iter(vals));
                 });
             }
@@ -1070,12 +1250,20 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
                     if !vm.has_handler(name) {
                         continue;
                     }
-                    let vals: Vec<mlua::Value> = args.iter().map(|a| api::to_lua(&vm.lua, a).unwrap_or(mlua::Value::Nil)).collect();
+                    let vals: Vec<mlua::Value> =
+                        args.iter().map(|a| api::to_lua(&vm.lua, a).unwrap_or(mlua::Value::Nil)).collect();
                     vm.emit(name, mlua::MultiValue::from_iter(vals));
                 }
-                let mine: Vec<(String, window::Event)> = ui_events.iter().filter(|e| e.0 == vm.manifest.id).map(|e| (e.1.clone(), e.2.clone())).collect();
+                let mine: Vec<(String, window::Event)> =
+                    ui_events.iter().filter(|e| e.0 == vm.manifest.id).map(|e| (e.1.clone(), e.2.clone())).collect();
                 for (win, ev) in mine {
-                    let f = vm.st.borrow().window_handlers.iter().find(|h| h.0 == win).and_then(|h| vm.lua.registry_value::<mlua::Function>(&h.1).ok());
+                    let f = vm
+                        .st
+                        .borrow()
+                        .window_handlers
+                        .iter()
+                        .find(|h| h.0 == win)
+                        .and_then(|h| vm.lua.registry_value::<mlua::Function>(&h.1).ok());
                     if let Some(f) = f {
                         let t = api::to_lua(&vm.lua, &ev.json()).unwrap_or(mlua::Value::Nil);
                         vm.call_input(f, (win, t));
@@ -1111,7 +1299,10 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
         if vm.suspended.is_none()
             && let Some(why) = vm.failing()
         {
-            out.push((format!("Mod {} suspended: {why}. /lua reload {} to start it again.", vm.manifest.name, vm.manifest.id), ERROR));
+            out.push((
+                format!("Mod {} suspended: {why}. /lua reload {} to start it again.", vm.manifest.name, vm.manifest.id),
+                ERROR,
+            ));
             vm.suspended = Some(why);
             vm.st.borrow_mut().suspended = true;
             // Its chat filters stop with it.
@@ -1128,9 +1319,11 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
         }
     }
     // A window opened this phase takes the focus from every other (not from an open modal one, unless modal itself).
-    let wanted: Option<(usize, String)> = host.vms.iter().enumerate().find_map(|(k, v)| v.st.borrow_mut().focus_request.take().map(|id| (k, id)));
+    let wanted: Option<(usize, String)> =
+        host.vms.iter().enumerate().find_map(|(k, v)| v.st.borrow_mut().focus_request.take().map(|id| (k, id)));
     let held = host.modal().is_some();
-    let wanted = wanted.filter(|(k, id)| !held || host.vms[*k].st.borrow().windows.iter().any(|w| w.id == *id && w.modal));
+    let wanted =
+        wanted.filter(|(k, id)| !held || host.vms[*k].st.borrow().windows.iter().any(|w| w.id == *id && w.modal));
     if let Some((k, id)) = wanted {
         for (j, vm) in host.vms.iter().enumerate() {
             for win in vm.st.borrow_mut().windows.iter_mut() {
@@ -1138,7 +1331,8 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
             }
         }
     }
-    let dirty = std::mem::take(&mut host.filters_dirty) | host.vms.iter().fold(false, |d, v| d | std::mem::take(&mut v.st.borrow_mut().filters_dirty));
+    let dirty = std::mem::take(&mut host.filters_dirty)
+        | host.vms.iter().fold(false, |d, v| d | std::mem::take(&mut v.st.borrow_mut().filters_dirty));
     if dirty {
         w.chat.filter = host.chat_filter();
         w.chat.mode_colours = w.battle.as_ref().map(|b| std::rc::Rc::new(b.code_tables(&w.game).1));
@@ -1215,14 +1409,17 @@ const MOD_CONTROL: [&str; 8] = ["load", "l", "unload", "u", "reload", "r", "hide
 /// A /lua line, as the host reads one (any number of leading slashes, any case).
 pub(super) fn lua_line(line: &str) -> bool {
     let line = line.trim();
-    line.starts_with('/') && line.trim_start_matches('/').split_whitespace().next().is_some_and(|w| w.eq_ignore_ascii_case("lua"))
+    line.starts_with('/')
+        && line.trim_start_matches('/').split_whitespace().next().is_some_and(|w| w.eq_ignore_ascii_case("lua"))
 }
 
 /// A /lua line that loads, unloads, reloads, hides or shows mods (split as the host splits it).
 pub(super) fn controls_mods(line: &str) -> bool {
     let line = line.trim();
     let mut words = line.trim_start_matches('/').split_whitespace();
-    line.starts_with('/') && words.next().is_some_and(|n| n.eq_ignore_ascii_case("lua")) && words.next().is_some_and(|s| MOD_CONTROL.contains(&s.to_ascii_lowercase().as_str()))
+    line.starts_with('/')
+        && words.next().is_some_and(|n| n.eq_ignore_ascii_case("lua"))
+        && words.next().is_some_and(|s| MOD_CONTROL.contains(&s.to_ascii_lowercase().as_str()))
 }
 
 /// A line from a mod or a mod's bind, run as typed. Lines for the mods are queued here with their source, so that
@@ -1280,13 +1477,15 @@ pub(in crate::client) fn lobby_frame(host: &mut Host, view: lobby::View) -> Lobb
         lend_opt(vm, None, |vm| {
             for (_, name, args) in emitted.iter().filter(|e| e.0 != vm.manifest.id) {
                 if vm.has_handler(name) {
-                    let vals: Vec<mlua::Value> = args.iter().map(|a| api::to_lua(&vm.lua, a).unwrap_or(mlua::Value::Nil)).collect();
+                    let vals: Vec<mlua::Value> =
+                        args.iter().map(|a| api::to_lua(&vm.lua, a).unwrap_or(mlua::Value::Nil)).collect();
                     vm.emit(name, mlua::MultiValue::from_iter(vals));
                 }
             }
             for (name, args) in &events {
                 if vm.has_handler(name) {
-                    let vals: Vec<mlua::Value> = args.iter().map(|a| api::to_lua(&vm.lua, a).unwrap_or(mlua::Value::Nil)).collect();
+                    let vals: Vec<mlua::Value> =
+                        args.iter().map(|a| api::to_lua(&vm.lua, a).unwrap_or(mlua::Value::Nil)).collect();
                     vm.emit(name, mlua::MultiValue::from_iter(vals));
                 }
             }
@@ -1344,7 +1543,8 @@ fn apply(w: &mut World, gu: Option<&super::game_ui::GameUi>, op: Op) {
         Op::Print(text) => w.chat.push_colour(text, DIM),
         Op::Chat { text, mode, colour } => match (mode, colour, super::expand_phrases(w, &text)) {
             (Some(m), _, text) => {
-                let (colour, indent) = w.battle.as_ref().map_or((super::WHITE, false), |b| (b.colour_in(m, &w.game), b.indents(m)));
+                let (colour, indent) =
+                    w.battle.as_ref().map_or((super::WHITE, false), |b| (b.colour_in(m, &w.game), b.indents(m)));
                 w.chat.push_event(text, colour, indent, m);
             }
             (None, Some(c), text) => {
@@ -1376,11 +1576,22 @@ fn apply(w: &mut World, gu: Option<&super::game_ui::GameUi>, op: Op) {
                 use super::timers::Icon;
                 let icon = match icon {
                     Some((k, id)) if k == "status" => Icon::Status(id),
-                    Some((k, id)) => super::magic::list_icon_of(w, k == "spell", id).map_or(Icon::None, |(l, i)| Icon::List(l, i)),
+                    Some((k, id)) => {
+                        super::magic::list_icon_of(w, k == "spell", id).map_or(Icon::None, |(l, i)| Icon::List(l, i))
+                    }
                     None => Icon::None,
                 };
                 let end = std::time::Instant::now() + std::time::Duration::from_secs_f32(s.max(0.0));
-                w.timers.mods.push(super::timers::ModTimer { mod_id, section, group, icon, name, end, total: if total > 0.0 { total } else { s.max(0.0) }, fills });
+                w.timers.mods.push(super::timers::ModTimer {
+                    mod_id,
+                    section,
+                    group,
+                    icon,
+                    name,
+                    end,
+                    total: if total > 0.0 { total } else { s.max(0.0) },
+                    fills,
+                });
             }
         }
         Op::Interface(show) => w.ui_hidden = !show,
@@ -1505,7 +1716,9 @@ fn install_stubs(root: PathBuf) {
             return;
         }
         let luarc = "{\n  \"runtime.version\": \"Lua 5.4\",\n  \"workspace.library\": [\".library\"],\n  \"workspace.checkThirdParty\": false\n}\n";
-        for (path, text) in [(root.join(".library").join("vana.lua"), stubs()), (root.join(".luarc.json"), luarc.to_string())] {
+        for (path, text) in
+            [(root.join(".library").join("vana.lua"), stubs()), (root.join(".luarc.json"), luarc.to_string())]
+        {
             if std::fs::read_to_string(&path).is_ok_and(|t| t == text) {
                 continue;
             }
@@ -1525,9 +1738,11 @@ mod tests {
     /// A wait_until test that never returns runs out of its budget instead of freezing the frame.
     #[test]
     fn wait_until_test_has_a_budget() {
-        let vm = Vm::new(manifest::Manifest::default(), PathBuf::from("."), vm::Source::Dir(PathBuf::from("."))).unwrap();
+        let vm =
+            Vm::new(manifest::Manifest::default(), PathBuf::from("."), vm::Source::Dir(PathBuf::from("."))).unwrap();
         api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        let f: mlua::Function = vm.lua.load("return function() wait_until(function() while true do end end) end").eval().unwrap();
+        let f: mlua::Function =
+            vm.lua.load("return function() wait_until(function() while true do end end) end").eval().unwrap();
         vm.resume(vm.lua.create_thread(f).unwrap(), ());
         assert_eq!(vm.st.borrow().sleepers.len(), 1);
         // A wait resumes in a later frame, never the one it began in.
@@ -1548,7 +1763,13 @@ mod tests {
             let vm = Vm::new(m, PathBuf::from("."), vm::Source::Dir(PathBuf::from("."))).unwrap();
             vm.lua.set_app_data(dir.clone());
             api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-            dir.borrow_mut().mods.push(runtime::Entry { id: id.into(), name: id.into(), version: String::new(), lua: vm.lua.weak(), st: vm.st.clone() });
+            dir.borrow_mut().mods.push(runtime::Entry {
+                id: id.into(),
+                name: id.into(),
+                version: String::new(),
+                lua: vm.lua.weak(),
+                st: vm.st.clone(),
+            });
             vm
         };
         let (caller, provider) = (new("caller"), new("provider"));
@@ -1562,7 +1783,8 @@ mod tests {
     /// A `__gc` finalizer would run with the budget hook off: setmetatable refuses one.
     #[test]
     fn setmetatable_refuses_gc() {
-        let vm = Vm::new(manifest::Manifest::default(), PathBuf::from("."), vm::Source::Dir(PathBuf::from("."))).unwrap();
+        let vm =
+            Vm::new(manifest::Manifest::default(), PathBuf::from("."), vm::Source::Dir(PathBuf::from("."))).unwrap();
         let e = vm.lua.load("setmetatable({}, {__gc = function() while true do end end})").exec().unwrap_err();
         assert!(e.to_string().contains("__gc"), "{e}");
         vm.lua.load("assert(getmetatable(setmetatable({}, {__index = {}})))").exec().unwrap();
@@ -1612,14 +1834,16 @@ mod tests {
         for l in ["//lua list", "/lua settings x", "lua unload x", "//luaunload x", "/echo lua unload"] {
             assert!(!controls_mods(l), "{l:?}");
         }
-        let vm = Vm::new(manifest::Manifest::default(), PathBuf::from("."), vm::Source::Dir(PathBuf::from("."))).unwrap();
+        let vm =
+            Vm::new(manifest::Manifest::default(), PathBuf::from("."), vm::Source::Dir(PathBuf::from("."))).unwrap();
         api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
         let e = vm.lua.load("commands.run('//lua unload other')").exec().unwrap_err();
         assert!(e.to_string().contains("mods permission"), "{e}");
         vm.lua.load("commands.run('//lua list')").exec().unwrap();
         vm.st.borrow_mut().granted.push("mods".into());
         vm.lua.load("commands.run('//lua unload other')").exec().unwrap();
-        let ops: Vec<bool> = vm.st.borrow().ops.iter().filter_map(|o| if let Op::Run(_, m) = o { Some(*m) } else { None }).collect();
+        let ops: Vec<bool> =
+            vm.st.borrow().ops.iter().filter_map(|o| if let Op::Run(_, m) = o { Some(*m) } else { None }).collect();
         assert_eq!(ops, [false, true]);
         assert!(!From::Mod { mods: false }.controls_mods() && !From::Bind { mods: false }.controls_mods());
         assert!(From::Player.controls_mods() && From::Mod { mods: true }.controls_mods());
@@ -1633,7 +1857,8 @@ mod tests {
         assert_eq!(p.len(), 8);
         assert_eq!(u16::from_le_bytes([p[0], p[1]]), 0x015 | (2 << 9));
         assert_eq!(fit(vec![0; 508]).len(), 508);
-        let vm = Vm::new(manifest::Manifest::default(), PathBuf::from("."), vm::Source::Dir(PathBuf::from("."))).unwrap();
+        let vm =
+            Vm::new(manifest::Manifest::default(), PathBuf::from("."), vm::Source::Dir(PathBuf::from("."))).unwrap();
         api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
         vm.st.borrow_mut().granted.push("packets.write".into());
         vm.lua.load("assert(#packets.build(0x15, string.rep('x', 504)) == 508)").exec().unwrap();
@@ -1655,7 +1880,8 @@ mod tests {
     /// Every documented function is bound, and every function in a documented namespace is documented.
     #[test]
     fn docs_match_bindings() {
-        let vm = Vm::new(manifest::Manifest::default(), PathBuf::from("."), vm::Source::Dir(PathBuf::from("."))).unwrap();
+        let vm =
+            Vm::new(manifest::Manifest::default(), PathBuf::from("."), vm::Source::Dir(PathBuf::from("."))).unwrap();
         api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
         let g = vm.lua.globals();
         for f in docs::FUNCS {
@@ -1672,7 +1898,12 @@ mod tests {
         }
         // Every global table but Lua's own is a namespace of ours, documented or not.
         const STD: [&str; 7] = ["_G", "table", "string", "math", "utf8", "coroutine", "os"];
-        let namespaces: Vec<String> = g.pairs::<String, Value>().filter_map(|p| p.ok()).filter(|(k, v)| matches!(v, Value::Table(_)) && !STD.contains(&k.as_str())).map(|p| p.0).collect();
+        let namespaces: Vec<String> = g
+            .pairs::<String, Value>()
+            .filter_map(|p| p.ok())
+            .filter(|(k, v)| matches!(v, Value::Table(_)) && !STD.contains(&k.as_str()))
+            .map(|p| p.0)
+            .collect();
         for ns in namespaces {
             let ns = ns.as_str();
             let t: Table = g.get(ns).unwrap();
@@ -1684,7 +1915,10 @@ mod tests {
                     for p in sub.pairs::<String, Value>() {
                         let (fname, fv) = p.unwrap();
                         if matches!(fv, Value::Function(_)) {
-                            assert!(docs::FUNCS.iter().any(|f| f.ns == full && f.name == fname), "{full}.{fname} is bound but not documented");
+                            assert!(
+                                docs::FUNCS.iter().any(|f| f.ns == full && f.name == fname),
+                                "{full}.{fname} is bound but not documented"
+                            );
                         }
                     }
                 }
@@ -1692,7 +1926,10 @@ mod tests {
             for pair in t.pairs::<String, Value>() {
                 let (name, v) = pair.unwrap();
                 if matches!(v, Value::Function(_)) {
-                    assert!(docs::FUNCS.iter().any(|f| f.ns == ns && f.name == name), "{ns}.{name} is bound but not documented");
+                    assert!(
+                        docs::FUNCS.iter().any(|f| f.ns == ns && f.name == name),
+                        "{ns}.{name} is bound but not documented"
+                    );
                 }
             }
         }
@@ -1702,7 +1939,9 @@ mod tests {
 /// A decoded s2c 0x028 for the `action` event (Windower's action table, our field names).
 pub(super) fn action_json(a: &crate::net::action::Action) -> serde_json::Value {
     use serde_json::json;
-    let side = |s: &Option<crate::net::action::Side>| s.as_ref().map(|s| json!({"kind": s.kind, "info": s.info, "value": s.value, "message": s.message}));
+    let side = |s: &Option<crate::net::action::Side>| {
+        s.as_ref().map(|s| json!({"kind": s.kind, "info": s.info, "value": s.value, "message": s.message}))
+    };
     let targets: Vec<serde_json::Value> = a
         .targets
         .iter()
@@ -1752,7 +1991,11 @@ impl Host {
                         Some(mlua::Value::String(t)) => {
                             text = t.to_string_lossy();
                             if let Some(m) = v.get(1).and_then(|m| m.as_integer()) {
-                                mode = if is_battle(mode) { super::combat::BATTLE | (m as u16 & 0xff) } else { m as u16 & 0xff };
+                                mode = if is_battle(mode) {
+                                    super::combat::BATTLE | (m as u16 & 0xff)
+                                } else {
+                                    m as u16 & 0xff
+                                };
                             }
                             changed = true;
                         }
@@ -1775,7 +2018,8 @@ pub(super) fn filter_typed(w: &mut World, line: &str) -> Option<String> {
     let mut line = line.to_string();
     let mut blocked = false;
     for vm in host.vms.iter().filter(|v| v.suspended.is_none()) {
-        let funcs: Vec<mlua::Function> = vm.st.borrow().typed_filters.iter().filter_map(|(_, k)| vm.lua.registry_value(k).ok()).collect();
+        let funcs: Vec<mlua::Function> =
+            vm.st.borrow().typed_filters.iter().filter_map(|(_, k)| vm.lua.registry_value(k).ok()).collect();
         lend(vm, w, |vm| {
             for f in funcs {
                 if blocked {
@@ -1801,7 +2045,11 @@ pub(super) fn filter_typed(w: &mut World, line: &str) -> Option<String> {
 }
 
 /// A mod's settings: the account file's keys, then the character file's for character-scoped ones.
-fn load_settings(m: &manifest::Manifest, data: &std::path::Path, char_file: Option<&str>) -> serde_json::Map<String, serde_json::Value> {
+fn load_settings(
+    m: &manifest::Manifest,
+    data: &std::path::Path,
+    char_file: Option<&str>,
+) -> serde_json::Map<String, serde_json::Value> {
     let mut out = serde_json::Map::new();
     let account = read_json(&data.join("settings.json"));
     let character = char_file.map_or(serde_json::Value::Null, |c| read_json(&data.join(format!("settings-{c}"))));
@@ -1830,24 +2078,39 @@ impl Host {
             let st = vm.st.borrow();
             let mut rows = Vec::new();
             for (key, d) in &vm.manifest.settings {
-                let current = st.settings.get(key).cloned().or_else(|| d.default.as_ref().and_then(|v| serde_json::to_value(v).ok())).unwrap_or(serde_json::Value::Null);
+                let current = st
+                    .settings
+                    .get(key)
+                    .cloned()
+                    .or_else(|| d.default.as_ref().and_then(|v| serde_json::to_value(v).ok()))
+                    .unwrap_or(serde_json::Value::Null);
                 let choices: Vec<(String, serde_json::Value)> = match d.kind.as_str() {
                     "bool" => vec![("ON".into(), true.into()), ("OFF".into(), false.into())],
                     "enum" => d.options.iter().map(|o| (o.clone(), o.as_str().into())).collect(),
                     "int" | "number" => {
                         let (min, max) = (d.min.unwrap_or(0.0), d.max.unwrap_or(100.0));
-                        let step = d.step.unwrap_or(if d.kind == "int" { 1.0 } else { (max - min) / 20.0 }).max(f64::EPSILON);
+                        let step =
+                            d.step.unwrap_or(if d.kind == "int" { 1.0 } else { (max - min) / 20.0 }).max(f64::EPSILON);
                         let n = (((max - min) / step).floor() as usize).min(200);
                         (0..=n)
                             .map(|i| {
                                 let v = min + step * i as f64;
-                                if d.kind == "int" { (format!("{}", v.round() as i64), (v.round() as i64).into()) } else { (format!("{v}"), v.into()) }
+                                if d.kind == "int" {
+                                    (format!("{}", v.round() as i64), (v.round() as i64).into())
+                                } else {
+                                    (format!("{v}"), v.into())
+                                }
                             })
                             .collect()
                     }
                     _ => continue,
                 };
-                let at = choices.iter().position(|c| c.1 == current || c.1.as_f64().zip(current.as_f64()).is_some_and(|(a, b)| (a - b).abs() < 1e-9)).unwrap_or(0);
+                let at = choices
+                    .iter()
+                    .position(|c| {
+                        c.1 == current || c.1.as_f64().zip(current.as_f64()).is_some_and(|(a, b)| (a - b).abs() < 1e-9)
+                    })
+                    .unwrap_or(0);
                 let label = if d.label.is_empty() { key.clone() } else { d.label.clone() };
                 rows.push(ModRow { key: key.clone(), label, help: d.help.clone(), choices, at });
             }
@@ -1856,7 +2119,13 @@ impl Host {
                 let (label, help) = permission_text(p);
                 let on = st.granted.contains(p);
                 let choices = vec![("ON".into(), true.into()), ("OFF".into(), false.into())];
-                rows.push(ModRow { key: format!("{PERM}{p}"), label: label.into(), help: help.into(), choices, at: if on { 0 } else { 1 } });
+                rows.push(ModRow {
+                    key: format!("{PERM}{p}"),
+                    label: label.into(),
+                    help: help.into(),
+                    choices,
+                    at: if on { 0 } else { 1 },
+                });
             }
             if !rows.is_empty() {
                 pages.push(ModPage { id: vm.manifest.id.clone(), name: vm.manifest.name.clone(), rows });
@@ -1900,7 +2169,8 @@ impl Host {
 impl Host {
     /// Whether a mod window has the keys.
     pub(super) fn focused(&self) -> bool {
-        !self.all_hidden && self.vms.iter().any(|v| v.suspended.is_none() && v.st.borrow().windows.iter().any(|w| w.open && w.focus))
+        !self.all_hidden
+            && self.vms.iter().any(|v| v.suspended.is_none() && v.st.borrow().windows.iter().any(|w| w.open && w.focus))
     }
 
     /// The loaded mods' ids.
@@ -1910,17 +2180,29 @@ impl Host {
 
     /// The open modal window (vm, id), the last opened when there are several.
     pub(super) fn modal(&self) -> Option<(usize, String)> {
-        self.vms.iter().enumerate().filter(|(_, v)| v.suspended.is_none()).find_map(|(k, v)| v.st.borrow().windows.iter().rev().find(|w| w.open && w.modal).map(|w| (k, w.id.clone())))
+        self.vms.iter().enumerate().filter(|(_, v)| v.suspended.is_none()).find_map(|(k, v)| {
+            v.st.borrow().windows.iter().rev().find(|w| w.open && w.modal).map(|w| (k, w.id.clone()))
+        })
     }
 
     /// Whether a mod window's line is being typed (it takes the text and the keys).
     pub(super) fn typing(&self) -> bool {
-        !self.all_hidden && self.vms.iter().any(|v| v.suspended.is_none() && v.st.borrow().windows.iter().any(|w| w.open && w.focus && w.typing()))
+        !self.all_hidden
+            && self
+                .vms
+                .iter()
+                .any(|v| v.suspended.is_none() && v.st.borrow().windows.iter().any(|w| w.open && w.focus && w.typing()))
     }
 
     /// The focused window's title and the help under its cursor, for the classic help bar.
     pub(super) fn focused_help(&self) -> Option<(String, String)> {
-        self.vms.iter().filter(|v| v.suspended.is_none()).find_map(|v| v.st.borrow().windows.iter().find(|w| w.open && w.focus).map(|w| (w.title.clone(), w.help_now().to_string())))
+        self.vms.iter().filter(|v| v.suspended.is_none()).find_map(|v| {
+            v.st.borrow()
+                .windows
+                .iter()
+                .find(|w| w.open && w.focus)
+                .map(|w| (w.title.clone(), w.help_now().to_string()))
+        })
     }
 }
 
@@ -2057,9 +2339,16 @@ fn classic_places(w: &World) -> Vec<(usize, String, f32, f32)> {
         for win in vm.st.borrow().windows.iter().filter(|w| w.open) {
             let (ww, wh) = win.classic_size();
             match (win.anchor, win.place) {
-                (Some((ax, ay)), _) => modal.push((v, win.id.clone(), (ax * uk.0).min(sw - ww).max(0.0), (ay * uk.1).min(sh - wh).max(0.0))),
+                (Some((ax, ay)), _) => modal.push((
+                    v,
+                    win.id.clone(),
+                    (ax * uk.0).min(sw - ww).max(0.0),
+                    (ay * uk.1).min(sh - wh).max(0.0),
+                )),
                 (None, Some((x, y))) if win.modal => modal.push((v, win.id.clone(), x, y)),
-                (None, None) if win.modal => modal.push((v, win.id.clone(), ((sw - ww) / 2.0).max(0.0), ((sh - wh) / 2.0).max(0.0))),
+                (None, None) if win.modal => {
+                    modal.push((v, win.id.clone(), ((sw - ww) / 2.0).max(0.0), ((sh - wh) / 2.0).max(0.0)))
+                }
                 (None, Some((x, y))) => out.push((v, win.id.clone(), x, y)),
                 (None, None) => {
                     out.push((v, win.id.clone(), 16.0 + 24.0 * k, 48.0 + 24.0 * k));
@@ -2073,13 +2362,21 @@ fn classic_places(w: &World) -> Vec<(usize, String, f32, f32)> {
 }
 
 /// The pointer on the classic mod windows (the topmost under it); whether it is over a control.
-pub(super) fn pointer_classic(w: &mut World, gu: &super::game_ui::GameUi, p: (f32, f32), moved: bool, clicked: bool, held: (bool, bool, bool)) -> bool {
+pub(super) fn pointer_classic(
+    w: &mut World,
+    gu: &super::game_ui::GameUi,
+    p: (f32, f32),
+    moved: bool,
+    clicked: bool,
+    held: (bool, bool, bool),
+) -> bool {
     let mut places = classic_places(w);
     // An open modal window is the only one the pointer reaches; a click outside a popup closes it.
     if let Some((k, mid)) = w.lua.modal() {
         places.retain(|(v, id, _, _)| *v == k && *id == mid);
         let inside = places.first().is_some_and(|(v, id, x, y)| {
-            let (ww, wh) = w.lua.vms[*v].st.borrow().windows.iter().find(|x| x.id == *id).map_or((0.0, 0.0), |x| x.classic_size());
+            let (ww, wh) =
+                w.lua.vms[*v].st.borrow().windows.iter().find(|x| x.id == *id).map_or((0.0, 0.0), |x| x.classic_size());
             p.0 >= *x && p.1 >= *y && p.0 < x + ww && p.1 < y + wh
         });
         if clicked && !inside {
@@ -2129,7 +2426,15 @@ impl Host {
             .map(|v| {
                 let st = v.st.borrow();
                 let state = v.suspended.as_deref().map_or(String::new(), |r| format!("  SUSPENDED ({r})"));
-                format!("lua {}  {:.2} ms avg  {:.1} peak  {} slow  {} KB  {} errors{state}", v.manifest.id, st.stats.avg, st.stats.peak, st.stats.slow, v.lua.used_memory() / 1024, st.errors.len())
+                format!(
+                    "lua {}  {:.2} ms avg  {:.1} peak  {} slow  {} KB  {} errors{state}",
+                    v.manifest.id,
+                    st.stats.avg,
+                    st.stats.peak,
+                    st.stats.slow,
+                    v.lua.used_memory() / 1024,
+                    st.errors.len()
+                )
             })
             .collect()
     }
@@ -2153,7 +2458,11 @@ mod stub_tests {
             assert!(text.contains(&format!("\n## `{full}`\n")), "docs/modding/reference has no section for {full}");
         }
         for e in super::docs::EVENTS {
-            assert!(text.contains(&format!("\n## `{}`\n", e.name)), "docs/modding/reference/events.md has no section for {}", e.name);
+            assert!(
+                text.contains(&format!("\n## `{}`\n", e.name)),
+                "docs/modding/reference/events.md has no section for {}",
+                e.name
+            );
         }
     }
 
@@ -2161,7 +2470,11 @@ mod stub_tests {
     /// `vana-client lua-stubs --out crates/vana-client/assets/mods/library/vana.lua`).
     #[test]
     fn committed_stubs_current() {
-        assert_eq!(include_str!("../../../assets/mods/library/vana.lua"), super::stubs(), "assets/mods/library/vana.lua is stale");
+        assert_eq!(
+            include_str!("../../../assets/mods/library/vana.lua"),
+            super::stubs(),
+            "assets/mods/library/vana.lua is stale"
+        );
     }
 }
 
@@ -2185,7 +2498,13 @@ pub(super) fn installed() -> Vec<(String, String, String, bool, bool)> {
     for (id, ..) in BUNDLED {
         if !out.iter().any(|o| o.0 == *id) {
             let m = bundled_manifest(id);
-            out.push((id.to_string(), m.as_ref().map_or_else(|| id.to_string(), |m| m.name.clone()), m.map_or_else(String::new, |m| m.version), enabled(id, true), true));
+            out.push((
+                id.to_string(),
+                m.as_ref().map_or_else(|| id.to_string(), |m| m.name.clone()),
+                m.map_or_else(String::new, |m| m.version),
+                enabled(id, true),
+                true,
+            ));
         }
     }
     out.sort();
@@ -2206,12 +2525,18 @@ const PERM: &str = "@permission:";
 /// A permission's row label and help line.
 fn permission_text(p: &str) -> (&'static str, &'static str) {
     match p {
-        "actions" => ("Allow game actions", "Casting, items, equipment and the like when you use its commands or windows."),
-        "automation" => ("Allow automation", "Game actions on its own: casting, targeting, moving, trading, answering NPCs."),
+        "actions" => {
+            ("Allow game actions", "Casting, items, equipment and the like when you use its commands or windows.")
+        }
+        "automation" => {
+            ("Allow automation", "Game actions on its own: casting, targeting, moving, trading, answering NPCs.")
+        }
         "packets.read" => ("Allow reading packets", "Sees every packet the server sends and the client sends."),
         "packets.write" => ("Allow changing packets", "Changes, blocks and sends packets of its own."),
         "input.capture" => ("Allow taking input", "Takes keys and the mouse from the game and presses keys."),
-        "files.shared" => ("Allow shared files", "Reads and writes files outside its own folder, in the shared mod data."),
+        "files.shared" => {
+            ("Allow shared files", "Reads and writes files outside its own folder, in the shared mod data.")
+        }
         "net" => ("Allow network", "Connects to the internet (web requests, sockets)."),
         "exec" => ("Allow running programs", "Starts programs on this computer."),
         "clipboard" => ("Allow reading the clipboard", "Reads the text you copied."),
@@ -2229,7 +2554,11 @@ impl Host {
     fn set_grant(&mut self, k: usize, p: &str, on: bool) {
         let id = self.vms[k].manifest.id.clone();
         let mut g = grants();
-        let mut list: Vec<String> = g.get(&id).and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default();
+        let mut list: Vec<String> = g
+            .get(&id)
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+            .unwrap_or_default();
         list.retain(|x| x != p);
         if on && manifest::PERMISSIONS.contains(&p) {
             list.push(p.to_string());
@@ -2247,7 +2576,6 @@ fn save_grants(g: &serde_json::Map<String, serde_json::Value>) {
         log::warn!("lua mods: saving grants: {e}");
     }
 }
-
 
 /// A sub-packet's id from its header (9 bits).
 fn packet_id(data: &[u8]) -> u16 {
@@ -2303,13 +2631,18 @@ fn chain(host: &Host, w: &World, data: Vec<u8>, injected: bool, outgoing: bool) 
                 match r {
                     Err(e) => vm.error(&e),
                     Ok(mlua::Value::Boolean(false)) | Ok(mlua::Value::String(_)) if !write => {
-                        vm.error(&mlua::Error::runtime("changing or blocking packets needs packets.write (/lua grant)"));
+                        vm.error(&mlua::Error::runtime(
+                            "changing or blocking packets needs packets.write (/lua grant)",
+                        ));
                     }
                     Ok(mlua::Value::Boolean(false)) => blocked = true,
                     Ok(mlua::Value::String(s)) => {
                         let b = s.as_bytes().to_vec();
                         if b.len() > 508 {
-                            vm.error(&mlua::Error::runtime(format!("a packet is at most 508 bytes ({} returned): kept as it was", b.len())));
+                            vm.error(&mlua::Error::runtime(format!(
+                                "a packet is at most 508 bytes ({} returned): kept as it was",
+                                b.len()
+                            )));
                         } else if b.len() >= 4 {
                             cur = fit(b);
                             id = packet_id(&cur);
@@ -2324,10 +2657,14 @@ fn chain(host: &Host, w: &World, data: Vec<u8>, injected: bool, outgoing: bool) 
 }
 
 /// A received batch through the mods' incoming hooks, then what they injected; what to decode.
-pub(super) fn packets_in(w: &mut World, packets: Vec<crate::net::map::session::SubPacket>) -> Vec<crate::net::map::session::SubPacket> {
+pub(super) fn packets_in(
+    w: &mut World,
+    packets: Vec<crate::net::map::session::SubPacket>,
+) -> Vec<crate::net::map::session::SubPacket> {
     let host = std::mem::take(&mut w.lua);
     let mut out = Vec::new();
-    let injected: Vec<Vec<u8>> = host.vms.iter().flat_map(|v| std::mem::take(&mut v.st.borrow_mut().inject_in)).collect();
+    let injected: Vec<Vec<u8>> =
+        host.vms.iter().flat_map(|v| std::mem::take(&mut v.st.borrow_mut().inject_in)).collect();
     let all = packets.into_iter().map(|p| (p.sync, p.data, false)).chain(injected.into_iter().map(|d| (0, d, true)));
     for (sync, data, inj) in all {
         w.net.stats.keep_last(false, &data);
@@ -2342,7 +2679,8 @@ pub(super) fn packets_in(w: &mut World, packets: Vec<crate::net::map::session::S
 /// A batch about to be sent through the mods' outgoing hooks, then what they injected; what to send.
 pub(super) fn packets_out(w: &mut World, packets: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
     let host = std::mem::take(&mut w.lua);
-    let injected: Vec<Vec<u8>> = host.vms.iter().flat_map(|v| std::mem::take(&mut v.st.borrow_mut().inject_out)).collect();
+    let injected: Vec<Vec<u8>> =
+        host.vms.iter().flat_map(|v| std::mem::take(&mut v.st.borrow_mut().inject_out)).collect();
     let mut out = Vec::new();
     for (data, inj) in packets.into_iter().map(|d| (d, false)).chain(injected.into_iter().map(|d| (d, true))) {
         w.net.stats.keep_last(true, &data);
@@ -2363,8 +2701,11 @@ impl Host {
             fin |= !st.hooks_in.is_empty();
             fout |= !st.hooks_out.is_empty();
         }
-        let last = self.vms.iter().any(|v| v.suspended.is_none() && v.st.borrow().granted.iter().any(|g| g == "packets.read"));
-        let flags = if fin { super::net::HOOK_IN } else { 0 } | if fout { super::net::HOOK_OUT } else { 0 } | if last { super::net::HOOK_LAST } else { 0 };
+        let last =
+            self.vms.iter().any(|v| v.suspended.is_none() && v.st.borrow().granted.iter().any(|g| g == "packets.read"));
+        let flags = if fin { super::net::HOOK_IN } else { 0 }
+            | if fout { super::net::HOOK_OUT } else { 0 }
+            | if last { super::net::HOOK_LAST } else { 0 };
         w.net.hooks.store(flags, std::sync::atomic::Ordering::Relaxed);
     }
 }

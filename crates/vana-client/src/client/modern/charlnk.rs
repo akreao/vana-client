@@ -18,7 +18,12 @@ pub fn draw(p: &mut Panels, w: &mut World) {
     let Some(c) = w.charlnk.clone() else { return };
     let m = p.m;
     let off = charlnk::off(w, &c);
-    let rows: Vec<(u16, String)> = charlnk::ORDER.iter().map(|&k| (k, gu.child_caption(CHARLNK, k).or_else(|| gu.focus_text(CHARLNK, k)[1].clone()).unwrap_or_default())).collect();
+    let rows: Vec<(u16, String)> = charlnk::ORDER
+        .iter()
+        .map(|&k| {
+            (k, gu.child_caption(CHARLNK, k).or_else(|| gu.focus_text(CHARLNK, k)[1].clone()).unwrap_or_default())
+        })
+        .collect();
     let name = charlnk::shown_name(w, &c).to_string();
     let free = w.confirm.is_none();
     // Kept on the screen: last frame's height (a guess the first one).
@@ -39,7 +44,13 @@ pub fn draw(p: &mut Panels, w: &mut World) {
             super::rows::face(ui.painter(), m, r, face, Color32::WHITE);
             let colour = if on { m.theme.color("text") } else { m.theme.color("muted").gamma_multiply(0.6) };
             let clip = Rect::from_min_max(r.min, pos2(r.max.x - 8.0, r.max.y));
-            ui.painter().with_clip_rect(clip).text(pos2(r.min.x + 18.0, r.center().y), Align2::LEFT_CENTER, text, FontId::proportional(m.theme.small), colour);
+            ui.painter().with_clip_rect(clip).text(
+                pos2(r.min.x + 18.0, r.center().y),
+                Align2::LEFT_CENTER,
+                text,
+                FontId::proportional(m.theme.small),
+                colour,
+            );
             if free && resp.clicked() {
                 click = Some(*k);
             }
