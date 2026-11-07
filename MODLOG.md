@@ -22937,14 +22937,18 @@ From FFXiMain.dll (Steven's unpacked copy), full_text.asm, FUN_100a7b80.
   plain frame and their one cell, the magenta plate, is skipped. Retail shows no tint; ours (logwin.rs draw_over,
   gu.frame) already draws them that way, so nothing changes.
 
-## Pending actions (ours, 2026-11-02)
+## Pending actions (ours, 2026-11-02, answers matched to the ask 2026-11-07)
 
 - Retail shows nothing between sending an action and the server's answer. Ours keeps the last 0x01A (magic 3, weapon
-  skill 7, job ability 9) or 0x037 sent; a 0x028 with our id as actor of its kind confirms it (magic 8 / 4, weapon
-  skills 7 / 3 and monster skills 11, job abilities 6 / 14 / 15, items 9 / 5; a melee round does not), a 0x029 with
-  our id as actor before that and within 2 s of the ask is taken as the refusal (but experience, limit and capacity
-  points, defeats: 6, 8, 105, 253, 371, 372, 718, 735). *inf:* the heuristic leans on LSB answering a refused action
-  at once with a 0x029 and an accepted one with a 0x028 first.
+  skill 7, job ability 9) or 0x037 sent; a 0x028 with our id as actor of its kind and id confirms it (magic 8 / 4 with
+  the spell id, weapon skills 7 / 3 with the weapon skill id — monster skills 11 carry a mob skill's, so any — job
+  abilities 6 / 14 / 15 with the 0x01A param, items 9 / 5 by category alone; a melee round or another action's answer
+  does not), a 0x029 with our id as actor before that and within 2 s of the ask that is one of the request path's
+  refusals for its kind is taken as the refusal (LSB's controllers and action states: a spell's carry its id — 34, 35,
+  40, 47, 49, 71, 78, 155, 313 — with the recast's 18 and an interrupt's 16 carrying none; weapon skills 71, 89, 190,
+  191, 192, 216, 217; job abilities 4, 5, 78, 87, 88, 94; items 56, 62, 445 — and where the message names an action
+  it must be the asked one; experience, wear-offs and the rest are no kind's refusal). *inf:* the heuristic leans on
+  LSB answering a refused action at once with a 0x029 and an accepted one with a 0x028 first.
 
 ## itemctrl / moneyctr: the mouse (2026-11-02)
 

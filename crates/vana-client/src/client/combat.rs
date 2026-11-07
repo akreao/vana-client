@@ -677,7 +677,7 @@ fn print(w: &mut World, m: Msg) {
     if m.which.is_none() && m.actor == w.my_id && w.asked.as_ref().is_some_and(|p| p.state == super::pending::State::Waiting) {
         let ctx = Ctx { actor: who(w, m.actor), target: who(w, m.target), me: w.name.clone(), work: m.work, keys: keys(w), ..Default::default() };
         let text = render(&bt, m.id, relation(w, m.actor, m.target), &ctx, &w.game).into_iter().map(|l| l.0).collect::<Vec<_>>().join(" ");
-        super::pending::message(w, m.id, &text);
+        super::pending::message(w, m.id, m.work[0], &text);
     }
     // Ours: a damage number's message (main and proc records), whatever the filters show, for the mods' `damage`
     // event (the bundled dps mod tallies it).
@@ -963,7 +963,7 @@ pub(super) fn message_queue(w: &mut World, dt: f32) {
 /// message and reaction per hit, each after the last swing ends; ours splits the round and queues the rest.
 pub(super) fn on_action(w: &mut World, a: &Action) {
     if a.actor == w.my_id {
-        super::pending::confirm(w, a.category);
+        super::pending::confirm(w, a);
     }
     // A new round flushes what is left of the last one at once.
     if let Some((_, rest)) = w.rounds.remove(&a.actor) {
