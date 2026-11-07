@@ -228,6 +228,7 @@ pub struct Macros {
     pub recs: Vec<Macro>,
     pub titles: Vec<[u8; 16]>,
     run: Option<Running>,
+    held_at: Option<Instant>,
     /// Retail stepped once a frame at 30 fps: one step per 2 ticks here.
     acc: f32,
     /// Lines of group 9 for the defaults, by id.
@@ -263,6 +264,7 @@ impl Macros {
             recs: vec![Macro::default(); 20],
             titles,
             run: None,
+            held_at: None,
             acc: 0.0,
             group9,
             clip: None,
@@ -552,10 +554,14 @@ impl Macros {
         self.run = None;
     }
 
-    /// Pause a running wait while a sub-target prompt is open.
-    pub fn hold_wait(&mut self, by: Duration) {
-        if let Some(r) = &mut self.run {
-            r.wait = r.wait.map(|(at, d)| (at + by, d));
+    /// Pauses a running wait while a sub-target prompt is open: the time it was open is added to the wait's start.
+    pub fn hold_wait(&mut self, held: bool) {
+        if held {
+            self.held_at.get_or_insert_with(Instant::now);
+        } else if let Some(t) = self.held_at.take()
+            && let Some(r) = &mut self.run
+        {
+            r.wait = r.wait.map(|(at, d)| (at + t.elapsed(), d));
         }
     }
 
@@ -723,10 +729,13 @@ mod tests {
 
         assert_eq!(m.step(2.0), Some(b"/say a".to_vec()));
         let started = m.run.as_ref().unwrap().wait.unwrap().0;
-        let paused = Duration::from_millis(250);
-        m.hold_wait(paused);
+        m.hold_wait(true);
+        std::thread::sleep(Duration::from_millis(5));
+        m.hold_wait(false);
         let held = m.run.as_ref().unwrap().wait.unwrap().0;
-        assert_eq!(held, started + paused);
+        assert!(held >= started + Duration::from_millis(5));
+        m.hold_wait(false);
+        assert_eq!(m.run.as_ref().unwrap().wait.unwrap().0, held);
         let _ = std::fs::remove_dir_all(&game);
     }
 }
