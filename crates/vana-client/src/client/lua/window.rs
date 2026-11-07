@@ -5,12 +5,62 @@
 use super::super::game_ui::GameUi;
 use crate::audio::Ui as Se;
 
+/// An icon as mods name it ({kind = "item" | "status" | "spell" | "ability", id}): an item's, a status's, or a
+/// spell's or an ability's (weapon skills too) as the magic and ability lists draw it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Icon {
+    Item(u16),
+    Status(u16),
+    Spell(u16),
+    Ability(u16),
+}
+
+impl Icon {
+    /// By kind name; no kind (or an unknown one) is an item's.
+    pub fn of(kind: Option<&str>, id: u16) -> Icon {
+        match kind {
+            Some("status") => Icon::Status(id),
+            Some("spell") => Icon::Spell(id),
+            Some("ability" | "weaponskill" | "weapon_skill") => Icon::Ability(id),
+            _ => Icon::Item(id),
+        }
+    }
+
+    pub fn kind(self) -> &'static str {
+        match self {
+            Icon::Item(_) => "item",
+            Icon::Status(_) => "status",
+            Icon::Spell(_) => "spell",
+            Icon::Ability(_) => "ability",
+        }
+    }
+
+    pub fn id(self) -> u16 {
+        match self {
+            Icon::Item(id) | Icon::Status(id) | Icon::Spell(id) | Icon::Ability(id) => id,
+        }
+    }
+
+    /// A spell's or an ability's list sprite (library, index).
+    pub fn sprite(self, w: &super::World) -> Option<(&'static str, usize)> {
+        match self {
+            Icon::Spell(id) => super::super::magic::list_icon_of(w, true, id),
+            Icon::Ability(id) => {
+                // The list takes a record's index; ids and indexes match, but look it up if one does not.
+                let acts = w.actions.as_ref()?;
+                let k = if acts.abilities.get(id as usize).is_some_and(|a| a.id == id) { id } else { acts.abilities.iter().position(|a| a.id == id)? as u16 };
+                super::super::magic::list_icon_of(w, false, k)
+            }
+            _ => None,
+        }
+    }
+}
+
 /// A list row: its cells (one without columns), an icon before them, a colour.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Row {
     pub cells: Vec<String>,
-    /// (item icon, id): an item's icon when true, a status icon's when false.
-    pub icon: Option<(bool, u16)>,
+    pub icon: Option<Icon>,
     pub colour: Option<[u8; 4]>,
 }
 
@@ -31,125 +81,40 @@ pub struct Col {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Elem {
     /// `id` (may be empty) lets ui.update find it.
-    Text {
-        id: String,
-        text: String,
-        dim: bool,
-        colour: Option<[u8; 4]>,
-    },
+    Text { id: String, text: String, dim: bool, colour: Option<[u8; 4]> },
     /// A row of buttons under a heading; `marked` makes them options (the chosen one marked, Enter sets it).
-    Buttons {
-        id: String,
-        label: String,
-        items: Vec<String>,
-        marked: Option<usize>,
-    },
-    Slider {
-        id: String,
-        label: String,
-        n: usize,
-        at: usize,
-        shown: String,
-    },
+    Buttons { id: String, label: String, items: Vec<String>, marked: Option<usize> },
+    Slider { id: String, label: String, n: usize, at: usize, shown: String },
     /// Rows with a cursor; `height` rows show at once; columns give them headings and cells.
-    List {
-        id: String,
-        rows: Vec<Row>,
-        columns: Vec<Col>,
-        at: usize,
-        top: usize,
-        height: usize,
-    },
+    List { id: String, rows: Vec<Row>, columns: Vec<Col>, at: usize, top: usize, height: usize },
     /// A bar filled `value` (0..1) with its label and text; `kind` is the art pack's gauge (hp, mp, tp, cast,
     /// experience, recast).
-    Gauge {
-        id: String,
-        label: String,
-        value: f32,
-        text: String,
-        kind: String,
-    },
+    Gauge { id: String, label: String, value: f32, text: String, kind: String },
     Separator,
     /// Pages: elements with a `page` show only on theirs (of the tabs above them); Left / Right turn it.
-    Tabs {
-        id: String,
-        items: Vec<String>,
-        at: usize,
-    },
+    Tabs { id: String, items: Vec<String>, at: usize },
     /// A line the player types: Enter starts and ends it, Escape undoes it.
-    Input {
-        id: String,
-        label: String,
-        text: String,
-        max: usize,
-    },
+    Input { id: String, label: String, text: String, max: usize },
     /// One of `items`, turned with Left / Right.
-    Choice {
-        id: String,
-        label: String,
-        items: Vec<String>,
-        at: usize,
-    },
+    Choice { id: String, label: String, items: Vec<String>, at: usize },
     /// An RGBA colour, edited a channel at a time after Enter.
-    Colour {
-        id: String,
-        label: String,
-        value: [u8; 4],
-        alpha: bool,
-    },
+    Colour { id: String, label: String, value: [u8; 4], alpha: bool },
     /// A heading that folds what is under it (to the next section or tabs).
-    Section {
-        id: String,
-        label: String,
-        open: bool,
-    },
+    Section { id: String, label: String, open: bool },
     /// A region `w` x `h` the mod draws in (local units: classic pixels, modern points); a click sends where.
-    Canvas {
-        id: String,
-        w: f32,
-        h: f32,
-        cmds: Vec<Cmd>,
-    },
+    Canvas { id: String, w: f32, h: f32, cmds: Vec<Cmd> },
 }
 
 /// A canvas drawing command, in the canvas's own units.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Cmd {
-    Line {
-        a: [f32; 2],
-        b: [f32; 2],
-        width: f32,
-        colour: [u8; 4],
-    },
+    Line { a: [f32; 2], b: [f32; 2], width: f32, colour: [u8; 4] },
     /// Filled (from `colour` at the top to `to` at the bottom when given), or outlined `line` wide.
-    Rect {
-        r: [f32; 4],
-        colour: [u8; 4],
-        to: Option<[u8; 4]>,
-        line: Option<f32>,
-    },
-    Circle {
-        c: [f32; 2],
-        radius: f32,
-        colour: [u8; 4],
-        line: Option<f32>,
-    },
-    Tri {
-        pts: [[f32; 2]; 3],
-        colour: [u8; 4],
-    },
-    Text {
-        at: [f32; 2],
-        text: String,
-        colour: [u8; 4],
-    },
-    /// (item icon, id) as list rows take them.
-    Icon {
-        at: [f32; 2],
-        size: f32,
-        item: bool,
-        id: u16,
-    },
+    Rect { r: [f32; 4], colour: [u8; 4], to: Option<[u8; 4]>, line: Option<f32> },
+    Circle { c: [f32; 2], radius: f32, colour: [u8; 4], line: Option<f32> },
+    Tri { pts: [[f32; 2]; 3], colour: [u8; 4] },
+    Text { at: [f32; 2], text: String, colour: [u8; 4] },
+    Icon { at: [f32; 2], size: f32, icon: Icon },
 }
 
 /// What every element may carry: the help it shows under the cursor, the page it is on.
@@ -232,51 +197,18 @@ pub struct Window {
 /// What happened in a window, for the mod's handler.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
-    Press {
-        id: String,
-        index: usize,
-    },
-    Set {
-        id: String,
-        index: usize,
-    },
-    Select {
-        id: String,
-        index: usize,
-    },
+    Press { id: String, index: usize },
+    Set { id: String, index: usize },
+    Select { id: String, index: usize },
     /// A typed line: as it changes (`done` false) and when Enter ends it.
-    Text {
-        id: String,
-        text: String,
-        done: bool,
-    },
-    Colour {
-        id: String,
-        value: [u8; 4],
-    },
-    Toggle {
-        id: String,
-        open: bool,
-    },
-    Sort {
-        id: String,
-        column: usize,
-    },
+    Text { id: String, text: String, done: bool },
+    Colour { id: String, value: [u8; 4] },
+    Toggle { id: String, open: bool },
+    Sort { id: String, column: usize },
     /// A click on a canvas, in its units.
-    Click {
-        id: String,
-        x: f32,
-        y: f32,
-    },
+    Click { id: String, x: f32, y: f32 },
     /// A drag on a canvas: 0 start, 1 a move, 2 the release; where, and the move since the last report.
-    Drag {
-        id: String,
-        phase: u8,
-        x: f32,
-        y: f32,
-        dx: f32,
-        dy: f32,
-    },
+    Drag { id: String, phase: u8, x: f32, y: f32, dx: f32, dy: f32 },
     Close,
 }
 
@@ -287,20 +219,12 @@ impl Event {
             Event::Press { id, index } => json!({"kind": "press", "id": id, "index": index + 1}),
             Event::Set { id, index } => json!({"kind": "set", "id": id, "index": index + 1}),
             Event::Select { id, index } => json!({"kind": "select", "id": id, "index": index + 1}),
-            Event::Text { id, text, done } => {
-                json!({"kind": if *done { "change" } else { "edit" }, "id": id, "text": text})
-            }
-            Event::Colour { id, value: [r, g, b, a] } => {
-                json!({"kind": "change", "id": id, "value": {"r": r, "g": g, "b": b, "a": a}})
-            }
+            Event::Text { id, text, done } => json!({"kind": if *done { "change" } else { "edit" }, "id": id, "text": text}),
+            Event::Colour { id, value: [r, g, b, a] } => json!({"kind": "change", "id": id, "value": {"r": r, "g": g, "b": b, "a": a}}),
             Event::Toggle { id, open } => json!({"kind": "toggle", "id": id, "open": open}),
             Event::Sort { id, column } => json!({"kind": "sort", "id": id, "column": column + 1}),
-            Event::Click { id, x, y } => {
-                json!({"kind": "click", "id": id, "x": x.round() as i64, "y": y.round() as i64})
-            }
-            Event::Drag { id, phase, x, y, dx, dy } => {
-                json!({"kind": (["drag_start", "drag", "drag_end"][*phase as usize % 3]), "id": id, "x": x.round() as i64, "y": y.round() as i64, "dx": dx.round() as i64, "dy": dy.round() as i64})
-            }
+            Event::Click { id, x, y } => json!({"kind": "click", "id": id, "x": x.round() as i64, "y": y.round() as i64}),
+            Event::Drag { id, phase, x, y, dx, dy } => json!({"kind": (["drag_start", "drag", "drag_end"][*phase as usize % 3]), "id": id, "x": x.round() as i64, "y": y.round() as i64, "dx": dx.round() as i64, "dy": dy.round() as i64}),
             Event::Close => json!({"kind": "close"}),
         }
     }
@@ -582,9 +506,7 @@ impl Window {
                     self.col = if key == K::ArrowRight { (self.col + 1) % n } else { (self.col + n - 1) % n };
                     se.push(Se::Cursor);
                 }
-                Some(Elem::Tabs { .. } | Elem::Choice { .. }) => {
-                    return self.turn(self.at, if key == K::ArrowRight { 1 } else { -1 });
-                }
+                Some(Elem::Tabs { .. } | Elem::Choice { .. }) => return self.turn(self.at, if key == K::ArrowRight { 1 } else { -1 }),
                 _ => {}
             },
             K::Enter => match self.elems.get_mut(self.at) {
@@ -845,15 +767,11 @@ impl Window {
                         out.push((i, c, [x + 32.0 + (bw + 8.0) * c as f32, ey + 14.0, bw, 16.0]));
                     }
                 }
-                Elem::Slider { .. } => {
-                    out.push((i, 0, [x + SLIDER_X, ey + 14.0, (w - SLIDER_X - 48.0).max(96.0), 16.0]))
-                }
+                Elem::Slider { .. } => out.push((i, 0, [x + SLIDER_X, ey + 14.0, (w - SLIDER_X - 48.0).max(96.0), 16.0])),
                 Elem::List { rows, columns, top, height, .. } => {
                     let mut ry = ey;
                     if has_header(columns) {
-                        for (c, (cx, cw, _)) in
-                            self::columns(columns, self.classic_list_w(rows.len(), *height)).into_iter().enumerate()
-                        {
+                        for (c, (cx, cw, _)) in self::columns(columns, self.classic_list_w(rows.len(), *height)).into_iter().enumerate() {
                             out.push((i, 1000 + c, [x + 32.0 + cx, ey, cw, LINE]));
                         }
                         ry += LINE;
@@ -878,16 +796,7 @@ impl Window {
                     out.push((i, 0, [x + 32.0, ey + 14.0, 64.0, 16.0]));
                     if self.edit && self.at == i {
                         for c in 0..if *alpha { 4 } else { 3 } {
-                            out.push((
-                                i,
-                                1 + c,
-                                [
-                                    x + SLIDER_X,
-                                    ey + PITCH + CHAN_H * c as f32 + 4.0,
-                                    (w - SLIDER_X - 48.0).max(96.0),
-                                    16.0,
-                                ],
-                            ));
+                            out.push((i, 1 + c, [x + SLIDER_X, ey + PITCH + CHAN_H * c as f32 + 4.0, (w - SLIDER_X - 48.0).max(96.0), 16.0]));
                         }
                     }
                 }
@@ -902,29 +811,14 @@ impl Window {
 
     /// The pointer on the classic page at (x, y): the cursor follows it over controls, a click acts. Whether it is
     /// over a control, and what it did.
-    pub fn pointer_classic(
-        &mut self,
-        gu: &GameUi,
-        x: f32,
-        y: f32,
-        p: (f32, f32),
-        moved: bool,
-        clicked: bool,
-        held: (bool, bool, bool),
-    ) -> (bool, Vec<Event>, Vec<Se>) {
+    pub fn pointer_classic(&mut self, gu: &GameUi, x: f32, y: f32, p: (f32, f32), moved: bool, clicked: bool, held: (bool, bool, bool)) -> (bool, Vec<Event>, Vec<Se>) {
         let inside = |r: &[f32; 4]| p.0 >= r[0] && p.1 >= r[1] && p.0 < r[0] + r[2] && p.1 < r[1] + r[3];
         let (pressed, down, released) = held;
         // A drag keeps the pointer, inside the canvas or not, until the button comes up.
         if let Some((di, ..)) = self.drag {
             if let Some(r) = self.classic_controls(gu, x, y).into_iter().find(|c| c.0 == di).map(|c| c.2) {
                 let (cx, cy) = (p.0 - r[0], p.1 - r[1]);
-                let ev = if released || !down {
-                    self.canvas_drag(di, 2, cx, cy).0
-                } else if moved {
-                    self.canvas_drag(di, 1, cx, cy).0
-                } else {
-                    Vec::new()
-                };
+                let ev = if released || !down { self.canvas_drag(di, 2, cx, cy).0 } else if moved { self.canvas_drag(di, 1, cx, cy).0 } else { Vec::new() };
                 return (true, ev, Vec::new());
             }
             self.drag = None;
@@ -945,9 +839,7 @@ impl Window {
                 self.press = None;
             }
         }
-        let Some((i, k, r)) = self.classic_controls(gu, x, y).into_iter().find(|c| inside(&c.2)) else {
-            return (false, Vec::new(), Vec::new());
-        };
+        let Some((i, k, r)) = self.classic_controls(gu, x, y).into_iter().find(|c| inside(&c.2)) else { return (false, Vec::new(), Vec::new()) };
         let mut se = Vec::new();
         #[derive(PartialEq)]
         enum K {
@@ -1022,9 +914,7 @@ impl Window {
             Elem::Gauge { .. } => LINE + 2.0,
             Elem::Separator => 8.0,
             Elem::Tabs { .. } => LINE + 6.0,
-            Elem::Colour { alpha, .. } => {
-                PITCH + if self.edit && self.at == i { CHAN_H * if *alpha { 4.0 } else { 3.0 } + 4.0 } else { 0.0 }
-            }
+            Elem::Colour { alpha, .. } => PITCH + if self.edit && self.at == i { CHAN_H * if *alpha { 4.0 } else { 3.0 } + 4.0 } else { 0.0 },
             Elem::Section { .. } => LINE + 4.0,
             Elem::Canvas { h, .. } => h + 6.0,
         }
@@ -1036,13 +926,7 @@ impl Window {
     }
 
     /// The classic page at (x, y): the Config pages' frame, bullets, buttons, sliders and the hand.
-    pub fn draw_classic(
-        &self,
-        gu: &mut GameUi,
-        items: Option<&super::super::items::ItemCache>,
-        x: f32,
-        y: f32,
-    ) -> [f32; 4] {
+    pub fn draw_classic(&self, gu: &mut GameUi, world: Option<&super::World>, x: f32, y: f32) -> [f32; 4] {
         let (w, h) = self.classic_size();
         if self.framed {
             gu.frame(x, y, w, h);
@@ -1110,11 +994,7 @@ impl Window {
                     if has_header(columns) {
                         for (c, &(cx, cw, right)) in cols.iter().enumerate() {
                             let t = &columns[c].title;
-                            let tx = if right {
-                                (x + 32.0 + cx + cw - gu.text_width(t) - 4.0).max(x + 32.0 + cx)
-                            } else {
-                                x + 32.0 + cx
-                            };
+                            let tx = if right { (x + 32.0 + cx + cw - gu.text_width(t) - 4.0).max(x + 32.0 + cx) } else { x + 32.0 + cx };
                             gu.text_fit(t, tx, ey, cw, DIM);
                         }
                         ry0 += LINE;
@@ -1123,8 +1003,8 @@ impl Window {
                         let ry = ry0 + LINE * (k - *top) as f32;
                         let ink = row.colour.map_or(N, tint);
                         let mut ix = 0.0;
-                        if let Some((item, id)) = row.icon {
-                            icon(gu, items, item, id, x + 32.0, ry + 1.0, 16.0);
+                        if let Some(i) = row.icon {
+                            icon(gu, world, i, x + 32.0, ry + 1.0, 16.0);
                             ix = 18.0;
                         }
                         if cols.is_empty() {
@@ -1193,13 +1073,7 @@ impl Window {
                         // Scrolled left to keep the caret in the box.
                         let shift = (lw - (bw - 14.0)).max(0.0);
                         gu.text_fit(text, bx + 5.0 - shift, by + 1.0, bw - 10.0 + shift, N);
-                        let blink = (std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_millis()
-                            / 500)
-                            % 2
-                            == 0;
+                        let blink = (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() / 500) % 2 == 0;
                         if blink {
                             gu.text("|", bx + 4.0 + lw - shift, by + 1.0, 0, [0x80; 4]);
                         }
@@ -1231,11 +1105,7 @@ impl Window {
                     super::super::settings::button(gu, [bx, by, 64.0, 16.0], N);
                     let [r, g, b, a] = value.map(|v| v as f32 / 255.0);
                     gu.rect(bx + 3.0, by + 3.0, 58.0, 10.0, [r, g, b, a.max(0.15)]);
-                    let shown = if *alpha {
-                        format!("{} {} {} {}", value[0], value[1], value[2], value[3])
-                    } else {
-                        format!("{} {} {}", value[0], value[1], value[2])
-                    };
+                    let shown = if *alpha { format!("{} {} {} {}", value[0], value[1], value[2], value[3]) } else { format!("{} {} {}", value[0], value[1], value[2]) };
                     gu.text_fit(&shown, bx + 72.0, by + 1.0, w - 112.0, DIM);
                     let open = self.edit && here;
                     if here && !open {
@@ -1249,13 +1119,7 @@ impl Window {
                             let v = value[c].to_string();
                             let sw = (w - SLIDER_X - 48.0).max(96.0);
                             gu.label(&v, x + SLIDER_X + sw + 6.0, cy + 2.0, N, false);
-                            slider(
-                                gu,
-                                x + SLIDER_X,
-                                cy + 4.0,
-                                to_step(value[c]) as f32 / (STEPS - 1) as f32,
-                                c == self.chan,
-                            );
+                            slider(gu, x + SLIDER_X, cy + 4.0, to_step(value[c]) as f32 / (STEPS - 1) as f32, c == self.chan);
                             if c == self.chan {
                                 hand = Some((x + SLIDER_X, cy + 4.0));
                             }
@@ -1263,7 +1127,7 @@ impl Window {
                     }
                 }
                 Elem::Canvas { w: cw, h: ch, cmds, .. } => {
-                    draw_canvas(gu, items, cmds, x + 20.0, ey, *cw, *ch);
+                    draw_canvas(gu, world, cmds, x + 20.0, ey, *cw, *ch);
                 }
                 Elem::Section { label, open, .. } => {
                     let mark = if *open { "-" } else { "+" };
@@ -1297,22 +1161,11 @@ fn line(gu: &mut GameUi, a: [f32; 2], b: [f32; 2], width: f32, c: [f32; 4]) {
 
 /// The points round a circle (32 segments).
 fn ring(c: [f32; 2], r: f32) -> Vec<[f32; 2]> {
-    (0..=32)
-        .map(|k| k as f32 / 32.0 * std::f32::consts::TAU)
-        .map(|t| [c[0] + r * t.cos(), c[1] + r * t.sin()])
-        .collect()
+    (0..=32).map(|k| k as f32 / 32.0 * std::f32::consts::TAU).map(|t| [c[0] + r * t.cos(), c[1] + r * t.sin()]).collect()
 }
 
 /// A canvas's commands at (x, y), clipped to it.
-fn draw_canvas(
-    gu: &mut GameUi,
-    items: Option<&super::super::items::ItemCache>,
-    cmds: &[Cmd],
-    x: f32,
-    y: f32,
-    w: f32,
-    h: f32,
-) {
+fn draw_canvas(gu: &mut GameUi, world: Option<&super::World>, cmds: &[Cmd], x: f32, y: f32, w: f32, h: f32) {
     gu.clip(Some([x, y, w, h]));
     let at = |p: [f32; 2]| [x + p[0], y + p[1]];
     for c in cmds {
@@ -1321,10 +1174,7 @@ fn draw_canvas(
             Cmd::Rect { r, colour, to, line: None } => {
                 let (top, bottom) = (f4(*colour), f4(to.unwrap_or(*colour)));
                 let [rx, ry] = at([r[0], r[1]]);
-                gu.quad(
-                    [[rx, ry], [rx + r[2], ry], [rx, ry + r[3]], [rx + r[2], ry + r[3]]],
-                    [top, top, bottom, bottom],
-                );
+                gu.quad([[rx, ry], [rx + r[2], ry], [rx, ry + r[3]], [rx + r[2], ry + r[3]]], [top, top, bottom, bottom]);
             }
             Cmd::Rect { r, colour, line: Some(lw), .. } => {
                 let [rx, ry] = at([r[0], r[1]]);
@@ -1355,9 +1205,9 @@ fn draw_canvas(
                 let [tx, ty] = at(*p);
                 gu.text_fit(text, tx, ty, x + w - tx + 16.0, tint(*colour));
             }
-            Cmd::Icon { at: p, size, item, id } => {
+            Cmd::Icon { at: p, size, icon: i } => {
                 let [ix, iy] = at(*p);
-                icon(gu, items, *item, *id, ix, iy, *size);
+                icon(gu, world, *i, ix, iy, *size);
             }
         }
     }
@@ -1367,27 +1217,34 @@ fn draw_canvas(
 /// The Config pages' button width for these captions.
 fn button_w(gu: &GameUi, items: &[String]) -> f32 {
     let need = items.iter().map(|s| gu.label_width(s) + 12.0).fold(0.0, f32::max).ceil();
-    if need <= 64.0 && items.len() >= 3 {
-        64.0
-    } else if need <= 88.0 {
-        88.0
-    } else {
-        need
-    }
+    if need <= 64.0 && items.len() >= 3 { 64.0 } else if need <= 88.0 { 88.0 } else { need }
 }
 
-/// An item's or a status icon at (x, y), `s` square.
-fn icon(gu: &mut GameUi, items: Option<&super::super::items::ItemCache>, item: bool, id: u16, x: f32, y: f32, s: f32) {
-    if item {
-        if let Some(cache) = items {
-            super::super::items::upload_icons(gu, cache, std::iter::once(id));
-            let name = crate::render::invwin::icon_texture(id);
-            if gu.has_image(&name) {
+/// An icon at (x, y), `s` square.
+pub(super) fn icon(gu: &mut GameUi, w: Option<&super::World>, i: Icon, x: f32, y: f32, s: f32) {
+    match i {
+        Icon::Item(id) => {
+            if let Some(cache) = w.and_then(|w| w.item_info.as_deref()) {
+                super::super::items::upload_icons(gu, cache, std::iter::once(id));
+                let name = crate::render::invwin::icon_texture(id);
+                if gu.has_image(&name) {
+                    gu.image_rect(&name, x, y, s, s, [1.0; 4]);
+                }
+            }
+        }
+        Icon::Status(id) => {
+            if let Some(name) = gu.status_icon(false, id) {
                 gu.image_rect(&name, x, y, s, s, [1.0; 4]);
             }
         }
-    } else if let Some(name) = gu.status_icon(false, id) {
-        gu.image_rect(&name, x, y, s, s, [1.0; 4]);
+        Icon::Spell(_) | Icon::Ability(_) => {
+            if let Some((lib, k)) = w.and_then(|w| i.sprite(w)) {
+                let (sw, sh) = (gu.sprite_width(lib, k), gu.sprite_height(lib, k));
+                if sw > 0.0 && sh > 0.0 {
+                    gu.sprite_scaled(lib, k, x, y, s / sw, s / sh, 0x8080_8080);
+                }
+            }
+        }
     }
 }
 
@@ -1401,21 +1258,9 @@ mod tests {
         w.elems = vec![
             Elem::Text { id: String::new(), text: "Hello".into(), dim: false, colour: None },
             Elem::Buttons { id: "go".into(), label: "Go".into(), items: vec!["A".into(), "B".into()], marked: None },
-            Elem::Buttons {
-                id: "pick".into(),
-                label: "Pick".into(),
-                items: vec!["X".into(), "Y".into()],
-                marked: Some(0),
-            },
+            Elem::Buttons { id: "pick".into(), label: "Pick".into(), items: vec!["X".into(), "Y".into()], marked: Some(0) },
             Elem::Slider { id: "s".into(), label: "S".into(), n: 3, at: 0, shown: "0".into() },
-            Elem::List {
-                id: "l".into(),
-                rows: ["r1", "r2", "r3"].map(Row::text).to_vec(),
-                columns: Vec::new(),
-                at: 0,
-                top: 0,
-                height: 2,
-            },
+            Elem::List { id: "l".into(), rows: ["r1", "r2", "r3"].map(Row::text).to_vec(), columns: Vec::new(), at: 0, top: 0, height: 2 },
         ];
         w.open = true;
         w.focus = true;
@@ -1467,13 +1312,7 @@ mod tests {
             Elem::Choice { id: "c".into(), label: "C".into(), items: vec!["x".into(), "y".into()], at: 0 },
             Elem::Colour { id: "col".into(), label: "Col".into(), value: [0, 0, 0, 255], alpha: false },
         ];
-        w.meta = vec![
-            Meta::default(),
-            Meta { page: Some(0), ..Default::default() },
-            Meta { page: Some(1), ..Default::default() },
-            Meta::default(),
-            Meta::default(),
-        ];
+        w.meta = vec![Meta::default(), Meta { page: Some(0), ..Default::default() }, Meta { page: Some(1), ..Default::default() }, Meta::default(), Meta::default()];
         (w.open, w.focus) = (true, true);
         w.settle();
         // Page one: the tabs and the line; the section is on page two.

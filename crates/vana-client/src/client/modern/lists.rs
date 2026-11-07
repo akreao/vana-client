@@ -3,11 +3,11 @@
 //! their sort strip and cost box. The mouse is the kit's: hovering only lights a row, a click puts the cursor on
 //! it and takes it; the wheel scrolls.
 
-use super::super::World;
 use super::super::listsearch::{self, Hit};
 use super::super::magic::{self, Cat, Cats, Kind, ListWin, VISIBLE};
-use super::super::registry;
 use super::super::scrollbar::Msg;
+use super::super::registry;
+use super::super::World;
 use super::{Panels, Title, kit, paint};
 use crate::audio::Ui as Se;
 use egui::{Align2, Color32, FontId, Rect, Sense, Ui, pos2, vec2};
@@ -25,17 +25,7 @@ enum Look {
 
 /// A row's frame (the pack's list rows), its icon and name, greyed when `off` (can't be used now); its response.
 #[allow(clippy::too_many_arguments)]
-fn row(
-    ui: &mut Ui,
-    m: &super::Modern,
-    icon: Option<egui::TextureId>,
-    pack: Option<&str>,
-    name: &str,
-    right: &str,
-    look: Look,
-    off: bool,
-    star: Option<bool>,
-) -> (egui::Response, bool) {
+fn row(ui: &mut Ui, m: &super::Modern, icon: Option<egui::TextureId>, pack: Option<&str>, name: &str, right: &str, look: Look, off: bool, star: Option<bool>) -> (egui::Response, bool) {
     let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW), Sense::click());
     // A row that can be a favourite keeps its right end for the star (favs.rs).
     let starred = star.map(|on| super::favs::star(ui, m, r, on, resp.hovered()));
@@ -59,13 +49,7 @@ fn row(
     let colour = super::rows::label_colour(m, look == Look::Cursor, off);
     p.text(pos2(r.min.x + 40.0, r.center().y), Align2::LEFT_CENTER, name, FontId::proportional(m.theme.ui), colour);
     if !right.is_empty() {
-        p.text(
-            pos2(r.max.x - 12.0, r.center().y),
-            Align2::RIGHT_CENTER,
-            right,
-            FontId::proportional(m.theme.small),
-            m.theme.color("muted"),
-        );
+        p.text(pos2(r.max.x - 12.0, r.center().y), Align2::RIGHT_CENTER, right, FontId::proportional(m.theme.small), m.theme.color("muted"));
     }
     ui.add_space(2.0);
     (resp, starred == Some(true))
@@ -126,39 +110,20 @@ fn palette(p: &mut Panels, w: &mut World) {
     let Some((text, sel, hits, icons)) = search_hits(p, w) else { return };
     let m = p.m;
     let mut found = Mouse::default();
-    p.panel(
-        "palette",
-        Some(Title { icon: Some("controls/search"), text: "Commands", note: Some("Esc closes") }),
-        420.0,
-        |ui| {
-            found = search_rows(ui, m, w, &icons, &text, sel, &hits);
-            if text.is_empty() && hits.is_empty() {
-                ui.label(
-                    egui::RichText::new("Type a spell, ability, item or command. Recent picks show here.")
-                        .size(m.theme.small)
-                        .color(m.theme.color("muted")),
-                );
-            }
-        },
-    );
+    p.panel("palette", Some(Title { icon: Some("controls/search"), text: "Commands", note: Some("Esc closes"), name: false }), 420.0, |ui| {
+        found = search_rows(ui, m, w, &icons, &text, sel, &hits);
+        if text.is_empty() && hits.is_empty() {
+            ui.label(egui::RichText::new("Type a spell, ability, item or command. Recent picks show here.").size(m.theme.small).color(m.theme.color("muted")));
+        }
+    });
     search_mouse(w, p.gu, &found, &hits);
 }
 
 /// The search field and its hits in place of the window's rows: what was clicked, what the pointer is over.
-pub(super) fn search_rows(
-    ui: &mut Ui,
-    m: &super::Modern,
-    w: &World,
-    icons: &[Option<egui::TextureId>],
-    text: &str,
-    sel: usize,
-    hits: &[Hit],
-) -> Mouse {
+pub(super) fn search_rows(ui: &mut Ui, m: &super::Modern, w: &World, icons: &[Option<egui::TextureId>], text: &str, sel: usize, hits: &[Hit]) -> Mouse {
     // From a category window, the list each hit is in; spells and abilities grey as in their lists.
     let note = |h: &Hit| match (h.cat, w.cats) {
-        (Some(c), Some(cats)) => {
-            magic::cat_rows(cats.menu).get(c).map_or("", |r| magic::cat_label(cats.menu, r.1)).to_string()
-        }
+        (Some(c), Some(cats)) => magic::cat_rows(cats.menu).get(c).map_or("", |r| magic::cat_label(cats.menu, r.1)).to_string(),
         _ => h.note.clone(),
     };
     let dim = |h: &Hit| h.slot.is_none() && h.journal.is_none() && off(w, h.kind, h.id);
@@ -168,17 +133,7 @@ pub(super) fn search_rows(
 
 /// The field and the hits (each with its note and greyed by `dim` or its list): what was clicked.
 #[allow(clippy::too_many_arguments)]
-fn hit_rows(
-    ui: &mut Ui,
-    m: &super::Modern,
-    icons: &[Option<egui::TextureId>],
-    text: &str,
-    sel: usize,
-    hits: &[Hit],
-    note: impl Fn(&Hit) -> String,
-    dim: impl Fn(&Hit) -> bool,
-    fav: impl Fn(&Hit) -> Option<(super::super::favs::Fav, bool)>,
-) -> Mouse {
+fn hit_rows(ui: &mut Ui, m: &super::Modern, icons: &[Option<egui::TextureId>], text: &str, sel: usize, hits: &[Hit], note: impl Fn(&Hit) -> String, dim: impl Fn(&Hit) -> bool, fav: impl Fn(&Hit) -> Option<(super::super::favs::Fav, bool)>) -> Mouse {
     search_field(ui, m, text);
     let mut mouse = Mouse::default();
     if hits.is_empty() {
@@ -197,13 +152,8 @@ fn hit_rows(
         let dim = matches!(h.journal, Some(listsearch::Journal::Row { dim: true, .. })) || dim(h);
         let fav = fav(h);
         // A favourite says so (it ranks first among the matches).
-        let right = if h.fav {
-            if right.is_empty() { "favourite".to_string() } else { format!("favourite · {right}") }
-        } else {
-            right
-        };
-        let (resp, star) =
-            row(ui, m, icons.get(k).copied().flatten(), None, &h.name, &right, look, dim, fav.map(|f| f.1));
+        let right = if h.fav { if right.is_empty() { "favourite".to_string() } else { format!("favourite · {right}") } } else { right };
+        let (resp, star) = row(ui, m, icons.get(k).copied().flatten(), None, &h.name, &right, look, dim, fav.map(|f| f.1));
         mouse.take(k, &resp);
         if star {
             mouse.star = fav.map(|f| f.0);
@@ -218,15 +168,7 @@ fn hit_rows(
 
 /// The search field with the typed text and its caret.
 pub(super) fn search_field(ui: &mut Ui, m: &super::Modern, text: &str) {
-    kit::field(
-        ui,
-        m,
-        text,
-        Some(text.chars().count()),
-        ui.available_width(),
-        FontId::proportional(m.theme.ui),
-        Some("controls/search"),
-    );
+    kit::field(ui, m, text, Some(text.chars().count()), ui.available_width(), FontId::proportional(m.theme.ui), Some("controls/search"));
     ui.add_space(4.0);
 }
 
@@ -235,18 +177,10 @@ pub(super) fn search_hits(p: &Panels, w: &World) -> Option<(String, usize, Vec<H
     let s = w.list_search.as_ref()?;
     let hits = listsearch::hits(w, &s.text);
     let icon = |h: &Hit| match h.slot {
-        _ if matches!(
-            h.journal,
-            Some(listsearch::Journal::Auction(_) | listsearch::Journal::Row { item: true, .. })
-        ) =>
-        {
-            w.item_info.as_ref().and_then(|info| p.m.item_icon(p.ctx, info, h.id))
-        }
+        _ if matches!(h.journal, Some(listsearch::Journal::Auction(_) | listsearch::Journal::Row { item: true, .. })) => w.item_info.as_ref().and_then(|info| p.m.item_icon(p.ctx, info, h.id)),
         _ if h.journal.is_some() => None,
         Some(_) => w.item_info.as_ref().and_then(|info| p.m.item_icon(p.ctx, info, h.id)),
-        None => {
-            p.gu.and_then(|gu| magic::row_icon(w, h.kind, h.id).and_then(|(lib, k)| p.m.sprite_icon(p.ctx, gu, lib, k)))
-        }
+        None => p.gu.and_then(|gu| magic::row_icon(w, h.kind, h.id).and_then(|(lib, k)| p.m.sprite_icon(p.ctx, gu, lib, k))),
     };
     let icons = hits.iter().take(listsearch::MAX).map(icon).collect();
     // A journal hit's note: its quest area or mission log by the game's titles.
@@ -254,9 +188,7 @@ pub(super) fn search_hits(p: &Panels, w: &World) -> Option<(String, usize, Vec<H
     if let Some(gu) = p.gu {
         for h in &mut hits {
             match h.journal {
-                Some(listsearch::Journal::Quest(area, _)) => {
-                    h.note = format!("{} ({})", super::journal::area_title(gu, area), h.note)
-                }
+                Some(listsearch::Journal::Quest(area, _)) => h.note = format!("{} ({})", super::journal::area_title(gu, area), h.note),
                 Some(listsearch::Journal::Mission(log, _)) => h.note = super::journal::log_title(gu, log),
                 Some(listsearch::Journal::Auction(cat)) => h.note = super::super::auction::cat_label(gu, cat),
                 _ => {}
@@ -287,8 +219,7 @@ pub(super) fn found(p: &Panels, w: &World, tag: &str) -> Option<Found> {
 impl Found {
     /// The field and the hits.
     pub(super) fn rows(&mut self, ui: &mut Ui, m: &super::Modern) {
-        self.mouse =
-            hit_rows(ui, m, &self.icons, &self.text, self.sel, &self.hits, |h| h.note.clone(), |_| false, |_| None);
+        self.mouse = hit_rows(ui, m, &self.icons, &self.text, self.sel, &self.hits, |h| h.note.clone(), |_| false, |_| None);
     }
 
     /// A hit clicked is picked.
@@ -332,32 +263,17 @@ fn cats(p: &mut Panels, w: &mut World) {
     let mut mouse = Mouse::default();
     let search = if w.magic.is_none() && w.ability.is_none() { search_hits(p, w) } else { None };
     let mut found = Mouse::default();
-    p.panel(
-        "cats",
-        Some(Title { icon: None, text: title, note: None }),
-        if search.is_some() { 360.0 } else { 260.0 },
-        |ui| {
-            if let Some((text, sel, hits, icons)) = &search {
-                found = search_rows(ui, m, w, icons, text, *sel, hits);
-                return;
-            }
-            for (k, &(_, cat)) in rows.iter().enumerate() {
-                let look = if k == c.sel { Look::Cursor } else { Look::Normal };
-                let (resp, _) = row(
-                    ui,
-                    m,
-                    None,
-                    Some(cat_icon(cat)),
-                    magic::cat_label(c.menu, cat),
-                    "",
-                    look,
-                    !magic::cat_ready(w, cat),
-                    None,
-                );
-                mouse.take(k, &resp);
-            }
-        },
-    );
+    p.panel("cats", Some(Title { icon: None, text: title, note: None, name: false }), if search.is_some() { 360.0 } else { 260.0 }, |ui| {
+        if let Some((text, sel, hits, icons)) = &search {
+            found = search_rows(ui, m, w, icons, text, *sel, hits);
+            return;
+        }
+        for (k, &(_, cat)) in rows.iter().enumerate() {
+            let look = if k == c.sel { Look::Cursor } else { Look::Normal };
+            let (resp, _) = row(ui, m, None, Some(cat_icon(cat)), magic::cat_label(c.menu, cat), "", look, !magic::cat_ready(w, cat), None);
+            mouse.take(k, &resp);
+        }
+    });
     if let Some((_, _, hits, _)) = &search {
         search_mouse(w, p.gu, &found, hits);
         return;
@@ -372,10 +288,7 @@ fn cats(p: &mut Panels, w: &mut World) {
 pub(super) fn off(w: &World, kind: Kind, id: u16) -> bool {
     match kind {
         Kind::Magic => !magic::spell_ready(w, id),
-        Kind::Ability => {
-            w.actions.as_ref().and_then(|a| a.abilities.get(id as usize)).is_some_and(|a| a.kind != 4)
-                && !magic::ability_ready(w, id)
-        }
+        Kind::Ability => w.actions.as_ref().and_then(|a| a.abilities.get(id as usize)).is_some_and(|a| a.kind != 4) && !magic::ability_ready(w, id),
         Kind::Mount => magic::mount_check(w).is_some(),
         Kind::Emote => magic::emote_locked(w, id),
     }
@@ -393,18 +306,10 @@ fn row_view(w: &World, kind: Kind, id: u16) -> (String, String, bool) {
         Kind::Ability => {
             let a = w.actions.as_ref().and_then(|a| a.abilities.get(id as usize));
             let recast = a.map_or(0.0, |a| if a.timer == 900 { 0.0 } else { magic::ability_recast(w, a.timer) });
-            (
-                magic::ability_name(w, id),
-                if recast > 0.0 { magic::clock(recast) } else { String::new() },
-                off(w, kind, id),
-            )
+            (magic::ability_name(w, id), if recast > 0.0 { magic::clock(recast) } else { String::new() }, off(w, kind, id))
         }
         Kind::Mount => (magic::mount_name(w, id), String::new(), magic::mount_check(w).is_some()),
-        Kind::Emote => (
-            magic::emote_entry(w, id).and_then(|e| w.names.as_ref()?.emote_text(e.name as u32)).unwrap_or_default(),
-            String::new(),
-            magic::emote_locked(w, id),
-        ),
+        Kind::Emote => (magic::emote_entry(w, id).and_then(|e| w.names.as_ref()?.emote_text(e.name as u32)).unwrap_or_default(), String::new(), magic::emote_locked(w, id)),
     }
 }
 
@@ -463,9 +368,7 @@ fn registry_lines(ui: &mut Ui, m: &super::Modern, info: &registry::Info) {
     if !facts.is_empty() {
         ui.label(egui::RichText::new(facts.join("  ·  ")).size(m.theme.small).color(m.theme.color("muted")));
     }
-    let warn = info.why.clone().or_else(|| {
-        info.out_of_range().then(|| format!("Target out of range ({:.1}).", info.distance.unwrap_or_default()))
-    });
+    let warn = info.why.clone().or_else(|| info.out_of_range().then(|| format!("Target out of range ({:.1}).", info.distance.unwrap_or_default())));
     if let Some(why) = warn {
         ui.label(egui::RichText::new(why).size(m.theme.small).color(m.theme.color("hp")));
     }
@@ -482,22 +385,14 @@ fn list(p: &mut Panels, w: &mut World) {
         Kind::Emote => "Emotes",
     };
     let note = win.rows.len().to_string();
-    let icons: Vec<Option<egui::TextureId>> = win
-        .rows
-        .iter()
-        .skip(win.scroll)
-        .take(VISIBLE)
-        .map(|&id| {
-            p.gu.and_then(|gu| magic::row_icon(w, win.kind, id).and_then(|(lib, k)| m.sprite_icon(p.ctx, gu, lib, k)))
-        })
-        .collect();
+    let icons: Vec<Option<egui::TextureId>> = win.rows.iter().skip(win.scroll).take(VISIBLE).map(|&id| p.gu.and_then(|gu| magic::row_icon(w, win.kind, id).and_then(|(lib, k)| m.sprite_icon(p.ctx, gu, lib, k)))).collect();
     let mut mouse = Mouse::default();
     let search = search_hits(p, w);
     let mut found = Mouse::default();
     let mut sort_click: Option<u16> = None;
     let mut ask_click: Option<bool> = None;
     let mut wheel = 0.0f32;
-    let rect = p.panel("list", Some(Title { icon: None, text: title, note: Some(&note) }), 360.0, |ui| {
+    let rect = p.panel("list", Some(Title { icon: None, text: title, note: Some(&note), name: false }), 360.0, |ui| {
         // The sort strip: its window's rows as the kit's buttons, the cursor's ringed while it has the keys.
         if let Some(menu) = win.sort {
             let labels = sort_labels(menu);
@@ -528,25 +423,9 @@ fn list(p: &mut Panels, w: &mut World) {
         for (k, &id) in win.rows.iter().skip(win.scroll).take(VISIBLE).enumerate() {
             let (name, right, off) = row_view(w, win.kind, id);
             let picked = win.manual == 2 && win.scroll + k == win.picked;
-            let look = if k == win.cursor && win.sort_focus.is_none() {
-                Look::Cursor
-            } else if picked {
-                Look::Picked
-            } else {
-                Look::Normal
-            };
+            let look = if k == win.cursor && win.sort_focus.is_none() { Look::Cursor } else if picked { Look::Picked } else { Look::Normal };
             let fav = super::super::favs::of_row(w, win.kind, id);
-            let (resp, star) = row(
-                ui,
-                m,
-                icons.get(k).copied().flatten(),
-                None,
-                &name,
-                &right,
-                look,
-                off,
-                fav.map(|f| super::super::favs::is(w, f)),
-            );
+            let (resp, star) = row(ui, m, icons.get(k).copied().flatten(), None, &name, &right, look, off, fav.map(|f| super::super::favs::is(w, f)));
             if star {
                 mouse.star = fav;
             } else {
@@ -554,10 +433,7 @@ fn list(p: &mut Panels, w: &mut World) {
             }
         }
         // The bar: the rows shown out of all, at the right edge.
-        let track = Rect::from_min_max(
-            pos2(ui.max_rect().max.x + 6.0, top.y),
-            pos2(ui.max_rect().max.x + 14.0, ui.cursor().min.y),
-        );
+        let track = Rect::from_min_max(pos2(ui.max_rect().max.x + 6.0, top.y), pos2(ui.max_rect().max.x + 14.0, ui.cursor().min.y));
         kit::bar(ui.painter(), m, track, win.rows.len(), VISIBLE, win.scroll);
         // The cost box for the cursor's row, and Manual Sort's hint.
         let lines = cost_lines(w, &win);
@@ -575,11 +451,7 @@ fn list(p: &mut Panels, w: &mut World) {
                 registry_lines(ui, m, info);
             }
             if win.manual > 0 {
-                let hint = if win.manual == 1 {
-                    "Manual Sort: pick a row to move."
-                } else {
-                    "Manual Sort: pick its new place."
-                };
+                let hint = if win.manual == 1 { "Manual Sort: pick a row to move." } else { "Manual Sort: pick its new place." };
                 ui.label(egui::RichText::new(hint).size(m.theme.small).color(m.theme.color("gold")));
             }
         }
@@ -650,12 +522,7 @@ fn sort_labels(menu: &str) -> &'static [&'static str] {
 /// rest stay magic.rs's. True when taken.
 pub fn key(w: &mut World, key: egui::Key) -> bool {
     use egui::Key as K;
-    if !w.modern
-        || w.prompt.is_some()
-        || w.cats.is_some()
-        || w.list_search.is_some()
-        || !matches!(key, K::ArrowUp | K::ArrowDown | K::ArrowLeft | K::ArrowRight)
-    {
+    if !w.modern || w.prompt.is_some() || w.cats.is_some() || w.list_search.is_some() || !matches!(key, K::ArrowUp | K::ArrowDown | K::ArrowLeft | K::ArrowRight) {
         return false;
     }
     let Some(win) = list_mut(w).filter(|x| !x.hidden && x.manual == 0) else { return false };
@@ -668,8 +535,7 @@ pub fn key(w: &mut World, key: egui::Key) -> bool {
         return true;
     }
     let n = win.rows.len();
-    let stops =
-        [kit::Stop::Buttons { n: sort_labels(menu).len(), off: 0, pair: None }, kit::Stop::List { n, page: VISIBLE }];
+    let stops = [kit::Stop::Buttons { n: sort_labels(menu).len(), off: 0, pair: None }, kit::Stop::List { n, page: VISIBLE }];
     let mut at = match win.sort_focus {
         Some(c) => kit::At::new(0, c as usize - 1),
         None => kit::At::new(1, win.scroll + win.cursor),

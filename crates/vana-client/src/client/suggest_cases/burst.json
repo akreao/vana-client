@@ -87,8 +87,7 @@
         145,
         144
       ],
-      "label": "Fire",
-      "family": "Fire"
+      "label": "Fire"
     },
     {
       "action": {
@@ -97,8 +96,7 @@
       "target": null,
       "reason": "Bio is not on the Goblin Thug.",
       "group": [],
-      "label": null,
-      "family": "Bio"
+      "label": null
     }
   ]
 }

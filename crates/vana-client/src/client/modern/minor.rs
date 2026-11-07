@@ -5,9 +5,7 @@
 //! windows (layout.rs), pupequip (equipwin.rs), the fishing gauge (fishing.rs) and the Fishing Ranking (ranking.rs).
 
 use super::super::listsearch::{Entry, count_note};
-use super::super::{
-    World, blklist, chatctrl, concierge, equipwin, fishing, garden, layout, map, primer, ranking, remodel, seacom,
-};
+use super::super::{World, blklist, chatctrl, concierge, equipwin, fishing, garden, layout, map, primer, ranking, remodel, seacom};
 use super::craft::{button, caption};
 use super::{MenuWin, Panels, Title, social};
 use crate::audio::Ui as Se;
@@ -46,25 +44,12 @@ fn map_menu(p: &mut Panels, w: &mut World) {
     let free = w.confirm.is_none();
     let title = gu.focus_text("menu    map0", sel)[1].clone().unwrap_or_else(|| "Map".into());
     let mut got = None;
-    p.panel("map0", Some(Title { icon: None, text: &title, note: None }), social::width(1), |ui| {
-        let col = MenuWin {
-            name: "menu    map0",
-            sel,
-            off: if scan { Vec::new() } else { vec![2] },
-            labels: Vec::new(),
-            marked: Vec::new(),
-            values: Vec::new(),
-        };
+    p.panel("map0", Some(Title { icon: None, text: &title, note: None, name: false }), social::width(1), |ui| {
+        let col = MenuWin { name: "menu    map0", sel, off: if scan { Vec::new() } else { vec![2] }, labels: Vec::new(), marked: Vec::new(), values: Vec::new() };
         got = social::column(ui, m, gu, &col, free);
     });
     if free {
-        social::act(
-            w,
-            gu,
-            got,
-            |w, k| w.map.as_mut().is_some_and(|m| m.set_cursor(k)),
-            |w, _| map::key(w, egui::Key::Enter),
-        );
+        social::act(w, gu, got, |w, k| w.map.as_mut().is_some_and(|m| m.set_cursor(k)), |w, _| map::key(w, egui::Key::Enter));
     }
 }
 
@@ -79,7 +64,7 @@ fn map_markers(p: &mut Panels, w: &mut World) {
     let (mut set_click, mut row_click, mut v2_row) = (None, None, None);
     let follow = v.cursor.is_some_and(|c| m.moved("map markers", c));
     let mut found = small_found(p, w, &[Small::Markers]);
-    p.panel("mapv3", Some(Title { icon: None, text: "Markers", note: None }), W, |ui| {
+    p.panel("mapv3", Some(Title { icon: None, text: "Markers", note: None, name: false }), W, |ui| {
         ui.horizontal(|ui| {
             for (s, &on) in v.sets.iter().enumerate() {
                 let (r, resp) = ui.allocate_exact_size(vec2(36.0, 26.0), Sense::click());
@@ -103,39 +88,16 @@ fn map_markers(p: &mut Panels, w: &mut World) {
         if super::lists::rows_or(ui, m, &mut found) {
             return;
         }
-        let out = super::kit::list(
-            ui,
-            m,
-            "map markers",
-            v.rows.len(),
-            v.cursor,
-            free,
-            follow,
-            ROW,
-            TALL,
-            |_| false,
-            |ui, row| {
-                let (icon, name) = &v.rows[row.index];
-                if let Some(t) = icon.and_then(|k| m.sprite_icon(ui.ctx(), gu, "menu    keytops3", k)) {
-                    ui.painter().image(
-                        t,
-                        egui::Rect::from_min_size(row.rect.min + vec2(8.0, (ROW - 16.0) / 2.0), vec2(16.0, 16.0)),
-                        full,
-                        Color32::WHITE,
-                    );
-                }
-                ui.painter().text(
-                    row.rect.left_center() + vec2(32.0, 0.0),
-                    Align2::LEFT_CENTER,
-                    name,
-                    FontId::proportional(m.theme.small),
-                    super::kit::ink(m, row),
-                );
-                if v.v2.is_some_and(|x| x.0 == row.index) {
-                    v2_row = Some(row.rect);
-                }
-            },
-        );
+        let out = super::kit::list(ui, m, "map markers", v.rows.len(), v.cursor, free, follow, ROW, TALL, |_| false, |ui, row| {
+            let (icon, name) = &v.rows[row.index];
+            if let Some(t) = icon.and_then(|k| m.sprite_icon(ui.ctx(), gu, "menu    keytops3", k)) {
+                ui.painter().image(t, egui::Rect::from_min_size(row.rect.min + vec2(8.0, (ROW - 16.0) / 2.0), vec2(16.0, 16.0)), full, Color32::WHITE);
+            }
+            ui.painter().text(row.rect.left_center() + vec2(32.0, 0.0), Align2::LEFT_CENTER, name, FontId::proportional(m.theme.small), super::kit::ink(m, row));
+            if v.v2.is_some_and(|x| x.0 == row.index) {
+                v2_row = Some(row.rect);
+            }
+        });
         row_click = out.clicked;
     });
     if let Some(f) = found {
@@ -147,14 +109,7 @@ fn map_markers(p: &mut Panels, w: &mut World) {
         let width = social::width(1);
         p.panel_at("mapv2", None, width, pos2(r.min.x - width - 20.0, r.min.y - 8.0), |ui| {
             // View needs a marker placed.
-            let col = MenuWin {
-                name: "menu    mapv2",
-                sel: c,
-                off: if placed { Vec::new() } else { vec![1] },
-                labels: Vec::new(),
-                marked: Vec::new(),
-                values: Vec::new(),
-            };
+            let col = MenuWin { name: "menu    mapv2", sel: c, off: if placed { Vec::new() } else { vec![1] }, labels: Vec::new(), marked: Vec::new(), values: Vec::new() };
             menu_click = social::column(ui, m, gu, &col, free);
         });
     }
@@ -183,54 +138,24 @@ fn map_scan(p: &mut Panels, w: &mut World) {
     let title = gu.focus_text("menu    scanlist", 1)[1].clone().unwrap_or_else(|| "Wide Scan".into());
     let mut click = None;
     let mut found = small_found(p, w, &[Small::MapScan]);
-    p.panel("scanlist", Some(Title { icon: None, text: &title, note: None }), W, |ui| {
+    p.panel("scanlist", Some(Title { icon: None, text: &title, note: None, name: false }), W, |ui| {
         if super::lists::rows_or(ui, m, &mut found) {
             return;
         }
-        let out = super::kit::list(
-            ui,
-            m,
-            "map scan",
-            v.rows.len(),
-            Some(v.cursor),
-            free && v.mapscan.is_none(),
-            follow,
-            ROW,
-            TALL,
-            |_| false,
-            |ui, row| {
-                let (icon, name) = &v.rows[row.index];
-                if let Some(t) = m.sprite_icon(ui.ctx(), gu, "menu    keytops3", *icon) {
-                    ui.painter().image(
-                        t,
-                        egui::Rect::from_min_size(row.rect.min + vec2(8.0, (ROW - 16.0) / 2.0), vec2(16.0, 16.0)),
-                        full,
-                        Color32::WHITE,
-                    );
-                }
-                ui.painter().text(
-                    row.rect.left_center() + vec2(32.0, 0.0),
-                    Align2::LEFT_CENTER,
-                    name,
-                    FontId::proportional(m.theme.small),
-                    super::kit::ink(m, row),
-                );
-            },
-        );
+        let out = super::kit::list(ui, m, "map scan", v.rows.len(), Some(v.cursor), free && v.mapscan.is_none(), follow, ROW, TALL, |_| false, |ui, row| {
+            let (icon, name) = &v.rows[row.index];
+            if let Some(t) = m.sprite_icon(ui.ctx(), gu, "menu    keytops3", *icon) {
+                ui.painter().image(t, egui::Rect::from_min_size(row.rect.min + vec2(8.0, (ROW - 16.0) / 2.0), vec2(16.0, 16.0)), full, Color32::WHITE);
+            }
+            ui.painter().text(row.rect.left_center() + vec2(32.0, 0.0), Align2::LEFT_CENTER, name, FontId::proportional(m.theme.small), super::kit::ink(m, row));
+        });
         click = out.clicked;
     });
     let mut got = None;
     if let Some((c, track)) = v.mapscan {
         let title = gu.focus_text("menu    mapscan", c)[1].clone().unwrap_or_else(|| "Map".into());
-        p.panel("mapscan", Some(Title { icon: None, text: &title, note: None }), social::width(1), |ui| {
-            let col = MenuWin {
-                name: "menu    mapscan",
-                sel: c,
-                off: if track { Vec::new() } else { vec![1] },
-                labels: Vec::new(),
-                marked: Vec::new(),
-                values: Vec::new(),
-            };
+        p.panel("mapscan", Some(Title { icon: None, text: &title, note: None, name: false }), social::width(1), |ui| {
+            let col = MenuWin { name: "menu    mapscan", sel: c, off: if track { Vec::new() } else { vec![1] }, labels: Vec::new(), marked: Vec::new(), values: Vec::new() };
             got = social::column(ui, m, gu, &col, free);
         });
     }
@@ -244,13 +169,7 @@ fn map_scan(p: &mut Panels, w: &mut World) {
     if let Some(k) = click {
         map::scan_click(w, k);
     }
-    social::act(
-        w,
-        gu,
-        got,
-        |w, k| w.map.as_mut().is_some_and(|m| m.set_mapscan(k)),
-        |w, _| map::key(w, egui::Key::Enter),
-    );
+    social::act(w, gu, got, |w, k| w.map.as_mut().is_some_and(|m| m.set_mapscan(k)), |w, _| map::key(w, egui::Key::Enter));
 }
 
 /// Change Map's list (maplist): a row per area or map, the name at the left and its count or area at the right.
@@ -261,40 +180,16 @@ fn map_list(p: &mut Panels, w: &mut World) {
     let follow = m.moved("map list", v.cursor);
     let mut click = None;
     let mut found = small_found(p, w, &[Small::MapList]);
-    p.panel("maplist", Some(Title { icon: None, text: "Change Map", note: None }), W + 80.0, |ui| {
+    p.panel("maplist", Some(Title { icon: None, text: "Change Map", note: None, name: false }), W + 80.0, |ui| {
         if super::lists::rows_or(ui, m, &mut found) {
             return;
         }
-        let out = super::kit::list(
-            ui,
-            m,
-            "map list",
-            v.rows.len(),
-            Some(v.cursor),
-            free,
-            follow,
-            ROW,
-            TALL,
-            |_| false,
-            |ui, row| {
-                let (name, value) = &v.rows[row.index];
-                let font = FontId::proportional(m.theme.small);
-                ui.painter().text(
-                    row.rect.left_center() + vec2(10.0, 0.0),
-                    Align2::LEFT_CENTER,
-                    name,
-                    font.clone(),
-                    super::kit::ink(m, row),
-                );
-                ui.painter().text(
-                    row.rect.right_center() - vec2(10.0, 0.0),
-                    Align2::RIGHT_CENTER,
-                    value,
-                    font,
-                    m.theme.color("muted"),
-                );
-            },
-        );
+        let out = super::kit::list(ui, m, "map list", v.rows.len(), Some(v.cursor), free, follow, ROW, TALL, |_| false, |ui, row| {
+            let (name, value) = &v.rows[row.index];
+            let font = FontId::proportional(m.theme.small);
+            ui.painter().text(row.rect.left_center() + vec2(10.0, 0.0), Align2::LEFT_CENTER, name, font.clone(), super::kit::ink(m, row));
+            ui.painter().text(row.rect.right_center() - vec2(10.0, 0.0), Align2::RIGHT_CENTER, value, font, m.theme.color("muted"));
+        });
         click = out.clicked;
     });
     if let Some(f) = found {
@@ -307,22 +202,14 @@ fn map_list(p: &mut Panels, w: &mut World) {
 }
 
 /// Plain rows (text, grey), the cursor's lit while focused and kept in view; the row clicked while focused.
-fn plain_rows(
-    ui: &mut egui::Ui,
-    m: &super::Modern,
-    salt: &str,
-    rows: &[(String, bool)],
-    cursor: usize,
-    focused: bool,
-) -> Option<usize> {
+fn plain_rows(ui: &mut egui::Ui, m: &super::Modern, salt: &str, rows: &[(String, bool)], cursor: usize, focused: bool) -> Option<usize> {
     let seen = egui::Id::unique((salt, "plain cursor seen"));
     let follow = ui.ctx().data(|d| d.get_temp::<usize>(seen)) != Some(cursor);
     ui.ctx().data_mut(|d| d.insert_temp(seen, cursor));
     let mut click = None;
     egui::ScrollArea::vertical().id_salt(salt).max_height(TALL).auto_shrink([false, true]).show(ui, |ui| {
         for (k, (text, grey)) in rows.iter().enumerate() {
-            let (r, resp) =
-                ui.allocate_exact_size(vec2(W - 14.0, ROW), if focused { Sense::click() } else { Sense::hover() });
+            let (r, resp) = ui.allocate_exact_size(vec2(W - 14.0, ROW), if focused { Sense::click() } else { Sense::hover() });
             let face = match () {
                 _ if k == cursor && focused => "controls/list_row_selected",
                 _ if k == cursor || focused && resp.hovered() => "controls/list_row_hover",
@@ -332,13 +219,7 @@ fn plain_rows(
             super::rows::face(ui.painter(), m, r, face, Color32::WHITE);
             let c = if *grey { m.theme.color("muted") } else { m.theme.color("text") };
             let clip = egui::Rect::from_min_max(r.min, pos2(r.max.x - 8.0, r.max.y));
-            ui.painter().with_clip_rect(clip).text(
-                pos2(r.min.x + 24.0, r.center().y),
-                Align2::LEFT_CENTER,
-                text,
-                FontId::proportional(m.theme.small),
-                c,
-            );
+            ui.painter().with_clip_rect(clip).text(pos2(r.min.x + 24.0, r.center().y), Align2::LEFT_CENTER, text, FontId::proportional(m.theme.small), c);
             if k == cursor && follow {
                 ui.scroll_to_rect(r, None);
             }
@@ -410,41 +291,17 @@ fn small_found(p: &Panels, w: &World, any: &[Small]) -> Option<super::lists::Fou
 
 pub(super) fn search_rows(w: &World) -> Vec<Entry> {
     let slots = |list: Option<(Vec<crate::inventory::Slot>, Vec<u32>, usize)>| {
-        list.map_or(Vec::new(), |(rows, tints, _)| {
-            rows.iter()
-                .zip(&tints)
-                .map(|(s, &t)| Entry::item(w, s.id).note(count_note(s.count)).dim(t == crate::inventory::TINT_DIM))
-                .collect()
-        })
+        list.map_or(Vec::new(), |(rows, tints, _)| rows.iter().zip(&tints).map(|(s, &t)| Entry::item(w, s.id).note(count_note(s.count)).dim(t == crate::inventory::TINT_DIM)).collect())
     };
     let named = |v: Vec<String>| v.into_iter().map(Entry::named).collect::<Vec<_>>();
     match small(w) {
-        Some(Small::MapScan) => w
-            .map
-            .as_ref()
-            .and_then(|m| m.scan_look())
-            .map_or(Vec::new(), |v| named(v.rows.into_iter().map(|r| r.1).collect())),
-        Some(Small::MapList) => w
-            .map
-            .as_ref()
-            .and_then(|m| m.maplist_look())
-            .map_or(Vec::new(), |v| v.rows.into_iter().map(|(a, b)| Entry::named(a).note(b)).collect()),
-        Some(Small::Markers) => w
-            .map
-            .as_ref()
-            .and_then(|m| m.markers_look())
-            .map_or(Vec::new(), |v| named(v.rows.into_iter().map(|r| r.1).collect())),
+        Some(Small::MapScan) => w.map.as_ref().and_then(|m| m.scan_look()).map_or(Vec::new(), |v| named(v.rows.into_iter().map(|r| r.1).collect())),
+        Some(Small::MapList) => w.map.as_ref().and_then(|m| m.maplist_look()).map_or(Vec::new(), |v| v.rows.into_iter().map(|(a, b)| Entry::named(a).note(b)).collect()),
+        Some(Small::Markers) => w.map.as_ref().and_then(|m| m.markers_look()).map_or(Vec::new(), |v| named(v.rows.into_iter().map(|r| r.1).collect())),
         Some(Small::PrimerCats) => primer::look(w).map_or(Vec::new(), |v| named(v.cats)),
         Some(Small::PrimerTopics) => primer::look(w).and_then(|v| v.list).map_or(Vec::new(), |(_, t, _)| named(t)),
-        Some(Small::Concierge) => concierge::look(w).map_or(Vec::new(), |v| {
-            v.rows
-                .into_iter()
-                .map(|r| r.map_or(Entry::default(), |r| Entry::named(r.name).note(r.wanted.to_string())))
-                .collect()
-        }),
-        Some(Small::Ranking) => ranking::look(w).map_or(Vec::new(), |(_, _, rows)| {
-            rows.into_iter().map(|r| Entry::named(r.name).note(format!("#{}", r.rank))).collect()
-        }),
+        Some(Small::Concierge) => concierge::look(w).map_or(Vec::new(), |v| v.rows.into_iter().map(|r| r.map_or(Entry::default(), |r| Entry::named(r.name).note(r.wanted.to_string()))).collect()),
+        Some(Small::Ranking) => ranking::look(w).map_or(Vec::new(), |(_, _, rows)| rows.into_iter().map(|r| Entry::named(r.name).note(format!("#{}", r.rank))).collect()),
         Some(Small::Blocks) => blklist::view(w).map_or(Vec::new(), |v| named(v.0)),
         Some(Small::Garden) => slots(garden::look(w).and_then(|v| v.list)),
         Some(Small::Layout) => slots(layout::look(w).and_then(|v| v.list)),
@@ -491,7 +348,7 @@ fn remodel_list(p: &mut Panels, w: &mut World) {
     let free = w.confirm.is_none();
     let title = gu.focus_text(remodel::WINDOW, 0)[1].clone().unwrap_or_else(|| "Remodel".into());
     let mut got = None;
-    p.panel("window", Some(Title { icon: Some("icons/mog_house"), text: &title, note: None }), W + 44.0, |ui| {
+    p.panel("window", Some(Title { icon: Some("icons/mog_house"), text: &title, note: None, name: false }), W + 44.0, |ui| {
         got = plain_rows(ui, m, "remodel rows", &rows, sel, free);
     });
     act(w, got, remodel::set_sel, |w| remodel::key(w, egui::Key::Enter));
@@ -507,7 +364,7 @@ fn primer_lists(p: &mut Panels, w: &mut World) {
     let width = W + if v.list.is_some() { 16.0 + W } else { 0.0 } + 44.0;
     let (mut cats, mut topics, mut turn) = (None, None, None);
     let mut found = small_found(p, w, &[Small::PrimerCats, Small::PrimerTopics]);
-    p.panel("window", Some(Title { icon: Some("icons/help"), text: &title, note: None }), width, |ui| {
+    p.panel("window", Some(Title { icon: Some("icons/help"), text: &title, note: None, name: false }), width, |ui| {
         if super::lists::rows_or(ui, m, &mut found) {
             return;
         }
@@ -571,22 +428,14 @@ fn concierge_list(p: &mut Panels, w: &mut World) {
     let (mut tab, mut click) = (None, None);
     let mut found = small_found(p, w, &[Small::Concierge]);
     let title = gu.focus_text(super::super::linkshell::LIST, 0)[1].clone().unwrap_or_else(|| "Linkshell".into());
-    p.panel("window", Some(Title { icon: Some("icons/linkshell"), text: &title, note: None }), LIST_W + 44.0, |ui| {
+    p.panel("window", Some(Title { icon: Some("icons/linkshell"), text: &title, note: None, name: false }), LIST_W + 44.0, |ui| {
         if !v.title.is_empty() {
             ui.label(egui::RichText::new(&v.title).size(m.theme.ui).color(m.theme.color("gold")));
             ui.add_space(6.0);
         }
-        let labels: Vec<String> =
-            [715usize, 92, 93, 574].iter().map(|&s| m.caption(gu, "menu    windowps", s).unwrap_or_default()).collect();
+        let labels: Vec<String> = [715usize, 92, 93, 574].iter().map(|&s| m.caption(gu, "menu    windowps", s).unwrap_or_default()).collect();
         let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
-        let tabs = super::tabs::strip(
-            ui,
-            m,
-            "concierge",
-            &labels,
-            Some((v.filter as usize).saturating_sub(1)),
-            v.lsc.map(|s| (s as usize).saturating_sub(1)),
-        );
+        let tabs = super::tabs::strip(ui, m, "concierge", &labels, Some((v.filter as usize).saturating_sub(1)), v.lsc.map(|s| (s as usize).saturating_sub(1)));
         if let Some(k) = tabs.iter().position(|r| r.clicked())
             && free
         {
@@ -599,77 +448,42 @@ fn concierge_list(p: &mut Panels, w: &mut World) {
         let seen = egui::Id::unique("concierge cursor seen");
         let follow = ui.ctx().data(|d| d.get_temp::<usize>(seen)) != Some(v.cursor);
         ui.ctx().data_mut(|d| d.insert_temp(seen, v.cursor));
-        egui::ScrollArea::vertical().id_salt("concierge rows").max_height(TALL).auto_shrink([false, true]).show(
-            ui,
-            |ui| {
-                for (k, r) in v.rows.iter().enumerate() {
-                    let (rect, resp) = ui.allocate_exact_size(
-                        vec2(LIST_W - 14.0, ROW),
-                        if focused { Sense::click() } else { Sense::hover() },
-                    );
-                    let face = match () {
-                        _ if k == v.cursor && focused => "controls/list_row_selected",
-                        _ if k == v.cursor || focused && resp.hovered() => "controls/list_row_hover",
-                        _ => "controls/list_row_normal",
-                    };
-                    super::rows::face(ui.painter(), m, rect, face, Color32::WHITE);
-                    let y = rect.center().y;
-                    let small = FontId::proportional(m.theme.small);
-                    match r {
-                        None => {
-                            let head = m.caption(gu, "menu    windowps", 718).unwrap_or_default();
-                            ui.painter().text(
-                                pos2(rect.min.x + 24.0, y),
-                                Align2::LEFT_CENTER,
-                                head,
-                                small,
-                                m.theme.color("gold"),
-                            );
+        egui::ScrollArea::vertical().id_salt("concierge rows").max_height(TALL).auto_shrink([false, true]).show(ui, |ui| {
+            for (k, r) in v.rows.iter().enumerate() {
+                let (rect, resp) = ui.allocate_exact_size(vec2(LIST_W - 14.0, ROW), if focused { Sense::click() } else { Sense::hover() });
+                let face = match () {
+                    _ if k == v.cursor && focused => "controls/list_row_selected",
+                    _ if k == v.cursor || focused && resp.hovered() => "controls/list_row_hover",
+                    _ => "controls/list_row_normal",
+                };
+                super::rows::face(ui.painter(), m, rect, face, Color32::WHITE);
+                let y = rect.center().y;
+                let small = FontId::proportional(m.theme.small);
+                match r {
+                    None => {
+                        let head = m.caption(gu, "menu    windowps", 718).unwrap_or_default();
+                        ui.painter().text(pos2(rect.min.x + 24.0, y), Align2::LEFT_CENTER, head, small, m.theme.color("gold"));
+                    }
+                    Some(r) => {
+                        if let Some(t) = info.as_ref().and_then(|i| m.item_icon(ctx, i, r.item)) {
+                            let ir = egui::Rect::from_center_size(pos2(rect.min.x + 30.0, y), vec2(20.0, 20.0));
+                            ui.painter().image(t, ir, egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), tint_colour(r.tint));
                         }
-                        Some(r) => {
-                            if let Some(t) = info.as_ref().and_then(|i| m.item_icon(ctx, i, r.item)) {
-                                let ir = egui::Rect::from_center_size(pos2(rect.min.x + 30.0, y), vec2(20.0, 20.0));
-                                ui.painter().image(
-                                    t,
-                                    ir,
-                                    egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-                                    tint_colour(r.tint),
-                                );
-                            }
-                            let nc = if r.ours { tint_colour(0x8050_9050) } else { m.theme.color("text") };
-                            ui.painter().text(
-                                pos2(rect.min.x + 48.0, y),
-                                Align2::LEFT_CENTER,
-                                &r.name,
-                                small.clone(),
-                                nc,
-                            );
-                            ui.painter().text(
-                                pos2(rect.max.x - 70.0, y),
-                                Align2::CENTER_CENTER,
-                                r.lang,
-                                small.clone(),
-                                m.theme.color("text"),
-                            );
-                            ui.painter().text(
-                                pos2(rect.max.x - 14.0, y),
-                                Align2::RIGHT_CENTER,
-                                r.wanted.to_string(),
-                                FontId::monospace(m.theme.small),
-                                m.theme.color("text"),
-                            );
-                        }
+                        let nc = if r.ours { tint_colour(0x8050_9050) } else { m.theme.color("text") };
+                        ui.painter().text(pos2(rect.min.x + 48.0, y), Align2::LEFT_CENTER, &r.name, small.clone(), nc);
+                        ui.painter().text(pos2(rect.max.x - 70.0, y), Align2::CENTER_CENTER, r.lang, small.clone(), m.theme.color("text"));
+                        ui.painter().text(pos2(rect.max.x - 14.0, y), Align2::RIGHT_CENTER, r.wanted.to_string(), FontId::monospace(m.theme.small), m.theme.color("text"));
                     }
-                    if k == v.cursor && follow {
-                        ui.scroll_to_rect(rect, None);
-                    }
-                    if focused && resp.clicked() {
-                        click = Some(k);
-                    }
-                    ui.add_space(2.0);
                 }
-            },
-        );
+                if k == v.cursor && follow {
+                    ui.scroll_to_rect(rect, None);
+                }
+                if focused && resp.clicked() {
+                    click = Some(k);
+                }
+                ui.add_space(2.0);
+            }
+        });
     });
     if !free {
         return;
@@ -702,12 +516,7 @@ fn fishing_ranking(p: &mut Panels, w: &mut World) {
     let lines: Vec<(u8, String, String, String)> = rows
         .iter()
         .map(|r| {
-            let score = cells
-                .iter()
-                .flatten()
-                .find(|c| matches!(c, ranking::Cell::Score(_)))
-                .and_then(|&c| ranking::text(w, c, r))
-                .unwrap_or_default();
+            let score = cells.iter().flatten().find(|c| matches!(c, ranking::Cell::Score(_))).and_then(|&c| ranking::text(w, c, r)).unwrap_or_default();
             let extra = cells
                 .iter()
                 .flatten()
@@ -717,9 +526,7 @@ fn fishing_ranking(p: &mut Panels, w: &mut World) {
                         Some(format!("{}{}/{}{}  R{}", j(r.job.0), r.level.0, j(r.job.1), r.level.1, r.fish_rank))
                     }
                     ranking::Cell::Icon => Some(format!("R{}", r.fish_rank)),
-                    ranking::Cell::Triple | ranking::Cell::VanaDate | ranking::Cell::EarthDate { .. } => {
-                        ranking::text(w, c, r)
-                    }
+                    ranking::Cell::Triple | ranking::Cell::VanaDate | ranking::Cell::EarthDate { .. } => ranking::text(w, c, r),
                     _ => None,
                 })
                 .collect::<Vec<_>>()
@@ -731,70 +538,40 @@ fn fishing_ranking(p: &mut Panels, w: &mut World) {
     let focused = w.confirm.is_none();
     let mut click = None;
     let mut found = small_found(p, w, &[Small::Ranking]);
-    p.panel("window", Some(Title { icon: None, text: "Fishing Ranking", note: None }), LIST_W + 44.0, |ui| {
+    p.panel("window", Some(Title { icon: None, text: "Fishing Ranking", note: None, name: false }), LIST_W + 44.0, |ui| {
         if super::lists::rows_or(ui, m, &mut found) {
             return;
         }
         let seen = egui::Id::unique("ranking cursor seen");
         let follow = ui.ctx().data(|d| d.get_temp::<usize>(seen)) != Some(cursor);
         ui.ctx().data_mut(|d| d.insert_temp(seen, cursor));
-        egui::ScrollArea::vertical().id_salt("ranking rows").max_height(TALL).auto_shrink([false, true]).show(
-            ui,
-            |ui| {
-                for (k, (rank, name, score, extra)) in lines.iter().enumerate() {
-                    let (rect, resp) = ui.allocate_exact_size(
-                        vec2(LIST_W - 14.0, ROW),
-                        if focused { Sense::click() } else { Sense::hover() },
-                    );
-                    let face = match () {
-                        _ if k == cursor && focused => "controls/list_row_selected",
-                        _ if k == cursor || focused && resp.hovered() => "controls/list_row_hover",
-                        _ => "controls/list_row_normal",
-                    };
-                    super::rows::face(ui.painter(), m, rect, face, Color32::WHITE);
-                    let y = rect.center().y;
-                    let small = FontId::proportional(m.theme.small);
-                    let mono = FontId::monospace(m.theme.small);
-                    let rc = if *rank > 10 { m.theme.color("muted") } else { m.theme.color("gold") };
-                    ui.painter().text(
-                        pos2(rect.min.x + 36.0, y),
-                        Align2::RIGHT_CENTER,
-                        rank.to_string(),
-                        mono.clone(),
-                        rc,
-                    );
-                    let clip = egui::Rect::from_min_max(rect.min, pos2(rect.min.x + 190.0, rect.max.y));
-                    ui.painter().with_clip_rect(clip).text(
-                        pos2(rect.min.x + 48.0, y),
-                        Align2::LEFT_CENTER,
-                        name,
-                        small.clone(),
-                        m.theme.color("text"),
-                    );
-                    ui.painter().text(
-                        pos2(rect.min.x + 196.0, y),
-                        Align2::LEFT_CENTER,
-                        extra,
-                        small.clone(),
-                        m.theme.color("muted"),
-                    );
-                    ui.painter().text(
-                        pos2(rect.max.x - 14.0, y),
-                        Align2::RIGHT_CENTER,
-                        score,
-                        mono,
-                        m.theme.color("text"),
-                    );
-                    if k == cursor && follow {
-                        ui.scroll_to_rect(rect, None);
-                    }
-                    if focused && resp.clicked() {
-                        click = Some(k);
-                    }
-                    ui.add_space(2.0);
+        egui::ScrollArea::vertical().id_salt("ranking rows").max_height(TALL).auto_shrink([false, true]).show(ui, |ui| {
+            for (k, (rank, name, score, extra)) in lines.iter().enumerate() {
+                let (rect, resp) = ui.allocate_exact_size(vec2(LIST_W - 14.0, ROW), if focused { Sense::click() } else { Sense::hover() });
+                let face = match () {
+                    _ if k == cursor && focused => "controls/list_row_selected",
+                    _ if k == cursor || focused && resp.hovered() => "controls/list_row_hover",
+                    _ => "controls/list_row_normal",
+                };
+                super::rows::face(ui.painter(), m, rect, face, Color32::WHITE);
+                let y = rect.center().y;
+                let small = FontId::proportional(m.theme.small);
+                let mono = FontId::monospace(m.theme.small);
+                let rc = if *rank > 10 { m.theme.color("muted") } else { m.theme.color("gold") };
+                ui.painter().text(pos2(rect.min.x + 36.0, y), Align2::RIGHT_CENTER, rank.to_string(), mono.clone(), rc);
+                let clip = egui::Rect::from_min_max(rect.min, pos2(rect.min.x + 190.0, rect.max.y));
+                ui.painter().with_clip_rect(clip).text(pos2(rect.min.x + 48.0, y), Align2::LEFT_CENTER, name, small.clone(), m.theme.color("text"));
+                ui.painter().text(pos2(rect.min.x + 196.0, y), Align2::LEFT_CENTER, extra, small.clone(), m.theme.color("muted"));
+                ui.painter().text(pos2(rect.max.x - 14.0, y), Align2::RIGHT_CENTER, score, mono, m.theme.color("text"));
+                if k == cursor && follow {
+                    ui.scroll_to_rect(rect, None);
                 }
-            },
-        );
+                if focused && resp.clicked() {
+                    click = Some(k);
+                }
+                ui.add_space(2.0);
+            }
+        });
     });
     if let Some(f) = found {
         f.pick(w, p.gu);
@@ -813,11 +590,10 @@ fn comment(p: &mut Panels, w: &mut World) {
     let Some((mode, lines, line, fep)) = seacom::view(w) else { return };
     let m = p.m;
     let blink = (p.ctx.input(|i| i.time) * 2.0) as i64 % 2 == 0;
-    let title =
-        if mode == 0 { gu.title_msg(0x0f).unwrap_or_else(|| "Set Bazaar".into()) } else { "Comment".to_string() };
+    let title = if mode == 0 { gu.title_msg(0x0f).unwrap_or_else(|| "Set Bazaar".into()) } else { "Comment".to_string() };
     let help = gu.menu_msg(0x32, "");
     let (mut pick, mut done) = (None, false);
-    p.panel("comment", Some(Title { icon: None, text: &title, note: None }), 420.0 + 44.0, |ui| {
+    p.panel("comment", Some(Title { icon: None, text: &title, note: None, name: false }), 420.0 + 44.0, |ui| {
         if !help.is_empty() {
             ui.label(egui::RichText::new(&help).size(m.theme.small).color(m.theme.color("muted")));
             ui.add_space(4.0);
@@ -827,13 +603,7 @@ fn comment(p: &mut Panels, w: &mut World) {
             let face = if k == line { "controls/list_row_selected" } else { "controls/list_row_normal" };
             super::rows::face(ui.painter(), m, r, face, Color32::WHITE);
             let text = if k == line && blink { format!("{l}|") } else { l.clone() };
-            let tr = ui.painter().text(
-                pos2(r.min.x + 24.0, r.center().y),
-                Align2::LEFT_CENTER,
-                text,
-                FontId::monospace(m.theme.small),
-                m.theme.color("text"),
-            );
+            let tr = ui.painter().text(pos2(r.min.x + 24.0, r.center().y), Align2::LEFT_CENTER, text, FontId::monospace(m.theme.small), m.theme.color("text"));
             if let Some((cands, sel)) = fep.as_ref().filter(|_| k == line) {
                 super::chat::candidates(ui, m, cands, *sel, pos2(tr.max.x - 8.0, r.min.y));
             }
@@ -863,7 +633,7 @@ fn block_list(p: &mut Panels, w: &mut World) {
     let title = gu.focus_text(blklist::LIST, 1)[1].clone().unwrap_or_else(|| "Blacklist".into());
     let (mut click, mut delete) = (None, false);
     let mut found = small_found(p, w, &[Small::Blocks]);
-    p.panel("blklist", Some(Title { icon: Some("icons/party"), text: &title, note: None }), W + 44.0, |ui| {
+    p.panel("blklist", Some(Title { icon: Some("icons/party"), text: &title, note: None, name: false }), W + 44.0, |ui| {
         if super::lists::rows_or(ui, m, &mut found) {
             return;
         }
@@ -874,37 +644,25 @@ fn block_list(p: &mut Panels, w: &mut World) {
         let follow = ui.ctx().data(|d| d.get_temp::<usize>(seen)) != Some(cursor);
         ui.ctx().data_mut(|d| d.insert_temp(seen, cursor));
         let focused = free && !main;
-        egui::ScrollArea::vertical().id_salt("blklist rows").max_height(TALL).auto_shrink([false, true]).show(
-            ui,
-            |ui| {
-                for (k, name) in rows.iter().enumerate() {
-                    let (r, resp) = ui.allocate_exact_size(
-                        vec2(W - 14.0, ROW),
-                        if focused { Sense::click() } else { Sense::hover() },
-                    );
-                    let face = match () {
-                        _ if k == cursor && focused => "controls/list_row_selected",
-                        _ if k == cursor || focused && resp.hovered() => "controls/list_row_hover",
-                        _ => "controls/list_row_normal",
-                    };
-                    super::rows::face(ui.painter(), m, r, face, Color32::WHITE);
-                    ui.painter().text(
-                        pos2(r.min.x + 24.0, r.center().y),
-                        Align2::LEFT_CENTER,
-                        name,
-                        FontId::proportional(m.theme.small),
-                        m.theme.color("text"),
-                    );
-                    if k == cursor && follow {
-                        ui.scroll_to_rect(r, None);
-                    }
-                    if focused && resp.clicked() {
-                        click = Some(k);
-                    }
-                    ui.add_space(2.0);
+        egui::ScrollArea::vertical().id_salt("blklist rows").max_height(TALL).auto_shrink([false, true]).show(ui, |ui| {
+            for (k, name) in rows.iter().enumerate() {
+                let (r, resp) = ui.allocate_exact_size(vec2(W - 14.0, ROW), if focused { Sense::click() } else { Sense::hover() });
+                let face = match () {
+                    _ if k == cursor && focused => "controls/list_row_selected",
+                    _ if k == cursor || focused && resp.hovered() => "controls/list_row_hover",
+                    _ => "controls/list_row_normal",
+                };
+                super::rows::face(ui.painter(), m, r, face, Color32::WHITE);
+                ui.painter().text(pos2(r.min.x + 24.0, r.center().y), Align2::LEFT_CENTER, name, FontId::proportional(m.theme.small), m.theme.color("text"));
+                if k == cursor && follow {
+                    ui.scroll_to_rect(r, None);
                 }
-            },
-        );
+                if focused && resp.clicked() {
+                    click = Some(k);
+                }
+                ui.add_space(2.0);
+            }
+        });
         if main {
             ui.add_space(8.0);
             if button(ui, m, &caption(gu, blklist::MAIN, 1, "Delete"), 130.0, true, false) && free {
@@ -941,15 +699,8 @@ fn chat_mode(p: &mut Panels, w: &mut World) {
     let free = w.confirm.is_none();
     let title = gu.focus_text(chatctrl::WINDOW, v.sel)[1].clone().unwrap_or_else(|| "Chat".into());
     let mut got = None;
-    p.panel("chatctrl", Some(Title { icon: None, text: &title, note: None }), social::width(1), |ui| {
-        let col = MenuWin {
-            name: chatctrl::WINDOW,
-            sel: v.sel,
-            off: v.off.clone(),
-            labels: Vec::new(),
-            marked: Vec::new(),
-            values: v.values.clone(),
-        };
+    p.panel("chatctrl", Some(Title { icon: None, text: &title, note: None, name: false }), social::width(1), |ui| {
+        let col = MenuWin { name: chatctrl::WINDOW, sel: v.sel, off: v.off.clone(), labels: Vec::new(), marked: Vec::new(), values: v.values.clone() };
         got = social::column(ui, m, gu, &col, free);
         ui.add_space(6.0);
         let head = m.caption(gu, "menu    windowps", 283).unwrap_or_default();
@@ -979,7 +730,7 @@ fn garden_windows(p: &mut Panels, w: &mut World) {
     let wide = if v.list.is_some() { 360.0 } else { social::width(1 + v.bank.is_some() as usize) - 44.0 };
     let (mut win, mut bank, mut row) = (None, None, None);
     let mut found = small_found(p, w, &[Small::Garden]);
-    p.panel("window", Some(Title { icon: Some("icons/mog_house"), text: &title, note: None }), wide + 44.0, |ui| {
+    p.panel("window", Some(Title { icon: Some("icons/mog_house"), text: &title, note: None, name: false }), wide + 44.0, |ui| {
         if let (Some((rows, tints, cur)), Some(info)) = (&v.list, &info) {
             if super::lists::rows_or(ui, m, &mut found) {
                 return;
@@ -989,20 +740,12 @@ fn garden_windows(p: &mut Panels, w: &mut World) {
         }
         ui.horizontal_top(|ui| {
             if let Some((name, sel)) = v.win {
-                let col =
-                    MenuWin { name, sel, off: Vec::new(), labels: Vec::new(), marked: Vec::new(), values: Vec::new() };
+                let col = MenuWin { name, sel, off: Vec::new(), labels: Vec::new(), marked: Vec::new(), values: Vec::new() };
                 win = social::column(ui, m, gu, &col, free && v.bank.is_none());
             }
             if let Some((sel, off)) = &v.bank {
                 ui.add_space(12.0);
-                let col = MenuWin {
-                    name: garden::BANK,
-                    sel: *sel,
-                    off: off.clone(),
-                    labels: Vec::new(),
-                    marked: Vec::new(),
-                    values: Vec::new(),
-                };
+                let col = MenuWin { name: garden::BANK, sel: *sel, off: off.clone(), labels: Vec::new(), marked: Vec::new(), values: Vec::new() };
                 bank = social::column(ui, m, gu, &col, free);
             }
         });
@@ -1037,7 +780,7 @@ fn layout_windows(p: &mut Panels, w: &mut World) {
     let wide = if v.list.is_some() { 360.0 } else { social::width(1 + v.bank.is_some() as usize) - 44.0 };
     let (mut win, mut bank, mut row) = (None, None, None);
     let mut found = small_found(p, w, &[Small::Layout]);
-    p.panel("window", Some(Title { icon: Some("icons/mog_house"), text: &title, note: None }), wide + 44.0, |ui| {
+    p.panel("window", Some(Title { icon: Some("icons/mog_house"), text: &title, note: None, name: false }), wide + 44.0, |ui| {
         if let (Some((rows, tints, cur)), Some(info)) = (&v.list, &info) {
             if super::lists::rows_or(ui, m, &mut found) {
                 return;
@@ -1047,26 +790,12 @@ fn layout_windows(p: &mut Panels, w: &mut World) {
         }
         ui.horizontal_top(|ui| {
             if let Some((name, sel, off)) = &v.win {
-                let col = MenuWin {
-                    name,
-                    sel: *sel,
-                    off: off.clone(),
-                    labels: Vec::new(),
-                    marked: Vec::new(),
-                    values: Vec::new(),
-                };
+                let col = MenuWin { name, sel: *sel, off: off.clone(), labels: Vec::new(), marked: Vec::new(), values: Vec::new() };
                 win = social::column(ui, m, gu, &col, free && v.bank.is_none());
             }
             if let Some((sel, off)) = &v.bank {
                 ui.add_space(12.0);
-                let col = MenuWin {
-                    name: layout::BANK,
-                    sel: *sel,
-                    off: off.clone(),
-                    labels: Vec::new(),
-                    marked: Vec::new(),
-                    values: Vec::new(),
-                };
+                let col = MenuWin { name: layout::BANK, sel: *sel, off: off.clone(), labels: Vec::new(), marked: Vec::new(), values: Vec::new() };
                 bank = social::column(ui, m, gu, &col, free);
             }
         });
@@ -1100,16 +829,10 @@ fn pup_menu(p: &mut Panels, w: &mut World) {
     let free = w.confirm.is_none();
     let title = gu.title_msg(0x14).unwrap_or_else(|| "Equipment".into());
     let mut got = None;
-    p.panel(
-        "window",
-        Some(Title { icon: Some("icons/equipment"), text: &title, note: None }),
-        social::width(1),
-        |ui| {
-            let col =
-                MenuWin { name, sel, off: Vec::new(), labels: Vec::new(), marked: Vec::new(), values: Vec::new() };
-            got = social::column(ui, m, gu, &col, free);
-        },
-    );
+    p.panel("window", Some(Title { icon: Some("icons/equipment"), text: &title, note: None, name: false }), social::width(1), |ui| {
+        let col = MenuWin { name, sel, off: Vec::new(), labels: Vec::new(), marked: Vec::new(), values: Vec::new() };
+        got = social::column(ui, m, gu, &col, free);
+    });
     if free {
         social::act(w, gu, got, equipwin::set_pup, |w, gu| equipwin::pup_key(w, gu, egui::Key::Enter));
     }

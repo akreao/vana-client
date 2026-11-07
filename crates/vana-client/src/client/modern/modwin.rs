@@ -29,15 +29,19 @@ fn rgba(c: [u8; 4]) -> Color32 {
 }
 
 /// A canvas's commands in `r`, clipped to it.
-fn canvas(
-    ui: &egui::Ui,
-    m: &super::Modern,
-    ctx: &egui::Context,
-    gu: Option<&super::super::game_ui::GameUi>,
-    items: Option<&super::super::items::ItemCache>,
-    r: Rect,
-    cmds: &[model::Cmd],
-) {
+/// A mod's icon as an egui texture and its UV: an item's, a status's, or a spell's or an ability's list sprite.
+pub(super) fn icon_tex(m: &super::Modern, ctx: &egui::Context, gu: Option<&super::super::game_ui::GameUi>, world: Option<&super::super::World>, i: model::Icon) -> Option<(egui::TextureId, Rect)> {
+    match i {
+        model::Icon::Item(id) => world.and_then(|w| w.item_info.as_deref()).and_then(|c| m.item_icon(ctx, c, id)).map(|t| (t, super::FULL_UV)),
+        model::Icon::Status(id) => gu.and_then(|g| m.status_icon(ctx, g, false, id)),
+        model::Icon::Spell(_) | model::Icon::Ability(_) => {
+            let (lib, k) = world.and_then(|w| i.sprite(w))?;
+            gu.and_then(|g| m.sprite_icon(ctx, g, lib, k)).map(|t| (t, super::FULL_UV))
+        }
+    }
+}
+
+fn canvas(ui: &egui::Ui, m: &super::Modern, ctx: &egui::Context, gu: Option<&super::super::game_ui::GameUi>, world: Option<&super::super::World>, r: Rect, cmds: &[model::Cmd]) {
     use model::Cmd;
     let p = ui.painter().with_clip_rect(r.intersect(ui.clip_rect()));
     let at = |q: [f32; 2]| pos2(r.min.x + q[0], r.min.y + q[1]);
@@ -55,9 +59,7 @@ fn canvas(
                     (None, Some(to)) => {
                         let mut mesh = egui::Mesh::default();
                         let (t, b) = (rgba(*colour), rgba(*to));
-                        for (pt, c) in
-                            [(rr.left_top(), t), (rr.right_top(), t), (rr.left_bottom(), b), (rr.right_bottom(), b)]
-                        {
+                        for (pt, c) in [(rr.left_top(), t), (rr.right_top(), t), (rr.left_bottom(), b), (rr.right_bottom(), b)] {
                             mesh.colored_vertex(pt, c);
                         }
                         mesh.add_triangle(0, 1, 2);
@@ -83,13 +85,8 @@ fn canvas(
             Cmd::Text { at: q, text, colour } => {
                 p.text(at(*q), Align2::LEFT_TOP, text, FontId::proportional(m.theme.small), rgba(*colour));
             }
-            Cmd::Icon { at: q, size, item, id } => {
-                let tex = if *item {
-                    items.and_then(|c| m.item_icon(ctx, c, *id)).map(|t| (t, super::FULL_UV))
-                } else {
-                    gu.and_then(|g| m.status_icon(ctx, g, false, *id))
-                };
-                if let Some((t, uv)) = tex {
+            Cmd::Icon { at: q, size, icon } => {
+                if let Some((t, uv)) = icon_tex(m, ctx, gu, world, *icon) {
                     p.image(t, Rect::from_min_size(at(*q), vec2(*size, *size)), uv, Color32::WHITE);
                 }
             }
@@ -99,11 +96,7 @@ fn canvas(
 
 /// A fold arrow: pointing down when open, right when folded.
 fn arrow(p: &egui::Painter, c: egui::Pos2, open: bool, colour: Color32) {
-    let pts = if open {
-        vec![pos2(c.x - 5.0, c.y - 3.0), pos2(c.x + 5.0, c.y - 3.0), pos2(c.x, c.y + 4.0)]
-    } else {
-        vec![pos2(c.x - 3.0, c.y - 5.0), pos2(c.x + 4.0, c.y), pos2(c.x - 3.0, c.y + 5.0)]
-    };
+    let pts = if open { vec![pos2(c.x - 5.0, c.y - 3.0), pos2(c.x + 5.0, c.y - 3.0), pos2(c.x, c.y + 4.0)] } else { vec![pos2(c.x - 3.0, c.y - 5.0), pos2(c.x + 4.0, c.y), pos2(c.x - 3.0, c.y + 5.0)] };
     p.add(Shape::convex_polygon(pts, colour, Stroke::NONE));
 }
 
@@ -128,7 +121,7 @@ impl Click {
 pub fn draw(p: &mut Panels, w: &mut World) {
     for (mod_id, win) in w.lua.open_windows() {
         let id = format!("mod:{mod_id}:{}", win.id);
-        let (clicks, shown) = panel(p, w.item_info.as_deref(), &id, &win);
+        let (clicks, shown) = panel(p, Some(&*w), &id, &win);
         // A click outside a popup closes it.
         if let Some(r) = shown
             && win.popup
@@ -150,18 +143,13 @@ pub fn draw(p: &mut Panels, w: &mut World) {
 }
 
 /// One window as a panel: the clicks on it and its rect.
-fn panel(
-    p: &mut Panels,
-    items: Option<&super::super::items::ItemCache>,
-    pid: &str,
-    win: &model::Window,
-) -> (Vec<Click>, Option<Rect>) {
+fn panel(p: &mut Panels, world: Option<&super::super::World>, pid: &str, win: &model::Window) -> (Vec<Click>, Option<Rect>) {
     let m = p.m;
     let (ctx, gu) = (p.ctx, p.gu);
     {
         let width = if win.width > 0.0 { win.width } else { 360.0 };
         let mut clicks: Vec<Click> = Vec::new();
-        let title = (!win.title.is_empty()).then_some(Title { icon: None, text: &win.title, note: None });
+        let title = (!win.title.is_empty()).then_some(Title { icon: None, text: &win.title, note: None, name: false });
         let frame = if win.framed { "window_normal" } else { "none" };
         let hidden = win.hidden();
         // A modal window is centred (on its last height), a popup at its anchor.
@@ -186,20 +174,14 @@ fn panel(
                 let top = ui.cursor().min.y;
                 match e {
                     Elem::Text { text, dim, colour, .. } => {
-                        ui.label(
-                            RichText::new(text)
-                                .size(m.theme.small)
-                                .color(colour.map_or(if *dim { muted } else { text_c }, rgba)),
-                        );
+                        ui.label(RichText::new(text).size(m.theme.small).color(colour.map_or(if *dim { muted } else { text_c }, rgba)));
                         ui.add_space(4.0);
                     }
                     Elem::Buttons { label, items, marked, .. } => {
                         let labels: Vec<&str> = items.iter().map(String::as_str).collect();
                         let lit = marked.map_or(0, |k| 1u64 << k.min(63));
                         let cursor = (here && !win.edit).then_some(win.col);
-                        let (hit, _) = kit::setting(ui, m, label, here, false, here, |ui| {
-                            kit::buttons(ui, m, &labels, cursor, lit, 0)
-                        });
+                        let (hit, _) = kit::setting(ui, m, label, here, false, here, |ui| kit::buttons(ui, m, &labels, cursor, lit, 0));
                         if let Some(c) = hit {
                             clicks.push(Click::Button(i, c));
                         }
@@ -217,113 +199,54 @@ fn panel(
                             let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::hover());
                             for (c, &(cx, cw, right)) in cols.iter().enumerate() {
                                 let cr = Rect::from_min_size(pos2(r.min.x + 10.0 + cx, r.min.y), vec2(cw, r.height()));
-                                let resp =
-                                    ui.interact(cr, ui.scope_id().with(("mod col", &win.id, id, c)), Sense::click());
+                                let resp = ui.interact(cr, ui.scope_id().with(("mod col", &win.id, id, c)), Sense::click());
                                 let ink = if resp.hovered() { text_c } else { muted };
                                 let p = ui.painter().with_clip_rect(cr);
                                 if right {
-                                    p.text(
-                                        pos2(cr.max.x - 6.0, cr.center().y),
-                                        Align2::RIGHT_CENTER,
-                                        &columns[c].title,
-                                        small.clone(),
-                                        ink,
-                                    );
+                                    p.text(pos2(cr.max.x - 6.0, cr.center().y), Align2::RIGHT_CENTER, &columns[c].title, small.clone(), ink);
                                 } else {
-                                    p.text(
-                                        pos2(cr.min.x, cr.center().y),
-                                        Align2::LEFT_CENTER,
-                                        &columns[c].title,
-                                        small.clone(),
-                                        ink,
-                                    );
+                                    p.text(pos2(cr.min.x, cr.center().y), Align2::LEFT_CENTER, &columns[c].title, small.clone(), ink);
                                 }
                                 if resp.clicked() {
                                     clicks.push(Click::Sort(i, c));
                                 }
                             }
                         }
-                        let out = kit::list(
-                            ui,
-                            m,
-                            ("mod list", &win.id, id),
-                            rows.len(),
-                            Some(*at),
-                            here,
-                            here,
-                            h,
-                            (h + 2.0) * *height as f32,
-                            |_| false,
-                            |ui, row| {
-                                let r = &rows[row.index];
-                                let ink = r.colour.map_or_else(|| kit::ink(m, row), rgba);
-                                let cy = row.rect.center().y;
-                                let mut x = row.rect.min.x + 10.0;
-                                if let Some((item, iid)) = r.icon {
-                                    let tex = if item {
-                                        items.and_then(|c| m.item_icon(ctx, c, iid)).map(|t| (t, super::FULL_UV))
-                                    } else {
-                                        gu.and_then(|g| m.status_icon(ctx, g, false, iid))
-                                    };
-                                    if let Some((t, uv)) = tex {
-                                        ui.painter().image(
-                                            t,
-                                            Rect::from_center_size(pos2(x + 9.0, cy), vec2(18.0, 18.0)),
-                                            uv,
-                                            Color32::WHITE,
-                                        );
-                                    }
-                                    x += 24.0;
+                        let out = kit::list(ui, m, ("mod list", &win.id, id), rows.len(), Some(*at), here, here, h, (h + 2.0) * *height as f32, |_| false, |ui, row| {
+                            let r = &rows[row.index];
+                            let ink = r.colour.map_or_else(|| kit::ink(m, row), rgba);
+                            let cy = row.rect.center().y;
+                            let mut x = row.rect.min.x + 10.0;
+                            if let Some(i) = r.icon {
+                                if let Some((t, uv)) = icon_tex(m, ctx, gu, world, i) {
+                                    ui.painter().image(t, Rect::from_center_size(pos2(x + 9.0, cy), vec2(18.0, 18.0)), uv, Color32::WHITE);
                                 }
-                                if cols.is_empty() {
-                                    ui.painter().text(
-                                        pos2(x, cy),
-                                        Align2::LEFT_CENTER,
-                                        r.cells.join("  "),
-                                        small.clone(),
-                                        ink,
-                                    );
+                                x += 24.0;
+                            }
+                            if cols.is_empty() {
+                                ui.painter().text(pos2(x, cy), Align2::LEFT_CENTER, r.cells.join("  "), small.clone(), ink);
+                            }
+                            for (c, &(cx, cw, right)) in cols.iter().enumerate() {
+                                let Some(cell) = r.cells.get(c) else { continue };
+                                let left = if c == 0 { x } else { row.rect.min.x + 10.0 + cx };
+                                let cr = Rect::from_min_max(pos2(left, row.rect.min.y), pos2(row.rect.min.x + 10.0 + cx + cw - 4.0, row.rect.max.y));
+                                let p = ui.painter().with_clip_rect(cr.intersect(row.rect));
+                                if right {
+                                    p.text(pos2(cr.max.x - 2.0, cy), Align2::RIGHT_CENTER, cell, small.clone(), ink);
+                                } else {
+                                    p.text(pos2(cr.min.x, cy), Align2::LEFT_CENTER, cell, small.clone(), ink);
                                 }
-                                for (c, &(cx, cw, right)) in cols.iter().enumerate() {
-                                    let Some(cell) = r.cells.get(c) else { continue };
-                                    let left = if c == 0 { x } else { row.rect.min.x + 10.0 + cx };
-                                    let cr = Rect::from_min_max(
-                                        pos2(left, row.rect.min.y),
-                                        pos2(row.rect.min.x + 10.0 + cx + cw - 4.0, row.rect.max.y),
-                                    );
-                                    let p = ui.painter().with_clip_rect(cr.intersect(row.rect));
-                                    if right {
-                                        p.text(
-                                            pos2(cr.max.x - 2.0, cy),
-                                            Align2::RIGHT_CENTER,
-                                            cell,
-                                            small.clone(),
-                                            ink,
-                                        );
-                                    } else {
-                                        p.text(pos2(cr.min.x, cy), Align2::LEFT_CENTER, cell, small.clone(), ink);
-                                    }
-                                }
-                            },
-                        );
+                            }
+                        });
                         if let Some(k) = out.clicked {
                             clicks.push(Click::Row(i, k));
                         }
                         ui.add_space(6.0);
                     }
                     Elem::Gauge { label, value, text, kind, .. } => {
-                        let (r, _) =
-                            ui.allocate_exact_size(egui::vec2(ui.available_width(), 33.0), egui::Sense::hover());
+                        let (r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 33.0), egui::Sense::hover());
                         let bar = egui::Rect::from_min_max(pos2(r.min.x, r.max.y - super::hud::BAR), r.max);
-                        super::hud::labelled_bar(
-                            ui,
-                            m,
-                            kind,
-                            bar,
-                            value.clamp(0.0, 1.0),
-                            (label, text_c),
-                            (text, text_c),
-                        );
+                        super::hud::labelled_bar(ui, m, kind, bar, value.clamp(0.0, 1.0), (label, text_c), (text, text_c));
                     }
                     Elem::Separator => {
                         ui.separator();
@@ -336,9 +259,7 @@ fn panel(
                     }
                     Elem::Input { label, text, .. } => {
                         let caret = (here && win.edit).then_some(win.caret);
-                        let (field, _) = kit::setting(ui, m, label, here, false, here, |ui| {
-                            kit::field(ui, m, text, caret, ui.available_width(), small.clone(), None)
-                        });
+                        let (field, _) = kit::setting(ui, m, label, here, false, here, |ui| kit::field(ui, m, text, caret, ui.available_width(), small.clone(), None));
                         if ui.interact(field, ui.scope_id().with(("mod input", &win.id, i)), Sense::click()).clicked() {
                             clicks.push(Click::Button(i, 0));
                         }
@@ -352,18 +273,9 @@ fn panel(
                                 if kit::clicked(&kit::button(ui, m, "‹", 34.0, s), s) {
                                     hit = Some(-1);
                                 }
-                                let (r, resp) = ui.allocate_exact_size(
-                                    vec2((ui.available_width() - 42.0).max(40.0), 30.0),
-                                    Sense::click(),
-                                );
+                                let (r, resp) = ui.allocate_exact_size(vec2((ui.available_width() - 42.0).max(40.0), 30.0), Sense::click());
                                 let v = kit::elide(ui, v, &small, r.width() - 8.0);
-                                ui.painter().with_clip_rect(r).text(
-                                    r.center(),
-                                    Align2::CENTER_CENTER,
-                                    v,
-                                    small.clone(),
-                                    if here { text_c } else { muted },
-                                );
+                                ui.painter().with_clip_rect(r).text(r.center(), Align2::CENTER_CENTER, v, small.clone(), if here { text_c } else { muted });
                                 if resp.clicked() {
                                     hit = Some(1);
                                 }
@@ -387,32 +299,17 @@ fn panel(
                                 if resp.clicked() {
                                     clicks.push(Click::Button(i, 0));
                                 }
-                                for (c, name) in
-                                    ["R", "G", "B", "A"].iter().enumerate().take(if *alpha { 4 } else { 3 })
-                                {
+                                for (c, name) in ["R", "G", "B", "A"].iter().enumerate().take(if *alpha { 4 } else { 3 }) {
                                     let ink = if open && c == win.chan { m.theme.color("focus") } else { muted };
-                                    ui.label(
-                                        RichText::new(format!("{name} {}", value[c])).size(m.theme.small).color(ink),
-                                    );
+                                    ui.label(RichText::new(format!("{name} {}", value[c])).size(m.theme.small).color(ink));
                                 }
                             });
                             if open {
-                                if let Some(rgb) =
-                                    kit::colour_picker(ui, m, [value[0], value[1], value[2]], ui.available_width())
-                                {
+                                if let Some(rgb) = kit::colour_picker(ui, m, [value[0], value[1], value[2]], ui.available_width()) {
                                     clicks.push(Click::Colour(i, rgb));
                                 }
                                 if *alpha {
-                                    let (hit, _) = kit::slider_setting(
-                                        ui,
-                                        m,
-                                        "A",
-                                        false,
-                                        false,
-                                        model::STEPS,
-                                        model::to_step(value[3]),
-                                        &value[3].to_string(),
-                                    );
+                                    let (hit, _) = kit::slider_setting(ui, m, "A", false, false, model::STEPS, model::to_step(value[3]), &value[3].to_string());
                                     if let Some(s) = hit {
                                         clicks.push(Click::Alpha(i, s));
                                     }
@@ -422,11 +319,8 @@ fn panel(
                     }
                     Elem::Canvas { w: cw, h: ch, cmds, .. } => {
                         let (r, resp) = ui.allocate_exact_size(vec2(*cw, *ch), Sense::click_and_drag());
-                        canvas(ui, m, ctx, gu, items, r, cmds);
-                        let at = resp
-                            .interact_pointer_pos()
-                            .or_else(|| ctx.input(|inp| inp.pointer.latest_pos()))
-                            .map(|q| (q.x - r.min.x, q.y - r.min.y));
+                        canvas(ui, m, ctx, gu, world, r, cmds);
+                        let at = resp.interact_pointer_pos().or_else(|| ctx.input(|inp| inp.pointer.latest_pos())).map(|q| (q.x - r.min.x, q.y - r.min.y));
                         if resp.clicked()
                             && let Some(q) = resp.interact_pointer_pos()
                         {
@@ -447,13 +341,7 @@ fn panel(
                         let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::click());
                         let ink = if here || resp.hovered() { text_c } else { muted };
                         arrow(ui.painter(), pos2(r.min.x + 9.0, r.center().y), *open, ink);
-                        ui.painter().text(
-                            pos2(r.min.x + 22.0, r.center().y),
-                            Align2::LEFT_CENTER,
-                            label,
-                            small.clone(),
-                            ink,
-                        );
+                        ui.painter().text(pos2(r.min.x + 22.0, r.center().y), Align2::LEFT_CENTER, label, small.clone(), ink);
                         if here {
                             kit::ring(ui.painter(), m, r, 6.0);
                         }
@@ -464,8 +352,7 @@ fn panel(
                     }
                 }
                 // The tip of the element under the pointer.
-                let span =
-                    Rect::from_min_max(pos2(ui.max_rect().min.x, top), pos2(ui.max_rect().max.x, ui.cursor().min.y));
+                let span = Rect::from_min_max(pos2(ui.max_rect().min.x, top), pos2(ui.max_rect().max.x, ui.cursor().min.y));
                 if let Some(t) = win.meta.get(i).map(|m| m.tip.as_str()).filter(|t| !t.is_empty())
                     && ui.rect_contains_pointer(span)
                 {

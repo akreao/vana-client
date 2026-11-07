@@ -13,7 +13,7 @@ pub enum Action {
     Ability(u16),
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Suggestion {
     pub action: Action,
     /// Who it is for (a name), when not ourselves or the target.
@@ -26,7 +26,15 @@ pub struct Suggestion {
     #[serde(default)]
     pub label: Option<String>,
     /// The family the row was made from, kept while it has no label (one castable spell) so a held row regroups.
+    /// Bookkeeping, not part of the suggestion: not saved in a case, not compared.
+    #[serde(skip)]
     family: Option<String>,
+}
+
+impl PartialEq for Suggestion {
+    fn eq(&self, o: &Self) -> bool {
+        (self.action, &self.target, &self.reason, &self.group, &self.label) == (o.action, &o.target, &o.reason, &o.group, &o.label)
+    }
 }
 
 impl Suggestion {
@@ -722,6 +730,7 @@ pub struct Case {
 }
 
 /// The rules by the names cases give them, in suggest's order.
+#[cfg(test)]
 pub const RULES: [&str; 17] = [
     "raise",
     "shadows",
@@ -743,7 +752,8 @@ pub const RULES: [&str; 17] = [
 ];
 
 /// With VANA_SUGGEST_RECORD set to a folder, each new set of suggestions is written there with its facts as a case
-/// (rule and note left for whoever files it under suggest_cases/).
+/// (rule and note left for whoever files it under suggest_cases/; the facts hold real player names: replace them
+/// before committing one).
 fn record(f: &Facts, out: &[Suggestion]) {
     let Some(dir) = std::env::var_os("VANA_SUGGEST_RECORD") else { return };
     let dir = std::path::PathBuf::from(dir);

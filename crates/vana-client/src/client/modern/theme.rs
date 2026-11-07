@@ -2,10 +2,7 @@
 //! logical sizes and nine-slice insets, 2x atlases, theme.json's palette), the window frames built from it, and the
 //! bundled OFL fonts (assets/fonts).
 
-use egui::{
-    Color32, ColorImage, Context, FontData, FontDefinitions, FontFamily, Rect, TextureHandle, TextureId,
-    TextureOptions, Vec2, pos2, vec2,
-};
+use egui::{Color32, ColorImage, Context, FontData, FontDefinitions, FontFamily, Rect, TextureHandle, TextureId, TextureOptions, Vec2, pos2, vec2};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -49,6 +46,8 @@ struct ThemeFile {
 
 pub struct Theme {
     colors: HashMap<String, Color32>,
+    /// Colours mods set (ui.skin.colour).
+    skin: std::cell::RefCell<HashMap<String, Color32>>,
     /// Point sizes: body text, titles, small print.
     pub ui: f32,
     pub title: f32,
@@ -72,16 +71,23 @@ impl Theme {
             log::error!("modern UI theme.json: {e}");
             ThemeFile::default()
         });
-        let mut colors: HashMap<String, Color32> =
-            f.palette.iter().filter_map(|(k, v)| Some((k.clone(), hex(v)?))).collect();
+        let mut colors: HashMap<String, Color32> = f.palette.iter().filter_map(|(k, v)| Some((k.clone(), hex(v)?))).collect();
         // The pack's previews: parchment white text, a slate grey for the quiet parts.
         colors.entry("text".into()).or_insert(Color32::from_rgb(0xe6, 0xe1, 0xd6));
         colors.entry("muted".into()).or_insert(Color32::from_rgb(0x8f, 0x9d, 0xa6));
-        Self { colors, ui: 16.0, title: 18.0, small: 14.5 }
+        Self { colors, skin: Default::default(), ui: 16.0, title: 18.0, small: 14.5 }
+    }
+
+    /// The colours mods set, in place of the palette's.
+    pub fn set_skin(&self, colours: HashMap<String, Color32>) {
+        *self.skin.borrow_mut() = colours;
     }
 
     /// A palette colour (theme.json "palette").
     pub fn color(&self, name: &str) -> Color32 {
+        if let Some(c) = self.skin.borrow().get(name) {
+            return *c;
+        }
         self.colors.get(name).copied().unwrap_or(Color32::MAGENTA)
     }
 
@@ -135,11 +141,20 @@ pub struct Frame {
     pub inset: f32,
 }
 
+/// A mod's PNG (ui.skin): its texture key and pixels (width, height, RGBA).
+pub type SkinImage = (String, Arc<(u32, u32, Vec<u8>)>);
+/// A mod's frame: its name, border, and interior's top and bottom colours.
+pub type SkinFrame = (String, Option<SkinImage>, Option<Color32>, Option<Color32>);
+/// The mods' sprites and frames by name, and the textures they draw from.
+type SkinArt = (HashMap<String, Sprite>, HashMap<String, std::rc::Rc<Frame>>, Vec<TextureHandle>);
+
 /// The atlases on the GPU, the sprites by manifest id, the window frames by name.
 pub struct Art {
     _textures: Vec<TextureHandle>,
     sprites: HashMap<String, Sprite>,
-    frames: HashMap<String, Frame>,
+    frames: HashMap<String, std::rc::Rc<Frame>>,
+    /// Sprites and frames mods set (ui.skin), with the textures they draw from.
+    skin: std::cell::RefCell<SkinArt>,
 }
 
 fn decode(png: &[u8]) -> Option<([usize; 2], Vec<u8>)> {
@@ -181,8 +196,7 @@ pub fn frame_image(name: &str) -> Option<FrameImage> {
     let (w, h) = (it.atlas.rect[2] as usize, it.atlas.rect[3] as usize);
     let mut rgba = crop(&decode(bytes(&it.atlas.file)?)?, it.atlas.rect);
     let cx = w / 2;
-    let inside: Vec<usize> =
-        (0..h).filter(|&y| rgba[(y * w + cx) * 4 + 3] > 0 && alpha.get(y * w + cx) == Some(&0)).collect();
+    let inside: Vec<usize> = (0..h).filter(|&y| rgba[(y * w + cx) * 4 + 3] > 0 && alpha.get(y * w + cx) == Some(&0)).collect();
     let (&top, &bottom) = (inside.first()?, inside.last()?);
     let col = |y: usize| {
         let k = (y * w + cx) * 4;
@@ -206,11 +220,7 @@ impl Art {
                 log::error!("modern UI: {name} does not decode");
                 continue;
             };
-            let t = ctx.load_texture(
-                format!("modern/{name}"),
-                ColorImage::from_rgba_unmultiplied(img.0, &img.1),
-                TextureOptions::LINEAR,
-            );
+            let t = ctx.load_texture(format!("modern/{name}"), ColorImage::from_rgba_unmultiplied(img.0, &img.1), TextureOptions::LINEAR);
             atlases.insert(name, (t.id(), vec2(img.0[0] as f32, img.0[1] as f32)));
             textures.push(t);
             images.insert(name, img);
@@ -224,17 +234,7 @@ impl Art {
             let Some(&(tex, at)) = atlases.get(it.atlas.file.as_str()) else { continue };
             let [x, y, w, h] = it.atlas.rect.map(|v| v as f32);
             let uv = Rect::from_min_max(pos2(x / at.x, y / at.y), pos2((x + w) / at.x, (y + h) / at.y));
-            sprites.insert(
-                it.id.clone(),
-                Sprite {
-                    tex,
-                    uv,
-                    size: vec2(it.size[0], it.size[1]),
-                    margins: it.nine_slice,
-                    px: it.png_size[0] / it.size[0],
-                    atlas: at,
-                },
-            );
+            sprites.insert(it.id.clone(), Sprite { tex, uv, size: vec2(it.size[0], it.size[1]), margins: it.nine_slice, px: it.png_size[0] / it.size[0], atlas: at });
         }
         let mut frames = HashMap::new();
         let find = |id: &str| m.items.iter().find(|it| it.id == id);
@@ -247,44 +247,96 @@ impl Art {
                 let mut rgba = crop(img, it.atlas.rect);
                 // The interior: the centre column inside the border (its first and last pixels where the mask ends).
                 let cx = w / 2;
-                let inside: Vec<usize> =
-                    (0..h).filter(|&y| rgba[(y * w + cx) * 4 + 3] > 0 && alpha[y * w + cx] == 0).collect();
+                let inside: Vec<usize> = (0..h).filter(|&y| rgba[(y * w + cx) * 4 + 3] > 0 && alpha[y * w + cx] == 0).collect();
                 let (Some(&top), Some(&bottom)) = (inside.first(), inside.last()) else { continue };
-                let gradient = (top..=bottom)
-                    .map(|y| {
-                        Color32::from_rgb(
-                            rgba[(y * w + cx) * 4],
-                            rgba[(y * w + cx) * 4 + 1],
-                            rgba[(y * w + cx) * 4 + 2],
-                        )
-                    })
-                    .collect();
+                let gradient = (top..=bottom).map(|y| Color32::from_rgb(rgba[(y * w + cx) * 4], rgba[(y * w + cx) * 4 + 1], rgba[(y * w + cx) * 4 + 2])).collect();
                 for (p, a) in rgba.chunks_mut(4).zip(&alpha) {
                     p[3] = *a;
                 }
                 let px = it.png_size[0] / it.size[0];
-                let border = ctx.load_texture(
-                    format!("modern/{name}"),
-                    ColorImage::from_rgba_unmultiplied([w, h], &rgba),
-                    TextureOptions::LINEAR,
-                );
+                let border = ctx.load_texture(format!("modern/{name}"), ColorImage::from_rgba_unmultiplied([w, h], &rgba), TextureOptions::LINEAR);
                 let corner = it.nine_slice.map_or(24.0, |n| n[0]);
-                frames.insert(
-                    name.to_string(),
-                    Frame { border, gradient, size: it.size[0], corner, inset: top as f32 / px },
-                );
+                frames.insert(name.to_string(), std::rc::Rc::new(Frame { border, gradient, size: it.size[0], corner, inset: top as f32 / px }));
             }
         }
-        Self { _textures: textures, sprites, frames }
+        Self { _textures: textures, sprites, frames, skin: Default::default() }
     }
 
     pub fn sprite(&self, id: &str) -> Option<Sprite> {
+        if let Some(s) = self.skin.borrow().0.get(id) {
+            return Some(*s);
+        }
         self.sprites.get(id).copied()
     }
 
-    pub fn frame(&self, name: &str) -> Option<&Frame> {
-        self.frames.get(name)
+    pub fn frame(&self, name: &str) -> Option<std::rc::Rc<Frame>> {
+        if let Some(f) = self.skin.borrow().1.get(name) {
+            return Some(f.clone());
+        }
+        self.frames.get(name).cloned()
     }
+
+    /// Mods' sprites and frames (ui.skin) in place of the pack's: a sprite keeps the pack's logical size and insets
+    /// (its PNG's pixels spread over them); a frame keeps the pack's size, corners and inset, with the mod's border and
+    /// interior colours (or the pack's where it gives none).
+    pub fn set_skin(&self, ctx: &Context, sprites: &[(String, SkinImage)], frames: &[SkinFrame]) {
+        let mut textures = Vec::new();
+        let mut load = |key: &str, img: &(u32, u32, Vec<u8>)| {
+            let t = ctx.load_texture(key, ColorImage::from_rgba_unmultiplied([img.0 as usize, img.1 as usize], &img.2), TextureOptions::LINEAR);
+            textures.push(t.clone());
+            t
+        };
+        let mut s = HashMap::new();
+        for (name, (key, img)) in sprites {
+            let Some(base) = self.sprites.get(name) else { continue };
+            let t = load(key, img);
+            let full = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+            s.insert(name.clone(), Sprite { tex: t.id(), uv: full, px: img.0 as f32 / base.size.x.max(1.0), atlas: vec2(img.0 as f32, img.1 as f32), ..*base });
+        }
+        let mut f = HashMap::new();
+        for (name, border, top, bottom) in frames {
+            let Some(base) = self.frames.get(name) else { continue };
+            let border = match border {
+                Some((key, img)) => load(key, img),
+                None => base.border.clone(),
+            };
+            let (a, b) = (top.unwrap_or(base.gradient[0]), bottom.unwrap_or(*base.gradient.last().unwrap_or(&base.gradient[0])));
+            let gradient = if top.is_none() && bottom.is_none() { base.gradient.clone() } else { (0..16).map(|i| a.lerp_to_gamma(b, i as f32 / 15.0)).collect() };
+            f.insert(name.clone(), std::rc::Rc::new(Frame { border, gradient, size: base.size, corner: base.corner, inset: base.inset }));
+        }
+        *self.skin.borrow_mut() = (s, f, textures);
+    }
+}
+
+fn manifest() -> &'static ManifestFile {
+    static M: std::sync::OnceLock<ManifestFile> = std::sync::OnceLock::new();
+    M.get_or_init(|| serde_json::from_str(MANIFEST).unwrap_or(ManifestFile { items: Vec::new() }))
+}
+
+/// The pack's sprites by name with their logical sizes (the frames are `pack_frames`), for mods.
+pub fn pack_sprites() -> &'static std::collections::BTreeMap<String, [f32; 2]> {
+    static S: std::sync::OnceLock<std::collections::BTreeMap<String, [f32; 2]>> = std::sync::OnceLock::new();
+    S.get_or_init(|| manifest().items.iter().filter(|it| !it.id.starts_with("frames/")).map(|it| (it.id.clone(), it.size)).collect())
+}
+
+/// The palette's colour names.
+pub fn pack_colours() -> &'static Vec<String> {
+    static C: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    C.get_or_init(|| {
+        let f: ThemeFile = serde_json::from_str(THEME).unwrap_or_default();
+        let mut names: Vec<String> = f.palette.keys().cloned().chain(["text".to_string(), "muted".to_string()]).collect();
+        names.sort();
+        names.dedup();
+        names
+    })
+}
+
+/// The window frames: name, logical size and corner.
+pub fn pack_frames() -> &'static Vec<(String, f32, f32)> {
+    static F: std::sync::OnceLock<Vec<(String, f32, f32)>> = std::sync::OnceLock::new();
+    F.get_or_init(|| {
+        FRAMES.iter().filter_map(|n| manifest().items.iter().find(|it| it.id == format!("frames/{n}")).map(|it| (n.to_string(), it.size[0], it.nine_slice.map_or(24.0, |s| s[0])))).collect()
+    })
 }
 
 /// A bundled font's bytes by name ("Inter-BoldItalic" ...).
@@ -350,20 +402,13 @@ pub fn install_fonts_with(ctx: &Context, body: Option<(Vec<u8>, Vec<u8>)>) {
     if cjk {
         fallbacks.push("cjk".into());
     }
-    let with =
-        |first: &str| -> Vec<String> { std::iter::once(first.to_string()).chain(fallbacks.iter().cloned()).collect() };
+    let with = |first: &str| -> Vec<String> { std::iter::once(first.to_string()).chain(fallbacks.iter().cloned()).collect() };
     defs.families.insert(FontFamily::Proportional, with(regular));
     defs.families.insert(FontFamily::Name(STRONG.into()), with(strong));
     defs.families.insert(FontFamily::Name(NAME.into()), with("Inter-SemiBold"));
     defs.families.insert(FontFamily::Name(LABEL.into()), with("Inter-BoldItalic"));
     let mono = defs.families.get(&FontFamily::Monospace).cloned().unwrap_or_default();
-    defs.families.insert(
-        FontFamily::Monospace,
-        std::iter::once("JetBrainsMono-Regular".to_string())
-            .chain(mono)
-            .chain(cjk.then(|| "cjk".to_string()))
-            .collect(),
-    );
+    defs.families.insert(FontFamily::Monospace, std::iter::once("JetBrainsMono-Regular".to_string()).chain(mono).chain(cjk.then(|| "cjk".to_string())).collect());
     ctx.set_fonts(defs);
 }
 
