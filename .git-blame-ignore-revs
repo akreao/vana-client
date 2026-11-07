@@ -1,2 +1,5 @@
-# The one-time rustfmt reformat (09a57a5) touched every file; skip it in git blame.
+# The one-time rustfmt reformats touched every file; skip them in git blame.
+# Fork (custom): 09a57a5. Upstream (master): 67ea0e4 / 720b03d.
 09a57a59bb413c0644ac5c07d763a7957ebf118e
+67ea0e4e9ff6bfed7fb8451e94be0efe15b22665
+720b03d0cd5c232dae754f4d9bcc5ce5440b72fb
