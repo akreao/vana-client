@@ -13140,7 +13140,7 @@ impl App {
         // Shift + Ctrl / Alt + digit picks a set. The palettes are not drawn yet.
         let sub_up = target::sub_up(world);
         if sub_up && let Some(m) = world.macros.as_mut() {
-            m.hold_wait();
+            m.hold_wait(std::time::Duration::from_secs_f32(dt));
         }
         let by_mod = world.macros.as_ref().is_some_and(|m| m.by_mod());
         if let Some(line) = world.macros.as_mut().filter(|_| !sub_up).and_then(|m| m.step(dt * 60.0)) {

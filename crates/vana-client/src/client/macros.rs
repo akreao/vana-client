@@ -552,10 +552,10 @@ impl Macros {
         self.run = None;
     }
 
-    /// Keep a running wait from elapsing while a sub-target prompt is open.
-    pub fn hold_wait(&mut self) {
+    /// Pause a running wait while a sub-target prompt is open.
+    pub fn hold_wait(&mut self, by: Duration) {
         if let Some(r) = &mut self.run {
-            r.wait = r.wait.map(|(_, d)| (Instant::now(), d));
+            r.wait = r.wait.map(|(at, d)| (at + by, d));
         }
     }
 
@@ -712,7 +712,7 @@ mod tests {
     }
 
     #[test]
-    fn hold_wait_restarts_the_wait_clock() {
+    fn hold_wait_pauses_the_wait() {
         let game = scratch("t4");
         let mut m = Macros::load(&game, 1, Box::new(|_| None));
         let mut mac = Macro::default();
@@ -723,10 +723,10 @@ mod tests {
 
         assert_eq!(m.step(2.0), Some(b"/say a".to_vec()));
         let started = m.run.as_ref().unwrap().wait.unwrap().0;
-        std::thread::sleep(Duration::from_millis(2));
-        m.hold_wait();
+        let paused = Duration::from_millis(250);
+        m.hold_wait(paused);
         let held = m.run.as_ref().unwrap().wait.unwrap().0;
-        assert!(held > started);
+        assert_eq!(held, started + paused);
         let _ = std::fs::remove_dir_all(&game);
     }
 }
