@@ -216,7 +216,11 @@ mod tests {
         // Experience, wear-offs and other chatter are no kind's refusal.
         assert!(!refusal(Ask::Spell(10), 8, 0) && !refusal(Ask::Spell(10), 204, 12));
         // Weapon skills, job abilities and items answer by their own ids.
-        assert!(refusal(Ask::WeaponSkill(300), 190, 0) && refusal(Ask::WeaponSkill(300), 192, 0) && refusal(Ask::WeaponSkill(300), 89, 0));
+        assert!(
+            refusal(Ask::WeaponSkill(300), 190, 0)
+                && refusal(Ask::WeaponSkill(300), 192, 0)
+                && refusal(Ask::WeaponSkill(300), 89, 0)
+        );
         assert!(!refusal(Ask::WeaponSkill(300), 47, 10));
         assert!(refusal(Ask::Ability(0x250), 88, 0) && !refusal(Ask::Ability(0x250), 88, 10));
         assert!(refusal(Ask::Item(1856), 56, 0) && refusal(Ask::Item(1856), 62, 1856));
