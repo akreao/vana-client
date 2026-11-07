@@ -73,6 +73,7 @@ pub struct Doll {
 }
 
 const MAIN: u32 = u32::from_le_bytes(*b"main");
+const INIT: u32 = u32::from_le_bytes(*b"init");
 /// The points a doll copies (vtable +0x1c4, 0..0x30).
 const DOLL_POINTS: u16 = 0x30;
 
@@ -558,6 +559,7 @@ impl Effects {
             }
         };
         self.pending.retain(|p| p.actor != Some(id));
+        self.init_sub.remove(&id);
         self.equip.remove(&id);
         self.equip_calls.retain(|c| c.0 != id);
         self.wading.remove(&id);
@@ -606,6 +608,22 @@ impl Effects {
             seq: None,
             event: false,
         });
+    }
+
+    /// FUN_1008c480's `init` (asm 0x1008c598..0x1008c5fe): the model's sub-animation (+0x8a5) is the wanted one
+    /// only while `init` takes its first step, then goes back to what it was. A sub-state 4 and up (LSB spawns
+    /// one as 4 | sub) never reaches +0x8a5 on an NPC afterwards (FUN_1008ef60), so `init` alone sees it.
+    pub fn on_init(&mut self, actor: u32, sub: u8) {
+        self.init_sub.insert(actor, sub);
+        self.on_scheduler(actor, actor, INIT);
+    }
+
+    /// Vtable +0xa4 (+0x8a5): the model's sub-animation, or the wanted one inside an `init` start (on_init).
+    fn sub_of(&self, id: u32, actors: &dyn Actors) -> u8 {
+        match self.sub_now {
+            Some((a, s)) if a == id => s,
+            _ => actors.sub_anim(id),
+        }
     }
 
     /// Starts waiting for files, when they are in.
@@ -707,7 +725,15 @@ impl Effects {
                                 Some(skip) if skip > 0.0 => {
                                     _ = self.fast_forward(ti, skip + (p.age - f.dt).max(0.0), actors)
                                 }
-                                _ => _ = self.run_new(ti, actors),
+                                _ => {
+                                    let init = p.actor.filter(|_| p.name == INIT && p.own);
+                                    if let Some(sub) = init.and_then(|a| Some((a, self.init_sub.remove(&a)?)))
+                                        && let Some(Some(t)) = self.tasks.get_mut(ti)
+                                    {
+                                        t.init_sub = Some(sub);
+                                    }
+                                    _ = self.run_new(ti, actors);
+                                }
                             }
                         }
                         None => {
@@ -841,6 +867,7 @@ impl Effects {
             self.reg.libs[r.0].file_id
         );
         let mut t = Task::new(r, ops, a1, a2, action, speed);
+        t.init_sub = self.sub_now;
         t.ends_loop = crate::dat::sched::loops(self.reg.libs[r.0].data(r.1));
         t.parent = parent;
         // A task an op creates belongs to its creator's event.
@@ -1047,6 +1074,20 @@ impl Effects {
 
     /// A task's ops while its countdown allows, each adding its wait x speed.
     fn run_ready(&mut self, i: usize, t: &mut Task, actors: &dyn Actors) {
+        // An `init` start's first step reads the wanted sub-animation (on_init); a file retry keeps it for the next go.
+        let outer = self.sub_now;
+        if t.init_sub.is_some() {
+            self.sub_now = t.init_sub;
+        }
+        let mut retry = false;
+        self.run_steps(i, t, actors, &mut retry);
+        if !retry {
+            t.init_sub = None;
+        }
+        self.sub_now = outer;
+    }
+
+    fn run_steps(&mut self, i: usize, t: &mut Task, actors: &dyn Actors, retry: &mut bool) {
         let mut guard = 0;
         while !t.done && !t.waiting && t.countdown <= 0.0 && guard < 512 {
             guard += 1;
@@ -1070,6 +1111,7 @@ impl Effects {
                 }
                 Flow::Retry => {
                     t.countdown = t.countdown.max(0.0) - op.wait as f32 * t.speed + 1e-3;
+                    *retry = true;
                     break;
                 }
                 Flow::Pause => break,
@@ -1487,7 +1529,7 @@ impl Effects {
                     };
                 }
                 // `shit` / `skaz` take the actor's sub-animation as the last digit when that SeSep exists.
-                let sub = self.doll_of(who).id().map_or(0, |id| actors.sub_anim(id) & 3);
+                let sub = self.doll_of(who).id().map_or(0, |id| self.sub_of(id, actors) & 3);
                 let r = match op.name().to_le_bytes() {
                     [b's', b'h', b'i', b't'] | [b's', b'k', b'a', b'z'] if sub != 0 => {
                         let mut n = op.name().to_le_bytes();
@@ -2301,7 +2343,7 @@ impl Effects {
                     2 => f32::from_bits(op.u32_at(12)) as f64,
                     // 0x3a: actor1's sub-animation (vtable +0xa4, +0x8a5 & 3), with or without an action (FUN_10061950).
                     3 => match op.u32_at(12) {
-                        0x3a => t.a1.id().map_or(0, |id| actors.sub_anim(id) & 3) as f64,
+                        0x3a => t.a1.id().map_or(0, |id| self.sub_of(id, actors) & 3) as f64,
                         // 0x3b: actor1's off-hand flag (FUN_10062900 at 0x1006297f, through vt+0x254).
                         0x3b => t.a1.id().is_some_and(|id| actors.off_hand(id)) as u8 as f64,
                         k => t.action.as_ref().map_or(0, |a| a.borrow().var(k, t.a1.id())) as f64,
