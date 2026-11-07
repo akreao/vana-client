@@ -7041,6 +7041,8 @@ struct World {
     /// Items /equip took in the last seconds (FUN_101efee0; six, each held while under 2 s old).
     equip_claims: Vec<((u8, u8), Instant)>,
     autorun_dir: Vec3,
+    /// Ours: the run was started by a mod's actions.run with its own heading, which the right drag leaves alone.
+    mod_run: bool,
     /// Ours (docs/lua-mods.md 4.8): a mod's run to a point (x, z, stop within): autorun steers at it as /follow does.
     run_to: Option<(f32, f32, f32)>,
     move_tier: f32,
@@ -9410,6 +9412,7 @@ impl App {
                             journal_on_list: false,
                             equip_claims: Vec::new(),
                             autorun_dir: Vec3::ZERO,
+                            mod_run: false,
                             run_to: None,
                             move_tier: 0.0,
                             step_ticks: 0.0,
@@ -12479,6 +12482,7 @@ impl App {
         if !in_event && self.input.test(0x1c, input::mode::PRESS) {
             world.autorun = !world.autorun;
             world.autorun_dir = Vec3::ZERO;
+            world.mod_run = false;
         }
         // Turning while autorunning steers it: the move goes forward and the turn counts as X input. Not while a move
         // lock (op 0x2e, our stand-up) holds the walk.
@@ -12544,7 +12548,8 @@ impl App {
             && !move_locked
             && !tank
             && world.follow.is_none()
-            && world.run_to.is_none();
+            && world.run_to.is_none()
+            && !world.mod_run;
         if look_run {
             world.autorun_dir = forward;
         }
@@ -12591,6 +12596,7 @@ impl App {
         if !world.autorun {
             world.autorun_dir = Vec3::ZERO;
             world.run_to = None;
+            world.mod_run = false;
             // Autorun ending for any reason ends the follow: group 9 0x41 "Follow canceled.".
             if world.follow.take().is_some() {
                 textcmd::log9(world, 0x41);
