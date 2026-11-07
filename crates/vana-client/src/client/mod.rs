@@ -12555,8 +12555,16 @@ impl App {
             if world.autorun_dir == Vec3::ZERO && step != Vec3::ZERO {
                 world.autorun_dir = step.normalize();
             }
+            // Ours (modern MMOs, mouse only): while the right drag's look holds the facing, the run goes where the
+            // camera looks, as W does then, and A / D add their side as with W held. Released, it keeps that way.
+            let look_run = world.mouse_look && !tank && world.follow.is_none() && world.run_to.is_none();
+            if look_run {
+                world.autorun_dir = forward;
+            }
             if world.autorun_dir == Vec3::ZERO {
                 world.autorun = false;
+            } else if look_run {
+                step = if touching { Vec3::ZERO } else { (forward + right * ax).normalize() };
             } else {
                 if ax != 0.0 {
                     let d = world.autorun_dir;
