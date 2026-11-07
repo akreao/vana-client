@@ -23065,8 +23065,14 @@ From FFXiMain.dll (Steven's unpacked copy), full_text.asm, FUN_100a7b80.
   (a new task steps at once, so `init` and what it starts with op 0x57 read the wanted value as var 0x3a), then sets
   +0x8a5 back to the saved value (vtable +0xa8).
 - FUN_1008ef60 sets +0x8a5 for a wanted value below 4, and for 4 and up only on an actor that passes the +0x120 /
-  +0x130 tests (monsters). So an NPC spawned in a sub-state (LSB sends 4 | animationsub) keeps its model's own 0 after
-  `init`.
-- Ours stored the wanted value as the model's for good at first sight: a synergy furnace (model 2348, LSB
-  animationsub 5) kept reading sub-animation 1 in its schedulers and looped its active glow (lenonk/vana-client#96).
-  Now `init` reads it through Effects::on_init for its first step only.
+  +0x130 tests below; for any other NPC spawned in a sub-state (LSB sends 4 | animationsub) the model's own stays 0
+  after `init`.
+- FUN_1008ef60's sub-state path (4 and up) and its `ini<n>` starts take an actor with the monster bit (+0x120 bit 13)
+  or +0x130 bit 2 (0x00E u32 @0x28 bit 26, asm 0x1009c5a2), not monsters only. Each change first copies the applied
+  value into +0x124 bits 8..11: scheduler var 0x3c (FUN_10062900; 8 as is, else & 3).
+- Synergy furnace (model 2348, file 52643; LSB animationsub 5 in every town): `init` -> `mse0` waits a tick, then
+  picks by var 0x3a `ids0` (closed: wepN hidden by op 0xa3 for 300 ticks, idle set 0 `idl0`), `ids1` (open: shown,
+  idle set 1 `1dl0`) or `ids2` / `ids3` (active, looping glows). The frame `init` starts, FUN_1008ef60 sets +0x8a5 to
+  5 and runs `ini1` -> `mse1` (var 0x3c 8: `ids1`), so retail shows the open idle. Both stop the model's 52 auto-start
+  crafting generators through `0kil`. Ours now does the same (lenonk/vana-client#96: the open idle is what retail
+  shows for LSB's data).
