@@ -6521,8 +6521,13 @@ struct World {
     recent_save: bool,
     /// The modern UI Modes editor is open (/uimodes, modern/modes.rs).
     uimodes_open: bool,
-    /// Favourites (favs.rs keys, the strip's order), whether the strip shows, and whether either changed since the save.
+    /// Favourites (favs.rs keys, the strip's order) for the active main/sub job, the saved loadouts by job, whether
+    /// the strip shows, and whether either changed since the save. `fav_provisional` marks a seeded loadout still
+    /// waiting for the learned spell/ability bits before it is pruned (favs.rs).
     favourites: Vec<String>,
+    fav_loadout: Option<String>,
+    fav_loadouts: std::collections::BTreeMap<String, Vec<String>>,
+    fav_provisional: bool,
     fav_strip: bool,
     fav_save: bool,
     /// The action we asked the server for and its answer so far (pending.rs).
@@ -8313,11 +8318,17 @@ impl App {
                         self.status = format!("Connecting to {}:{}...", login.map.0, login.map.1);
                         let features = if let Phase::Characters { lobby: Some(l), .. } = &self.phase { l.features } else { 0 };
                         let pol = login.lsb.map(|(account, hash)| crate::net::profile::Cred { host: self.cfg.server.clone(), port: self.cfg.profile_port, irc_port: self.cfg.irc_port, account, hash });
-                        let world_name = match &self.phase {
-                            Phase::Characters { chars, selected: Some(s), .. } => chars.get(*s).map(|c| c.world.clone()).unwrap_or_default(),
-                            _ => String::new(),
+                        let (world_name, expansions, fav_jobs) = match &self.phase {
+                            Phase::Characters { chars, selected: Some(s), expansions, .. } => {
+                                let c = chars.get(*s);
+                                (c.map(|c| c.world.clone()).unwrap_or_default(), *expansions & self.installed, c.map(|c| (c.main_job, c.sub_job)))
+                            }
+                            _ => (String::new(), 0, None),
                         };
-                        let expansions = if let Phase::Characters { expansions, .. } = &self.phase { *expansions & self.installed } else { 0 };
+                        let fav_loadouts = self.cfg.modern_favourite_loadouts.get(&login.name).cloned().unwrap_or_default();
+                        let fav_loadout = fav_jobs.and_then(|(m, s)| favs::job_key(m, s));
+                        let favourites = fav_loadout.as_ref().and_then(|k| fav_loadouts.get(k)).cloned().or_else(|| self.cfg.modern_favourites.get(&login.name).cloned()).unwrap_or_default();
+                        let fav_provisional = fav_loadout.as_ref().is_some_and(|k| !fav_loadouts.contains_key(k));
                         // The effects' GPU side caches by the World's registry ids (library, texture, mesh); a new
                         // World starts a new registry, so the old session's cache would draw the wrong ones.
                         self.effects_gpu = None;
@@ -8669,7 +8680,10 @@ impl App {
                             recent_picks: self.cfg.modern_recent.get(&login.name).cloned().unwrap_or_default(),
                             recent_save: false,
                             uimodes_open: false,
-                            favourites: self.cfg.modern_favourites.get(&login.name).cloned().unwrap_or_default(),
+                            favourites,
+                            fav_loadout,
+                            fav_loadouts,
+                            fav_provisional,
                             fav_strip: self.cfg.modern_fav_strip,
                             fav_save: false,
                             asked: None,
@@ -10166,6 +10180,7 @@ impl App {
                 }
                 NetEvent::CharStats(s) => {
                     world.stats = Some(s);
+                    favs::sync_jobs(world);
                     status::on_stats(world);
                 }
                 NetEvent::Merits { limit, bits, max } => world.merits = Some((limit, bits, max)),
@@ -10317,8 +10332,12 @@ impl App {
                         }
                     }
                     world.spells_known = bits;
+                    favs::refresh(world);
                 }
-                NetEvent::CommandsKnown(bits) => world.commands_known = bits,
+                NetEvent::CommandsKnown(bits) => {
+                    world.commands_known = bits;
+                    favs::refresh(world);
+                }
                 NetEvent::Dungeon(store) => maze::on_store(world, &store),
                 // LAB_100a2540 stores the offer whatever our state (it may come before our dead status, e.g. during a
                 // zone-in event); the K.O. step shows it once we are dead.
@@ -13507,8 +13526,16 @@ impl App {
                 if std::mem::take(&mut world.volume_dirty) {
                     apply = true;
                 }
+                favs::refresh(world);
                 if std::mem::take(&mut world.fav_save) {
-                    self.cfg.modern_favourites.insert(world.name.clone(), world.favourites.clone());
+                    let name = world.name.clone();
+                    if let Some(key) = world.fav_loadout.clone() {
+                        world.fav_loadouts.insert(key, world.favourites.clone());
+                    }
+                    if !world.fav_loadouts.is_empty() {
+                        self.cfg.modern_favourite_loadouts.insert(name.clone(), world.fav_loadouts.clone());
+                    }
+                    self.cfg.modern_favourites.insert(name, world.favourites.clone());
                     self.cfg.modern_fav_strip = world.fav_strip;
                     if let Err(e) = self.cfg.save() {
                         log::warn!("config: {e:#}");

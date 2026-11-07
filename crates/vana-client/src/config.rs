@@ -304,8 +304,11 @@ pub struct Config {
     pub modern_recent: std::collections::BTreeMap<String, Vec<String>>,
     /// The modern UI's mode presets (client/modern/modes.rs).
     pub modern_modes: ModernModes,
-    /// Favourites by character, in the strip's order (client/favs.rs), and whether the strip shows (/favs).
+    /// Favourites by character, in the strip's order (client/favs.rs), and whether the strip shows (/favs). This is
+    /// the active list; modern_favourite_loadouts keeps each main/sub job combination's saved list.
     pub modern_favourites: std::collections::BTreeMap<String, Vec<String>>,
+    /// Favourites by character, then by "main/sub" job ids (client/favs.rs), so a job change restores that job's list.
+    pub modern_favourite_loadouts: std::collections::BTreeMap<String, std::collections::BTreeMap<String, Vec<String>>>,
     pub modern_fav_strip: bool,
     /// How fast a mouse drag turns the camera, in % of the old fixed speed (ours; the controller is not touched).
     pub mouse_camera_speed: u32,
@@ -506,6 +509,7 @@ impl Default for Config {
             modern_recent: Default::default(),
             modern_modes: Default::default(),
             modern_favourites: Default::default(),
+            modern_favourite_loadouts: Default::default(),
             modern_fav_strip: true,
             mouse_camera_speed: 100,
             gamepad: true,
@@ -696,6 +700,15 @@ mod tests {
         c.remember_login();
         let out = written(&c);
         assert!(kept(&serde_json::from_str(text).unwrap(), &out), "{out}");
+    }
+
+    #[test]
+    fn favourite_loadouts_round_trip() {
+        let mut c = Config::default();
+        c.modern_favourite_loadouts.insert("Steven".into(), [("1/3".to_string(), vec!["m:1".to_string()])].into_iter().collect());
+        let out = written(&c);
+        let back: Config = serde_json::from_value(out).unwrap();
+        assert_eq!(back.modern_favourite_loadouts, c.modern_favourite_loadouts);
     }
 
     /// The real config (when there is one) loses nothing through a load and a save (read only).
