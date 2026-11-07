@@ -106,7 +106,7 @@ Most wanted non-blocking gaps (rows that list them in parentheses):
 - **res merits**, 2 rows: merit names in `res`. In GearSwap, GearSwap job-file API.
 - **res monstrosity**, 2 rows: Monstrosity species and instincts in `res`. In GearSwap, shortcuts.
 - **SQLite**, 2 rows: SQLite (JSON files do the job). In captain, Trust.
-- One row each: `<lastst>` target tag (SubTarget); arc primitive (nextauto); encumbrance flags (equipviewer (Windower));
+- One row each: arc primitive (nextauto); encumbrance flags (equipviewer (Windower));
   job change action (JobChange); linkshell name / linkshell_change (chatPorter); multi-line text input (repl); res item
   grammar (battlemod); res log-form status names (SimpleLog); res spell effects and durations (Debuffed); res.ability
   range (DistancePlus); RoE objectives in game (roe); stopping a started program (Run); synthesis event (craft);
@@ -225,7 +225,7 @@ Most wanted non-blocking gaps (rows that list them in parentheses):
 | stopwatch | Count-up timers | hud.text; clock; timer.every | covered | - |
 | StratHelper | SCH stratagem count for Spellcast | game.recasts; game.job_data; `job_change`; `action`; mods.emit | covered | - |
 | Stubborn | Blocks accidental calls for help | packets.on_out (block 0x01A) / inject_out | covered | (packet layouts: 0x01A) |
-| SubTarget | `<stal>` pick as the target of a send command | commands.register; game.target (after /target <stal>); ipc.send | covered | (`<lastst>` target tag) |
+| SubTarget | `<stal>` pick as the target of a send command | commands.register; game.target (after /target <stal>); ipc.send | covered | - |
 | switch_focus | Switches OS focus between game windows | ipc.send; client.focus; `focus_change` | covered | - |
 | Tab | Tab to `<stnpc>`, X+Tab to `<stpc>` | input.on_key / held; commands.run('/ta <stnpc>') | covered | - |
 | targetinfo | Target id, index and flags | game.target; hud.text | covered | - |

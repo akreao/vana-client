@@ -272,7 +272,7 @@ or broken file is an error at once.
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `x`, `y`, `visible`, `layer` | | | As for [every element](#places-sizes-and-layers). |
-| `path` | `string` | (required) | The PNG's path inside the mod's folder, with `/` between folders, e.g. `"img/frame.png"`. It cannot leave the folder: no `..`, no leading `/`, no `:`. |
+| `path` | `string` | (required) | The PNG's path inside the mod's folder, with `/` between folders, e.g. `"img/frame.png"`. It cannot leave the folder: no `..` and no `:`; a leading `/` counts from the mod's folder, and a symbolic link is refused. |
 | `w` | `number` | the image's width | Its drawn width in window pixels. |
 | `h` | `number` | the image's height | Its drawn height in window pixels. |
 | `colour` | `{r, g, b, a}` | white | A tint the image's colours are multiplied by; `a` fades it. |
@@ -281,7 +281,7 @@ or broken file is an error at once.
 
 **Errors**
 - No `path`: a conversion error.
-- A path that would leave the mod's folder: `"...": outside the mod's folder`.
+- A path that would leave the mod's folder: `"...": outside the mod's folder` for `..`, `"...": not a relative path` for `:`, `"...": a link, which could lead outside the mod's folder` for a symbolic link.
 - A file that cannot be read: the path and the system's reason.
 - A file that is not a PNG: the path, the reason and `(a PNG)`.
 - A `colour` that is not a table or `false`: `a colour is {r, g, b, a} (0..255), or false for none`.

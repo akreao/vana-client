@@ -82,7 +82,14 @@ impl Menu {
 /// The 0x20000 windows (window registry) that drop a 0x02E: the item / equipment windows, the map, the config windows,
 /// the door menu, prompts, and ours that stand for them (the lists; inferred).
 fn blocked(w: &World) -> bool {
-    w.win.is_some() || w.map.is_some() || w.config.is_some() || w.settings.is_some() || w.mogdoor.is_some() || w.confirm.is_some() || w.magic.is_some() || w.ability.is_some()
+    w.win.is_some()
+        || w.map.is_some()
+        || w.config.is_some()
+        || w.settings.is_some()
+        || w.mogdoor.is_some()
+        || w.confirm.is_some()
+        || w.magic.is_some()
+        || w.ability.is_some()
 }
 
 /// Per frame: FUN_10097af0 (the pending 0x02E opens once no event runs) and FUN_10145680 (mogext and what it opened
@@ -110,7 +117,8 @@ pub fn update(w: &mut World) {
     if let Some(r) = w.job_req.filter(|r| r.pending) {
         let busy = r.moogle.is_some_and(|id| {
             w.entities.contains_key(&id)
-                && (!w.effects.libs_ready(&[DANCE_FILE]) || w.effects.event_scheduler_running(DANCE_FILE, DANCE, Who::Actor(id), Who::Actor(w.my_id)))
+                && (!w.effects.libs_ready(&[DANCE_FILE])
+                    || w.effects.event_scheduler_running(DANCE_FILE, DANCE, Who::Actor(id), Who::Actor(w.my_id)))
         });
         if !busy {
             let _ = w.net.commands.send(super::net::NetCommand::Packet { id: 0x100, body: vec![r.main, r.sub, 0, 0] });
@@ -160,6 +168,20 @@ pub(super) fn emote(w: &mut World, motions: &[&str]) {
                 super::actmotion::fx_too(&mut w.effects, id, name);
             }
         }
+    }
+}
+
+/// s2c 0x061's job change ends the moogle's `job0` / `job1` spin: the status motion (idle) comes back.
+pub fn job_changed(w: &mut World) {
+    let Some(id) = moogle_actor(w) else { return };
+    if let Some(a) = w.actors.get_mut(&id) {
+        idle_job(a);
+    }
+}
+
+fn idle_job(a: &mut super::Actor) {
+    if a.play.as_ref().is_some_and(|p| p.name.starts_with("job")) {
+        a.play = None;
     }
 }
 
@@ -336,11 +358,7 @@ fn storage_off(w: &World, nomad: bool) -> Vec<u16> {
 fn storage_container(row: u16, nomad: bool) -> Option<u8> {
     const ROWS: [u8; 15] = [1, 9, 2, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16];
     let i = row.checked_sub(1)? as usize;
-    if nomad {
-        ROWS.iter().copied().filter(|&c| c != 2).nth(i)
-    } else {
-        ROWS.get(i).copied()
-    }
+    if nomad { ROWS.iter().copied().filter(|&c| c != 2).nth(i) } else { ROWS.get(i).copied() }
 }
 
 /// The menu's keys (the menu base: links, SE 0001 / 0002 / 0004 / 0003). True when used.
@@ -385,7 +403,13 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) -> bool {
         let n: u16 = if m.nomad { 14 } else { 15 };
         match key {
             K::ArrowDown | K::ArrowUp => {
-                let s = if key == K::ArrowDown { sel % n + 1 } else if *sel <= 1 { n } else { sel - 1 };
+                let s = if key == K::ArrowDown {
+                    sel % n + 1
+                } else if *sel <= 1 {
+                    n
+                } else {
+                    sel - 1
+                };
                 if let Some(mm) = w.moogle.as_mut() {
                     mm.storage = Some((s, off.clone()));
                 }
@@ -419,7 +443,13 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) -> bool {
     match key {
         K::ArrowDown | K::ArrowUp => {
             if let Some(mm) = w.moogle.as_mut() {
-                mm.sel = if key == K::ArrowDown { m.sel % n + 1 } else if m.sel <= 1 { n } else { m.sel - 1 };
+                mm.sel = if key == K::ArrowDown {
+                    m.sel % n + 1
+                } else if m.sel <= 1 {
+                    n
+                } else {
+                    m.sel - 1
+                };
             }
             w.sounds.push(Ui::Cursor as u32);
         }
@@ -455,7 +485,8 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) -> bool {
                 // Open / Close Mog House: c2s 0x0CB {1 open | 2 close, 0, 0}; open waits for 0x067 @0x24.
                 (false, 6) => {
                     let kind = if w.mh_open { 2u8 } else { 1 };
-                    let _ = w.net.commands.send(super::net::NetCommand::Packet { id: 0x0CB, body: vec![kind, 0, 0, 0] });
+                    let _ =
+                        w.net.commands.send(super::net::NetCommand::Packet { id: 0x0CB, body: vec![kind, 0, 0, 0] });
                     if kind == 1
                         && let Some(mm) = w.moogle.as_mut()
                     {
@@ -494,7 +525,15 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         return rects;
     }
     let mut off = if m.nomad { Vec::new() } else { myroom_off(w, m) };
-    let child6 = (!m.nomad).then(|| if w.mh_open { 608 } else if m.open_pending { 607 } else { 606 });
+    let child6 = (!m.nomad).then(|| {
+        if w.mh_open {
+            608
+        } else if m.open_pending {
+            607
+        } else {
+            606
+        }
+    });
     if child6.is_some() {
         off.retain(|&c| c != 6);
     }
@@ -504,7 +543,13 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
     }
     let free = !super::post::active(w);
     let focused = free && m.storage.is_none() && m.jobs.is_none() && m.post.is_none();
-    let mut draw_one = |gu: &mut GameUi, name: &str, sel: u16, off: &[u16], hide: &[u16], focused: bool, extra: Option<(u16, usize)>| {
+    let mut draw_one = |gu: &mut GameUi,
+                        name: &str,
+                        sel: u16,
+                        off: &[u16],
+                        hide: &[u16],
+                        focused: bool,
+                        extra: Option<(u16, usize)>| {
         if let Some(win) = gu.lobby_window_off(name, sw, sh, (0.0, 0.0), Some(sel), focused, hide) {
             super::winhits::record(w, name, &win);
             let [x, y, ..] = win.frame;
@@ -548,12 +593,34 @@ pub(super) fn views(w: &World, gu: &GameUi) -> Vec<super::modern::MenuWin> {
         return Vec::new();
     }
     let mut off = if m.nomad { Vec::new() } else { myroom_off(w, m) };
-    let child6 = (!m.nomad).then(|| if w.mh_open { 608 } else if m.open_pending { 607 } else { 606 });
+    let child6 = (!m.nomad).then(|| {
+        if w.mh_open {
+            608
+        } else if m.open_pending {
+            607
+        } else {
+            606
+        }
+    });
     if child6.is_some() {
         off.retain(|&c| c != 6);
     }
-    let mut out = vec![MenuWin { name: m.name(), sel: m.sel, off, labels: child6.map(|s| (6, s)).into_iter().collect(), marked: Vec::new(), values: Vec::new() }];
-    let win = |name, sel, off: Vec<u16>| MenuWin { name, sel, off, labels: Vec::new(), marked: Vec::new(), values: Vec::new() };
+    let mut out = vec![MenuWin {
+        name: m.name(),
+        sel: m.sel,
+        off,
+        labels: child6.map(|s| (6, s)).into_iter().collect(),
+        marked: Vec::new(),
+        values: Vec::new(),
+    }];
+    let win = |name, sel, off: Vec<u16>| MenuWin {
+        name,
+        sel,
+        off,
+        labels: Vec::new(),
+        marked: Vec::new(),
+        values: Vec::new(),
+    };
     if let Some((sel, off)) = &m.storage {
         out.push(win(if m.nomad { STORAGE2 } else { STORAGE }, *sel, off.clone()));
     }
@@ -623,14 +690,50 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
     };
     if let Some(j) = m.jobs {
         match j.select {
-            Some((mode, sel)) => generic(w, gu, JOBCSELU, sel, 1..=32, p, moved, clicked, right, |w, id| edit(w, &|mm| mm.jobs = Some(Jobs { select: Some((mode, id)), ..j })), keys),
-            None => generic(w, gu, JOBCHANG, j.sel, 1..=2, p, moved, clicked, right, |w, id| edit(w, &|mm| mm.jobs = Some(Jobs { sel: id, ..j })), keys),
+            Some((mode, sel)) => generic(
+                w,
+                gu,
+                JOBCSELU,
+                sel,
+                1..=32,
+                p,
+                moved,
+                clicked,
+                right,
+                |w, id| edit(w, &|mm| mm.jobs = Some(Jobs { select: Some((mode, id)), ..j })),
+                keys,
+            ),
+            None => generic(
+                w,
+                gu,
+                JOBCHANG,
+                j.sel,
+                1..=2,
+                p,
+                moved,
+                clicked,
+                right,
+                |w, id| edit(w, &|mm| mm.jobs = Some(Jobs { sel: id, ..j })),
+                keys,
+            ),
         }
     } else if let Some(c) = m.post {
         generic(w, gu, MOGPOST, c, 1..=2, p, moved, clicked, right, |w, id| edit(w, &|mm| mm.post = Some(id)), keys);
     } else if let Some((sel, off)) = m.storage.clone() {
         let name = if m.nomad { STORAGE2 } else { STORAGE };
-        generic(w, gu, name, sel, 1..=15, p, moved, clicked, right, |w, id| edit(w, &|mm| mm.storage = Some((id, off.clone()))), keys);
+        generic(
+            w,
+            gu,
+            name,
+            sel,
+            1..=15,
+            p,
+            moved,
+            clicked,
+            right,
+            |w, id| edit(w, &|mm| mm.storage = Some((id, off.clone()))),
+            keys,
+        );
     } else {
         let n = m.rows();
         generic(w, gu, m.name(), m.sel, 1..=n, p, moved, clicked, right, |w, id| edit(w, &|mm| mm.sel = id), keys);
@@ -650,7 +753,13 @@ fn draw_levels(gu: &mut GameUi, w: &World, off: &[u16], sw: f32, sh: f32) {
         if n == main {
             lv = w.stats.as_ref().map_or(lv, |s| s.main.1);
         }
-        let tint = if n == main { 0x80e0_9620 } else if n == sub { 0x8040_70a0 } else { 0x8080_8080 };
+        let tint = if n == main {
+            0x80e0_9620
+        } else if n == sub {
+            0x8040_70a0
+        } else {
+            0x8080_8080
+        };
         let text = fmt.replace("%d", &lv.to_string());
         gu.shape_text(&text, x + e.x as f32 + e.w as f32 + 30.0, y + e.y as f32 + 2.0, tint, true);
     }
@@ -696,5 +805,34 @@ pub fn line(w: &mut World, n: u16) {
     if let Some(raw) = bt.system_raw(n) {
         let motions = crate::dat::dialog::expand(&raw, &Default::default()).motions;
         emote(w, &motions);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn play(name: &str) -> super::super::actmotion::Play {
+        super::super::actmotion::Play {
+            name: name.into(),
+            motions: Vec::new(),
+            length: 0.0,
+            ticks: 0.0,
+            base: "idl".into(),
+            cut: -1.0,
+            stance_at: None,
+            end: None,
+        }
+    }
+
+    #[test]
+    fn job_change_clears_only_job_plays() {
+        let mut a = super::super::Actor::new();
+        a.play = Some(play("job0"));
+        idle_job(&mut a);
+        assert!(a.play.is_none());
+        a.play = Some(play("tlk0"));
+        idle_job(&mut a);
+        assert!(a.play.is_some_and(|p| p.name == "tlk0"));
     }
 }

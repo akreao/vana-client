@@ -4,6 +4,9 @@ The plan for vana-client's modern interface, from the user's planning document (
 26 October 2026), with the decisions taken since and the state of the work. Built on branch `ui-update`, merged into
 master 2026-10-27 (kept).
 
+Feature branches don't edit this file: their State updates go in `docs/modern-ui/`, one file each, and are folded
+in here later (see `docs/modern-ui/README.md`).
+
 ## Decisions (2026-10-26)
 
 - **Runtime toggle.** The retail UI stays the default and untouched. Settings > Client > Interface switches between
@@ -322,8 +325,11 @@ Milestone 1:
   and Global drawn natively (rows from the pages' controls, named with their layouts' captions, help lines);
   the list pages open retail's windows over it.
 - Storage (modern/storage.rs): the bags as tabs, Mog Safe / Safe 2 and Mog Wardrobe 1..8 merged; the bag beside the
-  inventory; a click moves a stack (right click one), into a merged bag the first part with room that takes it;
-  retail's colours say what may move.
+  inventory; a click (or Ctrl-click) moves a stack (right click one), into a merged bag the first part with room that
+  takes it; retail's colours say what may move. Milestone 2 (2026-11-02): a row dragged onto the other pane moves
+  its stack, the pane outlined teal / red for a valid / invalid drop; Shift (on the drop, a click or Enter) asks how
+  many; a refused row says why (hover, and under the lists after a try); a sent move shows as pending until the
+  server moves it, and one the server ignores is explained (nothing moves optimistically, so nothing is restored).
 - Plate badges: the approved SVG set (assets/modern/badges) in place of retail's glyphs; the pearl tinted by its
   linkshell; rank stars, the recruiter star in its orb, the master stars above.
 - Icons: batches 1 and 2 (131) redrawn in VectorCraft and approved.
@@ -566,6 +572,10 @@ Milestone 1:
   names (a status id) rather than prints is kept as it is. Live: Warcry with a bot in the party.
 - The target panel's name in retail's name colour (FUN_1008db40 as the plates: unclaimed monster pale yellow, our
   party's claim red, another's magenta).
+- Double click on the world (2026-11-02, ours; the pack's mouse contract): with the modern UI, a second plain left
+  click on the same actor within 500 ms runs the safe default instead of opening the action menu: talk to an NPC or
+  a door, check a player or a monster (retail's Ctrl+C, FUN_10130280). A slower second click stays retail's
+  (confirm: talk, or the action menu); a locked target, a sub-target prompt, a drag and the classic UI are unchanged.
 - Cursor on movement (ours, not retail): Settings > Misc. > Keys Hide the Cursor, off, keeps the mouse cursor shown
   while you walk with the keys. On, the default, hides it as retail does.
 - The first letter typed into a list's hidden search no longer also triggers its game hotkey.
@@ -637,9 +647,11 @@ Milestone 1:
 - Favourites (2026-11-02, ours; the plan's "favourites" and "a small optional favourites strip"; client/favs.rs,
   modern/favs.rs): spells, abilities (not traits) and items are starred by the star at their row's right end in the
   magic and ability lists, the Items window and the search's hits, or with Ctrl+F on the cursor's row or the
-  highlighted hit. Kept per character in config `modern_favourites` (the search's keys, "m:" / "a:" / "i:"), 24 at
-  most. In the list search a favourite ranks above every other match and says "favourite". The favourites strip
-  (panel "favourites", movable, over the chat window's right end by default) shows a tile per favourite: its icon, an
+  highlighted hit. Kept per character in config `modern_favourites` (the active list) and per main/sub job in
+  `modern_favourite_loadouts` ("main/sub" job ids; the search's keys, "m:" / "a:" / "i:"), 24 at most each. A job
+  change saves the current list under its job pair and restores that pair's list, seeding a new pair from the
+  favourites that still fit. In the list search a favourite ranks above every other match and says "favourite". The
+  favourites strip (panel "favourites", movable, over the chat window's right end by default) shows a tile per favourite: its icon, an
   item's count, greyed as its list greys it, its name as the tooltip. A click runs it as a macro line would: /ma,
   /ja, /ws or /pet, /item, with <me> when only we are a valid target and <st> (the target prompt) otherwise. /favs
   [on | off] shows or hides it (config `modern_fav_strip`); it hides while nothing is starred. `modern-shot --favs`.

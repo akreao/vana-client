@@ -1,3 +1,7 @@
+# Entries are only ever appended, so a local merge can keep both sides.
+# (GitHub's merge button ignores this; new entries go in docs/modlog/ instead.)
+MODLOG.md merge=union
+
 # The generated Lua API stubs are compared byte for byte with `vana-client lua-stubs` output (LF) by
 # committed_stubs_current; a CRLF checkout (Windows with core.autocrlf) would fail it.
 crates/vana-client/assets/mods/library/vana.lua text eol=lf
