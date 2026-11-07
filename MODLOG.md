@@ -22980,11 +22980,3 @@ From FFXiMain.dll (Steven's unpacked copy), full_text.asm, FUN_100a7b80.
   blocks and tables. Classic: the game's frame and title strip, the game font with in-line colours (bold `1e 01`,
   code `1e 02`), the list scroll bar, OK. Modern: the pack's frame, Fira Sans with the strong face and mono, a thin
   bar. Up / Down, Page Up / Page Down (Space), Home / End and the wheel scroll; Enter or Escape closes, as does OK.
-
-## Autorun follows the right drag's look (ours, 2026-11-07)
-
-- Ours (modern MMOs, mouse only): while the right drag holds the facing (World::mouse_look, third person, no /follow
-  or mod run), autorun's vector is the camera's forward each frame, so the character runs where it looks as with W
-  held; A / D add their side as they do with W. Released, the run keeps its last way and A / D steer it 2 degrees a
-  tick again (retail). Before, the run kept its old vector and the character faced the camera, running sideways.
-  The controller and the keys are untouched.
