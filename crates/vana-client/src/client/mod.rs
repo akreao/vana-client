@@ -9232,7 +9232,7 @@ impl App {
                     &std::fs::read(crate::dat::ffximain(&self.cfg.ffxi_dir())).unwrap_or_default(),
                 ) {
                     Ok(codec) => {
-                        let net = net::spawn(login.clone(), self.cfg.username.clone(), codec);
+                        let net = net::spawn(login.clone(), self.cfg.username.clone(), codec, self.cfg.gm_window);
                         self.status = format!("Connecting to {}:{}...", login.map.0, login.map.1);
                         let features =
                             if let Phase::Characters { lobby: Some(l), .. } = &self.phase { l.features } else { 0 };
