@@ -164,6 +164,19 @@ const COMMANDS: [(u8, &str); 6] = [
     (HEAL, "Heal"),
 ];
 
+/// A palette command the action menu would offer now (its rows for this target and state; Call for help with
+/// Disengage), so a pick does only what that row would. /heal checks itself.
+fn command_now(w: &World, c: u8) -> bool {
+    c == HEAL || command_in(&super::combat::current_items(w, false), c)
+}
+
+fn command_in(rows: &[u8], c: u8) -> bool {
+    c == HEAL || rows.contains(&c) || (c == super::combat::cmd::CALL_HELP && rows.contains(&super::combat::cmd::DISENGAGE))
+}
+
+/// How long the palette's hits stand for one query (every spell, ability and item scored again after).
+const PALETTE_FRESH: std::time::Duration = std::time::Duration::from_millis(250);
+
 /// Where the palette may open: modern, in the field, alive, nothing open or typed, not under a prompt or Monstrosity.
 pub fn palette_allowed(w: &World) -> bool {
     w.modern
@@ -196,6 +209,18 @@ fn close_palette(w: &mut World) {
 /// The palette's candidates: every spell and ability the menus list, the usable items (one per item, the total as the
 /// note) and the commands. An empty query keeps only the recent picks.
 fn palette_matches(w: &World, query: &str) -> Vec<Hit> {
+    if let Some((q, at, hits)) = &*w.palette_cache.borrow()
+        && q == query
+        && at.elapsed() < PALETTE_FRESH
+    {
+        return hits.clone();
+    }
+    let out = palette_scored(w, query);
+    *w.palette_cache.borrow_mut() = Some((query.to_string(), std::time::Instant::now(), out.clone()));
+    out
+}
+
+fn palette_scored(w: &World, query: &str) -> Vec<Hit> {
     let mut out = Vec::new();
     let mut push = |kind: Kind, id: u16, name: String, slot: Option<u8>, note: String, journal: Option<Journal>| {
         let mut h = Hit { kind, cat: None, id, name, score: 0, slot, note, journal, recent: false, fav: false };
@@ -205,7 +230,8 @@ fn palette_matches(w: &World, query: &str) -> Vec<Hit> {
             out.push(h);
         }
     };
-    for &(c, label) in &COMMANDS {
+    let rows = super::combat::current_items(w, false);
+    for &(c, label) in COMMANDS.iter().filter(|(c, _)| command_in(&rows, *c)) {
         push(Kind::Ability, c as u16, label.to_string(), None, "command".into(), Some(Journal::Command(c)));
     }
     for &(_, cat) in magic::cat_rows("menu    magselec") {
@@ -537,7 +563,7 @@ pub fn can_run(w: &World) -> bool {
         && w.prompt.is_none()
         && w.confirm.is_none()
         && !super::typing_elsewhere(w)
-        && (w.command_palette || other(w).is_some() || super::auction::searchable(w) || w.cats.is_some() || list.is_some_and(|l| !l.hidden && l.sort_focus.is_none() && l.ask.is_none() && l.manual == 0) || (w.win.is_some() && item_list(w).is_some()) || key_items(w) || quest_list(w) || mission_list(w))
+        && ((w.command_palette && palette_allowed(w)) || other(w).is_some() || super::auction::searchable(w) || w.cats.is_some() || list.is_some_and(|l| !l.hidden && l.sort_focus.is_none() && l.ask.is_none() && l.manual == 0) || (w.win.is_some() && item_list(w).is_some()) || key_items(w) || quest_list(w) || mission_list(w))
 }
 
 /// The modern quest list (no Records of Eminence list over it).
@@ -598,8 +624,9 @@ fn key_in(w: &mut World, gu: &GameUi, key: egui::Key) {
     let Some(s) = w.list_search.clone() else { return };
     let n = hits(w, &s.text).len().min(MAX);
     match key {
-        // An empty field (the auction's, reached with Up) gives the keys back with Down.
-        egui::Key::ArrowDown if s.text.is_empty() => {
+        // An empty field (the auction's, reached with Up) gives the keys back with Down; the palette's empty search
+        // lists the recent picks, which Down walks.
+        egui::Key::ArrowDown if s.text.is_empty() && !w.command_palette => {
             w.list_search = None;
             w.sounds.push(Se::Cursor as u32);
         }
@@ -656,10 +683,12 @@ pub fn pick(w: &mut World, h: &Hit, gu: Option<&GameUi>) {
                 return;
             }
             (Some(Journal::Command(c)), ..) => {
-                w.sounds.push(Se::Select as u32);
-                if !super::combat::choose(w, c) {
+                // Checked again: the target or the state may have changed since the list was made.
+                if !command_now(w, c) || !super::combat::choose(w, c) {
                     w.sounds.push(Se::Error as u32);
+                    return;
                 }
+                w.sounds.push(Se::Select as u32);
                 return;
             }
             (_, Some(_), _) => items::open_direct(w),

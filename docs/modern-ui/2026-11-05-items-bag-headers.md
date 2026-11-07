@@ -1,1 +1,0 @@
-- The usable Items list (action menu > Items) puts a small bag name (Temporary, Inventory, Mog Wardrobe, Mog Wardrobe 2..8) above each bag's rows, and above the top visible row, once it lists rows from more than one bag (Vana Client; retail has no headers). The order and keys stay as retail's.

@@ -60,6 +60,7 @@ mod configui2;
 mod settings;
 mod modsui;
 mod updater;
+mod notes;
 mod firstrun;
 mod desktop;
 mod target;
@@ -312,6 +313,7 @@ fn text_field_open(w: &World) -> bool {
 /// A text field other than the list search's takes the typing.
 fn typing_elsewhere(w: &World) -> bool {
     w.typing
+        || w.ctx_menu_open
         || event::input(w).is_some()
         || w.map.as_ref().is_some_and(|m| m.typing())
         || post::typing(w)
@@ -2167,6 +2169,9 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
             }
             egui::Event::Cut if !event::cinema(world) => chat_prefix(world, "/linkshell2 "),
             egui::Event::Key { key, pressed: true, modifiers, .. } => match key {
+                // Ours: an open modern right-click menu has its keys (modern/ctxmenu.rs reads them from egui), so they
+                // reach nothing under it (Enter would target the nearest, Escape the target, the chat line send).
+                egui::Key::ArrowUp | egui::Key::ArrowDown | egui::Key::Enter | egui::Key::Escape if world.modern && world.ctx_menu_open => {}
                 // Ctrl+Alt+Shift+V as a test script sends it (the window's own is taken before egui).
                 egui::Key::V if modifiers.ctrl && modifiers.alt && modifiers.shift => voicechat::toggle(world),
                 // The auto-translate list takes its keys first (FUN_101b5d10).
@@ -2218,6 +2223,11 @@ fn world_hud(gu: &mut GameUi, world: &mut World, input: &UiInput, size: [u32; 2]
                     keys.clear();
                 }
                 _ if world.typing => {}
+                // Ours: Escape closes the modern UI Modes editor (/uimodes), drawn over everything.
+                egui::Key::Escape if world.modern && world.uimodes_open => {
+                    world.uimodes_open = false;
+                    world.sounds.push(crate::audio::Ui::Cancel as u32);
+                }
                 // The voice chat window (ours, hidden) takes the keys while open.
                 _ if world.voice.focused() => voicechat::key(world, *key),
                 // The event's area picker (op 0xcc 0x10) and the concierge's list take the keys before the event.
@@ -6220,6 +6230,10 @@ struct World {
     pos_zone: u16,
     unsettled: bool,
     actors: HashMap<u32, Actor>,
+    /// A modern right-click menu is open (modern/ctxmenu.rs, chatsel.rs): its keys are no game keys.
+    ctx_menu_open: bool,
+    /// The command palette's last hits: the query, when, the hits (listsearch.rs).
+    palette_cache: std::cell::RefCell<Option<(String, Instant, Vec<listsearch::Hit>)>>,
     moving: bool,
     /// First person's turn on the spot this frame: the walk or run motion plays in place (FUN_100c8930 takes the
     /// tier), though we do not move (combat and the effects read `moving`).
@@ -6760,6 +6774,10 @@ struct World {
     /// When each spell recast (DAT_106671e0) and 0x119 ability timer ends; 0x119 seen (DAT_10485824 bit 0).
     spell_recast: HashMap<u16, Instant>,
     ability_recast: HashMap<u16, Instant>,
+    /// Each running recast's whole length in seconds (ours, for mods): as it started, or LSB's base for one already
+    /// running at login.
+    spell_total: HashMap<u16, f32>,
+    ability_total: HashMap<u16, f32>,
     /// Each 0x119 timer's Calc1 / Calc2 (the charge shares' adjustments).
     ability_calc: HashMap<u16, (u8, i16)>,
     recasts_seen: bool,
@@ -6778,7 +6796,7 @@ struct World {
     minimap_size: u32,
     minimap_span: f32,
     minimap_dirty: bool,
-    /// Resting's ticks: the rest watched and what was learnt (saved in config rest_tick).
+    /// Resting's ticks: the rest watched and what was learnt (saved in config rest_models for this server).
     rest: resttick::RestTick,
     /// Config auto_sort (items::auto_sort_tick): the containers kept sorted, changed since saved; those with a new item
     /// and the seconds until they sort.
@@ -7108,6 +7126,9 @@ pub struct App {
     /// When the left button went down, and the right one (where and when): the drag rule (FUN_10125040).
     press_time: Option<Instant>,
     right_press: Option<((f64, f64), Instant)>,
+    /// How far mouse look has turned since the last button went down (pixels, either axis): the held pointer stays
+    /// put during a look, so its travel is what makes the release a drag.
+    look_travel: f64,
     /// Ours (modern UI): the actor the last plain left click picked and when, for the double click.
     last_pick: Option<(u32, Instant)>,
     /// Ours (modern MMOs): a look drag holds the pointer, hidden, where it began. Some(true) locked (raw motion turns
@@ -7244,6 +7265,13 @@ pub struct App {
     /// No game files yet: the download window (not retail).
     first_run: Option<firstrun::FirstRun>,
     update_ui: Option<updater::UpdateUi>,
+    /// The change notes the last update left for this version, shown over the title once (client/notes.rs), and their
+    /// window while open.
+    whats_new: Option<notes::Saved>,
+    notes_ui: Option<notes::NotesUi>,
+    /// The notes since the version last seen, asked at start when no update left them (a manual download, or an update
+    /// by a build from before the notes).
+    notes_fetch: Option<notes::Fetch>,
     /// UI layout size / window size (Config-tool 0037 / 0038).
     ui_k: (f32, f32),
     /// The offscreen scene target and its scaling pass (background resolution other than the window's).
@@ -7372,6 +7400,10 @@ impl App {
             updater::tidy();
             updater::start(cfg.ffxi_dir())
         });
+        let whats_new = notes::pending();
+        // A test drive asks for the notes only with FFXI_NOTES_CHECK set (or FFXI_UPDATE_CHECK).
+        let notes_check = drive_checks || std::env::var_os("FFXI_NOTES_CHECK").is_some();
+        let notes_fetch = (whats_new.is_none() && notes_check && notes::due(&cfg.notes_seen)).then(|| notes::fetch_since(cfg.notes_seen.clone()));
         Self {
             cfg,
             applied_volumes: None,
@@ -7396,6 +7428,7 @@ impl App {
             press_at: None,
             press_time: None,
             right_press: None,
+            look_travel: 0.0,
             last_pick: None,
             look_grab: None,
             grab_at: None,
@@ -7481,6 +7514,9 @@ impl App {
             updates,
             first_run: None,
             update_ui: None,
+            whats_new,
+            notes_ui: None,
+            notes_fetch,
             ui_k: (1.0, 1.0),
             // FFXI_DEBUG_OVERLAY=1 starts with the F12 lines on (test shots).
             debug_overlay: std::env::var_os("FFXI_DEBUG_OVERLAY").is_some(),
@@ -8425,6 +8461,8 @@ impl App {
                             inv_loaded: 0,
                             actors: HashMap::new(),
                             moving: false,
+                            ctx_menu_open: false,
+                            palette_cache: Default::default(),
                             turn_in_place: false,
                             move_acc: 0.0,
                             walk: false,
@@ -8775,6 +8813,8 @@ impl App {
                             res_rdy: ResRdy::default(),
                             spell_recast: HashMap::new(),
                             ability_recast: HashMap::new(),
+                            spell_total: HashMap::new(),
+                            ability_total: HashMap::new(),
                             ability_calc: HashMap::new(),
                             extra_timers: self.cfg.timers,
                             extra_regime: self.cfg.regime,
@@ -8787,7 +8827,7 @@ impl App {
                             minimap_size: self.cfg.minimap_size,
                             minimap_span: self.cfg.minimap_span,
                             minimap_dirty: false,
-                            rest: resttick::RestTick::new(self.cfg.rest_tick),
+                            rest: resttick::RestTick::new(self.cfg.rest_models.get(&format!("{}-{}", login.search.0, login.search.1)).cloned()),
                             auto_sort: self.cfg.auto_sort,
                             auto_sort_dirty: false,
                             sort_due: (0, 0.0),
@@ -10377,8 +10417,22 @@ impl App {
                     }
                 }
                 NetEvent::AbilityRecasts(timers) => {
-                    world.recasts_seen = true;
+                    let first = !std::mem::replace(&mut world.recasts_seen, true);
                     let now = Instant::now();
+                    // A timer's length: its seconds when it starts (new, or ending a second or more later than it did);
+                    // one already running at login takes the base recast when that is longer.
+                    let mut totals = HashMap::new();
+                    for &(id, s, ..) in timers.iter().filter(|t| t.1 > 0) {
+                        let s = s as f32;
+                        let left = world.ability_recast.get(&id).map(|e| e.saturating_duration_since(now).as_secs_f32());
+                        let total = match (left, world.ability_total.get(&id)) {
+                            (Some(l), Some(&t)) if s <= l + 1.0 => t,
+                            _ if first => crate::dat::recasts::timer(id).map_or(s, |b| (b as f32).max(s)),
+                            _ => s,
+                        };
+                        totals.insert(id, total);
+                    }
+                    world.ability_total = totals;
                     world.ability_calc = timers.iter().filter(|t| t.1 > 0).map(|t| (t.0, (t.2, t.3))).collect();
                     world.ability_recast = timers.into_iter().filter(|t| t.1 > 0).map(|(id, s, _, _)| (id, now + std::time::Duration::from_secs(s as u64))).collect();
                 }
@@ -11928,6 +11982,7 @@ impl App {
     /// inverts its axes); with the right button the character faces where it looks (modern MMOs); in first person it
     /// turns the look itself.
     fn look(&mut self, dx: f64, dy: f64) {
+        self.look_travel += dx.abs() + dy.abs();
         let right = self.dragging;
         // Settings' Mouse Camera Speed (ours): scales the drag only; the controller's camera is not touched.
         let k = self.cfg.mouse_camera_speed.clamp(10, 400) as f64 / 100.0;
@@ -11993,10 +12048,17 @@ impl App {
         if pressed && button == MouseButton::Right {
             self.drag_from = self.last_cursor;
         }
+        if pressed {
+            self.look_travel = 0.0;
+        }
+        // A release is a drag past 65 square UI pixels or 25 ticks held, or when mouse look turned the camera more than
+        // 4 pixels meanwhile (the look holds the pointer, so it barely moves): a camera drag that starts on an actor
+        // opens no menu and makes no double click.
+        let looked = self.look_travel > 4.0;
         let release = |from: Option<((f64, f64), Instant)>, at: Option<(f64, f64)>, k: (f32, f32)| -> Option<((f64, f64), bool)> {
             let ((a, t), b) = (from?, at?);
             let (dx, dy) = ((b.0 - a.0) as f32 * k.0, (b.1 - a.1) as f32 * k.1);
-            Some((b, dx * dx + dy * dy >= 65.0 || t.elapsed().as_secs_f32() * 60.0 >= 25.0))
+            Some((b, looked || dx * dx + dy * dy >= 65.0 || t.elapsed().as_secs_f32() * 60.0 >= 25.0))
         };
         let size = self.window_size;
         let (k, retail_aspect) = (self.ui_k, self.cfg.retail_aspect);
@@ -12005,11 +12067,18 @@ impl App {
         let mut world_click = |phase: &mut Phase, b: (f64, f64), left: bool, drag: bool| -> bool {
             let on_hud = hud.iter().any(|r| inside(r, (b.0 as f32 * k.0, b.1 as f32 * k.1)));
             let Phase::World(world) = phase else { return false };
-            let gated = consumed || event::active(world) || world.typing || world.ui_hidden || (world_window_open(world) && world.prompt.is_none());
+            let aspect = cfgapply::aspect(size, retail_aspect, world.game.get(0x43));
+            let picked = if left { Self::under_pointer(world, b, size, aspect).0 } else { None };
+            // Ours (the modern UI's mouse contract): a second plain left click on the same actor within the
+            // double-click time runs the safe default (talk to an NPC, check anyone else). It gets past the action menu
+            // the first click opened, so it does the same whether or not the actor was the target already.
+            let double = left && !drag && world.modern && picked.is_some_and(|p| last_pick.is_some_and(|(q, at)| q == p && at.elapsed() < DOUBLE_CLICK));
+            let menu_only = world.action_menu.is_some() && !window_over_actions(world);
+            let gated = consumed || event::active(world) || world.typing || world.ui_hidden || (world_window_open(world) && world.prompt.is_none() && !(double && menu_only));
             if on_hud || gated {
+                *last_pick = None;
                 return false;
             }
-            let aspect = cfgapply::aspect(size, retail_aspect, world.game.get(0x43));
             if !drag {
                 fishing::click(world);
             }
@@ -12024,11 +12093,9 @@ impl App {
                 world.actor_menu = Some(id);
                 return false;
             }
-            let picked = if left { Self::under_pointer(world, b, size, aspect).0 } else { None };
-            // Ours (the modern UI's mouse contract): a second plain left click on the same actor within the
-            // double-click time runs the safe default (talk to an NPC, check anyone else) instead of the action menu.
-            let double = left && !drag && world.modern && picked.is_some_and(|p| last_pick.is_some_and(|(q, at)| q == p && at.elapsed() < DOUBLE_CLICK));
-            *last_pick = if left && !drag && !double { picked.map(|p| (p, Instant::now())) } else { None };
+            // A click answering the sub-target prompt is no first click.
+            let first = left && !drag && !double && !target::sub_up(world);
+            *last_pick = if first { picked.map(|p| (p, Instant::now())) } else { None };
             target::click(world, picked, left, drag, double)
         };
         match button {
@@ -12499,7 +12566,24 @@ impl App {
                         ];
                         const UPDATE: usize = 5;
                         // FUN_10235fa0: while lobycwin (or our settings screen) is up the title takes no input.
-                        let config_open = self.lobby_cfg.is_some() || self.lobby_settings.is_some() || self.update_ui.is_some();
+                        // The change notes an update left (or the start asked for) open first, over everything else on the
+                        // title. An answer with none marks this version seen.
+                        if let Some(answer) = self.notes_fetch.as_ref().and_then(|f| f.lock().unwrap().take()) {
+                            self.notes_fetch = None;
+                            match answer {
+                                Some(s) => self.whats_new = Some(s),
+                                None => {
+                                    self.cfg.notes_seen = env!("CARGO_PKG_VERSION").into();
+                                    let _ = self.cfg.save();
+                                }
+                            }
+                        }
+                        if self.notes_ui.is_none()
+                            && let Some(s) = self.whats_new.take()
+                        {
+                            self.notes_ui = Some(notes::NotesUi::open(s));
+                        }
+                        let config_open = self.lobby_cfg.is_some() || self.lobby_settings.is_some() || self.update_ui.is_some() || self.notes_ui.is_some();
                         let window_over = config_open;
                         // Not retail: Update (menu 5) above Select Character while something is out of date.
                         let upd = self.updates.as_ref().is_some_and(|s| s.lock().unwrap().any());
@@ -12563,6 +12647,7 @@ impl App {
                                 mo.title_buttons(ctx, [screen_size[0] as u32, screen_size[1] as u32], self.cfg.modern_scale, self.ui_k, &buttons);
                             }
                             let help = match (&self.update_ui, &self.lobby_settings, &self.lobby_cfg) {
+                                _ if self.notes_ui.is_some() => self.notes_ui.as_ref().map(|n| n.help()).unwrap_or_default(),
                                 (Some(u), _, _) => u.help(),
                                 // Modern: the Config panel has its own help line.
                                 (None, _, Some(_)) if modern_title => ITEMS[3].1.to_string(),
@@ -12766,6 +12851,54 @@ impl App {
                                     }
                                     if out.closed {
                                         self.update_ui = None;
+                                        break;
+                                    }
+                                }
+                            }
+                            if let Some(n) = self.notes_ui.as_mut() {
+                                n.zoom = if modern_title { 1.35 } else { 1.0 };
+                                let mut outs = Vec::new();
+                                for ev in input.events.iter() {
+                                    if let egui::Event::Key { key, pressed: true, .. } = ev {
+                                        outs.push(n.key(*key));
+                                    }
+                                }
+                                // The wheel straight from egui (the title screen sends it to no list).
+                                let lines: f32 = input
+                                    .events
+                                    .iter()
+                                    .map(|e| match e {
+                                        egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Line, delta, .. } => delta.y,
+                                        egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta, .. } => delta.y / 40.0,
+                                        egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Page, delta, .. } => delta.y * 5.0,
+                                        _ => 0.0,
+                                    })
+                                    .sum();
+                                if lines != 0.0 {
+                                    n.wheel(lines);
+                                }
+                                if let Some(p) = input.pointer {
+                                    outs.push(n.pointer(p, input.pressed, input.down, input.clicked, sw, sh));
+                                    if outs.last().is_some_and(|o| o.hover) {
+                                        lu.hover.set(true);
+                                    }
+                                }
+                                if modern_title {
+                                    self.modern.get_or_insert_with(|| modern::Modern::new(ctx)).notes_window(ctx, [screen_size[0] as u32, screen_size[1] as u32], self.cfg.modern_scale, self.ui_k, n, sw, sh);
+                                } else {
+                                    n.draw(lu, sw, sh);
+                                }
+                                for out in outs {
+                                    if let Some(a) = self.audio.as_mut() {
+                                        for x in &out.sounds {
+                                            a.ui(*x);
+                                        }
+                                    }
+                                    if out.closed {
+                                        self.notes_ui = None;
+                                        notes::seen();
+                                        self.cfg.notes_seen = env!("CARGO_PKG_VERSION").into();
+                                        let _ = self.cfg.save();
                                         break;
                                     }
                                 }
@@ -13409,7 +13542,8 @@ impl App {
                     }
                 }
                 if std::mem::take(&mut world.rest.dirty) {
-                    self.cfg.rest_tick = world.rest.learnt;
+                    let (ip, port) = world.search_addr;
+                    self.cfg.rest_models.insert(format!("{ip}-{port}"), world.rest.model.clone());
                     if let Err(e) = self.cfg.save() {
                         log::warn!("config: {e:#}");
                     }
@@ -14011,8 +14145,8 @@ impl App {
                 self.input.drive_event(e);
             }
             // Script pointer steps go through the same world mouse path as the window's (physical pixels), consumed as
-            // egui-winit consumes them.
-            let ppp = gfx.window.scale_factor();
+            // egui-winit consumes them. Points to pixels by egui's scale, the modern UI's zoom included.
+            let ppp = gfx.egui_ctx.pixels_per_point() as f64;
             let consumed = gfx.egui_ctx.egui_wants_pointer_input();
             for e in &events {
                 match e {
@@ -14081,8 +14215,9 @@ impl App {
             }
             // act:wheel:N turns the wheel N notches (up positive): the focused list's, else the camera's.
             if let Some(n) = action.as_deref().and_then(|a| a.strip_prefix("wheel:")).and_then(|n| n.parse::<f32>().ok()) {
-                // Over a modern panel it is egui's, as egui-winit consumes the window's.
-                if consumed && matches!(&self.phase, Phase::World(w) if w.modern) {
+                // Over a modern panel it is egui's, as egui-winit consumes the window's; off the world (the lobby's
+                // windows read it from egui) too.
+                if (consumed && matches!(&self.phase, Phase::World(w) if w.modern)) || !matches!(&self.phase, Phase::World(_)) {
                     let (unit, delta, phase, source) = (egui::MouseWheelUnit::Line, egui::vec2(0.0, n), egui::TouchPhase::Move, egui::MouseWheelSource::Unknown);
                     raw.events.push(egui::Event::MouseWheel { unit, delta, phase, source, modifiers: Default::default() });
                 } else if self.game_ui.as_ref().is_some_and(|g| g.wants_wheel()) {
@@ -15816,6 +15951,10 @@ impl ApplicationHandler for App {
                     // Other key functions hide the cursor (FUN_10125f70(0)), except during a drag; Keys Hide the Cursor
                     // off keeps it shown (ours).
                     let modifier = matches!(code, KeyCode::ShiftLeft | KeyCode::ShiftRight | KeyCode::ControlLeft | KeyCode::ControlRight | KeyCode::AltLeft | KeyCode::AltRight | KeyCode::SuperLeft | KeyCode::SuperRight);
+                    // A key between two clicks makes them no double click (click, Escape, click).
+                    if event.state == ElementState::Pressed && !modifier {
+                        self.last_pick = None;
+                    }
                     if event.state == ElementState::Pressed && !modifier && self.cfg.keys_hide_cursor && !self.dragging && !self.left_down {
                         self.mouse.visible = false;
                     }

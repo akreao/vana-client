@@ -74,8 +74,7 @@
       "target": "Koru",
       "reason": "Koru is paralyzed.",
       "group": [],
-      "label": null,
-      "family": "Paralyna"
+      "label": null
     },
     {
       "action": {
@@ -84,8 +83,7 @@
       "target": "Raven",
       "reason": "Raven is poisoned.",
       "group": [],
-      "label": null,
-      "family": "Poisona"
+      "label": null
     }
   ]
 }
