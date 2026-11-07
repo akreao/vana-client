@@ -103,7 +103,13 @@ mod linux {
 
     fn inhibit(conn: &Connection) -> Option<Held> {
         let ss = conn
-            .call_method(Some("org.freedesktop.ScreenSaver"), "/org/freedesktop/ScreenSaver", Some("org.freedesktop.ScreenSaver"), "Inhibit", &("Vana Client", REASON))
+            .call_method(
+                Some("org.freedesktop.ScreenSaver"),
+                "/org/freedesktop/ScreenSaver",
+                Some("org.freedesktop.ScreenSaver"),
+                "Inhibit",
+                &("Vana Client", REASON),
+            )
             .and_then(|m| m.body().deserialize::<u32>());
         let e = match ss {
             Ok(cookie) => return Some(Held::ScreenSaver(cookie)),
@@ -112,7 +118,13 @@ mod linux {
         // Flag 8: idle. The window is left empty (the portal then does not tie the inhibit to one).
         let options: HashMap<&str, Value> = HashMap::from([("reason", Value::from(REASON))]);
         let portal = conn
-            .call_method(Some("org.freedesktop.portal.Desktop"), "/org/freedesktop/portal/desktop", Some("org.freedesktop.portal.Inhibit"), "Inhibit", &("", 8u32, options))
+            .call_method(
+                Some("org.freedesktop.portal.Desktop"),
+                "/org/freedesktop/portal/desktop",
+                Some("org.freedesktop.portal.Inhibit"),
+                "Inhibit",
+                &("", 8u32, options),
+            )
             .and_then(|m| m.body().deserialize::<OwnedObjectPath>());
         match portal {
             Ok(handle) => Some(Held::Portal(handle)),
@@ -125,8 +137,20 @@ mod linux {
 
     fn release(conn: &Connection, held: Held) {
         let r = match &held {
-            Held::ScreenSaver(cookie) => conn.call_method(Some("org.freedesktop.ScreenSaver"), "/org/freedesktop/ScreenSaver", Some("org.freedesktop.ScreenSaver"), "UnInhibit", &(*cookie,)),
-            Held::Portal(handle) => conn.call_method(Some("org.freedesktop.portal.Desktop"), handle.as_ref(), Some("org.freedesktop.portal.Request"), "Close", &()),
+            Held::ScreenSaver(cookie) => conn.call_method(
+                Some("org.freedesktop.ScreenSaver"),
+                "/org/freedesktop/ScreenSaver",
+                Some("org.freedesktop.ScreenSaver"),
+                "UnInhibit",
+                &(*cookie,),
+            ),
+            Held::Portal(handle) => conn.call_method(
+                Some("org.freedesktop.portal.Desktop"),
+                handle.as_ref(),
+                Some("org.freedesktop.portal.Request"),
+                "Close",
+                &(),
+            ),
         };
         if let Err(e) = r {
             log::warn!("keep awake: release failed: {e}");
