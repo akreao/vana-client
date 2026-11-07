@@ -594,7 +594,12 @@ impl Macros {
             && text[i..].contains(&b'>')
         {
             let tail = &text[i + 5..];
-            let n: String = tail.iter().take_while(|c| c.is_ascii_digit()).map(|&c| c as char).collect();
+            let n: String = tail
+                .iter()
+                .skip_while(|c| c.is_ascii_whitespace())
+                .take_while(|c| c.is_ascii_digit())
+                .map(|&c| c as char)
+                .collect();
             let secs = if n.is_empty() { Some(1) } else { n.parse::<u64>().ok().filter(|v| *v <= 60) };
             if let Some(s) = secs {
                 r.wait = Some((Instant::now(), Duration::from_secs(s)));
@@ -714,6 +719,24 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         assert_eq!(sent, vec!["/say a", "/say b", "/say c"]);
+        let _ = std::fs::remove_dir_all(&game);
+    }
+
+    #[test]
+    fn inline_wait_accepts_leading_whitespace() {
+        let game = scratch("t5");
+        let mut m = Macros::load(&game, 1, Box::new(|_| None));
+
+        for (line, seconds) in [(&b"/say a<wait 3>"[..], 3), (&b"/say a<wait3>"[..], 3), (&b"/say a<wait>"[..], 1)] {
+            let mut mac = Macro::default();
+            mac.set_line(0, line);
+            m.recs[0] = mac;
+            m.start(0);
+
+            assert_eq!(m.step(2.0), Some(b"/say a".to_vec()));
+            assert_eq!(m.run.as_ref().unwrap().wait.unwrap().1, Duration::from_secs(seconds));
+        }
+
         let _ = std::fs::remove_dir_all(&game);
     }
 
