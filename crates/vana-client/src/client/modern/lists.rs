@@ -374,7 +374,7 @@ pub(super) fn off(w: &World, kind: Kind, id: u16) -> bool {
         Kind::Magic => !magic::spell_ready(w, id),
         Kind::Ability => {
             w.actions.as_ref().and_then(|a| a.abilities.get(id as usize)).is_some_and(|a| a.kind != 4)
-                && !magic::ability_ready(w, id)
+                && !magic::action_ready(w, kind, id)
         }
         Kind::Mount => magic::mount_check(w).is_some(),
         Kind::Emote => magic::emote_locked(w, id),
