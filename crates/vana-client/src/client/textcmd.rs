@@ -1514,6 +1514,7 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
         id::AUTOMOVE => {
             w.autorun = true;
             w.autorun_dir = glam::Vec3::new(w.yaw.sin(), 0.0, w.yaw.cos());
+            w.mod_run = false;
             w.run_to = None;
             Ok(())
         }
