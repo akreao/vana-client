@@ -228,6 +228,7 @@ pub struct Macros {
     pub recs: Vec<Macro>,
     pub titles: Vec<[u8; 16]>,
     run: Option<Running>,
+    held_at: Option<Instant>,
     /// Retail stepped once a frame at 30 fps: one step per 2 ticks here.
     acc: f32,
     /// Lines of group 9 for the defaults, by id.
@@ -263,6 +264,7 @@ impl Macros {
             recs: vec![Macro::default(); 20],
             titles,
             run: None,
+            held_at: None,
             acc: 0.0,
             group9,
             clip: None,
@@ -552,6 +554,17 @@ impl Macros {
         self.run = None;
     }
 
+    /// Pauses a running wait while a sub-target prompt is open: the time it was open is added to the wait's start.
+    pub fn hold_wait(&mut self, held: bool) {
+        if held {
+            self.held_at.get_or_insert_with(Instant::now);
+        } else if let Some(t) = self.held_at.take()
+            && let Some(r) = &mut self.run
+        {
+            r.wait = r.wait.map(|(at, d)| (at + t.elapsed(), d));
+        }
+    }
+
     /// FUN_101a1cc0, once per 2-tick frame: the next line to send, if any. The first empty line ends the macro, "//"
     /// lines are skipped (a frame each), "/wait n" (1..60 s) waits without sending, "<wait n>" (0..60) sends the line
     /// cut at the tag and then waits.
@@ -701,6 +714,28 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         assert_eq!(sent, vec!["/say a", "/say b", "/say c"]);
+        let _ = std::fs::remove_dir_all(&game);
+    }
+
+    #[test]
+    fn hold_wait_pauses_the_wait() {
+        let game = scratch("t4");
+        let mut m = Macros::load(&game, 1, Box::new(|_| None));
+        let mut mac = Macro::default();
+        mac.set_line(0, b"/say a<wait 1>");
+        mac.set_line(1, b"/say b");
+        m.recs[0] = mac;
+        m.start(0);
+
+        assert_eq!(m.step(2.0), Some(b"/say a".to_vec()));
+        let started = m.run.as_ref().unwrap().wait.unwrap().0;
+        m.hold_wait(true);
+        std::thread::sleep(Duration::from_millis(5));
+        m.hold_wait(false);
+        let held = m.run.as_ref().unwrap().wait.unwrap().0;
+        assert!(held >= started + Duration::from_millis(5));
+        m.hold_wait(false);
+        assert_eq!(m.run.as_ref().unwrap().wait.unwrap().0, held);
         let _ = std::fs::remove_dir_all(&game);
     }
 }

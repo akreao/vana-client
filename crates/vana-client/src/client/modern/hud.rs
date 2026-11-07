@@ -1067,8 +1067,12 @@ pub fn draw(p: &mut Panels, w: &mut World) {
         }
     }
     if let Some(k) = picked {
-        let t = target::slot_target(w, k);
-        target::pick(w, t);
+        if w.party_cursor.is_some() {
+            target::party_cursor_pick(w, k);
+        } else {
+            let t = target::slot_target(w, k);
+            target::pick(w, t);
+        }
     }
     // An event takes the target window down unless it keeps it (EventPara2 bit 1, FUN_10085a00), as the retail HUD
     // does (client/mod.rs world_hud); the focus panel goes with it.
