@@ -12983,6 +12983,7 @@ impl App {
             // state at 1.
             f.window = world_window_open(w)
                 || w.palette.0 != 0
+                || w.party_cursor.is_some()
                 || w.log_active
                 || w.log_focus == 2
                 || event::choice(w).is_some()
@@ -13138,6 +13139,9 @@ impl App {
         // when the gate allows (field, UI shown, no event, alive, no window), Ctrl / Alt + digit runs a macro and
         // Shift + Ctrl / Alt + digit picks a set. The palettes are not drawn yet.
         let sub_up = target::sub_up(world);
+        if sub_up && let Some(m) = world.macros.as_mut() {
+            m.hold_wait();
+        }
         let by_mod = world.macros.as_ref().is_some_and(|m| m.by_mod());
         if let Some(line) = world.macros.as_mut().filter(|_| !sub_up).and_then(|m| m.step(dt * 60.0)) {
             let line = crate::dat::font::decode_sjis(&line);
@@ -16077,7 +16081,14 @@ impl App {
             _ => true,
         };
         let keyboard = matches!(&self.phase, Phase::World(w) if w.swkbd.is_some());
-        let ctx = gamepad::Ctx { menu, palette, tabs, field, keyboard };
+        let ctx = gamepad::Ctx {
+            menu,
+            palette,
+            tabs,
+            field,
+            keyboard,
+            party_cursor: matches!(&self.phase, Phase::World(w) if w.party_cursor.is_some()),
+        };
         let pad = self.gamepad.poll(&self.cfg, gfx.window.has_focus(), ctx, dt);
         self.input.set_pad(pad.pad);
         self.input.set_stick(pad.stick);

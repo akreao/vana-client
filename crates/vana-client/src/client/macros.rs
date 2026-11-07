@@ -552,6 +552,13 @@ impl Macros {
         self.run = None;
     }
 
+    /// Keep a running wait from elapsing while a sub-target prompt is open.
+    pub fn hold_wait(&mut self) {
+        if let Some(r) = &mut self.run {
+            r.wait = r.wait.map(|(_, d)| (Instant::now(), d));
+        }
+    }
+
     /// FUN_101a1cc0, once per 2-tick frame: the next line to send, if any. The first empty line ends the macro, "//"
     /// lines are skipped (a frame each), "/wait n" (1..60 s) waits without sending, "<wait n>" (0..60) sends the line
     /// cut at the tag and then waits.
@@ -701,6 +708,25 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         assert_eq!(sent, vec!["/say a", "/say b", "/say c"]);
+        let _ = std::fs::remove_dir_all(&game);
+    }
+
+    #[test]
+    fn hold_wait_restarts_the_wait_clock() {
+        let game = scratch("t4");
+        let mut m = Macros::load(&game, 1, Box::new(|_| None));
+        let mut mac = Macro::default();
+        mac.set_line(0, b"/say a<wait 1>");
+        mac.set_line(1, b"/say b");
+        m.recs[0] = mac;
+        m.start(0);
+
+        assert_eq!(m.step(2.0), Some(b"/say a".to_vec()));
+        let started = m.run.as_ref().unwrap().wait.unwrap().0;
+        std::thread::sleep(Duration::from_millis(2));
+        m.hold_wait();
+        let held = m.run.as_ref().unwrap().wait.unwrap().0;
+        assert!(held > started);
         let _ = std::fs::remove_dir_all(&game);
     }
 }

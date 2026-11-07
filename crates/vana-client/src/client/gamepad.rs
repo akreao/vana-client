@@ -281,6 +281,8 @@ pub struct Ctx {
     pub field: bool,
     /// The software keyboard is up: it reads the buttons as key functions, so none becomes a key for the field.
     pub keyboard: bool,
+    /// The `<stpt>` / `<stal>` party cursor has the keys.
+    pub party_cursor: bool,
 }
 
 #[derive(Default)]
@@ -304,7 +306,7 @@ impl Gamepad {
     /// Reads the pads. `focused`: the window has the focus (a pad in the background does nothing, as padmode's
     /// foreground default, unless config gamepad_background).
     pub fn poll(&mut self, cfg: &Config, focused: bool, ctx: Ctx, dt: f32) -> Frame {
-        let Ctx { menu, palette, tabs, field, keyboard } = ctx;
+        let Ctx { menu, palette, tabs, field, keyboard, party_cursor } = ctx;
         if !cfg.gamepad {
             return self.release_all();
         }
@@ -370,8 +372,10 @@ impl Gamepad {
         if held & !self.prev & bit(slot::STICK_MODE) != 0 {
             self.mode = next_mode(self.mode, modes);
         }
-        let menu = menu || palette || !field;
-        let (keys, pad_bits) = if keyboard { (Vec::new(), held) } else { keys_of(held, menu, palette, tabs && menu) };
+        let menu = menu || palette || party_cursor || !field;
+        // The party cursor reads egui keys only: its confirm / cancel / d-pad leave the field's pad word.
+        let (keys, pad_bits) =
+            if keyboard { (Vec::new(), held) } else { keys_of(held, menu, palette || party_cursor, tabs && menu) };
         let mut f = self.step(held, &keys, dt);
         self.prev = held;
         f.pad = pad_bits;
@@ -574,8 +578,8 @@ mod tests {
         let held = rd(&[3, 6]);
         assert_eq!(keys_of(held, false, false, false), (vec![KeyCode::Enter], bit(0) | bit(6)));
         assert_eq!(keys_of(held, true, false, false).0, vec![KeyCode::Enter, KeyCode::ArrowUp]);
-        // A palette up takes confirm and the d-pad from the key functions (no action menu, no field targeting).
-        assert_eq!(keys_of(held, true, true, false).1, 0);
+        // The palette and party cursor take confirm and the d-pad from the key functions.
+        assert_eq!(keys_of(held, true, true, false), (vec![KeyCode::Enter, KeyCode::ArrowUp], 0));
         // LT in a window: Ctrl on the arrows (0xa8, page); the trigger's bit stays (0x89 item compare).
         let held = rd(&[9, 6]);
         assert_eq!(keys_of(held, true, false, false), (vec![KeyCode::ControlRight, KeyCode::ArrowUp], held));
