@@ -132,7 +132,13 @@ fn agent() -> ureq::Agent {
 
 /// A GitHub API answer's text.
 pub(super) fn get_text(url: &str) -> Result<String> {
-    Ok(agent().get(url).header("Accept", "application/vnd.github+json").call().with_context(|| url.to_string())?.body_mut().read_to_string()?)
+    Ok(agent()
+        .get(url)
+        .header("Accept", "application/vnd.github+json")
+        .call()
+        .with_context(|| url.to_string())?
+        .body_mut()
+        .read_to_string()?)
 }
 
 /// The latest GitHub release and this platform's asset in it (None: no release, or no such asset).
@@ -450,7 +456,9 @@ impl UpdateUi {
                     let from = env!("CARGO_PKG_VERSION");
                     match super::notes::fetch(from, &r.tag) {
                         Ok(notes) if !notes.is_empty() => {
-                            if let Err(e) = super::notes::save(&super::notes::Saved { from: from.into(), to: r.tag.clone(), notes }) {
+                            if let Err(e) =
+                                super::notes::save(&super::notes::Saved { from: from.into(), to: r.tag.clone(), notes })
+                            {
                                 log::warn!("update: can't keep the release notes: {e:#}");
                             }
                         }

@@ -33,7 +33,8 @@ pub struct Suggestion {
 
 impl PartialEq for Suggestion {
     fn eq(&self, o: &Self) -> bool {
-        (self.action, &self.target, &self.reason, &self.group, &self.label) == (o.action, &o.target, &o.reason, &o.group, &o.label)
+        (self.action, &self.target, &self.reason, &self.group, &self.label)
+            == (o.action, &o.target, &o.reason, &o.group, &o.label)
     }
 }
 

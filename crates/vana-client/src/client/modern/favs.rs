@@ -97,54 +97,59 @@ pub(super) fn strip(p: &mut Panels, chips: &[Chip]) -> Option<Fav> {
     let m = p.m;
     let width = (chips.len().min(PER_ROW) as f32) * (TILE + 4.0) + 40.0;
     let mut used = None;
-    p.panel("favourites", Some(Title { icon: None, text: "Favourites", note: None, name: false }), width.max(180.0), |ui| {
-        for line in chips.chunks(PER_ROW) {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
-                for c in line {
-                    let (r, resp) = ui.allocate_exact_size(vec2(TILE, TILE), Sense::click());
-                    let edge = if resp.hovered() && !c.off {
-                        m.theme.color("gold")
-                    } else {
-                        m.theme.color("bronze").gamma_multiply(0.7)
-                    };
-                    ui.painter().rect_filled(r, 5.0, m.theme.color("charcoal"));
-                    ui.painter().rect_stroke(r, 5.0, egui::Stroke::new(1.0, edge), egui::StrokeKind::Inside);
-                    let tint = if c.off { Color32::from_gray(100) } else { Color32::WHITE };
-                    let icon = Rect::from_center_size(r.center(), vec2(28.0, 28.0));
-                    match c.icon {
-                        Some(t) => {
-                            ui.painter().image(t, icon, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), tint);
+    p.panel(
+        "favourites",
+        Some(Title { icon: None, text: "Favourites", note: None, name: false }),
+        width.max(180.0),
+        |ui| {
+            for line in chips.chunks(PER_ROW) {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    for c in line {
+                        let (r, resp) = ui.allocate_exact_size(vec2(TILE, TILE), Sense::click());
+                        let edge = if resp.hovered() && !c.off {
+                            m.theme.color("gold")
+                        } else {
+                            m.theme.color("bronze").gamma_multiply(0.7)
+                        };
+                        ui.painter().rect_filled(r, 5.0, m.theme.color("charcoal"));
+                        ui.painter().rect_stroke(r, 5.0, egui::Stroke::new(1.0, edge), egui::StrokeKind::Inside);
+                        let tint = if c.off { Color32::from_gray(100) } else { Color32::WHITE };
+                        let icon = Rect::from_center_size(r.center(), vec2(28.0, 28.0));
+                        match c.icon {
+                            Some(t) => {
+                                ui.painter().image(t, icon, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), tint);
+                            }
+                            // No art: the name's first letters.
+                            None => {
+                                let short: String = c.name.chars().take(2).collect();
+                                ui.painter().text(
+                                    r.center(),
+                                    Align2::CENTER_CENTER,
+                                    short,
+                                    FontId::proportional(m.theme.ui),
+                                    if c.off { m.theme.color("muted") } else { m.theme.color("text") },
+                                );
+                            }
                         }
-                        // No art: the name's first letters.
-                        None => {
-                            let short: String = c.name.chars().take(2).collect();
-                            ui.painter().text(
-                                r.center(),
-                                Align2::CENTER_CENTER,
-                                short,
-                                FontId::proportional(m.theme.ui),
-                                if c.off { m.theme.color("muted") } else { m.theme.color("text") },
+                        if let Some(n) = c.count {
+                            paint::outlined(
+                                ui.painter(),
+                                pos2(r.max.x - 3.0, r.max.y - 2.0),
+                                Align2::RIGHT_BOTTOM,
+                                &n.to_string(),
+                                FontId::proportional(m.theme.small - 2.0),
+                                m.theme.color("text"),
                             );
                         }
+                        m.tip_with(ui, r, || (c.name.clone(), "Click to use. Unstar it in its list.".to_string()));
+                        if resp.clicked() && !c.off {
+                            used = Some(c.fav);
+                        }
                     }
-                    if let Some(n) = c.count {
-                        paint::outlined(
-                            ui.painter(),
-                            pos2(r.max.x - 3.0, r.max.y - 2.0),
-                            Align2::RIGHT_BOTTOM,
-                            &n.to_string(),
-                            FontId::proportional(m.theme.small - 2.0),
-                            m.theme.color("text"),
-                        );
-                    }
-                    m.tip_with(ui, r, || (c.name.clone(), "Click to use. Unstar it in its list.".to_string()));
-                    if resp.clicked() && !c.off {
-                        used = Some(c.fav);
-                    }
-                }
-            });
-        }
-    });
+                });
+            }
+        },
+    );
     used
 }

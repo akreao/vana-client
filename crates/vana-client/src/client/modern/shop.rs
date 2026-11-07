@@ -190,42 +190,47 @@ pub fn draw(p: &mut Panels, w: &mut World) {
     let gil = crate::inventory::gil_text(w.inv.gil() as i64);
     let mut mouse = Mouse::default();
     let mut found = super::lists::found(p, w, "shop");
-    p.panel("window", Some(Title { icon: Some("icons/currency"), text: &title, note: Some(&gil), name: false }), W, |ui| {
-        // shopmain / guildsho: Buy and Sell as tabs; the open list's open, else the cursor's marked.
-        if !v.bazaar && !v.wares {
-            let main = if v.guild { GUILDSHO } else { SHOPMAIN };
-            let names = [caption(gu, main, 1, "Buy"), caption(gu, main, 2, "Sell")];
-            let labels: Vec<&str> = names.iter().map(String::as_str).collect();
-            let open = v.view.map(|view| if matches!(view, View::Buy) { 0 } else { 1 });
-            let cursor = open.is_none().then(|| v.main.saturating_sub(1) as usize);
-            for (k, resp) in
-                super::tabs::strip(ui, m, "shop tabs", &labels, open.or(cursor), cursor).into_iter().enumerate()
-            {
-                if resp.clicked() {
-                    mouse.tab = Some(k as u16 + 1);
+    p.panel(
+        "window",
+        Some(Title { icon: Some("icons/currency"), text: &title, note: Some(&gil), name: false }),
+        W,
+        |ui| {
+            // shopmain / guildsho: Buy and Sell as tabs; the open list's open, else the cursor's marked.
+            if !v.bazaar && !v.wares {
+                let main = if v.guild { GUILDSHO } else { SHOPMAIN };
+                let names = [caption(gu, main, 1, "Buy"), caption(gu, main, 2, "Sell")];
+                let labels: Vec<&str> = names.iter().map(String::as_str).collect();
+                let open = v.view.map(|view| if matches!(view, View::Buy) { 0 } else { 1 });
+                let cursor = open.is_none().then(|| v.main.saturating_sub(1) as usize);
+                for (k, resp) in
+                    super::tabs::strip(ui, m, "shop tabs", &labels, open.or(cursor), cursor).into_iter().enumerate()
+                {
+                    if resp.clicked() {
+                        mouse.tab = Some(k as u16 + 1);
+                    }
                 }
+                ui.add_space(6.0);
             }
-            ui.add_space(6.0);
-        }
-        if super::lists::rows_or(ui, m, &mut found) {
-        } else if v.view.is_some() {
-            list(ui, m, gu, &info, &v, free && !asking, &mut mouse);
-        } else {
-            ui.label(egui::RichText::new("Buy or sell?").size(m.theme.small).color(m.theme.color("muted")));
-        }
-        if let Some((n, max)) = v.qty {
-            ui.add_space(8.0);
-            mouse.key = count_row(ui, m, gu, &gu.title_msg(0x3e).unwrap_or_default(), n, max);
-        }
-        if let Some(money) = v.money {
-            ui.add_space(8.0);
-            (mouse.key, mouse.money) = money_row(ui, m, gu, money, None);
-        }
-        if let Some(c) = v.confirm {
-            ui.add_space(8.0);
-            confirm(ui, m, gu, &info, &v, c, &mut mouse);
-        }
-    });
+            if super::lists::rows_or(ui, m, &mut found) {
+            } else if v.view.is_some() {
+                list(ui, m, gu, &info, &v, free && !asking, &mut mouse);
+            } else {
+                ui.label(egui::RichText::new("Buy or sell?").size(m.theme.small).color(m.theme.color("muted")));
+            }
+            if let Some((n, max)) = v.qty {
+                ui.add_space(8.0);
+                mouse.key = count_row(ui, m, gu, &gu.title_msg(0x3e).unwrap_or_default(), n, max);
+            }
+            if let Some(money) = v.money {
+                ui.add_space(8.0);
+                (mouse.key, mouse.money) = money_row(ui, m, gu, money, None);
+            }
+            if let Some(c) = v.confirm {
+                ui.add_space(8.0);
+                confirm(ui, m, gu, &info, &v, c, &mut mouse);
+            }
+        },
+    );
     if !free {
         return;
     }

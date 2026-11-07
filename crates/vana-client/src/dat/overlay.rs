@@ -302,7 +302,11 @@ mod tests {
         };
         let (stock, a, b) = (file("stock.DAT", 1), file("a.DAT", 2), file("b.DAT", 3));
         let cache = dir.join("cache");
-        let config = |m: &std::path::Path| Overlays { by_id: [(7, vec![m.to_path_buf()])].into(), dirs: Vec::new(), cache: cache.clone() };
+        let config = |m: &std::path::Path| Overlays {
+            by_id: [(7, vec![m.to_path_buf()])].into(),
+            dirs: Vec::new(),
+            cache: cache.clone(),
+        };
         let want = |m: &std::path::Path| merge(&std::fs::read(&stock).unwrap(), &[std::fs::read(m).unwrap()]).unwrap();
         std::thread::scope(|s| {
             for k in 0..8 {

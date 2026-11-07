@@ -202,8 +202,12 @@ pub(super) fn install(lua: &Lua, ui: &Table, mod_id: &str) -> mlua::Result<()> {
             need(lua, "ui.native")?;
             // A HUD piece, else a modern panel by name.
             if !PIECES.iter().any(|p| p.0 == what) && !PANELS.iter().any(|p| p.name == what && p.hide) {
-                let names: Vec<&str> = PIECES.iter().map(|p| p.0).chain(PANELS.iter().filter(|p| p.hide).map(|p| p.name)).collect();
-                return Err(mlua::Error::runtime(format!("no HUD piece or panel {what:?} that can hide ({})", names.join(", "))));
+                let names: Vec<&str> =
+                    PIECES.iter().map(|p| p.0).chain(PANELS.iter().filter(|p| p.hide).map(|p| p.name)).collect();
+                return Err(mlua::Error::runtime(format!(
+                    "no HUD piece or panel {what:?} that can hide ({})",
+                    names.join(", ")
+                )));
             }
             let info = info(lua);
             let mut f = info.borrow_mut();
@@ -237,7 +241,11 @@ pub(super) fn install(lua: &Lua, ui: &Table, mod_id: &str) -> mlua::Result<()> {
                         Some("bottom_left") => (0.0, 1.0),
                         Some("bottom_right") => (1.0, 1.0),
                         Some("center" | "centre") => (0.5, 0.5),
-                        Some(o) => return Err(mlua::Error::runtime(format!("origin {o:?}: top_left, top_right, bottom_left, bottom_right or center"))),
+                        Some(o) => {
+                            return Err(mlua::Error::runtime(format!(
+                                "origin {o:?}: top_left, top_right, bottom_left, bottom_right or center"
+                            )));
+                        }
                     };
                     let placed = super::state::Placed { x: s.get("x")?, y: s.get("y")?, scale, alpha, origin };
                     f.placed.insert(name, (me.clone(), placed));
