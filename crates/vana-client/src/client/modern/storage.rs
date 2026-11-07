@@ -497,7 +497,7 @@ pub fn draw(p: &mut Panels, w: &mut World) {
                 mouse.bag = Some(tabs[i]);
             }
         }
-        if !b.read_only && BAGS[g].1[0] != BIN {
+        if !b.read_only && b.qty.is_none() && BAGS[g].1[0] != BIN {
             let cursor = b.sortw.filter(|s| s.ask.is_none()).map(|s| (s.cursor.clamp(1, 2) - 1) as usize);
             let lit = cursor.map_or(0, |k| 1u64 << k) | if b.manual.is_some() { 1 << 1 } else { 0 };
             ui.horizontal_wrapped(|ui| {
