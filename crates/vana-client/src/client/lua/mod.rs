@@ -19,10 +19,13 @@ mod native;
 mod pattern;
 pub(super) mod render;
 mod runtime;
+pub(super) mod skin;
 mod sock;
 mod state;
 mod vm;
 pub(super) mod window;
+
+pub(in crate::client) use state::Placed;
 
 use super::World;
 use std::path::PathBuf;
@@ -259,8 +262,9 @@ pub struct Host {
     pub(in crate::client) music_dirty: bool,
     /// What the UI knows that mods read (the map grid).
     info: std::rc::Rc<std::cell::RefCell<state::FrameInfo>>,
-    /// HUD elements clicked since the last mod phase: (mod, element, button).
-    hud_clicks: Vec<(String, String, &'static str)>,
+    /// HUD element events since the last mod phase (clicks, drags, drops, the pointer in and out): (mod, element,
+    /// event).
+    hud_events: Vec<(String, String, serde_json::Value)>,
     /// Since when the world's mods wait for our character's state.
     start_wait: Option<std::time::Instant>,
     /// The game UI's data for this mod phase, lent to mods loaded during it too (their entry file and `load`).
@@ -588,6 +592,8 @@ impl Host {
         for mods in info.hidden.values_mut() {
             mods.remove(&vm.manifest.id);
         }
+        info.placed.retain(|_, p| p.0 != vm.manifest.id);
+        info.skin.forget(&vm.manifest.id);
         info.looks.retain(|_, l| l.0 != vm.manifest.id);
         info.item_tints.retain(|_, t| t.0 != vm.manifest.id);
         info.shaders.retain(|s| s.0 != vm.manifest.id);
@@ -1044,13 +1050,17 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
             let Some(vm) = host.vms.iter().find(|v| v.manifest.id == m && v.suspended.is_none() && v.st.borrow().granted.iter().any(|g| g == "multibox")) else { continue };
             lend(vm, w, |vm| vm.emit("ipc_message", (text.clone(), from.clone())));
         }
-        for (m, id, button) in std::mem::take(&mut host.hud_clicks) {
+        hud::hover(&mut host);
+        for (m, id, mut e) in std::mem::take(&mut host.hud_events) {
             let Some(vm) = host.vms.iter().find(|v| v.manifest.id == m && v.suspended.is_none()) else { continue };
             let f = vm.st.borrow().hud_handlers.iter().find(|h| h.0 == id).and_then(|h| vm.lua.registry_value::<mlua::Function>(&h.1).ok());
             if let Some(f) = f {
+                e["id"] = id.clone().into();
+                // The pointer coming and going is not the player acting.
+                let input = !matches!(e["kind"].as_str(), Some("mouse_enter" | "mouse_leave"));
                 lend(vm, w, |vm| {
-                    let e = api::to_lua(&vm.lua, &serde_json::json!({"kind": "click", "id": id, "button": button})).unwrap_or(mlua::Value::Nil);
-                    vm.call_input(f, (id.clone(), e));
+                    let t = api::to_lua(&vm.lua, &e).unwrap_or(mlua::Value::Nil);
+                    if input { vm.call_input(f, (id.clone(), t)) } else { vm.call(f, (id.clone(), t)) }
                 });
             }
         }
@@ -1440,6 +1450,11 @@ impl Host {
         self.info.borrow_mut().view_proj = m;
     }
 
+    /// The tooltip of the mod HUD element under the pointer: (title, text, seconds there).
+    pub(in crate::client) fn hud_tip(&self) -> Option<(String, String, f32)> {
+        hud::tip(self)
+    }
+
     /// Whether a mod hid a native HUD piece (ui.native.hide).
     pub(in crate::client) fn hides(&self, piece: &str) -> bool {
         self.info.borrow().hidden.get(piece).is_some_and(|m| !m.is_empty())
@@ -1467,9 +1482,36 @@ impl Host {
         self.info.borrow().looks.iter().map(|(id, l)| (*id, l.1.clone())).collect()
     }
 
-    /// The modern panels of the hidden pieces.
+    /// The modern panels of the hidden pieces, and the panels hidden by name.
     pub(in crate::client) fn hidden_panels(&self) -> Vec<&'static str> {
-        native::PIECES.iter().filter(|p| self.hides(p.0)).flat_map(|p| p.1.iter().copied()).collect()
+        let pieces = native::PIECES.iter().filter(|p| self.hides(p.0)).flat_map(|p| p.1.iter().copied());
+        pieces.chain(native::PANELS.iter().filter(|p| p.hide && self.hides(p.name)).map(|p| p.name)).collect()
+    }
+
+    /// The modern panels mods placed, scaled or faded (ui.native.place).
+    pub(in crate::client) fn placed(&self) -> std::collections::HashMap<String, Placed> {
+        self.info.borrow().placed.iter().map(|(k, v)| (k.clone(), v.1)).collect()
+    }
+
+    /// The modern panels drawn this frame, in window pixels; those not drawn keep their last rect, as not shown, but
+    /// those a mod hid take where they would stand now (`hidden`: what they sit on moves).
+    pub(in crate::client) fn set_native_rects(&self, drawn: Vec<(String, [f32; 4])>, hidden: Vec<(String, [f32; 4])>) {
+        let mut f = self.info.borrow_mut();
+        for r in f.native_rects.values_mut() {
+            r.1 = false;
+        }
+        for (id, r) in drawn {
+            f.native_rects.insert(id, (r, true));
+        }
+        for (id, r) in hidden {
+            f.native_rects.insert(id, (r, false));
+        }
+    }
+
+    /// The mods' look for the modern UI, when it changed since version `seen`.
+    pub(in crate::client) fn skin_since(&self, seen: u64) -> Option<skin::Skin> {
+        let f = self.info.borrow();
+        (f.skin.ver != seen).then(|| f.skin.clone())
     }
 
     /// The window's place on the desktop and its focus; a change of focus raises focus_change.
@@ -1537,6 +1579,110 @@ mod tests {
         assert!(t0.elapsed() < std::time::Duration::from_secs(2), "the test ran {:?}", t0.elapsed());
         assert!(vm.st.borrow().sleepers.is_empty());
         assert_eq!(vm.st.borrow().errors.len(), 1);
+    }
+
+    /// HUD elements: a press released in place is a click; one that moves is a drag, ending over another element that
+    /// gets a drop; the pointer coming and going; tips and spell icons from their specs.
+    #[test]
+    fn hud_clicks_drags_and_hover() {
+        use winit::event::MouseButton::Left;
+        let mut host = Host::default();
+        let vm = Vm::new(manifest::Manifest { id: "t".into(), ..Default::default() }, PathBuf::from("."), vm::Source::Dir(PathBuf::from("."))).unwrap();
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        vm.lua
+            .load(
+                r#"
+                hud.rect("a", {x = 0, y = 0, w = 10, h = 10, tip = "A"})
+                hud.rect("b", {x = 20, y = 0, w = 10, h = 10, tip = {title = "B", text = "b"}})
+                hud.icon("c", {kind = "spell", id = 1})
+                hud.on("a", function() end)
+                hud.on("b", function() end)
+            "#,
+            )
+            .exec()
+            .unwrap();
+        assert!(vm.st.borrow().hud.iter().any(|e| e.id == "c" && matches!(e.kind, hud::Kind::Icon { icon: window::Icon::Spell(1), .. })));
+        host.vms.push(vm);
+        host.info.borrow_mut().hud_rects = vec![("t".into(), "a".into(), [0.0, 0.0, 10.0, 10.0]), ("t".into(), "b".into(), [20.0, 0.0, 10.0, 10.0])];
+        let at = |host: &mut Host, x: f64| {
+            host.input.borrow_mut().cursor = (x, 5.0);
+            input::hud_drag(host, x, 5.0);
+        };
+        let take = |host: &mut Host| std::mem::take(&mut host.hud_events).into_iter().map(|(_, id, e)| (id, e)).collect::<Vec<_>>();
+        let kinds = |ev: &[(String, serde_json::Value)]| ev.iter().map(|(id, e)| format!("{id} {}", e["kind"].as_str().unwrap())).collect::<Vec<_>>();
+        at(&mut host, 5.0);
+        assert!(input::hud_press(&mut host, Left));
+        at(&mut host, 7.0);
+        input::hud_release(&mut host, Left);
+        assert_eq!(kinds(&take(&mut host)), ["a click"]);
+        assert!(input::hud_press(&mut host, Left));
+        for x in [12.0, 18.0, 25.0] {
+            at(&mut host, x);
+        }
+        input::hud_release(&mut host, Left);
+        let ev = take(&mut host);
+        assert_eq!(kinds(&ev), ["a drag_start", "a drag", "a drag_end", "b drop"]);
+        // Pressed at x 7, released at 25.
+        assert_eq!((ev[1].1["dx"].as_i64(), ev[2].1["over"].as_str(), ev[3].1["from"].as_str()), (Some(18), Some("b"), Some("a")));
+        // Nothing under the pointer is pressed there.
+        at(&mut host, 15.0);
+        assert!(!input::hud_press(&mut host, Left));
+        at(&mut host, 25.0);
+        hud::hover(&mut host);
+        at(&mut host, 5.0);
+        hud::hover(&mut host);
+        assert_eq!(kinds(&take(&mut host)), ["b mouse_enter", "b mouse_leave", "a mouse_enter"]);
+        assert_eq!(hud::tip(&host).map(|t| (t.0, t.1)), Some((String::new(), "A".into())));
+    }
+
+    /// ui.native.place / rect / panels and ui.skin: names checked, the permission asked, each change its mod's (another
+    /// mod's release leaves it), a skin change counted once; HUD anchors name panels.
+    #[test]
+    fn native_panels_and_skin() {
+        let host = Host::default();
+        let new = |id: &str, granted: bool| {
+            let vm = Vm::new(manifest::Manifest { id: id.into(), ..Default::default() }, PathBuf::from("."), vm::Source::Dir(PathBuf::from("."))).unwrap();
+            vm.lua.set_app_data(host.info.clone());
+            api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+            if granted {
+                vm.st.borrow_mut().granted.push("ui.native".into());
+            }
+            vm
+        };
+        let (a, b, c) = (new("a", true), new("b", true), new("c", false));
+        let run = |vm: &Vm, code: &str| vm.lua.load(code).exec();
+        run(&a, r#"ui.native.place("party", {x = 10, y = 20, scale = 2})"#).unwrap();
+        run(&b, r#"ui.native.place("party", nil)"#).unwrap();
+        assert_eq!(host.info.borrow().placed.get("party").map(|p| (p.0.as_str(), p.1.scale, p.1.x)), Some(("a", 2.0, Some(10.0))));
+        for bad in [r#"ui.native.place("timers", {})"#, r#"ui.native.place("nope", {})"#, r#"ui.native.hide("command")"#, r#"ui.skin.sprite("nope", false)"#, r#"ui.skin.colour("nope", false)"#, r#"hud.rect("r", {anchor = "nope"})"#] {
+            assert!(run(&a, bad).is_err(), "{bad}");
+        }
+        assert!(run(&c, r#"ui.native.place("party", {})"#).unwrap_err().to_string().contains("ui.native"));
+        run(&a, r#"ui.native.hide("focus"); ui.skin.colour("gold", {255, 0, 0}); ui.skin.sprite("gauges/hp_full", false)"#).unwrap();
+        run(&b, r#"ui.skin.colour("gold", false)"#).unwrap();
+        assert!(host.hidden_panels().contains(&"focus"));
+        {
+            let f = host.info.borrow();
+            assert_eq!((f.skin.ver, f.skin.colours.get("gold").map(|c| c.1)), (1, Some([255, 0, 0, 255])));
+        }
+        host.info.borrow_mut().skin.forget("a");
+        assert_eq!((host.info.borrow().skin.ver, host.info.borrow().skin.colours.len()), (2, 0));
+        host.set_native_rects(vec![("party".into(), [1.0, 2.0, 3.0, 4.0])], Vec::new());
+        assert_eq!(a.lua.load(r#"local r = ui.native.rect("party"); return r.x, r.h, r.shown"#).eval::<(i64, i64, bool)>().unwrap(), (1, 4, true));
+        // Closed: the last rect stays. Hidden by a mod: where it would stand now.
+        host.set_native_rects(Vec::new(), Vec::new());
+        assert_eq!(a.lua.load(r#"local r = ui.native.rect("party"); return r.x, r.shown"#).eval::<(i64, bool)>().unwrap(), (1, false));
+        host.set_native_rects(Vec::new(), vec![("party".into(), [9.0; 4]), ("where".into(), [5.0, 6.0, 7.0, 0.0])]);
+        assert_eq!(a.lua.load(r#"local r = ui.native.rect("party"); return r.x, r.shown"#).eval::<(i64, bool)>().unwrap(), (9, false));
+        assert_eq!(a.lua.load(r#"local r = ui.native.rect("where"); return r.x, r.shown"#).eval::<(i64, bool)>().unwrap(), (5, false));
+        assert!(run(&a, r#"ui.native.place("target", {scale = 2, origin = "middle"})"#).is_err());
+        run(&a, r#"ui.native.place("target", {scale = 2, origin = "bottom_right"})"#).unwrap();
+        assert_eq!(host.info.borrow().placed.get("target").map(|p| p.1.origin), Some((1.0, 1.0)));
+        assert!(a.lua.load(r#"return ui.native.rect("focus")"#).eval::<Option<mlua::Table>>().unwrap().is_none());
+        run(&a, r#"hud.rect("r", {anchor = "party", corner = "top_right", x = -10, y = -24})"#).unwrap();
+        assert!(run(&a, r#"hud.rect("r", {anchor = "party", corner = "middle"})"#).is_err());
+        let n: i64 = a.lua.load(r#"local n = 0 for _, p in ipairs(ui.native.panels()) do n = n + 1 end return n"#).eval().unwrap();
+        assert_eq!(n as usize, native::PANELS.len());
     }
 
     /// A suspended mod's provided functions don't run for other mods either.
@@ -1964,7 +2110,7 @@ pub(super) fn draw_classic(gu: &mut super::game_ui::GameUi, w: &World) -> Vec<[f
     let mut out = Vec::new();
     for (v, id, x, y) in classic_places(w) {
         if let Some(win) = w.lua.vms[v].st.borrow().windows.iter().find(|x| x.id == id) {
-            out.push(win.draw_classic(gu, w.item_info.as_deref(), x, y));
+            out.push(win.draw_classic(gu, Some(w), x, y));
         }
     }
     out
@@ -2216,7 +2362,7 @@ fn permission_text(p: &str) -> (&'static str, &'static str) {
         "exec" => ("Allow running programs", "Starts programs on this computer."),
         "clipboard" => ("Allow reading the clipboard", "Reads the text you copied."),
         "multibox" => ("Allow multibox", "Talks to your other game windows on this computer."),
-        "ui.native" => ("Allow game windows", "Opens, hides and drives the game's own windows."),
+        "ui.native" => ("Allow game windows", "Opens, hides, moves, scales and reskins the game's own windows and panels, and drives them."),
         "process" => ("Allow process settings", "Sets which CPU cores the game runs on, and its priority."),
         "devices" => ("Allow devices", "Talks to USB devices directly (G-keys, Stream Decks and the like)."),
         "mods" => ("Allow controlling mods", "Loads, unloads, reloads, hides and shows your other mods."),

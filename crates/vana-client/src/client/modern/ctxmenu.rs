@@ -1,7 +1,7 @@
 //! Ours (the pack's interaction contract: "right click a context menu"; retail has none): right-click menus on the
 //! Items window's rows (Use, Drop, Sort, Move to), the party and alliance rows (Target, Check, Tell, Focus) and the
 //! actors in the world (Talk, Target, Attack, Check, Tell, Invite, Trade). Every row runs what the keyboard path
-//! already runs (the item list's own keys, the text commands, the trade window), so the rules and refusals stay
+//! already runs (the item list's keys, the text commands, the trade window), so the rules and refusals stay
 //! retail's. One look for every menu, the chat window's included (chatsel.rs).
 
 use super::super::items::{self as gitems, Storage, Sub, Win};
@@ -21,7 +21,7 @@ pub enum Menu {
     Actor { at: Pos2, id: u32 },
 }
 
-/// The bags an item can go to away from the moogle (container, name): the Mog House's own bags are the storage
+/// The bags an item can go to away from the moogle (container, name): the Mog House's bags are the storage
 /// view's.
 const BAGS: [(u8, &str); 11] = [
     (5, "Mog Satchel"),
@@ -60,9 +60,28 @@ enum Act {
 type Row = (String, Act, bool);
 
 /// The open popup: an optional heading (a name), its rows in the pack's frame by `at`. Returns the row picked and
-/// whether it should close (a pick, a press outside it, Escape).
+/// whether it should close (a pick, a press outside it, Escape). The keys: Up / Down move the highlight over the usable
+/// rows (the first to start), Enter picks it, Escape closes; while a menu is open they reach no game key
+/// (World::ctx_menu_open: the key chain skips them, typing_elsewhere stops the key functions).
 pub fn popup(ctx: &egui::Context, m: &Modern, at: Pos2, title: Option<&str>, rows: &[(&str, bool)]) -> (Option<usize>, bool) {
     let mut picked = None;
+    let sel_id = Id::new("modern context menu sel").with((title, at.x as i32, at.y as i32));
+    let usable: Vec<usize> = rows.iter().enumerate().filter(|(_, r)| r.1).map(|(k, _)| k).collect();
+    let mut sel = ctx.data(|d| d.get_temp::<usize>(sel_id)).filter(|k| usable.contains(k)).or(usable.first().copied());
+    let (down, up, enter) = ctx.input(|i| (i.key_pressed(egui::Key::ArrowDown), i.key_pressed(egui::Key::ArrowUp), i.key_pressed(egui::Key::Enter)));
+    if let Some(at) = sel.and_then(|s| usable.iter().position(|&k| k == s)) {
+        if down {
+            sel = Some(usable[(at + 1) % usable.len()]);
+        } else if up {
+            sel = Some(usable[(at + usable.len() - 1) % usable.len()]);
+        }
+    }
+    if let Some(s) = sel {
+        ctx.data_mut(|d| d.insert_temp(sel_id, s));
+    }
+    if enter {
+        picked = sel;
+    }
     let font = FontId::proportional(m.theme.ui);
     let head = FontId::new(m.theme.small, FontFamily::Name(super::STRONG.into()));
     let width = |s: &str, f: &FontId| ctx.fonts_mut(|fo| fo.layout_no_wrap(s.to_string(), f.clone(), Color32::WHITE).size().x);
@@ -79,12 +98,13 @@ pub fn popup(ctx: &egui::Context, m: &Modern, at: Pos2, title: Option<&str>, row
             }
             for (k, (label, usable)) in rows.iter().enumerate() {
                 let (r, resp) = ui.allocate_exact_size(vec2(wide, m.theme.ui + 12.0), if *usable { Sense::click() } else { Sense::hover() });
-                if *usable && resp.hovered() {
+                let lit = *usable && (resp.hovered() || sel == Some(k));
+                if lit {
                     ui.painter().rect_filled(r.expand2(vec2(4.0, 0.0)), 4.0, m.theme.color("focus").gamma_multiply(0.35));
                 }
                 let colour = if !*usable {
                     m.theme.color("muted")
-                } else if resp.hovered() {
+                } else if lit {
                     m.theme.color("gold")
                 } else {
                     m.theme.color("text")
@@ -224,7 +244,7 @@ fn party_rows(w: &World, slot: usize) -> Option<(Option<String>, Vec<Row>)> {
     if !me {
         rows.push(("Tell".into(), Act::Tell, !name.is_empty()));
     }
-    // /focustarget takes our own party's slots 1..5 (retail's party menu Focus).
+    // /focustarget takes our party's slots 1..5 (retail's party menu Focus).
     if (1..6).contains(&slot) {
         rows.push(("Focus Target".into(), Act::Focus, true));
     }
@@ -305,7 +325,7 @@ fn run(w: &mut World, menu: &Menu, act: Act) {
     }
 }
 
-/// An item row's pick through the list's own keys: the cursor onto the row, then iuse's child or itmsort2's Auto-sort
+/// An item row's pick through the list's keys: the cursor onto the row, then iuse's child or itmsort2's Auto-sort
 /// and Enter (Drop and Sort still ask first).
 fn item_act(w: &mut World, bag: u8, index: u8, id: u16, act: Act) {
     if let Act::Move(c) = act {

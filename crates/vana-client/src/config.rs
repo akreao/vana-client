@@ -84,6 +84,15 @@ pub fn known_servers_path() -> PathBuf {
     }
 }
 
+/// The change notes an update left for the restarted client (client/notes.rs): in the data dir, or beside an
+/// FFXI_CONFIG copy.
+pub fn whats_new_path() -> PathBuf {
+    match std::env::var_os("FFXI_CONFIG") {
+        Some(p) => PathBuf::from(p).with_file_name("whats-new.json"),
+        None => data_dir().join("whats-new.json"),
+    }
+}
+
 /// The client's log: in the data dir, or beside an FFXI_CONFIG copy (test runs keep their own).
 pub fn log_path() -> PathBuf {
     match std::env::var_os("FFXI_CONFIG") {
@@ -120,6 +129,20 @@ pub struct SavedLogin {
 /// Server names compare without case or outer spaces ("PlayOnline", "playonline").
 fn same_server(a: &str, b: &str) -> bool {
     a.trim().eq_ignore_ascii_case(b.trim())
+}
+
+/// What a server's rest ticks look like, as learnt (client/resttick.rs keeps it moving).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RestModel {
+    /// From the rest's start to the first heal seen (seconds), a mean over rests.
+    pub first: f32,
+    /// The intervals after each heal, means over rests; the last stands for every later one.
+    pub gaps: Vec<f32>,
+    /// How many rests each value holds ([first, gaps...]), capped so later rests still move it.
+    pub seen: Vec<u32>,
+    /// The server's look period (its ticks land on the first look after their time); 0: on time.
+    pub period: f32,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -195,6 +218,10 @@ pub struct Config {
     /// on and only to a private server. No Settings row: only a server with its GM extension can use it, so it is set
     /// in config.json by hand.
     pub gm_window: bool,
+    /// The version whose change notes were last shown (client/notes.rs): a newer client shows the notes since. A
+    /// config from before the notes has none, so its first newer build shows that build's own.
+    #[serde(default)]
+    pub notes_seen: String,
     /// Extra (the trust chatter filters): trusts' party lines (battle message 711) are not printed.
     pub hide_trust_speech: bool,
     /// Extra (Battlemod's filters): "readies" / "starts casting" lines only for us and monsters.
@@ -223,9 +250,8 @@ pub struct Config {
     pub minimap_dock: u32,
     pub minimap_size: u32,
     pub minimap_span: f32,
-    /// Ours: resting's ticks as timed on the first rest seen, [first heal, interval, the server's look period] in
-    /// seconds (client/resttick.rs).
-    pub rest_tick: Option<[f32; 3]>,
+    /// Ours: resting's ticks as learnt per server (by its search address, "ip-port"; client/resttick.rs).
+    pub rest_models: std::collections::BTreeMap<String, RestModel>,
     /// The drawn cursor's size (config 0021 off) in percent of retail's pixels on screen; 0 = auto (grows with the
     /// window height from 720). Not retail: it was sized for 640 x 480. The .ani cursors keep their own size.
     pub cursor_size: u32,
@@ -272,6 +298,8 @@ pub struct Config {
     pub modern_battle_in_all: bool,
     /// The modern chat merges an action's lines that differ only in their number (BattleMod's condensing).
     pub modern_condense: bool,
+    /// The modern chat's tabs hidden by its settings, by name (All always shows).
+    pub modern_chat_hidden: Vec<String>,
     /// The list search's recent picks by character, newest first (listsearch.rs).
     pub modern_recent: std::collections::BTreeMap<String, Vec<String>>,
     /// The modern UI's mode presets (client/modern/modes.rs).
@@ -437,6 +465,7 @@ impl Default for Config {
             target_hpp: false,
             earth_clock: false,
             gm_window: false,
+            notes_seen: env!("CARGO_PKG_VERSION").into(),
             lamp_lights: true,
             actor_shadows: 0,
             shadow_map: 2048,
@@ -457,7 +486,7 @@ impl Default for Config {
             minimap_dock: 0,
             minimap_size: 1,
             minimap_span: 160.0,
-            rest_tick: None,
+            rest_models: Default::default(),
             cursor_size: 0,
             keys_hide_cursor: true,
             cam_keys_x: 0,
@@ -473,6 +502,7 @@ impl Default for Config {
             modern_scan_kinds: 7,
             modern_battle_in_all: true,
             modern_condense: true,
+            modern_chat_hidden: Vec::new(),
             modern_recent: Default::default(),
             modern_modes: Default::default(),
             modern_favourites: Default::default(),

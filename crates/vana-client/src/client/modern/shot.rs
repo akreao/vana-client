@@ -26,7 +26,7 @@ fn list_sample(p: &mut Panels) {
     let m = p.m;
     let rows = [("Hi-Potion", 12), ("Echo Drops", 4), ("Fire Crystal", 99), ("Scroll of Protect II", 1), ("Sleep Bolt", 87), ("Mithkabob", 6)];
     let at = p.ctx.content_rect().center() + vec2(-160.0, -240.0);
-    p.panel_at("items", Some(super::Title { icon: Some("icons/items"), text: "Items", note: Some("42/80") }), 320.0, at, |ui| {
+    p.panel_at("items", Some(super::Title { icon: Some("icons/items"), text: "Items", note: Some("42/80"), name: false }), 320.0, at, |ui| {
         for (k, (name, n)) in rows.iter().enumerate() {
             let (r, _) = ui.allocate_exact_size(vec2(296.0, 28.0), egui::Sense::hover());
             let face = if k == 2 { "controls/list_row_selected" } else { "controls/list_row_normal" };
@@ -48,7 +48,7 @@ fn favs_sample(p: &mut Panels) {
     super::favs::strip(p, &chips);
     let m = p.m;
     let at = p.ctx.content_rect().center() + vec2(-160.0, -240.0);
-    p.panel_at("items", Some(super::Title { icon: None, text: "White Magic", note: Some("4") }), 320.0, at, |ui| {
+    p.panel_at("items", Some(super::Title { icon: None, text: "White Magic", note: Some("4"), name: false }), 320.0, at, |ui| {
         for (k, (name, on)) in [("Cure", true), ("Cure II", false), ("Cure IV", true), ("Protect", false)].into_iter().enumerate() {
             let (r, resp) = ui.allocate_exact_size(vec2(296.0, 30.0), egui::Sense::hover());
             let face = if k == 1 { "controls/list_row_selected" } else { "controls/list_row_normal" };
@@ -64,7 +64,7 @@ fn favs_sample(p: &mut Panels) {
 /// The kit's controls as a Config page has them: sliders with a short and a long value, options, a long-labelled line.
 fn kit_sample(p: &mut Panels) {
     let m = p.m;
-    p.panel("window", Some(Title { icon: Some("icons/config"), text: "Config", note: None }), 640.0, |ui| {
+    p.panel("window", Some(Title { icon: Some("icons/config"), text: "Config", note: None, name: false }), 640.0, |ui| {
         ui.set_width(440.0);
         kit::slider_setting(ui, m, "Resolution", false, false, 17, 16, "2560x1440");
         kit::slider_setting(ui, m, "GPU", true, false, 3, 1, "AMD Radeon RX 6800 XT (RADV NAVI21)");
@@ -76,7 +76,7 @@ fn kit_sample(p: &mut Panels) {
     });
     // link11 as the modern window draws it (no item cache here: a disc stands in for the shell icon).
     let v = super::social::NameView { name: "Sunset Watch", rgb: [15, 9, 3], sel: 3, edit: 0 };
-    p.panel_at("naming sample", Some(Title { icon: Some("icons/linkshell"), text: "New Linkshell", note: None }), super::social::NAME_W + 44.0, pos2(720.0, 40.0), |ui| {
+    p.panel_at("naming sample", Some(Title { icon: Some("icons/linkshell"), text: "New Linkshell", note: None, name: false }), super::social::NAME_W + 44.0, pos2(720.0, 40.0), |ui| {
         super::social::naming_body(ui, m, &v, None, true);
     });
 }
@@ -86,7 +86,7 @@ fn menu_sample(p: &mut Panels) {
     let [top, journal] = super::command::sample();
     let at = p.ctx.content_rect().right_top() + vec2(-290.0, 60.0);
     let mut rect = None;
-    p.panel_at("command", Some(super::Title { icon: None, text: "Menu", note: None }), 250.0, at, |ui| {
+    p.panel_at("command", Some(super::Title { icon: None, text: "Menu", note: None, name: false }), 250.0, at, |ui| {
         let r = ui.min_rect();
         for (label, icon, sub) in &top {
             super::rows::menu_row(ui, m, icon, label, *label == "Journal", false, *sub, true, *label == "Magic");
@@ -94,7 +94,7 @@ fn menu_sample(p: &mut Panels) {
         rect = Some(r);
     });
     let Some(r) = rect else { return };
-    p.panel_at("command sub", Some(super::Title { icon: Some("icons/quest_log"), text: "Journal", note: None }), 250.0, pos2(r.min.x - 274.0, r.min.y - 12.0), |ui| {
+    p.panel_at("command sub", Some(super::Title { icon: Some("icons/quest_log"), text: "Journal", note: None, name: false }), 250.0, pos2(r.min.x - 274.0, r.min.y - 12.0), |ui| {
         for (label, icon, sub) in &journal {
             super::rows::menu_row(ui, m, icon, label, *label == "Quests", *label == "Key Items", *sub, false, false);
         }
@@ -227,7 +227,7 @@ fn titles_sample(p: &mut Panels) {
         }
     };
     for (id, title, note) in [("combat", "Commands", "Ghillie Dhu of the Great Woods"), ("palette", "Battle", "Qu'Vho: Deathhurler"), ("list", "Commands", "Tonberry Creeper")] {
-        p.panel(id, Some(Title { icon: Some("icons/attack"), text: title, note: Some(note) }), 270.0, |ui| rows(ui, &["Attack", "Magic", "Abilities"]));
+        p.panel(id, Some(Title { icon: Some("icons/attack"), text: title, note: Some(note), name: false }), 270.0, |ui| rows(ui, &["Attack", "Magic", "Abilities"]));
     }
     hud::target_panel(p, &TargetView { name: "Shadow Lord's Lieutenant of the North".into(), ring: "indicators/target_hostile", locked: false, hp: Some((100, 1.0)), colour: None, cast: None, distance: Some(4.2) });
 }
@@ -250,7 +250,7 @@ fn sample(m: &Modern, ctx: &egui::Context, layout: &mut Layout, opts: &Opts) {
     };
     super::topbar::draw(m, ctx, &top);
     let (mut changed, mut chat_font) = (false, opts.chat_font);
-    let mut p = Panels { m, ctx, gu: None, layout, vis: Default::default(), changed: &mut changed, chat_font: &mut chat_font, battle_in_all: &mut true, condense: &mut true, folded: &mut Default::default(), scan_kinds: &mut 7, this: Default::default(), retail: Default::default(), focus: Some("target"), hidden: Vec::new() };
+    let mut p = Panels { m, ctx, gu: None, layout, vis: Default::default(), changed: &mut changed, chat_font: &mut chat_font, battle_in_all: &mut true, condense: &mut true, chat_hidden: &mut Vec::new(), folded: &mut Default::default(), scan_kinds: &mut 7, this: Default::default(), retail: Default::default(), focus: Some("target"), hidden: Vec::new(), placed: Default::default() };
     // The chat window first, as the layer draws it: the location panel sits on it.
     let wh = [0x80, 0x80, 0x80, 0x80];
     let lines = vec![
@@ -281,8 +281,8 @@ fn sample(m: &Modern, ctx: &egui::Context, layout: &mut Layout, opts: &Opts) {
     hud::where_panel(&mut p, &WhereView { zone: "West Ronfaure".into(), grid: "(F-9)".into(), time: (18, 42), day: (3, "Windsday".into()), weather: Some(11), compass: Some(compass), clock: Some(super::super::clock::Parts { earth: "20:40".into(), moon: ("Last Quarter Moon".into(), 60), next: ("Lightningday".into(), 46) }) });
     let theirs = vec![fx("icons/protect", None, false), fx("icons/sleep", None, false)];
     let vit = |hp: u32, mp: u32, f: f32| hud::RowVitals { hp, hp_max: Some(1000), mp, tp: Some(if f > 0.9 { 1250 } else { 300 }), hpf: f, mpf: Some(f * 0.8), hp_colour: if f < 0.75 { egui::Color32::from_rgb(0xff, 0xd0, 0x40) } else { egui::Color32::WHITE } };
-    let row = |slot, name: &str, job, here: bool, hp: f32, marked, effects: Vec<Effect>| PartyRow { slot, name: name.into(), icon: hud::job_icon(job), sub_icon: hud::job_icon(if job == 3 { 5 } else { 0 }), here: here.then(|| vit((hp * 1000.0) as u32, 420, hp)), zone: "Port Jeuno".into(), marked, hand: marked.then_some(0x8080_8080), marks: (slot == 0) as u8, effects, jobs: String::new() };
-    hud::party_panel(&mut p, "party", "Party", &[row(0, "Lenon", 5, true, 0.98, false, vec![]), row(1, "Raven", 1, true, 0.88, false, theirs.clone()), row(2, "Koru", 3, true, 0.62, true, vec![]), row(3, "Shantotto", 4, true, 0.95, false, vec![]), row(4, "Prishe", 2, false, 1.0, false, vec![])], false, Some(super::super::resttick::Shown::Next(0.6, 4.0)));
+    let row = |slot, name: &str, job, here: bool, hp: f32, marked, effects: Vec<Effect>| PartyRow { slot, name: name.into(), icon: hud::job_icon(job), sub_icon: hud::job_icon(if job == 3 { 5 } else { 0 }), here: here.then(|| vit((hp * 1000.0) as u32, 420, hp)), zone: "Port Jeuno".into(), marked, hand: marked.then_some(0x8080_8080), marks: (slot == 0) as u8, effects, jobs: String::new(), level: [75, 99, 52, 7][slot % 4] };
+    hud::party_panel(&mut p, "party", "Party", &[row(0, "Lenon", 5, true, 0.98, false, vec![]), row(1, "Raven", 1, true, 0.88, false, theirs.clone()), row(2, "Koru", 3, true, 0.62, true, vec![]), row(3, "Shantotto", 4, true, 0.95, false, vec![]), row(4, "Prishe", 2, false, 1.0, false, vec![])], false, Some(super::super::resttick::Shown::Next(0.6, 4.0)), Some(&hud::ExpView { title: "Level 75".into(), now: 21_480, next: 34_000, capped: false, body: "EXP 21,480 / 34,000 (63%)\n12,520 to go".into() }));
     // The two alliance parties as party_rows builds them: no MP bar, leader marks (bit 1 the alliance leader's), a
     // member out of the zone, a trust's row without TP.
     let ally = |slot, name: &str, job, here: bool, hp: f32, marks: u8, tp: bool| {
@@ -296,13 +296,13 @@ fn sample(m: &Modern, ctx: &egui::Context, layout: &mut Layout, opts: &Opts) {
     if opts.alliance {
         let a1 = [ally(6, "Ayame", 12, true, 1.0, 3, true), ally(7, "Naji", 1, true, 0.42, 0, true), ally(8, "Kupipi", 3, true, 0.9, 0, false), ally(9, "Mihli Aliapoh", 3, false, 1.0, 0, true), ally(10, "Excenmille", 7, true, 0.15, 0, true), ally(11, "Trion", 7, true, 0.77, 0, true)];
         let a2 = [ally(12, "Zeid", 8, true, 0.66, 1, true), ally(13, "Lion", 6, true, 1.0, 0, true)];
-        hud::party_panel(&mut p, "alliance1", "Alliance", &a1, false, None);
-        hud::party_panel(&mut p, "alliance2", "Alliance", &a2, false, None);
+        hud::party_panel(&mut p, "alliance1", "Alliance", &a1, false, None, None);
+        hud::party_panel(&mut p, "alliance2", "Alliance", &a2, false, None, None);
     }
     hud::cast_panel(&mut p, "cast", "Casting", 0.6, "60%");
     // A refused action's chip over the cast bar (pending.rs).
     super::pending::panel(&mut p, &super::pending::View { what: "Cure III".into(), on: Some("Raven".into()), state: super::super::pending::State::Refused("Raven is out of range.".into()), secs: 0.6 });
-if !opts.titles {
+    if !opts.titles {
         hud::target_panel(&mut p, &TargetView { name: "Robber Crab".into(), ring: "indicators/target_hostile", locked: true, hp: Some((72, 0.72)), colour: Some(egui::Color32::from_rgb(255, 80, 80)), cast: Some(("Firaga".into(), Some(0.4))), distance: Some(12.4) });
     }
     if opts.titles {
@@ -359,7 +359,7 @@ if !opts.titles {
         let Some(f) = m.art.frame(n) else { continue };
         let s = sizes[i % sizes.len()];
         let y = screen.center().y - s.y;
-        painter.add(paint::window(f, Rect::from_min_size(pos2(x, y), s), 1.0, 1.0));
+        painter.add(paint::window(&f, Rect::from_min_size(pos2(x, y), s), 1.0, 1.0));
         painter.text(pos2(x + 12.0, y + 14.0), egui::Align2::LEFT_TOP, *n, egui::FontId::proportional(12.0), m.theme.color("muted"));
         x += s.x + 12.0;
     }

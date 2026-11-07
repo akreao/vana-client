@@ -241,6 +241,55 @@ impl Modern {
         ctx.request_repaint();
     }
 
+    /// The change notes (client/notes.rs) on the rects their view placed (UI pixels): the frame and title, the notes in
+    /// Fira Sans (headings and bold in the strong face, code in mono) clipped to the text's area and scrolled by points,
+    /// a thin scroll bar, OK; their keys and mouse stay the notes window's.
+    #[allow(clippy::too_many_arguments)]
+    pub fn notes_window(&mut self, ctx: &Context, window: [u32; 2], scale: u32, ui_k: (f32, f32), n: &super::super::notes::NotesUi, sw: f32, sh: f32) {
+        self.zoom_to(ctx, window, scale);
+        let k = ctx.pixels_per_point();
+        let pt = |r: [f32; 4]| egui::Rect::from_min_size(pos2(r[0] / (k * ui_k.0), r[1] / (k * ui_k.1)), vec2(r[2] / (k * ui_k.0), r[3] / (k * ui_k.1)));
+        let v = n.view(sw, sh);
+        let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("modern notes")));
+        let frame = pt(v.frame).expand(6.0);
+        let opacity = self.opacity.replace(1.0);
+        p.add(super::borders::window(self, "window_focused", frame));
+        self.opacity.set(opacity);
+        let size = (v.line / (k * ui_k.1) * 0.8).max(self.theme.small);
+        let title = pt([v.frame[0] + v.line * 0.5, v.frame[1] + v.line * 0.25, v.frame[2], v.line]);
+        p.text(pos2(title.min.x, title.center().y), Align2::LEFT_CENTER, n.title(), FontId::new(size * 1.1, FontFamily::Name(super::STRONG.into())), self.theme.color("gold"));
+        let area = pt(v.text);
+        let (items, total) = notes_layout(self, &p, &n.blocks, area.width(), size);
+        let max = (total - area.height()).max(0.0);
+        n.metrics.set(super::super::notes::Metrics { step: size * 1.4, page: (area.height() - size * 1.4).max(size), max, view: area.height() });
+        let off = n.scroll.min(max);
+        let clip = p.with_clip_rect(area);
+        for it in items {
+            match it {
+                NoteItem::Text(x, y, g) => {
+                    let at = pos2(area.min.x + x, area.min.y + y - off);
+                    if at.y + g.size().y >= area.min.y && at.y <= area.max.y {
+                        clip.galley(at, g, self.theme.color("text"));
+                    }
+                }
+                NoteItem::Rule(y) => {
+                    let y = area.min.y + y - off;
+                    clip.line_segment([pos2(area.min.x, y), pos2(area.max.x, y)], egui::Stroke::new(1.0, self.theme.color("bronze").gamma_multiply(0.7)));
+                }
+            }
+        }
+        if let Some(t) = n.thumb(v.bar) {
+            let track = pt(v.bar);
+            p.rect_filled(track, track.width() / 2.0, self.theme.color("charcoal"));
+            let thumb = pt(t);
+            let hot = ctx.input(|i| i.pointer.hover_pos()).is_some_and(|h| track.expand2(vec2(4.0, 0.0)).contains(h));
+            p.rect_filled(thumb, track.width() / 2.0, self.theme.color(if hot { "gold" } else { "bronze" }));
+        }
+        let hover = ctx.input(|i| i.pointer.hover_pos());
+        self.lobby_button(&p, pt(v.ok).expand2(vec2(4.0, 3.0)), "OK", true, true, hover, size);
+        ctx.request_repaint();
+    }
+
     /// The lobby's help bar on retail's lobyhelp strip (UI pixels, the screen's width): the help line centred in its
     /// colour, the client version above the strip at retail's spot.
     #[allow(clippy::too_many_arguments)]
@@ -311,7 +360,7 @@ impl Modern {
         self.zoom_to(ctx, window, scale);
         let mut layout = Default::default();
         let (mut changed, mut font) = (false, 15.0);
-        let mut p = Panels { m: self, ctx, gu: Some(gu), layout: &mut layout, vis: Default::default(), changed: &mut changed, chat_font: &mut font, battle_in_all: &mut true, condense: &mut true, folded: &mut Default::default(), scan_kinds: &mut 7, this: Default::default(), retail: Default::default(), focus: Some("select"), hidden: Vec::new() };
+        let mut p = Panels { m: self, ctx, gu: Some(gu), layout: &mut layout, vis: Default::default(), changed: &mut changed, chat_font: &mut font, battle_in_all: &mut true, condense: &mut true, chat_hidden: &mut Vec::new(), folded: &mut Default::default(), scan_kinds: &mut 7, this: Default::default(), retail: Default::default(), focus: Some("select"), hidden: Vec::new(), placed: Default::default() };
         let mut out = Pointer::default();
         list_panel(&mut p, gu, v, &mut out);
         windows(&mut p, gu, v, &mut out);
@@ -326,7 +375,7 @@ impl Modern {
         let mut layout = Default::default();
         let (mut changed, mut font) = (false, 15.0);
         let focus = if c.ok.is_some() || c.confirm.is_some() { "creator prompt" } else { "creator" };
-        let mut p = Panels { m: self, ctx, gu: Some(gu), layout: &mut layout, vis: Default::default(), changed: &mut changed, chat_font: &mut font, battle_in_all: &mut true, condense: &mut true, folded: &mut Default::default(), scan_kinds: &mut 7, this: Default::default(), retail: Default::default(), focus: Some(focus), hidden: Vec::new() };
+        let mut p = Panels { m: self, ctx, gu: Some(gu), layout: &mut layout, vis: Default::default(), changed: &mut changed, chat_font: &mut font, battle_in_all: &mut true, condense: &mut true, chat_hidden: &mut Vec::new(), folded: &mut Default::default(), scan_kinds: &mut 7, this: Default::default(), retail: Default::default(), focus: Some(focus), hidden: Vec::new(), placed: Default::default() };
         let mut out = creator::Pointer::default();
         creator_panel(&mut p, gu, c, &mut out);
         creator_prompts(&mut p, gu, c, &mut out);
@@ -342,7 +391,7 @@ impl Modern {
         self.zoom_to(ctx, window, scale);
         let mut layout = Default::default();
         let (mut changed, mut font) = (false, 15.0);
-        let mut p = Panels { m: self, ctx, gu: Some(gu), layout: &mut layout, vis: Default::default(), changed: &mut changed, chat_font: &mut font, battle_in_all: &mut true, condense: &mut true, folded: &mut Default::default(), scan_kinds: &mut 7, this: Default::default(), retail: Default::default(), focus: Some("lobby config"), hidden: Vec::new() };
+        let mut p = Panels { m: self, ctx, gu: Some(gu), layout: &mut layout, vis: Default::default(), changed: &mut changed, chat_font: &mut font, battle_in_all: &mut true, condense: &mut true, chat_hidden: &mut Vec::new(), folded: &mut Default::default(), scan_kinds: &mut 7, this: Default::default(), retail: Default::default(), focus: Some("lobby config"), hidden: Vec::new(), placed: Default::default() };
         let out = super::config::lobby(&mut p, c, v, s, sw);
         *p.m.rects.borrow_mut() = std::mem::take(&mut p.this);
         out
@@ -427,7 +476,7 @@ fn creator_panel(p: &mut Panels, gu: &GameUi, c: &Page, out: &mut creator::Point
         _ => 0,
     };
     let small = |t: &str, colour: Color32| egui::RichText::new(t).size(m.theme.small).color(colour);
-    p.panel_at("creator", Some(Title { icon: Some("icons/party"), text: "Create Character", note: note.as_deref() }), W + 44.0, at, |ui| {
+    p.panel_at("creator", Some(Title { icon: Some("icons/party"), text: "Create Character", note: note.as_deref(), name: false }), W + 44.0, at, |ui| {
         ui.label(small(&c.help, if c.status { m.theme.color("gold") } else { m.theme.color("muted") }));
         ui.add_space(8.0);
         if v.step != 5 {
@@ -606,7 +655,7 @@ fn list_panel(p: &mut Panels, gu: &GameUi, v: &View, out: &mut Pointer) {
         });
     }
     let at = from_bottom(m, "select", width, pos2(screen.max.x - gap, bottom), true);
-    p.panel_at("select", Some(Title { icon: Some("icons/party"), text: &title, note: None }), width, at, |ui| {
+    p.panel_at("select", Some(Title { icon: Some("icons/party"), text: &title, note: None, name: false }), width, at, |ui| {
         let focused = v.list_focus;
         let tall = screen.height() * 0.55;
         egui::ScrollArea::vertical().id_salt("select rows").max_height(tall).auto_shrink([false, true]).show(ui, |ui| {
@@ -663,7 +712,7 @@ fn windows(p: &mut Panels, gu: &GameUi, v: &View, out: &mut Pointer) {
         let title = gu.focus_text("menu    chfwin", 0)[1].clone().unwrap_or_else(|| "Settings".into());
         let active = v.slots.is_none() && v.prompt.is_none() && v.ok.is_none();
         let mut got = Pointer::default();
-        p.panel_at("select options", Some(Title { icon: None, text: &title, note: None }), 264.0, side, |ui| column(ui, rows, *cur, &mut got));
+        p.panel_at("select options", Some(Title { icon: None, text: &title, note: None, name: false }), 264.0, side, |ui| column(ui, rows, *cur, &mut got));
         if active {
             out.child = got.child;
         }
@@ -712,4 +761,108 @@ fn windows(p: &mut Panels, gu: &GameUi, v: &View, out: &mut Pointer) {
             ui.painter().text(pos2(r.min.x + 12.0, r.center().y), Align2::LEFT_CENTER, shown, FontId::proportional(m.theme.ui), m.theme.color("text"));
         });
     }
+}
+
+/// A laid-out piece of the change notes: text at (x, y) in the text area, or a rule at y.
+enum NoteItem {
+    Text(f32, f32, std::sync::Arc<egui::Galley>),
+    Rule(f32),
+}
+
+/// The notes' blocks laid out `width` wide at `size`: the pieces and the height they take.
+fn notes_layout(m: &Modern, p: &egui::Painter, blocks: &[super::super::notes::Block], width: f32, size: f32) -> (Vec<NoteItem>, f32) {
+    use super::super::notes::{Block, Span};
+    use egui::text::{LayoutJob, TextFormat};
+    let strong = FontFamily::Name(super::STRONG.into());
+    let (text, muted, gold) = (m.theme.color("text"), m.theme.color("muted"), m.theme.color("gold"));
+    let code_bg = m.theme.color("charcoal");
+    let job = |spans: &[Span], size: f32, colour: Color32, bold_all: bool, wrap: f32| {
+        let mut j = LayoutJob::default();
+        for s in spans {
+            let font = if s.code { FontId::monospace(size * 0.92) } else if s.bold || bold_all { FontId::new(size, strong.clone()) } else { FontId::proportional(size) };
+            j.append(&s.text, 0.0, TextFormat { font_id: font, color: colour, background: if s.code { code_bg } else { Color32::TRANSPARENT }, ..Default::default() });
+        }
+        j.wrap.max_width = wrap.max(size);
+        j
+    };
+    let mut items = Vec::new();
+    let mut y = 0.0f32;
+    let gap = |y: &mut f32, g: f32| {
+        if *y > 0.0 {
+            *y += g;
+        }
+    };
+    for b in blocks {
+        match b {
+            Block::Release(v, date) => {
+                gap(&mut y, size * 1.4);
+                let mut j = LayoutJob::default();
+                j.append(&format!("vana-client {v}"), 0.0, TextFormat { font_id: FontId::new(size * 1.25, strong.clone()), color: gold, ..Default::default() });
+                if !date.is_empty() {
+                    j.append(&format!("   {date}"), 0.0, TextFormat { font_id: FontId::proportional(size * 0.9), color: muted, ..Default::default() });
+                }
+                let g = p.layout_job(j);
+                let h = g.size().y;
+                items.push(NoteItem::Text(0.0, y, g));
+                y += h + size * 0.25;
+                items.push(NoteItem::Rule(y));
+                y += size * 0.5;
+            }
+            Block::Heading(level, spans) => {
+                gap(&mut y, size * 0.9);
+                let g = p.layout_job(job(spans, if *level <= 2 { size * 1.15 } else { size * 1.05 }, text, true, width));
+                let h = g.size().y;
+                items.push(NoteItem::Text(0.0, y, g));
+                y += h + size * 0.3;
+            }
+            Block::Text { depth, bullet, spans } => {
+                gap(&mut y, if *depth == 0 { size * 0.6 } else { size * 0.25 });
+                let x = *depth as f32 * size * 1.2;
+                if *bullet {
+                    let g = p.layout_no_wrap("\u{2022}".into(), FontId::proportional(size), gold);
+                    items.push(NoteItem::Text(x - size * 0.8, y, g));
+                }
+                let g = p.layout_job(job(spans, size, text, false, width - x));
+                let h = g.size().y;
+                items.push(NoteItem::Text(x, y, g));
+                y += h;
+            }
+            Block::Code(lines) => {
+                gap(&mut y, size * 0.5);
+                let spans = [Span { text: lines.join("\n"), bold: false, code: true }];
+                let g = p.layout_job(job(&spans, size, muted, false, width - size));
+                let h = g.size().y;
+                items.push(NoteItem::Text(size, y, g));
+                y += h;
+            }
+            Block::Table(rows) => {
+                gap(&mut y, size * 0.6);
+                let cols = rows.iter().map(Vec::len).max().unwrap_or(0);
+                // Each column as wide as its widest cell, fitted to the width.
+                let mut widths = vec![0f32; cols];
+                for (i, r) in rows.iter().enumerate() {
+                    for (c, cell) in r.iter().enumerate() {
+                        let w = p.layout_job(job(cell, size, text, i == 0, f32::INFINITY)).size().x;
+                        widths[c] = widths[c].max(w + size * 1.2);
+                    }
+                }
+                super::super::notes::fit_columns(&mut widths, width);
+                for (i, r) in rows.iter().enumerate() {
+                    let mut x = 0.0;
+                    let mut h = 0.0f32;
+                    for (c, cell) in r.iter().enumerate() {
+                        let g = p.layout_job(job(cell, size, if i == 0 { gold } else { text }, i == 0, widths[c] - size));
+                        h = h.max(g.size().y);
+                        items.push(NoteItem::Text(x, y, g));
+                        x += widths[c];
+                    }
+                    y += h + size * 0.2;
+                    if i == 0 {
+                        items.push(NoteItem::Rule(y - size * 0.1));
+                    }
+                }
+            }
+        }
+    }
+    (items, y + size * 0.5)
 }

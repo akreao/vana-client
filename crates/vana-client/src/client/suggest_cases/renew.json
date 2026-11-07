@@ -61,8 +61,7 @@
       "target": null,
       "reason": "Refresh wears off in 12s.",
       "group": [],
-      "label": null,
-      "family": "Refresh"
+      "label": null
     }
   ]
 }
