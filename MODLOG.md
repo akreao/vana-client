@@ -23103,6 +23103,7 @@ those are tested with fed lines only. Facts from the zone dialogue DATs of our i
 - Pop lists: the Empyrean (and other) NMs' pop trees as EmpyPopTracker has them (28 NMs: ids, droppers, how they
   appear); the ZNMs by path with pop items, the seals Sanraku takes, trophies and the seals they give, salts 1016..1018
   and each ???'s place.
+
 ## Model sub-animation: `init` alone sees an NPC's sub-state (2026-11-07)
 
 - FUN_1008c480 (asm 0x1008c598..0x1008c5fe), statuses other than 6 / 0x32 / 0x38 / 0x22 / 0x3f..0x53: saves the
