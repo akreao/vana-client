@@ -19,7 +19,10 @@ pub enum Click {
     Colour(usize, [u8; 3]),
     Alpha(usize, usize),
     Sort(usize, usize),
-    Canvas(usize, f32, f32),
+    /// A canvas click: element, where, the right button.
+    Canvas(usize, f32, f32, bool),
+    /// The pointer over a canvas (moved), or off it (negative).
+    CanvasHover(usize, f32, f32),
     /// A canvas drag: element, phase (0 start, 1 move, 2 release), where.
     CanvasDrag(usize, u8, f32, f32),
     /// A `targets` row: the entity to target.
@@ -70,11 +73,11 @@ fn canvas(
             Cmd::Line { a, b, width, colour } => {
                 p.line_segment([at(*a), at(*b)], Stroke::new(*width, rgba(*colour)));
             }
-            Cmd::Rect { r: q, colour, to, line } => {
+            Cmd::Rect { r: q, colour, to, line, round } => {
                 let rr = Rect::from_min_size(at([q[0], q[1]]), vec2(q[2], q[3]));
                 match (line, to) {
                     (Some(w), _) => {
-                        p.rect_stroke(rr, 0.0, Stroke::new(*w, rgba(*colour)), StrokeKind::Inside);
+                        p.rect_stroke(rr, *round, Stroke::new(*w, rgba(*colour)), StrokeKind::Inside);
                     }
                     (None, Some(to)) => {
                         let mut mesh = egui::Mesh::default();
@@ -89,7 +92,7 @@ fn canvas(
                         p.add(Shape::mesh(mesh));
                     }
                     (None, None) => {
-                        p.rect_filled(rr, 0.0, rgba(*colour));
+                        p.rect_filled(rr, *round, rgba(*colour));
                     }
                 }
             }
@@ -104,8 +107,23 @@ fn canvas(
             Cmd::Tri { pts, colour } => {
                 p.add(Shape::convex_polygon(pts.iter().map(|q| at(*q)).collect(), rgba(*colour), Stroke::NONE));
             }
-            Cmd::Text { at: q, text, colour } => {
-                p.text(at(*q), Align2::LEFT_TOP, text, FontId::proportional(m.theme.small), rgba(*colour));
+            Cmd::Text { at: q, text, colour, size, align, outline, bold } => {
+                let font = if *bold {
+                    FontId::new(m.theme.small * size, egui::FontFamily::Name(super::STRONG.into()))
+                } else {
+                    FontId::proportional(m.theme.small * size)
+                };
+                let anchor = [Align2::LEFT_TOP, Align2::CENTER_TOP, Align2::RIGHT_TOP][*align as usize % 3];
+                if let Some(o) = outline {
+                    for k in 0..8 {
+                        let a = k as f32 * std::f32::consts::FRAC_PI_4;
+                        p.text(at(*q) + vec2(a.cos(), a.sin()), anchor, text, font.clone(), rgba(*o));
+                    }
+                }
+                p.text(at(*q), anchor, text, font, rgba(*colour));
+            }
+            Cmd::Tip { r: q, title, text } => {
+                m.tip(ui, Rect::from_min_size(at([q[0], q[1]]), vec2(q[2], q[3])), title, text);
             }
             Cmd::Icon { at: q, size, icon } => {
                 if let Some((t, uv)) = icon_tex(m, ctx, gu, world, *icon) {
@@ -138,7 +156,8 @@ impl Click {
             Click::Colour(i, rgb) => win.set_colour(i, Some(rgb), None),
             Click::Alpha(i, s) => win.set_colour(i, None, Some(s)),
             Click::Sort(i, c) => win.sort(i, c),
-            Click::Canvas(i, x, y) => win.canvas_click(i, x, y),
+            Click::Canvas(i, x, y, right) => win.canvas_click(i, x, y, right),
+            Click::CanvasHover(i, x, y) => win.canvas_hover(i, x, y),
             Click::CanvasDrag(i, phase, x, y) => win.canvas_drag(i, phase, x, y),
             // The client picks it (lua::window_click).
             Click::Pick(_) => (Vec::new(), Vec::new()),
@@ -479,10 +498,25 @@ pub(super) fn body(
                     .interact_pointer_pos()
                     .or_else(|| ctx.input(|inp| inp.pointer.latest_pos()))
                     .map(|q| (q.x - r.min.x, q.y - r.min.y));
-                if resp.clicked()
+                if (resp.clicked() || resp.secondary_clicked())
                     && let Some(q) = resp.interact_pointer_pos()
                 {
-                    clicks.push(Click::Canvas(i, q.x - r.min.x, q.y - r.min.y));
+                    clicks.push(Click::Canvas(i, q.x - r.min.x, q.y - r.min.y, resp.secondary_clicked()));
+                }
+                // The pointer over it as it moves, and once when it leaves.
+                let was = egui::Id::new(("canvas hover", pid, i));
+                let inside = resp.hover_pos().map(|q| (q.x - r.min.x, q.y - r.min.y));
+                let last = ctx.data(|d| d.get_temp::<(f32, f32)>(was));
+                match (inside, last) {
+                    (Some(q), l) if l != Some(q) => {
+                        ctx.data_mut(|d| d.insert_temp(was, q));
+                        clicks.push(Click::CanvasHover(i, q.0, q.1));
+                    }
+                    (None, Some(_)) => {
+                        ctx.data_mut(|d| d.remove::<(f32, f32)>(was));
+                        clicks.push(Click::CanvasHover(i, -1.0, -1.0));
+                    }
+                    _ => {}
                 }
                 if let Some((x, y)) = at {
                     if resp.drag_started() {

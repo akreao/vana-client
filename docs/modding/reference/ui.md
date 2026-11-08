@@ -216,8 +216,9 @@ it and sends a `toggle` event.
 ### canvas
 
 A region your mod draws in with a list of drawing commands. Coordinates are in the units of the window's `width`,
-from the canvas's top left corner, with y going down; drawing outside it is cut off. A click sends a `click` event and
-a drag sends `drag_start`, `drag` and `drag_end` events (see [Window events](#window-events)). To redraw it, give it a
+from the canvas's top left corner, with y going down; drawing outside it is cut off. A click sends a `click` event
+(with `button`, `"left"` or `"right"`), a drag sends `drag_start`, `drag` and `drag_end` events, and the pointer moving
+over it sends `hover` {x, y} (at most once a frame) and `leave` when it goes (see [Window events](#window-events)). To redraw it, give it a
 new `draw` list with `ui.update(window, canvas, {draw = ...})`. It is not a cursor stop.
 
 A press and release without moving is a click. Moving more than a few units with the button down starts a drag
@@ -236,10 +237,11 @@ fields, all numbers defaulting to `0` unless shown:
 | `type` | Fields | What it draws |
 | --- | --- | --- |
 | `"line"` | `x1`, `y1`, `x2`, `y2`, `width` (default `1`) | A line from (x1, y1) to (x2, y2), `width` thick. |
-| `"rect"` | `x`, `y`, `w`, `h`, `to`, `line` | A filled rectangle with its top left at (x, y). With `to` (a colour), it fades from `colour` at the top to `to` at the bottom. With `line` (a width), only its outline is drawn, that thick (`to` is then not used). |
+| `"rect"` | `x`, `y`, `w`, `h`, `to`, `line`, `round` | A filled rectangle with its top left at (x, y). With `to` (a colour), it fades from `colour` at the top to `to` at the bottom. With `line` (a width), only its outline is drawn, that thick (`to` is then not used). `round` rounds its corners that much (not with `to`; the classic UI draws square ones). |
 | `"circle"` | `x`, `y`, `r`, `line` | A filled circle centred on (x, y) with radius `r`; with `line`, only its outline, that thick. |
 | `"tri"` | `x1`, `y1`, `x2`, `y2`, `x3`, `y3` | A filled triangle. |
-| `"text"` | `x`, `y`, `text` (default `""`) | Text with its top left at (x, y), in the UI's text font. |
+| `"text"` | `x`, `y`, `text` (default `""`), `size` (default `1`), `align`, `font`, `outline` | Text at (x, y), in the UI's text font: `size` times its small text, `align` `"left"` (the default), `"center"` or `"right"` of `x`, `font = "bold"` for the bold face, `outline` a colour round the letters. The classic UI draws its own font at one size. |
+| `"tip"` | `x`, `y`, `w`, `h`, `title`, `text` | Nothing drawn: the tooltip shown while the pointer rests on that rectangle (modern UI). |
 | `"icon"` | `x`, `y`, `size` (default `16`), `kind`, `id` | A square icon with its top left at (x, y): `kind` is `"item"` (or none), `"status"`, `"spell"` or `"ability"`, as for [`hud.icon`](hud.md#hudicon). `id` is required. |
 
 ### chip

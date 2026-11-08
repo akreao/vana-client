@@ -2010,6 +2010,7 @@ fn cmds(v: Option<Table>) -> mlua::Result<Vec<super::window::Cmd>> {
                     colour,
                     to: super::hud::colour(c.get("to")?)?,
                     line: c.get("line")?,
+                    round: n("round")?.max(0.0),
                 },
                 "circle" => Cmd::Circle { c: [n("x")?, n("y")?], radius: n("r")?, colour, line: c.get("line")? },
                 "tri" => Cmd::Tri { pts: [[n("x1")?, n("y1")?], [n("x2")?, n("y2")?], [n("x3")?, n("y3")?]], colour },
@@ -2017,6 +2018,19 @@ fn cmds(v: Option<Table>) -> mlua::Result<Vec<super::window::Cmd>> {
                     at: [n("x")?, n("y")?],
                     text: c.get::<Option<String>>("text")?.unwrap_or_default(),
                     colour,
+                    size: c.get::<Option<f32>>("size")?.unwrap_or(1.0).clamp(0.25, 8.0),
+                    align: match c.get::<Option<String>>("align")?.as_deref() {
+                        Some("center" | "centre") => 1,
+                        Some("right") => 2,
+                        _ => 0,
+                    },
+                    outline: super::hud::colour(c.get("outline")?)?,
+                    bold: c.get::<Option<String>>("font")?.as_deref() == Some("bold"),
+                },
+                "tip" => Cmd::Tip {
+                    r: [n("x")?, n("y")?, n("w")?, n("h")?],
+                    title: c.get::<Option<String>>("title")?.unwrap_or_default(),
+                    text: c.get::<Option<String>>("text")?.unwrap_or_default(),
                 },
                 "icon" => Cmd::Icon {
                     at: [n("x")?, n("y")?],
