@@ -18,12 +18,13 @@ M.hooks = {}
 
 local WIN = "bars"
 
-local EMPTY_BG = { 14, 16, 24, 170 }
-local FILLED_BG = { 20, 24, 38, 235 }
-local GLOSS = { 255, 255, 255, 14 }
-local EMPTY_EDGE = { 90, 94, 108, 120 }
-local EDGE = { main = { 206, 168, 92, 235 }, sub = { 104, 164, 232, 240 } }
-local HOVER = { 255, 255, 255, 30 }
+-- As the modern macro palette's keys: a plain charcoal key, surface under the pointer, a bronze edge (the sub job's
+-- set's slots a blue one); an empty slot fainter.
+local KEY = { 10, 17, 24, 255 }
+local KEY_HOVER = { 20, 33, 44, 255 }
+local EMPTY_KEY = { 10, 17, 24, 150 }
+local EMPTY_EDGE = { 184, 139, 73, 70 }
+local EDGE = { main = { 184, 139, 73, 205 }, sub = { 104, 164, 232, 205 } }
 local FLASH = { 255, 236, 190, 120 }
 local SHADE = { 0, 0, 0, 165 }
 local UNUSABLE = { 6, 8, 14, 165 }
@@ -33,11 +34,10 @@ local GHOST = { 255, 255, 255, 140 }
 local GHOST_BG = { 20, 24, 38, 120 }
 local DROP = { 255, 214, 120, 200 }
 local DRAGGED = { 0, 0, 0, 120 }
-local BTN_HOVER = { 255, 255, 255, 22 }
-local BTN_EDGE = { 214, 184, 120, 90 }
-local BTN_EDGE_OFF = { 214, 184, 120, 30 }
-local BTN_TEXT = { 236, 222, 186, 255 }
-local BTN_TEXT_OFF = { 150, 150, 160, 110 }
+-- + / -: round knobs as the edge window's fold button, charcoal ringed in gold (the text colour under the pointer).
+local GOLD = { 228, 192, 119, 255 }
+local GOLD_OFF = { 228, 192, 119, 70 }
+local INK = { 236, 230, 214, 255 }
 
 -- Bars per second while the window grows or shrinks.
 local SPEED = 4.5
@@ -104,12 +104,12 @@ end
 -- What is at (x, y) in the canvas: {b, i}, "plus", "minus" or nil.
 local function hit(x, y)
   if not geo then return nil end
-  local bx = geo.width - PAD - geo.btn
   local h = height(reveal or 1)
-  if x >= bx and x <= bx + geo.btn then
-    if y >= h - PAD - geo.btn and y <= h - PAD then return "minus" end
-    if y >= h - PAD - 2 * geo.btn - 3 and y < h - PAD - geo.btn - 3 then return "plus" end
-  end
+  local r = geo.btn / 2
+  local cx = geo.width - PAD - r
+  local function on(cy) return (x - cx) ^ 2 + (y - cy) ^ 2 <= (r + 1) ^ 2 end
+  if on(h - PAD - r) then return "minus" end
+  if on(h - PAD - 3 * r - 4) then return "plus" end
   for b = 1, geo.bars do
     for i = 1, geo.slots do
       local sx, sy = slot_xy(b, i)
@@ -143,14 +143,14 @@ local function draw()
         local cell = eff[b] and eff[b][i]
         local macro = cell and cell.macro
         local act = macro and actions.of(macro)
-        add({ type = "rect", x = x - 1, y = y - 1, w = s + 2, h = s + 2, round = round + 1, line = 1.5,
+        add({ type = "rect", x = x, y = y, w = s, h = s, round = round,
+          colour = hover == key and KEY_HOVER or (macro and KEY or EMPTY_KEY) })
+        add({ type = "rect", x = x, y = y, w = s, h = s, round = round, line = 1.5,
           colour = macro and EDGE[cell.from] or EMPTY_EDGE })
-        add({ type = "rect", x = x, y = y, w = s, h = s, round = round, colour = macro and FILLED_BG or EMPTY_BG })
         if act then
           local isz = math.floor(s * 0.7)
           add({ type = "icon", x = x + (s - isz) / 2, y = y + s * 0.08, size = isz, kind = act.kind, id = act.id })
         end
-        add({ type = "rect", x = x + 2, y = y + 2, w = s - 4, h = s * 0.42, round = round - 2, colour = GLOSS })
         local sh = shades[key]
         if sh and sh.left > 0 then
           add({ type = "rect", x = x, y = y, w = s, h = math.max(2, s * sh.frac), round = round, colour = SHADE })
@@ -189,9 +189,6 @@ local function draw()
           add({ type = "rect", x = x - 1, y = y - 1, w = s + 2, h = s + 2, round = round + 1, line = 1.5,
             colour = { GLOW[1], GLOW[2], GLOW[3], math.floor(150 + 90 * glow) } })
         end
-        if hover == key then
-          add({ type = "rect", x = x, y = y, w = s, h = s, round = round, colour = HOVER })
-        end
         if flash[key] and flash[key] > now then
           add({ type = "rect", x = x, y = y, w = s, h = s, round = round, colour = FLASH })
         end
@@ -210,23 +207,25 @@ local function draw()
       end
     end
   end
-  -- + over - at the lower right, beside the bottom bar.
+  -- + over - at the lower right, beside the bottom bar: round knobs.
   local n, most = wanted(), geo.bars
-  local bx = geo.width - PAD - geo.btn
+  local r = geo.btn / 2
+  local cx = geo.width - PAD - r
   local buttons = {
-    { "plus", "+", h - PAD - 2 * geo.btn - 3, n < most, "Show another bar" },
-    { "minus", "-", h - PAD - geo.btn, n > 1, "Show one bar fewer" },
+    { "plus", h - PAD - 3 * r - 4, n < most, "Show another bar" },
+    { "minus", h - PAD - r, n > 1, "Show one bar fewer" },
   }
   for _, btn in ipairs(buttons) do
-    local name, label, by, live, tip = btn[1], btn[2], btn[3], btn[4], btn[5]
-    if live and hover == name then
-      add({ type = "rect", x = bx, y = by, w = geo.btn, h = geo.btn, round = 4, colour = BTN_HOVER })
+    local name, cy, live, tip = btn[1], btn[2], btn[3], btn[4]
+    local ink = not live and GOLD_OFF or (hover == name and INK or GOLD)
+    add({ type = "circle", x = cx, y = cy, r = r, colour = KEY })
+    add({ type = "circle", x = cx, y = cy, r = r - 0.75, line = 1.5, colour = ink })
+    local a = r * 0.45
+    add({ type = "line", x1 = cx - a, y1 = cy, x2 = cx + a, y2 = cy, width = 1.6, colour = ink })
+    if name == "plus" then
+      add({ type = "line", x1 = cx, y1 = cy - a, x2 = cx, y2 = cy + a, width = 1.6, colour = ink })
     end
-    add({ type = "rect", x = bx, y = by, w = geo.btn, h = geo.btn, round = 4, line = 1,
-      colour = live and BTN_EDGE or BTN_EDGE_OFF })
-    add({ type = "text", x = bx + geo.btn / 2, y = by + geo.btn * 0.08, text = label, size = geo.btn / 18,
-      font = "bold", align = "center", colour = live and BTN_TEXT or BTN_TEXT_OFF })
-    add({ type = "tip", x = bx, y = by, w = geo.btn, h = geo.btn, title = "", text = tip })
+    add({ type = "tip", x = cx - r, y = cy - r, w = 2 * r, h = 2 * r, title = "", text = tip })
   end
   -- The dragged slot: a translucent copy under the pointer.
   if drag and drag.x then
@@ -357,7 +356,7 @@ function M.rebuild()
     return
   end
   local o = opts()
-  local btn = math.floor(math.max(16, o.size * 0.38))
+  local btn = 18 -- the fold knob's size (radius 9)
   geo = { size = o.size, gap = o.gap, slots = o.slots, bars = o.bars, show_keys = o.show_keys, btn = btn,
     width = PAD + o.slots * o.size + (o.slots - 1) * o.gap + PAD + btn + PAD }
   eff = data.effective(main, sub)
