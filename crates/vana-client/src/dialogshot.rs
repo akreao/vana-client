@@ -50,9 +50,10 @@ fn text(b: &mut UiBatch, font: &Font, s: &[u8], x: f32, y: f32) -> f32 {
 fn font_file(font: &Font) -> UiFile {
     let mut f = UiFile::default();
     let a = &font.atlas;
-    f.images.insert(ATLAS.into(), UiImage { width: a.width, height: a.height, rgba: a.rgba.clone() });
+    f.images.insert(ATLAS.into(), UiImage { width: a.width, height: a.height, rgba: a.rgba().to_vec() });
     for (name, t) in &font.textures {
-        f.images.insert(norm_name(name.as_bytes()), UiImage { width: t.width, height: t.height, rgba: t.rgba.clone() });
+        f.images
+            .insert(norm_name(name.as_bytes()), UiImage { width: t.width, height: t.height, rgba: t.rgba().to_vec() });
     }
     f
 }

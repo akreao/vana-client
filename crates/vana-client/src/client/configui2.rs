@@ -601,7 +601,7 @@ pub(super) fn assign(v: &mut Values, out: &mut Out, name: &str, row: usize, key:
 }
 
 /// Keys for windows with their own handling; true when taken.
-pub fn key(ui: &mut ConfigUi, gu: &GameUi, v: &mut Values, key: egui::Key, out: &mut Out) -> bool {
+pub fn key(ui: &mut ConfigUi, _gu: &GameUi, v: &mut Values, key: egui::Key, out: &mut Out) -> bool {
     let Some(w) = ui.stack.last() else { return false };
     let name = w.name.clone();
     let cursor = w.cursor;
@@ -690,7 +690,6 @@ pub fn key(ui: &mut ConfigUi, gu: &GameUi, v: &mut Values, key: egui::Key, out: 
         if moved {
             out.sounds.push(Se::Cursor);
         }
-        let _ = gu;
         return true;
     }
     false

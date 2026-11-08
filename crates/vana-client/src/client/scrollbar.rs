@@ -220,6 +220,27 @@ fn dispatch(w: &mut World, owner: Owner, m: Msg, bar: (usize, usize, usize)) -> 
     }
 }
 
+/// Scrolls `top` as little as it takes for row `at` to show among `vis` rows.
+pub fn keep_in_view(top: &mut usize, at: usize, vis: usize) {
+    *top = (*top).min(at).max((at + 1).saturating_sub(vis));
+}
+
+/// The generic list's keys on a (cursor, top) pair: Up / Down a row, silent at the ends; Left / Right a page of
+/// `vis` (FUN_101f6c70, +0x47). True when the cursor moved.
+pub fn step(c: &mut (usize, usize), n: usize, vis: usize, key: egui::Key) -> bool {
+    use egui::Key as K;
+    let old = c.0;
+    match key {
+        K::ArrowDown if c.0 + 1 < n => c.0 += 1,
+        K::ArrowUp if c.0 > 0 => c.0 -= 1,
+        K::ArrowRight => c.0 = (c.0 + vis).min(n.saturating_sub(1)),
+        K::ArrowLeft => c.0 = c.0.saturating_sub(vis),
+        _ => {}
+    }
+    keep_in_view(&mut c.1, c.0, vis);
+    c.0 != old
+}
+
 /// FUN_101f6c70 for a list kept as (top, the cursor's screen row): a row moves the top and the hand stays on its row;
 /// a page moves the top by `vis`, or at the end moves the hand to the first / last row; 0x1b sets the top. True when
 /// something moved.
@@ -293,6 +314,20 @@ pub fn paged(m: Msg, top: &mut usize, row: &mut usize, n: usize, vis: usize) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The generic list's keys: silent at the ends, a page of 10, the top following the cursor.
+    #[test]
+    fn list_steps() {
+        let mut c = (0, 0);
+        assert!(!step(&mut c, 3, 10, egui::Key::ArrowUp));
+        assert!(step(&mut c, 3, 10, egui::Key::ArrowRight));
+        assert_eq!(c, (2, 0));
+        let mut c = (9, 0);
+        assert!(step(&mut c, 25, 10, egui::Key::ArrowDown));
+        assert_eq!(c, (10, 1));
+        assert!(step(&mut c, 25, 10, egui::Key::ArrowRight));
+        assert_eq!(c, (20, 11));
+    }
 
     /// FUN_101f6c70: rows move the top under the hand, pages stop at the ends with the hand on the first / last row.
     #[test]

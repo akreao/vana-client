@@ -460,14 +460,16 @@ pub enum Irc {
         char_id: Option<u32>,
         age: u64,
     },
-    /// A new message: its 0x48-byte header.
-    Mail(Vec<u8>),
+    /// A new message (its header is not kept: the list is fetched again).
+    Mail,
     Closed(String),
 }
 
 /// The IRC session (3.4) on its own thread; dropping the sender ends it with QUIT.
 pub struct IrcLink {
     pub events: mpsc::Receiver<Irc>,
+    /// Held for its Drop: dropping it ends the session with QUIT.
+    #[allow(dead_code)]
     pub quit: mpsc::Sender<()>,
 }
 
@@ -555,7 +557,7 @@ fn notice(payload: &str) -> Option<Irc> {
     let ty = u16::from_le_bytes([h[0x3e], h[0x3f]]) >> 7 & 0x1f;
     let polpro = h[0x42] & 1 != 0;
     if ty != 31 {
-        return polpro.then(|| Irc::Mail(h[..0x48].to_vec()));
+        return polpro.then_some(Irc::Mail);
     }
     if h[0x10] == 1 {
         return Some(Irc::SignedOn);

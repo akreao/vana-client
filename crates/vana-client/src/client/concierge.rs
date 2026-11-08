@@ -180,7 +180,7 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
         }
         _ => {}
     }
-    c.top = c.top.min(c.cursor).max((c.cursor + 1).saturating_sub(ROWS));
+    crate::client::scrollbar::keep_in_view(&mut c.top, c.cursor, ROWS);
     w.concierge_ui = Some(c);
 }
 
@@ -316,7 +316,7 @@ pub(super) fn set_row(w: &mut World, k: usize) -> bool {
     let n = rows(w).len();
     let Some(c) = w.concierge_ui.as_mut().filter(|c| c.lsc.is_none() && c.cursor != k && k < n) else { return false };
     c.cursor = k;
-    c.top = c.top.min(k).max((k + 1).saturating_sub(ROWS));
+    crate::client::scrollbar::keep_in_view(&mut c.top, k, ROWS);
     true
 }
 

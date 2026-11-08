@@ -5,10 +5,7 @@
 /// Ticks a motion change blends over (FUN_100c6380).
 pub const BLEND_TICKS: f32 = 16.0;
 
-/// Frames per second of a motion: frame += ticks * speed * 0.5 * rate.
-pub fn frames_per_second(speed: f32, rate: f32) -> f32 {
-    60.0 * speed * 0.5 * rate
-}
+// A motion advances frame += ticks * speed * 0.5 * rate.
 
 /// Looping frame position: the client wraps at `frames` (the keys less one), so the last interval runs into the
 /// closing key, which repeats the first.

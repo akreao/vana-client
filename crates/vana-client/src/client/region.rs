@@ -612,8 +612,9 @@ fn fill_conquer1(w: &World, id: i32, player_region: i32) -> Conquer1 {
     } else {
         c.levels = std::array::from_fn(|k| (g >> (2 * k) & 3) as f32);
     }
-    let owner = d.byte(0x19 + 4 * r) as i8 - 1;
-    c.owner = if owner < 0 { 4 } else { owner as u8 };
+    // 0 (none), and a byte past LABELS (a bad one would index past it), read as 4, as before.
+    let owner = d.byte(0x19 + 4 * r) as i8 as i32 - 1;
+    c.owner = if (0..4).contains(&owner) { owner as u8 } else { 4 };
     c
 }
 

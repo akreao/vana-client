@@ -237,7 +237,7 @@ impl UiFile {
                 0x20 => match parse_img(c.data) {
                     Ok(t) => {
                         let key = norm_name(&c.data[1..17]);
-                        out.images.insert(key, UiImage { width: t.width, height: t.height, rgba: t.rgba });
+                        out.images.insert(key, UiImage { width: t.width, height: t.height, rgba: t.into_rgba() });
                     }
                     Err(e) => out.warnings.push(format!("{}: {e}", c.name())),
                 },

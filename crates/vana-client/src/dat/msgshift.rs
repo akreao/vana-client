@@ -28,9 +28,11 @@ pub struct ZoneShift {
     pub segs: Vec<Seg>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct MsgShift {
     pub zones: BTreeMap<u16, ZoneShift>,
+    /// Per zone: whether the install's dialogue file is the one mapped (filled by `installed`).
+    checked: std::sync::Mutex<std::collections::HashMap<u16, bool>>,
 }
 
 impl MsgShift {
@@ -60,7 +62,20 @@ impl MsgShift {
                 _ => {}
             }
         }
-        MsgShift { zones }
+        MsgShift { zones, checked: Default::default() }
+    }
+
+    /// Whether `zone` has a mapping made from this install's dialogue file; hashed on first ask, not all at login.
+    pub fn installed(&self, index: &DatIndex, zone: u16) -> bool {
+        let Some(s) = self.zones.get(&zone) else { return false };
+        if let Some(ok) = self.checked.lock().ok().and_then(|c| c.get(&zone).copied()) {
+            return ok;
+        }
+        let ok = index.read(file_id(zone)).is_ok_and(|d| md5_8(&d) == s.md5);
+        if let Ok(mut c) = self.checked.lock() {
+            c.insert(zone, ok);
+        }
+        ok
     }
 
     /// Keeps only zones whose dialogue file matches the install.

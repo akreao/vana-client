@@ -119,7 +119,6 @@ pub fn nine_slice(s: &Sprite, dst: Rect, k: f32, tint: Color32) -> Shape {
     Shape::mesh(m)
 }
 
-/// A sprite whole, `size` points wide at `at`.
 /// A five-pointed star at `c` (outer radius `r`) with a dark edge: a fan from its centre, as it is not convex.
 pub fn star(c: Pos2, r: f32, fill: Color32) -> Shape {
     let pts: Vec<Pos2> = (0..10)
@@ -155,6 +154,7 @@ pub fn turned(s: &Sprite, r: Rect, quarters: u8, tint: Color32) -> Shape {
     Shape::mesh(m)
 }
 
+/// A sprite whole, `size` points wide at `at`.
 pub fn image(s: &Sprite, at: Pos2, size: f32, tint: Color32) -> Shape {
     let mut m = Mesh::with_texture(s.tex);
     m.add_rect_with_uv(Rect::from_min_size(at, vec2(size, size * s.size.y / s.size.x)), s.uv, tint);

@@ -105,7 +105,7 @@ pub fn render(index: &DatIndex, shot: &Shot, out: &std::path::Path) -> Result<()
         for t in body.textures.iter().chain(&head.textures) {
             let mut o = t.clone();
             o.name = format!("{}#opaque", t.name);
-            o.rgba.chunks_exact_mut(4).for_each(|p| p[3] = 255);
+            o.rgba_mut().chunks_exact_mut(4).for_each(|p| p[3] = 255);
             textures.push(t.clone());
             textures.push(o);
         }
