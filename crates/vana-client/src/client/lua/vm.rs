@@ -17,6 +17,8 @@ use std::time::{Duration, Instant};
 pub(super) const MEMORY: usize = 64 << 20;
 /// A single call past this is stopped; repeated, the mod is suspended.
 const HARD_CAP: Duration = Duration::from_millis(100);
+/// Distinct error texts a mod's state remembers as reported (ModState::record).
+const REPORTED_KEPT: usize = 256;
 /// A call past this is reported once (BG3SE's client default).
 const SOFT_CAP: Duration = Duration::from_millis(2);
 /// Errors within `ERROR_WINDOW` that suspend a mod.
@@ -129,6 +131,8 @@ pub(super) struct ModState {
     pub stats: Stats,
     pub errors: VecDeque<Instant>,
     pub reported: HashSet<String>,
+    /// `reported` in the order its texts came, so the oldest goes first once it holds REPORTED_KEPT.
+    reported_order: VecDeque<String>,
     /// Lines for the chat log about this mod (errors, budget), printed by the host.
     pub notices: Vec<String>,
     pub save: bool,
@@ -188,7 +192,15 @@ impl ModState {
         while self.errors.front().is_some_and(|t| now.duration_since(*t) > ERROR_WINDOW) {
             self.errors.pop_front();
         }
+        // Errors that carry values are each new: the oldest texts go past a few hundred rather than the set grow
+        // (emptying it all at once would report a steady error again after every few hundred others).
         if self.reported.insert(text.clone()) {
+            self.reported_order.push_back(text.clone());
+            if self.reported_order.len() > REPORTED_KEPT
+                && let Some(old) = self.reported_order.pop_front()
+            {
+                self.reported.remove(&old);
+            }
             self.notices.push(format!("{name}: {text}"));
         }
     }

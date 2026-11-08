@@ -1,5 +1,5 @@
 name = "Effect Remover"
-version = "1.0.0"
+version = "1.0.1"
 description = "Cancels your status effects by name or id from a command, for macros (the cancel add-ons)."
 permissions = ["actions"]
 
@@ -8,3 +8,7 @@ type = "bool"
 default = true
 label = "Effect Remover"
 help = "//cancel <effect> removes a status effect you have (a name, a name with *, or an id; several separated by commas). Works in macros too: //cancel Sneak."
+
+[commands.cancel]
+help = "Cancels status effects: a name, a name with *, or an id."
+args = "<effect>[, <effect>...]"
