@@ -4629,6 +4629,19 @@ return "acxml flow ok"
             data.delete_entry("WAR", id)
             assert(data.resolve("WAR", "NIN", 2, 2) == nil and data.resolve("WAR", nil, 2, 5) == nil)
             assert(data.uses("WAR", id) == 0 and data.resolve("WAR", nil, 1, 1).name == "two")
+            -- Deleting an entry a sub slot names over a main macro leaves that slot empty, not showing the main one;
+            -- over an empty main slot (or one naming the same entry) the sub slot is removed.
+            local w = data.save_entry("WAR", nil, { name = "Warp", lines = { "/echo warp" } })
+            data.set_macro("WAR", nil, 3, 1, m("Cure"))
+            data.assign("WAR", "NIN", 3, 1, w)
+            data.assign("WAR", "NIN", 3, 2, w)
+            data.assign("WAR", nil, 3, 3, w)
+            data.assign("WAR", "NIN", 3, 3, w)
+            data.delete_entry("WAR", w)
+            assert(data.get_raw("WAR", "NIN", 3, 1) == false and data.resolve("WAR", "NIN", 3, 1) == nil)
+            assert(data.resolve("WAR", nil, 3, 1).name == "Cure")
+            assert(data.get_raw("WAR", "NIN", 3, 2) == nil and data.get_raw("WAR", "NIN", 3, 3) == nil)
+            assert(data.get_raw("WAR", nil, 3, 3) == nil)
 
             -- The builder's lines, and a system command's stand-in icon with no recast.
             assert(data.command({ kind = "equip", name = "Warp Ring", target = "ring1" }) == '/equip ring1 "Warp Ring"')

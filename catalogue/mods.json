@@ -1266,7 +1266,7 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "501dd827c200575dce33a19f61265a1b981c50fd5ea5c0ef0583ed91b40cba97",
+          "sha256": "de3163b41e0212ec051d8b9a5dcb0d0cbae3eb2a3743a3776678a034945535eb",
           "size": 1985,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/hotbar/mod.toml"
         },
@@ -1290,8 +1290,8 @@
         },
         {
           "path": "src/data.lua",
-          "sha256": "b72489e65a8e71ac0f646eb6cb0ca5b2b9e6c38a35dcb1813b14429c6176d786",
-          "size": 14438,
+          "sha256": "f31d7304eb691310ef534082d39b1a58bdcfd7863e63a3fbd2a4c2d4ae709180",
+          "size": 15108,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/hotbar/src/data.lua"
         },
         {
@@ -1346,7 +1346,7 @@
       "id": "hotbar",
       "kind": "lua",
       "name": "Hotbars",
-      "version": "1.7.1"
+      "version": "1.7.2"
     },
     {
       "authors": [],
