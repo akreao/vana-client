@@ -1335,7 +1335,7 @@ fn party_rows(p: Look, w: &World) -> (Vec<PartyRow>, [Option<Vec<PartyRow>>; 2])
             sub_icon: w.stats.as_ref().and_then(|s| job_icon(s.sub.0)),
             here: Some(RowVitals {
                 hp,
-                hp_max: super::super::party::hp_max(w.stats.as_ref().map(|s| s.hp_max), hp, hpp),
+                hp_max: super::super::party::hp_max(w.own_hp_max.or(w.stats.as_ref().map(|s| s.hp_max)), hp, hpp),
                 mp,
                 tp: w.party_tp.then_some(tp),
                 hpf: gh as f32 / 100.0,

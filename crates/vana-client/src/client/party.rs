@@ -387,26 +387,38 @@ pub fn change_body(name: &str, kind: u8, change: u8) -> Vec<u8> {
     b
 }
 
-/// A max HP worth showing for `hp` at `hpp` %: `known` (0x061's for us, the last 100 % reading for others) while
-/// the HP % still agrees with it, else HP / HP %. No packet carries a member's max HP, and a lost buff or food shrinks
-/// ours without a 0x061 (LSB sends only 0x0DF / 0x0DD), so a stale one shows up as an HP % that no longer fits.
-/// LSB's HP % is floor(hp * 100 / max), at least 1 while alive (CBattleEntity::GetHPP); a rounded one fits too.
+/// Whether `max` can be the max HP behind `hp` at `hpp` %. LSB's HP % is floor(hp * 100 / max), at least 1 while
+/// alive (CBattleEntity::GetHPP); a rounded one fits too.
+pub fn hp_max_fits(max: u32, hp: u32, hpp: u8) -> bool {
+    if hp > max || max == 0 {
+        return false;
+    }
+    if hp == 0 {
+        return true;
+    }
+    let x = hp as u64 * 100;
+    let lo = (x / max as u64).max(1);
+    let hi = x.div_ceil(max as u64).max(1);
+    (lo..=hi).contains(&(hpp as u64))
+}
+
+/// A max HP worth showing for `hp` at `hpp` %: `known` while it still fits, else HP / HP %.
 pub fn hp_max(known: Option<u32>, hp: u32, hpp: u8) -> Option<u32> {
-    let fits = |max: u32| {
-        if hp > max || max == 0 {
-            return false;
-        }
-        if hp == 0 {
-            return true;
-        }
-        let x = hp as u64 * 100;
-        let lo = (x / max as u64).max(1);
-        let hi = x.div_ceil(max as u64).max(1);
-        (lo..=hi).contains(&(hpp as u64))
-    };
     match known {
-        Some(max) if fits(max) => Some(max),
+        Some(max) if hp_max_fits(max, hp, hpp) => Some(max),
         _ => (hpp > 0).then(|| ((hp as f32 * 100.0 / hpp as f32).round() as u32).max(hp)),
+    }
+}
+
+/// Keeps a remembered max HP in step with the latest HP and HP %. No packet carries a member's max HP, and a lost buff
+/// or food shrinks ours without a 0x061 (LSB sends only 0x0DF / 0x0DD), so a stale one shows up as an HP % that no
+/// longer fits: it is replaced by HP / HP % then, and that estimate is kept while it fits (at low HP every max reads
+/// 1 %, which must not bring the stale one back). A full bar gives the exact value.
+pub fn track_hp_max(known: &mut Option<u32>, hp: u32, hpp: u8) {
+    if hpp == 100 && hp > 0 {
+        *known = Some(hp);
+    } else if known.is_none_or(|k| !hp_max_fits(k, hp, hpp)) {
+        *known = hp_max(None, hp, hpp);
     }
 }
 
@@ -495,5 +507,21 @@ mod tests {
         assert_eq!(hp_max(Some(1000), 996, 100), Some(1000));
         assert_eq!(hp_max(Some(1000), 0, 0), Some(1000));
         assert_eq!(hp_max(None, 0, 0), None);
+    }
+
+    /// Once corrected, near-death HP (1 % for any max) keeps the corrected value, not the stale one.
+    #[test]
+    fn tracked_hp_max_survives_low_hp() {
+        let mut max = Some(1200);
+        track_hp_max(&mut max, 900, 75);
+        assert_eq!(max, Some(1200));
+        track_hp_max(&mut max, 900, 90);
+        assert_eq!(max, Some(1000));
+        track_hp_max(&mut max, 10, 1);
+        assert_eq!(max, Some(1000));
+        track_hp_max(&mut max, 0, 0);
+        assert_eq!(max, Some(1000));
+        track_hp_max(&mut max, 1100, 100);
+        assert_eq!(max, Some(1100));
     }
 }

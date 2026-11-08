@@ -871,7 +871,7 @@ pub fn facts(w: &World) -> Facts {
             me: true,
             here: true,
             hp,
-            hp_max: super::party::hp_max(Some(st.hp_max), hp, hpp).unwrap_or(st.hp_max),
+            hp_max: super::party::hp_max(Some(w.own_hp_max.unwrap_or(st.hp_max)), hp, hpp).unwrap_or(st.hp_max),
             job: st.main.0,
             effects: own_ids.clone(),
         });
