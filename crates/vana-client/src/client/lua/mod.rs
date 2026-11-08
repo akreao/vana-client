@@ -4905,10 +4905,9 @@ impl Host {
     /// Whether a mod window's line is being typed (it takes the text and the keys).
     pub(super) fn typing(&self) -> bool {
         !self.all_hidden
-            && self
-                .vms
-                .iter()
-                .any(|v| v.suspended.is_none() && v.st.borrow().windows.iter().any(|w| w.open && w.focus && w.typing()))
+            && self.vms.iter().any(|v| {
+                v.suspended.is_none() && v.st.borrow().windows.iter().any(|w| w.open && w.focus && w.takes_text())
+            })
     }
 
     /// The focused window's title and the help under its cursor, for the classic help bar.
@@ -4929,8 +4928,8 @@ pub(super) fn window_text(w: &mut World, events: &[egui::Event]) {
     let mut hit = None;
     for vm in host.vms.iter().filter(|v| v.suspended.is_none()) {
         let mut st = vm.st.borrow_mut();
-        if let Some(win) = st.windows.iter_mut().find(|w| w.open && w.focus && w.typing()) {
-            let (ev, se) = win.text(events);
+        if let Some(win) = st.windows.iter_mut().find(|w| w.open && w.focus && w.takes_text()) {
+            let (ev, se) = if win.typing() { win.text(events) } else { win.filter_text(events) };
             hit = Some((vm.manifest.id.clone(), win.id.clone(), ev, se));
             break;
         }

@@ -175,6 +175,7 @@ Right, Home and End work while typing.
 | `label` | `string` | `""` | The heading above the line. |
 | `text` | `string` | `""` | The text in the line. |
 | `max` | `integer` | `64` | The most characters it takes (1 to 1024). |
+| `filter` | `boolean` | `false` | A type-to-filter line (a list's filter): while the window has the focus, typed characters and Backspace go into it (each change an `edit` event) wherever the cursor is, and none of the typing reaches the game; Up, Down, Enter, Escape and the other keys work the window as ever. One per window. |
 
 ### choice
 

@@ -2159,6 +2159,7 @@ fn elem_only(t: &Table) -> mlua::Result<super::window::Elem> {
             label: t.get::<Option<String>>("label")?.unwrap_or_default(),
             text: t.get::<Option<String>>("text")?.unwrap_or_default(),
             max: t.get::<Option<usize>>("max")?.unwrap_or(64).clamp(1, 1024),
+            filter: t.get::<Option<bool>>("filter")?.unwrap_or(false),
         },
         "choice" => Elem::Choice {
             id: id()?,
