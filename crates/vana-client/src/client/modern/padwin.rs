@@ -328,6 +328,9 @@ pub fn draw(p: &mut Panels, w: &mut World) {
     if !shown(w) {
         return;
     }
+    // Over the Settings window it is opened from: panels share one order, and a click on Settings (the Controller
+    // button) put that one in front.
+    p.ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(("modern panel", "controller"))));
     if let Some(c) = window(p, &w.padcfg) {
         apply(w, c);
     }
