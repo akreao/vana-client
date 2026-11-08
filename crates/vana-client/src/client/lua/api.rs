@@ -1794,6 +1794,7 @@ pub(super) fn entity(lua: &Lua, w: &World, id: u32, e: &super::super::Entity) ->
     t.set("height", model_height(w, id))?;
     // The model's skeleton bones: a handful for an object (a casket's box and lid), dozens for a creature; 0 for none.
     t.set("bones", w.actors.get(&id).and_then(|a| a.character.as_ref()).map_or(0, |c| c.skeleton.bones.len()))?;
+    t.set("walks", w.actors.get(&id).and_then(|a| a.character.as_ref()).is_some_and(|c| walks(c)))?;
     if let Some(l) = e.appearance {
         let look = lua.create_table()?;
         for (k, v) in [
@@ -1838,6 +1839,12 @@ pub(super) fn entity(lua: &Lua, w: &World, id: u32, e: &super::super::Entity) ->
 }
 
 /// An actor's model height in yalms (its top at rest, scaled), once its model is in.
+/// Whether a model can walk: a person's look, or a walk or run motion (a moogle, a monster); an object (a book, a
+/// casket, a crystal) has neither.
+fn walks(c: &crate::dat::character::Character) -> bool {
+    c.pc.is_some() || c.animations.iter().any(|a| a.name.starts_with("wlk") || a.name.starts_with("run"))
+}
+
 fn model_height(w: &World, id: u32) -> Option<f32> {
     w.actors.get(&id).filter(|a| a.character.is_some()).map(|a| -a.top)
 }
@@ -1863,6 +1870,7 @@ pub(super) fn self_entity(lua: &Lua, w: &World) -> mlua::Result<Table> {
     t.set("distance", 0.0)?;
     t.set("height", model_height(w, w.my_id))?;
     t.set("bones", w.actors.get(&w.my_id).and_then(|a| a.character.as_ref()).map_or(0, |c| c.skeleton.bones.len()))?;
+    t.set("walks", true)?;
     t.set("hpp", w.vitals.map_or(100, |v| v.3))?;
     t.set("gauge", true)?;
     t.set("status", w.my_motion.status)?;

@@ -92,6 +92,7 @@
 ---@field race integer?
 ---@field model integer a monster or NPC model id (0 for a player-style look)
 ---@field bones integer its model's skeleton bones: a few for an object (a casket: 3), dozens for a creature; 0 for none (a ??? point, a door)
+---@field walks boolean its model can walk (a person's look, or a walk or run motion): false for an object (a book, a casket, a crystal), a ??? point, a door, or a model not loaded yet
 ---@field look {face: integer, head: integer, body: integer, hands: integer, legs: integer, feet: integer, main: integer, sub: integer, range: integer}? a player-style look
 ---@field in_party boolean
 ---@field in_alliance boolean
