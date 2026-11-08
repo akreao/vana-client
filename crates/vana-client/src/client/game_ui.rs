@@ -1043,6 +1043,11 @@ impl GameUi {
         Some(r)
     }
 
+    /// The augment tables' no-mark weapon list, once loaded.
+    pub fn aug_no_mark(&self) -> Option<Vec<u16>> {
+        self.data.aug_tables.as_ref().map(|t| t.no_mark_ids())
+    }
+
     /// What augment decoding needs, when its texts and tables loaded.
     pub fn aug_ctx(&self) -> Option<super::augment::AugCtx<'_>> {
         Some(super::augment::AugCtx {
