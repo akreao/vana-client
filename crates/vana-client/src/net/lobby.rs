@@ -409,7 +409,8 @@ impl Lobby {
     pub fn worlds(&mut self) -> Result<Vec<(u32, String)>> {
         self.send_view(0x24, packet(0x2C))?;
         let pkt = self.read_view(0x23, 32)?;
-        let count = rd_u32(&pkt, 28) as usize;
+        // No more than the reply holds (a bad count would spin to 4 G).
+        let count = (rd_u32(&pkt, 28) as usize).min(pkt.len().saturating_sub(32) / 20);
         let worlds: Vec<(u32, String)> = (0..count)
             .filter_map(|i| {
                 let o = 32 + i * 20;

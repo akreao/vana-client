@@ -17988,14 +17988,18 @@ impl App {
                         g.lamp_lit = lit;
                     }
                 }
-                let drawn_map: HashMap<u32, &crate::render::ActorGpu> = w
+                let mut drawn: Vec<(u32, &crate::render::ActorGpu)> = w
                     .actors
                     .iter()
                     .filter(|(id, a)| !a.vanished() && !hidden.contains(id) && !far_out.contains(id) && !culled(id, a))
                     .filter_map(|(id, a)| Some((*id, a.gpu.as_ref()?)))
                     .filter(|(_, g)| g.alpha >= 1e-4)
                     .collect();
-                let actors: Vec<&crate::render::ActorGpu> = drawn_map.values().copied().collect();
+                // One order every frame (a map's order changes with each new map): which overlapping edges blend over
+                // which, and which actors take the 64 shine and fade slots, stay put.
+                drawn.sort_unstable_by_key(|d| d.0);
+                let actors: Vec<&crate::render::ActorGpu> = drawn.iter().map(|d| d.1).collect();
+                let drawn_map: HashMap<u32, &crate::render::ActorGpu> = drawn.into_iter().collect();
                 counts = perf::Counts {
                     entities: w.entities.len(),
                     actors: w.actors.len(),
