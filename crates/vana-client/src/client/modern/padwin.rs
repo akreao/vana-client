@@ -329,9 +329,11 @@ pub fn draw(p: &mut Panels, w: &mut World) {
     if !shown(w) {
         return;
     }
-    // Over the Settings window it is opened from: panels share one order, and a click on Settings (the Controller
-    // button) put that one in front. Only when it opens, so a later click or prompt can still come in front of it.
-    if std::mem::take(&mut w.padcfg.raise) {
+    // Over the Settings window it is opened from: when it opens (a click on Settings' Controller button put that one
+    // in front), and while a menu column window is shown, since those are raised every frame (Panels::show). Otherwise
+    // the order is the clicks', so a prompt can still come in front of it.
+    let column = super::COLUMN.iter().any(|c| p.this.contains_key(*c));
+    if std::mem::take(&mut w.padcfg.raise) || column {
         p.ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(("modern panel", "controller"))));
     }
     if let Some(c) = window(p, &w.padcfg) {
