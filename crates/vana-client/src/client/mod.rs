@@ -2731,7 +2731,7 @@ fn world_hud(
                 }
                 // A Lua mod's window with the focus takes the keys (docs/lua-mods.md 4.10).
                 _ if world.lua.focused() => {
-                    lua::window_key(world, *key);
+                    lua::window_key(world, *key, modifiers.shift);
                 }
                 // Our settings screen, then the Config windows, take the keys while open (in the modern Config ours is
                 // one of its pages, keyed there).
@@ -3214,7 +3214,15 @@ fn world_hud(
     // Mouse on the Lua mods' windows (the modern UI's panels take egui's).
     if !world.modern
         && let Some(p) = input.pointer
-        && lua::pointer_classic(world, gu, p, input.moved, input.clicked, (input.pressed, input.down, input.released))
+        && lua::pointer_classic(
+            world,
+            gu,
+            p,
+            input.moved,
+            input.clicked,
+            input.right_clicked,
+            (input.pressed, input.down, input.released),
+        )
     {
         gu.hover.set(true);
     }
@@ -18623,7 +18631,11 @@ impl ApplicationHandler for App {
             WindowEvent::Focused(false) => crate::voice::release(),
             _ => {}
         }
-        // Lua mods see keys and the mouse first, and may take them.
+        // Lua mods see keys and the mouse first, and may take them; a press over a window (a mod's pop-up, a panel) is
+        // the window's, never a HUD element's under it.
+        if let (Phase::World(w), Some(gfx)) = (&mut self.phase, &self.gfx) {
+            lua::input::set_over_ui(w, gfx.egui_ctx.is_pointer_over_egui());
+        }
         if self.opening.is_none()
             && let Phase::World(w) = &mut self.phase
             && lua::input::window_event(w, &event)

@@ -25,6 +25,7 @@ mod state;
 mod vm;
 pub(super) mod window;
 
+pub(in crate::client) use input::combo_label;
 pub(in crate::client) use state::Placed;
 
 use super::World;
@@ -4905,10 +4906,9 @@ impl Host {
     /// Whether a mod window's line is being typed (it takes the text and the keys).
     pub(super) fn typing(&self) -> bool {
         !self.all_hidden
-            && self
-                .vms
-                .iter()
-                .any(|v| v.suspended.is_none() && v.st.borrow().windows.iter().any(|w| w.open && w.focus && w.typing()))
+            && self.vms.iter().any(|v| {
+                v.suspended.is_none() && v.st.borrow().windows.iter().any(|w| w.open && w.focus && w.takes_text())
+            })
     }
 
     /// The focused window's title and the help under its cursor, for the classic help bar.
@@ -4926,11 +4926,18 @@ impl Host {
 /// Typed text for the focused window's line.
 pub(super) fn window_text(w: &mut World, events: &[egui::Event]) {
     let host = &mut w.lua;
+    let last = host.input.borrow().last_down;
     let mut hit = None;
     for vm in host.vms.iter().filter(|v| v.suspended.is_none()) {
         let mut st = vm.st.borrow_mut();
-        if let Some(win) = st.windows.iter_mut().find(|w| w.open && w.focus && w.typing()) {
-            let (ev, se) = win.text(events);
+        if let Some(win) = st.windows.iter_mut().find(|w| w.open && w.focus && w.takes_text()) {
+            let (ev, se) = if win.listening() {
+                win.listen(events, |e| input::combo_of(e, last))
+            } else if win.typing() {
+                win.text(events)
+            } else {
+                win.filter_text(events)
+            };
             hit = Some((vm.manifest.id.clone(), win.id.clone(), ev, se));
             break;
         }
@@ -4941,13 +4948,13 @@ pub(super) fn window_text(w: &mut World, events: &[egui::Event]) {
 }
 
 /// A key for the focused mod window, if any (its events go to the mod's handler next phase).
-pub(super) fn window_key(w: &mut World, key: egui::Key) -> bool {
+pub(super) fn window_key(w: &mut World, key: egui::Key, shift: bool) -> bool {
     let host = &mut w.lua;
     let mut hit = None;
     for vm in host.vms.iter().filter(|v| v.suspended.is_none()) {
         let mut st = vm.st.borrow_mut();
         if let Some(win) = st.windows.iter_mut().find(|w| w.open && w.focus) {
-            let (ev, se) = win.key(key);
+            let (ev, se) = win.key_mod(key, shift);
             hit = Some((vm.manifest.id.clone(), win.id.clone(), ev, se));
             break;
         }
@@ -4975,14 +4982,16 @@ pub(super) fn draw_classic(gu: &mut super::game_ui::GameUi, w: &World) -> Vec<[f
 
 impl Host {
     /// The open windows (mod id, a copy of the window), for the modern UI's panels.
-    /// What /uimodes lists of the mods: each running mod's windows (not its prompts) by panel key, and each of its
-    /// HUD windows as hud:<mod>:<window>, with a label.
+    /// What /uimodes lists of the mods: each running mod's HUD, edge and panel windows (not those the player opens) by
+    /// panel key, and each of its HUD windows as hud:<mod>:<window>, with a label.
     pub(in crate::client) fn mode_windows(&self) -> Vec<(String, String)> {
         let mut out: Vec<(String, String)> = Vec::new();
         for vm in self.vms.iter().filter(|v| v.suspended.is_none()) {
             let st = vm.st.borrow();
             let name = &vm.manifest.name;
-            for win in st.windows.iter().filter(|w| !w.modal) {
+            // Only what stands on the screen as the HUD does (HUD and edge windows, built-in panels' stand-ins): windows
+            // the player opens (a mod's manager) are never hidden by a mode.
+            for win in st.windows.iter().filter(|w| !w.modal && (w.hud || w.edge || w.panel.is_some())) {
                 let key = win.panel.clone().unwrap_or_else(|| format!("mod:{}:{}", vm.manifest.id, win.id));
                 let what = [&win.title, &win.heading]
                     .into_iter()
@@ -5129,9 +5138,23 @@ pub(super) fn pointer_classic(
     p: (f32, f32),
     moved: bool,
     clicked: bool,
+    right: bool,
     held: (bool, bool, bool),
 ) -> bool {
     let mut places = classic_places(w);
+    // A canvas the pointer has left (its window not under it now): its 'leave'.
+    let mut left = Vec::new();
+    for (v, id, x, y) in &places {
+        let vm = &w.lua.vms[*v];
+        let mut st = vm.st.borrow_mut();
+        if let Some(win) = st.windows.iter_mut().find(|x| x.id == *id && x.hovered.is_some()) {
+            let (ww, wh) = win.classic_size();
+            if p.0 < *x || p.1 < *y || p.0 >= x + ww || p.1 >= y + wh {
+                left.extend(win.hover_off().into_iter().map(|e| (vm.manifest.id.clone(), id.clone(), e)));
+            }
+        }
+    }
+    w.lua.ui_events.extend(left);
     // An open modal window is the only one the pointer reaches; a click outside a popup closes it.
     if let Some((k, mid)) = w.lua.modal() {
         places.retain(|(v, id, _, _)| *v == k && *id == mid);
@@ -5140,7 +5163,7 @@ pub(super) fn pointer_classic(
                 w.lua.vms[*v].st.borrow().windows.iter().find(|x| x.id == *id).map_or((0.0, 0.0), |x| x.classic_size());
             p.0 >= *x && p.1 >= *y && p.0 < x + ww && p.1 < y + wh
         });
-        if clicked && !inside {
+        if (clicked || right) && !inside {
             close_popup(w, k, &mid);
             return true;
         }
@@ -5154,7 +5177,7 @@ pub(super) fn pointer_classic(
             if win.drag.is_none() && win.press.is_none() && (p.0 < x || p.1 < y || p.0 >= x + wx || p.1 >= y + wy) {
                 continue;
             }
-            let (hover, ev, se) = win.pointer_classic(gu, x, y, p, moved, clicked, held);
+            let (hover, ev, se) = win.pointer_classic(gu, x, y, p, moved, clicked, right, held);
             (hover, ev, se, vm.manifest.id.clone())
         };
         // A click on a window gives it the focus (not a HUD's).
