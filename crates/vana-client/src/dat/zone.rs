@@ -669,6 +669,18 @@ impl Region {
     }
 
     /// The four corners of its footprint (x, z), in order around it: `local`'s rotation undone.
+    /// The box's 8 corners in the world (FUN_10173c10: unit corners through S(|size|) RotY(yaw) T(pos), record
+    /// +0x4c..+0xab).
+    pub fn box_corners(&self) -> [[f32; 3]; 8] {
+        let (s, c) = self.rot[1].sin_cos();
+        let size = self.scale.map(f32::abs);
+        std::array::from_fn(|i| {
+            let k = [i & 1, i >> 1 & 1, i >> 2 & 1].map(|b| (b as f32 - 0.5));
+            let (x, y, z) = (k[0] * size[0], k[1] * size[1], k[2] * size[2]);
+            [self.pos[0] + x * c + z * s, self.pos[1] + y, self.pos[2] - x * s + z * c]
+        })
+    }
+
     pub fn corners(&self) -> [[f32; 2]; 4] {
         let (sn, cs) = self.rot[1].sin_cos();
         let (sx, sz) = (self.scale[0].abs(), self.scale[2].abs());
@@ -890,6 +902,24 @@ pub fn load_scene(keys: &Keys, file: &[u8]) -> Result<ZoneScene> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn region_box_corners() {
+        let r = Region {
+            pos: [10.0, 0.0, 0.0],
+            rot: [0.0, std::f32::consts::FRAC_PI_2, 0.0],
+            scale: [2.0, -4.0, 6.0],
+            ..Default::default()
+        };
+        let c = r.box_corners();
+        // Yaw 90 degrees: local x goes to -z, local z to +x (x' = x c + z s, z' = -x s + z c).
+        let (lo, hi) = c.iter().fold(([f32::MAX; 3], [f32::MIN; 3]), |(lo, hi), p| {
+            (std::array::from_fn(|i| lo[i].min(p[i])), std::array::from_fn(|i| hi[i].max(p[i])))
+        });
+        for (a, b) in lo.iter().zip([7.0, -2.0, -1.0]).chain(hi.iter().zip([13.0, 2.0, 1.0])) {
+            assert!((a - b).abs() < 1e-4, "{lo:?} {hi:?}");
+        }
+    }
 
     /// Escha - Ru'Aun (scene 733): the gate's detailed mesh and its stand-in form a group whose simplest is the
     /// stand-in; the gate's other part at the same origin is not in it.
