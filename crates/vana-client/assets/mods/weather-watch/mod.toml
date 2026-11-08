@@ -1,6 +1,6 @@
 name = "Weather Watch"
-version = "1.0.0"
-description = "Tells you when the weather you are waiting for starts or ends, and can tell your party (the weather add-ons)."
+version = "1.0.1"
+description = "Tells you when the weather you are waiting for starts or ends, and can tell your party (the weather add-ons). Commands: //weather."
 permissions = ["automation"]
 
 [settings.on]
