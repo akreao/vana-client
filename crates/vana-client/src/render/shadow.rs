@@ -32,6 +32,8 @@ pub struct Caster<'a> {
     /// Its light-state slot, and whether the slot is new (the light starts at its target).
     pub state: u32,
     pub fresh: bool,
+    /// The light straight down whatever the zone's (FUN_100cbde0: the actor class's +0x404, the mannequin's).
+    pub down: bool,
     /// The 3 x 3 cells around it (x0, x1, z0, z1), for modes 0 / 1.
     pub cells: Option<(usize, usize, usize, usize)>,
     /// Mode 1: the actor (its skin and pose region) and its silhouette layer.
@@ -45,7 +47,7 @@ struct CasterGpu {
     corners: [[f32; 4]; 8],
     /// xyz, mode.
     pos: [f32; 4],
-    /// Light slots (4 bytes), state slot, layer, bit 0 fresh.
+    /// Light slots (4 bytes), state slot, layer, bit 0 fresh, bit 1 straight down.
     info: [u32; 4],
 }
 
@@ -96,10 +98,13 @@ fn prep(@builtin(global_invocation_id) gid: vec3<u32>) {
     let c = casters[i];
     let pos = c.pos.xyz;
     let mode = u32(c.pos.w);
-    // FUN_100c94a0: the strongest point light in range, else the directional light.
+    // FUN_100c94a0: the strongest point light in range, else the directional light; FUN_100cbde0: straight down for
+    // a class whose +0x404 says so (the mannequin), whatever the lights.
+    let down = (c.info.w & 2u) != 0u;
     var best = 0.0;
     var l0 = vec3<f32>(0.0, -1.0, 0.0);
     for (var k = 0u; k < 4u; k = k + 1u) {
+        if (down) { break; }
         let s = (c.info.x >> (8u * k)) & 0xffu;
         if (s == 0u) { continue; }
         let a = lights[2u * (s - 1u)];
@@ -114,7 +119,7 @@ fn prep(@builtin(global_invocation_id) gid: vec3<u32>) {
             l0 = d;
         }
     }
-    if (best == 0.0 && pr.sun.w > 0.5) { l0 = -pr.sun.xyz; }
+    if (best == 0.0 && pr.sun.w > 0.5 && !down) { l0 = -pr.sun.xyz; }
     // FUN_10033080: below the horizon a fixed light; the raw and final directions eased at 0.04 a tick; lights under
     // 60 degrees held at sin(pi / 3) of the level length.
     if (l0.y > 0.0) { l0 = vec3<f32>(0.45, -0.9, 0.0); }
@@ -653,7 +658,7 @@ impl ZoneRenderer {
             .map(|c| CasterGpu {
                 corners: c.corners.map(|v| [v.x, v.y, v.z, 1.0]),
                 pos: [c.pos.x, c.pos.y, c.pos.z, c.mode as f32],
-                info: [u32::from_le_bytes(c.lights), c.state, c.layer, c.fresh as u32],
+                info: [u32::from_le_bytes(c.lights), c.state, c.layer, c.fresh as u32 | (c.down as u32) << 1],
             })
             .collect();
         gpu.queue.put(&s.casters, 0, bytemuck::cast_slice(&input));
@@ -794,5 +799,17 @@ impl ZoneRenderer {
             }
             pass.draw(verts, range);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// The shadow shader (the mannequin's straight-down light included) parses and validates.
+    #[test]
+    fn shadow_shader_is_valid() {
+        let m = wgpu::naga::front::wgsl::parse_str(super::WGSL).expect("parse");
+        wgpu::naga::valid::Validator::new(Default::default(), wgpu::naga::valid::Capabilities::all())
+            .validate(&m)
+            .expect("valid");
     }
 }

@@ -17896,7 +17896,8 @@ impl App {
                     r.set_shadow_texture(&gfx.gpu, &t, scene_fmt);
                 }
                 if let Some(g) = w.ground.as_ref() {
-                    let casters = shadows::casters(&mut w.shadow_slots, g, shadow_modes, &drawn_map);
+                    let mannequin = |id: u32| w.furniture.mannequins.iter().any(|m| m.id == id);
+                    let casters = shadows::casters(&mut w.shadow_slots, g, shadow_modes, &drawn_map, &mannequin);
                     let sun = r.lighting.map_or([0.0; 4], |l| [l.actor_dir.x, l.actor_dir.y, l.actor_dir.z, 1.0]);
                     perf::timed(
                         || "shadows".into(),

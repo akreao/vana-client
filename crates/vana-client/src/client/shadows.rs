@@ -116,12 +116,14 @@ pub fn modes(c: &Ctx, seen: &HashMap<u32, Seen>, eye: Vec3) -> Vec<(u32, u8, See
     list
 }
 
-/// The casters to draw: `modes` of the actors drawn this frame (`actors`), their light slots and layers.
+/// The casters to draw: `modes` of the actors drawn this frame (`actors`), their light slots and layers. `down`: the
+/// actors whose class lights their shadow straight down (CXiMannequinActor's +0x404, FUN_100ab680).
 pub fn casters<'a>(
     slots: &mut Slots,
     ground: &Ground,
     modes: Vec<(u32, u8, Seen)>,
     actors: &HashMap<u32, &'a crate::render::ActorGpu>,
+    down: &dyn Fn(u32) -> bool,
 ) -> Vec<crate::render::shadow::Caster<'a>> {
     let list: Vec<(u32, u8, Seen)> = modes.into_iter().filter(|m| actors.contains_key(&m.0)).collect();
     let ids: Vec<u32> = list.iter().map(|l| l.0).collect();
@@ -143,6 +145,7 @@ pub fn casters<'a>(
                 lights: actors.get(&id).map_or([0; 4], |a| a.lights),
                 state,
                 fresh,
+                down: down(id),
                 cells: (m != 2).then(|| ground.decal_range(s.pos)).flatten(),
                 actor: if m == 1 { actors.get(&id).copied() } else { None },
                 layer,
