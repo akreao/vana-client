@@ -10,6 +10,7 @@
   0.5 box unless the entity is named "StreetLamp". Test zone::tests::region_box_corners.
 - The other "Not done" items of "Mouse picking in the world" and "Mouse cursor" checked 2026-11-08: the talk lock is
   in (event::talk_with refuses while World.control_lock is set, the "control lock" entry); cursor kind 1 over an
-  enabled menu item is in (mouse_kind, GameUi::hover). The hover's frame lag stays as it is: FUN_10125360 runs the
-  pick (FUN_10126270 -> FUN_10158d90 -> FUN_10083750) with the camera of the frame being built, ours with the last
-  drawn one *(inf: at most one frame apart, not visible)*.
+  enabled menu item is in (mouse_kind, GameUi::hover). Still open: "the hover's frame lag". FUN_10125360 runs the
+  pick each frame (FUN_10126270 -> FUN_10158d90 -> FUN_10083750 with the current camera, FUN_10015250); the only lag
+  found there is the pointer glide (+0x48 > 0: the drawn point moves half way to the cursor each frame), not traced
+  to what starts it.
