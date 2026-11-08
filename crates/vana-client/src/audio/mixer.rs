@@ -4,7 +4,7 @@
 use super::format::Decoder;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{Receiver, SyncSender};
 
 /// Volume level 0..127 -> linear 0..4096 (FFXiMain 0x1037c338).
 pub const LEVEL: [i32; 128] = [
@@ -94,9 +94,10 @@ impl Ramp {
 
 pub enum Cmd {
     /// Start music (cmd 7): ignored while the same id plays. `ticks` fades in from level 1.
+    /// The decoder is made off the audio callback (the loader).
     PlayBgm {
         id: u32,
-        bytes: Arc<[u8]>,
+        dec: Box<Decoder>,
         level: u8,
         ticks: i32,
     },
@@ -117,7 +118,7 @@ pub enum Cmd {
     /// Start an effect (cmd 2); `handle` (0 = none) names the voice for the commands below.
     /// `limit`: busy voices above which a new one steals instead of taking a free slot (0 = every slot).
     PlaySe {
-        bytes: Arc<[u8]>,
+        dec: Box<Decoder>,
         level: u8,
         pan: u8,
         priority: i32,
@@ -141,7 +142,7 @@ pub enum Cmd {
 }
 
 struct Source {
-    dec: Decoder,
+    dec: Box<Decoder>,
     /// Read position in source frames (fractional) and the two frames around it.
     frac: f64,
     step: f64,
@@ -151,7 +152,7 @@ struct Source {
 }
 
 impl Source {
-    fn new(dec: Decoder, out_rate: u32) -> Self {
+    fn new(dec: Box<Decoder>, out_rate: u32) -> Self {
         let step = dec.header.rate as f64 / out_rate as f64;
         let mut s = Self { dec, frac: 0.0, step, prev: [0.0; 2], next: [0.0; 2], done: false };
         s.advance();
@@ -234,10 +235,30 @@ pub struct Mixer {
     tick_left: u32,
     serial: u64,
     status: Arc<Status>,
+    /// Where ended voices and music go to be freed, off the callback (`bin`).
+    trash: Option<SyncSender<Box<Decoder>>>,
+}
+
+/// A decoder done with, freed off the audio callback (its buffers and the file's bytes, megabytes for music); in
+/// place only when the trash is full or gone.
+fn bin(trash: &Option<SyncSender<Box<Decoder>>>, dec: Box<Decoder>) {
+    if let Some(t) = trash {
+        let _ = t.try_send(dec);
+    }
 }
 
 impl Mixer {
     pub fn new(rx: Receiver<Cmd>, rate: u32, status: Arc<Status>) -> Self {
+        let (trash, bin_rx) = std::sync::mpsc::sync_channel::<Box<Decoder>>(64);
+        let trash = std::thread::Builder::new()
+            .name("audio-free".into())
+            .spawn(move || {
+                for d in bin_rx {
+                    drop(d)
+                }
+            })
+            .ok()
+            .map(|_| trash);
         let tick_len = (rate / 50).max(1);
         Self {
             rx,
@@ -249,17 +270,23 @@ impl Mixer {
             tick_left: tick_len,
             serial: 0,
             status,
-            taken_now: Vec::new(),
+            taken_now: Vec::with_capacity(64),
+            trash,
+        }
+    }
+
+    fn drop_bgm(&mut self) {
+        if let Some(b) = self.bgm.take() {
+            bin(&self.trash, b.src.dec);
         }
     }
 
     fn command(&mut self, cmd: Cmd) {
         match cmd {
-            Cmd::PlayBgm { id, bytes, level, ticks } => {
+            Cmd::PlayBgm { id, mut dec, level, ticks } => {
                 if self.bgm.as_ref().is_some_and(|b| b.id == id && id != 0x400) {
-                    return;
+                    return bin(&self.trash, dec);
                 }
-                let Ok(mut dec) = Decoder::new(bytes) else { return };
                 let slot = (id as usize) & 0x3ff;
                 if self.resume[slot] != 0 {
                     dec.seek_unit(self.resume[slot]);
@@ -273,6 +300,7 @@ impl Mixer {
                     Ramp { cur: LEVEL[1] << 12, left: n, delta: (((target - LEVEL[1]) * 0x1000) | 0x800) / n }
                 };
                 let file_level = dec.header.volume & 0x7f;
+                self.drop_bgm();
                 self.bgm = Some(Bgm { id, src: Source::new(dec, self.rate), ramp, stop_after: false, file_level });
             }
             Cmd::BgmVolume { level, ticks } => {
@@ -292,7 +320,7 @@ impl Mixer {
                     b.stop_after = true;
                 }
             }
-            Cmd::BgmStop => self.bgm = None,
+            Cmd::BgmStop => self.drop_bgm(),
             Cmd::SavePosition => {
                 if let Some(b) = &self.bgm
                     && b.id < 0x400
@@ -322,7 +350,9 @@ impl Mixer {
                     let n = steps(ticks);
                     let v = slot.as_mut().unwrap();
                     if n == 0 {
-                        *slot = None;
+                        if let Some(v) = slot.take() {
+                            bin(&self.trash, v.src.dec);
+                        }
                     } else {
                         v.ramp.left = n;
                         v.ramp.delta = ((LEVEL[1] * 0x1000 - v.ramp.cur) + 0x800) / n;
@@ -330,11 +360,10 @@ impl Mixer {
                     }
                 }
             }
-            Cmd::PlaySe { bytes, level, pan, priority, handle, limit } => {
+            Cmd::PlaySe { dec, level, pan, priority, handle, limit } => {
                 if handle != 0 {
                     self.taken_now.push(handle);
                 }
-                let Ok(dec) = Decoder::new(bytes) else { return };
                 let flags = dec.header.flags;
                 let mut ramp = Ramp { cur: LEVEL[(level & 0x7f) as usize] << 12, left: 0, delta: 0 };
                 if flags & 0x20 != 0 && flags & 0x80 == 0 {
@@ -360,8 +389,12 @@ impl Mixer {
                             (v.priority, v.started)
                         })
                 });
-                if let Some(i) = slot {
+                let Some(i) = slot else { return bin(&self.trash, dec) };
+                {
                     self.serial += 1;
+                    if let Some(old) = self.voices[i].take() {
+                        bin(&self.trash, old.src.dec);
+                    }
                     self.voices[i] = Some(Voice {
                         src: Source::new(dec, self.rate),
                         ramp,
@@ -382,14 +415,15 @@ impl Mixer {
             && b.ramp.tick()
             && b.stop_after
         {
-            self.bgm = None;
+            self.drop_bgm();
         }
         for slot in self.voices.iter_mut() {
             if let Some(v) = slot
                 && v.ramp.tick()
                 && v.stop_after
+                && let Some(v) = slot.take()
             {
-                *slot = None;
+                bin(&self.trash, v.src.dec);
             }
         }
     }
@@ -415,7 +449,7 @@ impl Mixer {
                     f[1] += s[1] * gr;
                 }
                 if b.src.finished() {
-                    self.bgm = None;
+                    self.drop_bgm();
                 }
             }
             for slot in self.voices.iter_mut() {
@@ -427,8 +461,10 @@ impl Mixer {
                     f[0] += s[0] * gl;
                     f[1] += s[1] * gr;
                 }
-                if v.src.finished() {
-                    *slot = None;
+                if v.src.finished()
+                    && let Some(v) = slot.take()
+                {
+                    bin(&self.trash, v.src.dec);
                 }
             }
             at += run;
@@ -443,13 +479,15 @@ impl Mixer {
         }
         self.status.bgm.store(self.bgm.as_ref().map_or(0, |b| b.id + 1), Ordering::Relaxed);
         self.status.voices.store(self.voices.iter().flatten().count() as u32, Ordering::Relaxed);
-        if let Ok(mut a) = self.status.alive.lock() {
+        // Never waiting on the game thread here: a busy list is published next mix (taken only after alive, so a
+        // taken handle is always in the list it is checked against; taken_now keeps them until then).
+        if let Ok(mut a) = self.status.alive.try_lock() {
             a.clear();
             a.extend(self.voices.iter().flatten().map(|v| v.handle).filter(|&h| h != 0));
-        }
-        // After `alive`, so a taken handle is always in the list it is checked against.
-        if let Ok(mut t) = self.status.taken.lock() {
-            t.extend(self.taken_now.drain(..));
+            drop(a);
+            if let Ok(mut t) = self.status.taken.try_lock() {
+                t.extend(self.taken_now.drain(..));
+            }
         }
     }
 }
@@ -465,6 +503,39 @@ mod tests {
         assert_eq!(dsound(0, 0x40).0, -10000);
         assert_eq!(dsound(4096, 0).1, -10000);
         assert_eq!(dsound(4096, 0x7f).1, 10000);
+    }
+
+    /// A sound that ends in a mix leaves its decoder to the trash (freed off the callback), and its handle is taken.
+    #[test]
+    fn ended_voices_leave_the_callback() {
+        let mut wav = Vec::new();
+        let samples = 100u32;
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + samples * 2).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        for v in [16u32.to_le_bytes().to_vec(), 1u16.to_le_bytes().to_vec(), 1u16.to_le_bytes().to_vec()] {
+            wav.extend_from_slice(&v);
+        }
+        wav.extend_from_slice(&48000u32.to_le_bytes());
+        wav.extend_from_slice(&96000u32.to_le_bytes());
+        wav.extend_from_slice(&2u16.to_le_bytes());
+        wav.extend_from_slice(&16u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&(samples * 2).to_le_bytes());
+        for _ in 0..samples {
+            wav.extend_from_slice(&8000i16.to_le_bytes());
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut m = Mixer::new(rx, 48000, Arc::new(Status::default()));
+        let (trash, bin) = std::sync::mpsc::sync_channel(4);
+        m.trash = Some(trash);
+        let dec = Box::new(Decoder::new(Arc::from(wav)).unwrap());
+        tx.send(Cmd::PlaySe { dec, level: 127, pan: 0x40, priority: 0, handle: 7, limit: 0 }).unwrap();
+        let mut out = vec![0f32; 2 * 4800];
+        m.render(&mut out);
+        assert!(out.iter().any(|s| *s != 0.0));
+        assert!(bin.try_recv().is_ok(), "the ended voice's decoder went to the trash");
+        assert_eq!(*m.status.taken.lock().unwrap(), vec![7]);
     }
 
     #[test]

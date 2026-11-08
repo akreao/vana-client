@@ -308,7 +308,8 @@ impl Audio {
         }
         let lv = ((level as f32 * self.effects) as i32).clamp(0, 127) as u8;
         log::debug!("mod sound: {} bytes at level {lv}", bytes.len());
-        let _ = self.tx.send(Req::Cmd(Cmd::PlaySe { bytes, level: lv, pan: 0x40, priority: 0, handle: 0, limit: 0 }));
+        let Some(dec) = decoder(bytes, "mod sound", 0) else { return };
+        let _ = self.tx.send(Req::Cmd(Cmd::PlaySe { dec, level: lv, pan: 0x40, priority: 0, handle: 0, limit: 0 }));
     }
 
     /// A positioned effect voice (FUN_100370d0 -> FUN_10036130 -> cmd 2) under `handle`; level 0..127 before the
@@ -667,6 +668,11 @@ pub fn title_choice(option: u32, installed: u32, t: u32) -> (u32, usize, bool) {
     (id, seq, single)
 }
 
+/// A sound file's decoder, made off the audio callback; None (logged) for a file it can't read.
+fn decoder(bytes: Arc<[u8]>, what: &str, id: u32) -> Option<Box<format::Decoder>> {
+    format::Decoder::new(bytes).map(Box::new).inspect_err(|e| log::warn!("{what} {id}: {e:#}")).ok()
+}
+
 /// Reads sound files off the UI thread, keeping command order (effects stay cached).
 fn loader(dir: PathBuf, rx: Receiver<Req>, tx: Sender<Cmd>, status: Arc<Status>) {
     let mut effects: HashMap<u32, Option<Arc<[u8]>>> = HashMap::new();
@@ -680,23 +686,25 @@ fn loader(dir: PathBuf, rx: Receiver<Req>, tx: Sender<Cmd>, status: Arc<Status>)
     for r in rx {
         let cmd = match r {
             Req::Cmd(c) => Some(c),
-            Req::Music { id, level } => {
-                read(format::music_path(&dir, id), "music", id).map(|bytes| Cmd::PlayBgm { id, bytes, level, ticks: 0 })
-            }
+            Req::Music { id, level } => read(format::music_path(&dir, id), "music", id)
+                .and_then(|bytes| decoder(bytes, "music", id))
+                .map(|dec| Cmd::PlayBgm { id, dec, level, ticks: 0 }),
             Req::Se { id, level } => {
                 log::debug!("se {id} at level {level}");
                 effects
                     .entry(id)
                     .or_insert_with(|| read(format::se_path(&dir, id), "sound", id))
                     .clone()
-                    .map(|bytes| Cmd::PlaySe { bytes, level, pan: 0x40, priority: 0, handle: 0, limit: 0 })
+                    .and_then(|bytes| decoder(bytes, "sound", id))
+                    .map(|dec| Cmd::PlaySe { dec, level, pan: 0x40, priority: 0, handle: 0, limit: 0 })
             }
             Req::Voice { id, level, pan, handle, limit } => {
                 let c = effects
                     .entry(id)
                     .or_insert_with(|| read(format::se_path(&dir, id), "sound", id))
                     .clone()
-                    .map(|bytes| Cmd::PlaySe { bytes, level, pan, priority: 0, handle, limit });
+                    .and_then(|bytes| decoder(bytes, "sound", id))
+                    .map(|dec| Cmd::PlaySe { dec, level, pan, priority: 0, handle, limit });
                 // A failed read is taken too: the voice never comes.
                 if c.is_none()
                     && let Ok(mut t) = status.taken.lock()

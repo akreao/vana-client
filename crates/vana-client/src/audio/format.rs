@@ -168,6 +168,8 @@ pub struct Decoder {
     at3_next: i64,
     pending: Vec<i16>,
     pending_at: usize,
+    /// The frame a jump primes the ATRAC3 decoder with (made here, not in the audio callback).
+    scratch: Vec<i16>,
     ended: bool,
     pub loops: bool,
 }
@@ -182,6 +184,9 @@ impl Decoder {
             _ => None,
         };
         let loops = header.loop_start.is_some();
+        // Room for an ATRAC3 frame (1024 a channel) or a block: the decoder's buffers never grow in the callback.
+        let room = 1024 * header.channels.max(1) as usize;
+        let scratch = if at3.is_some() { Vec::with_capacity(room) } else { Vec::new() };
         Ok(Self {
             header,
             bytes,
@@ -189,8 +194,9 @@ impl Decoder {
             hist: [[0; 2]; 2],
             at3,
             at3_next: 0,
-            pending: Vec::new(),
+            pending: Vec::with_capacity(room),
             pending_at: 0,
+            scratch,
             ended: false,
             loops,
         })
@@ -302,8 +308,11 @@ impl Decoder {
         };
         if frame != self.at3_next {
             // A jump (loop or resume): prime with the previous frame, as FUN_1023c620 does.
-            let mut scratch = Vec::new();
-            if frame > 0 && !feed(frame - 1, &mut scratch) {
+            let mut scratch = std::mem::take(&mut self.scratch);
+            scratch.clear();
+            let primed = frame <= 0 || feed(frame - 1, &mut scratch);
+            self.scratch = scratch;
+            if !primed {
                 return false;
             }
         }

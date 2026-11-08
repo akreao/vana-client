@@ -130,8 +130,10 @@ impl Out {
 
     fn sample(&mut self) -> f32 {
         if self.at == FRAME {
-            if let Ok(mut p) = self.shared.play.lock() {
-                p.mix(&mut self.buf);
+            // Never waiting on the network thread here: a frame it holds the streams for plays silence.
+            match self.shared.play.try_lock() {
+                Ok(mut p) => p.mix(&mut self.buf),
+                Err(_) => self.buf = [0.0; FRAME],
             }
             if let Some(r) = self.rec.as_mut() {
                 r.write(&self.buf);
