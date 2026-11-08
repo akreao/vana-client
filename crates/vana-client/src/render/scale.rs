@@ -268,8 +268,9 @@ impl SceneScale {
         let dst_size = [dst_size[0].max(1), dst_size[1].max(1)];
         let smaa = smaa && lcd.is_none() && t.size[0] <= dst_size[0] && t.size[1] <= dst_size[1];
         if !smaa {
-            // Off: its targets and the scene texture it holds go.
+            // Off: its targets and the scene texture it holds go (the kept group binds its output too).
             self.smaa = None;
+            self.smaa_group.clear();
         }
         let (on, strip, extra) = lcd.map_or((0.0, 0.0, 0.0), |(e, s)| (1.0, s as u32 as f32, e));
         let mut u = [

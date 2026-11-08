@@ -587,6 +587,15 @@ impl<K> Default for BindCache<K> {
     }
 }
 
+impl<K> BindCache<K> {
+    /// Lets go of the kept group and what it binds (a pass turned off or its targets remade).
+    pub fn clear(&self) {
+        if let Ok(mut c) = self.0.lock() {
+            *c = None;
+        }
+    }
+}
+
 impl<K: PartialEq> BindCache<K> {
     pub fn get(&self, key: K, make: impl FnOnce() -> wgpu::BindGroup) -> wgpu::BindGroup {
         let Ok(mut c) = self.0.lock() else { return make() };
