@@ -2063,13 +2063,13 @@
       "files": [
         {
           "path": "init.lua",
-          "sha256": "4dc94d03f7d242ed27c1e861f69fa925475beaad710149d7945b2f27bb0757d8",
-          "size": 3443,
+          "sha256": "2198f2845c5ee6b4743ed9a3e089ef70f5d8e8defcf1fc27166ca3129e213534",
+          "size": 5095,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/trust-lineups/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "61f751a6bf21c2ce86ecb5fdcf93988b0aef33bf4bc1680418e9a273aa1198c3",
+          "sha256": "1de6c65650af2d8beab063e078644fcc4215f17e88f2d74fee64f758e08fcc7a",
           "size": 414,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/trust-lineups/mod.toml"
         }
@@ -2077,7 +2077,7 @@
       "id": "trust-lineups",
       "kind": "lua",
       "name": "Trust Lineups",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
