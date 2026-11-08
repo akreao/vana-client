@@ -23304,3 +23304,61 @@ still gave `cor`. Both now go through actmotion::sdep_stand.
 - Settings declared `from` the config: a disabled mod's page now shows the migrated value; character-scoped ones wait
   for a character (they went to the account file, which every character falls back to) and migrate at login for
   running lobby mods.
+
+## Mods' commands on the chat line (ours, 2026-11-08)
+
+- User: "Installed mod's chat commands need to be effectively communicated to a player" (retail's own text commands
+  were never discoverable either). Replaces lenonk/vana-client#132's command lists in the mods' descriptions; follows
+  Steven's proposal (akreao.github.io/vana-client/mod-commands) for the shape, /lua help, the forms in the hint and
+  the off-mod line (user: take his ideas where they are better).
+- mod.toml `[commands.<name>]`: `help`, `args` (the main form's words; left out when the command only has `forms`),
+  `forms = [{ args, help }]`. manifest::Command::forms lists them (the main one first, a form's help else the
+  command's). A name may not be `lua` (parse) or a game command (the mod does not load). The 51 bundled mods declare
+  their 78 commands and 73 further forms, from #132's lists checked against each mod's code;
+  lua::tests::bundled_commands_declared keeps declared and registered names equal and every form helped.
+- client/cmdhint.rs: while a line starting with `/` is typed (`//` at once, one slash from three letters: /p, /sh,
+  /ma stay quiet), every running mod's form the typed words fit (literal words by prefix, `<x>` / `[x]` any word,
+  past the end only after a placeholder), those meeting more literal words first, over the chat line where the
+  auto-translate list goes, each with "mod · help". Up / Down pick (only while two or more show; otherwise the line
+  history's), Tab puts the pick's fixed words on the line (again: the next pick), before the auto-translate list's
+  Tab. Classic: a framed list on a dark backing; modern: an opaque panel (modern/chat.rs).
+- `/lua help`: the mods with commands, by id; `/lua help <mod>` its forms, `/lua help <command>` one command's
+  (`//help` the same unless a mod registers help). "No mod command x." names the installed mod that declares it when
+  it is not running, else the nearest command (prefix, else two edits). commands.usage(name) gives a mod its declared
+  forms as lines; mods.installed() gives each mod's command names. The Mods page's details and the catalogue's
+  (catalogue/mods.json now carries each mod's `commands`) list a mod's commands (modpack::with_commands).
+## The Mods window (ours, 2026-11-08)
+
+- User: "I like Steve's form designs" and "Full Mods window": Steven's design (akreao.github.io/vana-client/
+  mod-commands) in the modern UI. modern/modmgr.rs. The Settings window keeps one Mods entry (a summary: Lua mods and
+  DAT packs installed / on, updates; Enter or its button opens the window, as Controller opens padwin); its old DATs,
+  Mods, Standard Mods and per-mod pages are gone from the game (the title screen's Settings keeps its DAT Packs and
+  Mods pages, which modern/config.rs mods_page still draws, the Mods window's DATs tab and file picker too).
+- Tabs: Installed, Get mods, DATs. Installed: the Lua mods (search, ON / OFF tags, "update" where the catalogue has a
+  newer version); the picked one's name, version and folder, ON / OFF / Uninstall, description, then Settings (its
+  manifest settings, from lua settings_pages: a choice row, or a slider past 8 choices or 4 numbers), Commands and
+  Permissions (its `@permission:` rows). Changes go through SettingsUi::mod_changes as the Extras pages' did; the
+  app stores only `mods` from the window's SettingsUi (and copies it into the Settings window's, which would store its
+  own back). Get mods: Install from File, the standard mods (Install / Update / Installed), the mod archives in
+  Downloads; details at the right. DATs: the old page.
+- Commands: every form of the mod's `[commands]` (modpack::LuaCommand::forms) at the left; the picked form's words as
+  fields (cmdhint::words, a placeholder keyed by its first alternative, `[x]` left out of the line when empty; a word
+  with brackets inside other text is one field typed whole), the line, Run (lua Host::type_line: the chat line's
+  path, the mod sees the player's input; off while the mod is off) and Put in Chat Line; then the mod's replies: the
+  lines it printed (print, chat.add, its errors) since Run, from Host::printed (the last 64, numbered).
+- Typed params (`params = [{ name, type, options, also }]` on a command or a form; manifest::Param, validated: type in
+  PARAM_TYPES, an enum needs options): enum options and `also` words as buttons under the field; item, key_item,
+  zone, spell, job and player suggest names as typed (gm::Pickers, shared with the GM window: the name tables read on
+  a worker once, the party twice a second). Twelve bundled mods declare them (look-changer, auction-desk, bag-manager,
+  sell-hand-in, use-all, inventory-hud, chat-windows, warp-helper, loot-rules, music-picker, multibox,
+  completion-log).
+- Keys: Tab turns the window's tabs (in a form: the next field); on the list typing searches, Up / Down pick, Enter
+  or Right opens the page; on the page the kit's stops (header buttons, the sub tabs, rows; Commands: the forms list,
+  a stop a field with its buttons, Run / Put in Chat Line), Enter in a field types in it; Escape: out of a field, back
+  to the list, clears the search, closes. The window takes every key while it shows (mod.rs input_open).
+- /lua mods opens it; /lua settings <mod> opens it on that mod's Settings in the modern UI (classic: its Extras page).
+- config::mods_dir follows a test config's own mods folder (FFXI_CONFIG's sibling `mods`) as the Lua host's did: before,
+  a test run's Mods page listed (and could uninstall) the user's real mods.
+- Left: the classic UI's version (Steven: a list like the item list, a submenu ON / OFF, Settings, Commands,
+  Permissions; Commands a list whose Enter puts the line on the chat line).
+

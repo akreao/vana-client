@@ -1,5 +1,5 @@
 name = "NPC Errands"
-version = "1.0.0"
+version = "1.0.1"
 description = "Walks an NPC's menus by command, keeps such errands by name, and changes jobs at a moogle by command (the NPC shop and job change add-ons)."
 permissions = ["actions"]
 
@@ -8,3 +8,20 @@ type = "bool"
 default = true
 label = "NPC Errands"
 help = "//npc <name>: <option> > <option> > ... talks to the NPC and picks those rows; //errand save <name> <the same>, //errand <name>, //errand list | delete <name>; //job <main>[/<sub>] in a Mog House."
+
+[commands.npc]
+help = "Walks an NPC's menus: the options in order."
+args = "<name>: <option> > <option> > ..."
+
+[commands.errand]
+help = "Runs a named errand."
+args = "<name>"
+forms = [
+  { args = "save <name> <npc>: <option> > ...", help = "Keeps an errand by name." },
+  { args = "list", help = "Lists your errands." },
+  { args = "delete <name>", help = "Deletes one." },
+]
+
+[commands.job]
+help = "Changes jobs at a moogle, as //job war/nin or //job blm/none."
+args = "<main>[/<sub>]"

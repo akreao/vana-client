@@ -252,6 +252,90 @@ impl Reply {
     }
 }
 
+/// Pickers' choices by kind, built when first needed, and the last lookup.
+#[derive(Default)]
+pub struct Pickers {
+    /// Each picker's choices once built (the item list takes a moment, so only when first needed).
+    pub lists: HashMap<Pick, Choices>,
+    /// The last field lookup (pick, list size, typed text) and its suggestions and exact match, kept while the text is.
+    found: std::cell::RefCell<Option<((Pick, usize, String), Found)>>,
+    loading: Vec<(Pick, std::sync::mpsc::Receiver<Choices>)>,
+}
+
+impl Pickers {
+    /// `pick`'s suggestions for `typed` and the choice it names exactly, worked out again only when the text or the
+    /// list changes (a list can hold every item).
+    pub fn lookup(&self, pick: Pick, typed: &str, max: usize) -> Found {
+        let Some(list) = self.lists.get(&pick) else { return Found::default() };
+        let key = (pick, list.len(), typed.to_string());
+        if let Some((k, f)) = self.found.borrow().as_ref()
+            && *k == key
+        {
+            return f.clone();
+        }
+        let t = typed.trim();
+        let known = (!t.is_empty())
+            .then(|| list.iter().find(|(id, n)| id == t || n.eq_ignore_ascii_case(t)).cloned())
+            .flatten();
+        let f = Found { hits: suggest(list, typed, max).into_iter().cloned().collect(), known };
+        *self.found.borrow_mut() = Some((key, f.clone()));
+        f
+    }
+
+    /// Builds the choices `picks` need: fixed lists, the name tables (read on a worker, once), the party and the
+    /// people and things in the zone (those two every time, as they change).
+    pub fn fill(
+        &mut self,
+        picks: &[Pick],
+        names: Option<&std::sync::Arc<crate::dat::names::Names>>,
+        people: Choices,
+        around: Choices,
+    ) {
+        // Lists read from the DATs on a worker (items are 65535 reads), taken here once ready.
+        self.loading.retain(|(pick, rx)| match rx.try_recv() {
+            Ok(c) => {
+                self.lists.insert(*pick, c);
+                false
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => true,
+            Err(_) => false,
+        });
+        for &pick in picks {
+            match pick {
+                Pick::Player => {
+                    self.lists.insert(pick, people.clone());
+                }
+                Pick::Entity => {
+                    self.lists.insert(pick, around.clone());
+                }
+                Pick::EntityName => {
+                    let mut c: Choices = around.iter().map(|(_, n)| (n.replace(' ', "_"), n.clone())).collect();
+                    c.sort();
+                    c.dedup();
+                    self.lists.insert(pick, c);
+                }
+                _ if self.lists.contains_key(&pick) || self.loading.iter().any(|l| l.0 == pick) => {}
+                _ => {
+                    if let Some(c) = fixed(pick) {
+                        self.lists.insert(pick, c);
+                    } else if let Some(n) = names
+                        .filter(|_| matches!(pick, Pick::Zone | Pick::Item | Pick::Spell | Pick::KeyItem | Pick::Title))
+                    {
+                        let (tx, rx) = std::sync::mpsc::channel();
+                        let n = n.clone();
+                        std::thread::spawn(move || {
+                            if let Some(c) = from_names(pick, &n) {
+                                let _ = tx.send(c);
+                            }
+                        });
+                        self.loading.push((pick, rx));
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// The GM window's state, kept across zones (the list arrives again at each zone-in).
 #[derive(Default)]
 pub struct Gm {
@@ -276,13 +360,10 @@ pub struct Gm {
     pub armed: bool,
     /// The augment fields shown (folded away by default).
     pub augments: bool,
-    /// Each picker's choices once built (the item list takes a moment, so only when first needed).
-    pub lists: HashMap<Pick, Choices>,
+    /// The fields' pickers' choices.
+    pub pickers: Pickers,
     /// When the party and zone lists were last rebuilt (at most twice a second, not every frame).
     pub lists_at: Option<std::time::Instant>,
-    /// The last field lookup (pick, list size, typed text) and its suggestions and exact match, kept while the text is.
-    found: std::cell::RefCell<Option<((Pick, usize, String), Found)>>,
-    loading: Vec<(Pick, std::sync::mpsc::Receiver<Choices>)>,
     next_id: u16,
     /// Replies by request id, newest last; a few kept.
     pub replies: Vec<(u16, Reply)>,
@@ -546,76 +627,20 @@ impl Gm {
             .collect()
     }
 
-    /// `pick`'s suggestions for `typed` and the choice it names exactly, worked out again only when the text or the
-    /// list changes (a list can hold every item).
+    /// `pick`'s suggestions for `typed` and the choice it names exactly (Pickers::lookup).
     pub fn lookup(&self, pick: Pick, typed: &str, max: usize) -> Found {
-        let Some(list) = self.lists.get(&pick) else { return Found::default() };
-        let key = (pick, list.len(), typed.to_string());
-        if let Some((k, f)) = self.found.borrow().as_ref()
-            && *k == key
-        {
-            return f.clone();
-        }
-        let t = typed.trim();
-        let known = (!t.is_empty())
-            .then(|| list.iter().find(|(id, n)| id == t || n.eq_ignore_ascii_case(t)).cloned())
-            .flatten();
-        let f = Found { hits: suggest(list, typed, max).into_iter().cloned().collect(), known };
-        *self.found.borrow_mut() = Some((key, f.clone()));
-        f
+        self.pickers.lookup(pick, typed, max)
     }
 
-    /// Builds the choices the chosen command's pickers need: fixed lists, the name tables, the party and the
-    /// people and things in the zone (those two every time, as they change).
+    /// The chosen command's pickers' choices (Pickers::fill).
     pub fn fill_lists(
         &mut self,
         names: Option<&std::sync::Arc<crate::dat::names::Names>>,
         people: Choices,
         around: Choices,
     ) {
-        // Lists read from the DATs on a worker (items are 65535 reads), taken here once ready.
-        self.loading.retain(|(pick, rx)| match rx.try_recv() {
-            Ok(c) => {
-                self.lists.insert(*pick, c);
-                false
-            }
-            Err(std::sync::mpsc::TryRecvError::Empty) => true,
-            Err(_) => false,
-        });
         let picks: Vec<Pick> = self.selected().map(|c| c.fields.iter().map(|f| f.pick).collect()).unwrap_or_default();
-        for pick in picks {
-            match pick {
-                Pick::Player => {
-                    self.lists.insert(pick, people.clone());
-                }
-                Pick::Entity => {
-                    self.lists.insert(pick, around.clone());
-                }
-                Pick::EntityName => {
-                    let mut c: Choices = around.iter().map(|(_, n)| (n.replace(' ', "_"), n.clone())).collect();
-                    c.sort();
-                    c.dedup();
-                    self.lists.insert(pick, c);
-                }
-                _ if self.lists.contains_key(&pick) || self.loading.iter().any(|l| l.0 == pick) => {}
-                _ => {
-                    if let Some(c) = fixed(pick) {
-                        self.lists.insert(pick, c);
-                    } else if let Some(n) = names
-                        .filter(|_| matches!(pick, Pick::Zone | Pick::Item | Pick::Spell | Pick::KeyItem | Pick::Title))
-                    {
-                        let (tx, rx) = std::sync::mpsc::channel();
-                        let n = n.clone();
-                        std::thread::spawn(move || {
-                            if let Some(c) = from_names(pick, &n) {
-                                let _ = tx.send(c);
-                            }
-                        });
-                        self.loading.push((pick, rx));
-                    }
-                }
-            }
-        }
+        self.pickers.fill(&picks, names, people, around);
     }
 
     /// A new zone (maybe another map server): forget the level and list until this one answers 0x1F0.
@@ -675,7 +700,7 @@ pub fn sample() -> Gm {
     (g.group, g.selected, g.typing) = (Some(2), Some("additem".into()), Some(0));
     g.values.insert(("additem".into(), 0), "crystal".into());
     g.values.insert(("additem".into(), 1), "12".into());
-    g.lists.insert(
+    g.pickers.lists.insert(
         Pick::Item,
         [
             (4096, "Fire Crystal"),
