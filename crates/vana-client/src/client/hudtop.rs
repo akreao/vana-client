@@ -645,7 +645,6 @@ pub fn topbar_shot(
             down: false,
             released: false,
             right_clicked: false,
-            middle_clicked: false,
             wheel: 0,
             events: Vec::new(),
         };

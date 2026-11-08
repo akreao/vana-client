@@ -761,8 +761,6 @@ struct UiInput {
     down: bool,
     released: bool,
     right_clicked: bool,
-    /// A middle click: its release is message 7 (`middle_release`).
-    middle_clicked: bool,
     /// Wheel notches for the focused list, up positive (FUN_10125360).
     wheel: i32,
     /// Ctrl or Alt held: the page modifier 0xa8 that a click on a list's arrows is tested against
@@ -2339,6 +2337,8 @@ fn world_hud(
     // The focused list's scroll bar and the wheel, before the windows see the press.
     let taken = scrollbar::frame(gu, world, input);
     let input = taken.as_ref().unwrap_or(input);
+    // A middle click is this frame's only: one made while the HUD is down (downloading, hidden) is dropped.
+    let middle = std::mem::take(&mut world.middle_click);
     // FUN_1022eca0: keytops3 165 + (n >> 2) % 5 at (W - 234, H - 48 + 8 - min(2n, 8)), y scale min(n / 4, 1), n
     // the draws since the open (taken at 30 a second, inferred); the HUD windows are not drawn meanwhile.
     if let Some(t) = world.downloading {
@@ -2354,7 +2354,7 @@ fn world_hud(
         }
         return Vec::new();
     }
-    if input.middle_clicked {
+    if middle {
         middle_release(world);
     }
     for mut c in std::mem::take(&mut world.map_cmds) {
@@ -6916,6 +6916,8 @@ struct World {
     swkbd_out: Vec<egui::Event>,
     /// Keys a mouse button stands for (`middle_release`), for the next frame's input.
     mouse_keys: Vec<egui::Event>,
+    /// A middle click (released without a look drag) for the next HUD frame.
+    middle_click: bool,
     swkbd_reopen: bool,
     /// E (DAT_106627a8), which outlives the macro palettes: the focused palette (1 Ctrl, 2 Alt) and both columns.
     /// mcr1edit / mcr2edit open and regain the focus on column + 1 (FUN_101a44b0).
@@ -8115,6 +8117,8 @@ pub struct App {
     dragging: bool,
     left_down: bool,
     middle_down: bool,
+    /// Where and when the middle button went down (a click is told from a look drag on release).
+    middle_press: Option<((f64, f64), Instant)>,
     /// Where the right button went down (the camera arrow's reference).
     drag_from: Option<(f64, f64)>,
     /// FUN_10157fa0's +0x57: this movement push already sent its stand-up command.
@@ -8429,6 +8433,7 @@ impl App {
             dragging: false,
             left_down: false,
             middle_down: false,
+            middle_press: None,
             drag_from: None,
             stand_sent: false,
             mouse: Default::default(),
@@ -9730,6 +9735,7 @@ impl App {
                             swkbd: None,
                             swkbd_out: Vec::new(),
                             mouse_keys: Vec::new(),
+                            middle_click: false,
                             swkbd_reopen: false,
                             key_shift: false,
                             key_repeat: false,
@@ -13878,6 +13884,16 @@ impl App {
                         info_page_turn(w);
                     }
                 }
+                // The release is told here, not from egui's click: a middle press starts the look drag on the first
+                // pixel of motion, and the grab that takes the pointer away from egui loses its click.
+                if pressed {
+                    self.middle_press = self.last_cursor.map(|c| (c, Instant::now()));
+                } else if let Some(((a, _), b)) = self.middle_press.take().zip(self.last_cursor)
+                    && let Phase::World(w) = &mut self.phase
+                {
+                    let (dx, dy) = ((b.0 - a.0) as f32 * k.0, (b.1 - a.1) as f32 * k.1);
+                    w.middle_click |= !consumed && !looked && dx * dx + dy * dy < 65.0;
+                }
                 self.middle_down = pressed;
             }
             _ => {}
@@ -14075,7 +14091,6 @@ impl App {
             down: i.pointer.primary_down() && mine,
             released: i.pointer.primary_released() && !swallow && mine,
             right_clicked: i.pointer.secondary_clicked() && mine,
-            middle_clicked: i.pointer.button_clicked(egui::PointerButton::Middle) && mine,
             page: i.modifiers.ctrl || i.modifiers.alt,
             events: i.events.clone(),
         });
@@ -14234,7 +14249,6 @@ impl App {
                         down: false,
                         released: false,
                         right_clicked: false,
-                        middle_clicked: false,
                         wheel: 0,
                         page: false,
                         events: Vec::new(),
