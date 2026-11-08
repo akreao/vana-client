@@ -2327,6 +2327,8 @@ fn world_hud(
     // The focused list's scroll bar and the wheel, before the windows see the press.
     let taken = scrollbar::frame(gu, world, input);
     let input = taken.as_ref().unwrap_or(input);
+    // A middle click is this frame's only: one made while the HUD is down (downloading, hidden) is dropped.
+    let middle = std::mem::take(&mut world.middle_click);
     // FUN_1022eca0: keytops3 165 + (n >> 2) % 5 at (W - 234, H - 48 + 8 - min(2n, 8)), y scale min(n / 4, 1), n
     // the draws since the open (taken at 30 a second, inferred); the HUD windows are not drawn meanwhile.
     if let Some(t) = world.downloading {
@@ -2342,7 +2344,7 @@ fn world_hud(
         }
         return Vec::new();
     }
-    if std::mem::take(&mut world.middle_click) {
+    if middle {
         middle_release(world);
     }
     for mut c in std::mem::take(&mut world.map_cmds) {
