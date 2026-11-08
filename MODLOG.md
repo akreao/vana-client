@@ -20677,6 +20677,42 @@ From the 30261006_0 decompile; ours in client/gamepad.rs (gilrs for the device),
 - Ours, modern: while the UI is hidden (0x56) the modern layer is not drawn either (retail's hide draws no window).
 - Not seen live: the ground cursor (needs GEO), the stick modes and slots 25 / 26 / 34 (unbound by default), Windows.
 
+## Gamepad: retail's controller config (2026-11-08)
+
+- Retail has no button-assignment screen in the game. Config > Gamepad (configwi row 13, lobycwin child 13;
+  FUN_101bcb60 -> FUN_101bcc30) starts Tools{,US,EU}\FFXiPadConfig.exe -game on a thread (FUN_101bccb0: the install
+  folder from HKLM\SOFTWARE\PlayOnline{,US,EU}\InstallFolder), unless a "FINAL FANTASY XI GAMEPAD Config" window is
+  up, and pauses the pad (FUN_10005600(1): DAT_10455c37 saved and cleared). FUN_101bce30 looks for that window every 90
+  frames; once it is gone FUN_10005600(0) restores the pad and, with a device, sets DAT_10455c40, which makes
+  FUN_10005a40 release and re-create the device (the registry itself is read by FUN_10002840, from FUN_10002820 and
+  FUN_10016820). DLL index names: pad_registry_load, padsin_parse, padexsin_parse, padmode_parse,
+  pad_pause_for_padconfig, config_gamepad_row_open, padconfig_start_thread, padconfig_launch_exe,
+  padconfig_watch_window_closed.
+- FFXiPadConfig.exe 1.320 (US string table 101..213, dialog 147, its XInput page): rows Select / Confirm, Cancel,
+  Active Window / Window Options, Main Menu, Autorun, Macro Palette (Ctrl), Macro Palette (Alt), Logout, Hide Menus,
+  Shutdown, Heal / Lock Target, Change View, Take Screenshot, Target Nearby NPC, Operate menus / camera with movement
+  controls, Toggle movement, menu, and/or camera controls, Button Combination, Jump (/jump), Map (/map), and the
+  Movement, Camera and Menus directional devices (each direction a button, or the device takes a stick). Two pages:
+  Button Settings (padsin000) and Button Combination Settings (padexsin000, used while Button Combination, slot 34, is
+  held). Options: Enable Gamepad, slider, hat switches, force feedback, XInput, gamepad when the game is inactive
+  (padmode000 [0] .. [5]). Copy Assignment copies the button settings into the unassigned combination settings,
+  dropping duplicates. Predefined setups A..E and XInput.
+- Ours (padreg.rs): those registry values read at start on a thread, from the registry on Windows (the 32-bit view;
+  US, then JP, then EU) or a Wine system.reg (the prefix the game folder is in, WINEPREFIX, ~/.wine, Steam's app
+  230330, then any Steam prefix with PlayOnline installed: the user's is a non-Steam shortcut's). gamepad::settings:
+  config.json's gamepad_padsin wins (the Controller window saved it), else the registry's (its padmode000 [0] off turns
+  the pad off, as FUN_10002840 leaves the maps empty; [4] on reads it in the background), else the XInput layout.
+- Ours (padcfg.rs, modern/padwin.rs): the Controller window, the tool's XInput page in the client, opened from the
+  modern Settings window's Controller entry (now a button, not a page; its lines stay for the search). Enter or a
+  click waits up to 6 s for the pad (gamepad Ctx::capture: the pad goes to the window, not the game; buttons held when
+  it starts or ends do nothing until let go); a button leaves any other function it had (FUN_10005130 keeps the
+  last); a stick pushed on a direction gives the device's pair of positions that axis, signed so that way goes that
+  way. Saves to config.json at once.
+- Not done: force feedback (padmode000 [1]; retail drives it through XInputSetState, not traced), the device choice
+  (padguid000 is a DirectInput instance GUID; gilrs has none, so the pad last pressed plays), sliders and hat
+  switches (DirectInput only), retail's predefined setups A..D (DirectInput pads), and the classic interface's
+  Config > Gamepad row (still inert there; the Controller window is a modern one).
+
 ## Software keyboard (2026-11-03)
 
 From the 30261006_0 decompile; ours in client/swkbd.rs (classic) and modern/keyboard.rs.

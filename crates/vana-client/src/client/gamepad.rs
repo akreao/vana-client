@@ -266,6 +266,66 @@ pub struct Frame {
     pub pressed: bool,
     /// A button or a stick past the dead zone is held (keeps the screen awake, client/keepawake.rs).
     pub used: bool,
+    /// While the Controller window waits for a button (`Ctx::capture`): what the pad did, and nothing else is sent.
+    pub capture: Option<Capture>,
+}
+
+/// The pad as the Controller window assigns from it (modern/padwin.rs).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Capture {
+    /// Buttons that went down this frame (padsin's numbers).
+    pub pressed: Vec<u8>,
+    /// The sticks: left X / Y, right X / Y, -127 ..= 127 in XInput's signs (up positive).
+    pub axes: [f32; 4],
+}
+
+/// Where the button settings in use come from.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Source {
+    /// config.json (gamepad_padsin): the Controller window saved them.
+    Config,
+    /// Retail's registry values (FFXiPadConfig.exe), padreg.rs.
+    Retail,
+    /// Neither: FFXiPadConfig's XInput layout.
+    Default,
+}
+
+/// The settings in use: the button maps, the pad on, input in the background, and their source.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Settings {
+    pub padsin: String,
+    pub padexsin: String,
+    pub on: bool,
+    pub background: bool,
+    pub source: Source,
+}
+
+/// What a frame's settings are. config.json's maps win (the Controller window writes them); else retail's registry
+/// values, whose padmode000 also says whether the pad is on ([0]: off, FUN_10002840 leaves the maps empty) and plays in
+/// the background ([4]); else FFXiPadConfig's XInput layout. config gamepad off always turns it off.
+pub fn settings(cfg: &Config, retail: Option<&crate::padreg::Retail>) -> Settings {
+    let (on, background) = (cfg.gamepad, cfg.gamepad_background);
+    if !cfg.gamepad_padsin.trim().is_empty() {
+        let padexsin = or_default(&cfg.gamepad_padexsin, DEFAULT_PADEXSIN).to_string();
+        return Settings { padsin: cfg.gamepad_padsin.clone(), padexsin, on, background, source: Source::Config };
+    }
+    if let Some(r) = retail.filter(|r| r.padsin.is_some()) {
+        return Settings {
+            padsin: r.padsin.clone().unwrap_or_default(),
+            // With no padexsin000 retail's alternate map stays empty (FUN_10005320(0, 0)).
+            padexsin: r.padexsin.clone().unwrap_or_default(),
+            on: on && r.mode(0) != Some(false),
+            background: background || r.mode(4) == Some(true),
+            source: Source::Retail,
+        };
+    }
+    Settings {
+        padsin: DEFAULT_PADSIN.into(),
+        padexsin: DEFAULT_PADEXSIN.into(),
+        on,
+        background,
+        source: Source::Default,
+    }
 }
 
 /// What has the pad this frame.
@@ -281,6 +341,8 @@ pub struct Ctx {
     pub field: bool,
     /// The software keyboard is up: it reads the buttons as key functions, so none becomes a key for the field.
     pub keyboard: bool,
+    /// The Controller window waits for a button or a stick: the pad goes to it (Frame::capture), not to the game.
+    pub capture: bool,
 }
 
 #[derive(Default)]
@@ -298,6 +360,14 @@ pub struct Gamepad {
     clock: f32,
     counter: f32,
     armed: bool,
+    /// Retail's registry values (padreg.rs), read once on a thread (system.reg files are megabytes).
+    retail: Option<crate::padreg::Retail>,
+    retail_rx: Option<std::sync::mpsc::Receiver<Option<crate::padreg::Retail>>>,
+    /// The buttons held last frame while capturing, whether it was, and the buttons still held from it (they do
+    /// nothing until let go: the A that assigned must not press Enter in the window).
+    cap_prev: Vec<u8>,
+    capturing: bool,
+    mute: Vec<u8>,
 }
 
 impl Gamepad {
@@ -313,8 +383,19 @@ impl Gamepad {
         dt: f32,
         mods: &mut dyn FnMut(&[u8], [f32; 6], bool) -> Vec<u8>,
     ) -> Frame {
-        let Ctx { menu, palette, tabs, field, keyboard } = ctx;
-        if !cfg.gamepad {
+        let Ctx { menu, palette, tabs, field, keyboard, capture } = ctx;
+        if self.retail_rx.is_none() {
+            self.reload_retail(cfg.game_dir.clone());
+        }
+        if let Some(r) = self.retail_rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
+            match &r {
+                Some(r) => log::info!("gamepad: retail settings in {}", r.source),
+                None => log::info!("gamepad: no retail settings (FFXiPadConfig) found"),
+            }
+            self.retail = r;
+        }
+        let set = settings(cfg, self.retail.as_ref());
+        if !set.on && !capture {
             mods(&[], [0.0; 6], false);
             return self.release_all();
         }
@@ -331,8 +412,7 @@ impl Gamepad {
                 Err(e) => log::warn!("gamepad: {e}"),
             }
         }
-        let (padsin, padexsin) =
-            (or_default(&cfg.gamepad_padsin, DEFAULT_PADSIN), or_default(&cfg.gamepad_padexsin, DEFAULT_PADEXSIN));
+        let (padsin, padexsin) = (set.padsin.as_str(), set.padexsin.as_str());
         if self.maps.as_ref().is_none_or(|m| m.0 != padsin || m.1 != padexsin) {
             self.maps =
                 Some((padsin.to_string(), padexsin.to_string(), PadMap::parse(padsin), PadMap::parse(padexsin)));
@@ -358,13 +438,33 @@ impl Gamepad {
             }
         }
         let pad = match self.active.and_then(|id| g.connected_gamepad(id)) {
-            Some(p) if focused || cfg.gamepad_background => p,
+            Some(p) if focused || set.background => p,
             _ => {
                 mods(&[], [0.0; 6], false);
                 return self.release_all();
             }
         };
         let mut buttons: Vec<u8> = VIRTUAL.iter().filter(|(b, _)| pad.is_pressed(*b)).map(|(_, n)| *n).collect();
+        if capture {
+            // Buttons already down when it starts (the A that asked) are not presses.
+            if !self.capturing {
+                (self.capturing, self.cap_prev) = (true, buttons.clone());
+            }
+            let pressed = buttons.iter().copied().filter(|b| !self.cap_prev.contains(b)).collect();
+            let a = |x: Axis| pad.value(x) * 127.0;
+            let axes = [a(Axis::LeftStickX), a(Axis::LeftStickY), a(Axis::RightStickX), a(Axis::RightStickY)];
+            self.cap_prev = buttons;
+            mods(&[], [0.0; 6], false);
+            let mut f = self.release_all();
+            f.used = true;
+            f.capture = Some(Capture { pressed, axes });
+            return f;
+        }
+        if std::mem::take(&mut self.capturing) {
+            self.mute = std::mem::take(&mut self.cap_prev);
+        }
+        self.mute.retain(|b| buttons.contains(b));
+        buttons.retain(|b| !self.mute.contains(b));
         let trigger = |b: Button| pad.button_data(b).map_or(0.0, |d| d.value());
         let axes = [
             pad.value(Axis::LeftStickX),
@@ -406,6 +506,29 @@ impl Gamepad {
         // Outside the field the sticks do nothing (they never drive menus).
         f.stick = if field { [v[2] / 128.0, v[3] / 128.0, v[0] / 128.0, v[1] / 128.0] } else { [0.0; 4] };
         f
+    }
+
+    /// Reads retail's registry values again, on a thread (at start, and when the Controller window asks).
+    pub fn reload_retail(&mut self, game_dir: std::path::PathBuf) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(crate::padreg::find(&game_dir));
+        });
+        self.retail_rx = Some(rx);
+    }
+
+    /// Retail's registry values, once read.
+    pub fn retail(&self) -> Option<&crate::padreg::Retail> {
+        self.retail.as_ref()
+    }
+
+    /// The connected pads' names, the one that plays first.
+    pub fn pads(&self) -> Vec<String> {
+        let Some(g) = &self.gilrs else { return Vec::new() };
+        let mut v: Vec<(bool, String)> =
+            g.gamepads().map(|(id, p)| (Some(id) != self.active, p.name().to_string())).collect();
+        v.sort();
+        v.into_iter().map(|p| p.1).collect()
     }
 
     fn release_all(&mut self) -> Frame {

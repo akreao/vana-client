@@ -148,9 +148,11 @@ changed from the in-game Config menus. The fields you may need to set by hand:
 ### Gamepad
 
 Controllers work through the game's own pad path: the buttons set the pad bits the game's key functions test, and
-the sticks fill its stick bytes. Settings > Client turns the pad on or off and sets the sticks' dead zone. The button
-settings use the format of the registry value `padsin000` that FFXiPadConfig.exe writes, so a setting can be copied
-over as is; the default is FFXiPadConfig's XInput layout:
+the sticks fill its stick bytes. The button settings are retail's: at start the client reads what the retail Gamepad
+Config tool (FFXiPadConfig.exe, which retail's Config > Gamepad starts) saved, `padsin000`, `padexsin000` and
+`padmode000`, from the registry on Windows or from a Wine prefix's `system.reg` elsewhere (the prefix the game folder is
+in, `WINEPREFIX`, `~/.wine`, or a Steam prefix with PlayOnline installed). With none saved, the default is that tool's
+XInput layout:
 
 | Button | Does |
 |---|---|
@@ -173,6 +175,13 @@ the text field (or opens the chat line with it). The d-pad moves its cursor, A t
 Backspace, RB a space, X switches to capitals and symbols, Y is Enter, LT / RT move the caret, Start is Tab and Back
 closes it. Any key on a real keyboard closes it too. The modern UI draws it as one of its own panels.
 
+To change them in game, open Settings > Controller (in the modern interface): the Controller window is the tool's
+XInput page. Pick a function and press the button for it (on a Movement, Camera or Menus direction, push a stick to give
+that device the whole stick); Button Combination Settings are the buttons used while Button Combination is held. It also
+has the tool's Enable Gamepad and background options, the stick dead zone, the XInput setup and Copy Assignment. What it
+saves goes to config.json (`gamepad_padsin`, `gamepad_padexsin`) and wins over the registry; Use Retail Settings clears
+them again. Force feedback and the device choice (`padguid000`) are not used yet.
+
 Many desktops do not count pad input as activity, so while the pad is in use the client keeps the screen awake
 (Linux: the screen saver inhibit, or the desktop portal's; Windows: the display timer; macOS: IOKit power assertions).
 Five minutes after the pad's last input it lets go, and the desktop's own timeout applies again.
@@ -182,8 +191,8 @@ Five minutes after the pad's last input it lets go, and the desktop's own timeou
 | `gamepad` | `true` | Read a game controller (Settings > Client > Gamepad) |
 | `gamepad_deadzone` | `0.33` | Stick travel ignored around the centre, measured round so turning the stick does not snap to its axes (Settings > Client > Stick Dead Zone) |
 | `gamepad_background` | `false` | Read the pad while the window is in the background |
-| `gamepad_padsin` | empty (FFXiPadConfig's XInput default) | Button settings in `padsin000` format: 32 numbers, one per function, each an XInput button number (0 B, 1 X, 2 Y, 3 A, 4 / 5 / 6 / 7 d-pad right / left / up / down, 8 LB, 9 LT, 10 L3, 11 RB, 12 RT, 13 R3, 14 Start, 15 Back), an axis 32 + n (1 left X, 2 left Y, 4 right X, 5 right Y; negative inverts) or -1. The positions are listed in MODLOG.md, "Gamepad" |
-| `gamepad_padexsin` | empty | `padexsin000`, the buttons used while the "alternate map" button is held |
+| `gamepad_padsin` | empty (retail's registry value, else FFXiPadConfig's XInput default) | Button settings in `padsin000` format: 32 numbers, one per function, each an XInput button number (0 B, 1 X, 2 Y, 3 A, 4 / 5 / 6 / 7 d-pad right / left / up / down, 8 LB, 9 LT, 10 L3, 11 RB, 12 RT, 13 R3, 14 Start, 15 Back), an axis 32 + n (1 left X, 2 left Y, 4 right X, 5 right Y; negative inverts) or -1. The positions are listed in MODLOG.md, "Gamepad" |
+| `gamepad_padexsin` | empty | `padexsin000`, the buttons used while the Button Combination button is held |
 
 Building on Linux needs libudev's headers (`libudev-dev`, `systemd-devel`); the binary needs `libudev.so.1`, which
 every systemd distro and the Steam Runtime have.
