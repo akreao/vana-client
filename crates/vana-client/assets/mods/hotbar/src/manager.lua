@@ -207,6 +207,8 @@ local function define()
         page = TAB_MACRO },
       { type = "key", id = "skey", label = "Key", text = "", page = TAB_MACRO,
         tip = "Enter or click, then press the slot's key (with Ctrl, Alt or Shift if you like). Backspace: no key." },
+      { type = "buttons", id = "skeyb", items = { "Bar's Key" }, page = TAB_MACRO,
+        tip = "The slot takes its bar's key again (the Keys page's modifier and key row)." },
       { type = "input", id = "lines", label = "Lines (separate with |)", text = "", max = 1024, page = TAB_MACRO,
         tip = 'Example: /ma "Cure" <t> | /wait 2 | /echo done' },
       { type = "text", id = "tip", text = "Waits: /wait 2 on its own line, or <wait 2> at the end of one.",
@@ -243,8 +245,8 @@ local function define()
         refresh_keys()
         refresh_slots()
       end
-    elseif e.kind == "change" and e.id == "skey" then
-      keys.set_slot(S.bar, S.slot, e.text)
+    elseif (e.kind == "change" and e.id == "skey") or (e.kind == "press" and e.id == "skeyb") then
+      keys.set_slot(S.bar, S.slot, e.id == "skey" and e.text or nil)
       M.hooks.rebind()
       M.hooks.changed()
       refresh_keys()

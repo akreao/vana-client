@@ -897,8 +897,8 @@
         },
         {
           "path": "src/actions.lua",
-          "sha256": "3922e25c7f527e625316705bf2e63b3d0de4bfdc6162c7b6e7cab837b395531a",
-          "size": 3650,
+          "sha256": "0bae85cc1fdef20a683dcae09a929231f8e20056384f6710c9cc94954e01cdd2",
+          "size": 4687,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/actions.lua"
         },
         {
@@ -927,8 +927,8 @@
         },
         {
           "path": "src/manager.lua",
-          "sha256": "91fff209d9b374698fa9bef3adea4f857b1b54984206771ddcd8ea731da85702",
-          "size": 11066,
+          "sha256": "18898eeee39ed17a962917b7e62ac15ea75829aa80cbb8d7d4458f5b89c46b0b",
+          "size": 11314,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/manager.lua"
         },
         {
