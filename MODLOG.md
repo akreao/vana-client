@@ -22356,6 +22356,11 @@ Checked in Steven's unpacked FFXiMain.dll (sha256 8097dbf8..., 2026-11-03).
   actmotion::Pending now carries op 0x2c's target (when it is another actor in the zone) and the scheduler's effect
   side runs with it as actor2 (fx `on_scheduler_quiet_on`). Ops 0x5b / 0x66 are unchanged.
 - Not yet seen live in game.
+- 2026-11-05: still nothing in game (Windurst Woods event 0x21fd). The 'bind' op is the event's last op before
+  `event_end`, and ours only queued op 0x2c in the actor's pending slot for the next frame's actmotion update; the
+  event ended in the same VM tick and finish() dropped the pending motion, so neither the motion nor its effect side
+  ever started. FUN_100b2f80 calls vtable +0x298 at once (op 0x2c plays only from files the actor already has), so
+  the Motion handler now starts op 0x2c right away (actmotion::start_pending). The fx task outlives the event end.
 
 ## Send Rate and zone preloading (2026-11-04, ours, not retail)
 
@@ -23023,6 +23028,16 @@ From FFXiMain.dll (Steven's unpacked copy), full_text.asm, FUN_100a7b80.
   mods filter); a window with `panel = "pending"` holding a `chip` element the client draws as the chip was
   (modern/pending.rs chip). pending.rs and World.asked are gone. Compared with master live (Provoke on Fulchia:
   refused, "You cannot attack that target.", gone after 4 s): the same chip.
+- 2026-11-08: answers matched to the ask, not just its kind. A melee round (category 1) no longer answers a waiting
+  spell, nor another action's start or finish: a 0x028 of ours confirms only with the asked id where it names one (a
+  finish's param; a "ca.." start's first record value; abilities by their 0x01A param, the name-table id - 0x200;
+  an interrupt's "sp.." names none). Items and monster skills (11, a mob skill id) keep the category alone. A
+  battle message of ours is the refusal only if it is one of the request path's refusals for the kind (LSB's
+  controllers and action states): a spell's 34, 35, 40, 47, 49, 71, 78, 155, 313 with its id, its recast's 18 and an
+  interrupt's 16 with none; weapon skills 71, 89, 190, 191, 192, 216, 217 with none; job abilities 4, 5, 78, 87, 88,
+  94 with none or the param; items 56 with none, 62 / 445 with none or the item id. Melee-side lines ("out of range"
+  while a spell waits) and experience, wear-offs and the rest are no kind's refusal. Unit test
+  pending_actions_match_the_ask.
 
 ## itemctrl / moneyctr: the mouse (2026-11-02)
 
@@ -23341,3 +23356,17 @@ still gave `cor`. Both now go through actmotion::sdep_stand.
   it; FUN_100d6940 picks the standing swing by +0xf8 and the moving one's letter by +0x598 (2 r, 3 b, 4 l, else f),
   as ours. mvr / mvl themselves turn the body part way toward the step (seen in npc-shot), so a strafe swing's torso
   (`a?r1`, the upper body only) faces the target over legs running to the side by design.
+
+## Map Overlay Opacity moves into the Map Overlay mod (2026-11-08)
+
+- The Map Overlay Opacity is now the Map Overlay mod's setting (`settings.opacity`, 10% to 100% in 5% steps, taken
+  from config `map_overlay_opacity` at its first load), on the mod's own settings page. The mod passes it to the new
+  client option `map_opacity` (0..1; kept when the mod unloads, as `minimap_span` is), which HUD maps without their
+  own alpha and the minimap's marker use as before. The client's own row is gone; config `map_overlay_opacity` stays
+  as the client's memory of the last value given (saved when it changes, as `minimap_span` is), so the minimap's marker
+  keeps the player's shade while the Map Overlay mod is off (user, 2026-11-08).
+- The modern Settings window's Maps & Timers page is removed. Minimap Position, Minimap Size and Timers Position were
+  only ever shown there with the classic interface; they stay on the classic Extras tabs.
+- Settings declared `from` the config: a disabled mod's page now shows the migrated value; character-scoped ones wait
+  for a character (they went to the account file, which every character falls back to) and migrate at login for
+  running lobby mods.

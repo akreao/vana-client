@@ -54,7 +54,7 @@ pub fn find(game_dir: &Path) -> Option<Retail> {
 
 /// The system.reg files that may hold the key, most likely first: the prefix the game folder is in, WINEPREFIX,
 /// ~/.wine, Steam's Final Fantasy XI prefix (app 230330), then any other Steam prefix with PlayOnline installed (a
-/// non-Steam shortcut's, as on the user's machine).
+/// non-Steam shortcut's).
 #[cfg(not(windows))]
 fn wine_files(game_dir: &Path) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = Vec::new();
@@ -221,7 +221,7 @@ mod windows {
 mod tests {
     use super::*;
 
-    /// The user's Steam prefix (ffxi-pad-re registry_steam_prefix.txt), with a Japanese key before it.
+    /// A Steam (Proton) prefix as FFXiPadConfig.exe saved it, with a Japanese key before it.
     const REG: &str = r#"WINE REGISTRY Version 2
 [Software\\Wow6432Node\\PlayOnline\\SquareEnix\\FinalFantasyXI] 1785805000
 "0001"=dword:00000500

@@ -47,12 +47,13 @@ Every element, of any type, may also have these fields:
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `type` | `string` | (required) | The element type: `text`, `buttons`, `slider`, `list`, `gauge`, `separator`, `tabs`, `input`, `choice`, `colour` (or `color`), `section` or `canvas`. |
+| `type` | `string` | (required) | The element type: `text`, `buttons`, `slider`, `list`, `gauge`, `separator`, `tabs`, `input`, `key`, `choice`, `colour` (or `color`), `section` or `canvas`. |
 | `tip` | `string` | `""` | Help text shown while the cursor or the pointer is on this element (see [Tips and help](#tips-and-help)). |
 | `page` | `integer` | none | The page (from 1) of the tabs above it that this element belongs to (see [Pages](#pages-tabs)). Without it, the element shows on every page. |
 
-The keyboard cursor stops on buttons, sliders, lists, tabs, inputs, choices, colours and sections. Texts, gauges,
-separators and canvases are not cursor stops (a canvas still takes the mouse).
+The keyboard cursor stops on buttons, sliders, lists, tabs, inputs, keys, choices, colours and sections. Texts, gauges,
+separators and canvases are not cursor stops (a canvas still takes the mouse). Tab moves the cursor as Down does,
+Shift+Tab as Up.
 
 ### text
 
@@ -175,6 +176,22 @@ Right, Home and End work while typing.
 | `label` | `string` | `""` | The heading above the line. |
 | `text` | `string` | `""` | The text in the line. |
 | `max` | `integer` | `64` | The most characters it takes (1 to 1024). |
+| `filter` | `boolean` | `false` | A type-to-filter line (a list's filter): while the window has the focus, typed characters and Backspace go into it (each change an `edit` event), or into the window's other line when the cursor is on one, and none of the typing reaches the game; Up, Down, Tab, Enter, Escape and the other keys work the window as ever. One per window. |
+
+### key
+
+A key combination the player sets, such as a hotkey. Enter (or a click on it) listens for a key: the next key press,
+with the Ctrl, Alt and Shift held, becomes its text (`"ctrl+q"`, `"alt+numpad3"`, `"f9"`; the names are those of
+[input](input.md#key-names), the form [binds](binds.md) takes) and sends a `change` event. Backspace or Delete clears
+it (`""`, a `change` event too); Escape stops listening and keeps it. While it listens, no key reaches the game or a
+bind. It shows the combination as players read it ("Ctrl+Q"), "No key" when empty. `ui.update(window, id, {listen =
+true})` moves the cursor to it and starts listening.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | `string` | (required) | The element's id. |
+| `label` | `string` | `""` | The heading above it. |
+| `text` | `string` | `""` | The combination. |
 
 ### choice
 
@@ -216,8 +233,9 @@ it and sends a `toggle` event.
 ### canvas
 
 A region your mod draws in with a list of drawing commands. Coordinates are in the units of the window's `width`,
-from the canvas's top left corner, with y going down; drawing outside it is cut off. A click sends a `click` event and
-a drag sends `drag_start`, `drag` and `drag_end` events (see [Window events](#window-events)). To redraw it, give it a
+from the canvas's top left corner, with y going down; drawing outside it is cut off. A click sends a `click` event
+(with `button`, `"left"` or `"right"`), a drag sends `drag_start`, `drag` and `drag_end` events, and the pointer moving
+over it sends `hover` {x, y} (at most once a frame) and `leave` when it goes (see [Window events](#window-events)). To redraw it, give it a
 new `draw` list with `ui.update(window, canvas, {draw = ...})`. It is not a cursor stop.
 
 A press and release without moving is a click. Moving more than a few units with the button down starts a drag
@@ -236,11 +254,12 @@ fields, all numbers defaulting to `0` unless shown:
 | `type` | Fields | What it draws |
 | --- | --- | --- |
 | `"line"` | `x1`, `y1`, `x2`, `y2`, `width` (default `1`) | A line from (x1, y1) to (x2, y2), `width` thick. |
-| `"rect"` | `x`, `y`, `w`, `h`, `to`, `line` | A filled rectangle with its top left at (x, y). With `to` (a colour), it fades from `colour` at the top to `to` at the bottom. With `line` (a width), only its outline is drawn, that thick (`to` is then not used). |
+| `"rect"` | `x`, `y`, `w`, `h`, `to`, `line`, `round` | A filled rectangle with its top left at (x, y). With `to` (a colour), it fades from `colour` at the top to `to` at the bottom. With `line` (a width), only its outline is drawn, that thick (`to` is then not used). `round` rounds its corners that much (not with `to`; the classic UI draws square ones). |
 | `"circle"` | `x`, `y`, `r`, `line` | A filled circle centred on (x, y) with radius `r`; with `line`, only its outline, that thick. |
 | `"tri"` | `x1`, `y1`, `x2`, `y2`, `x3`, `y3` | A filled triangle. |
-| `"text"` | `x`, `y`, `text` (default `""`) | Text with its top left at (x, y), in the UI's text font. |
-| `"icon"` | `x`, `y`, `size` (default `16`), `kind`, `id` | A square icon with its top left at (x, y): `kind` is `"item"` (or none), `"status"`, `"spell"` or `"ability"`, as for [`hud.icon`](hud.md#hudicon). `id` is required. |
+| `"text"` | `x`, `y`, `text` (default `""`), `size` (default `1`), `align`, `font`, `outline` | Text at (x, y), in the UI's text font: `size` times its small text, `align` `"left"` (the default), `"center"` or `"right"` of `x`, `font = "bold"` for the bold face, `outline` a colour round the letters. The classic UI draws its own font at one size. |
+| `"tip"` | `x`, `y`, `w`, `h`, `title`, `text` | Nothing drawn: the tooltip shown while the pointer rests on that rectangle (modern UI). |
+| `"icon"` | `x`, `y`, `size` (default `16`), `kind`, `id` | A square icon with its top left at (x, y), tinted by `colour` (its alpha fades it; the classic UI draws it plain): `kind` is `"item"` (or none), `"status"`, `"spell"` or `"ability"`, as for [`hud.icon`](hud.md#hudicon). `id` is required. |
 
 ### chip
 
@@ -416,6 +435,7 @@ redraws it with the new elements; the values you give (`at`, `text`, `open` and 
 | `edge` | `boolean` | `false` | An edge window, drawn as the Timers and the training regime windows are: on a screen edge (in the modern UI the player drags it along the edges), folding to a tab that shows `title`, with `heading` as a line over the elements; a click on that line folds it. It is a HUD window: it never takes the keys. |
 | `heading` | `string` | the title | An edge window's line over its elements. |
 | `resize` | `boolean` | `false` | An edge window the player can make wider (modern UI). |
+| `grow` | `string` | none | `"up"`: an edge window whose canvas grows or shrinks keeps its bottom edge where it is (free, or on a side or the bottom edge); on the top edge it keeps its top and grows down (modern UI). Its handler gets `dock` {side} (`"top"`, `"bottom"`, `"left"`, `"right"` or `"free"`) when it is first shown and whenever the player moves it to another edge, so it can lay itself out for that edge. |
 | `panel` | `string` | none | `"regime"`, `"timers_recasts"`, `"timers_buffs"`, `"timers_debuffs"`, `"skillchains"` (the client's skillchain helper view, drawn whatever the window's elements are) or `"minimap"` (the client's minimap, with Wide Scan under it in the modern UI): the edge window stands in for that built-in panel: its saved place and fold, its name for `ui.native.hide` and `/uimodes`, and in the classic UI its place in the Timers' dock (under the Timers window, with the drawer arrow and the slide). The classic UI draws an edge window without a `panel` as other windows; in the modern UI one takes a place the first time it shows (the left edge under the edge windows there if it fits above the location panel, else the right edge under the minimap) and keeps it until the player moves it. An ordinary (not edge) window takes `"focus"` (the modern focus panel, on the target panel; not drawn while an event takes the target window down) or `"pending"` (the pending-action chip's panel, over the cast bar): it stands in for that panel, with its place, `ui.native.hide` and `/uimodes`; neither is drawn in the classic UI. |
 
 **Returns** nothing.

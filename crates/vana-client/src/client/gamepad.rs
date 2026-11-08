@@ -632,10 +632,6 @@ impl Gamepad {
     }
 }
 
-fn or_default<'a>(s: &'a str, d: &'a str) -> &'a str {
-    if s.trim().is_empty() { d } else { s }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

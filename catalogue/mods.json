@@ -3,7 +3,7 @@
   "mods": [
     {
       "authors": [],
-      "description": "A window of everything your jobs can use now: magic by school, job abilities, weapon skills and pet commands, with costs and recasts; a click uses one (the action menu add-ons).",
+      "description": "A window of everything your jobs can use now: magic by school, job abilities, weapon skills and pet commands, with costs and recasts; a click uses one; //actions opens it (the action menu add-ons).",
       "files": [
         {
           "path": "init.lua",
@@ -13,15 +13,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "197e46645342af31f04d6a11f093a57bf20e5cc0092f7992901c1aa1df9403a5",
-          "size": 488,
+          "sha256": "cd7f5f15bc9ef5485f39dd80faae829a0cc5cfcf3c5b07d26c2561d45a863ca4",
+          "size": 499,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/action-panel/mod.toml"
         }
       ],
       "id": "action-panel",
       "kind": "lua",
       "name": "Action Panel",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
@@ -523,13 +523,13 @@
       "files": [
         {
           "path": "init.lua",
-          "sha256": "28261429999e97a80e06d31bedafb17de8baf3f757c56e0e00d238e12231c0a5",
-          "size": 4957,
+          "sha256": "d84cd5df2ea3b66ce8939764c6013aa15ae71cb24511490a794869975e1b3b0e",
+          "size": 4950,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/dialogue-bubbles/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "667467199f851c5e528205c2cbb0495039c325403bc3cef1b39c8a358b509d29",
+          "sha256": "e79a9d7d356919530fc8c35145a8444e38b6d8a95728c5950793a5d79c81921c",
           "size": 1014,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/dialogue-bubbles/mod.toml"
         }
@@ -537,7 +537,7 @@
       "id": "dialogue-bubbles",
       "kind": "lua",
       "name": "Dialogue Bubbles",
-      "version": "1.0.1"
+      "version": "1.0.2"
     },
     {
       "authors": [
@@ -885,26 +885,26 @@
       "files": [
         {
           "path": "init.lua",
-          "sha256": "eab6a549d7ff1e166c880c5ba266f7473865ce044832f6373bf7111b3de13385",
-          "size": 2286,
+          "sha256": "fb24c8741dfdc2c92b23288d3b065138a3673a63b72be7e26eb99e9869ddee50",
+          "size": 2729,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/hotbar/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "43d044cb3e772784ca3e4f4b5c430b095625a10357b493f87196683feb0b2724",
-          "size": 1678,
+          "sha256": "1ad074d73e4483181d9d90f6f3fef99df2575d53cf76d325a8d55793618593a2",
+          "size": 1289,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/hotbar/mod.toml"
         },
         {
           "path": "src/actions.lua",
-          "sha256": "438e8d10553df88101be7e9ee02e4ec1efab0f7b23c7d1c3ea3630cd2163f1ab",
-          "size": 2720,
+          "sha256": "0bae85cc1fdef20a683dcae09a929231f8e20056384f6710c9cc94954e01cdd2",
+          "size": 4687,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/hotbar/src/actions.lua"
         },
         {
           "path": "src/bar.lua",
-          "sha256": "fcd9345db2147fc39330856bc93ea4afcd86bde3a754927959ad156ff76721f5",
-          "size": 8628,
+          "sha256": "5633c4a815543aa5871d6f7738fd4fc4898310b8b8b27a8ffdc2b00dc24635ed",
+          "size": 17355,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/hotbar/src/bar.lua"
         },
         {
@@ -921,15 +921,21 @@
         },
         {
           "path": "src/keys.lua",
-          "sha256": "b7f6cfb4e4e67bfb1f971cfe232aa87a10d331af17075ea705f8fa825bc2063b",
-          "size": 3710,
+          "sha256": "3d2896030ea679d8af136963cfa2c94ee5ab84c5ff466ed34dae4d9e67dccd3c",
+          "size": 5379,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/hotbar/src/keys.lua"
         },
         {
           "path": "src/manager.lua",
-          "sha256": "66443a1516e291e6766cb2fa4afb9b56696dd86637e113662ea0574e16837c03",
-          "size": 10474,
+          "sha256": "18898eeee39ed17a962917b7e62ac15ea75829aa80cbb8d7d4458f5b89c46b0b",
+          "size": 11314,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/hotbar/src/manager.lua"
+        },
+        {
+          "path": "src/menu.lua",
+          "sha256": "919ac66efaecb7cb881afb7adf0199b856aa4774d55831b4a9b9af1125185214",
+          "size": 11776,
+          "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/hotbar/src/menu.lua"
         },
         {
           "path": "src/runner.lua",
@@ -947,7 +953,7 @@
       "id": "hotbar",
       "kind": "lua",
       "name": "Hotbars",
-      "version": "1.0.3"
+      "version": "1.6.0"
     },
     {
       "authors": [],
