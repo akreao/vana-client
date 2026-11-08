@@ -476,6 +476,8 @@ pub struct Msg {
     pub logged: usize,
     /// msg+4 from a 1f code; 0 (no colour of its own, no indent) without one.
     pub mode: Option<u8>,
+    /// An s2c 0x03B line's speaker (its UniqueNo); None for the event's own messages.
+    pub actor: Option<u32>,
 }
 
 impl Msg {
@@ -957,6 +959,7 @@ impl Host for LiveHost<'_> {
                     page: 0,
                     logged: 0,
                     mode,
+                    actor: None,
                 });
             }
             Effect::Choice { question, options, cursor, .. } => {
@@ -2431,6 +2434,7 @@ pub fn update(w: &mut World, dt: f32) {
     let (cam, follow) = (w.last_camera, follow_key(w));
     w.screen.advance(cam, follow);
     self_request(w, ticks);
+    loose_step(w, ticks);
     if w.event.is_none()
         && let Some(mut wt) = w.event_pending.take()
     {
@@ -2660,6 +2664,8 @@ fn keep_pose(w: &mut World, p: Pose) {
 /// bits, event motions and looks end, deferred despawns happen.
 fn finish(w: &mut World, live: Box<Live>) {
     w.screen.release_black();
+    // FUN_100ae3f0 -> FUN_100ae3a0: the event message queues are cancelled (FUN_10127ea0).
+    cancel_queues(w);
     // FUN_100ae3f0 -> FUN_100ba080: op 0x97's gusts back as they were.
     w.wind.restore();
     // FUN_100acf20: first person as it was before the event.
@@ -3067,7 +3073,7 @@ pub fn idles(w: &World) -> HashMap<u32, String> {
 
 /// The open message waits for a key (the kaipage arrow shows).
 pub fn prompt(w: &World) -> bool {
-    w.event.as_ref().is_some_and(|l| l.st.msg.as_ref().is_some_and(Msg::waits_key))
+    message_ref(w).is_some_and(Msg::waits_key)
 }
 
 pub fn input(w: &World) -> Option<&Input> {
@@ -3172,16 +3178,16 @@ fn move_cursor(c: &mut Choice, to: isize, page: bool) {
 
 /// The event's message on screen: whether it waits for a key, and the seconds its page has been open.
 pub fn message_wait(w: &World) -> Option<(bool, f32)> {
-    let m = w.event.as_ref()?.st.msg.as_ref()?;
+    let m = message_ref(w)?;
     Some((m.waits_key(), m.open / 60.0))
 }
 
 /// The open message's page as wrapped for the log (all its lines before the first wrap), and the event's actor.
 pub fn message_page(w: &World) -> Option<(Vec<String>, u32)> {
-    let l = w.event.as_ref()?;
-    let m = l.st.msg.as_ref()?;
+    let m = message_ref(w)?;
     let page = m.pages.as_ref().and_then(|(_, p)| p.get(m.page).cloned()).unwrap_or_else(|| m.lines.clone());
-    Some((page, l.st.start.target))
+    let actor = m.actor.unwrap_or_else(|| w.event.as_ref().map_or(0, |l| l.st.start.target));
+    Some((page, actor))
 }
 
 pub fn choice(w: &World) -> Option<&Choice> {
@@ -3204,17 +3210,83 @@ pub(super) fn set_choice(w: &mut World, k: usize) -> bool {
 }
 
 /// The open message, for the event message window.
+/// The event's own message first; with none, the oldest s2c 0x03B line (both feed the same queues in retail; ours
+/// shows the event's first *(inf)*).
 pub fn message(w: &mut World) -> Option<&mut Msg> {
-    w.event.as_mut()?.st.msg.as_mut()
+    if w.event.as_ref().is_some_and(|l| l.st.msg.is_some()) {
+        return w.event.as_mut()?.st.msg.as_mut();
+    }
+    w.loose_msgs.front_mut()
 }
 
 pub fn message_ref(w: &World) -> Option<&Msg> {
-    w.event.as_ref()?.st.msg.as_ref()
+    w.event.as_ref().and_then(|l| l.st.msg.as_ref()).or_else(|| w.loose_msgs.front())
 }
 
 /// The id of the open message (test drives wait for one).
 pub fn message_id(w: &World) -> Option<u32> {
-    w.event.as_ref()?.st.msg.as_ref().map(|m| m.id)
+    message_ref(w).map(|m| m.id)
+}
+
+/// s2c 0x03B (LAB_100a1600): a line pushed into the event message queues with mode 0x96 (FUN_100ad5e0 /
+/// FUN_100ad660), outside an event as well; it pages like an event's message.
+fn push_loose(
+    w: &mut World,
+    id: u32,
+    actor: u32,
+    lines: Vec<String>,
+    prompt: bool,
+    wait: Option<u32>,
+    mode: Option<u8>,
+) {
+    w.loose_msgs.push_back(Msg {
+        id,
+        prompt: prompt && wait.is_none(),
+        wait: wait.unwrap_or(0) as f32,
+        open: 0.0,
+        lines,
+        pages: None,
+        page: 0,
+        logged: 0,
+        mode,
+        actor: Some(actor),
+    });
+}
+
+/// The shown 0x03B line's clock while no event message is up: one that waits for no key closes after its wait.
+fn loose_step(w: &mut World, ticks: f32) {
+    if w.event.as_ref().is_some_and(|l| l.st.msg.is_some()) {
+        return;
+    }
+    let Some(m) = w.loose_msgs.front_mut() else { return };
+    m.open += ticks;
+    // The line arrives before this frame's HUD pass: it closes only once its page has been shown and logged.
+    if !m.waits_key() && m.logged > m.page && m.open >= m.wait.max(1.0) {
+        w.loose_msgs.pop_front();
+    }
+}
+
+/// A 0x03B line is shown and waits for a key (no event message over it).
+pub fn loose_waits(w: &World) -> bool {
+    w.event.as_ref().is_none_or(|l| l.st.msg.is_none()) && w.loose_msgs.front().is_some_and(Msg::waits_key)
+}
+
+/// Enter on a waiting 0x03B line (FUN_10126840 via the rem): SE 0015, the next page or the line's end.
+pub fn loose_key(w: &mut World) {
+    w.sounds.push(crate::audio::Ui::Page as u32);
+    let Some(m) = w.loose_msgs.front_mut() else { return };
+    if m.pages.as_ref().is_some_and(|(_, p)| m.page + 1 < p.len()) {
+        m.page += 1;
+        m.open = 0.0;
+    } else {
+        w.loose_msgs.pop_front();
+    }
+}
+
+/// FUN_10127ea0: both event message queues emptied (after fishing's mode-3 sends, at an event's end, leaving the
+/// field). Ours: the 0x03B lines; an event's own message ends with its event.
+pub fn cancel_queues(w: &mut World) {
+    w.loose_msgs.clear();
 }
 
 /// Cinema mode (rem4line +0x48, FUN_1015dce0): ops 0x67 / 0x68, text code 03, a zone-in event with Mode 0x80; the
@@ -3289,6 +3361,11 @@ pub fn option_item(w: &World) -> Option<(u16, Option<[u8; 24]>, u8)> {
 }
 
 pub fn key(w: &mut World, key: egui::Key) {
+    // A 0x03B line shown during the event (no choice and no message of the event's own): Enter pages it.
+    if key == egui::Key::Enter && loose_waits(w) && w.event.as_ref().is_none_or(|l| l.st.choice.is_none()) {
+        loose_key(w);
+        return;
+    }
     let Some(mut l) = w.event.take() else { return };
     key_live(w, &mut l, key);
     w.event = Some(l);
@@ -3573,6 +3650,11 @@ pub fn zone_text(w: &mut World, t: &ZoneText) {
     let named = t.mes & 0x8000 == 0;
     let entity =
         w.entities.get(&t.actor).filter(|e| e.index == t.index).map(|e| super::monstrosity::name(e).to_string());
+    // 0x03B (LAB_100a1600) needs the actor at that index with that id whether or not it is named.
+    if t.packet == 0x03B && entity.is_none() {
+        log::info!("0x03B {lsb}: speaker {:#x} ({}) not here", t.actor, t.index);
+        return;
+    }
     // Bit 15 clear: the speaker must be here with that id and index, else the line is dropped (0x02A naming its
     // speaker excepted, inf).
     if named && entity.is_none() && t.name.is_empty() {
@@ -3622,6 +3704,18 @@ pub fn zone_text(w: &mut World, t: &ZoneText) {
     let e = dialog::expand(&raw, &ctx);
     w.sounds.extend(&e.sounds);
     super::moogle::emote(w, &e.motions);
+    // 0x03B: mode {0x96, 2, 0}, the event message queues (the rem and its pages) rather than a log line; "%s : "
+    // (0x1035bb48) with the shown name unless MesNum bit 15.
+    if t.packet == 0x03B {
+        let mut lines: Vec<String> = e.lines.iter().map(|l| decode_sjis(l)).collect();
+        if let Some(first) = lines.first_mut()
+            && !prefix.is_empty()
+        {
+            *first = format!("{prefix} : {first}");
+        }
+        push_loose(w, id.unwrap_or(lsb), t.actor, lines, e.prompt, e.wait, e.mode);
+        return;
+    }
     // The log mode: Type below 8 by table 0x1035b944, else 0; a 1f code in the text overrides it.
     const MODES: [u8; 8] = [0x8e, 0xa1, 0x90, 0x91, 0x92, 0xa1, 0x94, 0x95];
     let mode = e.mode.unwrap_or(MODES.get(t.kind as usize).copied().unwrap_or(0));
