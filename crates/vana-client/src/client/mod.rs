@@ -9152,12 +9152,12 @@ impl App {
         self.spawn(move || {
             Task::LoggedIn((|| {
                 let req = Request { username: &cfg.username, password: &password, otp: &otp, ..Default::default() };
-                let Reply::LoggedIn { account_id, session_hash, .. } =
+                let Reply::LoggedIn { account_id, session_hash, lobby_key, .. } =
                     auth::send(&cfg.server, cfg.auth_port, Command::Login, &req)?
                 else {
                     anyhow::bail!("unexpected reply from the login server");
                 };
-                let session = crate::net::lobby::Session::Lsb { account_id, hash: session_hash };
+                let session = crate::net::lobby::Session::Lsb { account_id, hash: session_hash, lobby_key };
                 let dll = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())).unwrap_or_default();
                 // Region 5: not the Japanese client (FUN_1023e610).
                 let mut lobby = Lobby::connect(
