@@ -32,6 +32,7 @@ pub fn open(w: &mut World) {
     let p = &mut w.padcfg;
     (p.open, p.listening, p.note) = (true, None, String::new());
     p.follow.set(true);
+    p.raise = true;
     w.sounds.push(Se::Select as u32);
 }
 
@@ -329,8 +330,10 @@ pub fn draw(p: &mut Panels, w: &mut World) {
         return;
     }
     // Over the Settings window it is opened from: panels share one order, and a click on Settings (the Controller
-    // button) put that one in front.
-    p.ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(("modern panel", "controller"))));
+    // button) put that one in front. Only when it opens, so a later click or prompt can still come in front of it.
+    if std::mem::take(&mut w.padcfg.raise) {
+        p.ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(("modern panel", "controller"))));
+    }
     if let Some(c) = window(p, &w.padcfg) {
         apply(w, c);
     }
