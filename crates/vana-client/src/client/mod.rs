@@ -92,6 +92,7 @@ mod bazaar;
 mod blklist;
 mod bluset;
 mod chatctrl;
+mod cmdhint;
 mod concierge;
 mod currencies;
 mod durations;
@@ -2488,6 +2489,8 @@ fn world_hud(
                 egui::Key::V if modifiers.ctrl && modifiers.alt && modifiers.shift => voicechat::toggle(world),
                 // The auto-translate list takes its keys first (FUN_101b5d10).
                 k if world.typing && world.fep.is_some() && fep::key(world, *k, modifiers.shift) => {}
+                // Ours: Tab on a command's name completes it (cmdhint.rs); elsewhere the auto-translate list.
+                egui::Key::Tab if world.typing && cmdhint::tab(world, modifiers.shift) => {}
                 egui::Key::Tab if world.typing => fep::open(world),
                 // FUN_101ac2c0 / FUN_101ac3d0: the line history (no sound, no wrap; Shift / Ctrl the same).
                 egui::Key::ArrowUp if world.typing && !modifiers.alt => {
@@ -4249,6 +4252,8 @@ fn world_hud(
         blockers.push([x, y, w, 22.0]);
         if let Some(f) = &world.fep {
             blockers.push(fep::draw(gu, f, word_x - 8.0, y));
+        } else if let Some(h) = cmdhint::hint(world) {
+            blockers.push(cmdhint::draw(gu, &h, x, y));
         }
     }
     if let Some(inp) = event::input(world).filter(|_| !world.modern) {
@@ -6958,6 +6963,9 @@ struct World {
     paste_request: bool,
     /// The auto-translate candidate list (menu fep) while open.
     fep: Option<fep::Fep>,
+    /// Ours: Tab's command completion on the chat line (cmdhint.rs): the root typed, the match it put there, and the
+    /// line it made (any other line ends it).
+    cmd_tab: Option<(String, usize, String)>,
     /// Tab completion's list in the macro editor or the comment editor (fep.rs FieldFep).
     field_fep: Option<fep::FieldFep>,
     /// The log window's size and scroll state, and the top bar / Network / compass state.
@@ -9357,6 +9365,7 @@ impl App {
                             log_selection: None,
                             paste_request: false,
                             fep: None,
+                            cmd_tab: None,
                             field_fep: None,
                             log: Default::default(),
                             log2: logwin::LogWin::second(),

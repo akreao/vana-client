@@ -1,5 +1,5 @@
 name = "Gear Stats"
-version = "1.0.0"
+version = "1.0.1"
 description = "The totals of the stats on everything you wear, from the items' own descriptions and their augments (the gear stat add-ons)."
 permissions = []
 
@@ -8,3 +8,7 @@ type = "bool"
 default = true
 label = "Gear Stats"
 help = "//gearstats opens a window with the totals of your worn gear's stats (DEF, attributes, Accuracy, Haste...), conditional lines (pet, set, latent, weather, day) left out."
+
+[commands.gearstats]
+help = "Opens or closes the Gear Stats window."
+usage = ""

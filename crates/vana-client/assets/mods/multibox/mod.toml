@@ -1,5 +1,5 @@
 name = "Multibox Control"
-version = "1.0.0"
+version = "1.0.1"
 description = "Commands, targets and status removal sent to your other game windows on this machine, focus switching, and tells relayed between them (the multibox add-ons)."
 permissions = ["multibox", "automation"]
 
@@ -14,3 +14,19 @@ type = "bool"
 default = false
 label = "Relay Tells"
 help = "Tells your other windows' characters get show in this window's log too."
+
+[commands.send]
+help = "Runs a command in your other game windows."
+usage = "<name | all | others> <command>"
+
+[commands.sendtarget]
+help = "Has your other windows target what you target."
+usage = "[name]"
+
+[commands.focus]
+help = "Brings another character's game window to the front."
+usage = "<name>"
+
+[commands.stna]
+help = "Casts the -na spell for an ailment this job can remove (or in another window)."
+usage = "[name]"

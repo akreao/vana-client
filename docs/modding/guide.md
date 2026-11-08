@@ -58,6 +58,7 @@ Every key is optional:
 | `permissions` | What it asks to do (see [Permissions](#permissions)). | none |
 | `lobby` | `true` to run before login, from the login screen on (see [below](#mods-that-run-before-login)). | `false` |
 | `[settings.<key>]` | Settings the player can change (see [Settings](#settings)). | none |
+| `[commands.<name>]` | The text commands it registers, with their words and a line of help (see [Commands and typed lines](#commands-and-typed-lines)). | none |
 
 ### More than one file
 
@@ -230,6 +231,24 @@ end)
 - `commands.run(line)` runs a line exactly as if the player had typed it: a game command (`/tell`, `/ma`, `/equip`),
   your mod's commands, or another mod's. A game command is an action, so it needs a permission (see
   [Permissions](#permissions)). Running a `//` mod command does not.
+
+Declare each command in mod.toml, so players can find it:
+
+```toml
+[commands.say_to]
+help = "Tells someone the words."   # one line on what it does
+usage = "<name> <words>"            # the words after the command: one form, or a list of forms
+
+[commands.camp]
+help = "Starts or stops the camp timer; with no word, shows it."
+usage = ["", "start", "stop"]       # "" is the command with no words
+```
+
+While the player types `//` or a `/` and three letters, the chat line lists the running mods' commands that start
+with what was typed, each with its help; once a command and a space are typed, it lists that command's forms. Tab
+completes the name. `//help` lists every mod's commands, `//help <command or mod>` one command's or one mod's forms,
+and a mistyped `//command` names the one it was probably meant to be. The Mods page shows each mod's commands under
+its description. A command registered without a declaration still shows, by name only.
 
 `filters.typed` sees every line before the game reads it, and can change it or swallow it:
 

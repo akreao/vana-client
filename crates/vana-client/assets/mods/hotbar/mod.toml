@@ -1,5 +1,5 @@
 name = "Hotbars"
-version = "1.6.0"
+version = "1.6.1"
 description = "Hotbars of multi-line macros with their actions' icons and recasts, loaded by main job and sub job."
 authors = ["Arusia"]
 permissions = ["actions", "ui.native"]
@@ -61,3 +61,7 @@ type = "bool"
 default = true
 label = "Show Key Hints"
 help = "Show each slot's hotkey in its corner."
+
+[commands.hb]
+help = "Hotbars: with no word, opens the manager."
+usage = ["", "show", "hide", "more", "fewer", "run <bar> <slot>", "reload", "wipestock", "restorestock"]

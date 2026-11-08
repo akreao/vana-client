@@ -1,5 +1,5 @@
 name = "Tell Inbox"
-version = "1.0.0"
+version = "1.0.1"
 description = "Keeps the tells that come while you are away, answers the last tell with //r, and can send an away reply (the answering machine add-ons)."
 permissions = ["automation"]
 
@@ -14,3 +14,11 @@ type = "string"
 default = ""
 label = "Away Reply"
 help = "Sent once to each player who sends you a tell while you are away (empty: none)."
+
+[commands.r]
+help = "Answers the last tell."
+usage = "<message>"
+
+[commands.tells]
+help = "Lists the tells kept while you were away."
+usage = ""

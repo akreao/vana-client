@@ -1,3 +1,7 @@
 name = "Find"
-version = "1.0.0"
+version = "1.0.1"
 description = "/find <words>: the bags holding each item whose name has them, the account's other characters' too (the find-all add-ons)."
+
+[commands.find]
+help = "Which bags hold each item whose name has these words, every character's."
+usage = "<words>"

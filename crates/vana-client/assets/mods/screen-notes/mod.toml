@@ -1,5 +1,5 @@
 name = "Screen Notes"
-version = "1.0.0"
+version = "1.0.1"
 description = "Puts your own notes on the screen by command, where you drag them (the text add-ons)."
 permissions = []
 
@@ -8,3 +8,11 @@ type = "bool"
 default = true
 label = "Screen Notes"
 help = "//note <name> <text> puts a note on the screen (drag it to move it); //note <name> removes it; //notes lists them."
+
+[commands.note]
+help = "Puts a named note on the screen; with no text, removes it."
+usage = ["<name> <text>", "<name>"]
+
+[commands.notes]
+help = "Lists your screen notes."
+usage = ""

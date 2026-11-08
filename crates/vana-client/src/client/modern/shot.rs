@@ -553,6 +553,7 @@ fn sample(m: &Modern, ctx: &egui::Context, layout: &mut Layout, opts: &Opts) {
                 caret: 22,
                 fep: None,
                 preedit: String::new(),
+                cmds: None,
             }),
             waiting: false,
             unread,

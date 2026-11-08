@@ -660,6 +660,47 @@ impl Host {
         self.vms.iter().any(|v| v.suspended.is_none() && v.has_handler(event))
     }
 
+    /// The running mods' text commands by name, each with its mod's name and its `[commands]` usage and help (none
+    /// declared: one bare form), then //help and /lua; a name two mods register is the first loaded's.
+    pub fn command_list(&self) -> Vec<CmdInfo> {
+        let mut out: Vec<CmdInfo> = Vec::new();
+        for vm in self.vms.iter().filter(|v| v.suspended.is_none()) {
+            for (name, _) in &vm.st.borrow().commands {
+                if out.iter().any(|c| c.name == *name) {
+                    continue;
+                }
+                let decl = vm.manifest.commands.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|d| d.1);
+                out.push(CmdInfo {
+                    name: name.clone(),
+                    owner: vm.manifest.name.clone(),
+                    help: decl.map_or(String::new(), |d| d.help.clone()),
+                    usage: decl
+                        .map(|d| d.usage.clone())
+                        .filter(|u| !u.is_empty())
+                        .unwrap_or_else(|| vec![String::new()]),
+                });
+            }
+        }
+        if !out.iter().any(|c| c.name == "help") {
+            out.push(CmdInfo {
+                name: "help".into(),
+                owner: "Mods".into(),
+                help: "Lists the mods' commands; with a command or a mod, its forms.".into(),
+                usage: vec![String::new(), "<command or mod>".into()],
+            });
+        }
+        out.push(CmdInfo {
+            name: "lua".into(),
+            owner: "Mods".into(),
+            help: "Loads, unloads and lists mods, and grants their permissions.".into(),
+            usage: ["list", "load <id>", "unload <id>", "reload [id]", "grant <id> <permission>", "settings <id>"]
+                .map(String::from)
+                .to_vec(),
+        });
+        out.sort_by(|a, b| a.name.cmp(&b.name));
+        out
+    }
+
     /// Whether a typed line is for the mods: //anything, /lua, or a mod's registered /command.
     pub fn takes(&self, line: &str) -> bool {
         if line.starts_with("//") {
@@ -1301,7 +1342,15 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
                         }
                     }
                 }),
-                None => out.push((format!("No mod command {name}."), ERROR)),
+                None if name == "help" => help_lines(&host.command_list(), &args, &mut out),
+                None => {
+                    let near = nearest(&host.command_list(), &name);
+                    let hint = near.map_or_else(
+                        || " //help lists them.".to_string(),
+                        |n| format!(" Did you mean //{n}? (//help lists them.)"),
+                    );
+                    out.push((format!("No mod command {name}.{hint}"), ERROR));
+                }
             }
         }
         let events = std::mem::take(&mut host.events);
@@ -2010,6 +2059,87 @@ impl Host {
     }
 }
 
+/// A running mod's text command as the chat line's hint and //help show it.
+#[derive(Clone, Debug, PartialEq)]
+pub(in crate::client) struct CmdInfo {
+    pub name: String,
+    /// The mod's name.
+    pub owner: String,
+    pub help: String,
+    /// The forms of the words after the name ("" for none).
+    pub usage: Vec<String>,
+}
+
+/// //help: every command by mod; //help <command> its forms and help; //help <mod> its commands' forms.
+fn help_lines(list: &[CmdInfo], args: &[&str], out: &mut Vec<(String, [u8; 4])>) {
+    const INFO: [u8; 4] = [0x80; 4];
+    let forms = |c: &CmdInfo, out: &mut Vec<(String, [u8; 4])>| {
+        for u in &c.usage {
+            let line = if u.is_empty() { format!("//{}", c.name) } else { format!("//{} {u}", c.name) };
+            out.push((format!("  {line}"), INFO));
+        }
+        if !c.help.is_empty() {
+            out.push((format!("    {}", c.help), DIM));
+        }
+    };
+    let want = args.join(" ").trim_start_matches('/').to_ascii_lowercase();
+    if want.is_empty() {
+        let mut owners: Vec<&str> = list.iter().map(|c| c.owner.as_str()).collect();
+        owners.sort();
+        owners.dedup();
+        out.push(("Mod commands (//help <command or mod> for more):".into(), INFO));
+        for o in owners {
+            let names: Vec<String> = list.iter().filter(|c| c.owner == o).map(|c| format!("//{}", c.name)).collect();
+            out.push((format!("  {o}: {}", names.join(", ")), INFO));
+        }
+        return;
+    }
+    if let Some(c) = list.iter().find(|c| c.name == want) {
+        out.push((format!("{} ({}):", c.name, c.owner), INFO));
+        forms(c, out);
+        return;
+    }
+    let of: Vec<&CmdInfo> = list.iter().filter(|c| c.owner.to_ascii_lowercase() == want).collect();
+    if of.is_empty() {
+        let hint = nearest(list, &want).map_or(String::new(), |n| format!(" Did you mean {n}?"));
+        out.push((format!("No mod command or mod {want}.{hint}"), ERROR));
+        return;
+    }
+    out.push((format!("{}:", of[0].owner), INFO));
+    for c in of {
+        forms(c, out);
+    }
+}
+
+/// The command a mistyped name most likely meant: one starting with it, else one a couple of edits away.
+fn nearest(list: &[CmdInfo], name: &str) -> Option<String> {
+    if name.is_empty() {
+        return None;
+    }
+    if let Some(c) = list.iter().find(|c| c.name.starts_with(name)) {
+        return Some(c.name.clone());
+    }
+    let dist = |a: &str, b: &str| {
+        let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+        let mut row: Vec<usize> = (0..=b.len()).collect();
+        for i in 1..=a.len() {
+            let mut prev = row[0];
+            row[0] = i;
+            for j in 1..=b.len() {
+                let cur = row[j];
+                row[j] = (row[j] + 1).min(row[j - 1] + 1).min(prev + usize::from(a[i - 1] != b[j - 1]));
+                prev = cur;
+            }
+        }
+        row[b.len()]
+    };
+    list.iter()
+        .map(|c| (dist(name, &c.name), &c.name))
+        .filter(|(d, _)| *d <= 2.min(name.len().saturating_sub(1)).max(1))
+        .min()
+        .map(|(_, n)| n.clone())
+}
+
 /// LuaLS stubs for the whole mod API (`vana-client lua-stubs`).
 pub fn stubs() -> String {
     docs::stubs()
@@ -2041,6 +2171,59 @@ fn install_stubs(root: PathBuf) {
 mod tests {
     use super::*;
     use mlua::{Table, Value};
+
+    /// Every bundled mod declares (`[commands.<name>]`, with help and usage) exactly the commands its code registers,
+    /// so the chat line's hint, //help and the Mods page show them all.
+    #[test]
+    fn bundled_commands_declared() {
+        for (id, text, files) in BUNDLED {
+            let m = manifest::parse(text, id).unwrap();
+            let mut registered: Vec<String> = Vec::new();
+            for (_, src) in files.iter() {
+                for part in src.split("commands.register(").skip(1) {
+                    let part = part.trim_start();
+                    let q = part.chars().next().filter(|c| *c == '"' || *c == '\'');
+                    let name = q.and_then(|q| part[1..].split(q).next()).expect("a literal command name");
+                    registered.push(name.trim_start_matches('/').to_ascii_lowercase());
+                }
+            }
+            registered.sort();
+            registered.dedup();
+            let mut declared: Vec<String> = m.commands.keys().map(|k| k.to_ascii_lowercase()).collect();
+            declared.sort();
+            assert_eq!(registered, declared, "{id}: commands registered vs declared in mod.toml");
+            for (name, c) in &m.commands {
+                assert!(!c.help.is_empty() && !c.usage.is_empty(), "{id}: //{name} needs help and usage");
+            }
+        }
+    }
+
+    /// //help: by mod, one command's forms, a mod's commands; a near miss names the command.
+    #[test]
+    fn help_and_near_misses() {
+        let info = |name: &str, owner: &str, usage: &[&str]| CmdInfo {
+            name: name.into(),
+            owner: owner.into(),
+            help: format!("{name} help"),
+            usage: usage.iter().map(|s| s.to_string()).collect(),
+        };
+        let list = vec![
+            info("ahbuy", "Auction Desk", &["<item> <price> [stack]"]),
+            info("ahsell", "Auction Desk", &["<item> <price> [stack]"]),
+            info("hb", "Hotbars", &["", "show"]),
+        ];
+        let text = |args: &[&str]| {
+            let mut out = Vec::new();
+            help_lines(&list, args, &mut out);
+            out.into_iter().map(|l| l.0).collect::<Vec<_>>()
+        };
+        assert_eq!(text(&[])[1..], ["  Auction Desk: //ahbuy, //ahsell", "  Hotbars: //hb"]);
+        assert_eq!(text(&["hb"]), ["hb (Hotbars):", "  //hb", "  //hb show", "    hb help"]);
+        assert_eq!(text(&["auction", "desk"]).len(), 5);
+        assert_eq!(nearest(&list, "ahbyu").as_deref(), Some("ahbuy"));
+        assert_eq!(nearest(&list, "ahs").as_deref(), Some("ahsell"));
+        assert_eq!(nearest(&list, "zzzz"), None);
+    }
 
     /// A wait_until test that never returns runs out of its budget instead of freezing the frame.
     #[test]

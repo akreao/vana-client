@@ -1,5 +1,5 @@
 name = "Window Placement"
-version = "1.0.0"
+version = "1.0.1"
 description = "Puts the game window back where and how big you keep it for each character, and can keep it on top (the window position add-ons)."
 permissions = ["multibox", "process"]
 
@@ -21,3 +21,7 @@ default = "Normal"
 options = ["Low", "Below Normal", "Normal"]
 label = "Priority"
 help = "Lowers the client's scheduling priority, for running several clients."
+
+[commands.winpos]
+help = "Keeps or forgets this character's game window place."
+usage = ["save", "forget"]

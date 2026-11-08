@@ -1,5 +1,5 @@
 name = "Weather Watch"
-version = "1.0.0"
+version = "1.0.1"
 description = "Tells you when the weather you are waiting for starts or ends, and can tell your party (the weather add-ons)."
 permissions = ["automation"]
 
@@ -20,3 +20,7 @@ type = "bool"
 default = false
 label = "Tell the Party"
 help = "Also says it in party chat."
+
+[commands.weather]
+help = "Shows the weather, zone and day now."
+usage = ""

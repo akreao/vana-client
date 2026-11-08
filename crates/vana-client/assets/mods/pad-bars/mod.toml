@@ -1,5 +1,5 @@
 name = "Pad Bars"
-version = "1.0.0"
+version = "1.0.1"
 description = "Controller crossbars: hold LT or RT and the d-pad and face buttons use that side's eight actions, set per job (the crossbar add-ons)."
 permissions = ["automation", "input.capture"]
 
@@ -25,3 +25,7 @@ max = 600
 step = 4
 label = "Distance from Bottom"
 help = "How far the bars sit above the bottom of the screen, or above the chat window when that is under them."
+
+[commands.padbars]
+help = "Opens or closes the controller crossbars' setup window."
+usage = ""

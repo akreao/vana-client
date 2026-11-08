@@ -1,5 +1,5 @@
 name = "Auction Desk"
-version = "1.0.0"
+version = "1.0.1"
 description = "Bids and sales at the auction house by command, and your listings in the log (the auction helper add-ons)."
 permissions = ["actions"]
 
@@ -8,3 +8,15 @@ type = "bool"
 default = true
 label = "Auction Desk"
 help = "At the auction house: //ahbuy <item> <price> [stack], //ahsell <item> <price> [stack], //ahlist. Prices take k and m (12k). The game asks before each bid and sale."
+
+[commands.ahbuy]
+help = "Bids on an item at the auction house."
+usage = "<item> <price> [stack]"
+
+[commands.ahsell]
+help = "Puts an item up for sale at the auction house."
+usage = "<item> <price> [stack]"
+
+[commands.ahlist]
+help = "Lists your auction house sales in the log."
+usage = ""

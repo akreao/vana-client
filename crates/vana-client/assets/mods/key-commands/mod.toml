@@ -1,5 +1,5 @@
 name = "Key Commands"
-version = "1.0.0"
+version = "1.0.1"
 description = "Binds keys to command lines and makes short aliases for long commands, kept per character (the bind and alias add-ons)."
 permissions = ["actions"]
 
@@ -8,3 +8,27 @@ type = "bool"
 default = true
 label = "Key Commands"
 help = "//bind <key> <line> (keys like f9, ctrl+1, alt+shift+q), //unbind <key>, //binds; //alias <name> <line> makes /name run the line, //unalias <name>, //aliases."
+
+[commands.bind]
+help = "Binds a key to a command line."
+usage = "<key> <line>"
+
+[commands.unbind]
+help = "Takes a key's bind off."
+usage = "<key>"
+
+[commands.binds]
+help = "Lists your key binds."
+usage = ""
+
+[commands.alias]
+help = "Makes a short name run a longer command line."
+usage = "<name> <line>"
+
+[commands.unalias]
+help = "Removes an alias."
+usage = "<name>"
+
+[commands.aliases]
+help = "Lists your aliases."
+usage = ""

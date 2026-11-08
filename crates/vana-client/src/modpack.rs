@@ -58,6 +58,45 @@ pub struct LuaInfo {
     pub description: String,
     #[serde(default)]
     pub version: String,
+    /// Its `[commands.<name>]`: help and usage (a form or a list of forms).
+    #[serde(default)]
+    pub commands: indexmap::IndexMap<String, LuaCommand>,
+}
+
+#[derive(Clone, Debug, Default, serde::Deserialize, PartialEq)]
+pub struct LuaCommand {
+    #[serde(default)]
+    pub help: String,
+    #[serde(default)]
+    pub usage: Option<toml::Value>,
+}
+
+impl LuaInfo {
+    /// The description, then a line a command: `//name forms: help` (several forms as `[a | b]`, brackets when one is
+    /// none).
+    pub fn details(&self) -> String {
+        if self.commands.is_empty() {
+            return self.description.clone();
+        }
+        let mut out = format!("{}\n\nCommands:", self.description.trim_end());
+        for (name, c) in &self.commands {
+            let forms: Vec<String> = match &c.usage {
+                Some(toml::Value::String(s)) => vec![s.clone()],
+                Some(toml::Value::Array(a)) => a.iter().filter_map(|v| v.as_str().map(String::from)).collect(),
+                _ => Vec::new(),
+            };
+            let some: Vec<&str> = forms.iter().map(String::as_str).filter(|f| !f.is_empty()).collect();
+            let args = match (some.len(), forms.len()) {
+                (0, _) => String::new(),
+                (1, 1) => format!(" {}", some[0]),
+                (_, n) if n > some.len() => format!(" [{}]", some.join(" | ")),
+                _ => format!(" {}", some.join(" | ")),
+            };
+            let help = if c.help.is_empty() { String::new() } else { format!(": {}", c.help) };
+            out.push_str(&format!("\n//{name}{args}{help}"));
+        }
+        out
+    }
 }
 
 /// The installed Lua mods by folder: name (the folder's when it gives none), description, version.

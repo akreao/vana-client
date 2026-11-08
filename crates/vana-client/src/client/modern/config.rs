@@ -2836,11 +2836,12 @@ fn row_detail(s: &SettingsUi, st: usize) -> Option<Detail> {
     let i = st.checked_sub(first)?;
     if lua && i < packs.len() {
         let info = s.mod_id(i).and_then(|id| s.lua_info.get(&id).cloned()).unwrap_or_default();
+        let text = info.details();
         let mut facts = vec![("State", if packs[i].1 { "On" } else { "Off" }.to_string())];
         if !info.version.is_empty() {
             facts.insert(0, ("Version", info.version));
         }
-        return Some(Detail { name: packs[i].0.clone(), text: info.description, facts });
+        return Some(Detail { name: packs[i].0.clone(), text, facts });
     }
     let k = if lua {
         i - packs.len()

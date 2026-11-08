@@ -337,7 +337,7 @@ function events.on(event, handler, options) end
 ---@param id integer what events.on returned
 function events.off(id) end
 
---- Adds a command: typed as //name or /name, it calls `handler` with the words after it.
+--- Adds a command: typed as //name or /name, it calls `handler` with the words after it. Declare it in mod.toml ([commands.<name>] help and usage) so the chat line's hint, //help and the Mods page show it.
 ---@param name string without the slash
 ---@param handler fun(...: string) 
 function commands.register(name, handler) end

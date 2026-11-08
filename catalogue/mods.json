@@ -13,15 +13,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "3410cc0b6cf7ac94d207177dd32912bb5987910e9b6d74bb9040fa34108b6f18",
-          "size": 499,
+          "sha256": "2bfb2da1ad6478720e10e4af3d0bec3ab13ebce6a65cce977b0bf51021a3b255",
+          "size": 570,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/action-panel/mod.toml"
         }
       ],
       "id": "action-panel",
       "kind": "lua",
       "name": "Action Panel",
-      "version": "1.0.1"
+      "version": "1.0.2"
     },
     {
       "authors": [],
@@ -35,15 +35,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "0dda6199948c363947cc7bd644da311e2488fe7106b2eaccfe72b452b130702c",
-          "size": 567,
+          "sha256": "eb331241fcaf19ffb297d7127f8587981963e70d6b95c14eb43f0f8ea7a09020",
+          "size": 684,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/attendance/mod.toml"
         }
       ],
       "id": "attendance",
       "kind": "lua",
       "name": "Attendance",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -57,15 +57,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "198e8ccad16aa5dfc037233e9a3f71cf13f131fb37a59489502bb6caddfe51f8",
-          "size": 429,
+          "sha256": "3d5aa01b6db5b01bcbe57f9f383299a0386fcebf3f08eb0feca1d8d6253d87b3",
+          "size": 717,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/auction-desk/mod.toml"
         }
       ],
       "id": "auction-desk",
       "kind": "lua",
       "name": "Auction Desk",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -101,15 +101,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "0f55e50806fcba3f35561be0592d50253f2e90270d72fc1e651648516d2db8c0",
-          "size": 483,
+          "sha256": "e5fc001c29e750bbf2f48b6e768f39604540553c9f33aa142e414a9becf33d9e",
+          "size": 613,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/automaton-sets/mod.toml"
         }
       ],
       "id": "automaton-sets",
       "kind": "lua",
       "name": "Automaton Sets",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -123,15 +123,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "d6218d8ca8ada1dbff2e1d542c926468a937c1cf3a8710b4507ddf9f02251fdb",
-          "size": 578,
+          "sha256": "b892f03450bd8d2e0af9b1069764644cefa623f445c8c295fe1ac9d89c0f7c2f",
+          "size": 727,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/bag-manager/mod.toml"
         }
       ],
       "id": "bag-manager",
       "kind": "lua",
       "name": "Bag Manager",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -167,8 +167,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "aea0402939741ac7f65f16f1dcbe313a423df0664807ed215a40b832a74d05e5",
-          "size": 897,
+          "sha256": "199e53888e413e980bc90a3380438dfcb4678aba5435f1b2145a740c67404049",
+          "size": 1058,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/blue-sets/mod.toml"
         },
         {
@@ -181,7 +181,7 @@
       "id": "blue-sets",
       "kind": "lua",
       "name": "Blue Magic Sets",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -195,15 +195,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "f888e89d35fb3f54f6fd792432816ad569c05fa4bfe48075f59b81022611c951",
-          "size": 392,
+          "sha256": "2854f01a876d639f133335d78b31570de4a53ab00b24c95821929654bf9a5b39",
+          "size": 497,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/calculator/mod.toml"
         }
       ],
       "id": "calculator",
       "kind": "lua",
       "name": "Calculator",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -327,15 +327,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "c482405b08bd5c4a713654fe9b28176d08c4548743688e40ae76b0a39ab77c9e",
-          "size": 501,
+          "sha256": "ea5949620cf998fa1a5132b082100bfdcdd955dd2f8a5862583d80ef0ef11a83",
+          "size": 716,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/chat-windows/mod.toml"
         }
       ],
       "id": "chat-windows",
       "kind": "lua",
       "name": "Chat Windows",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -393,15 +393,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "6dde15127300459bab0a376500b42b2b2ec224ae8ab788e2019990cce27d4252",
-          "size": 462,
+          "sha256": "f44a561440cb7a816b5891dd36f608b71bf52f605d765608edcad5dc3182105c",
+          "size": 590,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/completion-log/mod.toml"
         }
       ],
       "id": "completion-log",
       "kind": "lua",
       "name": "Completion Log",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -415,8 +415,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "49cf7623a66e57354e71d9d6b220db8a6806ccb93ea506189ff9ff17807d40e5",
-          "size": 727,
+          "sha256": "c4fe774dcc2070ba6b1be86f972cffb0a18c559d1fd3c212719955ef9ccb7fb1",
+          "size": 882,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/content-trackers/mod.toml"
         },
         {
@@ -471,7 +471,7 @@
       "id": "content-trackers",
       "kind": "lua",
       "name": "Content Trackers",
-      "version": "1.1.0"
+      "version": "1.1.1"
     },
     {
       "authors": [],
@@ -485,15 +485,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "9d4aa939f59123f83e5713533f0c8706a352eae35863390922bc71658cfab5bd",
-          "size": 395,
+          "sha256": "104622e24015f98a32000fd9c8d23724e6dba93796549a631f5f35c9f3052dc6",
+          "size": 545,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/countdowns/mod.toml"
         }
       ],
       "id": "countdowns",
       "kind": "lua",
       "name": "Countdowns",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -553,15 +553,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "d07a827e78b24f9bb9bfd1dd9e1e10f38ae00c29af7e696eee5aa3a31181312e",
-          "size": 413,
+          "sha256": "2902678f7398d5cf97115fa26c2d42483fd6a24238cbf787f29b1f24c6f225be",
+          "size": 522,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/dps/mod.toml"
         }
       ],
       "id": "dps",
       "kind": "lua",
       "name": "DPS",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -575,15 +575,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "79e9431c573f21eda5535fc8f19abb45375ffde98a20da19deb644d603de7b8c",
-          "size": 405,
+          "sha256": "313075c106847f79d95ae46c0008afe4037e22910f22e852c9361f5c2c51d551",
+          "size": 525,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/effect-remover/mod.toml"
         }
       ],
       "id": "effect-remover",
       "kind": "lua",
       "name": "Effect Remover",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -597,15 +597,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "b3566c745e9478fbc289fdc0c5c4faea96895522d28c01da496023da7cecfe7e",
-          "size": 755,
+          "sha256": "c72db8007ff6aae537035421796e1457652701543cb7f66551458dfbed9291da",
+          "size": 966,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/entity-styles/mod.toml"
         }
       ],
       "id": "entity-styles",
       "kind": "lua",
       "name": "Entity Styles",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -641,15 +641,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "3412d1268e6882202fd5f92b13ef5824681696e9bcaf5ffb01e42227d71ea31d",
-          "size": 477,
+          "sha256": "e903db91bf5afea05b24e0c4921316c8ad7325a51d422e0b1c33a2b7cff82710",
+          "size": 582,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/event-rules/mod.toml"
         }
       ],
       "id": "event-rules",
       "kind": "lua",
       "name": "Event Rules",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -685,15 +685,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "8c42681126e604b213d121433f7cc84e0e659633457e3ae4cf6ee45683688b5e",
-          "size": 171,
+          "sha256": "58f054d3ca40d41883ee220ea80faaa5b645f63b8582dd457e2dbf83ffadaac1",
+          "size": 288,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/find/mod.toml"
         }
       ],
       "id": "find",
       "kind": "lua",
       "name": "Find",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -729,15 +729,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "f8e422c29683dfb31300842df4ac7d35b37faf89e73a49345c60296cff26157e",
-          "size": 452,
+          "sha256": "abfea041ee63812110ff0bf0375c39c7ff16c2ae4a6d74b094eb06454fa2aad8",
+          "size": 528,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/gathering-log/mod.toml"
         }
       ],
       "id": "gathering-log",
       "kind": "lua",
       "name": "Gathering Log",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -751,15 +751,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "69f7b6e654fa593817dd2dba789c82ffcd2cec254afda672731ea9faf95de23b",
-          "size": 439,
+          "sha256": "0cd8757aeb9c4ce669b02e6c2a865361876e992cbcd6f446b269ee2595d02a61",
+          "size": 520,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/gear-stats/mod.toml"
         }
       ],
       "id": "gear-stats",
       "kind": "lua",
       "name": "Gear Stats",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -773,8 +773,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "d7cdfe2cb88994005bf5530efb8655e11d78cd0336ca138c4f1c1ebd50deefba",
-          "size": 480,
+          "sha256": "6ba4f15555f6bfe025c2c8e6828fc05f0e84aa020f9c1cda3dc7709b755811cc",
+          "size": 971,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/gearshift/mod.toml"
         },
         {
@@ -853,7 +853,7 @@
       "id": "gearshift",
       "kind": "lua",
       "name": "Gearshift",
-      "version": "0.1.0"
+      "version": "0.1.1"
     },
     {
       "authors": [],
@@ -891,8 +891,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "1ad074d73e4483181d9d90f6f3fef99df2575d53cf76d325a8d55793618593a2",
-          "size": 1289,
+          "sha256": "49cd68462c6699ddd2a4ec92afc95f7b096799e5628721e6141f7c171988c501",
+          "size": 1460,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/mod.toml"
         },
         {
@@ -953,7 +953,7 @@
       "id": "hotbar",
       "kind": "lua",
       "name": "Hotbars",
-      "version": "1.6.0"
+      "version": "1.6.1"
     },
     {
       "authors": [],
@@ -967,15 +967,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "954dda47e3ccc49237b344c378e805422d7860c25ae2942ea01a37e26a17f7bf",
-          "size": 530,
+          "sha256": "36d6f498b2620ee8a9c7be0e3c38eba36c40a07e2c9e0acf0d3d5523ddd2f393",
+          "size": 691,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/inventory-hud/mod.toml"
         }
       ],
       "id": "inventory-hud",
       "kind": "lua",
       "name": "Inventory HUD",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -989,8 +989,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "9cf0772e18ca6d58b1c33f09bea25a7d22cbe53ef972fcdaba551c27fa46c91a",
-          "size": 426,
+          "sha256": "499c96e365f8f3f495d59250c49df83476df136ad84b61e5a57b046e398343f5",
+          "size": 512,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/item-details/mod.toml"
         },
         {
@@ -1003,7 +1003,7 @@
       "id": "item-details",
       "kind": "lua",
       "name": "Item Details",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -1039,15 +1039,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "e213cf71092bd10891c04d20a9f6571fb0ad365e6845cf0907b17f4b1f24c90e",
-          "size": 437,
+          "sha256": "91acd7285159b1b3913abee888dbac3fec9c07adc85a0d1bd61b0c031979824f",
+          "size": 866,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/key-commands/mod.toml"
         }
       ],
       "id": "key-commands",
       "kind": "lua",
       "name": "Key Commands",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -1061,15 +1061,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "ebc0af7b826e2fed1086c7d76d10deb2d6957952bbb63f35c53932a34655880a",
-          "size": 362,
+          "sha256": "0bac990664887f65b57f4401313140be28792429d97df4cfd2c14ccd5118bae5",
+          "size": 476,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/link-catcher/mod.toml"
         }
       ],
       "id": "link-catcher",
       "kind": "lua",
       "name": "Link Catcher",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -1083,15 +1083,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "ec75d595a1b70fc6daa30b5907f8d544e3c4eeae704b54a8837f353e24ffd3d7",
-          "size": 426,
+          "sha256": "8558271d841e390d7a9e93139b1873677d29b33401be0f298341d65fd75b40e8",
+          "size": 582,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/list-trimmer/mod.toml"
         }
       ],
       "id": "list-trimmer",
       "kind": "lua",
       "name": "List Trimmer",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -1127,8 +1127,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "8f8c8a617d964276570dee771f8f93c739d4c1945727812e8a3d8fcd305281a3",
-          "size": 464,
+          "sha256": "25d56eb30efed82a117a6a3cd3dbb11dc870867a2f374e4435dcea40636d7743",
+          "size": 657,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/look-changer/mod.toml"
         },
         {
@@ -1141,7 +1141,7 @@
       "id": "look-changer",
       "kind": "lua",
       "name": "Look Changer",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -1155,15 +1155,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "85dd05cdfe36a6ee78491251e9f2c294186f29296c1e9d73c9abbd9389fd39db",
-          "size": 775,
+          "sha256": "1fe98491c82d89854de3a655e586cb48b7f42b8828809d95ea92b0c8e08c579c",
+          "size": 906,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/loot-rules/mod.toml"
         }
       ],
       "id": "loot-rules",
       "kind": "lua",
       "name": "Loot Rules",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -1177,15 +1177,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "5d380bf453141d14aa9e8b386e36c3eeb3d46b80a6a8fbee552468dc6622e8df",
-          "size": 485,
+          "sha256": "8229e9898e7112cc0125d33a2cbf64b5a11208f877ce0cc6723cc968a87d7c67",
+          "size": 557,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/loot-tracker/mod.toml"
         }
       ],
       "id": "loot-tracker",
       "kind": "lua",
       "name": "Loot Tracker",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -1199,15 +1199,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "9a87427a78cfe566444f2a1de36ad55d5480ff66fd84810d563585c1847f4160",
-          "size": 436,
+          "sha256": "85ade9943538b0e2a4a0ed49f914d0278a45cad9186b8e4b57339c7ae914cbb9",
+          "size": 567,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/macro-books/mod.toml"
         }
       ],
       "id": "macro-books",
       "kind": "lua",
       "name": "Macro Book Switch",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -1221,15 +1221,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "485520fccf833d4cc254b11015979cec63221f0f7295cb69d51f94070e1fcd49",
-          "size": 580,
+          "sha256": "c125204794cc6821c5b4799c194dd938a3291470703a72a462514e42ad9f851f",
+          "size": 739,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/map-notes/mod.toml"
         }
       ],
       "id": "map-notes",
       "kind": "lua",
       "name": "Map Notes",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -1309,15 +1309,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "9702191d4fe4852a4cf4aae6cac82fea058f9906316e59ff2e7c1380a011b780",
-          "size": 648,
+          "sha256": "8a55979fcbd2d30c1cdaba746cd881341a7bd2e932823f5d632fd5b76d2a0325",
+          "size": 756,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/monster-notes/mod.toml"
         }
       ],
       "id": "monster-notes",
       "kind": "lua",
       "name": "Monster Notes",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -1331,15 +1331,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "cf0a6b3695b4faa67daafb8f877a5d1f0c10816d710b56831af54be07542668a",
-          "size": 369,
+          "sha256": "abc26304a6ce57495615f4210314647da4659167078d07faa56cefb3a203ae3d",
+          "size": 486,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/mount-picker/mod.toml"
         }
       ],
       "id": "mount-picker",
       "kind": "lua",
       "name": "Mount Picker",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -1353,15 +1353,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "05db8bf230cb911efba1c9b1c026a57ad6aea24265fbeb832a033e5e903c841c",
-          "size": 656,
+          "sha256": "4c123a6765e81334abad436fcaa4c358d2d1ac2816521edbfa8c059ece11a533",
+          "size": 1082,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/multibox/mod.toml"
         }
       ],
       "id": "multibox",
       "kind": "lua",
       "name": "Multibox Control",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -1375,15 +1375,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "7967b608c47177ba121fb8b6f1daeb0c45cc10008c99e094ed7bb51b169c66cf",
-          "size": 787,
+          "sha256": "efbbc82adda1b420fe8926180fd1d559920964ecfe7d9a3e4df63eabf080b3d5",
+          "size": 914,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/music-picker/mod.toml"
         }
       ],
       "id": "music-picker",
       "kind": "lua",
       "name": "Music Picker",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -1397,15 +1397,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "8e2ff98cfcdb5ca8bf2c10fac0b928c8bc2bf114531b07ed765692e66f2aa58f",
-          "size": 493,
+          "sha256": "558b0ec607ec79ffa8667a97bcbb482f827522eda53d80096eb0a3230283a838",
+          "size": 837,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/npc-errands/mod.toml"
         }
       ],
       "id": "npc-errands",
       "kind": "lua",
       "name": "NPC Errands",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -1419,15 +1419,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "550c54989e0748f14230666cd22299815688aef4a2582040cd9d05035cb00db9",
-          "size": 494,
+          "sha256": "7403d22f3da71173b87a88714acaa983e33c6ede524c2826c5a3e699f0cea9e5",
+          "size": 717,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/objective-sets/mod.toml"
         }
       ],
       "id": "objective-sets",
       "kind": "lua",
       "name": "Objective Sets",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -1441,8 +1441,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "ec26c551d4c9cefb92c7987dffc14320a0f052654504e124548a8664f9ec31d0",
-          "size": 793,
+          "sha256": "fa47d499b20809733acaab4574835b6f2e4e13eeba69eb282e1dd8e1ba05d450",
+          "size": 889,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/pad-bars/mod.toml"
         },
         {
@@ -1461,7 +1461,7 @@
       "id": "pad-bars",
       "kind": "lua",
       "name": "Pad Bars",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -1673,15 +1673,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "d8ab58e29877a0e95a7f4226c577c5daa1482ab6a89190a8f6a102b71267bc68",
-          "size": 415,
+          "sha256": "3ecfdb3b73e4d760cd7856a0d44ec743bd81394ae5ce347f569acba8ff4a142f",
+          "size": 591,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/screen-capture/mod.toml"
         }
       ],
       "id": "screen-capture",
       "kind": "lua",
       "name": "Screen Capture",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -1695,15 +1695,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "ffda0b7280d44804400fd3dffc42caa512453445a211996987001d2c65735018",
-          "size": 350,
+          "sha256": "85b6d547cd081ee4023132255c70f2b6c084c4c620812c3d5c48071a6ca46b60",
+          "size": 534,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/screen-notes/mod.toml"
         }
       ],
       "id": "screen-notes",
       "kind": "lua",
       "name": "Screen Notes",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -1717,15 +1717,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "cffb42f29fcd87027c6405be7bd67d4a6bd779dae09c5ebdfcfa0b96dc6b3aef",
-          "size": 436,
+          "sha256": "12604bb8fae68670f640be478b092a6c6503e04f5739018e5647da22400147a6",
+          "size": 636,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/sell-hand-in/mod.toml"
         }
       ],
       "id": "sell-hand-in",
       "kind": "lua",
       "name": "Sell and Hand In",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -1739,15 +1739,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "4080c820d65af390ddb1356eaeaca4b634c9021bdfe1c1247d05b1dbb790118e",
-          "size": 425,
+          "sha256": "7f3d97f68690ec1e087cb1dc3b831ff1a51bcd590a197ca079fb1b8884e49c21",
+          "size": 513,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/skill-log/mod.toml"
         }
       ],
       "id": "skill-log",
       "kind": "lua",
       "name": "Skill-up Log",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -1965,15 +1965,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "71fa0e670fa109c0798ffa74bb7c817d1e6425bc66538a08a11fe2956764e795",
-          "size": 541,
+          "sha256": "ec380b185dd36b13fad637abd1e4335c1c48c47baf353a53e6ab26631df15305",
+          "size": 720,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/targeting/mod.toml"
         }
       ],
       "id": "targeting",
       "kind": "lua",
       "name": "Targeting Helpers",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -1987,15 +1987,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "b78b5e6f13e755601ae40ada7452c89226726293d1e75d593a362164710d7eb8",
-          "size": 591,
+          "sha256": "3948d6c4211d434efc96cb9d9a4bf10324a7156328a8bf74c194478deb97e154",
+          "size": 737,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/tell-inbox/mod.toml"
         }
       ],
       "id": "tell-inbox",
       "kind": "lua",
       "name": "Tell Inbox",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -2053,15 +2053,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "5c79232dcf699796dc1a42c45a340b83043ea820fbef104bdf0e071c0b806f62",
-          "size": 447,
+          "sha256": "706b0d81ac4e1a9882ee15e4d4c57e5318cce13b9260efd479e5620df3092376",
+          "size": 636,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/tracking/mod.toml"
         }
       ],
       "id": "tracking",
       "kind": "lua",
       "name": "Tracking Tools",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -2075,15 +2075,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "1de6c65650af2d8beab063e078644fcc4215f17e88f2d74fee64f758e08fcc7a",
-          "size": 414,
+          "sha256": "c81e95f5995e2f5b0411ff770e6242a11b324fd579a92f546eca5869f2e68230",
+          "size": 578,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/trust-lineups/mod.toml"
         }
       ],
       "id": "trust-lineups",
       "kind": "lua",
       "name": "Trust Lineups",
-      "version": "1.0.1"
+      "version": "1.0.2"
     },
     {
       "authors": [],
@@ -2141,15 +2141,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "90736e451d69a9b11adf495beda4c8ad0ff25b991222221f4ce112c3de96e0b3",
-          "size": 351,
+          "sha256": "c6d12ab7bb28d26ef1b6b20ad2831f735ae198747f1ae6249511d24625295e64",
+          "size": 467,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/use-all/mod.toml"
         }
       ],
       "id": "use-all",
       "kind": "lua",
       "name": "Item Use Queue",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -2185,8 +2185,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "ad779e7fcd84e01969c1a61700a633b0b61f314436f433ec33d61d702d4bd160",
-          "size": 843,
+          "sha256": "2797d8cdc33fd7f039112e928c7a730a8738191c7e4b9b24065ef84d9746dfef",
+          "size": 1037,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/warp-helper/mod.toml"
         },
         {
@@ -2199,7 +2199,7 @@
       "id": "warp-helper",
       "kind": "lua",
       "name": "Warp Helper",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -2213,15 +2213,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "b51580eb8b99316f5a371c1fbc15a8711d707f71269f0b54cf87c958a9bfccaf",
-          "size": 753,
+          "sha256": "f2a72de81152ffc3b371f48d7171f719611703ea3d7e4daa4882dc177cb17d5d",
+          "size": 830,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/weather-watch/mod.toml"
         }
       ],
       "id": "weather-watch",
       "kind": "lua",
       "name": "Weather Watch",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -2235,15 +2235,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "db8bc4c66b82a82a239c24b3b6b2b766bd99306c9cf3aced13ba4d3a30332aab",
-          "size": 424,
+          "sha256": "96b7e801b777a65293e9db36726e45e7592fcdffd5555e39e73367ba53f48778",
+          "size": 670,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/web-search/mod.toml"
         }
       ],
       "id": "web-search",
       "kind": "lua",
       "name": "Web Search",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -2257,15 +2257,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "79d529b9ffc9536c5d1a5df7afab3c482726c0d8454203ab70a22fff8e119eea",
-          "size": 748,
+          "sha256": "0bd79cb433abb4e072e5fbc213648e8cbe2c477f24014d8eb9864694186ef450",
+          "size": 856,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/window-placement/mod.toml"
         }
       ],
       "id": "window-placement",
       "kind": "lua",
       "name": "Window Placement",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -2279,15 +2279,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "c4a723fff6490258169f3f013af92f3d87d5a3f6c1c645dfa4fe4ebe135dd8b7",
-          "size": 425,
+          "sha256": "9658f951761cc010a539899b123289c4d628790ffe892160740b7c536628380e",
+          "size": 502,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/xp-tracker/mod.toml"
         }
       ],
       "id": "xp-tracker",
       "kind": "lua",
       "name": "XP Tracker",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],

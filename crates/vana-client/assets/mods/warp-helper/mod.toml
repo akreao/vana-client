@@ -1,5 +1,5 @@
 name = "Warp Helper"
-version = "1.0.0"
+version = "1.0.1"
 description = "Answers the Home Point, Survival Guide and Waypoint menus by name, and warps home with the Warp spell or a warp item (the warp add-ons)."
 permissions = ["actions"]
 
@@ -21,3 +21,7 @@ type = "bool"
 default = true
 label = "Wear the old gear again"
 help = "After a warp ring or cudgel takes you away, put back what that slot held."
+
+[commands.warp]
+help = "Warps by Home Point, Survival Guide or Waypoint, home, or to a Dimensional ring."
+usage = ["[hp | sg | wp] <zone> [number or place]", "home", "dim <holla | dem | mea>"]

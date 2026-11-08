@@ -26,6 +26,9 @@ pub struct Manifest {
     pub lobby: bool,
     /// Declared settings by key, drawn by the client (docs/lua-mods.md 4.12).
     pub settings: IndexMap<String, Setting>,
+    /// The text commands it registers, by name (`[commands.<name>]`): what the chat line's completion, //help and the
+    /// Mods page show.
+    pub commands: IndexMap<String, Command>,
 }
 
 impl Default for Manifest {
@@ -41,8 +44,32 @@ impl Default for Manifest {
             permissions: Vec::new(),
             lobby: false,
             settings: IndexMap::new(),
+            commands: IndexMap::new(),
         }
     }
+}
+
+/// A declared text command: one line on what it does, and the words it takes, a form each (`""` for none).
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct Command {
+    pub help: String,
+    #[serde(deserialize_with = "one_or_many")]
+    pub usage: Vec<String>,
+}
+
+/// A string or a list of strings.
+fn one_or_many<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Vec<String>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Forms {
+        One(String),
+        Many(Vec<String>),
+    }
+    Ok(match Forms::deserialize(d)? {
+        Forms::One(s) => vec![s],
+        Forms::Many(v) => v,
+    })
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -136,6 +163,11 @@ pub fn parse(text: &str, folder: &str) -> Result<Manifest> {
         if !s.tab.is_empty() && !EXTRA_TABS.contains(&s.tab.as_str()) {
             bail!("{}: setting {key}: tab is one of {} ({:?} given)", m.id, EXTRA_TABS.join(", "), s.tab);
         }
+    }
+    if let Some(name) =
+        m.commands.keys().find(|n| n.is_empty() || n.contains(char::is_whitespace) || n.starts_with('/'))
+    {
+        bail!("{}: command {name:?}: a name without slashes or spaces", m.id);
     }
     Ok(m)
 }

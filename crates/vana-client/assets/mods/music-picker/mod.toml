@@ -1,5 +1,5 @@
 name = "Music Picker"
-version = "1.0.0"
+version = "1.0.1"
 description = "Plays any of the game's tracks, keeps the zone's music in battle or silences it while mounted (the music add-ons)."
 permissions = []
 
@@ -22,3 +22,7 @@ default = "The Game's"
 options = ["The Game's", "Silence"]
 label = "Mount Music"
 help = "What plays while you ride: the game's mount music or nothing."
+
+[commands.music]
+help = "Plays one of the game's tracks, or goes back to the zone's music."
+usage = ["<track number>", "off"]

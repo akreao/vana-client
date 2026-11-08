@@ -23291,3 +23291,19 @@ still gave `cor`. Both now go through actmotion::sdep_stand.
 - Settings declared `from` the config: a disabled mod's page now shows the migrated value; character-scoped ones wait
   for a character (they went to the account file, which every character falls back to) and migrate at login for
   running lobby mods.
+
+## Mods' commands on the chat line (ours, 2026-11-08)
+
+- User: "Installed mod's chat commands need to be effectively communicated to a player" (retail's own text commands
+  were never discoverable either). Replaces lenonk/vana-client#132's command lists in the mods' descriptions.
+- mod.toml `[commands.<name>]`: `help` (a line) and `usage` (one form or a list; `""` for the bare command). The 51
+  bundled mods declare their 78 commands (from #132's lists, checked against each mod's code);
+  lua::tests::bundled_commands_declared keeps declared and registered names equal.
+- client/cmdhint.rs: while a line starting with `/` is typed (`//` at once, one slash from three letters: /p, /sh,
+  /ma stay quiet), the running mods' commands its first word starts with and their help, over the chat line where the
+  auto-translate list goes; one match, or the name and a space, shows that command's forms with its help and mod.
+  Tab completes the name (again: the next match, Shift+Tab back) before the auto-translate list's Tab; Enter and the
+  arrows stay the line's. Classic: a framed list on a dark backing; modern: an opaque panel (modern/chat.rs).
+- `//help` (unless a mod registers help): the mods' commands by mod; `//help <command or mod>` the forms. "No mod
+  command x." names the nearest command (prefix, else two edits). The Mods page's details list a mod's commands
+  (modpack::LuaInfo::details).
