@@ -18023,6 +18023,14 @@ impl App {
                 r.set_camera_list(&gfx.gpu, list, far);
                 // Config 0017: bump mapping's lighting (one eased light, vertex fog) or the two-light model; never in 182.
                 r.bump_mode = self.cfg.tool("0017") != 0 && w.zone != Some(182);
+                // Windowed (0034 != 0, no gamma ramp): lights boosted by the channels' ramps (render::light_boost),
+                // gamma base 0028 + 1 + Gameplay R / G / B / 100 (FUN_101aa650).
+                r.light_boost = if self.cfg.window_mode() != 0 {
+                    let base = self.cfg.gamma_base();
+                    crate::render::light_boost([0x37, 0x38, 0x39].map(|id| base + 1.0 + w.game.get(id) as f32 / 100.0))
+                } else {
+                    [0.0; 4]
+                };
                 (r.mod_clear, r.mod_ambient, r.wireframe) = (w.opts.clear, w.opts.ambient, w.opts.wireframe);
                 // Config 0011: the animated meshes' sway this frame (render/sway.rs).
                 let steps = match self.cfg.tool("0011") {

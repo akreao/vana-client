@@ -327,6 +327,16 @@ pub struct Placement {
     /// Record +0x40 when +0x46 bit 0 is set: its own draw distance, scaled by the Clipping factor instead of the
     /// zone's (FUN_1017c9c0).
     pub own_dist: Option<f32>,
+    /// Runtime +0xe, D3DRS_NORMALIZENORMALS while it draws (FUN_1017c9c0): set by the loader (FUN_10179430) only for
+    /// a placement named es_anmo* within 0.05 of (-57.9466, -15.7264, -269.387) in zone 0xd5, the one such in the
+    /// install. Every other placement lights with its normals as transformed, unnormalised.
+    pub normalize: bool,
+}
+
+/// FUN_10179430's NORMALIZENORMALS placement (Placement::normalize), its zone check left to the name and spot.
+fn normalizes(name: &str, at: [f32; 3]) -> bool {
+    let spot = [f32::from_bits(0xc267c952), f32::from_bits(0xc17b9f56), f32::from_bits(0xc386b189)];
+    name.as_bytes().starts_with(b"es_anmo") && (0..3).all(|k| (at[k] - spot[k]).abs() < f32::from_bits(0x3d4ccccd))
 }
 
 impl Placement {
@@ -433,9 +443,11 @@ pub fn parse_mzb(p: &mut [u8]) -> Result<Vec<Placement>> {
                 *l = if rf >= 1 { keys.get(rf - 1).copied().unwrap_or(0) } else { 0 };
             }
         }
+        let (name, translate) = (name_at(p, r, 16), vec3_at(p, r + 16));
         out.push(Placement {
-            name: name_at(p, r, 16),
-            translate: vec3_at(p, r + 16),
+            normalize: normalizes(&name, translate),
+            name,
+            translate,
             rotate: vec3_at(p, r + 28),
             scale: vec3_at(p, r + 40),
             lights,
@@ -1022,5 +1034,90 @@ mod tests {
         // Through the box with both ends outside, and beside it.
         assert!(r.touches([40.0, 17.0, -80.0], [58.0, 17.0, -80.0]));
         assert!(!r.touches([40.0, 17.0, -70.0], [58.0, 17.0, -70.0]));
+    }
+
+    /// Census for point-light slots and scaled placements (by hand: `cargo test --release light_ref_census --
+    /// --ignored --nocapture`).
+    #[test]
+    #[ignore]
+    fn light_ref_census() {
+        let cfg = crate::config::Config::load();
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Some(keys) =
+            std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())).ok().and_then(|b| Keys::from_ffximain(&b).ok())
+        else {
+            return;
+        };
+        let (mut leak_c, mut leak_empty, mut leak_far, mut scaled, mut drawn, mut refs) = (0, 0, 0, 0, 0, 0);
+        let mut nlen = [0usize; 4];
+        for zone in (0..300).chain(1000..1300) {
+            let Ok(file) = index.read(file_id(zone)) else { continue };
+            let Ok(list) = crate::dat::chunks(&file) else { continue };
+            for c in list {
+                if c.kind == 0x2E && zone < 300 {
+                    let mut data = c.data.to_vec();
+                    decode_mmb(&keys, &mut data);
+                    if let Ok(m) = parse_mmb(&data) {
+                        for v in m.models.iter().flat_map(|x| x.vertices.iter()) {
+                            let l = v.normal.iter().map(|a| a * a).sum::<f32>().sqrt();
+                            nlen[if l < 0.9 {
+                                0
+                            } else if l <= 1.01 {
+                                1
+                            } else if l < 1.5 {
+                                2
+                            } else {
+                                3
+                            }] += 1;
+                        }
+                    }
+                }
+                if c.kind != 0x1C {
+                    continue;
+                }
+                let mut p = c.data.to_vec();
+                if decode_mzb(&keys, &mut p).is_err() {
+                    continue;
+                }
+                let lk = light_list(&p);
+                let Ok(pl) = parse_mzb(&mut p.clone()) else { continue };
+                let count = (p[4] as usize) | (p[5] as usize) << 8 | (p[6] as usize) << 16;
+                let end = u32_at(&p, 20) as usize;
+                if count == 0 || end != count * 100 + 32 || p[3] < 0x12 {
+                    continue;
+                }
+                for (i, pl) in pl.iter().enumerate().filter(|(_, x)| x.id == 0) {
+                    drawn += 1;
+                    if pl.normalize {
+                        println!("normalize: zone {zone} {}", pl.name);
+                    }
+                    if pl.scale.iter().any(|s| (s.abs() - 1.0).abs() > 1e-3) {
+                        scaled += 1;
+                    }
+                    for k in 0..4 {
+                        let rf = u32_at(&p, 32 + i * 100 + 0x54 + 4 * k) as usize;
+                        if rf == 0 {
+                            continue;
+                        }
+                        refs += 1;
+                        match lk.get(rf - 1) {
+                            None => leak_far += 1,
+                            Some(0) => leak_empty += 1,
+                            Some(&key) if key as u8 == b'c' => {
+                                if leak_c < 20 {
+                                    println!("zone {zone} {} slot {k} key {:?}", pl.name, &key.to_le_bytes());
+                                }
+                                leak_c += 1
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+        println!(
+            "drawn {drawn} scaled {scaled} refs {refs}: 'c' {leak_c}, empty {leak_empty}, past the list {leak_far}"
+        );
+        println!("normal lengths <0.9 {} ~1 {} <1.5 {} more {}", nlen[0], nlen[1], nlen[2], nlen[3]);
     }
 }

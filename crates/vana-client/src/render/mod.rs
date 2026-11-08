@@ -270,6 +270,22 @@ pub struct Uniforms {
     two: [[f32; 4]; 4],
     /// x: 1 with bump mapping on (one eased light, vertex fog), 0 off (two lights, table fog).
     modes: [f32; 4],
+    /// Windowed mode's light boost (light_boost): rgb factors, w = 1 on.
+    boost: [f32; 4],
+}
+
+/// Windowed mode's light boost (FUN_1000be50, the SetLight wrapper FUN_1000bf30's helper; only while config 0034 !=
+/// 0, where no gamma ramp is set): a light whose diffuse r, g and b are all below 0.8 has each multiplied by 2.3 x
+/// ramp[i] / 65535 of its channel's gamma ramp (FUN_10017100: red entry 120, green 116, blue 128) and capped at 1.
+/// The ramp is FUN_100171b0's, built whether or not it is set: ftol(65535 (i / 255)^(1 / max(g, 0.01))), g the
+/// channel's gamma (base 0028 + 1 + Gameplay R / G / B / 100). Returns the factors, w = 1.
+pub fn light_boost(gamma: [f32; 3]) -> [f32; 4] {
+    let ramp = |i: u32, g: f32| -> u16 {
+        let g = g.max(0.01) as f64;
+        ((i as f64 * (1.0f32 / 255.0) as f64).powf(1.0 / g) * 65535.0) as u16
+    };
+    let f = |i: u32, g: f32| ramp(i, g) as f32 * f32::from_bits(0x381333c6);
+    [f(120, gamma[0]), f(116, gamma[1]), f(128, gamma[2]), 1.0]
 }
 
 /// Area environments (DAT_10631f24 area objects) the scenery is lit by, slot 0 unused.
@@ -409,6 +425,8 @@ pub struct ZoneRenderer {
     /// and vertex fog; off: two lights and table fog).
     bump_groups: Vec<wgpu::BindGroup>,
     pub bump_mode: bool,
+    /// Windowed mode's light boost (light_boost; zero = off).
+    pub light_boost: [f32; 4],
     /// The zone's scenery culled on the GPU (render/cull.rs) when the device draws indirectly, and its passes.
     cull: Option<cull::Cull>,
     cull_pipes: [wgpu::ComputePipeline; 2],
@@ -1841,7 +1859,7 @@ const LAMP_REACH: f32 = 16.0;
 pub struct Instance {
     model: [[f32; 4]; 4],
     lights: [u32; 4],
-    /// x: the area slot it is lit by (0 = the zone's).
+    /// x: the area slot it is lit by (0 = the zone's); y: the sway step (sway.rs); z: 1 with NORMALIZENORMALS.
     area: [u32; 4],
     /// Level of detail: drawn while near² < d² <= far² from the camera to its origin; far 0 = always. z: the part,
     /// w: 1 for a voyage zone's world (drawn through the voyage matrix).
@@ -1981,7 +1999,7 @@ impl ZoneGeometry {
                 let inst = Instance {
                     model: p.matrix(),
                     lights,
-                    area: [area, 0, 0, 0],
+                    area: [area, 0, p.normalize as u32, 0],
                     band: [b[0], b[1], part as f32, p.world as u32 as f32],
                 };
                 by_mesh.entry(name.into_owned()).or_default().push((
@@ -2411,6 +2429,7 @@ impl ZoneRenderer {
             sway,
             bump_groups,
             bump_mode: true,
+            light_boost: [0.0; 4],
             scenery_bump: p.scenery_bump,
             scenery: p.scenery,
             scenery_furn: p.scenery_furn,
@@ -3529,6 +3548,7 @@ impl ZoneRenderer {
             voyage: self.voyage.to_cols_array_2d(),
             two: [[0.0; 4]; 4],
             modes: [self.bump_mode as u32 as f32, 0.0, 0.0, 0.0],
+            boost: self.light_boost,
         };
         let mut clear = self.fog_color;
         if let Some(l) = &self.lighting {
@@ -4740,5 +4760,17 @@ mod faded_tests {
         gpu.queue.submit([enc.finish()]);
         let err = pollster::block_on(scope.pop());
         assert!(err.is_none(), "{err:?}");
+    }
+}
+
+#[cfg(test)]
+mod boost_tests {
+    /// FUN_1000be50 at the default gamma (1.5 per channel): red x 1.3915, green x 1.3604, blue x 1.4527; at 1.0 the
+    /// ramp is linear (2.3 x 120 / 255 ..).
+    #[test]
+    fn light_boost_factors() {
+        let near = |a: [f32; 4], b: [f32; 3]| (0..3).all(|k| (a[k] - b[k]).abs() < 1e-5) && a[3] == 1.0;
+        assert!(near(super::light_boost([1.5; 3]), [1.391_511, 1.360_417, 1.452_683]));
+        assert!(near(super::light_boost([1.0; 3]), [1.082_353, 1.046_274, 1.154_510]));
     }
 }
