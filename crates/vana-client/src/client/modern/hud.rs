@@ -1322,11 +1322,8 @@ fn party_rows(p: Look, w: &World) -> (Vec<PartyRow>, [Option<Vec<PartyRow>>; 2])
         })
     };
     let gauge = |k: usize, hpp: u8, mpp: u8| w.party_gauges.get(k).map_or((hpp, mpp), |g| (g.1, g.2));
-    // A member's max HP: as last seen at 100 %, else HP / HP %.
-    let hp_max = |id: u32, hp: u32, hpp: u8| match w.party_hp_max.get(&id) {
-        Some(&max) if hp <= max => Some(max),
-        _ => (hpp > 0).then(|| ((hp as f32 * 100.0 / hpp as f32).round() as u32).max(hp)),
-    };
+    // A member's max HP: as last seen at 100 % while their HP % still fits it, else HP / HP %.
+    let hp_max = |id: u32, hp: u32, hpp: u8| super::super::party::hp_max(w.party_hp_max.get(&id).copied(), hp, hpp);
     let mut party = Vec::new();
     if let Some((hp, mp, tp, hpp, mpp)) = w.vitals {
         let own = w.party.own();
@@ -1339,7 +1336,7 @@ fn party_rows(p: Look, w: &World) -> (Vec<PartyRow>, [Option<Vec<PartyRow>>; 2])
             sub_icon: w.stats.as_ref().and_then(|s| job_icon(s.sub.0)),
             here: Some(RowVitals {
                 hp,
-                hp_max: w.stats.as_ref().map(|s| s.hp_max),
+                hp_max: super::super::party::hp_max(w.own_hp_max.or(w.stats.as_ref().map(|s| s.hp_max)), hp, hpp),
                 mp,
                 tp: w.party_tp.then_some(tp),
                 hpf: gh as f32 / 100.0,
