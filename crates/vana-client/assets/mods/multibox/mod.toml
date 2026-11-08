@@ -1,6 +1,6 @@
 name = "Multibox Control"
-version = "1.0.0"
-description = "Commands, targets and status removal sent to your other game windows on this machine, focus switching, and tells relayed between them (the multibox add-ons)."
+version = "1.0.1"
+description = "Commands, targets and status removal sent to your other game windows on this machine, focus switching, and tells relayed between them (the multibox add-ons). Commands: //send <name | all | others> <command>, //sendtarget [name], //focus <name>, //stna [name]."
 permissions = ["multibox", "automation"]
 
 [settings.on]

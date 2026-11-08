@@ -1,6 +1,6 @@
 name = "Skill-up Log"
-version = "1.0.0"
-description = "Adds your session's total to each skill-up line, and lists your skills, their caps and today's gains (the skill-up tracker add-ons)."
+version = "1.0.1"
+description = "Adds your session's total to each skill-up line, and lists your skills, their caps and today's gains (the skill-up tracker add-ons). Commands: //skills."
 permissions = []
 
 [settings.on]

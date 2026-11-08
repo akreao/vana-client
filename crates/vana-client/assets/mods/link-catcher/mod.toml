@@ -1,6 +1,6 @@
 name = "Link Catcher"
-version = "1.0.0"
-description = "Numbers the web links in chat so you can open or copy them (the chat link add-ons)."
+version = "1.0.1"
+description = "Numbers the web links in chat so you can open or copy them (the chat link add-ons). Commands: //links (lists them), //links <number> opens one."
 permissions = ["net"]
 
 [settings.on]
