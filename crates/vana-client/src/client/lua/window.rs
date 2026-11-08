@@ -257,10 +257,12 @@ pub enum Cmd {
         title: String,
         text: String,
     },
+    /// Tinted by `tint` (its alpha fades it).
     Icon {
         at: [f32; 2],
         size: f32,
         icon: Icon,
+        tint: [u8; 4],
     },
 }
 
@@ -1509,7 +1511,7 @@ fn draw_canvas(gu: &mut GameUi, world: Option<&super::World>, cmds: &[Cmd], x: f
                 gu.text_fit(text, tx, ty, x + w - tx + 16.0, tint(*colour));
             }
             Cmd::Tip { .. } => {}
-            Cmd::Icon { at: p, size, icon: i } => {
+            Cmd::Icon { at: p, size, icon: i, .. } => {
                 let [ix, iy] = at(*p);
                 icon(gu, world, *i, ix, iy, *size);
             }
