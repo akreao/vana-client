@@ -1,5 +1,5 @@
 name = "Inventory HUD"
-version = "1.0.3"
+version = "1.0.4"
 description = "Bag space, gil and the items and key items you choose, in a window on a screen edge (the inventory and gil tracker add-ons)."
 permissions = []
 
@@ -14,3 +14,12 @@ type = "bool"
 default = false
 label = "Every Bag"
 help = "Lists the satchel, sack, case and wardrobes too, not only the inventory."
+
+[commands.bags]
+help = "The items and key items the Inventory HUD counts."
+forms = [
+  { args = "add <item>", help = "Counts an item.", params = [{ name = "item", type = "item" }] },
+  { args = "addkey <key item>", help = "Shows whether you have a key item.", params = [{ name = "key item", type = "key_item" }] },
+  { args = "remove <name>", help = "Stops counting an item or key item." },
+  { args = "list", help = "Lists what it counts." },
+]

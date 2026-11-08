@@ -39,7 +39,7 @@ scope = "character"
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `type` | string | `""` | `"bool"`, `"int"`, `"number"`, `"enum"`, `"string"`, `"colour"` or `"key"`; any other type stops the mod from loading. The Extras page shows `bool`, `enum`, `int` and `number` settings; the others are read with `settings.get` and set with `/lua set` only. |
+| `type` | string | `""` | `"bool"`, `"int"`, `"number"`, `"enum"`, `"string"`, `"colour"` or `"key"`; any other type stops the mod from loading. The Mods window shows them all: `bool`, `enum`, `int` and `number` as choices, `string` as a text field, `colour` as a swatch with its #RRGGBB and a picker, `key` as the key to press. The classic Extras page shows only `bool`, `enum`, `int` and `number`; in the classic UI the others are set with `/lua set`. |
 | `default` | any TOML value | none | The value `settings.get` returns while the user has chosen none. |
 | `label` | string | the key | The row's name on the Extras page. |
 | `help` | string | `""` | The help text the Extras page shows for the row. |

@@ -34,7 +34,11 @@ end
 
 events.on("job_change", apply)
 
-local USAGE = "//macros save [sub] (the palette's book and set for this job), //macros forget [sub], //macros list"
+-- The forms of //macros as mod.toml declares them: what the chat line's hint and //mods show.
+local function usage()
+  chat.add("Macro Book Switch:")
+  for _, line in ipairs(commands.usage("macros")) do chat.add("  " .. line) end
+end
 
 commands.register("macros", function(cmd, which)
   cmd = (cmd or ""):lower()
@@ -60,7 +64,7 @@ commands.register("macros", function(cmd, which)
     table.sort(out)
     chat.add("Macro Book Switch: " .. (#out > 0 and table.concat(out, "; ") or "nothing saved"))
   else
-    chat.add("Macro Book Switch: " .. USAGE)
+    usage()
   end
 end)
 

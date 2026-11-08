@@ -3,6 +3,12 @@
   "mods": [
     {
       "authors": [],
+      "commands": {
+        "actions": {
+          "args": "",
+          "help": "Opens the Action Panel window."
+        }
+      },
       "description": "A window of everything your jobs can use now: magic by school, job abilities, weapon skills and pet commands, with costs and recasts; a click uses one; //actions opens it (the action menu add-ons).",
       "files": [
         {
@@ -13,18 +19,24 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "cd7f5f15bc9ef5485f39dd80faae829a0cc5cfcf3c5b07d26c2561d45a863ca4",
-          "size": 499,
+          "sha256": "89dc1dd7dc68876df9ad2e8b0ae078cb4b99507a259ba60e32be1db12c40bcfd",
+          "size": 569,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/action-panel/mod.toml"
         }
       ],
       "id": "action-panel",
       "kind": "lua",
       "name": "Action Panel",
-      "version": "1.0.4"
+      "version": "1.0.5"
     },
     {
       "authors": [],
+      "commands": {
+        "attend": {
+          "args": "[note]",
+          "help": "Writes down who is here (party, alliance, players nearby), with an optional note."
+        }
+      },
       "description": "Writes down who is at an event: your party and alliance, and players nearby, with the time, to a file (the linkshell attendance add-ons).",
       "files": [
         {
@@ -35,18 +47,66 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "25c727e1a1174ee873dee8c5b6e00cbc3d818dd9dadaa4ce6457e3e00f712619",
-          "size": 567,
+          "sha256": "79dd0143a79239331b0d97055de5af5727121dd794190fb6c563d5e365ede1fa",
+          "size": 693,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/attendance/mod.toml"
         }
       ],
       "id": "attendance",
       "kind": "lua",
       "name": "Attendance",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
+      "commands": {
+        "ahbuy": {
+          "args": "<item> <price> [stack]",
+          "help": "Bids on an item at the auction house.",
+          "params": [
+            {
+              "name": "item",
+              "type": "item"
+            },
+            {
+              "name": "price",
+              "type": "int"
+            },
+            {
+              "name": "stack",
+              "options": [
+                "stack"
+              ],
+              "type": "enum"
+            }
+          ]
+        },
+        "ahlist": {
+          "args": "",
+          "help": "Lists your auction house sales in the log."
+        },
+        "ahsell": {
+          "args": "<item> <price> [stack]",
+          "help": "Puts an item up for sale at the auction house.",
+          "params": [
+            {
+              "name": "item",
+              "type": "item"
+            },
+            {
+              "name": "price",
+              "type": "int"
+            },
+            {
+              "name": "stack",
+              "options": [
+                "stack"
+              ],
+              "type": "enum"
+            }
+          ]
+        }
+      },
       "description": "Bids and sales at the auction house by command, and your listings in the log (the auction helper add-ons).",
       "files": [
         {
@@ -57,15 +117,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "e5fe591da5c04274973205fb4cf45d7a21ff628efec8cd8197333944f4e6787c",
-          "size": 429,
+          "sha256": "2dfd91ae5048a9b31b134802feebbe0f19d8b9f3458ac4e1b35e7c7f188793e6",
+          "size": 982,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/auction-desk/mod.toml"
         }
       ],
       "id": "auction-desk",
       "kind": "lua",
       "name": "Auction Desk",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
@@ -91,6 +151,26 @@
     },
     {
       "authors": [],
+      "commands": {
+        "automaton": {
+          "args": "<name>",
+          "forms": [
+            {
+              "args": "save <name>",
+              "help": "Saves the automaton's head, frame and attachments as a set."
+            },
+            {
+              "args": "list",
+              "help": "Lists your sets."
+            },
+            {
+              "args": "delete <name>",
+              "help": "Deletes a set."
+            }
+          ],
+          "help": "Your automaton's named sets."
+        }
+      },
       "description": "Saves your automaton's head, frame and attachments as named sets and puts a set on with one command (the automaton set add-ons).",
       "files": [
         {
@@ -101,18 +181,67 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "85844b1576249c917c507a88dd2d1db8a43fcf97df0310c95b3ef8a3e31c1c2c",
-          "size": 483,
+          "sha256": "788245840d2a6d210c79dfacade9779fe09a279413b636a8861b7a3bf5291f34",
+          "size": 772,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/automaton-sets/mod.toml"
         }
       ],
       "id": "automaton-sets",
       "kind": "lua",
       "name": "Automaton Sets",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
+      "commands": {
+        "stow": {
+          "forms": [
+            {
+              "args": "get <item> [count | all]",
+              "help": "Fetches an item into your inventory.",
+              "params": [
+                {
+                  "name": "item",
+                  "type": "item"
+                },
+                {
+                  "also": [
+                    "all"
+                  ],
+                  "name": "count",
+                  "type": "int"
+                }
+              ]
+            },
+            {
+              "args": "put <item> [to <bag>] [all]",
+              "help": "Puts an item away, in a bag you name or where it belongs.",
+              "params": [
+                {
+                  "name": "item",
+                  "type": "item"
+                },
+                {
+                  "name": "all",
+                  "options": [
+                    "all"
+                  ],
+                  "type": "enum"
+                }
+              ]
+            },
+            {
+              "args": "gear",
+              "help": "Gathers the gear your Gearshift file names."
+            },
+            {
+              "args": "tidy",
+              "help": "Puts the rest away."
+            }
+          ],
+          "help": "Moves items between your bags by name."
+        }
+      },
       "description": "Moves items between your bags by command: fetch and stow by name, gather the gear your Gearshift file names, tidy the rest away (the organizer and porter add-ons).",
       "files": [
         {
@@ -123,15 +252,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "84086a11da6a62f4a30f9acad00b4d6e8056c74d48e7d4614e4b3d9071cf4a0f",
-          "size": 578,
+          "sha256": "82af962e3aeb3b4cbb766d03f3773011048d32c1fa9c2f6f735cc3902a6f157b",
+          "size": 1173,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/bag-manager/mod.toml"
         }
       ],
       "id": "bag-manager",
       "kind": "lua",
       "name": "Bag Manager",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
@@ -157,6 +286,30 @@
     },
     {
       "authors": [],
+      "commands": {
+        "blu": {
+          "args": "<name>",
+          "forms": [
+            {
+              "args": "save <name>",
+              "help": "Saves your set blue magic as a set."
+            },
+            {
+              "args": "list",
+              "help": "Lists your sets."
+            },
+            {
+              "args": "delete <name>",
+              "help": "Deletes a set."
+            },
+            {
+              "args": "codex",
+              "help": "Opens the codex of every blue spell and what teaches it."
+            }
+          ],
+          "help": "Your blue magic sets; with a name, sets that set."
+        }
+      },
       "description": "Saves your set blue magic as named sets and puts a set back with one command; a codex of every blue spell and what teaches it; a call when a monster readies a move that teaches one you lack (the blue magic add-ons).",
       "files": [
         {
@@ -167,8 +320,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "e9df377e48d5ff77b0ba34ceafe1800d38be1d9c0f92e4efb544fa8dc145b8e3",
-          "size": 897,
+          "sha256": "a9091b35beaef794dcf1f81df1ab2e6e7ec6f393f1db0513da5f1098451d76aa",
+          "size": 1266,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/blue-sets/mod.toml"
         },
         {
@@ -181,10 +334,22 @@
       "id": "blue-sets",
       "kind": "lua",
       "name": "Blue Magic Sets",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
+      "commands": {
+        "calc": {
+          "args": "",
+          "forms": [
+            {
+              "args": "<sum>",
+              "help": "Works out a sum in the log."
+            }
+          ],
+          "help": "Opens the calculator window."
+        }
+      },
       "description": "Works out sums in the chat line or a small window: gil, stacks, prices (the calculator add-ons).",
       "files": [
         {
@@ -195,15 +360,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "f22e844233788454e6538b2e70533d00aa058084fecf81485bd75215dad96e09",
-          "size": 392,
+          "sha256": "5e49b399b904144d621ae32093e6fc903d4ac1769b0585dfbadc0b4e8a1a2117",
+          "size": 529,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/calculator/mod.toml"
         }
       ],
       "id": "calculator",
       "kind": "lua",
       "name": "Calculator",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
@@ -317,6 +482,32 @@
     },
     {
       "authors": [],
+      "commands": {
+        "chatfind": {
+          "args": "<words>",
+          "help": "Searches this session's chat lines."
+        },
+        "chatwin": {
+          "args": "<tell | party | ls | ls2 | say | shout | yell | unity>",
+          "help": "Opens a window for one chat channel.",
+          "params": [
+            {
+              "name": "tell",
+              "options": [
+                "tell",
+                "party",
+                "ls",
+                "ls2",
+                "say",
+                "shout",
+                "yell",
+                "unity"
+              ],
+              "type": "enum"
+            }
+          ]
+        }
+      },
       "description": "A window of its own for a chat channel (tells, party, linkshells, say, shout, yell, unity) with a line to answer in, and a search over the session's lines (the chat window add-ons).",
       "files": [
         {
@@ -327,15 +518,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "da959c9b3c359cd09c89e06750ad7558affabe1f79fbb4d71d9a18d619afd1bc",
-          "size": 501,
+          "sha256": "d0181693a52c153a97a81fd7645ce8a8982549f5962fdba2ba99bc883ad4c914",
+          "size": 833,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/chat-windows/mod.toml"
         }
       ],
       "id": "chat-windows",
       "kind": "lua",
       "name": "Chat Windows",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
@@ -383,6 +574,28 @@
     },
     {
       "authors": [],
+      "commands": {
+        "left": {
+          "args": "",
+          "forms": [
+            {
+              "args": "spells [job]",
+              "help": "The spells a job has yet to learn.",
+              "params": [
+                {
+                  "name": "job",
+                  "type": "job"
+                }
+              ]
+            },
+            {
+              "args": "quests",
+              "help": "The quests not done, by area."
+            }
+          ],
+          "help": "Opens or closes the Completion Log window."
+        }
+      },
       "description": "What is left to do: the spells a job has yet to learn and every area's quests, done, under way or not started (the checklist add-ons).",
       "files": [
         {
@@ -393,18 +606,28 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "a5d6af6be1a523dac5378cb3c5947aaacef04154b0463275e75e800c88e9cfa3",
-          "size": 462,
+          "sha256": "091796eadbf26c38928dfee7621390b7060bdaa3de8a62559424b861cd13cd54",
+          "size": 733,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/completion-log/mod.toml"
         }
       ],
       "id": "completion-log",
       "kind": "lua",
       "name": "Completion Log",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
+      "commands": {
+        "pops": {
+          "args": "[NM]",
+          "help": "The pop items for an Empyrean NM, or a list of them."
+        },
+        "znm": {
+          "args": "",
+          "help": "The Zeni NMs' pop items."
+        }
+      },
       "description": "A window for the content you are in: Dynamis, Abyssea, Salvage, Nyzul Isle, Omen, Delve, Odyssey, Sortie or a reive, with the time left and what the content's messages tell; pop lists for the Empyrean and Zeni NMs (the content tracker add-ons).",
       "files": [
         {
@@ -415,8 +638,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "7999c43d0769da23ac95afc186b0fe9408706a5150076a0ca5a864fda6d5b9af",
-          "size": 727,
+          "sha256": "63c970d892ce621edf79b58d6130a4d96fe6414b7e825c17e653102a95bb2678",
+          "size": 880,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/content-trackers/mod.toml"
         },
         {
@@ -471,10 +694,26 @@
       "id": "content-trackers",
       "kind": "lua",
       "name": "Content Trackers",
-      "version": "1.1.3"
+      "version": "1.1.4"
     },
     {
       "authors": [],
+      "commands": {
+        "timer": {
+          "args": "<time> <name>",
+          "forms": [
+            {
+              "args": "cancel <name>",
+              "help": "Stops a countdown."
+            },
+            {
+              "args": "clear",
+              "help": "Stops them all."
+            }
+          ],
+          "help": "Starts a countdown: 90, 5m, 1h30m or 2:30."
+        }
+      },
       "description": "Your own countdowns as rows in the Timers windows, with a line when each is up (the timer add-ons).",
       "files": [
         {
@@ -485,15 +724,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "1a234942e79b6cd7943e1db12590d7fa15eb7c338366e39eb7b8e2259af1ff8d",
-          "size": 395,
+          "sha256": "c9fbd47d6f85765935847db0a87a83ca3811f80ef783f6e40c081f83806d0dc9",
+          "size": 607,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/countdowns/mod.toml"
         }
       ],
       "id": "countdowns",
       "kind": "lua",
       "name": "Countdowns",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
@@ -543,6 +782,18 @@
       "authors": [
         "vana-client"
       ],
+      "commands": {
+        "dps": {
+          "args": "",
+          "forms": [
+            {
+              "args": "reset",
+              "help": "Starts counting again."
+            }
+          ],
+          "help": "Your party's damage since the first hit after a reset."
+        }
+      },
       "description": "/dps: the damage your party dealt since the first hit after a reset; /dps reset starts again.",
       "files": [
         {
@@ -553,18 +804,24 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "b0393700a4442c4701f132700c4e9a8df938a25f07e036abd70a492cea5eff6c",
-          "size": 413,
+          "sha256": "69d394bf686df211c0a6b8fd8cf134048d044b3a5e06fa09bee77e474f056eea",
+          "size": 570,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/dps/mod.toml"
         }
       ],
       "id": "dps",
       "kind": "lua",
       "name": "DPS",
-      "version": "1.0.2"
+      "version": "1.0.3"
     },
     {
       "authors": [],
+      "commands": {
+        "cancel": {
+          "args": "<effect>[, <effect>...]",
+          "help": "Cancels status effects: a name, a name with *, or an id."
+        }
+      },
       "description": "Cancels your status effects by name or id from a command, for macros (the cancel add-ons).",
       "files": [
         {
@@ -575,18 +832,34 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "7291f2896d3bedc90c0124dd702c6ea0af4b68e7b50b8689cae906608781b29d",
-          "size": 405,
+          "sha256": "fb3b7ae495991e16ec7c2a026c0ffea7c3cd650defe4cc9c770e0a8905130fe7",
+          "size": 523,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/effect-remover/mod.toml"
         }
       ],
       "id": "effect-remover",
       "kind": "lua",
       "name": "Effect Remover",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
+      "commands": {
+        "rename": {
+          "args": "<name> as <new name>",
+          "forms": [
+            {
+              "args": "<name>",
+              "help": "Gives it its own name back."
+            }
+          ],
+          "help": "Shows a character or monster under another name, on your screen only."
+        },
+        "renames": {
+          "args": "",
+          "help": "Lists the names you changed."
+        }
+      },
       "description": "Renames characters and monsters on your screen, hides your own name plate, and sets your size (the renamer and name plate add-ons). Only you see it.",
       "files": [
         {
@@ -597,15 +870,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "1a96e94ccc1befc4c91812bf25a94a5fee108539d88fa151b9e2ef217377602a",
-          "size": 755,
+          "sha256": "271660b311949adccbc6dd942b96f26ecbcb2d459fa027331a6a6e1b1ff4ceb3",
+          "size": 1024,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/entity-styles/mod.toml"
         }
       ],
       "id": "entity-styles",
       "kind": "lua",
       "name": "Entity Styles",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
@@ -631,6 +904,18 @@
     },
     {
       "authors": [],
+      "commands": {
+        "rules": {
+          "args": "",
+          "forms": [
+            {
+              "args": "reload",
+              "help": "Reads the rules file again."
+            }
+          ],
+          "help": "Lists your event rules."
+        }
+      },
       "description": "Runs your command lines when things happen: a zone, a job, an effect gained or lost, HP or MP low, a word in chat, a new day or weather (the auto-exec add-ons).",
       "files": [
         {
@@ -641,15 +926,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "63d3cca9936258e00a81abb5de5026e970bb2e084642b77a8eb314877e7c4d4f",
-          "size": 477,
+          "sha256": "a34b47ea83b4be9a48498aee38ec8ded9c1dd5897d3197bbc8b76f401271126c",
+          "size": 611,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/event-rules/mod.toml"
         }
       ],
       "id": "event-rules",
       "kind": "lua",
       "name": "Event Rules",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
@@ -675,6 +960,12 @@
     },
     {
       "authors": [],
+      "commands": {
+        "find": {
+          "args": "<words>",
+          "help": "Which bags hold each item whose name has these words, every character's."
+        }
+      },
       "description": "/find <words>: the bags holding each item whose name has them, the account's other characters' too (the find-all add-ons).",
       "files": [
         {
@@ -685,15 +976,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "5cbce90dff75169323913545b48da4f995b0a84ef09fde5d0369c28860650050",
-          "size": 171,
+          "sha256": "f5cc4f2aa58053a44d0402d609fb93d2875448cdcfa33c0dac019327bbe89d65",
+          "size": 287,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/find/mod.toml"
         }
       ],
       "id": "find",
       "kind": "lua",
       "name": "Find",
-      "version": "1.0.2"
+      "version": "1.0.3"
     },
     {
       "authors": [],
@@ -719,6 +1010,12 @@
     },
     {
       "authors": [],
+      "commands": {
+        "gather": {
+          "args": "reset",
+          "help": "Starts the gathering log again."
+        }
+      },
       "description": "Your harvesting, logging, mining and excavation this session: tries, success rate, broken tools and what you got (the gathering add-ons).",
       "files": [
         {
@@ -729,18 +1026,24 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "2a81f65ed41f4efae335b52b27ee4ed80f6242d6c975b8bc1757d807b1cae697",
-          "size": 452,
+          "sha256": "b48cdfc3e660cd34838dadcb8263ee9def0e1c59c32fad3b8f5a3d2e40053ec5",
+          "size": 527,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/gathering-log/mod.toml"
         }
       ],
       "id": "gathering-log",
       "kind": "lua",
       "name": "Gathering Log",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
+      "commands": {
+        "gearstats": {
+          "args": "",
+          "help": "Opens or closes the Gear Stats window."
+        }
+      },
       "description": "The totals of the stats on everything you wear, from the items' own descriptions and their augments (the gear stat add-ons).",
       "files": [
         {
@@ -751,18 +1054,46 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "40c52f73d8f6f961e2a9f8314188c99b152ab2519e5f121e3eb0feda7490e6ba",
-          "size": 439,
+          "sha256": "94647f63f4b4decdaed110d81daf1944183ba99da8973cfa534f8d1886b302aa",
+          "size": 519,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/gear-stats/mod.toml"
         }
       ],
       "id": "gear-stats",
       "kind": "lua",
       "name": "Gear Stats",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
+      "commands": {
+        "ac": {
+          "args": "<command>",
+          "help": "Ashitacast's own commands, for the loaded profile."
+        },
+        "gearshift": {
+          "args": "",
+          "forms": [
+            {
+              "args": "reload",
+              "help": "Reads the gear file again."
+            }
+          ],
+          "help": "Shows the loaded gear file."
+        },
+        "gs": {
+          "args": "<command>",
+          "help": "GearSwap's own commands, for the loaded GearSwap file."
+        },
+        "lac": {
+          "args": "<command>",
+          "help": "LuAshitacast's own commands, for the loaded profile."
+        },
+        "spellcast": {
+          "args": "<command>",
+          "help": "Spellcast's own commands, for the loaded file."
+        }
+      },
       "description": "Swaps gear around your actions from GearSwap job files and LuAshitacast and Ashitacast XML profiles, unchanged (the gear-swap add-ons).",
       "files": [
         {
@@ -773,8 +1104,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "4d281796f9516503227db2cadfe47bfa05171e46f559137ff6e5e48782361415",
-          "size": 480,
+          "sha256": "7645c5fae45a3f2ea57f768d77120da1cdc9319794a2f4b360e5cd91c9101dc2",
+          "size": 1007,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/gearshift/mod.toml"
         },
         {
@@ -853,7 +1184,7 @@
       "id": "gearshift",
       "kind": "lua",
       "name": "Gearshift",
-      "version": "0.1.3"
+      "version": "0.1.4"
     },
     {
       "authors": [],
@@ -881,37 +1212,93 @@
       "authors": [
         "Arusia"
       ],
-      "description": "Hotbars of multi-line macros with their actions' icons and recasts, loaded by main job and sub job.",
+      "commands": {
+        "hb": {
+          "args": "",
+          "forms": [
+            {
+              "args": "show",
+              "help": "Shows the bars."
+            },
+            {
+              "args": "hide",
+              "help": "Hides the bars."
+            },
+            {
+              "args": "more",
+              "help": "Shows one more bar."
+            },
+            {
+              "args": "fewer",
+              "help": "Shows one bar fewer."
+            },
+            {
+              "args": "palette",
+              "help": "Opens or closes the macro palette for your job."
+            },
+            {
+              "args": "run <bar> <slot>",
+              "help": "Fires a slot."
+            },
+            {
+              "args": "reload",
+              "help": "Reads macros.json again."
+            },
+            {
+              "args": "wipestock",
+              "help": "Empties the game's own macro palette (it can be restored)."
+            },
+            {
+              "args": "restorestock",
+              "help": "Puts the game's macro palette back."
+            }
+          ],
+          "help": "Opens the hotbar manager."
+        }
+      },
+      "description": "Hotbars of multi-line macros with their actions' icons and recasts, loaded by main job and sub job; a macro library with a builder and a palette to drag from.",
       "files": [
         {
           "path": "init.lua",
-          "sha256": "fb24c8741dfdc2c92b23288d3b065138a3673a63b72be7e26eb99e9869ddee50",
-          "size": 2729,
+          "sha256": "46e8d17c35f7cd09a9df07defba02a191d0a9acc65016d4bf296b4dcc4ee97db",
+          "size": 3379,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/hotbar/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "d9fad7dfc4535a98e9b0f79334d711d327943e32b770511971b56650a8f41de9",
-          "size": 1289,
+          "sha256": "de3163b41e0212ec051d8b9a5dcb0d0cbae3eb2a3743a3776678a034945535eb",
+          "size": 1985,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/hotbar/mod.toml"
         },
         {
           "path": "src/actions.lua",
-          "sha256": "91c560e1d7b4b258079fe8b1ebbd581ec149a9e0d7d910f23b8977da56bed69c",
-          "size": 4829,
+          "sha256": "4b26eea5ff6a4846ca3ef391fc24a94aa21282646752b7741db3780f78d65239",
+          "size": 5542,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/hotbar/src/actions.lua"
         },
         {
           "path": "src/bar.lua",
-          "sha256": "5633c4a815543aa5871d6f7738fd4fc4898310b8b8b27a8ffdc2b00dc24635ed",
-          "size": 17355,
+          "sha256": "13f3e84c789dcad1d1e9973f35999b108aae6af92720d88dc20a9d2a0c68000d",
+          "size": 19195,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/hotbar/src/bar.lua"
         },
         {
+          "path": "src/builder.lua",
+          "sha256": "8a57ddfeb7196f49a097ef49002cc1a77a8790f447778e8b5a1d33da51db5699",
+          "size": 10199,
+          "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/hotbar/src/builder.lua"
+        },
+        {
           "path": "src/data.lua",
-          "sha256": "5e278988dc44a3aa00cc1634c16137d8b8d72a70f7ec6ee05ad30019526683e5",
-          "size": 7082,
+          "sha256": "f31d7304eb691310ef534082d39b1a58bdcfd7863e63a3fbd2a4c2d4ae709180",
+          "size": 15108,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/hotbar/src/data.lua"
+        },
+        {
+          "path": "src/ghost.lua",
+          "sha256": "d0af813c49a31dc34c77431126b9a41ab8185b190229b8ef3039b861f365af5f",
+          "size": 2737,
+          "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/hotbar/src/ghost.lua"
         },
         {
           "path": "src/jobs.lua",
@@ -927,15 +1314,21 @@
         },
         {
           "path": "src/manager.lua",
-          "sha256": "18898eeee39ed17a962917b7e62ac15ea75829aa80cbb8d7d4458f5b89c46b0b",
-          "size": 11314,
+          "sha256": "55db0317bcde834c928f7deacd0f9a85690351d72560d103fde26fb6e1ca5770",
+          "size": 24569,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/hotbar/src/manager.lua"
         },
         {
           "path": "src/menu.lua",
-          "sha256": "d159d412ff0dddaaa8a8859f37a57f6febb5992af688e7d771407757dedca104",
-          "size": 12079,
+          "sha256": "b3cd6daec131188de6b77c25bbd46f86af0e40d7e27f3cb471e0cacfd69f29aa",
+          "size": 1849,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/hotbar/src/menu.lua"
+        },
+        {
+          "path": "src/palette.lua",
+          "sha256": "57f30a2e2321141426f9a4a790e2823a1496c5f9cbb0ae117b2c4d58cbddbf77",
+          "size": 6950,
+          "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/hotbar/src/palette.lua"
         },
         {
           "path": "src/runner.lua",
@@ -953,32 +1346,73 @@
       "id": "hotbar",
       "kind": "lua",
       "name": "Hotbars",
-      "version": "1.6.1"
+      "version": "1.7.2"
     },
     {
       "authors": [],
+      "commands": {
+        "bags": {
+          "forms": [
+            {
+              "args": "add <item>",
+              "help": "Counts an item.",
+              "params": [
+                {
+                  "name": "item",
+                  "type": "item"
+                }
+              ]
+            },
+            {
+              "args": "addkey <key item>",
+              "help": "Shows whether you have a key item.",
+              "params": [
+                {
+                  "name": "key item",
+                  "type": "key_item"
+                }
+              ]
+            },
+            {
+              "args": "remove <name>",
+              "help": "Stops counting an item or key item."
+            },
+            {
+              "args": "list",
+              "help": "Lists what it counts."
+            }
+          ],
+          "help": "The items and key items the Inventory HUD counts."
+        }
+      },
       "description": "Bag space, gil and the items and key items you choose, in a window on a screen edge (the inventory and gil tracker add-ons).",
       "files": [
         {
           "path": "init.lua",
-          "sha256": "8250ac997dff647355afc0fb20f328baeed85775765af7dea01a2a5f690a02e7",
-          "size": 3205,
+          "sha256": "32f116438b35a98524713fc60a7400bce671ab1508fe31dd5d8ec862eff00a3f",
+          "size": 3308,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/inventory-hud/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "d9e12f968d1d722ac966ae32486a8b7c16b910540235df85e54d20ed0d77f6d6",
-          "size": 530,
+          "sha256": "e58be64f60331838644164ea56fa7b9dffb5280c5b039807caedd0a8780733b0",
+          "size": 977,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/inventory-hud/mod.toml"
         }
       ],
       "id": "inventory-hud",
       "kind": "lua",
       "name": "Inventory HUD",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
+      "commands": {
+        "trials": {
+          "args": "",
+          "help": "Lists your trial weapons' weapon skill points."
+        }
+      },
       "description": "A trial weapon's weapon skill points toward its unlock, shown while it is highlighted in a game list and listed by command (the latent checker add-ons).",
       "files": [
         {
@@ -989,8 +1423,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "7cd6e94c74ba5dce026d3e69692b27d30916a0efcd5166641e7f9e41f87d2e47",
-          "size": 426,
+          "sha256": "388e7b8e70d682194f1329f16ff749fe5e8952b77346fc14959a6a971a54bb79",
+          "size": 511,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/item-details/mod.toml"
         },
         {
@@ -1003,7 +1437,7 @@
       "id": "item-details",
       "kind": "lua",
       "name": "Item Details",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
@@ -1029,6 +1463,32 @@
     },
     {
       "authors": [],
+      "commands": {
+        "alias": {
+          "args": "<name> <line>",
+          "help": "Makes a short name run a longer command line."
+        },
+        "aliases": {
+          "args": "",
+          "help": "Lists your aliases."
+        },
+        "bind": {
+          "args": "<key> <line>",
+          "help": "Binds a key to a command line."
+        },
+        "binds": {
+          "args": "",
+          "help": "Lists your key binds."
+        },
+        "unalias": {
+          "args": "<name>",
+          "help": "Removes an alias."
+        },
+        "unbind": {
+          "args": "<key>",
+          "help": "Takes a key's bind off."
+        }
+      },
       "description": "Binds keys to command lines and makes short aliases for long commands, kept per character (the bind and alias add-ons).",
       "files": [
         {
@@ -1039,18 +1499,30 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "aa4bbc8d723c6b3768e10e5f417042e21c301ef39d73eb7d9684daa0fbc62b15",
-          "size": 437,
+          "sha256": "2fd11d65255ec0233493a0cfb9ae87013de512433861c6eef628935cb6adbf60",
+          "size": 860,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/key-commands/mod.toml"
         }
       ],
       "id": "key-commands",
       "kind": "lua",
       "name": "Key Commands",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
+      "commands": {
+        "links": {
+          "args": "",
+          "forms": [
+            {
+              "args": "<number>",
+              "help": "Opens a link in your browser."
+            }
+          ],
+          "help": "Lists the web links seen in chat."
+        }
+      },
       "description": "Numbers the web links in chat so you can open or copy them (the chat link add-ons).",
       "files": [
         {
@@ -1061,18 +1533,34 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "e227b466384662901239c0c239c776938fc8eabbbbb19c667f1409e1596cf3b2",
-          "size": 362,
+          "sha256": "02a6b9eaf6a7eff014a309e0af09e3dd32a1f23a3bc78570463a0058e822e814",
+          "size": 510,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/link-catcher/mod.toml"
         }
       ],
       "id": "link-catcher",
       "kind": "lua",
       "name": "Link Catcher",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
+      "commands": {
+        "trim": {
+          "args": "<spell, ability or mount>",
+          "forms": [
+            {
+              "args": "list",
+              "help": "Lists what you left out."
+            },
+            {
+              "args": "clear",
+              "help": "Puts everything back."
+            }
+          ],
+          "help": "Leaves a spell, ability or mount out of the game's lists; again puts it back."
+        }
+      },
       "description": "Spells, abilities and mounts you never use left out of the game's lists, kept per character (the list trimming add-ons).",
       "files": [
         {
@@ -1083,15 +1571,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "c8e11cdafc0add24ca0d82c87f9afa0706896869d02d7b13df7e34bf7a921dcd",
-          "size": 426,
+          "sha256": "a41ee57685591f67fa8c559281c83afe9add20a3363e29e5deeab753d4e0b2de",
+          "size": 687,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/list-trimmer/mod.toml"
         }
       ],
       "id": "list-trimmer",
       "kind": "lua",
       "name": "List Trimmer",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
@@ -1117,18 +1605,138 @@
     },
     {
       "authors": [],
+      "commands": {
+        "look": {
+          "forms": [
+            {
+              "args": "race <race>",
+              "help": "Your race.",
+              "params": [
+                {
+                  "name": "race",
+                  "options": [
+                    "hume m",
+                    "hume f",
+                    "elvaan m",
+                    "elvaan f",
+                    "tarutaru m",
+                    "tarutaru f",
+                    "mithra",
+                    "galka"
+                  ],
+                  "type": "enum"
+                }
+              ]
+            },
+            {
+              "args": "face <1a..8b>",
+              "help": "Your face.",
+              "params": [
+                {
+                  "name": "1a..8b",
+                  "options": [
+                    "1a",
+                    "1b",
+                    "2a",
+                    "2b",
+                    "3a",
+                    "3b",
+                    "4a",
+                    "4b",
+                    "5a",
+                    "5b",
+                    "6a",
+                    "6b",
+                    "7a",
+                    "7b",
+                    "8a",
+                    "8b"
+                  ],
+                  "type": "enum"
+                }
+              ]
+            },
+            {
+              "args": "<slot> <item | none | own>",
+              "help": "A piece of your gear.",
+              "params": [
+                {
+                  "name": "slot",
+                  "options": [
+                    "head",
+                    "body",
+                    "hands",
+                    "legs",
+                    "feet",
+                    "main",
+                    "sub",
+                    "range"
+                  ],
+                  "type": "enum"
+                },
+                {
+                  "also": [
+                    "none",
+                    "own"
+                  ],
+                  "name": "item",
+                  "type": "item"
+                }
+              ]
+            },
+            {
+              "args": "copy [name]",
+              "help": "Copies a player's look (your target's).",
+              "params": [
+                {
+                  "name": "name",
+                  "type": "player"
+                }
+              ]
+            },
+            {
+              "args": "others <race | own>",
+              "help": "One race for everyone else.",
+              "params": [
+                {
+                  "also": [
+                    "own"
+                  ],
+                  "name": "race",
+                  "options": [
+                    "hume m",
+                    "hume f",
+                    "elvaan m",
+                    "elvaan f",
+                    "tarutaru m",
+                    "tarutaru f",
+                    "mithra",
+                    "galka"
+                  ],
+                  "type": "enum"
+                }
+              ]
+            },
+            {
+              "args": "reset",
+              "help": "Your own look back."
+            }
+          ],
+          "help": "Changes how characters look, on your screen only."
+        }
+      },
       "description": "Changes how characters look on your screen only: your race, face and gear, a target's look copied, one race for everyone else (the dress-up add-ons).",
       "files": [
         {
           "path": "init.lua",
-          "sha256": "8b1c34fb165d042e2f665248249c0514de36505b814ddc76b35f039deb14a3bd",
-          "size": 5245,
+          "sha256": "fd9b271232a636d970f88d4f60e831a7f497f63eb7b3fbb3adb0fddc7db8f406",
+          "size": 5344,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/look-changer/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "7aec7039f7c3719cf0190974e498a6eafd75f01b9c6925f28a95569f0d784dce",
-          "size": 464,
+          "sha256": "b17f3d843a9efbdf340cec3290ea0db73d0df2765484fbdfcc0239756d4f6cdb",
+          "size": 1625,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/look-changer/mod.toml"
         },
         {
@@ -1141,32 +1749,73 @@
       "id": "look-changer",
       "kind": "lua",
       "name": "Look Changer",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
+      "commands": {
+        "loot": {
+          "args": "[lot | pass | drop] [add | remove] <item>",
+          "forms": [
+            {
+              "args": "list",
+              "help": "Lists your rules."
+            }
+          ],
+          "help": "Lots, passes or drops treasure by your lists.",
+          "params": [
+            {
+              "name": "lot",
+              "options": [
+                "lot",
+                "pass",
+                "drop"
+              ],
+              "type": "enum"
+            },
+            {
+              "name": "add",
+              "options": [
+                "add",
+                "remove"
+              ],
+              "type": "enum"
+            },
+            {
+              "name": "item",
+              "type": "item"
+            }
+          ]
+        }
+      },
       "description": "Lots, passes and drops treasure by your lists (the treasury and loot add-ons).",
       "files": [
         {
           "path": "init.lua",
-          "sha256": "6e433c65f6b98abc5716ab118e0037348a4ae1b5abffe44447e65c65b7430503",
-          "size": 5333,
+          "sha256": "809057150e85010abe1e6fd39ba752ace344af837bcc56154be898052e0aaa48",
+          "size": 5453,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/loot-rules/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "89bb548284496826f1acc93c23c1e4585ddfb033acccc379bbe250e4558953d4",
-          "size": 775,
+          "sha256": "f19bade973673a8e73354ed9061f134ee20953f2e299511e0b423189c2913c9f",
+          "size": 1133,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/loot-rules/mod.toml"
         }
       ],
       "id": "loot-rules",
       "kind": "lua",
       "name": "Loot Rules",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
+      "commands": {
+        "lootlog": {
+          "args": "reset",
+          "help": "Starts the loot log again."
+        }
+      },
       "description": "Treasure Hunter on your target, what each kind of monster has dropped this session, and the treasure pool's time left (the loot tracker add-ons).",
       "files": [
         {
@@ -1177,40 +1826,86 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "5b1dc38eb7ebad9e987adbf8c533201b921e11cb86967b3a51cca266eddec7a3",
-          "size": 485,
+          "sha256": "d844bfcf4afd1e8d481a0f81c848ecf7c49f9b301322ecd960707205f76fbf72",
+          "size": 556,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/loot-tracker/mod.toml"
         }
       ],
       "id": "loot-tracker",
       "kind": "lua",
       "name": "Loot Tracker",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
+      "commands": {
+        "macros": {
+          "forms": [
+            {
+              "args": "save [sub]",
+              "help": "Keeps the palette's book and set for this job (or this sub job)."
+            },
+            {
+              "args": "forget [sub]",
+              "help": "Forgets them."
+            },
+            {
+              "args": "list",
+              "help": "Lists what is kept."
+            }
+          ],
+          "help": "The macro book and set kept for each job."
+        }
+      },
       "description": "Turns the macro palette to the book and set you keep for each job when the job changes (the macro changer add-ons).",
       "files": [
         {
           "path": "init.lua",
-          "sha256": "a2c8550589d2b0f49a8419f18dd3aa2eb5417283a27e745202ae79ba0eda4dac",
-          "size": 2413,
+          "sha256": "e1e974b1fd4d433c6dd39aea4948c00a95b1946311da4ce0581ef9706e2ea7ea",
+          "size": 2499,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/macro-books/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "c6c1f8ef2ffe3d9f133e5f7ed93984c1815dc912af606f1ddf6eb9c3ce1fd9b8",
-          "size": 436,
+          "sha256": "6502d3f3f6f9ef16558c5cb0e140693378d25f8b36dd6e8201764963deca5040",
+          "size": 724,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/macro-books/mod.toml"
         }
       ],
       "id": "macro-books",
       "kind": "lua",
       "name": "Macro Book Switch",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
+      "commands": {
+        "mapnote": {
+          "forms": [
+            {
+              "args": "add <text>",
+              "help": "Pins a note where you stand."
+            },
+            {
+              "args": "del <n>",
+              "help": "Removes a note by its number."
+            },
+            {
+              "args": "list",
+              "help": "Lists this zone's notes."
+            },
+            {
+              "args": "track <name>",
+              "help": "Marks a monster on the map."
+            },
+            {
+              "args": "untrack <name>",
+              "help": "Stops marking it."
+            }
+          ],
+          "help": "Notes on the zone's map, and monsters to track on it."
+        }
+      },
       "description": "Notes pinned to places on a zone's map, your party and the monsters you track, marked on the Map Overlay (the map marker add-ons).",
       "files": [
         {
@@ -1221,15 +1916,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "577aec156b27c6752a5272c5bafe30c93ae8b16c5c7e8d6c8be5526b93903f85",
-          "size": 580,
+          "sha256": "0b22af90823c2940141e1653148831af91aa903320b7c26e0c20fbfb193fef21",
+          "size": 987,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/map-notes/mod.toml"
         }
       ],
       "id": "map-notes",
       "kind": "lua",
       "name": "Map Notes",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
@@ -1299,6 +1994,22 @@
     },
     {
       "authors": [],
+      "commands": {
+        "mobnote": {
+          "args": "",
+          "forms": [
+            {
+              "args": "<text>",
+              "help": "Sets it."
+            },
+            {
+              "args": "clear",
+              "help": "Clears it."
+            }
+          ],
+          "help": "Shows your note on the target."
+        }
+      },
       "description": "A bar across the top of the screen with the zone, the time and weather, and your target: its /check result and the notes you keep on it (the info bar add-ons).",
       "files": [
         {
@@ -1309,18 +2020,34 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "5c07394017eefcda4a6b3b5fc684de27a3dbbde8ef75eae42ce6a0851ae97937",
-          "size": 648,
+          "sha256": "eb13bcb87177831cb7684b521ded3a03d9438ee35f9d2ffbc94f3b6d921763eb",
+          "size": 815,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/monster-notes/mod.toml"
         }
       ],
       "id": "monster-notes",
       "kind": "lua",
       "name": "Monster Notes",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
+      "commands": {
+        "ride": {
+          "args": "",
+          "forms": [
+            {
+              "args": "<part of a name>",
+              "help": "Calls the mount whose name has it."
+            },
+            {
+              "args": "list",
+              "help": "Lists your mounts."
+            }
+          ],
+          "help": "Calls a random mount."
+        }
+      },
       "description": "Calls a random mount of yours, or one by part of its name (the mount roulette add-ons).",
       "files": [
         {
@@ -1331,18 +2058,52 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "689ef81056ccdd9e006cdf4e7aafaec034af68993cc364dc0b7e998347c87538",
-          "size": 369,
+          "sha256": "5e9aac4766ed485cefb0008eaf56fa3455fe393b28b1b125a1ba15fc2a9bc28e",
+          "size": 567,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/mount-picker/mod.toml"
         }
       ],
       "id": "mount-picker",
       "kind": "lua",
       "name": "Mount Picker",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
+      "commands": {
+        "focus": {
+          "args": "<name>",
+          "help": "Brings another character's game window to the front.",
+          "params": [
+            {
+              "name": "name",
+              "type": "player"
+            }
+          ]
+        },
+        "send": {
+          "args": "<name | all | others> <command>",
+          "help": "Runs a command in your other game windows.",
+          "params": [
+            {
+              "also": [
+                "all",
+                "others"
+              ],
+              "name": "name",
+              "type": "player"
+            }
+          ]
+        },
+        "sendtarget": {
+          "args": "[name]",
+          "help": "Has your other windows target what you target."
+        },
+        "stna": {
+          "args": "[name]",
+          "help": "Casts the -na spell for an ailment this job can remove (or in another window)."
+        }
+      },
       "description": "Commands, targets and status removal sent to your other game windows on this machine, focus switching, and tells relayed between them (the multibox add-ons).",
       "files": [
         {
@@ -1353,18 +2114,36 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "6a6bcf8f2e87dd03c547471a8a9e9518bea795a8f010346e263c7e9d67e8ec7f",
-          "size": 656,
+          "sha256": "f47192eb6dead577637c3d456259b36d4cb32b7529522a305a748f6d32b8560f",
+          "size": 1196,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/multibox/mod.toml"
         }
       ],
       "id": "multibox",
       "kind": "lua",
       "name": "Multibox Control",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
+      "commands": {
+        "music": {
+          "args": "<track number>",
+          "forms": [
+            {
+              "args": "off",
+              "help": "Back to the zone's music."
+            }
+          ],
+          "help": "Plays one of the game's tracks.",
+          "params": [
+            {
+              "name": "track number",
+              "type": "int"
+            }
+          ]
+        }
+      },
       "description": "Plays any of the game's tracks, keeps the zone's music in battle or silences it while mounted (the music add-ons).",
       "files": [
         {
@@ -1375,18 +2154,46 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "3b6cae57ec31249369b51748b3f7492303e788874a7114cf84f0c0301d5bb07b",
-          "size": 787,
+          "sha256": "f67d705f7f9f2573c252e77835227e4cd5138f729b56c3fe56575b074154a2e1",
+          "size": 989,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/music-picker/mod.toml"
         }
       ],
       "id": "music-picker",
       "kind": "lua",
       "name": "Music Picker",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
+      "commands": {
+        "errand": {
+          "args": "<name>",
+          "forms": [
+            {
+              "args": "save <name> <npc>: <option> > ...",
+              "help": "Keeps an errand by name."
+            },
+            {
+              "args": "list",
+              "help": "Lists your errands."
+            },
+            {
+              "args": "delete <name>",
+              "help": "Deletes one."
+            }
+          ],
+          "help": "Runs a named errand."
+        },
+        "job": {
+          "args": "<main>[/<sub>]",
+          "help": "Changes jobs at a moogle, as //job war/nin or //job blm/none."
+        },
+        "npc": {
+          "args": "<name>: <option> > <option> > ...",
+          "help": "Walks an NPC's menus: the options in order."
+        }
+      },
       "description": "Walks an NPC's menus by command, keeps such errands by name, and changes jobs at a moogle by command (the NPC shop and job change add-ons).",
       "files": [
         {
@@ -1397,18 +2204,42 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "ad1341a4bf11a509592c0e43944719bc33081b6effe3cbdc128fee5bce1995c5",
-          "size": 493,
+          "sha256": "e65036bd785632006ef5f1468c67e5a9c25086e55241909f423c6da93cd862b9",
+          "size": 982,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/npc-errands/mod.toml"
         }
       ],
       "id": "npc-errands",
       "kind": "lua",
       "name": "NPC Errands",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
+      "commands": {
+        "roeset": {
+          "args": "<name>",
+          "forms": [
+            {
+              "args": "save <name>",
+              "help": "Saves the objectives you have set."
+            },
+            {
+              "args": "list",
+              "help": "Lists your sets."
+            },
+            {
+              "args": "delete <name>",
+              "help": "Deletes a set."
+            }
+          ],
+          "help": "Sets a named set of Records of Eminence objectives."
+        },
+        "roeshow": {
+          "args": "",
+          "help": "Lists the objectives you have set."
+        }
+      },
       "description": "Saves the Records of Eminence objectives you have set as named sets and puts a set back with one command (the objective set add-ons).",
       "files": [
         {
@@ -1419,18 +2250,24 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "62964afa36edffc542a847b84e3e6575ff19d083042947e99d8afdf7f46a67f4",
-          "size": 494,
+          "sha256": "f454af3ae31b78d80bc7782ebda46dacea5a69307281758d555449b388dbf1c5",
+          "size": 852,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/objective-sets/mod.toml"
         }
       ],
       "id": "objective-sets",
       "kind": "lua",
       "name": "Objective Sets",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
+      "commands": {
+        "padbars": {
+          "args": "",
+          "help": "Opens or closes the controller crossbars' setup window."
+        }
+      },
       "description": "Controller crossbars: hold LT or RT and the d-pad and face buttons use that side's eight actions, set per job (the crossbar add-ons).",
       "files": [
         {
@@ -1441,8 +2278,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "38ddfdbe2c38f4b92f3fe481cfff0be867f90704ae711917e28367d80881c86d",
-          "size": 793,
+          "sha256": "0e171ac9529c39008039614539d6c64810d620389686c01992ded0f238567507",
+          "size": 888,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/pad-bars/mod.toml"
         },
         {
@@ -1461,7 +2298,7 @@
       "id": "pad-bars",
       "kind": "lua",
       "name": "Pad Bars",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
@@ -1663,6 +2500,22 @@
     },
     {
       "authors": [],
+      "commands": {
+        "record": {
+          "args": "",
+          "forms": [
+            {
+              "args": "stop",
+              "help": "Stops the recording."
+            }
+          ],
+          "help": "Starts recording a video."
+        },
+        "shot": {
+          "args": "",
+          "help": "Takes a screenshot into its character and zone folder."
+        }
+      },
       "description": "Screenshots filed in folders by character and zone, and video recording by command (the screenshot organizer and capture add-ons).",
       "files": [
         {
@@ -1673,18 +2526,34 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "5c510733121ecbfbcf056a67ddb944b06c05b4d4553de908e723e887611b3990",
-          "size": 415,
+          "sha256": "7796635febf2420a01821bebb463084c2e9e2f0ef4058bee2581280075969eeb",
+          "size": 634,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/screen-capture/mod.toml"
         }
       ],
       "id": "screen-capture",
       "kind": "lua",
       "name": "Screen Capture",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
+      "commands": {
+        "note": {
+          "args": "<name> <text>",
+          "forms": [
+            {
+              "args": "<name>",
+              "help": "Removes it."
+            }
+          ],
+          "help": "Puts a named note on the screen."
+        },
+        "notes": {
+          "args": "",
+          "help": "Lists your screen notes."
+        }
+      },
       "description": "Puts your own notes on the screen by command, where you drag them (the text add-ons).",
       "files": [
         {
@@ -1695,18 +2564,41 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "e90d7e31e9da99470919a4fb2b77351cd085da70726d56a710a6f1c01814e923",
-          "size": 350,
+          "sha256": "979f7bc01a191b78f9138e47ac9880f7cb3b7240828cc71a308e64fde55fbb60",
+          "size": 551,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/screen-notes/mod.toml"
         }
       ],
       "id": "screen-notes",
       "kind": "lua",
       "name": "Screen Notes",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
+      "commands": {
+        "sell": {
+          "args": "<item> [all]",
+          "help": "Sells an item (or every copy) to the open shop.",
+          "params": [
+            {
+              "name": "item",
+              "type": "item"
+            },
+            {
+              "name": "all",
+              "options": [
+                "all"
+              ],
+              "type": "enum"
+            }
+          ]
+        },
+        "trade": {
+          "args": "<item> [count], <item> [count]...",
+          "help": "Hands items to your target NPC."
+        }
+      },
       "description": "Sells items by name to the open shop and hands items to your target NPC by command (the sell and trade add-ons).",
       "files": [
         {
@@ -1717,18 +2609,24 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "996e10c1dc61f33c821210bab20ddd785051cbadc3d4dba92eca1a2bf0a9c30d",
-          "size": 436,
+          "sha256": "1169e3bba516deeeaf9f8cba21f60d333474d7ea3d4b64c8d0785a0bded966d9",
+          "size": 730,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/sell-hand-in/mod.toml"
         }
       ],
       "id": "sell-hand-in",
       "kind": "lua",
       "name": "Sell and Hand In",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
+      "commands": {
+        "skills": {
+          "args": "",
+          "help": "Lists your skills, their caps and today's gains."
+        }
+      },
       "description": "Adds your session's total to each skill-up line, and lists your skills, their caps and today's gains (the skill-up tracker add-ons).",
       "files": [
         {
@@ -1739,15 +2637,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "64b5daca78b1f3ae7bec83b5f22af3047eb660cc2c412b8b5e2a07f6aa9d3f77",
-          "size": 425,
+          "sha256": "868f9c4f724ade02942f7fc1e53cd7aa2e4a19b60281cab443a07de253f96744",
+          "size": 512,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/skill-log/mod.toml"
         }
       ],
       "id": "skill-log",
       "kind": "lua",
       "name": "Skill-up Log",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
@@ -1955,6 +2853,22 @@
     },
     {
       "authors": [],
+      "commands": {
+        "face": {
+          "args": "",
+          "forms": [
+            {
+              "args": "away",
+              "help": "Turns you away from it."
+            }
+          ],
+          "help": "Turns you toward your target."
+        },
+        "tgt": {
+          "args": "<name or server id>",
+          "help": "Targets by name or server id."
+        }
+      },
       "description": "Targets by name or id, turns you toward or away from your target, and can check each monster you target (the targeting add-ons).",
       "files": [
         {
@@ -1965,18 +2879,28 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "ec0b5393600d57834fc21d332db435821e1980513917dee06a5af0f8db584fc3",
-          "size": 541,
+          "sha256": "dc6c811cf9b81b3c4f4e9ed934743a7eb4e808be3837fd0f4176f1d9d7002120",
+          "size": 758,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/targeting/mod.toml"
         }
       ],
       "id": "targeting",
       "kind": "lua",
       "name": "Targeting Helpers",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
+      "commands": {
+        "r": {
+          "args": "<message>",
+          "help": "Answers the last tell."
+        },
+        "tells": {
+          "args": "",
+          "help": "Lists the tells kept while you were away."
+        }
+      },
       "description": "Keeps the tells that come while you are away, answers the last tell with //r, and can send an away reply (the answering machine add-ons).",
       "files": [
         {
@@ -1987,15 +2911,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "ae253746cf41110be72985c6018e42ee53938a2c25cac6d16f94cd47c157904c",
-          "size": 591,
+          "sha256": "78342bf943134802c05358c24b092655ec4ec5fa350e689b2efb99061918e15a",
+          "size": 735,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/tell-inbox/mod.toml"
         }
       ],
       "id": "tell-inbox",
       "kind": "lua",
       "name": "Tell Inbox",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
@@ -2043,6 +2967,22 @@
     },
     {
       "authors": [],
+      "commands": {
+        "seek": {
+          "args": "<name>",
+          "help": "Lists who in the zone matches a name."
+        },
+        "track": {
+          "args": "<name>",
+          "forms": [
+            {
+              "args": "stop",
+              "help": "Stops tracking."
+            }
+          ],
+          "help": "Tracks a monster or NPC with Wide Scan."
+        }
+      },
       "description": "Tracks a monster or NPC by name with Wide Scan, and lists who in the zone matches a name (the wide scan add-ons).",
       "files": [
         {
@@ -2053,37 +2993,57 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "5970b146934c71f772cbdbfd1b3b28742a7324c0c2e181776dd626dd2edb3633",
-          "size": 447,
+          "sha256": "e963462aa7baf9f24e777e6e4ac174d008106227cac1effa8b453a62c317640d",
+          "size": 669,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/tracking/mod.toml"
         }
       ],
       "id": "tracking",
       "kind": "lua",
       "name": "Tracking Tools",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
+      "commands": {
+        "trusts": {
+          "args": "<lineup>",
+          "forms": [
+            {
+              "args": "save <lineup> [trust, trust...]",
+              "help": "Saves the trusts you name, or the ones out now."
+            },
+            {
+              "args": "list",
+              "help": "Lists your lineups."
+            },
+            {
+              "args": "delete <lineup>",
+              "help": "Deletes a lineup."
+            }
+          ],
+          "help": "Calls a named trust lineup."
+        }
+      },
       "description": "Saves the trusts you call as named lineups and calls a lineup with one command (the trust set add-ons).",
       "files": [
         {
           "path": "init.lua",
-          "sha256": "2198f2845c5ee6b4743ed9a3e089ef70f5d8e8defcf1fc27166ca3129e213534",
-          "size": 5095,
+          "sha256": "31fa2c758b23e402a1077f9790d609b31be27d7347ae309038a0c30fd5e97d70",
+          "size": 5182,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/trust-lineups/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "77662aaa26295442ec8c3e1df07b356a33ada1cbb2cf82246fc547a6b39d6812",
-          "size": 414,
+          "sha256": "cc88869fb052dbd25d274c19598e402d9a7ebf599ce7708fad0f47b39b563c88",
+          "size": 717,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/trust-lineups/mod.toml"
         }
       ],
       "id": "trust-lineups",
       "kind": "lua",
       "name": "Trust Lineups",
-      "version": "1.0.4"
+      "version": "1.0.5"
     },
     {
       "authors": [],
@@ -2131,6 +3091,24 @@
     },
     {
       "authors": [],
+      "commands": {
+        "useall": {
+          "args": "<item>",
+          "forms": [
+            {
+              "args": "stop",
+              "help": "Stops."
+            }
+          ],
+          "help": "Uses every copy of an item, one after another.",
+          "params": [
+            {
+              "name": "item",
+              "type": "item"
+            }
+          ]
+        }
+      },
       "description": "Uses every copy of an item one after another, such as a stack of pouches or bags (the pouch add-ons).",
       "files": [
         {
@@ -2141,15 +3119,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "bcff57f5d856db454c1f366c3139d03134d94f182f86f6106c63b81405931fdf",
-          "size": 351,
+          "sha256": "7ecb81d32767d4401b3b4c8e2e81e273ca17fafe57b3ff59ca13c114d56731af",
+          "size": 536,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/use-all/mod.toml"
         }
       ],
       "id": "use-all",
       "kind": "lua",
       "name": "Item Use Queue",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
@@ -2175,18 +3153,60 @@
     },
     {
       "authors": [],
+      "commands": {
+        "warp": {
+          "args": "[hp | sg | wp] <zone> [number or place]",
+          "forms": [
+            {
+              "args": "home",
+              "help": "Warps home with the Warp spell or a warp item."
+            },
+            {
+              "args": "dim <holla | dem | mea>",
+              "help": "Uses a Dimensional Ring.",
+              "params": [
+                {
+                  "name": "holla",
+                  "options": [
+                    "holla",
+                    "dem",
+                    "mea"
+                  ],
+                  "type": "enum"
+                }
+              ]
+            }
+          ],
+          "help": "Warps by Home Point, Survival Guide or Waypoint.",
+          "params": [
+            {
+              "name": "hp",
+              "options": [
+                "hp",
+                "sg",
+                "wp"
+              ],
+              "type": "enum"
+            },
+            {
+              "name": "zone",
+              "type": "zone"
+            }
+          ]
+        }
+      },
       "description": "Answers the Home Point, Survival Guide and Waypoint menus by name, and warps home with the Warp spell or a warp item (the warp add-ons).",
       "files": [
         {
           "path": "init.lua",
-          "sha256": "9b38fbe71bb90e3274efe35a0fa7fc5d770ac69c8b6579afdf784c5773016303",
-          "size": 15429,
+          "sha256": "5171a010e2796ed823b0bf200b5b9c4efbad43bacb8a5c718a49faf34a4f8fd9",
+          "size": 15540,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/warp-helper/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "1653c7f451f4a47a618ecc1d9cbd1a7a7a3c45711c05aca2ffcb46a31c3e0999",
-          "size": 843,
+          "sha256": "e99267fa32c33209fe00b1a99057dc24880b2924f81f740abf38c9ff321674f3",
+          "size": 1319,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/warp-helper/mod.toml"
         },
         {
@@ -2199,10 +3219,16 @@
       "id": "warp-helper",
       "kind": "lua",
       "name": "Warp Helper",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
+      "commands": {
+        "weather": {
+          "args": "",
+          "help": "Shows the weather, zone and day now."
+        }
+      },
       "description": "Tells you when the weather you are waiting for starts or ends, and can tell your party (the weather add-ons).",
       "files": [
         {
@@ -2213,18 +3239,28 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "935dab469f5cddee53ddebb88f56b52b315f41da03d7e16f530c4a6852e88016",
-          "size": 753,
+          "sha256": "844c3e495f11c9de1f88c49048bf04b594ae75a524b78a4f182798a50310fe6f",
+          "size": 829,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/weather-watch/mod.toml"
         }
       ],
       "id": "weather-watch",
       "kind": "lua",
       "name": "Weather Watch",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
+      "commands": {
+        "ah": {
+          "args": "[words]",
+          "help": "Looks words up on the auction site (none: the item pointed at, or your target)."
+        },
+        "wiki": {
+          "args": "[words]",
+          "help": "Looks words up on the wiki (none: the item pointed at, or your target)."
+        }
+      },
       "description": "Looks up an item, a spell, your target or any words on the wiki or the auction site, in your browser (the lookup add-ons).",
       "files": [
         {
@@ -2235,18 +3271,33 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "5086fe59460d568e0bd1521e640a1378864a1cc73d64c46a2a9fe88a85c42a46",
-          "size": 424,
+          "sha256": "5bc608de3953caf57a8f157a13011076b0e9d54297dad54067496dc998471f4e",
+          "size": 660,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/web-search/mod.toml"
         }
       ],
       "id": "web-search",
       "kind": "lua",
       "name": "Web Search",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
+      "commands": {
+        "winpos": {
+          "forms": [
+            {
+              "args": "save",
+              "help": "Keeps where and how big the window is now."
+            },
+            {
+              "args": "forget",
+              "help": "Forgets it."
+            }
+          ],
+          "help": "This character's game window place."
+        }
+      },
       "description": "Puts the game window back where and how big you keep it for each character, and can keep it on top (the window position add-ons).",
       "files": [
         {
@@ -2257,18 +3308,24 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "0e1810d7044540fef3970bc728fdb7e0b6cc96f4e092aa70f86af7e0746596c8",
-          "size": 748,
+          "sha256": "b95091169b1d2c545eb72257b0c2be624c5134b7da92fc78a2550b04efa75bcb",
+          "size": 943,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/window-placement/mod.toml"
         }
       ],
       "id": "window-placement",
       "kind": "lua",
       "name": "Window Placement",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],
+      "commands": {
+        "xp": {
+          "args": "reset",
+          "help": "Starts the XP tracker's rates again."
+        }
+      },
       "description": "Experience, limit and capacity points with their rates per hour, in a window on a screen edge (the point-watch add-ons).",
       "files": [
         {
@@ -2279,15 +3336,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "1feb2c9ff4b3742d485e1700e2e0374c0bc674c62bed1ec8810c6904e6a09931",
-          "size": 425,
+          "sha256": "76637fa6e50013f4e76565d362cd703b39ecb712ba97c9340eadefdadd706c70",
+          "size": 501,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/xp-tracker/mod.toml"
         }
       ],
       "id": "xp-tracker",
       "kind": "lua",
       "name": "XP Tracker",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     {
       "authors": [],

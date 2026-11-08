@@ -1,5 +1,5 @@
 name = "Bag Manager"
-version = "1.0.3"
+version = "1.0.4"
 description = "Moves items between your bags by command: fetch and stow by name, gather the gear your Gearshift file names, tidy the rest away (the organizer and porter add-ons)."
 permissions = ["actions"]
 
@@ -8,3 +8,12 @@ type = "bool"
 default = true
 label = "Bag Manager"
 help = "//stow get <item> [count | all], //stow put <item> [to <bag>] [all], //stow gear (gathers your Gearshift file's gear into the wardrobes), //stow tidy (gear it doesn't name goes to the case, sack or satchel). The safe, storage and locker only in a Mog House."
+
+[commands.stow]
+help = "Moves items between your bags by name."
+forms = [
+  { args = "get <item> [count | all]", help = "Fetches an item into your inventory.", params = [{ name = "item", type = "item" }, { name = "count", type = "int", also = ["all"] }] },
+  { args = "put <item> [to <bag>] [all]", help = "Puts an item away, in a bag you name or where it belongs.", params = [{ name = "item", type = "item" }, { name = "all", type = "enum", options = ["all"] }] },
+  { args = "gear", help = "Gathers the gear your Gearshift file names." },
+  { args = "tidy", help = "Puts the rest away." },
+]

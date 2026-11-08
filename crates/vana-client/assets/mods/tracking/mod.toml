@@ -1,5 +1,5 @@
 name = "Tracking Tools"
-version = "1.0.3"
+version = "1.0.4"
 description = "Tracks a monster or NPC by name with Wide Scan, and lists who in the zone matches a name (the wide scan add-ons)."
 permissions = ["actions"]
 
@@ -8,3 +8,14 @@ type = "bool"
 default = true
 label = "Tracking Tools"
 help = "//track <name> tracks the nearest match with Wide Scan (where your job can scan); //track stop ends it; //seek <name> lists the zone's matches and the nearest's distance."
+
+[commands.track]
+help = "Tracks a monster or NPC with Wide Scan."
+args = "<name>"
+forms = [
+  { args = "stop", help = "Stops tracking." },
+]
+
+[commands.seek]
+help = "Lists who in the zone matches a name."
+args = "<name>"

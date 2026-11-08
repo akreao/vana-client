@@ -1,5 +1,5 @@
 name = "Blue Magic Sets"
-version = "1.0.3"
+version = "1.0.4"
 description = "Saves your set blue magic as named sets and puts a set back with one command; a codex of every blue spell and what teaches it; a call when a monster readies a move that teaches one you lack (the blue magic add-ons)."
 permissions = ["actions"]
 
@@ -20,3 +20,13 @@ type = "bool"
 default = true
 label = "Learnable Moves Call"
 help = "A call sound with that line, and when you learn a blue spell."
+
+[commands.blu]
+help = "Your blue magic sets; with a name, sets that set."
+args = "<name>"
+forms = [
+  { args = "save <name>", help = "Saves your set blue magic as a set." },
+  { args = "list", help = "Lists your sets." },
+  { args = "delete <name>", help = "Deletes a set." },
+  { args = "codex", help = "Opens the codex of every blue spell and what teaches it." },
+]

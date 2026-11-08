@@ -384,8 +384,15 @@ pub struct ModRef {
 
 /// Where mod folders live.
 pub fn mods_dir() -> PathBuf {
-    // VANA_MODS_DIR: another mods folder for test runs.
-    std::env::var_os("VANA_MODS_DIR").map_or_else(|| data_dir().join("mods"), PathBuf::from)
+    // VANA_MODS_DIR: another mods folder for test runs; a test config (FFXI_CONFIG) with a mods folder beside it uses
+    // that one, as its Lua mods do.
+    if let Some(d) = std::env::var_os("VANA_MODS_DIR") {
+        return PathBuf::from(d);
+    }
+    match std::env::var_os("FFXI_CONFIG").map(|p| PathBuf::from(p).with_file_name("mods")) {
+        Some(d) if d.is_dir() => d,
+        _ => data_dir().join("mods"),
+    }
 }
 
 /// The enabled mods' folders, highest priority first (none with FFXI_NO_MODS set).

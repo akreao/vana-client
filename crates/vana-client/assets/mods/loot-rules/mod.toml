@@ -1,5 +1,5 @@
 name = "Loot Rules"
-version = "1.0.3"
+version = "1.0.4"
 description = "Lots, passes and drops treasure by your lists (the treasury and loot add-ons)."
 permissions = ["automation"]
 
@@ -26,3 +26,11 @@ type = "bool"
 default = false
 label = "Stack Loot"
 help = "Sorts the inventory after loot arrives, so its stacks merge."
+
+[commands.loot]
+help = "Lots, passes or drops treasure by your lists."
+args = "[lot | pass | drop] [add | remove] <item>"
+params = [{ name = "lot", type = "enum", options = ["lot", "pass", "drop"] }, { name = "add", type = "enum", options = ["add", "remove"] }, { name = "item", type = "item" }]
+forms = [
+  { args = "list", help = "Lists your rules." },
+]
