@@ -481,11 +481,16 @@ impl Mixer {
         self.status.voices.store(self.voices.iter().flatten().count() as u32, Ordering::Relaxed);
         // Never waiting on the game thread here: a busy list is published next mix (taken only after alive, so a
         // taken handle is always in the list it is checked against; taken_now keeps them until then).
-        if let Ok(mut a) = self.status.alive.try_lock() {
+        // Past half of taken_now's room (missed publishes piling up), it waits for the lists once rather than let the
+        // Vec grow here (an allocation in the callback).
+        let wait = self.taken_now.len() >= self.taken_now.capacity() / 2;
+        let alive = if wait { self.status.alive.lock().ok() } else { self.status.alive.try_lock().ok() };
+        if let Some(mut a) = alive {
             a.clear();
             a.extend(self.voices.iter().flatten().map(|v| v.handle).filter(|&h| h != 0));
             drop(a);
-            if let Ok(mut t) = self.status.taken.try_lock() {
+            let taken = if wait { self.status.taken.lock().ok() } else { self.status.taken.try_lock().ok() };
+            if let Some(mut t) = taken {
                 t.extend(self.taken_now.drain(..));
             }
         }

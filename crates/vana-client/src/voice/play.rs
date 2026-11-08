@@ -130,10 +130,12 @@ impl Out {
 
     fn sample(&mut self) -> f32 {
         if self.at == FRAME {
-            // Never waiting on the network thread here: a frame it holds the streams for plays silence.
+            // Never waiting on the network thread here. While it holds the streams (a push: moments), the last sample
+            // holds and the frame is asked for again at the next sample, instead of a whole frame (20 ms) of silence:
+            // a hole a listener hears, where a few held samples are not.
             match self.shared.play.try_lock() {
                 Ok(mut p) => p.mix(&mut self.buf),
-                Err(_) => self.buf = [0.0; FRAME],
+                Err(_) => return self.buf[FRAME - 1],
             }
             if let Some(r) = self.rec.as_mut() {
                 r.write(&self.buf);
