@@ -6296,6 +6296,8 @@ struct FxActors<'a> {
     entities: &'a HashMap<u32, Entity>,
     me: u32,
     me_moving: bool,
+    /// Our move's quarter (World::my_strafe, +0x598).
+    me_strafe: u8,
     pet: u16,
     /// Our party (roster mode 0, FUN_100e5dd0(0)): ourselves first; our ActIndex (we are not in `entities`).
     party: Vec<u32>,
@@ -6388,7 +6390,8 @@ impl crate::fx::Actors for FxActors<'_> {
         let ch = a.character.as_ref()?;
         let names = actmotion::scheduler_names(&a.extra, ch);
         let sub = self.entities.get(&id).map_or(0, |e| e.sub[2]);
-        let (first, other) = combat::swing_patterns(moving, sub);
+        let quarter = if id == self.me { self.me_strafe } else { 0 };
+        let (first, other) = combat::swing_patterns(moving, sub, quarter);
         let (first, other) = (first.as_str(), other.as_str());
         let mut pool = crate::dat::sched::matching(names.iter().copied(), first);
         if pool.is_empty() {
@@ -17994,6 +17997,7 @@ impl App {
                         entities: &w.entities,
                         me: w.my_id,
                         me_moving: w.moving,
+                        me_strafe: w.my_strafe,
                         pet: w.my_pet,
                         party,
                         my_index: w.my_index,
