@@ -1,6 +1,8 @@
 -- The hotbars in an edge window, as the Timers and the training regime are: on a screen edge, dragged along the edges,
--- folding to its tab. Its canvas grows a bar at a time: + and - at its lower right show more or fewer bars (bar 1 at
--- the bottom, the next ones above it), easing the window's height. A slot shows its action's icon (or its label), its hotkey, a shade
+-- folding to its tab. Its canvas grows a bar at a time from the edge that stays put: + and - show more or fewer bars,
+-- easing the window's height. On the top edge the window keeps its top: bar 1 is the top row, the next ones below it,
+-- + and - at the top right. Anywhere else it keeps its bottom: bar 1 is the bottom row, the next ones above it, + and -
+-- at the bottom right. The buttons never move. A slot shows its action's icon (or its label), its hotkey, a shade
 -- with the seconds left while the action recasts, and its macro in a tip; one whose action cannot be used now is
 -- dimmed, and one the battle menu suggests glows. A click fires it, a right click opens its menu, and a slot dragged
 -- onto another swaps them. Slots the main job's set fills have a gold edge, the sub job's set's a blue one.
@@ -54,6 +56,7 @@ local flash = {}       -- "b:i" -> os.clock() until its fire flash ends
 local drag = nil       -- {b, i, x, y}: the slot a drag started on and where the pointer is now
 local suggested = {}   -- "spell:<id>" / "ability:<id>" the battle menu suggests now
 local shades = {}      -- "b:i" -> {left, frac, usable} from the last recast tick
+local top_dock = false -- docked on the top edge (the dock event): grows down, the buttons at the top
 
 local function opts()
   return {
@@ -96,10 +99,25 @@ local function height(r)
   return rows * geo.size + (rows - 1) * geo.gap + 2 * PAD
 end
 
--- Bar 1 is the bottom row; each next bar stands above it (the top ones come into view as the canvas grows).
+-- Bar 1 stands on the edge that stays put; each next bar is further from it (coming into view as the canvas grows).
 local function slot_xy(b, i)
-  local h = height(reveal or 1)
-  return PAD + (i - 1) * (geo.size + geo.gap), h - PAD - geo.size - (b - 1) * (geo.size + geo.gap)
+  local x = PAD + (i - 1) * (geo.size + geo.gap)
+  if top_dock then return x, PAD + (b - 1) * (geo.size + geo.gap) end
+  return x, height(reveal or 1) - PAD - geo.size - (b - 1) * (geo.size + geo.gap)
+end
+
+-- Whether a slot at y is in view (not into the padding on the growing side).
+local function in_view(y, h)
+  if top_dock then return y < h - PAD end
+  return y + geo.size > PAD
+end
+
+-- The + and - knobs' centres: on the edge that stays put.
+local function knobs(h)
+  local r = geo.btn / 2
+  local cx = geo.width - PAD - r
+  if top_dock then return cx, PAD + r, PAD + 3 * r + 4 end
+  return cx, h - PAD - 3 * r - 4, h - PAD - r
 end
 
 -- What is at (x, y) in the canvas: {b, i}, "plus", "minus" or nil.
@@ -107,14 +125,14 @@ local function hit(x, y)
   if not geo then return nil end
   local h = height(reveal or 1)
   local r = geo.btn / 2
-  local cx = geo.width - PAD - r
+  local cx, plus_y, minus_y = knobs(h)
   local function on(cy) return (x - cx) ^ 2 + (y - cy) ^ 2 <= (r + 1) ^ 2 end
-  if on(h - PAD - r) then return "minus" end
-  if on(h - PAD - 3 * r - 4) then return "plus" end
+  if on(minus_y) then return "minus" end
+  if on(plus_y) then return "plus" end
   for b = 1, geo.bars do
     for i = 1, geo.slots do
       local sx, sy = slot_xy(b, i)
-      if x >= sx and x < sx + geo.size and y >= sy and y < sy + geo.size and sy >= 0 then
+      if x >= sx and x < sx + geo.size and y >= sy and y < sy + geo.size and sy >= 0 and sy + geo.size <= h then
         return { b = b, i = i }
       end
     end
@@ -138,8 +156,8 @@ local function draw()
   for b = 1, geo.bars do
     for i = 1, geo.slots do
       local x, y = slot_xy(b, i)
-      -- Only where it reaches below the top padding: a hidden bar's edge never peeks in.
-      if y + s > PAD then
+      -- Only where it reaches past the padding on the growing side: a hidden bar's edge never peeks in.
+      if in_view(y, h) then
         local key = b .. ":" .. i
         local cell = eff[b] and eff[b][i]
         local macro = cell and cell.macro
@@ -207,13 +225,13 @@ local function draw()
       end
     end
   end
-  -- + over - at the lower right, beside the bottom bar: round knobs.
+  -- + over -, round knobs on the edge that stays put.
   local n, most = wanted(), geo.bars
   local r = geo.btn / 2
-  local cx = geo.width - PAD - r
+  local cx, plus_y, minus_y = knobs(h)
   local buttons = {
-    { "plus", h - PAD - 3 * r - 4, n < most, "Show another bar" },
-    { "minus", h - PAD - r, n > 1, "Show one bar fewer" },
+    { "plus", plus_y, n < most, "Show another bar" },
+    { "minus", minus_y, n > 1, "Show one bar fewer" },
   }
   for _, btn in ipairs(buttons) do
     local name, cy, live, tip = btn[1], btn[2], btn[3], btn[4]
@@ -298,6 +316,11 @@ end
 -- ---------------------------------------------------------------------------
 
 local function on_event(_, e)
+  if e.kind == "dock" then
+    top_dock = e.side == "top"
+    draw()
+    return
+  end
   if e.id ~= "c" then return end
   if e.kind == "hover" or e.kind == "leave" then
     local now = e.kind == "hover" and key_of(hit(e.x, e.y)) or nil
@@ -365,6 +388,7 @@ function M.rebuild()
     title = "Hotbars",
     heading = main .. "/" .. (sub or "-"),
     edge = true,
+    grow = "up",
     -- The canvas plus the edge frame's margins (16 + 18 at most), so it never overflows.
     width = geo.width + 34,
     elements = { { type = "canvas", id = "c", w = geo.width, h = height(reveal) } },
