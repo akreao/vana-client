@@ -54,7 +54,8 @@ pub fn list_icon(w: &World, spell: bool, id: u16) -> Icon {
 pub struct Row {
     pub icon: Icon,
     pub name: String,
-    /// Seconds left; at or below 0 the predicted end has passed and the server's word is awaited.
+    /// Seconds left; at or below 0 the predicted end has passed and the server's word is awaited. Infinite: the
+    /// effect has no end (our own untimed effects, 0x063's 0x7fffffff), shown without a time until it goes.
     pub left: f32,
     /// The whole length (0: unknown, no gauge).
     pub total: f32,
@@ -887,8 +888,10 @@ fn recast_rows(w: &World, t: &mut Timers, now: Instant, seen: &mut HashSet<(u8, 
     rows
 }
 
-/// Our own effects with 0x063 end times, in 0x037's order (as the status icons), named by what we cast when it was
-/// ours.
+/// Our own effects, in 0x037's order (as the status icons), named by what we cast when it was ours. Those with a
+/// 0x063 end time count down to it; those without one (0x7fffffff, or a status the icons show no time for) are
+/// listed with no time: LSB sends no end for effects put on without a duration, as GM commands (!godmode) and many
+/// scripted events do, and they last until the server takes them off.
 fn own_rows(w: &World, gu: &GameUi, t: &mut Timers, seen: &mut HashSet<(u8, u32)>) -> Vec<Row> {
     let small = w.game.get(0x99) & 4 != 0;
     let now60 = w.clock.map_or(0.0, |(c, at)| (c as f64 + at.elapsed().as_secs_f64()) * 60.0) as u64 as u32;
@@ -900,18 +903,19 @@ fn own_rows(w: &World, gu: &GameUi, t: &mut Timers, seen: &mut HashSet<(u8, u32)
         if id == 0xffff || id == 0 {
             continue;
         }
-        let Some(end) = w.buff_timers.as_ref().filter(|b| b.0[i] == id).map(|b| b.1[i]).filter(|&e| e != 0x7fff_ffff)
-        else {
-            continue;
+        // As the status icons (buffs::icons): the end time only when 0x063 has the same id at that index.
+        let end = w.buff_timers.as_ref().filter(|b| b.0[i] == id).map(|b| b.1[i]).filter(|&e| e != 0x7fff_ffff);
+        let end = end.filter(|_| !gu.status_entry(small, id).is_some_and(|e| e.no_timer));
+        let (left, total) = match end {
+            Some(end) => {
+                let left = end.wrapping_sub(now60) as i32 as f32 / 60.0;
+                if left <= 0.0 {
+                    continue;
+                }
+                (left, t.total((2, end), left, seen))
+            }
+            None => (f32::INFINITY, 0.0),
         };
-        if gu.status_entry(small, id).is_some_and(|e| e.no_timer) {
-            continue;
-        }
-        let left = end.wrapping_sub(now60) as i32 as f32 / 60.0;
-        if left <= 0.0 {
-            continue;
-        }
-        let total = t.total((2, end), left, seen);
         let name = names.iter().rev().find(|e| e.0 == id).map(|e| e.1.clone()).filter(|n| !n.is_empty());
         let name = name.unwrap_or_else(|| w.battle.as_ref().map(|b| b.status_title(id)).unwrap_or_default());
         rows.push(Row { icon: Icon::Status(id), name, left, total, fills: false });
@@ -1232,7 +1236,11 @@ pub fn draw_panel(
                     inner - GAUGE_X + 16.0,
                     if waiting { 0x8060_6060 } else { N },
                 );
-                let t = if r.total <= 0.0 { "--:--".to_string() } else { clock(r.left) };
+                let t = match () {
+                    _ if r.left.is_infinite() => String::new(),
+                    _ if r.total <= 0.0 => "--:--".to_string(),
+                    _ => clock(r.left),
+                };
                 gu.shape_text(&t, right, ly + 13.0, if waiting { DIM } else { N }, true);
                 if r.total > 0.0 {
                     let f = (r.left / r.total).clamp(0.0, 1.0);

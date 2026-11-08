@@ -13671,7 +13671,9 @@ From the research notes:
   TP-scaled lengths).
 - Recasts: the 0x119 timers named by the ability we know on them (a sub-list row such as Phantom Roll over its
   moves), spells from our own casts; the list icons of the magic / ability lists; the gauge fills toward ready over
-  the longest time seen. Our effects: 0x037 / 0x063's end times (exact), named by what we cast when it was ours.
+  the longest time seen. Our effects: 0x037 / 0x063's end times (exact), named by what we cast when it was ours;
+  those with no end (0x063's 0x7fffffff, or a status the icons show no time for: LSB sends none for effects put on
+  without a duration, as !godmode's) are listed with no time and no gauge until they go (2026-11-08).
 - Others' effects: our 0x028 (and our pet's: categories 11 / 13, a pet's spells without our inputs)
   looked up by (spell / ability / weapon skill / pet move, id); a row lands on its own messages with the value its
   param kind expects (the effect, damage for Dia / Bio / helix, a roll total, a step level); several effects in one

@@ -1114,10 +1114,11 @@ const CELL_GAP: f32 = 6.0;
 const NAME_GAP: f32 = 8.0;
 
 /// A cell's time: m:ss below 10 minutes, then retail's "24m" / "1h" (the status icons'); "--" when the length is not
-/// known.
+/// known; none for an effect with no end (as the status icons).
 fn cell_time(left: f32, total: f32) -> String {
     let s = left.max(0.0).ceil() as u32;
     match s {
+        _ if left.is_infinite() => String::new(),
         _ if total <= 0.0 => "--".into(),
         s if s >= 3600 => format!("{}h", (s / 3600).min(99)),
         s if s >= 600 => format!("{}m", s / 60),
@@ -1188,6 +1189,7 @@ fn icon_group(
             );
             m.tip_with(ui, cell, || {
                 let body = match () {
+                    _ if row.left.is_infinite() => "Lasts until it is removed.".to_string(),
                     _ if row.total <= 0.0 => "Its length is not known.".to_string(),
                     _ if waiting => "Past its expected end.".to_string(),
                     _ => format!("{} left of {}", clock(row.left), clock(row.total)),
@@ -1219,7 +1221,11 @@ fn group(ui: &mut Ui, m: &super::Modern, g: &Group, icon: &dyn Fn(&egui::Painter
             FontId::proportional(m.theme.small),
             text,
         );
-        let time = if r.total <= 0.0 { "--:--".to_string() } else { clock(r.left) };
+        let time = match () {
+            _ if r.left.is_infinite() => String::new(),
+            _ if r.total <= 0.0 => "--:--".to_string(),
+            _ => clock(r.left),
+        };
         ui.painter().text(
             pos2(rect.max.x, rect.min.y + 2.0),
             Align2::RIGHT_TOP,
@@ -1833,5 +1839,18 @@ fn kind_colour(bit: u8) -> Color32 {
         1 => Color32::from_rgb(110, 170, 255),
         2 => Color32::from_rgb(110, 210, 120),
         _ => Color32::from_rgb(235, 95, 95),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cell_time;
+
+    #[test]
+    fn cell_times() {
+        assert_eq!(cell_time(f32::INFINITY, 0.0), "");
+        assert_eq!(cell_time(0.0, 0.0), "--");
+        assert_eq!(cell_time(65.0, 90.0), "1:05");
+        assert_eq!(cell_time(1500.0, 1800.0), "25m");
     }
 }
