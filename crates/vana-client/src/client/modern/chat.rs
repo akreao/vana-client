@@ -421,7 +421,7 @@ pub fn mentions(line: &str, me: &str) -> bool {
 /// The unread counts for the tabs (not All, not Battle): what each tab shows since it (or All showing it) was last
 /// on screen; the shown tab's mark moves to the log's end.
 fn unread(m: &Modern, w: &World, battle_in_all: bool) -> [u32; 11] {
-    let n = w.chat.len();
+    let (n, base) = (w.chat.len(), w.chat.start());
     let modes = w.chat.modes();
     let mut seen = m.chat_seen.borrow_mut();
     let tab = m.chat_tab.get() as usize;
@@ -433,8 +433,8 @@ fn unread(m: &Modern, w: &World, battle_in_all: bool) -> [u32; 11] {
     }
     let mut out = [0u32; 11];
     for (t, o) in out.iter_mut().enumerate().skip(1).take(TABS.len() - 2) {
-        let from = seen[t].unwrap_or(n).min(n);
-        *o = modes[from..].iter().filter(|&&md| shows(t as u8, md, battle_in_all)).count() as u32;
+        let from = seen[t].unwrap_or(n).clamp(base, n);
+        *o = modes[from - base..].iter().filter(|&&md| shows(t as u8, md, battle_in_all)).count() as u32;
     }
     out
 }
@@ -486,6 +486,7 @@ fn view_keep(w: &World, keep: usize) -> ChatView<'_> {
     let modes = w.chat.modes();
     let all: Vec<_> = w.chat.iter_timed().zip(modes.iter().copied()).collect();
     let from = all.len().saturating_sub(keep);
+    let base = w.chat.start();
     let lines = all[from..]
         .iter()
         .enumerate()
@@ -496,7 +497,7 @@ fn view_keep(w: &World, keep: usize) -> ChatView<'_> {
                 *c,
                 *mode,
                 incoming(*mode) && mentions(line, &w.name),
-                from + i,
+                base + from + i,
             )
         })
         .collect();
@@ -701,7 +702,10 @@ pub fn panel(p: &mut Panels, w: &mut World) {
         ml.anim.settle();
     }
     let modes = w.chat.modes();
-    for (((line, c), (time, chat, _)), mode) in w.chat.iter_timed().zip(modes.iter().copied()).skip(ml.seen) {
+    let base = w.chat.start();
+    for (((line, c), (time, chat, _)), mode) in
+        w.chat.iter_timed().zip(modes.iter().copied()).skip(ml.seen.saturating_sub(base))
+    {
         if shows(tab, mode, battle_in_all) {
             let job = line_job((&stamp_of(stamps, time, chat), Color32::WHITE), line, *c, &font, wrap);
             for _ in 0..p.ctx.fonts_mut(|f| f.layout_job(job)).rows.len().max(1) {
@@ -713,7 +717,7 @@ pub fn panel(p: &mut Panels, w: &mut World) {
     // A repeat folded into the last line ("(x13)") keeps the window open as a new line would, without a new row.
     let (folds, last) = w.chat.folds();
     if folds != ml.folds {
-        let shown = last.and_then(|k| modes.get(k)).is_some_and(|&mode| shows(tab, mode, battle_in_all));
+        let shown = last.and_then(|k| w.chat.mode(k)).is_some_and(|mode| shows(tab, mode, battle_in_all));
         if shown {
             for _ in 0..(folds - ml.folds).min(rule.cfg.max as u64) {
                 ml.anim.extend(&rule.cfg);

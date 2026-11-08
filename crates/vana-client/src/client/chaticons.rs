@@ -12,6 +12,8 @@ pub struct Icon {
     pub w: u32,
     pub h: u32,
     pub rgba: Arc<Vec<u8>>,
+    /// Its pixels' version: a mod reloaded with a changed file gets them, under a new texture name.
+    ver: u32,
 }
 
 static ICONS: Mutex<Vec<Icon>> = Mutex::new(Vec::new());
@@ -20,9 +22,15 @@ static ICONS: Mutex<Vec<Icon>> = Mutex::new(Vec::new());
 pub fn add(key: &str, w: u32, h: u32, rgba: Vec<u8>) -> Option<char> {
     let mut all = ICONS.lock().ok()?;
     let k = match all.iter().position(|i| i.key == key) {
-        Some(k) => k,
+        Some(k) => {
+            let i = &mut all[k];
+            if (i.w, i.h) != (w, h) || *i.rgba != rgba {
+                (i.w, i.h, i.rgba, i.ver) = (w, h, Arc::new(rgba), i.ver + 1);
+            }
+            k
+        }
         None if all.len() < MAX => {
-            all.push(Icon { key: key.into(), w, h, rgba: Arc::new(rgba) });
+            all.push(Icon { key: key.into(), w, h, rgba: Arc::new(rgba), ver: 0 });
             all.len() - 1
         }
         None => return None,
@@ -43,5 +51,6 @@ pub fn get(k: usize) -> Option<(u32, u32, Arc<Vec<u8>>)> {
 
 /// The texture name an icon is uploaded under.
 pub fn texture(k: usize) -> String {
-    format!("\0chaticon {k}")
+    let ver = ICONS.lock().ok().and_then(|a| a.get(k).map(|i| i.ver)).unwrap_or(0);
+    format!("\0chaticon {k} {ver}")
 }

@@ -188,6 +188,10 @@ impl ModState {
         while self.errors.front().is_some_and(|t| now.duration_since(*t) > ERROR_WINDOW) {
             self.errors.pop_front();
         }
+        // Errors that carry values are each new: the set starts again past a few hundred rather than grow.
+        if self.reported.len() >= 256 {
+            self.reported.clear();
+        }
         if self.reported.insert(text.clone()) {
             self.notices.push(format!("{name}: {text}"));
         }

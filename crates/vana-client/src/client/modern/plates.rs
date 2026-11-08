@@ -126,8 +126,13 @@ pub fn draw(
     let em = EM * scale[1];
     let px = BUCKETS.iter().copied().find(|&b| b >= em).unwrap_or(BUCKETS[3]);
     let key = format!("plate {px} {name}");
+    gu.touch_image(&key);
     let raster = {
         let mut m = metrics().lock().unwrap();
+        // Rasters gone (unseen a while) take their metrics with them.
+        if m.len() > 1024 {
+            m.retain(|k, _| gu.has_image(k));
+        }
         match m.get(&key).copied().filter(|_| gu.has_image(&key)) {
             Some(r) => r,
             None => {

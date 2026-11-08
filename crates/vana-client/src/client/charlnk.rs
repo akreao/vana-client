@@ -48,7 +48,7 @@ fn sides(mode: u8, name: &str, me: &str) -> (bool, bool) {
 /// FUN_10137c70's +0x26: line `k` is a player's, but not another's line naming us.
 pub fn lit(w: &World, k: usize) -> bool {
     let Some((name, _)) = w.chat.who(k) else { return false };
-    let Some(mode) = w.chat.modes().get(k).and_then(|&m| super::combat::log_mode(m)) else { return false };
+    let Some(mode) = w.chat.mode(k).and_then(super::combat::log_mode) else { return false };
     sides(mode, name, &w.name).0 || name != w.name
 }
 
@@ -57,7 +57,7 @@ pub fn lit(w: &World, k: usize) -> bool {
 pub fn open(w: &mut World, line: Option<(usize, String)>) {
     let rec = line.and_then(|(k, text)| {
         let (name, flags) = w.chat.who(k)?;
-        let mode = super::combat::log_mode(w.chat.modes()[k])?;
+        let mode = super::combat::log_mode(w.chat.mode(k)?)?;
         Some((k, name.to_string(), flags, mode, text))
     });
     let Some((k, name, flags, mode, text)) = rec else {
