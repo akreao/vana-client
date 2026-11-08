@@ -396,7 +396,7 @@ fn field(
     click: &mut Option<Click>,
 ) {
     let typing = g.typing == Some(i);
-    let list = g.lists.get(&f.pick);
+    let list = g.pickers.lists.get(&f.pick);
     let found = if list.is_some() { g.lookup(f.pick, value, SUGGEST) } else { gm::Found::default() };
     let label = if f.optional { format!("{} (optional)", f.label) } else { f.label.clone() };
     ui.label(egui::RichText::new(label).size(m.theme.small).color(if bad {

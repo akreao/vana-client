@@ -13,13 +13,31 @@ local KIND = { [3] = "spell", [7] = "ws", [9] = "ability" }
 -- 0x028 categories whose param names the action (finishes), and starts whose first record value does ("ca..").
 local FINISH = { [3] = true, [4] = true, [5] = true, [6] = true, [11] = true, [13] = true, [14] = true, [15] = true }
 local START = { [7] = true, [8] = true, [9] = true, [10] = true, [12] = true }
--- The refusals the server's request path sends for each kind (LSB's controllers and action states). A spell's carry
--- its id (its recast's 18 and an interrupt's 16 carry none); weapon skills' carry none; an ability's none or its
--- param; an item's 56 none, 62 / 445 none or the item id.
-local SPELL_REFUSALS = { [34] = true, [35] = true, [40] = true, [47] = true, [49] = true, [71] = true, [78] = true,
-  [155] = true, [313] = true }
-local WS_REFUSALS = { [71] = true, [89] = true, [190] = true, [191] = true, [192] = true, [216] = true, [217] = true }
-local ABILITY_REFUSALS = { [4] = true, [5] = true, [78] = true, [87] = true, [88] = true, [94] = true }
+-- The refusals the server's request path sends for each kind (LSB): its controllers and action states, the target
+-- check every kind goes through (12 already claimed, 155, 446) and the game scripts' own checks (onMagicCastingCheck,
+-- onAbilityCheck, onItemCheck: "You cannot learn...", "while medicated", "requires a pet" and the rest).
+-- A spell's carry its id, except the target check's and its recast's 18 (an interrupt's 16 too): none. Weapon
+-- skills' carry none. An ability's carry none or its param. An item's carry none or the item id, except a scroll's
+-- 95 / 96 (cannot learn, already known), which carry the spell it teaches, and the 0 a status that stops the item
+-- (stun, sleep...) sends with the item id.
+local SPELL_BARE = { [12] = true, [16] = true, [18] = true, [155] = true, [446] = true }
+local SPELL_NAMED = { [34] = true, [35] = true, [40] = true, [47] = true, [48] = true, [49] = true, [71] = true,
+  [72] = true, [78] = true, [155] = true, [235] = true, [313] = true, [315] = true, [316] = true, [569] = true,
+  [581] = true, [661] = true, [700] = true, [717] = true }
+local WS_REFUSALS = { [12] = true, [71] = true, [89] = true, [155] = true, [190] = true, [191] = true, [192] = true,
+  [216] = true, [217] = true, [446] = true }
+local ABILITY_REFUSALS = { [4] = true, [5] = true, [12] = true, [71] = true, [72] = true, [78] = true, [87] = true,
+  [88] = true, [94] = true, [154] = true, [155] = true, [192] = true, [199] = true, [215] = true, [216] = true,
+  [235] = true, [307] = true, [315] = true, [316] = true, [328] = true, [336] = true, [337] = true, [347] = true,
+  [356] = true, [428] = true, [429] = true, [446] = true, [523] = true, [524] = true, [525] = true, [561] = true,
+  [574] = true, [662] = true, [666] = true, [745] = true }
+local ITEM_REFUSALS = { [12] = true, [55] = true, [56] = true, [62] = true, [78] = true, [92] = true, [111] = true,
+  [155] = true, [215] = true, [246] = true, [247] = true, [308] = true, [316] = true, [356] = true, [410] = true,
+  [443] = true, [444] = true, [445] = true, [446] = true, [514] = true, [517] = true, [518] = true, [523] = true,
+  [580] = true, [759] = true }
+local LEARN = { [95] = true, [96] = true }
+-- The system message (0x053) the target check sends instead when a player blocks outside help.
+local BLOCKING = 225
 
 local asked
 
@@ -76,27 +94,37 @@ end
 local function refusal(a, id, param)
   local named = param == packet_id(a)
   if a.kind == "spell" then
-    if id == 16 or id == 18 then return param == 0 end
-    return SPELL_REFUSALS[id] == true and named
+    return (SPELL_BARE[id] == true and param == 0) or (SPELL_NAMED[id] == true and named)
   elseif a.kind == "ws" then
     return WS_REFUSALS[id] == true and param == 0
   elseif a.kind == "ability" then
     return ABILITY_REFUSALS[id] == true and (param == 0 or named)
   end
-  if id == 56 then return param == 0 end
-  return (id == 62 or id == 445) and (param == 0 or named)
+  return LEARN[id] == true or (id == 0 and named) or (ITEM_REFUSALS[id] == true and (param == 0 or named))
 end
 
 events.on("action", function(a)
   if asked and asked.state == "waiting" and a.actor == me() and answers(asked, a) then asked = nil end
 end)
 
-events.on("battle_message", function(actor, target, message, p1, p2)
-  if not asked or asked.state ~= "waiting" or actor ~= me() then return end
-  if os.clock() - asked.at >= REFUSED_WITHIN or not refusal(asked, message, p1) then return end
-  local m = res.message(message, { actor = actor, target = target, values = { p1, p2 } })
-  local why = m and text.strip(m.text):gsub("\n", " "):match("^%s*(.-)%s*$") or ""
+local function refuse(why)
   asked.state, asked.since, asked.why = "refused", os.clock(), why
+end
+
+-- Whether the ask still waits for its answer and a refusal now would be one.
+local function refusable() return asked and asked.state == "waiting" and os.clock() - asked.at < REFUSED_WITHIN end
+
+events.on("battle_message", function(actor, target, message, p1, p2)
+  if not refusable() or actor ~= me() or not refusal(asked, message, p1) then return end
+  local m = res.message(message, { actor = actor, target = target, values = { p1, p2 } })
+  refuse(m and text.strip(m.text):gsub("\n", " "):match("^%s*(.-)%s*$") or "")
+end)
+
+-- s2c 0x053: its number @0x0c. A weapon skill only targets monsters, which never block help.
+packets.on_in(0x053, function(p)
+  local d = p.data
+  if #d < 0x0e or not refusable() or asked.kind == "ws" then return end
+  if string.unpack("<I2", d, 0x0c + 1) == BLOCKING then refuse("") end
 end)
 
 local function name_of(a)

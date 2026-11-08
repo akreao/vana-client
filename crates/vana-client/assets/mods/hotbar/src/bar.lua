@@ -5,13 +5,15 @@
 -- at the bottom right. The buttons never move. A slot shows its action's icon (or its label), its hotkey, a shade
 -- with the seconds left while the action recasts, and its macro in a tip; one whose action cannot be used now is
 -- dimmed, and one the battle menu suggests glows. A click fires it, a right click opens its menu, and a slot dragged
--- onto another swaps them. Slots the main job's set fills have a gold edge, the sub job's set's a blue one.
+-- onto another swaps them; a palette tile dropped on a slot puts that library macro there. Slots the main job's set
+-- fills have a gold edge, the sub job's set's a blue one.
 
 local data = require("src.data")
 local runner = require("src.runner")
 local jobs = require("src.jobs")
 local keys = require("src.keys")
 local actions = require("src.actions")
+local palette = require("src.palette")
 
 local M = {}
 
@@ -42,6 +44,10 @@ local GOLD = { 228, 192, 119, 255 }
 local GOLD_OFF = { 228, 192, 119, 70 }
 local INK = { 236, 230, 214, 255 }
 
+-- A slot's label's text size (of the flyouts' text) and its lines' height.
+local LABEL = 0.78
+local LABEL_LINE = 13
+
 -- Bars per second while the window grows or shrinks.
 local SPEED = 4.5
 local PAD = 8
@@ -54,6 +60,7 @@ local eff, main, sub = nil, nil, nil
 local hover = nil      -- "b:i", "plus" or "minus" under the pointer
 local flash = {}       -- "b:i" -> os.clock() until its fire flash ends
 local drag = nil       -- {b, i, x, y}: the slot a drag started on and where the pointer is now
+local tile_at = nil    -- {x, y}: where a palette tile dragged over the bars is
 local suggested = {}   -- "spell:<id>" / "ability:<id>" the battle menu suggests now
 local shades = {}      -- "b:i" -> {left, frac, usable} from the last recast tick
 local top_dock = false -- docked on the top edge (the dock event): grows down, the buttons at the top
@@ -139,10 +146,10 @@ local function hit(x, y)
   end
 end
 
--- A line cut to what fits a slot `w` points wide, 4 clear of each side, at the flyouts' text size (about 6.5 a
--- character), with an ellipsis.
+-- A line cut to what fits a slot `w` points wide, 4 clear of each side, at the label's text size (about 6.5 a
+-- character at the flyouts' size), with an ellipsis.
 local function fit(text, w)
-  local n = math.max(1, math.floor((w - 8) / 6.5))
+  local n = math.max(1, math.floor((w - 8) / (6.5 * LABEL)))
   if utf8.len(text) and utf8.len(text) > n then
     return text:sub(1, utf8.offset(text, n) - 1) .. "…"
   end
@@ -189,15 +196,15 @@ local function draw()
         if macro then
           local label = data.display_label(macro)
           if act then
-            add({ type = "text", x = x + s / 2, y = y + s - 17, text = fit(label:match("^[^\n]*"), s), size = 1,
-              align = "center", colour = TEXT })
+            add({ type = "text", x = x + s / 2, y = y + s - LABEL_LINE - 2, text = fit(label:match("^[^\n]*"), s),
+              size = LABEL, align = "center", colour = TEXT })
           else
             local lines = {}
             for l in label:gmatch("[^\n]+") do lines[#lines + 1] = l end
-            local top = y + (s - #lines * 16) / 2
+            local top = y + (s - #lines * LABEL_LINE) / 2
             for n, l in ipairs(lines) do
-              add({ type = "text", x = x + s / 2, y = top + (n - 1) * 16, text = fit(l, s), size = 1, align = "center",
-                colour = TEXT })
+              add({ type = "text", x = x + s / 2, y = top + (n - 1) * LABEL_LINE, text = fit(l, s), size = LABEL,
+                align = "center", colour = TEXT })
             end
           end
         end
@@ -226,6 +233,8 @@ local function draw()
           elseif key_of(hit(drag.x, drag.y)) == key then
             add({ type = "rect", x = x - 1, y = y - 1, w = s + 2, h = s + 2, round = round + 1, line = 2, colour = DROP })
           end
+        elseif tile_at and key_of(hit(tile_at.x, tile_at.y)) == key then
+          add({ type = "rect", x = x - 1, y = y - 1, w = s + 2, h = s + 2, round = round + 1, line = 2, colour = DROP })
         end
         if macro then
           local name = data.trim(macro.name)
@@ -255,20 +264,25 @@ local function draw()
     end
     add({ type = "tip", x = cx - r, y = cy - r, w = 2 * r, h = 2 * r, title = "", text = tip })
   end
-  -- The dragged slot: a translucent copy under the pointer.
+  -- The dragged slot, or a palette tile dragged over the bars: a translucent copy under the pointer.
+  local g, act, glabel = nil, nil, nil
   if drag and drag.x then
     local cell = eff[drag.b] and eff[drag.b][drag.i]
     local macro = cell and cell.macro
-    local act = macro and actions.of(macro)
-    local gx, gy = drag.x - s / 2, drag.y - s / 2
+    g, act, glabel = drag, macro and actions.of(macro), macro and data.display_label(macro)
+  elseif tile_at and palette.dragging then
+    g, act, glabel = tile_at, palette.dragging.act, palette.dragging.label
+  end
+  if g then
+    local gx, gy = g.x - s / 2, g.y - s / 2
     add({ type = "rect", x = gx, y = gy, w = s, h = s, round = round, colour = GHOST_BG })
     if act then
       local isz = math.floor(s * 0.58)
       add({ type = "icon", x = gx + (s - isz) / 2, y = gy + 4, size = isz, kind = act.kind, id = act.id,
         colour = GHOST })
-    elseif macro then
-      add({ type = "text", x = gx + s / 2, y = gy + s / 2 - 8, text = fit(data.display_label(macro):match("^[^\n]*"), s),
-        size = 1, align = "center", colour = GHOST })
+    elseif glabel then
+      add({ type = "text", x = gx + s / 2, y = gy + s / 2 - LABEL_LINE / 2, text = fit(glabel:match("^[^\n]*"), s),
+        size = LABEL, align = "center", colour = GHOST })
     end
   end
   ui.update(WIN, "c", { h = h, draw = d })
@@ -332,12 +346,28 @@ local function on_event(_, e)
     return
   end
   if e.id ~= "c" then return end
-  if e.kind == "hover" or e.kind == "leave" then
+  if e.kind == "drop" then
+    -- A palette tile: its library macro goes into the set the slot shows (the sub job's when it shows that one).
+    tile_at = nil
+    local c = hit(e.x, e.y)
+    local id = palette.dragged_id(e.from) or (e.from == "tiles" and palette.last)
+    if type(c) ~= "table" or not id or not main then return end
+    local _, from = data.resolve(main, sub, c.b, c.i)
+    data.assign(main, from == "sub" and sub or nil, c.b, c.i, id)
+    flash[c.b .. ":" .. c.i] = os.clock() + 0.12
+    timer.after(0.13, draw)
+    M.rebuild()
+    if M.hooks.changed then M.hooks.changed() end
+  elseif e.kind == "hover" or e.kind == "leave" then
     local now = e.kind == "hover" and key_of(hit(e.x, e.y)) or nil
     if now ~= hover then
       hover = now
       draw()
     end
+  elseif e.kind == "drag_over" or e.kind == "drag_out" then
+    -- A palette tile dragged over the bars (or off them): its copy follows the pointer here.
+    tile_at = e.kind == "drag_over" and palette.dragging and { x = e.x, y = e.y } or nil
+    draw()
   elseif e.kind == "click" then
     local c = hit(e.x, e.y)
     if c == "plus" then
@@ -459,5 +489,13 @@ function M.set_hidden(value)
 end
 
 function M.is_hidden() return hidden end
+
+-- A palette tile's drag ended (dropped or not): its copy over the bars goes.
+function M.tile_drag_ended()
+  if tile_at then
+    tile_at = nil
+    draw()
+  end
+end
 
 return M

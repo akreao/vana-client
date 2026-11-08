@@ -159,7 +159,11 @@ end)
 
 -- ---- //loot ----
 
-local USAGE = "//loot [lot | pass | drop] [add | remove] <item>, //loot list"
+-- The forms of //loot as mod.toml declares them: what the chat line's hint and //mods show.
+local function usage()
+  chat.add("Loot Rules:")
+  for _, line in ipairs(commands.usage("loot")) do chat.add("  " .. line) end
+end
 
 commands.register("loot", function(kind, op, ...)
   kind = (kind or ""):lower()
@@ -176,7 +180,7 @@ commands.register("loot", function(kind, op, ...)
   end
   local entry = table.concat({ ... }, " ")
   if not TITLES[kind] or (op ~= "add" and op ~= "remove") or entry == "" then
-    chat.add("Loot Rules: " .. USAGE)
+    usage()
     return
   end
   local done = op == "add" and add(kind, entry) or op == "remove" and remove(kind, entry)
