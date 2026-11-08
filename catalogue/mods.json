@@ -763,7 +763,7 @@
     },
     {
       "authors": [],
-      "description": "Swaps gear around your actions from GearSwap job files and LuAshitacast and Ashitacast XML profiles, unchanged (the gear-swap add-ons).\n\n//gs, //lac, //ac, //spellcast: each add-on's own commands\n//gearshift shows the loaded file\n//gearshift reload reads it again",
+      "description": "Swaps gear around your actions from GearSwap job files and LuAshitacast and Ashitacast XML profiles, unchanged (the gear-swap add-ons).\n\n//gs: GearSwap's own commands\n//lac: LuAshitacast's own commands\n//ac: Ashitacast's own commands\n//spellcast: Spellcast's own commands\n//gearshift shows the loaded file\n//gearshift reload reads it again",
       "files": [
         {
           "path": "init.lua",
@@ -773,8 +773,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "5c015ef3c2cf31efad2ffe0d9b42d3c2916af6081a936fe7640add247e466577",
-          "size": 612,
+          "sha256": "9c8f0566a219baa5a2d4789e4d03e2040a1bf5adb3c3f9e0676d3acc9417e279",
+          "size": 691,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/gearshift/mod.toml"
         },
         {
