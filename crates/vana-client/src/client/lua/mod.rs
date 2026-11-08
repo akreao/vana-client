@@ -275,6 +275,21 @@ fn release_options(w: &mut World) {
     }
 }
 
+/// A mod window's canvas (element `i`, `id`) as last drawn, in window pixels: its origin, the part of it shown (min x,
+/// min y, max x, max y), the pixels per point (a canvas's own units are points), whether it was on top under the
+/// pointer, and when.
+struct CanvasAt {
+    m: String,
+    win: String,
+    i: usize,
+    id: String,
+    origin: [f32; 2],
+    shown: [f32; 4],
+    ppp: f32,
+    top: bool,
+    at: std::time::Instant,
+}
+
 /// The mods of this session.
 #[derive(Default)]
 pub struct Host {
@@ -295,8 +310,17 @@ pub struct Host {
     filters_dirty: bool,
     /// `/lua settings`: open Extras on this mod's page (taken by the app).
     pub(super) open_page: Option<String>,
+    /// `/lua mods` (and `/lua settings` in the modern UI): the Mods window, on this mod's Settings when one is named.
+    open_mods: Option<Option<String>>,
+    /// The lines the mods printed lately, numbered (the Mods window shows a mod's since its Run), and the next number.
+    printed: std::collections::VecDeque<(String, String, u64)>,
+    print_seq: u64,
     /// Window events for the mods' handlers: (mod, window, event).
     ui_events: Vec<(String, String, window::Event)>,
+    /// Where the mods' canvases were last drawn (the modern UI), for a HUD drag let go over one.
+    canvases: Vec<CanvasAt>,
+    /// The canvas a HUD drag is over now: (mod, window, canvas, the dragged element).
+    drag_over: Option<(String, String, String, String)>,
     /// `/lua watch`: mods reloaded when their files are saved.
     watch: Option<Watch>,
     /// The keys and mouse, shared with every mod (input.held, input.mouse).
@@ -600,8 +624,8 @@ const BUNDLED: &[(&str, &str, &[(&str, &str)])] = bundled!["dps", "auto-advance"
     "list-trimmer",
     "bag-manager",
     "gearshift" ["src/core.lua", "src/compat.lua", "src/names.lua", "src/gs.lua", "src/lac.lua", "src/windower.lua", "src/xml.lua", "src/acxml.lua", "src/modes.lua", "src/texts.lua", "src/regex.lua", "src/spellcast.lua"],
-    "hotbar" ["src/actions.lua", "src/bar.lua", "src/data.lua", "src/jobs.lua", "src/keys.lua", "src/manager.lua", "src/menu.lua",
-        "src/runner.lua", "src/stock.lua"],
+    "hotbar" ["src/actions.lua", "src/bar.lua", "src/builder.lua", "src/data.lua", "src/ghost.lua", "src/jobs.lua", "src/keys.lua",
+        "src/manager.lua", "src/menu.lua", "src/palette.lua", "src/runner.lua", "src/stock.lua"],
     "pad-bars" ["src/actions.lua", "src/runner.lua"],
     // After gearshift: its hooks see an action first.
     "steady-cast" ["src/hold.lua"],
@@ -633,13 +657,7 @@ fn folder_of(mods: &Path, id: &str) -> PathBuf {
 /// The mods' folders; a test run's own (`mods` beside its FFXI_CONFIG copy) when it has one, so test mods never sit
 /// among the user's.
 fn mods_dir() -> PathBuf {
-    if std::env::var_os("VANA_MODS_DIR").is_some() {
-        return crate::config::mods_dir();
-    }
-    match std::env::var_os("FFXI_CONFIG").map(|p| PathBuf::from(p).with_file_name("mods")) {
-        Some(d) if d.is_dir() => d,
-        _ => crate::config::mods_dir(),
-    }
+    crate::config::mods_dir()
 }
 
 fn read_json(path: &std::path::Path) -> serde_json::Value {
@@ -659,6 +677,64 @@ impl Host {
         self.vms.iter().any(|v| v.suspended.is_none() && v.has_handler(event))
     }
 
+    /// The running mods' text commands by name, each with its mod's name and its `[commands]` usage and help (none
+    /// declared: one bare form), then //mods and /lua; a name two mods register is the first loaded's.
+    pub fn command_list(&self) -> Vec<CmdInfo> {
+        let mut out: Vec<CmdInfo> = Vec::new();
+        for vm in self.vms.iter().filter(|v| v.suspended.is_none()) {
+            for (name, _) in &vm.st.borrow().commands {
+                if out.iter().any(|c| c.name == *name) {
+                    continue;
+                }
+                let decl = vm.manifest.commands.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|d| d.1);
+                out.push(CmdInfo {
+                    name: name.clone(),
+                    id: vm.manifest.id.clone(),
+                    owner: vm.manifest.name.clone(),
+                    help: decl.map_or(String::new(), |d| d.help.clone()),
+                    forms: decl.map_or_else(|| vec![(String::new(), String::new())], |d| d.forms()),
+                });
+            }
+        }
+        out.push(CmdInfo {
+            name: "mods".into(),
+            id: String::new(),
+            owner: "Mods".into(),
+            help: "The mods that have commands (as /lua help).".into(),
+            forms: help_forms(),
+        });
+        out.push(CmdInfo {
+            name: "lua".into(),
+            id: String::new(),
+            owner: "Mods".into(),
+            help: "Loads, unloads and lists mods, grants their permissions, and shows their commands.".into(),
+            forms: [
+                ("help [mod or command]", "The mods' commands: a mod's, or one command's forms."),
+                ("list", "The mods, loaded or not."),
+                ("load <id>", "Loads a mod."),
+                ("unload <id>", "Unloads a mod."),
+                ("reload [id]", "Loads a mod (or every mod) again."),
+                ("grant <id> <permission>", "Lets a mod do what it asks."),
+                ("settings <id>", "Opens a mod's settings."),
+            ]
+            .map(|(a, h)| (a.to_string(), h.to_string()))
+            .to_vec(),
+        });
+        out.sort_by(|a, b| a.name.cmp(&b.name));
+        out
+    }
+
+    /// An installed mod that is not running and declares the command `name`: its name.
+    fn off_mod_with(&self, name: &str) -> Option<String> {
+        let running = |id: &str| self.vms.iter().any(|v| v.suspended.is_none() && v.manifest.id == id);
+        std::fs::read_dir(mods_dir())
+            .ok()?
+            .flatten()
+            .filter_map(|e| manifest::read(&e.path()).ok())
+            .find(|m| !running(&m.id) && m.commands.keys().any(|n| n.eq_ignore_ascii_case(name)))
+            .map(|m| m.name)
+    }
+
     /// Whether a typed line is for the mods: //anything, /lua, or a mod's registered /command.
     pub fn takes(&self, line: &str) -> bool {
         if line.starts_with("//") {
@@ -667,6 +743,16 @@ impl Host {
         let first = line.trim_start_matches('/').split_whitespace().next().unwrap_or("").to_ascii_lowercase();
         first == "lua"
             || self.vms.iter().any(|v| v.suspended.is_none() && v.st.borrow().commands.iter().any(|(n, _)| *n == first))
+    }
+
+    /// The number the next printed line gets (the Mods window's Run notes it).
+    pub(in crate::client) fn print_seq(&self) -> u64 {
+        self.print_seq
+    }
+
+    /// The lines mod `id` printed from number `from` on, oldest first.
+    pub(in crate::client) fn printed_since(&self, id: &str, from: u64) -> Vec<&str> {
+        self.printed.iter().filter(|p| p.2 >= from && p.0 == id).map(|p| p.1.as_str()).collect()
     }
 
     /// A line the player typed (the chat line or a macro): the only source that may run /lua.
@@ -701,6 +787,9 @@ impl Host {
         dir: PathBuf,
         src: vm::Source,
     ) -> Result<(), String> {
+        if let Some(n) = m.commands.keys().find(|n| super::textcmd::is_game_command(&n.to_ascii_lowercase())) {
+            return Err(format!("{}: [commands.{n}]: /{n} is a game command; give yours another name", m.id));
+        }
         if self.vms.iter().any(|v| v.manifest.id == m.id) {
             return Err(format!("{} is already loaded", m.id));
         }
@@ -734,7 +823,7 @@ impl Host {
         if !missing.is_empty() {
             let id = vm.manifest.id.clone();
             vm.st.borrow_mut().notices.push(format!(
-                "{} asks for {}: allow it on its Extras page (/lua settings {id}) or with /lua grant {id} {}.",
+                "{} asks for {}: allow it in its settings (/lua settings {id}) or with /lua grant {id} {}.",
                 vm.manifest.name,
                 missing.join(", "),
                 missing.join(" ")
@@ -982,6 +1071,7 @@ impl Host {
     fn lua_command(&mut self, w: &World, args: &[&str], out: &mut Vec<(String, [u8; 4])>) {
         let find = |vms: &[Vm], id: &str| vms.iter().position(|v| v.manifest.id.eq_ignore_ascii_case(id));
         match args.first().copied().unwrap_or("list") {
+            "help" => help_lines(&self.command_list(), "/lua help", &args[1..], out),
             "list" => {
                 if self.vms.is_empty() {
                     out.push(("No Lua mods loaded.".into(), super::WHITE));
@@ -1124,6 +1214,11 @@ impl Host {
                 }
                 _ => out.push(("/lua set <mod> <key> <value>".into(), ERROR)),
             },
+            // The modern UI shows a mod's settings in the Mods window.
+            "settings" if w.modern => {
+                self.open_mods =
+                    Some(args.get(1).and_then(|id| find(&self.vms, id)).map(|k| self.vms[k].manifest.id.clone()))
+            }
             "settings" => {
                 let id = args
                     .get(1)
@@ -1135,6 +1230,8 @@ impl Host {
                     None => out.push(("No Lua mods loaded.".into(), ERROR)),
                 }
             }
+            "mods" if w.modern => self.open_mods = Some(None),
+            "mods" => out.push(("The Mods window is the modern UI's: Config > Settings > Mods here.".into(), ERROR)),
             "grant" | "revoke" => match args.get(1).and_then(|id| find(&self.vms, id)) {
                 Some(k) => {
                     for p in &args[2..] {
@@ -1152,7 +1249,9 @@ impl Host {
                 }
             },
             other => out.push((
-                format!("/lua {other}: list, load, unload, reload, watch, run, set, settings, grant, revoke"),
+                format!(
+                    "/lua {other}: list, load, unload, reload, watch, run, set, settings, mods, grant, revoke, help"
+                ),
                 ERROR,
             )),
         }
@@ -1300,7 +1399,15 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
                         }
                     }
                 }),
-                None => out.push((format!("No mod command {name}."), ERROR)),
+                None if name == "mods" => help_lines(&host.command_list(), "//mods", &args, &mut out),
+                None => {
+                    let hint = match (host.off_mod_with(&name), nearest(&host.command_list(), &name)) {
+                        (Some(m), _) => format!(" {m} has it, but it is not running (Settings > Mods)."),
+                        (None, Some(n)) => format!(" Did you mean //{n}? (/lua help lists them.)"),
+                        (None, None) => " /lua help lists them.".to_string(),
+                    };
+                    out.push((format!("No mod command {name}.{hint}"), ERROR));
+                }
             }
         }
         let events = std::mem::take(&mut host.events);
@@ -1422,6 +1529,16 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
             let mut st = vm.st.borrow_mut();
             (std::mem::take(&mut st.notices), std::mem::take(&mut st.ops), std::mem::take(&mut st.save))
         };
+        for text in notices.iter().chain(vm_ops.iter().filter_map(|o| match o {
+            Op::Print(t) | Op::Chat { text: t, .. } => Some(t),
+            _ => None,
+        })) {
+            if host.printed.len() >= 64 {
+                host.printed.pop_front();
+            }
+            host.printed.push_back((vm.manifest.id.clone(), text.clone(), host.print_seq));
+            host.print_seq += 1;
+        }
         out.extend(notices.into_iter().map(|n| (n, ERROR)));
         ops.extend(vm_ops);
         if save_now {
@@ -1447,32 +1564,21 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
         w.chat.filter = host.chat_filter();
         w.chat.mode_colours = w.battle.as_ref().map(|b| std::rc::Rc::new(b.code_tables(&w.game).1));
     }
-    // `/lua settings`: the modern UI shows the mods' pages in the Settings window (Mods, Mod Settings); the classic
-    // page stands alone.
     host.packet_upkeep(w);
-    // The modern Settings window keeps our state up on every page, so an open window is turned to the mod's page too:
-    // at once when its Extras state is up, else once the app has made it (it takes open_page then).
+    // `/lua settings` (classic): Extras on the mod's page, at once when its state is up, else once the app has made it
+    // (it takes open_page then). The modern UI's is the Mods window.
     if host.open_page.is_some() {
         let extras = w.settings.as_ref().is_some_and(|s| s.kind == super::settings::Kind::Extras);
-        if w.modern {
-            match w.config.as_mut() {
-                Some(c) => super::modern::open_mod_settings(c),
-                None => {
-                    let mut c = super::configui::ConfigUi::open("configwi");
-                    c.anon = w.self_flags & 1 << 5 != 0;
-                    super::modern::open_mod_settings(&mut c);
-                    w.config = Some(c);
-                    w.menu = None;
-                }
-            }
-        }
         if let Some(s) = w.settings.as_mut().filter(|_| extras) {
             if let Some(id) = host.open_page.take() {
                 s.goto_mod(&id);
             }
-        } else if w.settings.is_none() || w.modern {
+        } else if w.settings.is_none() {
             w.want_settings = Some(super::settings::Kind::Extras);
         }
+    }
+    if let Some(id) = host.open_mods.take() {
+        super::modern::open_mods(w, id);
     }
     w.lua = host;
     for (line, colour) in out {
@@ -2010,6 +2116,96 @@ impl Host {
     }
 }
 
+/// A running mod's text command as the chat line's hint and /lua help show it.
+#[derive(Clone, Debug, PartialEq)]
+pub(in crate::client) struct CmdInfo {
+    pub name: String,
+    /// The mod's id and name ("" and "Mods" for the client's own).
+    pub id: String,
+    pub owner: String,
+    pub help: String,
+    /// Its forms: the words after the name ("" for none) and a line on each.
+    pub forms: Vec<(String, String)>,
+}
+
+/// //mods' forms.
+fn help_forms() -> Vec<(String, String)> {
+    [("", "The mods that have commands."), ("<mod or command>", "A mod's commands, or one command's forms.")]
+        .map(|(a, h)| (a.to_string(), h.to_string()))
+        .to_vec()
+}
+
+/// //mods (and /lua help, `cmd` being the one typed): one line naming the mods with commands by id; with a mod (its id
+/// or name), its commands' forms; with a command, its forms. Each form a line: `//name words - help`.
+fn help_lines(list: &[CmdInfo], cmd: &str, args: &[&str], out: &mut Vec<(String, [u8; 4])>) {
+    const INFO: [u8; 4] = [0x80; 4];
+    let forms = |c: &CmdInfo, out: &mut Vec<(String, [u8; 4])>| {
+        for (a, h) in &c.forms {
+            let line = if a.is_empty() { format!("//{}", c.name) } else { format!("//{} {a}", c.name) };
+            let line = if h.is_empty() { format!("  {line}") } else { format!("  {line} - {h}") };
+            out.push((line, INFO));
+        }
+    };
+    let want = args.join(" ").trim_start_matches('/').to_ascii_lowercase();
+    if want.is_empty() {
+        let mut ids: Vec<&str> = list.iter().filter(|c| !c.id.is_empty()).map(|c| c.id.as_str()).collect();
+        ids.sort();
+        ids.dedup();
+        let names = if ids.is_empty() { "none".to_string() } else { ids.join(", ") };
+        out.push((format!("{cmd} <mod or command>: its commands. Mods: {names}."), INFO));
+        return;
+    }
+    // A mod (by id or name) first: a mod with a command of its own name (Gearshift's //gearshift) lists them all.
+    let of: Vec<&CmdInfo> =
+        list.iter().filter(|c| !c.id.is_empty() && (c.owner.to_ascii_lowercase() == want || c.id == want)).collect();
+    if of.is_empty()
+        && let Some(c) = list.iter().find(|c| c.name == want)
+    {
+        let help = if c.help.is_empty() { String::new() } else { format!(": {}", c.help) };
+        out.push((format!("//{} ({}){help}", c.name, c.owner), INFO));
+        forms(c, out);
+        return;
+    }
+    if of.is_empty() {
+        let hint = nearest(list, &want).map_or(String::new(), |n| format!(" Did you mean {n}?"));
+        out.push((format!("No mod command or mod {want}.{hint}"), ERROR));
+        return;
+    }
+    out.push((format!("{}:", of[0].owner), INFO));
+    for c in of {
+        forms(c, out);
+    }
+}
+
+/// The command a mistyped name most likely meant: one starting with it, else one a couple of edits away.
+fn nearest(list: &[CmdInfo], name: &str) -> Option<String> {
+    if name.is_empty() {
+        return None;
+    }
+    if let Some(c) = list.iter().find(|c| c.name.starts_with(name)) {
+        return Some(c.name.clone());
+    }
+    let dist = |a: &str, b: &str| {
+        let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+        let mut row: Vec<usize> = (0..=b.len()).collect();
+        for i in 1..=a.len() {
+            let mut prev = row[0];
+            row[0] = i;
+            for j in 1..=b.len() {
+                let cur = row[j];
+                row[j] = (row[j] + 1).min(row[j - 1] + 1).min(prev + usize::from(a[i - 1] != b[j - 1]));
+                prev = cur;
+            }
+        }
+        row[b.len()]
+    };
+    list.iter()
+        .map(|c| (dist(name, &c.name), &c.name))
+        .filter(|(d, _)| *d <= 2.min(name.len().saturating_sub(1)).max(1))
+        .min()
+        .map(|(_, n)| n.clone())
+}
+
 /// LuaLS stubs for the whole mod API (`vana-client lua-stubs`).
 pub fn stubs() -> String {
     docs::stubs()
@@ -2041,6 +2237,95 @@ fn install_stubs(root: PathBuf) {
 mod tests {
     use super::*;
     use mlua::{Table, Value};
+
+    /// Every bundled mod declares (`[commands.<name>]`, with help and usage) exactly the commands its code registers,
+    /// so the chat line's hint, //mods and the Mods page show them all.
+    #[test]
+    fn bundled_commands_declared() {
+        for (id, text, files) in BUNDLED {
+            let m = manifest::parse(text, id).unwrap();
+            let mut registered: Vec<String> = Vec::new();
+            for (_, src) in files.iter() {
+                for part in src.split("commands.register(").skip(1) {
+                    let part = part.trim_start();
+                    let q = part.chars().next().filter(|c| *c == '"' || *c == '\'');
+                    let name = q.and_then(|q| part[1..].split(q).next()).expect("a literal command name");
+                    registered.push(name.trim_start_matches('/').to_ascii_lowercase());
+                }
+            }
+            registered.sort();
+            registered.dedup();
+            let mut declared: Vec<String> = m.commands.keys().map(|k| k.to_ascii_lowercase()).collect();
+            declared.sort();
+            assert_eq!(registered, declared, "{id}: commands registered vs declared in mod.toml");
+            for (name, c) in &m.commands {
+                assert!(!c.help.is_empty(), "{id}: //{name} needs help");
+                assert!(c.forms.iter().all(|f| !f.help.is_empty()), "{id}: each form of //{name} needs help");
+            }
+        }
+    }
+
+    /// //mods: by mod, one command's forms, a mod's commands; a near miss names the command.
+    #[test]
+    fn help_and_near_misses() {
+        let info = |name: &str, id: &str, owner: &str, forms: &[(&str, &str)]| CmdInfo {
+            name: name.into(),
+            id: id.into(),
+            owner: owner.into(),
+            help: format!("{name} help"),
+            forms: forms.iter().map(|(a, h)| (a.to_string(), h.to_string())).collect(),
+        };
+        let list = vec![
+            info("ahbuy", "auction-desk", "Auction Desk", &[("<item> <price> [stack]", "Bids.")]),
+            info("ahsell", "auction-desk", "Auction Desk", &[("<item> <price> [stack]", "Sells.")]),
+            info("hb", "hotbar", "Hotbars", &[("", "Opens the manager."), ("show", "Shows the bars.")]),
+            info("lua", "", "Mods", &[("list", "The mods.")]),
+        ];
+        let text = |args: &[&str]| {
+            let mut out = Vec::new();
+            help_lines(&list, "//mods", args, &mut out);
+            out.into_iter().map(|l| l.0).collect::<Vec<_>>()
+        };
+        assert_eq!(text(&[]), ["//mods <mod or command>: its commands. Mods: auction-desk, hotbar."]);
+        assert_eq!(
+            text(&["hb"]),
+            ["//hb (Hotbars): hb help", "  //hb - Opens the manager.", "  //hb show - Shows the bars."]
+        );
+        assert_eq!(text(&["auction", "desk"]).len(), 3);
+        assert_eq!(text(&["hotbar"]).len(), 3);
+        // A mod with a command of its own name: the mod's commands, all of them.
+        let gear = vec![
+            info("gearshift", "gearshift", "Gearshift", &[("", "Shows the file.")]),
+            info("gs", "gearshift", "Gearshift", &[("<command>", "GearSwap's.")]),
+        ];
+        let mut out = Vec::new();
+        help_lines(&gear, "//mods", &["gearshift"], &mut out);
+        assert_eq!(
+            out.into_iter().map(|l| l.0).collect::<Vec<_>>(),
+            ["Gearshift:", "  //gearshift - Shows the file.", "  //gs <command> - GearSwap's."]
+        );
+        assert_eq!(nearest(&list, "ahbyu").as_deref(), Some("ahbuy"));
+        assert_eq!(nearest(&list, "ahs").as_deref(), Some("ahsell"));
+        assert_eq!(nearest(&list, "zzzz"), None);
+        // A declaration's forms: the main one first (when given, or when alone), a form's help else the command's.
+        let c =
+            |t: &str| manifest::parse(&format!("[commands.x]\nhelp = \"X.\"\n{t}"), "m").unwrap().commands["x"].forms();
+        assert_eq!(c(""), [(String::new(), "X.".to_string())]);
+        assert_eq!(
+            c("args = \"\"\nforms = [{ args = \"a\", help = \"A.\" }, { args = \"b\" }]"),
+            [("".into(), "X.".into()), ("a".into(), "A.".into()), ("b".into(), "X.".into())]
+        );
+        assert_eq!(c("forms = [{ args = \"a\", help = \"A.\" }]"), [("a".to_string(), "A.".to_string())]);
+        assert!(manifest::parse("[commands.lua]\nhelp = \"x\"", "m").is_err());
+        assert!(manifest::parse("[commands.mods]\nhelp = \"x\"", "m").is_err());
+        // Typed params: a known type, an enum with its options.
+        let p = |t: &str| manifest::parse(&format!("[commands.x]\nhelp = \"X.\"\nargs = \"<a>\"\nparams = [{t}]"), "m");
+        let ok = p("{ name = \"a\", type = \"item\", also = [\"none\"] }").unwrap();
+        assert_eq!(ok.commands["x"].params[0].also, ["none"]);
+        assert!(p("{ name = \"a\", type = \"enum\", options = [\"b\"] }").is_ok());
+        assert!(p("{ name = \"a\", type = \"enum\" }").is_err());
+        assert!(p("{ name = \"a\", type = \"thing\" }").is_err());
+    }
 
     /// A wait_until test that never returns runs out of its budget instead of freezing the frame.
     #[test]
@@ -2232,6 +2517,144 @@ mod tests {
         // Nor while a menu is open.
         host.vms.last().unwrap().lua.load(r#"ui.menu({"x", "y"}, function() end)"#).exec().unwrap();
         assert!(!input::hud_press(&mut host, Left));
+    }
+
+    /// A HUD element dragged and let go over one of its mod's canvases (as the modern UI last drew it): the canvas's
+    /// window gets a drop at the point in the canvas, in its points; none once the window is closed.
+    #[test]
+    fn hud_drag_onto_canvas() {
+        use winit::event::MouseButton::Left;
+        let mut host = Host::default();
+        let vm = Vm::new(
+            manifest::Manifest { id: "t".into(), ..Default::default() },
+            PathBuf::from("."),
+            vm::Source::Dir(PathBuf::from(".")),
+        )
+        .unwrap();
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        vm.lua
+            .load(
+                r#"
+                hud.rect("a", {x = 0, y = 0, w = 10, h = 10})
+                hud.on("a", function() end)
+                hud.rect("b", {x = 100, y = 0, w = 200, h = 100})
+                hud.on("b", function() end)
+                ui.window("w", {title = "W", elements = {{type = "canvas", id = "c", w = 100, h = 50}}})
+                ui.open("w")
+            "#,
+            )
+            .exec()
+            .unwrap();
+        host.vms.push(vm);
+        // "b", with a handler, is under the window's canvas.
+        host.info.borrow_mut().hud_rects = vec![
+            ("t".into(), "a".into(), [0.0, 0.0, 10.0, 10.0]),
+            ("t".into(), "b".into(), [100.0, 0.0, 200.0, 100.0]),
+        ];
+        // Drawn at (100, 0) in window pixels, 2 pixels to the point: 200 by 100 pixels.
+        host.canvas_at("t", "w", 0, [100.0, 0.0], [100.0, 0.0, 300.0, 100.0], 2.0, true);
+        let drag = |host: &mut Host, path: &[f64]| {
+            host.input.borrow_mut().cursor = (5.0, 5.0);
+            assert!(input::hud_press(host, Left));
+            for &x in path {
+                host.input.borrow_mut().cursor = (x, 5.0);
+                input::hud_drag(host, x, 5.0);
+            }
+            let window = host.hud_events.iter().rev().find(|e| e.2["kind"] == "drag").map(|e| e.2["window"].clone());
+            input::hud_release(host, Left);
+            let hud = std::mem::take(&mut host.hud_events)
+                .into_iter()
+                .filter(|e| e.2["kind"] != "drag" && e.2["kind"] != "drag_start")
+                .map(|e| (e.1, e.2["kind"].as_str().unwrap().to_string(), e.2["over"].clone()))
+                .collect::<Vec<_>>();
+            let ev = std::mem::take(&mut host.ui_events);
+            assert!(ev.iter().all(|e| e.0 == "t" && e.1 == "w"));
+            (ev.into_iter().map(|e| e.2.json()).collect::<Vec<_>>(), window, hud)
+        };
+        // The canvas is over "b": it takes the drop, and drag_end names no HUD element.
+        let (ev, window, hud) = drag(&mut host, &[20.0, 150.0]);
+        assert_eq!(
+            ev,
+            [
+                serde_json::json!({"kind": "drag_over", "id": "c", "x": 25, "y": 3, "from": "a"}),
+                serde_json::json!({"kind": "drop", "id": "c", "x": 25, "y": 3, "from": "a"})
+            ]
+        );
+        assert_eq!(window, Some(serde_json::json!("w")));
+        assert_eq!(hud, [("a".to_string(), "drag_end".to_string(), serde_json::Value::Null)]);
+        // Over it and off again: drag_out and no drop; the last drag names no window.
+        let (ev, window, _) = drag(&mut host, &[150.0, 320.0]);
+        assert_eq!(ev.iter().map(|e| e["kind"].as_str().unwrap()).collect::<Vec<_>>(), ["drag_over", "drag_out"]);
+        assert_eq!(window, Some(serde_json::Value::Null));
+        // Something over the canvas under the pointer: no drop there, "b" under it takes it.
+        host.canvas_at("t", "w", 0, [100.0, 0.0], [100.0, 0.0, 300.0, 100.0], 2.0, false);
+        let (ev, _, hud) = drag(&mut host, &[20.0, 150.0]);
+        assert!(ev.is_empty());
+        assert_eq!(
+            hud,
+            [
+                ("a".to_string(), "drag_end".to_string(), serde_json::json!("b")),
+                ("b".to_string(), "drop".to_string(), serde_json::Value::Null)
+            ]
+        );
+        host.canvas_at("t", "w", 0, [100.0, 0.0], [100.0, 0.0, 300.0, 100.0], 2.0, true);
+        host.vms[0].lua.load(r#"ui.close("w")"#).exec().unwrap();
+        assert!(drag(&mut host, &[20.0, 150.0]).0.is_empty());
+    }
+
+    /// A drag on a mod's canvas over another of its windows' canvases: the drag events say where on screen and which
+    /// window is under the pointer; that canvas gets drag_over, then the drop on the release (not its own canvas).
+    #[test]
+    fn canvas_drag_onto_canvas() {
+        let mut host = Host::default();
+        let vm = Vm::new(
+            manifest::Manifest { id: "t".into(), ..Default::default() },
+            PathBuf::from("."),
+            vm::Source::Dir(PathBuf::from(".")),
+        )
+        .unwrap();
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        vm.lua
+            .load(
+                r#"
+                ui.window("a", {title = "A", elements = {{type = "canvas", id = "s", w = 100, h = 50}}})
+                ui.window("b", {title = "B", elements = {{type = "canvas", id = "c", w = 100, h = 50}}})
+                ui.open("a"); ui.open("b")
+            "#,
+            )
+            .exec()
+            .unwrap();
+        host.vms.push(vm);
+        host.canvas_at("t", "a", 0, [0.0, 0.0], [0.0, 0.0, 100.0, 50.0], 1.0, true);
+        host.canvas_at("t", "b", 0, [200.0, 0.0], [200.0, 0.0, 300.0, 50.0], 1.0, true);
+        let drag = |phase: u8, x: f32| window::Event::Drag {
+            id: "s".into(),
+            phase,
+            x,
+            y: 10.0,
+            dx: 0.0,
+            dy: 0.0,
+            screen: None,
+            over: None,
+        };
+        // Within its own canvas: nothing crosses.
+        let mut ev = vec![drag(1, 50.0)];
+        assert!(host.canvas_drags("t", "a", &mut ev).is_empty() && host.ui_events.is_empty());
+        assert_eq!(ev[0].json()["window"], serde_json::Value::Null);
+        let mut ev = vec![drag(1, 250.0)];
+        assert!(host.canvas_drags("t", "a", &mut ev).is_empty());
+        assert_eq!((ev[0].json()["sx"].as_i64(), ev[0].json()["window"].as_str()), (Some(250), Some("b")));
+        let over = std::mem::take(&mut host.ui_events);
+        assert_eq!(
+            (over[0].1.as_str(), over[0].2.json()),
+            ("b", serde_json::json!({"kind": "drag_over", "id": "c", "x": 50, "y": 10, "from": "s"}))
+        );
+        let mut ev = vec![drag(2, 260.0)];
+        let dropped = host.canvas_drags("t", "a", &mut ev);
+        assert_eq!(
+            (dropped[0].1.as_str(), dropped[0].2.json()),
+            ("b", serde_json::json!({"kind": "drop", "id": "c", "x": 60, "y": 10, "from": "s"}))
+        );
     }
 
     /// The bundled Battle Text's short lines: the common forms; an unknown one stays as printed; names in their colours.
@@ -4184,6 +4607,35 @@ return "acxml flow ok"
             assert(four.name == "sub" and from == "sub")
             assert(data.resolve("WAR", "NIN", 1, 3) == nil)
             assert(saved ~= nil)
+
+            -- The library: an entry on slots of both sets by reference; editing it changes them all.
+            local id = data.save_entry("WAR", nil, { name = "Prov", action = { kind = "ja", name = "Provoke",
+              target = "t" }, lines = { "/p Provoked <t>" } })
+            data.assign("WAR", nil, 2, 1, id)
+            data.assign("WAR", "NIN", 2, 2, id)
+            local got, gf = data.resolve("WAR", "NIN", 2, 2)
+            assert(got.ref == id and gf == "sub" and got.lines[1] == '/ja "Provoke" <t>'
+              and got.lines[2] == "/p Provoked <t>")
+            assert(data.uses("WAR", id) == 2)
+            data.save_entry("WAR", id, { name = "Provoke!", action = { kind = "ja", name = "Provoke", target = "bt" } })
+            assert(data.resolve("WAR", nil, 2, 1).name == "Provoke!")
+            assert(data.effective("WAR", "NIN")[2][2].macro.lines[1] == '/ja "Provoke" <bt>')
+            -- A swap keeps the reference (not a copy of its lines).
+            data.swap("WAR", nil, 2, 1, 2, 5)
+            assert(data.get_raw("WAR", nil, 2, 5).ref == id and data.get_raw("WAR", nil, 2, 1) == nil)
+            -- set_macro with a resolved library macro (as the pickers give) puts the reference.
+            data.set_macro("WAR", nil, 2, 6, data.resolve("WAR", nil, 2, 5))
+            assert(data.get_raw("WAR", nil, 2, 6).ref == id and data.uses("WAR", id) == 3)
+            data.delete_entry("WAR", id)
+            assert(data.resolve("WAR", "NIN", 2, 2) == nil and data.resolve("WAR", nil, 2, 5) == nil)
+            assert(data.uses("WAR", id) == 0 and data.resolve("WAR", nil, 1, 1).name == "two")
+
+            -- The builder's lines, and a system command's stand-in icon with no recast.
+            assert(data.command({ kind = "equip", name = "Warp Ring", target = "ring1" }) == '/equip ring1 "Warp Ring"')
+            assert(data.command({ kind = "cmd", name = "/attack", target = "t" }) == "/attack <t>")
+            assert(data.command({ kind = "cmd", name = "/heal" }) == "/heal")
+            local atk = a.of({ lines = { "/attack <t>" } })
+            assert(atk and atk.kind == "item" and atk.no_recast and a.recast(atk, r) == 0)
         "#;
         vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
     }
@@ -4899,7 +5351,7 @@ fn mod_page(
     granted: &[String],
     bundled: bool,
 ) -> Option<super::settings::ModPage> {
-    use super::settings::{ModPage, ModRow};
+    use super::settings::{Edit, ModPage, ModRow};
     let mut rows = Vec::new();
     for (key, d) in &m.settings {
         if key == "on" && d.kind == "bool" {
@@ -4935,6 +5387,27 @@ fn mod_page(
                     })
                     .collect()
             }
+            // Edited in the Mods window: the one choice holds the value and what shows of it.
+            k @ ("string" | "colour" | "key") => {
+                let edit = match k {
+                    "colour" => Edit::Colour,
+                    "key" => Edit::Key,
+                    _ => Edit::Text,
+                };
+                rows.push(ModRow {
+                    key: key.clone(),
+                    label: if d.label.is_empty() { key.clone() } else { d.label.clone() },
+                    help: d.help.clone(),
+                    choices: vec![(edit_shown(edit, &current), current)],
+                    at: 0,
+                    tab: String::new(),
+                    place: None,
+                    place_modern: None,
+                    preview: None,
+                    edit,
+                });
+                continue;
+            }
             _ => continue,
         };
         let at = choices
@@ -4954,6 +5427,7 @@ fn mod_page(
             place: None,
             place_modern: None,
             preview: d.preview_sound,
+            edit: Edit::Choice,
         });
     }
     // The permissions it asks for (docs/lua-mods.md 3.5); a bundled mod's are given.
@@ -4971,9 +5445,46 @@ fn mod_page(
             place: None,
             place_modern: None,
             preview: None,
+            edit: Edit::Choice,
         });
     }
     (!rows.is_empty()).then(|| ModPage { id: m.id.clone(), name: m.name.clone(), rows })
+}
+
+/// An edited setting's value as the Mods window shows it: the text, the colour as #RRGGBB, the key as players read it.
+pub(in crate::client) fn edit_shown(edit: super::settings::Edit, v: &serde_json::Value) -> String {
+    use super::settings::Edit;
+    match edit {
+        Edit::Colour => colour_rgba(v).map_or(String::new(), |[r, g, b, _]| format!("#{r:02X}{g:02X}{b:02X}")),
+        Edit::Key => v.as_str().filter(|k| !k.is_empty()).map_or_else(|| "none".into(), input::combo_label),
+        _ => v.as_str().map_or_else(|| if v.is_null() { String::new() } else { v.to_string() }, str::to_string),
+    }
+}
+
+/// A colour setting's value ([r, g, b] or [r, g, b, a], 0..255) as RGBA.
+pub(in crate::client) fn colour_rgba(v: &serde_json::Value) -> Option<[u8; 4]> {
+    let a = v.as_array().filter(|a| a.len() == 3 || a.len() == 4)?;
+    let mut out = [255u8; 4];
+    for (o, x) in out.iter_mut().zip(a) {
+        *o = u8::try_from(x.as_u64()?).ok()?;
+    }
+    Some(out)
+}
+
+/// A colour typed as #RRGGBB (or RRGGBB), with the alpha of `old` (opaque when it has none): the setting's value.
+pub(in crate::client) fn colour_typed(text: &str, old: &serde_json::Value) -> Option<serde_json::Value> {
+    let h = text.trim().trim_start_matches('#');
+    if h.len() != 6 || !h.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    let n = |i: usize| u8::from_str_radix(&h[i..i + 2], 16).ok();
+    Some(colour_value([n(0)?, n(2)?, n(4)?], old))
+}
+
+/// An RGB with the alpha of `old` (opaque when it has none), as a colour setting's value.
+pub(in crate::client) fn colour_value(rgb: [u8; 3], old: &serde_json::Value) -> serde_json::Value {
+    let a = colour_rgba(old).map_or(255, |c| c[3]);
+    serde_json::json!([rgb[0], rgb[1], rgb[2], a])
 }
 
 /// Gives an installed mod every permission its manifest asks for (a standard mod installed from our list).
@@ -5152,6 +5663,126 @@ impl Host {
         })
     }
 
+    /// A mod window's canvas drawn this frame, at its element `i` (modwin's CanvasAt): kept for drops. Every frame, for
+    /// every canvas: an entry already kept is updated in place.
+    #[allow(clippy::too_many_arguments)]
+    fn canvas_at(&mut self, m: &str, win: &str, i: usize, origin: [f32; 2], shown: [f32; 4], ppp: f32, top: bool) {
+        let now = std::time::Instant::now();
+        let Some(vm) = self.vms.iter().find(|v| v.manifest.id == m) else { return };
+        let st = vm.st.borrow();
+        let Some(Some(window::Elem::Canvas { id, .. })) =
+            st.windows.iter().find(|w| w.id == win).map(|w| w.elems.get(i))
+        else {
+            return;
+        };
+        if let Some(c) = self.canvases.iter_mut().find(|c| c.i == i && c.m == m && c.win == win) {
+            if c.id != *id {
+                c.id = id.clone();
+            }
+            (c.origin, c.shown, c.ppp, c.top, c.at) = (origin, shown, ppp, top, now);
+            return;
+        }
+        let id = id.clone();
+        drop(st);
+        self.canvases.retain(|c| now.duration_since(c.at) < std::time::Duration::from_secs(1));
+        self.canvases.push(CanvasAt { m: m.into(), win: win.into(), i, id, origin, shown, ppp, top, at: now });
+    }
+
+    /// Where mod `m`'s canvas `id` of window `win`, at (x, y) in its units, is on screen (window pixels).
+    fn canvas_to_screen(&self, m: &str, win: &str, id: &str, x: f32, y: f32) -> Option<(f32, f32)> {
+        let c = self.canvases.iter().rev().find(|c| c.m == m && c.win == win && c.id == id)?;
+        Some((c.origin[0] + x * c.ppp, c.origin[1] + y * c.ppp))
+    }
+
+    /// A drag of mod `m`'s (`from`: a HUD element, or a canvas, which is `skip` (window, canvas)) at (x, y) in window
+    /// pixels: the canvas of the mod's under it gets drag_over, the one it left drag_out. The window under it, if any.
+    fn drag_cross(&mut self, m: &str, from: &str, x: f64, y: f64, skip: Option<(&str, &str)>) -> Option<String> {
+        let over = self.canvas_drop(m, x, y, from, skip).and_then(|(win, ev)| match ev {
+            window::Event::Drop { id: c, x, y, from } => {
+                Some((win, c.clone(), window::Event::DragOver { id: c, x, y, from }))
+            }
+            _ => None,
+        });
+        let now = over.as_ref().map(|(win, c, _)| (m.to_string(), win.clone(), c.clone(), from.to_string()));
+        if let Some((pm, pwin, pc, pfrom)) = self.drag_over.take()
+            && now.as_ref().is_none_or(|n| n.1 != pwin || n.2 != pc)
+        {
+            self.ui_events.push((pm, pwin, window::Event::DragOver { id: pc, x: -1.0, y: -1.0, from: pfrom }));
+        }
+        self.drag_over = now;
+        let (win, _, ev) = over?;
+        match self.ui_events.last_mut() {
+            Some(last)
+                if last.0 == m && last.1 == win && matches!(last.2, window::Event::DragOver { x, .. } if x >= 0.0) =>
+            {
+                last.2 = ev
+            }
+            _ => self.ui_events.push((m.to_string(), win.clone(), ev)),
+        }
+        Some(win)
+    }
+
+    /// A drag of mod `m`'s released at (x, y) in window pixels (as drag_cross): the drop on its canvas there, if any
+    /// (the window, its event); the canvas it was over before gets drag_out unless it is the one dropped on.
+    fn drag_release(
+        &mut self,
+        m: &str,
+        from: &str,
+        x: f64,
+        y: f64,
+        skip: Option<(&str, &str)>,
+    ) -> Option<(String, window::Event)> {
+        let drop = self.canvas_drop(m, x, y, from, skip);
+        if let Some((pm, pwin, pc, pfrom)) = self.drag_over.take()
+            && drop
+                .as_ref()
+                .is_none_or(|(w, e)| *w != pwin || !matches!(e, window::Event::Drop { id, .. } if *id == pc))
+        {
+            self.ui_events.push((pm, pwin, window::Event::DragOver { id: pc, x: -1.0, y: -1.0, from: pfrom }));
+        }
+        drop
+    }
+
+    /// The drop on mod `m`'s canvas under (x, y) in window pixels, drawn in the last moments in an open window, on top
+    /// there (no panel or window over it under the pointer), not `skip` (the (window, canvas) the drag started on):
+    /// the window and its event, at the point in the canvas.
+    fn canvas_drop(
+        &self,
+        m: &str,
+        x: f64,
+        y: f64,
+        from: &str,
+        skip: Option<(&str, &str)>,
+    ) -> Option<(String, window::Event)> {
+        let (x, y) = (x as f32, y as f32);
+        let now = std::time::Instant::now();
+        let c = self.canvases.iter().rev().find(|c| {
+            c.m == m
+                && c.top
+                && skip.is_none_or(|(w, id)| c.win != w || c.id != id)
+                && now.duration_since(c.at) < std::time::Duration::from_millis(250)
+                && x >= c.shown[0]
+                && y >= c.shown[1]
+                && x < c.shown[2]
+                && y < c.shown[3]
+        })?;
+        let open = self
+            .vms
+            .iter()
+            .find(|v| v.manifest.id == m && v.suspended.is_none())
+            .is_some_and(|v| v.st.borrow().windows.iter().any(|w| w.id == c.win && w.open));
+        let ppp = c.ppp.max(0.01);
+        open.then(|| {
+            let ev = window::Event::Drop {
+                id: c.id.clone(),
+                x: (x - c.origin[0]) / ppp,
+                y: (y - c.origin[1]) / ppp,
+                from: from.into(),
+            };
+            (c.win.clone(), ev)
+        })
+    }
+
     /// Whether a mod window's line is being typed (it takes the text and the keys).
     pub(super) fn typing(&self) -> bool {
         !self.all_hidden
@@ -5169,6 +5800,13 @@ impl Host {
                 .find(|w| w.open && w.focus)
                 .map(|w| (w.title.clone(), w.help_now().to_string()))
         })
+    }
+}
+
+impl Host {
+    /// A key press as a key setting's value ("ctrl+numpad1"), as a mod window's key element takes it.
+    pub(in crate::client) fn key_combo(&self, e: &egui::Event) -> Option<String> {
+        input::combo_of(e, self.input.borrow().last_down)
     }
 }
 
@@ -5307,6 +5945,10 @@ pub(super) fn window_click(w: &mut World, mod_id: &str, win_id: &str, click: sup
         return;
     }
     let host = &mut w.lua;
+    if let super::modern::ModClick::CanvasAt(i, origin, shown, ppp, top) = click {
+        host.canvas_at(mod_id, win_id, i, origin, shown, ppp, top);
+        return;
+    }
     // An open modal window takes no clicks meant for another.
     if let Some((k, id)) = host.modal()
         && (host.vms[k].manifest.id != mod_id || id != win_id)
@@ -5334,9 +5976,41 @@ pub(super) fn window_click(w: &mut World, mod_id: &str, win_id: &str, click: sup
         }
     }
     host.ui_events.extend(ended);
-    if let Some((ev, se)) = out {
+    if let Some((mut ev, se)) = out {
+        let dropped = host.canvas_drags(mod_id, win_id, &mut ev);
         host.ui_events.extend(ev.into_iter().map(|e| (mod_id.to_string(), win_id.to_string(), e)));
+        host.ui_events.extend(dropped);
         w.sounds.extend(se.into_iter().map(|s| s as u32));
+    }
+}
+
+impl Host {
+    /// A window's events: a canvas drag's get where on screen it is, and it crosses the mod's other canvases (they
+    /// get drag_over and drag_out, and the drop on the release: returned, to follow the window's own events).
+    fn canvas_drags(
+        &mut self,
+        mod_id: &str,
+        win_id: &str,
+        ev: &mut [window::Event],
+    ) -> Vec<(String, String, window::Event)> {
+        let host = self;
+        let mut dropped = Vec::new();
+        for e in ev.iter_mut() {
+            let window::Event::Drag { id, phase, x, y, screen, over, .. } = e else { continue };
+            let Some((sx, sy)) = host.canvas_to_screen(mod_id, win_id, id, *x, *y) else { continue };
+            *screen = Some((sx, sy));
+            let skip = Some((win_id, id.as_str()));
+            match phase {
+                1 => *over = host.drag_cross(mod_id, id, sx as f64, sy as f64, skip),
+                2 => {
+                    if let Some((w, d)) = host.drag_release(mod_id, id, sx as f64, sy as f64, skip) {
+                        dropped.push((mod_id.to_string(), w, d));
+                    }
+                }
+                _ => {}
+            }
+        }
+        dropped
     }
 }
 
@@ -5518,7 +6192,7 @@ fn bundled_manifest(id: &str) -> Option<manifest::Manifest> {
 }
 
 /// Every mod installed (the mods folder): (id, name, version, enabled in the config, bundled: always false now).
-pub(super) fn installed() -> Vec<(String, String, String, bool, bool)> {
+pub(super) fn installed() -> Vec<(String, String, String, bool, bool, Vec<String>)> {
     let cfg = crate::config::Config::load();
     let enabled = |id: &str, bundled: bool| cfg.mods.iter().find(|r| r.name == id).map_or(bundled, |r| r.enabled);
     let mut out = Vec::new();
@@ -5526,7 +6200,8 @@ pub(super) fn installed() -> Vec<(String, String, String, bool, bool)> {
         let dir = e.path();
         if let Ok(m) = manifest::read(&dir) {
             let id = m.id.clone();
-            out.push((id.clone(), m.name, m.version, enabled(&id, false), false));
+            let commands = m.commands.keys().cloned().collect();
+            out.push((id.clone(), m.name, m.version, enabled(&id, false), false, commands));
         }
     }
     out.sort();
@@ -5542,7 +6217,7 @@ fn grants() -> serde_json::Map<String, serde_json::Value> {
 }
 
 /// A setting row's key prefix for a permission (the mod's Extras page).
-const PERM: &str = "@permission:";
+pub(in crate::client) const PERM: &str = "@permission:";
 
 /// A permission's row label and help line.
 fn permission_text(p: &str) -> (&'static str, &'static str) {

@@ -1,5 +1,5 @@
 name = "Targeting Helpers"
-version = "1.0.3"
+version = "1.0.4"
 description = "Targets by name or id, turns you toward or away from your target, and can check each monster you target (the targeting add-ons)."
 permissions = ["automation"]
 
@@ -14,3 +14,14 @@ type = "bool"
 default = false
 label = "Check New Targets"
 help = "Checks (/check) each monster you target, once."
+
+[commands.tgt]
+help = "Targets by name or server id."
+args = "<name or server id>"
+
+[commands.face]
+help = "Turns you toward your target."
+args = ""
+forms = [
+  { args = "away", help = "Turns you away from it." },
+]

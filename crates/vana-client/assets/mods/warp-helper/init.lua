@@ -396,13 +396,17 @@ end
 
 -- The command ------------------------------------------------------------------------------------------------------
 
-local USAGE = "//warp [hp | sg | wp] <zone> [number or place], //warp home, //warp dim <holla | dem | mea>"
+-- The forms of //warp as mod.toml declares them: what the chat line's hint and //mods show.
+local function usage()
+  chat.add("Warp Helper:")
+  for _, line in ipairs(commands.usage("warp")) do chat.add("  " .. line) end
+end
 
 commands.register("warp", function(...)
   if not settings.get("on") then return end
   local args = { ... }
   local first = (args[1] or ""):lower()
-  if first == "" then say(USAGE) return end
+  if first == "" then usage() return end
   if game.event() then say("finish the conversation first.") return end
   if first == "home" then home() return end
   if first == "dim" then
@@ -417,7 +421,7 @@ commands.register("warp", function(...)
     table.remove(args, 1)
   end
   local words = table.concat(args, " ")
-  if words == "" then say(USAGE) return end
+  if words == "" then usage() return end
   local best, best_kind
   for key, name in pairs(NPC) do
     if not kind or kind == key then

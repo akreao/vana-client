@@ -1,5 +1,5 @@
 name = "Monster Notes"
-version = "1.0.3"
+version = "1.0.4"
 description = "A bar across the top of the screen with the zone, the time and weather, and your target: its /check result and the notes you keep on it (the info bar add-ons)."
 permissions = []
 
@@ -15,3 +15,11 @@ default = "Top"
 options = ["Top", "Bottom"]
 label = "Bar Place"
 help = "Across the top of the screen, or above the log."
+
+[commands.mobnote]
+help = "Shows your note on the target."
+args = ""
+forms = [
+  { args = "<text>", help = "Sets it." },
+  { args = "clear", help = "Clears it." },
+]

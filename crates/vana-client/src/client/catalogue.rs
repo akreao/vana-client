@@ -32,6 +32,9 @@ pub struct Entry {
     pub authors: Vec<String>,
     #[serde(default)]
     pub description: String,
+    /// A Lua mod's `[commands]`, as its mod.toml declares them.
+    #[serde(default)]
+    pub commands: indexmap::IndexMap<String, crate::modpack::LuaCommand>,
     /// Archives unpacked in order into the one folder (a later one's files replace an earlier one's), or a mod's files
     /// each put at its `path`.
     pub files: Vec<File>,
@@ -379,6 +382,8 @@ mod tests {
             description: String,
             #[serde(default)]
             authors: Vec<String>,
+            #[serde(default)]
+            commands: serde_json::Map<String, serde_json::Value>,
         }
         fn walk(root: &Path, dir: &Path, out: &mut Vec<String>) {
             for e in std::fs::read_dir(dir).unwrap().flatten() {
@@ -419,7 +424,11 @@ mod tests {
                         serde_json::json!({"path": rel, "url": url, "sha256": sha256(&p).unwrap(), "size": std::fs::metadata(&p).unwrap().len()})
                     })
                     .collect();
-                serde_json::json!({"id": id, "name": m.name, "kind": "lua", "version": m.version, "authors": m.authors, "description": m.description, "files": files})
+                let mut e = serde_json::json!({"id": id, "name": m.name, "kind": "lua", "version": m.version, "authors": m.authors, "description": m.description, "files": files});
+                if !m.commands.is_empty() {
+                    e["commands"] = serde_json::Value::Object(m.commands);
+                }
+                e
             })
             .collect()
     }

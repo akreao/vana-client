@@ -1,5 +1,5 @@
 name = "Entity Styles"
-version = "1.0.3"
+version = "1.0.4"
 description = "Renames characters and monsters on your screen, hides your own name plate, and sets your size (the renamer and name plate add-ons). Only you see it."
 permissions = []
 
@@ -23,3 +23,14 @@ max = 2.0
 step = 0.05
 label = "My Size"
 help = "Draws your character larger or smaller, on your screen only."
+
+[commands.rename]
+help = "Shows a character or monster under another name, on your screen only."
+args = "<name> as <new name>"
+forms = [
+  { args = "<name>", help = "Gives it its own name back." },
+]
+
+[commands.renames]
+help = "Lists the names you changed."
+args = ""

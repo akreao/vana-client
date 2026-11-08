@@ -1,5 +1,5 @@
 name = "Calculator"
-version = "1.0.3"
+version = "1.0.4"
 description = "Works out sums in the chat line or a small window: gil, stacks, prices (the calculator add-ons)."
 permissions = []
 
@@ -8,3 +8,10 @@ type = "bool"
 default = true
 label = "Calculator"
 help = "//calc <sum> prints the answer, e.g. //calc 12 * 99 + 450; //calc alone opens a window. + - * / % ^ and brackets; k and m for thousands and millions."
+
+[commands.calc]
+help = "Opens the calculator window."
+args = ""
+forms = [
+  { args = "<sum>", help = "Works out a sum in the log." },
+]
