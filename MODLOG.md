@@ -22913,6 +22913,16 @@ From FFXiMain.dll (Steven's unpacked copy), full_text.asm, FUN_100a7b80.
   mods filter); a window with `panel = "pending"` holding a `chip` element the client draws as the chip was
   (modern/pending.rs chip). pending.rs and World.asked are gone. Compared with master live (Provoke on Fulchia:
   refused, "You cannot attack that target.", gone after 4 s): the same chip.
+- 2026-11-08: answers matched to the ask, not just its kind. A melee round (category 1) no longer answers a waiting
+  spell, nor another action's start or finish: a 0x028 of ours confirms only with the asked id where it names one (a
+  finish's param; a "ca.." start's first record value; abilities by their 0x01A param, the name-table id - 0x200;
+  an interrupt's "sp.." names none). Items and monster skills (11, a mob skill id) keep the category alone. A
+  battle message of ours is the refusal only if it is one of the request path's refusals for the kind (LSB's
+  controllers and action states): a spell's 34, 35, 40, 47, 49, 71, 78, 155, 313 with its id, its recast's 18 and an
+  interrupt's 16 with none; weapon skills 71, 89, 190, 191, 192, 216, 217 with none; job abilities 4, 5, 78, 87, 88,
+  94 with none or the param; items 56 with none, 62 / 445 with none or the item id. Melee-side lines ("out of range"
+  while a spell waits) and experience, wear-offs and the rest are no kind's refusal. Unit test
+  pending_actions_match_the_ask.
 
 ## itemctrl / moneyctr: the mouse (2026-11-02)
 
@@ -23222,6 +23232,15 @@ still gave `cor`. Both now go through actmotion::sdep_stand.
 - Ours (user, 2026-11-07): retail picks the moving swing once, so reversing mid-swing left it on the old side over the
   new legs. Our character's playing `am?` now turns with the quarter at the same frame (actmotion::Play::rename_current,
   the one-shot too); other actors and retail's pick at the swing's start are unchanged.
+- Dual wield (user, 2026-11-08: "the same problem dual wield swords that I did with a staff"): its moving swings are
+  `ar?` (main hand, `at??` schedulers) and `al?` (off hand, `bt??`), and the turn above matched only `am?`, so a
+  reversal mid-swing left `arr` over `mvl` legs. Ours: combat::turned_swing turns any `a??` moving swing whose
+  scheduler is a moving one (third letter f / r / b / l), back and forth. Test combat::tests::moving_swing_turns.
+- Audit against the current build (30261006_0), from the user's log of RDM / NIN locked on: FUN_100c8bb0 plays
+  mvr / mvb / mvl when vt+0x340 (the strafe lock) is set or vt+0x330 is false (locked on), as lenonk/vana-client#62 has
+  it; FUN_100d6940 picks the standing swing by +0xf8 and the moving one's letter by +0x598 (2 r, 3 b, 4 l, else f),
+  as ours. mvr / mvl themselves turn the body part way toward the step (seen in npc-shot), so a strafe swing's torso
+  (`a?r1`, the upper body only) faces the target over legs running to the side by design.
 
 ## Map Overlay Opacity moves into the Map Overlay mod (2026-11-08)
 

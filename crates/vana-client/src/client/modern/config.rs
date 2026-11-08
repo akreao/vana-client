@@ -3004,7 +3004,8 @@ mod tests {
     use super::*;
 
     /// Every setting of the old Config list (retail's pages and ours, Settings' and Extras', but the classic UI's own
-    /// CLASSIC_ONLY) has exactly one place on the topic pages, every line names a setting that exists, and each page of SUBS opens from one button.
+    /// CLASSIC_ONLY) has exactly one place on the topic pages, every line names a setting that exists, and each page of
+    /// SUBS opens from one button.
     #[test]
     fn every_setting_has_a_page() {
         let items: Vec<Item> = PAGES.iter().flat_map(|p| p.2.iter().copied()).collect();

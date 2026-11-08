@@ -1028,7 +1028,7 @@ pub(super) fn draw(gu: &mut super::super::game_ui::GameUi, w: &World) {
             }
             Kind::Icon { icon, size } => {
                 let s = size * k.0;
-                super::window::icon(gu, Some(w), *icon, x, y, s);
+                super::window::icon(gu, Some(w), *icon, x, y, s, [255; 4]);
                 [x, y, s, s]
             }
             Kind::Bubble { w: bw, h: bh, round, colour, edge, edge_w, tail } => {

@@ -2731,7 +2731,7 @@ fn world_hud(
                 }
                 // A Lua mod's window with the focus takes the keys (docs/lua-mods.md 4.10).
                 _ if world.lua.focused() => {
-                    lua::window_key(world, *key);
+                    lua::window_key(world, *key, modifiers.shift);
                 }
                 // Our settings screen, then the Config windows, take the keys while open (in the modern Config ours is
                 // one of its pages, keyed there).
@@ -3214,7 +3214,15 @@ fn world_hud(
     // Mouse on the Lua mods' windows (the modern UI's panels take egui's).
     if !world.modern
         && let Some(p) = input.pointer
-        && lua::pointer_classic(world, gu, p, input.moved, input.clicked, (input.pressed, input.down, input.released))
+        && lua::pointer_classic(
+            world,
+            gu,
+            p,
+            input.moved,
+            input.clicked,
+            input.right_clicked,
+            (input.pressed, input.down, input.released),
+        )
     {
         gu.hover.set(true);
     }
@@ -3627,8 +3635,20 @@ fn world_hud(
     let party_slots = world.party.slots();
     let rows: Vec<Option<party::Member>> =
         std::iter::once(None).chain(party_slots.slots[1..6].iter().take_while(|m| m.is_some()).cloned()).collect();
-    for m in party_slots.slots.iter().flatten().filter(|m| m.hpp == 100 && m.hp > 0) {
-        world.party_hp_max.insert(m.id, m.hp);
+    for m in party_slots.slots.iter().flatten() {
+        let mut max = world.party_hp_max.get(&m.id).copied();
+        party::track_hp_max(&mut max, m.hp, m.hpp);
+        if let Some(max) = max {
+            world.party_hp_max.insert(m.id, max);
+        }
+    }
+    // Ours: 0x061's exact value stands while it fits.
+    if let (Some((hp, _, _, hpp, _)), Some(st)) = (world.vitals, world.stats.as_ref())
+        && (world.own_hp_max.is_some() || !party::hp_max_fits(st.hp_max, hp, hpp))
+    {
+        let mut max = Some(world.own_hp_max.unwrap_or(st.hp_max));
+        party::track_hp_max(&mut max, hp, hpp);
+        world.own_hp_max = max.filter(|&m| m != st.hp_max);
     }
     let mine = world.vitals.map(|v| (v.3 as f32 / 100.0, v.4 as f32 / 100.0));
     // FUN_101cad00 per draw at retail's 30 fps: a += trunc((t - a) * 0.15), or a = t once that is 0. A row whose member
@@ -7343,8 +7363,11 @@ struct World {
     suggest_sel: Option<usize>,
     /// The open family submenu of the suggestion under the cursor: its cursor in the group.
     suggest_sub: Option<usize>,
-    /// Party and alliance members' HP as last seen at 100 % (their max; the server sends only HP and HP %).
+    /// Party and alliance members' max HP: their HP as last seen at 100 %, or HP / HP % once that no longer fits
+    /// (party::track_hp_max; the server sends only HP and HP %).
     party_hp_max: HashMap<u32, u32>,
+    /// Our max HP when the last 0x061's no longer fits our HP % (a lost buff sends no new 0x061).
+    own_hp_max: Option<u32>,
     /// Where retail's target cursors (anc_l) go this frame, for the modern layer's own: screen fractions, the kind (0
     /// the target, 1 a prompt's saved target, 2 its pick) and the pick's range tint.
     modern_pointers: Vec<(f32, f32, u8, u32)>,
@@ -9617,6 +9640,7 @@ impl App {
                             suggest_sel: None,
                             suggest_sub: None,
                             party_hp_max: HashMap::new(),
+                            own_hp_max: None,
                             modern_pointers: Vec::new(),
                             actor_menu: None,
                             ui_wh: (1.0, 1.0),
@@ -11271,6 +11295,7 @@ impl App {
                 }
                 NetEvent::CharStats(s) => {
                     world.stats = Some(s);
+                    world.own_hp_max = None;
                     status::on_stats(world);
                 }
                 NetEvent::Merits { limit, bits, max } => world.merits = Some((limit, bits, max)),
@@ -16997,28 +17022,23 @@ impl App {
                     // Then a scheduler's motion (event / weapon draw) over the status motion.
                     // +0x80 up (ops 0x07 / 0x08 / 0x59, w.noreact): FUN_100c83c0 returns at once, no status motion re-pick.
                     let held = w.noreact.get(id).is_some_and(|t| *t > hold_now);
-                    // Ours (retail picks it once, FUN_100d46f0): our moving swing (am?) turns with the strafe mid-swing,
-                    // at the same frame, so it keeps matching the legs.
-                    let way = match my_strafe {
-                        1 => Some('f'),
-                        2 => Some('r'),
-                        3 => Some('b'),
-                        4 => Some('l'),
-                        _ => None,
-                    };
-                    if let Some(c) = way.filter(|_| *id == me && a.motion.len() == 3 && a.motion.starts_with("am")) {
-                        let want = format!("am{c}");
-                        if want != a.motion && has(&want) {
-                            if let Some(p) = a.play.as_mut()
-                                && p.current().is_some_and(|m| m.name == a.motion)
-                            {
-                                p.rename_current(&want);
-                            }
-                            if let Some(o) = a.oneshot.as_mut().filter(|o| o.name == a.motion) {
-                                o.name = want.clone();
-                            }
-                            a.motion = want;
+                    // Ours (retail picks it once, FUN_100d46f0): our moving swing (am?, dual wield's ar? / al?) turns
+                    // with the strafe mid-swing, at the same frame, so it keeps matching the legs.
+                    let turned =
+                        (*id == me).then(|| combat::turned_swing(&a.motion, &a.last_attack, my_strafe)).flatten();
+                    if let Some(want) = turned
+                        && has(&want)
+                    {
+                        log::info!(target: "motion_me", "actor {id:#x}: {} turns to {want}", a.motion);
+                        if let Some(p) = a.play.as_mut()
+                            && p.current().is_some_and(|m| m.name == a.motion)
+                        {
+                            p.rename_current(&want);
                         }
+                        if let Some(o) = a.oneshot.as_mut().filter(|o| o.name == a.motion) {
+                            o.name = want.clone();
+                        }
+                        a.motion = want;
                     }
                     let (name, rate, once, blend) = match (&a.oneshot, a.play.as_ref().and_then(|p| p.current())) {
                         (Some(o), _) => (o.name.clone(), o.speed, true, crate::motion::BLEND_TICKS),
@@ -18627,7 +18647,11 @@ impl ApplicationHandler for App {
             WindowEvent::Focused(false) => crate::voice::release(),
             _ => {}
         }
-        // Lua mods see keys and the mouse first, and may take them.
+        // Lua mods see keys and the mouse first, and may take them; a press over a window (a mod's pop-up, a panel) is
+        // the window's, never a HUD element's under it.
+        if let (Phase::World(w), Some(gfx)) = (&mut self.phase, &self.gfx) {
+            lua::input::set_over_ui(w, gfx.egui_ctx.is_pointer_over_egui());
+        }
         if self.opening.is_none()
             && let Phase::World(w) = &mut self.phase
             && lua::input::window_event(w, &event)

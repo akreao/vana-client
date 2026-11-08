@@ -1,5 +1,5 @@
 name = "Hotbars"
-version = "1.0.0"
+version = "1.6.0"
 description = "Hotbars of multi-line macros with their actions' icons and recasts, loaded by main job and sub job."
 authors = ["Arusia"]
 permissions = ["actions", "ui.native"]
@@ -8,7 +8,7 @@ permissions = ["actions", "ui.native"]
 type = "bool"
 default = false
 label = "Hotbars"
-help = "Shows the hotbars and binds their keys. //hb opens the manager."
+help = "Shows the hotbars in an edge window and binds their keys. //hb opens the manager."
 
 [settings.hide_stock]
 type = "bool"
@@ -55,24 +55,6 @@ min = 0
 max = 16
 step = 1
 label = "Slot Gap"
-
-[settings.offset_x]
-type = "int"
-default = 0
-min = -1000
-max = 1000
-step = 10
-label = "Horizontal Offset"
-help = "Move the bars left (negative) or right of the screen's centre."
-
-[settings.offset_y]
-type = "int"
-default = 12
-min = 0
-max = 600
-step = 4
-label = "Distance from Bottom"
-help = "How far the bottom bar sits above the window's bottom edge, or above the chat window when that is under the bars."
 
 [settings.show_keys]
 type = "bool"
