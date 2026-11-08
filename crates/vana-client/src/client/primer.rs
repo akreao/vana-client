@@ -132,7 +132,7 @@ pub fn key(w: &mut World, key: egui::Key, page_mod: bool) {
         match key {
             K::ArrowUp | K::ArrowDown if n > 0 => {
                 l.cursor = if key == K::ArrowDown { (l.cursor + 1) % n } else { (l.cursor + n - 1) % n };
-                l.top = l.top.min(l.cursor).max((l.cursor + 1).saturating_sub(ROWS));
+                crate::client::scrollbar::keep_in_view(&mut l.top, l.cursor, ROWS);
                 w.sounds.push(Ui::Cursor as u32);
             }
             // With 0xa8 the list's page (0x19 / 0x18); plain, the next / previous category with SE 0001 always
@@ -249,7 +249,7 @@ pub(super) fn set_topic(w: &mut World, k: usize) -> bool {
         return false;
     };
     l.cursor = k;
-    l.top = l.top.min(k).max((k + 1).saturating_sub(ROWS));
+    crate::client::scrollbar::keep_in_view(&mut l.top, k, ROWS);
     true
 }
 

@@ -542,7 +542,7 @@ impl WorldStep {
         let moved = k < self.rows.len() && k != self.cursor;
         if moved {
             self.cursor = k;
-            self.top = self.top.min(k).max((k + 1).saturating_sub(WORLD_ROWS));
+            crate::client::scrollbar::keep_in_view(&mut self.top, k, WORLD_ROWS);
         }
         moved
     }

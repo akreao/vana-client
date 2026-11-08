@@ -267,7 +267,8 @@ impl Effects {
         }
     }
 
-    /// Whether every file is in (or failed); the others start loading.
+    /// Whether every file is in (or failed); the others start loading. A fold, not `all`: every file is asked for.
+    #[allow(clippy::unnecessary_fold)]
     pub fn libs_ready(&mut self, files: &[u32]) -> bool {
         files.iter().fold(true, |ok, &f| (self.lib_for(f).is_some() || self.failed.contains(&f)) && ok)
     }
@@ -576,6 +577,13 @@ impl Effects {
         self.equip_calls.retain(|c| c.0 != id);
         self.wading.remove(&id);
         self.foot_folder.remove(&id);
+        // Its shine, colour drives and hide go with it (retail's actor object holds them): a respawn under the same
+        // id (LSB reuses them) started from the old one's.
+        self.shine.remove(&id);
+        self.shine_drives.retain(|d| d.actor != id);
+        self.color_drives.retain(|d| d.actor != id);
+        self.color_guards.retain(|g| g.1 != id);
+        self.hidden_actors.remove(&id);
         for p in &mut self.pending {
             clear(&mut p.a1);
             clear(&mut p.a2);
@@ -3281,7 +3289,6 @@ impl Effects {
         self.loading.iter().filter(|f| self.reg.lib_of(**f).is_none() && !self.failed.contains(f)).count()
     }
 
-    /// fx-sweep between runs: every task, pending start and generator gone.
     /// The shine drives' frame (FUN_10060680, FUN_1005e870): a drive whose task is gone ends there (U / V snap to the
     /// target, the overlay goes if still its own, the colour stays where it was).
     fn step_shine(&mut self, dt: f32, live: &[u64]) {
@@ -3393,6 +3400,7 @@ impl Effects {
             .collect()
     }
 
+    /// fx-sweep between runs: every task, pending start and generator gone.
     pub fn reset_runs(&mut self) {
         self.trails.clear();
         self.shine.clear();

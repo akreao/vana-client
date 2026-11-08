@@ -408,6 +408,8 @@ impl Item {
 pub struct Items {
     lang: Lang,
     paths: Vec<Option<(std::path::PathBuf, usize)>>,
+    /// `noun`'s answers: event and battle text ask on the UI thread.
+    nouns: std::sync::Mutex<std::collections::HashMap<u32, Option<super::names::Noun>>>,
 }
 
 impl Items {
@@ -421,7 +423,7 @@ impl Items {
             .map(|r| index.path(r.3[lang as usize]).map(|p| (stride(&p, r.1 - r.0), p)).map(|(n, p)| (p, n)))
             .collect();
         paths.iter().any(|p| p.is_some()).then_some(()).context("no item files")?;
-        Ok(Items { lang, paths })
+        Ok(Items { lang, paths, nouns: Default::default() })
     }
 
     pub fn lang(&self) -> Lang {
@@ -462,6 +464,21 @@ impl Items {
         let (kind, r) = self.record(id)?;
         let it = parse(&r, kind, self.lang, r.len() == 0x1400);
         (it.id == id).then_some(it)
+    }
+
+    /// The item's noun for message text (`names::item_noun`; the bare name outside English), read once.
+    pub fn noun(&self, id: u32) -> Option<super::names::Noun> {
+        if let Some(n) = self.nouns.lock().ok().and_then(|c| c.get(&id).cloned()) {
+            return n;
+        }
+        let n = self.item(id).map(|it| match self.lang {
+            Lang::En => super::names::item_noun(it),
+            _ => super::names::plain(it.name),
+        });
+        if let Ok(mut c) = self.nouns.lock() {
+            c.insert(id, n.clone());
+        }
+        n
     }
 
     pub fn icon(&self, id: u32) -> Option<(u32, u32, Vec<u8>)> {

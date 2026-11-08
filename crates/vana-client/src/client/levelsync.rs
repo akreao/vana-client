@@ -91,7 +91,7 @@ pub fn key(w: &mut World, key: egui::Key) {
         _ => {}
     }
     if let Some(l) = w.levelsync.as_mut() {
-        l.scroll = l.scroll.min(l.cursor).max((l.cursor + 1).saturating_sub(ROWS));
+        crate::client::scrollbar::keep_in_view(&mut l.scroll, l.cursor, ROWS);
     }
 }
 
@@ -99,7 +99,7 @@ pub fn key(w: &mut World, key: egui::Key) {
 pub(super) fn set_cursor(w: &mut World, k: usize) -> bool {
     let Some(l) = w.levelsync.as_mut().filter(|l| l.cursor != k && k < l.rows.len()) else { return false };
     l.cursor = k;
-    l.scroll = l.scroll.min(k).max((k + 1).saturating_sub(ROWS));
+    crate::client::scrollbar::keep_in_view(&mut l.scroll, k, ROWS);
     true
 }
 

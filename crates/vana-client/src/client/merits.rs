@@ -408,7 +408,7 @@ fn list_key(w: &mut World, key: egui::Key) {
                 && let Some(l) = w.merits_ui.as_mut().and_then(|m| m.list.as_mut())
             {
                 l.cursor = to;
-                l.top = l.top.min(to).max((to + 1).saturating_sub(ROWS));
+                crate::client::scrollbar::keep_in_view(&mut l.top, to, ROWS);
                 w.sounds.push(Ui::Cursor as u32);
             }
         }
@@ -572,7 +572,7 @@ pub(super) fn set_row(w: &mut World, k: usize) -> bool {
         return false;
     };
     l.cursor = k;
-    l.top = l.top.min(k).max((k + 1).saturating_sub(ROWS));
+    crate::client::scrollbar::keep_in_view(&mut l.top, k, ROWS);
     true
 }
 

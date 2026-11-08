@@ -39,7 +39,6 @@ fn rgba(c: [u8; 4]) -> Color32 {
     Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3])
 }
 
-/// A canvas's commands in `r`, clipped to it.
 /// A mod's icon as an egui texture and its UV: an item's, a status's, or a spell's or an ability's list sprite.
 pub(super) fn icon_tex(
     m: &super::Modern,
@@ -62,6 +61,7 @@ pub(super) fn icon_tex(
     }
 }
 
+/// A canvas's commands in `r`, clipped to it.
 fn canvas(
     ui: &egui::Ui,
     m: &super::Modern,

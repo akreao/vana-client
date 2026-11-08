@@ -961,7 +961,6 @@ fn fill(f: &[u8], args: &[Arg]) -> Vec<u8> {
                     Arg::N(n) if zero => out.extend(format!("{n:02}").bytes()),
                     Arg::N(n) => out.extend(n.to_string().bytes()),
                     Arg::C(c) => out.push(*c),
-                    Arg::S(s) => out.extend_from_slice(s),
                 }
             }
             i += len;
@@ -976,7 +975,6 @@ fn fill(f: &[u8], args: &[Arg]) -> Vec<u8> {
 enum Arg {
     N(i32),
     C(u8),
-    S(Vec<u8>),
 }
 
 /// FUN_1013b280 mode 1 (3 for a stone): the short line and its colour (0x80407090 at the top rank).

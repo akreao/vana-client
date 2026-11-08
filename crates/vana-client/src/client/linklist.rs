@@ -178,7 +178,7 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
                 && let Some(l) = w.linklist.as_mut()
             {
                 l.cursor = to;
-                l.top = l.top.min(to).max((to + 1).saturating_sub(ROWS));
+                crate::client::scrollbar::keep_in_view(&mut l.top, to, ROWS);
                 w.sounds.push(Ui::Cursor as u32);
             }
         }
@@ -323,18 +323,18 @@ pub fn view(w: &World, gu: &GameUi) -> Option<View> {
     })
 }
 
-/// The modern layer's mouse: the list's cursor to row `k`; true when it moved.
 /// The members' names while the list has the keys (type-to-search, modern/social.rs).
 pub(super) fn search_names(w: &World) -> Option<Vec<String>> {
     let l = w.linklist.as_ref().filter(|l| l.acts.is_none() && !l.busy && w.confirm.is_none())?;
     Some(l.rows.iter().map(|(r, _)| r.name.clone()).collect())
 }
 
+/// The modern layer's mouse: the list's cursor to row `k`; true when it moved.
 pub fn set_cursor(w: &mut World, k: usize) -> bool {
     let Some(l) = w.linklist.as_mut().filter(|l| l.acts.is_none() && k < l.rows.len()) else { return false };
     let moved = l.cursor != k;
     l.cursor = k;
-    l.top = l.top.min(k).max((k + 1).saturating_sub(ROWS));
+    crate::client::scrollbar::keep_in_view(&mut l.top, k, ROWS);
     moved
 }
 

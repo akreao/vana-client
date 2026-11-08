@@ -4,7 +4,8 @@
 use super::chunks;
 use anyhow::{Result, bail};
 
-/// Chunk types the effect system uses (names from the table at 0x10349110).
+/// Chunk types the effect system uses (names from the table at 0x10349110; the whole table, used or not).
+#[allow(dead_code)]
 pub mod kind {
     pub const END: u8 = 0x00;
     pub const FOLDER: u8 = 0x01;
@@ -335,6 +336,7 @@ impl KeyFrame {
     }
 
     /// FUN_10053520 / FUN_10053740: sampled with the first key's value replaced by `v0`.
+    #[cfg(test)]
     pub fn sample_v0(&self, x: f32, eased: bool, v0: f32) -> f32 {
         let mut k = self.clone();
         if let Some(first) = k.keys.first_mut() {

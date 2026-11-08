@@ -168,7 +168,7 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key, page: bool) {
             }
             K::ArrowUp | K::ArrowDown if n > 0 => {
                 r.cursor = if key == K::ArrowDown { (r.cursor + 1) % n } else { (r.cursor + n - 1) % n };
-                r.top = r.top.min(r.cursor).max((r.cursor + 1).saturating_sub(VISIBLE));
+                crate::client::scrollbar::keep_in_view(&mut r.top, r.cursor, VISIBLE);
                 w.sounds.push(Ui::Cursor as u32);
             }
             K::ArrowLeft | K::ArrowRight if page => {
@@ -524,7 +524,7 @@ pub(super) fn set_rank(w: &mut World, k: usize) -> bool {
         return false;
     };
     r.cursor = k;
-    r.top = r.top.min(k).max((k + 1).saturating_sub(VISIBLE));
+    crate::client::scrollbar::keep_in_view(&mut r.top, k, VISIBLE);
     true
 }
 
