@@ -11979,7 +11979,7 @@ impl App {
         for id in spops {
             world.effects.on_scheduler(id, id, u32::from_le_bytes(*b"spop"));
         }
-        search::poll(world);
+        search::poll(world, self.game_ui.as_ref());
         friends::poll(world);
         polmail::update(world);
         world.line_hist.track(world.typing);
