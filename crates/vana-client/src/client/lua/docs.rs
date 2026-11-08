@@ -1650,7 +1650,7 @@ pub const FUNCS: &[Func] = &[
     Func {
         ns: "res",
         name: "ability",
-        doc: "An ability's record by its name-table id (weapon skills 0..0x1ff, job abilities 0x200.., pet commands 0x400..): name, description, kind, cost, recast_id, recast (the base recast in seconds, before gear, merits and job points, as LandSandBoat has it; the ability files hold none, so nil for an ability without one), targets, tp, level.",
+        doc: "An ability's record by its name-table id (weapon skills 0..0x1ff, job abilities 0x200.., pet commands 0x400..): name, description, kind, cost, recast_id, recast (the base recast in seconds, before gear, merits and job points, as LandSandBoat has it; the ability files hold none, so nil for an ability without one), targets, tp, sub (the sub-list a row opens, as Phantom Roll's or Blood Pact: Rage's; 0 for an ability itself), level.",
         params: &[("id", "integer", "")],
         ret: "table?",
     },

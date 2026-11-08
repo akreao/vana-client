@@ -13,6 +13,10 @@ use std::sync::{Arc, Mutex};
 /// This fork's releases (release/publish.sh makes them): a build never offers upstream's binary in place of ours.
 pub const RELEASE_REPO: &str = "akreao/vana-client";
 
+/// The branch the mod catalogue and the standard mods' files are read from: this fork's own (its mod fixes are tested
+/// there before they go upstream), not the upstream mirror on master.
+pub const CATALOGUE_BRANCH: &str = "custom";
+
 /// The release asset for this platform. A build for a platform no release carries (macOS, Linux on ARM so far) finds
 /// none and is never offered another platform's binary.
 pub fn asset_name() -> &'static str {
