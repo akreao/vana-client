@@ -108,7 +108,7 @@ pub(in crate::client) struct WinReq {
 }
 
 /// The behaviour switches (client.set_option) by name; false for an unknown name or value.
-pub(super) const OPTIONS: [&str; 21] = [
+pub(super) const OPTIONS: [&str; 22] = [
     "macro_palette_delay",
     "ah_result_delay",
     "equipset_delay",
@@ -118,6 +118,7 @@ pub(super) const OPTIONS: [&str; 21] = [
     "clear_colour",
     "ambient",
     "minimap_span",
+    "map_opacity",
     "move_lock",
     "all_maps",
     "dead_commands",
@@ -197,6 +198,10 @@ fn set_option(w: &mut World, name: &str, v: &serde_json::Value) -> bool {
             }
             None => return false,
         },
+        ("map_opacity", _) => match v.as_f64() {
+            Some(k) => w.map_opacity = (k as f32).clamp(0.0, 1.0),
+            None => return false,
+        },
         _ => return false,
     }
     true
@@ -205,7 +210,7 @@ fn set_option(w: &mut World, name: &str, v: &serde_json::Value) -> bool {
 /// Whether a value suits a switch: a boolean, a number, or a colour ({r, g, b} or false).
 pub(super) fn option_value_ok(name: &str, v: &serde_json::Value) -> Result<(), &'static str> {
     match name {
-        "cutscene_speed" | "animation_rate" | "send_interval" | "minimap_span" => {
+        "cutscene_speed" | "animation_rate" | "send_interval" | "minimap_span" | "map_opacity" => {
             v.as_f64().map(|_| ()).ok_or("a number")
         }
         "clear_colour" | "ambient" => rgb_of(v).map(|_| ()).ok_or("a colour {r, g, b} (0..255), or false"),
@@ -237,6 +242,7 @@ pub(super) fn option(w: &World, name: &str) -> Option<serde_json::Value> {
         "clear_colour" => rgb_json(w.opts.clear),
         "ambient" => rgb_json(w.opts.ambient),
         "minimap_span" => json!(w.minimap_span),
+        "map_opacity" => json!(w.map_opacity),
         "send_interval" => json!(match w.net.stats.send_ms.load(std::sync::atomic::Ordering::Relaxed) {
             0 => 400,
             n => n,
@@ -817,6 +823,8 @@ impl Host {
             let data = data_dir().join(&vm.manifest.id);
             let file = Self::char_file(Some(w));
             vm.st.borrow_mut().char_file = file.clone();
+            // Its character-scoped settings declared `from` the config waited for a character (migrate_settings).
+            migrate_settings(&vm.manifest, &data, file.as_deref());
             vm.st.borrow_mut().settings = load_settings(&vm.manifest, &data, file.as_deref());
             force_on(&vm.manifest, &mut vm.st.borrow_mut().settings);
             let stored = file.map_or(serde_json::Value::Null, |f| read_json(&data.join(f)));
@@ -1659,8 +1667,9 @@ fn apply(w: &mut World, gu: Option<&super::game_ui::GameUi>, op: Op) {
         Op::Shot(name) => w.lua.shot = Some(name),
         Op::Paste => w.lua.paste_wanted = true,
         Op::Option(mod_id, name, v) => {
-            // The minimap's zoom stays as the wheel's does; the rest go back when the mod unloads.
-            if set_option(w, &name, &v) && name != "minimap_span" {
+            // The minimap's zoom stays as the wheel's does, the maps' opacity as the player set it; the rest go back
+            // when the mod unloads.
+            if set_option(w, &name, &v) && !["minimap_span", "map_opacity"].contains(&name.as_str()) {
                 w.lua.opt_owners.insert(name, mod_id);
             }
         }
@@ -4779,7 +4788,8 @@ fn migrate_regime(w: &World, data: &std::path::Path, char_file: &str) {
 }
 
 /// Settings declared `from` a client config field (a bundled mod's, replacing an extra that kept its value there) and
-/// not set yet take that field's value, written to their scope's file so the config may drop it.
+/// not set yet take that field's value, written to their scope's file so the config may drop it. A character-scoped
+/// one waits for a character (it would go to the account file, which every character falls back to).
 fn migrate_settings(m: &manifest::Manifest, data: &std::path::Path, char_file: Option<&str>) {
     if m.settings.values().all(|d| d.from.is_empty()) {
         return;
@@ -4790,6 +4800,8 @@ fn migrate_settings(m: &manifest::Manifest, data: &std::path::Path, char_file: O
         _ => data.join("settings.json"),
     };
     for (key, character, old) in migrations(m, &config, |key, character| read_json(&file(character)).get(key).is_some())
+        .into_iter()
+        .filter(|(_, character, _)| !character || char_file.is_some())
     {
         let file = file(character);
         let mut v = read_json(&file);
@@ -4978,6 +4990,8 @@ impl Host {
             if self.vms.iter().any(|v| v.manifest.id == m.id) {
                 continue;
             }
+            // A setting declared `from` the config shows the player's value before the mod first loads too.
+            migrate_settings(&m, &data_dir().join(&m.id), char_file.as_deref());
             let settings = load_settings(&m, &data_dir().join(&m.id), char_file.as_deref());
             let given: Vec<String> = g
                 .get(&m.id)

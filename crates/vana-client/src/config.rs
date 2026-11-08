@@ -197,9 +197,6 @@ pub struct Config {
     /// ("mod:<mod>:<window>") or a mod's HUD window ("hud:<mod>:<window>"). It wins over a mod's own.
     #[serde(default)]
     pub window_opacity: std::collections::BTreeMap<String, f32>,
-    /// Extra: how opaque the map overlay's map is, 0..1: the drawing code applies it to HUD maps (the Map Overlay
-    /// mod's), and the minimap's marker shades by it (the two markers alike).
-    pub map_overlay_opacity: f32,
     /// Not retail (Settings' Lamp Lights): real point lights at the zones' lamps in place of their baked lamplight
     /// (client/lamps.rs).
     pub lamp_lights: bool,
@@ -462,7 +459,6 @@ impl Default for Config {
             send_interval: 400,
             party_tp: true,
             window_opacity: Default::default(),
-            map_overlay_opacity: 0.6,
             gm_window: false,
             notes_seen: env!("CARGO_PKG_VERSION").into(),
             lamp_lights: true,
