@@ -1,5 +1,6 @@
 -- The zone map over the game (the map add-ons). Ctrl or Alt + O opens and closes it: in a box in the middle of the
--- screen at the Map Overlay Opacity (the client applies it to HUD maps), what the map window shows where we stand (the map with our marker; retail's NO MAP while
+-- screen at its Map Overlay Opacity (the client option map_opacity, which the client applies to HUD maps and the
+-- minimap's marker), what the map window shows where we stand (the map with our marker; retail's NO MAP while
 -- the map is not ours, or not ours yet), the error sound where no map exists. A left drag pans it, the wheel zooms at
 -- the pointer (the whole map up to 8x), Escape closes it. It follows us across zones and map pages.
 
@@ -87,8 +88,9 @@ local function toggle()
   end
 end
 
--- The keys while the overlay is switched on in Extras.
+-- The keys while the overlay is switched on in Extras; the opacity whether or not.
 local function apply()
+  client.set_option("map_opacity", settings.get("opacity"))
   if settings.get("on") then
     binds.set("^o", toggle)
     binds.set("!o", toggle)

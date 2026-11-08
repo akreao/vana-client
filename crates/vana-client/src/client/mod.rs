@@ -7288,8 +7288,8 @@ struct World {
     log_find: Option<String>,
     /// The main menu's map window, and the key item bits by word (table * 16 + word, s2c 0x055).
     map: Option<map::MapWin>,
-    /// Extra: the map overlay's opacity (HUD maps take it unless a mod gives its own; the minimap's marker shades by
-    /// it) and the synthesis amount.
+    /// The HUD maps' opacity (they take it unless a mod gives its own; the minimap's marker shades by it): the Map
+    /// Overlay mod's Map Overlay Opacity, through client.set_option("map_opacity").
     map_opacity: f32,
     /// Per-window opacity the player set (config `window_opacity`).
     window_opacity: std::collections::BTreeMap<String, f32>,
@@ -8403,7 +8403,6 @@ impl App {
             w.modern = self.cfg.modern_ui;
             w.condense = self.cfg.modern_condense;
             w.chat.set_fold(self.cfg.modern_ui && self.cfg.modern_condense);
-            w.map_opacity = self.cfg.map_overlay_opacity;
             w.window_opacity = self.cfg.window_opacity.clone();
             w.timers_dock = self.cfg.timers_dock;
             (w.minimap_dock, w.minimap_size) = (self.cfg.minimap_dock, self.cfg.minimap_size);
@@ -9385,7 +9384,7 @@ impl App {
                             follow: None,
                             translating: false,
                             last_proposer: String::new(),
-                            map_opacity: self.cfg.map_overlay_opacity,
+                            map_opacity: map::OPACITY,
                             window_opacity: self.cfg.window_opacity.clone(),
                             stamp_all_lines: false,
                             skillchain: Default::default(),
