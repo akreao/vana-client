@@ -29,6 +29,10 @@ local SHADE = { 0, 0, 0, 165 }
 local UNUSABLE = { 6, 8, 14, 165 }
 local KEY_BG = { 0, 0, 0, 150 }
 local GLOW = { 255, 214, 120 }
+local GHOST = { 255, 255, 255, 140 }
+local GHOST_BG = { 20, 24, 38, 120 }
+local DROP = { 255, 214, 120, 200 }
+local DRAGGED = { 0, 0, 0, 120 }
 local BTN_BG = { 26, 30, 46, 225 }
 local BTN_HOVER = { 58, 66, 96, 245 }
 local BTN_OFF = { 26, 30, 46, 90 }
@@ -47,7 +51,7 @@ local geo = nil        -- the layout: size, gap, slots, bars, width, button size
 local eff, main, sub = nil, nil, nil
 local hover = nil      -- "b:i", "plus" or "minus" under the pointer
 local flash = {}       -- "b:i" -> os.clock() until its fire flash ends
-local drag = nil       -- {b, i} a drag started on
+local drag = nil       -- {b, i, x, y}: the slot a drag started on and where the pointer is now
 local suggested = {}   -- "spell:<id>" / "ability:<id>" the battle menu suggests now
 local shades = {}      -- "b:i" -> {left, frac, usable} from the last recast tick
 
@@ -190,6 +194,13 @@ local function draw()
         if flash[key] and flash[key] > now then
           add({ type = "rect", x = x, y = y, w = s, h = s, round = round, colour = FLASH })
         end
+        if drag and drag.x then
+          if drag.b == b and drag.i == i then
+            add({ type = "rect", x = x, y = y, w = s, h = s, round = round, colour = DRAGGED })
+          elseif key_of(hit(drag.x, drag.y)) == key then
+            add({ type = "rect", x = x - 1, y = y - 1, w = s + 2, h = s + 2, round = round + 1, line = 2, colour = DROP })
+          end
+        end
         if macro then
           local name = data.trim(macro.name)
           add({ type = "tip", x = x, y = y, w = s, h = s, title = name ~= "" and name or keys.hint(b, i),
@@ -213,6 +224,22 @@ local function draw()
     add({ type = "text", x = bx + geo.btn / 2, y = by + geo.btn * 0.08, text = label, size = geo.btn / 18,
       font = "bold", align = "center", colour = live and BTN_TEXT or BTN_TEXT_OFF })
     add({ type = "tip", x = bx, y = by, w = geo.btn, h = geo.btn, title = "", text = tip })
+  end
+  -- The dragged slot: a translucent copy under the pointer.
+  if drag and drag.x then
+    local cell = eff[drag.b] and eff[drag.b][drag.i]
+    local macro = cell and cell.macro
+    local act = macro and actions.of(macro)
+    local gx, gy = drag.x - s / 2, drag.y - s / 2
+    add({ type = "rect", x = gx, y = gy, w = s, h = s, round = round, colour = GHOST_BG })
+    if act then
+      local isz = math.floor(s * 0.7)
+      add({ type = "icon", x = gx + (s - isz) / 2, y = gy + s * 0.08, size = isz, kind = act.kind, id = act.id,
+        colour = GHOST })
+    elseif macro then
+      add({ type = "text", x = gx + s / 2, y = gy + s / 2 - 8 * k, text = data.display_label(macro):match("^[^\n]*"),
+        size = 0.9 * k, align = "center", colour = GHOST, outline = { 0, 0, 0, 120 } })
+    end
   end
   ui.update(WIN, "c", { h = h, draw = d })
 end
@@ -295,11 +322,17 @@ local function on_event(_, e)
     end
   elseif e.kind == "drag_start" then
     local c = hit(e.x, e.y)
-    drag = type(c) == "table" and c or nil
+    local cell = type(c) == "table" and eff[c.b] and eff[c.b][c.i]
+    drag = cell and cell.macro and { b = c.b, i = c.i, x = e.x, y = e.y } or nil
+    if drag then draw() end
+  elseif e.kind == "drag" and drag then
+    drag.x, drag.y = e.x, e.y
+    draw()
   elseif e.kind == "drag_end" and drag then
     local to = hit(e.x, e.y)
     local from = drag
     drag = nil
+    draw()
     if type(to) ~= "table" or (to.b == from.b and to.i == from.i) or not main then return end
     local _, a = data.resolve(main, sub, from.b, from.i)
     local _, b = data.resolve(main, sub, to.b, to.i)
