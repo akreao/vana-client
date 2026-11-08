@@ -12808,8 +12808,9 @@ impl App {
             0
         } else if lock_target.is_some() {
             // FUN_100a7b80 (0x100a7ef6..0x100a7f2d): a 2 <-> 4 flip against last frame's quarter holds forward (motion,
-            // facing and FUN_100a8000's speed) for a short while.
-            let d = crate::motion::strafe_dir(forward, step);
+            // facing and FUN_100a8000's speed) for a short while. Ours: held at the 45 degree edge, as the right drag's
+            // is: W + D circling flipped run / mvr every frame or two on float noise.
+            let d = crate::motion::strafe_dir_held(forward, step, world.my_strafe);
             crate::motion::lock_flip_guard(world.my_strafe, d, &mut world.lock_flip, dt * 60.0)
         } else if face_cam {
             // The same facing as my_strafe below: the float one while the byte is still ours.

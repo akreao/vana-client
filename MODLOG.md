@@ -23197,3 +23197,14 @@ still gave `cor`. Both now go through actmotion::sdep_stand.
   the camera as the left arrow did and the X invert setting read backwards. Both third-person branches (free and
   locked) now take -x: a drag turns as the camera keys do, and Mouse/Cam.'s X invert flips both, as Y already did.
   First person (0x8d) already matched its keys and is unchanged.
+
+## Lock-on: the strafe quarter held at the 45 degree edge (ours, 2026-11-07)
+
+- User report: circling a locked target with a staff, the body often pointed one way and the legs another. The log
+  showed `mvr` and `run` swapping every 30 to 100 ms while moving (status 1, ratio 1): W + D (or a stick on the
+  diagonal) puts the locked step exactly on the edge between quarters 1 and 2, and update_movement re-reads it from
+  float vectors each frame, so noise picked a side every frame or two. A staff's `run` carries the body far from its
+  `mvr` (the two-handed stance turns the torso), so the endless blend between them twisted it against the legs.
+- Ours: the locked path takes motion::strafe_dir_held (the right drag's hold since lenonk/vana-client#95) before
+  FUN_100a7b80's 2 <-> 4 flip guard. Test motion::tests::locked_diagonal_holds. *(Retail's FUN_100a80d0 has no hold;
+  whether its keyboard diagonal flickers too is not known.)*
