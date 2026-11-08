@@ -2322,6 +2322,13 @@ impl Effects {
                         if let Some(c) = self.elems[e as usize].as_mut() {
                             c.child = Some(ci);
                         }
+                        // Its slot now, before it runs: a clone it emits at once reads this frame through it
+                        // (FUN_100473f0 reads the generator's +0xa4 directly in retail).
+                        if let Some(x) = self.insts[ci].as_ref() {
+                            let (m, a, b, wgt, ss, ms) =
+                                (x.matrix, x.scale_a, x.scale_b, x.weather, x.size_scaled, x.mslot);
+                            self.put_slot(ms, m, a, b, wgt, ss);
+                        }
                         self.update_instance(ci, f, acts);
                     }
                 }
