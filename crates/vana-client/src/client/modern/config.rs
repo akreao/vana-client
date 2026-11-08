@@ -268,6 +268,9 @@ const PAGES: [(&str, &str, &[Item]); 15] = [
     ("System", "Mods", &[]),
 ];
 
+/// The entry that opens the Controller window (modern/padwin.rs) rather than a page; its lines stay for the search.
+const CONTROLLER: &str = "Controller";
+
 /// The page shown: a page opened from another while one is, else the page chosen in the list.
 fn current(c: &ConfigUi) -> Entry {
     if let Some(s) = c.m_sub.and_then(|k| SUBS.get(k)) {
@@ -2518,6 +2521,17 @@ pub fn draw(p: &mut Panels, w: &mut World) {
                 }
                 let first = !cats.is_empty() as usize;
                 match page {
+                    // Controller is a button: the page only says what it opens.
+                    Entry::Topic if PAGES[entry].1 == CONTROLLER && find.is_none() => {
+                        ui.label(egui::RichText::new("Button assignments, the gamepad options and the stick dead zone are in the Controller window, Vana Client's copy of the retail Gamepad Config tool.").size(m.theme.small).color(m.theme.color("text")));
+                        ui.add_space(8.0);
+                        let b = Btn { cursor: true, ..Default::default() };
+                        if kit::clicked(&kit::button(ui, m, "Open Controller Window \u{203a}", 0.0, b), b) {
+                            click = Some(Click::Entry(entry));
+                        }
+                        detail = Detail { name: CONTROLLER.into(), text: "Opens the Controller window: press a button on the pad to give it to a function, as retail's Gamepad Config tool does.".into(), facts: vec![("Retail", "Config > Gamepad starts the Gamepad Config tool".into())] };
+                        help = "Enter: open the Controller window. Escape: close.".into();
+                    }
                     Entry::Topic => {
                         let focus = (open && c.m_sub.is_none()).then_some(row);
                         if let (Some(f), true) = (find.as_ref(), all.is_empty()) {
@@ -2753,6 +2767,16 @@ fn nav_list(ui: &mut Ui, m: &super::Modern, entry: usize, open: bool, click: &mu
                 FontId::proportional(m.theme.ui),
                 ink,
             );
+            // Controller opens its own window: marked as a button that leads on.
+            if *label == CONTROLLER {
+                ui.painter().text(
+                    pos2(r.max.x - 12.0, r.center().y),
+                    Align2::RIGHT_CENTER,
+                    "›",
+                    FontId::proportional(m.theme.ui),
+                    m.theme.color("muted"),
+                );
+            }
             if resp.clicked() {
                 *click = Some(Click::Entry(k));
             }
@@ -2870,6 +2894,14 @@ fn mods_help(s: &SettingsUi) -> String {
 
 /// The list's entry `k` taken: its page gets the keys (Extras / Settings ours: their state takes them from here).
 fn choose(w: &mut World, k: usize) {
+    // Controller is a button: it opens the Controller window (padwin.rs), the list keeping its cursor.
+    if PAGES.get(k).is_some_and(|p| p.1 == CONTROLLER) {
+        if let Some(c) = w.config.as_mut() {
+            (c.m_entry, c.m_open) = (k, false);
+        }
+        super::padwin::open(w);
+        return;
+    }
     let Some(c) = w.config.as_mut() else { return };
     (c.m_entry, c.m_open, c.m_row, c.m_keys, c.m_sub, c.m_find) = (k, true, 0, None, None, None);
     let out = configui::Out { sounds: vec![Se::Select], ..Default::default() };
