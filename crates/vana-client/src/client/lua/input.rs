@@ -262,6 +262,8 @@ pub(super) struct State {
     taken_keys: HashSet<K>,
     taken_buttons: Vec<MouseButton>,
     hud_press: Option<HudPress>,
+    /// The pointer is over a window or panel (egui's, last frame): HUD elements under it take no press.
+    pub over_ui: bool,
     /// The HUD element under the pointer (one with a handler or a tip) and since when.
     pub hud_hover: Option<(String, String, std::time::Instant)>,
     /// The game controller: buttons held (bits by PAD_BUTTONS' order), those a mod took, sticks and triggers
@@ -303,6 +305,11 @@ fn button_name(b: MouseButton) -> &'static str {
         MouseButton::Forward => "forward",
         MouseButton::Other(_) => "other",
     }
+}
+
+/// Whether the pointer is over a window or panel now (egui's): HUD elements under it take no press.
+pub(in crate::client) fn set_over_ui(w: &mut World, over: bool) {
+    w.lua.input.borrow_mut().over_ui = over;
 }
 
 /// A window event before egui and the game see it: true when a mod took it (a filter with input.capture, or a bind).
@@ -446,7 +453,10 @@ pub(super) fn hud_drag(host: &mut super::Host, x: f64, y: f64) {
 /// A left or right press at the pointer on a HUD element with a handler: the element's (true), and its release too.
 pub(super) fn hud_press(host: &mut super::Host, button: MouseButton) -> bool {
     let st = host.input.clone();
-    if !matches!(button, MouseButton::Left | MouseButton::Right) || st.borrow().hud_press.is_some() {
+    if !matches!(button, MouseButton::Left | MouseButton::Right)
+        || st.borrow().hud_press.is_some()
+        || st.borrow().over_ui
+    {
         return false;
     }
     let (x, y) = st.borrow().cursor;

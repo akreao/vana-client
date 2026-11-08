@@ -18628,7 +18628,11 @@ impl ApplicationHandler for App {
             WindowEvent::Focused(false) => crate::voice::release(),
             _ => {}
         }
-        // Lua mods see keys and the mouse first, and may take them.
+        // Lua mods see keys and the mouse first, and may take them; a press over a window (a mod's pop-up, a panel) is
+        // the window's, never a HUD element's under it.
+        if let (Phase::World(w), Some(gfx)) = (&mut self.phase, &self.gfx) {
+            lua::input::set_over_ui(w, gfx.egui_ctx.is_pointer_over_egui());
+        }
         if self.opening.is_none()
             && let Phase::World(w) = &mut self.phase
             && lua::input::window_event(w, &event)
