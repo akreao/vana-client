@@ -1,6 +1,6 @@
 name = "Hotbars"
-version = "1.0.1"
-description = "Hotbars of multi-line macros with their actions' icons and recasts, loaded by main job and sub job. Commands: //hb (opens the manager), //hb show | hide | run <bar> <slot> | reload | wipestock | restorestock."
+version = "1.0.2"
+description = "Hotbars of multi-line macros with their actions' icons and recasts, loaded by main job and sub job.\n\n//hb (opens the manager)\n//hb show\n//hb hide\n//hb run <bar> <slot>\n//hb reload\n//hb wipestock\n//hb restorestock"
 authors = ["Arusia"]
 permissions = ["actions", "ui.native"]
 

@@ -1,6 +1,6 @@
 name = "NPC Errands"
-version = "1.0.1"
-description = "Walks an NPC's menus by command, keeps such errands by name, and changes jobs at a moogle by command (the NPC shop and job change add-ons). Commands: //npc <name>: <option> > <option> > ..., //errand <name> | save <name> <npc>: <option> > ... | list | delete <name>, //job <main>[/<sub>]."
+version = "1.0.2"
+description = "Walks an NPC's menus by command, keeps such errands by name, and changes jobs at a moogle by command (the NPC shop and job change add-ons).\n\n//npc <name>: <option> > <option> > ...\n//errand <name>\n//errand save <name> <npc>: <option> > ...\n//errand list\n//errand delete <name>\n//job <main>[/<sub>]"
 permissions = ["actions"]
 
 [settings.on]

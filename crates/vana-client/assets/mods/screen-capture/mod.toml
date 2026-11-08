@@ -1,6 +1,6 @@
 name = "Screen Capture"
-version = "1.0.1"
-description = "Screenshots filed in folders by character and zone, and video recording by command (the screenshot organizer and capture add-ons). Commands: //shot, //record, //record stop."
+version = "1.0.2"
+description = "Screenshots filed in folders by character and zone, and video recording by command (the screenshot organizer and capture add-ons).\n\n//shot\n//record\n//record stop"
 permissions = []
 
 [settings.on]

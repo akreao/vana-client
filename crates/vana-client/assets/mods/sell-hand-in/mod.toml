@@ -1,6 +1,6 @@
 name = "Sell and Hand In"
-version = "1.0.1"
-description = "Sells items by name to the open shop and hands items to your target NPC by command (the sell and trade add-ons). Commands: //sell <item> [all], //trade <item> [count], <item> [count]..."
+version = "1.0.2"
+description = "Sells items by name to the open shop and hands items to your target NPC by command (the sell and trade add-ons).\n\n//sell <item> [all]\n//trade <item> [count], <item> [count]..."
 permissions = ["actions"]
 
 [settings.on]

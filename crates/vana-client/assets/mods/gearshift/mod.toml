@@ -1,6 +1,6 @@
 name = "Gearshift"
-version = "0.1.1"
-description = "Swaps gear around your actions from GearSwap job files and LuAshitacast and Ashitacast XML profiles, unchanged (the gear-swap add-ons). Commands: //gs, //lac, //ac and //spellcast take each add-on's own commands; //gearshift shows the loaded file, //gearshift reload reads it again."
+version = "0.1.2"
+description = "Swaps gear around your actions from GearSwap job files and LuAshitacast and Ashitacast XML profiles, unchanged (the gear-swap add-ons).\n\n//gs, //lac, //ac, //spellcast: each add-on's own commands\n//gearshift shows the loaded file\n//gearshift reload reads it again"
 permissions = ["packets.read", "packets.write", "automation"]
 
 [settings.on]

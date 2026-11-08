@@ -1,6 +1,6 @@
 name = "Blue Magic Sets"
-version = "1.0.1"
-description = "Saves your set blue magic as named sets and puts a set back with one command; a codex of every blue spell and what teaches it; a call when a monster readies a move that teaches one you lack (the blue magic add-ons). Commands: //blu save <name>, //blu <name>, //blu list, //blu delete <name>, //blu codex."
+version = "1.0.2"
+description = "Saves your set blue magic as named sets and puts a set back with one command; a codex of every blue spell and what teaches it; a call when a monster readies a move that teaches one you lack (the blue magic add-ons).\n\n//blu save <name>\n//blu <name>\n//blu list\n//blu delete <name>\n//blu codex"
 permissions = ["actions"]
 
 [settings.on]

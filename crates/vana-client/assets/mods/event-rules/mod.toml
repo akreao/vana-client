@@ -1,6 +1,6 @@
 name = "Event Rules"
-version = "1.0.1"
-description = "Runs your command lines when things happen: a zone, a job, an effect gained or lost, HP or MP low, a word in chat, a new day or weather (the auto-exec add-ons). Commands: //rules (lists them), //rules reload."
+version = "1.0.2"
+description = "Runs your command lines when things happen: a zone, a job, an effect gained or lost, HP or MP low, a word in chat, a new day or weather (the auto-exec add-ons).\n\n//rules (lists them)\n//rules reload"
 permissions = ["automation"]
 
 [settings.on]
