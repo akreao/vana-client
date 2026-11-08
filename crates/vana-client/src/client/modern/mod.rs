@@ -1504,7 +1504,8 @@ impl Modern {
     }
 
     /// `key`'s texture, made from `make`'s image the first time (None: there is none, remembered too); kept while it
-    /// is drawn.
+    /// is drawn. The id is for this frame only: one not drawn for IMAGE_KEEP is freed, so ask again each frame rather
+    /// than keep it.
     fn texture(
         &self,
         ctx: &Context,

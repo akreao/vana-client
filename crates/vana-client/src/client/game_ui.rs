@@ -349,6 +349,8 @@ pub struct GameUi {
     stale: Vec<String>,
     /// Images made for a while (name plates' rasters): when each was last drawn; unseen for TEMP_KEEP, stale.
     temp_seen: std::collections::HashMap<String, std::time::Instant>,
+    /// When temp_seen was last looked over.
+    temp_swept: std::time::Instant,
     /// The startup images a style replaced, for reset_style.
     style_saved: std::collections::HashMap<String, crate::dat::ui::UiImage>,
     /// When each scrolling text (scroll_text) first showed.
@@ -473,6 +475,7 @@ impl GameUi {
             replaced: Vec::new(),
             stale: Vec::new(),
             temp_seen: Default::default(),
+            temp_swept: std::time::Instant::now(),
             style_saved: Default::default(),
             scroll_seen: Default::default(),
             hover: Default::default(),
@@ -811,6 +814,13 @@ impl GameUi {
                             && let Some((w, h, rgba)) = super::chaticons::get(k)
                         {
                             self.image(&name, w, h, (*rgba).clone());
+                            // The pixels it had before a mod reload changed them go once nothing draws them.
+                            if let Some(old) = super::chaticons::previous_texture(k)
+                                && self.has_image(&old)
+                                && !self.stale.contains(&old)
+                            {
+                                self.stale.push(old);
+                            }
                         }
                         let (w, h) = icon_size(k);
                         self.image_rect(&name, x, y + 1.0, w, h, [1.0; 4]);
@@ -2510,8 +2520,10 @@ impl GameUi {
             r
         });
         // Name plates not drawn for a while go too (every name ever seen stayed for the session).
+        // Looked over once a second (a scan of every plate each frame otherwise).
         let now = std::time::Instant::now();
-        if self.temp_seen.values().any(|t| now.duration_since(*t) > TEMP_KEEP) {
+        if now.duration_since(self.temp_swept) >= std::time::Duration::from_secs(1) {
+            self.temp_swept = now;
             let old: Vec<String> = self
                 .temp_seen
                 .iter()
