@@ -123,6 +123,8 @@ pub struct BattleText {
     group10: Option<Messages>,
     /// Group 0xc: menu and command lines ("Set #%d equipped.", ...).
     group12: Option<Messages>,
+    /// Group 0x12: the job abbreviations (1 WAR ..).
+    jobs: Option<Messages>,
     days: Option<Messages>,
     /// Group 0x11: the moon phase names.
     moons: Option<Messages>,
@@ -247,6 +249,7 @@ impl BattleText {
             group9: super::msg::group_file(ffximain, 1, 9).and_then(msgs),
             group10: super::msg::group_file(ffximain, 1, 10).and_then(msgs),
             group12: super::msg::group_file(ffximain, 1, 0xc).and_then(msgs),
+            jobs: super::msg::group_file(ffximain, 1, 0x12).and_then(msgs),
             days: super::msg::group_file(ffximain, 1, 0x10).and_then(msgs),
             moons: super::msg::group_file(ffximain, 1, 0x11).and_then(msgs),
             compass: super::msg::group_file(ffximain, 1, 0xf).and_then(msgs),
@@ -439,6 +442,11 @@ impl BattleText {
 
     pub fn group12(&self, id: usize) -> Option<String> {
         self.group12.as_ref()?.get(id)
+    }
+
+    /// Group 0x12 entry `job` (FUN_10152f20(0x12, job)).
+    pub fn job_name(&self, job: usize) -> Option<String> {
+        self.jobs.as_ref()?.get(job)
     }
 
     /// A group 10 string's bytes, its FA 40 codes kept (for dat::msgfmt).
