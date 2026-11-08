@@ -213,13 +213,16 @@ fn panel(
         let mut clicks: Vec<Click> = Vec::new();
         let title = (!win.title.is_empty()).then_some(Title { icon: None, text: &win.title, note: None, name: false });
         let frame = if win.framed { "window_normal" } else { "none" };
-        // A modal window is centred (on its last height), a popup at its anchor.
+        // A modal window is centred (on its last height), a popup at its anchor: kept on screen, and opened upward
+        // (its bottom at the pointer) when it would run past the bottom.
+        let last_h = ctx.data(|d| d.get_temp::<f32>(egui::Id::unique(("mod modal h", pid)))).unwrap_or(120.0);
         let at = if let Some((ax, ay)) = win.anchor {
             let k = ctx.pixels_per_point();
-            Some(pos2(ax / k, ay / k))
+            let (p, screen) = (pos2(ax / k, ay / k), ctx.content_rect());
+            let y = if p.y + last_h > screen.max.y { p.y - last_h } else { p.y };
+            Some(pos2(p.x.min(screen.max.x - width).max(screen.min.x), y.min(screen.max.y - last_h).max(screen.min.y)))
         } else if win.modal {
-            let h = ctx.data(|d| d.get_temp::<f32>(egui::Id::unique(("mod modal h", pid)))).unwrap_or(120.0);
-            Some(ctx.content_rect().center() - vec2(width / 2.0, h / 2.0))
+            Some(ctx.content_rect().center() - vec2(width / 2.0, last_h / 2.0))
         } else {
             None
         };
