@@ -197,9 +197,6 @@ pub struct Config {
     /// ("mod:<mod>:<window>") or a mod's HUD window ("hud:<mod>:<window>"). It wins over a mod's own.
     #[serde(default)]
     pub window_opacity: std::collections::BTreeMap<String, f32>,
-    /// Extra: how opaque the map overlay's map is, 0..1: the drawing code applies it to HUD maps (the Map Overlay
-    /// mod's), and the minimap's marker shades by it (the two markers alike).
-    pub map_overlay_opacity: f32,
     /// Not retail (Settings' Lamp Lights): real point lights at the zones' lamps in place of their baked lamplight
     /// (client/lamps.rs).
     pub lamp_lights: bool,
@@ -230,6 +227,9 @@ pub struct Config {
     pub minimap_dock: u32,
     pub minimap_size: u32,
     pub minimap_span: f32,
+    /// The HUD maps' opacity and the minimap marker's shading, 0..1: the last the Map Overlay mod gave (client option
+    /// map_opacity), kept so it holds while the mod is off. No Settings row: the mod's own page sets it.
+    pub map_overlay_opacity: f32,
     /// Ours: resting's ticks as learnt per server (by its search address, "ip-port"; client/resttick.rs).
     pub rest_models: std::collections::BTreeMap<String, RestModel>,
     /// The drawn cursor's size (config 0021 off) in percent of retail's pixels on screen; 0 = auto (grows with the
@@ -459,7 +459,6 @@ impl Default for Config {
             send_interval: 400,
             party_tp: true,
             window_opacity: Default::default(),
-            map_overlay_opacity: 0.6,
             gm_window: false,
             notes_seen: env!("CARGO_PKG_VERSION").into(),
             lamp_lights: true,
@@ -473,6 +472,7 @@ impl Default for Config {
             minimap_dock: 0,
             minimap_size: 1,
             minimap_span: 160.0,
+            map_overlay_opacity: 0.6,
             rest_models: Default::default(),
             cursor_size: 0,
             keys_hide_cursor: true,

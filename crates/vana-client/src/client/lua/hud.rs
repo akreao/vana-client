@@ -48,7 +48,8 @@ pub(in crate::client) enum Kind {
         tint: [u8; 4],
     },
     /// The zone's map (the one the client shows here): centred on world (x, z) or on us, `span` map pixels across, at
-    /// `alpha` (none: the player's Map Overlay Opacity); our marker on it when `me`.
+    /// `alpha` (none: the client option map_opacity, the Map Overlay mod's Map Overlay Opacity); our marker on it when
+    /// `me`.
     Map {
         w: f32,
         h: f32,
@@ -442,7 +443,7 @@ fn apply(e: &mut Elem, t: &Table) -> mlua::Result<()> {
             if let Some(v) = t.get::<Option<f32>>("span")? {
                 *span = v.clamp(16.0, 2048.0);
             }
-            // A value, or false for the player's Map Overlay Opacity.
+            // A value, or false for the client option map_opacity (the Map Overlay mod's Map Overlay Opacity).
             if t.contains_key("alpha")? {
                 *alpha = t.get::<Option<f32>>("alpha").ok().flatten().map(|v| v.clamp(0.0, 1.0));
             }

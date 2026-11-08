@@ -1,5 +1,5 @@
 //! The modern Settings window (ours; it replaces retail's Config list in the modern interface): every setting of
-//! client/configui.rs (retail's) and client/settings.rs (ours) on fourteen topic pages, in the widget kit (kit.rs).
+//! client/configui.rs (retail's) and client/settings.rs (ours) on thirteen topic pages, in the widget kit (kit.rs).
 //! Left out as before: the Windows and Log pages (user, 2026-10-26) and Mouse/Cam.'s mouse rows.
 
 use super::super::World;
@@ -69,7 +69,7 @@ use Item::{Head, Open, Ours, Retail};
 
 /// The topic pages: (group, name, lines). Every retail setting of the old list and every row of ours has one place
 /// (the test `every_setting_has_a_page`).
-const PAGES: [(&str, &str, &[Item]); 15] = [
+const PAGES: [(&str, &str, &[Item]); 14] = [
     (
         "Game",
         "Gameplay",
@@ -115,18 +115,6 @@ const PAGES: [(&str, &str, &[Item]); 15] = [
             Retail("conf3win", 1),
             Head("Colours"),
             Open(SUB_COLOURS),
-        ],
-    ),
-    (
-        "Game",
-        "Maps & Timers",
-        &[
-            Head("Maps"),
-            Ours("Map Overlay Opacity"),
-            Ours("Minimap Position"),
-            Ours("Minimap Size"),
-            Head("Timers"),
-            Ours("Timers Position"),
         ],
     ),
     (
@@ -3047,8 +3035,9 @@ pub fn key(w: &mut World, key: egui::Key, shift: bool) -> bool {
 mod tests {
     use super::*;
 
-    /// Every setting of the old Config list (retail's pages and ours, Settings' and Extras') has exactly one place on
-    /// the topic pages, every line names a setting that exists, and each page of SUBS opens from one button.
+    /// Every setting of the old Config list (retail's pages and ours, Settings' and Extras', but the classic UI's own
+    /// CLASSIC_ONLY) has exactly one place on the topic pages, every line names a setting that exists, and each page of
+    /// SUBS opens from one button.
     #[test]
     fn every_setting_has_a_page() {
         let items: Vec<Item> = PAGES.iter().flat_map(|p| p.2.iter().copied()).collect();
@@ -3069,8 +3058,14 @@ mod tests {
             .collect();
         ours.sort();
         ours.dedup();
+        // The classic UI's places for the minimap and the timers: the modern UI has edge windows, so its Settings
+        // window never shows them.
+        let modern: Vec<&str> = [false, true].iter().flat_map(|&g| SettingsUi::all_labels(g, true)).collect();
+        for label in CLASSIC_ONLY {
+            assert!(!modern.contains(&label), "{label}");
+        }
         for label in &ours {
-            assert_eq!(count(Ours(label)), 1, "{label}");
+            assert_eq!(count(Ours(label)), !CLASSIC_ONLY.contains(label) as usize, "{label}");
         }
         for it in &items {
             if let Ours(label) = *it {
@@ -3081,6 +3076,9 @@ mod tests {
             assert_eq!(count(Open(k)), 1, "{}", SUBS[k].0);
         }
     }
+
+    /// Our rows the classic interface alone shows (its Extras' Maps and Timers tabs).
+    const CLASSIC_ONLY: [&str; 3] = ["Minimap Position", "Minimap Size", "Timers Position"];
 
     /// The search finds settings by name, by a word of their help, and every setting under a heading it names, each
     /// under its page's name; Retail only leaves ours out.
