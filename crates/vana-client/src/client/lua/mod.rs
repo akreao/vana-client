@@ -4985,6 +4985,8 @@ impl Host {
             if self.vms.iter().any(|v| v.manifest.id == m.id) {
                 continue;
             }
+            // A setting declared `from` the config shows the player's value before the mod first loads too.
+            migrate_settings(&m, &data_dir().join(&m.id), char_file.as_deref());
             let settings = load_settings(&m, &data_dir().join(&m.id), char_file.as_deref());
             let given: Vec<String> = g
                 .get(&m.id)
