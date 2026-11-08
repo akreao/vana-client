@@ -1,6 +1,6 @@
 -- The hotbars in an edge window, as the Timers and the training regime are: on a screen edge, dragged along the edges,
--- folding to its tab. Its canvas grows downward a bar at a time: + and - at its lower right show more or fewer bars
--- (bar 1 at the top), easing the window's height. A slot shows its action's icon (or its label), its hotkey, a shade
+-- folding to its tab. Its canvas grows a bar at a time: + and - at its lower right show more or fewer bars (bar 1 at
+-- the bottom, the next ones above it), easing the window's height. A slot shows its action's icon (or its label), its hotkey, a shade
 -- with the seconds left while the action recasts, and its macro in a tip; one whose action cannot be used now is
 -- dimmed, and one the battle menu suggests glows. A click fires it, a right click opens its menu, and a slot dragged
 -- onto another swaps them. Slots the main job's set fills have a gold edge, the sub job's set's a blue one.
@@ -33,10 +33,9 @@ local GHOST = { 255, 255, 255, 140 }
 local GHOST_BG = { 20, 24, 38, 120 }
 local DROP = { 255, 214, 120, 200 }
 local DRAGGED = { 0, 0, 0, 120 }
-local BTN_BG = { 26, 30, 46, 225 }
-local BTN_HOVER = { 58, 66, 96, 245 }
-local BTN_OFF = { 26, 30, 46, 90 }
-local BTN_EDGE = { 214, 184, 120, 70 }
+local BTN_HOVER = { 255, 255, 255, 22 }
+local BTN_EDGE = { 214, 184, 120, 90 }
+local BTN_EDGE_OFF = { 214, 184, 120, 30 }
 local BTN_TEXT = { 236, 222, 186, 255 }
 local BTN_TEXT_OFF = { 150, 150, 160, 110 }
 
@@ -96,8 +95,10 @@ local function height(r)
   return rows * geo.size + (rows - 1) * geo.gap + 2 * PAD
 end
 
+-- Bar 1 is the bottom row; each next bar stands above it (the top ones come into view as the canvas grows).
 local function slot_xy(b, i)
-  return PAD + (i - 1) * (geo.size + geo.gap), PAD + (b - 1) * (geo.size + geo.gap)
+  local h = height(reveal or 1)
+  return PAD + (i - 1) * (geo.size + geo.gap), h - PAD - geo.size - (b - 1) * (geo.size + geo.gap)
 end
 
 -- What is at (x, y) in the canvas: {b, i}, "plus", "minus" or nil.
@@ -112,7 +113,7 @@ local function hit(x, y)
   for b = 1, geo.bars do
     for i = 1, geo.slots do
       local sx, sy = slot_xy(b, i)
-      if x >= sx and x < sx + geo.size and y >= sy and y < sy + geo.size and sy + geo.size <= h then
+      if x >= sx and x < sx + geo.size and y >= sy and y < sy + geo.size and sy >= 0 then
         return { b = b, i = i }
       end
     end
@@ -137,7 +138,7 @@ local function draw()
   for b = 1, geo.bars do
     for i = 1, geo.slots do
       local x, y = slot_xy(b, i)
-      if y < h then
+      if y + s > 0 then
         local key = b .. ":" .. i
         local cell = eff[b] and eff[b][i]
         local macro = cell and cell.macro
@@ -218,9 +219,11 @@ local function draw()
   }
   for _, btn in ipairs(buttons) do
     local name, label, by, live, tip = btn[1], btn[2], btn[3], btn[4], btn[5]
-    add({ type = "rect", x = bx, y = by, w = geo.btn, h = geo.btn, round = 4,
-      colour = not live and BTN_OFF or (hover == name and BTN_HOVER or BTN_BG) })
-    add({ type = "rect", x = bx, y = by, w = geo.btn, h = geo.btn, round = 4, line = 1, colour = BTN_EDGE })
+    if live and hover == name then
+      add({ type = "rect", x = bx, y = by, w = geo.btn, h = geo.btn, round = 4, colour = BTN_HOVER })
+    end
+    add({ type = "rect", x = bx, y = by, w = geo.btn, h = geo.btn, round = 4, line = 1,
+      colour = live and BTN_EDGE or BTN_EDGE_OFF })
     add({ type = "text", x = bx + geo.btn / 2, y = by + geo.btn * 0.08, text = label, size = geo.btn / 18,
       font = "bold", align = "center", colour = live and BTN_TEXT or BTN_TEXT_OFF })
     add({ type = "tip", x = bx, y = by, w = geo.btn, h = geo.btn, title = "", text = tip })
@@ -363,7 +366,8 @@ function M.rebuild()
     title = "Hotbars",
     heading = main .. "/" .. (sub or "-"),
     edge = true,
-    width = geo.width,
+    -- The canvas plus the edge frame's margins (16 + 18 at most), so it never overflows.
+    width = geo.width + 34,
     elements = { { type = "canvas", id = "c", w = geo.width, h = height(reveal) } },
   })
   ui.on(WIN, on_event)
