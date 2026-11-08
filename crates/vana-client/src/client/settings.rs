@@ -21,7 +21,6 @@ pub struct Settings {
     pub draw_distance: u32,
     pub send_interval: u32,
     pub party_tp: bool,
-    pub map_opacity: u32,
     pub lamp_lights: bool,
     pub actor_shadows: u32,
     pub shadow_map: u32,
@@ -62,7 +61,6 @@ impl Settings {
             draw_distance: c.draw_distance,
             send_interval: c.send_interval,
             party_tp: c.party_tp,
-            map_opacity: pct(c.map_overlay_opacity),
             lamp_lights: c.lamp_lights,
             actor_shadows: c.actor_shadows,
             shadow_map: c.shadow_map,
@@ -100,7 +98,6 @@ impl Settings {
         c.draw_distance = self.draw_distance;
         c.send_interval = self.send_interval;
         c.party_tp = self.party_tp;
-        c.map_overlay_opacity = self.map_opacity as f32 / 100.0;
         c.lamp_lights = self.lamp_lights;
         c.actor_shadows = self.actor_shadows;
         c.shadow_map = self.shadow_map;
@@ -172,7 +169,6 @@ enum Val {
     Gamepad,
     PadDeadZone,
     MouseCamSpeed,
-    MapOpacity,
     /// A Lua mod's declared setting: its row on the mod's page (docs/lua-mods.md 4.12).
     Mod(usize),
     /// A bundled mod's setting on one of our Extras tabs (`SettingsUi::tab_rows`).
@@ -610,7 +606,6 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
         ),
     ];
     const MAPS: &[SRow] = &[
-        row("Map Overlay Opacity", "How see-through the map overlay is.", MapOpacity, &[], Now),
         row(
             "Minimap Position",
             "Puts the minimap in the top right, moving aside for open menus, or in the top left below the cast bar.",
@@ -628,12 +623,14 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
         Now,
     )];
     const TIMERS_MODERN: &[SRow] = &[];
+    // The modern UI places the minimap and the timers as edge windows.
+    const MAPS_MODERN: &[SRow] = &[];
     // A page holds 7 rows: what touches battle has its own.
     const EXTRA_BATTLE: &[SRow] = &[];
     const EXTRA_MISC: &[SRow] = &[];
     match kind {
         Kind::Extras if modern => {
-            [&MAPS[..1], TIMERS_MODERN, EXTRA_BATTLE, EXTRA_MISC].get(tab).copied().unwrap_or(&[])
+            [MAPS_MODERN, TIMERS_MODERN, EXTRA_BATTLE, EXTRA_MISC].get(tab).copied().unwrap_or(&[])
         }
         Kind::Extras => [MAPS, TIMERS, EXTRA_BATTLE, EXTRA_MISC].get(tab).copied().unwrap_or(&[]),
         Kind::Settings if in_game && tab == 4 => &SOUND[..3],
@@ -856,7 +853,6 @@ impl SettingsUi {
             | Val::Gpu
             | Val::Music
             | Val::Effects
-            | Val::MapOpacity
             | Val::ModernOpacity => Ctl::Slider,
             _ if r.choices.len() <= 3 => Ctl::Buttons(r.choices.len()),
             _ => Ctl::Slider,
@@ -901,7 +897,6 @@ impl SettingsUi {
             Val::ModernUi => self.s.modern_ui as u32,
             Val::ModernScale => self.s.modern_scale,
             Val::ModernOpacity => self.s.modern_opacity,
-            Val::MapOpacity => self.s.map_opacity,
             Val::ResetPlaces => self.s.reset_places as u32,
             Val::Gamepad => self.s.gamepad as u32,
             Val::PadDeadZone => self.s.gamepad_dead,
@@ -1010,7 +1005,6 @@ impl SettingsUi {
             Val::Music => (21, (self.s.music / 5) as usize),
             Val::Effects => (21, (self.s.effects / 5) as usize),
             Val::ModernOpacity => (19, (self.s.modern_opacity.clamp(10, 100) / 5 - 2) as usize),
-            Val::MapOpacity => (19, (self.s.map_opacity.clamp(10, 100) / 5 - 2) as usize),
             v => {
                 let list: Vec<u32> = r.choices.iter().map(|c| c.0).collect();
                 (list.len(), pos(&list, self.get(v)))
@@ -1044,7 +1038,6 @@ impl SettingsUi {
             Val::Music => self.s.music = (i as u32 * 5).min(100),
             Val::Effects => self.s.effects = (i as u32 * 5).min(100),
             Val::ModernOpacity => self.s.modern_opacity = ((i as u32 + 2) * 5).clamp(10, 100),
-            Val::MapOpacity => self.s.map_opacity = ((i as u32 + 2) * 5).clamp(10, 100),
             v => {
                 if let Some(c) = r.choices.get(i) {
                     self.set(v, c.0);
@@ -1069,7 +1062,6 @@ impl SettingsUi {
             Val::Music => format!("{}%", self.s.music),
             Val::Effects => format!("{}%", self.s.effects),
             Val::ModernOpacity => format!("{}%", self.s.modern_opacity),
-            Val::MapOpacity => format!("{}%", self.s.map_opacity),
             Val::Monitor => self
                 .monitors
                 .iter()
@@ -2189,13 +2181,13 @@ mod tests {
         ui.key(egui::Key::ArrowLeft);
         assert_eq!(ui.tab, 3);
         ui.key(egui::Key::ArrowRight);
-        // The first row is Map Overlay Opacity (a slider); Up from it to the page name, and Up again wraps to the last
-        // row, Minimap Size (Small / Medium / Large): Large; then its place, top left.
+        // The first row is Minimap Position (the Map Overlay's rows are its mod's); Up from it to the page name, and Up
+        // again wraps to the last row, Minimap Size (Small / Medium / Large): Large; then its place, top left.
         ui.key(egui::Key::ArrowDown);
         assert_eq!(ui.row, 1);
         ui.key(egui::Key::ArrowUp);
         ui.key(egui::Key::ArrowUp);
-        assert_eq!(ui.row, 3);
+        assert_eq!(ui.row, 2);
         ui.key(egui::Key::ArrowRight);
         ui.key(egui::Key::Enter);
         assert_eq!(ui.s.minimap_size, 2);

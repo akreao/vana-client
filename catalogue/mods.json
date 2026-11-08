@@ -1227,25 +1227,25 @@
     },
     {
       "authors": [],
-      "description": "Ctrl or Alt + O shows the zone map over the game (the map add-ons): pan it with a drag, zoom it with the wheel. Its opacity is the client's Map Overlay Opacity.",
+      "description": "Ctrl or Alt + O shows the zone map over the game (the map add-ons): pan it with a drag, zoom it with the wheel.",
       "files": [
         {
           "path": "init.lua",
-          "sha256": "f31081e52f507e95e259aaee9440c1712c9f3c73d71c654a2d40d65216358efb",
-          "size": 4999,
+          "sha256": "f314586951e05bbf7818294d5a5a6c1c90333f4fd58ac1f960e99c610b37d310",
+          "size": 5149,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/map-overlay/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "32d599e8a897ee447e48a127a050f446cd5e38504c3a87c06b8a9ae9e869ae97",
-          "size": 443,
+          "sha256": "88894707f0f5c56ec87302cdc86b64acfe5a425dce2482a591754f259c6867c5",
+          "size": 848,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/map-overlay/mod.toml"
         }
       ],
       "id": "map-overlay",
       "kind": "lua",
       "name": "Map Overlay",
-      "version": "1.0.0"
+      "version": "1.1.0"
     },
     {
       "authors": [],
