@@ -1,6 +1,6 @@
 name = "Hotbars"
-version = "1.6.2"
-description = "Hotbars of multi-line macros with their actions' icons and recasts, loaded by main job and sub job."
+version = "1.7.1"
+description = "Hotbars of multi-line macros with their actions' icons and recasts, loaded by main job and sub job; a macro library with a builder and a palette to drag from."
 authors = ["Arusia"]
 permissions = ["actions", "ui.native"]
 
@@ -70,6 +70,7 @@ forms = [
   { args = "hide", help = "Hides the bars." },
   { args = "more", help = "Shows one more bar." },
   { args = "fewer", help = "Shows one bar fewer." },
+  { args = "palette", help = "Opens or closes the macro palette for your job." },
   { args = "run <bar> <slot>", help = "Fires a slot." },
   { args = "reload", help = "Reads macros.json again." },
   { args = "wipestock", help = "Empties the game's own macro palette (it can be restored)." },
