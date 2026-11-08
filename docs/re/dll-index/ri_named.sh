@@ -12,17 +12,18 @@ DLL=${FFXI_DLL:-$W/FFXiMain.unpacked.dll}
 G=${GHIDRA_HOME:-/opt/ghidra}/support/analyzeHeadless
 export FFXI_RE_DIR="$W"
 cd "$W"
-[ -f funcs_full.tsv ] && [ -d ghidra ] || { echo "run ./ri.sh first" >&2; exit 1; }
+IDX="all_decomp_full.c funcs_full.tsv xrefs.tsv strrefs.tsv"
+[ -d ghidra ] || { echo "run ./ri.sh first" >&2; exit 1; }
+for f in $IDX; do [ -s "$f" ] || { echo "index incomplete ($f missing): run ./ri.sh first" >&2; exit 1; }; done
 [ -f funcs_full.orig.tsv ] || cp -p funcs_full.tsv funcs_full.orig.tsv
 python3 "$H/build_names.py"
 if [ "$1" != "--keep" ] || [ ! -d ghidra_named ]; then rm -rf ghidra_named; cp -a ghidra ghidra_named; fi
-IDX="all_decomp_full.c funcs_full.tsv xrefs.tsv strrefs.tsv"
 prev() { echo "$1" | sed 's/\.\([a-z]*\)$/.prev.\1/'; }
-restore() { for f in $IDX; do [ -f "$(prev "$f")" ] && mv -f "$(prev "$f")" "$f"; done; }
-ok=0
+restore() { for f in $MOVED; do mv -f "$(prev "$f")" "$f"; done; }
+ok=0; MOVED=""
 trap '[ $ok -eq 1 ] || restore' EXIT                    # any failure or interrupt puts the previous complete index back
 trap 'exit 1' INT TERM HUP
-for f in $IDX; do mv -f "$f" "$(prev "$f")"; done      # move, so a failed run can't leave old files looking current
+for f in $IDX; do mv -f "$f" "$(prev "$f")"; MOVED="$MOVED $f"; done      # move, so a failed run can't leave old files looking current
 rc=0
 "$G" "$W/ghidra_named" ffxi -process "$(basename "$DLL")" -noanalysis \
   -scriptPath "$H/ghidra_scripts" -postScript ApplyNames.java "$H" -postScript ExportIndex.java "$W" \
