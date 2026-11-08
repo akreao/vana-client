@@ -126,8 +126,16 @@ pub fn draw(
     let em = EM * scale[1];
     let px = BUCKETS.iter().copied().find(|&b| b >= em).unwrap_or(BUCKETS[3]);
     let key = format!("plate {px} {name}");
+    gu.touch_image(&key);
     let raster = {
         let mut m = metrics().lock().unwrap();
+        // Rasters gone (unseen a while) take their metrics with them: past a mark that doubles over what is still
+        // live, so a crowd of more than 1024 live plates is not swept again on every plate drawn.
+        static PRUNE_AT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1024);
+        if m.len() > PRUNE_AT.load(std::sync::atomic::Ordering::Relaxed) {
+            m.retain(|k, _| gu.has_image(k));
+            PRUNE_AT.store((m.len() * 2).max(1024), std::sync::atomic::Ordering::Relaxed);
+        }
         match m.get(&key).copied().filter(|_| gu.has_image(&key)) {
             Some(r) => r,
             None => {

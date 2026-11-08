@@ -97,7 +97,11 @@ local function copy_from(e)
   return true
 end
 
-local USAGE = "//look race <race> | face <1a..8b> | <slot> <item | none | own> | copy [name] | others <race | own> | reset"
+-- The forms of //look as mod.toml declares them: what the chat line's hint and //mods show.
+local function usage()
+  chat.add("Look Changer:")
+  for _, line in ipairs(commands.usage("look")) do chat.add("  " .. line) end
+end
 
 commands.register("look", function(...)
   if not settings.get("on") then return end
@@ -150,7 +154,7 @@ commands.register("look", function(...)
   elseif what == "reset" then
     l.me, l.others = {}, nil
   else
-    say(USAGE)
+    usage()
     return
   end
   reapply()

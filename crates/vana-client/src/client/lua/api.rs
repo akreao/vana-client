@@ -279,6 +279,10 @@ pub(super) fn install(
             if name == "lua" || super::super::textcmd::is_game_command(&name) {
                 return Err(mlua::Error::runtime(format!("/{name} is a game command: give yours another name")));
             }
+            // //mods is the client's list of the mods' commands.
+            if name == "mods" {
+                return Err(mlua::Error::runtime("//mods is the client's: give yours another name"));
+            }
             let st = state(lua);
             let key = lua.create_registry_value(func)?;
             let mut s = st.borrow_mut();
@@ -303,6 +307,21 @@ pub(super) fn install(
             };
             push_op(lua, Op::Run(line, mods, input))?;
             Ok(())
+        })?,
+    )?;
+    // commands.usage(name): the command's declared forms (mod.toml [commands]) as lines to print.
+    let declared = m.commands.clone();
+    commands.set(
+        "usage",
+        lua.create_function(move |lua, name: String| {
+            let name = name.trim_start_matches('/').to_ascii_lowercase();
+            let t = lua.create_table()?;
+            if let Some((_, c)) = declared.iter().find(|(n, _)| n.eq_ignore_ascii_case(&name)) {
+                for (a, _) in c.forms() {
+                    t.push(if a.is_empty() { format!("//{name}") } else { format!("//{name} {a}") })?;
+                }
+            }
+            Ok(t)
         })?,
     )?;
     commands.set(
