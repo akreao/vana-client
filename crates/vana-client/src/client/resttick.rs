@@ -199,7 +199,8 @@ impl RestTick {
     }
 
     /// Whether stat `s`'s rise of `a` is its own tick: the amount it rose by a look or two before (or less, filling it).
-    /// The held amount this one twins was one too, and no longer counts.
+    /// The held amount this one repeats exactly was one too, and no longer counts; a smaller rise that fills the bar
+    /// drops nothing (a rest heal held before a Regen top-off is not that top-off's twin).
     fn own_rise(&mut self, s: usize, now: Instant, a: u32, full: bool) -> bool {
         let like = |b: u32| a == b || (full && a < b);
         let near = |at: Instant| (OWN_GAP.0..=OWN_GAP.1).contains(&secs(at, now));
@@ -210,8 +211,7 @@ impl RestTick {
         if own
             && let Some(h) = self.held.as_mut()
             && near(h.at)
-            && let Some(i) =
-                h.amounts[s].iter().position(|x| x.1 == a).or_else(|| h.amounts[s].iter().position(|x| like(x.1)))
+            && let Some(i) = h.amounts[s].iter().position(|x| x.1 == a)
         {
             h.amounts[s].remove(i);
             if h.amounts.iter().all(Vec::is_empty) {
@@ -509,6 +509,24 @@ mod tests {
     fn a_heal_after_an_own_tick_in_its_hold_counts() {
         // Refresh +1 from 20.5 (first seen there), the rest heal 1.2 s later, Refresh's twin a look after.
         let r = feed_mp(&[(20.5, 1), (21.7, 12), (23.5, 1), (26.5, 1)], 40.0, 30.0);
+        assert_eq!(r.rises.len(), 1, "{:?}", r.rises);
+        assert!((r.rises[0] - 21.7).abs() < 0.05, "{:?}", r.rises);
+    }
+
+    #[test]
+    fn a_heal_before_a_top_off_counts() {
+        // Refresh +1 from gear on every look (0.7 + 3k s); the rest heal +12 at 21.7 leaves MP 1 short of full, and
+        // the next look's +1 fills it: that smaller own rise is no twin of the heal (the heal lands on a look, 13 in all).
+        let base = Instant::now();
+        let mut r = RestTick { chain: true, ..Default::default() };
+        let mut events: Vec<(f32, u32)> = (0..10).map(|k| (0.7 + 3.0 * k as f32, 1)).collect();
+        events.push((21.7, 12));
+        let max = 487 + 7 + 13 + 1;
+        for i in 0..=(30.0 * 60.0) as u32 {
+            let t = i as f32 / 60.0;
+            let mp = (487 + events.iter().filter(|e| e.0 <= t).map(|e| e.1).sum::<u32>()).min(max);
+            r.feed(base + std::time::Duration::from_secs_f32(t), true, 1, [1000, mp], [true, mp >= max]);
+        }
         assert_eq!(r.rises.len(), 1, "{:?}", r.rises);
         assert!((r.rises[0] - 21.7).abs() < 0.05, "{:?}", r.rises);
     }
