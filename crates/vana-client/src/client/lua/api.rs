@@ -2036,6 +2036,7 @@ fn cmds(v: Option<Table>) -> mlua::Result<Vec<super::window::Cmd>> {
                     at: [n("x")?, n("y")?],
                     size: c.get::<Option<f32>>("size")?.unwrap_or(16.0),
                     icon: super::window::Icon::of(c.get::<Option<String>>("kind")?.as_deref(), c.get("id")?),
+                    tint: colour,
                 },
                 other => return Err(mlua::Error::runtime(format!("unknown draw command {other:?}"))),
             })

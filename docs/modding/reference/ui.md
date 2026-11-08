@@ -242,7 +242,7 @@ fields, all numbers defaulting to `0` unless shown:
 | `"tri"` | `x1`, `y1`, `x2`, `y2`, `x3`, `y3` | A filled triangle. |
 | `"text"` | `x`, `y`, `text` (default `""`), `size` (default `1`), `align`, `font`, `outline` | Text at (x, y), in the UI's text font: `size` times its small text, `align` `"left"` (the default), `"center"` or `"right"` of `x`, `font = "bold"` for the bold face, `outline` a colour round the letters. The classic UI draws its own font at one size. |
 | `"tip"` | `x`, `y`, `w`, `h`, `title`, `text` | Nothing drawn: the tooltip shown while the pointer rests on that rectangle (modern UI). |
-| `"icon"` | `x`, `y`, `size` (default `16`), `kind`, `id` | A square icon with its top left at (x, y): `kind` is `"item"` (or none), `"status"`, `"spell"` or `"ability"`, as for [`hud.icon`](hud.md#hudicon). `id` is required. |
+| `"icon"` | `x`, `y`, `size` (default `16`), `kind`, `id` | A square icon with its top left at (x, y), tinted by `colour` (its alpha fades it; the classic UI draws it plain): `kind` is `"item"` (or none), `"status"`, `"spell"` or `"ability"`, as for [`hud.icon`](hud.md#hudicon). `id` is required. |
 
 ### chip
 

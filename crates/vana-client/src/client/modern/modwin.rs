@@ -125,9 +125,9 @@ fn canvas(
             Cmd::Tip { r: q, title, text } => {
                 m.tip(ui, Rect::from_min_size(at([q[0], q[1]]), vec2(q[2], q[3])), title, text);
             }
-            Cmd::Icon { at: q, size, icon } => {
+            Cmd::Icon { at: q, size, icon, tint } => {
                 if let Some((t, uv)) = icon_tex(m, ctx, gu, world, *icon) {
-                    p.image(t, Rect::from_min_size(at(*q), vec2(*size, *size)), uv, Color32::WHITE);
+                    p.image(t, Rect::from_min_size(at(*q), vec2(*size, *size)), uv, rgba(*tint));
                 }
             }
         }
