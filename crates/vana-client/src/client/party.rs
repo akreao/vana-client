@@ -387,6 +387,29 @@ pub fn change_body(name: &str, kind: u8, change: u8) -> Vec<u8> {
     b
 }
 
+/// A max HP worth showing for `hp` at `hpp` %: `known` (0x061's for us, the last 100 % reading for others) while
+/// the HP % still agrees with it, else HP / HP %. No packet carries a member's max HP, and a lost buff or food shrinks
+/// ours without a 0x061 (LSB sends only 0x0DF / 0x0DD), so a stale one shows up as an HP % that no longer fits.
+/// LSB's HP % is floor(hp * 100 / max), at least 1 while alive (CBattleEntity::GetHPP); a rounded one fits too.
+pub fn hp_max(known: Option<u32>, hp: u32, hpp: u8) -> Option<u32> {
+    let fits = |max: u32| {
+        if hp > max || max == 0 {
+            return false;
+        }
+        if hp == 0 {
+            return true;
+        }
+        let x = hp as u64 * 100;
+        let lo = (x / max as u64).max(1);
+        let hi = x.div_ceil(max as u64).max(1);
+        (lo..=hi).contains(&(hpp as u64))
+    };
+    match known {
+        Some(max) if fits(max) => Some(max),
+        _ => (hpp > 0).then(|| ((hp as f32 * 100.0 / hpp as f32).round() as u32).max(hp)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -457,5 +480,20 @@ mod tests {
         let ids: Vec<Option<u32>> = s.slots.iter().map(|m| m.as_ref().map(|m| m.id)).collect();
         assert_eq!((ids[0], ids[1], ids[6], ids[7], ids[12]), (Some(ME), Some(5), Some(2), Some(3), Some(4)));
         assert_eq!((s.leaders, s.alliance_leader), ([ME, 3, 4], ME));
+    }
+
+    /// A +200 max HP buff wears off at 900 HP: 900 / 1200 was 75 %, the server now says 90 %.
+    #[test]
+    fn hp_max_drops_with_the_hp_percent() {
+        assert_eq!(hp_max(Some(1200), 900, 75), Some(1200));
+        assert_eq!(hp_max(Some(1200), 900, 90), Some(1000));
+        // A rise above the old max (a new buff) and a full bar still win as before.
+        assert_eq!(hp_max(Some(1000), 1100, 100), Some(1100));
+        assert_eq!(hp_max(None, 1000, 100), Some(1000));
+        // Low HP: floor at least 1 %, and rounding either way fits.
+        assert_eq!(hp_max(Some(1000), 5, 1), Some(1000));
+        assert_eq!(hp_max(Some(1000), 996, 100), Some(1000));
+        assert_eq!(hp_max(Some(1000), 0, 0), Some(1000));
+        assert_eq!(hp_max(None, 0, 0), None);
     }
 }
