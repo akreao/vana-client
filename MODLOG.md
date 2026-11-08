@@ -23131,3 +23131,23 @@ still gave `cor`. Both now go through actmotion::sdep_stand.
   held; A / D add their side as they do with W. Released, the run keeps its last way and A / D steer it 2 degrees a
   tick again (retail). Before, the run kept its old vector and the character faced the camera, running sideways.
   A run a mod starts with actions.run keeps its own heading. The controller and the keys are untouched.
+
+## Dolls go with their actor (2026-11-07)
+
+- User report (Garlaige Citadel): pink glows left on the floor where mobs had stood. The effects dump showed two
+  endless clones of `g000` (file 35595, a DRK bot's weapon skill 99) on dolls, their tasks long gone. The file's
+  `main` starts `g000` (flags 0x1000, endless) on the pair at t50, dolls actor2 at t60 (op 0x23), and its child
+  `st44` (op 0x03, t145) stops `g000` with op 0x1e. Children run on the undolled pair (FUN_10062770 / FUN_100627d0
+  unwrap CXiDollActors), and FUN_10053a00 matches a clone by its actor2 handle (FUN_1003b700), which is the doll:
+  the stop misses in retail too.
+- Retail ends it with the target: the doll's link sub-object at +0xc4 (vtable 0x1032f91c, set in FUN_100abea0, its
+  actor1 handle = the owner) is in the owner's +0x68 list. The owner's destructor walk (FUN_10082b10) calls its
+  vtable +0x10 / +0x14 = FUN_100abd50 / FUN_100abd70, which delete the doll (ADD ECX,-0xc4; vtable +0x18(1)); the
+  doll's destructor (FUN_100abf80 -> FUN_10082b40 -> FUN_10082b10) takes the clones and tasks linked to it. A doll
+  also deletes itself once nothing is linked to it (FUN_100ac010 / 070 / 0b0: +0x68, +0x6c, +0x84 all empty).
+- FUN_10062d50 (ops 0x15 / 0x16 / 0x22 / 0x23 and back 0x17 / 0x18) moves one handle only: actor1 (list +0x68) for
+  0x15 / 0x22 / 0x17, actor2 (list +0x6c) for 0x16 / 0x23 / 0x18. Ours moved every slot equal to the actor, so a
+  self-targeted effect lost its caster slot to the doll too.
+- Ours: Effects::forget_actor takes the actor's dolls with it (tasks and clones on them go as on the actor);
+  move_clones moves the op's slot only. Test fx::tasks::tests::despawn_takes_its_dolls. Left: our dolls are never
+  freed (a slot each; nothing is drawn from a dead one).
