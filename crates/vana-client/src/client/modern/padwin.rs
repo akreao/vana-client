@@ -32,6 +32,7 @@ pub fn open(w: &mut World) {
     let p = &mut w.padcfg;
     (p.open, p.listening, p.note) = (true, None, String::new());
     p.follow.set(true);
+    p.raise = true;
     w.sounds.push(Se::Select as u32);
 }
 
@@ -327,6 +328,13 @@ fn apply(w: &mut World, c: Click) {
 pub fn draw(p: &mut Panels, w: &mut World) {
     if !shown(w) {
         return;
+    }
+    // Over the Settings window it is opened from: when it opens (a click on Settings' Controller button put that one
+    // in front), and while a menu column window is shown, since those are raised every frame (Panels::show). Otherwise
+    // the order is the clicks', so a prompt can still come in front of it.
+    let column = super::COLUMN.iter().any(|c| p.this.contains_key(*c));
+    if std::mem::take(&mut w.padcfg.raise) || column {
+        p.ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(("modern panel", "controller"))));
     }
     if let Some(c) = window(p, &w.padcfg) {
         apply(w, c);

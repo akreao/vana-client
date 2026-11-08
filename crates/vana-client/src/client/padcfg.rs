@@ -261,6 +261,8 @@ pub struct PadCfg {
     pub note: String,
     /// The list scrolls the cursor's row into view on the next frame (it moved by key, or the window opened).
     pub follow: std::cell::Cell<bool>,
+    /// Bring the window in front on the next frame (it was just opened, over the Settings window it is opened from).
+    pub raise: bool,
 }
 
 /// How long the window waits for a button.
