@@ -342,6 +342,7 @@ fn typing_elsewhere(w: &World) -> bool {
         // Ours: the GM window's fields and search, and the Settings window's search.
         || modern::gm_takes_keys(w)
         || modern::pad_takes_keys(w)
+        || modern::mods_takes_keys(w)
         || modern::config_finding(w)
 }
 
@@ -2344,8 +2345,13 @@ fn world_hud(
     if find_typing {
         keys.clear();
     }
+    // Ours: the Mods window takes the text and keys while it is open (over the Settings window it may be opened from).
+    let mods_typing = modern::mods_events(world, &input.events);
+    if mods_typing {
+        keys.clear();
+    }
     // The modern Settings window's search takes the text, Backspace, Escape and Ctrl+R while a topic page shows.
-    let settings_typing = modern::config_find_events(world, &input.events);
+    let settings_typing = !mods_typing && modern::config_find_events(world, &input.events);
     if settings_typing {
         keys.clear();
     }
@@ -2380,7 +2386,8 @@ fn world_hud(
         || find_typing
         || settings_typing
         || gm_typing
-        || pad_typing;
+        || pad_typing
+        || mods_typing;
     if post_typing {
         post::text_events(world, &input.events);
         keys.clear();
@@ -2411,7 +2418,7 @@ fn world_hud(
     } else if map_typing && let Some(m) = world.map.as_mut() {
         m.text_events(&input.events);
         keys.clear();
-    } else if input_open && !scan_typing && !find_typing && !pad_typing {
+    } else if input_open && !scan_typing && !find_typing && !pad_typing && !mods_typing {
         event::input_events(world, &input.events);
         keys.clear();
     }
@@ -7719,6 +7726,9 @@ struct World {
     /// Our Settings or Extras page when opened from the Config window, and a request to open one.
     settings: Option<settings::SettingsUi>,
     want_settings: Option<settings::Kind>,
+    /// Ours: the Mods window (modern/modmgr.rs), and a request to open it (on a mod's Settings when one is named).
+    modmgr: Option<modern::ModMgr>,
+    want_mods: Option<Option<String>>,
     /// Ours: the GM window (gm.rs, modern/gmwin.rs).
     gm: gm::Gm,
     /// Ours: the Controller window (padcfg.rs, modern/padwin.rs).
@@ -9862,6 +9872,8 @@ impl App {
                             game_save: false,
                             settings: None,
                             want_settings: None,
+                            modmgr: None,
+                            want_mods: None,
                             gm: gm::Gm::default(),
                             padcfg: padcfg::PadCfg::default(),
                             cam_keys: [self.cfg.cam_keys_y as u8, self.cfg.cam_keys_x as u8],
@@ -15467,16 +15479,34 @@ impl App {
                 if let Some(s) = world.settings.as_mut() {
                     s.tick();
                 }
-                // The Lua mods' settings changed on their Extras pages.
-                let changes = world.settings.as_mut().map(|s| std::mem::take(&mut s.mod_changes)).unwrap_or_default();
+                // The Mods window: made from the config when asked for; its installs, its mods' changes, its list.
+                if let Some(id) = world.want_mods.take() {
+                    match world.modmgr.as_mut() {
+                        Some(mm) => mm.show(id),
+                        None => {
+                            let mut s = settings::SettingsUi::open_kind(&self.cfg, window, settings::Kind::Settings);
+                            s.in_game = true;
+                            world.modmgr = Some(modern::ModMgr::new(s, world.lua.settings_pages(), id));
+                        }
+                    }
+                }
+                if let Some(mm) = world.modmgr.as_mut() {
+                    mm.s.tick();
+                }
+                // The Lua mods' settings changed on their Extras pages or in the Mods window.
+                let mut changes =
+                    world.settings.as_mut().map(|s| std::mem::take(&mut s.mod_changes)).unwrap_or_default();
+                if let Some(mm) = world.modmgr.as_mut() {
+                    changes.append(&mut mm.s.mod_changes);
+                }
                 if !changes.is_empty() {
                     let toggled = changes.iter().any(|c| c.1 == lua::ENABLED);
                     // A setting that is a sound (manifest preview_sound): the sound its new value picks.
                     for (id, key, value) in &changes {
-                        let base = world
-                            .settings
-                            .as_ref()
-                            .and_then(|s| s.mod_pages.iter().find(|p| &p.id == id))
+                        let pages = world.settings.iter().flat_map(|s| &s.mod_pages);
+                        let base = pages
+                            .chain(world.modmgr.iter().flat_map(|m| &m.pages))
+                            .find(|p| &p.id == id)
                             .and_then(|p| p.rows.iter().find(|r| &r.key == key))
                             .and_then(|r| r.preview);
                         if let (Some(base), Some(v)) = (base, value.as_u64()) {
@@ -15489,9 +15519,30 @@ impl App {
                     }
                     world.lua = mods;
                     // A mod turned on, off or installed: the pages follow.
-                    if toggled && let Some(s) = world.settings.as_mut() {
-                        s.set_mod_pages(world.lua.settings_pages());
+                    if toggled {
+                        if let Some(s) = world.settings.as_mut() {
+                            s.set_mod_pages(world.lua.settings_pages());
+                        }
+                        if let Some(mm) = world.modmgr.as_mut() {
+                            mm.pages = world.lua.settings_pages();
+                        }
                     }
+                }
+                // The Mods window's list and order to the config (only those: the Settings window keeps the rest),
+                // and to the Settings window's copy, which would otherwise store its own back.
+                if let Some(mm) = world.modmgr.as_mut().filter(|m| m.s.dirty) {
+                    mm.s.dirty = false;
+                    self.cfg.mods = mm.s.s.mods.clone();
+                    if let Some(s) = world.settings.as_mut() {
+                        s.s.mods = mm.s.s.mods.clone();
+                        (s.lua_names, s.lua_info) = (mm.s.lua_names.clone(), mm.s.lua_info.clone());
+                    }
+                    if let Err(e) = self.cfg.save() {
+                        log::warn!("config: {e:#}");
+                    }
+                }
+                if world.modmgr.as_ref().is_some_and(|m| !m.open) {
+                    world.modmgr = None;
                 }
                 if let Some(s) = world.settings.as_mut().filter(|s| s.dirty) {
                     s.dirty = false;

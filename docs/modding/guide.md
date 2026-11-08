@@ -251,12 +251,30 @@ forms = [                           # its other forms, each with a line of its o
 Leave `args` out when the command does nothing alone and only its `forms` are used. A command name may not be `lua` or
 one of the game's commands: the mod then does not load.
 
+A placeholder can be typed, so the Mods window's form for it offers choices: `params` on the command (its main form)
+or on a form, each naming the placeholder by its first word.
+
+```toml
+forms = [
+  { args = "<slot> <item | none | own>", help = "A piece of your gear.", params = [
+      { name = "slot", type = "enum", options = ["head", "body", "hands", "legs", "feet"] },
+      { name = "item", type = "item", also = ["none", "own"] } ] },
+]
+```
+
+`type` is `text` (the default), `int`, `number`, `enum` (its `options`), or one the client can list: `item`, `key_item`,
+`zone`, `spell`, `job` or `player` (you and your party), suggested by name as the player types. `also` adds words it takes
+besides. Words still split at spaces, so `//look body Kupo Suit` reaches your command as `body`, `Kupo`, `Suit`: join
+the rest as you do for typed lines.
+
 While the player types `//` (or a `/` and three letters), the chat line lists the running mods' command forms that fit
 what is typed, each with its mod and help: a literal word by its start, a `<word>` or `[word]` taking anything. Up /
 Down pick one and Tab puts its fixed words on the line. `/lua help` names the mods with commands; `/lua help <mod>`
 lists a mod's forms and `/lua help <command>` one command's (`//help` too, when no mod registers help). An unknown
-`//command` names the installed mod that has it when that mod is off, else the command it was probably meant to be. The
-Mods page shows each mod's commands under its description, the installed mods' and the catalogue's alike.
+`//command` names the installed mod that has it when that mod is off, else the command it was probably meant to be. In
+the modern UI the Mods window (Settings > Mods, or `/lua mods`) lists a mod's forms on its Commands tab: the picked one
+as a form with a field a placeholder, the line it makes, Run (it types the line as the chat line would, and shows what
+your mod prints after it) and Put in Chat Line. Get mods shows the catalogue's commands under each description.
 `commands.usage(name)` gives your declared forms as lines to print. A command registered without a declaration still
 shows, by name only.
 
@@ -663,7 +681,8 @@ the "Lua" extension, for example) and you get completion, argument hints and che
 | `/lua watch <id>` | Reloads the mod whenever you save one of its files. Run it again to stop. |
 | `/lua run <id> <code>` | Runs a line of Lua inside a mod: `/lua run hello chat.add(game.player().name)`. |
 | `/lua set <id> <key> <value>` | Changes a setting. |
-| `/lua settings <id>` | Opens the mod's Extras page. |
+| `/lua settings <id>` | Opens the mod's settings: its Settings in the Mods window (modern UI), its Extras page (classic). |
+| `/lua mods` | Opens the Mods window (modern UI). |
 | `/lua grant <id> <permission>` / `/lua revoke ...` | Grants or takes away a permission. |
 | `/lua hide` / `/lua show` | Hides or shows every mod's windows and drawing. |
 
@@ -673,12 +692,12 @@ the "Lua" extension, for example) and you get completion, argument hints and che
 
 ## Sharing your mod
 
-A mod is its folder: zip it (with the folder inside the zip) and share the file. To install one, use Settings >
-Mods > Install from File and pick the zip (or the mod's folder), or unzip it into the mods folder yourself. A mod
-installed by hand shows up on the Mods page switched off; switch it on, and grant the permissions it asks for on its
-Extras page.
+A mod is its folder: zip it (with the folder inside the zip) and share the file. To install one, use the Mods window's
+Get mods > Install from File (classic: Settings > Mods > Install from File) and pick the zip (or the mod's folder), or
+unzip it into the mods folder yourself. A mod installed by hand shows up in the list switched off; switch it on, and
+grant the permissions it asks for on its Permissions tab (classic: its Extras page).
 
-To list it in the mod catalogue, so players can install and update it from the Mods page, publish the zip as a
+To list it in the mod catalogue, so players can install and update it from Get mods, publish the zip as a
 GitHub release and add an entry for it to [catalogue/mods.json](../../catalogue/README.md) with a pull request.
 
 Put a `README.md` in the folder saying what the mod does, its commands, and which permissions it asks for and why.

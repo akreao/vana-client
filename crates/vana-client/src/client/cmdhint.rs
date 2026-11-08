@@ -5,7 +5,6 @@
 
 use super::World;
 use super::game_ui::GameUi;
-use super::lua::CmdInfo;
 use crate::audio::Ui as Se;
 
 /// A row: the form as typed (`//loot list`), its mod, its help.
@@ -39,7 +38,7 @@ fn split(line: &str) -> Option<(&str, &str)> {
 }
 
 /// A form's words: a `<...>` or `[...]` one word with what it holds (`[lot | pass | drop]`).
-fn words(form: &str) -> Vec<&str> {
+pub(super) fn words(form: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let (mut depth, mut start) = (0i32, None);
     for (i, c) in form.char_indices() {

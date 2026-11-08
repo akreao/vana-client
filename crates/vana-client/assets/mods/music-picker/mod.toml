@@ -1,5 +1,5 @@
 name = "Music Picker"
-version = "1.0.1"
+version = "1.0.2"
 description = "Plays any of the game's tracks, keeps the zone's music in battle or silences it while mounted (the music add-ons)."
 permissions = []
 
@@ -26,6 +26,7 @@ help = "What plays while you ride: the game's mount music or nothing."
 [commands.music]
 help = "Plays one of the game's tracks."
 args = "<track number>"
+params = [{ name = "track number", type = "int" }]
 forms = [
   { args = "off", help = "Back to the zone's music." },
 ]

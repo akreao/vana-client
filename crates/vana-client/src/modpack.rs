@@ -68,6 +68,7 @@ pub struct LuaInfo {
 pub struct LuaCommand {
     pub help: String,
     pub args: Option<String>,
+    pub params: Vec<LuaParam>,
     pub forms: Vec<LuaForm>,
 }
 
@@ -76,6 +77,30 @@ pub struct LuaCommand {
 pub struct LuaForm {
     pub args: String,
     pub help: String,
+    pub params: Vec<LuaParam>,
+}
+
+/// A placeholder's type (client/lua/manifest.rs Param).
+#[derive(Clone, Debug, Default, serde::Deserialize, PartialEq)]
+#[serde(default)]
+pub struct LuaParam {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub options: Vec<String>,
+    pub also: Vec<String>,
+}
+
+impl LuaCommand {
+    /// Every form as (words, help, params): the main one first (when declared, or when there are no others).
+    pub fn forms(&self) -> Vec<(String, String, Vec<LuaParam>)> {
+        let main = self.args.clone().or_else(|| self.forms.is_empty().then(String::new));
+        let help = |h: &str| if h.is_empty() { self.help.clone() } else { h.to_string() };
+        main.map(|a| (a, self.help.clone(), self.params.clone()))
+            .into_iter()
+            .chain(self.forms.iter().map(|f| (f.args.clone(), help(&f.help), f.params.clone())))
+            .collect()
+    }
 }
 
 impl LuaInfo {
@@ -93,11 +118,7 @@ pub fn with_commands(description: &str, commands: &indexmap::IndexMap<String, Lu
     }
     let mut out = format!("{}\n\nCommands:", description.trim_end());
     for (name, c) in commands {
-        let main = c.args.clone().or_else(|| c.forms.is_empty().then(String::new));
-        let forms = main.map(|a| (a, c.help.as_str())).into_iter().chain(
-            c.forms.iter().map(|f| (f.args.clone(), if f.help.is_empty() { c.help.as_str() } else { f.help.as_str() })),
-        );
-        for (args, help) in forms {
+        for (args, help, _) in c.forms() {
             let words = if args.is_empty() { String::new() } else { format!(" {args}") };
             out.push_str(&format!("\n//{name}{words} - {help}"));
         }

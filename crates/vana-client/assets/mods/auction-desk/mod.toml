@@ -1,5 +1,5 @@
 name = "Auction Desk"
-version = "1.0.1"
+version = "1.0.2"
 description = "Bids and sales at the auction house by command, and your listings in the log (the auction helper add-ons)."
 permissions = ["actions"]
 
@@ -12,10 +12,12 @@ help = "At the auction house: //ahbuy <item> <price> [stack], //ahsell <item> <p
 [commands.ahbuy]
 help = "Bids on an item at the auction house."
 args = "<item> <price> [stack]"
+params = [{ name = "item", type = "item" }, { name = "price", type = "int" }, { name = "stack", type = "enum", options = ["stack"] }]
 
 [commands.ahsell]
 help = "Puts an item up for sale at the auction house."
 args = "<item> <price> [stack]"
+params = [{ name = "item", type = "item" }, { name = "price", type = "int" }, { name = "stack", type = "enum", options = ["stack"] }]
 
 [commands.ahlist]
 help = "Lists your auction house sales in the log."

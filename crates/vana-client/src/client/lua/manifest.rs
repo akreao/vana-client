@@ -56,6 +56,8 @@ impl Default for Manifest {
 pub struct Command {
     pub help: String,
     pub args: Option<String>,
+    /// The main form's typed placeholders.
+    pub params: Vec<Param>,
     pub forms: Vec<Form>,
 }
 
@@ -65,7 +67,26 @@ pub struct Command {
 pub struct Form {
     pub args: String,
     pub help: String,
+    pub params: Vec<Param>,
 }
+
+/// A placeholder's type, for the Mods window's form: what picks its value.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct Param {
+    /// The placeholder's first word (`<item | none | own>`: item).
+    pub name: String,
+    /// One of PARAM_TYPES (none: text).
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// An enum's choices.
+    pub options: Vec<String>,
+    /// Words it takes besides its type's (none, own).
+    pub also: Vec<String>,
+}
+
+pub const PARAM_TYPES: [&str; 10] =
+    ["text", "int", "number", "enum", "item", "key_item", "zone", "spell", "job", "player"];
 
 impl Command {
     /// Every form as (words, help): the main one first (when declared, or when there are no others).
@@ -175,6 +196,22 @@ pub fn parse(text: &str, folder: &str) -> Result<Manifest> {
         m.commands.keys().find(|n| n.is_empty() || n.contains(char::is_whitespace) || n.starts_with('/') || *n == "lua")
     {
         bail!("{}: command {name:?}: a name without slashes or spaces, not lua", m.id);
+    }
+    for (name, c) in &m.commands {
+        for p in c.params.iter().chain(c.forms.iter().flat_map(|f| &f.params)) {
+            if !p.kind.is_empty() && !PARAM_TYPES.contains(&p.kind.as_str()) {
+                bail!(
+                    "{}: command {name}: param {}: type is one of {} ({:?} given)",
+                    m.id,
+                    p.name,
+                    PARAM_TYPES.join(", "),
+                    p.kind
+                );
+            }
+            if p.kind == "enum" && p.options.is_empty() {
+                bail!("{}: command {name}: param {}: an enum needs options", m.id, p.name);
+            }
+        }
     }
     Ok(m)
 }

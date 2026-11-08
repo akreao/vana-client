@@ -1,5 +1,5 @@
 name = "Warp Helper"
-version = "1.0.1"
+version = "1.0.2"
 description = "Answers the Home Point, Survival Guide and Waypoint menus by name, and warps home with the Warp spell or a warp item (the warp add-ons)."
 permissions = ["actions"]
 
@@ -25,7 +25,8 @@ help = "After a warp ring or cudgel takes you away, put back what that slot held
 [commands.warp]
 help = "Warps by Home Point, Survival Guide or Waypoint."
 args = "[hp | sg | wp] <zone> [number or place]"
+params = [{ name = "hp", type = "enum", options = ["hp", "sg", "wp"] }, { name = "zone", type = "zone" }]
 forms = [
   { args = "home", help = "Warps home with the Warp spell or a warp item." },
-  { args = "dim <holla | dem | mea>", help = "Uses a Dimensional Ring." },
+  { args = "dim <holla | dem | mea>", help = "Uses a Dimensional Ring.", params = [{ name = "holla", type = "enum", options = ["holla", "dem", "mea"] }] },
 ]

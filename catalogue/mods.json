@@ -62,7 +62,24 @@
       "commands": {
         "ahbuy": {
           "args": "<item> <price> [stack]",
-          "help": "Bids on an item at the auction house."
+          "help": "Bids on an item at the auction house.",
+          "params": [
+            {
+              "name": "item",
+              "type": "item"
+            },
+            {
+              "name": "price",
+              "type": "int"
+            },
+            {
+              "name": "stack",
+              "options": [
+                "stack"
+              ],
+              "type": "enum"
+            }
+          ]
         },
         "ahlist": {
           "args": "",
@@ -70,7 +87,24 @@
         },
         "ahsell": {
           "args": "<item> <price> [stack]",
-          "help": "Puts an item up for sale at the auction house."
+          "help": "Puts an item up for sale at the auction house.",
+          "params": [
+            {
+              "name": "item",
+              "type": "item"
+            },
+            {
+              "name": "price",
+              "type": "int"
+            },
+            {
+              "name": "stack",
+              "options": [
+                "stack"
+              ],
+              "type": "enum"
+            }
+          ]
         }
       },
       "description": "Bids and sales at the auction house by command, and your listings in the log (the auction helper add-ons).",
@@ -83,15 +117,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "016f0a981eb8562389a07f0deb76de9668dd685f4d63c88cdcc35bed6289aac9",
-          "size": 714,
+          "sha256": "c7351dfbad83a98d98d7f9fac9677c09528754bad0431244bb9d3972bc66cd97",
+          "size": 982,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/auction-desk/mod.toml"
         }
       ],
       "id": "auction-desk",
       "kind": "lua",
       "name": "Auction Desk",
-      "version": "1.0.1"
+      "version": "1.0.2"
     },
     {
       "authors": [],
@@ -164,11 +198,37 @@
           "forms": [
             {
               "args": "get <item> [count | all]",
-              "help": "Fetches an item into your inventory."
+              "help": "Fetches an item into your inventory.",
+              "params": [
+                {
+                  "name": "item",
+                  "type": "item"
+                },
+                {
+                  "also": [
+                    "all"
+                  ],
+                  "name": "count",
+                  "type": "int"
+                }
+              ]
             },
             {
               "args": "put <item> [to <bag>] [all]",
-              "help": "Puts an item away, in a bag you name or where it belongs."
+              "help": "Puts an item away, in a bag you name or where it belongs.",
+              "params": [
+                {
+                  "name": "item",
+                  "type": "item"
+                },
+                {
+                  "name": "all",
+                  "options": [
+                    "all"
+                  ],
+                  "type": "enum"
+                }
+              ]
             },
             {
               "args": "gear",
@@ -192,15 +252,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "097cb5692ac10b3facda11dbadefefbd126663ee07b0d21a80b9a67ca5adff51",
-          "size": 981,
+          "sha256": "9208fe68dfdbbf138fb5a54a8a99947f6d2bdd5caddb6ece6c1beae02328d1cc",
+          "size": 1173,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/bag-manager/mod.toml"
         }
       ],
       "id": "bag-manager",
       "kind": "lua",
       "name": "Bag Manager",
-      "version": "1.0.1"
+      "version": "1.0.2"
     },
     {
       "authors": [],
@@ -429,7 +489,23 @@
         },
         "chatwin": {
           "args": "<tell | party | ls | ls2 | say | shout | yell | unity>",
-          "help": "Opens a window for one chat channel."
+          "help": "Opens a window for one chat channel.",
+          "params": [
+            {
+              "name": "tell",
+              "options": [
+                "tell",
+                "party",
+                "ls",
+                "ls2",
+                "say",
+                "shout",
+                "yell",
+                "unity"
+              ],
+              "type": "enum"
+            }
+          ]
         }
       },
       "description": "A window of its own for a chat channel (tells, party, linkshells, say, shout, yell, unity) with a line to answer in, and a search over the session's lines (the chat window add-ons).",
@@ -442,15 +518,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "9b1dace453975f179b75d9515939595814707ab8cb1e774a7417bdae785d05f8",
-          "size": 714,
+          "sha256": "f4441703af0b9acc022b5589ced7a7b0933be068081559a773fa5023ea0dfb1a",
+          "size": 833,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/chat-windows/mod.toml"
         }
       ],
       "id": "chat-windows",
       "kind": "lua",
       "name": "Chat Windows",
-      "version": "1.0.1"
+      "version": "1.0.2"
     },
     {
       "authors": [],
@@ -504,7 +580,13 @@
           "forms": [
             {
               "args": "spells [job]",
-              "help": "The spells a job has yet to learn."
+              "help": "The spells a job has yet to learn.",
+              "params": [
+                {
+                  "name": "job",
+                  "type": "job"
+                }
+              ]
             },
             {
               "args": "quests",
@@ -524,15 +606,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "35cc5c09f9bea8faa12a9039b5daf053cdd4d21b1e88f89d7b6e4da3a9f5ed3e",
-          "size": 690,
+          "sha256": "e16bae2122b13b97973d729c8752cbec009f3f097623c00a04149717817aafeb",
+          "size": 733,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/completion-log/mod.toml"
         }
       ],
       "id": "completion-log",
       "kind": "lua",
       "name": "Completion Log",
-      "version": "1.0.1"
+      "version": "1.0.2"
     },
     {
       "authors": [],
@@ -1251,11 +1333,23 @@
           "forms": [
             {
               "args": "add <item>",
-              "help": "Counts an item."
+              "help": "Counts an item.",
+              "params": [
+                {
+                  "name": "item",
+                  "type": "item"
+                }
+              ]
             },
             {
               "args": "addkey <key item>",
-              "help": "Shows whether you have a key item."
+              "help": "Shows whether you have a key item.",
+              "params": [
+                {
+                  "name": "key item",
+                  "type": "key_item"
+                }
+              ]
             },
             {
               "args": "remove <name>",
@@ -1279,15 +1373,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "9ac733f781fb32ccb976dd347de00844cebcdf619ca78852f9200644915698dd",
-          "size": 879,
+          "sha256": "f120a1055f8da5ccf84982338c7ab5d8eae5c7423d8ecfa7978d9ba45b2a2095",
+          "size": 977,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/inventory-hud/mod.toml"
         }
       ],
       "id": "inventory-hud",
       "kind": "lua",
       "name": "Inventory HUD",
-      "version": "1.0.1"
+      "version": "1.0.2"
     },
     {
       "authors": [],
@@ -1494,23 +1588,112 @@
           "forms": [
             {
               "args": "race <race>",
-              "help": "Your race."
+              "help": "Your race.",
+              "params": [
+                {
+                  "name": "race",
+                  "options": [
+                    "hume m",
+                    "hume f",
+                    "elvaan m",
+                    "elvaan f",
+                    "tarutaru m",
+                    "tarutaru f",
+                    "mithra",
+                    "galka"
+                  ],
+                  "type": "enum"
+                }
+              ]
             },
             {
               "args": "face <1a..8b>",
-              "help": "Your face."
+              "help": "Your face.",
+              "params": [
+                {
+                  "name": "1a..8b",
+                  "options": [
+                    "1a",
+                    "1b",
+                    "2a",
+                    "2b",
+                    "3a",
+                    "3b",
+                    "4a",
+                    "4b",
+                    "5a",
+                    "5b",
+                    "6a",
+                    "6b",
+                    "7a",
+                    "7b",
+                    "8a",
+                    "8b"
+                  ],
+                  "type": "enum"
+                }
+              ]
             },
             {
               "args": "<slot> <item | none | own>",
-              "help": "A piece of your gear."
+              "help": "A piece of your gear.",
+              "params": [
+                {
+                  "name": "slot",
+                  "options": [
+                    "head",
+                    "body",
+                    "hands",
+                    "legs",
+                    "feet",
+                    "main",
+                    "sub",
+                    "range"
+                  ],
+                  "type": "enum"
+                },
+                {
+                  "also": [
+                    "none",
+                    "own"
+                  ],
+                  "name": "item",
+                  "type": "item"
+                }
+              ]
             },
             {
               "args": "copy [name]",
-              "help": "Copies a player's look (your target's)."
+              "help": "Copies a player's look (your target's).",
+              "params": [
+                {
+                  "name": "name",
+                  "type": "player"
+                }
+              ]
             },
             {
               "args": "others <race | own>",
-              "help": "One race for everyone else."
+              "help": "One race for everyone else.",
+              "params": [
+                {
+                  "also": [
+                    "own"
+                  ],
+                  "name": "race",
+                  "options": [
+                    "hume m",
+                    "hume f",
+                    "elvaan m",
+                    "elvaan f",
+                    "tarutaru m",
+                    "tarutaru f",
+                    "mithra",
+                    "galka"
+                  ],
+                  "type": "enum"
+                }
+              ]
             },
             {
               "args": "reset",
@@ -1530,8 +1713,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "eb0f58e194d461e37eb074068324e3d2c2296a3945ae2dc81a3c2e061aee4793",
-          "size": 931,
+          "sha256": "96e4f1fc4f5a2de4f1da34054b8be7627d6bbfdcebbf2abfad92bfd87cfb7522",
+          "size": 1625,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/look-changer/mod.toml"
         },
         {
@@ -1544,7 +1727,7 @@
       "id": "look-changer",
       "kind": "lua",
       "name": "Look Changer",
-      "version": "1.0.1"
+      "version": "1.0.2"
     },
     {
       "authors": [],
@@ -1557,7 +1740,30 @@
               "help": "Lists your rules."
             }
           ],
-          "help": "Lots, passes or drops treasure by your lists."
+          "help": "Lots, passes or drops treasure by your lists.",
+          "params": [
+            {
+              "name": "lot",
+              "options": [
+                "lot",
+                "pass",
+                "drop"
+              ],
+              "type": "enum"
+            },
+            {
+              "name": "add",
+              "options": [
+                "add",
+                "remove"
+              ],
+              "type": "enum"
+            },
+            {
+              "name": "item",
+              "type": "item"
+            }
+          ]
         }
       },
       "description": "Lots, passes and drops treasure by your lists (the treasury and loot add-ons).",
@@ -1570,15 +1776,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "93178540734419ceacbe0b1250d404949279799218ca1f924048b71c9298891b",
-          "size": 959,
+          "sha256": "3d71c710180d6f18fd2ff3ba100c6224f9162ce654f2d3e49f6c5f14bb5e1251",
+          "size": 1133,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/loot-rules/mod.toml"
         }
       ],
       "id": "loot-rules",
       "kind": "lua",
       "name": "Loot Rules",
-      "version": "1.0.1"
+      "version": "1.0.2"
     },
     {
       "authors": [],
@@ -1845,11 +2051,27 @@
       "commands": {
         "focus": {
           "args": "<name>",
-          "help": "Brings another character's game window to the front."
+          "help": "Brings another character's game window to the front.",
+          "params": [
+            {
+              "name": "name",
+              "type": "player"
+            }
+          ]
         },
         "send": {
           "args": "<name | all | others> <command>",
-          "help": "Runs a command in your other game windows."
+          "help": "Runs a command in your other game windows.",
+          "params": [
+            {
+              "also": [
+                "all",
+                "others"
+              ],
+              "name": "name",
+              "type": "player"
+            }
+          ]
         },
         "sendtarget": {
           "args": "[name]",
@@ -1870,15 +2092,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "abc5685035d839fcd8c81a261c84e4aa29aa2b1f2dc08248a8f13c34b2b43da8",
-          "size": 1078,
+          "sha256": "138254746ba9ba8b6659463727c29dee84b3834530408e009385b7f3d574d3c9",
+          "size": 1196,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/multibox/mod.toml"
         }
       ],
       "id": "multibox",
       "kind": "lua",
       "name": "Multibox Control",
-      "version": "1.0.1"
+      "version": "1.0.2"
     },
     {
       "authors": [],
@@ -1891,7 +2113,13 @@
               "help": "Back to the zone's music."
             }
           ],
-          "help": "Plays one of the game's tracks."
+          "help": "Plays one of the game's tracks.",
+          "params": [
+            {
+              "name": "track number",
+              "type": "int"
+            }
+          ]
         }
       },
       "description": "Plays any of the game's tracks, keeps the zone's music in battle or silences it while mounted (the music add-ons).",
@@ -1904,15 +2132,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "236d105376abc1ea7ceb34b897c988ee7b041084070bf114f0d44ae2385dc5df",
-          "size": 938,
+          "sha256": "f37f404149897a9ce4278186bff417ce8548514d0de1fc343ef5714d8f063a3e",
+          "size": 989,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/music-picker/mod.toml"
         }
       ],
       "id": "music-picker",
       "kind": "lua",
       "name": "Music Picker",
-      "version": "1.0.1"
+      "version": "1.0.2"
     },
     {
       "authors": [],
@@ -2329,7 +2557,20 @@
       "commands": {
         "sell": {
           "args": "<item> [all]",
-          "help": "Sells an item (or every copy) to the open shop."
+          "help": "Sells an item (or every copy) to the open shop.",
+          "params": [
+            {
+              "name": "item",
+              "type": "item"
+            },
+            {
+              "name": "all",
+              "options": [
+                "all"
+              ],
+              "type": "enum"
+            }
+          ]
         },
         "trade": {
           "args": "<item> [count], <item> [count]...",
@@ -2346,15 +2587,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "ebf5cb83b54bd752a8dd26f81653fe9857d1355d2f103138437cc696e95a45c9",
-          "size": 634,
+          "sha256": "8a943f38d6f08fb0a28d647e2f7afc54f4fc8dce5df5a403db9a75692b05455b",
+          "size": 730,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/sell-hand-in/mod.toml"
         }
       ],
       "id": "sell-hand-in",
       "kind": "lua",
       "name": "Sell and Hand In",
-      "version": "1.0.1"
+      "version": "1.0.2"
     },
     {
       "authors": [],
@@ -2837,7 +3078,13 @@
               "help": "Stops."
             }
           ],
-          "help": "Uses every copy of an item, one after another."
+          "help": "Uses every copy of an item, one after another.",
+          "params": [
+            {
+              "name": "item",
+              "type": "item"
+            }
+          ]
         }
       },
       "description": "Uses every copy of an item one after another, such as a stack of pouches or bags (the pouch add-ons).",
@@ -2850,15 +3097,15 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "aa129e308d8cfd3279814aeb369b1b2261858ee869bb27690a213e16f389091c",
-          "size": 492,
+          "sha256": "266dcaf2f352ec3785dabc32b9cfb424ff08835b370e512423c9b4b6e3c60a49",
+          "size": 536,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/use-all/mod.toml"
         }
       ],
       "id": "use-all",
       "kind": "lua",
       "name": "Item Use Queue",
-      "version": "1.0.1"
+      "version": "1.0.2"
     },
     {
       "authors": [],
@@ -2894,10 +3141,36 @@
             },
             {
               "args": "dim <holla | dem | mea>",
-              "help": "Uses a Dimensional Ring."
+              "help": "Uses a Dimensional Ring.",
+              "params": [
+                {
+                  "name": "holla",
+                  "options": [
+                    "holla",
+                    "dem",
+                    "mea"
+                  ],
+                  "type": "enum"
+                }
+              ]
             }
           ],
-          "help": "Warps by Home Point, Survival Guide or Waypoint."
+          "help": "Warps by Home Point, Survival Guide or Waypoint.",
+          "params": [
+            {
+              "name": "hp",
+              "options": [
+                "hp",
+                "sg",
+                "wp"
+              ],
+              "type": "enum"
+            },
+            {
+              "name": "zone",
+              "type": "zone"
+            }
+          ]
         }
       },
       "description": "Answers the Home Point, Survival Guide and Waypoint menus by name, and warps home with the Warp spell or a warp item (the warp add-ons).",
@@ -2910,8 +3183,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "75d0437336c3b858f40e7f32735806cebf34280d462e94eb2759ceb47bb32d11",
-          "size": 1132,
+          "sha256": "304f392baf2effea737fdd3ab3f6f77133bb9dad308f6a40ec345543bcfb5460",
+          "size": 1319,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/warp-helper/mod.toml"
         },
         {
@@ -2924,7 +3197,7 @@
       "id": "warp-helper",
       "kind": "lua",
       "name": "Warp Helper",
-      "version": "1.0.1"
+      "version": "1.0.2"
     },
     {
       "authors": [],

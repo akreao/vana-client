@@ -295,6 +295,11 @@ pub struct Host {
     filters_dirty: bool,
     /// `/lua settings`: open Extras on this mod's page (taken by the app).
     pub(super) open_page: Option<String>,
+    /// `/lua mods` (and `/lua settings` in the modern UI): the Mods window, on this mod's Settings when one is named.
+    open_mods: Option<Option<String>>,
+    /// The lines the mods printed lately, numbered (the Mods window shows a mod's since its Run), and the next number.
+    printed: std::collections::VecDeque<(String, String, u64)>,
+    print_seq: u64,
     /// Window events for the mods' handlers: (mod, window, event).
     ui_events: Vec<(String, String, window::Event)>,
     /// `/lua watch`: mods reloaded when their files are saved.
@@ -634,13 +639,7 @@ fn folder_of(mods: &Path, id: &str) -> PathBuf {
 /// The mods' folders; a test run's own (`mods` beside its FFXI_CONFIG copy) when it has one, so test mods never sit
 /// among the user's.
 fn mods_dir() -> PathBuf {
-    if std::env::var_os("VANA_MODS_DIR").is_some() {
-        return crate::config::mods_dir();
-    }
-    match std::env::var_os("FFXI_CONFIG").map(|p| PathBuf::from(p).with_file_name("mods")) {
-        Some(d) if d.is_dir() => d,
-        _ => crate::config::mods_dir(),
-    }
+    crate::config::mods_dir()
 }
 
 fn read_json(path: &std::path::Path) -> serde_json::Value {
@@ -730,6 +729,16 @@ impl Host {
             || self.vms.iter().any(|v| v.suspended.is_none() && v.st.borrow().commands.iter().any(|(n, _)| *n == first))
     }
 
+    /// The number the next printed line gets (the Mods window's Run notes it).
+    pub(in crate::client) fn print_seq(&self) -> u64 {
+        self.print_seq
+    }
+
+    /// The lines mod `id` printed from number `from` on, oldest first.
+    pub(in crate::client) fn printed_since(&self, id: &str, from: u64) -> Vec<&str> {
+        self.printed.iter().filter(|p| p.2 >= from && p.0 == id).map(|p| p.1.as_str()).collect()
+    }
+
     /// A line the player typed (the chat line or a macro): the only source that may run /lua.
     pub fn type_line(&mut self, line: &str) {
         self.typed.push((line.to_string(), From::Player));
@@ -798,7 +807,7 @@ impl Host {
         if !missing.is_empty() {
             let id = vm.manifest.id.clone();
             vm.st.borrow_mut().notices.push(format!(
-                "{} asks for {}: allow it on its Extras page (/lua settings {id}) or with /lua grant {id} {}.",
+                "{} asks for {}: allow it in its settings (/lua settings {id}) or with /lua grant {id} {}.",
                 vm.manifest.name,
                 missing.join(", "),
                 missing.join(" ")
@@ -1189,6 +1198,11 @@ impl Host {
                 }
                 _ => out.push(("/lua set <mod> <key> <value>".into(), ERROR)),
             },
+            // The modern UI shows a mod's settings in the Mods window.
+            "settings" if w.modern => {
+                self.open_mods =
+                    Some(args.get(1).and_then(|id| find(&self.vms, id)).map(|k| self.vms[k].manifest.id.clone()))
+            }
             "settings" => {
                 let id = args
                     .get(1)
@@ -1200,6 +1214,8 @@ impl Host {
                     None => out.push(("No Lua mods loaded.".into(), ERROR)),
                 }
             }
+            "mods" if w.modern => self.open_mods = Some(None),
+            "mods" => out.push(("The Mods window is the modern UI's: Config > Settings > Mods here.".into(), ERROR)),
             "grant" | "revoke" => match args.get(1).and_then(|id| find(&self.vms, id)) {
                 Some(k) => {
                     for p in &args[2..] {
@@ -1217,7 +1233,9 @@ impl Host {
                 }
             },
             other => out.push((
-                format!("/lua {other}: list, load, unload, reload, watch, run, set, settings, grant, revoke"),
+                format!(
+                    "/lua {other}: list, load, unload, reload, watch, run, set, settings, mods, grant, revoke, help"
+                ),
                 ERROR,
             )),
         }
@@ -1495,6 +1513,16 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
             let mut st = vm.st.borrow_mut();
             (std::mem::take(&mut st.notices), std::mem::take(&mut st.ops), std::mem::take(&mut st.save))
         };
+        for text in notices.iter().chain(vm_ops.iter().filter_map(|o| match o {
+            Op::Print(t) | Op::Chat { text: t, .. } => Some(t),
+            _ => None,
+        })) {
+            if host.printed.len() >= 64 {
+                host.printed.pop_front();
+            }
+            host.printed.push_back((vm.manifest.id.clone(), text.clone(), host.print_seq));
+            host.print_seq += 1;
+        }
         out.extend(notices.into_iter().map(|n| (n, ERROR)));
         ops.extend(vm_ops);
         if save_now {
@@ -1520,31 +1548,21 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
         w.chat.filter = host.chat_filter();
         w.chat.mode_colours = w.battle.as_ref().map(|b| std::rc::Rc::new(b.code_tables(&w.game).1));
     }
-    // `/lua settings`: the modern UI shows the mods' pages in the Settings window (Mods, Mod Settings); the classic
-    // page stands alone.
     host.packet_upkeep(w);
-    // The modern Settings window keeps our state up on every page, so an open window is turned to the mod's page too:
-    // at once when its Extras state is up, else once the app has made it (it takes open_page then).
+    // `/lua settings` (classic): Extras on the mod's page, at once when its state is up, else once the app has made it
+    // (it takes open_page then). The modern UI's is the Mods window.
     if host.open_page.is_some() {
         let extras = w.settings.as_ref().is_some_and(|s| s.kind == super::settings::Kind::Extras);
-        if w.modern {
-            match w.config.as_mut() {
-                Some(c) => super::modern::open_mod_settings(c),
-                None => {
-                    let mut c = super::configui::ConfigUi::open("configwi");
-                    super::modern::open_mod_settings(&mut c);
-                    w.config = Some(c);
-                    w.menu = None;
-                }
-            }
-        }
         if let Some(s) = w.settings.as_mut().filter(|_| extras) {
             if let Some(id) = host.open_page.take() {
                 s.goto_mod(&id);
             }
-        } else if w.settings.is_none() || w.modern {
+        } else if w.settings.is_none() {
             w.want_settings = Some(super::settings::Kind::Extras);
         }
+    }
+    if let Some(id) = host.open_mods.take() {
+        super::modern::open_mods(w, id);
     }
     w.lua = host;
     for (line, colour) in out {
@@ -2269,6 +2287,13 @@ mod tests {
         );
         assert_eq!(c("forms = [{ args = \"a\", help = \"A.\" }]"), [("a".to_string(), "A.".to_string())]);
         assert!(manifest::parse("[commands.lua]\nhelp = \"x\"", "m").is_err());
+        // Typed params: a known type, an enum with its options.
+        let p = |t: &str| manifest::parse(&format!("[commands.x]\nhelp = \"X.\"\nargs = \"<a>\"\nparams = [{t}]"), "m");
+        let ok = p("{ name = \"a\", type = \"item\", also = [\"none\"] }").unwrap();
+        assert_eq!(ok.commands["x"].params[0].also, ["none"]);
+        assert!(p("{ name = \"a\", type = \"enum\", options = [\"b\"] }").is_ok());
+        assert!(p("{ name = \"a\", type = \"enum\" }").is_err());
+        assert!(p("{ name = \"a\", type = \"thing\" }").is_err());
     }
 
     /// A wait_until test that never returns runs out of its budget instead of freezing the frame.
@@ -5738,7 +5763,7 @@ fn grants() -> serde_json::Map<String, serde_json::Value> {
 }
 
 /// A setting row's key prefix for a permission (the mod's Extras page).
-const PERM: &str = "@permission:";
+pub(in crate::client) const PERM: &str = "@permission:";
 
 /// A permission's row label and help line.
 fn permission_text(p: &str) -> (&'static str, &'static str) {

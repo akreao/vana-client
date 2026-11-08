@@ -1,5 +1,5 @@
 name = "Chat Windows"
-version = "1.0.1"
+version = "1.0.2"
 description = "A window of its own for a chat channel (tells, party, linkshells, say, shout, yell, unity) with a line to answer in, and a search over the session's lines (the chat window add-ons)."
 permissions = ["actions"]
 
@@ -12,6 +12,7 @@ help = "//chatwin <tell | party | ls | ls2 | say | shout | yell | unity> opens o
 [commands.chatwin]
 help = "Opens a window for one chat channel."
 args = "<tell | party | ls | ls2 | say | shout | yell | unity>"
+params = [{ name = "tell", type = "enum", options = ["tell", "party", "ls", "ls2", "say", "shout", "yell", "unity"] }]
 
 [commands.chatfind]
 help = "Searches this session's chat lines."

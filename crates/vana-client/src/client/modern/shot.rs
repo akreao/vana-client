@@ -721,6 +721,9 @@ fn sample(m: &Modern, ctx: &egui::Context, layout: &mut Layout, opts: &Opts) {
     if opts.controller {
         super::padwin::sample(&mut p);
     }
+    if opts.mods {
+        super::modmgr::sample(&mut p);
+    }
     if opts.settings {
         let s = super::super::settings::SettingsUi::open(&crate::config::Config::default(), [1920, 1080]);
         super::config::sample(&mut p, &s);
@@ -772,6 +775,7 @@ fn sample(m: &Modern, ctx: &egui::Context, layout: &mut Layout, opts: &Opts) {
         || opts.modes
         || opts.settings
         || opts.gm
+        || opts.mods
         || opts.rows.is_some()
         || opts.borders.is_some()
     {
@@ -821,6 +825,8 @@ pub struct Opts {
     pub gm: bool,
     /// Ours: the Controller window (padwin.rs).
     pub controller: bool,
+    /// Ours: the Mods window (modmgr.rs).
+    pub mods: bool,
     /// The favourites strip and starred list rows.
     pub favs: bool,
     /// The right-click menus beside the party window.
