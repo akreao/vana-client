@@ -504,7 +504,7 @@ pub(super) fn body(
                     clicks.push(Click::Canvas(i, q.x - r.min.x, q.y - r.min.y, resp.secondary_clicked()));
                 }
                 // The pointer over it as it moves, and once when it leaves.
-                let was = egui::Id::new(("canvas hover", pid, i));
+                let was = egui::Id::unique(("canvas hover", pid, i));
                 let inside = resp.hover_pos().map(|q| (q.x - r.min.x, q.y - r.min.y));
                 let last = ctx.data(|d| d.get_temp::<(f32, f32)>(was));
                 match (inside, last) {
