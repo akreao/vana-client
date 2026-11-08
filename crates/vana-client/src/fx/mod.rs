@@ -125,6 +125,11 @@ pub trait Actors {
     fn sub_anim(&self, _id: u32) -> u8 {
         0
     }
+    /// Entity +0x124 bits 8..11: the applied sub-animation before its last change (scheduler var 0x3c; 8 at the
+    /// start, FUN_1008a350's 0x880). None for an actor with no entity (model +0x70 0).
+    fn sub_prev(&self, _id: u32) -> Option<u8> {
+        None
+    }
     /// Drawobj +0x840 bit 6 (vtable +0x250 / +0x254, FUN_100d6850): this swing is the off-hand one, i.e. a dual-wield
     /// model playing a `b...` scheduler. Scheduler system value 0x3b (batch 5 item 8).
     fn off_hand(&self, _id: u32) -> bool {
@@ -919,6 +924,8 @@ pub struct Effects {
     stepping: Vec<usize>,
     dolls: Vec<tasks::Doll>,
     pending: Vec<tasks::Pending>,
+    /// FUN_1008c480: the wanted sub-animation while an `init` start (on_init) takes its first step.
+    sub_now: Option<(u32, u8)>,
     /// Actor +0xa0: the cast 4cc stored by FUN_10083d60.
     casting: HashMap<u32, u32>,
     sched_cache: HashMap<Ref, std::rc::Rc<Vec<sched::SOp>>>,
@@ -1126,6 +1133,7 @@ impl Effects {
             stepping: Vec::new(),
             dolls: Vec::new(),
             pending: Vec::new(),
+            sub_now: None,
             casting: HashMap::new(),
             sched_cache: HashMap::new(),
             index: None,
