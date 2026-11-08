@@ -25,6 +25,7 @@ mod state;
 mod vm;
 pub(super) mod window;
 
+pub(in crate::client) use input::combo_label;
 pub(in crate::client) use state::Placed;
 
 use super::World;
@@ -108,7 +109,7 @@ pub(in crate::client) struct WinReq {
 }
 
 /// The behaviour switches (client.set_option) by name; false for an unknown name or value.
-pub(super) const OPTIONS: [&str; 21] = [
+pub(super) const OPTIONS: [&str; 22] = [
     "macro_palette_delay",
     "ah_result_delay",
     "equipset_delay",
@@ -118,6 +119,7 @@ pub(super) const OPTIONS: [&str; 21] = [
     "clear_colour",
     "ambient",
     "minimap_span",
+    "map_opacity",
     "move_lock",
     "all_maps",
     "dead_commands",
@@ -197,6 +199,15 @@ fn set_option(w: &mut World, name: &str, v: &serde_json::Value) -> bool {
             }
             None => return false,
         },
+        // Saved to config when it changes, so it holds while the Map Overlay mod is off.
+        ("map_opacity", _) => match v.as_f64() {
+            Some(k) => {
+                let k = (k as f32).clamp(0.0, 1.0);
+                w.map_opacity_dirty |= k != w.map_opacity;
+                w.map_opacity = k;
+            }
+            None => return false,
+        },
         _ => return false,
     }
     true
@@ -205,7 +216,7 @@ fn set_option(w: &mut World, name: &str, v: &serde_json::Value) -> bool {
 /// Whether a value suits a switch: a boolean, a number, or a colour ({r, g, b} or false).
 pub(super) fn option_value_ok(name: &str, v: &serde_json::Value) -> Result<(), &'static str> {
     match name {
-        "cutscene_speed" | "animation_rate" | "send_interval" | "minimap_span" => {
+        "cutscene_speed" | "animation_rate" | "send_interval" | "minimap_span" | "map_opacity" => {
             v.as_f64().map(|_| ()).ok_or("a number")
         }
         "clear_colour" | "ambient" => rgb_of(v).map(|_| ()).ok_or("a colour {r, g, b} (0..255), or false"),
@@ -237,6 +248,7 @@ pub(super) fn option(w: &World, name: &str) -> Option<serde_json::Value> {
         "clear_colour" => rgb_json(w.opts.clear),
         "ambient" => rgb_json(w.opts.ambient),
         "minimap_span" => json!(w.minimap_span),
+        "map_opacity" => json!(w.map_opacity),
         "send_interval" => json!(match w.net.stats.send_ms.load(std::sync::atomic::Ordering::Relaxed) {
             0 => 400,
             n => n,
@@ -818,6 +830,8 @@ impl Host {
             let data = data_dir().join(&vm.manifest.id);
             let file = Self::char_file(Some(w));
             vm.st.borrow_mut().char_file = file.clone();
+            // Its character-scoped settings declared `from` the config waited for a character (migrate_settings).
+            migrate_settings(&vm.manifest, &data, file.as_deref());
             vm.st.borrow_mut().settings = load_settings(&vm.manifest, &data, file.as_deref());
             force_on(&vm.manifest, &mut vm.st.borrow_mut().settings);
             let stored = file.map_or(serde_json::Value::Null, |f| read_json(&data.join(f)));
@@ -1660,8 +1674,9 @@ fn apply(w: &mut World, gu: Option<&super::game_ui::GameUi>, op: Op) {
         Op::Shot(name) => w.lua.shot = Some(name),
         Op::Paste => w.lua.paste_wanted = true,
         Op::Option(mod_id, name, v) => {
-            // The minimap's zoom stays as the wheel's does; the rest go back when the mod unloads.
-            if set_option(w, &name, &v) && name != "minimap_span" {
+            // The minimap's zoom stays as the wheel's does, the maps' opacity as the player set it; the rest go back
+            // when the mod unloads.
+            if set_option(w, &name, &v) && !["minimap_span", "map_opacity"].contains(&name.as_str()) {
                 w.lua.opt_owners.insert(name, mod_id);
             }
         }
@@ -1988,6 +2003,11 @@ impl Host {
         f.window = [window[0] as f32, window[1] as f32];
         f.k = k;
     }
+
+    /// Whether the pointer is over a modern panel (egui's), which the HUD under it then leaves alone.
+    pub(in crate::client) fn set_over_ui(&self, over: bool) {
+        self.input.borrow_mut().over_ui = over;
+    }
 }
 
 /// LuaLS stubs for the whole mod API (`vana-client lua-stubs`).
@@ -2203,6 +2223,15 @@ mod tests {
         hud::hover(&mut host);
         assert_eq!(kinds(&take(&mut host)), ["b mouse_enter", "b mouse_leave", "a mouse_enter"]);
         assert_eq!(hud::tip(&host).map(|t| (t.0, t.1)), Some((String::new(), "A".into())));
+        // Under a modern panel the element is neither pressed nor hovered.
+        host.set_over_ui(true);
+        assert!(!input::hud_press(&mut host, Left));
+        hud::hover(&mut host);
+        assert_eq!(kinds(&take(&mut host)), ["a mouse_leave"]);
+        host.set_over_ui(false);
+        // Nor while a menu is open.
+        host.vms.last().unwrap().lua.load(r#"ui.menu({"x", "y"}, function() end)"#).exec().unwrap();
+        assert!(!input::hud_press(&mut host, Left));
     }
 
     /// The bundled Battle Text's short lines: the common forms; an unknown one stays as printed; names in their colours.
@@ -3210,6 +3239,79 @@ return "acxml flow ok"
         vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
     }
 
+    /// Pending Actions: a melee round or another spell's finish while a spell waits is not its answer, nor a message
+    /// that is not one of the spell's refusals (akreao/vana-client#243); the spell's own start, finish and
+    /// refusals are, and each kind matches its own ids.
+    #[test]
+    fn pending_actions_match_the_ask() {
+        let host = Host::default();
+        let files = BUNDLED.iter().find(|b| b.0 == "pending-actions").unwrap().2;
+        let vm = Vm::new(bundled_manifest("pending-actions").unwrap(), PathBuf::from("."), vm::Source::Bundled(files))
+            .unwrap();
+        vm.lua.set_app_data(host.info.clone());
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        let init = files.iter().find(|f| f.0 == "init.lua").unwrap().1;
+        let script = r#"
+            local H, OUT, chip = {}, {}, nil
+            local T = 100
+            os.clock = function() return T end
+            settings = { get = function() return true end }
+            events = { on = function(n, f) H[n] = f end }
+            packets = { on_out = function(id, f) OUT[id] = f end }
+            game = { player = function() return { id = 5 } end, entity = function() return nil end,
+              items = function() return { { slot = 3, id = 4112 } } end }
+            res = { spell = function() return { name = "Cure" } end, ability = function() return { name = "Provoke" } end,
+              item = function() return { name = "Potion" } end,
+              message = function() return { text = "No." } end }
+            text = { strip = function(s) return s end }
+            ui = { window = function(_, spec) chip = spec.elements[1] end, update = function(_, _, v) chip = v end,
+              open = function() end, close = function() chip = nil end }
+            load(INIT)()
+            local function ask(cat, param) OUT[0x01A]({ data = string.pack("<I4I4I2I2I4", 0, 0, 0, cat, param) }) end
+            local function item() OUT[0x037]({ data = string.pack("<I4I4I4BBI4I4", 0, 0, 0, 0, 0, 0, 0)
+              :sub(1, 0x0e) .. string.pack("<BBI4I4", 3, 0, 0, 0) }) end
+            local function state() T = T + 0.2 H.frame() return chip and chip.tone end
+            local function act(cat, param, value)
+              local targets = value and { { id = 9, results = { { value = value } } } } or {}
+              H.action({ actor = 5, category = cat, param = param, targets = targets })
+            end
+            -- A spell (Cure, 1): a melee round, another spell's finish, an interrupt and another spell's start leave
+            -- it waiting.
+            ask(3, 1)
+            act(1, 0x746b6174) act(4, 2) act(8, 0x6f737073, 1) act(8, 0x6f736163, 2)
+            assert(state() == "waiting")
+            -- Melee-side chatter of ours (71 with no spell id, experience) is no refusal; its own start answers.
+            H.battle_message(5, 9, 71, 0, 0) H.battle_message(5, 5, 8, 300, 0)
+            assert(state() == "waiting")
+            act(8, 0x6f736163, 1)
+            assert(state() == nil)
+            -- Its finish answers too; its refusal (47 with its id) refuses.
+            ask(3, 1) act(4, 1) assert(state() == nil)
+            ask(3, 1) H.battle_message(5, 9, 47, 2, 0) assert(state() == "waiting")
+            H.battle_message(5, 9, 47, 1, 0) assert(state() == "refused")
+            T = T + 10 state()
+            -- A job ability (Provoke, 0x01A param 0x23): its finish's param, not another's.
+            ask(9, 0x23) act(6, 0x24) assert(state() == "waiting")
+            act(6, 0x23) assert(state() == nil)
+            ask(9, 0x23) H.battle_message(5, 9, 88, 0x24, 0) assert(state() == "waiting")
+            H.battle_message(5, 9, 88, 0, 0) assert(state() == "refused")
+            T = T + 10 state()
+            -- A weapon skill: its start's record value; a monster skill finish answers whatever its id.
+            ask(7, 32) act(7, 0x65746163, 33) assert(state() == "waiting")
+            act(7, 0x65746163, 32) assert(state() == nil)
+            ask(7, 32) act(11, 999) assert(state() == nil)
+            ask(7, 32) H.battle_message(5, 9, 192, 0, 0) assert(state() == "refused")
+            T = T + 10 state()
+            -- An item: its category alone; 62 only with no id or its own.
+            item() act(1, 0) assert(state() == "waiting")
+            act(9, 0) assert(state() == nil)
+            item() H.battle_message(5, 9, 62, 4113, 0) assert(state() == "waiting")
+            H.battle_message(5, 9, 62, 4112, 0) assert(state() == "refused")
+        "#;
+        vm.lua.globals().set("INIT", init).unwrap();
+        vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
+    }
+
     /// Job Gauges: SCH 99 with 100 s of the stratagem recast left has 2 of 5 charges, the next in 4 s; a NIN sub sees
     /// its shadows and tools.
     #[test]
@@ -3750,6 +3852,115 @@ return "acxml flow ok"
         "#;
         vm.lua.globals().set("INIT", init).unwrap();
         vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
+    }
+
+    /// Action Panel: //actions shows its window (a HUD one: the game keeps its keys), listing the castable spells by
+    /// school and the abilities by tab with the costs the game's lists show; a row runs its macro line; the list
+    /// follows a pet called while it is open.
+    #[test]
+    fn action_panel_opens() {
+        let host = Host::default();
+        let files = BUNDLED.iter().find(|b| b.0 == "action-panel").unwrap().2;
+        let vm =
+            Vm::new(bundled_manifest("action-panel").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
+        vm.lua.set_app_data(host.info.clone());
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        let init = files.iter().find(|f| f.0 == "init.lua").unwrap().1;
+        let script = r#"
+            C, E, ran, said, tick = {}, {}, {}, {}, nil
+            on, pet = true, nil
+            settings = { get = function() return on end }
+            commands = { register = function(n, f) C[n] = f end, run = function(l) ran[#ran + 1] = l end }
+            events = { on = function(n, f) E[n] = f end }
+            chat = { add = function(t) said[#said + 1] = t end }
+            timer = { every = function(_, f) tick = f end }
+            local spells = {
+              [1] = { name = "Cure", kind = 1, levels = { [3] = 1 }, mp = 8, targets = 0x1F },
+              [100] = { name = "Protect", kind = 1, levels = { [3] = 7 }, mp = 9, targets = 1 },
+              [144] = { name = "Fire", kind = 2, levels = { [4] = 13 }, mp = 7, targets = 0x20 },
+              [145] = { name = "Fire II", kind = 2, levels = { [4] = 38 }, mp = 26, targets = 0x20 },
+              [146] = { name = nil, kind = 2, levels = { [4] = 1 }, mp = 1, targets = 0x20 },
+            }
+            local function ab(name, kind, t) t.name, t.kind = name, kind; t.tp = t.tp or 255; t.cost = t.cost or 0
+              t.targets = t.targets or 1; t.recast_id = t.recast_id or 900; t.sub = t.sub or 0; return t end
+            local abilities = {
+              [0x20] = ab("Fast Blade", 3, { targets = 0x20 }),
+              [0x210] = ab("Divine Seal", 1, { recast_id = 26 }),
+              [0x220] = ab("Curing Waltz", 11, { tp = 200, targets = 0x1F }),
+              -- Not listed: a trait, and a row that only opens a sub-list (its rolls are listed).
+              [0x230] = ab("Resist Sleep", 4, {}),
+              [0x240] = ab("Phantom Roll", 1, { recast_id = 193, sub = 8 }),
+              [0x250] = ab("Fighter's Roll", 8, { recast_id = 193 }),
+              -- Pet commands, only with a pet: a blood pact costs MP, a Ready move charges.
+              [0x400] = ab("Fight", 2, { targets = 0x20 }),
+              [0x410] = ab("Foot Kick", 0x12, { cost = 1, targets = 0x20 }),
+              [0x420] = ab("Searing Light", 6, { cost = 107, targets = 0x20 }),
+            }
+            game = {
+              player = function() return { main_job = 3, main_level = 75, sub_job = 4, sub_level = 37 } end,
+              info = function() return { pet_index = pet } end,
+              job_data = function() return {} end,
+              spells = function() return { 1, 100, 144, 145, 146 } end,
+              abilities = function() return { 0x20, 0x210, 0x220, 0x230, 0x240, 0x250, 0x400, 0x410, 0x420 } end,
+              recasts = function() return { spells = { [1] = 3.2 }, abilities = { [26] = 300 }, totals = {} } end,
+            }
+            res = { spell = function(id) return spells[id] end, ability = function(id) return abilities[id] end }
+            local on_window = ui.on
+            ui.on = function(id, f) H = f; on_window(id, f) end
+            load(INIT)()
+            C.actions()
+            assert(ui.is_open("actions"), "//actions opened no window")
+            tick()
+            -- White magic (the first school): Cure and Protect by name; a pick runs its line.
+            H("actions", { kind = "select", id = "list", index = 1 })
+            H("actions", { kind = "select", id = "list", index = 2 })
+            -- Black magic: the nameless spell (names still loading) is left out.
+            H("actions", { kind = "set", id = "school", index = 2 })
+            H("actions", { kind = "select", id = "list", index = 1 })
+            -- Weapon skills.
+            H("actions", { kind = "set", id = "tabs", index = 3 })
+            H("actions", { kind = "select", id = "list", index = 1 })
+            assert(table.concat(ran, "|") == '/ma "Cure" <st>|/ma "Protect" <me>|/ma "Fire" <st>|/ws "Fast Blade" <st>',
+              table.concat(ran, "|"))
+            C.actions()
+            assert(not ui.is_open("actions"), "a second //actions closes it")
+            on = false
+            C.actions()
+            assert(not ui.is_open("actions"), "off: //actions does nothing")
+            on = true
+            C.actions()
+            on = false
+            E.settings_changed("on", false)
+            assert(not ui.is_open("actions"), "switched off: the window closes")
+            on = true
+            C.actions()
+            H("actions", { kind = "press", id = "close", index = 1 })
+            assert(not ui.is_open("actions"), "Close closes it")
+            C.actions()
+            H("actions", { kind = "set", id = "tabs", index = 2 })
+        "#;
+        vm.lua.globals().set("INIT", init).unwrap();
+        let run = |code: &str| vm.lua.load(code).exec().unwrap_or_else(|e| panic!("{e}"));
+        let rows = || -> Vec<Vec<String>> {
+            let st = vm.st.borrow();
+            let win = st.windows.iter().find(|w| w.id == "actions").unwrap();
+            assert!(win.open && win.hud && !win.focus, "a HUD window, open, without the keys");
+            win.elems
+                .iter()
+                .find_map(|e| match e {
+                    window::Elem::List { rows, .. } => Some(rows.iter().map(|r| r.cells.clone()).collect()),
+                    _ => None,
+                })
+                .unwrap()
+        };
+        run(script);
+        // The Abilities page: the waltz's TP, Divine Seal's recast, Fighter's Roll.
+        assert_eq!(rows(), [["Curing Waltz", "200 TP", ""], ["Divine Seal", "", "5:00"], ["Fighter's Roll", "", ""]]);
+        // The Pet page: nothing without a pet; the commands once one is called.
+        run(r#"H("actions", { kind = "set", id = "tabs", index = 4 })"#);
+        assert!(rows().is_empty());
+        run("pet = 1234; tick()");
+        assert_eq!(rows(), [["Fight", "", ""], ["Foot Kick", "1 charge", ""], ["Searing Light", "107 MP", ""]]);
     }
 
     /// Gear Stats: descriptions and augments summed; conditional lines and DMG / Delay left out.
@@ -4598,7 +4809,8 @@ fn migrate_regime(w: &World, data: &std::path::Path, char_file: &str) {
 }
 
 /// Settings declared `from` a client config field (a bundled mod's, replacing an extra that kept its value there) and
-/// not set yet take that field's value, written to their scope's file so the config may drop it.
+/// not set yet take that field's value, written to their scope's file so the config may drop it. A character-scoped
+/// one waits for a character (it would go to the account file, which every character falls back to).
 fn migrate_settings(m: &manifest::Manifest, data: &std::path::Path, char_file: Option<&str>) {
     if m.settings.values().all(|d| d.from.is_empty()) {
         return;
@@ -4609,6 +4821,8 @@ fn migrate_settings(m: &manifest::Manifest, data: &std::path::Path, char_file: O
         _ => data.join("settings.json"),
     };
     for (key, character, old) in migrations(m, &config, |key, character| read_json(&file(character)).get(key).is_some())
+        .into_iter()
+        .filter(|(_, character, _)| !character || char_file.is_some())
     {
         let file = file(character);
         let mut v = read_json(&file);
@@ -4797,6 +5011,8 @@ impl Host {
             if self.vms.iter().any(|v| v.manifest.id == m.id) {
                 continue;
             }
+            // A setting declared `from` the config shows the player's value before the mod first loads too.
+            migrate_settings(&m, &data_dir().join(&m.id), char_file.as_deref());
             let settings = load_settings(&m, &data_dir().join(&m.id), char_file.as_deref());
             let given: Vec<String> = g
                 .get(&m.id)
@@ -4905,10 +5121,9 @@ impl Host {
     /// Whether a mod window's line is being typed (it takes the text and the keys).
     pub(super) fn typing(&self) -> bool {
         !self.all_hidden
-            && self
-                .vms
-                .iter()
-                .any(|v| v.suspended.is_none() && v.st.borrow().windows.iter().any(|w| w.open && w.focus && w.typing()))
+            && self.vms.iter().any(|v| {
+                v.suspended.is_none() && v.st.borrow().windows.iter().any(|w| w.open && w.focus && w.takes_text())
+            })
     }
 
     /// The focused window's title and the help under its cursor, for the classic help bar.
@@ -4926,11 +5141,18 @@ impl Host {
 /// Typed text for the focused window's line.
 pub(super) fn window_text(w: &mut World, events: &[egui::Event]) {
     let host = &mut w.lua;
+    let last = host.input.borrow().last_down;
     let mut hit = None;
     for vm in host.vms.iter().filter(|v| v.suspended.is_none()) {
         let mut st = vm.st.borrow_mut();
-        if let Some(win) = st.windows.iter_mut().find(|w| w.open && w.focus && w.typing()) {
-            let (ev, se) = win.text(events);
+        if let Some(win) = st.windows.iter_mut().find(|w| w.open && w.focus && w.takes_text()) {
+            let (ev, se) = if win.listening() {
+                win.listen(events, |e| input::combo_of(e, last))
+            } else if win.typing() {
+                win.text(events)
+            } else {
+                win.filter_text(events)
+            };
             hit = Some((vm.manifest.id.clone(), win.id.clone(), ev, se));
             break;
         }
@@ -4941,13 +5163,13 @@ pub(super) fn window_text(w: &mut World, events: &[egui::Event]) {
 }
 
 /// A key for the focused mod window, if any (its events go to the mod's handler next phase).
-pub(super) fn window_key(w: &mut World, key: egui::Key) -> bool {
+pub(super) fn window_key(w: &mut World, key: egui::Key, shift: bool) -> bool {
     let host = &mut w.lua;
     let mut hit = None;
     for vm in host.vms.iter().filter(|v| v.suspended.is_none()) {
         let mut st = vm.st.borrow_mut();
         if let Some(win) = st.windows.iter_mut().find(|w| w.open && w.focus) {
-            let (ev, se) = win.key(key);
+            let (ev, se) = win.key_mod(key, shift);
             hit = Some((vm.manifest.id.clone(), win.id.clone(), ev, se));
             break;
         }
@@ -4975,14 +5197,16 @@ pub(super) fn draw_classic(gu: &mut super::game_ui::GameUi, w: &World) -> Vec<[f
 
 impl Host {
     /// The open windows (mod id, a copy of the window), for the modern UI's panels.
-    /// What /uimodes lists of the mods: each running mod's windows (not its prompts) by panel key, and each of its
-    /// HUD windows as hud:<mod>:<window>, with a label.
+    /// What /uimodes lists of the mods: each running mod's HUD, edge and panel windows (not those the player opens) by
+    /// panel key, and each of its HUD windows as hud:<mod>:<window>, with a label.
     pub(in crate::client) fn mode_windows(&self) -> Vec<(String, String)> {
         let mut out: Vec<(String, String)> = Vec::new();
         for vm in self.vms.iter().filter(|v| v.suspended.is_none()) {
             let st = vm.st.borrow();
             let name = &vm.manifest.name;
-            for win in st.windows.iter().filter(|w| !w.modal) {
+            // Only what stands on the screen as the HUD does (HUD and edge windows, built-in panels' stand-ins): windows
+            // the player opens (a mod's manager) are never hidden by a mode.
+            for win in st.windows.iter().filter(|w| !w.modal && (w.hud || w.edge || w.panel.is_some())) {
                 let key = win.panel.clone().unwrap_or_else(|| format!("mod:{}:{}", vm.manifest.id, win.id));
                 let what = [&win.title, &win.heading]
                     .into_iter()
@@ -5129,9 +5353,23 @@ pub(super) fn pointer_classic(
     p: (f32, f32),
     moved: bool,
     clicked: bool,
+    right: bool,
     held: (bool, bool, bool),
 ) -> bool {
     let mut places = classic_places(w);
+    // A canvas the pointer has left (its window not under it now): its 'leave'.
+    let mut left = Vec::new();
+    for (v, id, x, y) in &places {
+        let vm = &w.lua.vms[*v];
+        let mut st = vm.st.borrow_mut();
+        if let Some(win) = st.windows.iter_mut().find(|x| x.id == *id && x.hovered.is_some()) {
+            let (ww, wh) = win.classic_size();
+            if p.0 < *x || p.1 < *y || p.0 >= x + ww || p.1 >= y + wh {
+                left.extend(win.hover_off().into_iter().map(|e| (vm.manifest.id.clone(), id.clone(), e)));
+            }
+        }
+    }
+    w.lua.ui_events.extend(left);
     // An open modal window is the only one the pointer reaches; a click outside a popup closes it.
     if let Some((k, mid)) = w.lua.modal() {
         places.retain(|(v, id, _, _)| *v == k && *id == mid);
@@ -5140,7 +5378,7 @@ pub(super) fn pointer_classic(
                 w.lua.vms[*v].st.borrow().windows.iter().find(|x| x.id == *id).map_or((0.0, 0.0), |x| x.classic_size());
             p.0 >= *x && p.1 >= *y && p.0 < x + ww && p.1 < y + wh
         });
-        if clicked && !inside {
+        if (clicked || right) && !inside {
             close_popup(w, k, &mid);
             return true;
         }
@@ -5154,7 +5392,7 @@ pub(super) fn pointer_classic(
             if win.drag.is_none() && win.press.is_none() && (p.0 < x || p.1 < y || p.0 >= x + wx || p.1 >= y + wy) {
                 continue;
             }
-            let (hover, ev, se) = win.pointer_classic(gu, x, y, p, moved, clicked, held);
+            let (hover, ev, se) = win.pointer_classic(gu, x, y, p, moved, clicked, right, held);
             (hover, ev, se, vm.manifest.id.clone())
         };
         // A click on a window gives it the focus (not a HUD's).

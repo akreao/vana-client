@@ -49,9 +49,12 @@ Done so far (checked live, Lnxcsfix):
   `input.on_mouse` to zoom at the pointer, Escape through `input.on_key` after the game's windows. Seen live: opened
   with Ctrl+O and Alt+O at the 80 % carried over, zoomed, panned, closed by Escape and by Alt+O. Compared shot for
   shot with the built-in overlay (master) in both UIs: the same box, image, edge (rounded corners), marker and name
-  plates, and the minimap's marker shaded by the overlay's opacity. The Map Overlay Opacity stays a client setting
-  (config `map_overlay_opacity`, its Extras row where it was): the drawing code applies it to HUD maps that give no
-  alpha of their own, and the minimap's marker shades by it, as before (checked against master in the classic UI). To get
+  plates, and the minimap's marker shaded by the overlay's opacity. The Map Overlay Opacity is the mod's setting (on its
+  own settings page; it takes config `map_overlay_opacity` at its first load), passed to the client option
+  `map_opacity`: the drawing code applies it to HUD maps that give no alpha of their own, and the minimap's marker
+  shades by it, as before. The client remembers the last value in config `map_overlay_opacity` (no Settings row), so
+  the minimap's marker keeps it while the mod is off. The Settings window's Maps & Timers page went
+  with it (Minimap Position, Minimap Size and Timers Position are the classic UI's rows, on its Extras tabs). To get
   there the modern UI draws mods' HUD elements with its own painter (modern/hudmods.rs), as its own panels draw:
   a mod's element looks as a built-in one does (user, 2026-11-06). It shows what the map window shows (user,
   2026-11-06: "no map exists" is not "you don't have it yet"): where no map exists (Mordion Gaol) the error sound and
@@ -472,8 +475,12 @@ Each conversion removes the Rust it replaces, keeps the extra's look in both UIs
 - **Action Panel** (assets/mods/action-panel; Rhombus, wizardui, smnbar, colure): `//actions` opens a window with tabs
   Magic (a School choice: the learned spells the jobs can cast now, blue magic only while set), Abilities, Weapon
   Skills and Pet (`game.abilities`), each row with its icon, cost and recast (dim while it runs, counting down); a
-  click or Enter runs its text command as a macro line would (`<me>` for self-only actions, else `<st>`, the rule the
-  favourites use). Seen live: Berserk used from it, its 4:59 recast in the row.
+  click runs its text command as a macro line would (`<me>` for self-only actions, else `<st>`, the rule the
+  favourites use). Seen live: Berserk used from it, its 4:59 recast in the row. A HUD window (`hud = true`, a Close
+  button): it never takes the keys, so the main menu, Escape, targeting and macros stay the game's while it is open.
+  Left out: traits, Monstrosity moves, the rows that only open a sub-list (`res.ability`'s new `sub`: Phantom Roll,
+  Blood Pact: Rage), pet commands without a pet, spells whose names have not loaded. Costs as the game's lists show
+  them (TP for dances, MP for blood pacts, a Ready move's charges); the list is rebuilt when it changes while open.
 - **Map Notes** (assets/mods/map-notes; boussole): on the Map Overlay while it is open, notes pinned where you stood
   (`//mapnote add <text>`, list, del; per zone and map page, for every character), party members in sight, and the
   names `//mapnote track` follows, each a dot with its label. The Map Overlay mod provides its box and view

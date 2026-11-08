@@ -140,6 +140,8 @@ loaded yet.
 | `recast` | `number` | The recast time in seconds. |
 | `range` | `integer` | The spell's range class, 0..15, as the game file stores it (an index into the game's range table, not a distance in yalms). |
 | `levels` | `table<integer, integer>` | The level each job learns it at, keyed by job id (1 WAR .. 22 RUN). Jobs that cannot learn the spell have no key. |
+| `main_only` | `integer?` | The job that casts it only as its main job (20 SCH, 21 GEO), else `nil`. |
+| `job_points` | `table<integer, boolean>` | Jobs for which `levels` holds the job points the spell takes at level 99 (a gift), keyed by job id. |
 
 **Errors** "game state is not available here" in the lobby or inside a filter.
 
@@ -183,6 +185,7 @@ skills 0..511 (0x000-0x1FF), job abilities from 512 (0x200), pet commands from 1
 | `recast` | `integer?` | Its base recast in seconds, before gear, merits and job points, as LandSandBoat has it (the game's files hold no recast lengths for abilities). `nil` for one without a recast (weapon skills, traits, Ready's charges). The length running now is in `game.recasts().totals`. |
 | `targets` | `integer` | Valid-target bits, the same bits as [`res.spell`](#resspell)'s `targets`. |
 | `tp` | `integer` | The TP cost; 255 means none. |
+| `sub` | `integer` | Not 0 on a row that opens a sub-list (Phantom Roll, Blood Pact: Rage, Ready...): the type of the list it opens, whose rows have that `kind`. Such a row is not an ability itself; `/ja` skips it. |
 | `level` | `integer` | The level the record gives (used by Monstrosity moves). |
 
 **Errors** "game state is not available here" in the lobby or inside a filter.

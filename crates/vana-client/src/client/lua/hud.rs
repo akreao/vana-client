@@ -48,7 +48,8 @@ pub(in crate::client) enum Kind {
         tint: [u8; 4],
     },
     /// The zone's map (the one the client shows here): centred on world (x, z) or on us, `span` map pixels across, at
-    /// `alpha` (none: the player's Map Overlay Opacity); our marker on it when `me`.
+    /// `alpha` (none: the client option map_opacity, the Map Overlay mod's Map Overlay Opacity); our marker on it when
+    /// `me`.
     Map {
         w: f32,
         h: f32,
@@ -442,7 +443,7 @@ fn apply(e: &mut Elem, t: &Table) -> mlua::Result<()> {
             if let Some(v) = t.get::<Option<f32>>("span")? {
                 *span = v.clamp(16.0, 2048.0);
             }
-            // A value, or false for the player's Map Overlay Opacity.
+            // A value, or false for the client option map_opacity (the Map Overlay mod's Map Overlay Opacity).
             if t.contains_key("alpha")? {
                 *alpha = t.get::<Option<f32>>("alpha").ok().flatten().map(|v| v.clamp(0.0, 1.0));
             }
@@ -1027,7 +1028,7 @@ pub(super) fn draw(gu: &mut super::super::game_ui::GameUi, w: &World) {
             }
             Kind::Icon { icon, size } => {
                 let s = size * k.0;
-                super::window::icon(gu, Some(w), *icon, x, y, s);
+                super::window::icon(gu, Some(w), *icon, x, y, s, [255; 4]);
                 [x, y, s, s]
             }
             Kind::Bubble { w: bw, h: bh, round, colour, edge, edge_w, tail } => {
@@ -1123,9 +1124,10 @@ pub(super) fn drop_target(host: &super::Host, m: &str, dragged: &str, x: f64, y:
 }
 
 /// The element under the pointer (one with a handler or a tooltip): mouse_leave and mouse_enter as it changes.
+/// None under a modern panel.
 pub(super) fn hover(host: &mut super::Host) {
     let (x, y) = host.input.borrow().cursor;
-    let now = under(host, x, y, true);
+    let now = if host.input.borrow().over_ui { None } else { under(host, x, y, true) };
     let mut s = host.input.borrow_mut();
     let was = s.hud_hover.as_ref().map(|h| (h.0.clone(), h.1.clone()));
     if was == now {

@@ -3,25 +3,25 @@
   "mods": [
     {
       "authors": [],
-      "description": "A window of everything your jobs can use now: magic by school, job abilities, weapon skills and pet commands, with costs and recasts; a click uses one (the action menu add-ons).",
+      "description": "A window of everything your jobs can use now: magic by school, job abilities, weapon skills and pet commands, with costs and recasts; a click uses one; //actions opens it (the action menu add-ons).",
       "files": [
         {
           "path": "init.lua",
-          "sha256": "00482ea1b047d962ae886fbf5b5ce19dbfcf90d61cdc55862ec90a77cecbe99a",
-          "size": 5925,
+          "sha256": "329484df97f2b55b4e8822817bfb63d765808e02a984c697dba68d7ae8da8c22",
+          "size": 7799,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/action-panel/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "9003ea0fd4b7364fe8364dadad89255f9b6e93830658fbc5eb08e647ef2d12b3",
-          "size": 488,
+          "sha256": "3410cc0b6cf7ac94d207177dd32912bb5987910e9b6d74bb9040fa34108b6f18",
+          "size": 499,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/action-panel/mod.toml"
         }
       ],
       "id": "action-panel",
       "kind": "lua",
       "name": "Action Panel",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
@@ -523,13 +523,13 @@
       "files": [
         {
           "path": "init.lua",
-          "sha256": "28261429999e97a80e06d31bedafb17de8baf3f757c56e0e00d238e12231c0a5",
-          "size": 4957,
+          "sha256": "d84cd5df2ea3b66ce8939764c6013aa15ae71cb24511490a794869975e1b3b0e",
+          "size": 4950,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/dialogue-bubbles/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "667467199f851c5e528205c2cbb0495039c325403bc3cef1b39c8a358b509d29",
+          "sha256": "e79a9d7d356919530fc8c35145a8444e38b6d8a95728c5950793a5d79c81921c",
           "size": 1014,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/dialogue-bubbles/mod.toml"
         }
@@ -537,7 +537,7 @@
       "id": "dialogue-bubbles",
       "kind": "lua",
       "name": "Dialogue Bubbles",
-      "version": "1.0.1"
+      "version": "1.0.2"
     },
     {
       "authors": [
@@ -885,26 +885,26 @@
       "files": [
         {
           "path": "init.lua",
-          "sha256": "eab6a549d7ff1e166c880c5ba266f7473865ce044832f6373bf7111b3de13385",
-          "size": 2286,
+          "sha256": "fb24c8741dfdc2c92b23288d3b065138a3673a63b72be7e26eb99e9869ddee50",
+          "size": 2729,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "af2cca4da7499db9e7c9f3f7f845f2b7d8ae1015a658b1261837ef4bd3ab8120",
-          "size": 1678,
+          "sha256": "1ad074d73e4483181d9d90f6f3fef99df2575d53cf76d325a8d55793618593a2",
+          "size": 1289,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/mod.toml"
         },
         {
           "path": "src/actions.lua",
-          "sha256": "438e8d10553df88101be7e9ee02e4ec1efab0f7b23c7d1c3ea3630cd2163f1ab",
-          "size": 2720,
+          "sha256": "0bae85cc1fdef20a683dcae09a929231f8e20056384f6710c9cc94954e01cdd2",
+          "size": 4687,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/actions.lua"
         },
         {
           "path": "src/bar.lua",
-          "sha256": "fcd9345db2147fc39330856bc93ea4afcd86bde3a754927959ad156ff76721f5",
-          "size": 8628,
+          "sha256": "5633c4a815543aa5871d6f7738fd4fc4898310b8b8b27a8ffdc2b00dc24635ed",
+          "size": 17355,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/bar.lua"
         },
         {
@@ -921,15 +921,21 @@
         },
         {
           "path": "src/keys.lua",
-          "sha256": "b7f6cfb4e4e67bfb1f971cfe232aa87a10d331af17075ea705f8fa825bc2063b",
-          "size": 3710,
+          "sha256": "3d2896030ea679d8af136963cfa2c94ee5ab84c5ff466ed34dae4d9e67dccd3c",
+          "size": 5379,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/keys.lua"
         },
         {
           "path": "src/manager.lua",
-          "sha256": "66443a1516e291e6766cb2fa4afb9b56696dd86637e113662ea0574e16837c03",
-          "size": 10474,
+          "sha256": "18898eeee39ed17a962917b7e62ac15ea75829aa80cbb8d7d4458f5b89c46b0b",
+          "size": 11314,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/manager.lua"
+        },
+        {
+          "path": "src/menu.lua",
+          "sha256": "919ac66efaecb7cb881afb7adf0199b856aa4774d55831b4a9b9af1125185214",
+          "size": 11776,
+          "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/menu.lua"
         },
         {
           "path": "src/runner.lua",
@@ -947,7 +953,7 @@
       "id": "hotbar",
       "kind": "lua",
       "name": "Hotbars",
-      "version": "1.0.0"
+      "version": "1.6.0"
     },
     {
       "authors": [],
@@ -1227,25 +1233,25 @@
     },
     {
       "authors": [],
-      "description": "Ctrl or Alt + O shows the zone map over the game (the map add-ons): pan it with a drag, zoom it with the wheel. Its opacity is the client's Map Overlay Opacity.",
+      "description": "Ctrl or Alt + O shows the zone map over the game (the map add-ons): pan it with a drag, zoom it with the wheel.",
       "files": [
         {
           "path": "init.lua",
-          "sha256": "f31081e52f507e95e259aaee9440c1712c9f3c73d71c654a2d40d65216358efb",
-          "size": 4999,
+          "sha256": "f314586951e05bbf7818294d5a5a6c1c90333f4fd58ac1f960e99c610b37d310",
+          "size": 5149,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/map-overlay/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "32d599e8a897ee447e48a127a050f446cd5e38504c3a87c06b8a9ae9e869ae97",
-          "size": 443,
+          "sha256": "88894707f0f5c56ec87302cdc86b64acfe5a425dce2482a591754f259c6867c5",
+          "size": 848,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/map-overlay/mod.toml"
         }
       ],
       "id": "map-overlay",
       "kind": "lua",
       "name": "Map Overlay",
-      "version": "1.0.0"
+      "version": "1.1.0"
     },
     {
       "authors": [],
@@ -1485,8 +1491,8 @@
       "files": [
         {
           "path": "init.lua",
-          "sha256": "4eae92b1d510be215873c1a9b2faaa25f8cd204ca91f5fe408b66d93985ab754",
-          "size": 4335,
+          "sha256": "5a26c40ab1fc939f89dcf2584f1c6d34ff1700b5ace8baa925fcbd40bab22bc1",
+          "size": 6884,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/pending-actions/init.lua"
         },
         {
