@@ -3164,6 +3164,8 @@ fn world_hud(
                 let mut c = configui::ConfigUi::open("configwi");
                 c.mon = monstrosity::active(world);
                 c.cam_keys = world.cam_keys;
+                c.recall(world.cursor_recall(configui::CONFIGWI_MENU));
+                config_anon(Some(&mut c), world.self_flags);
                 world.config = Some(c);
                 world.menu = None;
                 world.sounds.push(crate::audio::Ui::Select as u32);
@@ -4942,6 +4944,7 @@ fn config_out(world: &mut World, out: configui::Out) {
     world.sounds.extend(out.sounds.iter().map(|s| *s as u32));
     for id in out.changed {
         cfgapply::apply(world, id);
+        cfgapply::server_conf(world, id);
     }
     if out.closed {
         world.config = None;
@@ -4958,6 +4961,26 @@ fn config_out(world: &mut World, out: configui::Out) {
     }
     if let Some(k) = out.cam_keys {
         world.cam_keys = k;
+    }
+    if let Some(hide) = out.anon {
+        textcmd::config_flag(world, 0, hide);
+    }
+    // The modern page has no conf3win window to close: its Show / Hide goes out when picked.
+    let flags = world.self_flags;
+    let modern = world.config.as_mut().filter(|c| c.anon_dirty && !c.stack.iter().any(|w| w.name == "conf3win"));
+    if let Some(c) = modern {
+        c.anon_dirty = false;
+        let hide = c.anon;
+        textcmd::config_flag(world, 0, hide);
+    } else {
+        config_anon(world.config.as_mut(), flags);
+    }
+}
+
+/// Show / Hide follows our anonymous flag (0x037 flags bit 5, FUN_100e47c0(0)) until one is picked.
+fn config_anon(c: Option<&mut configui::ConfigUi>, flags: u32) {
+    if let Some(c) = c.filter(|c| !c.anon_dirty) {
+        c.anon = flags & 1 << 5 != 0;
     }
 }
 
@@ -7803,6 +7826,16 @@ impl World {
             self.macro_palette = p;
         }
         kept.extend(maze::kept(self));
+        // myroom / mogext, cmbmenu and configwi are opened by name without flag 0x10000 (MODLOG "Cursor memory").
+        if let Some(m) = &self.moogle {
+            kept.push((m.name(), m.sel));
+        }
+        if let Some(sel) = synth::menu_sel(self) {
+            kept.push((synth::CMBMENU, sel));
+        }
+        if let Some(w) = self.config.as_ref().and_then(|c| c.stack.first()).filter(|w| w.name == "configwi") {
+            kept.push((configui::CONFIGWI_MENU, w.cursor));
+        }
         self.cursor_mem.extend(kept);
     }
 
@@ -11419,6 +11452,7 @@ impl App {
                     world.my_fellow = fellow;
                     world.costume.set_id(costume);
                     world.self_flags = flags;
+                    config_anon(world.config.as_mut(), flags);
                     // 0x1009d84a: our own 0x037 clears entity +0x130 bit 18, the half-alpha draw.
                     if let Some(e) = world.entities.get_mut(&me) {
                         e.half_fade = false;
@@ -11507,7 +11541,7 @@ impl App {
                         _ => world.ko_offer = 0,
                     }
                 }
-                NetEvent::ConfSys(c) => world.conf_sys = c,
+                NetEvent::ConfSys(c) => cfgapply::from_server(world, c),
                 NetEvent::MissionLog { port, data } => world.journal.record(port, data),
                 NetEvent::RoeUnity { sparks, deeds, plaudits, rot } => {
                     (world.roe.sparks, world.roe.deeds, world.roe.plaudits, world.roe.rot) =

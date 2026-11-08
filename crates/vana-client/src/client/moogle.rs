@@ -70,7 +70,7 @@ pub struct Menu {
 }
 
 impl Menu {
-    fn name(&self) -> &'static str {
+    pub(super) fn name(&self) -> &'static str {
         if self.nomad { MOGEXT } else { MYROOM }
     }
 
@@ -299,7 +299,10 @@ pub fn open(w: &mut World, nomad: bool) {
     if !nomad && w.mh_owner != 0 {
         return;
     }
-    w.moogle = Some(Menu { nomad, origin: w.pos, sel: 1, storage: None, open_pending: false, jobs: None, post: None });
+    // Opened by name (FUN_1015e350): the cursor child comes back from the layout (no flag 0x10000; the open hook
+    // FUN_10145180 leaves it).
+    let sel = w.cursor_recall(if nomad { MOGEXT } else { MYROOM });
+    w.moogle = Some(Menu { nomad, origin: w.pos, sel, storage: None, open_pending: false, jobs: None, post: None });
     w.menu = None;
     w.action_menu = None;
 }

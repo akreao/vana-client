@@ -251,8 +251,14 @@ fn close_top(w: &mut World) {
 
 /// c2s 0x0DB kind 1 (FUN_100e4630): @8..@0x14 the three config words, @0x24 the party languages.
 fn send_langs(w: &World, mask: u32) {
+    send_0db(w, 1, mask);
+}
+
+/// c2s 0x0DB (FUN_100e4630(kind, param)): @6 the kind (0 the filters, 1 the party languages), @8..@0x14 the three
+/// SAVE_CONF words, @0x24 the languages.
+pub(super) fn send_0db(w: &World, kind: u8, mask: u32) {
     let mut b = vec![0u8; 0x24];
-    b[2] = 1;
+    b[2] = kind;
     b[4..16].copy_from_slice(&w.conf_sys);
     b[0x20..0x24].copy_from_slice(&mask.to_le_bytes());
     let _ = w.net.commands.send(NetCommand::Packet { id: 0x0DB, body: b });

@@ -1446,6 +1446,7 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
                 Some(c) => super::modern::open_mod_settings(c),
                 None => {
                     let mut c = super::configui::ConfigUi::open("configwi");
+                    c.anon = w.self_flags & 1 << 5 != 0;
                     super::modern::open_mod_settings(&mut c);
                     w.config = Some(c);
                     w.menu = None;
