@@ -885,13 +885,13 @@
       "files": [
         {
           "path": "init.lua",
-          "sha256": "eab6a549d7ff1e166c880c5ba266f7473865ce044832f6373bf7111b3de13385",
-          "size": 2286,
+          "sha256": "64f2c31f0d428ed9b9e1f8f6ef1712ca5e389b9ed33a6e84776960b324fa5e3c",
+          "size": 2698,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "af2cca4da7499db9e7c9f3f7f845f2b7d8ae1015a658b1261837ef4bd3ab8120",
+          "sha256": "94eee7668640c2af979565e6a6844a6c2c07194d4d66dbc63901a4e289bc9fa1",
           "size": 1678,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/mod.toml"
         },
@@ -903,8 +903,8 @@
         },
         {
           "path": "src/bar.lua",
-          "sha256": "fcd9345db2147fc39330856bc93ea4afcd86bde3a754927959ad156ff76721f5",
-          "size": 8628,
+          "sha256": "0d98f42d097e8ce758d19704b7fb8db230bb446303b4b3706322c373c0d4b241",
+          "size": 15451,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/bar.lua"
         },
         {
@@ -932,6 +932,12 @@
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/manager.lua"
         },
         {
+          "path": "src/menu.lua",
+          "sha256": "1666b5cf18081de5fb7c64421de9204555035df79f3b8f836c3c0ac5b88f40dd",
+          "size": 8646,
+          "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/menu.lua"
+        },
+        {
           "path": "src/runner.lua",
           "sha256": "a7f3242b417be9449989585625c30ef24c1a2778efc8863d711935f2592b650d",
           "size": 2399,
@@ -947,7 +953,7 @@
       "id": "hotbar",
       "kind": "lua",
       "name": "Hotbars",
-      "version": "1.0.0"
+      "version": "1.1.0"
     },
     {
       "authors": [],

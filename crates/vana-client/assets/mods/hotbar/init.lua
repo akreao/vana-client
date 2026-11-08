@@ -1,10 +1,12 @@
 -- Hotbars (from PR #88 by Arusia): bars of multi-line macros that load by main job, then sub job; each slot shows its
--- action's icon and recast. See src/data.lua for macros.json. //hb opens the manager.
+-- action's icon and recast, in a frame whose + / - show more or fewer bars. A slot's right-click menu puts a spell,
+-- an ability or an existing macro in it. See src/data.lua for macros.json. //hb opens the manager.
 
 local data = require("src.data")
 local bar = require("src.bar")
 local manager = require("src.manager")
 local stock = require("src.stock")
+local menu = require("src.menu")
 
 local ok, err = data.init({
   read = fs.read,
@@ -18,8 +20,14 @@ if not ok then
 end
 
 bar.hooks.open_manager = manager.open
-bar.hooks.edit_slot = manager.edit_slot
+bar.hooks.slot_menu = menu.open
 bar.hooks.changed = manager.refresh
+menu.hooks.edit_slot = manager.edit_slot
+menu.hooks.open_manager = manager.open
+menu.hooks.changed = function()
+  bar.rebuild()
+  manager.refresh()
+end
 manager.hooks.changed = bar.rebuild
 manager.hooks.rebind = bar.rebind
 
@@ -45,7 +53,7 @@ events.on("settings_changed", refresh)
 timer.every(1, bar.tick)
 timer.every(0.25, bar.recasts)
 
-local USAGE = "//hb [show | hide | run <bar> <slot> | reload | wipestock | restorestock]  (no argument opens the manager)"
+local USAGE = "//hb [show | hide | more | fewer | run <bar> <slot> | reload | wipestock | restorestock]  (no argument opens the manager)"
 
 commands.register("hb", function(cmd, a, b)
   cmd = (cmd or ""):lower()
@@ -55,6 +63,10 @@ commands.register("hb", function(cmd, a, b)
     bar.set_hidden(false)
   elseif cmd == "hide" then
     bar.set_hidden(true)
+  elseif cmd == "more" then
+    bar.grow(1)
+  elseif cmd == "fewer" then
+    bar.grow(-1)
   elseif cmd == "run" then
     local bn, sn = tonumber(a), tonumber(b)
     if bn and sn then bar.fire(bn, sn) else chat.add("Hotbars: " .. USAGE) end
