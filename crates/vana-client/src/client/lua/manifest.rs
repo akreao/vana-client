@@ -49,27 +49,34 @@ impl Default for Manifest {
     }
 }
 
-/// A declared text command: one line on what it does, and the words it takes, a form each (`""` for none).
+/// A declared text command (`[commands.<name>]`): a line on what it does, the words of its main form (`args`; none: it
+/// has only `forms`), and its other forms, each with a line of its own.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Command {
     pub help: String,
-    #[serde(deserialize_with = "one_or_many")]
-    pub usage: Vec<String>,
+    pub args: Option<String>,
+    pub forms: Vec<Form>,
 }
 
-/// A string or a list of strings.
-fn one_or_many<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Vec<String>, D::Error> {
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum Forms {
-        One(String),
-        Many(Vec<String>),
+/// One form of a command: the words after its name and a line on what it does (none: the command's).
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct Form {
+    pub args: String,
+    pub help: String,
+}
+
+impl Command {
+    /// Every form as (words, help): the main one first (when declared, or when there are no others).
+    pub fn forms(&self) -> Vec<(String, String)> {
+        let main = self.args.clone().or_else(|| self.forms.is_empty().then(String::new));
+        let help = |h: &str| if h.is_empty() { self.help.clone() } else { h.to_string() };
+        main.map(|a| (a, self.help.clone()))
+            .into_iter()
+            .chain(self.forms.iter().map(|f| (f.args.clone(), help(&f.help))))
+            .collect()
     }
-    Ok(match Forms::deserialize(d)? {
-        Forms::One(s) => vec![s],
-        Forms::Many(v) => v,
-    })
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -165,9 +172,9 @@ pub fn parse(text: &str, folder: &str) -> Result<Manifest> {
         }
     }
     if let Some(name) =
-        m.commands.keys().find(|n| n.is_empty() || n.contains(char::is_whitespace) || n.starts_with('/'))
+        m.commands.keys().find(|n| n.is_empty() || n.contains(char::is_whitespace) || n.starts_with('/') || *n == "lua")
     {
-        bail!("{}: command {name:?}: a name without slashes or spaces", m.id);
+        bail!("{}: command {name:?}: a name without slashes or spaces, not lua", m.id);
     }
     Ok(m)
 }

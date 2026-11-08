@@ -10,9 +10,12 @@ label = "Screen Notes"
 help = "//note <name> <text> puts a note on the screen (drag it to move it); //note <name> removes it; //notes lists them."
 
 [commands.note]
-help = "Puts a named note on the screen; with no text, removes it."
-usage = ["<name> <text>", "<name>"]
+help = "Puts a named note on the screen."
+args = "<name> <text>"
+forms = [
+  { args = "<name>", help = "Removes it." },
+]
 
 [commands.notes]
 help = "Lists your screen notes."
-usage = ""
+args = ""

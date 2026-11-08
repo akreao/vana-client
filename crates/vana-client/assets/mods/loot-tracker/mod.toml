@@ -11,4 +11,4 @@ help = "Shows, in a window on a screen edge, your target's Treasure Hunter level
 
 [commands.lootlog]
 help = "Starts the loot log again."
-usage = "reset"
+args = "reset"

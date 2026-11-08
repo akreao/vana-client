@@ -11,24 +11,24 @@ help = "//bind <key> <line> (keys like f9, ctrl+1, alt+shift+q), //unbind <key>,
 
 [commands.bind]
 help = "Binds a key to a command line."
-usage = "<key> <line>"
+args = "<key> <line>"
 
 [commands.unbind]
 help = "Takes a key's bind off."
-usage = "<key>"
+args = "<key>"
 
 [commands.binds]
 help = "Lists your key binds."
-usage = ""
+args = ""
 
 [commands.alias]
 help = "Makes a short name run a longer command line."
-usage = "<name> <line>"
+args = "<name> <line>"
 
 [commands.unalias]
 help = "Removes an alias."
-usage = "<name>"
+args = "<name>"
 
 [commands.aliases]
 help = "Lists your aliases."
-usage = ""
+args = ""

@@ -16,5 +16,10 @@ label = "Every Bag"
 help = "Lists the satchel, sack, case and wardrobes too, not only the inventory."
 
 [commands.bags]
-help = "Adds or removes the items and key items the Inventory HUD counts."
-usage = ["add <item>", "addkey <key item>", "remove <name>", "list"]
+help = "The items and key items the Inventory HUD counts."
+forms = [
+  { args = "add <item>", help = "Counts an item." },
+  { args = "addkey <key item>", help = "Shows whether you have a key item." },
+  { args = "remove <name>", help = "Stops counting an item or key item." },
+  { args = "list", help = "Lists what it counts." },
+]

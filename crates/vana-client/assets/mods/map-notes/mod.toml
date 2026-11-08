@@ -17,4 +17,10 @@ help = "Party and alliance members in sight marked on the Map Overlay."
 
 [commands.mapnote]
 help = "Notes on the zone's map, and monsters to track on it."
-usage = ["add <text>", "del <n>", "list", "track <name>", "untrack <name>"]
+forms = [
+  { args = "add <text>", help = "Pins a note where you stand." },
+  { args = "del <n>", help = "Removes a note by its number." },
+  { args = "list", help = "Lists this zone's notes." },
+  { args = "track <name>", help = "Marks a monster on the map." },
+  { args = "untrack <name>", help = "Stops marking it." },
+]

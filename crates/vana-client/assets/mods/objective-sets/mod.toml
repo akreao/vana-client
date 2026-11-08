@@ -10,9 +10,14 @@ label = "Objective Sets"
 help = "//roeset save <name> keeps the objectives set now; //roeset <name> removes the others and sets those, a second apart (removing loses an objective's progress); //roeset list, //roeset delete <name>."
 
 [commands.roeset]
-help = "Saves or sets a named set of Records of Eminence objectives."
-usage = ["<name>", "save <name>", "list", "delete <name>"]
+help = "Sets a named set of Records of Eminence objectives."
+args = "<name>"
+forms = [
+  { args = "save <name>", help = "Saves the objectives you have set." },
+  { args = "list", help = "Lists your sets." },
+  { args = "delete <name>", help = "Deletes a set." },
+]
 
 [commands.roeshow]
 help = "Lists the objectives you have set."
-usage = ""
+args = ""

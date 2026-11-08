@@ -17,16 +17,16 @@ help = "Tells your other windows' characters get show in this window's log too."
 
 [commands.send]
 help = "Runs a command in your other game windows."
-usage = "<name | all | others> <command>"
+args = "<name | all | others> <command>"
 
 [commands.sendtarget]
 help = "Has your other windows target what you target."
-usage = "[name]"
+args = "[name]"
 
 [commands.focus]
 help = "Brings another character's game window to the front."
-usage = "<name>"
+args = "<name>"
 
 [commands.stna]
 help = "Casts the -na spell for an ailment this job can remove (or in another window)."
-usage = "[name]"
+args = "[name]"

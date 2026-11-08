@@ -23,5 +23,9 @@ label = "Wear the old gear again"
 help = "After a warp ring or cudgel takes you away, put back what that slot held."
 
 [commands.warp]
-help = "Warps by Home Point, Survival Guide or Waypoint, home, or to a Dimensional ring."
-usage = ["[hp | sg | wp] <zone> [number or place]", "home", "dim <holla | dem | mea>"]
+help = "Warps by Home Point, Survival Guide or Waypoint."
+args = "[hp | sg | wp] <zone> [number or place]"
+forms = [
+  { args = "home", help = "Warps home with the Warp spell or a warp item." },
+  { args = "dim <holla | dem | mea>", help = "Uses a Dimensional Ring." },
+]

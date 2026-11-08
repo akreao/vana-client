@@ -114,6 +114,13 @@ pub const FUNCS: &[Func] = &[
     },
     Func {
         ns: "commands",
+        name: "usage",
+        doc: "The command's forms as its mod.toml declares them ([commands.<name>] args and forms), as lines to print: {\"//trusts <lineup>\", \"//trusts list\", ...}; empty when this mod declares no such command.",
+        params: &[("name", "string", "without the slash")],
+        ret: "string[]",
+    },
+    Func {
+        ns: "commands",
         name: "register",
         doc: "Adds a command: typed as //name or /name, it calls `handler` with the words after it. Declare it in mod.toml ([commands.<name>] help and usage) so the chat line's hint, //help and the Mods page show it.",
         params: &[("name", "string", "without the slash"), ("handler", "fun(...: string)", "")],
@@ -1857,7 +1864,7 @@ pub const FUNCS: &[Func] = &[
     Func {
         ns: "mods",
         name: "installed",
-        doc: "Every mod on disk and bundled: {id, name, version, enabled, bundled, loaded}. Load or unload one with commands.run('/lua load <id>') / '/lua unload <id>'.",
+        doc: "Every mod on disk and bundled: {id, name, version, enabled, bundled, loaded, commands (the names its mod.toml declares)}. Load or unload one with commands.run('/lua load <id>') / '/lua unload <id>'.",
         params: &[],
         ret: "table[]",
     },

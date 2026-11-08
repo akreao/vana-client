@@ -672,33 +672,52 @@ impl Host {
                 let decl = vm.manifest.commands.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|d| d.1);
                 out.push(CmdInfo {
                     name: name.clone(),
+                    id: vm.manifest.id.clone(),
                     owner: vm.manifest.name.clone(),
                     help: decl.map_or(String::new(), |d| d.help.clone()),
-                    usage: decl
-                        .map(|d| d.usage.clone())
-                        .filter(|u| !u.is_empty())
-                        .unwrap_or_else(|| vec![String::new()]),
+                    forms: decl.map_or_else(|| vec![(String::new(), String::new())], |d| d.forms()),
                 });
             }
         }
         if !out.iter().any(|c| c.name == "help") {
             out.push(CmdInfo {
                 name: "help".into(),
+                id: String::new(),
                 owner: "Mods".into(),
-                help: "Lists the mods' commands; with a command or a mod, its forms.".into(),
-                usage: vec![String::new(), "<command or mod>".into()],
+                help: "The mods that have commands (as /lua help).".into(),
+                forms: help_forms(),
             });
         }
         out.push(CmdInfo {
             name: "lua".into(),
+            id: String::new(),
             owner: "Mods".into(),
-            help: "Loads, unloads and lists mods, and grants their permissions.".into(),
-            usage: ["list", "load <id>", "unload <id>", "reload [id]", "grant <id> <permission>", "settings <id>"]
-                .map(String::from)
-                .to_vec(),
+            help: "Loads, unloads and lists mods, grants their permissions, and shows their commands.".into(),
+            forms: [
+                ("help [mod or command]", "The mods' commands: a mod's, or one command's forms."),
+                ("list", "The mods, loaded or not."),
+                ("load <id>", "Loads a mod."),
+                ("unload <id>", "Unloads a mod."),
+                ("reload [id]", "Loads a mod (or every mod) again."),
+                ("grant <id> <permission>", "Lets a mod do what it asks."),
+                ("settings <id>", "Opens a mod's settings."),
+            ]
+            .map(|(a, h)| (a.to_string(), h.to_string()))
+            .to_vec(),
         });
         out.sort_by(|a, b| a.name.cmp(&b.name));
         out
+    }
+
+    /// An installed mod that is not running and declares the command `name`: its name.
+    fn off_mod_with(&self, name: &str) -> Option<String> {
+        let running = |id: &str| self.vms.iter().any(|v| v.suspended.is_none() && v.manifest.id == id);
+        std::fs::read_dir(mods_dir())
+            .ok()?
+            .flatten()
+            .filter_map(|e| manifest::read(&e.path()).ok())
+            .find(|m| !running(&m.id) && m.commands.keys().any(|n| n.eq_ignore_ascii_case(name)))
+            .map(|m| m.name)
     }
 
     /// Whether a typed line is for the mods: //anything, /lua, or a mod's registered /command.
@@ -743,6 +762,9 @@ impl Host {
         dir: PathBuf,
         src: vm::Source,
     ) -> Result<(), String> {
+        if let Some(n) = m.commands.keys().find(|n| super::textcmd::is_game_command(&n.to_ascii_lowercase())) {
+            return Err(format!("{}: [commands.{n}]: /{n} is a game command; give yours another name", m.id));
+        }
         if self.vms.iter().any(|v| v.manifest.id == m.id) {
             return Err(format!("{} is already loaded", m.id));
         }
@@ -1024,6 +1046,7 @@ impl Host {
     fn lua_command(&mut self, w: &World, args: &[&str], out: &mut Vec<(String, [u8; 4])>) {
         let find = |vms: &[Vm], id: &str| vms.iter().position(|v| v.manifest.id.eq_ignore_ascii_case(id));
         match args.first().copied().unwrap_or("list") {
+            "help" => help_lines(&self.command_list(), &args[1..], out),
             "list" => {
                 if self.vms.is_empty() {
                     out.push(("No Lua mods loaded.".into(), super::WHITE));
@@ -1344,11 +1367,11 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
                 }),
                 None if name == "help" => help_lines(&host.command_list(), &args, &mut out),
                 None => {
-                    let near = nearest(&host.command_list(), &name);
-                    let hint = near.map_or_else(
-                        || " //help lists them.".to_string(),
-                        |n| format!(" Did you mean //{n}? (//help lists them.)"),
-                    );
+                    let hint = match (host.off_mod_with(&name), nearest(&host.command_list(), &name)) {
+                        (Some(m), _) => format!(" {m} has it, but it is not running (Settings > Mods)."),
+                        (None, Some(n)) => format!(" Did you mean //{n}? (/lua help lists them.)"),
+                        (None, None) => " /lua help lists them.".to_string(),
+                    };
                     out.push((format!("No mod command {name}.{hint}"), ERROR));
                 }
             }
@@ -2059,47 +2082,53 @@ impl Host {
     }
 }
 
-/// A running mod's text command as the chat line's hint and //help show it.
+/// A running mod's text command as the chat line's hint and /lua help show it.
 #[derive(Clone, Debug, PartialEq)]
 pub(in crate::client) struct CmdInfo {
     pub name: String,
-    /// The mod's name.
+    /// The mod's id and name ("" and "Mods" for the client's own).
+    pub id: String,
     pub owner: String,
     pub help: String,
-    /// The forms of the words after the name ("" for none).
-    pub usage: Vec<String>,
+    /// Its forms: the words after the name ("" for none) and a line on each.
+    pub forms: Vec<(String, String)>,
 }
 
-/// //help: every command by mod; //help <command> its forms and help; //help <mod> its commands' forms.
+/// //help's forms.
+fn help_forms() -> Vec<(String, String)> {
+    [("", "The mods that have commands."), ("<mod or command>", "A mod's commands, or one command's forms.")]
+        .map(|(a, h)| (a.to_string(), h.to_string()))
+        .to_vec()
+}
+
+/// /lua help (and //help): one line naming the mods with commands by id; with a mod (its id or name), its commands' forms;
+/// with a command, its forms. Each form a line: `//name words - help`.
 fn help_lines(list: &[CmdInfo], args: &[&str], out: &mut Vec<(String, [u8; 4])>) {
     const INFO: [u8; 4] = [0x80; 4];
     let forms = |c: &CmdInfo, out: &mut Vec<(String, [u8; 4])>| {
-        for u in &c.usage {
-            let line = if u.is_empty() { format!("//{}", c.name) } else { format!("//{} {u}", c.name) };
-            out.push((format!("  {line}"), INFO));
-        }
-        if !c.help.is_empty() {
-            out.push((format!("    {}", c.help), DIM));
+        for (a, h) in &c.forms {
+            let line = if a.is_empty() { format!("//{}", c.name) } else { format!("//{} {a}", c.name) };
+            let line = if h.is_empty() { format!("  {line}") } else { format!("  {line} - {h}") };
+            out.push((line, INFO));
         }
     };
     let want = args.join(" ").trim_start_matches('/').to_ascii_lowercase();
     if want.is_empty() {
-        let mut owners: Vec<&str> = list.iter().map(|c| c.owner.as_str()).collect();
-        owners.sort();
-        owners.dedup();
-        out.push(("Mod commands (//help <command or mod> for more):".into(), INFO));
-        for o in owners {
-            let names: Vec<String> = list.iter().filter(|c| c.owner == o).map(|c| format!("//{}", c.name)).collect();
-            out.push((format!("  {o}: {}", names.join(", ")), INFO));
-        }
+        let mut ids: Vec<&str> = list.iter().filter(|c| !c.id.is_empty()).map(|c| c.id.as_str()).collect();
+        ids.sort();
+        ids.dedup();
+        let names = if ids.is_empty() { "none".to_string() } else { ids.join(", ") };
+        out.push((format!("/lua help <mod or command>: its commands. Mods: {names}."), INFO));
         return;
     }
     if let Some(c) = list.iter().find(|c| c.name == want) {
-        out.push((format!("{} ({}):", c.name, c.owner), INFO));
+        let help = if c.help.is_empty() { String::new() } else { format!(": {}", c.help) };
+        out.push((format!("//{} ({}){help}", c.name, c.owner), INFO));
         forms(c, out);
         return;
     }
-    let of: Vec<&CmdInfo> = list.iter().filter(|c| c.owner.to_ascii_lowercase() == want).collect();
+    let of: Vec<&CmdInfo> =
+        list.iter().filter(|c| !c.id.is_empty() && (c.owner.to_ascii_lowercase() == want || c.id == want)).collect();
     if of.is_empty() {
         let hint = nearest(list, &want).map_or(String::new(), |n| format!(" Did you mean {n}?"));
         out.push((format!("No mod command or mod {want}.{hint}"), ERROR));
@@ -2193,7 +2222,8 @@ mod tests {
             declared.sort();
             assert_eq!(registered, declared, "{id}: commands registered vs declared in mod.toml");
             for (name, c) in &m.commands {
-                assert!(!c.help.is_empty() && !c.usage.is_empty(), "{id}: //{name} needs help and usage");
+                assert!(!c.help.is_empty(), "{id}: //{name} needs help");
+                assert!(c.forms.iter().all(|f| !f.help.is_empty()), "{id}: each form of //{name} needs help");
             }
         }
     }
@@ -2201,28 +2231,44 @@ mod tests {
     /// //help: by mod, one command's forms, a mod's commands; a near miss names the command.
     #[test]
     fn help_and_near_misses() {
-        let info = |name: &str, owner: &str, usage: &[&str]| CmdInfo {
+        let info = |name: &str, id: &str, owner: &str, forms: &[(&str, &str)]| CmdInfo {
             name: name.into(),
+            id: id.into(),
             owner: owner.into(),
             help: format!("{name} help"),
-            usage: usage.iter().map(|s| s.to_string()).collect(),
+            forms: forms.iter().map(|(a, h)| (a.to_string(), h.to_string())).collect(),
         };
         let list = vec![
-            info("ahbuy", "Auction Desk", &["<item> <price> [stack]"]),
-            info("ahsell", "Auction Desk", &["<item> <price> [stack]"]),
-            info("hb", "Hotbars", &["", "show"]),
+            info("ahbuy", "auction-desk", "Auction Desk", &[("<item> <price> [stack]", "Bids.")]),
+            info("ahsell", "auction-desk", "Auction Desk", &[("<item> <price> [stack]", "Sells.")]),
+            info("hb", "hotbar", "Hotbars", &[("", "Opens the manager."), ("show", "Shows the bars.")]),
+            info("lua", "", "Mods", &[("list", "The mods.")]),
         ];
         let text = |args: &[&str]| {
             let mut out = Vec::new();
             help_lines(&list, args, &mut out);
             out.into_iter().map(|l| l.0).collect::<Vec<_>>()
         };
-        assert_eq!(text(&[])[1..], ["  Auction Desk: //ahbuy, //ahsell", "  Hotbars: //hb"]);
-        assert_eq!(text(&["hb"]), ["hb (Hotbars):", "  //hb", "  //hb show", "    hb help"]);
-        assert_eq!(text(&["auction", "desk"]).len(), 5);
+        assert_eq!(text(&[]), ["/lua help <mod or command>: its commands. Mods: auction-desk, hotbar."]);
+        assert_eq!(
+            text(&["hb"]),
+            ["//hb (Hotbars): hb help", "  //hb - Opens the manager.", "  //hb show - Shows the bars."]
+        );
+        assert_eq!(text(&["auction", "desk"]).len(), 3);
+        assert_eq!(text(&["hotbar"]).len(), 3);
         assert_eq!(nearest(&list, "ahbyu").as_deref(), Some("ahbuy"));
         assert_eq!(nearest(&list, "ahs").as_deref(), Some("ahsell"));
         assert_eq!(nearest(&list, "zzzz"), None);
+        // A declaration's forms: the main one first (when given, or when alone), a form's help else the command's.
+        let c =
+            |t: &str| manifest::parse(&format!("[commands.x]\nhelp = \"X.\"\n{t}"), "m").unwrap().commands["x"].forms();
+        assert_eq!(c(""), [(String::new(), "X.".to_string())]);
+        assert_eq!(
+            c("args = \"\"\nforms = [{ args = \"a\", help = \"A.\" }, { args = \"b\" }]"),
+            [("".into(), "X.".into()), ("a".into(), "A.".into()), ("b".into(), "X.".into())]
+        );
+        assert_eq!(c("forms = [{ args = \"a\", help = \"A.\" }]"), [("a".to_string(), "A.".to_string())]);
+        assert!(manifest::parse("[commands.lua]\nhelp = \"x\"", "m").is_err());
     }
 
     /// A wait_until test that never returns runs out of its budget instead of freezing the frame.
@@ -5667,7 +5713,7 @@ fn bundled_manifest(id: &str) -> Option<manifest::Manifest> {
 }
 
 /// Every mod installed (the mods folder): (id, name, version, enabled in the config, bundled: always false now).
-pub(super) fn installed() -> Vec<(String, String, String, bool, bool)> {
+pub(super) fn installed() -> Vec<(String, String, String, bool, bool, Vec<String>)> {
     let cfg = crate::config::Config::load();
     let enabled = |id: &str, bundled: bool| cfg.mods.iter().find(|r| r.name == id).map_or(bundled, |r| r.enabled);
     let mut out = Vec::new();
@@ -5675,7 +5721,8 @@ pub(super) fn installed() -> Vec<(String, String, String, bool, bool)> {
         let dir = e.path();
         if let Ok(m) = manifest::read(&dir) {
             let id = m.id.clone();
-            out.push((id.clone(), m.name, m.version, enabled(&id, false), false));
+            let commands = m.commands.keys().cloned().collect();
+            out.push((id.clone(), m.name, m.version, enabled(&id, false), false, commands));
         }
     }
     out.sort();

@@ -1,27 +1,33 @@
 //! Ours: the chat line's hint for the mods' text commands. While a line starting with `/` is typed, the running mods'
-//! commands its first word starts with, each with its help, over the line where the auto-translate list goes; once a
-//! command is named and a space follows, that command's forms (its mod.toml `[commands]`). Tab completes the name,
-//! again the next match; the hint never takes Enter or the arrows.
+//! command forms (their mod.toml `[commands]`) that what is typed fits, each with its mod and help, over the chat line
+//! where the auto-translate list goes: literal words by prefix, a `<word>` or `[word]` taking anything. Up / Down pick a
+//! row, Tab puts its fixed words on the line; Enter stays the line's.
 
 use super::World;
 use super::game_ui::GameUi;
 use super::lua::CmdInfo;
 use crate::audio::Ui as Se;
 
-/// What the hint shows: rows of (the command as it would be typed, its help), the row Tab put on the line, and for one
-/// command's forms its help and mod under them.
+/// A row: the form as typed (`//loot list`), its mod, its help.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Row {
+    pub text: String,
+    pub owner: String,
+    pub help: String,
+}
+
+/// What the hint shows: its rows and the one picked.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Hint {
-    pub rows: Vec<(String, String)>,
+    pub rows: Vec<Row>,
     pub sel: Option<usize>,
-    pub footer: Option<String>,
 }
 
 /// The most rows shown.
 pub const ROWS: usize = 7;
 
-/// A line's slashes ("/" or "//"), its first word, and whether a space follows it.
-fn split(line: &str) -> Option<(&str, &str, bool)> {
+/// A line's slashes ("/" or "//") and the rest.
+fn split(line: &str) -> Option<(&str, &str)> {
     let slashes = if line.starts_with("//") {
         "//"
     } else if line.starts_with('/') {
@@ -29,111 +35,176 @@ fn split(line: &str) -> Option<(&str, &str, bool)> {
     } else {
         return None;
     };
-    let rest = &line[slashes.len()..];
-    Some(match rest.find(' ') {
-        Some(i) => (slashes, &rest[..i], true),
-        None => (slashes, rest, false),
-    })
+    Some((slashes, &line[slashes.len()..]))
 }
 
-fn typed(slashes: &str, name: &str, form: &str) -> String {
-    if form.is_empty() { format!("{slashes}{name}") } else { format!("{slashes}{name} {form}") }
+/// A form's words: a `<...>` or `[...]` one word with what it holds (`[lot | pass | drop]`).
+fn words(form: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let (mut depth, mut start) = (0i32, None);
+    for (i, c) in form.char_indices() {
+        match c {
+            '<' | '[' => depth += 1,
+            '>' | ']' => depth = (depth - 1).max(0),
+            _ => {}
+        }
+        if c.is_whitespace() && depth == 0 {
+            if let Some(s) = start.take() {
+                out.push(&form[s..i]);
+            }
+        } else if start.is_none() {
+            start = Some(i);
+        }
+    }
+    if let Some(s) = start {
+        out.push(&form[s..]);
+    }
+    out
+}
+
+fn literal(word: &str) -> bool {
+    !word.starts_with('<') && !word.starts_with('[')
+}
+
+/// Whether what is typed (the line after its slashes) fits a form (`name words`): each typed word its literal word
+/// (the last one, still being typed, by prefix) or any word for a placeholder; past the form's end only when it ends
+/// in a placeholder (the rest of the line). How many typed words met literal ones, when it fits.
+fn fits(typed: &str, form: &str) -> Option<usize> {
+    let fw = words(form);
+    let tw: Vec<&str> = typed.split_whitespace().collect();
+    let open = !typed.ends_with(char::is_whitespace);
+    let mut met = 0;
+    for (i, t) in tw.iter().enumerate() {
+        let Some(f) = fw.get(i) else { return fw.last().filter(|l| !literal(l)).map(|_| met) };
+        if literal(f) {
+            let (f, t) = (f.to_ascii_lowercase(), t.to_ascii_lowercase());
+            let ok = if open && i + 1 == tw.len() { f.starts_with(&t) } else { f == t };
+            if !ok {
+                return None;
+            }
+            met += 1;
+        }
+    }
+    Some(met)
+}
+
+/// A form's fixed words: its literal words before the first placeholder.
+fn fixed(form: &str) -> String {
+    words(form).into_iter().take_while(|w| literal(w)).collect::<Vec<_>>().join(" ")
 }
 
 /// One slash starts every game command (/p, /sh, /ma ...): the hint waits for three letters there; `//` is the mods'.
-fn enough(slashes: &str, word: &str) -> bool {
-    slashes == "//" || word.chars().count() >= 3
+fn enough(slashes: &str, typed: &str) -> bool {
+    slashes == "//" || typed.split_whitespace().next().is_some_and(|w| w.chars().count() >= 3)
 }
 
-/// The commands a first word's root names, and the row Tab is on, while the line is still what Tab made it.
-fn matches(w: &World, list: &[CmdInfo], word: &str) -> (Vec<usize>, Option<usize>) {
-    let tab = w.cmd_tab.as_ref().filter(|t| t.2 == w.chat_input);
-    let root = tab.map_or_else(|| word.to_ascii_lowercase(), |t| t.0.clone());
-    let found = list.iter().enumerate().filter(|(_, c)| c.name.starts_with(&root)).map(|(i, _)| i).collect();
-    (found, tab.map(|t| t.1))
-}
-
-/// The hint for the line as typed up to the caret, if any.
-pub(super) fn hint(w: &World) -> Option<Hint> {
+/// Every form (name and words, unslashed) the line before the caret fits, with its mod and help: those whose literal
+/// words met more of the typed ones first.
+fn rows(w: &World) -> Option<(String, Vec<(String, String, String)>)> {
     if !w.typing || w.fep.is_some() {
         return None;
     }
     let before: String = w.chat_input.chars().take(super::fep::caret(w)).collect();
-    let (slashes, word, spaced) = split(&before)?;
-    let list = w.lua.command_list();
-    // One command's forms, its help and mod under them.
-    let forms = |c: &CmdInfo| {
-        let rows = c.usage.iter().map(|u| (typed(slashes, &c.name, u), String::new())).collect();
-        let footer = if c.help.is_empty() { c.owner.clone() } else { format!("{} ({})", c.help, c.owner) };
-        Hint { rows, sel: None, footer: Some(footer) }
-    };
-    if spaced {
-        return list.iter().find(|c| c.name == word.to_ascii_lowercase()).map(forms);
-    }
-    if !enough(slashes, word) {
+    let (slashes, typed) = split(&before)?;
+    if !enough(slashes, typed) {
         return None;
     }
-    let (found, sel) = matches(w, &list, word);
-    match found.len() {
-        0 => return None,
-        // The only match: its forms at once.
-        1 => return Some(forms(&list[found[0]])),
-        _ => {}
+    let mut out = Vec::new();
+    for c in w.lua.command_list() {
+        for (a, h) in &c.forms {
+            let form = if a.is_empty() { c.name.clone() } else { format!("{} {a}", c.name) };
+            if let Some(met) = fits(typed, &form) {
+                out.push((met, (form, c.owner.clone(), h.clone())));
+            }
+        }
     }
-    let rows = found
-        .iter()
-        .map(|&i| {
-            let c = &list[i];
-            let form = if c.usage.len() == 1 { c.usage[0].clone() } else { "...".into() };
-            (typed(slashes, &c.name, &form), c.help.clone())
-        })
-        .collect();
-    Some(Hint { rows, sel, footer: None })
+    out.sort_by_key(|r| std::cmp::Reverse(r.0));
+    (!out.is_empty()).then(|| (slashes.to_string(), out.into_iter().map(|r| r.1).collect()))
 }
 
-/// Tab on a line whose first word names commands (the caret at its end): the line takes the next match's name, a
-/// space after it when it is the only one. False when it does not apply (the auto-translate list opens instead).
-pub(super) fn tab(w: &mut World, back: bool) -> bool {
-    if !w.typing || w.fep.is_some() {
-        return false;
-    }
-    let line = w.chat_input.clone();
-    let Some((slashes, word, spaced)) = split(&line) else { return false };
-    if spaced || super::fep::caret(w) != line.chars().count() || !enough(slashes, word) {
-        return false;
-    }
-    let list = w.lua.command_list();
-    let (found, sel) = matches(w, &list, word);
-    if found.is_empty() {
-        return false;
-    }
+/// The row Up / Down picked, while the line is still what it was then.
+fn picked(w: &World) -> Option<usize> {
+    w.cmd_tab.as_ref().filter(|t| t.1 == w.chat_input).map(|t| t.0)
+}
+
+/// The hint for the line as typed up to the caret, if any.
+pub(super) fn hint(w: &World) -> Option<Hint> {
+    let (slashes, found) = rows(w)?;
+    let rows = found.into_iter().map(|(text, owner, help)| Row { text: format!("{slashes}{text}"), owner, help });
+    Some(Hint { rows: rows.collect(), sel: picked(w) })
+}
+
+/// Up / Down while the hint lists two rows or more: the pick moves (wrapping); otherwise the line history's.
+pub(super) fn arrow(w: &mut World, up: bool) -> bool {
+    let Some((_, found)) = rows(w).filter(|r| r.1.len() > 1) else { return false };
     let n = found.len();
-    let next = match sel {
-        Some(i) if back => (i + n - 1) % n,
+    let next = match picked(w) {
+        Some(i) if up => (i + n - 1) % n,
         Some(i) => (i + 1) % n,
+        None if up => n - 1,
         None => 0,
     };
-    let root = w.cmd_tab.as_ref().filter(|t| t.2 == line).map_or_else(|| word.to_ascii_lowercase(), |t| t.0.clone());
-    let name = &list[found[next]].name;
-    w.chat_input = if n == 1 { format!("{slashes}{name} ") } else { format!("{slashes}{name}") };
-    w.chat_caret = None;
-    w.cmd_tab = (n > 1).then(|| (root, next, w.chat_input.clone()));
+    w.cmd_tab = Some((next, w.chat_input.clone()));
     w.sounds.push(Se::Cursor as u32);
     true
 }
 
-/// The classic hint: a framed list above the chat line from `x`, the command white (the Tab row gold), its help grey.
+/// Tab: the picked row's (else the first's) fixed words on the line, a space after them when words follow; when the
+/// line already has them, the next row is picked (Shift+Tab: the one before). False when no form fits or the caret is
+/// not at the end (the auto-translate list opens instead).
+pub(super) fn tab(w: &mut World, back: bool) -> bool {
+    if super::fep::caret(w) != w.chat_input.chars().count() {
+        return false;
+    }
+    let Some((slashes, found)) = rows(w) else { return false };
+    let at = picked(w).unwrap_or(0).min(found.len() - 1);
+    let form = &found[at].0;
+    let fix = fixed(form);
+    let more = words(form).len() > words(&fix).len();
+    let want = format!("{slashes}{fix}{}", if more { " " } else { "" });
+    let (_, typed) = split(&w.chat_input).unwrap_or(("", ""));
+    if want.len() > w.chat_input.len() && want.to_ascii_lowercase().starts_with(&w.chat_input.to_ascii_lowercase())
+        || typed.trim().is_empty()
+    {
+        w.chat_input = want;
+        w.chat_caret = None;
+        w.cmd_tab = None;
+    } else if found.len() > 1 {
+        let n = found.len();
+        let next = if back { (at + n - 1) % n } else { (at + 1) % n };
+        w.cmd_tab = Some((next, w.chat_input.clone()));
+    } else {
+        return false;
+    }
+    w.sounds.push(Se::Cursor as u32);
+    true
+}
+
+/// The rows shown: the page of ROWS holding the pick.
+pub fn page(h: &Hint) -> (usize, &[Row]) {
+    let first = h.sel.map_or(0, |s| s / ROWS * ROWS);
+    (first, &h.rows[first..h.rows.len().min(first + ROWS)])
+}
+
+/// A row's note: its mod and help.
+pub fn note(r: &Row, sep: &str) -> String {
+    if r.help.is_empty() { r.owner.clone() } else { format!("{}{sep}{}", r.owner, r.help) }
+}
+
+/// The classic hint: a framed list above the chat line from `x` on a dark backing, the form white (the pick gold), its
+/// mod and help grey; "n more" under a full page.
 pub(super) fn draw(gu: &mut GameUi, h: &Hint, x: f32, line_y: f32) -> [f32; 4] {
     const WHITE: [u8; 4] = [0x80; 4];
     const GOLD: [u8; 4] = [0x40, 0x70, 0x80, 0x80];
     const GREY: [u8; 4] = [0x58, 0x58, 0x58, 0x80];
-    let rows = &h.rows[..h.rows.len().min(ROWS)];
-    let left = rows.iter().map(|r| gu.text_width(&r.0)).fold(0.0, f32::max);
-    let right = rows.iter().map(|r| gu.text_width(&r.1)).fold(0.0, f32::max);
-    let foot = h.footer.as_ref().map_or(0.0, |f| gu.text_width(f));
+    let (first, rows) = page(h);
+    let notes: Vec<String> = rows.iter().map(|r| note(r, ": ")).collect();
+    let left = rows.iter().map(|r| gu.text_width(&r.text)).fold(0.0, f32::max);
+    let right = notes.iter().map(|n| gu.text_width(n)).fold(0.0, f32::max);
     let gap = if right > 0.0 { 18.0 } else { 0.0 };
-    let w = (left + gap + right).max(foot).clamp(120.0, 720.0) + 12.0;
-    let lines = rows.len() + usize::from(h.footer.is_some()) + usize::from(h.rows.len() > ROWS);
+    let w = (left + gap + right).clamp(120.0, 720.0) + 12.0;
+    let more = h.rows.len() > ROWS;
+    let lines = rows.len() + usize::from(more);
     let hh = 8.0 + 16.0 * lines as f32;
     let y = line_y - hh - 2.0;
     // A dark backing: the frame is translucent and sits over the log's lines.
@@ -149,22 +220,15 @@ pub(super) fn draw(gu: &mut GameUi, h: &Hint, x: f32, line_y: f32) -> [f32; 4] {
         }
         gu.text(&t, tx, ty, 0, c);
     };
-    for (k, (cmd, help)) in rows.iter().enumerate() {
+    for (k, (r, n)) in rows.iter().zip(&notes).enumerate() {
         let ry = y + 4.0 + 16.0 * k as f32;
-        let lit = h.sel == Some(k);
-        fit(gu, cmd, x + 6.0, ry, w - 12.0, if lit { GOLD } else { WHITE });
-        if !help.is_empty() {
-            let hx = x + 6.0 + left + gap;
-            fit(gu, help, hx, ry, x + w - 6.0 - hx, GREY);
-        }
+        fit(gu, &r.text, x + 6.0, ry, w - 12.0, if h.sel == Some(first + k) { GOLD } else { WHITE });
+        let hx = x + 6.0 + left + gap;
+        fit(gu, n, hx, ry, x + w - 6.0 - hx, GREY);
     }
-    let mut ry = y + 4.0 + 16.0 * rows.len() as f32;
-    if h.rows.len() > ROWS {
-        fit(gu, &format!("{} more", h.rows.len() - ROWS), x + 6.0, ry, w - 12.0, GREY);
-        ry += 16.0;
-    }
-    if let Some(f) = &h.footer {
-        fit(gu, f, x + 6.0, ry, w - 12.0, GREY);
+    if more {
+        let ry = y + 4.0 + 16.0 * rows.len() as f32;
+        fit(gu, &format!("{} of {} (Up / Down)", first + rows.len(), h.rows.len()), x + 6.0, ry, w - 12.0, GREY);
     }
     [x, y, w, hh]
 }
@@ -174,13 +238,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn splits_lines() {
-        assert_eq!(split("//hb sh"), Some(("//", "hb", true)));
-        assert_eq!(split("/ahb"), Some(("/", "ahb", false)));
-        assert_eq!(split("//"), Some(("//", "", false)));
-        assert_eq!(split("hello"), None);
-        assert!(enough("//", "") && !enough("/", "p") && enough("/", "ahb"));
-        assert_eq!(typed("//", "hb", ""), "//hb");
-        assert_eq!(typed("/", "ahbuy", "<item>"), "/ahbuy <item>");
+    fn forms_fit() {
+        assert_eq!(words("loot [lot | pass | drop] add <item>"), ["loot", "[lot | pass | drop]", "add", "<item>"]);
+        assert_eq!(words("cancel <effect>[, <effect>...]"), ["cancel", "<effect>[, <effect>...]"]);
+        assert_eq!(
+            (fits("lo", "loot list"), fits("loot l", "loot list"), fits("loot x", "loot list")),
+            (Some(1), Some(2), None)
+        );
+        // A placeholder takes any word, meeting no literal one; past the form's end only after a placeholder.
+        assert_eq!(fits("loot lot add Kupo", "loot [lot | pass | drop] add <item>"), Some(2));
+        assert_eq!((fits("find red mush", "find <words>"), fits("hb show x", "hb show")), (Some(1), None));
+        assert_eq!(
+            (fits("", "hb"), fits("trusts s", "trusts save <lineup>"), fits("trusts s", "trusts list")),
+            (Some(0), Some(2), None)
+        );
+        assert_eq!(fits("trusts save ", "trusts <lineup>"), Some(1));
+        assert_eq!(fixed("trusts save <lineup> [trust, trust...]"), "trusts save");
+        assert_eq!(fixed("hb"), "hb");
+        assert_eq!(split("//hb sh"), Some(("//", "hb sh")));
+        assert!(enough("//", "") && !enough("/", "p") && enough("/", "rid"));
     }
 }

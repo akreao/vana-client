@@ -305,6 +305,21 @@ pub(super) fn install(
             Ok(())
         })?,
     )?;
+    // commands.usage(name): the command's declared forms (mod.toml [commands]) as lines to print.
+    let declared = m.commands.clone();
+    commands.set(
+        "usage",
+        lua.create_function(move |lua, name: String| {
+            let name = name.trim_start_matches('/').to_ascii_lowercase();
+            let t = lua.create_table()?;
+            if let Some((_, c)) = declared.iter().find(|(n, _)| n.eq_ignore_ascii_case(&name)) {
+                for (a, _) in c.forms() {
+                    t.push(if a.is_empty() { format!("//{name}") } else { format!("//{name} {a}") })?;
+                }
+            }
+            Ok(t)
+        })?,
+    )?;
     commands.set(
         "is_game",
         lua.create_function(|_, name: String| {

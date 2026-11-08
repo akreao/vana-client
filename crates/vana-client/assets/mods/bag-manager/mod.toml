@@ -11,4 +11,9 @@ help = "//stow get <item> [count | all], //stow put <item> [to <bag>] [all], //s
 
 [commands.stow]
 help = "Moves items between your bags by name."
-usage = ["get <item> [count | all]", "put <item> [to <bag>] [all]", "gear", "tidy"]
+forms = [
+  { args = "get <item> [count | all]", help = "Fetches an item into your inventory." },
+  { args = "put <item> [to <bag>] [all]", help = "Puts an item away, in a bag you name or where it belongs." },
+  { args = "gear", help = "Gathers the gear your Gearshift file names." },
+  { args = "tidy", help = "Puts the rest away." },
+]

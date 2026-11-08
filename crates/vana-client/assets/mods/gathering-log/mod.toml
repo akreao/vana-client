@@ -11,4 +11,4 @@ help = "Counts each try at a Harvesting, Logging, Mining or Excavation Point and
 
 [commands.gather]
 help = "Starts the gathering log again."
-usage = "reset"
+args = "reset"

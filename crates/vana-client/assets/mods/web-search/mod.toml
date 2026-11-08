@@ -10,9 +10,9 @@ label = "Web Search"
 help = "//wiki [words] and //ah [words] open the wiki or the auction site in your browser: the words given, else what the list cursor is on, else your target."
 
 [commands.wiki]
-help = "Looks words up on the wiki (no words: the item pointed at, or your target)."
-usage = "[words]"
+help = "Looks words up on the wiki (none: the item pointed at, or your target)."
+args = "[words]"
 
 [commands.ah]
-help = "Looks words up on the auction site (no words: the item pointed at, or your target)."
-usage = "[words]"
+help = "Looks words up on the auction site (none: the item pointed at, or your target)."
+args = "[words]"

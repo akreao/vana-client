@@ -17,8 +17,8 @@ help = "Sent once to each player who sends you a tell while you are away (empty:
 
 [commands.r]
 help = "Answers the last tell."
-usage = "<message>"
+args = "<message>"
 
 [commands.tells]
 help = "Lists the tells kept while you were away."
-usage = ""
+args = ""

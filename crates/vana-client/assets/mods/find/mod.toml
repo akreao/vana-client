@@ -4,4 +4,4 @@ description = "/find <words>: the bags holding each item whose name has them, th
 
 [commands.find]
 help = "Which bags hold each item whose name has these words, every character's."
-usage = "<words>"
+args = "<words>"

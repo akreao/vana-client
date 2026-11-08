@@ -10,5 +10,10 @@ label = "Trust Lineups"
 help = "//trusts save <name> keeps the trusts in your party as a lineup; //trusts <name> calls them one after another; //trusts list, //trusts delete <name>."
 
 [commands.trusts]
-help = "Calls, saves, lists or deletes a named trust lineup."
-usage = ["<lineup>", "save <lineup> [trust, trust...]", "list", "delete <lineup>"]
+help = "Calls a named trust lineup."
+args = "<lineup>"
+forms = [
+  { args = "save <lineup> [trust, trust...]", help = "Saves the trusts you name, or the ones out now." },
+  { args = "list", help = "Lists your lineups." },
+  { args = "delete <lineup>", help = "Deletes a lineup." },
+]

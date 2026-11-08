@@ -2567,7 +2567,8 @@ pub fn draw(p: &mut Panels, w: &mut World) {
                                 if !e.authors.is_empty() {
                                     facts.push(("By", e.authors.join(", ")));
                                 }
-                                detail = Detail { name: e.name.clone(), text: e.description.clone(), facts };
+                                let text = crate::modpack::with_commands(&e.description, &e.commands);
+                                detail = Detail { name: e.name.clone(), text, facts };
                             }
                             help = "Up / Down: Back or a mod. Enter: Install (or Update), or Back. Escape: back to Mods.".into();
                         }

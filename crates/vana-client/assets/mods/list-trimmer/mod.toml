@@ -10,5 +10,9 @@ label = "List Trimmer"
 help = "//trim <spell, ability or mount> leaves it out of its list (again: puts it back); //trim list, //trim clear. Commands and macros still use them."
 
 [commands.trim]
-help = "Leaves a spell, ability or mount out of the game's lists (again: back in)."
-usage = ["<spell, ability or mount>", "list", "clear"]
+help = "Leaves a spell, ability or mount out of the game's lists; again puts it back."
+args = "<spell, ability or mount>"
+forms = [
+  { args = "list", help = "Lists what you left out." },
+  { args = "clear", help = "Puts everything back." },
+]

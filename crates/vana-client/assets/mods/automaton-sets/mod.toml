@@ -10,5 +10,10 @@ label = "Automaton Sets"
 help = "As a Puppetmaster: //automaton save <name> keeps the head, frame and attachments; //automaton <name> puts them on (the automaton must not be out); //automaton list, //automaton delete <name>."
 
 [commands.automaton]
-help = "Saves or puts on a named automaton set."
-usage = ["<name>", "save <name>", "list", "delete <name>"]
+help = "Your automaton's named sets."
+args = "<name>"
+forms = [
+  { args = "save <name>", help = "Saves the automaton's head, frame and attachments as a set." },
+  { args = "list", help = "Lists your sets." },
+  { args = "delete <name>", help = "Deletes a set." },
+]

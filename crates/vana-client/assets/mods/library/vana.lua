@@ -337,6 +337,11 @@ function events.on(event, handler, options) end
 ---@param id integer what events.on returned
 function events.off(id) end
 
+--- The command's forms as its mod.toml declares them ([commands.<name>] args and forms), as lines to print: {"//trusts <lineup>", "//trusts list", ...}; empty when this mod declares no such command.
+---@param name string without the slash
+---@return string[]
+function commands.usage(name) end
+
 --- Adds a command: typed as //name or /name, it calls `handler` with the words after it. Declare it in mod.toml ([commands.<name>] help and usage) so the chat line's hint, //help and the Mods page show it.
 ---@param name string without the slash
 ---@param handler fun(...: string) 
@@ -1543,7 +1548,7 @@ function json.decode(text) end
 ---@return {id: string, name: string, version: string, provides: string[], avg_ms: number, peak_ms: number, memory_kb: integer?, errors: integer}[]
 function mods.list() end
 
---- Every mod on disk and bundled: {id, name, version, enabled, bundled, loaded}. Load or unload one with commands.run('/lua load <id>') / '/lua unload <id>'.
+--- Every mod on disk and bundled: {id, name, version, enabled, bundled, loaded, commands (the names its mod.toml declares)}. Load or unload one with commands.run('/lua load <id>') / '/lua unload <id>'.
 ---@return table[]
 function mods.installed() end
 

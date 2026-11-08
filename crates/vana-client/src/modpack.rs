@@ -58,45 +58,51 @@ pub struct LuaInfo {
     pub description: String,
     #[serde(default)]
     pub version: String,
-    /// Its `[commands.<name>]`: help and usage (a form or a list of forms).
+    /// Its `[commands.<name>]` (client/lua/manifest.rs Command).
     #[serde(default)]
     pub commands: indexmap::IndexMap<String, LuaCommand>,
 }
 
 #[derive(Clone, Debug, Default, serde::Deserialize, PartialEq)]
+#[serde(default)]
 pub struct LuaCommand {
-    #[serde(default)]
     pub help: String,
-    #[serde(default)]
-    pub usage: Option<toml::Value>,
+    pub args: Option<String>,
+    pub forms: Vec<LuaForm>,
+}
+
+#[derive(Clone, Debug, Default, serde::Deserialize, PartialEq)]
+#[serde(default)]
+pub struct LuaForm {
+    pub args: String,
+    pub help: String,
 }
 
 impl LuaInfo {
-    /// The description, then a line a command: `//name forms: help` (several forms as `[a | b]`, brackets when one is
-    /// none).
+    /// The description, then its commands (commands_text).
     pub fn details(&self) -> String {
-        if self.commands.is_empty() {
-            return self.description.clone();
-        }
-        let mut out = format!("{}\n\nCommands:", self.description.trim_end());
-        for (name, c) in &self.commands {
-            let forms: Vec<String> = match &c.usage {
-                Some(toml::Value::String(s)) => vec![s.clone()],
-                Some(toml::Value::Array(a)) => a.iter().filter_map(|v| v.as_str().map(String::from)).collect(),
-                _ => Vec::new(),
-            };
-            let some: Vec<&str> = forms.iter().map(String::as_str).filter(|f| !f.is_empty()).collect();
-            let args = match (some.len(), forms.len()) {
-                (0, _) => String::new(),
-                (1, 1) => format!(" {}", some[0]),
-                (_, n) if n > some.len() => format!(" [{}]", some.join(" | ")),
-                _ => format!(" {}", some.join(" | ")),
-            };
-            let help = if c.help.is_empty() { String::new() } else { format!(": {}", c.help) };
-            out.push_str(&format!("\n//{name}{args}{help}"));
-        }
-        out
+        with_commands(&self.description, &self.commands)
     }
+}
+
+/// A description, then a mod's commands: a line a form, `//name words - help` (the main form first, as
+/// manifest::Command::forms).
+pub fn with_commands(description: &str, commands: &indexmap::IndexMap<String, LuaCommand>) -> String {
+    if commands.is_empty() {
+        return description.to_string();
+    }
+    let mut out = format!("{}\n\nCommands:", description.trim_end());
+    for (name, c) in commands {
+        let main = c.args.clone().or_else(|| c.forms.is_empty().then(String::new));
+        let forms = main.map(|a| (a, c.help.as_str())).into_iter().chain(
+            c.forms.iter().map(|f| (f.args.clone(), if f.help.is_empty() { c.help.as_str() } else { f.help.as_str() })),
+        );
+        for (args, help) in forms {
+            let words = if args.is_empty() { String::new() } else { format!(" {args}") };
+            out.push_str(&format!("\n//{name}{words} - {help}"));
+        }
+    }
+    out
 }
 
 /// The installed Lua mods by folder: name (the folder's when it gives none), description, version.

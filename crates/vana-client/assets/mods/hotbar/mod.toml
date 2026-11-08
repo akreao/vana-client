@@ -63,5 +63,15 @@ label = "Show Key Hints"
 help = "Show each slot's hotkey in its corner."
 
 [commands.hb]
-help = "Hotbars: with no word, opens the manager."
-usage = ["", "show", "hide", "more", "fewer", "run <bar> <slot>", "reload", "wipestock", "restorestock"]
+help = "Opens the hotbar manager."
+args = ""
+forms = [
+  { args = "show", help = "Shows the bars." },
+  { args = "hide", help = "Hides the bars." },
+  { args = "more", help = "Shows one more bar." },
+  { args = "fewer", help = "Shows one bar fewer." },
+  { args = "run <bar> <slot>", help = "Fires a slot." },
+  { args = "reload", help = "Reads macros.json again." },
+  { args = "wipestock", help = "Empties the game's own macro palette (it can be restored)." },
+  { args = "restorestock", help = "Puts the game's macro palette back." },
+]

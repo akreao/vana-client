@@ -28,5 +28,8 @@ label = "Stack Loot"
 help = "Sorts the inventory after loot arrives, so its stacks merge."
 
 [commands.loot]
-help = "Lots, passes or drops items by your lists."
-usage = ["[lot | pass | drop] [add | remove] <item>", "list"]
+help = "Lots, passes or drops treasure by your lists."
+args = "[lot | pass | drop] [add | remove] <item>"
+forms = [
+  { args = "list", help = "Lists your rules." },
+]

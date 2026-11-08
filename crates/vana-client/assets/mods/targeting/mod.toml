@@ -17,8 +17,11 @@ help = "Checks (/check) each monster you target, once."
 
 [commands.tgt]
 help = "Targets by name or server id."
-usage = "<name or server id>"
+args = "<name or server id>"
 
 [commands.face]
-help = "Turns you toward your target, or away from it."
-usage = ["", "away"]
+help = "Turns you toward your target."
+args = ""
+forms = [
+  { args = "away", help = "Turns you away from it." },
+]

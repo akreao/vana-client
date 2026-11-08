@@ -17,5 +17,9 @@ label = "Bar Place"
 help = "Across the top of the screen, or above the log."
 
 [commands.mobnote]
-help = "Shows, sets or clears your note on the target."
-usage = ["", "<text>", "clear"]
+help = "Shows your note on the target."
+args = ""
+forms = [
+  { args = "<text>", help = "Sets it." },
+  { args = "clear", help = "Clears it." },
+]

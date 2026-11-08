@@ -10,9 +10,12 @@ label = "Tracking Tools"
 help = "//track <name> tracks the nearest match with Wide Scan (where your job can scan); //track stop ends it; //seek <name> lists the zone's matches and the nearest's distance."
 
 [commands.track]
-help = "Tracks a monster or NPC with Wide Scan; stop ends it."
-usage = ["<name>", "stop"]
+help = "Tracks a monster or NPC with Wide Scan."
+args = "<name>"
+forms = [
+  { args = "stop", help = "Stops tracking." },
+]
 
 [commands.seek]
 help = "Lists who in the zone matches a name."
-usage = "<name>"
+args = "<name>"

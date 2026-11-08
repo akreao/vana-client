@@ -11,8 +11,11 @@ help = "//shot saves a screenshot in screenshots/<character>/<zone>/; //record s
 
 [commands.shot]
 help = "Takes a screenshot into its character and zone folder."
-usage = ""
+args = ""
 
 [commands.record]
-help = "Starts or stops recording a video."
-usage = ["", "stop"]
+help = "Starts recording a video."
+args = ""
+forms = [
+  { args = "stop", help = "Stops the recording." },
+]

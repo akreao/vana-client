@@ -11,4 +11,4 @@ help = "Skill-up lines show how much the skill has risen this session; //skills 
 
 [commands.skills]
 help = "Lists your skills, their caps and today's gains."
-usage = ""
+args = ""

@@ -25,9 +25,12 @@ label = "My Size"
 help = "Draws your character larger or smaller, on your screen only."
 
 [commands.rename]
-help = "Shows a character or monster under another name; with none, undoes it."
-usage = ["<name> as <new name>", "<name>"]
+help = "Shows a character or monster under another name, on your screen only."
+args = "<name> as <new name>"
+forms = [
+  { args = "<name>", help = "Gives it its own name back." },
+]
 
 [commands.renames]
 help = "Lists the names you changed."
-usage = ""
+args = ""

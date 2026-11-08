@@ -23295,15 +23295,22 @@ still gave `cor`. Both now go through actmotion::sdep_stand.
 ## Mods' commands on the chat line (ours, 2026-11-08)
 
 - User: "Installed mod's chat commands need to be effectively communicated to a player" (retail's own text commands
-  were never discoverable either). Replaces lenonk/vana-client#132's command lists in the mods' descriptions.
-- mod.toml `[commands.<name>]`: `help` (a line) and `usage` (one form or a list; `""` for the bare command). The 51
-  bundled mods declare their 78 commands (from #132's lists, checked against each mod's code);
-  lua::tests::bundled_commands_declared keeps declared and registered names equal.
+  were never discoverable either). Replaces lenonk/vana-client#132's command lists in the mods' descriptions; follows
+  Steven's proposal (akreao.github.io/vana-client/mod-commands) for the shape, /lua help, the forms in the hint and
+  the off-mod line (user: take his ideas where they are better).
+- mod.toml `[commands.<name>]`: `help`, `args` (the main form's words; left out when the command only has `forms`),
+  `forms = [{ args, help }]`. manifest::Command::forms lists them (the main one first, a form's help else the
+  command's). A name may not be `lua` (parse) or a game command (the mod does not load). The 51 bundled mods declare
+  their 78 commands and 73 further forms, from #132's lists checked against each mod's code;
+  lua::tests::bundled_commands_declared keeps declared and registered names equal and every form helped.
 - client/cmdhint.rs: while a line starting with `/` is typed (`//` at once, one slash from three letters: /p, /sh,
-  /ma stay quiet), the running mods' commands its first word starts with and their help, over the chat line where the
-  auto-translate list goes; one match, or the name and a space, shows that command's forms with its help and mod.
-  Tab completes the name (again: the next match, Shift+Tab back) before the auto-translate list's Tab; Enter and the
-  arrows stay the line's. Classic: a framed list on a dark backing; modern: an opaque panel (modern/chat.rs).
-- `//help` (unless a mod registers help): the mods' commands by mod; `//help <command or mod>` the forms. "No mod
-  command x." names the nearest command (prefix, else two edits). The Mods page's details list a mod's commands
-  (modpack::LuaInfo::details).
+  /ma stay quiet), every running mod's form the typed words fit (literal words by prefix, `<x>` / `[x]` any word,
+  past the end only after a placeholder), those meeting more literal words first, over the chat line where the
+  auto-translate list goes, each with "mod · help". Up / Down pick (only while two or more show; otherwise the line
+  history's), Tab puts the pick's fixed words on the line (again: the next pick), before the auto-translate list's
+  Tab. Classic: a framed list on a dark backing; modern: an opaque panel (modern/chat.rs).
+- `/lua help`: the mods with commands, by id; `/lua help <mod>` its forms, `/lua help <command>` one command's
+  (`//help` the same unless a mod registers help). "No mod command x." names the installed mod that declares it when
+  it is not running, else the nearest command (prefix, else two edits). commands.usage(name) gives a mod its declared
+  forms as lines; mods.installed() gives each mod's command names. The Mods page's details and the catalogue's
+  (catalogue/mods.json now carries each mod's `commands`) list a mod's commands (modpack::with_commands).

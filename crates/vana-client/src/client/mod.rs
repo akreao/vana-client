@@ -2492,6 +2492,9 @@ fn world_hud(
                 // Ours: Tab on a command's name completes it (cmdhint.rs); elsewhere the auto-translate list.
                 egui::Key::Tab if world.typing && cmdhint::tab(world, modifiers.shift) => {}
                 egui::Key::Tab if world.typing => fep::open(world),
+                // Ours: Up / Down pick in the command hint's list (cmdhint.rs) while it lists two commands or more.
+                egui::Key::ArrowUp | egui::Key::ArrowDown
+                    if world.typing && cmdhint::arrow(world, *key == egui::Key::ArrowUp) => {}
                 // FUN_101ac2c0 / FUN_101ac3d0: the line history (no sound, no wrap; Shift / Ctrl the same).
                 egui::Key::ArrowUp if world.typing && !modifiers.alt => {
                     if let Some(l) = world.line_hist.up(&world.chat_input) {
@@ -6963,9 +6966,8 @@ struct World {
     paste_request: bool,
     /// The auto-translate candidate list (menu fep) while open.
     fep: Option<fep::Fep>,
-    /// Ours: Tab's command completion on the chat line (cmdhint.rs): the root typed, the match it put there, and the
-    /// line it made (any other line ends it).
-    cmd_tab: Option<(String, usize, String)>,
+    /// Ours: the command hint's picked row (cmdhint.rs) and the line it was picked on (any other line drops it).
+    cmd_tab: Option<(usize, String)>,
     /// Tab completion's list in the macro editor or the comment editor (fep.rs FieldFep).
     field_fep: Option<fep::FieldFep>,
     /// The log window's size and scroll state, and the top bar / Network / compass state.

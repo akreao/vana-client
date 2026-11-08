@@ -11,4 +11,4 @@ help = "//actions opens or closes it. A click on a row uses it as a macro line w
 
 [commands.actions]
 help = "Opens the Action Panel window."
-usage = ""
+args = ""

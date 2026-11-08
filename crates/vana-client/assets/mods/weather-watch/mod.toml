@@ -23,4 +23,4 @@ help = "Also says it in party chat."
 
 [commands.weather]
 help = "Shows the weather, zone and day now."
-usage = ""
+args = ""

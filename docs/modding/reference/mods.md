@@ -73,6 +73,7 @@ client (unless a folder of the same id replaces one), sorted by id. Mods whose m
 | `enabled` | `boolean` | Whether it is on in the player's mod list (a built-in mod is on unless turned off). |
 | `bundled` | `boolean` | Whether it is built into the client. |
 | `loaded` | `boolean` | Whether it is running now. |
+| `commands` | `string[]` | The commands its mod.toml declares (`[commands.<name>]`), by name. |
 
 **Example**
 

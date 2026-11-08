@@ -11,4 +11,4 @@ help = "Shows your experience points, merits and limit points, job points and ca
 
 [commands.xp]
 help = "Starts the XP tracker's rates again."
-usage = "reset"
+args = "reset"

@@ -10,5 +10,5 @@ label = "Effect Remover"
 help = "//cancel <effect> removes a status effect you have (a name, a name with *, or an id; several separated by commas). Works in macros too: //cancel Sneak."
 
 [commands.cancel]
-help = "Cancels status effects by name (* matches any), or by id."
-usage = "<effect>[, <effect>...]"
+help = "Cancels status effects: a name, a name with *, or an id."
+args = "<effect>[, <effect>...]"

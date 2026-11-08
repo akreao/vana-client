@@ -236,19 +236,29 @@ Declare each command in mod.toml, so players can find it:
 
 ```toml
 [commands.say_to]
-help = "Tells someone the words."   # one line on what it does
-usage = "<name> <words>"            # the words after the command: one form, or a list of forms
+help = "Tells someone the words."   # a line on what it does
+args = "<name> <words>"             # the words after the command
 
 [commands.camp]
-help = "Starts or stops the camp timer; with no word, shows it."
-usage = ["", "start", "stop"]       # "" is the command with no words
+help = "Shows the camp timer."      # the command alone (args = "" below)
+args = ""
+forms = [                           # its other forms, each with a line of its own
+  { args = "start", help = "Starts the timer." },
+  { args = "stop", help = "Stops it." },
+]
 ```
 
-While the player types `//` or a `/` and three letters, the chat line lists the running mods' commands that start
-with what was typed, each with its help; once a command and a space are typed, it lists that command's forms. Tab
-completes the name. `//help` lists every mod's commands, `//help <command or mod>` one command's or one mod's forms,
-and a mistyped `//command` names the one it was probably meant to be. The Mods page shows each mod's commands under
-its description. A command registered without a declaration still shows, by name only.
+Leave `args` out when the command does nothing alone and only its `forms` are used. A command name may not be `lua` or
+one of the game's commands: the mod then does not load.
+
+While the player types `//` (or a `/` and three letters), the chat line lists the running mods' command forms that fit
+what is typed, each with its mod and help: a literal word by its start, a `<word>` or `[word]` taking anything. Up /
+Down pick one and Tab puts its fixed words on the line. `/lua help` names the mods with commands; `/lua help <mod>`
+lists a mod's forms and `/lua help <command>` one command's (`//help` too, when no mod registers help). An unknown
+`//command` names the installed mod that has it when that mod is off, else the command it was probably meant to be. The
+Mods page shows each mod's commands under its description, the installed mods' and the catalogue's alike.
+`commands.usage(name)` gives your declared forms as lines to print. A command registered without a declaration still
+shows, by name only.
 
 `filters.typed` sees every line before the game reads it, and can change it or swallow it:
 

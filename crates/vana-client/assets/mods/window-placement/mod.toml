@@ -23,5 +23,8 @@ label = "Priority"
 help = "Lowers the client's scheduling priority, for running several clients."
 
 [commands.winpos]
-help = "Keeps or forgets this character's game window place."
-usage = ["save", "forget"]
+help = "This character's game window place."
+forms = [
+  { args = "save", help = "Keeps where and how big the window is now." },
+  { args = "forget", help = "Forgets it." },
+]

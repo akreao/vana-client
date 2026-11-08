@@ -10,5 +10,9 @@ label = "Mount Picker"
 help = "//ride calls one of your mounts at random; //ride <part of a name> calls the first one it matches; //ride list names them."
 
 [commands.ride]
-help = "Calls a random mount, or one by part of its name."
-usage = ["", "<part of a name>", "list"]
+help = "Calls a random mount."
+args = ""
+forms = [
+  { args = "<part of a name>", help = "Calls the mount whose name has it." },
+  { args = "list", help = "Lists your mounts." },
+]

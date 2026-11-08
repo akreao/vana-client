@@ -10,5 +10,8 @@ label = "Event Rules"
 help = "Runs the rules in rules.txt in this mod's data folder: one per line, event | match | command line. //rules lists them; //rules reload reads the file again."
 
 [commands.rules]
-help = "Lists your event rules, or reads the rules file again."
-usage = ["", "reload"]
+help = "Lists your event rules."
+args = ""
+forms = [
+  { args = "reload", help = "Reads the rules file again." },
+]

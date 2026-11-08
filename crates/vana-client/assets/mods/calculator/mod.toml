@@ -10,5 +10,8 @@ label = "Calculator"
 help = "//calc <sum> prints the answer, e.g. //calc 12 * 99 + 450; //calc alone opens a window. + - * / % ^ and brackets; k and m for thousands and millions."
 
 [commands.calc]
-help = "Works out a sum; with none, opens the calculator window."
-usage = ["", "<sum>"]
+help = "Opens the calculator window."
+args = ""
+forms = [
+  { args = "<sum>", help = "Works out a sum in the log." },
+]

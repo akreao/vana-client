@@ -11,12 +11,17 @@ help = "//npc <name>: <option> > <option> > ... talks to the NPC and picks those
 
 [commands.npc]
 help = "Walks an NPC's menus: the options in order."
-usage = "<name>: <option> > <option> > ..."
+args = "<name>: <option> > <option> > ..."
 
 [commands.errand]
-help = "Runs, saves, lists or deletes a named errand."
-usage = ["<name>", "save <name> <npc>: <option> > ...", "list", "delete <name>"]
+help = "Runs a named errand."
+args = "<name>"
+forms = [
+  { args = "save <name> <npc>: <option> > ...", help = "Keeps an errand by name." },
+  { args = "list", help = "Lists your errands." },
+  { args = "delete <name>", help = "Deletes one." },
+]
 
 [commands.job]
-help = "Changes jobs at a moogle."
-usage = "<main>[/<sub>]"
+help = "Changes jobs at a moogle, as //job war/nin or //job blm/none."
+args = "<main>[/<sub>]"

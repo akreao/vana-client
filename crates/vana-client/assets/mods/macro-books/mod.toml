@@ -10,5 +10,9 @@ label = "Macro Book Switch"
 help = "When your job changes, turns the macro palette to the book and set saved for it with //macros save (or to a book titled with the job, such as WAR)."
 
 [commands.macros]
-help = "Keeps (or forgets) the macro book and set for this job."
-usage = ["save [sub]", "forget [sub]", "list"]
+help = "The macro book and set kept for each job."
+forms = [
+  { args = "save [sub]", help = "Keeps the palette's book and set for this job (or this sub job)." },
+  { args = "forget [sub]", help = "Forgets them." },
+  { args = "list", help = "Lists what is kept." },
+]

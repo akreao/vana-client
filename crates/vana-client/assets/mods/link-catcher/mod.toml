@@ -10,5 +10,8 @@ label = "Link Catcher"
 help = "Marks each web link in chat with a number. //links lists them to open or copy; //links <number> opens one in your browser."
 
 [commands.links]
-help = "Lists the web links seen in chat, or opens one by its number."
-usage = ["", "<number>"]
+help = "Lists the web links seen in chat."
+args = ""
+forms = [
+  { args = "<number>", help = "Opens a link in your browser." },
+]

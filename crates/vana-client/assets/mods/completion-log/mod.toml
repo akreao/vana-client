@@ -10,5 +10,9 @@ label = "Completion Log"
 help = "//left opens the window: Spells (a job's unlearned spells by level) and Quests (an area's quests and where you stand); //left spells [job] and //left quests print a summary."
 
 [commands.left]
-help = "What is left: a job's spells to learn, or the quests not done."
-usage = ["", "spells [job]", "quests"]
+help = "Opens or closes the Completion Log window."
+args = ""
+forms = [
+  { args = "spells [job]", help = "The spells a job has yet to learn." },
+  { args = "quests", help = "The quests not done, by area." },
+]

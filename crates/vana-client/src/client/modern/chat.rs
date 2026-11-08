@@ -596,20 +596,22 @@ fn input(ui: &mut Ui, m: &Modern, v: &InputView, t: f32, size: f32, r: Rect) {
     }
 }
 
-/// Ours: the mods' commands over the chat line (cmdhint.rs), as the auto-translate list's panel: each command as it
-/// would be typed (the one Tab put on the line lit), its help muted beside it; under one command's forms its help.
+/// Ours: the mods' command forms over the chat line (cmdhint.rs), as the auto-translate list's panel: each form as it
+/// would be typed (the pick lit), its mod and help muted beside it; "n of m" under a full page.
 fn commands(ui: &mut Ui, m: &Modern, h: &super::super::cmdhint::Hint, bottom_left: egui::Pos2) {
+    use super::super::cmdhint::{note, page};
     let font = FontId::proportional(m.theme.small);
-    let rows = &h.rows[..h.rows.len().min(super::super::cmdhint::ROWS)];
+    let (first, rows) = page(h);
+    let notes: Vec<String> = rows.iter().map(|r| note(r, " \u{b7} ")).collect();
     let width = |ui: &Ui, s: &str| ui.painter().layout_no_wrap(s.to_string(), font.clone(), Color32::WHITE).size().x;
     egui::Area::new(Id::unique("command hint"))
         .order(Order::Foreground)
         .pivot(egui::Align2::LEFT_BOTTOM)
         .fixed_pos(bottom_left)
         .show(ui.ctx(), |ui| {
-            let left = rows.iter().map(|r| width(ui, &r.0)).fold(0.0, f32::max);
-            let right = rows.iter().map(|r| width(ui, &r.1)).fold(0.0, f32::max);
-            let total = (left + if right > 0.0 { 18.0 + right } else { 0.0 } + 12.0).clamp(200.0, 760.0);
+            let left = rows.iter().map(|r| width(ui, &r.text)).fold(0.0, f32::max);
+            let right = notes.iter().map(|n| width(ui, n)).fold(0.0, f32::max);
+            let total = (left + 18.0 + right + 12.0).clamp(200.0, 760.0);
             // Opaque: it sits over the chat log's lines.
             egui::Frame::NONE
                 .fill(m.theme.color("charcoal"))
@@ -617,37 +619,37 @@ fn commands(ui: &mut Ui, m: &Modern, h: &super::super::cmdhint::Hint, bottom_lef
                 .corner_radius(6.0)
                 .inner_margin(6.0)
                 .show(ui, |ui| {
-                    for (k, (cmd, help)) in rows.iter().enumerate() {
+                    for (k, (r, n)) in rows.iter().zip(&notes).enumerate() {
                         let (rr, _) = ui.allocate_exact_size(vec2(total, m.theme.small + 8.0), Sense::hover());
-                        let lit = h.sel == Some(k);
+                        let lit = h.sel == Some(first + k);
                         if lit {
                             ui.painter().rect_filled(rr, 4.0, m.theme.color("focus").gamma_multiply(0.35));
                         }
                         let p = ui.painter().with_clip_rect(rr);
                         let c = if lit { m.theme.color("gold") } else { m.theme.color("text") };
-                        p.text(pos2(rr.min.x + 6.0, rr.center().y), egui::Align2::LEFT_CENTER, cmd, font.clone(), c);
-                        if !help.is_empty() {
-                            let hx = rr.min.x + 6.0 + left + 18.0;
-                            let help = super::kit::elide(ui, help, &font, rr.max.x - 6.0 - hx);
-                            p.text(
-                                pos2(hx, rr.center().y),
-                                egui::Align2::LEFT_CENTER,
-                                help,
-                                font.clone(),
-                                m.theme.color("muted"),
-                            );
-                        }
+                        p.text(
+                            pos2(rr.min.x + 6.0, rr.center().y),
+                            egui::Align2::LEFT_CENTER,
+                            &r.text,
+                            font.clone(),
+                            c,
+                        );
+                        let hx = rr.min.x + 6.0 + left + 18.0;
+                        let n = super::kit::elide(ui, n, &font, rr.max.x - 6.0 - hx);
+                        p.text(
+                            pos2(hx, rr.center().y),
+                            egui::Align2::LEFT_CENTER,
+                            n,
+                            font.clone(),
+                            m.theme.color("muted"),
+                        );
                     }
                     if h.rows.len() > rows.len() {
                         ui.label(
-                            egui::RichText::new(format!("{} more", h.rows.len() - rows.len()))
+                            egui::RichText::new(format!("{} of {} (Up / Down)", first + rows.len(), h.rows.len()))
                                 .size(m.theme.small - 1.0)
                                 .color(m.theme.color("muted")),
                         );
-                    }
-                    if let Some(f) = &h.footer {
-                        ui.add_space(2.0);
-                        ui.label(egui::RichText::new(f).size(m.theme.small - 1.0).color(m.theme.color("muted")));
                     }
                 });
         });

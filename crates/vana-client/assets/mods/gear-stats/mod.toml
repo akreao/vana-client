@@ -11,4 +11,4 @@ help = "//gearstats opens a window with the totals of your worn gear's stats (DE
 
 [commands.gearstats]
 help = "Opens or closes the Gear Stats window."
-usage = ""
+args = ""

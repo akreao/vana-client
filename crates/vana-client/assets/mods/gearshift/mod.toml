@@ -11,20 +11,23 @@ help = "Runs your GearSwap job file, LuAshitacast profile or Ashitacast XML prof
 
 [commands.gs]
 help = "GearSwap's own commands, for the loaded GearSwap file."
-usage = "<command>"
+args = "<command>"
 
 [commands.lac]
 help = "LuAshitacast's own commands, for the loaded profile."
-usage = "<command>"
+args = "<command>"
 
 [commands.ac]
 help = "Ashitacast's own commands, for the loaded profile."
-usage = "<command>"
+args = "<command>"
 
 [commands.spellcast]
 help = "Spellcast's own commands, for the loaded file."
-usage = "<command>"
+args = "<command>"
 
 [commands.gearshift]
-help = "Shows the loaded gear file, or reads it again."
-usage = ["", "reload"]
+help = "Shows the loaded gear file."
+args = ""
+forms = [
+  { args = "reload", help = "Reads the gear file again." },
+]

@@ -11,8 +11,8 @@ help = "//chatwin <tell | party | ls | ls2 | say | shout | yell | unity> opens o
 
 [commands.chatwin]
 help = "Opens a window for one chat channel."
-usage = "<tell | party | ls | ls2 | say | shout | yell | unity>"
+args = "<tell | party | ls | ls2 | say | shout | yell | unity>"
 
 [commands.chatfind]
 help = "Searches this session's chat lines."
-usage = "<words>"
+args = "<words>"

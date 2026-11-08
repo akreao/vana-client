@@ -11,4 +11,4 @@ help = "Highlight a trial weapon in a game list to see its weapon skill points t
 
 [commands.trials]
 help = "Lists your trial weapons' weapon skill points."
-usage = ""
+args = ""

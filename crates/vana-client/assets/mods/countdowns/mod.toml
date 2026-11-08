@@ -10,5 +10,9 @@ label = "Countdowns"
 help = "//timer <time> <name> counts down in the Timers windows and says when it is up (time as 90, 5m, 1h30m or 2:30); //timer cancel <name>; //timer clear."
 
 [commands.timer]
-help = "Starts, cancels or clears your own countdowns (90, 5m, 1h30m or 2:30)."
-usage = ["<time> <name>", "cancel <name>", "clear"]
+help = "Starts a countdown: 90, 5m, 1h30m or 2:30."
+args = "<time> <name>"
+forms = [
+  { args = "cancel <name>", help = "Stops a countdown." },
+  { args = "clear", help = "Stops them all." },
+]

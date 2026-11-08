@@ -24,5 +24,8 @@ label = "Mount Music"
 help = "What plays while you ride: the game's mount music or nothing."
 
 [commands.music]
-help = "Plays one of the game's tracks, or goes back to the zone's music."
-usage = ["<track number>", "off"]
+help = "Plays one of the game's tracks."
+args = "<track number>"
+forms = [
+  { args = "off", help = "Back to the zone's music." },
+]

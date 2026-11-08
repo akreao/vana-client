@@ -3,6 +3,12 @@
   "mods": [
     {
       "authors": [],
+      "commands": {
+        "actions": {
+          "args": "",
+          "help": "Opens the Action Panel window."
+        }
+      },
       "description": "A window of everything your jobs can use now: magic by school, job abilities, weapon skills and pet commands, with costs and recasts; a click uses one; //actions opens it (the action menu add-ons).",
       "files": [
         {
@@ -13,8 +19,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "2bfb2da1ad6478720e10e4af3d0bec3ab13ebce6a65cce977b0bf51021a3b255",
-          "size": 570,
+          "sha256": "d6d9746b5bac8de67492d246bb2d05de0205a9f7e22b40b9cd9f6542d2a5c1af",
+          "size": 569,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/action-panel/mod.toml"
         }
       ],
@@ -25,6 +31,12 @@
     },
     {
       "authors": [],
+      "commands": {
+        "attend": {
+          "args": "[note]",
+          "help": "Writes down who is here (party, alliance, players nearby), with an optional note."
+        }
+      },
       "description": "Writes down who is at an event: your party and alliance, and players nearby, with the time, to a file (the linkshell attendance add-ons).",
       "files": [
         {
@@ -35,8 +47,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "eb331241fcaf19ffb297d7127f8587981963e70d6b95c14eb43f0f8ea7a09020",
-          "size": 684,
+          "sha256": "0d4c3a7d380e753018c2a55d4fe468624e188d94f88ac546563e14ce6368c496",
+          "size": 693,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/attendance/mod.toml"
         }
       ],
@@ -47,6 +59,20 @@
     },
     {
       "authors": [],
+      "commands": {
+        "ahbuy": {
+          "args": "<item> <price> [stack]",
+          "help": "Bids on an item at the auction house."
+        },
+        "ahlist": {
+          "args": "",
+          "help": "Lists your auction house sales in the log."
+        },
+        "ahsell": {
+          "args": "<item> <price> [stack]",
+          "help": "Puts an item up for sale at the auction house."
+        }
+      },
       "description": "Bids and sales at the auction house by command, and your listings in the log (the auction helper add-ons).",
       "files": [
         {
@@ -57,8 +83,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "3d5aa01b6db5b01bcbe57f9f383299a0386fcebf3f08eb0feca1d8d6253d87b3",
-          "size": 717,
+          "sha256": "016f0a981eb8562389a07f0deb76de9668dd685f4d63c88cdcc35bed6289aac9",
+          "size": 714,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/auction-desk/mod.toml"
         }
       ],
@@ -91,6 +117,26 @@
     },
     {
       "authors": [],
+      "commands": {
+        "automaton": {
+          "args": "<name>",
+          "forms": [
+            {
+              "args": "save <name>",
+              "help": "Saves the automaton's head, frame and attachments as a set."
+            },
+            {
+              "args": "list",
+              "help": "Lists your sets."
+            },
+            {
+              "args": "delete <name>",
+              "help": "Deletes a set."
+            }
+          ],
+          "help": "Your automaton's named sets."
+        }
+      },
       "description": "Saves your automaton's head, frame and attachments as named sets and puts a set on with one command (the automaton set add-ons).",
       "files": [
         {
@@ -101,8 +147,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "e5fc001c29e750bbf2f48b6e768f39604540553c9f33aa142e414a9becf33d9e",
-          "size": 613,
+          "sha256": "e4a074cc74a45b58a1335ec4596d69e3d216bf6510c1ef3ad42e480d3f4927ca",
+          "size": 772,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/automaton-sets/mod.toml"
         }
       ],
@@ -113,6 +159,29 @@
     },
     {
       "authors": [],
+      "commands": {
+        "stow": {
+          "forms": [
+            {
+              "args": "get <item> [count | all]",
+              "help": "Fetches an item into your inventory."
+            },
+            {
+              "args": "put <item> [to <bag>] [all]",
+              "help": "Puts an item away, in a bag you name or where it belongs."
+            },
+            {
+              "args": "gear",
+              "help": "Gathers the gear your Gearshift file names."
+            },
+            {
+              "args": "tidy",
+              "help": "Puts the rest away."
+            }
+          ],
+          "help": "Moves items between your bags by name."
+        }
+      },
       "description": "Moves items between your bags by command: fetch and stow by name, gather the gear your Gearshift file names, tidy the rest away (the organizer and porter add-ons).",
       "files": [
         {
@@ -123,8 +192,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "b892f03450bd8d2e0af9b1069764644cefa623f445c8c295fe1ac9d89c0f7c2f",
-          "size": 727,
+          "sha256": "097cb5692ac10b3facda11dbadefefbd126663ee07b0d21a80b9a67ca5adff51",
+          "size": 981,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/bag-manager/mod.toml"
         }
       ],
@@ -157,6 +226,30 @@
     },
     {
       "authors": [],
+      "commands": {
+        "blu": {
+          "args": "<name>",
+          "forms": [
+            {
+              "args": "save <name>",
+              "help": "Saves your set blue magic as a set."
+            },
+            {
+              "args": "list",
+              "help": "Lists your sets."
+            },
+            {
+              "args": "delete <name>",
+              "help": "Deletes a set."
+            },
+            {
+              "args": "codex",
+              "help": "Opens the codex of every blue spell and what teaches it."
+            }
+          ],
+          "help": "Your blue magic sets; with a name, sets that set."
+        }
+      },
       "description": "Saves your set blue magic as named sets and puts a set back with one command; a codex of every blue spell and what teaches it; a call when a monster readies a move that teaches one you lack (the blue magic add-ons).",
       "files": [
         {
@@ -167,8 +260,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "199e53888e413e980bc90a3380438dfcb4678aba5435f1b2145a740c67404049",
-          "size": 1058,
+          "sha256": "108440dca0e1f027690b99de057ec827531efb2aa019c8c021df72461dc72a5f",
+          "size": 1266,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/blue-sets/mod.toml"
         },
         {
@@ -185,6 +278,18 @@
     },
     {
       "authors": [],
+      "commands": {
+        "calc": {
+          "args": "",
+          "forms": [
+            {
+              "args": "<sum>",
+              "help": "Works out a sum in the log."
+            }
+          ],
+          "help": "Opens the calculator window."
+        }
+      },
       "description": "Works out sums in the chat line or a small window: gil, stacks, prices (the calculator add-ons).",
       "files": [
         {
@@ -195,8 +300,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "2854f01a876d639f133335d78b31570de4a53ab00b24c95821929654bf9a5b39",
-          "size": 497,
+          "sha256": "0d3cd8c89a0e0424a61c8ccb7d38498587eba08b5001274c9022436db1b67bc5",
+          "size": 529,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/calculator/mod.toml"
         }
       ],
@@ -317,6 +422,16 @@
     },
     {
       "authors": [],
+      "commands": {
+        "chatfind": {
+          "args": "<words>",
+          "help": "Searches this session's chat lines."
+        },
+        "chatwin": {
+          "args": "<tell | party | ls | ls2 | say | shout | yell | unity>",
+          "help": "Opens a window for one chat channel."
+        }
+      },
       "description": "A window of its own for a chat channel (tells, party, linkshells, say, shout, yell, unity) with a line to answer in, and a search over the session's lines (the chat window add-ons).",
       "files": [
         {
@@ -327,8 +442,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "ea5949620cf998fa1a5132b082100bfdcdd955dd2f8a5862583d80ef0ef11a83",
-          "size": 716,
+          "sha256": "9b1dace453975f179b75d9515939595814707ab8cb1e774a7417bdae785d05f8",
+          "size": 714,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/chat-windows/mod.toml"
         }
       ],
@@ -383,6 +498,22 @@
     },
     {
       "authors": [],
+      "commands": {
+        "left": {
+          "args": "",
+          "forms": [
+            {
+              "args": "spells [job]",
+              "help": "The spells a job has yet to learn."
+            },
+            {
+              "args": "quests",
+              "help": "The quests not done, by area."
+            }
+          ],
+          "help": "Opens or closes the Completion Log window."
+        }
+      },
       "description": "What is left to do: the spells a job has yet to learn and every area's quests, done, under way or not started (the checklist add-ons).",
       "files": [
         {
@@ -393,8 +524,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "f44a561440cb7a816b5891dd36f608b71bf52f605d765608edcad5dc3182105c",
-          "size": 590,
+          "sha256": "35cc5c09f9bea8faa12a9039b5daf053cdd4d21b1e88f89d7b6e4da3a9f5ed3e",
+          "size": 690,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/completion-log/mod.toml"
         }
       ],
@@ -405,6 +536,16 @@
     },
     {
       "authors": [],
+      "commands": {
+        "pops": {
+          "args": "[NM]",
+          "help": "The pop items for an Empyrean NM, or a list of them."
+        },
+        "znm": {
+          "args": "",
+          "help": "The Zeni NMs' pop items."
+        }
+      },
       "description": "A window for the content you are in: Dynamis, Abyssea, Salvage, Nyzul Isle, Omen, Delve, Odyssey, Sortie or a reive, with the time left and what the content's messages tell; pop lists for the Empyrean and Zeni NMs (the content tracker add-ons).",
       "files": [
         {
@@ -415,8 +556,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "c4fe774dcc2070ba6b1be86f972cffb0a18c559d1fd3c212719955ef9ccb7fb1",
-          "size": 882,
+          "sha256": "745c63a09e2302e140175b54224caaa238745e7a41c1c8eb992d7fd9b3eb745c",
+          "size": 880,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/content-trackers/mod.toml"
         },
         {
@@ -475,6 +616,22 @@
     },
     {
       "authors": [],
+      "commands": {
+        "timer": {
+          "args": "<time> <name>",
+          "forms": [
+            {
+              "args": "cancel <name>",
+              "help": "Stops a countdown."
+            },
+            {
+              "args": "clear",
+              "help": "Stops them all."
+            }
+          ],
+          "help": "Starts a countdown: 90, 5m, 1h30m or 2:30."
+        }
+      },
       "description": "Your own countdowns as rows in the Timers windows, with a line when each is up (the timer add-ons).",
       "files": [
         {
@@ -485,8 +642,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "104622e24015f98a32000fd9c8d23724e6dba93796549a631f5f35c9f3052dc6",
-          "size": 545,
+          "sha256": "a9831ed30e4ed383258b2326f518161108abc6f49041609b9c0021fa9e4dcbd2",
+          "size": 607,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/countdowns/mod.toml"
         }
       ],
@@ -543,6 +700,18 @@
       "authors": [
         "vana-client"
       ],
+      "commands": {
+        "dps": {
+          "args": "",
+          "forms": [
+            {
+              "args": "reset",
+              "help": "Starts counting again."
+            }
+          ],
+          "help": "Your party's damage since the first hit after a reset."
+        }
+      },
       "description": "/dps: the damage your party dealt since the first hit after a reset; /dps reset starts again.",
       "files": [
         {
@@ -553,8 +722,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "2902678f7398d5cf97115fa26c2d42483fd6a24238cbf787f29b1f24c6f225be",
-          "size": 522,
+          "sha256": "043db9838c58ab6c586b11a9a9f7fff9bbdbe11df084831aeba01f749169c868",
+          "size": 570,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/dps/mod.toml"
         }
       ],
@@ -565,6 +734,12 @@
     },
     {
       "authors": [],
+      "commands": {
+        "cancel": {
+          "args": "<effect>[, <effect>...]",
+          "help": "Cancels status effects: a name, a name with *, or an id."
+        }
+      },
       "description": "Cancels your status effects by name or id from a command, for macros (the cancel add-ons).",
       "files": [
         {
@@ -575,8 +750,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "313075c106847f79d95ae46c0008afe4037e22910f22e852c9361f5c2c51d551",
-          "size": 525,
+          "sha256": "dd974374a17023894c74068da794594fa6de5f13b438c7269d98387169ff06a8",
+          "size": 523,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/effect-remover/mod.toml"
         }
       ],
@@ -587,6 +762,22 @@
     },
     {
       "authors": [],
+      "commands": {
+        "rename": {
+          "args": "<name> as <new name>",
+          "forms": [
+            {
+              "args": "<name>",
+              "help": "Gives it its own name back."
+            }
+          ],
+          "help": "Shows a character or monster under another name, on your screen only."
+        },
+        "renames": {
+          "args": "",
+          "help": "Lists the names you changed."
+        }
+      },
       "description": "Renames characters and monsters on your screen, hides your own name plate, and sets your size (the renamer and name plate add-ons). Only you see it.",
       "files": [
         {
@@ -597,8 +788,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "c72db8007ff6aae537035421796e1457652701543cb7f66551458dfbed9291da",
-          "size": 966,
+          "sha256": "6395532acbbd0596c94e14f7ef812a1c3b8e7e202d507635e674b4783dcccbad",
+          "size": 1024,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/entity-styles/mod.toml"
         }
       ],
@@ -631,6 +822,18 @@
     },
     {
       "authors": [],
+      "commands": {
+        "rules": {
+          "args": "",
+          "forms": [
+            {
+              "args": "reload",
+              "help": "Reads the rules file again."
+            }
+          ],
+          "help": "Lists your event rules."
+        }
+      },
       "description": "Runs your command lines when things happen: a zone, a job, an effect gained or lost, HP or MP low, a word in chat, a new day or weather (the auto-exec add-ons).",
       "files": [
         {
@@ -641,8 +844,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "e903db91bf5afea05b24e0c4921316c8ad7325a51d422e0b1c33a2b7cff82710",
-          "size": 582,
+          "sha256": "4908818d21ef4a2d00a044043c817bdc3280200241786117852f54498045b78d",
+          "size": 611,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/event-rules/mod.toml"
         }
       ],
@@ -675,6 +878,12 @@
     },
     {
       "authors": [],
+      "commands": {
+        "find": {
+          "args": "<words>",
+          "help": "Which bags hold each item whose name has these words, every character's."
+        }
+      },
       "description": "/find <words>: the bags holding each item whose name has them, the account's other characters' too (the find-all add-ons).",
       "files": [
         {
@@ -685,8 +894,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "58f054d3ca40d41883ee220ea80faaa5b645f63b8582dd457e2dbf83ffadaac1",
-          "size": 288,
+          "sha256": "000f6adeda11fb210b30b132147ccf319b26a48c181ad326ce03d064ac37ad13",
+          "size": 287,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/find/mod.toml"
         }
       ],
@@ -719,6 +928,12 @@
     },
     {
       "authors": [],
+      "commands": {
+        "gather": {
+          "args": "reset",
+          "help": "Starts the gathering log again."
+        }
+      },
       "description": "Your harvesting, logging, mining and excavation this session: tries, success rate, broken tools and what you got (the gathering add-ons).",
       "files": [
         {
@@ -729,8 +944,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "abfea041ee63812110ff0bf0375c39c7ff16c2ae4a6d74b094eb06454fa2aad8",
-          "size": 528,
+          "sha256": "87f09a121a677a9f03fdd09bd95ca68aa63a9578085ae8e93f4b7ce070de1d74",
+          "size": 527,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/gathering-log/mod.toml"
         }
       ],
@@ -741,6 +956,12 @@
     },
     {
       "authors": [],
+      "commands": {
+        "gearstats": {
+          "args": "",
+          "help": "Opens or closes the Gear Stats window."
+        }
+      },
       "description": "The totals of the stats on everything you wear, from the items' own descriptions and their augments (the gear stat add-ons).",
       "files": [
         {
@@ -751,8 +972,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "0cd8757aeb9c4ce669b02e6c2a865361876e992cbcd6f446b269ee2595d02a61",
-          "size": 520,
+          "sha256": "23538f755bb0452dbb470ea5bd83beede2de1e67df8e0a2975a2d6076524d0bb",
+          "size": 519,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/gear-stats/mod.toml"
         }
       ],
@@ -763,6 +984,34 @@
     },
     {
       "authors": [],
+      "commands": {
+        "ac": {
+          "args": "<command>",
+          "help": "Ashitacast's own commands, for the loaded profile."
+        },
+        "gearshift": {
+          "args": "",
+          "forms": [
+            {
+              "args": "reload",
+              "help": "Reads the gear file again."
+            }
+          ],
+          "help": "Shows the loaded gear file."
+        },
+        "gs": {
+          "args": "<command>",
+          "help": "GearSwap's own commands, for the loaded GearSwap file."
+        },
+        "lac": {
+          "args": "<command>",
+          "help": "LuAshitacast's own commands, for the loaded profile."
+        },
+        "spellcast": {
+          "args": "<command>",
+          "help": "Spellcast's own commands, for the loaded file."
+        }
+      },
       "description": "Swaps gear around your actions from GearSwap job files and LuAshitacast and Ashitacast XML profiles, unchanged (the gear-swap add-ons).",
       "files": [
         {
@@ -773,8 +1022,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "6ba4f15555f6bfe025c2c8e6828fc05f0e84aa020f9c1cda3dc7709b755811cc",
-          "size": 971,
+          "sha256": "e754039be49b61d2aebe770ae1b1aad563f788dd13050fd0f2d42981c52acb22",
+          "size": 1007,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/gearshift/mod.toml"
         },
         {
@@ -881,6 +1130,46 @@
       "authors": [
         "Arusia"
       ],
+      "commands": {
+        "hb": {
+          "args": "",
+          "forms": [
+            {
+              "args": "show",
+              "help": "Shows the bars."
+            },
+            {
+              "args": "hide",
+              "help": "Hides the bars."
+            },
+            {
+              "args": "more",
+              "help": "Shows one more bar."
+            },
+            {
+              "args": "fewer",
+              "help": "Shows one bar fewer."
+            },
+            {
+              "args": "run <bar> <slot>",
+              "help": "Fires a slot."
+            },
+            {
+              "args": "reload",
+              "help": "Reads macros.json again."
+            },
+            {
+              "args": "wipestock",
+              "help": "Empties the game's own macro palette (it can be restored)."
+            },
+            {
+              "args": "restorestock",
+              "help": "Puts the game's macro palette back."
+            }
+          ],
+          "help": "Opens the hotbar manager."
+        }
+      },
       "description": "Hotbars of multi-line macros with their actions' icons and recasts, loaded by main job and sub job.",
       "files": [
         {
@@ -891,8 +1180,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "49cd68462c6699ddd2a4ec92afc95f7b096799e5628721e6141f7c171988c501",
-          "size": 1460,
+          "sha256": "ae67dbc065e462831d2d4cb9bda22eed9b8c2c14a88efa07735e2195ec65b5f8",
+          "size": 1844,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/mod.toml"
         },
         {
@@ -957,6 +1246,29 @@
     },
     {
       "authors": [],
+      "commands": {
+        "bags": {
+          "forms": [
+            {
+              "args": "add <item>",
+              "help": "Counts an item."
+            },
+            {
+              "args": "addkey <key item>",
+              "help": "Shows whether you have a key item."
+            },
+            {
+              "args": "remove <name>",
+              "help": "Stops counting an item or key item."
+            },
+            {
+              "args": "list",
+              "help": "Lists what it counts."
+            }
+          ],
+          "help": "The items and key items the Inventory HUD counts."
+        }
+      },
       "description": "Bag space, gil and the items and key items you choose, in a window on a screen edge (the inventory and gil tracker add-ons).",
       "files": [
         {
@@ -967,8 +1279,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "36d6f498b2620ee8a9c7be0e3c38eba36c40a07e2c9e0acf0d3d5523ddd2f393",
-          "size": 691,
+          "sha256": "9ac733f781fb32ccb976dd347de00844cebcdf619ca78852f9200644915698dd",
+          "size": 879,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/inventory-hud/mod.toml"
         }
       ],
@@ -979,6 +1291,12 @@
     },
     {
       "authors": [],
+      "commands": {
+        "trials": {
+          "args": "",
+          "help": "Lists your trial weapons' weapon skill points."
+        }
+      },
       "description": "A trial weapon's weapon skill points toward its unlock, shown while it is highlighted in a game list and listed by command (the latent checker add-ons).",
       "files": [
         {
@@ -989,8 +1307,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "499c96e365f8f3f495d59250c49df83476df136ad84b61e5a57b046e398343f5",
-          "size": 512,
+          "sha256": "a1d39a50c51d8c5752ac209c3ae5cbda628e96becf3f21729fd283e007fd2e8a",
+          "size": 511,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/item-details/mod.toml"
         },
         {
@@ -1029,6 +1347,32 @@
     },
     {
       "authors": [],
+      "commands": {
+        "alias": {
+          "args": "<name> <line>",
+          "help": "Makes a short name run a longer command line."
+        },
+        "aliases": {
+          "args": "",
+          "help": "Lists your aliases."
+        },
+        "bind": {
+          "args": "<key> <line>",
+          "help": "Binds a key to a command line."
+        },
+        "binds": {
+          "args": "",
+          "help": "Lists your key binds."
+        },
+        "unalias": {
+          "args": "<name>",
+          "help": "Removes an alias."
+        },
+        "unbind": {
+          "args": "<key>",
+          "help": "Takes a key's bind off."
+        }
+      },
       "description": "Binds keys to command lines and makes short aliases for long commands, kept per character (the bind and alias add-ons).",
       "files": [
         {
@@ -1039,8 +1383,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "91acd7285159b1b3913abee888dbac3fec9c07adc85a0d1bd61b0c031979824f",
-          "size": 866,
+          "sha256": "50747230ee3cc3ce789057449b317d980036ffb643cbde7dc74aa8cde617d115",
+          "size": 860,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/key-commands/mod.toml"
         }
       ],
@@ -1051,6 +1395,18 @@
     },
     {
       "authors": [],
+      "commands": {
+        "links": {
+          "args": "",
+          "forms": [
+            {
+              "args": "<number>",
+              "help": "Opens a link in your browser."
+            }
+          ],
+          "help": "Lists the web links seen in chat."
+        }
+      },
       "description": "Numbers the web links in chat so you can open or copy them (the chat link add-ons).",
       "files": [
         {
@@ -1061,8 +1417,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "0bac990664887f65b57f4401313140be28792429d97df4cfd2c14ccd5118bae5",
-          "size": 476,
+          "sha256": "2af6a80e3d9fae18e10d8aa693df1d526e02bf1885ac14997d75b54127e955fb",
+          "size": 510,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/link-catcher/mod.toml"
         }
       ],
@@ -1073,6 +1429,22 @@
     },
     {
       "authors": [],
+      "commands": {
+        "trim": {
+          "args": "<spell, ability or mount>",
+          "forms": [
+            {
+              "args": "list",
+              "help": "Lists what you left out."
+            },
+            {
+              "args": "clear",
+              "help": "Puts everything back."
+            }
+          ],
+          "help": "Leaves a spell, ability or mount out of the game's lists; again puts it back."
+        }
+      },
       "description": "Spells, abilities and mounts you never use left out of the game's lists, kept per character (the list trimming add-ons).",
       "files": [
         {
@@ -1083,8 +1455,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "8558271d841e390d7a9e93139b1873677d29b33401be0f298341d65fd75b40e8",
-          "size": 582,
+          "sha256": "2593edeebd7687a6a9b8591ca003112166ae2df08b013f6186d8cfcbc92c40b3",
+          "size": 687,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/list-trimmer/mod.toml"
         }
       ],
@@ -1117,6 +1489,37 @@
     },
     {
       "authors": [],
+      "commands": {
+        "look": {
+          "forms": [
+            {
+              "args": "race <race>",
+              "help": "Your race."
+            },
+            {
+              "args": "face <1a..8b>",
+              "help": "Your face."
+            },
+            {
+              "args": "<slot> <item | none | own>",
+              "help": "A piece of your gear."
+            },
+            {
+              "args": "copy [name]",
+              "help": "Copies a player's look (your target's)."
+            },
+            {
+              "args": "others <race | own>",
+              "help": "One race for everyone else."
+            },
+            {
+              "args": "reset",
+              "help": "Your own look back."
+            }
+          ],
+          "help": "Changes how characters look, on your screen only."
+        }
+      },
       "description": "Changes how characters look on your screen only: your race, face and gear, a target's look copied, one race for everyone else (the dress-up add-ons).",
       "files": [
         {
@@ -1127,8 +1530,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "25d56eb30efed82a117a6a3cd3dbb11dc870867a2f374e4435dcea40636d7743",
-          "size": 657,
+          "sha256": "eb0f58e194d461e37eb074068324e3d2c2296a3945ae2dc81a3c2e061aee4793",
+          "size": 931,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/look-changer/mod.toml"
         },
         {
@@ -1145,6 +1548,18 @@
     },
     {
       "authors": [],
+      "commands": {
+        "loot": {
+          "args": "[lot | pass | drop] [add | remove] <item>",
+          "forms": [
+            {
+              "args": "list",
+              "help": "Lists your rules."
+            }
+          ],
+          "help": "Lots, passes or drops treasure by your lists."
+        }
+      },
       "description": "Lots, passes and drops treasure by your lists (the treasury and loot add-ons).",
       "files": [
         {
@@ -1155,8 +1570,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "1fe98491c82d89854de3a655e586cb48b7f42b8828809d95ea92b0c8e08c579c",
-          "size": 906,
+          "sha256": "93178540734419ceacbe0b1250d404949279799218ca1f924048b71c9298891b",
+          "size": 959,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/loot-rules/mod.toml"
         }
       ],
@@ -1167,6 +1582,12 @@
     },
     {
       "authors": [],
+      "commands": {
+        "lootlog": {
+          "args": "reset",
+          "help": "Starts the loot log again."
+        }
+      },
       "description": "Treasure Hunter on your target, what each kind of monster has dropped this session, and the treasure pool's time left (the loot tracker add-ons).",
       "files": [
         {
@@ -1177,8 +1598,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "8229e9898e7112cc0125d33a2cbf64b5a11208f877ce0cc6723cc968a87d7c67",
-          "size": 557,
+          "sha256": "6167a8a76de5f6b364fab5bdecaa15f2f4dec5162ba590c2412e4adbad6443a0",
+          "size": 556,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/loot-tracker/mod.toml"
         }
       ],
@@ -1189,6 +1610,25 @@
     },
     {
       "authors": [],
+      "commands": {
+        "macros": {
+          "forms": [
+            {
+              "args": "save [sub]",
+              "help": "Keeps the palette's book and set for this job (or this sub job)."
+            },
+            {
+              "args": "forget [sub]",
+              "help": "Forgets them."
+            },
+            {
+              "args": "list",
+              "help": "Lists what is kept."
+            }
+          ],
+          "help": "The macro book and set kept for each job."
+        }
+      },
       "description": "Turns the macro palette to the book and set you keep for each job when the job changes (the macro changer add-ons).",
       "files": [
         {
@@ -1199,8 +1639,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "85ade9943538b0e2a4a0ed49f914d0278a45cad9186b8e4b57339c7ae914cbb9",
-          "size": 567,
+          "sha256": "e036e5162fd3a7e96b02a99ddfe40b972f145ba9ab905f632a6516e428b5f1fe",
+          "size": 724,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/macro-books/mod.toml"
         }
       ],
@@ -1211,6 +1651,33 @@
     },
     {
       "authors": [],
+      "commands": {
+        "mapnote": {
+          "forms": [
+            {
+              "args": "add <text>",
+              "help": "Pins a note where you stand."
+            },
+            {
+              "args": "del <n>",
+              "help": "Removes a note by its number."
+            },
+            {
+              "args": "list",
+              "help": "Lists this zone's notes."
+            },
+            {
+              "args": "track <name>",
+              "help": "Marks a monster on the map."
+            },
+            {
+              "args": "untrack <name>",
+              "help": "Stops marking it."
+            }
+          ],
+          "help": "Notes on the zone's map, and monsters to track on it."
+        }
+      },
       "description": "Notes pinned to places on a zone's map, your party and the monsters you track, marked on the Map Overlay (the map marker add-ons).",
       "files": [
         {
@@ -1221,8 +1688,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "c125204794cc6821c5b4799c194dd938a3291470703a72a462514e42ad9f851f",
-          "size": 739,
+          "sha256": "691cdf6610af775d308bb0d971f28c574bde21ac0c40745fa497953908637874",
+          "size": 987,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/map-notes/mod.toml"
         }
       ],
@@ -1299,6 +1766,22 @@
     },
     {
       "authors": [],
+      "commands": {
+        "mobnote": {
+          "args": "",
+          "forms": [
+            {
+              "args": "<text>",
+              "help": "Sets it."
+            },
+            {
+              "args": "clear",
+              "help": "Clears it."
+            }
+          ],
+          "help": "Shows your note on the target."
+        }
+      },
       "description": "A bar across the top of the screen with the zone, the time and weather, and your target: its /check result and the notes you keep on it (the info bar add-ons).",
       "files": [
         {
@@ -1309,8 +1792,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "8a55979fcbd2d30c1cdaba746cd881341a7bd2e932823f5d632fd5b76d2a0325",
-          "size": 756,
+          "sha256": "61f773f0ddb03b3a11bd62c46447640610c5257d65733e1c19d4c77c59eeb8e1",
+          "size": 815,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/monster-notes/mod.toml"
         }
       ],
@@ -1321,6 +1804,22 @@
     },
     {
       "authors": [],
+      "commands": {
+        "ride": {
+          "args": "",
+          "forms": [
+            {
+              "args": "<part of a name>",
+              "help": "Calls the mount whose name has it."
+            },
+            {
+              "args": "list",
+              "help": "Lists your mounts."
+            }
+          ],
+          "help": "Calls a random mount."
+        }
+      },
       "description": "Calls a random mount of yours, or one by part of its name (the mount roulette add-ons).",
       "files": [
         {
@@ -1331,8 +1830,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "abc26304a6ce57495615f4210314647da4659167078d07faa56cefb3a203ae3d",
-          "size": 486,
+          "sha256": "b0da1e4d132481a0a573cf5f1c9a3f8bddf0e92f2278e30b88257190366e86fd",
+          "size": 567,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/mount-picker/mod.toml"
         }
       ],
@@ -1343,6 +1842,24 @@
     },
     {
       "authors": [],
+      "commands": {
+        "focus": {
+          "args": "<name>",
+          "help": "Brings another character's game window to the front."
+        },
+        "send": {
+          "args": "<name | all | others> <command>",
+          "help": "Runs a command in your other game windows."
+        },
+        "sendtarget": {
+          "args": "[name]",
+          "help": "Has your other windows target what you target."
+        },
+        "stna": {
+          "args": "[name]",
+          "help": "Casts the -na spell for an ailment this job can remove (or in another window)."
+        }
+      },
       "description": "Commands, targets and status removal sent to your other game windows on this machine, focus switching, and tells relayed between them (the multibox add-ons).",
       "files": [
         {
@@ -1353,8 +1870,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "4c123a6765e81334abad436fcaa4c358d2d1ac2816521edbfa8c059ece11a533",
-          "size": 1082,
+          "sha256": "abc5685035d839fcd8c81a261c84e4aa29aa2b1f2dc08248a8f13c34b2b43da8",
+          "size": 1078,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/multibox/mod.toml"
         }
       ],
@@ -1365,6 +1882,18 @@
     },
     {
       "authors": [],
+      "commands": {
+        "music": {
+          "args": "<track number>",
+          "forms": [
+            {
+              "args": "off",
+              "help": "Back to the zone's music."
+            }
+          ],
+          "help": "Plays one of the game's tracks."
+        }
+      },
       "description": "Plays any of the game's tracks, keeps the zone's music in battle or silences it while mounted (the music add-ons).",
       "files": [
         {
@@ -1375,8 +1904,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "efbbc82adda1b420fe8926180fd1d559920964ecfe7d9a3e4df63eabf080b3d5",
-          "size": 914,
+          "sha256": "236d105376abc1ea7ceb34b897c988ee7b041084070bf114f0d44ae2385dc5df",
+          "size": 938,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/music-picker/mod.toml"
         }
       ],
@@ -1387,6 +1916,34 @@
     },
     {
       "authors": [],
+      "commands": {
+        "errand": {
+          "args": "<name>",
+          "forms": [
+            {
+              "args": "save <name> <npc>: <option> > ...",
+              "help": "Keeps an errand by name."
+            },
+            {
+              "args": "list",
+              "help": "Lists your errands."
+            },
+            {
+              "args": "delete <name>",
+              "help": "Deletes one."
+            }
+          ],
+          "help": "Runs a named errand."
+        },
+        "job": {
+          "args": "<main>[/<sub>]",
+          "help": "Changes jobs at a moogle, as //job war/nin or //job blm/none."
+        },
+        "npc": {
+          "args": "<name>: <option> > <option> > ...",
+          "help": "Walks an NPC's menus: the options in order."
+        }
+      },
       "description": "Walks an NPC's menus by command, keeps such errands by name, and changes jobs at a moogle by command (the NPC shop and job change add-ons).",
       "files": [
         {
@@ -1397,8 +1954,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "558b0ec607ec79ffa8667a97bcbb482f827522eda53d80096eb0a3230283a838",
-          "size": 837,
+          "sha256": "a35841e33a30242e41b9eb6ff3cb3ac8718ad85f5e4657c77d5df764594ce3fe",
+          "size": 982,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/npc-errands/mod.toml"
         }
       ],
@@ -1409,6 +1966,30 @@
     },
     {
       "authors": [],
+      "commands": {
+        "roeset": {
+          "args": "<name>",
+          "forms": [
+            {
+              "args": "save <name>",
+              "help": "Saves the objectives you have set."
+            },
+            {
+              "args": "list",
+              "help": "Lists your sets."
+            },
+            {
+              "args": "delete <name>",
+              "help": "Deletes a set."
+            }
+          ],
+          "help": "Sets a named set of Records of Eminence objectives."
+        },
+        "roeshow": {
+          "args": "",
+          "help": "Lists the objectives you have set."
+        }
+      },
       "description": "Saves the Records of Eminence objectives you have set as named sets and puts a set back with one command (the objective set add-ons).",
       "files": [
         {
@@ -1419,8 +2000,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "7403d22f3da71173b87a88714acaa983e33c6ede524c2826c5a3e699f0cea9e5",
-          "size": 717,
+          "sha256": "cb00510f1fdbd5b97fd30e588f5245a1b10910410438d3a5661eeb539a6ab1f0",
+          "size": 852,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/objective-sets/mod.toml"
         }
       ],
@@ -1431,6 +2012,12 @@
     },
     {
       "authors": [],
+      "commands": {
+        "padbars": {
+          "args": "",
+          "help": "Opens or closes the controller crossbars' setup window."
+        }
+      },
       "description": "Controller crossbars: hold LT or RT and the d-pad and face buttons use that side's eight actions, set per job (the crossbar add-ons).",
       "files": [
         {
@@ -1441,8 +2028,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "fa47d499b20809733acaab4574835b6f2e4e13eeba69eb282e1dd8e1ba05d450",
-          "size": 889,
+          "sha256": "97b7934675251f5309250242d9172bb710aa5cc5a8011bcf91f5cab5162dbb2b",
+          "size": 888,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/pad-bars/mod.toml"
         },
         {
@@ -1663,6 +2250,22 @@
     },
     {
       "authors": [],
+      "commands": {
+        "record": {
+          "args": "",
+          "forms": [
+            {
+              "args": "stop",
+              "help": "Stops the recording."
+            }
+          ],
+          "help": "Starts recording a video."
+        },
+        "shot": {
+          "args": "",
+          "help": "Takes a screenshot into its character and zone folder."
+        }
+      },
       "description": "Screenshots filed in folders by character and zone, and video recording by command (the screenshot organizer and capture add-ons).",
       "files": [
         {
@@ -1673,8 +2276,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "3ecfdb3b73e4d760cd7856a0d44ec743bd81394ae5ce347f569acba8ff4a142f",
-          "size": 591,
+          "sha256": "7169a5db8f2a827cad06ef879ea1209c824394d2f6873453065e7c32891cf59c",
+          "size": 634,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/screen-capture/mod.toml"
         }
       ],
@@ -1685,6 +2288,22 @@
     },
     {
       "authors": [],
+      "commands": {
+        "note": {
+          "args": "<name> <text>",
+          "forms": [
+            {
+              "args": "<name>",
+              "help": "Removes it."
+            }
+          ],
+          "help": "Puts a named note on the screen."
+        },
+        "notes": {
+          "args": "",
+          "help": "Lists your screen notes."
+        }
+      },
       "description": "Puts your own notes on the screen by command, where you drag them (the text add-ons).",
       "files": [
         {
@@ -1695,8 +2314,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "85b6d547cd081ee4023132255c70f2b6c084c4c620812c3d5c48071a6ca46b60",
-          "size": 534,
+          "sha256": "587adb89b19afc479baf349aac43535b49a0ff31dc157f79d9a239e11662db82",
+          "size": 551,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/screen-notes/mod.toml"
         }
       ],
@@ -1707,6 +2326,16 @@
     },
     {
       "authors": [],
+      "commands": {
+        "sell": {
+          "args": "<item> [all]",
+          "help": "Sells an item (or every copy) to the open shop."
+        },
+        "trade": {
+          "args": "<item> [count], <item> [count]...",
+          "help": "Hands items to your target NPC."
+        }
+      },
       "description": "Sells items by name to the open shop and hands items to your target NPC by command (the sell and trade add-ons).",
       "files": [
         {
@@ -1717,8 +2346,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "12604bb8fae68670f640be478b092a6c6503e04f5739018e5647da22400147a6",
-          "size": 636,
+          "sha256": "ebf5cb83b54bd752a8dd26f81653fe9857d1355d2f103138437cc696e95a45c9",
+          "size": 634,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/sell-hand-in/mod.toml"
         }
       ],
@@ -1729,6 +2358,12 @@
     },
     {
       "authors": [],
+      "commands": {
+        "skills": {
+          "args": "",
+          "help": "Lists your skills, their caps and today's gains."
+        }
+      },
       "description": "Adds your session's total to each skill-up line, and lists your skills, their caps and today's gains (the skill-up tracker add-ons).",
       "files": [
         {
@@ -1739,8 +2374,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "7f3d97f68690ec1e087cb1dc3b831ff1a51bcd590a197ca079fb1b8884e49c21",
-          "size": 513,
+          "sha256": "55246d48d287fa8db4edcd664bd4cbf47b97b50b70e79b2a7eaf20e616e29ee2",
+          "size": 512,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/skill-log/mod.toml"
         }
       ],
@@ -1955,6 +2590,22 @@
     },
     {
       "authors": [],
+      "commands": {
+        "face": {
+          "args": "",
+          "forms": [
+            {
+              "args": "away",
+              "help": "Turns you away from it."
+            }
+          ],
+          "help": "Turns you toward your target."
+        },
+        "tgt": {
+          "args": "<name or server id>",
+          "help": "Targets by name or server id."
+        }
+      },
       "description": "Targets by name or id, turns you toward or away from your target, and can check each monster you target (the targeting add-ons).",
       "files": [
         {
@@ -1965,8 +2616,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "ec380b185dd36b13fad637abd1e4335c1c48c47baf353a53e6ab26631df15305",
-          "size": 720,
+          "sha256": "8fb790574508f5298e48950a647e139b7475317cf953a6c78e4f7660da5bbe81",
+          "size": 758,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/targeting/mod.toml"
         }
       ],
@@ -1977,6 +2628,16 @@
     },
     {
       "authors": [],
+      "commands": {
+        "r": {
+          "args": "<message>",
+          "help": "Answers the last tell."
+        },
+        "tells": {
+          "args": "",
+          "help": "Lists the tells kept while you were away."
+        }
+      },
       "description": "Keeps the tells that come while you are away, answers the last tell with //r, and can send an away reply (the answering machine add-ons).",
       "files": [
         {
@@ -1987,8 +2648,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "3948d6c4211d434efc96cb9d9a4bf10324a7156328a8bf74c194478deb97e154",
-          "size": 737,
+          "sha256": "e96de49fbbb0d5e3eed1db84ce97ffdbcba7bbd99971a3826f488775100647dd",
+          "size": 735,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/tell-inbox/mod.toml"
         }
       ],
@@ -2043,6 +2704,22 @@
     },
     {
       "authors": [],
+      "commands": {
+        "seek": {
+          "args": "<name>",
+          "help": "Lists who in the zone matches a name."
+        },
+        "track": {
+          "args": "<name>",
+          "forms": [
+            {
+              "args": "stop",
+              "help": "Stops tracking."
+            }
+          ],
+          "help": "Tracks a monster or NPC with Wide Scan."
+        }
+      },
       "description": "Tracks a monster or NPC by name with Wide Scan, and lists who in the zone matches a name (the wide scan add-ons).",
       "files": [
         {
@@ -2053,8 +2730,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "706b0d81ac4e1a9882ee15e4d4c57e5318cce13b9260efd479e5620df3092376",
-          "size": 636,
+          "sha256": "43965e5e5a29bcc26a413e457a85d9aa4b4c2c975bd32df75bf363c1395ccb08",
+          "size": 669,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/tracking/mod.toml"
         }
       ],
@@ -2065,6 +2742,26 @@
     },
     {
       "authors": [],
+      "commands": {
+        "trusts": {
+          "args": "<lineup>",
+          "forms": [
+            {
+              "args": "save <lineup> [trust, trust...]",
+              "help": "Saves the trusts you name, or the ones out now."
+            },
+            {
+              "args": "list",
+              "help": "Lists your lineups."
+            },
+            {
+              "args": "delete <lineup>",
+              "help": "Deletes a lineup."
+            }
+          ],
+          "help": "Calls a named trust lineup."
+        }
+      },
       "description": "Saves the trusts you call as named lineups and calls a lineup with one command (the trust set add-ons).",
       "files": [
         {
@@ -2075,8 +2772,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "c81e95f5995e2f5b0411ff770e6242a11b324fd579a92f546eca5869f2e68230",
-          "size": 578,
+          "sha256": "043dcfd7a06d20273c677d8c75ed759538de9c03bce3ab0643939ae964a22e09",
+          "size": 717,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/trust-lineups/mod.toml"
         }
       ],
@@ -2131,6 +2828,18 @@
     },
     {
       "authors": [],
+      "commands": {
+        "useall": {
+          "args": "<item>",
+          "forms": [
+            {
+              "args": "stop",
+              "help": "Stops."
+            }
+          ],
+          "help": "Uses every copy of an item, one after another."
+        }
+      },
       "description": "Uses every copy of an item one after another, such as a stack of pouches or bags (the pouch add-ons).",
       "files": [
         {
@@ -2141,8 +2850,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "c6d12ab7bb28d26ef1b6b20ad2831f735ae198747f1ae6249511d24625295e64",
-          "size": 467,
+          "sha256": "aa129e308d8cfd3279814aeb369b1b2261858ee869bb27690a213e16f389091c",
+          "size": 492,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/use-all/mod.toml"
         }
       ],
@@ -2175,6 +2884,22 @@
     },
     {
       "authors": [],
+      "commands": {
+        "warp": {
+          "args": "[hp | sg | wp] <zone> [number or place]",
+          "forms": [
+            {
+              "args": "home",
+              "help": "Warps home with the Warp spell or a warp item."
+            },
+            {
+              "args": "dim <holla | dem | mea>",
+              "help": "Uses a Dimensional Ring."
+            }
+          ],
+          "help": "Warps by Home Point, Survival Guide or Waypoint."
+        }
+      },
       "description": "Answers the Home Point, Survival Guide and Waypoint menus by name, and warps home with the Warp spell or a warp item (the warp add-ons).",
       "files": [
         {
@@ -2185,8 +2910,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "2797d8cdc33fd7f039112e928c7a730a8738191c7e4b9b24065ef84d9746dfef",
-          "size": 1037,
+          "sha256": "75d0437336c3b858f40e7f32735806cebf34280d462e94eb2759ceb47bb32d11",
+          "size": 1132,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/warp-helper/mod.toml"
         },
         {
@@ -2203,6 +2928,12 @@
     },
     {
       "authors": [],
+      "commands": {
+        "weather": {
+          "args": "",
+          "help": "Shows the weather, zone and day now."
+        }
+      },
       "description": "Tells you when the weather you are waiting for starts or ends, and can tell your party (the weather add-ons).",
       "files": [
         {
@@ -2213,8 +2944,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "f2a72de81152ffc3b371f48d7171f719611703ea3d7e4daa4882dc177cb17d5d",
-          "size": 830,
+          "sha256": "340ae0ecb03b44aaa4c18bce6ff11a3ec9854c8c9316a18ee46e3011899c644c",
+          "size": 829,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/weather-watch/mod.toml"
         }
       ],
@@ -2225,6 +2956,16 @@
     },
     {
       "authors": [],
+      "commands": {
+        "ah": {
+          "args": "[words]",
+          "help": "Looks words up on the auction site (none: the item pointed at, or your target)."
+        },
+        "wiki": {
+          "args": "[words]",
+          "help": "Looks words up on the wiki (none: the item pointed at, or your target)."
+        }
+      },
       "description": "Looks up an item, a spell, your target or any words on the wiki or the auction site, in your browser (the lookup add-ons).",
       "files": [
         {
@@ -2235,8 +2976,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "96b7e801b777a65293e9db36726e45e7592fcdffd5555e39e73367ba53f48778",
-          "size": 670,
+          "sha256": "eba8a454171fcd4e28dd48f356ace35b3f24cda82265fa07f1e018095789416a",
+          "size": 660,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/web-search/mod.toml"
         }
       ],
@@ -2247,6 +2988,21 @@
     },
     {
       "authors": [],
+      "commands": {
+        "winpos": {
+          "forms": [
+            {
+              "args": "save",
+              "help": "Keeps where and how big the window is now."
+            },
+            {
+              "args": "forget",
+              "help": "Forgets it."
+            }
+          ],
+          "help": "This character's game window place."
+        }
+      },
       "description": "Puts the game window back where and how big you keep it for each character, and can keep it on top (the window position add-ons).",
       "files": [
         {
@@ -2257,8 +3013,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "0bd79cb433abb4e072e5fbc213648e8cbe2c477f24014d8eb9864694186ef450",
-          "size": 856,
+          "sha256": "d2d0c08de7b7e7b1ff62bd924f68f961fa97eee8e555ec60a1d2628246cb2b67",
+          "size": 943,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/window-placement/mod.toml"
         }
       ],
@@ -2269,6 +3025,12 @@
     },
     {
       "authors": [],
+      "commands": {
+        "xp": {
+          "args": "reset",
+          "help": "Starts the XP tracker's rates again."
+        }
+      },
       "description": "Experience, limit and capacity points with their rates per hour, in a window on a screen edge (the point-watch add-ons).",
       "files": [
         {
@@ -2279,8 +3041,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "9658f951761cc010a539899b123289c4d628790ffe892160740b7c536628380e",
-          "size": 502,
+          "sha256": "4a02148025e169cae57d6ca863b539a53e5acc93a102cf4cbc33f62c5214329e",
+          "size": 501,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/xp-tracker/mod.toml"
         }
       ],

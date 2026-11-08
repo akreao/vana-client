@@ -16,5 +16,5 @@ label = "Players Nearby"
 help = "Counts the players within 50 yalms too, not only your party and alliance."
 
 [commands.attend]
-help = "Writes down who is here (party, alliance, players nearby), with a note."
-usage = "[note]"
+help = "Writes down who is here (party, alliance, players nearby), with an optional note."
+args = "[note]"
