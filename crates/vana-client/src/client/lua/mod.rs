@@ -25,8 +25,8 @@ mod state;
 mod vm;
 pub(super) mod window;
 
-pub(in crate::client) use state::Placed;
 pub(in crate::client) use input::combo_label;
+pub(in crate::client) use state::Placed;
 
 use super::World;
 use crate::dat::battle::Who;

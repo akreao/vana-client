@@ -623,7 +623,11 @@ impl Window {
 
     /// The listening key element takes the first key press: Escape stops, Backspace / Delete clear, any other key
     /// (named by `name`, with its modifiers) becomes the combination.
-    pub fn listen(&mut self, events: &[egui::Event], name: impl Fn(&egui::Event) -> Option<String>) -> (Vec<Event>, Vec<Se>) {
+    pub fn listen(
+        &mut self,
+        events: &[egui::Event],
+        name: impl Fn(&egui::Event) -> Option<String>,
+    ) -> (Vec<Event>, Vec<Se>) {
         let (mut ev, mut se) = (Vec::new(), Vec::new());
         if !self.listening() {
             return (ev, se);
@@ -1793,7 +1797,14 @@ mod tests {
         let mut w = Window::new("w");
         w.elems = vec![
             Elem::Tabs { id: "t".into(), items: vec!["One".into(), "Two".into()], at: 0 },
-            Elem::Input { id: "name".into(), label: "Name".into(), text: "ab".into(), max: 4, filter: false, key: false },
+            Elem::Input {
+                id: "name".into(),
+                label: "Name".into(),
+                text: "ab".into(),
+                max: 4,
+                filter: false,
+                key: false,
+            },
             Elem::Section { id: "sec".into(), label: "More".into(), open: false },
             Elem::Choice { id: "c".into(), label: "C".into(), items: vec!["x".into(), "y".into()], at: 0 },
             Elem::Colour { id: "col".into(), label: "Col".into(), value: [0, 0, 0, 255], alpha: false },
@@ -1817,7 +1828,14 @@ mod tests {
         assert_eq!(w.stops(), vec![0, 2, 3, 4]);
         // An element on another page than the section is not under it.
         let mut v = w.clone();
-        v.elems.push(Elem::Input { id: "p2".into(), label: String::new(), text: String::new(), max: 4, filter: false, key: false });
+        v.elems.push(Elem::Input {
+            id: "p2".into(),
+            label: String::new(),
+            text: String::new(),
+            max: 4,
+            filter: false,
+            key: false,
+        });
         v.meta.push(Meta { page: Some(0), ..Default::default() });
         (v.at, v.elems[0]) = (0, Elem::Tabs { id: "t".into(), items: vec!["One".into(), "Two".into()], at: 0 });
         assert_eq!(v.stops(), vec![0, 1, 5]);
@@ -1851,7 +1869,14 @@ mod tests {
 
     #[test]
     fn filter_window_walk() {
-        let input = |id: &str, filter| Elem::Input { id: id.into(), label: id.into(), text: String::new(), max: 9, filter, key: false };
+        let input = |id: &str, filter| Elem::Input {
+            id: id.into(),
+            label: id.into(),
+            text: String::new(),
+            max: 9,
+            filter,
+            key: false,
+        };
         let mut w = Window::new("w");
         w.elems = vec![
             Elem::Text { id: String::new(), text: "Hi".into(), dim: false, colour: None },
@@ -1923,13 +1948,19 @@ mod tests {
         assert!(w.listen(&[ctrl_q.clone()], name).0.is_empty());
         w.key(K::Enter);
         assert!(w.listening() && w.takes_text());
-        assert_eq!(w.listen(&[ctrl_q], name).0, vec![Event::Text { id: "k".into(), text: "ctrl+q".into(), done: true }]);
+        assert_eq!(
+            w.listen(&[ctrl_q], name).0,
+            vec![Event::Text { id: "k".into(), text: "ctrl+q".into(), done: true }]
+        );
         assert!(!w.listening());
         // Escape stops without a change; Backspace clears.
         w.key(K::Enter);
         assert!(w.listen(&[key_ev(K::Escape)], name).0.is_empty());
         w.key(K::Enter);
-        assert_eq!(w.listen(&[key_ev(K::Backspace)], name).0, vec![Event::Text { id: "k".into(), text: String::new(), done: true }]);
+        assert_eq!(
+            w.listen(&[key_ev(K::Backspace)], name).0,
+            vec![Event::Text { id: "k".into(), text: String::new(), done: true }]
+        );
         assert_eq!(super::super::input::combo_label("ctrl+shift+numpad+"), "Ctrl+Shift+Num +");
         assert_eq!(super::super::input::combo_label("alt+f1"), "Alt+F1");
     }

@@ -119,7 +119,14 @@ const KEYS: &[(&str, K, Option<E>)] = &[
 fn is_modifier(c: K) -> bool {
     matches!(
         c,
-        K::ShiftLeft | K::ShiftRight | K::ControlLeft | K::ControlRight | K::AltLeft | K::AltRight | K::SuperLeft | K::SuperRight
+        K::ShiftLeft
+            | K::ShiftRight
+            | K::ControlLeft
+            | K::ControlRight
+            | K::AltLeft
+            | K::AltRight
+            | K::SuperLeft
+            | K::SuperRight
     )
 }
 
