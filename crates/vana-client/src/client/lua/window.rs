@@ -222,12 +222,14 @@ pub enum Cmd {
         width: f32,
         colour: [u8; 4],
     },
-    /// Filled (from `colour` at the top to `to` at the bottom when given), or outlined `line` wide.
+    /// Filled (from `colour` at the top to `to` at the bottom when given), or outlined `line` wide; corners rounded
+    /// `round` (not with `to`).
     Rect {
         r: [f32; 4],
         colour: [u8; 4],
         to: Option<[u8; 4]>,
         line: Option<f32>,
+        round: f32,
     },
     Circle {
         c: [f32; 2],
@@ -239,10 +241,21 @@ pub enum Cmd {
         pts: [[f32; 2]; 3],
         colour: [u8; 4],
     },
+    /// `size` times the UI's small text; `align` 0 left, 1 centre, 2 right of `at`; an outline round the letters.
     Text {
         at: [f32; 2],
         text: String,
         colour: [u8; 4],
+        size: f32,
+        align: u8,
+        outline: Option<[u8; 4]>,
+        bold: bool,
+    },
+    /// Not drawn: the tooltip shown while the pointer rests inside `r`.
+    Tip {
+        r: [f32; 4],
+        title: String,
+        text: String,
     },
     Icon {
         at: [f32; 2],
@@ -384,8 +397,15 @@ pub enum Event {
         id: String,
         column: usize,
     },
-    /// A click on a canvas, in its units.
+    /// A click on a canvas, in its units: `right` for the right button.
     Click {
+        id: String,
+        x: f32,
+        y: f32,
+        right: bool,
+    },
+    /// The pointer over a canvas (when it moved), or gone off it (`x` / `y` negative).
+    Hover {
         id: String,
         x: f32,
         y: f32,
@@ -417,8 +437,12 @@ impl Event {
             }
             Event::Toggle { id, open } => json!({"kind": "toggle", "id": id, "open": open}),
             Event::Sort { id, column } => json!({"kind": "sort", "id": id, "column": column + 1}),
-            Event::Click { id, x, y } => {
-                json!({"kind": "click", "id": id, "x": x.round() as i64, "y": y.round() as i64})
+            Event::Click { id, x, y, right } => {
+                json!({"kind": "click", "id": id, "x": x.round() as i64, "y": y.round() as i64, "button": if *right { "right" } else { "left" }})
+            }
+            Event::Hover { id, x, y } => {
+                let kind = if *x < 0.0 { "leave" } else { "hover" };
+                json!({"kind": kind, "id": id, "x": x.round() as i64, "y": y.round() as i64})
             }
             Event::Drag { id, phase, x, y, dx, dy } => {
                 json!({"kind": (["drag_start", "drag", "drag_end"][*phase as usize % 3]), "id": id, "x": x.round() as i64, "y": y.round() as i64, "dx": dx.round() as i64, "dy": dy.round() as i64})
@@ -923,12 +947,20 @@ impl Window {
     }
 
     /// A canvas clicked at (x, y) in its units.
-    pub fn canvas_click(&mut self, i: usize, x: f32, y: f32) -> (Vec<Event>, Vec<Se>) {
+    pub fn canvas_click(&mut self, i: usize, x: f32, y: f32, right: bool) -> (Vec<Event>, Vec<Se>) {
         let mut ev = self.end_edit();
         if let Some(Elem::Canvas { id, .. }) = self.elems.get(i) {
-            ev.push(Event::Click { id: id.clone(), x, y });
+            ev.push(Event::Click { id: id.clone(), x, y, right });
         }
         (ev, Vec::new())
+    }
+
+    /// The pointer over a canvas at (x, y) in its units, or off it (negative).
+    pub fn canvas_hover(&mut self, i: usize, x: f32, y: f32) -> (Vec<Event>, Vec<Se>) {
+        match self.elems.get(i) {
+            Some(Elem::Canvas { id, .. }) => (vec![Event::Hover { id: id.clone(), x, y }], Vec::new()),
+            _ => (Vec::new(), Vec::new()),
+        }
     }
 
     /// A canvas drag at (x, y) in its units: 0 starts it, 1 moves (reported when it moved), 2 ends it.
@@ -1097,7 +1129,7 @@ impl Window {
         let (list, buttons) = (e == K::List, e == K::Buttons);
         if e == K::Canvas {
             let (cx, cy) = (p.0 - r[0], p.1 - r[1]);
-            let ev = if clicked { self.canvas_click(i, cx, cy).0 } else { Vec::new() };
+            let ev = if clicked { self.canvas_click(i, cx, cy, false).0 } else { Vec::new() };
             if pressed {
                 self.press = Some((i, cx, cy));
             }
@@ -1433,7 +1465,7 @@ fn draw_canvas(gu: &mut GameUi, world: Option<&super::World>, cmds: &[Cmd], x: f
     for c in cmds {
         match c {
             Cmd::Line { a, b, width, colour } => line(gu, at(*a), at(*b), *width, f4(*colour)),
-            Cmd::Rect { r, colour, to, line: None } => {
+            Cmd::Rect { r, colour, to, line: None, .. } => {
                 let (top, bottom) = (f4(*colour), f4(to.unwrap_or(*colour)));
                 let [rx, ry] = at([r[0], r[1]]);
                 gu.quad(
@@ -1466,10 +1498,17 @@ fn draw_canvas(gu: &mut GameUi, world: Option<&super::World>, cmds: &[Cmd], x: f
                 let p = pts.map(at);
                 gu.quad([p[0], p[1], p[2], p[2]], [f4(*colour); 4]);
             }
-            Cmd::Text { at: p, text, colour } => {
-                let [tx, ty] = at(*p);
+            // The classic UI's game font: one size, left at `at` (centred / right by its width).
+            Cmd::Text { at: p, text, colour, align, .. } => {
+                let [mut tx, ty] = at(*p);
+                match align {
+                    1 => tx -= gu.label_width(text) / 2.0,
+                    2 => tx -= gu.label_width(text),
+                    _ => {}
+                }
                 gu.text_fit(text, tx, ty, x + w - tx + 16.0, tint(*colour));
             }
+            Cmd::Tip { .. } => {}
             Cmd::Icon { at: p, size, icon: i } => {
                 let [ix, iy] = at(*p);
                 icon(gu, world, *i, ix, iy, *size);
