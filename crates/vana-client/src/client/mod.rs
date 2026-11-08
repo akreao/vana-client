@@ -3627,8 +3627,17 @@ fn world_hud(
     let party_slots = world.party.slots();
     let rows: Vec<Option<party::Member>> =
         std::iter::once(None).chain(party_slots.slots[1..6].iter().take_while(|m| m.is_some()).cloned()).collect();
-    for m in party_slots.slots.iter().flatten().filter(|m| m.hpp == 100 && m.hp > 0) {
-        world.party_hp_max.insert(m.id, m.hp);
+    for m in party_slots.slots.iter().flatten() {
+        let mut max = world.party_hp_max.get(&m.id).copied();
+        party::track_hp_max(&mut max, m.hp, m.hpp);
+        if let Some(max) = max {
+            world.party_hp_max.insert(m.id, max);
+        }
+    }
+    if let (Some((hp, _, _, hpp, _)), Some(st)) = (world.vitals, world.stats.as_ref()) {
+        let mut max = Some(world.own_hp_max.unwrap_or(st.hp_max));
+        party::track_hp_max(&mut max, hp, hpp);
+        world.own_hp_max = max.filter(|&m| m != st.hp_max);
     }
     let mine = world.vitals.map(|v| (v.3 as f32 / 100.0, v.4 as f32 / 100.0));
     // FUN_101cad00 per draw at retail's 30 fps: a += trunc((t - a) * 0.15), or a = t once that is 0. A row whose member
@@ -7340,8 +7349,11 @@ struct World {
     suggest_sel: Option<usize>,
     /// The open family submenu of the suggestion under the cursor: its cursor in the group.
     suggest_sub: Option<usize>,
-    /// Party and alliance members' HP as last seen at 100 % (their max; the server sends only HP and HP %).
+    /// Party and alliance members' max HP: their HP as last seen at 100 %, or HP / HP % once that no longer fits
+    /// (party::track_hp_max; the server sends only HP and HP %).
     party_hp_max: HashMap<u32, u32>,
+    /// Our max HP when the last 0x061's no longer fits our HP % (a lost buff sends no new 0x061).
+    own_hp_max: Option<u32>,
     /// Where retail's target cursors (anc_l) go this frame, for the modern layer's own: screen fractions, the kind (0
     /// the target, 1 a prompt's saved target, 2 its pick) and the pick's range tint.
     modern_pointers: Vec<(f32, f32, u8, u32)>,
@@ -9615,6 +9627,7 @@ impl App {
                             suggest_sel: None,
                             suggest_sub: None,
                             party_hp_max: HashMap::new(),
+                            own_hp_max: None,
                             modern_pointers: Vec::new(),
                             actor_menu: None,
                             ui_wh: (1.0, 1.0),
@@ -11269,6 +11282,7 @@ impl App {
                 }
                 NetEvent::CharStats(s) => {
                     world.stats = Some(s);
+                    world.own_hp_max = None;
                     status::on_stats(world);
                 }
                 NetEvent::Merits { limit, bits, max } => world.merits = Some((limit, bits, max)),
