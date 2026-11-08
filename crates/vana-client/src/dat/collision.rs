@@ -88,6 +88,10 @@ pub fn parse(p: &[u8]) -> Result<Collision> {
     // zones, 20 in Horlais Peak or Yughott Grotto); each cell's list names its own cell, which confirms the width.
     let scale = |n: usize, s: u8| n * if s == 0 { 40 } else { s as usize } / 4;
     let (w, h) = (scale(p[0x0c] as usize, p[0x0e]), scale(p[0x0d] as usize, p[0x0f]));
+    // A u32 a cell: a grid larger than the chunk is a bad file, not gigabytes of cells to allocate.
+    if w * h > (p.len() - grid_at) / 4 {
+        bail!("MZB collision grid {w} x {h} runs past the chunk");
+    }
     let list = super::zone::light_list(p);
     let light_keys = |xf: usize| -> [u32; 4] {
         std::array::from_fn(|k| match p.get(xf + 0xac + k) {

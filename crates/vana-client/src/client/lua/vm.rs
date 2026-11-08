@@ -226,6 +226,14 @@ pub(super) struct Sleeper {
     pub input: bool,
 }
 
+/// A wait longer than an Instant holds (`sleep(math.huge)`, `timer.after(1/0, f)`): a century, which is never.
+pub(super) const NEVER: Duration = Duration::from_secs(100 * 365 * 24 * 3600);
+
+/// A mod's number of seconds as a Duration, at most NEVER (infinite and huge values too; negative and NaN: none).
+pub(super) fn secs(s: f64) -> Duration {
+    Duration::try_from_secs_f64(s.max(0.0)).map_or(NEVER, |d| d.min(NEVER))
+}
+
 pub(super) enum Wake {
     At(Instant),
     Frames(u32),
@@ -291,20 +299,22 @@ impl Vm {
         lua.load(PRELUDE).set_name("=prelude").call::<()>(token_table.clone())?;
         let token = lua.create_registry_value(token_table)?;
         let vm = Self { manifest, dir, src, lua, st, suspended: None, token };
-        vm.set_hook_on_main()?;
+        vm.set_hook()?;
         Ok(vm)
     }
 
+    /// The time budget's check (a state borrowed elsewhere just lets the code run on to the next check).
     fn hook(&self) -> impl Fn(&Lua, &mlua::debug::Debug) -> mlua::Result<VmState> + 'static {
         let st = self.st.clone();
-        move |_, _| match st.borrow().deadline {
+        move |_, _| match st.try_borrow().ok().and_then(|s| s.deadline) {
             Some(d) if Instant::now() > d => Err(mlua::Error::runtime("ran past its time budget")),
             _ => Ok(VmState::Continue),
         }
     }
 
-    fn set_hook_on_main(&self) -> mlua::Result<()> {
-        self.lua.set_hook(HookTriggers::new().every_nth_instruction(10_000), self.hook())
+    /// One hook for every thread: ours and the coroutines a mod makes itself, which a per-thread hook missed.
+    fn set_hook(&self) -> mlua::Result<()> {
+        self.lua.set_global_hook(HookTriggers::new().every_nth_instruction(10_000), self.hook())
     }
 
     /// Runs the entry file.
@@ -375,10 +385,6 @@ impl Vm {
 
     /// As resume, with a time budget; what the thread returned when it ended.
     fn resume_for(&self, thread: Thread, args: impl IntoLuaMulti, cap: Duration) -> Option<MultiValue> {
-        if let Err(e) = thread.set_hook(HookTriggers::new().every_nth_instruction(10_000), self.hook()) {
-            self.error(&e);
-            return None;
-        }
         self.st.borrow_mut().deadline = Some(Instant::now() + cap);
         let t0 = Instant::now();
         let r = thread.resume::<MultiValue>(args);
@@ -418,7 +424,7 @@ impl Vm {
                         .and_then(|v| v.as_number().or(v.as_integer().map(|i| i as f64)))
                         .unwrap_or(0.0)
                         .max(0.0);
-                    Wake::At(Instant::now() + Duration::from_secs_f64(s))
+                    Wake::At(Instant::now() + secs(s))
                 }
                 Some("until") => {
                     let Some(Value::Function(test)) = it.next() else {
@@ -428,7 +434,7 @@ impl Vm {
                     let limit = it
                         .next()
                         .and_then(|v| v.as_number().or(v.as_integer().map(|i| i as f64)))
-                        .map(|s| Instant::now() + Duration::from_secs_f64(s.max(0.0)));
+                        .map(|s| Instant::now() + secs(s));
                     match self.lua.create_registry_value(test) {
                         Ok(k) => Wake::Until(k, limit),
                         Err(e) => {
@@ -555,7 +561,8 @@ impl Vm {
         let funcs: Vec<Function> = {
             let st = self.st.borrow();
             let mut hs: Vec<&Handler> = st.handlers.iter().filter(|h| h.event == event).collect();
-            hs.sort_by_key(|h| -h.priority);
+            // Highest first (a negation would wrap for i32::MIN); stable for equal priorities.
+            hs.sort_by(|a, b| b.priority.cmp(&a.priority));
             hs.iter().filter_map(|h| self.lua.registry_value::<Function>(&h.func).ok()).collect()
         };
         for f in funcs {

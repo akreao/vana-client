@@ -439,7 +439,8 @@ pub fn parse_channels(b: &[u8]) -> Result<Channels> {
             let types = (0..width).map(|i| i32_at(b, p + 4 * i)).collect::<Result<_>>()?;
             p += 4 * width;
             let frames = u32_at(b, p)? as usize;
-            let data = floats(b, p + 4, width * frames)?;
+            let n = size(b, width, frames)?;
+            let data = floats(b, p + 4, n)?;
             Ok(Channels { time, frames, width, types, data })
         }
         // PlaybackChannel v3 (FUN_1027ace0): time, n, frames, step, packed flag, per-channel delta streams, types.
@@ -448,10 +449,11 @@ pub fn parse_channels(b: &[u8]) -> Result<Channels> {
             let (time, width, frames, packed) =
                 (f32_at(b, p)?, u32_at(b, p + 4)? as usize, u32_at(b, p + 8)? as usize, u32_at(b, p + 16)?);
             p += 20;
-            let mut data = vec![0f32; width * frames];
+            let n = size(b, width, frames)?;
+            let mut data = vec![0f32; n];
             if packed == 0 {
-                data = floats(b, p, width * frames)?;
-                p += 4 * width * frames;
+                data = floats(b, p, n)?;
+                p += 4 * n;
             } else {
                 for c in 0..width {
                     let (len, bits, step, init) =
@@ -473,6 +475,13 @@ pub fn parse_channels(b: &[u8]) -> Result<Channels> {
         }
         k => bail!("channel kind {k:#x} not supported"),
     }
+}
+
+/// A channel set's value count (width x frames), checked before anything is allocated: at least one frame (sample
+/// reads frame 0), and no more values than the file's bytes could hold (2-bit deltas: four a byte).
+fn size(b: &[u8], width: usize, frames: usize) -> Result<usize> {
+    ensure!(frames >= 1, "channel with no frames");
+    width.checked_mul(frames).filter(|&n| n <= b.len() * 4).context("channel size past the file")
 }
 
 /// Sign-magnitude deltas: 2 bits MSB-first, 4-bit nibbles high first, 8 bit, 16 bit big-endian.
@@ -746,4 +755,17 @@ pub mod creator {
         ([-0.18707, 0.15538, -0.66265, -0.70649], 0.15),
         ([-0.00177, 0.00152, 0.85515, 0.51748], 0.45),
     ];
+}
+
+#[cfg(test)]
+mod tests {
+    /// A channel set's size is checked before it is allocated: no frames, or more values than the file holds, refuse.
+    #[test]
+    fn channel_sizes() {
+        let b = [0u8; 64];
+        assert_eq!(super::size(&b, 4, 2).unwrap(), 8);
+        assert!(super::size(&b, 4, 0).is_err());
+        assert!(super::size(&b, 1 << 20, 1 << 20).is_err());
+        assert!(super::size(&b, usize::MAX, 2).is_err());
+    }
 }

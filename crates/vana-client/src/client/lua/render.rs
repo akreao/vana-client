@@ -80,6 +80,7 @@ pub(super) fn install(lua: &Lua, g: &Table, mod_id: &str) -> mlua::Result<()> {
     t.set(
         "entity",
         lua.create_function(move |lua, (id, spec): (u32, Option<Table>)| {
+            let spec = spec.map(|s| super::api::unhooked(lua, &s)).transpose()?;
             let info = info(lua);
             let mut f = info.borrow_mut();
             let Some(s) = spec else {
@@ -113,6 +114,7 @@ pub(super) fn install(lua: &Lua, g: &Table, mod_id: &str) -> mlua::Result<()> {
     t.set(
         "look",
         lua.create_function(move |lua, (id, spec): (u32, Option<Table>)| {
+            let spec = spec.map(|s| super::api::unhooked(lua, &s)).transpose()?;
             let info = info(lua);
             let mut f = info.borrow_mut();
             let Some(s) = spec else {
@@ -188,6 +190,7 @@ pub(super) fn install(lua: &Lua, g: &Table, mod_id: &str) -> mlua::Result<()> {
     t.set(
         "shader_params",
         lua.create_function(move |lua, (id, params): (String, Vec<Table>)| {
+            let params = params.iter().map(|p| super::api::unhooked(lua, p)).collect::<mlua::Result<Vec<_>>>()?;
             let info = info(lua);
             let mut f = info.borrow_mut();
             let Some(s) = f.shaders.iter_mut().find(|s| s.0 == me && s.1 == id) else {

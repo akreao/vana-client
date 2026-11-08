@@ -1693,7 +1693,7 @@ fn apply(w: &mut World, gu: Option<&super::game_ui::GameUi>, op: Op) {
                     Some((k, id)) => super::timers::list_icon(w, k == "spell", id),
                     None => Icon::None,
                 };
-                let end = std::time::Instant::now() + std::time::Duration::from_secs_f32(s.max(0.0));
+                let end = std::time::Instant::now() + vm::secs(s as f64);
                 w.timers.mods.push(super::timers::ModTimer {
                     mod_id,
                     section,
@@ -2059,6 +2059,68 @@ mod tests {
         assert!(t0.elapsed() < std::time::Duration::from_secs(2), "the test ran {:?}", t0.elapsed());
         assert!(vm.st.borrow().sleepers.is_empty());
         assert_eq!(vm.st.borrow().errors.len(), 1);
+    }
+
+    /// A coroutine the mod makes itself is under the time budget too (a per-thread hook missed it: the frame hung).
+    #[test]
+    fn own_coroutine_has_a_budget() {
+        let vm =
+            Vm::new(manifest::Manifest::default(), PathBuf::from("."), vm::Source::Dir(PathBuf::from("."))).unwrap();
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        let f: mlua::Function =
+            vm.lua.load("return function() coroutine.wrap(function() while true do end end)() end").eval().unwrap();
+        let t0 = std::time::Instant::now();
+        vm.resume(vm.lua.create_thread(f).unwrap(), ());
+        assert!(t0.elapsed() < std::time::Duration::from_secs(2), "ran {:?}", t0.elapsed());
+        assert_eq!(vm.st.borrow().errors.len(), 1);
+    }
+
+    /// Endless or huge waits are a century, not a crash; handlers by priority, the lowest i32 last.
+    #[test]
+    fn endless_waits_and_extreme_priorities() {
+        let vm =
+            Vm::new(manifest::Manifest::default(), PathBuf::from("."), vm::Source::Dir(PathBuf::from("."))).unwrap();
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        vm.lua.load("timer.after(1/0, print); timer.every(1e300, print); timer.after(0/0, print)").exec().unwrap();
+        assert_eq!(vm.st.borrow().timers.len(), 3);
+        let f: mlua::Function = vm.lua.load("return function() sleep(math.huge) end").eval().unwrap();
+        vm.resume(vm.lua.create_thread(f).unwrap(), ());
+        assert_eq!(vm.st.borrow().sleepers.len(), 1);
+        assert!(vm.st.borrow().errors.is_empty());
+        assert_eq!(vm::secs(f64::INFINITY), vm::NEVER);
+        assert_eq!(vm::secs(-1.0), std::time::Duration::ZERO);
+        vm.lua
+            .load(
+                r#"order = {}
+                events.on("e", function() order[#order + 1] = "min" end, {priority = -2147483648})
+                events.on("e", function() order[#order + 1] = "max" end, {priority = 2147483647})
+                events.on("e", function() order[#order + 1] = "zero" end)"#,
+            )
+            .exec()
+            .unwrap();
+        vm.emit("e", ());
+        let order: Vec<String> = vm.lua.load("return order").eval().unwrap();
+        assert_eq!(order, ["max", "zero", "min"]);
+    }
+
+    /// A spec whose metamethod reaches the mod's state while it is read: no panic (the fields are copied first).
+    #[test]
+    fn spec_metamethods_reach_no_borrowed_state() {
+        let vm =
+            Vm::new(manifest::Manifest::default(), PathBuf::from("."), vm::Source::Dir(PathBuf::from("."))).unwrap();
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        vm.lua
+            .load(
+                r#"local base = {title = "From the class"}
+                local spec = setmetatable({elements = {{type = "text", id = "t", text = "x"}}}, {__index = base})
+                setmetatable(base, {__index = function() hud.clear(); timer.after(1, print) end})
+                ui.window("w", spec)
+                ui.update("w", "t", setmetatable({}, {__index = function() hud.clear() end}))"#,
+            )
+            .exec()
+            .unwrap();
+        let st = vm.st.borrow();
+        assert_eq!(st.windows[0].title, "From the class");
     }
 
     /// hud.bubble: the tail leaves the side facing its point and stops at its length; none for a point inside; the

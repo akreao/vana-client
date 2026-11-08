@@ -6,7 +6,7 @@ use super::{Op, World, ipc};
 use mlua::{FromLua, Function, Lua, LuaSerdeExt, Table, Value, Variadic};
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 /// The world, lent while the host runs a mod's Lua (null otherwise).
 pub(super) struct WorldRef(pub *const World);
@@ -134,6 +134,44 @@ pub(super) fn to_lua(lua: &Lua, v: &(impl serde::Serialize + ?Sized)) -> mlua::R
         v,
         mlua::serde::SerializeOptions::new().serialize_none_to_null(false).serialize_unit_to_null(false),
     )
+}
+
+/// A mod's table to read while a state is borrowed: itself when neither it nor a table in it has a metatable, else a
+/// copy with the fields its `__index` tables give folded in (an `__index` function's cannot be listed). A metamethod
+/// run during the read could reach the borrowed state again: a panic.
+pub(super) fn unhooked(lua: &Lua, t: &Table) -> mlua::Result<Table> {
+    use std::collections::HashSet;
+    fn meta(t: &Table, seen: &mut HashSet<usize>) -> bool {
+        if !seen.insert(t.to_pointer() as usize) {
+            return false;
+        }
+        t.metatable().is_some()
+            || t.pairs::<Value, Value>().flatten().any(|(_, v)| matches!(&v, Value::Table(n) if meta(n, seen)))
+    }
+    fn copy(lua: &Lua, t: &Table, seen: &mut HashSet<usize>) -> mlua::Result<Table> {
+        let out = lua.create_table()?;
+        seen.insert(t.to_pointer() as usize);
+        let mut src = Some(t.clone());
+        // The table, then its __index tables in turn (a few: a class chain); its own fields first.
+        for _ in 0..8 {
+            let Some(s) = src.take() else { break };
+            for pair in s.pairs::<Value, Value>() {
+                let (k, v) = pair?;
+                if out.raw_get::<Value>(k.clone())?.is_nil() {
+                    let v = match v {
+                        Value::Table(n) if !seen.contains(&(n.to_pointer() as usize)) => {
+                            Value::Table(copy(lua, &n, seen)?)
+                        }
+                        v => v,
+                    };
+                    out.raw_set(k, v)?;
+                }
+            }
+            src = s.metatable().and_then(|m| m.raw_get::<Table>("__index").ok());
+        }
+        Ok(out)
+    }
+    if meta(t, &mut HashSet::new()) { copy(lua, t, &mut HashSet::new()) } else { Ok(t.clone()) }
 }
 
 pub(super) fn state(lua: &Lua) -> Rc<RefCell<ModState>> {
@@ -362,6 +400,7 @@ pub(super) fn install(
     ui.set(
         "window",
         lua.create_function(|lua, (id, spec): (String, Table)| {
+            let spec = unhooked(lua, &spec)?;
             let st = state(lua);
             let mut s = st.borrow_mut();
             let k = match s.windows.iter().position(|w| w.id == id) {
@@ -423,6 +462,7 @@ pub(super) fn install(
     ui.set(
         "update",
         lua.create_function(|lua, (id, eid, fields): (String, String, Table)| {
+            let fields = unhooked(lua, &fields)?;
             let st = state(lua);
             let mut s = st.borrow_mut();
             let w = s
@@ -799,7 +839,7 @@ pub(super) fn install(
             lua.create_function(move |lua, (secs, func): (f64, Function)| {
                 let st = state(lua);
                 let id = next_id(&st);
-                let d = Duration::from_secs_f64(secs.max(if repeat { 0.01 } else { 0.0 }));
+                let d = super::vm::secs(secs.max(if repeat { 0.01 } else { 0.0 }));
                 let func = lua.create_registry_value(func)?;
                 st.borrow_mut().timers.push(Timer { id, due: Instant::now() + d, every: repeat.then_some(d), func });
                 Ok(id)
