@@ -131,7 +131,9 @@ pub fn sph(d: &[u8]) -> Vec<(Vec3, f32, Vec3, f32)> {
     let m = u(segs).unwrap_or(0) as usize;
     (0..m.min(4096))
         .filter_map(|k| {
-            let (a, b) = (u(segs + 0x10 + 8 * k)? as usize, u(segs + 0x14 + 8 * k)? as usize);
+            // FUN_10056160 masks each index to its low 24 bits.
+            let (a, b) =
+                ((u(segs + 0x10 + 8 * k)? & 0xff_ffff) as usize, (u(segs + 0x14 + 8 * k)? & 0xff_ffff) as usize);
             (a < n && b < n).then(|| {
                 let (pa, ra) = point(a);
                 let (pb, rb) = point(b);
