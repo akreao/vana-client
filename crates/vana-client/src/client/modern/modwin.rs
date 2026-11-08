@@ -414,8 +414,13 @@ pub(super) fn body(
                     clicks.push(Click::TurnTo(i, k));
                 }
             }
-            Elem::Input { label, text, .. } => {
-                let caret = (here && win.edit).then_some(win.caret);
+            Elem::Input { label, text, filter, .. } => {
+                // A type-to-filter input shows its caret at the end while the window has the focus.
+                let caret = if here && win.edit {
+                    Some(win.caret)
+                } else {
+                    (*filter && win.focus && !win.typing()).then(|| text.chars().count())
+                };
                 let (field, _) = kit::setting(ui, m, label, here, false, here, |ui| {
                     kit::field(ui, m, text, caret, ui.available_width(), small.clone(), None)
                 });

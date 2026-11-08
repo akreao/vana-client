@@ -148,11 +148,13 @@ pub enum Elem {
         at: usize,
     },
     /// A line the player types: Enter starts and ends it, Escape undoes it.
+    /// `filter`: typing goes into it while the window has the focus, whatever its cursor is on (a list's filter).
     Input {
         id: String,
         label: String,
         text: String,
         max: usize,
+        filter: bool,
     },
     /// One of `items`, turned with Left / Right.
     Choice {
@@ -609,6 +611,54 @@ impl Window {
     /// Whether a line is being typed (the window then takes the text and keys).
     pub fn typing(&self) -> bool {
         self.edit && matches!(self.elems.get(self.at), Some(Elem::Input { .. }))
+    }
+
+    /// Its type-to-filter input (`filter = true`), if it has one.
+    pub fn filter_input(&self) -> Option<usize> {
+        self.elems.iter().position(|e| matches!(e, Elem::Input { filter: true, .. }))
+    }
+
+    /// Whether it takes the typing from the game: a line being typed, or (focused) a type-to-filter input.
+    pub fn takes_text(&self) -> bool {
+        self.typing() || (self.focus && self.filter_input().is_some())
+    }
+
+    /// Focused with a type-to-filter input and no line being typed: text and Backspace go into that input, the other
+    /// keys move and press as ever.
+    pub fn filter_text(&mut self, events: &[egui::Event]) -> (Vec<Event>, Vec<Se>) {
+        let (mut ev, mut se) = (Vec::new(), Vec::new());
+        let Some(i) = self.filter_input() else { return (ev, se) };
+        for e in events {
+            if self.typing() {
+                // Enter on the filter itself started a typed line: the rest goes there.
+                let (a, b) = self.text(std::slice::from_ref(e));
+                ev.extend(a);
+                se.extend(b);
+                continue;
+            }
+            let Some(Elem::Input { id, text, max, .. }) = self.elems.get_mut(i) else { break };
+            match e {
+                egui::Event::Text(t) | egui::Event::Paste(t) => {
+                    let before = text.chars().count();
+                    text.extend(t.chars().filter(|c| !c.is_control()).take(max.saturating_sub(before)));
+                    if text.chars().count() != before {
+                        ev.push(Event::Text { id: id.clone(), text: text.clone(), done: false });
+                    }
+                }
+                egui::Event::Key { key: egui::Key::Backspace, pressed: true, .. } => {
+                    if text.pop().is_some() {
+                        ev.push(Event::Text { id: id.clone(), text: text.clone(), done: false });
+                    }
+                }
+                egui::Event::Key { key, pressed: true, .. } => {
+                    let (a, b) = self.key(*key);
+                    ev.extend(a);
+                    se.extend(b);
+                }
+                _ => {}
+            }
+        }
+        (ev, se)
     }
 
     /// Ends an edit as Enter would (a typed line is kept and reported).
@@ -1668,7 +1718,7 @@ mod tests {
         let mut w = Window::new("w");
         w.elems = vec![
             Elem::Tabs { id: "t".into(), items: vec!["One".into(), "Two".into()], at: 0 },
-            Elem::Input { id: "name".into(), label: "Name".into(), text: "ab".into(), max: 4 },
+            Elem::Input { id: "name".into(), label: "Name".into(), text: "ab".into(), max: 4, filter: false },
             Elem::Section { id: "sec".into(), label: "More".into(), open: false },
             Elem::Choice { id: "c".into(), label: "C".into(), items: vec!["x".into(), "y".into()], at: 0 },
             Elem::Colour { id: "col".into(), label: "Col".into(), value: [0, 0, 0, 255], alpha: false },
@@ -1692,7 +1742,7 @@ mod tests {
         assert_eq!(w.stops(), vec![0, 2, 3, 4]);
         // An element on another page than the section is not under it.
         let mut v = w.clone();
-        v.elems.push(Elem::Input { id: "p2".into(), label: String::new(), text: String::new(), max: 4 });
+        v.elems.push(Elem::Input { id: "p2".into(), label: String::new(), text: String::new(), max: 4, filter: false });
         v.meta.push(Meta { page: Some(0), ..Default::default() });
         (v.at, v.elems[0]) = (0, Elem::Tabs { id: "t".into(), items: vec!["One".into(), "Two".into()], at: 0 });
         assert_eq!(v.stops(), vec![0, 1, 5]);
