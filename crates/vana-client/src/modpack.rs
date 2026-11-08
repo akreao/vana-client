@@ -58,6 +58,72 @@ pub struct LuaInfo {
     pub description: String,
     #[serde(default)]
     pub version: String,
+    /// Its `[commands.<name>]` (client/lua/manifest.rs Command).
+    #[serde(default)]
+    pub commands: indexmap::IndexMap<String, LuaCommand>,
+}
+
+#[derive(Clone, Debug, Default, serde::Deserialize, PartialEq)]
+#[serde(default)]
+pub struct LuaCommand {
+    pub help: String,
+    pub args: Option<String>,
+    pub params: Vec<LuaParam>,
+    pub forms: Vec<LuaForm>,
+}
+
+#[derive(Clone, Debug, Default, serde::Deserialize, PartialEq)]
+#[serde(default)]
+pub struct LuaForm {
+    pub args: String,
+    pub help: String,
+    pub params: Vec<LuaParam>,
+}
+
+/// A placeholder's type (client/lua/manifest.rs Param).
+#[derive(Clone, Debug, Default, serde::Deserialize, PartialEq)]
+#[serde(default)]
+pub struct LuaParam {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub options: Vec<String>,
+    pub also: Vec<String>,
+}
+
+impl LuaCommand {
+    /// Every form as (words, help, params): the main one first (when declared, or when there are no others).
+    pub fn forms(&self) -> Vec<(String, String, Vec<LuaParam>)> {
+        let main = self.args.clone().or_else(|| self.forms.is_empty().then(String::new));
+        let help = |h: &str| if h.is_empty() { self.help.clone() } else { h.to_string() };
+        main.map(|a| (a, self.help.clone(), self.params.clone()))
+            .into_iter()
+            .chain(self.forms.iter().map(|f| (f.args.clone(), help(&f.help), f.params.clone())))
+            .collect()
+    }
+}
+
+impl LuaInfo {
+    /// The description, then its commands (commands_text).
+    pub fn details(&self) -> String {
+        with_commands(&self.description, &self.commands)
+    }
+}
+
+/// A description, then a mod's commands: a line a form, `//name words - help` (the main form first, as
+/// manifest::Command::forms).
+pub fn with_commands(description: &str, commands: &indexmap::IndexMap<String, LuaCommand>) -> String {
+    if commands.is_empty() {
+        return description.to_string();
+    }
+    let mut out = format!("{}\n\nCommands:", description.trim_end());
+    for (name, c) in commands {
+        for (args, help, _) in c.forms() {
+            let words = if args.is_empty() { String::new() } else { format!(" {args}") };
+            out.push_str(&format!("\n//{name}{words} - {help}"));
+        }
+    }
+    out
 }
 
 /// The installed Lua mods by folder: name (the folder's when it gives none), description, version.

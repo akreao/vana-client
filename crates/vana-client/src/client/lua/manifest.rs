@@ -26,6 +26,9 @@ pub struct Manifest {
     pub lobby: bool,
     /// Declared settings by key, drawn by the client (docs/lua-mods.md 4.12).
     pub settings: IndexMap<String, Setting>,
+    /// The text commands it registers, by name (`[commands.<name>]`): what the chat line's completion, //mods and the
+    /// Mods page show.
+    pub commands: IndexMap<String, Command>,
 }
 
 impl Default for Manifest {
@@ -41,7 +44,59 @@ impl Default for Manifest {
             permissions: Vec::new(),
             lobby: false,
             settings: IndexMap::new(),
+            commands: IndexMap::new(),
         }
+    }
+}
+
+/// A declared text command (`[commands.<name>]`): a line on what it does, the words of its main form (`args`; none: it
+/// has only `forms`), and its other forms, each with a line of its own.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct Command {
+    pub help: String,
+    pub args: Option<String>,
+    /// The main form's typed placeholders.
+    pub params: Vec<Param>,
+    pub forms: Vec<Form>,
+}
+
+/// One form of a command: the words after its name and a line on what it does (none: the command's).
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct Form {
+    pub args: String,
+    pub help: String,
+    pub params: Vec<Param>,
+}
+
+/// A placeholder's type, for the Mods window's form: what picks its value.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct Param {
+    /// The placeholder's first word (`<item | none | own>`: item).
+    pub name: String,
+    /// One of PARAM_TYPES (none: text).
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// An enum's choices.
+    pub options: Vec<String>,
+    /// Words it takes besides its type's (none, own).
+    pub also: Vec<String>,
+}
+
+pub const PARAM_TYPES: [&str; 10] =
+    ["text", "int", "number", "enum", "item", "key_item", "zone", "spell", "job", "player"];
+
+impl Command {
+    /// Every form as (words, help): the main one first (when declared, or when there are no others).
+    pub fn forms(&self) -> Vec<(String, String)> {
+        let main = self.args.clone().or_else(|| self.forms.is_empty().then(String::new));
+        let help = |h: &str| if h.is_empty() { self.help.clone() } else { h.to_string() };
+        main.map(|a| (a, self.help.clone()))
+            .into_iter()
+            .chain(self.forms.iter().map(|f| (f.args.clone(), help(&f.help))))
+            .collect()
     }
 }
 
@@ -135,6 +190,29 @@ pub fn parse(text: &str, folder: &str) -> Result<Manifest> {
         }
         if !s.tab.is_empty() && !EXTRA_TABS.contains(&s.tab.as_str()) {
             bail!("{}: setting {key}: tab is one of {} ({:?} given)", m.id, EXTRA_TABS.join(", "), s.tab);
+        }
+    }
+    if let Some(name) = m
+        .commands
+        .keys()
+        .find(|n| n.is_empty() || n.contains(char::is_whitespace) || n.starts_with('/') || *n == "lua" || *n == "mods")
+    {
+        bail!("{}: command {name:?}: a name without slashes or spaces, not lua or mods", m.id);
+    }
+    for (name, c) in &m.commands {
+        for p in c.params.iter().chain(c.forms.iter().flat_map(|f| &f.params)) {
+            if !p.kind.is_empty() && !PARAM_TYPES.contains(&p.kind.as_str()) {
+                bail!(
+                    "{}: command {name}: param {}: type is one of {} ({:?} given)",
+                    m.id,
+                    p.name,
+                    PARAM_TYPES.join(", "),
+                    p.kind
+                );
+            }
+            if p.kind == "enum" && p.options.is_empty() {
+                bail!("{}: command {name}: param {}: an enum needs options", m.id, p.name);
+            }
         }
     }
     Ok(m)

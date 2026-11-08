@@ -19,6 +19,7 @@ end)
 | --- | --- |
 | [`commands.register(name, handler)`](#commandsregister) | Adds a command `//name` / `/name` that calls `handler` with the words typed after it. |
 | [`commands.is_game(name)`](#commandsis_game) | Whether `/name` is one of the game's text commands. |
+| [`commands.usage(name)`](#commandsusage) | The command's forms as your mod.toml declares them, as lines to print. |
 | [`commands.run(line)`](#commandsrun) | Runs a line as if the player had typed it. |
 
 ## `commands.register`
@@ -28,7 +29,8 @@ commands.register(name, handler)
 ```
 
 Adds a text command. When the player types `//name` or `/name` followed by words, `handler` is called with each word
-as a separate string argument.
+as a separate string argument. Declare it in mod.toml (`[commands.<name>]`, with `help` and `usage`) so the chat line's
+hint, `//mods` and the Mods page show what it takes; see the guide's "Commands and typed lines".
 
 **Parameters**
 
@@ -57,7 +59,8 @@ end)
 How a typed line reaches the mod:
 
 - A line starting with `//` always goes to the mods. If no running mod has that command, the log shows
-  "No mod command <name>." in red.
+  "No mod command <name>." in red, with the command it most likely meant. `//mods`
+  lists the running mods' commands (a mod cannot register `mods`).
 - A line starting with one `/` goes to the mods when its first word is a command a running mod registered (or
   `/lua`). Since a mod cannot take a game command's name, the game's commands always work as before.
 - The words are split at spaces. Quotes do not group words: `//note "a b"` gives `"a` and `b"`. Join them again with
@@ -68,6 +71,37 @@ How a typed line reaches the mod:
 - The handler runs in the next mod phase, as a coroutine (it may sleep). When the player typed the line (or a macro or
   a key bind ran it), the handler counts as the player's input: game actions in it need only the `actions`
   permission, also after a sleep. A command run by a mod with `commands.run` is not the player's input.
+
+## `commands.usage`
+
+```lua
+commands.usage(name) -> string[]
+```
+
+The forms of one of your commands as your mod.toml declares them (`[commands.<name>]`: its `args`, then each of its
+`forms`), each as the line a player would type. Print them when a command is used wrongly, so the usage you show is the
+one players see in the chat line's suggestions and in `/lua help`.
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `name` | `string` | yes | The command's name, without the slash. |
+
+**Returns** `string[]`: one line a form, such as `"//trusts <lineup>"`; empty when your mod.toml declares no such
+command.
+
+**Example**
+
+```lua
+commands.register("trusts", function(cmd, ...)
+  if not cmd then
+    for _, line in ipairs(commands.usage("trusts")) do chat.add(line) end
+    return
+  end
+  -- ...
+end)
+```
 
 ## `commands.is_game`
 

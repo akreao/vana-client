@@ -1,5 +1,5 @@
 name = "Action Panel"
-version = "1.0.1"
+version = "1.0.2"
 description = "A window of everything your jobs can use now: magic by school, job abilities, weapon skills and pet commands, with costs and recasts; a click uses one; //actions opens it (the action menu add-ons)."
 permissions = ["actions"]
 
@@ -8,3 +8,7 @@ type = "bool"
 default = true
 label = "Action Panel"
 help = "//actions opens or closes it. A click on a row uses it as a macro line would: on yourself when it can only be, else through the target prompt."
+
+[commands.actions]
+help = "Opens the Action Panel window."
+args = ""

@@ -627,6 +627,9 @@ enum Cmd {
         /// Ours: the Controller window (the default layout, waiting on Movement Up).
         #[arg(long)]
         controller: bool,
+        /// Ours: the Mods window (a Look Changer sample on its Commands, a form filled in).
+        #[arg(long)]
+        mods: bool,
         /// The favourites strip and starred list rows.
         #[arg(long)]
         favs: bool,
@@ -1397,6 +1400,7 @@ fn main() -> Result<()> {
             settings,
             gm,
             controller,
+            mods,
         } => {
             let list = font.is_some();
             client::modern_shot(
@@ -1421,6 +1425,7 @@ fn main() -> Result<()> {
                     settings,
                     gm,
                     controller,
+                    mods,
                 },
             )
         }
