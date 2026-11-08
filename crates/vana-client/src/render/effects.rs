@@ -174,14 +174,14 @@ pub fn soften_alpha(t: &crate::dat::zone::Texture) -> Option<crate::dat::zone::T
     Some(crate::dat::zone::Texture::new(t.name.clone(), t.format, t.width, t.height, px))
 }
 
-/// FUN_10045950's blend modes as pipelines: 0 opaque, 1 alpha, 2 additive, 3 darken, 4 subtractive, 5 D3m 'I'
-/// (DESTCOLOR / SRCALPHA). None = the mode has no case and keeps the previous element's blend.
 /// FUN_10063c80 (0x10063c89..0x10063cc5): a CMoVuDist's draws each frame. N under 20 as is; from 20 up on a weather
 /// generator (+0xde bit 0) N x the weather density (FUN_10002d80) x 0.5, truncated; otherwise N.
 fn vu_dist_count(n: u32, weather: bool, density: f32) -> u32 {
     if n < 20 || !weather { n } else { (n as f32 * density * 0.5) as u32 }
 }
 
+/// FUN_10045950's blend modes as pipelines: 0 opaque, 1 alpha, 2 additive, 3 darken, 4 subtractive, 5 D3m 'I'
+/// (DESTCOLOR / SRCALPHA). None = the mode has no case and keeps the previous element's blend.
 fn blend_class(mode: u16, d3m: bool) -> Option<usize> {
     Some(match mode & 0xff {
         0x00 => 0,
@@ -1111,8 +1111,6 @@ impl EffectsGpu {
         }
     }
 
-    /// Uploads this frame's element writes, tables and new meshes, then records the update pass and the copy
-    /// of its readback.
     /// The zone's point-light table for kind 0x47 elements to write (a change rebinds).
     pub fn set_lights(&mut self, lights: &wgpu::Buffer) {
         if self.lights != *lights {
@@ -1122,8 +1120,8 @@ impl EffectsGpu {
         }
     }
 
-    /// The lamps' lights (client/lamps.rs): position, table slot, template slot.
-    /// The lamps: position, slot, template slot (0xffff: its own light) and the glow's colour (BGRA, 0x80 = 1.0).
+    /// The lamps (client/lamps.rs): position, slot, template slot (0xffff: its own light) and the glow's colour
+    /// (BGRA, 0x80 = 1.0).
     pub fn set_lamps(&mut self, gpu: &Gpu, lamps: &[(glam::Vec3, u32, u32, u32)]) {
         let n = lamps.len().min(crate::render::LIGHTS);
         let mut words: Vec<[f32; 4]> = vec![[f32::from_bits(n as u32), 0.0, 0.0, 0.0]];
@@ -1141,6 +1139,8 @@ impl EffectsGpu {
         self.depth = depth.map(|(v, p)| (v.clone(), p));
     }
 
+    /// Uploads this frame's element writes, tables and new meshes, then records the update pass and the copy
+    /// of its readback.
     pub fn update(&mut self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, fx: &mut Effects, f: &Frame) {
         let q = &gpu.queue;
         let reg = &mut fx.reg;
@@ -1433,10 +1433,8 @@ impl EffectsGpu {
         self.meshes[id as usize] = Some(GpuMesh { vb, groups, mmb: m.mmb, dist: m.dist.clone() });
     }
 
-    /// Draws the live elements over the scene (same targets, depth tested, back to front).
-    #[allow(clippy::too_many_arguments)]
-    /// `color_tex` is the texture behind `color` (CMoDist copies it; without one, or without COPY_SRC, distortion
-    /// is not drawn).
+    /// Draws the live elements over the scene (same targets, depth tested, back to front). `color_tex` is the
+    /// texture behind `color` (CMoDist copies it; without one, or without COPY_SRC, distortion is not drawn).
     #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &mut self,

@@ -887,7 +887,6 @@ impl Registry {
     }
 }
 
-/// Every running generator and live element.
 /// Effects::lamp_scan's findings: glow positions, data lights (position, table slot), shells found.
 #[derive(Default, Debug)]
 pub struct LampScan {
@@ -897,6 +896,7 @@ pub struct LampScan {
     pub shells: usize,
 }
 
+/// Every running generator and live element.
 pub struct Effects {
     pub reg: Registry,
     pub insts: Vec<Option<Instance>>,
@@ -2582,9 +2582,6 @@ impl Effects {
         self.alive = alive.into_iter().collect();
     }
 
-    /// The manager pass FUN_10035410 / FUN_100356c0 over every sound: volume and pan for the eye, voices started,
-    /// updated, restarted (persistent) or let go; at most 20 distinct sounds start a frame, repeats of one free
-    /// (FUN_10036460).
     /// FUN_10036b90 / FUN_10036af0: a voice of the one-at-a-time ids stopping frees the flag.
     fn voice_ended(&mut self, handle: u32) {
         if self.solo == Some(handle) {
@@ -2592,6 +2589,9 @@ impl Effects {
         }
     }
 
+    /// The manager pass FUN_10035410 / FUN_100356c0 over every sound: volume and pan for the eye, voices started,
+    /// updated, restarted (persistent) or let go; at most 20 distinct sounds start a frame, repeats of one free
+    /// (FUN_10036460).
     fn step_sounds(&mut self, f: &Frame) {
         let mut gone = Vec::new();
         for k in 0..self.sounds.len() {
@@ -2718,7 +2718,6 @@ impl Effects {
         }
     }
 
-    /// Live elements to draw, back to front (the CMoOT walk: larger keys first, insertion order within one).
     /// The after-images (op 0x2c) a retail frame on; one goes with its actor. Afb points are placed through the
     /// actor's posed root, point 0, whose rest turn RotY(pi / 2) cancels (stand-ins without one: the placement).
     fn step_trails(&mut self, f: &Frame, actors: &dyn Actors) {
@@ -2774,6 +2773,7 @@ impl Effects {
         v.into_iter().map(|(_, _, i)| i).collect()
     }
 
+    /// Live elements to draw, back to front (the CMoOT walk: larger keys first, insertion order within one).
     pub fn draw_order(&self) -> Vec<u32> {
         let mut v: Vec<(f32, (u32, u32), u32)> = self
             .elems
@@ -2960,14 +2960,14 @@ impl Effects {
     }
 }
 
-/// Op-1 flags 4 (camera-relative) or 0x4000000 (spawned in view space): stopped under a roof (LAB_10183a30 /
-/// LAB_10183b40).
 /// FUN_100712e0(type 1, 'fses' / 'fser') in a file.
 fn folder_of(lib: &lib::Library, rain: bool) -> Option<usize> {
     let w = crate::dat::generator::fourcc(if rain { "fser" } else { "fses" });
     lib.tree.nodes.iter().position(|n| n.kind == kind::FOLDER && n.name == w)
 }
 
+/// Op-1 flags 4 (camera-relative) or 0x4000000 (spawned in view space): stopped under a roof (LAB_10183a30 /
+/// LAB_10183b40).
 fn roofed(g: &crate::dat::generator::Generator) -> bool {
     g.template().is_some_and(|o| o.u32(1) & 0x400_0004 != 0)
 }

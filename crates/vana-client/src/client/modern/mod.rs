@@ -97,7 +97,7 @@ use std::collections::HashMap;
 pub struct Modern {
     pub theme: Theme,
     art: Art,
-    /// The chat window's tab and whether its settings are open; game textures (status icons) as egui textures, by key.
+    /// The chat window's tab and whether its settings are open.
     chat_tab: std::cell::Cell<u8>,
     chat_settings: std::cell::Cell<bool>,
     /// Where each chat tab was last seen (the log's length then; chat.rs unread).
@@ -1470,7 +1470,7 @@ impl Modern {
             ctx.request_repaint_after(std::time::Duration::from_secs_f32(REST - still));
             return;
         }
-        egui::Area::new(Id::new("modern tip"))
+        egui::Area::new(Id::unique("modern tip"))
             .order(Order::Tooltip)
             .fixed_pos(at + vec2(16.0, 20.0))
             .constrain(true)

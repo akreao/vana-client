@@ -356,7 +356,7 @@ pub fn draw(p: &mut Panels, w: &mut World) {
                 ui.add_space(6.0);
             }
             ui.horizontal_top(|ui| {
-                let id = egui::Id::new("auction tallest menu");
+                let id = egui::Id::unique("auction tallest menu");
                 let fill = ui.ctx().data(|d| d.get_temp::<f32>(id)).unwrap_or(0.0);
                 let mut tallest = 0.0f32;
                 for (k, pn) in panes.iter().enumerate() {

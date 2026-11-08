@@ -32,7 +32,7 @@ pub fn draw(p: &mut Panels, w: &mut World) {
         let (area, _) = ui.allocate_exact_size(vec2(width - 24.0, 5.0 * KEY + 4.0 * GAP), Sense::hover());
         let o = area.min;
         let mut key = |ui: &mut egui::Ui, id: u16, r: egui::Rect, label: &str, font: &FontId, lit: bool, off: bool| {
-            let resp = ui.interact(r, egui::Id::new(("swkbd key", id)), Sense::click());
+            let resp = ui.interact(r, egui::Id::unique(("swkbd key", id)), Sense::click());
             kit::paint_button(
                 ui.painter(),
                 m,

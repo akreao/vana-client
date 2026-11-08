@@ -306,7 +306,7 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
         }
         _ => {}
     }
-    a.top = a.top.min(a.cursor).max((a.cursor + 1).saturating_sub(ROWS));
+    crate::client::scrollbar::keep_in_view(&mut a.top, a.cursor, ROWS);
     w.arealist = Some(a);
 }
 

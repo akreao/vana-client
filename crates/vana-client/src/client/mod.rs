@@ -691,7 +691,6 @@ enum LobbyScreen {
     Select,
     Create,
     Delete,
-    Config,
 }
 
 /// Lobby screen changes (FUN_10233d50 / FUN_10233cf0, schedulers of file 33193): 'sfot' + 'ffot' take the 2D layer
@@ -1301,7 +1300,7 @@ fn reasks(kind: EntityKind, look_kind: u8, id: u32, old: u32, seen: u16, m: u16)
 }
 
 /// The game clock in Earth seconds since the Vana'diel epoch (FUN_101039e0: 0x00A GameTime plus the time since).
-pub(super) fn vana_now(w: &World) -> u64 {
+fn vana_now(w: &World) -> u64 {
     w.clock.map_or(0, |(t, at)| t as u64 + at.elapsed().as_secs())
 }
 
@@ -1823,8 +1822,6 @@ fn check_target(world: &mut World) {
     }
 }
 
-/// Name colour index into "menu    ncol" (a subset of FUN_1008c430): players white, NPCs green,
-/// monsters pale yellow, red when we claimed them, magenta when someone else did.
 /// Ourselves as a target (retail keeps the player in the entity array): what the target window and the target code
 /// read from an entity.
 fn self_entity(w: &World) -> Entity {
@@ -2207,8 +2204,6 @@ fn anchor_point(world: &World, id: u32, which: usize) -> Option<Vec3> {
     }
 }
 
-/// The in-game HUD in the game's own windows: chat log and input line, party, target, main menu
-/// ('-' opens it) and the KO prompt. Returns the rects that take clicks away from the world.
 /// The alliance windows are down while a window set is up (main and social menus, item / equipment windows, magic /
 /// ability lists, map, config, palettes) or an event holds us (the mapping to our state: inferred).
 fn alliance_hidden(world: &World) -> bool {
@@ -2260,6 +2255,8 @@ fn window_closes(w: &mut World, events: &[egui::Event]) {
     }
 }
 
+/// The in-game HUD in the game's own windows: chat log and input line, party, target, main menu
+/// ('-' opens it) and the KO prompt. Returns the rects that take clicks away from the world.
 fn world_hud(
     gu: &mut GameUi,
     world: &mut World,
@@ -6120,18 +6117,18 @@ fn scan_track(world: &mut World, index: u16) {
     world.scan.track(index);
 }
 
-/// One frame of a remote actor's move: FUN_1008b680 slides from the drawn spot `pos` linearly to the goal over the
-/// remaining ticks, a goal more than 12 units from it taken at once (FUN_100911f0); then FUN_1008dfb0 stands a
-/// grounded actor on the floor under the slide and gives the goal that height (+8 and +0x28), so a goal sent on
-/// another level is more than 12 away and taken at once. `server` is the goal's height as sent and the server's
-/// height along the slide (unsnapped), which keeps an actor out of holes the server walks it over. Returns the slide
-/// (where the actor is drawn) and whether the goal was taken at once.
 /// FFXI_TRACE_MOVE=1: movement traces in the log (test runs).
 fn trace_move() -> bool {
     static TRACE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *TRACE.get_or_init(|| std::env::var_os("FFXI_TRACE_MOVE").is_some())
 }
 
+/// One frame of a remote actor's move: FUN_1008b680 slides from the drawn spot `pos` linearly to the goal over the
+/// remaining ticks, a goal more than 12 units from it taken at once (FUN_100911f0); then FUN_1008dfb0 stands a
+/// grounded actor on the floor under the slide and gives the goal that height (+8 and +0x28), so a goal sent on
+/// another level is more than 12 away and taken at once. `server` is the goal's height as sent and the server's
+/// height along the slide (unsnapped), which keeps an actor out of holes the server walks it over. Returns the slide
+/// (where the actor is drawn) and whether the goal was taken at once.
 fn slide_frame(
     pos: Vec3,
     target: &mut Vec3,
@@ -6451,10 +6448,9 @@ impl crate::fx::Actors for FxActors<'_> {
         Some(Vec3::new(0.0, (-m.x_axis.z).atan2(m.x_axis.x), 0.0))
     }
 
-    // FUN_100d4560 -> FUN_1002c400: point 2 is the root plus its offset (no bone, no pose); the others ride the drawn
-    // pose's bones (posed for effect actors, see posed_actors).
-    /// FUN_100d4560 -> FUN_1002c400; a point on bone 0 then drops by size x d in world y (riding, chairs).
-    /// A model actor's every point is its position (vt+0x1c4 FUN_100c4b00).
+    /// FUN_100d4560 -> FUN_1002c400: point 2 is the root plus its offset (no bone, no pose); the others ride the drawn
+    /// pose's bones (posed for effect actors, see posed_actors), and a point on bone 0 then drops by size x d in world
+    /// y (riding, chairs). A model actor's every point is its position (vt+0x1c4 FUN_100c4b00).
     fn point(&self, id: u32, k: u16) -> Option<Vec3> {
         if self.ship(id).is_some() {
             return Some(Vec3::ZERO);
@@ -6622,7 +6618,6 @@ impl crate::fx::Actors for FxActors<'_> {
 /// Loaded looks kept while no actor wears them.
 const MODEL_CACHE: usize = 96;
 
-/// Model space faces +x; place it at `pos` facing `forward` (xz).
 /// FUN_100c63d0 / FUN_100cbde0's cull of one box (model space corners through `model`): None when every corner is
 /// behind the near plane (view z > -0.1, right-handed) or its screen rect misses the viewport; else the NDC rect and
 /// the occlusion test's depth, a quarter of the way from the box's nearest to its farthest corner (0.01 nearest when
@@ -6703,7 +6698,6 @@ fn plain_frame(pos: Vec3, forward: Vec3, t: [f32; 2]) -> glam::Mat4 {
         * glam::Mat4::from_rotation_z(t[1])
 }
 
-/// World y `dy` as a model-space vector for frame `m` (rotation only).
 /// FUN_100a4ed0's area id (+0x5e4): kept while frozen (event op 0xab 0x1b, +0x13c bit 19), else the override (op
 /// 0xae 7, +0x20c), else the floor's.
 fn actor_area(e: Option<&Entity>, floor: Option<u32>) -> Option<u32> {
@@ -6714,10 +6708,12 @@ fn actor_area(e: Option<&Entity>, floor: Option<u32>) -> Option<u32> {
     }
 }
 
+/// World y `dy` as a model-space vector for frame `m` (rotation only).
 fn point_drop(m: glam::Mat4, dy: f32) -> Vec3 {
     glam::Mat3::from_mat4(m).transpose() * Vec3::new(0.0, dy, 0.0)
 }
 
+/// Model space faces +x; place it at `pos` facing `forward` (xz).
 fn actor_matrix(pos: Vec3, forward: Vec3) -> glam::Mat4 {
     let f = Vec3::new(forward.x, 0.0, forward.z).normalize_or(Vec3::X);
     glam::Mat4::from_cols(f.extend(0.0), Vec3::Y.extend(0.0), f.cross(Vec3::Y).extend(0.0), pos.extend(1.0))
@@ -8190,11 +8186,8 @@ enum MusicScene {
     World,
 }
 
-/// Creator BGM per race (FFXiMain 0x1037cec0).
 /// 3D LCD Mode's eye shift: 0.006 in NDC x either way, 0.6 % of the width between the eyes.
 const LCD_SHIFT: f32 = 0.006;
-
-const CREATOR_BGM: [u32; 8] = [0x85, 0xa8, 0x84, 0x83, 0xa7, 0x82, 0xa6, 0xa5];
 
 /// Menu state compared across a UI pass to pick the menu sound.
 #[derive(Clone, PartialEq, Default)]
@@ -8600,11 +8593,12 @@ impl App {
             Phase::Characters { lobby, chars, selected, screen, .. } => {
                 view.screen = match (lobby.is_some(), screen) {
                     (false, _) => "connecting",
+                    // The title's Config window opens over the title screen (it is not a screen of its own).
+                    (true, LobbyScreen::Main) if self.lobby_cfg.is_some() => "config",
                     (true, LobbyScreen::Main) => "title",
                     (true, LobbyScreen::Select) => "select",
                     (true, LobbyScreen::Create) => "create",
                     (true, LobbyScreen::Delete) => "delete",
-                    (true, LobbyScreen::Config) => "config",
                 };
                 view.selected = *selected;
                 view.characters = chars
@@ -8854,7 +8848,7 @@ impl App {
             if let Some(race) = cr.restarted.take()
                 && scene == MusicScene::Creator
             {
-                a.play_music_now(CREATOR_BGM[race.min(7)]);
+                a.play_music_now(crate::dat::dancer::creator::BGM[race.min(7)] as u32);
             }
             for id in cr.sounds.drain(..) {
                 a.play_se(id, 127);
@@ -11362,7 +11356,6 @@ impl App {
                 NetEvent::MagicScheduler { ids, indices, file, kind } => {
                     combat::on_magic_scheduler(world, ids, indices, file, kind)
                 }
-                NetEvent::Status(s) => log::info!("net: {s}"),
                 NetEvent::SystemMessage { id, para, para2 } => {
                     combat::on_system_message(world, id, [para as i32, para2 as i32])
                 }
@@ -16178,7 +16171,7 @@ impl App {
                     self.dancer_loading = Some(want);
                     // FUN_10036b40: the old music fades while the race loads; it starts with the performance.
                     if let Some(a) = &mut self.audio {
-                        a.prepare_music(CREATOR_BGM[want.0.min(7)]);
+                        a.prepare_music(crate::dat::dancer::creator::BGM[want.0.min(7)] as u32);
                     }
                     let tx = self.tasks_tx.clone();
                     std::thread::spawn(move || {

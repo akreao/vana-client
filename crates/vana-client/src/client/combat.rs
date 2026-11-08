@@ -103,6 +103,7 @@ impl ChatLog {
     }
 
     /// A chat line (s2c 0x017 or our sends' echoes), which config 0xb5 stamps.
+    #[cfg(test)]
     pub fn push_chat(&mut self, s: String, colour: [u8; 4], indent: bool) {
         self.push_line(s, colour, true, indent, NO_MODE);
     }
@@ -284,10 +285,6 @@ impl ChatLog {
     /// line `start()`).
     pub fn iter_timed(&self) -> impl Iterator<Item = (&(String, [u8; 4]), ([u8; 3], bool, bool))> {
         self.lines.iter().zip(self.times.iter().copied())
-    }
-
-    pub fn iter(&self) -> std::slice::Iter<'_, (String, [u8; 4])> {
-        self.lines.iter()
     }
 
     /// The lines printed so far (held or dropped): the next line's number.

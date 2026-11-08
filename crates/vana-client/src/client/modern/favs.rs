@@ -15,7 +15,7 @@ pub const STAR_W: f32 = 30.0;
 /// The star at the right end of row `r`; true when it was clicked.
 pub fn star(ui: &Ui, m: &super::Modern, r: Rect, on: bool, row_hovered: bool) -> bool {
     let at = Rect::from_center_size(pos2(r.max.x - STAR_W / 2.0, r.center().y), vec2(STAR_W - 4.0, r.height() - 6.0));
-    let resp = ui.interact(at, ui.id().with(("fav star", r.min.y as i32)), Sense::click());
+    let resp = ui.interact(at, ui.scope_id().with(("fav star", r.min.y as i32)), Sense::click());
     let colour = match (on, resp.hovered()) {
         (true, _) => m.theme.color("gold"),
         (false, true) => m.theme.color("gold").gamma_multiply(0.7),

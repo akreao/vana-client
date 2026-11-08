@@ -30,6 +30,7 @@ fn name_at(b: &[u8], o: usize, len: usize) -> String {
 pub struct Bone {
     /// Unused for bone 0.
     pub parent: usize,
+    #[allow(dead_code)] // format field, not read
     pub term: u8,
     /// Rest rotation and translation relative to the parent.
     pub rot: Quat,

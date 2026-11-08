@@ -536,9 +536,8 @@ pub struct GpuAnim {
     data: Vec<u32>,
     uploaded: usize,
     data_buf: Option<wgpu::Buffer>,
-    /// Uploaded sources by Arc address (the Arc is kept so the address stays theirs): skeleton offset and
-    /// animation offsets in order.
-    /// Uploaded sources by Arc address: skeleton offset, animation offsets, and the end of their words.
+    /// Uploaded sources by Arc address (the Arc is kept so the address stays theirs): skeleton offset, animation
+    /// offsets in order, and the end of their words.
     sources: HashMap<usize, (Arc<dyn Any + Send + Sync>, Option<u32>, Vec<u32>, u32)>,
     /// Where each animation block (by Packed::key) went: start and end.
     blocks: HashMap<u64, (u32, u32)>,

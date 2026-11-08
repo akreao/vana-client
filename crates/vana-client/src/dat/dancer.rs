@@ -85,6 +85,7 @@ pub struct Model {
     pub materials: Vec<String>,
     pub shapes: Vec<Shape>,
     pub bones: Vec<Bone>,
+    #[allow(dead_code)] // format field, not read
     pub files: Vec<String>,
 }
 
@@ -335,7 +336,7 @@ fn strip_triangles(codes: &[i32]) -> Result<(Vec<[u32; 3]>, Vec<(usize, usize)>)
     let mut runs = Vec::new();
     let get = |i: usize| codes.get(i).copied().context("strip codes truncated");
     let mut p = 1;
-    let (mut v3, mut v4, mut v5, mut v7) = (0, 0, 0, 0);
+    let (mut v3, mut v5, mut v7) = (0, 0, 0);
     for _ in 0..get(0)? {
         let mut n = get(p)?;
         p += 1;
@@ -343,7 +344,7 @@ fn strip_triangles(codes: &[i32]) -> Result<(Vec<[u32; 3]>, Vec<(usize, usize)>)
             n = -n;
             let mut flag = 0;
             while n != 0 {
-                let step;
+                let (step, v4);
                 if flag == 0 {
                     v5 = get(p)?;
                     v4 = get(p + 1)?;
@@ -418,7 +419,6 @@ fn parse_skin(b: &[u8]) -> Result<Vec<(usize, Vec<u32>, Vec<f32>)>> {
 
 /// A motion channel set (sqmoChannelBuildSQO FUN_1027a930), decoded to frame-major floats.
 pub struct Channels {
-    pub time: f32,
     pub frames: usize,
     pub width: usize,
     /// Per float: 0 scalar, 1 first of a quaternion, 2 scale.
@@ -434,19 +434,19 @@ pub fn parse_channels(b: &[u8]) -> Result<Channels> {
         // FrameChannel v4 (FUN_1027aab0): time, n, n types, frames, raw frames.
         0x50001 => {
             ensure!(ver == 4, "FrameChannel v{ver}");
-            let (time, width) = (f32_at(b, p)?, u32_at(b, p + 4)? as usize);
+            let (_time, width) = (f32_at(b, p)?, u32_at(b, p + 4)? as usize);
             p += 8;
             let types = (0..width).map(|i| i32_at(b, p + 4 * i)).collect::<Result<_>>()?;
             p += 4 * width;
             let frames = u32_at(b, p)? as usize;
             let n = size(b, width, frames, false)?;
             let data = floats(b, p + 4, n)?;
-            Ok(Channels { time, frames, width, types, data })
+            Ok(Channels { frames, width, types, data })
         }
         // PlaybackChannel v3 (FUN_1027ace0): time, n, frames, step, packed flag, per-channel delta streams, types.
         0x50003 => {
             ensure!(ver == 3, "PBChannel v{ver}");
-            let (time, width, frames, packed) =
+            let (_time, width, frames, packed) =
                 (f32_at(b, p)?, u32_at(b, p + 4)? as usize, u32_at(b, p + 8)? as usize, u32_at(b, p + 16)?);
             p += 20;
             let n = size(b, width, frames, packed != 0)?;
@@ -471,7 +471,7 @@ pub fn parse_channels(b: &[u8]) -> Result<Channels> {
                 }
             }
             let types = (0..width).map(|i| i32_at(b, p + 4 * i)).collect::<Result<_>>()?;
-            Ok(Channels { time, frames, width, types, data })
+            Ok(Channels { frames, width, types, data })
         }
         k => bail!("channel kind {k:#x} not supported"),
     }

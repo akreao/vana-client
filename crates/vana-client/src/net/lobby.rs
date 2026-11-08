@@ -86,7 +86,8 @@ pub struct MapLogin {
     pub old_key: Option<[u8; 20]>,
     /// The LSB login's account id and session hash (xi_profile's credentials); none for PlayOnline.
     pub lsb: Option<(u32, [u8; 16])>,
-    /// PlayOnline: the chat link, kept open while the game runs.
+    /// PlayOnline: the chat link, kept open while the game runs (held for its Drop, never read).
+    #[allow(dead_code)]
     pub pol: Option<Arc<super::pol::Link>>,
 }
 

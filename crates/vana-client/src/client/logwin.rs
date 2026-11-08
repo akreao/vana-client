@@ -1119,10 +1119,6 @@ impl LogWin {
         self.anim.at_most_two(&self.cfg)
     }
 
-    pub fn history(&self) -> usize {
-        self.wrapped.len()
-    }
-
     /// The full log (FUN_10133680): frame (16, 48, text width + 14, H - 64), the tab strip at y0 - 9, lines 16 px
     /// apart from the text rect's bottom (y1 - 4); while typing the rect ends 16 higher and the lines move up 16 more
     /// (FUN_10138020's offset -16), the hand with them. Returns the frame rect.
