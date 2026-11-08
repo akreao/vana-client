@@ -353,15 +353,27 @@ function M.uses(main, id)
 end
 
 -- Removes an entry and empties every slot that names it.
+-- A sub set's slot that named it stays blank (false) where the main set fills that slot: emptied (nil), it would let
+-- the main set's macro show there again, which the entry had covered.
 function M.delete_entry(main, id)
   id = tostring(id)
   local lib = library(main, false)
   if lib then lib[id] = nil end
+  local job = db[main]
+  local main_set = is_table(job) and is_table(job.main) and job.main or nil
   each_set(main, function(set)
+    local blank = set ~= main_set
     for bk, bar in pairs(set) do
       if is_table(bar) then
         for sk, v in pairs(bar) do
-          if refers(v, id) then bar[sk] = nil end
+          if refers(v, id) then
+            local under = blank and main_set and is_table(main_set[bk]) and main_set[bk][sk]
+            if is_table(under) and not refers(under, id) then
+              bar[sk] = false
+            else
+              bar[sk] = nil
+            end
+          end
         end
         if next(bar) == nil then set[bk] = nil end
       end
