@@ -823,6 +823,8 @@ impl Host {
             let data = data_dir().join(&vm.manifest.id);
             let file = Self::char_file(Some(w));
             vm.st.borrow_mut().char_file = file.clone();
+            // Its character-scoped settings declared `from` the config waited for a character (migrate_settings).
+            migrate_settings(&vm.manifest, &data, file.as_deref());
             vm.st.borrow_mut().settings = load_settings(&vm.manifest, &data, file.as_deref());
             force_on(&vm.manifest, &mut vm.st.borrow_mut().settings);
             let stored = file.map_or(serde_json::Value::Null, |f| read_json(&data.join(f)));
