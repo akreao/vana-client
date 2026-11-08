@@ -8113,6 +8113,8 @@ pub struct App {
     close_asked: bool,
     /// The pointer is over the window (edge panning).
     cursor_in: bool,
+    /// Where a map cursor-mode move hid the pointer (physical pixels): motion past 2 px from there shows it again.
+    cursor_hid_at: Option<(f64, f64)>,
     /// The game's mouse cursor (client/mousecur.rs).
     mouse: mousecur::MouseCursor,
     /// A lobby or login error (or the new account's notice) waiting in the OK window on the login screen.
@@ -8376,6 +8378,7 @@ impl App {
             close_asked: false,
             scene_scale: None,
             cursor_in: false,
+            cursor_hid_at: None,
             login_error: None,
             twofa: None,
             lobby_cfg: None,
@@ -13159,11 +13162,24 @@ impl App {
             .zip(self.last_cursor)
             .filter(|_| self.left_down)
             .map(|(a, b)| ((b.0 - a.0) as f32 * k.0, (b.1 - a.1) as f32 * k.1));
-        if world.cnq.is_some() && !region::update(world, &mut self.input, dt * 60.0) {
+        // Cursor mode's mouse (FUN_101ef0a0): the pointer while shown (mouse +0x4e) and the window active. After a
+        // cursor move hid it, it shows again once it is more than 2 px from where it was hidden in all (CursorMoved
+        // only compares each event with the last, so slow motion would never show it).
+        if let (Some(a), Some(c)) = (self.cursor_hid_at, self.last_cursor) {
+            if self.mouse.visible {
+                self.cursor_hid_at = None;
+            } else if (c.0 - a.0).abs() > 2.0 || (c.1 - a.1).abs() > 2.0 {
+                (self.mouse.visible, self.cursor_hid_at) = (true, None);
+            }
+        }
+        let mouse = self.last_cursor.filter(|_| self.mouse.visible && self.cursor_in && world.confirm.is_none()).map(
+            |(x, y)| map::CursorMouse { at: (x as f32 * k.0, y as f32 * k.1), hardware: self.cfg.tool("0021") != 0 },
+        );
+        if world.cnq.is_some() && !region::update(world, &mut self.input, dt * 60.0, mouse) {
             world.cnq = None;
         }
         if let Some(m) = world.map.as_mut()
-            && !m.update(&mut self.input, dt * 60.0, drag)
+            && !m.update(&mut self.input, dt * 60.0, drag, mouse)
         {
             let (back, reopen, mode) = (m.return_menu, m.reopen, m.mode);
             let primer = m.primer_page().zip(m.primer_next);
@@ -13185,6 +13201,22 @@ impl App {
                 Some((zone, key)) => world.map_cmds.push(map::Cmd::Other { zone, key, return_menu: back }),
                 None if back.is_some() => world.menu = back,
                 None => {}
+            }
+        }
+        // After a cursor-mode move FUN_10124700 puts the pointer on the cursor point and FUN_101252f0(0) hides it.
+        let warp = world.cnq.as_mut().and_then(|m| m.warp.take()).or(world.map.as_mut().and_then(|m| m.warp.take()));
+        if let Some(at) = warp {
+            (self.mouse.visible, self.cursor_hid_at) = (false, self.last_cursor);
+            let phys = ((at.0 / k.0) as f64, (at.1 / k.1) as f64);
+            if let Some(g) = self.gfx.as_ref().filter(|g| g.window.has_focus() && self.cursor_in)
+                && g.window.set_cursor_position(winit::dpi::PhysicalPosition::new(phys.0, phys.1)).is_ok()
+            {
+                (self.last_cursor, self.cursor_hid_at) = (Some(phys), Some(phys));
+                if let Some(m) = world.cnq.as_mut() {
+                    m.warped(at);
+                } else if let Some(m) = world.map.as_mut() {
+                    m.warped(at);
+                }
             }
         }
         // Key function 0x18 also turns an RoE description's page (FUN_102326b0).

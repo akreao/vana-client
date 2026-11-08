@@ -31,6 +31,9 @@ const BESEIGE1: &str = "menu    beseige1";
 const BESEIGE2: &str = "menu    beseige2";
 const COLORESU: &str = "menu    coloresu";
 const COLORANK: &str = "menu    colorank";
+const CAMPRESU: &str = "menu    campresu";
+const CAMPSAN: &str = "menu    campsan";
+const CAMPAREA: &str = "menu    camparea";
 const WHITE: u32 = 0x8080_8080;
 /// conquer1's level marks (DAT_10381e40: Minimal, Minor, Major, Dominant, Equal) and the row labels (DAT_10381e4c,
 /// framesus: San d'Oria, Bastok, Windurst, Beastmen, Neutral).
@@ -406,6 +409,28 @@ pub struct CnqMap {
     /// The info windows on the left half (FUN_101e9320 / FUN_101e8df0: the cursor past the middle).
     left: bool,
     acc: f32,
+    /// Campaign's info window (FUN_101e86b0).
+    camp: Option<Camp>,
+    /// Cursor mode's mouse (map.rs mouse_step): where the game's pointer was last set, the warp asked of the app.
+    anchor: Option<(f32, f32)>,
+    pub warp: Option<(f32, f32)>,
+}
+
+/// Campaign's info windows (FUN_101e86b0, each opened alone; allied, the legend, beside any of them): campresu
+/// (nothing under the cursor, a front, Jeuno's, or an area nobody holds), campsan for a nation's or beastmen's front
+/// (campsan +0x30: 1..3 the nations, 4..7 the beastmen), camparea for an area (+0x30 its index, record +7).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Camp {
+    Resu,
+    San(usize),
+    Area(usize),
+}
+
+impl CnqMap {
+    /// The app moved the pointer onto the cursor point (FUN_10124700).
+    pub fn warped(&mut self, at: (f32, f32)) {
+        self.anchor = Some(at);
+    }
 }
 
 /// FUN_101e6ca0(zone, named): the zone has a conquest zone record (and, `named`, a name).
@@ -503,6 +528,9 @@ pub fn open_map(w: &mut World, gu: &GameUi, mode: usize, sw: f32, sh: f32) -> bo
         nations: std::array::from_fn(|k| gu.item_msg(0x13, k).unwrap_or_default()),
         left: false,
         acc: 0.0,
+        camp: None,
+        anchor: None,
+        warp: None,
     });
     if let Some(m) = w.region_menu.as_mut() {
         m.hidden = true;
@@ -705,14 +733,17 @@ fn frame_logic(w: &mut World, m: &mut CnqMap, recentre: bool) {
             m.legend = has;
         }
         2 => {
-            // FUN_101e8880: no campaign data on LSB yet; the windows need it.
-            if w.conquest.campaign.is_none() {
+            // FUN_101e86b0; FUN_101e8880: without the campaign set (LSB never sends it) help slot 2 says so (9 6) and
+            // no window opens (an open one closes itself in its draw).
+            let has = w.conquest.campaign.is_some();
+            if !has {
                 help = w.battle.as_ref().and_then(|b| b.group9(6));
             }
-            match under.map(|i| w.conquest.markers[2][i]) {
+            let camp = match under.map(|i| w.conquest.markers[2][i]) {
                 None => {
                     m.hovered = -1;
                     clear_zones(&mut w.conquest.markers[2], regions);
+                    Camp::Resu
                 }
                 Some(e) => {
                     let par = e.par as i32;
@@ -720,9 +751,20 @@ fn frame_logic(w: &mut World, m: &mut CnqMap, recentre: bool) {
                         m.hovered = par;
                         select_par(&mut w.conquest.markers[2], regions, par);
                     }
+                    // A front (+2 -2), Jeuno's (name 3) or an area nobody holds (second icon 9): the results.
+                    if e.par == -2 || e.name == 3 || e.icon2 == 9 {
+                        Camp::Resu
+                    } else {
+                        match e.name {
+                            0..=2 => Camp::San(e.name as usize + 1),
+                            0x2a..=0x2d => Camp::San(e.name as usize - 0x26),
+                            _ => Camp::Area(e.b7 as usize),
+                        }
+                    }
                 }
-            }
-            m.legend = w.conquest.campaign.is_some();
+            };
+            m.camp = has.then_some(camp);
+            m.legend = has;
         }
         _ => {
             help = None;
@@ -794,7 +836,12 @@ fn alpha_step(e: &mut CnqMarker, ticks: f32) {
 /// One frame of cnqframe (FUN_101e89c0 then the base FUN_101ef0a0): zoom keys, scroll keys and the cursor (axes
 /// 0x9d / 0x9e x 15 inside [W / 512 x 40, W - W / 512 x 60] x [H / 448 x 65, H - H / 448 x 180]; past it the view
 /// scrolls), the retail frames, the marker alphas. False once the fade-out has ended.
-pub fn update(w: &mut World, input: &mut super::input::Input, ticks: f32) -> bool {
+pub fn update(
+    w: &mut World,
+    input: &mut super::input::Input,
+    ticks: f32,
+    mouse: Option<super::map::CursorMouse>,
+) -> bool {
     use super::input::mode::{HELD, PRESS};
     let Some(mut m) = w.cnq.take() else { return true };
     if let Some(deadline) = m.view.closing {
@@ -826,19 +873,28 @@ pub fn update(w: &mut World, input: &mut super::input::Input, ticks: f32) -> boo
                 }
             }
         }
-        // Cursor mode (flag 0x100) reads only the cursor axes, not the scroll ones (0x79 / 0x7a).
+        // Cursor mode (flag 0x100) reads only the cursor axes, not the scroll ones (0x79 / 0x7a); with them still, the
+        // mouse (map.rs mouse_step). FUN_101edaf0: the point moves inside the box, past it the view scrolls; the fast
+        // key (0x9a, flag 0x200) scrolls the view instead.
         let dead = |v: f32| if (v * fast).abs() < 2.0 { 0.0 } else { v };
         let (sw, sh) = m.view.screen;
         let v =
             (dead(input.axis(0x9d) * 15.0) * fast * ticks * 0.5, dead(input.axis(0x9e) * 15.0) * fast * ticks * 0.5);
         let (bx, by) = ([sw / 512.0 * 40.0, sw - sw / 512.0 * 60.0], [sh / 448.0 * 65.0, sh - sh / 448.0 * 180.0]);
-        let want = (m.view.point.0 + v.0, m.view.point.1 + v.1);
-        let moved = (want.0.clamp(bx[0], bx[1]), want.1.clamp(by[0], by[1]));
-        let over = (want.0 - moved.0, want.1 - moved.1);
-        if over != (0.0, 0.0) {
-            m.view.scroll_by(over);
+        let d = match mouse.filter(|_| v == (0.0, 0.0)) {
+            Some(ms) => super::map::mouse_step(ms, &mut m.anchor, m.view.point, m.view.zoom),
+            None => v,
+        };
+        if d != (0.0, 0.0) {
+            if fast > 1.0 {
+                m.view.scroll_by(d);
+            } else {
+                let over = super::map::cursor_move(&mut m.view.point, d, m.view.zoom, bx, by);
+                m.view.view = (m.view.view.0 + over.0, m.view.view.1 + over.1);
+                m.view.clamp();
+            }
+            m.warp = Some(m.view.point);
         }
-        m.view.point = moved;
         m.left = m.view.point.0 > sw / 2.0;
     }
     m.acc += ticks;
@@ -1175,7 +1231,10 @@ fn draw_windows(gu: &mut GameUi, w: &World, m: &CnqMap, sw: f32, sh: f32) {
             number(gu, &r.to_string(), x + 100.0, y + 0x14 as f32 + 16.0 * k as f32);
         }
     }
-    // The legend (registry flag 0x2000: on the party window): conquest points, imperial standing, bayld.
+    if let (Some(camp), Some(c)) = (m.camp, d.campaign.as_deref()) {
+        draw_campaign(gu, w, m, c, camp, sw, sh);
+    }
+    // The legend (registry flag 0x2000: on the party window): conquest points, imperial standing, allied notes, bayld.
     let legend = LEGENDS[m.mode];
     let shown = match m.mode {
         0 => m.legend && d.have && d.byte(0x94) == 0,
@@ -1193,6 +1252,89 @@ fn draw_windows(gu: &mut GameUi, w: &World, m: &CnqMap, sw: f32, sh: f32) {
         };
         number(gu, &format!("{v:10}"), x + 0x5f as f32, y + 0x16 as f32);
     }
+}
+
+/// The campaign set's dword at `o` (DAT_10663644: +0 allied notes, +4 controlled areas, +8 + 4 (n - 1) army n, area k
+/// at 0x24 + 12 k).
+fn camp_word(c: &[u8], o: usize) -> u32 {
+    u32::from_le_bytes(std::array::from_fn(|i| c.get(o + i).copied().unwrap_or(0)))
+}
+
+/// Campaign's gauge (FUN_101ea030): the window's framesus 148 (+0x2c) at (+1, +2), x scaled by the fraction.
+fn camp_gauge(gu: &mut GameUi, x: f32, y: f32, f: f32) {
+    gu.sprite_scaled("menu    framesus", 148, x + 1.0, y + 2.0, f, 1.0, WHITE);
+}
+
+/// The crests FUN_101ea070 takes from the icon set from index 3 (keytops3 113 none, 110 / 111 / 112 the nations, 432
+/// the beastmen): window +0x18..+0x28.
+const CAMP_CRESTS: [usize; 5] = [113, 110, 111, 112, 432];
+
+/// campresu / campsan / camparea (FUN_101e9ec0 / FUN_101ea150 / FUN_101ea330); `c` the campaign set.
+fn draw_campaign(gu: &mut GameUi, w: &World, m: &CnqMap, c: &[u8], camp: Camp, sw: f32, sh: f32) {
+    let left = m.left;
+    match camp {
+        Camp::Resu => {
+            // Controlled areas, four 5-bit counts ("%d"), right at the frame's right - 6.
+            let Some((x, y, wd)) = info(gu, CAMPRESU, sw, sh, left, None) else { return };
+            let v = camp_word(c, 4);
+            for k in 0..4 {
+                number(gu, &(v >> (5 * k) & 0x1f).to_string(), x + wd - 6.0, y + (0x16 + 0x10 * k) as f32);
+            }
+        }
+        Camp::San(n) => {
+            // FUN_101ea0d0 / FUN_101ea150: the crest, framesus 153 (a nation) or 154 (beastmen), the army's name
+            // (142..144, 155..158), group 10 0x59 with the low nibble, two gauges (bits 18..24, 25..31 as %), the
+            // child frame framesus 146 over it.
+            let Some((x, y, wd)) = info(gu, CAMPSAN, sw, sh, left, None) else { return };
+            let v = camp_word(c, 4 + 4 * n);
+            gu.sprite("menu    keytops3", CAMP_CRESTS[n.min(4)], x + 4.0, y + 8.0, WHITE);
+            gu.sprite("menu    framesus", if n >= 4 { 154 } else { 153 }, x + 0x20 as f32, y + 6.0, WHITE);
+            let name = if n <= 3 { 141 + n } else { 151 + n };
+            gu.sprite("menu    framesus", name, x + 0x20 as f32, y + 0x14 as f32, WHITE);
+            number(gu, &line10(w, 0x59, (v & 0xf) as i32), x + wd - 0x10 as f32, y + 0x40 as f32);
+            camp_gauge(gu, x + 0x1d as f32, y + 0x5e as f32, (v >> 18 & 0x7f) as f32 * 0.01);
+            camp_gauge(gu, x + 0x1d as f32, y + 0x7e as f32, (v >> 25) as f32 * 0.01);
+            gu.sprite("menu    framesus", 146, x, y, WHITE);
+        }
+        Camp::Area(k) if k < 26 => {
+            // FUN_101ea2f0 / FUN_101ea330: the holder's crest, fortifications and resources "%d/%d" against their
+            // maxima, the four influences (bytes 4..7, x 0.4 %), the child frame framesus 147; on the map, under the
+            // marker in the cursor, the heroism gauge (framesus 149, 150 by byte 3 >> 1).
+            let Some((x, y, wd)) = info(gu, CAMPAREA, sw, sh, left, None) else { return };
+            let o = 0x24 + 12 * k;
+            let (a, b, max) = (camp_word(c, o), camp_word(c, o + 4), camp_word(c, o + 8));
+            gu.sprite("menu    keytops3", CAMP_CRESTS[((a >> 1) & 7).min(4) as usize], x + 4.0, y + 8.0, WHITE);
+            number(gu, &format!("{}/{}", a >> 4 & 0x3ff, max & 0x3ff), x + wd - 8.0, y + 0x12 as f32);
+            number(gu, &format!("{}/{}", a >> 14 & 0x3ff, max >> 10 & 0x3ff), x + wd - 8.0, y + 0x2e as f32);
+            for (i, dy) in [0x56, 0x6e, 0x86, 0x9e].into_iter().enumerate() {
+                camp_gauge(gu, x + 0x1d as f32, y + dy as f32, (b >> (8 * i) & 0xff) as f32 * 0.4 * 0.01);
+            }
+            gu.sprite("menu    framesus", 147, x, y, WHITE);
+            if let Some(i) = m.under_cursor(&w.conquest.markers[2]) {
+                let e = &w.conquest.markers[2][i];
+                let (sx, mut sy) = m.view.screen_of(e.px as f32, e.py as f32);
+                // A label placed below (codes 1, 6, 7) moves the gauge above it.
+                if e.flags & 0x40 != 0 && matches!(e.place, 1 | 6 | 7) {
+                    sy -= 0x1e as f32;
+                }
+                let (gx, gy) = (sx - 0x10 as f32, sy + 0xb as f32);
+                gu.sprite("menu    framesus", 149, gx, gy, WHITE);
+                gu.sprite_scaled("menu    framesus", 150, gx, gy, (a >> 25) as f32 * 0.01, 1.0, WHITE);
+            }
+        }
+        Camp::Area(_) => {}
+    }
+}
+
+/// The campaign windows' contents for the modern layer.
+pub enum CampView {
+    /// Controlled areas: the four counts.
+    Results([u32; 4]),
+    /// An army (1..3 the nations, 4..7 the beastmen): its group 10 0x59 line and two fractions.
+    Army { n: usize, line: String, gauges: [f32; 2] },
+    /// An area: the holder (0 none, 1..3 a nation, 4 beastmen), fortifications and resources (value, max), the four
+    /// influences and heroism as fractions.
+    Area { holder: u8, fort: (u32, u32), res: (u32, u32), influence: [f32; 4], heroism: f32 },
 }
 
 /// The info windows' contents for the modern layer (modern/regioninfo.rs names retail's label sprites by their
@@ -1215,6 +1357,8 @@ pub struct InfoView {
     pub coalitions: Option<[u8; 6]>,
     /// The legend's value (conquest points, imperial standing, allied notes, bayld).
     pub legend: Option<u32>,
+    /// Campaign's window.
+    pub campaign: Option<CampView>,
 }
 
 pub struct RegionView {
@@ -1275,7 +1419,31 @@ pub fn info_view(w: &World) -> Option<InfoView> {
         2 => d.campaign.as_ref().map_or(0, |c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])),
         _ => d.bayld,
     });
+    let campaign = m.camp.zip(d.campaign.as_deref()).and_then(|(camp, c)| match camp {
+        Camp::Resu => {
+            let v = camp_word(c, 4);
+            Some(CampView::Results(std::array::from_fn(|k| v >> (5 * k) & 0x1f)))
+        }
+        Camp::San(n) => {
+            let v = camp_word(c, 4 + 4 * n);
+            let line = line10(w, 0x59, (v & 0xf) as i32);
+            Some(CampView::Army { n, line, gauges: [(v >> 18 & 0x7f) as f32 * 0.01, (v >> 25) as f32 * 0.01] })
+        }
+        Camp::Area(k) if k < 26 => {
+            let o = 0x24 + 12 * k;
+            let (a, b, max) = (camp_word(c, o), camp_word(c, o + 4), camp_word(c, o + 8));
+            Some(CampView::Area {
+                holder: ((a >> 1) & 7).min(4) as u8,
+                fort: (a >> 4 & 0x3ff, max & 0x3ff),
+                res: (a >> 14 & 0x3ff, max >> 10 & 0x3ff),
+                influence: std::array::from_fn(|i| (b >> (8 * i) & 0xff) as f32 * 0.004),
+                heroism: (a >> 25) as f32 * 0.01,
+            })
+        }
+        Camp::Area(_) => None,
+    });
     Some(InfoView {
+        campaign,
         mode: m.mode,
         left: m.left,
         region,
