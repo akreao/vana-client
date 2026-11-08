@@ -16998,28 +16998,23 @@ impl App {
                     // Then a scheduler's motion (event / weapon draw) over the status motion.
                     // +0x80 up (ops 0x07 / 0x08 / 0x59, w.noreact): FUN_100c83c0 returns at once, no status motion re-pick.
                     let held = w.noreact.get(id).is_some_and(|t| *t > hold_now);
-                    // Ours (retail picks it once, FUN_100d46f0): our moving swing (am?) turns with the strafe mid-swing,
-                    // at the same frame, so it keeps matching the legs.
-                    let way = match my_strafe {
-                        1 => Some('f'),
-                        2 => Some('r'),
-                        3 => Some('b'),
-                        4 => Some('l'),
-                        _ => None,
-                    };
-                    if let Some(c) = way.filter(|_| *id == me && a.motion.len() == 3 && a.motion.starts_with("am")) {
-                        let want = format!("am{c}");
-                        if want != a.motion && has(&want) {
-                            if let Some(p) = a.play.as_mut()
-                                && p.current().is_some_and(|m| m.name == a.motion)
-                            {
-                                p.rename_current(&want);
-                            }
-                            if let Some(o) = a.oneshot.as_mut().filter(|o| o.name == a.motion) {
-                                o.name = want.clone();
-                            }
-                            a.motion = want;
+                    // Ours (retail picks it once, FUN_100d46f0): our moving swing (am?, dual wield's ar? / al?) turns
+                    // with the strafe mid-swing, at the same frame, so it keeps matching the legs.
+                    let turned =
+                        (*id == me).then(|| combat::turned_swing(&a.motion, &a.last_attack, my_strafe)).flatten();
+                    if let Some(want) = turned
+                        && has(&want)
+                    {
+                        log::info!(target: "motion_me", "actor {id:#x}: {} turns to {want}", a.motion);
+                        if let Some(p) = a.play.as_mut()
+                            && p.current().is_some_and(|m| m.name == a.motion)
+                        {
+                            p.rename_current(&want);
                         }
+                        if let Some(o) = a.oneshot.as_mut().filter(|o| o.name == a.motion) {
+                            o.name = want.clone();
+                        }
+                        a.motion = want;
                     }
                     let (name, rate, once, blend) = match (&a.oneshot, a.play.as_ref().and_then(|p| p.current())) {
                         (Some(o), _) => (o.name.clone(), o.speed, true, crate::motion::BLEND_TICKS),
