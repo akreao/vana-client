@@ -1,6 +1,6 @@
 name = "Objective Sets"
-version = "1.0.2"
-description = "Saves the Records of Eminence objectives you have set as named sets and puts a set back with one command (the objective set add-ons).\n\n//roeset save <name>\n//roeset <name>\n//roeset list\n//roeset delete <name>\n//roeshow"
+version = "1.0.3"
+description = "Saves the Records of Eminence objectives you have set as named sets and puts a set back with one command (the objective set add-ons)."
 permissions = ["actions"]
 
 [settings.on]

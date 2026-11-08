@@ -1,6 +1,6 @@
 name = "Bag Manager"
-version = "1.0.2"
-description = "Moves items between your bags by command: fetch and stow by name, gather the gear your Gearshift file names, tidy the rest away (the organizer and porter add-ons).\n\n//stow get <item> [count | all]\n//stow put <item> [to <bag>] [all]\n//stow gear\n//stow tidy"
+version = "1.0.3"
+description = "Moves items between your bags by command: fetch and stow by name, gather the gear your Gearshift file names, tidy the rest away (the organizer and porter add-ons)."
 permissions = ["actions"]
 
 [settings.on]

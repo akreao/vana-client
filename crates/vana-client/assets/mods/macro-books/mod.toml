@@ -1,6 +1,6 @@
 name = "Macro Book Switch"
-version = "1.0.2"
-description = "Turns the macro palette to the book and set you keep for each job when the job changes (the macro changer add-ons).\n\n//macros save [sub]\n//macros forget [sub]\n//macros list"
+version = "1.0.3"
+description = "Turns the macro palette to the book and set you keep for each job when the job changes (the macro changer add-ons)."
 permissions = ["automation"]
 
 [settings.on]

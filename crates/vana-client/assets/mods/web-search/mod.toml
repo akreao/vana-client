@@ -1,6 +1,6 @@
 name = "Web Search"
-version = "1.0.2"
-description = "Looks up an item, a spell, your target or any words on the wiki or the auction site, in your browser (the lookup add-ons).\n\n//wiki [words]\n//ah [words] (no words: the item pointed at or your target)"
+version = "1.0.3"
+description = "Looks up an item, a spell, your target or any words on the wiki or the auction site, in your browser (the lookup add-ons)."
 permissions = ["net"]
 
 [settings.on]

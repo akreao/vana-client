@@ -1,6 +1,6 @@
 name = "Window Placement"
-version = "1.0.2"
-description = "Puts the game window back where and how big you keep it for each character, and can keep it on top (the window position add-ons).\n\n//winpos save\n//winpos forget"
+version = "1.0.3"
+description = "Puts the game window back where and how big you keep it for each character, and can keep it on top (the window position add-ons)."
 permissions = ["multibox", "process"]
 
 [settings.on]

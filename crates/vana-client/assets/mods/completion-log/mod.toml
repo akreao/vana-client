@@ -1,6 +1,6 @@
 name = "Completion Log"
-version = "1.0.2"
-description = "What is left to do: the spells a job has yet to learn and every area's quests, done, under way or not started (the checklist add-ons).\n\n//left\n//left spells [job]\n//left quests"
+version = "1.0.3"
+description = "What is left to do: the spells a job has yet to learn and every area's quests, done, under way or not started (the checklist add-ons)."
 permissions = []
 
 [settings.on]

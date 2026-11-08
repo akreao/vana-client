@@ -1,6 +1,6 @@
 name = "Attendance"
-version = "1.0.2"
-description = "Writes down who is at an event: your party and alliance, and players nearby, with the time, to a file (the linkshell attendance add-ons).\n\n//attend [note]"
+version = "1.0.3"
+description = "Writes down who is at an event: your party and alliance, and players nearby, with the time, to a file (the linkshell attendance add-ons)."
 permissions = []
 
 [settings.on]
