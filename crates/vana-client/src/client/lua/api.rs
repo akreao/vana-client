@@ -386,6 +386,7 @@ pub(super) fn install(
             w.hud |= w.edge;
             w.heading = spec.get::<Option<String>>("heading")?.unwrap_or_default();
             w.resize = spec.get::<Option<bool>>("resize")?.unwrap_or(false);
+            w.grow_up = spec.get::<Option<String>>("grow")?.as_deref() == Some("up");
             w.panel = spec.get::<Option<String>>("panel")?;
             if let Some(p) = w.panel.as_deref() {
                 let (list, kind) = if w.edge {
@@ -436,6 +437,12 @@ pub(super) fn install(
                 .ok_or_else(|| mlua::Error::runtime(format!("no element {eid:?} in {id:?}")))?;
             update(&mut w.elems[k], &fields)?;
             w.meta.resize(w.elems.len(), Default::default());
+            // A key element starts listening (the cursor goes there).
+            if fields.get::<Option<bool>>("listen")? == Some(true)
+                && matches!(w.elems[k], super::window::Elem::Input { key: true, .. })
+            {
+                (w.at, w.edit) = (k, true);
+            }
             if let Some(v) = fields.get::<Option<String>>("tip")? {
                 w.meta[k].tip = v;
             }
@@ -1332,6 +1339,25 @@ pub(super) fn install(
                 }
             }
             t.set("levels", levels)?;
+            // Only as the main job: SCH's (flag 8) and GEO's (flag 0x20), as the magic list keeps them.
+            t.set(
+                "main_only",
+                if s.flags & 8 != 0 {
+                    Some(20u8)
+                } else if s.flags & 0x20 != 0 {
+                    Some(21)
+                } else {
+                    None
+                },
+            )?;
+            // Jobs whose level is the job points it takes at 99 (a gift).
+            let jp = lua.create_table()?;
+            for job in 0..32u32 {
+                if s.jp_mask & (1 << job) != 0 {
+                    jp.set(job, true)?;
+                }
+            }
+            t.set("job_points", jp)?;
             Ok(Some(t))
         })?,
     )?;
@@ -1768,6 +1794,7 @@ pub(super) fn entity(lua: &Lua, w: &World, id: u32, e: &super::super::Entity) ->
     t.set("height", model_height(w, id))?;
     // The model's skeleton bones: a handful for an object (a casket's box and lid), dozens for a creature; 0 for none.
     t.set("bones", w.actors.get(&id).and_then(|a| a.character.as_ref()).map_or(0, |c| c.skeleton.bones.len()))?;
+    t.set("walks", w.actors.get(&id).and_then(|a| a.character.as_ref()).is_some_and(|c| walks(c)))?;
     if let Some(l) = e.appearance {
         let look = lua.create_table()?;
         for (k, v) in [
@@ -1812,6 +1839,12 @@ pub(super) fn entity(lua: &Lua, w: &World, id: u32, e: &super::super::Entity) ->
 }
 
 /// An actor's model height in yalms (its top at rest, scaled), once its model is in.
+/// Whether a model can walk: a person's look, or a walk or run motion (a moogle, a monster); an object (a book, a
+/// casket, a crystal) has neither.
+fn walks(c: &crate::dat::character::Character) -> bool {
+    c.pc.is_some() || c.animations.iter().any(|a| a.name.starts_with("wlk") || a.name.starts_with("run"))
+}
+
 fn model_height(w: &World, id: u32) -> Option<f32> {
     w.actors.get(&id).filter(|a| a.character.is_some()).map(|a| -a.top)
 }
@@ -1837,6 +1870,7 @@ pub(super) fn self_entity(lua: &Lua, w: &World) -> mlua::Result<Table> {
     t.set("distance", 0.0)?;
     t.set("height", model_height(w, w.my_id))?;
     t.set("bones", w.actors.get(&w.my_id).and_then(|a| a.character.as_ref()).map_or(0, |c| c.skeleton.bones.len()))?;
+    t.set("walks", true)?;
     t.set("hpp", w.vitals.map_or(100, |v| v.3))?;
     t.set("gauge", true)?;
     t.set("status", w.my_motion.status)?;
@@ -2011,6 +2045,7 @@ fn cmds(v: Option<Table>) -> mlua::Result<Vec<super::window::Cmd>> {
                     colour,
                     to: super::hud::colour(c.get("to")?)?,
                     line: c.get("line")?,
+                    round: n("round")?.max(0.0),
                 },
                 "circle" => Cmd::Circle { c: [n("x")?, n("y")?], radius: n("r")?, colour, line: c.get("line")? },
                 "tri" => Cmd::Tri { pts: [[n("x1")?, n("y1")?], [n("x2")?, n("y2")?], [n("x3")?, n("y3")?]], colour },
@@ -2018,11 +2053,25 @@ fn cmds(v: Option<Table>) -> mlua::Result<Vec<super::window::Cmd>> {
                     at: [n("x")?, n("y")?],
                     text: c.get::<Option<String>>("text")?.unwrap_or_default(),
                     colour,
+                    size: c.get::<Option<f32>>("size")?.unwrap_or(1.0).clamp(0.25, 8.0),
+                    align: match c.get::<Option<String>>("align")?.as_deref() {
+                        Some("center" | "centre") => 1,
+                        Some("right") => 2,
+                        _ => 0,
+                    },
+                    outline: super::hud::colour(c.get("outline")?)?,
+                    bold: c.get::<Option<String>>("font")?.as_deref() == Some("bold"),
+                },
+                "tip" => Cmd::Tip {
+                    r: [n("x")?, n("y")?, n("w")?, n("h")?],
+                    title: c.get::<Option<String>>("title")?.unwrap_or_default(),
+                    text: c.get::<Option<String>>("text")?.unwrap_or_default(),
                 },
                 "icon" => Cmd::Icon {
                     at: [n("x")?, n("y")?],
                     size: c.get::<Option<f32>>("size")?.unwrap_or(16.0),
                     icon: super::window::Icon::of(c.get::<Option<String>>("kind")?.as_deref(), c.get("id")?),
+                    tint: colour,
                 },
                 other => return Err(mlua::Error::runtime(format!("unknown draw command {other:?}"))),
             })
@@ -2144,6 +2193,16 @@ fn elem_only(t: &Table) -> mlua::Result<super::window::Elem> {
             label: t.get::<Option<String>>("label")?.unwrap_or_default(),
             text: t.get::<Option<String>>("text")?.unwrap_or_default(),
             max: t.get::<Option<usize>>("max")?.unwrap_or(64).clamp(1, 1024),
+            filter: t.get::<Option<bool>>("filter")?.unwrap_or(false),
+            key: false,
+        },
+        "key" => Elem::Input {
+            id: id()?,
+            label: t.get::<Option<String>>("label")?.unwrap_or_default(),
+            text: t.get::<Option<String>>("text")?.unwrap_or_default(),
+            max: 64,
+            filter: false,
+            key: true,
         },
         "choice" => Elem::Choice {
             id: id()?,

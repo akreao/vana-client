@@ -2739,7 +2739,7 @@ fn world_hud(
                 }
                 // A Lua mod's window with the focus takes the keys (docs/lua-mods.md 4.10).
                 _ if world.lua.focused() => {
-                    lua::window_key(world, *key);
+                    lua::window_key(world, *key, modifiers.shift);
                 }
                 // Our settings screen, then the Config windows, take the keys while open (in the modern Config ours is
                 // one of its pages, keyed there).
@@ -3224,7 +3224,15 @@ fn world_hud(
     // Mouse on the Lua mods' windows (the modern UI's panels take egui's).
     if !world.modern
         && let Some(p) = input.pointer
-        && lua::pointer_classic(world, gu, p, input.moved, input.clicked, (input.pressed, input.down, input.released))
+        && lua::pointer_classic(
+            world,
+            gu,
+            p,
+            input.moved,
+            input.clicked,
+            input.right_clicked,
+            (input.pressed, input.down, input.released),
+        )
     {
         gu.hover.set(true);
     }
@@ -7338,8 +7346,9 @@ struct World {
     /// The main menu's map window, and the key item bits by word (table * 16 + word, s2c 0x055).
     map: Option<map::MapWin>,
     /// The HUD maps' opacity (they take it unless a mod gives its own; the minimap's marker shades by it): the Map
-    /// Overlay mod's Map Overlay Opacity, through client.set_option("map_opacity").
+    /// Overlay mod's Map Overlay Opacity, through client.set_option("map_opacity"); saved to config when it changes.
     map_opacity: f32,
+    map_opacity_dirty: bool,
     /// Per-window opacity the player set (config `window_opacity`).
     window_opacity: std::collections::BTreeMap<String, f32>,
     /// Retail's chat timestamps on every log line (client option stamp_all_lines; the bundled Timestamps mod).
@@ -9473,7 +9482,8 @@ impl App {
                             follow: None,
                             translating: false,
                             last_proposer: String::new(),
-                            map_opacity: map::OPACITY,
+                            map_opacity: self.cfg.map_overlay_opacity,
+                            map_opacity_dirty: false,
                             window_opacity: self.cfg.window_opacity.clone(),
                             stamp_all_lines: false,
                             skillchain: Default::default(),
@@ -15669,6 +15679,12 @@ impl App {
                         log::warn!("config: {e:#}");
                     }
                 }
+                if std::mem::take(&mut world.map_opacity_dirty) {
+                    self.cfg.map_overlay_opacity = world.map_opacity;
+                    if let Err(e) = self.cfg.save() {
+                        log::warn!("config: {e:#}");
+                    }
+                }
                 if std::mem::take(&mut world.rest.dirty) {
                     let (ip, port) = world.search_addr;
                     self.cfg.rest_models.insert(format!("{ip}-{port}"), world.rest.model.clone());
@@ -18850,7 +18866,11 @@ impl ApplicationHandler for App {
             WindowEvent::Focused(false) => crate::voice::release(),
             _ => {}
         }
-        // Lua mods see keys and the mouse first, and may take them.
+        // Lua mods see keys and the mouse first, and may take them; a press over a window (a mod's pop-up, a panel) is
+        // the window's, never a HUD element's under it.
+        if let (Phase::World(w), Some(gfx)) = (&mut self.phase, &self.gfx) {
+            lua::input::set_over_ui(w, gfx.egui_ctx.is_pointer_over_egui());
+        }
         if self.opening.is_none()
             && let Phase::World(w) = &mut self.phase
             && lua::input::window_event(w, &event)

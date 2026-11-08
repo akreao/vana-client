@@ -202,7 +202,14 @@ impl VoiceChat {
             "The microphone voice chat listens to.",
         ));
         v.push((
-            Elem::Input { id: "channel".into(), label: "Channel".into(), text: c.channel.clone(), max: CHANNEL_MAX },
+            Elem::Input {
+                id: "channel".into(),
+                label: "Channel".into(),
+                text: c.channel.clone(),
+                max: CHANNEL_MAX,
+                filter: false,
+                key: false,
+            },
             "Only players on the same channel hear each other. Leave it empty to talk with everyone.",
         ));
         v.push((Elem::Section { id: "people".into(), label: "Players on the Network".into(), open: true }, ""));
@@ -250,7 +257,7 @@ impl VoiceChat {
                 "Enter mutes or unmutes the player.",
             ));
         }
-        v.push((Elem::Input { id: "add".into(), label: "Add by Address".into(), text: String::new(), max: 64 }, "A computer's address or name on this network (192.168.1.20, or deck.local), for when it is not found by itself."));
+        v.push((Elem::Input { id: "add".into(), label: "Add by Address".into(), text: String::new(), max: 64, filter: false, key: false }, "A computer's address or name on this network (192.168.1.20, or deck.local), for when it is not found by itself."));
         if !c.peers.is_empty() {
             let rows = c
                 .peers
@@ -526,7 +533,7 @@ pub fn pointer_classic(
     {
         return false;
     }
-    let (hover, ev, se) = w.voice.win.pointer_classic(gu, x, y, p, moved, clicked, held);
+    let (hover, ev, se) = w.voice.win.pointer_classic(gu, x, y, p, moved, clicked, false, held);
     w.voice.events(ev);
     w.sounds.extend(se.into_iter().map(|s| s as u32));
     hover

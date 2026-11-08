@@ -227,6 +227,9 @@ pub struct Config {
     pub minimap_dock: u32,
     pub minimap_size: u32,
     pub minimap_span: f32,
+    /// The HUD maps' opacity and the minimap marker's shading, 0..1: the last the Map Overlay mod gave (client option
+    /// map_opacity), kept so it holds while the mod is off. No Settings row: the mod's own page sets it.
+    pub map_overlay_opacity: f32,
     /// Ours: resting's ticks as learnt per server (by its search address, "ip-port"; client/resttick.rs).
     pub rest_models: std::collections::BTreeMap<String, RestModel>,
     /// The drawn cursor's size (config 0021 off) in percent of retail's pixels on screen; 0 = auto (grows with the
@@ -472,6 +475,7 @@ impl Default for Config {
             minimap_dock: 0,
             minimap_size: 1,
             minimap_span: 160.0,
+            map_overlay_opacity: 0.6,
             rest_models: Default::default(),
             cursor_size: 0,
             keys_hide_cursor: true,
