@@ -11821,6 +11821,9 @@ impl App {
             me.target = target;
         }
         combat::tick(world);
+        if world.aug_no_mark.is_none() {
+            world.aug_no_mark = self.game_ui.as_ref().and_then(|g| g.aug_no_mark());
+        }
         combat::message_queue(world, dt);
         roe::new_challenge(world);
         // FUN_10096640 runs the K.O. machine (FUN_10096c90) only outside events.
@@ -11983,9 +11986,6 @@ impl App {
             world.effects.on_scheduler(id, id, u32::from_le_bytes(*b"spop"));
         }
         search::poll(world);
-        if world.aug_no_mark.is_none() {
-            world.aug_no_mark = self.game_ui.as_ref().and_then(|g| g.aug_no_mark());
-        }
         friends::poll(world);
         polmail::update(world);
         world.line_hist.track(world.typing);
