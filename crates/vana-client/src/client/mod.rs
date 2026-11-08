@@ -10658,6 +10658,11 @@ impl App {
                     (world.my_draw_yaw, world.my_face) = (None, None);
                     swkbd::zone_out(world);
                     log::info!("zone-in: zone {zone} at {:?} dir {dir}", pos);
+                    // MsgShift's check of this zone's dialogue file (a read and a hash) off the UI thread, before the
+                    // zone's first text line asks for it (event::zone_text).
+                    if let (Some(m), Some(dats)) = (world.msgshift.clone(), world.index.clone()) {
+                        std::thread::spawn(move || m.installed(&dats, zone));
+                    }
                     // FUN_1018b500 -> FUN_1001e4f0: the view shake stops at a zone load.
                     world.camst.shake = camera::Shake::default();
                     // FUN_10093720: the zone load clears the once-a-zone sound reset; it runs when the player's model

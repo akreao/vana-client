@@ -2,7 +2,7 @@
 
 use super::zone::{Texture, parse_img};
 use super::{DatIndex, chunks};
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use glam::{Quat, Vec3};
 
 fn u16_at(b: &[u8], o: usize) -> u16 {
@@ -1139,16 +1139,19 @@ mod tests {
     }
 }
 
-/// A PC race's skeleton or motion file, parsed once and shared by every look of the race.
+/// A PC race's skeleton or motion file, parsed once and shared by every look of the race. Kept by the file's path
+/// (another install, or a DAT mod standing in for it, is another file), not its id.
 fn race_file(index: &DatIndex, id: u32) -> Result<std::sync::Arc<CharFile>> {
     use std::sync::{Arc, LazyLock, Mutex};
-    static FILES: LazyLock<Mutex<std::collections::HashMap<u32, Arc<CharFile>>>> = LazyLock::new(Default::default);
-    if let Some(f) = FILES.lock().ok().and_then(|m| m.get(&id).cloned()) {
+    static FILES: LazyLock<Mutex<std::collections::HashMap<std::path::PathBuf, Arc<CharFile>>>> =
+        LazyLock::new(Default::default);
+    let path = index.path(id).with_context(|| format!("file id {id} is not in the index"))?;
+    if let Some(f) = FILES.lock().ok().and_then(|m| m.get(&path).cloned()) {
         return Ok(f);
     }
-    let f = Arc::new(load_file(&index.read(id)?)?);
+    let f = Arc::new(load_file(&std::fs::read(&path).with_context(|| format!("reading {}", path.display()))?)?);
     if let Ok(mut m) = FILES.lock() {
-        m.insert(id, f.clone());
+        m.insert(path, f.clone());
     }
     Ok(f)
 }

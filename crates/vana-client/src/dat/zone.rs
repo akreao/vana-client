@@ -596,10 +596,11 @@ pub fn parse_img(p: &[u8]) -> Result<Texture> {
     };
     let mut half_alpha = true;
     let mut dxt = None;
-    // The GPU takes the blocks themselves only when both sides are a multiple of 4 (render/upload.rs level0).
-    let lazy = |d: &Option<(bool, Vec<u8>)>| {
-        d.is_some() && w % 4 == 0 && h % 4 == 0 && !EAGER_RGBA.load(std::sync::atomic::Ordering::Relaxed)
-    };
+    // The GPU takes the blocks themselves only when both sides are a multiple of 4 (render/upload.rs level0). The flag
+    // is read once: 0018 can change on the UI thread mid-parse, and an image decoded neither now nor later would keep
+    // an empty RGBA for good.
+    let eager = EAGER_RGBA.load(std::sync::atomic::Ordering::Relaxed);
+    let lazy = |d: &Option<(bool, Vec<u8>)>| d.is_some() && w % 4 == 0 && h % 4 == 0 && !eager;
     let mut rgba: Vec<u8> = match flag {
         0xA1 => {
             if p.len() < 69 {
