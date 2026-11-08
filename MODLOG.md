@@ -23234,3 +23234,14 @@ still gave `cor`. Both now go through actmotion::sdep_stand.
   - Ef60's below-4 path excludes +0xee 6 / 7 (SubKind 5 / 6): those take the flagged path whatever the sub-state.
   - The wanted value reaches the tasks `init`'s first step runs at once (kept over a file retry), not the ones it
     creates to step later (ops 0x30, 0x5c, 0x76 / 0x77, 0x84), which step after +0x8a5 is back.
+
+## Mouse camera X follows the camera keys (2026-11-08)
+
+- FUN_10124bc0 (the mouse's camera axes, read through axis 6 / 7's second source 0x101232e0 -> +0x8c / +0x90) writes
+  +0x8c = -x and +0x90 = -y, then multiplies each by -1 for 0x8b / 0x8c; FUN_1001ee60 multiplies axis 6 / 7 by -1
+  for 0x8b / 0x8c again. So the retail mouse ends at -x / -y whatever the setting, and with the default (0x8b on) a
+  pointer at the right edge turns the camera as the right arrow does.
+- Ours applied 0x8b to the third-person drag without the leading negation (Y had it), so a drag to the right turned
+  the camera as the left arrow did and the X invert setting read backwards. Both third-person branches (free and
+  locked) now take -x: a drag turns as the camera keys do, and Mouse/Cam.'s X invert flips both, as Y already did.
+  First person (0x8d) already matched its keys and is unchanged.
