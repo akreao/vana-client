@@ -1633,6 +1633,17 @@ fn chat_shortcut(k: egui::Key) -> Option<&'static str> {
     })
 }
 
+fn swallow_shortcut_text(pending: &mut Option<egui::Key>, event: &egui::Event) -> bool {
+    match event {
+        egui::Event::Text(text) => pending.take().is_some_and(|key| text.eq_ignore_ascii_case(key.name())),
+        egui::Event::Key { pressed: true, .. } => {
+            *pending = None;
+            false
+        }
+        _ => false,
+    }
+}
+
 /// Key function 0x78 (numpad +, Ctrl / Alt + F), FUN_10151550: with focus somewhere (or nowhere to go) back
 /// to 0, else SE "0013" and the next of logwindo / buff (not modelled: no buff window) / none.
 fn log_cycle(w: &mut World) {
@@ -2413,7 +2424,11 @@ fn world_hud(
     }
     // Each key's own Shift and repeat flag, for the handlers it reaches; none outside this loop.
     (world.key_shift, world.key_repeat) = (false, false);
+    let mut swallow_text = None;
     for ev in input.events.iter().filter(|_| !input_open) {
+        if swallow_shortcut_text(&mut swallow_text, ev) {
+            continue;
+        }
         if let egui::Event::Key { modifiers, repeat, .. } = ev {
             (world.key_shift, world.key_repeat) = (modifiers.shift, *repeat);
         }
@@ -2511,10 +2526,12 @@ fn world_hud(
                     && let Some(p) = chat_shortcut(*k) =>
                 {
                     chat_prefix(world, p);
+                    swallow_text = modifiers.alt.then_some(*k);
                     keys.clear();
                 }
                 egui::Key::R if (modifiers.ctrl || modifiers.alt) && (world.typing || !event::cinema(world)) => {
                     reply(world);
+                    swallow_text = modifiers.alt.then_some(egui::Key::R);
                     keys.clear();
                 }
                 _ if world.typing => {}
@@ -12768,8 +12785,9 @@ impl App {
             let f = world.my_face.filter(|f| f.0 == dir).map_or_else(|| forward_from_dir(dir), |f| f.1);
             crate::motion::strafe_dir(f, step)
         } else if world.mouse_look && !tank {
-            // The right drag faces the camera's forward this frame (see `to` below), so the quarter is about that.
-            crate::motion::strafe_dir(face, step)
+            // The right drag faces the camera's forward this frame (see `to` below), so the quarter is about that. Held
+            // across the 45 degree edge a diagonal sits on: the drag turns face and step together every frame.
+            crate::motion::strafe_dir_held(face, step, world.my_strafe)
         } else {
             0
         };
@@ -12925,6 +12943,9 @@ impl App {
             // First person never writes +0x598 (walk / run forward, back and sideways alike).
             let facing_held = (face_cam || world.mouse_look) && pin.is_none() && lock_target.is_none() && !tank;
             world.my_strafe = if lock_target.is_some() && pin.is_none() {
+                lock_dir
+            } else if facing_held && stepping && world.mouse_look && !face_cam {
+                // The right drag's quarter, held at the edge as the step was (lock_dir above).
                 lock_dir
             } else if facing_held && stepping {
                 let f = world.my_face.filter(|f| f.0 == me.dir).map_or_else(|| forward_from_dir(me.dir), |f| f.1);
@@ -16880,6 +16901,13 @@ impl App {
                     .collect();
                 let me = w.my_id;
                 let my_strafe = w.my_strafe;
+                // `sdep` entities (trusts, death-flagged): no corpse pose in status 2 / 3 (actmotion::sdep_stand).
+                let sdep_ids: HashSet<u32> = w
+                    .entities
+                    .iter()
+                    .filter(|(id, e)| **id != me && (e.marks.trust || e.marks.death_flag))
+                    .map(|(id, _)| *id)
+                    .collect();
                 let mut far_out: HashSet<u32> = HashSet::new();
                 // The event's actors log their motion changes as ours do (cutscene reports).
                 let event_ids: HashSet<u32> = w.event.as_ref().map(|l| l.st.bound.clone()).unwrap_or_default();
@@ -16909,6 +16937,7 @@ impl App {
                     }
                     let Some(ch) = a.character.clone() else { continue };
                     let Some(&Place { pos, forward, tilt, status, ratio, size }) = places.get(id) else { continue };
+                    let (pick_status, pick_ratio) = actmotion::sdep_stand(status, ratio, sdep_ids.contains(id));
                     if a.gpu.is_none() {
                         // Not drawn until its model is on the GPU (a few new models a frame).
                         let Some(g) = perf::timed(
@@ -16957,8 +16986,8 @@ impl App {
                             // FUN_100c8bb0: our strafe / backpedal motions over the walk / run, at its rate.
                             let (n, r) = crate::motion::choose_strafed(
                                 &a.motion_names.unwrap_or(ch.motions),
-                                status,
-                                ratio,
+                                pick_status,
+                                pick_ratio,
                                 if *id == me { my_strafe } else { 0 },
                                 fixed_model(a),
                             );
@@ -17103,8 +17132,8 @@ impl App {
                         None => {
                             let (b, r) = crate::motion::choose_strafed(
                                 &a.motion_names.unwrap_or(ch.motions),
-                                status,
-                                ratio,
+                                pick_status,
+                                pick_ratio,
                                 if *id == me { my_strafe } else { 0 },
                                 fixed_model(a),
                             );
@@ -18958,6 +18987,54 @@ pub fn run(cfg: Config, drive: Drive) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    fn shortcut_key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers }
+    }
+
+    #[test]
+    fn alt_chat_shortcut_text_channels() {
+        for (key, typed, text, expected) in [
+            (egui::Key::L, "", "l", "/linkshell "),
+            (egui::Key::S, "", "s", "/say "),
+            (egui::Key::L, "/say hello", "L", "/linkshell hello"),
+        ] {
+            let mut pending = None;
+            assert!(!swallow_shortcut_text(&mut pending, &shortcut_key(key, egui::Modifiers::ALT)));
+            let mut line = format!("{}{}", chat_shortcut(key).unwrap(), strip_channel(typed));
+            pending = Some(key);
+            if !swallow_shortcut_text(&mut pending, &egui::Event::Text(text.into())) {
+                line.push_str(text);
+            }
+            assert_eq!(line, expected);
+            assert_eq!(pending, None);
+        }
+    }
+
+    #[test]
+    fn alt_chat_shortcut_text_preserves_other_input() {
+        let mut pending = Some(egui::Key::L);
+        assert!(!swallow_shortcut_text(&mut pending, &egui::Event::Paste("paste".into())));
+        assert!(swallow_shortcut_text(&mut pending, &egui::Event::Text("l".into())));
+        assert!(!swallow_shortcut_text(&mut pending, &egui::Event::Text("hello".into())));
+        pending = Some(egui::Key::L);
+        assert!(!swallow_shortcut_text(&mut pending, &shortcut_key(egui::Key::L, egui::Modifiers::NONE)));
+        assert!(!swallow_shortcut_text(&mut pending, &egui::Event::Text("l".into())));
+        pending = Some(egui::Key::R);
+        assert!(!swallow_shortcut_text(&mut pending, &egui::Event::Text("different".into())));
+        assert!(!swallow_shortcut_text(&mut pending, &egui::Event::Text("r".into())));
+        pending = Some(egui::Key::R);
+        assert!(swallow_shortcut_text(&mut pending, &egui::Event::Text("r".into())));
+    }
+
+    #[test]
+    fn alt_chat_shortcut_text_ctrl_without_text() {
+        let mut pending = None;
+        assert!(!swallow_shortcut_text(&mut pending, &shortcut_key(egui::Key::L, egui::Modifiers::CTRL)));
+        assert!(!swallow_shortcut_text(&mut pending, &shortcut_key(egui::Key::S, egui::Modifiers::NONE)));
+        assert!(!swallow_shortcut_text(&mut pending, &egui::Event::Text("s".into())));
+        assert_eq!(pending, None);
+    }
+
     /// Batch 12 item 78: a set change fades the palette 1 -> 0 over 20 ticks and 0 -> 1 over the next 20.
     #[test]
     fn palette_flip_fades_out_and_in() {
