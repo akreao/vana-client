@@ -3642,8 +3642,7 @@ fn world_hud(
             world.party_hp_max.insert(m.id, max);
         }
     }
-    // Ours: 0x061's exact value stands while it fits, a full bar included (a rounding server can read 100 % a little
-    // under max).
+    // Ours: 0x061's exact value stands while it fits.
     if let (Some((hp, _, _, hpp, _)), Some(st)) = (world.vitals, world.stats.as_ref())
         && (world.own_hp_max.is_some() || !party::hp_max_fits(st.hp_max, hp, hpp))
     {

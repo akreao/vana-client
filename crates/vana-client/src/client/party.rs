@@ -387,8 +387,8 @@ pub fn change_body(name: &str, kind: u8, change: u8) -> Vec<u8> {
     b
 }
 
-/// Whether `max` can be the max HP behind `hp` at `hpp` %. LSB's HP % is floor(hp * 100 / max), at least 1 while
-/// alive (CBattleEntity::GetHPP); a rounded one fits too.
+/// Whether `max` can be the max HP behind `hp` at `hpp` %: LSB's HP % is floor(hp * 100 / max), at least 1 while
+/// alive (CBattleEntity::GetHPP), so 100 % means HP is exactly max.
 pub fn hp_max_fits(max: u32, hp: u32, hpp: u8) -> bool {
     if hp > max || max == 0 {
         return false;
@@ -396,10 +396,7 @@ pub fn hp_max_fits(max: u32, hp: u32, hpp: u8) -> bool {
     if hp == 0 {
         return true;
     }
-    let x = hp as u64 * 100;
-    let lo = (x / max as u64).max(1);
-    let hi = x.div_ceil(max as u64).max(1);
-    (lo..=hi).contains(&(hpp as u64))
+    (hp as u64 * 100 / max as u64).max(1) == hpp as u64
 }
 
 /// A max HP worth showing for `hp` at `hpp` %: `known` while it still fits, else HP / HP %.
@@ -502,9 +499,10 @@ mod tests {
         // A rise above the old max (a new buff) and a full bar still win as before.
         assert_eq!(hp_max(Some(1000), 1100, 100), Some(1100));
         assert_eq!(hp_max(None, 1000, 100), Some(1000));
-        // Low HP: floor at least 1 %, and rounding either way fits.
+        // Low HP: floor at least 1 %. A +4 buff gone at full HP: 996 / 1000 would be 99 %, not 100.
         assert_eq!(hp_max(Some(1000), 5, 1), Some(1000));
-        assert_eq!(hp_max(Some(1000), 996, 100), Some(1000));
+        assert_eq!(hp_max(Some(1000), 996, 99), Some(1000));
+        assert_eq!(hp_max(Some(1000), 996, 100), Some(996));
         assert_eq!(hp_max(Some(1000), 0, 0), Some(1000));
         assert_eq!(hp_max(None, 0, 0), None);
     }
