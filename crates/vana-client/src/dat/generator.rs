@@ -336,7 +336,7 @@ impl KeyFrame {
     }
 
     /// FUN_10053520 / FUN_10053740: sampled with the first key's value replaced by `v0`.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub fn sample_v0(&self, x: f32, eased: bool, v0: f32) -> f32 {
         let mut k = self.clone();
         if let Some(first) = k.keys.first_mut() {

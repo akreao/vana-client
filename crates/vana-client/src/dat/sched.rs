@@ -67,7 +67,7 @@ pub fn auto_start(data: &[u8]) -> bool {
 }
 
 /// FUN_10056ae0: max(start + dur) over the main stream, op 0 included (it overwrites the header's length).
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 pub fn span(data: &[u8]) -> i32 {
     let Some(mut at) =
         data.get(0x14..0x18).map(|b| (u32::from_le_bytes(b.try_into().unwrap()) as usize).saturating_sub(0x10))

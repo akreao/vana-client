@@ -451,13 +451,13 @@ impl Atrac3 {
         }
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub fn frame_bytes(&self) -> usize {
         self.frame
     }
 
     /// Frames that failed to decode (output as silence).
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub fn errors(&self) -> u64 {
         self.errors
     }

@@ -1383,7 +1383,7 @@ impl Grid {
     }
 
     /// FUN_101ceef0: gives back what the piece holds.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub fn free(&mut self, p: &Piece) {
         if p.furn.wall() {
             for w in self.walls.iter_mut().filter(|w| w.piece == p.key()) {

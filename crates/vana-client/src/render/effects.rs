@@ -1120,7 +1120,8 @@ impl EffectsGpu {
         }
     }
 
-    /// The lamps (client/lamps.rs): position, slot, template slot (0xffff: its own light) and the glow's colour (BGRA, 0x80 = 1.0).
+    /// The lamps (client/lamps.rs): position, slot, template slot (0xffff: its own light) and the glow's colour
+    /// (BGRA, 0x80 = 1.0).
     pub fn set_lamps(&mut self, gpu: &Gpu, lamps: &[(glam::Vec3, u32, u32, u32)]) {
         let n = lamps.len().min(crate::render::LIGHTS);
         let mut words: Vec<[f32; 4]> = vec![[f32::from_bits(n as u32), 0.0, 0.0, 0.0]];

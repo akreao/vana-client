@@ -582,8 +582,8 @@ impl Ground {
         self.tris.is_empty()
     }
 
-    /// The normal of the floor face under feet at `p` (as `surface` finds it), turned to +y (into the floor; -vt+0x210 *(inf: the sign, from flat ground giving
-    /// FUN_100d3750 the identity)*).
+    /// The normal of the floor face under feet at `p` (as `surface` finds it), turned to +y (into the floor;
+    /// -vt+0x210 *(inf: the sign, from flat ground giving FUN_100d3750 the identity)*).
     pub fn floor_normal(&self, p: Vec3) -> Option<Vec3> {
         let (_, i) =
             self.heights(p.x, p.z).into_iter().filter(|h| h.0 >= p.y - 0.5).min_by(|a, b| a.0.total_cmp(&b.0))?;

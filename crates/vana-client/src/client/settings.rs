@@ -1160,7 +1160,7 @@ impl SettingsUi {
     /// A key; returns true when the page closes (Escape). Left / Right move between a row's buttons; on the page name
     /// (a stop of ours above the rows) or a slider row, or with Ctrl / Alt (the lists' page modifier), they turn the
     /// page.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub fn key(&mut self, key: egui::Key) -> bool {
         self.key_mod(key, false)
     }

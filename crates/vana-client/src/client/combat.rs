@@ -97,7 +97,7 @@ impl ChatLog {
     }
 
     /// A chat line (s2c 0x017 or our sends' echoes), which config 0xb5 stamps.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub fn push_chat(&mut self, s: String, colour: [u8; 4], indent: bool) {
         self.push_line(s, colour, true, indent, NO_MODE);
     }
