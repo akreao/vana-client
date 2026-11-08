@@ -34,6 +34,8 @@ pub struct Script {
 #[derive(Debug, Default)]
 struct Node {
     question: bool,
+    /// LABEL; a leading '#' draws a select node without slots as the confirmation page (FUN_10219b80).
+    label: String,
     /// The English column of HEADER.
     header: String,
     evals: Vec<String>,
@@ -129,6 +131,7 @@ pub fn parse(b: &[u8]) -> Script {
                 let Some((_, n)) = cur.as_mut() else { continue };
                 match k {
                     b"HEADER" => n.header = text(2),
+                    b"LABEL" => n.label = text(1),
                     b"EVAL" => n.evals.push(text(1)),
                     b"SLOT" if word(2).starts_with(b"Input:") => {
                         n.slots.push(Slot { id: num(1) as u16, text: text(5), var: Some(text(3)) })
@@ -145,12 +148,45 @@ pub fn parse(b: &[u8]) -> Script {
     s
 }
 
-/// The values the DISP conditions and the report read *(inf: the client's evaluator is not traced; PC, in the field)*.
-fn value(var: &str) -> &'static str {
+/// What the evaluators registered by FUN_10114b60 read, taken when the page opens.
+#[derive(Clone, Debug, Default)]
+struct Env {
+    /// Zone flag 0x100 (session +0x3c35c, FUN_100fa9f0 on 0x00A; mod.rs room_flag: a Mog House or other room).
+    room: bool,
+    /// UTC minute (time() through gmtime, FUN_100dbe10 / FUN_101c8d10) % 10 < 5.
+    gm_time: bool,
+    version: String,
+}
+
+impl Env {
+    fn of(w: &World) -> Env {
+        let min = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() / 60);
+        // LAB_10114d00: "JP/" only for language 0; ours is English. S = the lobby's content bits 1..31 (+0x14,
+        // FUN_100ed7e0 step 0xf), C = the installed mask (+0x10), then the version string (DAT_10662dcc + 0x10)
+        // *(inf: the same string the lobby gets)*.
+        let version = format!("EN/S{:08x}/C{:08x}/{}", w.expansions & !1, w.installed, w.client_version);
+        Env { room: w.room_flag, gm_time: min % 10 < 5, version }
+    }
+}
+
+/// The evaluators (FUN_10114b60): GENERIC.PLATFORM "win" (LAB_10114cf0), GENERIC.VERSION (LAB_10114d00), GAME.INFIELD
+/// "off" in a room else "on" (LAB_10114dc0), GAME.GMTIME "1" / "0" (LAB_10114df0), the EXEC.* and GMREPORT.* keys "on"
+/// (LAB_10114db0). Other keys have none.
+fn value(var: &str, env: &Env) -> String {
     match var {
-        "GENERIC.PLATFORM" => "win",
-        "GAME.INFIELD" => "on",
-        _ => "",
+        "GENERIC.PLATFORM" => "win".into(),
+        "GENERIC.VERSION" => env.version.clone(),
+        "GAME.INFIELD" => if env.room { "off" } else { "on" }.into(),
+        "GAME.GMTIME" => if env.gm_time { "1" } else { "0" }.into(),
+        "EXEC.LOGOUT"
+        | "EXEC.POLEXIT"
+        | "EXEC.RESCUE"
+        | "GMREPORT.NOTICE"
+        | "GMREPORT.GMCALL"
+        | "GMREPORT.HARASSMENT"
+        | "GMREPORT.STUCK"
+        | "GMREPORT.BLOCK" => "on".into(),
+        _ => String::new(),
     }
 }
 
@@ -159,6 +195,8 @@ enum Page {
     Select,
     Question,
     Leaf,
+    /// A '#'-labelled leaf (FUN_10219b80): 9 0x7c "Carry out selected process?", Execute (9 0x7d), Go back, Return.
+    Confirm,
 }
 
 pub struct FaqMain {
@@ -174,6 +212,7 @@ pub struct FaqMain {
     inputs: HashMap<String, String>,
     /// DAT_10664550 / DAT_1066469b: the last committed text and its slot row, cleared at every open.
     remembered: Option<(i16, String)>,
+    env: Env,
 }
 
 impl FaqMain {
@@ -186,7 +225,7 @@ impl FaqMain {
         let Some(n) = self.node() else { return Vec::new() };
         n.slots
             .iter()
-            .filter(|s| n.disp.iter().filter(|d| d.slot == s.id).all(|d| (value(&d.var) == d.value) == d.eq))
+            .filter(|s| n.disp.iter().filter(|d| d.slot == s.id).all(|d| (value(&d.var, &self.env) == d.value) == d.eq))
             .collect()
     }
 
@@ -195,6 +234,7 @@ impl FaqMain {
     fn page(&self) -> Page {
         match self.node() {
             Some(n) if n.question => Page::Question,
+            Some(n) if self.visible().is_empty() && n.label.starts_with('#') => Page::Confirm,
             _ if self.visible().is_empty() => Page::Leaf,
             _ => Page::Select,
         }
@@ -212,6 +252,7 @@ impl FaqMain {
             Page::Select => (1..=n).collect(),
             Page::Question => (1..=n + 1).collect(),
             Page::Leaf => Vec::new(),
+            Page::Confirm => vec![1],
         };
         if self.history() || self.page() == Page::Leaf {
             r.push(0);
@@ -226,6 +267,9 @@ impl FaqMain {
         self.cursor = match self.page() {
             Page::Select => 1,
             Page::Question if !self.visible().is_empty() => 1,
+            // Retail leaves +0x14 at 0 (no row marked); ours starts on Execute without history, where row 0 would be
+            // the GM reply's "Delete this message.".
+            Page::Confirm if !self.history() => 1,
             _ => 0,
         };
         (self.scroll, self.follow, self.field) = (0.0, true, None);
@@ -281,6 +325,7 @@ pub fn open(w: &mut World) -> Option<FaqMain> {
             field: None,
             inputs: HashMap::new(),
             remembered: None,
+            env: Env::of(w),
         };
         f.enter_page();
         return Some(f);
@@ -299,6 +344,7 @@ pub fn open(w: &mut World) -> Option<FaqMain> {
         field: None,
         inputs: HashMap::new(),
         remembered: None,
+        env: Env::of(w),
     };
     f.enter_page();
     Some(f)
@@ -439,7 +485,7 @@ fn enter(w: &mut World) {
             f.field = Some(start.into_bytes());
             w.sounds.push(Ui::Select as u32);
         }
-        (Page::Question, c) if c > 0 => {
+        (Page::Question | Page::Confirm, c) if c > 0 => {
             w.sounds.push(Ui::Select as u32);
             execute(w);
         }
@@ -503,7 +549,7 @@ fn report(w: &mut World, kind: u8) {
     let mut params: Vec<(String, String)> = Vec::new();
     for e in f.path.iter().filter_map(|n| f.script.nodes.get(n)).flat_map(|n| n.evals.iter()) {
         if !params.iter().any(|p| &p.0 == e) {
-            params.push((e.clone(), value(e).to_string()));
+            params.push((e.clone(), value(e, &f.env)));
         }
     }
     for (k, v) in &f.inputs {
@@ -552,7 +598,7 @@ pub fn view(w: &World, gu: &GameUi) -> Option<super::helpdesk::PageView> {
     let page = f.page();
     let g9 = |id: usize| w.battle.as_ref().and_then(|b| b.group9(id)).unwrap_or_default();
     let mut lines = Vec::new();
-    let header = f.node().map_or(String::new(), |n| n.header.clone());
+    let header = if page == Page::Confirm { g9(0x7c) } else { f.node().map_or(String::new(), |n| n.header.clone()) };
     if !header.is_empty() {
         lines.push(Line::Text(header, false));
     }
@@ -564,7 +610,7 @@ pub fn view(w: &World, gu: &GameUi) -> Option<super::helpdesk::PageView> {
             lines.push(Line::Row { id: k as i32 + 1, text: text.clone(), on: true, value });
         }
     }
-    if page == Page::Question {
+    if matches!(page, Page::Question | Page::Confirm) {
         lines.push(Line::Row { id: slots.len() as i32 + 1, text: g9(0x7d), on: true, value: None });
     }
     if f.history() || page == Page::Leaf {
@@ -605,13 +651,13 @@ fn layout(gu: &GameUi, w: &World, f: &FaqMain, width: f32) -> (Vec<Entry>, f32) 
     let (left, right, top) = match page {
         Page::Select => (8.0, 20.0, 10.0),
         Page::Question => (8.0, 20.0, 15.0),
-        Page::Leaf => (10.0, 25.0, 15.0),
+        Page::Leaf | Page::Confirm => (10.0, 25.0, 15.0),
     };
     let inner = width - left - right;
     let row_w = inner - RIGHT - INDENT;
     let g9 = |id: usize| w.battle.as_ref().and_then(|b| b.group9(id)).unwrap_or_default();
     let mut out = Vec::new();
-    let header = f.node().map_or(String::new(), |n| n.header.clone());
+    let header = if page == Page::Confirm { g9(0x7c) } else { f.node().map_or(String::new(), |n| n.header.clone()) };
     let lines = if header.is_empty() { Vec::new() } else { gu.wrap(&header, inner) };
     let mut y = top + 16.0 * lines.len() as f32;
     out.push(Entry { row: None, x: left, y: top, lines, value: None, bullet: false, h: 0.0 });
@@ -637,7 +683,7 @@ fn layout(gu: &GameUi, w: &World, f: &FaqMain, width: f32) -> (Vec<Entry>, f32) 
             push(&mut out, &mut y, GAP, k as i16 + 1, text.clone(), value, true);
         }
     }
-    if page == Page::Question {
+    if matches!(page, Page::Question | Page::Confirm) {
         push(&mut out, &mut y, GAP2, slots.len() as i16 + 1, g9(0x7d), None, false);
     }
     // Leaf pages start their row 0 at the header + 15 as well.
@@ -787,11 +833,39 @@ mod tests {
             field: None,
             inputs: HashMap::new(),
             remembered: None,
+            env: Env::default(),
         };
         assert_eq!(f.visible().len(), 1);
         assert_eq!((f.page(), f.rows()), (Page::Select, vec![1, -1]));
         f.path.push(3);
         assert_eq!((f.page(), f.rows()), (Page::Question, vec![1, 2, 0, -1]));
+    }
+
+    #[test]
+    fn evaluators_and_the_confirmation_page() {
+        let room = Env { room: true, gm_time: false, version: "EN/S00000000/C00000001/x".into() };
+        assert_eq!(value("GAME.INFIELD", &room), "off");
+        assert_eq!(value("GAME.INFIELD", &Env::default()), "on");
+        assert_eq!(value("GAME.GMTIME", &room), "0");
+        assert_eq!(value("GMREPORT.STUCK", &room), "on");
+        assert_eq!(value("GENERIC.VERSION", &room), "EN/S00000000/C00000001/x");
+        assert_eq!(value("GMCALL.INPUT", &room), "");
+        let src: &[u8] =
+            b"DEF DATASET 1\r\n  DEF SELECTNODE 0\r\n    LABEL \"#GO\"\r\n    HEADER \"\" \"x\" \"\" \"\"\r\n  END NODE\r\nEND DATASET\r\n";
+        let mut f = FaqMain {
+            script: parse(src),
+            path: vec![0],
+            cursor: 0,
+            scroll: 0.0,
+            follow: false,
+            field: None,
+            inputs: HashMap::new(),
+            remembered: None,
+            env: Env::default(),
+        };
+        assert_eq!((f.page(), f.rows()), (Page::Confirm, vec![1, -1]));
+        f.enter_page();
+        assert_eq!(f.cursor, 1);
     }
 }
 
