@@ -4974,14 +4974,16 @@ pub(super) fn draw_classic(gu: &mut super::game_ui::GameUi, w: &World) -> Vec<[f
 
 impl Host {
     /// The open windows (mod id, a copy of the window), for the modern UI's panels.
-    /// What /uimodes lists of the mods: each running mod's windows (not its prompts) by panel key, and each of its
-    /// HUD windows as hud:<mod>:<window>, with a label.
+    /// What /uimodes lists of the mods: each running mod's HUD, edge and panel windows (not those the player opens) by
+    /// panel key, and each of its HUD windows as hud:<mod>:<window>, with a label.
     pub(in crate::client) fn mode_windows(&self) -> Vec<(String, String)> {
         let mut out: Vec<(String, String)> = Vec::new();
         for vm in self.vms.iter().filter(|v| v.suspended.is_none()) {
             let st = vm.st.borrow();
             let name = &vm.manifest.name;
-            for win in st.windows.iter().filter(|w| !w.modal) {
+            // Only what stands on the screen as the HUD does (HUD and edge windows, built-in panels' stand-ins): windows
+            // the player opens (a mod's manager) are never hidden by a mode.
+            for win in st.windows.iter().filter(|w| !w.modal && (w.hud || w.edge || w.panel.is_some())) {
                 let key = win.panel.clone().unwrap_or_else(|| format!("mod:{}:{}", vm.manifest.id, win.id));
                 let what = [&win.title, &win.heading]
                     .into_iter()
