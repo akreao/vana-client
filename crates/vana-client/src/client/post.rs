@@ -667,13 +667,22 @@ pub(super) fn picker_rows(w: &World) -> Vec<crate::inventory::Slot> {
     w.inv.viewed(super::items::INVENTORY).into_iter().filter(|s| s.index != 0 && s.id != 0).collect()
 }
 
-/// FUN_1012e1a0: NoDelivery (0x2000) without CanSendAccount (0x10) grey; CanSendAccount only to our own account;
-/// equipped grey. The augment rule (Ex by augment) and the equipped linkshell are not checked here.
+/// LAB_1012e1a0 (the picker's row colour, 0x80404040 grey or 0x80808080): Ex by augment = the Aug flag byte's bit 2
+/// (FUN_101cb960 / FUN_101cba20, as the item window's Ex mark). CanSendAccount (0x10): grey to another account, and
+/// on our account when Ex by augment without item flag bit 0; else NoDelivery (0x2000) or Ex by augment grey. Then the
+/// equipped (FUN_10131f10) and the shell worn as linkshell 1 (FUN_100e9730(.., 1): its slot and this bag) grey.
 fn picker_tint(w: &World, s: &crate::inventory::Slot, on_account: bool) -> u32 {
     use crate::inventory::{TINT_DIM, TINT_WHITE};
-    let flags = w.item_info.as_ref().and_then(|c| c.item(s.id)).map_or(0, |it| it.flags);
-    let grey = if flags & 0x10 == 0 { flags & 0x2000 != 0 } else { !on_account };
-    if grey || s.equipped { TINT_DIM } else { TINT_WHITE }
+    let bag = super::items::INVENTORY;
+    let it = w.item_info.as_ref().and_then(|c| c.item(s.id));
+    let (flags, item_type) = it.map_or((0, 0), |it| (it.flags, it.item_type));
+    let ext = w.inv.ext.get(&(bag, s.index));
+    let aug_ex = super::augment::marked_with(s.id, item_type, ext, w.aug_no_mark.as_deref().unwrap_or(&[]))
+        .is_some_and(|f| f & 2 != 0);
+    let grey =
+        if flags & 0x10 != 0 { !on_account || (aug_ex && flags & 1 == 0) } else { flags & 0x2000 != 0 || aug_ex };
+    let ls1 = super::chatctrl::ls_on(w, 1) && w.linkshells[1] == (s.index, bag);
+    if grey || s.equipped || ls1 { TINT_DIM } else { TINT_WHITE }
 }
 
 /// FUN_1012f380: the delivery cursor slot takes the item (pending until Set goes out next frame).

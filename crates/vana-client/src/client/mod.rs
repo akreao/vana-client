@@ -7234,6 +7234,8 @@ struct World {
     /// The search server from the lobby's reply (+0x40 IP, +0x44 port) and the queries running on it.
     search_addr: (std::net::Ipv4Addr, u16),
     searches: Vec<(std::sync::mpsc::Receiver<anyhow::Result<crate::net::search::Reply>>, search::Then)>,
+    /// The augment no-mark weapons (GameUi's augment tables), for the item rules outside drawing.
+    aug_no_mark: Option<Vec<u16>>,
     /// The search results window ("menu    scresult") and scoption over it.
     search: Option<search::Results>,
     /// FUN_10104f00's word lists, regions and zone flags (FFXiMain).
@@ -9281,6 +9283,7 @@ impl App {
                             name: login.name.clone(),
                             search_addr: login.search,
                             searches: Vec::new(),
+                            aug_no_mark: None,
                             search: None,
                             search_words: self.search_words.clone(),
                             known_zones: None,
@@ -11980,6 +11983,9 @@ impl App {
             world.effects.on_scheduler(id, id, u32::from_le_bytes(*b"spop"));
         }
         search::poll(world);
+        if world.aug_no_mark.is_none() {
+            world.aug_no_mark = self.game_ui.as_ref().and_then(|g| g.aug_no_mark());
+        }
         friends::poll(world);
         polmail::update(world);
         world.line_hist.track(world.typing);
