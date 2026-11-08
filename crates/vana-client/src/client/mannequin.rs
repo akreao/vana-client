@@ -588,7 +588,7 @@ pub(super) fn set_list(w: &mut World, k: usize) -> bool {
     let Some(d) = dress_mut(w).filter(|d| d.focus == Focus::List && d.scroll + d.row != k && k < n) else {
         return false;
     };
-    d.scroll = d.scroll.min(k).max((k + 1).saturating_sub(VISIBLE_ROWS));
+    crate::client::scrollbar::keep_in_view(&mut d.scroll, k, VISIBLE_ROWS);
     d.row = k - d.scroll;
     true
 }

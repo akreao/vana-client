@@ -371,21 +371,6 @@ fn place(c: &mut (usize, usize), row: usize, n: usize) {
     c.1 = c.1.min(c.0).max((c.0 + 1).saturating_sub(VISIBLE)).min(n.saturating_sub(VISIBLE));
 }
 
-/// The generic list's keys: Up / Down a row (silent at the ends), Left / Right a page (FUN_101f6c70, +0x47).
-fn step(c: &mut (usize, usize), n: usize, key: egui::Key) -> bool {
-    use egui::Key as K;
-    let old = c.0;
-    match key {
-        K::ArrowDown if c.0 + 1 < n => c.0 += 1,
-        K::ArrowUp if c.0 > 0 => c.0 -= 1,
-        K::ArrowRight => c.0 = (c.0 + VISIBLE).min(n.saturating_sub(1)),
-        K::ArrowLeft => c.0 = c.0.saturating_sub(VISIBLE),
-        _ => {}
-    }
-    c.1 = c.1.min(c.0).max((c.0 + 1).saturating_sub(VISIBLE));
-    c.0 != old
-}
-
 /// mp_cstm's grid: arrows wrap in rows and columns (the layout's links).
 fn grid_step(child: u16, key: egui::Key) -> u16 {
     use egui::Key as K;
@@ -594,7 +579,7 @@ fn list_key(w: &mut World, gu: &GameUi, s: &mut Screen, key: egui::Key) {
             }
         }
         _ => {
-            if step(&mut s.cursors[i], rws.len(), key) {
+            if crate::client::scrollbar::step(&mut s.cursors[i], rws.len(), VISIBLE, key) {
                 w.sounds.push(Ui::Cursor as u32);
             }
         }
@@ -631,7 +616,7 @@ pub fn remove_all(w: &mut World) {
 }
 
 /// mp_cstm (FUN_10143cd0): the slot grid, a slot then an instinct (or the other way) equips.
-fn cstm_key(w: &mut World, gu: &GameUi, s: &mut Screen, key: egui::Key) {
+fn cstm_key(w: &mut World, _gu: &GameUi, s: &mut Screen, key: egui::Key) {
     use egui::Key as K;
     match key {
         K::Enter if !monstrosity::in_feretory(w) => {
@@ -677,7 +662,6 @@ fn cstm_key(w: &mut World, gu: &GameUi, s: &mut Screen, key: egui::Key) {
         }
         _ => {}
     }
-    let _ = gu;
 }
 
 /// mp_kncst (FUN_10144190): the min and max boxes edited by the arrows, Keep, Cancel, Reset.

@@ -104,8 +104,7 @@ impl Mods {
         }
     }
 
-    /// No archives and no scan (tests).
-    #[cfg(test)]
+    /// No archives and no scan (tests, offscreen shots).
     pub fn empty() -> Self {
         Self {
             packs: Vec::new(),

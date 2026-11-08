@@ -297,21 +297,6 @@ pub fn remove_all(w: &mut World) {
     w.bluset = Some(s);
 }
 
-/// The generic list: Up / Down stop at the ends, Left / Right a page of 10. True when it moved.
-fn step(c: &mut (usize, usize), n: usize, key: egui::Key) -> bool {
-    use egui::Key as K;
-    let old = c.0;
-    match key {
-        K::ArrowDown if c.0 + 1 < n => c.0 += 1,
-        K::ArrowUp if c.0 > 0 => c.0 -= 1,
-        K::ArrowRight => c.0 = (c.0 + VISIBLE).min(n.saturating_sub(1)),
-        K::ArrowLeft => c.0 = c.0.saturating_sub(VISIBLE),
-        _ => {}
-    }
-    c.1 = c.1.min(c.0).max((c.0 + 1).saturating_sub(VISIBLE));
-    c.0 != old
-}
-
 /// bluequip (FUN_101dfa50) and bluinven (FUN_101e0340) keys, bluesibo's over them.
 pub fn key(w: &mut World, key: egui::Key) {
     let Some(mut s) = w.bluset.take() else { return };
@@ -379,7 +364,7 @@ fn keys(w: &mut World, s: &mut Screen, key: egui::Key) -> bool {
                 let idx = slot(w, s.side, i);
                 if let Some(r) = rows.iter().position(|r| *r == Row::Spell(0x200 + idx as u16)).filter(|_| idx != 0) {
                     s.inven.0 = r;
-                    s.inven.1 = s.inven.1.min(r).max((r + 1).saturating_sub(VISIBLE));
+                    crate::client::scrollbar::keep_in_view(&mut s.inven.1, r, VISIBLE);
                 }
                 s.focus = Focus::Inven;
             }
@@ -404,7 +389,7 @@ fn keys(w: &mut World, s: &mut Screen, key: egui::Key) -> bool {
                     // bluequip +0x54: its cursor on the slot holding the spell.
                     if let Some(i) = (0..s.slots).find(|&i| slot(w, s.side, i) as u16 == id - 0x200) {
                         s.equip.0 = i;
-                        s.equip.1 = s.equip.1.min(i).max((i + 1).saturating_sub(VISIBLE));
+                        crate::client::scrollbar::keep_in_view(&mut s.equip.1, i, VISIBLE);
                     }
                     s.focus = Focus::Equip;
                 }
@@ -413,12 +398,12 @@ fn keys(w: &mut World, s: &mut Screen, key: egui::Key) -> bool {
             _ => w.sounds.push(Ui::Error as u32),
         },
         (Focus::Equip, _) => {
-            if step(&mut s.equip, s.slots, key) {
+            if crate::client::scrollbar::step(&mut s.equip, s.slots, VISIBLE, key) {
                 w.sounds.push(Ui::Cursor as u32);
             }
         }
         (Focus::Inven, _) => {
-            if step(&mut s.inven, rows.len(), key) {
+            if crate::client::scrollbar::step(&mut s.inven, rows.len(), VISIBLE, key) {
                 w.sounds.push(Ui::Cursor as u32);
             }
         }
@@ -671,8 +656,6 @@ pub(super) fn look(w: &World, gu: &GameUi) -> Option<Look> {
     })
 }
 
-/// The mouse's cursor moves: a slot (bluequip), a row of bluinven, bluesibo's row; with nothing picked a row of the
-/// other list takes the focus first (as Num+). True when the cursor moved.
 /// Type-to-search (modern/search.rs) in the spells: while either list has the keys and no slot waits for a spell.
 pub(super) fn search_open(w: &World) -> bool {
     w.confirm.is_none()
@@ -697,6 +680,8 @@ pub(super) fn search_pick(w: &mut World, _: Option<&GameUi>, k: usize) {
     key(w, egui::Key::Enter);
 }
 
+/// The mouse's cursor moves: a slot (bluequip), a row of bluinven, bluesibo's row; with nothing picked a row of the
+/// other list takes the focus first (as Num+). True when the cursor moved.
 pub(super) fn set_row(w: &mut World, equip: bool, k: usize) -> bool {
     let Some(s) = w.bluset.as_ref().filter(|s| s.sibo.is_none()) else { return false };
     if (s.focus == Focus::Equip) != equip {
@@ -716,7 +701,7 @@ pub(super) fn set_row(w: &mut World, equip: bool, k: usize) -> bool {
         return false;
     }
     c.0 = k;
-    c.1 = c.1.min(k).max((k + 1).saturating_sub(VISIBLE));
+    crate::client::scrollbar::keep_in_view(&mut c.1, k, VISIBLE);
     true
 }
 
@@ -847,22 +832,4 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         rects.push(win.frame);
     }
     rects
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn list_steps() {
-        let mut c = (0, 0);
-        assert!(!step(&mut c, 3, egui::Key::ArrowUp));
-        assert!(step(&mut c, 3, egui::Key::ArrowRight));
-        assert_eq!(c, (2, 0));
-        let mut c = (9, 0);
-        assert!(step(&mut c, 25, egui::Key::ArrowDown));
-        assert_eq!(c, (10, 1));
-        assert!(step(&mut c, 25, egui::Key::ArrowRight));
-        assert_eq!(c, (20, 11));
-    }
 }

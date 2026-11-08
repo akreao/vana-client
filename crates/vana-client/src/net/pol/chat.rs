@@ -43,6 +43,7 @@ pub fn b64_decode(text: &[u8], n: usize) -> Vec<u8> {
 }
 
 /// 0x10007590: 5 bytes to 8 characters, a short last group zero-padded.
+#[cfg(test)]
 pub fn b32_encode(data: &[u8]) -> String {
     let mut out = String::new();
     for g in data.chunks(5) {

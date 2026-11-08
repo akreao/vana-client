@@ -290,7 +290,7 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
         lua.create_function(|lua, ()| {
             let loaded: Vec<String> = directory(lua).borrow().mods.iter().map(|m| m.id.clone()).collect();
             let out = lua.create_table()?;
-            for (id, name, version, enabled, bundled) in super::installed() {
+            for (id, name, version, enabled, bundled, commands) in super::installed() {
                 let t = lua.create_table()?;
                 (
                     t.set("loaded", loaded.contains(&id))?,
@@ -298,7 +298,7 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
                     t.set("name", name)?,
                     t.set("version", version)?,
                 );
-                (t.set("enabled", enabled)?, t.set("bundled", bundled)?);
+                (t.set("enabled", enabled)?, t.set("bundled", bundled)?, t.set("commands", commands)?);
                 out.push(t)?;
             }
             Ok(out)

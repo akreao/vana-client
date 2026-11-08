@@ -671,7 +671,7 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
         }
         _ => {}
     }
-    l.top = l.top.min(l.cursor).max((l.cursor + 1).saturating_sub(ROWS));
+    crate::client::scrollbar::keep_in_view(&mut l.top, l.cursor, ROWS);
     w.linkshell = Some(l);
 }
 

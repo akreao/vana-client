@@ -59,8 +59,8 @@ pub(super) fn install(lua: &Lua, g: &Table) -> mlua::Result<()> {
                 Some(h) => h.pairs::<String, String>().collect::<mlua::Result<_>>()?,
                 None => Vec::new(),
             };
-            let timeout =
-                Duration::from_secs_f64(spec.get::<Option<f64>>("timeout")?.unwrap_or(30.0).clamp(1.0, 300.0));
+            let timeout = super::vm::secs(spec.get::<Option<f64>>("timeout")?.unwrap_or(30.0))
+                .clamp(Duration::from_secs(1), Duration::from_secs(300));
             let st = state(lua);
             let id = next_id(&st);
             let key = lua.create_registry_value(callback)?;

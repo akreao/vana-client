@@ -67,7 +67,6 @@ fn shows(tab: u8, mode: u16, battle_in_all: bool) -> bool {
 }
 /// Lines kept in the window's scroll.
 const KEEP: usize = 300;
-/// The default room: the width and the lines' height in points.
 /// The default room: most of the screen's width (the user's arrangement), eight or nine lines.
 fn default_room(ctx: &egui::Context) -> Vec2 {
     vec2(ctx.content_rect().width() * 0.8715, 174.0)
@@ -421,7 +420,7 @@ pub fn mentions(line: &str, me: &str) -> bool {
 /// The unread counts for the tabs (not All, not Battle): what each tab shows since it (or All showing it) was last
 /// on screen; the shown tab's mark moves to the log's end.
 fn unread(m: &Modern, w: &World, battle_in_all: bool) -> [u32; 11] {
-    let n = w.chat.len();
+    let (n, base) = (w.chat.len(), w.chat.start());
     let modes = w.chat.modes();
     let mut seen = m.chat_seen.borrow_mut();
     let tab = m.chat_tab.get() as usize;
@@ -433,8 +432,8 @@ fn unread(m: &Modern, w: &World, battle_in_all: bool) -> [u32; 11] {
     }
     let mut out = [0u32; 11];
     for (t, o) in out.iter_mut().enumerate().skip(1).take(TABS.len() - 2) {
-        let from = seen[t].unwrap_or(n).min(n);
-        *o = modes[from..].iter().filter(|&&md| shows(t as u8, md, battle_in_all)).count() as u32;
+        let from = seen[t].unwrap_or(n).clamp(base, n);
+        *o = modes[from - base..].iter().filter(|&&md| shows(t as u8, md, battle_in_all)).count() as u32;
     }
     out
 }
@@ -450,6 +449,8 @@ pub struct InputView {
     pub fep: Option<(Vec<String>, usize)>,
     /// An IME's text being composed at the caret.
     pub preedit: String,
+    /// Ours: the mods' commands the line's first word names, or one command's forms (cmdhint.rs).
+    pub cmds: Option<super::super::cmdhint::Hint>,
 }
 
 /// The channel a line goes to (chatctrl::line_mode's codes).
@@ -486,6 +487,7 @@ fn view_keep(w: &World, keep: usize) -> ChatView<'_> {
     let modes = w.chat.modes();
     let all: Vec<_> = w.chat.iter_timed().zip(modes.iter().copied()).collect();
     let from = all.len().saturating_sub(keep);
+    let base = w.chat.start();
     let lines = all[from..]
         .iter()
         .enumerate()
@@ -496,7 +498,7 @@ fn view_keep(w: &World, keep: usize) -> ChatView<'_> {
                 *c,
                 *mode,
                 incoming(*mode) && mentions(line, &w.name),
-                from + i,
+                base + from + i,
             )
         })
         .collect();
@@ -507,6 +509,7 @@ fn view_keep(w: &World, keep: usize) -> ChatView<'_> {
         sel: fep::selection(w),
         fep: w.fep.as_ref().map(|f| (f.cands.iter().map(|c| c.text.clone()).collect(), f.sel)),
         preedit: w.ime_preedit.clone(),
+        cmds: super::super::cmdhint::hint(w),
     });
     ChatView { lines, input, waiting: event::prompt(w), unread: [0; 11] }
 }
@@ -588,7 +591,68 @@ fn input(ui: &mut Ui, m: &Modern, v: &InputView, t: f32, size: f32, r: Rect) {
     }
     if let Some((cands, sel)) = &v.fep {
         candidates(ui, m, cands, *sel, pos2(caret_x - 8.0, r.min.y - TAB_H));
+    } else if let Some(h) = &v.cmds {
+        commands(ui, m, h, pos2(r.min.x, r.min.y - TAB_H));
     }
+}
+
+/// Ours: the mods' command forms over the chat line (cmdhint.rs), as the auto-translate list's panel: each form as it
+/// would be typed (the pick lit), its mod and help muted beside it; "n of m" under a full page.
+fn commands(ui: &mut Ui, m: &Modern, h: &super::super::cmdhint::Hint, bottom_left: egui::Pos2) {
+    use super::super::cmdhint::{note, page};
+    let font = FontId::proportional(m.theme.small);
+    let (first, rows) = page(h);
+    let notes: Vec<String> = rows.iter().map(|r| note(r, " \u{b7} ")).collect();
+    let width = |ui: &Ui, s: &str| ui.painter().layout_no_wrap(s.to_string(), font.clone(), Color32::WHITE).size().x;
+    egui::Area::new(Id::unique("command hint"))
+        .order(Order::Foreground)
+        .pivot(egui::Align2::LEFT_BOTTOM)
+        .fixed_pos(bottom_left)
+        .show(ui.ctx(), |ui| {
+            let left = rows.iter().map(|r| width(ui, &r.text)).fold(0.0, f32::max);
+            let right = notes.iter().map(|n| width(ui, n)).fold(0.0, f32::max);
+            let total = (left + 18.0 + right + 12.0).clamp(200.0, 760.0);
+            // Opaque: it sits over the chat log's lines.
+            egui::Frame::NONE
+                .fill(m.theme.color("charcoal"))
+                .stroke(egui::Stroke::new(1.0, m.theme.color("bronze")))
+                .corner_radius(6.0)
+                .inner_margin(6.0)
+                .show(ui, |ui| {
+                    for (k, (r, n)) in rows.iter().zip(&notes).enumerate() {
+                        let (rr, _) = ui.allocate_exact_size(vec2(total, m.theme.small + 8.0), Sense::hover());
+                        let lit = h.sel == Some(first + k);
+                        if lit {
+                            ui.painter().rect_filled(rr, 4.0, m.theme.color("focus").gamma_multiply(0.35));
+                        }
+                        let p = ui.painter().with_clip_rect(rr);
+                        let c = if lit { m.theme.color("gold") } else { m.theme.color("text") };
+                        p.text(
+                            pos2(rr.min.x + 6.0, rr.center().y),
+                            egui::Align2::LEFT_CENTER,
+                            &r.text,
+                            font.clone(),
+                            c,
+                        );
+                        let hx = rr.min.x + 6.0 + left + 18.0;
+                        let n = super::kit::elide(ui, n, &font, rr.max.x - 6.0 - hx);
+                        p.text(
+                            pos2(hx, rr.center().y),
+                            egui::Align2::LEFT_CENTER,
+                            n,
+                            font.clone(),
+                            m.theme.color("muted"),
+                        );
+                    }
+                    if h.rows.len() > rows.len() {
+                        ui.label(
+                            egui::RichText::new(format!("{} of {} (Up / Down)", first + rows.len(), h.rows.len()))
+                                .size(m.theme.small - 1.0)
+                                .color(m.theme.color("muted")),
+                        );
+                    }
+                });
+        });
 }
 
 /// The auto-translate list over the chat line at the word (retail's "menu    fep"): "n/m", a page of seven, the
@@ -701,7 +765,10 @@ pub fn panel(p: &mut Panels, w: &mut World) {
         ml.anim.settle();
     }
     let modes = w.chat.modes();
-    for (((line, c), (time, chat, _)), mode) in w.chat.iter_timed().zip(modes.iter().copied()).skip(ml.seen) {
+    let base = w.chat.start();
+    for (((line, c), (time, chat, _)), mode) in
+        w.chat.iter_timed().zip(modes.iter().copied()).skip(ml.seen.saturating_sub(base))
+    {
         if shows(tab, mode, battle_in_all) {
             let job = line_job((&stamp_of(stamps, time, chat), Color32::WHITE), line, *c, &font, wrap);
             for _ in 0..p.ctx.fonts_mut(|f| f.layout_job(job)).rows.len().max(1) {
@@ -713,7 +780,7 @@ pub fn panel(p: &mut Panels, w: &mut World) {
     // A repeat folded into the last line ("(x13)") keeps the window open as a new line would, without a new row.
     let (folds, last) = w.chat.folds();
     if folds != ml.folds {
-        let shown = last.and_then(|k| modes.get(k)).is_some_and(|&mode| shows(tab, mode, battle_in_all));
+        let shown = last.and_then(|k| w.chat.mode(k)).is_some_and(|mode| shows(tab, mode, battle_in_all));
         if shown {
             for _ in 0..(folds - ml.folds).min(rule.cfg.max as u64) {
                 ml.anim.extend(&rule.cfg);

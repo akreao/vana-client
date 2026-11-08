@@ -235,6 +235,21 @@ pub struct ModRow {
     pub place_modern: Option<usize>,
     /// The interface sound its value is an offset from, played as the value changes (manifest `preview_sound`).
     pub preview: Option<u32>,
+    /// How it changes: from its choices, or edited (a text, colour or key setting: its one choice holds the value).
+    pub edit: Edit,
+}
+
+/// How a mod setting changes. Only the Mods window edits; the Extras pages show the chosen ones.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum Edit {
+    #[default]
+    Choice,
+    /// `string`: typed.
+    Text,
+    /// `colour`: typed as #RRGGBB, or picked.
+    Colour,
+    /// `key`: the next key pressed (with its modifiers).
+    Key,
 }
 
 const OFF_ON: &[(u32, &str)] = &[(1, "ON"), (0, "OFF")];
@@ -700,6 +715,8 @@ pub struct SettingsUi {
     pub sounds: Vec<Se>,
     /// Changed since the app last took it.
     pub dirty: bool,
+    /// A mod was installed or updated since the app last took it (its settings pages are rebuilt).
+    pub installed: bool,
     /// The pointer is over a control (the hit cursor).
     pub hover: bool,
     /// The Mods page's archives and moves, opened the first time the page shows.
@@ -745,6 +762,7 @@ impl SettingsUi {
             edit: false,
             sounds: Vec::new(),
             dirty: false,
+            installed: false,
             hover: false,
             mods_ui: None,
             m_mods: (0, 0),
@@ -773,6 +791,8 @@ impl SettingsUi {
         self.tab_rows.clear();
         self.mod_pages.clear();
         for mut p in pages {
+            // Text, colour and key settings are the Mods window's: these pages have only choices.
+            p.rows.retain(|r| r.edit == Edit::Choice);
             let (tabbed, own): (Vec<ModRow>, Vec<ModRow>) =
                 p.rows.into_iter().partition(|r| EXTRA_TABS.contains(&r.tab.as_str()));
             self.tab_rows.extend(tabbed.into_iter().map(|r| (p.id.clone(), r)));
@@ -1140,6 +1160,7 @@ impl SettingsUi {
     /// A key; returns true when the page closes (Escape). Left / Right move between a row's buttons; on the page name
     /// (a stop of ours above the rows) or a slider row, or with Ctrl / Alt (the lists' page modifier), they turn the
     /// page.
+    #[cfg(test)]
     pub fn key(&mut self, key: egui::Key) -> bool {
         self.key_mod(key, false)
     }
@@ -1402,13 +1423,13 @@ impl SettingsUi {
         }
     }
 
-    /// The help bar's text for the cursor's row, with when a change shows.
     /// Ours, not retail: the Background row carries a warning while real character shadows are on (their full-screen
     /// receive pass runs at the Background size, so a larger one costs more).
     fn warns(&self, r: &Row) -> bool {
         matches!(r.val, Val::Size(_, _, Sizes::Background)) && self.s.actor_shadows != 0
     }
 
+    /// The help bar's text for the cursor's row, with when a change shows.
     pub fn help(&self) -> String {
         if self.on_mods() {
             return if self.s.modern_ui { self.modern_mods_help() } else { self.mods_help() };
@@ -1496,16 +1517,6 @@ impl SettingsUi {
         }
     }
 
-    /// The Mods page (Settings) or the Lua mods' pages (Extras, after our three) turned to.
-    pub fn goto_mods(&mut self) {
-        self.goto(self.mods_tab(), 0);
-    }
-
-    /// The first mods tab: Mods (Settings), or the first Lua mod's page (Extras after its own).
-    pub fn mods_tab(&self) -> usize {
-        if self.kind == Kind::Extras { EXTRA_TABS.len() } else { PACKS }
-    }
-
     /// Every label of ours, for the Settings window's test that each row has a place.
     #[cfg(test)]
     pub fn all_labels(in_game: bool, modern: bool) -> Vec<&'static str> {
@@ -1526,15 +1537,13 @@ pub enum VCtl {
     Slider { n: usize, at: usize, shown: String },
 }
 
-/// The page as the modern layer draws it; the cursor's row (0 the page name) and column, a slider being edited.
+/// The page as the modern layer draws it; the cursor's row (0 the page name) and column.
 pub struct View {
-    pub title: &'static str,
     pub tabs: Vec<String>,
     pub tab: usize,
     pub rows: Vec<VRow>,
     pub row: usize,
     pub col: usize,
-    pub edit: bool,
     pub help: String,
 }
 
@@ -1581,16 +1590,7 @@ impl SettingsUi {
         } else {
             self.rows().iter().map(|r| self.vrow(r)).collect()
         };
-        View {
-            title: self.title(),
-            tabs: self.tabs(),
-            tab: self.tab,
-            rows,
-            row: self.row,
-            col: self.col,
-            edit: self.edit,
-            help: plain(&self.help()),
-        }
+        View { tabs: self.tabs(), tab: self.tab, rows, row: self.row, col: self.col, help: plain(&self.help()) }
     }
 
     /// The modern layer's mouse: page `t`.
@@ -1706,6 +1706,7 @@ impl SettingsUi {
             }
             self.lua_names = now;
             self.lua_info = crate::modpack::lua_info();
+            self.installed = true;
         }
     }
 
@@ -2091,6 +2092,7 @@ mod tests {
             tab: tab.into(),
             place,
             place_modern: None,
+            edit: Edit::Choice,
         };
         ui.set_mod_pages(vec![ModPage {
             id: "m".into(),

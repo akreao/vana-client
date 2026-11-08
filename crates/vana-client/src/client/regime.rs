@@ -179,14 +179,13 @@ pub fn draw_panel(gu: &mut GameUi, r: &View, p: &Place, slide: f32, sw: f32) -> 
 }
 
 /// Each frame from the HUD after the Timers' prepare: hidden in events, under the map, and with nothing to show.
-pub fn prepare(gu: &GameUi, w: &mut World, base: Place) {
+pub fn prepare(_gu: &GameUi, w: &mut World, base: Place) {
     let now = Instant::now();
     let dt = w.regime.last.map_or(0.0, |l| now.duration_since(l).as_secs_f32());
     w.regime.last = Some(now);
     let step = dt * 60.0 / SLIDE_TICKS;
     w.regime.slide = if w.regime.out { (w.regime.slide + step).min(1.0) } else { (w.regime.slide - step).max(0.0) };
     w.regime.frame = None;
-    let _ = gu;
     if super::event::active(w) || w.map.is_some() || w.cnq.is_some() {
         return;
     }

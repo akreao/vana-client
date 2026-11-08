@@ -57,10 +57,12 @@ pub enum Op {
         wait: u16,
         ticks: u16,
     },
-    Call(String),
-    Spawn(String),
+    // Their names are read through Debug (eventdump).
+    Call(#[allow(dead_code)] String),
+    Spawn(#[allow(dead_code)] String),
     /// 0x3d (or 0xaf with an expansion bit): run one random entry up to the closing 0x3e.
     Random {
+        #[allow(dead_code)] // read through Debug (eventdump)
         expansion: Option<u32>,
     },
     EndRandom,

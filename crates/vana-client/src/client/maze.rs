@@ -363,7 +363,7 @@ fn set_voucher(s: &mut Screen, v: u16, clear: bool) {
 
 fn list_to(s: &mut Screen, r: usize) {
     s.list.0 = r;
-    s.list.1 = s.list.1.min(r).max((r + 1).saturating_sub(VISIBLE));
+    crate::client::scrollbar::keep_in_view(&mut s.list.1, r, VISIBLE);
 }
 
 /// FUN_101fe930's tail: the pending cursor reset (the current voucher's row in mode 0, else the first), and the cursor

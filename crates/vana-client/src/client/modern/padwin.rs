@@ -1,5 +1,5 @@
-//! Ours: the Controller window (client/padcfg.rs), opened from the Settings window's Controller entry. Retail's Config
-//! > Gamepad starts the external FFXiPadConfig.exe instead (FUN_101bccb0); this is that tool's XInput page in the
+//! Ours: the Controller window (client/padcfg.rs), opened from the Settings window's Controller entry. Retail's
+//! Config > Gamepad starts the external FFXiPadConfig.exe instead (FUN_101bccb0); this is that tool's XInput page in the
 //! client: each function's button (Button Settings) and its button while Button Combination is held (Button
 //! Combination Settings), assigned by pressing it on the pad, with the tool's options at the right. Up / Down pick a
 //! function, Tab turns the page, Enter assigns (then press the button, or push a stick on a direction), Delete clears,

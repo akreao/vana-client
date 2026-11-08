@@ -623,7 +623,7 @@ fn main(@builtin(global_invocation_id) g: vec3<u32>) {
         });
         let (data, row, rows) = match &t.dxt {
             Some((_, b)) => (b.as_slice(), w / 4 * 8, h / 4),
-            None => (t.rgba.as_slice(), w * 4, h),
+            None => (t.rgba(), w * 4, h),
         };
         gpu.queue.write_texture(
             wgpu::TexelCopyTextureInfo {
@@ -687,7 +687,7 @@ fn main(@builtin(global_invocation_id) g: vec3<u32>) {
         let blocks = reference::encode_bc1(&opaque, w, h, false);
         let mut t = Texture::new(String::new(), 0, w, h, decode_dxt(&blocks, w, h, false));
         t.dxt = Some((false, blocks.clone()));
-        let want = reference::levels(&t.rgba, w, h, Some((false, &blocks)));
+        let want = reference::levels(t.rgba(), w, h, Some((false, &blocks)));
         let tex = texture(&gpu, &t, wgpu::TextureFormat::Bc1RgbaUnormSrgb, Kind::Bc1);
         for k in 1..want.data.len() {
             let (lw, lh) = ((w >> k).max(1), (h >> k).max(1));
