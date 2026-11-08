@@ -4360,9 +4360,14 @@ return "acxml flow ok"
             -- set_macro with a resolved library macro (as the pickers give) puts the reference.
             data.set_macro("WAR", nil, 2, 6, data.resolve("WAR", nil, 2, 5))
             assert(data.get_raw("WAR", nil, 2, 6).ref == id and data.uses("WAR", id) == 3)
+            -- A sub slot over a main macro: deleting the entry leaves it blank, not showing the main macro again.
+            data.set_macro("WAR", nil, 2, 7, { name = "under", lines = { "/ja \"Berserk\" <me>" } })
+            data.assign("WAR", "NIN", 2, 7, id)
             data.delete_entry("WAR", id)
             assert(data.resolve("WAR", "NIN", 2, 2) == nil and data.resolve("WAR", nil, 2, 5) == nil)
             assert(data.uses("WAR", id) == 0 and data.resolve("WAR", nil, 1, 1).name == "two")
+            assert(data.get_raw("WAR", "NIN", 2, 7) == false and data.resolve("WAR", "NIN", 2, 7) == nil)
+            assert(data.resolve("WAR", nil, 2, 7).name == "under")
 
             -- The builder's lines, and a system command's stand-in icon with no recast.
             assert(data.command({ kind = "equip", name = "Warp Ring", target = "ring1" }) == '/equip ring1 "Warp Ring"')
