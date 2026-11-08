@@ -2156,14 +2156,17 @@ fn help_lines(list: &[CmdInfo], cmd: &str, args: &[&str], out: &mut Vec<(String,
         out.push((format!("{cmd} <mod or command>: its commands. Mods: {names}."), INFO));
         return;
     }
-    if let Some(c) = list.iter().find(|c| c.name == want) {
+    // A mod (by id or name) first: a mod with a command of its own name (Gearshift's //gearshift) lists them all.
+    let of: Vec<&CmdInfo> =
+        list.iter().filter(|c| !c.id.is_empty() && (c.owner.to_ascii_lowercase() == want || c.id == want)).collect();
+    if of.is_empty()
+        && let Some(c) = list.iter().find(|c| c.name == want)
+    {
         let help = if c.help.is_empty() { String::new() } else { format!(": {}", c.help) };
         out.push((format!("//{} ({}){help}", c.name, c.owner), INFO));
         forms(c, out);
         return;
     }
-    let of: Vec<&CmdInfo> =
-        list.iter().filter(|c| !c.id.is_empty() && (c.owner.to_ascii_lowercase() == want || c.id == want)).collect();
     if of.is_empty() {
         let hint = nearest(list, &want).map_or(String::new(), |n| format!(" Did you mean {n}?"));
         out.push((format!("No mod command or mod {want}.{hint}"), ERROR));
@@ -2291,6 +2294,17 @@ mod tests {
         );
         assert_eq!(text(&["auction", "desk"]).len(), 3);
         assert_eq!(text(&["hotbar"]).len(), 3);
+        // A mod with a command of its own name: the mod's commands, all of them.
+        let gear = vec![
+            info("gearshift", "gearshift", "Gearshift", &[("", "Shows the file.")]),
+            info("gs", "gearshift", "Gearshift", &[("<command>", "GearSwap's.")]),
+        ];
+        let mut out = Vec::new();
+        help_lines(&gear, "//mods", &["gearshift"], &mut out);
+        assert_eq!(
+            out.into_iter().map(|l| l.0).collect::<Vec<_>>(),
+            ["Gearshift:", "  //gearshift - Shows the file.", "  //gs <command> - GearSwap's."]
+        );
         assert_eq!(nearest(&list, "ahbyu").as_deref(), Some("ahbuy"));
         assert_eq!(nearest(&list, "ahs").as_deref(), Some("ahsell"));
         assert_eq!(nearest(&list, "zzzz"), None);

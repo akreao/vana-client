@@ -715,6 +715,8 @@ pub struct SettingsUi {
     pub sounds: Vec<Se>,
     /// Changed since the app last took it.
     pub dirty: bool,
+    /// A mod was installed or updated since the app last took it (its settings pages are rebuilt).
+    pub installed: bool,
     /// The pointer is over a control (the hit cursor).
     pub hover: bool,
     /// The Mods page's archives and moves, opened the first time the page shows.
@@ -760,6 +762,7 @@ impl SettingsUi {
             edit: false,
             sounds: Vec::new(),
             dirty: false,
+            installed: false,
             hover: false,
             mods_ui: None,
             m_mods: (0, 0),
@@ -1723,6 +1726,7 @@ impl SettingsUi {
             }
             self.lua_names = now;
             self.lua_info = crate::modpack::lua_info();
+            self.installed = true;
         }
     }
 

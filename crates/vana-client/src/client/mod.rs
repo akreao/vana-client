@@ -15492,6 +15492,10 @@ impl App {
                 }
                 if let Some(mm) = world.modmgr.as_mut() {
                     mm.s.tick();
+                    // A mod installed or updated: its settings and permissions as its files now have them.
+                    if std::mem::take(&mut mm.s.installed) {
+                        mm.refresh(world.lua.settings_pages());
+                    }
                 }
                 // The Lua mods' settings changed on their Extras pages or in the Mods window.
                 let mut changes =
@@ -15524,7 +15528,7 @@ impl App {
                             s.set_mod_pages(world.lua.settings_pages());
                         }
                         if let Some(mm) = world.modmgr.as_mut() {
-                            mm.pages = world.lua.settings_pages();
+                            mm.refresh(world.lua.settings_pages());
                         }
                     }
                 }

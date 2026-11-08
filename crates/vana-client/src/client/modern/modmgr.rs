@@ -66,6 +66,8 @@ pub struct ModMgr {
     listening: Option<usize>,
     /// A colour setting whose picker is open: its row on Settings.
     picking: Option<usize>,
+    /// Each running command's owner (the mod loaded first that registered it): a form runs only from its owner.
+    owners: HashMap<String, String>,
     /// The last Run: (mod, the print number then, the line).
     ran: Option<(String, u64, String)>,
     get_row: usize,
@@ -95,6 +97,7 @@ impl ModMgr {
             editing: None,
             listening: None,
             picking: None,
+            owners: HashMap::new(),
             ran: None,
             get_row: 0,
             pickers: gm::Pickers::default(),
@@ -160,6 +163,23 @@ impl ModMgr {
 
     fn values_of(&self, id: &str, form: usize, n: usize) -> Vec<String> {
         (0..n).map(|i| self.values.get(&(id.to_string(), form, i)).cloned().unwrap_or_default()).collect()
+    }
+
+    /// The mods' settings and permission rows made again (a mod installed, updated or turned on or off); a setting
+    /// being typed, waited for or picked stops, since its row may have moved.
+    pub fn refresh(&mut self, pages: Vec<ModPage>) {
+        self.pages = pages;
+        self.stop_editing();
+    }
+
+    /// The mod whose handler `//cmd` runs when it is not `sel`'s (another mod registered it first), by name.
+    fn other_owner(&self, sel: &Sel, cmd: &str) -> Option<String> {
+        self.owners.get(cmd).filter(|id| !id.eq_ignore_ascii_case(&sel.id)).map(|id| {
+            self.s
+                .lua_info
+                .get(id)
+                .map_or_else(|| id.clone(), |i| if i.name.is_empty() { id.clone() } else { i.name.clone() })
+        })
     }
 
     /// A setting's typing, key wait and picker dropped (the value it holds stays).
@@ -374,7 +394,12 @@ fn form_stop(mm: &ModMgr) -> Option<Kind> {
         return None;
     }
     let sel = mm.picked()?;
-    kinds(&sel, mm.sub, mm.form).get(mm.at.stop).copied().filter(|k| matches!(k, Kind::Field(_) | Kind::Run))
+    // Run is one only when the form has fields to Tab back to; a form without stays on the window's tabs.
+    let fielded = sel.forms.get(mm.form).is_some_and(|f| !fields(f).is_empty());
+    kinds(&sel, mm.sub, mm.form)
+        .get(mm.at.stop)
+        .copied()
+        .filter(|k| matches!(k, Kind::Field(_)) || (*k == Kind::Run && fielded))
 }
 
 /// The field the suggestions are for: the one typed in, else the cursor's.
@@ -387,6 +412,7 @@ fn active_field(mm: &ModMgr, ks: &[Kind]) -> Option<usize> {
 
 fn stops(mm: &ModMgr, sel: &Sel, ks: &[Kind], chips: &[Vec<String>]) -> Vec<Stop> {
     let ok = sel.forms.get(mm.form).is_some_and(|f| line(f, &mm.values_of(&sel.id, mm.form, fields(f).len())).is_ok());
+    let other = sel.forms.get(mm.form).is_some_and(|f| mm.other_owner(sel, &f.cmd).is_some());
     let rows = if mm.sub == SUB_SETTINGS { &sel.rows } else { &sel.perms };
     ks.iter()
         .map(|k| match *k {
@@ -402,7 +428,7 @@ fn stops(mm: &ModMgr, sel: &Sel, ks: &[Kind], chips: &[Vec<String>]) -> Vec<Stop
             }
             Kind::Forms => Stop::List { n: sel.forms.len(), page: 8 },
             Kind::Field(i) => Stop::Buttons { n: 1 + chips.get(i).map_or(0, Vec::len), off: 0, pair: None },
-            Kind::Run => Stop::Buttons { n: 2, off: (!(ok && sel.on)) as u64, pair: None },
+            Kind::Run => Stop::Buttons { n: 2, off: (!(ok && sel.on && !other)) as u64, pair: None },
         })
         .collect()
 }
@@ -838,7 +864,7 @@ fn run(w: &mut World, to_chat: bool) {
         w.chat_input = format!("{text} ");
         (w.chat_caret, w.chat_anchor) = (None, None);
         w.typing = true;
-    } else if sel.on {
+    } else if sel.on && mm.other_owner(&sel, &f.cmd).is_none() {
         mm.ran = Some((sel.id.clone(), w.lua.print_seq(), text.clone()));
         w.lua.type_line(&text);
     } else {
@@ -1349,7 +1375,9 @@ fn form(
     let st = ks.iter().position(|k| *k == Kind::Run).unwrap_or(0);
     let here = mm.focus == Focus::Page && mm.at.stop == st;
     ui.horizontal(|ui| {
-        let run = Btn { cursor: here && mm.at.sub == 0, off: result.is_err() || !sel.on, ..Default::default() };
+        let other = mm.other_owner(sel, &f.cmd).is_some();
+        let run =
+            Btn { cursor: here && mm.at.sub == 0, off: result.is_err() || !sel.on || other, ..Default::default() };
         if kit::clicked(&kit::button(ui, m, "Run", 0.0, run), run) {
             click.push(Click::Press(st, 0));
         }
@@ -1360,6 +1388,11 @@ fn form(
     });
     if !sel.on {
         note(ui, m, "The mod is off: turn it on to run its commands.", "muted");
+    } else if let Some(f) = sel.forms.get(mm.form)
+        && let Some(owner) = mm.other_owner(sel, &f.cmd)
+    {
+        let t = format!("//{} runs {owner}'s command ({owner} was loaded first): Run is off here.", f.cmd);
+        note(ui, m, &t, "muted");
     }
     if let Some((_, _, l)) = mm.ran.as_ref().filter(|r| r.0 == sel.id) {
         ui.add_space(8.0);
@@ -1598,6 +1631,13 @@ pub fn draw(p: &mut Panels, w: &mut World) {
         p.ctx.set_sublayer(layer(c), layer("mods"));
     }
     fill_pickers(w);
+    // Who runs each command now, for Run (a name two mods register is the first loaded's).
+    if let Some(mm) = w.modmgr.as_mut()
+        && mm.tab == 0
+        && mm.sub == SUB_COMMANDS
+    {
+        mm.owners = w.lua.command_list().into_iter().filter(|c| !c.id.is_empty()).map(|c| (c.name, c.id)).collect();
+    }
     let Some(mm) = w.modmgr.as_ref() else { return };
     let sel = if mm.tab == 0 { mm.picked() } else { None };
     let replies: Vec<&str> = match (&mm.ran, &sel) {
