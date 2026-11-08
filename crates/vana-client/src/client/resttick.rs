@@ -97,11 +97,13 @@ pub struct RestTick {
     pub dirty: bool,
 }
 
-/// A rise waiting to count: when, and the amounts (HP, MP) that may still be a rest tick's.
-#[derive(Clone, Copy)]
+/// A rise waiting to count: when, its rest (start, zone), and the rises (when, by how much; HP, MP) that may still be a
+/// rest tick's (a stat may rise twice within it: an own tick, then a rest tick).
 struct Held {
     at: Instant,
-    amounts: [Option<u32>; 2],
+    start: Instant,
+    zone: u16,
+    amounts: [Vec<(Instant, u32)>; 2],
 }
 
 impl RestTick {
@@ -153,34 +155,51 @@ impl RestTick {
         }
         self.last = vitals;
         let Some(start) = self.start.filter(|_| resting) else {
+            if resting {
+                // A new rest: what the last one held counts now, before its rises go.
+                self.count_held();
+                (self.rises, self.chain) = (Vec::new(), true);
+            }
             self.start = resting.then_some(now);
-            (self.rises, self.chain, self.held) = (Vec::new(), true, None);
+            // A heal held as the rest ended still waits for its twin.
+            self.settle(now);
             return;
         };
         if tick != [None; 2] {
             match self.held.as_mut() {
                 // HP and MP come in separate packets.
                 Some(h) if secs(h.at, now) <= SAME => {
-                    for s in 0..2 {
-                        h.amounts[s] = h.amounts[s].or(tick[s]);
+                    for (held, a) in h.amounts.iter_mut().zip(tick) {
+                        held.extend(a.map(|a| (now, a)));
                     }
                 }
                 _ => {
-                    if let Some(h) = self.held.take() {
-                        self.count(start, zone, h.at);
-                    }
-                    self.held = Some(Held { at: now, amounts: tick });
+                    self.count_held();
+                    let amounts = tick.map(|a| a.map(|a| (now, a)).into_iter().collect());
+                    self.held = Some(Held { at: now, start, zone, amounts });
                 }
             }
         }
-        if let Some(h) = self.held.filter(|h| secs(h.at, now) > HOLD) {
-            self.held = None;
-            self.count(start, zone, h.at);
+        self.settle(now);
+    }
+
+    /// The held rise counts once its twin had time to show.
+    fn settle(&mut self, now: Instant) {
+        if self.held.as_ref().is_some_and(|h| secs(h.at, now) > HOLD) {
+            self.count_held();
+        }
+    }
+
+    /// The held rise counts at the first of its amounts left (an own tick's twin may have dropped an earlier one).
+    fn count_held(&mut self) {
+        if let Some(h) = self.held.take() {
+            let at = h.amounts.iter().flatten().map(|x| x.0).min().unwrap_or(h.at);
+            self.count(h.start, h.zone, at);
         }
     }
 
     /// Whether stat `s`'s rise of `a` is its own tick: the amount it rose by a look or two before (or less, filling it).
-    /// A held rise this one twins was one too, and no longer counts.
+    /// The held amount this one twins was one too, and no longer counts.
     fn own_rise(&mut self, s: usize, now: Instant, a: u32, full: bool) -> bool {
         let like = |b: u32| a == b || (full && a < b);
         let near = |at: Instant| (OWN_GAP.0..=OWN_GAP.1).contains(&secs(at, now));
@@ -191,10 +210,11 @@ impl RestTick {
         if own
             && let Some(h) = self.held.as_mut()
             && near(h.at)
-            && h.amounts[s].is_some_and(like)
+            && let Some(i) =
+                h.amounts[s].iter().position(|x| x.1 == a).or_else(|| h.amounts[s].iter().position(|x| like(x.1)))
         {
-            h.amounts[s] = None;
-            if h.amounts == [None; 2] {
+            h.amounts[s].remove(i);
+            if h.amounts.iter().all(Vec::is_empty) {
                 self.held = None;
             }
         }
@@ -463,6 +483,34 @@ mod tests {
             assert_eq!(rises.len(), want.len(), "{own_from}: {rises:?}");
             assert!(rises.iter().zip(want).all(|(a, b)| (a - b).abs() < 0.05), "{own_from}: {rises:?}");
         }
+    }
+
+    /// Feeds MP (HP full) at each `(t, mp)` from 0.0, resting until `stand` s, a frame every 1/60 s up to `until`.
+    fn feed_mp(events: &[(f32, u32)], stand: f32, until: f32) -> RestTick {
+        let base = Instant::now();
+        let mut r = RestTick { chain: true, ..Default::default() };
+        for i in 0..=(until * 60.0) as u32 {
+            let t = i as f32 / 60.0;
+            let mp = 500 + events.iter().filter(|e| e.0 <= t).map(|e| e.1).sum::<u32>();
+            r.feed(base + std::time::Duration::from_secs_f32(t), t < stand, 1, [1000, mp], [true, false]);
+        }
+        r
+    }
+
+    #[test]
+    fn a_heal_just_before_standing_counts() {
+        let r = feed_mp(&[(21.7, 12)], 23.0, 30.0);
+        assert_eq!(r.rises.len(), 1, "{:?}", r.rises);
+        assert!((r.rises[0] - 21.7).abs() < 0.05, "{:?}", r.rises);
+        assert!((r.model.first - 21.7).abs() < 0.05, "{:?}", r.model);
+    }
+
+    #[test]
+    fn a_heal_after_an_own_tick_in_its_hold_counts() {
+        // Refresh +1 from 20.5 (first seen there), the rest heal 1.2 s later, Refresh's twin a look after.
+        let r = feed_mp(&[(20.5, 1), (21.7, 12), (23.5, 1), (26.5, 1)], 40.0, 30.0);
+        assert_eq!(r.rises.len(), 1, "{:?}", r.rises);
+        assert!((r.rises[0] - 21.7).abs() < 0.05, "{:?}", r.rises);
     }
 
     #[test]

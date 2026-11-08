@@ -16265,7 +16265,12 @@ From the research notes:
   spread is the looks' doing (within a period and a half, or a fifth of their mean) are one interval, their mean, as
   LSB's; a look period is taken only from a rest's steady gaps (a quickening server's even gaps are no look grid).
   A rest's rises learn only while they follow one on another: a gap the model can't place (a tick with HP and MP
-  full, a stray rise) stops it for that rest. Rises while Regen (42) or Refresh (43) is up neither learn nor anchor.
+  full, a stray rise) stops it for that rest. A stat's own ticks (Regen, Refresh: from spells, gear, food or songs;
+  issue #111, Refresh +1 from gear shows no icon) neither learn nor anchor. They are told by their repeats, not by the
+  icons 42 / 43: LSB applies them at every 3 s look, so the same amount rises again a look or two later (2-7 s; less
+  when it fills the bar), while rest heals grow each tick. Each rise is held 4.5 s for such a twin before it counts;
+  a twin drops the amount it matches, and a rest heal on the same look (added to it) or a second rise of the stat in
+  the hold (own tick, then heal) still counts. A rise held as the rest ends keeps waiting and counts for that rest.
   The server's start this rest is bounded by its rises, each at the tick it is nearest; a rise outside every bound
   anchors alone, so the countdown recovers at the next tick. Shown from the second heal of the first rest.
 - Captions read by the letters' ink (render/ui.rs ink: the light pixels; "font    font" letters sit in fully opaque
