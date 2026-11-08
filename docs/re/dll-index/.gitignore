@@ -1,0 +1,20 @@
+# Everything generated from the DLL stays local. Never commit decompiled code, disassembly, strings or the DLL.
+work/
+*.dll
+*.DLL
+all_decomp*.c
+xrefs*.tsv
+strrefs*.tsv
+funcs_full*.tsv
+funcs.txt
+imports.txt
+notes_index.tsv
+*.log
+ghidra/
+ghidra_named/
+*.gpr
+*.rep/
+*.rzdb
+*.json
+keyfn_table.tsv
+__pycache__/
