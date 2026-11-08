@@ -476,6 +476,8 @@ pub struct Msg {
     pub logged: usize,
     /// msg+4 from a 1f code; 0 (no colour of its own, no indent) without one.
     pub mode: Option<u8>,
+    /// An s2c 0x03B line's speaker (its UniqueNo); None for the event's own messages.
+    pub actor: Option<u32>,
 }
 
 impl Msg {
@@ -957,6 +959,7 @@ impl Host for LiveHost<'_> {
                     page: 0,
                     logged: 0,
                     mode,
+                    actor: None,
                 });
             }
             Effect::Choice { question, options, cursor, .. } => {
@@ -3183,7 +3186,8 @@ pub fn message_wait(w: &World) -> Option<(bool, f32)> {
 pub fn message_page(w: &World) -> Option<(Vec<String>, u32)> {
     let m = message_ref(w)?;
     let page = m.pages.as_ref().and_then(|(_, p)| p.get(m.page).cloned()).unwrap_or_else(|| m.lines.clone());
-    Some((page, w.event.as_ref().map_or(0, |l| l.st.start.target)))
+    let actor = m.actor.unwrap_or_else(|| w.event.as_ref().map_or(0, |l| l.st.start.target));
+    Some((page, actor))
 }
 
 pub fn choice(w: &World) -> Option<&Choice> {
@@ -3226,7 +3230,15 @@ pub fn message_id(w: &World) -> Option<u32> {
 
 /// s2c 0x03B (LAB_100a1600): a line pushed into the event message queues with mode 0x96 (FUN_100ad5e0 /
 /// FUN_100ad660), outside an event as well; it pages like an event's message.
-fn push_loose(w: &mut World, id: u32, lines: Vec<String>, prompt: bool, wait: Option<u32>, mode: Option<u8>) {
+fn push_loose(
+    w: &mut World,
+    id: u32,
+    actor: u32,
+    lines: Vec<String>,
+    prompt: bool,
+    wait: Option<u32>,
+    mode: Option<u8>,
+) {
     w.loose_msgs.push_back(Msg {
         id,
         prompt: prompt && wait.is_none(),
@@ -3237,6 +3249,7 @@ fn push_loose(w: &mut World, id: u32, lines: Vec<String>, prompt: bool, wait: Op
         page: 0,
         logged: 0,
         mode,
+        actor: Some(actor),
     });
 }
 
@@ -3247,7 +3260,8 @@ fn loose_step(w: &mut World, ticks: f32) {
     }
     let Some(m) = w.loose_msgs.front_mut() else { return };
     m.open += ticks;
-    if !m.waits_key() && m.open >= m.wait.max(1.0) {
+    // The line arrives before this frame's HUD pass: it closes only once its page has been shown and logged.
+    if !m.waits_key() && m.logged > m.page && m.open >= m.wait.max(1.0) {
         w.loose_msgs.pop_front();
     }
 }
@@ -3347,6 +3361,11 @@ pub fn option_item(w: &World) -> Option<(u16, Option<[u8; 24]>, u8)> {
 }
 
 pub fn key(w: &mut World, key: egui::Key) {
+    // A 0x03B line shown during the event (no choice and no message of the event's own): Enter pages it.
+    if key == egui::Key::Enter && loose_waits(w) && w.event.as_ref().is_none_or(|l| l.st.choice.is_none()) {
+        loose_key(w);
+        return;
+    }
     let Some(mut l) = w.event.take() else { return };
     key_live(w, &mut l, key);
     w.event = Some(l);
@@ -3694,7 +3713,7 @@ pub fn zone_text(w: &mut World, t: &ZoneText) {
         {
             *first = format!("{prefix} : {first}");
         }
-        push_loose(w, id.unwrap_or(lsb), lines, e.prompt, e.wait, e.mode);
+        push_loose(w, id.unwrap_or(lsb), t.actor, lines, e.prompt, e.wait, e.mode);
         return;
     }
     // The log mode: Type below 8 by table 0x1035b944, else 0; a 1f code in the text overrides it.
