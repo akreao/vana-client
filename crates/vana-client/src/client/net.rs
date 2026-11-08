@@ -142,7 +142,7 @@ pub struct Marks {
     pub anon: bool,
     pub auto: bool,
     pub lfg_master: bool,
-    /// Flags1 u32 @0x20 bit 31 (actor +0x128 bit 9): the player has a bazaar.
+    /// Flags1 u32 @0x20 bit 31 in 0x00D, @0x2c bit 29 in 0x037 (actor +0x128 bit 9): the player has a bazaar.
     pub bazaar: bool,
     /// The name plate's icon flags (MODLOG "Name plate icons"): Flags1 b14 away, b16 PlayOnline, b17 linkshell, b18
     /// link dead; Flags2 @0x24..0x26 the linkshell colour, b28 GmIconFlag; Flags3 b23 New Adventurer, b24 mentor.
@@ -1585,7 +1585,7 @@ impl EntityUpdate {
     }
 }
 
-pub fn spawn(login: MapLogin, account: String, codec: Codec) -> NetHandle {
+pub fn spawn(login: MapLogin, account: String, codec: Codec, gm_window: bool) -> NetHandle {
     crate::net::search::begin_session();
     let (events_tx, events) = channel();
     let (commands, commands_rx) = channel();
@@ -1593,6 +1593,9 @@ pub fn spawn(login: MapLogin, account: String, codec: Codec) -> NetHandle {
     let shared = me.clone();
     let stats = Arc::new(NetStats::default());
     stats.now_ms();
+    // Set before the thread starts: on a LAN server the first zone-in can arrive before the first frame's
+    // poll_network stores it, and the GM list request (c2s 0x1F0) would then be skipped for the whole zone.
+    stats.gm_window.store(gm_window, std::sync::atomic::Ordering::Relaxed);
     let st = stats.clone();
     let hooks = Arc::new(AtomicU8::new(0));
     let hk = hooks.clone();

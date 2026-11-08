@@ -565,6 +565,15 @@ impl Gm {
         f
     }
 
+    /// Replaces a list that changes as people come and go; a changed one drops `lookup`'s kept answer, whose key holds
+    /// only the list's length (one party member swapped for another keeps it).
+    fn set_list(&mut self, pick: Pick, c: Choices) {
+        if self.lists.get(&pick) != Some(&c) {
+            self.lists.insert(pick, c);
+            self.found.borrow_mut().take();
+        }
+    }
+
     /// Builds the choices the chosen command's pickers need: fixed lists, the name tables, the party and the
     /// people and things in the zone (those two every time, as they change).
     pub fn fill_lists(
@@ -585,17 +594,13 @@ impl Gm {
         let picks: Vec<Pick> = self.selected().map(|c| c.fields.iter().map(|f| f.pick).collect()).unwrap_or_default();
         for pick in picks {
             match pick {
-                Pick::Player => {
-                    self.lists.insert(pick, people.clone());
-                }
-                Pick::Entity => {
-                    self.lists.insert(pick, around.clone());
-                }
+                Pick::Player => self.set_list(pick, people.clone()),
+                Pick::Entity => self.set_list(pick, around.clone()),
                 Pick::EntityName => {
                     let mut c: Choices = around.iter().map(|(_, n)| (n.replace(' ', "_"), n.clone())).collect();
                     c.sort();
                     c.dedup();
-                    self.lists.insert(pick, c);
+                    self.set_list(pick, c);
                 }
                 _ if self.lists.contains_key(&pick) || self.loading.iter().any(|l| l.0 == pick) => {}
                 _ => {
@@ -706,6 +711,19 @@ pub const CATALOG_REQUEST: [u8; 4] = [1, 0, 0, 0];
 
 #[cfg(test)]
 mod tests {
+    /// A party member swapped for another keeps the list's length; the picker must not keep the one who left.
+    #[test]
+    fn lookup_follows_a_same_size_swap() {
+        let mut g = super::Gm::default();
+        let list = |n: &str| vec![("1".to_string(), "Me".to_string()), ("2".to_string(), n.to_string())];
+        g.set_list(super::Pick::Player, list("Alice"));
+        assert_eq!(g.lookup(super::Pick::Player, "", 6).hits.len(), 2);
+        assert!(g.lookup(super::Pick::Player, "", 6).hits.iter().any(|h| h.1 == "Alice"));
+        g.set_list(super::Pick::Player, list("Bob"));
+        let f = g.lookup(super::Pick::Player, "", 6);
+        assert!(f.hits.iter().any(|h| h.1 == "Bob") && !f.hits.iter().any(|h| h.1 == "Alice"));
+    }
+
     use super::*;
 
     fn page(level: u8, first: u16, last: bool, entries: &[(u8, &str, &str)]) -> Vec<u8> {

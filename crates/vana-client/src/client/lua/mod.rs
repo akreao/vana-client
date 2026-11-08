@@ -328,7 +328,6 @@ pub struct Host {
     watch_deferred: Vec<String>,
     lobby_screen: Option<&'static str>,
     lobby: lobby::Shared,
-    /// A recording asked for (taken by the app), and the file being recorded, as the app sets it.
     /// A mod's recording asked for: (the mod, its file and frames a second, or None to stop its own).
     pub(in crate::client) record_req: Option<(String, Option<(std::path::PathBuf, u32)>)>,
     /// The recording running: its mod and file.
@@ -3210,6 +3209,79 @@ return "acxml flow ok"
         vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
     }
 
+    /// Pending Actions: a melee round or another spell's finish while a spell waits is not its answer, nor a message
+    /// that is not one of the spell's refusals (akreao/vana-client#243); the spell's own start, finish and
+    /// refusals are, and each kind matches its own ids.
+    #[test]
+    fn pending_actions_match_the_ask() {
+        let host = Host::default();
+        let files = BUNDLED.iter().find(|b| b.0 == "pending-actions").unwrap().2;
+        let vm = Vm::new(bundled_manifest("pending-actions").unwrap(), PathBuf::from("."), vm::Source::Bundled(files))
+            .unwrap();
+        vm.lua.set_app_data(host.info.clone());
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        let init = files.iter().find(|f| f.0 == "init.lua").unwrap().1;
+        let script = r#"
+            local H, OUT, chip = {}, {}, nil
+            local T = 100
+            os.clock = function() return T end
+            settings = { get = function() return true end }
+            events = { on = function(n, f) H[n] = f end }
+            packets = { on_out = function(id, f) OUT[id] = f end }
+            game = { player = function() return { id = 5 } end, entity = function() return nil end,
+              items = function() return { { slot = 3, id = 4112 } } end }
+            res = { spell = function() return { name = "Cure" } end, ability = function() return { name = "Provoke" } end,
+              item = function() return { name = "Potion" } end,
+              message = function() return { text = "No." } end }
+            text = { strip = function(s) return s end }
+            ui = { window = function(_, spec) chip = spec.elements[1] end, update = function(_, _, v) chip = v end,
+              open = function() end, close = function() chip = nil end }
+            load(INIT)()
+            local function ask(cat, param) OUT[0x01A]({ data = string.pack("<I4I4I2I2I4", 0, 0, 0, cat, param) }) end
+            local function item() OUT[0x037]({ data = string.pack("<I4I4I4BBI4I4", 0, 0, 0, 0, 0, 0, 0)
+              :sub(1, 0x0e) .. string.pack("<BBI4I4", 3, 0, 0, 0) }) end
+            local function state() T = T + 0.2 H.frame() return chip and chip.tone end
+            local function act(cat, param, value)
+              local targets = value and { { id = 9, results = { { value = value } } } } or {}
+              H.action({ actor = 5, category = cat, param = param, targets = targets })
+            end
+            -- A spell (Cure, 1): a melee round, another spell's finish, an interrupt and another spell's start leave
+            -- it waiting.
+            ask(3, 1)
+            act(1, 0x746b6174) act(4, 2) act(8, 0x6f737073, 1) act(8, 0x6f736163, 2)
+            assert(state() == "waiting")
+            -- Melee-side chatter of ours (71 with no spell id, experience) is no refusal; its own start answers.
+            H.battle_message(5, 9, 71, 0, 0) H.battle_message(5, 5, 8, 300, 0)
+            assert(state() == "waiting")
+            act(8, 0x6f736163, 1)
+            assert(state() == nil)
+            -- Its finish answers too; its refusal (47 with its id) refuses.
+            ask(3, 1) act(4, 1) assert(state() == nil)
+            ask(3, 1) H.battle_message(5, 9, 47, 2, 0) assert(state() == "waiting")
+            H.battle_message(5, 9, 47, 1, 0) assert(state() == "refused")
+            T = T + 10 state()
+            -- A job ability (Provoke, 0x01A param 0x23): its finish's param, not another's.
+            ask(9, 0x23) act(6, 0x24) assert(state() == "waiting")
+            act(6, 0x23) assert(state() == nil)
+            ask(9, 0x23) H.battle_message(5, 9, 88, 0x24, 0) assert(state() == "waiting")
+            H.battle_message(5, 9, 88, 0, 0) assert(state() == "refused")
+            T = T + 10 state()
+            -- A weapon skill: its start's record value; a monster skill finish answers whatever its id.
+            ask(7, 32) act(7, 0x65746163, 33) assert(state() == "waiting")
+            act(7, 0x65746163, 32) assert(state() == nil)
+            ask(7, 32) act(11, 999) assert(state() == nil)
+            ask(7, 32) H.battle_message(5, 9, 192, 0, 0) assert(state() == "refused")
+            T = T + 10 state()
+            -- An item: its category alone; 62 only with no id or its own.
+            item() act(1, 0) assert(state() == "waiting")
+            act(9, 0) assert(state() == nil)
+            item() H.battle_message(5, 9, 62, 4113, 0) assert(state() == "waiting")
+            H.battle_message(5, 9, 62, 4112, 0) assert(state() == "refused")
+        "#;
+        vm.lua.globals().set("INIT", init).unwrap();
+        vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
+    }
+
     /// Job Gauges: SCH 99 with 100 s of the stratagem recast left has 2 of 5 charges, the next in 4 s; a NIN sub sees
     /// its shadows and tools.
     #[test]
@@ -3750,6 +3822,115 @@ return "acxml flow ok"
         "#;
         vm.lua.globals().set("INIT", init).unwrap();
         vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
+    }
+
+    /// Action Panel: //actions shows its window (a HUD one: the game keeps its keys), listing the castable spells by
+    /// school and the abilities by tab with the costs the game's lists show; a row runs its macro line; the list
+    /// follows a pet called while it is open.
+    #[test]
+    fn action_panel_opens() {
+        let host = Host::default();
+        let files = BUNDLED.iter().find(|b| b.0 == "action-panel").unwrap().2;
+        let vm =
+            Vm::new(bundled_manifest("action-panel").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
+        vm.lua.set_app_data(host.info.clone());
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        let init = files.iter().find(|f| f.0 == "init.lua").unwrap().1;
+        let script = r#"
+            C, E, ran, said, tick = {}, {}, {}, {}, nil
+            on, pet = true, nil
+            settings = { get = function() return on end }
+            commands = { register = function(n, f) C[n] = f end, run = function(l) ran[#ran + 1] = l end }
+            events = { on = function(n, f) E[n] = f end }
+            chat = { add = function(t) said[#said + 1] = t end }
+            timer = { every = function(_, f) tick = f end }
+            local spells = {
+              [1] = { name = "Cure", kind = 1, levels = { [3] = 1 }, mp = 8, targets = 0x1F },
+              [100] = { name = "Protect", kind = 1, levels = { [3] = 7 }, mp = 9, targets = 1 },
+              [144] = { name = "Fire", kind = 2, levels = { [4] = 13 }, mp = 7, targets = 0x20 },
+              [145] = { name = "Fire II", kind = 2, levels = { [4] = 38 }, mp = 26, targets = 0x20 },
+              [146] = { name = nil, kind = 2, levels = { [4] = 1 }, mp = 1, targets = 0x20 },
+            }
+            local function ab(name, kind, t) t.name, t.kind = name, kind; t.tp = t.tp or 255; t.cost = t.cost or 0
+              t.targets = t.targets or 1; t.recast_id = t.recast_id or 900; t.sub = t.sub or 0; return t end
+            local abilities = {
+              [0x20] = ab("Fast Blade", 3, { targets = 0x20 }),
+              [0x210] = ab("Divine Seal", 1, { recast_id = 26 }),
+              [0x220] = ab("Curing Waltz", 11, { tp = 200, targets = 0x1F }),
+              -- Not listed: a trait, and a row that only opens a sub-list (its rolls are listed).
+              [0x230] = ab("Resist Sleep", 4, {}),
+              [0x240] = ab("Phantom Roll", 1, { recast_id = 193, sub = 8 }),
+              [0x250] = ab("Fighter's Roll", 8, { recast_id = 193 }),
+              -- Pet commands, only with a pet: a blood pact costs MP, a Ready move charges.
+              [0x400] = ab("Fight", 2, { targets = 0x20 }),
+              [0x410] = ab("Foot Kick", 0x12, { cost = 1, targets = 0x20 }),
+              [0x420] = ab("Searing Light", 6, { cost = 107, targets = 0x20 }),
+            }
+            game = {
+              player = function() return { main_job = 3, main_level = 75, sub_job = 4, sub_level = 37 } end,
+              info = function() return { pet_index = pet } end,
+              job_data = function() return {} end,
+              spells = function() return { 1, 100, 144, 145, 146 } end,
+              abilities = function() return { 0x20, 0x210, 0x220, 0x230, 0x240, 0x250, 0x400, 0x410, 0x420 } end,
+              recasts = function() return { spells = { [1] = 3.2 }, abilities = { [26] = 300 }, totals = {} } end,
+            }
+            res = { spell = function(id) return spells[id] end, ability = function(id) return abilities[id] end }
+            local on_window = ui.on
+            ui.on = function(id, f) H = f; on_window(id, f) end
+            load(INIT)()
+            C.actions()
+            assert(ui.is_open("actions"), "//actions opened no window")
+            tick()
+            -- White magic (the first school): Cure and Protect by name; a pick runs its line.
+            H("actions", { kind = "select", id = "list", index = 1 })
+            H("actions", { kind = "select", id = "list", index = 2 })
+            -- Black magic: the nameless spell (names still loading) is left out.
+            H("actions", { kind = "set", id = "school", index = 2 })
+            H("actions", { kind = "select", id = "list", index = 1 })
+            -- Weapon skills.
+            H("actions", { kind = "set", id = "tabs", index = 3 })
+            H("actions", { kind = "select", id = "list", index = 1 })
+            assert(table.concat(ran, "|") == '/ma "Cure" <st>|/ma "Protect" <me>|/ma "Fire" <st>|/ws "Fast Blade" <st>',
+              table.concat(ran, "|"))
+            C.actions()
+            assert(not ui.is_open("actions"), "a second //actions closes it")
+            on = false
+            C.actions()
+            assert(not ui.is_open("actions"), "off: //actions does nothing")
+            on = true
+            C.actions()
+            on = false
+            E.settings_changed("on", false)
+            assert(not ui.is_open("actions"), "switched off: the window closes")
+            on = true
+            C.actions()
+            H("actions", { kind = "press", id = "close", index = 1 })
+            assert(not ui.is_open("actions"), "Close closes it")
+            C.actions()
+            H("actions", { kind = "set", id = "tabs", index = 2 })
+        "#;
+        vm.lua.globals().set("INIT", init).unwrap();
+        let run = |code: &str| vm.lua.load(code).exec().unwrap_or_else(|e| panic!("{e}"));
+        let rows = || -> Vec<Vec<String>> {
+            let st = vm.st.borrow();
+            let win = st.windows.iter().find(|w| w.id == "actions").unwrap();
+            assert!(win.open && win.hud && !win.focus, "a HUD window, open, without the keys");
+            win.elems
+                .iter()
+                .find_map(|e| match e {
+                    window::Elem::List { rows, .. } => Some(rows.iter().map(|r| r.cells.clone()).collect()),
+                    _ => None,
+                })
+                .unwrap()
+        };
+        run(script);
+        // The Abilities page: the waltz's TP, Divine Seal's recast, Fighter's Roll.
+        assert_eq!(rows(), [["Curing Waltz", "200 TP", ""], ["Divine Seal", "", "5:00"], ["Fighter's Roll", "", ""]]);
+        // The Pet page: nothing without a pet; the commands once one is called.
+        run(r#"H("actions", { kind = "set", id = "tabs", index = 4 })"#);
+        assert!(rows().is_empty());
+        run("pet = 1234; tick()");
+        assert_eq!(rows(), [["Fight", "", ""], ["Foot Kick", "1 charge", ""], ["Searing Light", "107 MP", ""]]);
     }
 
     /// Gear Stats: descriptions and augments summed; conditional lines and DMG / Delay left out.
@@ -5212,6 +5393,8 @@ mod stub_tests {
             // A Windows checkout (core.autocrlf) has CRLF lines.
             text += &std::fs::read_to_string(e.path()).unwrap().replace("\r\n", "\n");
         }
+        // A Windows checkout may carry CRLF line ends.
+        let text = text.replace("\r\n", "\n");
         for f in super::docs::FUNCS {
             let full = if f.ns.is_empty() { f.name.to_string() } else { format!("{}.{}", f.ns, f.name) };
             assert!(text.contains(&format!("\n## `{full}`\n")), "docs/modding/reference has no section for {full}");

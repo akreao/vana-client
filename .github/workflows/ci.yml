@@ -1,4 +1,4 @@
-# Build, clippy and tests on Linux and Windows for every push to master and every pull request.
+# Build, clippy and tests on Linux and Windows for every push to custom and every pull request.
 # Clippy fails on its errors (deny-by-default lints) only; its warnings are reported but don't fail the run.
 # The runners have no GPU: GPU tests skip when Gpu::headless() finds no adapter. Windows always has one, WARP, its
 # software D3D12 renderer, so they run there (see the Windows WARP step).
@@ -6,7 +6,7 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [custom]
   pull_request:
 
 concurrency:

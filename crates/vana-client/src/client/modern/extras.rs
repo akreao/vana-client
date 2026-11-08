@@ -1429,7 +1429,11 @@ fn widescan_panel(p: &mut Panels, w: &mut World) {
     if w.lua.edge_panel("minimap").is_none() && !hidden(w) {
         hold_layer(p.ctx, "widescan");
     }
-    if w.lua.edge_panel("minimap").is_none() || hidden(w) {
+    // Hidden by a mode or a Lua mod as by the event / map cases: not drawn, it asks for nothing, and its filter
+    // takes no keys (they would go into a field that is not there, client/mod.rs's scan_typing keeping them from
+    // the game). While it fades out it is still drawn, and takes them.
+    if w.lua.edge_panel("minimap").is_none() || hidden(w) || p.vis("widescan") <= 0.01 || p.hidden.contains(&"widescan")
+    {
         w.scan_typing = false;
         return;
     }

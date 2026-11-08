@@ -380,6 +380,7 @@ fn tag(w: &World, tag: &str, target_cmd: bool) -> Option<String> {
         "<me>" if !target_cmd => Some(w.name.clone()),
         "<bt>" if !target_cmd => battle_target(w).and_then(|t| name_of(w, t)),
         "<pet>" if !target_cmd => pet(w).and_then(|t| name_of(w, t)),
+        "<lastst>" if !target_cmd => super::target::last_subtarget(w).and_then(|t| name_of(w, t)),
         // FUN_10076ff0 type 0x16: the zone NPC-list name of the call-for-help monster.
         "<ht>" if !target_cmd => super::target::call_for_help(w)
             .and_then(|id| w.entities.get(&id))
@@ -474,6 +475,7 @@ pub(super) fn resolve(w: &World, text: Option<&str>, fallback: bool, wide: bool,
                 .tracking()
                 .and_then(|t| w.entities.iter().find(|(_, e)| e.index == t.index).map(|(id, e)| (*id, e.index))),
             "<pet>" => pet(w),
+            "<lastst>" => super::target::last_subtarget(w),
             "<lt>" if w.modern => super::target::last_target(w),
             "<ht>" => super::target::call_for_help(w).and_then(|id| w.entities.get(&id).map(|e| (id, e.index))),
             _ => None,
@@ -644,6 +646,9 @@ pub fn run(w: &mut World, line: &str, mode: Mode) {
     if line.is_empty() {
         return;
     }
+    // Macro lines carry the same auto-translate phrase blocks as a submitted chat line.
+    let macro_line = (mode == Mode::Macro).then(|| super::fep::outgoing(w, line.to_string()));
+    let line = macro_line.as_deref().unwrap_or(line);
     // Ours (docs/lua-mods.md): //anything, /lua and the mods' own commands go to the mods.
     if line.starts_with('/') && w.lua.takes(line) {
         w.lua.type_line(line);
