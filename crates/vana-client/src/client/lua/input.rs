@@ -116,6 +116,20 @@ const KEYS: &[(&str, K, Option<E>)] = &[
     ("rwin", K::SuperRight, None),
 ];
 
+fn is_modifier(c: K) -> bool {
+    matches!(
+        c,
+        K::ShiftLeft
+            | K::ShiftRight
+            | K::ControlLeft
+            | K::ControlRight
+            | K::AltLeft
+            | K::AltRight
+            | K::SuperLeft
+            | K::SuperRight
+    )
+}
+
 /// A key's name.
 pub(super) fn name_of(code: K) -> Option<&'static str> {
     KEYS.iter().find(|k| k.1 == code).map(|k| k.0)
@@ -144,6 +158,48 @@ pub(super) fn code_of(name: &str) -> Option<K> {
 
 fn egui_of(code: K) -> Option<E> {
     KEYS.iter().find(|k| k.1 == code).and_then(|k| k.2)
+}
+
+/// A key press as a combination ("ctrl+numpad1"): named by `last`, the window's key that went down last, when it is
+/// this press's key (egui has no numpad keys), else by egui's key. None for a key with no name.
+pub(super) fn combo_of(e: &egui::Event, last: Option<K>) -> Option<String> {
+    let egui::Event::Key { key, physical_key, modifiers, .. } = e else { return None };
+    let named = |k: E| KEYS.iter().find(|x| x.2 == Some(k)).map(|x| x.0);
+    let name = last
+        .filter(|c| egui_of(*c).is_some_and(|k| k == *key || Some(k) == *physical_key))
+        .and_then(name_of)
+        .or_else(|| physical_key.and_then(named))
+        .or_else(|| named(*key))?;
+    let mut s = String::new();
+    for (on, p) in [(modifiers.ctrl, "ctrl+"), (modifiers.alt, "alt+"), (modifiers.shift, "shift+")] {
+        if on {
+            s.push_str(p);
+        }
+    }
+    Some(s + name)
+}
+
+/// A combination as players read it: "ctrl+numpad1" is "Ctrl+Num 1".
+pub(in crate::client) fn combo_label(combo: &str) -> String {
+    let mut rest = combo;
+    let mut out = String::new();
+    while let Some((m, r)) = [("ctrl+", "Ctrl+"), ("alt+", "Alt+"), ("shift+", "Shift+")]
+        .iter()
+        .find_map(|(p, l)| rest.strip_prefix(p).filter(|r| !r.is_empty()).map(|r| (*l, r)))
+    {
+        out.push_str(m);
+        rest = r;
+    }
+    let key = match rest {
+        "pageup" => "PgUp".to_string(),
+        "pagedown" => "PgDn".to_string(),
+        p if p.starts_with("numpad") && p.len() > 6 => format!("Num {}", &p[6..]),
+        p => {
+            let mut c = p.chars();
+            c.next().map_or(String::new(), |f| f.to_uppercase().collect::<String>() + c.as_str())
+        }
+    };
+    out + &key
 }
 
 /// A key with its modifiers: "ctrl+f1", "alt+shift+1", or Windower's "^f1" (^ Ctrl, ! Alt, ~ Shift, @ Win).
@@ -253,6 +309,8 @@ impl Synth {
 #[derive(Default)]
 pub(super) struct State {
     pub held: HashSet<K>,
+    /// The last key that went down (not a modifier), for naming a key element's press.
+    pub last_down: Option<K>,
     pub mods: ModifiersState,
     /// Window pixels.
     pub cursor: (f64, f64),
@@ -262,6 +320,8 @@ pub(super) struct State {
     taken_keys: HashSet<K>,
     taken_buttons: Vec<MouseButton>,
     hud_press: Option<HudPress>,
+    /// The pointer is over a window or panel (egui's, last frame): HUD elements under it take no press.
+    pub over_ui: bool,
     /// The HUD element under the pointer (one with a handler or a tip) and since when.
     pub hud_hover: Option<(String, String, std::time::Instant)>,
     /// The game controller: buttons held (bits by PAD_BUTTONS' order), those a mod took, sticks and triggers
@@ -303,6 +363,11 @@ fn button_name(b: MouseButton) -> &'static str {
         MouseButton::Forward => "forward",
         MouseButton::Other(_) => "other",
     }
+}
+
+/// Whether the pointer is over a window or panel now (egui's): HUD elements under it take no press.
+pub(in crate::client) fn set_over_ui(w: &mut World, over: bool) {
+    w.lua.input.borrow_mut().over_ui = over;
 }
 
 /// A window event before egui and the game see it: true when a mod took it (a filter with input.capture, or a bind).
@@ -390,6 +455,9 @@ fn key_edge(w: &mut World, code: K, down: bool, repeat: bool, mods: Option<Modif
         let mut s = st.borrow_mut();
         if down {
             s.held.insert(code);
+            if !repeat && !is_modifier(code) {
+                s.last_down = Some(code);
+            }
         } else {
             s.held.remove(&code);
         }
@@ -446,7 +514,10 @@ pub(super) fn hud_drag(host: &mut super::Host, x: f64, y: f64) {
 /// A left or right press at the pointer on a HUD element with a handler: the element's (true), and its release too.
 pub(super) fn hud_press(host: &mut super::Host, button: MouseButton) -> bool {
     let st = host.input.clone();
-    if !matches!(button, MouseButton::Left | MouseButton::Right) || st.borrow().hud_press.is_some() {
+    if !matches!(button, MouseButton::Left | MouseButton::Right)
+        || st.borrow().hud_press.is_some()
+        || st.borrow().over_ui
+    {
         return false;
     }
     let (x, y) = st.borrow().cursor;

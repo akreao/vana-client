@@ -148,11 +148,16 @@ pub enum Elem {
         at: usize,
     },
     /// A line the player types: Enter starts and ends it, Escape undoes it.
+    /// `filter`: typing goes into it while the window has the focus, whatever its cursor is on (a list's filter).
+    /// `key` (`type = "key"`): a key combination ("ctrl+f1"); Enter or a click listens for the next key press,
+    /// Escape stops, Backspace or Delete clears it.
     Input {
         id: String,
         label: String,
         text: String,
         max: usize,
+        filter: bool,
+        key: bool,
     },
     /// One of `items`, turned with Left / Right.
     Choice {
@@ -222,12 +227,14 @@ pub enum Cmd {
         width: f32,
         colour: [u8; 4],
     },
-    /// Filled (from `colour` at the top to `to` at the bottom when given), or outlined `line` wide.
+    /// Filled (from `colour` at the top to `to` at the bottom when given), or outlined `line` wide; corners rounded
+    /// `round` (not with `to`).
     Rect {
         r: [f32; 4],
         colour: [u8; 4],
         to: Option<[u8; 4]>,
         line: Option<f32>,
+        round: f32,
     },
     Circle {
         c: [f32; 2],
@@ -239,15 +246,28 @@ pub enum Cmd {
         pts: [[f32; 2]; 3],
         colour: [u8; 4],
     },
+    /// `size` times the UI's small text; `align` 0 left, 1 centre, 2 right of `at`; an outline round the letters.
     Text {
         at: [f32; 2],
         text: String,
         colour: [u8; 4],
+        size: f32,
+        align: u8,
+        outline: Option<[u8; 4]>,
+        bold: bool,
     },
+    /// Not drawn: the tooltip shown while the pointer rests inside `r`.
+    Tip {
+        r: [f32; 4],
+        title: String,
+        text: String,
+    },
+    /// Tinted by `tint` (its alpha fades it).
     Icon {
         at: [f32; 2],
         size: f32,
         icon: Icon,
+        tint: [u8; 4],
     },
 }
 
@@ -343,11 +363,17 @@ pub struct Window {
     /// classic UI: a press and release in place is a click, a move past 3 units starts the drag).
     pub drag: Option<(usize, f32, f32)>,
     pub press: Option<(usize, f32, f32)>,
+    /// The canvas the pointer was last over (classic UI), for its 'leave'.
+    pub hovered: Option<usize>,
     /// An edge window (drawn as the Timers and the training regime are): its header line, whether it can be made
     /// wider, and the built-in panel it stands in for (its place, fold, hiding).
     pub edge: bool,
     pub heading: String,
     pub resize: bool,
+    /// An edge window that grows and shrinks upward: its bottom stays put (`grow = "up"`).
+    pub grow_up: bool,
+    /// The edge an edge window stands on, as last told to the mod: "top", "bottom", "left", "right" or "free".
+    pub dock: Option<&'static str>,
     pub panel: Option<String>,
 }
 
@@ -384,8 +410,19 @@ pub enum Event {
         id: String,
         column: usize,
     },
-    /// A click on a canvas, in its units.
+    /// A click on a canvas, in its units: `right` for the right button.
     Click {
+        id: String,
+        x: f32,
+        y: f32,
+        right: bool,
+    },
+    /// An edge window's edge changed (or was first known).
+    Dock {
+        side: &'static str,
+    },
+    /// The pointer over a canvas (when it moved), or gone off it (`x` / `y` negative).
+    Hover {
         id: String,
         x: f32,
         y: f32,
@@ -417,8 +454,13 @@ impl Event {
             }
             Event::Toggle { id, open } => json!({"kind": "toggle", "id": id, "open": open}),
             Event::Sort { id, column } => json!({"kind": "sort", "id": id, "column": column + 1}),
-            Event::Click { id, x, y } => {
-                json!({"kind": "click", "id": id, "x": x.round() as i64, "y": y.round() as i64})
+            Event::Click { id, x, y, right } => {
+                json!({"kind": "click", "id": id, "x": x.round() as i64, "y": y.round() as i64, "button": if *right { "right" } else { "left" }})
+            }
+            Event::Dock { side } => json!({"kind": "dock", "side": side}),
+            Event::Hover { id, x, y } => {
+                let kind = if *x < 0.0 { "leave" } else { "hover" };
+                json!({"kind": kind, "id": id, "x": x.round() as i64, "y": y.round() as i64})
             }
             Event::Drag { id, phase, x, y, dx, dy } => {
                 json!({"kind": (["drag_start", "drag", "drag_end"][*phase as usize % 3]), "id": id, "x": x.round() as i64, "y": y.round() as i64, "dx": dx.round() as i64, "dy": dy.round() as i64})
@@ -494,6 +536,9 @@ impl Window {
             edge: false,
             heading: String::new(),
             resize: false,
+            grow_up: false,
+            dock: None,
+            hovered: None,
             panel: None,
         }
     }
@@ -569,16 +614,116 @@ impl Window {
         }
     }
 
-    /// Whether a line is being typed (the window then takes the text and keys).
+    /// Whether a line is being typed or a key listened for (the window then takes the text and keys).
     pub fn typing(&self) -> bool {
         self.edit && matches!(self.elems.get(self.at), Some(Elem::Input { .. }))
     }
 
-    /// Ends an edit as Enter would (a typed line is kept and reported).
+    /// Whether a key element waits for its key.
+    pub fn listening(&self) -> bool {
+        self.edit && matches!(self.elems.get(self.at), Some(Elem::Input { key: true, .. }))
+    }
+
+    /// The listening key element takes the first key press: Escape stops, Backspace / Delete clear, any other key
+    /// (named by `name`, with its modifiers) becomes the combination.
+    pub fn listen(
+        &mut self,
+        events: &[egui::Event],
+        name: impl Fn(&egui::Event) -> Option<String>,
+    ) -> (Vec<Event>, Vec<Se>) {
+        let (mut ev, mut se) = (Vec::new(), Vec::new());
+        if !self.listening() {
+            return (ev, se);
+        }
+        for e in events {
+            let egui::Event::Key { key, pressed: true, .. } = e else { continue };
+            let combo = match key {
+                egui::Key::Escape => None,
+                egui::Key::Backspace | egui::Key::Delete => Some(String::new()),
+                _ => match name(e) {
+                    Some(c) => Some(c),
+                    None => continue,
+                },
+            };
+            (self.edit, self.undo) = (false, None);
+            match combo {
+                Some(c) => {
+                    if let Some(Elem::Input { id, text, .. }) = self.elems.get_mut(self.at) {
+                        *text = c;
+                        ev.push(Event::Text { id: id.clone(), text: text.clone(), done: true });
+                    }
+                    se.push(Se::Select);
+                }
+                None => se.push(Se::Cancel),
+            }
+            break;
+        }
+        (ev, se)
+    }
+
+    /// Its type-to-filter input (`filter = true`), if it has one.
+    pub fn filter_input(&self) -> Option<usize> {
+        self.elems.iter().position(|e| matches!(e, Elem::Input { filter: true, .. }))
+    }
+
+    /// Whether it takes the typing from the game: a line being typed, or (focused) a type-to-filter input.
+    pub fn takes_text(&self) -> bool {
+        self.typing() || (self.focus && self.filter_input().is_some())
+    }
+
+    /// In a window with a type-to-filter input, the input typing goes into: the line under the cursor, else the filter.
+    pub fn type_into(&self) -> Option<usize> {
+        let f = self.filter_input()?;
+        Some(if matches!(self.elems.get(self.at), Some(Elem::Input { key: false, .. })) { self.at } else { f })
+    }
+
+    /// Focused with a type-to-filter input and no line being typed: text and Backspace go into the line under the
+    /// cursor (else the filter), the other keys move and press as ever.
+    pub fn filter_text(&mut self, events: &[egui::Event]) -> (Vec<Event>, Vec<Se>) {
+        let (mut ev, mut se) = (Vec::new(), Vec::new());
+        if self.filter_input().is_none() {
+            return (ev, se);
+        }
+        for e in events {
+            if self.typing() {
+                // Enter on the filter itself started a typed line: the rest goes there.
+                let (a, b) = self.text(std::slice::from_ref(e));
+                ev.extend(a);
+                se.extend(b);
+                continue;
+            }
+            let Some(i) = self.type_into() else { break };
+            let Some(Elem::Input { id, text, max, .. }) = self.elems.get_mut(i) else { break };
+            match e {
+                egui::Event::Text(t) | egui::Event::Paste(t) => {
+                    let before = text.chars().count();
+                    text.extend(t.chars().filter(|c| !c.is_control()).take(max.saturating_sub(before)));
+                    if text.chars().count() != before {
+                        ev.push(Event::Text { id: id.clone(), text: text.clone(), done: false });
+                    }
+                }
+                egui::Event::Key { key: egui::Key::Backspace, pressed: true, .. } => {
+                    if text.pop().is_some() {
+                        ev.push(Event::Text { id: id.clone(), text: text.clone(), done: false });
+                    }
+                }
+                egui::Event::Key { key, pressed: true, modifiers, .. } => {
+                    let (a, b) = self.key_mod(*key, modifiers.shift);
+                    ev.extend(a);
+                    se.extend(b);
+                }
+                _ => {}
+            }
+        }
+        (ev, se)
+    }
+
+    /// Ends an edit as Enter would (a typed line is kept and reported; a key element still listening is left as it was).
     pub fn end_edit(&mut self) -> Vec<Event> {
         let mut ev = Vec::new();
+        // A key element stopped before a key press is unchanged, as Escape leaves it (no 'change').
         if self.edit
-            && let Some(Elem::Input { id, text, .. }) = self.elems.get(self.at)
+            && let Some(Elem::Input { id, text, key: false, .. }) = self.elems.get(self.at)
         {
             ev.push(Event::Text { id: id.clone(), text: text.clone(), done: true });
         }
@@ -608,6 +753,14 @@ impl Window {
             }
         }
         Vec::new()
+    }
+
+    /// A key with Shift's state: Tab moves as Down, Shift+Tab as Up.
+    pub fn key_mod(&mut self, key: egui::Key, shift: bool) -> (Vec<Event>, Vec<Se>) {
+        match key {
+            egui::Key::Tab if !self.edit => self.key(if shift { egui::Key::ArrowUp } else { egui::Key::ArrowDown }),
+            _ => self.key(key),
+        }
     }
 
     /// A key while the window has the focus: the events for the mod and the sounds.
@@ -765,7 +918,7 @@ impl Window {
     pub fn text(&mut self, events: &[egui::Event]) -> (Vec<Event>, Vec<Se>) {
         use egui::Key as K;
         let (mut ev, mut se) = (Vec::new(), Vec::new());
-        if !self.typing() {
+        if !self.typing() || self.listening() {
             return (ev, se);
         }
         let Some(Elem::Input { id, text, max, .. }) = self.elems.get_mut(self.at) else { return (ev, se) };
@@ -923,12 +1076,31 @@ impl Window {
     }
 
     /// A canvas clicked at (x, y) in its units.
-    pub fn canvas_click(&mut self, i: usize, x: f32, y: f32) -> (Vec<Event>, Vec<Se>) {
+    pub fn canvas_click(&mut self, i: usize, x: f32, y: f32, right: bool) -> (Vec<Event>, Vec<Se>) {
         let mut ev = self.end_edit();
         if let Some(Elem::Canvas { id, .. }) = self.elems.get(i) {
-            ev.push(Event::Click { id: id.clone(), x, y });
+            ev.push(Event::Click { id: id.clone(), x, y, right });
         }
         (ev, Vec::new())
+    }
+
+    /// The pointer gone off the canvas it was over (classic UI): its 'leave'.
+    pub fn hover_off(&mut self) -> Vec<Event> {
+        self.hovered.take().map_or_else(Vec::new, |i| self.canvas_hover(i, -1.0, -1.0).0)
+    }
+
+    /// An edge window now stands on `side` (the `dock` event).
+    pub fn docked(&mut self, side: &'static str) -> (Vec<Event>, Vec<Se>) {
+        self.dock = Some(side);
+        (vec![Event::Dock { side }], Vec::new())
+    }
+
+    /// The pointer over a canvas at (x, y) in its units, or off it (negative).
+    pub fn canvas_hover(&mut self, i: usize, x: f32, y: f32) -> (Vec<Event>, Vec<Se>) {
+        match self.elems.get(i) {
+            Some(Elem::Canvas { id, .. }) => (vec![Event::Hover { id: id.clone(), x, y }], Vec::new()),
+            _ => (Vec::new(), Vec::new()),
+        }
     }
 
     /// A canvas drag at (x, y) in its units: 0 starts it, 1 moves (reported when it moved), 2 ends it.
@@ -1036,6 +1208,7 @@ impl Window {
         p: (f32, f32),
         moved: bool,
         clicked: bool,
+        right: bool,
         held: (bool, bool, bool),
     ) -> (bool, Vec<Event>, Vec<Se>) {
         let inside = |r: &[f32; 4]| p.0 >= r[0] && p.1 >= r[1] && p.0 < r[0] + r[2] && p.1 < r[1] + r[3];
@@ -1072,7 +1245,7 @@ impl Window {
             }
         }
         let Some((i, k, r)) = self.classic_controls(gu, x, y).into_iter().find(|c| inside(&c.2)) else {
-            return (false, Vec::new(), Vec::new());
+            return (false, self.hover_off(), Vec::new());
         };
         let mut se = Vec::new();
         #[derive(PartialEq)]
@@ -1097,12 +1270,21 @@ impl Window {
         let (list, buttons) = (e == K::List, e == K::Buttons);
         if e == K::Canvas {
             let (cx, cy) = (p.0 - r[0], p.1 - r[1]);
-            let ev = if clicked { self.canvas_click(i, cx, cy).0 } else { Vec::new() };
+            let mut ev = if self.hovered.is_some_and(|h| h != i) { self.hover_off() } else { Vec::new() };
+            if moved || self.hovered.is_none() {
+                self.hovered = Some(i);
+                ev.extend(self.canvas_hover(i, cx, cy).0);
+            }
+            if clicked || right {
+                ev.extend(self.canvas_click(i, cx, cy, !clicked).0);
+            }
             if pressed {
                 self.press = Some((i, cx, cy));
             }
             return (false, ev, Vec::new());
         }
+        // Off a canvas onto another control: the canvas's 'leave'.
+        let mut ev = self.hover_off();
         if (moved || clicked) && !self.edit && (self.at != i || (buttons && self.col != k)) {
             (self.at, self.col) = (i, if buttons { k } else { 0 });
             se.push(Se::Cursor);
@@ -1115,9 +1297,9 @@ impl Window {
             *at = k;
         }
         if !clicked {
-            return (true, Vec::new(), se);
+            return (true, ev, se);
         }
-        let (ev, more) = match e {
+        let (more_ev, more) = match e {
             K::Slider(n) => {
                 let stop = (((p.0 - r[0]) / r[2]).clamp(0.0, 1.0) * (n - 1) as f32).round() as usize;
                 self.slide(i, stop)
@@ -1132,6 +1314,7 @@ impl Window {
             }
             _ => self.click_button(i, k),
         };
+        ev.extend(more_ev);
         se.extend(more);
         (true, ev, se)
     }
@@ -1247,7 +1430,7 @@ impl Window {
                         let ink = row.colour.map_or(N, tint);
                         let mut ix = 0.0;
                         if let Some(i) = row.icon {
-                            icon(gu, world, i, x + 32.0, ry + 1.0, 16.0);
+                            icon(gu, world, i, x + 32.0, ry + 1.0, 16.0, [255; 4]);
                             ix = 18.0;
                         }
                         if cols.is_empty() {
@@ -1301,6 +1484,23 @@ impl Window {
                     gu.text(name, x + (w - nw) / 2.0, ey, 0, [0x80; 4]);
                     if here {
                         hand = Some((x + (w - nw) / 2.0 - 4.0, ey));
+                    }
+                }
+                Elem::Input { label, text, key: true, .. } => {
+                    bullet(gu, ey);
+                    gu.label(label, x + 32.0, ey, N, false);
+                    let (bx, by, bw) = (x + 32.0, ey + 14.0, w - 64.0);
+                    super::super::settings::button(gu, [bx, by, bw, 16.0], N);
+                    let shown = if here && self.edit {
+                        "Press a key...".to_string()
+                    } else if text.is_empty() {
+                        "No key".to_string()
+                    } else {
+                        super::input::combo_label(text)
+                    };
+                    gu.text_fit(&shown, bx + 5.0, by + 1.0, bw - 10.0, N);
+                    if here {
+                        hand = Some((bx, by));
                     }
                 }
                 Elem::Input { label, text, .. } => {
@@ -1433,7 +1633,7 @@ fn draw_canvas(gu: &mut GameUi, world: Option<&super::World>, cmds: &[Cmd], x: f
     for c in cmds {
         match c {
             Cmd::Line { a, b, width, colour } => line(gu, at(*a), at(*b), *width, f4(*colour)),
-            Cmd::Rect { r, colour, to, line: None } => {
+            Cmd::Rect { r, colour, to, line: None, .. } => {
                 let (top, bottom) = (f4(*colour), f4(to.unwrap_or(*colour)));
                 let [rx, ry] = at([r[0], r[1]]);
                 gu.quad(
@@ -1466,13 +1666,20 @@ fn draw_canvas(gu: &mut GameUi, world: Option<&super::World>, cmds: &[Cmd], x: f
                 let p = pts.map(at);
                 gu.quad([p[0], p[1], p[2], p[2]], [f4(*colour); 4]);
             }
-            Cmd::Text { at: p, text, colour } => {
-                let [tx, ty] = at(*p);
+            // The classic UI's game font: one size, left at `at` (centred / right by its width).
+            Cmd::Text { at: p, text, colour, align, .. } => {
+                let [mut tx, ty] = at(*p);
+                match align {
+                    1 => tx -= gu.label_width(text) / 2.0,
+                    2 => tx -= gu.label_width(text),
+                    _ => {}
+                }
                 gu.text_fit(text, tx, ty, x + w - tx + 16.0, tint(*colour));
             }
-            Cmd::Icon { at: p, size, icon: i } => {
+            Cmd::Tip { .. } => {}
+            Cmd::Icon { at: p, size, icon: i, tint: t } => {
                 let [ix, iy] = at(*p);
-                icon(gu, world, *i, ix, iy, *size);
+                icon(gu, world, *i, ix, iy, *size, *t);
             }
         }
     }
@@ -1492,20 +1699,22 @@ fn button_w(gu: &GameUi, items: &[String]) -> f32 {
 }
 
 /// An icon at (x, y), `s` square.
-pub(super) fn icon(gu: &mut GameUi, w: Option<&super::World>, i: Icon, x: f32, y: f32, s: f32) {
+/// `colour` multiplies its colours (white: as drawn; its alpha fades it).
+pub(super) fn icon(gu: &mut GameUi, w: Option<&super::World>, i: Icon, x: f32, y: f32, s: f32, colour: [u8; 4]) {
+    let mul = colour.map(|c| f32::from(c) / 255.0);
     match i {
         Icon::Item(id) => {
             if let Some(cache) = w.and_then(|w| w.item_info.as_deref()) {
                 super::super::items::upload_icons(gu, cache, std::iter::once(id));
                 let name = crate::render::invwin::icon_texture(id);
                 if gu.has_image(&name) {
-                    gu.image_rect(&name, x, y, s, s, [1.0; 4]);
+                    gu.image_rect(&name, x, y, s, s, mul);
                 }
             }
         }
         Icon::Status(id) => {
             if let Some(name) = gu.status_icon(false, id) {
-                gu.image_rect(&name, x, y, s, s, [1.0; 4]);
+                gu.image_rect(&name, x, y, s, s, mul);
             }
         }
         Icon::Spell(_) | Icon::Ability(_) => {
@@ -1514,14 +1723,14 @@ pub(super) fn icon(gu: &mut GameUi, w: Option<&super::World>, i: Icon, x: f32, y
             if w.modern
                 && i.picture(w)
                     .and_then(super::super::modern::action_art)
-                    .is_some_and(|art| pack_icon(gu, art, x, y, s))
+                    .is_some_and(|art| pack_icon(gu, art, x, y, s, mul))
             {
                 return;
             }
             if let Some((lib, k)) = i.sprite(w) {
                 let (sw, sh) = (gu.sprite_width(lib, k), gu.sprite_height(lib, k));
                 if sw > 0.0 && sh > 0.0 {
-                    gu.sprite_scaled(lib, k, x, y, s / sw, s / sh, 0x8080_8080);
+                    gu.sprite_scaled(lib, k, x, y, s / sw, s / sh, tint(colour));
                 }
             }
         }
@@ -1529,13 +1738,13 @@ pub(super) fn icon(gu: &mut GameUi, w: Option<&super::World>, i: Icon, x: f32, y
 }
 
 /// The modern pack's sprite `id` at (x, y), `s` square, uploaded on first use; false when the pack has none.
-fn pack_icon(gu: &mut GameUi, id: &str, x: f32, y: f32, s: f32) -> bool {
+fn pack_icon(gu: &mut GameUi, id: &str, x: f32, y: f32, s: f32, mul: [f32; 4]) -> bool {
     let key = format!("modern {id}");
     if !gu.has_image(&key) {
         let Some((iw, ih, rgba)) = super::super::modern::sprite_pixels(id) else { return false };
         gu.image(&key, iw, ih, rgba);
     }
-    gu.image_rect(&key, x, y, s, s, [1.0; 4]);
+    gu.image_rect(&key, x, y, s, s, mul);
     true
 }
 
@@ -1610,7 +1819,14 @@ mod tests {
         let mut w = Window::new("w");
         w.elems = vec![
             Elem::Tabs { id: "t".into(), items: vec!["One".into(), "Two".into()], at: 0 },
-            Elem::Input { id: "name".into(), label: "Name".into(), text: "ab".into(), max: 4 },
+            Elem::Input {
+                id: "name".into(),
+                label: "Name".into(),
+                text: "ab".into(),
+                max: 4,
+                filter: false,
+                key: false,
+            },
             Elem::Section { id: "sec".into(), label: "More".into(), open: false },
             Elem::Choice { id: "c".into(), label: "C".into(), items: vec!["x".into(), "y".into()], at: 0 },
             Elem::Colour { id: "col".into(), label: "Col".into(), value: [0, 0, 0, 255], alpha: false },
@@ -1634,7 +1850,14 @@ mod tests {
         assert_eq!(w.stops(), vec![0, 2, 3, 4]);
         // An element on another page than the section is not under it.
         let mut v = w.clone();
-        v.elems.push(Elem::Input { id: "p2".into(), label: String::new(), text: String::new(), max: 4 });
+        v.elems.push(Elem::Input {
+            id: "p2".into(),
+            label: String::new(),
+            text: String::new(),
+            max: 4,
+            filter: false,
+            key: false,
+        });
         v.meta.push(Meta { page: Some(0), ..Default::default() });
         (v.at, v.elems[0]) = (0, Elem::Tabs { id: "t".into(), items: vec!["One".into(), "Two".into()], at: 0 });
         assert_eq!(v.stops(), vec![0, 1, 5]);
@@ -1664,5 +1887,108 @@ mod tests {
         assert_eq!(ev, vec![Event::Text { id: "name".into(), text: "bcd".into(), done: false }]);
         let Elem::Input { text, .. } = &w.elems[1] else { panic!() };
         assert_eq!(text, "bcd");
+    }
+
+    #[test]
+    fn filter_window_walk() {
+        let input = |id: &str, filter| Elem::Input {
+            id: id.into(),
+            label: id.into(),
+            text: String::new(),
+            max: 9,
+            filter,
+            key: false,
+        };
+        let mut w = Window::new("w");
+        w.elems = vec![
+            Elem::Text { id: String::new(), text: "Hi".into(), dim: false, colour: None },
+            input("filter", true),
+            Elem::List {
+                id: "l".into(),
+                rows: ["r1", "r2"].map(Row::text).to_vec(),
+                columns: Vec::new(),
+                at: 0,
+                top: 0,
+                height: 2,
+            },
+            Elem::Text { id: "count".into(), text: "2".into(), dim: true, colour: None },
+            input("btn", false),
+            Elem::Buttons { id: "go".into(), label: String::new(), items: vec!["A".into(), "B".into()], marked: None },
+        ];
+        (w.open, w.focus) = (true, true);
+        w.settle();
+        let mut seen = vec![w.at];
+        for _ in 0..5 {
+            w.filter_text(&[key_ev(K::ArrowDown)]);
+            seen.push(w.at);
+        }
+        assert_eq!(seen, vec![1, 2, 2, 4, 5, 1]);
+        // Tab moves as Down, Shift+Tab as Up.
+        let tab = |shift| egui::Event::Key {
+            key: K::Tab,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers { shift, ..Default::default() },
+        };
+        w.filter_text(&[tab(false), tab(false), tab(false)]);
+        assert_eq!(w.at, 4);
+        w.filter_text(&[tab(true)]);
+        assert_eq!(w.at, 2);
+        // Typing goes into the line under the cursor, else the filter.
+        w.filter_text(&[tab(false), egui::Event::Text("Ichi".into())]);
+        w.filter_text(&[tab(false), egui::Event::Text("u".into())]);
+        let text = |w: &Window, i| match &w.elems[i] {
+            Elem::Input { text, .. } => text.clone(),
+            _ => panic!(),
+        };
+        assert_eq!((text(&w, 1), text(&w, 4)), ("u".to_string(), "Ichi".to_string()));
+    }
+
+    #[test]
+    fn key_element() {
+        let mut w = Window::new("w");
+        w.elems = vec![Elem::Input {
+            id: "k".into(),
+            label: "Key".into(),
+            text: "1".into(),
+            max: 64,
+            filter: false,
+            key: true,
+        }];
+        (w.open, w.focus) = (true, true);
+        w.settle();
+        let ctrl_q = egui::Event::Key {
+            key: K::Q,
+            physical_key: Some(K::Q),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers { ctrl: true, ..Default::default() },
+        };
+        let name = |e: &egui::Event| super::super::input::combo_of(e, None);
+        // Not listening: nothing taken.
+        assert!(w.listen(&[ctrl_q.clone()], name).0.is_empty());
+        w.key(K::Enter);
+        assert!(w.listening() && w.takes_text());
+        assert_eq!(
+            w.listen(&[ctrl_q], name).0,
+            vec![Event::Text { id: "k".into(), text: "ctrl+q".into(), done: true }]
+        );
+        assert!(!w.listening());
+        // Escape stops without a change; Backspace clears.
+        w.key(K::Enter);
+        assert!(w.listen(&[key_ev(K::Escape)], name).0.is_empty());
+        w.key(K::Enter);
+        assert_eq!(
+            w.listen(&[key_ev(K::Backspace)], name).0,
+            vec![Event::Text { id: "k".into(), text: String::new(), done: true }]
+        );
+        // Stopped by a click elsewhere before a key press: no change.
+        w.key(K::Enter);
+        assert!(w.listening());
+        assert!(w.end_edit().is_empty());
+        assert!(!w.listening());
+        assert_eq!(super::super::input::combo_label("ctrl+shift+numpad+"), "Ctrl+Shift+Num +");
+        assert_eq!(super::super::input::combo_label("alt+f1"), "Alt+F1");
     }
 }
