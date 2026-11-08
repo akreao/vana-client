@@ -3634,7 +3634,11 @@ fn world_hud(
             world.party_hp_max.insert(m.id, max);
         }
     }
-    if let (Some((hp, _, _, hpp, _)), Some(st)) = (world.vitals, world.stats.as_ref()) {
+    // Ours: 0x061's exact value stands while it fits, a full bar included (a rounding server can read 100 % a little
+    // under max).
+    if let (Some((hp, _, _, hpp, _)), Some(st)) = (world.vitals, world.stats.as_ref())
+        && (world.own_hp_max.is_some() || !party::hp_max_fits(st.hp_max, hp, hpp))
+    {
         let mut max = Some(world.own_hp_max.unwrap_or(st.hp_max));
         party::track_hp_max(&mut max, hp, hpp);
         world.own_hp_max = max.filter(|&m| m != st.hp_max);
