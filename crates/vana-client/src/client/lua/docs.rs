@@ -1643,7 +1643,7 @@ pub const FUNCS: &[Func] = &[
     Func {
         ns: "res",
         name: "spell",
-        doc: "A spell's record: name, description, kind (1 white .. 8 trust), element, targets (bits), skill, mp, cast_time and recast (seconds), range, levels (by job).",
+        doc: "A spell's record: name, description, kind (1 white .. 8 trust), element, targets (bits), skill, mp, cast_time and recast (seconds), range, levels (by job), main_only (the job it is cast as main only: 20 SCH, 21 GEO), job_points (jobs whose levels value is the job points it takes at 99).",
         params: &[("id", "integer", "")],
         ret: "table?",
     },

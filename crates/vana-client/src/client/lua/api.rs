@@ -1339,6 +1339,25 @@ pub(super) fn install(
                 }
             }
             t.set("levels", levels)?;
+            // Only as the main job: SCH's (flag 8) and GEO's (flag 0x20), as the magic list keeps them.
+            t.set(
+                "main_only",
+                if s.flags & 8 != 0 {
+                    Some(20u8)
+                } else if s.flags & 0x20 != 0 {
+                    Some(21)
+                } else {
+                    None
+                },
+            )?;
+            // Jobs whose level is the job points it takes at 99 (a gift).
+            let jp = lua.create_table()?;
+            for job in 0..32u32 {
+                if s.jp_mask & (1 << job) != 0 {
+                    jp.set(job, true)?;
+                }
+            }
+            t.set("job_points", jp)?;
             Ok(Some(t))
         })?,
     )?;
