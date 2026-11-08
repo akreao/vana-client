@@ -20,8 +20,13 @@ local at = nil        -- {bar, slot, from} the menu and the pickers work on
 local all = {}        -- the picker's whole list: {label, info, icon, macro}
 local rows = {}       -- what it shows after the filter
 
--- The set a slot's new macro goes into: the sub job's when the slot shows the sub set's.
+-- The set a slot's new macro goes into: the sub job's when the slot shows the sub set's. The picker's button text,
+-- when given, labels the slot in place of the name.
 local function store(macro)
+  local label = data.trim(ui.is_open(PICK) and ui.get(PICK, "btn").text or "")
+  if label ~= "" then
+    macro = { name = macro.name, label = label, lines = macro.lines }
+  end
   local main, sub = jobs.current()
   if not (main and at) then return end
   data.set_macro(main, at.from == "sub" and sub or nil, at.bar, at.slot, macro)
@@ -154,12 +159,15 @@ local function pick(kind)
     elements = {
       { type = "text", id = "where", text = ("Bar %d, slot %d (%s)"):format(at.bar, at.slot, keys.hint(at.bar, at.slot)),
         colour = GOLD },
-      { type = "input", id = "filter", label = "Filter", text = "", max = 32, tip = "Part of a name to narrow the list." },
+      { type = "input", id = "filter", label = "Filter (type to narrow the list)", text = "", max = 32, filter = true,
+        tip = "Typing goes here: part of a name narrows the list." },
       { type = "list", id = "list", rows = {}, height = 12,
         columns = { { title = kind == "macro" and "Macro" or "Name" }, { title = kind == "macro" and "From" or "",
           width = kind == "macro" and 150 or 110, align = "right" } } },
       { type = "text", id = "count", text = "", dim = true },
-      { type = "buttons", id = "btn", items = { "Assign", "Cancel" } },
+      { type = "input", id = "btn", label = "Button text (blank: the name)", text = "", max = 14,
+        tip = "What the slot shows; Enter to type it." },
+      { type = "buttons", id = "go", items = { "Assign", "Cancel" } },
     },
   })
   ui.on(PICK, function(_, e)
@@ -168,10 +176,10 @@ local function pick(kind)
     elseif e.kind == "select" and e.id == "list" then
       local r = rows[e.index]
       if r then
-        ui.close(PICK)
         store(r.macro)
+        ui.close(PICK)
       end
-    elseif e.kind == "press" and e.id == "btn" then
+    elseif e.kind == "press" and e.id == "go" then
       if e.index == 1 then
         local r = rows[ui.get(PICK, "list").at or 1]
         if r then store(r.macro) end
