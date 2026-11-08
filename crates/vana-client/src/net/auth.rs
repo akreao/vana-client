@@ -1,13 +1,14 @@
 //! xi_connect's auth service (TCP 54231, TLS 1.3, one JSON request and reply per connection).
-//! Speaks the protocol of xiloader 2.2.x, which the server checks for; a server that names another version is asked
-//! again as that one.
+//! Speaks the protocol of xiloader 3.0.x, which the server checks for; a server that names another version is asked
+//! again as that one. From 3.0 LSB serves the lobby data and view ports over TLS too, with this port's key; before it
+//! they are plain (lobby.rs).
 
 use super::tls;
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 use std::io::{Read, Write};
 
-pub const LOADER_VERSION: [u8; 3] = [2, 2, 0];
+pub const LOADER_VERSION: [u8; 3] = [3, 0, 0];
 /// The most of a login reply taken before giving up: xi_connect's replies are a few hundred bytes of JSON.
 const MAX_REPLY: usize = 64 * 1024;
 
@@ -35,11 +36,22 @@ pub struct Request<'a> {
 
 #[derive(Debug)]
 pub enum Reply {
-    LoggedIn { account_id: u32, session_hash: [u8; 16], trust_token: Option<String> },
+    /// `lobby_key`: the login server's key when it took a 3.x loader version, whose lobby is TLS with that key; none
+    /// for an older server's plain lobby.
+    LoggedIn {
+        account_id: u32,
+        session_hash: [u8; 16],
+        trust_token: Option<String>,
+        lobby_key: Option<tls::Fingerprint>,
+    },
     AccountCreated,
     PasswordChanged,
-    TotpCreated { uri: String },
-    TotpVerified { recovery_code: Option<String> },
+    TotpCreated {
+        uri: String,
+    },
+    TotpVerified {
+        recovery_code: Option<String>,
+    },
     TotpRemoved,
 }
 
@@ -107,14 +119,16 @@ fn asked_version(msg: &str) -> Option<[u8; 3]> {
         })
 }
 
-fn exchange(host: &str, port: u16, body: &Value) -> Result<Value> {
+/// The reply, and the key of the certificate the server sent.
+fn exchange(host: &str, port: u16, body: &Value) -> Result<(Value, Option<tls::Fingerprint>)> {
     let mut stream = tls::connect(host, port).with_context(|| format!("connecting to {host}:{port}"))?;
+    let key = tls::peer_key(&stream);
     stream.write_all(body.to_string().as_bytes())?;
     stream.flush()?;
     let reply = read_reply(&mut stream)?;
     stream.conn.send_close_notify();
     let _ = stream.flush();
-    Ok(reply)
+    Ok((reply, key))
 }
 
 pub fn send(host: &str, port: u16, command: Command, req: &Request) -> Result<Reply> {
@@ -130,12 +144,14 @@ pub fn send(host: &str, port: u16, command: Command, req: &Request) -> Result<Re
         body["trust_token"] = json!(req.trust_token);
         body["trust_this_computer"] = json!(req.trust_this_computer);
     }
-    let mut reply = exchange(host, port, &body)?;
+    let mut version = LOADER_VERSION;
+    let (mut reply, mut key) = exchange(host, port, &body)?;
     // A server built for another loader names the version it checks for; the requests are the same, so ask as that.
     if let Some(v) = reply["error_message"].as_str().and_then(asked_version) {
         log::info!("login: {host} asks for loader {}.{}.x; asking again as {}.{}.{}", v[0], v[1], v[0], v[1], v[2]);
         body["version"] = json!(v);
-        reply = exchange(host, port, &body)?;
+        version = v;
+        (reply, key) = exchange(host, port, &body)?;
     }
     if let Some(msg) = reply["error_message"].as_str() {
         bail!("{msg}");
@@ -153,6 +169,7 @@ pub fn send(host: &str, port: u16, command: Command, req: &Request) -> Result<Re
                 account_id: reply["account_id"].as_u64().context("reply has no account id")? as u32,
                 session_hash: bytes.try_into().map_err(|_| anyhow::anyhow!("session hash is not 16 bytes"))?,
                 trust_token: reply["trust_token"].as_str().filter(|t| !t.is_empty()).map(str::to_string),
+                lobby_key: lobby_key(version, key)?,
             }
         }
         0x03 => Reply::AccountCreated,
@@ -162,6 +179,14 @@ pub fn send(host: &str, port: u16, command: Command, req: &Request) -> Result<Re
         0x12 => Reply::TotpRemoved,
         other => bail!("{} (code 0x{other:02X})", describe(other)),
     })
+}
+
+/// The key the lobby ports must hold: the login server's, when it took a 3.x or later version (TLS lobby).
+fn lobby_key(version: [u8; 3], key: Option<tls::Fingerprint>) -> Result<Option<tls::Fingerprint>> {
+    if version[0] < 3 {
+        return Ok(None);
+    }
+    key.map(Some).context("the login server sent no certificate key to hold the lobby to")
 }
 
 #[cfg(test)]
@@ -182,11 +207,20 @@ mod reply_tests {
     /// LSB's refusal and one server's own wording both give the version to ask as; ours alone gives none.
     #[test]
     fn asked_version_from_refusals() {
-        let lsb = "Unsupported xiloader version 2.2.0.\nThis server requires version 2.0.x.";
-        let other = "Your xiloader is too old.\nPlease update to version '2.0.x'.\nYour client reported '2.2.0'.";
-        assert_eq!((asked_version(lsb), asked_version(other)), (Some([2, 0, 0]), Some([2, 0, 0])));
+        let lsb = "Unsupported xiloader version 3.0.0.\nThis server requires version 2.2.x.";
+        let other = "Your xiloader is too old.\nPlease update to version '2.0.x'.\nYour client reported '3.0.0'.";
+        assert_eq!((asked_version(lsb), asked_version(other)), (Some([2, 2, 0]), Some([2, 0, 0])));
         assert_eq!(asked_version("needs 1.12.3 here"), Some([1, 12, 3]));
-        assert_eq!((asked_version("Your client reported '2.2.0'."), asked_version("version 10.0")), (None, None));
+        assert_eq!((asked_version("Your client reported '3.0.0'."), asked_version("version 10.0")), (None, None));
+    }
+
+    /// A 3.x server's lobby is held to its login key; a 2.x server's lobby is plain.
+    #[test]
+    fn lobby_key_follows_the_version() {
+        let k = [7u8; 32];
+        assert_eq!(lobby_key([3, 0, 0], Some(k)).unwrap(), Some(k));
+        assert_eq!(lobby_key([2, 2, 0], Some(k)).unwrap(), None);
+        assert!(lobby_key([3, 1, 0], None).is_err());
     }
 
     #[test]

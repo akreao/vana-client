@@ -1,5 +1,6 @@
-//! TLS 1.3 for xi_connect and xi_profile (ours; xiloader checks nothing). A certificate a public authority signs is
-//! checked as any is; a self-signed one (LSB's, X.509 v1) is pinned by its key the first time (known_servers.json).
+//! TLS 1.3 for xi_connect and xi_profile. A certificate a public authority signs is checked as any is; a self-signed
+//! one (LSB's, X.509 v1) is pinned by its key the first time (known_servers.json). LSB's lobby data and view ports
+//! (TLS since xiloader 3.0) must hold the login port's key instead, as xiloader 3.0 checks them.
 
 use anyhow::{Context, Result, bail};
 use rustls::client::WebPkiServerVerifier;
@@ -226,7 +227,7 @@ fn der(d: &[u8]) -> Option<(u8, &[u8], &[u8])> {
 
 /// The SubjectPublicKeyInfo (tag and length included) of an X.509 certificate of any version: Certificate ->
 /// tbsCertificate -> [0] version (v2/v3 only), serial, signature, issuer, validity, subject, subjectPublicKeyInfo.
-fn cert_spki(cert: &[u8]) -> Option<&[u8]> {
+pub(super) fn cert_spki(cert: &[u8]) -> Option<&[u8]> {
     let (0x30, c, _) = der(cert)? else { return None };
     let (0x30, mut tbs, _) = der(c)? else { return None };
     if tbs.first() == Some(&0xa0) {
@@ -322,6 +323,41 @@ pub fn connect_pinned(store: &Path, host: &str, port: u16) -> Result<TlsStream> 
     {
         record_pin(store, &key, pin.as_ref(), got)?;
     }
+    Ok(StreamOwned::new(conn, tcp))
+}
+
+/// The key (SubjectPublicKeyInfo) fingerprint of the certificate a connection was sent.
+pub fn peer_key(s: &TlsStream) -> Option<Fingerprint> {
+    s.conn.peer_certificates()?.first().and_then(|c| cert_spki(c)).map(fingerprint)
+}
+
+/// connect to a port that must hold `want`, the key the login port was trusted with (LSB's lobby data and view since
+/// xiloader 3.0, which checks them the same way): nothing is pinned for the port itself. Reads wait as long as the
+/// server takes, as on a plain lobby link.
+pub fn connect_with_key(host: &str, port: u16, want: Fingerprint) -> Result<TlsStream> {
+    let pin = Pin::Key { sha256: hex::encode(want), fixed: true };
+    let seen: Arc<Mutex<Option<Seen>>> = Default::default();
+    let mut tcp = super::tcp(host, port)?;
+    tcp.set_read_timeout(Some(std::time::Duration::from_secs(10)))?;
+    let name = ServerName::try_from(host.to_string())?;
+    let mut conn = ClientConnection::new(client_config(Some(pin), seen.clone())?, name)?;
+    while conn.is_handshaking() {
+        if let Err(e) = conn.complete_io(&mut tcp) {
+            if let Some(got) = *seen.lock().unwrap()
+                && got.key != want
+            {
+                log::warn!("tls: {host}:{port} sent key {}; the login server's is {}", show(&got.key), show(&want));
+                bail!(
+                    "port {port} sent another certificate than the login server (key {}, not {}). Someone may be \
+                     intercepting the connection.",
+                    show(&got.key).get(..23).unwrap_or_default(),
+                    show(&want).get(..23).unwrap_or_default()
+                );
+            }
+            return Err(e.into());
+        }
+    }
+    tcp.set_read_timeout(None)?;
     Ok(StreamOwned::new(conn, tcp))
 }
 
@@ -776,6 +812,19 @@ mod tests {
         trust(&store, "127.0.0.1", Some(port), Some(&show(&der("a")))).unwrap();
         assert!(attempt("b").is_err());
         attempt("a").unwrap();
+        // A lobby port held to the login server's key: that key passes (and is what peer_key reads), another is
+        // refused naming both, and neither is pinned for the port.
+        let lobby = |n: &str, want: Fingerprint| {
+            let (mut child, stdin) = serve(n);
+            let r = connect_with_key("127.0.0.1", port, want).map(|s| peer_key(&s));
+            drop(stdin);
+            let _ = child.kill();
+            let _ = child.wait();
+            r
+        };
+        assert_eq!(lobby("a", der("a")).unwrap(), Some(der("a")));
+        let e = format!("{:#}", lobby("b", der("a")).unwrap_err());
+        assert!(e.contains("another certificate than the login server") && e.contains(&show(&der("b"))[..23]), "{e}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
