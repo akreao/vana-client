@@ -18,6 +18,10 @@ python3 "$H/build_names.py"
 if [ "$1" != "--keep" ] || [ ! -d ghidra_named ]; then rm -rf ghidra_named; cp -a ghidra ghidra_named; fi
 IDX="all_decomp_full.c funcs_full.tsv xrefs.tsv strrefs.tsv"
 prev() { echo "$1" | sed 's/\.\([a-z]*\)$/.prev.\1/'; }
+restore() { for f in $IDX; do [ -f "$(prev "$f")" ] && mv -f "$(prev "$f")" "$f"; done; }
+ok=0
+trap '[ $ok -eq 1 ] || restore' EXIT                    # any failure or interrupt puts the previous complete index back
+trap 'exit 1' INT TERM HUP
 for f in $IDX; do mv -f "$f" "$(prev "$f")"; done      # move, so a failed run can't leave old files looking current
 rc=0
 "$G" "$W/ghidra_named" ffxi -process "$(basename "$DLL")" -noanalysis \
@@ -25,7 +29,6 @@ rc=0
   >"$W/exportindex_named.log" 2>&1 || rc=$?
 grep -E 'ApplyNames|ExportIndex|ERROR' "$W/exportindex_named.log" || true
 if [ $rc -ne 0 ] || ! grep -q 'ExportIndex.java> done' "$W/exportindex_named.log"; then
-  for f in $IDX; do mv -f "$(prev "$f")" "$f"; done     # put the previous complete index back
   echo "named export failed (exit $rc), previous index restored; see $W/exportindex_named.log" >&2; exit 1
 fi
 # keep the rizin/ghidra source column from the previous export; functions ApplyNames created are 'named'
@@ -36,3 +39,4 @@ rows = [l.rstrip('\n').split('\t') for l in open(D + 'funcs_full.tsv')]
 with open(D + 'funcs_full.tsv', 'w') as w:
     for r in rows: r[3] = old.get(r[0], 'named'); w.write('\t'.join(r) + '\n')
 PY
+ok=1
