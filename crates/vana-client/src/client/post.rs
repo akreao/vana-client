@@ -677,7 +677,11 @@ fn picker_tint(w: &World, s: &crate::inventory::Slot, on_account: bool) -> u32 {
     let it = w.item_info.as_ref().and_then(|c| c.item(s.id));
     let (flags, item_type) = it.map_or((0, 0), |it| (it.flags, it.item_type));
     let ext = w.inv.ext.get(&(bag, s.index));
-    let aug_ex = super::augment::marked_with(s.id, item_type, ext, w.aug_no_mark.as_deref().unwrap_or(&[]))
+    // Without the augment tables (not loaded yet) no Aug flag counts, as the item window shows no mark then.
+    let aug_ex = w
+        .aug_no_mark
+        .as_deref()
+        .and_then(|nm| super::augment::marked_with(s.id, item_type, ext, nm))
         .is_some_and(|f| f & 2 != 0);
     let grey =
         if flags & 0x10 != 0 { !on_account || (aug_ex && flags & 1 == 0) } else { flags & 0x2000 != 0 || aug_ex };
