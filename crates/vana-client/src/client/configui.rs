@@ -472,7 +472,7 @@ impl ConfigUi {
         out
     }
 
-    fn narrow_9d(v: &mut Values, out: &mut Out, sw: f32) {
+    pub fn narrow_9d(v: &mut Values, out: &mut Out, sw: f32) {
         if sw < 1024.0 {
             Self::set(v, out, 0x9d, 1);
         }
