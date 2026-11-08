@@ -27,10 +27,10 @@ pub enum Click {
     Docked(&'static str),
     /// A canvas drag: element, phase (0 start, 1 move, 2 release), where.
     CanvasDrag(usize, u8, f32, f32),
-    /// Where a canvas is on screen this frame, in window pixels: its origin, the part of it shown (min, max), then the
-    /// pixels per point. The client keeps it so a HUD drag let go over it drops there (lua::window_click; it is no
-    /// click on the window).
-    CanvasAt(usize, [f32; 2], [f32; 4], f32),
+    /// Where a canvas is on screen this frame, in window pixels: its origin, the part of it shown (min, max), the
+    /// pixels per point, and whether it is on top under the pointer. The client keeps it so a HUD drag let go over it
+    /// drops there (lua::window_click; it is no click on the window).
+    CanvasAt(usize, [f32; 2], [f32; 4], f32, bool),
     /// A `targets` row: the entity to target.
     Pick(u32),
 }
@@ -532,11 +532,17 @@ pub(super) fn body(
                 let shown = r.intersect(ui.clip_rect());
                 if shown.is_positive() {
                     let ppp = ctx.pixels_per_point();
+                    // Under the pointer, whether it is on top there: no panel or window over it (tips aside).
+                    let top = ctx.pointer_latest_pos().is_none_or(|q| {
+                        !shown.contains(q)
+                            || ctx.layer_id_at(q).is_none_or(|l| l == ui.layer_id() || l.order == egui::Order::Tooltip)
+                    });
                     clicks.push(Click::CanvasAt(
                         i,
                         [r.min.x * ppp, r.min.y * ppp],
                         [shown.min.x * ppp, shown.min.y * ppp, shown.max.x * ppp, shown.max.y * ppp],
                         ppp,
+                        top,
                     ));
                 }
                 let at = resp

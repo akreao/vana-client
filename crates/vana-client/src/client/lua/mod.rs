@@ -275,15 +275,18 @@ fn release_options(w: &mut World) {
     }
 }
 
-/// A mod window's canvas as last drawn, in window pixels: its origin, the part of it shown (min x, min y, max x,
-/// max y), the pixels per point (a canvas's own units are points) and when.
+/// A mod window's canvas (element `i`, `id`) as last drawn, in window pixels: its origin, the part of it shown (min x,
+/// min y, max x, max y), the pixels per point (a canvas's own units are points), whether it was on top under the
+/// pointer, and when.
 struct CanvasAt {
     m: String,
     win: String,
+    i: usize,
     id: String,
     origin: [f32; 2],
     shown: [f32; 4],
     ppp: f32,
+    top: bool,
     at: std::time::Instant,
 }
 
@@ -2268,6 +2271,8 @@ mod tests {
                 r#"
                 hud.rect("a", {x = 0, y = 0, w = 10, h = 10})
                 hud.on("a", function() end)
+                hud.rect("b", {x = 100, y = 0, w = 200, h = 100})
+                hud.on("b", function() end)
                 ui.window("w", {title = "W", elements = {{type = "canvas", id = "c", w = 100, h = 50}}})
                 ui.open("w")
             "#,
@@ -2275,9 +2280,13 @@ mod tests {
             .exec()
             .unwrap();
         host.vms.push(vm);
-        host.info.borrow_mut().hud_rects = vec![("t".into(), "a".into(), [0.0, 0.0, 10.0, 10.0])];
+        // "b", with a handler, is under the window's canvas.
+        host.info.borrow_mut().hud_rects = vec![
+            ("t".into(), "a".into(), [0.0, 0.0, 10.0, 10.0]),
+            ("t".into(), "b".into(), [100.0, 0.0, 200.0, 100.0]),
+        ];
         // Drawn at (100, 0) in window pixels, 2 pixels to the point: 200 by 100 pixels.
-        host.canvas_at("t", "w", 0, [100.0, 0.0], [100.0, 0.0, 300.0, 100.0], 2.0);
+        host.canvas_at("t", "w", 0, [100.0, 0.0], [100.0, 0.0, 300.0, 100.0], 2.0, true);
         let drag = |host: &mut Host, path: &[f64]| {
             host.input.borrow_mut().cursor = (5.0, 5.0);
             assert!(input::hud_press(host, Left));
@@ -2287,12 +2296,17 @@ mod tests {
             }
             let window = host.hud_events.iter().rev().find(|e| e.2["kind"] == "drag").map(|e| e.2["window"].clone());
             input::hud_release(host, Left);
-            host.hud_events.clear();
+            let hud = std::mem::take(&mut host.hud_events)
+                .into_iter()
+                .filter(|e| e.2["kind"] != "drag" && e.2["kind"] != "drag_start")
+                .map(|e| (e.1, e.2["kind"].as_str().unwrap().to_string(), e.2["over"].clone()))
+                .collect::<Vec<_>>();
             let ev = std::mem::take(&mut host.ui_events);
             assert!(ev.iter().all(|e| e.0 == "t" && e.1 == "w"));
-            (ev.into_iter().map(|e| e.2.json()).collect::<Vec<_>>(), window)
+            (ev.into_iter().map(|e| e.2.json()).collect::<Vec<_>>(), window, hud)
         };
-        let (ev, window) = drag(&mut host, &[20.0, 150.0]);
+        // The canvas is over "b": it takes the drop, and drag_end names no HUD element.
+        let (ev, window, hud) = drag(&mut host, &[20.0, 150.0]);
         assert_eq!(
             ev,
             [
@@ -2301,10 +2315,23 @@ mod tests {
             ]
         );
         assert_eq!(window, Some(serde_json::json!("w")));
+        assert_eq!(hud, [("a".to_string(), "drag_end".to_string(), serde_json::Value::Null)]);
         // Over it and off again: drag_out and no drop; the last drag names no window.
-        let (ev, window) = drag(&mut host, &[150.0, 320.0]);
+        let (ev, window, _) = drag(&mut host, &[150.0, 320.0]);
         assert_eq!(ev.iter().map(|e| e["kind"].as_str().unwrap()).collect::<Vec<_>>(), ["drag_over", "drag_out"]);
         assert_eq!(window, Some(serde_json::Value::Null));
+        // Something over the canvas under the pointer: no drop there, "b" under it takes it.
+        host.canvas_at("t", "w", 0, [100.0, 0.0], [100.0, 0.0, 300.0, 100.0], 2.0, false);
+        let (ev, _, hud) = drag(&mut host, &[20.0, 150.0]);
+        assert!(ev.is_empty());
+        assert_eq!(
+            hud,
+            [
+                ("a".to_string(), "drag_end".to_string(), serde_json::json!("b")),
+                ("b".to_string(), "drop".to_string(), serde_json::Value::Null)
+            ]
+        );
+        host.canvas_at("t", "w", 0, [100.0, 0.0], [100.0, 0.0, 300.0, 100.0], 2.0, true);
         host.vms[0].lua.load(r#"ui.close("w")"#).exec().unwrap();
         assert!(drag(&mut host, &[20.0, 150.0]).0.is_empty());
     }
@@ -2332,8 +2359,8 @@ mod tests {
             .exec()
             .unwrap();
         host.vms.push(vm);
-        host.canvas_at("t", "a", 0, [0.0, 0.0], [0.0, 0.0, 100.0, 50.0], 1.0);
-        host.canvas_at("t", "b", 0, [200.0, 0.0], [200.0, 0.0, 300.0, 50.0], 1.0);
+        host.canvas_at("t", "a", 0, [0.0, 0.0], [0.0, 0.0, 100.0, 50.0], 1.0, true);
+        host.canvas_at("t", "b", 0, [200.0, 0.0], [200.0, 0.0, 300.0, 50.0], 1.0, true);
         let drag = |phase: u8, x: f32| window::Event::Drag {
             id: "s".into(),
             phase,
@@ -5248,23 +5275,29 @@ impl Host {
         })
     }
 
-    /// A mod window's canvas drawn this frame, at its element `i` (modwin's CanvasAt): kept for drops.
-    fn canvas_at(&mut self, m: &str, win: &str, i: usize, origin: [f32; 2], shown: [f32; 4], ppp: f32) {
-        let Some(id) = self.vms.iter().find(|v| v.manifest.id == m).and_then(|v| {
-            let st = v.st.borrow();
-            let w = st.windows.iter().find(|w| w.id == win)?;
-            match w.elems.get(i) {
-                Some(window::Elem::Canvas { id, .. }) => Some(id.clone()),
-                _ => None,
-            }
-        }) else {
+    /// A mod window's canvas drawn this frame, at its element `i` (modwin's CanvasAt): kept for drops. Every frame, for
+    /// every canvas: an entry already kept is updated in place.
+    #[allow(clippy::too_many_arguments)]
+    fn canvas_at(&mut self, m: &str, win: &str, i: usize, origin: [f32; 2], shown: [f32; 4], ppp: f32, top: bool) {
+        let now = std::time::Instant::now();
+        let Some(vm) = self.vms.iter().find(|v| v.manifest.id == m) else { return };
+        let st = vm.st.borrow();
+        let Some(Some(window::Elem::Canvas { id, .. })) =
+            st.windows.iter().find(|w| w.id == win).map(|w| w.elems.get(i))
+        else {
             return;
         };
-        let now = std::time::Instant::now();
-        self.canvases.retain(|c| {
-            !(c.m == m && c.win == win && c.id == id) && now.duration_since(c.at) < std::time::Duration::from_secs(1)
-        });
-        self.canvases.push(CanvasAt { m: m.into(), win: win.into(), id, origin, shown, ppp, at: now });
+        if let Some(c) = self.canvases.iter_mut().find(|c| c.i == i && c.m == m && c.win == win) {
+            if c.id != *id {
+                c.id = id.clone();
+            }
+            (c.origin, c.shown, c.ppp, c.top, c.at) = (origin, shown, ppp, top, now);
+            return;
+        }
+        let id = id.clone();
+        drop(st);
+        self.canvases.retain(|c| now.duration_since(c.at) < std::time::Duration::from_secs(1));
+        self.canvases.push(CanvasAt { m: m.into(), win: win.into(), i, id, origin, shown, ppp, top, at: now });
     }
 
     /// Where mod `m`'s canvas `id` of window `win`, at (x, y) in its units, is on screen (window pixels).
@@ -5301,8 +5334,30 @@ impl Host {
         Some(win)
     }
 
-    /// The drop on mod `m`'s canvas under (x, y) in window pixels, drawn in the last moments in an open window (not
-    /// `skip`, the (window, canvas) the drag started on): the window and its event, at the point in the canvas.
+    /// A drag of mod `m`'s released at (x, y) in window pixels (as drag_cross): the drop on its canvas there, if any
+    /// (the window, its event); the canvas it was over before gets drag_out unless it is the one dropped on.
+    fn drag_release(
+        &mut self,
+        m: &str,
+        from: &str,
+        x: f64,
+        y: f64,
+        skip: Option<(&str, &str)>,
+    ) -> Option<(String, window::Event)> {
+        let drop = self.canvas_drop(m, x, y, from, skip);
+        if let Some((pm, pwin, pc, pfrom)) = self.drag_over.take()
+            && drop
+                .as_ref()
+                .is_none_or(|(w, e)| *w != pwin || !matches!(e, window::Event::Drop { id, .. } if *id == pc))
+        {
+            self.ui_events.push((pm, pwin, window::Event::DragOver { id: pc, x: -1.0, y: -1.0, from: pfrom }));
+        }
+        drop
+    }
+
+    /// The drop on mod `m`'s canvas under (x, y) in window pixels, drawn in the last moments in an open window, on top
+    /// there (no panel or window over it under the pointer), not `skip` (the (window, canvas) the drag started on):
+    /// the window and its event, at the point in the canvas.
     fn canvas_drop(
         &self,
         m: &str,
@@ -5315,6 +5370,7 @@ impl Host {
         let now = std::time::Instant::now();
         let c = self.canvases.iter().rev().find(|c| {
             c.m == m
+                && c.top
                 && skip.is_none_or(|(w, id)| c.win != w || c.id != id)
                 && now.duration_since(c.at) < std::time::Duration::from_millis(250)
                 && x >= c.shown[0]
@@ -5494,8 +5550,8 @@ pub(super) fn window_click(w: &mut World, mod_id: &str, win_id: &str, click: sup
         return;
     }
     let host = &mut w.lua;
-    if let super::modern::ModClick::CanvasAt(i, origin, shown, ppp) = click {
-        host.canvas_at(mod_id, win_id, i, origin, shown, ppp);
+    if let super::modern::ModClick::CanvasAt(i, origin, shown, ppp, top) = click {
+        host.canvas_at(mod_id, win_id, i, origin, shown, ppp, top);
         return;
     }
     // An open modal window takes no clicks meant for another.
@@ -5552,18 +5608,8 @@ impl Host {
             match phase {
                 1 => *over = host.drag_cross(mod_id, id, sx as f64, sy as f64, skip),
                 2 => {
-                    let prev = host.drag_over.take();
-                    match host.canvas_drop(mod_id, sx as f64, sy as f64, id, skip) {
-                        Some((w, d)) => dropped.push((mod_id.to_string(), w, d)),
-                        None => {
-                            if let Some((pm, pwin, pc, pfrom)) = prev {
-                                dropped.push((
-                                    pm,
-                                    pwin,
-                                    window::Event::DragOver { id: pc, x: -1.0, y: -1.0, from: pfrom },
-                                ));
-                            }
-                        }
+                    if let Some((w, d)) = host.drag_release(mod_id, id, sx as f64, sy as f64, skip) {
+                        dropped.push((mod_id.to_string(), w, d));
                     }
                 }
                 _ => {}
