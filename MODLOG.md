@@ -23172,3 +23172,6 @@ still gave `cor`. Both now go through actmotion::sdep_stand.
   carry `atr?` / `atl?` / `atb?` with `amr1` / `aml1` / `amb1`.
 - Ours: combat::swing_patterns takes the quarter (World::my_strafe for us, 0 for others: retail writes +0x598 only for
   the local player). Test combat::tests::moving_swing_by_quarter.
+- Ours (user, 2026-11-07): retail picks the moving swing once, so reversing mid-swing left it on the old side over the
+  new legs. Our character's playing `am?` now turns with the quarter at the same frame (actmotion::Play::rename_current,
+  the one-shot too); other actors and retail's pick at the swing's start are unchanged.
