@@ -586,7 +586,13 @@ fn edge_window_up(
     let tall = last.map_or(TAB_H, |r| r.height().max(TAB_H));
     let mut top = (screen.height() * place.y).clamp(screen.min.y, (screen.max.y - tall).max(screen.min.y));
     if grow != 0.0 && !folded && (float || matches!(side, Side::Left | Side::Right)) {
-        top = (top - grow).max(screen.min.y);
+        // Growth the screen's top stopped is owed: shrinking pays it back first, so the window does not creep down.
+        let owed_id = egui::Id::unique(("modern edge owed", key));
+        let owed = ctx.data(|d| d.get_temp::<f32>(owed_id)).unwrap_or(0.0);
+        let paid = if grow < 0.0 { owed.min(-grow) } else { 0.0 };
+        let want = top - grow - paid;
+        top = want.max(screen.min.y);
+        ctx.data_mut(|d| d.insert_temp(owed_id, owed - paid + (top - want)));
         let mut place = p.place(key);
         place.y = top / screen.height();
         p.layout.insert(key.to_string(), place);
