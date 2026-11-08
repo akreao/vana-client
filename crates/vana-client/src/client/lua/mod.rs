@@ -26,6 +26,7 @@ mod vm;
 pub(super) mod window;
 
 pub(in crate::client) use state::Placed;
+pub(in crate::client) use input::combo_label;
 
 use super::World;
 use crate::dat::battle::Who;
@@ -4925,11 +4926,18 @@ impl Host {
 /// Typed text for the focused window's line.
 pub(super) fn window_text(w: &mut World, events: &[egui::Event]) {
     let host = &mut w.lua;
+    let last = host.input.borrow().last_down;
     let mut hit = None;
     for vm in host.vms.iter().filter(|v| v.suspended.is_none()) {
         let mut st = vm.st.borrow_mut();
         if let Some(win) = st.windows.iter_mut().find(|w| w.open && w.focus && w.takes_text()) {
-            let (ev, se) = if win.typing() { win.text(events) } else { win.filter_text(events) };
+            let (ev, se) = if win.listening() {
+                win.listen(events, |e| input::combo_of(e, last))
+            } else if win.typing() {
+                win.text(events)
+            } else {
+                win.filter_text(events)
+            };
             hit = Some((vm.manifest.id.clone(), win.id.clone(), ev, se));
             break;
         }
@@ -4940,13 +4948,13 @@ pub(super) fn window_text(w: &mut World, events: &[egui::Event]) {
 }
 
 /// A key for the focused mod window, if any (its events go to the mod's handler next phase).
-pub(super) fn window_key(w: &mut World, key: egui::Key) -> bool {
+pub(super) fn window_key(w: &mut World, key: egui::Key, shift: bool) -> bool {
     let host = &mut w.lua;
     let mut hit = None;
     for vm in host.vms.iter().filter(|v| v.suspended.is_none()) {
         let mut st = vm.st.borrow_mut();
         if let Some(win) = st.windows.iter_mut().find(|w| w.open && w.focus) {
-            let (ev, se) = win.key(key);
+            let (ev, se) = win.key_mod(key, shift);
             hit = Some((vm.manifest.id.clone(), win.id.clone(), ev, se));
             break;
         }

@@ -437,6 +437,12 @@ pub(super) fn install(
                 .ok_or_else(|| mlua::Error::runtime(format!("no element {eid:?} in {id:?}")))?;
             update(&mut w.elems[k], &fields)?;
             w.meta.resize(w.elems.len(), Default::default());
+            // A key element starts listening (the cursor goes there).
+            if fields.get::<Option<bool>>("listen")? == Some(true)
+                && matches!(w.elems[k], super::window::Elem::Input { key: true, .. })
+            {
+                (w.at, w.edit) = (k, true);
+            }
             if let Some(v) = fields.get::<Option<String>>("tip")? {
                 w.meta[k].tip = v;
             }
@@ -2160,6 +2166,15 @@ fn elem_only(t: &Table) -> mlua::Result<super::window::Elem> {
             text: t.get::<Option<String>>("text")?.unwrap_or_default(),
             max: t.get::<Option<usize>>("max")?.unwrap_or(64).clamp(1, 1024),
             filter: t.get::<Option<bool>>("filter")?.unwrap_or(false),
+            key: false,
+        },
+        "key" => Elem::Input {
+            id: id()?,
+            label: t.get::<Option<String>>("label")?.unwrap_or_default(),
+            text: t.get::<Option<String>>("text")?.unwrap_or_default(),
+            max: 64,
+            filter: false,
+            key: true,
         },
         "choice" => Elem::Choice {
             id: id()?,

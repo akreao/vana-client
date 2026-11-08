@@ -47,12 +47,13 @@ Every element, of any type, may also have these fields:
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `type` | `string` | (required) | The element type: `text`, `buttons`, `slider`, `list`, `gauge`, `separator`, `tabs`, `input`, `choice`, `colour` (or `color`), `section` or `canvas`. |
+| `type` | `string` | (required) | The element type: `text`, `buttons`, `slider`, `list`, `gauge`, `separator`, `tabs`, `input`, `key`, `choice`, `colour` (or `color`), `section` or `canvas`. |
 | `tip` | `string` | `""` | Help text shown while the cursor or the pointer is on this element (see [Tips and help](#tips-and-help)). |
 | `page` | `integer` | none | The page (from 1) of the tabs above it that this element belongs to (see [Pages](#pages-tabs)). Without it, the element shows on every page. |
 
-The keyboard cursor stops on buttons, sliders, lists, tabs, inputs, choices, colours and sections. Texts, gauges,
-separators and canvases are not cursor stops (a canvas still takes the mouse).
+The keyboard cursor stops on buttons, sliders, lists, tabs, inputs, keys, choices, colours and sections. Texts, gauges,
+separators and canvases are not cursor stops (a canvas still takes the mouse). Tab moves the cursor as Down does,
+Shift+Tab as Up.
 
 ### text
 
@@ -175,7 +176,22 @@ Right, Home and End work while typing.
 | `label` | `string` | `""` | The heading above the line. |
 | `text` | `string` | `""` | The text in the line. |
 | `max` | `integer` | `64` | The most characters it takes (1 to 1024). |
-| `filter` | `boolean` | `false` | A type-to-filter line (a list's filter): while the window has the focus, typed characters and Backspace go into it (each change an `edit` event) wherever the cursor is, and none of the typing reaches the game; Up, Down, Enter, Escape and the other keys work the window as ever. One per window. |
+| `filter` | `boolean` | `false` | A type-to-filter line (a list's filter): while the window has the focus, typed characters and Backspace go into it (each change an `edit` event), or into the window's other line when the cursor is on one, and none of the typing reaches the game; Up, Down, Tab, Enter, Escape and the other keys work the window as ever. One per window. |
+
+### key
+
+A key combination the player sets, such as a hotkey. Enter (or a click on it) listens for a key: the next key press,
+with the Ctrl, Alt and Shift held, becomes its text (`"ctrl+q"`, `"alt+numpad3"`, `"f9"`; the names are those of
+[input](input.md#key-names), the form [binds](binds.md) takes) and sends a `change` event. Backspace or Delete clears
+it (`""`, a `change` event too); Escape stops listening and keeps it. While it listens, no key reaches the game or a
+bind. It shows the combination as players read it ("Ctrl+Q"), "No key" when empty. `ui.update(window, id, {listen =
+true})` moves the cursor to it and starts listening.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | `string` | (required) | The element's id. |
+| `label` | `string` | `""` | The heading above it. |
+| `text` | `string` | `""` | The combination. |
 
 ### choice
 

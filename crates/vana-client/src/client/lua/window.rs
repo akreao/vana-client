@@ -149,12 +149,15 @@ pub enum Elem {
     },
     /// A line the player types: Enter starts and ends it, Escape undoes it.
     /// `filter`: typing goes into it while the window has the focus, whatever its cursor is on (a list's filter).
+    /// `key` (`type = "key"`): a key combination ("ctrl+f1"); Enter or a click listens for the next key press,
+    /// Escape stops, Backspace or Delete clears it.
     Input {
         id: String,
         label: String,
         text: String,
         max: usize,
         filter: bool,
+        key: bool,
     },
     /// One of `items`, turned with Left / Right.
     Choice {
@@ -608,9 +611,47 @@ impl Window {
         }
     }
 
-    /// Whether a line is being typed (the window then takes the text and keys).
+    /// Whether a line is being typed or a key listened for (the window then takes the text and keys).
     pub fn typing(&self) -> bool {
         self.edit && matches!(self.elems.get(self.at), Some(Elem::Input { .. }))
+    }
+
+    /// Whether a key element waits for its key.
+    pub fn listening(&self) -> bool {
+        self.edit && matches!(self.elems.get(self.at), Some(Elem::Input { key: true, .. }))
+    }
+
+    /// The listening key element takes the first key press: Escape stops, Backspace / Delete clear, any other key
+    /// (named by `name`, with its modifiers) becomes the combination.
+    pub fn listen(&mut self, events: &[egui::Event], name: impl Fn(&egui::Event) -> Option<String>) -> (Vec<Event>, Vec<Se>) {
+        let (mut ev, mut se) = (Vec::new(), Vec::new());
+        if !self.listening() {
+            return (ev, se);
+        }
+        for e in events {
+            let egui::Event::Key { key, pressed: true, .. } = e else { continue };
+            let combo = match key {
+                egui::Key::Escape => None,
+                egui::Key::Backspace | egui::Key::Delete => Some(String::new()),
+                _ => match name(e) {
+                    Some(c) => Some(c),
+                    None => continue,
+                },
+            };
+            (self.edit, self.undo) = (false, None);
+            match combo {
+                Some(c) => {
+                    if let Some(Elem::Input { id, text, .. }) = self.elems.get_mut(self.at) {
+                        *text = c;
+                        ev.push(Event::Text { id: id.clone(), text: text.clone(), done: true });
+                    }
+                    se.push(Se::Select);
+                }
+                None => se.push(Se::Cancel),
+            }
+            break;
+        }
+        (ev, se)
     }
 
     /// Its type-to-filter input (`filter = true`), if it has one.
@@ -623,11 +664,19 @@ impl Window {
         self.typing() || (self.focus && self.filter_input().is_some())
     }
 
-    /// Focused with a type-to-filter input and no line being typed: text and Backspace go into that input, the other
-    /// keys move and press as ever.
+    /// In a window with a type-to-filter input, the input typing goes into: the line under the cursor, else the filter.
+    pub fn type_into(&self) -> Option<usize> {
+        let f = self.filter_input()?;
+        Some(if matches!(self.elems.get(self.at), Some(Elem::Input { key: false, .. })) { self.at } else { f })
+    }
+
+    /// Focused with a type-to-filter input and no line being typed: text and Backspace go into the line under the
+    /// cursor (else the filter), the other keys move and press as ever.
     pub fn filter_text(&mut self, events: &[egui::Event]) -> (Vec<Event>, Vec<Se>) {
         let (mut ev, mut se) = (Vec::new(), Vec::new());
-        let Some(i) = self.filter_input() else { return (ev, se) };
+        if self.filter_input().is_none() {
+            return (ev, se);
+        }
         for e in events {
             if self.typing() {
                 // Enter on the filter itself started a typed line: the rest goes there.
@@ -636,6 +685,7 @@ impl Window {
                 se.extend(b);
                 continue;
             }
+            let Some(i) = self.type_into() else { break };
             let Some(Elem::Input { id, text, max, .. }) = self.elems.get_mut(i) else { break };
             match e {
                 egui::Event::Text(t) | egui::Event::Paste(t) => {
@@ -650,8 +700,8 @@ impl Window {
                         ev.push(Event::Text { id: id.clone(), text: text.clone(), done: false });
                     }
                 }
-                egui::Event::Key { key, pressed: true, .. } => {
-                    let (a, b) = self.key(*key);
+                egui::Event::Key { key, pressed: true, modifiers, .. } => {
+                    let (a, b) = self.key_mod(*key, modifiers.shift);
                     ev.extend(a);
                     se.extend(b);
                 }
@@ -695,6 +745,14 @@ impl Window {
             }
         }
         Vec::new()
+    }
+
+    /// A key with Shift's state: Tab moves as Down, Shift+Tab as Up.
+    pub fn key_mod(&mut self, key: egui::Key, shift: bool) -> (Vec<Event>, Vec<Se>) {
+        match key {
+            egui::Key::Tab if !self.edit => self.key(if shift { egui::Key::ArrowUp } else { egui::Key::ArrowDown }),
+            _ => self.key(key),
+        }
     }
 
     /// A key while the window has the focus: the events for the mod and the sounds.
@@ -852,7 +910,7 @@ impl Window {
     pub fn text(&mut self, events: &[egui::Event]) -> (Vec<Event>, Vec<Se>) {
         use egui::Key as K;
         let (mut ev, mut se) = (Vec::new(), Vec::new());
-        if !self.typing() {
+        if !self.typing() || self.listening() {
             return (ev, se);
         }
         let Some(Elem::Input { id, text, max, .. }) = self.elems.get_mut(self.at) else { return (ev, se) };
@@ -1404,6 +1462,23 @@ impl Window {
                         hand = Some((x + (w - nw) / 2.0 - 4.0, ey));
                     }
                 }
+                Elem::Input { label, text, key: true, .. } => {
+                    bullet(gu, ey);
+                    gu.label(label, x + 32.0, ey, N, false);
+                    let (bx, by, bw) = (x + 32.0, ey + 14.0, w - 64.0);
+                    super::super::settings::button(gu, [bx, by, bw, 16.0], N);
+                    let shown = if here && self.edit {
+                        "Press a key...".to_string()
+                    } else if text.is_empty() {
+                        "No key".to_string()
+                    } else {
+                        super::input::combo_label(text)
+                    };
+                    gu.text_fit(&shown, bx + 5.0, by + 1.0, bw - 10.0, N);
+                    if here {
+                        hand = Some((bx, by));
+                    }
+                }
                 Elem::Input { label, text, .. } => {
                     bullet(gu, ey);
                     gu.label(label, x + 32.0, ey, N, false);
@@ -1718,7 +1793,7 @@ mod tests {
         let mut w = Window::new("w");
         w.elems = vec![
             Elem::Tabs { id: "t".into(), items: vec!["One".into(), "Two".into()], at: 0 },
-            Elem::Input { id: "name".into(), label: "Name".into(), text: "ab".into(), max: 4, filter: false },
+            Elem::Input { id: "name".into(), label: "Name".into(), text: "ab".into(), max: 4, filter: false, key: false },
             Elem::Section { id: "sec".into(), label: "More".into(), open: false },
             Elem::Choice { id: "c".into(), label: "C".into(), items: vec!["x".into(), "y".into()], at: 0 },
             Elem::Colour { id: "col".into(), label: "Col".into(), value: [0, 0, 0, 255], alpha: false },
@@ -1742,7 +1817,7 @@ mod tests {
         assert_eq!(w.stops(), vec![0, 2, 3, 4]);
         // An element on another page than the section is not under it.
         let mut v = w.clone();
-        v.elems.push(Elem::Input { id: "p2".into(), label: String::new(), text: String::new(), max: 4, filter: false });
+        v.elems.push(Elem::Input { id: "p2".into(), label: String::new(), text: String::new(), max: 4, filter: false, key: false });
         v.meta.push(Meta { page: Some(0), ..Default::default() });
         (v.at, v.elems[0]) = (0, Elem::Tabs { id: "t".into(), items: vec!["One".into(), "Two".into()], at: 0 });
         assert_eq!(v.stops(), vec![0, 1, 5]);
@@ -1772,5 +1847,90 @@ mod tests {
         assert_eq!(ev, vec![Event::Text { id: "name".into(), text: "bcd".into(), done: false }]);
         let Elem::Input { text, .. } = &w.elems[1] else { panic!() };
         assert_eq!(text, "bcd");
+    }
+
+    #[test]
+    fn filter_window_walk() {
+        let input = |id: &str, filter| Elem::Input { id: id.into(), label: id.into(), text: String::new(), max: 9, filter, key: false };
+        let mut w = Window::new("w");
+        w.elems = vec![
+            Elem::Text { id: String::new(), text: "Hi".into(), dim: false, colour: None },
+            input("filter", true),
+            Elem::List {
+                id: "l".into(),
+                rows: ["r1", "r2"].map(Row::text).to_vec(),
+                columns: Vec::new(),
+                at: 0,
+                top: 0,
+                height: 2,
+            },
+            Elem::Text { id: "count".into(), text: "2".into(), dim: true, colour: None },
+            input("btn", false),
+            Elem::Buttons { id: "go".into(), label: String::new(), items: vec!["A".into(), "B".into()], marked: None },
+        ];
+        (w.open, w.focus) = (true, true);
+        w.settle();
+        let mut seen = vec![w.at];
+        for _ in 0..5 {
+            w.filter_text(&[key_ev(K::ArrowDown)]);
+            seen.push(w.at);
+        }
+        assert_eq!(seen, vec![1, 2, 2, 4, 5, 1]);
+        // Tab moves as Down, Shift+Tab as Up.
+        let tab = |shift| egui::Event::Key {
+            key: K::Tab,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers { shift, ..Default::default() },
+        };
+        w.filter_text(&[tab(false), tab(false), tab(false)]);
+        assert_eq!(w.at, 4);
+        w.filter_text(&[tab(true)]);
+        assert_eq!(w.at, 2);
+        // Typing goes into the line under the cursor, else the filter.
+        w.filter_text(&[tab(false), egui::Event::Text("Ichi".into())]);
+        w.filter_text(&[tab(false), egui::Event::Text("u".into())]);
+        let text = |w: &Window, i| match &w.elems[i] {
+            Elem::Input { text, .. } => text.clone(),
+            _ => panic!(),
+        };
+        assert_eq!((text(&w, 1), text(&w, 4)), ("u".to_string(), "Ichi".to_string()));
+    }
+
+    #[test]
+    fn key_element() {
+        let mut w = Window::new("w");
+        w.elems = vec![Elem::Input {
+            id: "k".into(),
+            label: "Key".into(),
+            text: "1".into(),
+            max: 64,
+            filter: false,
+            key: true,
+        }];
+        (w.open, w.focus) = (true, true);
+        w.settle();
+        let ctrl_q = egui::Event::Key {
+            key: K::Q,
+            physical_key: Some(K::Q),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers { ctrl: true, ..Default::default() },
+        };
+        let name = |e: &egui::Event| super::super::input::combo_of(e, None);
+        // Not listening: nothing taken.
+        assert!(w.listen(&[ctrl_q.clone()], name).0.is_empty());
+        w.key(K::Enter);
+        assert!(w.listening() && w.takes_text());
+        assert_eq!(w.listen(&[ctrl_q], name).0, vec![Event::Text { id: "k".into(), text: "ctrl+q".into(), done: true }]);
+        assert!(!w.listening());
+        // Escape stops without a change; Backspace clears.
+        w.key(K::Enter);
+        assert!(w.listen(&[key_ev(K::Escape)], name).0.is_empty());
+        w.key(K::Enter);
+        assert_eq!(w.listen(&[key_ev(K::Backspace)], name).0, vec![Event::Text { id: "k".into(), text: String::new(), done: true }]);
+        assert_eq!(super::super::input::combo_label("ctrl+shift+numpad+"), "Ctrl+Shift+Num +");
+        assert_eq!(super::super::input::combo_label("alt+f1"), "Alt+F1");
     }
 }

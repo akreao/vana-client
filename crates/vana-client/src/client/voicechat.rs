@@ -208,6 +208,7 @@ impl VoiceChat {
                 text: c.channel.clone(),
                 max: CHANNEL_MAX,
                 filter: false,
+                key: false,
             },
             "Only players on the same channel hear each other. Leave it empty to talk with everyone.",
         ));
@@ -256,7 +257,7 @@ impl VoiceChat {
                 "Enter mutes or unmutes the player.",
             ));
         }
-        v.push((Elem::Input { id: "add".into(), label: "Add by Address".into(), text: String::new(), max: 64, filter: false }, "A computer's address or name on this network (192.168.1.20, or deck.local), for when it is not found by itself."));
+        v.push((Elem::Input { id: "add".into(), label: "Add by Address".into(), text: String::new(), max: 64, filter: false, key: false }, "A computer's address or name on this network (192.168.1.20, or deck.local), for when it is not found by itself."));
         if !c.peers.is_empty() {
             let rows = c
                 .peers

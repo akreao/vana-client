@@ -2731,7 +2731,7 @@ fn world_hud(
                 }
                 // A Lua mod's window with the focus takes the keys (docs/lua-mods.md 4.10).
                 _ if world.lua.focused() => {
-                    lua::window_key(world, *key);
+                    lua::window_key(world, *key, modifiers.shift);
                 }
                 // Our settings screen, then the Config windows, take the keys while open (in the modern Config ours is
                 // one of its pages, keyed there).

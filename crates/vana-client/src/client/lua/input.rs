@@ -116,6 +116,13 @@ const KEYS: &[(&str, K, Option<E>)] = &[
     ("rwin", K::SuperRight, None),
 ];
 
+fn is_modifier(c: K) -> bool {
+    matches!(
+        c,
+        K::ShiftLeft | K::ShiftRight | K::ControlLeft | K::ControlRight | K::AltLeft | K::AltRight | K::SuperLeft | K::SuperRight
+    )
+}
+
 /// A key's name.
 pub(super) fn name_of(code: K) -> Option<&'static str> {
     KEYS.iter().find(|k| k.1 == code).map(|k| k.0)
@@ -144,6 +151,48 @@ pub(super) fn code_of(name: &str) -> Option<K> {
 
 fn egui_of(code: K) -> Option<E> {
     KEYS.iter().find(|k| k.1 == code).and_then(|k| k.2)
+}
+
+/// A key press as a combination ("ctrl+numpad1"): named by `last`, the window's key that went down last, when it is
+/// this press's key (egui has no numpad keys), else by egui's key. None for a key with no name.
+pub(super) fn combo_of(e: &egui::Event, last: Option<K>) -> Option<String> {
+    let egui::Event::Key { key, physical_key, modifiers, .. } = e else { return None };
+    let named = |k: E| KEYS.iter().find(|x| x.2 == Some(k)).map(|x| x.0);
+    let name = last
+        .filter(|c| egui_of(*c).is_some_and(|k| k == *key || Some(k) == *physical_key))
+        .and_then(name_of)
+        .or_else(|| physical_key.and_then(named))
+        .or_else(|| named(*key))?;
+    let mut s = String::new();
+    for (on, p) in [(modifiers.ctrl, "ctrl+"), (modifiers.alt, "alt+"), (modifiers.shift, "shift+")] {
+        if on {
+            s.push_str(p);
+        }
+    }
+    Some(s + name)
+}
+
+/// A combination as players read it: "ctrl+numpad1" is "Ctrl+Num 1".
+pub(in crate::client) fn combo_label(combo: &str) -> String {
+    let mut rest = combo;
+    let mut out = String::new();
+    while let Some((m, r)) = [("ctrl+", "Ctrl+"), ("alt+", "Alt+"), ("shift+", "Shift+")]
+        .iter()
+        .find_map(|(p, l)| rest.strip_prefix(p).filter(|r| !r.is_empty()).map(|r| (*l, r)))
+    {
+        out.push_str(m);
+        rest = r;
+    }
+    let key = match rest {
+        "pageup" => "PgUp".to_string(),
+        "pagedown" => "PgDn".to_string(),
+        p if p.starts_with("numpad") && p.len() > 6 => format!("Num {}", &p[6..]),
+        p => {
+            let mut c = p.chars();
+            c.next().map_or(String::new(), |f| f.to_uppercase().collect::<String>() + c.as_str())
+        }
+    };
+    out + &key
 }
 
 /// A key with its modifiers: "ctrl+f1", "alt+shift+1", or Windower's "^f1" (^ Ctrl, ! Alt, ~ Shift, @ Win).
@@ -253,6 +302,8 @@ impl Synth {
 #[derive(Default)]
 pub(super) struct State {
     pub held: HashSet<K>,
+    /// The last key that went down (not a modifier), for naming a key element's press.
+    pub last_down: Option<K>,
     pub mods: ModifiersState,
     /// Window pixels.
     pub cursor: (f64, f64),
@@ -390,6 +441,9 @@ fn key_edge(w: &mut World, code: K, down: bool, repeat: bool, mods: Option<Modif
         let mut s = st.borrow_mut();
         if down {
             s.held.insert(code);
+            if !repeat && !is_modifier(code) {
+                s.last_down = Some(code);
+            }
         } else {
             s.held.remove(&code);
         }

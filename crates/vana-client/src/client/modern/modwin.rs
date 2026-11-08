@@ -414,12 +414,32 @@ pub(super) fn body(
                     clicks.push(Click::TurnTo(i, k));
                 }
             }
-            Elem::Input { label, text, filter, .. } => {
-                // A type-to-filter input shows its caret at the end while the window has the focus.
+            Elem::Input { label, text, key: true, .. } => {
+                let listening = here && win.edit;
+                let shown = if listening {
+                    "Press a key\u{2026}".to_string()
+                } else if text.is_empty() {
+                    "No key".to_string()
+                } else {
+                    crate::client::lua::combo_label(text)
+                };
+                let (field, _) = kit::setting(ui, m, label, here, false, here, |ui| {
+                    let r = kit::field(ui, m, "", listening.then_some(0), ui.available_width(), small.clone(), None);
+                    let c = if listening || text.is_empty() { muted } else { text_c };
+                    let x = r.min.x + if listening { 16.0 } else { 10.0 };
+                    ui.painter().text(pos2(x, r.center().y), Align2::LEFT_CENTER, shown, small.clone(), c);
+                    r
+                });
+                if ui.interact(field, ui.scope_id().with(("mod input", &win.id, i)), Sense::click()).clicked() {
+                    clicks.push(Click::Button(i, 0));
+                }
+            }
+            Elem::Input { label, text, .. } => {
+                // The line typing goes into shows its caret at the end while the window has the focus.
                 let caret = if here && win.edit {
                     Some(win.caret)
                 } else {
-                    (*filter && win.focus && !win.typing()).then(|| text.chars().count())
+                    (win.focus && !win.typing() && win.type_into() == Some(i)).then(|| text.chars().count())
                 };
                 let (field, _) = kit::setting(ui, m, label, here, false, here, |ui| {
                     kit::field(ui, m, text, caret, ui.available_width(), small.clone(), None)
