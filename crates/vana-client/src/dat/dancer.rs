@@ -439,7 +439,7 @@ pub fn parse_channels(b: &[u8]) -> Result<Channels> {
             let types = (0..width).map(|i| i32_at(b, p + 4 * i)).collect::<Result<_>>()?;
             p += 4 * width;
             let frames = u32_at(b, p)? as usize;
-            let n = size(b, width, frames)?;
+            let n = size(b, width, frames, false)?;
             let data = floats(b, p + 4, n)?;
             Ok(Channels { time, frames, width, types, data })
         }
@@ -449,7 +449,7 @@ pub fn parse_channels(b: &[u8]) -> Result<Channels> {
             let (time, width, frames, packed) =
                 (f32_at(b, p)?, u32_at(b, p + 4)? as usize, u32_at(b, p + 8)? as usize, u32_at(b, p + 16)?);
             p += 20;
-            let n = size(b, width, frames)?;
+            let n = size(b, width, frames, packed != 0)?;
             let mut data = vec![0f32; n];
             if packed == 0 {
                 data = floats(b, p, n)?;
@@ -478,10 +478,12 @@ pub fn parse_channels(b: &[u8]) -> Result<Channels> {
 }
 
 /// A channel set's value count (width x frames), checked before anything is allocated: at least one frame (sample
-/// reads frame 0), and no more values than the file's bytes could hold (2-bit deltas: four a byte).
-fn size(b: &[u8], width: usize, frames: usize) -> Result<usize> {
+/// reads frame 0), and no more values than the file's bytes could hold (packed: 2-bit deltas, four a byte; else a
+/// 4-byte float each).
+fn size(b: &[u8], width: usize, frames: usize, packed: bool) -> Result<usize> {
     ensure!(frames >= 1, "channel with no frames");
-    width.checked_mul(frames).filter(|&n| n <= b.len() * 4).context("channel size past the file")
+    let most = if packed { b.len() * 4 } else { b.len() / 4 };
+    width.checked_mul(frames).filter(|&n| n <= most).context("channel size past the file")
 }
 
 /// Sign-magnitude deltas: 2 bits MSB-first, 4-bit nibbles high first, 8 bit, 16 bit big-endian.
@@ -763,9 +765,12 @@ mod tests {
     #[test]
     fn channel_sizes() {
         let b = [0u8; 64];
-        assert_eq!(super::size(&b, 4, 2).unwrap(), 8);
-        assert!(super::size(&b, 4, 0).is_err());
-        assert!(super::size(&b, 1 << 20, 1 << 20).is_err());
-        assert!(super::size(&b, usize::MAX, 2).is_err());
+        assert_eq!(super::size(&b, 4, 2, false).unwrap(), 8);
+        assert!(super::size(&b, 4, 0, false).is_err());
+        assert!(super::size(&b, 1 << 20, 1 << 20, true).is_err());
+        assert!(super::size(&b, usize::MAX, 2, true).is_err());
+        // 64 bytes hold 16 floats, or 256 packed 2-bit deltas.
+        assert!(super::size(&b, 4, 4, false).is_ok() && super::size(&b, 4, 5, false).is_err());
+        assert!(super::size(&b, 16, 16, true).is_ok() && super::size(&b, 16, 17, true).is_err());
     }
 }

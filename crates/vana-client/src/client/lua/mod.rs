@@ -2119,8 +2119,17 @@ mod tests {
             )
             .exec()
             .unwrap();
+        // A table named twice (two elements the same table): both references take the copy, not the original.
+        vm.lua
+            .load(
+                r#"local e = setmetatable({type = "text", id = "s", text = "y"}, {__index = function() hud.clear() end})
+                ui.window("w2", {title = "Shared", elements = {e, e}})"#,
+            )
+            .exec()
+            .unwrap();
         let st = vm.st.borrow();
         assert_eq!(st.windows[0].title, "From the class");
+        assert_eq!(st.windows[1].title, "Shared");
     }
 
     /// hud.bubble: the tail leaves the side facing its point and stops at its length; none for a point inside; the
