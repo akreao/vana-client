@@ -31,7 +31,7 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
     t.set(
         "play",
         lua.create_function(move |lua, (path, volume): (String, Option<f32>)| {
-            if path.contains("..") || path.starts_with('/') || path.contains(':') {
+            if super::vm::outside(&path) {
                 return Err(mlua::Error::runtime(format!("{path:?}: outside the mod's folder")));
             }
             let bytes: Vec<u8> = match &src {

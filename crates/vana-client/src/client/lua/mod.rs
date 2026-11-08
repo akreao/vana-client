@@ -334,7 +334,6 @@ pub struct Host {
     watch_deferred: Vec<String>,
     lobby_screen: Option<&'static str>,
     lobby: lobby::Shared,
-    /// A recording asked for (taken by the app), and the file being recorded, as the app sets it.
     /// A mod's recording asked for: (the mod, its file and frames a second, or None to stop its own).
     pub(in crate::client) record_req: Option<(String, Option<(std::path::PathBuf, u32)>)>,
     /// The recording running: its mod and file.
@@ -3217,6 +3216,79 @@ return "acxml flow ok"
         vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
     }
 
+    /// Pending Actions: a melee round or another spell's finish while a spell waits is not its answer, nor a message
+    /// that is not one of the spell's refusals (akreao/vana-client#243); the spell's own start, finish and
+    /// refusals are, and each kind matches its own ids.
+    #[test]
+    fn pending_actions_match_the_ask() {
+        let host = Host::default();
+        let files = BUNDLED.iter().find(|b| b.0 == "pending-actions").unwrap().2;
+        let vm = Vm::new(bundled_manifest("pending-actions").unwrap(), PathBuf::from("."), vm::Source::Bundled(files))
+            .unwrap();
+        vm.lua.set_app_data(host.info.clone());
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        let init = files.iter().find(|f| f.0 == "init.lua").unwrap().1;
+        let script = r#"
+            local H, OUT, chip = {}, {}, nil
+            local T = 100
+            os.clock = function() return T end
+            settings = { get = function() return true end }
+            events = { on = function(n, f) H[n] = f end }
+            packets = { on_out = function(id, f) OUT[id] = f end }
+            game = { player = function() return { id = 5 } end, entity = function() return nil end,
+              items = function() return { { slot = 3, id = 4112 } } end }
+            res = { spell = function() return { name = "Cure" } end, ability = function() return { name = "Provoke" } end,
+              item = function() return { name = "Potion" } end,
+              message = function() return { text = "No." } end }
+            text = { strip = function(s) return s end }
+            ui = { window = function(_, spec) chip = spec.elements[1] end, update = function(_, _, v) chip = v end,
+              open = function() end, close = function() chip = nil end }
+            load(INIT)()
+            local function ask(cat, param) OUT[0x01A]({ data = string.pack("<I4I4I2I2I4", 0, 0, 0, cat, param) }) end
+            local function item() OUT[0x037]({ data = string.pack("<I4I4I4BBI4I4", 0, 0, 0, 0, 0, 0, 0)
+              :sub(1, 0x0e) .. string.pack("<BBI4I4", 3, 0, 0, 0) }) end
+            local function state() T = T + 0.2 H.frame() return chip and chip.tone end
+            local function act(cat, param, value)
+              local targets = value and { { id = 9, results = { { value = value } } } } or {}
+              H.action({ actor = 5, category = cat, param = param, targets = targets })
+            end
+            -- A spell (Cure, 1): a melee round, another spell's finish, an interrupt and another spell's start leave
+            -- it waiting.
+            ask(3, 1)
+            act(1, 0x746b6174) act(4, 2) act(8, 0x6f737073, 1) act(8, 0x6f736163, 2)
+            assert(state() == "waiting")
+            -- Melee-side chatter of ours (71 with no spell id, experience) is no refusal; its own start answers.
+            H.battle_message(5, 9, 71, 0, 0) H.battle_message(5, 5, 8, 300, 0)
+            assert(state() == "waiting")
+            act(8, 0x6f736163, 1)
+            assert(state() == nil)
+            -- Its finish answers too; its refusal (47 with its id) refuses.
+            ask(3, 1) act(4, 1) assert(state() == nil)
+            ask(3, 1) H.battle_message(5, 9, 47, 2, 0) assert(state() == "waiting")
+            H.battle_message(5, 9, 47, 1, 0) assert(state() == "refused")
+            T = T + 10 state()
+            -- A job ability (Provoke, 0x01A param 0x23): its finish's param, not another's.
+            ask(9, 0x23) act(6, 0x24) assert(state() == "waiting")
+            act(6, 0x23) assert(state() == nil)
+            ask(9, 0x23) H.battle_message(5, 9, 88, 0x24, 0) assert(state() == "waiting")
+            H.battle_message(5, 9, 88, 0, 0) assert(state() == "refused")
+            T = T + 10 state()
+            -- A weapon skill: its start's record value; a monster skill finish answers whatever its id.
+            ask(7, 32) act(7, 0x65746163, 33) assert(state() == "waiting")
+            act(7, 0x65746163, 32) assert(state() == nil)
+            ask(7, 32) act(11, 999) assert(state() == nil)
+            ask(7, 32) H.battle_message(5, 9, 192, 0, 0) assert(state() == "refused")
+            T = T + 10 state()
+            -- An item: its category alone; 62 only with no id or its own.
+            item() act(1, 0) assert(state() == "waiting")
+            act(9, 0) assert(state() == nil)
+            item() H.battle_message(5, 9, 62, 4113, 0) assert(state() == "waiting")
+            H.battle_message(5, 9, 62, 4112, 0) assert(state() == "refused")
+        "#;
+        vm.lua.globals().set("INIT", init).unwrap();
+        vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
+    }
+
     /// Job Gauges: SCH 99 with 100 s of the stratagem recast left has 2 of 5 charges, the next in 4 s; a NIN sub sees
     /// its shadows and tools.
     #[test]
@@ -5219,6 +5291,8 @@ mod stub_tests {
             // A Windows checkout (core.autocrlf) has CRLF lines.
             text += &std::fs::read_to_string(e.path()).unwrap().replace("\r\n", "\n");
         }
+        // A Windows checkout may carry CRLF line ends.
+        let text = text.replace("\r\n", "\n");
         for f in super::docs::FUNCS {
             let full = if f.ns.is_empty() { f.name.to_string() } else { format!("{}.{}", f.ns, f.name) };
             assert!(text.contains(&format!("\n## `{full}`\n")), "docs/modding/reference has no section for {full}");

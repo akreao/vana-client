@@ -69,6 +69,7 @@ mod modsui;
 mod myroom;
 pub mod net;
 mod notes;
+mod padcfg;
 pub(crate) mod perf;
 mod portrait;
 pub mod script;
@@ -339,6 +340,7 @@ fn typing_elsewhere(w: &World) -> bool {
         || (w.modern && w.full_log.is_some() && w.log_find.is_some())
         // Ours: the GM window's fields and search, and the Settings window's search.
         || modern::gm_takes_keys(w)
+        || modern::pad_takes_keys(w)
         || modern::config_finding(w)
 }
 
@@ -2351,6 +2353,11 @@ fn world_hud(
     if gm_typing {
         keys.clear();
     }
+    // Ours: the Controller window takes the keys while it is open (over the Settings window it is opened from).
+    let pad_typing = modern::pad_events(world, &input.events);
+    if pad_typing {
+        keys.clear();
+    }
     // The modern magic and ability windows' search takes the keys and text while it runs.
     let list_typing = listsearch::events(world, gu, &input.events);
     if list_typing {
@@ -2371,7 +2378,8 @@ fn world_hud(
         || scan_typing
         || find_typing
         || settings_typing
-        || gm_typing;
+        || gm_typing
+        || pad_typing;
     if post_typing {
         post::text_events(world, &input.events);
         keys.clear();
@@ -2402,7 +2410,7 @@ fn world_hud(
     } else if map_typing && let Some(m) = world.map.as_mut() {
         m.text_events(&input.events);
         keys.clear();
-    } else if input_open && !scan_typing && !find_typing {
+    } else if input_open && !scan_typing && !find_typing && !pad_typing {
         event::input_events(world, &input.events);
         keys.clear();
     }
@@ -7000,6 +7008,8 @@ struct World {
     /// Ours (modern): the target before the current one, set as target::set changes it (the sub-target prompt's
     /// stand-ins are not counted); `<lt>` and the modern focus panel's Last row.
     last_target: Option<u32>,
+    /// The last target a sub-target prompt or `<stpt>` / `<stal>` pick confirmed (`<lastst>`).
+    last_subtarget: Option<u32>,
     /// Target lock-on (DAT_10565d34 +0x5c bits 0..1 != 0), the locked camera, ticks left in which the free
     /// camera ignores manual turns after a lock (DAT_10444464), auto lock-on (config 7 = 0), when the target
     /// was set, and manual camera turns waiting for the locked camera.
@@ -7327,8 +7337,15 @@ struct World {
     recent_save: bool,
     /// The modern UI Modes editor is open (/uimodes, modern/modes.rs).
     uimodes_open: bool,
-    /// Favourites (favs.rs keys, the strip's order), whether the strip shows, and whether either changed since the save.
+    /// Favourites (favs.rs keys, the strip's order) for the active main/sub job, the saved loadouts by job, whether
+    /// the strip shows, and whether either changed since the save. `fav_provisional` marks a seeded loadout still
+    /// waiting for the learned bits and spell job data before it is pruned; `fav_commands_fresh` is false from a job
+    /// change until the next 0x0AC, so stale command bits are not used (favs.rs).
     favourites: Vec<String>,
+    fav_loadout: Option<String>,
+    fav_loadouts: std::collections::BTreeMap<String, Vec<String>>,
+    fav_provisional: bool,
+    fav_commands_fresh: bool,
     fav_strip: bool,
     fav_save: bool,
     /// The battle menu's suggestions (suggest.rs::refresh_root), when they were taken, and the one the cursor is on.
@@ -7606,6 +7623,9 @@ struct World {
     auto_sort: u32,
     auto_sort_dirty: bool,
     sort_due: (u32, f32),
+    /// Queued c2s 0x03A {container} stack-merge requests (merged storage tabs), one per SORT_GAP.
+    sort_packets: Vec<u8>,
+    sort_packet_wait: f32,
     /// The frames posed so far (FUN_10014d50's count, for Misc. 2's animation frame rate).
     anim_frame: u32,
     /// DAT_10487ef5 (event op 0xab subs 9 / 10): the weather density forced to 1.0; cleared by each zone load.
@@ -7676,6 +7696,8 @@ struct World {
     want_settings: Option<settings::Kind>,
     /// Ours: the GM window (gm.rs, modern/gmwin.rs).
     gm: gm::Gm,
+    /// Ours: the Controller window (padcfg.rs, modern/padwin.rs).
+    padcfg: padcfg::PadCfg,
     /// Ours: the camera keys' Y / X sense (Mouse/Cam.'s Camera Keys; the client's config keeps it).
     cam_keys: [u8; 2],
     /// The Lua mods of this session (docs/lua-mods.md).
@@ -9239,7 +9261,7 @@ impl App {
                     &std::fs::read(crate::dat::ffximain(&self.cfg.ffxi_dir())).unwrap_or_default(),
                 ) {
                     Ok(codec) => {
-                        let net = net::spawn(login.clone(), self.cfg.username.clone(), codec);
+                        let net = net::spawn(login.clone(), self.cfg.username.clone(), codec, self.cfg.gm_window);
                         self.status = format!("Connecting to {}:{}...", login.map.0, login.map.1);
                         let features =
                             if let Phase::Characters { lobby: Some(l), .. } = &self.phase { l.features } else { 0 };
@@ -9250,17 +9272,27 @@ impl App {
                             account,
                             hash,
                         });
-                        let world_name = match &self.phase {
-                            Phase::Characters { chars, selected: Some(s), .. } => {
-                                chars.get(*s).map(|c| c.world.clone()).unwrap_or_default()
+                        let (world_name, expansions, fav_jobs) = match &self.phase {
+                            Phase::Characters { chars, selected: Some(s), expansions, .. } => {
+                                let c = chars.get(*s);
+                                (
+                                    c.map(|c| c.world.clone()).unwrap_or_default(),
+                                    *expansions & self.installed,
+                                    c.map(|c| (c.main_job, c.sub_job)),
+                                )
                             }
-                            _ => String::new(),
+                            _ => (String::new(), 0, None),
                         };
-                        let expansions = if let Phase::Characters { expansions, .. } = &self.phase {
-                            *expansions & self.installed
-                        } else {
-                            0
-                        };
+                        let fav_loadouts =
+                            self.cfg.modern_favourite_loadouts.get(&login.name).cloned().unwrap_or_default();
+                        let fav_loadout = fav_jobs.and_then(|(m, s)| favs::job_key(m, s));
+                        let favourites = fav_loadout
+                            .as_ref()
+                            .and_then(|k| fav_loadouts.get(k))
+                            .cloned()
+                            .or_else(|| self.cfg.modern_favourites.get(&login.name).cloned())
+                            .unwrap_or_default();
+                        let fav_provisional = fav_loadout.as_ref().is_some_and(|k| !fav_loadouts.contains_key(k));
                         // The effects' GPU side caches by the World's registry ids (library, texture, mesh); a new
                         // World starts a new registry, so the old session's cache would draw the wrong ones.
                         self.effects_gpu = None;
@@ -9359,6 +9391,7 @@ impl App {
                             logging_out: false,
                             target: None,
                             last_target: None,
+                            last_subtarget: None,
                             locked: false,
                             cam: Default::default(),
                             lock_height: -1.5,
@@ -9604,7 +9637,11 @@ impl App {
                             recent_picks: self.cfg.modern_recent.get(&login.name).cloned().unwrap_or_default(),
                             recent_save: false,
                             uimodes_open: false,
-                            favourites: self.cfg.modern_favourites.get(&login.name).cloned().unwrap_or_default(),
+                            favourites,
+                            fav_loadout,
+                            fav_loadouts,
+                            fav_provisional,
+                            fav_commands_fresh: false,
                             fav_strip: self.cfg.modern_fav_strip,
                             fav_save: false,
                             root_sugg: Vec::new(),
@@ -9768,6 +9805,8 @@ impl App {
                             auto_sort: self.cfg.auto_sort,
                             auto_sort_dirty: false,
                             sort_due: (0, 0.0),
+                            sort_packets: Vec::new(),
+                            sort_packet_wait: 0.0,
                             anim_frame: 0,
                             weather_forced: false,
                             inv_free: None,
@@ -9813,6 +9852,7 @@ impl App {
                             settings: None,
                             want_settings: None,
                             gm: gm::Gm::default(),
+                            padcfg: padcfg::PadCfg::default(),
                             cam_keys: [self.cfg.cam_keys_y as u8, self.cfg.cam_keys_x as u8],
                             lua: std::mem::take(&mut self.lobby_mods),
                             spam: spamfilter::SpamFilter::new(self.cfg.ffxi_dir()),
@@ -11267,8 +11307,14 @@ impl App {
                     }
                 }
                 NetEvent::CharStats(s) => {
+                    let jobs = world.stats.as_ref().map(|o| (o.main.0, o.sub.0));
+                    let changed = jobs.is_some_and(|old| old != (s.main.0, s.sub.0));
                     world.stats = Some(s);
+                    favs::sync_jobs(world);
                     status::on_stats(world);
+                    if changed {
+                        moogle::job_changed(world);
+                    }
                 }
                 NetEvent::Merits { limit, bits, max } => world.merits = Some((limit, bits, max)),
                 NetEvent::JobPoints(access, jobs) => {
@@ -11482,8 +11528,13 @@ impl App {
                         }
                     }
                     world.spells_known = bits;
+                    favs::refresh(world);
                 }
-                NetEvent::CommandsKnown(bits) => world.commands_known = bits,
+                NetEvent::CommandsKnown(bits) => {
+                    world.commands_known = bits;
+                    world.fav_commands_fresh = true;
+                    favs::refresh(world);
+                }
                 NetEvent::Dungeon(store) => maze::on_store(world, &store),
                 // LAB_100a2540 stores the offer whatever our state (it may come before our dead status, e.g. during a
                 // zone-in event); the K.O. step shows it once we are dead.
@@ -13052,6 +13103,7 @@ impl App {
             // state at 1.
             f.window = world_window_open(w)
                 || w.palette.0 != 0
+                || w.party_cursor.is_some()
                 || w.log_active
                 || w.log_focus == 2
                 || event::choice(w).is_some()
@@ -13207,6 +13259,9 @@ impl App {
         // when the gate allows (field, UI shown, no event, alive, no window), Ctrl / Alt + digit runs a macro and
         // Shift + Ctrl / Alt + digit picks a set. The palettes are not drawn yet.
         let sub_up = target::sub_up(world);
+        if let Some(m) = world.macros.as_mut() {
+            m.hold_wait(sub_up);
+        }
         let by_mod = world.macros.as_ref().is_some_and(|m| m.by_mod());
         if let Some(line) = world.macros.as_mut().filter(|_| !sub_up).and_then(|m| m.step(dt * 60.0)) {
             let line = crate::dat::font::decode_sjis(&line);
@@ -13485,9 +13540,11 @@ impl App {
             // Mouse/Cam. 0x8b / 0x8c invert the third-person camera's X / Y (FUN_1001e030).
             // Down is positive as retail's mode-5 axis 7 (FUN_10122590, the pointer below the drag's start); with
             // 0x8c on, the default, down raises the eye as the camera keys do.
+            // X goes in negated, as FUN_10124bc0 feeds the mouse into axis 6 (+0x8c = -x): a drag to the right turns
+            // the camera as the right arrow does, under either 0x8b setting (unnegated, the setting read backwards).
             _ if world.locked => {
                 let (ix, iy) = (inv(world, 0x8b), inv(world, 0x8c));
-                world.cam_turn.0 += (dx * 0.008 * ix) as f32;
+                world.cam_turn.0 -= (dx * 0.008 * ix) as f32;
                 world.cam_turn.1 += (dy * 0.02 * iy) as f32;
             }
             // First person: 0x8d / 0x8e.
@@ -13499,7 +13556,7 @@ impl App {
             _ if world.unlock_ticks > 0.0 => {}
             _ => {
                 let (ix, iy) = (inv(world, 0x8b), inv(world, 0x8c));
-                camera::drag(world, (dx * 0.008 * ix) as f32, -(dy * 0.03 * iy) as f32);
+                camera::drag(world, -(dx * 0.008 * ix) as f32, -(dy * 0.03 * iy) as f32);
                 world.mouse_look = right;
             }
         }
@@ -15454,8 +15511,16 @@ impl App {
                 if std::mem::take(&mut world.volume_dirty) {
                     apply = true;
                 }
+                favs::refresh(world);
                 if std::mem::take(&mut world.fav_save) {
-                    self.cfg.modern_favourites.insert(world.name.clone(), world.favourites.clone());
+                    let name = world.name.clone();
+                    if let Some(key) = world.fav_loadout.clone() {
+                        world.fav_loadouts.insert(key, world.favourites.clone());
+                    }
+                    if !world.fav_loadouts.is_empty() {
+                        self.cfg.modern_favourite_loadouts.insert(name.clone(), world.fav_loadouts.clone());
+                    }
+                    self.cfg.modern_favourites.insert(name, world.favourites.clone());
                     self.cfg.modern_fav_strip = world.fav_strip;
                     if let Err(e) = self.cfg.save() {
                         log::warn!("config: {e:#}");
@@ -15872,6 +15937,56 @@ impl App {
         }
     }
 
+    /// The Controller window (padcfg.rs) each frame: the pad it waits for, what it changed into config.json, and the
+    /// settings in use shown again.
+    fn controller_window(
+        cfg: &mut crate::config::Config,
+        gp: &mut gamepad::Gamepad,
+        w: &mut World,
+        cap: Option<&gamepad::Capture>,
+        dt: f32,
+    ) {
+        let p = &mut w.padcfg;
+        if !p.open {
+            p.listening = None;
+            return;
+        }
+        if let Some(c) = cap
+            && p.feed(c, dt)
+        {
+            w.sounds.push(crate::audio::Ui::Select as u32);
+        }
+        let mut save = false;
+        if let Some((padsin, padexsin, on, bg, dead)) = p.save.take() {
+            (cfg.gamepad_padsin, cfg.gamepad_padexsin) = (padsin, padexsin);
+            (cfg.gamepad, cfg.gamepad_background) = (on, bg);
+            cfg.gamepad_deadzone = dead as f32 / 100.0;
+            save = true;
+        }
+        if std::mem::take(&mut p.use_retail) {
+            (cfg.gamepad_padsin, cfg.gamepad_padexsin) = (String::new(), String::new());
+            save = true;
+        }
+        if std::mem::take(&mut p.reread) {
+            gp.reload_retail(cfg.game_dir.clone());
+        }
+        if save {
+            log::info!("gamepad: settings saved (padsin {:?})", cfg.gamepad_padsin);
+            if let Err(e) = cfg.save() {
+                log::warn!("config save: {e:#}");
+            }
+            // The Settings window's copy follows, so its next store keeps them.
+            if let Some(s) = w.settings.as_mut() {
+                (s.s.gamepad, s.s.gamepad_dead) = (cfg.gamepad, (cfg.gamepad_deadzone * 100.0).round() as u32);
+            }
+        }
+        let p = &mut w.padcfg;
+        p.set = Some(gamepad::settings(&cfg, gp.retail()));
+        p.dead = (cfg.gamepad_deadzone * 100.0).round() as u32;
+        p.retail = gp.retail().map(|r| r.source.clone());
+        p.pads = gp.pads();
+    }
+
     /// The window's own upkeep each frame: monitors, mode and size changes, the full-screen re-ask, the present mode.
     fn window_upkeep(&mut self, gfx: &mut Gfx) {
         if self.monitors.is_empty() {
@@ -16163,13 +16278,19 @@ impl App {
             _ => true,
         };
         let keyboard = matches!(&self.phase, Phase::World(w) if w.swkbd.is_some());
-        let ctx = gamepad::Ctx { menu, palette, tabs, field, keyboard };
+        let party_cursor = matches!(&self.phase, Phase::World(w) if w.party_cursor.is_some());
+        // The Controller window waiting for a button: the pad goes to it.
+        let capture = matches!(&self.phase, Phase::World(w) if w.padcfg.open && w.padcfg.listening.is_some());
+        let ctx = gamepad::Ctx { menu, palette, tabs, field, keyboard, party_cursor, capture };
         let phase = &mut self.phase;
         let mut to_mods = |b: &[u8], a: [f32; 6], on: bool| match phase {
             Phase::World(w) => lua::input::pad_filter(w, b, a, on),
             _ => Vec::new(),
         };
         let pad = self.gamepad.poll(&self.cfg, gfx.window.has_focus(), ctx, dt, &mut to_mods);
+        if let Phase::World(w) = &mut self.phase {
+            Self::controller_window(&mut self.cfg, &mut self.gamepad, w, pad.capture.as_ref(), dt);
+        }
         self.input.set_pad(pad.pad);
         self.input.set_stick(pad.stick);
         self.keep_awake.update(pad.used);

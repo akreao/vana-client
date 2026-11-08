@@ -1,0 +1,1 @@
+- The first letter typed into a list's hidden search (or the Settings window's search) no longer also triggers its game hotkey.
