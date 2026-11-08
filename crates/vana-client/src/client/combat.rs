@@ -41,6 +41,8 @@ pub struct ChatLog {
     folds: u64,
     /// Lines restored from the last session (with their divider): never saved again.
     restored: usize,
+    /// Lines dropped from the front (KEPT): a line's number stays the same for as long as it is held.
+    base: usize,
     /// Ours (docs/lua-mods.md 4.3): the mods' filters, run on every line before it is kept, and each mode's colour for
     /// a line a filter moves to another mode.
     pub filter: Option<std::rc::Rc<dyn Fn(&str, u16) -> Filtered>>,
@@ -57,6 +59,10 @@ pub enum Filtered {
 pub const NO_MODE: u16 = 0xffff;
 /// In-place edits whose lines the chat log remembers (ChatLog::edited_since).
 const EDITED_KEPT: usize = 256;
+/// Lines the log holds (retail's history is a fixed ring; ours, the full log's, is this): past KEPT + DROP, the oldest
+/// DROP go at once.
+const KEPT: usize = 8000;
+const DROP: usize = 1000;
 /// Battle messages from older saves, without their mode: the modern chat's Battle tab (not retail).
 pub const BATTLE_MODE: u16 = 0xfffe;
 /// A battle message's mode is stored as BATTLE + its mode.
@@ -159,15 +165,41 @@ impl ChatLog {
         self.who.push(None);
         self.marks.push(0);
         self.lines.push((s, colour));
+        self.trim();
+    }
+
+    /// The oldest DROP lines go once the log holds KEPT + DROP.
+    fn trim(&mut self) {
+        if self.lines.len() <= KEPT + DROP {
+            return;
+        }
+        self.lines.drain(..DROP);
+        self.times.drain(..DROP);
+        self.modes.drain(..DROP);
+        self.gm.drain(..DROP);
+        self.who.drain(..DROP);
+        self.marks.drain(..DROP);
+        self.base += DROP;
+        self.restored = self.restored.saturating_sub(DROP);
+        self.repeat = self.repeat.take().and_then(|(k, s, n)| Some((k.checked_sub(DROP)?, s, n)));
+    }
+
+    /// Where line `k` is held, if it still is.
+    fn at(&self, k: usize) -> Option<usize> {
+        k.checked_sub(self.base).filter(|&i| i < self.lines.len())
+    }
+
+    /// The first line still held (the ones before it were dropped, KEPT).
+    pub fn start(&self) -> usize {
+        self.base
     }
 
     /// Line `k`'s text replaced (a condensed battle line grown); it no longer counts repeats.
     pub fn set_text(&mut self, k: usize, s: String) {
-        if let Some(l) = self.lines.get_mut(k) {
-            l.0 = s;
-            self.note_edit(k);
-        }
-        if self.repeat.as_ref().is_some_and(|r| r.0 == k) {
+        let Some(i) = self.at(k) else { return };
+        self.lines[i].0 = s;
+        self.note_edit(i);
+        if self.repeat.as_ref().is_some_and(|r| r.0 == i) {
             self.repeat = None;
         }
     }
@@ -179,7 +211,7 @@ impl ChatLog {
 
     /// How many repeats have folded into the last line so far, and that line.
     pub fn folds(&self) -> (u64, Option<usize>) {
-        (self.folds, self.repeat.as_ref().map(|r| r.0))
+        (self.folds, self.repeat.as_ref().map(|r| self.base + r.0))
     }
 
     /// How many lines have been changed in place: the logs wrap again when it moves.
@@ -187,9 +219,10 @@ impl ChatLog {
         self.edits
     }
 
-    fn note_edit(&mut self, k: usize) {
+    /// Held line `i` changed in place (remembered by its line number).
+    fn note_edit(&mut self, i: usize) {
         self.edits += 1;
-        self.edited.push_back(k);
+        self.edited.push_back(self.base + i);
         if self.edited.len() > EDITED_KEPT {
             self.edited.pop_front();
         }
@@ -201,19 +234,25 @@ impl ChatLog {
         (n <= self.edited.len()).then(|| self.edited.iter().skip(self.edited.len() - n).copied().collect())
     }
 
-    /// The lines' modes, in the lines' order.
+    /// The held lines' modes, in the lines' order: the first is line `start()`'s.
     pub fn modes(&self) -> &[u16] {
         &self.modes
     }
 
+    /// Line `k`'s mode.
+    pub fn mode(&self, k: usize) -> Option<u16> {
+        self.modes.get(self.at(k)?).copied()
+    }
+
     /// Line `k`'s print mode and GM flag, for the log windows' masks.
     pub fn route(&self, k: usize) -> (Option<u8>, bool) {
-        (self.modes.get(k).and_then(|&m| log_mode(m)), self.gm.get(k).copied().unwrap_or(false))
+        let Some(i) = self.at(k) else { return (None, false) };
+        (log_mode(self.modes[i]), self.gm[i])
     }
 
     /// Line `k`'s print mark (0 none).
     pub fn mark(&self, k: usize) -> u8 {
-        self.marks.get(k).copied().unwrap_or(0)
+        self.at(k).map_or(0, |i| self.marks[i])
     }
 
     /// Marks the newest line.
@@ -225,22 +264,24 @@ impl ChatLog {
 
     /// FUN_10129290: lines from `from` on lose mark `m`.
     pub fn unmark(&mut self, m: u8, from: usize) {
-        for x in self.marks.iter_mut().skip(from).filter(|x| **x == m) {
+        for x in self.marks.iter_mut().skip(from.saturating_sub(self.base)).filter(|x| **x == m) {
             *x = 0;
         }
     }
 
     /// Line `k`'s record name and flags byte 1 when it is a player's line.
     pub fn who(&self, k: usize) -> Option<(&str, u8)> {
-        self.who.get(k)?.as_ref().map(|(n, f)| (n.as_str(), *f))
+        self.who[self.at(k)?].as_ref().map(|(n, f)| (n.as_str(), *f))
     }
 
     /// Line `k` with the time it came in, whether it is a chat line and whether it indents.
     pub fn timed(&self, k: usize) -> Option<(&(String, [u8; 4]), ([u8; 3], bool, bool))> {
-        Some((self.lines.get(k)?, *self.times.get(k)?))
+        let i = self.at(k)?;
+        Some((&self.lines[i], self.times[i]))
     }
 
-    /// Lines with the time they came in, whether they are chat lines and whether they indent.
+    /// The held lines with the time they came in, whether they are chat lines and whether they indent (the first is
+    /// line `start()`).
     pub fn iter_timed(&self) -> impl Iterator<Item = (&(String, [u8; 4]), ([u8; 3], bool, bool))> {
         self.lines.iter().zip(self.times.iter().copied())
     }
@@ -249,8 +290,9 @@ impl ChatLog {
         self.lines.iter()
     }
 
+    /// The lines printed so far (held or dropped): the next line's number.
     pub fn len(&self) -> usize {
-        self.lines.len()
+        self.base + self.lines.len()
     }
 
     #[cfg(test)]
@@ -2417,6 +2459,29 @@ mod tests {
         assert_eq!([first(0), first(1), first(2), first(3), first(4)], ["atf?", "atf?", "atr?", "atb?", "atl?"]);
         assert_eq!(swing_patterns(false, 0, 2), ("ati?".to_string(), "atr?".to_string()));
         assert_eq!(swing_patterns(true, 1, 4).0, "a1l?");
+    }
+
+    /// The log holds KEPT lines (the oldest DROP go at once past KEPT + DROP); a line keeps its number while held, and
+    /// one gone reads as nothing.
+    #[test]
+    fn log_keeps_its_last_lines() {
+        let mut c = ChatLog::default();
+        for i in 0..KEPT + DROP + 5 {
+            c.push_battle(format!("line {i}"), [0; 4], 7);
+        }
+        assert_eq!((c.len(), c.start()), (KEPT + DROP + 5, DROP));
+        assert_eq!(c.modes().len(), KEPT + 5);
+        assert!(c.timed(DROP - 1).is_none() && c.mode(0).is_none() && c.route(0) == (None, false));
+        assert_eq!(c.timed(DROP).unwrap().0.0, format!("line {DROP}"));
+        assert_eq!(c.mode(c.len() - 1), Some(BATTLE | 7));
+        c.set_text(5, "gone".into());
+        c.set_text(DROP + 1, "kept".into());
+        assert_eq!(c.timed(DROP + 1).unwrap().0.0, "kept");
+        assert_eq!(c.edited_since(0), Some(vec![DROP + 1]));
+        // A fold counts on the last line, by its number.
+        c.set_fold(true);
+        c.push_battle(format!("line {}", KEPT + DROP + 4), [0; 4], 7);
+        assert_eq!(c.folds(), (1, Some(KEPT + DROP + 4)));
     }
 
     /// The edits after a mark give their lines; a mark older than the kept edits gives None (wrap everything).

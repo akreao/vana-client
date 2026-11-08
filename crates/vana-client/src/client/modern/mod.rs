@@ -111,7 +111,10 @@ pub struct Modern {
     /// How menu rows look (rows.rs), and window borders (borders.rs).
     row_style: std::cell::Cell<rows::Style>,
     border_style: std::cell::Cell<borders::Style>,
-    images: std::cell::RefCell<std::collections::HashMap<String, Option<egui::TextureHandle>>>,
+    /// Textures made from game files and mods (icons, maps, mod images), with when each was last drawn (egui's
+    /// time): one unseen for IMAGE_KEEP seconds goes (Modern::texture).
+    images: std::cell::RefCell<std::collections::HashMap<String, (Option<egui::TextureHandle>, f64)>>,
+    images_pruned: std::cell::Cell<f64>,
     /// Status tooltips' name and description by (status id, small set), read once (hud.rs).
     pub status_tips: std::cell::RefCell<HashMap<(u16, bool), std::rc::Rc<(String, String)>>>,
     /// Macro lines and the spell or ability each names (textcmd::line_action), for greying the macro keys.
@@ -206,6 +209,7 @@ impl Modern {
             row_style: Default::default(),
             border_style: Default::default(),
             images: Default::default(),
+            images_pruned: Default::default(),
             status_tips: Default::default(),
             macro_acts: Default::default(),
             grid: Default::default(),
@@ -349,6 +353,7 @@ impl Modern {
         // The Lua mods' HUD elements, under every panel, as the modern layer draws its own (each HUD window faded by
         // the mode as a panel is).
         hudmods::draw(self, ctx, gu, w, &vis);
+        self.prune_images(ctx);
         // Places per display: this window size and UI scale's layout, else the character's last one (the
         // template); a change saves both. A display shown the template for 2 s keeps it as its own, so a change on
         // another display doesn't move its panels; sizes passed through while resizing store nothing.
@@ -673,6 +678,8 @@ const BOTTOM: [&str; 2] = ["chat", "party"];
 /// The right edge's column (the main menu, its submenu and the windows it opens): the panels placed from the right
 /// keep left of it; the edge windows stay put under it.
 const COLUMN: [&str; 3] = ["command", "command sub", "window"];
+/// Seconds a texture of Modern::images stays undrawn before it goes.
+const IMAGE_KEEP: f64 = 60.0;
 /// The windows on a screen edge (extras.rs edge_window): they slide along it, so nothing docks on them.
 const EDGE: [&str; 7] = ["timers", "minimap", "widescan", "regime", "timers_recasts", "timers_buffs", "timers_debuffs"];
 
@@ -1500,34 +1507,52 @@ impl Modern {
         g.1.clone()
     }
 
-    /// A menu sprite from the game's files (a list's spell or ability icon) as an egui texture, made once.
-    fn sprite_icon(&self, ctx: &Context, gu: &GameUi, lib: &str, index: usize) -> Option<egui::TextureId> {
-        let key = format!("sprite {lib}:{index}");
+    /// `key`'s texture, made from `make`'s image the first time (None: there is none, remembered too); kept while it
+    /// is drawn. The id is for this frame only: one not drawn for IMAGE_KEEP is freed, so ask again each frame rather
+    /// than keep it.
+    fn texture(
+        &self,
+        ctx: &Context,
+        key: &str,
+        make: impl FnOnce() -> Option<egui::ColorImage>,
+    ) -> Option<egui::TextureId> {
+        let now = ctx.input(|i| i.time);
         let mut images = self.images.borrow_mut();
-        let t = images.entry(key.clone()).or_insert_with(|| {
-            let (w, h, rgba) = gu.sprite_rgba(lib, index)?;
-            Some(ctx.load_texture(
-                key,
-                egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba),
-                egui::TextureOptions::LINEAR,
-            ))
-        });
-        t.as_ref().map(|t| t.id())
+        if let Some(e) = images.get_mut(key) {
+            e.1 = now;
+            return e.0.as_ref().map(|t| t.id());
+        }
+        let t = make().map(|img| ctx.load_texture(key, img, egui::TextureOptions::LINEAR));
+        let id = t.as_ref().map(|t| t.id());
+        images.insert(key.to_string(), (t, now));
+        id
     }
 
-    /// A mod's chat icon (chaticons.rs) as an egui texture, made once.
+    /// Textures not drawn for IMAGE_KEEP seconds go (every zone's map, every name and every version of a mod's
+    /// image stayed for the session); made again if drawn again.
+    fn prune_images(&self, ctx: &Context) {
+        let now = ctx.input(|i| i.time);
+        if now - self.images_pruned.get() < 5.0 {
+            return;
+        }
+        self.images_pruned.set(now);
+        self.images.borrow_mut().retain(|_, e| now - e.1 <= IMAGE_KEEP);
+    }
+
+    /// A menu sprite from the game's files (a list's spell or ability icon) as an egui texture.
+    fn sprite_icon(&self, ctx: &Context, gu: &GameUi, lib: &str, index: usize) -> Option<egui::TextureId> {
+        self.texture(ctx, &format!("sprite {lib}:{index}"), || {
+            let (w, h, rgba) = gu.sprite_rgba(lib, index)?;
+            Some(egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba))
+        })
+    }
+
+    /// A mod's chat icon (chaticons.rs) as an egui texture.
     pub fn chat_icon(&self, ctx: &Context, k: usize) -> Option<egui::TextureId> {
-        let key = super::chaticons::texture(k);
-        let mut images = self.images.borrow_mut();
-        let t = images.entry(key.clone()).or_insert_with(|| {
+        self.texture(ctx, &super::chaticons::texture(k), || {
             let (w, h, rgba) = super::chaticons::get(k)?;
-            Some(ctx.load_texture(
-                key,
-                egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba),
-                egui::TextureOptions::LINEAR,
-            ))
-        });
-        t.as_ref().map(|t| t.id())
+            Some(egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba))
+        })
     }
 
     /// A name sprite's caption as text, read once.
@@ -1539,20 +1564,12 @@ impl Modern {
             .clone()
     }
 
-    /// An item's icon from the game's files (32 x 32) as an egui texture, made once.
+    /// An item's icon from the game's files (32 x 32) as an egui texture.
     fn item_icon(&self, ctx: &Context, info: &super::items::ItemCache, id: u16) -> Option<egui::TextureId> {
         use crate::inventory::ItemInfo;
-        let key = format!("item {id}");
-        let mut images = self.images.borrow_mut();
-        let t = images.entry(key.clone()).or_insert_with(|| {
-            let rgba = info.icon(id)?;
-            Some(ctx.load_texture(
-                key,
-                egui::ColorImage::from_rgba_unmultiplied([32, 32], &rgba),
-                egui::TextureOptions::LINEAR,
-            ))
-        });
-        t.as_ref().map(|t| t.id())
+        self.texture(ctx, &format!("item {id}"), || {
+            Some(egui::ColorImage::from_rgba_unmultiplied([32, 32], &info.icon(id)?))
+        })
     }
 
     /// Ours: no line of the macro that names a spell or ability (/ma, /ja, /pet, /ws) can be used now; one with none
@@ -1586,17 +1603,11 @@ impl Modern {
         if let Some(s) = status_art().get(&id).and_then(|name| self.art.sprite(&format!("status/{name}"))) {
             return Some((s.tex, s.uv));
         }
-        let key = format!("status {}:{id}", small as u8);
-        let mut images = self.images.borrow_mut();
-        let t = images.entry(key.clone()).or_insert_with(|| {
+        let t = self.texture(ctx, &format!("status {}:{id}", small as u8), || {
             let (w, h, rgba) = gu.status_rgba(small, id)?;
-            Some(ctx.load_texture(
-                key,
-                egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba),
-                egui::TextureOptions::LINEAR,
-            ))
+            Some(egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba))
         });
-        t.as_ref().map(|t| (t.id(), FULL_UV))
+        t.map(|t| (t, FULL_UV))
     }
 
     /// A spell's or ability's list icon and its uv: ours for its picture (magic::picture), else the game's sprite.

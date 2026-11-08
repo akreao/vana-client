@@ -667,9 +667,44 @@ pub fn title_choice(option: u32, installed: u32, t: u32) -> (u32, usize, bool) {
     (id, seq, single)
 }
 
-/// Reads sound files off the UI thread, keeping command order (effects stay cached).
+/// The sound effects read lately, up to SE_BUDGET bytes (the least recently played go first: a voice keeps its own
+/// Arc, so dropping one here never cuts a sound short); a file found missing stays known as missing.
+#[derive(Default)]
+struct SeCache {
+    files: HashMap<u32, (Option<Arc<[u8]>>, u64)>,
+    bytes: usize,
+    tick: u64,
+}
+
+/// About 550 effects at their average 116 KB (sound/win/se holds 9459, 1.1 GB).
+const SE_BUDGET: usize = 64 << 20;
+
+impl SeCache {
+    fn get(&mut self, id: u32, read: impl FnOnce() -> Option<Arc<[u8]>>) -> Option<Arc<[u8]>> {
+        self.tick += 1;
+        if let Some(e) = self.files.get_mut(&id) {
+            e.1 = self.tick;
+            return e.0.clone();
+        }
+        let bytes = read();
+        self.bytes += bytes.as_ref().map_or(0, |b| b.len());
+        self.files.insert(id, (bytes.clone(), self.tick));
+        while self.bytes > SE_BUDGET {
+            let Some((&old, _)) = self.files.iter().filter(|(k, e)| e.0.is_some() && **k != id).min_by_key(|e| e.1.1)
+            else {
+                break;
+            };
+            if let Some((Some(b), _)) = self.files.remove(&old) {
+                self.bytes -= b.len();
+            }
+        }
+        bytes
+    }
+}
+
+/// Reads sound files off the UI thread, keeping command order (effects cached, SeCache).
 fn loader(dir: PathBuf, rx: Receiver<Req>, tx: Sender<Cmd>, status: Arc<Status>) {
-    let mut effects: HashMap<u32, Option<Arc<[u8]>>> = HashMap::new();
+    let mut effects = SeCache::default();
     let read = |path: Option<PathBuf>, what: &str, id: u32| -> Option<Arc<[u8]>> {
         let bytes = path.and_then(|p| std::fs::read(p).ok()).map(Arc::from);
         if bytes.is_none() {
@@ -685,18 +720,24 @@ fn loader(dir: PathBuf, rx: Receiver<Req>, tx: Sender<Cmd>, status: Arc<Status>)
             }
             Req::Se { id, level } => {
                 log::debug!("se {id} at level {level}");
-                effects
-                    .entry(id)
-                    .or_insert_with(|| read(format::se_path(&dir, id), "sound", id))
-                    .clone()
-                    .map(|bytes| Cmd::PlaySe { bytes, level, pan: 0x40, priority: 0, handle: 0, limit: 0 })
+                effects.get(id, || read(format::se_path(&dir, id), "sound", id)).map(|bytes| Cmd::PlaySe {
+                    bytes,
+                    level,
+                    pan: 0x40,
+                    priority: 0,
+                    handle: 0,
+                    limit: 0,
+                })
             }
             Req::Voice { id, level, pan, handle, limit } => {
-                let c = effects
-                    .entry(id)
-                    .or_insert_with(|| read(format::se_path(&dir, id), "sound", id))
-                    .clone()
-                    .map(|bytes| Cmd::PlaySe { bytes, level, pan, priority: 0, handle, limit });
+                let c = effects.get(id, || read(format::se_path(&dir, id), "sound", id)).map(|bytes| Cmd::PlaySe {
+                    bytes,
+                    level,
+                    pan,
+                    priority: 0,
+                    handle,
+                    limit,
+                });
                 // A failed read is taken too: the voice never comes.
                 if c.is_none()
                     && let Ok(mut t) = status.taken.lock()
@@ -849,6 +890,21 @@ impl ZoneMusic {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The effects cache keeps the recently played to its budget; the one just read always stays; misses stay known.
+    #[test]
+    fn se_cache_budget() {
+        let mut c = SeCache::default();
+        let big = |n: usize| move || Some(Arc::<[u8]>::from(vec![0u8; n]));
+        let half = SE_BUDGET / 2 + 1;
+        assert!(c.get(1, big(half)).is_some());
+        assert!(c.get(2, || None).is_none());
+        assert!(c.get(3, big(half)).is_some());
+        // 1 went (least recently played); 3 stays; the miss stays known (no second read).
+        assert!(!c.files.contains_key(&1) && c.files.contains_key(&3));
+        assert!(c.get(2, || panic!("read again")).is_none());
+        assert!(c.bytes <= SE_BUDGET);
+    }
 
     #[test]
     fn title_choice_follows_ffximain() {
