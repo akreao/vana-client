@@ -8248,7 +8248,7 @@ impl App {
         let frame_limit = cfg.frame_limit();
         crate::render::ANISOTROPY.store(cfg.anisotropy.clamp(1, 16), std::sync::atomic::Ordering::Relaxed);
         crate::render::MIPMAPS.store(cfg.tool("0000") != 0, std::sync::atomic::Ordering::Relaxed);
-        crate::render::UNCOMPRESSED.store(cfg.tool("0018") >= 2, std::sync::atomic::Ordering::Relaxed);
+        crate::render::set_uncompressed(cfg.tool("0018") >= 2);
         crate::render::MAP_COMPRESSED.store(cfg.tool("0019") == 0, std::sync::atomic::Ordering::Relaxed);
         crate::render::SHINE_WRAP.store(cfg.tool("0040") == 0, std::sync::atomic::Ordering::Relaxed);
         let (tasks_tx, tasks) = channel();
@@ -8408,7 +8408,7 @@ impl App {
         self.present_dirty = true;
         crate::render::ANISOTROPY.store(self.cfg.anisotropy.clamp(1, 16), std::sync::atomic::Ordering::Relaxed);
         crate::render::MIPMAPS.store(self.cfg.tool("0000") != 0, std::sync::atomic::Ordering::Relaxed);
-        crate::render::UNCOMPRESSED.store(self.cfg.tool("0018") >= 2, std::sync::atomic::Ordering::Relaxed);
+        crate::render::set_uncompressed(self.cfg.tool("0018") >= 2);
         crate::render::MAP_COMPRESSED.store(self.cfg.tool("0019") == 0, std::sync::atomic::Ordering::Relaxed);
         crate::render::SHINE_WRAP.store(self.cfg.tool("0040") == 0, std::sync::atomic::Ordering::Relaxed);
         let (m, e) = self.volume_factors();
@@ -9886,7 +9886,7 @@ impl App {
                             let tx = self.tasks_tx.clone();
                             std::thread::spawn(move || {
                                 let n = crate::dat::names::Names::load(&index, crate::dat::items::Lang::En)
-                                    .map(|n| (Arc::new(n), crate::dat::msgshift::MsgShift::bundled().verified(&index)));
+                                    .map(|n| (Arc::new(n), crate::dat::msgshift::MsgShift::bundled()));
                                 let _ = tx.send(Task::Names(n));
                             });
                         }

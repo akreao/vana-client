@@ -669,6 +669,8 @@ pub fn title_choice(option: u32, installed: u32, t: u32) -> (u32, usize, bool) {
 
 /// Reads sound files off the UI thread, keeping command order (effects stay cached).
 fn loader(dir: PathBuf, rx: Receiver<Req>, tx: Sender<Cmd>, status: Arc<Status>) {
+    // Mod packs change on restart, so the roots are listed once (each lookup read the config).
+    let roots = format::sound_dirs(&dir);
     let mut effects: HashMap<u32, Option<Arc<[u8]>>> = HashMap::new();
     let read = |path: Option<PathBuf>, what: &str, id: u32| -> Option<Arc<[u8]>> {
         let bytes = path.and_then(|p| std::fs::read(p).ok()).map(Arc::from);
@@ -680,21 +682,20 @@ fn loader(dir: PathBuf, rx: Receiver<Req>, tx: Sender<Cmd>, status: Arc<Status>)
     for r in rx {
         let cmd = match r {
             Req::Cmd(c) => Some(c),
-            Req::Music { id, level } => {
-                read(format::music_path(&dir, id), "music", id).map(|bytes| Cmd::PlayBgm { id, bytes, level, ticks: 0 })
-            }
+            Req::Music { id, level } => read(format::music_in(&dir, &roots, id), "music", id)
+                .map(|bytes| Cmd::PlayBgm { id, bytes, level, ticks: 0 }),
             Req::Se { id, level } => {
                 log::debug!("se {id} at level {level}");
                 effects
                     .entry(id)
-                    .or_insert_with(|| read(format::se_path(&dir, id), "sound", id))
+                    .or_insert_with(|| read(format::se_in(&roots, id), "sound", id))
                     .clone()
                     .map(|bytes| Cmd::PlaySe { bytes, level, pan: 0x40, priority: 0, handle: 0, limit: 0 })
             }
             Req::Voice { id, level, pan, handle, limit } => {
                 let c = effects
                     .entry(id)
-                    .or_insert_with(|| read(format::se_path(&dir, id), "sound", id))
+                    .or_insert_with(|| read(format::se_in(&roots, id), "sound", id))
                     .clone()
                     .map(|bytes| Cmd::PlaySe { bytes, level, pan, priority: 0, handle, limit });
                 // A failed read is taken too: the voice never comes.

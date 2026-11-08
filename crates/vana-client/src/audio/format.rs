@@ -362,19 +362,25 @@ fn sound_dirs_in(roots: &[PathBuf]) -> Vec<PathBuf> {
 /// `music%03u.bgw` from the first root that has it (FUN_1023bed0; id & 0x3ff); id 0x400 is the opening movie's
 /// `mov/music999.bgw` (FUN_1023bce0 plays it by path).
 pub fn music_path(ffxi_dir: &Path, id: u32) -> Option<PathBuf> {
+    music_in(ffxi_dir, &sound_dirs(ffxi_dir), id)
+}
+
+/// `music_path` over roots already listed (`sound_dirs`).
+pub fn music_in(ffxi_dir: &Path, dirs: &[PathBuf], id: u32) -> Option<PathBuf> {
     if id == 0x400 {
         return Some(ffxi_dir.join("mov").join("music999.bgw")).filter(|p| p.exists());
     }
-    sound_dirs(ffxi_dir)
-        .into_iter()
-        .map(|d| d.join("music/data").join(format!("music{:03}.bgw", id & 0x3ff)))
-        .find(|p| p.exists())
+    dirs.iter().map(|d| d.join("music/data").join(format!("music{:03}.bgw", id & 0x3ff))).find(|p| p.exists())
 }
 
 /// `se%03u/se%06u.spw` (FUN_1023f6f0).
 pub fn se_path(ffxi_dir: &Path, id: u32) -> Option<PathBuf> {
-    sound_dirs(ffxi_dir)
-        .into_iter()
+    se_in(&sound_dirs(ffxi_dir), id)
+}
+
+/// `se_path` over roots already listed (`sound_dirs`).
+pub fn se_in(dirs: &[PathBuf], id: u32) -> Option<PathBuf> {
+    dirs.iter()
         .map(|d| d.join("se").join(format!("se{:03}", id / 1000)).join(format!("se{id:06}.spw")))
         .find(|p| p.exists())
 }

@@ -510,7 +510,8 @@ pub struct Animation {
     /// The frame count as the game plays it: the keys less one (FUN_10018900), the last key closing the cycle.
     pub frames: u16,
     pub speed: f32,
-    pub tracks: Vec<Track>,
+    /// Shared: every look of a race clones its race's motions (`race_file`).
+    pub tracks: std::sync::Arc<[Track]>,
 }
 
 impl Track {
@@ -569,7 +570,7 @@ pub fn parse_animation(name: String, d: &[u8]) -> Result<Animation> {
         let scale: [Channel; 3] = channels(o + 60, o + 72, 3)?.try_into().unwrap();
         tracks.push(Track { bone: i32_at(d, o) as usize, rot, trans, scale });
     }
-    Ok(Animation { name, frames, speed, tracks })
+    Ok(Animation { name, frames, speed, tracks: tracks.into() })
 }
 
 /// Bone 0's translation (rest + motion) through RotY(3 pi / 2) as FUN_10033800 does: (x, y, z) -> (-z, y, x).
@@ -611,7 +612,7 @@ pub fn pose_held(skel: &Skeleton, anims: &[(&Animation, f32)], grips: &[(u16, u1
     let n = skel.bones.len();
     let mut local: Vec<(Quat, Vec3, Vec3)> = skel.bones.iter().map(|b| (b.rot, b.pos, Vec3::ONE)).collect();
     for (anim, frame) in anims {
-        for t in &anim.tracks {
+        for t in anim.tracks.iter() {
             let Some(b) = skel.bones.get(t.bone) else { continue };
             let (r, tr, s) = t.sample(*frame);
             // Verified visually: r * rest poses correctly (rest * r folds the torso); translation adds
@@ -672,7 +673,7 @@ pub fn skin(part: &MeshPart, world: &[BoneXf]) -> Vec<(Vec3, Vec3)> {
 }
 
 /// Everything parsed from one DAT that matters for a character.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct CharFile {
     pub skeleton: Option<Skeleton>,
     pub parts: Vec<MeshPart>,
@@ -1005,7 +1006,7 @@ impl Character {
     }
 
     pub fn prepare(&mut self) {
-        self.packed = Some(std::sync::Arc::new(super::animpack::pack(&self.animations)));
+        self.packed = Some(super::animpack::shared(super::animpack::pack(&self.animations)));
         self.skin = Some(std::sync::Arc::new(crate::render::SkinMesh::build(self)));
     }
 
@@ -1108,6 +1109,23 @@ mod tests {
         }
     }
 
+    /// Two looks of a race share its parsed motions and packed set, which match a fresh parse of the skeleton file.
+    #[test]
+    fn race_files_shared() {
+        use super::{Look, load_character, load_file};
+        use crate::dat::animpack::pack;
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let (a, b) =
+            (Look { race: 1, body: 8, ..Default::default() }, Look { race: 1, head: 3, body: 8, ..Default::default() });
+        let (Ok(mut x), Ok(mut y)) = (load_character(&index, &a), load_character(&index, &b)) else { return };
+        x.prepare();
+        y.prepare();
+        assert!(std::sync::Arc::ptr_eq(&x.animations[0].tracks, &y.animations[0].tracks));
+        assert!(std::sync::Arc::ptr_eq(x.packed.as_ref().unwrap(), y.packed.as_ref().unwrap()));
+        let fresh = load_file(&index.read(7072).unwrap()).unwrap().animations;
+        assert_eq!(pack(&fresh).words, pack(&x.animations[..fresh.len()]).words);
+    }
+
     /// Every PC skeleton's head look: head (0.24, 0.16, 0.5), neck (0.16, 0.06, 0.5); points 3 / 7 head / neck.
     #[test]
     fn look_limits() {
@@ -1121,9 +1139,26 @@ mod tests {
     }
 }
 
+/// A PC race's skeleton or motion file, parsed once and shared by every look of the race.
+fn race_file(index: &DatIndex, id: u32) -> Result<std::sync::Arc<CharFile>> {
+    use std::sync::{Arc, LazyLock, Mutex};
+    static FILES: LazyLock<Mutex<std::collections::HashMap<u32, Arc<CharFile>>>> = LazyLock::new(Default::default);
+    if let Some(f) = FILES.lock().ok().and_then(|m| m.get(&id).cloned()) {
+        return Ok(f);
+    }
+    let f = Arc::new(load_file(&index.read(id)?)?);
+    if let Ok(mut m) = FILES.lock() {
+        m.insert(id, f.clone());
+    }
+    Ok(f)
+}
+
 pub fn load_character(index: &DatIndex, look: &Look) -> Result<Character> {
     let (skel_id, part_ids) = file_ids(look)?;
-    let base = load_file(&index.read(skel_id)?)?;
+    let base = match pc_race(look.race) {
+        Some(_) => race_file(index, skel_id)?.as_ref().clone(),
+        None => load_file(&index.read(skel_id)?)?,
+    };
     let Some(skeleton) = base.skeleton else { bail!("file {skel_id} has no skeleton") };
     let mut log =
         vec![format!("skeleton {skel_id}: {} bones, {} animations", skeleton.bones.len(), base.animations.len())];
@@ -1224,10 +1259,10 @@ pub fn load_character(index: &DatIndex, look: &Look) -> Result<Character> {
     let upper = skel_id + 1 + if dual { 0 } else { selector(sub_info, 5).min(1) };
     let skirt = skel_id + 3 + selector(body_info, 9).saturating_sub(1).min(1);
     for (what, id) in [("upper-body motions", upper), ("skirt motions", skirt)] {
-        match index.read(id).and_then(|b| load_file(&b)) {
+        match race_file(index, id) {
             Ok(f) => {
                 ch.log.push(format!("{what}: file {id}, {} animations", f.animations.len()));
-                ch.animations.extend(f.animations);
+                ch.animations.extend(f.animations.iter().cloned());
             }
             Err(e) => ch.log.push(format!("{what} {id}: {e}")),
         }
