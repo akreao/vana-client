@@ -840,11 +840,10 @@ pub fn charges(left_secs: i32, n: i32, full: i32, calc: (u8, i16)) -> Option<(i3
 }
 
 /// The charge kind of the abilities on a timer (the sub-list row's sub, or a move's own kind).
-fn charge_kind(w: &World, a: &crate::dat::actions::Ability) -> u8 {
+fn charge_kind(a: &crate::dat::actions::Ability) -> u8 {
     if a.sub != 0 {
         return a.sub;
     }
-    let _ = w;
     a.kind
 }
 
@@ -863,7 +862,7 @@ fn recast_rows(w: &World, t: &mut Timers, now: Instant, seen: &mut HashSet<(u8, 
         let icon = list_icon(w, false, a.id);
         let mut name = name_of(a.id as u32, false);
         let calc = w.ability_calc.get(&timer).copied().unwrap_or((0, 0));
-        let rule = charge_rule(w, charge_kind(w, a)).and_then(|(n, full)| charges(left.ceil() as i32, n, full, calc));
+        let rule = charge_rule(w, charge_kind(a)).and_then(|(n, full)| charges(left.ceil() as i32, n, full, calc));
         let (left, total) = match rule {
             Some((next, ready, per)) => {
                 name = format!("{name} ({ready})");

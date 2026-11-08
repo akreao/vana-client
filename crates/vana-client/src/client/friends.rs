@@ -107,11 +107,6 @@ impl Friends {
     pub fn new(cred: Option<Cred>) -> Self {
         Self { cred, ..Default::default() }
     }
-
-    /// A friend by account, on the friend list.
-    pub fn by_account(&self, account: u64) -> Option<&Friend> {
-        self.list.iter().find(|f| !f.black && f.account == account)
-    }
 }
 
 fn spawn(w: &mut World, job: impl FnOnce(&Cred) -> Done + Send + 'static) {
@@ -205,7 +200,7 @@ pub fn poll(w: &mut World) {
             Irc::Status { account, list_index, status, char_id, age } => {
                 notice(w, account, list_index, status, char_id, age)
             }
-            Irc::Mail(_) => fetch(w),
+            Irc::Mail => fetch(w),
             Irc::Closed(why) => {
                 log::warn!("friends: IRC closed: {why}");
                 let f = &mut w.friends;

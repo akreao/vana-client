@@ -72,7 +72,11 @@ end
 timer.every(1, tick)
 events.on("settings_changed", tick)
 
-local USAGE = "//bags add <item>, //bags addkey <key item>, //bags remove <name>, //bags list"
+-- The forms of //bags as mod.toml declares them: what the chat line's hint and //mods show.
+local function usage()
+  chat.add("Inventory HUD:")
+  for _, line in ipairs(commands.usage("bags")) do chat.add("  " .. line) end
+end
 
 commands.register("bags", function(cmd, ...)
   cmd = (cmd or ""):lower()
@@ -97,6 +101,6 @@ commands.register("bags", function(cmd, ...)
     end
     chat.add("Inventory HUD: " .. name .. " is not watched.")
   else
-    chat.add("Inventory HUD: " .. USAGE)
+    usage()
   end
 end)

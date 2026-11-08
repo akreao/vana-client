@@ -401,6 +401,9 @@ impl Library {
         }
         match zone::parse_img(self.data(i)) {
             Ok(t) => {
+                // Decoded here, as before the lazy decode: the effects renderer reads every texture's alpha
+                // (soften_alpha) when it first draws it, mid-frame.
+                let _ = t.rgba();
                 let k = self.textures.len();
                 self.textures.push(t);
                 self.tex_of_node.insert(i, k);

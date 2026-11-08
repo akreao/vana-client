@@ -117,14 +117,18 @@ local function call(names)
   if not ok then error(err, 0) end
 end
 
-local USAGE = "//trusts <lineup>, //trusts save <lineup> [trust, trust...], //trusts list, //trusts delete <lineup>"
+-- The forms of //trusts as mod.toml declares them: what the chat line's hint and //mods show.
+local function usage()
+  chat.add("Trust Lineups:")
+  for _, line in ipairs(commands.usage("trusts")) do chat.add("  " .. line) end
+end
 
 commands.register("trusts", function(cmd, name, ...)
   if not settings.get("on") then return end
   cmd = (cmd or ""):lower()
   local s = sets()
   if cmd == "" then
-    chat.add("Trust Lineups: " .. USAGE)
+    usage()
   elseif cmd == "list" then
     local out = {}
     for k, v in pairs(s) do out[#out + 1] = k .. ": " .. table.concat(v, ", ") end
@@ -156,6 +160,7 @@ commands.register("trusts", function(cmd, name, ...)
   elseif s[cmd] then
     call(s[cmd])
   else
-    chat.add("Trust Lineups: no lineup " .. cmd .. ". " .. USAGE)
+    chat.add("Trust Lineups: no lineup " .. cmd .. ".")
+    usage()
   end
 end)

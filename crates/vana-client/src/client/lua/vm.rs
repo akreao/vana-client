@@ -17,6 +17,8 @@ use std::time::{Duration, Instant};
 pub(super) const MEMORY: usize = 64 << 20;
 /// A single call past this is stopped; repeated, the mod is suspended.
 const HARD_CAP: Duration = Duration::from_millis(100);
+/// Distinct error texts a mod's state remembers as reported (ModState::record).
+const REPORTED_KEPT: usize = 256;
 /// A call past this is reported once (BG3SE's client default).
 const SOFT_CAP: Duration = Duration::from_millis(2);
 /// Errors within `ERROR_WINDOW` that suspend a mod.
@@ -129,6 +131,8 @@ pub(super) struct ModState {
     pub stats: Stats,
     pub errors: VecDeque<Instant>,
     pub reported: HashSet<String>,
+    /// `reported` in the order its texts came, so the oldest goes first once it holds REPORTED_KEPT.
+    reported_order: VecDeque<String>,
     /// Lines for the chat log about this mod (errors, budget), printed by the host.
     pub notices: Vec<String>,
     pub save: bool,
@@ -188,11 +192,15 @@ impl ModState {
         while self.errors.front().is_some_and(|t| now.duration_since(*t) > ERROR_WINDOW) {
             self.errors.pop_front();
         }
-        // Errors that carry values are each new: the set starts again past a few hundred rather than grow.
-        if self.reported.len() >= 256 {
-            self.reported.clear();
-        }
+        // Errors that carry values are each new: the oldest texts go past a few hundred rather than the set grow
+        // (emptying it all at once would report a steady error again after every few hundred others).
         if self.reported.insert(text.clone()) {
+            self.reported_order.push_back(text.clone());
+            if self.reported_order.len() > REPORTED_KEPT
+                && let Some(old) = self.reported_order.pop_front()
+            {
+                self.reported.remove(&old);
+            }
             self.notices.push(format!("{name}: {text}"));
         }
     }
@@ -228,6 +236,14 @@ pub(super) struct Sleeper {
     pub born: u64,
     /// Begun with the player's input (ModState::input), kept across sleeps.
     pub input: bool,
+}
+
+/// A wait longer than an Instant holds (`sleep(math.huge)`, `timer.after(1/0, f)`): a century, which is never.
+pub(super) const NEVER: Duration = Duration::from_secs(100 * 365 * 24 * 3600);
+
+/// A mod's number of seconds as a Duration, at most NEVER (infinite and huge values too; negative and NaN: none).
+pub(super) fn secs(s: f64) -> Duration {
+    Duration::try_from_secs_f64(s.max(0.0)).map_or(NEVER, |d| d.min(NEVER))
 }
 
 pub(super) enum Wake {
@@ -295,20 +311,22 @@ impl Vm {
         lua.load(PRELUDE).set_name("=prelude").call::<()>(token_table.clone())?;
         let token = lua.create_registry_value(token_table)?;
         let vm = Self { manifest, dir, src, lua, st, suspended: None, token };
-        vm.set_hook_on_main()?;
+        vm.set_hook()?;
         Ok(vm)
     }
 
+    /// The time budget's check (a state borrowed elsewhere just lets the code run on to the next check).
     fn hook(&self) -> impl Fn(&Lua, &mlua::debug::Debug) -> mlua::Result<VmState> + 'static {
         let st = self.st.clone();
-        move |_, _| match st.borrow().deadline {
+        move |_, _| match st.try_borrow().ok().and_then(|s| s.deadline) {
             Some(d) if Instant::now() > d => Err(mlua::Error::runtime("ran past its time budget")),
             _ => Ok(VmState::Continue),
         }
     }
 
-    fn set_hook_on_main(&self) -> mlua::Result<()> {
-        self.lua.set_hook(HookTriggers::new().every_nth_instruction(10_000), self.hook())
+    /// One hook for every thread: ours and the coroutines a mod makes itself, which a per-thread hook missed.
+    fn set_hook(&self) -> mlua::Result<()> {
+        self.lua.set_global_hook(HookTriggers::new().every_nth_instruction(10_000), self.hook())
     }
 
     /// Runs the entry file.
@@ -379,10 +397,6 @@ impl Vm {
 
     /// As resume, with a time budget; what the thread returned when it ended.
     fn resume_for(&self, thread: Thread, args: impl IntoLuaMulti, cap: Duration) -> Option<MultiValue> {
-        if let Err(e) = thread.set_hook(HookTriggers::new().every_nth_instruction(10_000), self.hook()) {
-            self.error(&e);
-            return None;
-        }
         self.st.borrow_mut().deadline = Some(Instant::now() + cap);
         let t0 = Instant::now();
         let r = thread.resume::<MultiValue>(args);
@@ -422,7 +436,7 @@ impl Vm {
                         .and_then(|v| v.as_number().or(v.as_integer().map(|i| i as f64)))
                         .unwrap_or(0.0)
                         .max(0.0);
-                    Wake::At(Instant::now() + Duration::from_secs_f64(s))
+                    Wake::At(Instant::now() + secs(s))
                 }
                 Some("until") => {
                     let Some(Value::Function(test)) = it.next() else {
@@ -432,7 +446,7 @@ impl Vm {
                     let limit = it
                         .next()
                         .and_then(|v| v.as_number().or(v.as_integer().map(|i| i as f64)))
-                        .map(|s| Instant::now() + Duration::from_secs_f64(s.max(0.0)));
+                        .map(|s| Instant::now() + secs(s));
                     match self.lua.create_registry_value(test) {
                         Ok(k) => Wake::Until(k, limit),
                         Err(e) => {
@@ -559,7 +573,8 @@ impl Vm {
         let funcs: Vec<Function> = {
             let st = self.st.borrow();
             let mut hs: Vec<&Handler> = st.handlers.iter().filter(|h| h.event == event).collect();
-            hs.sort_by_key(|h| -h.priority);
+            // Highest first (a negation would wrap for i32::MIN); stable for equal priorities.
+            hs.sort_by(|a, b| b.priority.cmp(&a.priority));
             hs.iter().filter_map(|h| self.lua.registry_value::<Function>(&h.func).ok()).collect()
         };
         for f in funcs {

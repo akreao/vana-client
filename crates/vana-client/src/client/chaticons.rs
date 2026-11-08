@@ -54,3 +54,9 @@ pub fn texture(k: usize) -> String {
     let ver = ICONS.lock().ok().and_then(|a| a.get(k).map(|i| i.ver)).unwrap_or(0);
     format!("\0chaticon {k} {ver}")
 }
+
+/// The name its pixels before the last change were uploaded under (to free them), if they changed.
+pub fn previous_texture(k: usize) -> Option<String> {
+    let ver = ICONS.lock().ok().and_then(|a| a.get(k).map(|i| i.ver))?;
+    ver.checked_sub(1).map(|v| format!("\0chaticon {k} {v}"))
+}

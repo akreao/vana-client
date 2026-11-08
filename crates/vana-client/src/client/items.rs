@@ -104,12 +104,12 @@ impl Inventory {
         }
     }
 
-    /// The occupied slots in the view's order.
     /// The item id in a slot.
     pub fn item(&self, container: u8, index: u8) -> Option<u16> {
         self.slots.get(&(container, index)).map(|s| s.0)
     }
 
+    /// The occupied slots in the view's order.
     pub fn viewed(&self, container: u8) -> Vec<Slot> {
         let o = self.order.get(&container).map(Vec::as_slice).unwrap_or_default();
         o.iter()
@@ -1235,7 +1235,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         Win::Items { scroll, cursor, store: Some(b), .. } => {
             rects.extend(draw_storage(gu, w, info, *scroll, *cursor, b, sw, sh, frame))
         }
-        Win::Items { scroll, cursor, sub, direct, sort, manual, .. } => {
+        Win::Items { scroll, cursor, sub, direct, sort, .. } => {
             let shown = listed_at(w, *direct);
             let rows = list_rows(w, info, &shown, *direct);
             let list = ItemList { rows, scroll: *scroll, cursor: *cursor };
@@ -1275,7 +1275,6 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
                     );
                 }
             }
-            let _ = manual;
             if let Some(s) = sub {
                 rects.extend(draw_iuse(gu, w, *s, sw, sh));
             }

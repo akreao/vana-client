@@ -133,7 +133,7 @@ pub fn update(w: &mut World, ticks: f32) {
 
 fn scroll(cursor: &mut usize, top: &mut usize, to: usize, rows: usize) {
     *cursor = to;
-    *top = (*top).min(to).max((to + 1).saturating_sub(rows));
+    super::scrollbar::keep_in_view(top, to, rows);
 }
 
 pub fn key(w: &mut World, key: egui::Key, page_mod: bool) {

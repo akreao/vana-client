@@ -27,6 +27,10 @@ pub enum Click {
     Docked(&'static str),
     /// A canvas drag: element, phase (0 start, 1 move, 2 release), where.
     CanvasDrag(usize, u8, f32, f32),
+    /// Where a canvas is on screen this frame, in window pixels: its origin, the part of it shown (min, max), the
+    /// pixels per point, and whether it is on top under the pointer. The client keeps it so a HUD drag let go over it
+    /// drops there (lua::window_click; it is no click on the window).
+    CanvasAt(usize, [f32; 2], [f32; 4], f32, bool),
     /// A `targets` row: the entity to target.
     Pick(u32),
 }
@@ -35,7 +39,6 @@ fn rgba(c: [u8; 4]) -> Color32 {
     Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3])
 }
 
-/// A canvas's commands in `r`, clipped to it.
 /// A mod's icon as an egui texture and its UV: an item's, a status's, or a spell's or an ability's list sprite.
 pub(super) fn icon_tex(
     m: &super::Modern,
@@ -58,6 +61,7 @@ pub(super) fn icon_tex(
     }
 }
 
+/// A canvas's commands in `r`, clipped to it.
 fn canvas(
     ui: &egui::Ui,
     m: &super::Modern,
@@ -162,8 +166,8 @@ impl Click {
             Click::CanvasHover(i, x, y) => win.canvas_hover(i, x, y),
             Click::Docked(side) => win.docked(side),
             Click::CanvasDrag(i, phase, x, y) => win.canvas_drag(i, phase, x, y),
-            // The client picks it (lua::window_click).
-            Click::Pick(_) => (Vec::new(), Vec::new()),
+            // The client takes these (lua::window_click).
+            Click::Pick(_) | Click::CanvasAt(..) => (Vec::new(), Vec::new()),
         }
     }
 }
@@ -525,6 +529,22 @@ pub(super) fn body(
             Elem::Canvas { w: cw, h: ch, cmds, .. } => {
                 let (r, resp) = ui.allocate_exact_size(vec2(*cw, *ch), Sense::click_and_drag());
                 canvas(ui, m, ctx, gu, world, r, cmds);
+                let shown = r.intersect(ui.clip_rect());
+                if shown.is_positive() {
+                    let ppp = ctx.pixels_per_point();
+                    // Under the pointer, whether it is on top there: no panel or window over it (tips aside).
+                    let top = ctx.pointer_latest_pos().is_none_or(|q| {
+                        !shown.contains(q)
+                            || ctx.layer_id_at(q).is_none_or(|l| l == ui.layer_id() || l.order == egui::Order::Tooltip)
+                    });
+                    clicks.push(Click::CanvasAt(
+                        i,
+                        [r.min.x * ppp, r.min.y * ppp],
+                        [shown.min.x * ppp, shown.min.y * ppp, shown.max.x * ppp, shown.max.y * ppp],
+                        ppp,
+                        top,
+                    ));
+                }
                 let at = resp
                     .interact_pointer_pos()
                     .or_else(|| ctx.input(|inp| inp.pointer.latest_pos()))

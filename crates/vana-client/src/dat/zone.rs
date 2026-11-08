@@ -450,20 +450,41 @@ pub fn parse_mzb(p: &mut [u8]) -> Result<Vec<Placement>> {
     Ok(out)
 }
 
+/// Set while the renderer uploads DXT images as RGBA (no BC, 0018 = 2, FFXI_TEX_OLD): `parse_img` then decodes
+/// them where they are read, not at upload.
+pub static EAGER_RGBA: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 #[derive(Clone)]
 pub struct Texture {
     pub name: String,
     pub format: u8,
     pub width: u32,
     pub height: u32,
-    pub rgba: Vec<u8>,
+    /// RGBA8; a DXT image's is decoded from `dxt` on first use (the GPU mostly takes the blocks).
+    rgba: std::sync::OnceLock<Vec<u8>>,
     /// The DXT blocks as stored (true = DXT3, its alpha doubled as the RGBA's is): the GPU's level 0.
     pub dxt: Option<(bool, Vec<u8>)>,
 }
 
 impl Texture {
     pub fn new(name: String, format: u8, width: u32, height: u32, rgba: Vec<u8>) -> Self {
-        Texture { name, format, width, height, rgba, dxt: None }
+        Texture { name, format, width, height, rgba: rgba.into(), dxt: None }
+    }
+
+    pub fn rgba(&self) -> &[u8] {
+        self.rgba.get_or_init(|| match &self.dxt {
+            Some((dxt3, b)) => decode_dxt(b, self.width, self.height, *dxt3),
+            None => Vec::new(),
+        })
+    }
+
+    pub fn rgba_mut(&mut self) -> &mut Vec<u8> {
+        self.rgba();
+        self.rgba.get_mut().expect("set by rgba()")
+    }
+
+    pub fn into_rgba(mut self) -> Vec<u8> {
+        std::mem::take(self.rgba_mut())
     }
 }
 
@@ -575,7 +596,12 @@ pub fn parse_img(p: &[u8]) -> Result<Texture> {
     };
     let mut half_alpha = true;
     let mut dxt = None;
-    let mut rgba = match flag {
+    // The GPU takes the blocks themselves only when both sides are a multiple of 4 (render/upload.rs level0). The flag
+    // is read once: 0018 can change on the UI thread mid-parse, and an image decoded neither now nor later would keep
+    // an empty RGBA for good.
+    let eager = EAGER_RGBA.load(std::sync::atomic::Ordering::Relaxed);
+    let lazy = |d: &Option<(bool, Vec<u8>)>| d.is_some() && w % 4 == 0 && h % 4 == 0 && !eager;
+    let mut rgba: Vec<u8> = match flag {
         0xA1 => {
             if p.len() < 69 {
                 bail!("IMG {name}: DXT header cut short");
@@ -588,7 +614,7 @@ pub fn parse_img(p: &[u8]) -> Result<Texture> {
                 b"1TXD" => {
                     half_alpha = false;
                     dxt = (data.len() >= blocks * 8).then(|| (false, data[..blocks * 8].to_vec()));
-                    decode_dxt(data, w, h, false)
+                    if lazy(&dxt) { Vec::new() } else { decode_dxt(data, w, h, false) }
                 }
                 b"3TXD" => {
                     dxt = (data.len() >= blocks * 16).then(|| {
@@ -596,7 +622,8 @@ pub fn parse_img(p: &[u8]) -> Result<Texture> {
                         super::texmip::double_bc2_alpha(&mut d);
                         (true, d)
                     });
-                    decode_dxt(data, w, h, true)
+                    // Decoding the doubled blocks gives the doubled alpha: (2n).min(15) * 17 == (n * 34).min(255).
+                    if lazy(&dxt) { Vec::new() } else { decode_dxt(data, w, h, true) }
                 }
                 other => bail!("IMG {name}: unsupported compression {:?}", String::from_utf8_lossy(other)),
             }
@@ -611,6 +638,7 @@ pub fn parse_img(p: &[u8]) -> Result<Texture> {
             px[3] = px[3].saturating_mul(2);
         }
     }
+    let rgba = if lazy(&dxt) { std::sync::OnceLock::new() } else { rgba.into() };
     Ok(Texture { name, format: flag, width: w, height: h, rgba, dxt })
 }
 
@@ -837,33 +865,37 @@ pub fn load_scene(keys: &Keys, file: &[u8]) -> Result<ZoneScene> {
     };
     let list: Vec<Chunk> = chunks(file)?;
     for c in list {
-        let mut data = c.data.to_vec();
+        // Only the MZB and MMB chunks are decoded in place, so only they are copied.
         let result = match c.kind {
-            0x1C => decode_mzb(keys, &mut data).and_then(|_| parse_mzb(&mut data)).map(|p| {
-                // As the collision, the last MZB's.
-                let base = scene.placements.len() as u32;
-                scene.camera_lists = camera_lists(&data)
-                    .into_iter()
-                    .map(|(at, l)| (at, l.into_iter().map(|i| i + base).collect()))
-                    .collect();
-                scene.placements.extend(p);
-                for k in light_list(&data) {
-                    if k != 0 && !scene.light_keys.contains(&k) {
-                        scene.light_keys.push(k);
+            0x1C => {
+                let mut data = c.data.to_vec();
+                decode_mzb(keys, &mut data).and_then(|_| parse_mzb(&mut data)).map(|p| {
+                    // As the collision, the last MZB's.
+                    let base = scene.placements.len() as u32;
+                    scene.camera_lists = camera_lists(&data)
+                        .into_iter()
+                        .map(|(at, l)| (at, l.into_iter().map(|i| i + base).collect()))
+                        .collect();
+                    scene.placements.extend(p);
+                    for k in light_list(&data) {
+                        if k != 0 && !scene.light_keys.contains(&k) {
+                            scene.light_keys.push(k);
+                        }
                     }
-                }
-                match super::collision::parse(&data) {
-                    Ok(c) => scene.collision = Some(c),
-                    Err(e) => scene.warnings.push(format!("collision: {e}")),
-                }
-            }),
+                    match super::collision::parse(&data) {
+                        Ok(c) => scene.collision = Some(c),
+                        Err(e) => scene.warnings.push(format!("collision: {e}")),
+                    }
+                })
+            }
             0x2E => {
+                let mut data = c.data.to_vec();
                 decode_mmb(keys, &mut data);
                 parse_mmb(&data).map(|m| scene.meshes.push(m))
             }
-            0x20 => parse_img(&data).map(|t| scene.textures.push(t)),
+            0x20 => parse_img(c.data).map(|t| scene.textures.push(t)),
             0x36 => {
-                scene.regions.extend(parse_rid(&data));
+                scene.regions.extend(parse_rid(c.data));
                 Ok(())
             }
             0x06 if c.name[..3] == *b"c00" && (b'0'..=b'3').contains(&c.name[3]) => {
@@ -886,6 +918,20 @@ pub fn load_scene(keys: &Keys, file: &[u8]) -> Result<ZoneScene> {
 
 #[cfg(test)]
 mod tests {
+    /// A DXT3 image's RGBA, decoded later from the alpha-doubled blocks, is the one decoded first and doubled.
+    #[test]
+    fn dxt3_alpha_doubled_either_way() {
+        let mut block = [0u8; 16];
+        for (k, b) in block[..8].iter_mut().enumerate() {
+            *b = (2 * k as u8) | ((2 * k as u8 + 1) << 4);
+        }
+        block[8..].copy_from_slice(&[0x1f, 0xf8, 0xe0, 0x07, 0xe4, 0x1b, 0x6c, 0x93]);
+        let mut first = super::decode_dxt(&block, 4, 4, true);
+        first.chunks_exact_mut(4).for_each(|p| p[3] = p[3].saturating_mul(2));
+        let mut doubled = block;
+        crate::dat::texmip::double_bc2_alpha(&mut doubled);
+        assert_eq!(first, super::decode_dxt(&doubled, 4, 4, true));
+    }
     use super::*;
 
     /// Escha - Ru'Aun (scene 733): the gate's detailed mesh and its stand-in form a group whose simplest is the
@@ -930,11 +976,11 @@ mod tests {
         p.extend(pal);
         p.extend([0x12, 0x21]);
         let t = parse_img(&p).unwrap();
-        assert_eq!(t.rgba, [60, 50, 40, 0x80, 30, 20, 10, 255, 30, 20, 10, 255, 60, 50, 40, 0x80]);
+        assert_eq!(t.rgba(), [60, 50, 40, 0x80, 30, 20, 10, 255, 30, 20, 10, 255, 60, 50, 40, 0x80]);
         // 1 x 2 BGRA.
         let mut p = header(0x81, 1, 2, 32, 0);
         p.extend([1, 2, 3, 0x40, 4, 5, 6, 0x80]);
-        assert_eq!(parse_img(&p).unwrap().rgba, [6, 5, 4, 255, 3, 2, 1, 0x80]);
+        assert_eq!(parse_img(&p).unwrap().rgba(), [6, 5, 4, 255, 3, 2, 1, 0x80]);
     }
 
     /// Each footprint corner, nudged toward the centre, is inside the box; nudged out, it is not.

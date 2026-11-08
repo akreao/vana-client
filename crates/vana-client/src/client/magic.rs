@@ -647,7 +647,6 @@ pub(super) fn ability_ready(w: &World, i: u16) -> bool {
     ability_check(w, i).is_none() && !blocked(w, false)
 }
 
-/// Ours: something in the category can be used now. Traits are a list to read, never dimmed.
 /// A macro line's spell or ability (textcmd::line_action) usable now: a spell learned, a job ability among s2c
 /// 0x0AC's bits.
 pub(super) fn action_ready(w: &World, kind: Kind, id: u16) -> bool {
@@ -662,6 +661,7 @@ pub(super) fn action_ready(w: &World, kind: Kind, id: u16) -> bool {
     }
 }
 
+/// Ours: something in the category can be used now. Traits are a list to read, never dimmed.
 pub(super) fn cat_ready(w: &World, cat: Cat) -> bool {
     match cat {
         Cat::Magic(ty, _) => magic_rows(w, ty, false, 0).into_iter().any(|s| spell_ready(w, s)),

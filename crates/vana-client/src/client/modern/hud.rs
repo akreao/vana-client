@@ -491,10 +491,6 @@ fn exp_bar(p: &Panels, id: &str, r: Rect, e: &ExpView) {
     }
 }
 
-/// The party window (ours first; "Solo" outside a party) or an alliance's, as retail's ptwN / raid1 / raid2: per row
-/// the job, leader marks, the name over the HP bar with the HP number in its colour, the MP bar and number and TP
-/// (party rows), a member elsewhere greyed with the zone's name, the hand on the party cursor's or our target's row.
-/// Its height is exact, so the party window grows upward with no frame's lag. The slot clicked, if any.
 /// A row under the party's members for our pet or fellow (retail's rows beside the party window).
 pub struct PetRow {
     pub id: u32,
@@ -513,6 +509,10 @@ pub enum PartyPick {
     Entity(u32),
 }
 
+/// The party window (ours first; "Solo" outside a party) or an alliance's, as retail's ptwN / raid1 / raid2: per row
+/// the job, leader marks, the name over the HP bar with the HP number in its colour, the MP bar and number and TP
+/// (party rows), a member elsewhere greyed with the zone's name, the hand on the party cursor's or our target's row.
+/// Its height is exact, so the party window grows upward with no frame's lag. What was clicked, if anything.
 pub fn party_panel(
     p: &mut Panels,
     id: &str,

@@ -211,7 +211,7 @@ pub(super) fn mark_seen(w: &mut World, id: u16) {
 }
 
 /// FUN_1022aaa0 (and FUN_10222710 for evitem01).
-pub fn key(w: &mut World, gu: &GameUi, key: egui::Key, page_mod: bool) {
+pub fn key(w: &mut World, gu: &GameUi, key: egui::Key, _page_mod: bool) {
     let Some(mut k) = w.keyitems.clone() else { return };
     // FUN_1022aaa0 state 3: Enter / Escape do nothing while +0x89 is set.
     if k.event {
@@ -282,7 +282,6 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key, page_mod: bool) {
             w.sounds.push(Ui::Cursor as u32);
         }
         (2, egui::Key::ArrowLeft | egui::Key::ArrowRight) if !k.items.is_empty() => {
-            let _ = page_mod;
             let t = page(&h, k.top, key == egui::Key::ArrowRight);
             if t != k.top {
                 (k.top, k.cursor) = (t, t);

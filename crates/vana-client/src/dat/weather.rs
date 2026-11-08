@@ -334,11 +334,6 @@ pub struct LightEase {
 }
 
 impl LightEase {
-    /// FUN_10187030 at a zone load: the next step copies the targets.
-    pub fn reset(&mut self) {
-        self.init = false;
-    }
-
     /// FUN_10187720 once a retail frame in game: the sun by day, the moon by night (sun.y < 0); flags-bit-0
     /// environments keep their data directions (no ease).
     pub fn step(&mut self, env: &Env, minute: f32) {

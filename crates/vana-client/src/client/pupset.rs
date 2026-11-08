@@ -306,24 +306,9 @@ pub fn remove_all(w: &mut World) {
     send_body(w, body);
 }
 
-/// The generic list: Up / Down stop at the ends, Left / Right a page of 10. True when it moved.
-fn step(c: &mut (usize, usize), n: usize, key: egui::Key) -> bool {
-    use egui::Key as K;
-    let old = c.0;
-    match key {
-        K::ArrowDown if c.0 + 1 < n => c.0 += 1,
-        K::ArrowUp if c.0 > 0 => c.0 -= 1,
-        K::ArrowRight => c.0 = (c.0 + VISIBLE).min(n.saturating_sub(1)),
-        K::ArrowLeft => c.0 = c.0.saturating_sub(VISIBLE),
-        _ => {}
-    }
-    c.1 = c.1.min(c.0).max((c.0 + 1).saturating_sub(VISIBLE));
-    c.0 != old
-}
-
 fn list_to(s: &mut Screen, r: usize) {
     s.list.0 = r;
-    s.list.1 = s.list.1.min(r).max((r + 1).saturating_sub(VISIBLE));
+    crate::client::scrollbar::keep_in_view(&mut s.list.1, r, VISIBLE);
 }
 
 /// The list's cursor kept on its rows after they change.
@@ -527,7 +512,7 @@ fn keys(w: &mut World, gu: &GameUi, s: &mut Screen, key: egui::Key) -> bool {
         }
         (Focus::List, _) => {
             let n = rows(w, s).len();
-            if step(&mut s.list, n, key) {
+            if crate::client::scrollbar::step(&mut s.list, n, VISIBLE, key) {
                 w.sounds.push(Ui::Cursor as u32);
             }
         }
@@ -930,8 +915,6 @@ pub(super) fn look(w: &World, gu: &GameUi) -> Option<Look> {
     })
 }
 
-/// The mouse's moves in the modern layer: a slot (grid) or a list row; with nothing picked the other side takes the
-/// focus first (as Num+). True when the cursor moved.
 /// Type-to-search (modern/search.rs) in the owned parts: while either list has the keys and no slot waits for a part.
 pub(super) fn search_open(w: &World) -> bool {
     w.confirm.is_none()
@@ -960,6 +943,8 @@ pub(super) fn search_pick(w: &mut World, gu: Option<&GameUi>, k: usize) {
     key(w, gu, egui::Key::Enter);
 }
 
+/// The mouse's moves in the modern layer: a slot (grid) or a list row; with nothing picked the other side takes the
+/// focus first (as Num+). True when the cursor moved.
 pub(super) fn set_row(w: &mut World, grid: bool, k: usize) -> bool {
     let Some(s) = w.pupset.as_ref().filter(|s| s.sibo.is_none()) else { return false };
     if (s.focus == Focus::Grid) != grid {

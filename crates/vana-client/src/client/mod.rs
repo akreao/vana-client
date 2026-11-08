@@ -92,6 +92,7 @@ mod bazaar;
 mod blklist;
 mod bluset;
 mod chatctrl;
+mod cmdhint;
 mod concierge;
 mod currencies;
 mod durations;
@@ -341,6 +342,7 @@ fn typing_elsewhere(w: &World) -> bool {
         // Ours: the GM window's fields and search, and the Settings window's search.
         || modern::gm_takes_keys(w)
         || modern::pad_takes_keys(w)
+        || modern::mods_takes_keys(w)
         || modern::config_finding(w)
 }
 
@@ -689,7 +691,6 @@ enum LobbyScreen {
     Select,
     Create,
     Delete,
-    Config,
 }
 
 /// Lobby screen changes (FUN_10233d50 / FUN_10233cf0, schedulers of file 33193): 'sfot' + 'ffot' take the 2D layer
@@ -1299,7 +1300,7 @@ fn reasks(kind: EntityKind, look_kind: u8, id: u32, old: u32, seen: u16, m: u16)
 }
 
 /// The game clock in Earth seconds since the Vana'diel epoch (FUN_101039e0: 0x00A GameTime plus the time since).
-pub(super) fn vana_now(w: &World) -> u64 {
+fn vana_now(w: &World) -> u64 {
     w.clock.map_or(0, |(t, at)| t as u64 + at.elapsed().as_secs())
 }
 
@@ -1821,8 +1822,6 @@ fn check_target(world: &mut World) {
     }
 }
 
-/// Name colour index into "menu    ncol" (a subset of FUN_1008c430): players white, NPCs green,
-/// monsters pale yellow, red when we claimed them, magenta when someone else did.
 /// Ourselves as a target (retail keeps the player in the entity array): what the target window and the target code
 /// read from an entity.
 fn self_entity(w: &World) -> Entity {
@@ -2205,8 +2204,6 @@ fn anchor_point(world: &World, id: u32, which: usize) -> Option<Vec3> {
     }
 }
 
-/// The in-game HUD in the game's own windows: chat log and input line, party, target, main menu
-/// ('-' opens it) and the KO prompt. Returns the rects that take clicks away from the world.
 /// The alliance windows are down while a window set is up (main and social menus, item / equipment windows, magic /
 /// ability lists, map, config, palettes) or an event holds us (the mapping to our state: inferred).
 fn alliance_hidden(world: &World) -> bool {
@@ -2258,6 +2255,8 @@ fn window_closes(w: &mut World, events: &[egui::Event]) {
     }
 }
 
+/// The in-game HUD in the game's own windows: chat log and input line, party, target, main menu
+/// ('-' opens it) and the KO prompt. Returns the rects that take clicks away from the world.
 fn world_hud(
     gu: &mut GameUi,
     world: &mut World,
@@ -2343,8 +2342,13 @@ fn world_hud(
     if find_typing {
         keys.clear();
     }
+    // Ours: the Mods window takes the text and keys while it is open (over the Settings window it may be opened from).
+    let mods_typing = modern::mods_events(world, &input.events);
+    if mods_typing {
+        keys.clear();
+    }
     // The modern Settings window's search takes the text, Backspace, Escape and Ctrl+R while a topic page shows.
-    let settings_typing = modern::config_find_events(world, &input.events);
+    let settings_typing = !mods_typing && modern::config_find_events(world, &input.events);
     if settings_typing {
         keys.clear();
     }
@@ -2379,7 +2383,8 @@ fn world_hud(
         || find_typing
         || settings_typing
         || gm_typing
-        || pad_typing;
+        || pad_typing
+        || mods_typing;
     if post_typing {
         post::text_events(world, &input.events);
         keys.clear();
@@ -2410,7 +2415,7 @@ fn world_hud(
     } else if map_typing && let Some(m) = world.map.as_mut() {
         m.text_events(&input.events);
         keys.clear();
-    } else if input_open && !scan_typing && !find_typing && !pad_typing {
+    } else if input_open && !scan_typing && !find_typing && !pad_typing && !mods_typing {
         event::input_events(world, &input.events);
         keys.clear();
     }
@@ -2488,7 +2493,12 @@ fn world_hud(
                 egui::Key::V if modifiers.ctrl && modifiers.alt && modifiers.shift => voicechat::toggle(world),
                 // The auto-translate list takes its keys first (FUN_101b5d10).
                 k if world.typing && world.fep.is_some() && fep::key(world, *k, modifiers.shift) => {}
+                // Ours: Tab on a command's name completes it (cmdhint.rs); elsewhere the auto-translate list.
+                egui::Key::Tab if world.typing && cmdhint::tab(world, modifiers.shift) => {}
                 egui::Key::Tab if world.typing => fep::open(world),
+                // Ours: Up / Down pick in the command hint's list (cmdhint.rs) while it lists two commands or more.
+                egui::Key::ArrowUp | egui::Key::ArrowDown
+                    if world.typing && cmdhint::arrow(world, *key == egui::Key::ArrowUp) => {}
                 // FUN_101ac2c0 / FUN_101ac3d0: the line history (no sound, no wrap; Shift / Ctrl the same).
                 egui::Key::ArrowUp if world.typing && !modifiers.alt => {
                     if let Some(l) = world.line_hist.up(&world.chat_input) {
@@ -4249,6 +4259,8 @@ fn world_hud(
         blockers.push([x, y, w, 22.0]);
         if let Some(f) = &world.fep {
             blockers.push(fep::draw(gu, f, word_x - 8.0, y));
+        } else if let Some(h) = cmdhint::hint(world) {
+            blockers.push(cmdhint::draw(gu, &h, x, y));
         }
     }
     if let Some(inp) = event::input(world).filter(|_| !world.modern) {
@@ -6106,18 +6118,18 @@ fn scan_track(world: &mut World, index: u16) {
     world.scan.track(index);
 }
 
-/// One frame of a remote actor's move: FUN_1008b680 slides from the drawn spot `pos` linearly to the goal over the
-/// remaining ticks, a goal more than 12 units from it taken at once (FUN_100911f0); then FUN_1008dfb0 stands a
-/// grounded actor on the floor under the slide and gives the goal that height (+8 and +0x28), so a goal sent on
-/// another level is more than 12 away and taken at once. `server` is the goal's height as sent and the server's
-/// height along the slide (unsnapped), which keeps an actor out of holes the server walks it over. Returns the slide
-/// (where the actor is drawn) and whether the goal was taken at once.
 /// FFXI_TRACE_MOVE=1: movement traces in the log (test runs).
 fn trace_move() -> bool {
     static TRACE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *TRACE.get_or_init(|| std::env::var_os("FFXI_TRACE_MOVE").is_some())
 }
 
+/// One frame of a remote actor's move: FUN_1008b680 slides from the drawn spot `pos` linearly to the goal over the
+/// remaining ticks, a goal more than 12 units from it taken at once (FUN_100911f0); then FUN_1008dfb0 stands a
+/// grounded actor on the floor under the slide and gives the goal that height (+8 and +0x28), so a goal sent on
+/// another level is more than 12 away and taken at once. `server` is the goal's height as sent and the server's
+/// height along the slide (unsnapped), which keeps an actor out of holes the server walks it over. Returns the slide
+/// (where the actor is drawn) and whether the goal was taken at once.
 fn slide_frame(
     pos: Vec3,
     target: &mut Vec3,
@@ -6437,10 +6449,9 @@ impl crate::fx::Actors for FxActors<'_> {
         Some(Vec3::new(0.0, (-m.x_axis.z).atan2(m.x_axis.x), 0.0))
     }
 
-    // FUN_100d4560 -> FUN_1002c400: point 2 is the root plus its offset (no bone, no pose); the others ride the drawn
-    // pose's bones (posed for effect actors, see posed_actors).
-    /// FUN_100d4560 -> FUN_1002c400; a point on bone 0 then drops by size x d in world y (riding, chairs).
-    /// A model actor's every point is its position (vt+0x1c4 FUN_100c4b00).
+    /// FUN_100d4560 -> FUN_1002c400: point 2 is the root plus its offset (no bone, no pose); the others ride the drawn
+    /// pose's bones (posed for effect actors, see posed_actors), and a point on bone 0 then drops by size x d in world
+    /// y (riding, chairs). A model actor's every point is its position (vt+0x1c4 FUN_100c4b00).
     fn point(&self, id: u32, k: u16) -> Option<Vec3> {
         if self.ship(id).is_some() {
             return Some(Vec3::ZERO);
@@ -6608,7 +6619,6 @@ impl crate::fx::Actors for FxActors<'_> {
 /// Loaded looks kept while no actor wears them.
 const MODEL_CACHE: usize = 96;
 
-/// Model space faces +x; place it at `pos` facing `forward` (xz).
 /// FUN_100c63d0 / FUN_100cbde0's cull of one box (model space corners through `model`): None when every corner is
 /// behind the near plane (view z > -0.1, right-handed) or its screen rect misses the viewport; else the NDC rect and
 /// the occlusion test's depth, a quarter of the way from the box's nearest to its farthest corner (0.01 nearest when
@@ -6689,7 +6699,6 @@ fn plain_frame(pos: Vec3, forward: Vec3, t: [f32; 2]) -> glam::Mat4 {
         * glam::Mat4::from_rotation_z(t[1])
 }
 
-/// World y `dy` as a model-space vector for frame `m` (rotation only).
 /// FUN_100a4ed0's area id (+0x5e4): kept while frozen (event op 0xab 0x1b, +0x13c bit 19), else the override (op
 /// 0xae 7, +0x20c), else the floor's.
 fn actor_area(e: Option<&Entity>, floor: Option<u32>) -> Option<u32> {
@@ -6700,10 +6709,12 @@ fn actor_area(e: Option<&Entity>, floor: Option<u32>) -> Option<u32> {
     }
 }
 
+/// World y `dy` as a model-space vector for frame `m` (rotation only).
 fn point_drop(m: glam::Mat4, dy: f32) -> Vec3 {
     glam::Mat3::from_mat4(m).transpose() * Vec3::new(0.0, dy, 0.0)
 }
 
+/// Model space faces +x; place it at `pos` facing `forward` (xz).
 fn actor_matrix(pos: Vec3, forward: Vec3) -> glam::Mat4 {
     let f = Vec3::new(forward.x, 0.0, forward.z).normalize_or(Vec3::X);
     glam::Mat4::from_cols(f.extend(0.0), Vec3::Y.extend(0.0), f.cross(Vec3::Y).extend(0.0), pos.extend(1.0))
@@ -6962,6 +6973,8 @@ struct World {
     paste_request: bool,
     /// The auto-translate candidate list (menu fep) while open.
     fep: Option<fep::Fep>,
+    /// Ours: the command hint's picked row (cmdhint.rs) and the line it was picked on (any other line drops it).
+    cmd_tab: Option<(usize, String)>,
     /// Tab completion's list in the macro editor or the comment editor (fep.rs FieldFep).
     field_fep: Option<fep::FieldFep>,
     /// The log window's size and scroll state, and the top bar / Network / compass state.
@@ -7713,6 +7726,9 @@ struct World {
     /// Our Settings or Extras page when opened from the Config window, and a request to open one.
     settings: Option<settings::SettingsUi>,
     want_settings: Option<settings::Kind>,
+    /// Ours: the Mods window (modern/modmgr.rs), and a request to open it (on a mod's Settings when one is named).
+    modmgr: Option<modern::ModMgr>,
+    want_mods: Option<Option<String>>,
     /// Ours: the GM window (gm.rs, modern/gmwin.rs).
     gm: gm::Gm,
     /// Ours: the Controller window (padcfg.rs, modern/padwin.rs).
@@ -8189,11 +8205,8 @@ enum MusicScene {
     World,
 }
 
-/// Creator BGM per race (FFXiMain 0x1037cec0).
 /// 3D LCD Mode's eye shift: 0.006 in NDC x either way, 0.6 % of the width between the eyes.
 const LCD_SHIFT: f32 = 0.006;
-
-const CREATOR_BGM: [u32; 8] = [0x85, 0xa8, 0x84, 0x83, 0xa7, 0x82, 0xa6, 0xa5];
 
 /// Menu state compared across a UI pass to pick the menu sound.
 #[derive(Clone, PartialEq, Default)]
@@ -8267,7 +8280,7 @@ impl App {
         let frame_limit = cfg.frame_limit();
         crate::render::ANISOTROPY.store(cfg.anisotropy.clamp(1, 16), std::sync::atomic::Ordering::Relaxed);
         crate::render::MIPMAPS.store(cfg.tool("0000") != 0, std::sync::atomic::Ordering::Relaxed);
-        crate::render::UNCOMPRESSED.store(cfg.tool("0018") >= 2, std::sync::atomic::Ordering::Relaxed);
+        crate::render::set_uncompressed(cfg.tool("0018") >= 2);
         crate::render::MAP_COMPRESSED.store(cfg.tool("0019") == 0, std::sync::atomic::Ordering::Relaxed);
         crate::render::SHINE_WRAP.store(cfg.tool("0040") == 0, std::sync::atomic::Ordering::Relaxed);
         let (tasks_tx, tasks) = channel();
@@ -8427,7 +8440,7 @@ impl App {
         self.present_dirty = true;
         crate::render::ANISOTROPY.store(self.cfg.anisotropy.clamp(1, 16), std::sync::atomic::Ordering::Relaxed);
         crate::render::MIPMAPS.store(self.cfg.tool("0000") != 0, std::sync::atomic::Ordering::Relaxed);
-        crate::render::UNCOMPRESSED.store(self.cfg.tool("0018") >= 2, std::sync::atomic::Ordering::Relaxed);
+        crate::render::set_uncompressed(self.cfg.tool("0018") >= 2);
         crate::render::MAP_COMPRESSED.store(self.cfg.tool("0019") == 0, std::sync::atomic::Ordering::Relaxed);
         crate::render::SHINE_WRAP.store(self.cfg.tool("0040") == 0, std::sync::atomic::Ordering::Relaxed);
         let (m, e) = self.volume_factors();
@@ -8599,11 +8612,12 @@ impl App {
             Phase::Characters { lobby, chars, selected, screen, .. } => {
                 view.screen = match (lobby.is_some(), screen) {
                     (false, _) => "connecting",
+                    // The title's Config window opens over the title screen (it is not a screen of its own).
+                    (true, LobbyScreen::Main) if self.lobby_cfg.is_some() => "config",
                     (true, LobbyScreen::Main) => "title",
                     (true, LobbyScreen::Select) => "select",
                     (true, LobbyScreen::Create) => "create",
                     (true, LobbyScreen::Delete) => "delete",
-                    (true, LobbyScreen::Config) => "config",
                 };
                 view.selected = *selected;
                 view.characters = chars
@@ -8853,7 +8867,7 @@ impl App {
             if let Some(race) = cr.restarted.take()
                 && scene == MusicScene::Creator
             {
-                a.play_music_now(CREATOR_BGM[race.min(7)]);
+                a.play_music_now(crate::dat::dancer::creator::BGM[race.min(7)] as u32);
             }
             for id in cr.sounds.drain(..) {
                 a.play_se(id, 127);
@@ -9377,6 +9391,7 @@ impl App {
                             log_selection: None,
                             paste_request: false,
                             fep: None,
+                            cmd_tab: None,
                             field_fep: None,
                             log: Default::default(),
                             log2: logwin::LogWin::second(),
@@ -9871,6 +9886,8 @@ impl App {
                             game_save: false,
                             settings: None,
                             want_settings: None,
+                            modmgr: None,
+                            want_mods: None,
                             gm: gm::Gm::default(),
                             padcfg: padcfg::PadCfg::default(),
                             cam_keys: [self.cfg.cam_keys_y as u8, self.cfg.cam_keys_x as u8],
@@ -9906,7 +9923,7 @@ impl App {
                             let tx = self.tasks_tx.clone();
                             std::thread::spawn(move || {
                                 let n = crate::dat::names::Names::load(&index, crate::dat::items::Lang::En)
-                                    .map(|n| (Arc::new(n), crate::dat::msgshift::MsgShift::bundled().verified(&index)));
+                                    .map(|n| (Arc::new(n), crate::dat::msgshift::MsgShift::bundled()));
                                 let _ = tx.send(Task::Names(n));
                             });
                         }
@@ -10678,6 +10695,11 @@ impl App {
                     (world.my_draw_yaw, world.my_face) = (None, None);
                     swkbd::zone_out(world);
                     log::info!("zone-in: zone {zone} at {:?} dir {dir}", pos);
+                    // MsgShift's check of this zone's dialogue file (a read and a hash) off the UI thread, before the
+                    // zone's first text line asks for it (event::zone_text).
+                    if let (Some(m), Some(dats)) = (world.msgshift.clone(), world.index.clone()) {
+                        std::thread::spawn(move || m.installed(&dats, zone));
+                    }
                     // FUN_1018b500 -> FUN_1001e4f0: the view shake stops at a zone load.
                     world.camst.shake = camera::Shake::default();
                     // FUN_10093720: the zone load clears the once-a-zone sound reset; it runs when the player's model
@@ -11359,7 +11381,6 @@ impl App {
                 NetEvent::MagicScheduler { ids, indices, file, kind } => {
                     combat::on_magic_scheduler(world, ids, indices, file, kind)
                 }
-                NetEvent::Status(s) => log::info!("net: {s}"),
                 NetEvent::SystemMessage { id, para, para2 } => {
                     combat::on_system_message(world, id, [para as i32, para2 as i32])
                 }
@@ -15476,16 +15497,38 @@ impl App {
                 if let Some(s) = world.settings.as_mut() {
                     s.tick();
                 }
-                // The Lua mods' settings changed on their Extras pages.
-                let changes = world.settings.as_mut().map(|s| std::mem::take(&mut s.mod_changes)).unwrap_or_default();
+                // The Mods window: made from the config when asked for; its installs, its mods' changes, its list.
+                if let Some(id) = world.want_mods.take() {
+                    match world.modmgr.as_mut() {
+                        Some(mm) => mm.show(id),
+                        None => {
+                            let mut s = settings::SettingsUi::open_kind(&self.cfg, window, settings::Kind::Settings);
+                            s.in_game = true;
+                            world.modmgr = Some(modern::ModMgr::new(s, world.lua.settings_pages(), id));
+                        }
+                    }
+                }
+                if let Some(mm) = world.modmgr.as_mut() {
+                    mm.s.tick();
+                    // A mod installed or updated: its settings and permissions as its files now have them.
+                    if std::mem::take(&mut mm.s.installed) {
+                        mm.refresh(world.lua.settings_pages());
+                    }
+                }
+                // The Lua mods' settings changed on their Extras pages or in the Mods window.
+                let mut changes =
+                    world.settings.as_mut().map(|s| std::mem::take(&mut s.mod_changes)).unwrap_or_default();
+                if let Some(mm) = world.modmgr.as_mut() {
+                    changes.append(&mut mm.s.mod_changes);
+                }
                 if !changes.is_empty() {
                     let toggled = changes.iter().any(|c| c.1 == lua::ENABLED);
                     // A setting that is a sound (manifest preview_sound): the sound its new value picks.
                     for (id, key, value) in &changes {
-                        let base = world
-                            .settings
-                            .as_ref()
-                            .and_then(|s| s.mod_pages.iter().find(|p| &p.id == id))
+                        let pages = world.settings.iter().flat_map(|s| &s.mod_pages);
+                        let base = pages
+                            .chain(world.modmgr.iter().flat_map(|m| &m.pages))
+                            .find(|p| &p.id == id)
                             .and_then(|p| p.rows.iter().find(|r| &r.key == key))
                             .and_then(|r| r.preview);
                         if let (Some(base), Some(v)) = (base, value.as_u64()) {
@@ -15498,9 +15541,30 @@ impl App {
                     }
                     world.lua = mods;
                     // A mod turned on, off or installed: the pages follow.
-                    if toggled && let Some(s) = world.settings.as_mut() {
-                        s.set_mod_pages(world.lua.settings_pages());
+                    if toggled {
+                        if let Some(s) = world.settings.as_mut() {
+                            s.set_mod_pages(world.lua.settings_pages());
+                        }
+                        if let Some(mm) = world.modmgr.as_mut() {
+                            mm.refresh(world.lua.settings_pages());
+                        }
                     }
+                }
+                // The Mods window's list and order to the config (only those: the Settings window keeps the rest),
+                // and to the Settings window's copy, which would otherwise store its own back.
+                if let Some(mm) = world.modmgr.as_mut().filter(|m| m.s.dirty) {
+                    mm.s.dirty = false;
+                    self.cfg.mods = mm.s.s.mods.clone();
+                    if let Some(s) = world.settings.as_mut() {
+                        s.s.mods = mm.s.s.mods.clone();
+                        (s.lua_names, s.lua_info) = (mm.s.lua_names.clone(), mm.s.lua_info.clone());
+                    }
+                    if let Err(e) = self.cfg.save() {
+                        log::warn!("config: {e:#}");
+                    }
+                }
+                if world.modmgr.as_ref().is_some_and(|m| !m.open) {
+                    world.modmgr = None;
                 }
                 if let Some(s) = world.settings.as_mut().filter(|s| s.dirty) {
                     s.dirty = false;
@@ -16127,7 +16191,7 @@ impl App {
                     self.dancer_loading = Some(want);
                     // FUN_10036b40: the old music fades while the race loads; it starts with the performance.
                     if let Some(a) = &mut self.audio {
-                        a.prepare_music(CREATOR_BGM[want.0.min(7)]);
+                        a.prepare_music(crate::dat::dancer::creator::BGM[want.0.min(7)] as u32);
                     }
                     let tx = self.tasks_tx.clone();
                     std::thread::spawn(move || {
@@ -17938,14 +18002,18 @@ impl App {
                         g.lamp_lit = lit;
                     }
                 }
-                let drawn_map: HashMap<u32, &crate::render::ActorGpu> = w
+                let mut drawn: Vec<(u32, &crate::render::ActorGpu)> = w
                     .actors
                     .iter()
                     .filter(|(id, a)| !a.vanished() && !hidden.contains(id) && !far_out.contains(id) && !culled(id, a))
                     .filter_map(|(id, a)| Some((*id, a.gpu.as_ref()?)))
                     .filter(|(_, g)| g.alpha >= 1e-4)
                     .collect();
-                let actors: Vec<&crate::render::ActorGpu> = drawn_map.values().copied().collect();
+                // One order every frame (a map's order changes with each new map): which overlapping edges blend over
+                // which, and which actors take the 64 shine and fade slots, stay put.
+                drawn.sort_unstable_by_key(|d| d.0);
+                let actors: Vec<&crate::render::ActorGpu> = drawn.iter().map(|d| d.1).collect();
+                let drawn_map: HashMap<u32, &crate::render::ActorGpu> = drawn.into_iter().collect();
                 counts = perf::Counts {
                     entities: w.entities.len(),
                     actors: w.actors.len(),

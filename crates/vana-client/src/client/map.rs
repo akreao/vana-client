@@ -1123,7 +1123,7 @@ impl MapWin {
                 }
                 _ => {}
             }
-            s.scroll = s.scroll.min(s.cursor).max((s.cursor + 1).saturating_sub(SCAN_ROWS));
+            crate::client::scrollbar::keep_in_view(&mut s.scroll, s.cursor, SCAN_ROWS);
         }
         self.scan = Some(s);
         true
@@ -1983,7 +1983,7 @@ impl MapList {
             },
             _ => {}
         }
-        self.scroll = self.scroll.min(self.cursor).max((self.cursor + 1).saturating_sub(ROWS));
+        crate::client::scrollbar::keep_in_view(&mut self.scroll, self.cursor, ROWS);
         ListOut::Keep
     }
 
@@ -2429,7 +2429,7 @@ pub fn scan_click(w: &mut World, k: usize) {
     };
     s.mapscan = None;
     s.cursor = k;
-    s.scroll = s.scroll.min(k).max((k + 1).saturating_sub(SCAN_ROWS));
+    crate::client::scrollbar::keep_in_view(&mut s.scroll, k, SCAN_ROWS);
     key(w, egui::Key::Enter);
 }
 
@@ -2437,7 +2437,7 @@ pub fn scan_click(w: &mut World, k: usize) {
 pub fn maplist_click(w: &mut World, k: usize) {
     let Some(l) = w.map.as_mut().and_then(|m| m.maplist.as_mut()).filter(|l| k < l.rows.len()) else { return };
     l.cursor = k;
-    l.scroll = l.scroll.min(k).max((k + 1).saturating_sub(ROWS));
+    crate::client::scrollbar::keep_in_view(&mut l.scroll, k, ROWS);
     key(w, egui::Key::Enter);
 }
 

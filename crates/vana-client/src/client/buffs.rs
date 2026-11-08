@@ -24,9 +24,6 @@ pub(super) fn icons(w: &World) -> Vec<(u16, u32)> {
 /// The modern status panel's icons a row (modern/hud.rs).
 pub const MODERN_ROW: usize = 10;
 
-/// FUN_10222150 for the 9-column list: Left / Right one cell, Up / Down a row (staying when there is none; the wrap
-/// rules there are not followed), SE 0001 on a move; Enter (FUN_10227eb0) cancels a cancellable effect: c2s 0x0F1 and
-/// the icon goes at once. Escape does nothing here.
 /// FUN_10227eb0: a cancellable effect (its status info flag) is cancelled: c2s 0x0F1 and the icon goes at once.
 pub(super) fn cancel(gu: &GameUi, w: &mut World, id: u16) -> bool {
     let small = w.game.get(0x99) & 4 != 0;
@@ -40,6 +37,9 @@ pub(super) fn cancel(gu: &GameUi, w: &mut World, id: u16) -> bool {
     true
 }
 
+/// FUN_10222150 for the 9-column list: Left / Right one cell, Up / Down a row (staying when there is none; the wrap
+/// rules there are not followed), SE 0001 on a move; Enter (FUN_10227eb0) cancels a cancellable effect: c2s 0x0F1 and
+/// the icon goes at once. Escape leaves status select mode.
 pub fn key(gu: &GameUi, w: &mut World, key: egui::Key) {
     let list = icons(w);
     if list.is_empty() {

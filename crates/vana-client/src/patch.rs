@@ -72,6 +72,7 @@ fn file_request(path: &str, offset: u32, len: u32) -> Vec<u8> {
 /// The version reply: release time, flags, a label ("empty" for a blank block) and the version string.
 #[derive(Debug, Clone)]
 pub struct ServerVersion {
+    #[allow(dead_code)] // format field, not read
     pub released: u32,
     pub label: String,
     pub version: String,

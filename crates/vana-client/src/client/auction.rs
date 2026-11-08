@@ -57,6 +57,7 @@ pub struct AucPacket {
     pub cmd: u8,
     pub slot: i8,
     pub result: u8,
+    #[allow(dead_code)] // format field, not read
     pub status: i8,
     pub p8: u32,
     pub pc: u16,
@@ -150,14 +151,11 @@ pub struct List {
     pub failed: bool,
 }
 
-/// The price history (H): its item, form, where it returns (0 the bid list, 1 Sales Status, -1 none) and mode (0 from
-/// Sales Status, 1 the bid list, 2 selling).
+/// The price history (H): its item and where it returns (0 the bid list, 1 Sales Status, -1 none).
 #[derive(Clone, Debug, Default)]
 pub struct History {
     pub item: u16,
-    pub stack: bool,
     pub ret: i8,
-    pub mode: u8,
     pub head: Option<(u16, u32, u16)>,
     pub sales: Vec<AhSale>,
     pub scroll: usize,
@@ -519,10 +517,10 @@ impl Auction {
     }
 
     /// FUN_101d8800: the history of an item's form; `ret` where Escape goes back to.
-    fn ask_history(&mut self, w: &World, item: u16, stack: bool, ret: i8, mode: u8) {
+    fn ask_history(&mut self, w: &World, item: u16, stack: bool, ret: i8) {
         let payload = crate::net::search::ah_history_payload(item, market(w.zone), stack);
         self.query = Some((true, crate::net::search::ah_spawn(w.search_addr, if stack { 6 } else { 5 }, payload, 0)));
-        self.history = Some(History { item, stack, ret, mode, ..Default::default() });
+        self.history = Some(History { item, ret, ..Default::default() });
         self.layers.retain(|l| !matches!(l, Layer::History));
         self.layers.push(Layer::History);
     }
@@ -1409,7 +1407,7 @@ fn auc3_pick(w: &mut World, a: &mut Auction, sel: u16) {
         1 => {
             a.kept = a.list.take();
             a.layers.retain(|l| !matches!(l, Layer::List));
-            a.ask_history(w, r.item(&w.ah_slots), r.stack(), 0, 1);
+            a.ask_history(w, r.item(&w.ah_slots), r.stack(), 0);
         }
         2 if auc3_dim(w, r) => w.sounds.push(Ui::Error as u32),
         2 => {
@@ -1498,7 +1496,7 @@ fn auc4_pick(w: &mut World, a: &mut Auction, sel: u16) {
         1 if here => {
             a.layers.retain(|l| !matches!(l, Layer::List));
             a.kept = a.list.take();
-            a.ask_history(w, p.item, p.qty != 1, 1, 0);
+            a.ask_history(w, p.item, p.qty != 1, 1);
         }
         2 if p.stat == 3 && here => w.confirm = Some((super::Confirm::Auction(Ask::Cancel { slot: k }), false)),
         _ => w.sounds.push(Ui::Error as u32),
@@ -1663,7 +1661,7 @@ fn sell_key(w: &mut World, a: &mut Auction, mut scroll: usize, mut cursor: usize
                 return;
             }
             w.sounds.push(Ui::Select as u32);
-            a.ask_history(w, s.id, full, -1, 2);
+            a.ask_history(w, s.id, full, -1);
             a.money = Some((1, 999_999_999, 0, MoneyFor::Sell { inv: s.index, item: s.id, single: !full }));
         }
         _ => {

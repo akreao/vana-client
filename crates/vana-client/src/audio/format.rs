@@ -168,6 +168,8 @@ pub struct Decoder {
     at3_next: i64,
     pending: Vec<i16>,
     pending_at: usize,
+    /// The frame a jump primes the ATRAC3 decoder with (made here, not in the audio callback).
+    scratch: Vec<i16>,
     ended: bool,
     pub loops: bool,
 }
@@ -182,6 +184,9 @@ impl Decoder {
             _ => None,
         };
         let loops = header.loop_start.is_some();
+        // Room for an ATRAC3 frame (1024 a channel) or a block: the decoder's buffers never grow in the callback.
+        let room = 1024 * header.channels.max(1) as usize;
+        let scratch = if at3.is_some() { Vec::with_capacity(room) } else { Vec::new() };
         Ok(Self {
             header,
             bytes,
@@ -189,8 +194,9 @@ impl Decoder {
             hist: [[0; 2]; 2],
             at3,
             at3_next: 0,
-            pending: Vec::new(),
+            pending: Vec::with_capacity(room),
             pending_at: 0,
+            scratch,
             ended: false,
             loops,
         })
@@ -302,8 +308,11 @@ impl Decoder {
         };
         if frame != self.at3_next {
             // A jump (loop or resume): prime with the previous frame, as FUN_1023c620 does.
-            let mut scratch = Vec::new();
-            if frame > 0 && !feed(frame - 1, &mut scratch) {
+            let mut scratch = std::mem::take(&mut self.scratch);
+            scratch.clear();
+            let primed = frame <= 0 || feed(frame - 1, &mut scratch);
+            self.scratch = scratch;
+            if !primed {
                 return false;
             }
         }
@@ -362,19 +371,25 @@ fn sound_dirs_in(roots: &[PathBuf]) -> Vec<PathBuf> {
 /// `music%03u.bgw` from the first root that has it (FUN_1023bed0; id & 0x3ff); id 0x400 is the opening movie's
 /// `mov/music999.bgw` (FUN_1023bce0 plays it by path).
 pub fn music_path(ffxi_dir: &Path, id: u32) -> Option<PathBuf> {
+    music_in(ffxi_dir, &sound_dirs(ffxi_dir), id)
+}
+
+/// `music_path` over roots already listed (`sound_dirs`).
+pub fn music_in(ffxi_dir: &Path, dirs: &[PathBuf], id: u32) -> Option<PathBuf> {
     if id == 0x400 {
         return Some(ffxi_dir.join("mov").join("music999.bgw")).filter(|p| p.exists());
     }
-    sound_dirs(ffxi_dir)
-        .into_iter()
-        .map(|d| d.join("music/data").join(format!("music{:03}.bgw", id & 0x3ff)))
-        .find(|p| p.exists())
+    dirs.iter().map(|d| d.join("music/data").join(format!("music{:03}.bgw", id & 0x3ff))).find(|p| p.exists())
 }
 
 /// `se%03u/se%06u.spw` (FUN_1023f6f0).
 pub fn se_path(ffxi_dir: &Path, id: u32) -> Option<PathBuf> {
-    sound_dirs(ffxi_dir)
-        .into_iter()
+    se_in(&sound_dirs(ffxi_dir), id)
+}
+
+/// `se_path` over roots already listed (`sound_dirs`).
+pub fn se_in(dirs: &[PathBuf], id: u32) -> Option<PathBuf> {
+    dirs.iter()
         .map(|d| d.join("se").join(format!("se{:03}", id / 1000)).join(format!("se{id:06}.spw")))
         .find(|p| p.exists())
 }

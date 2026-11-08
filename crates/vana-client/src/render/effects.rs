@@ -99,7 +99,7 @@ pub fn view_set(v: Mat4) -> [Mat4; 4] {
 /// retail lamp glow 'light', under 10 % in hit sparks drawn with hard steps.
 fn dithered(t: &crate::dat::zone::Texture) -> bool {
     let (w, h) = (t.width as usize, t.height as usize);
-    let a = |x: usize, y: usize| t.rgba[(y * w + x) * 4 + 3] as i32;
+    let a = |x: usize, y: usize| t.rgba()[(y * w + x) * 4 + 3] as i32;
     let (mut covered, mut extreme) = (0usize, 0usize);
     for y in 1..h - 1 {
         for x in 1..w - 1 {
@@ -121,15 +121,15 @@ fn dithered(t: &crate::dat::zone::Texture) -> bool {
 /// today's resolutions. None = leave it as it is.
 pub fn soften_alpha(t: &crate::dat::zone::Texture) -> Option<crate::dat::zone::Texture> {
     let (w, h) = (t.width as usize, t.height as usize);
-    if w < 4 || h < 4 || t.rgba.len() < w * h * 4 {
+    if w < 4 || h < 4 || t.rgba().len() < w * h * 4 {
         return None;
     }
-    let levels: std::collections::BTreeSet<u8> = t.rgba.chunks(4).map(|p| p[3]).collect();
-    let clear = t.rgba.chunks(4).filter(|p| p[3] == 0).count();
+    let levels: std::collections::BTreeSet<u8> = t.rgba().chunks(4).map(|p| p[3]).collect();
+    let clear = t.rgba().chunks(4).filter(|p| p[3] == 0).count();
     if levels.len() > 8 || levels.len() < 2 || clear == 0 || clear == w * h || !dithered(t) {
         return None;
     }
-    let mut px = t.rgba.clone();
+    let mut px = t.rgba().to_vec();
     let at = |x: isize, y: isize| (y.clamp(0, h as isize - 1) as usize * w + x.clamp(0, w as isize - 1) as usize) * 4;
     // Colour into the clear texels, two rings out from the opaque ones.
     let mut filled: Vec<bool> = px.chunks(4).map(|p| p[3] != 0).collect();
@@ -174,14 +174,14 @@ pub fn soften_alpha(t: &crate::dat::zone::Texture) -> Option<crate::dat::zone::T
     Some(crate::dat::zone::Texture::new(t.name.clone(), t.format, t.width, t.height, px))
 }
 
-/// FUN_10045950's blend modes as pipelines: 0 opaque, 1 alpha, 2 additive, 3 darken, 4 subtractive, 5 D3m 'I'
-/// (DESTCOLOR / SRCALPHA). None = the mode has no case and keeps the previous element's blend.
 /// FUN_10063c80 (0x10063c89..0x10063cc5): a CMoVuDist's draws each frame. N under 20 as is; from 20 up on a weather
 /// generator (+0xde bit 0) N x the weather density (FUN_10002d80) x 0.5, truncated; otherwise N.
 fn vu_dist_count(n: u32, weather: bool, density: f32) -> u32 {
     if n < 20 || !weather { n } else { (n as f32 * density * 0.5) as u32 }
 }
 
+/// FUN_10045950's blend modes as pipelines: 0 opaque, 1 alpha, 2 additive, 3 darken, 4 subtractive, 5 D3m 'I'
+/// (DESTCOLOR / SRCALPHA). None = the mode has no case and keeps the previous element's blend.
 fn blend_class(mode: u16, d3m: bool) -> Option<usize> {
     Some(match mode & 0xff {
         0x00 => 0,
@@ -1048,7 +1048,7 @@ impl EffectsGpu {
         }
         let t = &fx.reg.libs[s.tex.0].textures[s.tex.1];
         let (d2, cube) = if s.cube {
-            (None, Some(Self::cube_view(gpu, t.width, t.height, Some(&t.rgba))))
+            (None, Some(Self::cube_view(gpu, t.width, t.height, Some(t.rgba()))))
         } else {
             (Some(super::upload_texture(gpu, t, false)), None)
         };
@@ -1116,8 +1116,6 @@ impl EffectsGpu {
         }
     }
 
-    /// Uploads this frame's element writes, tables and new meshes, then records the update pass and the copy
-    /// of its readback.
     /// The zone's point-light table for kind 0x47 elements to write (a change rebinds).
     pub fn set_lights(&mut self, lights: &wgpu::Buffer) {
         if self.lights != *lights {
@@ -1127,8 +1125,8 @@ impl EffectsGpu {
         }
     }
 
-    /// The lamps' lights (client/lamps.rs): position, table slot, template slot.
-    /// The lamps: position, slot, template slot (0xffff: its own light) and the glow's colour (BGRA, 0x80 = 1.0).
+    /// The lamps (client/lamps.rs): position, slot, template slot (0xffff: its own light) and the glow's colour
+    /// (BGRA, 0x80 = 1.0).
     pub fn set_lamps(&mut self, gpu: &Gpu, lamps: &[(glam::Vec3, u32, u32, u32)]) {
         let n = lamps.len().min(crate::render::LIGHTS);
         let mut words: Vec<[f32; 4]> = vec![[f32::from_bits(n as u32), 0.0, 0.0, 0.0]];
@@ -1146,6 +1144,8 @@ impl EffectsGpu {
         self.depth = depth.map(|(v, p)| (v.clone(), p));
     }
 
+    /// Uploads this frame's element writes, tables and new meshes, then records the update pass and the copy
+    /// of its readback.
     pub fn update(&mut self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, fx: &mut Effects, f: &Frame) {
         let q = &gpu.queue;
         let reg = &mut fx.reg;
@@ -1439,10 +1439,8 @@ impl EffectsGpu {
         self.meshes[id as usize] = Some(GpuMesh { vb, groups, mmb: m.mmb, dist: m.dist.clone() });
     }
 
-    /// Draws the live elements over the scene (same targets, depth tested, back to front).
-    #[allow(clippy::too_many_arguments)]
-    /// `color_tex` is the texture behind `color` (CMoDist copies it; without one, or without COPY_SRC, distortion
-    /// is not drawn).
+    /// Draws the live elements over the scene (same targets, depth tested, back to front). `color_tex` is the
+    /// texture behind `color` (CMoDist copies it; without one, or without COPY_SRC, distortion is not drawn).
     #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &mut self,
@@ -2419,11 +2417,11 @@ mod soften_tests {
         }
         let t = Texture::new("light".into(), 0, w, h, rgba);
         let s = soften_alpha(&t).expect("few levels");
-        let levels: std::collections::BTreeSet<u8> = s.rgba.chunks(4).map(|p| p[3]).collect();
+        let levels: std::collections::BTreeSet<u8> = s.rgba().chunks(4).map(|p| p[3]).collect();
         assert!(levels.len() > 8, "{levels:?}");
         // Texels just outside the old edge took the glow's colour, not black.
         let i = ((7 * w + 13) * 4) as usize;
-        assert!(s.rgba[i] > 200 && s.rgba[i + 3] > 0, "{:?}", &s.rgba[i..i + 4]);
+        assert!(s.rgba()[i] > 200 && s.rgba()[i + 3] > 0, "{:?}", &s.rgba()[i..i + 4]);
         // Many alpha levels already: left alone.
         let smooth: Vec<u8> = (0..w * h).flat_map(|k| [9, 9, 9, (k % 200) as u8]).collect();
         assert!(soften_alpha(&Texture::new("s".into(), 0, w, h, smooth)).is_none());

@@ -33,6 +33,7 @@ mod lobby;
 mod loot;
 mod macros;
 mod maze;
+mod modmgr;
 mod modwin;
 mod padwin;
 mod pupset;
@@ -76,13 +77,14 @@ pub use command::{BarFocus, CmdMenu, bar_focus, key as command_key};
 pub use config::find_open as config_find_open;
 pub use config::{
     find_events as config_find_events, finding as config_finding, key as config_key, lobby_key as lobby_config_key,
-    lobby_settings as lobby_config_settings, open_mod_settings,
+    lobby_settings as lobby_config_settings,
 };
 use egui::{Color32, Context, FontFamily, FontId, Id, LayerId, Order, Pos2, Rect, Sense, Shape, Ui, Vec2, pos2, vec2};
 pub use gmwin::{events as gm_events, takes_keys as gm_takes_keys};
 pub use journal::key as journal_key;
 pub use lists::key as magic_key;
 pub use macros::key as macro_key;
+pub use modmgr::{ModMgr, events as mods_events, open as open_mods, takes_keys as mods_takes_keys};
 pub use padwin::{events as pad_events, takes_keys as pad_takes_keys};
 pub use status::key as status_key;
 pub use storage::key as storage_key;
@@ -98,7 +100,7 @@ type ScanViewKey = (Option<(u64, usize, u16)>, (f32, f32), Option<(f32, f32, f32
 pub struct Modern {
     pub theme: Theme,
     art: Art,
-    /// The chat window's tab and whether its settings are open; game textures (status icons) as egui textures, by key.
+    /// The chat window's tab and whether its settings are open.
     chat_tab: std::cell::Cell<u8>,
     chat_settings: std::cell::Cell<bool>,
     /// Where each chat tab was last seen (the log's length then; chat.rs unread).
@@ -414,6 +416,7 @@ impl Modern {
         config::draw(&mut p, w);
         gmwin::draw(&mut p, w);
         padwin::draw(&mut p, w);
+        modmgr::draw(&mut p, w);
         modwin::draw(&mut p, w);
         // A mod HUD element's tooltip, unless a panel is over it.
         if let Some((title, text, _)) = w.lua.hud_tip()
@@ -657,6 +660,7 @@ fn focus_panel(w: &World) -> Option<&'static str> {
         _ if w.settings.is_some() || w.config.is_some() || w.bluset.is_some() || w.pupset.is_some() => "window",
         _ if gmwin::shown(w) => "window",
         _ if padwin::shown(w) => "window",
+        _ if modmgr::shown(w) => "window",
         _ if w.magic.is_some() || w.ability.is_some() => "list",
         _ if w.cats.is_some() => "cats",
         _ if w.inspect.up() => "check",
@@ -1478,7 +1482,7 @@ impl Modern {
             ctx.request_repaint_after(std::time::Duration::from_secs_f32(REST - still));
             return;
         }
-        egui::Area::new(Id::new("modern tip"))
+        egui::Area::new(Id::unique("modern tip"))
             .order(Order::Tooltip)
             .fixed_pos(at + vec2(16.0, 20.0))
             .constrain(true)
@@ -1516,7 +1520,8 @@ impl Modern {
     }
 
     /// `key`'s texture, made from `make`'s image the first time (None: there is none, remembered too); kept while it
-    /// is drawn.
+    /// is drawn. The id is for this frame only: one not drawn for IMAGE_KEEP is freed, so ask again each frame rather
+    /// than keep it.
     fn texture(
         &self,
         ctx: &Context,

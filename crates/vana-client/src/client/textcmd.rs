@@ -2352,9 +2352,8 @@ fn item(w: &mut World, args: &[String], mode: Mode) -> Done {
         return Ok(());
     }
     let name = args.get(1).ok_or(())?;
-    let (bag, slot, id) = find_item(w, name, &[3, 0, 8, 10, 11, 12, 13, 14, 15, 16]).ok_or(())?;
+    let (bag, slot, _) = find_item(w, name, &[3, 0, 8, 10, 11, 12, 13, 14, 15, 16]).ok_or(())?;
     let t = resolve(w, args.get(2).map(String::as_str), false, false, mode).ok_or(())?;
-    let _ = id;
     super::items::use_slot(w, bag, slot, t.0);
     Ok(())
 }

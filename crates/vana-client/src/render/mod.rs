@@ -36,6 +36,8 @@ use wgpu::util::DeviceExt;
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 pub struct Gpu {
+    /// The instance the surface came from (held, never read).
+    #[allow(dead_code)]
     pub instance: wgpu::Instance,
     pub adapter: wgpu::Adapter,
     pub device: wgpu::Device,
@@ -154,6 +156,11 @@ impl Gpu {
         }
         let required_features = adapter.features() & wanted;
         log::info!("device features {required_features:?}");
+        BC.store(
+            required_features.contains(wgpu::Features::TEXTURE_COMPRESSION_BC),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        set_uncompressed(uncompressed());
         // The effects update pass binds 9 storage buffers (the default limit is 8; desktop GPUs allow far more).
         let required_limits = wgpu::Limits {
             max_storage_buffers_per_shader_stage: adapter.limits().max_storage_buffers_per_shader_stage.min(16),
@@ -475,7 +482,7 @@ pub struct ZoneRenderer {
     pose_frame: u64,
     /// Motions evaluated on the GPU into the pose regions (render/anim.rs).
     anim: anim::GpuAnim,
-    /// Skinned models on the GPU by model address (the Arc keeps it), and how many more this frame may add.
+    /// Skinned models on the GPU by model address (the Arc keeps it).
     models: HashMap<usize, (std::sync::Arc<crate::dat::character::Character>, ActorGpu)>,
     /// Models going up piece by piece, oldest first, and the magenta slot-0 texture of actors.
     builds: Vec<(usize, Build)>,
@@ -613,7 +620,20 @@ impl<K: PartialEq> BindCache<K> {
 /// Config-tool 0000 (MIP mapping: D3DTSS_MIPFILTER LINEAR, else NONE = level 0 only) and 0018 = 2 (textures
 /// uploaded uncompressed); read when samplers and textures are made, so at the next zone load.
 pub static MIPMAPS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
-pub static UNCOMPRESSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static UNCOMPRESSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Whether the device samples BC textures.
+static BC: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Config-tool 0018 = 2; with the device's BC support, whether loaders decode DXT to RGBA up front.
+pub fn set_uncompressed(on: bool) {
+    use std::sync::atomic::Ordering::Relaxed;
+    UNCOMPRESSED.store(on, Relaxed);
+    crate::dat::zone::EAGER_RGBA.store(on || !BC.load(Relaxed) || old_textures(), Relaxed);
+}
+
+pub fn uncompressed() -> bool {
+    UNCOMPRESSED.load(std::sync::atomic::Ordering::Relaxed)
+}
 /// Config-tool 0040 = 0 (Graphics Stabilization Off, the default): the shine pass wraps its coordinates (D3DRS_WRAP0 = 7).
 pub static SHINE_WRAP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 /// Config-tool 0019 = 0 (2-D Mapping Compressed): the palettized map images go through DXT3 at load (client/map.rs).
@@ -690,12 +710,12 @@ pub fn upload_texture_seq(gpu: &Gpu, t: &crate::dat::zone::Texture, srgb: bool) 
         view_formats: &[],
     };
     if old_textures() {
-        TEXTURE_BYTES.fetch_add(t.rgba.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        TEXTURE_BYTES.fetch_add(t.rgba().len() as u64, std::sync::atomic::Ordering::Relaxed);
         let texture = gpu.device.create_texture_with_data(
             &gpu.queue,
             &desc(pick(F::Rgba8UnormSrgb, F::Rgba8Unorm), 1),
             wgpu::util::TextureDataOrder::LayerMajor,
-            &t.rgba,
+            t.rgba(),
         );
         return (texture.create_view(&Default::default()), 0);
     }
@@ -3316,7 +3336,6 @@ impl ZoneRenderer {
 
     /// Queues a skinned actor posed on the GPU from its motions (to, and from at blend `t`), and its placement.
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     pub fn pose_actor_gpu(
         &mut self,
         actor: &mut ActorGpu,
@@ -4453,17 +4472,6 @@ pub fn depth_view(device: &wgpu::Device, width: u32, height: u32) -> wgpu::Textu
             view_formats: &[],
         })
         .create_view(&Default::default())
-}
-
-/// Renders one frame offscreen and writes it as a PNG.
-pub fn render_png(
-    scene: &ZoneScene,
-    camera: &Camera,
-    width: u32,
-    height: u32,
-    path: &std::path::Path,
-) -> Result<usize> {
-    render_pngs(scene, &[(camera, path)], width, height)
 }
 
 /// Renders several frames of one scene offscreen, one PNG each.

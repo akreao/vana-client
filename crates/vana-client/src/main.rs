@@ -627,6 +627,9 @@ enum Cmd {
         /// Ours: the Controller window (the default layout, waiting on Movement Up).
         #[arg(long)]
         controller: bool,
+        /// Ours: the Mods window (a Look Changer sample on its Commands, a form filled in).
+        #[arg(long)]
+        mods: bool,
         /// The favourites strip and starred list rows.
         #[arg(long)]
         favs: bool,
@@ -1397,6 +1400,7 @@ fn main() -> Result<()> {
             settings,
             gm,
             controller,
+            mods,
         } => {
             let list = font.is_some();
             client::modern_shot(
@@ -1421,6 +1425,7 @@ fn main() -> Result<()> {
                     settings,
                     gm,
                     controller,
+                    mods,
                 },
             )
         }
@@ -1801,7 +1806,7 @@ fn main() -> Result<()> {
                                 if let Some(t) = fx.reg.libs[r.0].sprites.get(&r.1).and_then(|s| s.texture) {
                                     let tex = &fx.reg.libs[t.0].textures[t.1];
                                     let alphas: std::collections::BTreeSet<u8> =
-                                        tex.rgba.chunks(4).map(|p| p[3]).collect();
+                                        tex.rgba().chunks(4).map(|p| p[3]).collect();
                                     println!(
                                         "  sprite {id} texture {} {}x{} format {} dxt {:?} alphas {:?}",
                                         tex.name,
@@ -1815,7 +1820,7 @@ fn main() -> Result<()> {
                                         let mut enc =
                                             png::Encoder::new(std::io::BufWriter::new(f), tex.width, tex.height);
                                         enc.set_color(png::ColorType::Rgba);
-                                        let _ = enc.write_header().and_then(|mut w| w.write_image_data(&tex.rgba));
+                                        let _ = enc.write_header().and_then(|mut w| w.write_image_data(tex.rgba()));
                                     }
                                 }
                             }
@@ -2014,7 +2019,8 @@ fn main() -> Result<()> {
                     let va = model.vertices.iter().map(|v| (v.color >> 24) as f32).sum::<f32>()
                         / model.vertices.len() as f32;
                     let tex = textures.get(model.texture.as_str()).map(|t| {
-                        let a = t.rgba.chunks_exact(4).map(|p| p[3] as f32).sum::<f32>() / (t.rgba.len() / 4) as f32;
+                        let a =
+                            t.rgba().chunks_exact(4).map(|p| p[3] as f32).sum::<f32>() / (t.rgba().len() / 4) as f32;
                         format!("fmt {:#04x} {}x{} texel alpha {:.0}", t.format, t.width, t.height, a)
                     });
                     println!(
@@ -2126,7 +2132,7 @@ fn main() -> Result<()> {
             // Alpha profile per texture format: how much would an alpha test at 0.3 discard?
             let mut by_format: std::collections::BTreeMap<u8, (usize, f64, f64)> = Default::default();
             for t in &scene.textures {
-                let a: Vec<u8> = t.rgba.chunks_exact(4).map(|p| p[3]).collect();
+                let a: Vec<u8> = t.rgba().chunks_exact(4).map(|p| p[3]).collect();
                 let mean = a.iter().map(|&x| x as f64).sum::<f64>() / a.len() as f64;
                 let low = a.iter().filter(|&&x| x < 77).count() as f64 / a.len() as f64;
                 let e = by_format.entry(t.format).or_default();
@@ -2535,7 +2541,7 @@ fn tex_dump(ids: &[u32], random: Option<usize>, files: &[PathBuf], out: &std::pa
         let path = out.join(format!("{id}_{k}_{name}.png"));
         let mut enc = png::Encoder::new(std::io::BufWriter::new(std::fs::File::create(&path)?), t.width, t.height);
         enc.set_color(png::ColorType::Rgba);
-        enc.write_header()?.write_image_data(&t.rgba)?;
+        enc.write_header()?.write_image_data(t.rgba())?;
         println!("{} {}x{}", path.display(), t.width, t.height);
         Ok(())
     };
