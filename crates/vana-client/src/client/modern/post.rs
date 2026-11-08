@@ -176,6 +176,7 @@ pub fn draw(p: &mut Panels, w: &mut World) {
             label,
             text,
             editing,
+            at,
             shown,
             dl_cursor,
             dl_mode,
@@ -203,7 +204,9 @@ pub fn draw(p: &mut Panels, w: &mut World) {
                             Some(n) => n.clone(),
                             None if *editing => {
                                 let blink = (ctx.input(|i| i.time) * 2.0) as i64 % 2 == 0;
-                                format!("{text}{}", if blink { "|" } else { " " })
+                                let (before, after): (String, String) =
+                                    (text.chars().take(*at).collect(), text.chars().skip(*at).collect());
+                                format!("{before}{}{after}", if blink { "|" } else { " " })
                             }
                             None => text.clone(),
                         };
