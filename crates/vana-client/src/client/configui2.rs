@@ -431,8 +431,12 @@ pub fn opened(ui: &mut ConfigUi, name: &str) {
     }
 }
 
-/// A window was closed: textcol1 takes textcol2 with it.
-pub fn closed(ui: &mut ConfigUi, name: &str, _out: &mut Out) {
+/// A window was closed: textcol1 takes textcol2 with it; conf3win sends a picked Show / Hide.
+pub fn closed(ui: &mut ConfigUi, name: &str, out: &mut Out) {
+    if name == "conf3win" && ui.anon_dirty {
+        ui.anon_dirty = false;
+        out.anon = Some(ui.anon);
+    }
     if name == "textcol1" && ui.stack.last().is_some_and(|w| w.name == "textcol2") {
         ui.stack.pop();
     }

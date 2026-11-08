@@ -1010,6 +1010,10 @@ fn native_set(c: &mut ConfigUi, v: &mut Values, s: &Shape, x: usize, sw: f32) ->
     match s.ctls[0].1 {
         Ctl::Slider(id, lo, hi, step) => {
             let mut out = ConfigUi::set_value(v, id, (lo + x as i32 * step.max(1)).min(hi) as u32);
+            // Misc. 2's sliders too: retail's conf6win writes 0x9d = 1 under 1024 wide whatever is touched.
+            if s.menu == "conf6win" {
+                ConfigUi::narrow_9d(v, &mut out, sw);
+            }
             out.sounds.push(Se::Cursor);
             out
         }

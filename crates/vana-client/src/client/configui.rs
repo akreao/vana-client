@@ -36,7 +36,7 @@ pub enum Ctl {
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Act {
-    /// conf3win Show / Hide: kept by the page, not a config id (c2s 0x0DC on close in retail).
+    /// conf3win Show / Hide: kept by the page, not a config id (c2s 0x0DC which 0 when the page closes).
     Anon(bool),
     /// conf6win Default: the yes/no box, then default key assignments.
     ResetKeys,
@@ -237,8 +237,9 @@ pub fn disabled(name: &str, child: u16, sw: f32, mon: bool) -> bool {
         "conf12wi" => mon && matches!(child, 3 | 4),
         // Compact software keyboard: Japanese only (FUN_10194460).
         "conf13wi" => matches!(child, 3..=5),
-        // Macro palette size: below 1024 wide the full palette does not fit (FUN_10193e50, simplified).
-        "conf6win" => child == 12 && sw < 1024.0,
+        // Macro palettes (FUN_1019b6d0): below 1024 wide the long palette is off (child 12), below 640 the position
+        // rows too (14 / 15; manager +0xb6 = -1).
+        "conf6win" => (child == 12 && sw < 1024.0) || (matches!(child, 14 | 15) && sw < 640.0),
         // Ours (user, 2026-10-26: the mouse as modern MMOs): Mouse Control's type and Screen Edge Panning do nothing.
         "conf7" => matches!(child, 1..=4),
         _ => false,
@@ -303,6 +304,9 @@ pub struct Out {
     pub lockstyle: Option<u8>,
     /// Ours: the camera keys' Y / X sense changed (the client's config keeps it).
     pub cam_keys: Option<[u8; 2]>,
+    /// conf3win closed after Show / Hide was picked (win_conf3win_v08): c2s 0x0DC which 0, set = hidden. Sent even
+    /// when the pick matches the flag already held.
+    pub anon: Option<bool>,
 }
 
 /// Our Settings button under lobycwin and our rows under configwi's list (not retail): virtual children.
@@ -372,8 +376,11 @@ pub const SETTINGS_HELP: &str = "Window, resolution, frame limit and the other s
 #[derive(Default)]
 pub struct ConfigUi {
     pub stack: Vec<Win>,
-    /// Character information hidden (conf3win Show / Hide).
+    /// Character information hidden (conf3win Show / Hide): our anonymous flag when the page opened
+    /// (FUN_100e47c0(0), win_conf3win_v04), then the row picked.
     pub anon: bool,
+    /// Show or Hide was picked (conf3win +0x3c): c2s 0x0DC which 0 goes out once conf3win closes.
+    pub anon_dirty: bool,
     /// confyn's mode (0 text colours, 1 log windows).
     pub yn_mode: u8,
     /// Page-specific state of the other pages (configui2).
@@ -408,7 +415,17 @@ pub struct ConfigUi {
     pub m_hsv: Option<(u16, [usize; 3])>,
 }
 
+/// configwi's layout name, for its remembered cursor child.
+pub const CONFIGWI_MENU: &str = "menu    configwi";
+
 impl ConfigUi {
+    /// The bottom window's cursor child from its layout (FUN_10118870 on an open by name); 1 = never opened.
+    pub fn recall(&mut self, child: u16) {
+        if let Some(w) = self.stack.first_mut() {
+            w.cursor = child;
+        }
+    }
+
     pub fn open(name: &str) -> Self {
         let mut c = ConfigUi::default();
         c.push(name);
@@ -440,9 +457,33 @@ impl ConfigUi {
         disabled(name, child, sw, self.mon) || unowned(name, child, self.owned)
     }
 
+    /// conf6win's draw (FUN_1019b6d0, every frame while it is up): under 1024 wide the long palette's manager value
+    /// +0xb5 is -1, and that writes config 0x9d = 1 (the short palettes), saved.
+    fn narrow(&self, v: &mut Values, out: &mut Out, sw: f32) {
+        if self.stack.iter().any(|w| w.name == "conf6win") {
+            Self::narrow_9d(v, out, sw);
+        }
+    }
+
+    #[cfg(test)]
+    fn narrow_step(&self, v: &mut Values, sw: f32) -> Out {
+        let mut out = Out::default();
+        self.narrow(v, &mut out, sw);
+        out
+    }
+
+    pub fn narrow_9d(v: &mut Values, out: &mut Out, sw: f32) {
+        if sw < 1024.0 {
+            Self::set(v, out, 0x9d, 1);
+        }
+    }
+
     /// The modern Config page: Enter on `child` of page `name` (whatever window is on top).
     pub fn apply(&mut self, v: &mut Values, name: &str, child: u16, sw: f32) -> Out {
         let mut out = Out::default();
+        if name == "conf6win" {
+            Self::narrow_9d(v, &mut out, sw);
+        }
         self.enter(v, name, child, sw, &mut out);
         out
     }
@@ -468,6 +509,7 @@ impl ConfigUi {
     /// A key on the top window.
     pub fn key(&mut self, gu: &GameUi, v: &mut Values, key: egui::Key, sw: f32) -> Out {
         let mut out = Out::default();
+        self.narrow(v, &mut out, sw);
         if super::configui2::key(self, gu, v, key, &mut out) {
             return out;
         }
@@ -630,7 +672,7 @@ impl ConfigUi {
                 }
             }
             Open(next) => self.push(next),
-            Act(Act::Anon(h)) => self.anon = h,
+            Act(Act::Anon(h)) => (self.anon, self.anon_dirty) = (h, true),
             Act(Act::ResetKeys) => {
                 self.extra.ask_keys = Some(false);
                 self.push("comyn");
@@ -675,6 +717,7 @@ impl ConfigUi {
         sh: f32,
     ) -> Out {
         let mut out = Out::default();
+        self.narrow(v, &mut out, sw);
         if super::configui2::pointer(self, gu, v, p, moved, clicked, sw, sh, &mut out) {
             return out;
         }
@@ -1021,6 +1064,38 @@ mod tests {
         ui.enter(&mut v, "conf13wi", 3, 1280.0, &mut out);
         assert!(matches!(out.sounds.as_slice(), [Se::Error]));
         assert_eq!(v.get(0xc9), 0);
+    }
+
+    #[test]
+    fn show_hide_goes_out_when_conf3win_closes() {
+        let mut v = Values::default();
+        let mut ui = ConfigUi::open("configwi");
+        ui.push("conf3win");
+        let mut out = Out::default();
+        // Show on a page that already shows: still sent (win_conf3win_v08 only checks +0x3c).
+        ui.enter(&mut v, "conf3win", 3, 1280.0, &mut out);
+        assert_eq!(out.anon, None);
+        ui.close_top(&mut out);
+        assert_eq!(out.anon, Some(false));
+        // Closing it again without a pick sends nothing.
+        ui.push("conf3win");
+        let mut out = Out::default();
+        ui.close_top(&mut out);
+        assert_eq!(out.anon, None);
+    }
+
+    #[test]
+    fn narrow_screens_turn_off_the_palette_rows() {
+        assert!(disabled("conf6win", 12, 1000.0, false) && !disabled("conf6win", 14, 1000.0, false));
+        assert!(disabled("conf6win", 14, 600.0, false) && disabled("conf6win", 15, 600.0, false));
+        assert!(!disabled("conf6win", 12, 1024.0, false) && !disabled("conf6win", 13, 600.0, false));
+        let mut v = Values::default();
+        let mut ui = ConfigUi::open("configwi");
+        ui.push("conf6win");
+        let out = ui.narrow_step(&mut v, 1280.0);
+        assert!(out.changed.is_empty() && v.get(0x9d) == 0);
+        let out = ui.narrow_step(&mut v, 800.0);
+        assert_eq!((out.changed.as_slice(), v.get(0x9d)), (&[0x9d][..], 1));
     }
 
     #[test]
