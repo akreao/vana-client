@@ -10,7 +10,7 @@
 use super::super::World;
 use super::super::gm::{self, Pick};
 use super::super::lua::PERM;
-use super::super::settings::{ModPage, ModRow, SettingsUi};
+use super::super::settings::{Edit, ModPage, ModRow, SettingsUi};
 use super::config::{self, Detail, ModDo, ModOut};
 use super::kit::{self, At, Btn, Stop};
 use super::{Panels, Title};
@@ -60,6 +60,12 @@ pub struct ModMgr {
     field: Option<usize>,
     /// Typed values by (mod, form, field).
     values: HashMap<(String, usize, usize), String>,
+    /// A text or colour setting being typed: its row on Settings, the text so far.
+    editing: Option<(usize, String)>,
+    /// A key setting waiting for its key: its row on Settings.
+    listening: Option<usize>,
+    /// A colour setting whose picker is open: its row on Settings.
+    picking: Option<usize>,
     /// The last Run: (mod, the print number then, the line).
     ran: Option<(String, u64, String)>,
     get_row: usize,
@@ -86,6 +92,9 @@ impl ModMgr {
             form: 0,
             field: None,
             values: HashMap::new(),
+            editing: None,
+            listening: None,
+            picking: None,
             ran: None,
             get_row: 0,
             pickers: gm::Pickers::default(),
@@ -115,6 +124,7 @@ impl ModMgr {
     fn pick(&mut self, i: usize) {
         if i != self.sel {
             (self.sel, self.form, self.field) = (i, 0, None);
+            self.stop_editing();
         }
     }
 
@@ -150,6 +160,11 @@ impl ModMgr {
 
     fn values_of(&self, id: &str, form: usize, n: usize) -> Vec<String> {
         (0..n).map(|i| self.values.get(&(id.to_string(), form, i)).cloned().unwrap_or_default()).collect()
+    }
+
+    /// A setting's typing, key wait and picker dropped (the value it holds stays).
+    fn stop_editing(&mut self) {
+        (self.editing, self.listening, self.picking) = (None, None, None);
     }
 }
 
@@ -379,7 +394,11 @@ fn stops(mm: &ModMgr, sel: &Sel, ks: &[Kind], chips: &[Vec<String>]) -> Vec<Stop
             Kind::Subs => Stop::Tabs { n: SUBS.len(), at: mm.sub },
             Kind::Row(r) => {
                 let r = &rows[r];
-                Stop::Value { n: r.choices.len(), at: r.at, slider: slider(r), off: 0 }
+                match r.edit {
+                    Edit::Choice => Stop::Value { n: r.choices.len(), at: r.at, slider: slider(r), off: 0 },
+                    // The value (Enter: type it, or wait for the key); a colour's Pick… beside it.
+                    e => Stop::Buttons { n: if e == Edit::Colour { 2 } else { 1 }, off: 0, pair: None },
+                }
             }
             Kind::Forms => Stop::List { n: sel.forms.len(), page: 8 },
             Kind::Field(i) => Stop::Buttons { n: 1 + chips.get(i).map_or(0, Vec::len), off: 0, pair: None },
@@ -412,6 +431,10 @@ pub fn events(w: &mut World, events: &[egui::Event]) -> bool {
         return false;
     }
     for e in events {
+        if w.modmgr.as_ref().is_some_and(|m| m.listening.is_some()) {
+            listen(w, e);
+            continue;
+        }
         match e {
             egui::Event::Text(t) | egui::Event::Paste(t) => text(w, t),
             egui::Event::Key { key, pressed: true, modifiers, repeat, .. } => {
@@ -434,6 +457,10 @@ fn text(w: &mut World, t: &str) {
     let Some(mm) = w.modmgr.as_mut() else { return };
     let t: String = t.chars().filter(|c| !c.is_control()).collect();
     if mm.tab != 0 || t.is_empty() || mm.s.m_remove.is_some() {
+        return;
+    }
+    if let Some((_, typed)) = mm.editing.as_mut() {
+        typed.push_str(&t);
         return;
     }
     if let Some(i) = mm.field {
@@ -469,6 +496,7 @@ fn turn(w: &mut World, t: usize) {
         return;
     }
     (mm.tab, mm.field, mm.finding, mm.get_row) = (t, None, false, 0);
+    mm.stop_editing();
     mm.s.goto_page(t != 2);
     if t == 0 {
         mm.focus = Focus::List;
@@ -491,7 +519,7 @@ fn key(w: &mut World, key: egui::Key, shift: bool) {
         return;
     }
     // Tab turns the window's tabs, but in a form moves between its fields.
-    if key == egui::Key::Tab && mm.field.is_none() && form_stop(mm).is_none() {
+    if key == egui::Key::Tab && mm.field.is_none() && mm.editing.is_none() && form_stop(mm).is_none() {
         let t = (mm.tab + if shift { TABS.len() - 1 } else { 1 }) % TABS.len();
         return turn(w, t);
     }
@@ -557,6 +585,23 @@ fn page_key(w: &mut World, key: egui::Key, shift: bool) {
         return;
     };
     let ks = kinds(&sel, mm.sub, mm.form);
+    // Typing a setting: Enter keeps it, Escape drops it.
+    if mm.editing.is_some() {
+        match key {
+            egui::Key::Backspace => {
+                if let Some((_, t)) = mm.editing.as_mut() {
+                    t.pop();
+                }
+            }
+            egui::Key::Enter => finish_edit(w, &sel.id),
+            egui::Key::Escape => {
+                mm.editing = None;
+                sound(w, Se::Cancel);
+            }
+            _ => {}
+        }
+        return;
+    }
     // Typing in a field: its keys first.
     if let Some(i) = mm.field {
         let n = sel.forms.get(mm.form).map_or(0, |f| fields(f).len()).max(1);
@@ -624,6 +669,7 @@ fn page_key(w: &mut World, key: egui::Key, shift: bool) {
         kit::Act::Set(s, x) => match ks[s] {
             Kind::Subs => {
                 (mm.sub, mm.field) = (x, None);
+                mm.stop_editing();
                 sound(w, Se::Cursor);
             }
             Kind::Row(r) => set_row(w, &sel.id, r, x),
@@ -632,9 +678,75 @@ fn page_key(w: &mut World, key: egui::Key, shift: bool) {
         kit::Act::Press(s, b) => press(w, &sel, &ks, &chips, s, b),
         kit::Act::Back => {
             (mm.focus, mm.field) = (Focus::List, None);
+            mm.stop_editing();
             sound(w, Se::Cancel);
         }
         a => w.sounds.extend(a.sound().map(|s| s as u32)),
+    }
+}
+
+/// The setting being typed kept, when what was typed is a value of its type (a colour #RRGGBB).
+fn finish_edit(w: &mut World, id: &str) {
+    let Some(mm) = w.modmgr.as_mut() else { return };
+    let Some((r, typed)) = mm.editing.clone() else { return };
+    let Some(old) = edited_row(mm, id, r).map(|row| (row.edit, row.choices.first().map(|c| c.1.clone()))) else {
+        mm.editing = None;
+        return;
+    };
+    let value = match old {
+        (Edit::Colour, v) => super::super::lua::colour_typed(&typed, &v.unwrap_or_default()),
+        _ => Some(serde_json::Value::String(typed)),
+    };
+    match value {
+        Some(v) => {
+            mm.editing = None;
+            set_edited(w, id, r, v);
+            sound(w, Se::Select);
+        }
+        None => sound(w, Se::Error),
+    }
+}
+
+/// Settings' row `r` of mod `id` when it is a text, colour or key setting.
+fn edited_row<'a>(mm: &'a ModMgr, id: &str, r: usize) -> Option<&'a ModRow> {
+    let p = mm.pages.iter().find(|p| p.id.eq_ignore_ascii_case(id))?;
+    p.rows.iter().filter(|r| !r.key.starts_with(PERM)).nth(r).filter(|r| r.edit != Edit::Choice)
+}
+
+/// A text, colour or key setting given value `v`: kept, and handed to the app for the mod.
+fn set_edited(w: &mut World, id: &str, r: usize, v: serde_json::Value) {
+    let Some(mm) = w.modmgr.as_mut() else { return };
+    let Some(p) = mm.pages.iter_mut().find(|p| p.id.eq_ignore_ascii_case(id)) else { return };
+    let Some(row) = p.rows.iter_mut().filter(|r| !r.key.starts_with(PERM)).nth(r) else { return };
+    if row.choices.first().is_some_and(|c| c.1 == v) {
+        return;
+    }
+    row.choices = vec![(super::super::lua::edit_shown(row.edit, &v), v.clone())];
+    mm.s.mod_changes.push((p.id.clone(), row.key.clone(), v));
+}
+
+/// A key setting waiting: the first key pressed becomes its value (with Ctrl, Alt, Shift); Backspace or Delete
+/// clears it, Escape keeps it as it was.
+fn listen(w: &mut World, e: &egui::Event) {
+    let egui::Event::Key { key, pressed: true, .. } = e else { return };
+    let combo = match key {
+        egui::Key::Escape => None,
+        egui::Key::Backspace | egui::Key::Delete => Some(String::new()),
+        _ => match w.lua.key_combo(e) {
+            Some(c) => Some(c),
+            // A key with no name (a modifier alone): keep waiting.
+            None => return,
+        },
+    };
+    let Some(mm) = w.modmgr.as_mut() else { return };
+    let Some(r) = mm.listening.take() else { return };
+    let Some(id) = mm.picked().map(|s| s.id) else { return };
+    match combo {
+        Some(c) => {
+            set_edited(w, &id, r, serde_json::Value::String(c));
+            sound(w, Se::Select);
+        }
+        None => sound(w, Se::Cancel),
     }
 }
 
@@ -684,6 +796,30 @@ fn press(w: &mut World, sel: &Sel, ks: &[Kind], chips: &[Vec<String>], s: usize,
             }
         }
         Kind::Run => run(w, b == 1),
+        // A text, colour or key setting: typing it (its value to start from), waiting for its key, or its picker.
+        Kind::Row(r) if mm.sub == SUB_SETTINGS => {
+            let Some(row) = sel.rows.get(r).filter(|row| row.edit != Edit::Choice) else { return };
+            let shown = row.choices.first().map_or(String::new(), |c| c.0.clone());
+            match (row.edit, b) {
+                (Edit::Key, _) => {
+                    (mm.editing, mm.picking, mm.listening) = (None, None, Some(r));
+                }
+                (Edit::Colour, 1) => {
+                    mm.editing = None;
+                    mm.picking = if mm.picking == Some(r) { None } else { Some(r) };
+                }
+                _ => {
+                    (mm.listening, mm.picking) = (None, None);
+                    let typed = if row.edit == Edit::Text {
+                        row.choices.first().and_then(|c| c.1.as_str()).map_or(shown, str::to_string)
+                    } else {
+                        shown
+                    };
+                    mm.editing = Some((r, typed));
+                }
+            }
+            sound(w, Se::Select);
+        }
         _ => {}
     }
 }
@@ -765,11 +901,84 @@ enum Click {
     /// A stop clicked outside its controls: the cursor there.
     Point(usize),
     Field(usize),
+    /// A colour setting (Settings' row) picked with the mouse.
+    Colour(usize, [u8; 3]),
     Remove(bool),
     Get(usize),
     GetPoint(usize),
     Dats(Vec<ModDo>),
     Close,
+}
+
+/// A text, colour or key setting (Settings' row `k`): its value in a field (typed in after Enter or a click; a key
+/// setting waits for its key), a colour's swatch and Pick… with the picker under it when open, then its help.
+#[allow(clippy::too_many_arguments)]
+fn edit_row(
+    ui: &mut Ui,
+    m: &super::Modern,
+    mm: &ModMgr,
+    r: &ModRow,
+    k: usize,
+    focus: bool,
+    follow: bool,
+    click: &mut Vec<Click>,
+) -> Rect {
+    let st = 2 + k;
+    let font = FontId::proportional(m.theme.small);
+    let typing = mm.editing.as_ref().filter(|e| e.0 == k).map(|e| e.1.as_str());
+    let waiting = mm.listening == Some(k);
+    let value = r.choices.first().map_or(String::new(), |c| c.0.clone());
+    kit::setting(ui, m, &r.label, focus, false, follow, |ui| {
+        let field = |ui: &mut Ui, width: f32, click: &mut Vec<Click>| {
+            let shown = match (typing, waiting) {
+                (Some(t), _) => t.to_string(),
+                (_, true) => "Press a key (Escape: keep, Backspace: none)".to_string(),
+                _ => value.clone(),
+            };
+            let rect = kit::field(ui, m, &shown, typing.map(|t| t.chars().count()), width, font.clone(), None);
+            if focus && mm.at.sub == 0 && typing.is_none() {
+                kit::ring(ui.painter(), m, rect, 6.0);
+            }
+            if ui.interact(rect, ui.scope_id().with(("mods setting", &r.key)), Sense::click()).clicked() {
+                click.push(Click::Press(st, 0));
+            }
+        };
+        match r.edit {
+            Edit::Colour => {
+                let rgba = r.choices.first().and_then(|c| super::super::lua::colour_rgba(&c.1)).unwrap_or([255; 4]);
+                ui.horizontal(|ui| {
+                    let (sw, _) = ui.allocate_exact_size(vec2(30.0, 30.0), Sense::hover());
+                    let c = Color32::from_rgb(rgba[0], rgba[1], rgba[2]);
+                    ui.painter().rect_filled(sw.shrink(3.0), 3.0, c);
+                    ui.painter().rect_stroke(
+                        sw.shrink(3.0),
+                        3.0,
+                        Stroke::new(1.0, m.theme.color("muted")),
+                        StrokeKind::Inside,
+                    );
+                    field(ui, 130.0, click);
+                    let s = Btn { lit: mm.picking == Some(k), cursor: focus && mm.at.sub == 1, off: false };
+                    if kit::clicked(&kit::button(ui, m, "Pick…", 72.0, s), s) {
+                        click.push(Click::Press(st, 1));
+                    }
+                });
+                if mm.picking == Some(k)
+                    && let Some(c) = kit::colour_picker(ui, m, [rgba[0], rgba[1], rgba[2]], 300.0)
+                {
+                    click.push(Click::Colour(k, c));
+                }
+            }
+            Edit::Key => field(ui, 300.0, click),
+            _ => field(ui, PAGE_W - 40.0, click),
+        }
+        if !r.help.is_empty() {
+            ui.add(
+                egui::Label::new(egui::RichText::new(&r.help).size(m.theme.small - 1.0).color(m.theme.color("muted")))
+                    .wrap(),
+            );
+        }
+    })
+    .1
 }
 
 fn heading(ui: &mut Ui, m: &super::Modern, s: &str) {
@@ -948,7 +1157,9 @@ fn page(
                     for (k, r) in rows.iter().enumerate() {
                         let st = 2 + k;
                         let focus = mm.focus == Focus::Page && mm.at.stop == st;
-                        let rect = if slider(r) {
+                        let rect = if r.edit != Edit::Choice {
+                            edit_row(ui, m, mm, r, k, focus, follow, click)
+                        } else if slider(r) {
                             let shown = r.choices.get(r.at).map_or(String::new(), |c| c.0.clone());
                             let (i, rect) =
                                 kit::slider_setting(ui, m, &r.label, focus, follow, r.choices.len(), r.at, &shown);
@@ -1278,6 +1489,23 @@ fn apply(w: &mut World, clicks: Vec<Click>) {
     for c in clicks {
         let Some(mm) = w.modmgr.as_mut() else { return };
         mm.s.sounds.clear();
+        // A click anywhere but the setting being typed (or its picker) keeps what was typed; one waiting for its key
+        // stops waiting.
+        let on = |r: usize| matches!(c, Click::Press(st, 0) if st == 2 + r);
+        if let Some((r, _)) = mm.editing
+            && !on(r)
+            && !matches!(c, Click::Colour(..))
+        {
+            if let Some(id) = mm.picked().map(|s| s.id) {
+                finish_edit(w, &id);
+            }
+            let Some(mm) = w.modmgr.as_mut() else { return };
+            mm.editing = None;
+        }
+        let Some(mm) = w.modmgr.as_mut() else { return };
+        if mm.listening.is_some_and(|r| !on(r)) {
+            mm.listening = None;
+        }
         match c {
             Click::Tab(k) => turn(w, k),
             Click::Find => {
@@ -1323,6 +1551,12 @@ fn apply(w: &mut World, clicks: Vec<Click>) {
                 if ks.get(st).is_some() {
                     press(w, &sel, &ks, &chips, st, b);
                 }
+            }
+            Click::Colour(r, rgb) => {
+                let Some(id) = mm.picked().map(|s| s.id) else { continue };
+                let old = edited_row(mm, &id, r).and_then(|row| row.choices.first().map(|c| c.1.clone()));
+                let v = super::super::lua::colour_value(rgb, &old.unwrap_or_default());
+                set_edited(w, &id, r, v);
             }
             Click::Remove(yes) => {
                 config::remove_answer(&mut mm.s, yes);
@@ -1507,12 +1741,25 @@ fn installed_help(mm: &ModMgr, sel: Option<&Sel>, ks: &[Kind]) -> String {
     if mm.field.is_some() {
         return "Type the value. Tab: the next field. Enter or Escape: done.".into();
     }
+    if mm.editing.is_some() {
+        return "Type the value. Enter: keep it. Escape: leave it as it was.".into();
+    }
+    if mm.listening.is_some() {
+        return "Press the key, with Ctrl, Alt or Shift if you like. Backspace: no key. Escape: leave it as it was."
+            .into();
+    }
     let rows = if mm.sub == SUB_SETTINGS { &sel.rows } else { &sel.perms };
     match ks.get(mm.at.stop) {
         Some(Kind::Header) => "ON starts the mod at once, OFF stops it. Uninstall deletes its folder.".into(),
         Some(Kind::Subs) => "Left / Right: Settings, Commands or Permissions. Escape: back to the list.".into(),
         Some(Kind::Row(r)) => rows.get(*r).map_or(String::new(), |r| {
-            if r.help.is_empty() { "Left / Right: change it.".into() } else { r.help.clone() }
+            let how = match r.edit {
+                Edit::Choice => "Left / Right: change it.",
+                Edit::Text => "Enter: type it.",
+                Edit::Colour => "Enter: type it as #RRGGBB. Right, then Enter: the colour picker.",
+                Edit::Key => "Enter, then press the key.",
+            };
+            if r.help.is_empty() { how.into() } else { format!("{} {how}", r.help) }
         }),
         Some(Kind::Forms) => sel.forms.get(mm.form).map_or(String::new(), |f| format!("{} Enter: fill it in.", f.help)),
         Some(Kind::Field(_)) => {

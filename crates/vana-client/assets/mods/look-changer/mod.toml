@@ -1,5 +1,5 @@
 name = "Look Changer"
-version = "1.0.2"
+version = "1.0.3"
 description = "Changes how characters look on your screen only: your race, face and gear, a target's look copied, one race for everyone else (the dress-up add-ons)."
 permissions = []
 

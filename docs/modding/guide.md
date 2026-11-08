@@ -248,8 +248,8 @@ forms = [                           # its other forms, each with a line of its o
 ]
 ```
 
-Leave `args` out when the command does nothing alone and only its `forms` are used. A command name may not be `lua` or
-one of the game's commands: the mod then does not load.
+Leave `args` out when the command does nothing alone and only its `forms` are used. A command name may not be `lua`,
+`mods` or one of the game's commands: the mod then does not load.
 
 A placeholder can be typed, so the Mods window's form for it offers choices: `params` on the command (its main form)
 or on a form, each naming the placeholder by its first word.
@@ -269,8 +269,8 @@ the rest as you do for typed lines.
 
 While the player types `//` (or a `/` and three letters), the chat line lists the running mods' command forms that fit
 what is typed, each with its mod and help: a literal word by its start, a `<word>` or `[word]` taking anything. Up /
-Down pick one and Tab puts its fixed words on the line. `/lua help` names the mods with commands; `/lua help <mod>`
-lists a mod's forms and `/lua help <command>` one command's (`//help` too, when no mod registers help). An unknown
+Down pick one and Tab puts its fixed words on the line. `//mods` names the mods with commands; `//mods <mod>` lists a
+mod's forms and `//mods <command>` one command's (`/lua help` the same). An unknown
 `//command` names the installed mod that has it when that mod is off, else the command it was probably meant to be. In
 the modern UI the Mods window (Settings > Mods, or `/lua mods`) lists a mod's forms on its Commands tab: the picked one
 as a form with a field a placeholder, the line it makes, Run (it types the line as the chat line would, and shows what

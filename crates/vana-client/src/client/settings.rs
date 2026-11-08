@@ -235,6 +235,21 @@ pub struct ModRow {
     pub place_modern: Option<usize>,
     /// The interface sound its value is an offset from, played as the value changes (manifest `preview_sound`).
     pub preview: Option<u32>,
+    /// How it changes: from its choices, or edited (a text, colour or key setting: its one choice holds the value).
+    pub edit: Edit,
+}
+
+/// How a mod setting changes. Only the Mods window edits; the Extras pages show the chosen ones.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum Edit {
+    #[default]
+    Choice,
+    /// `string`: typed.
+    Text,
+    /// `colour`: typed as #RRGGBB, or picked.
+    Colour,
+    /// `key`: the next key pressed (with its modifiers).
+    Key,
 }
 
 const OFF_ON: &[(u32, &str)] = &[(1, "ON"), (0, "OFF")];
@@ -773,6 +788,8 @@ impl SettingsUi {
         self.tab_rows.clear();
         self.mod_pages.clear();
         for mut p in pages {
+            // Text, colour and key settings are the Mods window's: these pages have only choices.
+            p.rows.retain(|r| r.edit == Edit::Choice);
             let (tabbed, own): (Vec<ModRow>, Vec<ModRow>) =
                 p.rows.into_iter().partition(|r| EXTRA_TABS.contains(&r.tab.as_str()));
             self.tab_rows.extend(tabbed.into_iter().map(|r| (p.id.clone(), r)));
@@ -2091,6 +2108,7 @@ mod tests {
             tab: tab.into(),
             place,
             place_modern: None,
+            edit: Edit::Choice,
         };
         ui.set_mod_pages(vec![ModPage {
             id: "m".into(),

@@ -1,5 +1,5 @@
 name = "Loot Rules"
-version = "1.0.2"
+version = "1.0.3"
 description = "Lots, passes and drops treasure by your lists (the treasury and loot add-ons)."
 permissions = ["automation"]
 

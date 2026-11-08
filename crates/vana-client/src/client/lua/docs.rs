@@ -122,7 +122,7 @@ pub const FUNCS: &[Func] = &[
     Func {
         ns: "commands",
         name: "register",
-        doc: "Adds a command: typed as //name or /name, it calls `handler` with the words after it. Declare it in mod.toml ([commands.<name>] help and usage) so the chat line's hint, //help and the Mods page show it.",
+        doc: "Adds a command: typed as //name or /name, it calls `handler` with the words after it. Declare it in mod.toml ([commands.<name>] help and usage) so the chat line's hint, //mods and the Mods page show it.",
         params: &[("name", "string", "without the slash"), ("handler", "fun(...: string)", "")],
         ret: "",
     },

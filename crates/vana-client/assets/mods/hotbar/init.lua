@@ -54,7 +54,11 @@ events.on("settings_changed", refresh)
 timer.every(1, bar.tick)
 timer.every(0.25, bar.recasts)
 
-local USAGE = "//hb [show | hide | more | fewer | run <bar> <slot> | reload | wipestock | restorestock]  (no argument opens the manager)"
+-- The forms of //hb as mod.toml declares them: what the chat line's hint and //mods show.
+local function usage()
+  chat.add("Hotbars:")
+  for _, line in ipairs(commands.usage("hb")) do chat.add("  " .. line) end
+end
 
 commands.register("hb", function(cmd, a, b)
   cmd = (cmd or ""):lower()
@@ -70,7 +74,7 @@ commands.register("hb", function(cmd, a, b)
     bar.grow(-1)
   elseif cmd == "run" then
     local bn, sn = tonumber(a), tonumber(b)
-    if bn and sn then bar.fire(bn, sn) else chat.add("Hotbars: " .. USAGE) end
+    if bn and sn then bar.fire(bn, sn) else usage() end
   elseif cmd == "wipestock" then
     stock.start_wipe()
   elseif cmd == "restorestock" then
@@ -81,6 +85,6 @@ commands.register("hb", function(cmd, a, b)
     bar.rebuild()
     manager.refresh()
   else
-    chat.add("Hotbars: " .. USAGE)
+    usage()
   end
 end)

@@ -1,5 +1,5 @@
 name = "Inventory HUD"
-version = "1.0.2"
+version = "1.0.3"
 description = "Bag space, gil and the items and key items you choose, in a window on a screen edge (the inventory and gil tracker add-ons)."
 permissions = []
 

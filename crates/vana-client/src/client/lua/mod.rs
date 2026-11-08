@@ -660,7 +660,7 @@ impl Host {
     }
 
     /// The running mods' text commands by name, each with its mod's name and its `[commands]` usage and help (none
-    /// declared: one bare form), then //help and /lua; a name two mods register is the first loaded's.
+    /// declared: one bare form), then //mods and /lua; a name two mods register is the first loaded's.
     pub fn command_list(&self) -> Vec<CmdInfo> {
         let mut out: Vec<CmdInfo> = Vec::new();
         for vm in self.vms.iter().filter(|v| v.suspended.is_none()) {
@@ -678,15 +678,13 @@ impl Host {
                 });
             }
         }
-        if !out.iter().any(|c| c.name == "help") {
-            out.push(CmdInfo {
-                name: "help".into(),
-                id: String::new(),
-                owner: "Mods".into(),
-                help: "The mods that have commands (as /lua help).".into(),
-                forms: help_forms(),
-            });
-        }
+        out.push(CmdInfo {
+            name: "mods".into(),
+            id: String::new(),
+            owner: "Mods".into(),
+            help: "The mods that have commands (as /lua help).".into(),
+            forms: help_forms(),
+        });
         out.push(CmdInfo {
             name: "lua".into(),
             id: String::new(),
@@ -1055,7 +1053,7 @@ impl Host {
     fn lua_command(&mut self, w: &World, args: &[&str], out: &mut Vec<(String, [u8; 4])>) {
         let find = |vms: &[Vm], id: &str| vms.iter().position(|v| v.manifest.id.eq_ignore_ascii_case(id));
         match args.first().copied().unwrap_or("list") {
-            "help" => help_lines(&self.command_list(), &args[1..], out),
+            "help" => help_lines(&self.command_list(), "/lua help", &args[1..], out),
             "list" => {
                 if self.vms.is_empty() {
                     out.push(("No Lua mods loaded.".into(), super::WHITE));
@@ -1383,7 +1381,7 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
                         }
                     }
                 }),
-                None if name == "help" => help_lines(&host.command_list(), &args, &mut out),
+                None if name == "mods" => help_lines(&host.command_list(), "//mods", &args, &mut out),
                 None => {
                     let hint = match (host.off_mod_with(&name), nearest(&host.command_list(), &name)) {
                         (Some(m), _) => format!(" {m} has it, but it is not running (Settings > Mods)."),
@@ -2112,16 +2110,16 @@ pub(in crate::client) struct CmdInfo {
     pub forms: Vec<(String, String)>,
 }
 
-/// //help's forms.
+/// //mods' forms.
 fn help_forms() -> Vec<(String, String)> {
     [("", "The mods that have commands."), ("<mod or command>", "A mod's commands, or one command's forms.")]
         .map(|(a, h)| (a.to_string(), h.to_string()))
         .to_vec()
 }
 
-/// /lua help (and //help): one line naming the mods with commands by id; with a mod (its id or name), its commands' forms;
-/// with a command, its forms. Each form a line: `//name words - help`.
-fn help_lines(list: &[CmdInfo], args: &[&str], out: &mut Vec<(String, [u8; 4])>) {
+/// //mods (and /lua help, `cmd` being the one typed): one line naming the mods with commands by id; with a mod (its id
+/// or name), its commands' forms; with a command, its forms. Each form a line: `//name words - help`.
+fn help_lines(list: &[CmdInfo], cmd: &str, args: &[&str], out: &mut Vec<(String, [u8; 4])>) {
     const INFO: [u8; 4] = [0x80; 4];
     let forms = |c: &CmdInfo, out: &mut Vec<(String, [u8; 4])>| {
         for (a, h) in &c.forms {
@@ -2136,7 +2134,7 @@ fn help_lines(list: &[CmdInfo], args: &[&str], out: &mut Vec<(String, [u8; 4])>)
         ids.sort();
         ids.dedup();
         let names = if ids.is_empty() { "none".to_string() } else { ids.join(", ") };
-        out.push((format!("/lua help <mod or command>: its commands. Mods: {names}."), INFO));
+        out.push((format!("{cmd} <mod or command>: its commands. Mods: {names}."), INFO));
         return;
     }
     if let Some(c) = list.iter().find(|c| c.name == want) {
@@ -2220,7 +2218,7 @@ mod tests {
     use mlua::{Table, Value};
 
     /// Every bundled mod declares (`[commands.<name>]`, with help and usage) exactly the commands its code registers,
-    /// so the chat line's hint, //help and the Mods page show them all.
+    /// so the chat line's hint, //mods and the Mods page show them all.
     #[test]
     fn bundled_commands_declared() {
         for (id, text, files) in BUNDLED {
@@ -2246,7 +2244,7 @@ mod tests {
         }
     }
 
-    /// //help: by mod, one command's forms, a mod's commands; a near miss names the command.
+    /// //mods: by mod, one command's forms, a mod's commands; a near miss names the command.
     #[test]
     fn help_and_near_misses() {
         let info = |name: &str, id: &str, owner: &str, forms: &[(&str, &str)]| CmdInfo {
@@ -2264,10 +2262,10 @@ mod tests {
         ];
         let text = |args: &[&str]| {
             let mut out = Vec::new();
-            help_lines(&list, args, &mut out);
+            help_lines(&list, "//mods", args, &mut out);
             out.into_iter().map(|l| l.0).collect::<Vec<_>>()
         };
-        assert_eq!(text(&[]), ["/lua help <mod or command>: its commands. Mods: auction-desk, hotbar."]);
+        assert_eq!(text(&[]), ["//mods <mod or command>: its commands. Mods: auction-desk, hotbar."]);
         assert_eq!(
             text(&["hb"]),
             ["//hb (Hotbars): hb help", "  //hb - Opens the manager.", "  //hb show - Shows the bars."]
@@ -2287,6 +2285,7 @@ mod tests {
         );
         assert_eq!(c("forms = [{ args = \"a\", help = \"A.\" }]"), [("a".to_string(), "A.".to_string())]);
         assert!(manifest::parse("[commands.lua]\nhelp = \"x\"", "m").is_err());
+        assert!(manifest::parse("[commands.mods]\nhelp = \"x\"", "m").is_err());
         // Typed params: a known type, an enum with its options.
         let p = |t: &str| manifest::parse(&format!("[commands.x]\nhelp = \"X.\"\nargs = \"<a>\"\nparams = [{t}]"), "m");
         let ok = p("{ name = \"a\", type = \"item\", also = [\"none\"] }").unwrap();
@@ -5119,7 +5118,7 @@ fn mod_page(
     granted: &[String],
     bundled: bool,
 ) -> Option<super::settings::ModPage> {
-    use super::settings::{ModPage, ModRow};
+    use super::settings::{Edit, ModPage, ModRow};
     let mut rows = Vec::new();
     for (key, d) in &m.settings {
         if key == "on" && d.kind == "bool" {
@@ -5155,6 +5154,27 @@ fn mod_page(
                     })
                     .collect()
             }
+            // Edited in the Mods window: the one choice holds the value and what shows of it.
+            k @ ("string" | "colour" | "key") => {
+                let edit = match k {
+                    "colour" => Edit::Colour,
+                    "key" => Edit::Key,
+                    _ => Edit::Text,
+                };
+                rows.push(ModRow {
+                    key: key.clone(),
+                    label: if d.label.is_empty() { key.clone() } else { d.label.clone() },
+                    help: d.help.clone(),
+                    choices: vec![(edit_shown(edit, &current), current)],
+                    at: 0,
+                    tab: String::new(),
+                    place: None,
+                    place_modern: None,
+                    preview: None,
+                    edit,
+                });
+                continue;
+            }
             _ => continue,
         };
         let at = choices
@@ -5174,6 +5194,7 @@ fn mod_page(
             place: None,
             place_modern: None,
             preview: d.preview_sound,
+            edit: Edit::Choice,
         });
     }
     // The permissions it asks for (docs/lua-mods.md 3.5); a bundled mod's are given.
@@ -5191,9 +5212,46 @@ fn mod_page(
             place: None,
             place_modern: None,
             preview: None,
+            edit: Edit::Choice,
         });
     }
     (!rows.is_empty()).then(|| ModPage { id: m.id.clone(), name: m.name.clone(), rows })
+}
+
+/// An edited setting's value as the Mods window shows it: the text, the colour as #RRGGBB, the key as players read it.
+pub(in crate::client) fn edit_shown(edit: super::settings::Edit, v: &serde_json::Value) -> String {
+    use super::settings::Edit;
+    match edit {
+        Edit::Colour => colour_rgba(v).map_or(String::new(), |[r, g, b, _]| format!("#{r:02X}{g:02X}{b:02X}")),
+        Edit::Key => v.as_str().filter(|k| !k.is_empty()).map_or_else(|| "none".into(), input::combo_label),
+        _ => v.as_str().map_or_else(|| if v.is_null() { String::new() } else { v.to_string() }, str::to_string),
+    }
+}
+
+/// A colour setting's value ([r, g, b] or [r, g, b, a], 0..255) as RGBA.
+pub(in crate::client) fn colour_rgba(v: &serde_json::Value) -> Option<[u8; 4]> {
+    let a = v.as_array().filter(|a| a.len() == 3 || a.len() == 4)?;
+    let mut out = [255u8; 4];
+    for (o, x) in out.iter_mut().zip(a) {
+        *o = u8::try_from(x.as_u64()?).ok()?;
+    }
+    Some(out)
+}
+
+/// A colour typed as #RRGGBB (or RRGGBB), with the alpha of `old` (opaque when it has none): the setting's value.
+pub(in crate::client) fn colour_typed(text: &str, old: &serde_json::Value) -> Option<serde_json::Value> {
+    let h = text.trim().trim_start_matches('#');
+    if h.len() != 6 || !h.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    let n = |i: usize| u8::from_str_radix(&h[i..i + 2], 16).ok();
+    Some(colour_value([n(0)?, n(2)?, n(4)?], old))
+}
+
+/// An RGB with the alpha of `old` (opaque when it has none), as a colour setting's value.
+pub(in crate::client) fn colour_value(rgb: [u8; 3], old: &serde_json::Value) -> serde_json::Value {
+    let a = colour_rgba(old).map_or(255, |c| c[3]);
+    serde_json::json!([rgb[0], rgb[1], rgb[2], a])
 }
 
 /// Gives an installed mod every permission its manifest asks for (a standard mod installed from our list).
@@ -5389,6 +5447,13 @@ impl Host {
                 .find(|w| w.open && w.focus)
                 .map(|w| (w.title.clone(), w.help_now().to_string()))
         })
+    }
+}
+
+impl Host {
+    /// A key press as a key setting's value ("ctrl+numpad1"), as a mod window's key element takes it.
+    pub(in crate::client) fn key_combo(&self, e: &egui::Event) -> Option<String> {
+        input::combo_of(e, self.input.borrow().last_down)
     }
 }
 

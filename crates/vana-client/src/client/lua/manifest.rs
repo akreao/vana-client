@@ -26,7 +26,7 @@ pub struct Manifest {
     pub lobby: bool,
     /// Declared settings by key, drawn by the client (docs/lua-mods.md 4.12).
     pub settings: IndexMap<String, Setting>,
-    /// The text commands it registers, by name (`[commands.<name>]`): what the chat line's completion, //help and the
+    /// The text commands it registers, by name (`[commands.<name>]`): what the chat line's completion, //mods and the
     /// Mods page show.
     pub commands: IndexMap<String, Command>,
 }
@@ -192,10 +192,12 @@ pub fn parse(text: &str, folder: &str) -> Result<Manifest> {
             bail!("{}: setting {key}: tab is one of {} ({:?} given)", m.id, EXTRA_TABS.join(", "), s.tab);
         }
     }
-    if let Some(name) =
-        m.commands.keys().find(|n| n.is_empty() || n.contains(char::is_whitespace) || n.starts_with('/') || *n == "lua")
+    if let Some(name) = m
+        .commands
+        .keys()
+        .find(|n| n.is_empty() || n.contains(char::is_whitespace) || n.starts_with('/') || *n == "lua" || *n == "mods")
     {
-        bail!("{}: command {name:?}: a name without slashes or spaces, not lua", m.id);
+        bail!("{}: command {name:?}: a name without slashes or spaces, not lua or mods", m.id);
     }
     for (name, c) in &m.commands {
         for p in c.params.iter().chain(c.forms.iter().flat_map(|f| &f.params)) {

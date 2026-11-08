@@ -279,6 +279,10 @@ pub(super) fn install(
             if name == "lua" || super::super::textcmd::is_game_command(&name) {
                 return Err(mlua::Error::runtime(format!("/{name} is a game command: give yours another name")));
             }
+            // //mods is the client's list of the mods' commands.
+            if name == "mods" {
+                return Err(mlua::Error::runtime("//mods is the client's: give yours another name"));
+            }
             let st = state(lua);
             let key = lua.create_registry_value(func)?;
             let mut s = st.borrow_mut();
