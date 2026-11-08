@@ -8,7 +8,7 @@ local SCHOOLS = { "White Magic", "Black Magic", "Summoning Magic", "Ninjutsu", "
 local DIM = { 150, 150, 150, 255 }
 local BLU = 16
 
-local view = { tab = 1, school = nil, at = 1 }
+local view = { tab = 1, school = nil, at = 1, schools = {} }
 local shown = {}   -- the rows' actions as listed: {kind, id}
 
 local function say(t) chat.add("Action Panel: " .. t) end
@@ -40,7 +40,7 @@ local function spells_by_school()
   local blue = blue_set()
   for _, id in ipairs(game.spells()) do
     local r = res.spell(id)
-    local k = r and r.kind
+    local k = r and r.name and r.kind
     if k and SCHOOLS[k] and (k == 8 or (k == 6 and blue[id]) or (k ~= 6 and level_ok(r.levels, p))) then
       out[k] = out[k] or {}
       table.insert(out[k], { kind = "spell", id = id, name = r.name, cost = r.mp, unit = "MP" })
@@ -50,15 +50,33 @@ local function spells_by_school()
   return out
 end
 
--- Abilities, weapon skills and pet commands we can use now.
+local TRAIT, MONSTROSITY, READY = 4, 0x14, 0x12
+-- The cost the game's ability list shows by the record's kind (the client's table 0x10386159): TP for the dances and
+-- other TP moves, MP for blood pacts. Ready moves show their charges.
+local TP_COST = { [11] = true, [12] = true, [13] = true, [16] = true }
+local MP_COST = { [6] = true, [10] = true }
+
+local function cost_of(r)
+  if TP_COST[r.kind] and r.tp ~= 255 then return r.tp, "TP" end
+  if MP_COST[r.kind] then return r.cost, "MP" end
+  if r.kind == READY then return r.cost, r.cost == 1 and "charge" or "charges" end
+  return 0, ""
+end
+
+-- Abilities, weapon skills and pet commands we can use now: not traits, Monstrosity moves (in their own list) or the
+-- rows that only open a sub-list (Phantom Roll; its rolls are listed themselves); pet commands only with a pet.
 local function abilities_by_tab()
   local out = { [2] = {}, [3] = {}, [4] = {} }
+  local pet = game.info().pet_index ~= nil
   for _, id in ipairs(game.abilities()) do
     local r = res.ability(id)
-    if r and r.name and r.name ~= "" then
-      local tab = id < 0x200 and 3 or (id < 0x400 and 2 or 4)
-      table.insert(out[tab], { kind = tab == 3 and "ws" or (tab == 4 and "pet" or "ja"), id = id, name = r.name,
-        cost = tab == 3 and r.tp or r.cost, unit = tab == 3 and "TP" or "", recast_id = r.recast_id })
+    if r and r.name and r.name ~= "" and r.kind ~= TRAIT and r.kind ~= MONSTROSITY and (r.sub or 0) == 0 then
+      local tab = id < 0x200 and 3 or ((id < 0x400 and r.kind ~= READY) and 2 or 4)
+      if tab ~= 4 or pet then
+        local cost, unit = cost_of(r)
+        table.insert(out[tab], { kind = tab == 3 and "ws" or (tab == 4 and "pet" or "ja"), id = id, name = r.name,
+          cost = cost, unit = unit, recast_id = r.recast_id })
+      end
     end
   end
   for _, list in pairs(out) do table.sort(list, function(a, b) return a.name < b.name end) end
@@ -102,7 +120,7 @@ end
 
 local function show()
   local list, schools = list_now()
-  shown = list
+  shown, view.schools = list, schools or {}
   local els = { { type = "tabs", id = "tabs", items = TABS, at = view.tab } }
   if schools and #schools > 0 then
     local names, at = {}, 1
@@ -110,13 +128,15 @@ local function show()
       names[i] = SCHOOLS[k]
       if k == view.school then at = i end
     end
-    view.schools = schools
     els[#els + 1] = { type = "choice", id = "school", label = "School", items = names, at = at, page = 1 }
   end
   els[#els + 1] = { type = "list", id = "list", rows = rows(list), height = 12, at = math.min(view.at, math.max(1, #list)),
     columns = { { title = "Action", width = 0 }, { title = "Cost", width = 70, align = "right" }, { title = "Recast", width = 64, align = "right" } } }
   if #list == 0 then els[#els + 1] = { type = "text", text = "Nothing to use here now.", dim = true } end
-  ui.window(WIN, { title = "Actions", width = 420, elements = els })
+  els[#els + 1] = { type = "buttons", id = "close", items = { "Close" } }
+  -- A HUD window: it never takes the keys, so the game's keys (the main menu, Escape, targeting, macros) keep working
+  -- while it is open; its rows and tabs work with the mouse.
+  ui.window(WIN, { title = "Actions", width = 420, hud = true, elements = els })
 end
 
 -- Its macro line: self-only actions on us, the rest through the target prompt.
@@ -132,27 +152,45 @@ ui.on(WIN, function(_, e)
     view.tab, view.at = e.index, 1
     show()
   elseif e.kind == "set" and e.id == "school" then
-    view.school, view.at = view.schools and view.schools[e.index], 1
+    view.school, view.at = view.schools[e.index], 1
     show()
   elseif e.kind == "select" and e.id == "list" then
     view.at = e.index
     local a = shown[e.index]
     if a then commands.run(line_of(a)) end
+  elseif e.kind == "press" and e.id == "close" then
+    ui.close(WIN)
   end
 end)
 
--- The recasts count down while it is open.
+-- The actions' ids in order, to see when the list changes.
+local function ids(list)
+  local out = {}
+  for i, a in ipairs(list) do out[i] = a.kind .. a.id end
+  return table.concat(out, ",")
+end
+
+-- The recasts count down while it is open; a changed list (a pet called or gone, a level gained, a blue spell set)
+-- is shown again.
 timer.every(0.5, function()
   if not ui.is_open(WIN) then return end
-  ui.update(WIN, "list", { rows = rows(shown) })
+  local list, schools = list_now()
+  if ids(list) ~= ids(shown) or table.concat(schools or {}, ",") ~= table.concat(view.schools, ",") then
+    show()
+  else
+    ui.update(WIN, "list", { rows = rows(shown) })
+  end
 end)
 
 events.on("job_change", function() if ui.is_open(WIN) then show() end end)
+
+-- Switched off: the window goes too.
+events.on("settings_changed", function() if not settings.get("on") then ui.close(WIN) end end)
 
 commands.register("actions", function()
   if not settings.get("on") then return end
   if ui.is_open(WIN) then ui.close(WIN) return end
   show()
-  ui.open(WIN)
+  ui.show(WIN)
   if #shown == 0 and view.tab == 1 then say("no magic to use now; the other tabs hold abilities and weapon skills.") end
 end)
