@@ -139,6 +139,16 @@ local function hit(x, y)
   end
 end
 
+-- A line cut to what fits a slot `w` points wide, 4 clear of each side, at the flyouts' text size (about 6.5 a
+-- character), with an ellipsis.
+local function fit(text, w)
+  local n = math.max(1, math.floor((w - 8) / 6.5))
+  if utf8.len(text) and utf8.len(text) > n then
+    return text:sub(1, utf8.offset(text, n) - 1) .. "…"
+  end
+  return text
+end
+
 local function key_of(c) return type(c) == "table" and (c.b .. ":" .. c.i) or c end
 
 -- ---------------------------------------------------------------------------
@@ -179,14 +189,14 @@ local function draw()
         if macro then
           local label = data.display_label(macro)
           if act then
-            add({ type = "text", x = x + s / 2, y = y + s - 17, text = label:match("^[^\n]*"), size = 1,
+            add({ type = "text", x = x + s / 2, y = y + s - 17, text = fit(label:match("^[^\n]*"), s), size = 1,
               align = "center", colour = TEXT })
           else
             local lines = {}
             for l in label:gmatch("[^\n]+") do lines[#lines + 1] = l end
             local top = y + (s - #lines * 16) / 2
             for n, l in ipairs(lines) do
-              add({ type = "text", x = x + s / 2, y = top + (n - 1) * 16, text = l, size = 1, align = "center",
+              add({ type = "text", x = x + s / 2, y = top + (n - 1) * 16, text = fit(l, s), size = 1, align = "center",
                 colour = TEXT })
             end
           end
@@ -257,7 +267,7 @@ local function draw()
       add({ type = "icon", x = gx + (s - isz) / 2, y = gy + 4, size = isz, kind = act.kind, id = act.id,
         colour = GHOST })
     elseif macro then
-      add({ type = "text", x = gx + s / 2, y = gy + s / 2 - 8, text = data.display_label(macro):match("^[^\n]*"),
+      add({ type = "text", x = gx + s / 2, y = gy + s / 2 - 8, text = fit(data.display_label(macro):match("^[^\n]*"), s),
         size = 1, align = "center", colour = GHOST })
     end
   end

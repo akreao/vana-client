@@ -86,7 +86,7 @@ function M.usable(a, me)
   elseif a.kind == "ability" then
     if a.ws or a.id < 0x200 then return (me.tp or 0) >= 1000 end
     if a.id >= 0x400 then
-      local s = game.session()
+      local s = game.info()
       return s ~= nil and (s.pet_index or 0) ~= 0
     end
   end
