@@ -4786,7 +4786,8 @@ fn migrate_regime(w: &World, data: &std::path::Path, char_file: &str) {
 }
 
 /// Settings declared `from` a client config field (a bundled mod's, replacing an extra that kept its value there) and
-/// not set yet take that field's value, written to their scope's file so the config may drop it.
+/// not set yet take that field's value, written to their scope's file so the config may drop it. A character-scoped
+/// one waits for a character (it would go to the account file, which every character falls back to).
 fn migrate_settings(m: &manifest::Manifest, data: &std::path::Path, char_file: Option<&str>) {
     if m.settings.values().all(|d| d.from.is_empty()) {
         return;
@@ -4797,6 +4798,8 @@ fn migrate_settings(m: &manifest::Manifest, data: &std::path::Path, char_file: O
         _ => data.join("settings.json"),
     };
     for (key, character, old) in migrations(m, &config, |key, character| read_json(&file(character)).get(key).is_some())
+        .into_iter()
+        .filter(|(_, character, _)| !character || char_file.is_some())
     {
         let file = file(character);
         let mut v = read_json(&file);
