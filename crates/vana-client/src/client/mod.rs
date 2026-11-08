@@ -3214,7 +3214,15 @@ fn world_hud(
     // Mouse on the Lua mods' windows (the modern UI's panels take egui's).
     if !world.modern
         && let Some(p) = input.pointer
-        && lua::pointer_classic(world, gu, p, input.moved, input.clicked, (input.pressed, input.down, input.released))
+        && lua::pointer_classic(
+            world,
+            gu,
+            p,
+            input.moved,
+            input.clicked,
+            input.right_clicked,
+            (input.pressed, input.down, input.released),
+        )
     {
         gu.hover.set(true);
     }

@@ -363,6 +363,8 @@ pub struct Window {
     /// classic UI: a press and release in place is a click, a move past 3 units starts the drag).
     pub drag: Option<(usize, f32, f32)>,
     pub press: Option<(usize, f32, f32)>,
+    /// The canvas the pointer was last over (classic UI), for its 'leave'.
+    pub hovered: Option<usize>,
     /// An edge window (drawn as the Timers and the training regime are): its header line, whether it can be made
     /// wider, and the built-in panel it stands in for (its place, fold, hiding).
     pub edge: bool,
@@ -536,6 +538,7 @@ impl Window {
             resize: false,
             grow_up: false,
             dock: None,
+            hovered: None,
             panel: None,
         }
     }
@@ -715,11 +718,12 @@ impl Window {
         (ev, se)
     }
 
-    /// Ends an edit as Enter would (a typed line is kept and reported).
+    /// Ends an edit as Enter would (a typed line is kept and reported; a key element still listening is left as it was).
     pub fn end_edit(&mut self) -> Vec<Event> {
         let mut ev = Vec::new();
+        // A key element stopped before a key press is unchanged, as Escape leaves it (no 'change').
         if self.edit
-            && let Some(Elem::Input { id, text, .. }) = self.elems.get(self.at)
+            && let Some(Elem::Input { id, text, key: false, .. }) = self.elems.get(self.at)
         {
             ev.push(Event::Text { id: id.clone(), text: text.clone(), done: true });
         }
@@ -1080,6 +1084,11 @@ impl Window {
         (ev, Vec::new())
     }
 
+    /// The pointer gone off the canvas it was over (classic UI): its 'leave'.
+    pub fn hover_off(&mut self) -> Vec<Event> {
+        self.hovered.take().map_or_else(Vec::new, |i| self.canvas_hover(i, -1.0, -1.0).0)
+    }
+
     /// An edge window now stands on `side` (the `dock` event).
     pub fn docked(&mut self, side: &'static str) -> (Vec<Event>, Vec<Se>) {
         self.dock = Some(side);
@@ -1199,6 +1208,7 @@ impl Window {
         p: (f32, f32),
         moved: bool,
         clicked: bool,
+        right: bool,
         held: (bool, bool, bool),
     ) -> (bool, Vec<Event>, Vec<Se>) {
         let inside = |r: &[f32; 4]| p.0 >= r[0] && p.1 >= r[1] && p.0 < r[0] + r[2] && p.1 < r[1] + r[3];
@@ -1235,7 +1245,7 @@ impl Window {
             }
         }
         let Some((i, k, r)) = self.classic_controls(gu, x, y).into_iter().find(|c| inside(&c.2)) else {
-            return (false, Vec::new(), Vec::new());
+            return (false, self.hover_off(), Vec::new());
         };
         let mut se = Vec::new();
         #[derive(PartialEq)]
@@ -1260,12 +1270,21 @@ impl Window {
         let (list, buttons) = (e == K::List, e == K::Buttons);
         if e == K::Canvas {
             let (cx, cy) = (p.0 - r[0], p.1 - r[1]);
-            let ev = if clicked { self.canvas_click(i, cx, cy, false).0 } else { Vec::new() };
+            let mut ev = if self.hovered.is_some_and(|h| h != i) { self.hover_off() } else { Vec::new() };
+            if moved || self.hovered.is_none() {
+                self.hovered = Some(i);
+                ev.extend(self.canvas_hover(i, cx, cy).0);
+            }
+            if clicked || right {
+                ev.extend(self.canvas_click(i, cx, cy, !clicked).0);
+            }
             if pressed {
                 self.press = Some((i, cx, cy));
             }
             return (false, ev, Vec::new());
         }
+        // Off a canvas onto another control: the canvas's 'leave'.
+        let mut ev = self.hover_off();
         if (moved || clicked) && !self.edit && (self.at != i || (buttons && self.col != k)) {
             (self.at, self.col) = (i, if buttons { k } else { 0 });
             se.push(Se::Cursor);
@@ -1278,9 +1297,9 @@ impl Window {
             *at = k;
         }
         if !clicked {
-            return (true, Vec::new(), se);
+            return (true, ev, se);
         }
-        let (ev, more) = match e {
+        let (more_ev, more) = match e {
             K::Slider(n) => {
                 let stop = (((p.0 - r[0]) / r[2]).clamp(0.0, 1.0) * (n - 1) as f32).round() as usize;
                 self.slide(i, stop)
@@ -1295,6 +1314,7 @@ impl Window {
             }
             _ => self.click_button(i, k),
         };
+        ev.extend(more_ev);
         se.extend(more);
         (true, ev, se)
     }
@@ -1410,7 +1430,7 @@ impl Window {
                         let ink = row.colour.map_or(N, tint);
                         let mut ix = 0.0;
                         if let Some(i) = row.icon {
-                            icon(gu, world, i, x + 32.0, ry + 1.0, 16.0);
+                            icon(gu, world, i, x + 32.0, ry + 1.0, 16.0, [255; 4]);
                             ix = 18.0;
                         }
                         if cols.is_empty() {
@@ -1657,9 +1677,9 @@ fn draw_canvas(gu: &mut GameUi, world: Option<&super::World>, cmds: &[Cmd], x: f
                 gu.text_fit(text, tx, ty, x + w - tx + 16.0, tint(*colour));
             }
             Cmd::Tip { .. } => {}
-            Cmd::Icon { at: p, size, icon: i, .. } => {
+            Cmd::Icon { at: p, size, icon: i, tint: t } => {
                 let [ix, iy] = at(*p);
-                icon(gu, world, *i, ix, iy, *size);
+                icon(gu, world, *i, ix, iy, *size, *t);
             }
         }
     }
@@ -1679,20 +1699,22 @@ fn button_w(gu: &GameUi, items: &[String]) -> f32 {
 }
 
 /// An icon at (x, y), `s` square.
-pub(super) fn icon(gu: &mut GameUi, w: Option<&super::World>, i: Icon, x: f32, y: f32, s: f32) {
+/// `colour` multiplies its colours (white: as drawn; its alpha fades it).
+pub(super) fn icon(gu: &mut GameUi, w: Option<&super::World>, i: Icon, x: f32, y: f32, s: f32, colour: [u8; 4]) {
+    let mul = colour.map(|c| f32::from(c) / 255.0);
     match i {
         Icon::Item(id) => {
             if let Some(cache) = w.and_then(|w| w.item_info.as_deref()) {
                 super::super::items::upload_icons(gu, cache, std::iter::once(id));
                 let name = crate::render::invwin::icon_texture(id);
                 if gu.has_image(&name) {
-                    gu.image_rect(&name, x, y, s, s, [1.0; 4]);
+                    gu.image_rect(&name, x, y, s, s, mul);
                 }
             }
         }
         Icon::Status(id) => {
             if let Some(name) = gu.status_icon(false, id) {
-                gu.image_rect(&name, x, y, s, s, [1.0; 4]);
+                gu.image_rect(&name, x, y, s, s, mul);
             }
         }
         Icon::Spell(_) | Icon::Ability(_) => {
@@ -1701,14 +1723,14 @@ pub(super) fn icon(gu: &mut GameUi, w: Option<&super::World>, i: Icon, x: f32, y
             if w.modern
                 && i.picture(w)
                     .and_then(super::super::modern::action_art)
-                    .is_some_and(|art| pack_icon(gu, art, x, y, s))
+                    .is_some_and(|art| pack_icon(gu, art, x, y, s, mul))
             {
                 return;
             }
             if let Some((lib, k)) = i.sprite(w) {
                 let (sw, sh) = (gu.sprite_width(lib, k), gu.sprite_height(lib, k));
                 if sw > 0.0 && sh > 0.0 {
-                    gu.sprite_scaled(lib, k, x, y, s / sw, s / sh, 0x8080_8080);
+                    gu.sprite_scaled(lib, k, x, y, s / sw, s / sh, tint(colour));
                 }
             }
         }
@@ -1716,13 +1738,13 @@ pub(super) fn icon(gu: &mut GameUi, w: Option<&super::World>, i: Icon, x: f32, y
 }
 
 /// The modern pack's sprite `id` at (x, y), `s` square, uploaded on first use; false when the pack has none.
-fn pack_icon(gu: &mut GameUi, id: &str, x: f32, y: f32, s: f32) -> bool {
+fn pack_icon(gu: &mut GameUi, id: &str, x: f32, y: f32, s: f32, mul: [f32; 4]) -> bool {
     let key = format!("modern {id}");
     if !gu.has_image(&key) {
         let Some((iw, ih, rgba)) = super::super::modern::sprite_pixels(id) else { return false };
         gu.image(&key, iw, ih, rgba);
     }
-    gu.image_rect(&key, x, y, s, s, [1.0; 4]);
+    gu.image_rect(&key, x, y, s, s, mul);
     true
 }
 
@@ -1961,6 +1983,11 @@ mod tests {
             w.listen(&[key_ev(K::Backspace)], name).0,
             vec![Event::Text { id: "k".into(), text: String::new(), done: true }]
         );
+        // Stopped by a click elsewhere before a key press: no change.
+        w.key(K::Enter);
+        assert!(w.listening());
+        assert!(w.end_edit().is_empty());
+        assert!(!w.listening());
         assert_eq!(super::super::input::combo_label("ctrl+shift+numpad+"), "Ctrl+Shift+Num +");
         assert_eq!(super::super::input::combo_label("alt+f1"), "Alt+F1");
     }

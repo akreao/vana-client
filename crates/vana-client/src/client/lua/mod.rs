@@ -5138,9 +5138,23 @@ pub(super) fn pointer_classic(
     p: (f32, f32),
     moved: bool,
     clicked: bool,
+    right: bool,
     held: (bool, bool, bool),
 ) -> bool {
     let mut places = classic_places(w);
+    // A canvas the pointer has left (its window not under it now): its 'leave'.
+    let mut left = Vec::new();
+    for (v, id, x, y) in &places {
+        let vm = &w.lua.vms[*v];
+        let mut st = vm.st.borrow_mut();
+        if let Some(win) = st.windows.iter_mut().find(|x| x.id == *id && x.hovered.is_some()) {
+            let (ww, wh) = win.classic_size();
+            if p.0 < *x || p.1 < *y || p.0 >= x + ww || p.1 >= y + wh {
+                left.extend(win.hover_off().into_iter().map(|e| (vm.manifest.id.clone(), id.clone(), e)));
+            }
+        }
+    }
+    w.lua.ui_events.extend(left);
     // An open modal window is the only one the pointer reaches; a click outside a popup closes it.
     if let Some((k, mid)) = w.lua.modal() {
         places.retain(|(v, id, _, _)| *v == k && *id == mid);
@@ -5149,7 +5163,7 @@ pub(super) fn pointer_classic(
                 w.lua.vms[*v].st.borrow().windows.iter().find(|x| x.id == *id).map_or((0.0, 0.0), |x| x.classic_size());
             p.0 >= *x && p.1 >= *y && p.0 < x + ww && p.1 < y + wh
         });
-        if clicked && !inside {
+        if (clicked || right) && !inside {
             close_popup(w, k, &mid);
             return true;
         }
@@ -5163,7 +5177,7 @@ pub(super) fn pointer_classic(
             if win.drag.is_none() && win.press.is_none() && (p.0 < x || p.1 < y || p.0 >= x + wx || p.1 >= y + wy) {
                 continue;
             }
-            let (hover, ev, se) = win.pointer_classic(gu, x, y, p, moved, clicked, held);
+            let (hover, ev, se) = win.pointer_classic(gu, x, y, p, moved, clicked, right, held);
             (hover, ev, se, vm.manifest.id.clone())
         };
         // A click on a window gives it the focus (not a HUD's).

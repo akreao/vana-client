@@ -533,7 +533,7 @@ pub fn pointer_classic(
     {
         return false;
     }
-    let (hover, ev, se) = w.voice.win.pointer_classic(gu, x, y, p, moved, clicked, held);
+    let (hover, ev, se) = w.voice.win.pointer_classic(gu, x, y, p, moved, clicked, false, held);
     w.voice.events(ev);
     w.sounds.extend(se.into_iter().map(|s| s as u32));
     hover
