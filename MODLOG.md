@@ -23161,3 +23161,14 @@ still gave `cor`. Both now go through actmotion::sdep_stand.
   - Ef60's below-4 path excludes +0xee 6 / 7 (SubKind 5 / 6): those take the flagged path whatever the sub-state.
   - The wanted value reaches the tasks `init`'s first step runs at once (kept over a file retry), not the ones it
     creates to step later (ops 0x30, 0x5c, 0x76 / 0x77, 0x84), which step after +0x8a5 is back.
+
+## Lock-on: the strafe quarter held at the 45 degree edge (ours, 2026-11-07)
+
+- User report: circling a locked target with a staff, the body often pointed one way and the legs another. The log
+  showed `mvr` and `run` swapping every 30 to 100 ms while moving (status 1, ratio 1): W + D (or a stick on the
+  diagonal) puts the locked step exactly on the edge between quarters 1 and 2, and update_movement re-reads it from
+  float vectors each frame, so noise picked a side every frame or two. A staff's `run` carries the body far from its
+  `mvr` (the two-handed stance turns the torso), so the endless blend between them twisted it against the legs.
+- Ours: the locked path takes motion::strafe_dir_held (the right drag's hold since lenonk/vana-client#95) before
+  FUN_100a7b80's 2 <-> 4 flip guard. Test motion::tests::locked_diagonal_holds. *(Retail's FUN_100a80d0 has no hold;
+  whether its keyboard diagonal flickers too is not known.)*
