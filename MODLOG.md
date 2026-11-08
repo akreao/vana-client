@@ -23222,3 +23222,12 @@ still gave `cor`. Both now go through actmotion::sdep_stand.
 - Ours (user, 2026-11-07): retail picks the moving swing once, so reversing mid-swing left it on the old side over the
   new legs. Our character's playing `am?` now turns with the quarter at the same frame (actmotion::Play::rename_current,
   the one-shot too); other actors and retail's pick at the swing's start are unchanged.
+- Dual wield (user, 2026-11-08: "the same problem dual wield swords that I did with a staff"): its moving swings are
+  `ar?` (main hand, `at??` schedulers) and `al?` (off hand, `bt??`), and the turn above matched only `am?`, so a
+  reversal mid-swing left `arr` over `mvl` legs. Ours: combat::turned_swing turns any `a??` moving swing whose
+  scheduler is a moving one (third letter f / r / b / l), back and forth. Test combat::tests::moving_swing_turns.
+- Audit against the current build (30261006_0), from the user's log of RDM / NIN locked on: FUN_100c8bb0 plays
+  mvr / mvb / mvl when vt+0x340 (the strafe lock) is set or vt+0x330 is false (locked on), as lenonk/vana-client#62 has
+  it; FUN_100d6940 picks the standing swing by +0xf8 and the moving one's letter by +0x598 (2 r, 3 b, 4 l, else f),
+  as ours. mvr / mvl themselves turn the body part way toward the step (seen in npc-shot), so a strafe swing's torso
+  (`a?r1`, the upper body only) faces the target over legs running to the side by design.
