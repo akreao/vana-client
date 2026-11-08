@@ -3212,7 +3212,8 @@ return "acxml flow ok"
 
     /// Pending Actions: a melee round or another spell's finish while a spell waits is not its answer, nor a message
     /// that is not one of the spell's refusals (akreao/vana-client#243); the spell's own start, finish and
-    /// refusals are, and each kind matches its own ids.
+    /// refusals are, and each kind matches its own ids. The game scripts' checks ("You cannot learn...") and the
+    /// target check's refusals refuse too.
     #[test]
     fn pending_actions_match_the_ask() {
         let host = Host::default();
@@ -3228,7 +3229,8 @@ return "acxml flow ok"
             os.clock = function() return T end
             settings = { get = function() return true end }
             events = { on = function(n, f) H[n] = f end }
-            packets = { on_out = function(id, f) OUT[id] = f end }
+            local IN = {}
+            packets = { on_out = function(id, f) OUT[id] = f end, on_in = function(id, f) IN[id] = f end }
             game = { player = function() return { id = 5 } end, entity = function() return nil end,
               items = function() return { { slot = 3, id = 4112 } } end }
             res = { spell = function() return { name = "Cure" } end, ability = function() return { name = "Provoke" } end,
@@ -3278,6 +3280,38 @@ return "acxml flow ok"
             act(9, 0) assert(state() == nil)
             item() H.battle_message(5, 9, 62, 4113, 0) assert(state() == "waiting")
             H.battle_message(5, 9, 62, 4112, 0) assert(state() == "refused")
+            T = T + 10 state()
+            -- The scripts' own checks: a scroll the player cannot learn yet (95, naming the spell it teaches), a
+            -- medicated player's potion (111 with the item id, not another's), the 0 a stun sends with the item id
+            -- (not a bare 0).
+            item() H.battle_message(5, 5, 95, 1, 0) assert(state() == "refused")
+            T = T + 10 state()
+            item() H.battle_message(5, 5, 111, 4113, 0) H.battle_message(5, 5, 0, 0, 0) assert(state() == "waiting")
+            H.battle_message(5, 5, 111, 4112, 0) assert(state() == "refused")
+            T = T + 10 state()
+            item() H.battle_message(5, 5, 0, 4112, 0) assert(state() == "refused")
+            T = T + 10 state()
+            -- A spell's script check names it (316 not here); the target check names none (12 claimed).
+            ask(3, 1) H.battle_message(5, 9, 316, 2, 0) H.battle_message(5, 9, 316, 0, 0) assert(state() == "waiting")
+            H.battle_message(5, 9, 316, 1, 0) assert(state() == "refused")
+            T = T + 10 state()
+            ask(3, 1) H.battle_message(5, 9, 12, 0, 0) assert(state() == "refused")
+            T = T + 10 state()
+            -- An ability's script check names it as both values (523 already active); a weapon skill's target check.
+            ask(9, 0x23) H.battle_message(5, 5, 523, 0x24, 0x24) assert(state() == "waiting")
+            H.battle_message(5, 5, 523, 0x23, 0x23) assert(state() == "refused")
+            T = T + 10 state()
+            ask(7, 32) H.battle_message(5, 9, 446, 0, 0) assert(state() == "refused")
+            T = T + 10 state()
+            -- A player blocking outside help answers with system message 225 (0x053); another system message does
+            -- not, nor 225 for a weapon skill, and none after the refusal window.
+            local function sys(n) IN[0x053]({ data = string.pack("<I4I4I4I2I2", 0, 0, 0, n, 0) }) end
+            ask(3, 1) sys(224) assert(state() == "waiting")
+            sys(225) assert(state() == "refused")
+            T = T + 10 state()
+            ask(7, 32) sys(225) assert(state() == "waiting")
+            T = T + 10 state()
+            ask(3, 1) T = T + 3 sys(225) assert(state() == "waiting")
         "#;
         vm.lua.globals().set("INIT", init).unwrap();
         vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
