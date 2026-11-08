@@ -1851,11 +1851,12 @@ impl GameUi {
         use crate::dat::ui::{UiImage, norm_name};
         let mut fonts = UiFile::default();
         let a = &self.data.font.atlas;
-        fonts.images.insert(ATLAS.into(), UiImage { width: a.width, height: a.height, rgba: a.rgba.clone() });
+        fonts.images.insert(ATLAS.into(), UiImage { width: a.width, height: a.height, rgba: a.rgba().to_vec() });
         for (name, t) in &self.data.font.textures {
-            fonts
-                .images
-                .insert(norm_name(name.as_bytes()), UiImage { width: t.width, height: t.height, rgba: t.rgba.clone() });
+            fonts.images.insert(
+                norm_name(name.as_bytes()),
+                UiImage { width: t.width, height: t.height, rgba: t.rgba().to_vec() },
+            );
         }
         for (name, w, h, rgba) in &self.pending {
             fonts.images.insert(name.clone(), UiImage { width: *w, height: *h, rgba: rgba.clone() });
@@ -2513,9 +2514,9 @@ impl GameUi {
             let mut r = UiRenderer::new(gpu, format);
             r.load(gpu, &self.data.lobby);
             let a = &self.data.font.atlas;
-            r.load_image(gpu, ATLAS, a.width, a.height, &a.rgba);
+            r.load_image(gpu, ATLAS, a.width, a.height, a.rgba());
             for (name, t) in &self.data.font.textures {
-                r.load_image(gpu, &crate::dat::ui::norm_name(name.as_bytes()), t.width, t.height, &t.rgba);
+                r.load_image(gpu, &crate::dat::ui::norm_name(name.as_bytes()), t.width, t.height, t.rgba());
             }
             r
         });

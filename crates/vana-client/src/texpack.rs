@@ -46,7 +46,7 @@ fn image_name(p: &[u8]) -> String {
 /// FNV-1a over the size and pixels: the key an image is saved under once.
 fn key(t: &Texture) -> String {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in t.width.to_le_bytes().iter().chain(&t.height.to_le_bytes()).chain(&t.rgba) {
+    for b in t.width.to_le_bytes().iter().chain(&t.height.to_le_bytes()).chain(t.rgba()) {
         h ^= *b as u64;
         h = h.wrapping_mul(0x0100_0000_01b3);
     }
@@ -93,8 +93,8 @@ pub fn status_dump(out: &Path) -> Result<()> {
         if rgba.chunks(4).all(|p| p[3] == 0) {
             continue;
         }
-        let t = Texture { name: String::new(), format: 0, width: w, height: h, rgba, dxt: None };
-        save_png(&out.join(format!("{id}.png")), w, h, &t.rgba)?;
+        let t = Texture::new(String::new(), 0, w, h, rgba);
+        save_png(&out.join(format!("{id}.png")), w, h, t.rgba())?;
         let desc = dat::statusinfo::entry(&bytes, id).map(|e| e.desc).unwrap_or_default();
         writeln!(tsv, "{id}\t{}\t{}\t{}", names.status_title(id), desc.replace(['\t', '\n'], " "), key(&t))?;
         n += 1;
@@ -140,8 +140,8 @@ pub fn action_icon_dump(out: &Path) -> Result<()> {
     for k in &used {
         let (lib, i) = k.split_once('_').context("key")?;
         let Some((w, h, rgba)) = ui.sprite_rgba(&format!("menu    {lib}"), i.parse()?) else { continue };
-        let t = Texture { name: String::new(), format: 0, width: w, height: h, rgba, dxt: None };
-        save_png(&out.join(format!("{k}.png")), w, h, &t.rgba)?;
+        let t = Texture::new(String::new(), 0, w, h, rgba);
+        save_png(&out.join(format!("{k}.png")), w, h, t.rgba())?;
         writeln!(keys, "{k}\t{w}\t{h}\t{}", key(&t))?;
     }
     println!(
@@ -191,7 +191,7 @@ pub fn export(out: &Path) -> Result<()> {
                         rows.lock().unwrap().push(format!("{id}\t{k}\t{key}\t{}", t.name.trim()));
                         if seen.lock().unwrap().insert(key.clone()) {
                             let path = out.join(format!("{key}.png"));
-                            if !path.exists() && save_png(&path, t.width, t.height, &t.rgba).is_ok() {
+                            if !path.exists() && save_png(&path, t.width, t.height, t.rgba()).is_ok() {
                                 saved.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             }
                         }
@@ -276,10 +276,10 @@ fn encode(dxt1: bool, w: u32, h: u32, rgba: &[u8], levels: Option<&[(u8, f32)]>)
 fn stock_levels(stock: &[u8]) -> Option<Vec<(u8, f32)>> {
     let t = dat::zone::parse_img(stock).ok()?;
     let mut count = std::collections::BTreeMap::new();
-    for p in t.rgba.chunks_exact(4) {
+    for p in t.rgba().chunks_exact(4) {
         *count.entry((p[3] as u16).div_ceil(2) as u8).or_insert(0usize) += 1;
     }
-    let n = (t.rgba.len() / 4).max(1) as f32;
+    let n = (t.rgba().len() / 4).max(1) as f32;
     (count.len() <= 3).then(|| count.into_iter().map(|(v, c)| (v, c as f32 / n)).collect())
 }
 
@@ -606,7 +606,7 @@ mod tests {
         let p = image_chunk(&stock, 8, 8, &rgba);
         let t = dat::zone::parse_img(&p).unwrap();
         assert_eq!((t.width, t.height, t.name.trim()), (8, 8, "tim     testtex".trim()));
-        assert!(t.rgba.chunks(4).all(|px| px[3] >= 254));
+        assert!(t.rgba().chunks(4).all(|px| px[3] >= 254));
         let header = [b'i', b'm', b'g', b'1', 0x20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
         let c = chunk_bytes(&header, &p);
         assert_eq!(c.len() % 16, 0);

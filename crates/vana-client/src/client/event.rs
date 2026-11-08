@@ -3557,7 +3557,7 @@ pub fn zone_text(w: &mut World, t: &ZoneText) {
     }
     let lsb = (t.mes & 0x7fff) as u32;
     let id = match &w.msgshift {
-        Some(m) if m.zones.contains_key(&zone) => m.map_near(zone, lsb),
+        Some(m) if m.installed(&index, zone) => m.map_near(zone, lsb),
         _ => Some(lsb),
     };
     // The mods' zone_text event: the line's id in the install (after MsgShift), its actor, MesNum bit 15.

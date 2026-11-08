@@ -6474,11 +6474,23 @@ impl Host {
     /// After the mod phase: the hook flags for the net thread.
     fn packet_upkeep(&self, w: &World) {
         let (mut fin, mut fout) = (false, false);
+        // Each way, the ids hooked (a hook on no id takes them all).
+        let mut ids = [[0u64; 8]; 2];
         for vm in self.vms.iter().filter(|v| v.suspended.is_none()) {
             let st = vm.st.borrow();
             fin |= !st.hooks_in.is_empty();
             fout |= !st.hooks_out.is_empty();
+            for (way, hooks) in [&st.hooks_in, &st.hooks_out].into_iter().enumerate() {
+                for h in hooks {
+                    match h.1 {
+                        Some(id) => ids[way][(id & 0x1ff) as usize / 64] |= 1 << (id % 64),
+                        None => ids[way] = [u64::MAX; 8],
+                    }
+                }
+            }
         }
+        w.net.stats.set_hooked(false, &ids[0]);
+        w.net.stats.set_hooked(true, &ids[1]);
         let last =
             self.vms.iter().any(|v| v.suspended.is_none() && v.st.borrow().granted.iter().any(|g| g == "packets.read"));
         let flags = if fin { super::net::HOOK_IN } else { 0 }

@@ -79,7 +79,7 @@ pub fn level0<'a>(
         Some((false, b)) if bc && w % 4 == 0 && h % 4 == 0 => {
             (Kind::Bc1, pick(F::Bc1RgbaUnormSrgb, F::Bc1RgbaUnorm), b.as_slice(), w / 4 * 8, h / 4, 4)
         }
-        _ => (Kind::Rgba, pick(F::Rgba8UnormSrgb, F::Rgba8Unorm), t.rgba.as_slice(), w * 4, h, 1),
+        _ => (Kind::Rgba, pick(F::Rgba8UnormSrgb, F::Rgba8Unorm), t.rgba(), w * 4, h, 1),
     }
 }
 
