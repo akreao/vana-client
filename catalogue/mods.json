@@ -897,8 +897,8 @@
         },
         {
           "path": "src/actions.lua",
-          "sha256": "0bae85cc1fdef20a683dcae09a929231f8e20056384f6710c9cc94954e01cdd2",
-          "size": 4687,
+          "sha256": "91c560e1d7b4b258079fe8b1ebbd581ec149a9e0d7d910f23b8977da56bed69c",
+          "size": 4829,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/hotbar/src/actions.lua"
         },
         {
