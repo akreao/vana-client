@@ -504,10 +504,17 @@ pub(super) fn hud_drag(host: &mut super::Host, x: f64, y: f64) {
         *dragging = true;
         host.hud_events.push((m.clone(), id.clone(), hud_event("drag_start", *button, *start, *start)));
     }
-    let e = hud_event("drag", *button, (x, y), *start);
+    let mut e = hud_event("drag", *button, (x, y), *start);
+    let (m, id) = (m.clone(), id.clone());
+    drop(s);
+    // Over a canvas of the mod's windows: the drag event names the window (drawn over the HUD: a ghost the mod draws
+    // on the HUD is hidden there).
+    if let Some(win) = host.drag_cross(&m, &id, x, y, None) {
+        e["window"] = win.into();
+    }
     match host.hud_events.last_mut() {
-        Some(last) if last.0 == *m && last.1 == *id && last.2["kind"] == "drag" => last.2 = e,
-        _ => host.hud_events.push((m.clone(), id.clone(), e)),
+        Some(last) if last.0 == m && last.1 == id && last.2["kind"] == "drag" => last.2 = e,
+        _ => host.hud_events.push((m, id, e)),
     }
 }
 
@@ -531,11 +538,13 @@ pub(super) fn hud_press(host: &mut super::Host, button: MouseButton) -> bool {
     true
 }
 
-/// A HUD element's press released: a click, or the drag's end over the mod's element there (which gets a drop).
+/// A HUD element's press released: a click, or the drag's end over the mod's element there (which gets a drop), else
+/// over a canvas of the mod's windows (its window gets a drop on it).
 pub(super) fn hud_release(host: &mut super::Host, button: MouseButton) {
     let st = host.input.clone();
     let Some((m, id, _, start, dragging)) = st.borrow_mut().hud_press.take_if(|p| p.2 == button) else { return };
     let at = st.borrow().cursor;
+    host.drag_over = None;
     if !dragging {
         host.hud_events.push((m, id, hud_event("click", button, at, at)));
         return;
@@ -548,6 +557,8 @@ pub(super) fn hud_release(host: &mut super::Host, button: MouseButton) {
         let mut d = hud_event("drop", button, at, start);
         d["from"] = id.into();
         host.hud_events.push((m, o, d));
+    } else if let Some((win, ev)) = host.canvas_drop(&m, at.0, at.1, &id, None) {
+        host.ui_events.push((m, win, ev));
     }
 }
 
