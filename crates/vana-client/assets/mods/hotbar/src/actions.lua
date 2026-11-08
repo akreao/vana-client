@@ -110,7 +110,8 @@ function M.usable(a, me)
     return (s.mp or 0) <= (me.mp or 0)
   elseif a.kind == "ability" then
     if a.ws or a.id < 0x200 then return (me.tp or 0) >= 1000 end
-    if a.id >= 0x400 then
+    local r = a.id < 0x400 and res.ability(a.id) or nil
+    if a.id >= 0x400 or (r and r.kind == 0x12) then -- Ready moves (kind 0x12) are pet commands below 0x400 too
       local s = game.info()
       return s ~= nil and (s.pet_index or 0) ~= 0
     end

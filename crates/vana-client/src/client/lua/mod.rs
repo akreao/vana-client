@@ -600,8 +600,8 @@ const BUNDLED: &[(&str, &str, &[(&str, &str)])] = bundled!["dps", "auto-advance"
     "list-trimmer",
     "bag-manager",
     "gearshift" ["src/core.lua", "src/compat.lua", "src/names.lua", "src/gs.lua", "src/lac.lua", "src/windower.lua", "src/xml.lua", "src/acxml.lua", "src/modes.lua", "src/texts.lua", "src/regex.lua", "src/spellcast.lua"],
-    "hotbar" ["src/actions.lua", "src/bar.lua", "src/data.lua", "src/jobs.lua", "src/keys.lua", "src/manager.lua", "src/runner.lua",
-        "src/stock.lua"],
+    "hotbar" ["src/actions.lua", "src/bar.lua", "src/data.lua", "src/jobs.lua", "src/keys.lua", "src/manager.lua", "src/menu.lua",
+        "src/runner.lua", "src/stock.lua"],
     "pad-bars" ["src/actions.lua", "src/runner.lua"],
     // After gearshift: its hooks see an action first.
     "steady-cast" ["src/hold.lua"],
