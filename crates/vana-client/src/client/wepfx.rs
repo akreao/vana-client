@@ -69,13 +69,6 @@ fn refresh_calls(w: &World, id: u32) -> [EquipCall; 2] {
     [0, 1].map(|n| EquipCall::Glow { n, on: base && !wep_hidden(w, id, n as usize) })
 }
 
-/// FUN_100cf160: every glow off.
-pub fn all_off(w: &mut World, id: u32) {
-    for n in 0..2 {
-        glow(w, id, n, false);
-    }
-}
-
 /// FUN_100cf060 after `init` (FUN_1008c480's default status case): `!in?`, or `!kl?` on a hidden model.
 pub fn start_in(w: &mut World, id: u32) {
     let hidden = model_hidden(w, id);
@@ -84,7 +77,7 @@ pub fn start_in(w: &mut World, id: u32) {
 
 /// FUN_100973f0, run every frame from the name getter (FUN_100977f0's gate: a model, a name plate, targetable; the
 /// own model hide +0x120 bits 14 / 15 not modelled): a PC after its `init`, not bound by an event. Shown: `!in?`
-/// and FUN_100cf100; invisible: `!kl?` and every glow off. Then the model colour ([`colour`]).
+/// and FUN_100cf100; invisible: `!kl?` and every glow off (FUN_100cf160). Then the model colour ([`colour`]).
 pub fn frame(w: &mut World) {
     let mut ids: Vec<u32> = w
         .entities
