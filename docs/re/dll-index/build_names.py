@@ -169,8 +169,6 @@ if have('event_handlers.json'):
 if have('winclasses.json'):
     for w in json.load(open(P('winclasses.json'))):
         onkey[w['onkey']].update(w['names'])
-if not any(have(n) for n in ('menu_classes.json', 'onkey_scan.json', 'event_handlers.json', 'winclasses.json')):
-    carry('onkey', 'menu_classes/onkey_scan/event_handlers/winclasses.json')
 def textcode(a):
     return a is not None and any(s <= a < e and x for s, e, x in TEXT) and not inside(a) and a not in ENT
 for a in onkey:
@@ -181,6 +179,9 @@ for a, ms in sorted(onkey.items(), key=lambda x: (len(x[1]) or 99, x[0])):
     if len(ms) == 1: put(a, 'win_%s_onkey' % ms[0], 'high' if per_menu[ms[0]] == 1 else 'med', 'onkey')   # several handlers for one menu: ambiguous
     elif 2 <= len(ms) <= 4: put(a, 'win_%s_onkey' % ms[0], 'med', 'onkey')
     elif len(ms) > 4: put(a, 'win_common_onkey', 'low', 'onkey')     # shared base handler
+ONKEY_IN = ('menu_classes.json', 'onkey_scan.json', 'event_handlers.json', 'winclasses.json')
+if not all(have(n) for n in ONKEY_IN):              # some inputs missing: keep their old rows (derived names above win)
+    carry('onkey', ', '.join(n for n in ONKEY_IN if not have(n)))
 
 # --- key-function callbacks ---------------------------------------------------
 kf = collections.defaultdict(list)

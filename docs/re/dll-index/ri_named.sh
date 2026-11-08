@@ -16,10 +16,18 @@ cd "$W"
 [ -f funcs_full.orig.tsv ] || cp -p funcs_full.tsv funcs_full.orig.tsv
 python3 "$H/build_names.py"
 if [ "$1" != "--keep" ] || [ ! -d ghidra_named ]; then rm -rf ghidra_named; cp -a ghidra ghidra_named; fi
-for f in all_decomp_full.c funcs_full.tsv xrefs.tsv strrefs.tsv; do cp -p "$f" "$(echo "$f" | sed 's/\.\([a-z]*\)$/.prev.\1/')"; done
+IDX="all_decomp_full.c funcs_full.tsv xrefs.tsv strrefs.tsv"
+prev() { echo "$1" | sed 's/\.\([a-z]*\)$/.prev.\1/'; }
+for f in $IDX; do mv -f "$f" "$(prev "$f")"; done      # move, so a failed run can't leave old files looking current
+rc=0
 "$G" "$W/ghidra_named" ffxi -process "$(basename "$DLL")" -noanalysis \
-  -scriptPath "$H/ghidra_scripts" -postScript ApplyNames.java "$H" -postScript ExportIndex.java "$W" 2>&1 \
-  | tee "$W/exportindex_named.log" | grep -E 'ApplyNames|ExportIndex|ERROR' || true
+  -scriptPath "$H/ghidra_scripts" -postScript ApplyNames.java "$H" -postScript ExportIndex.java "$W" \
+  >"$W/exportindex_named.log" 2>&1 || rc=$?
+grep -E 'ApplyNames|ExportIndex|ERROR' "$W/exportindex_named.log" || true
+if [ $rc -ne 0 ] || ! grep -q 'ExportIndex.java> done' "$W/exportindex_named.log"; then
+  for f in $IDX; do mv -f "$(prev "$f")" "$f"; done     # put the previous complete index back
+  echo "named export failed (exit $rc), previous index restored; see $W/exportindex_named.log" >&2; exit 1
+fi
 # keep the rizin/ghidra source column from the previous export; functions ApplyNames created are 'named'
 python3 - "$W" <<'PY'
 import sys; D = sys.argv[1] + '/'

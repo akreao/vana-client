@@ -86,8 +86,11 @@ def decomp():
     return _C
 def fn(a):
     C = decomp(); k = owner(a)
-    if k is None:
-        ks = sorted(C); k = ks[bisect.bisect_right(ks, a) - 1]
+    if k is None and a in C: k = a
+    if k is None and not funcs():                    # no function list (old all_decomp.c only): nearest entry below
+        ks = sorted(C); i = bisect.bisect_right(ks, a) - 1
+        if i >= 0: k = ks[i]
+    if k is None: return None, '// no known function contains %08x\n' % a
     return k, C.get(k, '// not decompiled\n')
 
 def xrows():
@@ -144,7 +147,7 @@ def main(a):
         print('//==== %s (for %08x)' % (lab(k), x)); print(named_c(c))
         print('== callers'); show_x(callers(x), 1)
         print('== callees'); show_x(callees(x), 3)
-        print('== strings'); [print('  %s %r' % (s, t)) for s, _, _, t in strs(func='%08x' % k)]
+        print('== strings'); [print('  %s %r' % (s, t)) for s, _, _, t in strs(func='%08x' % k)] if k is not None else None
         print('== notes'); [print('  %s  %s' % (w, l)) for _, w, l in notes(x)]
     elif cmd == 'build-notes':
         rx = re.compile(r'(?:FUN_|LAB_|DAT_|0x)?(10[0-9a-fA-F]{6})\b')

@@ -17,6 +17,12 @@ if [ ! -f "$W/ghidra/ffxi.gpr" ]; then
   "$G" "$W/ghidra" ffxi -import "$DLL" 2>&1 | tee "$W/ghidra_import.log" | grep -E 'IMPORTING|REPORT|ERROR' || true
   [ -f "$W/ghidra/ffxi.gpr" ] || { echo "Ghidra import failed, see $W/ghidra_import.log" >&2; exit 1; }
 fi
+# drop the previous index first, so a failed run can't leave old files looking current
+rm -f "$W/all_decomp_full.c" "$W/funcs_full.tsv" "$W/xrefs.tsv" "$W/strrefs.tsv"
+rc=0
 "$G" "$W/ghidra" ffxi -process "$(basename "$DLL")" -noanalysis -readOnly \
-  -scriptPath "$H/ghidra_scripts" -postScript ExportIndex.java "$W" 2>&1 | tee "$W/exportindex.log" | grep -E 'ExportIndex|ERROR' || true
-[ -s "$W/all_decomp_full.c" ] || { echo "export failed, see $W/exportindex.log" >&2; exit 1; }
+  -scriptPath "$H/ghidra_scripts" -postScript ExportIndex.java "$W" >"$W/exportindex.log" 2>&1 || rc=$?
+grep -E 'ExportIndex|ERROR' "$W/exportindex.log" || true
+if [ $rc -ne 0 ] || ! grep -q 'ExportIndex.java> done' "$W/exportindex.log" || [ ! -s "$W/all_decomp_full.c" ]; then
+  echo "export failed (exit $rc), see $W/exportindex.log" >&2; exit 1
+fi
