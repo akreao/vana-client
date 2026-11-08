@@ -102,13 +102,14 @@ impl Roster {
         (id != 0).then(|| self.recs.iter().position(|r| r.id == id)).flatten()
     }
 
-    /// FUN_100ea140: the first free record past ours, else the one updated longest ago.
+    /// FUN_100ea140: the first free record past ours (zeroed when its member left), else the one updated longest
+    /// ago. A taken record is not wiped: only +0x38..+0x4b are cleared, so the old member's fields stay until the
+    /// caller or a later packet writes them, the Monstrosity word, prefixes and short name (+0x4c..+0x50) included
+    /// until the next 0x0DF.
     fn alloc(&mut self) -> usize {
-        let i = (1..RECORDS)
+        (1..RECORDS)
             .find(|&i| self.recs[i].id == 0)
-            .unwrap_or_else(|| (1..RECORDS).min_by_key(|&i| self.recs[i].time).unwrap_or(1));
-        self.recs[i] = Member::default();
-        i
+            .unwrap_or_else(|| (1..RECORDS).min_by_key(|&i| self.recs[i].time).unwrap_or(1))
     }
 
     /// FUN_100e8b80: record 0 is refreshed with our name, id, ActIndex and the current zone.
@@ -132,8 +133,11 @@ impl Roster {
                     i
                 }
                 None => {
+                    // LAB_100e9ee0 on a new record: MemberNumber and the name cleared (+1, +2 = 0).
                     let i = self.alloc();
-                    (self.recs[i].zone, self.recs[i].away) = (zone, zone);
+                    let r = &mut self.recs[i];
+                    (r.zone, r.away, r.number) = (zone, zone, 0);
+                    r.name.clear();
                     i
                 }
             };
@@ -476,6 +480,34 @@ mod tests {
         // Bo leaves the Mog House.
         r.list(&listed(0x300, 0x402, 0, 231, "Bo"), ME, false);
         assert_eq!((r.mog_mask(ME), r.mog_member(ME, 2)), (0, 0));
+    }
+
+    /// All 20 records taken (0x0E2 creates without a 0x0C8): a new member takes the oldest record, which keeps the
+    /// old member's Monstrosity word and short name until its own 0x0DF (FUN_100ea140 clears only +0x38..+0x4b).
+    #[test]
+    fn reused_record_keeps_the_monstrosity_word() {
+        let mut r = Roster::default();
+        r.refresh_self(ME, 0x400, "Me", 230);
+        for k in 1..RECORDS as u32 {
+            r.list(&listed(0x1000 + k, k as u16, 0, 230, "X"), ME, true);
+        }
+        let first = r.find(0x1001).unwrap();
+        r.attr(&AttrUpdate { id: 0x1001, mon: 0x8001, mon_ids: [3, 4], ..Default::default() });
+        r.recs[first].mon_short = "A.B. Rabbit".into();
+        for k in 2..RECORDS as u32 {
+            r.attr(&AttrUpdate { id: 0x1000 + k, ..Default::default() });
+        }
+        r.list(&listed(0x2000, 0x99, 0, 230, "New"), ME, true);
+        assert_eq!(r.find(0x2000), Some(first));
+        let m = &r.recs[first];
+        assert_eq!((m.name.as_str(), m.mon, m.mon_ids, m.mon_short.as_str()), ("New", 0x8001, [3, 4], "A.B. Rabbit"));
+        r.attr(&AttrUpdate { id: 0x2000, ..Default::default() });
+        assert_eq!((r.recs[first].mon, r.recs[first].mon_short.as_str()), (0, ""));
+        // A record freed by a 0x0C8 is zeroed, so a member placed there starts clean.
+        r.table(&[(ME, 0x400, 0, 230)]);
+        r.table(&[(ME, 0x400, 0, 230), (0x3000, 0x98, 0, 230)]);
+        let m = &r.recs[r.find(0x3000).unwrap()];
+        assert_eq!((m.mon, m.name.as_str(), m.number), (0, "", 0));
     }
 
     /// Alliance: members of other party numbers go to slots 6.. and 12.. in order.

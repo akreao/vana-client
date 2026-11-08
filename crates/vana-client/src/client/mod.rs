@@ -1355,12 +1355,22 @@ fn ko_step(w: &mut World) {
         w.ko_open = true;
     }
     if w.homing && w.home_sent.is_none_or(|t| t.elapsed().as_secs_f32() >= 10.0) {
+        // FUN_10096c90 in Monstrosity: 600 ticks after a pick (sub 3 -> 0) mp_dead opens again while the deadline is
+        // ahead (its open hook clears +0x24, the cursor on Retry by registry flag 0x10000) and waits for a new pick;
+        // only past the deadline is the last answer sent again.
+        if w.home_sent.is_some() && !expired && monstrosity::active(w) {
+            (w.homing, w.home_sent, w.mon_dead_sel) = (false, None, 1);
+            close_for_ko(w);
+            w.ko_open = true;
+            return;
+        }
         w.home_sent = Some(Instant::now());
         let _ = w.net.commands.send(NetCommand::HomePoint(w.home_status));
     }
 }
 
-/// mp_dead's pick (+0x24 = the child): the K.O. state machine sends it at once and closes the window.
+/// mp_dead's pick (+0x24 = the child): the K.O. state machine sends it at once and closes the window *(inf: the
+/// handler FUN_101419d0 only sets +0x24)*; ko_step opens it again 10 s later if we are still down.
 fn mon_dead_pick(w: &mut World) {
     w.sounds.push(crate::audio::Ui::Select as u32);
     (w.homing, w.home_status, w.ko_open) = (true, if w.mon_dead_sel == 1 { 2 } else { 1 }, false);
