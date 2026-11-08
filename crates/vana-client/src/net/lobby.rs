@@ -87,7 +87,8 @@ pub struct MapLogin {
     pub old_key: Option<[u8; 20]>,
     /// The LSB login's account id and session hash (xi_profile's credentials); none for PlayOnline.
     pub lsb: Option<(u32, [u8; 16])>,
-    /// PlayOnline: the chat link, kept open while the game runs.
+    /// PlayOnline: the chat link, kept open while the game runs (held for its Drop, never read).
+    #[allow(dead_code)]
     pub pol: Option<Arc<super::pol::Link>>,
 }
 
@@ -474,7 +475,8 @@ impl Lobby {
     pub fn worlds(&mut self) -> Result<Vec<(u32, String)>> {
         self.send_view(0x24, packet(0x2C))?;
         let pkt = self.read_view(0x23, 32)?;
-        let count = rd_u32(&pkt, 28) as usize;
+        // No more than the reply holds (a bad count would spin to 4 G).
+        let count = (rd_u32(&pkt, 28) as usize).min(pkt.len().saturating_sub(32) / 20);
         let worlds: Vec<(u32, String)> = (0..count)
             .filter_map(|i| {
                 let o = 32 + i * 20;

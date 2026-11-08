@@ -229,6 +229,7 @@ pub(super) fn install(lua: &Lua, ui: &Table, mod_id: &str) -> mlua::Result<()> {
             if !p.place {
                 return Err(mlua::Error::runtime(format!("{name} stays on its edge: it can be hidden, not placed")));
             }
+            let spec = spec.map(|s| super::api::unhooked(lua, &s)).transpose()?;
             let info = info(lua);
             let mut f = info.borrow_mut();
             match spec {

@@ -190,7 +190,7 @@ impl PostFx {
             let Some(pipeline) = &pass.pipeline else { continue };
             let mut u = vec![w as f32, h as f32, time, 0.0];
             u.extend(params.iter().flatten());
-            gpu.queue.write_buffer(&pass.uniform, 0, bytemuck::cast_slice(&u));
+            super::Put::put(&gpu.queue, &pass.uniform, 0, bytemuck::cast_slice(&u));
             enc.copy_texture_to_texture(
                 tex.as_image_copy(),
                 copy.as_image_copy(),

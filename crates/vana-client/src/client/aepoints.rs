@@ -94,7 +94,7 @@ pub fn ask_text(w: &World, a: Ask) -> String {
 
 fn scroll(cursor: &mut usize, top: &mut usize, to: usize) {
     *cursor = to;
-    *top = (*top).min(to).max((to + 1).saturating_sub(ROWS));
+    super::scrollbar::keep_in_view(top, to, ROWS);
 }
 
 /// Up / Down a row, Left / Right a page with Ctrl or Alt (+0x47 = 0); Enter opens a category / raises; Escape goes

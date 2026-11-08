@@ -46,19 +46,7 @@ pub fn pose_character_held(
     skin_character(ch, &pose_held(&ch.skeleton, anims, grips))
 }
 
-/// Cross-fades from one motion's pose to another's: t = 0 is all `from`, 1 all `to` (FUN_100c6380 blend).
-pub fn pose_character_blend(
-    ch: &Character,
-    from: &[(&crate::dat::character::Animation, f32)],
-    to: &[(&crate::dat::character::Animation, f32)],
-    t: f32,
-) -> PosedMesh {
-    let (a, b) = (pose(&ch.skeleton, from), pose(&ch.skeleton, to));
-    let world: Vec<_> = a.iter().zip(&b).map(|(x, y)| x.lerp(y, t)).collect();
-    skin_character(ch, &world)
-}
-
-/// The bone transforms of a cross-fade from one motion to another (t = 0 all `from`).
+/// The bone transforms of a cross-fade from one motion to another (t = 0 all `from`; FUN_100c6380 blend).
 pub fn pose_blend(
     ch: &Character,
     from: &[(&crate::dat::character::Animation, f32)],
@@ -272,7 +260,7 @@ pub fn render_batches_png(
     let mut slot: HashMap<&str, usize> = HashMap::new();
     for t in tex_list {
         slot.insert(&t.name, textures.len());
-        textures.push(make_texture(t.width, t.height, &t.rgba));
+        textures.push(make_texture(t.width, t.height, t.rgba()));
     }
     let mut verts: Vec<CharVertex> = Vec::new();
     let mut draws = Vec::new();

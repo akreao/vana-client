@@ -162,7 +162,7 @@ pub(super) fn set_cursor(w: &mut World, k: usize) -> bool {
     }
     let Some(l) = w.polmail.list.as_mut().filter(|l| k < l.0.len()) else { return false };
     let old = std::mem::replace(&mut l.2, k);
-    l.1 = l.1.min(k).max((k + 1).saturating_sub(ROWS));
+    crate::client::scrollbar::keep_in_view(&mut l.1, k, ROWS);
     old != k
 }
 

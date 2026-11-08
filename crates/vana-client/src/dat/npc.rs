@@ -360,7 +360,7 @@ mod tests {
         let Ok(ch) = load_model(&index, 0x15c) else { return };
         let mut flips = 0;
         for a in &ch.animations {
-            for t in &a.tracks {
+            for t in a.tracks.iter() {
                 for f in 0..a.frames.saturating_sub(1) as usize {
                     let (p, q, m) = (t.sample(f as f32).0, t.sample(f as f32 + 1.0).0, t.sample(f as f32 + 0.5).0);
                     flips += (p.dot(q) < 0.0) as usize;

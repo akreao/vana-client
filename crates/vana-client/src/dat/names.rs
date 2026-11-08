@@ -254,7 +254,7 @@ fn text_at(f: &[Field], i: usize) -> String {
 }
 
 /// A name with no English grammar (other languages): every form is the name.
-fn plain(name: String) -> Noun {
+pub(super) fn plain(name: String) -> Noun {
     Noun { bare: name.clone(), singular: name.clone(), plural: name, an: false, singular_an: false, mode: 3 }
 }
 
@@ -286,11 +286,7 @@ pub fn item_noun(it: super::items::Item) -> Noun {
 
 impl NameSource for Names {
     fn item(&self, id: u32) -> Option<Noun> {
-        let it = self.items.item(id)?;
-        if self.lang != Lang::En {
-            return Some(plain(it.name));
-        }
-        Some(item_noun(it))
+        self.items.noun(id)
     }
 
     fn key_item(&self, id: u32) -> Option<Noun> {

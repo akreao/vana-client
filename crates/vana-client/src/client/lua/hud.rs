@@ -730,6 +730,7 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
     t.set(
         "set",
         lua.create_function(move |lua, (id, fields): (String, Table)| {
+            let fields = super::api::unhooked(lua, &fields)?;
             let png = fields.get::<Option<String>>("path")?.map(|p| load_png(&src3, &mod3, &p)).transpose()?;
             let st = super::api::state(lua);
             let mut s = st.borrow_mut();

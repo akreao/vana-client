@@ -39,7 +39,6 @@ pub enum Scope {
     World,
 }
 
-/// The results window (W) and its list (DAT_106644dc).
 /// A scroll bar or wheel message to the results (FUN_101f6c70; row 0 is the summary line). True when it moved.
 pub(super) fn bar(w: &mut World, m: Msg) -> bool {
     let Some(res) = w.search.as_mut().filter(|r| r.option.is_none()) else { return false };
@@ -47,6 +46,7 @@ pub(super) fn bar(w: &mut World, m: Msg) -> bool {
     rows_abs(m, &mut res.scroll, &mut res.cursor, n, ROWS)
 }
 
+/// The results window (W) and its list (DAT_106644dc).
 pub struct Results {
     /// DAT_10385a04 != 4: a query is out.
     pub busy: bool,
@@ -797,7 +797,7 @@ pub fn key(w: &mut World, key: egui::Key) {
         K::Enter => w.sounds.push(Ui::Error as u32),
         _ => {}
     }
-    res.scroll = res.scroll.min(res.cursor).max((res.cursor + 1).saturating_sub(ROWS));
+    crate::client::scrollbar::keep_in_view(&mut res.scroll, res.cursor, ROWS);
     w.search = Some(res);
 }
 

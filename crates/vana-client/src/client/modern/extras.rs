@@ -1240,17 +1240,10 @@ fn group(ui: &mut Ui, m: &super::Modern, g: &Group, icon: &dyn Fn(&egui::Painter
     }
 }
 
-/// The map image as an egui texture, made once per image.
+/// The map image as an egui texture (Modern::texture: a zone left behind lets its map go).
 pub(super) fn map_texture(m: &super::Modern, ctx: &egui::Context, img: &MapImage) -> egui::TextureId {
-    let mut images = m.images.borrow_mut();
-    let t = images.entry(img.name.clone()).or_insert_with(|| {
-        Some(ctx.load_texture(
-            img.name.clone(),
-            egui::ColorImage::from_rgba_unmultiplied(img.size, &img.rgba),
-            egui::TextureOptions::LINEAR,
-        ))
-    });
-    t.as_ref().map_or(egui::TextureId::default(), |t| t.id())
+    m.texture(ctx, &img.name, || Some(egui::ColorImage::from_rgba_unmultiplied(img.size, &img.rgba)))
+        .unwrap_or_default()
 }
 
 /// Our arrow at `c` pointing along `facing` (radians; 0 east, turning toward south on the map).

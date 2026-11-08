@@ -44,6 +44,23 @@ fn pack_one(a: &Animation, out: &mut Vec<u32>) {
     }
 }
 
+/// `p`, or an equal set already packed for another model (looks of a race share their motions).
+pub fn shared(p: Packed) -> std::sync::Arc<Packed> {
+    use std::sync::{Arc, LazyLock, Mutex, Weak};
+    static SETS: LazyLock<Mutex<std::collections::HashMap<u64, Weak<Packed>>>> = LazyLock::new(Default::default);
+    let Ok(mut sets) = SETS.lock() else { return Arc::new(p) };
+    if let Some(have) = sets.get(&p.key).and_then(Weak::upgrade)
+        && have.words == p.words
+        && have.offsets == p.offsets
+    {
+        return have;
+    }
+    sets.retain(|_, w| w.strong_count() > 0);
+    let p = Arc::new(p);
+    sets.insert(p.key, Arc::downgrade(&p));
+    p
+}
+
 pub fn pack(anims: &[Animation]) -> Packed {
     let mut p = Packed::default();
     for a in anims {

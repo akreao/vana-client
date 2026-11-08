@@ -451,20 +451,15 @@ impl Atrac3 {
         }
     }
 
+    #[cfg(test)]
     pub fn frame_bytes(&self) -> usize {
         self.frame
     }
 
     /// Frames that failed to decode (output as silence).
+    #[cfg(test)]
     pub fn errors(&self) -> u64 {
         self.errors
-    }
-
-    pub fn reset(&mut self) {
-        self.ch = [Channel::new(), Channel::new()];
-        self.js = JOINT_INIT;
-        self.js_prev = JOINT_INIT;
-        self.frames = 0;
     }
 
     /// One already-descrambled frame -> 1024 samples per channel, interleaved i16, appended to out.

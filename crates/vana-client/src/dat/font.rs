@@ -426,7 +426,7 @@ impl Font {
             let xi = (x as i32).clamp(0, tex.width as i32 - 1) as usize;
             let yi = (y as i32).clamp(0, tex.height as i32 - 1) as usize;
             let o = (yi * tex.width as usize + xi) * 4;
-            [0, 1, 2, 3].map(|k| tex.rgba[o + k] as f32 / 255.0)
+            [0, 1, 2, 3].map(|k| tex.rgba()[o + k] as f32 / 255.0)
         };
         let (a, b, c, d) = (px(x0, y0), px(x0 + 1.0, y0), px(x0, y0 + 1.0), px(x0 + 1.0, y0 + 1.0));
         [0, 1, 2, 3].map(|k| (a[k] * (1.0 - ax) + b[k] * ax) * (1.0 - ay) + (c[k] * (1.0 - ax) + d[k] * ax) * ay)
