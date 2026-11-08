@@ -219,7 +219,10 @@ prints the login port's key fingerprint (`profile.cert` is the Friend List's, po
 
 - `MODLOG.md` records every reverse-engineered fact the code relies on: addresses in the original executable,
   DAT formats, packets. Anything inferred rather than read from the binary is marked as inferred. Read the
-  relevant section before changing behaviour, and add what you learn.
+  relevant section before changing behaviour, and add what you learn. New entries go in `docs/modlog/`, one
+  file each, so branches don't conflict on `MODLOG.md`; `docs/modlog/README.md` explains how.
+- `docs/modern-ui.md` is the modern UI's plan and state. Branches don't edit it: their state updates go in
+  `docs/modern-ui/`, one file each. `python3 docs/fold.py` folds both folders in on custom (the fork's default branch; master mirrors upstream).
 - `cargo test --release` runs the tests. Tests that need the game data skip themselves when it isn't installed.
 - Offscreen tools render parts of the client to PNG without opening a window, for example `zone-shot`, `npc-shot`,
   `char-shot`, `select-shot`, `creator-shot` and `cs-shot`. Others decode game files: `dat-info`, `ui-dump`,

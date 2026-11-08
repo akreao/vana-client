@@ -3,6 +3,8 @@
 Confirmed facts only; each with where it was verified. Sources: LSB `~/landsandboat` (commit d90234d2d1),
 xiloader (`~/ffxi/lab/xiloader`, ceb79a0), Ghidra on the installer. Decompiled output stays in `~/ffxi/lab`.
 
+New entries go in `docs/modlog/` as one file each and are folded in here later (see `docs/modlog/README.md`).
+
 ## Installer (FFXIFullSetup_US)
 - RAR5 SFX, 5 volumes. Contents: `FFXISetup.exe` (MFC bootstrapper), `PlayOnline/PlayOnlineViewer.msi`,
   `FINAL_FANTASY_XI/FINAL_FANTASY_XI.msi` + `data1..7.cab`, `redist/Directx_Jun2010`.
@@ -10905,7 +10907,7 @@ Ours: client/faqmain.rs.
 - LSB sends the oldest unread `help_desk.response` at zone-in as 0x0B6 chunks; 0x0D5 marks it read and sends the
   next. Live (2026-10-28, a help_desk row for Lnxcsfix): the reply arrived at zone-in, /helpdesk -> Help Desk showed
   it with "Delete this message." / "Return.", Delete set deleted_at (LSB) and went back to faqsub; the same in the
-  modern UI. Not done: netstat's "reply waiting" mark (+0x30 = 2, its drawing not traced).
+  modern UI. The "reply waiting" mark: see "netstat: the Help Desk reply mark" (2026-11-02).
 
 From the research notes:
 - FUN_10115020 (every frame) writes the finished text as "gmNotice.fdt" / "gmNotice.siz"; FUN_10115250 reports the
@@ -14684,6 +14686,7 @@ FUN_101cf510 (client/layout.rs `overlay`, render/lines.wgsl, ZoneRenderer `set_l
   on the window is Escape. Hand-over: slots 1..8, OK 9, Cancel 10, gil 11; player trade: "menu    trade" 1..11
   (after our OK only OK / Cancel take the cursor, as the keys) and "menu    gift" 1..8. The picker (the inventory list
   at x 200, post::picker_row) as the item list: hover moves the row cursor, a click on it is Enter, a right click
+  Escape. itemctrl / moneyctr by winhits::ctr (see "itemctrl / moneyctr: the mouse").
   Escape. itemctrl / moneyctr as retail's (MODLOG "itemctrl / moneyctr: the mouse").
 - Live (Lnxcsfix, the Moogle in its house, main menu Trade): hover slot 2, click (picker), hover and click Distilled
   Water (No. of Items), Enter (in slot 2), right click (cursor to Cancel), click Cancel (closed). Player trade not
@@ -15018,6 +15021,7 @@ client/macroedit.rs (`pointer`, `generic`, `child_under`, `hit`), esmenu.rs, ese
   right click over it Escape). MacroPalette (macroedit.rs) uses it now.
 - Shops (shop.rs `pointer`): shopmain / guildsho and shopbuy / shopsell as the generic window; the list's rows (18 px
   from (3, 4), short of the bar) as the item list: hover moves the row, a click on it is Enter, a right click on the
+  list Escape; itemctrl / moneyctr by winhits::ctr.
   list Escape; itemctrl / moneyctr as retail's (MODLOG "itemctrl / moneyctr: the mouse").
 - Live (Lnxcsfix at Capucine, Southern San d'Oria): hover Sell, click Buy, hover and click Mitts (the purchase
   confirm, cursor on Cancel), right clicks closing the list and the shop. The windows stacked on the log move as it
@@ -15033,6 +15037,7 @@ client/macroedit.rs (`pointer`, `generic`, `child_under`, `hit`), esmenu.rs, ese
 
 - post.rs `pointer` (winhits.rs): post1 / post2 (receive), delivery and stringdl (send; stringdl's buttons are drawn by
   code, so their rects come from the layout) as the generic window; the inventory list at x 200 as the item list;
+  itemctrl / moneyctr by winhits::ctr; nothing while busy or while the name is typed.
   itemctrl / moneyctr as retail's (MODLOG "itemctrl / moneyctr: the mouse"); nothing while busy or while the name is typed.
 - Live (Lnxcsfix, its Mog House): moogle menu Delivery Box, mogpost Send, hover Exit ("Cancel.") and OK ("Is
   recipient's name correct?"), click Exit closes the send UI. The moogle menu and mogpost sit on the log and move with
@@ -15193,6 +15198,7 @@ From the research notes:
 
 - synth.rs `pointer` (winhits.rs): cmbmenu, cmbhwin and tskill1 as the generic window, cmbhlst's code-drawn rows (18
   apart from (0, 4)) as its children; the crystal list and the material picker as the item list at x 200
+  (post::picker_row); itemctrl by winhits::ctr. A right click on tskill1 is its Escape (the cursor to Cancel).
   (post::picker_row); itemctrl as retail's (MODLOG "itemctrl / moneyctr: the mouse"). A right click on tskill1 is its Escape (the cursor to Cancel).
 - Live (Lnxcsfix): main menu Synthesis, cmbmenu hover / click Crystal Synthesis, the crystal list hover / click Wind
   Crystal, tskill1 hover / click a slot (the picker), a picker row hovered, right clicks back, Cancel, the crystal list
@@ -15202,6 +15208,7 @@ From the research notes:
 
 - auction.rs `pointer` (winhits.rs): the command menus (auc1..aucitem, auc3, auc4, the sort menus) and shopsell as the
   generic window; auclist's and auchisto's code-drawn rows (18 apart from (4, 4)) as their children; the sell list (the
+  inventory list) by its row pitch; moneyctr by winhits::ctr. Scroll bars: Owner::Auction for auclist and the sell
   inventory list) by its row pitch; moneyctr as retail's (MODLOG "itemctrl / moneyctr: the mouse"). Scroll bars: Owner::Auction for auclist and the sell
   list (FUN_101f6c70 rows: a notch moves the top, the hand keeps its screen row).
 - Live (Lnxcsfix, !ah): auc1 Bid, auc2 Crystals, auclist hover / wheel / click (auc3), right clicks back to auc2 and
@@ -15643,6 +15650,8 @@ From the research notes:
   Desk's Q&A loader / GM call (FUN_10212760, FUN_10217d20), **0x10** the mail windows (mes1rcv / mes2frnd / msgline /
   msglist, FUN_101ff3e0..FUN_10200d70; MODLOG "The busy strip's 0x10"), **0x20** only cleared (FUN_101e3430, link5), **0x80000000** an
   auction bid in flight (LAB_101d95b0 with DAT_1066344e; cleared FUN_101d7ac0 / FUN_101da370).
+- Ours now adds the search (search::busy) and the bid (bid.pending) to the strip; the Help Desk's (its Q&A never
+  loads in ours) is not modelled. The mail windows' 0x10: see "The busy strip's 0x10: PlayOnline message jobs".
 - Ours now adds the search (search::busy) and the bid (bid.pending) to the strip, and msgline's sends (friends.strip);
   the Help Desk's (its Q&A never loads in ours) and the other mail windows' are not modelled.
 
@@ -17246,6 +17255,10 @@ keeps its newest 100 rows *(inf: retail ~50 at the switch, up to 100 while open)
   message; the unread count at (+0x6c, +0x10), 0x60808080) for 60 ticks (DAT_10385270), page 1 the network for 120
   (DAT_10385272), held on page 1 while nothing is unread; the modern top bar the same with its own envelope. Seen live
   in both UIs.
+- Not done: netstat's Help Desk count (GM replies) and its second count (engine +0xe), deleting / unblocking / reordering
+  (retail has no in-game way: the user's call), Away back to Online at login *(inf, spec 2.5)*.
+- Not done: netstat's Help Desk count (GM replies) and its second count (engine +0xe), the busy strip bit 0x10, deleting / unblocking / reordering
+  (retail has no in-game way: the user's call), Away back to Online at login *(inf, below)*.
 - Done since: netstat's Help Desk reply mark, its second count (never non-zero in this build) and the busy strip bit
   0x10 (MODLOG "netstat: the Help Desk reply mark", "netstat: the second count", "The busy strip's 0x10").
 - Not done: deleting / unblocking / reordering (retail has no in-game way: the user's call), Away back to Online at
@@ -17345,6 +17358,9 @@ From the research notes:
   (subs 0xa / 0xc / 0xb). Not seen live.
 - A 0x97 message's pages (op 0x48) print as mode 0xbe (asm 0x1013669b); 0x96 / 0x97 / 0x98 / 0xbe share colour id 91
   and mask bit 9, so only the record's mode differs.
+- The frames' magenta tint (windowps 43, spec §8): retail never draws it; see "rem4line / spoolmsg: the magenta
+  plate is never drawn" (2026-11-02).
+- Not done: the frames' magenta tint (windowps 43, below).
 - The frames' magenta tint (windowps 43, below): never drawn (MODLOG "rem4line / spoolmsg: the magenta plate is never
   drawn").
 
@@ -20314,6 +20330,68 @@ From the research notes:
   1.665 -> 1.571 at (-4, 10.45, 117)); San d'Oria's came at 25.6 s and was applied at 26.4 s (1.493 -> 1.571 at
   (-68, 10.45, 117)). Seen fixed by the user.
 
+## Gamepad (2026-11-02)
+
+- Retail's pad path, from the unpacked FFXiMain.dll (30261006_0; the file is POL1-packed, see
+  docs/re/gamepad/findings.md, which also corrects earlier guesses: FUN_101bced0 is the chat word list loader, so
+  config 0xce is a chat-filter option, not a pad option). FUN_10005a40 polls DirectInput (DIJOYSTATE2) or XInput
+  (through xinputdll.dll) each frame into the input object's 64-bit pad word (+0x220 held, +0x228 pressed, +0x230
+  released, +0x238 repeat; bit n = slot n) and the stick bytes +0x250 / +0x251 camera X / Y, +0x252 / +0x253
+  movement X / Y ((b - 0x80) / 128, dead zone 42, movement past 9677 rescaled). padsin000 maps 32 positions to slots
+  through the permutation at 0x1034f930; values are button numbers (XInput virtual: 0 B, 1 X, 2 Y, 3 A, 4..7 d-pad
+  R / L / U / D, 8 LB, 9 LT, 10 L3, 11 RB, 12 RT, 13 R3, 14 Start, 15 Back) or axis codes 32 + n.
+- The key functions' pad bits (keyfn_table.md) are our PAD table's: the compact keyboard and the pad share the word.
+  The second word (+0x224) holds slots 32 / 33 / 35 / 36 (key functions 0xb7..0xba); slot 34 switches to padexsin.
+  0x27..0x2a are pad-only d-pad functions in the field (below).
+- Ours (client/gamepad.rs): gilrs stands in for DirectInput / XInput; config.json gamepad_padsin / gamepad_padexsin in
+  the registry's format, FFXiPadConfig's XInput layout by default. Our windows read egui keys, so the confirm,
+  cancel and main menu slots also send Enter / Escape / Num-, and the d-pad the arrows with a window or a palette up
+  (the press, then tick 17 and every 3rd: past mgr +0x94 = 16, back to 14). The sticks never step a window's cursor and keep moving / turning
+  with a window up.
+- What each button does where, from the DLL (docs/re/gamepad/window_fns.md): only 18 of the 239 window OnKey handlers
+  take the pad's extra events, nearly all of them text input (the software keyboard, msgline, comment, fep).
+  - Field d-pad (table 0x10371ee0): up / down step the alliance's 18 slots, wrapping (FUN_10203920); right / left the
+    next / previous actor on screen without wrapping (FUN_10083d00 / FUN_10083b40; Tab wraps). target::pad_step,
+    target::party_pad_step.
+  - Macros (FUN_101a2e80): a trigger's press (0x89 LT / 0x8a RT) toggles the Ctrl / Alt palette and the other swaps
+    it; the palette's own keys (FUN_101a3960) pick and run the macro. A pad-opened palette stays up after the
+    release (World::pad_palette). No button maps straight to a macro number.
+  - Windows: LT / RT are 0xa8, read with Ctrl / Alt, so held they ride on the arrows as Ctrl (page; the full log's
+    0xaf scroll) and both together as Alt (0xb5 / 0xb6, the item lists' next / previous bag). Their bits stay set
+    (0x89 item compare, 0x9a map fast scroll).
+  - RB 0x24 (FUN_101579c0): with no window, opens the chat line; with the UI hidden (FUN_101d0c70) the screenshot.
+  - Slots 32 / 33 / 35 / 36 (0xb7..0xba, unbound by default): the shut down prompt, F8's nearest target, /jump, /map.
+- Not built: retail's software keyboard windows (keypad*, where RB / LB / X / Back / LT / RT type; ours is the
+  on-screen keyboard, see "Gamepad: on-screen keyboard"). The ground-position cursor (0xb0..0xb3) and L3 on the map
+  (0x7e) are in "Gamepad: the ground-position cursor; L3 on the map".
+
+## Gamepad: window tabs, lock-on camera, own facing (2026-11-02)
+
+- Ours: with a window up the pad's LB / RB (slots 8 / 12; retail's list windows take neither, window_fns.md) send
+  Shift+Tab / Tab, and every modern tabbed window turns its tabs with them: the storage view's bags, the journal,
+  settings (Settings::tab_back), the macro palettes and config pages (kit), the job point pages, the equip set pages
+  (esmenu) and storage tabs (esedit), the concierge's filters. World::key_shift carries the dispatched key's Shift.
+  Not the shop's Buy / Sell (its main menu, reached with the d-pad) or the chat log's channel tabs (no pad focus).
+- Fix: locked on, the stick's / keys' axis 6 turned the camera the wrong way. target::step_camera rotates with
+  Quat::from_rotation_y, opposite to camera::orbit, which the free camera turns by -v6; the locked call now negates it
+  (the mouse's cam_turn already matched).
+- Fix: our character is drawn from the float facing (World::my_face) instead of the network byte. Retail keeps the
+  heading as a float (FUN_100a6240: -atan2 of the frame's step, or the stick turned by the camera yaw) and rounds it
+  only for the position packet; from the byte (1.4 degree steps) a stick's slow turn stepped and its noise shook.
+
+## Temporary items in the Items lists (2026-11-02)
+
+- Main Menu > Items and the action menu's Items now list the temporary items (container 3, Abyssea / Salvage and the
+  like), which they left out. FFXiMain.dll's list rebuild (FUN_101f1100, 0x101f12a8..0x101f16c8): once container 3 is
+  loaded and the list's source returns a colour from its +0x20 (FUN_101f1bf0 for the main list, FUN_101f1c40 for the
+  direct list: both 0x80806040), every temporary item comes first (+0x54 rows, its view's order), then the inventory.
+  The temporary rows take that colour and show no quantity; the direct list takes them all, unfiltered. The storage
+  view's sources return 0 there, so its inventory side stays without them.
+- The list's "items/size" count leaves the temporary rows out (the row total +0x52 less +0x54).
+- Use and Drop work on a temporary row: the target prompt carries container 3 to c2s 0x037, and Drop sends c2s 0x028
+  with container 3 (LSB takes LOC_TEMPITEMS for both). iuse, the drop question and the item info follow the row's
+  container.
+- Ours: Manual Sort only moves inventory slots, so a temporary row there plays the error sound.
 ## Lua mods: the add-on surveys (2026-11-01)
 The bar for the Lua layer (docs/lua-mods.md 1) is that every Windower 4 and Ashita add-on can be rebuilt on it. These
 are the surveys' findings it is measured against: counts are add-ons, from scans of their source (127 official
@@ -22272,11 +22350,6 @@ Checked in Steven's unpacked FFXiMain.dll (sha256 8097dbf8..., 2026-11-03).
   actmotion::Pending now carries op 0x2c's target (when it is another actor in the zone) and the scheduler's effect
   side runs with it as actor2 (fx `on_scheduler_quiet_on`). Ops 0x5b / 0x66 are unchanged.
 - Not yet seen live in game.
-- 2026-11-05: still nothing in game (Windurst Woods event 0x21fd). The 'bind' op is the event's last op before
-  `event_end`, and ours only queued op 0x2c in the actor's pending slot for the next frame's actmotion update; the
-  event ended in the same VM tick and finish() dropped the pending motion, so neither the motion nor its effect side
-  ever started. FUN_100b2f80 calls vtable +0x298 at once (op 0x2c plays only from files the actor already has), so
-  the Motion handler now starts op 0x2c right away (actmotion::start_pending). The fx task outlives the event end.
 
 ## Send Rate and zone preloading (2026-11-04, ours, not retail)
 
@@ -22930,7 +23003,7 @@ From FFXiMain.dll (Steven's unpacked copy), full_text.asm, FUN_100a7b80.
   plain frame and their one cell, the magenta plate, is skipped. Retail shows no tint; ours (logwin.rs draw_over,
   gu.frame) already draws them that way, so nothing changes.
 
-## Pending actions (ours, 2026-11-02)
+## Pending actions (ours, 2026-11-02, answers matched to the ask 2026-11-07)
 
 - Retail shows nothing between sending an action and the server's answer. Ours keeps the last 0x01A (magic 3, weapon
   skill 7, job ability 9) or 0x037 sent; a 0x028 with our id as actor of its kind confirms it (magic 8 / 4, weapon
@@ -23167,3 +23240,44 @@ still gave `cor`. Both now go through actmotion::sdep_stand.
   held; A / D add their side as they do with W. Released, the run keeps its last way and A / D steer it 2 degrees a
   tick again (retail). Before, the run kept its old vector and the character faced the camera, running sideways.
   A run a mod starts with actions.run keeps its own heading. The controller and the keys are untouched.
+
+## Model sub-animation: `init` alone sees an NPC's sub-state (2026-11-07)
+
+- FUN_1008c480 (asm 0x1008c598..0x1008c5fe), statuses other than 6 / 0x32 / 0x38 / 0x22 / 0x3f..0x53: saves the
+  model's sub-animation (vtable +0xa4, +0x8a5), sets it to the wanted one (entity +0x124 bits 1..3), starts `init`
+  (a new task steps at once, so `init` and what it starts with op 0x57 read the wanted value as var 0x3a), then sets
+  +0x8a5 back to the saved value (vtable +0xa8).
+- FUN_1008ef60 sets +0x8a5 for a wanted value below 4, and for 4 and up only on an actor that passes the +0x120 /
+  +0x130 tests below; for any other NPC spawned in a sub-state (LSB sends 4 | animationsub) the model's own stays 0
+  after `init`.
+- FUN_1008ef60's sub-state path (4 and up) and its `ini<n>` starts take an actor with the monster bit (+0x120 bit 13)
+  or +0x130 bit 2 (0x00E u32 @0x28 bit 26, asm 0x1009c5a2), not monsters only. Each change first copies the applied
+  value into +0x124 bits 8..11: scheduler var 0x3c (FUN_10062900; 8 as is, else & 3).
+- Synergy furnace (model 2348, file 52643; LSB animationsub 5 in every town): `init` -> `mse0` waits a tick, then
+  picks by var 0x3a `ids0` (closed: wepN hidden by op 0xa3 for 300 ticks, idle set 0 `idl0`), `ids1` (open: shown,
+  idle set 1 `1dl0`) or `ids2` / `ids3` (active, looping glows). The frame `init` starts, FUN_1008ef60 sets +0x8a5 to
+  5 and runs `ini1` -> `mse1` (var 0x3c 8: `ids1`), so retail shows the open idle. Both stop the model's 52 auto-start
+  crafting generators through `0kil`. Ours now does the same (lenonk/vana-client#96: the open idle is what retail
+  shows for LSB's data).
+- Review fixes:
+  - Order: FUN_1008c480 runs before FUN_1008ef60, so ef60 finds `init` running. A monster or flagged NPC first seen
+    with sub-state 4 (SUB[4] is `init`) started `init` twice in ours (monsters before this change too); the queued
+    one now counts as running.
+  - On status 0x22 `init` is a plain start, still before ef60: it reads the model's own value (0 for a new actor),
+    not the wanted one ef60 sets the same frame.
+  - +0x124 starts at 0x880 (FUN_1008a350): bits 8..11 = 8, so var 0x3c reads 8 for an actor ef60 never changed. Var
+    0x3c takes this path only for an actor with an entity (model +0x70); others read the variable as any other.
+  - Ef60's below-4 path excludes +0xee 6 / 7 (SubKind 5 / 6): those take the flagged path whatever the sub-state.
+  - The wanted value reaches the tasks `init`'s first step runs at once (kept over a file retry), not the ones it
+    creates to step later (ops 0x30, 0x5c, 0x76 / 0x77, 0x84), which step after +0x8a5 is back.
+
+## Mouse camera X follows the camera keys (2026-11-08)
+
+- FUN_10124bc0 (the mouse's camera axes, read through axis 6 / 7's second source 0x101232e0 -> +0x8c / +0x90) writes
+  +0x8c = -x and +0x90 = -y, then multiplies each by -1 for 0x8b / 0x8c; FUN_1001ee60 multiplies axis 6 / 7 by -1
+  for 0x8b / 0x8c again. So the retail mouse ends at -x / -y whatever the setting, and with the default (0x8b on) a
+  pointer at the right edge turns the camera as the right arrow does.
+- Ours applied 0x8b to the third-person drag without the leading negation (Y had it), so a drag to the right turned
+  the camera as the left arrow did and the X invert setting read backwards. Both third-person branches (free and
+  locked) now take -x: a drag turns as the camera keys do, and Mouse/Cam.'s X invert flips both, as Y already did.
+  First person (0x8d) already matched its keys and is unchanged.

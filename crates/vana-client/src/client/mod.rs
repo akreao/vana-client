@@ -591,6 +591,11 @@ struct Entity {
     sync: u8,
     /// +0x124: the sub-animation wanted (bits 1..3), applied (bits 4..7, 8 = none yet), and the model's own (+0x8a5).
     sub: [u8; 3],
+    /// +0x124 bits 8..11: the applied sub-animation before FUN_1008ef60's last change (scheduler var 0x3c).
+    sub_prev: u8,
+    /// +0x130 bit 2: 0x00E u32 @0x28 bit 26 (asm 0x1009c5a2), the server's sub-animation flag. With the monster bit
+    /// it lets FUN_1008ef60 run `ini<n>` and set the model's sub-animation.
+    sub_flag: bool,
     /// +0x124 bits 13..14 (0x00E MonStat): 2 takes the dft / df1 idles, ark walk and hsr run (FUN_1008a1a0); and the
     /// ticks to the next idle pick (+0x1ba, FUN_1008da00).
     mon_stat: u8,
@@ -1867,6 +1872,8 @@ fn self_entity(w: &World) -> Entity {
         mon_name: w.my_mon_name.clone(),
         mon_key: w.my_mon_key,
         sub: [0, 8, 0],
+        sub_prev: 8,
+        sub_flag: false,
         mon_stat: 0,
         ev_mon_stat: None,
         idle_swap: 0.0,
@@ -5329,6 +5336,8 @@ fn place_mogdoor(w: &mut World) {
             mon_name: None,
             mon_key: (0, [0; 2]),
             sub: [0, 8, 0],
+            sub_prev: 8,
+            sub_flag: false,
             mon_stat: 0,
             ev_mon_stat: None,
             idle_swap: 0.0,
@@ -6354,6 +6363,11 @@ impl crate::fx::Actors for FxActors<'_> {
         self.entities.get(&id).map_or(0, |e| e.sub[2])
     }
 
+    // We are an entity in retail too; ours never has a sub-animation change, so its previous stays 8.
+    fn sub_prev(&self, id: u32) -> Option<u8> {
+        self.entities.get(&id).map(|e| e.sub_prev).or((id == self.me).then_some(8))
+    }
+
     fn off_hand(&self, id: u32) -> bool {
         self.actors.get(&id).is_some_and(|a| a.off_hand)
     }
@@ -6992,6 +7006,8 @@ struct World {
     /// Ours (modern): the target before the current one, set as target::set changes it (the sub-target prompt's
     /// stand-ins are not counted); `<lt>` and the modern focus panel's Last row.
     last_target: Option<u32>,
+    /// The last target a sub-target prompt or `<stpt>` / `<stal>` pick confirmed (`<lastst>`).
+    last_subtarget: Option<u32>,
     /// Target lock-on (DAT_10565d34 +0x5c bits 0..1 != 0), the locked camera, ticks left in which the free
     /// camera ignores manual turns after a lock (DAT_10444464), auto lock-on (config 7 = 0), when the target
     /// was set, and manual camera turns waiting for the locked camera.
@@ -7319,8 +7335,15 @@ struct World {
     recent_save: bool,
     /// The modern UI Modes editor is open (/uimodes, modern/modes.rs).
     uimodes_open: bool,
-    /// Favourites (favs.rs keys, the strip's order), whether the strip shows, and whether either changed since the save.
+    /// Favourites (favs.rs keys, the strip's order) for the active main/sub job, the saved loadouts by job, whether
+    /// the strip shows, and whether either changed since the save. `fav_provisional` marks a seeded loadout still
+    /// waiting for the learned bits and spell job data before it is pruned; `fav_commands_fresh` is false from a job
+    /// change until the next 0x0AC, so stale command bits are not used (favs.rs).
     favourites: Vec<String>,
+    fav_loadout: Option<String>,
+    fav_loadouts: std::collections::BTreeMap<String, Vec<String>>,
+    fav_provisional: bool,
+    fav_commands_fresh: bool,
     fav_strip: bool,
     fav_save: bool,
     /// The battle menu's suggestions (suggest.rs::refresh_root), when they were taken, and the one the cursor is on.
@@ -7598,6 +7621,9 @@ struct World {
     auto_sort: u32,
     auto_sort_dirty: bool,
     sort_due: (u32, f32),
+    /// Queued c2s 0x03A {container} stack-merge requests (merged storage tabs), one per SORT_GAP.
+    sort_packets: Vec<u8>,
+    sort_packet_wait: f32,
     /// The frames posed so far (FUN_10014d50's count, for Misc. 2's animation frame rate).
     anim_frame: u32,
     /// DAT_10487ef5 (event op 0xab subs 9 / 10): the weather density forced to 1.0; cleared by each zone load.
@@ -9234,7 +9260,7 @@ impl App {
                     &std::fs::read(crate::dat::ffximain(&self.cfg.ffxi_dir())).unwrap_or_default(),
                 ) {
                     Ok(codec) => {
-                        let net = net::spawn(login.clone(), self.cfg.username.clone(), codec);
+                        let net = net::spawn(login.clone(), self.cfg.username.clone(), codec, self.cfg.gm_window);
                         self.status = format!("Connecting to {}:{}...", login.map.0, login.map.1);
                         let features =
                             if let Phase::Characters { lobby: Some(l), .. } = &self.phase { l.features } else { 0 };
@@ -9245,17 +9271,27 @@ impl App {
                             account,
                             hash,
                         });
-                        let world_name = match &self.phase {
-                            Phase::Characters { chars, selected: Some(s), .. } => {
-                                chars.get(*s).map(|c| c.world.clone()).unwrap_or_default()
+                        let (world_name, expansions, fav_jobs) = match &self.phase {
+                            Phase::Characters { chars, selected: Some(s), expansions, .. } => {
+                                let c = chars.get(*s);
+                                (
+                                    c.map(|c| c.world.clone()).unwrap_or_default(),
+                                    *expansions & self.installed,
+                                    c.map(|c| (c.main_job, c.sub_job)),
+                                )
                             }
-                            _ => String::new(),
+                            _ => (String::new(), 0, None),
                         };
-                        let expansions = if let Phase::Characters { expansions, .. } = &self.phase {
-                            *expansions & self.installed
-                        } else {
-                            0
-                        };
+                        let fav_loadouts =
+                            self.cfg.modern_favourite_loadouts.get(&login.name).cloned().unwrap_or_default();
+                        let fav_loadout = fav_jobs.and_then(|(m, s)| favs::job_key(m, s));
+                        let favourites = fav_loadout
+                            .as_ref()
+                            .and_then(|k| fav_loadouts.get(k))
+                            .cloned()
+                            .or_else(|| self.cfg.modern_favourites.get(&login.name).cloned())
+                            .unwrap_or_default();
+                        let fav_provisional = fav_loadout.as_ref().is_some_and(|k| !fav_loadouts.contains_key(k));
                         // The effects' GPU side caches by the World's registry ids (library, texture, mesh); a new
                         // World starts a new registry, so the old session's cache would draw the wrong ones.
                         self.effects_gpu = None;
@@ -9354,6 +9390,7 @@ impl App {
                             logging_out: false,
                             target: None,
                             last_target: None,
+                            last_subtarget: None,
                             locked: false,
                             cam: Default::default(),
                             lock_height: -1.5,
@@ -9599,7 +9636,11 @@ impl App {
                             recent_picks: self.cfg.modern_recent.get(&login.name).cloned().unwrap_or_default(),
                             recent_save: false,
                             uimodes_open: false,
-                            favourites: self.cfg.modern_favourites.get(&login.name).cloned().unwrap_or_default(),
+                            favourites,
+                            fav_loadout,
+                            fav_loadouts,
+                            fav_provisional,
+                            fav_commands_fresh: false,
                             fav_strip: self.cfg.modern_fav_strip,
                             fav_save: false,
                             root_sugg: Vec::new(),
@@ -9763,6 +9804,8 @@ impl App {
                             auto_sort: self.cfg.auto_sort,
                             auto_sort_dirty: false,
                             sort_due: (0, 0.0),
+                            sort_packets: Vec::new(),
+                            sort_packet_wait: 0.0,
                             anim_frame: 0,
                             weather_forced: false,
                             inv_free: None,
@@ -10758,6 +10801,8 @@ impl App {
                         mon_name: None,
                         mon_key: (0, [0; 2]),
                         sub: [0, 8, 0],
+                        sub_prev: 8,
+                        sub_flag: false,
                         mon_stat: 0,
                         ev_mon_stat: None,
                         idle_swap: 0.0,
@@ -10979,6 +11024,9 @@ impl App {
                     }
                     if let Some(s) = e.sub_anim {
                         entry.sub[0] = s;
+                    }
+                    if let Some(f) = e.sub_flag {
+                        entry.sub_flag = f;
                     }
                     if let Some(h) = e.half_fade {
                         entry.half_fade = h;
@@ -11258,8 +11306,14 @@ impl App {
                     }
                 }
                 NetEvent::CharStats(s) => {
+                    let jobs = world.stats.as_ref().map(|o| (o.main.0, o.sub.0));
+                    let changed = jobs.is_some_and(|old| old != (s.main.0, s.sub.0));
                     world.stats = Some(s);
+                    favs::sync_jobs(world);
                     status::on_stats(world);
+                    if changed {
+                        moogle::job_changed(world);
+                    }
                 }
                 NetEvent::Merits { limit, bits, max } => world.merits = Some((limit, bits, max)),
                 NetEvent::JobPoints(access, jobs) => {
@@ -11473,8 +11527,13 @@ impl App {
                         }
                     }
                     world.spells_known = bits;
+                    favs::refresh(world);
                 }
-                NetEvent::CommandsKnown(bits) => world.commands_known = bits,
+                NetEvent::CommandsKnown(bits) => {
+                    world.commands_known = bits;
+                    world.fav_commands_fresh = true;
+                    favs::refresh(world);
+                }
                 NetEvent::Dungeon(store) => maze::on_store(world, &store),
                 // LAB_100a2540 stores the offer whatever our state (it may come before our dead status, e.g. during a
                 // zone-in event); the K.O. step shows it once we are dead.
@@ -11870,20 +11929,28 @@ impl App {
         let mut starts: Vec<(u32, [u8; 4])> = Vec::new();
         let mut stops: Vec<(u32, [u8; 4])> = Vec::new();
         let (mut readies, mut ins): (Vec<u32>, Vec<u32>) = (Vec::new(), Vec::new());
-        let mut first_init = |id: u32, status: u8, starts: &mut Vec<(u32, [u8; 4])>| {
+        // FUN_1008c480, before FUN_1008ef60: `init` on a status of its own (not 0x22) sees the wanted sub-animation,
+        // then the model's goes back to what it was (Effects::on_init); on 0x22 it sees the model's own. True when
+        // `init` starts.
+        let mut inits: Vec<(u32, u8)> = Vec::new();
+        let mut first_init = |id: u32, status: u8, (want, own): (u8, u8), starts: &mut Vec<(u32, [u8; 4])>| {
             readies.push(id);
-            if !matches!(status, 6 | 0x32 | 0x38 | 0x3f..=0x53) {
-                starts.push((id, *b"init"));
-                if status == 0x22 {
-                    starts.push((id, *b"inte"));
-                } else {
-                    ins.push(id);
-                }
+            if matches!(status, 6 | 0x32 | 0x38 | 0x3f..=0x53) {
+                return false;
             }
+            if status == 0x22 {
+                inits.push((id, own));
+                starts.push((id, *b"inte"));
+            } else {
+                inits.push((id, want));
+                ins.push(id);
+            }
+            true
         };
         if !world.my_init_done && world.actors.get(&world.my_id).is_some_and(|a| a.character.is_some()) {
             world.my_init_done = true;
-            first_init(world.my_id, world.my_motion.status, &mut starts);
+            // Ours keeps no sub-animation for the player.
+            first_init(world.my_id, world.my_motion.status, (0, 0), &mut starts);
         }
         for (id, e) in world.entities.iter_mut() {
             let ready = world.actors.get(id).is_some_and(|a| a.character.is_some());
@@ -11891,32 +11958,43 @@ impl App {
                 continue;
             }
             let status = e.motion.status;
+            let mut queued = false;
             if !e.init_done {
                 e.init_done = true;
-                e.sub[2] = e.sub[0];
-                first_init(*id, status, &mut starts);
+                queued = first_init(*id, status, (e.sub[0], e.sub[2]), &mut starts);
             }
-            let (want, applied) = (e.sub[0], e.sub[1]);
+            // FUN_1008ef60. Each change first keeps the applied value as the previous one (var 0x3c).
+            let (want, applied, own) = (e.sub[0], e.sub[1], e.sub[2]);
             if (want == 4 && applied == 0) || (want == 0 && applied == 4) {
+                e.sub_prev = applied;
                 e.sub = [want, want, want];
                 continue;
             }
-            let running = |name: [u8; 4]| world.effects.actor_scheduler_running(*id, u32::from_le_bytes(name));
-            if want < 4 {
-                if want == e.sub[2] && want == applied {
+            // +0x120 bit 9 (a model: `ready`) and bit 13 (the monster bit) or +0x130 bit 2.
+            let flagged = e.mob || e.sub_flag;
+            // The `init` just queued counts as running, as retail's has already started.
+            let running = |name: [u8; 4]| {
+                (queued && name == *b"init") || world.effects.actor_scheduler_running(*id, u32::from_le_bytes(name))
+            };
+            // +0xee 6 / 7 (SubKind 5 / 6) take the flagged path whatever the sub-state.
+            if want < 4 && !matches!(e.sub_kind, 5 | 6) {
+                if want == own && want == applied {
                     continue;
                 }
+                e.sub_prev = applied;
                 e.sub[2] = want;
-                if e.mob && applied != 8 && !running(SUB[want as usize]) {
+                if flagged && applied != 8 && !running(SUB[want as usize]) {
                     starts.push((*id, SUB[want as usize]));
                 }
                 e.sub[1] = want;
-            } else if want != applied && e.mob && !running(SUB[want as usize]) {
+            } else if flagged && !(want == own && want == applied) && !running(SUB[want as usize]) {
+                e.sub_prev = applied;
+                e.sub[2] = want;
                 if applied != 8 {
                     stops.push((*id, SUB[applied as usize & 7]));
                 }
                 starts.push((*id, SUB[want as usize]));
-                e.sub = [want, want, want];
+                e.sub[1] = want;
             }
         }
         for id in readies {
@@ -11924,6 +12002,10 @@ impl App {
         }
         for (id, name) in stops {
             world.effects.stop_actor_scheduler(id, u32::from_le_bytes(name));
+        }
+        for (id, sub) in inits {
+            log::debug!(target: "motion", "actor {id:#x}: scheduler init (sub-animation {sub})");
+            world.effects.on_init(id, sub);
         }
         for (id, name) in starts {
             log::debug!(target: "motion", "actor {id:#x}: scheduler {}", String::from_utf8_lossy(&name));
@@ -13020,6 +13102,7 @@ impl App {
             // state at 1.
             f.window = world_window_open(w)
                 || w.palette.0 != 0
+                || w.party_cursor.is_some()
                 || w.log_active
                 || w.log_focus == 2
                 || event::choice(w).is_some()
@@ -13175,6 +13258,9 @@ impl App {
         // when the gate allows (field, UI shown, no event, alive, no window), Ctrl / Alt + digit runs a macro and
         // Shift + Ctrl / Alt + digit picks a set. The palettes are not drawn yet.
         let sub_up = target::sub_up(world);
+        if let Some(m) = world.macros.as_mut() {
+            m.hold_wait(sub_up);
+        }
         let by_mod = world.macros.as_ref().is_some_and(|m| m.by_mod());
         if let Some(line) = world.macros.as_mut().filter(|_| !sub_up).and_then(|m| m.step(dt * 60.0)) {
             let line = crate::dat::font::decode_sjis(&line);
@@ -13453,9 +13539,11 @@ impl App {
             // Mouse/Cam. 0x8b / 0x8c invert the third-person camera's X / Y (FUN_1001e030).
             // Down is positive as retail's mode-5 axis 7 (FUN_10122590, the pointer below the drag's start); with
             // 0x8c on, the default, down raises the eye as the camera keys do.
+            // X goes in negated, as FUN_10124bc0 feeds the mouse into axis 6 (+0x8c = -x): a drag to the right turns
+            // the camera as the right arrow does, under either 0x8b setting (unnegated, the setting read backwards).
             _ if world.locked => {
                 let (ix, iy) = (inv(world, 0x8b), inv(world, 0x8c));
-                world.cam_turn.0 += (dx * 0.008 * ix) as f32;
+                world.cam_turn.0 -= (dx * 0.008 * ix) as f32;
                 world.cam_turn.1 += (dy * 0.02 * iy) as f32;
             }
             // First person: 0x8d / 0x8e.
@@ -13467,7 +13555,7 @@ impl App {
             _ if world.unlock_ticks > 0.0 => {}
             _ => {
                 let (ix, iy) = (inv(world, 0x8b), inv(world, 0x8c));
-                camera::drag(world, (dx * 0.008 * ix) as f32, -(dy * 0.03 * iy) as f32);
+                camera::drag(world, -(dx * 0.008 * ix) as f32, -(dy * 0.03 * iy) as f32);
                 world.mouse_look = right;
             }
         }
@@ -15422,8 +15510,16 @@ impl App {
                 if std::mem::take(&mut world.volume_dirty) {
                     apply = true;
                 }
+                favs::refresh(world);
                 if std::mem::take(&mut world.fav_save) {
-                    self.cfg.modern_favourites.insert(world.name.clone(), world.favourites.clone());
+                    let name = world.name.clone();
+                    if let Some(key) = world.fav_loadout.clone() {
+                        world.fav_loadouts.insert(key, world.favourites.clone());
+                    }
+                    if !world.fav_loadouts.is_empty() {
+                        self.cfg.modern_favourite_loadouts.insert(name.clone(), world.fav_loadouts.clone());
+                    }
+                    self.cfg.modern_favourites.insert(name, world.favourites.clone());
                     self.cfg.modern_fav_strip = world.fav_strip;
                     if let Err(e) = self.cfg.save() {
                         log::warn!("config: {e:#}");
@@ -16181,9 +16277,10 @@ impl App {
             _ => true,
         };
         let keyboard = matches!(&self.phase, Phase::World(w) if w.swkbd.is_some());
+        let party_cursor = matches!(&self.phase, Phase::World(w) if w.party_cursor.is_some());
         // The Controller window waiting for a button: the pad goes to it.
         let capture = matches!(&self.phase, Phase::World(w) if w.padcfg.open && w.padcfg.listening.is_some());
-        let ctx = gamepad::Ctx { menu, palette, tabs, field, keyboard, capture };
+        let ctx = gamepad::Ctx { menu, palette, tabs, field, keyboard, party_cursor, capture };
         let phase = &mut self.phase;
         let mut to_mods = |b: &[u8], a: [f32; 6], on: bool| match phase {
             Phase::World(w) => lua::input::pad_filter(w, b, a, on),

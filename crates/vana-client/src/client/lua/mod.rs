@@ -328,7 +328,6 @@ pub struct Host {
     watch_deferred: Vec<String>,
     lobby_screen: Option<&'static str>,
     lobby: lobby::Shared,
-    /// A recording asked for (taken by the app), and the file being recorded, as the app sets it.
     /// A mod's recording asked for: (the mod, its file and frames a second, or None to stop its own).
     pub(in crate::client) record_req: Option<(String, Option<(std::path::PathBuf, u32)>)>,
     /// The recording running: its mod and file.
@@ -5212,6 +5211,8 @@ mod stub_tests {
             // A Windows checkout (core.autocrlf) has CRLF lines.
             text += &std::fs::read_to_string(e.path()).unwrap().replace("\r\n", "\n");
         }
+        // A Windows checkout may carry CRLF line ends.
+        let text = text.replace("\r\n", "\n");
         for f in super::docs::FUNCS {
             let full = if f.ns.is_empty() { f.name.to_string() } else { format!("{}.{}", f.ns, f.name) };
             assert!(text.contains(&format!("\n## `{full}`\n")), "docs/modding/reference has no section for {full}");
