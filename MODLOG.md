@@ -23132,6 +23132,36 @@ still gave `cor`. Both now go through actmotion::sdep_stand.
   tick again (retail). Before, the run kept its old vector and the character faced the camera, running sideways.
   A run a mod starts with actions.run keeps its own heading. The controller and the keys are untouched.
 
+## Model sub-animation: `init` alone sees an NPC's sub-state (2026-11-07)
+
+- FUN_1008c480 (asm 0x1008c598..0x1008c5fe), statuses other than 6 / 0x32 / 0x38 / 0x22 / 0x3f..0x53: saves the
+  model's sub-animation (vtable +0xa4, +0x8a5), sets it to the wanted one (entity +0x124 bits 1..3), starts `init`
+  (a new task steps at once, so `init` and what it starts with op 0x57 read the wanted value as var 0x3a), then sets
+  +0x8a5 back to the saved value (vtable +0xa8).
+- FUN_1008ef60 sets +0x8a5 for a wanted value below 4, and for 4 and up only on an actor that passes the +0x120 /
+  +0x130 tests below; for any other NPC spawned in a sub-state (LSB sends 4 | animationsub) the model's own stays 0
+  after `init`.
+- FUN_1008ef60's sub-state path (4 and up) and its `ini<n>` starts take an actor with the monster bit (+0x120 bit 13)
+  or +0x130 bit 2 (0x00E u32 @0x28 bit 26, asm 0x1009c5a2), not monsters only. Each change first copies the applied
+  value into +0x124 bits 8..11: scheduler var 0x3c (FUN_10062900; 8 as is, else & 3).
+- Synergy furnace (model 2348, file 52643; LSB animationsub 5 in every town): `init` -> `mse0` waits a tick, then
+  picks by var 0x3a `ids0` (closed: wepN hidden by op 0xa3 for 300 ticks, idle set 0 `idl0`), `ids1` (open: shown,
+  idle set 1 `1dl0`) or `ids2` / `ids3` (active, looping glows). The frame `init` starts, FUN_1008ef60 sets +0x8a5 to
+  5 and runs `ini1` -> `mse1` (var 0x3c 8: `ids1`), so retail shows the open idle. Both stop the model's 52 auto-start
+  crafting generators through `0kil`. Ours now does the same (lenonk/vana-client#96: the open idle is what retail
+  shows for LSB's data).
+- Review fixes:
+  - Order: FUN_1008c480 runs before FUN_1008ef60, so ef60 finds `init` running. A monster or flagged NPC first seen
+    with sub-state 4 (SUB[4] is `init`) started `init` twice in ours (monsters before this change too); the queued
+    one now counts as running.
+  - On status 0x22 `init` is a plain start, still before ef60: it reads the model's own value (0 for a new actor),
+    not the wanted one ef60 sets the same frame.
+  - +0x124 starts at 0x880 (FUN_1008a350): bits 8..11 = 8, so var 0x3c reads 8 for an actor ef60 never changed. Var
+    0x3c takes this path only for an actor with an entity (model +0x70); others read the variable as any other.
+  - Ef60's below-4 path excludes +0xee 6 / 7 (SubKind 5 / 6): those take the flagged path whatever the sub-state.
+  - The wanted value reaches the tasks `init`'s first step runs at once (kept over a file retry), not the ones it
+    creates to step later (ops 0x30, 0x5c, 0x76 / 0x77, 0x84), which step after +0x8a5 is back.
+
 ## Dolls go with their actor (2026-11-07)
 
 - User report (Garlaige Citadel): pink glows left on the floor where mobs had stood. The effects dump showed two
