@@ -632,8 +632,10 @@ fn edge_window(
     let mut sized: Option<Vec2> = None;
     let shown = egui::Area::new(id).order(egui::Order::Middle).fixed_pos(pos2(x, y)).constrain(false).show(ctx, |ui| {
         ui.multiply_opacity(vis);
-        // Room to the screen's bottom (an area offers only last frame's size).
-        ui.set_max_height((screen.max.y - y).max(ui.min_rect().height()));
+        // Room to the screen's bottom (an area offers only last frame's size); one held on the bottom edge stands on it
+        // by last frame's height, so it may grow up the whole screen (it rises next frame) rather than scroll.
+        let room = if !float && side == Side::Bottom { screen.height() } else { screen.max.y - y };
+        ui.set_max_height(room.max(ui.min_rect().height()));
         // Under the top bar the open top's border stays hidden above the window.
         let bg = ui.painter().with_clip_rect(Rect::from_min_max(pos2(screen.min.x, y), screen.max)).add(Shape::Noop);
         // The background moves it: sensed under the contents (last frame's size), so they keep their clicks.
