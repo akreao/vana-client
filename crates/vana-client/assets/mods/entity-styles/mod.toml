@@ -1,6 +1,6 @@
 name = "Entity Styles"
-version = "1.0.1"
-description = "Renames characters and monsters on your screen, hides your own name plate, and sets your size (the renamer and name plate add-ons). Only you see it. Commands: //rename <name> as <new name>, //rename <name> (undo), //renames."
+version = "1.0.2"
+description = "Renames characters and monsters on your screen, hides your own name plate, and sets your size (the renamer and name plate add-ons). Only you see it.\n\n//rename <name> as <new name>\n//rename <name> (undo)\n//renames"
 permissions = []
 
 [settings.on]

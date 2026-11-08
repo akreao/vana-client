@@ -1,6 +1,6 @@
 name = "Key Commands"
-version = "1.0.1"
-description = "Binds keys to command lines and makes short aliases for long commands, kept per character (the bind and alias add-ons). Commands: //bind <key> <line>, //unbind <key>, //binds, //alias <name> <line>, //unalias <name>, //aliases."
+version = "1.0.2"
+description = "Binds keys to command lines and makes short aliases for long commands, kept per character (the bind and alias add-ons).\n\n//bind <key> <line>\n//unbind <key>\n//binds\n//alias <name> <line>\n//unalias <name>\n//aliases"
 permissions = ["actions"]
 
 [settings.on]

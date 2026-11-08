@@ -1,6 +1,6 @@
 name = "XP Tracker"
-version = "1.0.1"
-description = "Experience, limit and capacity points with their rates per hour, in a window on a screen edge (the point-watch add-ons). Commands: //xp reset."
+version = "1.0.2"
+description = "Experience, limit and capacity points with their rates per hour, in a window on a screen edge (the point-watch add-ons).\n\n//xp reset"
 permissions = []
 
 [settings.on]
