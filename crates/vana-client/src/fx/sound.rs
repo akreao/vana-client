@@ -141,23 +141,32 @@ pub fn sph(d: &[u8]) -> Vec<(Vec3, f32, Vec3, f32)> {
         .collect()
 }
 
-/// FUN_100551b0: the offset from the listener to the nearest point of the capsule chain (radius interpolated
-/// along each segment), pulled in by the radius, zero inside *(inf: FUN_10054fb0's exact clamp)*.
+/// Emission op 0x6b (FUN_10056160 over FUN_10055f60): the offset from the listener to the nearest point of the
+/// capsule chain. Per segment A -> B: Q = the point of the segment nearest the listener, r = A's radius blended to B's
+/// by Q's place along it, offset = unit(Q - listener) x max(|Q - listener| - r, 0) (zero inside). A segment of length
+/// 0 skips the radius (the normalise leaves a zero vector): the offset is A - listener. The smallest pulled-in
+/// distance wins, the first on a tie.
 pub fn nearest(caps: &[(Vec3, f32, Vec3, f32)], l: Vec3) -> Vec3 {
-    let mut best: Option<Vec3> = None;
+    let mut best: Option<(f32, Vec3)> = None;
     for &(a, ra, b, rb) in caps {
         let ab = b - a;
-        let t = if ab.length_squared() > 0.0 { ((l - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0) } else { 0.0 };
-        let q = a + ab * t;
-        let r = ra + (rb - ra) * t;
-        let off = q - l;
-        let len = off.length();
-        let o = if len <= r { Vec3::ZERO } else { off * ((len - r) / len) };
-        if best.is_none_or(|b| o.length_squared() < b.length_squared()) {
-            best = Some(o);
+        let len = ab.length();
+        let (o, k) = if len > 0.0 {
+            let s = ((l - a).dot(ab) / (len * len)).clamp(0.0, 1.0);
+            let off = a + ab * s - l;
+            let d = off.length();
+            let r = ra + (rb - ra) * s;
+            let k = (d - r).max(0.0);
+            (if d > 0.0 { off * (k / d) } else { Vec3::ZERO }, k)
+        } else {
+            let off = a - l;
+            (off, off.length())
+        };
+        if best.is_none_or(|(bk, _)| k < bk) {
+            best = Some((k, o));
         }
     }
-    best.unwrap_or(Vec3::ZERO)
+    best.map_or(Vec3::ZERO, |b| b.1)
 }
 
 /// FUN_10035e50: volume and pan of a source at `pos` for the listener at the eye. None = silent (stop).
@@ -247,6 +256,24 @@ mod tests {
             .into_iter()
             .filter_map(|c| if let SoundCmd::Play { se, .. } = c { Some(se) } else { None })
             .collect()
+    }
+
+    /// FUN_10055f60: radius blended along the segment, zero inside, and a zero-length segment without its radius.
+    #[test]
+    fn capsule_nearest() {
+        let seg = (Vec3::ZERO, 1.0, Vec3::new(10.0, 0.0, 0.0), 3.0);
+        // Halfway along (r = 2), 6 above: pulled in to 4 above.
+        assert!(nearest(&[seg], Vec3::new(5.0, 6.0, 0.0)).abs_diff_eq(Vec3::new(0.0, -4.0, 0.0), 1e-5));
+        // Inside the capsule: zero.
+        assert_eq!(nearest(&[seg], Vec3::new(5.0, 1.0, 0.0)), Vec3::ZERO);
+        // Past B: clamped to B with B's radius.
+        assert!(nearest(&[seg], Vec3::new(15.0, 0.0, 0.0)).abs_diff_eq(Vec3::new(-2.0, 0.0, 0.0), 1e-5));
+        // A point (A = B) keeps no radius: the offset is A itself.
+        let dot = (Vec3::new(0.0, 0.0, 4.0), 3.0, Vec3::new(0.0, 0.0, 4.0), 3.0);
+        assert_eq!(nearest(&[dot], Vec3::ZERO), Vec3::new(0.0, 0.0, 4.0));
+        // The smaller pulled-in distance wins (13 for the far capsule, 4 for the near one).
+        let far = (Vec3::new(0.0, 20.0, 0.0), 1.0, Vec3::new(10.0, 20.0, 0.0), 1.0);
+        assert!(nearest(&[far, seg], Vec3::new(5.0, 6.0, 0.0)).abs_diff_eq(Vec3::new(0.0, -4.0, 0.0), 1e-5));
     }
 
     /// FUN_10036460: 20 SeSep resources a 2-tick pass; once full a repeat waits too.
