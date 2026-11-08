@@ -1,6 +1,6 @@
 name = "Item Use Queue"
-version = "1.0.0"
-description = "Uses every copy of an item one after another, such as a stack of pouches or bags (the pouch add-ons)."
+version = "1.0.1"
+description = "Uses every copy of an item one after another, such as a stack of pouches or bags (the pouch add-ons). Commands: //useall <item>, //useall stop."
 permissions = ["actions"]
 
 [settings.on]

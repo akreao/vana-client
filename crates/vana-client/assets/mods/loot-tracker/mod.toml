@@ -1,6 +1,6 @@
 name = "Loot Tracker"
-version = "1.0.0"
-description = "Treasure Hunter on your target, what each kind of monster has dropped this session, and the treasure pool's time left (the loot tracker add-ons)."
+version = "1.0.1"
+description = "Treasure Hunter on your target, what each kind of monster has dropped this session, and the treasure pool's time left (the loot tracker add-ons). Commands: //lootlog reset."
 permissions = []
 
 [settings.on]

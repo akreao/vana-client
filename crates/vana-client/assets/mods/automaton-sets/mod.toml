@@ -1,6 +1,6 @@
 name = "Automaton Sets"
-version = "1.0.0"
-description = "Saves your automaton's head, frame and attachments as named sets and puts a set on with one command (the automaton set add-ons)."
+version = "1.0.1"
+description = "Saves your automaton's head, frame and attachments as named sets and puts a set on with one command (the automaton set add-ons). Commands: //automaton save <name>, //automaton <name>, //automaton list, //automaton delete <name>."
 permissions = ["actions"]
 
 [settings.on]
