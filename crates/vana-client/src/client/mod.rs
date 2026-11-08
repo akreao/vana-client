@@ -8261,7 +8261,7 @@ impl App {
         let frame_limit = cfg.frame_limit();
         crate::render::ANISOTROPY.store(cfg.anisotropy.clamp(1, 16), std::sync::atomic::Ordering::Relaxed);
         crate::render::MIPMAPS.store(cfg.tool("0000") != 0, std::sync::atomic::Ordering::Relaxed);
-        crate::render::UNCOMPRESSED.store(cfg.tool("0018") >= 2, std::sync::atomic::Ordering::Relaxed);
+        crate::render::set_uncompressed(cfg.tool("0018") >= 2);
         crate::render::MAP_COMPRESSED.store(cfg.tool("0019") == 0, std::sync::atomic::Ordering::Relaxed);
         crate::render::SHINE_WRAP.store(cfg.tool("0040") == 0, std::sync::atomic::Ordering::Relaxed);
         let (tasks_tx, tasks) = channel();
@@ -8421,7 +8421,7 @@ impl App {
         self.present_dirty = true;
         crate::render::ANISOTROPY.store(self.cfg.anisotropy.clamp(1, 16), std::sync::atomic::Ordering::Relaxed);
         crate::render::MIPMAPS.store(self.cfg.tool("0000") != 0, std::sync::atomic::Ordering::Relaxed);
-        crate::render::UNCOMPRESSED.store(self.cfg.tool("0018") >= 2, std::sync::atomic::Ordering::Relaxed);
+        crate::render::set_uncompressed(self.cfg.tool("0018") >= 2);
         crate::render::MAP_COMPRESSED.store(self.cfg.tool("0019") == 0, std::sync::atomic::Ordering::Relaxed);
         crate::render::SHINE_WRAP.store(self.cfg.tool("0040") == 0, std::sync::atomic::Ordering::Relaxed);
         let (m, e) = self.volume_factors();
@@ -9903,7 +9903,7 @@ impl App {
                             let tx = self.tasks_tx.clone();
                             std::thread::spawn(move || {
                                 let n = crate::dat::names::Names::load(&index, crate::dat::items::Lang::En)
-                                    .map(|n| (Arc::new(n), crate::dat::msgshift::MsgShift::bundled().verified(&index)));
+                                    .map(|n| (Arc::new(n), crate::dat::msgshift::MsgShift::bundled()));
                                 let _ = tx.send(Task::Names(n));
                             });
                         }
@@ -10675,6 +10675,11 @@ impl App {
                     (world.my_draw_yaw, world.my_face) = (None, None);
                     swkbd::zone_out(world);
                     log::info!("zone-in: zone {zone} at {:?} dir {dir}", pos);
+                    // MsgShift's check of this zone's dialogue file (a read and a hash) off the UI thread, before the
+                    // zone's first text line asks for it (event::zone_text).
+                    if let (Some(m), Some(dats)) = (world.msgshift.clone(), world.index.clone()) {
+                        std::thread::spawn(move || m.installed(&dats, zone));
+                    }
                     // FUN_1018b500 -> FUN_1001e4f0: the view shake stops at a zone load.
                     world.camst.shake = camera::Shake::default();
                     // FUN_10093720: the zone load clears the once-a-zone sound reset; it runs when the player's model
@@ -17981,14 +17986,18 @@ impl App {
                         g.lamp_lit = lit;
                     }
                 }
-                let drawn_map: HashMap<u32, &crate::render::ActorGpu> = w
+                let mut drawn: Vec<(u32, &crate::render::ActorGpu)> = w
                     .actors
                     .iter()
                     .filter(|(id, a)| !a.vanished() && !hidden.contains(id) && !far_out.contains(id) && !culled(id, a))
                     .filter_map(|(id, a)| Some((*id, a.gpu.as_ref()?)))
                     .filter(|(_, g)| g.alpha >= 1e-4)
                     .collect();
-                let actors: Vec<&crate::render::ActorGpu> = drawn_map.values().copied().collect();
+                // One order every frame (a map's order changes with each new map): which overlapping edges blend over
+                // which, and which actors take the 64 shine and fade slots, stay put.
+                drawn.sort_unstable_by_key(|d| d.0);
+                let actors: Vec<&crate::render::ActorGpu> = drawn.iter().map(|d| d.1).collect();
+                let drawn_map: HashMap<u32, &crate::render::ActorGpu> = drawn.into_iter().collect();
                 counts = perf::Counts {
                     entities: w.entities.len(),
                     actors: w.actors.len(),

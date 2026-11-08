@@ -577,6 +577,13 @@ impl Effects {
         self.equip_calls.retain(|c| c.0 != id);
         self.wading.remove(&id);
         self.foot_folder.remove(&id);
+        // Its shine, colour drives and hide go with it (retail's actor object holds them): a respawn under the same
+        // id (LSB reuses them) started from the old one's.
+        self.shine.remove(&id);
+        self.shine_drives.retain(|d| d.actor != id);
+        self.color_drives.retain(|d| d.actor != id);
+        self.color_guards.retain(|g| g.1 != id);
+        self.hidden_actors.remove(&id);
         for p in &mut self.pending {
             clear(&mut p.a1);
             clear(&mut p.a2);

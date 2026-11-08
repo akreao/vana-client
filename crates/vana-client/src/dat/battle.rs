@@ -379,7 +379,7 @@ impl BattleText {
     /// English item name: form 0 singular, 1 with its article, 2 plural.
     /// The noun of form 0 (bare), 1 (singular, mode 3) or 2 (plural, mode 4) and whether it takes "an".
     fn item_noun(&self, id: u32, form: u8) -> Option<(String, u8, bool)> {
-        let n = super::names::item_noun(self.items.as_ref()?.item(id)?);
+        let n = self.items.as_ref()?.noun(id)?;
         Some(match form {
             0 => (n.bare, n.mode, n.an),
             1 => (n.singular, 3, n.singular_an),

@@ -1259,7 +1259,9 @@ impl Effects {
     /// A new zone: the old zone's instances go, and its auto-start world generators start (FUN_10046d30).
     /// Returns the library's registry index, for [`Effects::switch_zone`].
     pub fn load_zone(&mut self, lib: Library) -> usize {
-        let l = self.reg.add(lib);
+        // A zone come back to keeps its library: another copy (and its meshes and textures on the GPU) per visit grew
+        // for the whole session. Its caches are the same either way.
+        let l = self.reg.lib_of(lib.file_id).unwrap_or_else(|| self.reg.add(lib));
         self.switch_zone(l);
         l
     }
@@ -1288,6 +1290,11 @@ impl Effects {
         self.dolls.clear();
         self.pending.clear();
         self.models.clear();
+        self.shine.clear();
+        self.shine_drives.clear();
+        self.color_drives.clear();
+        self.color_guards.clear();
+        self.hidden_actors.clear();
         self.zone_lib = Some(l);
         self.reg.zone = Some(l);
         let weat = crate::dat::generator::fourcc("weat");

@@ -260,7 +260,7 @@ pub fn render_batches_png(
     let mut slot: HashMap<&str, usize> = HashMap::new();
     for t in tex_list {
         slot.insert(&t.name, textures.len());
-        textures.push(make_texture(t.width, t.height, &t.rgba));
+        textures.push(make_texture(t.width, t.height, t.rgba()));
     }
     let mut verts: Vec<CharVertex> = Vec::new();
     let mut draws = Vec::new();

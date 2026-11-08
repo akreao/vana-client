@@ -728,7 +728,7 @@ impl LogWin {
         let limit = if filter == 8 { KEEP } else { 100 };
         let mut rows: Vec<Vec<Row>> = Vec::new();
         let mut n = 0;
-        for k in (0..chat.len()).rev() {
+        for k in (chat.start()..chat.len()).rev() {
             let (mode, gm) = chat.route(k);
             if !tab_shows(filter, &route, mode, gm) {
                 continue;
@@ -828,7 +828,7 @@ impl LogWin {
             (self.width, self.edits, self.route) = (tw, chat.edits(), route);
             let mut rows: Vec<Vec<Row>> = Vec::new();
             let mut n = 0;
-            for k in (0..chat.len()).rev() {
+            for k in (chat.start()..chat.len()).rev() {
                 let (mode, gm) = chat.route(k);
                 if !route.shows(window, mode, gm) {
                     continue;
@@ -856,7 +856,7 @@ impl LogWin {
                 }
                 self.anim.settle();
             }
-            for k in self.seen..chat.len() {
+            for k in self.seen.max(chat.start())..chat.len() {
                 let (mode, gm) = chat.route(k);
                 if route.shows(window, mode, gm) {
                     let r = self.wrap_line(gu, chat, k, tw);

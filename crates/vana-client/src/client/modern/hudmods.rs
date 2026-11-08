@@ -168,16 +168,11 @@ fn element(
         }
         Kind::Image { key, img, w: iw, h: ih, tint } => {
             let r = Rect::from_min_size(at, vec2(pt(*iw), pt(*ih)));
-            let mut images = m.images.borrow_mut();
-            let t = images.entry(key.clone()).or_insert_with(|| {
-                Some(ctx.load_texture(
-                    key.clone(),
-                    egui::ColorImage::from_rgba_unmultiplied([img.0 as usize, img.1 as usize], &img.2),
-                    egui::TextureOptions::LINEAR,
-                ))
+            let t = m.texture(ctx, key, || {
+                Some(egui::ColorImage::from_rgba_unmultiplied([img.0 as usize, img.1 as usize], &img.2))
             });
             if let Some(t) = t {
-                painter.image(t.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), rgba(*tint));
+                painter.image(t, r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), rgba(*tint));
             }
             r
         }

@@ -99,7 +99,7 @@ pub fn view_set(v: Mat4) -> [Mat4; 4] {
 /// retail lamp glow 'light', under 10 % in hit sparks drawn with hard steps.
 fn dithered(t: &crate::dat::zone::Texture) -> bool {
     let (w, h) = (t.width as usize, t.height as usize);
-    let a = |x: usize, y: usize| t.rgba[(y * w + x) * 4 + 3] as i32;
+    let a = |x: usize, y: usize| t.rgba()[(y * w + x) * 4 + 3] as i32;
     let (mut covered, mut extreme) = (0usize, 0usize);
     for y in 1..h - 1 {
         for x in 1..w - 1 {
@@ -121,15 +121,15 @@ fn dithered(t: &crate::dat::zone::Texture) -> bool {
 /// today's resolutions. None = leave it as it is.
 pub fn soften_alpha(t: &crate::dat::zone::Texture) -> Option<crate::dat::zone::Texture> {
     let (w, h) = (t.width as usize, t.height as usize);
-    if w < 4 || h < 4 || t.rgba.len() < w * h * 4 {
+    if w < 4 || h < 4 || t.rgba().len() < w * h * 4 {
         return None;
     }
-    let levels: std::collections::BTreeSet<u8> = t.rgba.chunks(4).map(|p| p[3]).collect();
-    let clear = t.rgba.chunks(4).filter(|p| p[3] == 0).count();
+    let levels: std::collections::BTreeSet<u8> = t.rgba().chunks(4).map(|p| p[3]).collect();
+    let clear = t.rgba().chunks(4).filter(|p| p[3] == 0).count();
     if levels.len() > 8 || levels.len() < 2 || clear == 0 || clear == w * h || !dithered(t) {
         return None;
     }
-    let mut px = t.rgba.clone();
+    let mut px = t.rgba().to_vec();
     let at = |x: isize, y: isize| (y.clamp(0, h as isize - 1) as usize * w + x.clamp(0, w as isize - 1) as usize) * 4;
     // Colour into the clear texels, two rings out from the opaque ones.
     let mut filled: Vec<bool> = px.chunks(4).map(|p| p[3] != 0).collect();
@@ -1043,7 +1043,7 @@ impl EffectsGpu {
         }
         let t = &fx.reg.libs[s.tex.0].textures[s.tex.1];
         let (d2, cube) = if s.cube {
-            (None, Some(Self::cube_view(gpu, t.width, t.height, Some(&t.rgba))))
+            (None, Some(Self::cube_view(gpu, t.width, t.height, Some(t.rgba()))))
         } else {
             (Some(super::upload_texture(gpu, t, false)), None)
         };
@@ -2408,11 +2408,11 @@ mod soften_tests {
         }
         let t = Texture::new("light".into(), 0, w, h, rgba);
         let s = soften_alpha(&t).expect("few levels");
-        let levels: std::collections::BTreeSet<u8> = s.rgba.chunks(4).map(|p| p[3]).collect();
+        let levels: std::collections::BTreeSet<u8> = s.rgba().chunks(4).map(|p| p[3]).collect();
         assert!(levels.len() > 8, "{levels:?}");
         // Texels just outside the old edge took the glow's colour, not black.
         let i = ((7 * w + 13) * 4) as usize;
-        assert!(s.rgba[i] > 200 && s.rgba[i + 3] > 0, "{:?}", &s.rgba[i..i + 4]);
+        assert!(s.rgba()[i] > 200 && s.rgba()[i + 3] > 0, "{:?}", &s.rgba()[i..i + 4]);
         // Many alpha levels already: left alone.
         let smooth: Vec<u8> = (0..w * h).flat_map(|k| [9, 9, 9, (k % 200) as u8]).collect();
         assert!(soften_alpha(&Texture::new("s".into(), 0, w, h, smooth)).is_none());

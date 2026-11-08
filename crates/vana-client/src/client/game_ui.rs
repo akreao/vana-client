@@ -23,6 +23,9 @@ pub const GREY: [u8; 4] = [0x58, 0x58, 0x58, 0x80];
 const MODERN_CORNER: f32 = 24.0;
 
 /// Parsed resources; loaded off the UI thread.
+/// How long a name plate's raster stays undrawn before it goes (GameUi::touch_image).
+const TEMP_KEEP: std::time::Duration = std::time::Duration::from_secs(30);
+
 pub struct GameUiData {
     lobby: UiFile,
     style: SpriteLib,
@@ -344,6 +347,10 @@ pub struct GameUi {
     replaced: Vec<(String, u32, u32, Vec<u8>)>,
     /// A mod image's older contents (image), freed once a frame's batch no longer draws them.
     stale: Vec<String>,
+    /// Images made for a while (name plates' rasters): when each was last drawn; unseen for TEMP_KEEP, stale.
+    temp_seen: std::collections::HashMap<String, std::time::Instant>,
+    /// When temp_seen was last looked over.
+    temp_swept: std::time::Instant,
     /// The startup images a style replaced, for reset_style.
     style_saved: std::collections::HashMap<String, crate::dat::ui::UiImage>,
     /// The pointer is over an enabled item (mouse cursor kind 1); set by the windows' hit tests, cleared when the
@@ -465,6 +472,8 @@ impl GameUi {
             style_index: 0,
             replaced: Vec::new(),
             stale: Vec::new(),
+            temp_seen: Default::default(),
+            temp_swept: std::time::Instant::now(),
             style_saved: Default::default(),
             hover: Default::default(),
             modern_order: Default::default(),
@@ -801,6 +810,13 @@ impl GameUi {
                             && let Some((w, h, rgba)) = super::chaticons::get(k)
                         {
                             self.image(&name, w, h, (*rgba).clone());
+                            // The pixels it had before a mod reload changed them go once nothing draws them.
+                            if let Some(old) = super::chaticons::previous_texture(k)
+                                && self.has_image(&old)
+                                && !self.stale.contains(&old)
+                            {
+                                self.stale.push(old);
+                            }
                         }
                         let (w, h) = icon_size(k);
                         self.image_rect(&name, x, y + 1.0, w, h, [1.0; 4]);
@@ -1802,6 +1818,19 @@ impl GameUi {
         self.views.push((name.to_string(), view));
     }
 
+    /// Image `name` (one made for a while: a name plate's raster) drawn now; TEMP_KEEP unseen, it goes.
+    pub fn touch_image(&mut self, name: &str) {
+        let now = std::time::Instant::now();
+        match self.temp_seen.get_mut(name) {
+            Some(t) => *t = now,
+            // Back after going stale (and not yet freed): it stays.
+            None => {
+                self.temp_seen.insert(name.to_string(), now);
+                self.stale.retain(|n| n != name);
+            }
+        }
+    }
+
     pub fn has_image(&self, name: &str) -> bool {
         self.images.contains(name)
     }
@@ -1818,11 +1847,12 @@ impl GameUi {
         use crate::dat::ui::{UiImage, norm_name};
         let mut fonts = UiFile::default();
         let a = &self.data.font.atlas;
-        fonts.images.insert(ATLAS.into(), UiImage { width: a.width, height: a.height, rgba: a.rgba.clone() });
+        fonts.images.insert(ATLAS.into(), UiImage { width: a.width, height: a.height, rgba: a.rgba().to_vec() });
         for (name, t) in &self.data.font.textures {
-            fonts
-                .images
-                .insert(norm_name(name.as_bytes()), UiImage { width: t.width, height: t.height, rgba: t.rgba.clone() });
+            fonts.images.insert(
+                norm_name(name.as_bytes()),
+                UiImage { width: t.width, height: t.height, rgba: t.rgba().to_vec() },
+            );
         }
         for (name, w, h, rgba) in &self.pending {
             fonts.images.insert(name.clone(), UiImage { width: *w, height: *h, rgba: rgba.clone() });
@@ -2458,12 +2488,30 @@ impl GameUi {
             let mut r = UiRenderer::new(gpu, format);
             r.load(gpu, &self.data.lobby);
             let a = &self.data.font.atlas;
-            r.load_image(gpu, ATLAS, a.width, a.height, &a.rgba);
+            r.load_image(gpu, ATLAS, a.width, a.height, a.rgba());
             for (name, t) in &self.data.font.textures {
-                r.load_image(gpu, &crate::dat::ui::norm_name(name.as_bytes()), t.width, t.height, &t.rgba);
+                r.load_image(gpu, &crate::dat::ui::norm_name(name.as_bytes()), t.width, t.height, t.rgba());
             }
             r
         });
+        // Name plates not drawn for a while go too (every name ever seen stayed for the session).
+        // Looked over once a second (a scan of every plate each frame otherwise).
+        let now = std::time::Instant::now();
+        if now.duration_since(self.temp_swept) >= std::time::Duration::from_secs(1) {
+            self.temp_swept = now;
+            let old: Vec<String> = self
+                .temp_seen
+                .iter()
+                .filter(|(_, t)| now.duration_since(**t) > TEMP_KEEP)
+                .map(|(n, _)| n.clone())
+                .collect();
+            for n in old {
+                self.temp_seen.remove(&n);
+                if !self.stale.contains(&n) {
+                    self.stale.push(n);
+                }
+            }
+        }
         let batch = &self.batch;
         let (gone, kept): (Vec<String>, Vec<String>) =
             std::mem::take(&mut self.stale).into_iter().partition(|n| !batch.uses(n));

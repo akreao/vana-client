@@ -6,7 +6,7 @@ use crate::net::map::compress::Codec;
 use crate::net::map::session::{MapSession, SubPacket, build};
 use anyhow::Result;
 use std::net::{Ipv4Addr, SocketAddr};
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -1187,15 +1187,36 @@ pub struct NetStats {
     /// The last sub-packet of each id each way (packets.last), kept while HOOK_LAST is set.
     pub last_in: Mutex<std::collections::HashMap<u16, Vec<u8>>>,
     pub last_out: Mutex<std::collections::HashMap<u16, Vec<u8>>>,
+    /// The ids the mods hook each way (in, out; a bit an id), published each frame: only a batch holding one goes
+    /// through the main thread, the rest decode or go out at once.
+    pub hooked: [[AtomicU64; 8]; 2],
+}
+
+/// A sub-packet's id (its first 9 bits).
+fn sub_id(data: &[u8]) -> u16 {
+    if data.len() < 2 { 0 } else { u16::from_le_bytes([data[0], data[1]]) & 0x1ff }
 }
 
 impl NetStats {
     /// Keeps a sub-packet as the last of its id.
     pub fn keep_last(&self, out: bool, data: &[u8]) {
-        let id = if data.len() < 2 { 0 } else { u16::from_le_bytes([data[0], data[1]]) & 0x1ff };
         if let Ok(mut m) = if out { &self.last_out } else { &self.last_in }.lock() {
-            m.insert(id, data.to_vec());
+            let e = m.entry(sub_id(data)).or_default();
+            e.clear();
+            e.extend_from_slice(data);
         }
+    }
+
+    /// The hooked ids one way (`out`), a bit an id.
+    pub fn set_hooked(&self, out: bool, ids: &[u64; 8]) {
+        for (a, v) in self.hooked[out as usize].iter().zip(ids) {
+            a.store(*v, Ordering::Relaxed);
+        }
+    }
+
+    fn hooked(&self, out: bool, id: u16) -> bool {
+        let i = (id & 0x1ff) as usize;
+        self.hooked[out as usize][i / 64].load(Ordering::Relaxed) >> (i % 64) & 1 != 0
     }
 }
 
@@ -1676,7 +1697,9 @@ fn session(
         let incoming = if !hooked_in.is_empty() {
             Some(std::mem::take(&mut hooked_in))
         } else {
-            let got = map.recv(Duration::from_millis(20))?;
+            // A batch with the hooks comes back between receives: look for it sooner then.
+            let wait = if away_in + away_out > 0 { 2 } else { 20 };
+            let got = map.recv(Duration::from_millis(wait))?;
             // Only datagrams that decode count (recv adds them).
             stats.received.fetch_add(map.bytes_in - rx_seen, Relaxed);
             rx_seen = map.bytes_in;
@@ -1684,8 +1707,11 @@ fn session(
                 Some(packets) => {
                     answered = true;
                     stats.last_rx_ms.store(stats.now_ms(), Relaxed);
-                    // While a mod hooks them, they go to the main thread first and come back as Decode.
-                    if hooks.load(Ordering::Relaxed) & HOOK_IN != 0 || away_in > 0 {
+                    // A batch holding an id a mod hooks goes to the main thread first and comes back as Decode (and
+                    // every batch after it while one is away, so the order holds).
+                    let hooked = hooks.load(Ordering::Relaxed) & HOOK_IN != 0
+                        && packets.iter().any(|p| stats.hooked(false, p.id));
+                    if hooked || away_in > 0 {
                         away_in += 1;
                         tx.send(NetEvent::RawIn(sess, packets))?;
                         None
@@ -2546,8 +2572,10 @@ fn session(
                 body[18..20].copy_from_slice(&s.target.to_le_bytes());
                 add_position(&mut queue, build(0x015, &body), s.moving);
             }
-            // While a mod hooks them, the batch goes to the main thread and comes back as SendBatch.
-            if hooks.load(Ordering::Relaxed) & HOOK_OUT != 0 || away_out > 0 {
+            // A batch holding an id a mod hooks goes to the main thread and comes back as SendBatch.
+            let hooked =
+                hooks.load(Ordering::Relaxed) & HOOK_OUT != 0 && queue.iter().any(|p| stats.hooked(true, sub_id(p)));
+            if hooked || away_out > 0 {
                 away_out += 1;
                 tx.send(NetEvent::RawOut(sess, std::mem::take(&mut queue)))?;
             } else {
@@ -2569,6 +2597,20 @@ fn session(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The hooked ids each way: only those (a sub-packet's first 9 bits) send a batch through the mods.
+    #[test]
+    fn hooked_ids() {
+        let s = NetStats::default();
+        let mut ids = [0u64; 8];
+        ids[0x032 / 64] |= 1 << (0x032 % 64);
+        ids[0x1ff / 64] |= 1 << (0x1ff % 64);
+        s.set_hooked(false, &ids);
+        assert!(s.hooked(false, 0x032) && s.hooked(false, 0x1ff) && !s.hooked(false, 0x033));
+        assert!(!s.hooked(true, 0x032));
+        assert_eq!(sub_id(&[0x32, 0x2e, 9]), 0x032);
+        assert_eq!(sub_id(&[0x15, 0x01]), 0x115);
+    }
 
     /// 0x0B6 is 4 × ceil((len + 0x15) / 4) bytes as retail's: 150 bytes of text give 172, and a NUL ends the text
     /// when the packet has room for it.
