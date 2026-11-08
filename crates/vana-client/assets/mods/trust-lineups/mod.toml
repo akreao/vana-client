@@ -1,5 +1,5 @@
 name = "Trust Lineups"
-version = "1.0.2"
+version = "1.0.3"
 description = "Saves the trusts you call as named lineups and calls a lineup with one command (the trust set add-ons).\n\n//trusts <lineup>\n//trusts save <lineup> [trust, trust...]\n//trusts list\n//trusts delete <lineup>"
 permissions = ["actions"]
 
