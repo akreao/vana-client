@@ -717,6 +717,9 @@ fn sample(m: &Modern, ctx: &egui::Context, layout: &mut Layout, opts: &Opts) {
     if opts.gm {
         super::gmwin::sample(&mut p);
     }
+    if opts.controller {
+        super::padwin::sample(&mut p);
+    }
     if opts.settings {
         let s = super::super::settings::SettingsUi::open(&crate::config::Config::default(), [1920, 1080]);
         super::config::sample(&mut p, &s);
@@ -815,6 +818,8 @@ pub struct Opts {
     pub settings: bool,
     /// Ours: the GM window (gmwin.rs) with a level 5 sample.
     pub gm: bool,
+    /// Ours: the Controller window (padwin.rs).
+    pub controller: bool,
     /// The favourites strip and starred list rows.
     pub favs: bool,
     /// The right-click menus beside the party window.

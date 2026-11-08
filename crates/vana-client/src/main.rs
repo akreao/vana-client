@@ -18,6 +18,7 @@ mod gamecfg;
 mod install;
 mod itemshot;
 mod mpeg1;
+mod padreg;
 mod patch;
 
 /// unrar_sys's build script picks its sources by the host (`cfg!(windows)`), so a MinGW cross build from Linux
@@ -623,6 +624,9 @@ enum Cmd {
         /// Ours: the GM window with a level 5 GM's sample commands.
         #[arg(long)]
         gm: bool,
+        /// Ours: the Controller window (the default layout, waiting on Movement Up).
+        #[arg(long)]
+        controller: bool,
         /// The favourites strip and starred list rows.
         #[arg(long)]
         favs: bool,
@@ -1392,6 +1396,7 @@ fn main() -> Result<()> {
             titles,
             settings,
             gm,
+            controller,
         } => {
             let list = font.is_some();
             client::modern_shot(
@@ -1415,6 +1420,7 @@ fn main() -> Result<()> {
                     titles,
                     settings,
                     gm,
+                    controller,
                 },
             )
         }

@@ -1,6 +1,6 @@
 # The catalogues
 
-Two lists the client reads from the `master` branch, keeping the last copy of each for when it is offline:
+Two lists the client reads from the `custom` branch (`updater::CATALOGUE_BRANCH`), keeping the last copy of each for when it is offline:
 
 - `dats.json`: the DAT packs offered on the **DATs** page (its Available tab, "From the catalogue"), as archives.
 - `mods.json`: the standard Lua mods offered by **Mods > Download Standard Mods**, each as its files in this repository

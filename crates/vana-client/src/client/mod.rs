@@ -69,6 +69,7 @@ mod modsui;
 mod myroom;
 pub mod net;
 mod notes;
+mod padcfg;
 pub(crate) mod perf;
 mod portrait;
 pub mod script;
@@ -339,6 +340,7 @@ fn typing_elsewhere(w: &World) -> bool {
         || (w.modern && w.full_log.is_some() && w.log_find.is_some())
         // Ours: the GM window's fields and search, and the Settings window's search.
         || modern::gm_takes_keys(w)
+        || modern::pad_takes_keys(w)
         || modern::config_finding(w)
 }
 
@@ -2351,6 +2353,11 @@ fn world_hud(
     if gm_typing {
         keys.clear();
     }
+    // Ours: the Controller window takes the keys while it is open (over the Settings window it is opened from).
+    let pad_typing = modern::pad_events(world, &input.events);
+    if pad_typing {
+        keys.clear();
+    }
     // The modern magic and ability windows' search takes the keys and text while it runs.
     let list_typing = listsearch::events(world, gu, &input.events);
     if list_typing {
@@ -2371,7 +2378,8 @@ fn world_hud(
         || scan_typing
         || find_typing
         || settings_typing
-        || gm_typing;
+        || gm_typing
+        || pad_typing;
     if post_typing {
         post::text_events(world, &input.events);
         keys.clear();
@@ -2402,7 +2410,7 @@ fn world_hud(
     } else if map_typing && let Some(m) = world.map.as_mut() {
         m.text_events(&input.events);
         keys.clear();
-    } else if input_open && !scan_typing && !find_typing {
+    } else if input_open && !scan_typing && !find_typing && !pad_typing {
         event::input_events(world, &input.events);
         keys.clear();
     }
@@ -7688,6 +7696,8 @@ struct World {
     want_settings: Option<settings::Kind>,
     /// Ours: the GM window (gm.rs, modern/gmwin.rs).
     gm: gm::Gm,
+    /// Ours: the Controller window (padcfg.rs, modern/padwin.rs).
+    padcfg: padcfg::PadCfg,
     /// Ours: the camera keys' Y / X sense (Mouse/Cam.'s Camera Keys; the client's config keeps it).
     cam_keys: [u8; 2],
     /// The Lua mods of this session (docs/lua-mods.md).
@@ -9843,6 +9853,7 @@ impl App {
                             settings: None,
                             want_settings: None,
                             gm: gm::Gm::default(),
+                            padcfg: padcfg::PadCfg::default(),
                             cam_keys: [self.cfg.cam_keys_y as u8, self.cfg.cam_keys_x as u8],
                             lua: std::mem::take(&mut self.lobby_mods),
                             spam: spamfilter::SpamFilter::new(self.cfg.ffxi_dir()),
@@ -15927,6 +15938,56 @@ impl App {
         }
     }
 
+    /// The Controller window (padcfg.rs) each frame: the pad it waits for, what it changed into config.json, and the
+    /// settings in use shown again.
+    fn controller_window(
+        cfg: &mut crate::config::Config,
+        gp: &mut gamepad::Gamepad,
+        w: &mut World,
+        cap: Option<&gamepad::Capture>,
+        dt: f32,
+    ) {
+        let p = &mut w.padcfg;
+        if !p.open {
+            p.listening = None;
+            return;
+        }
+        if let Some(c) = cap
+            && p.feed(c, dt)
+        {
+            w.sounds.push(crate::audio::Ui::Select as u32);
+        }
+        let mut save = false;
+        if let Some((padsin, padexsin, on, bg, dead)) = p.save.take() {
+            (cfg.gamepad_padsin, cfg.gamepad_padexsin) = (padsin, padexsin);
+            (cfg.gamepad, cfg.gamepad_background) = (on, bg);
+            cfg.gamepad_deadzone = dead as f32 / 100.0;
+            save = true;
+        }
+        if std::mem::take(&mut p.use_retail) {
+            (cfg.gamepad_padsin, cfg.gamepad_padexsin) = (String::new(), String::new());
+            save = true;
+        }
+        if std::mem::take(&mut p.reread) {
+            gp.reload_retail(cfg.game_dir.clone());
+        }
+        if save {
+            log::info!("gamepad: settings saved (padsin {:?})", cfg.gamepad_padsin);
+            if let Err(e) = cfg.save() {
+                log::warn!("config save: {e:#}");
+            }
+            // The Settings window's copy follows, so its next store keeps them.
+            if let Some(s) = w.settings.as_mut() {
+                (s.s.gamepad, s.s.gamepad_dead) = (cfg.gamepad, (cfg.gamepad_deadzone * 100.0).round() as u32);
+            }
+        }
+        let p = &mut w.padcfg;
+        p.set = Some(gamepad::settings(&cfg, gp.retail()));
+        p.dead = (cfg.gamepad_deadzone * 100.0).round() as u32;
+        p.retail = gp.retail().map(|r| r.source.clone());
+        p.pads = gp.pads();
+    }
+
     /// The window's own upkeep each frame: monitors, mode and size changes, the full-screen re-ask, the present mode.
     fn window_upkeep(&mut self, gfx: &mut Gfx) {
         if self.monitors.is_empty() {
@@ -16219,13 +16280,18 @@ impl App {
         };
         let keyboard = matches!(&self.phase, Phase::World(w) if w.swkbd.is_some());
         let party_cursor = matches!(&self.phase, Phase::World(w) if w.party_cursor.is_some());
-        let ctx = gamepad::Ctx { menu, palette, tabs, field, keyboard, party_cursor };
+        // The Controller window waiting for a button: the pad goes to it.
+        let capture = matches!(&self.phase, Phase::World(w) if w.padcfg.open && w.padcfg.listening.is_some());
+        let ctx = gamepad::Ctx { menu, palette, tabs, field, keyboard, party_cursor, capture };
         let phase = &mut self.phase;
         let mut to_mods = |b: &[u8], a: [f32; 6], on: bool| match phase {
             Phase::World(w) => lua::input::pad_filter(w, b, a, on),
             _ => Vec::new(),
         };
         let pad = self.gamepad.poll(&self.cfg, gfx.window.has_focus(), ctx, dt, &mut to_mods);
+        if let Phase::World(w) = &mut self.phase {
+            Self::controller_window(&mut self.cfg, &mut self.gamepad, w, pad.capture.as_ref(), dt);
+        }
         self.input.set_pad(pad.pad);
         self.input.set_stick(pad.stick);
         self.keep_awake.update(pad.used);
