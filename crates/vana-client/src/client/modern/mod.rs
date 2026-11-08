@@ -34,6 +34,7 @@ mod loot;
 mod macros;
 mod maze;
 mod modwin;
+mod padwin;
 mod pupset;
 mod regioninfo;
 pub use modwin::Click as ModClick;
@@ -82,6 +83,7 @@ pub use gmwin::{events as gm_events, takes_keys as gm_takes_keys};
 pub use journal::key as journal_key;
 pub use lists::key as magic_key;
 pub use macros::key as macro_key;
+pub use padwin::{events as pad_events, takes_keys as pad_takes_keys};
 pub use status::key as status_key;
 pub use storage::key as storage_key;
 use theme::{Art, LABEL, NAME, STRONG};
@@ -394,6 +396,7 @@ impl Modern {
         equip::draw(&mut p, w);
         config::draw(&mut p, w);
         gmwin::draw(&mut p, w);
+        padwin::draw(&mut p, w);
         modwin::draw(&mut p, w);
         // A mod HUD element's tooltip, unless a panel is over it.
         if let Some((title, text, _)) = w.lua.hud_tip()
@@ -636,6 +639,7 @@ fn focus_panel(w: &World) -> Option<&'static str> {
         _ if w.friendui.is_some() => "window",
         _ if w.settings.is_some() || w.config.is_some() || w.bluset.is_some() || w.pupset.is_some() => "window",
         _ if gmwin::shown(w) => "window",
+        _ if padwin::shown(w) => "window",
         _ if w.magic.is_some() || w.ability.is_some() => "list",
         _ if w.cats.is_some() => "cats",
         _ if w.inspect.up() => "check",
@@ -720,6 +724,8 @@ fn default_place(id: &str) -> Place {
         // The command window: every window the command menu opens shows here. The item info rides the log as retail's
         // (mode 0, flag 0x1000).
         "window" => at(0.0047, 0.0347),
+        // Ours: the Controller window over the Settings window it is opened from.
+        "controller" => at(0.03, 0.06),
         "iteminfo" => on("combat"),
         // The treasure pool rides the action menu it is opened from, over the item info of its cursor's row.
         "loot" => on("iteminfo"),
