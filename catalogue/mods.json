@@ -1485,8 +1485,8 @@
       "files": [
         {
           "path": "init.lua",
-          "sha256": "4eae92b1d510be215873c1a9b2faaa25f8cd204ca91f5fe408b66d93985ab754",
-          "size": 4335,
+          "sha256": "5a26c40ab1fc939f89dcf2584f1c6d34ff1700b5ace8baa925fcbd40bab22bc1",
+          "size": 6884,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/master/crates/vana-client/assets/mods/pending-actions/init.lua"
         },
         {
