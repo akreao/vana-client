@@ -67,16 +67,20 @@ local function spells()
   return out
 end
 
+-- Ability kinds as the Action Panel reads them: traits have no command, Monstrosity moves have their own list, and
+-- Ready moves (below 0x400 too) are pet commands.
+local TRAIT, MONSTROSITY, READY = 4, 0x14, 0x12
+
 local function abilities()
   local out = {}
   local me, rc = game.player(), game.recasts()
   for _, id in ipairs(game.abilities()) do
     local a = res.ability(id)
-    if a and a.name and a.name ~= "" then
+    if a and a.name and a.name ~= "" and a.kind ~= TRAIT and a.kind ~= MONSTROSITY and (a.sub or 0) == 0 then
       local cmd, info = "/ja", "Ability"
       if id < 0x200 then
         cmd, info = "/ws", "Weapon skill"
-      elseif id >= 0x400 then
+      elseif id >= 0x400 or a.kind == READY then
         cmd, info = "/pet", "Pet command"
       end
       out[#out + 1] = { label = a.name, info = info, icon = { kind = "ability", id = id },
