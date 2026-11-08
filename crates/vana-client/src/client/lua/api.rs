@@ -386,6 +386,7 @@ pub(super) fn install(
             w.hud |= w.edge;
             w.heading = spec.get::<Option<String>>("heading")?.unwrap_or_default();
             w.resize = spec.get::<Option<bool>>("resize")?.unwrap_or(false);
+            w.grow_up = spec.get::<Option<String>>("grow")?.as_deref() == Some("up");
             w.panel = spec.get::<Option<String>>("panel")?;
             if let Some(p) = w.panel.as_deref() {
                 let (list, kind) = if w.edge {

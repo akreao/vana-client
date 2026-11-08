@@ -363,6 +363,10 @@ pub struct Window {
     pub edge: bool,
     pub heading: String,
     pub resize: bool,
+    /// An edge window that grows and shrinks upward: its bottom stays put (`grow = "up"`).
+    pub grow_up: bool,
+    /// The edge an edge window stands on, as last told to the mod: "top", "bottom", "left", "right" or "free".
+    pub dock: Option<&'static str>,
     pub panel: Option<String>,
 }
 
@@ -406,6 +410,10 @@ pub enum Event {
         y: f32,
         right: bool,
     },
+    /// An edge window's edge changed (or was first known).
+    Dock {
+        side: &'static str,
+    },
     /// The pointer over a canvas (when it moved), or gone off it (`x` / `y` negative).
     Hover {
         id: String,
@@ -442,6 +450,7 @@ impl Event {
             Event::Click { id, x, y, right } => {
                 json!({"kind": "click", "id": id, "x": x.round() as i64, "y": y.round() as i64, "button": if *right { "right" } else { "left" }})
             }
+            Event::Dock { side } => json!({"kind": "dock", "side": side}),
             Event::Hover { id, x, y } => {
                 let kind = if *x < 0.0 { "leave" } else { "hover" };
                 json!({"kind": kind, "id": id, "x": x.round() as i64, "y": y.round() as i64})
@@ -520,6 +529,8 @@ impl Window {
             edge: false,
             heading: String::new(),
             resize: false,
+            grow_up: false,
+            dock: None,
             panel: None,
         }
     }
@@ -955,6 +966,12 @@ impl Window {
             ev.push(Event::Click { id: id.clone(), x, y, right });
         }
         (ev, Vec::new())
+    }
+
+    /// An edge window now stands on `side` (the `dock` event).
+    pub fn docked(&mut self, side: &'static str) -> (Vec<Event>, Vec<Se>) {
+        self.dock = Some(side);
+        (vec![Event::Dock { side }], Vec::new())
     }
 
     /// The pointer over a canvas at (x, y) in its units, or off it (negative).

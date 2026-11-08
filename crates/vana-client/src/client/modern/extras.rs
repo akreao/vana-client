@@ -170,7 +170,31 @@ fn mod_edges(p: &mut Panels, w: &mut World) {
         let width = if win.width > 0.0 { win.width } else { WIDTH };
         let mut clicks = Vec::new();
         let world: &World = w;
-        let toggle = edge_window(p, &key, width, win.resize, folded, &label, |ui, side, fixed| {
+        // A canvas's height change this frame, for a window that grows upward.
+        let canvas_h: f32 = win
+            .elems
+            .iter()
+            .map(|e| if let super::super::lua::window::Elem::Canvas { h, .. } = e { *h } else { 0.0 })
+            .sum();
+        let hid = egui::Id::unique(("mod canvas h", key.as_str()));
+        let grow = match ctx.data(|d| d.get_temp::<f32>(hid)) {
+            Some(was) if win.grow_up => canvas_h - was,
+            _ => 0.0,
+        };
+        ctx.data_mut(|d| d.insert_temp(hid, canvas_h));
+        // The edge it stands on, told to the mod when it changes (the `dock` event).
+        let place = p.place(&key);
+        let dock = match side_of(&place, ctx.content_rect(), width) {
+            _ if place.float => "free",
+            Side::Top => "top",
+            Side::Bottom => "bottom",
+            Side::Left => "left",
+            Side::Right => "right",
+        };
+        if win.dock != Some(dock) {
+            clicks.push(super::modwin::Click::Docked(dock));
+        }
+        let toggle = edge_window_up(p, &key, width, win.resize, folded, &label, grow, |ui, side, fixed| {
             let heading = if win.heading.is_empty() { &label } else { &win.heading };
             let toggle = flyout_header(ui, m, heading, side).clicked();
             ui.add_space(4.0);
@@ -524,6 +548,23 @@ fn edge_window(
     label: &str,
     add: impl FnOnce(&mut Ui, Side, bool) -> bool,
 ) -> bool {
+    edge_window_up(p, key, width, resize, folded, label, 0.0, add)
+}
+
+/// `edge_window` whose body grew by `grow` points this frame and keeps its bottom where it was (a mod's `grow = "up"`):
+/// free or on a side edge its top (and its saved place) moves up by that much, on the bottom edge it stands on its new
+/// height at once; on the top edge it can only grow down.
+#[allow(clippy::too_many_arguments)]
+fn edge_window_up(
+    p: &mut Panels,
+    key: &str,
+    width: f32,
+    resize: bool,
+    folded: bool,
+    label: &str,
+    grow: f32,
+    add: impl FnOnce(&mut Ui, Side, bool) -> bool,
+) -> bool {
     // Hidden by the mode (modes.rs, faded as the other panels) or by a Lua mod (ui.native.hide).
     let vis = p.vis(key);
     if vis <= 0.01 || p.hidden.contains(&key) {
@@ -543,7 +584,14 @@ fn edge_window(
     // Kept whole on the screen: its top at least its own height (last frame's) above the bottom.
     let last = m.rects.borrow().get(key).copied();
     let tall = last.map_or(TAB_H, |r| r.height().max(TAB_H));
-    let top = (screen.height() * place.y).clamp(screen.min.y, (screen.max.y - tall).max(screen.min.y));
+    let mut top = (screen.height() * place.y).clamp(screen.min.y, (screen.max.y - tall).max(screen.min.y));
+    if grow != 0.0 && !folded && (float || matches!(side, Side::Left | Side::Right)) {
+        top = (top - grow).max(screen.min.y);
+        let mut place = p.place(key);
+        place.y = top / screen.height();
+        p.layout.insert(key.to_string(), place);
+        *p.changed = true;
+    }
     let id = egui::Id::unique(("modern edge", key));
     let mut toggle = false;
     if folded {
@@ -607,7 +655,7 @@ fn edge_window(
         }
         return toggle;
     }
-    let h = fixed.unwrap_or_else(|| last.map_or(TAB_H, |r| r.height()));
+    let h = fixed.unwrap_or_else(|| last.map_or(TAB_H, |r| r.height())) + if folded { 0.0 } else { grow };
     let ax = fx.min(screen.max.x - width);
     let (x, y) = match (float, side) {
         (true, _) => (ax, top),

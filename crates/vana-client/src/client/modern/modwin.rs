@@ -23,6 +23,8 @@ pub enum Click {
     Canvas(usize, f32, f32, bool),
     /// The pointer over a canvas (moved), or off it (negative).
     CanvasHover(usize, f32, f32),
+    /// An edge window's edge: "top", "bottom", "left", "right" or "free".
+    Docked(&'static str),
     /// A canvas drag: element, phase (0 start, 1 move, 2 release), where.
     CanvasDrag(usize, u8, f32, f32),
     /// A `targets` row: the entity to target.
@@ -158,6 +160,7 @@ impl Click {
             Click::Sort(i, c) => win.sort(i, c),
             Click::Canvas(i, x, y, right) => win.canvas_click(i, x, y, right),
             Click::CanvasHover(i, x, y) => win.canvas_hover(i, x, y),
+            Click::Docked(side) => win.docked(side),
             Click::CanvasDrag(i, phase, x, y) => win.canvas_drag(i, phase, x, y),
             // The client picks it (lua::window_click).
             Click::Pick(_) => (Vec::new(), Vec::new()),
