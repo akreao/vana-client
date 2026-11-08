@@ -298,6 +298,8 @@ pub struct Settings {
     pub on: bool,
     pub background: bool,
     pub source: Source,
+    /// config.json holds a map of its own (either): Use Retail Settings has something to clear.
+    pub saved: bool,
 }
 
 /// What a frame's settings are. config.json's maps win (the Controller window writes them); else retail's registry
@@ -307,7 +309,7 @@ pub struct Settings {
 pub fn settings(cfg: &Config, retail: Option<&crate::padreg::Retail>) -> Settings {
     let mut s = settings_of(cfg, retail);
     if !cfg.gamepad_padexsin.trim().is_empty() {
-        s.padexsin = cfg.gamepad_padexsin.clone();
+        (s.padexsin, s.saved) = (cfg.gamepad_padexsin.clone(), true);
     }
     s
 }
@@ -316,7 +318,14 @@ fn settings_of(cfg: &Config, retail: Option<&crate::padreg::Retail>) -> Settings
     let (on, background) = (cfg.gamepad, cfg.gamepad_background);
     if !cfg.gamepad_padsin.trim().is_empty() {
         let padexsin = DEFAULT_PADEXSIN.to_string();
-        return Settings { padsin: cfg.gamepad_padsin.clone(), padexsin, on, background, source: Source::Config };
+        return Settings {
+            padsin: cfg.gamepad_padsin.clone(),
+            padexsin,
+            on,
+            background,
+            source: Source::Config,
+            saved: true,
+        };
     }
     if let Some(r) = retail.filter(|r| r.padsin.is_some()) {
         return Settings {
@@ -326,6 +335,7 @@ fn settings_of(cfg: &Config, retail: Option<&crate::padreg::Retail>) -> Settings
             on: on && r.mode(0) != Some(false),
             background: background || r.mode(4) == Some(true),
             source: Source::Retail,
+            saved: false,
         };
     }
     Settings {
@@ -334,6 +344,7 @@ fn settings_of(cfg: &Config, retail: Option<&crate::padreg::Retail>) -> Settings
         on,
         background,
         source: Source::Default,
+        saved: false,
     }
 }
 

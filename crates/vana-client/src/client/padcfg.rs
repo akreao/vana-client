@@ -425,7 +425,7 @@ mod tests {
         let cfg = crate::config::Config { gamepad_padexsin: "3".into(), ..Default::default() };
         let r = crate::padreg::Retail { padsin: Some("8".into()), padexsin: Some("9".into()), ..Default::default() };
         let s = gamepad::settings(&cfg, Some(&r));
-        assert_eq!((s.padsin.as_str(), s.padexsin.as_str(), s.source), ("8", "3", Source::Retail));
+        assert_eq!((s.padsin.as_str(), s.padexsin.as_str(), s.source, s.saved), ("8", "3", Source::Retail, true));
         let s = gamepad::settings(&cfg, None);
         assert_eq!((s.padexsin.as_str(), s.source), ("3", Source::Default));
     }
