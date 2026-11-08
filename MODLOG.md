@@ -23150,3 +23150,14 @@ still gave `cor`. Both now go through actmotion::sdep_stand.
   5 and runs `ini1` -> `mse1` (var 0x3c 8: `ids1`), so retail shows the open idle. Both stop the model's 52 auto-start
   crafting generators through `0kil`. Ours now does the same (lenonk/vana-client#96: the open idle is what retail
   shows for LSB's data).
+- Review fixes:
+  - Order: FUN_1008c480 runs before FUN_1008ef60, so ef60 finds `init` running. A monster or flagged NPC first seen
+    with sub-state 4 (SUB[4] is `init`) started `init` twice in ours (monsters before this change too); the queued
+    one now counts as running.
+  - On status 0x22 `init` is a plain start, still before ef60: it reads the model's own value (0 for a new actor),
+    not the wanted one ef60 sets the same frame.
+  - +0x124 starts at 0x880 (FUN_1008a350): bits 8..11 = 8, so var 0x3c reads 8 for an actor ef60 never changed. Var
+    0x3c takes this path only for an actor with an entity (model +0x70); others read the variable as any other.
+  - Ef60's below-4 path excludes +0xee 6 / 7 (SubKind 5 / 6): those take the flagged path whatever the sub-state.
+  - The wanted value reaches the tasks `init`'s first step runs at once (kept over a file retry), not the ones it
+    creates to step later (ops 0x30, 0x5c, 0x76 / 0x77, 0x84), which step after +0x8a5 is back.

@@ -58,6 +58,8 @@ pub(super) struct Pending {
     pub seq: Option<f32>,
     /// An event op's scheduler (on_event_scheduler).
     pub event: bool,
+    /// An `init` start's wanted sub-animation (on_init).
+    pub init_sub: Option<u8>,
 }
 
 /// A doll (CXiDollActor, FUN_100abea0): the actor's placement and its 48 points when a scheduler froze it. Ops
@@ -322,6 +324,7 @@ impl Effects {
                 own: false,
                 seq: None,
                 event: false,
+                init_sub: None,
             }),
             3..=6 | 0xb | 0xd..=0xf => {
                 let anim = a.targets.first().and_then(|t| t.results.first()).map_or(0, |r| r.animation as u32);
@@ -350,6 +353,7 @@ impl Effects {
                     own: false,
                     seq: None,
                     event: false,
+                    init_sub: None,
                 });
             }
             7..=0xa | 0xc => {
@@ -375,6 +379,7 @@ impl Effects {
                     own: true,
                     seq: None,
                     event: false,
+                    init_sub: None,
                 });
             }
             _ => {}
@@ -404,6 +409,7 @@ impl Effects {
                 own: true,
                 seq: None,
                 event: false,
+                init_sub: None,
             });
         }
         if arg != 0 {
@@ -433,6 +439,7 @@ impl Effects {
             own: false,
             seq: None,
             event: true,
+            init_sub: None,
         });
     }
 
@@ -491,6 +498,7 @@ impl Effects {
             own: false,
             seq: None,
             event: false,
+            init_sub: None,
         });
     }
 
@@ -519,6 +527,7 @@ impl Effects {
             own: false,
             seq: None,
             event: false,
+            init_sub: None,
         });
     }
 
@@ -559,7 +568,6 @@ impl Effects {
             }
         };
         self.pending.retain(|p| p.actor != Some(id));
-        self.init_sub.remove(&id);
         self.equip.remove(&id);
         self.equip_calls.retain(|c| c.0 != id);
         self.wading.remove(&id);
@@ -607,15 +615,19 @@ impl Effects {
             own: true,
             seq: None,
             event: false,
+            init_sub: None,
         });
     }
 
-    /// FUN_1008c480's `init` (asm 0x1008c598..0x1008c5fe): the model's sub-animation (+0x8a5) is the wanted one
-    /// only while `init` takes its first step, then goes back to what it was. A sub-state 4 and up (LSB spawns
-    /// one as 4 | sub) never reaches +0x8a5 on an NPC afterwards (FUN_1008ef60), so `init` alone sees it.
+    /// FUN_1008c480's `init` (asm 0x1008c598..0x1008c5fe): the model's sub-animation (+0x8a5) is `sub` only while
+    /// `init` takes its first step (and the tasks that step runs at once), then goes back to what it was. An
+    /// unflagged NPC's sub-state 4 and up (LSB spawns one as 4 | sub) never reaches +0x8a5 afterwards, so `init`
+    /// alone sees it; FUN_1008ef60 sets a flagged one's.
     pub fn on_init(&mut self, actor: u32, sub: u8) {
-        self.init_sub.insert(actor, sub);
         self.on_scheduler(actor, actor, INIT);
+        if let Some(p) = self.pending.last_mut() {
+            p.init_sub = Some(sub);
+        }
     }
 
     /// Vtable +0xa4 (+0x8a5): the model's sub-animation, or the wanted one inside an `init` start (on_init).
@@ -726,11 +738,10 @@ impl Effects {
                                     _ = self.fast_forward(ti, skip + (p.age - f.dt).max(0.0), actors)
                                 }
                                 _ => {
-                                    let init = p.actor.filter(|_| p.name == INIT && p.own);
-                                    if let Some(sub) = init.and_then(|a| Some((a, self.init_sub.remove(&a)?)))
+                                    if let (Some(a), Some(sub)) = (p.actor, p.init_sub)
                                         && let Some(Some(t)) = self.tasks.get_mut(ti)
                                     {
-                                        t.init_sub = Some(sub);
+                                        t.init_sub = Some((a, sub));
                                     }
                                     _ = self.run_new(ti, actors);
                                 }
@@ -867,7 +878,6 @@ impl Effects {
             self.reg.libs[r.0].file_id
         );
         let mut t = Task::new(r, ops, a1, a2, action, speed);
-        t.init_sub = self.sub_now;
         t.ends_loop = crate::dat::sched::loops(self.reg.libs[r.0].data(r.1));
         t.parent = parent;
         // A task an op creates belongs to its creator's event.
@@ -1079,15 +1089,14 @@ impl Effects {
         if t.init_sub.is_some() {
             self.sub_now = t.init_sub;
         }
-        let mut retry = false;
-        self.run_steps(i, t, actors, &mut retry);
-        if !retry {
+        if !self.run_steps(i, t, actors) {
             t.init_sub = None;
         }
         self.sub_now = outer;
     }
 
-    fn run_steps(&mut self, i: usize, t: &mut Task, actors: &dyn Actors, retry: &mut bool) {
+    /// True when the step ended on a file retry.
+    fn run_steps(&mut self, i: usize, t: &mut Task, actors: &dyn Actors) -> bool {
         let mut guard = 0;
         while !t.done && !t.waiting && t.countdown <= 0.0 && guard < 512 {
             guard += 1;
@@ -1111,8 +1120,7 @@ impl Effects {
                 }
                 Flow::Retry => {
                     t.countdown = t.countdown.max(0.0) - op.wait as f32 * t.speed + 1e-3;
-                    *retry = true;
-                    break;
+                    return true;
                 }
                 Flow::Pause => break,
                 Flow::End => t.done = true,
@@ -1123,6 +1131,7 @@ impl Effects {
                 t.early = 0.0;
             }
         }
+        false
     }
 
     /// After a step: a task that ended wakes its parent and ends its action; one still running goes back in its slot.
@@ -1164,6 +1173,9 @@ impl Effects {
         let Some(mut t) = self.tasks[i].take() else { return true };
         let outer = self.stepping.first().copied();
         self.stepping.push(i);
+        // Inside an `init`'s first step a task stepped at once sees its wanted sub-animation too (kept over a file
+        // retry); one that steps later (ops 0x30, 0x5c, 0x76 / 0x77, 0x84) sees the model's own.
+        t.init_sub = t.init_sub.or(self.sub_now);
         self.run_ready(i, &mut t, actors);
         // Once a frame: the frame's step is still to come for a start before it or a slot past its running task.
         t.stepped = outer.is_none_or(|o| i > o);
@@ -1623,6 +1635,7 @@ impl Effects {
                     own: false,
                     seq: None,
                     event: false,
+                    init_sub: None,
                 });
                 Flow::Next
             }
@@ -2317,6 +2330,7 @@ impl Effects {
                     own: false,
                     seq: None,
                     event: false,
+                    init_sub: None,
                 });
                 Flow::Next
             }
@@ -2342,16 +2356,17 @@ impl Effects {
                     1 => op.u32_at(12) as i32 as f64,
                     2 => f32::from_bits(op.u32_at(12)) as f64,
                     // 0x3a: actor1's sub-animation (vtable +0xa4, +0x8a5 & 3), with or without an action (FUN_10061950).
-                    3 => match op.u32_at(12) {
-                        0x3a => t.a1.id().map_or(0, |id| self.sub_of(id, actors) & 3) as f64,
+                    3 => match (op.u32_at(12), t.a1.id().and_then(|id| actors.sub_prev(id))) {
+                        (0x3a, _) => t.a1.id().map_or(0, |id| self.sub_of(id, actors) & 3) as f64,
                         // 0x3c: actor1's previous applied sub-animation (+0x124 bits 8..11): 8 (none) as is, else & 3.
-                        0x3c => t.a1.id().map_or(0, |id| match actors.sub_prev(id) & 0xf {
-                            8 => 8,
-                            v => v & 3,
-                        }) as f64,
+                        // Only an actor with an entity (FUN_10062900: model +0x70); others read the variable.
+                        (0x3c, Some(p)) => match p & 0xf {
+                            8 => 8.0,
+                            v => (v & 3) as f64,
+                        },
                         // 0x3b: actor1's off-hand flag (FUN_10062900 at 0x1006297f, through vt+0x254).
-                        0x3b => t.a1.id().is_some_and(|id| actors.off_hand(id)) as u8 as f64,
-                        k => t.action.as_ref().map_or(0, |a| a.borrow().var(k, t.a1.id())) as f64,
+                        (0x3b, _) => t.a1.id().is_some_and(|id| actors.off_hand(id)) as u8 as f64,
+                        (k, _) => t.action.as_ref().map_or(0, |a| a.borrow().var(k, t.a1.id())) as f64,
                     },
                     _ => 0.0,
                 };
@@ -2483,6 +2498,7 @@ impl Effects {
             own: false,
             seq: Some(skip),
             event: false,
+            init_sub: None,
         });
     }
 

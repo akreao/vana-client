@@ -1870,7 +1870,7 @@ fn self_entity(w: &World) -> Entity {
         mon_name: w.my_mon_name.clone(),
         mon_key: w.my_mon_key,
         sub: [0, 8, 0],
-        sub_prev: 0,
+        sub_prev: 8,
         sub_flag: false,
         mon_stat: 0,
         ev_mon_stat: None,
@@ -5330,7 +5330,7 @@ fn place_mogdoor(w: &mut World) {
             mon_name: None,
             mon_key: (0, [0; 2]),
             sub: [0, 8, 0],
-            sub_prev: 0,
+            sub_prev: 8,
             sub_flag: false,
             mon_stat: 0,
             ev_mon_stat: None,
@@ -6357,8 +6357,9 @@ impl crate::fx::Actors for FxActors<'_> {
         self.entities.get(&id).map_or(0, |e| e.sub[2])
     }
 
-    fn sub_prev(&self, id: u32) -> u8 {
-        self.entities.get(&id).map_or(0, |e| e.sub_prev)
+    // We are an entity in retail too; ours never has a sub-animation change, so its previous stays 8.
+    fn sub_prev(&self, id: u32) -> Option<u8> {
+        self.entities.get(&id).map(|e| e.sub_prev).or((id == self.me).then_some(8))
     }
 
     fn off_hand(&self, id: u32) -> bool {
@@ -10762,7 +10763,7 @@ impl App {
                         mon_name: None,
                         mon_key: (0, [0; 2]),
                         sub: [0, 8, 0],
-                        sub_prev: 0,
+                        sub_prev: 8,
                         sub_flag: false,
                         mon_stat: 0,
                         ev_mon_stat: None,
@@ -11879,25 +11880,28 @@ impl App {
         let mut starts: Vec<(u32, [u8; 4])> = Vec::new();
         let mut stops: Vec<(u32, [u8; 4])> = Vec::new();
         let (mut readies, mut ins): (Vec<u32>, Vec<u32>) = (Vec::new(), Vec::new());
-        // FUN_1008c480: `init` on a status of its own (not 0x22) sees the wanted sub-animation, then the model's goes
-        // back to what it was (Effects::on_init).
+        // FUN_1008c480, before FUN_1008ef60: `init` on a status of its own (not 0x22) sees the wanted sub-animation,
+        // then the model's goes back to what it was (Effects::on_init); on 0x22 it sees the model's own. True when
+        // `init` starts.
         let mut inits: Vec<(u32, u8)> = Vec::new();
-        let mut first_init = |id: u32, status: u8, sub: u8, starts: &mut Vec<(u32, [u8; 4])>| {
+        let mut first_init = |id: u32, status: u8, (want, own): (u8, u8), starts: &mut Vec<(u32, [u8; 4])>| {
             readies.push(id);
-            if !matches!(status, 6 | 0x32 | 0x38 | 0x3f..=0x53) {
-                if status == 0x22 {
-                    starts.push((id, *b"init"));
-                    starts.push((id, *b"inte"));
-                } else {
-                    inits.push((id, sub));
-                    ins.push(id);
-                }
+            if matches!(status, 6 | 0x32 | 0x38 | 0x3f..=0x53) {
+                return false;
             }
+            if status == 0x22 {
+                inits.push((id, own));
+                starts.push((id, *b"inte"));
+            } else {
+                inits.push((id, want));
+                ins.push(id);
+            }
+            true
         };
         if !world.my_init_done && world.actors.get(&world.my_id).is_some_and(|a| a.character.is_some()) {
             world.my_init_done = true;
-            let sub = world.entities.get(&world.my_id).map_or(0, |e| e.sub[0]);
-            first_init(world.my_id, world.my_motion.status, sub, &mut starts);
+            // Ours keeps no sub-animation for the player.
+            first_init(world.my_id, world.my_motion.status, (0, 0), &mut starts);
         }
         for (id, e) in world.entities.iter_mut() {
             let ready = world.actors.get(id).is_some_and(|a| a.character.is_some());
@@ -11905,9 +11909,10 @@ impl App {
                 continue;
             }
             let status = e.motion.status;
+            let mut queued = false;
             if !e.init_done {
                 e.init_done = true;
-                first_init(*id, status, e.sub[0], &mut starts);
+                queued = first_init(*id, status, (e.sub[0], e.sub[2]), &mut starts);
             }
             // FUN_1008ef60. Each change first keeps the applied value as the previous one (var 0x3c).
             let (want, applied, own) = (e.sub[0], e.sub[1], e.sub[2]);
@@ -11918,8 +11923,12 @@ impl App {
             }
             // +0x120 bit 9 (a model: `ready`) and bit 13 (the monster bit) or +0x130 bit 2.
             let flagged = e.mob || e.sub_flag;
-            let running = |name: [u8; 4]| world.effects.actor_scheduler_running(*id, u32::from_le_bytes(name));
-            if want < 4 {
+            // The `init` just queued counts as running, as retail's has already started.
+            let running = |name: [u8; 4]| {
+                (queued && name == *b"init") || world.effects.actor_scheduler_running(*id, u32::from_le_bytes(name))
+            };
+            // +0xee 6 / 7 (SubKind 5 / 6) take the flagged path whatever the sub-state.
+            if want < 4 && !matches!(e.sub_kind, 5 | 6) {
                 if want == own && want == applied {
                     continue;
                 }
