@@ -28,7 +28,8 @@ local EDGE = { main = { 184, 139, 73, 205 }, sub = { 104, 164, 232, 205 } }
 local FLASH = { 255, 236, 190, 120 }
 local SHADE = { 0, 0, 0, 165 }
 local UNUSABLE = { 6, 8, 14, 165 }
-local KEY_BG = { 0, 0, 0, 150 }
+local TEXT = { 236, 230, 214, 255 }
+local MUTED = { 196, 188, 170, 230 }
 local GLOW = { 255, 214, 120 }
 local GHOST = { 255, 255, 255, 140 }
 local GHOST_BG = { 20, 24, 38, 120 }
@@ -132,13 +133,13 @@ local function draw()
   local function add(c) d[#d + 1] = c end
   local s, round = geo.size, 7
   local h = height(reveal or 1)
-  local k = s / 52
   local glow = 0.5 + 0.5 * math.sin(os.clock() * 3.2)
   local now = os.clock()
   for b = 1, geo.bars do
     for i = 1, geo.slots do
       local x, y = slot_xy(b, i)
-      if y + s > 0 then
+      -- Only where it reaches below the top padding: a hidden bar's edge never peeks in.
+      if y + s > PAD then
         local key = b .. ":" .. i
         local cell = eff[b] and eff[b][i]
         local macro = cell and cell.macro
@@ -148,8 +149,8 @@ local function draw()
         add({ type = "rect", x = x, y = y, w = s, h = s, round = round, line = 1.5,
           colour = macro and EDGE[cell.from] or EMPTY_EDGE })
         if act then
-          local isz = math.floor(s * 0.7)
-          add({ type = "icon", x = x + (s - isz) / 2, y = y + s * 0.08, size = isz, kind = act.kind, id = act.id })
+          local isz = math.floor(s * 0.58)
+          add({ type = "icon", x = x + (s - isz) / 2, y = y + 4, size = isz, kind = act.kind, id = act.id })
         end
         local sh = shades[key]
         if sh and sh.left > 0 then
@@ -160,28 +161,27 @@ local function draw()
         if macro then
           local label = data.display_label(macro)
           if act then
-            add({ type = "text", x = x + s / 2, y = y + s - 15 * k, text = label:match("^[^\n]*"), size = 0.8 * k,
-              align = "center", colour = { 244, 242, 236, 255 }, outline = { 0, 0, 0, 230 } })
+            add({ type = "text", x = x + s / 2, y = y + s - 17, text = label:match("^[^\n]*"), size = 1,
+              align = "center", colour = TEXT })
           else
             local lines = {}
             for l in label:gmatch("[^\n]+") do lines[#lines + 1] = l end
-            local top = y + (s - #lines * 15 * k) / 2
+            local top = y + (s - #lines * 16) / 2
             for n, l in ipairs(lines) do
-              add({ type = "text", x = x + s / 2, y = top + (n - 1) * 15 * k, text = l, size = 0.9 * k,
-                align = "center", colour = { 255, 255, 255, 255 }, outline = { 0, 0, 0, 230 } })
+              add({ type = "text", x = x + s / 2, y = top + (n - 1) * 16, text = l, size = 1, align = "center",
+                colour = TEXT })
             end
           end
         end
         if sh and sh.left > 0 then
           local secs = math.ceil(sh.left)
           local t = secs >= 60 and ("%d:%02d"):format(secs // 60, secs % 60) or tostring(secs)
-          add({ type = "text", x = x + s / 2, y = y + s * 0.22, text = t, size = 1.25 * k, font = "bold",
-            align = "center", colour = { 255, 236, 180, 255 }, outline = { 0, 0, 0, 255 } })
+          add({ type = "text", x = x + s / 2, y = y + s / 2 - 11, text = t, size = 1.45, font = "bold",
+            align = "center", colour = { 255, 236, 180, 255 } })
         end
         if geo.show_keys then
           local hint = keys.hint(b, i)
-          add({ type = "rect", x = x + 2, y = y + 2, w = 7 * k * #hint + 6, h = 13 * k, round = 3, colour = KEY_BG })
-          add({ type = "text", x = x + 5, y = y + 2, text = hint, size = 0.72 * k, colour = { 236, 230, 214, 255 } })
+          add({ type = "text", x = x + 4, y = y + 2, text = hint, size = 0.9, colour = MUTED })
         end
         if act and suggested[act.kind .. ":" .. act.id] then
           add({ type = "rect", x = x - 3, y = y - 3, w = s + 6, h = s + 6, round = round + 3, line = 3,
@@ -235,12 +235,12 @@ local function draw()
     local gx, gy = drag.x - s / 2, drag.y - s / 2
     add({ type = "rect", x = gx, y = gy, w = s, h = s, round = round, colour = GHOST_BG })
     if act then
-      local isz = math.floor(s * 0.7)
-      add({ type = "icon", x = gx + (s - isz) / 2, y = gy + s * 0.08, size = isz, kind = act.kind, id = act.id,
+      local isz = math.floor(s * 0.58)
+      add({ type = "icon", x = gx + (s - isz) / 2, y = gy + 4, size = isz, kind = act.kind, id = act.id,
         colour = GHOST })
     elseif macro then
-      add({ type = "text", x = gx + s / 2, y = gy + s / 2 - 8 * k, text = data.display_label(macro):match("^[^\n]*"),
-        size = 0.9 * k, align = "center", colour = GHOST, outline = { 0, 0, 0, 120 } })
+      add({ type = "text", x = gx + s / 2, y = gy + s / 2 - 8, text = data.display_label(macro):match("^[^\n]*"),
+        size = 1, align = "center", colour = GHOST })
     end
   end
   ui.update(WIN, "c", { h = h, draw = d })
