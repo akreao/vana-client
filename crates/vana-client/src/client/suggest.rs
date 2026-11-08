@@ -865,24 +865,19 @@ pub fn facts(w: &World) -> Facts {
     let now = (super::vana_now(w) as u32).wrapping_mul(60);
     let own_ids: Vec<u16> = super::buffs::icons(w).iter().map(|e| e.0).collect();
     let mut party = Vec::new();
-    if let (Some((hp, ..)), Some(st)) = (w.vitals, w.stats.as_ref()) {
+    if let (Some((hp, _, _, hpp, _)), Some(st)) = (w.vitals, w.stats.as_ref()) {
         party.push(Member {
             name: w.name.clone(),
             me: true,
             here: true,
             hp,
-            hp_max: st.hp_max,
+            hp_max: super::party::hp_max(Some(w.own_hp_max.unwrap_or(st.hp_max)), hp, hpp).unwrap_or(st.hp_max),
             job: st.main.0,
             effects: own_ids.clone(),
         });
     }
     for m in slots.slots[1..6].iter().flatten() {
-        let max = w
-            .party_hp_max
-            .get(&m.id)
-            .copied()
-            .filter(|&x| m.hp <= x)
-            .unwrap_or_else(|| if m.hpp > 0 { m.hp * 100 / m.hpp as u32 } else { 0 });
+        let max = super::party::hp_max(w.party_hp_max.get(&m.id).copied(), m.hp, m.hpp).unwrap_or(0);
         let effects = w
             .party_buffs
             .get(&m.id)
