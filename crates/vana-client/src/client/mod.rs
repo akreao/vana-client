@@ -2354,7 +2354,8 @@ fn world_hud(
         keys.clear();
     }
     // Ours: the Controller window takes the keys while it is open (over the Settings window it is opened from).
-    if modern::pad_events(world, &input.events) {
+    let pad_typing = modern::pad_events(world, &input.events);
+    if pad_typing {
         keys.clear();
     }
     // The modern magic and ability windows' search takes the keys and text while it runs.
@@ -2377,7 +2378,8 @@ fn world_hud(
         || scan_typing
         || find_typing
         || settings_typing
-        || gm_typing;
+        || gm_typing
+        || pad_typing;
     if post_typing {
         post::text_events(world, &input.events);
         keys.clear();
@@ -2408,7 +2410,7 @@ fn world_hud(
     } else if map_typing && let Some(m) = world.map.as_mut() {
         m.text_events(&input.events);
         keys.clear();
-    } else if input_open && !scan_typing && !find_typing {
+    } else if input_open && !scan_typing && !find_typing && !pad_typing {
         event::input_events(world, &input.events);
         keys.clear();
     }

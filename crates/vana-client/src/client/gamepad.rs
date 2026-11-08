@@ -303,10 +303,19 @@ pub struct Settings {
 /// What a frame's settings are. config.json's maps win (the Controller window writes them); else retail's registry
 /// values, whose padmode000 also says whether the pad is on ([0]: off, FUN_10002840 leaves the maps empty) and plays in
 /// the background ([4]); else FFXiPadConfig's XInput layout. config gamepad off always turns it off.
+/// A config.json gamepad_padexsin of its own is used whatever the main map's source.
 pub fn settings(cfg: &Config, retail: Option<&crate::padreg::Retail>) -> Settings {
+    let mut s = settings_of(cfg, retail);
+    if !cfg.gamepad_padexsin.trim().is_empty() {
+        s.padexsin = cfg.gamepad_padexsin.clone();
+    }
+    s
+}
+
+fn settings_of(cfg: &Config, retail: Option<&crate::padreg::Retail>) -> Settings {
     let (on, background) = (cfg.gamepad, cfg.gamepad_background);
     if !cfg.gamepad_padsin.trim().is_empty() {
-        let padexsin = or_default(&cfg.gamepad_padexsin, DEFAULT_PADEXSIN).to_string();
+        let padexsin = DEFAULT_PADEXSIN.to_string();
         return Settings { padsin: cfg.gamepad_padsin.clone(), padexsin, on, background, source: Source::Config };
     }
     if let Some(r) = retail.filter(|r| r.padsin.is_some()) {

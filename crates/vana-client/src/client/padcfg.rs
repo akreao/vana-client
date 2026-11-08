@@ -179,6 +179,13 @@ pub fn assign(map: &mut [i32], r: &Row, cap: &Capture, sticks: bool) -> bool {
                 *v = -1;
             }
         }
+        // A direction that had its device's stick: the pair lets go of it too (read() takes the axis from either).
+        if let Kind::Dir(_, pair) = r.kind
+            && map[r.pos].abs() >= 32
+            && map[pair] == map[r.pos]
+        {
+            map[pair] = -1;
+        }
         map[r.pos] = b;
         return true;
     }
@@ -373,6 +380,9 @@ mod tests {
         // A (3) on Cancel: Select / Confirm loses it.
         assert!(assign(&mut m, r("Cancel", "Buttons"), &cap(vec![3], [0.0; 4]), true));
         assert_eq!((m[5], m[7]), (3, -1));
+        // A button on Movement Up: Down lets go of the left stick too (it would still move forward).
+        assert!(assign(&mut m, r("Up", "Movement"), &cap(vec![8], [0.0; 4]), true));
+        assert_eq!((m[13], m[14]), (8, -1));
         // A stick on a button row does nothing.
         assert!(!assign(&mut m, r("Cancel", "Buttons"), &cap(vec![], [127.0, 0.0, 0.0, 0.0]), true));
         let mut m = vec![-1; 32];
@@ -407,6 +417,17 @@ mod tests {
         // Autorun is taken (kept), then A goes to Select / Confirm (7) and leaves Autorun as a duplicate.
         assert_eq!((alt[7], alt[0], alt[5]), (3, -1, 0));
         assert_eq!(alt[29], -1);
+    }
+
+    /// config.json's combination map counts on its own, whatever the main map's source.
+    #[test]
+    fn combination_override_alone() {
+        let cfg = crate::config::Config { gamepad_padexsin: "3".into(), ..Default::default() };
+        let r = crate::padreg::Retail { padsin: Some("8".into()), padexsin: Some("9".into()), ..Default::default() };
+        let s = gamepad::settings(&cfg, Some(&r));
+        assert_eq!((s.padsin.as_str(), s.padexsin.as_str(), s.source), ("8", "3", Source::Retail));
+        let s = gamepad::settings(&cfg, None);
+        assert_eq!((s.padexsin.as_str(), s.source), ("3", Source::Default));
     }
 
     #[test]
