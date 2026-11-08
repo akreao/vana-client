@@ -1353,6 +1353,7 @@ pub(super) fn install(
             t.set("recast", crate::dat::recasts::ability(id))?;
             t.set("targets", a.targets)?;
             t.set("tp", a.tp)?;
+            t.set("sub", a.sub)?;
             t.set("level", a.level)?;
             Ok(Some(t))
         })?,
