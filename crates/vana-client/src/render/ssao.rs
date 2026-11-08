@@ -50,11 +50,12 @@ fn world_at(uv: vec2<f32>, d: f32) -> vec3<f32> {
     return h.xyz / h.w;
 }
 
-// At half the scene's size: each pixel reads the depth under it.
+// At half the scene's size: each pixel reads the depth of the top-left full-size pixel under it, and rebuilds the
+// position on that same pixel's ray (the half-size pixel's own centre is a corner between four of them).
 @fragment fn fs_ao(i: VOut) -> @location(0) vec4<f32> {
-    let d = depth_at(floor(i.pos.xy) * 2.0);
-    let p = world_at(i.uv, d);
-    let lz = linear(d);
+    let px = floor(i.pos.xy) * 2.0;
+    let d = depth_at(px);
+    let p = world_at((px + 0.5) / size(), d);
     var n = cross(dpdx(p), dpdy(p));
     let nl = length(n);
     n = select(vec3<f32>(0.0, -1.0, 0.0), n / max(nl, 1e-12), nl > 1e-12);
@@ -79,11 +80,13 @@ fn world_at(uv: vec2<f32>, d: f32) -> vec3<f32> {
         let q = c.xyz / c.w;
         let suv = vec2<f32>(q.x * 0.5 + 0.5, 0.5 - q.y * 0.5);
         let sd = depth_at(suv * size());
-        // Occluded when the scene there is nearer than the sample, within the radius of this pixel along the view
-        // (no halos off far edges); samples off the screen have no depth to test and count as open.
+        // Occluded when the scene there is nearer than the sample, within the radius of this pixel (no halos off far
+        // edges); samples off the screen have no depth to test and count as open. The scene's point lies on the ray
+        // from the eye through the sample, so its linear depth over the sample's places it without a matrix.
         let on = all(suv >= vec2<f32>(0.0)) && all(suv <= vec2<f32>(1.0));
         let near = select(0.0, 1.0, on && sd < q.z - 1e-6);
-        let range = 1.0 - smoothstep(0.5 * r, r, abs(linear(sd) - lz));
+        let hit = u.eye.xyz + (s - u.eye.xyz) * (linear(sd) / linear(q.z));
+        let range = 1.0 - smoothstep(0.5 * r, r, distance(hit, p));
         occ += near * range;
     }
     let dist = distance(p, u.eye.xyz);
