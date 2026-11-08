@@ -88,6 +88,8 @@ pub struct EntityUpdate {
     /// The sub-animation (actor +0x124 bits 1..3): 0x00E mask 0x04, @0x2A & 7 when @0x20 bit 0 (monster) or u32 @0x28
     /// bit 26 (asm 0x1009be45; LSB animationsub).
     pub sub_anim: Option<u8>,
+    /// 0x00E mask 0x04: u32 @0x28 bit 26 (entity +0x130 bit 2, asm 0x1009c5a2).
+    pub sub_flag: Option<bool>,
     /// MonStat (actor +0x124 bits 13..14): 0x00E mask 0x04 without those two bits, @0x2A & 3 (asm 0x1009be5d).
     pub mon_stat: Option<u8>,
     /// 0x00E u32 @0x28 bit 31 -> entity +0x130 bit 18 (FUN_100cd040): the character draws at half alpha, whatever the
@@ -1421,6 +1423,9 @@ fn look_at(p: &SubPacket, at: usize) -> [u16; 9] {
 fn entity(p: &SubPacket, kind: EntityKind) -> EntityUpdate {
     let flags = p.u8(10);
     let name_at = if kind == EntityKind::Npc { 0x34 } else { 0x5A };
+    // 0x00E mask 0x04: u32 @0x28 bit 26, the server's sub-animation flag (entity +0x130 bit 2, asm 0x1009c5a2).
+    let sub_flag =
+        (kind == EntityKind::Npc && flags & 0x04 != 0 && p.data.len() >= 0x2C).then(|| p.u32(0x28) & (1 << 26) != 0);
     EntityUpdate {
         id: p.u32(4),
         index: p.u16(8),
@@ -1527,17 +1532,9 @@ fn entity(p: &SubPacket, kind: EntityKind) -> EntityUpdate {
             .then(|| [p.u8(0x40), p.u8(0x41)]),
         mon_form: (kind == EntityKind::Player && flags & 0x04 != 0 && p.data.len() >= 0x40 && p.u16(0x3E) != 0)
             .then(|| p.u8(0x2A) & 7),
-        sub_anim: (kind == EntityKind::Npc
-            && flags & 0x04 != 0
-            && p.data.len() >= 0x2C
-            && (p.u8(0x20) & 1 != 0 || p.u32(0x28) & (1 << 26) != 0))
-            .then(|| p.u8(0x2A) & 7),
-        mon_stat: (kind == EntityKind::Npc
-            && flags & 0x04 != 0
-            && p.data.len() >= 0x2C
-            && p.u8(0x20) & 1 == 0
-            && p.u32(0x28) & (1 << 26) == 0)
-            .then(|| p.u8(0x2A) & 3),
+        sub_anim: sub_flag.filter(|&f| f || p.u8(0x20) & 1 != 0).map(|_| p.u8(0x2A) & 7),
+        sub_flag,
+        mon_stat: sub_flag.filter(|&f| !f && p.u8(0x20) & 1 == 0).map(|_| p.u8(0x2A) & 3),
         half_fade: (kind == EntityKind::Npc && flags & 0x04 != 0 && p.data.len() >= 0x2C)
             .then(|| p.u32(0x28) >> 31 != 0),
         hp_bits: (kind == EntityKind::Npc && flags & 0x04 != 0 && p.data.len() >= 0x2C)
