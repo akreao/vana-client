@@ -347,6 +347,10 @@ pub struct GameUi {
     replaced: Vec<(String, u32, u32, Vec<u8>)>,
     /// A mod image's older contents (image), freed once a frame's batch no longer draws them.
     stale: Vec<String>,
+    /// Wrapped lines by (text, widths, TrueType text): windows wrap the same text every frame, and a wrap measures its
+    /// line again for every word (wrap_part).
+    #[allow(clippy::type_complexity)]
+    wrapped: std::cell::RefCell<std::collections::HashMap<u64, (String, [u32; 2], bool, Vec<String>)>>,
     /// Images made for a while (name plates' rasters): when each was last drawn; unseen for TEMP_KEEP, stale.
     temp_seen: std::collections::HashMap<String, std::time::Instant>,
     /// When temp_seen was last looked over.
@@ -472,6 +476,7 @@ impl GameUi {
             style_index: 0,
             replaced: Vec::new(),
             stale: Vec::new(),
+            wrapped: Default::default(),
             temp_seen: Default::default(),
             temp_swept: std::time::Instant::now(),
             style_saved: Default::default(),
@@ -2245,6 +2250,11 @@ impl GameUi {
         crate::dat::statusinfo::entry(self.data.status[small as usize].as_deref()?, id)
     }
 
+    /// The entry's (cancel, no_timer) alone (per-frame callers).
+    pub fn status_flags(&self, small: bool, id: u16) -> Option<(bool, bool)> {
+        crate::dat::statusinfo::flags(self.data.status[small as usize].as_deref()?, id)
+    }
+
     /// An uploaded image stretched over a rect; colour 1.0 = 0x80.
     /// An image over any four corners (top left, top right, bottom left, bottom right) and their uvs.
     pub fn image_corners(&mut self, name: &str, corners: [[f32; 2]; 4], uvs: [[f32; 2]; 4], rgba: [f32; 4]) {
@@ -2339,8 +2349,30 @@ impl GameUi {
         out
     }
 
-    /// Words to lines: the first at most `first` wide, the others `rest`.
+    /// Words to lines: the first at most `first` wide, the others `rest` (wrapped once for the same text and widths).
     fn wrap_part(&self, line: &str, first: f32, rest: f32) -> Vec<String> {
+        use std::hash::{Hash, Hasher};
+        let (widths, ttf) = ([first.to_bits(), rest.to_bits()], self.batch.ttf_text());
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (line, widths, ttf).hash(&mut h);
+        let key = h.finish();
+        if let Some(e) = self.wrapped.borrow().get(&key)
+            && e.0 == line
+            && e.1 == widths
+            && e.2 == ttf
+        {
+            return e.3.clone();
+        }
+        let out = self.wrap_words(line, first, rest);
+        let mut c = self.wrapped.borrow_mut();
+        if c.len() >= 512 {
+            c.clear();
+        }
+        c.insert(key, (line.to_string(), widths, ttf, out.clone()));
+        out
+    }
+
+    fn wrap_words(&self, line: &str, first: f32, rest: f32) -> Vec<String> {
         let mut out = Vec::new();
         let mut cur = String::new();
         let max = |out: &Vec<String>| if out.is_empty() { first } else { rest };
