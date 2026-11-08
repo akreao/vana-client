@@ -1,5 +1,7 @@
 -- The hotbars on screen, in a frame that grows upward a bar at a time: + and - at its lower right show more or fewer
--- bars (bar 1 at the bottom), easing the frame and fading the bars in and out. A slot shows its action's icon (or its
+-- bars (bar 1 at the bottom), easing the frame and fading the bars in and out. Like an edge window, its tab folds it
+-- down off the bottom edge and back. A slot whose action cannot be used now is dimmed; one the battle menu suggests
+-- glows. A slot shows its action's icon (or its
 -- label), its hotkey, a shade with the seconds left while the action recasts, and its macro in a tip. A click fires
 -- it, a right click opens its menu, and a slot dragged onto another swaps them. Slots the main job's set fills have a
 -- gold edge, the sub job's set's a blue one.
@@ -28,6 +30,8 @@ local HOVER = { 255, 255, 255, 30 }
 local FLASH = { 255, 236, 190, 120 }
 local SHADE = { 0, 0, 0, 165 }
 local KEY_BG = { 0, 0, 0, 150 }
+local UNUSABLE = { 6, 8, 14, 165 }
+local GLOW = { 255, 214, 120 }
 
 local FRAME_SHADOW = { 0, 0, 0, 70 }
 local FRAME_BG = { 8, 10, 18, 135 }
@@ -39,8 +43,9 @@ local BTN_OFF = { 26, 30, 46, 90 }
 local BTN_TEXT = { 236, 222, 186, 255 }
 local BTN_TEXT_OFF = { 150, 150, 160, 110 }
 
--- Bars per second while the frame grows or shrinks.
+-- Bars per second while the frame grows or shrinks; folds per second while it slides away or back.
 local SPEED = 4.5
+local SLIDE_SPEED = 3.5
 
 -- Sizes and offsets are in UI units, so the bars keep their size at any resolution and UI size.
 local function opts()
@@ -63,7 +68,11 @@ local function wanted()
   return math.max(1, math.min(most, tonumber(storage.character.hb_shown) or 1))
 end
 
+local function folded() return storage.character.hb_folded == true end
+
 local reveal = nil     -- the bars shown now, eased toward wanted()
+local slide = nil      -- 0 open .. 1 folded away, eased toward folded()
+local suggested = {}   -- "spell:<id>" / "ability:<id>" the battle menu suggests now
 local geo = nil        -- the last drawing's layout
 local bar_ids = {}     -- bar -> its element ids (shown and hidden with it)
 local bar_vis = {}     -- bar -> visible now
@@ -147,7 +156,7 @@ local function apply(r)
   hud.set("hb_frame", { y = top, h = h })
   hud.set("hb_edge", { y = top, h = h })
   hud.set("hb_line", { y = top + 1 * g.u })
-  hud.set("hdr", { y = top - 9 * g.u })
+  hud.set("hdr", { y = math.min(top - 9 * g.u, g.floor - g.tab) })
   for b = 1, g.bars do
     local a = math.max(0, math.min(1, e - (b - 1)))
     local vis = a > 0.02
@@ -181,19 +190,21 @@ end
 
 local anim, last = nil, nil
 
+local function toward(v, to, d)
+  if v < to then return math.min(to, v + d) end
+  return math.max(to, v - d)
+end
+
 local function step()
   local now = os.clock()
   local dt = math.min(0.05, math.max(0, now - (last or now)))
   last = now
-  local target = wanted()
-  reveal = reveal or target
-  if reveal < target then
-    reveal = math.min(target, reveal + dt * SPEED)
-  else
-    reveal = math.max(target, reveal - dt * SPEED)
-  end
-  apply(reveal)
-  if reveal == target then
+  local target, fold = wanted(), folded() and 1 or 0
+  reveal = toward(reveal or target, target, dt * SPEED)
+  local sliding = (slide or fold) ~= fold
+  slide = toward(slide or fold, fold, dt * SLIDE_SPEED)
+  if sliding then M.rebuild() else apply(reveal) end
+  if reveal == target and slide == fold and anim then
     events.off(anim)
     anim, last = nil, nil
   end
@@ -204,6 +215,14 @@ local function animate()
     last = os.clock()
     anim = events.on("frame", step)
   end
+end
+
+-- The tab folds the bars away below the bottom edge, or brings them back.
+function M.fold(value)
+  if value == nil then value = not folded() end
+  storage.character.hb_folded = value
+  storage.save()
+  animate()
 end
 
 -- + shows one bar more, - one fewer (1 .. the Bars setting).
@@ -259,8 +278,30 @@ function M.rebuild()
   local y_bottom = floor_y(scr, x0, w) - o.oy - o.size
   local pad = math.floor(7 * u)
   local bsz = math.floor(math.max(16 * u, o.size * 0.38))
-  geo = { x0 = x0, w = w, y_bottom = y_bottom, size = o.size, gap = o.gap, pad = pad, u = u, bars = o.bars }
+  local floor = floor_y(scr, x0, w)
+  local tab = math.floor(22 * u)
   reveal = math.min(reveal or wanted(), o.bars)
+  slide = slide or (folded() and 1 or 0)
+  -- Folding slides everything below the bottom edge; the tab stays at the edge.
+  local rows = math.max(eased(reveal), 1)
+  local frame_h = rows * o.size + (rows - 1) * o.gap + 2 * pad
+  local e = slide * slide * (3 - 2 * slide)
+  y_bottom = y_bottom + e * (frame_h + o.oy + 4 * u)
+  geo = { x0 = x0, w = w, y_bottom = y_bottom, size = o.size, gap = o.gap, pad = pad, u = u, bars = o.bars,
+    floor = floor, tab = tab }
+  local function tab_text()
+    hud.text("hdr", { x = x0, y = floor - tab, text = (folded() and "▴  " or "▾  ") .. main .. "/" .. (sub or "-"),
+      size = 0.75, font = "bold", colour = { 232, 210, 156 }, bg = { 8, 10, 18, 215 }, pad = 6, layer = 8,
+      tip = folded() and "Show the hotbars" or "Fold the hotbars away" })
+    hud.on("hdr", function(_, ev)
+      if ev.kind == "click" then M.fold() end
+    end)
+  end
+  if slide >= 0.999 then
+    tab_text()
+    if reveal ~= wanted() or slide ~= (folded() and 1 or 0) then animate() end
+    return
+  end
 
   -- The frame: a soft shadow, a dark glass body, a thin warm edge and a highlight along its top.
   local fx, fw = x0 - pad, w + 2 * pad + bsz + pad
@@ -351,23 +392,29 @@ function M.rebuild()
   button("plus", bx, y_bottom + o.size - 2 * bsz - 3 * u, bsz, "+", 1)
   button("minus", bx, y_bottom + o.size - bsz, bsz, "-", -1)
 
-  -- The jobs on a tab over the frame's top edge; a click opens the manager.
-  hud.text("hdr", { x = x0, y = y_bottom, text = main .. "/" .. (sub or "-"), size = 0.75, font = "bold",
-    colour = { 232, 210, 156 }, bg = { 8, 10, 18, 200 }, pad = 5, layer = 2, tip = "Open the Hotbars manager" })
-  hud.on("hdr", function() M.hooks.open_manager() end)
+  -- The jobs on a tab over the frame's top edge: a click folds the bars away (the manager is on a slot's menu).
+  tab_text()
 
   apply(reveal)
   buttons()
-  if reveal ~= wanted() then animate() end
+  if reveal ~= wanted() or slide ~= (folded() and 1 or 0) then animate() end
   M.recasts()
+  M.highlight()
 end
 
 -- The recast shades: the part still to go, from the top, and the seconds over it.
 function M.recasts()
   if not next(shown) then return end
   local r = game.recasts()
+  local me = game.player()
   for id, s in pairs(shown) do
     local left, frac = actions.recast(s.action, r)
+    if left <= 0 and bar_vis[s.bar] and not actions.usable(s.action, me) then
+      hud.rect(id .. "_d", { x = s.x, y = s.y, w = s.size, h = s.size, round = s.round, colour = UNUSABLE, layer = 3,
+        window = "hb_bar" .. s.bar })
+    else
+      hud.remove(id .. "_d")
+    end
     if left > 0 and bar_vis[s.bar] then
       hud.rect(id .. "_r", { x = s.x, y = s.y, w = s.size, h = math.max(2, s.size * frac), round = s.round,
         colour = SHADE, layer = 3, window = "hb_bar" .. s.bar })
@@ -382,6 +429,52 @@ function M.recasts()
     end
   end
 end
+
+-- The battle menu's suggestions (while it is open): their slots glow, breathing gently.
+local pulse = nil
+local lit = {}
+
+local function breathe()
+  local a = 0.5 + 0.5 * math.sin(os.clock() * 3.2)
+  for id in pairs(lit) do
+    hud.set(id .. "_s", { colour = { GLOW[1], GLOW[2], GLOW[3], math.floor(150 + 90 * a) } })
+    hud.set(id .. "_s2", { colour = { GLOW[1], GLOW[2], GLOW[3], math.floor(25 + 45 * a) } })
+  end
+end
+
+function M.highlight()
+  for id in pairs(lit) do
+    hud.remove(id .. "_s")
+    hud.remove(id .. "_s2")
+  end
+  lit = {}
+  for id, s in pairs(shown) do
+    if bar_vis[s.bar] and suggested[s.action.kind .. ":" .. s.action.id] then
+      local u = geo and geo.u or 1
+      hud.rect(id .. "_s2", { x = s.x - 3 * u, y = s.y - 3 * u, w = s.size + 6 * u, h = s.size + 6 * u,
+        round = s.round + 3 * u, colour = { GLOW[1], GLOW[2], GLOW[3], 50 }, line = 3 * u, layer = 6,
+        window = "hb_bar" .. s.bar })
+      hud.rect(id .. "_s", { x = s.x - 1, y = s.y - 1, w = s.size + 2, h = s.size + 2, round = s.round + 1,
+        colour = { GLOW[1], GLOW[2], GLOW[3], 200 }, line = 1.5 * u, layer = 6, window = "hb_bar" .. s.bar })
+      lit[id] = true
+    end
+  end
+  if next(lit) and not pulse then
+    pulse = events.on("frame", breathe)
+  elseif not next(lit) and pulse then
+    events.off(pulse)
+    pulse = nil
+  end
+end
+
+events.on("suggestions", function(rows)
+  suggested = {}
+  for _, r in ipairs(rows or {}) do
+    if r.kind and r.id then suggested[r.kind .. ":" .. r.id] = true end
+    for _, g in ipairs(r.group or {}) do suggested["spell:" .. g] = true end
+  end
+  M.highlight()
+end)
 
 function M.rebind()
   if not settings.get("on") then

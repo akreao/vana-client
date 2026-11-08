@@ -46,7 +46,7 @@ function M.of(macro)
         local r = res.ability(abilities[name])
         hit = { kind = "ability", id = abilities[name], recast_id = r and r.recast_id }
       elseif kind == "weaponskill" and weaponskills[name] then
-        hit = { kind = "ability", id = weaponskills[name] }
+        hit = { kind = "ability", id = weaponskills[name], ws = true }
       elseif kind == "item" then
         local held = game.find_items(name)
         if held[1] then hit = { kind = "item", id = held[1].id } end
@@ -69,6 +69,28 @@ function M.recast(a, recasts)
   end
   if left <= 0 then return 0, 0 end
   return left, total > 0 and math.min(1, left / total) or 1
+end
+
+-- Whether we can use it now, apart from its recast (shaded on its own): a weapon skill needs 1000 TP, a pet command a
+-- pet, a spell a job that has it at our level and its MP. Nil `a` (a macro with no known action) counts as usable.
+function M.usable(a, me)
+  if not a or not me then return true end
+  if a.kind == "spell" then
+    local s = res.spell(a.id)
+    if not s then return true end
+    if s.kind ~= 8 and s.levels then
+      local lv = function(job, level) return job and s.levels[job] and s.levels[job] <= (level or 0) end
+      if not (lv(me.main_job, me.main_level) or lv(me.sub_job, me.sub_level)) then return false end
+    end
+    return (s.mp or 0) <= (me.mp or 0)
+  elseif a.kind == "ability" then
+    if a.ws or a.id < 0x200 then return (me.tp or 0) >= 1000 end
+    if a.id >= 0x400 then
+      local s = game.session()
+      return s ~= nil and (s.pet_index or 0) ~= 0
+    end
+  end
+  return true
 end
 
 return M

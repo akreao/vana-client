@@ -42,13 +42,20 @@ end
 -- The pickers
 -- ---------------------------------------------------------------------------
 
+-- Dim when it cannot be used now (its job level or MP, TP for a weapon skill, a pet, its recast).
+local function ready(a, me, rc)
+  return actions.usable(a, me) and actions.recast(a, rc) <= 0
+end
+
 local function spells()
   local out = {}
+  local me, rc = game.player(), game.recasts()
   for _, id in ipairs(game.spells()) do
     local s = res.spell(id)
     if s and s.name and s.name ~= "" then
       local info = s.kind == 8 and "Trust" or (s.mp and s.mp > 0 and ("%d MP"):format(s.mp) or "")
       out[#out + 1] = { label = s.name, info = info, icon = { kind = "spell", id = id },
+        dim = not ready({ kind = "spell", id = id }, me, rc),
         macro = { name = s.name, lines = { ("/ma %s %s"):format(quote(s.name), aim(s.targets)) } } }
     end
   end
@@ -57,6 +64,7 @@ end
 
 local function abilities()
   local out = {}
+  local me, rc = game.player(), game.recasts()
   for _, id in ipairs(game.abilities()) do
     local a = res.ability(id)
     if a and a.name and a.name ~= "" then
@@ -67,6 +75,7 @@ local function abilities()
         cmd, info = "/pet", "Pet command"
       end
       out[#out + 1] = { label = a.name, info = info, icon = { kind = "ability", id = id },
+        dim = not ready({ kind = "ability", id = id, recast_id = a.recast_id, ws = id < 0x200 }, me, rc),
         macro = { name = a.name, lines = { ("%s %s %s"):format(cmd, quote(a.name), aim(a.targets)) } } }
     end
   end
@@ -122,7 +131,7 @@ local function show(filter)
   for _, e in ipairs(all) do
     if f == "" or e.label:lower():find(f, 1, true) or (e.info or ""):lower():find(f, 1, true) then
       rows[#rows + 1] = e
-      list[#list + 1] = { e.label, e.info or "", icon = e.icon }
+      list[#list + 1] = { e.label, e.info or "", icon = e.icon, colour = e.dim and DIM or nil }
     end
   end
   ui.update(PICK, "list", { rows = list, at = 1 })
