@@ -6296,6 +6296,8 @@ struct FxActors<'a> {
     entities: &'a HashMap<u32, Entity>,
     me: u32,
     me_moving: bool,
+    /// Our move's quarter (World::my_strafe, +0x598).
+    me_strafe: u8,
     pet: u16,
     /// Our party (roster mode 0, FUN_100e5dd0(0)): ourselves first; our ActIndex (we are not in `entities`).
     party: Vec<u32>,
@@ -6388,7 +6390,8 @@ impl crate::fx::Actors for FxActors<'_> {
         let ch = a.character.as_ref()?;
         let names = actmotion::scheduler_names(&a.extra, ch);
         let sub = self.entities.get(&id).map_or(0, |e| e.sub[2]);
-        let (first, other) = combat::swing_patterns(moving, sub);
+        let quarter = if id == self.me { self.me_strafe } else { 0 };
+        let (first, other) = combat::swing_patterns(moving, sub, quarter);
         let (first, other) = (first.as_str(), other.as_str());
         let mut pool = crate::dat::sched::matching(names.iter().copied(), first);
         if pool.is_empty() {
@@ -16995,6 +16998,29 @@ impl App {
                     // Then a scheduler's motion (event / weapon draw) over the status motion.
                     // +0x80 up (ops 0x07 / 0x08 / 0x59, w.noreact): FUN_100c83c0 returns at once, no status motion re-pick.
                     let held = w.noreact.get(id).is_some_and(|t| *t > hold_now);
+                    // Ours (retail picks it once, FUN_100d46f0): our moving swing (am?) turns with the strafe mid-swing,
+                    // at the same frame, so it keeps matching the legs.
+                    let way = match my_strafe {
+                        1 => Some('f'),
+                        2 => Some('r'),
+                        3 => Some('b'),
+                        4 => Some('l'),
+                        _ => None,
+                    };
+                    if let Some(c) = way.filter(|_| *id == me && a.motion.len() == 3 && a.motion.starts_with("am")) {
+                        let want = format!("am{c}");
+                        if want != a.motion && has(&want) {
+                            if let Some(p) = a.play.as_mut()
+                                && p.current().is_some_and(|m| m.name == a.motion)
+                            {
+                                p.rename_current(&want);
+                            }
+                            if let Some(o) = a.oneshot.as_mut().filter(|o| o.name == a.motion) {
+                                o.name = want.clone();
+                            }
+                            a.motion = want;
+                        }
+                    }
                     let (name, rate, once, blend) = match (&a.oneshot, a.play.as_ref().and_then(|p| p.current())) {
                         (Some(o), _) => (o.name.clone(), o.speed, true, crate::motion::BLEND_TICKS),
                         (None, Some(m)) => {
@@ -17997,6 +18023,7 @@ impl App {
                         entities: &w.entities,
                         me: w.my_id,
                         me_moving: w.moving,
+                        me_strafe: w.my_strafe,
                         pet: w.my_pet,
                         party,
                         my_index: w.my_index,

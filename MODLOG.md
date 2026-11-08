@@ -23208,3 +23208,17 @@ still gave `cor`. Both now go through actmotion::sdep_stand.
 - Ours: the locked path takes motion::strafe_dir_held (the right drag's hold since lenonk/vana-client#95) before
   FUN_100a7b80's 2 <-> 4 flip guard. Test motion::tests::locked_diagonal_holds. *(Retail's FUN_100a80d0 has no hold;
   whether its keyboard diagonal flickers too is not known.)*
+
+## Swings while strafing: by the move's quarter (2026-11-07)
+
+- User report: attacking with a staff while holding only A or D (or Num4 / Num6) locked on, the upper body swung one
+  way and the legs another. The log showed `mvr -> amf ... keeps [mvr, None, mvr]`: the forward moving swing `atf?`
+  (whose `amf1` keys only the upper body) over the strafing legs.
+- FUN_100d46f0 (old build; moving branch): with vt+0x330 false (the facing held: locked on, the strafe lock) the
+  moving swing's third letter is from +0x598: 2 'r', 3 'b', 4 'l', else 'f'; with it true always 'f'. The battle files
+  carry `atr?` / `atl?` / `atb?` with `amr1` / `aml1` / `amb1`.
+- Ours: combat::swing_patterns takes the quarter (World::my_strafe for us, 0 for others: retail writes +0x598 only for
+  the local player). Test combat::tests::moving_swing_by_quarter.
+- Ours (user, 2026-11-07): retail picks the moving swing once, so reversing mid-swing left it on the old side over the
+  new legs. Our character's playing `am?` now turns with the quarter at the same frame (actmotion::Play::rename_current,
+  the one-shot too); other actors and retail's pick at the swing's start are unchanged.
