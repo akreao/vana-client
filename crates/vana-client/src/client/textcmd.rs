@@ -1025,7 +1025,8 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
             if !status_gate(w, 0x44) {
                 return Ok(());
             }
-            // Ours: refused while gardening already (as read a second /garden would break the camera).
+            // Gardening already: every gardening window (bankmenu, inventor, plnt1..6, comyn) has registry flag
+            // 0x20000, so retail's UI_FREE gate (main_open in status_gate) refuses it; this covers the frames with none.
             if super::moogle::job_cooling(w) || w.layout.is_some() || w.remodel.is_some() || w.garden.is_some() {
                 return Err(());
             }
