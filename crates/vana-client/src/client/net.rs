@@ -993,7 +993,6 @@ pub enum NetEvent {
     Logout {
         state: u32,
     },
-    Status(String),
     Error(String),
 }
 

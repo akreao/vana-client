@@ -68,6 +68,7 @@ pub struct Action {
 
 impl Action {
     /// cmd_arg as text when it is a 4cc.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn arg_4cc(&self) -> Option<String> {
         let b = self.arg.to_le_bytes();
         b.iter().all(|c| c.is_ascii_graphic()).then(|| String::from_utf8_lossy(&b).into_owned())

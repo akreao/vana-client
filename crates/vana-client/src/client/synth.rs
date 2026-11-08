@@ -174,7 +174,6 @@ pub(super) fn menu_off(w: &World) -> bool {
     w.synth.sent.is_some_and(|t| t.elapsed() < Duration::from_secs(23))
 }
 
-/// The crystal source's rows: crystals only (FUN_101e2a40 colours type 8 yellow; the others are not listed, inferred).
 /// The focused synthesis picker or crystal list (true), for its bar and the wheel.
 pub(super) fn picker(w: &mut World, confirm: bool) -> Option<(&mut (usize, usize), bool)> {
     if let Some(s) = w.synth.win.as_mut().filter(|s| s.focus == Focus::List && !confirm && s.from != From::History) {
@@ -187,6 +186,7 @@ pub(super) fn crystal_count(w: &World) -> usize {
     crystal_rows(w).len()
 }
 
+/// The crystal source's rows: crystals only (FUN_101e2a40 colours type 8 yellow; the others are not listed, inferred).
 fn crystal_rows(w: &World) -> Vec<crate::inventory::Slot> {
     let info = w.item_info.as_ref();
     picker_rows(w).into_iter().filter(|r| info.and_then(|c| c.item(r.id)).is_some_and(|it| it.item_type == 8)).collect()
@@ -543,14 +543,13 @@ fn cancel(w: &mut World) {
 }
 
 /// FUN_101e0580: linkshells, equipped items and the crystal grey; a stack already in a slot orange.
-fn tint(w: &World, s: &Win, row: &crate::inventory::Slot) -> u32 {
+fn tint(_w: &World, s: &Win, row: &crate::inventory::Slot) -> u32 {
     use crate::inventory::{TINT_DIM, TINT_WHITE};
     if (0x201..=0x203).contains(&row.id) || row.equipped || row.index == s.crystal.0 {
         TINT_DIM
     } else if s.slots.iter().any(|x| x.0 == row.index && x.0 != 0) {
         0x8080_4020
     } else {
-        let _ = w;
         TINT_WHITE
     }
 }
@@ -976,8 +975,7 @@ fn sets_held(w: &World, s: &Win) -> u32 {
             .sum()
     };
     let mut need: Vec<(u16, u32)> = vec![(s.crystal.1, 1)];
-    for &(index, id, count) in s.slots.iter().filter(|x| x.0 != 0 && x.2 != 0) {
-        let _ = index;
+    for &(_, id, count) in s.slots.iter().filter(|x| x.0 != 0 && x.2 != 0) {
         match need.iter_mut().find(|n| n.0 == id) {
             Some(n) => n.1 += count,
             None => need.push((id, count)),

@@ -67,7 +67,6 @@ fn shows(tab: u8, mode: u16, battle_in_all: bool) -> bool {
 }
 /// Lines kept in the window's scroll.
 const KEEP: usize = 300;
-/// The default room: the width and the lines' height in points.
 /// The default room: most of the screen's width (the user's arrangement), eight or nine lines.
 fn default_room(ctx: &egui::Context) -> Vec2 {
     vec2(ctx.content_rect().width() * 0.8715, 174.0)

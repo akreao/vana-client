@@ -47,6 +47,7 @@ pub struct Def {
     pub min: u32,
     pub max: u32,
     /// Bit 0: callbacks run even when the value is unchanged.
+    #[allow(dead_code)] // table column, not read
     pub flag: u8,
 }
 
@@ -283,10 +284,6 @@ impl Values {
         self.get(id) as i32
     }
 
-    pub fn on(&self, id: u16) -> bool {
-        self.get(id) != 0
-    }
-
     /// FUN_1018ecb0: out of range resets to the default. Returns whether the stored value changed.
     pub fn set(&mut self, id: u16, v: u32) -> bool {
         let Some(d) = def(id) else { return false };
@@ -302,18 +299,6 @@ impl Values {
             self.0.insert(id, v);
         }
         old != v
-    }
-
-    /// FUN_1018edd0(0): every id back to its default.
-    pub fn reset(&mut self, ids: impl IntoIterator<Item = u16>) {
-        for id in ids {
-            self.0.remove(&id);
-        }
-    }
-
-    /// The ids stored apart from the default.
-    pub fn changed(&self) -> impl Iterator<Item = (u16, u32)> + '_ {
-        self.0.iter().map(|(k, v)| (*k, *v))
     }
 }
 

@@ -137,7 +137,7 @@ pub fn key(w: &mut World, key: egui::Key) {
 
 fn move_to(p: &mut Prompt, k: usize) {
     p.cursor = k.min(p.options.len() - 1);
-    p.scroll = p.scroll.min(p.cursor).max((p.cursor + 1).saturating_sub(ROWS));
+    crate::client::scrollbar::keep_in_view(&mut p.scroll, p.cursor, ROWS);
 }
 
 /// The mouse (ours, as the query's): hovering row `k` moves the cursor there, a click picks it.

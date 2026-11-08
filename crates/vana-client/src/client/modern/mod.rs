@@ -95,7 +95,7 @@ use std::collections::HashMap;
 pub struct Modern {
     pub theme: Theme,
     art: Art,
-    /// The chat window's tab and whether its settings are open; game textures (status icons) as egui textures, by key.
+    /// The chat window's tab and whether its settings are open.
     chat_tab: std::cell::Cell<u8>,
     chat_settings: std::cell::Cell<bool>,
     /// Where each chat tab was last seen (the log's length then; chat.rs unread).
@@ -109,6 +109,7 @@ pub struct Modern {
     /// How menu rows look (rows.rs), and window borders (borders.rs).
     row_style: std::cell::Cell<rows::Style>,
     border_style: std::cell::Cell<borders::Style>,
+    /// Game textures (status icons) as egui textures, by key.
     images: std::cell::RefCell<std::collections::HashMap<String, Option<egui::TextureHandle>>>,
     /// Status tooltips' name and description by (status id, small set), read once (hud.rs).
     pub status_tips: std::cell::RefCell<HashMap<(u16, bool), std::rc::Rc<(String, String)>>>,
@@ -1459,7 +1460,7 @@ impl Modern {
             ctx.request_repaint_after(std::time::Duration::from_secs_f32(REST - still));
             return;
         }
-        egui::Area::new(Id::new("modern tip"))
+        egui::Area::new(Id::unique("modern tip"))
             .order(Order::Tooltip)
             .fixed_pos(at + vec2(16.0, 20.0))
             .constrain(true)

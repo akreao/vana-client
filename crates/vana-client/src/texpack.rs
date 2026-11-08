@@ -550,7 +550,9 @@ pub fn slim(pack: &Path, out: &Path) -> Result<()> {
                         counts.lock().unwrap()[1] += 1;
                         continue;
                     }
-                    if dat::overlay::merge(&stock, &[bytes.clone()]) != dat::overlay::merge(&stock, &[full.clone()]) {
+                    if dat::overlay::merge(&stock, std::slice::from_ref(&bytes))
+                        != dat::overlay::merge(&stock, std::slice::from_ref(&full))
+                    {
                         failed.lock().unwrap().push(format!("{}: merges differently", rel.display()));
                         continue;
                     }

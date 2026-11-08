@@ -453,7 +453,7 @@ pub fn look(w: &World) -> Option<(u8, usize, Vec<Row>)> {
 pub fn set_cursor(w: &mut World, k: usize) {
     if let Some(win) = w.ranking.win.as_mut() {
         win.cursor = k;
-        win.top = win.top.min(k).max((k + 1).saturating_sub(ROWS));
+        crate::client::scrollbar::keep_in_view(&mut win.top, k, ROWS);
     }
 }
 
@@ -489,7 +489,7 @@ pub fn key(w: &mut World, key: egui::Key) {
         _ => {}
     }
     a.cursor = a.cursor.min(n.saturating_sub(1));
-    a.top = a.top.min(a.cursor).max((a.cursor + 1).saturating_sub(ROWS));
+    crate::client::scrollbar::keep_in_view(&mut a.top, a.cursor, ROWS);
     w.ranking.win = Some(a);
 }
 

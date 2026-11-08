@@ -119,7 +119,7 @@ pub(super) fn view(w: &World) -> Option<(Vec<String>, usize, bool, String)> {
 pub(super) fn set_cursor(w: &mut World, k: usize) -> bool {
     let Some(b) = w.blklist.as_mut().filter(|b| !b.main && b.cursor != k && k < b.rows.len()) else { return false };
     b.cursor = k;
-    b.top = b.top.min(k).max((k + 1).saturating_sub(ROWS));
+    crate::client::scrollbar::keep_in_view(&mut b.top, k, ROWS);
     true
 }
 

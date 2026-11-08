@@ -267,7 +267,8 @@ impl Effects {
         }
     }
 
-    /// Whether every file is in (or failed); the others start loading.
+    /// Whether every file is in (or failed); the others start loading. A fold, not `all`: every file is asked for.
+    #[allow(clippy::unnecessary_fold)]
     pub fn libs_ready(&mut self, files: &[u32]) -> bool {
         files.iter().fold(true, |ok, &f| (self.lib_for(f).is_some() || self.failed.contains(&f)) && ok)
     }
@@ -3281,7 +3282,6 @@ impl Effects {
         self.loading.iter().filter(|f| self.reg.lib_of(**f).is_none() && !self.failed.contains(f)).count()
     }
 
-    /// fx-sweep between runs: every task, pending start and generator gone.
     /// The shine drives' frame (FUN_10060680, FUN_1005e870): a drive whose task is gone ends there (U / V snap to the
     /// target, the overlay goes if still its own, the colour stays where it was).
     fn step_shine(&mut self, dt: f32, live: &[u64]) {
@@ -3393,6 +3393,7 @@ impl Effects {
             .collect()
     }
 
+    /// fx-sweep between runs: every task, pending start and generator gone.
     pub fn reset_runs(&mut self) {
         self.trails.clear();
         self.shine.clear();

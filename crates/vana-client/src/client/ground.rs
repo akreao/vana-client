@@ -541,7 +541,6 @@ impl Ground {
         self.open.borrow_mut().clear();
     }
 
-    /// Triangle `i` counts: not the box of an open door.
     /// The live triangles with a corner within `r` of (x, z) horizontally (mods: game.collision), with their normals
     /// and surface kinds.
     pub fn tris_near(&self, x: f32, z: f32, r: f32) -> Vec<([Vec3; 3], Vec3, u8)> {
@@ -571,6 +570,7 @@ impl Ground {
         self.tris.iter().enumerate().filter(|&(i, _)| self.live(i) && !self.degenerate[i]).map(|(_, t)| t)
     }
 
+    /// Triangle `i` counts: not the box of an open door.
     fn live(&self, i: usize) -> bool {
         match self.doors.get(i) {
             Some(&d) if d != 0 => !self.open.borrow().contains(&d),
@@ -582,9 +582,7 @@ impl Ground {
         self.tris.is_empty()
     }
 
-    /// The floor under feet at `p` (FUN_10162120): its surface type (0 when the face is more than 0.4 below the
-    /// feet, FUN_10162470) and whether its object is covered (actor+0x17c).
-    /// The same face's normal, turned to +y (into the floor; -vt+0x210 *(inf: the sign, from flat ground giving
+    /// The normal of the floor face under feet at `p` (as `surface` finds it), turned to +y (into the floor; -vt+0x210 *(inf: the sign, from flat ground giving
     /// FUN_100d3750 the identity)*).
     pub fn floor_normal(&self, p: Vec3) -> Option<Vec3> {
         let (_, i) =
@@ -619,6 +617,8 @@ impl Ground {
             .then(|| self.objs.get(i).and_then(|&o| self.obj_water.get(o as usize)).copied().unwrap_or(0.0))
     }
 
+    /// The floor under feet at `p` (FUN_10162120): its surface type (0 when the face is more than 0.4 below the
+    /// feet, FUN_10162470) and whether its object is covered (actor+0x17c).
     pub fn surface(&self, p: Vec3) -> (u8, bool) {
         let floor = self.heights(p.x, p.z).into_iter().filter(|h| h.0 >= p.y - 0.5).min_by(|a, b| a.0.total_cmp(&b.0));
         match floor {

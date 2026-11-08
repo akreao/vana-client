@@ -1140,6 +1140,7 @@ impl SettingsUi {
     /// A key; returns true when the page closes (Escape). Left / Right move between a row's buttons; on the page name
     /// (a stop of ours above the rows) or a slider row, or with Ctrl / Alt (the lists' page modifier), they turn the
     /// page.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn key(&mut self, key: egui::Key) -> bool {
         self.key_mod(key, false)
     }
@@ -1402,13 +1403,13 @@ impl SettingsUi {
         }
     }
 
-    /// The help bar's text for the cursor's row, with when a change shows.
     /// Ours, not retail: the Background row carries a warning while real character shadows are on (their full-screen
     /// receive pass runs at the Background size, so a larger one costs more).
     fn warns(&self, r: &Row) -> bool {
         matches!(r.val, Val::Size(_, _, Sizes::Background)) && self.s.actor_shadows != 0
     }
 
+    /// The help bar's text for the cursor's row, with when a change shows.
     pub fn help(&self) -> String {
         if self.on_mods() {
             return if self.s.modern_ui { self.modern_mods_help() } else { self.mods_help() };
@@ -1526,15 +1527,13 @@ pub enum VCtl {
     Slider { n: usize, at: usize, shown: String },
 }
 
-/// The page as the modern layer draws it; the cursor's row (0 the page name) and column, a slider being edited.
+/// The page as the modern layer draws it; the cursor's row (0 the page name) and column.
 pub struct View {
-    pub title: &'static str,
     pub tabs: Vec<String>,
     pub tab: usize,
     pub rows: Vec<VRow>,
     pub row: usize,
     pub col: usize,
-    pub edit: bool,
     pub help: String,
 }
 
@@ -1581,16 +1580,7 @@ impl SettingsUi {
         } else {
             self.rows().iter().map(|r| self.vrow(r)).collect()
         };
-        View {
-            title: self.title(),
-            tabs: self.tabs(),
-            tab: self.tab,
-            rows,
-            row: self.row,
-            col: self.col,
-            edit: self.edit,
-            help: plain(&self.help()),
-        }
+        View { tabs: self.tabs(), tab: self.tab, rows, row: self.row, col: self.col, help: plain(&self.help()) }
     }
 
     /// The modern layer's mouse: page `t`.

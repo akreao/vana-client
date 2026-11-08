@@ -36,6 +36,8 @@ use wgpu::util::DeviceExt;
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 pub struct Gpu {
+    /// The instance the surface came from (held, never read).
+    #[allow(dead_code)]
     pub instance: wgpu::Instance,
     pub adapter: wgpu::Adapter,
     pub device: wgpu::Device,
@@ -475,7 +477,7 @@ pub struct ZoneRenderer {
     pose_frame: u64,
     /// Motions evaluated on the GPU into the pose regions (render/anim.rs).
     anim: anim::GpuAnim,
-    /// Skinned models on the GPU by model address (the Arc keeps it), and how many more this frame may add.
+    /// Skinned models on the GPU by model address (the Arc keeps it).
     models: HashMap<usize, (std::sync::Arc<crate::dat::character::Character>, ActorGpu)>,
     /// Models going up piece by piece, oldest first, and the magenta slot-0 texture of actors.
     builds: Vec<(usize, Build)>,
@@ -3284,7 +3286,6 @@ impl ZoneRenderer {
 
     /// Queues a skinned actor posed on the GPU from its motions (to, and from at blend `t`), and its placement.
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     pub fn pose_actor_gpu(
         &mut self,
         actor: &mut ActorGpu,
@@ -4421,17 +4422,6 @@ pub fn depth_view(device: &wgpu::Device, width: u32, height: u32) -> wgpu::Textu
             view_formats: &[],
         })
         .create_view(&Default::default())
-}
-
-/// Renders one frame offscreen and writes it as a PNG.
-pub fn render_png(
-    scene: &ZoneScene,
-    camera: &Camera,
-    width: u32,
-    height: u32,
-    path: &std::path::Path,
-) -> Result<usize> {
-    render_pngs(scene, &[(camera, path)], width, height)
 }
 
 /// Renders several frames of one scene offscreen, one PNG each.

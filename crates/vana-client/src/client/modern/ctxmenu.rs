@@ -71,7 +71,7 @@ pub fn popup(
     rows: &[(&str, bool)],
 ) -> (Option<usize>, bool) {
     let mut picked = None;
-    let sel_id = Id::new("modern context menu sel").with((title, at.x as i32, at.y as i32));
+    let sel_id = Id::unique("modern context menu sel").with((title, at.x as i32, at.y as i32));
     let usable: Vec<usize> = rows.iter().enumerate().filter(|(_, r)| r.1).map(|(k, _)| k).collect();
     let mut sel = ctx.data(|d| d.get_temp::<usize>(sel_id)).filter(|k| usable.contains(k)).or(usable.first().copied());
     let (down, up, enter) = ctx.input(|i| {

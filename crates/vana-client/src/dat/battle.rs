@@ -282,6 +282,7 @@ impl BattleText {
     }
 
     /// Line colour of a chat mode, BGRA with 0x80 = 1.0; 0x80808080 when unlisted (FUN_10126040).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn colour(&self, mode: u8) -> [u8; 4] {
         let id = self.mode_colours.iter().find(|(m, _)| *m == mode as u16).map_or(0, |e| e.1);
         self.palette.iter().find(|(i, _)| *i == id).map_or([0x80; 4], |e| e.1)
