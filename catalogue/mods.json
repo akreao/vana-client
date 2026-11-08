@@ -3,25 +3,25 @@
   "mods": [
     {
       "authors": [],
-      "description": "A window of everything your jobs can use now: magic by school, job abilities, weapon skills and pet commands, with costs and recasts; a click uses one (the action menu add-ons).",
+      "description": "A window of everything your jobs can use now: magic by school, job abilities, weapon skills and pet commands, with costs and recasts; a click uses one; //actions opens it (the action menu add-ons).",
       "files": [
         {
           "path": "init.lua",
-          "sha256": "00482ea1b047d962ae886fbf5b5ce19dbfcf90d61cdc55862ec90a77cecbe99a",
-          "size": 5925,
+          "sha256": "329484df97f2b55b4e8822817bfb63d765808e02a984c697dba68d7ae8da8c22",
+          "size": 7799,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/action-panel/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "9003ea0fd4b7364fe8364dadad89255f9b6e93830658fbc5eb08e647ef2d12b3",
-          "size": 488,
+          "sha256": "3410cc0b6cf7ac94d207177dd32912bb5987910e9b6d74bb9040fa34108b6f18",
+          "size": 499,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/action-panel/mod.toml"
         }
       ],
       "id": "action-panel",
       "kind": "lua",
       "name": "Action Panel",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],
