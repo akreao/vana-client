@@ -1,6 +1,6 @@
 name = "Mount Picker"
-version = "1.0.1"
-description = "Calls a random mount of yours, or one by part of its name (the mount roulette add-ons). Commands: //ride (a random mount), //ride <part of a name>, //ride list."
+version = "1.0.2"
+description = "Calls a random mount of yours, or one by part of its name (the mount roulette add-ons).\n\n//ride (a random mount)\n//ride <part of a name>\n//ride list"
 permissions = ["actions"]
 
 [settings.on]

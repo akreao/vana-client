@@ -1,6 +1,6 @@
 name = "Countdowns"
-version = "1.0.1"
-description = "Your own countdowns as rows in the Timers windows, with a line when each is up (the timer add-ons). Commands: //timer <time> <name> (90, 5m, 1h30m or 2:30), //timer cancel <name>, //timer clear."
+version = "1.0.2"
+description = "Your own countdowns as rows in the Timers windows, with a line when each is up (the timer add-ons).\n\n//timer <time> <name> (90, 5m, 1h30m or 2:30)\n//timer cancel <name>\n//timer clear"
 permissions = []
 
 [settings.on]

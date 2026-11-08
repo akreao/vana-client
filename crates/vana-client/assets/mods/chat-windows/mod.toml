@@ -1,6 +1,6 @@
 name = "Chat Windows"
-version = "1.0.1"
-description = "A window of its own for a chat channel (tells, party, linkshells, say, shout, yell, unity) with a line to answer in, and a search over the session's lines (the chat window add-ons). Commands: //chatwin <tell | party | ls | ls2 | say | shout | yell | unity>, //chatfind <words>."
+version = "1.0.2"
+description = "A window of its own for a chat channel (tells, party, linkshells, say, shout, yell, unity) with a line to answer in, and a search over the session's lines (the chat window add-ons).\n\n//chatwin <tell | party | ls | ls2 | say | shout | yell | unity>\n//chatfind <words>"
 permissions = ["actions"]
 
 [settings.on]

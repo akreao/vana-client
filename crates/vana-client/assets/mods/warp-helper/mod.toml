@@ -1,6 +1,6 @@
 name = "Warp Helper"
-version = "1.0.1"
-description = "Answers the Home Point, Survival Guide and Waypoint menus by name, and warps home with the Warp spell or a warp item (the warp add-ons). Commands: //warp [hp | sg | wp] <zone> [number or place], //warp home, //warp dim <holla | dem | mea>."
+version = "1.0.2"
+description = "Answers the Home Point, Survival Guide and Waypoint menus by name, and warps home with the Warp spell or a warp item (the warp add-ons).\n\n//warp [hp | sg | wp] <zone> [number or place]\n//warp home\n//warp dim <holla | dem | mea>"
 permissions = ["actions"]
 
 [settings.on]

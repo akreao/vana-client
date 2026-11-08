@@ -1,6 +1,6 @@
 name = "Loot Rules"
-version = "1.0.1"
-description = "Lots, passes and drops treasure by your lists (the treasury and loot add-ons). Commands: //loot [lot | pass | drop] [add | remove] <item>, //loot list."
+version = "1.0.2"
+description = "Lots, passes and drops treasure by your lists (the treasury and loot add-ons).\n\n//loot [lot | pass | drop] [add | remove] <item>\n//loot list"
 permissions = ["automation"]
 
 [settings.on]
