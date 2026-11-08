@@ -1,5 +1,5 @@
--- Hotkeys for the bars: a modifier per bar plus one key row shared by all bars.
--- Defaults: bar 1 = 1..0, bar 2 = Ctrl+1..0, bar 3 = Alt+1..0.
+-- Hotkeys for the bars: a modifier per bar plus one key row shared by all bars, unless a slot has a key of its own
+-- (any combination, or none). Defaults: bar 1 = 1..0, bar 2 = Ctrl+1..0, bar 3 = Alt+1..0.
 -- The choices live in storage.account.keys (string keys only: saved tables
 -- come back with text keys).
 
@@ -101,14 +101,64 @@ local function row()
   return ROWS[index_of(M.ROW_LABELS, M.get_row())]
 end
 
--- The key combination for a slot, e.g. "ctrl+1".
+-- A slot's own key: a combination such as "ctrl+q", "" for none, nil when it takes the bar's.
+function M.get_slot(bar, slot)
+  local t = store().slots
+  local v = type(t) == "table" and t[bar .. "." .. slot] or nil
+  return type(v) == "string" and v or nil
+end
+
+function M.set_slot(bar, slot, combo)
+  local s = store()
+  if type(s.slots) ~= "table" then
+    s.slots = {}
+  end
+  s.slots[bar .. "." .. slot] = combo
+end
+
+-- The bar's key for a slot, e.g. "ctrl+1".
+function M.default_combo(bar, slot)
+  return MOD_PREFIX[M.get_mod(bar)] .. (row().keys[slot] or "")
+end
+
+-- The key combination for a slot ("" when it has none).
 function M.combo(bar, slot)
-  return MOD_PREFIX[M.get_mod(bar)] .. row().keys[slot]
+  return M.get_slot(bar, slot) or M.default_combo(bar, slot)
+end
+
+local SHORT_KEY = { pageup = "PgU", pagedown = "PgD", backspace = "BS", insert = "Ins", delete = "Del",
+  escape = "Esc", space = "Spc", enter = "Ent", up = "Up", down = "Dn", left = "Lt", right = "Rt", home = "Hm",
+  ["end"] = "End", tab = "Tab" }
+
+-- Short text for a combination: "ctrl+q" is "CQ", "alt+numpad3" "AN3".
+local function short(combo)
+  local mods, key = "", combo
+  while true do
+    local m, rest = key:match("^(%a+)%+(.+)$")
+    if m == "ctrl" then mods = mods .. "C"
+    elseif m == "alt" then mods = mods .. "A"
+    elseif m == "shift" then mods = mods .. "S"
+    else break end
+    key = rest
+  end
+  local n = key:match("^numpad(.+)$")
+  key = n and ("N" .. n) or SHORT_KEY[key] or key:upper()
+  return mods .. key
 end
 
 -- Short text for the slot's corner, e.g. "C1" or "AF3".
 function M.hint(bar, slot)
-  return MOD_SHORT[M.get_mod(bar)] .. row().hints[slot]
+  local own = M.get_slot(bar, slot)
+  if own then
+    return own == "" and "" or short(own)
+  end
+  return MOD_SHORT[M.get_mod(bar)] .. (row().hints[slot] or "")
+end
+
+-- The hint, or "no key".
+function M.hint_or(bar, slot)
+  local h = M.hint(bar, slot)
+  return h ~= "" and h or "no key"
 end
 
 -- Drops the old binds and binds every slot to fire(bar, slot). A combination two
@@ -123,7 +173,9 @@ function M.bind_all(bars, slots, fire)
   for b = 1, bars do
     for s = 1, slots do
       local combo = M.combo(b, s)
-      if seen[combo] then
+      if combo == "" then
+        -- No key.
+      elseif seen[combo] then
         conflicts[#conflicts + 1] = ("%s: bar %d slot %d is taken by bar %d slot %d"):format(
           combo, b, s, seen[combo][1], seen[combo][2])
       else

@@ -24,6 +24,7 @@ bar.hooks.slot_menu = menu.open
 bar.hooks.changed = manager.refresh
 menu.hooks.edit_slot = manager.edit_slot
 menu.hooks.open_manager = manager.open
+menu.hooks.rebind = bar.rebind
 menu.hooks.changed = function()
   bar.rebuild()
   manager.refresh()

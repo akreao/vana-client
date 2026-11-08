@@ -885,13 +885,13 @@
       "files": [
         {
           "path": "init.lua",
-          "sha256": "64f2c31f0d428ed9b9e1f8f6ef1712ca5e389b9ed33a6e84776960b324fa5e3c",
-          "size": 2698,
+          "sha256": "fb24c8741dfdc2c92b23288d3b065138a3673a63b72be7e26eb99e9869ddee50",
+          "size": 2729,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "df2a98bd3aab891cb1fa062b964a254eed3e4441d354a6a9d6e65022665b67a8",
+          "sha256": "1ad074d73e4483181d9d90f6f3fef99df2575d53cf76d325a8d55793618593a2",
           "size": 1289,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/mod.toml"
         },
@@ -921,20 +921,20 @@
         },
         {
           "path": "src/keys.lua",
-          "sha256": "b7f6cfb4e4e67bfb1f971cfe232aa87a10d331af17075ea705f8fa825bc2063b",
-          "size": 3710,
+          "sha256": "3d2896030ea679d8af136963cfa2c94ee5ab84c5ff466ed34dae4d9e67dccd3c",
+          "size": 5379,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/keys.lua"
         },
         {
           "path": "src/manager.lua",
-          "sha256": "66443a1516e291e6766cb2fa4afb9b56696dd86637e113662ea0574e16837c03",
-          "size": 10474,
+          "sha256": "91fff209d9b374698fa9bef3adea4f857b1b54984206771ddcd8ea731da85702",
+          "size": 11066,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/manager.lua"
         },
         {
           "path": "src/menu.lua",
-          "sha256": "412a9fa5184b8b799350191fcba3efe89590a7a223157f575dc4988a5c530f3c",
-          "size": 9612,
+          "sha256": "919ac66efaecb7cb881afb7adf0199b856aa4774d55831b4a9b9af1125185214",
+          "size": 11776,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/menu.lua"
         },
         {
@@ -953,7 +953,7 @@
       "id": "hotbar",
       "kind": "lua",
       "name": "Hotbars",
-      "version": "1.5.0"
+      "version": "1.6.0"
     },
     {
       "authors": [],

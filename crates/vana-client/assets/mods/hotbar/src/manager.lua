@@ -114,15 +114,20 @@ end
 -- Editing a slot
 -- ---------------------------------------------------------------------------
 
+local function show_where()
+  ui.update(WIN, "where", {
+    text = ("Bar %d, slot %d (%s) of %s"):format(S.bar, S.slot, keys.hint_or(S.bar, S.slot),
+      S.sj ~= "" and (S.mj .. " + sub " .. S.sj) or (S.mj .. " main")),
+  })
+  ui.update(WIN, "skey", { text = keys.combo(S.bar, S.slot) })
+end
+
 local function edit_slot()
   if not S.mj then
     return
   end
   local macro = data.resolve(S.mj, sub_arg(), S.bar, S.slot)
-  ui.update(WIN, "where", {
-    text = ("Bar %d, slot %d (%s) of %s"):format(S.bar, S.slot, keys.hint(S.bar, S.slot),
-      S.sj ~= "" and (S.mj .. " + sub " .. S.sj) or (S.mj .. " main")),
-  })
+  show_where()
   ui.update(WIN, "name", { text = macro and macro.name or "" })
   ui.update(WIN, "label", { text = macro and macro.label or "" })
   ui.update(WIN, "lines", { text = macro and data.join_lines(macro.lines) or "" })
@@ -200,6 +205,8 @@ local function define()
       { type = "input", id = "name", label = "Name", text = "", max = 32, page = TAB_MACRO },
       { type = "input", id = "label", label = "Button text (blank = from the name)", text = "", max = 14,
         page = TAB_MACRO },
+      { type = "key", id = "skey", label = "Key", text = "", page = TAB_MACRO,
+        tip = "Enter or click, then press the slot's key (with Ctrl, Alt or Shift if you like). Backspace: no key." },
       { type = "input", id = "lines", label = "Lines (separate with |)", text = "", max = 1024, page = TAB_MACRO,
         tip = 'Example: /ma "Cure" <t> | /wait 2 | /echo done' },
       { type = "text", id = "tip", text = "Waits: /wait 2 on its own line, or <wait 2> at the end of one.",
@@ -207,7 +214,8 @@ local function define()
       { type = "buttons", id = "ebtn", items = { "Save", "Cancel" }, page = TAB_MACRO },
 
       -- Keys
-      { type = "text", id = "ktext", text = "Hotkey modifier for each bar:", page = TAB_KEYS },
+      { type = "text", id = "ktext", text = "Each bar's keys (a slot's own key, set on its Macro page or its menu, takes "
+        .. "their place):", page = TAB_KEYS },
       { type = "choice", id = "mod1", label = "Bar 1", items = keys.MOD_LABELS, at = 1, page = TAB_KEYS },
       { type = "choice", id = "mod2", label = "Bar 2", items = keys.MOD_LABELS, at = 1, page = TAB_KEYS },
       { type = "choice", id = "mod3", label = "Bar 3", items = keys.MOD_LABELS, at = 1, page = TAB_KEYS },
@@ -235,6 +243,13 @@ local function define()
         refresh_keys()
         refresh_slots()
       end
+    elseif e.kind == "change" and e.id == "skey" then
+      keys.set_slot(S.bar, S.slot, e.text)
+      M.hooks.rebind()
+      M.hooks.changed()
+      refresh_keys()
+      refresh_slots()
+      show_where()
     elseif e.kind == "change" and (e.id == "mj" or e.id == "sj") then
       local text = data.trim(e.text)
       if text == "" and e.id == "sj" then

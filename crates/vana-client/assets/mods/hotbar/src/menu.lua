@@ -9,10 +9,10 @@ local actions = require("src.actions")
 
 local M = {}
 
--- Set by init.lua: edit_slot(bar, slot, from), open_manager(), changed()
+-- Set by init.lua: edit_slot(bar, slot, from), open_manager(), changed(), rebind()
 M.hooks = {}
 
-local MENU, PICK = "slotmenu", "slotpick"
+local MENU, PICK, KEY = "slotmenu", "slotpick", "slotkey"
 local GOLD = { 232, 210, 156 }
 local DIM = { 160, 162, 172 }
 
@@ -31,7 +31,7 @@ local function store(macro)
   if not (main and at) then return end
   data.set_macro(main, at.from == "sub" and sub or nil, at.bar, at.slot, macro)
   if M.hooks.changed then M.hooks.changed() end
-  chat.add(("Hotbars: %s is on bar %d, slot %d (%s)."):format(macro.name, at.bar, at.slot, keys.hint(at.bar, at.slot)))
+  chat.add(("Hotbars: %s is on bar %d, slot %d (%s)."):format(macro.name, at.bar, at.slot, keys.hint_or(at.bar, at.slot)))
 end
 
 local function quote(name)
@@ -157,7 +157,7 @@ local function pick(kind)
     modal = true,
     help = "Type to filter, then pick one: it goes into the slot as a macro you can still edit in the manager.",
     elements = {
-      { type = "text", id = "where", text = ("Bar %d, slot %d (%s)"):format(at.bar, at.slot, keys.hint(at.bar, at.slot)),
+      { type = "text", id = "where", text = ("Bar %d, slot %d (%s)"):format(at.bar, at.slot, keys.hint_or(at.bar, at.slot)),
         colour = GOLD },
       { type = "input", id = "filter", label = "Filter (type to narrow the list)", text = "", max = 32, filter = true,
         tip = "Typing goes here: part of a name narrows the list." },
@@ -192,6 +192,63 @@ local function pick(kind)
 end
 
 -- ---------------------------------------------------------------------------
+-- A slot's key
+-- ---------------------------------------------------------------------------
+
+local function key_note(bar, slot)
+  local own = keys.get_slot(bar, slot)
+  local note = own and "Its own key." or ("The bar's key (%s)."):format(keys.hint_or(bar, slot))
+  local combo = keys.combo(bar, slot)
+  for _, c in ipairs(keys.conflicts()) do
+    if combo ~= "" and c:sub(1, #combo + 1) == combo .. ":" then
+      return note .. " Clash: " .. c:sub(#combo + 3) .. ".", { 240, 120, 100 }
+    end
+  end
+  return note, DIM
+end
+
+local function key_changed(bar, slot)
+  if M.hooks.rebind then M.hooks.rebind() end
+  if M.hooks.changed then M.hooks.changed() end
+  local text, colour = key_note(bar, slot)
+  ui.update(KEY, "note", { text = text, colour = colour })
+  ui.update(KEY, "key", { text = keys.combo(bar, slot) })
+end
+
+local function set_key(bar, slot)
+  ui.window(KEY, {
+    title = "Slot Key",
+    width = 340,
+    modal = true,
+    help = "Press the key, with Ctrl, Alt or Shift if you like. Backspace: no key. Escape: stop.",
+    elements = {
+      { type = "text", id = "where", text = ("Bar %d, slot %d"):format(bar, slot), colour = GOLD },
+      { type = "key", id = "key", label = "Key", text = keys.combo(bar, slot),
+        tip = "Enter or click, then press the key. Backspace: no key." },
+      { type = "text", id = "note", text = "", dim = true },
+      { type = "buttons", id = "go", items = { "Bar's Key", "Done" } },
+    },
+  })
+  ui.on(KEY, function(_, e)
+    if e.kind == "change" and e.id == "key" then
+      keys.set_slot(bar, slot, e.text)
+      key_changed(bar, slot)
+    elseif e.kind == "press" and e.id == "go" then
+      if e.index == 1 then
+        keys.set_slot(bar, slot, nil)
+        key_changed(bar, slot)
+      else
+        ui.close(KEY)
+      end
+    end
+  end)
+  local text, colour = key_note(bar, slot)
+  ui.update(KEY, "note", { text = text, colour = colour })
+  ui.open(KEY)
+  ui.update(KEY, "key", { listen = true })
+end
+
+-- ---------------------------------------------------------------------------
 -- The menu
 -- ---------------------------------------------------------------------------
 
@@ -201,6 +258,7 @@ local ITEMS = {
   { "Assign a macro...", "macro" },
   { "Edit the macro", "edit" },
   { "Clear the slot", "clear" },
+  { "Set the key...", "key" },
   { "Open the manager", "manager" },
 }
 
@@ -244,6 +302,8 @@ function M.open(bar, slot, from)
     elseif what == "clear" and main then
       data.clear(main, from == "sub" and sub or nil, bar, slot)
       if M.hooks.changed then M.hooks.changed() end
+    elseif what == "key" then
+      set_key(bar, slot)
     elseif what == "manager" then
       M.hooks.open_manager()
     end
