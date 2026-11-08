@@ -1,6 +1,6 @@
 name = "List Trimmer"
-version = "1.0.2"
-description = "Spells, abilities and mounts you never use left out of the game's lists, kept per character (the list trimming add-ons).\n\n//trim <spell, ability or mount>\n//trim list\n//trim clear"
+version = "1.0.3"
+description = "Spells, abilities and mounts you never use left out of the game's lists, kept per character (the list trimming add-ons)."
 permissions = ["ui.native"]
 
 [settings.on]

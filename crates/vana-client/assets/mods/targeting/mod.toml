@@ -1,6 +1,6 @@
 name = "Targeting Helpers"
-version = "1.0.2"
-description = "Targets by name or id, turns you toward or away from your target, and can check each monster you target (the targeting add-ons).\n\n//tgt <name or server id>\n//face\n//face away"
+version = "1.0.3"
+description = "Targets by name or id, turns you toward or away from your target, and can check each monster you target (the targeting add-ons)."
 permissions = ["automation"]
 
 [settings.on]

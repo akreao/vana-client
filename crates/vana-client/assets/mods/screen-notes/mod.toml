@@ -1,6 +1,6 @@
 name = "Screen Notes"
-version = "1.0.2"
-description = "Puts your own notes on the screen by command, where you drag them (the text add-ons).\n\n//note <name> <text>\n//note <name> (removes it)\n//notes"
+version = "1.0.3"
+description = "Puts your own notes on the screen by command, where you drag them (the text add-ons)."
 permissions = []
 
 [settings.on]

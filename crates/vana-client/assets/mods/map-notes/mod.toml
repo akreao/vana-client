@@ -1,6 +1,6 @@
 name = "Map Notes"
-version = "1.0.2"
-description = "Notes pinned to places on a zone's map, your party and the monsters you track, marked on the Map Overlay (the map marker add-ons).\n\n//mapnote add <text>\n//mapnote del <n>\n//mapnote list\n//mapnote track <name>\n//mapnote untrack <name>"
+version = "1.0.3"
+description = "Notes pinned to places on a zone's map, your party and the monsters you track, marked on the Map Overlay (the map marker add-ons)."
 permissions = []
 
 [settings.on]

@@ -1,6 +1,6 @@
 name = "Music Picker"
-version = "1.0.2"
-description = "Plays any of the game's tracks, keeps the zone's music in battle or silences it while mounted (the music add-ons).\n\n//music <track number>\n//music off"
+version = "1.0.3"
+description = "Plays any of the game's tracks, keeps the zone's music in battle or silences it while mounted (the music add-ons)."
 permissions = []
 
 [settings.on]
