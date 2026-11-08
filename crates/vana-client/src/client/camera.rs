@@ -519,13 +519,21 @@ fn drawn_out(w: &mut World, ticks: f32) {
 fn tick(w: &mut World, target: Vec3, player: Vec3, facing: Vec3, chase: bool, inp: &Inputs, frame_start: Option<Vec3>) {
     // _DAT_10456d7c: (A) and the final ray wait for the unlock hold (20 after the lock, 8 after first person).
     let unlocked = w.unlock_ticks <= 0.0;
+    let mouse_look = w.mouse_look;
     let ground = w.ground.as_ref().filter(|g| !g.is_empty());
     let st = &mut w.camst;
     // Retail's distances: the wheel scales only the drawn eye (drawn_out).
     let k = 1.0;
     let c = &mut w.cam;
     let start = frame_start.unwrap_or(c.eye);
-    c.look += (target - c.look) * 0.25;
+    let step = (target - c.look) * 0.25;
+    c.look += step;
+    // Ours: the right drag's mouse look (the character faces the view) carries the eye along with the look across the
+    // ground, so moving never turns the view: left behind, the eye swung the view toward a strafe and the facing with
+    // it (lenonk/vana-client#98). Heights stay retail's.
+    if mouse_look && st.face.is_none() && !st.path_mode {
+        c.eye += Vec3::new(step.x, 0.0, step.z);
+    }
     if let Some(off) = st.face {
         c.eye = c.look + off;
     } else {

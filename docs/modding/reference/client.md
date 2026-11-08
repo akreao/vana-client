@@ -30,7 +30,7 @@ end)
 | [`client.focus()`](#clientfocus) | Asks for the keyboard focus for this game window. |
 | [`client.screenshot(name?)`](#clientscreenshot) | Saves a screenshot of the next frame. |
 | [`client.record(name?, options?)`](#clientrecord) | Starts recording the game window to a video file. |
-| [`client.stop_recording()`](#clientstop_recording) | Ends the recording. |
+| [`client.stop_recording()`](#clientstop_recording) | Ends this mod's recording. |
 | [`client.recording()`](#clientrecording) | The video file being recorded, if any. |
 | [`client.run(program, args?, handler?)`](#clientrun) | Starts another program. |
 | [`client.process()`](#clientprocess) | The client's process id, cores, affinity and priority. |

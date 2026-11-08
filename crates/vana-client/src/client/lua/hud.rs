@@ -573,7 +573,7 @@ pub(super) fn load_png(
     mod_id: &str,
     path: &str,
 ) -> mlua::Result<(String, std::sync::Arc<(u32, u32, Vec<u8>)>)> {
-    if path.contains("..") || path.starts_with('/') || path.contains(':') {
+    if super::vm::outside(path) {
         return Err(mlua::Error::runtime(format!("{path:?}: outside the mod's folder")));
     }
     let bytes = match src {
@@ -625,7 +625,7 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
     chat.set(
         "icon",
         lua.create_function(move |_, path: String| {
-            if path.contains("..") || path.starts_with('/') || path.contains(':') {
+            if super::vm::outside(&path) {
                 return Err(mlua::Error::runtime(format!("{path:?}: outside the mod's folder")));
             }
             let bytes = match &src2 {

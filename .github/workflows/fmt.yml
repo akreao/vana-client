@@ -1,10 +1,10 @@
-# rustfmt on every push to master and every pull request; fails when `cargo fmt --all -- --check` finds a file that
+# rustfmt on every push to custom and every pull request; fails when `cargo fmt --all -- --check` finds a file that
 # isn't formatted (settings in rustfmt.toml). One Linux runner is enough: formatting is platform-independent.
 name: rustfmt
 
 on:
   push:
-    branches: [master]
+    branches: [custom]
   pull_request:
 
 concurrency:
