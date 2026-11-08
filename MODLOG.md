@@ -23246,9 +23246,10 @@ still gave `cor`. Both now go through actmotion::sdep_stand.
 
 - The Map Overlay Opacity is now the Map Overlay mod's setting (`settings.opacity`, 10% to 100% in 5% steps, taken
   from config `map_overlay_opacity` at its first load), on the mod's own settings page. The mod passes it to the new
-  client option `map_opacity` (0..1; kept when the mod unloads, as `minimap_span` is; 0.6 until a mod sets it), which
-  HUD maps without their own alpha and the minimap's marker use as before. The client's own row and config field are
-  gone.
+  client option `map_opacity` (0..1; kept when the mod unloads, as `minimap_span` is), which HUD maps without their
+  own alpha and the minimap's marker use as before. The client's own row is gone; config `map_overlay_opacity` stays
+  as the client's memory of the last value given (saved when it changes, as `minimap_span` is), so the minimap's marker
+  keeps the player's shade while the Map Overlay mod is off (user, 2026-11-08).
 - The modern Settings window's Maps & Timers page is removed. Minimap Position, Minimap Size and Timers Position were
   only ever shown there with the classic interface; they stay on the classic Extras tabs.
 - Settings declared `from` the config: a disabled mod's page now shows the migrated value; character-scoped ones wait

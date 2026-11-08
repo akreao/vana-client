@@ -52,7 +52,8 @@ Done so far (checked live, Lnxcsfix):
   plates, and the minimap's marker shaded by the overlay's opacity. The Map Overlay Opacity is the mod's setting (on its
   own settings page; it takes config `map_overlay_opacity` at its first load), passed to the client option
   `map_opacity`: the drawing code applies it to HUD maps that give no alpha of their own, and the minimap's marker
-  shades by it, as before. The Settings window's Maps & Timers page went
+  shades by it, as before. The client remembers the last value in config `map_overlay_opacity` (no Settings row), so
+  the minimap's marker keeps it while the mod is off. The Settings window's Maps & Timers page went
   with it (Minimap Position, Minimap Size and Timers Position are the classic UI's rows, on its Extras tabs). To get
   there the modern UI draws mods' HUD elements with its own painter (modern/hudmods.rs), as its own panels draw:
   a mod's element looks as a built-in one does (user, 2026-11-06). It shows what the map window shows (user,

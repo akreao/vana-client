@@ -7309,8 +7309,9 @@ struct World {
     /// The main menu's map window, and the key item bits by word (table * 16 + word, s2c 0x055).
     map: Option<map::MapWin>,
     /// The HUD maps' opacity (they take it unless a mod gives its own; the minimap's marker shades by it): the Map
-    /// Overlay mod's Map Overlay Opacity, through client.set_option("map_opacity").
+    /// Overlay mod's Map Overlay Opacity, through client.set_option("map_opacity"); saved to config when it changes.
     map_opacity: f32,
+    map_opacity_dirty: bool,
     /// Per-window opacity the player set (config `window_opacity`).
     window_opacity: std::collections::BTreeMap<String, f32>,
     /// Retail's chat timestamps on every log line (client option stamp_all_lines; the bundled Timestamps mod).
@@ -9407,7 +9408,8 @@ impl App {
                             follow: None,
                             translating: false,
                             last_proposer: String::new(),
-                            map_opacity: map::OPACITY,
+                            map_opacity: self.cfg.map_overlay_opacity,
+                            map_opacity_dirty: false,
                             window_opacity: self.cfg.window_opacity.clone(),
                             stamp_all_lines: false,
                             skillchain: Default::default(),
@@ -15518,6 +15520,12 @@ impl App {
                 }
                 if std::mem::take(&mut world.minimap_dirty) {
                     self.cfg.minimap_span = world.minimap_span;
+                    if let Err(e) = self.cfg.save() {
+                        log::warn!("config: {e:#}");
+                    }
+                }
+                if std::mem::take(&mut world.map_opacity_dirty) {
+                    self.cfg.map_overlay_opacity = world.map_opacity;
                     if let Err(e) = self.cfg.save() {
                         log::warn!("config: {e:#}");
                     }

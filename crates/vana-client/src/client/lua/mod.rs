@@ -199,8 +199,13 @@ fn set_option(w: &mut World, name: &str, v: &serde_json::Value) -> bool {
             }
             None => return false,
         },
+        // Saved to config when it changes, so it holds while the Map Overlay mod is off.
         ("map_opacity", _) => match v.as_f64() {
-            Some(k) => w.map_opacity = (k as f32).clamp(0.0, 1.0),
+            Some(k) => {
+                let k = (k as f32).clamp(0.0, 1.0);
+                w.map_opacity_dirty |= k != w.map_opacity;
+                w.map_opacity = k;
+            }
             None => return false,
         },
         _ => return false,

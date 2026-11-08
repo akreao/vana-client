@@ -21,8 +21,6 @@ const ICON_SPRITE: [usize; 20] =
 /// Mode 6's margins: the view may pass the image by +0x7c + +0x80 map pixels, and scroll targets move by +0x7c.
 const PREVIEW_MARGIN: f32 = 126.0;
 const PREVIEW_PAD: f32 = 30.0;
-/// The HUD maps' opacity until the Map Overlay mod sets the player's (client option map_opacity).
-pub const OPACITY: f32 = 0.6;
 /// Mode 6's backdrop (FUN_101cc620(0xd0c2), file 53442): a dark band around the image.
 pub const BACKDROP: &str = "menumap m_x36_00";
 
