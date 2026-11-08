@@ -620,8 +620,8 @@ const BUNDLED: &[(&str, &str, &[(&str, &str)])] = bundled!["dps", "auto-advance"
     "list-trimmer",
     "bag-manager",
     "gearshift" ["src/core.lua", "src/compat.lua", "src/names.lua", "src/gs.lua", "src/lac.lua", "src/windower.lua", "src/xml.lua", "src/acxml.lua", "src/modes.lua", "src/texts.lua", "src/regex.lua", "src/spellcast.lua"],
-    "hotbar" ["src/actions.lua", "src/bar.lua", "src/data.lua", "src/jobs.lua", "src/keys.lua", "src/manager.lua", "src/runner.lua",
-        "src/stock.lua"],
+    "hotbar" ["src/actions.lua", "src/bar.lua", "src/builder.lua", "src/data.lua", "src/ghost.lua", "src/jobs.lua", "src/keys.lua",
+        "src/manager.lua", "src/menu.lua", "src/palette.lua", "src/runner.lua", "src/stock.lua"],
     "pad-bars" ["src/actions.lua", "src/runner.lua"],
     // After gearshift: its hooks see an action first.
     "steady-cast" ["src/hold.lua"],
@@ -4307,6 +4307,35 @@ return "acxml flow ok"
             assert(four.name == "sub" and from == "sub")
             assert(data.resolve("WAR", "NIN", 1, 3) == nil)
             assert(saved ~= nil)
+
+            -- The library: an entry on slots of both sets by reference; editing it changes them all.
+            local id = data.save_entry("WAR", nil, { name = "Prov", action = { kind = "ja", name = "Provoke",
+              target = "t" }, lines = { "/p Provoked <t>" } })
+            data.assign("WAR", nil, 2, 1, id)
+            data.assign("WAR", "NIN", 2, 2, id)
+            local got, gf = data.resolve("WAR", "NIN", 2, 2)
+            assert(got.ref == id and gf == "sub" and got.lines[1] == '/ja "Provoke" <t>'
+              and got.lines[2] == "/p Provoked <t>")
+            assert(data.uses("WAR", id) == 2)
+            data.save_entry("WAR", id, { name = "Provoke!", action = { kind = "ja", name = "Provoke", target = "bt" } })
+            assert(data.resolve("WAR", nil, 2, 1).name == "Provoke!")
+            assert(data.effective("WAR", "NIN")[2][2].macro.lines[1] == '/ja "Provoke" <bt>')
+            -- A swap keeps the reference (not a copy of its lines).
+            data.swap("WAR", nil, 2, 1, 2, 5)
+            assert(data.get_raw("WAR", nil, 2, 5).ref == id and data.get_raw("WAR", nil, 2, 1) == nil)
+            -- set_macro with a resolved library macro (as the pickers give) puts the reference.
+            data.set_macro("WAR", nil, 2, 6, data.resolve("WAR", nil, 2, 5))
+            assert(data.get_raw("WAR", nil, 2, 6).ref == id and data.uses("WAR", id) == 3)
+            data.delete_entry("WAR", id)
+            assert(data.resolve("WAR", "NIN", 2, 2) == nil and data.resolve("WAR", nil, 2, 5) == nil)
+            assert(data.uses("WAR", id) == 0 and data.resolve("WAR", nil, 1, 1).name == "two")
+
+            -- The builder's lines, and a system command's stand-in icon with no recast.
+            assert(data.command({ kind = "equip", name = "Warp Ring", target = "ring1" }) == '/equip ring1 "Warp Ring"')
+            assert(data.command({ kind = "cmd", name = "/attack", target = "t" }) == "/attack <t>")
+            assert(data.command({ kind = "cmd", name = "/heal" }) == "/heal")
+            local atk = a.of({ lines = { "/attack <t>" } })
+            assert(atk and atk.kind == "item" and atk.no_recast and a.recast(atk, r) == 0)
         "#;
         vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
     }
