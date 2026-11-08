@@ -243,7 +243,7 @@ fn side(ui: &mut Ui, m: &super::Modern, p: &PadCfg, click: &mut Option<Click>) {
             Source::Default => ("The XInput setup (no saved settings).".to_string(), "muted"),
         };
         note(ui, m, &from, colour);
-        if set.source == Source::Config && p.retail.is_some() {
+        if set.saved && p.retail.is_some() {
             note(ui, m, "Retail settings were found too; Use Retail Settings switches to them.", "muted");
         }
         let pads = if p.pads.is_empty() {
@@ -258,7 +258,7 @@ fn side(ui: &mut Ui, m: &super::Modern, p: &PadCfg, click: &mut Option<Click>) {
         note(ui, m, &pads, "muted");
         ui.add_space(6.0);
         let labels = ["XInput Setup", "Copy Assignment", "Use Retail Settings", "Look Again"];
-        let off = if p.retail.is_none() || set.source == Source::Retail { 1 << 2 } else { 0 };
+        let off = if p.retail.is_none() || !set.saved { 1 << 2 } else { 0 };
         match kit::buttons(ui, m, &labels, None, 0, off) {
             Some(0) => *click = Some(Click::Defaults),
             Some(1) => *click = Some(Click::Copy),
