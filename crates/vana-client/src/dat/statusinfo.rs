@@ -29,6 +29,13 @@ pub fn entry(file: &[u8], id: u16) -> Option<Entry> {
     Some(Entry { cancel: head[2] != 0, no_timer: head[3] == 0xff, desc })
 }
 
+/// `entry`'s (cancel, no_timer) without the rest: each byte's unmask depends only on bytes 2, 11 and 12.
+pub fn flags(file: &[u8], id: u16) -> Option<(bool, bool)> {
+    let mut head: [u8; 16] = raw(file, id)?.get(..0x1fc)?[..16].try_into().ok()?;
+    super::actions::unmask(&mut head);
+    Some((head[2] != 0, head[3] == 0xff))
+}
+
 /// The icon @0x284 as RGBA: flag byte, 16-byte name, BITMAPINFOHEADER (32 bpp), BGRA rows bottom-up. The size field
 /// @0x280 is not read (retail ignores it; the xiPrime icons carry a stale one). Alpha 0..0x80 is doubled; a set whose
 /// alpha already runs to 0xff (xiPrime) is taken as it is.
@@ -76,5 +83,10 @@ mod tests {
         assert_eq!(super::icon(&big, 33).map(|i| (i.0, i.1)), Some((32, 32)));
         let small = index.read(39557).unwrap();
         assert_eq!(super::icon(&small, 33).map(|i| (i.0, i.1)), Some((16, 16)));
+        for file in [&big, &small] {
+            for id in 0..1024 {
+                assert_eq!(super::flags(file, id), super::entry(file, id).map(|e| (e.cancel, e.no_timer)), "{id}");
+            }
+        }
     }
 }

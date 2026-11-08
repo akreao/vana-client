@@ -18,7 +18,7 @@ fn invisible(w: &World, id: u32) -> bool {
 
 /// Model +0xb2: the server's hide bits, or a rider waiting hidden for its mount (+0x40).
 fn model_hidden(w: &World, id: u32) -> bool {
-    w.entities.get(&id).is_some_and(|e| e.flags & 2 != 0) || ride::hidden(w).contains(&id)
+    w.entities.get(&id).is_some_and(|e| e.flags & 2 != 0) || ride::hides(w, id)
 }
 
 /// FUN_100d6240: a hide byte of `wepN` is set.
@@ -59,11 +59,14 @@ pub fn hide_all(w: &mut World, id: u32) {
 
 /// FUN_100cf100: each glow on while the model shows, engaged, the weapon drawn (+0x83c) and the mesh not hidden.
 pub fn refresh(w: &mut World, id: u32) {
-    let base = !model_hidden(w, id) && engaged(w, id) && w.actors.get(&id).is_some_and(|a| a.drawn);
-    for n in 0..2 {
-        let on = base && !wep_hidden(w, id, n);
-        glow(w, id, n, on);
+    for c in refresh_calls(w, id) {
+        w.effects.equip(id, c);
     }
+}
+
+fn refresh_calls(w: &World, id: u32) -> [EquipCall; 2] {
+    let base = !model_hidden(w, id) && engaged(w, id) && w.actors.get(&id).is_some_and(|a| a.drawn);
+    [0, 1].map(|n| EquipCall::Glow { n, on: base && !wep_hidden(w, id, n as usize) })
 }
 
 /// FUN_100cf160: every glow off.
@@ -96,13 +99,18 @@ pub fn frame(w: &mut World) {
         if !w.actors.get(&id).is_some_and(|a| a.character.is_some()) || event::bound(w, id) {
             continue;
         }
+        // With nothing waiting, a call that would change nothing is not queued (each touches its own state bit).
         if !w.effects.equip_waiting(id) {
-            if invisible(w, id) {
-                w.effects.equip(id, EquipCall::Kill);
-                all_off(w, id);
+            let calls = if invisible(w, id) {
+                [EquipCall::Kill, EquipCall::Glow { n: 0, on: false }, EquipCall::Glow { n: 1, on: false }]
             } else {
-                start_in(w, id);
-                refresh(w, id);
+                let [g0, g1] = refresh_calls(w, id);
+                [EquipCall::In { hidden: model_hidden(w, id) }, g0, g1]
+            };
+            for c in calls {
+                if !w.effects.equip_noop(id, c) {
+                    w.effects.equip(id, c);
+                }
             }
         }
         colour(w, id);
