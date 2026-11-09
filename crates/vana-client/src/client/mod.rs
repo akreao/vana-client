@@ -10458,13 +10458,17 @@ impl App {
                     let _ = w.net.commands.send(NetCommand::SubMap { state: 1, id: 0 });
                 }
             }
-            Some(subarea::Step::Load(id, from_event)) => {
+            Some(subarea::Step::Load(id, from_event, asked)) => {
                 let Some(zone_id) = w.zone else { return };
                 log::info!("sub-area {id} loading (zone {zone_id})");
                 w.sub.loading = Some((id, from_event));
-                // FUN_10176dd0(0): doors are solid while it loads.
-                if let Some(g) = &w.ground {
-                    g.close_all_doors();
+                // FUN_10178a20 -> FUN_10176dd0(0): a trigger's load makes every door box solid and holds door changes
+                // until it ends; the asked loads (FUN_10178900) do neither.
+                if !asked {
+                    w.sub.doors_held = true;
+                    for g in w.ground.iter().chain(w.sub.home.iter()) {
+                        g.close_all_doors();
+                    }
                 }
                 let (collision, keys, areas, textures) = (
                     w.sub.zone_collision.clone(),
@@ -10487,6 +10491,7 @@ impl App {
                         log::warn!("sub-area {id}: {e:#}");
                         if let Phase::World(w) = &mut self.phase {
                             w.sub.loading = None;
+                            doors::reapply(w);
                         }
                     }
                 }
