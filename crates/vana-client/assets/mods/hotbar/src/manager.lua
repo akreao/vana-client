@@ -443,15 +443,16 @@ local function save_builder()
     local c = entry.action and entry.action.kind == "cmd" and builder.command(entry.action.name)
     entry.name = c and c.title or entry.action and entry.action.name or entry.lines[1]:sub(1, 24)
   end
-  E.id = data.save_entry(S.mj, E.id, entry)
+  local id = data.save_entry(S.mj, E.id, entry)
   local s = E.slot
   if s and s.main == S.mj then
-    data.assign(s.main, s.sub, s.bar, s.slot, E.id)
+    data.assign(s.main, s.sub, s.bar, s.slot, id)
     say(('"%s" is on bar %d, slot %d.'):format(entry.name, s.bar, s.slot))
   end
-  E.slot = nil
   M.hooks.changed()
-  refresh_library(E.id)
+  -- The Builder tab starts a new macro next; Edit reopens this one.
+  open_builder(nil)
+  refresh_library(id)
   ui.update(WIN, "tabs", { at = TAB_LIB })
 end
 

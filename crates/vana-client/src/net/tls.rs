@@ -1,5 +1,6 @@
-//! TLS 1.3 for xi_connect and xi_profile (ours; xiloader checks nothing). A certificate a public authority signs is
-//! checked as any is; a self-signed one (LSB's, X.509 v1) is pinned by its key the first time (known_servers.json).
+//! TLS 1.3 for xi_connect and xi_profile. A certificate a public authority signs is checked as any is; a self-signed
+//! one (LSB's, X.509 v1) is pinned by its key the first time (known_servers.json). LSB's lobby data and view ports
+//! (TLS since xiloader 3.0) must hold the login port's key instead, as xiloader 3.0 checks them.
 
 use anyhow::{Context, Result, bail};
 use rustls::client::WebPkiServerVerifier;
@@ -226,7 +227,7 @@ fn der(d: &[u8]) -> Option<(u8, &[u8], &[u8])> {
 
 /// The SubjectPublicKeyInfo (tag and length included) of an X.509 certificate of any version: Certificate ->
 /// tbsCertificate -> [0] version (v2/v3 only), serial, signature, issuer, validity, subject, subjectPublicKeyInfo.
-fn cert_spki(cert: &[u8]) -> Option<&[u8]> {
+pub(super) fn cert_spki(cert: &[u8]) -> Option<&[u8]> {
     let (0x30, c, _) = der(cert)? else { return None };
     let (0x30, mut tbs, _) = der(c)? else { return None };
     if tbs.first() == Some(&0xa0) {
@@ -280,20 +281,34 @@ fn describe(pin: &Pin) -> String {
     }
 }
 
-/// connect with the pins in `store`: the handshake runs here, so a changed certificate is refused before anything
-/// (a password) is sent, and a new pin is kept once the handshake has passed.
+/// Connects and runs the handshake under `pin` here, so a refused certificate ends it before anything is sent. Reads
+/// time out after 10 s. Returns the stream or the handshake's error, and what the server sent (none: no certificate).
+fn handshake(host: &str, port: u16, pin: Option<Pin>) -> Result<(std::io::Result<TlsStream>, Option<Seen>)> {
+    let seen: Arc<Mutex<Option<Seen>>> = Default::default();
+    let mut tcp = super::tcp(host, port)?;
+    tcp.set_read_timeout(Some(std::time::Duration::from_secs(10)))?;
+    let name = ServerName::try_from(host.to_string())?;
+    let mut conn = ClientConnection::new(client_config(pin, seen.clone())?, name)?;
+    while conn.is_handshaking() {
+        if let Err(e) = conn.complete_io(&mut tcp) {
+            return Ok((Err(e), *seen.lock().unwrap()));
+        }
+    }
+    let got = *seen.lock().unwrap();
+    Ok((Ok(StreamOwned::new(conn, tcp)), got))
+}
+
+/// connect with the pins in `store`: a changed certificate is refused before anything (a password) is sent, and a new
+/// pin is kept once the handshake has passed. Reads keep the 10 s timeout: the login server sends nothing back for
+/// requests it rejects as malformed.
 pub fn connect_pinned(store: &Path, host: &str, port: u16) -> Result<TlsStream> {
     let key = key(host, port);
     let pin = KnownServers::load(store).0.get(&key).cloned().or_else(|| session_pin(store, &key));
-    let seen: Arc<Mutex<Option<Seen>>> = Default::default();
-    let mut tcp = super::tcp(host, port)?;
-    // The login server sends nothing back for requests it rejects as malformed.
-    tcp.set_read_timeout(Some(std::time::Duration::from_secs(10)))?;
-    let name = ServerName::try_from(host.to_string())?;
-    let mut conn = ClientConnection::new(client_config(pin.clone(), seen.clone())?, name)?;
-    while conn.is_handshaking() {
-        if let Err(e) = conn.complete_io(&mut tcp) {
-            if let (Some(want), Some(got)) = (&pin, *seen.lock().unwrap())
+    let (stream, seen) = handshake(host, port, pin.clone())?;
+    let stream = match stream {
+        Ok(s) => s,
+        Err(e) => {
+            if let (Some(want), Some(got)) = (&pin, seen)
                 && !accepts(Some(want), got)
             {
                 let sent = if got.authority {
@@ -316,13 +331,46 @@ pub fn connect_pinned(store: &Path, host: &str, port: u16) -> Result<TlsStream> 
             }
             return Err(e.into());
         }
-    }
-    if let Some(got) = *seen.lock().unwrap()
+    };
+    if let Some(got) = seen
         && learned(pin.as_ref(), got).is_some()
     {
         record_pin(store, &key, pin.as_ref(), got)?;
     }
-    Ok(StreamOwned::new(conn, tcp))
+    Ok(stream)
+}
+
+/// The key (SubjectPublicKeyInfo) fingerprint of the certificate a connection was sent.
+pub fn peer_key(s: &TlsStream) -> Option<Fingerprint> {
+    s.conn.peer_certificates()?.first().and_then(|c| cert_spki(c)).map(fingerprint)
+}
+
+/// connect to a port that must hold `want`, the key the login port was trusted with (LSB's lobby data and view since
+/// xiloader 3.0, which checks them the same way): nothing is pinned for the port itself. Reads wait as long as the
+/// server takes, as on a plain lobby link.
+pub fn connect_with_key(host: &str, port: u16, want: Fingerprint) -> Result<TlsStream> {
+    let (stream, seen) = handshake(host, port, Some(Pin::Key { sha256: hex::encode(want), fixed: true }))?;
+    match (stream, seen) {
+        (Ok(s), _) => {
+            s.sock.set_read_timeout(None)?;
+            Ok(s)
+        }
+        (Err(_), Some(got)) if got.key != want => {
+            log::warn!("tls: {host}:{port} sent key {}; the login server's is {}", show(&got.key), show(&want));
+            bail!(
+                "port {port} sent another certificate than the login server (key {}, not {}). Someone may be \
+                 intercepting the connection.",
+                show(&got.key).get(..23).unwrap_or_default(),
+                show(&want).get(..23).unwrap_or_default()
+            )
+        }
+        // No certificate came: the port is not TLS, or not this server's.
+        (Err(e), None) => bail!(
+            "port {port} did not answer as TLS ({e}). The login server took loader 3.x, whose lobby is TLS: this \
+             server's login and lobby may be from different versions."
+        ),
+        (Err(e), Some(_)) => Err(e.into()),
+    }
 }
 
 /// Keeps what `seen` teaches about `key` after a handshake that passed `was` (the pin read when it began). The auth
@@ -776,6 +824,19 @@ mod tests {
         trust(&store, "127.0.0.1", Some(port), Some(&show(&der("a")))).unwrap();
         assert!(attempt("b").is_err());
         attempt("a").unwrap();
+        // A lobby port held to the login server's key: that key passes (and is what peer_key reads), another is
+        // refused naming both, and neither is pinned for the port.
+        let lobby = |n: &str, want: Fingerprint| {
+            let (mut child, stdin) = serve(n);
+            let r = connect_with_key("127.0.0.1", port, want).map(|s| peer_key(&s));
+            drop(stdin);
+            let _ = child.kill();
+            let _ = child.wait();
+            r
+        };
+        assert_eq!(lobby("a", der("a")).unwrap(), Some(der("a")));
+        let e = format!("{:#}", lobby("b", der("a")).unwrap_err());
+        assert!(e.contains("another certificate than the login server") && e.contains(&show(&der("b"))[..23]), "{e}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -801,6 +862,20 @@ mod tests {
         trust(&store, "lsb", None, None).ok();
         assert_eq!(session_pin(&store, "lsb:54231"), None);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A lobby port that answers in plain: the error says it is not TLS rather than give rustls's alone.
+    #[test]
+    fn plain_lobby_port_is_named() {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut s, _) = l.accept().unwrap();
+            let _ = s.write_all(&[0u8; 64]);
+        });
+        let e = format!("{:#}", connect_with_key("127.0.0.1", port, [0; 32]).unwrap_err());
+        server.join().unwrap();
+        assert!(e.contains("did not answer as TLS"), "{e}");
     }
 
     fn ring_b64(s: &str) -> Vec<u8> {

@@ -16,8 +16,11 @@ xiloader (`~/ffxi/lab/xiloader`, ceb79a0), Ghidra on the installer. Decompiled o
 
 ## Auth (xi_connect, TCP 54231)
 - TLS 1.3. LSB's server certs are self-signed X.509 v1 (webpki rejects them): RSA-4096 on the login port, P-256 for
-  xi_profile, SHA-384. xiloader checks nothing; ours checks them (see "TLS: certificates checked or pinned").
-- JSON in, JSON out. Must send `"version": [2,2,x]`. Login reply: `result` 1, `account_id`,
+  xi_profile, SHA-384. xiloader before 3.0 checks nothing; 3.0 pins the login port's key and holds the lobby to it
+  (see "Lobby"); ours checks them (see "TLS: certificates checked or pinned").
+- JSON in, JSON out. `"version"`: LSB checks its major and minor only and refuses another with "Unsupported xiloader
+  version a.b.c.\nThis server requires version x.y.x." (src/login/auth_session.cpp, before any credential check):
+  [2,2,x] until LSB 9b6df7c7 (2026-11-04), [3,0,x] from it. Login reply: `result` 1, `account_id`,
   `session_hash` as a 16-int array. Verified live (account 1000 created via command 0x20).
 
 ## Lobby (xi_connect view TCP 54001, data TCP 54230)
@@ -30,6 +33,11 @@ xiloader (`~/ffxi/lab/xiloader`, ceb79a0), Ghidra on the installer. Decompiled o
   {07,14,1F,21,22,24,28,2B}, +1 per reply {03,0B,20,23}, +1 per error reply to {22,24,28,2B}.
   Verified: zone server decrypts our traffic.
 - chr_info_sub2 is 140 bytes; TC_OPERATION_MAKE GrapIDTbl @12, zone_no @28, mjob_level @29, zone_no2 @35.
+- (2026-11-09) TLS from LSB 778b7429 (released with 9b6df7c7, the 3.0 version check): data and view sessions run a TLS
+  server handshake first (handler_session::start) from the login port's ssl context (handler.h sslContext_), so they
+  present its certificate; the messages inside are unchanged. A plain client is dropped unanswered ("wrong version
+  number" in the server log). xiloader 3.0 (ec0835b) connects both without CA checks and compares the peer key's
+  SHA-256 with the login server's trusted key (checkPeerKey: lobby/data_connection.cpp, client/polrelay.cpp).
 
 ## Zone (xi_map, UDP 54230)
 - 28-byte header: u16 our seq, u16 last server seq seen, u32 time @8. Sub-packets: u16 (id:9 | size:7 in
@@ -20531,6 +20539,13 @@ Lessons from other games' mod layers (BG3 Script Extender, WoW, Skyrim, Factorio
   known_servers.json a directory: the three servers (54231, 51220, 51240) pinned once each, the line in the log.
 - `vana-client trust-server HOST [--port P] [--fingerprint F]` forgets the host's pins (every port: an LSB reinstall
   changes the login port's and xi_profile's 51220 / 51240), or sets a fixed key pin.
+- (2026-11-09) The lobby over TLS (LSB for xiloader 3.0, see "Lobby"): net/tls.rs connect_with_key holds data and view
+  to the key the login port sent (a fixed key pin; nothing is stored for those ports), only when the login server took
+  a 3.x version (auth.rs lobby_key). Both links open at once and nothing is sent until both handshakes pass. A lobby
+  port that sends no certificate is named as not TLS; a plain lobby that hangs up unanswered is named as maybe TLS.
+  There is no fallback from TLS to plain: it would hand a downgrade to anyone in between. The version each server took
+  is kept in loader_versions.json ("host:port" to [major, minor, patch], beside known_servers.json) and sent first next
+  time, so a 2.x server is not refused (and sent the password twice) at every login.
 - Character names from the server become file names (chat history, regime state) only as letters and digits, and not
   a Windows device name on Windows; anything else as '_' and the name's bytes in hex.
 - The Friend List's message names (GetFileList, up to 0x100 bytes) are written as files in the mail folder only when
@@ -23362,3 +23377,39 @@ still gave `cor`. Both now go through actmotion::sdep_stand.
 - Left: the classic UI's version (Steven: a list like the item list, a submenu ON / OFF, Settings, Commands,
   Permissions; Commands a list whose Enter puts the line on the chat line).
 
+
+## Swings while strafing: the legs go on under the swing (2026-11-09)
+
+- User report (Steven): locked on and engaged, swinging while strafing left / right showed the wrong legs: they
+  stepped the wrong way and twitched, after several fixes to which quarter and which swing letter is picked.
+- The quarter and letters were right (FUN_100d6940 in 30261006_0: vt+0x330 false, +0x598 2 'r', 3 'b', 4 'l', else
+  'f'). The legs were not: the moving swings key only the upper body (`amr1` / `aml1` / `amf1` / `amb1` in the battle
+  files, e.g. 9672..9683 for Hume M), so the legs are region 0's status motion (`mvr0` / `mvl0` from the model), which
+  FUN_100cb500 leaves playing. Ours drew them on a second clock (`base_ticks`) that was never in step with the motion's
+  own: each swing's start blended the legs from one point of the step to another over 16 ticks (a step backwards), and
+  each swing's end blended them in from the rest pose (the old motion had no leg chunks to blend from).
+- +0x80: the swing schedulers start with op 0x59 (FUN_10062650 -> actor vt+0x160, `inc [ecx+0x80]`; vt+0x164 drops it
+  at the task's end) for 58..66 ticks of their 68 (hit + 30). While it is up FUN_100c83c0 returns before the pick
+  (`param_1[0x20] != 0`), so retail's legs stay the motion the swing started over, whatever the move does meanwhile.
+  Ours re-picked them every frame under a one-shot.
+- Ours now: the status motion's clock is the motion's own while it plays alone, so a one-shot's other regions go on in
+  step; under a held one-shot (and its motion lingering past its end while held) the status motion keeps its name and
+  rate; back to that motion, the regions the one-shot had no chunk for do not blend and the motion goes on at the same
+  tick, as do the regions neither of two back-to-back swings keys; a status motion changed under a one-shot starts at
+  the old one's fraction of its cycle (motion::cycle_sync, FUN_1001ad00) *(inf: its blend in those regions is not
+  modelled)*.
+- Dropped: the mid-swing turn of our moving swing (combat::turned_swing, Play::rename_current, 2026-11-07 / 08). It
+  covered for the legs re-picked mid-swing; retail picks the swing once and keeps the legs under it, so they match.
+
+## The Update button on the login form (ours, 2026-11-09)
+
+- The Update button (client/updater.rs's window) moves from the title (above Select Character) to the login form:
+  at the right end of Remember password's row, opposite Two-factor, while something is out of date. The title comes
+  only after a login and the character list, which an outdated client may not get through (LSB's xiloader 3.0 lobby
+  drops a 2.2 client's plain links), so its button could never be reached when it mattered most.
+- login_window focus n+5 (after Two-factor): Right from the box, Left back, Down to Exit, Up to the last field, Tab
+  after Two-factor; hover and click as the other buttons. The help line "Update the game files or vana-client.". The
+  form takes no input while the window is up, and the window's help line replaces the form's.
+- The form is wide enough for the box's caption and Update side by side (380 design px, or more for a wider caption;
+  440 with the game font), whether or not Update shows, so nothing moves when it appears.
+- The title's keytophd Update button (render/screens.rs update_button and its backing) is gone with it.
