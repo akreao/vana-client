@@ -345,13 +345,9 @@ local function set_kind(kind)
   refresh_preview()
 end
 
--- Opens the builder on a library entry (`id`), or on a new macro: blank, or `macro` (a slot's own macro) as typed
+-- Fills the builder with a library entry (`id`), or with a new macro: blank, or `macro` (a slot's own macro) as typed
 -- lines. `slot` ({bar, slot, main, sub}) is where Save puts it.
-function open_builder(id, slot, macro)
-  if not S.mj then
-    say("jobs are not loaded yet.")
-    return
-  end
+local function load_builder(id, slot, macro)
   local entry = id and data.get_entry(S.mj, id) or nil
   E.id = entry and tostring(id) or nil
   E.slot = slot
@@ -379,6 +375,15 @@ function open_builder(id, slot, macro)
   refresh_results("")
   refresh_choice()
   refresh_preview()
+end
+
+-- Opens the builder (see load_builder) on its tab.
+function open_builder(id, slot, macro)
+  if not S.mj then
+    say("jobs are not loaded yet.")
+    return
+  end
+  load_builder(id, slot, macro)
   ui.update(WIN, "tabs", { at = TAB_BUILD })
 end
 
@@ -443,15 +448,16 @@ local function save_builder()
     local c = entry.action and entry.action.kind == "cmd" and builder.command(entry.action.name)
     entry.name = c and c.title or entry.action and entry.action.name or entry.lines[1]:sub(1, 24)
   end
-  E.id = data.save_entry(S.mj, E.id, entry)
+  local id = data.save_entry(S.mj, E.id, entry)
   local s = E.slot
   if s and s.main == S.mj then
-    data.assign(s.main, s.sub, s.bar, s.slot, E.id)
+    data.assign(s.main, s.sub, s.bar, s.slot, id)
     say(('"%s" is on bar %d, slot %d.'):format(entry.name, s.bar, s.slot))
   end
-  E.slot = nil
+  -- The builder starts a new macro now: the Builder tab clicked next must not edit the one just saved.
+  load_builder(nil)
   M.hooks.changed()
-  refresh_library(E.id)
+  refresh_library(id)
   ui.update(WIN, "tabs", { at = TAB_LIB })
 end
 
