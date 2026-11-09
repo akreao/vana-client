@@ -80,6 +80,9 @@ pub struct Inventory {
     /// The list's view per container (FUN_1021c210 / FUN_1021c5b0 append a new slot, FUN_1021c680 drops an emptied
     /// one; sorting reorders it): slot indexes.
     pub order: BTreeMap<u8, Vec<u8>>,
+    /// View 3 per container, the plain one gardening and layout mode list from: FUN_1021c7e0(mask 0, 3, ..) rebuilds
+    /// it in slot order when those lists open; in between the same upkeep as `order` keeps it.
+    pub view3: BTreeMap<u8, Vec<u8>>,
 }
 
 impl Inventory {
@@ -90,18 +93,38 @@ impl Inventory {
             self.locks.remove(&(container, index));
             self.unlist(container, index);
         } else {
-            self.slots.insert((container, index), (id, count));
-            let o = self.order.entry(container).or_default();
-            if !o.contains(&index) {
-                o.push(index);
+            // FUN_1021c380 -> FUN_1021c210: a slot whose item differs from the cached one (new, or replaced) leaves
+            // every view (FUN_1021c680) and is appended at the end (FUN_1021c5b0); a count change keeps its place.
+            let old = self.slots.insert((container, index), (id, count)).map(|s| s.0);
+            for v in [&mut self.order, &mut self.view3] {
+                let o = v.entry(container).or_default();
+                if old != Some(id) || !o.contains(&index) {
+                    o.retain(|&i| i != index);
+                    o.push(index);
+                }
             }
         }
     }
 
     fn unlist(&mut self, container: u8, index: u8) {
-        if let Some(o) = self.order.get_mut(&container) {
-            o.retain(|&i| i != index);
+        for v in [&mut self.order, &mut self.view3] {
+            if let Some(o) = v.get_mut(&container) {
+                o.retain(|&i| i != index);
+            }
         }
+    }
+
+    /// FUN_1021c7e0(0, 3, 0x12, 0): view 3 rebuilt from slots 1..80 in slot order.
+    pub fn rebuild_view3(&mut self, container: u8) {
+        let v = self.slots.range((container, 1)..=(container, 80)).map(|(&(_, i), _)| i).collect();
+        self.view3.insert(container, v);
+    }
+
+    /// The occupied slots in view 3's order.
+    pub fn viewed3(&self, container: u8) -> Vec<Slot> {
+        let slots = self.slots_of(container);
+        let o = self.view3.get(&container).map(Vec::as_slice).unwrap_or_default();
+        o.iter().filter_map(|i| slots.iter().find(|s| s.index == *i).cloned()).collect()
     }
 
     /// The item id in a slot.
@@ -293,8 +316,8 @@ pub struct Storage {
     pub read_only: bool,
     /// itmsortw focused: its cursor, the side it serves, Auto's sortyn.
     pub sortw: Option<SortW>,
-    /// Manual Sort (FUN_101dbed0) on a side (true: the bank), with the held slot.
-    pub manual: Option<(bool, Option<u8>)>,
+    /// Manual Sort (FUN_101dbed0) on a side (true: the bank), with the held (container, slot).
+    pub manual: Option<(bool, Option<(u8, u8)>)>,
     /// "menu    itmstora" (Switch) with its cursor row, for the side itmsortw serves.
     pub stora: Option<u16>,
     /// Modern (not retail): the move sent and not yet seen in the inventory, and the line explaining the last refusal.
@@ -1008,8 +1031,14 @@ pub(super) fn follow_held(w: &mut World) {
 /// Seconds after the last new item before a container kept sorted sorts (a pickup's updates come in a burst).
 pub(super) const SORT_DELAY: f32 = 0.5;
 
-/// Ours: the containers kept sorted (config auto_sort) sort again once their new items are in.
+/// Ours: kept-sorted containers sort locally once their new items are in and queue c2s 0x03A stack-merge requests;
+/// requests (including merged-tab sorts) go one per SORT_GAP.
 pub(super) fn auto_sort_tick(w: &mut World, dt: f32) {
+    w.sort_packet_wait -= dt;
+    if w.sort_packet_wait <= 0.0 && !w.sort_packets.is_empty() {
+        let c = w.sort_packets.remove(0);
+        send_sort_packet(w, c);
+    }
     if w.sort_due.0 == 0 {
         return;
     }
@@ -1020,7 +1049,7 @@ pub(super) fn auto_sort_tick(w: &mut World, dt: f32) {
     let due = std::mem::take(&mut w.sort_due.0);
     for c in (0..32u8).filter(|c| due >> c & 1 != 0) {
         log::info!("items: container {c} kept sorted, sorting");
-        auto_sort_c(w, c);
+        auto_sort_local(w, c);
     }
 }
 
@@ -1063,7 +1092,7 @@ pub(super) fn retail_auto_sort(w: &mut World, dt: f32) {
 }
 
 /// Auto keeps the container sorted (ours), Manual stops it.
-fn keep_sorted(w: &mut World, c: u8, on: bool) {
+pub(super) fn keep_sorted(w: &mut World, c: u8, on: bool) {
     let v = if on { w.auto_sort | 1 << c } else { w.auto_sort & !(1 << c) };
     if v != w.auto_sort {
         (w.auto_sort, w.auto_sort_dirty) = (v, true);
@@ -1076,8 +1105,8 @@ fn auto_sort(w: &mut World) {
     auto_sort_c(w, INVENTORY);
 }
 
-/// FUN_1021c7e0 on a container; 0x03A {c} is sent again by the storage view's itmsortw (LAB_101f3780: two in all).
-pub(super) fn auto_sort_c(w: &mut World, c: u8) {
+/// FUN_1021c7e0 on a container's view (no packet).
+fn sort_view(w: &mut World, c: u8) {
     let grouped = w.game.get(0xca) == 1;
     let info = w.item_info.clone();
     let key = |s: &Slot| (info.as_ref().and_then(|c| c.item(s.id)).map_or(0xffff, |it| it.resource), s.id);
@@ -1100,7 +1129,31 @@ pub(super) fn auto_sort_c(w: &mut World, c: u8) {
     if c == INVENTORY {
         w.sort_wait = 0.0;
     }
+}
+
+/// c2s 0x03A {c}: one sort / stack-merge request; queued sends keep SORT_GAP after the last one.
+fn send_sort_packet(w: &mut World, c: u8) {
     let _ = w.net.commands.send(NetCommand::Packet { id: 0x03A, body: (c as u32).to_le_bytes().to_vec() });
+    w.sort_packet_wait = SORT_GAP;
+}
+
+/// c2s 0x03A {c} now: the storage view's itmsortw request (auto_sort_c sends another).
+pub(super) fn sort_request(w: &mut World, c: u8) {
+    send_sort_packet(w, c);
+}
+
+/// FUN_1021c7e0 on a container; 0x03A {c} is sent again by the storage view's itmsortw (LAB_101f3780: two in all).
+pub(super) fn auto_sort_c(w: &mut World, c: u8) {
+    sort_view(w, c);
+    send_sort_packet(w, c);
+}
+
+/// The view sorted now, its 0x03A queued: merged storage tabs sort several containers without tripping LSB's rate limit.
+pub(super) fn auto_sort_local(w: &mut World, c: u8) {
+    sort_view(w, c);
+    if !w.sort_packets.contains(&c) {
+        w.sort_packets.push(c);
+    }
 }
 
 /// FUN_101f0b30's second pick: the same row splits one off (to index 0x52, inf: the server's first free slot) when
@@ -1111,7 +1164,7 @@ fn manual_move(w: &mut World, from: u8, to: &Slot) {
 }
 
 /// FUN_101dbed0: the same in a storage container.
-fn manual_move_c(w: &mut World, c: u8, from: u8, to: &Slot) {
+pub(super) fn manual_move_c(w: &mut World, c: u8, from: u8, to: &Slot) {
     let Some(&(id, count)) = w.inv.slots.get(&(c, from)) else { return };
     let stack = w.item_info.as_ref().and_then(|c| c.item(id)).map_or(1, |it| it.stack);
     let mv = |w: &World, n: u32, i1: u8, i2: u8| {
@@ -1532,7 +1585,7 @@ pub(super) fn judge(
 
 /// FUN_101dbdb0, Manual's colours: the held row orange, equipped gear green (still movable), a Storage piece a
 /// mannequin wears grey, installed furniture grey on this floor and dark red on another, else white.
-fn manual_tint(w: &World, c: u8, held: Option<u8>, s: &Slot) -> u32 {
+pub(super) fn manual_tint(w: &World, c: u8, held: Option<u8>, s: &Slot) -> u32 {
     let furniture =
         w.item_info.as_ref().and_then(|i| i.item(s.id)).is_some_and(|it| matches!(it.item_type, 10 | 12 | 14));
     let installed = w.inv.ext.get(&(c, s.index)).filter(|e| matches!(c, 1 | 9) && furniture && e[1] & 0x40 != 0);
@@ -1666,10 +1719,7 @@ fn store_key(w: &mut World, info: &ItemCache, key: egui::Key, page: bool, alt: b
                     w.sounds.push(if yes { Ui::Select } else { Ui::Cancel } as u32);
                     if yes {
                         if c != INVENTORY {
-                            let _ = w
-                                .net
-                                .commands
-                                .send(NetCommand::Packet { id: 0x03A, body: (c as u32).to_le_bytes().to_vec() });
+                            sort_request(w, c);
                         }
                         auto_sort_c(w, c);
                         keep_sorted(w, c, true);
@@ -1723,19 +1773,20 @@ fn store_key(w: &mut World, info: &ItemCache, key: egui::Key, page: bool, alt: b
         let c = if bank_side { b.bank } else { b.side };
         let rows = if bank_side { &banks } else { &inv };
         let (sc, cu) = if bank_side { (&mut b.scroll, &mut b.cursor) } else { (&mut scroll, &mut cursor) };
+        let held_index = held.map(|(_, index)| index);
         match key {
             K::Enter => {
                 // A grey row takes no Enter (FUN_101f6c70: SE 0004).
                 let row = rows.get(*sc + *cu).cloned();
-                if row.as_ref().is_some_and(|s| manual_tint(w, c, held, s) == crate::inventory::TINT_DIM) {
+                if row.as_ref().is_some_and(|s| manual_tint(w, c, held_index, s) == crate::inventory::TINT_DIM) {
                     w.sounds.push(Ui::Error as u32);
                 } else if let Some(s) = row {
                     w.sounds.push(Ui::Select as u32);
                     match held {
-                        None => b.manual = Some((bank_side, Some(s.index))),
-                        Some(from) => {
+                        None => b.manual = Some((bank_side, Some((c, s.index)))),
+                        Some((hc, from)) => {
                             b.manual = Some((bank_side, None));
-                            manual_move_c(w, c, from, &s);
+                            manual_move_c(w, hc, from, &s);
                         }
                     }
                 }
@@ -1990,12 +2041,14 @@ fn draw_storage(
         return rects;
     }
     let inv = store_rows(w, b.side);
-    let manual = |bank_side: bool| b.manual.filter(|m| m.0 == bank_side).map(|m| m.1);
+    let manual = |bank_side: bool, c: u8| {
+        b.manual.filter(|m| m.0 == bank_side).map(|m| m.1.filter(|held| held.0 == c).map(|held| held.1))
+    };
     let tinted = |rows: &[Slot], bank_side: bool| {
         let mut out = build_rows(rows, info, false);
         let c = if bank_side { b.bank } else { b.side };
         for (r, s) in out.iter_mut().zip(rows) {
-            r.tint = match manual(bank_side) {
+            r.tint = match manual(bank_side, c) {
                 Some(held) => manual_tint(w, c, held, s),
                 None => tint(w, info, b, bank_side, s),
             };
@@ -2205,5 +2258,28 @@ mod charged_tests {
         assert!(super::charged_ready(&e));
         e[0] = 2;
         assert!(!super::charged_ready(&e));
+    }
+}
+
+#[cfg(test)]
+mod view_tests {
+    /// FUN_1021c210's upkeep: new and replaced slots go to the end of every view, a count change stays, an emptied slot
+    /// leaves; FUN_1021c7e0(0, 3, ..) puts view 3 back in slot order.
+    #[test]
+    fn upkeep_appends_and_rebuild_restores_slot_order() {
+        let mut inv = super::Inventory::default();
+        for (i, id) in [(1, 572), (2, 573), (3, 4096)] {
+            inv.set(9, i, id, 1);
+        }
+        inv.set(9, 1, 2235, 1);
+        inv.set(9, 2, 573, 5);
+        inv.set(9, 5, 574, 1);
+        inv.set(9, 3, 0, 0);
+        let order = |inv: &super::Inventory| inv.viewed3(9).iter().map(|s| s.index).collect::<Vec<_>>();
+        assert_eq!(order(&inv), [2, 1, 5]);
+        assert_eq!(inv.order[&9], [2, 1, 5]);
+        inv.rebuild_view3(9);
+        assert_eq!(order(&inv), [1, 2, 5]);
+        assert_eq!(inv.order[&9], [2, 1, 5]);
     }
 }

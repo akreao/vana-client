@@ -93,6 +93,27 @@ pub fn last_target(w: &World) -> Option<(u32, u16)> {
     Some((id, e.index))
 }
 
+fn last_subtarget_index(id: u32, my_id: u32, my_index: u16, entity_index: Option<u16>) -> Option<(u32, u16)> {
+    if id == my_id {
+        return Some((id, my_index));
+    }
+    entity_index.map(|index| (id, index))
+}
+
+/// The last confirmed sub-target pick, `<lastst>`, while it is still here. A prompt can pick us.
+pub fn last_subtarget(w: &World) -> Option<(u32, u16)> {
+    let id = w.last_subtarget?;
+    let entity_index = if id == w.my_id {
+        None
+    } else {
+        w.entities
+            .get(&id)
+            .map(|e| e.index)
+            .or_else(|| w.party.members().find(|m| m.id == id && m.away == 0 && m.zone == w.pos_zone).map(|m| m.index))
+    };
+    last_subtarget_index(id, w.my_id, w.my_index, entity_index)
+}
+
 /// FUN_101593c0 on the focus target: someone other than us in our six slots.
 pub fn focus_member(w: &World) -> Option<u32> {
     w.focus.map(|f| f.0).filter(|&id| id != w.my_id && in_own_six(w, id))
@@ -214,6 +235,9 @@ pub fn party_cursor_key(w: &mut World, key: egui::Key) -> bool {
                 }
                 _ => return true,
             };
+            if matches!(then, SubThen::Line { .. }) {
+                w.last_subtarget = Some(id);
+            }
             super::textcmd::run(w, &line, super::textcmd::Mode::SubTarget);
         }
         K::Escape => {
@@ -235,6 +259,21 @@ pub fn party_cursor_key(w: &mut World, key: egui::Key) -> bool {
         _ => {}
     }
     true
+}
+
+/// A click on a party row while the cursor is up: move to that row and take Enter's pick.
+pub fn party_cursor_pick(w: &mut World, index: usize) -> bool {
+    let Some(pc) = w.party_cursor.as_ref() else { return false };
+    let ok = match pc.moving {
+        Some((_, base)) => (base..base + 6).contains(&index),
+        None => index < pc.count,
+    };
+    if !ok {
+        return false;
+    }
+    let pc = w.party_cursor.as_mut().unwrap();
+    (pc.index, pc.fellow) = (index, false);
+    party_cursor_key(w, egui::Key::Enter)
 }
 
 /// The cursor with the mouse over the party windows' rows (the windows' generic events *(inf)*): hovering a used row
@@ -535,6 +574,7 @@ pub fn prefer(w: &mut World, id: u32) {
 /// FUN_10158db0(0): runs the callback on the pick, SE "0009", the saved target and lock come back.
 pub fn confirm_sub(w: &mut World) {
     let (Some(s), Some(t)) = (w.prompt.take(), w.target) else { return };
+    w.last_subtarget = Some(t);
     w.sounds.push(SE_TARGET);
     if let SubThen::Item { container, index } = s.then {
         restore(w, &s);
@@ -1381,6 +1421,14 @@ mod tests {
         assert_eq!(assist_rule(0x0100_0099, me, 0x0106_5013, true, true, auto), None);
         assert_eq!(assist_rule(me, me, 0, true, true, auto), None);
         assert_eq!(assist_rule(me, me, 0x0106_5013, false, true, auto), None);
+    }
+
+    /// `<lastst>` resolves us by our own index, anyone else by the entity's, and nobody gone.
+    #[test]
+    fn last_subtarget_index_rule() {
+        assert_eq!(last_subtarget_index(7, 1, 0x405, Some(0x406)), Some((7, 0x406)));
+        assert_eq!(last_subtarget_index(1, 1, 0x405, None), Some((1, 0x405)));
+        assert_eq!(last_subtarget_index(7, 1, 0x405, None), None);
     }
 
     /// Side input keeps the radius (circle strafe); forward closes in, stopping at 0.8.

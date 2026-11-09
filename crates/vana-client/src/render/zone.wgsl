@@ -25,9 +25,21 @@ struct Uniforms {
     voyage: mat4x4<f32>,
     // Config 0017 off: the sun and the moon (direction the light travels, colour) as two lights (FUN_10181b50).
     two: array<vec4<f32>, 4>,
-    // x: 1 with bump mapping on (one eased light, vertex range fog), 0 off (two lights, table fog).
+    // x: 1 with bump mapping on (one eased light, vertex range fog), 0 off (two lights, table fog); y: 1 with
+    // Settings' Light Shading Smooth (point lights per pixel, ours), 0 Retail (per vertex).
     modes: vec4<f32>,
+    // Windowed mode's light boost (render light_boost, FUN_1000be50): rgb factors, w = 1 on.
+    boost: vec4<f32>,
 };
+
+// FUN_1000bf30 -> FUN_1000be50 on every SetLight while windowed: a diffuse colour all of whose parts are below 0.8 is
+// multiplied by the channel factors and capped at 1.
+fn boost(c: vec3<f32>) -> vec3<f32> {
+    if (u.boost.w > 0.5 && all(c < vec3<f32>(0.8))) {
+        return min(c * u.boost.rgb, vec3<f32>(1.0));
+    }
+    return c;
+}
 
 // An area environment's lighting (sun.w = 1 when it has one); fog.xy = start, end.
 struct Area {
@@ -70,6 +82,8 @@ struct LampShadowU {
 @group(0) @binding(5) var<uniform> lamp_sh: LampShadowU;
 // Config 0011: the animated meshes' vertex deltas (vertex flags >> 8, minus 1); the instance's sway is area.y.
 @group(0) @binding(4) var<storage, read> deltas: array<vec4<f32>>;
+// '#' placements' stage 0: the scenery sampler with CLAMP addressing.
+@group(0) @binding(6) var samp_clamp: sampler;
 
 fn part_k(time: vec4<f32>) -> f32 {
     return select(clamp((u.area_info.y - time.x) / time.y, 0.0, 1.0), 1.0, time.y <= 0.0);
@@ -103,9 +117,10 @@ struct VertexIn {
     @location(7) m3: vec4<f32>,
     // The placement's four lights (table slot + 1, 0 = none).
     @location(8) lights: vec4<u32>,
-    // Bit 0: the model's 'ev10' flag (MMB +0x10 bit 28).
+    // Bit 0: the model's 'ev10' flag (MMB +0x10 bit 28); bit 1: a bumped corner; bit 2: a '#' placement (UV clamped);
+    // bits 8..: the delta (sway or tangent) index + 1.
     @location(9) flags: u32,
-    // x: the placement's area slot (0 = the zone's).
+    // x: the placement's area slot (0 = the zone's); y: the sway step (render/sway.rs); z: 1 with NORMALIZENORMALS.
     @location(10) area: vec4<u32>,
     // Level of detail: drawn while x < d^2 <= y from the eye to the placement's origin; y 0 = always.
     @location(11) band: vec4<f32>,
@@ -120,11 +135,13 @@ struct VertexOut {
     @location(4) depth: f32,
     // Target flash (FUN_100c94a0): ambient lerp toward 220 / 255, fog colour scale.
     @location(5) flash: vec2<f32>,
-    // Actors: the floor lamp, per vertex. Scenery: 0 (its point lights are per pixel, from `lights`).
+    // Actors: the floor lamp, per vertex. Scenery: its point lights per vertex (Light Shading Retail; vc x the sum,
+    // clamped for fixed function), 0 with Smooth (per pixel from `lights`).
     @location(6) point: vec3<f32>,
     // The placement's four light slots (+1, 0 = none) for the per-pixel point lights.
     @location(7) @interpolate(flat) lights: vec4<u32>,
-    // The area slot it is lit by (0 = the zone's); bit 15: the 'ev10' path, which keeps the zone's fog range.
+    // The area slot it is lit by (0 = the zone's); bit 15: the 'ev10' path, which keeps the zone's fog range; bit 14:
+    // stage 0 clamps its UV (a '#' placement).
     @location(8) @interpolate(flat) area: u32,
     // Actors: the model colour's RGB (actor +0x660, 0x80 = 1.0), the material colour of the ambient and diffuse terms.
     @location(9) @interpolate(flat) tint: vec3<f32>,
@@ -132,6 +149,8 @@ struct VertexOut {
     @location(10) tsl: vec3<f32>,
     // The eye distance, for the vertex (range) fog of bump-mapping mode.
     @location(11) range: f32,
+    // Scenery: the transformed normal's length, which scales every N.L (NORMALIZENORMALS off); 1 for actors.
+    @location(12) nscale: f32,
 };
 
 // FUN_100c94a0: of the floor's lights, the strongest w = 1 / max(d^2 Att2, 1e-4) at the actor's position within
@@ -152,18 +171,21 @@ fn actor_lamp(packed: u32, pos: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
         let wt = 1.0 / max(d2 * att2, 1e-4);
         if (wt > best) {
             best = wt;
-            col = c.rgb * wt;
+            col = boost(c.rgb) * wt;
             dir = l * inverseSqrt(max(d2, 1e-12));
         }
     }
     return col * max(dot(n, dir), 0.0);
 }
 
-// Retail's D3D8 POINT lights (C x I x max(N.L, 0) / d^2, cut at the range) ran per vertex, which draws triangles
-// of light on coarse walls. Ours, per pixel: the same term with the distance floored at 1 and a smooth window over
-// the range instead of the hard cut (not retail).
+// Settings' Light Shading Smooth (ours, u.modes.y = 1): the D3D8 term per pixel with the distance floored at 1 and a
+// smooth window over the range instead of the hard cut (not retail; retail's per-vertex lights draw triangles of
+// light on coarse walls).
 fn point_lights(lights: vec4<u32>, p: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
     var sum = vec3<f32>(0.0);
+    if (u.modes.y < 0.5) {
+        return sum;
+    }
     for (var k = 0u; k < 4u; k = k + 1u) {
         let s = lights[k];
         if (s == 0u) { continue; }
@@ -175,7 +197,55 @@ fn point_lights(lights: vec4<u32>, p: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
         if (d2 >= r2) { continue; }
         let q = d2 / r2;
         let win = (1.0 - q * q) * (1.0 - q * q);
-        sum = sum + c.rgb * c.w * max(dot(n, l * inverseSqrt(max(d2, 1e-6))), 0.0) * win / max(d2, 1.0);
+        sum = sum + boost(c.rgb) * c.w * max(dot(n, l * inverseSqrt(max(d2, 1e-6))), 0.0) * win / max(d2, 1.0);
+    }
+    return sum;
+}
+
+// Retail's fixed function (FUN_1017c9c0, D3D8 POINT lights from the table, FUN_10178530: Att0 = Att1 = 0, Att2 =
+// 1 / I, Diffuse rgb / 128 or 0 when I <= 0), per vertex: C x I x max(N.L, 0) / d^2 with N the world normal as it
+// comes (NORMALIZENORMALS off: `nt`, not unit), none past the range.
+fn ff_points(lights: vec4<u32>, p: vec3<f32>, nt: vec3<f32>) -> vec3<f32> {
+    var sum = vec3<f32>(0.0);
+    for (var k = 0u; k < 4u; k = k + 1u) {
+        let s = lights[k];
+        if (s == 0u) { continue; }
+        let a = plights[2u * (s - 1u)];
+        let c = plights[2u * (s - 1u) + 1u];
+        let l = a.xyz - p;
+        let d2 = max(dot(l, l), 1e-12);
+        if (d2 > a.w * a.w) { continue; }
+        sum = sum + boost(c.rgb) * c.w * max(dot(nt, l) * inverseSqrt(d2), 0.0) / d2;
+    }
+    return sum;
+}
+
+// Config 0017's type-3 meshes (the vertex shaders at 0x10376ff8.. for 0..4 lights, built by FUN_10178250): in object
+// space, c11..c14 = the light position x placement +0x80 (the placement's own inverse, T(-p) Rz Ry Rx S^-1, even on a
+// voyage) against the vertex v0 and its raw normal v3: sum_k c15..c17[k] x max(N.(P - V), 0) / d^3 x (d^2 <= c18[k]
+// = Range^2), c15..c17 the boosted Diffuse x I per lane (zeroed per draw). So a placement scaled by s sees I s^2 / d^2
+// and the range R s. `inv`'s columns are the rows of the inverse of the placement's 3 x 3 part, `t` its translation.
+// The inverse's row for axis `a` of a placement S Rx Ry Rz T (`b`, `c` the next two axes in turn).
+fn inv_axis(a: vec3<f32>, b: vec3<f32>, c: vec3<f32>) -> vec3<f32> {
+    let s2 = dot(a, a);
+    if (s2 > 0.0) {
+        return a / s2;
+    }
+    let n = cross(b, c);
+    return n * inverseSqrt(max(dot(n, n), 1e-30));
+}
+
+fn bump_points(lights: vec4<u32>, v: vec3<f32>, n: vec3<f32>, inv: mat3x3<f32>, t: vec3<f32>) -> vec3<f32> {
+    var sum = vec3<f32>(0.0);
+    for (var k = 0u; k < 4u; k = k + 1u) {
+        let s = lights[k];
+        if (s == 0u) { continue; }
+        let a = plights[2u * (s - 1u)];
+        let c = plights[2u * (s - 1u) + 1u];
+        let r = (a.xyz - t) * inv - v;
+        let d2 = max(dot(r, r), 1e-12);
+        if (d2 > a.w * a.w) { continue; }
+        sum = sum + boost(c.rgb) * c.w * max(dot(r, n) * inverseSqrt(d2) / d2, 0.0);
     }
     return sum;
 }
@@ -205,20 +275,52 @@ fn vs_main(v: VertexIn) -> VertexOut {
     out.color = v.color;
     out.uv = v.uv;
     out.world = world.xyz;
-    out.normal = normalize((model * vec4<f32>(v.normal, 0.0)).xyz);
+    // D3D8 lights with the normal through the inverse transpose of the world matrix (its cofactors / det), and with
+    // NORMALIZENORMALS off (FUN_1017c9c0 sets it from placement +0xe) uses it as it comes: a placement scaled by s
+    // sees N.L / s, and the vertex normal's own length counts too.
+    let ma = model[0].xyz;
+    let mb = model[1].xyz;
+    let mc = model[2].xyz;
+    let det = dot(ma, cross(mb, mc));
+    let nt = (cross(mb, mc) * v.normal.x + cross(mc, ma) * v.normal.y + cross(ma, mb) * v.normal.z) / det;
+    let nl = length(nt);
+    out.normal = select(vec3<f32>(0.0, 1.0, 0.0), nt / nl, nl > 1e-12);
+    out.nscale = select(nl, 1.0, v.area.z != 0u);
     out.range = distance(world.xyz, u.eye.xyz);
-    // The bumped vertex shader's oD1: the light (toward it) against T, B = N x T and N.
+    // The bumped vertex shader's oD1 (a colour, so clamped): the sun vector in object space (c4 = -(sun direction x
+    // the inverse world)) against the object-space T, B = N x T and N, unnormalised. On a voyage FUN_1017c9c0 takes
+    // the transpose of world x V (D3DXMatrixTranspose) as the inverse: no 1 / s^2.
     if (bumped && di != 0u) {
-        let t = normalize((model * vec4<f32>(deltas[di - 1u].xyz, 0.0)).xyz);
-        let n = out.normal;
+        let t = deltas[di - 1u].xyz;
+        let n = v.normal;
         let b = cross(n, t);
         var sun = u.sun.xyz;
         let slot = v.area.x;
         if (slot != 0u && areas[slot].sun.w > 0.5) {
             sun = areas[slot].sun.xyz;
         }
-        let l = -sun;
-        out.tsl = 0.5 * vec3<f32>(dot(t, l), dot(b, l), dot(n, l)) + 0.5;
+        let ws = -sun;
+        var l = vec3<f32>(dot(cross(mb, mc), ws), dot(cross(mc, ma), ws), dot(cross(ma, mb), ws)) / det;
+        if (voyaged) {
+            l = vec3<f32>(dot(ma, ws), dot(mb, ws), dot(mc, ws));
+        }
+        out.tsl = clamp(0.5 * vec3<f32>(dot(t, l), dot(b, l), dot(n, l)) + 0.5, vec3<f32>(0.0), vec3<f32>(1.0));
+    }
+    // Retail's point lights per vertex (Light Shading Retail): fixed function in world space, the bumped path in the
+    // placement's object space (oT3's lamp part, x vc, interpolated unclamped; t3 clamps it per pixel). Fixed
+    // function clamps the vertex colour, so its part is clamped here.
+    if (u.modes.y < 0.5 && any(v.lights != vec4<u32>(0u))) {
+        if (bumped && di != 0u) {
+            // Placement +0x80 (FUN_10179430): T(-p) Rz(-z) Ry(-y) Rx(-x) S(1 / s), so row k is the placement's axis
+            // k over s_k^2; a zero scale takes 1 (the unit axis, from the other two).
+            let ba = v.m0.xyz;
+            let bb = v.m1.xyz;
+            let bc = v.m2.xyz;
+            let inv = mat3x3<f32>(inv_axis(ba, bb, bc), inv_axis(bb, bc, ba), inv_axis(bc, ba, bb));
+            out.point = v.color.rgb * bump_points(v.lights, v.pos, v.normal, inv, v.m3.xyz);
+        } else {
+            out.point = clamp(v.color.rgb * ff_points(v.lights, world.xyz, out.normal * out.nscale), vec3<f32>(0.0), vec3<f32>(1.0));
+        }
     }
     out.depth = out.clip.w;
     out.flash = vec2<f32>(0.0, 1.0);
@@ -226,6 +328,7 @@ fn vs_main(v: VertexIn) -> VertexOut {
     out.lights = v.lights;
     let ev10 = u32(u.area_info.x);
     out.area = select(v.area.x, ev10 | 0x8000u, (v.flags & 1u) != 0u && ev10 != 0u);
+    out.area = out.area | select(0u, 0x4000u, (v.flags & 4u) != 0u);
     // FUN_1017c9c0's LOD pick: an instance outside its band collapses to nothing.
     let origin = select(v.m3.xyz, (u.voyage * v.m3).xyz, voyaged);
     let d = u.eye.xyz - origin;
@@ -298,6 +401,7 @@ fn skin(v: SkinIn) -> VertexOut {
     out.point = actor_lamp(bitcast<u32>(pose[4].w), model[3].xyz, out.normal);
     out.area = u32(pose[5].x);
     out.tint = pose[5].yzw;
+    out.nscale = 1.0;
     return out;
 }
 
@@ -463,13 +567,25 @@ fn shade(in: VertexOut, color: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(select(rgb, pow(rgb, vec3<f32>(1.0 / 2.2)), u.fog.z > 0.5), 1.0);
 }
 
+// FUN_1017c9c0: a '#' placement (+0xd6 = 2) samples stage 0 with ADDRESSU / ADDRESSV CLAMP (samp_clamp), the rest
+// WRAP. The derivatives are taken first, in uniform control flow, and the clamped sample uses them.
+fn tex0(in: VertexOut) -> vec4<f32> {
+    let dx = dpdx(in.uv);
+    let dy = dpdy(in.uv);
+    let t = textureSample(tex, samp, in.uv);
+    if ((in.area & 0x4000u) != 0u) {
+        return textureSampleGrad(tex, samp_clamp, in.uv, dx, dy);
+    }
+    return t;
+}
+
 // Most scenery is opaque; its texture alpha carries something other than coverage.
 @fragment
 fn fs_opaque(in: VertexOut) -> @location(0) vec4<f32> {
     if (u.sun.w > 0.5) {
-        return lit_zone(in, textureSample(tex, samp, in.uv));
+        return lit_zone(in, tex0(in));
     }
-    return shade(in, textureSample(tex, samp, in.uv) * in.color * 2.0);
+    return shade(in, tex0(in) * in.color * 2.0);
 }
 
 // Characters carry no baked lighting: shade by the normal. Placeholder until the D3D8 light setup is known.
@@ -531,19 +647,19 @@ fn fs_faded(in: FadedOut) -> @location(0) vec4<f32> {
 // the texture alpha already doubled).
 @fragment
 fn fs_alpha_test(in: VertexOut) -> @location(0) vec4<f32> {
-    let color = textureSample(tex, samp, in.uv) * in.color * 2.0;
+    let color = tex0(in) * in.color * 2.0;
     if (color.a <= 96.0 / 255.0) {
         discard;
     }
     if (u.sun.w > 0.5) {
-        return lit_zone(in, textureSample(tex, samp, in.uv));
+        return lit_zone(in, tex0(in));
     }
     return shade(in, color);
 }
 
 // MMB models with bit 31: blended by that alpha (SRCALPHA / INVSRCALPHA), alpha-tested only on '_' placements.
 fn blended(in: VertexOut) -> vec4<f32> {
-    let t = textureSample(tex, samp, in.uv);
+    let t = tex0(in);
     let a = clamp(t.a * in.color.a * 2.0, 0.0, 1.0);
     if (u.sun.w > 0.5) {
         return vec4<f32>(lit_zone(in, t).rgb, a);
@@ -591,7 +707,7 @@ fn lit_zone(in: VertexOut, t: vec4<f32>) -> vec4<f32> {
     var ambient = u.ambient.rgb;
     var fog_color = u.fog_color.rgb;
     var fog = u.fog.xy;
-    let slot = in.area & 0x7fffu;
+    let slot = in.area & 0x3fffu;
     if (slot != 0u && areas[slot].sun.w > 0.5) {
         let a = areas[slot];
         sun = a.sun.xyz;
@@ -603,17 +719,18 @@ fn lit_zone(in: VertexOut, t: vec4<f32>) -> vec4<f32> {
     let n = normalize(in.normal);
     // Config 0017 (FUN_10174610): on, the one eased light and vertex fog over the eye range; off, the sun and the
     // moon as two lights (the zone's, or the area's) and table fog over the view depth.
-    var direct = sun_color * max(dot(n, -sun), 0.0);
+    var direct = boost(sun_color) * max(dot(n, -sun), 0.0);
     var d = in.range;
     if (u.modes.x < 0.5) {
         var two = u.two;
         if (slot != 0u && areas[slot].sun.w > 0.5) {
             two = areas[slot].two;
         }
-        direct = two[1].rgb * max(dot(n, -two[0].xyz), 0.0) + two[3].rgb * max(dot(n, -two[2].xyz), 0.0);
+        direct = boost(two[1].rgb) * max(dot(n, -two[0].xyz), 0.0) + boost(two[3].rgb) * max(dot(n, -two[2].xyz), 0.0);
         d = in.depth;
     }
-    let lit = clamp(in.color.rgb * (ambient + direct + point_lights(in.lights, in.world, n)), vec3<f32>(0.0), vec3<f32>(1.0));
+    // Every N.L takes the normal's length (NORMALIZENORMALS off).
+    let lit = clamp(in.color.rgb * (ambient + in.nscale * (direct + point_lights(in.lights, in.world, n))) + in.point, vec3<f32>(0.0), vec3<f32>(1.0));
     let rgb = clamp(to_gamma(t.rgb) * lit * 2.0, vec3<f32>(0.0), vec3<f32>(1.0));
     let f = clamp((fog.y - d) / (fog.y - fog.x), 0.0, 1.0);
     let c = mix(fog_color, rgb, f);
@@ -628,13 +745,13 @@ fn lit_zone(in: VertexOut, t: vec4<f32>) -> vec4<f32> {
 
 @fragment
 fn fs_bump(in: VertexOut) -> @location(0) vec4<f32> {
-    let t0 = textureSample(tex, samp, in.uv);
+    let t0 = tex0(in);
     let t1 = textureSample(bump_tex, bump_samp, in.uv).rgb;
     var sun_color = u.sun_color.rgb;
     var ambient = u.ambient.rgb;
     var fog_color = u.fog_color.rgb;
     var fog = u.fog.xy;
-    let slot = in.area & 0x7fffu;
+    let slot = in.area & 0x3fffu;
     if (slot != 0u && areas[slot].sun.w > 0.5) {
         let a = areas[slot];
         sun_color = a.sun_color.rgb;
@@ -644,8 +761,8 @@ fn fs_bump(in: VertexOut) -> @location(0) vec4<f32> {
     }
     let r1 = clamp(dot(t1 * 2.0 - 1.0, in.tsl * 2.0 - 1.0), 0.0, 1.0);
     let n = normalize(in.normal);
-    let t2 = clamp(sun_color * in.color.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
-    let t3 = clamp((ambient + point_lights(in.lights, in.world, n)) * in.color.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+    let t2 = clamp(boost(sun_color) * in.color.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+    let t3 = clamp((ambient + point_lights(in.lights, in.world, n)) * in.color.rgb + in.point, vec3<f32>(0.0), vec3<f32>(1.0));
     let rgb = clamp(2.0 * (r1 * t2 + t3) * to_gamma(t0.rgb), vec3<f32>(0.0), vec3<f32>(1.0));
     let f = clamp((fog.y - in.depth) / (fog.y - fog.x), 0.0, 1.0);
     let c = mix(fog_color, rgb, f);
@@ -669,6 +786,7 @@ fn lit_actor(in: VertexOut, t: vec4<f32>) -> vec4<f32> {
         fog_color = a.fog_color.rgb;
         fog = a.fog.xy;
     }
+    color = boost(color);
     let ndl = max(dot(normalize(in.normal), -sun), 0.0);
     // D3DRS_AMBIENT = ftol(ambient x 128) (FUN_10181de0); the target flash mixes those bytes toward 220 and scales
     // the fog colour (FUN_100c94a0).

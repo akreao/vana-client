@@ -44,6 +44,11 @@ pub struct Menu {
     history: Option<(u16, Option<u16>)>,
 }
 
+/// cmbmenu's cursor child while it is open (World::cursor_keep).
+pub(super) fn menu_sel(w: &World) -> Option<u16> {
+    w.synth.menu.as_ref().map(|m| m.sel)
+}
+
 /// A history record (FUN_101e1b40): Result, Grade, ItemNo, CrystalNo (bit 15 the favourite), MaterialNo[8].
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Record {
@@ -161,9 +166,10 @@ pub fn zone_reset(w: &mut World) {
     w.synth = State { history, loaded, sent, ..Default::default() };
 }
 
-/// Main menu row 10 (FUN_10140400 case 10): "menu    cmbmenu", SE 0002.
+/// Main menu row 10 (FUN_10140400 case 10): "menu    cmbmenu", SE 0002, on its remembered row (no flag 0x10000; the
+/// open hook FUN_101e2950 only dims rows).
 pub fn open_menu(w: &mut World) {
-    w.synth.menu = Some(Menu { sel: 1, crystals: None, history: None });
+    w.synth.menu = Some(Menu { sel: w.cursor_recall(CMBMENU), crystals: None, history: None });
     w.menu = None;
     w.sounds.push(Ui::Select as u32);
 }

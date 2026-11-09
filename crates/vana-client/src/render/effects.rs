@@ -2014,9 +2014,10 @@ mod tests {
     /// nothing when the scene hides it (op 0x53 zeroes FADE, so op 0x60 skips).
     #[test]
     fn gpu_thunder_flash() {
-        if Gpu::headless().is_err() {
-            return;
-        }
+        // One device and one EffectsGpu for every case: EffectsGpu::new compiles every effects pipeline, the bulk of
+        // the test's time (once per case, this test took minutes on some drivers).
+        let Ok(gpu) = Gpu::headless() else { return };
+        let mut eg = EffectsGpu::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb);
         let eye = glam::Vec3::new(0.0, 0.0, -10.0);
         let view = glam::camera::rh::view::look_at_mat4(eye, glam::Vec3::ZERO, glam::Vec3::NEG_Y);
         let mut view_rot = view;
@@ -2034,7 +2035,8 @@ mod tests {
             moon_phase: 0,
             weekday: 0,
         };
-        let flash = |clear: f32, far_key: f32| flash_at(f, (glam::Vec3::ZERO, 0), clear, (50.0, far_key));
+        let mut flash =
+            |clear: f32, far_key: f32| flash_at(&gpu, &mut eg, f, (glam::Vec3::ZERO, 0), clear, (50.0, far_key));
         // Visible: B, G, R bytes of the colour at full strength.
         assert_eq!(flash(1.0, 150.0), 0x00c0_8040);
         // Behind scenery: nothing.
@@ -2048,14 +2050,22 @@ mod tests {
         let mut view_rot = view;
         view_rot.w_axis = glam::Vec4::W;
         let g = Frame { view, view_rot, eye, ..f };
-        assert_eq!(flash_at(g, (glam::Vec3::new(0.0, 0.0, 10.0), 4), 1.0, (200.0, 300.0)), 0x00c0_8040);
-        assert_eq!(flash_at(g, (glam::Vec3::new(0.0, 0.0, -10.0), 4), 1.0, (200.0, 300.0)), 0, "behind the eye");
+        let mut flash = |pos: glam::Vec3| flash_at(&gpu, &mut eg, g, (pos, 4), 1.0, (200.0, 300.0));
+        assert_eq!(flash(glam::Vec3::new(0.0, 0.0, 10.0)), 0x00c0_8040);
+        assert_eq!(flash(glam::Vec3::new(0.0, 0.0, -10.0)), 0, "behind the eye");
     }
 
     /// One element with Tavnazian Safehold's frsh ops (op 0x53, then op 0x60 with near / far) at `pos` with `flags`,
-    /// over a scene depth cleared to `clear`: its readback flash word after one update.
-    fn flash_at(f: Frame, (pos, flags): (glam::Vec3, u32), clear: f32, (near, far): (f32, f32)) -> u32 {
-        let gpu = Gpu::headless().expect("a GPU");
+    /// over a scene depth cleared to `clear`: its readback flash word after one update of `eg`. The element is written
+    /// whole (slot 0) each call, so nothing carries over from an earlier call.
+    fn flash_at(
+        gpu: &Gpu,
+        eg: &mut EffectsGpu,
+        f: Frame,
+        (pos, flags): (glam::Vec3, u32),
+        clear: f32,
+        (near, far): (f32, f32),
+    ) -> u32 {
         let f32w = |v: f32| v.to_bits();
         let proj = glam::camera::rh::proj::directx::perspective(1.0, 1.0, 0.1, 1000.0);
         {
@@ -2094,7 +2104,6 @@ mod tests {
                 view_formats: &[],
             });
             let dv = depth.create_view(&Default::default());
-            let mut eg = EffectsGpu::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb);
             let mut enc = gpu.device.create_command_encoder(&Default::default());
             enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
@@ -2109,10 +2118,10 @@ mod tests {
                 multiview_mask: None,
             });
             eg.set_depth(Some((&dv, proj)));
-            eg.update(&gpu, &mut enc, &mut fx, &f);
+            eg.update(gpu, &mut enc, &mut fx, &f);
             gpu.queue.submit([enc.finish()]);
             gpu.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None }).unwrap();
-            eg.read_back(&gpu, 1)[crate::fx::elem::back::FLASH]
+            eg.read_back(gpu, 1)[crate::fx::elem::back::FLASH]
         }
     }
 

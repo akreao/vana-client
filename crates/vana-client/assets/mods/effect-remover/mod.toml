@@ -1,5 +1,5 @@
 name = "Effect Remover"
-version = "1.0.1"
+version = "1.0.4"
 description = "Cancels your status effects by name or id from a command, for macros (the cancel add-ons)."
 permissions = ["actions"]
 

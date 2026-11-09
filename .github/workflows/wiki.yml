@@ -1,0 +1,48 @@
+# Publishes wiki/ to the repository's GitHub wiki on every push to custom that changes it. The wiki is generated:
+# edits made in its web editor are overwritten. GitHub creates the wiki's git repository only when its first page is
+# saved, so create any page once in the web UI before the first run.
+name: Wiki
+
+on:
+  push:
+    branches: [custom]
+    paths: [wiki/**, .github/workflows/wiki.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: wiki
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          # The token goes in a header for each git call, so it is never stored in the wiki clone's remote URL.
+          AUTH="$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
+          echo "::add-mask::${AUTH}"
+          git_auth() { git -c http.extraheader="Authorization: Basic ${AUTH}" "$@"; }
+          if ! git_auth clone --depth 1 "https://github.com/${REPO}.wiki.git" wiki-repo; then
+            echo "::error::Could not clone the wiki. If it has no pages yet, create any page at https://github.com/${REPO}/wiki once (GitHub creates the wiki repository then) and re-run; otherwise check the token's access."
+            exit 1
+          fi
+          find wiki-repo -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp -r wiki/. wiki-repo/
+          cd wiki-repo
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Wiki already up to date."
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -m "Sync from ${REPO}@${SHA}"
+          git_auth push

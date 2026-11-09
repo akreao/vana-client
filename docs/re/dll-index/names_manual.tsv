@@ -1,0 +1,2 @@
+# addr<TAB>name[<TAB>note]  -- hand-checked names; always win over build_names.py.
+# Add with: python3 dll.py name ADDR NAME

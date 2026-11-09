@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Publishes a GitHub release vVERSION of lenonk/vana-client with the assets release/build-*.sh made, and those
+# Publishes a GitHub release vVERSION of akreao/vana-client (updater.rs RELEASE_REPO) with the assets release/build-*.sh made, and those
 # release/fetch-ci-builds.sh downloaded (Linux aarch64, macOS) when present, each with its .sig. VERSION must be the
 # crate's version (crates/vana-client/Cargo.toml), newer than the last release: clients offer the update when the tag
 # is newer and its signature checks against release/signing-key.pub, built in.
-# The private key: VANA_SIGNING_KEY, or ~/.config/vana-client-release/signing.pem (Ed25519; never in the repo).
+# The private key: VANA_SIGNING_KEY, or ~/.config/vana-client-release/signing-key.pem (Ed25519; never in the repo).
 #   release/publish.sh 0.1.1 [notes file]
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -14,7 +14,7 @@ assets=(target/assets/vana-client-linux-x86_64 target/assets/vana-client-windows
 for a in target/assets/vana-client-linux-aarch64 target/assets/vana-client-macos-aarch64 target/assets/vana-client-macos-x86_64; do
     if [ -f "$a" ]; then assets+=("$a"); else echo "note: no $a (release/fetch-ci-builds.sh); left out" >&2; fi
 done
-key="${VANA_SIGNING_KEY:-$HOME/.config/vana-client-release/signing.pem}"
+key="${VANA_SIGNING_KEY:-$HOME/.config/vana-client-release/signing-key.pem}"
 [ -f "$key" ] || { echo "no signing key at $key" >&2; exit 1; }
 pub=$(tr -d '[:space:]' < release/signing-key.pub)
 [ "$(openssl pkey -in "$key" -pubout -outform DER | tail -c 32 | od -An -tx1 | tr -d ' \n')" = "$pub" ] \
@@ -37,4 +37,4 @@ notes=(--generate-notes)
 [ -n "${2:-}" ] && notes=(--notes-file "$2")
 git tag "v$version"
 git push origin "v$version"
-gh release create "v$version" -R lenonk/vana-client --title "vana-client $version" "${notes[@]}" "${assets[@]}" "${sigs[@]}"
+gh release create "v$version" -R akreao/vana-client --title "vana-client $version" "${notes[@]}" "${assets[@]}" "${sigs[@]}"

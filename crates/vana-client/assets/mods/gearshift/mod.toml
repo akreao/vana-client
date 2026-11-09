@@ -1,5 +1,5 @@
 name = "Gearshift"
-version = "0.1.1"
+version = "0.1.4"
 description = "Swaps gear around your actions from GearSwap job files and LuAshitacast and Ashitacast XML profiles, unchanged (the gear-swap add-ons)."
 permissions = ["packets.read", "packets.write", "automation"]
 

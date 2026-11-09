@@ -70,7 +70,7 @@ pub struct Menu {
 }
 
 impl Menu {
-    fn name(&self) -> &'static str {
+    pub(super) fn name(&self) -> &'static str {
         if self.nomad { MOGEXT } else { MYROOM }
     }
 
@@ -168,6 +168,20 @@ pub(super) fn emote(w: &mut World, motions: &[&str]) {
                 super::actmotion::fx_too(&mut w.effects, id, name);
             }
         }
+    }
+}
+
+/// s2c 0x061's job change ends the moogle's `job0` / `job1` spin: the status motion (idle) comes back.
+pub fn job_changed(w: &mut World) {
+    let Some(id) = moogle_actor(w) else { return };
+    if let Some(a) = w.actors.get_mut(&id) {
+        idle_job(a);
+    }
+}
+
+fn idle_job(a: &mut super::Actor) {
+    if a.play.as_ref().is_some_and(|p| p.name.starts_with("job")) {
+        a.play = None;
     }
 }
 
@@ -299,7 +313,10 @@ pub fn open(w: &mut World, nomad: bool) {
     if !nomad && w.mh_owner != 0 {
         return;
     }
-    w.moogle = Some(Menu { nomad, origin: w.pos, sel: 1, storage: None, open_pending: false, jobs: None, post: None });
+    // Opened by name (FUN_1015e350): the cursor child comes back from the layout (no flag 0x10000; the open hook
+    // FUN_10145180 leaves it).
+    let sel = w.cursor_recall(if nomad { MOGEXT } else { MYROOM });
+    w.moogle = Some(Menu { nomad, origin: w.pos, sel, storage: None, open_pending: false, jobs: None, post: None });
     w.menu = None;
     w.action_menu = None;
 }
@@ -813,5 +830,34 @@ pub fn line(w: &mut World, n: u16) {
     if let Some(raw) = bt.system_raw(n) {
         let motions = crate::dat::dialog::expand(&raw, &Default::default()).motions;
         emote(w, &motions);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn play(name: &str) -> super::super::actmotion::Play {
+        super::super::actmotion::Play {
+            name: name.into(),
+            motions: Vec::new(),
+            length: 0.0,
+            ticks: 0.0,
+            base: "idl".into(),
+            cut: -1.0,
+            stance_at: None,
+            end: None,
+        }
+    }
+
+    #[test]
+    fn job_change_clears_only_job_plays() {
+        let mut a = super::super::Actor::new();
+        a.play = Some(play("job0"));
+        idle_job(&mut a);
+        assert!(a.play.is_none());
+        a.play = Some(play("tlk0"));
+        idle_job(&mut a);
+        assert!(a.play.is_some_and(|p| p.name == "tlk0"));
     }
 }

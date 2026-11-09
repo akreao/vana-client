@@ -27,6 +27,8 @@ pub enum Then {
     Black(String, u8),
     /// LAB_1007a0b0: /befriend's exact name.
     Befriend(String),
+    /// LAB_1020b440: a person's comment (FUN_1020b3e0), the record as copied to DAT_10664448.
+    Comment(Box<Record>),
 }
 
 /// Which summary line the results get (list +0x16): one area, several, none (all areas).
@@ -460,7 +462,21 @@ pub fn run_quiet(w: &mut World, cond: Cond, scope: Scope) {
 
 /// DAT_10385a04 != 4: a query for the results window or a summary is out.
 pub fn busy(w: &World) -> bool {
-    w.searches.iter().any(|s| matches!(s.1, Then::Results | Then::Summary(_) | Then::LinkList))
+    w.searches.iter().any(|s| matches!(s.1, Then::Results | Then::Summary(_) | Then::LinkList | Then::Comment(_)))
+}
+
+/// FUN_1020b3e0 (Enter on a person in scresult or link12): while no query is out, a person with flag 0x10 (a comment
+/// set) has it fetched (slot kind 4 on their id, busy until the answer); false while a query is out.
+pub fn fetch_comment(w: &mut World, r: &Record) -> bool {
+    if busy(w) {
+        return false;
+    }
+    if r.flags & 0x10 != 0 {
+        log::info!("search: comment of {:#x}", r.id);
+        let rx = search::comment_spawn(w.search_addr, r.id);
+        w.searches.push((rx, Then::Comment(Box::new(r.clone()))));
+    }
+    true
 }
 
 /// The summary scope from the areas searched: one area, several, none (all areas).
@@ -473,25 +489,31 @@ pub fn scope_of(c: &Cond) -> Scope {
 }
 
 /// FUN_100e0d50's delivery for finished queries (a failure or the 30 s timeout delivers nothing).
-pub fn poll(w: &mut World) {
+pub fn poll(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
     let mut i = 0;
     while i < w.searches.len() {
         match w.searches[i].0.try_recv() {
             Ok(r) => {
                 let (_, then) = w.searches.remove(i);
-                finish(w, r.ok(), then);
+                finish(w, r.ok(), then, gu);
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => i += 1,
             Err(_) => {
                 let (_, then) = w.searches.remove(i);
-                finish(w, None, then);
+                finish(w, None, then, gu);
             }
         }
     }
 }
 
-fn finish(w: &mut World, reply: Option<Reply>, then: Then) {
+fn finish(w: &mut World, reply: Option<Reply>, then: Then, gu: Option<&super::game_ui::GameUi>) {
     match then {
+        // LAB_1020b440: the record's header only when the answer is for its id, else the unknown form.
+        Then::Comment(r) => {
+            if let Some((id, text)) = reply.and_then(|r| r.comment) {
+                print_comment(w, &text, (id == r.id).then_some(&*r), gu);
+            }
+        }
         Then::PartyAdd(name) => {
             let Some(reply) = reply else { return };
             // An exact match: c2s 0x06E with its id, ActIndex 0, kind 5 to a party leader (rec+0x30 bit 3), else 0.
@@ -568,6 +590,65 @@ fn summary(w: &mut World, scope: Scope, total: usize, shown: usize) {
     }
     if shown < total {
         w.chat.push_colour(bt.group9(0xbf).unwrap_or_default(), colour);
+    }
+}
+
+/// FUN_101dd780's chat mode: 0xcc (the mode word {0xcc, 3}).
+const COMMENT_MODE: u8 = 0xcc;
+
+/// FUN_101dd780: nothing for an empty comment; else the header, then three 40-byte rows of the comment (trailing
+/// spaces cut, auto-translate expanded, control bytes as spaces, cut at 335 px with "..."). Not done: the profanity
+/// filter (FUN_101ba200, the PlayOnline engine) and the Japanese quote rewrite (FUN_10190140, language 2 only).
+fn print_comment(w: &mut World, text: &[u8], r: Option<&Record>, gu: Option<&super::game_ui::GameUi>) {
+    let text = &text[..text.iter().position(|&b| b == 0).unwrap_or(text.len())];
+    if text.is_empty() {
+        return;
+    }
+    let Some(bt) = w.battle.clone() else { return };
+    super::push_chat_mode(w, comment_header(&bt, r), COMMENT_MODE, 0);
+    let mut buf = [0u8; 120];
+    for (d, s) in buf.iter_mut().zip(text) {
+        *d = *s;
+    }
+    for row in buf.chunks(40) {
+        let row = &row[..row.iter().position(|&b| b == 0).unwrap_or(row.len())];
+        let end = row.iter().rposition(|&b| b != b' ').map_or(0, |e| e + 1);
+        let line = super::expand_phrases(w, &crate::dat::font::decode_sjis(&row[..end]));
+        let line: String = line.chars().map(|c| if (c as u32) < 0x20 { ' ' } else { c }).collect();
+        super::push_chat_mode(w, cut_line(line, gu), COMMENT_MODE, 0);
+    }
+}
+
+/// FUN_101ca570(0x14f): the part that fits in 335 px, "..." after it when cut.
+fn cut_line(line: String, gu: Option<&super::game_ui::GameUi>) -> String {
+    let Some(gu) = gu else { return line };
+    let first = super::augment::wrap(&line, 335.0, &|s| gu.text_width(s)).into_iter().next().unwrap_or_default();
+    if first.len() < line.len() { first + "..." } else { line }
+}
+
+/// The header: "??????:" without the record (or its flags field), the anonymous form, "%s :" for job 0x17 (MON),
+/// else "%s (%s %s):" / "%s (%s %s / %s %s):" with 10 0x59 (level) or 10 0x7a (master level, flag bit 30) and group
+/// 0x12's job names.
+fn comment_header(bt: &crate::dat::battle::BattleText, r: Option<&Record>) -> String {
+    use crate::dat::msgfmt;
+    let Some(r) = r.filter(|r| r.present & 1 << 6 != 0) else { return "??????:".into() };
+    if r.flags & 0x4000 != 0 {
+        return format!("{} (？　？　？):", r.name);
+    }
+    if r.job.0 == 0x17 {
+        return format!("{} :", r.name);
+    }
+    let lv = |id: usize, v: u8| {
+        bt.group10_raw(id)
+            .map(|raw| crate::dat::font::decode_sjis(&msgfmt::format(&raw, &[], &[v as i32], &|_, _, _| None)))
+            .unwrap_or_default()
+    };
+    let job = |j: u8| bt.job_name(j as usize).unwrap_or_default();
+    let main = if r.flags & 0x4000_0000 != 0 { lv(0x7a, r.master_level) } else { lv(0x59, r.level.0) };
+    if r.job.1 == 0 {
+        format!("{} ({} {}):", r.name, main, job(r.job.0))
+    } else {
+        format!("{} ({} {} / {} {}):", r.name, main, job(r.job.0), lv(0x59, r.level.1), job(r.job.1))
     }
 }
 
@@ -695,7 +776,7 @@ pub fn key(w: &mut World, key: egui::Key) {
             w.sounds.push(Ui::Cancel as u32);
             return;
         }
-        // FUN_1020c250: a person opens scoption (the comment fetch for flag 0x10 is not done); the header (or no row)
+        // FUN_1020c250: a person opens scoption (after the comment fetch, FUN_1020b3e0); the header (or no row)
         // opens scsibori, no busy check (its rows check).
         K::Enter if res.cursor == 0 && res.mode == 3 => {}
         K::Enter if res.cursor == 0 => {
@@ -703,6 +784,12 @@ pub fn key(w: &mut World, key: egui::Key) {
             w.sounds.push(Ui::Select as u32);
         }
         K::Enter if !res.busy => {
+            // FUN_1020c250: the comment fetch first (0004 while a query is out), then the option window anyway.
+            if let Some(r) = res.rows.get(res.cursor - 1)
+                && !fetch_comment(w, r)
+            {
+                w.sounds.push(Ui::Error as u32);
+            }
             res.ac = mute_list(w, &res) && res.rows.get(res.cursor - 1).is_some_and(|r| r.flags & 0x2000_0000 != 0);
             res.option = Some(1);
             w.sounds.push(Ui::Select as u32);

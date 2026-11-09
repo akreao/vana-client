@@ -760,8 +760,6 @@ struct UiInput {
     down: bool,
     released: bool,
     right_clicked: bool,
-    /// A middle click (the maze grid's turn, message 7 *(inf)*).
-    middle_clicked: bool,
     /// Wheel notches for the focused list, up positive (FUN_10125360).
     wheel: i32,
     /// Ctrl or Alt held: the page modifier 0xa8 that a click on a list's arrows is tested against
@@ -1354,12 +1352,22 @@ fn ko_step(w: &mut World) {
         w.ko_open = true;
     }
     if w.homing && w.home_sent.is_none_or(|t| t.elapsed().as_secs_f32() >= 10.0) {
+        // FUN_10096c90 in Monstrosity: 600 ticks after a pick (sub 3 -> 0) mp_dead opens again while the deadline is
+        // ahead (its open hook clears +0x24, the cursor on Retry by registry flag 0x10000) and waits for a new pick;
+        // only past the deadline is the last answer sent again.
+        if w.home_sent.is_some() && !expired && monstrosity::active(w) {
+            (w.homing, w.home_sent, w.mon_dead_sel) = (false, None, 1);
+            close_for_ko(w);
+            w.ko_open = true;
+            return;
+        }
         w.home_sent = Some(Instant::now());
         let _ = w.net.commands.send(NetCommand::HomePoint(w.home_status));
     }
 }
 
-/// mp_dead's pick (+0x24 = the child): the K.O. state machine sends it at once and closes the window.
+/// mp_dead's pick (+0x24 = the child): the K.O. state machine sends it at once and closes the window *(inf: the
+/// handler FUN_101419d0 only sets +0x24)*; ko_step opens it again 10 s later if we are still down.
 fn mon_dead_pick(w: &mut World) {
     w.sounds.push(crate::audio::Ui::Select as u32);
     (w.homing, w.home_status, w.ko_open) = (true, if w.mon_dead_sel == 1 { 2 } else { 1 }, false);
@@ -2255,6 +2263,59 @@ fn window_closes(w: &mut World, events: &[egui::Event]) {
     }
 }
 
+/// The input context (DAT_1036e3a0) that gates the key functions: the map's, the layout's, the gardening one's, else
+/// every flag.
+fn key_context(w: &World) -> u16 {
+    if w.map.is_some() || w.cnq.is_some() {
+        0x26
+    } else if w.layout.is_some() {
+        layout::context(w)
+    } else {
+        garden::context(w).unwrap_or(0xffff)
+    }
+}
+
+/// FUN_1013c220: the item info window's next page; past the last, back to 0 (key function 0x18, a middle press).
+fn info_page_turn(w: &World) {
+    if w.info_win.is_some() || items::info_source(w).is_some() {
+        let mut p = w.info_page.get();
+        p.0 = if p.0 + 1 >= p.2.min(3) { 0 } else { p.0 + 1 };
+        w.info_page.set(p);
+    }
+}
+
+/// FUN_1015df20: a middle-button release is FUN_1015dd00(7), message 7 to the focused window, or the main menu when
+/// no window has the focus; not in an input context without flag 4 (FUN_10123e50: laying out furniture), nor in
+/// cinema mode. Message 7 is what key function 0x18 (Num-) gives a window: with no window or only the main / action
+/// menu up the next frame gets a Num- press (the menu opens or closes); the maze grid turns its rune (FUN_101fdbf0);
+/// other windows ignore it. Retail also skips it with control type 2 (config 0x42, FUN_1025e070), where its middle
+/// button drags the camera. Ours: every control type looks around with a middle drag and only a click counts, so type
+/// 2 (the default) clicks too.
+fn middle_release(w: &mut World) {
+    if key_context(w) & 4 == 0 || event::cinema(w) {
+        return;
+    }
+    if w.maze.screen.is_some() {
+        maze::rotate(w);
+        return;
+    }
+    // Another window has the focus: message 7 is its own (the windows ours has take Num- as the key, not as this
+    // message), so nothing happens. The main menu and the action menu (playermo: FUN_1015ee40) take it as Num-.
+    let menu = w.menu.take();
+    let other = window_over_actions(w);
+    w.menu = menu;
+    if other {
+        return;
+    }
+    w.mouse_keys.extend([true, false].map(|pressed| egui::Event::Key {
+        key: egui::Key::Minus,
+        physical_key: Some(egui::Key::Minus),
+        pressed,
+        repeat: false,
+        modifiers: egui::Modifiers::default(),
+    }));
+}
+
 /// The in-game HUD in the game's own windows: chat log and input line, party, target, main menu
 /// ('-' opens it) and the KO prompt. Returns the rects that take clicks away from the world.
 fn world_hud(
@@ -2274,6 +2335,8 @@ fn world_hud(
     // The focused list's scroll bar and the wheel, before the windows see the press.
     let taken = scrollbar::frame(gu, world, input);
     let input = taken.as_ref().unwrap_or(input);
+    // A middle click is this frame's only: one made while the HUD is down (downloading, hidden) is dropped.
+    let middle = std::mem::take(&mut world.middle_click);
     // FUN_1022eca0: keytops3 165 + (n >> 2) % 5 at (W - 234, H - 48 + 8 - min(2n, 8)), y scale min(n / 4, 1), n
     // the draws since the open (taken at 30 a second, inferred); the HUD windows are not drawn meanwhile.
     if let Some(t) = world.downloading {
@@ -2288,6 +2351,9 @@ fn world_hud(
             world.ui_hidden = false;
         }
         return Vec::new();
+    }
+    if middle {
+        middle_release(world);
     }
     for mut c in std::mem::take(&mut world.map_cmds) {
         if let map::Cmd::Preview { point_y, .. } = &mut c {
@@ -2583,6 +2649,8 @@ fn world_hud(
                 }
                 // An event takes the keys: Enter advances or picks, arrows move, Escape cancels.
                 _ if event::active(world) => event::key(world, *key),
+                // An s2c 0x03B line waiting for a key outside an event: Enter pages it (FUN_10126840).
+                egui::Key::Enter if event::loose_waits(world) => event::loose_key(world),
                 _ if gmtell::open(world) => gmtell::key(world, *key),
                 // charlnk over the full log, and the prompts it opens (the comyn arm below).
                 _ if world.charlnk.is_some() && world.confirm.is_none() => charlnk::key(world, *key),
@@ -3182,6 +3250,8 @@ fn world_hud(
                 let mut c = configui::ConfigUi::open("configwi");
                 c.mon = monstrosity::active(world);
                 c.cam_keys = world.cam_keys;
+                c.recall(world.cursor_recall(configui::CONFIGWI_MENU));
+                config_anon(Some(&mut c), world.self_flags);
                 world.config = Some(c);
                 world.menu = None;
                 world.sounds.push(crate::audio::Ui::Select as u32);
@@ -3432,7 +3502,7 @@ fn world_hud(
         pupset::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.maze.screen.is_some() && world.confirm.is_none()) {
-        maze::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked, input.middle_clicked);
+        maze::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked);
     }
     // Mouse on the magic / ability lists and their category windows, or the Set Spells screen over them.
     if let Some(p) = input.pointer.filter(|_| world.bluset.is_some() && world.confirm.is_none()) {
@@ -4982,6 +5052,7 @@ fn config_out(world: &mut World, out: configui::Out) {
     world.sounds.extend(out.sounds.iter().map(|s| *s as u32));
     for id in out.changed {
         cfgapply::apply(world, id);
+        cfgapply::server_conf(world, id);
     }
     if out.closed {
         world.config = None;
@@ -4998,6 +5069,26 @@ fn config_out(world: &mut World, out: configui::Out) {
     }
     if let Some(k) = out.cam_keys {
         world.cam_keys = k;
+    }
+    if let Some(hide) = out.anon {
+        textcmd::config_flag(world, 0, hide);
+    }
+    // The modern page has no conf3win window to close: its Show / Hide goes out when picked.
+    let flags = world.self_flags;
+    let modern = world.config.as_mut().filter(|c| c.anon_dirty && !c.stack.iter().any(|w| w.name == "conf3win"));
+    if let Some(c) = modern {
+        c.anon_dirty = false;
+        let hide = c.anon;
+        textcmd::config_flag(world, 0, hide);
+    } else {
+        config_anon(world.config.as_mut(), flags);
+    }
+}
+
+/// Show / Hide follows our anonymous flag (0x037 flags bit 5, FUN_100e47c0(0)) until one is picked.
+fn config_anon(c: Option<&mut configui::ConfigUi>, flags: u32) {
+    if let Some(c) = c.filter(|c| !c.anon_dirty) {
+        c.anon = flags & 1 << 5 != 0;
     }
 }
 
@@ -6779,6 +6870,8 @@ struct AreaSwitch {
         Option<(Option<ZoneRenderer>, Option<ground::Ground>, Option<crate::dat::weather::ZoneWeather>, Option<usize>)>,
     /// The zone's sub-area state meanwhile (the shown area's own takes the event's op 0x75 requests).
     home_sub: Option<subarea::SubArea>,
+    /// The zone's doors (states and flags; the event's commands stay in use) meanwhile.
+    home_doors: Option<doors::Doors>,
 }
 
 struct World {
@@ -6821,6 +6914,10 @@ struct World {
     /// after the zone.
     swkbd: Option<swkbd::Keyboard>,
     swkbd_out: Vec<egui::Event>,
+    /// Keys a mouse button stands for (`middle_release`), for the next frame's input.
+    mouse_keys: Vec<egui::Event>,
+    /// A middle click (released without a look drag) for the next HUD frame.
+    middle_click: bool,
     swkbd_reopen: bool,
     /// E (DAT_106627a8), which outlives the macro palettes: the focused palette (1 Ctrl, 2 Alt) and both columns.
     /// mcr1edit / mcr2edit open and regain the focus on column + 1 (FUN_101a44b0).
@@ -7048,6 +7145,8 @@ struct World {
     /// Ours (modern): the target before the current one, set as target::set changes it (the sub-target prompt's
     /// stand-ins are not counted); `<lt>` and the modern focus panel's Last row.
     last_target: Option<u32>,
+    /// The last target a sub-target prompt or `<stpt>` / `<stal>` pick confirmed (`<lastst>`).
+    last_subtarget: Option<u32>,
     /// Target lock-on (DAT_10565d34 +0x5c bits 0..1 != 0), the locked camera, ticks left in which the free
     /// camera ignores manual turns after a lock (DAT_10444464), auto lock-on (config 7 = 0), when the target
     /// was set, and manual camera turns waiting for the locked camera.
@@ -7229,6 +7328,8 @@ struct World {
     missions: Option<missions::Missions>,
     mission_cmd: Option<Option<String>>,
     expansions: u32,
+    /// The installed-content mask (DAT_10456a28 + 0x10), for the Help Desk's GENERIC.VERSION.
+    installed: u32,
     /// The Status row's windows (client/status.rs); s2c 0x063 type 2 (limit points, bits, max merits), type 5 (job point
     /// access), types 3 / 4 (Monstrosity: the types seen as bits, type 3's rank word and prestige); 0x067 @0x25.
     status: Option<status::StatusUi>,
@@ -7282,6 +7383,8 @@ struct World {
     /// The search server from the lobby's reply (+0x40 IP, +0x44 port) and the queries running on it.
     search_addr: (std::net::Ipv4Addr, u16),
     searches: Vec<(std::sync::mpsc::Receiver<anyhow::Result<crate::net::search::Reply>>, search::Then)>,
+    /// The augment no-mark weapons (GameUi's augment tables), for the item rules outside drawing.
+    aug_no_mark: Option<Vec<u16>>,
     /// The search results window ("menu    scresult") and scoption over it.
     search: Option<search::Results>,
     /// FUN_10104f00's word lists, regions and zone flags (FFXiMain).
@@ -7376,8 +7479,15 @@ struct World {
     recent_save: bool,
     /// The modern UI Modes editor is open (/uimodes, modern/modes.rs).
     uimodes_open: bool,
-    /// Favourites (favs.rs keys, the strip's order), whether the strip shows, and whether either changed since the save.
+    /// Favourites (favs.rs keys, the strip's order) for the active main/sub job, the saved loadouts by job, whether
+    /// the strip shows, and whether either changed since the save. `fav_provisional` marks a seeded loadout still
+    /// waiting for the learned bits and spell job data before it is pruned; `fav_commands_fresh` is false from a job
+    /// change until the next 0x0AC, so stale command bits are not used (favs.rs).
     favourites: Vec<String>,
+    fav_loadout: Option<String>,
+    fav_loadouts: std::collections::BTreeMap<String, Vec<String>>,
+    fav_provisional: bool,
+    fav_commands_fresh: bool,
     fav_strip: bool,
     fav_save: bool,
     /// The battle menu's suggestions (suggest.rs::refresh_root), when they were taken, and the one the cursor is on.
@@ -7415,6 +7525,8 @@ struct World {
     /// The running event, one waiting for its actors, and the work that outlives events (M / G).
     event: Option<Box<event::Live>>,
     event_pending: Option<Box<event::Waiting>>,
+    /// s2c 0x03B lines in the event message queues outside an event (event.rs `loose_*`; FUN_10127ea0 drops them).
+    loose_msgs: std::collections::VecDeque<event::Msg>,
     /// Scheduler tasks, cutscene camera and screen fades (they outlive the event), and the camera drawn last.
     screen: event::Screen,
     last_camera: Option<Camera>,
@@ -7658,6 +7770,9 @@ struct World {
     auto_sort: u32,
     auto_sort_dirty: bool,
     sort_due: (u32, f32),
+    /// Queued c2s 0x03A {container} stack-merge requests (merged storage tabs), one per SORT_GAP.
+    sort_packets: Vec<u8>,
+    sort_packet_wait: f32,
     /// The frames posed so far (FUN_10014d50's count, for Misc. 2's animation frame rate).
     anim_frame: u32,
     /// DAT_10487ef5 (event op 0xab subs 9 / 10): the weather density forced to 1.0; cleared by each zone load.
@@ -7872,6 +7987,16 @@ impl World {
             self.macro_palette = p;
         }
         kept.extend(maze::kept(self));
+        // myroom / mogext, cmbmenu and configwi are opened by name without flag 0x10000 (MODLOG "Cursor memory").
+        if let Some(m) = &self.moogle {
+            kept.push((m.name(), m.sel));
+        }
+        if let Some(sel) = synth::menu_sel(self) {
+            kept.push((synth::CMBMENU, sel));
+        }
+        if let Some(w) = self.config.as_ref().and_then(|c| c.stack.first()).filter(|w| w.name == "configwi") {
+            kept.push((configui::CONFIGWI_MENU, w.cursor));
+        }
         self.cursor_mem.extend(kept);
     }
 
@@ -8010,6 +8135,8 @@ pub struct App {
     dragging: bool,
     left_down: bool,
     middle_down: bool,
+    /// Where and when the middle button went down (a click is told from a look drag on release).
+    middle_press: Option<((f64, f64), Instant)>,
     /// Where the right button went down (the camera arrow's reference).
     drag_from: Option<(f64, f64)>,
     /// FUN_10157fa0's +0x57: this movement push already sent its stand-up command.
@@ -8146,6 +8273,8 @@ pub struct App {
     close_asked: bool,
     /// The pointer is over the window (edge panning).
     cursor_in: bool,
+    /// Where a map cursor-mode move hid the pointer (physical pixels): motion past 2 px from there shows it again.
+    cursor_hid_at: Option<(f64, f64)>,
     /// The game's mouse cursor (client/mousecur.rs).
     mouse: mousecur::MouseCursor,
     /// A lobby or login error (or the new account's notice) waiting in the OK window on the login screen.
@@ -8319,6 +8448,7 @@ impl App {
             dragging: false,
             left_down: false,
             middle_down: false,
+            middle_press: None,
             drag_from: None,
             stand_sent: false,
             mouse: Default::default(),
@@ -8406,6 +8536,7 @@ impl App {
             close_asked: false,
             scene_scale: None,
             cursor_in: false,
+            cursor_hid_at: None,
             login_error: None,
             twofa: None,
             lobby_cfg: None,
@@ -9076,12 +9207,12 @@ impl App {
         self.spawn(move || {
             Task::LoggedIn((|| {
                 let req = Request { username: &cfg.username, password: &password, otp: &otp, ..Default::default() };
-                let Reply::LoggedIn { account_id, session_hash, .. } =
+                let Reply::LoggedIn { account_id, session_hash, lobby_key, .. } =
                     auth::send(&cfg.server, cfg.auth_port, Command::Login, &req)?
                 else {
                     anyhow::bail!("unexpected reply from the login server");
                 };
-                let session = crate::net::lobby::Session::Lsb { account_id, hash: session_hash };
+                let session = crate::net::lobby::Session::Lsb { account_id, hash: session_hash, lobby_key };
                 let dll = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())).unwrap_or_default();
                 // Region 5: not the Japanese client (FUN_1023e610).
                 let mut lobby = Lobby::connect(
@@ -9309,7 +9440,7 @@ impl App {
                     &std::fs::read(crate::dat::ffximain(&self.cfg.ffxi_dir())).unwrap_or_default(),
                 ) {
                     Ok(codec) => {
-                        let net = net::spawn(login.clone(), self.cfg.username.clone(), codec);
+                        let net = net::spawn(login.clone(), self.cfg.username.clone(), codec, self.cfg.gm_window);
                         self.status = format!("Connecting to {}:{}...", login.map.0, login.map.1);
                         let features =
                             if let Phase::Characters { lobby: Some(l), .. } = &self.phase { l.features } else { 0 };
@@ -9320,17 +9451,27 @@ impl App {
                             account,
                             hash,
                         });
-                        let world_name = match &self.phase {
-                            Phase::Characters { chars, selected: Some(s), .. } => {
-                                chars.get(*s).map(|c| c.world.clone()).unwrap_or_default()
+                        let (world_name, expansions, fav_jobs) = match &self.phase {
+                            Phase::Characters { chars, selected: Some(s), expansions, .. } => {
+                                let c = chars.get(*s);
+                                (
+                                    c.map(|c| c.world.clone()).unwrap_or_default(),
+                                    *expansions & self.installed,
+                                    c.map(|c| (c.main_job, c.sub_job)),
+                                )
                             }
-                            _ => String::new(),
+                            _ => (String::new(), 0, None),
                         };
-                        let expansions = if let Phase::Characters { expansions, .. } = &self.phase {
-                            *expansions & self.installed
-                        } else {
-                            0
-                        };
+                        let fav_loadouts =
+                            self.cfg.modern_favourite_loadouts.get(&login.name).cloned().unwrap_or_default();
+                        let fav_loadout = fav_jobs.and_then(|(m, s)| favs::job_key(m, s));
+                        let favourites = fav_loadout
+                            .as_ref()
+                            .and_then(|k| fav_loadouts.get(k))
+                            .cloned()
+                            .or_else(|| self.cfg.modern_favourites.get(&login.name).cloned())
+                            .unwrap_or_default();
+                        let fav_provisional = fav_loadout.as_ref().is_some_and(|k| !fav_loadouts.contains_key(k));
                         // The effects' GPU side caches by the World's registry ids (library, texture, mesh); a new
                         // World starts a new registry, so the old session's cache would draw the wrong ones.
                         self.effects_gpu = None;
@@ -9350,6 +9491,7 @@ impl App {
                             name: login.name.clone(),
                             search_addr: login.search,
                             searches: Vec::new(),
+                            aug_no_mark: None,
                             search: None,
                             search_words: self.search_words.clone(),
                             known_zones: None,
@@ -9431,6 +9573,7 @@ impl App {
                             logging_out: false,
                             target: None,
                             last_target: None,
+                            last_subtarget: None,
                             locked: false,
                             cam: Default::default(),
                             lock_height: -1.5,
@@ -9549,6 +9692,7 @@ impl App {
                             missions: None,
                             mission_cmd: None,
                             expansions,
+                            installed: self.installed,
                             status: None,
                             merits: None,
                             jp_access: None,
@@ -9607,6 +9751,8 @@ impl App {
                             palette_flip: None,
                             swkbd: None,
                             swkbd_out: Vec::new(),
+                            mouse_keys: Vec::new(),
+                            middle_click: false,
                             swkbd_reopen: false,
                             key_shift: false,
                             key_repeat: false,
@@ -9677,7 +9823,11 @@ impl App {
                             recent_picks: self.cfg.modern_recent.get(&login.name).cloned().unwrap_or_default(),
                             recent_save: false,
                             uimodes_open: false,
-                            favourites: self.cfg.modern_favourites.get(&login.name).cloned().unwrap_or_default(),
+                            favourites,
+                            fav_loadout,
+                            fav_loadouts,
+                            fav_provisional,
+                            fav_commands_fresh: false,
                             fav_strip: self.cfg.modern_fav_strip,
                             fav_save: false,
                             root_sugg: Vec::new(),
@@ -9697,6 +9847,7 @@ impl App {
                             index: None,
                             event: None,
                             event_pending: None,
+                            loose_msgs: Default::default(),
                             screen: Default::default(),
                             last_camera: None,
                             sunshadow_diag: String::new(),
@@ -9842,6 +9993,8 @@ impl App {
                             auto_sort: self.cfg.auto_sort,
                             auto_sort_dirty: false,
                             sort_due: (0, 0.0),
+                            sort_packets: Vec::new(),
+                            sort_packet_wait: 0.0,
                             anim_frame: 0,
                             weather_forced: false,
                             inv_free: None,
@@ -10040,6 +10193,10 @@ impl App {
                         let old = std::mem::replace(&mut world.sub, sub);
                         if world.area.home_sub.is_none() {
                             world.area.home_sub = Some(old);
+                            // The event's door commands (+0x174) carry over; states and flags are the zone's.
+                            let mut home = std::mem::take(&mut world.doors);
+                            world.doors.event = std::mem::take(&mut home.event);
+                            world.area.home_doors = Some(home);
                         } else if old.current.is_some() {
                             world.effects.drop_sub_area();
                         }
@@ -10062,6 +10219,10 @@ impl App {
                             ));
                         }
                         world.ground = Some(ground);
+                        // FUN_10173c10 builds the new scene's door groups solid (+0xf0 = 1); its doors are seen anew. The
+                        // event's door commands carry over.
+                        let event = std::mem::take(&mut world.doors.event);
+                        world.doors = doors::Doors { event, ..Default::default() };
                         world.area.shown = Some(area);
                     }
                     Ok(_) => {}
@@ -10245,6 +10406,8 @@ impl App {
                     world.zone_uploading = Some(Instant::now());
                 }
                 world.ground = Some(ground);
+                // FUN_10173c10 builds the new zone's door groups solid (+0xf0 = 1); its doors are seen anew.
+                world.doors = Default::default();
                 let old_zone = world.zone.replace(zone_id);
                 world.lua.raise("zone_change", vec![zone_id.into(), old_zone.into()]);
                 world.scene = Some(map_no);
@@ -10307,13 +10470,17 @@ impl App {
                     let _ = w.net.commands.send(NetCommand::SubMap { state: 1, id: 0 });
                 }
             }
-            Some(subarea::Step::Load(id, from_event)) => {
+            Some(subarea::Step::Load(id, from_event, asked)) => {
                 let Some(zone_id) = w.zone else { return };
                 log::info!("sub-area {id} loading (zone {zone_id})");
                 w.sub.loading = Some((id, from_event));
-                // FUN_10176dd0(0): doors are solid while it loads.
-                if let Some(g) = &w.ground {
-                    g.close_all_doors();
+                // FUN_10178a20 -> FUN_10176dd0(0): a trigger's load makes every door box solid and holds door changes
+                // until it ends; the asked loads (FUN_10178900) do neither.
+                if !asked {
+                    w.sub.doors_held = true;
+                    for g in w.ground.iter().chain(w.sub.home.iter()) {
+                        g.close_all_doors();
+                    }
                 }
                 let (collision, keys, areas, textures) = (
                     w.sub.zone_collision.clone(),
@@ -10336,6 +10503,7 @@ impl App {
                         log::warn!("sub-area {id}: {e:#}");
                         if let Phase::World(w) = &mut self.phase {
                             w.sub.loading = None;
+                            doors::reapply(w);
                         }
                     }
                 }
@@ -10356,6 +10524,11 @@ impl App {
             && let Some((renderer, ground, weather, fx)) = w.area.home.take()
         {
             (w.renderer, w.ground, w.zone_weather) = (renderer, ground, weather);
+            if let Some(d) = w.area.home_doors.take() {
+                let event = std::mem::take(&mut w.doors.event);
+                w.doors = d;
+                w.doors.event = event;
+            }
             if let Some(sub) = w.area.home_sub.take() {
                 if w.sub.current.is_some() {
                     w.effects.drop_sub_area();
@@ -10615,6 +10788,8 @@ impl App {
                         (false, Vec3::ZERO, None, false);
                     world.run_to = None;
                     (world.fishing, world.fish_pending, world.fish_gauge, world.primer) = (None, false, None, None);
+                    // FUN_1015ef60 (game mode 0x70 / 0xe0, leaving the field): FUN_10127ea0.
+                    event::cancel_queues(world);
                     world.hud_top.enter();
                     // FUN_10095650 at the world start: the Unity chat setting (config 0xb2) and the job master display
                     // (config 0x99 bit 8 clear) go to the server again.
@@ -11354,9 +11529,15 @@ impl App {
                     }
                 }
                 NetEvent::CharStats(s) => {
+                    let jobs = world.stats.as_ref().map(|o| (o.main.0, o.sub.0));
+                    let changed = jobs.is_some_and(|old| old != (s.main.0, s.sub.0));
                     world.stats = Some(s);
                     world.own_hp_max = None;
+                    favs::sync_jobs(world);
                     status::on_stats(world);
+                    if changed {
+                        moogle::job_changed(world);
+                    }
                 }
                 NetEvent::Merits { limit, bits, max } => world.merits = Some((limit, bits, max)),
                 NetEvent::JobPoints(access, jobs) => {
@@ -11502,6 +11683,7 @@ impl App {
                     world.my_fellow = fellow;
                     world.costume.set_id(costume);
                     world.self_flags = flags;
+                    config_anon(world.config.as_mut(), flags);
                     // 0x1009d84a: our own 0x037 clears entity +0x130 bit 18, the half-alpha draw.
                     if let Some(e) = world.entities.get_mut(&me) {
                         e.half_fade = false;
@@ -11569,8 +11751,13 @@ impl App {
                         }
                     }
                     world.spells_known = bits;
+                    favs::refresh(world);
                 }
-                NetEvent::CommandsKnown(bits) => world.commands_known = bits,
+                NetEvent::CommandsKnown(bits) => {
+                    world.commands_known = bits;
+                    world.fav_commands_fresh = true;
+                    favs::refresh(world);
+                }
                 NetEvent::Dungeon(store) => maze::on_store(world, &store),
                 // LAB_100a2540 stores the offer whatever our state (it may come before our dead status, e.g. during a
                 // zone-in event); the K.O. step shows it once we are dead.
@@ -11590,7 +11777,7 @@ impl App {
                         _ => world.ko_offer = 0,
                     }
                 }
-                NetEvent::ConfSys(c) => world.conf_sys = c,
+                NetEvent::ConfSys(c) => cfgapply::from_server(world, c),
                 NetEvent::MissionLog { port, data } => world.journal.record(port, data),
                 NetEvent::RoeUnity { sparks, deeds, plaudits, rot } => {
                     (world.roe.sparks, world.roe.deeds, world.roe.plaudits, world.roe.rot) =
@@ -11904,6 +12091,9 @@ impl App {
             me.target = target;
         }
         combat::tick(world);
+        if world.aug_no_mark.is_none() {
+            world.aug_no_mark = self.game_ui.as_ref().and_then(|g| g.aug_no_mark());
+        }
         combat::message_queue(world, dt);
         roe::new_challenge(world);
         // FUN_10096640 runs the K.O. machine (FUN_10096c90) only outside events.
@@ -12065,7 +12255,7 @@ impl App {
         for id in spops {
             world.effects.on_scheduler(id, id, u32::from_le_bytes(*b"spop"));
         }
-        search::poll(world);
+        search::poll(world, self.game_ui.as_ref());
         friends::poll(world);
         polmail::update(world);
         world.line_hist.track(world.typing);
@@ -13122,15 +13312,7 @@ impl App {
         });
         if let Phase::World(w) = &self.phase {
             self.input.assign(&w.game);
-            self.input.context = if w.map.is_some() || w.cnq.is_some() {
-                0x26
-            } else if w.layout.is_some() {
-                layout::context(w)
-            } else if let Some(c) = garden::context(w) {
-                c
-            } else {
-                0xffff
-            };
+            self.input.context = key_context(w);
             // Not with the UI hidden: the search gets no events then. Ours: the Settings window's search opens the same way.
             f.typing = text_field_open(w)
                 || (!w.ui_hidden && starts_search && (listsearch::can_run(w) || modern::config_find_open(w)));
@@ -13140,6 +13322,7 @@ impl App {
             // state at 1.
             f.window = world_window_open(w)
                 || w.palette.0 != 0
+                || w.party_cursor.is_some()
                 || w.log_active
                 || w.log_focus == 2
                 || event::choice(w).is_some()
@@ -13172,11 +13355,24 @@ impl App {
             .zip(self.last_cursor)
             .filter(|_| self.left_down)
             .map(|(a, b)| ((b.0 - a.0) as f32 * k.0, (b.1 - a.1) as f32 * k.1));
-        if world.cnq.is_some() && !region::update(world, &mut self.input, dt * 60.0) {
+        // Cursor mode's mouse (FUN_101ef0a0): the pointer while shown (mouse +0x4e) and the window active. After a
+        // cursor move hid it, it shows again once it is more than 2 px from where it was hidden in all (CursorMoved
+        // only compares each event with the last, so slow motion would never show it).
+        if let (Some(a), Some(c)) = (self.cursor_hid_at, self.last_cursor) {
+            if self.mouse.visible {
+                self.cursor_hid_at = None;
+            } else if (c.0 - a.0).abs() > 2.0 || (c.1 - a.1).abs() > 2.0 {
+                (self.mouse.visible, self.cursor_hid_at) = (true, None);
+            }
+        }
+        let mouse = self.last_cursor.filter(|_| self.mouse.visible && self.cursor_in && world.confirm.is_none()).map(
+            |(x, y)| map::CursorMouse { at: (x as f32 * k.0, y as f32 * k.1), hardware: self.cfg.tool("0021") != 0 },
+        );
+        if world.cnq.is_some() && !region::update(world, &mut self.input, dt * 60.0, mouse) {
             world.cnq = None;
         }
         if let Some(m) = world.map.as_mut()
-            && !m.update(&mut self.input, dt * 60.0, drag)
+            && !m.update(&mut self.input, dt * 60.0, drag, mouse)
         {
             let (back, reopen, mode) = (m.return_menu, m.reopen, m.mode);
             let primer = m.primer_page().zip(m.primer_next);
@@ -13200,6 +13396,22 @@ impl App {
                 None => {}
             }
         }
+        // After a cursor-mode move FUN_10124700 puts the pointer on the cursor point and FUN_101252f0(0) hides it.
+        let warp = world.cnq.as_mut().and_then(|m| m.warp.take()).or(world.map.as_mut().and_then(|m| m.warp.take()));
+        if let Some(at) = warp {
+            (self.mouse.visible, self.cursor_hid_at) = (false, self.last_cursor);
+            let phys = ((at.0 / k.0) as f64, (at.1 / k.1) as f64);
+            if let Some(g) = self.gfx.as_ref().filter(|g| g.window.has_focus() && self.cursor_in)
+                && g.window.set_cursor_position(winit::dpi::PhysicalPosition::new(phys.0, phys.1)).is_ok()
+            {
+                (self.last_cursor, self.cursor_hid_at) = (Some(phys), Some(phys));
+                if let Some(m) = world.cnq.as_mut() {
+                    m.warped(at);
+                } else if let Some(m) = world.map.as_mut() {
+                    m.warped(at);
+                }
+            }
+        }
         // Key function 0x18 also turns an RoE description's page (FUN_102326b0).
         if self.input.test(0x18, input::mode::PRESS) {
             roe::flip_page(world);
@@ -13210,12 +13422,8 @@ impl App {
             if self.input.test(0x18, input::mode::PRESS) {
                 maze::rotate(world);
             }
-        } else if self.input.test(0x18, input::mode::PRESS)
-            && (world.info_win.is_some() || items::info_source(world).is_some())
-        {
-            let mut p = world.info_page.get();
-            p.0 = if p.0 + 1 >= p.2.min(3) { 0 } else { p.0 + 1 };
-            world.info_page.set(p);
+        } else if self.input.test(0x18, input::mode::PRESS) {
+            info_page_turn(world);
         }
         items::compare_key(world, self.input.test(0x76, input::mode::HELD) || self.input.test(0x89, input::mode::HELD));
         if self.input.test(0x11, input::mode::PRESS) && world.pupset.is_some() {
@@ -13295,6 +13503,9 @@ impl App {
         // when the gate allows (field, UI shown, no event, alive, no window), Ctrl / Alt + digit runs a macro and
         // Shift + Ctrl / Alt + digit picks a set. The palettes are not drawn yet.
         let sub_up = target::sub_up(world);
+        if let Some(m) = world.macros.as_mut() {
+            m.hold_wait(sub_up);
+        }
         let by_mod = world.macros.as_ref().is_some_and(|m| m.by_mod());
         if let Some(line) = world.macros.as_mut().filter(|_| !sub_up).and_then(|m| m.step(dt * 60.0)) {
             let line = crate::dat::font::decode_sjis(&line);
@@ -13711,9 +13922,23 @@ impl App {
                 self.dragging = pressed;
             }
             MouseButton::Middle => {
-                // WM_MBUTTONDOWN turns an RoE description's page (FUN_102326b0).
+                // WM_MBUTTONDOWN (the mouse's press bit 2) turns an RoE description's page (FUN_102326b0) and the item
+                // info window's (FUN_1013cba0), as key function 0x18 does.
                 if pressed && let Phase::World(w) = &mut self.phase {
                     roe::flip_page(w);
+                    if w.maze.screen.is_none() {
+                        info_page_turn(w);
+                    }
+                }
+                // The release is told here, not from egui's click: a middle press starts the look drag on the first
+                // pixel of motion, and the grab that takes the pointer away from egui loses its click.
+                if pressed {
+                    self.middle_press = self.last_cursor.map(|c| (c, Instant::now()));
+                } else if let Some(((a, _), b)) = self.middle_press.take().zip(self.last_cursor)
+                    && let Phase::World(w) = &mut self.phase
+                {
+                    let (dx, dy) = ((b.0 - a.0) as f32 * k.0, (b.1 - a.1) as f32 * k.1);
+                    w.middle_click |= !consumed && !looked && dx * dx + dy * dy < 65.0;
                 }
                 self.middle_down = pressed;
             }
@@ -13786,12 +14011,29 @@ impl App {
                 hits.push((far, *id, true));
             }
         }
-        // Doors without a region box (FUN_100ad320): a 0.5-tall box at the door, always a hit inside it.
+        // Doors (FUN_100ad320, set up by FUN_100acba0): with a '_' RID record of their id (+0x870) the rect of its 8
+        // world corners; without one a 0.5-tall box at the door (+0x874 = 1), unless the door is named "StreetLamp"
+        // (then not pickable at all). Always a hit inside the rect (no fine test).
         for (id, e) in world
             .entities
             .iter()
             .filter(|(id, e)| (e.door != 0 || **id == myroom::DOOR_ID) && target::mouse_candidate(world, &hidden, **id))
         {
+            let rid = (e.door != 0)
+                .then(|| world.sub.regions.iter().find(|r| r.name.starts_with('_') && r.tag() == e.door))
+                .flatten();
+            if let Some(r) = rid {
+                let corners = r.box_corners().map(Vec3::from);
+                if let Some((lo, hi, far)) = rect(&corners, vp)
+                    && inside(lo, hi)
+                {
+                    hits.push((far, *id, false));
+                }
+                continue;
+            }
+            if e.name == "StreetLamp" {
+                continue;
+            }
             let (Some(a), Some(b)) = (rect(&[e.pos], vp), rect(&[e.pos + Vec3::new(0.0, -0.5, 0.0)], vp)) else {
                 continue;
             };
@@ -13890,7 +14132,6 @@ impl App {
             down: i.pointer.primary_down() && mine,
             released: i.pointer.primary_released() && !swallow && mine,
             right_clicked: i.pointer.secondary_clicked() && mine,
-            middle_clicked: i.pointer.button_clicked(egui::PointerButton::Middle) && mine,
             page: i.modifiers.ctrl || i.modifiers.alt,
             events: i.events.clone(),
         });
@@ -14049,7 +14290,6 @@ impl App {
                         down: false,
                         released: false,
                         right_clicked: false,
-                        middle_clicked: false,
                         wheel: 0,
                         page: false,
                         events: Vec::new(),
@@ -15582,8 +15822,16 @@ impl App {
                 if std::mem::take(&mut world.volume_dirty) {
                     apply = true;
                 }
+                favs::refresh(world);
                 if std::mem::take(&mut world.fav_save) {
-                    self.cfg.modern_favourites.insert(world.name.clone(), world.favourites.clone());
+                    let name = world.name.clone();
+                    if let Some(key) = world.fav_loadout.clone() {
+                        world.fav_loadouts.insert(key, world.favourites.clone());
+                    }
+                    if !world.fav_loadouts.is_empty() {
+                        self.cfg.modern_favourite_loadouts.insert(name.clone(), world.fav_loadouts.clone());
+                    }
+                    self.cfg.modern_favourites.insert(name, world.favourites.clone());
                     self.cfg.modern_fav_strip = world.fav_strip;
                     if let Err(e) = self.cfg.save() {
                         log::warn!("config: {e:#}");
@@ -16347,9 +16595,10 @@ impl App {
             _ => true,
         };
         let keyboard = matches!(&self.phase, Phase::World(w) if w.swkbd.is_some());
+        let party_cursor = matches!(&self.phase, Phase::World(w) if w.party_cursor.is_some());
         // The Controller window waiting for a button: the pad goes to it.
         let capture = matches!(&self.phase, Phase::World(w) if w.padcfg.open && w.padcfg.listening.is_some());
-        let ctx = gamepad::Ctx { menu, palette, tabs, field, keyboard, capture };
+        let ctx = gamepad::Ctx { menu, palette, tabs, field, keyboard, party_cursor, capture };
         let phase = &mut self.phase;
         let mut to_mods = |b: &[u8], a: [f32; 6], on: bool| match phase {
             Phase::World(w) => lua::input::pad_filter(w, b, a, on),
@@ -16369,6 +16618,7 @@ impl App {
         // What the software keyboard typed, as the keys a field reads.
         if let Phase::World(w) = &mut self.phase {
             raw.events.append(&mut w.swkbd_out);
+            raw.events.append(&mut w.mouse_keys);
         }
         let phase = self.phase_name();
         let mut script_shot = None;
@@ -16738,7 +16988,9 @@ impl App {
             || world_phase
             || lcd
             || self.cfg.antialias != 0
-            || self.cfg.grading != 0;
+            || self.cfg.grading != 0
+            // Reflections read a copy of the scene, which the window's own surface may not allow.
+            || self.cfg.reflections;
         let (scene_view, scene_depth, scene_tex) = if scaled {
             self.scene_scale
                 .get_or_insert_with(|| crate::render::scale::SceneScale::new(&gfx.gpu, gfx.config.format))
@@ -17898,6 +18150,8 @@ impl App {
                 );
                 // Ambient occlusion on the scenery (ours, render/ssao.rs), at the scene's size.
                 r.prepare_ssao(&gfx.gpu, self.cfg.ssao, bg);
+                // Water reflections (ours, render/reflect.rs).
+                r.prepare_reflections(&gfx.gpu, self.cfg.reflections);
                 // Lamp shadows (ours, render/lampshadow.rs): with Real shadows, the point lights nearest our own character
                 // (the zone's data lights, and with Real lamp lights the lamps) are cut behind it, one shadow each.
                 // Only ours casts them (with our mount while riding); others keep their sun or retail shadow. The lights
@@ -18039,6 +18293,16 @@ impl App {
                 r.set_camera_list(&gfx.gpu, list, far);
                 // Config 0017: bump mapping's lighting (one eased light, vertex fog) or the two-light model; never in 182.
                 r.bump_mode = self.cfg.tool("0017") != 0 && w.zone != Some(182);
+                // Light Shading (ours): Smooth lights the scenery's lamps per pixel, Retail per vertex.
+                r.smooth_lights = self.cfg.smooth_lights;
+                // Windowed (0034 != 0, no gamma ramp): lights boosted by the channels' ramps (render::light_boost),
+                // gamma base 0028 + 1 + Gameplay R / G / B / 100 (FUN_101aa650).
+                r.light_boost = if self.cfg.window_mode() != 0 {
+                    let base = self.cfg.gamma_base();
+                    crate::render::light_boost([0x37, 0x38, 0x39].map(|id| base + 1.0 + w.game.get(id) as f32 / 100.0))
+                } else {
+                    [0.0; 4]
+                };
                 (r.mod_clear, r.mod_ambient, r.wireframe) = (w.opts.clear, w.opts.ambient, w.opts.wireframe);
                 // Config 0011: the animated meshes' sway this frame (render/sway.rs).
                 let steps = match self.cfg.tool("0011") {
@@ -18053,6 +18317,8 @@ impl App {
                 );
                 // FUN_1001d240's helper target for faded actors (drawn opaque, then blended as one quad).
                 r.prepare_faded(&gfx.gpu, &scene_tex);
+                // The point-light slot leak for this view (render/leak.rs).
+                r.update_leak(&gfx.gpu, &camera, aspect);
                 perf::timed(
                     || "zone render".into(),
                     || r.render(&gfx.gpu, &mut encoder, &scene_raw, &scene_depth, &camera, aspect, &actors),
@@ -18078,7 +18344,8 @@ impl App {
                     r.set_shadow_texture(&gfx.gpu, &t, scene_fmt);
                 }
                 if let Some(g) = w.ground.as_ref() {
-                    let casters = shadows::casters(&mut w.shadow_slots, g, shadow_modes, &drawn_map);
+                    let mannequin = |id: u32| w.furniture.mannequins.iter().any(|m| m.id == id);
+                    let casters = shadows::casters(&mut w.shadow_slots, g, shadow_modes, &drawn_map, &mannequin);
                     let sun = r.lighting.map_or([0.0; 4], |l| [l.actor_dir.x, l.actor_dir.y, l.actor_dir.z, 1.0]);
                     perf::timed(
                         || "shadows".into(),
@@ -18125,6 +18392,17 @@ impl App {
                     );
                 }
                 mark!("refraction");
+                // Water reflections (ours, render/reflect.rs): after the actors so they show in it, before the effects.
+                r.render_reflections(
+                    &gfx.gpu,
+                    &mut encoder,
+                    &scene_raw,
+                    Some(&scene_tex),
+                    &scene_depth,
+                    &camera,
+                    aspect,
+                );
+                mark!("reflections");
                 r.occl.run(&gfx.gpu, &mut encoder, &scene_depth);
                 mark!("occlusion");
                 // Effect generators: CPU emission, the GPU update pass, then the elements over the scene.

@@ -55,8 +55,25 @@ pub fn texture(k: usize) -> String {
     format!("\0chaticon {k} {ver}")
 }
 
-/// The name its pixels before the last change were uploaded under (to free them), if they changed.
-pub fn previous_texture(k: usize) -> Option<String> {
-    let ver = ICONS.lock().ok().and_then(|a| a.get(k).map(|i| i.ver))?;
-    ver.checked_sub(1).map(|v| format!("\0chaticon {k} {v}"))
+/// The names every earlier version of its pixels was uploaded under (to free them): a mod can change an icon more
+/// than once before the classic chat draws it again, so not only the last one.
+pub fn older_textures(k: usize) -> Vec<String> {
+    let ver = ICONS.lock().ok().and_then(|a| a.get(k).map(|i| i.ver)).unwrap_or(0);
+    (0..ver).map(|v| format!("\0chaticon {k} {v}")).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_older_version_is_named() {
+        let c = add("test/older.png", 1, 1, vec![0; 4]).unwrap();
+        let k = index(c).unwrap();
+        assert!(older_textures(k).is_empty());
+        add("test/older.png", 1, 1, vec![1; 4]);
+        add("test/older.png", 1, 1, vec![2; 4]);
+        assert_eq!(older_textures(k), [format!("\0chaticon {k} 0"), format!("\0chaticon {k} 1")]);
+        assert_eq!(texture(k), format!("\0chaticon {k} 2"));
+    }
 }

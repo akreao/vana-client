@@ -1,5 +1,5 @@
 name = "Objective Sets"
-version = "1.0.1"
+version = "1.0.4"
 description = "Saves the Records of Eminence objectives you have set as named sets and puts a set back with one command (the objective set add-ons)."
 permissions = ["actions"]
 

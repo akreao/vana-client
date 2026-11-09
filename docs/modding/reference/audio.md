@@ -43,7 +43,7 @@ game sound file in the SeWave format.
 **Returns** nothing.
 
 **Errors**
-- `<path>: outside the mod's folder` when `path` contains `..` or `:`, or starts with `/`.
+- `"<path>": outside the mod's folder` when `path` contains `..`, `"<path>": not a relative path` when it contains `:`, `"<path>": a link, which could lead outside the mod's folder` for a symbolic link. A leading `/` counts from the mod's folder.
 - `<path>: <reason>` when the file cannot be read (for example, it does not exist).
 - `<path>: <reason> (16-bit PCM WAV, mono or stereo)` when the file is not a sound the client can play (for example an
   8-bit or 24-bit WAV).

@@ -1,5 +1,5 @@
 name = "Item Use Queue"
-version = "1.0.2"
+version = "1.0.4"
 description = "Uses every copy of an item one after another, such as a stack of pouches or bags (the pouch add-ons)."
 permissions = ["actions"]
 

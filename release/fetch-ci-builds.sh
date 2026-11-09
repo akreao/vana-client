@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# Runs .github/workflows/release-builds.yml on master (HEAD, pushed), waits for it and puts its binaries (Linux
+# Runs .github/workflows/release-builds.yml on custom (HEAD, pushed), waits for it and puts its binaries (Linux
 # aarch64, macOS aarch64 and x86_64) in target/assets, where release/publish.sh signs them with the rest.
 #   release/fetch-ci-builds.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
-repo=lenonk/vana-client
+repo=akreao/vana-client
 names=(vana-client-linux-aarch64 vana-client-macos-aarch64 vana-client-macos-x86_64)
-git fetch -q origin master
+git fetch -q origin custom
 head=$(git rev-parse HEAD)
-[ "$(git rev-parse origin/master)" = "$head" ] || { echo "HEAD is not origin/master: push the release commit first" >&2; exit 1; }
+[ "$(git rev-parse origin/custom)" = "$head" ] || { echo "HEAD is not origin/custom: push the release commit first" >&2; exit 1; }
 start=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-gh workflow run release-builds.yml -R "$repo" --ref master
+gh workflow run release-builds.yml -R "$repo" --ref custom
 # The run is listed a few seconds after the request: the first one for HEAD made since.
 run=""
 for _ in $(seq 60); do
-    run=$(gh run list -R "$repo" --workflow release-builds.yml --branch master --event workflow_dispatch --limit 10 \
+    run=$(gh run list -R "$repo" --workflow release-builds.yml --branch custom --event workflow_dispatch --limit 10 \
         --json databaseId,headSha,createdAt \
         --jq "[.[] | select(.headSha == \"$head\" and .createdAt >= \"$start\")] | last | .databaseId // empty")
     [ -n "$run" ] && break

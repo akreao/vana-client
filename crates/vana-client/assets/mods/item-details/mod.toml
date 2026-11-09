@@ -1,5 +1,5 @@
 name = "Item Details"
-version = "1.0.1"
+version = "1.0.4"
 description = "A trial weapon's weapon skill points toward its unlock, shown while it is highlighted in a game list and listed by command (the latent checker add-ons)."
 permissions = []
 

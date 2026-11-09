@@ -1,5 +1,5 @@
 name = "Targeting Helpers"
-version = "1.0.1"
+version = "1.0.4"
 description = "Targets by name or id, turns you toward or away from your target, and can check each monster you target (the targeting add-ons)."
 permissions = ["automation"]
 

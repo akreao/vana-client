@@ -1,5 +1,5 @@
 name = "Content Trackers"
-version = "1.1.1"
+version = "1.1.4"
 description = "A window for the content you are in: Dynamis, Abyssea, Salvage, Nyzul Isle, Omen, Delve, Odyssey, Sortie or a reive, with the time left and what the content's messages tell; pop lists for the Empyrean and Zeni NMs (the content tracker add-ons)."
 permissions = []
 

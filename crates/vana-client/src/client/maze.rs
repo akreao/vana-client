@@ -844,20 +844,11 @@ fn hit(gu: &GameUi, sw: f32, sh: f32, p: (f32, f32)) -> Option<Hit> {
 }
 
 /// Mouse *(inf: the generic handlers act on the focused window)*: prvdunsi's buttons while it is open; while a rune is
-/// carried a cell moves it there (message 9), a click places it, a right click drops it, a middle click turns it; the
-/// list's rows move the cursor, a click on the cursor's row is Enter, a right click Escape.
+/// carried a cell moves it there (message 9), a click places it, a right click drops it; the list's rows move the
+/// cursor, a click on the cursor's row is Enter, a right click Escape. A middle click turns the rune wherever the
+/// pointer is: the release is message 7 to the focused window (client/mod.rs `middle_release`).
 #[allow(clippy::too_many_arguments)]
-pub fn pointer(
-    w: &mut World,
-    gu: &GameUi,
-    sw: f32,
-    sh: f32,
-    p: (f32, f32),
-    moved: bool,
-    clicked: bool,
-    right: bool,
-    middle: bool,
-) {
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
     let Some(s) = w.maze.screen.as_ref().filter(|_| !w.modern) else { return };
     let (sibo, focus, list) = (s.sibo, s.focus, s.list);
     let Some(h) = hit(gu, sw, sh, p) else { return };
@@ -880,8 +871,6 @@ pub fn pointer(
                 key(w, egui::Key::Enter);
             } else if right {
                 key(w, egui::Key::Escape);
-            } else if middle {
-                rotate(w);
             }
         }
         (None, Focus::List, Hit::Row(k)) => {

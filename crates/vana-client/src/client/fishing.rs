@@ -111,6 +111,10 @@ fn send(w: &mut World, para: i32, mode: u8, para2: u32) {
     body.extend(para2.to_le_bytes());
     log::info!("fishing: c2s 0x110 mode {mode} para {para} para2 {para2}");
     let _ = w.net.commands.send(NetCommand::Packet { id: 0x110, body });
+    // FUN_10127ea0 after every mode-3 send (0x1008936e / 0x100894a1): the event message queues are emptied.
+    if mode == 3 {
+        super::event::cancel_queues(w);
+    }
 }
 
 /// The fishing statuses and the request latch keep us in place (FUN_100964f0).

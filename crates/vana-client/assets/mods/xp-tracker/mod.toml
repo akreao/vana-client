@@ -1,5 +1,5 @@
 name = "XP Tracker"
-version = "1.0.1"
+version = "1.0.4"
 description = "Experience, limit and capacity points with their rates per hour, in a window on a screen edge (the point-watch add-ons)."
 permissions = []
 

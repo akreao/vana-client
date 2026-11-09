@@ -142,7 +142,7 @@ pub struct Marks {
     pub anon: bool,
     pub auto: bool,
     pub lfg_master: bool,
-    /// Flags1 u32 @0x20 bit 31 (actor +0x128 bit 9): the player has a bazaar.
+    /// Flags1 u32 @0x20 bit 31 in 0x00D, @0x2c bit 29 in 0x037 (actor +0x128 bit 9): the player has a bazaar.
     pub bazaar: bool,
     /// The name plate's icon flags (MODLOG "Name plate icons"): Flags1 b14 away, b16 PlayOnline, b17 linkshell, b18
     /// link dead; Flags2 @0x24..0x26 the linkshell colour, b28 GmIconFlag; Flags3 b23 New Adventurer, b24 mentor.
@@ -367,7 +367,7 @@ pub struct EventStart {
 /// A zone dialogue line sent by the server: 0x036 (talk) or 0x02A (with num[4]).
 #[derive(Clone, Debug, Default)]
 pub struct ZoneText {
-    /// The packet: 0x036, 0x02A, 0x027 or 0x043.
+    /// The packet: 0x036, 0x02A, 0x027, 0x043 or 0x03B.
     pub packet: u16,
     pub actor: u32,
     pub index: u16,
@@ -1605,7 +1605,7 @@ impl EntityUpdate {
     }
 }
 
-pub fn spawn(login: MapLogin, account: String, codec: Codec) -> NetHandle {
+pub fn spawn(login: MapLogin, account: String, codec: Codec, gm_window: bool) -> NetHandle {
     crate::net::search::begin_session();
     let (events_tx, events) = channel();
     let (commands, commands_rx) = channel();
@@ -1613,6 +1613,9 @@ pub fn spawn(login: MapLogin, account: String, codec: Codec) -> NetHandle {
     let shared = me.clone();
     let stats = Arc::new(NetStats::default());
     stats.now_ms();
+    // Set before the thread starts: on a LAN server the first zone-in can arrive before the first frame's
+    // poll_network stores it, and the GM list request (c2s 0x1F0) would then be skipped for the whole zone.
+    stats.gm_window.store(gm_window, std::sync::atomic::Ordering::Relaxed);
     let st = stats.clone();
     let hooks = Arc::new(AtomicU8::new(0));
     let hk = hooks.clone();
@@ -2269,6 +2272,15 @@ fn session(
                         dir: p.u8(0x17),
                         mode: p.u8(0x16),
                     })?,
+                    // 0x03B (handler LAB_100a1600): UniqueNo @4, ActIndex @8, MesNum @0xa; shown in the event message
+                    // window (mode 0x96), not printed. LSB never sends it.
+                    0x03B => tx.send(NetEvent::ZoneText(ZoneText {
+                        packet: 0x03B,
+                        actor: p.u32(4),
+                        index: p.u16(8),
+                        mes: p.u16(0xa),
+                        ..Default::default()
+                    }))?,
                     0x036 => tx.send(NetEvent::ZoneText(ZoneText {
                         packet: 0x036,
                         actor: p.u32(4),

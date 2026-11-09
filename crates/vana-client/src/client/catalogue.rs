@@ -104,7 +104,8 @@ impl List {
 
 /// Where a list is read from.
 pub fn url(list: List) -> String {
-    format!("https://raw.githubusercontent.com/{}/master/catalogue/{}", super::updater::RELEASE_REPO, list.file())
+    use super::updater::{CATALOGUE_BRANCH, RELEASE_REPO};
+    format!("https://raw.githubusercontent.com/{RELEASE_REPO}/{CATALOGUE_BRANCH}/catalogue/{}", list.file())
 }
 
 fn check(e: &Entry, any_host: bool) -> Result<()> {
@@ -345,7 +346,7 @@ mod tests {
     }
 
     /// Every standard mod (assets/mods) is listed with each of its files at its SHA-256, as GitHub serves them from
-    /// master. VANA_WRITE_CATALOGUE=1 writes the list anew (the DAT packs' entries kept).
+    /// the catalogue branch. VANA_WRITE_CATALOGUE=1 writes the list anew (the DAT packs' entries kept).
     #[test]
     fn standard_mods_listed() {
         let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -415,7 +416,11 @@ mod tests {
                     .iter()
                     .map(|rel| {
                         let p = dir.join(rel);
-                        let url = format!("https://raw.githubusercontent.com/{}/master/crates/vana-client/assets/mods/{id}/{rel}", super::super::updater::RELEASE_REPO);
+                        let url = format!(
+                            "https://raw.githubusercontent.com/{}/{}/crates/vana-client/assets/mods/{id}/{rel}",
+                            super::super::updater::RELEASE_REPO,
+                            super::super::updater::CATALOGUE_BRANCH
+                        );
                         serde_json::json!({"path": rel, "url": url, "sha256": sha256(&p).unwrap(), "size": std::fs::metadata(&p).unwrap().len()})
                     })
                     .collect();

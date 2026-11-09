@@ -812,7 +812,10 @@ fn bank_key(w: &mut World, l: &mut Layout, row: u16, key: egui::Key) {
         K::Enter => {
             w.sounds.push(Ui::Select as u32);
             (l.bank, l.win) = (None, None);
-            l.list = Some((if row == 1 { 1 } else { 9 }, 0, 0));
+            let c = if row == 1 { 1 } else { 9 };
+            // The list source's open hook FUN_101f4130: view 3 of that Safe rebuilt in slot order.
+            w.inv.rebuild_view3(c);
+            l.list = Some((c, 0, 0));
         }
         _ => {}
     }
@@ -822,7 +825,7 @@ fn bank_key(w: &mut World, l: &mut Layout, row: u16, key: egui::Key) {
 /// on another not listed, not installed white; a locked row (LockFlg not 0 / 5 / 0x1b) grey.
 fn list_rows(w: &World, l: &Layout, c: u8) -> Vec<(crate::inventory::Slot, u32)> {
     let mut out = Vec::new();
-    for s in w.inv.viewed(c).into_iter().filter(|s| s.index != 0) {
+    for s in w.inv.viewed3(c).into_iter().filter(|s| s.index != 0) {
         let ty = item_type(w, s.id);
         if !(ty == 10 || ty == MANNEQUIN || (ty == 12 && l.floor == 0)) {
             continue;

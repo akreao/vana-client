@@ -22,9 +22,11 @@ pub struct Settings {
     pub send_interval: u32,
     pub party_tp: bool,
     pub lamp_lights: bool,
+    pub smooth_lights: bool,
     pub actor_shadows: u32,
     pub shadow_map: u32,
     pub ssao: bool,
+    pub reflections: bool,
     pub timers_dock: u32,
     pub minimap_dock: u32,
     pub minimap_size: u32,
@@ -62,9 +64,11 @@ impl Settings {
             send_interval: c.send_interval,
             party_tp: c.party_tp,
             lamp_lights: c.lamp_lights,
+            smooth_lights: c.smooth_lights,
             actor_shadows: c.actor_shadows,
             shadow_map: c.shadow_map,
             ssao: c.ssao,
+            reflections: c.reflections,
             timers_dock: c.timers_dock,
             minimap_dock: c.minimap_dock,
             minimap_size: c.minimap_size,
@@ -99,9 +103,11 @@ impl Settings {
         c.send_interval = self.send_interval;
         c.party_tp = self.party_tp;
         c.lamp_lights = self.lamp_lights;
+        c.smooth_lights = self.smooth_lights;
         c.actor_shadows = self.actor_shadows;
         c.shadow_map = self.shadow_map;
         c.ssao = self.ssao;
+        c.reflections = self.reflections;
         c.timers_dock = self.timers_dock;
         c.minimap_dock = self.minimap_dock;
         c.minimap_size = self.minimap_size;
@@ -147,9 +153,11 @@ enum Val {
     SendRate,
     PartyTp,
     LampLights,
+    SmoothLights,
     ActorShadows,
     ShadowMap,
     Ssao,
+    Reflections,
     TimersDock,
     MinimapDock,
     MinimapSize,
@@ -404,6 +412,13 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
             Now,
         ),
         row(
+            "Light Shading",
+            "Retail lights the world from lamps at the corners of its triangles, cut off sharply at a light's reach. Smooth lights every pixel and fades the edge out (not retail).",
+            SmoothLights,
+            &[(0, "Retail"), (1, "Smooth")],
+            Now,
+        ),
+        row(
             "Environment Animation",
             "Makes grass, trees and other plants sway. Smooth sways them more smoothly than Normal.",
             Tool("0011"),
@@ -579,6 +594,13 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
             "Adds soft shade in corners and creases of the world, so buildings look more solid (not retail).",
             Ssao,
             OFF_ON,
+            Now,
+        ),
+        row(
+            "Reflections",
+            "Water reflects the sky, the scenery and characters around it (not retail).",
+            Reflections,
+            &[(0, "Off"), (1, "Water")],
             Now,
         ),
         row(
@@ -922,9 +944,11 @@ impl SettingsUi {
             Val::PadDeadZone => self.s.gamepad_dead,
             Val::MouseCamSpeed => self.s.mouse_camera_speed,
             Val::LampLights => self.s.lamp_lights as u32,
+            Val::SmoothLights => self.s.smooth_lights as u32,
             Val::ActorShadows => self.s.actor_shadows,
             Val::ShadowMap => self.s.shadow_map,
             Val::Ssao => self.s.ssao as u32,
+            Val::Reflections => self.s.reflections as u32,
             Val::TimersDock => self.s.timers_dock,
             Val::MinimapDock => self.s.minimap_dock,
             Val::MinimapSize => self.s.minimap_size,
@@ -955,9 +979,11 @@ impl SettingsUi {
             Val::PadDeadZone => self.s.gamepad_dead = x,
             Val::MouseCamSpeed => self.s.mouse_camera_speed = x,
             Val::LampLights => self.s.lamp_lights = x != 0,
+            Val::SmoothLights => self.s.smooth_lights = x != 0,
             Val::ActorShadows => self.s.actor_shadows = x,
             Val::ShadowMap => self.s.shadow_map = x,
             Val::Ssao => self.s.ssao = x != 0,
+            Val::Reflections => self.s.reflections = x != 0,
             Val::TimersDock => self.s.timers_dock = x,
             Val::MinimapDock => self.s.minimap_dock = x,
             Val::MinimapSize => self.s.minimap_size = x,

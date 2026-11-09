@@ -1131,13 +1131,13 @@ fn parse_mask(s: &str) -> Result<u32, String> {
 fn login(cfg: &config::Config, creds: &Credentials) -> Result<net::lobby::Lobby> {
     use net::auth::{self, Command, Reply, Request};
     let req = Request { username: &creds.username, password: &creds.password, ..Default::default() };
-    let Reply::LoggedIn { account_id, session_hash, .. } =
+    let Reply::LoggedIn { account_id, session_hash, lobby_key, .. } =
         auth::send(&cfg.server, cfg.auth_port, Command::Login, &req)?
     else {
         anyhow::bail!("unexpected login reply");
     };
     println!("Logged in: account {account_id}");
-    let session = net::lobby::Session::Lsb { account_id, hash: session_hash };
+    let session = net::lobby::Session::Lsb { account_id, hash: session_hash, lobby_key };
     let dll = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())).unwrap_or_default();
     let lobby = net::lobby::Lobby::connect(
         &cfg.server,
@@ -1630,6 +1630,8 @@ fn main() -> Result<()> {
                 // Config 0011 at this weather; one frame, so the instances stand at their random start.
                 r.set_sway(0.0, sway_steps(cfg.tool("0011")), dat::zone::SWAY_TAGS.iter().position(|t| *t == weather));
                 r.bump_mode = bump;
+                // FFXI_SMOOTH_LIGHTS: Settings' Light Shading Smooth (ours) in place of retail's per-vertex lights.
+                r.smooth_lights = std::env::var_os("FFXI_SMOOTH_LIGHTS").is_some();
                 if let Some(v) = voyage_v {
                     r.voyage = v;
                 }

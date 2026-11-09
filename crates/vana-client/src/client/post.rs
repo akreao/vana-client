@@ -118,6 +118,8 @@ struct Stringdl {
     label: usize,
     shown: Option<String>,
     caret: Instant,
+    /// The caret in `text` (a char index): at the end when editing starts, moved by Left / Right, Home / End.
+    at: usize,
 }
 
 /// A placed item not yet Set (the local record's pending flag): inventory index, item, count.
@@ -332,20 +334,23 @@ fn gil_line(w: &mut World, slot: usize) {
     }
 }
 
-/// The open refusals of FUN_1012f100 / the receive side: a blocking window (group 7 0x45), healing (0x51); already open:
-/// silent. True when it may open.
-fn may_open(w: &mut World) -> bool {
-    if active(w) {
-        return false;
-    }
-    if w.win.is_some()
+/// The open refusals of FUN_1012f100 (send) / FUN_1014ce80 (receive), in retail's order: a main-class window up
+/// (FUN_1015ecc0(0x20000), which takes in the other side's inventory list), sub-target mode (target system +0x59) or a
+/// target prompt pending (+0xc4) -> group 7 0x45 (refusal index 3); this side already open: silent; healing (0x21 / 7)
+/// -> 0x51. True when it may open.
+fn may_open(w: &mut World, recv: bool) -> bool {
+    // Ours: the windows of the main class we keep as state count too (the modern UI draws no retail frames).
+    let main = w.main_open
+        || w.win.is_some()
         || w.map.is_some()
         || w.config.is_some()
         || w.mogdoor.is_some()
-        || w.magic.is_some()
-        || w.ability.is_some()
-    {
+        || if recv { send_open(w) } else { recv_open(w) };
+    if main || super::target::sub_up(w) {
         super::textcmd::refuse(w, 0x45);
+        return false;
+    }
+    if if recv { recv_open(w) } else { send_open(w) } {
         return false;
     }
     if matches!(w.my_motion.status, 0x21 | 7) {
@@ -359,7 +364,7 @@ fn may_open(w: &mut World) -> bool {
 
 /// FUN_1014ce80: post1 (focused), post2, money and the look-only inventory list; Work (1, -1), then state 1.
 fn open_recv(w: &mut World) {
-    if !may_open(w) {
+    if !may_open(w, true) {
         return;
     }
     (w.post.last, w.post.recv_count) = (None, None);
@@ -615,7 +620,7 @@ pub fn confirm_text(gu: &GameUi, ctx: u8) -> String {
 
 /// FUN_1012eff0: the picker list, money, delivery and stringdl (focused); Work (2, -1); label "Recipient"; state 1.
 fn open_send(w: &mut World) {
-    if !may_open(w) {
+    if !may_open(w, false) {
         return;
     }
     (w.post.last, w.post.send_count) = (None, None);
@@ -629,6 +634,7 @@ fn open_send(w: &mut World) {
         label: 0x2e,
         shown: None,
         caret: Instant::now(),
+        at: 0,
     };
     w.post.send_ui = Some(Send {
         state: 1,
@@ -667,13 +673,26 @@ pub(super) fn picker_rows(w: &World) -> Vec<crate::inventory::Slot> {
     w.inv.viewed(super::items::INVENTORY).into_iter().filter(|s| s.index != 0 && s.id != 0).collect()
 }
 
-/// FUN_1012e1a0: NoDelivery (0x2000) without CanSendAccount (0x10) grey; CanSendAccount only to our own account;
-/// equipped grey. The augment rule (Ex by augment) and the equipped linkshell are not checked here.
+/// LAB_1012e1a0 (the picker's row colour, 0x80404040 grey or 0x80808080): Ex by augment = the Aug flag byte's bit 2
+/// (FUN_101cb960 / FUN_101cba20, as the item window's Ex mark). CanSendAccount (0x10): grey to another account, and
+/// on our account when Ex by augment without item flag bit 0; else NoDelivery (0x2000) or Ex by augment grey. Then the
+/// equipped (FUN_10131f10) and the shell worn as linkshell 1 (FUN_100e9730(.., 1): its slot and this bag) grey.
 fn picker_tint(w: &World, s: &crate::inventory::Slot, on_account: bool) -> u32 {
     use crate::inventory::{TINT_DIM, TINT_WHITE};
-    let flags = w.item_info.as_ref().and_then(|c| c.item(s.id)).map_or(0, |it| it.flags);
-    let grey = if flags & 0x10 == 0 { flags & 0x2000 != 0 } else { !on_account };
-    if grey || s.equipped { TINT_DIM } else { TINT_WHITE }
+    let bag = super::items::INVENTORY;
+    let it = w.item_info.as_ref().and_then(|c| c.item(s.id));
+    let (flags, item_type) = it.map_or((0, 0), |it| (it.flags, it.item_type));
+    let ext = w.inv.ext.get(&(bag, s.index));
+    // Without the augment tables (not loaded yet) no Aug flag counts, as the item window shows no mark then.
+    let aug_ex = w
+        .aug_no_mark
+        .as_deref()
+        .and_then(|nm| super::augment::marked_with(s.id, item_type, ext, nm))
+        .is_some_and(|f| f & 2 != 0);
+    let grey =
+        if flags & 0x10 != 0 { !on_account || (aug_ex && flags & 1 == 0) } else { flags & 0x2000 != 0 || aug_ex };
+    let ls1 = super::chatctrl::ls_on(w, 1) && w.linkshells[1] == (s.index, bag);
+    if grey || s.equipped || ls1 { TINT_DIM } else { TINT_WHITE }
 }
 
 /// FUN_1012f380: the delivery cursor slot takes the item (pending until Set goes out next frame).
@@ -1106,7 +1125,7 @@ fn stringdl_key(w: &mut World, gu: &GameUi, s: &mut Send, key: egui::Key) {
         }
         K::Enter => match (d.mode, d.cursor) {
             (1, 1) => {
-                (d.editing, d.caret) = (true, Instant::now());
+                (d.editing, d.caret, d.at) = (true, Instant::now(), d.text.chars().count());
                 w.sounds.push(Ui::Select as u32);
             }
             (1, 2) => {
@@ -1144,24 +1163,43 @@ pub fn typing(w: &World) -> bool {
     w.post.send_ui.as_ref().is_some_and(|s| s.focus == SFocus::Stringdl && s.dl.editing)
 }
 
+/// The field's keys while editing (the shared text input; FUN_1014f520 passes stringdl's messages on): typed and pasted
+/// text goes in at the caret (15 characters); Backspace / Delete take the character before / at it; Left / Right
+/// (messages 4 / 3 -> FUN_101c6920(4 / 5)) move it one character and Home / End (the input's own keys, as the chat
+/// line's) to the ends; Up (message 1), Enter and Escape end the editing (FUN_1014f500), the text kept.
 pub fn text_events(w: &mut World, events: &[egui::Event]) {
     let Some(s) = w.post.send_ui.as_mut() else { return };
     let d = &mut s.dl;
     for ev in events {
+        let mut chars: Vec<char> = d.text.chars().collect();
+        d.at = d.at.min(chars.len());
         match ev {
             egui::Event::Text(t) | egui::Event::Paste(t) => {
                 for c in t.chars().filter(|c| (' '..='~').contains(c)) {
-                    if d.text.chars().count() < 15 {
-                        d.text.push(c);
+                    if chars.len() < 15 {
+                        chars.insert(d.at, c);
+                        d.at += 1;
                     }
                 }
             }
-            egui::Event::Key { key: egui::Key::Backspace, pressed: true, .. } => {
-                d.text.pop();
-            }
-            egui::Event::Key { key: egui::Key::Enter | egui::Key::Escape, pressed: true, .. } => d.editing = false,
+            egui::Event::Key { key, pressed: true, .. } => match key {
+                egui::Key::Backspace if d.at > 0 => {
+                    d.at -= 1;
+                    chars.remove(d.at);
+                }
+                egui::Key::Delete if d.at < chars.len() => {
+                    chars.remove(d.at);
+                }
+                egui::Key::ArrowLeft => d.at = d.at.saturating_sub(1),
+                egui::Key::ArrowRight => d.at = (d.at + 1).min(chars.len()),
+                egui::Key::Home => d.at = 0,
+                egui::Key::End => d.at = chars.len(),
+                egui::Key::Enter | egui::Key::Escape | egui::Key::ArrowUp => d.editing = false,
+                _ => {}
+            },
             _ => {}
         }
+        d.text = chars.into_iter().collect();
     }
 }
 
@@ -1379,11 +1417,15 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         let (fx, fy) = (x + 20.0, y + 30.0);
         match &s.dl.shown {
             Some(n) => clipped(gu, n, fx, fy, 130.0, NAME),
-            // FUN_101c60e0: the live input in white with '|' at the caret, on 19 of every 30 ticks (inf: 1/60 s).
+            // FUN_101c60e0: the live input in white; on 19 of every 30 ticks (inf: 1/60 s) a '|' at the caret (the
+            // 7F FF marker), drawn where the text after it starts.
             None if s.dl.editing => {
+                gu.text(&s.dl.text, fx, fy, 0, WHITE.to_le_bytes());
                 let t = (s.dl.caret.elapsed().as_secs_f32() * 60.0) as u32 % 30;
-                let caret = if (1..20).contains(&t) { "|" } else { "" };
-                gu.text(&format!("{}{caret}", s.dl.text), fx, fy, 0, WHITE.to_le_bytes());
+                if (1..20).contains(&t) {
+                    let before: String = s.dl.text.chars().take(s.dl.at).collect();
+                    gu.text("|", fx + gu.text_width(&before), fy, 0, WHITE.to_le_bytes());
+                }
             }
             None => clipped(gu, &s.dl.text, fx, fy, 130.0, NAME),
         }
@@ -1760,6 +1802,8 @@ pub(super) enum Look {
         label: String,
         text: String,
         editing: bool,
+        /// The caret in `text` while editing (a char index).
+        at: usize,
         shown: Option<String>,
         dl_cursor: u16,
         dl_mode: u8,
@@ -1815,6 +1859,7 @@ pub(super) fn look(w: &World) -> Option<Look> {
         label: w.battle.as_ref().and_then(|b| b.group9(s.dl.label)).unwrap_or_default(),
         text: s.dl.text.clone(),
         editing: s.dl.editing,
+        at: s.dl.at.min(s.dl.text.chars().count()),
         shown: s.dl.shown.clone(),
         dl_cursor: s.dl.cursor,
         dl_mode: s.dl.mode,

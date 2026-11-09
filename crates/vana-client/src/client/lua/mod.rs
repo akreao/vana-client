@@ -377,7 +377,6 @@ pub struct Host {
     watch_deferred: Vec<String>,
     lobby_screen: Option<&'static str>,
     lobby: lobby::Shared,
-    /// A recording asked for (taken by the app), and the file being recorded, as the app sets it.
     /// A mod's recording asked for: (the mod, its file and frames a second, or None to stop its own).
     pub(in crate::client) record_req: Option<(String, Option<(std::path::PathBuf, u32)>)>,
     /// The recording running: its mod and file.

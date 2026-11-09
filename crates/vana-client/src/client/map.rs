@@ -21,6 +21,8 @@ const ICON_SPRITE: [usize; 20] =
 /// Mode 6's margins: the view may pass the image by +0x7c + +0x80 map pixels, and scroll targets move by +0x7c.
 const PREVIEW_MARGIN: f32 = 126.0;
 const PREVIEW_PAD: f32 = 30.0;
+/// The HUD maps' opacity until the Map Overlay mod sets the player's (client option map_opacity).
+pub const OPACITY: f32 = 0.6;
 /// Mode 6's backdrop (FUN_101cc620(0xd0c2), file 53442): a dark band around the image.
 pub const BACKDROP: &str = "menumap m_x36_00";
 
@@ -392,6 +394,9 @@ pub struct MapWin {
     rising: bool,
     /// Real ticks not yet run as 2-tick retail frames (fade, zoom-to, scroll-to).
     acc: f32,
+    /// Cursor mode's mouse: where the game's pointer was last set (sprite cursor), the pointer warp asked of the app.
+    anchor: Option<(f32, f32)>,
+    pub warp: Option<(f32, f32)>,
     /// Mode 7 (+0xa4c / +0xa50 / +0xa51): the page's first image file, the image count, the one shown; and what the
     /// close asks next (LAB_101f7b90 the next image, LAB_101f7b40 back to guide01).
     primer: Option<(u32, u8, u8)>,
@@ -765,6 +770,8 @@ impl MapWin {
             alpha: 0.0,
             rising: true,
             acc: 0.0,
+            anchor: None,
+            warp: None,
             primer: None,
             primer_next: None,
         };
@@ -1281,6 +1288,11 @@ impl MapWin {
         }
     }
 
+    /// The app moved the pointer onto the cursor point (FUN_10124700): the sprite cursor's motion counts from there.
+    pub fn warped(&mut self, at: (f32, f32)) {
+        self.anchor = Some(at);
+    }
+
     /// Op 0xb4 sub 0x14 (FUN_101fb070): view to (x, y) map pixels at zoom factor zf of the base zoom, `speed` (x 0.005
     /// a tick) in mode flags & 0x7f (1 linear, 2 eases out, 3 eases in); speed 0 jumps; flag 0x80 shows the map at once.
     /// The keys, a fade and the closing all stop (the flags become 0x400).
@@ -1313,7 +1325,13 @@ impl MapWin {
     /// scripted view; the fade, zoom-to and scroll-to on 2-tick retail frames. False once the window is gone.
     /// `drag`: a left drag's offset from its press point in UI pixels (FUN_10126100 / FUN_10125fe0: past W / 21 on an
     /// axis it counts as full scroll that way, the anchor taken as the press point *(inf)*).
-    pub fn update(&mut self, input: &mut super::input::Input, ticks: f32, drag: Option<(f32, f32)>) -> bool {
+    pub fn update(
+        &mut self,
+        input: &mut super::input::Input,
+        ticks: f32,
+        drag: Option<(f32, f32)>,
+        mouse: Option<CursorMouse>,
+    ) -> bool {
         use super::input::mode::{HELD, PRESS};
         if let Some(deadline) = self.closing {
             let idle = self.zoom_to.is_none() && self.scroll_to.is_none() && self.fade.0 == self.fade.1;
@@ -1389,26 +1407,36 @@ impl MapWin {
             self.acc -= 2.0;
             self.frame();
         }
-        // Cursor mode (placing a marker, narrowing a scan): axes 0x9d / 0x9e x the cursor speed 8, inside the cursor
-        // box; past it the view scrolls.
+        // Cursor mode (placing a marker, narrowing a scan): axes 0x9d / 0x9e x the cursor speed 8, else the mouse, by
+        // FUN_101edaf0's cursor rule inside the cursor box (past it the view scrolls); the fast key scrolls the view.
         let cur = self.list.as_ref().and_then(|l| l.placing.map(|p| p.1)).or(self.scan.as_ref().and_then(|s| s.narrow));
-        if let Some(cur) = cur {
+        if let Some(mut cur) = cur {
             let (sw, sh) = self.screen;
             let dead = |v: f32| if (v * fast).abs() < 2.0 { 0.0 } else { v };
             let v =
                 (dead(input.axis(0x9d) * 8.0) * fast * ticks * 0.5, dead(input.axis(0x9e) * 8.0) * fast * ticks * 0.5);
             let (bx, by) = ([sw / 512.0 * 40.0, sw - sw / 512.0 * 150.0], [sh / 448.0 * 65.0, sh - sh / 448.0 * 180.0]);
-            let want = (cur.0 + v.0, cur.1 + v.1);
-            let moved = (want.0.clamp(bx[0], bx[1]), want.1.clamp(by[0], by[1]));
-            let over = (want.0 - moved.0, want.1 - moved.1);
-            if over != (0.0, 0.0) {
-                self.scroll_by(over);
+            let d = match mouse.filter(|_| v == (0.0, 0.0) && live) {
+                Some(ms) => mouse_step(ms, &mut self.anchor, cur, self.zoom),
+                None => v,
+            };
+            if d != (0.0, 0.0) {
+                if fast > 1.0 {
+                    self.scroll_by(d);
+                } else {
+                    let over = cursor_move(&mut cur, d, self.zoom, bx, by);
+                    self.view = (self.view.0 + over.0, self.view.1 + over.1);
+                    self.clamp();
+                }
+                self.warp = Some(cur);
             }
             if let Some(p) = self.list.as_mut().and_then(|l| l.placing.as_mut()) {
-                p.1 = moved;
+                p.1 = cur;
             } else if let Some(s) = self.scan.as_mut() {
-                s.narrow = Some(moved);
+                s.narrow = Some(cur);
             }
+        } else {
+            self.anchor = None;
         }
         // The scan's 30 s timer (scanlist +0x62) ends the busy strip.
         if let Some(s) = self.scan.as_mut().filter(|s| s.scanning) {
@@ -1846,6 +1874,65 @@ pub enum Out {
 }
 
 const SCAN_ROWS: usize = 10;
+
+/// The mouse for a map's cursor mode (FUN_101ef0a0: the mouse object DAT_104e1d4c +4 / +8 while +0x4e, the pointer
+/// shown, and the window's active argument): the pointer in UI pixels and config 0021 (hardware cursor).
+#[derive(Clone, Copy, Debug)]
+pub struct CursorMouse {
+    pub at: (f32, f32),
+    pub hardware: bool,
+}
+
+/// FUN_101ef0a0's mouse step once the cursor axes are still: the pointer less the cursor point (hardware cursor), or,
+/// with the game's sprite cursor (config 0021 = 0, DAT_10456bf8 0), its move since the game last put it on the point
+/// times the zoom (+0x58) unless both axes are under 2. Under 2 pixels an axis is dropped.
+///
+/// Retail sets the game's own pointer onto the point every frame (FUN_10124700), so its sprite cursor counts mouse
+/// motion from the point; ours keeps that place in `anchor` (the pointer, or the point once the app has warped it), and
+/// asks for the warp only after a move, so motion under 2 pixels a frame adds up instead of being lost at 60 fps.
+pub(super) fn mouse_step(m: CursorMouse, anchor: &mut Option<(f32, f32)>, point: (f32, f32), zoom: f32) -> (f32, f32) {
+    let d = if m.hardware {
+        (m.at.0 - point.0, m.at.1 - point.1)
+    } else {
+        let a = *anchor.get_or_insert(m.at);
+        let d = (m.at.0 - a.0, m.at.1 - a.1);
+        if d.0.abs() < 2.0 && d.1.abs() < 2.0 { d } else { (d.0 * zoom, d.1 * zoom) }
+    };
+    let z = |v: f32| if v.abs() < 2.0 { 0.0 } else { v };
+    let d = (z(d.0), z(d.1));
+    if d != (0.0, 0.0) {
+        *anchor = Some(m.at);
+    }
+    d
+}
+
+/// FUN_101edaf0 in cursor mode (flag 0x100, not 0x200 / 8): per axis the point (+0x1c / +0x1e, whole pixels) moves by
+/// d when it lands inside the box [lo, hi] (+0x44..+0x50); otherwise it steps by d / zoom rounded half away (at least
+/// one pixel toward d), is put back in the box, and what went past it scrolls the view (map pixels). Returns that
+/// scroll.
+pub(super) fn cursor_move(point: &mut (f32, f32), d: (f32, f32), zoom: f32, bx: [f32; 2], by: [f32; 2]) -> (f32, f32) {
+    let axis = |p: f32, d: f32, b: [f32; 2]| -> (f32, f32) {
+        let (lo, hi) = (b[0].trunc(), b[1].trunc());
+        let n = (p + d).trunc();
+        let p = if (lo..=hi).contains(&n) {
+            n
+        } else {
+            let s = (d / zoom + 0.5f32.copysign(d)).trunc();
+            p.trunc() + if s.abs() <= 1.0 { 1f32.copysign(d) } else { s }
+        };
+        if p < lo {
+            (lo, p - lo)
+        } else if p > hi {
+            (hi, p - hi)
+        } else {
+            (p, 0.0)
+        }
+    };
+    let (x, ox) = axis(point.0, d.0, bx);
+    let (y, oy) = axis(point.1, d.1, by);
+    *point = (x, y);
+    (ox, oy)
+}
 
 /// Wide Scan's list (scanlist) with mapscan and the narrow cursor.
 #[derive(Clone, Debug, Default)]
@@ -2925,5 +3012,43 @@ mod tests {
         assert_eq!(r.px(-200.0, -1050.0), (-39, 209));
         assert_eq!(r.grid(-39, 209), "(G-15)");
         assert_eq!(r.grid(-264 + 16 + 6 * 32, -256 + 16 + 8 * 32), "(G-9)");
+    }
+}
+
+#[cfg(test)]
+mod cursor_tests {
+    use super::{CursorMouse, cursor_move, mouse_step};
+
+    #[test]
+    fn cursor_moves_inside_the_box_and_steps_past_it() {
+        let (bx, by) = ([80.0, 900.0], [100.0, 500.0]);
+        let mut p = (200.0, 300.0);
+        assert_eq!(cursor_move(&mut p, (10.7, -3.0), 4.6, bx, by), (0.0, 0.0));
+        assert_eq!(p, (210.0, 297.0));
+        // Past the right edge: the point steps by d / zoom rounded (at least 1) and the view takes the excess.
+        let mut p = (899.0, 300.0);
+        let over = cursor_move(&mut p, (23.0, 0.0), 4.6, bx, by);
+        assert_eq!(p, (900.0, 300.0));
+        assert_eq!(over, (4.0, 0.0));
+        let mut p = (80.0, 300.0);
+        assert_eq!(cursor_move(&mut p, (-3.0, 0.0), 4.6, bx, by), (-1.0, 0.0));
+        assert_eq!(p, (80.0, 300.0));
+    }
+
+    #[test]
+    fn mouse_hardware_is_absolute_sprite_relative_and_zoomed() {
+        let mut anchor = None;
+        let hw = CursorMouse { at: (250.0, 301.0), hardware: true };
+        assert_eq!(mouse_step(hw, &mut anchor, (200.0, 300.0), 4.6), (50.0, 0.0));
+        let mut anchor = None;
+        let sp = CursorMouse { at: (250.0, 300.0), hardware: false };
+        assert_eq!(mouse_step(sp, &mut anchor, (200.0, 300.0), 4.0), (0.0, 0.0));
+        let sp = CursorMouse { at: (253.0, 300.0), hardware: false };
+        assert_eq!(mouse_step(sp, &mut anchor, (200.0, 300.0), 4.0), (12.0, 0.0));
+        // Under 2 pixels it waits and adds up.
+        let sp = CursorMouse { at: (254.0, 300.0), hardware: false };
+        assert_eq!(mouse_step(sp, &mut anchor, (200.0, 300.0), 4.0), (0.0, 0.0));
+        let sp = CursorMouse { at: (255.0, 300.0), hardware: false };
+        assert_eq!(mouse_step(sp, &mut anchor, (200.0, 300.0), 4.0), (8.0, 0.0));
     }
 }

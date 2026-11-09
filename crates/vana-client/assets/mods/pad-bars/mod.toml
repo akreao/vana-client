@@ -1,5 +1,5 @@
 name = "Pad Bars"
-version = "1.0.1"
+version = "1.0.4"
 description = "Controller crossbars: hold LT or RT and the d-pad and face buttons use that side's eight actions, set per job (the crossbar add-ons)."
 permissions = ["automation", "input.capture"]
 
