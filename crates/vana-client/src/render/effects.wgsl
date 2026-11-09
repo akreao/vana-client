@@ -1305,7 +1305,9 @@ fn vs_distring(@builtin(vertex_index) k: u32, @builtin(instance_index) inst: u32
     let cb = vec4<u32>((c >> 16u) & 0xffu, (c >> 8u) & 0xffu, c & 0xffu, c >> 24u);
     let dc = vec4<f32>(((cb * tf) >> vec4<u32>(7u)) & vec4<u32>(0xffu)) / 255.0;
     var out = vout(e, vp, dc, vec2<f32>(0.0), 12u);
-    out.uv = screen_uv(vp);
+    // The 256x256 copy is flipped: v = (H - 0.5 - sy) / H at the vertex's screen point (FUN_10042d00).
+    let s = screen_uv(vp);
+    out.uv = vec2<f32>(s.x, 1.0 - s.y);
     return out;
 }
 

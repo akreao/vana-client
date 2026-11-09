@@ -268,6 +268,10 @@ pub struct EffectsGpu {
     /// The scene copy CMoDist samples (MIRROR, linear), remade on a size or format change.
     scene_copy: Option<(wgpu::Texture, wgpu::BindGroup)>,
     copy_sampler: wgpu::Sampler,
+    /// DistRing's 256x256 copy (FUN_10042d00, render/squeeze.wgsl): the scene copy squeezed and flipped, its bind
+    /// group (MIRROR, linear), and the squeeze pipeline for the view format it was made for.
+    ring_copy: Option<(wgpu::Texture, wgpu::TextureView, wgpu::BindGroup)>,
+    squeeze: Option<(wgpu::TextureFormat, wgpu::RenderPipeline)>,
     /// Lens flares and their glare: additive, no depth test (FUN_1003ddb0, FUN_100125c0).
     flare_pipe: wgpu::RenderPipeline,
     glare_pipe: wgpu::RenderPipeline,
@@ -899,6 +903,8 @@ impl EffectsGpu {
             damv_pipes,
             dmgnum: None,
             scene_copy: None,
+            ring_copy: None,
+            squeeze: None,
             copy_sampler,
             flare_pipe,
             glare_pipe,
@@ -1069,6 +1075,44 @@ impl EffectsGpu {
             ],
         });
         self.spec_groups.insert(key, g);
+    }
+
+    /// FUN_10042d00's copy pass into DistRing's 256x256 target (render/squeeze.wgsl), drawn in `format`.
+    fn squeeze_pipe(
+        device: &wgpu::Device,
+        tex_layout: &wgpu::BindGroupLayout,
+        format: wgpu::TextureFormat,
+    ) -> wgpu::RenderPipeline {
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("effects squeeze"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("squeeze.wgsl").into()),
+        });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("effects squeeze"),
+            bind_group_layouts: &[Some(tex_layout)],
+            immediate_size: 0,
+        });
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("effects squeeze"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &module,
+                entry_point: Some("vs"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            primitive: Default::default(),
+            depth_stencil: None,
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &module,
+                entry_point: Some("fs"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::ALL })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        })
     }
 
     fn tex_group(
@@ -1486,6 +1530,22 @@ impl EffectsGpu {
             let g = Self::tex_group(&gpu.device, &self.tex_layout, &self.copy_sampler, &view);
             self.copy_wrap = Some(Self::tex_group(&gpu.device, &self.tex_layout, &self.wrap_sampler, &view));
             self.scene_copy = Some((c, g));
+            let rc = gpu.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("effects ring copy"),
+                size: wgpu::Extent3d { width: 256, height: 256, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: t.format(),
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[t.format().remove_srgb_suffix()],
+            });
+            let rv = rc.create_view(&wgpu::TextureViewDescriptor { format: Some(vf), ..Default::default() });
+            let rg = Self::tex_group(&gpu.device, &self.tex_layout, &self.copy_sampler, &rv);
+            self.ring_copy = Some((rc, rv, rg));
+            if self.squeeze.as_ref().is_none_or(|(f, _)| *f != vf) {
+                self.squeeze = Some((vf, Self::squeeze_pipe(&gpu.device, &self.tex_layout, vf)));
+            }
         }
         for &e in &order {
             if let Some(sp) = fx.elems[e as usize].as_ref().and_then(|c| c.spec) {
@@ -1714,10 +1774,37 @@ impl EffectsGpu {
                     pass.set_vertex_buffer(0, vb.slice(..));
                     pass.draw(first..first + n, base..base + 1);
                 }
+                // FUN_10043720: the scene squeezed into the 256x256 copy (FUN_10042d00), which the ring samples at
+                // its own screen points; retail's soft, shifted band.
                 Draw::DistRing => {
-                    let (Some(src), Some((copy, g))) = (copy_src, self.scene_copy.as_ref()) else { continue };
+                    let (Some(src), Some((copy, cg)), Some((_, rv, g)), Some((_, sq))) =
+                        (copy_src, self.scene_copy.as_ref(), self.ring_copy.as_ref(), self.squeeze.as_ref())
+                    else {
+                        continue;
+                    };
                     drop(pass);
                     encoder.copy_texture_to_texture(src.as_image_copy(), copy.as_image_copy(), src.size());
+                    {
+                        let mut sp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("effects squeeze"),
+                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                view: rv,
+                                depth_slice: None,
+                                resolve_target: None,
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                    store: wgpu::StoreOp::Store,
+                                },
+                            })],
+                            depth_stencil_attachment: None,
+                            timestamp_writes: None,
+                            occlusion_query_set: None,
+                            multiview_mask: None,
+                        });
+                        sp.set_pipeline(sq);
+                        sp.set_bind_group(0, cg, &[]);
+                        sp.draw(0..3, 0..1);
+                    }
                     pass = new_pass(encoder);
                     class = blend_class(c.blend, false).unwrap_or(class);
                     pass.set_pipeline(&self.distring_pipes[&(class, c.flags & 0x1000 != 0)]);
@@ -1898,6 +1985,118 @@ mod tests {
 
     use super::*;
     use crate::fx::elem::{Elem, update_ref};
+
+    /// FUN_10042d00's copy pass (render/squeeze.wgsl) against a CPU reference: a 320x200 source whose texel (x, y)
+    /// holds (x, y, 0), squeezed into 256x256; texel (i, j) is the linear, MIRROR sample at u = (i W / 256 - 0.5) / W,
+    /// v = (H - 0.5) / H - j / 256 (so row 0 holds the bottom of the screen), alpha 0x80.
+    #[test]
+    fn squeeze_matches_retail_mapping() {
+        let Ok(gpu) = Gpu::headless() else { return };
+        let (w, h) = (320u32, 200u32);
+        let fmt = wgpu::TextureFormat::Rgba8Unorm;
+        let src = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: fmt,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let texel = |x: u32, y: u32| [(x * 255 / (w - 1)) as u8, (y * 255 / (h - 1)) as u8, 0u8, 255u8];
+        let px: Vec<u8> = (0..h).flat_map(|y| (0..w).flat_map(move |x| texel(x, y))).collect();
+        gpu.queue.write_texture(
+            src.as_image_copy(),
+            &px,
+            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(w * 4), rows_per_image: Some(h) },
+            src.size(),
+        );
+        let eg = EffectsGpu::new(&gpu, fmt);
+        let view = src.create_view(&Default::default());
+        let g = EffectsGpu::tex_group(&gpu.device, &eg.tex_layout, &eg.copy_sampler, &view);
+        let dst = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size: wgpu::Extent3d { width: 256, height: 256, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: fmt,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let dv = dst.create_view(&Default::default());
+        let pipe = EffectsGpu::squeeze_pipe(&gpu.device, &eg.tex_layout, fmt);
+        let mut enc = gpu.device.create_command_encoder(&Default::default());
+        {
+            let mut p = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: None,
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &dv,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            p.set_pipeline(&pipe);
+            p.set_bind_group(0, &g, &[]);
+            p.draw(0..3, 0..1);
+        }
+        let buf = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: 256 * 4 * 256,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        enc.copy_texture_to_buffer(
+            dst.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buf,
+                layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(1024), rows_per_image: Some(256) },
+            },
+            dst.size(),
+        );
+        gpu.queue.submit([enc.finish()]);
+        buf.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+        gpu.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None }).unwrap();
+        let out = buf.slice(..).get_mapped_range().unwrap().to_vec();
+        // Bilinear with MIRROR addressing, per channel.
+        let mirror = |k: i32, n: i32| {
+            let m = k.rem_euclid(2 * n);
+            if m < n { m } else { 2 * n - 1 - m }
+        };
+        let sample = |u: f32, v: f32, c: usize| {
+            let (x, y) = (u * w as f32 - 0.5, v * h as f32 - 0.5);
+            let (x0, y0) = (x.floor(), y.floor());
+            let (fx, fy) = (x - x0, y - y0);
+            let at = |dx: i32, dy: i32| {
+                let t = texel(mirror(x0 as i32 + dx, w as i32) as u32, mirror(y0 as i32 + dy, h as i32) as u32);
+                t[c] as f32
+            };
+            (at(0, 0) * (1.0 - fx) + at(1, 0) * fx) * (1.0 - fy) + (at(0, 1) * (1.0 - fx) + at(1, 1) * fx) * fy
+        };
+        for (i, j) in [(0u32, 0u32), (1, 1), (128, 128), (255, 255), (37, 200), (200, 17)] {
+            let u = (i as f32 * w as f32 / 256.0 - 0.5) / w as f32;
+            let v = (h as f32 - 0.5) / h as f32 - j as f32 / 256.0;
+            let o = (j * 1024 + i * 4) as usize;
+            for c in 0..2 {
+                let want = sample(u, v, c);
+                assert!(
+                    (out[o + c] as f32 - want).abs() <= 2.0,
+                    "texel ({i}, {j}) channel {c}: {} vs {want}",
+                    out[o + c]
+                );
+            }
+            assert_eq!(out[o + 3], 128, "alpha at ({i}, {j})");
+        }
+    }
 
     impl EffectsGpu {
         fn read_elems(&self, gpu: &Gpu, n: usize) -> Vec<u32> {
