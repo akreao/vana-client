@@ -12,7 +12,8 @@
 - The middle press bit (+0x60 & 4) turns pages beside key function 0x18: the RoE description (FUN_102326b0, already
   built) and the item info window (FUN_1013cba0 -> FUN_1013c220, also iteminfo / itemxinf's per-frame hooks).
 - Ours: a middle click (a press and release without a look drag; ours drags the camera with it) runs
-  `middle_release`: keyboard type 2, the layout / gardening contexts (0x42, no flag 4) and cinema mode skip it; the
+  `middle_release`: the layout / gardening contexts (no flag 4) and cinema mode skip it, keyboard type 2 does not
+  (ours: every type looks with a middle drag, and 0x42 = 2 is the default, so the retail skip lost the click); the
   maze editor turns the carried rune (its grid focused, as before, but now wherever the pointer is); with no window
   or only the main / action menu up, the next frame gets a Num- press (the main menu opens / closes); with another
   window up nothing happens *(inf: the windows ours has take no message 7 of their own)*. Not over a modern panel
