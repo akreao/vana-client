@@ -145,12 +145,12 @@ fn mod_edges(p: &mut Panels, w: &mut World) {
         .iter()
         .filter(|n| !n.starts_with("timers_") && !["skillchains", "minimap"].contains(*n))
     {
-        if w.lua.edge_panel(name).is_none() || w.lua.hides(name) {
+        if !w.lua.has_edge_panel(name) || w.lua.hides(name) {
             hold_layer(p.ctx, name);
         }
     }
     // The timers' and skillchains' panels draw their client views (timers_panel, skillchain_panel).
-    for (mod_id, win) in w.lua.open_windows().into_iter().filter(|(_, x)| {
+    for (mod_id, win) in w.lua.open_windows_where(|x| {
         x.edge && !x.panel.as_deref().is_some_and(|n| n.starts_with("timers_") || n == "skillchains" || n == "minimap")
     }) {
         if win.panel.as_deref().is_some_and(|n| w.lua.hides(n)) {
@@ -1475,14 +1475,13 @@ fn minimap_panel(p: &mut Panels, w: &mut World) {
 /// nothing is tracked, and shows the last complete list until the next one is all in.
 fn widescan_panel(p: &mut Panels, w: &mut World) {
     // Its layer held from the first frame while the minimap mod's window is not in yet, as the built-in tab had it.
-    if w.lua.edge_panel("minimap").is_none() && !hidden(w) {
+    if !w.lua.has_edge_panel("minimap") && !hidden(w) {
         hold_layer(p.ctx, "widescan");
     }
     // Hidden by a mode or a Lua mod as by the event / map cases: not drawn, it asks for nothing, and its filter
     // takes no keys (they would go into a field that is not there, client/mod.rs's scan_typing keeping them from
     // the game). While it fades out it is still drawn, and takes them.
-    if w.lua.edge_panel("minimap").is_none() || hidden(w) || p.vis("widescan") <= 0.01 || p.hidden.contains(&"widescan")
-    {
+    if !w.lua.has_edge_panel("minimap") || hidden(w) || p.vis("widescan") <= 0.01 || p.hidden.contains(&"widescan") {
         w.scan_typing = false;
         return;
     }
@@ -1532,55 +1531,63 @@ fn widescan_panel(p: &mut Panels, w: &mut World) {
         m.scan_at.set(Some(now));
         super::super::scan_request(w);
     }
-    // Named as retail's list (FUN_101fb4b0): players by their own name, NPCs and monsters from the zone's NPC list by
-    // index & 0x3ff; nameless ones and ourselves left out.
-    let names: std::collections::HashMap<u16, &String> =
-        w.npc_names.iter().map(|(id, n)| ((id & 0x3ff) as u16, n)).collect();
-    let mut rows: Vec<(super::super::widescan::Entry, String)> = w
-        .scan
-        .entries
-        .values()
-        .filter(|e| !(e.kind == 0 && e.index == w.my_index))
-        .filter_map(|e| {
-            let name = if e.kind == 0 {
-                e.name.clone()
-            } else {
-                names.get(&(e.index & 0x3ff)).map(|n| n.to_string()).unwrap_or_default()
-            };
-            (!name.is_empty()).then(|| (e.clone(), name))
-        })
-        .collect();
-    rows.sort_by(|a, b| (a.0.dx as f32).hypot(a.0.dz as f32).total_cmp(&(b.0.dx as f32).hypot(b.0.dz as f32)));
-    // While a list streams in (state 1, or asked and not begun) the last complete one stays.
+    // While a list streams in (state 1, or asked and not begun) the last complete one stays. The rows are built again
+    // only when the results, the names or our index changed.
     let streaming = w.scan.list_state == 1 || (w.scan.busy && w.scan.list_state != 2);
-    if !streaming {
+    let built = (w.scan.generation, w.npc_names.len(), w.my_index);
+    if !streaming && m.scan_built.get() != Some(built) {
+        // Named as retail's list (FUN_101fb4b0): players by their own name, NPCs and monsters from the zone's NPC list
+        // by index & 0x3ff; nameless ones and ourselves left out.
+        let names: std::collections::HashMap<u16, &String> =
+            w.npc_names.iter().map(|(id, n)| ((id & 0x3ff) as u16, n)).collect();
+        let mut rows: Vec<(super::super::widescan::Entry, String)> = w
+            .scan
+            .entries
+            .values()
+            .filter(|e| !(e.kind == 0 && e.index == w.my_index))
+            .filter_map(|e| {
+                let name = if e.kind == 0 {
+                    e.name.clone()
+                } else {
+                    names.get(&(e.index & 0x3ff)).map(|n| n.to_string()).unwrap_or_default()
+                };
+                (!name.is_empty()).then(|| (e.clone(), name))
+            })
+            .collect();
+        rows.sort_by(|a, b| (a.0.dx as f32).hypot(a.0.dz as f32).total_cmp(&(b.0.dx as f32).hypot(b.0.dz as f32)));
         *m.scan_rows.borrow_mut() = rows;
+        m.scan_built.set(Some(built));
+    }
+    if !streaming {
         m.scan_origin.set(w.scan.origin);
     }
     let origin = m.scan_origin.get();
     let area = m.scan_area.get();
     let all = m.scan_rows.borrow().len();
-    // Narrowed: the rows within the area.
-    let rows: Vec<_> = m
-        .scan_rows
-        .borrow()
-        .iter()
-        .filter(|(e, _)| {
-            area.is_none_or(|(x, z, r)| (origin.0 + e.dx as f32 - x).hypot(origin.1 + e.dz as f32 - z) <= r)
-        })
-        .cloned()
-        .collect();
-    // The filter (ours): the kinds shown, and every word typed somewhere in the name.
+    // Narrowed: the rows within the area; then the filter (ours): the kinds shown, and every word typed somewhere in
+    // the name. Kept until any of them changes.
     let kinds = *p.scan_kinds | 1;
-    let words: Vec<String> = w.scan_find.to_lowercase().split_whitespace().map(str::to_string).collect();
-    let rows: Vec<_> = rows
-        .into_iter()
-        .filter(|(e, name)| {
-            let lower = name.to_lowercase();
-            kinds & kind_bit(e.kind) != 0 && words.iter().all(|wd| lower.contains(wd.as_str()))
-        })
-        .collect();
-    let filtered = area.is_some() || kinds & 6 != 6 || !words.is_empty();
+    let view_key: super::ScanViewKey = (m.scan_built.get(), origin, area, kinds, w.scan_find.clone());
+    let cached = m.scan_view.borrow().as_ref().filter(|(k, _)| *k == view_key).map(|(_, r)| r.clone());
+    let rows = cached.unwrap_or_else(|| {
+        let words: Vec<String> = w.scan_find.to_lowercase().split_whitespace().map(str::to_string).collect();
+        let rows: std::rc::Rc<Vec<_>> = std::rc::Rc::new(
+            m.scan_rows
+                .borrow()
+                .iter()
+                .filter(|(e, name)| {
+                    let near = area
+                        .is_none_or(|(x, z, r)| (origin.0 + e.dx as f32 - x).hypot(origin.1 + e.dz as f32 - z) <= r);
+                    let lower = name.to_lowercase();
+                    near && kinds & kind_bit(e.kind) != 0 && words.iter().all(|wd| lower.contains(wd.as_str()))
+                })
+                .cloned()
+                .collect(),
+        );
+        *m.scan_view.borrow_mut() = Some((view_key, rows.clone()));
+        rows
+    });
+    let filtered = area.is_some() || kinds & 6 != 6 || w.scan_find.split_whitespace().next().is_some();
     let (find, typing) = (w.scan_find.clone(), w.scan_typing);
     let (mut flip, mut field_click, mut clear) = (0u8, false, false);
     let tracked = w.scan.track.index;
@@ -1689,7 +1696,7 @@ fn widescan_panel(p: &mut Panels, w: &mut World) {
         egui::ScrollArea::vertical().max_height(room).min_scrolled_height(room).auto_shrink([false, !fixed]).show(
             ui,
             |ui| {
-                for (e, name) in &rows {
+                for (e, name) in rows.iter() {
                     let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::click());
                     let on = e.index == tracked;
                     if on || resp.hovered() {
