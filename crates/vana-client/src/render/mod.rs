@@ -570,6 +570,8 @@ pub struct ZoneRenderer {
     /// The sway deltas (globals binding 4), and each portrait's uniforms and globals (render_portrait).
     deltas_gpu: wgpu::Buffer,
     portrait_globals: Vec<(wgpu::Buffer, wgpu::BindGroup)>,
+    /// The mirrored characters' uniforms, one per reflecting plane a frame (render/reflect.rs).
+    mirror_globals: Vec<(wgpu::Buffer, wgpu::BindGroup)>,
     /// Door parts: slots by door id, their base matrices, their animations (CPU copy of the GPU table) and the tick
     /// they run against.
     pub door_parts: HashMap<u32, Vec<u32>>,
@@ -2731,6 +2733,7 @@ impl ZoneRenderer {
             areas,
             deltas_gpu: deltas,
             portrait_globals: Vec::new(),
+            mirror_globals: Vec::new(),
             door_parts: geo.door_parts.clone(),
             door_bases: geo.door_bases.clone(),
             parts: vec![PartGpu::default(); PARTS],
@@ -4479,10 +4482,10 @@ impl ZoneRenderer {
         depth: &wgpu::TextureView,
         camera: &Camera,
         aspect: f32,
+        actors: &[&ActorGpu],
     ) {
-        if self.reflections.is_none() {
-            return;
-        }
+        let Some(mut r) = self.reflections.take() else { return };
+        let mirrored = self.mirror_actors(gpu, encoder, &mut r, color_tex, camera, aspect, actors);
         let (u, _) = self.frame_uniforms(camera, aspect);
         let params = reflect::Params {
             view_proj: u.view_proj,
@@ -4494,11 +4497,126 @@ impl ZoneRenderer {
             fog: [u.fog[0], u.fog[1], NEAR, FAR],
             sky_colors: u.sky_colors,
             sky_stops: u.sky_stops,
+            mirror_heights: [reflect::NO_PLANE; 4],
         };
-        let encode_gamma = self.encode_gamma;
-        if let Some(r) = &mut self.reflections {
-            r.draw(gpu, encoder, color, color_tex, depth, params, encode_gamma);
+        r.draw(gpu, encoder, color, color_tex, depth, params, self.encode_gamma, mirrored);
+        self.reflections = Some(r);
+    }
+
+    /// Characters mirrored in the reflecting plane under their feet (ours, render/reflect.rs): those within
+    /// reflect::MIRROR_REACH of the eye over a plane (`PlaneGrid::under`, one cell lookup each), at most
+    /// reflect::MIRROR_PLANES planes a frame taken nearest character first, each plane's drawn again through its
+    /// mirrored camera into its own half-size layer, which only surfaces at that height read. Fading characters and
+    /// shine overlays are left out (a solid reflection of a fading character would show more than the character).
+    /// Linear apart from sorting the few characters in reach; nothing is drawn when none stands over a plane. The
+    /// layers' heights when any holds this frame's.
+    #[allow(clippy::too_many_arguments)]
+    fn mirror_actors(
+        &mut self,
+        gpu: &Gpu,
+        encoder: &mut wgpu::CommandEncoder,
+        r: &mut reflect::Reflections,
+        color_tex: Option<&wgpu::Texture>,
+        camera: &Camera,
+        aspect: f32,
+        actors: &[&ActorGpu],
+    ) -> Option<[f32; 4]> {
+        let (Some(t), Some((_, pose_group, _))) = (color_tex, &self.pose_gpu) else { return None };
+        let done = gpu.mips_done();
+        let reach = reflect::MIRROR_REACH * reflect::MIRROR_REACH;
+        let mut near: Vec<(f32, &ActorGpu)> = actors
+            .iter()
+            .copied()
+            .filter(|a| {
+                a.mips <= done
+                    && a.refract.is_none()
+                    && a.alpha >= 1.0
+                    && a.skin.as_ref().is_some_and(|s| s.frame == self.pose_frame)
+            })
+            .map(|a| (a.origin.distance_squared(camera.eye), a))
+            .filter(|(d, _)| *d < reach)
+            .collect();
+        near.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+        let mut planes: Vec<(f32, Vec<&ActorGpu>)> = Vec::new();
+        for (_, a) in near {
+            let Some(h) = r.planes.under(a.origin, r.floors) else { continue };
+            if let Some(p) = planes.iter_mut().find(|p| (p.0 - h).abs() < 0.1) {
+                p.1.push(a);
+            } else if planes.len() < reflect::MIRROR_PLANES {
+                planes.push((h, vec![a]));
+            }
         }
+        if planes.is_empty() {
+            return None;
+        }
+        while self.mirror_globals.len() < planes.len() {
+            let buf = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("mirror uniforms"),
+                size: std::mem::size_of::<Uniforms>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("mirror globals"),
+                layout: &self.globals_layout,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 1, resource: self.lights.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 2, resource: self.areas.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 3, resource: self.parts_gpu.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 4, resource: self.deltas_gpu.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 5, resource: self.lamp_shadow.uniform.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::Sampler(&self.clamp_sampler) },
+                ],
+            });
+            self.mirror_globals.push((buf, group));
+        }
+        let (mut u, _) = self.frame_uniforms(camera, aspect);
+        let vp = Mat4::from_cols_array_2d(&u.view_proj);
+        for (k, (h, _)) in planes.iter().enumerate() {
+            u.view_proj = (vp * reflect::mirror(*h)).to_cols_array_2d();
+            gpu.queue.put(&self.mirror_globals[k].0, 0, bytemuck::bytes_of(&u));
+        }
+        let (colours, depth) = r.layer(gpu, [t.width(), t.height()], self.color_format);
+        let mut heights = [reflect::NO_PLANE; 4];
+        for (k, (h, list)) in planes.iter().enumerate() {
+            heights[k] = *h;
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("mirrored actors"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &colours[k],
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth,
+                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Discard }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.skin_pipeline);
+            pass.set_bind_group(0, &self.mirror_globals[k].1, &[]);
+            for a in list {
+                let Some(skin) = a.skin.as_ref() else { continue };
+                pass.set_bind_group(2, pose_group, &[skin.offset]);
+                pass.set_vertex_buffer(0, skin.vertices.slice(..));
+                for (tex, range, wep) in &a.draws {
+                    if *wep != NO_WEP && a.hidden_weps & (1 << wep) != 0 {
+                        continue;
+                    }
+                    pass.set_bind_group(1, &a.textures[*tex], &[]);
+                    pass.draw(range.clone(), 0..1);
+                }
+            }
+        }
+        Some(heights)
     }
 
     /// Real character shadows (ours) on or off with a `size` map; made at the first use or a size change. render draws

@@ -12,11 +12,38 @@ struct Params {
     fog: vec4<f32>,
     sky_colors: array<vec4<f32>, 8>,
     sky_stops: array<vec4<f32>, 2>,
+    // The height each mirrored-characters layer belongs to (1e9 for an empty one).
+    mirror_heights: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> u: Params;
 @group(0) @binding(1) var depth: texture_depth_2d;
 @group(0) @binding(2) var scene: texture_2d<f32>;
+// The mirrored characters (render/reflect.rs, ZoneRenderer::mirror_actors) at half size, transparent elsewhere: drawn
+// through the camera mirrored in the plane under their feet, so on a reflecting surface they sit where their
+// reflection belongs, front and all (the screen-space march only has the side the camera sees).
+// One layer per plane: a surface reads only the layer of its own height.
+@group(0) @binding(3) var layer: texture_2d_array<f32>;
+@group(0) @binding(4) var layer_samp: sampler;
+
+// A surface takes the layer whose height is nearest its own, within this much (world units).
+const PLANE_MATCH: f32 = 0.3;
+
+// The mirrored characters at a screen point (`size` the scene's) on a surface at height `y`, the water's ripples
+// bending it a little; nothing when no layer belongs to that height.
+fn mirrored(px: vec2<f32>, size: vec2<f32>, bend: vec2<f32>, y: f32) -> vec4<f32> {
+    let d = abs(u.mirror_heights - vec4<f32>(y));
+    var k = 0;
+    for (var j = 1; j < 4; j++) {
+        if (d[j] < d[k]) {
+            k = j;
+        }
+    }
+    if (d[k] > PLANE_MATCH) {
+        return vec4<f32>(0.0);
+    }
+    return textureSampleLevel(layer, layer_samp, px / size + bend, k, 0.0);
+}
 
 // The march: at most this many screen steps (no loop runs longer on a busy screen), then a few halvings on a hit.
 const STEPS: i32 = 32;
@@ -158,10 +185,18 @@ fn fs(i: VOut) -> @location(0) vec4<f32> {
             let edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
             from_scene = smoothstep(0.0, 0.08, edge) * (1.0 - smoothstep(0.7, 1.0, b / RAY));
             // The copy holds target values; the sky is gamma-space: bring the sky to the target first.
-            return finish(mix(to_target(colour), hit_rgb, from_scene), n, v, dist) * vec4<f32>(1.0, 1.0, 1.0, shore);
+            return with_character(finish(mix(to_target(colour), hit_rgb, from_scene), n, v, dist), i, n, size, shore);
         }
     }
-    return finish(to_target(colour), n, v, dist) * vec4<f32>(1.0, 1.0, 1.0, shore);
+    return with_character(finish(to_target(colour), n, v, dist), i, n, size, shore);
+}
+
+// The water's colour and weight with a mirrored character over it: the character at least as strong as a calm
+// reflection seen from above (the lift plus a little), bent by the ripples; then the shoreline fade.
+fn with_character(c: vec4<f32>, i: VOut, n: vec3<f32>, size: vec2<f32>, shore: f32) -> vec4<f32> {
+    let ch = mirrored(i.pos.xy, size, n.xz * 0.04, i.world.y);
+    let w = mix(c.a, max(c.a, LIFT + 0.25), ch.a);
+    return vec4<f32>(mix(c.rgb, ch.rgb, ch.a), w * shore);
 }
 
 // The first scene point the reflected ray from `p` along `r` meets on screen within `reach`, as its distance along the
@@ -233,7 +268,7 @@ fn march(p: vec3<f32>, r: vec3<f32>, reach: f32, size: vec2<f32>, j: f32) -> f32
 fn floor_reflection(i: VOut, d: f32, size: vec2<f32>) -> vec4<f32> {
     let w_scene = linear(d);
     let w_floor = linear(i.pos.z);
-    if (w_floor > w_scene + 0.05 + 0.003 * w_scene || u.info.w < 0.5) {
+    if (w_floor > w_scene + 0.05 + 0.003 * w_scene) {
         discard;
     }
     let to_p = i.world - u.eye.xyz;
@@ -244,18 +279,30 @@ fn floor_reflection(i: VOut, d: f32, size: vec2<f32>) -> vec4<f32> {
     }
     let n = vec3<f32>(0.0, -1.0, 0.0);
     let r = normalize(reflect(v, n));
-    let b = march(i.world, r, FLOOR_RAY, size, jitter(i.pos.xy));
-    if (b < 0.0) {
+    // The march's hit, faded with the ray's length and at the screen's edges (none without the frame copy).
+    var rgb = vec3<f32>(0.0);
+    var found = 0.0;
+    if (u.info.w > 0.5) {
+        let b = march(i.world, r, FLOOR_RAY, size, jitter(i.pos.xy));
+        if (b > 0.0) {
+            let uv = to_uv(project(i.world + r * b));
+            let texel = vec2<i32>(clamp(uv * size, vec2<f32>(0.0), size - 1.0));
+            rgb = textureLoad(scene, texel, 0).rgb;
+            let edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
+            found = (1.0 - smoothstep(0.0, FLOOR_RAY, b)) * smoothstep(0.0, 0.08, edge);
+        }
+    }
+    // A mirrored character over it.
+    let ch = mirrored(i.pos.xy, size, vec2<f32>(0.0), i.world.y);
+    rgb = mix(rgb, ch.rgb, ch.a);
+    found = max(found, ch.a);
+    if (found <= 0.0) {
         discard;
     }
-    let uv = to_uv(project(i.world + r * b));
-    let texel = vec2<i32>(clamp(uv * size, vec2<f32>(0.0), size - 1.0));
-    let rgb = textureLoad(scene, texel, 0).rgb;
-    let edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
     let cos_i = clamp(dot(n, -v), 0.0, 1.0);
     let fresnel = F0 + (1.0 - F0) * pow(1.0 - cos_i, 5.0);
     let fog = clamp((u.fog.y - dist) / max(u.fog.y - u.fog.x, 1e-3), 0.0, 1.0);
-    let w = i.floor * mix(0.7, 1.0, fresnel) * (1.0 - smoothstep(0.0, FLOOR_RAY, b)) * smoothstep(0.0, 0.08, edge) * fog;
+    let w = i.floor * mix(0.7, 1.0, fresnel) * found * fog;
     return vec4<f32>(rgb, w);
 }
 
