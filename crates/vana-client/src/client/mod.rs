@@ -6840,13 +6840,22 @@ fn floor_list(zone: u32) -> Vec<(String, f32)> {
     crate::render::reflect::floor_textures(zone).iter().map(|(n, w)| (n.to_string(), *w)).collect()
 }
 
-/// Reads and builds a zone (on a loader thread): `bump` config 0017's bump maps, `need_global` DAT 0's effects too.
+/// Surface Detail's pack slopes for the scene's textures (surface.rs), from the enabled mods, when `on`.
+fn surface_pack(scene: &mut zone::ZoneScene, map_no: u32, on: bool) {
+    if on {
+        let names: Vec<String> = scene.textures.iter().map(|t| t.name.clone()).collect();
+        scene.surface = crate::surface::load(map_no, &names, &crate::config::enabled_mod_dirs());
+    }
+}
+
+/// Reads and builds a zone (on a loader thread): `bump` config 0017's bump maps, `detail` Surface Detail's pack,
+/// `need_global` DAT 0's effects too.
 fn load_zone_data(
     index: &DatIndex,
     keys: &zone::Keys,
     zone_id: u16,
     map_no: u16,
-    bump: bool,
+    (bump, detail): (bool, bool),
     need_global: bool,
 ) -> Result<ZoneData> {
     let file = index.read(crate::dat::zone::file_id(map_no as u32))?;
@@ -6856,6 +6865,7 @@ fn load_zone_data(
         scene.bumps =
             crate::dat::bump::parse(&index.read(crate::dat::bump::file_id(map_no as u32)).unwrap_or_default());
     }
+    surface_pack(&mut scene, map_no as u32, detail);
     let ground = ground::Ground::build(&scene);
     let weather =
         crate::dat::weather::ZoneWeather::parse(&file).map_err(|e| log::warn!("zone {zone_id} weather: {e:#}")).ok();
@@ -10569,6 +10579,7 @@ impl App {
         w.area.loading = true;
         // A background load like the select scene's: not through spawn, which marks the app busy.
         let bump = self.cfg.tool("0017") != 0 && area != 182;
+        let detail = self.cfg.surface_detail > 0;
         match self.game_data() {
             Ok((index, keys)) => {
                 let tx = self.tasks_tx.clone();
@@ -10584,6 +10595,7 @@ impl App {
                                     &index.read(crate::dat::bump::file_id(area as u32)).unwrap_or_default(),
                                 );
                             }
+                            surface_pack(&mut scene, area as u32, detail);
                             let ground = ground::Ground::build(&scene);
                             let weather = crate::dat::weather::ZoneWeather::parse(&file)
                                 .map_err(|e| log::warn!("area {area} weather: {e:#}"))
@@ -12052,12 +12064,13 @@ impl App {
         if let Some((zone_id, map_no)) = want {
             let need_global = matches!(&self.phase, Phase::World(w) if !w.effects.has_global());
             let bump = self.cfg.tool("0017") != 0 && map_no != 182;
+            let detail = self.cfg.surface_detail > 0;
             if let Ok((index, keys)) = self.game_data() {
                 self.spawn(move || {
                     Task::ZonePreloaded(
                         zone_id,
                         map_no,
-                        load_zone_data(&index, &keys, zone_id, map_no, bump, need_global),
+                        load_zone_data(&index, &keys, zone_id, map_no, (bump, detail), need_global),
                     )
                 });
             }
@@ -12070,9 +12083,14 @@ impl App {
             };
             // Config 0017 (FUN_10171360 / FUN_101720a0): the zone's bump maps, never in zone 182 (Walk of Echoes).
             let bump = self.cfg.tool("0017") != 0 && map_no != 182;
+            let detail = self.cfg.surface_detail > 0;
             match self.game_data() {
                 Ok((index, keys)) => self.spawn(move || {
-                    Task::ZoneLoaded(zone_id, map_no, load_zone_data(&index, &keys, zone_id, map_no, bump, need_global))
+                    Task::ZoneLoaded(
+                        zone_id,
+                        map_no,
+                        load_zone_data(&index, &keys, zone_id, map_no, (bump, detail), need_global),
+                    )
                 }),
                 Err(e) => self.status = format!("{e:#}"),
             }

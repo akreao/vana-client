@@ -821,6 +821,8 @@ pub struct ZoneScene {
     /// Polished floors that reflect (render/reflect.rs floor_textures): texture name past its 8-byte prefix, strength.
     /// Put in by the loader.
     pub floors: Vec<(String, f32)>,
+    /// Surface Detail's pack slopes by texture name (surface.rs), put in by the loader when the setting is on.
+    pub surface: std::collections::HashMap<String, crate::surface::Slopes>,
 }
 
 impl ZoneScene {
@@ -896,6 +898,7 @@ pub fn load_scene(keys: &Keys, file: &[u8]) -> Result<ZoneScene> {
         sway: sway_curves(file),
         bumps: Vec::new(),
         floors: Vec::new(),
+        surface: Default::default(),
     };
     let list: Vec<Chunk> = chunks(file)?;
     for c in list {

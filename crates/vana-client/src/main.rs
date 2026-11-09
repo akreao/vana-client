@@ -47,6 +47,7 @@ mod net;
 mod render;
 mod secret;
 mod sounddump;
+mod surface;
 mod texpack;
 mod uishot;
 mod voice;
@@ -306,6 +307,18 @@ enum Cmd {
         /// Image keys (one per line, first column) whose files are rebuilt even when already built.
         #[arg(long)]
         redo: Option<PathBuf>,
+    },
+    /// Surface Detail's height pack (surface.rs): every zone texture, read through the enabled mods, as a height PNG
+    /// under `out`/surface/<zone>/. Install `out` as a mod.
+    TexHeights {
+        #[arg(long)]
+        out: PathBuf,
+        /// Only these zones (comma separated).
+        #[arg(long, value_delimiter = ',')]
+        zones: Option<Vec<u32>>,
+        /// Rewrite PNGs that already exist (hand edits are kept otherwise).
+        #[arg(long)]
+        redo: bool,
     },
     /// Install a pack archive into `root` as Settings > Mods does, to check a pack before publishing it.
     ModInstall {
@@ -1575,6 +1588,17 @@ fn main() -> Result<()> {
                 scene.bumps = dat::bump::parse(&index.read(dat::bump::file_id(zone)).unwrap_or_default());
                 println!("{} bump maps", scene.bumps.len());
             }
+            // FFXI_SURFACE_DETAIL=1 or 2: Settings' Surface Detail (ours), with the enabled mods' height pack.
+            let detail: u32 = std::env::var("FFXI_SURFACE_DETAIL").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+            if detail > 0 {
+                let names: Vec<String> = scene.textures.iter().map(|t| t.name.clone()).collect();
+                // FFXI_SURFACE_PACK: a pack folder (tex-heights' `out`) tried before the enabled mods.
+                let mut mods: Vec<PathBuf> =
+                    std::env::var_os("FFXI_SURFACE_PACK").map(PathBuf::from).into_iter().collect();
+                mods.extend(config::enabled_mod_dirs());
+                scene.surface = surface::load(zone, &names, &mods);
+                println!("{} surface detail pack textures", scene.surface.len());
+            }
             let lighting = match hour {
                 Some(h) => {
                     let w = dat::weather::ZoneWeather::parse(&file)?;
@@ -1632,6 +1656,7 @@ fn main() -> Result<()> {
                 r.bump_mode = bump;
                 // FFXI_SMOOTH_LIGHTS: Settings' Light Shading Smooth (ours) in place of retail's per-vertex lights.
                 r.smooth_lights = std::env::var_os("FFXI_SMOOTH_LIGHTS").is_some();
+                r.surface_detail = detail.min(2);
                 if let Some(v) = voyage_v {
                     r.voyage = v;
                 }
@@ -2179,6 +2204,7 @@ fn main() -> Result<()> {
             Ok(())
         }
         Cmd::TexPack { manifest, upscaled, out, redo } => texpack::pack(&manifest, &upscaled, &out, redo.as_deref()),
+        Cmd::TexHeights { out, zones, redo } => surface::pack(&out, zones.as_deref(), redo),
         Cmd::TexSlim { pack, out } => texpack::slim(&pack, &out),
         Cmd::ModInstall { archive, root } => {
             let pack = modpack::pack_of(&archive)?;
