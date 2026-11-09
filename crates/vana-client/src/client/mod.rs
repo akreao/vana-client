@@ -5412,6 +5412,7 @@ fn place_mogdoor(w: &mut World) {
     }
     let Some(r) = w.sub.regions.iter().find(|r| r.name == myroom::DOOR_RECT) else { return };
     let pos = Vec3::from(r.pos);
+    w.entity_index.insert(myroom::DOOR_INDEX, myroom::DOOR_ID);
     w.entities.insert(
         myroom::DOOR_ID,
         Entity {
@@ -7016,6 +7017,9 @@ struct World {
     /// FUN_100a7b80's +0x5b1: ticks left of the forced forward quarter after a locked-on left / right flip.
     lock_flip: f32,
     entities: HashMap<u32, Entity>,
+    /// Each entity's id by its target index, kept with `entities` (where they come and go): lookups by index were a
+    /// scan of every entity (World::entity_at).
+    entity_index: HashMap<u16, u32>,
     /// Actors drawn on screen this frame (actor +0xb2 bit 0 clear, FUN_100c63d0 / FUN_100cbde0): the target keys
     /// only take these.
     visible: HashSet<u32>,
@@ -7926,6 +7930,21 @@ enum Confirm {
 }
 
 impl World {
+    /// The entity with target index `index`, and its id.
+    fn entity_at(&self, index: u16) -> Option<(u32, &Entity)> {
+        let id = *self.entity_index.get(&index)?;
+        self.entities.get(&id).filter(|e| e.index == index).map(|e| (id, e))
+    }
+
+    /// Entity `id` gone: its index goes with it (unless a newer one holds it).
+    fn forget_entity(&mut self, id: u32) {
+        if let Some(e) = self.entities.remove(&id)
+            && self.entity_index.get(&e.index) == Some(&id)
+        {
+            self.entity_index.remove(&e.index);
+        }
+    }
+
     /// We stand in the zone and scene that are loaded (a Mog House keeps the zone number but loads another scene, so
     /// the old ground must not settle or move us meanwhile).
     fn in_scene(&self) -> bool {
@@ -9484,6 +9503,7 @@ impl App {
                             my_strafe: 0,
                             lock_flip: 0.0,
                             entities: HashMap::new(),
+                            entity_index: HashMap::new(),
                             visible: HashSet::new(),
                             zone_lines: Vec::new(),
                             lifts: Default::default(),
@@ -10845,6 +10865,7 @@ impl App {
                     timers::on_zone(world);
                     seacom::zone_in(world);
                     world.entities.clear();
+                    world.entity_index.clear();
                     world.new_challenge = false;
                     // FUN_10093b10: the 0x077 list goes with the zone.
                     world.vis_list.clear();
@@ -10901,7 +10922,7 @@ impl App {
                     if e.despawn {
                         // 0x1009a04d: an event participant stays until the event ends.
                         if !event::holds(world, e.id) {
-                            world.entities.remove(&e.id);
+                            world.forget_entity(e.id);
                             world.actors.remove(&e.id);
                             world.rests.remove(&e.id);
                             world.effects.forget_actor(e.id);
@@ -10931,6 +10952,10 @@ impl App {
                     let rising = e.hpp.is_some() && chair::rise(world, e.id, e.motion.status);
                     let held =
                         rising || combat::held(world, e.id) || fishrod::walking_hold(world, e.id, e.motion.status);
+                    // A new one is filed under its index (an entity's index never changes).
+                    if !world.entities.contains_key(&e.id) {
+                        world.entity_index.insert(e.index, e.id);
+                    }
                     let entry = world.entities.entry(e.id).or_insert(Entity {
                         name: String::new(),
                         pos: Vec3::ZERO,
@@ -11425,7 +11450,7 @@ impl App {
                 // LAB_100a2760: the actor's jump flag (FUN_1008b410 -> FUN_100c63d0: 32 ticks of "jmp"). LSB also echoes it
                 // to the jumper; retail's toggle would answer that with another 0x11D, so ours ignores our own (inferred).
                 NetEvent::Jump(index) if index != world.my_index => {
-                    if let Some(id) = world.entities.iter().find(|(_, e)| e.index == index).map(|(id, _)| *id) {
+                    if let Some(id) = world.entity_at(index).map(|(id, _)| id) {
                         start_jump(world, id);
                     }
                 }
@@ -11864,7 +11889,7 @@ impl App {
         looks.extend(std::mem::take(&mut world.event_looks));
         looks.splice(0..0, std::mem::take(&mut world.held_looks));
         // The mods' looks changed (render.look): every player look in sight again, before the newer ones.
-        let (models_ver, models) = world.lua.models();
+        let models_ver = world.lua.models_ver();
         if models_ver != world.models_ver {
             world.models_ver = models_ver;
             let again: Vec<(u32, Source)> = world
@@ -11886,7 +11911,7 @@ impl App {
             let source = match source {
                 Source::Pc(l) => {
                     world.look_base.insert(id, l);
-                    Source::Pc(models.get(&id).map_or(l, |m| m.applied(l)))
+                    Source::Pc(world.lua.model(id).map_or(l, |m| m.applied(l)))
                 }
                 other => {
                     world.look_base.remove(&id);
@@ -12420,7 +12445,7 @@ impl App {
         actmotion::update(world, dt * world.opts.anim_rate);
         // FUN_10096640: the lock goes with its target; inferred, after 10 s (a talk the server never answers).
         // FUN_10096640 (0x10096bd7): the talked-to index is dropped once that actor is gone.
-        if world.talked_index != 0 && !world.entities.values().any(|e| e.index == world.talked_index) {
+        if world.talked_index != 0 && world.entity_at(world.talked_index).is_none() {
             world.talked_index = 0;
         }
         if !event::active(world)
@@ -13956,14 +13981,8 @@ impl App {
             if b2 == b0 {
                 (b2, b3) = (b2 - 1.0, b3 + 1.0);
             }
-            let mut corners = Vec::with_capacity(8);
-            for x in [b2, b3] {
-                for y in [b0, b1] {
-                    for z in [b4, b5] {
-                        corners.push(Vec3::new(x, y, z));
-                    }
-                }
-            }
+            let corners: [Vec3; 8] =
+                std::array::from_fn(|i| Vec3::new([b2, b3][i >> 2], [b0, b1][(i >> 1) & 1], [b4, b5][i & 1]));
             if let Some((lo, hi, far)) = rect(&corners, vp * actor_matrix(place.pos, place.forward))
                 && inside(lo, hi)
             {
@@ -14004,22 +14023,23 @@ impl App {
         }
         hits.sort_by(|x, y| x.0.total_cmp(&y.0));
         let in_rect: HashSet<u32> = hits.iter().map(|h| h.1).collect();
-        let picked =
-            hits.iter().find(|&&(_, id, skinned)| !skinned || Self::fine_hit(world, id, view, proj, ndc)).map(|h| h.1);
+        let picked = hits
+            .iter()
+            .find(|&&(_, id, skinned)| !skinned || Self::fine_hit(world, id, my_dir, view, proj, ndc))
+            .map(|h| h.1);
         (picked, in_rect)
     }
 
     /// FUN_100cff40: circles at each geometry bone, its parent and the midpoint (radius 0.4 x the segment on screen),
     /// else around attach points 1 and 3 (world radius from points 13 / 15). From the read-back points; before any
     /// came back the rect alone decides (inferred).
-    fn fine_hit(world: &World, id: u32, view: glam::Mat4, proj: glam::Mat4, ndc: glam::Vec2) -> bool {
+    fn fine_hit(world: &World, id: u32, my_dir: u8, view: glam::Mat4, proj: glam::Mat4, ndc: glam::Vec2) -> bool {
         let Some(a) = world.actors.get(&id) else { return false };
         let Some(ch) = &a.character else { return false };
         if ch.skeleton.bones.len() <= 2 {
             return true;
         }
         let Some(pts) = world.pick_points.get(&id) else { return true };
-        let my_dir = world.net.me.lock().map(|m| m.dir).unwrap_or(0);
         let Some(root) = actor_place(world, id, my_dir).map(|p| p.pos) else { return false };
         let vp = proj * view;
         let screen = |p: Vec3| {
@@ -17025,9 +17045,7 @@ impl App {
                 .collect();
             // FUN_100d5b10: we look at our target, everyone else at its server face target, only in the statuses
             // that allow it (FUN_10095790), never at doors; the target's point 3, 1.2 higher when it is hidden.
-            let mut by_index: HashMap<u16, u32> =
-                w.entities.iter().filter(|(_, e)| e.index != 0).map(|(id, e)| (e.index, *id)).collect();
-            by_index.insert(w.my_index, w.my_id);
+            let by_index = |i: u16| if i == w.my_index { Some(w.my_id) } else { w.entity_at(i).map(|(id, _)| id) };
             let fx_posed = w.effects.posed_actors();
             let face_points: HashMap<u32, Vec3> = w
                 .actors
@@ -17040,7 +17058,7 @@ impl App {
                     let t = if *id == w.my_id {
                         w.target?
                     } else {
-                        *by_index.get(&w.entities.get(id).map(|e| e.face).filter(|f| *f != 0)?)?
+                        by_index(w.entities.get(id).map(|e| e.face).filter(|f| *f != 0)?)?
                     };
                     if t == *id || t == myroom::DOOR_ID || w.entities.get(&t).is_some_and(|e| e.door != 0) {
                         return None;
@@ -17074,8 +17092,6 @@ impl App {
             }
             doors::moves(w, &gfx.gpu);
             lifts::moves(w, &gfx.gpu);
-            // Looks Lua mods set (render.entity).
-            let looks = w.lua.looks();
             // Mog House furniture loaded for this scene goes up.
             if w.renderer.is_some()
                 && let Some(l) = w.furniture.ready.take()
@@ -17550,10 +17566,11 @@ impl App {
                     a.once = once;
                     a.ticks += dt * 60.0 * rate;
                     // A leader frame in (0, ours] becomes ours.
-                    if let (Some(&lf), Some(speed)) = (
-                        leads.get(id),
-                        actmotion::find(&extra, &ch, &a.motion).first().map(|x| x.speed * 0.5).filter(|s| *s > 0.0),
-                    ) && lf > 0.0
+                    // The leader first: the chunk search runs only for actors that follow one.
+                    if let Some(&lf) = leads.get(id)
+                        && let Some(speed) =
+                            actmotion::find(&extra, &ch, &a.motion).first().map(|x| x.speed * 0.5).filter(|s| *s > 0.0)
+                        && lf > 0.0
                         && lf <= a.ticks * speed
                     {
                         a.ticks = lf / speed;
@@ -17726,8 +17743,7 @@ impl App {
                         a.anim_held =
                             Some(AnimHeld { to: addr(&anims), from: addr(&from), t, overlay: ov_addr, look: None });
                     }
-                    a.scale = a.event_scale.unwrap_or_else(|| ch.scale(size))
-                        * looks.get(id).and_then(|l| l.scale).unwrap_or(1.0);
+                    a.scale = a.event_scale.unwrap_or_else(|| ch.scale(size)) * w.lua.look_scale(*id);
                     // The rest pose's mesh top, once (stub models, plates without attach points).
                     if a.top_key.is_empty() {
                         a.rest = crate::dat::character::pose(&ch.skeleton, &[]);
@@ -17909,7 +17925,7 @@ impl App {
                     let drawn = !a.vanished()
                         && !hidden.contains(id)
                         && !(*id == w.my_id && w.camst.self_alpha <= 0.0)
-                        && !looks.get(id).is_some_and(|l| l.hidden);
+                        && !w.lua.look_hidden(*id);
                     let bx = ch.skeleton.boxes.get(box_index(status)).or(ch.skeleton.boxes.first()).copied();
                     // FUN_100c63d0: past the draw distance by its box's farthest corner, neither drawn nor a target.
                     if r.clip[0] > 0.0
@@ -17962,9 +17978,9 @@ impl App {
                     g.alpha = (k * if *id == w.my_id { w.camst.self_alpha } else { 1.0 }).min(1.0);
                     g.shadow_off = a.shadow_off;
                     g.tint = a.rgb.map(|c| c.max(0.0) / actmotion::OPAQUE);
-                    if let Some(l) = looks.get(id) {
-                        g.alpha = g.alpha.min(l.alpha.unwrap_or(1.0));
-                        let t = l.tint.unwrap_or([1.0; 3]);
+                    if let Some((alpha, tint)) = w.lua.look_shade(*id) {
+                        g.alpha = g.alpha.min(alpha.unwrap_or(1.0));
+                        let t = tint.unwrap_or([1.0; 3]);
                         g.tint = [g.tint[0] * t[0], g.tint[1] * t[1], g.tint[2] * t[2]];
                     }
                     g.hidden_weps = wepfx::mask(&a.wep_hide);

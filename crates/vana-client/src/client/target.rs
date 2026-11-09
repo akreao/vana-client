@@ -384,7 +384,7 @@ pub fn party_hand(w: &World) -> Option<(usize, u32, Option<u32>)> {
                 0 => Some(w.my_id),
                 // FUN_102033c0: an away member keeps the base tint and flashes nothing.
                 i => match slots.here(i, w.pos_zone) {
-                    Some(m) => w.entities.iter().find(|(_, e)| e.index == m.index).map(|(id, _)| *id),
+                    Some(m) => w.entity_at(m.index).map(|(id, _)| id),
                     None => return slots.slots.get(i).cloned().flatten().map(|_| (pc.index, 0xa040_40d0, None)),
                 },
             };
@@ -761,10 +761,10 @@ pub fn lock(w: &mut World, on: bool, why: &str) {
 fn invalid(w: &World, t: u32) -> Option<bool> {
     // Ourselves: only an event hiding us drops it (distance 0, never attackable).
     if t == w.my_id {
-        return super::event::hidden(w).contains(&t).then_some(false);
+        return super::event::hides(w, t).then_some(false);
     }
     let Some(e) = w.entities.get(&t) else { return Some(false) };
-    let hidden = e.flags & 2 != 0 || super::event::hidden(w).contains(&t);
+    let hidden = e.flags & 2 != 0 || super::event::hides(w, t);
     drop_rule(e.flags, e.untargetable, e.motion.status, (e.pos - w.pos).length(), hidden)
 }
 
@@ -1102,7 +1102,7 @@ pub fn slot_target(w: &World, slot: usize) -> Option<u32> {
     if m.id == w.my_id {
         return Some(m.id);
     }
-    let id = w.entities.iter().find(|(_, e)| e.index == m.index).map(|(id, _)| *id)?;
+    let id = w.entity_at(m.index)?.0;
     w.actors.get(&id).is_some_and(|a| a.character.is_some()).then_some(id)
 }
 
