@@ -3807,6 +3807,8 @@ fn fx_shot(
                     zr: &mut render::ZoneRenderer| {
         let eg = eg.get_or_insert_with(|| render::effects::EffectsGpu::new(gpu, wgpu::TextureFormat::Rgba8Unorm));
         eg.set_lights(&zr.lights);
+        // Lit elements (op-1 flag 16), as the client sets them with no gamma boost.
+        eg.set_light(l.map(|l| (l.dir, l.diffuse, l.ambient)));
         fx.reg.light_keys = zr.light_keys.clone();
         let view = cam.view();
         let mut view_rot = view;
