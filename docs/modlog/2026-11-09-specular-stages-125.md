@@ -18,15 +18,17 @@ L11734). Addresses are Steven's FFXiMain.dll.
   leaves stage 0 NONE (0x1017c5cc), stage 1 as the Mip Mapping setting (0000, 0x1017bac8 / 0x1017bb1d) and, with
   zone+0x3949c == 1, stage 2 the same (0x1017bb43); the actor draw sets stages 0 and 1 to the setting (0x1002bec3,
   0x1002bf29 / 0x1002bf40) and restores nothing. Inside the effects only CMoDist's copy (TSS 0x10353028, FUN_100426f0,
-  CMoDist and VuDist) sets stage 0 NONE. So stage 0 and the no-groups specular stage (stage 1) follow the setting
+  CMoDist and VuDist with particles) sets stage 0 NONE. So stage 0 and the no-groups specular stage (stage 1) follow the setting
   until a CMoDist copy (then stage 0 NONE for the rest of the frame); the grouped specular stage (stage 2) mips only
   with the setting and bump mapping (config 0017 with shaders, zone 182 never).
 - Stage 2: TSS 0x103529c8 (grouped) sets stage 2 MODULATEALPHA_ADDCOLOR(CURRENT, TEXTURE); the draw's cleanup resets
   only stage 0's ops, RESULTARG and the specular stage's TEXCOORDINDEX / TRANSFORMFLAGS, so stage 2 stays on with the
   specular texture bound (the image, or the shared tint copy) and reads uv set 0. Blocks that disable stage 2 in the
-  effect draws: D3a (0x10351ec8 / 0x10351fa0), D3b (0x10352258), grouped plain D3m (0x103524a8 / 0x103523d0, and
-  0x10352590 for 'I'), DamValue (0x10352d30), VuDist (0x10353260); the scenery and actor passes disable it every
-  frame. Two draws enable stage 1 without setting stage 2 and so add what is left there: the no-groups specular path
+  effect draws: D3a (0x10351ec8 / 0x10351fa0), D3b and DistMorph through it (0x10352258), grouped plain D3m and
+  DistModel's grouped mesh through FUN_10040670 (0x103524a8 / 0x103523d0 / 0x10352740, and 0x10352590 for 'I'),
+  DamValue (0x10352d30); the scenery and actor passes disable it every frame. VuDist (FUN_10043110) only runs
+  CMoDist's draw per particle (FUN_10063c80 -> 0x100430d0 -> FUN_100426f0); 0x10353260 sits in FUN_100431b0, which
+  nothing references. A VuDist with no particles changes nothing. Two draws enable stage 1 without setting stage 2 and so add what is left there: the no-groups specular path
   (TSS 0x103528f0: rgb + a0 x texel) and the lens flare (FUN_1003ebf0 under FUN_100548d0, TSS 0x103520a8: rgb + a x
   texel). A cube left there adds black.
 - The lens flare's own stages (TSS 0x103520a8): alpha MODULATE2X(diffuse, texture), then MODULATE2X(current,

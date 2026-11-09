@@ -1355,8 +1355,8 @@ impl EffectsGpu {
     /// element's binding (MIPFILTER of stage 2 for the grouped path: the scenery pass's, 0x1017bb43; of stage 1 without
     /// groups: the actor draw's), and stage 2 as the last grouped specular draw left it (TSS 0x103529c8 sets it,
     /// FUN_100412b0 never disables it) for the draws that read it without setting it: the no-groups specular path (TSS
-    /// 0x103528f0) and the lens flare (FUN_1003ebf0, TSS 0x103520a8). D3a, D3b, DamValue, VuDist and grouped plain
-    /// D3m draws (also a ground projection's image) disable it; the others leave it.
+    /// 0x103528f0) and the lens flare (FUN_1003ebf0, TSS 0x103520a8). D3a, D3b (DistMorph too), DamValue and grouped
+    /// plain D3m draws (DistModel and a ground projection's image too) disable it; the others leave it.
     fn stage_walk(&self, fx: &Effects) -> StageWalk {
         let mesh = |id: u32| {
             self.meshes.get(id as usize).and_then(|m| m.as_ref()).map(|m| (m.mmb, m.groups.iter().any(|g| g.2)))
@@ -1369,7 +1369,14 @@ impl EffectsGpu {
                 let c = fx.elems[e as usize].as_ref()?;
                 let d = match c.draw {
                     Draw::Dist => StageDraw::Dist,
-                    Draw::VuDist(..) => StageDraw::VuDist,
+                    // FUN_10063c80 runs CMoDist's draw per particle: none, nothing changes.
+                    Draw::VuDist(n, weather) if vu_dist_count(n, weather, fx.weather_density).min(64) > 0 => {
+                        StageDraw::Dist
+                    }
+                    // FUN_10043590 draws through the D3b stages (TSS 0x10352258).
+                    Draw::DistMorph(_) => StageDraw::Disables,
+                    // FUN_10043320 -> FUN_10040670 with a texture count: TSS 0x10352740.
+                    Draw::DistModel(id) if mesh(id).is_some_and(|m| m.1) => StageDraw::Disables,
                     Draw::Sprite(id) if fx.reg.sprite_is_flare(id) => StageDraw::Flare,
                     Draw::Sprite(_) | Draw::Morph(_) | Draw::DamValue => StageDraw::Disables,
                     Draw::Mesh(id) => match (mesh(id), c.spec) {
@@ -2514,7 +2521,7 @@ mod tests {
             (6, StageDraw::Disables),
             (7, StageDraw::Flare),
             (8, StageDraw::SpecGrouped(sp(3, false))),
-            (9, StageDraw::VuDist),
+            (9, StageDraw::Disables),
             (10, StageDraw::SpecFlat(sp(4, false))),
         ];
         let w = stage_walk(&items, 11, true, false);
@@ -3191,10 +3198,8 @@ mod soften_tests {
 /// What an element's retail draw does to the stages stage_walk follows.
 #[derive(Clone, Copy, Debug)]
 enum StageDraw {
-    /// CMoDist: its copy pass sets stage 0's MIPFILTER NONE (TSS 0x10353028).
+    /// CMoDist, or a CMoVuDist with particles: its copy pass sets stage 0's MIPFILTER NONE (TSS 0x10353028).
     Dist,
-    /// CMoVuDist: the same, and TSS 0x10353260 disables stage 2.
-    VuDist,
     /// The lens flare (TSS 0x103520a8): reads stage 2.
     Flare,
     /// D3a, D3b, DamValue, a grouped plain D3m or a ground projection's grouped image: disables stage 2.
@@ -3221,10 +3226,6 @@ fn stage_walk(items: &[(u32, StageDraw)], count: u32, mips: bool, bump: bool) ->
         };
         match d {
             StageDraw::Dist => s0 = false,
-            StageDraw::VuDist => {
-                s0 = false;
-                leak = None;
-            }
             StageDraw::Flare => read(&mut w),
             StageDraw::Disables => leak = None,
             StageDraw::SpecGrouped(sp) => {
