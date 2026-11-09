@@ -175,6 +175,12 @@ fn emit_ops(
                 }
             },
             kind::D3A | 0x39 => match reg.resolve(lib, from, kind::D3A, name) {
+                // CMoD3aLightmapElem (D3a + 0x200000 without gen 0x20000000; no generator in the data): FUN_1003ee70
+                // draws the frame and its decal into the 256x256 target and never puts the back buffer back, so
+                // nothing of it reaches the screen.
+                Some(_) if remap(res_kind) == kind::D3A && flags & 0x20_0000 != 0 && inst.flags & 0x2000_0000 == 0 => {
+                    Draw::None
+                }
                 Some(r) => reg.sprite(r).map(Draw::Sprite).unwrap_or(Draw::None),
                 None => {
                     reg.miss(lib, from, name, res_kind);
@@ -195,6 +201,11 @@ fn emit_ops(
             _ => Draw::None,
         }
     };
+    // The decal blend +0x198 has no ctor default (FUN_10052e90 over an unzeroed heap block); every projection in the
+    // data sets it with one op 0x43. Ours starts from the commonest code, and an op's 0 stays 0 (ONE / ZERO).
+    if matches!(draw, Draw::GroundProj(_)) {
+        e.0[w::GP_BLEND] = 0x48;
+    }
     // Kind 0x3d: a SeSep; no resource means no element (FUN_1004d920 returns at op 1).
     let mut sound = None;
     if res_kind == 0x3d {
@@ -824,8 +835,9 @@ fn emit_ops(
         (None, None) => inst.mslot,
     };
     e.0[w::PARENT] = frame;
-    if matches!(draw, Draw::GroundProj(_)) && e.0[w::GP_BLEND] == 0 {
-        e.0[w::GP_BLEND] = 0x48;
+    // FUN_100467e0 reads the code 0xffff as the element's own +0x16c.
+    if matches!(draw, Draw::GroundProj(_)) && e.0[w::GP_BLEND] == 0xffff {
+        e.0[w::GP_BLEND] = e.0[w::BLEND];
     }
     let cpu = ElemCpu {
         gp: matches!(draw, Draw::GroundProj(_)).then(|| crate::fx::GroundDecal {

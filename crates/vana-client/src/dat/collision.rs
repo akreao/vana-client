@@ -433,6 +433,83 @@ mod tests {
 }
 
 #[cfg(test)]
+mod census {
+    use super::u32_at;
+
+    /// Census for gaps item 126 over every DAT's MZB (by hand: `cargo test --release mzb_list_census -- --ignored
+    /// --nocapture`): cell lists whose head has bits besides the count and the cell (0x2000 = switched off, which
+    /// `parse` drops), and the object ids (+0xbc) the walks compare with the loaded sub-area (0xffffffff without one).
+    #[test]
+    #[ignore]
+    fn mzb_list_census() {
+        let cfg = crate::config::Config::load();
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Some(keys) = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir()))
+            .ok()
+            .and_then(|b| crate::dat::zone::Keys::from_ffximain(&b).ok())
+        else {
+            return;
+        };
+        let (mut files, mut lists, mut off, mut odd, mut objects) = (0, 0usize, 0usize, 0usize, 0usize);
+        let mut ids: std::collections::BTreeMap<u32, (usize, Vec<u32>)> = Default::default();
+        let mut versions: std::collections::BTreeMap<u8, usize> = Default::default();
+        for id in 0..index.len() as u32 {
+            let Ok(file) = index.read(id) else { continue };
+            let Ok(list) = crate::dat::chunks(&file) else { continue };
+            for c in list.iter().filter(|c| c.kind == 0x1C) {
+                let mut p = c.data.to_vec();
+                if p.len() < 0x20 || crate::dat::zone::decode_mzb(&keys, &mut p).is_err() {
+                    continue;
+                }
+                let table = u32_at(&p, 8).unwrap_or(0) as usize;
+                let grid_at = u32_at(&p, table + 0x10).unwrap_or(0) as usize;
+                if table == 0 || table >= p.len() || grid_at == 0 || grid_at >= p.len() {
+                    continue;
+                }
+                files += 1;
+                *versions.entry(p[3]).or_default() += 1;
+                let scale = |n: usize, s: u8| n * if s == 0 { 40 } else { s as usize } / 4;
+                let (w, h) = (scale(p[0x0c] as usize, p[0x0e]), scale(p[0x0d] as usize, p[0x0f]));
+                let mut seen = std::collections::HashSet::new();
+                for cell in 0..w * h {
+                    let Some(entry) = u32_at(&p, grid_at + cell * 4).map(|e| e as usize) else { break };
+                    if entry == 0 || entry >= p.len() {
+                        continue;
+                    }
+                    let head = u32_at(&p, entry).unwrap_or(0);
+                    lists += 1;
+                    if head & 0x2000 != 0 {
+                        off += 1;
+                        println!("DAT {id}: list off at cell {cell}, head {head:#x}");
+                    }
+                    if head & 0x1800 != 0 {
+                        odd += 1;
+                        println!("DAT {id}: head {head:#x} at cell {cell}");
+                    }
+                    for k in 0..(head & 0x7FF) as usize {
+                        let Some(xf) = u32_at(&p, entry + 4 + k * 8).map(|v| v as usize) else { break };
+                        if xf == 0 || xf + 0xc0 > p.len() || !seen.insert(xf) {
+                            continue;
+                        }
+                        objects += 1;
+                        let e = ids.entry(u32_at(&p, xf + 0xbc).unwrap_or(0)).or_default();
+                        e.0 += 1;
+                        if !e.1.contains(&id) && e.1.len() < 12 {
+                            e.1.push(id);
+                        }
+                    }
+                }
+            }
+        }
+        println!("{files} MZBs (versions {versions:?}), {lists} lists: {off} off, {odd} with bits 11 / 12");
+        println!("{objects} objects by id (+0xbc):");
+        for (k, (n, f)) in &ids {
+            println!("  {k:#x} ({}): {n} in DATs {f:?}", *k as i32);
+        }
+    }
+}
+
+#[cfg(test)]
 mod water_tests {
     use super::water_of;
 

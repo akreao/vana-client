@@ -533,6 +533,93 @@ mod tests {
         println!("{switched} of {total} format-5/6 meshes switch to format 7");
     }
 
+    /// Ground projection census for gaps item 126 over every DAT (by hand: `cargo test --release ground_proj_census
+    /// -- --ignored --nocapture`): the D3m + 0x200000 generators, their op 0x43 blends, the lit ones (flag 16), the
+    /// MMB byte (@0x28 -> +0x179), where each mesh name resolves in its own file, and the meshes named 'hi17' / 'asi1'
+    /// (the two names that resolve outside their generators' files).
+    #[test]
+    #[ignore]
+    fn ground_proj_census() {
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let trim = |n: [u8; 4]| String::from_utf8_lossy(&n).trim_end_matches(['\0', ' ']).to_string();
+        let (mut total, mut files, mut d3a) = (0, std::collections::BTreeSet::new(), 0);
+        let mut blends: std::collections::BTreeMap<String, usize> = Default::default();
+        let mut found: std::collections::BTreeMap<&str, usize> = Default::default();
+        let mut outside: std::collections::BTreeMap<String, Vec<u32>> = Default::default();
+        let mut hi17: Vec<String> = Vec::new();
+        for id in 0..index.len() as u32 {
+            let Ok(file) = index.read(id) else { continue };
+            let Ok(tree) = Tree::build(&file) else { continue };
+            for (i, n) in tree.nodes.iter().enumerate() {
+                if n.name == fourcc("hi17") && matches!(n.kind, kind::D3M | kind::MMB) && n.data.len() > 64
+                    || n.name == fourcc("asi1") && matches!(n.kind, kind::D3M | kind::MMB)
+                {
+                    let d = &file[n.data.clone()];
+                    hi17.push(format!(
+                        "DAT {id} {} kind {:#x} {} bytes, path {:?}",
+                        n.name(),
+                        n.kind,
+                        d.len(),
+                        tree.path(i).iter().map(|p| trim(*p)).collect::<Vec<_>>()
+                    ));
+                }
+            }
+            for node in tree.of_kind(kind::GENERATOR).collect::<Vec<_>>() {
+                let Ok(g) = Generator::parse(&tree, node, &file) else { continue };
+                let Some(t) = g.template() else { continue };
+                let (k, flags) = (t.byte(0x21), t.u32(1));
+                if flags & 0x20_0000 == 0 {
+                    continue;
+                }
+                if matches!(k, 0x0e | 0x21) {
+                    d3a += 1;
+                    println!("D3a + 0x200000: DAT {id} {}", trim(g.name));
+                }
+                if !matches!(k, 0x0b | 0x0c | 0x1f) {
+                    continue;
+                }
+                total += 1;
+                files.insert(id);
+                let name = fourcc_u32(t.u32(3));
+                let ops43: Vec<u32> =
+                    g.streams[stream::EMISSION].iter().filter(|o| o.code == 0x43).map(|o| o.u32(1)).collect();
+                *blends.entry(format!("{ops43:x?}")).or_default() += 1;
+                let (d3m, mmb) = (tree.find(node, kind::D3M, name), tree.find(node, kind::MMB, name));
+                let at = match (d3m, mmb) {
+                    (Some(_), Some(_)) => "both",
+                    (Some(_), None) => "d3m",
+                    (None, Some(_)) => "mmb",
+                    (None, None) => "outside",
+                };
+                *found.entry(at).or_default() += 1;
+                if d3m.is_none() {
+                    outside.entry(format!("{} ({at})", trim(name))).or_default().push(id);
+                }
+                let has_normals = d3m.map(|m| file[tree.nodes[m].data.clone()][0] & 0xf);
+                if flags & 0x1_0000 != 0 || t.byte(0x28) != 0 || flags & 0x1000 != 0 || ops43.len() != 1 {
+                    println!(
+                        "DAT {id} {} mesh {} ({at}, format {has_normals:?}): flags {flags:#x}, byte 0x28 {}, op 0x43 {ops43:x?}, gen flags {:#x}, attach {}",
+                        trim(g.name),
+                        trim(name),
+                        t.byte(0x28),
+                        g.flags,
+                        g.attach_mode(),
+                    );
+                }
+            }
+        }
+        println!("{total} D3m ground projections in {} files; {d3a} D3a", files.len());
+        println!("op 0x43: {blends:?}");
+        println!("mesh found in the file: {found:?}");
+        for (n, f) in &outside {
+            println!("  {n}: DATs {f:?}");
+        }
+        println!("'hi17' / 'asi1' meshes (MMB stubs of 64 bytes left out):");
+        for h in &hi17 {
+            println!("  {h}");
+        }
+    }
+
     /// Zone 232 (DAT 332) effe/sea sea1: world, auto-start, one persistent element; op 1 names 'sea1',
     /// which is no D3m but the MMB in the same folder; op 0x63 binds keyframe 'seen'.
     #[test]

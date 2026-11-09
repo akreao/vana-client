@@ -587,6 +587,22 @@ mod lit_tests {
         assert!(close(c, 0.08403) && (l - Vec3::new(-0.99995, 0.0099995, 0.0)).length() < 1e-5, "{c} {l}");
     }
 
+    /// A lit ground projection (gaps item 126), same Cv / ambient / light: the image's mesh under WORLD = S(0.25) L
+    /// has its normal 4 times as long, so the facing side saturates; the decal's faces have no normal and keep
+    /// Cv x Ga, whatever the light.
+    #[test]
+    fn ground_proj_lit() {
+        let close = |a: f32, b: f32| (a - b).abs() < 1e-4;
+        let quarter = Mat3::from_diagonal(Vec3::splat(0.25));
+        assert!(close(lit(quarter, Vec3::NEG_Y, None).0, 1.0));
+        assert!(close(
+            lit(quarter, Vec3::new(1.0, -0.05, 0.0), None).0,
+            0.07874 + 128.0 / 255.0 * 192.0 / 255.0 * 1.4 * 0.2
+        ));
+        assert!(close(lit(quarter, Vec3::Y, None).0, 0.07874));
+        assert!(close(lit(Mat3::IDENTITY, Vec3::ZERO, None).0, 128.0 / 255.0 * 40.0 / 255.0));
+    }
+
     #[test]
     fn ambient_bytes() {
         assert_eq!(ambient_ref(Vec3::splat(80.0 / 255.0)).x * 255.0, 40.0);

@@ -794,7 +794,7 @@ fn update(@builtin(global_invocation_id) gid: vec3<u32>) {
     // FUN_100467e0 (op-1 flag 16 on a D3b or D3m): the light matrix B = the element's view rotation (+0xa0's base),
     // with a parent (generator +0xdf bit 1 clear) B Ry(3 pi / 2) P^-1, or for orientation 1 / 2 with bit 0
     // rot(V_b50) Ry(pi); the light's travel direction through it with the translation added (math +0x50).
-    if ((flags & 0x10000u) != 0u && (kind == DK_MORPH || kind == DK_MESH) && p.light.w > 0.0) {
+    if ((flags & 0x10000u) != 0u && (kind == DK_MORPH || kind == DK_MESH || kind == DK_GROUND_PROJ) && p.light.w > 0.0) {
         var bm = mat4x4<f32>(vec4<f32>(xm[0].xyz, 0.0), vec4<f32>(xm[1].xyz, 0.0), vec4<f32>(xm[2].xyz, 0.0), vec4<f32>(0.0, 0.0, 0.0, 1.0));
         let r3 = rot_y(4.712389);
         if (has_p && (el[b + E_GEN_BITS] & 2u) == 0u) {
@@ -805,9 +805,11 @@ fn update(@builtin(global_invocation_id) gid: vec3<u32>) {
             bm = mat4x4<f32>(vec4<f32>(ry[0], 0.0), vec4<f32>(ry[1], 0.0), vec4<f32>(ry[2], 0.0), vec4<f32>(0.0, 0.0, 0.0, 1.0));
         }
         let l = normalize((bm * vec4<f32>(p.light.xyz, 1.0)).xyz);
-        outs[ob + 37u] = l.x;
-        outs[ob + 38u] = l.y;
-        outs[ob + 39u] = l.z;
+        // The ground projection keeps its local 3x3 in 32..40, so its light goes to 41..43.
+        let lo = select(37u, 41u, kind == DK_GROUND_PROJ);
+        outs[ob + lo] = l.x;
+        outs[ob + lo + 1u] = l.y;
+        outs[ob + lo + 2u] = l.z;
     }
     // CMoD3mSpecularElem (FUN_100412b0): the specular stage's texture matrix (bit 0: Rz(-a2) Ry(-(a1 + pi/2)) Rx(-a0),
     // times the camera rotation with bit 1; else Ry(-pi/2)) and the tint C (bit 0 clear: rgb = element x specular / 128
@@ -1047,13 +1049,22 @@ fn fx_lit(e: u32, mv: mat4x4<f32>, n: vec3<f32>, cv: vec4<f32>) -> vec4<f32> {
     let k = dels[eb + E_KIND];
     if (d.light_col.w <= 0.0 || (dels[eb + E_FLAGS] & 0x10000u) == 0u || (k != DK_MORPH && k != DK_MESH)) { return cv; }
     let o = e * OUT_WORDS;
-    let m = mat3x3<f32>(mv[0].xyz, mv[1].xyz, mv[2].xyz);
+    return lit_by(mat3x3<f32>(mv[0].xyz, mv[1].xyz, mv[2].xyz), n, cv, vec3<f32>(douts[o + 37u], douts[o + 38u], douts[o + 39u]));
+}
+
+// The lit vertex colour under the 3x3 `m` (WORLD x VIEW) and the light's travel direction `l` in the same space.
+fn lit_by(m: mat3x3<f32>, n: vec3<f32>, cv: vec4<f32>, l: vec3<f32>) -> vec4<f32> {
     let cof = mat3x3<f32>(cross(m[1], m[2]), cross(m[2], m[0]), cross(m[0], m[1]));
     let det = dot(m[0], cof[0]);
     let nv = select(vec3<f32>(0.0), cof * n / det, det != 0.0);
-    let l = vec3<f32>(douts[o + 37u], douts[o + 38u], douts[o + 39u]);
     let s = d.ambient.rgb + d.light_col.rgb * max(dot(nv, -l), 0.0);
     return vec4<f32>(clamp(cv.rgb * s, vec3<f32>(0.0), vec3<f32>(1.0)), cv.a);
+}
+
+// A lit ground projection (op-1 flag 16; 'fls1' of DATs 60756 / 60801): FUN_10046070 runs FUN_100467e0 before the
+// class draw, so LIGHTING is on for the image and again for the decal.
+fn gp_lit(e: u32) -> bool {
+    return d.light_col.w > 0.0 && (dels[e * E_WORDS + E_FLAGS] & 0x10000u) != 0u;
 }
 
 @vertex
@@ -1298,7 +1309,12 @@ fn vs_mesh_rt(v: VIn, @builtin(instance_index) inst: u32) -> VOut {
     let l3 = mat3x3<f32>(vec3<f32>(douts[o + 32u], douts[o + 33u], douts[o + 34u]), vec3<f32>(douts[o + 35u], douts[o + 36u], douts[o + 37u]), vec3<f32>(douts[o + 38u], douts[o + 39u], douts[o + 40u]));
     let q = 0.25 * (l3 * v.pos);
     let vp = vec3<f32>(-q.x, -q.z, -2.0 - q.y);
-    var out = vout(e, vp, v.color, v.uv, inst % PER_ELEM);
+    // Lit: the normal goes through the inverse transpose of WORLD x VIEW = S(0.25) L x the look-down view,
+    // unnormalised, so it arrives 4 times as long (for a rigid L); the light set under the identity VIEW turns with
+    // the look-down view too, which leaves the dot product that of 0.25 L alone.
+    var col = v.color;
+    if (gp_lit(e)) { col = lit_by(0.25 * l3, v.normal, v.color, vec3<f32>(douts[o + 41u], douts[o + 42u], douts[o + 43u])); }
+    var out = vout(e, vp, col, v.uv, inst % PER_ELEM);
     out.clip = d.proj * vec4<f32>(vp, 1.0);
     return out;
 }
@@ -1316,7 +1332,11 @@ fn vs_decal(v: DIn, @builtin(instance_index) inst: u32) -> VOut {
     if (douts[o + 23u] < 0.5) { return hidden(); }
     let c = vec3<f32>(douts[o + 25u], douts[o + 26u], douts[o + 27u]);
     let vp = (d.view * vec4<f32>(v.pos, 1.0)).xyz;
-    var out = vout(e, vp, vec4<f32>(128.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0, 1.0), vec2<f32>(0.0), 13u);
+    // Lit, the faces have no normal (FVF 0x142), so the lights add nothing: AMBIENT x the vertex colour
+    // (AMBIENTMATERIALSOURCE COLOR1, emissive 0, the lights' own ambient 0), alpha the vertex alpha.
+    var col = vec4<f32>(128.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0, 1.0);
+    if (gp_lit(e)) { col = vec4<f32>(clamp(col.rgb * d.ambient.rgb, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0); }
+    var out = vout(e, vp, col, vec2<f32>(0.0), 13u);
     out.uv = (v.pos.xz - c.xz) * 0.1 + 0.5;
     let eb = e * E_WORDS;
     if ((dels[eb + E_BLEND] & 0xffu) == 0x44u && out.tf.a > 126.0 / 255.0) { out.tf.a = 1.0; }

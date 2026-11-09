@@ -2753,6 +2753,62 @@ mod tests {
         assert_eq!(shown, vec![(0.0, 1.0, 1.0), (1.0, 1.0, 0.0)]);
     }
 
+    /// A lit ground projection (op-1 flag 16, gaps item 126): the update pass keeps the local 3x3 in outs 32..40 for
+    /// the image and writes FUN_100467e0's light direction (the travel direction through the view rotation) to
+    /// 41..43; an unlit one leaves 41..43 alone.
+    #[test]
+    fn gpu_ground_proj_light() {
+        let Ok(gpu) = Gpu::headless() else { return };
+        let eye = glam::Vec3::new(3.0, -4.0, -10.0);
+        let view = glam::camera::rh::view::look_at_mat4(eye, glam::Vec3::ZERO, glam::Vec3::NEG_Y);
+        let mut view_rot = view;
+        view_rot.w_axis = glam::Vec4::W;
+        let f = Frame {
+            dt: 1.0,
+            seconds: 1.0 / 60.0,
+            dayfrac: 0.5,
+            view,
+            view_rot,
+            eye,
+            draw_distance: 2000.0,
+            area_light: glam::Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        };
+        let mut fx = Effects::new();
+        fx.reg.ops = vec![0];
+        fx.reg.ops_dirty = true;
+        for (k, flags) in [0x21_0000u32, 0x20_0000].into_iter().enumerate() {
+            let mut el = Elem::default();
+            el.0[w::STATE] = crate::fx::elem::st::ALIVE;
+            el.0[w::KIND] = crate::fx::elem::dk::GROUND_PROJ;
+            el.0[w::FLAGS] = flags;
+            el.0[w::COLOR] = 0x8080_8080;
+            el.0[w::SERIAL] = 1 + k as u32;
+            el.0[w::PARENT] = crate::fx::elem::NONE;
+            el.set_v3(w::SCALE, glam::Vec3::new(2.0, 3.0, 4.0));
+            fx.writes.push(Write::Full(k as u32, Box::new(el)));
+            fx.elems.push(None);
+        }
+        let dir = glam::Vec3::new(0.3, 0.8, -0.5).normalize();
+        let mut eg = EffectsGpu::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb);
+        eg.set_light(Some((dir, glam::Vec3::ONE, glam::Vec3::splat(0.5))));
+        let mut enc = gpu.device.create_command_encoder(&Default::default());
+        eg.update(&gpu, &mut enc, &mut fx, &f);
+        gpu.queue.submit([enc.finish()]);
+        gpu.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None }).unwrap();
+        let o = eg.read_outs(&gpu, 2);
+        let want = view_rot.transform_vector3(dir).normalize();
+        let got = glam::Vec3::new(o[41], o[42], o[43]);
+        assert!((got - want).length() < 1e-5, "{got} vs {want}");
+        for e in 0..2 {
+            let l3: Vec<f32> = o[e * OUT_WORDS + 32..e * OUT_WORDS + 41].to_vec();
+            assert_eq!(l3, [2.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 4.0], "element {e}");
+        }
+        assert_eq!(&o[OUT_WORDS + 41..OUT_WORDS + 44], &[0.0, 0.0, 0.0]);
+    }
+
     /// Update ops 0x53 and 0x60 as Tavnazian Safehold's thunder flash (t_ta/weat/thdr/wez4/frsh) carries them: an element 10 in
     /// front of the eye on the screen centre adds its colour to the flash when the scene depth leaves it visible, and
     /// nothing when the scene hides it (op 0x53 zeroes FADE, so op 0x60 skips).
