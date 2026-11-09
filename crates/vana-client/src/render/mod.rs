@@ -270,7 +270,8 @@ pub struct Uniforms {
     voyage: [[f32; 4]; 4],
     /// Config 0017 off (FUN_10181b50): the sun and the moon as two lights, (direction, colour) each.
     two: [[f32; 4]; 4],
-    /// x: 1 with bump mapping on (one eased light, vertex fog), 0 off (two lights, table fog).
+    /// x: 1 with bump mapping on (one eased light, vertex fog), 0 off (two lights, table fog); y: smooth point lights;
+    /// z: Surface Detail's strength (0 off).
     modes: [f32; 4],
     /// Windowed mode's light boost (light_boost): rgb factors, w = 1 on.
     boost: [f32; 4],
@@ -440,6 +441,8 @@ pub struct ZoneRenderer {
     /// Settings' Light Shading (ours): false Retail (the scenery's point lights per vertex, hard cut at the range),
     /// true Smooth (per pixel, soft edge; not retail).
     pub smooth_lights: bool,
+    /// Surface Detail (ours, zone.wgsl `detail_normal`): 0 off, 1 subtle, 2 strong.
+    pub surface_detail: u32,
     /// Windowed mode's light boost (light_boost; zero = off).
     pub light_boost: [f32; 4],
     /// The zone's scenery culled on the GPU (render/cull.rs) when the device draws indirectly, and its passes.
@@ -2626,6 +2629,7 @@ impl ZoneRenderer {
             bump_groups,
             bump_mode: true,
             smooth_lights: false,
+            surface_detail: 0,
             light_boost: [0.0; 4],
             scenery_bump: p.scenery_bump,
             scenery: p.scenery,
@@ -3793,7 +3797,12 @@ impl ZoneRenderer {
             area_info: [0.0; 4],
             voyage: self.voyage.to_cols_array_2d(),
             two: [[0.0; 4]; 4],
-            modes: [self.bump_mode as u32 as f32, self.smooth_lights as u32 as f32, 0.0, 0.0],
+            modes: [
+                self.bump_mode as u32 as f32,
+                self.smooth_lights as u32 as f32,
+                [0.0, 1.0, 2.5][self.surface_detail.min(2) as usize],
+                0.0,
+            ],
             boost: self.light_boost,
         };
         let mut clear = self.fog_color;
