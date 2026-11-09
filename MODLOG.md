@@ -16,8 +16,11 @@ xiloader (`~/ffxi/lab/xiloader`, ceb79a0), Ghidra on the installer. Decompiled o
 
 ## Auth (xi_connect, TCP 54231)
 - TLS 1.3. LSB's server certs are self-signed X.509 v1 (webpki rejects them): RSA-4096 on the login port, P-256 for
-  xi_profile, SHA-384. xiloader checks nothing; ours checks them (see "TLS: certificates checked or pinned").
-- JSON in, JSON out. Must send `"version": [2,2,x]`. Login reply: `result` 1, `account_id`,
+  xi_profile, SHA-384. xiloader before 3.0 checks nothing; 3.0 pins the login port's key and holds the lobby to it
+  (see "Lobby"); ours checks them (see "TLS: certificates checked or pinned").
+- JSON in, JSON out. `"version"`: LSB checks its major and minor only and refuses another with "Unsupported xiloader
+  version a.b.c.\nThis server requires version x.y.x." (src/login/auth_session.cpp, before any credential check):
+  [2,2,x] until LSB 9b6df7c7 (2026-11-04), [3,0,x] from it. Login reply: `result` 1, `account_id`,
   `session_hash` as a 16-int array. Verified live (account 1000 created via command 0x20).
 
 ## Lobby (xi_connect view TCP 54001, data TCP 54230)
@@ -30,6 +33,11 @@ xiloader (`~/ffxi/lab/xiloader`, ceb79a0), Ghidra on the installer. Decompiled o
   {07,14,1F,21,22,24,28,2B}, +1 per reply {03,0B,20,23}, +1 per error reply to {22,24,28,2B}.
   Verified: zone server decrypts our traffic.
 - chr_info_sub2 is 140 bytes; TC_OPERATION_MAKE GrapIDTbl @12, zone_no @28, mjob_level @29, zone_no2 @35.
+- (2026-11-09) TLS from LSB 778b7429 (released with 9b6df7c7, the 3.0 version check): data and view sessions run a TLS
+  server handshake first (handler_session::start) from the login port's ssl context (handler.h sslContext_), so they
+  present its certificate; the messages inside are unchanged. A plain client is dropped unanswered ("wrong version
+  number" in the server log). xiloader 3.0 (ec0835b) connects both without CA checks and compares the peer key's
+  SHA-256 with the login server's trusted key (checkPeerKey: lobby/data_connection.cpp, client/polrelay.cpp).
 
 ## Zone (xi_map, UDP 54230)
 - 28-byte header: u16 our seq, u16 last server seq seen, u32 time @8. Sub-packets: u16 (id:9 | size:7 in
@@ -20531,6 +20539,13 @@ Lessons from other games' mod layers (BG3 Script Extender, WoW, Skyrim, Factorio
   known_servers.json a directory: the three servers (54231, 51220, 51240) pinned once each, the line in the log.
 - `vana-client trust-server HOST [--port P] [--fingerprint F]` forgets the host's pins (every port: an LSB reinstall
   changes the login port's and xi_profile's 51220 / 51240), or sets a fixed key pin.
+- (2026-11-09) The lobby over TLS (LSB for xiloader 3.0, see "Lobby"): net/tls.rs connect_with_key holds data and view
+  to the key the login port sent (a fixed key pin; nothing is stored for those ports), only when the login server took
+  a 3.x version (auth.rs lobby_key). Both links open at once and nothing is sent until both handshakes pass. A lobby
+  port that sends no certificate is named as not TLS; a plain lobby that hangs up unanswered is named as maybe TLS.
+  There is no fallback from TLS to plain: it would hand a downgrade to anyone in between. The version each server took
+  is kept in loader_versions.json ("host:port" to [major, minor, patch], beside known_servers.json) and sent first next
+  time, so a 2.x server is not refused (and sent the password twice) at every login.
 - Character names from the server become file names (chat history, regime state) only as letters and digits, and not
   a Windows device name on Windows; anything else as '_' and the name's bytes in hex.
 - The Friend List's message names (GetFileList, up to 0x100 bytes) are written as files in the mail folder only when
