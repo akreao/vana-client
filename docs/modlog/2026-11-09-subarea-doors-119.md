@@ -18,4 +18,4 @@ are Steven's FFXiMain.dll (FUN_10176dd0 kept its address).
   of the current and the kept zone ground; doors::reapply (end of load, failure, unload, any new ground) sets every
   box from its flag. A zone or event area load starts with fresh doors (FUN_10173c10 builds the groups solid; the doors'
   states are seen anew, so the first-sight path sets each flag again); the zone's doors are kept while an event area
-  shows.
+  shows. The event's door commands (+0x174) carry over every switch.

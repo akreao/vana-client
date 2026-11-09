@@ -6870,7 +6870,7 @@ struct AreaSwitch {
         Option<(Option<ZoneRenderer>, Option<ground::Ground>, Option<crate::dat::weather::ZoneWeather>, Option<usize>)>,
     /// The zone's sub-area state meanwhile (the shown area's own takes the event's op 0x75 requests).
     home_sub: Option<subarea::SubArea>,
-    /// The zone's doors (states and flags) meanwhile.
+    /// The zone's doors (states and flags; the event's commands stay in use) meanwhile.
     home_doors: Option<doors::Doors>,
 }
 
@@ -10193,7 +10193,10 @@ impl App {
                         let old = std::mem::replace(&mut world.sub, sub);
                         if world.area.home_sub.is_none() {
                             world.area.home_sub = Some(old);
-                            world.area.home_doors = Some(std::mem::take(&mut world.doors));
+                            // The event's door commands (+0x174) carry over; states and flags are the zone's.
+                            let mut home = std::mem::take(&mut world.doors);
+                            world.doors.event = std::mem::take(&mut home.event);
+                            world.area.home_doors = Some(home);
                         } else if old.current.is_some() {
                             world.effects.drop_sub_area();
                         }
@@ -10216,8 +10219,10 @@ impl App {
                             ));
                         }
                         world.ground = Some(ground);
-                        // FUN_10173c10 builds the new scene's door groups solid (+0xf0 = 1); its doors are seen anew.
-                        world.doors = Default::default();
+                        // FUN_10173c10 builds the new scene's door groups solid (+0xf0 = 1); its doors are seen anew. The
+                        // event's door commands carry over.
+                        let event = std::mem::take(&mut world.doors.event);
+                        world.doors = doors::Doors { event, ..Default::default() };
                         world.area.shown = Some(area);
                     }
                     Ok(_) => {}
@@ -10520,7 +10525,9 @@ impl App {
         {
             (w.renderer, w.ground, w.zone_weather) = (renderer, ground, weather);
             if let Some(d) = w.area.home_doors.take() {
+                let event = std::mem::take(&mut w.doors.event);
                 w.doors = d;
+                w.doors.event = event;
             }
             if let Some(sub) = w.area.home_sub.take() {
                 if w.sub.current.is_some() {
