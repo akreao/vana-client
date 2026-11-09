@@ -1,6 +1,6 @@
 {
   "format": "vana-ui-production-v2",
-  "asset_count": 1217,
+  "asset_count": 1227,
   "reference": "User-approved ornate dark bronze/charcoal UI design",
   "scale": "SVG 1x coordinate system; PNG exports 2x",
   "items": [
@@ -11958,6 +11958,246 @@
         "file": "atlases/status_0@2x.png",
         "rect": [
           8,
+          1640,
+          128,
+          128
+        ]
+      }
+    },
+    {
+      "id": "status/s522",
+      "svg": "svg/status/s522.svg",
+      "png": "png/status/s522.png",
+      "size": [
+        64,
+        64
+      ],
+      "png_size": [
+        128,
+        128
+      ],
+      "nine_slice": null,
+      "notes": "",
+      "atlas": {
+        "file": "atlases/status_0@2x.png",
+        "rect": [
+          144,
+          1640,
+          128,
+          128
+        ]
+      }
+    },
+    {
+      "id": "status/s523",
+      "svg": "svg/status/s523.svg",
+      "png": "png/status/s523.png",
+      "size": [
+        64,
+        64
+      ],
+      "png_size": [
+        128,
+        128
+      ],
+      "nine_slice": null,
+      "notes": "",
+      "atlas": {
+        "file": "atlases/status_0@2x.png",
+        "rect": [
+          280,
+          1640,
+          128,
+          128
+        ]
+      }
+    },
+    {
+      "id": "status/s524",
+      "svg": "svg/status/s524.svg",
+      "png": "png/status/s524.png",
+      "size": [
+        64,
+        64
+      ],
+      "png_size": [
+        128,
+        128
+      ],
+      "nine_slice": null,
+      "notes": "",
+      "atlas": {
+        "file": "atlases/status_0@2x.png",
+        "rect": [
+          416,
+          1640,
+          128,
+          128
+        ]
+      }
+    },
+    {
+      "id": "status/s525",
+      "svg": "svg/status/s525.svg",
+      "png": "png/status/s525.png",
+      "size": [
+        64,
+        64
+      ],
+      "png_size": [
+        128,
+        128
+      ],
+      "nine_slice": null,
+      "notes": "",
+      "atlas": {
+        "file": "atlases/status_0@2x.png",
+        "rect": [
+          552,
+          1640,
+          128,
+          128
+        ]
+      }
+    },
+    {
+      "id": "status/s526",
+      "svg": "svg/status/s526.svg",
+      "png": "png/status/s526.png",
+      "size": [
+        64,
+        64
+      ],
+      "png_size": [
+        128,
+        128
+      ],
+      "nine_slice": null,
+      "notes": "",
+      "atlas": {
+        "file": "atlases/status_0@2x.png",
+        "rect": [
+          688,
+          1640,
+          128,
+          128
+        ]
+      }
+    },
+    {
+      "id": "status/s527",
+      "svg": "svg/status/s527.svg",
+      "png": "png/status/s527.png",
+      "size": [
+        64,
+        64
+      ],
+      "png_size": [
+        128,
+        128
+      ],
+      "nine_slice": null,
+      "notes": "",
+      "atlas": {
+        "file": "atlases/status_0@2x.png",
+        "rect": [
+          824,
+          1640,
+          128,
+          128
+        ]
+      }
+    },
+    {
+      "id": "status/s528",
+      "svg": "svg/status/s528.svg",
+      "png": "png/status/s528.png",
+      "size": [
+        64,
+        64
+      ],
+      "png_size": [
+        128,
+        128
+      ],
+      "nine_slice": null,
+      "notes": "",
+      "atlas": {
+        "file": "atlases/status_0@2x.png",
+        "rect": [
+          960,
+          1640,
+          128,
+          128
+        ]
+      }
+    },
+    {
+      "id": "status/s529",
+      "svg": "svg/status/s529.svg",
+      "png": "png/status/s529.png",
+      "size": [
+        64,
+        64
+      ],
+      "png_size": [
+        128,
+        128
+      ],
+      "nine_slice": null,
+      "notes": "",
+      "atlas": {
+        "file": "atlases/status_0@2x.png",
+        "rect": [
+          1096,
+          1640,
+          128,
+          128
+        ]
+      }
+    },
+    {
+      "id": "status/s530",
+      "svg": "svg/status/s530.svg",
+      "png": "png/status/s530.png",
+      "size": [
+        64,
+        64
+      ],
+      "png_size": [
+        128,
+        128
+      ],
+      "nine_slice": null,
+      "notes": "",
+      "atlas": {
+        "file": "atlases/status_0@2x.png",
+        "rect": [
+          1232,
+          1640,
+          128,
+          128
+        ]
+      }
+    },
+    {
+      "id": "status/s536",
+      "svg": "svg/status/s536.svg",
+      "png": "png/status/s536.png",
+      "size": [
+        64,
+        64
+      ],
+      "png_size": [
+        128,
+        128
+      ],
+      "nine_slice": null,
+      "notes": "",
+      "atlas": {
+        "file": "atlases/status_0@2x.png",
+        "rect": [
+          1368,
           1640,
           128,
           128
