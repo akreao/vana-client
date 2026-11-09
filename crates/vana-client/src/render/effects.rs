@@ -228,6 +228,22 @@ fn dist_copy_pass<'e>(encoder: &'e mut wgpu::CommandEncoder, view: &wgpu::Textur
 }
 
 /// DAT_1047bb88: the distortion draws' 256x256 copy, its view and bind groups.
+/// A specular binding: (library, texture), cube, CLAMP, MIPFILTER LINEAR.
+type SpecKey = ((usize, usize), bool, bool, bool);
+
+/// EffectsGpu::stage_walk's result.
+#[derive(Default)]
+struct StageWalk {
+    /// Stage 0's MIPFILTER LINEAR per element.
+    s0_mip: HashMap<u32, bool>,
+    /// Each drawn specular element's own binding.
+    spec: HashMap<u32, SpecKey>,
+    /// For the draws that read stage 2: the binding left there.
+    leak: HashMap<u32, Option<SpecKey>>,
+    /// Per element: the element that left stage 2 + 1 (0: nothing; group 3 binding 4).
+    drawst: Vec<u32>,
+}
+
 struct DistCopy {
     _tex: wgpu::Texture,
     view: wgpu::TextureView,
@@ -277,9 +293,32 @@ pub struct EffectsGpu {
     distring_pipes: HashMap<(usize, bool), wgpu::RenderPipeline>,
     spec_pipes: HashMap<(usize, bool), wgpu::RenderPipeline>,
     spec_layout: wgpu::BindGroupLayout,
-    /// Specular images by (library, texture, cube, clamp), and the black stand-ins of the other dimension.
-    spec_groups: HashMap<((usize, usize), bool, bool), wgpu::BindGroup>,
+    /// Specular images by (library, texture, cube, clamp, MIPFILTER LINEAR), and the black stand-ins of the other
+    /// dimension.
+    spec_groups: HashMap<SpecKey, wgpu::BindGroup>,
+    /// The specular images' views (2D or cube) and sizes by (library, texture, cube).
+    spec_views: HashMap<((usize, usize), bool), (Option<wgpu::TextureView>, Option<wgpu::TextureView>, (u32, u32))>,
     spec_black: (wgpu::TextureView, wgpu::TextureView),
+    /// The specular stages' samplers by [CLAMP][MIPFILTER LINEAR] (linear MAG / MIN, TSS 0x103528f0 / 0x103529c8).
+    spec_samplers: [[wgpu::Sampler; 2]; 2],
+    /// MIPFILTER NONE, WRAP: stage 0 after a CMoDist copy (TSS 0x10353028), and the tint copy's source.
+    nomip_sampler: wgpu::Sampler,
+    /// The effect textures under `nomip_sampler`.
+    textures_nomip: HashMap<(usize, usize), wgpu::BindGroup>,
+    /// The specular 2D images as the tint copy's source (`nomip_sampler`).
+    spec_src: HashMap<(usize, usize), wgpu::BindGroup>,
+    /// FUN_100759c0's shared tint-copy target (DAT_1047d158), one per image size (8-bit), and its pass.
+    copy_targets: HashMap<(u32, u32), (wgpu::Texture, wgpu::TextureView)>,
+    copy_pipe: wgpu::RenderPipeline,
+    /// Stage 2 as the last grouped specular draw left it (group 3): the per-element state (the leaving element + 1),
+    /// the layout, the groups by the leaving element's image, and the one for none.
+    drawst: (wgpu::Buffer, usize),
+    leak_layout: wgpu::BindGroupLayout,
+    leak_groups: HashMap<SpecKey, wgpu::BindGroup>,
+    leak_none: Option<wgpu::BindGroup>,
+    /// Config 0017 with VS / PS 1.1 (zone+0x3949c == 1): the scenery pass then sets stage 2's MIPFILTER as the Mip
+    /// Mapping setting (0x1017bb43), which the grouped specular stage inherits.
+    pub bump_mode: bool,
     clamp_sampler: wgpu::Sampler,
     wrap_sampler: wgpu::Sampler,
     /// CMoDist: SRCALPHA / INVSRCALPHA, z write by flag 12.
@@ -585,7 +624,93 @@ impl EffectsGpu {
         let pipe = |vs_entry: &str, buffers: &[Option<wgpu::VertexBufferLayout>], class: usize, zwrite: bool| {
             pipe_z(vs_entry, buffers, class, zwrite, wgpu::CompareFunction::LessEqual)
         };
-        let flare_pipe = pipe_z("vs_flare", &[], 2, false, wgpu::CompareFunction::Always);
+        let tex2d = |binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        };
+        // Group 3 for the draws that read stage 2 without setting it (the no-groups specular path, the lens flare).
+        let leak_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("effects stage 2"),
+            entries: &[
+                tex2d(1),
+                tex2d(2),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                storage(4, true, vs),
+            ],
+        });
+        let flare_layout_draw = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("effects flare draw"),
+            bind_group_layouts: &[Some(&draw_layout), Some(&tex_layout), None, Some(&leak_layout)],
+            immediate_size: 0,
+        });
+        let flare_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("effects flare"),
+            layout: Some(&flare_layout_draw),
+            vertex: wgpu::VertexState {
+                module: &dmod,
+                entry_point: Some("vs_flare"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &dmod,
+                entry_point: Some("fs_flare"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(blend_state(2)),
+                    write_mask: wgpu::ColorWrites::COLOR,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+        // FUN_100759c0's tint copy into the 8-bit shared target: no blend, no depth (RS 0x10354874).
+        let copy_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("effects tint copy"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &dmod,
+                entry_point: Some("vs_spec_copy"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            primitive: Default::default(),
+            depth_stencil: None,
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &dmod,
+                entry_point: Some("fs_spec_copy"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
         let glare_pipe = pipe_z("vs_glare", &[], 2, false, wgpu::CompareFunction::Always);
         let fmod = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("effects flare"),
@@ -671,7 +796,7 @@ impl EffectsGpu {
             cache: None,
         });
         let mut distring_pipes = HashMap::new();
-        // CMoD3mSpecularElem: group 2 the specular image (2D, cube) and its sampler.
+        // CMoD3mSpecularElem: group 2 the specular image (2D, cube), its sampler and the tint copy of its size.
         let spec_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("effects specular"),
             entries: &[
@@ -701,11 +826,12 @@ impl EffectsGpu {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                tex2d(3),
             ],
         });
         let spec_pipe_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("effects specular"),
-            bind_group_layouts: &[Some(&draw_layout), Some(&tex_layout), Some(&spec_layout)],
+            bind_group_layouts: &[Some(&draw_layout), Some(&tex_layout), Some(&spec_layout), Some(&leak_layout)],
             immediate_size: 0,
         });
         let spec_pipe = |class: usize, zwrite: bool| {
@@ -881,6 +1007,25 @@ impl EffectsGpu {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
+        let spec_sampler = |clamp: bool, mip: bool| {
+            let a = if clamp { wgpu::AddressMode::ClampToEdge } else { wgpu::AddressMode::Repeat };
+            device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("effects specular"),
+                address_mode_u: a,
+                address_mode_v: a,
+                address_mode_w: a,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                mipmap_filter: wgpu::MipmapFilterMode::Linear,
+                lod_max_clamp: if mip { 32.0 } else { 0.0 },
+                ..Default::default()
+            })
+        };
+        let spec_samplers = [
+            [spec_sampler(false, false), spec_sampler(false, true)],
+            [spec_sampler(true, false), spec_sampler(true, true)],
+        ];
+        let nomip_sampler = spec_sampler(false, false);
         let spec_black_2d = super::upload_texture(
             gpu,
             &crate::dat::zone::Texture::new(String::new(), 0, 1, 1, vec![0, 0, 0, 0]),
@@ -924,7 +1069,19 @@ impl EffectsGpu {
             spec_pipes,
             spec_layout,
             spec_groups: HashMap::new(),
+            spec_views: HashMap::new(),
             spec_black: (spec_black_2d, spec_black_cube),
+            spec_samplers,
+            nomip_sampler,
+            textures_nomip: HashMap::new(),
+            spec_src: HashMap::new(),
+            copy_targets: HashMap::new(),
+            copy_pipe,
+            drawst: (buf("effects stage 2", 1024, U::STORAGE | U::COPY_DST), 1024),
+            leak_layout,
+            leak_groups: HashMap::new(),
+            leak_none: None,
+            bump_mode: false,
             clamp_sampler,
             wrap_sampler,
             dist_pipes,
@@ -1045,31 +1202,39 @@ impl EffectsGpu {
     }
 
     /// FUN_10039e50 for a `cubemap ` image: every face black (rgb 0), face -Z (layer 5) the image.
+    /// A `cubemap ` image (FUN_10039e50): every face black, the image in face 5 (-Z), with box-filtered mips.
     fn cube_view(gpu: &Gpu, w: u32, h: u32, rgba: Option<&[u8]>) -> wgpu::TextureView {
+        let levels = if rgba.is_some() { 32 - w.max(h).max(1).leading_zeros() } else { 1 };
         let tex = gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("effects cube"),
             size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 6 },
-            mip_level_count: 1,
+            mip_level_count: levels,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8Unorm,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        let black = vec![0u8; (w * h * 4) as usize];
-        for layer in 0..6 {
-            let data = if layer == 5 { rgba.unwrap_or(&black) } else { &black };
-            gpu.queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &tex,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d { x: 0, y: 0, z: layer },
-                    aspect: wgpu::TextureAspect::All,
-                },
-                data,
-                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(w * 4), rows_per_image: Some(h) },
-                wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
-            );
+        let mut face = rgba.map(|r| r.to_vec());
+        let (mut lw, mut lh) = (w, h);
+        for level in 0..levels {
+            let black = vec![0u8; (lw * lh * 4) as usize];
+            for layer in 0..6 {
+                let data = if layer == 5 { face.as_deref().unwrap_or(&black) } else { &black };
+                gpu.queue.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &tex,
+                        mip_level: level,
+                        origin: wgpu::Origin3d { x: 0, y: 0, z: layer },
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    data,
+                    wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(lw * 4), rows_per_image: Some(lh) },
+                    wgpu::Extent3d { width: lw, height: lh, depth_or_array_layers: 1 },
+                );
+            }
+            face = face.map(|f| box_half(&f, lw, lh));
+            (lw, lh) = ((lw / 2).max(1), (lh / 2).max(1));
         }
         tex.create_view(&wgpu::TextureViewDescriptor {
             dimension: Some(wgpu::TextureViewDimension::Cube),
@@ -1078,18 +1243,56 @@ impl EffectsGpu {
     }
 
     /// A specular element's group 2: its image as 2D or cube (the other black), WRAP or CLAMP.
-    fn spec_group(&mut self, gpu: &Gpu, fx: &Effects, s: crate::fx::SpecTex) {
-        let key = (s.tex, s.cube, s.clamp);
-        if self.spec_groups.contains_key(&key) {
-            return;
+    /// A specular image's views (2D, or the cube) and its size.
+    fn spec_view(&mut self, gpu: &Gpu, fx: &Effects, tex: (usize, usize), cube: bool) -> (u32, u32) {
+        if let Some(v) = self.spec_views.get(&(tex, cube)) {
+            return v.2;
         }
-        let t = &fx.reg.libs[s.tex.0].textures[s.tex.1];
-        let (d2, cube) = if s.cube {
+        let t = &fx.reg.libs[tex.0].textures[tex.1];
+        let (d2, c) = if cube {
             (None, Some(Self::cube_view(gpu, t.width, t.height, Some(t.rgba()))))
         } else {
             (Some(super::upload_texture(gpu, t, false)), None)
         };
-        let sampler = if s.clamp { &self.clamp_sampler } else { &self.sampler };
+        if let Some(v) = &d2 {
+            self.spec_src.insert(tex, Self::tex_group(&gpu.device, &self.tex_layout, &self.nomip_sampler, v));
+        }
+        self.spec_views.insert((tex, cube), (d2, c, (t.width, t.height)));
+        (t.width, t.height)
+    }
+
+    /// FUN_100755a0: the shared tint-copy target for an image of this size (made on first use, never cleared).
+    fn copy_target(&mut self, gpu: &Gpu, size: (u32, u32)) -> &wgpu::TextureView {
+        &self
+            .copy_targets
+            .entry(size)
+            .or_insert_with(|| {
+                let t = gpu.device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("effects tint copy"),
+                    size: wgpu::Extent3d { width: size.0.max(1), height: size.1.max(1), depth_or_array_layers: 1 },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING
+                        | wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::COPY_SRC,
+                    view_formats: &[],
+                });
+                let v = t.create_view(&Default::default());
+                (t, v)
+            })
+            .1
+    }
+
+    fn spec_group(&mut self, gpu: &Gpu, fx: &Effects, key: SpecKey) {
+        if self.spec_groups.contains_key(&key) {
+            return;
+        }
+        let (tex, cube, clamp, mip) = key;
+        let size = self.spec_view(gpu, fx, tex, cube);
+        self.copy_target(gpu, size);
+        let (d2, c, _) = &self.spec_views[&(tex, cube)];
         let g = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("effects specular"),
             layout: &self.spec_layout,
@@ -1100,12 +1303,88 @@ impl EffectsGpu {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(cube.as_ref().unwrap_or(&self.spec_black.1)),
+                    resource: wgpu::BindingResource::TextureView(c.as_ref().unwrap_or(&self.spec_black.1)),
                 },
-                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(sampler) },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.spec_samplers[clamp as usize][mip as usize]),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&self.copy_targets[&size].1),
+                },
             ],
         });
         self.spec_groups.insert(key, g);
+    }
+
+    /// Group 3 with stage 2 as the grouped specular draw of `key` left it (`None`: nothing there).
+    fn leak_group(&mut self, gpu: &Gpu, fx: &Effects, key: Option<SpecKey>) {
+        if key.is_none() && self.leak_none.is_some() || key.is_some_and(|k| self.leak_groups.contains_key(&k)) {
+            return;
+        }
+        let (d2, copy, sampler) = match key {
+            Some((tex, cube, clamp, mip)) => {
+                let size = self.spec_view(gpu, fx, tex, cube);
+                self.copy_target(gpu, size);
+                let d2 = self.spec_views[&(tex, cube)].0.as_ref().unwrap_or(&self.spec_black.0);
+                (d2, &self.copy_targets[&size].1, &self.spec_samplers[clamp as usize][mip as usize])
+            }
+            None => (&self.spec_black.0, &self.spec_black.0, &self.nomip_sampler),
+        };
+        let g = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("effects stage 2"),
+            layout: &self.leak_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(d2) },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(copy) },
+                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(sampler) },
+                wgpu::BindGroupEntry { binding: 4, resource: self.drawst.0.as_entire_binding() },
+            ],
+        });
+        match key {
+            Some(k) => {
+                self.leak_groups.insert(k, g);
+            }
+            None => self.leak_none = Some(g),
+        }
+    }
+
+    /// The frame's draw-order state (retail leaves these set from one draw to the next): stage 0's MIPFILTER per element
+    /// (the Mip Mapping setting from the actor draw, NONE after a CMoDist / VuDist copy, TSS 0x10353028), each specular
+    /// element's binding (MIPFILTER of stage 2 for the grouped path: the scenery pass's, 0x1017bb43; of stage 1 without
+    /// groups: the actor draw's), and stage 2 as the last grouped specular draw left it (TSS 0x103529c8 sets it,
+    /// FUN_100412b0 never disables it) for the draws that read it without setting it: the no-groups specular path (TSS
+    /// 0x103528f0) and the lens flare (FUN_1003ebf0, TSS 0x103520a8). D3a, D3b, DamValue, VuDist and grouped plain
+    /// D3m draws (also a ground projection's image) disable it; the others leave it.
+    fn stage_walk(&self, fx: &Effects) -> StageWalk {
+        let mesh = |id: u32| {
+            self.meshes.get(id as usize).and_then(|m| m.as_ref()).map(|m| (m.mmb, m.groups.iter().any(|g| g.2)))
+        };
+        let items: Vec<(u32, StageDraw)> = fx
+            .draw_items()
+            .into_iter()
+            .filter(|&e| e & crate::fx::TRAIL_ITEM == 0 && e < self.count)
+            .filter_map(|e| {
+                let c = fx.elems[e as usize].as_ref()?;
+                let d = match c.draw {
+                    Draw::Dist => StageDraw::Dist,
+                    Draw::VuDist(..) => StageDraw::VuDist,
+                    Draw::Sprite(id) if fx.reg.sprite_is_flare(id) => StageDraw::Flare,
+                    Draw::Sprite(_) | Draw::Morph(_) | Draw::DamValue => StageDraw::Disables,
+                    Draw::Mesh(id) => match (mesh(id), c.spec) {
+                        (Some((false, true)), Some(sp)) => StageDraw::SpecGrouped(sp),
+                        (Some((false, false)), Some(sp)) => StageDraw::SpecFlat(sp),
+                        (Some((false, true)), None) => StageDraw::Disables,
+                        _ => StageDraw::Keeps,
+                    },
+                    Draw::GroundProj(id) if mesh(id) == Some((false, true)) => StageDraw::Disables,
+                    _ => StageDraw::Keeps,
+                };
+                Some((e, d))
+            })
+            .collect();
+        stage_walk(&items, self.count, super::MIPMAPS.load(std::sync::atomic::Ordering::Relaxed), self.bump_mode)
     }
 
     /// FUN_10042d00's copy pass into DistRing's 256x256 target (render/squeeze.wgsl), drawn in `format`.
@@ -1515,6 +1794,22 @@ impl EffectsGpu {
             let soft = soften_alpha(src);
             let view = super::upload_texture(gpu, soft.as_ref().unwrap_or(src), false);
             self.textures.insert(t, Self::tex_group(&gpu.device, &self.tex_layout, &self.sampler, &view));
+            self.textures_nomip.insert(t, Self::tex_group(&gpu.device, &self.tex_layout, &self.nomip_sampler, &view));
+        }
+    }
+
+    /// An effect texture on stage 0 (white without one): MIPFILTER as the Mip Mapping setting (the actor draw's,
+    /// 0x1002bec3), NONE after a CMoDist copy this frame (`mip` false).
+    fn tex_bind(&self, t: Option<(usize, usize)>, mip: bool) -> &wgpu::BindGroup {
+        let map = if mip { &self.textures } else { &self.textures_nomip };
+        t.and_then(|t| map.get(&t)).unwrap_or(&self.white)
+    }
+
+    /// Group 3 for a draw that reads stage 2 (made by the frame's leak_group calls).
+    fn leak_bind(&self, stages: &StageWalk, e: u32) -> &wgpu::BindGroup {
+        match stages.leak.get(&e).copied().flatten() {
+            Some(k) => &self.leak_groups[&k],
+            None => self.leak_none.as_ref().unwrap(),
         }
     }
 
@@ -1608,10 +1903,20 @@ impl EffectsGpu {
                 self.dist_copy_pipe = Some((vf, pipe));
             }
         }
-        for &e in &order {
-            if let Some(sp) = fx.elems[e as usize].as_ref().and_then(|c| c.spec) {
-                self.spec_group(gpu, fx, sp);
-            }
+        let stages = self.stage_walk(fx);
+        for &k in stages.spec.values() {
+            self.spec_group(gpu, fx, k);
+        }
+        if Self::fit(gpu, &mut self.drawst, (stages.drawst.len() * 4).max(4), "effects stage 2") {
+            self.leak_groups.clear();
+            self.leak_none = None;
+        }
+        self.leak_group(gpu, fx, None);
+        for &k in stages.leak.values().flatten() {
+            self.leak_group(gpu, fx, Some(k));
+        }
+        if !stages.drawst.is_empty() {
+            gpu.queue.put(&self.drawst.0, 0, bytemuck::cast_slice(&stages.drawst));
         }
         // Ground projections: a layer each this frame, and the decal faces when any changed.
         let gps: Vec<u32> = order
@@ -1703,7 +2008,7 @@ impl EffectsGpu {
                 let base = e * PER_ELEM;
                 for (tex, range, _) in &m.groups {
                     let variant = if m.mmb { 2 } else { 0 } + tex.is_none() as u32;
-                    rp.set_bind_group(1, tex.and_then(|t| self.textures.get(&t)).unwrap_or(&self.white), &[]);
+                    rp.set_bind_group(1, self.tex_bind(*tex, stages.s0_mip.get(&e).copied().unwrap_or(true)), &[]);
                     rp.draw(range.clone(), base + variant..base + variant + 1);
                 }
             }
@@ -1919,16 +2224,38 @@ impl EffectsGpu {
                     pass.draw(0..m.t * 3, base..base + 1);
                 }
                 // CMoD3mSpecularElem: one pass with the specular stage; no 'I' blend, per-run variants (FUN_100412b0).
-                Draw::Mesh(id)
-                    if c.spec.is_some()
-                        && self.meshes.get(id as usize).is_some_and(|m| m.as_ref().is_some_and(|m| !m.mmb)) =>
-                {
-                    let s = c.spec.unwrap();
-                    let (Some(Some(m)), Some(sg)) =
-                        (self.meshes.get(id as usize), self.spec_groups.get(&(s.tex, s.cube, s.clamp)))
-                    else {
+                Draw::Mesh(id) if stages.spec.contains_key(&e) => {
+                    let k = stages.spec[&e];
+                    let (Some(Some(m)), Some(sg)) = (self.meshes.get(id as usize), self.spec_groups.get(&k)) else {
                         continue;
                     };
+                    // FUN_10041160 -> FUN_100759c0: the tint copy into the shared target of the image's size first
+                    // (vs_spec_copy skips C = 0x80808080).
+                    let size = self.spec_views[&(k.0, k.1)].2;
+                    if let Some((_, target)) = self.copy_targets.get(&size) {
+                        drop(pass);
+                        {
+                            let mut cp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                                label: Some("effects tint copy"),
+                                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                    view: target,
+                                    depth_slice: None,
+                                    resolve_target: None,
+                                    ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                                })],
+                                depth_stencil_attachment: None,
+                                timestamp_writes: None,
+                                occlusion_query_set: None,
+                                multiview_mask: None,
+                            });
+                            cp.set_pipeline(&self.copy_pipe);
+                            cp.set_bind_group(0, group, &[]);
+                            cp.set_bind_group(1, self.spec_src.get(&k.0).filter(|_| !k.1).unwrap_or(&self.white), &[]);
+                            cp.draw(0..3, e..e + 1);
+                        }
+                        pass = new_pass(encoder);
+                        bound = None;
+                    }
                     class = blend_class(c.blend, false).unwrap_or(class);
                     let key = (false, class + 32, c.flags & 0x1000 != 0);
                     if bound != Some(key) {
@@ -1936,8 +2263,10 @@ impl EffectsGpu {
                         bound = Some(key);
                     }
                     pass.set_bind_group(2, sg, &[]);
+                    pass.set_bind_group(3, self.leak_bind(&stages, e), &[]);
                     pass.set_vertex_buffer(0, m.vb.slice(..));
                     let grouped = m.groups.iter().any(|g| g.2);
+                    let mip = stages.s0_mip.get(&e).copied().unwrap_or(true);
                     for (tex, range, named) in &m.groups {
                         let variant = if !grouped {
                             11
@@ -1946,7 +2275,7 @@ impl EffectsGpu {
                         } else {
                             12
                         };
-                        pass.set_bind_group(1, tex.and_then(|t| self.textures.get(&t)).unwrap_or(&self.white), &[]);
+                        pass.set_bind_group(1, self.tex_bind(*tex, mip), &[]);
                         pass.draw(range.clone(), base + variant..base + variant + 1);
                     }
                 }
@@ -1959,9 +2288,10 @@ impl EffectsGpu {
                         bound = Some(key);
                     }
                     pass.set_vertex_buffer(0, m.vb.slice(..));
+                    let mip = stages.s0_mip.get(&e).copied().unwrap_or(true);
                     for (tex, range, _) in &m.groups {
                         let variant = if m.mmb { 2 } else { 0 } + tex.is_none() as u32;
-                        pass.set_bind_group(1, tex.and_then(|t| self.textures.get(&t)).unwrap_or(&self.white), &[]);
+                        pass.set_bind_group(1, self.tex_bind(*tex, mip), &[]);
                         pass.draw(range.clone(), base + variant..base + variant + 1);
                     }
                 }
@@ -1970,7 +2300,8 @@ impl EffectsGpu {
                     bound = None;
                     let r = fx.reg.sprites[id as usize];
                     let tex = fx.reg.libs[r.0].sprites.get(&r.1).and_then(|s| s.texture);
-                    pass.set_bind_group(1, tex.and_then(|t| self.textures.get(&t)).unwrap_or(&self.white), &[]);
+                    pass.set_bind_group(1, self.tex_bind(tex, stages.s0_mip.get(&e).copied().unwrap_or(true)), &[]);
+                    pass.set_bind_group(3, self.leak_bind(&stages, e), &[]);
                     pass.draw(0..6 * fx.reg.sprite_at[id as usize].1, base..base + 1);
                 }
                 Draw::Sprite(id) => {
@@ -1982,7 +2313,7 @@ impl EffectsGpu {
                     }
                     let r = fx.reg.sprites[id as usize];
                     let tex = fx.reg.libs[r.0].sprites.get(&r.1).and_then(|s| s.texture);
-                    pass.set_bind_group(1, tex.and_then(|t| self.textures.get(&t)).unwrap_or(&self.white), &[]);
+                    pass.set_bind_group(1, self.tex_bind(tex, stages.s0_mip.get(&e).copied().unwrap_or(true)), &[]);
                     let quads = fx.reg.sprite_at[id as usize].1;
                     match c.parts {
                         Some((_, n)) => pass.draw(0..6, base..base + n.min(PER_ELEM)),
@@ -1997,7 +2328,11 @@ impl EffectsGpu {
                         pass.set_pipeline(&self.morph_pipes[&(class, key.2)]);
                         bound = Some(key);
                     }
-                    pass.set_bind_group(1, m.texture.and_then(|t| self.textures.get(&t)).unwrap_or(&self.white), &[]);
+                    pass.set_bind_group(
+                        1,
+                        self.tex_bind(m.texture, stages.s0_mip.get(&e).copied().unwrap_or(true)),
+                        &[],
+                    );
                     pass.draw(0..m.t * 3, base..base + 1);
                 }
                 // Up to 3 ring pairs of 2S triangles (S <= 255); vs_ring hides the rest.
@@ -2161,6 +2496,144 @@ mod tests {
             }
             assert_eq!(out[o + 3], 128, "alpha at ({i}, {j})");
         }
+    }
+
+    /// The draw-order stage state (FUN_100412b0 and the element draws): a grouped specular draw leaves stage 2 set for
+    /// the next no-groups specular mesh or lens flare until a D3a / D3b / VuDist / grouped D3m draw disables it; stage
+    /// 0 loses MIPFILTER after a CMoDist copy; the grouped stage's MIPFILTER needs bump mapping too.
+    #[test]
+    fn stage_walk_leak_and_mips() {
+        let sp = |i: usize, clamp: bool| crate::fx::SpecTex { tex: (0, i), cube: false, clamp };
+        let items = [
+            (0, StageDraw::SpecFlat(sp(9, false))),
+            (1, StageDraw::SpecGrouped(sp(1, true))),
+            (2, StageDraw::Keeps),
+            (3, StageDraw::SpecFlat(sp(2, false))),
+            (4, StageDraw::Flare),
+            (5, StageDraw::Dist),
+            (6, StageDraw::Disables),
+            (7, StageDraw::Flare),
+            (8, StageDraw::SpecGrouped(sp(3, false))),
+            (9, StageDraw::VuDist),
+            (10, StageDraw::SpecFlat(sp(4, false))),
+        ];
+        let w = stage_walk(&items, 11, true, false);
+        assert_eq!(w.drawst, vec![0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(w.leak[&3], Some(((0, 1), false, true, false)));
+        assert_eq!(w.leak[&7], None);
+        assert_eq!(w.spec[&1], ((0, 1), false, true, false), "stage 2: no MIPFILTER without bump mapping");
+        assert_eq!(w.spec[&3], ((0, 2), false, false, true), "stage 1 follows the Mip Mapping setting");
+        assert!(w.s0_mip[&5] && !w.s0_mip[&6] && !w.s0_mip[&10]);
+        let w = stage_walk(&items, 11, true, true);
+        assert!(w.spec[&1].3);
+        let w = stage_walk(&items, 11, false, true);
+        assert!(!w.spec[&1].3 && !w.spec[&3].3 && !w.s0_mip[&0]);
+    }
+
+    /// One box mip step: 2 x 2 averages, rounded.
+    #[test]
+    fn cube_box_mip() {
+        let src: Vec<u8> = [0u8, 10, 20, 30].iter().flat_map(|&v| [v, v, v, 255]).collect();
+        assert_eq!(box_half(&src, 2, 2), vec![15, 15, 15, 255]);
+    }
+
+    /// FUN_100759c0's tint copy (vs_spec_copy / fs_spec_copy) against a CPU reference: target texel i reads u = i / W
+    /// (linear, WRAP), so it is the 2 x 2 average of texels i - 1 and i, then sat(2 x C x t) in 8 bits. C =
+    /// 0x80808080 (outs 41 = -1) leaves the target as it was; a cube source copies black.
+    #[test]
+    fn tint_copy_half_texel() {
+        let Ok(gpu) = Gpu::headless() else { return };
+        let (w, h) = (8u32, 4u32);
+        let texel = |x: u32, y: u32| [(x * 30) as u8, (y * 60) as u8, ((x + y) * 17) as u8, 255u8];
+        let px: Vec<u8> = (0..h).flat_map(|y| (0..w).flat_map(move |x| texel(x, y))).collect();
+        let src =
+            super::super::upload_texture(&gpu, &crate::dat::zone::Texture::new(String::new(), 0, w, h, px), false);
+        let mut eg = EffectsGpu::new(&gpu, wgpu::TextureFormat::Rgba8Unorm);
+        // The outs written from here (the update pass fills them in the client).
+        eg.outs = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: (OUT_WORDS * 4) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        eg.draw_groups(&gpu);
+        let sg = EffectsGpu::tex_group(&gpu.device, &eg.tex_layout, &eg.nomip_sampler, &src);
+        let c = [0.25f32, 0.5, 1.0];
+        let run = |eg: &mut EffectsGpu, g41: f32, bits: u32| -> Vec<u8> {
+            let mut o = vec![0f32; OUT_WORDS];
+            o[23] = 1.0;
+            o[41] = g41;
+            o[42] = c[1];
+            o[43] = c[2];
+            gpu.queue.put(&eg.outs, 0, bytemuck::cast_slice(&o));
+            let mut el = vec![0u32; w::WORDS];
+            el[w::SPEC_BITS] = bits;
+            gpu.queue.put(&eg.elems, 0, bytemuck::cast_slice(&el));
+            let target = eg.copy_target(&gpu, (w, h)).clone();
+            let mut enc = gpu.device.create_command_encoder(&Default::default());
+            {
+                let mut p = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: None,
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &target,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                p.set_pipeline(&eg.copy_pipe);
+                p.set_bind_group(0, eg.draw_group.as_ref().unwrap(), &[]);
+                p.set_bind_group(1, &sg, &[]);
+                p.draw(0..3, 0..1);
+            }
+            let buf = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label: None,
+                size: 256 * h as u64,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            enc.copy_texture_to_buffer(
+                eg.copy_targets[&(w, h)].0.as_image_copy(),
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &buf,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(256),
+                        rows_per_image: Some(h),
+                    },
+                },
+                wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            );
+            gpu.queue.submit([enc.finish()]);
+            buf.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+            gpu.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None }).unwrap();
+            let v = buf.slice(..).get_mapped_range().unwrap().to_vec();
+            v
+        };
+        let out = run(&mut eg, c[0], 0);
+        for y in 0..h {
+            for x in 0..w {
+                for k in 0..3 {
+                    let at = |xx: i32, yy: i32| {
+                        texel(xx.rem_euclid(w as i32) as u32, yy.rem_euclid(h as i32) as u32)[k] as f32 / 255.0
+                    };
+                    let (xi, yi) = (x as i32, y as i32);
+                    let avg = (at(xi - 1, yi - 1) + at(xi, yi - 1) + at(xi - 1, yi) + at(xi, yi)) / 4.0;
+                    let want = ((2.0 * c[k] * avg).min(1.0) * 255.0).round();
+                    let got = out[(y * 256 + x * 4) as usize + k] as f32;
+                    assert!((got - want).abs() <= 1.0, "({x}, {y}) channel {k}: {got} vs {want}");
+                }
+            }
+        }
+        // C = 0x80808080: no copy, the target keeps the last one.
+        assert_eq!(run(&mut eg, -1.0, 0), out);
+        // A cube on stage 0 read with 2D coordinates: black.
+        let cube = run(&mut eg, c[0], 16);
+        assert!((0..h).all(|y| (0..w).all(|x| cube[(y * 256 + x * 4) as usize..][..3] == [0, 0, 0])));
     }
 
     impl EffectsGpu {
@@ -2713,4 +3186,74 @@ mod soften_tests {
         assert!(soften_alpha(&tex(116, "effect  kaw1")).is_none());
         assert!(soften_alpha(&tex(101, "light   light")).is_some());
     }
+}
+
+/// What an element's retail draw does to the stages stage_walk follows.
+#[derive(Clone, Copy, Debug)]
+enum StageDraw {
+    /// CMoDist: its copy pass sets stage 0's MIPFILTER NONE (TSS 0x10353028).
+    Dist,
+    /// CMoVuDist: the same, and TSS 0x10353260 disables stage 2.
+    VuDist,
+    /// The lens flare (TSS 0x103520a8): reads stage 2.
+    Flare,
+    /// D3a, D3b, DamValue, a grouped plain D3m or a ground projection's grouped image: disables stage 2.
+    Disables,
+    /// A grouped specular D3m (TSS 0x103529c8): its stage 2 stays set.
+    SpecGrouped(crate::fx::SpecTex),
+    /// A specular D3m without texture groups (TSS 0x103528f0): reads stage 2.
+    SpecFlat(crate::fx::SpecTex),
+    /// Leaves stage 0's MIPFILTER and stage 2 as they are.
+    Keeps,
+}
+
+/// EffectsGpu::stage_walk over the frame's draws in order; `mips` the Mip Mapping setting, `bump` bump mapping.
+fn stage_walk(items: &[(u32, StageDraw)], count: u32, mips: bool, bump: bool) -> StageWalk {
+    let s2_mip = mips && bump;
+    let mut w = StageWalk { drawst: vec![0; count as usize], ..Default::default() };
+    let mut s0 = mips;
+    let mut leak: Option<(u32, SpecKey)> = None;
+    for &(e, d) in items {
+        w.s0_mip.insert(e, s0);
+        let read = |w: &mut StageWalk| {
+            w.leak.insert(e, leak.map(|l| l.1));
+            w.drawst[e as usize] = leak.map_or(0, |l| l.0 + 1);
+        };
+        match d {
+            StageDraw::Dist => s0 = false,
+            StageDraw::VuDist => {
+                s0 = false;
+                leak = None;
+            }
+            StageDraw::Flare => read(&mut w),
+            StageDraw::Disables => leak = None,
+            StageDraw::SpecGrouped(sp) => {
+                let k = (sp.tex, sp.cube, sp.clamp, s2_mip);
+                w.spec.insert(e, k);
+                leak = Some((e, k));
+            }
+            StageDraw::SpecFlat(sp) => {
+                w.spec.insert(e, (sp.tex, sp.cube, sp.clamp, mips));
+                read(&mut w);
+            }
+            StageDraw::Keeps => {}
+        }
+    }
+    w
+}
+
+/// One box-filtered mip step of an RGBA image (2 x 2 texels averaged, odd edges repeated).
+fn box_half(src: &[u8], w: u32, h: u32) -> Vec<u8> {
+    let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
+    let mut out = vec![0u8; (nw * nh * 4) as usize];
+    for y in 0..nh {
+        for x in 0..nw {
+            for c in 0..4 {
+                let at = |xx: u32, yy: u32| src[((yy.min(h - 1) * w + xx.min(w - 1)) * 4 + c) as usize] as u32;
+                let sum = at(2 * x, 2 * y) + at(2 * x + 1, 2 * y) + at(2 * x, 2 * y + 1) + at(2 * x + 1, 2 * y + 1);
+                out[((y * nw + x) * 4 + c) as usize] = ((sum + 2) / 4) as u8;
+            }
+        }
+    }
+    out
 }
