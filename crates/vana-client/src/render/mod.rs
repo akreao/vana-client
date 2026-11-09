@@ -4392,6 +4392,7 @@ impl ZoneRenderer {
         let params = reflect::Params {
             view_proj: u.view_proj,
             eye: u.eye,
+            forward: (camera.target - camera.eye).normalize_or_zero().extend(0.0).to_array(),
             info: [u.sky_info[0], self.encode_gamma as u32 as f32, self.now / 60.0, 0.0],
             clear: u.clear,
             fog_color: u.fog_color,

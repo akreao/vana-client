@@ -3,6 +3,7 @@
 struct Params {
     view_proj: mat4x4<f32>,
     eye: vec4<f32>,
+    forward: vec4<f32>,
     // x: sky gradient on; y: the target holds gamma bytes; z: seconds; w: the frame copy is readable.
     info: vec4<f32>,
     clear: vec4<f32>,
@@ -27,6 +28,9 @@ const RAY: f32 = 80.0;
 const F0: f32 = 0.02;
 const LIFT: f32 = 0.12;
 const MAX_WEIGHT: f32 = 0.7;
+// The reflection fades in over this much water depth under the surface (world units), so it never shows where the
+// collision's surface stands above the drawn water's edge (Bibiki Bay's shores sit about half a unit above its sea).
+const SHORE: f32 = 1.0;
 
 struct VOut {
     @builtin(position) pos: vec4<f32>,
@@ -114,7 +118,8 @@ fn fs(i: VOut) -> @location(0) vec4<f32> {
     let size = vec2<f32>(textureDimensions(depth));
     // The depth test, against the scene (water draws no depth): hidden behind scenery or an actor.
     let px = vec2<i32>(i.pos.xy);
-    if (i.pos.z > textureLoad(depth, px, 0) + 1e-6) {
+    let d = textureLoad(depth, px, 0);
+    if (i.pos.z > d + 1e-6) {
         discard;
     }
     let to_p = i.world - u.eye.xyz;
@@ -122,6 +127,12 @@ fn fs(i: VOut) -> @location(0) vec4<f32> {
     let v = to_p / dist;
     // Seen from under the surface: nothing.
     if (v.y <= 0.0) {
+        discard;
+    }
+    // How far below the surface the scene behind it lies (y grows downward): the water's depth along this ray.
+    let under = u.eye.xyz + v * (linear(d) / max(dot(v, u.forward.xyz), 1e-3));
+    let shore = smoothstep(0.0, SHORE, under.y - i.world.y);
+    if (shore <= 0.0) {
         discard;
     }
     let n = ripple_normal(i.world, dist);
@@ -169,10 +180,10 @@ fn fs(i: VOut) -> @location(0) vec4<f32> {
             let edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
             from_scene = smoothstep(0.0, 0.08, edge) * (1.0 - smoothstep(0.7, 1.0, b / RAY));
             // The copy holds target values; the sky is gamma-space: bring the sky to the target first.
-            return finish(mix(to_target(colour), hit_rgb, from_scene), n, v, dist);
+            return finish(mix(to_target(colour), hit_rgb, from_scene), n, v, dist) * vec4<f32>(1.0, 1.0, 1.0, shore);
         }
     }
-    return finish(to_target(colour), n, v, dist);
+    return finish(to_target(colour), n, v, dist) * vec4<f32>(1.0, 1.0, 1.0, shore);
 }
 
 // The Fresnel weight, fogged away with distance (the water there is already the fog's colour).
