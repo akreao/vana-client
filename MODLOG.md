@@ -23362,3 +23362,16 @@ still gave `cor`. Both now go through actmotion::sdep_stand.
 - Left: the classic UI's version (Steven: a list like the item list, a submenu ON / OFF, Settings, Commands,
   Permissions; Commands a list whose Enter puts the line on the chat line).
 
+
+## The Update button on the login form (ours, 2026-11-09)
+
+- The Update button (client/updater.rs's window) moves from the title (above Select Character) to the login form:
+  at the right end of Remember password's row, opposite Two-factor, while something is out of date. The title comes
+  only after a login and the character list, which an outdated client may not get through (LSB's xiloader 3.0 lobby
+  drops a 2.2 client's plain links), so its button could never be reached when it mattered most.
+- login_window focus n+5 (after Two-factor): Right from the box, Left back, Down to Exit, Up to the last field, Tab
+  after Two-factor; hover and click as the other buttons. The help line "Update the game files or vana-client.". The
+  form takes no input while the window is up, and the window's help line replaces the form's.
+- The form is wide enough for the box's caption and Update side by side (380 design px, or more for a wider caption;
+  440 with the game font), whether or not Update shows, so nothing moves when it appears.
+- The title's keytophd Update button (render/screens.rs update_button and its backing) is gone with it.
