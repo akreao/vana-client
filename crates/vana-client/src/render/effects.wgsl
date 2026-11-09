@@ -810,9 +810,8 @@ fn update(@builtin(global_invocation_id) gid: vec3<u32>) {
         outs[ob + 39u] = l.z;
     }
     // CMoD3mSpecularElem (FUN_100412b0): the specular stage's texture matrix (bit 0: Rz(-a2) Ry(-(a1 + pi/2)) Rx(-a0),
-    // times the camera rotation with bit 1; else Ry(-pi/2)) and its gain: the colour C (bit 0 clear: rgb = element x
-    // specular / 128 per byte, wrapping) as 2 C over a 2D image, 1 when C is 0x80808080, 0 over a cube (its tinted copy
-    // samples face -Z with 2D coordinates: black).
+    // times the camera rotation with bit 1; else Ry(-pi/2)) and the tint C (bit 0 clear: rgb = element x specular / 128
+    // per byte, wrapping) as bytes / 255 for the tint copy (FUN_100759c0); -1 when C is 0x80808080 (the image itself).
     if (kind == DK_MESH && (el[b + E_SPEC_BITS] & 32u) != 0u) {
         let sb = el[b + E_SPEC_BITS];
         var ms = rot_y(-1.5707964);
@@ -829,9 +828,9 @@ fn update(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
             c = m;
         }
-        var g = vec3<f32>(1.0);
+        var g = vec3<f32>(-1.0);
         if (c != 0x80808080u) {
-            g = select(2.0 * vec3<f32>(f32((c >> 16u) & 0xffu), f32((c >> 8u) & 0xffu), f32(c & 0xffu)) / 255.0, vec3<f32>(0.0), (sb & 16u) != 0u);
+            g = vec3<f32>(f32((c >> 16u) & 0xffu), f32((c >> 8u) & 0xffu), f32(c & 0xffu)) / 255.0;
         }
         for (var k = 0u; k < 3u; k = k + 1u) {
             outs[ob + 32u + 3u * k] = ms[k].x;
@@ -937,6 +936,32 @@ struct Draw {
 @group(2) @binding(0) var spec2d: texture_2d<f32>;
 @group(2) @binding(1) var speccube: texture_cube<f32>;
 @group(2) @binding(2) var spec_samp: sampler;
+@group(2) @binding(3) var speccopy: texture_2d<f32>;
+// Stage 2 as the last grouped specular draw left it (FUN_100412b0 never disables it; read by the no-groups path and
+// the lens flare): that element's image or the shared tint copy of its size, its sampler, and per element the leaving
+// element + 1 (0: stage 2 disabled).
+@group(3) @binding(1) var leak2d: texture_2d<f32>;
+@group(3) @binding(2) var leakcopy: texture_2d<f32>;
+@group(3) @binding(3) var leak_samp: sampler;
+@group(3) @binding(4) var<storage, read> drawst: array<u32>;
+
+// Stage 2 left by the last grouped specular draw (COLOROP MODULATEALPHA_ADDCOLOR, TEXCOORDINDEX 0, no transform), read
+// at the draw's own uv set 0: 1 that element's image, 2 the shared tint copy (its C is not 0x80808080), 0 nothing or a
+// cube (2D coordinates never reach face -Z: black).
+fn leak_mode(e: u32) -> u32 {
+    let l = drawst[e];
+    if (l == 0u) { return 0u; }
+    let le = l - 1u;
+    if (douts[le * OUT_WORDS + 41u] >= 0.0) { return 2u; }
+    if ((dels[le * E_WORDS + E_SPEC_BITS] & 16u) != 0u) { return 0u; }
+    return 1u;
+}
+
+fn leak_texel(m: u32, a: vec3<f32>, b: vec3<f32>) -> vec3<f32> {
+    if (m == 2u) { return b; }
+    if (m == 1u) { return a; }
+    return vec3<f32>(0.0);
+}
 // fx/trail.rs gpu_words: per after-image a 32-word header and 80 samples of 8 words.
 @group(3) @binding(0) var<storage, read> trails: array<u32>;
 
@@ -958,9 +983,12 @@ struct VOut {
     @location(3) depth: f32,
     // flags, blend mode, shading variant (0 D3m, 1 D3m untextured, 2 MMB, 3 MMB untextured, 4 D3a)
     @location(4) @interpolate(flat) mode: vec3<u32>,
-    // The specular stage (vs_mesh_spec): the texture direction, and the gain rgb with w = 1 for a cube.
+    // The specular stage (vs_mesh_spec): the texture direction, and w = the bound image (0 the 2D image, 1 the cube,
+    // 2 the tint copy).
     @location(5) sd: vec3<f32>,
     @location(6) @interpolate(flat) sk: vec4<f32>,
+    // Stage 2 as the last grouped specular draw left it (leak_mode): 0 off or black, 1 its image, 2 the tint copy.
+    @location(7) @interpolate(flat) lk: u32,
 };
 
 fn out_mat(o: u32) -> mat4x4<f32> {
@@ -1109,7 +1137,44 @@ fn vs_flare(@builtin(vertex_index) k: u32, @builtin(instance_index) inst: u32) -
     out.tf = vec4<f32>(douts[o + 16u], douts[o + 17u], douts[o + 18u], douts[o + 19u]);
     out.depth = 0.0;
     out.mode = vec3<u32>(dels[eb + E_FLAGS], dels[eb + E_BLEND], 5u);
+    out.lk = leak_mode(e);
     return out;
+}
+
+// The lens flare's stages (FUN_1003ebf0, TSS 0x103520a8): colour 2 x diffuse x texture, stage 1 SELECTARG1; alpha
+// 2 x diffuse x texture, then x TFACTOR x 2. Stage 2 is not set: what a grouped specular draw left there adds.
+@fragment
+fn fs_flare(i: VOut) -> @location(0) vec4<f32> {
+    let t = textureSample(tex, samp, i.uv);
+    let lk = leak_texel(i.lk, textureSample(leak2d, leak_samp, i.uv).rgb, textureSample(leakcopy, leak_samp, i.uv).rgb);
+    let a = sat(2.0 * sat(2.0 * i.color.a * t.a) * i.tf.a);
+    var rgb = sat3(sat3(2.0 * i.color.rgb * t.rgb) + a * lk);
+    if (d.fog.z > 0.5) { rgb = pow(rgb, vec3<f32>(2.2)); }
+    return vec4<f32>(rgb, a);
+}
+
+// FUN_100759c0, the tint copy: a pre-transformed quad (0, 0)..(W, H) with uv 0..1 into the shared target of the
+// image's size. D3D8 samples pixel i at u = i / W, half a texel left of its centre, so linear filtering averages 2 x 2
+// texels; stage 0 MODULATE2X(TEXTURE, TFACTOR = C) into 8 bits (alpha MODULATE4X, never read). A cube bound there is
+// read with 2D coordinates, which never reach face -Z: black. Not drawn for C = 0x80808080 (outs 41 < 0).
+@vertex
+fn vs_spec_copy(@builtin(vertex_index) k: u32, @builtin(instance_index) e: u32) -> VOut {
+    let o = e * OUT_WORDS;
+    if (douts[o + 23u] < 0.5 || douts[o + 41u] < 0.0) { return hidden(); }
+    let p = array<vec2<f32>, 3>(vec2<f32>(-1.0, -1.0), vec2<f32>(3.0, -1.0), vec2<f32>(-1.0, 3.0));
+    var out: VOut;
+    out.clip = vec4<f32>(p[min(k, 2u)], 0.5, 1.0);
+    out.tf = vec4<f32>(douts[o + 41u], douts[o + 42u], douts[o + 43u], 1.0);
+    out.sk = vec4<f32>(0.0, 0.0, 0.0, select(0.0, 1.0, (dels[e * E_WORDS + E_SPEC_BITS] & 16u) != 0u));
+    return out;
+}
+
+@fragment
+fn fs_spec_copy(i: VOut) -> @location(0) vec4<f32> {
+    let sz = vec2<f32>(textureDimensions(tex, 0));
+    let t = textureSampleLevel(tex, samp, (i.clip.xy - 0.5) / sz, 0.0);
+    if (i.sk.w > 0.5) { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }
+    return vec4<f32>(sat3(2.0 * t.rgb * i.tf.rgb), 1.0);
 }
 
 // The screen glare of a flare (FUN_10053920 step 7 -> FUN_100125c0): g = max(0, 1 - r 2/3) from the screen
@@ -1275,7 +1340,12 @@ fn vs_mesh_spec(v: VIn, @builtin(instance_index) inst: u32) -> VOut {
     let ms = mat3x3<f32>(vec3<f32>(douts[o + 32u], douts[o + 33u], douts[o + 34u]), vec3<f32>(douts[o + 35u], douts[o + 36u], douts[o + 37u]), vec3<f32>(douts[o + 38u], douts[o + 39u], douts[o + 40u]));
     out.sd = ms * nc;
     let cube = (dels[e * E_WORDS + E_SPEC_BITS] & 16u) != 0u;
-    out.sk = vec4<f32>(douts[o + 41u], douts[o + 42u], douts[o + 43u], select(0.0, 1.0, cube));
+    out.sk = vec4<f32>(0.0, 0.0, 0.0, select(select(0.0, 1.0, cube), 2.0, douts[o + 41u] >= 0.0));
+    // The no-groups path: stage 0 untextured, stage 2 at the raw uv (the scroll is stage 0's texture matrix).
+    if (inst % PER_ELEM == 11u) {
+        out.uv = v.uv;
+        out.lk = leak_mode(e);
+    }
     return out;
 }
 
@@ -1291,7 +1361,10 @@ fn fs_spec(i: VOut) -> @location(0) vec4<f32> {
     let t0 = textureSample(tex, samp, i.uv);
     let s2 = textureSample(spec2d, spec_samp, i.sd.xy);
     let sc = textureSample(speccube, spec_samp, i.sd);
-    let sp = sat3(select(s2.rgb, sc.rgb, i.sk.w > 0.5) * i.sk.rgb);
+    let sy = textureSample(speccopy, spec_samp, i.sd.xy);
+    var sp = s2.rgb;
+    if (i.sk.w > 1.5) { sp = sy.rgb; } else if (i.sk.w > 0.5) { sp = sc.rgb; }
+    let lk = leak_texel(i.lk, textureSample(leak2d, leak_samp, i.uv).rgb, textureSample(leakcopy, leak_samp, i.uv).rgb);
     var rgb: vec3<f32>;
     var a: f32;
     if (variant == 10u) {
@@ -1305,6 +1378,8 @@ fn fs_spec(i: VOut) -> @location(0) vec4<f32> {
         let a0 = sat(4.0 * dd.a * f.a);
         rgb = sat3(sat3(2.0 * dd.rgb * f.rgb) + a0 * sp);
         a = a0;
+        // TSS 0x103528f0 sets stages 0 and 1 only: stage 2 adds what a grouped draw left there.
+        rgb = sat3(rgb + a * lk);
     } else {
         rgb = sat3(2.0 * dd.rgb * f.rgb);
         a = sat(4.0 * dd.a * f.a);
@@ -1699,10 +1774,11 @@ fn fs(i: VOut) -> @location(0) vec4<f32> {
         rgb = sat3(2.0 * dd.rgb * f.rgb);
         a = sat(4.0 * dd.a * f.a);
     } else if (variant == 5u) {
-        // Flare stages: colour diffuse x texture x 2 (TFACTOR rgb not applied), alpha x TFACTOR x 2.
+        // Flare stages (TSS 0x103520a8; drawn by fs_flare): colour diffuse x texture x 2 (TFACTOR rgb not applied),
+        // alpha diffuse x texture x 2, then x TFACTOR x 2.
         let t = textureSample(tex, samp, i.uv);
         rgb = sat3(2.0 * dd.rgb * t.rgb);
-        a = sat(sat(dd.a * t.a) * f.a * 2.0);
+        a = sat(sat(2.0 * dd.a * t.a) * f.a * 2.0);
     } else if (variant == 6u) {
         rgb = dd.rgb;
         a = 1.0;

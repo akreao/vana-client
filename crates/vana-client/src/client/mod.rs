@@ -18543,6 +18543,7 @@ impl App {
                         }),
                     );
                     eg.set_depth(Some((&scene_depth, camera.proj(aspect))));
+                    eg.bump_mode = r.bump_mode;
                     perf::timed(|| "effects upload".into(), || eg.update(&gfx.gpu, &mut encoder, &mut w.effects, &f));
                     mark!("fx update");
                     let (fog_color, fog) = r
