@@ -153,6 +153,10 @@ fn save_grey(path: &Path, w: u32, h: u32, v: &[u8]) -> Result<()> {
     enc.set_color(png::ColorType::Grayscale);
     enc.set_compression(png::Compression::Fast);
     enc.write_header()?.write_image_data(v)?;
+    // Windows' rename won't replace a file (--redo).
+    if path.exists() {
+        std::fs::remove_file(path)?;
+    }
     std::fs::rename(&tmp, path)?;
     Ok(())
 }

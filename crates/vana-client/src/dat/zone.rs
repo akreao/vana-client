@@ -823,6 +823,8 @@ pub struct ZoneScene {
     pub floors: Vec<(String, f32)>,
     /// Surface Detail's pack slopes by texture name (surface.rs), put in by the loader when the setting is on.
     pub surface: std::collections::HashMap<String, crate::surface::Slopes>,
+    /// The loader looked for the pack (Surface Detail was on), found or not.
+    pub surface_tried: bool,
 }
 
 impl ZoneScene {
@@ -899,6 +901,7 @@ pub fn load_scene(keys: &Keys, file: &[u8]) -> Result<ZoneScene> {
         bumps: Vec::new(),
         floors: Vec::new(),
         surface: Default::default(),
+        surface_tried: false,
     };
     let list: Vec<Chunk> = chunks(file)?;
     for c in list {

@@ -205,6 +205,7 @@ impl Task {
             Task::ZonePreloaded(..) => "zone preloaded",
             Task::AreaLoaded(..) => "area loaded",
             Task::SubAreaLoaded(..) => "sub-area loaded",
+            Task::SurfacePack(..) => "surface pack",
             Task::CharacterLoaded(..) => "model loaded",
             Task::GameUi(_) => "game ui",
             Task::Flyover(_) => "flyover",
@@ -251,6 +252,9 @@ enum Task {
     ),
     /// A sub-area (zone, id) off the loader thread.
     SubAreaLoaded(u16, u32, Result<subarea::Loaded>),
+    /// Surface Detail's pack for a scene loaded with the setting off (ZoneRenderer::surface_request): the scene, the
+    /// texture names asked for, the pack.
+    SurfacePack(u16, Vec<String>, std::collections::HashMap<String, crate::surface::Slopes>),
     /// A model by its source key, prepared for the GPU on the loader thread.
     CharacterLoaded(String, Result<Model>),
     GameUi(Result<GameUiData>),
@@ -6845,6 +6849,7 @@ fn surface_pack(scene: &mut zone::ZoneScene, map_no: u32, on: bool) {
     if on {
         let names: Vec<String> = scene.textures.iter().map(|t| t.name.clone()).collect();
         scene.surface = crate::surface::load(map_no, &names, &crate::config::enabled_mod_dirs());
+        scene.surface_tried = true;
     }
 }
 
@@ -9299,6 +9304,7 @@ impl App {
                 | Task::Actions(_)
                 | Task::AreaLoaded(..)
                 | Task::SubAreaLoaded(..)
+                | Task::SurfacePack(..)
         ) {
             self.busy = false;
         }
@@ -10195,6 +10201,14 @@ impl App {
                         log::warn!("sub-area {id}: {e:#}");
                         doors::reapply(w);
                     }
+                }
+            }
+            Task::SurfacePack(map, names, pack) => {
+                let Phase::World(world) = &mut self.phase else { return };
+                if world.area.shown.or(world.scene) == Some(map)
+                    && let (Some(r), Some(gfx)) = (world.renderer.as_mut(), self.gfx.as_ref())
+                {
+                    r.attach_surface(&gfx.gpu, &pack, &names);
                 }
             }
             Task::AreaLoaded(area, result) => {
@@ -18385,6 +18399,14 @@ impl App {
                 r.smooth_lights = self.cfg.smooth_lights;
                 // Surface Detail (ours): relief from the scenery textures on the sun's light, 0 off.
                 r.surface_detail = self.cfg.surface_detail.min(2);
+                // Switched on after the zone loaded: its pack, read off the frame.
+                if let (Some(names), Some(map)) = (r.surface_request(), w.area.shown.or(w.scene)) {
+                    let tx = self.tasks_tx.clone();
+                    std::thread::spawn(move || {
+                        let pack = crate::surface::load(map as u32, &names, &crate::config::enabled_mod_dirs());
+                        let _ = tx.send(Task::SurfacePack(map, names, pack));
+                    });
+                }
                 // Windowed (0034 != 0, no gamma ramp): lights boosted by the channels' ramps (render::light_boost),
                 // gamma base 0028 + 1 + Gameplay R / G / B / 100 (FUN_101aa650).
                 r.light_boost = if self.cfg.window_mode() != 0 {

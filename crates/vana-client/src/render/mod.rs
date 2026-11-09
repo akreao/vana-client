@@ -419,6 +419,8 @@ pub struct ZoneRenderer {
     scenery_surface: [[wgpu::RenderPipeline; 3]; 4],
     scenery_surface_furn: [[wgpu::RenderPipeline; 3]; 2],
     surface_groups: Vec<wgpu::BindGroup>,
+    /// The texture names to look the pack up for, until asked (ZoneGeometry::surface_names).
+    surface_names: Option<Vec<String>>,
     /// The scenery as lines by cull, where the device draws lines (a mod's wireframe switch).
     scenery_wire: Option<[wgpu::RenderPipeline; 3]>,
     pub wireframe: bool,
@@ -800,7 +802,7 @@ pub fn upload_texture_seq(gpu: &Gpu, t: &crate::dat::zone::Texture, srgb: bool) 
     (up.texture.create_view(&Default::default()), seq)
 }
 
-/// Surface Detail's slopes (surface.rs, RG8) as a texture with its mips made here (each level the mean of the four
+/// Surface Detail's slopes (surface.rs, RG8) as a texture with its mips made here (each level the mean of the
 /// texels above it): the shader reads the slope averaged over a pixel's footprint.
 fn upload_slopes(gpu: &Gpu, w: u32, h: u32, rg: &[u8]) -> wgpu::TextureView {
     let mut data = rg.to_vec();
@@ -809,12 +811,19 @@ fn upload_slopes(gpu: &Gpu, w: u32, h: u32, rg: &[u8]) -> wgpu::TextureView {
     while lw > 1 || lh > 1 {
         let (nw, nh) = ((lw / 2).max(1), (lh / 2).max(1));
         let mut next = Vec::with_capacity(nw * nh * 2);
+        // Each texel over its 2 x 2 block; on an odd side the last one takes the leftover row or column too.
+        let span = |i: usize, n: usize, l: usize| 2 * i..if i + 1 == n { l } else { (2 * i + 2).min(l) };
         for y in 0..nh {
             for x in 0..nw {
                 for c in 0..2 {
-                    let at = |xx: usize, yy: usize| level[(yy.min(lh - 1) * lw + xx.min(lw - 1)) * 2 + c] as u32;
-                    let sum = at(2 * x, 2 * y) + at(2 * x + 1, 2 * y) + at(2 * x, 2 * y + 1) + at(2 * x + 1, 2 * y + 1);
-                    next.push(((sum + 2) / 4) as u8);
+                    let (mut sum, mut k) = (0u32, 0u32);
+                    for yy in span(y, nh, lh) {
+                        for xx in span(x, nw, lw) {
+                            sum += level[(yy * lw + xx) * 2 + c] as u32;
+                            k += 1;
+                        }
+                    }
+                    next.push(((sum + k / 2) / k.max(1)) as u8);
                 }
             }
         }
@@ -2103,6 +2112,9 @@ pub struct ZoneGeometry {
     bumps: Vec<(u32, u32, Vec<u8>)>,
     /// Surface Detail's pack slopes the draws use (surface.rs), one per texture.
     surface: Vec<crate::surface::Slopes>,
+    /// The scene's texture names (a draw's texture slot - 1), when the pack wasn't looked for at load: Surface Detail
+    /// switched on later asks for it then (ZoneRenderer::surface_request).
+    surface_names: Option<Vec<String>>,
     /// The water faces reflections draw on (render/reflect.rs); empty for a sub-area.
     water: std::sync::Arc<reflect::WaterSurface>,
     /// The polished floors' upward faces in world space (the scene's `floors`).
@@ -2468,6 +2480,7 @@ impl ZoneGeometry {
             sway_curves,
             bumps,
             surface,
+            surface_names: (!scene.surface_tried).then(|| scene.textures.iter().map(|t| t.name.clone()).collect()),
             water: std::sync::Arc::new(match (&scene.collision, animate) {
                 (Some(c), true) => reflect::WaterSurface::build(c),
                 _ => Default::default(),
@@ -2728,6 +2741,7 @@ impl ZoneRenderer {
             sway,
             bump_groups,
             surface_groups,
+            surface_names: geo.surface_names.clone(),
             scenery_surface: p.scenery_surface,
             scenery_surface_furn: p.scenery_surface_furn,
             bump_mode: true,
@@ -4742,6 +4756,33 @@ impl ZoneRenderer {
         }
     }
 
+    /// With Surface Detail on and the pack not looked for when the zone loaded, the scene's texture names to look it
+    /// up for (once; the caller loads it off the frame and hands it to `attach_surface`).
+    pub fn surface_request(&mut self) -> Option<Vec<String>> {
+        if self.surface_detail == 0 {
+            return None;
+        }
+        self.surface_names.take()
+    }
+
+    /// Surface Detail's pack for this zone, loaded after it went up (`surface_request`; `names` the texture names it
+    /// gave): the pack's slopes on the draws whose texture has one and no retail bump map.
+    pub fn attach_surface(&mut self, gpu: &Gpu, pack: &HashMap<String, crate::surface::Slopes>, names: &[String]) {
+        let mut index: HashMap<&str, usize> = HashMap::new();
+        for d in self.draws.iter_mut().filter(|d| d.bump.is_none() && d.surface.is_none()) {
+            let Some(name) = d.texture.checked_sub(1).and_then(|t| names.get(t)) else { continue };
+            let Some(slopes) = pack.get(name) else { continue };
+            let k = *index.entry(name.as_str()).or_insert_with(|| {
+                let (w, h, rg) = slopes;
+                let view = upload_slopes(gpu, *w, *h, rg);
+                self.surface_groups.push(view_bind_group(gpu, &self.texture_layout, &self.sampler, &view));
+                self.surface_groups.len() - 1
+            });
+            d.surface = Some(k);
+        }
+        log::info!("surface detail: {} pack textures attached", index.len());
+    }
+
     /// The faded actors' offscreen target at the scene target's size (`scene`: the texture render draws into), in the
     /// pipelines' colour format. Without it render blends a faded actor triangle by triangle.
     pub fn prepare_faded(&mut self, gpu: &Gpu, scene: &wgpu::Texture) {
@@ -5276,6 +5317,7 @@ mod faded_tests {
             sway: Default::default(),
             bumps: vec![],
             surface: Default::default(),
+            surface_tried: false,
             floors: vec![],
         };
         let format = wgpu::TextureFormat::Rgba8Unorm;
