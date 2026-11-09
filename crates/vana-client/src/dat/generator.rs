@@ -371,10 +371,13 @@ impl D3m {
         if d.len() < 8 {
             bail!("d3m: {} bytes", d.len());
         }
-        let format = (d[0] & 0xf) as u8;
+        let mut format = (d[0] & 0xf) as u8;
         let (n, m, tris) = (d[4] as usize, d[5] as usize, u16::from_le_bytes([d[6], d[7]]) as usize);
         let counts: Vec<u16> =
             (0..n).map(|k| d.get(8 + 2 * k..10 + 2 * k).map_or(0, |b| u16::from_le_bytes([b[0], b[1]]))).collect();
+        if (format == 5 || format == 6) && Self::probe_fails(d, n, m, tris, &counts) {
+            format = 7;
+        }
         let table = if (5..=7).contains(&format) {
             if format == 7 && n == 0 {
                 8
@@ -410,6 +413,30 @@ impl D3m {
             })
             .collect();
         Ok(Self { format, textures, per_texture: counts, untextured_tail: m != 0, vertices })
+    }
+
+    /// The layout probe FUN_1003fee0 (first use, format 5 / 6): with no textures, the first three vertices at the
+    /// format-5/6 offset must have |normal| in [0.1, 2.0] (D3DX length; a NaN length passes, as the x87 compares do)
+    /// and a finite position and uv (FUN_1006ca20: _fpclass of the float widened to double, so only NaN and infinity
+    /// fail); with textures, the runs' triangle counts must not sum past 3N. A failure makes it format 7, whose
+    /// vertices start right after the header when there are no textures (FUN_1003fcf0). A vertex past the end of the
+    /// data fails *(ours: retail reads whatever follows)*.
+    fn probe_fails(d: &[u8], n: usize, m: usize, tris: usize, counts: &[u16]) -> bool {
+        if n != 0 {
+            return counts.iter().map(|&c| c as usize).sum::<usize>() > 3 * tris;
+        }
+        let first = if m & 3 != 0 { 8 + (m & !3) * 2 + 6 } else { 8 + m * 2 };
+        let f = |o: usize| d.get(o..o + 4).map(|b| f32::from_le_bytes(b.try_into().unwrap()));
+        (0..3).any(|k| {
+            let o = first + 36 * k;
+            let (Some(x), Some(y), Some(z), Some(nx), Some(ny), Some(nz), Some(u), Some(v)) =
+                (f(o), f(o + 4), f(o + 8), f(o + 12), f(o + 16), f(o + 20), f(o + 28), f(o + 32))
+            else {
+                return true;
+            };
+            let len = (nx * nx + ny * ny + nz * nz).sqrt();
+            len > 2.0 || len < 0.1 || ![x, y, z, u, v].iter().all(|c| c.is_finite())
+        })
     }
 }
 
@@ -463,6 +490,47 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// FUN_1003fee0 on the two meshes it changes (d3m_probe_census): DAT 148 `2cor` (vertex 1's normal is 13.55
+    /// long) and DAT 170 `ike2` (vertex 0's is 0.099996) are format 6 by their header and read as format 7, six bytes
+    /// early, as retail does; NaN normals (DAT 3559 `md`) pass (needs the game's files).
+    #[test]
+    fn d3m_format7_probe() {
+        let cases: [(u32, &str, u8); 3] = [(148, "2cor", 7), (170, "ike2", 7), (3559, "md  ", 6)];
+        for (id, name, want) in cases {
+            let Some(file) = read(id) else { return };
+            let tree = Tree::build(&file).unwrap();
+            let i = tree.of_kind(kind::D3M).find(|&i| tree.nodes[i].name == fourcc(name)).unwrap();
+            let d = &file[tree.nodes[i].data.clone()];
+            assert_eq!((d[0] & 0xf, D3m::parse(d).unwrap().format), (6, want), "DAT {id} {name}");
+        }
+    }
+
+    /// FUN_1003fee0 census over every DAT (by hand: `cargo test --release d3m_probe_census -- --ignored
+    /// --nocapture`): the format-5/6 meshes the probe turns into format 7. 2 of 74,033 in this install.
+    #[test]
+    #[ignore]
+    fn d3m_probe_census() {
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let (mut total, mut switched) = (0, 0);
+        for id in 0..index.len() as u32 {
+            let Ok(file) = index.read(id) else { continue };
+            let Ok(tree) = Tree::build(&file) else { continue };
+            for i in tree.of_kind(kind::D3M) {
+                let d = &file[tree.nodes[i].data.clone()];
+                if d.len() < 8 || !matches!(d[0] & 0xf, 5 | 6) {
+                    continue;
+                }
+                total += 1;
+                if D3m::parse(d).is_ok_and(|m| m.format == 7) {
+                    switched += 1;
+                    let name = String::from_utf8_lossy(&tree.nodes[i].name).to_string();
+                    println!("DAT {id} {name:?} A {} B {} N {}", d[4], d[5], u16::from_le_bytes([d[6], d[7]]));
+                }
+            }
+        }
+        println!("{switched} of {total} format-5/6 meshes switch to format 7");
     }
 
     /// Zone 232 (DAT 332) effe/sea sea1: world, auto-start, one persistent element; op 1 names 'sea1',
