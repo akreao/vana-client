@@ -4777,6 +4777,75 @@ return "acxml flow ok"
         vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
     }
 
+    /// Hotbars' builder: after a macro is saved it starts a new one, so the next macro made from the Builder tab is
+    /// added to the library instead of saved over the one just made (and put on a bar).
+    #[test]
+    fn hotbar_builder_new_after_save() {
+        let host = Host::default();
+        let files = BUNDLED.iter().find(|b| b.0 == "hotbar").unwrap().2;
+        let vm = Vm::new(bundled_manifest("hotbar").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
+        vm.lua.set_app_data(host.info.clone());
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        let script = r#"
+            local W, ON = {}, nil
+            ui = {
+              window = function(_, spec)
+                for _, e in ipairs(spec.elements) do if e.id then W[e.id] = { text = e.text or "" } end end
+              end,
+              on = function(_, f) ON = f end,
+              update = function(_, id, p) W[id] = W[id] or {}; for k, v in pairs(p) do W[id][k] = v end end,
+              get = function(_, id) return W[id] or { text = "" } end,
+              open = function() end, close = function() end, is_open = function() return true end,
+              menu = function() end, prompt = function() end,
+            }
+            chat = { add = function() end }
+            settings = { get = function(k) return ({ bars = 3, slots = 10, size = 52 })[k] end }
+            local STUB = {
+              ["src.jobs"] = { current = function() return "WHM", nil end, parse = function(t) return t end },
+              ["src.keys"] = { MOD_LABELS = { "Ctrl" }, ROW_LABELS = { "1-0" }, index_of = function() return 1 end,
+                conflicts = function() return {} end, get_mod = function() end, get_row = function() end,
+                get_slot = function() end, hint_or = function() return "" end, combo = function() return "" end },
+              ["src.actions"] = { of = function() return nil end },
+              ["src.palette"] = { start_drag = function() end, end_drag = function() end },
+              ["src.builder"] = {
+                TYPES = { { kind = "ma", label = "Spell", search = "" } }, TYPE_LABELS = { "Spell" },
+                type_index = function() return 1 end, columns = function() return {} end,
+                target_label = function() return "<t>" end,
+                find = function(_, q)
+                  local n = q == "" and "Cure" or q
+                  return { { name = n, title = n, target = "t", cells = {} } }
+                end,
+              },
+            }
+            local real = require
+            require = function(n) return STUB[n] or real(n) end
+            local data = require("src.data")
+            data.init({ read = function() return nil end, write = function() end, decode = json.decode,
+              encode = json.encode })
+            local M = require("src.manager")
+            M.hooks = { changed = function() end, rebind = function() end }
+            M.open()
+            local function ev(e) ON("manager", e) end
+            local function make(spell)
+              ev({ kind = "edit", id = "q", text = spell })
+              ev({ kind = "select", id = "found", index = 1 })
+              ev({ kind = "press", id = "bbtn", index = 1 })
+            end
+            -- New, Cure, Save; it goes on bar 1, slot 1; then the Builder tab itself, Protect, Save.
+            ev({ kind = "press", id = "lbtn", index = 1 })
+            make("Cure")
+            data.assign("WHM", nil, 1, 1, "1")
+            M.refresh()
+            ev({ kind = "set", id = "tabs", index = 2 })
+            assert(W.bwhere.text == "New macro for WHM." and W.name.text == "", W.bwhere.text)
+            make("Protect")
+            local lib = data.library("WHM")
+            assert(#lib == 2 and lib[1].entry.name == "Cure" and lib[2].entry.name == "Protect", #lib)
+            assert(data.resolve("WHM", nil, 1, 1).name == "Cure")
+        "#;
+        vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
+    }
+
     /// ui.native.place / rect / panels and ui.skin: names checked, the permission asked, each change its mod's (another
     /// mod's release leaves it), a skin change counted once; HUD anchors name panels.
     #[test]
