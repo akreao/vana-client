@@ -94,6 +94,9 @@ pub use theme::{Theme, frame_image, sprite_pixels};
 pub use crate::config::{ModernDock as Dock, ModernLayout as Layout, ModernPlace as Place};
 use std::collections::HashMap;
 
+/// The modern Wide Scan list's filtered rows depend on: the rows' build, the origin, the area, the kinds, the text.
+type ScanViewKey = (Option<(u64, usize, u16)>, (f32, f32), Option<(f32, f32, f32)>, u8, String);
+
 pub struct Modern {
     pub theme: Theme,
     art: Art,
@@ -115,6 +118,9 @@ pub struct Modern {
     /// time): one unseen for IMAGE_KEEP seconds goes (Modern::texture).
     images: std::cell::RefCell<std::collections::HashMap<String, (Option<egui::TextureHandle>, f64)>>,
     images_pruned: std::cell::Cell<f64>,
+    /// The full log's find: its key (the log's span and edits, the text, the tab) and the lines it found.
+    #[allow(clippy::type_complexity)]
+    log_found: std::cell::RefCell<Option<((usize, usize, u64, String, u8, bool), std::rc::Rc<Vec<usize>>)>>,
     /// Status tooltips' name and description by (status id, small set), read once (hud.rs).
     pub status_tips: std::cell::RefCell<HashMap<(u16, bool), std::rc::Rc<(String, String)>>>,
     /// Macro lines and the spell or ability each names (textcmd::line_action), for greying the macro keys.
@@ -135,6 +141,9 @@ pub struct Modern {
     /// asked from; the row picked (its options open, ringed on the minimap); Narrow down range: waiting for a click on
     /// the minimap, then the area kept (world x, z, radius).
     scan_rows: std::cell::RefCell<Vec<(super::widescan::Entry, String)>>,
+    /// What `scan_rows` was built from (scan generation, names, our index), and the filtered view drawn from it.
+    scan_built: std::cell::Cell<Option<(u64, usize, u16)>>,
+    scan_view: std::cell::RefCell<Option<(ScanViewKey, std::rc::Rc<Vec<(super::widescan::Entry, String)>>)>>,
     scan_origin: std::cell::Cell<(f32, f32)>,
     scan_pick: std::cell::Cell<Option<u16>>,
     scan_picking: std::cell::Cell<bool>,
@@ -210,12 +219,15 @@ impl Modern {
             border_style: Default::default(),
             images: Default::default(),
             images_pruned: Default::default(),
+            log_found: Default::default(),
             status_tips: Default::default(),
             macro_acts: Default::default(),
             grid: Default::default(),
             marquee: Default::default(),
             scan_at: Default::default(),
             scan_rows: Default::default(),
+            scan_built: Default::default(),
+            scan_view: Default::default(),
             scan_origin: Default::default(),
             scan_pick: Default::default(),
             scan_picking: Default::default(),

@@ -290,6 +290,19 @@ struct CanvasAt {
     at: std::time::Instant,
 }
 
+/// The mods' render.entity looks, borrowed from the frame info (Host::looks).
+pub(in crate::client) struct Looks<'a>(std::cell::Ref<'a, std::collections::HashMap<u32, (String, render::Look)>>);
+
+impl Looks<'_> {
+    pub fn get(&self, id: &u32) -> Option<&render::Look> {
+        self.0.get(id).map(|l| &l.1)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&u32, &render::Look)> {
+        self.0.iter().map(|(id, l)| (id, &l.1))
+    }
+}
+
 /// The mods of this session.
 #[derive(Default)]
 pub struct Host {
@@ -1902,9 +1915,26 @@ impl Host {
     /// The timers' sections shown: per section, whether its panel's window is open, and with the client's own rows.
     pub(in crate::client) fn timers_panels(&self) -> [Option<bool>; 3] {
         TIMERS_PANELS.map(|p| {
-            let win = self.edge_panel(p).filter(|_| !self.hides(p))?;
-            Some(win.elems.iter().any(|e| matches!(e, window::Elem::Timers { builtin: true, .. })))
+            if self.all_hidden || self.hides(p) {
+                return None;
+            }
+            // Read in place (edge_panel copies the window).
+            self.vms.iter().rev().filter(|v| v.suspended.is_none()).find_map(|v| {
+                let st = v.st.borrow();
+                let win = st.windows.iter().find(|w| w.open && w.edge && w.panel.as_deref() == Some(p))?;
+                Some(win.elems.iter().any(|e| matches!(e, window::Elem::Timers { builtin: true, .. })))
+            })
         })
+    }
+
+    /// Whether an open edge window stands in for a built-in panel (edge_panel, without copying the window).
+    pub(in crate::client) fn has_edge_panel(&self, panel: &str) -> bool {
+        !self.all_hidden
+            && self
+                .vms
+                .iter()
+                .filter(|v| v.suspended.is_none())
+                .any(|v| v.st.borrow().windows.iter().any(|w| w.open && w.edge && w.panel.as_deref() == Some(panel)))
     }
 
     /// The open edge window standing in for a built-in panel (the newest mod's).
@@ -1944,12 +1974,20 @@ impl Host {
         if !self.hud_shown() {
             return Vec::new();
         }
+        // Read in place (every element was copied for this every frame), in the draw order elements() gives.
+        let mut all: Vec<(i32, hud::Wanted)> = Vec::new();
+        for vm in self.vms.iter().filter(|v| v.suspended.is_none()) {
+            for e in vm.st.borrow().hud.iter().filter(|e| e.visible) {
+                if let hud::Kind::Portrait { entity, w, h, look, .. } = e.kind {
+                    all.push((e.layer, hud::Wanted { entity, size: [w, h], look }));
+                }
+            }
+        }
+        all.sort_by_key(|p| p.0);
         let mut out: Vec<hud::Wanted> = Vec::new();
-        for (_, e) in hud::elements(self) {
-            if let hud::Kind::Portrait { entity, w, h, look, .. } = e.kind
-                && !out.iter().any(|p| p.entity == entity)
-            {
-                out.push(hud::Wanted { entity, size: [w, h], look });
+        for (_, p) in all {
+            if !out.iter().any(|o| o.entity == p.entity) {
+                out.push(p);
             }
         }
         out
@@ -2034,13 +2072,35 @@ impl Host {
     }
 
     /// The player looks mods set (render.look) and their version.
-    pub(in crate::client) fn models(&self) -> (u64, std::collections::HashMap<u32, render::Model>) {
-        let f = self.info.borrow();
-        (f.models_ver, f.models.iter().map(|(id, m)| (*id, m.1)).collect())
+    /// The mods' render.look models' version: it moves when one changes.
+    pub(in crate::client) fn models_ver(&self) -> u64 {
+        self.info.borrow().models_ver
     }
 
-    pub(in crate::client) fn looks(&self) -> std::collections::HashMap<u32, render::Look> {
-        self.info.borrow().looks.iter().map(|(id, l)| (*id, l.1.clone())).collect()
+    /// Entity `id`'s model as a mod set it (render.look).
+    pub(in crate::client) fn model(&self, id: u32) -> Option<render::Model> {
+        self.info.borrow().models.get(&id).map(|m| m.1)
+    }
+
+    /// Entity `id`'s size as a mod set it (render.entity scale; 1 for none).
+    pub(in crate::client) fn look_scale(&self, id: u32) -> f32 {
+        self.info.borrow().looks.get(&id).and_then(|l| l.1.scale).unwrap_or(1.0)
+    }
+
+    /// Entity `id`'s alpha and tint as a mod set them (render.entity), when one did.
+    pub(in crate::client) fn look_shade(&self, id: u32) -> Option<(Option<f32>, Option<[f32; 3]>)> {
+        self.info.borrow().looks.get(&id).map(|l| (l.1.alpha, l.1.tint))
+    }
+
+    /// A mod hides entity `id` (render.entity hidden).
+    pub(in crate::client) fn look_hidden(&self, id: u32) -> bool {
+        self.info.borrow().looks.get(&id).is_some_and(|l| l.1.hidden)
+    }
+
+    /// The looks mods set (render.entity) by entity, borrowed (a copy every frame was a map of strings): hold it only
+    /// while no mod runs.
+    pub(in crate::client) fn looks(&self) -> Looks<'_> {
+        Looks(std::cell::Ref::map(self.info.borrow(), |f| &f.looks))
     }
 
     /// The modern panels of the hidden pieces, and the panels hidden by name.
@@ -5982,13 +6042,14 @@ impl Host {
         out
     }
 
-    pub(super) fn open_windows(&self) -> Vec<(String, window::Window)> {
+    /// The open windows `keep` takes (copied: the caller draws them while it changes the world).
+    pub(super) fn open_windows_where(&self, keep: impl Fn(&window::Window) -> bool) -> Vec<(String, window::Window)> {
         let mut out = Vec::new();
         if self.all_hidden {
             return out;
         }
         for vm in self.vms.iter().filter(|v| v.suspended.is_none()) {
-            for win in vm.st.borrow().windows.iter().filter(|w| w.open) {
+            for win in vm.st.borrow().windows.iter().filter(|w| w.open && keep(w)) {
                 out.push((vm.manifest.id.clone(), win.clone()));
             }
         }

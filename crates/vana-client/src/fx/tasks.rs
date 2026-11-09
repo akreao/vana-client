@@ -3076,16 +3076,18 @@ impl Effects {
     /// / Z at its origin by keyframe 4cc u32 @8 at t over the element plus generator life (op 1's i16 @0x22),
     /// half-turns wrapped to +-pi.
     #[allow(clippy::approx_constant, reason = "truncated pi values, kept as written")]
-    pub(super) fn spin(&mut self, i: usize, op: &crate::dat::generator::Op, f: &Frame, actors: &dyn Actors) {
+    /// `op`: the op's code, keyframe name (word 2) and wrap word (3).
+    pub(super) fn spin(&mut self, i: usize, op: (u8, u32, u32), f: &Frame, actors: &dyn Actors) {
+        let (code, key, wrap) = op;
         let Some((Some(m), a, b, d)) = self.attach_matrix(i, Some(f), actors) else { return };
         let Some(x) = self.insts[i].as_ref() else { return };
         let l = x.streams[1].first().map_or(0.0, |o| o.i16_at(0x22) as f32);
         let t = if l + x.life > 0.0 { (1.0 - (l + x.life - x.elapsed) / (l + x.life)).min(1.0) } else { 0.0 };
         let Some(v) = self
             .reg
-            .resolve(x.src.0, x.src.1, kind::KEYFRAME, op.u32(2))
+            .resolve(x.src.0, x.src.1, kind::KEYFRAME, key)
             .and_then(|r| self.reg.keyframe(r))
-            .map(|k| k.sample(t, op.u32(3) & 0xf != 0))
+            .map(|k| k.sample(t, wrap & 0xf != 0))
         else {
             return;
         };
@@ -3095,7 +3097,7 @@ impl Effects {
         } else if ang < -3.1415 {
             ang += 2.0 * 3.1415;
         }
-        let r = match op.code {
+        let r = match code {
             0x0e => Mat4::from_rotation_x(ang),
             0x0f => Mat4::from_rotation_y(ang),
             _ => Mat4::from_rotation_z(ang),
@@ -3149,9 +3151,14 @@ impl Effects {
     /// FUN_10085a50 (hide, once): the actor's non-static clones go, its static ones stop (none live: held here) or
     /// hide their first live element, its tasks pause. FUN_10085a10 (show): undone, and the model's generators start
     /// again (FUN_10085060 replaces their clones).
-    fn model_hide(&mut self, actors: &dyn Actors) {
-        let mut ids: Vec<u32> = actors.models().into_iter().map(|m| m.0).collect();
-        ids.extend(self.hidden_actors.iter().filter(|id| !ids.contains(id)).copied().collect::<Vec<_>>());
+    fn model_hide(
+        &mut self,
+        actors: &dyn Actors,
+        present: &[(u32, Vec<u32>)],
+        by_id: &std::collections::HashMap<u32, &[u32]>,
+    ) {
+        let mut ids: Vec<u32> = present.iter().map(|m| m.0).collect();
+        ids.extend(self.hidden_actors.iter().filter(|id| !by_id.contains_key(id)).copied().collect::<Vec<_>>());
         for id in ids {
             let hide = actors.hidden(id);
             if hide == self.hidden_actors.contains(&id) {
@@ -3163,7 +3170,7 @@ impl Effects {
                 let Some(x) = self.insts[i].as_ref().filter(|x| x.actors.contains(&who) && x.driven.is_none()) else {
                     continue;
                 };
-                let (src, first) = (x.src, x.live.first().copied());
+                let (src, first) = (x.src, x.live.front().copied());
                 if hide && !self.static_gen(src) {
                     self.kill(i);
                     continue;
@@ -3203,14 +3210,17 @@ impl Effects {
     }
 
     pub(super) fn model_generators(&mut self, actors: &dyn Actors) {
-        self.model_hide(actors);
+        // Listed once a frame (the hide pass took its own copy) and looked up by id (a search of the list per model).
         let present = actors.models();
+        let by_id: std::collections::HashMap<u32, &[u32]> = present.iter().map(|(id, f)| (*id, f.as_slice())).collect();
+        self.model_hide(actors, &present, &by_id);
         let gone: Vec<u32> = self
             .models
-            .keys()
-            .filter(|id| !present.iter().any(|(p, files)| p == *id && self.models.get(p) == Some(files)))
-            .copied()
+            .iter()
+            .filter(|(id, files)| by_id.get(*id) != Some(&files.as_slice()))
+            .map(|(id, _)| *id)
             .collect();
+        drop(by_id);
         for id in gone {
             self.models.remove(&id);
             for i in 0..self.insts.len() {
@@ -3774,7 +3784,9 @@ mod tests {
             fx.insts
                 .iter()
                 .enumerate()
-                .filter_map(|(i, x)| x.as_ref().filter(|x| x.name == *n).map(|x| (i, x.live.clone(), x.parent_elem)))
+                .filter_map(|(i, x)| {
+                    x.as_ref().filter(|x| x.name == *n).map(|x| (i, x.live.iter().copied().collect(), x.parent_elem))
+                })
                 .collect()
         };
         let mut fx = Effects::new();
