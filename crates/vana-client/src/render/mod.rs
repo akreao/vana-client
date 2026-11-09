@@ -478,6 +478,7 @@ pub struct ZoneRenderer {
     ssao: Option<ssao::Ssao>,
     /// Water reflections (ours, render/reflect.rs): the zone's water faces, and the pass while the option is on.
     water: std::sync::Arc<reflect::WaterSurface>,
+    floors: std::sync::Arc<reflect::WaterSurface>,
     reflections: Option<reflect::Reflections>,
     /// Lamp shadows (render/lampshadow.rs): the maps (always made) and this frame's lamps (light slot, matrix,
     /// position; empty = none), which the client sets.
@@ -1053,7 +1054,7 @@ pub const POSE_PER_BONE: usize = 3;
 const POSE_BINDING: u64 = ((POSE_HEAD + POSE_PER_BONE * (MAX_BONES + 1) + 2 * MAX_CLOTH) * 16) as u64;
 
 /// Strip to list, dropping the degenerate triangles that join strips.
-fn strip_to_list(strip: &[u16]) -> Vec<u16> {
+pub(crate) fn strip_to_list(strip: &[u16]) -> Vec<u16> {
     let mut out = Vec::with_capacity(strip.len() * 3);
     for i in 0..strip.len().saturating_sub(2) {
         let (a, b, c) = (strip[i], strip[i + 1], strip[i + 2]);
@@ -2016,6 +2017,8 @@ pub struct ZoneGeometry {
     bumps: Vec<(u32, u32, Vec<u8>)>,
     /// The water faces reflections draw on (render/reflect.rs); empty for a sub-area.
     water: std::sync::Arc<reflect::WaterSurface>,
+    /// The polished floors' upward faces in world space (the scene's `floors`).
+    floors: std::sync::Arc<reflect::WaterSurface>,
 }
 
 impl ZoneGeometry {
@@ -2152,6 +2155,12 @@ impl ZoneGeometry {
             (!t.is_empty()).then(|| bump_keys.iter().position(|k| *k == t)).flatten()
         };
         let mut bumps: Vec<(u32, u32, Vec<u8>)> = Vec::new();
+        // Reflecting floors (render/reflect.rs): a listed texture's strength, by its name past the 8-byte prefix.
+        let floor_of = |texture: &str| -> Option<f32> {
+            let t = texture.get(8..)?.trim_end_matches([' ', '\0']);
+            scene.floors.iter().find(|(n, _)| n == t).map(|f| f.1)
+        };
+        let mut floor_faces: Vec<([Vec3; 3], f32)> = Vec::new();
         let mut bump_used: HashMap<usize, usize> = HashMap::new();
         for mesh in &scene.meshes {
             let Some(mut mats) = by_mesh.remove(mesh.name.as_str()) else { continue };
@@ -2199,6 +2208,34 @@ impl ZoneGeometry {
             // FUN_1017a... placement +0xd6 = 2 for a '#' name: FUN_1017c9c0 draws it with stage 0's ADDRESSU / ADDRESSV
             // CLAMP and no alpha test (vertex flag bit 2).
             let clamp_uv = (mesh.name.starts_with('#') as u32) << 2;
+            // A listed floor's upward faces in world space, from each placement drawn at full detail (or always),
+            // not a door part or a voyage's world. Only the listed textures' triangles are walked.
+            for model in mesh.models.iter().filter(|_| animate) {
+                let Some(strength) = floor_of(&model.texture) else { continue };
+                let indices = if model.strip { strip_to_list(&model.indices) } else { model.indices.clone() };
+                for inst in matrices[start as usize..]
+                    .iter()
+                    .filter(|i| i.band[0] <= 0.0 && i.band[2] == 0.0 && i.band[3] == 0.0)
+                {
+                    let m = Mat4::from_cols_array_2d(&inst.model);
+                    for t in indices.as_chunks::<3>().0 {
+                        let Some(v) = t.iter().map(|&k| model.vertices.get(k as usize)).collect::<Option<Vec<_>>>()
+                        else {
+                            continue;
+                        };
+                        if reflect::faces_up(&m, [v[0].normal, v[1].normal, v[2].normal]) {
+                            floor_faces.push((
+                                v.iter()
+                                    .map(|c| m.transform_point3(Vec3::from(c.pos)))
+                                    .collect::<Vec<_>>()
+                                    .try_into()
+                                    .unwrap(),
+                                strength,
+                            ));
+                        }
+                    }
+                }
+            }
             for (mi, model) in mesh.models.iter().enumerate() {
                 let indices = if model.strip { strip_to_list(&model.indices) } else { model.indices.clone() };
                 if indices.is_empty() || model.vertices.is_empty() {
@@ -2335,6 +2372,7 @@ impl ZoneGeometry {
                 (Some(c), true) => reflect::WaterSurface::build(c),
                 _ => Default::default(),
             }),
+            floors: std::sync::Arc::new(reflect::WaterSurface::from_faces(floor_faces)),
         }
     }
 
@@ -2632,6 +2670,7 @@ impl ZoneRenderer {
             sun_shadow: None,
             ssao: None,
             water: geo.water.clone(),
+            floors: geo.floors.clone(),
             reflections: None,
             lamp_shadow,
             clamp_sampler,
@@ -4408,14 +4447,15 @@ impl ZoneRenderer {
     }
 
     /// Water reflections (ours) on or off; made at the first use in a zone with water.
-    pub fn prepare_reflections(&mut self, gpu: &Gpu, on: bool) {
-        if !on || self.water.is_empty() {
+    pub fn prepare_reflections(&mut self, gpu: &Gpu, on: bool, floors: bool) {
+        if !on || (self.water.is_empty() && (!floors || self.floors.is_empty())) {
             self.reflections = None;
             return;
         }
-        if self.reflections.is_none() {
-            self.reflections = Some(reflect::Reflections::new(gpu, self.color_format, self.water.clone()));
-        }
+        let r = self.reflections.get_or_insert_with(|| {
+            reflect::Reflections::new(gpu, self.color_format, self.water.clone(), self.floors.clone())
+        });
+        r.floors = floors;
     }
 
     /// Water reflections over `color` (the scene, after the actors; `color_tex` its texture when it can be copied).
@@ -4985,6 +5025,7 @@ mod faded_tests {
             camera_lists: Default::default(),
             sway: Default::default(),
             bumps: vec![],
+            floors: vec![],
         };
         let format = wgpu::TextureFormat::Rgba8Unorm;
         let mut r = super::ZoneRenderer::new(&gpu, &scene, format);

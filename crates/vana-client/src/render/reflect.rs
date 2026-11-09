@@ -10,7 +10,13 @@
 //! water pixel marches its reflected ray through the scene's depth a fixed number of steps; a hit takes the copy's
 //! colour there, a miss (or a ray leaving the screen) takes retail's sky gradient in that direction. The result is
 //! blended by a Fresnel weight and faded by the fog, and faded out where the water is shallow (the scene's depth
-//! lies little below the surface), so a face laid a little above the drawn water leaves no band along the shore. Ripples bend the surface normal, worked out in the shader.
+//! lies little below the surface), so a face laid a little above the drawn water leaves no band along the shore.
+//! Ripples bend the surface normal, worked out in the shader.
+//!
+//! Floors (the option's "Water and Floors"): polished floors chosen by hand, per zone and texture (`floor_textures`).
+//! Their upward-facing triangles are copied out of the scenery at load, in world space, and drawn in the same pass
+//! with the strength listed for them. A floor reflects only what the march finds on screen, fading with the ray's
+//! length (a glossy look, and no sky under a roof); it has no ripples and no shoreline fade.
 //!
 //! Cost: one scene-sized copy and a draw of the water in view, nothing at all when none is. The faces go in tiles
 //! at load (a sort, linear apart from it) and each frame tests only the tiles' boxes.
@@ -26,11 +32,35 @@ const REACH: f32 = 300.0;
 /// A face is flat when its normal is within about 18 degrees of straight up or down.
 const FLAT: f32 = 0.95;
 
-/// The water faces as one triangle list, grouped by tile.
+/// Polished floors by zone: (texture name past its 8-byte prefix, reflection strength). Picked by looking at each
+/// zone's large upward-facing textures; cobbles, grass and carpets are left out.
+pub fn floor_textures(zone: u32) -> &'static [(&'static str, f32)] {
+    match zone {
+        // Ru'Lude Gardens: the patterned marble, then the smooth stone.
+        243 => &[("e_yuka", 0.35), ("yuka02", 0.35), ("yuka01", 0.25), ("kaka", 0.2)],
+        // Lower Jeuno: the smooth grey floor.
+        245 => &[("yuka1", 0.2)],
+        // Port Jeuno: the diamond-tiled stone.
+        246 => &[("p", 0.25)],
+        // Aht Urhgan Whitegate: the tiled floor.
+        50 => &[("yu", 0.25)],
+        _ => &[],
+    }
+}
+
+/// A floor triangle's world normal must point this far up (y grows downward).
+const FLOOR_UP: f32 = 0.9;
+
+/// Whether a placed triangle is floor: every corner's normal, through the placement's matrix, points up.
+pub fn faces_up(m: &Mat4, normals: [[f32; 3]; 3]) -> bool {
+    normals.iter().all(|n| m.transform_vector3(Vec3::from(*n)).normalize_or_zero().y < -FLOOR_UP)
+}
+
+/// Reflecting faces as one triangle list, grouped by tile.
 #[derive(Default)]
 pub struct WaterSurface {
-    /// World positions, three per face.
-    pub verts: Vec<[f32; 3]>,
+    /// World positions, three per face; w: the face's strength as a floor (0 for water).
+    pub verts: Vec<[f32; 4]>,
     /// Per tile: its box and its range of `verts`.
     pub tiles: Vec<Tile>,
 }
@@ -44,7 +74,7 @@ pub struct Tile {
 
 impl WaterSurface {
     pub fn build(c: &Collision) -> Self {
-        let mut faces: Vec<((i32, i32), [Vec3; 3])> = Vec::new();
+        let mut faces: Vec<([Vec3; 3], f32)> = Vec::new();
         for (i, t) in c.tris.iter().enumerate() {
             if c.kinds.get(i) != Some(&9) {
                 continue;
@@ -64,9 +94,20 @@ impl WaterSurface {
                 }
                 *t
             };
-            let centre = (face[0] + face[1] + face[2]) / 3.0;
-            faces.push((((centre.x / TILE).floor() as i32, (centre.z / TILE).floor() as i32), face));
+            faces.push((face, 0.0));
         }
+        Self::from_faces(faces)
+    }
+
+    /// Faces (world corners, floor strength or 0 for water) grouped in tiles.
+    pub fn from_faces(faces: Vec<([Vec3; 3], f32)>) -> Self {
+        let mut faces: Vec<((i32, i32), [Vec3; 3], f32)> = faces
+            .into_iter()
+            .map(|(f, w)| {
+                let centre = (f[0] + f[1] + f[2]) / 3.0;
+                (((centre.x / TILE).floor() as i32, (centre.z / TILE).floor() as i32), f, w)
+            })
+            .collect();
         faces.sort_unstable_by_key(|f| f.0);
         let mut out = Self { verts: Vec::with_capacity(faces.len() * 3), tiles: Vec::new() };
         let mut k = 0;
@@ -78,7 +119,7 @@ impl WaterSurface {
                 for v in faces[k].1 {
                     lo = lo.min(v);
                     hi = hi.max(v);
-                    out.verts.push(v.to_array());
+                    out.verts.push(v.extend(faces[k].2).to_array());
                 }
                 k += 1;
             }
@@ -149,8 +190,10 @@ pub struct Reflections {
     layout: wgpu::BindGroupLayout,
     pipeline: wgpu::RenderPipeline,
     uniform: wgpu::Buffer,
-    verts: wgpu::Buffer,
-    surface: std::sync::Arc<WaterSurface>,
+    /// The water's and the floors' faces, each with its vertex buffer.
+    surfaces: [(std::sync::Arc<WaterSurface>, wgpu::Buffer); 2],
+    /// Floors are drawn too (the option's "Water and Floors").
+    pub floors: bool,
     /// The frame copy (same size and format as the scene) and the view its pixels are read through.
     copy: Option<(wgpu::Texture, wgpu::TextureView)>,
     /// A 1 x 1 stand-in when the scene can't be copied.
@@ -159,7 +202,12 @@ pub struct Reflections {
 
 impl Reflections {
     /// `format`: the scene's colour format (as the zone pass writes it).
-    pub fn new(gpu: &Gpu, format: wgpu::TextureFormat, surface: std::sync::Arc<WaterSurface>) -> Self {
+    pub fn new(
+        gpu: &Gpu,
+        format: wgpu::TextureFormat,
+        water: std::sync::Arc<WaterSurface>,
+        floors: std::sync::Arc<WaterSurface>,
+    ) -> Self {
         let device = &gpu.device;
         let tex = |binding, sample_type| wgpu::BindGroupLayoutEntry {
             binding,
@@ -205,9 +253,9 @@ impl Reflections {
                 entry_point: Some("vs"),
                 compilation_options: Default::default(),
                 buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: 12,
+                    array_stride: 16,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3],
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x4],
                 })],
             },
             primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
@@ -245,16 +293,20 @@ impl Reflections {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let bytes: &[u8] = bytemuck::cast_slice(&surface.verts);
-        let verts = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("reflections water"),
-            size: (bytes.len() as u64).max(12).next_multiple_of(4),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        if !bytes.is_empty() {
-            gpu.queue.write_buffer(&verts, 0, bytes);
-        }
+        let upload = |s: &WaterSurface| {
+            let bytes: &[u8] = bytemuck::cast_slice(&s.verts);
+            let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("reflections faces"),
+                size: (bytes.len() as u64).max(16),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            if !bytes.is_empty() {
+                gpu.queue.write_buffer(&buf, 0, bytes);
+            }
+            buf
+        };
+        let (wb, fb) = (upload(&water), upload(&floors));
         let blank = device
             .create_texture(&wgpu::TextureDescriptor {
                 label: Some("reflections blank"),
@@ -267,8 +319,14 @@ impl Reflections {
                 view_formats: &[],
             })
             .create_view(&Default::default());
-        log::info!("reflections: {} water faces in {} tiles", surface.verts.len() / 3, surface.tiles.len());
-        Self { layout, pipeline, uniform, verts, surface, copy: None, blank }
+        log::info!(
+            "reflections: {} water faces in {} tiles, {} floor faces in {} tiles",
+            water.verts.len() / 3,
+            water.tiles.len(),
+            floors.verts.len() / 3,
+            floors.tiles.len()
+        );
+        Self { layout, pipeline, uniform, surfaces: [(water, wb), (floors, fb)], floors: false, copy: None, blank }
     }
 
     /// Draws the water in view over `color` (the scene, `color_tex` its texture when it can be copied), reading the
@@ -286,8 +344,13 @@ impl Reflections {
     ) {
         let vp = Mat4::from_cols_array_2d(&params.view_proj);
         let eye = Vec3::new(params.eye[0], params.eye[1], params.eye[2]);
-        let ranges = self.surface.visible(&vp, eye);
-        if ranges.is_empty() {
+        let ranges: Vec<Vec<std::ops::Range<u32>>> = self
+            .surfaces
+            .iter()
+            .enumerate()
+            .map(|(k, (s, _))| if k == 1 && !self.floors { Vec::new() } else { s.visible(&vp, eye) })
+            .collect();
+        if ranges.iter().all(Vec::is_empty) {
             return;
         }
         let src = color_tex.filter(|t| t.usage().contains(wgpu::TextureUsages::COPY_SRC));
@@ -343,9 +406,14 @@ impl Reflections {
         });
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &group, &[]);
-        pass.set_vertex_buffer(0, self.verts.slice(..));
-        for r in ranges {
-            pass.draw(r, 0..1);
+        for ((_, buf), ranges) in self.surfaces.iter().zip(ranges) {
+            if ranges.is_empty() {
+                continue;
+            }
+            pass.set_vertex_buffer(0, buf.slice(..));
+            for r in ranges {
+                pass.draw(r, 0..1);
+            }
         }
     }
 }
@@ -453,7 +521,7 @@ mod tests {
         let format = wgpu::TextureFormat::Rgba8Unorm;
         let pond = [Vec3::new(-500.0, 0.0, -500.0), Vec3::new(500.0, 0.0, -500.0), Vec3::new(0.0, 0.0, 500.0)];
         let c = collision(vec![pond], vec![9], 0);
-        let mut r = Reflections::new(&gpu, format, std::sync::Arc::new(WaterSurface::build(&c)));
+        let mut r = Reflections::new(&gpu, format, std::sync::Arc::new(WaterSurface::build(&c)), Default::default());
         let n = 32u32;
         let cam = crate::render::Camera {
             eye: Vec3::new(0.0, -3.0, -20.0),
@@ -527,6 +595,106 @@ mod tests {
         assert!(centre[2][0] * 4 < centre[0][0], "shallow water at the shore: {:?}", centre[2]);
     }
 
+    #[test]
+    fn floors_face_up_and_keep_their_strength() {
+        let up = [[0.0, -1.0, 0.0]; 3];
+        assert!(faces_up(&Mat4::IDENTITY, up));
+        assert!(!faces_up(&Mat4::IDENTITY, [[0.0, 1.0, 0.0]; 3]));
+        // A placement turned over: its "up" normals now point down.
+        assert!(!faces_up(&Mat4::from_rotation_x(std::f32::consts::PI), up));
+        let s = WaterSurface::from_faces(vec![(flat(0.0, 0.0), 0.3)]);
+        assert!(s.verts.iter().all(|v| v[3] == 0.3));
+        assert_eq!(floor_textures(243).len(), 4);
+        assert!(floor_textures(100).is_empty());
+    }
+
+    /// A floor under the camera with a wall of scenery standing across the view (constant depth): the floor in front
+    /// of the wall reflects the wall (the copy is red), by its strength; without a copy it draws nothing (no sky).
+    #[test]
+    fn gpu_floor_reflects_the_scene_only() {
+        let Ok(gpu) = Gpu::headless() else { return };
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let n = 32u32;
+        let cam = crate::render::Camera {
+            eye: Vec3::new(0.0, -1.6, -6.0),
+            target: Vec3::new(0.0, -1.0, 0.0),
+            up: Vec3::NEG_Y,
+            fov_y: 0.9,
+        };
+        let floor = vec![([Vec3::new(-50.0, 0.0, -50.0), Vec3::new(50.0, 0.0, -50.0), Vec3::new(0.0, 0.0, 50.0)], 0.5)];
+        let mut r =
+            Reflections::new(&gpu, format, Default::default(), std::sync::Arc::new(WaterSurface::from_faces(floor)));
+        r.floors = true;
+        let vp = cam.view_proj(1.0);
+        // The wall: everything 8 units in front of the eye.
+        let wall = vp.project_point3(cam.eye + (cam.target - cam.eye).normalize() * 8.0).z;
+        let params = Params {
+            view_proj: vp.to_cols_array_2d(),
+            eye: [cam.eye.x, cam.eye.y, cam.eye.z, 1.0],
+            forward: (cam.target - cam.eye).normalize().extend(0.0).to_array(),
+            info: [0.0, 1.0, 0.0, 0.0],
+            clear: [0.0, 0.0, 1.0, 1.0],
+            fog_color: [0.0; 4],
+            fog: [500.0, 1000.0, crate::render::NEAR, crate::render::FAR],
+            sky_colors: [[0.0; 4]; 8],
+            sky_stops: [[0.0; 4]; 2],
+        };
+        let tex = |clear: wgpu::Color, enc: &mut wgpu::CommandEncoder| {
+            let t = gpu.device.create_texture(&wgpu::TextureDescriptor {
+                label: None,
+                size: wgpu::Extent3d { width: n, height: n, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+            let v = t.create_view(&Default::default());
+            enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: None,
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &v,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(clear), store: wgpu::StoreOp::Store },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            (t, v)
+        };
+        let mut got = Vec::new();
+        for copy in [true, false] {
+            let mut enc = gpu.device.create_command_encoder(&Default::default());
+            let (target, view) = tex(wgpu::Color::BLACK, &mut enc);
+            let (red, _) = tex(wgpu::Color::RED, &mut enc);
+            let depth = crate::render::depth_view(&gpu.device, n, n);
+            enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: None,
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &depth,
+                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(wall), store: wgpu::StoreOp::Store }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            r.draw(&gpu, &mut enc, &view, copy.then_some(&red), &depth, params, true);
+            gpu.queue.submit([enc.finish()]);
+            let px = read(&gpu, &target, n, n);
+            // Near the bottom of the screen: floor close to the eye, in front of the wall.
+            let at = ((n - 3) * n + n / 2) as usize * 4;
+            got.push([px[at], px[at + 1], px[at + 2]]);
+        }
+        assert!(got[0][0] > 20 && got[0][2] == 0, "floor reflecting the wall: {:?}", got[0]);
+        assert_eq!(got[1], [0, 0, 0], "no copy: nothing, not the sky");
+    }
+
     /// The water faces of some zones and the time to find them (by hand: `cargo test --release water_census --
     /// --ignored --nocapture`).
     #[test]
@@ -540,9 +708,20 @@ mod tests {
         else {
             return;
         };
-        for zone in [4u32, 26, 50, 102, 103, 104, 106, 115, 230, 231, 232, 234, 236, 238, 240, 243, 246] {
+        for zone in [4u32, 26, 50, 102, 103, 104, 106, 115, 230, 231, 232, 234, 236, 238, 240, 243, 245, 246] {
             let Ok(file) = index.read(file_id(zone)) else { continue };
-            let Ok(scene) = load_scene(&keys, &file) else { continue };
+            let Ok(mut scene) = load_scene(&keys, &file) else { continue };
+            scene.floors = floor_textures(zone).iter().map(|(n, w)| (n.to_string(), *w)).collect();
+            if !scene.floors.is_empty() {
+                let t = std::time::Instant::now();
+                let geo = crate::render::ZoneGeometry::build(&scene);
+                println!(
+                    "zone {zone}: {} floor faces in {} tiles (whole geometry {:.1} ms)",
+                    geo.floors.verts.len() / 3,
+                    geo.floors.tiles.len(),
+                    t.elapsed().as_secs_f64() * 1000.0
+                );
+            }
             let Some(col) = &scene.collision else { continue };
             let t = std::time::Instant::now();
             let s = WaterSurface::build(col);

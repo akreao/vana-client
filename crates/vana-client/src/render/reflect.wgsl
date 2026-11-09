@@ -31,17 +31,23 @@ const MAX_WEIGHT: f32 = 0.7;
 // The reflection fades in over this much water depth under the surface (world units), so it never shows where the
 // collision's surface stands above the drawn water's edge (Bibiki Bay's shores sit about half a unit above its sea).
 const SHORE: f32 = 1.0;
+// Floors: a reflection fades out over this much of the ray (a glossy floor shows what stands on it, not the far end of
+// the room), and a floor's own depth is matched within a small margin (its faces are the scenery's, placed on the CPU).
+const FLOOR_RAY: f32 = 12.0;
 
 struct VOut {
     @builtin(position) pos: vec4<f32>,
     @location(0) world: vec3<f32>,
+    // A floor's strength; 0 for water.
+    @location(1) @interpolate(flat) floor: f32,
 };
 
 @vertex
-fn vs(@location(0) p: vec3<f32>) -> VOut {
+fn vs(@location(0) p: vec4<f32>) -> VOut {
     var o: VOut;
-    o.pos = u.view_proj * vec4<f32>(p, 1.0);
-    o.world = p;
+    o.pos = u.view_proj * vec4<f32>(p.xyz, 1.0);
+    o.world = p.xyz;
+    o.floor = p.w;
     return o;
 }
 
@@ -119,6 +125,9 @@ fn fs(i: VOut) -> @location(0) vec4<f32> {
     // The depth test, against the scene (water draws no depth): hidden behind scenery or an actor.
     let px = vec2<i32>(i.pos.xy);
     let d = textureLoad(depth, px, 0);
+    if (i.floor > 0.0) {
+        return floor_reflection(i, d, size);
+    }
     if (i.pos.z > d + 1e-6) {
         discard;
     }
@@ -143,36 +152,8 @@ fn fs(i: VOut) -> @location(0) vec4<f32> {
     var colour = sky(r);
     var from_scene = 0.0;
     if (u.info.w > 0.5) {
-        var prev = 0.0;
-        var hit = -1.0;
-        for (var s = 1; s <= STEPS; s = s + 1) {
-            let f = f32(s) / f32(STEPS);
-            let t = RAY * f * f;
-            let c = project(i.world + r * t);
-            if (c.w <= u.fog.z) {
-                break;
-            }
-            let uv = to_uv(c);
-            if (any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0))) {
-                break;
-            }
-            if (behind(c, size, max(0.5, (t - prev) * 1.5)) > 0.0) {
-                hit = t;
-                break;
-            }
-            prev = t;
-        }
-        if (hit > 0.0) {
-            var a = prev;
-            var b = hit;
-            for (var k = 0; k < REFINE; k = k + 1) {
-                let m = 0.5 * (a + b);
-                if (behind(project(i.world + r * m), size, max(0.5, (b - a) * 3.0)) > 0.0) {
-                    b = m;
-                } else {
-                    a = m;
-                }
-            }
+        let b = march(i.world, r, RAY, size);
+        if (b > 0.0) {
             let uv = to_uv(project(i.world + r * b));
             let texel = vec2<i32>(clamp(uv * size, vec2<f32>(0.0), size - 1.0));
             let hit_rgb = textureLoad(scene, texel, 0).rgb;
@@ -184,6 +165,75 @@ fn fs(i: VOut) -> @location(0) vec4<f32> {
         }
     }
     return finish(to_target(colour), n, v, dist) * vec4<f32>(1.0, 1.0, 1.0, shore);
+}
+
+// The first scene point the reflected ray from `p` along `r` meets on screen within `reach` (the halved step), or a
+// negative distance on a miss.
+fn march(p: vec3<f32>, r: vec3<f32>, reach: f32, size: vec2<f32>) -> f32 {
+    var prev = 0.0;
+    var hit = -1.0;
+    for (var s = 1; s <= STEPS; s = s + 1) {
+        let f = f32(s) / f32(STEPS);
+        let t = reach * f * f;
+        let c = project(p + r * t);
+        if (c.w <= u.fog.z) {
+            break;
+        }
+        let uv = to_uv(c);
+        if (any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0))) {
+            break;
+        }
+        if (behind(c, size, max(0.5, (t - prev) * 1.5)) > 0.0) {
+            hit = t;
+            break;
+        }
+        prev = t;
+    }
+    if (hit < 0.0) {
+        return -1.0;
+    }
+    var a = prev;
+    var b = hit;
+    for (var k = 0; k < REFINE; k = k + 1) {
+        let m = 0.5 * (a + b);
+        if (behind(project(p + r * m), size, max(0.5, (b - a) * 3.0)) > 0.0) {
+            b = m;
+        } else {
+            a = m;
+        }
+    }
+    return b;
+}
+
+// A polished floor: only what the march finds on screen, by the floor's strength, fading with the ray's length and at
+// the screen's edges; a miss draws nothing (no sky under a roof).
+fn floor_reflection(i: VOut, d: f32, size: vec2<f32>) -> vec4<f32> {
+    let w_scene = linear(d);
+    let w_floor = linear(i.pos.z);
+    if (w_floor > w_scene + 0.05 + 0.003 * w_scene || u.info.w < 0.5) {
+        discard;
+    }
+    let to_p = i.world - u.eye.xyz;
+    let dist = length(to_p);
+    let v = to_p / dist;
+    if (v.y <= 0.0) {
+        discard;
+    }
+    let n = vec3<f32>(0.0, -1.0, 0.0);
+    let r = normalize(reflect(v, n));
+    let b = march(i.world, r, FLOOR_RAY, size);
+    if (b < 0.0) {
+        discard;
+    }
+    let uv = to_uv(project(i.world + r * b));
+    let texel = vec2<i32>(clamp(uv * size, vec2<f32>(0.0), size - 1.0));
+    let rgb = textureLoad(scene, texel, 0).rgb;
+    let edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
+    let cos_i = clamp(dot(n, -v), 0.0, 1.0);
+    let fresnel = F0 + (1.0 - F0) * pow(1.0 - cos_i, 5.0);
+    let fog = clamp((u.fog.y - dist) / max(u.fog.y - u.fog.x, 1e-3), 0.0, 1.0);
+    let w = i.floor * mix(0.7, 1.0, fresnel) * (1.0 - smoothstep(0.0, FLOOR_RAY, b)) * smoothstep(0.0, 0.08, edge) * fog;
+    return vec4<f32>(rgb, w);
 }
 
 // The Fresnel weight, fogged away with distance (the water there is already the fog's colour).

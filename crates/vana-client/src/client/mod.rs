@@ -6822,6 +6822,11 @@ type ZoneData = (
     ZoneEffects,
 );
 
+/// A zone's reflecting floors (render/reflect.rs), as the scene carries them.
+fn floor_list(zone: u32) -> Vec<(String, f32)> {
+    crate::render::reflect::floor_textures(zone).iter().map(|(n, w)| (n.to_string(), *w)).collect()
+}
+
 /// Reads and builds a zone (on a loader thread): `bump` config 0017's bump maps, `need_global` DAT 0's effects too.
 fn load_zone_data(
     index: &DatIndex,
@@ -6833,6 +6838,7 @@ fn load_zone_data(
 ) -> Result<ZoneData> {
     let file = index.read(crate::dat::zone::file_id(map_no as u32))?;
     let mut scene = zone::load_scene(keys, &file)?;
+    scene.floors = floor_list(map_no as u32);
     if bump {
         scene.bumps =
             crate::dat::bump::parse(&index.read(crate::dat::bump::file_id(map_no as u32)).unwrap_or_default());
@@ -10559,6 +10565,7 @@ impl App {
                         (|| {
                             let file = index.read(crate::dat::zone::file_id(area as u32))?;
                             let mut scene = zone::load_scene(&keys, &file)?;
+                            scene.floors = floor_list(area as u32);
                             if bump {
                                 scene.bumps = crate::dat::bump::parse(
                                     &index.read(crate::dat::bump::file_id(area as u32)).unwrap_or_default(),
@@ -18151,7 +18158,7 @@ impl App {
                 // Ambient occlusion on the scenery (ours, render/ssao.rs), at the scene's size.
                 r.prepare_ssao(&gfx.gpu, self.cfg.ssao, bg);
                 // Water reflections (ours, render/reflect.rs).
-                r.prepare_reflections(&gfx.gpu, self.cfg.reflections);
+                r.prepare_reflections(&gfx.gpu, self.cfg.reflections, self.cfg.reflect_floors);
                 // Lamp shadows (ours, render/lampshadow.rs): with Real shadows, the point lights nearest our own character
                 // (the zone's data lights, and with Real lamp lights the lamps) are cut behind it, one shadow each.
                 // Only ours casts them (with our mount while riding); others keep their sun or retail shadow. The lights

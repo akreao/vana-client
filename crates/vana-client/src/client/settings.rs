@@ -27,6 +27,7 @@ pub struct Settings {
     pub shadow_map: u32,
     pub ssao: bool,
     pub reflections: bool,
+    pub reflect_floors: bool,
     pub timers_dock: u32,
     pub minimap_dock: u32,
     pub minimap_size: u32,
@@ -69,6 +70,7 @@ impl Settings {
             shadow_map: c.shadow_map,
             ssao: c.ssao,
             reflections: c.reflections,
+            reflect_floors: c.reflect_floors,
             timers_dock: c.timers_dock,
             minimap_dock: c.minimap_dock,
             minimap_size: c.minimap_size,
@@ -108,6 +110,7 @@ impl Settings {
         c.shadow_map = self.shadow_map;
         c.ssao = self.ssao;
         c.reflections = self.reflections;
+        c.reflect_floors = self.reflect_floors;
         c.timers_dock = self.timers_dock;
         c.minimap_dock = self.minimap_dock;
         c.minimap_size = self.minimap_size;
@@ -598,9 +601,9 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
         ),
         row(
             "Reflections",
-            "Water reflects the sky, the scenery and characters around it (not retail).",
+            "Water reflects the sky, the scenery and characters around it; with Floors, polished floors in a few towns do too (not retail).",
             Reflections,
-            &[(0, "Off"), (1, "Water")],
+            &[(0, "Off"), (1, "Water"), (2, "Water and Floors")],
             Now,
         ),
         row(
@@ -948,7 +951,7 @@ impl SettingsUi {
             Val::ActorShadows => self.s.actor_shadows,
             Val::ShadowMap => self.s.shadow_map,
             Val::Ssao => self.s.ssao as u32,
-            Val::Reflections => self.s.reflections as u32,
+            Val::Reflections => self.s.reflections as u32 + (self.s.reflections && self.s.reflect_floors) as u32,
             Val::TimersDock => self.s.timers_dock,
             Val::MinimapDock => self.s.minimap_dock,
             Val::MinimapSize => self.s.minimap_size,
@@ -983,7 +986,7 @@ impl SettingsUi {
             Val::ActorShadows => self.s.actor_shadows = x,
             Val::ShadowMap => self.s.shadow_map = x,
             Val::Ssao => self.s.ssao = x != 0,
-            Val::Reflections => self.s.reflections = x != 0,
+            Val::Reflections => (self.s.reflections, self.s.reflect_floors) = (x != 0, x >= 2),
             Val::TimersDock => self.s.timers_dock = x,
             Val::MinimapDock => self.s.minimap_dock = x,
             Val::MinimapSize => self.s.minimap_size = x,

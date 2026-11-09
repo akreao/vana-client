@@ -818,6 +818,9 @@ pub struct ZoneScene {
     pub sway: SwayCurves,
     /// The zone's bump maps (config 0017, dat/bump.rs), put in by the loader when bump mapping is on.
     pub bumps: Vec<super::bump::BumpMap>,
+    /// Polished floors that reflect (render/reflect.rs floor_textures): texture name past its 8-byte prefix, strength.
+    /// Put in by the loader.
+    pub floors: Vec<(String, f32)>,
 }
 
 impl ZoneScene {
@@ -892,6 +895,7 @@ pub fn load_scene(keys: &Keys, file: &[u8]) -> Result<ZoneScene> {
         camera_lists: Default::default(),
         sway: sway_curves(file),
         bumps: Vec::new(),
+        floors: Vec::new(),
     };
     let list: Vec<Chunk> = chunks(file)?;
     for c in list {
