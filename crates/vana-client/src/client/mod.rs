@@ -18045,6 +18045,8 @@ impl App {
                 );
                 // FUN_1001d240's helper target for faded actors (drawn opaque, then blended as one quad).
                 r.prepare_faded(&gfx.gpu, &scene_tex);
+                // The point-light slot leak for this view (render/leak.rs).
+                r.update_leak(&gfx.gpu, &camera, aspect);
                 perf::timed(
                     || "zone render".into(),
                     || r.render(&gfx.gpu, &mut encoder, &scene_raw, &scene_depth, &camera, aspect, &actors),

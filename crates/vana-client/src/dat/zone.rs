@@ -331,6 +331,8 @@ pub struct Placement {
     /// a placement named es_anmo* within 0.05 of (-57.9466, -15.7264, -269.387) in zone 0xd5, the one such in the
     /// install. Every other placement lights with its normals as transformed, unnormalised.
     pub normalize: bool,
+    /// Record +0x46 bit 2 (runtime +0xf): drawn after the rest of the scenery, in a queue (FUN_1017b510).
+    pub deferred: bool,
 }
 
 /// FUN_10179430's NORMALIZENORMALS placement (Placement::normalize), its zone check left to the name and spot.
@@ -457,6 +459,7 @@ pub fn parse_mzb(p: &mut [u8]) -> Result<Vec<Placement>> {
             lod: [f32_at(p, r + 0x38), f32_at(p, r + 0x3c)],
             world,
             own_dist: (p[r + 0x46] & 1 != 0).then(|| f32_at(p, r + 0x40)),
+            deferred: p[r + 0x46] & 4 != 0,
         });
     }
     Ok(out)
@@ -1048,6 +1051,7 @@ mod tests {
         else {
             return;
         };
+        let mut prev_set = 0;
         let (mut leak_c, mut leak_empty, mut leak_far, mut scaled, mut drawn, mut refs) = (0, 0, 0, 0, 0, 0);
         let mut nlen = [0usize; 4];
         for zone in (0..300).chain(1000..1300) {
@@ -1086,6 +1090,7 @@ mod tests {
                 if count == 0 || end != count * 100 + 32 || p[3] < 0x12 {
                     continue;
                 }
+                let pl_all = &pl;
                 for (i, pl) in pl.iter().enumerate().filter(|(_, x)| x.id == 0) {
                     drawn += 1;
                     if pl.normalize {
@@ -1105,9 +1110,24 @@ mod tests {
                             Some(0) => leak_empty += 1,
                             Some(&key) if key as u8 == b'c' => {
                                 if leak_c < 20 {
-                                    println!("zone {zone} {} slot {k} key {:?}", pl.name, &key.to_le_bytes());
+                                    println!(
+                                        "zone {zone} {} slot {k} key {:?} at {:?}",
+                                        pl.name,
+                                        &key.to_le_bytes(),
+                                        pl.translate
+                                    );
                                 }
-                                leak_c += 1
+                                leak_c += 1;
+                                // The scenery placement before it in record order: its ref in this slot.
+                                let prev = (0..i).rev().find(|&j| pl_all[j].id == 0);
+                                if let Some(j) = prev {
+                                    let pr = u32_at(&p, 32 + j * 100 + 0x54 + 4 * k) as usize;
+                                    let pk = if pr >= 1 { lk.get(pr - 1).copied().unwrap_or(0) } else { 0 };
+                                    if pk != 0 && pk as u8 != b'c' {
+                                        prev_set += 1;
+                                        println!("lit before: zone {zone} {} at {:?}", pl.name, pl.translate);
+                                    }
+                                }
                             }
                             _ => {}
                         }
@@ -1119,5 +1139,6 @@ mod tests {
             "drawn {drawn} scaled {scaled} refs {refs}: 'c' {leak_c}, empty {leak_empty}, past the list {leak_far}"
         );
         println!("normal lengths <0.9 {} ~1 {} <1.5 {} more {}", nlen[0], nlen[1], nlen[2], nlen[3]);
+        println!("'c' refs whose record-order predecessor sets a light there: {prev_set}");
     }
 }

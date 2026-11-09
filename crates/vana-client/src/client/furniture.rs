@@ -175,6 +175,7 @@ fn matrix(pos: Vec3, yaw: f32) -> glam::Mat4 {
         world: false,
         own_dist: None,
         normalize: false,
+        deferred: false,
     };
     glam::Mat4::from_cols_array_2d(&p.matrix())
 }
@@ -485,6 +486,7 @@ pub fn load(index: &DatIndex, keys: &Keys, seq: u64, want: &[Key], map: u16, flo
                 world: false,
                 own_dist: None,
                 normalize: false,
+                deferred: false,
             })
             .collect();
         let local = Arc::new(scene.meshes[0].models.iter().flat_map(model_tris).collect::<Vec<_>>());
