@@ -16,4 +16,5 @@ are Steven's FFXiMain.dll (FUN_10176dd0 kept its address).
   Doors::solid is +0xf0 (set_solid always records it); SubArea::doors_held is +0x44 for a trigger's load only
   (subarea::Step::Load's third field says asked), during which set_solid leaves the boxes; the load closes the doors
   of the current and the kept zone ground; doors::reapply (end of load, failure, unload, any new ground) sets every
-  box from its flag.
+  box from its flag. A zone or event area load starts with no flags (FUN_10173c10 builds the groups solid); the
+  zone's flags are kept while an event area shows.
