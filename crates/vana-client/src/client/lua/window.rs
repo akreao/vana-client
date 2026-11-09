@@ -159,12 +159,14 @@ pub enum Elem {
         filter: bool,
         key: bool,
     },
-    /// One of `items`, turned with Left / Right.
+    /// One of `items`, turned with Left / Right. `drop` (`type = "dropdown"`): Enter or a click opens the items in a
+    /// list under it (Up / Down, Enter or a click picks, Escape or a click elsewhere closes).
     Choice {
         id: String,
         label: String,
         items: Vec<String>,
         at: usize,
+        drop: bool,
     },
     /// An RGBA colour, edited a channel at a time after Enter.
     Colour {
@@ -348,6 +350,8 @@ pub struct Window {
     /// The typed line's caret (chars), the colour's channel, and the element as it was before the edit.
     pub caret: usize,
     pub chan: usize,
+    /// An open dropdown's highlighted item.
+    pub drop_at: usize,
     undo: Option<Elem>,
     /// A HUD window never takes the keys (a click still acts); drawn without a frame when `framed` is off; at
     /// `place` (classic UI pixels) when given.
@@ -556,6 +560,7 @@ impl Window {
             edit: false,
             caret: 0,
             chan: 0,
+            drop_at: 0,
             undo: None,
             hud: false,
             framed: true,
@@ -649,6 +654,11 @@ impl Window {
     /// Whether a line is being typed or a key listened for (the window then takes the text and keys).
     pub fn typing(&self) -> bool {
         self.edit && matches!(self.elems.get(self.at), Some(Elem::Input { .. }))
+    }
+
+    /// The dropdown open now, if any.
+    pub fn drop_open(&self) -> Option<usize> {
+        (self.edit && matches!(self.elems.get(self.at), Some(Elem::Choice { drop: true, .. }))).then_some(self.at)
     }
 
     /// Whether a key element waits for its key.
@@ -853,6 +863,27 @@ impl Window {
                         _ => {}
                     }
                 }
+                Some(Elem::Choice { id, items, at, drop: true, .. }) => match key {
+                    K::ArrowUp | K::ArrowDown if !items.is_empty() => {
+                        let n = items.len();
+                        let d = if key == K::ArrowDown { 1 } else { n - 1 };
+                        self.drop_at = (self.drop_at + d) % n;
+                        se.push(Se::Cursor);
+                    }
+                    K::Enter => {
+                        if self.drop_at < items.len() && self.drop_at != *at {
+                            *at = self.drop_at;
+                            ev.push(Event::Set { id: id.clone(), index: *at });
+                        }
+                        self.edit = false;
+                        se.push(Se::Select);
+                    }
+                    K::Escape => {
+                        self.edit = false;
+                        se.push(Se::Cancel);
+                    }
+                    _ => {}
+                },
                 // A typed line takes its keys through `text`.
                 Some(Elem::Input { .. }) => {}
                 _ => self.edit = false,
@@ -927,7 +958,11 @@ impl Window {
                     (self.chan, self.undo, self.edit) = (0, Some(e.clone()), true);
                     se.push(Se::Select);
                 }
-                Some(Elem::Choice { .. }) => return (self.turn(self.at, 1).0, vec![Se::Select]),
+                Some(Elem::Choice { items, at, drop: true, .. }) if !items.is_empty() => {
+                    (self.drop_at, self.edit) = (*at, true);
+                    se.push(Se::Select);
+                }
+                Some(Elem::Choice { drop: false, .. }) => return (self.turn(self.at, 1).0, vec![Se::Select]),
                 Some(Elem::Section { id, open, .. }) => {
                     *open = !*open;
                     ev.push(Event::Toggle { id: id.clone(), open: *open });
@@ -1026,6 +1061,11 @@ impl Window {
         if self.edit && self.at == i && matches!(self.elems.get(i), Some(Elem::Input { .. })) {
             return (Vec::new(), Vec::new());
         }
+        // A click on an open dropdown's field closes it.
+        if self.drop_open() == Some(i) {
+            self.edit = false;
+            return (Vec::new(), vec![Se::Cancel]);
+        }
         let mut ev = if self.at != i { self.end_edit() } else { Vec::new() };
         // A click on a colour being edited ends the edit, as Enter.
         let colour_open = self.edit && self.at == i && matches!(self.elems.get(i), Some(Elem::Colour { .. }));
@@ -1062,6 +1102,32 @@ impl Window {
         let (more, se) = self.key(egui::Key::Enter);
         ev.extend(more);
         (ev, se)
+    }
+
+    /// An open dropdown's item `k` picked by the pointer.
+    pub fn drop_pick(&mut self, i: usize, k: usize) -> (Vec<Event>, Vec<Se>) {
+        if self.drop_open() != Some(i) {
+            return (Vec::new(), Vec::new());
+        }
+        self.drop_at = k;
+        self.key(egui::Key::Enter)
+    }
+
+    /// The pointer over an open dropdown's item `k`: the highlight goes there.
+    pub fn drop_hover(&mut self, i: usize, k: usize) -> (Vec<Event>, Vec<Se>) {
+        if self.drop_open() == Some(i) && self.drop_at != k {
+            self.drop_at = k;
+            return (Vec::new(), vec![Se::Cursor]);
+        }
+        (Vec::new(), Vec::new())
+    }
+
+    /// The pointer pressed off an open dropdown: it closes.
+    pub fn drop_close(&mut self, i: usize) -> (Vec<Event>, Vec<Se>) {
+        if self.drop_open() == Some(i) {
+            self.edit = false;
+        }
+        (Vec::new(), Vec::new())
     }
 
     /// Tabs or a choice turned by the pointer: by `d`, or straight to `to`.
@@ -1162,7 +1228,15 @@ impl Window {
     fn classic_controls(&self, gu: &GameUi, x: f32, y: f32) -> Vec<(usize, usize, [f32; 4])> {
         let (w, _) = self.classic_size();
         let hidden = self.hidden();
+        // An open dropdown's rows (parts 1..) lie over what is under them: they come first.
         let mut out = Vec::new();
+        if let Some((i, b)) = self.drop_box(x, y)
+            && let Some(Elem::Choice { items, .. }) = self.elems.get(i)
+        {
+            for k in 0..items.len() {
+                out.push((i, 1 + k, [b[0], b[1] + LINE * k as f32, b[2], LINE]));
+            }
+        }
         let mut ey = y + TOP;
         for (i, e) in self.elems.iter().enumerate() {
             if hidden[i] {
@@ -1197,6 +1271,7 @@ impl Window {
                     out.push((i, 1, [x + w - 27.0, ey - 3.0, 26.0, 17.0]));
                     out.push((i, 2, [x + 40.0, ey, w - 80.0, LINE]));
                 }
+                Elem::Choice { drop: true, .. } => out.push((i, 0, [x + 32.0, ey + 14.0, w - 64.0, 16.0])),
                 Elem::Choice { .. } => {
                     let bw = w - 64.0;
                     out.push((i, 0, [x + 32.0, ey + 14.0, 24.0, 16.0]));
@@ -1277,6 +1352,11 @@ impl Window {
             }
         }
         let Some((i, k, r)) = self.classic_controls(gu, x, y).into_iter().find(|c| inside(&c.2)) else {
+            if (clicked || right)
+                && let Some(d) = self.drop_open()
+            {
+                self.drop_close(d);
+            }
             return (false, self.hover_off(), Vec::new());
         };
         let mut se = Vec::new();
@@ -1286,6 +1366,7 @@ impl Window {
             List,
             Buttons,
             Turn,
+            Drop,
             Colour,
             Canvas,
             Other,
@@ -1294,6 +1375,7 @@ impl Window {
             Some(Elem::Slider { n, .. }) => K::Slider(*n),
             Some(Elem::List { .. }) => K::List,
             Some(Elem::Buttons { .. }) => K::Buttons,
+            Some(Elem::Choice { drop: true, .. }) => K::Drop,
             Some(Elem::Tabs { .. } | Elem::Choice { .. }) => K::Turn,
             Some(Elem::Colour { .. }) => K::Colour,
             Some(Elem::Canvas { .. }) => K::Canvas,
@@ -1317,6 +1399,11 @@ impl Window {
         }
         // Off a canvas onto another control: the canvas's 'leave'.
         let mut ev = self.hover_off();
+        // An open dropdown's highlight follows the pointer over its rows.
+        if e == K::Drop && k > 0 && moved && self.drop_at != k - 1 {
+            self.drop_at = k - 1;
+            se.push(Se::Cursor);
+        }
         if (moved || clicked) && !self.edit && (self.at != i || (buttons && self.col != k)) {
             (self.at, self.col) = (i, if buttons { k } else { 0 });
             se.push(Se::Cursor);
@@ -1339,6 +1426,7 @@ impl Window {
             K::List if k >= 1000 => self.sort(i, k - 1000),
             K::List => self.pick(i, k),
             K::Turn => self.turn_to(i, if k == 0 { -1 } else { 1 }, None),
+            K::Drop if k > 0 => self.drop_pick(i, k - 1),
             K::Colour if k > 0 => {
                 self.chan = k - 1;
                 let stop = (((p.0 - r[0]) / r[2]).clamp(0.0, 1.0) * (STEPS - 1) as f32).round() as usize;
@@ -1376,6 +1464,22 @@ impl Window {
     pub fn classic_size(&self) -> (f32, f32) {
         let w = if self.width > 0.0 { self.width } else { CLASSIC_W };
         (w, TOP + (0..self.elems.len()).map(|i| self.elem_h(i)).sum::<f32>() + 12.0)
+    }
+
+    /// The open dropdown and its list's rect on the classic page at (x, y): the rows under its field, as the login
+    /// form's combo fields'.
+    fn drop_box(&self, x: f32, y: f32) -> Option<(usize, [f32; 4])> {
+        let i = self.drop_open()?;
+        let Some(Elem::Choice { items, .. }) = self.elems.get(i) else { return None };
+        let (w, _) = self.classic_size();
+        let ey = y + TOP + (0..i).map(|j| self.elem_h(j)).sum::<f32>();
+        Some((i, [x + 32.0, ey + 30.0, w - 64.0, LINE * items.len() as f32]))
+    }
+
+    /// What the classic page covers: its size, taller while an open dropdown's list hangs below it.
+    pub fn classic_reach(&self) -> (f32, f32) {
+        let (w, h) = self.classic_size();
+        (w, self.drop_box(0.0, 0.0).map_or(h, |(_, b)| h.max(b[1] + b[3])))
     }
 
     /// The classic page at (x, y): the Config pages' frame, bullets, buttons, sliders and the hand.
@@ -1565,6 +1669,19 @@ impl Window {
                         }
                     }
                 }
+                Elem::Choice { label, items, at, drop: true, .. } => {
+                    bullet(gu, ey);
+                    gu.label(label, x + 32.0, ey, N, false);
+                    let (bx, by, bw) = (x + 32.0, ey + 14.0, w - 64.0);
+                    let ink = if here { ON } else { N };
+                    super::super::settings::button(gu, [bx, by, bw, 16.0], ink);
+                    let v = items.get(*at).map_or("", String::as_str);
+                    gu.text_fit(v, bx + 5.0, by + 1.0, bw - 26.0, ink);
+                    gu.combo_arrow([bx + bw - 16.0, by, 16.0, 16.0], self.drop_open() == Some(i));
+                    if here && self.drop_open().is_none() {
+                        hand = Some((bx, by));
+                    }
+                }
                 Elem::Choice { label, items, at, .. } => {
                     bullet(gu, ey);
                     gu.label(label, x + 32.0, ey, N, false);
@@ -1631,10 +1748,22 @@ impl Window {
             }
             ey += self.elem_h(i);
         }
+        // An open dropdown's list over what is under it, as the login form's: the cursor's row lit, the hand on it.
+        if let Some((i, b)) = self.drop_box(x, y)
+            && let Some(Elem::Choice { items, .. }) = self.elems.get(i)
+        {
+            for (k, item) in items.iter().enumerate() {
+                let r = [b[0], b[1] + LINE * k as f32, b[2], LINE];
+                let shown = super::super::fit_tail(gu, item, r[2] - 10.0);
+                gu.combo_row(r, &shown, k == self.drop_at);
+            }
+            hand = Some((b[0], b[1] + LINE * self.drop_at as f32));
+        }
         if let Some((hx, hy)) = hand {
             gu.cursor(hx, hy);
         }
-        [x, y, w, h]
+        let (_, reach) = self.classic_reach();
+        [x, y, w, h.max(reach)]
     }
 }
 
@@ -1842,6 +1971,39 @@ mod tests {
         assert!(!w.open);
     }
 
+    /// A dropdown: Enter opens its list on the item held, Up / Down move, Enter picks, Escape closes it unchanged; a
+    /// click on its field opens and closes it, one on an item picks it, one off it closes it.
+    #[test]
+    fn dropdown() {
+        let mut w = Window::new("w");
+        let items = vec!["Spell".to_string(), "Job ability".into(), "Item".into()];
+        w.elems = vec![Elem::Choice { id: "t".into(), label: "Type".into(), items, at: 0, drop: true }];
+        (w.open, w.focus) = (true, true);
+        w.settle();
+        w.key(K::Enter);
+        assert_eq!((w.drop_open(), w.drop_at), (Some(0), 0));
+        w.key(K::ArrowUp);
+        assert_eq!(w.drop_at, 2);
+        assert_eq!(w.key(K::Enter).0, vec![Event::Set { id: "t".into(), index: 2 }]);
+        assert_eq!(w.drop_open(), None);
+        w.key(K::Enter);
+        w.key(K::ArrowDown);
+        assert!(w.key(K::Escape).0.is_empty());
+        assert!(w.open && w.drop_open().is_none());
+        // Left / Right still turn it, as a choice.
+        assert_eq!(w.key(K::ArrowRight).0, vec![Event::Set { id: "t".into(), index: 0 }]);
+        w.click_button(0, 0);
+        assert_eq!(w.drop_open(), Some(0));
+        w.click_button(0, 0);
+        assert_eq!(w.drop_open(), None);
+        w.click_button(0, 0);
+        w.drop_hover(0, 1);
+        assert_eq!(w.drop_pick(0, 1).0, vec![Event::Set { id: "t".into(), index: 1 }]);
+        w.click_button(0, 0);
+        w.drop_close(0);
+        assert_eq!(w.drop_open(), None);
+    }
+
     fn key_ev(k: K) -> egui::Event {
         egui::Event::Key { key: k, physical_key: None, pressed: true, repeat: false, modifiers: Default::default() }
     }
@@ -1860,7 +2022,7 @@ mod tests {
                 key: false,
             },
             Elem::Section { id: "sec".into(), label: "More".into(), open: false },
-            Elem::Choice { id: "c".into(), label: "C".into(), items: vec!["x".into(), "y".into()], at: 0 },
+            Elem::Choice { id: "c".into(), label: "C".into(), items: vec!["x".into(), "y".into()], at: 0, drop: false },
             Elem::Colour { id: "col".into(), label: "Col".into(), value: [0, 0, 0, 255], alpha: false },
         ];
         w.meta = vec![

@@ -2288,11 +2288,12 @@ fn elem_only(t: &Table) -> mlua::Result<super::window::Elem> {
             filter: false,
             key: true,
         },
-        "choice" => Elem::Choice {
+        "choice" | "dropdown" => Elem::Choice {
             id: id()?,
             label: t.get::<Option<String>>("label")?.unwrap_or_default(),
             items: t.get::<Option<Vec<String>>>("items")?.unwrap_or_default(),
             at: index("at")?.unwrap_or(0),
+            drop: kind == "dropdown",
         },
         "colour" | "color" => Elem::Colour {
             id: id()?,

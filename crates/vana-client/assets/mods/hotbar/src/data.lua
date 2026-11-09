@@ -17,7 +17,8 @@
 -- A library entry is a macro whose first line can be built from an action:
 -- { name, label?, action = { kind = "ma", name = "Cure", target = "t" }?, lines = { <lines after it> } }.
 -- An equip action's target is the equipment slot ({ kind = "equip", name = "Warp Ring", target = "ring1" }); a system
--- command's name is the command itself ({ kind = "cmd", name = "/attack", target = "t" }).
+-- command's name is the command itself ({ kind = "cmd", name = "/attack", target = "t" }). An action's `line`, when
+-- set, is the player's own line run in place of the one it builds.
 --
 -- Bars and slots are stored as text keys ("1", "2", ...) because JSON object keys are text.
 
@@ -207,9 +208,13 @@ M.ACTION_KINDS = COMMAND
 -- The line an action builds: { kind = "ma", name = "Cure", target = "t" } -> /ma "Cure" <t>;
 -- { kind = "equip", name = "Warp Ring", target = "ring1" } -> /equip ring1 "Warp Ring";
 -- { kind = "cmd", name = "/attack", target = "t" } -> /attack <t>; { kind = "cmd", name = "/heal" } -> /heal.
+-- An action with its own `line` runs that.
 function M.command(action)
   if not is_table(action) or not COMMAND[action.kind] or trim(action.name) == "" then
     return nil
+  end
+  if trim(action.line) ~= "" then
+    return trim(action.line)
   end
   local target = trim(action.target)
   if action.kind == "equip" then
@@ -246,7 +251,7 @@ local expanded = setmetatable({}, { __mode = "k" })
 local function expand(entry, id)
   local m = expanded[entry]
   if not m then
-    m = { name = entry.name or "", label = entry.label, lines = M.entry_lines(entry), ref = id }
+    m = { name = entry.name or "", label = entry.label, lines = M.entry_lines(entry), ref = id, action = entry.action }
     expanded[entry] = m
   end
   return m
@@ -302,6 +307,7 @@ local function clean_entry(e)
   if trim(e.label) ~= "" then out.label = trim(e.label) end
   if is_table(e.action) and COMMAND[e.action.kind] and trim(e.action.name) ~= "" then
     out.action = { kind = e.action.kind, name = trim(e.action.name), target = trim(e.action.target) }
+    if trim(e.action.line) ~= "" then out.action.line = trim(e.action.line) end
   end
   return out
 end

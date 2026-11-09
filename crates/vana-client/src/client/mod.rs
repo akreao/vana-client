@@ -831,7 +831,7 @@ pub struct LoginView {
 }
 
 /// The tail of `text` that fits in `max` pixels, so the caret end stays visible.
-fn fit_tail(lu: &GameUi, text: &str, max: f32) -> String {
+pub(super) fn fit_tail(lu: &GameUi, text: &str, max: f32) -> String {
     let mut t = text;
     while lu.text_width(t) > max {
         let mut c = t.chars();
@@ -1228,7 +1228,7 @@ fn login_window(
         }
         if arrow > 0.0 {
             let a = arrow_rect(i);
-            lu.text("\u{25bc}", a[0] + 3.0, a[1] + 1.0, 0, if combo.is_some_and(|c| c.0 == i) { WHITE } else { GREY });
+            lu.combo_arrow(a, combo.is_some_and(|c| c.0 == i));
         }
         lu.text(&shown, r[0] + 4.0, r[1] + 1.0, 0, WHITE);
         if *focus == i && lu.blink() && !x.read_only {
@@ -1269,8 +1269,8 @@ fn login_window(
     if let Some((i, c)) = *combo {
         for (k, o) in fields[i].options.iter().take(COMBO_ROWS).enumerate() {
             let r = list_row(i, k);
-            lu.rect(r[0], r[1], r[2], r[3], if k == c { [0.16, 0.2, 0.45, 0.95] } else { [0.03, 0.03, 0.08, 0.95] });
-            lu.text(&fit_tail(lu, o, r[2] - 10.0), r[0] + 4.0, r[1] + 1.0, 0, WHITE);
+            let shown = fit_tail(lu, o, r[2] - 10.0);
+            lu.combo_row(r, &shown, k == c);
         }
         let r = list_row(i, c);
         hand = Some((r[0], r[1]));

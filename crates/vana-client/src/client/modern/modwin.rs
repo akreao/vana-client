@@ -15,6 +15,10 @@ pub enum Click {
     Row(usize, usize),
     /// Tabs or a choice turned by one, or to a page.
     Turn(usize, isize),
+    /// An open dropdown's item picked, hovered; a press off it.
+    DropPick(usize, usize),
+    DropHover(usize, usize),
+    DropClose(usize),
     TurnTo(usize, usize),
     Colour(usize, [u8; 3]),
     Alpha(usize, usize),
@@ -159,6 +163,9 @@ impl Click {
             Click::Row(i, r) => win.pick(i, r),
             Click::Turn(i, d) => win.turn_to(i, d, None),
             Click::TurnTo(i, k) => win.turn_to(i, 0, Some(k)),
+            Click::DropPick(i, k) => win.drop_pick(i, k),
+            Click::DropHover(i, k) => win.drop_hover(i, k),
+            Click::DropClose(i) => win.drop_close(i),
             Click::Colour(i, rgb) => win.set_colour(i, Some(rgb), None),
             Click::Alpha(i, s) => win.set_colour(i, None, Some(s)),
             Click::Sort(i, c) => win.sort(i, c),
@@ -453,6 +460,31 @@ pub(super) fn body(
                 });
                 if ui.interact(field, ui.scope_id().with(("mod input", &win.id, i)), Sense::click()).clicked() {
                     clicks.push(Click::Button(i, 0));
+                }
+            }
+            // As the login form's combo fields: the arrow at the right end, the open list under it over the window.
+            Elem::Choice { label, items, at, drop: true, .. } => {
+                let v = items.get(*at).map_or("", String::as_str);
+                let (field, _) = kit::setting(ui, m, label, here, false, here, |ui| {
+                    let r = kit::field(ui, m, v, None, ui.available_width(), small.clone(), None);
+                    let a = Rect::from_min_max(pos2(r.max.x - 28.0, r.min.y), r.max);
+                    kit::combo_arrow(ui.painter(), m, a, m.theme.small);
+                    r
+                });
+                if ui.interact(field, ui.scope_id().with(("mod dropdown", &win.id, i)), Sense::click()).clicked() {
+                    clicks.push(Click::Button(i, 0));
+                }
+                if win.drop_open() == Some(i) {
+                    let id = egui::Id::unique("mod dropdown list").with((pid, &win.id, i));
+                    let out = kit::combo_list(ctx, m, id, field, items, win.drop_at, small.clone());
+                    if let Some(k) = out.picked {
+                        clicks.push(Click::DropPick(i, k));
+                    } else if let Some(k) = out.hovered.filter(|k| *k != win.drop_at) {
+                        clicks.push(Click::DropHover(i, k));
+                    }
+                    if out.away {
+                        clicks.push(Click::DropClose(i));
+                    }
                 }
             }
             Elem::Choice { label, items, at, .. } => {

@@ -660,6 +660,75 @@ pub fn field(
     r
 }
 
+/// A combo field's arrow centred on `a`, its right end (the login form's fields, the mods' dropdowns); `size` the
+/// field's text size.
+pub fn combo_arrow(p: &egui::Painter, m: &Modern, a: Rect, size: f32) {
+    p.text(a.center(), Align2::CENTER_CENTER, "\u{25bc}", FontId::proportional(size * 0.7), m.theme.color("muted"));
+}
+
+/// A combo field's open list painted on `p`, over the form: the window frame round the rows, the cursor's row lit.
+pub fn paint_combo_list(p: &egui::Painter, m: &Modern, rows: &[(Rect, &str)], cursor: usize, font: &FontId) {
+    let (Some(first), Some(last)) = (rows.first(), rows.last()) else { return };
+    p.add(super::borders::window(m, "window_normal", first.0.union(last.0).expand(3.0)));
+    for (k, (r, text)) in rows.iter().enumerate() {
+        if k == cursor {
+            p.rect_filled(*r, 2.0, m.theme.color("focus").gamma_multiply(0.45));
+        }
+        let c = if k == cursor { m.theme.color("gold") } else { m.theme.color("text") };
+        p.with_clip_rect(*r).text(pos2(r.min.x + 6.0, r.center().y), Align2::LEFT_CENTER, *text, font.clone(), c);
+    }
+}
+
+/// What a combo field's open list took from the pointer.
+#[derive(Default)]
+pub struct ComboOut {
+    pub picked: Option<usize>,
+    pub hovered: Option<usize>,
+    /// A press off the list and its field: it closes.
+    pub away: bool,
+}
+
+/// A combo field's open list under `field`, over everything, as the login form's: `items`, the cursor's lit.
+pub fn combo_list(
+    ctx: &egui::Context,
+    m: &Modern,
+    id: egui::Id,
+    field: Rect,
+    items: &[String],
+    cursor: usize,
+    font: FontId,
+) -> ComboOut {
+    const H: f32 = 26.0;
+    let top = field.max.y + 3.0;
+    let rows: Vec<(Rect, &str)> = items
+        .iter()
+        .enumerate()
+        .map(|(k, s)| (Rect::from_min_size(pos2(field.min.x, top + H * k as f32), vec2(field.width(), H)), s.as_str()))
+        .collect();
+    let mut out = ComboOut::default();
+    let area = egui::Area::new(id).order(egui::Order::Foreground).fixed_pos(field.left_bottom()).constrain(false).show(
+        ctx,
+        |ui| {
+            ui.allocate_exact_size(vec2(field.width(), 6.0 + H * rows.len() as f32), Sense::hover());
+            paint_combo_list(ui.painter(), m, &rows, cursor, &font);
+            for (k, (r, _)) in rows.iter().enumerate() {
+                let resp = ui.interact(*r, ui.scope_id().with(("combo row", k)), Sense::click());
+                if resp.hovered() {
+                    out.hovered = Some(k);
+                }
+                if resp.clicked() {
+                    out.picked = Some(k);
+                }
+            }
+        },
+    );
+    let shown = area.response.rect;
+    out.away = ctx.input(|i| {
+        i.pointer.any_pressed() && i.pointer.interact_pos().is_some_and(|q| !shown.contains(q) && !field.contains(q))
+    });
+    out
+}
+
 /// Text from `at` (left, centred on y) with the blinking caret before char `caret`, scrolled left to keep the caret
 /// before `right`.
 pub fn caret_text(ui: &Ui, m: &Modern, at: egui::Pos2, text: &str, caret: Option<usize>, font: FontId, right: f32) {

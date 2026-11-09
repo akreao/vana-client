@@ -2,7 +2,9 @@
 --
 --   Library  a main job's macros as tiles, dragged onto the bars: new, edit, copy, delete, and the palette.
 --   Builder  one macro: an action of a type (spell, job ability, weapon skill, pet command, item, equipment, system
---            command) and its target build the first line; lines typed under it run after it. A "Macro" is typed only.
+--            command) and its target build the first line (or the player's own line in its place); lines typed under
+--            it run after it. A "Macro" is typed only. A row that opens a list in the game's menu (Rune Enchantment,
+--            Phantom Roll...) opens that list here.
 --   Config   the hotkey modifier of each bar, the key row, and a slot's own key (changes apply at once).
 
 local data = require("src.data")
@@ -25,11 +27,13 @@ local S = { mj = nil }
 local defined = false
 
 -- The library rows as shown (ids, in order) and the builder's state: the entry edited (nil: a new one), the action
--- kind (nil: a macro of typed lines), the action picked ({name}), its target, the search results, and the slot it was
--- opened from ({bar, slot, main, sub}: the saved macro goes on it), if any.
+-- kind (nil: a macro of typed lines), the action picked ({name}), its target, the player's own line in place of the
+-- built one (nil: the built one), the search results, the opener whose list is shown ({list, name}), and the slot it
+-- was opened from ({bar, slot, main, sub}: the saved macro goes on it), if any.
 local lib_ids = {}
 local open_builder
-local E = { id = nil, kind = "ma", pick = nil, target = "t", results = {}, auto_name = nil, slot = nil }
+local E = { id = nil, kind = "ma", pick = nil, target = "t", line = nil, results = {}, opened = nil, auto_name = nil,
+  slot = nil }
 -- The Config tab's slot whose own key is set there.
 local K = { bar = 1, slot = 1 }
 
@@ -264,10 +268,15 @@ local function type_def()
   return builder.TYPES[builder.type_index(E.kind)]
 end
 
+-- The line the picked action builds (nil: none picked).
+local function built_line()
+  return E.kind and E.pick and data.command({ kind = E.kind, name = E.pick.name, target = E.target }) or nil
+end
+
 local function builder_entry()
   local action = nil
   if E.kind and E.pick then
-    action = { kind = E.kind, name = E.pick.name, target = E.target }
+    action = { kind = E.kind, name = E.pick.name, target = E.target, line = E.line }
   end
   return {
     name = ui.get(WIN, "name").text,
@@ -285,6 +294,30 @@ local function refresh_preview()
   })
 end
 
+-- The target menu's choices for the kind and pick, with the target held when it is none of them.
+local function target_choices()
+  if not E.kind then return { { "", "(not used)" } } end
+  local choices = {}
+  for i, c in ipairs(builder.targets_for(E.kind, E.pick and E.pick.name)) do choices[i] = c end
+  local held = false
+  for _, c in ipairs(choices) do
+    if c[1] == E.target then held = true end
+  end
+  if not held and data.trim(E.target) ~= "" then
+    choices[#choices + 1] = { E.target, builder.target_label(E.kind, E.target, E.pick and E.pick.name) }
+  end
+  return choices
+end
+
+-- The line field shows the player's own line, else the one the pick builds.
+local function refresh_line()
+  ui.update(WIN, "line", {
+    label = not E.kind and "Line it builds (none: a macro's lines are typed below)"
+      or E.line and "Its own line (clear it for the built one)" or "Line it builds (type your own to change it)",
+    text = E.line or built_line() or "",
+  })
+end
+
 local function refresh_choice()
   local t = type_def()
   local text
@@ -296,12 +329,15 @@ local function refresh_choice()
     text = ("%s: none yet. Search, then pick one from the list."):format(t.label)
   end
   ui.update(WIN, "picked", { text = text, dim = not E.kind or not E.pick })
-  ui.update(WIN, "btype", { items = { t.label } })
-  ui.update(WIN, "target", {
-    label = E.kind == "equip" and "Equipment slot" or "Target",
-    items = { E.kind and builder.target_label(E.kind, E.target, E.pick and E.pick.name) or "(not used)" },
-  })
+  ui.update(WIN, "btype", { at = builder.type_index(E.kind) })
+  local labels, at = {}, 1
+  for i, c in ipairs(target_choices()) do
+    labels[i] = c[2]
+    if c[1] == (E.target or "") then at = i end
+  end
+  ui.update(WIN, "target", { label = E.kind == "equip" and "Equipment slot" or "Target", items = labels, at = at })
   ui.update(WIN, "extra", { label = E.kind and "Lines after it (| between lines, optional)" or "Lines (| between lines)" })
+  refresh_line()
 end
 
 local function refresh_results(query)
@@ -314,17 +350,27 @@ local function refresh_results(query)
     ui.update(WIN, "fcount", { text = "" })
     return
   end
-  local found, more = builder.find(E.kind, query)
-  E.results = found
+  local found, more = builder.find(E.kind, query, E.opened and E.opened.list)
+  -- An opener's list starts with the row back out of it.
+  E.results = {}
   local rows = {}
-  for i, e in ipairs(found) do
-    rows[i] = { e.name, e.cells[1] or "", e.cells[2] or "", icon = e.icon }
+  if E.opened then
+    E.results[1] = { back = true }
+    rows[1] = { "\u{2039} Back", "", "", colour = { 200, 180, 130 } }
+  end
+  for _, e in ipairs(found) do
+    E.results[#E.results + 1] = e
+    local name = e.list and (e.name .. "  \u{203a}") or e.name
+    rows[#rows + 1] = { name, e.cells[1] or "", e.cells[2] or "", icon = e.icon,
+      colour = e.list and { 232, 210, 156 } or nil }
   end
   ui.update(WIN, "found", { rows = rows, at = 1 })
-  ui.update(WIN, "fcount", {
-    text = #found == 0 and "Nothing matches." or (more and ("First %d matches."):format(#found)
-      or ("%d found."):format(#found)),
-  })
+  local count = #found == 0 and "Nothing matches." or (more and ("First %d matches."):format(#found)
+    or ("%d found."):format(#found))
+  if E.opened then
+    count = ("%s: %s Back returns to the list."):format(E.opened.name, count)
+  end
+  ui.update(WIN, "fcount", { text = count })
 end
 
 local function builder_where()
@@ -338,7 +384,7 @@ end
 
 local function set_kind(kind)
   if kind == E.kind then return end
-  E.kind, E.pick = kind, nil
+  E.kind, E.pick, E.line, E.opened = kind, nil, nil, nil
   E.target = kind == "equip" and "main" or kind == "cmd" and "" or "t"
   refresh_results(ui.get(WIN, "q").text)
   refresh_choice()
@@ -355,7 +401,7 @@ function open_builder(id, slot, macro)
   local entry = id and data.get_entry(S.mj, id) or nil
   E.id = entry and tostring(id) or nil
   E.slot = slot
-  E.kind, E.pick, E.target, E.auto_name = "ma", nil, "t", nil
+  E.kind, E.pick, E.target, E.auto_name, E.line, E.opened = "ma", nil, "t", nil, nil, nil
   local name, label, extra = "", "", ""
   if macro then
     entry = { name = macro.name, label = macro.label, lines = macro.lines }
@@ -367,6 +413,7 @@ function open_builder(id, slot, macro)
       E.kind = entry.action.kind
       E.pick = { name = entry.action.name }
       E.target = entry.action.target
+      E.line = entry.action.line
     else
       E.kind = nil
     end
@@ -382,48 +429,49 @@ function open_builder(id, slot, macro)
   ui.update(WIN, "tabs", { at = TAB_BUILD })
 end
 
+-- Into an opener's list (`e`), or back out of it (nil); the search starts over.
+local function open_list(e)
+  E.opened = e and { list = e.list, name = e.name } or nil
+  ui.update(WIN, "q", { text = "" })
+  refresh_results("")
+end
+
 local function pick(index)
   local e = E.results[index]
   if not e then return end
+  if e.back or e.list then
+    open_list(not e.back and e or nil)
+    return
+  end
   local name = data.trim(ui.get(WIN, "name").text)
   -- The name follows the pick until the player types their own.
   if name == "" or name == E.auto_name then
     ui.update(WIN, "name", { text = e.title or e.name })
     E.auto_name = e.title or e.name
   end
-  -- A new pick starts on its usual target; picking the same again keeps the one chosen.
+  -- A new pick starts on its usual target and the line it builds; picking the same again keeps them.
   if not E.pick or E.pick.name ~= e.name then
-    E.target = e.target
+    E.target, E.line = e.target, nil
   end
   E.pick = { name = e.name }
   refresh_choice()
   refresh_preview()
 end
 
-local function choose_type()
-  ui.menu(builder.TYPE_LABELS, function(i)
-    if i then set_kind(builder.TYPES[i].kind) end
-  end)
+local function set_target(index)
+  local c = target_choices()[index]
+  if not c or not E.kind then return end
+  E.target = c[1]
+  refresh_choice()
+  refresh_preview()
 end
 
-local function choose_target()
-  if not E.kind then
-    say("a macro's lines name their own targets.")
-    return
-  end
-  local choices = builder.targets_for(E.kind, E.pick and E.pick.name)
-  if choices[1][1] == "" and #choices == 1 then
-    say("that command takes no target.")
-    return
-  end
-  local labels = {}
-  for i, t in ipairs(choices) do labels[i] = t[2] end
-  ui.menu(labels, function(i)
-    if not i then return end
-    E.target = choices[i][1]
-    refresh_choice()
-    refresh_preview()
-  end)
+-- The line field typed in: the player's own line, or (cleared, or the built one again) none.
+local function line_edited(text)
+  if not E.kind then return end
+  text = data.trim(text)
+  E.line = (text ~= "" and text ~= built_line()) and text or nil
+  refresh_preview()
 end
 
 local function save_builder()
@@ -516,7 +564,7 @@ local function define()
 
       -- Builder
       { type = "text", id = "bwhere", text = "", page = TAB_BUILD },
-      { type = "buttons", id = "btype", label = "Type", items = { "Spell" }, page = TAB_BUILD,
+      { type = "dropdown", id = "btype", label = "Type", items = builder.TYPE_LABELS, at = 1, page = TAB_BUILD,
         tip = "Choose what the macro does." },
       { type = "input", id = "q", label = "Search", text = "", max = 32, page = TAB_BUILD,
         tip = "Part of a name, e.g. cure." },
@@ -524,7 +572,11 @@ local function define()
         tip = "Enter or click one to build the macro on it." },
       { type = "text", id = "fcount", text = "", dim = true, page = TAB_BUILD },
       { type = "text", id = "picked", text = "", page = TAB_BUILD },
-      { type = "buttons", id = "target", label = "Target", items = { "<t> Current target" }, page = TAB_BUILD },
+      { type = "dropdown", id = "target", label = "Target", items = { "<t> Current target" }, at = 1,
+        page = TAB_BUILD },
+      { type = "input", id = "line", label = "Line it builds (type your own to change it)", text = "", max = 256,
+        page = TAB_BUILD, tip = "What the macro runs first. Type your own line in its place if the built one is not "
+          .. "right; clear it for the built one again." },
       { type = "input", id = "name", label = "Name", text = "", max = 32, page = TAB_BUILD },
       { type = "input", id = "label", label = "Button text (blank = from the name)", text = "", max = 14,
         page = TAB_BUILD },
@@ -570,13 +622,20 @@ local function define()
       elseif e.id == "kbar" then
         K.bar = e.index
         refresh_keys()
+      elseif e.id == "btype" then
+        set_kind(builder.TYPES[e.index].kind)
+      elseif e.id == "target" then
+        set_target(e.index)
       end
     elseif (e.kind == "change" and e.id == "skey") or (e.kind == "press" and e.id == "skeyb") then
       keys.set_slot(K.bar, K.slot, e.id == "skey" and e.text or nil)
       keys_changed()
-    elseif e.kind == "edit" then
+    elseif e.kind == "edit" or (e.kind == "change" and e.id == "line") then
       if e.id == "q" then
         refresh_results(e.text)
+      elseif e.id == "line" then
+        line_edited(e.text)
+        if e.kind == "change" then refresh_line() end
       elseif e.id == "extra" or e.id == "name" then
         refresh_preview()
       end
@@ -610,10 +669,6 @@ local function define()
         elseif M.hooks.palette then
           M.hooks.palette()
         end
-      elseif e.id == "btype" then
-        choose_type()
-      elseif e.id == "target" then
-        choose_target()
       elseif e.id == "bbtn" then
         if e.index == 1 then
           save_builder()

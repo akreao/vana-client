@@ -183,6 +183,21 @@ local function draw()
           colour = hover == key and KEY_HOVER or (macro and KEY or EMPTY_KEY) })
         add({ type = "rect", x = x, y = y, w = s, h = s, round = round, line = 1.5,
           colour = macro and EDGE[cell.from] or EMPTY_EDGE })
+        local sugg = act and suggested[act.kind .. ":" .. act.id]
+        if sugg then
+          -- Inside, gold at the edge fading into the key toward the middle (rings inset a step at a time), its depth
+          -- and strength pulsing with the glow round it.
+          local depth = s * (0.22 + 0.06 * glow)
+          local rings = 10
+          local step_w = depth / rings
+          for k = 0, rings - 1 do
+            local t = k / rings
+            local inset = k * step_w
+            add({ type = "rect", x = x + inset, y = y + inset, w = s - 2 * inset, h = s - 2 * inset,
+              round = math.max(0, round - inset), line = step_w + 0.5,
+              colour = { GLOW[1], GLOW[2], GLOW[3], math.floor((55 + 55 * glow) * (1 - t) * (1 - t)) } })
+          end
+        end
         if act then
           local isz = math.floor(s * 0.58)
           add({ type = "icon", x = x + (s - isz) / 2, y = y + 4, size = isz, kind = act.kind, id = act.id })
@@ -218,7 +233,7 @@ local function draw()
           local hint = keys.hint(b, i)
           add({ type = "text", x = x + 4, y = y + 2, text = hint, size = 0.9, colour = MUTED })
         end
-        if act and suggested[act.kind .. ":" .. act.id] then
+        if sugg then
           add({ type = "rect", x = x - 3, y = y - 3, w = s + 6, h = s + 6, round = round + 3, line = 3,
             colour = { GLOW[1], GLOW[2], GLOW[3], math.floor(25 + 45 * glow) } })
           add({ type = "rect", x = x - 1, y = y - 1, w = s + 2, h = s + 2, round = round + 1, line = 1.5,

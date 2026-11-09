@@ -3,6 +3,7 @@
 -- Builder's system commands (/attack, /heal, ...: the game icon standing in for it).
 
 local builder = require("src.builder")
+local data = require("src.data")
 
 local M = {}
 
@@ -30,9 +31,12 @@ local KIND = { ["/ma"] = "spell", ["/magic"] = "spell", ["/so"] = "spell", ["/so
 
 local cache = {}
 
--- {kind = 'spell' | 'ability' | 'item', id, recast_id} for the macro's first action, or false.
+-- {kind = 'spell' | 'ability' | 'item', id, recast_id} for the macro's first action, or false. A macro built on an
+-- action whose own line names none (a line this does not read) takes the action's.
 function M.of(macro)
   local key = table.concat(macro.lines or {}, "\n")
+  local a = type(macro.action) == "table" and macro.action or nil
+  if a then key = key .. "\0" .. tostring(a.kind) .. "\0" .. tostring(a.name) end
   local hit = cache[key]
   if hit ~= nil then return hit end
   hit = false
@@ -65,6 +69,10 @@ function M.of(macro)
       if c.icon then hit = { kind = c.icon.kind, id = c.icon.id, no_recast = true } end
       break
     end
+  end
+  if not hit and a and data.trim(a.line) ~= "" then
+    local built = data.command({ kind = a.kind, name = a.name, target = a.target })
+    if built then hit = M.of({ lines = { built } }) end
   end
   cache[key] = hit
   return hit

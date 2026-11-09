@@ -73,8 +73,9 @@ Built (client/lua/, modern/modwin.rs), each checked live:
 - **Windows:**
   - `ui.window` / `update` / `get` / `open` / `show` / `close` / `on` / `prompt` / `menu`
   - elements: text, buttons and options, slider, scrolling list, gauge, separator; tabs (elements on pages), typed
-    lines (edit / change events, Escape undoes), choices (Left / Right), colours (RGBA, a channel at a time; the
-    classic UI shows channel sliders, the modern UI the kit's picker), folding sections, list columns with headings
+    lines (edit / change events, Escape undoes), choices (Left / Right), dropdowns (a choice whose items open in a
+    list under it, as the login form's combo fields), colours (RGBA, a channel at a time; the classic UI shows
+    channel sliders, the modern UI the kit's picker), folding sections, list columns with headings
     (a click sends sort), right-aligned cells, row icons (item, status) and colours; a tip on any element (the help
     bar in classic, the help line in modern); a canvas element the mod draws in (lines, rects with gradients or
     outlines, circles, triangles, text, icons; clicks report where, drags their start, moves and release, both UIs
