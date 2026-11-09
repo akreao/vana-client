@@ -6870,6 +6870,8 @@ struct AreaSwitch {
         Option<(Option<ZoneRenderer>, Option<ground::Ground>, Option<crate::dat::weather::ZoneWeather>, Option<usize>)>,
     /// The zone's sub-area state meanwhile (the shown area's own takes the event's op 0x75 requests).
     home_sub: Option<subarea::SubArea>,
+    /// The zone's door flags (+0xf0) meanwhile.
+    home_doors: Option<std::collections::HashMap<u32, bool>>,
 }
 
 struct World {
@@ -10191,6 +10193,7 @@ impl App {
                         let old = std::mem::replace(&mut world.sub, sub);
                         if world.area.home_sub.is_none() {
                             world.area.home_sub = Some(old);
+                            world.area.home_doors = Some(std::mem::take(&mut world.doors.solid));
                         } else if old.current.is_some() {
                             world.effects.drop_sub_area();
                         }
@@ -10213,6 +10216,8 @@ impl App {
                             ));
                         }
                         world.ground = Some(ground);
+                        // FUN_10173c10 builds the new scene's door groups solid (+0xf0 = 1).
+                        world.doors.solid.clear();
                         world.area.shown = Some(area);
                     }
                     Ok(_) => {}
@@ -10396,6 +10401,8 @@ impl App {
                     world.zone_uploading = Some(Instant::now());
                 }
                 world.ground = Some(ground);
+                // FUN_10173c10 builds the new zone's door groups solid (+0xf0 = 1).
+                world.doors.solid.clear();
                 let old_zone = world.zone.replace(zone_id);
                 world.lua.raise("zone_change", vec![zone_id.into(), old_zone.into()]);
                 world.scene = Some(map_no);
@@ -10512,6 +10519,9 @@ impl App {
             && let Some((renderer, ground, weather, fx)) = w.area.home.take()
         {
             (w.renderer, w.ground, w.zone_weather) = (renderer, ground, weather);
+            if let Some(solid) = w.area.home_doors.take() {
+                w.doors.solid = solid;
+            }
             if let Some(sub) = w.area.home_sub.take() {
                 if w.sub.current.is_some() {
                     w.effects.drop_sub_area();
