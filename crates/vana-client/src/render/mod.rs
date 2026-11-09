@@ -427,6 +427,9 @@ pub struct ZoneRenderer {
     /// and vertex fog; off: two lights and table fog).
     bump_groups: Vec<wgpu::BindGroup>,
     pub bump_mode: bool,
+    /// Settings' Light Shading (ours): false Retail (the scenery's point lights per vertex, hard cut at the range),
+    /// true Smooth (per pixel, soft edge; not retail).
+    pub smooth_lights: bool,
     /// Windowed mode's light boost (light_boost; zero = off).
     pub light_boost: [f32; 4],
     /// The zone's scenery culled on the GPU (render/cull.rs) when the device draws indirectly, and its passes.
@@ -2535,6 +2538,7 @@ impl ZoneRenderer {
             sway,
             bump_groups,
             bump_mode: true,
+            smooth_lights: false,
             light_boost: [0.0; 4],
             scenery_bump: p.scenery_bump,
             scenery: p.scenery,
@@ -3700,7 +3704,7 @@ impl ZoneRenderer {
             area_info: [0.0; 4],
             voyage: self.voyage.to_cols_array_2d(),
             two: [[0.0; 4]; 4],
-            modes: [self.bump_mode as u32 as f32, 0.0, 0.0, 0.0],
+            modes: [self.bump_mode as u32 as f32, self.smooth_lights as u32 as f32, 0.0, 0.0],
             boost: self.light_boost,
         };
         let mut clear = self.fog_color;

@@ -1132,6 +1132,11 @@ mod tests {
                     if pl.scale.iter().any(|s| (s.abs() - 1.0).abs() > 1e-3) {
                         scaled += 1;
                     }
+                    // The loader's inverse (FUN_10179430) takes 1 for a zero scale: such a placement's object-space
+                    // lights would differ from the true inverse.
+                    if pl.scale.contains(&0.0) {
+                        println!("zero scale: zone {zone} {} {:?}", pl.name, pl.scale);
+                    }
                     for k in 0..4 {
                         let rf = u32_at(&p, 32 + i * 100 + 0x54 + 4 * k) as usize;
                         if rf == 0 {

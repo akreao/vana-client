@@ -18271,6 +18271,8 @@ impl App {
                 r.set_camera_list(&gfx.gpu, list, far);
                 // Config 0017: bump mapping's lighting (one eased light, vertex fog) or the two-light model; never in 182.
                 r.bump_mode = self.cfg.tool("0017") != 0 && w.zone != Some(182);
+                // Light Shading (ours): Smooth lights the scenery's lamps per pixel, Retail per vertex.
+                r.smooth_lights = self.cfg.smooth_lights;
                 // Windowed (0034 != 0, no gamma ramp): lights boosted by the channels' ramps (render::light_boost),
                 // gamma base 0028 + 1 + Gameplay R / G / B / 100 (FUN_101aa650).
                 r.light_boost = if self.cfg.window_mode() != 0 {
