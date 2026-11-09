@@ -12,6 +12,7 @@ Steven's FFXiMain.dll.
   ADDRESSV (14) WRAP (1); 1 -> alpha test 1, WRAP; 2 -> alpha test 0, CLAMP (3). So '#' does not alpha-test; it
   clamps the texture coordinates.
 - Ours: a '#' mesh's vertices carry flag bit 2; vs_main marks VertexOut.area bit 14 (the slot mask is now 0x3fff);
-  the scenery fragment paths sample stage 0 through uv0(), which clamps the UV to the edge texels' centres for it (the
-  shared sampler repeats, so this keeps the filter off the opposite edge, as CLAMP). Census (light_ref_census pattern, zones 0..299 and 1000..1299): no placement in this
+  the scenery fragment paths sample stage 0 through uv0(), which clamps the UV half a texel of the mip level in use
+  (from the UV's screen derivatives) inside each edge: the shared sampler repeats, so this keeps the filter off the
+  opposite edge, as CLAMP. Census (light_ref_census pattern, zones 0..299 and 1000..1299): no placement in this
   install is named '#', so nothing changes on screen today; zone-shot 232 renders identical.

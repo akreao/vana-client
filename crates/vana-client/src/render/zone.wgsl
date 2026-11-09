@@ -493,13 +493,18 @@ fn shade(in: VertexOut, color: vec4<f32>) -> vec4<f32> {
 }
 
 // FUN_1017c9c0: a '#' placement (+0xd6 = 2) samples stage 0 with ADDRESSU / ADDRESSV CLAMP, the rest WRAP. The
-// shared sampler repeats, so the UV stops at the edge texels' centres (level 0), which keeps the filter off the
-// opposite edge.
+// shared sampler repeats, so the UV stops half a texel of the mip level in use (from the UV's screen derivatives)
+// inside each edge, which keeps the filter off the opposite edge.
 fn uv0(in: VertexOut) -> vec2<f32> {
+    let dim = vec2<f32>(textureDimensions(tex, 0));
+    let t = in.uv * dim;
+    let rho = max(length(dpdx(t)), length(dpdy(t)));
     if ((in.area & 0x4000u) == 0u) {
         return in.uv;
     }
-    let h = 0.5 / vec2<f32>(textureDimensions(tex, 0));
+    let top = f32(textureNumLevels(tex) - 1u);
+    let lod = clamp(log2(max(rho, 1.0)), 0.0, top);
+    let h = min(0.5 * exp2(ceil(lod)) / dim, vec2<f32>(0.5));
     return clamp(in.uv, h, vec2<f32>(1.0) - h);
 }
 
