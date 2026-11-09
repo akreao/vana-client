@@ -4694,6 +4694,48 @@ return "acxml flow ok"
         vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
     }
 
+    /// Hotbars: back on the Builder by its tab (not New) after a Save, a second macro is a new entry; the first,
+    /// already on a slot, stays.
+    #[test]
+    fn hotbar_builder_tab_new_macro() {
+        let host = Host::default();
+        let files = BUNDLED.iter().find(|b| b.0 == "hotbar").unwrap().2;
+        let vm = Vm::new(bundled_manifest("hotbar").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
+        vm.lua.set_app_data(host.info.clone());
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        let script = r#"
+            local spells = { [1] = { name = "Cure", mp = 8, kind = 1, targets = 0x1F },
+              [144] = { name = "Fire", mp = 7, kind = 2, targets = 0x20 } }
+            res = { spell = function(id) return spells[id] end, ability = function() end,
+              job = function(id) return ({ [5] = "RDM", [3] = "WHM" })[id] end }
+            game = { player = function() return { main_job = 5, sub_job = 3 } end,
+              spells = function() return { 1, 144 } end, abilities = function() return {} end,
+              find_items = function() return {} end }
+            chat = { add = function() end }
+            local on_window = ui.on
+            ui.on = function(id, f) if id == "manager" then H = f end; on_window(id, f) end
+            local data = require("src.data")
+            data.init({ read = function() return nil end, write = function() end, decode = json.decode,
+              encode = json.encode })
+            local manager = require("src.manager")
+            manager.hooks = { changed = function() end, rebind = function() end }
+            manager.open()
+            -- New, Cure, Save; its tile dropped on bar 1, slot 1.
+            H("manager", { kind = "press", id = "lbtn", index = 1 })
+            H("manager", { kind = "select", id = "found", index = 1 })
+            H("manager", { kind = "press", id = "bbtn", index = 1 })
+            data.assign("RDM", nil, 1, 1, data.library("RDM")[1].id)
+            -- Back by the Builder tab: Fire, Save.
+            H("manager", { kind = "set", id = "tabs", index = 2 })
+            H("manager", { kind = "select", id = "found", index = 2 })
+            H("manager", { kind = "press", id = "bbtn", index = 1 })
+            local lib = data.library("RDM")
+            assert(#lib == 2 and lib[1].entry.name == "Cure" and lib[2].entry.name == "Fire", #lib)
+            assert(data.resolve("RDM", nil, 1, 1).name == "Cure")
+        "#;
+        vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
+    }
+
     /// Hotbars: a macro's first action names its icon and recast; a drag swaps two slots, in the sub job's set when
     /// either slot comes from it.
     #[test]
