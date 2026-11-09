@@ -2261,6 +2261,22 @@ impl ZoneGeometry {
     }
 }
 
+/// A leaker's resolved slots (render/leak.rs) with the lamps its Lamp Lights patch added (slots that were free in
+/// `own`), in their order: each where it was if that is still free, else in the first free slot; none past four.
+fn with_lamps(resolved: [u32; 4], own: [u32; 4], patch: Option<[u32; 4]>) -> [u32; 4] {
+    let mut v = resolved;
+    let Some(patch) = patch else { return v };
+    for k in (0..4).filter(|&k| own[k] == 0 && patch[k] != 0) {
+        if v.contains(&patch[k]) {
+            continue;
+        }
+        if let Some(f) = std::iter::once(k).chain(0..4).find(|&f| v[f] == 0) {
+            v[f] = patch[k];
+        }
+    }
+    v
+}
+
 /// Each instance's free light places filled with the nearest lamps within LAMP_REACH of its sphere (instance -> slots,
 /// only the instances that take any).
 fn lamp_slots(own: &[[u32; 4]], spheres: &[[f32; 4]], lamps: &[(Vec3, u32)]) -> HashMap<u32, [u32; 4]> {
@@ -2751,8 +2767,8 @@ impl ZoneRenderer {
         let next = l.resolve(&view, hidden);
         let mut writes = Vec::new();
         for (&i, slots) in &next {
-            let lamp = self.lamp_patch.get(&i).copied().unwrap_or([0; 4]);
-            let v: [u32; 4] = std::array::from_fn(|k| if slots[k] != 0 { slots[k] } else { lamp[k] });
+            let own = self.inst_lights.get(i as usize).copied().unwrap_or([0; 4]);
+            let v = with_lamps(*slots, own, self.lamp_patch.get(&i).copied());
             if l.written.get(&i) != Some(&v) && !hidden(i) {
                 writes.push((i, v));
             }
@@ -3154,6 +3170,10 @@ impl ZoneRenderer {
             }
         }
         self.hidden = link;
+        // The slot leak writes its instances again over the restored ones.
+        if let Some(l) = &mut self.leak {
+            l.written.clear();
+        }
     }
 
     fn put_texture(&mut self, gpu: &Gpu, slot: usize, t: &crate::dat::zone::Texture) {
@@ -4772,6 +4792,15 @@ mod refract_tests {
 
 #[cfg(test)]
 mod furniture_tests {
+    /// A lamp the leak's light displaces moves to a free slot; one already there is not doubled.
+    #[test]
+    fn leak_keeps_lamps() {
+        assert_eq!(super::with_lamps([9, 0, 0, 0], [0, 0, 0, 0], Some([4, 0, 0, 0])), [9, 4, 0, 0]);
+        assert_eq!(super::with_lamps([0, 0, 0, 0], [0, 0, 0, 0], Some([4, 5, 0, 0])), [4, 5, 0, 0]);
+        assert_eq!(super::with_lamps([4, 0, 0, 0], [0, 3, 0, 0], Some([4, 3, 0, 0])), [4, 0, 0, 0]);
+        assert_eq!(super::with_lamps([1, 2, 3, 6], [0, 0, 0, 0], Some([4, 5, 7, 8])), [1, 2, 3, 6]);
+    }
+
     /// FUN_101844c0: l_01 at table slot 0 is light 1; no l_01, no light.
     #[test]
     fn furniture_lights() {
