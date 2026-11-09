@@ -9,7 +9,8 @@
 //! How: after the actors, one copy of the frame is taken, and the water faces in view are drawn once over it. Each
 //! water pixel marches its reflected ray through the scene's depth a fixed number of steps; a hit takes the copy's
 //! colour there, a miss (or a ray leaving the screen) takes retail's sky gradient in that direction. The result is
-//! blended by a Fresnel weight and faded by the fog. Ripples bend the surface normal, worked out in the shader.
+//! blended by a Fresnel weight and faded by the fog, and faded out where the water is shallow (the scene's depth
+//! lies little below the surface), so a face laid a little above the drawn water leaves no band along the shore. Ripples bend the surface normal, worked out in the shader.
 //!
 //! Cost: one scene-sized copy and a draw of the water in view, nothing at all when none is. The faces go in tiles
 //! at load (a sort, linear apart from it) and each frame tests only the tiles' boxes.
@@ -131,6 +132,8 @@ const WGSL: &str = include_str!("reflect.wgsl");
 pub struct Params {
     pub view_proj: [[f32; 4]; 4],
     pub eye: [f32; 4],
+    /// The camera's view direction (unit), for the scene's depth as a distance along each pixel's ray.
+    pub forward: [f32; 4],
     /// x: 1 with a sky gradient; y: 1 when the target holds gamma bytes (no sRGB encode); z: seconds; w: 1 when the
     /// frame copy can be read (else every ray takes the sky).
     pub info: [f32; 4],
@@ -442,7 +445,8 @@ mod tests {
     }
 
     /// A large pond under the camera, the frame black: with nothing in the depth (far) the water takes the sky's
-    /// colour (red here) at the Fresnel weight; with scenery in front of it everywhere (depth 0) nothing changes.
+    /// colour (red here) at the Fresnel weight; with scenery in front of it everywhere (depth 0), nothing changes; with ground
+    /// just under the surface (a shore) it is faint.
     #[test]
     fn gpu_sky_on_open_water_none_behind_scenery() {
         let Ok(gpu) = Gpu::headless() else { return };
@@ -460,6 +464,7 @@ mod tests {
         let mut params = Params {
             view_proj: cam.view_proj(1.0).to_cols_array_2d(),
             eye: [cam.eye.x, cam.eye.y, cam.eye.z, 1.0],
+            forward: (cam.target - cam.eye).normalize().extend(0.0).to_array(),
             info: [0.0, 1.0, 0.0, 0.0],
             clear: [1.0, 0.0, 0.0, 1.0],
             fog_color: [0.0; 4],
@@ -467,8 +472,14 @@ mod tests {
             sky_colors: [[0.0; 4]; 8],
             sky_stops: [[0.0; 4]; 2],
         };
+        // The depth of ground 0.2 under the water at the pixel checked: shallow, so the reflection there is faint.
+        let vp = cam.view_proj(1.0);
+        let ndc = glam::Vec2::new(0.0 + 1.0 / n as f32, -0.5 - 1.0 / n as f32);
+        let (a, b) = (vp.inverse().project_point3(ndc.extend(0.0)), vp.inverse().project_point3(ndc.extend(1.0)));
+        let ground = a + (b - a) * ((0.2 - a.y) / (b.y - a.y));
+        let shallow = vp.project_point3(ground).z;
         let mut centre = Vec::new();
-        for d in [1.0f32, 0.0] {
+        for d in [1.0f32, 0.0, shallow] {
             let depth = crate::render::depth_view(&gpu.device, n, n);
             let color = gpu.device.create_texture(&wgpu::TextureDescriptor {
                 label: None,
@@ -503,7 +514,8 @@ mod tests {
                 multiview_mask: None,
             });
             params.info[3] = 0.0;
-            r.draw(&gpu, &mut enc, &view, Some(&color), &depth, params, true);
+            // No frame copy: every ray takes the sky, so the colour shows where the water drew.
+            r.draw(&gpu, &mut enc, &view, None, &depth, params, true);
             gpu.queue.submit([enc.finish()]);
             let px = read(&gpu, &color, n, n);
             // The lower middle of the screen looks at the water.
@@ -512,6 +524,7 @@ mod tests {
         }
         assert!(centre[0][0] > 20 && centre[0][1] == 0 && centre[0][2] == 0, "open water: {:?}", centre[0]);
         assert_eq!(centre[1], [0, 0, 0], "behind scenery");
+        assert!(centre[2][0] * 4 < centre[0][0], "shallow water at the shore: {:?}", centre[2]);
     }
 
     /// The water faces of some zones and the time to find them (by hand: `cargo test --release water_census --
