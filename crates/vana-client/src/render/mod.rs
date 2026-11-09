@@ -479,6 +479,8 @@ pub struct ZoneRenderer {
     /// Lamp shadows (render/lampshadow.rs): the maps (always made) and this frame's lamps (light slot, matrix,
     /// position; empty = none), which the client sets.
     lamp_shadow: lampshadow::LampShadows,
+    /// '#' placements' sampler (globals binding 6).
+    clamp_sampler: wgpu::Sampler,
     pub lamp_shadows: Vec<(u32, Mat4, Vec3)>,
     /// The real shadows' level from the Vana'diel clock (sunshadow::twilight; 0 at the sun / moon change) and their PCF
     /// spacing (softer by the moon).
@@ -684,6 +686,30 @@ pub fn mip_sampler(device: &wgpu::Device) -> wgpu::Sampler {
     device.create_sampler(&wgpu::SamplerDescriptor {
         address_mode_u: wgpu::AddressMode::Repeat,
         address_mode_v: wgpu::AddressMode::Repeat,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::MipmapFilterMode::Linear,
+        lod_max_clamp: if MIPMAPS.load(std::sync::atomic::Ordering::Relaxed) { 32.0 } else { 0.0 },
+        anisotropy_clamp: ANISOTROPY.load(std::sync::atomic::Ordering::Relaxed).clamp(1, 16),
+        ..Default::default()
+    })
+}
+
+/// mip_sampler with ADDRESSU / ADDRESSV CLAMP ('#' placements).
+pub fn clamp_sampler(device: &wgpu::Device) -> wgpu::Sampler {
+    let clamp = wgpu::AddressMode::ClampToEdge;
+    if old_textures() {
+        return device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: clamp,
+            address_mode_v: clamp,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+    }
+    device.create_sampler(&wgpu::SamplerDescriptor {
+        address_mode_u: clamp,
+        address_mode_v: clamp,
         mag_filter: wgpu::FilterMode::Linear,
         min_filter: wgpu::FilterMode::Linear,
         mipmap_filter: wgpu::MipmapFilterMode::Linear,
@@ -1144,6 +1170,13 @@ impl ZonePipes {
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
+                    count: None,
+                },
+                // '#' placements' stage 0 (FUN_1017c9c0: ADDRESSU / ADDRESSV CLAMP): the scenery sampler clamped.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
             ],
@@ -2438,6 +2471,7 @@ impl ZoneRenderer {
             gpu.queue.put(&deltas, 0, bytemuck::cast_slice(&geo.deltas));
         }
         let lamp_shadow = lampshadow::LampShadows::new(gpu, &p.sil_layout, color_format);
+        let clamp_sampler = clamp_sampler(device);
         let globals = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("globals"),
             layout: &p.globals_layout,
@@ -2448,6 +2482,7 @@ impl ZoneRenderer {
                 wgpu::BindGroupEntry { binding: 3, resource: parts_gpu.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 4, resource: deltas.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 5, resource: lamp_shadow.uniform.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::Sampler(&clamp_sampler) },
             ],
         });
         let sampler = mip_sampler(device);
@@ -2595,6 +2630,7 @@ impl ZoneRenderer {
             water: geo.water.clone(),
             reflections: None,
             lamp_shadow,
+            clamp_sampler,
             lamp_shadows: Vec::new(),
             shadow_level: 1.0,
             shadow_soft: 1.0,
@@ -4141,6 +4177,7 @@ impl ZoneRenderer {
                     wgpu::BindGroupEntry { binding: 3, resource: self.parts_gpu.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 4, resource: self.deltas_gpu.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 5, resource: self.lamp_shadow.uniform.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::Sampler(&self.clamp_sampler) },
                 ],
             });
             self.portrait_globals.push((buf, group));

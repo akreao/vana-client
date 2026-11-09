@@ -81,6 +81,8 @@ struct LampShadowU {
 @group(0) @binding(5) var<uniform> lamp_sh: LampShadowU;
 // Config 0011: the animated meshes' vertex deltas (vertex flags >> 8, minus 1); the instance's sway is area.y.
 @group(0) @binding(4) var<storage, read> deltas: array<vec4<f32>>;
+// '#' placements' stage 0: the scenery sampler with CLAMP addressing.
+@group(0) @binding(6) var samp_clamp: sampler;
 
 fn part_k(time: vec4<f32>) -> f32 {
     return select(clamp((u.area_info.y - time.x) / time.y, 0.0, 1.0), 1.0, time.y <= 0.0);
@@ -492,29 +494,25 @@ fn shade(in: VertexOut, color: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(select(rgb, pow(rgb, vec3<f32>(1.0 / 2.2)), u.fog.z > 0.5), 1.0);
 }
 
-// FUN_1017c9c0: a '#' placement (+0xd6 = 2) samples stage 0 with ADDRESSU / ADDRESSV CLAMP, the rest WRAP. The
-// shared sampler repeats, so the UV stops half a texel of the mip level in use (from the UV's screen derivatives)
-// inside each edge, which keeps the filter off the opposite edge.
-fn uv0(in: VertexOut) -> vec2<f32> {
-    let dim = vec2<f32>(textureDimensions(tex, 0));
-    let t = in.uv * dim;
-    let rho = max(length(dpdx(t)), length(dpdy(t)));
-    if ((in.area & 0x4000u) == 0u) {
-        return in.uv;
+// FUN_1017c9c0: a '#' placement (+0xd6 = 2) samples stage 0 with ADDRESSU / ADDRESSV CLAMP (samp_clamp), the rest
+// WRAP. The derivatives are taken first, in uniform control flow, and the clamped sample uses them.
+fn tex0(in: VertexOut) -> vec4<f32> {
+    let dx = dpdx(in.uv);
+    let dy = dpdy(in.uv);
+    let t = textureSample(tex, samp, in.uv);
+    if ((in.area & 0x4000u) != 0u) {
+        return textureSampleGrad(tex, samp_clamp, in.uv, dx, dy);
     }
-    let top = f32(textureNumLevels(tex) - 1u);
-    let lod = clamp(log2(max(rho, 1.0)), 0.0, top);
-    let h = min(0.5 * exp2(ceil(lod)) / dim, vec2<f32>(0.5));
-    return clamp(in.uv, h, vec2<f32>(1.0) - h);
+    return t;
 }
 
 // Most scenery is opaque; its texture alpha carries something other than coverage.
 @fragment
 fn fs_opaque(in: VertexOut) -> @location(0) vec4<f32> {
     if (u.sun.w > 0.5) {
-        return lit_zone(in, textureSample(tex, samp, uv0(in)));
+        return lit_zone(in, tex0(in));
     }
-    return shade(in, textureSample(tex, samp, uv0(in)) * in.color * 2.0);
+    return shade(in, tex0(in) * in.color * 2.0);
 }
 
 // Characters carry no baked lighting: shade by the normal. Placeholder until the D3D8 light setup is known.
@@ -576,19 +574,19 @@ fn fs_faded(in: FadedOut) -> @location(0) vec4<f32> {
 // the texture alpha already doubled).
 @fragment
 fn fs_alpha_test(in: VertexOut) -> @location(0) vec4<f32> {
-    let color = textureSample(tex, samp, uv0(in)) * in.color * 2.0;
+    let color = tex0(in) * in.color * 2.0;
     if (color.a <= 96.0 / 255.0) {
         discard;
     }
     if (u.sun.w > 0.5) {
-        return lit_zone(in, textureSample(tex, samp, uv0(in)));
+        return lit_zone(in, tex0(in));
     }
     return shade(in, color);
 }
 
 // MMB models with bit 31: blended by that alpha (SRCALPHA / INVSRCALPHA), alpha-tested only on '_' placements.
 fn blended(in: VertexOut) -> vec4<f32> {
-    let t = textureSample(tex, samp, uv0(in));
+    let t = tex0(in);
     let a = clamp(t.a * in.color.a * 2.0, 0.0, 1.0);
     if (u.sun.w > 0.5) {
         return vec4<f32>(lit_zone(in, t).rgb, a);
@@ -674,7 +672,7 @@ fn lit_zone(in: VertexOut, t: vec4<f32>) -> vec4<f32> {
 
 @fragment
 fn fs_bump(in: VertexOut) -> @location(0) vec4<f32> {
-    let t0 = textureSample(tex, samp, uv0(in));
+    let t0 = tex0(in);
     let t1 = textureSample(bump_tex, bump_samp, in.uv).rgb;
     var sun_color = u.sun_color.rgb;
     var ambient = u.ambient.rgb;
