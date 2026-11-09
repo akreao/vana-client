@@ -18,6 +18,10 @@ pub struct SubArea {
     pub loading: Option<(u32, bool)>,
     /// Asked for by 0x00A SubMapNumber, event op 0x75 sub 0, or 0 by a mode-7 position.
     pub asked: Option<(u32, bool)>,
+    /// +0x44: a trigger's load (FUN_10178a20) runs. Door boxes stay solid meanwhile (FUN_10176dd0(0)) and door
+    /// changes only set the door's flag (FUN_1017ac40 checks FUN_10178780); the asked loads (FUN_10178900) are
+    /// synchronous in retail and hold nothing.
+    pub doors_held: bool,
     /// The zone's collision and point-light keys, which a sub-area's merge into.
     pub zone_collision: Option<Arc<Collision>>,
     pub zone_keys: Vec<u32>,
@@ -31,9 +35,9 @@ pub struct SubArea {
     pub weather: Option<ZoneWeather>,
 }
 
-/// What FUN_10178a20 decides.
+/// What FUN_10178a20 decides: a load (id, asked by an event, asked at all: FUN_10178900's synchronous form).
 pub enum Step {
-    Load(u32, bool),
+    Load(u32, bool, bool),
     Unload,
 }
 
@@ -57,22 +61,22 @@ impl SubArea {
 
     /// FUN_10178a20 (slot 1): nothing while a load runs or for the loaded id; 0 unloads; another id loads when a
     /// trigger declares it.
-    pub fn request(&self, id: u32, from_event: bool) -> Option<Step> {
+    pub fn request(&self, id: u32, from_event: bool, asked: bool) -> Option<Step> {
         if self.loading.is_some() || self.current == Some(id) {
             return None;
         }
         if id == 0 {
             return self.current.is_some().then_some(Step::Unload);
         }
-        zone::declares_sub_area(&self.regions, id).then_some(Step::Load(id, from_event))
+        zone::declares_sub_area(&self.regions, id).then_some(Step::Load(id, from_event, asked))
     }
 
     /// This frame's request: one asked for, else the trigger under the player (FUN_10014390 -> FUN_10181540).
     pub fn next(&mut self, feet: [f32; 3]) -> Option<Step> {
         if let Some((id, ev)) = self.asked.take() {
-            return self.request(id, ev);
+            return self.request(id, ev, true);
         }
-        zone::sub_area_at(&self.regions, feet).and_then(|id| self.request(id, false))
+        zone::sub_area_at(&self.regions, feet).and_then(|id| self.request(id, false, false))
     }
 }
 

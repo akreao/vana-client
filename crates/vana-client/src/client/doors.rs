@@ -10,6 +10,9 @@ pub struct Doors {
     pub state: HashMap<u32, u8>,
     /// +0x174: states event ops 0x4c / 0x4d / 0x4f / 0x8e / 0x8f set on bound doors; they hold while an event runs.
     pub event: HashMap<u32, u8>,
+    /// Door group entry +0xf0 by door id: solid (1, as FUN_10173c10 builds it) or open (0). FUN_1017ac40 always sets
+    /// it; the box follows it at once unless a trigger's sub-area load runs, and FUN_10176dd0(1) applies it after.
+    pub solid: HashMap<u32, bool>,
 }
 
 fn opens(s: u8) -> bool {
@@ -86,20 +89,25 @@ pub fn update(w: &mut World) {
     }
 }
 
-/// FUN_10176dd0(1): a new ground (a sub-area came or went) takes the doors' states; open doors stop blocking.
-pub fn reapply(w: &World) {
-    for (id, s) in &w.doors.state {
-        if let Some(e) = w.entities.get(id)
-            && e.door != 0
-            && matches!(s, 8 | 0x1a | 0x1d)
-        {
-            set_solid(w, e.door, false);
+/// FUN_10176dd0(1) at the end of a trigger's load: every door's box from its flag (+0xf0), open ones let through.
+/// Ours also runs it whenever a new ground comes in (an asked load, an unload, a failed load), since each ground keeps
+/// its own boxes.
+pub fn reapply(w: &mut World) {
+    w.sub.doors_held = false;
+    for (&door, &solid) in &w.doors.solid {
+        for g in w.ground.iter().chain(w.sub.home.iter()) {
+            g.set_door(door, solid);
         }
     }
 }
 
-/// FUN_1017ac40 on the ground in use and, while a sub-area is in, the zone's own kept ground.
-fn set_solid(w: &World, door: u32, solid: bool) {
+/// FUN_1017ac40: the door's flag, and its box on the ground in use and, while a sub-area is in, the zone's own kept
+/// ground, unless a trigger's sub-area load holds the doors (FUN_10178780).
+fn set_solid(w: &mut World, door: u32, solid: bool) {
+    w.doors.solid.insert(door, solid);
+    if w.sub.doors_held {
+        return;
+    }
     for g in w.ground.iter().chain(w.sub.home.iter()) {
         g.set_door(door, solid);
     }
