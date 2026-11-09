@@ -18535,7 +18535,13 @@ impl App {
                         play_fx_sound(a, c);
                     }
                     eg.set_lights(&r.lights);
-                    eg.set_light(r.lighting.as_ref().map(|l| (l.dir, l.diffuse, l.ambient)));
+                    // Lit effect elements take the boosted SetLight (FUN_1000bf30) and AMBIENT (FUN_10188e00).
+                    let b = r.light_boost;
+                    eg.set_light(
+                        r.lighting.as_ref().map(|l| {
+                            (l.dir, crate::render::boosted(l.diffuse, b), crate::render::boosted(l.ambient, b))
+                        }),
+                    );
                     eg.set_depth(Some((&scene_depth, camera.proj(aspect))));
                     perf::timed(|| "effects upload".into(), || eg.update(&gfx.gpu, &mut encoder, &mut w.effects, &f));
                     mark!("fx update");
