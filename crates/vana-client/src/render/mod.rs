@@ -290,6 +290,16 @@ pub fn light_boost(gamma: [f32; 3]) -> [f32; 4] {
     [f(120, gamma[0]), f(116, gamma[1]), f(128, gamma[2]), 1.0]
 }
 
+/// A colour through the windowed boost (zone.wgsl `boost`, FUN_1000be50 for lights, FUN_10188e00 for the ambient):
+/// with the boost on and every part below 0.8, each part times its factor, capped at 1.
+pub fn boosted(c: glam::Vec3, boost: [f32; 4]) -> glam::Vec3 {
+    if boost[3] > 0.5 && c.max_element() < 0.8 {
+        (c * glam::Vec3::new(boost[0], boost[1], boost[2])).min(glam::Vec3::ONE)
+    } else {
+        c
+    }
+}
+
 /// Area environments (DAT_10631f24 area objects) the scenery is lit by, slot 0 unused.
 pub const AREAS: usize = 64;
 
@@ -5065,5 +5075,20 @@ mod boost_tests {
         let near = |a: [f32; 4], b: [f32; 3]| (0..3).all(|k| (a[k] - b[k]).abs() < 1e-5) && a[3] == 1.0;
         assert!(near(super::light_boost([1.5; 3]), [1.391_511, 1.360_417, 1.452_683]));
         assert!(near(super::light_boost([1.0; 3]), [1.082_353, 1.046_274, 1.154_510]));
+    }
+
+    /// FUN_10188e00 / FUN_1000be50: boosted only while every part is below 0.8, then capped at 1; the ambient's
+    /// bytes after it (fx::elem::ambient_ref, zone.wgsl ambient_rs) are about half the env's.
+    #[test]
+    fn boosted_ambient() {
+        use glam::Vec3;
+        let b = super::light_boost([1.5; 3]);
+        let a = super::boosted(Vec3::splat(0.5), b);
+        assert!((a.x - 0.695_755).abs() < 1e-5 && (a.z - 0.726_341).abs() < 1e-5);
+        assert_eq!(super::boosted(Vec3::new(0.5, 0.5, 0.8), b), Vec3::new(0.5, 0.5, 0.8));
+        assert_eq!(super::boosted(Vec3::splat(0.75), b).max_element(), 1.0);
+        assert_eq!(super::boosted(Vec3::splat(0.5), [0.0; 4]), Vec3::splat(0.5));
+        // 0xa0 / 255 -> trunc(0.627 x 128) = 80 bytes: 80 / 255, not 160 / 255.
+        assert_eq!(crate::fx::elem::ambient_ref(Vec3::splat(160.0 / 255.0)).x * 255.0, 80.0);
     }
 }

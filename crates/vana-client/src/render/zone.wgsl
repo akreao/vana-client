@@ -41,6 +41,13 @@ fn boost(c: vec3<f32>) -> vec3<f32> {
     return c;
 }
 
+// D3DRS_AMBIENT for the fixed-function draws (FUN_10188e00, scenery / furniture mode 0, actors mode 1): the env's
+// ambient (bytes / 255) through the windowed boost, capped at 1, as bytes trunc(a x 128); D3D then takes them / 255,
+// so the ambient term is about half the env's (with AMBIENTMATERIALSOURCE COLOR1 for scenery, set at device init).
+fn ambient_rs(a: vec3<f32>) -> vec3<f32> {
+    return floor(min(boost(a), vec3<f32>(1.0)) * 128.0);
+}
+
 // An area environment's lighting (sun.w = 1 when it has one); fog.xy = start, end.
 struct Area {
     sun: vec4<f32>,
@@ -699,7 +706,7 @@ fn d3d_out_fog(in: VertexOut, rgb: vec3<f32>, fog_color: vec3<f32>) -> vec4<f32>
     return vec4<f32>(select(pow(c, vec3<f32>(2.2)), c, u.fog.z > 0.5), 1.0);
 }
 
-// lit = clamp(vc * (ambient + sun * max(N.-L, 0))); out = tex * lit * 2. The light, ambient and fog are the zone's,
+// lit = clamp(vc * (ambient bytes / 255 + sun * max(N.-L, 0))); out = tex * lit * 2. The light, ambient and fog are the zone's,
 // or the area's (FUN_10183da0: FUN_10188ca0 lights, FUN_10188e00 ambient, FUN_10189120 fog).
 fn lit_zone(in: VertexOut, t: vec4<f32>) -> vec4<f32> {
     var sun = u.sun.xyz;
@@ -730,7 +737,7 @@ fn lit_zone(in: VertexOut, t: vec4<f32>) -> vec4<f32> {
         d = in.depth;
     }
     // Every N.L takes the normal's length (NORMALIZENORMALS off).
-    let lit = clamp(in.color.rgb * (ambient + in.nscale * (direct + point_lights(in.lights, in.world, n))) + in.point, vec3<f32>(0.0), vec3<f32>(1.0));
+    let lit = clamp(in.color.rgb * (ambient_rs(ambient) / 255.0 + in.nscale * (direct + point_lights(in.lights, in.world, n))) + in.point, vec3<f32>(0.0), vec3<f32>(1.0));
     let rgb = clamp(to_gamma(t.rgb) * lit * 2.0, vec3<f32>(0.0), vec3<f32>(1.0));
     let f = clamp((fog.y - d) / (fog.y - fog.x), 0.0, 1.0);
     let c = mix(fog_color, rgb, f);
@@ -739,7 +746,8 @@ fn lit_zone(in: VertexOut, t: vec4<f32>) -> vec4<f32> {
 
 // Config 0017's type-3 meshes (FUN_10175ac0 case 3, ps.1.1 at 0x1036b264): the normal map against the interpolated
 // light, r1 = sat(t1_bx2 . v1_bx2); r1 = r1 x t2 + t3 with t2 = sat(diffuse x vc) and t3 = sat((ambient + point lights)
-// x vc); rgb = 2 r1 t0. Fog by the view depth (the vertex shader's oFog).
+// x vc); rgb = 2 r1 t0. Fog by the view depth (the vertex shader's oFog). The ambient constant is FUN_10188fa0's:
+// the env's ambient through the windowed boost (capped at 1) x 0.5, not rounded to bytes.
 @group(2) @binding(0) var bump_tex: texture_2d<f32>;
 @group(2) @binding(1) var bump_samp: sampler;
 
@@ -762,7 +770,7 @@ fn fs_bump(in: VertexOut) -> @location(0) vec4<f32> {
     let r1 = clamp(dot(t1 * 2.0 - 1.0, in.tsl * 2.0 - 1.0), 0.0, 1.0);
     let n = normalize(in.normal);
     let t2 = clamp(boost(sun_color) * in.color.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
-    let t3 = clamp((ambient + point_lights(in.lights, in.world, n)) * in.color.rgb + in.point, vec3<f32>(0.0), vec3<f32>(1.0));
+    let t3 = clamp((min(boost(ambient), vec3<f32>(1.0)) * 0.5 + point_lights(in.lights, in.world, n)) * in.color.rgb + in.point, vec3<f32>(0.0), vec3<f32>(1.0));
     let rgb = clamp(2.0 * (r1 * t2 + t3) * to_gamma(t0.rgb), vec3<f32>(0.0), vec3<f32>(1.0));
     let f = clamp((fog.y - in.depth) / (fog.y - fog.x), 0.0, 1.0);
     let c = mix(fog_color, rgb, f);
@@ -788,9 +796,9 @@ fn lit_actor(in: VertexOut, t: vec4<f32>) -> vec4<f32> {
     }
     color = boost(color);
     let ndl = max(dot(normalize(in.normal), -sun), 0.0);
-    // D3DRS_AMBIENT = ftol(ambient x 128) (FUN_10181de0); the target flash mixes those bytes toward 220 and scales
-    // the fog colour (FUN_100c94a0).
-    let amb = floor(mix(floor(ambient * 128.0), vec3<f32>(220.0), in.flash.x)) / 255.0;
+    // D3DRS_AMBIENT (ambient_rs); the target flash mixes those bytes toward 220 and scales the fog colour
+    // (FUN_100c94a0).
+    let amb = floor(mix(ambient_rs(ambient), vec3<f32>(220.0), in.flash.x)) / 255.0;
     // The material's light factor f (red, 0x80 = 1.0): body meshes scale the ambient bytes (clamped) and the lights by it
     // (FUN_1002cdf0), cloth ones the lights and add emissive max(f - 1.5, 0) (FUN_100216a0).
     let mf = in.color.r * 255.0 / 128.0;
