@@ -626,8 +626,8 @@ mod tests {
             Reflections::new(&gpu, format, Default::default(), std::sync::Arc::new(WaterSurface::from_faces(floor)));
         r.floors = true;
         let vp = cam.view_proj(1.0);
-        // The wall: everything 8 units in front of the eye.
-        let wall = vp.project_point3(cam.eye + (cam.target - cam.eye).normalize() * 8.0).z;
+        // The wall: everything 5 units in front of the eye.
+        let wall = vp.project_point3(cam.eye + (cam.target - cam.eye).normalize() * 5.0).z;
         let params = Params {
             view_proj: vp.to_cols_array_2d(),
             eye: [cam.eye.x, cam.eye.y, cam.eye.z, 1.0],
