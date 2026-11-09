@@ -56,6 +56,65 @@ pub fn faces_up(m: &Mat4, normals: [[f32; 3]; 3]) -> bool {
     normals.iter().all(|n| m.transform_vector3(Vec3::from(*n)).normalize_or_zero().y < -FLOOR_UP)
 }
 
+/// Characters are mirrored in a reflecting surface this far below their feet at most (y grows downward), or this far
+/// above them (feet in shallow water, or a floor's own unevenness).
+const MIRROR_BELOW: f32 = 3.0;
+const MIRROR_ABOVE: f32 = 0.5;
+/// Characters farther than this from the eye are not mirrored.
+pub const MIRROR_REACH: f32 = 40.0;
+/// At most this many reflecting planes take mirrored characters a frame.
+pub const MIRROR_PLANES: usize = 4;
+/// The plane grid's cell side, world units.
+const PLANE_CELL: f32 = 4.0;
+
+/// The reflecting surfaces' heights by 4-unit cell, for finding the plane under a character's feet: (height, floor).
+#[derive(Default)]
+pub struct PlaneGrid {
+    cells: std::collections::HashMap<(i32, i32), Vec<(f32, bool)>>,
+}
+
+impl PlaneGrid {
+    /// Each face's height (its corners' mean, the faces are flat) over the cells its box covers, each height once a
+    /// cell (within 5 cm).
+    pub fn build(water: &WaterSurface, floors: &WaterSurface) -> Self {
+        let mut cells: std::collections::HashMap<(i32, i32), Vec<(f32, bool)>> = Default::default();
+        for (s, floor) in [(water, false), (floors, true)] {
+            for f in s.verts.as_chunks::<3>().0 {
+                let h = (f[0][1] + f[1][1] + f[2][1]) / 3.0;
+                let (x0, x1) = (f[0][0].min(f[1][0]).min(f[2][0]), f[0][0].max(f[1][0]).max(f[2][0]));
+                let (z0, z1) = (f[0][2].min(f[1][2]).min(f[2][2]), f[0][2].max(f[1][2]).max(f[2][2]));
+                let c = |v: f32| (v / PLANE_CELL).floor() as i32;
+                for cx in c(x0)..=c(x1) {
+                    for cz in c(z0)..=c(z1) {
+                        let v = cells.entry((cx, cz)).or_default();
+                        if !v.iter().any(|(g, fl)| *fl == floor && (g - h).abs() < 0.05) {
+                            v.push((h, floor));
+                        }
+                    }
+                }
+            }
+        }
+        Self { cells }
+    }
+
+    /// The reflecting plane under `feet`: the nearest height from MIRROR_ABOVE above them to MIRROR_BELOW below,
+    /// floors only when `floors`.
+    pub fn under(&self, feet: Vec3, floors: bool) -> Option<f32> {
+        let key = ((feet.x / PLANE_CELL).floor() as i32, (feet.z / PLANE_CELL).floor() as i32);
+        self.cells
+            .get(&key)?
+            .iter()
+            .filter(|(h, fl)| (floors || !fl) && *h >= feet.y - MIRROR_ABOVE && *h <= feet.y + MIRROR_BELOW)
+            .map(|(h, _)| *h)
+            .min_by(|a, b| (a - feet.y).abs().total_cmp(&(b - feet.y).abs()))
+    }
+}
+
+/// The matrix mirroring world space in the plane y = h.
+pub fn mirror(h: f32) -> Mat4 {
+    Mat4::from_cols(Vec4::X, Vec4::NEG_Y, Vec4::Z, Vec4::new(0.0, 2.0 * h, 0.0, 1.0))
+}
+
 /// Reflecting faces as one triangle list, grouped by tile.
 #[derive(Default)]
 pub struct WaterSurface {
@@ -196,8 +255,13 @@ pub struct Reflections {
     pub floors: bool,
     /// The frame copy (same size and format as the scene) and the view its pixels are read through.
     copy: Option<(wgpu::Texture, wgpu::TextureView)>,
-    /// A 1 x 1 stand-in when the scene can't be copied.
+    /// A 1 x 1 stand-in when the scene can't be copied, or no character is mirrored this frame.
     blank: wgpu::TextureView,
+    /// The heights under characters' feet (`PlaneGrid`).
+    pub planes: PlaneGrid,
+    /// The mirrored characters' layer at half the scene's size: its size, colour and depth.
+    layer: Option<([u32; 2], wgpu::TextureView, wgpu::TextureView)>,
+    linear: wgpu::Sampler,
 }
 
 impl Reflections {
@@ -234,6 +298,13 @@ impl Reflections {
                 },
                 tex(1, wgpu::TextureSampleType::Depth),
                 tex(2, wgpu::TextureSampleType::Float { filterable: false }),
+                tex(3, wgpu::TextureSampleType::Float { filterable: true }),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
             ],
         });
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -326,7 +397,54 @@ impl Reflections {
             floors.verts.len() / 3,
             floors.tiles.len()
         );
-        Self { layout, pipeline, uniform, surfaces: [(water, wb), (floors, fb)], floors: false, copy: None, blank }
+        let planes = PlaneGrid::build(&water, &floors);
+        let linear = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("reflections layer"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        Self {
+            layout,
+            pipeline,
+            uniform,
+            surfaces: [(water, wb), (floors, fb)],
+            floors: false,
+            copy: None,
+            blank,
+            planes,
+            layer: None,
+            linear,
+        }
+    }
+
+    /// The mirrored characters' layer for a scene of `size` (half its size, in the pipelines' `format`): colour and
+    /// depth views, made on first use or a size change.
+    pub fn layer(
+        &mut self,
+        gpu: &Gpu,
+        size: [u32; 2],
+        format: wgpu::TextureFormat,
+    ) -> (&wgpu::TextureView, &wgpu::TextureView) {
+        let half = [size[0].div_ceil(2).max(1), size[1].div_ceil(2).max(1)];
+        if self.layer.as_ref().is_none_or(|l| l.0 != half) {
+            let colour = gpu
+                .device
+                .create_texture(&wgpu::TextureDescriptor {
+                    label: Some("reflections characters"),
+                    size: wgpu::Extent3d { width: half[0], height: half[1], depth_or_array_layers: 1 },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                })
+                .create_view(&Default::default());
+            self.layer = Some((half, colour, super::depth_view(&gpu.device, half[0], half[1])));
+        }
+        let l = self.layer.as_ref().unwrap();
+        (&l.1, &l.2)
     }
 
     /// Draws the water in view over `color` (the scene, `color_tex` its texture when it can be copied), reading the
@@ -341,6 +459,7 @@ impl Reflections {
         depth: &wgpu::TextureView,
         mut params: Params,
         encode_gamma: bool,
+        mirrored: bool,
     ) {
         let vp = Mat4::from_cols_array_2d(&params.view_proj);
         let eye = Vec3::new(params.eye[0], params.eye[1], params.eye[2]);
@@ -389,6 +508,14 @@ impl Reflections {
                 wgpu::BindGroupEntry { binding: 0, resource: self.uniform.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(depth) },
                 wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(scene) },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(match (&self.layer, mirrored) {
+                        (Some(l), true) => &l.1,
+                        _ => &self.blank,
+                    }),
+                },
+                wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::Sampler(&self.linear) },
             ],
         });
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -583,7 +710,7 @@ mod tests {
             });
             params.info[3] = 0.0;
             // No frame copy: every ray takes the sky, so the colour shows where the water drew.
-            r.draw(&gpu, &mut enc, &view, None, &depth, params, true);
+            r.draw(&gpu, &mut enc, &view, None, &depth, params, true, false);
             gpu.queue.submit([enc.finish()]);
             let px = read(&gpu, &color, n, n);
             // The lower middle of the screen looks at the water.
@@ -684,7 +811,7 @@ mod tests {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            r.draw(&gpu, &mut enc, &view, copy.then_some(&red), &depth, params, true);
+            r.draw(&gpu, &mut enc, &view, copy.then_some(&red), &depth, params, true, false);
             gpu.queue.submit([enc.finish()]);
             let px = read(&gpu, &target, n, n);
             // Near the bottom of the screen: floor close to the eye, in front of the wall.
@@ -693,6 +820,102 @@ mod tests {
         }
         assert!(got[0][0] > 20 && got[0][2] == 0, "floor reflecting the wall: {:?}", got[0]);
         assert_eq!(got[1], [0, 0, 0], "no copy: nothing, not the sky");
+    }
+
+    #[test]
+    fn planes_under_feet_and_the_mirror() {
+        let water = WaterSurface::from_faces(vec![(flat(0.0, 2.0), 0.0)]);
+        let floors = WaterSurface::from_faces(vec![(flat(0.0, 0.0), 0.3)]);
+        let g = PlaneGrid::build(&water, &floors);
+        // Standing on the floor at y 0: the floor; with floors off, the water 2 below.
+        assert_eq!(g.under(Vec3::new(0.2, 0.0, 0.2), true), Some(0.0));
+        assert_eq!(g.under(Vec3::new(0.2, 0.0, 0.2), false), Some(2.0));
+        // Far above both (y grows downward), or away from them: none.
+        assert_eq!(g.under(Vec3::new(0.2, -10.0, 0.2), true), None);
+        assert_eq!(g.under(Vec3::new(40.0, 0.0, 0.2), true), None);
+        // The mirror in y = 1 takes a point 1 above the plane (y 0) to 1 below it (y 2), x and z kept.
+        assert!(mirror(1.0).transform_point3(Vec3::new(3.0, 0.0, -4.0)).abs_diff_eq(Vec3::new(3.0, 2.0, -4.0), 1e-6));
+    }
+
+    /// The mirrored characters' layer (here filled green over its whole size) shows on a floor even where the march
+    /// finds nothing (no frame copy), and is left out when the frame has none (`mirrored` false).
+    #[test]
+    fn gpu_mirrored_layer_on_the_floor() {
+        let Ok(gpu) = Gpu::headless() else { return };
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let n = 32u32;
+        let cam = crate::render::Camera {
+            eye: Vec3::new(0.0, -1.6, -6.0),
+            target: Vec3::new(0.0, -1.0, 0.0),
+            up: Vec3::NEG_Y,
+            fov_y: 0.9,
+        };
+        let floor = vec![([Vec3::new(-50.0, 0.0, -50.0), Vec3::new(50.0, 0.0, -50.0), Vec3::new(0.0, 0.0, 50.0)], 0.5)];
+        let mut r =
+            Reflections::new(&gpu, format, Default::default(), std::sync::Arc::new(WaterSurface::from_faces(floor)));
+        r.floors = true;
+        let vp = cam.view_proj(1.0);
+        let params = Params {
+            view_proj: vp.to_cols_array_2d(),
+            eye: [cam.eye.x, cam.eye.y, cam.eye.z, 1.0],
+            forward: (cam.target - cam.eye).normalize().extend(0.0).to_array(),
+            info: [0.0, 1.0, 0.0, 0.0],
+            clear: [0.0, 0.0, 1.0, 1.0],
+            fog_color: [0.0; 4],
+            fog: [500.0, 1000.0, crate::render::NEAR, crate::render::FAR],
+            sky_colors: [[0.0; 4]; 8],
+            sky_stops: [[0.0; 4]; 2],
+        };
+        let mut got = Vec::new();
+        for mirrored in [true, false] {
+            let mut enc = gpu.device.create_command_encoder(&Default::default());
+            let target = gpu.device.create_texture(&wgpu::TextureDescriptor {
+                label: None,
+                size: wgpu::Extent3d { width: n, height: n, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+            let view = target.create_view(&Default::default());
+            let depth = crate::render::depth_view(&gpu.device, n, n);
+            for (v, c) in [(&view, wgpu::Color::BLACK), (r.layer(&gpu, [n, n], format).0, wgpu::Color::GREEN)] {
+                enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: None,
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: v,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations { load: wgpu::LoadOp::Clear(c), store: wgpu::StoreOp::Store },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+            }
+            enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: None,
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &depth,
+                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Store }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            r.draw(&gpu, &mut enc, &view, None, &depth, params, true, mirrored);
+            gpu.queue.submit([enc.finish()]);
+            let px = read(&gpu, &target, n, n);
+            let at = ((n - 3) * n + n / 2) as usize * 4;
+            got.push([px[at], px[at + 1], px[at + 2]]);
+        }
+        assert!(got[0][1] > 40 && got[0][0] == 0, "mirrored character on the floor: {:?}", got[0]);
+        assert_eq!(got[1], [0, 0, 0], "no layer this frame");
     }
 
     /// The water faces of some zones and the time to find them (by hand: `cargo test --release water_census --

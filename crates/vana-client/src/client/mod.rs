@@ -18408,6 +18408,7 @@ impl App {
                     &scene_depth,
                     &camera,
                     aspect,
+                    &actors,
                 );
                 mark!("reflections");
                 r.occl.run(&gfx.gpu, &mut encoder, &scene_depth);
