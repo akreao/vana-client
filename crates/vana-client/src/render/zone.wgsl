@@ -82,6 +82,8 @@ struct LampShadowU {
 @group(0) @binding(5) var<uniform> lamp_sh: LampShadowU;
 // Config 0011: the animated meshes' vertex deltas (vertex flags >> 8, minus 1); the instance's sway is area.y.
 @group(0) @binding(4) var<storage, read> deltas: array<vec4<f32>>;
+// '#' placements' stage 0: the scenery sampler with CLAMP addressing.
+@group(0) @binding(6) var samp_clamp: sampler;
 
 fn part_k(time: vec4<f32>) -> f32 {
     return select(clamp((u.area_info.y - time.x) / time.y, 0.0, 1.0), 1.0, time.y <= 0.0);
@@ -115,7 +117,8 @@ struct VertexIn {
     @location(7) m3: vec4<f32>,
     // The placement's four lights (table slot + 1, 0 = none).
     @location(8) lights: vec4<u32>,
-    // Bit 0: the model's 'ev10' flag (MMB +0x10 bit 28).
+    // Bit 0: the model's 'ev10' flag (MMB +0x10 bit 28); bit 1: a bumped corner; bit 2: a '#' placement (UV clamped);
+    // bits 8..: the delta (sway or tangent) index + 1.
     @location(9) flags: u32,
     // x: the placement's area slot (0 = the zone's); y: the sway step (render/sway.rs); z: 1 with NORMALIZENORMALS.
     @location(10) area: vec4<u32>,
@@ -137,7 +140,8 @@ struct VertexOut {
     @location(6) point: vec3<f32>,
     // The placement's four light slots (+1, 0 = none) for the per-pixel point lights.
     @location(7) @interpolate(flat) lights: vec4<u32>,
-    // The area slot it is lit by (0 = the zone's); bit 15: the 'ev10' path, which keeps the zone's fog range.
+    // The area slot it is lit by (0 = the zone's); bit 15: the 'ev10' path, which keeps the zone's fog range; bit 14:
+    // stage 0 clamps its UV (a '#' placement).
     @location(8) @interpolate(flat) area: u32,
     // Actors: the model colour's RGB (actor +0x660, 0x80 = 1.0), the material colour of the ambient and diffuse terms.
     @location(9) @interpolate(flat) tint: vec3<f32>,
@@ -324,6 +328,7 @@ fn vs_main(v: VertexIn) -> VertexOut {
     out.lights = v.lights;
     let ev10 = u32(u.area_info.x);
     out.area = select(v.area.x, ev10 | 0x8000u, (v.flags & 1u) != 0u && ev10 != 0u);
+    out.area = out.area | select(0u, 0x4000u, (v.flags & 4u) != 0u);
     // FUN_1017c9c0's LOD pick: an instance outside its band collapses to nothing.
     let origin = select(v.m3.xyz, (u.voyage * v.m3).xyz, voyaged);
     let d = u.eye.xyz - origin;
@@ -562,13 +567,25 @@ fn shade(in: VertexOut, color: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(select(rgb, pow(rgb, vec3<f32>(1.0 / 2.2)), u.fog.z > 0.5), 1.0);
 }
 
+// FUN_1017c9c0: a '#' placement (+0xd6 = 2) samples stage 0 with ADDRESSU / ADDRESSV CLAMP (samp_clamp), the rest
+// WRAP. The derivatives are taken first, in uniform control flow, and the clamped sample uses them.
+fn tex0(in: VertexOut) -> vec4<f32> {
+    let dx = dpdx(in.uv);
+    let dy = dpdy(in.uv);
+    let t = textureSample(tex, samp, in.uv);
+    if ((in.area & 0x4000u) != 0u) {
+        return textureSampleGrad(tex, samp_clamp, in.uv, dx, dy);
+    }
+    return t;
+}
+
 // Most scenery is opaque; its texture alpha carries something other than coverage.
 @fragment
 fn fs_opaque(in: VertexOut) -> @location(0) vec4<f32> {
     if (u.sun.w > 0.5) {
-        return lit_zone(in, textureSample(tex, samp, in.uv));
+        return lit_zone(in, tex0(in));
     }
-    return shade(in, textureSample(tex, samp, in.uv) * in.color * 2.0);
+    return shade(in, tex0(in) * in.color * 2.0);
 }
 
 // Characters carry no baked lighting: shade by the normal. Placeholder until the D3D8 light setup is known.
@@ -630,19 +647,19 @@ fn fs_faded(in: FadedOut) -> @location(0) vec4<f32> {
 // the texture alpha already doubled).
 @fragment
 fn fs_alpha_test(in: VertexOut) -> @location(0) vec4<f32> {
-    let color = textureSample(tex, samp, in.uv) * in.color * 2.0;
+    let color = tex0(in) * in.color * 2.0;
     if (color.a <= 96.0 / 255.0) {
         discard;
     }
     if (u.sun.w > 0.5) {
-        return lit_zone(in, textureSample(tex, samp, in.uv));
+        return lit_zone(in, tex0(in));
     }
     return shade(in, color);
 }
 
 // MMB models with bit 31: blended by that alpha (SRCALPHA / INVSRCALPHA), alpha-tested only on '_' placements.
 fn blended(in: VertexOut) -> vec4<f32> {
-    let t = textureSample(tex, samp, in.uv);
+    let t = tex0(in);
     let a = clamp(t.a * in.color.a * 2.0, 0.0, 1.0);
     if (u.sun.w > 0.5) {
         return vec4<f32>(lit_zone(in, t).rgb, a);
@@ -690,7 +707,7 @@ fn lit_zone(in: VertexOut, t: vec4<f32>) -> vec4<f32> {
     var ambient = u.ambient.rgb;
     var fog_color = u.fog_color.rgb;
     var fog = u.fog.xy;
-    let slot = in.area & 0x7fffu;
+    let slot = in.area & 0x3fffu;
     if (slot != 0u && areas[slot].sun.w > 0.5) {
         let a = areas[slot];
         sun = a.sun.xyz;
@@ -728,13 +745,13 @@ fn lit_zone(in: VertexOut, t: vec4<f32>) -> vec4<f32> {
 
 @fragment
 fn fs_bump(in: VertexOut) -> @location(0) vec4<f32> {
-    let t0 = textureSample(tex, samp, in.uv);
+    let t0 = tex0(in);
     let t1 = textureSample(bump_tex, bump_samp, in.uv).rgb;
     var sun_color = u.sun_color.rgb;
     var ambient = u.ambient.rgb;
     var fog_color = u.fog_color.rgb;
     var fog = u.fog.xy;
-    let slot = in.area & 0x7fffu;
+    let slot = in.area & 0x3fffu;
     if (slot != 0u && areas[slot].sun.w > 0.5) {
         let a = areas[slot];
         sun_color = a.sun_color.rgb;
