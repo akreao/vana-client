@@ -5568,8 +5568,17 @@ struct Actor {
     oneshot: Option<combat::OneShot>,
     /// A hit reaction / guard over the motion (regions 5 / 6).
     overlay: Option<actmotion::Overlay>,
-    /// The status motion's own clock, kept under a one-shot or scheduler motion (its regions stay below).
+    /// The status motion's own clock, kept under a one-shot or scheduler motion (its regions stay below). It is the
+    /// motion's clock while that plays alone, so the regions below a one-shot go on in step (FUN_100cb500 leaves them).
     base_ticks: f32,
+    /// The status motion picked last frame (FUN_100c83c0's +0x1f6): kept while +0x80 holds the pick.
+    base_name: String,
+    /// Last frame's status motion under a one-shot or scheduler motion, and its ticks.
+    under: Option<(String, f32)>,
+    /// What a switch blends from in the regions the old motion has no chunk for: the status motion that played there
+    /// under it (`under` at the switch); and the regions that do not blend at all, the new motion being that one.
+    prev_under: Option<(String, f32)>,
+    under_skip: u8,
     /// Event op 0xb6 0xf / 0x17: a scale set by a script (+0x204), over the model's own.
     event_scale: Option<f32>,
     /// A per-axis scale (facing, height, side) over `scale` (a chair, client/chair.rs).
@@ -5739,6 +5748,10 @@ impl Actor {
             oneshot: None,
             overlay: None,
             base_ticks: 0.0,
+            base_name: String::new(),
+            under: None,
+            prev_under: None,
+            under_skip: 0,
             event_scale: None,
             turn_pct: 0,
             look_pct: 0,
@@ -17176,24 +17189,6 @@ impl App {
                     // Then a scheduler's motion (event / weapon draw) over the status motion.
                     // +0x80 up (ops 0x07 / 0x08 / 0x59, w.noreact): FUN_100c83c0 returns at once, no status motion re-pick.
                     let held = w.noreact.get(id).is_some_and(|t| *t > hold_now);
-                    // Ours (retail picks it once, FUN_100d46f0): our moving swing (am?, dual wield's ar? / al?) turns
-                    // with the strafe mid-swing, at the same frame, so it keeps matching the legs.
-                    let turned =
-                        (*id == me).then(|| combat::turned_swing(&a.motion, &a.last_attack, my_strafe)).flatten();
-                    if let Some(want) = turned
-                        && has(&want)
-                    {
-                        log::info!(target: "motion_me", "actor {id:#x}: {} turns to {want}", a.motion);
-                        if let Some(p) = a.play.as_mut()
-                            && p.current().is_some_and(|m| m.name == a.motion)
-                        {
-                            p.rename_current(&want);
-                        }
-                        if let Some(o) = a.oneshot.as_mut().filter(|o| o.name == a.motion) {
-                            o.name = want.clone();
-                        }
-                        a.motion = want;
-                    }
                     let (name, rate, once, blend) = match (&a.oneshot, a.play.as_ref().and_then(|p| p.current())) {
                         (Some(o), _) => (o.name.clone(), o.speed, true, crate::motion::BLEND_TICKS),
                         (None, Some(m)) => {
@@ -17282,6 +17277,7 @@ impl App {
                         };
                         let old =
                             was.as_ref().filter(|w| !w.0.is_empty()).map_or(0, |w| mask(&frames_of(&w.0, 0.0, false)));
+                        let old_mask = old;
                         for r in 0..3u8 {
                             let cur = if old >> r & 1 != 0 { was.clone() } else { a.keep[r as usize].take() };
                             let done = |(n, t, o): &(String, f32, bool)| {
@@ -17324,15 +17320,27 @@ impl App {
                             .as_ref()
                             .filter(|p| !p.0.is_empty())
                             .and_then(|p| span(&p.0).map(|(f, sp)| (p.1 * 0.5, f / sp)));
+                        // Back from a one-shot or scheduler motion to the status motion that went on under it: the
+                        // regions it kept were never queued again (FUN_100c83c0 queues only a changed +0x1f6), so they
+                        // go on in step and do not blend; the old motion's own regions blend back to it.
+                        // A new one-shot over the same status motion (the next swing) leaves the regions neither keys
+                        // to it, too.
+                        let under = a.under.take();
+                        a.under_skip = match &under {
+                            Some(u) if u.0 == name => !old_mask & 7,
+                            Some(_) => !old_mask & !new & 7,
+                            None => 0,
+                        };
                         a.ticks = match (old, span(&name)) {
+                            _ if !once && under.as_ref().is_some_and(|u| u.0 == name) => {
+                                under.as_ref().map_or(0.0, |u| u.1)
+                            }
                             (Some((at, old_len)), Some((frames, speed))) if !once && old_len > 0.001 => {
-                                let new_len = frames / speed;
-                                let k = 1.0 / old_len;
-                                let b = if blend > 0.0 { blend } else { 1.0 };
-                                2.0 * ((at * k * new_len + k * new_len * speed * 0.5 * rate * b) % new_len)
+                                crate::motion::cycle_sync(at, old_len, frames, speed, rate, blend)
                             }
                             _ => 0.0,
                         };
+                        a.prev_under = under.filter(|u| u.0 != name);
                         a.motion = name.clone();
                     }
                     a.once = once;
@@ -17362,8 +17370,14 @@ impl App {
                     // FUN_1001ad00's queue replaces only the regions a new motion keys: under a one-shot or scheduler motion
                     // the status motion goes on (an Elvaan's moving swing amf1 keys the upper body over the run), so it
                     // goes first and the motion's tracks win where it has them.
+                    // +0x80 up (the swing's op 0x59 holds it from its start to about 30 ticks past the hit):
+                    // FUN_100c83c0 returns before the pick, so the status motion under a one-shot stays what it was,
+                    // at its rate, whatever the move does meanwhile.
                     let (base, base_rate) = match a.play.as_ref().filter(|_| held) {
                         Some(p) => (p.base.clone(), a.base_rate_now),
+                        None if held && a.under.is_some() && !a.base_name.is_empty() => {
+                            (a.base_name.clone(), a.base_rate_now)
+                        }
                         None => {
                             let (b, r) = crate::motion::choose_strafed(
                                 &a.motion_names.unwrap_or(ch.motions),
@@ -17375,9 +17389,44 @@ impl App {
                             (b.to_string(), r)
                         }
                     };
+                    // A changed status motion under a one-shot is queued as any (FUN_1001ad00): it starts at the old
+                    // one's fraction of its cycle. *(inf: its 16-tick blend in those regions is not modelled.)*
+                    if base != a.base_name
+                        && a.under.is_some()
+                        && let (Some((of, osp)), Some((nf, nsp))) = (
+                            frames_of(&a.base_name, 0.0, false).first().map(|(x, _)| (x.frames as f32, x.speed)),
+                            frames_of(&base, 0.0, false).first().map(|(x, _)| (x.frames as f32, x.speed)),
+                        )
+                        && of > 0.0
+                        && osp > 0.0
+                        && nf > 0.0
+                        && nsp > 0.0
+                    {
+                        a.base_ticks = crate::motion::cycle_sync(
+                            a.base_ticks * 0.5,
+                            of / osp,
+                            nf,
+                            nsp,
+                            base_rate * a.rate_scale,
+                            crate::motion::BLEND_TICKS,
+                        );
+                    }
                     a.base_rate_now = base_rate;
                     a.base_ticks += dt * 60.0 * base_rate * a.rate_scale;
-                    let under = name != base && (a.oneshot.is_some() || a.play.is_some());
+                    // After a one-shot's end its motion may stay while +0x80 holds (no pick): still over the status
+                    // motion.
+                    let under =
+                        name != base && (a.oneshot.is_some() || a.play.is_some() || (held && a.under.is_some()));
+                    if under {
+                        a.under = Some((base.clone(), a.base_ticks));
+                    } else {
+                        a.under = None;
+                        // The status motion playing alone: its clock is the one a one-shot's regions go on with.
+                        if name == base {
+                            a.base_ticks = a.ticks;
+                        }
+                    }
+                    a.base_name = base.clone();
                     // The kept regions' own chunks (the status motion under a one-shot covers them).
                     let kept: Vec<_> = if under {
                         Vec::new()
@@ -17450,6 +17499,7 @@ impl App {
                     a.blend += dt * 60.0;
                     if a.blend >= a.blend_len {
                         a.prev = None;
+                        (a.prev_under, a.under_skip) = (None, 0);
                     }
                     // Motions are evaluated and skinned on the GPU (render/anim.rs, vs_skinned).
                     // The old pose: its own regions, the kept ones live (a kept region does not blend).
@@ -17463,6 +17513,19 @@ impl App {
                                 .filter(|(x, _)| kept_mask >> actmotion::region(x).min(7) & 1 == 0)
                                 .collect();
                             v.extend(kept.iter().copied());
+                            // The regions the old motion had no chunk for showed the status motion under it.
+                            let has_mask = mask(&v);
+                            let free = |x: &crate::dat::character::Animation| {
+                                let r = actmotion::region(x);
+                                r < 3 && has_mask >> r & 1 == 0
+                            };
+                            if let Some((b, bt)) = &a.prev_under {
+                                v.extend(frames_of(b, *bt, false).into_iter().filter(|(x, _)| free(x)));
+                            }
+                            let skip = a.under_skip;
+                            v.extend(
+                                anims.iter().copied().filter(|(x, _)| free(x) && skip >> actmotion::region(x) & 1 != 0),
+                            );
                             v.sort_by_key(|(x, _)| actmotion::region(x));
                             v
                         })

@@ -1654,24 +1654,6 @@ pub(super) fn swing_patterns(moving: bool, sub: u8, quarter: u8) -> (String, Str
     if moving { (f, i) } else { (i, f) }
 }
 
-/// Ours: the moving swing `motion` (the third letter its way; `scheduler` a moving one, `a?r0` / `b?l1`..., whatever
-/// way it started) as the quarter `quarter` now wants it, when that differs: `amr` -> `aml`, dual wield's `arr` -> `arl`.
-pub(super) fn turned_swing(motion: &str, scheduler: &str, quarter: u8) -> Option<String> {
-    let way = match quarter {
-        1 => 'f',
-        2 => 'r',
-        3 => 'b',
-        4 => 'l',
-        _ => return None,
-    };
-    let (m, s) = (motion.as_bytes(), scheduler.as_bytes());
-    let moving = |c: u8| b"frbl".contains(&c);
-    if m.len() != 3 || m[0] != b'a' || !moving(m[2]) || s.len() < 3 || !moving(s[2]) || m[2] == way as u8 {
-        return None;
-    }
-    Some(format!("{}{way}", &motion[..2]))
-}
-
 /// FUN_100d46f0 by the hit's record (FUN_10185ea0: kind @4, animation @6): kind 1 animation 1 (the off hand) tries the
 /// sub weapon's `b..?` swings first, 2 / 3 `c..?` / `d..?` (4 "ls05" not handled), then the `a..?` ones.
 pub(super) fn swing_hand(record: Option<(u8, u16)>) -> Option<char> {
@@ -2434,22 +2416,6 @@ mod tests {
     use super::*;
 
     /// A moving swing follows the move's quarter (FUN_100d46f0: 2 r, 3 b, 4 l, else f); standing keeps `ati?` first.
-    #[test]
-    fn moving_swing_turns() {
-        // The staff's am?, dual wield's main (ar?) and off hand (al?, from a `b` scheduler).
-        assert_eq!(turned_swing("amr", "atr0", 4).as_deref(), Some("aml"));
-        assert_eq!(turned_swing("arr", "atr1", 4).as_deref(), Some("arl"));
-        assert_eq!(turned_swing("alr", "btr0", 3).as_deref(), Some("alb"));
-        assert_eq!(turned_swing("all", "btl0", 1).as_deref(), Some("alf"));
-        // Turned once already: it turns back.
-        assert_eq!(turned_swing("aml", "atr0", 2).as_deref(), Some("amr"));
-        // Already right, standing (a digit), not moving, or not a swing.
-        assert_eq!(turned_swing("arl", "atl0", 4), None);
-        assert_eq!(turned_swing("ar2", "ati0", 4), None);
-        assert_eq!(turned_swing("arr", "atr0", 0), None);
-        assert_eq!(turned_swing("mvr", "atr0", 4), None);
-    }
-
     #[test]
     fn moving_swing_by_quarter() {
         let first = |q| swing_patterns(true, 0, q).0;
