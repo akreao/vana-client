@@ -16946,7 +16946,9 @@ impl App {
             || world_phase
             || lcd
             || self.cfg.antialias != 0
-            || self.cfg.grading != 0;
+            || self.cfg.grading != 0
+            // Reflections read a copy of the scene, which the window's own surface may not allow.
+            || self.cfg.reflections;
         let (scene_view, scene_depth, scene_tex) = if scaled {
             self.scene_scale
                 .get_or_insert_with(|| crate::render::scale::SceneScale::new(&gfx.gpu, gfx.config.format))
@@ -18110,6 +18112,8 @@ impl App {
                 );
                 // Ambient occlusion on the scenery (ours, render/ssao.rs), at the scene's size.
                 r.prepare_ssao(&gfx.gpu, self.cfg.ssao, bg);
+                // Water reflections (ours, render/reflect.rs).
+                r.prepare_reflections(&gfx.gpu, self.cfg.reflections);
                 // Lamp shadows (ours, render/lampshadow.rs): with Real shadows, the point lights nearest our own character
                 // (the zone's data lights, and with Real lamp lights the lamps) are cut behind it, one shadow each.
                 // Only ours casts them (with our mount while riding); others keep their sun or retail shadow. The lights
@@ -18348,6 +18352,17 @@ impl App {
                     );
                 }
                 mark!("refraction");
+                // Water reflections (ours, render/reflect.rs): after the actors so they show in it, before the effects.
+                r.render_reflections(
+                    &gfx.gpu,
+                    &mut encoder,
+                    &scene_raw,
+                    Some(&scene_tex),
+                    &scene_depth,
+                    &camera,
+                    aspect,
+                );
+                mark!("reflections");
                 r.occl.run(&gfx.gpu, &mut encoder, &scene_depth);
                 mark!("occlusion");
                 // Effect generators: CPU emission, the GPU update pass, then the elements over the scene.
