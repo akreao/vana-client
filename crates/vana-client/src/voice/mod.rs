@@ -337,8 +337,11 @@ impl Engine {
         )
     }
 
-    /// `output` None: no sound devices at all (the tests).
+    /// `output` None: no sound devices at all (the tests). `port` 0: a free beacon port the system picks (the tests;
+    /// a fixed one can be taken or reserved, as Windows reserves ranges of its dynamic ports); `discovery` has it.
     fn start_on(cfg: &Settings, name: &str, output: Option<&str>, port: u16, stand: Stand) -> anyhow::Result<Engine> {
+        let found = discovery_socket(port).and_then(|d| Ok((d.local_addr()?.port(), d)));
+        let port = found.as_ref().map_or(port, |f| f.0);
         let sock = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))?;
         sock.set_broadcast(true)?;
         sock.set_multicast_ttl_v4(1)?;
@@ -361,8 +364,8 @@ impl Engine {
             level: AtomicU32::new((-100f32).to_bits()),
             talking: AtomicBool::new(false),
         });
-        let discovery = match discovery_socket(port) {
-            Ok(d) => {
+        let discovery = match found {
+            Ok((port, d)) => {
                 let sh = shared.clone();
                 std::thread::Builder::new().name("voice-find".into()).spawn(move || listen(sh, d))?;
                 Ok(port)
@@ -622,6 +625,21 @@ fn net(shared: Arc<Shared>) {
 mod tests {
     use super::*;
 
+    /// Beta on a free beacon port, and the settings that point Alpha at it by a typed address. Fixed ports flaked
+    /// on Windows, which reserves ranges of its dynamic ports (49152 and up), so Beta's beacon port couldn't bind.
+    fn beta() -> (Engine, Settings) {
+        let b = Engine::start_on(
+            &Settings { enabled: true, ..Default::default() },
+            "Beta",
+            None,
+            0,
+            Stand { mic: None, rec: None },
+        )
+        .unwrap();
+        let port = b.discovery.clone().expect("Beta's beacon port");
+        (b, Settings { enabled: true, peers: vec![format!("127.0.0.1:{port}")], ..Default::default() })
+    }
+
     fn wait(mut what: impl FnMut() -> bool) -> bool {
         let end = Instant::now() + Duration::from_secs(5);
         while Instant::now() < end {
@@ -637,13 +655,9 @@ mod tests {
     /// other's frames, and keep channels apart.
     #[test]
     fn two_engines_talk() {
-        let port = 55400 + (std::process::id() % 500) as u16 * 2;
-        let cfg = Settings { enabled: true, peers: vec![format!("127.0.0.1:{}", port + 1)], ..Default::default() };
-        let none = || Stand { mic: None, rec: None };
         // Beta first: Alpha's hello to the typed address, sent as it starts, finds Beta listening.
-        let b =
-            Engine::start_on(&Settings { peers: Vec::new(), ..cfg.clone() }, "Beta", None, port + 1, none()).unwrap();
-        let a = Engine::start_on(&cfg, "Alpha", None, port, none()).unwrap();
+        let (b, cfg) = beta();
+        let a = Engine::start_on(&cfg, "Alpha", None, 0, Stand { mic: None, rec: None }).unwrap();
         let sees = |e: &Engine, name: &str| e.status().peers.iter().any(|p| p.name == name);
         assert!(wait(|| sees(&a, "Beta") && sees(&b, "Alpha")));
         let talking = |e: &Engine| e.status().peers.iter().any(|p| p.talking);
@@ -674,20 +688,11 @@ mod tests {
     /// what it sends is heard.
     #[test]
     fn mic_opens_unless_muted() {
-        let port = 57000 + (std::process::id() % 500) as u16 * 2;
-        let cfg = Settings { enabled: true, peers: vec![format!("127.0.0.1:{}", port + 1)], ..Default::default() };
         // Beta first: Alpha's hello to the typed address, sent as it starts, finds Beta listening, so they meet
         // while the tone is still in its first second on.
-        let b = Engine::start_on(
-            &Settings { peers: Vec::new(), ..cfg.clone() },
-            "Beta",
-            None,
-            port + 1,
-            Stand { mic: None, rec: None },
-        )
-        .unwrap();
+        let (b, cfg) = beta();
         let mut a =
-            Engine::start_on(&cfg, "Alpha", Some("null"), port, Stand { mic: Some("tone".into()), rec: None }).unwrap();
+            Engine::start_on(&cfg, "Alpha", Some("null"), 0, Stand { mic: Some("tone".into()), rec: None }).unwrap();
         a.linger = Duration::ZERO;
         a.tick();
         assert_eq!(a.mic(), Ok(Some("test tone 440 Hz")));
@@ -711,12 +716,8 @@ mod tests {
     /// other's next beacon (BEACON).
     #[test]
     fn hello_answered_at_once() {
-        let port = 59000 + (std::process::id() % 500) as u16 * 2;
-        let cfg = Settings { enabled: true, peers: vec![format!("127.0.0.1:{}", port + 1)], ..Default::default() };
-        let none = || Stand { mic: None, rec: None };
-        let b =
-            Engine::start_on(&Settings { peers: Vec::new(), ..cfg.clone() }, "Beta", None, port + 1, none()).unwrap();
-        let a = Engine::start_on(&cfg, "Alpha", None, port, none()).unwrap();
+        let (b, cfg) = beta();
+        let a = Engine::start_on(&cfg, "Alpha", None, 0, Stand { mic: None, rec: None }).unwrap();
         let end = Instant::now() + BEACON / 2;
         let sees = |e: &Engine, name: &str| e.status().peers.iter().any(|p| p.name == name);
         while !(sees(&a, "Beta") && sees(&b, "Alpha")) {
@@ -728,12 +729,11 @@ mod tests {
     /// A Bye or a frame counts only from the address the peer's hellos come from, port included.
     #[test]
     fn bye_and_audio_from_the_peer_only() {
-        let port = 58000 + (std::process::id() % 500) as u16 * 2;
         let e = Engine::start_on(
             &Settings { enabled: true, ..Default::default() },
             "Alpha",
             None,
-            port,
+            0,
             Stand { mic: None, rec: None },
         )
         .unwrap();
