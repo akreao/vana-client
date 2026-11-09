@@ -492,9 +492,15 @@ fn shade(in: VertexOut, color: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(select(rgb, pow(rgb, vec3<f32>(1.0 / 2.2)), u.fog.z > 0.5), 1.0);
 }
 
-// FUN_1017c9c0: a '#' placement (+0xd6 = 2) samples stage 0 with ADDRESSU / ADDRESSV CLAMP, the rest WRAP.
+// FUN_1017c9c0: a '#' placement (+0xd6 = 2) samples stage 0 with ADDRESSU / ADDRESSV CLAMP, the rest WRAP. The
+// shared sampler repeats, so the UV stops at the edge texels' centres (level 0), which keeps the filter off the
+// opposite edge.
 fn uv0(in: VertexOut) -> vec2<f32> {
-    return select(in.uv, clamp(in.uv, vec2<f32>(0.0), vec2<f32>(1.0)), (in.area & 0x4000u) != 0u);
+    if ((in.area & 0x4000u) == 0u) {
+        return in.uv;
+    }
+    let h = 0.5 / vec2<f32>(textureDimensions(tex, 0));
+    return clamp(in.uv, h, vec2<f32>(1.0) - h);
 }
 
 // Most scenery is opaque; its texture alpha carries something other than coverage.
