@@ -23441,3 +23441,26 @@ still gave `cor`. Both now go through actmotion::sdep_stand.
 - Left: the classic UI's version (Steven: a list like the item list, a submenu ON / OFF, Settings, Commands,
   Permissions; Commands a list whose Enter puts the line on the chat line).
 
+
+## Swings while strafing: the legs go on under the swing (2026-11-09)
+
+- User report (Steven): locked on and engaged, swinging while strafing left / right showed the wrong legs: they
+  stepped the wrong way and twitched, after several fixes to which quarter and which swing letter is picked.
+- The quarter and letters were right (FUN_100d6940 in 30261006_0: vt+0x330 false, +0x598 2 'r', 3 'b', 4 'l', else
+  'f'). The legs were not: the moving swings key only the upper body (`amr1` / `aml1` / `amf1` / `amb1` in the battle
+  files, e.g. 9672..9683 for Hume M), so the legs are region 0's status motion (`mvr0` / `mvl0` from the model), which
+  FUN_100cb500 leaves playing. Ours drew them on a second clock (`base_ticks`) that was never in step with the motion's
+  own: each swing's start blended the legs from one point of the step to another over 16 ticks (a step backwards), and
+  each swing's end blended them in from the rest pose (the old motion had no leg chunks to blend from).
+- +0x80: the swing schedulers start with op 0x59 (FUN_10062650 -> actor vt+0x160, `inc [ecx+0x80]`; vt+0x164 drops it
+  at the task's end) for 58..66 ticks of their 68 (hit + 30). While it is up FUN_100c83c0 returns before the pick
+  (`param_1[0x20] != 0`), so retail's legs stay the motion the swing started over, whatever the move does meanwhile.
+  Ours re-picked them every frame under a one-shot.
+- Ours now: the status motion's clock is the motion's own while it plays alone, so a one-shot's other regions go on in
+  step; under a held one-shot (and its motion lingering past its end while held) the status motion keeps its name and
+  rate; back to that motion, the regions the one-shot had no chunk for do not blend and the motion goes on at the same
+  tick, as do the regions neither of two back-to-back swings keys; a status motion changed under a one-shot starts at
+  the old one's fraction of its cycle (motion::cycle_sync, FUN_1001ad00) *(inf: its blend in those regions is not
+  modelled)*.
+- Dropped: the mid-swing turn of our moving swing (combat::turned_swing, Play::rename_current, 2026-11-07 / 08). It
+  covered for the legs re-picked mid-swing; retail picks the swing once and keeps the legs under it, so they match.
