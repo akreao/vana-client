@@ -1287,7 +1287,8 @@ impl Effects {
 
     /// A new zone: the old zone's instances go, and its auto-start world generators start (FUN_10046d30).
     /// Returns the library's registry index, for [`Effects::switch_zone`].
-    pub fn load_zone(&mut self, lib: Library) -> usize {
+    pub fn load_zone(&mut self, mut lib: Library) -> usize {
+        lib.mark_zone_load();
         // A zone come back to keeps its library: another copy (and its meshes and textures on the GPU) per visit grew
         // for the whole session. Its caches are the same either way.
         let l = self.reg.lib_of(lib.file_id).unwrap_or_else(|| self.reg.add(lib));
@@ -1360,7 +1361,8 @@ impl Effects {
     /// A sub-area DAT (an interior) loaded beside the zone: the old one's generators go and its auto-start world
     /// generators start, as a zone's do *(inf: the chunk loader starts them the same way)*. A file loaded before is
     /// reused.
-    pub fn load_sub_area(&mut self, lib: Library) {
+    pub fn load_sub_area(&mut self, mut lib: Library) {
+        lib.mark_zone_load();
         self.drop_sub_area();
         let l = self.reg.lib_of(lib.file_id).unwrap_or_else(|| self.reg.add(lib));
         self.sub_lib = Some(l);

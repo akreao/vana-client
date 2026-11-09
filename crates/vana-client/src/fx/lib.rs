@@ -211,6 +211,9 @@ pub struct Library {
     pub textures: Vec<zone::Texture>,
     tex_of_node: HashMap<usize, usize>,
     file: Vec<u8>,
+    /// Loaded as a zone or sub-area file (FUN_10072fd0 while the zone renderer's +0x54 is set: the zone DAT and the
+    /// sub-area DATs): FUN_1003fee0 doubles its D3m meshes' vertex colours (mark_zone_load).
+    zone_load: bool,
 }
 
 /// IMG names compared as stored: 16 bytes (NULs and spaces kept apart only at the end).
@@ -246,7 +249,24 @@ impl Library {
             textures: Vec::new(),
             tex_of_node: HashMap::new(),
             file,
+            zone_load: false,
         })
+    }
+
+    /// FUN_1003fee0 under DAT_10631f24 +0x54 (set by FUN_101787c0 / FUN_10178df0 around the zone's and the
+    /// sub-areas' FUN_10072fd0 loads, which prepare the file at once): each D3m vertex colour byte, alpha too, x 2
+    /// capped at 255. Files loaded at other times (DAT 0, action effects) keep theirs. Meshes parsed before (prewarm)
+    /// are doubled here; once only.
+    pub fn mark_zone_load(&mut self) {
+        if self.zone_load {
+            return;
+        }
+        self.zone_load = true;
+        for (&node, m) in self.meshes.iter_mut() {
+            if self.tree.nodes[node].kind == kind::D3M {
+                double_colours(m);
+            }
+        }
     }
 
     pub fn generator(&self, node: usize) -> Option<&Generator> {
@@ -263,7 +283,13 @@ impl Library {
     pub fn mesh(&mut self, node: usize, keys: &zone::Keys) -> Option<&mut Mesh> {
         if !self.meshes.contains_key(&node) {
             let mesh = match self.tree.nodes[node].kind {
-                kind::D3M => D3m::parse(self.data(node)).map(|m| from_d3m(&m)),
+                kind::D3M => D3m::parse(self.data(node)).map(|m| {
+                    let mut mesh = from_d3m(&m);
+                    if self.zone_load {
+                        double_colours(&mut mesh);
+                    }
+                    mesh
+                }),
                 kind::MMB => {
                     let mut d = self.data(node).to_vec();
                     zone::decode_mmb(keys, &mut d);
@@ -443,6 +469,13 @@ impl Library {
                     .parent
                     .is_some_and(|q| self.tree.nodes[q].name == crate::dat::generator::fourcc("syst"))
         })
+    }
+}
+
+/// FUN_1003fee0's zone-load colour pass: every byte x 2, capped at 255.
+fn double_colours(m: &mut Mesh) {
+    for v in &mut m.verts {
+        v.rgba = v.rgba.map(|c| c.saturating_mul(2));
     }
 }
 
