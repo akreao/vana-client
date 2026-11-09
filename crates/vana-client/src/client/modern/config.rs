@@ -152,6 +152,7 @@ const PAGES: [(&str, &str, &[Item]); 13] = [
             Retail("conf3win", 6),
             Ours("Shadow Quality"),
             Ours("Ambient Occlusion"),
+            Ours("Reflections"),
         ],
     ),
     (

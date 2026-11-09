@@ -16,6 +16,7 @@ pub mod occlusion;
 pub mod points;
 pub mod portrait;
 pub mod postfx;
+pub mod reflect;
 pub mod scale;
 pub mod screenfx;
 pub mod screens;
@@ -472,6 +473,9 @@ pub struct ZoneRenderer {
     sun_shadow: Option<sunshadow::SunShadow>,
     /// Ambient occlusion on the scenery (render/ssao.rs; prepare_ssao).
     ssao: Option<ssao::Ssao>,
+    /// Water reflections (ours, render/reflect.rs): the zone's water faces, and the pass while the option is on.
+    water: std::sync::Arc<reflect::WaterSurface>,
+    reflections: Option<reflect::Reflections>,
     /// Lamp shadows (render/lampshadow.rs): the maps (always made) and this frame's lamps (light slot, matrix,
     /// position; empty = none), which the client sets.
     lamp_shadow: lampshadow::LampShadows,
@@ -1974,6 +1978,8 @@ pub struct ZoneGeometry {
     sway_curves: crate::dat::zone::SwayCurves,
     /// Config 0017: the normal maps the bumped draws use.
     bumps: Vec<(u32, u32, Vec<u8>)>,
+    /// The water faces reflections draw on (render/reflect.rs); empty for a sub-area.
+    water: std::sync::Arc<reflect::WaterSurface>,
 }
 
 impl ZoneGeometry {
@@ -2285,6 +2291,10 @@ impl ZoneGeometry {
             sway_insts,
             sway_curves,
             bumps,
+            water: std::sync::Arc::new(match (&scene.collision, animate) {
+                (Some(c), true) => reflect::WaterSurface::build(c),
+                _ => Default::default(),
+            }),
         }
     }
 
@@ -2578,6 +2588,8 @@ impl ZoneRenderer {
             lamp_depth_pipeline: p.lamp_depth_pipeline,
             sun_shadow: None,
             ssao: None,
+            water: geo.water.clone(),
+            reflections: None,
             lamp_shadow,
             lamp_shadows: Vec::new(),
             shadow_level: 1.0,
@@ -4348,6 +4360,49 @@ impl ZoneRenderer {
         }
         let format = self.color_format;
         self.ssao.get_or_insert_with(|| ssao::Ssao::new(gpu, format)).resize(gpu, size);
+    }
+
+    /// Water reflections (ours) on or off; made at the first use in a zone with water.
+    pub fn prepare_reflections(&mut self, gpu: &Gpu, on: bool) {
+        if !on || self.water.is_empty() {
+            self.reflections = None;
+            return;
+        }
+        if self.reflections.is_none() {
+            self.reflections = Some(reflect::Reflections::new(gpu, self.color_format, self.water.clone()));
+        }
+    }
+
+    /// Water reflections over `color` (the scene, after the actors; `color_tex` its texture when it can be copied).
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_reflections(
+        &mut self,
+        gpu: &Gpu,
+        encoder: &mut wgpu::CommandEncoder,
+        color: &wgpu::TextureView,
+        color_tex: Option<&wgpu::Texture>,
+        depth: &wgpu::TextureView,
+        camera: &Camera,
+        aspect: f32,
+    ) {
+        if self.reflections.is_none() {
+            return;
+        }
+        let (u, _) = self.frame_uniforms(camera, aspect);
+        let params = reflect::Params {
+            view_proj: u.view_proj,
+            eye: u.eye,
+            info: [u.sky_info[0], self.encode_gamma as u32 as f32, self.now / 60.0, 0.0],
+            clear: u.clear,
+            fog_color: u.fog_color,
+            fog: [u.fog[0], u.fog[1], NEAR, FAR],
+            sky_colors: u.sky_colors,
+            sky_stops: u.sky_stops,
+        };
+        let encode_gamma = self.encode_gamma;
+        if let Some(r) = &mut self.reflections {
+            r.draw(gpu, encoder, color, color_tex, depth, params, encode_gamma);
+        }
     }
 
     /// Real character shadows (ours) on or off with a `size` map; made at the first use or a size change. render draws
