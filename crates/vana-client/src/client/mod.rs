@@ -2285,13 +2285,14 @@ fn info_page_turn(w: &World) {
 }
 
 /// FUN_1015df20: a middle-button release is FUN_1015dd00(7), message 7 to the focused window, or the main menu when
-/// no window has the focus; not with keyboard type 2 (FUN_1025e070: there the middle button drags the camera), not in
-/// an input context without flag 4 (FUN_10123e50: laying out furniture), nor in cinema mode. Message 7 is what key
-/// function 0x18 (Num-) gives a window: with no window or only the main / action menu up the next frame gets a Num-
-/// press (the menu opens or closes); the maze grid turns its rune (FUN_101fdbf0); other windows ignore it. Ours: a
-/// middle drag looks around, so only a click counts.
+/// no window has the focus; not in an input context without flag 4 (FUN_10123e50: laying out furniture), nor in
+/// cinema mode. Message 7 is what key function 0x18 (Num-) gives a window: with no window or only the main / action
+/// menu up the next frame gets a Num- press (the menu opens or closes); the maze grid turns its rune (FUN_101fdbf0);
+/// other windows ignore it. Retail also skips it with control type 2 (config 0x42, FUN_1025e070), where its middle
+/// button drags the camera. Ours: every control type looks around with a middle drag and only a click counts, so type
+/// 2 (the default) clicks too.
 fn middle_release(w: &mut World) {
-    if w.game.get(0x42) == 2 || key_context(w) & 4 == 0 || event::cinema(w) {
+    if key_context(w) & 4 == 0 || event::cinema(w) {
         return;
     }
     if w.maze.screen.is_some() {
