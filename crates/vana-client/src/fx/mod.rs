@@ -1288,6 +1288,9 @@ impl Effects {
     /// A new zone: the old zone's instances go, and its auto-start world generators start (FUN_10046d30).
     /// Returns the library's registry index, for [`Effects::switch_zone`].
     pub fn load_zone(&mut self, mut lib: Library) -> usize {
+        // FUN_1003fee0's colour pass runs only when FUN_10072fd0 prepares the file during the zone load; a file
+        // already resident (an effect file loaded before as the zone's DAT) is a cache hit there and keeps its
+        // colours, so a registered library is kept as it is.
         lib.mark_zone_load();
         // A zone come back to keeps its library: another copy (and its meshes and textures on the GPU) per visit grew
         // for the whole session. Its caches are the same either way.
