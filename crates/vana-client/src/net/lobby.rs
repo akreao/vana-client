@@ -19,8 +19,9 @@ const MAX_REPLY: usize = 0xB68;
 /// Who vouches for the lobby session.
 #[derive(Clone)]
 pub enum Session {
-    /// xi_connect's login (net/auth.rs): the account id and session hash.
-    Lsb { account_id: u32, hash: [u8; 16] },
+    /// xi_connect's login (net/auth.rs): the account id and session hash, and the key the lobby's TLS ports must
+    /// hold (LSB for xiloader 3.0 and later; none: the older plain lobby).
+    Lsb { account_id: u32, hash: [u8; 16], lobby_key: Option<super::tls::Fingerprint> },
     /// A PlayOnline sign-in: polcore's authCode (table 0x3A8) and 16-byte value (0x3EB).
     PlayOnline { auth_code: [u8; 64], k16: [u8; 16] },
 }
@@ -148,6 +149,65 @@ impl std::fmt::Display for Refused {
 
 impl std::error::Error for Refused {}
 
+/// A lobby connection: plain, or TLS (LSB's data and view ports since xiloader 3.0).
+enum Link {
+    Plain(TcpStream),
+    Tls(Box<super::tls::TlsStream>),
+}
+
+impl Link {
+    /// `key`: TLS held to that key, else plain.
+    fn open(host: &str, port: u16, key: Option<super::tls::Fingerprint>) -> Result<Self> {
+        Ok(match key {
+            Some(k) => Link::Tls(Box::new(super::tls::connect_with_key(host, port, k)?)),
+            None => Link::Plain(super::tcp(host, port)?),
+        })
+    }
+
+    fn tcp(&self) -> &TcpStream {
+        match self {
+            Link::Plain(s) => s,
+            Link::Tls(s) => &s.sock,
+        }
+    }
+}
+
+impl Read for Link {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            Link::Plain(s) => s.read(buf),
+            Link::Tls(s) => s.read(buf),
+        }
+    }
+}
+
+impl Write for Link {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self {
+            Link::Plain(s) => s.write(buf),
+            Link::Tls(s) => s.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            Link::Plain(s) => s.flush(),
+            Link::Tls(s) => s.flush(),
+        }
+    }
+
+    /// rustls's write sends the record but drops the socket's error until the next call: the flush reports it here.
+    fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        match self {
+            Link::Plain(s) => s.write_all(buf),
+            Link::Tls(s) => {
+                s.write_all(buf)?;
+                s.flush()
+            }
+        }
+    }
+}
+
 /// A lobby result with the server's refusal split out: Err only when the link itself failed.
 pub fn refusal<T>(r: Result<T>) -> Result<std::result::Result<T, u16>> {
     match r {
@@ -180,9 +240,9 @@ fn packet(size: usize) -> Vec<u8> {
 }
 
 pub struct Lobby {
-    view: TcpStream,
+    view: Link,
     /// LSB's data link (xiloader's part); none for PlayOnline.
-    data: Option<TcpStream>,
+    data: Option<Link>,
     session: Session,
     k16: [u8; 16],
     /// FFXiMain.dll's checksum, for 0x07.
@@ -218,15 +278,25 @@ impl Lobby {
         content: u32,
         replies: Arc<AtomicU32>,
     ) -> Result<Self> {
-        let data = match session {
-            Session::Lsb { .. } => Some(
-                super::tcp(host, data_port).with_context(|| format!("connecting to lobby data {host}:{data_port}"))?,
-            ),
-            Session::PlayOnline { .. } => None,
+        // LSB: the data link too, and the key its TLS lobby holds (none: plain).
+        let (lsb, key) = match session {
+            Session::Lsb { lobby_key, .. } => (true, lobby_key),
+            Session::PlayOnline { .. } => (false, None),
         };
-        let view =
-            super::tcp(host, view_port).with_context(|| format!("connecting to the lobby {host}:{view_port}"))?;
-        let server_ip = match view.peer_addr()?.ip() {
+        // Both open at once, so a TLS lobby's two handshakes cost one wait; nothing is sent until both have passed.
+        let (data, view) = std::thread::scope(|s| {
+            let data = lsb.then(|| {
+                s.spawn(|| {
+                    Link::open(host, data_port, key)
+                        .with_context(|| format!("connecting to lobby data {host}:{data_port}"))
+                })
+            });
+            let view =
+                Link::open(host, view_port, key).with_context(|| format!("connecting to the lobby {host}:{view_port}"));
+            (data.map(|h| h.join().unwrap_or_else(|p| std::panic::resume_unwind(p))), view)
+        });
+        let (data, view) = (data.transpose()?, view?);
+        let server_ip = match view.tcp().peer_addr()?.ip() {
             std::net::IpAddr::V4(ip) => ip,
             std::net::IpAddr::V6(ip) => ip.to_ipv4().unwrap_or(Ipv4Addr::LOCALHOST),
         };
@@ -264,7 +334,16 @@ impl Lobby {
         put_name(&mut p, 0x74, version);
         put(&mut p, 0x84, &content.to_le_bytes());
         lobby.send_view(0x26, p)?;
-        let reply = lobby.read_view(0x05, 0x28)?;
+        let reply = match lobby.read_view(0x05, 0x28) {
+            // A TLS lobby drops a plain link unanswered.
+            Err(e) if lsb && key.is_none() && e.downcast_ref::<Refused>().is_none() => {
+                return Err(e.context(
+                    "the lobby gave no answer. If it is TLS (LSB for xiloader 3.0), the login server, which took \
+                     loader 2.x, is from another version",
+                ));
+            }
+            r => r?,
+        };
         lobby.key_counter = rd_u32(&reply, 0x1C).wrapping_add(1);
         lobby.expansions = rd_u32(&reply, 0x20);
         lobby.features = rd_u32(&reply, 0x24);
@@ -382,7 +461,7 @@ impl Lobby {
 
     pub fn characters(&mut self) -> Result<Vec<Character>> {
         self.send_view(0x1F, packet(0x2C))?;
-        if let Session::Lsb { account_id, hash } = self.session.clone() {
+        if let Session::Lsb { account_id, hash, .. } = self.session.clone() {
             let msg = self.read_data()?;
             if msg[0] != 0x01 {
                 bail!("lobby asked for 0x{:02X} instead of the account id", msg[0]);
@@ -501,7 +580,7 @@ impl Lobby {
         // The lobby closes the link after 0x0B and the game waits for it (FUN_100ee160 sub 2), then makes the character
         // PlayOnline's active one (subs 0xE..0x15); a failure there ends the login.
         if self.playonline() {
-            self.view.set_read_timeout(Some(Duration::from_secs(10)))?;
+            self.view.tcp().set_read_timeout(Some(Duration::from_secs(10)))?;
             let mut rest = Vec::new();
             // Bounded: anything after 0x0B is ignored, and a lobby that keeps sending can't grow it without limit.
             let _ = (&mut self.view).take(MAX_REPLY as u64).read_to_end(&mut rest);
@@ -525,7 +604,7 @@ impl Lobby {
             key: key20,
             old_key: self.data.is_some().then_some(old_key),
             lsb: match self.session {
-                Session::Lsb { account_id, hash } => Some((account_id, hash)),
+                Session::Lsb { account_id, hash, .. } => Some((account_id, hash)),
                 Session::PlayOnline { .. } => None,
             },
             pol: self.pol.take().map(|p| Arc::new(p.into_link())),
@@ -725,6 +804,43 @@ mod create_tests {
         );
     }
 
+    /// A view request off the server's end: its command.
+    fn req(v: &mut impl Read) -> u8 {
+        let mut n = [0u8; 4];
+        v.read_exact(&mut n).unwrap();
+        let mut p = vec![0u8; u32::from_le_bytes(n) as usize - 4];
+        v.read_exact(&mut p).unwrap();
+        p[4]
+    }
+
+    /// A view reply `cmd` with `body` after the header.
+    fn reply(v: &mut impl Write, cmd: u8, body: &[u8]) {
+        let mut p = packet(28 + body.len());
+        p[8] = cmd;
+        p[28..].copy_from_slice(body);
+        v.write_all(&p).unwrap();
+        v.flush().unwrap();
+    }
+
+    /// A connection within 10 s, its reads timing out alike, so a failing client fails the test rather than hang it.
+    fn accept_by(l: &std::net::TcpListener) -> Option<TcpStream> {
+        l.set_nonblocking(true).unwrap();
+        let end = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            match l.accept() {
+                Ok((s, _)) => {
+                    s.set_nonblocking(false).unwrap();
+                    s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+                    return Some(s);
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock && std::time::Instant::now() < end => {
+                    std::thread::sleep(Duration::from_millis(5))
+                }
+                Err(_) => return None,
+            }
+        }
+    }
+
     /// LSB's dialect with its old fixed counter seed: a plain login reaches world entry at xiloader's 0xAD5DE058, the
     /// counter LSB's older login keyed the map with, so `old_key` is the loader's zero value and that counter.
     #[test]
@@ -737,19 +853,6 @@ mod create_tests {
             let (mut v, _) = view.accept().unwrap();
             let mut hello = [0u8; 28];
             d.read_exact(&mut hello).unwrap();
-            let req = |v: &mut TcpStream| {
-                let mut n = [0u8; 4];
-                v.read_exact(&mut n).unwrap();
-                let mut p = vec![0u8; u32::from_le_bytes(n) as usize - 4];
-                v.read_exact(&mut p).unwrap();
-                p[4]
-            };
-            let reply = |v: &mut TcpStream, cmd: u8, body: &[u8]| {
-                let mut p = packet(28 + body.len());
-                p[8] = cmd;
-                p[28..].copy_from_slice(body);
-                v.write_all(&p).unwrap();
-            };
             assert_eq!(req(&mut v), 0x26);
             let mut b = [0u8; 12];
             b[..4].copy_from_slice(&0xAD5DE04Fu32.to_le_bytes());
@@ -779,7 +882,7 @@ mod create_tests {
             "127.0.0.1",
             vp,
             dp,
-            Session::Lsb { account_id: 1, hash },
+            Session::Lsb { account_id: 1, hash, lobby_key: None },
             b"dll",
             "30261006_0",
             5,
@@ -797,6 +900,140 @@ mod create_tests {
             (vec![0u8; 16], 0xAD5DE058)
         );
         assert_eq!((m.key[..16].to_vec(), m.key[16..].to_vec()), (Md5::digest(hash).to_vec(), old[16..].to_vec()));
+    }
+
+    /// LSB since xiloader 3.0: data and view are TLS with the login server's key. The lobby talks over both as before;
+    /// a port that presents another key is refused before anything is sent.
+    #[test]
+    fn tls_lobby_holds_the_login_key() {
+        use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+        use rustls::{ServerConfig, ServerConnection, StreamOwned};
+        use std::net::TcpListener;
+        const CERT: &[u8] = include_bytes!("testdata/lobby-v1.der");
+        const KEY: &[u8] = include_bytes!("testdata/lobby-key.der");
+        // As LSB's: an X.509 v1 certificate, which with_single_cert won't parse, so it is served as it is.
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let signer = provider
+            .key_provider
+            .load_private_key(PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(KEY.to_vec())))
+            .unwrap();
+        let certified = rustls::sign::CertifiedKey::new(vec![CertificateDer::from(CERT.to_vec())], signer);
+        let config = Arc::new(
+            ServerConfig::builder_with_provider(provider)
+                .with_protocol_versions(&[&rustls::version::TLS13])
+                .unwrap()
+                .with_no_client_auth()
+                .with_cert_resolver(Arc::new(rustls::sign::SingleCertAndKey::from(certified))),
+        );
+        let key = super::super::tls::fingerprint(super::super::tls::cert_spki(CERT).unwrap());
+        // The server's end with its handshake run; none when the client never dialled.
+        let accept = |l: &TcpListener| {
+            let mut s = accept_by(l)?;
+            let mut c = ServerConnection::new(config.clone()).unwrap();
+            while c.is_handshaking() {
+                if c.complete_io(&mut s).is_err() {
+                    break;
+                }
+            }
+            Some(StreamOwned::new(c, s))
+        };
+
+        let (view, data) = (TcpListener::bind("127.0.0.1:0").unwrap(), TcpListener::bind("127.0.0.1:0").unwrap());
+        let (vp, dp) = (view.local_addr().unwrap().port(), data.local_addr().unwrap().port());
+        let hash = [0x33u8; 16];
+        std::thread::scope(|scope| {
+            let server = scope.spawn(|| {
+                let mut d = accept(&data).expect("no data connection");
+                let mut v = accept(&view).expect("no view connection");
+                let mut hello = [0u8; 28];
+                d.read_exact(&mut hello).unwrap();
+                assert_eq!((hello[0], &hello[12..]), (0xFE, &hash[..]));
+                assert_eq!(req(&mut v), 0x26);
+                reply(&mut v, 0x05, &[0u8; 12]);
+                assert_eq!(req(&mut v), 0x1F);
+                d.write_all(&[1, 0, 0, 0, 0]).unwrap();
+                d.flush().unwrap();
+                let mut ident = [0u8; 28];
+                d.read_exact(&mut ident).unwrap();
+                assert_eq!((ident[0], &ident[5..9]), (0xA1, &[127, 0, 0, 1][..]));
+                let mut list = vec![0u8; 0x148];
+                list[0] = 3;
+                d.write_all(&list).unwrap();
+                d.flush().unwrap();
+                let mut chars = vec![0u8; 4 + CHAR_INFO_LEN];
+                chars[0] = 1;
+                chars[4..8].copy_from_slice(&7u32.to_le_bytes());
+                chars[4 + 12..4 + 16].copy_from_slice(b"Nine");
+                reply(&mut v, 0x20, &chars);
+            });
+            let mut l = Lobby::connect(
+                "127.0.0.1",
+                vp,
+                dp,
+                Session::Lsb { account_id: 1, hash, lobby_key: Some(key) },
+                b"dll",
+                "30261006_0",
+                5,
+                0,
+                Default::default(),
+            )
+            .unwrap();
+            let chars = l.characters().unwrap();
+            assert_eq!(chars[0].name, "Nine");
+            server.join().unwrap();
+        });
+
+        // Another key: refused, and nothing sent on either port (both are dialled at once).
+        let other = [0u8; 32];
+        let (refused, sent) = std::thread::scope(|scope| {
+            let server = scope
+                .spawn(|| [&data, &view].map(|l| accept(l).map_or(0, |mut s| s.read(&mut [0u8; 64]).unwrap_or(0))));
+            let e = Lobby::connect(
+                "127.0.0.1",
+                vp,
+                dp,
+                Session::Lsb { account_id: 1, hash, lobby_key: Some(other) },
+                b"dll",
+                "30261006_0",
+                5,
+                0,
+                Default::default(),
+            )
+            .err()
+            .unwrap();
+            (e, server.join().unwrap())
+        });
+        let e = format!("{refused:#}");
+        assert!(e.contains("another certificate than the login server"), "{e}");
+        assert_eq!(sent, [0, 0]);
+    }
+
+    /// A plain link to a lobby that hangs up unanswered, as a TLS one does: the error says it may be TLS.
+    #[test]
+    fn plain_link_dropped_names_tls() {
+        use std::net::TcpListener;
+        let (view, data) = (TcpListener::bind("127.0.0.1:0").unwrap(), TcpListener::bind("127.0.0.1:0").unwrap());
+        let (vp, dp) = (view.local_addr().unwrap().port(), data.local_addr().unwrap().port());
+        let server = std::thread::spawn(move || {
+            let (_d, mut v) = (accept_by(&data).unwrap(), accept_by(&view).unwrap());
+            req(&mut v);
+        });
+        let e = Lobby::connect(
+            "127.0.0.1",
+            vp,
+            dp,
+            Session::Lsb { account_id: 1, hash: [0; 16], lobby_key: None },
+            b"dll",
+            "30261006_0",
+            5,
+            0,
+            Default::default(),
+        )
+        .err()
+        .unwrap();
+        server.join().unwrap();
+        let e = format!("{e:#}");
+        assert!(e.contains("If it is TLS"), "{e}");
     }
 
     /// A lobby whose replies stop at the header: each one is an error, not a panic.

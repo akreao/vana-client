@@ -1131,13 +1131,13 @@ fn parse_mask(s: &str) -> Result<u32, String> {
 fn login(cfg: &config::Config, creds: &Credentials) -> Result<net::lobby::Lobby> {
     use net::auth::{self, Command, Reply, Request};
     let req = Request { username: &creds.username, password: &creds.password, ..Default::default() };
-    let Reply::LoggedIn { account_id, session_hash, .. } =
+    let Reply::LoggedIn { account_id, session_hash, lobby_key, .. } =
         auth::send(&cfg.server, cfg.auth_port, Command::Login, &req)?
     else {
         anyhow::bail!("unexpected login reply");
     };
     println!("Logged in: account {account_id}");
-    let session = net::lobby::Session::Lsb { account_id, hash: session_hash };
+    let session = net::lobby::Session::Lsb { account_id, hash: session_hash, lobby_key };
     let dll = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())).unwrap_or_default();
     let lobby = net::lobby::Lobby::connect(
         &cfg.server,
