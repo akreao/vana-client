@@ -561,3 +561,46 @@ mod tests {
         assert!(objs.iter().any(|o| o.lights[..2] == [pl18, u32::from_le_bytes(*b"pl19")]));
     }
 }
+
+#[cfg(test)]
+mod fog_census {
+    /// Census for gaps item 124: the fog span (end - start) of every zone weather key; a pre-transformed vertex
+    /// (rhw 1) under table fog is fogged by 1 - (end - 1) / (end - start).
+    #[test]
+    #[ignore]
+    fn fog_span_census() {
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let mut spans: Vec<(f32, u32, String, f32, f32)> = Vec::new();
+        for file in (100..400).chain(83900..84200) {
+            let Ok(b) = index.read(file) else { continue };
+            let Ok(w) = super::ZoneWeather::parse(&b) else { continue };
+            let mut add = |k: &super::Keys| {
+                for (tag, v) in k {
+                    for (_, e) in v {
+                        // FUN_10182100: end <= start -> start + 1.
+                        let (st, mut en) = (e.bg.fog_start, e.bg.fog_end);
+                        if en <= st {
+                            en = st + 1.0;
+                        }
+                        spans.push((
+                            255.0 * (1.0 - ((en - 1.0) / (en - st)).clamp(0.0, 1.0)),
+                            file,
+                            tag.clone(),
+                            st,
+                            en,
+                        ));
+                    }
+                }
+            };
+            add(&w.keys);
+            for a in w.areas.values() {
+                add(&a.keys);
+            }
+        }
+        spans.sort_by(|a, b| b.0.total_cmp(&a.0));
+        println!("{} keys; start < 1 in {}", spans.len(), spans.iter().filter(|s| s.3 < 1.0).count());
+        for s in spans.iter().take(15) {
+            println!("{s:?}");
+        }
+    }
+}

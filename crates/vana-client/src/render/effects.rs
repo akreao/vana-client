@@ -210,6 +210,31 @@ fn blend_state(class: usize) -> wgpu::BlendState {
     wgpu::BlendState { color: comp, alpha: comp }
 }
 
+/// A pass into the 256x256 distortion copy that keeps what is there (retail never clears DAT_1047bb88).
+fn dist_copy_pass<'e>(encoder: &'e mut wgpu::CommandEncoder, view: &wgpu::TextureView) -> wgpu::RenderPass<'e> {
+    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("effects dist copy"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    })
+}
+
+/// DAT_1047bb88: the distortion draws' 256x256 copy, its view and bind groups.
+struct DistCopy {
+    _tex: wgpu::Texture,
+    view: wgpu::TextureView,
+    mirror: wgpu::BindGroup,
+    wrap: wgpu::BindGroup,
+}
+
 struct GpuMesh {
     vb: wgpu::Buffer,
     /// Texture, vertices, and whether the D3m named a texture for the run (the specular variants).
@@ -256,8 +281,6 @@ pub struct EffectsGpu {
     spec_groups: HashMap<((usize, usize), bool, bool), wgpu::BindGroup>,
     spec_black: (wgpu::TextureView, wgpu::TextureView),
     clamp_sampler: wgpu::Sampler,
-    /// The scene copy with a Repeat sampler (DistModel's stage address WRAP).
-    copy_wrap: Option<wgpu::BindGroup>,
     wrap_sampler: wgpu::Sampler,
     /// CMoDist: SRCALPHA / INVSRCALPHA, z write by flag 12.
     dist_pipes: HashMap<bool, wgpu::RenderPipeline>,
@@ -265,13 +288,19 @@ pub struct EffectsGpu {
     damv_pipes: HashMap<usize, wgpu::RenderPipeline>,
     /// "font    font" of "menu    dmgnum" (file 39542) and its glyph table, once the game UI is in.
     dmgnum: Option<(wgpu::BindGroup, [[f32; 4]; 22])>,
-    /// The scene copy CMoDist samples (MIRROR, linear), remade on a size or format change.
+    /// The scene so far (device +0x194's picture), the source of the 256x256 distortion copies (MIRROR, linear),
+    /// remade on a size or format change.
     scene_copy: Option<(wgpu::Texture, wgpu::BindGroup)>,
     copy_sampler: wgpu::Sampler,
-    /// DistRing's 256x256 copy (FUN_10042d00, render/squeeze.wgsl): the scene copy squeezed and flipped, its bind
-    /// group (MIRROR, linear), and the squeeze pipeline for the view format it was made for.
-    ring_copy: Option<(wgpu::Texture, wgpu::TextureView, wgpu::BindGroup)>,
+    /// The distortion draws' shared 256x256 target (DAT_1047bb88) and its bind groups (linear; MIRROR, WRAP): FUN_10042d00
+    /// squeezes the whole scene copy into it for DistRing / DistModel / DistMorph (render/squeeze.wgsl); FUN_100426f0
+    /// draws CMoDist's diamond into it at the diamond's screen box (vs_dist_copy). Never cleared, as retail.
+    dist_copy: Option<DistCopy>,
     squeeze: Option<(wgpu::TextureFormat, wgpu::RenderPipeline)>,
+    /// FUN_100426f0's copy pass (vs_dist_copy / fs_dist_copy) for the view format it was made for.
+    dist_copy_pipe: Option<(wgpu::TextureFormat, wgpu::RenderPipeline)>,
+    draw_module: wgpu::ShaderModule,
+    draw_pipe_layout: wgpu::PipelineLayout,
     /// Lens flares and their glare: additive, no depth test (FUN_1003ddb0, FUN_100125c0).
     flare_pipe: wgpu::RenderPipeline,
     glare_pipe: wgpu::RenderPipeline,
@@ -897,14 +926,16 @@ impl EffectsGpu {
             spec_groups: HashMap::new(),
             spec_black: (spec_black_2d, spec_black_cube),
             clamp_sampler,
-            copy_wrap: None,
             wrap_sampler,
             dist_pipes,
             damv_pipes,
             dmgnum: None,
             scene_copy: None,
-            ring_copy: None,
+            dist_copy: None,
             squeeze: None,
+            dist_copy_pipe: None,
+            draw_module: dmod,
+            draw_pipe_layout: layout,
             copy_sampler,
             flare_pipe,
             glare_pipe,
@@ -1107,6 +1138,32 @@ impl EffectsGpu {
             fragment: Some(wgpu::FragmentState {
                 module: &module,
                 entry_point: Some("fs"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::ALL })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        })
+    }
+
+    /// FUN_100426f0's copy pass: the diamond's four tips as a quad into the 256x256 target at the diamond's screen box
+    /// (RS 0x103530d0: no blend, no z, no fog; TSS 0x10353028: colour TEXTURE, alpha TFACTOR 0x80; linear, MIRROR).
+    fn dist_copy_pipe_for(&self, device: &wgpu::Device, format: wgpu::TextureFormat) -> wgpu::RenderPipeline {
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("effects dist copy"),
+            layout: Some(&self.draw_pipe_layout),
+            vertex: wgpu::VertexState {
+                module: &self.draw_module,
+                entry_point: Some("vs_dist_copy"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            depth_stencil: None,
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &self.draw_module,
+                entry_point: Some("fs_dist_copy"),
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::ALL })],
             }),
@@ -1528,10 +1585,9 @@ impl EffectsGpu {
             let vf = if self.linearize { t.format() } else { t.format().remove_srgb_suffix() };
             let view = c.create_view(&wgpu::TextureViewDescriptor { format: Some(vf), ..Default::default() });
             let g = Self::tex_group(&gpu.device, &self.tex_layout, &self.copy_sampler, &view);
-            self.copy_wrap = Some(Self::tex_group(&gpu.device, &self.tex_layout, &self.wrap_sampler, &view));
             self.scene_copy = Some((c, g));
             let rc = gpu.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("effects ring copy"),
+                label: Some("effects dist copy"),
                 size: wgpu::Extent3d { width: 256, height: 256, depth_or_array_layers: 1 },
                 mip_level_count: 1,
                 sample_count: 1,
@@ -1541,10 +1597,15 @@ impl EffectsGpu {
                 view_formats: &[t.format().remove_srgb_suffix()],
             });
             let rv = rc.create_view(&wgpu::TextureViewDescriptor { format: Some(vf), ..Default::default() });
-            let rg = Self::tex_group(&gpu.device, &self.tex_layout, &self.copy_sampler, &rv);
-            self.ring_copy = Some((rc, rv, rg));
+            let mirror = Self::tex_group(&gpu.device, &self.tex_layout, &self.copy_sampler, &rv);
+            let wrap = Self::tex_group(&gpu.device, &self.tex_layout, &self.wrap_sampler, &rv);
+            self.dist_copy = Some(DistCopy { _tex: rc, view: rv, mirror, wrap });
             if self.squeeze.as_ref().is_none_or(|(f, _)| *f != vf) {
                 self.squeeze = Some((vf, Self::squeeze_pipe(&gpu.device, &self.tex_layout, vf)));
+            }
+            if self.dist_copy_pipe.as_ref().is_none_or(|(f, _)| *f != vf) {
+                let pipe = self.dist_copy_pipe_for(&gpu.device, vf);
+                self.dist_copy_pipe = Some((vf, pipe));
             }
         }
         for &e in &order {
@@ -1712,6 +1773,20 @@ impl EffectsGpu {
             pass.set_bind_group(0, group, &[]);
             pass
         };
+        // FUN_10042d00: the scene so far copied, then squeezed and flipped into the 256x256 target.
+        let squeeze = |encoder: &mut wgpu::CommandEncoder| -> bool {
+            let (Some(src), Some((copy, cg)), Some(dc), Some((_, sq))) =
+                (copy_src, self.scene_copy.as_ref(), self.dist_copy.as_ref(), self.squeeze.as_ref())
+            else {
+                return false;
+            };
+            encoder.copy_texture_to_texture(src.as_image_copy(), copy.as_image_copy(), src.size());
+            let mut sp = dist_copy_pass(encoder, &dc.view);
+            sp.set_pipeline(sq);
+            sp.set_bind_group(0, cg, &[]);
+            sp.draw(0..3, 0..1);
+            true
+        };
         let mut pass = new_pass(encoder);
         // Unknown modes keep the previous element's blend (additive before the first).
         let mut class = 2usize;
@@ -1737,11 +1812,15 @@ impl EffectsGpu {
             }
             let base = e * PER_ELEM;
             match c.draw {
-                // FUN_100418b0 pass 1: the scene so far is copied (retail: the diamond's screen box into a 256x256
-                // texture, a 2002 limit; here the whole target at full size), then the shifted redraw.
+                // FUN_100426f0 (CMoDist pass 1): the diamond copied into the 256x256 target at its screen box, 1:1 up
+                // to 255 pixels a side and squeezed to 255 beyond (vs_dist_copy); pass 2 the shifted fan sampling it.
                 // VuDist: the same diamond n times, each copy holding the last draw (the shift compounds).
                 Draw::Dist | Draw::VuDist(..) => {
-                    let (Some(src), Some((copy, g))) = (copy_src, self.scene_copy.as_ref()) else { continue };
+                    let (Some(src), Some((copy, cg)), Some(dc), Some((_, cp))) =
+                        (copy_src, self.scene_copy.as_ref(), self.dist_copy.as_ref(), self.dist_copy_pipe.as_ref())
+                    else {
+                        continue;
+                    };
                     let n = match c.draw {
                         Draw::VuDist(n, weather) => vu_dist_count(n, weather, fx.weather_density).min(64),
                         _ => 1,
@@ -1749,9 +1828,16 @@ impl EffectsGpu {
                     for _ in 0..n {
                         drop(pass);
                         encoder.copy_texture_to_texture(src.as_image_copy(), copy.as_image_copy(), src.size());
+                        {
+                            let mut cpass = dist_copy_pass(encoder, &dc.view);
+                            cpass.set_pipeline(cp);
+                            cpass.set_bind_group(0, group, &[]);
+                            cpass.set_bind_group(1, cg, &[]);
+                            cpass.draw(0..6, base..base + 1);
+                        }
                         pass = new_pass(encoder);
                         pass.set_pipeline(&self.dist_pipes[&(c.flags & 0x1000 != 0)]);
-                        pass.set_bind_group(1, g, &[]);
+                        pass.set_bind_group(1, &dc.mirror, &[]);
                         pass.draw(0..12, base..base + 1);
                     }
                     bound = None;
@@ -1777,55 +1863,33 @@ impl EffectsGpu {
                 // FUN_10043720: the scene squeezed into the 256x256 copy (FUN_10042d00), which the ring samples at
                 // its own screen points; retail's soft, shifted band.
                 Draw::DistRing => {
-                    let (Some(src), Some((copy, cg)), Some((_, rv, g)), Some((_, sq))) =
-                        (copy_src, self.scene_copy.as_ref(), self.ring_copy.as_ref(), self.squeeze.as_ref())
-                    else {
-                        continue;
-                    };
+                    let Some(dc) = self.dist_copy.as_ref() else { continue };
                     drop(pass);
-                    encoder.copy_texture_to_texture(src.as_image_copy(), copy.as_image_copy(), src.size());
-                    {
-                        let mut sp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                            label: Some("effects squeeze"),
-                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                                view: rv,
-                                depth_slice: None,
-                                resolve_target: None,
-                                ops: wgpu::Operations {
-                                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                                    store: wgpu::StoreOp::Store,
-                                },
-                            })],
-                            depth_stencil_attachment: None,
-                            timestamp_writes: None,
-                            occlusion_query_set: None,
-                            multiview_mask: None,
-                        });
-                        sp.set_pipeline(sq);
-                        sp.set_bind_group(0, cg, &[]);
-                        sp.draw(0..3, 0..1);
+                    if !squeeze(encoder) {
+                        pass = new_pass(encoder);
+                        continue;
                     }
                     pass = new_pass(encoder);
                     class = blend_class(c.blend, false).unwrap_or(class);
                     pass.set_pipeline(&self.distring_pipes[&(class, c.flags & 0x1000 != 0)]);
                     bound = None;
-                    pass.set_bind_group(1, g, &[]);
+                    pass.set_bind_group(1, &dc.mirror, &[]);
                     pass.draw(0..3 * 2 * 255 * 3, base..base + 1);
                 }
-                // FUN_10043320: the scene so far copied (retail: squeezed into 256x256; here full size), then the mesh's
-                // DistModel ranges over it.
+                // FUN_10043320: the scene squeezed into the 256x256 copy (FUN_10042d00), then the mesh's DistModel ranges
+                // over it (WRAP).
                 Draw::DistModel(id) => {
                     let Some(Some(m)) = self.meshes.get(id as usize) else { continue };
-                    let (Some(src), Some((copy, _)), Some(g)) =
-                        (copy_src, self.scene_copy.as_ref(), self.copy_wrap.as_ref())
-                    else {
-                        continue;
-                    };
+                    let Some(dc) = self.dist_copy.as_ref() else { continue };
+                    let g = &dc.wrap;
                     if m.dist.is_empty() {
                         continue;
                     }
                     drop(pass);
-                    encoder.copy_texture_to_texture(src.as_image_copy(), copy.as_image_copy(), src.size());
+                    if !squeeze(encoder) {
+                        pass = new_pass(encoder);
+                        continue;
+                    }
                     pass = new_pass(encoder);
                     class = blend_class(c.blend, false).unwrap_or(class);
                     pass.set_pipeline(&self.distmodel_pipes[&(class, c.flags & 0x1000 != 0)]);
@@ -1836,16 +1900,17 @@ impl EffectsGpu {
                         pass.draw(r.clone(), base..base + 1);
                     }
                 }
-                // FUN_10043590: the scene so far copied, then the morph's triangles over it (no texture of its own).
+                // FUN_10043590: the scene squeezed into the 256x256 copy (FUN_10042d00), then the morph's triangles over
+                // it (WRAP; no texture of its own).
                 Draw::DistMorph(id) => {
                     let Some(m) = fx.reg.morph_data_of(id) else { continue };
-                    let (Some(src), Some((copy, _)), Some(g)) =
-                        (copy_src, self.scene_copy.as_ref(), self.copy_wrap.as_ref())
-                    else {
-                        continue;
-                    };
+                    let Some(dc) = self.dist_copy.as_ref() else { continue };
+                    let g = &dc.wrap;
                     drop(pass);
-                    encoder.copy_texture_to_texture(src.as_image_copy(), copy.as_image_copy(), src.size());
+                    if !squeeze(encoder) {
+                        pass = new_pass(encoder);
+                        continue;
+                    }
                     pass = new_pass(encoder);
                     class = blend_class(c.blend, false).unwrap_or(class);
                     pass.set_pipeline(&self.distmorph_pipes[&(class, c.flags & 0x1000 != 0)]);
