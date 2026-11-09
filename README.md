@@ -37,7 +37,9 @@ Playable on a local LSB server. Working today:
 
 - Login, the lobby, character creation (with the original creator scenes), character select and the new-character
   openings
-- Zones with GPU skinning, compressed textures with mipmaps, lighting, sky, fog and weather
+- Zones with GPU skinning, compressed textures with mipmaps, lighting, sky, fog and weather, plus settings beyond
+  retail: lamps that give off light of their own, character shadows, ambient occlusion, colour grading and
+  anti-aliasing
 - Players, NPCs and monsters with their motions, collision (characters, doors, lifts) and name plates with their
   icons (GM, bazaar, New Adventurer, mentor, linkshell and the rest)
 - NPC dialogue, event scripts and cutscenes
@@ -51,11 +53,12 @@ Playable on a local LSB server. Working today:
 - The main menu: Status (merit points, job points, currencies, Unity), Equipment and equipment sets, Items and
   storage, the map, Party and Level Sync, Linkshell, Search, Missions, Quests, Key Items, Region Info, Bazaar, the
   Help Desk and the macro editor
-- Trading, NPC and guild shops, the Delivery Box and the treasure pool
+- Trading, NPC and guild shops, the auction house, the Delivery Box and the treasure pool
+- Job changes at the Mog House moogle, the Block list and the GM call (Help Desk)
 - Alter Ego Points, automaton customization, blue magic sets, mounts, the Friend List and PlayOnline messages
 - Fishing, chocobo racing, Monstrosity, Mog House layout, gardening and mannequins
-- The in-game and lobby Config menus, with an Extras page for additions such as a map overlay, a minimap, timers, a
-  skillchain helper and chat timestamps
+- The in-game and lobby Config menus
+- Logins the client remembers (with Remember password), and two-factor sign-in enrolled from the login form
 - Game updates from the PlayOnline patch server, an Update button for the client itself, and a manager for DAT packs
   such as HD textures and for Lua mods (install from an archive or the mod catalogue, update, order, enable,
   uninstall). Our HD pack, the game's textures upscaled 4x, is in the catalogue and on the
@@ -63,16 +66,14 @@ Playable on a local LSB server. Working today:
 - Music and sound effects
 - Lua mods: commands, windows and HUD elements in the game's look, drawing in the world, chat filters, and game
   actions with the player's permission. See [writing mods](docs/modding/README.md)
-
-Not done yet:
-
-- macOS builds
+- The standard mods, downloaded from Settings > Mods > Download Standard Mods: the map overlay, minimap, timers,
+  skillchain helper and chat timestamps that used to be Extras, hotbars, Gearshift (which runs GearSwap files and
+  LuAshitacast profiles) and many more. None come with the client; the list is [catalogue/mods.json](catalogue/mods.json)
 
 ## Requirements
 
-- A GPU with Vulkan support
-- Rust 1.85 or newer (edition 2024)
-- PipeWire or PulseAudio for sound
+- A GPU with Vulkan (Linux), Direct3D 12 or Vulkan (Windows) or Metal (macOS)
+- On Linux, PipeWire, PulseAudio or ALSA for sound
 - The game data from Square Enix's official installer, `FFXIFullSetup_US.part1.exe` and its other parts
 - A LandSandBoat server to connect to
 
@@ -80,13 +81,26 @@ No game data is included in this repository.
 
 ## Build
 
+Building needs Rust 1.95 or newer (egui's minimum; the crate is edition 2024) and a C and C++ compiler (Lua, UnRAR
+and ring are built from source).
+
 ```sh
 cargo build --release
 ```
 
-On Linux the build needs PipeWire's headers (`libpipewire-0.3-dev`). Where they are too old for cpal's PipeWire bindings (Ubuntu 22.04 fails, 24.04 builds), `cargo build --release --no-default-features` leaves PipeWire output out; sound then goes through PulseAudio (or PipeWire's PulseAudio server) or ALSA.
+On Linux the build also needs pkg-config and the headers of PipeWire, ALSA and libudev, plus libclang for the PipeWire
+bindings. On Debian and Ubuntu:
 
-The binary is `target/release/vana-client`. Release builds are incremental, without link-time optimisation; for a binary to hand out, `cargo build --profile dist` (fat LTO, one codegen unit) writes `target/dist/vana-client`.
+```sh
+sudo apt install build-essential pkg-config libpipewire-0.3-dev libasound2-dev libudev-dev libclang-dev
+```
+
+Where PipeWire's headers are too old for cpal's PipeWire bindings (Ubuntu 22.04 fails, 24.04 builds), `cargo build --release --no-default-features` leaves PipeWire output out; sound then goes through PulseAudio (or PipeWire's PulseAudio server) or ALSA. The binary needs `libudev.so.1`, which every systemd distro and the Steam Runtime have.
+
+On macOS the Xcode command line tools are enough (`xcode-select --install`). For a native Windows build with MSVC and
+VS Code, see [docs/building-windows.md](docs/building-windows.md).
+
+The binary is `target/release/vana-client` (`vana-client.exe` on Windows). Release builds are incremental, without link-time optimisation; for a binary to hand out, `cargo build --profile dist` (fat LTO, one codegen unit) writes `target/dist/vana-client`.
 
 Published releases are built with `release/build-linux.sh` (in the Steam Runtime 3 "sniper" SDK container, so one binary runs on every current distro) and `release/build-windows.sh` (a MinGW cross build); `release/fetch-ci-builds.sh` runs the Release builds workflow on GitHub for Linux on ARM (the SDK's arm64 image) and macOS (Apple Silicon and Intel) and downloads those. Then `release/publish.sh VERSION` tags them, signs each with the release key (Ed25519, kept outside the repo; its public half is `release/signing-key.pub`, built into the client) and creates the GitHub release that the in-app Update offers. The client installs a release only when its signature checks.
 
@@ -112,10 +126,12 @@ target/release/vana-client update
 ## Play
 
 ```sh
-target/release/vana-client play
+target/release/vana-client
 ```
 
-You log in on the game's login screen. The server address and ports come from the config file.
+Started without a subcommand (or with `play`), the client opens on the game's login screen. Its Server Type picks
+Private, an LSB server whose address and account you type there (the ports come from the config file), or PlayOnline,
+which signs in with a PlayOnline ID and a Square Enix account in place of the PlayOnline Viewer.
 
 On Linux the client installs itself the first time it starts: it copies itself to
 `~/.local/share/vana-client/vana-client` and adds an application menu entry and its icon that start that copy.
@@ -131,17 +147,21 @@ This writes the username and a generated password to `account.json`.
 
 ## Configuration
 
-Settings are in `~/.config/vana-client/config.json`. The file is created on first save, and most options can be
-changed from the in-game Config menus. The fields you may need to set by hand:
+Settings are in `config.json` in the config folder: `~/.config/vana-client` on Linux, `%APPDATA%\vana-client` on
+Windows and `~/Library/Application Support/vana-client` on macOS. The client's own data (the game files by default,
+mods, `known_servers.json` and the log, `vana-client.log`, with the run before it as `vana-client.prev.log`) is in the
+data folder: `~/.local/share/vana-client` on Linux, and the same folder as the config on Windows and macOS. The file
+is created on first save, and most options can be changed from the in-game Config menus. The fields you may need to set by hand:
 
 | Field | Default | Meaning |
 |---|---|---|
 | `server` | `127.0.0.1` | LSB server address |
 | `auth_port`, `data_port`, `view_port` | `54231`, `54230`, `54001` | LSB login and lobby ports |
-| `game_dir` | `~/.local/share/vana-client/game` | Folder that holds `FINAL FANTASY XI` |
+| `profile_port`, `irc_port` | `51220`, `51240` | The server's Friend List ports |
+| `game_dir` | `game` in the data folder | Folder that holds `FINAL FANTASY XI` |
 | `client_version` | `30261006_0` | Version sent to the lobby; must be at least the server's `CLIENT_VER` |
 | `frame_limit` | `300` | Frame limit in fps, `0` for unlimited |
-| `gpu` | empty | Graphics adapter by name; empty picks the high-performance one |
+| `gpu` | empty | Graphics adapter by name; empty picks the high-performance one (the `WGPU_BACKEND` environment variable, e.g. `vulkan` or `gl`, picks the graphics API) |
 | `audio_device` | empty | Output device; empty uses the system default |
 | `gamepad`, `gamepad_padsin` ... | | See [Gamepad](#gamepad) |
 
@@ -194,18 +214,14 @@ Five minutes after the pad's last input it lets go, and the desktop's own timeou
 | `gamepad_padsin` | empty (retail's registry value, else FFXiPadConfig's XInput default) | Button settings in `padsin000` format: 32 numbers, one per function, each an XInput button number (0 B, 1 X, 2 Y, 3 A, 4 / 5 / 6 / 7 d-pad right / left / up / down, 8 LB, 9 LT, 10 L3, 11 RB, 12 RT, 13 R3, 14 Start, 15 Back), an axis 32 + n (1 left X, 2 left Y, 4 right X, 5 right Y; negative inverts) or -1. The positions are listed in MODLOG.md, "Gamepad" |
 | `gamepad_padexsin` | empty | `padexsin000`, the buttons used while the Button Combination button is held |
 
-Building on Linux needs libudev's headers (`libudev-dev`, `systemd-devel`); the binary needs `libudev.so.1`, which
-every systemd distro and the Steam Runtime have.
-
 
 ### Server certificates
 
 The login and Friend List connections use TLS. A certificate signed by a public authority (Let's Encrypt, for one) is
 checked as a browser checks it, and renewals just work. A self-signed one (what LSB makes by default) can't be checked
 that way, so the client remembers the key each server's certificate has the first time (`known_servers.json` in the
-data folder: `~/.local/share/vana-client` on Linux, `%APPDATA%\vana-client` on Windows) and refuses a different one
-later, since that is what someone intercepting the connection would send. When a server really gets a new key (an LSB
-reinstall makes one), trust it with:
+data folder) and refuses a different one later, since that is what someone intercepting the connection would send. When
+a server really gets a new key (an LSB reinstall makes one), trust it with:
 
 ```sh
 vana-client trust-server SERVER            # forget SERVER's pins (every port); the next login pins the new keys
@@ -224,6 +240,9 @@ prints the login port's key fingerprint (`profile.cert` is the Friend List's, po
 - `docs/modern-ui.md` is the modern UI's plan and state. Branches don't edit it: their state updates go in
   `docs/modern-ui/`, one file each. `python3 docs/fold.py` folds both folders in on custom (the fork's default branch; master mirrors upstream).
 - `cargo test --release` runs the tests. Tests that need the game data skip themselves when it isn't installed.
+- GPU tests also skip when there is no graphics adapter. CI runs clippy (`cargo clippy --release --all-targets`) and
+  fails on unformatted code (`cargo fmt --check`).
+- The `FFXI_CONFIG` environment variable points a run at another config file, so test runs never write yours.
 - Offscreen tools render parts of the client to PNG without opening a window, for example `zone-shot`, `npc-shot`,
   `char-shot`, `select-shot`, `creator-shot` and `cs-shot`. Others decode game files: `dat-info`, `ui-dump`,
   `event-dump`, `msg-dump`. Run `vana-client --help` for the full list.
