@@ -546,8 +546,9 @@ end
 -- The window
 -- ---------------------------------------------------------------------------
 
-local function define()
-  ui.window(WIN, {
+-- The window's spec with Type and Target as `drop` elements: "dropdown", or "choice" on a client without dropdowns.
+local function spec(drop)
+  return {
     title = "Hotbars",
     width = 520,
     help = "Drag a macro onto a slot of the bars. Right-click a slot to clear it.",
@@ -564,7 +565,7 @@ local function define()
 
       -- Builder
       { type = "text", id = "bwhere", text = "", page = TAB_BUILD },
-      { type = "dropdown", id = "btype", label = "Type", items = builder.TYPE_LABELS, at = 1, page = TAB_BUILD,
+      { type = drop, id = "btype", label = "Type", items = builder.TYPE_LABELS, at = 1, page = TAB_BUILD,
         tip = "Choose what the macro does." },
       { type = "input", id = "q", label = "Search", text = "", max = 32, page = TAB_BUILD,
         tip = "Part of a name, e.g. cure." },
@@ -572,7 +573,7 @@ local function define()
         tip = "Enter or click one to build the macro on it." },
       { type = "text", id = "fcount", text = "", dim = true, page = TAB_BUILD },
       { type = "text", id = "picked", text = "", page = TAB_BUILD },
-      { type = "dropdown", id = "target", label = "Target", items = { "<t> Current target" }, at = 1,
+      { type = drop, id = "target", label = "Target", items = { "<t> Current target" }, at = 1,
         page = TAB_BUILD },
       { type = "input", id = "line", label = "Line it builds (type your own to change it)", text = "", max = 256,
         page = TAB_BUILD, tip = "What the macro runs first. Type your own line in its place if the built one is not "
@@ -607,7 +608,14 @@ local function define()
       { type = "buttons", id = "skeyb", items = { "Bar's Key" }, page = TAB_CONFIG,
         tip = "The slot takes its bar's key again." },
     },
-  })
+  }
+end
+
+local function define()
+  -- A client older than the dropdown element (1.0.10 and before) gets Type and Target as choices.
+  if not pcall(ui.window, WIN, spec("dropdown")) then
+    ui.window(WIN, spec("choice"))
+  end
 
   ui.on(WIN, function(_, e)
     if e.id == "tiles" then
