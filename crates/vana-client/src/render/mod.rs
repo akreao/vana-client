@@ -363,6 +363,8 @@ struct Draw {
     args: [u32; 2],
     /// A bump-mapped model's normal map (ZoneGeometry::bumps index; config 0017).
     bump: Option<usize>,
+    /// Its texture's Surface Detail pack slopes (ZoneGeometry::surface index; surface.rs).
+    surface: Option<usize>,
 }
 
 impl Draw {
@@ -413,6 +415,12 @@ pub struct ZoneRenderer {
     /// Modes 2 / 3 (the blended classes) for furniture: depth writes on, no bias (batch 7 item 23).
     scenery_furn: [[wgpu::RenderPipeline; 3]; 2],
     scenery_bump: [wgpu::RenderPipeline; 3],
+    /// Surface Detail's pack pipelines (`scenery`, `scenery_furn` reading the slopes at group 2) and the slopes.
+    scenery_surface: [[wgpu::RenderPipeline; 3]; 4],
+    scenery_surface_furn: [[wgpu::RenderPipeline; 3]; 2],
+    surface_groups: Vec<wgpu::BindGroup>,
+    /// The texture names to look the pack up for, until asked (ZoneGeometry::surface_names).
+    surface_names: Option<Vec<String>>,
     /// The scenery as lines by cull, where the device draws lines (a mod's wireframe switch).
     scenery_wire: Option<[wgpu::RenderPipeline; 3]>,
     pub wireframe: bool,
@@ -794,6 +802,55 @@ pub fn upload_texture_seq(gpu: &Gpu, t: &crate::dat::zone::Texture, srgb: bool) 
     (up.texture.create_view(&Default::default()), seq)
 }
 
+/// Surface Detail's slopes (surface.rs, RG8) as a texture with its mips made here (each level the mean of the
+/// texels above it): the shader reads the slope averaged over a pixel's footprint.
+fn upload_slopes(gpu: &Gpu, w: u32, h: u32, rg: &[u8]) -> wgpu::TextureView {
+    let mut data = rg.to_vec();
+    let (mut lw, mut lh, mut level) = (w as usize, h as usize, rg.to_vec());
+    let mut levels = 1;
+    while lw > 1 || lh > 1 {
+        let (nw, nh) = ((lw / 2).max(1), (lh / 2).max(1));
+        let mut next = Vec::with_capacity(nw * nh * 2);
+        // Each texel over its 2 x 2 block; on an odd side the last one takes the leftover row or column too.
+        let span = |i: usize, n: usize, l: usize| 2 * i..if i + 1 == n { l } else { (2 * i + 2).min(l) };
+        for y in 0..nh {
+            for x in 0..nw {
+                for c in 0..2 {
+                    let (mut sum, mut k) = (0u32, 0u32);
+                    for yy in span(y, nh, lh) {
+                        for xx in span(x, nw, lw) {
+                            sum += level[(yy * lw + xx) * 2 + c] as u32;
+                            k += 1;
+                        }
+                    }
+                    next.push(((sum + k / 2) / k.max(1)) as u8);
+                }
+            }
+        }
+        data.extend_from_slice(&next);
+        (lw, lh, level) = (nw, nh, next);
+        levels += 1;
+    }
+    TEXTURE_BYTES.fetch_add(data.len() as u64, std::sync::atomic::Ordering::Relaxed);
+    gpu.device
+        .create_texture_with_data(
+            &gpu.queue,
+            &wgpu::TextureDescriptor {
+                label: Some("surface detail"),
+                size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                mip_level_count: levels,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rg8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::MipMajor,
+            &data,
+        )
+        .create_view(&Default::default())
+}
+
 fn texture_bind_group(
     gpu: &Gpu,
     layout: &wgpu::BindGroupLayout,
@@ -1091,6 +1148,9 @@ pub struct ZonePipes {
     scenery: [[wgpu::RenderPipeline; 3]; 4],
     scenery_furn: [[wgpu::RenderPipeline; 3]; 2],
     scenery_bump: [wgpu::RenderPipeline; 3],
+    /// Surface Detail's pack pipelines, as `scenery` and `scenery_furn`.
+    scenery_surface: [[wgpu::RenderPipeline; 3]; 4],
+    scenery_surface_furn: [[wgpu::RenderPipeline; 3]; 2],
     scenery_wire: Option<[wgpu::RenderPipeline; 3]>,
     actor_pipeline: wgpu::RenderPipeline,
     sky_pipeline: wgpu::RenderPipeline,
@@ -1330,10 +1390,22 @@ impl ZonePipes {
         // depth bias of -8)*.
         // `furn`: furniture's own pass (FUN_101844c0) sets neither ZWRITEENABLE nor ZBIAS, so its blended meshes keep
         // the actor pass's depth writes and bias 0 (batch 7 item 23).
-        let make_scenery_z = |fragment: &str, blend: bool, cull: Option<wgpu::Face>, wire: bool, furn: bool| {
+        // Config 0017's type-3 meshes and Surface Detail's pack (FUN_10175ac0 case 3 / ours): the colour texture,
+        // then the normal map or the pack's slopes at group 2.
+        let bump_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("zone bumped"),
+            bind_group_layouts: &[Some(&globals_layout), Some(&texture_layout), Some(&texture_layout)],
+            immediate_size: 0,
+        });
+        let make_scenery_l = |fragment: &str,
+                              blend: bool,
+                              cull: Option<wgpu::Face>,
+                              wire: bool,
+                              furn: bool,
+                              layout: &wgpu::PipelineLayout| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(fragment),
-                layout: Some(&layout),
+                layout: Some(layout),
                 vertex: wgpu::VertexState {
                     module: &shader,
                     entry_point: Some("vs_main"),
@@ -1376,7 +1448,19 @@ impl ZonePipes {
                 cache: None,
             })
         };
+        let make_scenery_z =
+            |f: &str, b: bool, c: Option<wgpu::Face>, w: bool, furn: bool| make_scenery_l(f, b, c, w, furn, &layout);
         let culls = [None, Some(wgpu::Face::Back), Some(wgpu::Face::Front)];
+        // Surface Detail's pack: the same classes reading the slopes at group 2.
+        let scenery_surface = [
+            ("fs_opaque_pack", false),
+            ("fs_alpha_test_pack", false),
+            ("fs_blend_pack", true),
+            ("fs_blend_test_pack", true),
+        ]
+        .map(|(f, b)| culls.map(|c| make_scenery_l(f, b, c, false, false, &bump_layout)));
+        let scenery_surface_furn = [("fs_blend_pack", true), ("fs_blend_test_pack", true)]
+            .map(|(f, b)| culls.map(|c| make_scenery_l(f, b, c, false, true, &bump_layout)));
         let make_scenery = |f: &str, b: bool, c: Option<wgpu::Face>, w: bool| make_scenery_z(f, b, c, w, false);
         let scenery = [("fs_opaque", false), ("fs_alpha_test", false), ("fs_blend", true), ("fs_blend_test", true)]
             .map(|(f, b)| culls.map(|c| make_scenery(f, b, c, false)));
@@ -1387,12 +1471,6 @@ impl ZonePipes {
             .features()
             .contains(wgpu::Features::POLYGON_MODE_LINE)
             .then(|| culls.map(|c| make_scenery("fs_opaque", false, c, true)));
-        // Config 0017's type-3 meshes (FUN_10175ac0 case 3): the colour texture, then the normal map at group 2.
-        let bump_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("zone bumped"),
-            bind_group_layouts: &[Some(&globals_layout), Some(&texture_layout), Some(&texture_layout)],
-            immediate_size: 0,
-        });
         let scenery_bump = culls.map(|cull| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("fs_bump"),
@@ -1913,6 +1991,8 @@ impl ZonePipes {
             scenery,
             scenery_furn,
             scenery_bump,
+            scenery_surface,
+            scenery_surface_furn,
             scenery_wire,
             actor_pipeline,
             sky_pipeline,
@@ -2030,6 +2110,11 @@ pub struct ZoneGeometry {
     sway_curves: crate::dat::zone::SwayCurves,
     /// Config 0017: the normal maps the bumped draws use.
     bumps: Vec<(u32, u32, Vec<u8>)>,
+    /// Surface Detail's pack slopes the draws use (surface.rs), one per texture.
+    surface: Vec<crate::surface::Slopes>,
+    /// The scene's texture names (a draw's texture slot - 1), when the pack wasn't looked for at load: Surface Detail
+    /// switched on later asks for it then (ZoneRenderer::surface_request).
+    surface_names: Option<Vec<String>>,
     /// The water faces reflections draw on (render/reflect.rs); empty for a sub-area.
     water: std::sync::Arc<reflect::WaterSurface>,
     /// The polished floors' upward faces in world space (the scene's `floors`).
@@ -2177,6 +2262,15 @@ impl ZoneGeometry {
         };
         let mut floor_faces: Vec<([Vec3; 3], f32)> = Vec::new();
         let mut bump_used: HashMap<usize, usize> = HashMap::new();
+        let mut surface: Vec<crate::surface::Slopes> = Vec::new();
+        let mut surface_used: HashMap<&str, usize> = HashMap::new();
+        let mut surface_of = |texture: &str| -> Option<usize> {
+            let (key, s) = scene.surface.get_key_value(texture)?;
+            Some(*surface_used.entry(key.as_str()).or_insert_with(|| {
+                surface.push(s.clone());
+                surface.len() - 1
+            }))
+        };
         for mesh in &scene.meshes {
             let Some(mut mats) = by_mesh.remove(mesh.name.as_str()) else { continue };
             // Normal placements first, then the mirrored ones (culled the other way).
@@ -2299,6 +2393,7 @@ impl ZoneGeometry {
                         mode: mesh.name.starts_with('_') as u8 | ((model.blending & 0x8000 != 0) as u8) << 1,
                         args: [u32::MAX; 2],
                         bump: Some(bi),
+                        surface: None,
                     });
                     continue;
                 }
@@ -2331,6 +2426,7 @@ impl ZoneGeometry {
                     mode: mesh.name.starts_with('_') as u8 | ((model.blending & 0x8000 != 0) as u8) << 1,
                     args: [u32::MAX; 2],
                     bump: None,
+                    surface: surface_of(&model.texture),
                 });
             }
         }
@@ -2383,6 +2479,8 @@ impl ZoneGeometry {
             sway_insts,
             sway_curves,
             bumps,
+            surface,
+            surface_names: (!scene.surface_tried).then(|| scene.textures.iter().map(|t| t.name.clone()).collect()),
             water: std::sync::Arc::new(match (&scene.collision, animate) {
                 (Some(c), true) => reflect::WaterSurface::build(c),
                 _ => Default::default(),
@@ -2618,6 +2716,19 @@ impl ZoneRenderer {
                 view_bind_group(gpu, &p.texture_layout, &sampler, &view)
             })
             .collect();
+        // Surface Detail's pack (surface.rs), loaded only with the setting on: one small RG8 texture per texture.
+        if !geo.surface.is_empty() {
+            log::info!(
+                "surface detail: {} pack textures on {} draws",
+                geo.surface.len(),
+                geo.draws.iter().filter(|d| d.surface.is_some()).count()
+            );
+        }
+        let surface_groups: Vec<wgpu::BindGroup> = geo
+            .surface
+            .iter()
+            .map(|(w, h, rg)| view_bind_group(gpu, &p.texture_layout, &sampler, &upload_slopes(gpu, *w, *h, rg)))
+            .collect();
         if sway.is_some() {
             log::info!(
                 "environment animation: {} instances, {} vertex deltas, curves per tag {:?}",
@@ -2629,6 +2740,10 @@ impl ZoneRenderer {
         Self {
             sway,
             bump_groups,
+            surface_groups,
+            surface_names: geo.surface_names.clone(),
+            scenery_surface: p.scenery_surface,
+            scenery_surface_furn: p.scenery_surface_furn,
             bump_mode: true,
             smooth_lights: false,
             surface_detail: 0,
@@ -2966,6 +3081,7 @@ impl ZoneRenderer {
                 texture: texture(d.texture),
                 instances: d.instances.clone(),
                 mirrored: d.mirrored.clone(),
+                surface: None,
                 ..*d
             })
             .collect();
@@ -3045,6 +3161,7 @@ impl ZoneRenderer {
                     texture: texture(d.texture),
                     instances: d.instances.clone(),
                     mirrored: d.mirrored.clone(),
+                    surface: None,
                     ..*d
                 })
                 .collect();
@@ -4639,6 +4756,33 @@ impl ZoneRenderer {
         }
     }
 
+    /// With Surface Detail on and the pack not looked for when the zone loaded, the scene's texture names to look it
+    /// up for (once; the caller loads it off the frame and hands it to `attach_surface`).
+    pub fn surface_request(&mut self) -> Option<Vec<String>> {
+        if self.surface_detail == 0 {
+            return None;
+        }
+        self.surface_names.take()
+    }
+
+    /// Surface Detail's pack for this zone, loaded after it went up (`surface_request`; `names` the texture names it
+    /// gave): the pack's slopes on the draws whose texture has one and no retail bump map.
+    pub fn attach_surface(&mut self, gpu: &Gpu, pack: &HashMap<String, crate::surface::Slopes>, names: &[String]) {
+        let mut index: HashMap<&str, usize> = HashMap::new();
+        for d in self.draws.iter_mut().filter(|d| d.bump.is_none() && d.surface.is_none()) {
+            let Some(name) = d.texture.checked_sub(1).and_then(|t| names.get(t)) else { continue };
+            let Some(slopes) = pack.get(name) else { continue };
+            let k = *index.entry(name.as_str()).or_insert_with(|| {
+                let (w, h, rg) = slopes;
+                let view = upload_slopes(gpu, *w, *h, rg);
+                self.surface_groups.push(view_bind_group(gpu, &self.texture_layout, &self.sampler, &view));
+                self.surface_groups.len() - 1
+            });
+            d.surface = Some(k);
+        }
+        log::info!("surface detail: {} pack textures attached", index.len());
+    }
+
     /// The faded actors' offscreen target at the scene target's size (`scene`: the texture render draws into), in the
     /// pipelines' colour format. Without it render blends a faded actor triangle by triangle.
     pub fn prepare_faded(&mut self, gpu: &Gpu, scene: &wgpu::Texture) {
@@ -4835,24 +4979,34 @@ impl ZoneRenderer {
             *bound = d.texture;
         }
         let bump = d.bump.filter(|_| mode == 0).and_then(|b| self.bump_groups.get(b));
-        if let Some(g) = bump {
+        // Surface Detail's pack: only while the setting is on (the slopes are loaded only then, but it can be
+        // switched off mid-zone).
+        let surface =
+            d.surface.filter(|_| bump.is_none() && self.surface_detail > 0).and_then(|s| self.surface_groups.get(s));
+        if let Some(g) = bump.or(surface) {
             pass.set_bind_group(2, g, &[]);
         }
         for (k, (c, range)) in runs.clone().into_iter().enumerate() {
             if !live(k) {
                 continue;
             }
-            let want = if bump.is_some() {
-                8 + c
-            } else if furn {
-                16 + c
-            } else {
-                c
+            let want = match (bump.is_some(), surface.is_some(), furn) {
+                (true, _, _) => 8 + c,
+                (_, true, true) => 32 + c,
+                (_, true, false) => 24 + c,
+                (_, false, true) => 16 + c,
+                _ => c,
             };
             if *pipe != want {
-                let normal =
-                    if furn { &self.scenery_furn[mode as usize - 2][c] } else { &self.scenery[mode as usize][c] };
-                pass.set_pipeline(self.wire(c).unwrap_or(if bump.is_some() { &self.scenery_bump[c] } else { normal }));
+                let m = mode as usize;
+                let chosen = match (bump.is_some(), surface.is_some(), furn) {
+                    (true, _, _) => &self.scenery_bump[c],
+                    (_, true, true) => &self.scenery_surface_furn[m - 2][c],
+                    (_, true, false) => &self.scenery_surface[m][c],
+                    (_, false, true) => &self.scenery_furn[m - 2][c],
+                    _ => &self.scenery[m][c],
+                };
+                pass.set_pipeline(self.wire(c).unwrap_or(chosen));
                 *pipe = want;
             }
             match culled {
@@ -5162,6 +5316,8 @@ mod faded_tests {
             camera_lists: Default::default(),
             sway: Default::default(),
             bumps: vec![],
+            surface: Default::default(),
+            surface_tried: false,
             floors: vec![],
         };
         let format = wgpu::TextureFormat::Rgba8Unorm;

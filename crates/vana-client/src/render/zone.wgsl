@@ -596,6 +596,15 @@ fn fs_opaque(in: VertexOut) -> @location(0) vec4<f32> {
     return shade(in, tex0(in) * in.color * 2.0);
 }
 
+// The same with Surface Detail's pack (render ZoneRenderer::scenery_surface): the slopes at group 2.
+@fragment
+fn fs_opaque_pack(in: VertexOut) -> @location(0) vec4<f32> {
+    if (u.sun.w > 0.5) {
+        return lit_zone_pack(in, tex0(in));
+    }
+    return shade(in, tex0(in) * in.color * 2.0);
+}
+
 // Characters carry no baked lighting: shade by the normal. Placeholder until the D3D8 light setup is known.
 @fragment
 fn fs_actor(in: VertexOut) -> @location(0) vec4<f32> {
@@ -665,6 +674,18 @@ fn fs_alpha_test(in: VertexOut) -> @location(0) vec4<f32> {
     return shade(in, color);
 }
 
+@fragment
+fn fs_alpha_test_pack(in: VertexOut) -> @location(0) vec4<f32> {
+    let color = tex0(in) * in.color * 2.0;
+    if (color.a <= 96.0 / 255.0) {
+        discard;
+    }
+    if (u.sun.w > 0.5) {
+        return lit_zone_pack(in, tex0(in));
+    }
+    return shade(in, color);
+}
+
 // MMB models with bit 31: blended by that alpha (SRCALPHA / INVSRCALPHA), alpha-tested only on '_' placements.
 fn blended(in: VertexOut) -> vec4<f32> {
     let t = tex0(in);
@@ -678,6 +699,29 @@ fn blended(in: VertexOut) -> vec4<f32> {
 @fragment
 fn fs_blend(in: VertexOut) -> @location(0) vec4<f32> {
     return blended(in);
+}
+
+fn blended_pack(in: VertexOut) -> vec4<f32> {
+    let t = tex0(in);
+    let a = clamp(t.a * in.color.a * 2.0, 0.0, 1.0);
+    if (u.sun.w > 0.5) {
+        return vec4<f32>(lit_zone_pack(in, t).rgb, a);
+    }
+    return vec4<f32>(shade(in, t * in.color * 2.0).rgb, a);
+}
+
+@fragment
+fn fs_blend_pack(in: VertexOut) -> @location(0) vec4<f32> {
+    return blended_pack(in);
+}
+
+@fragment
+fn fs_blend_test_pack(in: VertexOut) -> @location(0) vec4<f32> {
+    let c = blended_pack(in);
+    if (c.a <= 96.0 / 255.0) {
+        discard;
+    }
+    return c;
 }
 
 @fragment
@@ -710,6 +754,26 @@ fn d3d_out_fog(in: VertexOut, rgb: vec3<f32>, fog_color: vec3<f32>) -> vec4<f32>
 // lit = clamp(vc * (ambient bytes / 255 + sun * max(N.-L, 0))); out = tex * lit * 2. The light, ambient and fog are the zone's,
 // or the area's (FUN_10183da0: FUN_10188ca0 lights, FUN_10188e00 ambient, FUN_10189120 fog).
 fn lit_zone(in: VertexOut, t: vec4<f32>) -> vec4<f32> {
+    let n = normalize(in.normal);
+    var nd = n;
+    if (u.modes.z > 0.0) {
+        nd = detail_normal(in, n, t);
+    }
+    return lit_zone_n(in, t, nd);
+}
+
+// lit_zone with Surface Detail's pack (the slopes at group 2) in place of the texture's own estimate.
+fn lit_zone_pack(in: VertexOut, t: vec4<f32>) -> vec4<f32> {
+    let n = normalize(in.normal);
+    var nd = n;
+    if (u.modes.z > 0.0) {
+        nd = detail_normal_pack(in, n);
+    }
+    return lit_zone_n(in, t, nd);
+}
+
+// `nd`: the normal of the sun's and moon's terms (Surface Detail's, or the surface's own).
+fn lit_zone_n(in: VertexOut, t: vec4<f32>, nd: vec3<f32>) -> vec4<f32> {
     var sun = u.sun.xyz;
     var sun_color = u.sun_color.rgb;
     var ambient = u.ambient.rgb;
@@ -725,12 +789,8 @@ fn lit_zone(in: VertexOut, t: vec4<f32>) -> vec4<f32> {
         fog = select(a.fog.xy, u.fog.xy, (in.area & 0x8000u) != 0u);
     }
     let n = normalize(in.normal);
-    // Surface Detail (ours) bends the normal of the sun's and moon's terms only; the vertex colours (the baked light),
-    // the ambient and the point lights keep the surface's own.
-    var nd = n;
-    if (u.modes.z > 0.0) {
-        nd = detail_normal(in, n, t);
-    }
+    // Surface Detail (ours) bends the normal of the sun's and moon's terms only (`nd`); the vertex colours (the baked
+    // light), the ambient and the point lights keep the surface's own.
     // Config 0017 (FUN_10174610): on, the one eased light and vertex fog over the eye range; off, the sun and the
     // moon as two lights (the zone's, or the area's) and table fog over the view depth.
     var direct = boost(sun_color) * max(dot(nd, -sun), 0.0);
@@ -789,9 +849,39 @@ fn detail_normal(in: VertexOut, n: vec3<f32>, t: vec4<f32>) -> vec3<f32> {
     let h = dot(t.rgb, vec3<f32>(0.299, 0.587, 0.114));
     let dhdu = (detail_height(in, in.uv + vec2<f32>(e.x, 0.0), dx, dy) - h) / e.x;
     let dhdv = (detail_height(in, in.uv + vec2<f32>(0.0, e.y), dx, dy) - h) / e.y;
-    // The height's change per screen pixel, then the surface gradient.
-    let hx = amp * (dhdu * dx.x + dhdv * dx.y);
-    let hy = amp * (dhdu * dy.x + dhdv * dy.y);
+    return bend(n, dx, dy, px, py, amp * dhdu, amp * dhdv);
+}
+
+// Surface Detail from the pack (surface.rs): the slope per texel along u and v, averaged over the pixel's footprint
+// by the mips, in one read. The pack's heights are evened out per texture, so they take their own scale.
+const DETAIL_PACK_HEIGHT: f32 = 0.025;
+
+fn detail_normal_pack(in: VertexOut, n: vec3<f32>) -> vec3<f32> {
+    let dx = dpdx(in.uv);
+    let dy = dpdy(in.uv);
+    let px = dpdx(in.world);
+    let py = dpdy(in.world);
+    let amp = DETAIL_PACK_HEIGHT * u.modes.z * (1.0 - smoothstep(DETAIL_NEAR, DETAIL_FAR, in.depth));
+    if (amp <= 0.0) {
+        return n;
+    }
+    var s: vec2<f32>;
+    if ((in.area & 0x4000u) != 0u) {
+        s = textureSampleGrad(bump_tex, samp_clamp, in.uv, dx, dy).rg;
+    } else {
+        s = textureSampleGrad(bump_tex, bump_samp, in.uv, dx, dy).rg;
+    }
+    // surface.rs `slopes`: 128 level, x2 per texel; per UV unit by the texture's size.
+    let per_texel = (s - 128.0 / 255.0) * 0.5;
+    let dims = vec2<f32>(textureDimensions(bump_tex));
+    return bend(n, dx, dy, px, py, amp * per_texel.x * dims.x, amp * per_texel.y * dims.y);
+}
+
+// The normal `n` bent by a height whose change per UV unit is (dhdu, dhdv) (world units), through the surface
+// gradient: the height's change per screen pixel by the UV's derivatives, against the position's.
+fn bend(n: vec3<f32>, dx: vec2<f32>, dy: vec2<f32>, px: vec3<f32>, py: vec3<f32>, dhdu: f32, dhdv: f32) -> vec3<f32> {
+    let hx = dhdu * dx.x + dhdv * dx.y;
+    let hy = dhdu * dy.x + dhdv * dy.y;
     let r1 = cross(py, n);
     let r2 = cross(n, px);
     let det = dot(px, r1);
