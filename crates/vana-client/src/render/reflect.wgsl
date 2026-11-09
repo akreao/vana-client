@@ -12,6 +12,8 @@ struct Params {
     fog: vec4<f32>,
     sky_colors: array<vec4<f32>, 8>,
     sky_stops: array<vec4<f32>, 2>,
+    // The height each mirrored-characters layer belongs to (1e9 for an empty one).
+    mirror_heights: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> u: Params;
@@ -20,12 +22,27 @@ struct Params {
 // The mirrored characters (render/reflect.rs, ZoneRenderer::mirror_actors) at half size, transparent elsewhere: drawn
 // through the camera mirrored in the plane under their feet, so on a reflecting surface they sit where their
 // reflection belongs, front and all (the screen-space march only has the side the camera sees).
-@group(0) @binding(3) var layer: texture_2d<f32>;
+// One layer per plane: a surface reads only the layer of its own height.
+@group(0) @binding(3) var layer: texture_2d_array<f32>;
 @group(0) @binding(4) var layer_samp: sampler;
 
-// The mirrored characters at a screen point (`size` the scene's), the water's ripples bending it a little.
-fn mirrored(px: vec2<f32>, size: vec2<f32>, bend: vec2<f32>) -> vec4<f32> {
-    return textureSampleLevel(layer, layer_samp, px / size + bend, 0.0);
+// A surface takes the layer whose height is nearest its own, within this much (world units).
+const PLANE_MATCH: f32 = 0.3;
+
+// The mirrored characters at a screen point (`size` the scene's) on a surface at height `y`, the water's ripples
+// bending it a little; nothing when no layer belongs to that height.
+fn mirrored(px: vec2<f32>, size: vec2<f32>, bend: vec2<f32>, y: f32) -> vec4<f32> {
+    let d = abs(u.mirror_heights - vec4<f32>(y));
+    var k = 0;
+    for (var j = 1; j < 4; j++) {
+        if (d[j] < d[k]) {
+            k = j;
+        }
+    }
+    if (d[k] > PLANE_MATCH) {
+        return vec4<f32>(0.0);
+    }
+    return textureSampleLevel(layer, layer_samp, px / size + bend, k, 0.0);
 }
 
 // The march: at most this many screen steps (no loop runs longer on a busy screen), then a few halvings on a hit.
@@ -177,7 +194,7 @@ fn fs(i: VOut) -> @location(0) vec4<f32> {
 // The water's colour and weight with a mirrored character over it: the character at least as strong as a calm
 // reflection seen from above (the lift plus a little), bent by the ripples; then the shoreline fade.
 fn with_character(c: vec4<f32>, i: VOut, n: vec3<f32>, size: vec2<f32>, shore: f32) -> vec4<f32> {
-    let ch = mirrored(i.pos.xy, size, n.xz * 0.04);
+    let ch = mirrored(i.pos.xy, size, n.xz * 0.04, i.world.y);
     let w = mix(c.a, max(c.a, LIFT + 0.25), ch.a);
     return vec4<f32>(mix(c.rgb, ch.rgb, ch.a), w * shore);
 }
@@ -276,7 +293,7 @@ fn floor_reflection(i: VOut, d: f32, size: vec2<f32>) -> vec4<f32> {
         }
     }
     // A mirrored character over it.
-    let ch = mirrored(i.pos.xy, size, vec2<f32>(0.0));
+    let ch = mirrored(i.pos.xy, size, vec2<f32>(0.0), i.world.y);
     rgb = mix(rgb, ch.rgb, ch.a);
     found = max(found, ch.a);
     if (found <= 0.0) {
