@@ -26,7 +26,8 @@ struct Uniforms {
     // Config 0017 off: the sun and the moon (direction the light travels, colour) as two lights (FUN_10181b50).
     two: array<vec4<f32>, 4>,
     // x: 1 with bump mapping on (one eased light, vertex range fog), 0 off (two lights, table fog); y: 1 with
-    // Settings' Light Shading Smooth (point lights per pixel, ours), 0 Retail (per vertex).
+    // Settings' Light Shading Smooth (point lights per pixel, ours), 0 Retail (per vertex); z: Settings' Surface
+    // Detail strength (ours, `detail_normal`), 0 off.
     modes: vec4<f32>,
     // Windowed mode's light boost (render light_boost, FUN_1000be50): rgb factors, w = 1 on.
     boost: vec4<f32>,
@@ -724,16 +725,22 @@ fn lit_zone(in: VertexOut, t: vec4<f32>) -> vec4<f32> {
         fog = select(a.fog.xy, u.fog.xy, (in.area & 0x8000u) != 0u);
     }
     let n = normalize(in.normal);
+    // Surface Detail (ours) bends the normal of the sun's and moon's terms only; the vertex colours (the baked light),
+    // the ambient and the point lights keep the surface's own.
+    var nd = n;
+    if (u.modes.z > 0.0) {
+        nd = detail_normal(in, n, t);
+    }
     // Config 0017 (FUN_10174610): on, the one eased light and vertex fog over the eye range; off, the sun and the
     // moon as two lights (the zone's, or the area's) and table fog over the view depth.
-    var direct = boost(sun_color) * max(dot(n, -sun), 0.0);
+    var direct = boost(sun_color) * max(dot(nd, -sun), 0.0);
     var d = in.range;
     if (u.modes.x < 0.5) {
         var two = u.two;
         if (slot != 0u && areas[slot].sun.w > 0.5) {
             two = areas[slot].two;
         }
-        direct = boost(two[1].rgb) * max(dot(n, -two[0].xyz), 0.0) + boost(two[3].rgb) * max(dot(n, -two[2].xyz), 0.0);
+        direct = boost(two[1].rgb) * max(dot(nd, -two[0].xyz), 0.0) + boost(two[3].rgb) * max(dot(nd, -two[2].xyz), 0.0);
         d = in.depth;
     }
     // Every N.L takes the normal's length (NORMALIZENORMALS off).
@@ -742,6 +749,57 @@ fn lit_zone(in: VertexOut, t: vec4<f32>) -> vec4<f32> {
     let f = clamp((fog.y - d) / (fog.y - fog.x), 0.0, 1.0);
     let c = mix(fog_color, rgb, f);
     return vec4<f32>(select(pow(c, vec3<f32>(2.2)), c, u.fog.z > 0.5), 1.0);
+}
+
+// ---- Surface Detail (ours; Settings' Surface Detail, u.modes.z the strength) ----
+// The texture's own brightness taken as a height field (bright stands out), its slope read by two more taps one
+// texel away (or one pixel's footprint, whichever is wider, so distant surfaces don't sparkle), and put on the surface
+// by the screen-space surface gradient (Mikkelsen, "Bump Mapping Unparametrized Surfaces on the GPU", 2010): no
+// tangents, mirrored or rotated UVs alike. It fades out with the view depth. The meshes retail bumps itself
+// (config 0017, fs_bump) never reach it.
+
+// World units of relief for the whole brightness range at strength 1.
+const DETAIL_HEIGHT: f32 = 0.04;
+// The view depths over which it fades out.
+const DETAIL_NEAR: f32 = 20.0;
+const DETAIL_FAR: f32 = 50.0;
+
+fn detail_height(in: VertexOut, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> f32 {
+    var c: vec4<f32>;
+    if ((in.area & 0x4000u) != 0u) {
+        c = textureSampleGrad(tex, samp_clamp, uv, dx, dy);
+    } else {
+        c = textureSampleGrad(tex, samp, uv, dx, dy);
+    }
+    return dot(c.rgb, vec3<f32>(0.299, 0.587, 0.114));
+}
+
+// `n`: the surface's unit normal; `t`: its texel at the pixel. Called in uniform control flow (derivatives).
+fn detail_normal(in: VertexOut, n: vec3<f32>, t: vec4<f32>) -> vec3<f32> {
+    let dx = dpdx(in.uv);
+    let dy = dpdy(in.uv);
+    let px = dpdx(in.world);
+    let py = dpdy(in.world);
+    let amp = DETAIL_HEIGHT * u.modes.z * (1.0 - smoothstep(DETAIL_NEAR, DETAIL_FAR, in.depth));
+    if (amp <= 0.0) {
+        return n;
+    }
+    let texel = 1.0 / vec2<f32>(textureDimensions(tex));
+    let e = max(texel, max(abs(dx), abs(dy)));
+    let h = dot(t.rgb, vec3<f32>(0.299, 0.587, 0.114));
+    let dhdu = (detail_height(in, in.uv + vec2<f32>(e.x, 0.0), dx, dy) - h) / e.x;
+    let dhdv = (detail_height(in, in.uv + vec2<f32>(0.0, e.y), dx, dy) - h) / e.y;
+    // The height's change per screen pixel, then the surface gradient.
+    let hx = amp * (dhdu * dx.x + dhdv * dx.y);
+    let hy = amp * (dhdu * dy.x + dhdv * dy.y);
+    let r1 = cross(py, n);
+    let r2 = cross(n, px);
+    let det = dot(px, r1);
+    if (abs(det) < 1e-12) {
+        return n;
+    }
+    let grad = sign(det) * (hx * r1 + hy * r2);
+    return normalize(abs(det) * n - grad);
 }
 
 // Config 0017's type-3 meshes (FUN_10175ac0 case 3, ps.1.1 at 0x1036b264): the normal map against the interpolated

@@ -148,6 +148,7 @@ const PAGES: [(&str, &str, &[Item]); 13] = [
             Ours("Lamp Lights"),
             Ours("Light Shading"),
             Ours("Bump Mapping"),
+            Ours("Surface Detail"),
             Head("Shadows"),
             Ours("Character Shadows"),
             Retail("conf3win", 6),

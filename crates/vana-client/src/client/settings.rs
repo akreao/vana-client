@@ -28,6 +28,7 @@ pub struct Settings {
     pub ssao: bool,
     pub reflections: bool,
     pub reflect_floors: bool,
+    pub surface_detail: u32,
     pub timers_dock: u32,
     pub minimap_dock: u32,
     pub minimap_size: u32,
@@ -71,6 +72,7 @@ impl Settings {
             ssao: c.ssao,
             reflections: c.reflections,
             reflect_floors: c.reflect_floors,
+            surface_detail: c.surface_detail,
             timers_dock: c.timers_dock,
             minimap_dock: c.minimap_dock,
             minimap_size: c.minimap_size,
@@ -111,6 +113,7 @@ impl Settings {
         c.ssao = self.ssao;
         c.reflections = self.reflections;
         c.reflect_floors = self.reflect_floors;
+        c.surface_detail = self.surface_detail;
         c.timers_dock = self.timers_dock;
         c.minimap_dock = self.minimap_dock;
         c.minimap_size = self.minimap_size;
@@ -161,6 +164,7 @@ enum Val {
     ShadowMap,
     Ssao,
     Reflections,
+    SurfaceDetail,
     TimersDock,
     MinimapDock,
     MinimapSize,
@@ -607,6 +611,13 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
             Now,
         ),
         row(
+            "Surface Detail",
+            "Gives the world's textures a little relief where the sun or moon lights them; walls and floors Bump Mapping already covers keep its look (not retail).",
+            SurfaceDetail,
+            &[(0, "Off"), (1, "Subtle"), (2, "Strong")],
+            Now,
+        ),
+        row(
             "Colour Grading",
             "Gives the 3D world a colour tint. Menus and text keep their colours (not retail).",
             Grading,
@@ -952,6 +963,7 @@ impl SettingsUi {
             Val::ShadowMap => self.s.shadow_map,
             Val::Ssao => self.s.ssao as u32,
             Val::Reflections => self.s.reflections as u32 + (self.s.reflections && self.s.reflect_floors) as u32,
+            Val::SurfaceDetail => self.s.surface_detail,
             Val::TimersDock => self.s.timers_dock,
             Val::MinimapDock => self.s.minimap_dock,
             Val::MinimapSize => self.s.minimap_size,
@@ -987,6 +999,7 @@ impl SettingsUi {
             Val::ShadowMap => self.s.shadow_map = x,
             Val::Ssao => self.s.ssao = x != 0,
             Val::Reflections => (self.s.reflections, self.s.reflect_floors) = (x != 0, x >= 2),
+            Val::SurfaceDetail => self.s.surface_detail = x.min(2),
             Val::TimersDock => self.s.timers_dock = x,
             Val::MinimapDock => self.s.minimap_dock = x,
             Val::MinimapSize => self.s.minimap_size = x,
