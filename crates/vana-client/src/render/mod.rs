@@ -2160,6 +2160,9 @@ impl ZoneGeometry {
                 let at = m.transform_point3(c);
                 spheres.push([at.x, at.y, at.z, h.length() * k]);
             }
+            // FUN_1017a... placement +0xd6 = 2 for a '#' name: FUN_1017c9c0 draws it with stage 0's ADDRESSU / ADDRESSV
+            // CLAMP and no alpha test (vertex flag bit 2).
+            let clamp_uv = (mesh.name.starts_with('#') as u32) << 2;
             for (mi, model) in mesh.models.iter().enumerate() {
                 let indices = if model.strip { strip_to_list(&model.indices) } else { model.indices.clone() };
                 if indices.is_empty() || model.vertices.is_empty() {
@@ -2185,7 +2188,8 @@ impl ZoneGeometry {
                             let t = corner_tangent(&a, &b, &c);
                             deltas.push([t.x, t.y, t.z, 0.0]);
                             let [bb, g, r, al] = a.color.to_le_bytes();
-                            let flags = (model.blending & 0x1000 != 0) as u32 | 2 | (deltas.len() as u32) << 8;
+                            let flags =
+                                (model.blending & 0x1000 != 0) as u32 | 2 | clamp_uv | (deltas.len() as u32) << 8;
                             all_indices.push((all_verts.len() as i32 - base_vertex) as u16);
                             all_verts.push(GpuVertex {
                                 pos: a.pos,
@@ -2215,7 +2219,7 @@ impl ZoneGeometry {
                     .iter()
                     .map(|v| {
                         let [b, g, r, a] = v.color.to_le_bytes();
-                        let mut flags = (model.blending & 0x1000 != 0) as u32;
+                        let mut flags = (model.blending & 0x1000 != 0) as u32 | clamp_uv;
                         if sways && v.delta != [0.0; 3] && deltas.len() < 0xff_ffff {
                             deltas.push([v.delta[0], v.delta[1], v.delta[2], 0.0]);
                             flags |= (deltas.len() as u32) << 8;
