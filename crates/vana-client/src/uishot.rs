@@ -136,7 +136,6 @@ pub fn title_shot(out: &Path, width: u32, height: u32) -> Result<()> {
     let lobby = load_ui_full(&index, LOBBY_US)?;
     let style_file = load_ui(&index, WINDOW_STYLE_BASE)?;
     let style = style_file.libs.first().ok_or_else(|| anyhow::anyhow!("window style file has no sprite library"))?;
-    let update = std::env::var("FFXI_TITLE_UPDATE").ok().map(|v| (v == "sel", true));
     // FFXI_TITLE_PRESS=c: Select Character pressed with counter c (9 down to 0).
     let press = std::env::var("FFXI_TITLE_PRESS").ok().and_then(|v| v.parse::<f32>().ok()).map(|c| (c, true));
     let st = TitleState {
@@ -146,7 +145,6 @@ pub fn title_shot(out: &Path, width: u32, height: u32) -> Result<()> {
         buttons: true,
         shift: 0.0,
         enabled: [true; 5],
-        update,
         hand: true,
         wardrobes: 0b1100,
         press,

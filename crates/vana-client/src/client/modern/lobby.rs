@@ -185,6 +185,17 @@ impl Modern {
                 size,
             );
         }
+        if let Some((r, label)) = &v.update {
+            self.lobby_button(
+                &p,
+                pt(*r).expand2(vec2(4.0, 3.0)),
+                label,
+                v.focus == n + 5 && !v.busy,
+                !v.busy,
+                hover,
+                size,
+            );
+        }
         // Combo fields: the arrow at the right end; an open list over the form in the window frame, its cursor's row lit.
         for a in &v.arrows {
             p.text(

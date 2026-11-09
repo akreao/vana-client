@@ -824,6 +824,8 @@ pub struct LoginView {
     pub buttons: Vec<([f32; 4], &'static str, bool)>,
     /// Two-factor (the focus after Exit), left of the box; none for PlayOnline.
     pub twofa: Option<([f32; 4], &'static str, bool)>,
+    /// Update (the focus after Two-factor), at the box's row's right end; only while something is out of date.
+    pub update: Option<([f32; 4], &'static str)>,
     pub focus: usize,
     pub busy: bool,
 }
@@ -846,13 +848,16 @@ enum LoginChoice {
     Create,
     Exit,
     TwoFa,
+    Update,
     Picked(usize),
     Forget(usize, usize),
 }
 
 /// The credentials window over the title art (ours: retail logged in through PlayOnline). Focus 0..n-1 are the
 /// fields, n Remember password, n+1..n+3 Log in / Create account / Exit, n+4 Two-factor (client/twofa.rs; not for
-/// PlayOnline, where Create account is off too). `help_over` replaces the help line (the two-factor window's).
+/// PlayOnline, where Create account is off too), n+5 Update (only with `update`: something is out of date; here
+/// rather than after the login, which an outdated client may not get through). `help_over` replaces the help line
+/// (the two-factor or Update window's).
 /// Not retail (PlayOnline logged in): the generic window sounds (FUN_10118260) go to `sounds`: 0001 when the focus
 /// moves (and on Escape, which lands on Exit), 0002 on an enabled action, 0004 on a disabled one.
 #[allow(clippy::too_many_arguments)]
@@ -866,6 +871,7 @@ fn login_window(
     remember: &mut bool,
     focus: &mut usize,
     busy: bool,
+    update: bool,
     status: &str,
     help_over: Option<&str>,
     version: &str,
@@ -873,13 +879,18 @@ fn login_window(
     modern: Option<&mut Option<LoginView>>,
     monitor_scale: f32,
 ) -> Option<LoginChoice> {
-    let was = *focus;
     const CHOICES: [LoginChoice; 3] = [LoginChoice::LogIn, LoginChoice::Create, LoginChoice::Exit];
     let n = fields.len();
     let check = n;
     let first = n + 1;
     let twofa = n + 4;
-    let items = if playonline { n + 4 } else { n + 5 };
+    let upd = n + 5;
+    if *focus == upd && !update {
+        *focus = check;
+    }
+    let was = *focus;
+    // Tab's order: the fields, the box, the actions, then Two-factor and Update.
+    let order: Vec<usize> = (0..first + 3).chain((!playonline).then_some(twofa)).chain(update.then_some(upd)).collect();
     let (sw, sh) = (size[0] as f32, size[1] as f32);
     // Rows 22 px apart, 20 with more than four fields so the form stays between the logo and the copyright line.
     let pitch = if n > 4 { 20.0 } else { 22.0 };
@@ -887,15 +898,19 @@ fn login_window(
     // The modern layer's form is half again as large (its text sized to the fields), times the monitor's scale, up to
     // what fits.
     let f = if modern.is_some() { (1.5 * monitor_scale).min(0.4 * sh / base_h).max(1.5) } else { 1.0 };
-    let (ww, wh) = (380.0 * f, base_h * f);
+    const CAPTION: &str = "Remember password";
+    const UPD: &str = "Update";
+    let check_w = lu.text_width(&format!("\u{25a1} {CAPTION}")) + 4.0;
+    let upd_w = (lu.label_width(UPD) + 14.0).max(88.0);
+    // Room for Update beside the box whether it shows or not, so nothing moves when it appears.
+    let (ww, wh) = (380.0f32.max(148.0 + check_w + 8.0 + upd_w + 16.0) * f, base_h * f);
     // Centred between the title logo's foot (about half the height) and the copyright line (about 0.8); a larger
     // form stays below the logo's "ONLINE" line.
     let (wx, wy) = (((sw - ww) / 2.0).round(), (sh * 0.65 - wh / 2.0).max(sh * 0.52).round());
     let row = |i: usize| wy + 14.0 * f + i as f32 * pitch * f;
     let field_rect = |i: usize| [wx + 148.0 * f, row(i), ww - 164.0 * f, 18.0 * f];
     // Remember password: the game font's box (filled when on) and its caption under the fields.
-    const CAPTION: &str = "Remember password";
-    let check_rect = [wx + 148.0 * f, row(check), (lu.text_width(&format!("\u{25a1} {CAPTION}")) + 4.0) * f, 18.0 * f];
+    let check_rect = [wx + 148.0 * f, row(check), check_w * f, 18.0 * f];
     let ay = row(n + 1) + 6.0 * f;
     // Config-page buttons (88 px, wider for a longer caption), centred 24 px apart.
     const ACTIONS: [&str; 3] = ["Log in", "Create account", "Exit"];
@@ -914,6 +929,11 @@ fn login_window(
     const TF: &str = "Two-factor";
     let tf_rect = (!playonline)
         .then(|| [wx + 16.0 * f, row(check) + 1.0 * f, ((lu.label_width(TF) + 14.0).max(88.0) * f).round(), 16.0 * f]);
+    // Update at the row's other end, under the fields' right edge.
+    let upd_rect = update.then(|| {
+        let w = (upd_w * f).round();
+        [wx + ww - 16.0 * f - w, row(check) + 1.0 * f, w, 16.0 * f]
+    });
     // A combo field: its arrow at the right end, its list under it.
     let arrow_rect = |i: usize| {
         let r = field_rect(i);
@@ -966,12 +986,14 @@ fn login_window(
             *focus = check;
         }
     }
-    if let Some(r) = tf_rect
-        && input.pointer.is_some_and(|p| inside(&r, p))
-    {
-        lu.hover.set(true);
-        if input.moved {
-            *focus = twofa;
+    for (i, r) in [(twofa, tf_rect), (upd, upd_rect)] {
+        if let Some(r) = r
+            && input.pointer.is_some_and(|p| inside(&r, p))
+        {
+            lu.hover.set(true);
+            if input.moved {
+                *focus = i;
+            }
         }
     }
     let mut toggled = false;
@@ -1000,6 +1022,11 @@ fn login_window(
             *focus = twofa;
             chosen = filled.then_some(LoginChoice::TwoFa);
             sounds.push(if filled { crate::audio::Ui::Select } else { crate::audio::Ui::Error });
+        }
+        if upd_rect.is_some_and(|r| inside(&r, p)) {
+            *focus = upd;
+            chosen = Some(LoginChoice::Update);
+            sounds.push(crate::audio::Ui::Select);
         }
     }
     let mut escape = false;
@@ -1071,14 +1098,19 @@ fn login_window(
             }
             egui::Event::Key { key, pressed: true, modifiers, .. } => match key {
                 egui::Key::Tab => {
-                    *focus = if modifiers.shift { (*focus + items - 1) % items } else { (*focus + 1) % items }
+                    let at = order.iter().position(|&i| i == *focus).unwrap_or(0);
+                    let m = order.len();
+                    *focus = order[if modifiers.shift { (at + m - 1) % m } else { (at + 1) % m }];
                 }
                 egui::Key::ArrowDown if *focus == twofa => *focus = first,
-                egui::Key::ArrowUp if *focus == twofa => *focus = n - 1,
+                egui::Key::ArrowDown if *focus == upd => *focus = first + 2,
+                egui::Key::ArrowUp if *focus == twofa || *focus == upd => *focus = n - 1,
                 egui::Key::ArrowDown => *focus = (*focus + 1).min(first.max(*focus)),
                 egui::Key::ArrowUp => *focus = if *focus > check { check } else { focus.saturating_sub(1) },
                 egui::Key::ArrowLeft if *focus == check && !playonline => *focus = twofa,
                 egui::Key::ArrowRight if *focus == twofa => *focus = check,
+                egui::Key::ArrowRight if *focus == check && update => *focus = upd,
+                egui::Key::ArrowLeft if *focus == upd => *focus = check,
                 egui::Key::ArrowLeft if (first + 1..=first + 2).contains(&*focus) => *focus -= 1,
                 egui::Key::ArrowRight if (first..first + 2).contains(&*focus) => *focus += 1,
                 egui::Key::Enter | egui::Key::Space if *focus == check && !busy => toggled = true,
@@ -1093,6 +1125,10 @@ fn login_window(
                 egui::Key::Enter if *focus == twofa => {
                     chosen = filled.then_some(LoginChoice::TwoFa);
                     sounds.push(if filled { crate::audio::Ui::Select } else { crate::audio::Ui::Error });
+                }
+                egui::Key::Enter if *focus == upd => {
+                    chosen = Some(LoginChoice::Update);
+                    sounds.push(crate::audio::Ui::Select);
                 }
                 egui::Key::Enter => {
                     let k = focus.saturating_sub(first);
@@ -1126,6 +1162,8 @@ fn login_window(
         }
     } else if playonline && *focus == first + 1 {
         "Square Enix accounts are made on Square Enix's website."
+    } else if *focus == upd {
+        "Update the game files or vana-client."
     } else if *focus >= first && !(if *focus == twofa { filled } else { enabled[*focus - first] }) {
         if playonline {
             "Enter the PlayOnline ID and password and the Square Enix ID and password first."
@@ -1144,7 +1182,7 @@ fn login_window(
             _ => "Enter your account information to log in.",
         }
     };
-    let slots = lu.title_update(sw, sh, None, 0, [true; 5], None, 0, None, true, modern.is_some());
+    let slots = lu.title_with(sw, sh, None, 0, [true; 5], 0, None, true, modern.is_some());
     let help_colour = if help_over.is_some() || busy || status.is_empty() { WHITE } else { YELLOW };
     let shown = |x: &LoginField| if x.secret { "*".repeat(x.text.chars().count()) } else { x.text.clone() };
     // Modern: the layer draws the form on these rects (its mouse stays this one's) and the help bar.
@@ -1171,6 +1209,7 @@ fn login_window(
             check: (check_rect, CAPTION, *remember),
             buttons: (0..3).map(|k| (arects[k], ACTIONS[k], enabled[k])).collect(),
             twofa: tf_rect.map(|r| (r, TF, filled)),
+            update: upd_rect.map(|r| (r, UPD)),
             focus: *focus,
             busy,
         });
@@ -1207,7 +1246,8 @@ fn login_window(
         .zip(enabled)
         .enumerate()
         .map(|(k, ((r, a), e))| (first + k, *r, a, e))
-        .chain(tf_rect.map(|r| (twofa, r, TF, filled)));
+        .chain(tf_rect.map(|r| (twofa, r, TF, filled)))
+        .chain(upd_rect.map(|r| (upd, r, UPD, true)));
     for (i, r, name, on_ok) in all {
         let on = *focus == i && !busy;
         let d = if on { -1.0 } else { 0.0 };
@@ -9089,12 +9129,12 @@ impl App {
         self.spawn(move || {
             Task::LoggedIn((|| {
                 let req = Request { username: &cfg.username, password: &password, otp: &otp, ..Default::default() };
-                let Reply::LoggedIn { account_id, session_hash, .. } =
+                let Reply::LoggedIn { account_id, session_hash, lobby_key, .. } =
                     auth::send(&cfg.server, cfg.auth_port, Command::Login, &req)?
                 else {
                     anyhow::bail!("unexpected reply from the login server");
                 };
-                let session = crate::net::lobby::Session::Lsb { account_id, hash: session_hash };
+                let session = crate::net::lobby::Session::Lsb { account_id, hash: session_hash, lobby_key };
                 let dll = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())).unwrap_or_default();
                 // Region 5: not the Japanese client (FUN_1023e610).
                 let mut lobby = Lobby::connect(
@@ -14067,11 +14107,18 @@ impl App {
                         page: false,
                         events: Vec::new(),
                     };
-                    let shown = if self.login_error.is_some() || self.twofa.is_some() { &none } else { &input };
+                    let shown = if self.login_error.is_some() || self.twofa.is_some() || self.update_ui.is_some() {
+                        &none
+                    } else {
+                        &input
+                    };
                     let mut sounds = Vec::new();
                     let modern_ui = self.cfg.modern_ui;
                     let mut view = None;
-                    let help_over = self.twofa.as_ref().map(|t| t.help());
+                    let update_help = self.update_ui.as_ref().map(|u| u.help());
+                    let help_over = update_help.as_deref().or_else(|| self.twofa.as_ref().map(|t| t.help()));
+                    // Not retail: Update while something is out of date.
+                    let update = self.updates.as_ref().is_some_and(|s| s.lock().unwrap().any());
                     let chosen = login_window(
                         lu,
                         shown,
@@ -14082,6 +14129,7 @@ impl App {
                         &mut self.cfg.remember_password,
                         focus,
                         busy,
+                        update,
                         &status,
                         help_over,
                         &self.cfg.client_version,
@@ -14166,6 +14214,66 @@ impl App {
                                 action = Some(Box::new(move |app: &mut App| app.twofa_send(command, p, otp)));
                             }
                             None => {}
+                        }
+                    }
+                    // The Update window over the form (client/updater.rs): before the login, so an old client can
+                    // always reach it.
+                    if let Some(u) = self.update_ui.as_mut() {
+                        let (sw, sh) = (size[0] as f32, size[1] as f32);
+                        u.zoom = if modern_ui { 1.35 } else { 1.0 };
+                        let mut outs = vec![u.poll()];
+                        for ev in input.events.iter() {
+                            if let egui::Event::Key { key, pressed: true, .. } = ev {
+                                outs.push(u.key(*key));
+                            }
+                        }
+                        if let Some(p) = input.pointer {
+                            outs.push(u.pointer(p, input.moved, input.clicked, sw, sh));
+                            if outs.last().is_some_and(|o| o.hover) {
+                                lu.hover.set(true);
+                            }
+                        }
+                        let v = u.view(sw, sh);
+                        if modern_ui {
+                            self.modern.get_or_insert_with(|| modern::Modern::new(ctx)).update_window(
+                                ctx,
+                                window,
+                                self.cfg.modern_scale,
+                                self.ui_k,
+                                &v,
+                            );
+                        } else {
+                            updater::UpdateUi::draw(lu, &v);
+                        }
+                        for out in outs {
+                            if let Some(a) = self.audio.as_mut() {
+                                for x in &out.sounds {
+                                    a.ui(*x);
+                                }
+                            }
+                            // New and changed DATs: the next login opens the index again.
+                            if out.reload {
+                                self.index = None;
+                            }
+                            if out.restart {
+                                match updater::exe().map(|exe| {
+                                    std::process::Command::new(&exe)
+                                        .args(std::env::args().skip(1))
+                                        .spawn()
+                                        .map(|c| (exe, c.id()))
+                                }) {
+                                    Some(Ok((exe, pid))) => {
+                                        log::info!("update: restarted as {} (pid {pid})", exe.display())
+                                    }
+                                    Some(Err(e)) => log::warn!("update: restart failed: {e}"),
+                                    None => log::warn!("update: restart failed: no executable path"),
+                                }
+                                self.exit_requested = true;
+                            }
+                            if out.closed {
+                                self.update_ui = None;
+                                break;
+                            }
                         }
                     }
                     // A saved login picked: its account, PlayOnline ID, Remember password and passwords fill the form. A
@@ -14302,6 +14410,11 @@ impl App {
                     match chosen.filter(|_| self.login_error.is_none()) {
                         Some(LoginChoice::Exit) => self.exit_requested = true,
                         Some(LoginChoice::TwoFa) => self.twofa = Some(twofa::TwoFa::new()),
+                        Some(LoginChoice::Update) => {
+                            if let Some(s) = self.updates.clone() {
+                                self.update_ui = Some(updater::UpdateUi::open(s, self.cfg.ffxi_dir()));
+                            }
+                        }
                         Some(LoginChoice::Picked(_) | LoginChoice::Forget(..)) => {}
                         Some(_) if is_playonline(&self.cfg.server) => {
                             let (pp, p, o) = (pol_password.clone(), password.clone(), otp.clone());
@@ -14358,7 +14471,6 @@ impl App {
                             ("Config", "Change settings."),
                             ("Back", "Return to the previous screen."),
                         ];
-                        const UPDATE: usize = 5;
                         // FUN_10235fa0: while lobycwin (or our settings screen) is up the title takes no input.
                         // The change notes an update left (or the start asked for) open first, over everything else on the
                         // title. An answer with none marks this version seen.
@@ -14377,19 +14489,12 @@ impl App {
                         {
                             self.notes_ui = Some(notes::NotesUi::open(s));
                         }
-                        let config_open = self.lobby_cfg.is_some()
-                            || self.lobby_settings.is_some()
-                            || self.update_ui.is_some()
-                            || self.notes_ui.is_some();
+                        let config_open =
+                            self.lobby_cfg.is_some() || self.lobby_settings.is_some() || self.notes_ui.is_some();
                         let window_over = config_open;
-                        // Not retail: Update (menu 5) above Select Character while something is out of date.
-                        let upd = self.updates.as_ref().is_some_and(|s| s.lock().unwrap().any());
-                        if !upd && *menu == UPDATE {
-                            *menu = 0;
-                        }
-                        let order: &[usize] = if upd { &[UPDATE, 0, 1, 2, 3, 4] } else { &[0, 1, 2, 3, 4] };
-                        // FUN_102406d0: Config (and our Update window) give the title back when they close.
-                        if !config_open && self.title_press.is_some_and(|p| p.2 && (p.0 == 3 || p.0 == UPDATE)) {
+                        let order: &[usize] = &[0, 1, 2, 3, 4];
+                        // FUN_102406d0: Config gives the title back when it closes.
+                        if !config_open && self.title_press.is_some_and(|p| p.2 && p.0 == 3) {
                             self.title_press = None;
                         }
                         // FUN_102405f0: a taken press locks the title (+0x1c, window +0x5d) until the screen changes.
@@ -14418,15 +14523,12 @@ impl App {
                             const CHILD: [usize; 5] = [0, 1, 2, 4, 3];
                             // Logos need both the server's bit and the install's (FUN_10235810, simplified).
                             let logos = *expansions & self.installed;
-                            let mut rects: Vec<(usize, [f32; 4])> = lu
+                            let rects: Vec<(usize, [f32; 4])> = lu
                                 .button_rects(sw, sh, logos)
                                 .into_iter()
                                 .enumerate()
                                 .map(|(i, r)| (CHILD[i], r))
                                 .collect();
-                            if upd {
-                                rects.extend(lu.update_button_rect(sw, sh, logos).map(|r| (UPDATE, r)));
-                            }
                             for (m, r) in &rects {
                                 if !config_open && input.pointer.is_some_and(|p| inside(r, p)) {
                                     lu.hover.set(true);
@@ -14439,20 +14541,19 @@ impl App {
                                 }
                             }
                             let child_enabled = CHILD.map(|k| enabled[k]);
-                            let shown = if *menu == UPDATE { 0 } else { CHILD[*menu] };
+                            let shown = CHILD[*menu];
                             let wardrobes = lobby.as_ref().map_or(0, |l| l.features);
                             let press = self
                                 .title_press
-                                .filter(|p| p.0 == *menu && p.0 != UPDATE)
+                                .filter(|p| p.0 == *menu)
                                 .map(|p| ((9.0 - p.1.elapsed().as_secs_f32() * 60.0).max(0.0), p.2));
                             let modern_title = self.cfg.modern_ui;
-                            let slots = lu.title_update(
+                            let slots = lu.title_with(
                                 sw,
                                 sh,
                                 Some(shown),
                                 logos,
                                 child_enabled,
-                                upd.then_some((*menu == UPDATE, true)),
                                 wardrobes,
                                 press,
                                 !window_over,
@@ -14462,14 +14563,7 @@ impl App {
                             if modern_title {
                                 let buttons: Vec<([f32; 4], &str, bool, bool)> = rects
                                     .iter()
-                                    .map(|&(m, r)| {
-                                        (
-                                            r,
-                                            if m == UPDATE { "Update" } else { ITEMS[m].0 },
-                                            m == *menu && !window_over,
-                                            m == UPDATE || enabled[m],
-                                        )
-                                    })
+                                    .map(|&(m, r)| (r, ITEMS[m].0, m == *menu && !window_over, enabled[m]))
                                     .collect();
                                 let mo = self.modern.get_or_insert_with(|| modern::Modern::new(ctx));
                                 mo.title_buttons(
@@ -14480,15 +14574,14 @@ impl App {
                                     &buttons,
                                 );
                             }
-                            let help = match (&self.update_ui, &self.lobby_settings, &self.lobby_cfg) {
+                            let help = match (&self.lobby_settings, &self.lobby_cfg) {
                                 _ if self.notes_ui.is_some() => {
                                     self.notes_ui.as_ref().map(|n| n.help()).unwrap_or_default()
                                 }
-                                (Some(u), _, _) => u.help(),
                                 // Modern: the Config panel has its own help line.
-                                (None, _, Some(_)) if modern_title => ITEMS[3].1.to_string(),
-                                (None, Some(s), _) => s.help(),
-                                (None, None, Some(c)) => match c.focus() {
+                                (_, Some(_)) if modern_title => ITEMS[3].1.to_string(),
+                                (Some(s), _) => s.help(),
+                                (None, Some(c)) => match c.focus() {
                                     Some((_, configui::SETTINGS)) => configui::SETTINGS_HELP.to_string(),
                                     // lobyhelp ids 0x24.. (FUN_10236b40) -> group 8 0xf5..0x101 by child.
                                     Some((_, child)) => {
@@ -14502,7 +14595,6 @@ impl App {
                                     }
                                     None => String::new(),
                                 },
-                                _ if *menu == UPDATE => "Update the game files or vana-client.".to_string(),
                                 _ => ITEMS[*menu].1.to_string(),
                             };
                             if modern_title {
@@ -14682,63 +14774,6 @@ impl App {
                                     }
                                 }
                             }
-                            if let Some(u) = self.update_ui.as_mut() {
-                                u.zoom = if modern_title { 1.35 } else { 1.0 };
-                                let mut outs = vec![u.poll()];
-                                for ev in input.events.iter() {
-                                    if let egui::Event::Key { key, pressed: true, .. } = ev {
-                                        outs.push(u.key(*key));
-                                    }
-                                }
-                                if let Some(p) = input.pointer {
-                                    outs.push(u.pointer(p, input.moved, input.clicked, sw, sh));
-                                    if outs.last().is_some_and(|o| o.hover) {
-                                        lu.hover.set(true);
-                                    }
-                                }
-                                let v = u.view(sw, sh);
-                                if modern_title {
-                                    self.modern.get_or_insert_with(|| modern::Modern::new(ctx)).update_window(
-                                        ctx,
-                                        [screen_size[0] as u32, screen_size[1] as u32],
-                                        self.cfg.modern_scale,
-                                        self.ui_k,
-                                        &v,
-                                    );
-                                } else {
-                                    updater::UpdateUi::draw(lu, &v);
-                                }
-                                for out in outs {
-                                    if let Some(a) = self.audio.as_mut() {
-                                        for x in &out.sounds {
-                                            a.ui(*x);
-                                        }
-                                    }
-                                    // New and changed DATs: the next login opens the index again.
-                                    if out.reload {
-                                        self.index = None;
-                                    }
-                                    if out.restart {
-                                        match updater::exe().map(|exe| {
-                                            std::process::Command::new(&exe)
-                                                .args(std::env::args().skip(1))
-                                                .spawn()
-                                                .map(|c| (exe, c.id()))
-                                        }) {
-                                            Some(Ok((exe, pid))) => {
-                                                log::info!("update: restarted as {} (pid {pid})", exe.display())
-                                            }
-                                            Some(Err(e)) => log::warn!("update: restart failed: {e}"),
-                                            None => log::warn!("update: restart failed: no executable path"),
-                                        }
-                                        self.exit_requested = true;
-                                    }
-                                    if out.closed {
-                                        self.update_ui = None;
-                                        break;
-                                    }
-                                }
-                            }
                             if let Some(n) = self.notes_ui.as_mut() {
                                 n.zoom = if modern_title { 1.35 } else { 1.0 };
                                 let mut outs = Vec::new();
@@ -14806,7 +14841,7 @@ impl App {
                         // disabled button (Create excepted) only buzzes, any other is taken with 0002 (the fade hides
                         // the screen change from the UiSnap diff).
                         if let Some(i) = chosen {
-                            let refused = i < 5 && i != 1 && !enabled[i];
+                            let refused = i != 1 && !enabled[i];
                             self.title_press = Some((i, Instant::now(), !refused));
                             if let Some(a) = self.audio.as_mut() {
                                 a.ui(if refused { crate::audio::Ui::Error } else { crate::audio::Ui::Select });
@@ -14816,11 +14851,6 @@ impl App {
                             }
                         }
                         match chosen {
-                            Some(UPDATE) => {
-                                if let Some(s) = self.updates.clone() {
-                                    self.update_ui = Some(updater::UpdateUi::open(s, self.cfg.ffxi_dir()));
-                                }
-                            }
                             Some(0) => *screen = LobbyScreen::Select,
                             Some(1) => {
                                 *screen = LobbyScreen::Create;

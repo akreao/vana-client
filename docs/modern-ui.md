@@ -493,14 +493,16 @@ Milestone 1:
   by keys, the login prompt (No), Settings by the mouse.
 - The title's buttons (2026-10-27, modern/lobby.rs title_buttons over render/screens.rs TitleState.modern): the pack's
   buttons on retail's rects (loby2win's backing and button sprites skipped), the cursor's lit, the disabled dimmed,
-  the Update button as retail places it; retail's keys and mouse untouched (hover moves the cursor, a click is Enter).
+  retail's keys and mouse untouched (hover moves the cursor, a click is Enter). The Update button moved to the login
+  form (2026-11-09).
   The labels are sized to the buttons (half their height; user, 2026-10-27: the panel-sized font was far too small). The
   logo, the expansion banners and the help bar stay. Live: hover, Select Character by the mouse, back by Escape.
 - The login screen (2026-10-27, modern/lobby.rs login_form / ok_popup / wait_panel / help_bar over client/mod.rs
   login_window, which keeps the keys): the form at 1.5x in the pack's input, checkbox and button art; the wait and
   error popups on retail's netwait / ok rects with their text above the form's size (user: as big as the original's
   or bigger) and OK centred on retail's row, lifted clear of the form; the help bar on retail's lobyhelp strip with
-  the version above it at loby2win's spot (title screen too). Character select's wait is the same panel.
+  the version above it at loby2win's spot (title screen too). Character select's wait is the same panel. Update
+  (2026-11-09, while something is out of date) at the right end of Remember password's row, in the lobby button art.
 - Panel Opacity (2026-10-27, Settings > Client, config modern_opacity, default 85 %): every window background the layer
   paints (the frame gradient, the other border styles' fill, the edge windows, the auto-translate list); borders and
   text stay opaque.
