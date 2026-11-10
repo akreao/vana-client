@@ -96,7 +96,10 @@ mod tests {
         let Ok(items) = Items::load(&index, Lang::En) else { return };
         let root = category(&items, ROOT).expect("root");
         let ids: Vec<u16> = root.kids.iter().map(|k| k.0).collect();
-        assert_eq!(ids, [0xf210, 0xf211, 0xf212, 0xf213, 0xf214, 0xf215, 0xf216, 0xf217, 0xf218, 0xf219, 0xf21b]);
+        // 30261102_0 added category 0xf21a (30261006_0 goes from 0xf219 to 0xf21b)
+        let old = [0xf210, 0xf211, 0xf212, 0xf213, 0xf214, 0xf215, 0xf216, 0xf217, 0xf218, 0xf219, 0xf21b];
+        let new = [0xf210, 0xf211, 0xf212, 0xf213, 0xf214, 0xf215, 0xf216, 0xf217, 0xf218, 0xf219, 0xf21a, 0xf21b];
+        assert!(ids == old || ids == new, "{ids:x?}");
         assert_eq!(root.kids[1].1[0], [1, 0, 0, 1]);
         assert_eq!(category(&items, 0xf210).unwrap().name, "Tutorial");
         let basics = category(&items, 0xf230).unwrap();
@@ -122,6 +125,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!((cats, objs), (121, 1503));
+        // 30261006_0: 121 categories, 1503 objectives; 30261102_0: 125, 1508
+        assert!(matches!((cats, objs), (121, 1503) | (125, 1508)), "{cats} {objs}");
     }
 }

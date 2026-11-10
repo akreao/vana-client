@@ -7,7 +7,9 @@
   dll.py str REGEX          strings matching REGEX and the functions using them
   dll.py grep REGEX         functions whose pseudo-C matches REGEX (address + matching lines)
   dll.py notes ADDR         where ADDR (or its function) is mentioned in our notes
-  dll.py build-notes [PATH..] (re)build notes_index.tsv from .md/.rs/.lua files/dirs (default: repo MODLOG.md + docs/re)
+  dll.py build-notes [PATH..] (re)build notes_index.tsv from .md/.rs/.lua files/dirs (default: repo MODLOG.md + docs/re
+                            + docs/modlog); addresses in notes written for the previous build are moved to this one
+  dll.py map ADDR.. [--back] the previous build's address in this build (--back: the other way), from maps/
   dll.py names REGEX        list function names (names.tsv + names_manual.tsv) matching REGEX
   dll.py name ADDR NAME     give the function at ADDR a hand-checked name (appends to names_manual.tsv)
 ADDR may be hex (0x.., FUN_..) or a function name. Output shows names next to addresses and in the C.
@@ -151,8 +153,10 @@ def main(a):
         print('== notes'); [print('  %s  %s' % (w, l)) for _, w, l in notes(x)]
     elif cmd == 'build-notes':
         rx = re.compile(r'(?:FUN_|LAB_|DAT_|0x)?(10[0-9a-fA-F]{6})\b')
-        n = 0
-        roots = args or [os.path.join(REPO, 'MODLOG.md'), os.path.join(REPO, 'docs', 're')]
+        n = moved = lost = 0
+        import addrmap
+        mp = addrmap.load(H)
+        roots = args or [os.path.join(REPO, 'MODLOG.md'), os.path.join(REPO, 'docs', 're'), os.path.join(REPO, 'docs', 'modlog')]
         os.makedirs(D, exist_ok=True)
         with open(P('notes_index.tsv'), 'w') as w:
             for root in roots:
@@ -162,12 +166,36 @@ def main(a):
                     for f in fns:
                         if not f.endswith(('.md', '.rs', '.lua')): continue
                         p = os.path.join(dp, f)
+                        # which build a note's addresses are for: a `dll-build: <version>` marker (in the file, or
+                        # under a MODLOG heading) says so; else its date (docs/modlog/<date>-*.md, or the date in
+                        # the `## ... (date)` heading above it) against the map's `since`; undated = the older build
+                        fdate = re.match(r'(\d{4}-\d\d-\d\d)-', f)
+                        fold = old = bool(mp) and not (fdate and mp.since and fdate.group(1) >= mp.since)
                         try:
                             for i, l in enumerate(open(p, errors='replace'), 1):
+                                if re.match(r'#{1,3} ', l) and mp:        # a new section: back to the file's default
+                                    hd = re.search(r'\((\d{4}-\d\d-\d\d)\)\s*$', l)
+                                    old = not (mp.since and hd.group(1) >= mp.since) if hd else fold
+                                mk = re.search(r'dll-build:\s*(\w+)', l)
+                                if mk and mp: old = mk.group(1) == mp.old
                                 for m in set(rx.findall(l)):
-                                    w.write('%s\t%s:%d\t%s\n' % (m.lower(), p, i, l.strip()[:300])); n += 1
+                                    a_, tag = int(m, 16), ''
+                                    if old:
+                                        b_ = mp.fwd(a_)
+                                        if b_ is None: tag = '[%s address, not mapped] ' % mp.old; lost += 1
+                                        elif b_ != a_: tag = '[%s: %08x] ' % (mp.old, a_); a_ = b_; moved += 1
+                                    w.write('%08x\t%s:%d\t%s%s\n' % (a_, p, i, tag, l.strip()[:300])); n += 1
                         except OSError: pass
-        print('notes_index.tsv:', n, 'mentions')
+        print('notes_index.tsv:', n, 'mentions' + (' (%d moved from %s addresses, %d not mapped)' % (moved, mp.old, lost) if mp else ''))
+    elif cmd == 'map':
+        import addrmap
+        mp = addrmap.load(H)
+        if mp is None: sys.exit('no map in maps/')
+        for x in [x for x in args if x != '--back']:
+            a_ = int(x.replace('0x', '').replace('FUN_', '').replace('DAT_', ''), 16)
+            b_ = mp.back(a_) if '--back' in args else mp.fwd(a_)
+            print('%08x -> %s' % (a_, lab(b_) if b_ is not None and '--back' not in args else '%08x' % b_ if b_ is not None else
+                                  'not mapped (inside a changed function or resized data; see remap/ in the work dir)'))
     elif cmd == 'names':
         rx = re.compile(args[0] if args else '.')
         for a, (n, c, src) in sorted(names().items()):

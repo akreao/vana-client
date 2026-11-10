@@ -114,7 +114,8 @@ ORIG = {}
 for l in open(P('funcs_full.orig.tsv') if os.path.exists(P('funcs_full.orig.tsv')) else P('funcs_full.tsv')):
     f = l.rstrip('\n').split('\t'); ORIG[int(f[0], 16)] = f[2]
 for a, nm in ORIG.items():
-    if not re.match(r'(FUN_|thunk_|LAB_|SUB_)', nm): put(a, nm, 'high', 'ghidra', raw=True)   # keep Ghidra's spelling
+    # Ghidra's own labels for unwind funclets, catch blocks and switch cases are not names
+    if not re.match(r'(FUN_|thunk_|LAB_|SUB_|Unwind@|Catch_|Catch@|caseD_|switchD)', nm): put(a, nm, 'high', 'ghidra', raw=True)   # keep Ghidra's spelling
 
 # --- the DLL (evtable, vtable) ---------------------------------------------------
 dll = open(DLL, 'rb').read() if os.path.exists(DLL) else None
@@ -133,7 +134,7 @@ def rd(va, n=4):
         if s <= va < e and va - s + n <= rs: return int.from_bytes(dll[ro + va - s:ro + va - s + n], 'little')
     return None
 
-# --- event ops: the event script dispatcher (FUN_100bc280 in build 30261006_0) ------
+# --- event ops: the event script dispatcher (FUN_100bc280 in builds 30261006_0 and 30261102_0) ------
 #   movsx eax, word [esp+4]; cmp eax, 0xda; ja default; jmp [eax*4 + 0x100bc960]
 # every case is "call handler; ret 4". vana-client's event_ops.rs was decoded against an older DLL build, so its
 # FUN_ addresses do not match this one; the table here is the source of truth for this build.
@@ -227,6 +228,9 @@ def good_desc(d):
     if any(re.match(r'(?:modlog|inf|inferred|confirmed|unconfirmed|fun|dat|lab|l\d+|[a-f0-9]*\d[a-f0-9]*[a-f][a-f0-9]*)$', x.lower()) for x in w): return None
     while w and w[0].lower() in STOP: w = w[1:]
     return '_'.join(w) if w else None
+sys.path.insert(0, H)
+import addrmap
+MAP = addrmap.load(H)
 if not have('notes_index.tsv'): carry('notes', 'notes_index.tsv; run dll.py build-notes')
 for l in open(P('notes_index.tsv'), errors='replace') if have('notes_index.tsv') else []:
     f = l.rstrip('\n').split('\t', 2)
@@ -239,9 +243,14 @@ for l in open(P('notes_index.tsv'), errors='replace') if have('notes_index.tsv')
     # re-notes/*-wt checkouts) are often about an older DLL, so they need two agreeing lines before they count
     this_build = ('/re-notes/' in path and '-wt/' not in path) or (path.startswith(D) and '/vana-client/' not in path)
     w = 2.0 if this_build else 0.5
+    # dll.py build-notes tags lines written for the previous build: "[<build>: <its address>] line"; the addresses
+    # in such a line are that build's and go through the map
+    tagged = re.match(r'\[\w+(?:: [0-9a-f]{8}| address, not mapped)\] ', txt)
+    if tagged: txt = txt[tagged.end():]
     for p in pats:
         for m in p.finditer(txt):
             a = int(m.group(1), 16)
+            if tagged: a = MAP.fwd(a) if MAP else None
             if a not in ENT: continue                     # interior / other-build addresses
             d = good_desc(m.group(2))
             if d: votes[a][snake(d)] += w

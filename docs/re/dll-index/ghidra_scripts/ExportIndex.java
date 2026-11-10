@@ -4,7 +4,7 @@
 // 2. Decompiles every function (parallel) -> all_decomp_full.c  ("//@@FUNC <addr>" blocks, same format as all_decomp.c)
 // 3. xrefs.tsv   : from_addr  from_func  to_addr  to_func  type
 // 4. strrefs.tsv : str_addr  from_addr  from_func  string
-// 5. funcs_full.tsv : entry  end  name  source(ghidra|rizin)
+// 5. funcs_full.tsv : entry  end  name  source(ghidra|rizin|vtable|sweep; the last two defined by FixVt.java)
 import ghidra.app.script.GhidraScript;
 import ghidra.app.decompiler.*;
 import ghidra.program.model.listing.*;
@@ -40,11 +40,15 @@ public class ExportIndex extends GhidraScript {
       catch (Exception e) { }
     }
     println("missing tried " + tried + ", created " + added.size());
+    Set<String> vt = new HashSet<>();                 // FixVt's functions, when it ran just before (ri.sh)
+    Path fv = Paths.get(D + "fixvt.tsv");
+    Set<String> sw = new HashSet<>();
+    if (Files.exists(fv)) for (String l : Files.readAllLines(fv)) (l.endsWith("\tsweep") ? sw : vt).add(l.split("\t")[0]);
 
     List<Function> fs = new ArrayList<>();
     for (Function f : fm.getFunctions(true)) fs.add(f);
     try (PrintWriter w = new PrintWriter(new BufferedWriter(new FileWriter(D + "funcs_full.tsv")))) {
-      for (Function f : fs) w.println(fa(f) + "\t" + f.getBody().getMaxAddress() + "\t" + f.getName() + "\t" + (added.contains(fa(f)) ? "rizin" : "ghidra"));
+      for (Function f : fs) w.println(fa(f) + "\t" + f.getBody().getMaxAddress() + "\t" + f.getName() + "\t" + (added.contains(fa(f)) ? "rizin" : vt.contains(fa(f)) ? "vtable" : sw.contains(fa(f)) ? "sweep" : "ghidra"));
     }
 
     ReferenceManager rm = currentProgram.getReferenceManager();

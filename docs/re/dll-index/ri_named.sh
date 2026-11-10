@@ -26,9 +26,9 @@ trap 'exit 1' INT TERM HUP
 for f in $IDX; do mv -f "$f" "$(prev "$f")"; MOVED="$MOVED $f"; done      # move, so a failed run can't leave old files looking current
 rc=0
 "$G" "$W/ghidra_named" ffxi -process "$(basename "$DLL")" -noanalysis \
-  -scriptPath "$H/ghidra_scripts" -postScript ApplyNames.java "$H" -postScript ExportIndex.java "$W" \
+  -scriptPath "$H/ghidra_scripts" -postScript FixVt.java "$W" -postScript ApplyNames.java "$H" -postScript ExportIndex.java "$W" \
   >"$W/exportindex_named.log" 2>&1 || rc=$?
-grep -E 'ApplyNames|ExportIndex|ERROR' "$W/exportindex_named.log" || true
+grep -E 'FixVt|ApplyNames|ExportIndex|ERROR' "$W/exportindex_named.log" || true
 if [ $rc -ne 0 ] || ! grep -q 'ExportIndex.java> done' "$W/exportindex_named.log"; then
   echo "named export failed (exit $rc), previous index restored; see $W/exportindex_named.log" >&2; exit 1
 fi

@@ -533,7 +533,9 @@ mod tests {
         let c = categories(&n.key_item_list());
         let counts: Vec<usize> = c.iter().map(|s| s.1.len()).collect();
         assert_eq!(c[0].0, "Temporary Key Items");
-        assert_eq!(counts, [1632, 389, 412, 117, 102, 40, 127, 134, 89, 192]);
+        // 30261102_0 added one temporary and one permanent key item (30261006_0: 1632, 389)
+        assert!(matches!(counts[..2], [1632, 389] | [1633, 390]), "{counts:?}");
+        assert_eq!(counts[2..], [412, 117, 102, 40, 127, 134, 89, 192]);
     }
 
     #[test]
