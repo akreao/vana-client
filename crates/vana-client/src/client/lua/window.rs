@@ -363,6 +363,10 @@ pub struct Window {
     pub modal: bool,
     pub popup: bool,
     pub anchor: Option<(f32, f32)>,
+    /// The anchor is the popup's bottom left (it opens upward), not its top left.
+    pub above: bool,
+    /// The modern UI fades it in and grows it up from its bottom edge as it opens, and folds it back as it closes.
+    pub animate: bool,
     /// A canvas being dragged: its element and the last place reported; a press on one that has not moved yet (the
     /// classic UI: a press and release in place is a click, a move past 3 units starts the drag).
     pub drag: Option<(usize, f32, f32)>,
@@ -568,6 +572,8 @@ impl Window {
             modal: false,
             popup: false,
             anchor: None,
+            above: false,
+            animate: false,
             drag: None,
             press: None,
             edge: false,

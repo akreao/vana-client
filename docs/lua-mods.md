@@ -81,7 +81,8 @@ Built (client/lua/, modern/modwin.rs), each checked live:
     outlines, circles, triangles, text, icons; clicks report where, drags their start, moves and release, both UIs
     checked live); coloured text; modal windows, `ui.prompt`
     (a question with buttons) and `ui.menu` (a popup list at the pointer, closed by a click outside it); checked
-    live in both UIs
+    live in both UIs; a popup opened at a place (`ui.open(id, {x, y, above})`, by `ui.bounds` of a canvas) and
+    `animate` windows (the modern UI fades them in and grows them up from their bottom edge, and folds them back)
   - keys and mouse in both UIs: the classic UI draws Config pages, the modern UI kit panels with saved places
   - HUD windows (no focus, frameless, placed)
   - the HUD layer (`hud`): retained text (size, colour, background, alignment, lines), rects, bars and item / status

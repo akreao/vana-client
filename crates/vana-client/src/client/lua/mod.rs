@@ -638,7 +638,7 @@ const BUNDLED: &[(&str, &str, &[(&str, &str)])] = bundled!["dps", "auto-advance"
     "list-trimmer",
     "bag-manager",
     "gearshift" ["src/core.lua", "src/compat.lua", "src/names.lua", "src/gs.lua", "src/lac.lua", "src/windower.lua", "src/xml.lua", "src/acxml.lua", "src/modes.lua", "src/texts.lua", "src/regex.lua", "src/spellcast.lua"],
-    "hotbar" ["src/actions.lua", "src/bar.lua", "src/builder.lua", "src/data.lua", "src/ghost.lua", "src/jobs.lua", "src/keys.lua",
+    "hotbar" ["src/actions.lua", "src/bar.lua", "src/builder.lua", "src/chooser.lua", "src/data.lua", "src/ghost.lua", "src/jobs.lua", "src/keys.lua",
         "src/manager.lua", "src/menu.lua", "src/palette.lua", "src/runner.lua", "src/stock.lua"],
     "pad-bars" ["src/actions.lua", "src/runner.lua"],
     // After gearshift: its hooks see an action first.
@@ -4796,6 +4796,63 @@ return "acxml flow ok"
         vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
     }
 
+    /// Hotbars' group slots: Rune Enchantment's list made a group in the Builder; its list runs the member picked and
+    /// starts on it the next time.
+    #[test]
+    fn hotbar_group_slot() {
+        let host = Host::default();
+        let files = BUNDLED.iter().find(|b| b.0 == "hotbar").unwrap().2;
+        let vm = Vm::new(bundled_manifest("hotbar").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
+        vm.lua.set_app_data(host.info.clone());
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        let script = r#"
+            local abilities = { [869] = { name = "Rune Enchantment", kind = 1, sub = 21, targets = 1 },
+              [870] = { name = "Ignis", kind = 21, targets = 1, recast = 5 },
+              [877] = { name = "Tenebrae", kind = 21, targets = 1, recast = 5 } }
+            res = { spell = function() end, ability = function(id) return abilities[id] end,
+              job = function(id) return ({ [22] = "RUN" })[id] end }
+            game = { player = function() return { main_job = 22, sub_job = 0 } end,
+              spells = function() return {} end, abilities = function() return { 869, 870, 877 } end,
+              find_items = function() return {} end,
+              recasts = function() return { spells = {}, abilities = {}, totals = { spells = {}, abilities = {} } } end }
+            chat = { add = function() end }
+            SENT = {}
+            commands.run = function(line) SENT[#SENT + 1] = line end
+            local on_window = ui.on
+            ui.on = function(id, f)
+              if id == "manager" then H = f elseif id == "group" then G = f end
+              on_window(id, f)
+            end
+            local data = require("src.data")
+            data.init({ read = function() return nil end, write = function() end, decode = json.decode,
+              encode = json.encode })
+            local manager = require("src.manager")
+            manager.hooks = { changed = function() end, rebind = function() end }
+            manager.open()
+            -- New, Job ability, into Rune Enchantment, Make a Group of These, Save.
+            H("manager", { kind = "press", id = "lbtn", index = 1 })
+            H("manager", { kind = "set", id = "btype", index = 2 })
+            H("manager", { kind = "select", id = "found", index = 1 })
+            H("manager", { kind = "press", id = "grp", index = 1 })
+            H("manager", { kind = "press", id = "bbtn", index = 1 })
+            local it = data.library("RUN")[1]
+            assert(it.entry.name == "Rune Enchantment" and #it.entry.group == 2, it.entry.name)
+            assert(it.entry.group[2].action.name == "Tenebrae" and it.entry.group[2].action.target == "me")
+            local macro = data.macro_of("RUN", it.id)
+            assert(macro.group and #macro.lines == 0)
+            -- Its list: the second runs, and is the one shown and offered first next time.
+            local chooser = require("src.chooser")
+            chooser.open(macro)
+            assert(chooser.is_open())
+            G("group", { kind = "select", index = 2 })
+            assert(not chooser.is_open())
+            assert(SENT[1] == '/ja "Tenebrae" <me>', tostring(SENT[1]))
+            assert(data.last_member(macro) == 2)
+            assert(data.current_member(macro).name == "Tenebrae")
+        "#;
+        vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
+    }
+
     /// Hotbars on a client without the dropdown element (1.0.10): the manager opens with choices in their place.
     #[test]
     fn hotbar_manager_without_dropdowns() {
@@ -5953,17 +6010,22 @@ impl Host {
         else {
             return;
         };
+        let id = id.clone();
+        drop(st);
+        // ui.bounds reads them from the frame info.
+        self.info.borrow_mut().canvas_rects.insert((m.into(), win.into(), id.clone()), [origin[0], origin[1], ppp]);
         if let Some(c) = self.canvases.iter_mut().find(|c| c.i == i && c.m == m && c.win == win) {
-            if c.id != *id {
-                c.id = id.clone();
+            if c.id != id {
+                c.id = id;
             }
             (c.origin, c.shown, c.ppp, c.top, c.at) = (origin, shown, ppp, top, now);
             return;
         }
-        let id = id.clone();
-        drop(st);
         self.canvases.retain(|c| now.duration_since(c.at) < std::time::Duration::from_secs(1));
         self.canvases.push(CanvasAt { m: m.into(), win: win.into(), i, id, origin, shown, ppp, top, at: now });
+        let live: std::collections::HashSet<(String, String, String)> =
+            self.canvases.iter().map(|c| (c.m.clone(), c.win.clone(), c.id.clone())).collect();
+        self.info.borrow_mut().canvas_rects.retain(|k, _| live.contains(k));
     }
 
     /// Where mod `m`'s canvas `id` of window `win`, at (x, y) in its units, is on screen (window pixels).
@@ -6185,12 +6247,17 @@ impl Host {
 
     /// The open windows `keep` takes (copied: the caller draws them while it changes the world).
     pub(super) fn open_windows_where(&self, keep: impl Fn(&window::Window) -> bool) -> Vec<(String, window::Window)> {
+        self.windows_where(|w| w.open && keep(w))
+    }
+
+    /// The windows `keep` takes, open or not (a closed animated window still folds away).
+    pub(super) fn windows_where(&self, keep: impl Fn(&window::Window) -> bool) -> Vec<(String, window::Window)> {
         let mut out = Vec::new();
         if self.all_hidden {
             return out;
         }
         for vm in self.vms.iter().filter(|v| v.suspended.is_none()) {
-            for win in vm.st.borrow().windows.iter().filter(|w| w.open && keep(w)) {
+            for win in vm.st.borrow().windows.iter().filter(|w| keep(w)) {
                 out.push((vm.manifest.id.clone(), win.clone()));
             }
         }
@@ -6315,7 +6382,7 @@ fn classic_places(w: &World) -> Vec<(usize, String, f32, f32)> {
                     v,
                     win.id.clone(),
                     (ax * uk.0).min(sw - ww).max(0.0),
-                    (ay * uk.1).min(sh - wh).max(0.0),
+                    (ay * uk.1 - if win.above { wh } else { 0.0 }).min(sh - wh).max(0.0),
                 )),
                 (None, Some((x, y))) if win.modal => modal.push((v, win.id.clone(), x, y)),
                 (None, None) if win.modal => {

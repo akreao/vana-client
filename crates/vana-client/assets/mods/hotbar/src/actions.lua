@@ -34,6 +34,11 @@ local cache = {}
 -- {kind = 'spell' | 'ability' | 'item', id, recast_id} for the macro's first action, or false. A macro built on an
 -- action whose own line names none (a line this does not read) takes the action's.
 function M.of(macro)
+  -- A group shows the member picked last.
+  if macro.group then
+    local m = data.current_member(macro)
+    return m and M.of(m) or false
+  end
   local key = table.concat(macro.lines or {}, "\n")
   local a = type(macro.action) == "table" and macro.action or nil
   if a then key = key .. "\0" .. tostring(a.kind) .. "\0" .. tostring(a.name) end

@@ -1,0 +1,89 @@
+-- A group slot's list: pressing the slot opens its members in a list over it (under it on the top edge), the one
+-- picked last under the cursor. Up / Down and Enter, a click, or a member's number (the bars' keys 1, 2, ...) run
+-- one; Escape or a click elsewhere closes it. It opens and closes with a short fold.
+
+local data = require("src.data")
+local actions = require("src.actions")
+local runner = require("src.runner")
+
+local M = {}
+
+-- Set by bar.lua: picked() after a member ran (its slot shows that one now).
+M.hooks = {}
+
+local WIN = "group"
+local WIDTH = 240
+M.WIDTH = WIDTH
+local DIM = { 160, 152, 136, 255 }
+local SUGGESTED = { 255, 214, 120, 255 }
+
+local open_macro = nil
+
+local function clock(secs)
+  secs = math.ceil(secs)
+  return secs >= 60 and ("%d:%02d"):format(secs // 60, secs % 60) or tostring(secs)
+end
+
+local function rows_of(macro, suggested)
+  local recasts = game.recasts()
+  local rows = {}
+  for k, m in ipairs(macro.group) do
+    local a = actions.of(m)
+    local left = a and actions.recast(a, recasts) or 0
+    local name = data.trim(m.name) ~= "" and m.name or (m.lines[1] or "")
+    rows[k] = { name, left > 0 and clock(left) or "", tostring(k), icon = a and { kind = a.kind, id = a.id } or nil,
+      colour = suggested and suggested(m) and SUGGESTED or (a and not actions.usable(a, game.player()) and DIM) or nil }
+  end
+  return rows
+end
+
+function M.is_open()
+  return open_macro ~= nil and ui.is_open(WIN)
+end
+
+local function close()
+  open_macro = nil
+  if ui.is_open(WIN) then ui.close(WIN) end
+end
+
+-- Runs member k of the open group and closes the list.
+function M.pick(k)
+  local macro = open_macro
+  local m = macro and macro.group[k]
+  if not m then return end
+  close()
+  data.set_last_member(macro, k)
+  runner.run_checked(m)
+  if M.hooks.picked then M.hooks.picked() end
+end
+
+-- Opens a group's list; `at` is where on screen ({x, y, above} in window pixels), else at the pointer; members
+-- `suggested(member)` names (the battle menu's suggestions) show in gold.
+function M.open(macro, at, suggested)
+  if not macro.group or #macro.group == 0 then return end
+  local rows = rows_of(macro, suggested)
+  ui.window(WIN, {
+    title = data.trim(macro.name) ~= "" and macro.name or "Group",
+    width = WIDTH,
+    popup = true,
+    animate = true,
+    help = "Up / Down, then Enter. Escape closes.",
+    elements = {
+      { type = "list", id = "m", rows = rows, height = #rows, at = data.last_member(macro),
+        columns = { { title = "" }, { title = "", width = 46, align = "right" },
+          { title = "", width = 20, align = "right" } } },
+    },
+  })
+  open_macro = macro
+  ui.open(WIN, at)
+end
+
+ui.on(WIN, function(_, e)
+  if e.kind == "select" then
+    M.pick(e.index)
+  elseif e.kind == "close" then
+    open_macro = nil
+  end
+end)
+
+return M

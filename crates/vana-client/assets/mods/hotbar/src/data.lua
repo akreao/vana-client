@@ -19,6 +19,8 @@
 -- An equip action's target is the equipment slot ({ kind = "equip", name = "Warp Ring", target = "ring1" }); a system
 -- command's name is the command itself ({ kind = "cmd", name = "/attack", target = "t" }). An action's `line`, when
 -- set, is the player's own line run in place of the one it builds.
+-- A group entry stands for several: { name, label?, group = { <entry>, ... } }; its slot opens a list of them to pick
+-- one from (src/chooser.lua), the one picked last first.
 --
 -- Bars and slots are stored as text keys ("1", "2", ...) because JSON object keys are text.
 
@@ -231,9 +233,10 @@ function M.command(action)
   return line
 end
 
--- An entry's lines as they run: its action's line, then its own.
+-- An entry's lines as they run: its action's line, then its own (none for a group: its members run).
 function M.entry_lines(entry)
   local out = {}
+  if is_table(entry.group) then return out end
   local first = M.command(entry.action)
   if first then
     out[1] = first
@@ -248,13 +251,54 @@ end
 -- new table, so its old expansion is dropped with it.
 local expanded = setmetatable({}, { __mode = "k" })
 
+local function member(e)
+  return { name = e.name or "", label = e.label, lines = M.entry_lines(e), action = e.action }
+end
+
 local function expand(entry, id)
   local m = expanded[entry]
   if not m then
     m = { name = entry.name or "", label = entry.label, lines = M.entry_lines(entry), ref = id, action = entry.action }
+    if is_table(entry.group) then
+      m.group = {}
+      for k, e in ipairs(entry.group) do
+        if is_table(e) then m.group[k] = member(e) end
+      end
+    end
     expanded[entry] = m
   end
   return m
+end
+
+-- A library entry as its slots run it (a group with its members), or nil.
+function M.macro_of(main, id)
+  local lib = library(main, false)
+  local entry = lib and id ~= nil and lib[tostring(id)]
+  return is_table(entry) and expand(entry, tostring(id)) or nil
+end
+
+-- A group's member picked last (kept per character), 1 when none was; and setting it.
+local function last_key(macro)
+  local ok, mj = pcall(function() return require("src.jobs").current() end)
+  return tostring(ok and mj or "") .. ":" .. tostring(macro.ref)
+end
+
+function M.last_member(macro)
+  local t = storage and storage.character and storage.character.hb_last
+  local k = type(t) == "table" and tonumber(t[last_key(macro)]) or 1
+  return math.max(1, math.min(k, #(macro.group or {})))
+end
+
+function M.set_last_member(macro, k)
+  if not (storage and storage.character) then return end
+  if type(storage.character.hb_last) ~= "table" then storage.character.hb_last = {} end
+  storage.character.hb_last[last_key(macro)] = k
+  pcall(storage.save)
+end
+
+-- The member a group's slot shows: the one picked last.
+function M.current_member(macro)
+  return macro.group and macro.group[M.last_member(macro)] or nil
 end
 
 -- The macro a slot value stands for: its library entry for a ref (nil when that entry is gone), else itself.
@@ -297,7 +341,25 @@ function M.get_entry(main, id)
   return is_table(entry) and entry or nil
 end
 
-local function clean_entry(e)
+local clean_entry
+
+local function clean_group(list)
+  local out = {}
+  for _, e in ipairs(list) do
+    if is_table(e) and not is_table(e.group) then
+      local c = clean_entry(e)
+      if c.action or #c.lines > 0 then out[#out + 1] = c end
+    end
+  end
+  return out
+end
+
+clean_entry = function(e)
+  if is_table(e.group) then
+    local out = { name = trim(e.name), group = clean_group(e.group) }
+    if trim(e.label) ~= "" then out.label = trim(e.label) end
+    return out
+  end
   local lines = {}
   for _, l in ipairs(e.lines or {}) do
     l = trim(l)

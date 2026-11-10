@@ -32,8 +32,10 @@ local defined = false
 -- was opened from ({bar, slot, main, sub}: the saved macro goes on it), if any.
 local lib_ids = {}
 local open_builder
+-- `group` is the members while the macro is a group ({name, action} each), else nil.
 local E = { id = nil, kind = "ma", pick = nil, target = "t", line = nil, results = {}, opened = nil, auto_name = nil,
-  slot = nil }
+  slot = nil, group = nil }
+local MAX_MEMBERS = 12
 -- The Config tab's slot whose own key is set there.
 local K = { bar = 1, slot = 1 }
 
@@ -53,6 +55,11 @@ end
 -- ---------------------------------------------------------------------------
 
 local function does_text(entry)
+  if type(entry.group) == "table" then
+    local names = {}
+    for k, m in ipairs(entry.group) do names[k] = m.name or "?" end
+    return ("a group of %d: %s"):format(#names, table.concat(names, ", "))
+  end
   local first = data.command(entry.action)
   local n = #(entry.lines or {})
   if first then
@@ -169,8 +176,13 @@ local function refresh_library(select_id)
   local still = false
   for i, it in ipairs(data.library(S.mj)) do
     lib_ids[i] = it.id
+    local macro = data.macro_of(S.mj, it.id)
     local lines = data.entry_lines(it.entry)
-    tiles[i] = { id = it.id, entry = it.entry, lines = lines, act = actions.of({ lines = lines }),
+    if macro and macro.group then
+      lines = {}
+      for k, m in ipairs(macro.group) do lines[k] = ("%d. %s"):format(k, m.lines[1] or m.name) end
+    end
+    tiles[i] = { id = it.id, entry = it.entry, lines = lines, act = macro and actions.of(macro),
       label = data.display_label(it.entry) }
     if it.id == L.sel then still = true end
   end
@@ -274,6 +286,9 @@ local function built_line()
 end
 
 local function builder_entry()
+  if E.group then
+    return { name = ui.get(WIN, "name").text, label = ui.get(WIN, "label").text, group = E.group }
+  end
   local action = nil
   if E.kind and E.pick then
     action = { kind = E.kind, name = E.pick.name, target = E.target, line = E.line }
@@ -287,6 +302,10 @@ local function builder_entry()
 end
 
 local function refresh_preview()
+  if E.group then
+    ui.update(WIN, "preview", { text = "Runs: the member picked from its list (Up / Down, Enter).", dim = false })
+    return
+  end
   local lines = data.entry_lines(builder_entry())
   ui.update(WIN, "preview", {
     text = #lines == 0 and "Runs: (nothing yet)" or ("Runs: " .. table.concat(lines, "  |  ")),
@@ -311,6 +330,10 @@ end
 
 -- The line field shows the player's own line, else the one the pick builds.
 local function refresh_line()
+  if E.group then
+    ui.update(WIN, "line", { label = "Line it builds (none: each member builds its own)", text = "" })
+    return
+  end
   ui.update(WIN, "line", {
     label = not E.kind and "Line it builds (none: a macro's lines are typed below)"
       or E.line and "Its own line (clear it for the built one)" or "Line it builds (type your own to change it)",
@@ -328,7 +351,14 @@ local function refresh_choice()
   else
     text = ("%s: none yet. Search, then pick one from the list."):format(t.label)
   end
-  ui.update(WIN, "picked", { text = text, dim = not E.kind or not E.pick })
+  if E.group then
+    local names = {}
+    for k, m in ipairs(E.group) do names[k] = m.name end
+    text = #names == 0 and "Group: no members yet. Search, then click to add."
+      or ("Group of %d: %s."):format(#names, table.concat(names, ", "))
+  end
+  ui.update(WIN, "picked", { text = text, dim = not E.group and (not E.kind or not E.pick) })
+  ui.update(WIN, "grp", { items = { E.group and "One Action Again" or "Make a Group of These" } })
   ui.update(WIN, "btype", { at = builder.type_index(E.kind) })
   local labels, at = {}, 1
   for i, c in ipairs(target_choices()) do
@@ -348,6 +378,20 @@ local function refresh_results(query)
     E.results = {}
     ui.update(WIN, "found", { rows = {} })
     ui.update(WIN, "fcount", { text = "" })
+    return
+  end
+  -- A group with no search shows its members (a click takes one out).
+  if E.group and data.trim(query) == "" and not E.opened then
+    E.results = {}
+    local rows = {}
+    for k, m in ipairs(E.group) do
+      local a = actions.of({ lines = { data.command(m.action) or "" }, action = m.action })
+      E.results[k] = { member = k }
+      rows[k] = { m.name, "", "", icon = a and { kind = a.kind, id = a.id } or nil }
+    end
+    ui.update(WIN, "found", { rows = rows, at = 1 })
+    ui.update(WIN, "fcount", { text = #rows == 0 and "No members yet: search, then click one to add it."
+      or "Its members: click one to take it out. Search to add more." })
     return
   end
   local found, more = builder.find(E.kind, query, E.opened and E.opened.list)
@@ -370,6 +414,9 @@ local function refresh_results(query)
   if E.opened then
     count = ("%s: %s Back returns to the list."):format(E.opened.name, count)
   end
+  if E.group then
+    count = count .. " Click one to add it to the group."
+  end
   ui.update(WIN, "fcount", { text = count })
 end
 
@@ -384,6 +431,7 @@ end
 
 local function set_kind(kind)
   if kind == E.kind then return end
+  -- A group keeps its members: another type adds other kinds to it.
   E.kind, E.pick, E.line, E.opened = kind, nil, nil, nil
   E.target = kind == "equip" and "main" or kind == "cmd" and "" or "t"
   refresh_results(ui.get(WIN, "q").text)
@@ -401,7 +449,7 @@ function open_builder(id, slot, macro)
   local entry = id and data.get_entry(S.mj, id) or nil
   E.id = entry and tostring(id) or nil
   E.slot = slot
-  E.kind, E.pick, E.target, E.auto_name, E.line, E.opened = "ma", nil, "t", nil, nil, nil
+  E.kind, E.pick, E.target, E.auto_name, E.line, E.opened, E.group = "ma", nil, "t", nil, nil, nil, nil
   local name, label, extra = "", "", ""
   if macro then
     entry = { name = macro.name, label = macro.label, lines = macro.lines }
@@ -409,7 +457,16 @@ function open_builder(id, slot, macro)
   if entry then
     name, label = entry.name or "", entry.label or ""
     extra = data.join_lines(entry.lines)
-    if entry.action then
+    if type(entry.group) == "table" then
+      E.group = {}
+      for k, m in ipairs(entry.group) do
+        E.group[k] = { name = m.name, action = m.action and { kind = m.action.kind, name = m.action.name,
+          target = m.action.target, line = m.action.line }, lines = m.lines }
+      end
+      local first = E.group[1] and E.group[1].action
+      E.kind = first and first.kind or "ja"
+      E.target = first and first.target or "t"
+    elseif entry.action then
       E.kind = entry.action.kind
       E.pick = { name = entry.action.name }
       E.target = entry.action.target
@@ -436,11 +493,38 @@ local function open_list(e)
   refresh_results("")
 end
 
+-- A group's member from a result: its action on the result's usual target.
+local function member_of(e)
+  return { name = e.title or e.name, action = { kind = E.kind, name = e.name, target = e.target or "" } }
+end
+
 local function pick(index)
   local e = E.results[index]
   if not e then return end
+  if e.member then
+    table.remove(E.group, e.member)
+    refresh_results("")
+    refresh_choice()
+    return
+  end
   if e.back or e.list then
     open_list(not e.back and e or nil)
+    return
+  end
+  if E.group then
+    for _, m in ipairs(E.group) do
+      if m.action and m.action.kind == E.kind and m.action.name == e.name then
+        say(e.name .. " is in the group already.")
+        return
+      end
+    end
+    if #E.group >= MAX_MEMBERS then
+      say(("a group holds %d at most."):format(MAX_MEMBERS))
+      return
+    end
+    E.group[#E.group + 1] = member_of(e)
+    refresh_choice()
+    say(("%s added (%d in the group)."):format(e.name, #E.group))
     return
   end
   local name = data.trim(ui.get(WIN, "name").text)
@@ -462,6 +546,46 @@ local function set_target(index)
   local c = target_choices()[index]
   if not c or not E.kind then return end
   E.target = c[1]
+  for _, m in ipairs(E.group or {}) do
+    if m.action and m.action.kind ~= "equip" and m.action.kind ~= "cmd" then m.action.target = c[1] end
+  end
+  refresh_choice()
+  refresh_preview()
+end
+
+-- The results shown as one group slot (an opener's list, a search such as "cure"), or back to one action.
+local function toggle_group()
+  if E.group then
+    E.group = nil
+    refresh_results(ui.get(WIN, "q").text)
+    refresh_choice()
+    refresh_preview()
+    return
+  end
+  if not E.kind or E.kind == "cmd" then
+    say("search spells, abilities or items first, then make a group of what is found.")
+    return
+  end
+  local members = {}
+  for _, e in ipairs(E.results) do
+    if not e.back and not e.list and not e.member and #members < MAX_MEMBERS then members[#members + 1] = member_of(e) end
+  end
+  if #members == 0 then
+    say("nothing to group: search first, or open a list such as Rune Enchantment.")
+    return
+  end
+  E.group, E.pick, E.line = members, nil, nil
+  E.target = members[1].action.target
+  local name = data.trim(ui.get(WIN, "name").text)
+  if name == "" or name == E.auto_name then
+    local q = data.trim(ui.get(WIN, "q").text)
+    local auto = E.opened and E.opened.name or (q ~= "" and (q:sub(1, 1):upper() .. q:sub(2))) or members[1].name
+    ui.update(WIN, "name", { text = auto })
+    E.auto_name = auto
+  end
+  E.opened = nil
+  ui.update(WIN, "q", { text = "" })
+  refresh_results("")
   refresh_choice()
   refresh_preview()
 end
@@ -479,15 +603,21 @@ local function save_builder()
     return
   end
   local entry = builder_entry()
-  if E.kind and not entry.action then
+  if entry.group then
+    if #entry.group == 0 then
+      say("the group has no members: search, then click to add.")
+      return
+    end
+    if data.trim(entry.name) == "" then entry.name = entry.group[1].name end
+  elseif E.kind and not entry.action then
     say("pick one from the list first.")
     return
   end
-  if not entry.action and #entry.lines == 0 then
+  if not entry.group and not entry.action and #entry.lines == 0 then
     say("add at least one line to the macro.")
     return
   end
-  if data.trim(entry.name) == "" then
+  if data.trim(entry.name) == "" and not entry.group then
     local c = entry.action and entry.action.kind == "cmd" and builder.command(entry.action.name)
     entry.name = c and c.title or entry.action and entry.action.name or entry.lines[1]:sub(1, 24)
   end
@@ -572,6 +702,8 @@ local function spec(drop)
       { type = "list", id = "found", rows = {}, height = 7, page = TAB_BUILD, columns = builder.columns("ma"),
         tip = "Enter or click one to build the macro on it." },
       { type = "text", id = "fcount", text = "", dim = true, page = TAB_BUILD },
+      { type = "buttons", id = "grp", items = { "Make a Group of These" }, page = TAB_BUILD,
+        tip = "One slot for all of them: pressing it opens a list over it to pick one (Up / Down, Enter)." },
       { type = "text", id = "picked", text = "", page = TAB_BUILD },
       { type = drop, id = "target", label = "Target", items = { "<t> Current target" }, at = 1,
         page = TAB_BUILD },
@@ -677,6 +809,8 @@ local function define()
         elseif M.hooks.palette then
           M.hooks.palette()
         end
+      elseif e.id == "grp" then
+        toggle_group()
       elseif e.id == "bbtn" then
         if e.index == 1 then
           save_builder()

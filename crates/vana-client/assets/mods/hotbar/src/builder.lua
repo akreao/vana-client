@@ -237,6 +237,10 @@ function M.find(kind, query, list)
       found[#found + 1] = e
     end
   end
+  -- An opener's rows in the game's order (Ignis, Gelus, ... Tenebrae), as its menu lists them.
+  if list then
+    table.sort(found, function(a, b) return (a.icon and a.icon.id or 0) < (b.icon and b.icon.id or 0) end)
+  end
   local more = #found > M.MAX_RESULTS
   while #found > M.MAX_RESULTS do
     found[#found] = nil
