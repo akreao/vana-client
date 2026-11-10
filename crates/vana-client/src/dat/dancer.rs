@@ -477,13 +477,20 @@ pub fn parse_channels(b: &[u8]) -> Result<Channels> {
     }
 }
 
+/// Most values a packed channel set may decode to (64 MB of floats). A packed channel with no deltas holds its first
+/// value for every frame, so the file's size bounds the channel count but not the frames.
+const PACKED_MOST: usize = 1 << 24;
+
 /// A channel set's value count (width x frames), checked before anything is allocated: at least one frame (sample
-/// reads frame 0), and no more values than the file's bytes could hold (packed: 2-bit deltas, four a byte; else a
-/// 4-byte float each).
+/// reads frame 0), and no more values than the file could hold. Unpacked, that is a 4-byte float each. Packed, each
+/// channel needs its 16-byte stream header, and the total stays under PACKED_MOST: the creator dancers' sets are
+/// mostly constant channels (31511: 438 of 488 with no deltas), so a bytes-per-value bound refused them.
 fn size(b: &[u8], width: usize, frames: usize, packed: bool) -> Result<usize> {
     ensure!(frames >= 1, "channel with no frames");
-    let most = if packed { b.len() * 4 } else { b.len() / 4 };
-    width.checked_mul(frames).filter(|&n| n <= most).context("channel size past the file")
+    let n = width.checked_mul(frames).context("channel size past the file")?;
+    let fits = if packed { width <= b.len() / 16 && n <= PACKED_MOST } else { n <= b.len() / 4 };
+    ensure!(fits, "channel size past the file");
+    Ok(n)
 }
 
 /// Sign-magnitude deltas: 2 bits MSB-first, 4-bit nibbles high first, 8 bit, 16 bit big-endian.
@@ -769,8 +776,10 @@ mod tests {
         assert!(super::size(&b, 4, 0, false).is_err());
         assert!(super::size(&b, 1 << 20, 1 << 20, true).is_err());
         assert!(super::size(&b, usize::MAX, 2, true).is_err());
-        // 64 bytes hold 16 floats, or 256 packed 2-bit deltas.
+        // 64 bytes hold 16 floats.
         assert!(super::size(&b, 4, 4, false).is_ok() && super::size(&b, 4, 5, false).is_err());
-        assert!(super::size(&b, 16, 16, true).is_ok() && super::size(&b, 16, 17, true).is_err());
+        // Packed: a 16-byte header per channel, so 64 bytes hold 4 channels of any frame count up to PACKED_MOST.
+        assert!(super::size(&b, 4, 1000, true).is_ok() && super::size(&b, 5, 1, true).is_err());
+        assert!(super::size(&b, 1, super::PACKED_MOST + 1, true).is_err());
     }
 }
