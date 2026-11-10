@@ -7436,6 +7436,8 @@ struct World {
     missions: Option<missions::Missions>,
     mission_cmd: Option<Option<String>>,
     expansions: u32,
+    /// The installed-content mask (DAT_10456a28 + 0x10), for the Help Desk's GENERIC.VERSION.
+    installed: u32,
     /// The Status row's windows (client/status.rs); s2c 0x063 type 2 (limit points, bits, max merits), type 5 (job point
     /// access), types 3 / 4 (Monstrosity: the types seen as bits, type 3's rank word and prestige); 0x067 @0x25.
     status: Option<status::StatusUi>,
@@ -9791,6 +9793,7 @@ impl App {
                             missions: None,
                             mission_cmd: None,
                             expansions,
+                            installed: self.installed,
                             status: None,
                             merits: None,
                             jp_access: None,
