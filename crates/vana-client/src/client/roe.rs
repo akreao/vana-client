@@ -297,8 +297,9 @@ pub fn update(w: &mut World) {
         3 => build_tree(w, &mut l),
         _ => {}
     }
+    // Kept with a description open too: the modern Journal shows the list beside it, so its arrows stay.
     l.siblings = (0, 0);
-    if l.mode == 3 && l.state == 0 && l.stack.len() > 1 {
+    if l.mode == 3 && l.stack.len() > 1 {
         let cur = l.stack[l.stack.len() - 1].0;
         if let Some(parent) = w.item_info.as_ref().and_then(|c| c.category(l.stack[l.stack.len() - 2].0)) {
             l.siblings = siblings(&ctx(w), &parent, cur);
@@ -529,8 +530,13 @@ pub(super) fn bar(w: &mut World, m: super::scrollbar::Msg) -> bool {
     moved
 }
 
-/// The arrows (children 9 / 10, FUN_102324f0) work only with both siblings.
+/// The arrows (children 9 / 10, FUN_102324f0) work only with both siblings, on the list.
 fn arrows(l: &List) -> bool {
+    l.state == 0 && has_siblings(l)
+}
+
+/// Down in an Objective List category with both siblings (a description open or not).
+fn has_siblings(l: &List) -> bool {
     l.mode == 3 && l.stack.len() > 1 && l.siblings.0 != 0 && l.siblings.1 != 0
 }
 
@@ -708,7 +714,7 @@ pub fn view(w: &World, gu: &GameUi) -> Option<View> {
         empty,
         desc,
         deep: l.stack.len() > 1,
-        siblings: arrows(l),
+        siblings: has_siblings(l),
     })
 }
 
@@ -889,5 +895,28 @@ mod tests {
         assert_eq!(siblings(&c, &parent, 0xf210), (0xf212, 0xf212));
         assert_eq!(siblings(&c, &parent, 0xf212), (0xf210, 0xf210));
         assert_eq!(visible(&c, &parent), vec![0xf210, 0xf212]);
+    }
+
+    #[test]
+    fn sibling_arrows_with_a_description() {
+        let mut l = List {
+            mode: 3,
+            state: 0,
+            rows: Vec::new(),
+            built: true,
+            top: 0,
+            cursor: 0,
+            stack: vec![(ROOT, 0), (0xf210, 0)],
+            siblings: (0xf212, 0xf212),
+            described: 0,
+            page2: false,
+            sent: None,
+        };
+        assert!(arrows(&l) && has_siblings(&l));
+        // A row clicked in the modern Journal opens its description: the classic arrows hide, the modern ones stay.
+        l.state = 1;
+        assert!(!arrows(&l) && has_siblings(&l));
+        l.stack.pop();
+        assert!(!has_siblings(&l));
     }
 }
