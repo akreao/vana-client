@@ -2,6 +2,7 @@
 
 pub mod anim;
 pub mod character;
+pub mod cloth;
 pub mod cull;
 pub mod dancer;
 pub mod effects;
@@ -53,6 +54,7 @@ pub struct PipeCache {
     device: wgpu::Device,
     mips: std::sync::OnceLock<mipgen::Pipes>,
     anim: std::sync::OnceLock<(wgpu::ComputePipeline, wgpu::BindGroupLayout)>,
+    cloth: std::sync::OnceLock<(wgpu::ComputePipeline, wgpu::ComputePipeline, wgpu::BindGroupLayout)>,
     zone: std::sync::Mutex<HashMap<wgpu::TextureFormat, ZonePipes>>,
 }
 
@@ -63,6 +65,10 @@ impl PipeCache {
 
     pub fn anim(&self) -> &(wgpu::ComputePipeline, wgpu::BindGroupLayout) {
         self.anim.get_or_init(|| anim::pipeline(&self.device))
+    }
+
+    pub fn cloth(&self) -> &(wgpu::ComputePipeline, wgpu::ComputePipeline, wgpu::BindGroupLayout) {
+        self.cloth.get_or_init(|| cloth::pipelines(&self.device))
     }
 
     pub fn zone(&self, format: wgpu::TextureFormat) -> ZonePipes {
@@ -175,6 +181,7 @@ impl Gpu {
             device: device.clone(),
             mips: Default::default(),
             anim: Default::default(),
+            cloth: Default::default(),
             zone: Default::default(),
         });
         Ok(Self { instance, adapter, device, queue, mips: Default::default(), uploads: Default::default(), pipes })
@@ -187,6 +194,7 @@ impl Gpu {
             let t = std::time::Instant::now();
             pipes.mips();
             pipes.anim();
+            pipes.cloth();
             for f in formats {
                 pipes.zone(f);
             }
@@ -482,6 +490,8 @@ pub struct ZoneRenderer {
     pose_frame: u64,
     /// Motions evaluated on the GPU into the pose regions (render/anim.rs).
     anim: anim::GpuAnim,
+    /// The actors' cloth, stepped on the GPU after the bones (render/cloth.rs).
+    cloth: cloth::ClothGpu,
     /// Skinned models on the GPU by model address (the Arc keeps it).
     models: HashMap<usize, (std::sync::Arc<crate::dat::character::Character>, ActorGpu)>,
     /// Models going up piece by piece, oldest first, and the magenta slot-0 texture of actors.
@@ -792,9 +802,12 @@ pub struct ActorGpu {
     pub lights: [u8; 4],
     /// The area 4cc it stands in (vtable +0x188, the floor's +0xb0): its environment lights it (0 = the zone's).
     pub area: u32,
-    /// Cloth particles this frame (client/cloth.rs), two vec4s each in model space: position (w 1 = set) and normal
-    /// (w 1 = set), in the order SkinMesh numbers them. Missing ones draw skinned.
+    /// Cloth particles written from the CPU (only cloth-shot does: the game's step on the GPU, render/cloth.rs), two
+    /// vec4s each in model space: position (w 1 = set) and normal (w 1 = set), in SkinMesh's order; missing ones
+    /// draw skinned.
     pub cloth: Vec<[f32; 4]>,
+    /// Its cloth's particle state on the GPU (render/cloth.rs), its own: a clone starts without.
+    cloth_state: cloth::ClothState,
     /// The last mip job of its textures; drawn once the GPU has it.
     mips: u64,
     /// Where pose_actor last placed it (world), for the faded actors' back-to-front order.
@@ -880,6 +893,8 @@ pub struct SkinMesh {
     bones: usize,
     /// Cloth particles numbered (SkinVertex.cloth).
     cloth: usize,
+    /// Those particles' sheets for the GPU step (render/cloth.rs).
+    sim: Option<std::sync::Arc<cloth::ClothModel>>,
 }
 
 impl SkinMesh {
@@ -929,7 +944,8 @@ impl SkinMesh {
         if verts.is_empty() {
             verts.push(SkinVertex::zeroed());
         }
-        SkinMesh { verts, groups, bones, cloth: particles }
+        let sim = cloth::ClothModel::build(&ch.parts, &ch.skeleton).map(std::sync::Arc::new);
+        SkinMesh { verts, groups, bones, cloth: particles, sim }
     }
 }
 
@@ -983,8 +999,9 @@ struct Skinned {
     /// The shine pass's group 3 over these vertices (read as storage for the wrap), made at the first shine.
     shine: std::sync::Arc<std::sync::OnceLock<wgpu::BindGroup>>,
     bones: usize,
-    /// Cloth particles after the bones.
+    /// Cloth particles after the bones, and their sheets.
     cloth: usize,
+    sim: Option<std::sync::Arc<cloth::ClothModel>>,
     /// Dynamic offset of this frame's pose region, and the pose frame it was written in.
     offset: u32,
     frame: u64,
@@ -2514,6 +2531,7 @@ impl ZoneRenderer {
             pose_gpu: None,
             pose_frame: 0,
             anim: anim::GpuAnim::new(gpu),
+            cloth: cloth::ClothGpu::new(gpu),
             models: HashMap::new(),
             builds: Vec::new(),
             budgeted,
@@ -3250,6 +3268,7 @@ impl ZoneRenderer {
             shine: Default::default(),
             bones: mesh.bones,
             cloth: mesh.cloth,
+            sim: mesh.sim.clone(),
             offset: 0,
             frame: u64::MAX,
         });
@@ -3305,6 +3324,7 @@ impl ZoneRenderer {
                     shine: Default::default(),
                     bones: mesh.bones,
                     cloth: mesh.cloth,
+                    sim: mesh.sim.clone(),
                     offset: 0,
                     frame: u64::MAX,
                 }),
@@ -3315,6 +3335,7 @@ impl ZoneRenderer {
                 lights: [0; 4],
                 area: 0,
                 cloth: Vec::new(),
+                cloth_state: Default::default(),
                 mips: 0,
                 origin: Vec3::ZERO,
                 screen: None,
@@ -3332,6 +3353,7 @@ impl ZoneRenderer {
         self.poses.clear();
         self.pose_frame += 1;
         self.anim.begin();
+        self.cloth.begin();
     }
 
     /// Queues a skinned actor posed on the GPU from its motions (to, and from at blend `t`), and its placement.
@@ -3391,6 +3413,16 @@ impl ZoneRenderer {
         self.poses.extend(actor.cloth.iter().copied().chain(std::iter::repeat([0.0; 4])).take(n));
     }
 
+    /// The actor's cloth this frame (render/cloth.rs): its tick, and with `drawn` (its model matrix and its move since
+    /// the last step) the particles into the pose region it was posed in this frame.
+    /// True when the tick was taken (render/cloth.rs `ClothGpu::job`).
+    pub fn cloth(&mut self, actor: &mut ActorGpu, tick: cloth::Tick, drawn: Option<(Mat4, Vec3)>) -> bool {
+        let Some(skin) = actor.skin.as_ref() else { return false };
+        let Some(sim) = skin.sim.clone() else { return false };
+        let region = (skin.frame == self.pose_frame).then_some((skin.offset / 16, skin.bones as u32));
+        self.cloth.job(&mut actor.cloth_state, &sim, tick, region, drawn)
+    }
+
     /// Asks for an attach point (bone, offset) of an actor posed this frame, relative to its root in world axes,
     /// read back later by key (points::Points::take).
     pub fn query_point(&mut self, actor: &ActorGpu, key: u64, bone: u16, off: Vec3) {
@@ -3431,6 +3463,7 @@ impl ZoneRenderer {
         if let Some((buf, _, _)) = &self.pose_gpu {
             gpu.queue.put(buf, 0, bytemuck::cast_slice(&self.poses));
             self.anim.dispatch(gpu, encoder, buf, !self.budgeted);
+            self.cloth.dispatch(gpu, encoder, buf, !self.budgeted);
             self.points.run(gpu, encoder, buf);
         }
     }
@@ -3470,6 +3503,7 @@ impl ZoneRenderer {
             lights: [0; 4],
             area: 0,
             cloth: Vec::new(),
+            cloth_state: Default::default(),
             mips,
             origin: Vec3::ZERO,
             screen: None,
