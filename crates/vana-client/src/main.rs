@@ -2971,6 +2971,9 @@ impl fx::Actors for SoakActors {
     fn files(&self, id: u32) -> (Vec<u32>, Vec<u32>) {
         if id == SWEEP_MOB { self.files.clone() } else { (vec![8392], vec![9672, 7072]) }
     }
+    fn model_files(&self, id: u32) -> Vec<u32> {
+        if id == SWEEP_MOB { self.files.1.clone() } else { vec![9672, 7072] }
+    }
     fn hidden(&self, _: u32) -> bool {
         false
     }

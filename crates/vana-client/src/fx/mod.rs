@@ -49,9 +49,11 @@ pub trait Actors {
     fn sound_muted(&self, _id: u32) -> bool {
         false
     }
-    /// The model's own files (vtable +0x1e0), without the motion files.
-    fn model_files(&self, id: u32) -> Vec<u32> {
-        self.files(id).1
+    /// The model's own files (vtable +0x1e0), without the motion files. None by default: `files` mixes the two, and
+    /// a motion file taken for the model's would pass the lookups that only search the model (op 0x2c's any-name
+    /// Afb, the equipment schedulers).
+    fn model_files(&self, _id: u32) -> Vec<u32> {
+        Vec::new()
     }
     /// Vtable +0x1e4 (FUN_100d12d0): the model and every file on its list are in; None without an actor.
     fn ready(&self, _id: u32) -> Option<bool> {
