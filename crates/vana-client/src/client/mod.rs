@@ -2623,6 +2623,8 @@ fn world_hud(
                 }
                 // An event takes the keys: Enter advances or picks, arrows move, Escape cancels.
                 _ if event::active(world) => event::key(world, *key),
+                // An s2c 0x03B line waiting for a key outside an event: Enter pages it (FUN_10126840).
+                egui::Key::Enter if event::loose_waits(world) => event::loose_key(world),
                 _ if gmtell::open(world) => gmtell::key(world, *key),
                 // charlnk over the full log, and the prompts it opens (the comyn arm below).
                 _ if world.charlnk.is_some() && world.confirm.is_none() => charlnk::key(world, *key),
@@ -7468,6 +7470,8 @@ struct World {
     /// The running event, one waiting for its actors, and the work that outlives events (M / G).
     event: Option<Box<event::Live>>,
     event_pending: Option<Box<event::Waiting>>,
+    /// s2c 0x03B lines in the event message queues outside an event (event.rs `loose_*`; FUN_10127ea0 drops them).
+    loose_msgs: std::collections::VecDeque<event::Msg>,
     /// Scheduler tasks, cutscene camera and screen fades (they outlive the event), and the camera drawn last.
     screen: event::Screen,
     last_camera: Option<Camera>,
@@ -9755,6 +9759,7 @@ impl App {
                             index: None,
                             event: None,
                             event_pending: None,
+                            loose_msgs: Default::default(),
                             screen: Default::default(),
                             last_camera: None,
                             sunshadow_diag: String::new(),
@@ -10674,6 +10679,8 @@ impl App {
                         (false, Vec3::ZERO, None, false);
                     world.run_to = None;
                     (world.fishing, world.fish_pending, world.fish_gauge, world.primer) = (None, false, None, None);
+                    // FUN_1015ef60 (game mode 0x70 / 0xe0, leaving the field): FUN_10127ea0.
+                    event::cancel_queues(world);
                     world.hud_top.enter();
                     // FUN_10095650 at the world start: the Unity chat setting (config 0xb2) and the job master display
                     // (config 0x99 bit 8 clear) go to the server again.
