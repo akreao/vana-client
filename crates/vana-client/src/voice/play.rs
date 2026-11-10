@@ -154,7 +154,7 @@ impl crate::audio::output::Render for Out {
         } else {
             self.shared.volume.load(Ordering::Relaxed) as f32 / 100.0
         };
-        for f in out.chunks_exact_mut(2) {
+        for f in out.as_chunks_mut::<2>().0 {
             while self.frac >= 1.0 {
                 self.a = self.b;
                 self.b = self.sample();

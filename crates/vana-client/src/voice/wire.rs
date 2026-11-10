@@ -93,7 +93,7 @@ pub fn decode(b: &[u8]) -> Option<Packet> {
         }
         AUDIO if rest.len() == 4 + super::FRAME * 2 => {
             let seq = u32::from_le_bytes(rest[..4].try_into().ok()?);
-            let pcm = rest[4..].chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect();
+            let pcm = rest[4..].as_chunks::<2>().0.iter().map(|c| i16::from_le_bytes([c[0], c[1]])).collect();
             Some(Packet::Audio { session, seq, pcm })
         }
         BYE => Some(Packet::Bye { session }),

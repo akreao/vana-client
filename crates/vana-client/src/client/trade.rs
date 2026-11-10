@@ -207,14 +207,14 @@ pub(super) fn modern_link(cursor: u16, key: egui::Key, gil: bool) -> u16 {
     use egui::Key as K;
     match (cursor, key) {
         (1..=8, K::ArrowLeft) => {
-            if (cursor - 1) % 4 == 0 {
+            if (cursor - 1).is_multiple_of(4) {
                 cursor + 3
             } else {
                 cursor - 1
             }
         }
         (1..=8, K::ArrowRight) => {
-            if cursor % 4 == 0 {
+            if cursor.is_multiple_of(4) {
                 cursor - 3
             } else {
                 cursor + 1

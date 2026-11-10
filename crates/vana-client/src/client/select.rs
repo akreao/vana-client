@@ -1106,10 +1106,11 @@ fn draw(
     gu.help_line(text, w, h, colour, None);
     // chfwin opens with the list (select only); unfocused it keeps no highlight (registry flag 0x80000).
     let options = if let Focus::Options(k) = st.focus { Some(k) } else { None };
-    if !deleting && let Some(win) = gu.lobby_window("menu    chfwin", w, h, false, options, options.is_some(), &[]) {
-        if options.is_some() {
-            rects.children = win.children;
-        }
+    if !deleting
+        && let Some(win) = gu.lobby_window("menu    chfwin", w, h, false, options, options.is_some(), &[])
+        && options.is_some()
+    {
+        rects.children = win.children;
     }
     let used: Vec<bool> = (0..SLOTS).map(|i| i < list.entries.len()).collect();
     let press = st.press.map(|t| (9.0 - t.elapsed().as_secs_f32() * 60.0).max(0.0));

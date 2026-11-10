@@ -6,7 +6,7 @@ pub const ALPHA_REF: f32 = 0.3;
 
 /// DXT3 alpha is PS2-style (0x80 opaque): double each 4-bit alpha in place, as the RGBA path does.
 pub fn double_bc2_alpha(data: &mut [u8]) {
-    for block in data.chunks_exact_mut(16) {
+    for block in data.as_chunks_mut::<16>().0 {
         for b in &mut block[..8] {
             let (lo, hi) = (*b & 15, *b >> 4);
             *b = (lo * 2).min(15) | ((hi * 2).min(15) << 4);
@@ -71,7 +71,7 @@ pub mod reference {
     pub fn coverage(rgba: &[u8], scale: f32) -> f32 {
         let cut = ALPHA_REF * 255.0;
         let n = rgba.len() / 4;
-        rgba.chunks_exact(4).filter(|p| p[3] as f32 * scale >= cut).count() as f32 / n.max(1) as f32
+        rgba.as_chunks::<4>().0.iter().filter(|p| p[3] as f32 * scale >= cut).count() as f32 / n.max(1) as f32
     }
 
     /// Scales a level's alpha so its coverage matches `target` (binary search on the scale).
@@ -83,7 +83,7 @@ pub mod reference {
         }
         // The smallest scale found that reaches the target.
         let s = hi;
-        for p in rgba.chunks_exact_mut(4) {
+        for p in rgba.as_chunks_mut::<4>().0 {
             p[3] = (p[3] as f32 * s).min(255.0) as u8;
         }
     }
@@ -91,7 +91,7 @@ pub mod reference {
     /// RGBA levels from level 0 down to 1x1; alpha coverage kept when the image has cut-out alpha.
     pub fn rgba_chain(rgba: &[u8], w: u32, h: u32) -> Vec<(Vec<u8>, u32, u32)> {
         let lut: [f32; 256] = std::array::from_fn(|i| to_lin(i as u8));
-        let cutout = rgba.chunks_exact(4).any(|p| p[3] < 250);
+        let cutout = rgba.as_chunks::<4>().0.iter().any(|p| p[3] < 250);
         let target = coverage(rgba, 1.0);
         let mut out = vec![(rgba.to_vec(), w, h)];
         let (mut cur, mut cw, mut ch) = (rgba.to_vec(), w, h);
@@ -208,8 +208,8 @@ pub mod reference {
     pub fn levels(rgba: &[u8], w: u32, h: u32, dxt: Option<(bool, &[u8])>) -> Levels {
         let chain = rgba_chain(rgba, w, h);
         match dxt {
-            Some((dxt3, data)) if w % 4 == 0 && h % 4 == 0 => {
-                let punch = !dxt3 && rgba.chunks_exact(4).any(|p| p[3] < 128);
+            Some((dxt3, data)) if w.is_multiple_of(4) && h.is_multiple_of(4) => {
+                let punch = !dxt3 && rgba.as_chunks::<4>().0.iter().any(|p| p[3] < 128);
                 let mut lv = Vec::with_capacity(chain.len());
                 let mut first =
                     data[..data.len().min(((w / 4) * (h / 4) * if dxt3 { 16 } else { 8 }) as usize)].to_vec();

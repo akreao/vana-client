@@ -128,9 +128,6 @@ pub fn aspect(window: [u32; 2], retail: bool, ratio: u32) -> f32 {
     0.75 * r / 0.791
 }
 
-/// Movement and turn keys from the k1assign ids (0x4a..0x4d move up / down / left / right, 0x66 / 0x67 turn
-/// right / left), as winit keys.
-
 #[cfg(test)]
 mod tests {
     use super::*;

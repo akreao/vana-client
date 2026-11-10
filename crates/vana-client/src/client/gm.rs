@@ -798,7 +798,7 @@ mod tests {
             ("4097".into(), "Ice Crystal".into()),
             ("4112".into(), "Potion".into()),
         ];
-        fn names<'a>(v: Vec<&'a (String, String)>) -> Vec<&'a str> {
+        fn names(v: Vec<&(String, String)>) -> Vec<&str> {
             v.into_iter().map(|c| c.1.as_str()).collect()
         }
         assert_eq!(names(suggest(&c, "crystal", 5)), ["Fire Crystal", "Ice Crystal"]);

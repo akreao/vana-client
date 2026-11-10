@@ -189,13 +189,12 @@ pub(super) fn install(lua: &Lua, g: &Table) -> mlua::Result<()> {
             let out = lua.create_table()?;
             for d in list() {
                 let e = lua.create_table()?;
-                (
-                    e.set("path", d.path)?,
-                    e.set("vendor", d.vendor)?,
-                    e.set("product", d.product)?,
-                    e.set("name", d.name)?,
-                );
-                (e.set("interface", d.interface)?, e.set("descriptor", lua.create_string(&d.descriptor)?)?);
+                e.set("path", d.path)?;
+                e.set("vendor", d.vendor)?;
+                e.set("product", d.product)?;
+                e.set("name", d.name)?;
+                e.set("interface", d.interface)?;
+                e.set("descriptor", lua.create_string(&d.descriptor)?)?;
                 out.push(e)?;
             }
             Ok(out)

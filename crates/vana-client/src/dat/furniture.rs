@@ -30,7 +30,7 @@ impl Furn {
 
     /// FUN_101ceaf0 / FUN_101ceb40: the footprint in cells (width, depth), turned for odd rotations.
     pub fn footprint(&self, rot: u8) -> (u8, u8) {
-        if rot % 2 == 0 { (self.size[0], self.size[1]) } else { (self.size[1], self.size[0]) }
+        if rot.is_multiple_of(2) { (self.size[0], self.size[1]) } else { (self.size[1], self.size[0]) }
     }
 }
 
@@ -51,7 +51,9 @@ impl FurnTable {
         let u16_at = |b: &[u8], o: usize| u16::from_le_bytes([b[o], b[o + 1]]);
         let entries = furn
             .data
-            .chunks_exact(8)
+            .as_chunks::<8>()
+            .0
+            .iter()
             .map(|e| Furn { flags: u16_at(e, 0), model: u16_at(e, 2), size: [e[4], e[5]], height: u16_at(e, 6) })
             .collect();
         let u32_at = |b: &[u8], o: usize| b.get(o..o + 4).map(|s| u32::from_le_bytes(s.try_into().unwrap()));

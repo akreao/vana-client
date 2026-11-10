@@ -269,7 +269,7 @@ pub fn of(dll: &[u8]) -> Result<Tables> {
 pub fn call_sounds(dll: &[u8]) -> Result<Vec<(String, u32)>> {
     let at = of(dll)?.calls_at;
     let mut out = Vec::new();
-    for row in dll.get(at..).unwrap_or_default().chunks_exact(0x14) {
+    for row in dll.get(at..).unwrap_or_default().as_chunks::<0x14>().0 {
         let snd = u32::from_le_bytes(row[16..20].try_into()?);
         if snd == 0 {
             break;
@@ -286,7 +286,7 @@ pub fn call_sounds(dll: &[u8]) -> Result<Vec<(String, u32)>> {
 pub fn text_help(dll: &[u8]) -> Result<Vec<(i16, i16)>> {
     let at = find(dll, &TEXT_HELP)?;
     let mut out = Vec::new();
-    for r in dll.get(at..at + 0xe4 * 4).unwrap_or_default().chunks_exact(4) {
+    for r in dll.get(at..at + 0xe4 * 4).unwrap_or_default().as_chunks::<4>().0 {
         let (c, e) = (i16::from_le_bytes([r[0], r[1]]), i16::from_le_bytes([r[2], r[3]]));
         if c == -1 || e == -1 {
             break;
@@ -368,7 +368,9 @@ fn find_pair(dll: &[u8], value: i32, word: &str) -> Result<usize> {
         if let Some(va) = va_of(dll, s) {
             let pat: Vec<u8> = [value.to_le_bytes(), va.to_le_bytes()].concat();
             if let Some(p) = dll
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .enumerate()
                 .find_map(|(k, _)| (dll.get(k * 4..k * 4 + 8) == Some(&pat[..])).then_some(k * 4))
             {
@@ -455,8 +457,10 @@ pub fn search_words(dll: &[u8]) -> Result<SearchWords> {
         .and_then(|o| va_of(dll, o))
         .ok_or_else(|| anyhow!("FFXiMain.dll: no region lists"))?;
     let arr = dll
-        .chunks_exact(4)
-        .position(|c| c == list_va.to_le_bytes())
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .position(|c| *c == list_va.to_le_bytes())
         .ok_or_else(|| anyhow!("FFXiMain.dll: no region array"))?
         * 4;
     for k in 0..0x32 {

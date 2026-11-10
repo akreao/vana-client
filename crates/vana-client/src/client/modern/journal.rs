@@ -568,7 +568,7 @@ pub fn draw(p: &mut Panels, w: &mut World) {
             desc = Some((nav[sel].0.clone(), "Enter or a click on an entry at the left opens it.".into()));
         }
         Tab::KeyItems => {
-            let Some(k) = w.keyitems.clone() else { return };
+            let Some(k) = w.keyitems.as_ref() else { return };
             waiting = k.state == 0;
             let cats = keyitems::all(w);
             for (title, items) in cats.iter() {
@@ -691,11 +691,11 @@ pub fn draw(p: &mut Panels, w: &mut World) {
     };
     let Some(at) = at else { return };
     if t == Tab::Roe {
-        if roe_list.is_some() {
-            if let Some(k) = mouse.click {
-                roe::set_cursor(w, k);
-                roe::modern_key(w, egui::Key::Enter, false);
-            }
+        if roe_list.is_some()
+            && let Some(k) = mouse.click
+        {
+            roe::set_cursor(w, k);
+            roe::modern_key(w, egui::Key::Enter, false);
         }
         return;
     }

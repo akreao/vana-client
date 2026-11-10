@@ -938,8 +938,10 @@ pub fn topbar_shot(
                 }
             }
         }
-        let mut ui = super::configui::ConfigUi::default();
-        ui.owned = installed.unwrap_or_else(|| crate::dat::installed(&cfg.ffxi_dir()));
+        let mut ui = super::configui::ConfigUi {
+            owned: installed.unwrap_or_else(|| crate::dat::installed(&cfg.ffxi_dir())),
+            ..Default::default()
+        };
         let mut settings = None;
         let mut update = None;
         for w in spec.split(',').filter(|w| !w.is_empty()) {

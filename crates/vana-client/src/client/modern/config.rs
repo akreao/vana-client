@@ -2047,13 +2047,7 @@ fn ours_help(s: &SettingsUi) -> String {
 
 /// The title's Config (lobycwin) in the modern style: the list, then retail's page or our Settings (`s`). Its step
 /// comes back: the sounds, the changed ids.
-pub fn lobby(
-    p: &mut Panels,
-    c: &mut ConfigUi,
-    v: &mut Values,
-    mut s: Option<&mut SettingsUi>,
-    sw: f32,
-) -> configui::Out {
+pub fn lobby(p: &mut Panels, c: &mut ConfigUi, v: &mut Values, s: Option<&mut SettingsUi>, sw: f32) -> configui::Out {
     let mut out = configui::Out::default();
     let Some(gu) = p.gu else { return out };
     let m = p.m;
@@ -2131,7 +2125,7 @@ pub fn lobby(
             }
         },
     );
-    if let Some(s) = s.as_deref_mut().filter(|_| !sact.is_empty() || !mact.is_empty()) {
+    if let Some(s) = s.filter(|_| !sact.is_empty() || !mact.is_empty()) {
         s.sounds.clear();
         settings_do(s, sact);
         mods_do(s, mact);

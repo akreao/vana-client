@@ -239,10 +239,8 @@ pub fn received(w: &mut World, status: u8, name: String) {
                 line(w, 0x77, &name);
             }
         }
-        1 => {
-            if delete(&mut w.partyreq, &name) {
-                line(w, 0x78, &name);
-            }
+        1 if delete(&mut w.partyreq, &name) => {
+            line(w, 0x78, &name);
         }
         _ => {}
     }

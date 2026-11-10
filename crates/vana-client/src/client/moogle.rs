@@ -566,7 +566,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         return rects;
     }
     let mut off = if m.nomad { Vec::new() } else { myroom_off(w, m) };
-    let child6 = (!m.nomad).then(|| {
+    let child6 = (!m.nomad).then_some({
         if w.mh_open {
             608
         } else if m.open_pending {
@@ -595,12 +595,11 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
             super::winhits::record(w, name, &win);
             let [x, y, ..] = win.frame;
             gu.disabled_children(name, x, y, off, focused.then_some(sel));
-            if let Some(l) = gu.layout(name).cloned() {
-                if let Some((child, sprite)) = extra
-                    && let Some(e) = l.elements.iter().find(|e| e.id == child)
-                {
-                    gu.sprite("menu    windowps", sprite, x + e.x as f32, y + e.y as f32, 0x8080_8080);
-                }
+            if let Some(l) = gu.layout(name).cloned()
+                && let Some((child, sprite)) = extra
+                && let Some(e) = l.elements.iter().find(|e| e.id == child)
+            {
+                gu.sprite("menu    windowps", sprite, x + e.x as f32, y + e.y as f32, 0x8080_8080);
             }
             rects.push(win.frame);
         }
@@ -634,7 +633,7 @@ pub(super) fn views(w: &World, gu: &GameUi) -> Vec<super::modern::MenuWin> {
         return Vec::new();
     }
     let mut off = if m.nomad { Vec::new() } else { myroom_off(w, m) };
-    let child6 = (!m.nomad).then(|| {
+    let child6 = (!m.nomad).then_some({
         if w.mh_open {
             608
         } else if m.open_pending {

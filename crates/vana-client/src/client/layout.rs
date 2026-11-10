@@ -533,11 +533,11 @@ fn frame_colors(w: &mut World, l: &mut Layout, ticks: f32) {
         let mannequin = l.dress.is_some() || w.inv.slots.get(&k).is_some_and(|&(id, _)| item_type(w, id) == MANNEQUIN);
         let alpha = if mannequin { 0x80u32 } else { 0x40 };
         if let Some(level) = w.furniture.pulses.get_mut(&k).and_then(|p| p.tick(ticks)) {
-            l.colors.insert(k, alpha << 24 | level as u32 * 0x1_0101);
+            l.colors.insert(k, (alpha << 24) | (level as u32 * 0x1_0101));
             let grid = l.grid(w);
             for (s, c) in grid.on(k.1, k.0) {
                 if let Some(level) = w.furniture.pulses.get_mut(&(c, s)).and_then(|p| p.tick(ticks)) {
-                    l.colors.insert((c, s), 0x40 << 24 | level as u32 * 0x1_0101);
+                    l.colors.insert((c, s), (0x40 << 24) | (level as u32 * 0x1_0101));
                 }
             }
         }

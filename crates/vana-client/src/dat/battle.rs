@@ -680,7 +680,7 @@ impl BattleText {
                         out.extend(format!("{} gil", separated(v as u32)).bytes());
                         3
                     }
-                    0x34..=0x36 | 0x81 | 0xa0..=0xb5 => 3,
+                    0x34..=0x36 => 3,
                     0x38 => 4,
                     0x84 => {
                         // Names of the set bits of work[4], kind 3 entries n * 0x20 + bit, space separated.
@@ -740,7 +740,7 @@ impl BattleText {
                     }
                     // The handlers 0x80..0xb7 read an operand (3 bytes) but 0x8f..0x93; past the table (0x100c2b38) markers such as fb / fc are 2.
                     0x93 => 2,
-                    0x80..=0xb7 => 3,
+                    b if (0x80..=0xb7).contains(&b) => 3,
                     _ => 2,
                 },
                 0x20..0x7f => {

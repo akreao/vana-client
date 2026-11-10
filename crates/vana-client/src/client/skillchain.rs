@@ -365,7 +365,7 @@ pub fn view(w: &World) -> Option<View> {
         let by = members
             .iter()
             .position(|x| x.me && r.by == w.my_id)
-            .map(|k| who(k))
+            .map(who)
             .or_else(|| w.party.party().find(|x| x.id == r.by).map(|x| x.name.clone()))
             .unwrap_or_default();
         let closers = closers(&members, r)

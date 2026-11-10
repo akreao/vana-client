@@ -98,7 +98,9 @@ pub fn order(file: &[u8]) -> Vec<u16> {
     };
     file.get(o + 16..o + 16 + 0x400)
         .unwrap_or_default()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
         .filter(|&v| v != 0)
         .collect()

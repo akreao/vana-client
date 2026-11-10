@@ -612,22 +612,20 @@ pub struct RowView {
     pub count: Option<(u32, u32)>,
 }
 
-/// An objective's description there: its name and tint, both pages' text, the progress (its tint), the once-only
-/// note and the rewards, with their labels.
+/// An objective's description there: its name, both pages' text, the progress, the once-only note and the rewards,
+/// with their labels.
 pub struct DescView {
     pub name: String,
-    pub tint: u32,
     pub text: String,
     pub progress_label: String,
     pub progress: String,
-    pub progress_tint: u32,
     pub once: Option<String>,
     pub rewards_label: String,
     pub rewards: String,
 }
 
 /// What the modern Journal draws of an open list: its title, rows, cursor, the empty line, the cursor row's
-/// description, whether it is down in a category and whether its sibling categories are there.
+/// description and whether it is down in a category.
 pub struct View {
     pub mode: usize,
     pub title: String,
@@ -636,7 +634,6 @@ pub struct View {
     pub empty: Option<String>,
     pub desc: Option<DescView>,
     pub deep: bool,
-    pub siblings: bool,
 }
 
 pub fn view(w: &World, gu: &GameUi) -> Option<View> {
@@ -675,8 +672,7 @@ pub fn view(w: &World, gu: &GameUi) -> Option<View> {
         .then(|| gu.lobby_msg(0xc, if l.mode == 2 { 0x72 } else { 0x87 }, ""));
     let desc = l.rows.get(l.cursor).filter(|&&id| id < 0xf200).and_then(|&id| {
         let o = objective(w, id)?;
-        let (have, full) = count(w, id, &o);
-        let at_goal = l.mode == 4 && w.roe.done(id, Some(&o)) && have == o.goal;
+        let (have, _) = count(w, id, &o);
         let extra = |v: u32, m: usize| (v != 0).then(|| format!("{v}{}", gu.lobby_msg(0xc, m, "")));
         let mut rewards = vec![
             format!("{}{}", o.sparks, gu.lobby_msg(0xc, 0x7b, "")),
@@ -686,26 +682,15 @@ pub fn view(w: &World, gu: &GameUi) -> Option<View> {
         let text = if o.pages[1].is_empty() { o.pages[0].clone() } else { format!("{} {}", o.pages[0], o.pages[1]) };
         Some(DescView {
             name: o.name.clone(),
-            tint: colour(w, l.mode, id, Some(&o), false),
             text,
             progress_label: gu.lobby_msg(0xc, 0x81, ""),
             progress: format!("{have}/{}", o.goal),
-            progress_tint: if full || at_goal { 0x8020_60a0 } else { WHITE },
             once: (!o.repeatable).then(|| gu.lobby_msg(0xc, 0x84, "")),
             rewards_label: gu.lobby_msg(0xc, 0x83, ""),
             rewards: rewards.join("   "),
         })
     });
-    Some(View {
-        mode: l.mode,
-        title,
-        rows,
-        cursor: l.cursor,
-        empty,
-        desc,
-        deep: l.stack.len() > 1,
-        siblings: l.siblings != (0, 0),
-    })
+    Some(View { mode: l.mode, title, rows, cursor: l.cursor, empty, desc, deep: l.stack.len() > 1 })
 }
 
 /// The modern Journal moves the cursor itself (hover, a click); a description open goes back to the list.

@@ -85,19 +85,15 @@ pub(super) fn install(lua: &Lua, g: &Table, mod_id: &str) -> mlua::Result<()> {
             let list = lua.create_table()?;
             for (k, c) in v.characters.iter().enumerate() {
                 let e = lua.create_table()?;
-                (
-                    e.set("slot", k + 1)?,
-                    e.set("name", c.name.as_str())?,
-                    e.set("world", c.world.as_str())?,
-                    e.set("race", c.race)?,
-                );
-                (
-                    e.set("job", c.job)?,
-                    e.set("level", c.level)?,
-                    e.set("sub_job", c.sub_job)?,
-                    e.set("zone", c.zone)?,
-                    e.set("available", c.available)?,
-                );
+                e.set("slot", k + 1)?;
+                e.set("name", c.name.as_str())?;
+                e.set("world", c.world.as_str())?;
+                e.set("race", c.race)?;
+                e.set("job", c.job)?;
+                e.set("level", c.level)?;
+                e.set("sub_job", c.sub_job)?;
+                e.set("zone", c.zone)?;
+                e.set("available", c.available)?;
                 list.push(e)?;
             }
             out.set("characters", list)?;

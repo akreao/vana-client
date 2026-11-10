@@ -1007,7 +1007,7 @@ fn weather_tip(id: u16) -> (&'static str, String) {
     let body = match id {
         4..=19 => {
             let e = ELEMENTS[(id as usize - 4) / 2];
-            if id % 2 == 0 {
+            if id.is_multiple_of(2) {
                 format!("{e} weather: {e} is stronger here while it lasts.")
             } else {
                 format!("Double {} weather: {e} is stronger still while it lasts.", e.to_lowercase())

@@ -181,10 +181,11 @@ fn zone_ids(lsb: &Path) -> Result<BTreeMap<String, u16>> {
         if let Some((k, v)) = l.trim().split_once('=') {
             let k = k.trim();
             let v = v.trim().trim_end_matches(',').trim();
-            if !k.is_empty() && k.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_') {
-                if let Ok(v) = v.parse() {
-                    m.insert(k.to_string(), v);
-                }
+            if !k.is_empty()
+                && k.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+                && let Ok(v) = v.parse()
+            {
+                m.insert(k.to_string(), v);
             }
         }
     }
@@ -207,14 +208,14 @@ fn lsb_entries(text: &str) -> (Option<String>, Vec<(u32, String)>) {
             continue;
         }
         depth += l.matches('{').count() as i32 - l.matches('}').count() as i32;
-        if let Some((lhs, rest)) = t.split_once('=') {
-            if let Some((num, com)) = rest.split_once(',') {
-                let com = com.trim();
-                if let (Ok(id), Some(c)) = (num.trim().parse::<u32>(), com.strip_prefix("--")) {
-                    if lhs.trim().chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_') {
-                        out.push((id, c.trim().to_string()));
-                    }
-                }
+        if let Some((lhs, rest)) = t.split_once('=')
+            && let Some((num, com)) = rest.split_once(',')
+        {
+            let com = com.trim();
+            if let (Ok(id), Some(c)) = (num.trim().parse::<u32>(), com.strip_prefix("--"))
+                && lhs.trim().chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+            {
+                out.push((id, c.trim().to_string()));
             }
         }
         if depth <= 0 && l.contains('}') {

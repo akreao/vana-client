@@ -340,194 +340,6 @@ fn pose_actors(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_i
 }
 "#;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::dat::character::{Look, load_character, pose};
-
-    /// The compute pass gives the CPU pose (and its cross-fade) for a Hume run blended from idle.
-    #[test]
-    fn gpu_pose_matches_cpu() {
-        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
-        let look = Look { race: 1, face: 0, head: 0, body: 8, hands: 8, legs: 8, feet: 8, main: 0, sub: 0, range: 0 };
-        let Ok(ch) = load_character(&index, &look) else { return };
-        let ch = Arc::new(ch);
-        let Ok(gpu) = Gpu::headless() else { return };
-        let to: Vec<(&Animation, f32)> = ch.find_animations("run").into_iter().map(|a| (a, 3.37)).collect();
-        let from: Vec<(&Animation, f32)> = ch.find_animations("idl").into_iter().map(|a| (a, 7.5)).collect();
-        assert!(!to.is_empty() && !from.is_empty());
-        check(&gpu, &ch, &to, &from, &[]);
-        // Pugil idle: its keys flip sign between frames (the short-way lerp).
-        let Ok(pugil) = crate::dat::npc::load_model(&index, 0x15c) else { return };
-        let pugil = Arc::new(pugil);
-        let idle: Vec<(&Animation, f32)> = pugil.find_animations("idl").into_iter().map(|a| (a, 4.5)).collect();
-        assert!(!idle.is_empty());
-        check(&gpu, &pugil, &idle, &[], &[]);
-    }
-
-    /// Nine's look (Mithra, two daggers on carry bones 96 / 98): the engaged run (file 47223's run1) keys the carry
-    /// bones at rest, on the ground; drawn, each rides its grip (FUN_10029320), on the GPU too.
-    #[test]
-    fn drawn_weapons_ride_the_grips() {
-        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
-        let look = Look {
-            race: 7,
-            face: 10,
-            head: 0,
-            body: 110,
-            hands: 110,
-            legs: 110,
-            feet: 11,
-            main: 430,
-            sub: 379,
-            range: 62,
-        };
-        let Ok(mut ch) = load_character(&index, &look) else { return };
-        let Ok(d) = index.read(47223) else { return };
-        let f = crate::dat::character::load_file(&d).unwrap();
-        ch.animations.push(f.animations.iter().find(|a| a.name == "run1").expect("run1").clone());
-        let ch = Arc::new(ch);
-        let grips: Vec<(u16, u16)> = ch.grips.iter().flatten().copied().collect();
-        assert_eq!(grips.len(), 2, "{:?}", ch.grips);
-        let mut to: Vec<(&Animation, f32)> =
-            ch.find_animations("run").into_iter().filter(|a| a.name != "run1").map(|a| (a, 4.0)).collect();
-        to.push((ch.animations.last().unwrap(), 4.0));
-        let loose = pose(&ch.skeleton, &to);
-        let held = crate::dat::character::pose_held(&ch.skeleton, &to, &grips);
-        for &(c, g) in &grips {
-            let (c, g) = (c as usize, g as usize);
-            println!("carry {c} on grip {g}: loose height {:.2}, held {:.2}", -loose[c].t.y, -held[c].t.y);
-            assert!((held[c].t - held[g].t).length() < 1e-4 && held[c].q.dot(held[g].q).abs() > 0.9999);
-            assert!(-loose[c].t.y < 0.2 && -held[c].t.y > 0.5);
-        }
-        let Ok(gpu) = Gpu::headless() else { return };
-        check(&gpu, &ch, &to, &[], &grips);
-    }
-
-    fn posed(gpu: &Gpu, ch: &Arc<Character>, to: &[(&Animation, f32)], look: Option<HeadLook>) -> Vec<glam::Quat> {
-        let n = ch.skeleton.bones.len().min(TABLE - 1);
-        let mut ga = GpuAnim::new(gpu);
-        ga.begin();
-        ga.job(ch, &[], to, &[], 0.0, 0, look, None, &[]);
-        let size = (n * 48) as u64;
-        let out = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-            label: None,
-            size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-        let rb = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-            label: None,
-            size,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let mut enc = gpu.device.create_command_encoder(&Default::default());
-        ga.dispatch(gpu, &mut enc, &out, true);
-        enc.copy_buffer_to_buffer(&out, 0, &rb, 0, size);
-        gpu.queue.submit([enc.finish()]);
-        rb.slice(..).map_async(wgpu::MapMode::Read, |_| {});
-        gpu.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None }).unwrap();
-        let data = rb.slice(..).get_mapped_range().unwrap();
-        let v: &[f32] = bytemuck::cast_slice(&data);
-        (0..n).map(|i| glam::Quat::from_slice(&v[i * 12..i * 12 + 4])).collect()
-    }
-
-    /// Hume M idle looking far to one side: the neck turns about its 17.7 deg limit and the head, which carries
-    /// the neck's turn, about 43 deg in all; a point straight ahead barely moves them.
-    #[test]
-    fn head_look_limits() {
-        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
-        let Ok(gpu) = Gpu::headless() else { return };
-        for race in 1..=8u8 {
-            let look = Look { race, face: 0, head: 0, body: 8, hands: 8, legs: 8, feet: 8, main: 0, sub: 0, range: 0 };
-            let Ok(ch) = load_character(&index, &look) else { return };
-            let ch = Arc::new(ch);
-            let idle: Vec<(&Animation, f32)> = ch.find_animations("idl").into_iter().map(|a| (a, 0.0)).collect();
-            let pt = |k: usize| ch.skeleton.points[k];
-            let hl = |point: glam::Vec3| HeadLook {
-                bones: [Some(pt(3).0), Some(pt(7).0)],
-                two: true,
-                weight: 1.0,
-                point,
-                p3: pt(3).1,
-                p4: pt(4),
-                drop: 0.0,
-                limits: ch.skeleton.look_limits,
-            };
-            let base = posed(&gpu, &ch, &idle, None);
-            let side = posed(&gpu, &ch, &idle, Some(hl(glam::Vec3::new(0.0, -1.6, 20.0))));
-            let ahead = posed(&gpu, &ch, &idle, Some(hl(glam::Vec3::new(20.0, -1.6, 0.0))));
-            let turn = |a: &[glam::Quat], b: usize| (a[b] * base[b].inverse()).to_axis_angle().1.to_degrees();
-            let (head, neck) = (pt(3).0 as usize, pt(7).0 as usize);
-            println!(
-                "race {race} side: head {:.1} neck {:.1}; ahead: head {:.1} neck {:.1}",
-                turn(&side, head),
-                turn(&side, neck),
-                turn(&ahead, head),
-                turn(&ahead, neck)
-            );
-            assert!((turn(&side, neck) - 17.7).abs() < 3.0, "race {race}");
-            assert!((turn(&side, head) - 43.3).abs() < 5.0, "race {race}");
-            assert!(turn(&ahead, head) < 15.0, "race {race}");
-        }
-    }
-
-    fn check(
-        gpu: &Gpu,
-        ch: &Arc<Character>,
-        to: &[(&Animation, f32)],
-        from: &[(&Animation, f32)],
-        grips: &[(u16, u16)],
-    ) {
-        for (f, t) in [(from, 0.3f32), (&[][..], 0.0)] {
-            if f.is_empty() && t != 0.0 {
-                continue;
-            }
-            let cpu = if f.is_empty() {
-                crate::dat::character::pose_held(&ch.skeleton, &to, grips)
-            } else {
-                crate::render::character::pose_blend(&ch, f, &to, t, grips)
-            };
-            let mut ga = GpuAnim::new(&gpu);
-            ga.begin();
-            ga.job(&ch, &[], &to, f, t, 0, None, None, grips);
-            let n = cpu.len().min(TABLE - 1);
-            let size = (n * 48) as u64;
-            let out = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-                label: None,
-                size,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-                mapped_at_creation: false,
-            });
-            let rb = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-                label: None,
-                size,
-                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            let mut enc = gpu.device.create_command_encoder(&Default::default());
-            ga.dispatch(&gpu, &mut enc, &out, true);
-            enc.copy_buffer_to_buffer(&out, 0, &rb, 0, size);
-            gpu.queue.submit([enc.finish()]);
-            rb.slice(..).map_async(wgpu::MapMode::Read, |_| {});
-            gpu.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None }).unwrap();
-            let data = rb.slice(..).get_mapped_range().unwrap();
-            let v: &[f32] = bytemuck::cast_slice(&data);
-            let mut worst = 0f32;
-            for (i, b) in cpu.iter().take(n).enumerate() {
-                let g = &v[i * 12..i * 12 + 12];
-                let gq = glam::Quat::from_slice(&g[0..4]);
-                let dq = (gq - b.q).length().min((gq + b.q).length());
-                let dp = (glam::Vec3::from_slice(&g[4..7]) - b.t).length();
-                let ds = (glam::Vec3::from_slice(&g[8..11]) - b.s).length();
-                worst = worst.max(dq).max(dp).max(ds);
-            }
-            assert!(worst < 1e-3, "blend {t}: worst difference {worst}");
-        }
-    }
-}
-
 /// Keys and skeletons in one u32 buffer (floats as bits), jobs per frame, and the compute pipeline.
 pub struct GpuAnim {
     pipeline: wgpu::ComputePipeline,
@@ -851,5 +663,193 @@ impl GpuAnim {
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &group, &[]);
         pass.dispatch_workgroups(n as u32, 1, 1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dat::character::{Look, load_character, pose};
+
+    /// The compute pass gives the CPU pose (and its cross-fade) for a Hume run blended from idle.
+    #[test]
+    fn gpu_pose_matches_cpu() {
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let look = Look { race: 1, face: 0, head: 0, body: 8, hands: 8, legs: 8, feet: 8, main: 0, sub: 0, range: 0 };
+        let Ok(ch) = load_character(&index, &look) else { return };
+        let ch = Arc::new(ch);
+        let Ok(gpu) = Gpu::headless() else { return };
+        let to: Vec<(&Animation, f32)> = ch.find_animations("run").into_iter().map(|a| (a, 3.37)).collect();
+        let from: Vec<(&Animation, f32)> = ch.find_animations("idl").into_iter().map(|a| (a, 7.5)).collect();
+        assert!(!to.is_empty() && !from.is_empty());
+        check(&gpu, &ch, &to, &from, &[]);
+        // Pugil idle: its keys flip sign between frames (the short-way lerp).
+        let Ok(pugil) = crate::dat::npc::load_model(&index, 0x15c) else { return };
+        let pugil = Arc::new(pugil);
+        let idle: Vec<(&Animation, f32)> = pugil.find_animations("idl").into_iter().map(|a| (a, 4.5)).collect();
+        assert!(!idle.is_empty());
+        check(&gpu, &pugil, &idle, &[], &[]);
+    }
+
+    /// Nine's look (Mithra, two daggers on carry bones 96 / 98): the engaged run (file 47223's run1) keys the carry
+    /// bones at rest, on the ground; drawn, each rides its grip (FUN_10029320), on the GPU too.
+    #[test]
+    fn drawn_weapons_ride_the_grips() {
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let look = Look {
+            race: 7,
+            face: 10,
+            head: 0,
+            body: 110,
+            hands: 110,
+            legs: 110,
+            feet: 11,
+            main: 430,
+            sub: 379,
+            range: 62,
+        };
+        let Ok(mut ch) = load_character(&index, &look) else { return };
+        let Ok(d) = index.read(47223) else { return };
+        let f = crate::dat::character::load_file(&d).unwrap();
+        ch.animations.push(f.animations.iter().find(|a| a.name == "run1").expect("run1").clone());
+        let ch = Arc::new(ch);
+        let grips: Vec<(u16, u16)> = ch.grips.iter().flatten().copied().collect();
+        assert_eq!(grips.len(), 2, "{:?}", ch.grips);
+        let mut to: Vec<(&Animation, f32)> =
+            ch.find_animations("run").into_iter().filter(|a| a.name != "run1").map(|a| (a, 4.0)).collect();
+        to.push((ch.animations.last().unwrap(), 4.0));
+        let loose = pose(&ch.skeleton, &to);
+        let held = crate::dat::character::pose_held(&ch.skeleton, &to, &grips);
+        for &(c, g) in &grips {
+            let (c, g) = (c as usize, g as usize);
+            println!("carry {c} on grip {g}: loose height {:.2}, held {:.2}", -loose[c].t.y, -held[c].t.y);
+            assert!((held[c].t - held[g].t).length() < 1e-4 && held[c].q.dot(held[g].q).abs() > 0.9999);
+            assert!(-loose[c].t.y < 0.2 && -held[c].t.y > 0.5);
+        }
+        let Ok(gpu) = Gpu::headless() else { return };
+        check(&gpu, &ch, &to, &[], &grips);
+    }
+
+    fn posed(gpu: &Gpu, ch: &Arc<Character>, to: &[(&Animation, f32)], look: Option<HeadLook>) -> Vec<glam::Quat> {
+        let n = ch.skeleton.bones.len().min(TABLE - 1);
+        let mut ga = GpuAnim::new(gpu);
+        ga.begin();
+        ga.job(ch, &[], to, &[], 0.0, 0, look, None, &[]);
+        let size = (n * 48) as u64;
+        let out = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let rb = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut enc = gpu.device.create_command_encoder(&Default::default());
+        ga.dispatch(gpu, &mut enc, &out, true);
+        enc.copy_buffer_to_buffer(&out, 0, &rb, 0, size);
+        gpu.queue.submit([enc.finish()]);
+        rb.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+        gpu.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None }).unwrap();
+        let data = rb.slice(..).get_mapped_range().unwrap();
+        let v: &[f32] = bytemuck::cast_slice(&data);
+        (0..n).map(|i| glam::Quat::from_slice(&v[i * 12..i * 12 + 4])).collect()
+    }
+
+    /// Hume M idle looking far to one side: the neck turns about its 17.7 deg limit and the head, which carries
+    /// the neck's turn, about 43 deg in all; a point straight ahead barely moves them.
+    #[test]
+    fn head_look_limits() {
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let Ok(gpu) = Gpu::headless() else { return };
+        for race in 1..=8u8 {
+            let look = Look { race, face: 0, head: 0, body: 8, hands: 8, legs: 8, feet: 8, main: 0, sub: 0, range: 0 };
+            let Ok(ch) = load_character(&index, &look) else { return };
+            let ch = Arc::new(ch);
+            let idle: Vec<(&Animation, f32)> = ch.find_animations("idl").into_iter().map(|a| (a, 0.0)).collect();
+            let pt = |k: usize| ch.skeleton.points[k];
+            let hl = |point: glam::Vec3| HeadLook {
+                bones: [Some(pt(3).0), Some(pt(7).0)],
+                two: true,
+                weight: 1.0,
+                point,
+                p3: pt(3).1,
+                p4: pt(4),
+                drop: 0.0,
+                limits: ch.skeleton.look_limits,
+            };
+            let base = posed(&gpu, &ch, &idle, None);
+            let side = posed(&gpu, &ch, &idle, Some(hl(glam::Vec3::new(0.0, -1.6, 20.0))));
+            let ahead = posed(&gpu, &ch, &idle, Some(hl(glam::Vec3::new(20.0, -1.6, 0.0))));
+            let turn = |a: &[glam::Quat], b: usize| (a[b] * base[b].inverse()).to_axis_angle().1.to_degrees();
+            let (head, neck) = (pt(3).0 as usize, pt(7).0 as usize);
+            println!(
+                "race {race} side: head {:.1} neck {:.1}; ahead: head {:.1} neck {:.1}",
+                turn(&side, head),
+                turn(&side, neck),
+                turn(&ahead, head),
+                turn(&ahead, neck)
+            );
+            assert!((turn(&side, neck) - 17.7).abs() < 3.0, "race {race}");
+            assert!((turn(&side, head) - 43.3).abs() < 5.0, "race {race}");
+            assert!(turn(&ahead, head) < 15.0, "race {race}");
+        }
+    }
+
+    fn check(
+        gpu: &Gpu,
+        ch: &Arc<Character>,
+        to: &[(&Animation, f32)],
+        from: &[(&Animation, f32)],
+        grips: &[(u16, u16)],
+    ) {
+        for (f, t) in [(from, 0.3f32), (&[][..], 0.0)] {
+            if f.is_empty() && t != 0.0 {
+                continue;
+            }
+            let cpu = if f.is_empty() {
+                crate::dat::character::pose_held(&ch.skeleton, to, grips)
+            } else {
+                crate::render::character::pose_blend(ch, f, to, t, grips)
+            };
+            let mut ga = GpuAnim::new(gpu);
+            ga.begin();
+            ga.job(ch, &[], to, f, t, 0, None, None, grips);
+            let n = cpu.len().min(TABLE - 1);
+            let size = (n * 48) as u64;
+            let out = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label: None,
+                size,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            });
+            let rb = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label: None,
+                size,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let mut enc = gpu.device.create_command_encoder(&Default::default());
+            ga.dispatch(gpu, &mut enc, &out, true);
+            enc.copy_buffer_to_buffer(&out, 0, &rb, 0, size);
+            gpu.queue.submit([enc.finish()]);
+            rb.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+            gpu.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None }).unwrap();
+            let data = rb.slice(..).get_mapped_range().unwrap();
+            let v: &[f32] = bytemuck::cast_slice(&data);
+            let mut worst = 0f32;
+            for (i, b) in cpu.iter().take(n).enumerate() {
+                let g = &v[i * 12..i * 12 + 12];
+                let gq = glam::Quat::from_slice(&g[0..4]);
+                let dq = (gq - b.q).length().min((gq + b.q).length());
+                let dp = (glam::Vec3::from_slice(&g[4..7]) - b.t).length();
+                let ds = (glam::Vec3::from_slice(&g[8..11]) - b.s).length();
+                worst = worst.max(dq).max(dp).max(ds);
+            }
+            assert!(worst < 1e-3, "blend {t}: worst difference {worst}");
+        }
     }
 }

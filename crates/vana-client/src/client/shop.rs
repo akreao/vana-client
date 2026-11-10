@@ -420,7 +420,7 @@ fn enter_wares(w: &mut World, s: &mut Shop, at: usize) -> bool {
     if unit > gil || w.item_info.as_ref().and_then(|c| c.item(r.item)).is_none() {
         return false;
     }
-    let max = if unit != 0 { r.count.min(gil / unit) } else { r.count };
+    let max = gil.checked_div(unit).map_or(r.count, |n| r.count.min(n));
     if max == 0 {
         return false;
     }
@@ -652,7 +652,7 @@ fn req_met(w: &World, r: Req) -> bool {
 
 /// NPC buy rows: the name colour, grey past the gil or with an unmet requirement.
 fn buy_tint(w: &World, e: &Entry) -> u32 {
-    if e.price > w.inv.gil() as u32 || requirement(e).is_some_and(|r| !req_met(w, r)) {
+    if e.price > w.inv.gil() || requirement(e).is_some_and(|r| !req_met(w, r)) {
         crate::inventory::TINT_DIM
     } else {
         name_tint(w, e.item)
@@ -661,7 +661,7 @@ fn buy_tint(w: &World, e: &Entry) -> u32 {
 
 /// Guild buy rows (FUN_101ec920): the name colour, orange on the busy row, grey past the gil or out of stock.
 fn guild_buy_tint(w: &World, s: &Shop, row: usize, g: &GuildItem) -> u32 {
-    if g.price & 0x7fff_ffff > w.inv.gil() as u32 || g.count == 0 {
+    if g.price & 0x7fff_ffff > w.inv.gil() || g.count == 0 {
         crate::inventory::TINT_DIM
     } else if s.busy == Some(row as u8) {
         ORANGE
@@ -1192,7 +1192,7 @@ fn enter_buy(w: &mut World, s: &mut Shop, at: usize) -> bool {
         return false;
     }
     let stack = w.item_info.as_ref().map_or(1, |c| c.stack(e.item)).max(1) as u32;
-    let max = if e.price > 0 { stack.min(w.inv.gil() as u32 / e.price) } else { stack }.max(1);
+    let max = w.inv.gil().checked_div(e.price).map_or(stack, |n| stack.min(n)).max(1);
     s.busy = Some(index);
     ask_qty(s, max);
     true
@@ -1206,10 +1206,10 @@ fn enter_guild_buy(w: &mut World, s: &mut Shop, at: usize) -> bool {
     let Some(stack) = w.item_info.as_ref().and_then(|c| c.item(g.item).map(|_| c.stack(g.item).max(1) as u32)) else {
         return false;
     };
-    if price > w.inv.gil() as u32 || g.count == 0 {
+    if price > w.inv.gil() || g.count == 0 {
         return false;
     }
-    let max = if price > 0 { stack.min(w.inv.gil() as u32 / price) } else { stack }.min(g.count as u32).max(1);
+    let max = w.inv.gil().checked_div(price).map_or(stack, |n| stack.min(n)).min(g.count as u32).max(1);
     s.busy = Some(at as u8);
     ask_qty(s, max);
     true
@@ -1396,7 +1396,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32, log_top: f32) -> Vec<[
     }
     if s.view.is_some() {
         let Some((wx, wy)) = gu.window_xy(SHOP, sw, sh) else { return rects };
-        let size = gu.window_rect(SHOP, sw, sh).map_or([wx, wy, 256.0, 190.0], |r| r);
+        let size = gu.window_rect(SHOP, sw, sh).unwrap_or([wx, wy, 256.0, 190.0]);
         let rows = rows(w, s);
         // A requirement on any row adds its column (FUN_10210880: the window 0x69 wider, cells up to + 0x16e).
         let column = rows.iter().any(|r| r.req.is_some());

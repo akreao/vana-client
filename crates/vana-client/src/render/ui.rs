@@ -1421,7 +1421,7 @@ pub fn render_png(
     for y in 0..height {
         pixels.extend_from_slice(&data[(y * row) as usize..(y * row + width * 4) as usize]);
     }
-    for px in pixels.chunks_exact_mut(4) {
+    for px in pixels.as_chunks_mut::<4>().0 {
         px[3] = 255;
     }
     write_png(path, width, height, &pixels)

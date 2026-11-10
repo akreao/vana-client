@@ -488,18 +488,8 @@ fn keys(w: &mut World, s: &mut Screen, key: egui::Key) -> Then {
             }
         },
         K::ArrowDown | K::ArrowUp | K::ArrowRight | K::ArrowLeft => {
-            let old = s.list.0;
-            let n = rows.len();
-            match key {
-                K::ArrowDown if s.list.0 + 1 < n => s.list.0 += 1,
-                K::ArrowUp if s.list.0 > 0 => s.list.0 -= 1,
-                K::ArrowRight => s.list.0 = (s.list.0 + VISIBLE).min(n.saturating_sub(1)),
-                K::ArrowLeft => s.list.0 = s.list.0.saturating_sub(VISIBLE),
-                _ => {}
-            }
-            let r = s.list.0;
-            list_to(s, r);
-            if s.list.0 != old {
+            let moved = crate::client::scrollbar::step(&mut s.list, rows.len(), VISIBLE, key);
+            if moved {
                 w.sounds.push(Ui::Cursor as u32);
             }
         }
