@@ -7261,6 +7261,8 @@ struct World {
     loads: HashMap<u32, (u32, Instant)>,
     /// Running knockbacks (op 0x5e), by actor.
     knocks: HashMap<u32, combat::KnockState>,
+    /// Running self-moves (op 0x6e on an actor that is not a leaving animal), by actor.
+    self_moves: HashMap<u32, ride::SelfMove>,
     /// The action menu (Enter), and when the world started (a seed for random motion picks).
     action_menu: Option<combat::ActionMenu>,
     /// A main menu row was picked this frame (the snapshot's `picked`).
@@ -9731,6 +9733,7 @@ impl App {
                             face_locks: HashMap::new(),
                             loads: HashMap::new(),
                             knocks: HashMap::new(),
+                            self_moves: HashMap::new(),
                             action_menu: None,
                             menu_picked: false,
                             battle_prev: 0,
@@ -11092,6 +11095,7 @@ impl App {
                     world.noreact.clear();
                     world.loads.clear();
                     world.knocks.clear();
+                    world.self_moves.clear();
                     // A rest machine starts afresh in the new zone (rest.rs).
                     world.rests.clear();
                     let current = world.zone == Some(zone) && world.scene == Some(scene);
@@ -12721,6 +12725,7 @@ impl App {
         let floor = world.ground.as_ref().filter(|_| world.in_scene() && !in_event);
         let shafts = world.lifts.shafts();
         let mut knock_ends = Vec::new();
+        let mut self_ends = Vec::new();
         for (eid, e) in world.entities.iter_mut() {
             // Moved by someone else since last frame (an event script): take that as the slide and drawn spot.
             if e.pos != e.last_pos {
@@ -12741,6 +12746,34 @@ impl App {
                 e.slide = e.pos;
                 knock_ends.push((*eid, recover, done));
                 bump::active_tick(e, ticks);
+                e.last_pos = e.pos;
+                continue;
+            }
+            // FUN_100a57f0 while +0x101 is set (op 0x6e): the actor steps along the facing it had; FUN_100c63d0 takes
+            // that position at once (no chase, no turn), and the walk / run motion follows the way moved.
+            if let Some(m) = world.self_moves.get_mut(eid) {
+                let (d, done) = ride::self_step(m, ticks);
+                e.pos += d;
+                if e.grounded
+                    && let Some(g) = floor
+                    && let Some(y) = g.snap(e.pos.x, e.pos.z, e.pos.y)
+                {
+                    e.pos.y = y;
+                }
+                e.slide = e.pos;
+                if done {
+                    self_ends.push(*eid);
+                }
+                e.ratio = crate::motion::move_ratio(
+                    e.ratio,
+                    Vec3::new(d.x, 0.0, d.z).length(),
+                    dt,
+                    e.motion.speed,
+                    e.motion.speed_base,
+                    e.motion.status,
+                );
+                bump::active_tick(e, ticks);
+                actmotion::idle_swap(*eid, e, world.actors.get_mut(eid), ticks);
                 e.last_pos = e.pos;
                 continue;
             }
@@ -12831,6 +12864,29 @@ impl App {
                 .map_or(p, |g| g.walk_player(from, p, ground::STEP_TICKS, Some(&ride)));
             knock_ends.push((world.my_id, recover, done));
         }
+        // Our own self-move comes before the input's move (FUN_100a57f0), through the walking collision; a push
+        // goes first (+0x102 before +0x101).
+        let me = world.my_id;
+        if !world.knocks.contains_key(&me)
+            && let Some(m) = world.self_moves.get_mut(&me)
+        {
+            let from = world.pos;
+            let (d, done) = ride::self_step(m, ticks);
+            let shafts = world.lifts.shafts();
+            let ride = |a: Vec3, b: Vec3| lifts::ride_in(&shafts, a, b);
+            world.pos = world
+                .ground
+                .as_ref()
+                .filter(|g| !g.is_empty())
+                .map_or(from + d, |g| g.walk_player(from, from + d, ground::STEP_TICKS, Some(&ride)));
+            if done {
+                self_ends.push(me);
+            }
+        }
+        for id in self_ends {
+            world.self_moves.remove(&id);
+        }
+        world.self_moves.retain(|id, _| *id == me || world.entities.contains_key(id));
         for (id, recover, done) in knock_ends {
             if recover {
                 combat::knock_recover(world, id);

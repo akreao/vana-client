@@ -390,12 +390,40 @@ fn finish(w: &mut World, id: u32) {
     }
 }
 
-/// Op 0x6e on a leaving animal: it runs along its facing.
+/// A running op 0x6e (actor +0x101): the step a tick (+0x120) and the ticks left to move (+0x118).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SelfMove {
+    vel: Vec3,
+    left: f32,
+}
+
+/// FUN_100aadf0 takes the frame's ticks off the count before it moves, and the frame that reaches 0 moves only by
+/// the overshoot: at retail's 2-tick frame a run of n ticks moves n - 2 (the animals' 72 -> 70). Ours moves
+/// continuously, so the count starts that much short.
+fn run_ticks(ticks: f32) -> f32 {
+    (ticks - 2.0).max(0.0)
+}
+
+/// FUN_100aadf0: one frame of a self-move: the way moved and whether it is over.
+pub fn self_step(m: &mut SelfMove, ticks: f32) -> (Vec3, bool) {
+    let n = ticks.min(m.left);
+    m.left -= n;
+    (m.vel * n, m.left <= 0.0)
+}
+
+/// Op 0x6e (FUN_100aad40): actor1 moves along the facing it has now, `speed` a tick for `ticks` ticks. A leaving
+/// animal runs from where it was left; any other actor through `World::self_moves` (no retail data reaches that:
+/// only the animals' `coff` / `cdam` hold the op).
 pub fn self_move(w: &mut World, id: u32, ticks: f32, speed: f32) {
-    if id & ANIMAL != 0
-        && let Some(Riding { phase: Phase::Leaving { run, .. }, .. }) = w.rides.get_mut(&(id & !ANIMAL))
-    {
-        *run = Some((ticks, speed));
+    if id & ANIMAL != 0 {
+        if let Some(Riding { phase: Phase::Leaving { run, .. }, .. }) = w.rides.get_mut(&(id & !ANIMAL)) {
+            *run = Some((run_ticks(ticks), speed));
+        }
+        return;
+    }
+    let my_dir = w.net.me.lock().map(|m| m.dir).unwrap_or(0);
+    if let Some(p) = super::base_place(w, id, my_dir) {
+        w.self_moves.insert(id, SelfMove { vel: p.forward * speed, left: run_ticks(ticks) });
     }
 }
 
@@ -601,6 +629,28 @@ pub fn dig_update(w: &mut World) {
 #[cfg(test)]
 mod tests {
     use super::drop_for;
+
+    /// FUN_100aadf0 at 2 ticks a frame: the animals' 72-tick run at 12.0 / 60 moves 70 ticks = 14.0, whatever our
+    /// frame time; nothing after it.
+    #[test]
+    fn self_move_runs_two_ticks_short() {
+        for dt in [2.0, 1.0, 0.4, 7.0] {
+            let mut m = super::SelfMove { vel: glam::Vec3::X * 0.2, left: super::run_ticks(72.0) };
+            let (mut x, mut frames) = (0.0, 0);
+            loop {
+                let (d, done) = super::self_step(&mut m, dt);
+                x += d.x;
+                frames += 1;
+                if done {
+                    break;
+                }
+            }
+            assert!((x - 14.0).abs() < 1e-3, "{dt}: {x}");
+            assert_eq!(frames, (70.0 / dt).ceil() as usize, "{dt}");
+            assert_eq!(super::self_step(&mut m, dt), (glam::Vec3::ZERO, true));
+        }
+        assert_eq!(super::run_ticks(1.0), 0.0);
+    }
 
     #[test]
     fn bone0_drops() {
