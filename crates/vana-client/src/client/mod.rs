@@ -12743,8 +12743,8 @@ impl App {
         }
         let mut step = if tank { tank_step(heading, ax, ay) } else { right * ax - forward * ay };
         // Autorun: the first move becomes the vector; X input steers it 2 degrees a tick (ticks x 0.01745 x 2); no
-        // input and no vector ends it. Forced off while dead, resting or seated and in events. Locked on, the
-        // keys move as usual *(inf)*.
+        // input and no vector ends it. Forced off while dead, resting or seated and in events. Locked on, it runs at
+        // the target (below).
         if world.autorun
             && (in_event
                 || world.dead()
@@ -12821,12 +12821,27 @@ impl App {
                 step = Vec3::ZERO;
             }
         }
-        if world.autorun && !world.locked && !move_locked {
+        // Locked on, autorun runs at the target (FUN_100a7b80 with a vector): the keys only end it (the test above),
+        // the vector keeps its length and turns at the target each tick, and touching it (the gap less both radii
+        // under 0) the step is none and the run goes on. Unlocked, the run goes on along the last way it took.
+        // Retail's last tick before touching runs at 0.3 of the vector (within one tick's move); ours stops at 0.
+        let lock_run = world.target.filter(|_| world.locked).and_then(|t| world.entities.get(&t).map(|e| (t, e.pos)));
+        if world.autorun && !move_locked {
             if world.autorun_dir == Vec3::ZERO && step != Vec3::ZERO {
                 world.autorun_dir = step.normalize();
             }
             if world.autorun_dir == Vec3::ZERO {
                 world.autorun = false;
+            } else if world.locked {
+                if let Some((t, tp)) = lock_run {
+                    let d = Vec3::new(tp.x - world.pos.x, 0.0, tp.z - world.pos.z);
+                    if d.length() > 1e-3 {
+                        world.autorun_dir = d.normalize();
+                    }
+                    let r = |id: u32| world.actors.get(&id).map_or(0.0, bump::radius);
+                    touching = d.length() - r(world.my_id) - r(t) < 0.0;
+                }
+                step = if touching { Vec3::ZERO } else { world.autorun_dir };
             } else if look_run {
                 // Kept as the run's way, so a release goes on along the path it was taking.
                 world.autorun_dir = (forward + right * ax).normalize();
@@ -12855,7 +12870,7 @@ impl App {
             }
         }
         // FUN_100a5f60: |v| > 0.9 full speed, 0.05..0.9 a third; walking caps at a third.
-        let mag = if world.autorun && !world.locked { 1.0 } else { ax.hypot(ay) };
+        let mag = if world.autorun { 1.0 } else { ax.hypot(ay) };
         let mut tier = if mag > 0.9 {
             1.0
         } else if mag >= 0.05 {
