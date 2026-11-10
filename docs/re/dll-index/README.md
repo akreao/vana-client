@@ -14,8 +14,12 @@ The names match one build only:
 | | |
 |---|---|
 | file | `FFXiMain.unpacked.dll` (image base `0x10000000`) |
-| build | `30261006_0` |
-| sha256 | `8097dbf8a79eb35840d350dcc33718aea2fd71afac686d4d95c5f93e4695550c` |
+| build | `30261102_0` (the November 2026 retail update) |
+| sha256 | `5b911e4c900e1328dfea3ce327e35cf1280e3568fc71c7f98f5df87da35f8f6c` |
+
+The build before it, `30261006_0` (sha256 `8097dbf8a79eb35840d350dcc33718aea2fd71afac686d4d95c5f93e4695550c`), is the
+one most of `MODLOG.md` was written against. `maps/30261006_0.tsv` moves its addresses to this build:
+`python3 dll.py map ADDR` (`--back` for the other way). See "A new retail build" below.
 
 Bring an **already unpacked** DLL (the packed `FFXiMain.dll` from the game install will not work; unpacking is not
 part of these tools). Check it with `sha256sum`. For another build, the addresses in `names*.tsv` are wrong.
@@ -40,15 +44,22 @@ Settings (environment variables):
 | `GHIDRA_HOME` | `/opt/ghidra` | Ghidra install (`$GHIDRA_HOME/support/analyzeHeadless`) |
 
 `ri.sh` writes into the work dir: `all_decomp_full.c` (pseudo-C of every function), `xrefs.tsv`, `strrefs.tsv`,
-`funcs_full.tsv`. On a fast machine the first run takes a few minutes; later runs reuse the Ghidra project read-only.
+`funcs_full.tsv`, and `sig_insns.tsv` (every instruction with its build-dependent bytes blanked, for `remap.py`).
+Before exporting it runs `FixVt.java`: Ghidra's auto-analysis leaves out the functions that are reached only through
+a stored pointer (vtable slots, callbacks; about 4,700) and code nothing references at all (about 4,700 more), so the
+script defines both (`fixvt.tsv` lists them; `funcs_full.tsv` marks them `vtable` / `sweep`). On a fast machine the first run takes a few minutes; later runs reuse the Ghidra project read-only.
 
 Optional, in the work dir:
 
 - `funcs.txt`: rizin's function list. Ghidra misses some functions; with this file `ri.sh` defines them first.
   `rizin -A -q -c aflq FFXiMain.unpacked.dll | cut -d' ' -f1 > work/funcs.txt` (rizin 0.8; slow).
 - `imports.txt`: `rizin -q -c ii FFXiMain.unpacked.dll > work/imports.txt` (for the `imp_` names).
-- `notes_index.tsv`: `python3 dll.py build-notes` indexes every DLL address mentioned in the repo's `MODLOG.md` and
-  `docs/re` (or pass other files/dirs), so `dll.py addr`/`notes` show where we wrote about a function.
+- `notes_index.tsv`: `python3 dll.py build-notes` indexes every DLL address mentioned in the repo's `MODLOG.md`,
+  `docs/re` and `docs/modlog` (or pass other files/dirs), so `dll.py addr`/`notes` show where we wrote about a
+  function. Notes written for the previous build are indexed under this build's address (through `maps/`), with
+  the address they were written with shown in brackets. A note counts as written for this build when it is dated on
+  or after the map's `# since` date (`docs/modlog/<date>-*.md`, or the `## Title (date)` heading above it in
+  `MODLOG.md`), or follows a `<!-- dll-build: 30261102_0 -->` line in the same section.
 
 ## dll.py
 
@@ -62,6 +73,7 @@ dll.py grep REGEX         functions whose pseudo-C matches REGEX
 dll.py notes ADDR         where ADDR (or its function) is mentioned in our notes
 dll.py names REGEX        list function names matching REGEX
 dll.py name ADDR NAME     give the function at ADDR a hand-checked name
+dll.py map ADDR.. [--back] the previous build's address in this build (--back: the other way)
 ```
 
 ADDR may be hex (`0x100bc280`, `FUN_100bc280`, `100bc280`) or a function name. `python3 dll.py --help` for all.
@@ -88,9 +100,35 @@ in the source column (`evtable ops 0x00,0xca,0xcb`). The `FUN_` addresses in
 `crates/vana-client/src/dat/event_ops.rs` are from an older DLL build; use `python3 dll.py addr evop_XX` for the
 handler in this build.
 
+## A new retail build
+
+SE replaces `FFXiMain.dll` with most monthly updates, and every address moves. The client itself finds its tables by
+content (`crates/vana-client/src/dat/tables.rs`) and supports the current build and the one before; the research
+files here follow the newest build. To move them (done for `30261006_0` -> `30261102_0` on 2026-11-10):
+
+1. Unpack the new DLL into a work dir of its own and run `./ri.sh` there (`FFXI_RE_DIR=<new dir>`). Run the same
+   `ri.sh` on the old build's work dir too if its `sig_insns.tsv` is older than these scripts.
+2. `python3 remap.py <old dir> <new dir>` matches the two builds and writes `<new dir>/remap/`: `funcmap.tsv` (every
+   function: same / consts / refs / changed), `new.tsv`, `removed.tsv`, `datamap.tsv`, `data_diff.tsv` (initialised
+   data that differs once moved), `changed/*.diff` (one instruction diff per changed function) and `segments.tsv`.
+   Its doc comment says how it matches. Read every `changed`, `refs`, new and removed row and every `data_diff.tsv`
+   line in the decompile: each real change becomes a row in `docs/re/modlog-gaps.md` (never dropped), the rest is
+   written down as checked.
+3. Copy `segments.tsv` to `maps/<old build>.tsv` with a `# since <date>` line (the first day notes use the new
+   addresses), run `python3 port_names.py` (moves `names.tsv` / `names_manual.tsv`), move the three addresses
+   `build_names.py` has in its code (`EVT_DISPATCH`, `EVT_TABLE`, `OPEN_WINDOW`; `python3 dll.py map` gives them),
+   then `python3 dll.py build-notes` and `./ri_named.sh` in the new work dir.
+4. Check the table signatures: `cargo test -p vana-client dat::tables` with `FFXI_CONFIG` pointing at an install
+   that has the new DLL. A table SE changed needs its signature cut down to the stable part.
+5. Update the build and sha256 at the top of this file, and write the `docs/modlog/` entry.
+
+`maps/*.tsv` hold addresses only (ranges that moved together) and are committed; everything in `remap/` is generated
+from the DLLs and stays local.
+
 ## Never commit
 
 Everything in `work/` and every generated file: `all_decomp_full.c` (and `all_decomp*.c`, `*.prev.*`), `xrefs.tsv`,
-`strrefs.tsv`, `funcs_full*.tsv`, `funcs.txt`, `imports.txt`, `notes_index.tsv`, logs, the Ghidra projects
+`strrefs.tsv`, `funcs_full*.tsv`, `sig_insns.tsv`, `fixvt.tsv`, `remap/`, `funcs.txt`, `imports.txt`,
+`notes_index.tsv`, logs, the Ghidra projects
 (`ghidra/`, `ghidra_named/`) and the DLL. They contain decompiled game code and game strings. `.gitignore` here covers
 them, including when `FFXI_RE_DIR` is left at its default.

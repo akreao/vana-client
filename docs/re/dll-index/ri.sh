@@ -1,5 +1,7 @@
 #!/bin/sh
-# Build the grep index (all_decomp_full.c, xrefs.tsv, strrefs.tsv, funcs_full.tsv) in the work dir.
+# Build the grep index (all_decomp_full.c, xrefs.tsv, strrefs.tsv, funcs_full.tsv) in the work dir, and
+# sig_insns.tsv (what remap.py compares two builds by). Functions reached only through stored pointers are defined
+# first (FixVt.java; fixvt.tsv lists them).
 # The first run imports the DLL into a new Ghidra project (with auto-analysis, slow); later runs reuse it read-only.
 #   FFXI_RE_DIR   work dir (default: ./work next to this script); must hold FFXiMain.unpacked.dll
 #   FFXI_DLL      the unpacked DLL (default: $FFXI_RE_DIR/FFXiMain.unpacked.dll)
@@ -18,11 +20,12 @@ if [ ! -f "$W/ghidra/ffxi.gpr" ]; then
   [ -f "$W/ghidra/ffxi.gpr" ] || { echo "Ghidra import failed, see $W/ghidra_import.log" >&2; exit 1; }
 fi
 # drop the previous index first, so a failed run can't leave old files looking current
-rm -f "$W/all_decomp_full.c" "$W/funcs_full.tsv" "$W/xrefs.tsv" "$W/strrefs.tsv"
+rm -f "$W/all_decomp_full.c" "$W/funcs_full.tsv" "$W/xrefs.tsv" "$W/strrefs.tsv" "$W/fixvt.tsv" "$W/sig_insns.tsv"
 rc=0
 "$G" "$W/ghidra" ffxi -process "$(basename "$DLL")" -noanalysis -readOnly \
-  -scriptPath "$H/ghidra_scripts" -postScript ExportIndex.java "$W" >"$W/exportindex.log" 2>&1 || rc=$?
-grep -E 'ExportIndex|ERROR' "$W/exportindex.log" || true
-if [ $rc -ne 0 ] || ! grep -q 'ExportIndex.java> done' "$W/exportindex.log" || [ ! -s "$W/all_decomp_full.c" ]; then
+  -scriptPath "$H/ghidra_scripts" -postScript FixVt.java "$W" -postScript ExportIndex.java "$W" \
+  -postScript ExportSig.java "$W" >"$W/exportindex.log" 2>&1 || rc=$?
+grep -E 'FixVt|ExportIndex|ExportSig|ERROR' "$W/exportindex.log" || true
+if [ $rc -ne 0 ] || ! grep -q 'ExportIndex.java> done' "$W/exportindex.log" || [ ! -s "$W/all_decomp_full.c" ] || [ ! -s "$W/sig_insns.tsv" ]; then
   echo "export failed (exit $rc), see $W/exportindex.log" >&2; exit 1
 fi

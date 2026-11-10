@@ -9,7 +9,8 @@ decoded, not traced, inferred or not checked live, grouped by area.
 - **Status** comes from the journal text, not from a code audit. Where a later entry says an item was built, it
   moved to "Closed by later entries" at the end. The rows once marked *(may be closed)* were checked against the
   later entries and the code on 2026-11-03: closed ones moved to the end, partly closed ones keep only what is left.
-- **Settle by**: **DLL** = read retail FFXiMain.dll (30261006_0) in Ghidra / Rizin; **Live** = try it in game;
+- **Settle by**: **DLL** = read retail FFXiMain.dll (30261102_0 since 2026-11-10; addresses in rows written before
+  that are 30261006_0, move them with `python3 docs/re/dll-index/dll.py map ADDR`) in Ghidra / Rizin; **Live** = try it in game;
   **Footage** = compare with the retail client or a recording; **LSB** = depends on what the server sends;
   **Upstream** = a design question for upstream (lenonk/vana-client), listed only, not answered here.
 - **Addresses**: many MODLOG / `event_ops.rs` addresses are from an older FFXiMain.dll than Steven's unpacked one
@@ -345,6 +346,25 @@ Built from the DLL but never seen in game (beyond the rows above):
 - Main menu's Map zoom resume (L10390).
 - Ground tilt and riding yaws against footage (L12739, L12469).
 - Cloth sway on the 27 cloth models (`2026-11-03-cloth.md`).
+
+## 15. Retail 30261102_0 (the November 2026 update)
+
+<!-- dll-build: 30261102_0 -->
+
+What FFXiMain.dll 30261102_0 added or changed against 30261006_0, from the full function and data comparison
+(`docs/modlog/2026-11-10-rebaseline-30261102.md`). Addresses in this section are 30261102_0. Queue numbers 151..159.
+
+| Item | Status | Source | Settle by |
+|---|---|---|---|
+| In-line colour code 9 (`1e 09`) is 0x60404040 now (table 0x10336510 + 0x24): the client reads it from the DLL (signature fixed 2026-11-10); which retail text uses the code, and that ours draws it grey | Built, not checked | 2026-11-10-rebaseline-30261102.md | DLL, Live |
+| List cell kind 0x4d (FUN_101f60f0 accepts it, FUN_101f6180's jump table 0x101f7b98 case 0x101f7b57: FUN_1015d340(u16 value, x, y + 2, 0.5, 0, colour, 0)); which window sets it, and ours' list cells | Not built | 2026-11-10-rebaseline-30261102.md | DLL |
+| statcom2 child 0xd: enabled at main level above 0x62 with key item 0xd21 or (new) 0xd2f (FUN_1014a0b0); what the child is and whether ours enables it at all | Not built, not traced | 2026-11-10-rebaseline-30261102.md | DLL |
+| Mog House layout Move keys (FUN_101cf930): the 0x8d / 0x8e steps are skipped while FUN_101d01b0 (bit 0 of *(this + 0xf0)); the re-centring now runs before the FUN_101d01d0 test. What the bit is, and ours' Move | Not built, not traced | 2026-11-10-rebaseline-30261102.md | DLL |
+| s2c 0x08F (FUN_100e5290): 0x2b dwords to session +0x2d67c, callback session +0x2d728, "received" bit 5 of session +0x40e65; cleared by FUN_100e4340 / FUN_100e4420 / FUN_100e44e0. Field layout as fe_equip reads it (six sets of ten slot bytes from +0x2a, step 0x14; the rest unread so far) | Not built (LSB sends a stub) | 2026-11-10-rebaseline-30261102.md | DLL, LSB |
+| c2s 0x0C5 (FUN_100e5200: 0x10 bytes, +4 set, +5 ten slot bytes, from FUN_10117b70) and c2s 0x0C6 (FUN_100e5260: 4 bytes, asks for 0x08F; from fe_equip's open FUN_101173d0 while the bit is clear) | Not built (LSB has stubs) | 2026-11-10-rebaseline-30261102.md | DLL, LSB |
+| Menu fe_main (object DAT_105795f4, vtable 0x10335680: FUN_1014caa0 enables children by level and key items 0xd21 / 0xd2f, FUN_1014cb40, events FUN_1014cb50); its creation in FUN_10147740 and deletion in FUN_10148100; where it opens from; the class at vtable 0x10335638 that gained the destructor FUN_101480d0 | Not built | 2026-11-10-rebaseline-30261102.md | DLL |
+| Window fe_equip (DAT_104e2d20, 100 bytes, vtable 0x10333fe8, FUN_101170f0): open FUN_101173d0, FUN_10117480, draw / fill FUN_101174b0 + FUN_10117580, FUN_101176e0, keys FUN_10117750, FUN_10117290, FUN_101172c0, FUN_10117980; helpers FUN_10117310, FUN_10117360, FUN_101173b0, FUN_101179d0..FUN_10117c00 | Not built | 2026-11-10-rebaseline-30261102.md | DLL |
+| Window fe_inven (DAT_104e2d24, 0x60 bytes, vtable 0x10334058, FUN_10117c30): FUN_10117d60, FUN_10117d90 + FUN_10117e60 (the list), keys FUN_10118260, FUN_10117cb0, FUN_10117ce0; helpers FUN_10117d30, FUN_10118110..FUN_10118220 | Not built | 2026-11-10-rebaseline-30261102.md | DLL |
 
 ## Closed by later entries
 
