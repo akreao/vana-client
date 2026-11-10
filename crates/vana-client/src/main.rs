@@ -1599,13 +1599,15 @@ fn main() -> Result<()> {
                 scene.surface = surface::load(zone, &names, &mods);
                 println!("{} surface detail pack textures", scene.surface.len());
             }
+            let sky = dat::weather::Sky::of_zone_file(&file);
             let lighting = match hour {
                 Some(h) => {
                     let w = dat::weather::ZoneWeather::parse(&file)?;
-                    let env =
-                        w.at(&weather, h * 60.0).ok_or_else(|| anyhow::anyhow!("zone {zone} has no weat keys"))?;
-                    println!("weather {weather} at {h:.2} h: {env:?}");
-                    Some(dat::weather::Lighting::from_env(&env, h * 60.0))
+                    // The zone's `@ini` may fix the sky time or tilt the sun (Escha, Reisenjima).
+                    let m = sky.minute(h * 60.0);
+                    let env = w.at(&weather, m).ok_or_else(|| anyhow::anyhow!("zone {zone} has no weat keys"))?;
+                    println!("weather {weather} at {:.2} h, tilt {}: {env:?}", m / 60.0, sky.tilt);
+                    Some(dat::weather::Lighting::from_env_k(&env, m, sky.tilt, 1.0))
                 }
                 None => None,
             };
@@ -1685,12 +1687,12 @@ fn main() -> Result<()> {
                 }
                 // Area lighting at the same hour and weather, the sub-area's areas first.
                 if let Some(h) = hour.filter(|_| std::env::var_os("FFXI_NO_AREAS").is_none()) {
-                    let env =
-                        |k: &u32| weathers.iter().find_map(|w| w.areas.get(k)).and_then(|a| a.at(&weather, h * 60.0));
+                    let m = sky.minute(h * 60.0);
+                    let env = |k: &u32| weathers.iter().find_map(|w| w.areas.get(k)).and_then(|a| a.at(&weather, m));
                     let lights = r
                         .area_keys()
                         .iter()
-                        .map(|k| env(k).map(|e| dat::weather::Lighting::from_env(&e, h * 60.0)))
+                        .map(|k| env(k).map(|e| dat::weather::Lighting::from_env_k(&e, m, sky.tilt, 1.0)))
                         .collect();
                     println!(
                         "areas {:?}",

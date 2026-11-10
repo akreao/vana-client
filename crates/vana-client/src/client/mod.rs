@@ -17344,7 +17344,10 @@ impl App {
                     // Op 0x77 sets the hour and weather while an event runs.
                     let ev_weather = w.event.as_ref().and_then(|l| l.st.weather);
                     let clock = crate::dat::weather::vana_minute(t, at.elapsed().as_secs_f32());
-                    let minute = ev_clock.map_or(clock, |c| c.minute as f32);
+                    // The zone's `@ini` (scheduler ops 0xc0 / 0xc3): a fixed sky time stands in for the clock in the
+                    // light and the weather keys (W+0x1c8 in FUN_10187720 / FUN_10189c60), and the sun's path tilts.
+                    let sky = w.effects.sky();
+                    let minute = sky.minute(ev_clock.map_or(clock, |c| c.minute as f32));
                     // thunk_FUN_1018ade0: each weather object blends its child chain's output into its own env by
                     // (total - left) / total; a finished one drops the chain before it. Op 0x77's weather stands alone.
                     if let Some(k) =
@@ -17388,11 +17391,12 @@ impl App {
                     let (x, zone) = (crate::dat::weather::clipping_factor(w.game.get(0x3e)), w.zone.unwrap_or(0));
                     let step = |ease: &mut crate::dat::weather::LightEase, e: &crate::dat::weather::Env| {
                         for _ in 0..steps {
-                            ease.step(e, minute);
+                            ease.step(e, minute, sky.tilt);
                         }
                         crate::dat::weather::Lighting::from_env_eased(
                             e,
                             minute,
+                            sky.tilt,
                             ease,
                             crate::dat::weather::clipping(e.draw_dist, x, zone).1,
                         )
@@ -17401,12 +17405,13 @@ impl App {
                     // Real character shadows (render/sunshadow.rs): cast by the sun, or by the moon at night (fainter by its
                     // colour, softer), faded out around the change at 6:00 and 18:00. Indoors the room light keeps day's edges.
                     r.shadow_level = crate::render::sunshadow::twilight(minute);
-                    r.shadow_soft =
-                        if r.lighting.is_some_and(|l| l.fixed) || crate::dat::weather::sun_moon(minute).0.y >= 0.0 {
-                            1.0
-                        } else {
-                            2.0
-                        };
+                    r.shadow_soft = if r.lighting.is_some_and(|l| l.fixed)
+                        || crate::dat::weather::sun_moon_tilted(minute, sky.tilt).0.y >= 0.0
+                    {
+                        1.0
+                    } else {
+                        2.0
+                    };
                     // FUN_1018b8f0: 100 before the env is up. Settings' Draw Distance scales it, or lifts it (0).
                     let (d, k) = crate::dat::weather::clipping(r.lighting.map_or(100.0, |l| l.draw_dist), x, zone);
                     let scale = self.cfg.draw_distance as f32 / 100.0;
