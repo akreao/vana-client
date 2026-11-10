@@ -14,6 +14,10 @@ const VISIBLE: usize = 8;
 const WHITE: u32 = 0x8080_8080;
 const CURSOR: u32 = 0x8080_3040;
 const GREY: u32 = 0x8040_4040;
+/// FUN_10232090: the count of a record complete or at its goal.
+pub const AT_GOAL: u32 = 0x8020_60a0;
+/// FUN_10232090: the once-only note.
+pub const ONCE: u32 = 0x8080_4040;
 /// FUN_10232760: DAT_10668edc > 29, the frames since the open or the last send (30 frames, 1 s at 30 fps *(inf)*).
 const COOLDOWN: Duration = Duration::from_secs(1);
 
@@ -612,20 +616,22 @@ pub struct RowView {
     pub count: Option<(u32, u32)>,
 }
 
-/// An objective's description there: its name, both pages' text, the progress, the once-only note and the rewards,
-/// with their labels.
+/// An objective's description there: its name and tint, both pages' text, the progress and its tint, the once-only
+/// note and the rewards, with their labels.
 pub struct DescView {
     pub name: String,
+    pub tint: u32,
     pub text: String,
     pub progress_label: String,
     pub progress: String,
+    pub progress_tint: u32,
     pub once: Option<String>,
     pub rewards_label: String,
     pub rewards: String,
 }
 
 /// What the modern Journal draws of an open list: its title, rows, cursor, the empty line, the cursor row's
-/// description and whether it is down in a category.
+/// description, whether it is down in a category and whether the sibling arrows show (children 9 / 10).
 pub struct View {
     pub mode: usize,
     pub title: String,
@@ -634,6 +640,7 @@ pub struct View {
     pub empty: Option<String>,
     pub desc: Option<DescView>,
     pub deep: bool,
+    pub siblings: bool,
 }
 
 pub fn view(w: &World, gu: &GameUi) -> Option<View> {
@@ -672,7 +679,8 @@ pub fn view(w: &World, gu: &GameUi) -> Option<View> {
         .then(|| gu.lobby_msg(0xc, if l.mode == 2 { 0x72 } else { 0x87 }, ""));
     let desc = l.rows.get(l.cursor).filter(|&&id| id < 0xf200).and_then(|&id| {
         let o = objective(w, id)?;
-        let (have, _) = count(w, id, &o);
+        let (have, full) = count(w, id, &o);
+        let at_goal = l.mode == 4 && w.roe.done(id, Some(&o)) && have == o.goal;
         let extra = |v: u32, m: usize| (v != 0).then(|| format!("{v}{}", gu.lobby_msg(0xc, m, "")));
         let mut rewards = vec![
             format!("{}{}", o.sparks, gu.lobby_msg(0xc, 0x7b, "")),
@@ -682,15 +690,26 @@ pub fn view(w: &World, gu: &GameUi) -> Option<View> {
         let text = if o.pages[1].is_empty() { o.pages[0].clone() } else { format!("{} {}", o.pages[0], o.pages[1]) };
         Some(DescView {
             name: o.name.clone(),
+            tint: colour(w, l.mode, id, Some(&o), false),
             text,
             progress_label: gu.lobby_msg(0xc, 0x81, ""),
             progress: format!("{have}/{}", o.goal),
+            progress_tint: if full || at_goal { AT_GOAL } else { WHITE },
             once: (!o.repeatable).then(|| gu.lobby_msg(0xc, 0x84, "")),
             rewards_label: gu.lobby_msg(0xc, 0x83, ""),
             rewards: rewards.join("   "),
         })
     });
-    Some(View { mode: l.mode, title, rows, cursor: l.cursor, empty, desc, deep: l.stack.len() > 1 })
+    Some(View {
+        mode: l.mode,
+        title,
+        rows,
+        cursor: l.cursor,
+        empty,
+        desc,
+        deep: l.stack.len() > 1,
+        siblings: arrows(l),
+    })
 }
 
 /// The modern Journal moves the cursor itself (hover, a click); a description open goes back to the list.
@@ -798,9 +817,9 @@ pub fn draw(gu: &mut GameUi, w: &World, l: &List, sw: f32, sh: f32, rects: &mut 
     let (have, full) = count(w, id, &o);
     let at_goal = l.mode == 4 && w.roe.done(id, Some(&o)) && have == o.goal;
     text(gu, &format!("{}：", gu.lobby_msg(0xc, 0x81, "")), x + 20.0, y + 180.0, WHITE);
-    text(gu, &format!("{have}/{}", o.goal), x + 180.0, y + 180.0, if full || at_goal { 0x8020_60a0 } else { WHITE });
+    text(gu, &format!("{have}/{}", o.goal), x + 180.0, y + 180.0, if full || at_goal { AT_GOAL } else { WHITE });
     if !o.repeatable {
-        text(gu, &gu.lobby_msg(0xc, 0x84, ""), x + 220.0, y + 200.0, 0x8080_4040);
+        text(gu, &gu.lobby_msg(0xc, 0x84, ""), x + 220.0, y + 200.0, ONCE);
     }
     text(gu, &gu.lobby_msg(0xc, 0x83, ""), x + 20.0, y + 200.0, WHITE);
     let extra = |v: u32, m: usize| (v != 0).then(|| format!("{v}{}", gu.lobby_msg(0xc, m, "")));

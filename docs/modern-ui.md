@@ -360,11 +360,14 @@ Milestone 1:
   beside them at once (profile with the attributes, job and master levels with the job icons, combat / magic / craft
   skills named by their sprites' captions, Currencies 1 and 2 as one list with "only those held"); Play Time shows on
   the page; Unity, Merit Points, Job Points and Alter Ego Points open retail's windows over it.
-- Journal (modern/journal.rs): Missions, Quests and Key Items as tabs of one window (Tab or a click switches): every
-  log / area / category on the left with counts, the chosen one's rows on the right (a log's or an area's current and
-  completed together), the cursor row's description under them at once; a new key item is marked seen by Enter or a
-  click (no "Examine?" question); the Records of Eminence values and buttons under Quests open retail's lists. Typing
-  searches every key item, quest or mission there is (listsearch.rs).
+- Journal (modern/journal.rs): Missions, Quests, Records of Eminence and Key Items as tabs of one window (Tab or a
+  click switches): every log / area / category on the left with counts, the chosen one's rows on the right (a log's or
+  an area's current and completed together), the cursor row's description under them at once; a new key item is
+  marked seen by Enter or a click (no "Examine?" question). Records of Eminence shows the totals, then retail's lists
+  (Current, Objective List, Vana'Bout) in place, the rows and the description in retail's colours (the name as its
+  row, the count blue when complete or at its goal, the once-only note); in a category the sibling ones are a Left /
+  Right away, or a click on the arrows by its heading (retail's children 9 / 10). Typing searches every key item, quest
+  or mission there is (listsearch.rs).
 - Social (modern/social.rs): the Party menu, Search and Linkshell windows drawn from retail's menus (their rows
   named by their label sprites, retail's disabled rows and swaps, a window opened over another shown beside it);
   link12 is the People member list and link11 (naming a new shell) a modern window. Set Bazaar the same way. View House is the storage view itself, opened on the Mog
