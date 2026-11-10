@@ -2594,6 +2594,10 @@ fn world_hud(
                     keys.clear();
                 }
                 _ if world.typing => {}
+                // The window cursor ids 0x2b..0x2e are bound with flag 0x20 (no Shift): Shift + arrows only turn the
+                // camera (Input::axis), never a window's cursor.
+                egui::Key::ArrowUp | egui::Key::ArrowDown | egui::Key::ArrowLeft | egui::Key::ArrowRight
+                    if modifiers.shift => {}
                 // Ours: Escape closes the modern UI Modes editor (/uimodes), drawn over everything.
                 egui::Key::Escape if world.modern && world.uimodes_open => {
                     world.uimodes_open = false;

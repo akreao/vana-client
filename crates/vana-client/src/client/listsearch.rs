@@ -762,7 +762,16 @@ pub fn events(w: &mut World, gu: &GameUi, events: &[egui::Event]) -> bool {
                 s.text.push_str(t);
                 s.sel = 0;
             }
-            egui::Event::Key { key, pressed: true, .. } => key_in(w, gu, *key),
+            // Shift + arrows are the camera's (no Shift on the window cursor ids).
+            egui::Event::Key { key, pressed: true, modifiers, .. }
+                if !(modifiers.shift
+                    && matches!(
+                        key,
+                        egui::Key::ArrowUp | egui::Key::ArrowDown | egui::Key::ArrowLeft | egui::Key::ArrowRight
+                    )) =>
+            {
+                key_in(w, gu, *key)
+            }
             _ => {}
         }
         if was && w.list_search.is_none() {

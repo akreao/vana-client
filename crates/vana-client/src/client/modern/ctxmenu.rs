@@ -74,8 +74,14 @@ pub fn popup(
     let sel_id = Id::unique("modern context menu sel").with((title, at.x as i32, at.y as i32));
     let usable: Vec<usize> = rows.iter().enumerate().filter(|(_, r)| r.1).map(|(k, _)| k).collect();
     let mut sel = ctx.data(|d| d.get_temp::<usize>(sel_id)).filter(|k| usable.contains(k)).or(usable.first().copied());
+    // Shift + arrows are the camera's, as in every window (no Shift on the cursor ids).
     let (down, up, enter) = ctx.input(|i| {
-        (i.key_pressed(egui::Key::ArrowDown), i.key_pressed(egui::Key::ArrowUp), i.key_pressed(egui::Key::Enter))
+        let arrows = !i.modifiers.shift;
+        (
+            arrows && i.key_pressed(egui::Key::ArrowDown),
+            arrows && i.key_pressed(egui::Key::ArrowUp),
+            i.key_pressed(egui::Key::Enter),
+        )
     });
     if let Some(at) = sel.and_then(|s| usable.iter().position(|&k| k == s)) {
         if down {
