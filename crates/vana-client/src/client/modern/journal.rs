@@ -223,6 +223,8 @@ struct Mouse {
     tab: Option<Tab>,
     nav: Option<usize>,
     click: Option<usize>,
+    /// A Records of Eminence sibling arrow (true the right one).
+    sibling: Option<bool>,
 }
 
 /// A navigation row (a log, an area, a category) with its count; the chosen one lit while this column has the keys.
@@ -330,8 +332,14 @@ fn list(ui: &mut Ui, m: &super::Modern, lines: &[Line], cursor: usize, keys: boo
 
 /// The cursor row's name and description, wrapped.
 fn description(ui: &mut Ui, m: &super::Modern, name: &str, text: &str) {
+    desc_box(ui, m, name, m.theme.color("gold"), |ui| {
+        super::gametext::label(ui, m, text, m.theme.small, m.theme.color("text"));
+    });
+}
+
+/// The description's box: as tall as its text needs (DESC_H at least, so nothing is cut), the name over `add`.
+fn desc_box(ui: &mut Ui, m: &super::Modern, name: &str, colour: Color32, add: impl FnOnce(&mut Ui)) {
     ui.add_space(8.0);
-    // As tall as its text needs (DESC_H at least), so nothing is cut.
     egui::Frame::NONE.fill(m.theme.color("charcoal").gamma_multiply(0.7)).corner_radius(6).inner_margin(10).show(
         ui,
         |ui| {
@@ -341,12 +349,36 @@ fn description(ui: &mut Ui, m: &super::Modern, name: &str, text: &str) {
                 egui::RichText::new(name)
                     .size(m.theme.small)
                     .family(FontFamily::Name(super::STRONG.into()))
-                    .color(m.theme.color("gold")),
+                    .color(colour),
             );
             ui.add_space(2.0);
-            super::gametext::label(ui, m, text, m.theme.small, m.theme.color("text"));
+            add(ui);
         },
     );
+}
+
+/// An objective's description in retail's colours (FUN_102323d0 / FUN_10232090): the name's as its row's, the count's
+/// when complete or at its goal, the once-only note's.
+fn roe_description(ui: &mut Ui, m: &super::Modern, d: &roe::DescView) {
+    let tint = |c: u32| super::chat::colour(c.to_le_bytes());
+    desc_box(ui, m, &d.name, tint(d.tint), |ui| {
+        let (text, size) = (m.theme.color("text"), m.theme.small);
+        super::gametext::label(ui, m, &d.text, size, text);
+        ui.add_space(6.0);
+        let part = |ui: &mut Ui, s: &str, c: Color32| ui.label(egui::RichText::new(s).size(size).color(c));
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            part(ui, &format!("{}: ", d.progress_label), text);
+            part(ui, &d.progress, tint(d.progress_tint));
+            if let Some(o) = &d.once {
+                part(ui, &format!("   {o}"), tint(roe::ONCE));
+            }
+        });
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            part(ui, &format!("{} {}", d.rewards_label, d.rewards), text);
+        });
+    });
 }
 
 /// The tab strip.
@@ -527,16 +559,6 @@ pub fn draw(p: &mut Panels, w: &mut World) {
                 lines.push(Line { text: e.clone(), indent: 0.0, colour: muted, head: true, new: false, count: None });
             }
             cursor = v.cursor;
-            desc = v.desc.as_ref().map(|d| {
-                let once = d.once.as_ref().map_or(String::new(), |o| format!("   ({o})"));
-                (
-                    d.name.clone(),
-                    format!(
-                        "{}\n\n{}: {}{once}\n{}: {}",
-                        d.text, d.progress_label, d.progress, d.rewards_label, d.rewards
-                    ),
-                )
-            });
         }
         Tab::Roe => {
             // The entries on the left, the totals on the right (quest00's panel, FUN_10233560).
@@ -595,6 +617,9 @@ pub fn draw(p: &mut Panels, w: &mut World) {
         }
     }
     let on_list = w.journal_on_list && t != Tab::Roe;
+    // An open Records of Eminence list: its description in its colours, the sibling arrows by the heading.
+    let roe_desc = roe_list.as_ref().and_then(|v| v.desc.as_ref());
+    let siblings = roe_list.as_ref().is_some_and(|v| v.siblings);
     let follow = m.journal_seen.get() != (t as u8, cursor);
     m.journal_seen.set((t as u8, cursor));
 
@@ -632,21 +657,31 @@ pub fn draw(p: &mut Panels, w: &mut World) {
                         found = Some(lists::search_rows(ui, m, w, icons, text, *sel, hits));
                         return;
                     }
-                    ui.label(
-                        egui::RichText::new(&heading)
-                            .size(m.theme.title)
-                            .family(FontFamily::Name(super::STRONG.into()))
-                            .color(gold),
-                    );
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(&heading)
+                                .size(m.theme.title)
+                                .family(FontFamily::Name(super::STRONG.into()))
+                                .color(gold),
+                        );
+                        if siblings {
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if let Some(right) = super::kit::arrows(ui, m, "roe siblings", false, false) {
+                                    mouse.sibling = Some(right);
+                                }
+                            });
+                        }
+                    });
                     ui.add_space(4.0);
                     if waiting {
                         ui.label(egui::RichText::new("Preparing data...").size(m.theme.small).color(muted));
                         return;
                     }
                     list(ui, m, &lines, cursor, on_list, follow, &mut mouse);
-                    match &desc {
-                        Some((name, text)) => description(ui, m, name, text),
-                        None => {
+                    match (roe_desc, &desc) {
+                        (Some(d), _) => roe_description(ui, m, d),
+                        (None, Some((name, text))) => description(ui, m, name, text),
+                        (None, None) => {
                             ui.add_space(8.0 + DESC_H);
                         }
                     }
@@ -662,6 +697,11 @@ pub fn draw(p: &mut Panels, w: &mut World) {
     }
     if let Some(to) = mouse.tab {
         switch(w, to);
+        return;
+    }
+    // The sibling category in its place, as Left / Right (FUN_102304b0 / FUN_102304e0).
+    if let Some(right) = mouse.sibling {
+        roe::modern_key(w, if right { egui::Key::ArrowRight } else { egui::Key::ArrowLeft }, false);
         return;
     }
     if let Some(k) = mouse.nav {
