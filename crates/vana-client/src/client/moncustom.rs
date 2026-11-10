@@ -1052,7 +1052,6 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
 
 /// The mouse: the generic handler on the focused window, list rows as the list's own (a row moves the cursor, a click
 /// on it is Enter).
-#[allow(clippy::too_many_arguments)]
 pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
     let Some(s) = w.moncustom.clone() else { return };
     let enter = |w: &mut World, gu: &GameUi, k: egui::Key| key(w, gu, k);

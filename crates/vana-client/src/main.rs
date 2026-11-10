@@ -2610,7 +2610,6 @@ fn sjis_with_escapes(s: &str) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn text_shot(
     text: &[String],
     font: &str,
@@ -3551,7 +3550,6 @@ impl fx::Actors for ShotActors {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 /// `movie-shot`: decodes the opening movie up to the last frame asked for, writing those frames (BT.601 to RGB).
 fn movie_shot(frames: &[u32], out: &std::path::Path, size: Option<&str>) -> Result<()> {
     let cfg = config::Config::load();

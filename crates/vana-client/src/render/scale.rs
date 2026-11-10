@@ -252,7 +252,6 @@ impl SceneScale {
     /// 3D LCD Mode's side-by-side eyes (the scene `extra` wider) and whether this frame carries the strip. `smaa`: the
     /// anti-aliasing filter (not retail; skipped in 3D LCD Mode and when downscaling). The SMAA passes are made on
     /// first use; turning it off leaves them idle. `grading`: the colour grading preset (`grading`, 0 off).
-    #[allow(clippy::too_many_arguments)]
     pub fn blit(
         &mut self,
         gpu: &Gpu,

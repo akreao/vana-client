@@ -2903,7 +2903,6 @@ impl Effects {
 
     /// FUN_1003afd0's frame for attach `mode` / word `w` on two actor slots, with op 0x7b's offsets and the last matrix
     /// (dolls): the matrix (None while unplaced) and the two-point distance; None for a mode it does not know.
-    #[allow(clippy::too_many_arguments)]
     fn attach_frame(
         &self,
         mode: u8,

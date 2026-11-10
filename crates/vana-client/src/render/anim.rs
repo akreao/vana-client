@@ -675,7 +675,6 @@ impl GpuAnim {
 
     /// Queues one actor: its model, the motion files on it, the pose (and the one it blends from at `t`),
     /// written to pose vec4 index `out`. Animations are found in the model or its files by address.
-    #[allow(clippy::too_many_arguments)]
     pub fn job(
         &mut self,
         ch: &Arc<Character>,

@@ -237,7 +237,6 @@ pub fn push_help_frame(b: &mut UiBatch, lobby: &UiFile, style: &SpriteLib, w: f3
 /// other lobby menus). Returns the 16 slot rects and the grid's bounds.
 /// `press`: the cursor row's press counter (window +0x5e, 9 down to 0): the row sinks to +1, +1 and the tail of the
 /// N = 20 rings shows (FUN_101177d0 -> FUN_10119f80).
-#[allow(clippy::too_many_arguments)]
 pub fn select_list(
     b: &mut UiBatch,
     lobby: &UiFile,
@@ -339,7 +338,6 @@ fn shape_fit_count(lib: &SpriteLib, s: &[u8], max: f32) -> usize {
 /// the fit, else at the last ' ', '-', '@', ''' or ':' from fit + 1 down to fit / 4, else at the fit. `split` (no
 /// gauge): the rest goes on as its own name one line down, 4 in and 4 narrower; else the rest is fitted with the
 /// ellipsis (FUN_101c9d50).
-#[allow(clippy::too_many_arguments)]
 pub fn push_wrapped_name(
     b: &mut UiBatch,
     ui: &UiFile,
@@ -423,7 +421,6 @@ pub fn frame_rect(m: &Menu, w: f32, h: f32, fx: f32, fy: f32) -> (f32, f32, f32,
 /// FUN_10234680: a list's scroll bar ("menu    scroll" 0..3 in 0x80808080) at (x, y), h tall, when total > visible
 /// (window draw 0x10117e97): the top cap, the thumb (x + 1, y + 4 + off) 6 x len, the track, the bottom cap;
 /// len = ((h - 9) visible + total) / total, off = (h - 8 - len) top / (total - visible), in integers.
-#[allow(clippy::too_many_arguments)]
 pub fn push_scroll_bar(b: &mut UiBatch, ui: &UiFile, x: f32, y: f32, h: f32, total: usize, visible: usize, top: usize) {
     if total <= visible {
         return;
@@ -482,7 +479,6 @@ pub fn push_window_at(
 
 /// `push_window_at` at frame alpha `a` (part +0x0c): colour ftol(a * 128) << 24 | 0x808080, the frame alpha
 /// blended (0x44) while a < 1 (FUN_101144b0 at 0x101147a8).
-#[allow(clippy::too_many_arguments)]
 pub fn push_window_alpha(
     b: &mut UiBatch,
     ui: &UiFile,
@@ -534,7 +530,6 @@ pub fn push_gauge(
 
 /// FUN_101caf00 -> FUN_101cad00: the fill to min(value, eased), a ghost (0x30808080) from there to the max, the frame
 /// dimmed 0x30505050 when the fill is empty.
-#[allow(clippy::too_many_arguments)]
 pub fn push_gauge_eased(
     b: &mut UiBatch,
     ui: &UiFile,

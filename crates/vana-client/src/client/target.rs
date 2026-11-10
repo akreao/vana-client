@@ -278,7 +278,6 @@ pub fn party_cursor_pick(w: &mut World, index: usize) -> bool {
 
 /// The cursor with the mouse over the party windows' rows (the windows' generic events *(inf)*): hovering a used row
 /// moves it (SE 0001), a click on the cursor row is Enter, a right click on a party window Escape.
-#[allow(clippy::too_many_arguments)]
 pub fn party_cursor_pointer(
     w: &mut World,
     gu: &super::game_ui::GameUi,

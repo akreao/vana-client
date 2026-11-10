@@ -1441,7 +1441,6 @@ impl EffectsGpu {
 
     /// Draws the live elements over the scene (same targets, depth tested, back to front). `color_tex` is the
     /// texture behind `color` (CMoDist copies it; without one, or without COPY_SRC, distortion is not drawn).
-    #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &mut self,
         gpu: &Gpu,

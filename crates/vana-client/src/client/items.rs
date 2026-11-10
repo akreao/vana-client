@@ -1995,7 +1995,6 @@ fn store_bars(gu: &GameUi, b: &Storage, bars: &mut super::hudtop::BarText) {
 /// The storage view's windows: "menu    bank" at its layout (16, 48), the inventory list moved to (200, 48), the
 /// cursor on the focused one; itmsortw at (384, 48) (not for the bin) with sortyn; itemctrl over them for a stack
 /// ("%2d" right-aligned at (+0x34, +0x16), "/%2d" at (+0x3a, +0x16), FUN_1013a520). Read-only: the item list alone.
-#[allow(clippy::too_many_arguments)]
 fn draw_storage(
     gu: &mut GameUi,
     w: &World,

@@ -873,7 +873,6 @@ impl LogWin {
     /// open, `shrink` is Escape (key 0x95, FUN_1015b830). Lines this window's mask leaves out are not taken; stamps
     /// are added as lines come (a change of 0xb5 shows on new lines; ours, the every-line switch, rewraps them all, as
     /// the modern chat shows it).
-    #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
         gu: &GameUi,
@@ -1203,7 +1202,6 @@ impl LogWin {
     /// (FUN_10138020's offset -16), the hand with them. Returns the frame rect.
     /// `band`: the cursor row is a player's line (+0x26): child 1 (the row) shows keytops3 538, a translucent blue band,
     /// instead of windowps 332 (blank) (FUN_10137c70; drawn under the text *(inf: the order)*).
-    #[allow(clippy::too_many_arguments)]
     pub fn draw_full(
         &self,
         gu: &mut GameUi,

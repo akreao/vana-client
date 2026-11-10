@@ -571,7 +571,6 @@ pub fn scroll<R>(
 /// A list of `n` rows `h` tall in a scroll area at most `max` tall: each row's face (the cursor's chosen while `focus`,
 /// lit when not; under the pointer only lit), then `paint` draws its contents; the cursor's row kept in view when
 /// `follow`. Rows `off(k)` are greyed.
-#[allow(clippy::too_many_arguments)]
 pub fn list(
     ui: &mut Ui,
     m: &Modern,

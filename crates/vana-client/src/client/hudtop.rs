@@ -210,7 +210,6 @@ impl HudTop {
     }
 
     /// Draws the three windows from the bars' text slots.
-    #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &mut self,
         gu: &mut GameUi,
@@ -291,7 +290,6 @@ impl HudTop {
     }
 
     /// titlewin, helpwind and netstat at the current fade (also the offscreen topbar-shot).
-    #[allow(clippy::too_many_arguments)]
     pub fn draw_bars(&mut self, gu: &mut GameUi, sw: f32, sh: f32, title: &str, help: &str, ticks: f32, busy: bool) {
         let a = self.fade.alpha();
         // titlewin (16, 16) 112 x 30: the title at (+4, +8), clipped to width - 8 (FUN_1014a3b0); content always.
@@ -566,7 +564,6 @@ impl HudTop {
 
 /// The offscreen top bar (topbar-shot): the bars at a fade state, the main menu on child `menu`, the party
 /// row at `hpp` and a target window with ("mob") or without ("npc") the gauge.
-#[allow(clippy::too_many_arguments)]
 pub fn topbar_shot(
     out: &std::path::Path,
     fade: &str,

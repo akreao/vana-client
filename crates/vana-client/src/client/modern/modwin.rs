@@ -297,7 +297,6 @@ fn panel(
 }
 
 /// A window's elements and its help line (in its panel, or an edge window's body); clicks into `clicks`.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn body(
     ui: &mut egui::Ui,
     m: &super::Modern,

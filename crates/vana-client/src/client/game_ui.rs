@@ -349,7 +349,6 @@ pub struct GameUi {
     stale: Vec<String>,
     /// Wrapped lines by (text, widths, TrueType text): windows wrap the same text every frame, and a wrap measures its
     /// line again for every word (wrap_part).
-    #[allow(clippy::type_complexity)]
     wrapped: std::cell::RefCell<std::collections::HashMap<u64, (String, [u32; 2], bool, Vec<String>)>>,
     /// Images made for a while (name plates' rasters): when each was last drawn; unseen for TEMP_KEEP, stale.
     temp_seen: std::collections::HashMap<String, std::time::Instant>,
@@ -706,7 +705,6 @@ impl GameUi {
     }
 
     /// The title with the wardrobes, the selected button's press, the hand and the modern layer's part.
-    #[allow(clippy::too_many_arguments)]
     pub fn title_with(
         &mut self,
         w: f32,
@@ -971,7 +969,6 @@ impl GameUi {
     /// A lobby window as FUN_101144b0 draws it: style frame, the window sprite from its second cell, each child's
     /// sprite, child `sel` tinted 0x80805020 one pixel up-left with the hand when `hand`; `hide` children are
     /// skipped. `centred` adds ((W - 512) / 2, (H - 448) / 2) (FUN_101179a0).
-    #[allow(clippy::too_many_arguments)]
     /// Disabled (state 5) children over a window drawn with them hidden (FUN_101177d0 / FUN_10119c00): the last ref of
     /// kind 0 or 4 wins; a kind-4 sprite at full tint (cursor 0x80805020 at +1 px), a kind-0 one dimmed to 0x30808080
     /// (cursor 0x40402810 at +1 px).
@@ -1031,7 +1028,6 @@ impl GameUi {
     }
 
     /// `lobby_window` moved by `off` (region stacking).
-    #[allow(clippy::too_many_arguments)]
     /// A window drawn from `layout` but opened and animated as `gate`: a window that swaps its layout in place
     /// (FUN_1011a8f0). Returns the frame rect.
     pub fn window_swapped(&mut self, gate: &str, layout: &str, w: f32, h: f32, off: (f32, f32)) -> Option<[f32; 4]> {
@@ -1101,7 +1097,6 @@ impl GameUi {
     }
 
     /// `lobby_window_off` with children's own sprites replaced (FUN_1011ae50: (child, sprite in the same library)).
-    #[allow(clippy::too_many_arguments)]
     pub fn lobby_window_swaps(
         &mut self,
         name: &str,
@@ -1118,7 +1113,6 @@ impl GameUi {
     }
 
     /// `lobby_window_swaps` where a swap may take its sprite from another library (FUN_1011ae50 with another table).
-    #[allow(clippy::too_many_arguments)]
     pub fn lobby_window_lib_swaps(
         &mut self,
         name: &str,
@@ -1147,7 +1141,6 @@ impl GameUi {
         self.lobby_window_full(name, w, h, (pad[0], -pad[3]), sel, hand, &[], &[], pad)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn lobby_window_full(
         &mut self,
         name: &str,
@@ -1421,7 +1414,6 @@ impl GameUi {
     }
 
     /// Sprite `k` scaled by (sx, sy) about (x, y).
-    #[allow(clippy::too_many_arguments)]
     pub fn sprite_scaled(&mut self, lib: &str, k: usize, x: f32, y: f32, sx: f32, sy: f32, tint: u32) {
         if let Some(l) = self.data.lobby.lib(lib).filter(|l| k < l.sprites.len()) {
             self.batch.push_sprite(&self.data.lobby, l, k, x, y, sx, sy, tint, 0);
@@ -1472,7 +1464,6 @@ impl GameUi {
     }
 
     /// Sprite `k` scaled by (sx, sy) with a blend word (8: the gauge fills).
-    #[allow(clippy::too_many_arguments)]
     pub fn sprite_scaled_blend(
         &mut self,
         lib: &str,
@@ -1490,7 +1481,6 @@ impl GameUi {
     }
 
     /// Sprite `k` scaled, its cells' vertex colours replaced by `rgba` (0x80 = 1.0).
-    #[allow(clippy::too_many_arguments)]
     pub fn sprite_coloured(
         &mut self,
         lib: &str,
@@ -1515,7 +1505,6 @@ impl GameUi {
     }
 
     /// The same with a blend word (0: the cells' own; 0x44 alpha blended).
-    #[allow(clippy::too_many_arguments)]
     pub fn sprite_affine_blend(&mut self, lib: &str, k: usize, x: f32, y: f32, m: [f32; 4], tint: u32, blend: u32) {
         let Some(l) = self.data.lobby.lib(lib) else { return };
         if let Some(s) = l.sprites.get(k) {
@@ -1609,7 +1598,6 @@ impl GameUi {
 
     /// A focused list's bar at (x, y), h tall, for the mouse and the wheel; registered whether it shows or not (the
     /// wheel goes to the focused list either way).
-    #[allow(clippy::too_many_arguments)]
     pub fn bar_site(
         &mut self,
         owner: super::scrollbar::Owner,
@@ -1629,12 +1617,10 @@ impl GameUi {
     }
 
     /// Cell `cell` of sprite `k` stretched over (x, y, w, h), keeping its texture rect.
-    #[allow(clippy::too_many_arguments)]
     pub fn cell_stretch(&mut self, lib: &str, k: usize, cell: usize, x: f32, y: f32, w: f32, h: f32, tint: u32) {
         self.cell_stretch_blend(lib, k, cell, x, y, w, h, tint, 0);
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn cell_stretch_blend(
         &mut self,
         lib: &str,
@@ -2061,7 +2047,6 @@ impl GameUi {
 
     /// A name plate in a name colour (an "menu    ncol" tint, FUN_10119590), bottom at (x, y): the icon bytes
     /// (client/plate.rs) and the name, the job master stars above it.
-    #[allow(clippy::too_many_arguments)]
     pub fn name_plate(
         &mut self,
         prefix: &[u8],
@@ -2125,7 +2110,6 @@ impl GameUi {
     }
 
     /// FUN_101c9fa0: a name wrapped as the target window draws it (see screens::push_wrapped_name).
-    #[allow(clippy::too_many_arguments)]
     pub fn wrapped_name(&mut self, s: &str, max: f32, x: f32, y: f32, tint: u32, centre: bool, split: bool) {
         screens::push_wrapped_name(&mut self.batch, &self.data.lobby, &encode_sjis(s), max, x, y, tint, centre, split);
     }
@@ -2506,9 +2490,7 @@ impl GameUi {
 
     /// Draws this frame's batch, over the lobby clear colour or (`over`) on top of the 3D scene.
     /// Draws the batch; `fade` is the 2D layer level, `scene` the lobby scene level the clear colour takes.
-    #[allow(clippy::too_many_arguments)]
     /// `layout`: the menu size the batch was laid out at; `size`: the target's pixels.
-    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
         gpu: &Gpu,

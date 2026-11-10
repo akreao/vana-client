@@ -860,7 +860,6 @@ enum LoginChoice {
 /// (the two-factor or Update window's).
 /// Not retail (PlayOnline logged in): the generic window sounds (FUN_10118260) go to `sounds`: 0001 when the focus
 /// moves (and on Escape, which lands on Exit), 0002 on an enabled action, 0004 on a disabled one.
-#[allow(clippy::too_many_arguments)]
 fn login_window(
     lu: &mut GameUi,
     input: &UiInput,
@@ -1593,7 +1592,6 @@ fn kaipage(gu: &mut GameUi, world: &World, x: f32, y: f32, last: &str) {
 
 /// A query-class window (FUN_1014e220): the question at the top, three option rows with the anc_s hand, the bar
 /// (FUN_1014de10: total the options, top the first shown; at x1 - 8 when stacked). Its rect.
-#[allow(clippy::too_many_arguments)]
 fn draw_choice(
     gu: &mut GameUi,
     name: &str,
@@ -19310,7 +19308,6 @@ fn present_mode(caps: &wgpu::SurfaceCapabilities, limit: u32, window: &Window) -
 
 /// Saves a captured frame as PNG: at `shrink` (an area-average resample) when given, and a full-size copy under `full`
 /// (same file name) when given.
-#[allow(clippy::too_many_arguments)]
 fn save_capture(
     gpu: &Gpu,
     buf: &wgpu::Buffer,

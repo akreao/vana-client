@@ -546,7 +546,6 @@ fn group_head(ui: &mut Ui, m: &super::Modern, text: &str, first: bool) {
 
 /// A topic page: its headings and settings, the cursor's ringed while it has the keys. What the mouse did, and the
 /// help of the line under the pointer.
-#[allow(clippy::too_many_arguments)]
 fn topic_page(
     ui: &mut Ui,
     m: &super::Modern,
@@ -1414,7 +1413,6 @@ enum Got {
 }
 
 /// A native setting: its heading and its options as buttons, its slider, or its button; ringed with the cursor.
-#[allow(clippy::too_many_arguments)]
 fn native_row(
     ui: &mut Ui,
     m: &super::Modern,
@@ -1483,7 +1481,6 @@ fn native_row(
 }
 
 /// A native page's settings (the title's Config); the setting under the pointer (for the help line).
-#[allow(clippy::too_many_arguments)]
 fn native_rows(
     ui: &mut Ui,
     m: &super::Modern,
@@ -1523,7 +1520,6 @@ fn help_line(ui: &mut Ui, m: &super::Modern, text: &str) {
 }
 
 /// A list page's rows: the label, its state as a button at the right (a click steps it as Enter does).
-#[allow(clippy::too_many_arguments)]
 fn list_rows(
     ui: &mut Ui,
     m: &super::Modern,
@@ -1552,7 +1548,6 @@ fn list_rows(
 
 /// Font Colors: each colour's name, sample line and swatch; the cursor's colour open with the picker and its hue,
 /// saturation and brightness sliders (the cursor's ringed).
-#[allow(clippy::too_many_arguments)]
 /// Font Colors' columns: the swatch's, the widest name's and the widest sample's of category `cat`; the page is made
 /// as wide as they need.
 const SWATCH_W: f32 = 38.0;

@@ -1693,7 +1693,6 @@ pub(super) fn bar(w: &mut World, m: super::scrollbar::Msg) -> bool {
 /// The mouse on the focused window (winhits.rs): the menus and shopsell as the generic window, auclist / auchisto's
 /// rows and the sell list's as lists (hover moves the cursor, a click on it is Enter, a right click Escape); moneyctr
 /// as retail's (winhits::ctr).
-#[allow(clippy::too_many_arguments)]
 pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
     use super::winhits::generic;
     // The modern layer draws these and takes their mouse.

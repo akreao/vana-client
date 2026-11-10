@@ -595,7 +595,6 @@ impl DancerRenderer {
 
     /// Draws over what is in `view`, clearing only depth as the dancer does (FUN_10245ab0).
     /// `coverage` adds the alpha-only pass that marks the model for a transparent background.
-    #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &mut self,
         gpu: &Gpu,

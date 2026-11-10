@@ -1652,7 +1652,6 @@ enum Outcome {
     Done,
 }
 
-#[allow(clippy::too_many_arguments)]
 fn run(
     mut login: MapLogin,
     account: &str,
@@ -1680,7 +1679,6 @@ fn run(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn session(
     addr: SocketAddr,
     login: &MapLogin,

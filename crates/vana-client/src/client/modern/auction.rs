@@ -48,7 +48,6 @@ fn heading(ui: &mut Ui, m: &super::Modern, text: &str) {
 
 /// Item rows (the list, the inventory for sale): icon, the stack size, the name in its tint, the cell at the right; the
 /// cursor's kept in view. The row clicked on the pane with the keys.
-#[allow(clippy::too_many_arguments)]
 fn item_rows(
     ui: &mut Ui,
     m: &super::Modern,
@@ -191,7 +190,6 @@ fn search_box(ui: &mut Ui, m: &super::Modern) -> bool {
 
 /// One pane as a column; a list reaches down to `fill` (the tallest menu column last frame), 12 rows at least. Its
 /// height.
-#[allow(clippy::too_many_arguments)]
 fn pane(
     ui: &mut Ui,
     m: &super::Modern,

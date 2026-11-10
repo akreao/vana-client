@@ -2531,7 +2531,6 @@ impl Effects {
     /// `model` (vtable +0x1e0; flyers keep their wing beats there) becomes its folder; else DAT 0's 'foot' (se 12, a
     /// plain tone). One shot at `pos`, centred, at `level` (101 walking, 127 running). Then the dust generator `dust`
     /// of that folder, if any, bursts once on actor `id`.
-    #[allow(clippy::too_many_arguments)]
     pub fn footstep(
         &mut self,
         id: u32,
