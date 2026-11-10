@@ -95,6 +95,7 @@ enum Click {
     Assign,
     Clear,
     Options(bool, bool, u32),
+    Rumble(bool),
     Defaults,
     Copy,
     Retail,
@@ -225,6 +226,10 @@ fn side(ui: &mut Ui, m: &super::Modern, p: &PadCfg, click: &mut Option<Click>) {
         if let Some(k) = kit::choice(ui, m, &onoff, set.background as usize, 0) {
             *click = Some(Click::Options(set.on, k == 1, p.dead));
         }
+        ui.label(egui::RichText::new("Enable Force Feedback").size(m.theme.small).color(m.theme.color("text")));
+        if let Some(k) = kit::choice(ui, m, &onoff, set.rumble as usize, 0) {
+            *click = Some(Click::Rumble(k == 1));
+        }
         let at = (p.dead / 5).min(12) as usize;
         let shown = format!("{}%", p.dead);
         if let (Some(k), _) = kit::slider_setting(ui, m, "Stick Dead Zone (Vana Client)", false, false, 13, at, &shown)
@@ -297,6 +302,10 @@ fn apply(w: &mut World, c: Click) {
         }
         Click::Options(on, bg, dead) => {
             p.set_options(on, bg, dead);
+            Se::Cursor
+        }
+        Click::Rumble(on) => {
+            p.set_rumble(on);
             Se::Cursor
         }
         Click::Defaults => {

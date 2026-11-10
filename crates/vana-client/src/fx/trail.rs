@@ -353,6 +353,74 @@ mod tests {
         Some(Afb::parse(lib.data(n)).expect("Afb parse"))
     }
 
+    /// After-image census for gaps item 127 over every DAT (by hand: `cargo test --release afb_census -- --ignored
+    /// --nocapture`): each file's op 0x2c names against its own Afbs, and whether the file is a model's (a skeleton
+    /// chunk 0x29) or carries motions (0x2b).
+    #[test]
+    #[ignore]
+    fn afb_census() {
+        use crate::dat::generator::{Tree, kind};
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let (mut ops, mut afbs, mut op_files, mut afb_files) = (0, 0, 0, 0);
+        let mut classes: std::collections::BTreeMap<String, Vec<u32>> = Default::default();
+        for id in 0..index.len() as u32 {
+            let Ok(file) = index.read(id) else { continue };
+            let Ok(tree) = Tree::build(&file) else { continue };
+            let own: Vec<[u8; 4]> = tree.of_kind(kind::AFB).map(|i| tree.nodes[i].name).collect();
+            let mut wants: Vec<([u8; 4], [u8; 4])> = Vec::new();
+            for i in tree.of_kind(kind::SCHEDULER) {
+                for o in crate::dat::sched::ops(&file[tree.nodes[i].data.clone()]) {
+                    if o.code == 0x2c && o.raw.len() >= 12 {
+                        wants.push((tree.nodes[i].name, o.raw[8..12].try_into().unwrap()));
+                    }
+                }
+            }
+            if own.is_empty() && wants.is_empty() {
+                continue;
+            }
+            ops += wants.len();
+            afbs += own.len();
+            op_files += !wants.is_empty() as usize;
+            afb_files += !own.is_empty() as usize;
+            let has = |k: u8| tree.nodes.iter().any(|n| n.kind == k);
+            let named = wants.iter().filter(|(_, w)| own.iter().any(|a| a[..3] == w[..3])).count();
+            let class = format!(
+                "ops {} afbs {} skeleton {} motions {}",
+                match (wants.len(), named) {
+                    (0, _) => "none",
+                    (n, m) if n == m => "all named here",
+                    (_, 0) if own.is_empty() => "no Afb here",
+                    (_, 0) => "none named here",
+                    _ => "some named here",
+                },
+                if own.is_empty() { "no" } else { "yes" },
+                has(0x29),
+                has(kind::MOTION),
+            );
+            let list = classes.entry(class.clone()).or_default();
+            list.push(id);
+            if !class.starts_with("ops all named here afbs yes skeleton false motions true") {
+                let s = |n: &[u8; 4]| String::from_utf8_lossy(n).into_owned();
+                println!(
+                    "DAT {id}: {class}; ops {:?}; afbs {:?}",
+                    wants.iter().map(|(a, b)| format!("{}>{}", s(a), s(b))).collect::<Vec<_>>(),
+                    own.iter().map(s).collect::<Vec<_>>()
+                );
+            }
+        }
+        println!("{ops} ops 0x2c in {op_files} files; {afbs} Afbs in {afb_files} files");
+        for (c, f) in &classes {
+            let mut runs: Vec<(u32, u32)> = Vec::new();
+            for &id in f {
+                match runs.last_mut() {
+                    Some(r) if id <= r.1 + 16 => r.1 = id,
+                    _ => runs.push((id, id)),
+                }
+            }
+            println!("{c}: {} files, ranges {runs:?}", f.len());
+        }
+    }
+
     /// Spec 2.4: 33228 `b0a0` (Hume M Fast Blade).
     #[test]
     fn parse_fast_blade() {

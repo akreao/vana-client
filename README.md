@@ -207,6 +207,7 @@ Five minutes after the pad's last input it lets go, and the desktop's own timeou
 | `gamepad` | `true` | Read a game controller (Settings > Client > Gamepad) |
 | `gamepad_deadzone` | `0.33` | Stick travel ignored around the centre, measured round so turning the stick does not snap to its axes (Settings > Client > Stick Dead Zone) |
 | `gamepad_background` | `false` | Read the pad while the window is in the background |
+| `gamepad_rumble` | `true` | The pad rumbles with effects' quakes and the chat `<call>` |
 | `gamepad_padsin` | empty (retail's registry value, else FFXiPadConfig's XInput default) | Button settings in `padsin000` format: 32 numbers, one per function, each an XInput button number (0 B, 1 X, 2 Y, 3 A, 4 / 5 / 6 / 7 d-pad right / left / up / down, 8 LB, 9 LT, 10 L3, 11 RB, 12 RT, 13 R3, 14 Start, 15 Back), an axis 32 + n (1 left X, 2 left Y, 4 right X, 5 right Y; negative inverts) or -1. The positions are listed in MODLOG.md, "Gamepad" |
 | `gamepad_padexsin` | empty | `padexsin000`, the buttons used while the Button Combination button is held |
 

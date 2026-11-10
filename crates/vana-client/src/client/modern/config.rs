@@ -146,6 +146,7 @@ const PAGES: [(&str, &str, &[Item]); 13] = [
         &[
             Head("Lights"),
             Ours("Lamp Lights"),
+            Ours("Light Shading"),
             Ours("Bump Mapping"),
             Head("Shadows"),
             Ours("Character Shadows"),

@@ -263,10 +263,11 @@ pub fn of(dll: &[u8]) -> Result<Tables> {
     Ok(t)
 }
 
-/// FUN_10127990's call tags as (tag, UI sound number): "<call>" 17 .. "<call21>" 38, then "<ncall>" and "<scall>" with
-/// the same sounds. Their flags (0x800000: FUN_10127ab0's sender-near test; 0x400000: off) only set FUN_100380f0's
-/// third argument, a blink while DAT_10351710 is on (FUN_100381d0), and are taken off the SeSep name (asm 0x10127c9a).
-pub fn call_sounds(dll: &[u8]) -> Result<Vec<(String, u32)>> {
+/// FUN_10127990's call tags as (tag, UI sound number, flags): "<call>" 17 .. "<call21>" 38, then "<ncall>" and
+/// "<scall>" with the same sounds. Their flags (CALL_NEAR: FUN_10127ab0's sender-near test; CALL_QUIET: off) only set
+/// FUN_100380f0's third argument, whether the pad rumbles with the call (FUN_100381d0), and are taken off the SeSep
+/// name (asm 0x10127c9a / 0x10127cb6).
+pub fn call_sounds(dll: &[u8]) -> Result<Vec<(String, u32, u32)>> {
     let at = of(dll)?.calls_at;
     let mut out = Vec::new();
     for row in dll.get(at..).unwrap_or_default().as_chunks::<0x14>().0 {
@@ -275,12 +276,18 @@ pub fn call_sounds(dll: &[u8]) -> Result<Vec<(String, u32)>> {
             break;
         }
         let name = String::from_utf8_lossy(row[..16].split(|&b| b == 0).next().unwrap_or_default()).into_owned();
-        if let Ok(n) = std::str::from_utf8(&(snd & !0xc0_0000).to_be_bytes()).unwrap_or("").parse::<u32>() {
-            out.push((name, n));
+        let flags = snd & (CALL_NEAR | CALL_QUIET);
+        if let Ok(n) = std::str::from_utf8(&(snd & !flags).to_be_bytes()).unwrap_or("").parse::<u32>() {
+            out.push((name, n, flags));
         }
     }
     Ok(out)
 }
+
+/// A call sound's flags in DAT_1036eba0's names: the pad rumbles only when the caller stands near (`<ncall>`), or not
+/// at all (`<scall>`, and the tell sound 0x30703430).
+pub const CALL_NEAR: u32 = 0x80_0000;
+pub const CALL_QUIET: u32 = 0x40_0000;
 
 /// FUN_10080300's rows: (text command id, entry in the slot 0x24 help file), first match wins.
 pub fn text_help(dll: &[u8]) -> Result<Vec<(i16, i16)>> {
