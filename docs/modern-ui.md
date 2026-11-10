@@ -328,8 +328,8 @@ Milestone 1:
   the list pages open retail's windows over it.
 - Storage (modern/storage.rs): the bags as tabs, Mog Safe / Safe 2 and Mog Wardrobe 1..8 merged (only the parts the
   account may use: no Safe 2 without the 2F); the bag beside the inventory; a click moves a stack (right click one),
-  into a merged bag the first part with room that takes it; retail's colours say what may move. A move within a second
-  of the last waits for the send gate. The moogle's Storage row opens it at once on the first open bag (no container
+  into a merged bag the first part with room that takes it; retail's colours say what may move. A move made while the
+  last is pending waits for it, and the send gate holds it (one a second) rather than dropping it. The moogle's Storage row opens it at once on the first open bag (no container
   list); closing it comes back to the moogle's menu. Each pane has Auto-sort / Manual Sort (Num+ reaches them):
   Auto-sort sorts its bag (every part) and keeps it sorted as items come in (config auto_sort, saved); Manual Sort
   stops that and puts rows in order by hand (pick a row, then the row to put it at, within one part of a merged bag;

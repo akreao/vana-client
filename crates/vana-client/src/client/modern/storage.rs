@@ -6,7 +6,8 @@
 //! the first part with room that takes it. Retail's colours say what may move (equipped pieces, the moogle's bags away
 //! from it, non-gear into a wardrobe, installed furniture ...), and a refused row says why (ours). Nothing moves
 //! before the server does: a sent move shows as pending until the slot changes, and one the server ignores is
-//! explained after a while. A move within a second of the last waits for the send gate, which would drop it.
+//! explained after a while. A move made while the last is pending waits for it, and the net thread holds each for
+//! the send gate (one a second) where retail would drop it.
 
 use super::super::World;
 use super::super::items::{self as gitems, Pending, Qty, SortW, Storage, Waiting, Win};
@@ -20,8 +21,6 @@ const ICON: f32 = 24.0;
 const BIN: u8 = 17;
 /// How long a sent move may wait for the server before it counts as refused.
 const PATIENCE: std::time::Duration = std::time::Duration::from_secs(5);
-/// FUN_100fc3c0's gate: a second c2s 0x029 within this of the last is dropped.
-const GATE: std::time::Duration = std::time::Duration::from_millis(1000);
 
 /// The bags: name and containers (the merged ones in the order they fill).
 const BAGS: [(&str, &[u8]); 9] = [
@@ -68,12 +67,16 @@ fn bags(w: &World, b: &Storage) -> Vec<usize> {
 }
 
 /// A bag's parts this account may use now: the one the view opened on, and the others retail's lists leave on (no
-/// Safe 2 without the 2F, no Locker without a lease, ...). The server refuses a move into the rest.
+/// Safe 2 without the 2F, no Locker without a lease, no Wardrobe 3..8 without its lobby feature bit, ...). The server
+/// refuses a move into the rest.
 fn parts(w: &World, b: &Storage, g: usize) -> Vec<u8> {
     let house = w.viewhouse.is_some().then(|| super::super::viewhouse::open_containers(w));
-    let on = |c: u8| match &house {
-        Some(open) => open.contains(&c),
-        None => gitems::usable(w, &Storage { bank: 0xff, ..*b }, c),
+    let on = |c: u8| {
+        super::super::equipwin::bag_open(w, c)
+            && match &house {
+                Some(open) => open.contains(&c),
+                None => gitems::usable(w, &Storage { bank: 0xff, ..*b }, c),
+            }
     };
     BAGS[g].1.iter().copied().filter(|&c| c == b.bank || matches!(c, 3 | BIN) || on(c)).collect()
 }
@@ -539,7 +542,7 @@ fn manual_pick(w: &mut World, bank_side: bool, k: usize) {
             if c != b.held_part {
                 return refuse(w, "That row is in another part of this bag: Manual Sort keeps to one.");
             }
-            gitems::manual_move_c(w, c, from, &s);
+            gitems::manual_move_c(w, c, from, &s, true);
             if let Some(b) = store_mut(w) {
                 (b.manual, b.note) = (Some((side, None)), None);
             }
@@ -589,31 +592,29 @@ fn settle(w: &mut World) {
     release(w);
 }
 
-/// The waiting move goes once the last has settled and the gate is open, if its stack is still there; into a merged
-/// bag it takes the part with room then.
+/// The waiting move goes once the last has settled, if its stack is still there and may still move; into a merged
+/// bag it takes the part with room then. It goes to the bag it was made for, whichever tab shows now.
 fn release(w: &mut World) {
     let Some((b, ..)) = view(w) else { return };
     let Some(h) = b.waiting else { return };
-    if b.pending.is_some() || b.sent.is_some_and(|t| t.elapsed() < GATE) {
+    if b.pending.is_some() {
         return;
     }
     if let Some(b) = store_mut(w) {
         b.waiting = None;
     }
-    let s = match w.inv.slots.get(&(h.from, h.index)) {
-        Some(&(id, count)) if id == h.id => Slot { index: h.index, id, count, equipped: false, equipped_ex: false },
-        _ => return refuse(w, "That stack changed: pick it again."),
+    let b = Storage { bank: h.bag, ..b };
+    let g = group(h.bag);
+    let bank_side = h.from != gitems::INVENTORY;
+    let Some(s) = gitems::store_rows(w, h.from).into_iter().find(|s| s.index == h.index && s.id == h.id) else {
+        return refuse(w, "That stack changed: pick it again.");
     };
-    let to = if h.from == gitems::INVENTORY {
-        let open = open_parts(w, &b, group(b.bank));
-        match target(w, &b, &open, &s) {
-            Some(to) => to,
-            None => return refuse(w, "No room in this bag."),
-        }
-    } else {
-        h.to
-    };
-    send(w, h.from, to, &s, h.n.min(s.count));
+    let open = open_parts(w, &b, g);
+    if let Some(why) = refusal(w, &b, g, &open, bank_side, h.from, &s) {
+        return refuse(w, why);
+    }
+    let to = if bank_side { h.to } else { target(w, &b, &open, &s).unwrap_or(h.to) };
+    send_now(w, h.from, to, &s, h.n.min(s.count));
 }
 
 fn store_mut(w: &mut World) -> Option<&mut Storage> {
@@ -695,28 +696,31 @@ fn refuse(w: &mut World, why: &'static str) {
     w.sounds.push(Se::Error as u32);
 }
 
-/// c2s 0x029 for `n` of the stack in slot `s` of `from`, kept as the pending move.
+/// c2s 0x029 for `n` of the stack in slot `s` of `from`, kept as the pending move. While the last is pending it waits
+/// (one at a time), so a move into a merged bag picks its part once the last has landed.
 fn send(w: &mut World, from: u8, to: u8, s: &Slot, n: u32) {
     let Some((b, ..)) = view(w) else { return };
-    if b.pending.is_some() || b.sent.is_some_and(|t| t.elapsed() < GATE) {
-        // Too soon for the gate: held (one at a time) and sent from settle().
+    if b.pending.is_some() {
         if b.waiting.is_some() {
-            return refuse(w, "One move a second: wait for the last one.");
+            return refuse(w, "One move at a time: wait for the last one.");
         }
-        if let Some(b) = store_mut(w) {
-            b.waiting = Some(Waiting { from, to, index: s.index, id: s.id, n });
-            (b.note, b.qty) = (None, None);
+        if let Some(st) = store_mut(w) {
+            st.waiting = Some(Waiting { bag: b.bank, from, to, index: s.index, id: s.id, n });
+            (st.note, st.qty) = (None, None);
         }
-        w.sounds.push(Se::Select as u32);
-        return;
-    }
-    gitems::send_move(w, from, to, s.index, n);
-    let now = std::time::Instant::now();
-    if let Some(b) = store_mut(w) {
-        b.pending = Some(Pending { from, index: s.index, id: s.id, count: s.count, sent: now });
-        (b.sent, b.note, b.qty) = (Some(now), None, None);
+    } else {
+        send_now(w, from, to, s, n);
     }
     w.sounds.push(Se::Select as u32);
+}
+
+/// The move goes: the net thread holds it for FUN_100fc3c0's gate (one 0x029 a second) where retail would drop it.
+fn send_now(w: &mut World, from: u8, to: u8, s: &Slot, n: u32) {
+    gitems::send_move_held(w, from, to, s.index, n);
+    if let Some(b) = store_mut(w) {
+        b.pending = Some(Pending { from, index: s.index, id: s.id, count: s.count, sent: std::time::Instant::now() });
+        (b.note, b.qty) = (None, None);
+    }
 }
 
 /// The quantity strip: a step, one, all, Move or Cancel.

@@ -7711,7 +7711,7 @@ struct World {
     auto_sort: u32,
     auto_sort_dirty: bool,
     sort_due: (u32, f32),
-    /// The last c2s 0x03A per container (items::send_sort keeps them a second apart).
+    /// The last c2s 0x03A per container (items::send_sort keeps them SORT_SPACING apart).
     sort_sent: [Option<Instant>; 32],
     /// The frames posed so far (FUN_10014d50's count, for Misc. 2's animation frame rate).
     anim_frame: u32,
