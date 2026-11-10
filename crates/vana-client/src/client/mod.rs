@@ -6446,6 +6446,8 @@ struct FxActors<'a> {
     places: &'a HashMap<u32, Place>,
     contacts: &'a HashMap<u32, (Vec3, Vec3)>,
     entities: &'a HashMap<u32, Entity>,
+    /// The entity that holds each ActIndex now (a reused index names its new owner).
+    entity_index: &'a HashMap<u16, u32>,
     me: u32,
     me_moving: bool,
     /// Our move's quarter (World::my_strafe, +0x598).
@@ -6627,6 +6629,24 @@ impl crate::fx::Actors for FxActors<'_> {
 
     fn posed(&self, id: u32) -> bool {
         self.actors.get(&id).is_some_and(|a| !a.bones.is_empty())
+    }
+
+    /// We are not in `entities` (our own +0x1f8 comes only from a 0x00D about us, which is not kept).
+    fn face_target(&self, id: u32) -> Option<u32> {
+        let f = self.entities.get(&id).map(|e| e.face).filter(|f| *f != 0)?;
+        let t = if f == self.my_index {
+            self.me
+        } else {
+            *self.entity_index.get(&f).filter(|id| self.entities.get(id).is_some_and(|e| e.index == f))?
+        };
+        self.actors.contains_key(&t).then_some(t)
+    }
+
+    /// The heading alone (vtable +0x1c0's y), without the ground tilt the frame carries.
+    fn yaw(&self, id: u32) -> Option<f32> {
+        let f = self.places.get(&id)?.forward;
+        let f = Vec3::new(f.x, 0.0, f.z).normalize_or(Vec3::X);
+        Some((-f.z).atan2(f.x))
     }
 
     fn never_posed(&self, id: u32) -> bool {
@@ -18597,6 +18617,7 @@ impl App {
                         places: &places,
                         contacts: &w.contacts,
                         entities: &w.entities,
+                        entity_index: &w.entity_index,
                         me: w.my_id,
                         me_moving: w.moving,
                         me_strafe: w.my_strafe,

@@ -63,6 +63,17 @@ pub trait Actors {
     fn posed(&self, _id: u32) -> bool {
         true
     }
+    /// The actor of the entity this one faces (entity +0x1f8, the 0x00D / 0x00E face target; FUN_10098360), for
+    /// attach modes 0x16..0x1b.
+    fn face_target(&self, _id: u32) -> Option<u32> {
+        None
+    }
+    /// The actor's heading (vtable +0x1c0's y) where its frame also carries a ground tilt; None = read it off the
+    /// frame.
+    fn yaw(&self, _id: u32) -> Option<f32> {
+        None
+    }
+
     /// A skeleton actor before its first pose (model +0x30 bit 4 clear: FUN_1002c2d0 sets it in the actor's update once
     /// every skeleton of the model is computed): its bone frames (vtable +0x1d0) are the identity.
     fn never_posed(&self, _id: u32) -> bool {
