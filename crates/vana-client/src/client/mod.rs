@@ -1850,15 +1850,14 @@ fn palette_flip_alpha(ticks: f32) -> Option<f32> {
 /// Ours: the double-click time for the modern UI's world clicks (Windows' default).
 const DOUBLE_CLICK: std::time::Duration = std::time::Duration::from_millis(500);
 
-/// FUN_10130280 (Ctrl+C): talk to an NPC target, check anything else (a trust *(inferred)*: talk releases it on LSB).
+/// FUN_10130280 (Ctrl+C): talk to an NPC target, check anything else at once, engaged too (a trust *(inferred)*: talk
+/// releases it on LSB).
 fn check_target(world: &mut World) {
     match world.target.filter(|&t| target::talks_to(world, t)) {
         Some(t) => {
             event::talk(world, t);
         }
-        None => {
-            combat::choose(world, combat::cmd::CHECK);
-        }
+        None => combat::check(world, None, 0, false),
     }
 }
 

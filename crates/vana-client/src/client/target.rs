@@ -54,8 +54,6 @@ pub enum SubThen {
     Item { container: u8, index: u8 },
     /// The emote list's line (LAB_10225c50): run while the pick is still the target, then the old one comes back.
     Command(String),
-    /// The engaged battle menu's Check (LAB_1012bec0): FUN_101347b0 on the pick.
-    Check,
     /// A party menu pick (client/partymenu.rs).
     Party(super::partymenu::Pick),
     /// The main menu's Trade (FUN_1013fe70): FUN_1013fd30 on the pick.
@@ -586,11 +584,6 @@ pub fn confirm_sub(w: &mut World) {
         super::items::use_slot(w, container, index, t);
         return;
     }
-    if matches!(s.then, SubThen::Check) {
-        restore(w, &s);
-        super::combat::check(w, Some(t), 0, false);
-        return;
-    }
     if matches!(s.then, SubThen::Trade) {
         restore(w, &s);
         super::trade::start_on(w, Some(t));
@@ -602,9 +595,7 @@ pub fn confirm_sub(w: &mut World) {
         return;
     }
     let line = match &s.then {
-        SubThen::Item { .. } | SubThen::Command(_) | SubThen::Check | SubThen::Party(_) | SubThen::Trade => {
-            String::new()
-        }
+        SubThen::Item { .. } | SubThen::Command(_) | SubThen::Party(_) | SubThen::Trade => String::new(),
         SubThen::Magic(name) => format!("/magic \"{name}\" {t}"),
         SubThen::Ability(cmd, name) => format!("{cmd} \"{name}\" {t}"),
         SubThen::Line { stash, quoted: true, .. } => format!("{stash}\"{}\"", super::textcmd::display_name(w, t)),
