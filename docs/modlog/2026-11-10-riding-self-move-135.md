@@ -34,8 +34,8 @@ closed after the row was written; the fourth is built here. The functions named 
   (`ride::SelfMove`: the step from the facing at the op, the ticks left). The entity loop moves such an actor after
   the push branch: no slide, no turn, snapped to the floor when grounded, its motion ratio from the way moved; our
   own player moves through the walking collision before the input. Not retail (the goal offsets aren't traced): at its
-  end another actor's slide goal becomes where it was moved, unless a new server position came in meanwhile (that one
-  stays and the slide goes on to it); test `client::ride::tests::self_move_settles_goal`. Runs start 2 ticks short (retail's 30 fps
+  end another actor's slide goal becomes where it was moved, unless a slide was under way when the op started or a new
+  server position came in meanwhile (that goal stays and the slide goes on to it); test `client::ride::tests::self_move_settles_goal`. Runs start 2 ticks short (retail's 30 fps
   count), then move continuously as before. Test `client::ride::tests::self_move_runs_two_ticks_short`.
 - Not built: our own ratio freeze (FUN_100c8930) and the locked branch's rule; +0x103 / +0x104 are not traced. No
   retail data reaches any of it: op 0x6e is only in the animals' `coff` / `cdam` (102 schedulers).

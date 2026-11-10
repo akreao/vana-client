@@ -391,7 +391,7 @@ fn finish(w: &mut World, id: u32) {
 }
 
 /// A running op 0x6e (actor +0x101): the step a tick (+0x120) and the ticks left to move (+0x118); `goal`, another
-/// actor's slide goal when the op started.
+/// actor's slide goal when the op started (None while a slide was still under way).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SelfMove {
     vel: Vec3,
@@ -414,7 +414,8 @@ pub fn self_step(m: &mut SelfMove, ticks: f32) -> (Vec3, bool) {
 }
 
 /// Not retail (the goal offsets aren't traced): at the end of a self-move the actor stays where it was moved unless
-/// the server sent a new position meanwhile, which the slide then goes on toward.
+/// a slide was under way when it started or the server sent a new position meanwhile; the slide then goes on toward
+/// that goal.
 pub fn self_settle(m: &SelfMove, pos: Vec3, target: &mut Vec3, remain: &mut f32) {
     if m.goal == Some(*target) {
         *target = pos;
@@ -434,7 +435,8 @@ pub fn self_move(w: &mut World, id: u32, ticks: f32, speed: f32) {
     }
     let my_dir = w.net.me.lock().map(|m| m.dir).unwrap_or(0);
     if let Some(p) = super::base_place(w, id, my_dir) {
-        let goal = w.entities.get(&id).map(|e| e.target);
+        // A slide still under way when the op starts goes on to its goal afterwards.
+        let goal = w.entities.get(&id).filter(|e| e.remain <= 0.0).map(|e| e.target);
         w.self_moves.insert(id, SelfMove { vel: p.forward * speed, left: run_ticks(ticks), goal });
     }
 }
@@ -664,7 +666,8 @@ mod tests {
         assert_eq!(super::run_ticks(1.0), 0.0);
     }
 
-    /// An idle actor keeps the spot it was moved to; one the server moved meanwhile slides on to the new position.
+    /// An idle actor keeps the spot it was moved to; one the server moved meanwhile, or one mid-slide when the op
+    /// started, slides on to that position.
     #[test]
     fn self_move_settles_goal() {
         use glam::Vec3;
@@ -676,6 +679,10 @@ mod tests {
         let (mut target, mut remain) = (sent, 12.0);
         super::self_settle(&m, Vec3::new(10.0, 0.0, 0.0), &mut target, &mut remain);
         assert_eq!((target, remain), (sent, 12.0));
+        let pending = super::SelfMove { goal: None, ..m };
+        let (mut target, mut remain) = (sent, 5.0);
+        super::self_settle(&pending, Vec3::new(10.0, 0.0, 0.0), &mut target, &mut remain);
+        assert_eq!((target, remain), (sent, 5.0));
     }
 
     #[test]
