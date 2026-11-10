@@ -171,7 +171,8 @@ pub struct Config {
     pub view_port: u16,
     pub profile_port: u16,
     pub irc_port: u16,
-    /// Version string sent to the lobby; LSB rejects clients older than its CLIENT_VER.
+    /// Version string sent to the lobby; LSB rejects clients older than its CLIENT_VER. A patch applied to the game
+    /// files moves it up (follow_applied_version).
     pub client_version: String,
     /// cpal output device id ("pipewire:..."); empty = the system default.
     pub audio_device: String,
@@ -545,7 +546,22 @@ impl Config {
             c.remember_login();
         }
         c.modern_modes.split_timers();
+        c.follow_applied_version();
         c
+    }
+
+    /// The lobby version follows the game files, as retail's does: a patch applied here (crate::patch's stamp file)
+    /// newer than the saved `client_version` replaces it. A newer or hand-written saved value stays. Whether it moved.
+    pub fn follow_applied_version(&mut self) -> bool {
+        let Some(applied) = crate::patch::applied_version_cached(&self.ffxi_dir()) else { return false };
+        match (crate::patch::version_key(&applied), crate::patch::version_key(&self.client_version)) {
+            (Some(a), Some(saved)) if a > saved => {
+                log::info!("client version {} -> {applied} (game files patched)", self.client_version);
+                self.client_version = applied;
+                true
+            }
+            _ => false,
+        }
     }
 
     /// The servers logged in to, most recent first.
@@ -671,6 +687,30 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// After a patch the lobby gets the patched files' version; a newer or hand-written saved one stays.
+    #[test]
+    fn client_version_follows_the_applied_patch() {
+        let base = std::env::temp_dir().join(format!("vana-config-version-{}", std::process::id()));
+        let root = base.join("FINAL FANTASY XI");
+        std::fs::create_dir_all(&root).unwrap();
+        let mut c = Config { game_dir: base.clone(), client_version: "30261006_0".into(), ..Config::default() };
+        assert!(!c.follow_applied_version() && c.client_version == "30261006_0");
+        let stamp = |v: &str| {
+            let text = format!(
+                "file ROM/0/0.DAT {{\n30261006_0 1 1 1 30261006_0/Direct/ROM/0/0.DAT.slc 5\n{v} 2 2 2 {v}/Direct/ROM/0/0.DAT.slc 6\n}}\nend\n"
+            );
+            std::fs::write(root.join(crate::patch::STAMP_FILE), text).unwrap();
+        };
+        stamp("30261102_0");
+        assert!(c.follow_applied_version());
+        assert_eq!(c.client_version, "30261102_0");
+        c.client_version = "30270101_0".into();
+        assert!(!c.follow_applied_version() && c.client_version == "30270101_0");
+        c.client_version = "custom".into();
+        assert!(!c.follow_applied_version() && c.client_version == "custom");
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     /// The first key or value of `a` that `b` lacks or changes (objects compared key by key, recursively).
     fn lost(a: &serde_json::Value, b: &serde_json::Value, at: &str) -> Option<String> {
