@@ -809,12 +809,11 @@ impl GameUi {
                             && let Some((w, h, rgba)) = super::chaticons::get(k)
                         {
                             self.image(&name, w, h, (*rgba).clone());
-                            // The pixels it had before a mod reload changed them go once nothing draws them.
-                            if let Some(old) = super::chaticons::previous_texture(k)
-                                && self.has_image(&old)
-                                && !self.stale.contains(&old)
-                            {
-                                self.stale.push(old);
+                            // The pixels it had before mod reloads changed them go once nothing draws them.
+                            for old in super::chaticons::older_textures(k) {
+                                if self.has_image(&old) && !self.stale.contains(&old) {
+                                    self.stale.push(old);
+                                }
                             }
                         }
                         let (w, h) = icon_size(k);

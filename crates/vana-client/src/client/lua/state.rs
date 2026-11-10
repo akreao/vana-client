@@ -84,7 +84,7 @@ fn vec3(lua: &Lua, v: glam::Vec3) -> mlua::Result<Table> {
     Ok(t)
 }
 
-/// A target tag ("t", "<st>", "bt", "pet", "me", "ht", "scan", "p0".."p5", "a10".."a25"), a player's name or a server
+/// A target tag ("t", "<st>", "bt", "pet", "me", "ht", "scan", "lastst", "p0".."p5", "a10".."a25"), a player's name or a server
 /// id: (id, index).
 pub(super) fn by_tag(w: &World, tag: &str) -> Option<(u32, u16)> {
     let inner = tag.trim().trim_start_matches('<').trim_end_matches('>').to_ascii_lowercase();
@@ -98,8 +98,11 @@ pub(super) fn by_tag(w: &World, tag: &str) -> Option<(u32, u16)> {
         return Some((m.id, m.index));
     }
     let tagged = format!("<{inner}>");
-    let probe =
-        if ["t", "me", "bt", "scan", "pet", "ht"].contains(&inner.as_str()) { tagged.as_str() } else { tag.trim() };
+    let probe = if ["t", "me", "bt", "scan", "pet", "ht", "lastst"].contains(&inner.as_str()) {
+        tagged.as_str()
+    } else {
+        tag.trim()
+    };
     super::super::textcmd::resolve(w, Some(probe), false, true, super::super::textcmd::Mode::Internal)
 }
 

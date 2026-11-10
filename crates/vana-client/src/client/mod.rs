@@ -2623,6 +2623,8 @@ fn world_hud(
                 }
                 // An event takes the keys: Enter advances or picks, arrows move, Escape cancels.
                 _ if event::active(world) => event::key(world, *key),
+                // An s2c 0x03B line waiting for a key outside an event: Enter pages it (FUN_10126840).
+                egui::Key::Enter if event::loose_waits(world) => event::loose_key(world),
                 _ if gmtell::open(world) => gmtell::key(world, *key),
                 // charlnk over the full log, and the prompts it opens (the comyn arm below).
                 _ if world.charlnk.is_some() && world.confirm.is_none() => charlnk::key(world, *key),
@@ -7101,6 +7103,8 @@ struct World {
     /// Ours (modern): the target before the current one, set as target::set changes it (the sub-target prompt's
     /// stand-ins are not counted); `<lt>` and the modern focus panel's Last row.
     last_target: Option<u32>,
+    /// The last target a sub-target prompt or `<stpt>` / `<stal>` pick confirmed (`<lastst>`).
+    last_subtarget: Option<u32>,
     /// Target lock-on (DAT_10565d34 +0x5c bits 0..1 != 0), the locked camera, ticks left in which the free
     /// camera ignores manual turns after a lock (DAT_10444464), auto lock-on (config 7 = 0), when the target
     /// was set, and manual camera turns waiting for the locked camera.
@@ -7468,6 +7472,8 @@ struct World {
     /// The running event, one waiting for its actors, and the work that outlives events (M / G).
     event: Option<Box<event::Live>>,
     event_pending: Option<Box<event::Waiting>>,
+    /// s2c 0x03B lines in the event message queues outside an event (event.rs `loose_*`; FUN_10127ea0 drops them).
+    loose_msgs: std::collections::VecDeque<event::Msg>,
     /// Scheduler tasks, cutscene camera and screen fades (they outlive the event), and the camera drawn last.
     screen: event::Screen,
     last_camera: Option<Camera>,
@@ -9489,6 +9495,7 @@ impl App {
                             logging_out: false,
                             target: None,
                             last_target: None,
+                            last_subtarget: None,
                             locked: false,
                             cam: Default::default(),
                             lock_height: -1.5,
@@ -9755,6 +9762,7 @@ impl App {
                             index: None,
                             event: None,
                             event_pending: None,
+                            loose_msgs: Default::default(),
                             screen: Default::default(),
                             last_camera: None,
                             sunshadow_diag: String::new(),
@@ -10674,6 +10682,8 @@ impl App {
                         (false, Vec3::ZERO, None, false);
                     world.run_to = None;
                     (world.fishing, world.fish_pending, world.fish_gauge, world.primer) = (None, false, None, None);
+                    // FUN_1015ef60 (game mode 0x70 / 0xe0, leaving the field): FUN_10127ea0.
+                    event::cancel_queues(world);
                     world.hud_top.enter();
                     // FUN_10095650 at the world start: the Unity chat setting (config 0xb2) and the job master display
                     // (config 0x99 bit 8 clear) go to the server again.
@@ -13199,6 +13209,7 @@ impl App {
             // state at 1.
             f.window = world_window_open(w)
                 || w.palette.0 != 0
+                || w.party_cursor.is_some()
                 || w.log_active
                 || w.log_focus == 2
                 || event::choice(w).is_some()
@@ -13354,6 +13365,9 @@ impl App {
         // when the gate allows (field, UI shown, no event, alive, no window), Ctrl / Alt + digit runs a macro and
         // Shift + Ctrl / Alt + digit picks a set. The palettes are not drawn yet.
         let sub_up = target::sub_up(world);
+        if let Some(m) = world.macros.as_mut() {
+            m.hold_wait(sub_up);
+        }
         let by_mod = world.macros.as_ref().is_some_and(|m| m.by_mod());
         if let Some(line) = world.macros.as_mut().filter(|_| !sub_up).and_then(|m| m.step(dt * 60.0)) {
             let line = crate::dat::font::decode_sjis(&line);
@@ -16397,9 +16411,10 @@ impl App {
             _ => true,
         };
         let keyboard = matches!(&self.phase, Phase::World(w) if w.swkbd.is_some());
+        let party_cursor = matches!(&self.phase, Phase::World(w) if w.party_cursor.is_some());
         // The Controller window waiting for a button: the pad goes to it.
         let capture = matches!(&self.phase, Phase::World(w) if w.padcfg.open && w.padcfg.listening.is_some());
-        let ctx = gamepad::Ctx { menu, palette, tabs, field, keyboard, capture };
+        let ctx = gamepad::Ctx { menu, palette, tabs, field, keyboard, party_cursor, capture };
         let phase = &mut self.phase;
         let mut to_mods = |b: &[u8], a: [f32; 6], on: bool| match phase {
             Phase::World(w) => lua::input::pad_filter(w, b, a, on),
