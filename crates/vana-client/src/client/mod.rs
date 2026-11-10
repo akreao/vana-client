@@ -11438,9 +11438,14 @@ impl App {
                     }
                 }
                 NetEvent::CharStats(s) => {
+                    let jobs = world.stats.as_ref().map(|o| (o.main.0, o.sub.0));
+                    let changed = jobs.is_some_and(|old| old != (s.main.0, s.sub.0));
                     world.stats = Some(s);
                     world.own_hp_max = None;
                     status::on_stats(world);
+                    if changed {
+                        moogle::job_changed(world);
+                    }
                 }
                 NetEvent::Merits { limit, bits, max } => world.merits = Some((limit, bits, max)),
                 NetEvent::JobPoints(access, jobs) => {
