@@ -17,6 +17,11 @@ Issue lenonk/vana-client#173.
   1 key, as a VK is). winit's key location tells the numpad from the main block (egui maps both to one key); a mod's
   keys go by DIK (0x37, 0x47..0x53, 0x9c, 0xb5); a test drive's keys are the main block's. The modern list search
   keeps the letters it takes (ours); the plain-T Timers toggle (ours) is left to the compact keyboards.
+- Review fixes: the numpad test is per key press, not per frame. A frame's presses of the keys egui names the same on
+  both blocks (digits, '-', '/', '.' / ',', Enter, the numpad's '+') are queued in order with their source and
+  matched to the key events by key, so numpad 8's repeat and a letter in one frame no longer type a stray "8" or drop
+  the letter. A test drive's or the controller's '-' counts as the numpad's (the menu on every keyboard type), as
+  before. Key Assignment's keys are kept in the modern UI too: its key list is `ConfigUi::m_keys`, not on the stack.
 - Seen live (Lnxcsfix, classic, Full keyboard): with the Items window open, Space, '/' and H each opened the chat line
   ("", "/", "h") over the window, and Escape closed it with the window kept. Not tried live: the numpad's digits on
   the Full keyboard (a drive cannot press them), the modern UI.
