@@ -130,22 +130,25 @@ impl Modern {
                 );
             }
         }
-        let (cr, caption, onv) = &v.check;
-        let cr = pt(*cr);
         let n = v.fields.len();
-        let lit = v.focus == n && !v.busy;
-        let side = size * 1.1;
-        let bx = egui::Rect::from_min_size(pos2(cr.min.x, cr.center().y - side / 2.0), vec2(side, side));
-        if let Some(s) = self.art.sprite(if *onv { "controls/checkbox_on" } else { "controls/checkbox_off" }) {
-            p.add(paint::image(&s, bx.min, side, if v.busy { Color32::from_gray(120) } else { Color32::WHITE }));
+        // Remember password (focus n) and Trust this computer (n + 6): the box art and its caption, gold with the focus.
+        let boxes = std::iter::once((v.check, n)).chain(v.trust.map(|t| (t, n + 6)));
+        for ((cr, caption, onv), at) in boxes {
+            let cr = pt(cr);
+            let lit = v.focus == at && !v.busy;
+            let side = size * 1.1;
+            let bx = egui::Rect::from_min_size(pos2(cr.min.x, cr.center().y - side / 2.0), vec2(side, side));
+            if let Some(s) = self.art.sprite(if onv { "controls/checkbox_on" } else { "controls/checkbox_off" }) {
+                p.add(paint::image(&s, bx.min, side, if v.busy { Color32::from_gray(120) } else { Color32::WHITE }));
+            }
+            p.text(
+                pos2(bx.max.x + 6.0, bx.center().y),
+                Align2::LEFT_CENTER,
+                caption,
+                font.clone(),
+                if lit { self.theme.color("gold") } else { self.theme.color("text") },
+            );
         }
-        p.text(
-            pos2(bx.max.x + 6.0, bx.center().y),
-            Align2::LEFT_CENTER,
-            *caption,
-            font.clone(),
-            if lit { self.theme.color("gold") } else { self.theme.color("text") },
-        );
         let hover = ctx.input(|i| i.pointer.hover_pos());
         for (k, (r, label, enabled)) in v.buttons.iter().enumerate() {
             let r = pt(*r).expand2(vec2(4.0, 3.0));

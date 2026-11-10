@@ -115,7 +115,8 @@ pub(crate) fn config_path() -> PathBuf {
 }
 
 /// A login that worked: the server, the account (the Square Enix ID for PlayOnline), PlayOnline's member ID, and its
-/// own Remember password with the password(s) sealed for that server and account (secret.rs).
+/// own Remember password with the password(s) sealed for that server and account (secret.rs), and its own Trust this
+/// computer with the server's trust token, sealed the same way.
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SavedLogin {
@@ -124,6 +125,8 @@ pub struct SavedLogin {
     pub pol_id: String,
     pub remember_password: bool,
     pub saved_password: String,
+    pub trust_computer: bool,
+    pub trust_token: String,
     /// Fields of a newer client, kept as they are.
     #[serde(flatten)]
     pub unknown: serde_json::Map<String, serde_json::Value>,
@@ -166,6 +169,10 @@ pub struct Config {
     /// (secret.rs; hex, empty when none).
     pub remember_password: bool,
     pub saved_password: String,
+    /// The login screen's Trust this computer (not retail): with two-factor sign-in, the server's trust token is kept
+    /// (secret.rs; hex, empty when none) and sent instead of the one-time code.
+    pub trust_computer: bool,
+    pub trust_token: String,
     pub auth_port: u16,
     pub data_port: u16,
     pub view_port: u16,
@@ -452,6 +459,8 @@ impl Default for Config {
             logins: Vec::new(),
             remember_password: false,
             saved_password: String::new(),
+            trust_computer: false,
+            trust_token: String::new(),
             auth_port: 54231,
             data_port: 54230,
             view_port: 54001,
@@ -585,13 +594,27 @@ impl Config {
         self.logins.iter().find(|l| same_server(&l.server, server) && username.is_none_or(|u| l.username == u))
     }
 
-    /// Makes a saved login the form's: its server, account, PlayOnline ID, Remember password and sealed passwords.
+    /// Makes a saved login the form's: its server, account, PlayOnline ID, Remember password and sealed passwords,
+    /// Trust this computer and the token.
     pub fn use_login(&mut self, l: &SavedLogin) {
         self.server = l.server.clone();
         self.username = l.username.clone();
         self.pol_id = l.pol_id.clone();
         self.remember_password = l.remember_password;
         self.saved_password = l.saved_password.clone();
+        self.trust_computer = l.trust_computer;
+        self.trust_token = l.trust_token.clone();
+    }
+
+    /// A trust token for a server and account (sealed; empty: none): the form's when it is that login, and the saved
+    /// login's.
+    pub fn set_trust_token(&mut self, server: &str, username: &str, sealed: String) {
+        if same_server(&self.server, server) && self.username.trim() == username {
+            self.trust_token = sealed.clone();
+        }
+        if let Some(l) = self.logins.iter_mut().find(|l| same_server(&l.server, server) && l.username == username) {
+            l.trust_token = sealed;
+        }
     }
 
     /// The form's login, first in the lists (after a login that worked, or a change to its Remember password).
@@ -610,6 +633,8 @@ impl Config {
             pol_id: self.pol_id.clone(),
             remember_password: self.remember_password,
             saved_password: self.saved_password.clone(),
+            trust_computer: self.trust_computer,
+            trust_token: self.trust_token.clone(),
             unknown,
         };
         self.logins.retain(|o| !(same_server(&o.server, &l.server) && o.username == l.username));

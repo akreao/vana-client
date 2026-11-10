@@ -46,8 +46,8 @@ pub enum Reply {
     LoggedIn {
         account_id: u32,
         session_hash: [u8; 16],
-        /// For "trust this computer", which our login does not offer yet.
-        #[allow(dead_code)]
+        /// A new trust token, when asked for with a one-time code ("Trust this computer"): sent instead of the code
+        /// next time.
         trust_token: Option<String>,
         lobby_key: Option<tls::Fingerprint>,
     },
@@ -61,6 +61,21 @@ pub enum Reply {
     },
     TotpRemoved,
 }
+
+/// The result code a trust token was turned down with (expired, or the password changed): the code is needed again.
+pub const TRUST_REJECTED: u64 = 0x13;
+
+/// A login server's refusal: its result code (`describe` says what it means).
+#[derive(Debug)]
+pub struct Refused(pub u64);
+
+impl std::fmt::Display for Refused {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{} (code 0x{:02X})", describe(self.0), self.0)
+    }
+}
+
+impl std::error::Error for Refused {}
 
 fn describe(result: u64) -> &'static str {
     match result {
@@ -221,7 +236,7 @@ pub fn send(host: &str, port: u16, command: Command, req: &Request) -> Result<Re
         0x10 => Reply::TotpCreated { uri: reply["TOTP_uri"].as_str().unwrap_or_default().to_string() },
         0x11 => Reply::TotpVerified { recovery_code: reply["recovery_code"].as_str().map(str::to_string) },
         0x12 => Reply::TotpRemoved,
-        other => bail!("{} (code 0x{other:02X})", describe(other)),
+        other => return Err(Refused(other).into()),
     })
 }
 

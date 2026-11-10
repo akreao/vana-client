@@ -197,7 +197,7 @@ const RUN_SPEED: f32 = 5.0;
 impl Task {
     fn name(&self) -> &'static str {
         match self {
-            Task::LoggedIn(_) => "logged in",
+            Task::LoggedIn(..) => "logged in",
             Task::AccountCreated(_) => "account",
             Task::Lobby(_) => "lobby",
             Task::Selected(_) => "selected",
@@ -225,7 +225,9 @@ impl Task {
 }
 
 enum Task {
-    LoggedIn(Result<(Lobby, Vec<Character>)>),
+    /// The login's lobby and characters, and a new trust token with the server and account it is for (Trust this
+    /// computer), whether or not the lobby step after it worked.
+    LoggedIn(Result<(Lobby, Vec<Character>)>, Option<(String, String, String)>),
     AccountCreated(Result<()>),
     Lobby(Result<(Lobby, Vec<Character>)>),
     Selected(Result<MapLogin>),
@@ -821,6 +823,8 @@ pub struct LoginView {
     /// Fields only their list sets (no caret).
     pub fixed: Vec<usize>,
     pub check: ([f32; 4], &'static str, bool),
+    /// Trust this computer (focus n + 6), right of the one-time code; none for PlayOnline.
+    pub trust: Option<([f32; 4], &'static str, bool)>,
     pub buttons: Vec<([f32; 4], &'static str, bool)>,
     /// Two-factor (the focus after Exit), left of the box; none for PlayOnline.
     pub twofa: Option<([f32; 4], &'static str, bool)>,
@@ -856,8 +860,9 @@ enum LoginChoice {
 /// The credentials window over the title art (ours: retail logged in through PlayOnline). Focus 0..n-1 are the
 /// fields, n Remember password, n+1..n+3 Log in / Create account / Exit, n+4 Two-factor (client/twofa.rs; not for
 /// PlayOnline, where Create account is off too), n+5 Update (only with `update`: something is out of date; here
-/// rather than after the login, which an outdated client may not get through). `help_over` replaces the help line
-/// (the two-factor or Update window's).
+/// rather than after the login, which an outdated client may not get through), n+6 Trust this computer (with `trust`,
+/// not for PlayOnline: beside the one-time code, the last field, which is made as narrow as a code). `help_over`
+/// replaces the help line (the two-factor or Update window's).
 /// Not retail (PlayOnline logged in): the generic window sounds (FUN_10118260) go to `sounds`: 0001 when the focus
 /// moves (and on Escape, which lands on Exit), 0002 on an enabled action, 0004 on a disabled one.
 fn login_window(
@@ -868,6 +873,7 @@ fn login_window(
     playonline: bool,
     combo: &mut Option<(usize, usize)>,
     remember: &mut bool,
+    mut trust: Option<&mut bool>,
     focus: &mut usize,
     busy: bool,
     update: bool,
@@ -884,12 +890,19 @@ fn login_window(
     let first = n + 1;
     let twofa = n + 4;
     let upd = n + 5;
-    if *focus == upd && !update {
+    let trust_at = n + 6;
+    let trusting = trust.is_some();
+    if (*focus == upd && !update) || (*focus == trust_at && !trusting) {
         *focus = check;
     }
     let was = *focus;
-    // Tab's order: the fields, the box, the actions, then Two-factor and Update.
-    let order: Vec<usize> = (0..first + 3).chain((!playonline).then_some(twofa)).chain(update.then_some(upd)).collect();
+    // Tab's order: the fields (Trust this computer after the code), the box, the actions, then Two-factor and Update.
+    let order: Vec<usize> = (0..n)
+        .chain(trusting.then_some(trust_at))
+        .chain(n..first + 3)
+        .chain((!playonline).then_some(twofa))
+        .chain(update.then_some(upd))
+        .collect();
     let (sw, sh) = (size[0] as f32, size[1] as f32);
     // Rows 22 px apart, 20 with more than four fields so the form stays between the logo and the copyright line.
     let pitch = if n > 4 { 20.0 } else { 22.0 };
@@ -898,18 +911,29 @@ fn login_window(
     // what fits.
     let f = if modern.is_some() { (1.5 * monitor_scale).min(0.4 * sh / base_h).max(1.5) } else { 1.0 };
     const CAPTION: &str = "Remember password";
+    const TRUST: &str = "Trust this computer";
     const UPD: &str = "Update";
     let check_w = lu.text_width(&format!("\u{25a1} {CAPTION}")) + 4.0;
+    let trust_w = lu.text_width(&format!("\u{25a1} {TRUST}")) + 4.0;
+    // The one-time code beside Trust this computer: as wide as a code or its hint.
+    let code_w = lu.text_width("00000000").max(lu.text_width(fields[n - 1].hint)) + 12.0;
     let upd_w = (lu.label_width(UPD) + 14.0).max(88.0);
     // Room for Update beside the box whether it shows or not, so nothing moves when it appears.
-    let (ww, wh) = (380.0f32.max(148.0 + check_w + 8.0 + upd_w + 16.0) * f, base_h * f);
+    let (ww, wh) = (
+        380.0f32.max(148.0 + check_w + 8.0 + upd_w + 16.0).max(148.0 + code_w + 16.0 + trust_w + 16.0) * f,
+        base_h * f,
+    );
     // Centred between the title logo's foot (about half the height) and the copyright line (about 0.8); a larger
     // form stays below the logo's "ONLINE" line.
     let (wx, wy) = (((sw - ww) / 2.0).round(), (sh * 0.65 - wh / 2.0).max(sh * 0.52).round());
     let row = |i: usize| wy + 14.0 * f + i as f32 * pitch * f;
-    let field_rect = |i: usize| [wx + 148.0 * f, row(i), ww - 164.0 * f, 18.0 * f];
+    let field_rect = |i: usize| {
+        let w = if trusting && i == n - 1 { code_w * f } else { ww - 164.0 * f };
+        [wx + 148.0 * f, row(i), w, 18.0 * f]
+    };
     // Remember password: the game font's box (filled when on) and its caption under the fields.
     let check_rect = [wx + 148.0 * f, row(check), check_w * f, 18.0 * f];
+    let trust_rect = [wx + (148.0 + code_w + 16.0) * f, row(n - 1), trust_w * f, 18.0 * f];
     let ay = row(n + 1) + 6.0 * f;
     // Config-page buttons (88 px, wider for a longer caption), centred 24 px apart.
     const ACTIONS: [&str; 3] = ["Log in", "Create account", "Exit"];
@@ -985,6 +1009,12 @@ fn login_window(
             *focus = check;
         }
     }
+    if trusting && input.pointer.is_some_and(|p| inside(&trust_rect, p)) {
+        lu.hover.set(true);
+        if input.moved {
+            *focus = trust_at;
+        }
+    }
     for (i, r) in [(twofa, tf_rect), (upd, upd_rect)] {
         if let Some(r) = r
             && input.pointer.is_some_and(|p| inside(&r, p))
@@ -995,7 +1025,7 @@ fn login_window(
             }
         }
     }
-    let mut toggled = false;
+    let (mut toggled, mut trust_toggled) = (false, false);
     if input.clicked
         && !list_click
         && let Some(p) = input.pointer
@@ -1011,6 +1041,10 @@ fn login_window(
         if inside(&check_rect, p) && !busy {
             *focus = check;
             toggled = true;
+        }
+        if trusting && inside(&trust_rect, p) && !busy {
+            *focus = trust_at;
+            trust_toggled = true;
         }
         if let Some(k) = (0..3).find(|&k| inside(&arects[k], p)) {
             *focus = first + k;
@@ -1101,6 +1135,12 @@ fn login_window(
                     let m = order.len();
                     *focus = order[if modifiers.shift { (at + m - 1) % m } else { (at + 1) % m }];
                 }
+                // Trust this computer: right of the code, the box under it.
+                egui::Key::ArrowRight if trusting && *focus == n - 1 => *focus = trust_at,
+                egui::Key::ArrowLeft if *focus == trust_at => *focus = n - 1,
+                egui::Key::ArrowUp if *focus == trust_at => *focus = n - 2,
+                egui::Key::ArrowDown if *focus == trust_at => *focus = check,
+                egui::Key::Enter | egui::Key::Space if *focus == trust_at => trust_toggled = !busy,
                 egui::Key::ArrowDown if *focus == twofa => *focus = first,
                 egui::Key::ArrowDown if *focus == upd => *focus = first + 2,
                 egui::Key::ArrowUp if *focus == twofa || *focus == upd => *focus = n - 1,
@@ -1143,6 +1183,9 @@ fn login_window(
     if toggled {
         *remember = !*remember;
         sounds.push(crate::audio::Ui::Select);
+    } else if let Some(t) = trust.as_deref_mut().filter(|_| trust_toggled) {
+        *t = !*t;
+        sounds.push(crate::audio::Ui::Select);
     } else if (*focus != was || escape) && chosen.is_none() {
         sounds.push(crate::audio::Ui::Cursor);
     }
@@ -1163,6 +1206,9 @@ fn login_window(
         "Square Enix accounts are made on Square Enix's website."
     } else if *focus == upd {
         "Update the game files or vana-client."
+    } else if *focus == trust_at {
+        "With two-factor sign-in: log in once with the code, then this computer needs none until the server stops \
+         trusting it."
     } else if *focus >= first && !(if *focus == twofa { filled } else { enabled[*focus - first] }) {
         if playonline {
             "Enter the PlayOnline ID and password and the Square Enix ID and password first."
@@ -1206,6 +1252,7 @@ fn login_window(
                 )
             }),
             check: (check_rect, CAPTION, *remember),
+            trust: trust.as_deref().map(|t| (trust_rect, TRUST, *t)),
             buttons: (0..3).map(|k| (arects[k], ACTIONS[k], enabled[k])).collect(),
             twofa: tf_rect.map(|r| (r, TF, filled)),
             update: upd_rect.map(|r| (r, UPD)),
@@ -1234,11 +1281,17 @@ fn login_window(
             lu.rect(r[0] + 4.0 + lu.text_width(&shown), r[1] + 2.0, 2.0, 14.0, [1.0, 1.0, 1.0, 0.9]);
         }
     }
-    let check_text = format!("{} {CAPTION}", if *remember { '\u{25a0}' } else { '\u{25a1}' });
-    lu.text(&check_text, check_rect[0], check_rect[1] + 1.0, 0, if busy { GREY } else { WHITE });
+    let boxed = |on: bool, caption: &str| format!("{} {caption}", if on { '\u{25a0}' } else { '\u{25a1}' });
+    lu.text(&boxed(*remember, CAPTION), check_rect[0], check_rect[1] + 1.0, 0, if busy { GREY } else { WHITE });
+    if let Some(t) = trust.as_deref() {
+        lu.text(&boxed(*t, TRUST), trust_rect[0], trust_rect[1] + 1.0, 0, if busy { GREY } else { WHITE });
+    }
     // As the Config pages' buttons: the selected one gold (0x80805020) one pixel up-left, the hand over it last;
     // disabled grey.
     let mut hand = (*focus == check && !busy).then_some((check_rect[0], check_rect[1]));
+    if *focus == trust_at && trusting && !busy {
+        hand = Some((trust_rect[0], trust_rect[1]));
+    }
     let all = arects
         .iter()
         .zip(ACTIONS)
@@ -5547,7 +5600,7 @@ fn cut_pages(
 fn task_failed(t: &Task) -> bool {
     matches!(
         t,
-        Task::LoggedIn(Err(_))
+        Task::LoggedIn(Err(_), _)
             | Task::Lobby(Err(_))
             | Task::Selected(Err(_))
             | Task::NameChecked(Err(_))
@@ -9132,7 +9185,7 @@ impl App {
         let replies: Arc<std::sync::atomic::AtomicU32> = Default::default();
         self.netwait = Some(netwait::NetWait::new(netwait::Op::Connect, replies.clone()));
         self.spawn(move || {
-            Task::LoggedIn((|| {
+            let result = (|| {
                 let creds = crate::net::pol::Credentials {
                     pol_id: cfg.pol_id.clone(),
                     pol_password,
@@ -9157,7 +9210,8 @@ impl App {
                 let chars = lobby.characters()?;
                 lobby.worlds()?;
                 Ok((lobby, chars))
-            })())
+            })();
+            Task::LoggedIn(result, None)
         });
     }
 
@@ -9193,14 +9247,30 @@ impl App {
         }
         let replies: Arc<std::sync::atomic::AtomicU32> = Default::default();
         self.netwait = Some(netwait::NetWait::new(netwait::Op::Connect, replies.clone()));
+        // Trust this computer: the kept token stands in for the code; a code typed asks for a (new) token.
+        let token = cfg
+            .trust_computer
+            .then(|| crate::secret::open_token(&cfg.server, &cfg.username, &cfg.trust_token))
+            .flatten()
+            .unwrap_or_default();
+        let ask = cfg.trust_computer && (token.is_empty() || !otp.trim().is_empty());
         self.spawn(move || {
-            Task::LoggedIn((|| {
-                let req = Request { username: &cfg.username, password: &password, otp: &otp, ..Default::default() };
-                let Reply::LoggedIn { account_id, session_hash, lobby_key, .. } =
+            let mut trusted = None;
+            let result = (|| {
+                let req = Request {
+                    username: &cfg.username,
+                    password: &password,
+                    otp: &otp,
+                    trust_token: &token,
+                    trust_this_computer: ask,
+                    ..Default::default()
+                };
+                let Reply::LoggedIn { account_id, session_hash, lobby_key, trust_token } =
                     auth::send(&cfg.server, cfg.auth_port, Command::Login, &req)?
                 else {
                     anyhow::bail!("unexpected reply from the login server");
                 };
+                trusted = trust_token.map(|t| (cfg.server.clone(), cfg.username.clone(), t));
                 let session = crate::net::lobby::Session::Lsb { account_id, hash: session_hash, lobby_key };
                 let dll = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())).unwrap_or_default();
                 // Region 5: not the Japanese client (FUN_1023e610).
@@ -9219,8 +9289,31 @@ impl App {
                 // Retail's connect step asks for the world list too (0x24, step 1 sub 17).
                 lobby.worlds()?;
                 Ok((lobby, chars))
-            })())
+            })();
+            Task::LoggedIn(result, trusted)
         });
+    }
+
+    /// A trust token for a server and account, kept sealed (empty: forgotten), saved at once: it stands whatever comes
+    /// of the login it came with.
+    fn keep_trust_token(&mut self, server: &str, username: &str, token: &str) {
+        let sealed = if token.is_empty() {
+            String::new()
+        } else {
+            match crate::secret::seal_token(server, username, token) {
+                Ok(s) => s,
+                Err(e) => {
+                    log::warn!("keeping the trust token: {e:#}");
+                    return;
+                }
+            }
+        };
+        self.cfg.set_trust_token(server, username, sealed);
+        if (self.drive.login.is_none() || crate::config::is_copy())
+            && let Err(e) = self.cfg.save()
+        {
+            log::warn!("saving the config: {e:#}");
+        }
     }
 
     /// A two-factor request with the form's account and password (client/twofa.rs).
@@ -9233,12 +9326,18 @@ impl App {
         });
     }
 
-    fn handle_task(&mut self, task: Task) {
+    fn handle_task(&mut self, mut task: Task) {
+        // A login's new trust token is kept before anything else (the lobby step may yet fail, or wait below).
+        if let Task::LoggedIn(_, trusted) = &mut task
+            && let Some((server, username, token)) = trusted.take()
+        {
+            self.keep_trust_token(&server, &username, &token);
+        }
         // A lobby operation's Task waits for its netwait / netbar run to end (FUN_1023b550).
         if let Some(nw) = self.netwait.as_mut()
             && matches!(
                 task,
-                Task::LoggedIn(_) | Task::Lobby(_) | Task::Selected(_) | Task::NameChecked(_) | Task::Created(_)
+                Task::LoggedIn(..) | Task::Lobby(_) | Task::Selected(_) | Task::NameChecked(_) | Task::Created(_)
             )
         {
             let refused = matches!(&task, Task::NameChecked(Ok((_, Some(_)))) | Task::Created(Ok((_, Some(_), _))));
@@ -9350,6 +9449,10 @@ impl App {
                 self.game_ui_state = LoadState::Failed;
             }
             Task::TwoFa(r) => {
+                if matches!(r, Ok(Reply::TotpRemoved)) {
+                    let (server, username) = (self.cfg.server.clone(), self.cfg.username.clone());
+                    self.keep_trust_token(&server, &username, "");
+                }
                 if let Some(t) = self.twofa.as_mut() {
                     t.reply(r);
                 }
@@ -9362,7 +9465,7 @@ impl App {
                     *focus = 5;
                 }
             }
-            Task::LoggedIn(Ok((lobby, chars))) | Task::Lobby(Ok((lobby, chars))) => {
+            Task::LoggedIn(Ok((lobby, chars)), _) | Task::Lobby(Ok((lobby, chars))) => {
                 self.status.clear();
                 // A login that worked: the password is remembered (sealed) or forgotten as the box says.
                 if let Phase::Login { password, pol_password, .. } = &self.phase
@@ -10195,7 +10298,12 @@ impl App {
             }
             Task::ZoneLoaded(zone_id, map_no, result) => self.zone_loaded(zone_id, map_no, result.map(|d| *d), None),
             Task::ZonePreloaded(zone_id, map_no, result) => self.preloaded(zone_id, map_no, result.map(|d| *d)),
-            Task::LoggedIn(Err(e)) | Task::AccountCreated(Err(e)) | Task::Selected(Err(e)) => {
+            Task::LoggedIn(Err(e), _) | Task::AccountCreated(Err(e)) | Task::Selected(Err(e)) => {
+                // A trust token turned down (expired, or the password changed) is gone: the code is needed again.
+                if e.downcast_ref::<auth::Refused>().is_some_and(|r| r.0 == auth::TRUST_REJECTED) {
+                    let (server, username) = (self.cfg.server.clone(), self.cfg.username.clone());
+                    self.keep_trust_token(&server, &username, "");
+                }
                 self.status = format!("{e:#}");
                 self.back_to_login(true);
             }
@@ -14182,6 +14290,11 @@ impl App {
                             "PlayOnline, or a private server. Left / Right or Alt+Down: change it.",
                         )
                     };
+                    let code_hint = if self.cfg.trust_computer && !self.cfg.trust_token.is_empty() {
+                        "trusted"
+                    } else {
+                        "only with 2FA"
+                    };
                     let mut fields = if playonline {
                         vec![
                             type_field,
@@ -14215,7 +14328,7 @@ impl App {
                             field("Server", &mut self.cfg.server, false, "", server_help),
                             field("Account", &mut self.cfg.username, false, "", account_help),
                             field("Password", &mut *password, true, "", ""),
-                            field("One-time code", &mut *otp, false, "only with 2FA", ""),
+                            field("One-time code", &mut *otp, false, code_hint, ""),
                         ]
                     };
                     if !playonline {
@@ -14223,6 +14336,7 @@ impl App {
                     }
                     fields[account_field].options = accounts.clone();
                     let remembered = self.cfg.remember_password;
+                    let trusted = self.cfg.trust_computer;
                     // While an error shows, the fields take no input (the OK window has it).
                     let none = UiInput {
                         pointer: None,
@@ -14257,6 +14371,7 @@ impl App {
                         playonline,
                         combo,
                         &mut self.cfg.remember_password,
+                        (!playonline).then_some(&mut self.cfg.trust_computer),
                         focus,
                         busy,
                         update,
@@ -14268,6 +14383,22 @@ impl App {
                         ctx.native_pixels_per_point().unwrap_or(1.0),
                     );
                     drop(fields);
+                    // Trust this computer is the account's own: unticked, its token goes at once.
+                    if trusted != self.cfg.trust_computer {
+                        let (server, user, on) =
+                            (self.cfg.server.clone(), self.cfg.username.clone(), self.cfg.trust_computer);
+                        if let Some(l) =
+                            self.cfg.logins.iter_mut().find(|l| {
+                                l.server.trim().eq_ignore_ascii_case(server.trim()) && l.username == user.trim()
+                            })
+                        {
+                            l.trust_computer = on;
+                        }
+                        if !on {
+                            self.cfg.set_trust_token(&server, user.trim(), String::new());
+                        }
+                        save |= self.drive.login.is_none() || crate::config::is_copy();
+                    }
                     // A server typed over to or from PlayOnline: the passwords are the other service's, never sent there.
                     if is_playonline(&self.cfg.server) != playonline {
                         password.clear();
