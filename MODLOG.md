@@ -23436,3 +23436,18 @@ still gave `cor`. Both now go through actmotion::sdep_stand.
   dropped move was reported five seconds later as refused by the server.
 - The modern Moogle menu's Storage row opens the storage view on the first open row of the container list (ours,
   user 2026-11-09); the list shows only when that row will not open. Closing the view returns to the Moogle menu.
+
+## The modern storage view's sorting, and LSB's sort limit (2026-11-10)
+
+- LSB's c2s 0x03A handler (0x03a_item_stack.cpp) keeps the time of the last sort per container. A 0x03A for that
+  container within 1 s of it is dropped and counted, and at map.LIGHTLUGGAGE_BLOCK (4 here) the player is logged out.
+  The count resets only on a sort that goes through. Other containers are not affected, so sorting the eight
+  wardrobes at once is fine; sending to one container repeatedly is not.
+- Ours: items::send_sort sends 0x03A to a container at most once a second. Every sort goes through it: the kept-sorted
+  re-sorts, the Items window, the classic sort window's Auto (retail sends 0x03A twice there, and LSB would drop the
+  second).
+- The modern storage view (ours): each pane has Auto-sort / Manual Sort, as the modern Items window has. Auto-sort sorts
+  the pane's containers (a merged bag's usable parts, or the inventory) and keeps them sorted (config auto_sort, the
+  same bits as the classic sort window's Auto). Manual Sort clears those bits and starts storage's Manual Sort on that
+  pane: a pick, then the row to put it at (FUN_101f0b30's rules), within one part. Num+ (FUN_101db690 case 8) focuses
+  the pair: Left / Right between them, Enter takes one.

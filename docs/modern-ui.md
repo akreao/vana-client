@@ -330,7 +330,10 @@ Milestone 1:
   account may use: no Safe 2 without the 2F); the bag beside the inventory; a click moves a stack (right click one),
   into a merged bag the first part with room that takes it; retail's colours say what may move. A move within a second
   of the last waits for the send gate. The moogle's Storage row opens it at once on the first open bag (no container
-  list); closing it comes back to the moogle's menu.
+  list); closing it comes back to the moogle's menu. Each pane has Auto-sort / Manual Sort (Num+ reaches them):
+  Auto-sort sorts its bag (every part) and keeps it sorted as items come in (config auto_sort, saved); Manual Sort
+  stops that and puts rows in order by hand (pick a row, then the row to put it at, within one part of a merged bag;
+  Escape or Manual Sort ends it).
 - Plate badges: the approved SVG set (assets/modern/badges) in place of retail's glyphs; the pearl tinted by its
   linkshell; rank stars, the recruiter star in its orb, the master stars above.
 - Icons: batches 1 and 2 (131) redrawn in VectorCraft and approved.

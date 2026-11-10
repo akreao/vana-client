@@ -251,6 +251,7 @@ fn away(bank: u8) -> Storage {
         sortw: None,
         manual: None,
         stora: None,
+        held_part: 0,
         pending: None,
         note: None,
         sent: None,

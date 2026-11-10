@@ -297,6 +297,8 @@ pub struct Storage {
     pub manual: Option<(bool, Option<u8>)>,
     /// "menu    itmstora" (Switch) with its cursor row, for the side itmsortw serves.
     pub stora: Option<u16>,
+    /// Modern: the container of Manual Sort's held row (`manual`'s slot), a merged bag having several.
+    pub held_part: u8,
     /// Modern (not retail): the move sent and not yet seen in the inventory, and the line explaining the last refusal.
     pub pending: Option<Pending>,
     pub note: Option<&'static str>,
@@ -1076,7 +1078,7 @@ pub(super) fn retail_auto_sort(w: &mut World, dt: f32) {
 }
 
 /// Auto keeps the container sorted (ours), Manual stops it.
-fn keep_sorted(w: &mut World, c: u8, on: bool) {
+pub(super) fn keep_sorted(w: &mut World, c: u8, on: bool) {
     let v = if on { w.auto_sort | 1 << c } else { w.auto_sort & !(1 << c) };
     if v != w.auto_sort {
         (w.auto_sort, w.auto_sort_dirty) = (v, true);
@@ -1113,6 +1115,19 @@ pub(super) fn auto_sort_c(w: &mut World, c: u8) {
     if c == INVENTORY {
         w.sort_wait = 0.0;
     }
+    send_sort(w, c);
+}
+
+/// c2s 0x03A {c} (the server merges the container's stacks), at most once a second per container: LSB drops one sent
+/// within 1 s of the last for that container and logs the player out at the 4th it drops (map.LIGHTLUGGAGE_BLOCK).
+/// Retail sends every one.
+fn send_sort(w: &mut World, c: u8) {
+    let now = std::time::Instant::now();
+    let Some(last) = w.sort_sent.get_mut(c as usize) else { return };
+    if last.is_some_and(|t| now.duration_since(t) < std::time::Duration::from_secs(1)) {
+        return;
+    }
+    *last = Some(now);
     let _ = w.net.commands.send(NetCommand::Packet { id: 0x03A, body: (c as u32).to_le_bytes().to_vec() });
 }
 
@@ -1124,7 +1139,7 @@ fn manual_move(w: &mut World, from: u8, to: &Slot) {
 }
 
 /// FUN_101dbed0: the same in a storage container.
-fn manual_move_c(w: &mut World, c: u8, from: u8, to: &Slot) {
+pub(super) fn manual_move_c(w: &mut World, c: u8, from: u8, to: &Slot) {
     let Some(&(id, count)) = w.inv.slots.get(&(c, from)) else { return };
     let stack = w.item_info.as_ref().and_then(|c| c.item(id)).map_or(1, |it| it.stack);
     let mv = |w: &World, n: u32, i1: u8, i2: u8| {
@@ -1374,6 +1389,7 @@ fn open_view_n(w: &mut World, bank: u8, at_moogle: bool, nomad: bool, read_only:
         sortw: None,
         manual: None,
         stora: None,
+        held_part: 0,
         pending: None,
         note: None,
         sent: None,
@@ -1674,17 +1690,15 @@ fn store_key(w: &mut World, info: &ItemCache, key: egui::Key, page: bool, alt: b
                     sw.ask = Some(!yes);
                     w.sounds.push(Ui::Cursor as u32);
                 }
-                // LAB_101f3780: Yes sorts the side's container (0x03A {c} here and again in the sort), focus back.
+                // LAB_101f3780: Yes sorts the side's container (0x03A {c} here and again in the sort, which
+                // send_sort holds back as LSB would drop it), focus back.
                 K::Enter | K::Escape => {
                     let yes = yes && key == K::Enter;
                     sw.ask = None;
                     w.sounds.push(if yes { Ui::Select } else { Ui::Cancel } as u32);
                     if yes {
                         if c != INVENTORY {
-                            let _ = w
-                                .net
-                                .commands
-                                .send(NetCommand::Packet { id: 0x03A, body: (c as u32).to_le_bytes().to_vec() });
+                            send_sort(w, c);
                         }
                         auto_sort_c(w, c);
                         keep_sorted(w, c, true);
