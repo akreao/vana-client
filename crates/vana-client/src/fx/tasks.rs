@@ -95,6 +95,12 @@ fn action_speed(a: &Action) -> f32 {
     if a.records().len() > 1 && !matches!(a.category, 0xe | 0xf) { 0.7 } else { 1.0 }
 }
 
+/// A file in FUN_100d25e0's ranges (weapon skills, dances, runes of the eight race codes): one retail puts on the
+/// caster's motion list instead of running it as a plain effect file. For the tools' `--file`.
+pub fn is_skill_file(file: u32) -> bool {
+    [33227..=38602, 58041..=60728, 61451..=61786, 88035..=98786].iter().any(|r| r.contains(&file))
+}
+
 /// FUN_100d25e0's files for a skill on a PC skeleton (tables 0x1035f484..0x1035f550, indexed by race code 0..8):
 /// the motion and effect file, and the skirt file when body info byte 9 > 0 (the pair's first when it is 1).
 fn skill_files(category: u8, anim: u16, race: u8, skirt: i8) -> Option<(u32, Option<u32>)> {
@@ -584,6 +590,14 @@ impl Effects {
         self.color_drives.retain(|d| d.actor != id);
         self.color_guards.retain(|g| g.1 != id);
         self.hidden_actors.remove(&id);
+        // The after-image's watcher (FUN_10060b30) links the actor as caster and target; the walk takes the caster
+        // list first, whose callback FUN_10060ac0 deletes the watcher and the after-image.
+        for t in self.trails.iter_mut() {
+            if t.as_ref().is_some_and(|t| t.actor == id) {
+                *t = None;
+                self.trails_dirty = true;
+            }
+        }
         for p in &mut self.pending {
             clear(&mut p.a1);
             clear(&mut p.a2);
@@ -847,14 +861,27 @@ impl Effects {
         Ok(None)
     }
 
-    /// FUN_100ce480 / vtable +0x1e8 for an Afb: the motion files in order, matched on 3 letters, then the first Afb of
-    /// any name in the part files. Err while one of them is still loading.
+    /// Op 0x2c's Afb. FUN_100ce480(actor1, 0x54, name & 0xffffff): the actor's motion list (+0x7e4) newest first, then
+    /// its own resources (vtable +0x400 / +0x1dc), each file to its root, matched on 3 letters. Failing those vtable
+    /// +0x1e8 (FUN_100ceb00): the first Afb of any name from each mesh's folder up (the part files), then in the model
+    /// file. The scheduler's own file is never searched (unlike op 0x05's motions), and nothing puts an effect file on
+    /// the +0x7e4 list (FUN_100d4410's callers are the actor's own loaders), so an Afb that sits only in a mob-move
+    /// effect file is not found: the files our op 0x05 put on the actor (`owned_motions`) are left out. Err while a
+    /// file is still loading.
     fn find_afb(&mut self, actor: u32, name: u32, actors: &dyn Actors) -> Result<Option<super::trail::Afb>, ()> {
         let (parts, motions) = actors.files(actor);
+        let named: Vec<u32> = motions
+            .into_iter()
+            .filter(|f| !self.owned_motions.iter().any(|&(_, a, of)| a == actor && of == *f))
+            .collect();
+        let any: Vec<u32> = parts.into_iter().chain(actors.model_files(actor)).collect();
         let want = name.to_le_bytes();
         let mut waiting = false;
-        for (files, any) in [(motions, false), (parts, true)] {
+        for (files, any) in [(named, false), (any, true)] {
             for file in files {
+                if any && self.owned_motions.iter().any(|&(_, a, of)| a == actor && of == file) {
+                    continue;
+                }
                 match self.lib_for(file) {
                     Some(l) => {
                         let lib = &self.reg.libs[l];
@@ -1929,7 +1956,8 @@ impl Effects {
                 Flow::Next
             }
             // FUN_1005a432: actor1's Afb by the 4cc's first three letters (motion files newest first, then the model's;
-            // failing those the first Afb in its part files) starts a top-level after-image; none: nothing.
+            // failing those the first Afb in its part files or model file) starts a top-level after-image; none:
+            // nothing. The effect file itself is not searched (find_afb).
             0x2c => {
                 let Some(id) = self.doll_of(t.a1).id() else { return Flow::Next };
                 match self.find_afb(id, op.u32_at(8), actors) {
@@ -4770,6 +4798,69 @@ mod tests {
         for g in ["g006", "g000"] {
             assert!(gens.iter().any(|n| n == g), "{g}: {gens:?}");
         }
+    }
+
+    /// A Hume M with Fast Blade's file (33228) on its motion list and the NPC Swift Blade file (50288) put there by
+    /// our op 0x05.
+    struct AfbActor;
+
+    impl Actors for AfbActor {
+        fn matrix(&self, id: u32) -> Option<Mat4> {
+            HumeWs.matrix(id)
+        }
+        fn point(&self, id: u32, k: u16) -> Option<Vec3> {
+            HumeWs.point(id, k)
+        }
+        fn scale(&self, _: u32) -> f32 {
+            1.0
+        }
+        fn files(&self, _: u32) -> (Vec<u32>, Vec<u32>) {
+            (vec![8392], vec![50288, 33228, 9672, 7072])
+        }
+        fn model_files(&self, _: u32) -> Vec<u32> {
+            vec![9672, 7072]
+        }
+        fn hidden(&self, _: u32) -> bool {
+            false
+        }
+        fn models(&self) -> Vec<(u32, Vec<u32>)> {
+            Vec::new()
+        }
+    }
+
+    /// Op 0x2c's lookup (FUN_100ce480, then vtable +0x1e8) never reaches the running effect file: 50288's own Afbs
+    /// (`s0a0` ..) are not found while the file is on the actor only through our op 0x05, a skill file's are, and
+    /// the any-name fallback does not take one from either. The ribbon goes with its actor (FUN_10060ac0).
+    #[test]
+    fn afb_lookup_skips_effect_files() {
+        assert!(is_skill_file(33228) && is_skill_file(61451) && is_skill_file(97252));
+        assert!(!is_skill_file(50288) && !is_skill_file(4223) && !is_skill_file(51130));
+        let cfg = crate::config::Config::load();
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let index = std::sync::Arc::new(index);
+        let mut fx = Effects::new();
+        fx.set_index(index.clone());
+        fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
+        let files = [8392, 9672, 7072, 33228, 50288];
+        fx.preload(&files);
+        while files.iter().any(|f| fx.reg.lib_of(*f).is_none()) {
+            fx.poll_loads();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let name = |s: &[u8; 4]| u32::from_le_bytes(*s);
+        // On the list as retail would have it (nothing of ours owns it): found by name.
+        assert!(fx.find_afb(HUME, name(b"s0a?"), &AfbActor).unwrap().is_some());
+        fx.owned_motions.push((1, HUME, 50288));
+        assert!(fx.find_afb(HUME, name(b"s0a?"), &AfbActor).unwrap().is_none());
+        assert!(fx.find_afb(ORC, name(b"s0a?"), &AfbActor).unwrap().is_some(), "another actor's list");
+        let afb = fx.find_afb(HUME, name(b"b0a?"), &AfbActor).unwrap().expect("Fast Blade's Afb");
+        assert_eq!(afb.a.len(), 5);
+        assert!(fx.find_afb(HUME, name(b"zzz?"), &AfbActor).unwrap().is_none(), "no any-name hit in motion files");
+        fx.trails.push(Some(super::super::trail::Trail::new(HUME, afb.clone(), &[0u8; 0x58])));
+        fx.trails.push(Some(super::super::trail::Trail::new(ORC, afb, &[0u8; 0x58])));
+        fx.trails_dirty = false;
+        fx.forget_actor(HUME);
+        assert!(fx.trails[0].is_none() && fx.trails[1].is_some() && fx.trails_dirty);
     }
 
     /// HumeWs with the orc's model still loading.
