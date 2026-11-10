@@ -760,8 +760,6 @@ struct UiInput {
     down: bool,
     released: bool,
     right_clicked: bool,
-    /// A middle click (the maze grid's turn, message 7 *(inf)*).
-    middle_clicked: bool,
     /// Wheel notches for the focused list, up positive (FUN_10125360).
     wheel: i32,
     /// Ctrl or Alt held: the page modifier 0xa8 that a click on a list's arrows is tested against
@@ -2292,6 +2290,59 @@ fn window_closes(w: &mut World, events: &[egui::Event]) {
     }
 }
 
+/// The input context (DAT_1036e3a0) that gates the key functions: the map's, the layout's, the gardening one's, else
+/// every flag.
+fn key_context(w: &World) -> u16 {
+    if w.map.is_some() || w.cnq.is_some() {
+        0x26
+    } else if w.layout.is_some() {
+        layout::context(w)
+    } else {
+        garden::context(w).unwrap_or(0xffff)
+    }
+}
+
+/// FUN_1013c220: the item info window's next page; past the last, back to 0 (key function 0x18, a middle press).
+fn info_page_turn(w: &World) {
+    if w.info_win.is_some() || items::info_source(w).is_some() {
+        let mut p = w.info_page.get();
+        p.0 = if p.0 + 1 >= p.2.min(3) { 0 } else { p.0 + 1 };
+        w.info_page.set(p);
+    }
+}
+
+/// FUN_1015df20: a middle-button release is FUN_1015dd00(7), message 7 to the focused window, or the main menu when
+/// no window has the focus; not in an input context without flag 4 (FUN_10123e50: laying out furniture), nor in
+/// cinema mode. Message 7 is what key function 0x18 (Num-) gives a window: with no window or only the main / action
+/// menu up the next frame gets a Num- press (the menu opens or closes); the maze grid turns its rune (FUN_101fdbf0);
+/// other windows ignore it. Retail also skips it with control type 2 (config 0x42, FUN_1025e070), where its middle
+/// button drags the camera. Ours: every control type looks around with a middle drag and only a click counts, so type
+/// 2 (the default) clicks too.
+fn middle_release(w: &mut World) {
+    if key_context(w) & 4 == 0 || event::cinema(w) {
+        return;
+    }
+    if w.maze.screen.is_some() {
+        maze::rotate(w);
+        return;
+    }
+    // Another window has the focus: message 7 is its own (the windows ours has take Num- as the key, not as this
+    // message), so nothing happens. The main menu and the action menu (playermo: FUN_1015ee40) take it as Num-.
+    let menu = w.menu.take();
+    let other = window_over_actions(w);
+    w.menu = menu;
+    if other {
+        return;
+    }
+    w.mouse_keys.extend([true, false].map(|pressed| egui::Event::Key {
+        key: egui::Key::Minus,
+        physical_key: Some(egui::Key::Minus),
+        pressed,
+        repeat: false,
+        modifiers: egui::Modifiers::default(),
+    }));
+}
+
 /// The in-game HUD in the game's own windows: chat log and input line, party, target, main menu
 /// ('-' opens it) and the KO prompt. Returns the rects that take clicks away from the world.
 fn world_hud(
@@ -2312,6 +2363,8 @@ fn world_hud(
     // The focused list's scroll bar and the wheel, before the windows see the press.
     let taken = scrollbar::frame(gu, world, input);
     let input = taken.as_ref().unwrap_or(input);
+    // A middle click is this frame's only: one made while the HUD is down (downloading, hidden) is dropped.
+    let middle = std::mem::take(&mut world.middle_click);
     // FUN_1022eca0: keytops3 165 + (n >> 2) % 5 at (W - 234, H - 48 + 8 - min(2n, 8)), y scale min(n / 4, 1), n
     // the draws since the open (taken at 30 a second, inferred); the HUD windows are not drawn meanwhile.
     if let Some(t) = world.downloading {
@@ -2326,6 +2379,9 @@ fn world_hud(
             world.ui_hidden = false;
         }
         return Vec::new();
+    }
+    if middle {
+        middle_release(world);
     }
     for mut c in std::mem::take(&mut world.map_cmds) {
         if let map::Cmd::Preview { point_y, .. } = &mut c {
@@ -3497,7 +3553,7 @@ fn world_hud(
         pupset::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.maze.screen.is_some() && world.confirm.is_none()) {
-        maze::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked, input.middle_clicked);
+        maze::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked);
     }
     // Mouse on the magic / ability lists and their category windows, or the Set Spells screen over them.
     if let Some(p) = input.pointer.filter(|_| world.bluset.is_some() && world.confirm.is_none()) {
@@ -6913,6 +6969,10 @@ struct World {
     /// after the zone.
     swkbd: Option<swkbd::Keyboard>,
     swkbd_out: Vec<egui::Event>,
+    /// Keys a mouse button stands for (`middle_release`), for the next frame's input.
+    mouse_keys: Vec<egui::Event>,
+    /// A middle click (released without a look drag) for the next HUD frame.
+    middle_click: bool,
     swkbd_reopen: bool,
     /// E (DAT_106627a8), which outlives the macro palettes: the focused palette (1 Ctrl, 2 Alt) and both columns.
     /// mcr1edit / mcr2edit open and regain the focus on column + 1 (FUN_101a44b0).
@@ -8114,6 +8174,8 @@ pub struct App {
     dragging: bool,
     left_down: bool,
     middle_down: bool,
+    /// Where and when the middle button went down (a click is told from a look drag on release).
+    middle_press: Option<((f64, f64), Instant)>,
     /// Where the right button went down (the camera arrow's reference).
     drag_from: Option<(f64, f64)>,
     /// FUN_10157fa0's +0x57: this movement push already sent its stand-up command.
@@ -8429,6 +8491,7 @@ impl App {
             dragging: false,
             left_down: false,
             middle_down: false,
+            middle_press: None,
             drag_from: None,
             stand_sent: false,
             mouse: Default::default(),
@@ -9731,6 +9794,8 @@ impl App {
                             palette_flip: None,
                             swkbd: None,
                             swkbd_out: Vec::new(),
+                            mouse_keys: Vec::new(),
+                            middle_click: false,
                             swkbd_reopen: false,
                             key_shift: false,
                             key_repeat: false,
@@ -13287,13 +13352,7 @@ impl App {
         });
         if let Phase::World(w) = &self.phase {
             self.input.assign(&w.game);
-            self.input.context = if w.map.is_some() || w.cnq.is_some() {
-                0x26
-            } else if w.layout.is_some() {
-                layout::context(w)
-            } else {
-                garden::context(w).unwrap_or(0xffff)
-            };
+            self.input.context = key_context(w);
             // Not with the UI hidden: the search gets no events then. Ours: the Settings window's search opens the same way.
             f.typing = text_field_open(w)
                 || (!w.ui_hidden && starts_search && (listsearch::can_run(w) || modern::config_find_open(w)));
@@ -13374,12 +13433,8 @@ impl App {
             if self.input.test(0x18, input::mode::PRESS) {
                 maze::rotate(world);
             }
-        } else if self.input.test(0x18, input::mode::PRESS)
-            && (world.info_win.is_some() || items::info_source(world).is_some())
-        {
-            let mut p = world.info_page.get();
-            p.0 = if p.0 + 1 >= p.2.min(3) { 0 } else { p.0 + 1 };
-            world.info_page.set(p);
+        } else if self.input.test(0x18, input::mode::PRESS) {
+            info_page_turn(world);
         }
         items::compare_key(world, self.input.test(0x76, input::mode::HELD) || self.input.test(0x89, input::mode::HELD));
         if self.input.test(0x11, input::mode::PRESS) && world.pupset.is_some() {
@@ -13877,9 +13932,23 @@ impl App {
                 self.dragging = pressed;
             }
             MouseButton::Middle => {
-                // WM_MBUTTONDOWN turns an RoE description's page (FUN_102326b0).
+                // WM_MBUTTONDOWN (the mouse's press bit 2) turns an RoE description's page (FUN_102326b0) and the item
+                // info window's (FUN_1013cba0), as key function 0x18 does.
                 if pressed && let Phase::World(w) = &mut self.phase {
                     roe::flip_page(w);
+                    if w.maze.screen.is_none() {
+                        info_page_turn(w);
+                    }
+                }
+                // The release is told here, not from egui's click: a middle press starts the look drag on the first
+                // pixel of motion, and the grab that takes the pointer away from egui loses its click.
+                if pressed {
+                    self.middle_press = self.last_cursor.map(|c| (c, Instant::now()));
+                } else if let Some(((a, _), b)) = self.middle_press.take().zip(self.last_cursor)
+                    && let Phase::World(w) = &mut self.phase
+                {
+                    let (dx, dy) = ((b.0 - a.0) as f32 * k.0, (b.1 - a.1) as f32 * k.1);
+                    w.middle_click |= !consumed && !looked && dx * dx + dy * dy < 65.0;
                 }
                 self.middle_down = pressed;
             }
@@ -14073,7 +14142,6 @@ impl App {
             down: i.pointer.primary_down() && mine,
             released: i.pointer.primary_released() && !swallow && mine,
             right_clicked: i.pointer.secondary_clicked() && mine,
-            middle_clicked: i.pointer.button_clicked(egui::PointerButton::Middle) && mine,
             page: i.modifiers.ctrl || i.modifiers.alt,
             events: i.events.clone(),
         });
@@ -14232,7 +14300,6 @@ impl App {
                         down: false,
                         released: false,
                         right_clicked: false,
-                        middle_clicked: false,
                         wheel: 0,
                         page: false,
                         events: Vec::new(),
@@ -16552,6 +16619,11 @@ impl App {
         // What the software keyboard typed, as the keys a field reads.
         if let Phase::World(w) = &mut self.phase {
             raw.events.append(&mut w.swkbd_out);
+            // A middle click is the numpad's minus (middle_release).
+            if minus_pressed(&w.mouse_keys) {
+                self.numpad_minus = true;
+            }
+            raw.events.append(&mut w.mouse_keys);
         }
         raw
     }
