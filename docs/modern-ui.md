@@ -75,7 +75,8 @@ pacing, decisions and atmosphere of Vana'diel.
 - **Spells and abilities:** one searchable action registry: categories, favourites, recent, job filters, costs,
   recasts, range, valid targets and why an action is disabled.
 - **Recommendations:** a deterministic, testable rules engine (Poisona for a poisoned ally, Cure for low HP, an
-  expiring Refresh, burst spells in a skillchain window, weapon skills at TP); never casts, never moves the cursor,
+  expiring Refresh, burst spells in a skillchain window, weapon skills at TP; RUN's rune for what it fights and
+  when to spend runes; GEO's colures and luopan); never casts, never moves the cursor,
   updates at safe points, shows its reason; no runtime LLM.
 - **Targeting:** target, sub-target, focus target, last target and party selection shown explicitly; clicks may set
   a target; cycling and target-by-name stay.

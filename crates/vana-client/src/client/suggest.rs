@@ -143,11 +143,25 @@ pub struct Partner {
     pub skills: Vec<(String, [Prop; 3])>,
 }
 
+/// Our pet: its name, HP %, and whether it is a GEO's luopan.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PetFact {
+    pub name: String,
+    pub hpp: u8,
+    pub luopan: bool,
+}
+
 /// The facts the rules read.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Facts {
     pub party: Vec<Member>,
+    /// Our main and support job and level; MP %; our pet.
+    pub main: (u8, u8),
+    pub sub: (u8, u8),
+    pub mpp: u8,
+    pub pet: Option<PetFact>,
     /// Our effects and their seconds left (untimed: none).
     pub own: Vec<(u16, Option<f32>)>,
     pub tp: u32,
@@ -452,6 +466,268 @@ fn nuke(s: &SpellFact) -> bool {
             || (s.skill == 39 && s.name.contains("ton:")))
 }
 
+/// A suggestion unless one for the same action is there already.
+fn add(out: &mut Vec<Suggestion>, s: Suggestion) {
+    if !out.iter().any(|o| o.action == s.action) {
+        out.push(s);
+    }
+}
+
+/// RUN's runes, Ignis .. Tenebrae (statuses 523 .. 530, in the spells' element order).
+const RUNES: [&str; 8] = ["Ignis", "Gelus", "Flabra", "Tellus", "Sulpor", "Unda", "Lux", "Tenebrae"];
+const IGNIS: u16 = 523;
+
+/// The element a rune resists (LSB rune_fencer.lua, the runes' MEVA and Vallation's SDT): each the one its element
+/// beats, Ignis ice .. Unda fire; Lux dark, Tenebrae light.
+fn rune_resists(rune: usize) -> usize {
+    match rune {
+        0..=5 => (rune + 1) % 6,
+        6 => 7,
+        _ => 6,
+    }
+}
+
+/// The rune that resists element `e`.
+fn rune_against(e: usize) -> usize {
+    (0..8).find(|&r| rune_resists(r) == e).unwrap_or(0)
+}
+
+/// Main jobs that fight in melee (WAR MNK THF PLD DRK BST RNG SAM NIN DRG BLU COR PUP DNC RUN) and that nuke (BLM
+/// RDM SCH GEO).
+const MELEE: [u8; 15] = [1, 2, 6, 7, 8, 9, 11, 12, 13, 14, 16, 17, 18, 19, 22];
+const NUKERS: [u8; 4] = [4, 5, 20, 21];
+
+/// The elements words of a set of runes, by element, once each ("fire and ice").
+fn element_list(elements: &[usize]) -> String {
+    let mut seen: Vec<usize> = Vec::new();
+    for &e in elements {
+        if !seen.contains(&e) {
+            seen.push(e);
+        }
+    }
+    let words: Vec<&str> = seen.iter().map(|&e| ELEMENT_WORDS[e]).collect();
+    match words.len() {
+        0 => String::new(),
+        1 => words[0].to_string(),
+        n => format!("{} and {}", words[..n - 1].join(", "), words[n - 1]),
+    }
+}
+
+/// RUN (main or support): the rune for what we fight, then what to do with the runes held.
+///
+/// On the monster (it hits us) the rune to hold resists its own element: the one its ranks resist most (inferred:
+/// monsters resist their own element and deal it). Otherwise the rune of the element it is weakest to, which Swipe
+/// and Lunge deal. A rune is suggested while fewer than the most we hold (1, 2 from RUN 35, 3 from 65) are that
+/// one, or one wears off soon. Holding the monster: Vallation (Valiance with others here), Pflug, Battuta; Elemental
+/// Sforzo and Liement when HP is low. Not holding it: the runes spent as their element, Gambit when the party has
+/// nukers, else Lunge (two or more) or Swipe, unless the monster resists that element.
+fn rune_fencer(f: &Facts, out: &mut Vec<Suggestion>) {
+    let level = match (f.main, f.sub) {
+        ((22, l), _) | (_, (22, l)) => l,
+        _ => return,
+    };
+    let most = if level >= 65 {
+        3
+    } else if level >= 35 {
+        2
+    } else {
+        1
+    };
+    let up: Vec<(usize, Option<f32>)> = f
+        .own
+        .iter()
+        .filter(|(e, _)| (IGNIS..IGNIS + 8).contains(e))
+        .map(|&(e, left)| ((e - IGNIS) as usize, left))
+        .collect();
+    let held: Vec<usize> = up.iter().map(|r| r.0).collect();
+    let t = f.target.as_ref().filter(|t| t.hpp > 0);
+    let foe = t.map_or("monster", |t| t.name.as_str());
+    let tanking = t.is_some_and(|t| t.hitting_me);
+    let ranks = t.and_then(|t| t.ranks);
+    // Its own element: resisted most, by a clear margin; its weakness: resisted least, below 0.
+    let own = ranks.and_then(|r| {
+        let top = *r.iter().max()?;
+        (top > 0 && r.iter().filter(|&&v| v == top).count() == 1).then(|| r.iter().position(|&v| v == top))?
+    });
+    let weak = ranks.and_then(|r| {
+        let low = *r.iter().min()?;
+        (low < 0).then(|| r.iter().position(|&v| v == low))?
+    });
+    if f.fighting() {
+        let want = match (tanking, own, weak) {
+            (true, Some(e), _) => Some((rune_against(e), format!("Resists the {foe}'s {}", ELEMENT_WORDS[e]))),
+            (_, _, Some(e)) => Some((e, format!("The {foe} is weak to {}, for Swipe and Lunge", ELEMENT_WORDS[e]))),
+            _ => None,
+        };
+        if let Some((r, why)) = want
+            && let Some(a) = f.ability(RUNES[r])
+        {
+            let have = held.iter().filter(|&&h| h == r).count();
+            let soon = up.iter().any(|&(h, left)| h == r && left.is_some_and(|l| l < SOON));
+            if have < most || soon {
+                let reason = format!("{why} ({have} of {most} up).");
+                add(out, Suggestion::new(Action::Ability(a.index), None, reason));
+            }
+        }
+    }
+    if !f.fighting() {
+        return;
+    }
+    let me = f.party.first();
+    let hp_pct = me.map_or(100, |m| (m.hp * 100).checked_div(m.hp_max).unwrap_or(100));
+    if tanking
+        && hp_pct < 35
+        && let Some(a) = f.ability("Elemental Sforzo")
+    {
+        add(out, Suggestion::new(Action::Ability(a.index), None, format!("HP low while the {foe} is on you.")));
+    }
+    if !f.has(532)
+        && let Some(a) = f.ability("Swordplay")
+    {
+        add(out, Suggestion::new(Action::Ability(a.index), None, "Accuracy and evasion up as you fight.".into()));
+    }
+    if held.is_empty() {
+        return;
+    }
+    let resisted: Vec<usize> = held.iter().map(|&r| rune_resists(r)).collect();
+    let guarded = element_list(&resisted);
+    if tanking {
+        if !f.has(531) && !f.has(535) {
+            let others = f.party.iter().any(|m| !m.me && m.here);
+            let (first, then) = if others { ("Valiance", "Vallation") } else { ("Vallation", "Valiance") };
+            if let Some(a) = f.ability(first).or_else(|| f.ability(then)) {
+                let who = if a.name.eq_ignore_ascii_case("Valiance") { "the party takes" } else { "you take" };
+                add(out, Suggestion::new(Action::Ability(a.index), None, format!("Less {guarded} damage {who}.")));
+            }
+        }
+        if !f.has(533)
+            && let Some(a) = f.ability("Pflug")
+        {
+            add(out, Suggestion::new(Action::Ability(a.index), None, format!("Fewer {guarded} ailments.")));
+        }
+        if hp_pct < 50
+            && !f.has(537)
+            && let Some(a) = f.ability("Liement")
+        {
+            add(out, Suggestion::new(Action::Ability(a.index), None, format!("Absorb {guarded} damage.")));
+        }
+        if held.len() >= most
+            && !f.has(570)
+            && let Some(a) = f.ability("Battuta")
+        {
+            add(out, Suggestion::new(Action::Ability(a.index), None, format!("Parry the {foe} more.")));
+        }
+    }
+    // Spending them: the newest rune's element goes first (rune_fencer.lua, getNewestRuneEffect); held runes in
+    // the order they were cast, so the last.
+    let Some(t) = t else { return };
+    if tanking {
+        return;
+    }
+    let el = *held.last().unwrap_or(&0);
+    if ranks.is_some_and(|r| r[el] > 0) {
+        return;
+    }
+    let word = ELEMENT_WORDS[el];
+    let nukers = f.party.iter().any(|m| !m.me && m.here && NUKERS.contains(&m.job));
+    if nukers
+        && t.hpp > 30
+        && !t.ours.contains(&536)
+        && let Some(a) = f.ability("Gambit")
+    {
+        add(out, Suggestion::new(Action::Ability(a.index), None, format!("The party's {word} magic hits harder.")));
+    } else if held.len() >= 2
+        && let Some(a) = f.ability("Lunge")
+    {
+        let n = held.len();
+        add(out, Suggestion::new(Action::Ability(a.index), None, format!("{n} runes as {word} on the {foe}.")));
+    } else if let Some(a) = f.ability("Swipe") {
+        add(out, Suggestion::new(Action::Ability(a.index), None, format!("A rune as {word} on the {foe}.")));
+    }
+}
+
+/// The first spell castable now of `names`.
+fn first_spell<'a>(f: &'a Facts, names: &[&str]) -> Option<&'a SpellFact> {
+    names.iter().find_map(|n| f.spells.iter().find(|s| s.name.eq_ignore_ascii_case(n)))
+}
+
+/// GEO (main): an Indicolure always on (Colure Active, 612), a Geocolure on what we fight while no luopan is out
+/// (Blaze of Glory first), and the luopan looked after: Ecliptic Attrition in a fight, Full Circle after it, Life
+/// Cycle or Dematerialize when it is hurt, Radial Arcana for our MP, Mending Halation for a hurt party. Melee
+/// colures (Fury, Frailty) when the party has more melee than nukers, else magic ones (Acumen, Malaise); a GEO alone
+/// nukes.
+fn geomancer(f: &Facts, out: &mut Vec<Suggestion>) {
+    if f.main.0 != 21 {
+        return;
+    }
+    let others = || f.party.iter().filter(|m| !m.me && m.here);
+    let melee = others().filter(|m| MELEE.contains(&m.job)).count();
+    let melee_party = melee > others().filter(|m| NUKERS.contains(&m.job)).count();
+    if !f.has(612) {
+        let (names, why): (&[&str], &str) = if melee_party {
+            (&["Indi-Fury", "Indi-Precision", "Indi-Haste", "Indi-Regen"], "for the melee round you")
+        } else {
+            (&["Indi-Acumen", "Indi-Focus", "Indi-Refresh", "Indi-Regen"], "for the magic round you")
+        };
+        if let Some(s) = first_spell(f, names) {
+            add(out, Suggestion::new(Action::Spell(s.id), None, format!("No Indicolure on you: {}, {why}.", s.name)));
+        }
+    }
+    let luopan = f.pet.as_ref().filter(|p| p.luopan);
+    let foe = f.target.as_ref().filter(|t| t.hpp > 0);
+    if let Some(t) = foe {
+        if luopan.is_none() {
+            let (names, why): (&[&str], &str) = if melee_party {
+                (&["Geo-Frailty", "Geo-Fury", "Geo-Wilt"], "for your melee")
+            } else {
+                (&["Geo-Malaise", "Geo-Acumen", "Geo-Languor"], "for your magic")
+            };
+            if let Some(s) = first_spell(f, names) {
+                if !f.has(569)
+                    && let Some(a) = f.ability("Blaze of Glory")
+                {
+                    let reason = format!("The next luopan ({}) stronger.", s.name);
+                    add(out, Suggestion::new(Action::Ability(a.index), None, reason));
+                }
+                let reason = format!("No luopan out: {} on the {}, {why}.", s.name, t.name);
+                add(out, Suggestion::new(Action::Spell(s.id), None, reason));
+            }
+        } else if f.fighting()
+            && !f.has(516)
+            && let Some(a) = f.ability("Ecliptic Attrition")
+        {
+            add(out, Suggestion::new(Action::Ability(a.index), None, "The luopan's effect stronger.".into()));
+        }
+    }
+    let Some(p) = luopan else { return };
+    if foe.is_none()
+        && let Some(a) = f.ability("Full Circle")
+    {
+        add(out, Suggestion::new(Action::Ability(a.index), None, "No fight now: the luopan's MP back.".into()));
+    }
+    if p.hpp < 50
+        && let Some(a) = f.ability("Life Cycle")
+    {
+        add(out, Suggestion::new(Action::Ability(a.index), None, format!("The luopan at {}% HP.", p.hpp)));
+    } else if p.hpp < 70
+        && !f.has(518)
+        && let Some(a) = f.ability("Dematerialize")
+    {
+        add(out, Suggestion::new(Action::Ability(a.index), None, format!("The luopan at {}% HP.", p.hpp)));
+    }
+    if f.mpp < 25
+        && let Some(a) = f.ability("Radial Arcana")
+    {
+        add(out, Suggestion::new(Action::Ability(a.index), None, format!("Your MP at {}%.", f.mpp)));
+    }
+    let hurt = f.party.iter().filter(|m| m.here && m.hp_max > 0 && m.hp * 5 < m.hp_max * 3).count();
+    if hurt >= 3
+        && let Some(a) = f.ability("Mending Halation")
+    {
+        add(out, Suggestion::new(Action::Ability(a.index), None, format!("{hurt} members below 60% HP.")));
+    }
+}
+
 /// The rules in their order: raise, shadows, ailments, heal, close the open chain, burst it, pull the monster off
 /// someone, job abilities, debuffs, open a chain with a partner, the strongest weapon skill, renew what wears off.
 pub fn suggest(f: &Facts) -> Vec<Suggestion> {
@@ -601,6 +877,8 @@ pub fn suggest(f: &Facts) -> Vec<Suggestion> {
             push(&mut out, Suggestion::new(Action::Ability(a.index), None, "No samba up.".into()));
         }
     }
+    rune_fencer(f, &mut out);
+    geomancer(f, &mut out);
     // Debuffs on the monster we target, engaged or not (casters fight from range), while it has the HP for them to
     // matter.
     if let Some(t) = f.target.as_ref().filter(|t| t.hpp > 30) {
@@ -780,7 +1058,7 @@ pub struct Case {
 
 /// The rules by the names cases give them, in suggest's order.
 #[cfg(test)]
-pub const RULES: [&str; 17] = [
+pub const RULES: [&str; 19] = [
     "raise",
     "shadows",
     "ailment",
@@ -793,6 +1071,8 @@ pub const RULES: [&str; 17] = [
     "job_ability",
     "ninja_stance",
     "samba",
+    "rune_fencer",
+    "geomancer",
     "debuff",
     "open_chain",
     "strongest_ws",
@@ -921,8 +1201,20 @@ pub fn facts(w: &World) -> Facts {
         .collect();
     let d = sc::data();
     let ready = |ty: u16| magic::ability_rows(w, ty).into_iter().filter(|&a| magic::ability_check(w, a).is_none());
-    let abilities =
-        ready(1).map(|i| AbilityFact { index: i, name: magic::ability_name(w, i), ..Default::default() }).collect();
+    // Job abilities, and the rows of the lists job abilities open (the runes, Vallation, Lunge, the waltzes...).
+    let mut kinds = vec![1u16];
+    if let Some(acts) = w.actions.as_ref() {
+        for a in acts.abilities.iter().filter(|a| a.kind == 1 && a.sub != 0) {
+            if !kinds.contains(&(a.sub as u16)) {
+                kinds.push(a.sub as u16);
+            }
+        }
+    }
+    let abilities = kinds
+        .into_iter()
+        .flat_map(ready)
+        .map(|i| AbilityFact { index: i, name: magic::ability_name(w, i), ..Default::default() })
+        .collect();
     let weapon_skills = ready(3)
         .map(|i| {
             let ws = w.actions.as_ref().and_then(|a| a.abilities.get(i as usize)).map_or(i, |a| a.id);
@@ -968,8 +1260,18 @@ pub fn facts(w: &World) -> Facts {
     let day_element =
         w.clock.map(|(t, at)| DAY_ELEMENTS[((t as u64 + at.elapsed().as_secs()) % 27648 / 3456) as usize]);
     let weather_element = weather_element(super::event::weather(w));
+    let pet = (w.my_pet != 0).then(|| w.entity_at(w.my_pet)).flatten().map(|(_, e)| PetFact {
+        name: super::monstrosity::name(e).to_string(),
+        hpp: e.hpp,
+        // The luopans' models (petrow.rs).
+        luopan: (0xb22..=0xb31).contains(&e.model),
+    });
     Facts {
         party,
+        main: w.stats.as_ref().map_or((0, 0), |s| s.main),
+        sub: w.stats.as_ref().map_or((0, 0), |s| s.sub),
+        mpp: w.vitals.map_or(0, |v| v.4),
+        pet,
         own,
         tp: w.vitals.map_or(0, |v| v.2),
         engaged: w.my_motion.status == 1,
