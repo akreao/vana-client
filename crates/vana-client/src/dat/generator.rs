@@ -658,6 +658,87 @@ mod tests {
         assert!((k.linear(0.275) - (0.703 + (1.172 - 0.703) * 0.5)).abs() < 1e-3);
     }
 
+    /// Bone-frame generators (attach mode 9 / 0xa) with op 0x11 or the spin ops 0x0e..0x10 in their update stream,
+    /// and whether their file's schedulers make dolls (ops 0x15 / 0x16 / 0x22 / 0x23), the only way such a generator
+    /// can end up on a doll (by hand: `cargo test --release mode9_doll_census -- --ignored --nocapture`).
+    #[test]
+    #[ignore]
+    fn mode9_doll_census() {
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let trim = |n: [u8; 4]| String::from_utf8_lossy(&n).trim_end_matches(['\0', ' ']).to_string();
+        let (mut gens, mut follow, mut spin, mut files) = (0, 0, 0, std::collections::BTreeSet::new());
+        let mut doll_files: Vec<String> = Vec::new();
+        let mut words: std::collections::BTreeMap<(u32, u32), usize> = Default::default();
+        let mut looping: std::collections::BTreeMap<bool, usize> = Default::default();
+        let mut loop_files = std::collections::BTreeSet::new();
+        for id in 0..index.len() as u32 {
+            let Ok(file) = index.read(id) else { continue };
+            let Ok(tree) = Tree::build(&file) else { continue };
+            let mut hits: Vec<String> = Vec::new();
+            for node in tree.of_kind(kind::GENERATOR).collect::<Vec<_>>() {
+                let Ok(g) = Generator::parse(&tree, node, &file) else { continue };
+                if !matches!(g.attach_mode(), 9 | 0xa) {
+                    continue;
+                }
+                gens += 1;
+                let ops = &g.streams[stream::GENERATOR];
+                let (f, s) = (ops.iter().any(|o| o.code == 0x11), ops.iter().any(|o| matches!(o.code, 0x0e..=0x10)));
+                follow += f as usize;
+                spin += s as usize;
+                for o in ops.iter().filter(|o| o.code == 0x11) {
+                    *words.entry((o.u32(1) & 3, (o.u32(1) >> 2) & 0xff)).or_default() += 1;
+                }
+                if g.flags & 0x1000 != 0 {
+                    *looping.entry(f).or_default() += 1;
+                    if !f {
+                        loop_files.insert(id);
+                    }
+                }
+                if f || s {
+                    files.insert(id);
+                    hits.push(format!(
+                        "{}{}{}",
+                        trim(g.name),
+                        if f { " 0x11" } else { "" },
+                        if s { " spin" } else { "" }
+                    ));
+                }
+            }
+            if hits.is_empty() {
+                continue;
+            }
+            let dolls: Vec<String> = tree
+                .of_kind(kind::SCHEDULER)
+                .filter_map(|n| {
+                    let ops = crate::dat::sched::ops(&file[tree.nodes[n].data.clone()]);
+                    let d: Vec<String> = ops
+                        .iter()
+                        .filter(|o| matches!(o.code, 0x15 | 0x16 | 0x22 | 0x23))
+                        .map(|o| format!("{:#x}", o.code))
+                        .collect();
+                    (!d.is_empty()).then(|| format!("{} {}", trim(tree.nodes[n].name), d.join(" ")))
+                })
+                .collect();
+            if !dolls.is_empty() {
+                doll_files.push(format!(
+                    "DAT {id}: gens [{}], doll schedulers [{}]",
+                    hits.join(", "),
+                    dolls.join(", ")
+                ));
+            }
+        }
+        println!(
+            "{gens} mode 9 / 0xa generators: {follow} with op 0x11, {spin} with a spin op, in {} files",
+            files.len()
+        );
+        println!("op 0x11 words (bits, k) -> generators: {words:?}");
+        println!("looping (0x1000) ones by op 0x11: {looping:?}; without it in DATs {loop_files:?}");
+        println!("{} of those files make dolls:", doll_files.len());
+        for d in &doll_files {
+            println!("  {d}");
+        }
+    }
+
     /// Prints a file's generators: attach word and mode (by hand: `cargo test --release gen_attach -- --ignored
     /// --nocapture`).
     #[test]
