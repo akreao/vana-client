@@ -63,6 +63,11 @@ pub trait Actors {
     fn posed(&self, _id: u32) -> bool {
         true
     }
+    /// The actor of the entity this one faces (entity +0x1f8, the 0x00D / 0x00E face target; FUN_10098360), for
+    /// attach modes 0x16..0x1b.
+    fn face_target(&self, _id: u32) -> Option<u32> {
+        None
+    }
     /// Hidden actors (+0xb2 bit 1) get no attached effects.
     fn hidden(&self, id: u32) -> bool;
     /// Actors whose model is up, with the model's files (FUN_10083970 reads their generators).

@@ -533,6 +533,77 @@ mod tests {
         println!("{switched} of {total} format-5/6 meshes switch to format 7");
     }
 
+    /// Attach census for gaps item 129 over every DAT (by hand: `cargo test --release attach_spec_census -- --ignored
+    /// --nocapture`): generators by attach mode, the linked-target modes 0x16..0x1b, op 0x7b's offsets with their
+    /// modes and points, the spin ops 0x0e..0x10, the camera modes 7 / 8 and point 0x33.
+    #[test]
+    #[ignore]
+    fn attach_spec_census() {
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let trim = |n: [u8; 4]| String::from_utf8_lossy(&n).trim_end_matches(['\0', ' ']).to_string();
+        let mut modes: std::collections::BTreeMap<u8, usize> = Default::default();
+        let mut linked: std::collections::BTreeMap<u8, std::collections::BTreeSet<u32>> = Default::default();
+        let mut spins: std::collections::BTreeMap<u8, usize> = Default::default();
+        let mut spin_files = std::collections::BTreeSet::new();
+        let (mut offs, mut unused, mut special) = (Vec::new(), 0, Vec::new());
+        let (mut eye, mut eye_files) = (0, std::collections::BTreeSet::new());
+        for id in 0..index.len() as u32 {
+            let Ok(file) = index.read(id) else { continue };
+            let Ok(tree) = Tree::build(&file) else { continue };
+            for node in tree.of_kind(kind::GENERATOR).collect::<Vec<_>>() {
+                let Ok(g) = Generator::parse(&tree, node, &file) else { continue };
+                let mode = g.attach_mode();
+                *modes.entry(mode).or_default() += 1;
+                let w = g.attach;
+                let (pc, pt) = ((((w >> 18) & 1) << 6) | ((w >> 4) & 0x3f), (w >> 10) & 0x3f);
+                if (0x16..=0x1b).contains(&mode) {
+                    linked.entry(mode).or_default().insert(id);
+                }
+                if g.streams[stream::GENERATOR].iter().any(|o| matches!(o.code, 0x0e..=0x10)) {
+                    *spins.entry(mode).or_default() += 1;
+                    spin_files.insert(id);
+                }
+                let uses = |k: u32| match mode {
+                    1 | 5 | 7 | 9 | 0xb | 0x18 => pc == k,
+                    2 | 4 | 8 | 0xa | 0xc | 0x17 => pt == k,
+                    0 | 0xe | 0xf | 0x13..=0x15 => false,
+                    _ => pc == k || pt == k,
+                };
+                if uses(0x33) {
+                    eye += 1;
+                    eye_files.insert(id);
+                }
+                let Some(o) = g.streams[stream::EMISSION].iter().find(|o| o.code == 0x7b) else { continue };
+                if !g.offsets {
+                    continue;
+                }
+                let two = matches!(mode, 3 | 6 | 0xd | 0x10 | 0x11 | 0x12 | 0x16..=0x1b);
+                if !two {
+                    unused += 1;
+                    continue;
+                }
+                let (a, b) = ([o.f32(1), o.f32(2), o.f32(3)], [o.f32(4), o.f32(5), o.f32(6)]);
+                let line = format!("DAT {id} {} mode {mode:#x} pc {pc:#x} pt {pt:#x} A {a:?} B {b:?}", trim(g.name));
+                if (0x30..=0x35).contains(&pc) && a != [0.0; 3] || (0x30..=0x35).contains(&pt) && b != [0.0; 3] {
+                    special.push(line.clone());
+                }
+                offs.push(line);
+            }
+        }
+        println!("generators by attach mode: {modes:x?}");
+        println!("modes 0x16..0x1b: {linked:?}");
+        println!("spin ops 0x0e..0x10 by mode: {spins:x?} in {} files", spin_files.len());
+        println!("point 0x33 (nearest the eye): {eye} generators in {} files", eye_files.len());
+        println!("op 0x7b offsets in a two-point mode: {}; set in another mode (never read): {unused}", offs.len());
+        for l in &offs {
+            println!("  {l}");
+        }
+        println!("offsets on a special point 0x30..0x35: {}", special.len());
+        for l in &special {
+            println!("  {l}");
+        }
+    }
+
     /// Ground projection census for gaps item 126 over every DAT (by hand: `cargo test --release ground_proj_census
     /// -- --ignored --nocapture`): the D3m + 0x200000 generators, their op 0x43 blends, the lit ones (flag 16), the
     /// MMB byte (@0x28 -> +0x179), where each mesh name resolves in its own file, and the meshes named 'hi17' / 'asi1'

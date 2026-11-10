@@ -6626,6 +6626,13 @@ impl crate::fx::Actors for FxActors<'_> {
         self.actors.get(&id).is_some_and(|a| !a.bones.is_empty())
     }
 
+    /// We are not in `entities` (our own +0x1f8 comes only from a 0x00D about us, which is not kept).
+    fn face_target(&self, id: u32) -> Option<u32> {
+        let f = self.entities.get(&id).map(|e| e.face).filter(|f| *f != 0)?;
+        let t = if f == self.my_index { self.me } else { *self.entities.iter().find(|(_, e)| e.index == f)?.0 };
+        self.actors.contains_key(&t).then_some(t)
+    }
+
     fn ready(&self, id: u32) -> Option<bool> {
         if self.furniture(id).is_some() || self.ship(id).is_some() {
             return Some(true);

@@ -2846,16 +2846,18 @@ impl Effects {
             }
             _ => actors.point(id, k),
         };
-        // Op 0x7b's offset turns with the actor (TransformCoord by its yaw).
-        let off = m.transform_vector3(off);
-        let world = |k: u16| local(k).map(|p| m.transform_point3(p) + off);
+        // Op 0x7b's offset turns by the actor's yaw alone (FUN_1003ba20: RotationY of vtable +0x1c0's y, then
+        // TransformCoord), not by its ground tilt.
+        let off = Mat4::from_rotation_y((-m.x_axis.z).atan2(m.x_axis.x)).transform_vector3(off);
+        let bare = |k: u16| local(k).map(|p| m.transform_point3(p));
+        let world = |k: u16| bare(k).map(|p| p + off);
         let nearest = |to: Vec3| {
             (0xd..=0x14u16).filter_map(world).min_by(|a, b| a.distance_squared(to).total_cmp(&b.distance_squared(to)))
         };
         let p = match k {
-            // From 1 above to 6 below; retail's miss is (0, 0, 0), ours keeps the position (our collision is not
-            // retail's everywhere).
-            0x30 => world(0).and_then(|p| actors.ground_hit(p - Vec3::Y, p + Vec3::Y * 6.0)),
+            // From 1 above to 6 below point 0, without op 0x7b's offset (the case never adds it); retail's miss is
+            // (0, 0, 0), ours keeps the position (our collision is not retail's everywhere).
+            0x30 => bare(0).and_then(|p| actors.ground_hit(p - Vec3::Y, p + Vec3::Y * 6.0)),
             0x31 | 0x32 => self.who_matrix(other, actors).and_then(|(_, o)| nearest(o.w_axis.truncate())),
             0x33 => eye.and_then(nearest),
             0x34 => actors.foot(id),
@@ -2945,6 +2947,12 @@ impl Effects {
         if attach_missing(mode, [a1, a2]) {
             return Some((Some(Mat4::IDENTITY), 0.0));
         }
+        // Modes 0x16..0x1b: the target is the caster's face target when that has an actor (FUN_100845e0 ->
+        // FUN_10098360: entity +0x1f8, the 0x00D / 0x00E face target), else the target. Only 0x1a is in the data.
+        let a2 = match a1 {
+            Who::Actor(id) if (0x16..=0x1b).contains(&mode) => actors.face_target(id).map_or(a2, Who::Actor),
+            _ => a2,
+        };
         let pc = ((((w >> 18) & 1) << 6) | ((w >> 4) & 0x3f)) as u16;
         let pt = ((w >> 10) & 0x3f) as u16;
         let rot = |m: Mat4| Mat4::from_cols(m.x_axis, m.y_axis, m.z_axis, glam::Vec4::W);
@@ -3514,6 +3522,81 @@ mod tests {
         fn models(&self) -> Vec<(u32, Vec<u32>)> {
             Vec::new()
         }
+    }
+
+    /// A tilted stand-in at x 5: yaw 0.7 under a 0.3 pitch, every point 1 above its origin, the ground 3 below a
+    /// ray's start. A third actor (id 7) stands at z 9, and HUME faces it when `face` is set.
+    struct Tilted {
+        face: bool,
+    }
+
+    impl Actors for Tilted {
+        fn matrix(&self, id: u32) -> Option<Mat4> {
+            Some(match id {
+                7 => Mat4::from_translation(Vec3::new(0.0, 0.0, 9.0)),
+                _ => {
+                    Mat4::from_translation(Vec3::new(5.0, 0.0, 0.0))
+                        * Mat4::from_rotation_y(0.7)
+                        * Mat4::from_rotation_x(0.3)
+                }
+            })
+        }
+        fn point(&self, _: u32, _: u16) -> Option<Vec3> {
+            Some(Vec3::new(0.0, -1.0, 0.0))
+        }
+        fn scale(&self, _: u32) -> f32 {
+            1.0
+        }
+        fn files(&self, _: u32) -> (Vec<u32>, Vec<u32>) {
+            (Vec::new(), Vec::new())
+        }
+        fn hidden(&self, _: u32) -> bool {
+            false
+        }
+        fn models(&self) -> Vec<(u32, Vec<u32>)> {
+            Vec::new()
+        }
+        fn ground_hit(&self, from: Vec3, _: Vec3) -> Option<Vec3> {
+            Some(from + Vec3::Y * 3.0)
+        }
+        fn face_target(&self, id: u32) -> Option<u32> {
+            (self.face && id == HUME).then_some(7)
+        }
+    }
+
+    /// FUN_1003ba20: op 0x7b's offset turns by the actor's yaw only, and point 0x30 (the ground under point 0) does
+    /// not take it.
+    #[test]
+    fn point_offset_yaw_only() {
+        let fx = Effects::new();
+        let a = Tilted { face: false };
+        let off = Vec3::new(1.0, -2.0, 0.5);
+        let m = a.matrix(HUME).unwrap();
+        let p0 = m.transform_point3(Vec3::new(0.0, -1.0, 0.0));
+        let (_, p) = fx.who_point(Who::Actor(HUME), 5, Who::None, None, off, &a).unwrap();
+        let want = p0 + Mat4::from_rotation_y(0.7).transform_vector3(off);
+        assert!(p.abs_diff_eq(want, 1e-5), "{p} != {want}");
+        let (_, g) = fx.who_point(Who::Actor(HUME), 0x30, Who::None, None, off, &a).unwrap();
+        let want = p0 - Vec3::Y + Vec3::Y * 3.0;
+        assert!(g.abs_diff_eq(want, 1e-5), "{g} != {want}");
+    }
+
+    /// Modes 0x16..0x1b (FUN_100845e0): the target is the caster's face target when it has one. 101739's mode 0x1a
+    /// generator then points from the caster at actor 7, not at the task's target.
+    #[test]
+    fn attach_linked_target() {
+        let (Some((plain, _)), Some((linked, _))) = (
+            attached(101739, 0x1a, None, &Tilted { face: false }),
+            attached(101739, 0x1a, None, &Tilted { face: true }),
+        ) else {
+            return;
+        };
+        // Without a face target both points sit on the same stand-in pose: no length to aim along.
+        assert!(!plain.abs_diff_eq(linked, 1e-5), "{plain}");
+        let from = linked.w_axis.truncate();
+        let to = Tilted { face: true }.matrix(7).unwrap().transform_point3(Vec3::new(0.0, -1.0, 0.0));
+        let dir = (to - from).normalize();
+        assert!(linked.x_axis.truncate().normalize().abs_diff_eq(dir, 1e-3), "{linked} / {dir}");
     }
 
     /// Op 0x7a (86913's layout): the orc stands at the Hume's point + (2, 0, 0), facing back, for dur ticks.
