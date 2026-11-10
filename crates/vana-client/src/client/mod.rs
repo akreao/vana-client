@@ -18547,66 +18547,12 @@ impl App {
         }
     }
 
-    fn redraw(&mut self) {
-        let t0 = Instant::now();
-        self.scene_loads();
-        self.frame_updates();
-        if !self.frame_shown() {
-            return;
-        }
-        let (shoot, dt) = self.frame_clock();
-        let m_update = Instant::now();
-
-        let Some(mut gfx) = self.gfx.take() else { return };
-        let mut raw = self.frame_input(&mut gfx, dt);
-        let size = [gfx.config.width, gfx.config.height];
-        let mut script_shot = self.drive_frame(&gfx, &mut raw);
-        let game_shot = self.shot_requests(&mut script_shot);
-        let shoot = shoot || script_shot.is_some();
-        let (jobs, pixels_per_point) = self.frame_ui(&mut gfx, raw, size, dt);
-        let m_ui = Instant::now();
-
-        let frame = match gfx.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
-            other => {
-                // Outdated or lost (KWin's full-screen re-ask makes the swapchain stale): rebuilt, and the next frame
-                // asked for here, or the loop waits on events with nothing scheduled and the window stays frozen.
-                log::debug!("surface: no frame ({other:?}), configured again");
-                gfx.surface.configure(&gfx.gpu.device, &gfx.config);
-                self.next_frame = Some(Instant::now() + std::time::Duration::from_millis(16));
-                self.gfx = Some(gfx);
-                return;
-            }
-        };
-        let mut g = self.frame_targets(&gfx, frame, size);
-        self.draw_world(&mut gfx, &mut g, dt);
-        let FrameGpu {
-            frame,
-            view,
-            mut encoder,
-            mut gpu_time,
-            bg,
-            aspect,
-            lcd,
-            gamma,
-            scaled,
-            scene_view,
-            scene_depth,
-            scene_tex,
-            m_acquire,
-            m_actors,
-            mut counts,
-            mut drew_world,
-            ..
-        } = g;
-        macro_rules! mark {
-            ($l:expr) => {
-                if let Some(t) = gpu_time.as_mut() {
-                    t.mark(&mut encoder, $l);
-                }
-            };
-        }
-
+    /// The lobby's scenes into the scene targets: the creator's dancer or the nation step's flyover, the select ring,
+    /// the title's flyover.
+    fn draw_lobby_scenes(&mut self, gfx: &Gfx, g: &mut FrameGpu, dt: f32) {
+        let (bg, aspect) = (g.bg, g.aspect);
+        let (scene_view, scene_depth, scene_tex) = (g.scene_view.clone(), g.scene_depth.clone(), g.scene_tex.clone());
+        let encoder = &mut g.encoder;
         if matches!(&self.phase, Phase::Characters { screen: LobbyScreen::Create, .. })
             && let Some(cr) = &mut self.creator
         {
@@ -18619,14 +18565,14 @@ impl App {
                     if fly.done {
                         fly.restart();
                     }
-                    fly.render(&gfx.gpu, gfx.config.format, &mut encoder, &scene_view, &scene_depth, bg, aspect);
+                    fly.render(&gfx.gpu, gfx.config.format, encoder, &scene_view, &scene_depth, bg, aspect);
                 }
                 _ => {
                     let alive = self.audio.as_ref().map(|a| a.alive());
                     cr.render(
                         &gfx.gpu,
                         gfx.config.format,
-                        &mut encoder,
+                        encoder,
                         (&scene_view, Some(&scene_tex), bg),
                         &scene_depth,
                         aspect,
@@ -18638,7 +18584,7 @@ impl App {
                     }
                 }
             }
-            drew_world = true;
+            g.drew_world = true;
         }
         if matches!(&self.phase, Phase::Characters { screen: LobbyScreen::Create, .. })
             && self.creator_simple
@@ -18649,8 +18595,8 @@ impl App {
             if fly.done {
                 fly.restart();
             }
-            fly.render(&gfx.gpu, gfx.config.format, &mut encoder, &scene_view, &scene_depth, bg, aspect);
-            drew_world = true;
+            fly.render(&gfx.gpu, gfx.config.format, encoder, &scene_view, &scene_depth, bg, aspect);
+            g.drew_world = true;
         }
         if matches!(&self.phase, Phase::Characters { screen: LobbyScreen::Select | LobbyScreen::Delete, .. })
             && let Some(sel) = &mut self.select
@@ -18660,7 +18606,7 @@ impl App {
             sel.render(
                 &gfx.gpu,
                 gfx.config.format,
-                &mut encoder,
+                encoder,
                 (&scene_view, Some(&scene_tex), bg),
                 &scene_depth,
                 aspect,
@@ -18670,15 +18616,23 @@ impl App {
                 let Some(a) = &mut self.audio else { break };
                 play_fx_sound(a, c);
             }
-            drew_world = true;
+            g.drew_world = true;
         }
         if self.title_backdrop()
             && let Some(fly) = &mut self.flyover
         {
             fly.advance(dt);
-            drew_world = fly.render(&gfx.gpu, gfx.config.format, &mut encoder, &scene_view, &scene_depth, bg, aspect)
-                || drew_world;
+            g.drew_world =
+                fly.render(&gfx.gpu, gfx.config.format, encoder, &scene_view, &scene_depth, bg, aspect) || g.drew_world;
         }
+    }
+
+    /// The scene finished: the lobby's fade over it, then the scaling pass into the window (gamma, 3D LCD Mode,
+    /// anti-aliasing, grading); the 2D layer's and the scene's levels.
+    fn finish_scene(&mut self, gfx: &Gfx, g: &mut FrameGpu, size: [u32; 2]) -> (f32, f32) {
+        let (bg, gamma, lcd, scaled) = (g.bg, g.gamma, g.lcd, g.scaled);
+        let (scene_view, view) = (g.scene_view.clone(), g.view.clone());
+        let encoder = &mut g.encoder;
         // The lobby scene fade (a multiply over the drawn scene) and the 2D layer's level.
         let (ui_level, scene_level) = match &self.phase {
             // While the indicator is up it alone is drawn, at full level. Out of the lobby the empty screen is
@@ -18687,19 +18641,19 @@ impl App {
             Phase::World(w) => ((1.0 - w.fade) * w.screen.ui_level(), 0.0),
             _ => (self.lobby_fade.ui, self.lobby_fade.scene),
         };
-        if !matches!(self.phase, Phase::World(_)) && drew_world && scene_level < 0.995 {
+        if !matches!(self.phase, Phase::World(_)) && g.drew_world && scene_level < 0.995 {
             let fx = self
                 .screen_fx
                 .get_or_insert_with(|| crate::render::screenfx::ScreenFx::new(&gfx.gpu, gfx.config.format));
-            fx.draw(&gfx.gpu, &mut encoder, &scene_view, bg, None, [scene_level; 3]);
+            fx.draw(&gfx.gpu, encoder, &scene_view, bg, None, [scene_level; 3]);
         }
-        if drew_world
+        if g.drew_world
             && scaled
             && let Some(sc) = &mut self.scene_scale
         {
             sc.blit(
                 &gfx.gpu,
-                &mut encoder,
+                encoder,
                 &view,
                 size,
                 gamma,
@@ -18707,6 +18661,21 @@ impl App {
                 self.cfg.antialias != 0,
                 self.cfg.grading,
             );
+        }
+        (ui_level, scene_level)
+    }
+
+    /// The game UI's pass (the lobby's and the world's windows, the HUD, the cursor sprite) over the scene.
+    fn draw_game_ui(&mut self, gfx: &Gfx, g: &mut FrameGpu, size: [u32; 2], dt: f32, levels: (f32, f32)) {
+        let (ui_level, scene_level) = levels;
+        let (scene_depth, view) = (g.scene_depth.clone(), g.view.clone());
+        let encoder = &mut g.encoder;
+        macro_rules! mark {
+            ($l:expr) => {
+                if let Some(t) = g.gpu_time.as_mut() {
+                    t.mark(encoder, $l);
+                }
+            };
         }
         self.window_size = size;
         self.mouse_kind(size);
@@ -18742,8 +18711,8 @@ impl App {
                     fs,
                 );
             }
-            counts.ui_vertices = lu.vertex_count();
-            lu.scene_depth = drew_world.then(|| scene_depth.clone());
+            g.counts.ui_vertices = lu.vertex_count();
+            lu.scene_depth = g.drew_world.then(|| scene_depth.clone());
             mark!("blit");
             perf::timed(
                 || "ui render".into(),
@@ -18751,20 +18720,40 @@ impl App {
                     lu.render(
                         &gfx.gpu,
                         gfx.config.format,
-                        &mut encoder,
+                        encoder,
                         &view,
                         self.cfg.ui_size(size),
                         size,
-                        drew_world,
+                        g.drew_world,
                         ui_level,
                         scene_level,
                     )
                 },
             );
             mark!("game ui");
-            drew_world = true;
+            g.drew_world = true;
         }
+    }
 
+    /// egui's pass (the debug overlay, the settings screens, the modern layer) and the game UI's top layer over it;
+    /// the command buffers egui-wgpu wrote first.
+    fn draw_egui(
+        &mut self,
+        gfx: &mut Gfx,
+        g: &mut FrameGpu,
+        size: [u32; 2],
+        jobs: &[egui::ClippedPrimitive],
+        pixels_per_point: f32,
+    ) -> Vec<wgpu::CommandBuffer> {
+        let view = g.view.clone();
+        let encoder = &mut g.encoder;
+        macro_rules! mark {
+            ($l:expr) => {
+                if let Some(t) = g.gpu_time.as_mut() {
+                    t.mark(encoder, $l);
+                }
+            };
+        }
         let screen = egui_wgpu::ScreenDescriptor { size_in_pixels: size, pixels_per_point };
         let mut textures = std::mem::take(&mut self.egui_deltas);
         if !textures.set.is_empty() {
@@ -18775,9 +18764,9 @@ impl App {
                 gfx.egui_renderer.update_texture(&gfx.gpu.device, &gfx.gpu.queue, *id, delta);
             }
         }
-        let extra = gfx.egui_renderer.update_buffers(&gfx.gpu.device, &gfx.gpu.queue, &mut encoder, &jobs, &screen);
+        let extra = gfx.egui_renderer.update_buffers(&gfx.gpu.device, &gfx.gpu.queue, encoder, jobs, &screen);
         {
-            let load = if drew_world {
+            let load = if g.drew_world {
                 wgpu::LoadOp::Load
             } else {
                 wgpu::LoadOp::Clear(wgpu::Color { r: 0.05, g: 0.06, b: 0.1, a: 1.0 })
@@ -18797,18 +18786,25 @@ impl App {
                     multiview_mask: None,
                 })
                 .forget_lifetime();
-            gfx.egui_renderer.render(&mut pass, &jobs, &screen);
+            gfx.egui_renderer.render(&mut pass, jobs, &screen);
         }
         mark!("egui");
         if self.ui_drawn
             && let Some(lu) = &mut self.game_ui
         {
-            lu.render_top(&mut encoder, &view, self.cfg.ui_size(size), size);
+            lu.render_top(encoder, &view, self.cfg.ui_size(size), size);
         }
         for id in &textures.free {
             gfx.egui_renderer.free_texture(id);
         }
         textures.clear();
+        extra
+    }
+
+    /// A mod's recording: started, stopped or ended as asked, and this frame copied for it.
+    fn record_frame(&mut self, gfx: &Gfx, g: &mut FrameGpu, size: [u32; 2]) {
+        let encoder = &mut g.encoder;
+        let frame = &g.frame;
         // A mod's recording: started or stopped as asked, ended with its mod or a new size, a frame copied for it.
         if let Phase::World(w) = &mut self.phase
             && let Some((owner, req)) = w.lua.record_req.take()
@@ -18844,11 +18840,27 @@ impl App {
             r.stop();
         }
         if let Some(r) = self.recorder.as_mut() {
-            r.copy(&mut encoder, &frame.texture);
+            r.copy(encoder, &frame.texture);
         }
         if let Phase::World(w) = &self.phase {
             *w.lua.recording.borrow_mut() = self.recorder.as_ref().map(|r| (r.owner.clone(), r.path.clone()));
         }
+    }
+
+    /// The frame's end: a screenshot's copy, the submit and what waits on it, the screenshot written, the present,
+    /// the measures and the next frame's time; gfx goes back.
+    fn finish_frame(
+        &mut self,
+        gfx: Gfx,
+        g: FrameGpu,
+        size: [u32; 2],
+        extra: Vec<wgpu::CommandBuffer>,
+        shots: (bool, Option<std::path::PathBuf>, bool),
+        times: [Instant; 3],
+    ) {
+        let (shoot, script_shot, game_shot) = shots;
+        let [t0, m_update, m_ui] = times;
+        let FrameGpu { frame, mut encoder, mut gpu_time, m_acquire, m_actors, counts, .. } = g;
         let row = (size[0] * 4).div_ceil(256) * 256;
         let capture = (shoot && gfx.config.usage.contains(wgpu::TextureUsages::COPY_SRC)).then(|| {
             let buf = gfx.gpu.device.create_buffer(&wgpu::BufferDescriptor {
@@ -18941,6 +18953,47 @@ impl App {
             gfx.window.request_redraw();
         }
         self.gfx = Some(gfx);
+    }
+
+    fn redraw(&mut self) {
+        let t0 = Instant::now();
+        self.scene_loads();
+        self.frame_updates();
+        if !self.frame_shown() {
+            return;
+        }
+        let (shoot, dt) = self.frame_clock();
+        let m_update = Instant::now();
+
+        let Some(mut gfx) = self.gfx.take() else { return };
+        let mut raw = self.frame_input(&mut gfx, dt);
+        let size = [gfx.config.width, gfx.config.height];
+        let mut script_shot = self.drive_frame(&gfx, &mut raw);
+        let game_shot = self.shot_requests(&mut script_shot);
+        let shoot = shoot || script_shot.is_some();
+        let (jobs, pixels_per_point) = self.frame_ui(&mut gfx, raw, size, dt);
+        let m_ui = Instant::now();
+
+        let frame = match gfx.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
+            other => {
+                // Outdated or lost (KWin's full-screen re-ask makes the swapchain stale): rebuilt, and the next frame
+                // asked for here, or the loop waits on events with nothing scheduled and the window stays frozen.
+                log::debug!("surface: no frame ({other:?}), configured again");
+                gfx.surface.configure(&gfx.gpu.device, &gfx.config);
+                self.next_frame = Some(Instant::now() + std::time::Duration::from_millis(16));
+                self.gfx = Some(gfx);
+                return;
+            }
+        };
+        let mut g = self.frame_targets(&gfx, frame, size);
+        self.draw_world(&mut gfx, &mut g, dt);
+        self.draw_lobby_scenes(&gfx, &mut g, dt);
+        let levels = self.finish_scene(&gfx, &mut g, size);
+        self.draw_game_ui(&gfx, &mut g, size, dt, levels);
+        let extra = self.draw_egui(&mut gfx, &mut g, size, &jobs, pixels_per_point);
+        self.record_frame(&gfx, &mut g, size);
+        self.finish_frame(gfx, g, size, extra, (shoot, script_shot, game_shot), [t0, m_update, m_ui]);
     }
 }
 
