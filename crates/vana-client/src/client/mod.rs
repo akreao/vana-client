@@ -13044,7 +13044,10 @@ impl App {
         // the vector keeps its length and turns at the target each tick, and touching it (the gap less both radii
         // under 0) the step is none and the run goes on. Unlocked, the run goes on along the last way it took.
         // A gap under one tick's move (|vector| x ticks) runs at 0.3 of the vector instead (_DAT_1032dfa4, see the
-        // step below; `lock_run_reach` holds the target and both radii for it).
+        // step below; `lock_run_reach` holds the target and both radii for it). Its step goes straight along the
+        // vector, not through target::locked_step's 0.8 floor. /follow under the lock runs at the lock target too
+        // (FUN_100a7b80 takes FUN_10157cf0's target before FUN_10081600's); a mod's run to a point (ours) keeps its
+        // own way.
         let lock_run = world.target.filter(|_| world.locked).and_then(|t| world.entities.get(&t).map(|e| (t, e.pos)));
         let mut lock_run_reach = None;
         if world.autorun && !move_locked {
@@ -13053,7 +13056,7 @@ impl App {
             }
             if world.autorun_dir == Vec3::ZERO {
                 world.autorun = false;
-            } else if world.locked {
+            } else if world.locked && world.run_to.is_none() {
                 if let Some((t, tp)) = lock_run {
                     let d = Vec3::new(tp.x - world.pos.x, 0.0, tp.z - world.pos.z);
                     if d.length() > 1e-3 {
@@ -13305,6 +13308,7 @@ impl App {
                     None => d,
                 };
                 next = match lock_target {
+                    _ if lock_run_reach.is_some() => from + s * d,
                     Some(tp) => target::locked_step(from, tp, s.dot(forward), s.dot(right), d),
                     None => from + s * d,
                 };
