@@ -242,6 +242,22 @@ pub(super) fn ability_kind(ty: u8) -> u8 {
     ABILITY_TYPES.get(ty as usize).map_or(0, |t| t.1)
 }
 
+/// The list a sub-list type opens from (Job Abilities for runes and rolls, Pet Commands for Blood Pacts); 0 for a
+/// category's own list and Monstrosity's.
+pub(super) fn ability_parent(ty: u16) -> u16 {
+    match ABILITY_TYPES.get(ty as usize).map_or(0, |t| t.0 as u16) {
+        0x14 => 0,
+        p => p,
+    }
+}
+
+/// The row of `rows` that opens the sub-list holding ability `id` (Rune Enchantment for Ignis, Ward for Vallation).
+pub(super) fn opener_row(w: &World, rows: &[u16], id: u16) -> Option<u16> {
+    let acts = w.actions.as_ref()?;
+    let ty = acts.abilities.get(id as usize)?.kind;
+    rows.iter().copied().find(|&r| acts.abilities.get(r as usize).is_some_and(|a| a.sub == ty))
+}
+
 fn bit(bits: &[u8], n: usize) -> bool {
     bits.get(n / 8).is_some_and(|b| b & (1 << (n % 8)) != 0)
 }
@@ -854,6 +870,11 @@ pub(super) fn enter(w: &mut World, kind: Kind) {
                 m.hidden = true;
             }
         }
+    }
+    // Ours (modern, user 2026-11-09): with only us to pick, the prompt confirms at once; retail asks (FUN_10159440).
+    if w.modern && target::only_us(w) {
+        target::confirm_sub(w);
+        return;
     }
     w.sounds.push(Ui::Select as u32);
 }
