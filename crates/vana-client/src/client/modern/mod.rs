@@ -119,7 +119,6 @@ pub struct Modern {
     images: std::cell::RefCell<std::collections::HashMap<String, (Option<egui::TextureHandle>, f64)>>,
     images_pruned: std::cell::Cell<f64>,
     /// The full log's find: its key (the log's span and edits, the text, the tab) and the lines it found.
-    #[allow(clippy::type_complexity)]
     log_found: std::cell::RefCell<Option<((usize, usize, u64, String, u8, bool), std::rc::Rc<Vec<usize>>)>>,
     /// Status tooltips' name and description by (status id, small set), read once (hud.rs).
     pub status_tips: std::cell::RefCell<HashMap<(u16, bool), std::rc::Rc<(String, String)>>>,

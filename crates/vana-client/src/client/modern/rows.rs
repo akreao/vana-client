@@ -237,7 +237,6 @@ pub fn more_mark(p: &Painter, m: &Modern, r: Rect, on: bool) -> Rect {
 
 /// A menu row in the current style (Modern::row_style): its icon, its label, the submenu mark when `sub` (pointing left
 /// when `left`, the submenu opening at that side); hovered by the pointer or `hover`. Its response.
-#[allow(clippy::too_many_arguments)]
 pub fn menu_row(
     ui: &mut Ui,
     m: &Modern,

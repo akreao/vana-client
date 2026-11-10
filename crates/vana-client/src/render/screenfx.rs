@@ -226,7 +226,6 @@ impl ScreenFx {
 
     /// Retail's order: the crossfade, the flash (RGB, doubled alpha), the feedback blur (needs the texture behind
     /// `view` to copy from), then the multiply by `m`.
-    #[allow(clippy::too_many_arguments)]
     pub fn draw_all(
         &mut self,
         gpu: &Gpu,

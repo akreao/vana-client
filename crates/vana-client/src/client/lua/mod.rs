@@ -6002,7 +6002,6 @@ impl Host {
 
     /// A mod window's canvas drawn this frame, at its element `i` (modwin's CanvasAt): kept for drops. Every frame, for
     /// every canvas: an entry already kept is updated in place.
-    #[allow(clippy::too_many_arguments)]
     fn canvas_at(&mut self, m: &str, win: &str, i: usize, origin: [f32; 2], shown: [f32; 4], ppp: f32, top: bool) {
         let now = std::time::Instant::now();
         let Some(vm) = self.vms.iter().find(|v| v.manifest.id == m) else { return };

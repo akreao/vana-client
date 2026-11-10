@@ -396,7 +396,6 @@ impl Modern {
     /// The change notes (client/notes.rs) on the rects their view placed (UI pixels): the frame and title, the notes in
     /// Fira Sans (headings and bold in the strong face, code in mono) clipped to the text's area and scrolled by points,
     /// a thin scroll bar, OK; their keys and mouse stay the notes window's.
-    #[allow(clippy::too_many_arguments)]
     pub fn notes_window(
         &mut self,
         ctx: &Context,
@@ -472,7 +471,6 @@ impl Modern {
 
     /// The lobby's help bar on retail's lobyhelp strip (UI pixels, the screen's width): the help line centred in its
     /// colour, the client version above the strip at retail's spot.
-    #[allow(clippy::too_many_arguments)]
     pub fn help_bar(
         &mut self,
         ctx: &Context,
@@ -687,7 +685,6 @@ impl Modern {
     }
 
     /// The title's Config (modern/config.rs's lobby page): its step.
-    #[allow(clippy::too_many_arguments)]
     pub fn config_screen(
         &mut self,
         ctx: &Context,

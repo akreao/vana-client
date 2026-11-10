@@ -64,7 +64,6 @@ pub(super) fn camera(w: &World, places: &HashMap<u32, Place>, id: u32, oval: boo
 impl Portraits {
     /// Draws each wanted actor into a slot, a slot kept while its actor is wanted, and finishes it (backing, oval,
     /// frame). The ones drawn: entity -> (game UI image, modern UI texture).
-    #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &mut self,
         gpu: &Gpu,

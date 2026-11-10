@@ -71,7 +71,6 @@ fn slots(
 }
 
 /// The receive side: post1's slots, the cursor slot's sender, post2's choices while it has the keys.
-#[allow(clippy::too_many_arguments)]
 fn receive(
     ui: &mut Ui,
     m: &super::Modern,

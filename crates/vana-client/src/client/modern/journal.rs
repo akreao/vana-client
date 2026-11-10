@@ -256,7 +256,6 @@ fn nav_row(ui: &mut Ui, m: &super::Modern, text: &str, count: &str, on: bool, ke
 }
 
 /// The rows, the cursor's kept in view as it moves (lit while the rows have the keys); a click takes the row.
-#[allow(clippy::too_many_arguments)]
 fn list(ui: &mut Ui, m: &super::Modern, lines: &[Line], cursor: usize, keys: bool, follow: bool, mouse: &mut Mouse) {
     egui::ScrollArea::vertical()
         .id_salt("journal list")

@@ -839,7 +839,6 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
 /// The mouse (winhits.rs): cmbmenu, cmbhwin, cmbhlst's rows and tskill1 as the generic window; the crystal list and
 /// the picker as the item list (hover moves the row, a click on it is Enter, a right click Escape); itemctrl as
 /// retail's (winhits::ctr).
-#[allow(clippy::too_many_arguments)]
 pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
     use super::winhits::generic;
     if w.modern {
@@ -1463,7 +1462,6 @@ pub(super) fn set_row(w: &mut World, k: usize) -> bool {
 /// cmbhlst moved to (200, 48) (FUN_101e2b60): per record newest first the icon at half size at (+3, +6 + 18k), the
 /// name in the game font at (+21, +5 + 18k), the favourite (keytops3 101) at (+166, +5 + 18k); the bar keytops3 428 at
 /// (0, +6) on the cursor row while focused. cmbhwin at (384, 48), its rows disabled with no record.
-#[allow(clippy::too_many_arguments)]
 fn draw_history(
     gu: &mut GameUi,
     w: &World,

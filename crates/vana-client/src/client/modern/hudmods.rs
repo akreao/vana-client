@@ -63,7 +63,6 @@ pub(super) fn draw(
 }
 
 /// One element at `at` (points); the rect it takes.
-#[allow(clippy::too_many_arguments)]
 fn element(
     m: &Modern,
     ctx: &egui::Context,

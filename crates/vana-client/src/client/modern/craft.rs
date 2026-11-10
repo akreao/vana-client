@@ -60,7 +60,6 @@ pub(super) fn tint(m: &super::Modern, t: u32) -> Color32 {
 
 /// A slot tile: its item's icon and count, the cursor's ring (bronze while another part has the focus), a red cross
 /// over a material not held.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn tile(
     ui: &mut Ui,
     m: &super::Modern,
@@ -108,7 +107,6 @@ pub(super) fn tile(
 }
 
 /// Eight tiles in two rows of four: children 1..8; the tile clicked.
-#[allow(clippy::too_many_arguments)]
 fn grid(
     ui: &mut Ui,
     m: &super::Modern,
@@ -145,7 +143,6 @@ pub(super) fn button(ui: &mut Ui, m: &super::Modern, label: &str, width: f32, li
 }
 
 /// An item list: every row with its icon, name, count and colour, the cursor's row kept in view The row clicked.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn list(
     ui: &mut Ui,
     m: &super::Modern,

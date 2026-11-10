@@ -79,7 +79,6 @@ fn needs_no_resource(k: u8) -> bool {
 /// FUN_1004d920: builds one element from the instance's emission stream, or None when op 1's resource does not
 /// resolve (retail returns without emitting).
 /// `me`: whether the instance's actor1 / actor2 is our own player (emission op 0x82).
-#[allow(clippy::too_many_arguments)]
 /// Generator +0xdf bit 1 (asm 0x10047e42..0x10047f13): set at its start only for these door parts, whose lighting then
 /// skips the parent branch of FUN_100467e0.
 fn lit_parent_off(file: u32, name: [u8; 4]) -> bool {
@@ -110,7 +109,6 @@ pub fn emit(
     r
 }
 
-#[allow(clippy::too_many_arguments)]
 fn emit_ops(
     reg: &mut Registry,
     inst: &mut Instance,

@@ -260,7 +260,6 @@ impl Ssao {
     }
 
     /// Darkens `color` by the occlusion of the scenery in `depth` (the scene's, the size given to `resize`).
-    #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &self,
         gpu: &Gpu,

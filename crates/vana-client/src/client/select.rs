@@ -104,7 +104,6 @@ impl LobbyFx {
     }
 
     /// One frame over the drawn zone.
-    #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &mut self,
         gpu: &Gpu,
@@ -382,7 +381,6 @@ impl SelectScene {
         self.effects.as_mut()
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
         gpu: &Gpu,
@@ -608,7 +606,6 @@ pub fn printf(fmt: &str, args: &[&str]) -> String {
 
 impl SelectUi {
     /// One frame: keys, the draw, then the mouse over what was drawn.
-    #[allow(clippy::too_many_arguments)]
     pub fn step(
         &mut self,
         gu: &mut GameUi,
@@ -679,7 +676,6 @@ impl SelectUi {
         gu.menu_links(menu, child).map(|l| l[k] as u16).filter(|&c| c != 0 && c != 0xff)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn key(
         &mut self,
         gu: &GameUi,
@@ -888,7 +884,6 @@ impl SelectUi {
         self.focus = Focus::List;
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn mouse(
         &mut self,
         gu: &GameUi,
@@ -1094,7 +1089,6 @@ fn name_tint(c: &Character) -> u32 {
 }
 
 /// The screen as FUN_102372c0 and its windows draw it.
-#[allow(clippy::too_many_arguments)]
 fn draw(
     gu: &mut GameUi,
     st: &SelectUi,

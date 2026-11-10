@@ -363,7 +363,6 @@ impl SunShadow {
     }
 
     /// Darkens `color` where the map shadows the scenery in `depth` (the scene's). `soft`: the PCF spacing in texels.
-    #[allow(clippy::too_many_arguments)]
     pub fn receive(
         &self,
         gpu: &Gpu,

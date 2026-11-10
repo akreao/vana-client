@@ -37,7 +37,6 @@ pub fn over(w: &World, name: &str, p: (f32, f32)) -> bool {
 /// The generic handler on the focused window: a child under the pointer takes the cursor (SE 0001), a click on the
 /// cursor's child is Enter, a right click on the window Escape (ours only over it; retail's message 6 takes any right
 /// click, FUN_1015def0). `key` is the window's key handler.
-#[allow(clippy::too_many_arguments)]
 pub fn generic(
     w: &mut World,
     gu: &GameUi,

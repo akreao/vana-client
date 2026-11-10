@@ -1231,7 +1231,6 @@ pub(super) fn hit(w: &World, name: &str, win: &super::game_ui::LobbyWin) {
 pub(super) use super::winhits::child_under;
 
 /// The generic window mouse with this chain's keys.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn generic(
     w: &mut World,
     gu: &GameUi,

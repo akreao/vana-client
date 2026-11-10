@@ -250,7 +250,6 @@ fn layout(lu: &GameUi, size: [u32; 2], st: &TwoFa, busy: bool, f: f32) -> Lay {
 
 /// The window over the login form: keys and mouse (none while `busy`), then drawn here (classic) or handed to the
 /// modern layer through `modern`. Focus 0 is the code field where there is one, then the buttons.
-#[allow(clippy::too_many_arguments)]
 pub fn window(
     lu: &mut GameUi,
     input: &UiInput,

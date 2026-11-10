@@ -266,7 +266,6 @@ pub struct Lobby {
 impl Lobby {
     /// `host`: the lobby (LSB's server, or ffxi00.pol.com); `data_port` is LSB's only. `content`: the installed
     /// ROMs (FUN_101c3400, dat::installed).
-    #[allow(clippy::too_many_arguments)]
     pub fn connect(
         host: &str,
         view_port: u16,

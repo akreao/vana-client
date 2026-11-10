@@ -3335,7 +3335,6 @@ impl ZoneRenderer {
     }
 
     /// Queues a skinned actor posed on the GPU from its motions (to, and from at blend `t`), and its placement.
-    #[allow(clippy::too_many_arguments)]
     pub fn pose_actor_gpu(
         &mut self,
         actor: &mut ActorGpu,
@@ -3607,7 +3606,6 @@ impl ZoneRenderer {
         (u, clear)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &self,
         gpu: &Gpu,
@@ -3958,7 +3956,6 @@ impl ZoneRenderer {
     /// One actor posed this frame drawn alone into `color` / `depth` (cleared to `clear`, premultiplied) from `camera`,
     /// lit as the scene: a Lua HUD portrait. `slot` picks its uniforms, one per portrait a frame. False when it is not
     /// posed this frame or its textures are not all up.
-    #[allow(clippy::too_many_arguments)]
     pub fn render_portrait(
         &mut self,
         gpu: &Gpu,
@@ -4039,7 +4036,6 @@ impl ZoneRenderer {
     /// z written into the offscreen target cleared to 0 (FUN_1001d240), its shine too, then that target blended over
     /// the scene as one viewport quad at the actor's alpha (FUN_1001d3b0), so the model does not show through itself.
     /// `shine_slot`: the first free slot of the shine buffer.
-    #[allow(clippy::too_many_arguments)]
     fn render_faded(
         &self,
         gpu: &Gpu,
@@ -4273,7 +4269,6 @@ impl ZoneRenderer {
     /// list): per actor the scene so far is copied whole (FUN_10025870 into DAT_10456e6c), then its batches, its shine
     /// and the refraction pass (FUN_1002dc10 -> FUN_10025330) sampling that copy at the pixel's own screen point shifted
     /// by (L P11, L P22) / w. Without a copyable target they draw plainly.
-    #[allow(clippy::too_many_arguments)]
     pub fn render_refraction(
         &mut self,
         gpu: &Gpu,
@@ -4406,7 +4401,6 @@ impl ZoneRenderer {
     }
 
     /// `furn`: the furniture pipelines for a blended mode (depth writes on, no bias).
-    #[allow(clippy::too_many_arguments)]
     fn draw_scenery_pipes(
         &self,
         pass: &mut wgpu::RenderPass,

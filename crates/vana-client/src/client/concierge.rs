@@ -197,7 +197,6 @@ pub fn num_plus(w: &mut World) {
 
 /// Mouse: link5's rows and lscswin's children as the generic handler takes them, a right click the focused window's
 /// Escape (message 6); the pointer over lscswin while the list has the focus hands it over (FUN_101e4610, SE 0013).
-#[allow(clippy::too_many_arguments)]
 pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
     let Some(c) = w.concierge_ui.clone() else { return };
     // The modern layer draws it and takes its mouse.

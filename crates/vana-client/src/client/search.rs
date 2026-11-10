@@ -716,7 +716,6 @@ pub fn key(w: &mut World, key: egui::Key) {
 
 /// The mouse (winhits.rs): scoption as the generic window, else the results' rows (hover moves the cursor, a click on
 /// it is Enter, a right click Escape).
-#[allow(clippy::too_many_arguments)]
 pub fn pointer(w: &mut World, gu: &super::game_ui::GameUi, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
     use super::winhits::generic;
     let Some(res) = w.search.as_ref() else { return };
