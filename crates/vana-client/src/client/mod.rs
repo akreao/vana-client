@@ -2993,14 +2993,17 @@ fn world_hud(
                         _ => {}
                     }
                 }
-                // A full keyboard takes only the numpad's minus, Compact 1 / 2 the main row's too (egui maps both to
-                // Key::Minus). Held, it turns no pages (ours).
+                // Key function 0x18's bindings: the numpad's minus, Ctrl / Alt + Key Assignment's k2 row 8 key (config
+                // 0x72, '-' by default), and on Compact 1 / 2 the main row's '-' with any modifiers (compact record 35).
+                // egui maps both minus keys to Key::Minus. Held, it turns no pages (ours).
                 // While dead the K.O. window or the raise prompt has the focus and takes it (message 7, FUN_1015dd00).
                 egui::Key::Minus
                     if !world.ko_open
                         && world.ko_offer != 2
                         && !world.key_repeat
-                        && (numpad_minus || world.game.get(0x42) != 0) =>
+                        && (numpad_minus
+                            || world.game.get(0x42) != 0
+                            || ((modifiers.ctrl || modifiers.alt) && world.game.get(0x72) & 0xff == 0x0c)) =>
                 {
                     menu_minus(&mut world.menu, &mut world.menu_page, &mut world.menu_mem, world.modern)
                 }
