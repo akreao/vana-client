@@ -59,10 +59,6 @@ Playable on a local LSB server. Working today:
 - Fishing, chocobo racing, Monstrosity, Mog House layout, gardening and mannequins
 - The in-game and lobby Config menus
 - Logins the client remembers (with Remember password), and two-factor sign-in enrolled from the login form
-- Game updates from the PlayOnline patch server, an Update button for the client itself, and a manager for DAT packs
-  such as HD textures and for Lua mods (install from an archive or the mod catalogue, update, order, enable,
-  uninstall). Our HD pack, the game's textures upscaled 4x, is in the catalogue and on the
-  [releases page](https://github.com/lenonk/vana-client/releases/tag/hd-pack-1)
 - Music and sound effects
 - Lua mods: commands, windows and HUD elements in the game's look, drawing in the world, chat filters, and game
   actions with the player's permission. See [writing mods](docs/modding/README.md)
