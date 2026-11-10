@@ -2320,11 +2320,8 @@ pub(super) fn choose(w: &mut World, c: u8) -> bool {
             let (t, i) = target.unwrap_or((w.my_id, 0));
             send(w, NetCommand::Act { target: t, index: i, action: 4 });
         }
-        // FUN_1012b880 cases 9 / 0xa (the player layouts' Check and Check): engaged, the sub-target prompt over monsters
-        // first (LAB_1012bec0); else at once (us too).
-        (0xa | cmd::CHECK, _) if w.target.is_some() && w.my_motion.status == 1 => {
-            super::target::open_sub(w, 0x20, super::target::SubThen::Check, None, String::new(), 0);
-        }
+        // FUN_1012b880 cases 9 / 0xa (the player layouts' Check and Check). Engaged, retail opens the sub-target prompt
+        // over monsters first (FUN_10159440 flags 0x20); ours checks the target at once, as Ctrl+C does (user, #176).
         (0xa | cmd::CHECK, _) if w.target.is_some() => check(w, None, 0, false),
         (0x16..=0x18, _) => super::textcmd::run(
             w,
@@ -2396,9 +2393,6 @@ pub(super) fn choose(w: &mut World, c: u8) -> bool {
         (mon::MAGIC, _) => super::magic::open_magic(w, 0, false, 0),
         (mon::ABILITIES, _) => super::magic::open_cats(w, "menu    mp_abisc"),
         (mon::DISENGAGE, _) => return choose(w, cmd::DISENGAGE),
-        (mon::CHECK, _) if w.my_motion.status == 1 => {
-            super::target::open_sub(w, 0x20, super::target::SubThen::Check, None, String::new(), 0);
-        }
         (mon::CHECK, _) => check(w, None, 0, false),
         (mon::TREASURE, _) if super::treasure::count(w) > 0 => super::treasure::open(w),
         (mon::TREASURE | mon::ATTACK, _) => {}
