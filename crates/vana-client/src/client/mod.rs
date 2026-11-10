@@ -5745,6 +5745,8 @@ struct Actor {
     scale: f32,
     /// Set once the rest-pose top is known.
     top_key: String,
+    /// The pose step has run for this actor (retail's model +0x30 bit 4); a look change keeps it.
+    posed_once: bool,
     /// Motion name lookups (actmotion::find) by name.
     find_cache: actmotion::FindCache,
     /// The model failed to load (the event actor wait takes it as loaded).
@@ -5883,6 +5885,7 @@ impl Actor {
             anchor_at: [None; 2],
             scale: 1.0,
             top_key: String::new(),
+            posed_once: false,
             find_cache: Default::default(),
             failed: false,
             motion_names: None,
@@ -6644,6 +6647,10 @@ impl crate::fx::Actors for FxActors<'_> {
         let f = self.places.get(&id)?.forward;
         let f = Vec3::new(f.x, 0.0, f.z).normalize_or(Vec3::X);
         Some((-f.z).atan2(f.x))
+    }
+
+    fn never_posed(&self, id: u32) -> bool {
+        self.actors.get(&id).is_some_and(|a| !a.posed_once)
     }
 
     fn ready(&self, id: u32) -> Option<bool> {
@@ -17890,6 +17897,7 @@ impl App {
                             Some(AnimHeld { to: addr(&anims), from: addr(&from), t, overlay: ov_addr, look: None });
                     }
                     a.scale = a.event_scale.unwrap_or_else(|| ch.scale(size)) * w.lua.look_scale(*id);
+                    a.posed_once = true;
                     // The rest pose's mesh top, once (stub models, plates without attach points).
                     if a.top_key.is_empty() {
                         a.rest = crate::dat::character::pose(&ch.skeleton, &[]);

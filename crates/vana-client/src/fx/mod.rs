@@ -73,6 +73,12 @@ pub trait Actors {
     fn yaw(&self, _id: u32) -> Option<f32> {
         None
     }
+
+    /// A skeleton actor before its first pose (model +0x30 bit 4 clear: FUN_1002c2d0 sets it in the actor's update once
+    /// every skeleton of the model is computed): its bone frames (vtable +0x1d0) are the identity.
+    fn never_posed(&self, _id: u32) -> bool {
+        false
+    }
     /// Hidden actors (+0xb2 bit 1) get no attached effects.
     fn hidden(&self, id: u32) -> bool;
     /// Actors whose model is up, with the model's files (FUN_10083970 reads their generators).

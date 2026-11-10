@@ -2893,6 +2893,19 @@ impl Effects {
         f: Option<&Frame>,
         actors: &dyn Actors,
     ) -> Option<(Option<Mat4>, Vec3, Vec3, f32)> {
+        self.attach_matrix_into(i, f, actors, self.insts[i].as_ref()?.matrix)
+    }
+
+    /// [`Self::attach_matrix`] built into `out`, the matrix FUN_1003be10 is handed: the generator's own (+0xa4) from
+    /// FUN_10053e60 (the start, the spin ops), a math pool scratch from op 0x11 (FUN_10053c80). Only a doll's bone
+    /// frame reads what is there (FUN_10082180 multiplies it, every other path writes it whole).
+    fn attach_matrix_into(
+        &self,
+        i: usize,
+        f: Option<&Frame>,
+        actors: &dyn Actors,
+        out: Option<Mat4>,
+    ) -> Option<(Option<Mat4>, Vec3, Vec3, f32)> {
         let x = self.insts[i].as_ref()?;
         let g = self.reg.libs[x.src.0].generator(x.src.1)?;
         let w = x.attach;
@@ -2909,7 +2922,7 @@ impl Effects {
             }
             _ => (Vec3::ZERO, Vec3::ZERO),
         };
-        let (m, dist) = self.attach_frame(x.mode, w, x.actors, (off_a, off_b), x.matrix, f, actors)?;
+        let (m, dist) = self.attach_frame(x.mode, w, x.actors, (off_a, off_b), out, f, actors)?;
         // Scale A from bits 20..23 (1-4 caster, 5-8 target), scale B from byte 3 low nibble.
         let size = |src: u32, blend: f32| -> Vec3 {
             let who = match src & 0xf {
@@ -2988,9 +3001,11 @@ impl Effects {
         let p2 = |k: u16| self.who_point(a2, k, a1, eye, off_b, actors);
         let mut dist = 0.0;
         // FUN_1003bd90 remaps points 0x36..0x3c, then vtable +0x1d0: a skeleton's point frame Rx Ry Rz T(offset) on
-        // its drawn bone, whose rows carry the actor size (FUN_100d49d0 -> FUN_1002a900); a doll's (FUN_10082180) is
-        // the generator's last matrix moved by the doll's position: no rotation, the point ignored, so a rebuild adds
-        // the position again (as decompiled).
+        // its drawn bone, whose rows carry the actor size (FUN_100d49d0 -> FUN_1002a900), and the identity until the
+        // skeleton's first pose (FUN_1002c520 runs only with model +0x30 bit 4, set by FUN_1002c2d0 in the actor's
+        // update); a doll's (FUN_10082180) is the matrix it is handed (`last`) moved by the doll's position: no
+        // rotation, the point ignored, nothing reset, so a rebuild into the generator's own matrix adds the position
+        // again (as decompiled).
         let remap = |k: u16| match k {
             0x36 => 0x7e,
             0x37 => 0x7f,
@@ -2998,6 +3013,7 @@ impl Effects {
             _ => k,
         };
         let bone_frame = |w: Who, k: u16| match w {
+            Who::Actor(id) if actors.never_posed(id) => Some(Mat4::IDENTITY),
             Who::Actor(id) => {
                 let f = actors.matrix(id)? * actors.point_frame(id, remap(k))?;
                 let s = actors.scale(id);
@@ -3155,10 +3171,15 @@ impl Effects {
         x.dist = d;
     }
 
-    /// Generator op 0x11 (FUN_10052cd0): the attach matrix again, lerped by k = ((op[1] >> 2) & 0xff) / 255 —
-    /// bit 0 the translation, bit 1 the rotation rows.
+    /// Generator op 0x11 (FUN_10053c80 [2019 FUN_10052cd0]): the attach matrix again, lerped by
+    /// k = ((op[1] >> 2) & 0xff) / 255 — bit 0 the translation, bit 1 the rotation rows.
     pub(super) fn follow(&mut self, i: usize, word: u32, f: &Frame, actors: &dyn Actors) {
-        let Some((Some(m), a, b, d)) = self.attach_matrix(i, Some(f), actors) else { return };
+        // The target is built in a math pool scratch, not in the generator's matrix. A doll's bone frame (modes 9 /
+        // 0xa) multiplies what the last user of that slot left there by T(its position), so retail's target is not
+        // defined; the scratch is taken as the identity here *(inf)*: the doll's position, no rotation.
+        let Some((Some(m), a, b, d)) = self.attach_matrix_into(i, Some(f), actors, Some(Mat4::IDENTITY)) else {
+            return;
+        };
         let Some(x) = self.insts[i].as_mut() else { return };
         // FUN_10052cd0 runs once per pass at retail's 2 ticks a frame: the same pull per 2 ticks at any frame rate.
         let k = 1.0 - (1.0 - ((word >> 2) & 0xff) as f32 / 255.0).powf(f.dt / 2.0);
@@ -4299,6 +4320,85 @@ mod tests {
         let want = Mat4::from_translation(Vec3::new(1.0, -1.26, 0.0)) * Mat4::from_rotation_y(0.5);
         let want = Mat4::from_cols(want.x_axis * 2.0, want.y_axis * 2.0, want.z_axis * 2.0, want.w_axis);
         assert!(m.abs_diff_eq(want, 1e-5), "{m} != {want}");
+    }
+
+    /// A skeleton before its first pose (model +0x30 bit 4 clear): FUN_100d49d0 leaves the identity, the world origin.
+    #[test]
+    fn attach_never_posed_identity() {
+        struct Fresh;
+        impl Actors for Fresh {
+            fn matrix(&self, id: u32) -> Option<Mat4> {
+                Skel.matrix(id)
+            }
+            fn point(&self, id: u32, k: u16) -> Option<Vec3> {
+                Skel.point(id, k)
+            }
+            fn scale(&self, id: u32) -> f32 {
+                Skel.scale(id)
+            }
+            fn files(&self, _: u32) -> (Vec<u32>, Vec<u32>) {
+                (Vec::new(), Vec::new())
+            }
+            fn hidden(&self, _: u32) -> bool {
+                false
+            }
+            fn models(&self) -> Vec<(u32, Vec<u32>)> {
+                Vec::new()
+            }
+            fn point_frame(&self, id: u32, k: u16) -> Option<Mat4> {
+                Skel.point_frame(id, k)
+            }
+            fn never_posed(&self, _: u32) -> bool {
+                true
+            }
+        }
+        let Some((m, _)) = attached(87053, 9, Some(0x36), &Fresh) else { return };
+        assert_eq!(m, Mat4::IDENTITY);
+    }
+
+    /// Op 0x11 on a doll in mode 9 (FUN_10053c80 -> FUN_10082180): the target is a scratch moved by the doll's
+    /// position, not the generator's own matrix, so following does not add the position again every frame.
+    #[test]
+    fn doll_follow_stays() {
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let mut fx = Effects::new();
+        let lib = Library::load(87053, index.read(87053).unwrap()).unwrap();
+        let (node, word) = lib
+            .gens
+            .iter()
+            .filter(|g| g.attach_mode() == 9)
+            .find_map(|g| g.streams[0].iter().find(|o| o.code == 0x11).map(|o| (g.node, o.u32(1))))
+            .expect("a mode 9 generator with op 0x11");
+        let l = fx.reg.add(lib);
+        let i = fx.start((l, node), super::super::Owner::Zone).unwrap();
+        let at = Vec3::new(-100.0, 0.0, -10.0);
+        fx.dolls.push(Doll {
+            of: HUME,
+            matrix: Mat4::from_translation(at),
+            follow: false,
+            points: Vec::new(),
+            unposed: false,
+        });
+        fx.insts[i].as_mut().unwrap().actors = [Who::Doll(0), Who::Actor(ORC)];
+        fx.attach_now(i, &Skel);
+        let f = Frame {
+            dt: 2.0,
+            seconds: 1.0 / 30.0,
+            dayfrac: 0.5,
+            view: Mat4::IDENTITY,
+            view_rot: Mat4::IDENTITY,
+            eye: Vec3::new(0.0, -2.0, -10.0),
+            draw_distance: 2000.0,
+            area_light: Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        };
+        for _ in 0..10 {
+            fx.follow(i, word, &f, &Skel);
+            let m = fx.insts[i].as_ref().unwrap().matrix.unwrap();
+            assert!(m.abs_diff_eq(Mat4::from_translation(at), 1e-4), "{m}");
+        }
     }
 
     /// Mode 0x14 (56775 alex): the voyage matrix, identity off a ship's voyage.
