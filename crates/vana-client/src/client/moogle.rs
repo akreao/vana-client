@@ -369,6 +369,23 @@ fn storage_container(row: u16, nomad: bool) -> Option<u8> {
     if nomad { ROWS.iter().copied().filter(|&c| c != 2).nth(i) } else { ROWS.get(i).copied() }
 }
 
+/// The storage menu's rows: the nomad moogle's has no Storage.
+fn storage_rows(nomad: bool) -> u16 {
+    if nomad { 14 } else { 15 }
+}
+
+/// A storage menu row's Enter: its container's view opens. A 0 from FUN_101dae10 plays SE 0004; FUN_101daf70's
+/// result is not looked at.
+fn open_storage(w: &mut World, c: u8, nomad: bool) {
+    if matches!(c, 1 | 2 | 4 | 9) {
+        if !items::open_dae10(w, c, nomad && c != 2) {
+            w.sounds.push(crate::audio::Ui::Error as u32);
+        }
+    } else {
+        items::open_daf70(w, c, c == 5, nomad);
+    }
+}
+
 /// The menu's keys (the menu base: links, SE 0001 / 0002 / 0004 / 0003). True when used.
 pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) -> bool {
     use crate::audio::Ui;
@@ -408,7 +425,7 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) -> bool {
         return true;
     }
     if let Some((sel, off)) = &m.storage {
-        let n: u16 = if m.nomad { 14 } else { 15 };
+        let n = storage_rows(m.nomad);
         match key {
             K::ArrowDown | K::ArrowUp => {
                 let s = if key == K::ArrowDown {
@@ -433,14 +450,7 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) -> bool {
             K::Enter => {
                 let Some(c) = storage_container(*sel, m.nomad) else { return true };
                 w.sounds.push(Ui::Select as u32);
-                // A 0 from FUN_101dae10 plays SE 0004; FUN_101daf70's result is not looked at.
-                if matches!(c, 1 | 2 | 4 | 9) {
-                    if !items::open_dae10(w, c, m.nomad && c != 2) {
-                        w.sounds.push(Ui::Error as u32);
-                    }
-                } else {
-                    items::open_daf70(w, c, c == 5, m.nomad);
-                }
+                open_storage(w, c, m.nomad);
             }
             _ => {}
         }
@@ -476,8 +486,17 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) -> bool {
             match (m.nomad, m.sel) {
                 (_, 1) => {
                     let off = storage_off(w, m.nomad);
+                    // Modern (user, 2026-11-09): the storage view's tabs are this list's bags, so it opens on the
+                    // first open row at once, and closing it comes back to this menu.
+                    let first = (1..=storage_rows(m.nomad)).find(|r| !off.contains(r)).filter(|_| w.modern);
+                    if let Some(c) = first.and_then(|r| storage_container(r, m.nomad)) {
+                        open_storage(w, c, m.nomad);
+                        if matches!(w.win, Some(items::Win::Items { store: Some(_), .. })) {
+                            return true;
+                        }
+                    }
                     if let Some(mm) = w.moogle.as_mut() {
-                        mm.storage = Some((1, off));
+                        mm.storage = Some((first.unwrap_or(1), off));
                     }
                 }
                 // Gardening / Layout / Remodel run their text commands and close myroom.
