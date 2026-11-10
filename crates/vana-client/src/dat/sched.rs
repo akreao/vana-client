@@ -375,4 +375,54 @@ mod census {
         }
         println!("{n} schedulers in {} files: {files:?}", files.len());
     }
+    /// The zone-lighting scheduler ops across every DAT: 0x82 / 0x83 (the lighting override task, FUN_10057fb0
+    /// 0x10059273 / 0x10059181), 0xc0 (fixed sky time, 0x10058079) and 0xc3 (sun / moon tilt, 0x1005809b), with the
+    /// weather ops 0x7b..0x7d for scale, and a histogram of every op code (by hand: `cargo test --release
+    /// light_op_census -- --ignored --nocapture`).
+    #[test]
+    #[ignore]
+    fn light_op_census() {
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let trim = |n: [u8; 4]| String::from_utf8_lossy(&n).trim_end_matches(['\0', ' ']).to_string();
+        let mut hist: std::collections::BTreeMap<u8, (usize, std::collections::BTreeSet<u32>)> = Default::default();
+        for id in 0..index.len() as u32 {
+            let Ok(file) = index.read(id) else { continue };
+            let Ok(tree) = Tree::build(&file) else { continue };
+            for node in tree.of_kind(kind::SCHEDULER).collect::<Vec<_>>() {
+                let data = &file[tree.nodes[node].data.clone()];
+                if &tree.nodes[node].name == b"@ini" {
+                    let path: Vec<String> = tree.path(node).into_iter().map(trim).collect();
+                    let seq: Vec<String> = ops(data)
+                        .iter()
+                        .map(|o| {
+                            let hex: Vec<String> =
+                                o.raw[8.min(o.raw.len())..].iter().map(|b| format!("{b:02x}")).collect();
+                            format!("{:02x} w{} {}", o.code, o.wait, hex.join(""))
+                        })
+                        .collect();
+                    println!("@ini {id} {} loop {}: {}", path.join("/"), loops(data), seq.join(" | "));
+                }
+                for o in ops(data) {
+                    let e = hist.entry(o.code).or_default();
+                    e.0 += 1;
+                    e.1.insert(id);
+                    if matches!(o.code, 0x82 | 0x83 | 0xc0 | 0xc3 | 0x7c | 0x7d) {
+                        let path: Vec<String> = tree.path(node).into_iter().map(trim).collect();
+                        let hex: Vec<String> = o.raw.iter().map(|b| format!("{b:02x}")).collect();
+                        println!(
+                            "{id} {}/{} op {:02x}: {}",
+                            path.join("/"),
+                            trim(tree.nodes[node].name),
+                            o.code,
+                            hex.join("")
+                        );
+                    }
+                }
+            }
+        }
+        for (code, (n, files)) in &hist {
+            let eg: Vec<u32> = files.iter().take(8).copied().collect();
+            println!("op {code:02x}: {n} in {} files, e.g. {eg:?}", files.len());
+        }
+    }
 }

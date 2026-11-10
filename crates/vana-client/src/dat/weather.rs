@@ -288,10 +288,70 @@ const TWO_PI: f32 = 6.283;
 #[allow(clippy::approx_constant, reason = "the DLL's stored values: they set when the switch falls")]
 const PI: f32 = 3.1415;
 
+/// The zone object's sky fixes, cleared at every scene load (FUN_1018b620) and set by the zone file's `@ini`
+/// scheduler, which the load runs at once (FUN_1018b500 -> vtable +0x18 FUN_1018b770): op 0xc0 fixes the time the
+/// light and the weather keys read (W+0x1c8), op 0xc3 tilts the sun's and the moon's path (W+0x1cc, degrees).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Sky {
+    /// W+0x1c8 in clock units (216000 an hour); `None` is retail's -1.
+    pub time: Option<u32>,
+    /// W+0x1cc.
+    pub tilt: i16,
+}
+
+impl Sky {
+    /// FUN_1018bc40: op 0xc0's value as stored (a signed compare: above 360 days it wraps, negative means none).
+    pub fn set_time(&mut self, v: u32) {
+        const SPAN: i64 = 0x6f3c_9000;
+        let mut v = v as i32 as i64;
+        if v > SPAN {
+            v -= SPAN;
+        }
+        self.time = (v >= 0).then_some(v as u32);
+    }
+
+    /// The minute of the day FUN_10187720 and FUN_10189c60 work with: the fixed time, else the clock's.
+    pub fn minute(&self, clock: f32) -> f32 {
+        self.time.map_or(clock, |t| t as f32 / 3600.0)
+    }
+
+    /// What the load's `@ini` step leaves for zone file `file`, for the tools that light a zone without running its
+    /// schedulers (the client takes it from the effects engine, which runs the ops).
+    pub fn of_zone_file(file: &[u8]) -> Self {
+        use crate::dat::generator::{Tree, fourcc, kind};
+        let mut sky = Self::default();
+        let Ok(tree) = Tree::build(file) else { return sky };
+        let ini = fourcc("@ini");
+        let Some(n) = tree.nodes.iter().position(|n| n.kind == kind::SCHEDULER && n.name == ini) else { return sky };
+        for o in crate::dat::sched::ops(&file[tree.nodes[n].data.clone()]) {
+            let v = o.raw.get(8..12).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()));
+            match o.code {
+                0xc0 => sky.set_time(v),
+                0xc3 => sky.tilt = v as i16,
+                _ => {}
+            }
+            // FUN_10057e10: the one step runs on while the waits are 0.
+            if o.wait != 0 {
+                break;
+            }
+        }
+        sky
+    }
+}
+
+/// FUN_10187720's degrees to radians (0x1032a9f4).
+const DEG: f32 = 0.017_452_778;
+
 /// FUN_10187720: the sun and moon light directions (the way the light travels, +y down) at `minute`.
 pub fn sun_moon(minute: f32) -> (Vec3, Vec3) {
+    sun_moon_tilted(minute, 0)
+}
+
+/// FUN_10187720 with the zone's tilt (W+0x1cc, 0x10187882): both directions turned about x by `tilt` degrees
+/// (FUN_10027b80 builds the rotation, FUN_10028200 applies it: y' = y cos - z sin, z' = y sin + z cos), so the sun's
+/// path leans out of the x / y plane. Only Reisenjima sets one (36).
+pub fn sun_moon_tilted(minute: f32, tilt: i16) -> (Vec3, Vec3) {
     let a = minute / 1440.0 * TWO_PI;
-    let moon = Vec3::new(a.sin(), a.cos(), 0.0);
     let mut b = a + PI;
     if b > PI {
         b -= TWO_PI;
@@ -299,7 +359,13 @@ pub fn sun_moon(minute: f32) -> (Vec3, Vec3) {
     if b < -PI {
         b += TWO_PI;
     }
-    (Vec3::new(b.sin(), b.cos(), 0.0), moon)
+    let (sun, moon) = (Vec3::new(b.sin(), b.cos(), 0.0), Vec3::new(a.sin(), a.cos(), 0.0));
+    if tilt == 0 {
+        return (sun, moon);
+    }
+    let (s, c) = (tilt as f32 * DEG).sin_cos();
+    let turn = |v: Vec3| Vec3::new(v.x, v.y * c - v.z * s, v.y * s + v.z * c);
+    (turn(sun), turn(moon))
 }
 
 /// One eased light (E+0x14c / +0x16c, E+0x17c / +0x19c): direction and colour (bytes / 255, before the scale).
@@ -336,11 +402,11 @@ pub struct LightEase {
 impl LightEase {
     /// FUN_10187720 once a retail frame in game: the sun by day, the moon by night (sun.y < 0); flags-bit-0
     /// environments keep their data directions (no ease).
-    pub fn step(&mut self, env: &Env, minute: f32) {
+    pub fn step(&mut self, env: &Env, minute: f32, tilt: i16) {
         if env.flags & 1 != 0 {
             return;
         }
-        let (sun, moon) = sun_moon(minute);
+        let (sun, moon) = sun_moon_tilted(minute, tilt);
         let (d, bg, actor) = if sun.y < 0.0 {
             (moon, rgb(env.bg.moon), rgb(env.actor.moon))
         } else {
@@ -360,8 +426,8 @@ impl LightEase {
 impl Lighting {
     /// In game (FUN_10188ca0): the eased direction and colour times the environment's light scale (not eased);
     /// ambient as the keys give it, the fog times the Clipping factor `k` (FUN_10189120).
-    pub fn from_env_eased(env: &Env, minute: f32, ease: &LightEase, k: f32) -> Self {
-        let mut l = Self::from_env_k(env, minute, k);
+    pub fn from_env_eased(env: &Env, minute: f32, tilt: i16, ease: &LightEase, k: f32) -> Self {
+        let mut l = Self::from_env_k(env, minute, tilt, k);
         if env.flags & 1 == 0 && ease.init {
             l.dir = ease.bg.dir;
             l.diffuse = ease.bg.color * env.bg.light_scale;
@@ -372,12 +438,12 @@ impl Lighting {
     }
 
     pub fn from_env(env: &Env, minute: f32) -> Self {
-        Self::from_env_k(env, minute, 1.0)
+        Self::from_env_k(env, minute, 0, 1.0)
     }
 
-    /// With the fog's start and end times the Clipping factor `k` (FUN_10189120).
-    pub fn from_env_k(env: &Env, minute: f32, k: f32) -> Self {
-        let (sun, moon) = sun_moon(minute);
+    /// With the zone's tilt, and the fog's start and end times the Clipping factor `k` (FUN_10189120).
+    pub fn from_env_k(env: &Env, minute: f32, tilt: i16, k: f32) -> Self {
+        let (sun, moon) = sun_moon_tilted(minute, tilt);
         let night = sun.y < 0.0;
         let (dir, diffuse, actor_dir, actor_diffuse) = if env.flags & 1 != 0 {
             let d =
@@ -467,6 +533,31 @@ mod tests {
         assert!(sun_moon(1080.0).0.y >= 0.0 && sun_moon(1080.02).0.y < 0.0);
     }
 
+    /// FUN_10187720 with W+0x1cc: Rx(tilt) on both directions (row vector: y' = y cos - z sin, z' = y sin + z cos);
+    /// FUN_1018bc40's stored time.
+    #[test]
+    fn sky_tilt_and_time() {
+        use super::{Sky, sun_moon_tilted};
+        let (sun, moon) = sun_moon_tilted(720.0, 36);
+        assert!((sun - Vec3::new(0.0, 0.80902, 0.58778)).length() < 1e-3, "{sun}");
+        assert!((moon + sun).length() < 1e-3 && (sun.length() - 1.0).abs() < 1e-6);
+        let (sun, _) = sun_moon_tilted(360.0, 36);
+        assert!((sun - Vec3::new(-1.0, 0.0, 0.0)).length() < 1e-3, "{sun}");
+        assert_eq!(sun_moon_tilted(500.0, 0), sun_moon(500.0));
+        let (up, _) = sun_moon_tilted(720.0, -36);
+        assert!((up.z + 0.58778).abs() < 1e-3);
+        let mut s = Sky::default();
+        assert_eq!(s.minute(123.0), 123.0);
+        s.set_time(2_160_000);
+        assert_eq!((s.time, s.minute(123.0)), (Some(2_160_000), 600.0));
+        s.set_time(0x6f3c_9000 + 216_000);
+        assert_eq!(s.time, Some(216_000));
+        s.set_time(0x6f3c_9000);
+        assert_eq!(s.time, Some(0x6f3c_9000));
+        s.set_time(u32::MAX);
+        assert_eq!(s.time, None);
+    }
+
     fn weather(file: u32) -> Option<ZoneWeather> {
         let index = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()).ok()?;
         ZoneWeather::parse(&index.read(file).ok()?).ok()
@@ -481,7 +572,7 @@ mod tests {
             (0..n)
                 .map(|i| {
                     let m = start + i as f32 / 72.0;
-                    e.step(&w.at("suny", m).unwrap(), m);
+                    e.step(&w.at("suny", m).unwrap(), m, 0);
                     (e.bg.dir, e.bg.color)
                 })
                 .collect()

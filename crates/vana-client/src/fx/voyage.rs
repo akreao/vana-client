@@ -102,14 +102,19 @@ mod tests {
         assert_eq!(v.path.as_ref().map(|p| p.keys), Some(18));
     }
 
-    /// The sun: day fraction 0.25, eye (0, -2, -10), V of 320 c000 forward at t 0.5.
+    /// The sun: 06:00, eye (0, -2, -10), V of 320 c000 forward at t 0.5.
     #[test]
     fn sun_turns() {
         let Some(p) = path(320, b"c000") else { return };
         let eye = Vec3::new(0.0, -2.0, -10.0);
-        let at = super::super::sky_point(true, 0.25, eye, p.matrix(0.5, false));
-        assert!(close(at, Vec3::new(27.224, -2.0, -999.679), 0.01), "{at}");
-        assert!(close(super::super::sky_point(true, 0.25, eye, Mat4::IDENTITY), Vec3::new(1000.0, -2.0, -10.0), 0.01));
+        let at = super::super::sky_point(true, 360.0, 0, eye, p.matrix(0.5, false));
+        // FUN_10187720's stored 6.283 / 3.1415 leave the sun 0.05 off the axis at 06:00.
+        assert!(close(at, Vec3::new(27.224, -2.0, -999.679), 0.1), "{at}");
+        assert!(close(
+            super::super::sky_point(true, 360.0, 0, eye, Mat4::IDENTITY),
+            Vec3::new(1000.0, -2.0, -10.0),
+            0.1
+        ));
     }
 
     /// Zone 1's four paths (keys, chord totals; MODLOG "Ship voyages").

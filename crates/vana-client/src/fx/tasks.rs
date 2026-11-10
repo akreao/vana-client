@@ -1275,7 +1275,7 @@ impl Effects {
 
     /// FUN_10055c00 / FUN_10055cc0 -> FUN_10073910: a task an op creates takes its first step at once (vtable +0x20), before
     /// the op after its creator's (efon's efkl kills the old orbs before the new ones start). True when it already ended.
-    fn run_new(&mut self, i: usize, actors: &dyn Actors) -> bool {
+    pub(super) fn run_new(&mut self, i: usize, actors: &dyn Actors) -> bool {
         let Some(mut t) = self.tasks[i].take() else { return true };
         let outer = self.stepping.first().copied();
         self.stepping.push(i);
@@ -1339,6 +1339,20 @@ impl Effects {
             }
             // No case (0x1005ac96): it only keeps the scheduler from starting by itself.
             0xa2 => Flow::Next,
+            // Case 0xc0 (0x10058079): the zone object's fixed sky time W+0x1c8 = u32 @8 (FUN_1018bc40), which the
+            // light (FUN_10187720) and the weather keys (FUN_10189c60) read instead of the clock while it is not
+            // negative. Op 0x52's windows and the element curves keep the clock.
+            0xc0 => {
+                self.sky.set_time(op.u32_at(8));
+                Flow::Next
+            }
+            // Case 0xc3 (0x1005809b): the sun's tilt W+0x1cc = i16 @8 (degrees). The case has no break and runs on
+            // into case 0x1b (0x100580ab), which looks for an actor named by the same bytes (FUN_100841a0); the two
+            // in the data (36 = "$") name none, so nothing follows.
+            0xc3 => {
+                self.sky.tilt = op.u16_at(8) as i16;
+                Flow::Next
+            }
             0x02 => {
                 self.op_start_generator(t, op, actors);
                 Flow::Next
@@ -5565,6 +5579,41 @@ mod auto_tests {
             moon_phase: 0,
             weekday: 0,
         }
+    }
+
+    /// FUN_1018b500: the load runs the zone file's `@ini` at once. Escha - Zi'Tah (83923) fixes the sky at 10:00,
+    /// Reisenjima Sanctorium (83928) at 14:00, Reisenjima (83926) tilts the sun 36 degrees; the next load clears
+    /// both, and the sun generator's point follows them.
+    #[test]
+    fn zone_ini_sky() {
+        use crate::dat::weather::Sky;
+        let Some(index) = index() else { return };
+        let mut fx = Effects::new();
+        for (file, want) in [
+            (83923, Sky { time: Some(10 * 216000), tilt: 0 }),
+            (83926, Sky { time: None, tilt: 36 }),
+            (83928, Sky { time: Some(14 * 216000), tilt: 0 }),
+            (crate::dat::zone::file_id(230), Sky::default()),
+        ] {
+            let Ok(bytes) = index.read(file) else { return };
+            assert_eq!(Sky::of_zone_file(&bytes), want, "{file}");
+            fx.load_zone(Library::load(file, bytes).unwrap());
+            assert_eq!(fx.sky(), want, "{file}");
+            // The task ended in its one step.
+            assert!(fx.tasks.iter().flatten().all(|t| fx.reg.libs[t.res.0].tree.nodes[t.res.1].name != fourcc("@ini")));
+        }
+        // FUN_10187720's sun point at a 06:00 clock: on +x; at a fixed 10:00 it stands 60 degrees up; tilted 36
+        // degrees at noon it leans toward -z.
+        let eye = Vec3::new(0.0, -2.0, -10.0);
+        let at = |sky: Sky, clock: f32| {
+            super::super::sky_point(true, sky.minute(clock), sky.tilt, eye, Mat4::IDENTITY) - eye
+        };
+        let near = |a: Vec3, b: Vec3| (a - b).abs().max_element() < 0.1;
+        assert!(near(at(Sky::default(), 360.0), Vec3::new(1000.0, 0.0, 0.0)));
+        let fixed = at(Sky { time: Some(10 * 216000), tilt: 0 }, 360.0);
+        assert!(near(fixed, Vec3::new(500.0, -866.0, 0.0)), "{fixed}");
+        let tilted = at(Sky { time: None, tilt: 36 }, 720.0);
+        assert!(near(tilted, Vec3::new(0.0, -809.0, -587.8)), "{tilted}");
     }
 
     /// FUN_10056e10 / e80 / ae0 on the data: the end loops, the windows, op 0xa2's exception.
