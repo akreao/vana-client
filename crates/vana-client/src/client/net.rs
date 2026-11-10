@@ -367,7 +367,7 @@ pub struct EventStart {
 /// A zone dialogue line sent by the server: 0x036 (talk) or 0x02A (with num[4]).
 #[derive(Clone, Debug, Default)]
 pub struct ZoneText {
-    /// The packet: 0x036, 0x02A, 0x027 or 0x043.
+    /// The packet: 0x036, 0x02A, 0x027, 0x043 or 0x03B.
     pub packet: u16,
     pub actor: u32,
     pub index: u16,
@@ -2288,6 +2288,15 @@ fn session(
                         dir: p.u8(0x17),
                         mode: p.u8(0x16),
                     })?,
+                    // 0x03B (handler LAB_100a1600): UniqueNo @4, ActIndex @8, MesNum @0xa; shown in the event message
+                    // window (mode 0x96), not printed. LSB never sends it.
+                    0x03B => tx.send(NetEvent::ZoneText(ZoneText {
+                        packet: 0x03B,
+                        actor: p.u32(4),
+                        index: p.u16(8),
+                        mes: p.u16(0xa),
+                        ..Default::default()
+                    }))?,
                     0x036 => tx.send(NetEvent::ZoneText(ZoneText {
                         packet: 0x036,
                         actor: p.u32(4),
