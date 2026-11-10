@@ -1272,9 +1272,12 @@ fn one_action(w: &mut World, a: &Action) {
         if let Some(t) = att {
             w.holds.insert(a.actor, ticks(*t));
             w.noreact.insert(a.actor, ticks(*t));
+            w.hold_list.retain(|h| h.1 != a.actor);
+            w.hold_list.push((0, a.actor, crate::fx::HOLD_STATUS | crate::fx::HOLD_REACT, ticks(*t)));
         }
         if let (Some(t), Some(id)) = (tgt, first) {
             let until = ticks(*t);
+            w.hold_list.push((0, id, crate::fx::HOLD_STATUS, until));
             let e = w.holds.entry(id).or_insert(until);
             *e = (*e).max(until);
         }
@@ -1432,8 +1435,9 @@ pub(super) fn fx_load(w: &mut World, id: u32) {
 }
 
 /// The skill holds from fx (ops 0x20 / 0x1f / 0x56 / 0x59 / 0x07 / 0x08) for their ticks, the longest winning.
-pub(super) fn fx_hold(w: &mut World, id: u32, ticks: f32, kind: u8) {
+pub(super) fn fx_hold(w: &mut World, id: u32, ticks: f32, kind: u8, owner: u64) {
     let until = Instant::now() + Duration::from_secs_f32(ticks.max(0.0) / 60.0);
+    w.hold_list.push((owner, id, kind, until));
     if kind & crate::fx::HOLD_STATUS != 0 {
         let e = w.holds.entry(id).or_insert(until);
         *e = (*e).max(until);
@@ -1441,6 +1445,34 @@ pub(super) fn fx_hold(w: &mut World, id: u32, ticks: f32, kind: u8) {
     if kind & crate::fx::HOLD_REACT != 0 {
         let e = w.noreact.entry(id).or_insert(until);
         *e = (*e).max(until);
+    }
+}
+
+/// The holds of a scheduler task that was killed end with it (retail's hold tasks are its children; their destructors
+/// let the actor go): each actor keeps the longest of its other holds, as `klbt`'s kill of `bntg` leaves the
+/// sheathe's own.
+pub(super) fn fx_hold_cut(w: &mut World, owner: u64) {
+    cut_holds(&mut w.hold_list, &mut w.holds, &mut w.noreact, owner);
+}
+
+fn cut_holds(
+    list: &mut Vec<(u64, u32, u8, Instant)>,
+    holds: &mut std::collections::HashMap<u32, Instant>,
+    noreact: &mut std::collections::HashMap<u32, Instant>,
+    owner: u64,
+) {
+    let cut: Vec<(u32, u8)> = list.iter().filter(|h| h.0 == owner).map(|h| (h.1, h.2)).collect();
+    list.retain(|h| h.0 != owner);
+    for (id, kind) in cut {
+        for (bit, map) in [(crate::fx::HOLD_STATUS, &mut *holds), (crate::fx::HOLD_REACT, &mut *noreact)] {
+            if kind & bit == 0 {
+                continue;
+            }
+            match list.iter().filter(|h| h.1 == id && h.2 & bit != 0).map(|h| h.3).max() {
+                Some(t) => map.insert(id, t),
+                None => map.remove(&id),
+            };
+        }
     }
 }
 
@@ -1601,6 +1633,7 @@ pub(super) fn tick(w: &mut World) {
     }
     w.holds.retain(|_, t| *t > now);
     w.noreact.retain(|_, t| *t > now);
+    w.hold_list.retain(|h| h.3 > now);
     let (due, rest): (Vec<Pending>, Vec<Pending>) =
         std::mem::take(&mut w.pending).into_iter().partition(|p| p.at <= now);
     w.pending = rest;
@@ -2422,6 +2455,29 @@ mod tests {
         assert_eq!([first(0), first(1), first(2), first(3), first(4)], ["atf?", "atf?", "atr?", "atb?", "atl?"]);
         assert_eq!(swing_patterns(false, 0, 2), ("ati?".to_string(), "atr?".to_string()));
         assert_eq!(swing_patterns(true, 1, 4).0, "a1l?");
+    }
+
+    /// A killed scheduler's holds end with it: `bntg`'s 300 ticks go when `klbt` kills it and the sheathe's own 72
+    /// stay; an actor with no other hold is free at once; a hold of another kind is untouched.
+    #[test]
+    fn killed_scheduler_frees_its_holds() {
+        use crate::fx::{HOLD_REACT, HOLD_STATUS};
+        let now = Instant::now();
+        let at = |ticks: u64| now + Duration::from_millis(ticks * 1000 / 60);
+        let mut list = vec![
+            (7, 1, HOLD_REACT, at(300)),
+            (8, 1, HOLD_REACT, at(72)),
+            (8, 1, HOLD_STATUS, at(72)),
+            (7, 2, HOLD_REACT, at(300)),
+        ];
+        let mut holds = std::collections::HashMap::from([(1, at(72))]);
+        let mut noreact = std::collections::HashMap::from([(1, at(300)), (2, at(300))]);
+        cut_holds(&mut list, &mut holds, &mut noreact, 7);
+        assert_eq!(noreact, std::collections::HashMap::from([(1, at(72))]));
+        assert_eq!(holds, std::collections::HashMap::from([(1, at(72))]));
+        assert_eq!(list.len(), 2);
+        cut_holds(&mut list, &mut holds, &mut noreact, 99);
+        assert_eq!((list.len(), noreact.len()), (2, 1));
     }
 
     /// The log holds KEPT lines (the oldest DROP go at once past KEPT + DROP); a line keeps its number while held, and

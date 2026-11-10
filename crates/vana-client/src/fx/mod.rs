@@ -1028,8 +1028,13 @@ pub struct Effects {
     /// Op 0x9a for the client: actor, entity +0x130 bit 1.
     pub gens_off: Vec<(u32, bool)>,
     /// Skill / magic actions' holds for the client: op 0x20 (actor2) / 0x59 (actor1, no reactions) as (actor, ticks,
-    /// no reactions), and the actors whose load hold ends (their "main" started or was given up, FUN_100a9610).
-    pub holds: Vec<(u32, f32, u8)>,
+    /// no reactions, the task's uid), and the actors whose load hold ends (their "main" started or was given up,
+    /// FUN_100a9610).
+    pub holds: Vec<(u32, f32, u8, u64)>,
+    /// Tasks killed by name (op 0x5f, the stops): a hold is a child task of its scheduler (FUN_100607e0 /
+    /// FUN_100601f0 take it as parent, FUN_10074790), deleted with it (FUN_10074ad0 -> FUN_10074890), and its
+    /// destructor lets the actor go (FUN_100608b0 -> vtable +0x164), so their holds end now.
+    pub hold_cuts: Vec<u64>,
     /// Ops 0x2e (actor1's move input, our own player only) and 0x2f (actor1's facing) locked for ticks.
     pub locks: Vec<(u32, u8, f32)>,
     /// Op 0x2e: (owner task uid, actor1, ticks left); the actors whose move input is off this frame, and those whose
@@ -1226,6 +1231,7 @@ impl Effects {
             anchor_points: Vec::new(),
             gens_off: Vec::new(),
             holds: Vec::new(),
+            hold_cuts: Vec::new(),
             locks: Vec::new(),
             roots: Vec::new(),
             rooted: HashSet::new(),
