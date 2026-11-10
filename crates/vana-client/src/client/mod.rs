@@ -18912,6 +18912,16 @@ fn draw_scene(
     r.set_camera_list(&gfx.gpu, list, far);
     // Config 0017: bump mapping's lighting (one eased light, vertex fog) or the two-light model; never in 182.
     r.bump_mode = cx.cfg.tool("0017") != 0 && w.zone != Some(182);
+    // Light Shading (ours): Smooth lights the scenery's lamps per pixel, Retail per vertex.
+    r.smooth_lights = cx.cfg.smooth_lights;
+    // Windowed (0034 != 0, no gamma ramp): lights boosted by the channels' ramps (render::light_boost),
+    // gamma base 0028 + 1 + Gameplay R / G / B / 100 (FUN_101aa650).
+    r.light_boost = if cx.cfg.window_mode() != 0 {
+        let base = cx.cfg.gamma_base();
+        crate::render::light_boost([0x37, 0x38, 0x39].map(|id| base + 1.0 + w.game.get(id) as f32 / 100.0))
+    } else {
+        [0.0; 4]
+    };
     (r.mod_clear, r.mod_ambient, r.wireframe) = (w.opts.clear, w.opts.ambient, w.opts.wireframe);
     // Config 0011: the animated meshes' sway this frame (render/sway.rs).
     let steps = match cx.cfg.tool("0011") {
@@ -18926,6 +18936,8 @@ fn draw_scene(
     );
     // FUN_1001d240's helper target for faded actors (drawn opaque, then blended as one quad).
     r.prepare_faded(&gfx.gpu, &scene_tex);
+    // The point-light slot leak for this view (render/leak.rs).
+    r.update_leak(&gfx.gpu, camera, aspect);
     perf::timed(
         || "zone render".into(),
         || r.render(&gfx.gpu, &mut fg.encoder, &scene_raw, &scene_depth, camera, aspect, &actors),
@@ -19120,7 +19132,13 @@ fn draw_effects(
             play_fx_sound(a, c);
         }
         eg.set_lights(&r.lights);
-        eg.set_light(r.lighting.as_ref().map(|l| (l.dir, l.diffuse, l.ambient)));
+        // Lit effect elements take the boosted SetLight (FUN_1000bf30) and AMBIENT (FUN_10188e00).
+        let b = r.light_boost;
+        eg.set_light(
+            r.lighting
+                .as_ref()
+                .map(|l| (l.dir, crate::render::boosted(l.diffuse, b), crate::render::boosted(l.ambient, b))),
+        );
         eg.set_depth(Some((&scene_depth, camera.proj(aspect))));
         perf::timed(|| "effects upload".into(), || eg.update(&gfx.gpu, &mut fg.encoder, &mut w.effects, &f));
         fg.mark("fx update");
