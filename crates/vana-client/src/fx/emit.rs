@@ -849,6 +849,7 @@ fn emit_ops(
         spec: spec_tex,
         inst: usize::MAX,
         serial: 0,
+        born: 0,
         life,
         max_life,
         flags,

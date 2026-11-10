@@ -1465,11 +1465,11 @@ pub(super) fn rank_icon(mentor: u8, mastery: u8) -> String {
 /// A chat line in its log mode's colour (the config colour before the message tables load), auto-translate blocks
 /// expanded with their brackets (FUN_10127c00 with param 5).
 /// FUN_10127990: a party line (modes 5 / 0x0d) with a call tag outside quotes plays its sound (the first tag that
-/// matches; FUN_100380f0 plays one at a time). A received tell (mode 0x0c) with config 0x47 names SeSep "0p40", which
-/// no game file holds; ours plays the <call> sound (0017) for it.
-fn call_sound(bt: &crate::dat::battle::BattleText, line: &str, mode: u8, tell_sound: bool) -> Option<u32> {
+/// matches; FUN_100380f0 plays one at a time), as (sound, rumble flags). A received tell (mode 0x0c) with config 0x47
+/// gives 0x30703430: SeSep "0040" once the quiet flag is off the name (asm 0x10127cb6), the tell's short tone.
+fn call_sound(bt: &crate::dat::battle::BattleText, line: &str, mode: u8, tell_sound: bool) -> Option<(u32, u32)> {
     if mode == 0x0c {
-        return tell_sound.then_some(17);
+        return tell_sound.then_some((40, crate::dat::tables::CALL_QUIET));
     }
     if !matches!(mode, 5 | 0x0d) {
         return None;
@@ -1479,12 +1479,49 @@ fn call_sound(bt: &crate::dat::battle::BattleText, line: &str, mode: u8, tell_so
     while let Some(open) = b[i..].iter().position(|&c| c == b'<').map(|p| p + i) {
         let Some(close) = b[open..].iter().position(|&c| c == b'>').map(|p| p + open) else { break };
         let quoted = open > 0 && b[open - 1] == b'"' && b.get(close + 1) == Some(&b'"');
-        if !quoted && let Some((_, n)) = bt.calls.iter().find(|(t, _)| line[open..].starts_with(t.as_str())) {
-            return Some(*n);
+        if !quoted && let Some((_, n, f)) = bt.calls.iter().find(|(t, ..)| line[open..].starts_with(t.as_str())) {
+            return Some((*n, *f));
         }
         i = open + 1;
     }
     None
+}
+
+/// The chat call's task (FUN_100380f0, update FUN_100381d0): `timer` (+0x34) runs down from 120 ticks and on below 0
+/// while the sound plays; the pad gets 60 a frame while bit 5 of the whole timer is set (120..96, 63..32, then
+/// -1..-32, ...) and `rumble` (+0x3c) holds.
+struct CallTask {
+    timer: f32,
+    rumble: bool,
+}
+
+impl CallTask {
+    /// A frame of `ticks`: false once its 120 ticks are over and its voice is (`heard.1`), or at once while the
+    /// call level is 0 (`heard.0`; event op 0x69 mask 0x10).
+    fn step(&mut self, ticks: f32, heard: (bool, bool)) -> bool {
+        self.timer -= ticks;
+        heard.0 && (self.timer >= 0.0 || heard.1)
+    }
+
+    /// What it adds to the pad's rumble this frame.
+    fn pulse(&self) -> i32 {
+        if self.rumble && self.timer as i32 & 0x20 != 0 { 0x3c } else { 0 }
+    }
+}
+
+/// FUN_10127ab0, an `<ncall>`'s rumble: the line's "(name)" is us, or an actor of that name within 4 of us on whole
+/// x / z (dx^2 + dz^2 < 16).
+fn call_near<'a>(line: &str, me: (&str, Vec3), mut others: impl Iterator<Item = (&'a str, Vec3)>) -> bool {
+    let Some(name) = line.find(')').filter(|&e| (2..0x21).contains(&e)).and_then(|e| line.get(1..e)) else {
+        return false;
+    };
+    let d = |a: f32, b: f32| (a as i32 - b as i32).pow(2);
+    name == me.0 || others.any(|(n, p)| n == name && d(me.1.x, p.x) + d(me.1.z, p.z) < 16)
+}
+
+/// The frame's rumble for the pad (DAT_10455c20 +0xdb4): effect op 0x5f's elements and the chat call.
+fn rumble_sum(world: &World) -> i32 {
+    world.effects.rumble + world.call.as_ref().map_or(0, CallTask::pulse)
 }
 
 fn push_chat_mode(world: &mut World, line: String, mode: u8, kind: u8) {
@@ -1536,9 +1573,21 @@ fn expand_phrases(world: &World, line: &str) -> String {
 /// A chat line in its mode, `gm` from s2c 0x017's Attr bit 0, `who` its record's name.
 fn push_chat_line(world: &mut World, line: String, mode: u8, kind: u8, gm: bool, who: Option<(String, u8)>) {
     let tell_sound = world.game.get(0x47) != 0;
-    if let Some(n) = world.battle.as_ref().and_then(|bt| call_sound(bt, &line, mode, tell_sound)) {
-        // Ours: the tell sound stays an interface sound; the call tags go through FUN_100380f0's level.
-        if mode == 0x0c { world.sounds.push(n) } else { world.call_sounds.push(n) }
+    if let Some((n, flags)) = world.battle.as_ref().and_then(|bt| call_sound(bt, &line, mode, tell_sound)) {
+        // 0x10127c8a: the pad rumbles with a <call>, with an <ncall> from someone near, never with an <scall> or
+        // the tell's tone.
+        let rumble = match flags {
+            0 => true,
+            f if f & crate::dat::tables::CALL_NEAR != 0 => {
+                call_near(&line, (&world.name, world.pos), world.entities.values().map(|e| (e.name.as_str(), e.pos)))
+            }
+            _ => false,
+        };
+        // FUN_100380f0: one call task at a time (DAT_10463938); a call that comes while it runs makes no sound.
+        if world.call.is_none() {
+            world.call = Some(CallTask { timer: 120.0, rumble });
+            world.call_sounds.push(n);
+        }
     }
     let (colour, line, indent) = match world.battle.clone() {
         Some(bt) => {
@@ -7656,8 +7705,11 @@ struct World {
     audio_cmds: Vec<(i32, f32, f32)>,
     /// DAT_104804c3: the per-zone sound-level reset has run, so the event end doesn't restore levels (batch 6 item 18).
     sound_reset: bool,
-    /// Chat call sounds to play (FUN_100380f0, at the op 0x69 mask 0x10 level).
+    /// Chat call sounds to play (FUN_100380f0, at the op 0x69 mask 0x10 level), the call's task, and what the audio
+    /// says of it: the call level is on (DAT_10351710), the call's voice still plays.
     call_sounds: Vec<u32>,
+    call: Option<CallTask>,
+    call_heard: (bool, bool),
     names: Option<Arc<crate::dat::names::Names>>,
     /// Spell / ability records, and the learned bits (s2c 0x0AA, 0x0AC).
     actions: Option<Arc<crate::dat::actions::Actions>>,
@@ -9091,6 +9143,7 @@ impl App {
             for id in w.call_sounds.drain(..) {
                 a.play_call(id);
             }
+            w.call_heard = a.call_heard();
             // The Lua mods' sounds.
             for s in w.lua.sounds.drain(..) {
                 match s {
@@ -9949,6 +10002,8 @@ impl App {
                             audio_cmds: Vec::new(),
                             sound_reset: false,
                             call_sounds: Vec::new(),
+                            call: None,
+                            call_heard: (true, false),
                             names: None,
                             actions: None,
                             spells_known: Vec::new(),
@@ -13269,8 +13324,13 @@ impl App {
         }
         camera::step(world, dt, &cam_in);
         let in_event = event::active(world);
-        world.effects.in_event = in_event;
+        // FUN_100adf70: the "Screen shaking" filter is off while the player is busy, not only in an event.
+        world.effects.busy = textcmd::busy(world);
         camera::shake_step(world, dt);
+        let heard = world.call_heard;
+        if world.call.as_mut().is_some_and(|c| !c.step(dt * 60.0, heard)) {
+            world.call = None;
+        }
         if trace_move() && (cx != 0.0 || cy != 0.0 || (world.started.elapsed().as_secs_f32() * 2.0).fract() < dt * 2.0)
         {
             log::info!(
@@ -16353,6 +16413,9 @@ impl App {
             w.sounds.push(crate::audio::Ui::Select as u32);
         }
         let mut save = false;
+        if let Some(on) = p.save_rumble.take() {
+            cfg.gamepad_rumble = on;
+        }
         if let Some((padsin, padexsin, on, bg, dead)) = p.save.take() {
             (cfg.gamepad_padsin, cfg.gamepad_padexsin) = (padsin, padexsin);
             (cfg.gamepad, cfg.gamepad_background) = (on, bg);
@@ -16684,6 +16747,9 @@ impl App {
             _ => Vec::new(),
         };
         let pad = self.gamepad.poll(&self.cfg, gfx.window.has_focus(), ctx, dt, &mut to_mods);
+        // FUN_10007ae0: the frame's rumble, from the world only (the creator's foley tracks carry none).
+        let sum = if let Phase::World(w) = &self.phase { rumble_sum(w) } else { 0 };
+        self.gamepad.rumble(&self.cfg, gfx.window.has_focus(), sum, dt);
         if let Phase::World(w) = &mut self.phase {
             Self::controller_window(&mut self.cfg, &mut self.gamepad, w, pad.capture.as_ref(), dt);
         }
@@ -19716,6 +19782,43 @@ mod tests {
     }
 
     use super::*;
+
+    /// FUN_100381d0 at 2 ticks a frame: the pad's 60 comes while bit 5 of the whole timer is set (118..96, 62..32,
+    /// then -2..-32 while the sound is still heard); the task ends once the 120 ticks and the voice are over, or at
+    /// once with the call level off. An `<scall>` never rumbles.
+    #[test]
+    fn call_task_pulses() {
+        let mut c = CallTask { timer: 120.0, rumble: true };
+        let mut on = Vec::new();
+        for f in 1..=80 {
+            // The voice plays for 150 ticks.
+            if !c.step(2.0, (true, f <= 75)) {
+                assert_eq!(f, 76);
+                break;
+            }
+            if c.pulse() != 0 {
+                on.push(c.timer as i32);
+            }
+        }
+        let want: Vec<i32> =
+            (96..=118).rev().step_by(2).chain((32..=62).rev().step_by(2)).chain((-30..=-2).rev().step_by(2)).collect();
+        assert_eq!(on, want);
+        assert!(!CallTask { timer: 120.0, rumble: true }.step(2.0, (false, true)));
+        assert_eq!(CallTask { timer: 100.0, rumble: false }.pulse(), 0);
+    }
+
+    /// FUN_10127ab0: the "(name)" at the line's start is us, or stands within 4 on whole x / z.
+    #[test]
+    fn ncall_rumbles_near() {
+        let me = ("Lnxtest", Vec3::new(10.9, 0.0, -4.2));
+        let at = |x: f32, z: f32| [("Other", Vec3::new(x, 30.0, z)), ("Third", Vec3::ZERO)];
+        assert!(call_near("(Lnxtest) <ncall> here", me, at(500.0, 0.0).into_iter()));
+        // Whole coordinates: 10 - 13 and -4 - -6 give 9 + 4.
+        assert!(call_near("(Other) <ncall3>", me, at(13.9, -6.9).into_iter()));
+        assert!(!call_near("(Other) <ncall3>", me, at(14.0, -4.0).into_iter()));
+        assert!(!call_near("(Nobody) <ncall>", me, at(10.0, -4.0).into_iter()));
+        assert!(!call_near("<ncall> no name", me, at(10.0, -4.0).into_iter()));
+    }
 
     /// Hide PC armour: slots 1..5 to the defaults, face, weapons and a model look kept.
     #[test]

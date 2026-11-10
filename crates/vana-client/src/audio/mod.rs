@@ -80,6 +80,8 @@ struct Task {
 /// The ambient loop's voice handles (above the effect voices' handles): two, so the old loop can fade out while the
 /// new one fades in.
 const AMBIENT: u32 = 0xffff_ff00;
+/// The chat call's voice (FUN_100380f0's task keeps its handle at +0x38).
+const CALL: u32 = 0xffff_ff02;
 
 /// FUN_1024a1b0: a replaced flag-0x20 loop fades out over 0x96 sound steps (~2.5 s), in 60 Hz ticks for SeStop.
 const AMBIENT_FADE: i32 = 0x96 * 0x3c / 0x32;
@@ -286,11 +288,21 @@ impl Audio {
     }
 
     /// A chat `<call>` sound (FUN_100380f0): volume = DAT_10351710 x 127, its own level (event op 0x69 mask 0x10), not
-    /// the interface sounds'. At 0 retail still starts it, silent; ours skips it.
+    /// the interface sounds'. At 0 retail still starts it, silent; ours skips it. It plays under a handle of its own
+    /// (ours), so its task can wait for it (`call_heard`).
     pub fn play_call(&mut self, id: u32) {
-        if self.call_level > 0.0 {
-            self.se_at(id, 127, self.call_level);
+        if self.call_level <= 0.0 || self.status.voices.load(std::sync::atomic::Ordering::Relaxed) >= self.max_se {
+            return;
         }
+        let level = ((127.0 * self.effects * self.call_level) as i32).clamp(0, 127) as u8;
+        self.pending.borrow_mut().insert(CALL);
+        let _ = self.tx.send(Req::Voice { id, level, pan: 0x40, handle: CALL, limit: 0 });
+    }
+
+    /// For the call's task (FUN_100381d0): the call level is on (DAT_10351710), and the call's voice still plays
+    /// (FUN_100367f0).
+    pub fn call_heard(&self) -> (bool, bool) {
+        (self.call_level > 0.0, self.alive().contains(&CALL))
     }
 
     fn se_at(&mut self, id: u32, level: i32, event: f32) {
