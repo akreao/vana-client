@@ -1,5 +1,7 @@
 //! Cloth: the wind gusts (FUN_10188a50) and the cloth meshes' particles (FUN_10023290 / FUN_10023700 /
 //! FUN_10023bd0 / FUN_10024900). Retail steps both once a frame at its 30 fps; ours steps them on a 30 Hz clock.
+//! The game's particles step on the GPU (render/cloth.rs, the same loops); `Cloth` here is the reference it is
+//! tested against, and cloth-shot's.
 
 use crate::dat::character::{BoneXf, ClothSpec, Influence, MeshPart, Skeleton};
 use glam::{Mat4, Vec3};
@@ -103,6 +105,14 @@ impl Wind {
     }
 }
 
+/// What the client keeps of an actor's cloth, whose particles step on the GPU (render/cloth.rs): the wind step it
+/// last took and where the model stood then.
+#[derive(Clone, Copy, Debug)]
+pub struct Track {
+    pub tick: u64,
+    pub at: Vec3,
+}
+
 /// A particle (0x3c bytes in retail): position, last position, normal, in the world.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Particle {
@@ -116,7 +126,8 @@ pub struct Particle {
 pub struct Sheet {
     pub part: usize,
     pub p: Vec<Particle>,
-    sphere_prev: Vec<Option<Vec3>>,
+    /// The spheres' last centres (instance +0x48).
+    pub(crate) sphere_prev: Vec<Option<Vec3>>,
 }
 
 /// A model's cloth, built when the model is (FUN_10025010 sets the reset flag only there).
@@ -124,9 +135,6 @@ pub struct Sheet {
 pub struct Cloth {
     pub sheets: Vec<Sheet>,
     reset: bool,
-    /// The wind step it last took, and where the model stood then.
-    pub tick: u64,
-    pub at: Vec3,
 }
 
 /// What a step reads from the actor.
@@ -155,7 +163,7 @@ impl Cloth {
                 })
             })
             .collect();
-        (!sheets.is_empty()).then_some(Self { sheets, reset: true, tick: u64::MAX, at: Vec3::ZERO })
+        (!sheets.is_empty()).then_some(Self { sheets, reset: true })
     }
 
     /// FUN_10023290 for each cloth mesh: the first step snaps every particle to the skin; later ones skin the pinned
@@ -187,22 +195,6 @@ impl Cloth {
             normals(spec, &mut sh.p);
         }
         self.reset = false;
-    }
-
-    /// The particles hold positions: the first step (the snap to the skin) has run.
-    pub fn placed(&self) -> bool {
-        !self.reset
-    }
-
-    /// FUN_100231f0 (the actor off screen): every particle moves with the actor, nothing simulated.
-    pub fn carry(&mut self, moved: Vec3) {
-        if self.reset {
-            return;
-        }
-        for q in self.sheets.iter_mut().flat_map(|s| s.p.iter_mut()) {
-            q.cur += moved;
-            q.prev += moved;
-        }
     }
 }
 

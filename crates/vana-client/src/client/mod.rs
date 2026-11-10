@@ -5743,7 +5743,7 @@ struct Actor {
     anim_fresh: bool,
     anim_held: Option<AnimHeld>,
     /// Its model's cloth (client/cloth.rs), keyed by the model it was built for.
-    cloth: Option<(usize, cloth::Cloth)>,
+    cloth: Option<(usize, cloth::Track)>,
 }
 
 /// The pose an actor was last skinned with: its motion frames (with their animations' addresses to notice a change),
@@ -17923,54 +17923,38 @@ impl App {
                     g.lights = w.ground.as_ref().map_or([0; 4], |gr| gr.lights(pos));
                     lamps::offer(&w.lamps.list, pos, &mut g.lights);
                     g.area = actor_area(w.entities.get(id), w.ground.as_ref().and_then(|gr| gr.area(pos))).unwrap_or(0);
-                    // The cloth (client/cloth.rs): a step on each tick of the 30 Hz clock, on screen simulated
-                    // (FUN_10023290), off screen carried along (FUN_100231f0). A frame Misc. 2's animation frame rate
-                    // skips never reaches FUN_10023290, so the step waits for the next skinned frame *(inf: retail may
-                    // drop that tick instead)*.
+                    // The cloth (stepped on the GPU from the pose, render/cloth.rs; client/cloth.rs the reference): a step
+                    // on each tick of the 30 Hz clock, on screen simulated (FUN_10023290), off screen carried along
+                    // (FUN_100231f0). A frame Misc. 2's animation frame rate skips never reaches FUN_10023290, so the
+                    // step waits for the next skinned frame *(inf: retail may drop that tick instead)*.
                     let model_key = Arc::as_ptr(&ch) as usize;
                     if a.cloth.as_ref().is_none_or(|(k, _)| *k != model_key) {
-                        a.cloth = cloth::Cloth::new(&ch.parts).map(|c| (model_key, c));
+                        a.cloth = ch
+                            .parts
+                            .iter()
+                            .any(|p| p.sim.is_some())
+                            .then_some((model_key, cloth::Track { tick: u64::MAX, at: Vec3::ZERO }));
                     }
-                    g.cloth.clear();
+                    let mut cloth_tick = None;
                     if let Some((_, c)) = &mut a.cloth {
                         let at = model.w_axis.truncate();
+                        let mut tick = crate::render::cloth::Tick::None;
                         if c.tick != wind.0 && !skipped {
                             // FUN_100c63d0: a move under 0.01 counts as none.
                             let d = at - c.at;
                             let moved = if d.length() < 0.01 { Vec3::ZERO } else { d };
-                            if drawn && visible.contains(id) {
-                                let bones = if a.bones.is_empty() { pose_now() } else { a.bones.clone() };
+                            tick = if drawn && visible.contains(id) {
                                 // Actor +0x17c (FUN_100a4ed0): no wind on a covered floor (MZB object flags bit 2).
                                 let covered = w.ground.as_ref().is_some_and(|g| g.surface(pos).1);
-                                let f = cloth::Frame {
-                                    skeleton: &ch.skeleton,
-                                    bones: &bones,
-                                    model,
-                                    moved,
-                                    wind: (!covered).then_some((wind.1, wind.2)),
-                                };
-                                c.step(&ch.parts, &f);
+                                crate::render::cloth::Tick::Step { moved, wind: (!covered).then_some((wind.1, wind.2)) }
                             } else {
-                                c.carry(moved);
-                            }
+                                crate::render::cloth::Tick::Carry { moved }
+                            };
                             (c.tick, c.at) = (wind.0, at);
                         }
-                        // Ours: between steps the particles ride along with the actor; then into model space. Before the
-                        // first step they hold no positions and the cloth draws skinned.
-                        let inv = model.inverse();
-                        let ride = at - c.at;
-                        let mut n = 0;
-                        for sh in c.sheets.iter().filter(|_| c.placed()) {
-                            if n + sh.p.len() > crate::render::MAX_CLOTH {
-                                continue;
-                            }
-                            n += sh.p.len();
-                            for q in &sh.p {
-                                g.cloth.push(inv.transform_point3(q.cur + ride).extend(1.0).to_array());
-                                g.cloth
-                                    .push(inv.transform_vector3(q.normal).normalize_or_zero().extend(1.0).to_array());
-                            }
-                        }
+                        // Ours: between steps the particles ride along with the actor. Before the first step they hold
+                        // no positions and the cloth draws skinned.
+                        cloth_tick = Some((tick, at - c.at));
                     }
                     if drawn {
                         let files: Vec<_> = extra.iter().map(|(_, f)| f.clone()).collect();
@@ -18030,6 +18014,10 @@ impl App {
                                 }
                             }
                         }
+                    }
+                    // After the pose: the step reads this frame's bones in the pose region.
+                    if let Some((tick, ride)) = cloth_tick {
+                        r.cloth(g, tick, drawn.then_some((model, ride)));
                     }
                 }
                 // Test 6: the occlusion results, a frame or two late, drop actors hidden behind scenery.
