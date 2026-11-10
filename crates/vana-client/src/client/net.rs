@@ -6,7 +6,7 @@ use crate::net::map::compress::Codec;
 use crate::net::map::session::{MapSession, SubPacket, build};
 use anyhow::Result;
 use std::net::{Ipv4Addr, SocketAddr};
-use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering, Ordering::Relaxed};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -1682,6 +1682,40 @@ fn run(
     }
 }
 
+/// One map server session's state, shared by its steps (session()).
+struct Session<'a> {
+    addr: SocketAddr,
+    login: &'a MapLogin,
+    account: &'a str,
+    tx: &'a Sender<NetEvent>,
+    rx: &'a Receiver<NetCommand>,
+    me: &'a Mutex<SelfState>,
+    stats: &'a NetStats,
+    hooks: &'a AtomicU8,
+    sess: u32,
+    map: MapSession,
+    /// The session's bytes each way already counted into the stats.
+    rx_seen: u64,
+    tx_seen: u64,
+    /// FFXiMain sends the plain login every 400 ms until the zone-in (s2c 0x00A) is handled, not just any datagram.
+    tries: u32,
+    answered: bool,
+    zoned: bool,
+    queue: Vec<Vec<u8>>,
+    /// FUN_100fc3c0's per-id send times (char data +0x41b4), for the gated ids.
+    gate: SendGate,
+    last_send: Instant,
+    last_login: Instant,
+    my_index: u16,
+    npc_logged: u32,
+    /// Packets back from the mods' hooks (or injected), decoded before the next receive.
+    hooked_in: Vec<SubPacket>,
+    /// Batches still with the hooks each way (later ones follow them there, so the order holds when the hooks go
+    /// away).
+    away_in: usize,
+    away_out: usize,
+}
+
 fn session(
     addr: SocketAddr,
     login: &MapLogin,
@@ -1694,51 +1728,77 @@ fn session(
     hooks: &AtomicU8,
     sess: u32,
 ) -> Result<Outcome> {
-    use std::sync::atomic::Ordering::Relaxed;
     let mut map = MapSession::connect(addr, &login.key, codec.clone())?.or_key(login.old_key);
-    let (mut rx_seen, mut tx_seen) = (0u64, 0u64);
-    // FFXiMain sends the plain login every 400 ms until the zone-in (s2c 0x00A) is handled, not just any datagram.
-    let mut tries = 1u32;
     map.send_login(login.char_id, &login.name, account, 0)?;
-    let mut answered = false;
-    let mut zoned = false;
-    let mut queue: Vec<Vec<u8>> = Vec::new();
-    // FUN_100fc3c0's per-id send times (char data +0x41b4), for the gated ids.
-    let mut gate = SendGate::default();
-    let mut last_send = Instant::now();
-    let mut last_login = Instant::now();
-    let mut my_index = 0u16;
-    let mut npc_logged = 0u32;
-    // Packets back from the mods' hooks (or injected), decoded before the next receive; batches still with the hooks
-    // each way (later ones follow them there, so the order holds when the hooks go away).
-    let mut hooked_in: Vec<SubPacket> = Vec::new();
-    let (mut away_in, mut away_out) = (0usize, 0usize);
+    let now = Instant::now();
+    let mut s = Session {
+        addr,
+        login,
+        account,
+        tx,
+        rx,
+        me,
+        stats,
+        hooks,
+        sess,
+        map,
+        rx_seen: 0,
+        tx_seen: 0,
+        tries: 1,
+        answered: false,
+        zoned: false,
+        queue: Vec::new(),
+        gate: SendGate::default(),
+        last_send: now,
+        last_login: now,
+        my_index: 0,
+        npc_logged: 0,
+        hooked_in: Vec::new(),
+        away_in: 0,
+        away_out: 0,
+    };
     loop {
-        let incoming = if !hooked_in.is_empty() {
-            Some(std::mem::take(&mut hooked_in))
+        if let Some(packets) = s.receive()? {
+            for p in packets {
+                if let Some(out) = s.decode(p)? {
+                    return Ok(out);
+                }
+            }
+        }
+        s.retry_login()?;
+        s.commands()?;
+        s.send_due()?;
+    }
+}
+
+impl Session<'_> {
+    /// The next batch to decode: one back from the hooks first, else a datagram's (none while it goes to the hooks).
+    fn receive(&mut self) -> Result<Option<Vec<SubPacket>>> {
+        Ok(if !self.hooked_in.is_empty() {
+            Some(std::mem::take(&mut self.hooked_in))
         } else {
             // A batch with the hooks comes back between receives: look for it sooner then.
-            let wait = if away_in + away_out > 0 { 2 } else { 20 };
-            let got = map.recv(Duration::from_millis(wait))?;
+            let wait = if self.away_in + self.away_out > 0 { 2 } else { 20 };
+            let got = self.map.recv(Duration::from_millis(wait))?;
             // Only datagrams that decode count (recv adds them).
-            stats.received.fetch_add(map.bytes_in - rx_seen, Relaxed);
-            rx_seen = map.bytes_in;
+            self.stats.received.fetch_add(self.map.bytes_in - self.rx_seen, Relaxed);
+            self.rx_seen = self.map.bytes_in;
             match got {
                 Some(packets) => {
-                    answered = true;
-                    stats.last_rx_ms.store(stats.now_ms(), Relaxed);
+                    self.answered = true;
+                    self.stats.last_rx_ms.store(self.stats.now_ms(), Relaxed);
                     // A batch holding an id a mod hooks goes to the main thread first and comes back as Decode (and
                     // every batch after it while one is away, so the order holds).
-                    let hooked = hooks.load(Ordering::Relaxed) & HOOK_IN != 0
-                        && packets.iter().any(|p| stats.hooked(false, p.id));
-                    if hooked || away_in > 0 {
-                        away_in += 1;
-                        tx.send(NetEvent::RawIn(sess, packets))?;
+                    let hooked = self.hooks.load(Ordering::Relaxed) & HOOK_IN != 0
+                        && packets.iter().any(|p| self.stats.hooked(false, p.id));
+                    if hooked || self.away_in > 0 {
+                        self.away_in += 1;
+                        self.tx.send(NetEvent::RawIn(self.sess, packets))?;
                         None
                     } else {
-                        if hooks.load(Ordering::Relaxed) & HOOK_LAST != 0 {
+                        if self.hooks.load(Ordering::Relaxed) & HOOK_LAST != 0 {
                             for p in &packets {
-                                stats.keep_last(false, &p.data);
+                                self.stats.keep_last(false, &p.data);
                             }
                         }
                         Some(packets)
@@ -1746,757 +1806,760 @@ fn session(
                 }
                 None => None,
             }
-        };
-        if let Some(packets) = incoming {
-            for p in packets {
-                match p.id {
-                    // A zone-in once in the session is ignored (FUN_100fa5c0: error 0x10 outside state 2).
-                    0x00A if zoned => log::info!("map: a repeated zone-in ignored"),
-                    0x00A => {
-                        map.zoned_in(&p);
-                        let pos = [p.f32(12), p.f32(16), p.f32(20)];
-                        let (scene, myroom) = scene_of(&p);
-                        *me.lock().unwrap() = SelfState { pos, dir: p.u8(11), moving: false, move_time: 0, target: 0 };
-                        zoned = true;
-                        my_index = p.u16(8);
-                        queue.push(build(0x00C, &[0u8; 8]));
-                        queue.push(build(0x011, &[2, 0, 0, 0]));
-                        // Ours: the GM level and command list (c2s 0x1F0), only to a private server and only with GM
-                        // Window on (a server without the extension logs an unknown packet).
-                        if login.lsb.is_some() && stats.gm_window.load(Relaxed) {
-                            queue.push(build(0x1F0, &super::gm::CATALOG_REQUEST));
-                        }
-                        // EventNum @0x62, EventPara @0x64, EventMode @0x66, EventNo @0x40: the client starts
-                        // the login event itself, on the player (FUN_10094ea0).
-                        let (event_num, event_para) = (p.u16(0x62), p.u16(0x64));
-                        let event = (event_num != 0).then(|| EventStart {
-                            target: p.u32(4),
-                            index: p.u16(8),
-                            zone: event_num,
-                            event: event_para,
-                            mode: p.u16(0x66),
-                            zone2: p.u16(0x40),
-                            login: true,
-                            ..Default::default()
-                        });
-                        tx.send(NetEvent::ZoneIn {
-                            zone: p.u32(48) as u16,
-                            pos,
-                            dir: p.u8(11),
-                            char_id: p.u32(4),
-                            index: p.u16(8),
-                            name: text(&p, 132, 16),
-                            look: look_at(&p, 68),
-                            motion: motion_state(&p),
-                            game_time: p.u32(0x3C),
-                            weather: p.u16(0x68),
-                            music: std::array::from_fn(|i| p.u16(0x56 + 2 * i)),
-                            event,
-                            area: area_line(&p),
-                            sub_map: if p.u16(0x60) != scene && myroom.is_none() { p.u16(0x60) } else { 0 },
-                            scene,
-                            myroom,
-                            room_flag: matches!(p.u32(0x80), 1 | 4 | 5),
-                            dead_counter: p.u32(0xA4),
-                            play_time: p.u32(0xA0),
-                            mog_zone: p.u8(0xaf) & 1 != 0,
-                            send_count: p.u16(0xac),
-                            ship: ship_data(&p),
-                            monstrosity: p.u16(0x7E) != 0,
-                        })?;
-                    }
-                    // FUN_100fb730: 4 cancels a logout (nothing sent); otherwise 0x00D goes out with the old key, and 2
-                    // (zone change) and 3 (Mog House) reconnect to @8 / @0xC, each kept when 0; the rest end the session.
-                    0x00B if p.u8(4) == 4 => log::info!("map: logout cancelled"),
-                    0x00B => {
-                        let state = p.u8(4);
-                        map.send(&[build(0x00D, &[0u8; 4])])?;
-                        if matches!(state, 2 | 3) {
-                            let ip = match p.u32(8) {
-                                0 => addr.ip(),
-                                ip => Ipv4Addr::from(ip.to_le_bytes()).into(),
-                            };
-                            let port = match p.u32(12) as u16 {
-                                0 => addr.port(),
-                                port => port,
-                            };
-                            log::info!("map: zone change (0x00B state {state}) to {ip}:{port}");
-                            return Ok(Outcome::Zone(SocketAddr::new(ip, port), map.key20()));
-                        }
-                        tx.send(NetEvent::Logout { state: state as u32 })?;
-                        return Ok(Outcome::Done);
-                    }
-                    0x00D => tx.send(NetEvent::Entity(entity(&p, EntityKind::Player)))?,
-                    0x037 => {
-                        let status = p.u8(0x30);
-                        // u32 @0x34 >> 3: the pet's ActIndex (MODLOG "Effects filter").
-                        // FUN_1009d0f0: icon i = hi << 8 | lo, none when lo 0xff with hi 0.
-                        let icons = std::array::from_fn(|i| {
-                            let (lo, hi) = (p.u8(4 + i) as u16, (p.u8(0x4C + i / 4) as u16 >> (2 * (i % 4))) & 3);
-                            if lo == 0xff && hi == 0 { 0xffff } else { hi << 8 | lo }
-                        });
-                        let speed = ((p.u32(0x2C) & 0xfff).min(255) as u8, (p.u32(0x2C) >> 17) as u8);
-                        tx.send(NetEvent::SelfStatus {
-                            speed,
-                            status,
-                            hpp: (p.u32(0x28) >> 16) as u8,
-                            dead: (p.u32(0x3C), p.u32(0x40)),
-                            pet: (p.u32(0x34) >> 3) as u16,
-                            flags: p.u32(0x28),
-                            icons,
-                            team: (p.u32(0x34) >> 21) as u8,
-                            fellow: p.u16(0x48),
-                            plate: self_plate(&p),
-                            ride: ((p.u32(0x28) >> 13 & 7) as u8, if p.data.len() > 0x5b { p.u8(0x5b) } else { 0 }),
-                            indi: if p.data.len() > 0x58 { p.u8(0x58) & 0x7f } else { 0x10 },
-                            fish_timer: if p.data.len() > 0x4b { p.u16(0x4a) } else { 0 },
-                            gate: if p.data.len() > 0x5a { p.u8(0x5a) >> 4 } else { 0 },
-                            costume: if p.data.len() > 0x45 { p.u16(0x44) } else { 0 },
-                        })?;
-                    }
-                    // FUN_10098f90: 5 x {u32 UniqueNo, u16 ActIndex, pad, u64 bits, u8 icons[32]}; icon = (hi << 8 | lo) &
-                    // 0x3ff, none when lo 0xff with hi 0.
-                    0x076 => {
-                        let rows = (0..5)
-                            .map(|k| 4 + k * 48)
-                            .filter(|&o| p.u32(o) != 0)
-                            .map(|o| {
-                                let icons = std::array::from_fn(|i| {
-                                    let (lo, hi) =
-                                        (p.u8(o + 16 + i) as u16, (p.u8(o + 8 + i / 4) as u16 >> (2 * (i % 4))) & 3);
-                                    if lo == 0xff && hi == 0 { 0xffff } else { (hi << 8 | lo) & 0x3ff }
-                                });
-                                (p.u32(o), icons)
-                            })
-                            .collect();
-                        tx.send(NetEvent::PartyEffects(rows))?;
-                    }
-                    0x075 => tx.send(NetEvent::Objective(p.data.to_vec()))?,
-                    0x063 if p.u16(4) == 2 => {
-                        tx.send(NetEvent::Merits { limit: p.u16(8), bits: p.u16(0xa), max: p.u8(0xc) })?
-                    }
-                    // Type 5: access @8, then per job 0..23 {u16 capacity, u16 current, u16 spent} from @0xc.
-                    0x063 if p.u16(4) == 5 => {
-                        let jobs = std::array::from_fn(|j| [0, 2, 4].map(|k| p.u16(0xc + 6 * j + k)));
-                        tx.send(NetEvent::JobPoints(p.u8(8), jobs))?
-                    }
-                    0x0B6 => {
-                        let end = p.data.len().min(0xc + 244);
-                        let raw = p.data.get(0xc..end).unwrap_or_default();
-                        let text = raw.iter().take_while(|&&c| c != 0).copied().collect();
-                        tx.send(NetEvent::GmMessage { id: p.u32(4), seq: p.u16(8), last: p.u16(0xa) == 0, text })?
-                    }
-                    0x08C => {
-                        let n = (p.u16(4) as usize).min(p.data.len().saturating_sub(8) / 4);
-                        tx.send(NetEvent::MeritList(
-                            (0..n).map(|i| (p.u16(8 + 4 * i), p.u8(10 + 4 * i), p.u8(11 + 4 * i))).collect(),
-                        ))?
-                    }
-                    0x08E if p.data.len() >= 0x68 => tx.send(NetEvent::AlterEgo(super::aepoints::AeData {
-                        points: p.u16(4),
-                        upgrades: std::array::from_fn(|i| p.u8(8 + i)),
-                        costs: std::array::from_fn(|i| p.u16(0x28 + 2 * i)),
-                    }))?,
-                    0x08D => {
-                        let n = (p.data.len().saturating_sub(4) / 4).min(64);
-                        let recs = (0..n)
-                            .map(|i| (p.u16(4 + 4 * i), p.u16(6 + 4 * i)))
-                            .filter(|r| r.0 != 0)
-                            .map(|(id, v)| (id, (v >> 10) as u8, v & 0x3ff))
-                            .collect();
-                        tx.send(NetEvent::JobPointList(recs))?
-                    }
-                    0x063 if p.u16(4) == 6 && p.data.len() >= 0x48 => {
-                        tx.send(NetEvent::PointMasks(p.data[8..0x48].try_into().unwrap()))?
-                    }
-                    0x063 if p.u16(4) == 7 && p.data.len() >= 0x8c => tx.send(NetEvent::UnityTable {
-                        week: p.u8(8),
-                        d: p.u8(9),
-                        data: p.data[0xc..0x8c].try_into().unwrap(),
-                    })?,
-                    0x063 if matches!(p.u16(4), 3 | 4) => {
-                        let n = if p.u16(4) == 3 { 212 } else { 172 };
-                        tx.send(NetEvent::Monstrosity { kind: p.u16(4), data: (0..n).map(|i| p.u8(8 + i)).collect() })?
-                    }
-                    0x063 if p.u16(4) == 9 => {
-                        tx.send(NetEvent::StatusTimers {
-                            ids: std::array::from_fn(|i| p.u16(8 + 2 * i)),
-                            ends: std::array::from_fn(|i| p.u32(0x48 + 4 * i)),
-                        })?;
-                    }
-                    0x05A => tx.send(NetEvent::Emote {
-                        caster: p.u32(4),
-                        target: p.u32(8),
-                        emote: p.u16(0x10),
-                        param: p.u16(0x12),
-                        mode: p.u8(0x16),
-                    })?,
-                    0x031 | 0x059 | 0x10E => tx.send(NetEvent::EventAnswer { id: p.id, data: p.data.clone() })?,
-                    0x0F4 => tx.send(NetEvent::TrackEntry(super::widescan::Entry {
-                        index: p.u16(4),
-                        level: p.u8(6),
-                        kind: p.u8(7) & 7,
-                        dx: p.u16(8) as i16,
-                        dz: p.u16(0xa) as i16,
-                        name: text(&p, 0xc, 16),
-                    }))?,
-                    0x0F5 => tx.send(NetEvent::TrackPos {
-                        index: p.u16(0x12),
-                        level: p.u8(0x10),
-                        pos: [p.f32(4), p.f32(8), p.f32(0xc)],
-                        state: p.u32(0x14),
-                    })?,
-                    0x0F6 => tx.send(NetEvent::TrackState(p.u32(4)))?,
-                    0x0A0 => tx.send(NetEvent::MapGroup {
-                        id: p.u32(4),
-                        zone: p.u16(8),
-                        pos: [p.f32(0xc), p.f32(0x10), p.f32(0x14)],
-                    })?,
-                    0x0BF => tx.send(NetEvent::Registration { index: p.u32(0xC), result: p.u16(6) })?,
-                    0x0F9 => tx.send(NetEvent::ResOffer { kind: p.u16(0xA) })?,
-                    0x110 => tx.send(NetEvent::RoeUnity {
-                        sparks: p.u32(4) & 0xff_ffff,
-                        deeds: p.u16(8),
-                        plaudits: p.u16(0xa),
-                        rot: std::array::from_fn(|i| p.u8(0xc + i)),
-                    })?,
-                    0x111 => tx.send(NetEvent::RoeActive(std::array::from_fn(|i| p.u32(4 + 4 * i))))?,
-                    0x112 => {
-                        tx.send(NetEvent::RoeLog { offset: p.u16(0x84), data: std::array::from_fn(|i| p.u8(4 + i)) })?
-                    }
-                    0x056 => tx.send(NetEvent::MissionLog {
-                        port: p.u16(0x24),
-                        data: std::array::from_fn(|i| p.u32(4 + 4 * i)),
-                    })?,
-                    0x0B4 => tx.send(NetEvent::ConfSys(std::array::from_fn(|i| p.u8(4 + i))))?,
-                    0x0E1 => tx.send(NetEvent::GroupId(p.u32(4)))?,
-                    0x108 => tx.send(NetEvent::BazaarShopper {
-                        state: p.u32(8),
-                        hide: p.u16(0xc),
-                        name: text(&p, 0x10, 16),
-                    })?,
-                    0x10A => {
-                        tx.send(NetEvent::BazaarSale { count: p.u32(4), item: p.u16(8), name: text(&p, 0xa, 16) })?
-                    }
-                    0x105 => tx.send(NetEvent::BazaarItem {
-                        price: p.u32(4),
-                        count: p.u32(8),
-                        tax: p.u16(0xc),
-                        item: p.u16(0xe),
-                        index: p.u8(0x10),
-                        attr: std::array::from_fn(|i| p.u8(0x11 + i)),
-                    })?,
-                    0x106 => tx.send(NetEvent::BazaarBuy { state: p.u32(4), name: text(&p, 8, 16) })?,
-                    0x107 => tx.send(NetEvent::BazaarClosed { name: text(&p, 4, 16) })?,
-                    0x109 => tx.send(NetEvent::BazaarSold {
-                        count: p.u32(8),
-                        owner: p.u16(0xe),
-                        name: text(&p, 0x10, 16),
-                        index: p.u8(0x20),
-                    })?,
-                    0x115 => tx.send(NetEvent::Fish(super::fishing::FishParams {
-                        stamina: p.u16(4),
-                        delay: p.u16(6),
-                        regen: p.u16(8),
-                        moves: p.u16(0xa),
-                        damage: p.u16(0xc),
-                        heal: p.u16(0xe),
-                        time: p.u16(0x10),
-                        sense: p.u8(0x12),
-                        special: p.u32(0x14),
-                    }))?,
-                    0x116 => tx.send(NetEvent::EquipSetValid(std::array::from_fn(|i| {
-                        std::array::from_fn(|k| p.u8(4 + 4 * i + k))
-                    })))?,
-                    0x117 => tx.send(NetEvent::EquipSetRes {
-                        count: p.u8(4),
-                        changed: std::array::from_fn(|i| std::array::from_fn(|k| p.u8(8 + 4 * i + k))),
-                        equipped: std::array::from_fn(|i| std::array::from_fn(|k| p.u8(0x48 + 4 * i + k))),
-                    })?,
-                    0x11B => tx.send(NetEvent::LockStyleFlag(p.u8(4)))?,
-                    0x11C => tx.send(NetEvent::LockStyleError(
-                        (0..p.u8(4).min(16) as usize).map(|i| p.u16(8 + 2 * i)).collect(),
-                    ))?,
-                    0x113 | 0x118 => {
-                        tx.send(NetEvent::Currencies { mode: if p.id == 0x113 { 1 } else { 2 }, data: p.data.clone() })?
-                    }
-                    0x11D => tx.send(NetEvent::PartyRequest { status: p.u8(0xb), name: text(&p, 0xc, 16) })?,
-                    0x077 if p.u8(4) & 1 != 0 => {
-                        tx.send(NetEvent::EntityVis((0..32).map(|k| p.u32(8 + 4 * k)).collect()))?
-                    }
-                    0x078 => tx.send(NetEvent::PollStart {
-                        name: text(&p, 0xe, 15),
-                        kind: p.u8(0x1d),
-                        text: text(&p, 0x1e, p.data.len().saturating_sub(0x1e)),
-                    })?,
-                    0x079 => tx.send(NetEvent::PollState {
-                        votes: std::array::from_fn(|i| p.u16(8 + 2 * i)),
-                        kind: p.u8(0x1a),
-                        state: p.u8(0x1b),
-                        questions: p.u8(0x1c),
-                        name: text(&p, 0x1d, 15),
-                        text: text(&p, 0x2c, p.data.len().saturating_sub(0x2c)),
-                    })?,
-                    0x047 => tx.send(NetEvent::Translate {
-                        item: p.u16(4),
-                        from: p.u8(6),
-                        to: p.u8(7),
-                        from_text: text(&p, 8, 64),
-                        to_text: text(&p, 0x48, 64),
-                    })?,
-                    0x049 => tx.send(NetEvent::ItemSearch { item: p.u16(4), flag: p.u8(6) })?,
-                    0x042 => tx.send(NetEvent::BlackEdit { id: p.u32(4), name: text(&p, 8, 16), mode: p.u8(0x18) })?,
-                    0x041 => tx.send(NetEvent::Blacklist {
-                        stat: p.u8(0xf4),
-                        entries: (0..p.u8(0xf5).min(12) as usize)
-                            .map(|k| (p.u32(4 + 0x14 * k), text(&p, 8 + 0x14 * k, 16)))
-                            .collect(),
-                    })?,
-                    0x044 => tx.send(NetEvent::ExtJob((0..0x9c).map(|i| p.u8(4 + i)).collect()))?,
-                    0x0DC => tx.send(NetEvent::Invite {
-                        anon: p.u8(0xa),
-                        kind: p.u8(0xb),
-                        name: text(&p, 0xc, 16),
-                        race: p.u16(0x1c),
-                    })?,
-                    0x0AE => tx.send(NetEvent::Mounts(p.u32(4) as u64 | (p.u32(8) as u64) << 32))?,
-                    0x119
-                        if {
-                            let _ = tx.send(NetEvent::MountRecast(p.u32(0xfc)));
-                            false
-                        } => {}
-                    0x068 if p.u8(4) & 0x3f == 4 => tx.send(NetEvent::PetSync((p.u16(0xc) != 0).then(|| PetSync {
-                        index: p.u16(0xc),
-                        hpp: p.u8(0xe),
-                        mpp: p.u8(0xf),
-                        tp: p.u16(0x10),
-                        target: p.u32(0x14),
-                    })))?,
-                    0x119 => tx.send(NetEvent::AbilityRecasts(
-                        (0..31)
-                            .map(|i| {
-                                (
-                                    p.u8(4 + 8 * i + 3) as u16,
-                                    p.u16(4 + 8 * i),
-                                    p.u8(4 + 8 * i + 2),
-                                    p.u16(4 + 8 * i + 4) as i16,
-                                )
-                            })
-                            .collect(),
-                    ))?,
-                    0x0AA => tx.send(NetEvent::MagicKnown((0..128).map(|i| p.u8(4 + i)).collect()))?,
-                    0x0AC => tx.send(NetEvent::CommandsKnown((0..224).map(|i| p.u8(4 + i)).collect()))?,
-                    0x0AD => tx.send(NetEvent::Dungeon((0..0x80).map(|i| p.u8(4 + i)).collect()))?,
-                    0x0DF => {
-                        if p.u32(4) == login.char_id {
-                            tx.send(NetEvent::Vitals {
-                                hp: p.u32(8),
-                                mp: p.u32(12),
-                                tp: p.u32(16),
-                                hpp: p.u8(0x16),
-                                mpp: p.u8(0x17),
-                            })?;
-                        }
-                        let jobs = std::array::from_fn(|i| p.u8(0x20 + i));
-                        tx.send(NetEvent::PartyAttr(super::party::AttrUpdate {
-                            id: p.u32(4),
-                            index: p.u16(0x14),
-                            hp: p.u32(8),
-                            mp: p.u32(12),
-                            tp: p.u32(16),
-                            hpp: p.u8(0x16),
-                            mpp: p.u8(0x17),
-                            jobs,
-                            mon: p.u16(0x1c),
-                            mon_ids: [p.u8(0x1e), p.u8(0x1f)],
-                        }))?;
-                    }
-                    // Kinds 0 (party) and 5 (alliance) share list 0; LSB sends no others.
-                    0x0C8 if matches!(p.u8(4), 0 | 5) => {
-                        let entries = (0..20)
-                            .map(|k| (p.u32(8 + 12 * k), p.u16(12 + 12 * k), p.u8(14 + 12 * k), p.u16(16 + 12 * k)))
-                            .collect();
-                        tx.send(NetEvent::PartyTable(entries))?;
-                    }
-                    0x0DD | 0x0E2 if matches!(p.u8(0x1C), 0 | 5) => {
-                        let jobs = std::array::from_fn(|i| p.u8(0x22 + i));
-                        let u = super::party::ListUpdate {
-                            id: p.u32(4),
-                            index: p.u16(0x18),
-                            number: p.u8(0x1A),
-                            name: text(&p, 0x28, 16),
-                            hp: p.u32(8),
-                            mp: p.u32(12),
-                            tp: p.u32(16),
-                            hpp: p.u8(0x1D),
-                            mpp: p.u8(0x1E),
-                            zone: p.u16(0x20),
-                            flags: p.u32(0x14),
-                            jobs,
-                            moghouse: p.u8(0x1B) != 0,
-                        };
-                        tx.send(NetEvent::PartyList(u, p.id == 0x0E2))?;
-                    }
-                    0x029 => tx.send(NetEvent::Battle(battle_message(&p)))?,
-                    0x02D => tx.send(NetEvent::Battle(battle_message2(&p)))?,
-                    0x028 => tx.send(NetEvent::Action(crate::net::action::parse(&p.data)))?,
-                    0x038 => tx.send(NetEvent::Scheduler {
-                        actor: p.u32(4),
-                        target: p.u32(8),
-                        name: p.u32(12).to_le_bytes(),
-                    })?,
-                    0x069 | 0x073 | 0x074 => tx.send(NetEvent::Racing { id: p.id, data: p.data.to_vec() })?,
-                    0x02F => tx.send(NetEvent::Dig { id: p.u32(4), index: p.u16(8), flags: p.u8(0xa) })?,
-                    0x03A => tx.send(NetEvent::MagicScheduler {
-                        ids: (p.u32(4), p.u32(8)),
-                        indices: (p.u16(0xc), p.u16(0xe)),
-                        file: p.u16(0x10),
-                        kind: p.u8(0x12),
-                    })?,
-                    0x039 => tx.send(NetEvent::MapScheduler {
-                        ids: (p.u32(4), p.u32(8)),
-                        indices: (p.u16(0x10), p.u16(0x12)),
-                        name: p.u32(12).to_le_bytes(),
-                    })?,
-                    0x051 => tx.send(NetEvent::SelfLook(look_at(&p, 4)))?,
-                    0x00E => {
-                        // The first NPC updates of a session, for comparing servers: index, id, mask, the look @0x30.
-                        if npc_logged < 400 {
-                            npc_logged += 1;
-                            let look = p.data.get(0x30..p.data.len().min(0x44)).unwrap_or_default();
-                            log::info!(
-                                "0x00E index {:#05x} id {:08x} mask {:02x} ({:#x} bytes): look {}",
-                                p.u16(8),
-                                p.u32(4),
-                                p.u8(10),
-                                p.data.len(),
-                                hex::encode(look)
-                            );
-                        }
-                        tx.send(NetEvent::Entity(entity(&p, EntityKind::Npc)))?
-                    }
-                    0x057 => tx.send(NetEvent::Weather(p.u16(8), p.u16(0x0a)))?,
-                    // s2c 0x009 (LAB_100fbd40): MesNo @0xa, its parameters as "Para0 %u Para1 %u ..." text in Data @0xd.
-                    0x009 => {
-                        let data = text(&p, 0xd, p.data.len().saturating_sub(0xd));
-                        let d = std_data(&data);
-                        tx.send(NetEvent::MessageStd { id: p.u16(0xa), cas: d.0, para: d.1, strings: d.2 })?
-                    }
-                    0x053 => tx.send(NetEvent::SystemMessage { id: p.u16(0xc), para: p.u32(4), para2: p.u32(8) })?,
-                    0x03E => tx.send(NetEvent::ShopOpen { count: p.u16(4) })?,
-                    0x03C => {
-                        let n = p.data.len().saturating_sub(8) / 12;
-                        let entries = (0..n)
-                            .map(|k| {
-                                let o = 8 + 12 * k;
-                                (p.u32(o), p.u16(o + 4), p.u8(o + 6), p.u16(o + 8), p.u16(o + 0xa))
-                            })
-                            .collect();
-                        tx.send(NetEvent::ShopList { last: p.u8(6) & 1 != 0, entries })?
-                    }
-                    0x03F => tx.send(NetEvent::ShopBuy { index: p.u16(4), count: p.u32(8) })?,
-                    0x03D => tx.send(NetEvent::ShopSell {
-                        price: p.u32(4),
-                        slot: p.u8(8),
-                        kind: p.u8(9),
-                        count: p.u32(0xc),
-                    })?,
-                    0x086 => tx.send(NetEvent::GuildOpen { stat: p.u8(4), time: p.u32(8) })?,
-                    0x01D => tx.send(NetEvent::ItemsSettled(p.u8(4), p.u32(8)))?,
-                    0x062 => tx.send(NetEvent::SkillBase(std::array::from_fn(|i| p.u16(0x80 + 2 * i))))?,
-                    0x083 | 0x085 => {
-                        let n = (p.u8(0xf4) as usize).min(30);
-                        let entries = (0..n)
-                            .map(|k| {
-                                let o = 4 + 8 * k;
-                                (p.u16(o), p.u8(o + 2), p.u8(o + 3), p.u32(o + 4))
-                            })
-                            .collect();
-                        tx.send(NetEvent::GuildList { sell: p.id == 0x085, stat: p.u8(0xf5), entries })?
-                    }
-                    0x021 => tx.send(NetEvent::TradeRequest { id: p.u32(4), index: p.u16(8) })?,
-                    0x022 => tx.send(NetEvent::TradeResponse { id: p.u32(4), kind: p.u32(8), index: p.u16(0xc) })?,
-                    0x023 => tx.send(NetEvent::TradeTheirs {
-                        n: p.u32(4),
-                        counter: p.u16(8),
-                        item: p.u16(0xa),
-                        slot: p.u8(0xd),
-                        attr: std::array::from_fn(|k| p.u8(0xe + k)),
-                    })?,
-                    0x025 => {
-                        tx.send(NetEvent::TradeMine { n: p.u32(4), item: p.u16(8), slot: p.u8(0xa), inv: p.u8(0xb) })?
-                    }
-                    0x082 | 0x084 => tx.send(NetEvent::GuildResult {
-                        sell: p.id == 0x084,
-                        item: p.u16(4),
-                        count: p.u8(6),
-                        trade: p.u8(7) as i8,
-                    })?,
-                    0x0E0 => tx.send(NetEvent::LinkshellEquip { num: p.u8(4), index: p.u8(5), bag: p.u8(6) })?,
-                    0x0CC => tx.send(NetEvent::LinkshellMessage(p.data.clone()))?,
-                    0x048 => tx.send(NetEvent::Concierge(p.data.clone()))?,
-                    0x05E => tx.send(NetEvent::Conquest(p.data.clone()))?,
-                    0x071 => tx.send(NetEvent::Influence(p.data.clone()))?,
-                    0x0C9 => tx.send(NetEvent::InspectEquip(p.data.clone()))?,
-                    0x008 if p.data.len() >= 4 + 0x30 => {
-                        tx.send(NetEvent::KnownZones(p.data[4..4 + 0x30].try_into().unwrap()))?
-                    }
-                    0x0CA => tx.send(NetEvent::InspectMessage(p.data.clone()))?,
-                    0x04D => tx.send(NetEvent::Fragments(p.data.clone()))?,
-                    0x0D2 => tx.send(NetEvent::TrophyList(TrophyList {
-                        slot: p.u8(0x14),
-                        item: p.u16(0x10),
-                        qty: p.u32(4),
-                        target: p.u32(8),
-                        gold: p.u16(0xc),
-                        container: p.u8(0x16) != 0,
-                        entry: p.u8(0x15),
-                        start: p.u32(0x18),
-                        own_lot: if p.u16(0x1c) != 0 { p.u16(0x1e) as i16 } else { 0 },
-                        loot_id: p.u32(0x20),
-                        loot_point: p.u16(0x26),
-                        loot_name: text(&p, 0x28, 16),
-                    }))?,
-                    0x0D3 => tx.send(NetEvent::TrophySolution {
-                        slot: p.u8(0x14),
-                        judge: p.u8(0x15),
-                        loot: p.u32(4),
-                        loot_point: p.u16(0xe) as i16,
-                        entry: p.u32(8),
-                        entry_point: p.u16(0x12) as i16,
-                        entry_flg: p.u16(0x10) >> 15 != 0,
-                        loot_name: text(&p, 0x16, 16),
-                        entry_name: text(&p, 0x26, 16),
-                    })?,
-                    0x058 => tx.send(NetEvent::Assist { player: p.u32(4), target: p.u32(8) })?,
-                    0x055 if p.data.len() >= 0x86 => tx.send(NetEvent::KeyItems {
-                        table: p.u16(0x84),
-                        bits: std::array::from_fn(|i| p.u32(4 + 4 * i)),
-                        seen: std::array::from_fn(|i| p.u32(0x44 + 4 * i)),
-                    })?,
-                    0x05F => tx.send(NetEvent::Music { slot: p.u16(4), id: p.u16(6) })?,
-                    0x017 => {
-                        let (from, text) = chat_text(&p);
-                        tx.send(NetEvent::Chat { kind: p.u8(4), attr: p.u8(5), data: p.u16(6), from, text })?
-                    }
-                    0x032..=0x034 => tx.send(NetEvent::Event(event_start(&p)))?,
-                    0x05D => tx.send(NetEvent::EventStrings((0..4).map(|i| p.str(0x28 + 16 * i, 16)).collect()))?,
-                    0x05C => tx.send(NetEvent::EventParams(std::array::from_fn(|i| p.u32(4 + 4 * i))))?,
-                    0x052 => tx.send(NetEvent::EventRelease { mode: p.u8(4), event: (p.u32(4) >> 8) as u16 })?,
-                    0x05B | 0x065 => tx.send(NetEvent::Wpos {
-                        id: p.u32(0x10),
-                        pos: [p.f32(4), p.f32(8), p.f32(0xc)],
-                        dir: p.u8(0x17),
-                        mode: p.u8(0x16),
-                    })?,
-                    // 0x03B (handler LAB_100a1600): UniqueNo @4, ActIndex @8, MesNum @0xa; shown in the event message
-                    // window (mode 0x96), not printed. LSB never sends it.
-                    0x03B => tx.send(NetEvent::ZoneText(ZoneText {
-                        packet: 0x03B,
-                        actor: p.u32(4),
-                        index: p.u16(8),
-                        mes: p.u16(0xa),
-                        ..Default::default()
-                    }))?,
-                    0x036 => tx.send(NetEvent::ZoneText(ZoneText {
-                        packet: 0x036,
-                        actor: p.u32(4),
-                        index: p.u16(8),
-                        mes: p.u16(0xa),
-                        kind: p.u8(0xc),
-                        ..Default::default()
-                    }))?,
-                    0x02A => tx.send(NetEvent::ZoneText(ZoneText {
-                        packet: 0x02A,
-                        actor: p.u32(4),
-                        num: std::array::from_fn(|i| if i < 4 { p.u32(8 + 4 * i) as i32 } else { 0 }),
-                        index: p.u16(0x18),
-                        mes: p.u16(0x1a),
-                        kind: p.u8(0x1c),
-                        name: text(&p, 0x1e, 32),
-                        ..Default::default()
-                    }))?,
-                    // 0x027 (handler 0x100a1dc0): Num1[4] @0x10 -> num 0..3, Num2[4..7] @0x60 -> num 4..7 (Num2[0..3] unread),
-                    // String1 @0x20 -> string 0, String2 @0x40, Flags @0xe.
-                    0x027 => tx.send(NetEvent::ZoneText(ZoneText {
-                        packet: 0x027,
-                        actor: p.u32(4),
-                        index: p.u16(8),
-                        mes: p.u16(0xa),
-                        kind: p.u16(0xc).min(255) as u8,
-                        flags: p.u8(0xe),
-                        num: std::array::from_fn(|i| {
-                            if i < 4 { p.u32(0x10 + 4 * i) as i32 } else { p.u32(0x50 + 4 * i) as i32 }
-                        }),
-                        strings: vec![text(&p, 0x20, 32)],
-                        name2: text(&p, 0x40, 16),
-                        ..Default::default()
-                    }))?,
-                    // 0x043 (handler 0x100a1070): fishing's monster / chest; sName @0x10 -> string 0.
-                    0x043 => tx.send(NetEvent::ZoneText(ZoneText {
-                        packet: 0x043,
-                        actor: p.u32(4),
-                        index: p.u16(8),
-                        mes: p.u16(0xa),
-                        kind: p.u8(0xc),
-                        strings: vec![text(&p, 0x10, 16)],
-                        ..Default::default()
-                    }))?,
-                    0x067 if p.u8(4) & 0x3f == 3 => {
-                        tx.send(NetEvent::EntityMaster { index: p.u16(6), id: p.u32(8), master: p.u16(0xc) })?
-                    }
-                    0x067 if p.u8(4) == 2 => tx.send(NetEvent::CharSync {
-                        id: p.u32(8),
-                        owner: p.u32(0x20),
-                        floors: p.u8(0x27) & 1 != 0,
-                        open: p.u8(0x24) != 0,
-                        level: p.u8(0x25),
-                        sync: p.u8(0x10),
-                        custom: [p.u32(0x18), p.u32(0x1c)],
-                    })?,
-                    0x02E => tx.send(NetEvent::MogMenu)?,
-                    0x11A => tx.send(NetEvent::EmoteUnlocks { jobs: p.u32(4), chairs: p.u16(8) })?,
-                    0x11E => tx.send(NetEvent::Jump(p.u16(4)))?,
-                    0x1F0 => tx.send(NetEvent::GmCatalog(p.data.clone()))?,
-                    0x1F1 => tx.send(NetEvent::GmResult(p.data.clone()))?,
-                    0x030 => tx.send(NetEvent::SynthEffect {
-                        id: p.u32(4),
-                        index: p.u16(8),
-                        effect: p.u16(0xa) as i16,
-                        kind: p.u8(0xc) as i8,
-                        status: p.u8(0xd) as i8,
-                        timer: p.u16(0xe),
-                    })?,
-                    0x06F | 0x070 => {
-                        let a = super::synth::Answer {
-                            result: p.u8(4),
-                            grade: p.u8(5) as i8,
-                            count: p.u8(6),
-                            item: p.u16(8),
-                            breaks: std::array::from_fn(|i| p.u16(0xa + 2 * i)),
-                            name: if p.id == 0x070 { text(&p, 0x1e, 16) } else { String::new() },
-                            crystal: if p.id == 0x06F { p.u16(0x22) } else { 0 },
-                            materials: std::array::from_fn(|i| if p.id == 0x06F { p.u16(0x24 + 2 * i) } else { 0 }),
-                        };
-                        tx.send(if p.id == 0x06F { NetEvent::SynthResult(a) } else { NetEvent::SynthOthers(a) })?
-                    }
-                    0x04C => tx.send(NetEvent::Auc(super::auction::AucPacket::parse(&p.data)))?,
-                    0x04B => tx.send(NetEvent::Pbx(super::post::Pbx {
-                        cmd: p.u8(4),
-                        box_no: p.u8(5) as i8,
-                        post: p.u8(6) as i8,
-                        result: p.u8(0xc) as i8,
-                        res: [p.u8(0xd) as i8, p.u8(0xe) as i8, p.u8(0xf) as i8],
-                        slot: super::post::Slot {
-                            stat: p.u32(0x10),
-                            name: text(&p, 0x14, 16),
-                            work_no: p.u32(0x2c),
-                            item: p.u16(0x30),
-                            stack: p.u32(0x38),
-                            ext: std::array::from_fn(|i| p.u8(0x3c + i)),
-                        },
-                    }))?,
-                    0x01B => tx.send(NetEvent::JobInfo(super::moogle::JobInfo {
-                        main: p.u8(8),
-                        sub: p.u8(0xb),
-                        flags: p.u32(0xc),
-                        levels: std::array::from_fn(|n| if n < 16 { p.u8(0x10 + n) } else { p.u8(0x48 + n) }),
-                        sub_ok: p.u8(0x44) != 0,
-                        encumbrance: p.u32(0x60),
-                        thumbs: p.u8(0x64),
-                        mentor: p.u8(0x65),
-                        mastery: p.u8(0x66),
-                        ml_jobs: p.u32(0x68),
-                        ml_levels: std::array::from_fn(|n| p.u8(0x6c + n)),
-                    }))?,
-                    0x01C => tx.send(NetEvent::ItemMax(
-                        std::array::from_fn(|i| p.u8(4 + i)),
-                        std::array::from_fn(|i| p.u16(0x24 + 2 * i)),
-                    ))?,
-                    0x01E => tx.send(NetEvent::ItemNum { container: p.u8(8), index: p.u8(9), count: p.u32(4) })?,
-                    0x01F => tx.send(NetEvent::Item {
-                        container: p.u8(0xa),
-                        index: p.u8(0xb),
-                        id: p.u16(8),
-                        count: p.u32(4),
-                        ext: None,
-                        lock: p.u8(0xc),
-                        price: None,
-                    })?,
-                    0x020 => {
-                        let ext = std::array::from_fn(|k| p.u8(0x11 + k));
-                        tx.send(NetEvent::Item {
-                            container: p.u8(0xe),
-                            index: p.u8(0xf),
-                            id: p.u16(0xc),
-                            count: p.u32(4),
-                            ext: Some(ext),
-                            lock: p.u8(0x10),
-                            price: Some(p.u32(8)),
-                        })?
-                    }
-                    // GP_SERV_COMMAND_ITEM_SUBCONTAINER (LAB_100ec730): a mannequin's look, bytes 4..0x1b kept whole.
-                    0x026 => tx.send(NetEvent::MannequinLook { rec: std::array::from_fn(|k| p.u8(4 + k)) })?,
-                    0x04F => tx.send(NetEvent::EquipClear)?,
-                    0x050 => tx.send(NetEvent::Equip { index: p.u8(4), slot: p.u8(5), container: p.u8(6) })?,
-                    // CLISTATUS: hpmax @4, mpmax @8, jobs @0xc..0xf, bp_base @0x14, bp_adj @0x22, atk @0x30,
-                    // def @0x32, def_elem @0x34, su_lv @0x52, ilvl @0x55.
-                    0x061 => tx.send(NetEvent::CharStats(super::items::CharStats {
-                        hp_max: p.u32(4),
-                        mp_max: p.u32(8),
-                        main: (p.u8(0xc), p.u8(0xd)),
-                        sub: (p.u8(0xe), p.u8(0xf)),
-                        base: std::array::from_fn(|i| p.u16(0x14 + 2 * i) as i32),
-                        adj: std::array::from_fn(|i| p.u16(0x22 + 2 * i) as i16 as i32),
-                        atk: p.u16(0x30) as i16 as i32,
-                        def: p.u16(0x32) as i16 as i32,
-                        elem: std::array::from_fn(|i| p.u16(0x34 + 2 * i) as i16 as i32),
-                        su: p.u8(0x52),
-                        ilvl: p.u8(0x55),
-                        unity: p.u32(0x58),
-                        unity_flag: p.u32(0x60),
-                        unity_eval: p.u32(0x5c),
-                        exp: (p.u16(0x10), p.u16(0x12)),
-                        title: p.u16(0x44),
-                        rank: p.u16(0x46),
-                        rank_points: p.u16(0x48),
-                        home: p.u16(0x4a),
-                        nation: p.u8(0x50),
-                        ml: (p.u8(0x65), p.u8(0x66)),
-                        ml_exp: (p.u32(0x68), p.u32(0x6c)),
-                    }))?,
-                    _ => {}
+        })
+    }
+
+    /// One s2c sub-packet into its event; a logout or zone change ends the session.
+    fn decode(&mut self, p: SubPacket) -> Result<Option<Outcome>> {
+        match p.id {
+            // A zone-in once in the session is ignored (FUN_100fa5c0: error 0x10 outside state 2).
+            0x00A if self.zoned => log::info!("map: a repeated zone-in ignored"),
+            0x00A => {
+                self.map.zoned_in(&p);
+                let pos = [p.f32(12), p.f32(16), p.f32(20)];
+                let (scene, myroom) = scene_of(&p);
+                *self.me.lock().unwrap() = SelfState { pos, dir: p.u8(11), moving: false, move_time: 0, target: 0 };
+                self.zoned = true;
+                self.my_index = p.u16(8);
+                self.queue.push(build(0x00C, &[0u8; 8]));
+                self.queue.push(build(0x011, &[2, 0, 0, 0]));
+                // Ours: the GM level and command list (c2s 0x1F0), only to a private server and only with GM
+                // Window on (a server without the extension logs an unknown packet).
+                if self.login.lsb.is_some() && self.stats.gm_window.load(Relaxed) {
+                    self.queue.push(build(0x1F0, &super::gm::CATALOG_REQUEST));
                 }
+                // EventNum @0x62, EventPara @0x64, EventMode @0x66, EventNo @0x40: the client starts
+                // the login event itself, on the player (FUN_10094ea0).
+                let (event_num, event_para) = (p.u16(0x62), p.u16(0x64));
+                let event = (event_num != 0).then(|| EventStart {
+                    target: p.u32(4),
+                    index: p.u16(8),
+                    zone: event_num,
+                    event: event_para,
+                    mode: p.u16(0x66),
+                    zone2: p.u16(0x40),
+                    login: true,
+                    ..Default::default()
+                });
+                self.tx.send(NetEvent::ZoneIn {
+                    zone: p.u32(48) as u16,
+                    pos,
+                    dir: p.u8(11),
+                    char_id: p.u32(4),
+                    index: p.u16(8),
+                    name: text(&p, 132, 16),
+                    look: look_at(&p, 68),
+                    motion: motion_state(&p),
+                    game_time: p.u32(0x3C),
+                    weather: p.u16(0x68),
+                    music: std::array::from_fn(|i| p.u16(0x56 + 2 * i)),
+                    event,
+                    area: area_line(&p),
+                    sub_map: if p.u16(0x60) != scene && myroom.is_none() { p.u16(0x60) } else { 0 },
+                    scene,
+                    myroom,
+                    room_flag: matches!(p.u32(0x80), 1 | 4 | 5),
+                    dead_counter: p.u32(0xA4),
+                    play_time: p.u32(0xA0),
+                    mog_zone: p.u8(0xaf) & 1 != 0,
+                    send_count: p.u16(0xac),
+                    ship: ship_data(&p),
+                    monstrosity: p.u16(0x7E) != 0,
+                })?;
             }
+            // FUN_100fb730: 4 cancels a logout (nothing sent); otherwise 0x00D goes out with the old key, and 2
+            // (zone change) and 3 (Mog House) reconnect to @8 / @0xC, each kept when 0; the rest end the session.
+            0x00B if p.u8(4) == 4 => log::info!("map: logout cancelled"),
+            0x00B => {
+                let state = p.u8(4);
+                self.map.send(&[build(0x00D, &[0u8; 4])])?;
+                if matches!(state, 2 | 3) {
+                    let ip = match p.u32(8) {
+                        0 => self.addr.ip(),
+                        ip => Ipv4Addr::from(ip.to_le_bytes()).into(),
+                    };
+                    let port = match p.u32(12) as u16 {
+                        0 => self.addr.port(),
+                        port => port,
+                    };
+                    log::info!("map: zone change (0x00B state {state}) to {ip}:{port}");
+                    return Ok(Some(Outcome::Zone(SocketAddr::new(ip, port), self.map.key20())));
+                }
+                self.tx.send(NetEvent::Logout { state: state as u32 })?;
+                return Ok(Some(Outcome::Done));
+            }
+            0x00D => self.tx.send(NetEvent::Entity(entity(&p, EntityKind::Player)))?,
+            0x037 => {
+                let status = p.u8(0x30);
+                // u32 @0x34 >> 3: the pet's ActIndex (MODLOG "Effects filter").
+                // FUN_1009d0f0: icon i = hi << 8 | lo, none when lo 0xff with hi 0.
+                let icons = std::array::from_fn(|i| {
+                    let (lo, hi) = (p.u8(4 + i) as u16, (p.u8(0x4C + i / 4) as u16 >> (2 * (i % 4))) & 3);
+                    if lo == 0xff && hi == 0 { 0xffff } else { hi << 8 | lo }
+                });
+                let speed = ((p.u32(0x2C) & 0xfff).min(255) as u8, (p.u32(0x2C) >> 17) as u8);
+                self.tx.send(NetEvent::SelfStatus {
+                    speed,
+                    status,
+                    hpp: (p.u32(0x28) >> 16) as u8,
+                    dead: (p.u32(0x3C), p.u32(0x40)),
+                    pet: (p.u32(0x34) >> 3) as u16,
+                    flags: p.u32(0x28),
+                    icons,
+                    team: (p.u32(0x34) >> 21) as u8,
+                    fellow: p.u16(0x48),
+                    plate: self_plate(&p),
+                    ride: ((p.u32(0x28) >> 13 & 7) as u8, if p.data.len() > 0x5b { p.u8(0x5b) } else { 0 }),
+                    indi: if p.data.len() > 0x58 { p.u8(0x58) & 0x7f } else { 0x10 },
+                    fish_timer: if p.data.len() > 0x4b { p.u16(0x4a) } else { 0 },
+                    gate: if p.data.len() > 0x5a { p.u8(0x5a) >> 4 } else { 0 },
+                    costume: if p.data.len() > 0x45 { p.u16(0x44) } else { 0 },
+                })?;
+            }
+            // FUN_10098f90: 5 x {u32 UniqueNo, u16 ActIndex, pad, u64 bits, u8 icons[32]}; icon = (hi << 8 | lo) &
+            // 0x3ff, none when lo 0xff with hi 0.
+            0x076 => {
+                let rows = (0..5)
+                    .map(|k| 4 + k * 48)
+                    .filter(|&o| p.u32(o) != 0)
+                    .map(|o| {
+                        let icons = std::array::from_fn(|i| {
+                            let (lo, hi) = (p.u8(o + 16 + i) as u16, (p.u8(o + 8 + i / 4) as u16 >> (2 * (i % 4))) & 3);
+                            if lo == 0xff && hi == 0 { 0xffff } else { (hi << 8 | lo) & 0x3ff }
+                        });
+                        (p.u32(o), icons)
+                    })
+                    .collect();
+                self.tx.send(NetEvent::PartyEffects(rows))?;
+            }
+            0x075 => self.tx.send(NetEvent::Objective(p.data))?,
+            0x063 if p.u16(4) == 2 => {
+                self.tx.send(NetEvent::Merits { limit: p.u16(8), bits: p.u16(0xa), max: p.u8(0xc) })?
+            }
+            // Type 5: access @8, then per job 0..23 {u16 capacity, u16 current, u16 spent} from @0xc.
+            0x063 if p.u16(4) == 5 => {
+                let jobs = std::array::from_fn(|j| [0, 2, 4].map(|k| p.u16(0xc + 6 * j + k)));
+                self.tx.send(NetEvent::JobPoints(p.u8(8), jobs))?
+            }
+            0x0B6 => {
+                let end = p.data.len().min(0xc + 244);
+                let raw = p.data.get(0xc..end).unwrap_or_default();
+                let text = raw.iter().take_while(|&&c| c != 0).copied().collect();
+                self.tx.send(NetEvent::GmMessage { id: p.u32(4), seq: p.u16(8), last: p.u16(0xa) == 0, text })?
+            }
+            0x08C => {
+                let n = (p.u16(4) as usize).min(p.data.len().saturating_sub(8) / 4);
+                self.tx.send(NetEvent::MeritList(
+                    (0..n).map(|i| (p.u16(8 + 4 * i), p.u8(10 + 4 * i), p.u8(11 + 4 * i))).collect(),
+                ))?
+            }
+            0x08E if p.data.len() >= 0x68 => self.tx.send(NetEvent::AlterEgo(super::aepoints::AeData {
+                points: p.u16(4),
+                upgrades: std::array::from_fn(|i| p.u8(8 + i)),
+                costs: std::array::from_fn(|i| p.u16(0x28 + 2 * i)),
+            }))?,
+            0x08D => {
+                let n = (p.data.len().saturating_sub(4) / 4).min(64);
+                let recs = (0..n)
+                    .map(|i| (p.u16(4 + 4 * i), p.u16(6 + 4 * i)))
+                    .filter(|r| r.0 != 0)
+                    .map(|(id, v)| (id, (v >> 10) as u8, v & 0x3ff))
+                    .collect();
+                self.tx.send(NetEvent::JobPointList(recs))?
+            }
+            0x063 if p.u16(4) == 6 && p.data.len() >= 0x48 => {
+                self.tx.send(NetEvent::PointMasks(p.data[8..0x48].try_into().unwrap()))?
+            }
+            0x063 if p.u16(4) == 7 && p.data.len() >= 0x8c => self.tx.send(NetEvent::UnityTable {
+                week: p.u8(8),
+                d: p.u8(9),
+                data: p.data[0xc..0x8c].try_into().unwrap(),
+            })?,
+            0x063 if matches!(p.u16(4), 3 | 4) => {
+                let n = if p.u16(4) == 3 { 212 } else { 172 };
+                self.tx.send(NetEvent::Monstrosity { kind: p.u16(4), data: (0..n).map(|i| p.u8(8 + i)).collect() })?
+            }
+            0x063 if p.u16(4) == 9 => {
+                self.tx.send(NetEvent::StatusTimers {
+                    ids: std::array::from_fn(|i| p.u16(8 + 2 * i)),
+                    ends: std::array::from_fn(|i| p.u32(0x48 + 4 * i)),
+                })?;
+            }
+            0x05A => self.tx.send(NetEvent::Emote {
+                caster: p.u32(4),
+                target: p.u32(8),
+                emote: p.u16(0x10),
+                param: p.u16(0x12),
+                mode: p.u8(0x16),
+            })?,
+            0x031 | 0x059 | 0x10E => self.tx.send(NetEvent::EventAnswer { id: p.id, data: p.data })?,
+            0x0F4 => self.tx.send(NetEvent::TrackEntry(super::widescan::Entry {
+                index: p.u16(4),
+                level: p.u8(6),
+                kind: p.u8(7) & 7,
+                dx: p.u16(8) as i16,
+                dz: p.u16(0xa) as i16,
+                name: text(&p, 0xc, 16),
+            }))?,
+            0x0F5 => self.tx.send(NetEvent::TrackPos {
+                index: p.u16(0x12),
+                level: p.u8(0x10),
+                pos: [p.f32(4), p.f32(8), p.f32(0xc)],
+                state: p.u32(0x14),
+            })?,
+            0x0F6 => self.tx.send(NetEvent::TrackState(p.u32(4)))?,
+            0x0A0 => self.tx.send(NetEvent::MapGroup {
+                id: p.u32(4),
+                zone: p.u16(8),
+                pos: [p.f32(0xc), p.f32(0x10), p.f32(0x14)],
+            })?,
+            0x0BF => self.tx.send(NetEvent::Registration { index: p.u32(0xC), result: p.u16(6) })?,
+            0x0F9 => self.tx.send(NetEvent::ResOffer { kind: p.u16(0xA) })?,
+            0x110 => self.tx.send(NetEvent::RoeUnity {
+                sparks: p.u32(4) & 0xff_ffff,
+                deeds: p.u16(8),
+                plaudits: p.u16(0xa),
+                rot: std::array::from_fn(|i| p.u8(0xc + i)),
+            })?,
+            0x111 => self.tx.send(NetEvent::RoeActive(std::array::from_fn(|i| p.u32(4 + 4 * i))))?,
+            0x112 => {
+                self.tx.send(NetEvent::RoeLog { offset: p.u16(0x84), data: std::array::from_fn(|i| p.u8(4 + i)) })?
+            }
+            0x056 => self
+                .tx
+                .send(NetEvent::MissionLog { port: p.u16(0x24), data: std::array::from_fn(|i| p.u32(4 + 4 * i)) })?,
+            0x0B4 => self.tx.send(NetEvent::ConfSys(std::array::from_fn(|i| p.u8(4 + i))))?,
+            0x0E1 => self.tx.send(NetEvent::GroupId(p.u32(4)))?,
+            0x108 => {
+                self.tx.send(NetEvent::BazaarShopper { state: p.u32(8), hide: p.u16(0xc), name: text(&p, 0x10, 16) })?
+            }
+            0x10A => self.tx.send(NetEvent::BazaarSale { count: p.u32(4), item: p.u16(8), name: text(&p, 0xa, 16) })?,
+            0x105 => self.tx.send(NetEvent::BazaarItem {
+                price: p.u32(4),
+                count: p.u32(8),
+                tax: p.u16(0xc),
+                item: p.u16(0xe),
+                index: p.u8(0x10),
+                attr: std::array::from_fn(|i| p.u8(0x11 + i)),
+            })?,
+            0x106 => self.tx.send(NetEvent::BazaarBuy { state: p.u32(4), name: text(&p, 8, 16) })?,
+            0x107 => self.tx.send(NetEvent::BazaarClosed { name: text(&p, 4, 16) })?,
+            0x109 => self.tx.send(NetEvent::BazaarSold {
+                count: p.u32(8),
+                owner: p.u16(0xe),
+                name: text(&p, 0x10, 16),
+                index: p.u8(0x20),
+            })?,
+            0x115 => self.tx.send(NetEvent::Fish(super::fishing::FishParams {
+                stamina: p.u16(4),
+                delay: p.u16(6),
+                regen: p.u16(8),
+                moves: p.u16(0xa),
+                damage: p.u16(0xc),
+                heal: p.u16(0xe),
+                time: p.u16(0x10),
+                sense: p.u8(0x12),
+                special: p.u32(0x14),
+            }))?,
+            0x116 => self
+                .tx
+                .send(NetEvent::EquipSetValid(std::array::from_fn(|i| std::array::from_fn(|k| p.u8(4 + 4 * i + k)))))?,
+            0x117 => self.tx.send(NetEvent::EquipSetRes {
+                count: p.u8(4),
+                changed: std::array::from_fn(|i| std::array::from_fn(|k| p.u8(8 + 4 * i + k))),
+                equipped: std::array::from_fn(|i| std::array::from_fn(|k| p.u8(0x48 + 4 * i + k))),
+            })?,
+            0x11B => self.tx.send(NetEvent::LockStyleFlag(p.u8(4)))?,
+            0x11C => self
+                .tx
+                .send(NetEvent::LockStyleError((0..p.u8(4).min(16) as usize).map(|i| p.u16(8 + 2 * i)).collect()))?,
+            0x113 | 0x118 => {
+                self.tx.send(NetEvent::Currencies { mode: if p.id == 0x113 { 1 } else { 2 }, data: p.data })?
+            }
+            0x11D => self.tx.send(NetEvent::PartyRequest { status: p.u8(0xb), name: text(&p, 0xc, 16) })?,
+            0x077 if p.u8(4) & 1 != 0 => {
+                self.tx.send(NetEvent::EntityVis((0..32).map(|k| p.u32(8 + 4 * k)).collect()))?
+            }
+            0x078 => self.tx.send(NetEvent::PollStart {
+                name: text(&p, 0xe, 15),
+                kind: p.u8(0x1d),
+                text: text(&p, 0x1e, p.data.len().saturating_sub(0x1e)),
+            })?,
+            0x079 => self.tx.send(NetEvent::PollState {
+                votes: std::array::from_fn(|i| p.u16(8 + 2 * i)),
+                kind: p.u8(0x1a),
+                state: p.u8(0x1b),
+                questions: p.u8(0x1c),
+                name: text(&p, 0x1d, 15),
+                text: text(&p, 0x2c, p.data.len().saturating_sub(0x2c)),
+            })?,
+            0x047 => self.tx.send(NetEvent::Translate {
+                item: p.u16(4),
+                from: p.u8(6),
+                to: p.u8(7),
+                from_text: text(&p, 8, 64),
+                to_text: text(&p, 0x48, 64),
+            })?,
+            0x049 => self.tx.send(NetEvent::ItemSearch { item: p.u16(4), flag: p.u8(6) })?,
+            0x042 => self.tx.send(NetEvent::BlackEdit { id: p.u32(4), name: text(&p, 8, 16), mode: p.u8(0x18) })?,
+            0x041 => self.tx.send(NetEvent::Blacklist {
+                stat: p.u8(0xf4),
+                entries: (0..p.u8(0xf5).min(12) as usize)
+                    .map(|k| (p.u32(4 + 0x14 * k), text(&p, 8 + 0x14 * k, 16)))
+                    .collect(),
+            })?,
+            0x044 => self.tx.send(NetEvent::ExtJob((0..0x9c).map(|i| p.u8(4 + i)).collect()))?,
+            0x0DC => self.tx.send(NetEvent::Invite {
+                anon: p.u8(0xa),
+                kind: p.u8(0xb),
+                name: text(&p, 0xc, 16),
+                race: p.u16(0x1c),
+            })?,
+            0x0AE => self.tx.send(NetEvent::Mounts(p.u32(4) as u64 | (p.u32(8) as u64) << 32))?,
+            0x119
+                if {
+                    let _ = self.tx.send(NetEvent::MountRecast(p.u32(0xfc)));
+                    false
+                } => {}
+            0x068 if p.u8(4) & 0x3f == 4 => self.tx.send(NetEvent::PetSync((p.u16(0xc) != 0).then(|| PetSync {
+                index: p.u16(0xc),
+                hpp: p.u8(0xe),
+                mpp: p.u8(0xf),
+                tp: p.u16(0x10),
+                target: p.u32(0x14),
+            })))?,
+            0x119 => self.tx.send(NetEvent::AbilityRecasts(
+                (0..31)
+                    .map(|i| {
+                        (p.u8(4 + 8 * i + 3) as u16, p.u16(4 + 8 * i), p.u8(4 + 8 * i + 2), p.u16(4 + 8 * i + 4) as i16)
+                    })
+                    .collect(),
+            ))?,
+            0x0AA => self.tx.send(NetEvent::MagicKnown((0..128).map(|i| p.u8(4 + i)).collect()))?,
+            0x0AC => self.tx.send(NetEvent::CommandsKnown((0..224).map(|i| p.u8(4 + i)).collect()))?,
+            0x0AD => self.tx.send(NetEvent::Dungeon((0..0x80).map(|i| p.u8(4 + i)).collect()))?,
+            0x0DF => {
+                if p.u32(4) == self.login.char_id {
+                    self.tx.send(NetEvent::Vitals {
+                        hp: p.u32(8),
+                        mp: p.u32(12),
+                        tp: p.u32(16),
+                        hpp: p.u8(0x16),
+                        mpp: p.u8(0x17),
+                    })?;
+                }
+                let jobs = std::array::from_fn(|i| p.u8(0x20 + i));
+                self.tx.send(NetEvent::PartyAttr(super::party::AttrUpdate {
+                    id: p.u32(4),
+                    index: p.u16(0x14),
+                    hp: p.u32(8),
+                    mp: p.u32(12),
+                    tp: p.u32(16),
+                    hpp: p.u8(0x16),
+                    mpp: p.u8(0x17),
+                    jobs,
+                    mon: p.u16(0x1c),
+                    mon_ids: [p.u8(0x1e), p.u8(0x1f)],
+                }))?;
+            }
+            // Kinds 0 (party) and 5 (alliance) share list 0; LSB sends no others.
+            0x0C8 if matches!(p.u8(4), 0 | 5) => {
+                let entries = (0..20)
+                    .map(|k| (p.u32(8 + 12 * k), p.u16(12 + 12 * k), p.u8(14 + 12 * k), p.u16(16 + 12 * k)))
+                    .collect();
+                self.tx.send(NetEvent::PartyTable(entries))?;
+            }
+            0x0DD | 0x0E2 if matches!(p.u8(0x1C), 0 | 5) => {
+                let jobs = std::array::from_fn(|i| p.u8(0x22 + i));
+                let u = super::party::ListUpdate {
+                    id: p.u32(4),
+                    index: p.u16(0x18),
+                    number: p.u8(0x1A),
+                    name: text(&p, 0x28, 16),
+                    hp: p.u32(8),
+                    mp: p.u32(12),
+                    tp: p.u32(16),
+                    hpp: p.u8(0x1D),
+                    mpp: p.u8(0x1E),
+                    zone: p.u16(0x20),
+                    flags: p.u32(0x14),
+                    jobs,
+                    moghouse: p.u8(0x1B) != 0,
+                };
+                self.tx.send(NetEvent::PartyList(u, p.id == 0x0E2))?;
+            }
+            0x029 => self.tx.send(NetEvent::Battle(battle_message(&p)))?,
+            0x02D => self.tx.send(NetEvent::Battle(battle_message2(&p)))?,
+            0x028 => self.tx.send(NetEvent::Action(crate::net::action::parse(&p.data)))?,
+            0x038 => self.tx.send(NetEvent::Scheduler {
+                actor: p.u32(4),
+                target: p.u32(8),
+                name: p.u32(12).to_le_bytes(),
+            })?,
+            0x069 | 0x073 | 0x074 => self.tx.send(NetEvent::Racing { id: p.id, data: p.data })?,
+            0x02F => self.tx.send(NetEvent::Dig { id: p.u32(4), index: p.u16(8), flags: p.u8(0xa) })?,
+            0x03A => self.tx.send(NetEvent::MagicScheduler {
+                ids: (p.u32(4), p.u32(8)),
+                indices: (p.u16(0xc), p.u16(0xe)),
+                file: p.u16(0x10),
+                kind: p.u8(0x12),
+            })?,
+            0x039 => self.tx.send(NetEvent::MapScheduler {
+                ids: (p.u32(4), p.u32(8)),
+                indices: (p.u16(0x10), p.u16(0x12)),
+                name: p.u32(12).to_le_bytes(),
+            })?,
+            0x051 => self.tx.send(NetEvent::SelfLook(look_at(&p, 4)))?,
+            0x00E => {
+                // The first NPC updates of a session, for comparing servers: index, id, mask, the look @0x30.
+                if self.npc_logged < 400 {
+                    self.npc_logged += 1;
+                    let look = p.data.get(0x30..p.data.len().min(0x44)).unwrap_or_default();
+                    log::info!(
+                        "0x00E index {:#05x} id {:08x} mask {:02x} ({:#x} bytes): look {}",
+                        p.u16(8),
+                        p.u32(4),
+                        p.u8(10),
+                        p.data.len(),
+                        hex::encode(look)
+                    );
+                }
+                self.tx.send(NetEvent::Entity(entity(&p, EntityKind::Npc)))?
+            }
+            0x057 => self.tx.send(NetEvent::Weather(p.u16(8), p.u16(0x0a)))?,
+            // s2c 0x009 (LAB_100fbd40): MesNo @0xa, its parameters as "Para0 %u Para1 %u ..." text in Data @0xd.
+            0x009 => {
+                let data = text(&p, 0xd, p.data.len().saturating_sub(0xd));
+                let d = std_data(&data);
+                self.tx.send(NetEvent::MessageStd { id: p.u16(0xa), cas: d.0, para: d.1, strings: d.2 })?
+            }
+            0x053 => self.tx.send(NetEvent::SystemMessage { id: p.u16(0xc), para: p.u32(4), para2: p.u32(8) })?,
+            0x03E => self.tx.send(NetEvent::ShopOpen { count: p.u16(4) })?,
+            0x03C => {
+                let n = p.data.len().saturating_sub(8) / 12;
+                let entries = (0..n)
+                    .map(|k| {
+                        let o = 8 + 12 * k;
+                        (p.u32(o), p.u16(o + 4), p.u8(o + 6), p.u16(o + 8), p.u16(o + 0xa))
+                    })
+                    .collect();
+                self.tx.send(NetEvent::ShopList { last: p.u8(6) & 1 != 0, entries })?
+            }
+            0x03F => self.tx.send(NetEvent::ShopBuy { index: p.u16(4), count: p.u32(8) })?,
+            0x03D => {
+                self.tx.send(NetEvent::ShopSell { price: p.u32(4), slot: p.u8(8), kind: p.u8(9), count: p.u32(0xc) })?
+            }
+            0x086 => self.tx.send(NetEvent::GuildOpen { stat: p.u8(4), time: p.u32(8) })?,
+            0x01D => self.tx.send(NetEvent::ItemsSettled(p.u8(4), p.u32(8)))?,
+            0x062 => self.tx.send(NetEvent::SkillBase(std::array::from_fn(|i| p.u16(0x80 + 2 * i))))?,
+            0x083 | 0x085 => {
+                let n = (p.u8(0xf4) as usize).min(30);
+                let entries = (0..n)
+                    .map(|k| {
+                        let o = 4 + 8 * k;
+                        (p.u16(o), p.u8(o + 2), p.u8(o + 3), p.u32(o + 4))
+                    })
+                    .collect();
+                self.tx.send(NetEvent::GuildList { sell: p.id == 0x085, stat: p.u8(0xf5), entries })?
+            }
+            0x021 => self.tx.send(NetEvent::TradeRequest { id: p.u32(4), index: p.u16(8) })?,
+            0x022 => self.tx.send(NetEvent::TradeResponse { id: p.u32(4), kind: p.u32(8), index: p.u16(0xc) })?,
+            0x023 => self.tx.send(NetEvent::TradeTheirs {
+                n: p.u32(4),
+                counter: p.u16(8),
+                item: p.u16(0xa),
+                slot: p.u8(0xd),
+                attr: std::array::from_fn(|k| p.u8(0xe + k)),
+            })?,
+            0x025 => {
+                self.tx.send(NetEvent::TradeMine { n: p.u32(4), item: p.u16(8), slot: p.u8(0xa), inv: p.u8(0xb) })?
+            }
+            0x082 | 0x084 => self.tx.send(NetEvent::GuildResult {
+                sell: p.id == 0x084,
+                item: p.u16(4),
+                count: p.u8(6),
+                trade: p.u8(7) as i8,
+            })?,
+            0x0E0 => self.tx.send(NetEvent::LinkshellEquip { num: p.u8(4), index: p.u8(5), bag: p.u8(6) })?,
+            0x0CC => self.tx.send(NetEvent::LinkshellMessage(p.data))?,
+            0x048 => self.tx.send(NetEvent::Concierge(p.data))?,
+            0x05E => self.tx.send(NetEvent::Conquest(p.data))?,
+            0x071 => self.tx.send(NetEvent::Influence(p.data))?,
+            0x0C9 => self.tx.send(NetEvent::InspectEquip(p.data))?,
+            0x008 if p.data.len() >= 4 + 0x30 => {
+                self.tx.send(NetEvent::KnownZones(p.data[4..4 + 0x30].try_into().unwrap()))?
+            }
+            0x0CA => self.tx.send(NetEvent::InspectMessage(p.data))?,
+            0x04D => self.tx.send(NetEvent::Fragments(p.data))?,
+            0x0D2 => self.tx.send(NetEvent::TrophyList(TrophyList {
+                slot: p.u8(0x14),
+                item: p.u16(0x10),
+                qty: p.u32(4),
+                target: p.u32(8),
+                gold: p.u16(0xc),
+                container: p.u8(0x16) != 0,
+                entry: p.u8(0x15),
+                start: p.u32(0x18),
+                own_lot: if p.u16(0x1c) != 0 { p.u16(0x1e) as i16 } else { 0 },
+                loot_id: p.u32(0x20),
+                loot_point: p.u16(0x26),
+                loot_name: text(&p, 0x28, 16),
+            }))?,
+            0x0D3 => self.tx.send(NetEvent::TrophySolution {
+                slot: p.u8(0x14),
+                judge: p.u8(0x15),
+                loot: p.u32(4),
+                loot_point: p.u16(0xe) as i16,
+                entry: p.u32(8),
+                entry_point: p.u16(0x12) as i16,
+                entry_flg: p.u16(0x10) >> 15 != 0,
+                loot_name: text(&p, 0x16, 16),
+                entry_name: text(&p, 0x26, 16),
+            })?,
+            0x058 => self.tx.send(NetEvent::Assist { player: p.u32(4), target: p.u32(8) })?,
+            0x055 if p.data.len() >= 0x86 => self.tx.send(NetEvent::KeyItems {
+                table: p.u16(0x84),
+                bits: std::array::from_fn(|i| p.u32(4 + 4 * i)),
+                seen: std::array::from_fn(|i| p.u32(0x44 + 4 * i)),
+            })?,
+            0x05F => self.tx.send(NetEvent::Music { slot: p.u16(4), id: p.u16(6) })?,
+            0x017 => {
+                let (from, text) = chat_text(&p);
+                self.tx.send(NetEvent::Chat { kind: p.u8(4), attr: p.u8(5), data: p.u16(6), from, text })?
+            }
+            0x032..=0x034 => self.tx.send(NetEvent::Event(event_start(&p)))?,
+            0x05D => self.tx.send(NetEvent::EventStrings((0..4).map(|i| p.str(0x28 + 16 * i, 16)).collect()))?,
+            0x05C => self.tx.send(NetEvent::EventParams(std::array::from_fn(|i| p.u32(4 + 4 * i))))?,
+            0x052 => self.tx.send(NetEvent::EventRelease { mode: p.u8(4), event: (p.u32(4) >> 8) as u16 })?,
+            0x05B | 0x065 => self.tx.send(NetEvent::Wpos {
+                id: p.u32(0x10),
+                pos: [p.f32(4), p.f32(8), p.f32(0xc)],
+                dir: p.u8(0x17),
+                mode: p.u8(0x16),
+            })?,
+            // 0x03B (handler LAB_100a1600): UniqueNo @4, ActIndex @8, MesNum @0xa; shown in the event message
+            // window (mode 0x96), not printed. LSB never sends it.
+            0x03B => self.tx.send(NetEvent::ZoneText(ZoneText {
+                packet: 0x03B,
+                actor: p.u32(4),
+                index: p.u16(8),
+                mes: p.u16(0xa),
+                ..Default::default()
+            }))?,
+            0x036 => self.tx.send(NetEvent::ZoneText(ZoneText {
+                packet: 0x036,
+                actor: p.u32(4),
+                index: p.u16(8),
+                mes: p.u16(0xa),
+                kind: p.u8(0xc),
+                ..Default::default()
+            }))?,
+            0x02A => self.tx.send(NetEvent::ZoneText(ZoneText {
+                packet: 0x02A,
+                actor: p.u32(4),
+                num: std::array::from_fn(|i| if i < 4 { p.u32(8 + 4 * i) as i32 } else { 0 }),
+                index: p.u16(0x18),
+                mes: p.u16(0x1a),
+                kind: p.u8(0x1c),
+                name: text(&p, 0x1e, 32),
+                ..Default::default()
+            }))?,
+            // 0x027 (handler 0x100a1dc0): Num1[4] @0x10 -> num 0..3, Num2[4..7] @0x60 -> num 4..7 (Num2[0..3] unread),
+            // String1 @0x20 -> string 0, String2 @0x40, Flags @0xe.
+            0x027 => {
+                self.tx.send(NetEvent::ZoneText(ZoneText {
+                    packet: 0x027,
+                    actor: p.u32(4),
+                    index: p.u16(8),
+                    mes: p.u16(0xa),
+                    kind: p.u16(0xc).min(255) as u8,
+                    flags: p.u8(0xe),
+                    num: std::array::from_fn(|i| {
+                        if i < 4 { p.u32(0x10 + 4 * i) as i32 } else { p.u32(0x50 + 4 * i) as i32 }
+                    }),
+                    strings: vec![text(&p, 0x20, 32)],
+                    name2: text(&p, 0x40, 16),
+                    ..Default::default()
+                }))?
+            }
+            // 0x043 (handler 0x100a1070): fishing's monster / chest; sName @0x10 -> string 0.
+            0x043 => self.tx.send(NetEvent::ZoneText(ZoneText {
+                packet: 0x043,
+                actor: p.u32(4),
+                index: p.u16(8),
+                mes: p.u16(0xa),
+                kind: p.u8(0xc),
+                strings: vec![text(&p, 0x10, 16)],
+                ..Default::default()
+            }))?,
+            0x067 if p.u8(4) & 0x3f == 3 => {
+                self.tx.send(NetEvent::EntityMaster { index: p.u16(6), id: p.u32(8), master: p.u16(0xc) })?
+            }
+            0x067 if p.u8(4) == 2 => self.tx.send(NetEvent::CharSync {
+                id: p.u32(8),
+                owner: p.u32(0x20),
+                floors: p.u8(0x27) & 1 != 0,
+                open: p.u8(0x24) != 0,
+                level: p.u8(0x25),
+                sync: p.u8(0x10),
+                custom: [p.u32(0x18), p.u32(0x1c)],
+            })?,
+            0x02E => self.tx.send(NetEvent::MogMenu)?,
+            0x11A => self.tx.send(NetEvent::EmoteUnlocks { jobs: p.u32(4), chairs: p.u16(8) })?,
+            0x11E => self.tx.send(NetEvent::Jump(p.u16(4)))?,
+            0x1F0 => self.tx.send(NetEvent::GmCatalog(p.data))?,
+            0x1F1 => self.tx.send(NetEvent::GmResult(p.data))?,
+            0x030 => self.tx.send(NetEvent::SynthEffect {
+                id: p.u32(4),
+                index: p.u16(8),
+                effect: p.u16(0xa) as i16,
+                kind: p.u8(0xc) as i8,
+                status: p.u8(0xd) as i8,
+                timer: p.u16(0xe),
+            })?,
+            0x06F | 0x070 => {
+                let a = super::synth::Answer {
+                    result: p.u8(4),
+                    grade: p.u8(5) as i8,
+                    count: p.u8(6),
+                    item: p.u16(8),
+                    breaks: std::array::from_fn(|i| p.u16(0xa + 2 * i)),
+                    name: if p.id == 0x070 { text(&p, 0x1e, 16) } else { String::new() },
+                    crystal: if p.id == 0x06F { p.u16(0x22) } else { 0 },
+                    materials: std::array::from_fn(|i| if p.id == 0x06F { p.u16(0x24 + 2 * i) } else { 0 }),
+                };
+                self.tx.send(if p.id == 0x06F { NetEvent::SynthResult(a) } else { NetEvent::SynthOthers(a) })?
+            }
+            0x04C => self.tx.send(NetEvent::Auc(super::auction::AucPacket::parse(&p.data)))?,
+            0x04B => self.tx.send(NetEvent::Pbx(super::post::Pbx {
+                cmd: p.u8(4),
+                box_no: p.u8(5) as i8,
+                post: p.u8(6) as i8,
+                result: p.u8(0xc) as i8,
+                res: [p.u8(0xd) as i8, p.u8(0xe) as i8, p.u8(0xf) as i8],
+                slot: super::post::Slot {
+                    stat: p.u32(0x10),
+                    name: text(&p, 0x14, 16),
+                    work_no: p.u32(0x2c),
+                    item: p.u16(0x30),
+                    stack: p.u32(0x38),
+                    ext: std::array::from_fn(|i| p.u8(0x3c + i)),
+                },
+            }))?,
+            0x01B => self.tx.send(NetEvent::JobInfo(super::moogle::JobInfo {
+                main: p.u8(8),
+                sub: p.u8(0xb),
+                flags: p.u32(0xc),
+                levels: std::array::from_fn(|n| if n < 16 { p.u8(0x10 + n) } else { p.u8(0x48 + n) }),
+                sub_ok: p.u8(0x44) != 0,
+                encumbrance: p.u32(0x60),
+                thumbs: p.u8(0x64),
+                mentor: p.u8(0x65),
+                mastery: p.u8(0x66),
+                ml_jobs: p.u32(0x68),
+                ml_levels: std::array::from_fn(|n| p.u8(0x6c + n)),
+            }))?,
+            0x01C => self.tx.send(NetEvent::ItemMax(
+                std::array::from_fn(|i| p.u8(4 + i)),
+                std::array::from_fn(|i| p.u16(0x24 + 2 * i)),
+            ))?,
+            0x01E => self.tx.send(NetEvent::ItemNum { container: p.u8(8), index: p.u8(9), count: p.u32(4) })?,
+            0x01F => self.tx.send(NetEvent::Item {
+                container: p.u8(0xa),
+                index: p.u8(0xb),
+                id: p.u16(8),
+                count: p.u32(4),
+                ext: None,
+                lock: p.u8(0xc),
+                price: None,
+            })?,
+            0x020 => {
+                let ext = std::array::from_fn(|k| p.u8(0x11 + k));
+                self.tx.send(NetEvent::Item {
+                    container: p.u8(0xe),
+                    index: p.u8(0xf),
+                    id: p.u16(0xc),
+                    count: p.u32(4),
+                    ext: Some(ext),
+                    lock: p.u8(0x10),
+                    price: Some(p.u32(8)),
+                })?
+            }
+            // GP_SERV_COMMAND_ITEM_SUBCONTAINER (LAB_100ec730): a mannequin's look, bytes 4..0x1b kept whole.
+            0x026 => self.tx.send(NetEvent::MannequinLook { rec: std::array::from_fn(|k| p.u8(4 + k)) })?,
+            0x04F => self.tx.send(NetEvent::EquipClear)?,
+            0x050 => self.tx.send(NetEvent::Equip { index: p.u8(4), slot: p.u8(5), container: p.u8(6) })?,
+            // CLISTATUS: hpmax @4, mpmax @8, jobs @0xc..0xf, bp_base @0x14, bp_adj @0x22, atk @0x30,
+            // def @0x32, def_elem @0x34, su_lv @0x52, ilvl @0x55.
+            0x061 => self.tx.send(NetEvent::CharStats(super::items::CharStats {
+                hp_max: p.u32(4),
+                mp_max: p.u32(8),
+                main: (p.u8(0xc), p.u8(0xd)),
+                sub: (p.u8(0xe), p.u8(0xf)),
+                base: std::array::from_fn(|i| p.u16(0x14 + 2 * i) as i32),
+                adj: std::array::from_fn(|i| p.u16(0x22 + 2 * i) as i16 as i32),
+                atk: p.u16(0x30) as i16 as i32,
+                def: p.u16(0x32) as i16 as i32,
+                elem: std::array::from_fn(|i| p.u16(0x34 + 2 * i) as i16 as i32),
+                su: p.u8(0x52),
+                ilvl: p.u8(0x55),
+                unity: p.u32(0x58),
+                unity_flag: p.u32(0x60),
+                unity_eval: p.u32(0x5c),
+                exp: (p.u16(0x10), p.u16(0x12)),
+                title: p.u16(0x44),
+                rank: p.u16(0x46),
+                rank_points: p.u16(0x48),
+                home: p.u16(0x4a),
+                nation: p.u8(0x50),
+                ml: (p.u8(0x65), p.u8(0x66)),
+                ml_exp: (p.u32(0x68), p.u32(0x6c)),
+            }))?,
+            _ => {}
         }
-        if !zoned && last_login.elapsed() >= Duration::from_millis(400) {
-            tries += 1;
-            if tries > 150 {
+        Ok(None)
+    }
+
+    /// The plain login again every 400 ms until the zone-in.
+    fn retry_login(&mut self) -> Result<()> {
+        if !self.zoned && self.last_login.elapsed() >= Duration::from_millis(400) {
+            self.tries += 1;
+            if self.tries > 150 {
                 anyhow::bail!("the zone server did not answer the login");
             }
-            map.send_login(login.char_id, &login.name, account, if answered { 3 } else { 2 })?;
-            last_login = Instant::now();
+            self.map.send_login(
+                self.login.char_id,
+                &self.login.name,
+                self.account,
+                if self.answered { 3 } else { 2 },
+            )?;
+            self.last_login = Instant::now();
         }
-        gate.release(&mut queue, Instant::now());
-        while let Ok(cmd) = rx.try_recv() {
-            let before = queue.len();
+        Ok(())
+    }
+
+    /// The main thread's commands into the send queue, through the send gate.
+    fn commands(&mut self) -> Result<()> {
+        self.gate.release(&mut self.queue, Instant::now());
+        while let Ok(cmd) = self.rx.try_recv() {
+            let before = self.queue.len();
             match cmd {
                 NetCommand::Decode(g, packets) => {
-                    if g == sess {
-                        away_in = away_in.saturating_sub(1);
+                    if g == self.sess {
+                        self.away_in = self.away_in.saturating_sub(1);
                     }
-                    if g == 0 || g == sess {
-                        hooked_in.extend(packets);
+                    if g == 0 || g == self.sess {
+                        self.hooked_in.extend(packets);
                     }
                 }
                 NetCommand::SendBatch(g, packets) => {
-                    if g == sess {
-                        away_out = away_out.saturating_sub(1);
+                    if g == self.sess {
+                        self.away_out = self.away_out.saturating_sub(1);
                     }
-                    if (g == 0 || g == sess) && !packets.is_empty() {
-                        map.send(&packets)?;
-                        stats.sent.fetch_add(map.bytes_out - tx_seen, Relaxed);
-                        tx_seen = map.bytes_out;
+                    if (g == 0 || g == self.sess) && !packets.is_empty() {
+                        self.map.send(&packets)?;
+                        self.stats.sent.fetch_add(self.map.bytes_out - self.tx_seen, Relaxed);
+                        self.tx_seen = self.map.bytes_out;
                     }
                 }
                 // c2s 0x0B5 / 0x0B6 (FUN_100e3400 / the tell sender): the text in Shift-JIS, auto-translate blocks
@@ -2505,36 +2568,38 @@ fn session(
                     let mut body = vec![kind, 0];
                     body.extend_from_slice(&chat_bytes(&text));
                     body.push(0);
-                    queue.push(build(0x0B5, &body));
+                    self.queue.push(build(0x0B5, &body));
                 }
-                NetCommand::Tell { name, text } => queue.push(tell_packet(&name, &text)),
-                NetCommand::Heal(mode) => queue.push(build(0x0E8, &mode.to_le_bytes())),
+                NetCommand::Tell { name, text } => self.queue.push(tell_packet(&name, &text)),
+                NetCommand::Heal(mode) => self.queue.push(build(0x0E8, &mode.to_le_bytes())),
                 NetCommand::Logout { mode, kind } => {
                     let mut b = mode.to_le_bytes().to_vec();
                     b.extend_from_slice(&kind.to_le_bytes());
-                    queue.push(build(0x0E7, &b));
+                    self.queue.push(build(0x0E7, &b));
                 }
                 NetCommand::HomePoint(status) => {
                     let mut body = vec![0u8; 24];
-                    body[0..4].copy_from_slice(&login.char_id.to_le_bytes());
-                    body[4..6].copy_from_slice(&my_index.to_le_bytes());
+                    body[0..4].copy_from_slice(&self.login.char_id.to_le_bytes());
+                    body[4..6].copy_from_slice(&self.my_index.to_le_bytes());
                     body[6] = 0x0B;
                     body[8..12].copy_from_slice(&status.to_le_bytes());
-                    queue.push(build(0x01A, &body));
+                    self.queue.push(build(0x01A, &body));
                 }
                 NetCommand::Act { target, index, action } => {
-                    queue.push(build(0x01A, &action_body(target, index, action)))
+                    self.queue.push(build(0x01A, &action_body(target, index, action)))
                 }
-                NetCommand::Packet { id, body } => queue.push(build(id, &body)),
-                NetCommand::PacketHeld { id, body } => gate.hold(&mut queue, build(id, &body), Instant::now()),
-                NetCommand::GroupListReq => queue.push(build(0x076, &[0u8; 4])),
-                NetCommand::CancelStatus(id) => queue.push(build(0x0F1, &[id as u8, (id >> 8) as u8, 0, 0])),
+                NetCommand::Packet { id, body } => self.queue.push(build(id, &body)),
+                NetCommand::PacketHeld { id, body } => {
+                    self.gate.hold(&mut self.queue, build(id, &body), Instant::now())
+                }
+                NetCommand::GroupListReq => self.queue.push(build(0x076, &[0u8; 4])),
+                NetCommand::CancelStatus(id) => self.queue.push(build(0x0F1, &[id as u8, (id >> 8) as u8, 0, 0])),
                 NetCommand::Check { target, index, kind } => {
                     let mut body = vec![0u8; 12];
                     body[0..4].copy_from_slice(&target.to_le_bytes());
                     body[4..8].copy_from_slice(&(index as u32).to_le_bytes());
                     body[8] = kind;
-                    queue.push(build(0x0DD, &body));
+                    self.queue.push(build(0x0DD, &body));
                 }
                 NetCommand::ZoneLine { tag, pos } => {
                     let mut body = Vec::with_capacity(20);
@@ -2542,12 +2607,12 @@ fn session(
                     for v in pos {
                         body.extend_from_slice(&v.to_le_bytes());
                     }
-                    body.extend_from_slice(&my_index.to_le_bytes());
+                    body.extend_from_slice(&self.my_index.to_le_bytes());
                     body.extend_from_slice(&[0, 0]);
-                    queue.push(build(0x05E, &body));
+                    self.queue.push(build(0x05E, &body));
                 }
                 NetCommand::EventEnd { target, index, option, zone, event, mode } => {
-                    queue.push(build(0x05B, &event_end_body(target, index, option, zone, event, mode)))
+                    self.queue.push(build(0x05B, &event_end_body(target, index, option, zone, event, mode)))
                 }
                 NetCommand::EventPos { pos, dir, target, index, option, zone, event } => {
                     let mut b = Vec::with_capacity(28);
@@ -2560,67 +2625,73 @@ fn session(
                     b.extend_from_slice(&event.to_le_bytes());
                     b.extend_from_slice(&index.to_le_bytes());
                     b.extend_from_slice(&[1, dir]);
-                    queue.push(build(0x05C, &b));
+                    self.queue.push(build(0x05C, &b));
                 }
-                NetCommand::Equip { index, slot, container } => queue.push(build(0x050, &[index, slot, container, 0])),
-                NetCommand::StatusRequest(kind) => queue.push(build(0x061, &[kind, 0, 0, 0])),
-                NetCommand::CharReq(index) => queue.push(build(0x016, &charreq_body(index))),
+                NetCommand::Equip { index, slot, container } => {
+                    self.queue.push(build(0x050, &[index, slot, container, 0]))
+                }
+                NetCommand::StatusRequest(kind) => self.queue.push(build(0x061, &[kind, 0, 0, 0])),
+                NetCommand::CharReq(index) => self.queue.push(build(0x016, &charreq_body(index))),
                 NetCommand::MyRoomExit { bit, mode } => {
                     let mut body = super::myroom::ZMRQ.to_le_bytes().to_vec();
                     body.extend_from_slice(&[0; 14]);
                     body.extend_from_slice(&[bit, mode]);
-                    queue.push(build(0x05E, &body));
+                    self.queue.push(build(0x05E, &body));
                 }
                 NetCommand::SubMap { state, id } => {
                     let mut b = state.to_le_bytes().to_vec();
                     b.extend_from_slice(&id.to_le_bytes());
-                    queue.push(build(0x0F2, &b));
+                    self.queue.push(build(0x0F2, &b));
                 }
             }
-            gate.admit(&mut queue, before, Instant::now());
+            self.gate.admit(&mut self.queue, before, Instant::now());
         }
+        Ok(())
+    }
+
+    /// The queued packets out once a send interval has passed, with a fresh position (c2s 0x015).
+    fn send_due(&mut self) -> Result<()> {
         // Retail sends one datagram every 400 ms (config +0xd0 = 400, net+0x417c), each with a fresh 0x015. On a private
         // server Settings' Send Rate may be faster (LSB answers every datagram); a mod's interval wins over both.
-        let every = match stats.send_ms.load(Relaxed) {
-            0 if login.lsb.is_some() => match stats.rate_ms.load(Relaxed) {
+        let every = match self.stats.send_ms.load(Relaxed) {
+            0 if self.login.lsb.is_some() => match self.stats.rate_ms.load(Relaxed) {
                 0 => 400,
                 n => n.clamp(50, 400) as u64,
             },
             0 => 400,
             n => n as u64,
         };
-        if zoned && last_send.elapsed() >= Duration::from_millis(every) {
-            if zoned {
-                let s = *me.lock().unwrap();
-                let mut body = [0u8; 28];
-                for (i, v) in s.pos.iter().enumerate() {
-                    body[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());
-                }
-                body[14..16].copy_from_slice(&s.move_time.to_le_bytes());
-                body[16] = s.dir;
-                // FUN_10096c00: @0x16 the current target's ActIndex (FUN_10152f20).
-                body[18..20].copy_from_slice(&s.target.to_le_bytes());
-                add_position(&mut queue, build(0x015, &body), s.moving);
+        if self.zoned && self.last_send.elapsed() >= Duration::from_millis(every) {
+            let s = *self.me.lock().unwrap();
+            let mut body = [0u8; 28];
+            for (i, v) in s.pos.iter().enumerate() {
+                body[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());
             }
+            body[14..16].copy_from_slice(&s.move_time.to_le_bytes());
+            body[16] = s.dir;
+            // FUN_10096c00: @0x16 the current target's ActIndex (FUN_10152f20).
+            body[18..20].copy_from_slice(&s.target.to_le_bytes());
+            add_position(&mut self.queue, build(0x015, &body), s.moving);
             // A batch holding an id a mod hooks goes to the main thread and comes back as SendBatch.
-            let hooked =
-                hooks.load(Ordering::Relaxed) & HOOK_OUT != 0 && queue.iter().any(|p| stats.hooked(true, sub_id(p)));
-            if hooked || away_out > 0 {
-                away_out += 1;
-                tx.send(NetEvent::RawOut(sess, std::mem::take(&mut queue)))?;
+            let hooked = self.hooks.load(Ordering::Relaxed) & HOOK_OUT != 0
+                && self.queue.iter().any(|p| self.stats.hooked(true, sub_id(p)));
+            if hooked || self.away_out > 0 {
+                self.away_out += 1;
+                self.tx.send(NetEvent::RawOut(self.sess, std::mem::take(&mut self.queue)))?;
             } else {
-                if hooks.load(Ordering::Relaxed) & HOOK_LAST != 0 {
-                    for p in &queue {
-                        stats.keep_last(true, p);
+                if self.hooks.load(Ordering::Relaxed) & HOOK_LAST != 0 {
+                    for p in &self.queue {
+                        self.stats.keep_last(true, p);
                     }
                 }
-                map.send(&queue)?;
-                stats.sent.fetch_add(map.bytes_out - tx_seen, Relaxed);
-                tx_seen = map.bytes_out;
+                self.map.send(&self.queue)?;
+                self.stats.sent.fetch_add(self.map.bytes_out - self.tx_seen, Relaxed);
+                self.tx_seen = self.map.bytes_out;
             }
-            queue.clear();
-            last_send = Instant::now();
+            self.queue.clear();
+            self.last_send = Instant::now();
         }
+        Ok(())
     }
 }
 
