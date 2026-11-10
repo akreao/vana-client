@@ -16225,8 +16225,9 @@ impl App {
         matches!(self.phase, Phase::Login { .. } | Phase::Characters { screen: LobbyScreen::Main, .. })
     }
 
-    fn redraw(&mut self) {
-        let t0 = Instant::now();
+    /// The scenes behind the lobby and the game UI load as they are wanted: the title flyover, the select ring, the
+    /// creator's backdrop and dancer, the nation step's flyover.
+    fn scene_loads(&mut self) {
         if self.game_ui_state == LoadState::Idle {
             self.load_game_ui();
         }
@@ -16353,6 +16354,11 @@ impl App {
         if self.flyover.as_ref().is_some_and(|f| f.done) {
             self.flyover = None;
         }
+    }
+
+    /// The frame's work before any drawing: finished loader tasks, the network, area switches, then the world's
+    /// (or the lobby's) per-frame updates and the mods' frame.
+    fn frame_updates(&mut self) {
         while let Ok(t) = self.tasks.try_recv() {
             let name = t.name();
             perf::timed(|| format!("task {name}"), || self.handle_task(t));
@@ -16385,16 +16391,20 @@ impl App {
         } else {
             self.lobby_mods_frame();
         }
+    }
+
+    /// Whether this frame draws the game: not while the opening movie plays, nor before the title can draw.
+    fn frame_shown(&mut self) -> bool {
         // Config 0022: the opening movie before the title, which loads behind it.
         if self.opening.is_some() {
             self.draw_opening();
-            return;
+            return false;
         }
         // Nothing is shown until the title can draw.
         if !self.shown {
             if !self.title_ready() {
                 self.next_frame = Some(Instant::now() + std::time::Duration::from_millis(16));
-                return;
+                return false;
             }
             self.shown = true;
             if let Some(g) = &self.gfx {
@@ -16405,6 +16415,12 @@ impl App {
                 self.refullscreen.set(Some(3));
             }
         }
+        true
+    }
+
+    /// The frame's time (dt, sped up by a mod's cutscene speed) and the work that runs on it before the input: the
+    /// test drive's step (true when it wants a screenshot), key functions, movement and the lobby fades.
+    fn frame_clock(&mut self) -> (bool, f32) {
         let shoot = self.step_drive();
         let dt = self.last_frame.elapsed().as_secs_f32().min(0.1);
         self.last_frame = Instant::now();
@@ -16433,6 +16449,17 @@ impl App {
         if let Some(next) = self.lobby_fade.step(dt * 60.0) {
             next(self);
         }
+        (shoot, dt)
+    }
+
+    fn redraw(&mut self) {
+        let t0 = Instant::now();
+        self.scene_loads();
+        self.frame_updates();
+        if !self.frame_shown() {
+            return;
+        }
+        let (shoot, dt) = self.frame_clock();
         let m_update = Instant::now();
 
         let Some(mut gfx) = self.gfx.take() else { return };
