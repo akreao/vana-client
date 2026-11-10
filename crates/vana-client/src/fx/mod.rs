@@ -255,6 +255,8 @@ pub struct ElemCpu {
     pub gp: Option<GroundDecal>,
     pub inst: usize,
     pub serial: u32,
+    /// The tick it was made in (`Effects::ticks`): elements run newest first (`run_order`).
+    pub born: u32,
     pub life: f32,
     pub max_life: f32,
     pub flags: u32,
@@ -415,6 +417,12 @@ pub struct Instance {
     pub dam: Option<DamValue>,
     /// Its start in the serial order: the task list runs generators in start order (FUN_10074170 appends).
     pub started: u32,
+}
+
+/// `Effects::run_order`'s key: the tick the element was made in, its generator's place in the walk (attach mode,
+/// start serial), its own serial.
+fn run_key(born: u32, mode: u8, started: u32, serial: u32) -> (u32, (u8, u32), u32) {
+    (born, if matches!(mode, 0 | 0xe | 0xf | 0x14) { (0, started) } else { (1, !started) }, serial)
 }
 
 /// Element update ops 0x33 / 0x46 (0x1004b604): a linked clone's matrix. Euler(element rotation), then for 0x33 the
@@ -1105,11 +1113,15 @@ pub struct Effects {
     sounds: Vec<sound::Sound>,
     /// Config 0x92 (the Effects filter) and whether the player's status is 1 or 3 (FUN_100ac4b0's bit-0 gate).
     pub filter: (u32, bool),
-    /// In an event or cutscene (FUN_10087070(0)): op 0x5f ignores the "Screen shaking" filter.
-    pub in_event: bool,
-    /// This frame's op 0x5f camera kicks (v x factor, element order) and rumble (the sum of v, for a pad backend).
+    /// The player is busy (FUN_10087070(0): an event, frozen, charmed, fishing or digging): op 0x5f ignores the
+    /// "Screen shaking" filter.
+    pub busy: bool,
+    /// This frame's op 0x5f camera kicks (v x factor, in retail's element order: `run_order`) and rumble (the sum of
+    /// v, the pad's DAT_10455c20 +0xdb4).
     pub quakes: Vec<f32>,
     pub rumble: i32,
+    /// Ticks run, for `ElemCpu::born`.
+    ticks: u32,
     /// Bumped whenever a ground projection's faces change (the renderer re-uploads them).
     pub decal_version: u64,
     /// Footstep dust to start next tick: generator and actor; actors that left a footprint.
@@ -1248,9 +1260,10 @@ impl Effects {
             flash: [0; 3],
             sounds: Vec::new(),
             filter: (0, false),
-            in_event: false,
+            busy: false,
             quakes: Vec::new(),
             rumble: 0,
+            ticks: 0,
             decal_version: 0,
             dust: Vec::new(),
             prints: Vec::new(),
@@ -1901,6 +1914,7 @@ impl Effects {
     /// One frame: attachments, generator updates and emissions, element lives (FUN_10043ca0) and expiry.
     pub fn tick(&mut self, f: &Frame, actors: &dyn Actors) {
         let dt = f.dt;
+        self.ticks = self.ticks.wrapping_add(1);
         // FUN_1018c2b0: the time of day (rounded: 11:00 from an f32 day fraction must not land on 10:59:59.98) and
         // its change since the last frame.
         let now =
@@ -2141,16 +2155,31 @@ impl Effects {
         })
     }
 
+    /// Where an element stands in retail's task walk, larger = earlier. The element factory moves every new element
+    /// to the front of task bucket 0xb (FUN_1004e8d0 0x100511a4: FUN_100749b0(elem, DAT_10353710 = 0xb) ->
+    /// FUN_10074f80), so elements update newest first. Elements made in one frame come from generators the walk
+    /// reached in order: the unattached kinds (0, 0xe, 0xf, 0x14: FUN_100531d0 -> FUN_10075120, appended) in start
+    /// order, then the actor-attached ones (front of bucket 9), the last started first *(inf: an unattached generator
+    /// started by a running task goes just before that task instead)*.
+    fn run_order(&self, c: &ElemCpu) -> (u32, (u8, u32), u32) {
+        let (mode, started) = self.insts.get(c.inst).and_then(|x| x.as_ref()).map_or((0, 0), |x| (x.mode, x.started));
+        run_key(c.born, mode, started, c.serial)
+    }
+
     /// Element update op 0x5f each frame, after the lives: |sort key| > far skips; k from the distance to the eye
     /// (1 within near, 0 at far); v = trunc(key(t) x S2 x k x 255) >= 0 to the rumble, v x factor a camera kick.
-    /// Skipped with "Screen shaking" off (config 0x92 bit 17) outside events.
+    /// Skipped with "Screen shaking" off (config 0x92 bit 17) unless the player is busy (FUN_100adf70). The kicks
+    /// come in retail's element order (`run_order`): FUN_10021ba0's speed rule depends on it.
     fn step_quakes(&mut self, f: &Frame) {
         self.quakes.clear();
         self.rumble = 0;
-        if !self.in_event && self.filter.0 & (1 << 17) != 0 {
+        if !self.busy && self.filter.0 & (1 << 17) != 0 {
             return;
         }
-        for e in 0..self.elems.len() {
+        let mut order: Vec<usize> =
+            (0..self.elems.len()).filter(|&e| self.elems[e].as_ref().is_some_and(|c| c.quake.is_some())).collect();
+        order.sort_by_key(|&e| std::cmp::Reverse(self.elems[e].as_ref().map(|c| self.run_order(c))));
+        for e in order {
             let Some(c) = self.elems[e].as_ref() else { continue };
             let Some(q) = c.quake else { continue };
             if c.key.abs() > q.far {
@@ -2223,6 +2252,7 @@ impl Effects {
         }
         cpu.inst = inst;
         cpu.serial = self.serial;
+        cpu.born = self.ticks;
         if let Some(mut snd) = s.sound {
             snd.elem = Some(e);
             snd.pos = elem.v3(w::POS);
@@ -3056,6 +3086,19 @@ fn sky_point(sun: bool, dayfrac: f32, eye: Vec3, voyage: Mat4) -> Vec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Retail's element walk (task bucket 0xb, each new element at its front): newest first. Within one tick the
+    /// generators ran unattached first in start order, then the attached ones newest first, so their elements come
+    /// in the reverse of that; a generator's own burst, last made first.
+    #[test]
+    fn elements_run_newest_first() {
+        // (born, generator mode, generator start serial, element serial), as the walk reaches them.
+        let walk =
+            [(9, 0, 5, 40), (8, 1, 3, 31), (8, 1, 3, 30), (8, 1, 7, 33), (8, 0, 6, 34), (8, 0xe, 2, 32), (7, 1, 3, 20)];
+        let mut sorted = walk;
+        sorted.sort_by_key(|&(b, m, st, se)| std::cmp::Reverse(run_key(b, m, st, se)));
+        assert_eq!(sorted, walk);
+    }
 
     /// Op 0x46: the clone's axes come out as the view's (it faces the camera), at the element's world position.
     #[test]
