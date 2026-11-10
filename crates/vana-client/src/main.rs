@@ -1630,6 +1630,8 @@ fn main() -> Result<()> {
                 // Config 0011 at this weather; one frame, so the instances stand at their random start.
                 r.set_sway(0.0, sway_steps(cfg.tool("0011")), dat::zone::SWAY_TAGS.iter().position(|t| *t == weather));
                 r.bump_mode = bump;
+                // FFXI_SMOOTH_LIGHTS: Settings' Light Shading Smooth (ours) in place of retail's per-vertex lights.
+                r.smooth_lights = std::env::var_os("FFXI_SMOOTH_LIGHTS").is_some();
                 if let Some(v) = voyage_v {
                     r.voyage = v;
                 }
@@ -2908,6 +2910,9 @@ impl fx::Actors for SweepActors {
         m.extend(self.fx_files.borrow().iter().filter(|x| x.0 == id).map(|x| x.1));
         (p, m)
     }
+    fn model_files(&self, id: u32) -> Vec<u32> {
+        if id == SWEEP_PC { vec![9672, 7072] } else { self.mob_files.1.clone() }
+    }
     fn hidden(&self, _: u32) -> bool {
         false
     }
@@ -2938,6 +2943,9 @@ impl fx::Actors for SoakActors {
     }
     fn files(&self, id: u32) -> (Vec<u32>, Vec<u32>) {
         if id == SWEEP_MOB { self.files.clone() } else { (vec![8392], vec![9672, 7072]) }
+    }
+    fn model_files(&self, id: u32) -> Vec<u32> {
+        if id == SWEEP_MOB { self.files.1.clone() } else { vec![9672, 7072] }
     }
     fn hidden(&self, _: u32) -> bool {
         false
@@ -3532,6 +3540,9 @@ impl fx::Actors for ShotActors {
         m.extend(self.fx_files.borrow().iter().filter(|x| x.0 == id).map(|x| x.1));
         (p, m)
     }
+    fn model_files(&self, id: u32) -> Vec<u32> {
+        if id == self.at[0].0 { vec![9672, 7072] } else { vec![1300] }
+    }
     fn hidden(&self, _: u32) -> bool {
         false
     }
@@ -3798,6 +3809,11 @@ fn fx_shot(
             while files.iter().any(|f| fx.reg.lib_of(*f).is_none()) {
                 fx.tick(&f, &actors);
                 std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            // A race skill file is on the caster's motion list in retail (FUN_100d25e0), where op 0x2c finds its Afbs;
+            // any other file runs as a plain effect file, which the Afb lookup does not search.
+            if let Some(n) = fx_file.filter(|n| fx::is_skill_file(*n)) {
+                actors.fx_files.borrow_mut().push((0x0001_0001, n));
             }
             match (&dust, fx_file) {
                 (Some(d), _) => {

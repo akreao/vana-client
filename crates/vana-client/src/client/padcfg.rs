@@ -253,6 +253,8 @@ pub struct PadCfg {
     pub listening: Option<f32>,
     /// To store: the maps, on, background, dead zone.
     pub save: Option<(String, String, bool, bool, u32)>,
+    /// To store: the rumble option (config gamepad_rumble).
+    pub save_rumble: Option<bool>,
     /// Clear config.json's maps (retail's or the default then play).
     pub use_retail: bool,
     /// Read the registry again.
@@ -291,6 +293,16 @@ impl PadCfg {
             (s.on, s.background) = (on, background);
         }
         self.dead = dead;
+        self.store(self.maps());
+    }
+
+    /// Stores the rumble option. Retail's own setting (padmode000) stops deciding it once config.json has maps, so
+    /// the maps are stored with it.
+    pub fn set_rumble(&mut self, on: bool) {
+        if let Some(s) = self.set.as_mut() {
+            s.rumble = on;
+        }
+        self.save_rumble = Some(on);
         self.store(self.maps());
     }
 

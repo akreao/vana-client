@@ -175,7 +175,7 @@ pub fn fp_turn(w: &mut World, d: f32) {
 }
 
 /// The view shake (camera +0x7c offset, +0x80 speed, +0x84 scale; effect op 0x5f's kicks), stepped in retail frames
-/// of 2 ticks, held between them.
+/// (`retail_frame`), held between them.
 #[derive(Default)]
 pub struct Shake {
     x: f32,
@@ -235,25 +235,37 @@ impl Shake {
     }
 }
 
-/// Every frame, every view: this frame's op 0x5f kicks, then the integrator, in 2-tick steps (stock retail's n = 2).
+/// Retail frames from our frame time: once 2 ticks (the stock divisor, DAT_104568fc +0x30) have gathered, one frame
+/// of the whole ticks gathered (FUN_10014cf0: whole, at least the divisor). Above 30 fps that is every second or
+/// third frame of ours with 2; below, every frame with 3 or more. `cap` is the consumer's own limit (the shake's 8);
+/// ticks past it are dropped, as retail's are. *(Retail's count is a 4-frame average.)*
+pub fn retail_frame(acc: &mut f32, dt: f32, cap: f32) -> Option<f32> {
+    *acc += dt * 60.0;
+    if *acc < 2.0 {
+        return None;
+    }
+    let n = acc.floor();
+    *acc -= n;
+    Some(n.min(cap))
+}
+
+/// Every view, once a retail frame (FUN_10015510 at the frame's end): the frame's op 0x5f kicks in the elements'
+/// order, then the integrator over the frame's ticks (FUN_10021900: n = ftol(min(ticks, 8))).
 pub fn shake_step(w: &mut World, dt: f32) {
     let sh = &mut w.camst.shake;
-    sh.acc += dt * 60.0;
-    while sh.acc >= 2.0 {
-        sh.acc -= 2.0;
-        for &a in &w.effects.quakes {
-            sh.kick(a);
-        }
-        sh.step(2.0);
-        if !w.effects.quakes.is_empty() {
-            log::debug!(
-                "camera shake: kicks {:?} x {:.4} speed {:.4} scale {:.2}",
-                w.effects.quakes,
-                sh.x,
-                sh.speed,
-                sh.scale
-            );
-        }
+    let Some(n) = retail_frame(&mut sh.acc, dt, 8.0) else { return };
+    for &a in &w.effects.quakes {
+        sh.kick(a);
+    }
+    sh.step(n);
+    if !w.effects.quakes.is_empty() {
+        log::debug!(
+            "camera shake: kicks {:?} x {:.4} speed {:.4} scale {:.2}",
+            w.effects.quakes,
+            sh.x,
+            sh.speed,
+            sh.scale
+        );
     }
 }
 
@@ -922,6 +934,37 @@ mod tests {
                 sh.speed
             );
         }
+    }
+
+    /// FUN_10021ba0: a kick only raises the speed when it outruns twice the speed, so two elements' kicks leave a
+    /// different speed by the order they come in (retail: the newest element first).
+    #[test]
+    fn shake_speed_goes_by_kick_order() {
+        let speed = |kicks: [f32; 2]| {
+            let mut sh = Shake::default();
+            kicks.into_iter().for_each(|a| sh.kick(a));
+            (sh.x, sh.speed)
+        };
+        // At rest the first kick sets x; the second sets the speed again unless it is under twice the first's.
+        assert_eq!(speed([0.01, 0.03]), (0.01, 0.03 * 0.125));
+        assert_eq!(speed([0.03, 0.01]), (0.03, 0.01 * 0.125));
+        assert_eq!(speed([0.1, 0.02]), (0.1, 0.1 * 0.125));
+        assert_eq!(speed([0.02, 0.1]), (0.02, 0.1 * 0.125));
+    }
+
+    /// Whole ticks, at least the divisor's 2: every other frame at 60 fps, every frame below 30, the shake's cap 8.
+    #[test]
+    fn retail_frames_from_frame_time() {
+        let run = |fps: f32, frames: usize| {
+            let mut acc = 0.0;
+            (0..frames).filter_map(|_| retail_frame(&mut acc, 1.0 / fps, 8.0)).collect::<Vec<f32>>()
+        };
+        assert_eq!(run(60.0, 8), [2.0; 4]);
+        assert_eq!(run(30.0, 4), [2.0; 4]);
+        assert_eq!(run(20.0, 4), [3.0; 4]);
+        assert_eq!(run(24.0, 4), [2.0, 3.0, 2.0, 3.0]);
+        assert_eq!(run(5.0, 2), [8.0; 2]);
+        assert_eq!(run(144.0, 12).len(), 2);
     }
 
     #[test]

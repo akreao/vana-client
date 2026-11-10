@@ -297,6 +297,8 @@ pub struct Settings {
     pub padexsin: String,
     pub on: bool,
     pub background: bool,
+    /// The pad rumbles (padmode000's second flag, "Enable Force Feedback": DAT_10455c39).
+    pub rumble: bool,
     pub source: Source,
     /// config.json holds a map of its own (either): Use Retail Settings has something to clear.
     pub saved: bool,
@@ -304,7 +306,8 @@ pub struct Settings {
 
 /// What a frame's settings are. config.json's maps win (the Controller window writes them); else retail's registry
 /// values, whose padmode000 also says whether the pad is on ([0]: off, FUN_10002840 leaves the maps empty) and plays in
-/// the background ([4]); else FFXiPadConfig's XInput layout. config gamepad off always turns it off.
+/// the background ([4]) and rumbles ([1]); else FFXiPadConfig's XInput layout. config gamepad off always turns it
+/// off, and so does gamepad_rumble the rumble.
 /// A config.json gamepad_padexsin of its own is used whatever the main map's source.
 pub fn settings(cfg: &Config, retail: Option<&crate::padreg::Retail>) -> Settings {
     let mut s = settings_of(cfg, retail);
@@ -315,7 +318,7 @@ pub fn settings(cfg: &Config, retail: Option<&crate::padreg::Retail>) -> Setting
 }
 
 fn settings_of(cfg: &Config, retail: Option<&crate::padreg::Retail>) -> Settings {
-    let (on, background) = (cfg.gamepad, cfg.gamepad_background);
+    let (on, background, rumble) = (cfg.gamepad, cfg.gamepad_background, cfg.gamepad_rumble);
     if !cfg.gamepad_padsin.trim().is_empty() {
         let padexsin = DEFAULT_PADEXSIN.to_string();
         return Settings {
@@ -323,6 +326,7 @@ fn settings_of(cfg: &Config, retail: Option<&crate::padreg::Retail>) -> Settings
             padexsin,
             on,
             background,
+            rumble,
             source: Source::Config,
             saved: true,
         };
@@ -334,6 +338,7 @@ fn settings_of(cfg: &Config, retail: Option<&crate::padreg::Retail>) -> Settings
             padexsin: r.padexsin.clone().unwrap_or_default(),
             on: on && r.mode(0) != Some(false),
             background: background || r.mode(4) == Some(true),
+            rumble: rumble && r.mode(1) != Some(false),
             source: Source::Retail,
             saved: false,
         };
@@ -343,6 +348,7 @@ fn settings_of(cfg: &Config, retail: Option<&crate::padreg::Retail>) -> Settings
         padexsin: DEFAULT_PADEXSIN.into(),
         on,
         background,
+        rumble,
         source: Source::Default,
         saved: false,
     }
@@ -390,6 +396,40 @@ pub struct Gamepad {
     cap_prev: Vec<u8>,
     capturing: bool,
     mute: Vec<u8>,
+    /// The rumble: retail's level and hold (FUN_10007ae0), the ticks not yet a retail frame, the pad's effect
+    /// (ours: one constant effect whose gain is the motors' level), the level it plays at, and a pad that refused.
+    rumble: Rumble,
+    rumble_clock: f32,
+    ff: Option<(GamepadId, gilrs::ff::Effect)>,
+    ff_level: u16,
+    ff_refused: Option<GamepadId>,
+}
+
+/// FUN_10007ae0, the XInput branch, once a retail frame from the pad poll (FUN_10005a40): the frame's rumble sum
+/// (pad +0xdb4: effect op 0x5f's v, the chat call's 60) doubled, nothing under 10, at most 256; the motors change at
+/// most every 5 ticks (+0xdb8), and a frame that comes sooner loses its level. Both motors get min(level x 10000 /
+/// 256 x 4, 0xffff). *(Retail's DirectInput pads take level x 10000 / 256 as a constant force instead, full at 256.)*
+#[derive(Default)]
+pub struct Rumble {
+    hold: i32,
+}
+
+impl Rumble {
+    /// One frame of `ticks` (FUN_10014cf0, whole): the motors' new level, when they are set.
+    pub fn frame(&mut self, sum: i32, ticks: i32) -> Option<u16> {
+        let level = match sum.max(0).saturating_mul(2) {
+            l if l < 10 => 0,
+            l => l.min(0x100),
+        };
+        if self.hold > 0 {
+            self.hold -= ticks;
+            if self.hold > 0 {
+                return None;
+            }
+        }
+        self.hold = 5;
+        Some((level * 10000 / 256 * 4).min(0xffff) as u16)
+    }
 }
 
 impl Gamepad {
@@ -532,6 +572,59 @@ impl Gamepad {
         f
     }
 
+    /// The frame's rumble `sum` (retail's pad +0xdb4) to the pad that plays, in retail frames. Nothing while the pad
+    /// is off, the rumble is off, or the game is in the background without the background option (then it stops).
+    pub fn rumble(&mut self, cfg: &Config, focused: bool, sum: i32, dt: f32) {
+        let set = settings(cfg, self.retail.as_ref());
+        let on = set.on && set.rumble && (focused || set.background);
+        let Some(n) = super::camera::retail_frame(&mut self.rumble_clock, dt, 20.0) else { return };
+        if let Some(level) = self.rumble.frame(if on { sum } else { 0 }, n as i32) {
+            self.motors(level);
+        }
+    }
+
+    /// Both motors at `level` (XInputSetState's scale).
+    fn motors(&mut self, level: u16) {
+        let Some(g) = &mut self.gilrs else { return };
+        if self.ff.as_ref().is_some_and(|(id, _)| Some(*id) != self.active) {
+            // Another pad plays now: the old one's effect goes with its handle.
+            (self.ff, self.ff_level) = (None, 0);
+        }
+        if level == self.ff_level {
+            return;
+        }
+        if self.ff.is_none() && level != 0 {
+            let Some(id) = self.active.filter(|id| self.ff_refused != Some(*id)) else { return };
+            use gilrs::ff::{BaseEffect, BaseEffectType, EffectBuilder, Replay, Ticks};
+            let scheduling = Replay { play_for: Ticks::from_ms(1000), ..Default::default() };
+            let motor = |kind| BaseEffect { kind, scheduling, ..Default::default() };
+            match EffectBuilder::new()
+                .add_effect(motor(BaseEffectType::Strong { magnitude: u16::MAX }))
+                .add_effect(motor(BaseEffectType::Weak { magnitude: u16::MAX }))
+                .gamepads(&[id])
+                .gain(0.0)
+                .finish(g)
+            {
+                Ok(e) => self.ff = Some((id, e)),
+                Err(e) => {
+                    log::info!("gamepad {id}: no rumble ({e})");
+                    self.ff_refused = Some(id);
+                    return;
+                }
+            }
+        }
+        let Some((_, e)) = &self.ff else { return };
+        let r = e.set_gain(level as f32 / u16::MAX as f32).and_then(|_| match (self.ff_level, level) {
+            (0, _) => e.play(),
+            (_, 0) => e.stop(),
+            _ => Ok(()),
+        });
+        if let Err(e) = r {
+            log::debug!("gamepad rumble: {e}");
+        }
+        self.ff_level = level;
+    }
+
     /// Reads retail's registry values again, on a thread (at start, and when the Controller window asks).
     pub fn reload_retail(&mut self, game_dir: std::path::PathBuf) {
         let (tx, rx) = std::sync::mpsc::channel();
@@ -641,6 +734,54 @@ mod tests {
     }
 
     const DEAD: f32 = 42.0 / 127.0;
+
+    /// FUN_10007ae0 at stock retail's 2 ticks a frame: the motors are set on the first frame and then every third
+    /// (the 5-tick hold), with that frame's sum alone. File 3445 gob_/vib1's v 239 is past the 256 cap: 40000 of
+    /// 65535; the chat call's 60 gives 18748; a sum under 5 nothing.
+    #[test]
+    fn rumble_levels_and_hold() {
+        let mut r = Rumble::default();
+        let out: Vec<Option<u16>> = [239, 239, 239, 60, 4, 4, 4, 0].into_iter().map(|v| r.frame(v, 2)).collect();
+        assert_eq!(out, [Some(40000), None, None, Some(18748), None, None, Some(0), None]);
+        // A slow frame's ticks clear the hold at once; the sum is never negative.
+        let mut r = Rumble::default();
+        assert_eq!((r.frame(5, 2), r.frame(-3, 5), r.frame(1000, 8)), (Some(1560), Some(0), Some(40000)));
+    }
+
+    /// A connected pad takes the effect: the chat call's level for 0.4 s, then off (run by hand: it needs a pad that
+    /// rumbles, and buzzes it).
+    #[test]
+    #[ignore]
+    fn rumble_reaches_a_pad() {
+        let g = Gilrs::new().unwrap();
+        let active = g.gamepads().map(|(id, _)| id).next();
+        let mut pad = Gamepad { gilrs: Some(g), active, ..Default::default() };
+        pad.motors(18748);
+        assert!(pad.ff.is_some(), "no pad that rumbles (refused: {:?})", pad.ff_refused);
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        pad.motors(0);
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert_eq!(pad.ff_level, 0);
+    }
+
+    /// Retail's padmode000 turns the rumble off with its second flag, as the pad with its first; config's own maps
+    /// leave it to config.json.
+    #[test]
+    fn rumble_setting() {
+        let retail = |mode: &str| crate::padreg::Retail {
+            padmode: Some(mode.into()),
+            padsin: Some(DEFAULT_PADSIN.into()),
+            ..Default::default()
+        };
+        let mut cfg = Config::default();
+        assert!(settings(&cfg, None).rumble);
+        assert!(settings(&cfg, Some(&retail("1,1,0,0,0,1"))).rumble);
+        assert!(!settings(&cfg, Some(&retail("1,0,0,0,0,1"))).rumble);
+        cfg.gamepad_padsin = DEFAULT_PADSIN.into();
+        assert!(settings(&cfg, Some(&retail("1,0,0,0,0,1"))).rumble);
+        cfg.gamepad_rumble = false;
+        assert!(!settings(&cfg, None).rumble);
+    }
 
     /// The default padsin: A confirm (slot 0), B cancel (3), X slot 1, Y slot 2, LB 8, LT 9, L3 10, RB 12, RT 13, R3 14,
     /// Start 15, Back 16, the d-pad 4 ..= 7, lY inverted on 23 / 24, lX on 21 / 22, lRy inverted on 19 / 20, lRx on
