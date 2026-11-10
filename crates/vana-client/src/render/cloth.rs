@@ -311,7 +311,9 @@ impl ClothGpu {
         out: Option<(Mat4, Vec3)>,
     ) {
         let block = self.model(m);
-        if st.0.as_ref().is_none_or(|s| s.len != m.state) {
+        // A slot from another renderer's buffer (our own actor keeps its model across a zone load) is not ours: take
+        // a new one, which starts with the snap to the skin.
+        if st.0.as_ref().is_none_or(|s| s.len != m.state || !Arc::ptr_eq(&s.free, &self.free)) {
             st.0 = Some(self.alloc(m.state));
         }
         let Some(slot) = st.0.as_mut() else { return };
