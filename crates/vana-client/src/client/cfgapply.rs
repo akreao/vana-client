@@ -50,6 +50,33 @@ pub fn apply(w: &mut World, id: u16) {
     }
 }
 
+/// The chat filters the server keeps (LAB_101aa980, the setter of 0x32 / 0x33 / 0x35): 0x32 / 0x33 are SAVE_CONF's
+/// words @4 / @8, 0x35 byte 1 bits 3..4; a change goes out at once as c2s 0x0DB kind 0 (FUN_100e4610) with the party
+/// languages. Run for the ids a step changed, not at load (kind 5 ids are not saved).
+pub fn server_conf(w: &mut World, id: u16) {
+    let v = w.game.get(id);
+    match id {
+        0x32 => w.conf_sys[4..8].copy_from_slice(&v.to_le_bytes()),
+        0x33 => w.conf_sys[8..12].copy_from_slice(&v.to_le_bytes()),
+        0x35 => w.conf_sys[1] = w.conf_sys[1] & !0x18 | (v as u8) << 3 & 0x18,
+        _ => return,
+    }
+    super::partymenu::send_0db(w, 0, w.game.get(0x98));
+}
+
+/// s2c 0x0B4 (FUN_101aaa50 after the session's copy, LAB_100e4f20): the server's words set 0x32, 0x33 and 0x35, and
+/// each one that changed runs its setter, so the first one after login is echoed (LSB counts on that).
+pub fn from_server(w: &mut World, c: [u8; 12]) {
+    w.conf_sys = c;
+    let word = |i: usize| u32::from_le_bytes(c[i..i + 4].try_into().unwrap());
+    for (id, v) in [(0x32, word(4)), (0x33, word(8)), (0x35, (c[1] >> 3 & 3) as u32)] {
+        if w.game.set(id, v) {
+            apply(w, id);
+            server_conf(w, id);
+        }
+    }
+}
+
 /// Config 0x49 focal length for the field of view.
 pub fn focal(v: &Values) -> f32 {
     v.get_i(0x49).clamp(242, 902) as f32
