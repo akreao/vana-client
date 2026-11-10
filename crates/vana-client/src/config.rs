@@ -296,6 +296,8 @@ pub struct Config {
     pub gamepad_deadzone: f32,
     /// Read the pad while the window is in the background (padmode000's [4], DISCL_BACKGROUND).
     pub gamepad_background: bool,
+    /// The pad rumbles with effects' quakes and the chat call (padmode000's [1], "Enable Force Feedback").
+    pub gamepad_rumble: bool,
     /// The button settings in retail's padsin000 format (FFXiPadConfig's registry value: 32 numbers, XInput button
     /// numbers or axis codes 32 + n); empty = gamepad::DEFAULT_PADSIN.
     pub gamepad_padsin: String,
@@ -506,6 +508,7 @@ impl Default for Config {
             gamepad: true,
             gamepad_deadzone: 0.33,
             gamepad_background: false,
+            gamepad_rumble: true,
             gamepad_padsin: String::new(),
             gamepad_padexsin: String::new(),
             voice: Default::default(),
