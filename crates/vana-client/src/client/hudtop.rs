@@ -649,6 +649,7 @@ pub fn topbar_shot(
         let (mut a, mut b, mut c, mut d) =
             ("127.0.0.1".to_string(), "tuxedo".to_string(), "secret".to_string(), String::new());
         let mut remember = cfgset == Some("remember");
+        let mut trust = cfgset == Some("trust");
         // login2fa[:scan|:code|:done]: the two-factor window over the form, a sample key for the QR code.
         let mut twofa = config.and_then(|c| c.strip_prefix("login2fa")).map(|step| {
             let mut t = super::twofa::TwoFa::new();
@@ -724,6 +725,7 @@ pub fn topbar_shot(
             pol,
             &mut combo,
             &mut remember,
+            (!pol).then_some(&mut trust),
             &mut 0,
             false,
             update,
