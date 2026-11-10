@@ -3199,6 +3199,116 @@ mod tests {
             }
         }
     }
+
+    /// Update op 0x64 on the GPU (case 0x1004b249): La Theine's pigeons (DAT 202 `f_la/mode/hato/hat2`, emission op
+    /// 0x87 and update op 0x64 on slot 0, factor -10 on x) keep their last position and step in the slot, and their
+    /// roll is -10 x the turn from the last step to this one.
+    #[test]
+    fn gpu_bird_bank() {
+        let cfg = crate::config::Config::load();
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(dll) = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())) else { return };
+        let Ok(gpu) = Gpu::headless() else { return };
+        let mut fx = Effects::new();
+        fx.set_keys(Arc::new(crate::dat::zone::Keys::from_ffximain(&dll).unwrap()));
+        fx.set_global(crate::fx::lib::Library::load(0, index.read(0).unwrap()).unwrap());
+        let l = fx.load_zone(crate::fx::lib::Library::load(202, index.read(202).unwrap()).unwrap());
+        let hat2 = fx.reg.libs[l].gens.iter().find(|g| g.name == *b"hat2").map(|g| g.node).unwrap();
+        fx.start((l, hat2), crate::fx::Owner::Zone).unwrap();
+        let mut eg = EffectsGpu::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb);
+        let eye = glam::Vec3::new(0.0, -20.0, 0.0);
+        let view = glam::camera::rh::view::look_at_mat4(eye, glam::Vec3::new(10.0, -20.0, 10.0), glam::Vec3::NEG_Y);
+        let mut view_rot = view;
+        view_rot.w_axis = glam::Vec4::W;
+        let f = Frame {
+            dt: 2.0,
+            seconds: 2.0 / 60.0,
+            dayfrac: 0.3,
+            view,
+            view_rot,
+            eye,
+            draw_distance: 2000.0,
+            area_light: glam::Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        };
+        let wrap = |a: f32| {
+            if a > std::f32::consts::PI {
+                a - std::f32::consts::TAU
+            } else if a < -std::f32::consts::PI {
+                a + std::f32::consts::TAU
+            } else {
+                a
+            }
+        };
+        // Per element: the last position and step read back.
+        let mut last: HashMap<u32, (glam::Vec3, glam::Vec3)> = HashMap::new();
+        let (mut checked, mut banked) = (0, 0);
+        for tick in 0..120 {
+            fx.tick(&f, &crate::fx::NoActors);
+            let fresh: Vec<(u32, glam::Vec3)> = fx
+                .writes
+                .iter()
+                .filter_map(|wr| match wr {
+                    Write::Full(e, el) => Some((*e, el.v3(w::POS))),
+                    _ => None,
+                })
+                .collect();
+            let mut enc = gpu.device.create_command_encoder(&Default::default());
+            eg.update(&gpu, &mut enc, &mut fx, &f);
+            gpu.queue.submit([enc.finish()]);
+            gpu.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None }).unwrap();
+            eg.after_submit(&gpu, &mut fx);
+            let g = eg.read_elems(&gpu, fx.elems.len());
+            let birds: Vec<u32> = (0..fx.elems.len() as u32)
+                .filter(|&e| {
+                    fx.elems[e as usize]
+                        .as_ref()
+                        .and_then(|c| fx.insts.get(c.inst)?.as_ref())
+                        .is_some_and(|x| x.name == *b"hat2")
+                })
+                .collect();
+            for e in birds {
+                let gw = &g[e as usize * w::WORDS..(e as usize + 1) * w::WORDS];
+                let v3 = |k: usize| {
+                    glam::Vec3::new(f32::from_bits(gw[k]), f32::from_bits(gw[k + 1]), f32::from_bits(gw[k + 2]))
+                };
+                if gw[w::STATE] & crate::fx::elem::st::ALIVE == 0 {
+                    last.remove(&e);
+                    continue;
+                }
+                let (pos, roll) = (v3(w::POS), f32::from_bits(gw[w::ROT]));
+                // Emission op 0x87 left the start position and a zero step.
+                if let Some((_, p0)) = fresh.iter().find(|x| x.0 == e) {
+                    last.insert(e, (*p0, glam::Vec3::ZERO));
+                }
+                let Some(&(prev, step)) = last.get(&e) else { continue };
+                let d = pos - prev;
+                assert!((v3(w::SLOTS) - pos).length() < 1e-4, "tick {tick}: slot {} pos {pos}", v3(w::SLOTS));
+                assert!(
+                    (v3(w::SLOTS + 3) - d).length() < 1e-3,
+                    "tick {tick}: slot step {} moved {d}",
+                    v3(w::SLOTS + 3)
+                );
+                let a = -step.z.atan2(step.x);
+                let turn = (d.x * a.sin() + d.z * a.cos()).atan2(d.x * a.cos() - d.z * a.sin());
+                let want = wrap(turn * -10.0);
+                // The turn is a difference of nearly equal steps: compare loosely, as rotations.
+                let off = (roll - want).rem_euclid(std::f32::consts::TAU);
+                assert!(
+                    off.min(std::f32::consts::TAU - off) < 0.05,
+                    "tick {tick} element {e}: roll {roll}, want {want}"
+                );
+                checked += 1;
+                banked += (step != glam::Vec3::ZERO && roll.abs() > 0.004 && roll.abs() < 1.5) as usize;
+                last.insert(e, (pos, d));
+            }
+        }
+        println!("{checked} bird frames checked, {banked} banked");
+        // Its path curves gently: about 0.02 rad of roll at 30 fps.
+        assert!(checked > 100 && banked > 40, "{checked} checked, {banked} banked");
+    }
 }
 
 #[cfg(test)]

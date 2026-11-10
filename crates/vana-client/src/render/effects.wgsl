@@ -222,6 +222,17 @@ fn wrap_pi(a: f32) -> f32 {
     return a;
 }
 
+// x87 fpatan: atan2 with its answers for two zeros (0 for x = +0, pi for x = -0, each with y's sign), which WGSL
+// leaves open.
+fn fpatan(y: f32, x: f32) -> f32 {
+    if (x == 0.0 && y == 0.0) {
+        let neg = (bitcast<u32>(y) >> 31u) != 0u;
+        if ((bitcast<u32>(x) >> 31u) != 0u) { return select(PI, -PI, neg); }
+        return y;
+    }
+    return atan2(y, x);
+}
+
 // FUN_1003d040: fmod(v, 2) * pi, wrapped into [-pi, pi].
 fn half_turns(v: f32) -> f32 {
     var a = (v - 2.0 * trunc(v / 2.0)) * PI;
@@ -433,15 +444,20 @@ fn update(@builtin(global_invocation_id) gid: vec3<u32>) {
                     }
                 }
             }
-            // Case 0x1004b249: the element's angle about the slot's centre S[s..s+2] against the direction (S[s+3], S[s+5])
-            // turns it by the op's factors (x / y / z), each wrapped to +-pi (ducks circling face their way).
+            // Case 0x1004b249: the turn since the last frame. The slot holds the last position S[s..s+2] and the last
+            // step S[s+3..s+5] (emission op 0x87: the start position and a zero step); the angle from the last step to
+            // this one, times the op's factors, is the rotation (x / y / z, each wrapped once: birds bank into their
+            // turns). The case then stores this position and step (0x1004b40f).
             case 0x64u: {
-                let dv = ev3(b, E_POS) - slv3(b, s);
-                let a = -atan2(slf(b, s + 5u), slf(b, s + 3u));
-                let tt = atan2(dv.x * sin(a) + dv.z * cos(a), dv.x * cos(a) - dv.z * sin(a));
+                let pos = ev3(b, E_POS);
+                let dv = pos - slv3(b, s);
+                let a = -fpatan(slf(b, s + 5u), slf(b, s + 3u));
+                let tt = fpatan(dv.x * sin(a) + dv.z * cos(a), dv.x * cos(a) - dv.z * sin(a));
                 if (opf(r) != 0.0) { set_ef(b, E_ROT, wrap_pi(tt * opf(r))); }
                 if (opf(r + 1u) != 0.0) { set_ef(b, E_ROT + 1u, wrap_pi(tt * opf(r + 1u))); }
                 if (opf(r + 2u) != 0.0) { set_ef(b, E_ROT + 2u, wrap_pi(tt * opf(r + 2u))); }
+                set_slv3(b, s, pos);
+                set_slv3(b, s + 3u, dv);
             }
             // The moon (FUN_10184dc0): frame = phase, rotation z = pi/2.
             case 0x45u: {
