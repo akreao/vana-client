@@ -7711,6 +7711,8 @@ struct World {
     auto_sort: u32,
     auto_sort_dirty: bool,
     sort_due: (u32, f32),
+    /// The last c2s 0x03A per container (items::send_sort keeps them SORT_SPACING apart).
+    sort_sent: [Option<Instant>; 32],
     /// The frames posed so far (FUN_10014d50's count, for Misc. 2's animation frame rate).
     anim_frame: u32,
     /// DAT_10487ef5 (event op 0xab subs 9 / 10): the weather density forced to 1.0; cleared by each zone load.
@@ -7965,6 +7967,8 @@ enum Phase {
         confirm: Option<usize>,
         /// Expansions the server has enabled (lobby 0x05 bitmask).
         expansions: u32,
+        /// The server's feature bits (lobby 0x05 +0x24): kept here as the lobby is taken before the World starts.
+        features: u32,
     },
     World(Box<World>),
 }
@@ -9335,7 +9339,7 @@ impl App {
                     Phase::Characters { .. } => LobbyScreen::Select,
                     _ => LobbyScreen::Main,
                 };
-                let expansions = lobby.expansions;
+                let (expansions, features) = (lobby.expansions, lobby.features);
                 self.phase = Phase::Characters {
                     lobby: Some(lobby),
                     chars,
@@ -9350,6 +9354,7 @@ impl App {
                     menu: 0,
                     confirm: None,
                     expansions,
+                    features,
                 };
                 if std::mem::take(&mut self.deleting)
                     && let Some(gu) = self.game_ui.as_ref()
@@ -9364,8 +9369,7 @@ impl App {
                     Ok(codec) => {
                         let net = net::spawn(login.clone(), self.cfg.username.clone(), codec);
                         self.status = format!("Connecting to {}:{}...", login.map.0, login.map.1);
-                        let features =
-                            if let Phase::Characters { lobby: Some(l), .. } = &self.phase { l.features } else { 0 };
+                        let features = if let Phase::Characters { features, .. } = &self.phase { *features } else { 0 };
                         let pol = login.lsb.map(|(account, hash)| crate::net::profile::Cred {
                             host: self.cfg.server.clone(),
                             port: self.cfg.profile_port,
@@ -9384,6 +9388,7 @@ impl App {
                         } else {
                             0
                         };
+                        log::info!("server features 0x{features:08X}, expansions 0x{expansions:08X}");
                         // The effects' GPU side caches by the World's registry ids (library, texture, mesh); a new
                         // World starts a new registry, so the old session's cache would draw the wrong ones.
                         self.effects_gpu = None;
@@ -9894,6 +9899,7 @@ impl App {
                             ),
                             auto_sort: self.cfg.auto_sort,
                             auto_sort_dirty: false,
+                            sort_sent: [None; 32],
                             sort_due: (0, 0.0),
                             anim_frame: 0,
                             weather_forced: false,
@@ -14443,6 +14449,7 @@ impl App {
                 menu,
                 confirm: _,
                 expansions,
+                features: _,
             } => {
                 let live: Vec<usize> =
                     chars.iter().enumerate().filter(|(_, c)| !c.is_empty_slot()).map(|(i, _)| i).collect();
