@@ -712,6 +712,12 @@ pub(super) fn set_cursor(w: &mut World, c: u16) -> bool {
     };
     let moved = *at != c;
     *at = c;
+    // The menu's own row is kept at once: a click that moves the cursor and closes the menu in one frame would
+    // otherwise leave World::cursor_keep the row from before it.
+    if m.jobs.is_none() && m.post.is_none() && m.storage.is_none() {
+        let name = m.name();
+        w.cursor_mem.insert(name, c);
+    }
     moved
 }
 

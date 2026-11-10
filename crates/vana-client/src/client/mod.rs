@@ -3353,6 +3353,7 @@ fn world_hud(
                 c.mon = monstrosity::active(world);
                 c.cam_keys = world.cam_keys;
                 c.recall(world.cursor_recall(configui::CONFIGWI_MENU));
+                c.recall_modern(&world.cursor_mem);
                 config_anon(Some(&mut c), world.self_flags);
                 world.config = Some(c);
                 world.menu = None;
@@ -8157,6 +8158,14 @@ impl World {
         }
         if let Some(w) = self.config.as_ref().and_then(|c| c.stack.first()).filter(|w| w.name == "configwi") {
             kept.push((configui::CONFIGWI_MENU, w.cursor));
+        }
+        // Ours: the modern Config window's topic and row, so it reopens where it was left as configwi does.
+        // Classic Config leaves m_entry / m_row at their defaults, so only the modern window writes them.
+        if self.modern
+            && let Some(c) = self.config.as_ref().filter(|c| c.stack.first().is_some_and(|w| w.name == "configwi"))
+        {
+            kept.push((configui::MODERN_ENTRY, c.m_entry as u16));
+            kept.push((configui::MODERN_ROW, c.m_row as u16));
         }
         self.cursor_mem.extend(kept);
     }
