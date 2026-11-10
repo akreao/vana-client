@@ -255,7 +255,8 @@ pub fn rows(m: Msg, top: &mut usize, row: &mut usize, n: usize, vis: usize) -> b
         Msg::Down => *top = (*top + 1).min(max),
         Msg::PageUp if *top == 0 => *row = 0,
         Msg::PageUp => *top = top.saturating_sub(vis),
-        Msg::PageDown if *top >= max => *row = (n - *top).min(vis) - 1,
+        // FUN_101f6c70 case 3 / 0x19 tests top == max (a top past a shrunk list pages back to the end).
+        Msg::PageDown if *top == max => *row = (n - *top).min(vis) - 1,
         Msg::PageDown => *top = (*top + vis).min(max),
         Msg::Set(t) => *top = t.min(max),
     }
@@ -348,6 +349,10 @@ mod tests {
         assert_eq!((top, row), (0, 9));
         assert!(rows(Msg::PageUp, &mut top, &mut row, 25, 10));
         assert_eq!((top, row), (0, 0));
+        // A top past a shrunk list's end: Right pages back to the end (retail tests top == max).
+        let (mut top, mut row) = (20, 2);
+        assert!(rows(Msg::PageDown, &mut top, &mut row, 25, 10));
+        assert_eq!((top, row), (15, 2));
     }
 
     /// FUN_10222150: 0x19 moves the cursor a whole page even when the top stops short.

@@ -476,19 +476,7 @@ pub(super) fn list_keys(scroll: &mut usize, cursor: &mut usize, n: usize, key: e
 /// FUN_101f6c70 messages 3 / 4: Right / Left turn a page of 10 keeping the cursor row; on the last / first page the
 /// cursor goes to the last / first row instead. True when something moved (SE 0001).
 pub(super) fn page_keys(scroll: &mut usize, cursor: &mut usize, n: usize, right: bool) -> bool {
-    if n == 0 {
-        return false;
-    }
-    let max = n.saturating_sub(VISIBLE_ROWS);
-    let before = (*scroll, *cursor);
-    match right {
-        true if *scroll == max => *cursor = (n - *scroll).min(VISIBLE_ROWS) - 1,
-        true => *scroll = (*scroll + VISIBLE_ROWS).min(max),
-        false if *scroll == 0 => *cursor = 0,
-        false => *scroll = scroll.saturating_sub(VISIBLE_ROWS),
-    }
-    *cursor = (*cursor).min(n - 1 - *scroll);
-    (*scroll, *cursor) != before
+    rows(if right { Msg::PageDown } else { Msg::PageUp }, scroll, cursor, n, VISIBLE_ROWS)
 }
 
 /// A scroll bar or wheel message (FUN_101f6c70) to the focused item list. True when it moved.

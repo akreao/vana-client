@@ -15569,9 +15569,7 @@ impl App {
                 let keys = [world.cam_keys[1] as u32, world.cam_keys[0] as u32];
                 if keys != [self.cfg.cam_keys_x, self.cfg.cam_keys_y] {
                     (self.cfg.cam_keys_x, self.cfg.cam_keys_y) = (keys[0], keys[1]);
-                    if let Err(e) = self.cfg.save() {
-                        log::warn!("config save: {e:#}");
-                    }
+                    save = true;
                 }
                 if let Some(kind) = world.want_settings.take() {
                     // Size lists come from the window, not the menu layout it is scaled to.
@@ -15653,9 +15651,7 @@ impl App {
                         s.s.mods = mm.s.s.mods.clone();
                         (s.lua_names, s.lua_info) = (mm.s.lua_names.clone(), mm.s.lua_info.clone());
                     }
-                    if let Err(e) = self.cfg.save() {
-                        log::warn!("config: {e:#}");
-                    }
+                    save = true;
                 }
                 if world.modmgr.as_ref().is_some_and(|m| !m.open) {
                     world.modmgr = None;
@@ -15668,9 +15664,7 @@ impl App {
                     if std::mem::take(&mut s.s.reset_places) {
                         log::info!("modern: panel places of {} reset (every display)", world.name);
                         self.cfg.modern_places.retain(|k, _| !modern::layout_of(k, &world.name));
-                        if let Err(e) = self.cfg.save() {
-                            log::warn!("config: {e:#}");
-                        }
+                        save = true;
                     }
                 }
                 if std::mem::take(&mut world.volume_dirty) {
@@ -15679,64 +15673,44 @@ impl App {
                 if std::mem::take(&mut world.fav_save) {
                     self.cfg.modern_favourites.insert(world.name.clone(), world.favourites.clone());
                     self.cfg.modern_fav_strip = world.fav_strip;
-                    if let Err(e) = self.cfg.save() {
-                        log::warn!("config: {e:#}");
-                    }
+                    save = true;
                 }
                 if std::mem::take(&mut world.recent_save) {
                     self.cfg.modern_recent.insert(world.name.clone(), world.recent_picks.clone());
-                    if let Err(e) = self.cfg.save() {
-                        log::warn!("config: {e:#}");
-                    }
+                    save = true;
                 }
                 if std::mem::take(&mut world.voice.dirty) {
                     self.cfg.voice = world.voice.cfg.clone();
-                    if let Err(e) = self.cfg.save() {
-                        log::warn!("config: {e:#}");
-                    }
+                    save = true;
                 }
                 if std::mem::take(&mut world.party_tp_save) {
                     self.cfg.party_tp = world.party_tp;
-                    if let Err(e) = self.cfg.save() {
-                        log::warn!("config: {e:#}");
-                    }
+                    save = true;
                 }
                 if std::mem::take(&mut world.auto_sort_dirty) {
                     self.cfg.auto_sort = world.auto_sort;
-                    if let Err(e) = self.cfg.save() {
-                        log::warn!("config: {e:#}");
-                    }
+                    save = true;
                 }
                 if std::mem::take(&mut world.minimap_dirty) {
                     self.cfg.minimap_span = world.minimap_span;
-                    if let Err(e) = self.cfg.save() {
-                        log::warn!("config: {e:#}");
-                    }
+                    save = true;
                 }
                 if std::mem::take(&mut world.map_opacity_dirty) {
                     self.cfg.map_overlay_opacity = world.map_opacity;
-                    if let Err(e) = self.cfg.save() {
-                        log::warn!("config: {e:#}");
-                    }
+                    save = true;
                 }
                 if std::mem::take(&mut world.rest.dirty) {
                     let (ip, port) = world.search_addr;
                     self.cfg.rest_models.insert(format!("{ip}-{port}"), world.rest.model.clone());
-                    if let Err(e) = self.cfg.save() {
-                        log::warn!("config: {e:#}");
-                    }
+                    save = true;
                 }
                 if std::mem::take(&mut world.timers.dirty) {
                     (self.cfg.timers_out, self.cfg.timers_folded) = (world.timers.out, world.timers.folded);
-                    if let Err(e) = self.cfg.save() {
-                        log::warn!("config: {e:#}");
-                    }
+                    save = true;
                 }
                 if std::mem::take(&mut world.regime.dirty) {
                     self.cfg.regime_out = world.regime.out;
-                    if let Err(e) = self.cfg.save() {
-                        log::warn!("config: {e:#}");
-                    }
+                    save = true;
                 }
                 if std::mem::take(&mut world.game_save) || apply {
                     self.cfg.game.store(Some(&world.name), &world.game);
