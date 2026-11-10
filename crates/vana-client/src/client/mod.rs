@@ -9456,6 +9456,8 @@ impl App {
             }
             Task::CreatorBackdrop(Ok(b)) => {
                 self.creator = Some(creator::Creator::new(b));
+                // A fresh creator asks for its dancer again, even one that failed in an earlier visit.
+                self.dancer_loading = None;
                 self.creator_state = LoadState::Idle;
             }
             Task::CreatorBackdrop(Err(e)) => {
@@ -16548,6 +16550,7 @@ impl App {
             }
         } else if !in_create && !matches!(self.phase, Phase::Characters { .. }) {
             self.creator = None;
+            self.dancer_loading = None;
         }
         // Nation step: the highlighted city's flyover (FUN_1022ea40): a 10-frame settle, a 60-tick fade to
         // black ('ffot', file 33193), file 24 + nation loads, a 60-tick fade back ('ffin').
