@@ -882,15 +882,15 @@ pub fn update(
         let v =
             (dead(input.axis(0x9d) * 15.0) * fast * ticks * 0.5, dead(input.axis(0x9e) * 15.0) * fast * ticks * 0.5);
         let (bx, by) = ([sw / 512.0 * 40.0, sw - sw / 512.0 * 60.0], [sh / 448.0 * 65.0, sh - sh / 448.0 * 180.0]);
-        let d = match mouse.filter(|_| v == (0.0, 0.0)) {
-            Some(ms) => super::map::mouse_step(ms, &mut m.anchor, m.view.point),
-            None => v,
+        let (d, exact) = match mouse.filter(|_| v == (0.0, 0.0)) {
+            Some(ms) => (super::map::mouse_step(ms, &mut m.anchor, m.view.point), true),
+            None => (v, false),
         };
         if d != (0.0, 0.0) {
             if fast > 1.0 {
                 m.view.scroll_by(d);
             } else {
-                let over = super::map::cursor_move(&mut m.view.point, d, m.view.zoom, bx, by);
+                let over = super::map::cursor_move(&mut m.view.point, d, m.view.zoom, bx, by, exact);
                 m.view.view = (m.view.view.0 + over.0, m.view.view.1 + over.1);
                 m.view.clamp();
             }
