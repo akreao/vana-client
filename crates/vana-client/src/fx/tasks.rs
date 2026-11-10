@@ -545,14 +545,31 @@ impl Effects {
         self.furn_starts.push((actor, file));
     }
 
-    /// The furniture actor goes: its waiting start and the tasks on_furniture started on it, their copies too (its
-    /// links delete them, FUN_10057cf0).
+    /// The furniture actor goes: its waiting start, the tasks on_furniture started on it with their copies, and the
+    /// generator clones those started on it, a finished copy's too (the actor's links delete them all, FUN_10082b10:
+    /// FUN_10057cf0 the tasks, FUN_10054380 the clones).
     pub fn stop_furniture(&mut self, actor: u32) {
         let who = Who::Actor(actor);
         self.furn_starts.retain(|f| f.0 != actor);
+        let (mut gone, mut libs) = (Vec::new(), Vec::new());
         for t in self.tasks.iter_mut() {
-            if t.as_ref().is_some_and(|t| t.a1 == who && t.ops.iter().any(|o| o.code == 0xa2)) {
+            if let Some(x) = t.as_ref().filter(|t| t.a1 == who && t.ops.iter().any(|o| o.code == 0xa2)) {
+                gone.push(x.uid);
+                libs.push(x.res.0);
                 *t = None;
+            }
+        }
+        let live: Vec<u64> = self.tasks.iter().flatten().map(|t| t.uid).collect();
+        for i in 0..self.insts.len() {
+            let linked = self.insts[i].as_ref().is_some_and(|x| {
+                x.actors.contains(&who)
+                    && match x.owner {
+                        super::Owner::Task(u) => gone.contains(&u) || (libs.contains(&x.src.0) && !live.contains(&u)),
+                        _ => false,
+                    }
+            });
+            if linked {
+                self.kill(i);
             }
         }
     }
@@ -5621,7 +5638,7 @@ mod auto_tests {
         let st12 = (l, sched(&fx.reg.libs[l], &["m_ev", "toke"], "st12"));
         assert_eq!(fx.tasks.iter().flatten().filter(|t| t.res == st12).count(), 2);
         fx.stop_furniture(CLOCK);
-        assert_eq!(fx.tasks.iter().flatten().count(), 0);
+        assert_eq!((fx.tasks.iter().flatten().count(), struck(&fx)), (0, 0), "the strike goes with the clock");
         let fx = run(11.0 / 24.0);
         assert_eq!((on_clock(&fx), waiting(&fx)), (2, 2), "no strike at 11:00");
         assert_eq!(struck(&fx), 0);

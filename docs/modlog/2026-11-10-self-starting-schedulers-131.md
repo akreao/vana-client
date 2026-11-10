@@ -68,7 +68,8 @@ decompile and the disassembly.
 - Ours: dat::sched::furniture_start; Effects::on_furniture / stop_furniture (the start waits for the file, then
   spawns on (actor, actor) and steps); Mog House pieces (client/furniture.rs apply) and prop model actors
   (client/ships.rs create and the op 0xb6 0x11 swap, generic MMB branch only) call it. A model swap stops the old
-  file's tasks first (FUN_100c42f0 -> FUN_10082b10 drops everything linked to the actor; ours only these).
+  file's tasks first (FUN_100c42f0 -> FUN_10082b10 drops everything linked to the actor; ours these tasks and the
+  generator clones they started on it).
 - Tests: render::effects::tests::gpu_bird_bank (DAT 202 `hat2`: the slot holds the last position and step, roll =
   -10 x turn, 120 frames), fx::tasks::auto_tests::furniture_clock_strikes (62933: nothing from the parse; on the
   actor two parked tasks, at 12:00 a copy that starts 8075; none at 11:00; the actor's end takes all).
