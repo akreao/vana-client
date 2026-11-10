@@ -201,6 +201,9 @@ pub struct Config {
     /// Not retail (Settings' Lamp Lights): real point lights at the zones' lamps in place of their baked lamplight
     /// (client/lamps.rs).
     pub lamp_lights: bool,
+    /// Not retail (Settings' Light Shading Smooth): the scenery's point lights per pixel with a soft edge, in place of
+    /// retail's per-vertex lights with a hard cut at the range.
+    pub smooth_lights: bool,
     /// Character shadows: 0 retail's (blob / silhouette), 1 real (a shadow map from the sun, render/sunshadow.rs,
     /// retail's where there is no sun). Not a retail option.
     pub actor_shadows: u32,
@@ -472,6 +475,7 @@ impl Default for Config {
             gm_window: false,
             notes_seen: env!("CARGO_PKG_VERSION").into(),
             lamp_lights: true,
+            smooth_lights: false,
             actor_shadows: 0,
             shadow_map: 2048,
             ssao: false,

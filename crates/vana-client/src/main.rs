@@ -1630,6 +1630,8 @@ fn main() -> Result<()> {
                 // Config 0011 at this weather; one frame, so the instances stand at their random start.
                 r.set_sway(0.0, sway_steps(cfg.tool("0011")), dat::zone::SWAY_TAGS.iter().position(|t| *t == weather));
                 r.bump_mode = bump;
+                // FFXI_SMOOTH_LIGHTS: Settings' Light Shading Smooth (ours) in place of retail's per-vertex lights.
+                r.smooth_lights = std::env::var_os("FFXI_SMOOTH_LIGHTS").is_some();
                 if let Some(v) = voyage_v {
                     r.voyage = v;
                 }
