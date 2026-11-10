@@ -14385,8 +14385,11 @@ impl App {
                             if out.reload {
                                 self.index = None;
                                 // The next login sends the patched files' version.
-                                if self.cfg.follow_applied_version() {
-                                    let _ = self.cfg.save();
+                                // At once: the restart below starts a client that reads it.
+                                if self.cfg.follow_applied_version()
+                                    && let Err(e) = self.cfg.save()
+                                {
+                                    log::warn!("saving the config: {e:#}");
                                 }
                             }
                             if out.restart {
@@ -14460,9 +14463,7 @@ impl App {
                             let server = self.cfg.server.clone();
                             self.cfg.forget_login(&server, Some(a));
                         }
-                        if self.drive.login.is_none() || crate::config::is_copy() {
-                            let _ = self.cfg.save();
-                        }
+                        save |= self.drive.login.is_none() || crate::config::is_copy();
                     }
                     // Remember password is the account's own: unticked, its password goes at once.
                     if remembered != self.cfg.remember_password {
@@ -14482,9 +14483,7 @@ impl App {
                                 l.saved_password.clear();
                             }
                         }
-                        if self.drive.login.is_none() || crate::config::is_copy() {
-                            let _ = self.cfg.save();
-                        }
+                        save |= self.drive.login.is_none() || crate::config::is_copy();
                     }
                     if let Some(a) = self.audio.as_mut() {
                         for s in sounds {
@@ -14615,7 +14614,7 @@ impl App {
                                 Some(s) => self.whats_new = Some(s),
                                 None => {
                                     self.cfg.notes_seen = env!("CARGO_PKG_VERSION").into();
-                                    let _ = self.cfg.save();
+                                    save = true;
                                 }
                             }
                         }
@@ -14966,7 +14965,7 @@ impl App {
                                         self.notes_ui = None;
                                         notes::seen();
                                         self.cfg.notes_seen = env!("CARGO_PKG_VERSION").into();
-                                        let _ = self.cfg.save();
+                                        save = true;
                                         break;
                                     }
                                 }
