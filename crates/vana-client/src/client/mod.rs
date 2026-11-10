@@ -5794,6 +5794,19 @@ fn anim_skip(config: u32, frame: u32, a: &mut Actor) -> bool {
 }
 
 impl Actor {
+    /// A model taken on: the motion and pose state start over, attach points from the rest pose until it poses. A
+    /// model taken on by an actor without one (loaded, or shared at once) seeds its weapon effects (wepfx); a look
+    /// swapped in for a drawn one does not, as the actor's `init` does not run again on a look change *(inf)*.
+    fn adopt(&mut self, m: &Arc<crate::dat::character::Character>, seed: bool) {
+        if seed {
+            wepfx::seed(self, m);
+        }
+        self.character = Some(m.clone());
+        (self.motion_names, self.rebase, self.fresh) = (None, true, true);
+        (self.rest, self.bones, self.motion_link) = (crate::dat::character::pose(&m.skeleton, &[]), Vec::new(), None);
+        (self.anchors, self.anchor_at) = (ANCHORS, [None; 2]);
+    }
+
     fn new() -> Self {
         Actor {
             key: String::new(),
@@ -10055,14 +10068,9 @@ impl App {
                                 a.next = Some(ch.clone());
                                 continue;
                             }
-                            wepfx::seed(a, &ch);
-                            a.character = Some(ch.clone());
-                            a.gpu = None;
-                            (a.motion_names, a.rebase, a.fresh) = (None, true, true);
                             // Attach points from the rest pose while the GPU model builds ('spop' dolls it at once).
-                            (a.rest, a.bones, a.motion_link) =
-                                (crate::dat::character::pose(&ch.skeleton, &[]), Vec::new(), None);
-                            (a.anchors, a.anchor_at) = (ANCHORS, [None; 2]);
+                            a.adopt(&ch, true);
+                            a.gpu = None;
                         }
                         world.models.insert(key, ch);
                         // Looks no actor wears any more go once there are more than MODEL_CACHE.
@@ -11913,13 +11921,8 @@ impl App {
                 if actor.character.is_some() {
                     actor.next = Some(m.clone());
                 } else {
-                    wepfx::seed(actor, m);
-                    actor.character = Some(m.clone());
+                    actor.adopt(m, true);
                     actor.gpu = None;
-                    (actor.motion_names, actor.rebase, actor.fresh) = (None, true, true);
-                    (actor.rest, actor.bones, actor.motion_link) =
-                        (crate::dat::character::pose(&m.skeleton, &[]), Vec::new(), None);
-                    (actor.anchors, actor.anchor_at) = (ANCHORS, [None; 2]);
                 }
             } else if world.models_loading.insert(key.clone()) {
                 wanted.push((key, source));
@@ -17336,13 +17339,9 @@ impl App {
                         && let Some(g) = r.skinned_actor(&gfx.gpu, &nx)
                     {
                         a.next = None;
-                        a.character = Some(nx.clone());
+                        a.adopt(&nx, false);
                         a.gpu = Some(g);
                         a.top_key.clear();
-                        (a.motion_names, a.rebase, a.fresh) = (None, true, true);
-                        (a.rest, a.bones, a.motion_link) =
-                            (crate::dat::character::pose(&nx.skeleton, &[]), Vec::new(), None);
-                        (a.anchors, a.anchor_at) = (ANCHORS, [None; 2]);
                     }
                     let Some(ch) = a.character.clone() else { continue };
                     let Some(&Place { pos, forward, tilt, status, ratio, size }) = places.get(id) else { continue };
