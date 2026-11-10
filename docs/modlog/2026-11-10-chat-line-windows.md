@@ -22,6 +22,10 @@ Issue lenonk/vana-client#173.
   matched to the key events by key, so numpad 8's repeat and a letter in one frame no longer type a stray "8" or drop
   the letter. A test drive's or the controller's '-' counts as the numpad's (the menu on every keyboard type), as
   before. Key Assignment's keys are kept in the modern UI too: its key list is `ConfigUi::m_keys`, not on the stack.
+- `chat_opens` also tests the zone loaded (ours: World::in_scene, the zone's scene loaded and stood in), so the Full
+  keyboard's letters during a zone-in do not open the line. '/' opens it by position as well as by what it types:
+  Shift + '/' ('?') opens it as VK 0xBF does (the '?' typed), and a layout with '/' elsewhere (Shift + 7) still opens
+  it by its '/' *(ours: retail's VK 0xBF is that layout's other key)*. Its numpad test is the per-press one too.
 - Seen live (Lnxcsfix, classic, Full keyboard): with the Items window open, Space, '/' and H each opened the chat line
   ("", "/", "h") over the window, and Escape closed it with the window kept. Not tried live: the numpad's digits on
   the Full keyboard (a drive cannot press them), the modern UI.

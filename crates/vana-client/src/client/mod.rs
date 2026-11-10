@@ -2304,7 +2304,6 @@ fn world_hud(
     size: [u32; 2],
     keys: &mut HashSet<KeyCode>,
     view_proj: glam::Mat4,
-    numpad_slash: bool,
     numpad_minus: bool,
     numpad_presses: &mut Vec<(egui::Key, bool)>,
 ) -> Vec<[f32; 4]> {
@@ -2622,8 +2621,14 @@ fn world_hud(
                     opened = true;
                     keys.clear();
                 }
-                // egui reports numpad / as Slash too; that key is 0x45 / 0x88, not chat.
-                egui::Key::Slash if !modifiers.ctrl && !modifiers.alt && !numpad_slash && chat_opens(world) => {
+                // VK 0xBF whatever the Shift (Shift + '/' types '?'): the key by position, or by what it types on a
+                // layout with '/' elsewhere. The numpad's '/' is 0x45 / 0x88, not chat.
+                k if (*k == egui::Key::Slash || *physical_key == Some(egui::Key::Slash))
+                    && !modifiers.ctrl
+                    && !modifiers.alt
+                    && !numpad
+                    && chat_opens(world) =>
+                {
                     world.typing = true;
                     keys.clear();
                 }
@@ -8121,8 +8126,6 @@ pub struct App {
     nation: NationShow,
     /// When the next frame may draw (the frame limit; see about_to_wait).
     next_frame: Option<Instant>,
-    /// The last '/' key pressed was the numpad one (egui maps both to Key::Slash).
-    numpad_slash: bool,
     /// The last '-' key pressed was the numpad one (egui maps both to Key::Minus).
     numpad_minus: bool,
     /// This frame's presses of keys egui gives one name for the numpad and the main block (the digits, '-', '/',
@@ -8425,7 +8428,6 @@ impl App {
             last_cursor: None,
             last_frame: Instant::now(),
             next_frame: None,
-            numpad_slash: false,
             numpad_minus: false,
             numpad_presses: Vec::new(),
             numpad_synth: Vec::new(),
@@ -15551,7 +15553,6 @@ impl App {
                         screen_size,
                         &mut self.keys,
                         view_proj,
-                        self.numpad_slash,
                         self.numpad_minus,
                         &mut self.numpad_presses,
                     );
@@ -19101,9 +19102,6 @@ impl ApplicationHandler for App {
                     {
                         self.numpad_presses.push(p);
                     }
-                    if event.state == ElementState::Pressed && matches!(code, KeyCode::Slash | KeyCode::NumpadDivide) {
-                        self.numpad_slash = code == KeyCode::NumpadDivide;
-                    }
                     if event.state == ElementState::Pressed && matches!(code, KeyCode::Minus | KeyCode::NumpadSubtract)
                     {
                         self.numpad_minus = code == KeyCode::NumpadSubtract;
@@ -19426,10 +19424,10 @@ fn typed_key(key: egui::Key) -> bool {
     (s.len() == 1 && s != "/") || matches!(key, egui::Key::Minus | egui::Key::Quote | egui::Key::IntlBackslash)
 }
 
-/// FUN_101b0060, the chat line's gate for Space, '/' and the Full keyboard's keys: no window is tested. Not in cinema
-/// mode; ours leaves Key Assignment its keys (the classic window on the config stack, the modern page's key list).
+/// FUN_101b0060, the chat line's gate for Space, '/' and the Full keyboard's keys: no window is tested. The zone loaded
+/// (FUN_10085930; ours: in its scene), not in cinema mode; ours leaves Key Assignment its keys (the classic window on the config stack, the modern page's key list).
 fn chat_opens(w: &World) -> bool {
-    !event::cinema(w) && !w.config.as_ref().is_some_and(key_assigning)
+    w.in_scene() && !event::cinema(w) && !w.config.as_ref().is_some_and(key_assigning)
 }
 
 /// Key Assignment is up and takes the keys it assigns: the classic k1assign / k2assign window, or the modern Settings
