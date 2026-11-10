@@ -1,7 +1,8 @@
 //! Where FFXiMain.dll keeps the data tables the client reads. Their addresses move with every build, so each is
 //! found by content when the DLL is read: a short hint, confirmed by an MD5 over the table (or its stable start;
 //! SE appends to some). Tables at a fixed distance from a found one in every known build are placed from it.
-//! Signatures from the 2019 base, checked against retail 30261006_0 (lab/current/signatures.py).
+//! Signatures from the 2019 base, checked against retail 30261006_0 (lab/current/signatures.py) and 30261102_0
+//! (every signature is found in both; the client supports the current retail build and the one before it).
 
 use anyhow::{Result, anyhow, bail};
 use md5::{Digest, Md5};
@@ -162,12 +163,13 @@ const MON_PREFIXES: Sig = Sig {
     len: 0xf9 * 16,
     md5: "97532e5b1c14131bf50a39cd77ac0ebf",
 };
-/// FUN_10161fd0's table 0x103353c8: the colours of in-line codes `1e 00..10` (0 = the line's own colour).
+/// FUN_10161fd0's table 0x103353c8 (0x10336510 in 30261102_0): the colours of in-line codes `1e 00..10` (0 = the
+/// line's own colour). Signed over codes 0..8 only: 30261102_0 gave code 9 a colour (0x60404040, was 0).
 const CODE_COLOURS: Sig = Sig {
     name: "colour codes",
     hint: &[0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0xc0, 0x40, 0x40, 0xa0, 0x40, 0x40, 0x60],
-    len: 0x44,
-    md5: "23e1f4ec52b1b2f0d5ddc68efbf06f89",
+    len: 0x24,
+    md5: "a9761428fc6ef53801dab7ce4122724e",
 };
 const ERRORS: Sig = Sig {
     name: "error codes",
@@ -662,6 +664,17 @@ mod tests {
         let t = Tables::find(&dll).unwrap();
         assert_eq!(t.key2_at - t.key1_at, 0x328);
         assert_eq!(t.mode_tables[6] - t.mode_tables[1], 0x1800);
+        // the readers that only log when their table is missing: a new retail build must not lose one silently
+        // (30261102_0 changed colour code 9, which the full-table signature then missed)
+        let colours = super::code_colours(&dll).unwrap();
+        assert_eq!((colours[0], colours[2], colours[8]), (0, 0x4040_c000, 0x8080_4020));
+        assert_eq!(super::call_sounds(&dll).unwrap()[0].0, "<call>");
+        assert!(!super::text_help(&dll).unwrap().is_empty());
+        assert_eq!(super::knockback(&dll).unwrap()[0], [0.0; 3]);
+        assert_eq!(super::mon_prefixes(&dll).unwrap()[1], "Abashed");
+        assert_eq!(super::mon_types(&dll).unwrap().len(), 0x200);
+        super::search_words(&dll).unwrap();
+        super::conquest(&dll).unwrap();
     }
 
     /// The /search word lists, regions and zone flags (MODLOG "Search: the /search grammar").

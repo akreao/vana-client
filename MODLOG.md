@@ -23485,3 +23485,58 @@ still gave `cor`. Both now go through actmotion::sdep_stand.
   same bits as the classic sort window's Auto). Manual Sort clears those bits and starts storage's Manual Sort on that
   pane: a pick, then the row to put it at (FUN_101f0b30's rules), within one part. Num+ (FUN_101db690 case 8) focuses
   the pair: Left / Right between them, Enter takes one.
+
+## Retail FFXiMain 30261102_0 as the baseline; what changed from 30261006_0 (2026-11-10)
+
+The November 2026 retail update replaced FFXiMain.dll. Addresses below are 30261102_0, with the 30261006_0 address
+in brackets where the function existed. Both builds were unpacked, analysed in Ghidra (functions reached only through
+pointers and unreferenced code defined as functions too) and compared function by function: blanked instruction bytes
+for every function, every address checked through an old -> new map, tables and data compared byte for byte.
+
+- Size of the change: 23,632 functions in .text before, 23,679 after. 23,379 are identical; 231 differ only in constants
+  (a struct grew, below); 14 pairs were flagged as changed, of which 8 are real (the rest: the same code compiled in
+  another order, offsets moved only, or table bytes decoded as code); 51 are new (45 functions and six decode
+  fragments), 4 gone (one thunk, three decode fragments). .text grew by 0x1600 bytes, .rdata and .data start 0x1000
+  higher. 45 identical `sub ecx, 0x30; jmp f` thunks were placed in another order by the linker (their vtable slots
+  follow them: no change).
+- The session object (DAT_104e0f48 [DAT_104dfd98]) grew by 0xb0 bytes at +0x2d67c: everything after moved up, which is
+  all that changed in 223 functions (flag byte +0x40db5 is now +0x40e65; the object is 0x44c64 bytes, cleared as 0x11319
+  dwords in FUN_100f9a80 [FUN_100f9940]). FUN_10004060..FUN_10004452 hold three copies on the stack (+0x210).
+- New s2c 0x08F: FUN_100fa1a0's table set-up FUN_100e4340 registers FUN_100e5290 after 0x08C..0x08E. The handler copies
+  0x2b dwords from packet +4 to session +0x2d67c, calls the callback at session +0x2d728 when one is set, and sets bit 5
+  of session +0x40e65 ("received"). FUN_100e4340, FUN_100e4420 [FUN_100e43f0] and FUN_100e44e0 [FUN_100e4490] clear the
+  block, the callback and the bit with the 0x08C..0x08E state.
+- New c2s 0x0C5 (FUN_100e5200, 0x10 bytes: +4 u8 set, +5 ten slot bytes) and c2s 0x0C6 (FUN_100e5260, 4 bytes, no
+  payload: asks for the 0x08F data; sent by fe_equip's open when the bit is clear).
+- Three new menus, rows added to the menu table (the inserted bytes start at 0x1037557b): "menu    fe_main " (object
+  DAT_105795f4, 0x14 bytes, vtable 0x10335680), "menu    fe_equip" (DAT_104e2d20, 100 bytes, vtable 0x10333fe8, built by
+  FUN_101170f0) and "menu    fe_inven" (DAT_104e2d24, 0x60 bytes, vtable 0x10334058, built by FUN_10117c30). The window
+  set-up FUN_10147740 [FUN_10146340] creates them and FUN_10148100 [FUN_10146c60] deletes them. New code: 0x101170f0 to
+  0x1011842d (37 functions; the shared one-instruction stubs FUN_101171b0.. moved in between them), FUN_1014caa0,
+  FUN_1014cb40, FUN_1014cb50, and a deleting destructor FUN_101480d0 for the class at vtable 0x10335638.
+  - fe_main: vtable +4 FUN_1014caa0 (run at open, as read) disables children 1..8, then at main level above 0x62
+    (DAT_104867f1) enables child 1 with key item 0xd21 and children 2..7 with key item 0xd2f (FUN_10097e80). Vtable +8
+    FUN_1014cb40 loads the menu, +0x18 FUN_1014cb50 takes its events: event 5 on child 1 opens "menu    fp_cat  ",
+    children 2..7 call FUN_10117360(0..5), which stores the set in fe_equip +0x58 and opens fe_inven and fe_equip.
+  - fe_equip reads the 0x08F block through FUN_10117af0 (session +0x2d67c once received): six sets of ten slot bytes at
+    block +0x2a + set x 0x14 (FUN_10117b70 builds the 0x0C5 packet from them); FUN_10117580 fills ten list rows of 0x54
+    bytes (cell kinds 0xe and 0x19, item id = slot value + 0x72f0); FUN_10117750 is its key handler (events 3 / 4 step
+    the set mod 6, 5 picks a slot and hands over to fe_inven, 6 backs out).
+- statcom2's frame FUN_1014a0b0 [FUN_10148be0]: child 0xd is enabled (FUN_10119ff0(0xb, 0xd)) at main level above 0x62
+  with key item 0xd21 or, new, key item 0xd2f.
+- List cells: FUN_101f60f0 [FUN_101f4b20] accepts kinds up to 0x4d (was 0x4c), and the draw FUN_101f6180 [FUN_101f4bb0]
+  has a 78th case (jump table 0x101f7b98, case at 0x101f7b57): FUN_1015d340(u16 value, x, y + 2, 0.5, 0, the cell's
+  colour, 0).
+- In-line colour code 9 (`1e 09`) is 0x60404040 (table 0x10336510 [0x103353c8] + 0x24; was 0 = the line's colour). The
+  client reads this table from the DLL; its signature covered all 17 entries and missed the new build, so chat colours
+  fell back to none there. It is signed over codes 0..8 now.
+- Mog House layout, Move keys FUN_101cf930 [FUN_101ce360]: the 0x8d / 0x8e steps of +0x20 (0..3) are skipped while
+  FUN_101d01b0 is set (bit 0 of the byte at *(this + 0xf0)); the re-centring after a step (FUN_101cf520, FUN_101cf360,
+  FUN_101ce720) now runs before the FUN_101d01d0 test, not inside its failed branch.
+- No behaviour change, checked in the decompile: FUN_100d7240 and FUN_10169520 [FUN_10167f50] (same code, other
+  instruction order); FUN_100ec2d0 [FUN_100ec190] and FUN_100f9ce0 [FUN_100f9ba0] (offsets moved by 0xb0 only);
+  FUN_1012da60 [FUN_1012c660] and FUN_1020a170 [FUN_10208b60] (two side-effect-free getters called in the other order
+  before being added).
+- Data: every other initialised byte of .rdata / .data is equal once moved, pointers included, except the build date
+  strings and the PE timestamp. All 29 table signatures of `dat/tables.rs` are found in both builds.
+- Ours: nothing of the 0x08F / 0x0C5 / 0x0C6 feature is built (LSB has stubs for the three packets).
