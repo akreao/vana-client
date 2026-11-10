@@ -508,13 +508,18 @@ fn sig_of_path(p: &Path) -> Result<Option<Sig>> {
 /// The version of the manifest last applied here (our stamp file).
 pub fn applied_version(root: &Path) -> Option<String> {
     let text = std::fs::read_to_string(root.join(STAMP_FILE)).ok()?;
-    parse_manifest(&text).ok()?.iter().flat_map(|e| e.versions.iter().map(|v| v.stamp.clone())).max()
+    parse_manifest(&text)
+        .ok()?
+        .iter()
+        .flat_map(|e| e.versions.iter().map(|v| v.stamp.clone()))
+        .max_by_key(|s| version_key(s))
 }
+
+type Seen = (PathBuf, Option<std::time::SystemTime>, u64, Option<String>);
+static SEEN: std::sync::Mutex<Option<Seen>> = std::sync::Mutex::new(None);
 
 /// [`applied_version`], read again only when the stamp file changes (every Config::load asks for it).
 pub fn applied_version_cached(root: &Path) -> Option<String> {
-    type Seen = (PathBuf, Option<std::time::SystemTime>, u64, Option<String>);
-    static SEEN: std::sync::Mutex<Option<Seen>> = std::sync::Mutex::new(None);
     let path = root.join(STAMP_FILE);
     let meta = std::fs::metadata(&path).ok()?;
     let key = (path, meta.modified().ok(), meta.len());
@@ -681,7 +686,10 @@ pub fn apply(root: &Path, plan: &Plan, connections: usize, progress: &(dyn Fn(us
     if let Some(e) = failed.into_inner().unwrap() {
         return Err(e);
     }
-    write_atomic(&root.join(STAMP_FILE), &plan.manifest)
+    write_atomic(&root.join(STAMP_FILE), &plan.manifest)?;
+    // A new stamp the same size within the filesystem's timestamp step would look unchanged to the cache.
+    *SEEN.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -789,6 +797,13 @@ mod tests {
         assert!(version_key("30261006_10") > version_key("30261006_9"));
         assert_eq!(version_key("custom"), None);
         assert_eq!(version_key(""), None);
+        let base = std::env::temp_dir().join(format!("vana-patch-version-{}", std::process::id()));
+        std::fs::create_dir_all(&base).unwrap();
+        let line = |v: &str| format!("{v} 1 1 1 {v}/Direct/x.slc 5\n");
+        let text = format!("file ROM/0/0.DAT {{\n{}{}}}\nend\n", line("30261102_9"), line("30261102_10"));
+        std::fs::write(base.join(STAMP_FILE), text).unwrap();
+        assert_eq!(applied_version(&base).as_deref(), Some("30261102_10"));
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
