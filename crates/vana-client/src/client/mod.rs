@@ -7965,6 +7965,8 @@ enum Phase {
         confirm: Option<usize>,
         /// Expansions the server has enabled (lobby 0x05 bitmask).
         expansions: u32,
+        /// The server's feature bits (lobby 0x05 +0x24): kept here as the lobby is taken before the World starts.
+        features: u32,
     },
     World(Box<World>),
 }
@@ -9335,7 +9337,7 @@ impl App {
                     Phase::Characters { .. } => LobbyScreen::Select,
                     _ => LobbyScreen::Main,
                 };
-                let expansions = lobby.expansions;
+                let (expansions, features) = (lobby.expansions, lobby.features);
                 self.phase = Phase::Characters {
                     lobby: Some(lobby),
                     chars,
@@ -9350,6 +9352,7 @@ impl App {
                     menu: 0,
                     confirm: None,
                     expansions,
+                    features,
                 };
                 if std::mem::take(&mut self.deleting)
                     && let Some(gu) = self.game_ui.as_ref()
@@ -9364,8 +9367,7 @@ impl App {
                     Ok(codec) => {
                         let net = net::spawn(login.clone(), self.cfg.username.clone(), codec);
                         self.status = format!("Connecting to {}:{}...", login.map.0, login.map.1);
-                        let features =
-                            if let Phase::Characters { lobby: Some(l), .. } = &self.phase { l.features } else { 0 };
+                        let features = if let Phase::Characters { features, .. } = &self.phase { *features } else { 0 };
                         let pol = login.lsb.map(|(account, hash)| crate::net::profile::Cred {
                             host: self.cfg.server.clone(),
                             port: self.cfg.profile_port,
@@ -9384,6 +9386,7 @@ impl App {
                         } else {
                             0
                         };
+                        log::info!("server features 0x{features:08X}, expansions 0x{expansions:08X}");
                         // The effects' GPU side caches by the World's registry ids (library, texture, mesh); a new
                         // World starts a new registry, so the old session's cache would draw the wrong ones.
                         self.effects_gpu = None;
@@ -14443,6 +14446,7 @@ impl App {
                 menu,
                 confirm: _,
                 expansions,
+                features: _,
             } => {
                 let live: Vec<usize> =
                     chars.iter().enumerate().filter(|(_, c)| !c.is_empty_slot()).map(|(i, _)| i).collect();
