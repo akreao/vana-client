@@ -613,13 +613,19 @@ impl Config {
         self.trust_token = l.trust_token.clone();
     }
 
+    /// The saved login for a server and account (outer spaces aside), to change.
+    pub fn saved_login_mut(&mut self, server: &str, username: &str) -> Option<&mut SavedLogin> {
+        let username = username.trim();
+        self.logins.iter_mut().find(|l| same_server(&l.server, server) && l.username == username)
+    }
+
     /// A trust token for a server and account (sealed; empty: none): the form's when it is that login, and the saved
     /// login's.
     pub fn set_trust_token(&mut self, server: &str, username: &str, sealed: String) {
-        if same_server(&self.server, server) && self.username.trim() == username {
+        if same_server(&self.server, server) && self.username.trim() == username.trim() {
             self.trust_token = sealed.clone();
         }
-        if let Some(l) = self.logins.iter_mut().find(|l| same_server(&l.server, server) && l.username == username) {
+        if let Some(l) = self.saved_login_mut(server, username) {
             l.trust_token = sealed;
         }
     }

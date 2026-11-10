@@ -224,10 +224,17 @@ impl Task {
     }
 }
 
+/// The server and account a login was sent for, and the new trust token it brought (Trust this computer), whether or
+/// not the lobby step after it worked.
+struct TrustReply {
+    server: String,
+    username: String,
+    token: Option<String>,
+}
+
 enum Task {
-    /// The login's lobby and characters, and a new trust token with the server and account it is for (Trust this
-    /// computer), whether or not the lobby step after it worked.
-    LoggedIn(Result<(Lobby, Vec<Character>)>, Option<(String, String, String)>),
+    /// The login's lobby and characters, and what came of its trust token (not for PlayOnline).
+    LoggedIn(Result<(Lobby, Vec<Character>)>, Option<TrustReply>),
     AccountCreated(Result<()>),
     Lobby(Result<(Lobby, Vec<Character>)>),
     Selected(Result<MapLogin>),
@@ -853,6 +860,41 @@ enum LoginChoice {
     Update,
     Picked(usize),
     Forget(usize, usize),
+}
+
+/// The login form's Trust this computer and token as its server and account's saved login has them (with none, the box
+/// as it was and no token), and only a token this computer's key opens (a replaced secret.key's are dropped); `save`:
+/// the config may be written (not a driven run's on the user's config).
+fn sync_trust(cfg: &mut Config, trust_for: &mut (String, String), save: bool) {
+    let (server, user) = (cfg.server.trim().to_string(), cfg.username.trim().to_string());
+    match cfg.saved_login(&server, Some(&user)) {
+        Some(l) => (cfg.trust_computer, cfg.trust_token) = (l.trust_computer, l.trust_token.clone()),
+        None => cfg.trust_token.clear(),
+    }
+    if !cfg.trust_token.is_empty() && crate::secret::open_token(&server, &user, &cfg.trust_token).is_none() {
+        keep_trust_token(cfg, save, &server, &user, "");
+    }
+    *trust_for = (server, user);
+}
+
+/// A trust token for a server and account, kept sealed (empty: forgotten), saved at once (with `save`): it stands
+/// whatever comes of the login it came with.
+fn keep_trust_token(cfg: &mut Config, save: bool, server: &str, username: &str, token: &str) {
+    let sealed = if token.is_empty() {
+        String::new()
+    } else {
+        match crate::secret::seal_token(server, username, token) {
+            Ok(s) => s,
+            Err(e) => {
+                log::warn!("keeping the trust token: {e:#}");
+                return;
+            }
+        }
+    };
+    cfg.set_trust_token(server, username, sealed);
+    if save && let Err(e) = cfg.save() {
+        log::warn!("saving the config: {e:#}");
+    }
 }
 
 /// The credentials window over the title art (ours: retail logged in through PlayOnline). Focus 0..n-1 are the
@@ -8464,6 +8506,8 @@ pub struct App {
     mouse: mousecur::MouseCursor,
     /// A lobby or login error (or the new account's notice) waiting in the OK window on the login screen.
     login_error: Option<String>,
+    /// The server and account the login form's Trust this computer and token are for (sync_trust).
+    trust_for: (String, String),
     /// The two-factor window over the login form.
     twofa: Option<twofa::TwoFa>,
     /// The title's Config window (lobycwin) with its values, and our settings screen over the title.
@@ -8724,6 +8768,7 @@ impl App {
             scene_scale: None,
             cursor_in: false,
             login_error: None,
+            trust_for: Default::default(),
             twofa: None,
             lobby_cfg: None,
             title_press: None,
@@ -9408,7 +9453,7 @@ impl App {
             .unwrap_or_default();
         let ask = cfg.trust_computer && (token.is_empty() || !otp.trim().is_empty());
         self.spawn(move || {
-            let mut trusted = None;
+            let mut trust = TrustReply { server: cfg.server.clone(), username: cfg.username.clone(), token: None };
             let result = (|| {
                 let req = Request {
                     username: &cfg.username,
@@ -9423,7 +9468,7 @@ impl App {
                 else {
                     anyhow::bail!("unexpected reply from the login server");
                 };
-                trusted = trust_token.map(|t| (cfg.server.clone(), cfg.username.clone(), t));
+                trust.token = trust_token;
                 let session = crate::net::lobby::Session::Lsb { account_id, hash: session_hash, lobby_key };
                 let dll = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())).unwrap_or_default();
                 // Region 5: not the Japanese client (FUN_1023e610).
@@ -9443,30 +9488,8 @@ impl App {
                 lobby.worlds()?;
                 Ok((lobby, chars))
             })();
-            Task::LoggedIn(result, trusted)
+            Task::LoggedIn(result, Some(trust))
         });
-    }
-
-    /// A trust token for a server and account, kept sealed (empty: forgotten), saved at once: it stands whatever comes
-    /// of the login it came with.
-    fn keep_trust_token(&mut self, server: &str, username: &str, token: &str) {
-        let sealed = if token.is_empty() {
-            String::new()
-        } else {
-            match crate::secret::seal_token(server, username, token) {
-                Ok(s) => s,
-                Err(e) => {
-                    log::warn!("keeping the trust token: {e:#}");
-                    return;
-                }
-            }
-        };
-        self.cfg.set_trust_token(server, username, sealed);
-        if (self.drive.login.is_none() || crate::config::is_copy())
-            && let Err(e) = self.cfg.save()
-        {
-            log::warn!("saving the config: {e:#}");
-        }
     }
 
     /// A two-factor request with the form's account and password (client/twofa.rs).
@@ -9480,11 +9503,33 @@ impl App {
     }
 
     fn handle_task(&mut self, mut task: Task) {
-        // A login's new trust token is kept before anything else (the lobby step may yet fail, or wait below).
-        if let Task::LoggedIn(_, trusted) = &mut task
-            && let Some((server, username, token)) = trusted.take()
+        // A login's trust token, before anything else (the lobby step may yet fail, or the task wait below): a new one
+        // kept, one turned down (0x13: expired, or the password changed) dropped, for the login it was sent with.
+        if let Task::LoggedIn(result, trust) = &mut task
+            && let Some(t) = trust.take()
         {
-            self.keep_trust_token(&server, &username, &token);
+            let turned_down = result
+                .as_ref()
+                .err()
+                .and_then(|e| e.downcast_ref::<auth::Refused>())
+                .is_some_and(|r| r.0 == auth::TRUST_REJECTED);
+            if let Some(token) = &t.token {
+                keep_trust_token(
+                    &mut self.cfg,
+                    self.drive.login.is_none() || crate::config::is_copy(),
+                    &t.server,
+                    &t.username,
+                    token,
+                );
+            } else if turned_down {
+                keep_trust_token(
+                    &mut self.cfg,
+                    self.drive.login.is_none() || crate::config::is_copy(),
+                    &t.server,
+                    &t.username,
+                    "",
+                );
+            }
         }
         // A lobby operation's Task waits for its netwait / netbar run to end (FUN_1023b550).
         if let Some(nw) = self.netwait.as_mut()
@@ -9604,7 +9649,13 @@ impl App {
             Task::TwoFa(r) => {
                 if matches!(r, Ok(Reply::TotpRemoved)) {
                     let (server, username) = (self.cfg.server.clone(), self.cfg.username.clone());
-                    self.keep_trust_token(&server, &username, "");
+                    keep_trust_token(
+                        &mut self.cfg,
+                        self.drive.login.is_none() || crate::config::is_copy(),
+                        &server,
+                        &username,
+                        "",
+                    );
                 }
                 if let Some(t) = self.twofa.as_mut() {
                     t.reply(r);
@@ -10465,11 +10516,6 @@ impl App {
             Task::ZoneLoaded(zone_id, map_no, result) => self.zone_loaded(zone_id, map_no, result.map(|d| *d), None),
             Task::ZonePreloaded(zone_id, map_no, result) => self.preloaded(zone_id, map_no, result.map(|d| *d)),
             Task::LoggedIn(Err(e), _) | Task::AccountCreated(Err(e)) | Task::Selected(Err(e)) => {
-                // A trust token turned down (expired, or the password changed) is gone: the code is needed again.
-                if e.downcast_ref::<auth::Refused>().is_some_and(|r| r.0 == auth::TRUST_REJECTED) {
-                    let (server, username) = (self.cfg.server.clone(), self.cfg.username.clone());
-                    self.keep_trust_token(&server, &username, "");
-                }
                 self.status = format!("{e:#}");
                 self.back_to_login(true);
             }
@@ -14573,15 +14619,11 @@ impl App {
                     if trusted != self.cfg.trust_computer {
                         let (server, user, on) =
                             (self.cfg.server.clone(), self.cfg.username.clone(), self.cfg.trust_computer);
-                        if let Some(l) =
-                            self.cfg.logins.iter_mut().find(|l| {
-                                l.server.trim().eq_ignore_ascii_case(server.trim()) && l.username == user.trim()
-                            })
-                        {
+                        if let Some(l) = self.cfg.saved_login_mut(&server, &user) {
                             l.trust_computer = on;
                         }
                         if !on {
-                            self.cfg.set_trust_token(&server, user.trim(), String::new());
+                            self.cfg.set_trust_token(&server, &user, String::new());
                         }
                         save |= self.drive.login.is_none() || crate::config::is_copy();
                     }
@@ -14789,18 +14831,21 @@ impl App {
                         }
                         let (server, user, on) =
                             (self.cfg.server.clone(), self.cfg.username.clone(), self.cfg.remember_password);
-                        if let Some(l) = self
-                            .cfg
-                            .logins
-                            .iter_mut()
-                            .find(|l| l.server.trim().eq_ignore_ascii_case(server.trim()) && l.username == user)
-                        {
+                        if let Some(l) = self.cfg.saved_login_mut(&server, &user) {
                             l.remember_password = on;
                             if !on {
                                 l.saved_password.clear();
                             }
                         }
                         save |= self.drive.login.is_none() || crate::config::is_copy();
+                    }
+                    // Typed, picked or forgotten: another server or account takes its own saved login's trust.
+                    if self.trust_for.0 != self.cfg.server.trim() || self.trust_for.1 != self.cfg.username.trim() {
+                        sync_trust(
+                            &mut self.cfg,
+                            &mut self.trust_for,
+                            self.drive.login.is_none() || crate::config::is_copy(),
+                        );
                     }
                     if let Some(a) = self.audio.as_mut() {
                         for s in sounds {

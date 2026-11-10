@@ -39,7 +39,6 @@ pub struct Request<'a> {
     pub trust_this_computer: bool,
 }
 
-#[derive(Debug)]
 pub enum Reply {
     /// `lobby_key`: the login server's key when it took a 3.x loader version, whose lobby is TLS with that key; none
     /// for an older server's plain lobby.
@@ -60,6 +59,28 @@ pub enum Reply {
         recovery_code: Option<String>,
     },
     TotpRemoved,
+}
+
+/// Without the secrets: the session hash, the trust token, the TOTP key (in its URI) and the recovery code.
+impl std::fmt::Debug for Reply {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let hidden = |on: bool| if on { "<hidden>" } else { "none" };
+        match self {
+            Reply::LoggedIn { account_id, trust_token, lobby_key, .. } => f
+                .debug_struct("LoggedIn")
+                .field("account_id", account_id)
+                .field("trust_token", &hidden(trust_token.is_some()))
+                .field("lobby_key", lobby_key)
+                .finish_non_exhaustive(),
+            Reply::AccountCreated => f.write_str("AccountCreated"),
+            Reply::PasswordChanged => f.write_str("PasswordChanged"),
+            Reply::TotpCreated { .. } => f.write_str("TotpCreated { .. }"),
+            Reply::TotpVerified { recovery_code } => {
+                f.debug_struct("TotpVerified").field("recovery_code", &hidden(recovery_code.is_some())).finish()
+            }
+            Reply::TotpRemoved => f.write_str("TotpRemoved"),
+        }
+    }
 }
 
 /// The result code a trust token was turned down with (expired, or the password changed): the code is needed again.

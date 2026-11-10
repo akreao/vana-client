@@ -15,11 +15,14 @@ Issue lenonk/vana-client#150. Adds to "Two-factor sign-in".
 - The token is sealed as the remembered password is (secret.rs, ChaCha20-Poly1305 under secret.key), bound to the
   server and account under a "trust" prefix so a password and a token never open as each other. Config
   `trust_computer` / `trust_token`, and the same on each saved login, so the box and token go with the account (and
-  with a forgotten login).
+  with a forgotten login). The form's pair follows its server and account: when they change (typed, picked,
+  forgotten) or the form first shows, they are the saved login's; with none the token goes and the box stays as it
+  was; a token this computer's key cannot open (a replaced secret.key) is dropped there and then.
 - It is kept as soon as the reply brings it, whatever the lobby step after does. Unticking the box drops it at once;
   so do a 0x13 refusal (its message "the saved trust token was rejected; enter your one-time code" shows, the box
   stays ticked so the next code login gets a new one) and Turn off in the Two-factor window.
 - Seen live (lnxtest01 with a TOTP secret set in accounts_totp, removed afterwards): a code login with the box ticked
   got a token (one row, 30 days); the modern form then showed "trusted" and logged in on the password alone; with the
   row deleted the next login gave 0x13 and the kept token went; a code login got a new one; unticking by keys (Down,
-  Right, Space from Password) dropped it.
+  Right, Space from Password) dropped it. After review: the hint went to "only with 2FA" with one letter of the
+  account deleted and back to "trusted" when retyped; with secret.key replaced the form dropped the kept token at once.
