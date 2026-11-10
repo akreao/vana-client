@@ -17950,11 +17950,10 @@ impl App {
                             } else {
                                 crate::render::cloth::Tick::Carry { moved }
                             };
-                            (c.tick, c.at) = (wind.0, at);
                         }
                         // Ours: between steps the particles ride along with the actor. Before the first step they hold
                         // no positions and the cloth draws skinned.
-                        cloth_tick = Some((tick, at - c.at));
+                        cloth_tick = Some((tick, at - c.at, at));
                     }
                     if drawn {
                         let files: Vec<_> = extra.iter().map(|(_, f)| f.clone()).collect();
@@ -18016,8 +18015,12 @@ impl App {
                         }
                     }
                     // After the pose: the step reads this frame's bones in the pose region.
-                    if let Some((tick, ride)) = cloth_tick {
-                        r.cloth(g, tick, drawn.then_some((model, ride)));
+                    // The tick is the renderer's once taken; one it could not take comes again next frame.
+                    if let Some((tick, ride, at)) = cloth_tick
+                        && r.cloth(g, tick, drawn.then_some((model, ride)))
+                        && let Some((_, c)) = &mut a.cloth
+                    {
+                        (c.tick, c.at) = (wind.0, at);
                     }
                 }
                 // Test 6: the occlusion results, a frame or two late, drop actors hidden behind scenery.

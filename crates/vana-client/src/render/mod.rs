@@ -802,8 +802,9 @@ pub struct ActorGpu {
     pub lights: [u8; 4],
     /// The area 4cc it stands in (vtable +0x188, the floor's +0xb0): its environment lights it (0 = the zone's).
     pub area: u32,
-    /// Cloth particles this frame (client/cloth.rs), two vec4s each in model space: position (w 1 = set) and normal
-    /// (w 1 = set), in the order SkinMesh numbers them. Missing ones draw skinned.
+    /// Cloth particles written from the CPU (only cloth-shot does: the game's step on the GPU, render/cloth.rs), two
+    /// vec4s each in model space: position (w 1 = set) and normal (w 1 = set), in SkinMesh's order; missing ones
+    /// draw skinned.
     pub cloth: Vec<[f32; 4]>,
     /// Its cloth's particle state on the GPU (render/cloth.rs), its own: a clone starts without.
     cloth_state: cloth::ClothState,
@@ -3415,11 +3416,12 @@ impl ZoneRenderer {
 
     /// The actor's cloth this frame (render/cloth.rs): its tick, and with `drawn` (its model matrix and its move since
     /// the last step) the particles into the pose region it was posed in this frame.
-    pub fn cloth(&mut self, actor: &mut ActorGpu, tick: cloth::Tick, drawn: Option<(Mat4, Vec3)>) {
-        let Some(skin) = actor.skin.as_ref() else { return };
-        let Some(sim) = skin.sim.clone() else { return };
+    /// True when the tick was taken (render/cloth.rs `ClothGpu::job`).
+    pub fn cloth(&mut self, actor: &mut ActorGpu, tick: cloth::Tick, drawn: Option<(Mat4, Vec3)>) -> bool {
+        let Some(skin) = actor.skin.as_ref() else { return false };
+        let Some(sim) = skin.sim.clone() else { return false };
         let region = (skin.frame == self.pose_frame).then_some((skin.offset / 16, skin.bones as u32));
-        self.cloth.job(&mut actor.cloth_state, &sim, tick, region, drawn);
+        self.cloth.job(&mut actor.cloth_state, &sim, tick, region, drawn)
     }
 
     /// Asks for an attach point (bone, offset) of an actor posed this frame, relative to its root in world axes,
@@ -3462,7 +3464,7 @@ impl ZoneRenderer {
         if let Some((buf, _, _)) = &self.pose_gpu {
             gpu.queue.put(buf, 0, bytemuck::cast_slice(&self.poses));
             self.anim.dispatch(gpu, encoder, buf, !self.budgeted);
-            self.cloth.dispatch(gpu, encoder, buf);
+            self.cloth.dispatch(gpu, encoder, buf, !self.budgeted);
             self.points.run(gpu, encoder, buf);
         }
     }

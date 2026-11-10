@@ -191,7 +191,8 @@ pub struct ClothGpu {
     data_buf: Option<wgpu::Buffer>,
     /// Each model's block (kept alive, so its address is never another model's).
     models: HashMap<usize, (Arc<ClothModel>, u32)>,
-    /// The state buffer (vec4s), the high-water mark, and the ranges given back.
+    /// The state buffer (vec4s), the high-water mark, and the ranges given back. First fit with no coalescing, and the
+    /// buffer only grows: a few KB an actor, so neither is worth more.
     state_buf: Option<wgpu::Buffer>,
     top: u32,
     free: Arc<Mutex<Vec<(u32, u32)>>>,
@@ -301,7 +302,8 @@ impl ClothGpu {
 
     /// Queues one actor's cloth: its tick, and (`out`: posed this frame at pose vec4 `region` with `bones`, its model
     /// matrix, and the actor's move since the last step) the particles into its pose region. Before the first step
-    /// nothing is written and the cloth draws skinned.
+    /// nothing is written and the cloth draws skinned. True when the tick was taken: a step needs this frame's pose
+    /// and the model's sheets on the GPU, a carry a placed state; an untaken tick is the caller's to give again.
     pub fn job(
         &mut self,
         st: &mut ClothState,
@@ -309,14 +311,18 @@ impl ClothGpu {
         tick: Tick,
         region: Option<(u32, u32)>,
         out: Option<(Mat4, Vec3)>,
-    ) {
+    ) -> bool {
         let block = self.model(m);
+        // Its sheets go up under the frames' copy budget (dispatch); until they are all there it draws skinned.
+        if block as usize + m.words.len() > self.uploaded {
+            return false;
+        }
         // A slot from another renderer's buffer (our own actor keeps its model across a zone load) is not ours: take
         // a new one, which starts with the snap to the skin.
         if st.0.as_ref().is_none_or(|s| s.len != m.state || !Arc::ptr_eq(&s.free, &self.free)) {
             st.0 = Some(self.alloc(m.state));
         }
-        let Some(slot) = st.0.as_mut() else { return };
+        let Some(slot) = st.0.as_mut() else { return false };
         let (mut flags, mut moved, mut wind) = (0, Vec3::ZERO, None);
         match tick {
             Tick::Step { moved: d, wind: w } if region.is_some() => {
@@ -327,15 +333,17 @@ impl ClothGpu {
             Tick::Carry { moved: d } if slot.placed => (flags, moved) = (CARRY, d),
             _ => {}
         }
+        let taken = flags & (STEP | CARRY) != 0;
         let (inv, ride) = match out.filter(|_| slot.placed && region.is_some()) {
             Some((model, ride)) => {
                 flags |= OUT;
-                (model.inverse(), ride)
+                // A step or carry this frame puts the particles where the actor stands: nothing rides yet.
+                (model.inverse(), if taken { Vec3::ZERO } else { ride })
             }
             None => (Mat4::IDENTITY, Vec3::ZERO),
         };
         if flags == 0 {
-            return;
+            return false;
         }
         if wind.is_some() {
             flags |= WIND;
@@ -361,11 +369,13 @@ impl ClothGpu {
             self.jobs.extend(j);
         }
         self.jobs[0] = ((self.jobs.len() - JOB_HEAD) / JOB_WORDS) as u32;
+        taken
     }
 
-    /// New model blocks up, the state buffer grown (its contents carried over), then the steps and the particles'
-    /// writes into `pose`, after the bones are posed into it.
-    pub fn dispatch(&mut self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, pose: &wgpu::Buffer) {
+    /// New model blocks up (under the frame's copy budget, or all of them with `all`, as the posing's keys), the state
+    /// buffer grown (its contents carried over), then the steps and the particles' writes into `pose`, after the
+    /// bones are posed into it.
+    pub fn dispatch(&mut self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, pose: &wgpu::Buffer, all: bool) {
         let device = &gpu.device;
         if !self.data.is_empty() {
             let need = ((self.uploaded + self.data.len()) * 4) as u64;
@@ -384,13 +394,18 @@ impl ClothGpu {
                 }
                 self.data_buf = Some(buf);
             }
-            gpu.queue.put(
-                self.data_buf.as_ref().unwrap(),
-                (self.uploaded * 4) as u64,
-                bytemuck::cast_slice(&self.data),
-            );
-            self.uploaded += self.data.len();
-            self.data.clear();
+            if all || gpu.upload_room() > 0 {
+                let n = if all { self.data.len() } else { (gpu.piece(self.data.len() as u64 * 4, 4) / 4) as usize };
+                gpu.upload(n as u64 * 4, || {
+                    gpu.queue.put(
+                        self.data_buf.as_ref().unwrap(),
+                        (self.uploaded * 4) as u64,
+                        bytemuck::cast_slice(&self.data[..n]),
+                    )
+                });
+                self.uploaded += n;
+                self.data.drain(..n);
+            }
         }
         let need = (self.top.max(1) as u64) * 16;
         if self.state_buf.as_ref().is_none_or(|b| b.size() < need) {
@@ -902,9 +917,17 @@ mod tests {
             }
             cpu.step(&ch.parts, &Frame { skeleton: &ch.skeleton, bones: &bones, model, moved, wind });
             gc.begin();
-            gc.job(&mut st, &m, Tick::Step { moved, wind }, Some((region, bones_n as u32)), Some((model, Vec3::ZERO)));
+            if k == 0 {
+                // The model's sheets up first (a job waits for them).
+                let _ = gc.job(&mut st, &m, Tick::None, None, None);
+                let mut enc = gpu.device.create_command_encoder(&Default::default());
+                gc.dispatch(&gpu, &mut enc, &pose, true);
+                gpu.queue.submit([enc.finish()]);
+            }
+            let tick = Tick::Step { moved, wind };
+            assert!(gc.job(&mut st, &m, tick, Some((region, bones_n as u32)), Some((model, Vec3::ZERO))));
             let mut enc = gpu.device.create_command_encoder(&Default::default());
-            gc.dispatch(&gpu, &mut enc, &pose);
+            gc.dispatch(&gpu, &mut enc, &pose, true);
             enc.copy_buffer_to_buffer(&pose, region as u64 * 16, &rb, 0, size);
             gpu.queue.submit([enc.finish()]);
             rb.slice(..).map_async(wgpu::MapMode::Read, |_| {});
@@ -935,7 +958,10 @@ mod tests {
     /// itself (1367 walking: two of the forty).
     #[test]
     fn a_step_matches_the_cpu() {
-        let (Some(e), Some(n)) = (run(true), nudged()) else { return };
+        let (Some(e), Some(n)) = (run(true), nudged()) else {
+            eprintln!("skipped: needs a GPU and the game's files (model 1367)");
+            return;
+        };
         let ok = e.iter().zip(&n).all(|(&e, &n)| e < 0.05 && (e < 1e-4 || n > 1e-4));
         assert!(ok, "gpu {:?}\nnudged cpu {:?}", sci(&e), sci(&n));
     }
@@ -943,7 +969,10 @@ mod tests {
     /// Run on their own, the two drift apart by rounding (a sweep's inside / outside test can flip), never visibly.
     #[test]
     fn steps_stay_with_the_cpu() {
-        let Some(e) = run(false) else { return };
+        let Some(e) = run(false) else {
+            eprintln!("skipped: needs a GPU and the game's files (model 1367)");
+            return;
+        };
         assert!(e.iter().all(|&e| e < 0.05), "{:?}", sci(&e));
     }
 
@@ -979,5 +1008,71 @@ mod tests {
             out.push(worst);
         }
         Some(out)
+    }
+
+    /// The record layout on a made-up sheet (no GPU, no game files): pins, influences, edges with their fixed-end bits,
+    /// triangles, the spheres resolved (a slot past the table none, an unused one no edges), the state offsets.
+    #[test]
+    fn model_records() {
+        use crate::dat::character::{Bone, ClothEdge, ClothSpec, ClothSphere, Influence, MeshPart};
+        let inf =
+            |bone: usize, x: f32| vec![Influence { bone, pos: Vec3::new(x, 0.0, 0.0), normal: Vec3::Y, weight: 1.0 }];
+        let spec = ClothSpec {
+            counts: [2, 1],
+            pins: [1, 0],
+            edges: vec![ClothEdge { a: 0x8000, b: 1, rest: 0.5 }, ClothEdge { a: 1, b: 2, rest: 0.25 }],
+            group1: 1,
+            k: [0.6, 0.3],
+            damping: 0.85,
+            gravity: 0.1,
+            inertia: 0.05,
+            spheres: vec![0, 1, 99],
+            tris: vec![[0, 1, 2]],
+        };
+        let part = MeshPart {
+            name: "cape".into(),
+            mirrored: false,
+            vertices: vec![inf(0, 1.0), inf(1, 2.0), inf(1, 3.0)],
+            groups: Vec::new(),
+            cloth: true,
+            sim: Some(Arc::new(spec)),
+        };
+        let bone = Bone { parent: 0, term: 0, rot: glam::Quat::IDENTITY, pos: Vec3::ZERO };
+        let skeleton = Skeleton {
+            name: "test".into(),
+            bones: vec![bone.clone(), bone],
+            points: Vec::new(),
+            point_rots: Vec::new(),
+            look_limits: [[0.0; 3]; 2],
+            boxes: Vec::new(),
+            spheres: vec![
+                ClothSphere { bone: 1, radius: 0.2, offset: Vec3::new(0.0, 1.0, 0.0) },
+                ClothSphere { bone: -12851, radius: -4.3e8, offset: Vec3::ZERO },
+            ],
+        };
+        let m = ClothModel::build(&[part], &skeleton).unwrap();
+        assert_eq!(m.sheets, [0]);
+        let w = |k: usize| m.words[k];
+        let f = |k: usize| f32::from_bits(m.words[k]);
+        assert_eq!([w(rec::N), w(rec::COUNT0), w(rec::PINS0), w(rec::PINS1)], [3, 2, 1, 0]);
+        assert_eq!([w(rec::EDGES), w(rec::GROUP1), w(rec::TRIS), w(rec::SPHERES), w(rec::BASE)], [2, 1, 1, 3, 0]);
+        assert_eq!([f(rec::DAMPING), f(rec::K0), f(rec::K1)], [0.85, 0.6, 0.3]);
+        // Particle 1's influence: one, bone 1 at (2, 0, 0) weight 1.
+        let t = w(rec::INF_AT) as usize;
+        let (at, n) = (w(t + 2) as usize, w(t + 3));
+        assert_eq!((w(at), f(at + 1), f(at + 4), n), (1, 2.0, 1.0, 1));
+        let e = w(rec::EDGE_AT) as usize;
+        assert_eq!([w(e), w(e + 1), w(e + 3), w(e + 4)], [0x8000, 1, 1, 2]);
+        assert_eq!(f(e + 2), 0.5);
+        let tr = w(rec::TRI_AT) as usize;
+        assert_eq!([w(tr), w(tr + 1), w(tr + 2)], [0, 1, 2]);
+        // Spheres: slot 0 used (flags 3), slot 1 the 0xCD fill (in the table, takes no edges: flags 1), 99 none (0).
+        let s = w(rec::SPH_AT) as usize;
+        assert_eq!([w(s), w(s + 1), w(s + 2)], [3, 0, 1]);
+        assert_eq!((f(s + 4), f(s + 6)), (1.0, 0.2));
+        assert_eq!([w(s + SPH_WORDS), w(s + 2 * SPH_WORDS)], [1, 0]);
+        // State: 3 particles x 3 vec4s, then 3 last centres, 3 centres, one vec4 of edge owners.
+        assert_eq!([w(rec::ST_P), w(rec::ST_SPREV), w(rec::ST_SCUR), w(rec::ST_OWN)], [0, 9, 12, 15]);
+        assert_eq!(m.state, 16);
     }
 }
