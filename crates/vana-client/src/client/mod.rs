@@ -3108,7 +3108,8 @@ fn world_hud(
                 // does the menu ("menu playermo") open.
                 // Fishing reads Enter itself (key function 0x0e) *(inf: retail's action menu is busy-gated)*.
                 egui::Key::Enter if !dead && !fishing::locked(world) => {
-                    if !(world.target.is_none() && !event::active(world) && target::enter_nearest(world)) {
+                    let picked = world.target.is_none() && !event::active(world) && target::enter_nearest(world);
+                    if !picked {
                         target::confirm_target(world);
                     }
                 }
