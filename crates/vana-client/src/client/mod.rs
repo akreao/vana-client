@@ -16452,19 +16452,10 @@ impl App {
         (shoot, dt)
     }
 
-    fn redraw(&mut self) {
-        let t0 = Instant::now();
-        self.scene_loads();
-        self.frame_updates();
-        if !self.frame_shown() {
-            return;
-        }
-        let (shoot, dt) = self.frame_clock();
-        let m_update = Instant::now();
-
-        let Some(mut gfx) = self.gfx.take() else { return };
-        self.window_upkeep(&mut gfx);
-        let size = [gfx.config.width, gfx.config.height];
+    /// The frame's input for egui: the window's upkeep, egui-winit's events, the keys the mods pressed, the gamepad
+    /// (through retail's pad word and stick bytes too) and what the software keyboard typed.
+    fn frame_input(&mut self, gfx: &mut Gfx, dt: f32) -> egui::RawInput {
+        self.window_upkeep(gfx);
         let mut raw = gfx.egui_state.take_egui_input(&gfx.window);
         // egui-winit passes the texture limit in its first input only; lost, egui assumes 2048 and the modern atlases
         // (status_0@2x is 2184 wide) fail its debug check.
@@ -16517,6 +16508,12 @@ impl App {
         if let Phase::World(w) = &mut self.phase {
             raw.events.append(&mut w.swkbd_out);
         }
+        raw
+    }
+
+    /// A test drive's step (client/script.rs): its events into the frame's input and its actions; the screenshot it
+    /// asks for.
+    fn drive_frame(&mut self, gfx: &Gfx, raw: &mut egui::RawInput) -> Option<std::path::PathBuf> {
         let phase = self.phase_name();
         let mut script_shot = None;
         if let Some(sc) = &mut self.drive.input {
@@ -16692,6 +16689,12 @@ impl App {
                 self.apply_settings();
             }
         }
+        script_shot
+    }
+
+    /// The other screenshots asked for this frame: a Lua mod's (client.screenshot), Print Screen's (key function
+    /// 0x55: true).
+    fn shot_requests(&mut self, script_shot: &mut Option<std::path::PathBuf>) -> bool {
         // A Lua mod's screenshot (client.screenshot), under the screenshots folder.
         if let Phase::World(w) = &mut self.phase
             && let Some(n) = w.lua.shot.take()
@@ -16707,10 +16710,21 @@ impl App {
             if let Some(dir) = p.parent() {
                 let _ = std::fs::create_dir_all(dir);
             }
-            script_shot = Some(p);
+            *script_shot = Some(p);
             game_shot = true;
         }
-        let shoot = shoot || script_shot.is_some();
+        game_shot
+    }
+
+    /// egui's frame: the windows and the HUD (ui), the UI sounds and the audio, then the platform output (the
+    /// clipboard, the mods' window requests, the cursor, the chat line's IME); the meshes and their scale.
+    fn frame_ui(
+        &mut self,
+        gfx: &mut Gfx,
+        raw: egui::RawInput,
+        size: [u32; 2],
+        dt: f32,
+    ) -> (Vec<egui::ClippedPrimitive>, f32) {
         let ctx = gfx.egui_ctx.clone();
         self.update_netwait(dt);
         let before = self.ui_snap();
@@ -16824,6 +16838,26 @@ impl App {
             })
             .sum();
         crate::render::WRITTEN.fetch_add(egui_bytes as u64, std::sync::atomic::Ordering::Relaxed);
+        (jobs, output.pixels_per_point)
+    }
+
+    fn redraw(&mut self) {
+        let t0 = Instant::now();
+        self.scene_loads();
+        self.frame_updates();
+        if !self.frame_shown() {
+            return;
+        }
+        let (shoot, dt) = self.frame_clock();
+        let m_update = Instant::now();
+
+        let Some(mut gfx) = self.gfx.take() else { return };
+        let mut raw = self.frame_input(&mut gfx, dt);
+        let size = [gfx.config.width, gfx.config.height];
+        let mut script_shot = self.drive_frame(&gfx, &mut raw);
+        let game_shot = self.shot_requests(&mut script_shot);
+        let shoot = shoot || script_shot.is_some();
+        let (jobs, pixels_per_point) = self.frame_ui(&mut gfx, raw, size, dt);
         let m_ui = Instant::now();
 
         let frame = match gfx.surface.get_current_texture() {
@@ -18664,7 +18698,7 @@ impl App {
             drew_world = true;
         }
 
-        let screen = egui_wgpu::ScreenDescriptor { size_in_pixels: size, pixels_per_point: output.pixels_per_point };
+        let screen = egui_wgpu::ScreenDescriptor { size_in_pixels: size, pixels_per_point };
         let mut textures = std::mem::take(&mut self.egui_deltas);
         if !textures.set.is_empty() {
             perf::note(|| format!("egui textures {}", textures.set.len()));
