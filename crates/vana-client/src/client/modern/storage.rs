@@ -6,10 +6,10 @@
 //! the first part with room that takes it. Retail's colours say what may move (equipped pieces, the moogle's bags away
 //! from it, non-gear into a wardrobe, installed furniture ...), and a refused row says why (ours). Nothing moves
 //! before the server does: a sent move shows as pending until the slot changes, and one the server ignores is
-//! explained after a while.
+//! explained after a while. A move within a second of the last waits for the send gate, which would drop it.
 
 use super::super::World;
-use super::super::items::{self as gitems, Pending, Qty, Storage, Win};
+use super::super::items::{self as gitems, Pending, Qty, Storage, Waiting, Win};
 use super::{Panels, Title};
 use crate::audio::Ui as Se;
 use crate::inventory::{Slot, TINT_DIM, TINT_WHITE};
@@ -20,6 +20,8 @@ const ICON: f32 = 24.0;
 const BIN: u8 = 17;
 /// How long a sent move may wait for the server before it counts as refused.
 const PATIENCE: std::time::Duration = std::time::Duration::from_secs(5);
+/// FUN_100fc3c0's gate: a second c2s 0x029 within this of the last is dropped.
+const GATE: std::time::Duration = std::time::Duration::from_millis(1000);
 
 /// The bags: name and containers (the merged ones in the order they fill).
 const BAGS: [(&str, &[u8]); 9] = [
@@ -65,14 +67,25 @@ fn bags(w: &World, b: &Storage) -> Vec<usize> {
         .collect()
 }
 
+/// A bag's parts this account may use now: the one the view opened on, and the others retail's lists leave on (no
+/// Safe 2 without the 2F, no Locker without a lease, ...). The server refuses a move into the rest.
+fn parts(w: &World, b: &Storage, g: usize) -> Vec<u8> {
+    let house = w.viewhouse.is_some().then(|| super::super::viewhouse::open_containers(w));
+    let on = |c: u8| match &house {
+        Some(open) => open.contains(&c),
+        None => gitems::usable(w, &Storage { bank: 0xff, ..*b }, c),
+    };
+    BAGS[g].1.iter().copied().filter(|&c| c == b.bank || matches!(c, 3 | BIN) || on(c)).collect()
+}
+
 /// A bag's rows over its parts.
-fn rows(w: &World, g: usize) -> Vec<(u8, Slot)> {
-    BAGS[g].1.iter().flat_map(|&c| gitems::store_rows(w, c).into_iter().map(move |s| (c, s))).collect()
+fn rows(w: &World, b: &Storage, g: usize) -> Vec<(u8, Slot)> {
+    parts(w, b, g).into_iter().flat_map(|c| gitems::store_rows(w, c).into_iter().map(move |s| (c, s))).collect()
 }
 
 /// Used and room over a bag's parts.
-fn fill(w: &World, g: usize) -> (usize, usize) {
-    BAGS[g].1.iter().fold((0, 0), |(u, r), &c| {
+fn fill(w: &World, b: &Storage, g: usize) -> (usize, usize) {
+    parts(w, b, g).into_iter().fold((0, 0), |(u, r), c| {
         (u + gitems::store_rows(w, c).len(), r + (w.inv.sizes[c as usize] as usize).saturating_sub(1))
     })
 }
@@ -85,8 +98,8 @@ fn tint(w: &World, b: &Storage, bank_side: bool, c: u8, dest: u8, s: &Slot) -> u
 }
 
 /// A bag's parts with room, worked out once for every row.
-fn open_parts(w: &World, g: usize) -> Vec<u8> {
-    BAGS[g].1.iter().copied().filter(|&c| gitems::has_free(w, c)).collect()
+fn open_parts(w: &World, b: &Storage, g: usize) -> Vec<u8> {
+    parts(w, b, g).into_iter().filter(|&c| gitems::has_free(w, c)).collect()
 }
 
 /// Where an inventory item goes in the bag: the first part with room (`open`) that takes it.
@@ -99,7 +112,7 @@ fn target(w: &World, b: &Storage, open: &[u8], s: &Slot) -> Option<u8> {
 fn places(w: &World) -> Vec<(Option<usize>, usize, u8, Slot)> {
     let Some((b, ..)) = view(w) else { return Vec::new() };
     let g = group(b.bank);
-    let bag = |g: usize| rows(w, g).into_iter().enumerate().map(move |(k, (c, s))| (Some(g), k, c, s));
+    let bag = |g: usize| rows(w, &b, g).into_iter().enumerate().map(move |(k, (c, s))| (Some(g), k, c, s));
     let inv =
         gitems::store_rows(w, gitems::INVENTORY).into_iter().enumerate().map(|(k, s)| (None, k, gitems::INVENTORY, s));
     let others: Vec<_> = bags(w, &b).into_iter().filter(|&o| o != g).flat_map(bag).collect();
@@ -114,7 +127,7 @@ pub(in crate::client) fn search_open(w: &World) -> bool {
 /// Every place's item: its bag (and count) as the note, greyed when it can't move across.
 pub(in crate::client) fn search_rows(w: &World) -> Vec<super::super::listsearch::Entry> {
     let Some((b, ..)) = view(w) else { return Vec::new() };
-    let open = open_parts(w, group(b.bank));
+    let open = open_parts(w, &b, group(b.bank));
     places(w)
         .into_iter()
         .map(|(bag, _, c, s)| {
@@ -158,10 +171,9 @@ fn refusal(w: &World, b: &Storage, g: usize, open: &[u8], bank_side: bool, c: u8
         return None;
     }
     // No part takes it: the first part's reason other than room, else the bag is full.
-    let whys: Vec<_> = BAGS[g]
-        .1
-        .iter()
-        .filter_map(|&c| gitems::judge(w, info, &Storage { bank: c, side: gitems::INVENTORY, ..*b }, false, s).1)
+    let whys: Vec<_> = parts(w, b, g)
+        .into_iter()
+        .filter_map(|c| gitems::judge(w, info, &Storage { bank: c, side: gitems::INVENTORY, ..*b }, false, s).1)
         .collect();
     Some(whys.iter().copied().find(|y| !y.starts_with("No room")).unwrap_or("No room in this bag."))
 }
@@ -215,10 +227,10 @@ pub fn draw(p: &mut Panels, w: &mut World) {
     let (m, ctx, gu) = (p.m, p.ctx, p.gu);
     let g = group(b.bank);
     let tabs = bags(w, &b);
-    let bag = rows(w, g);
+    let bag = rows(w, &b, g);
     let inv = gitems::store_rows(w, gitems::INVENTORY);
     let first = BAGS[g].1[0];
-    let open = open_parts(w, g);
+    let open = open_parts(w, &b, g);
     let why_bag: Vec<Option<&'static str>> = bag.iter().map(|(c, s)| refusal(w, &b, g, &open, true, *c, s)).collect();
     let why_inv: Vec<Option<&'static str>> =
         inv.iter().map(|s| refusal(w, &b, g, &open, false, gitems::INVENTORY, s)).collect();
@@ -247,7 +259,7 @@ pub fn draw(p: &mut Panels, w: &mut World) {
         inv.iter().map(|s| super::items::bazaar_price(w, gitems::INVENTORY, s.index)).collect();
     // The inventory side's cursor on a bazaar item: what frees it under the lists.
     let bazaar_held = !b.on_bank && inv_bazaar.get(iscroll + icursor).copied().flatten().is_some();
-    let (used, room) = fill(w, g);
+    let (used, room) = fill(w, &b, g);
     let inv_room = (w.inv.sizes[0] as usize).saturating_sub(1);
     let on_bank = b.on_bank;
     let (bcur, icur) = (b.scroll + b.cursor, iscroll + icursor);
@@ -262,7 +274,11 @@ pub fn draw(p: &mut Panels, w: &mut World) {
                 .unwrap_or_default(),
         )
     });
-    let pending = b.pending.map(|pd| (pd.count, info.item(pd.id).map(|it| it.name.clone()).unwrap_or_default()));
+    let pending = b
+        .pending
+        .map(|pd| (pd.count, pd.id))
+        .or(b.waiting.map(|h| (h.n, h.id)))
+        .map(|(n, id)| (n, info.item(id).map(|it| it.name.clone()).unwrap_or_default()));
     let note = b.note;
     let held = egui::DragAndDrop::payload::<Held>(ctx).map(|h| *h);
     let held_icon = held.and_then(|h| {
@@ -406,7 +422,7 @@ pub fn draw(p: &mut Panels, w: &mut World) {
 fn dropped(w: &mut World, h: Held, how: How) {
     let Some((b, ..)) = view(w) else { return };
     let side: Vec<(u8, Slot)> = if h.bank_side {
-        rows(w, group(b.bank))
+        rows(w, &b, group(b.bank))
     } else {
         gitems::store_rows(w, gitems::INVENTORY).into_iter().map(|s| (gitems::INVENTORY, s)).collect()
     };
@@ -426,18 +442,47 @@ fn dropped(w: &mut World, h: Held, how: How) {
 /// The move in flight settles: done once its slot holds something else; after PATIENCE unchanged, the server refused it
 /// and the view says so (nothing was moved on our side, so nothing needs putting back).
 fn settle(w: &mut World) {
-    let Some(pd) = view(w).and_then(|(b, ..)| b.pending) else { return };
-    let now = w.inv.slots.get(&(pd.from, pd.index)).copied();
-    let (pending, note) = if now != Some((pd.id, pd.count)) {
-        (None, None)
-    } else if pd.sent.elapsed() > PATIENCE {
-        (None, Some("Not moved: the server refused it (see the log). Nothing changed."))
-    } else {
-        return;
-    };
-    if let Some(b) = store_mut(w) {
-        (b.pending, b.note) = (pending, note);
+    if let Some(pd) = view(w).and_then(|(b, ..)| b.pending) {
+        let now = w.inv.slots.get(&(pd.from, pd.index)).copied();
+        let note = if now != Some((pd.id, pd.count)) {
+            None
+        } else if pd.sent.elapsed() > PATIENCE {
+            Some("Not moved: the server refused it (see the log). Nothing changed.")
+        } else {
+            return;
+        };
+        if let Some(b) = store_mut(w) {
+            (b.pending, b.note) = (None, note);
+        }
     }
+    release(w);
+}
+
+/// The waiting move goes once the last has settled and the gate is open, if its stack is still there; into a merged
+/// bag it takes the part with room then.
+fn release(w: &mut World) {
+    let Some((b, ..)) = view(w) else { return };
+    let Some(h) = b.waiting else { return };
+    if b.pending.is_some() || b.sent.is_some_and(|t| t.elapsed() < GATE) {
+        return;
+    }
+    if let Some(b) = store_mut(w) {
+        b.waiting = None;
+    }
+    let s = match w.inv.slots.get(&(h.from, h.index)) {
+        Some(&(id, count)) if id == h.id => Slot { index: h.index, id, count, equipped: false, equipped_ex: false },
+        _ => return refuse(w, "That stack changed: pick it again."),
+    };
+    let to = if h.from == gitems::INVENTORY {
+        let open = open_parts(w, &b, group(b.bank));
+        match target(w, &b, &open, &s) {
+            Some(to) => to,
+            None => return refuse(w, "No room in this bag."),
+        }
+    } else {
+        h.to
+    };
+    send(w, h.from, to, &s, h.n.min(s.count));
 }
 
 fn store_mut(w: &mut World) -> Option<&mut Storage> {
@@ -487,12 +532,12 @@ fn take(w: &mut World, bank_side: bool, k: usize, how: How) {
     let Some((b, ..)) = view(w) else { return };
     let g = group(b.bank);
     let found = if bank_side {
-        rows(w, g).into_iter().nth(k)
+        rows(w, &b, g).into_iter().nth(k)
     } else {
         gitems::store_rows(w, gitems::INVENTORY).into_iter().nth(k).map(|s| (gitems::INVENTORY, s))
     };
     let Some((c, s)) = found else { return };
-    let open = open_parts(w, g);
+    let open = open_parts(w, &b, g);
     if let Some(why) = refusal(w, &b, g, &open, bank_side, c, &s) {
         refuse(w, why);
         return;
@@ -520,10 +565,24 @@ fn refuse(w: &mut World, why: &'static str) {
 
 /// c2s 0x029 for `n` of the stack in slot `s` of `from`, kept as the pending move.
 fn send(w: &mut World, from: u8, to: u8, s: &Slot, n: u32) {
+    let Some((b, ..)) = view(w) else { return };
+    if b.pending.is_some() || b.sent.is_some_and(|t| t.elapsed() < GATE) {
+        // Too soon for the gate: held (one at a time) and sent from settle().
+        if b.waiting.is_some() {
+            return refuse(w, "One move a second: wait for the last one.");
+        }
+        if let Some(b) = store_mut(w) {
+            b.waiting = Some(Waiting { from, to, index: s.index, id: s.id, n });
+            (b.note, b.qty) = (None, None);
+        }
+        w.sounds.push(Se::Select as u32);
+        return;
+    }
     gitems::send_move(w, from, to, s.index, n);
+    let now = std::time::Instant::now();
     if let Some(b) = store_mut(w) {
-        b.pending = Some(Pending { from, index: s.index, id: s.id, count: s.count, sent: std::time::Instant::now() });
-        (b.note, b.qty) = (None, None);
+        b.pending = Some(Pending { from, index: s.index, id: s.id, count: s.count, sent: now });
+        (b.sent, b.note, b.qty) = (Some(now), None, None);
     }
     w.sounds.push(Se::Select as u32);
 }
@@ -592,7 +651,7 @@ pub fn key(w: &mut World, key: egui::Key, shift: bool) -> bool {
         return true;
     }
     let g = group(b.bank);
-    let (bn, inn) = (rows(w, g).len(), gitems::store_rows(w, gitems::INVENTORY).len());
+    let (bn, inn) = (rows(w, &b, g).len(), gitems::store_rows(w, gitems::INVENTORY).len());
     let (side, cur, n) = if b.on_bank { (true, b.scroll + b.cursor, bn) } else { (false, iscroll + icursor, inn) };
     match key {
         K::ArrowUp | K::ArrowDown if n > 0 => {

@@ -23413,3 +23413,26 @@ still gave `cor`. Both now go through actmotion::sdep_stand.
 - The form is wide enough for the box's caption and Update side by side (380 design px, or more for a wider caption;
   440 with the game font), whether or not Update shows, so nothing moves when it appears.
 - The title's keytophd Update button (render/screens.rs update_button and its backing) is gone with it.
+
+## Mog storage gates on LSB, and the modern storage view (2026-11-09)
+
+- Lobby 0x05 +0x24 (the feature bits, wardrobes 3..8 at bits 2..7) was read from the character phase's lobby when
+  the World started. Every login path takes that lobby to run select, so World.features was always 0, and Wardrobes 3..8
+  were refused in the item moves (rule 4) and the equipment lists (equipwin bag_open) since 2026-10-23. The bits now
+  sit in Phase::Characters beside `expansions`; the world start logs both (LSB: 0xFC, 0xFFF).
+- FUN_101dbc20's Sack and Wardrobe 2..8 checks go through FUN_100eb940(c) = byte S+0x19891 + c: the container's s2c
+  0x01C ItemNum. FUN_100eb960(c) is the u16 at S+0x198a4 + 2c, ItemNum2. LSB sends ItemNum = 1 + size for every
+  container (0x01c_item_max.cpp), so these checks never close on LSB. Only ItemNum2 of the Locker is 0 there (no
+  lease).
+- LSB's item move validator (c2s 0x029) allows Safe 2 only with char_stats.mhflag & 0x20 (the 2F) and
+  ENABLE_MOG_HOUSE_2F; else "Category2 value 9 is not allowed" and nothing moves. Ours knows the 2F from s2c 0x067
+  kind 2 @0x27 bit 0 (mh_floors).
+- The modern storage view (ours) merged Safe and Safe 2 as one Mog Safe without checking that flag. It counted Safe 2's
+  room (50 / 100) and, with the Safe full, sent moves into Safe 2. Its merged bags now use only the parts
+  items::usable allows (View House: its open containers).
+- c2s 0x029 is in FUN_100fc3c0's gate (dropped within 1000 ms of the last). The modern view now holds a move made
+  within the gate, or while the last is still pending, and sends it when the gate opens. It holds one move at a time
+  and checks the stack is still there; an inventory stack takes the bag part with room at that point. Before this, the
+  dropped move was reported five seconds later as refused by the server.
+- The modern Moogle menu's Storage row opens the storage view on the first open row of the container list (ours,
+  user 2026-11-09); the list shows only when that row will not open. Closing the view returns to the Moogle menu.

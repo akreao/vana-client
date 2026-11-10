@@ -300,6 +300,19 @@ pub struct Storage {
     /// Modern (not retail): the move sent and not yet seen in the inventory, and the line explaining the last refusal.
     pub pending: Option<Pending>,
     pub note: Option<&'static str>,
+    /// Modern: the last move sent, and the next one held until the 1000 ms send gate (FUN_100fc3c0) lets it go.
+    pub sent: Option<std::time::Instant>,
+    pub waiting: Option<Waiting>,
+}
+
+/// A move held for the send gate (modern, not retail): the stack's place and item, where to and how many.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Waiting {
+    pub from: u8,
+    pub to: u8,
+    pub index: u8,
+    pub id: u16,
+    pub n: u32,
 }
 
 /// A move sent to the server (modern, not retail): the slot it left and what was there, until the slot changes.
@@ -1363,6 +1376,8 @@ fn open_view_n(w: &mut World, bank: u8, at_moogle: bool, nomad: bool, read_only:
         stora: None,
         pending: None,
         note: None,
+        sent: None,
+        waiting: None,
     };
     match &mut w.win {
         Some(Win::Items { store, sort, direct: false, .. }) if from_menu => {

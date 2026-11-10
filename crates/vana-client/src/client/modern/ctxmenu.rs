@@ -253,6 +253,8 @@ fn away(bank: u8) -> Storage {
         stora: None,
         pending: None,
         note: None,
+        sent: None,
+        waiting: None,
     }
 }
 
