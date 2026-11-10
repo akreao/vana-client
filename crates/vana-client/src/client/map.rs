@@ -1416,15 +1416,15 @@ impl MapWin {
             let v =
                 (dead(input.axis(0x9d) * 8.0) * fast * ticks * 0.5, dead(input.axis(0x9e) * 8.0) * fast * ticks * 0.5);
             let (bx, by) = ([sw / 512.0 * 40.0, sw - sw / 512.0 * 150.0], [sh / 448.0 * 65.0, sh - sh / 448.0 * 180.0]);
-            let d = match mouse.filter(|_| v == (0.0, 0.0) && live) {
-                Some(ms) => mouse_step(ms, &mut self.anchor, cur, self.zoom),
-                None => v,
+            let (d, exact) = match mouse.filter(|_| v == (0.0, 0.0) && live) {
+                Some(ms) => (mouse_step(ms, &mut self.anchor, cur), true),
+                None => (v, false),
             };
             if d != (0.0, 0.0) {
                 if fast > 1.0 {
                     self.scroll_by(d);
                 } else {
-                    let over = cursor_move(&mut cur, d, self.zoom, bx, by);
+                    let over = cursor_move(&mut cur, d, self.zoom, bx, by, exact);
                     self.view = (self.view.0 + over.0, self.view.1 + over.1);
                     self.clamp();
                 }
@@ -1884,19 +1884,21 @@ pub struct CursorMouse {
 }
 
 /// FUN_101ef0a0's mouse step once the cursor axes are still: the pointer less the cursor point (hardware cursor), or,
-/// with the game's sprite cursor (config 0021 = 0, DAT_10456bf8 0), its move since the game last put it on the point
-/// times the zoom (+0x58) unless both axes are under 2. Under 2 pixels an axis is dropped.
+/// with the game's sprite cursor (config 0021 = 0, DAT_10456bf8 0), its move since the game last put it on the point.
+/// Under 2 pixels an axis is dropped.
+///
+/// Ours: retail multiplies the sprite cursor's move by the zoom (+0x58) unless both axes are under 2; zoomed in (up to
+/// 4.6) that made the cursor race across the map, so the move stays one to one with the pointer.
 ///
 /// Retail sets the game's own pointer onto the point every frame (FUN_10124700), so its sprite cursor counts mouse
 /// motion from the point; ours keeps that place in `anchor` (the pointer, or the point once the app has warped it), and
 /// asks for the warp only after a move, so motion under 2 pixels a frame adds up instead of being lost at 60 fps.
-pub(super) fn mouse_step(m: CursorMouse, anchor: &mut Option<(f32, f32)>, point: (f32, f32), zoom: f32) -> (f32, f32) {
+pub(super) fn mouse_step(m: CursorMouse, anchor: &mut Option<(f32, f32)>, point: (f32, f32)) -> (f32, f32) {
     let d = if m.hardware {
         (m.at.0 - point.0, m.at.1 - point.1)
     } else {
         let a = *anchor.get_or_insert(m.at);
-        let d = (m.at.0 - a.0, m.at.1 - a.1);
-        if d.0.abs() < 2.0 && d.1.abs() < 2.0 { d } else { (d.0 * zoom, d.1 * zoom) }
+        (m.at.0 - a.0, m.at.1 - a.1)
     };
     let z = |v: f32| if v.abs() < 2.0 { 0.0 } else { v };
     let d = (z(d.0), z(d.1));
@@ -1910,10 +1912,25 @@ pub(super) fn mouse_step(m: CursorMouse, anchor: &mut Option<(f32, f32)>, point:
 /// d when it lands inside the box [lo, hi] (+0x44..+0x50); otherwise it steps by d / zoom rounded half away (at least
 /// one pixel toward d), is put back in the box, and what went past it scrolls the view (map pixels). Returns that
 /// scroll.
-pub(super) fn cursor_move(point: &mut (f32, f32), d: (f32, f32), zoom: f32, bx: [f32; 2], by: [f32; 2]) -> (f32, f32) {
+///
+/// Ours: with `exact` (the mouse) the point moves by d and what went past the box scrolls by that much on screen
+/// (d / zoom map pixels, not rounded), so the map keeps up with the pointer one to one at the edges too; retail's step
+/// of at least one map pixel scrolled up to the zoom (4.6) screen pixels for a 2-pixel move. The gamepad keeps retail's.
+pub(super) fn cursor_move(
+    point: &mut (f32, f32),
+    d: (f32, f32),
+    zoom: f32,
+    bx: [f32; 2],
+    by: [f32; 2],
+    exact: bool,
+) -> (f32, f32) {
     let axis = |p: f32, d: f32, b: [f32; 2]| -> (f32, f32) {
         let (lo, hi) = (b[0].trunc(), b[1].trunc());
         let n = (p + d).trunc();
+        if exact {
+            let at = n.clamp(lo, hi);
+            return (at, (p + d - at) / zoom * f32::from(n != at));
+        }
         let p = if (lo..=hi).contains(&n) {
             n
         } else {
@@ -3023,32 +3040,47 @@ mod cursor_tests {
     fn cursor_moves_inside_the_box_and_steps_past_it() {
         let (bx, by) = ([80.0, 900.0], [100.0, 500.0]);
         let mut p = (200.0, 300.0);
-        assert_eq!(cursor_move(&mut p, (10.7, -3.0), 4.6, bx, by), (0.0, 0.0));
+        assert_eq!(cursor_move(&mut p, (10.7, -3.0), 4.6, bx, by, false), (0.0, 0.0));
         assert_eq!(p, (210.0, 297.0));
         // Past the right edge: the point steps by d / zoom rounded (at least 1) and the view takes the excess.
         let mut p = (899.0, 300.0);
-        let over = cursor_move(&mut p, (23.0, 0.0), 4.6, bx, by);
+        let over = cursor_move(&mut p, (23.0, 0.0), 4.6, bx, by, false);
         assert_eq!(p, (900.0, 300.0));
         assert_eq!(over, (4.0, 0.0));
         let mut p = (80.0, 300.0);
-        assert_eq!(cursor_move(&mut p, (-3.0, 0.0), 4.6, bx, by), (-1.0, 0.0));
+        assert_eq!(cursor_move(&mut p, (-3.0, 0.0), 4.6, bx, by, false), (-1.0, 0.0));
         assert_eq!(p, (80.0, 300.0));
+        // The mouse (ours): what goes past the edge scrolls d / zoom map pixels, so 2 pixels on screen stay 2.
+        let mut p = (900.0, 300.0);
+        let over = cursor_move(&mut p, (2.0, 0.0), 4.6, bx, by, true);
+        assert_eq!(p, (900.0, 300.0));
+        assert!((over.0 * 4.6 - 2.0).abs() < 1e-4 && over.1 == 0.0, "{over:?}");
+        // From inside the box, only the part past the edge scrolls.
+        let mut p = (895.0, 300.0);
+        let over = cursor_move(&mut p, (9.2, 0.0), 4.6, bx, by, true);
+        assert_eq!(p, (900.0, 300.0));
+        assert!((over.0 - 0.913_043_5).abs() < 1e-4, "{over:?}");
+        // Inside the box it is the plain move.
+        let mut p = (200.0, 300.0);
+        assert_eq!(cursor_move(&mut p, (10.7, -3.0), 4.6, bx, by, true), (0.0, 0.0));
+        assert_eq!(p, (210.0, 297.0));
     }
 
     #[test]
-    fn mouse_hardware_is_absolute_sprite_relative_and_zoomed() {
+    fn mouse_hardware_is_absolute_sprite_relative() {
         let mut anchor = None;
         let hw = CursorMouse { at: (250.0, 301.0), hardware: true };
-        assert_eq!(mouse_step(hw, &mut anchor, (200.0, 300.0), 4.6), (50.0, 0.0));
+        assert_eq!(mouse_step(hw, &mut anchor, (200.0, 300.0)), (50.0, 0.0));
         let mut anchor = None;
         let sp = CursorMouse { at: (250.0, 300.0), hardware: false };
-        assert_eq!(mouse_step(sp, &mut anchor, (200.0, 300.0), 4.0), (0.0, 0.0));
+        assert_eq!(mouse_step(sp, &mut anchor, (200.0, 300.0)), (0.0, 0.0));
         let sp = CursorMouse { at: (253.0, 300.0), hardware: false };
-        assert_eq!(mouse_step(sp, &mut anchor, (200.0, 300.0), 4.0), (12.0, 0.0));
+        // One to one with the pointer, whatever the zoom (ours).
+        assert_eq!(mouse_step(sp, &mut anchor, (200.0, 300.0)), (3.0, 0.0));
         // Under 2 pixels it waits and adds up.
         let sp = CursorMouse { at: (254.0, 300.0), hardware: false };
-        assert_eq!(mouse_step(sp, &mut anchor, (200.0, 300.0), 4.0), (0.0, 0.0));
+        assert_eq!(mouse_step(sp, &mut anchor, (200.0, 300.0)), (0.0, 0.0));
         let sp = CursorMouse { at: (255.0, 300.0), hardware: false };
-        assert_eq!(mouse_step(sp, &mut anchor, (200.0, 300.0), 4.0), (8.0, 0.0));
+        assert_eq!(mouse_step(sp, &mut anchor, (200.0, 300.0)), (2.0, 0.0));
     }
 }
