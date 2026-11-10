@@ -816,6 +816,20 @@ pub fn screen_shot(shot: &ScreenShot, out: &std::path::Path) -> Result<()> {
 mod tests {
     use super::*;
 
+    /// Every race and face of the creator dancer loads from the installed game (their packed motion sets are mostly
+    /// constant channels, which a bytes-per-value bound once refused, leaving the creator black).
+    #[test]
+    fn real_dancers_load() {
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        for race in 0..8 {
+            for face in 0..8 {
+                if let Err(e) = Dancer::load(&index, race, face) {
+                    panic!("race {race} face {face}: {e:#}");
+                }
+            }
+        }
+    }
+
     #[test]
     fn zone_camera_flips_y_and_z() {
         // Camera 0 of Hume M starts at (9.6, 3.8, -87.5) facing +z (dancer, y up): zone (0.96, -0.38, 8.75) facing -z.

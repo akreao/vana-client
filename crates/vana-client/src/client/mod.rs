@@ -9491,14 +9491,15 @@ impl App {
                 log::warn!("creator backdrop: {e:#}");
                 self.creator_state = LoadState::Failed;
             }
-            Task::Dancer(res) => {
-                self.dancer_loading = None;
-                match (res, &mut self.creator) {
-                    (Ok(d), Some(c)) => c.set_dancer(d),
-                    (Err(e), _) => log::warn!("creator dancer: {e:#}"),
-                    _ => {}
+            Task::Dancer(res) => match (res, &mut self.creator) {
+                (Ok(d), Some(c)) => {
+                    self.dancer_loading = None;
+                    c.set_dancer(d);
                 }
-            }
+                // dancer_loading stays on the failed race / face, so it isn't asked for again every frame.
+                (Err(e), _) => log::warn!("creator dancer: {e:#}"),
+                _ => self.dancer_loading = None,
+            },
             Task::Select(Err(e), _) => {
                 log::warn!("select scene: {e:#}");
                 self.select_state = LoadState::Failed;
