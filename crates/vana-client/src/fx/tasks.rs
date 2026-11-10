@@ -1032,7 +1032,7 @@ impl Effects {
                 s[r.k] = v;
             }
             let word = if r.k == 0 { super::elem::w::L_ISCALE } else { super::elem::w::L_RSCALE };
-            self.writes.push(super::Write::Words(e, word, vec![v.to_bits()]));
+            self.writes.push(super::Write::Word(e, word, v.to_bits()));
             if !done {
                 self.light_ramps.push(r);
             }

@@ -569,7 +569,7 @@ pub fn draw(p: &mut Panels, w: &mut World) {
             desc = Some((nav[sel].0.clone(), "Enter or a click on an entry at the left opens it.".into()));
         }
         Tab::KeyItems => {
-            let Some(k) = w.keyitems.clone() else { return };
+            let Some(k) = w.keyitems.as_ref() else { return };
             waiting = k.state == 0;
             let cats = keyitems::all(w);
             for (title, items) in cats.iter() {

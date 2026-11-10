@@ -69,6 +69,15 @@ pub struct KeyItems {
     pub ask: Option<bool>,
     /// +0x89: an event script opened it on one key item (op 0xcc 0x20); the keys do not close it.
     pub event: bool,
+    /// `items`' row heights, wrapped once per category shown (`row_heights`).
+    heights: std::cell::OnceCell<Vec<f32>>,
+}
+
+impl KeyItems {
+    /// The shown category's row heights (FUN_10233380), worked out on first use.
+    fn row_heights(&self, gu: &GameUi) -> &[f32] {
+        self.heights.get_or_init(|| heights(gu, &self.items))
+    }
 }
 
 /// The ten categories (FUN_1022a360): each '-' header closes the entries before it, titled by its own name.
@@ -106,7 +115,16 @@ pub(super) fn all(w: &World) -> Categories {
 /// /keyitem (FUN_1007d220): evitem, waiting until a 0x055 has come.
 pub fn open(w: &mut World) {
     let state = if w.ki_seen.received { 1 } else { 0 };
-    w.keyitems = Some(KeyItems { state, cat: 0, top: 0, cursor: 0, items: Vec::new(), ask: None, event: false });
+    w.keyitems = Some(KeyItems {
+        state,
+        cat: 0,
+        top: 0,
+        cursor: 0,
+        items: Vec::new(),
+        ask: None,
+        event: false,
+        heights: Default::default(),
+    });
 }
 
 /// Op 0xcc 0x20 (FUN_100b9d90 -> FUN_1022a640 / FUN_1022a660 / FUN_1022a7b0): evitem in event mode (+0x89 = 1) on
@@ -123,8 +141,16 @@ pub fn event_show(w: &mut World, id: u16) {
         .and_then(|n| n.key_item_list().into_iter().find(|(k, _)| *k == id as u32))
         .map(|(_, n)| n)
         .unwrap_or_default();
-    w.keyitems =
-        Some(KeyItems { state: 3, cat: 0, top: 0, cursor: 0, items: vec![(id, name)], ask: None, event: true });
+    w.keyitems = Some(KeyItems {
+        state: 3,
+        cat: 0,
+        top: 0,
+        cursor: 0,
+        items: vec![(id, name)],
+        ask: None,
+        event: true,
+        heights: Default::default(),
+    });
 }
 
 pub fn update(w: &mut World) {
@@ -189,6 +215,7 @@ pub(super) fn show_category(w: &mut World, cat: usize) {
         cats.get(cat).map_or(Vec::new(), |c| c.1.iter().filter(|(id, _)| w.has_key_item(*id)).cloned().collect());
     if let Some(k) = w.keyitems.as_mut() {
         (k.state, k.cat, k.items, k.top, k.cursor) = (2, cat, items, 0, 0);
+        k.heights = Default::default();
     }
 }
 
@@ -238,7 +265,7 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key, _page_mod: bool) {
         w.keyitems = Some(k);
         return;
     }
-    let h = heights(gu, &k.items);
+    let h = k.row_heights(gu).to_vec();
     match (k.state, key) {
         (0 | 1, egui::Key::Escape) => {
             w.sounds.push(Ui::Cancel as u32);
@@ -306,7 +333,8 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key, _page_mod: bool) {
 /// Mouse *(inf: the paged lists' hover and click)*: hover moves the cursor to a row, a click on the cursor row is Enter;
 /// on evitem01 the same over Yes / No.
 pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool) {
-    let Some(k) = w.keyitems.clone() else { return };
+    let Some(k) = w.keyitems.as_ref() else { return };
+    let (state, cur) = (k.state, k.ask.map_or(k.cursor, |yes| if yes { 0 } else { 1 }));
     let inside = |r: [f32; 4]| p.0 >= r[0] && p.0 < r[0] + r[2] && p.1 >= r[1] && p.1 < r[1] + r[3];
     let rows: Vec<(usize, [f32; 4])> = if k.ask.is_some() {
         let Some((x, y)) = gu.window_xy(ASK, sw, sh) else { return };
@@ -332,9 +360,9 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
                 })
             }
             2 => {
-                let h = heights(gu, &k.items);
+                let h = k.row_heights(gu);
                 let mut ry = y + 12.0;
-                (k.top..k.top + fit(&h, k.top).min(k.items.len() - k.top.min(k.items.len())))
+                (k.top..k.top + fit(h, k.top).min(k.items.len() - k.top.min(k.items.len())))
                     .map(|i| {
                         let r = (i, [x + 40.0, ry, NAME_W + 36.0, h[i]]);
                         ry += h[i] + GAP;
@@ -346,22 +374,12 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
         }
     };
     let Some(&(row, _)) = rows.iter().find(|(_, r)| inside(*r)) else {
-        if clicked && k.state == 3 {
+        if clicked && state == 3 {
             key(w, gu, egui::Key::Enter, false);
         }
         return;
     };
     gu.hover.set(true);
-    let cur = match k.ask {
-        Some(yes) => {
-            if yes {
-                0
-            } else {
-                1
-            }
-        }
-        None => k.cursor,
-    };
     if row != cur && (moved || clicked) {
         if let Some(kk) = w.keyitems.as_mut() {
             match kk.ask.as_mut() {
@@ -444,8 +462,8 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
             }
         }
         2 => {
-            let h = heights(gu, &k.items);
-            let n = fit(&h, k.top);
+            let h = k.row_heights(gu);
+            let n = fit(h, k.top);
             let mut ry = y + 12.0;
             for i in k.top..k.top + n {
                 let (id, name) = &k.items[i];
@@ -462,7 +480,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
                 }
                 ry += h[i] + GAP;
             }
-            let (mt, bx) = (max_top(&h), fx + fw - 8.0);
+            let (mt, bx) = (max_top(h), fx + fw - 8.0);
             gu.scroll_bar(bx, fy, fh, k.items.len(), k.items.len() - mt, k.top);
         }
         _ => {
