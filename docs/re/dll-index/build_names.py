@@ -138,6 +138,7 @@ def rd(va, n=4):
 #   movsx eax, word [esp+4]; cmp eax, 0xda; ja default; jmp [eax*4 + 0x100bc960]
 # every case is "call handler; ret 4". vana-client's event_ops.rs was decoded against an older DLL build, so its
 # FUN_ addresses do not match this one; the table here is the source of truth for this build.
+# (these two did not move from 30261006_0 to 30261102_0; check them with `dll.py map` on every build move)
 EVT_DISPATCH, EVT_TABLE, EVT_MAX = 0x100bc280, 0x100bc960, 0xda
 def evtable():
     if rd(EVT_DISPATCH, 4) != 0x2444bf0f or rd(EVT_DISPATCH + 5, 1) != 0x3d or rd(EVT_DISPATCH + 6) != EVT_MAX \
@@ -285,7 +286,10 @@ if not have('strrefs.tsv', 'xrefs.tsv'):
 for l in open(P('strrefs.tsv'), encoding='utf-8', errors='replace') if have('strrefs.tsv', 'xrefs.tsv') else []:
     s, frm, fn, txt = l.rstrip('\n').split('\t', 3)
     if fn != '-': fstr[int(fn, 16)].add(txt)
-decomp_open = {a for a, outs in xout.items() if any(to == 0x1015e350 for to, ty in outs)}   # calls open-window-by-name
+# The DLL's open-window-by-name routine, in the build names.tsv is for (0x1015e350 in 30261006_0). It moves with every
+# build: `dll.py map` gives the new address (README, "A new retail build", step 3).
+OPEN_WINDOW = 0x1015f920
+decomp_open = {a for a, outs in xout.items() if any(to == OPEN_WINDOW for to, ty in outs)}   # calls open-window-by-name
 for a, ss in sorted(fstr.items()):
     menus = {s[4:].strip() for s in ss if s.startswith('menu    ')}
     if len(menus) == 1:

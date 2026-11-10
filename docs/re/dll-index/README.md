@@ -115,8 +115,9 @@ files here follow the newest build. To move them (done for `30261006_0` -> `3026
    line in the decompile: each real change becomes a row in `docs/re/modlog-gaps.md` (never dropped), the rest is
    written down as checked.
 3. Copy `segments.tsv` to `maps/<old build>.tsv` with a `# since <date>` line (the first day notes use the new
-   addresses), run `python3 port_names.py` (moves `names.tsv` / `names_manual.tsv`), then `python3 dll.py build-notes`
-   and `./ri_named.sh` in the new work dir.
+   addresses), run `python3 port_names.py` (moves `names.tsv` / `names_manual.tsv`), move the three addresses
+   `build_names.py` has in its code (`EVT_DISPATCH`, `EVT_TABLE`, `OPEN_WINDOW`; `python3 dll.py map` gives them),
+   then `python3 dll.py build-notes` and `./ri_named.sh` in the new work dir.
 4. Check the table signatures: `cargo test -p vana-client dat::tables` with `FFXI_CONFIG` pointing at an install
    that has the new DLL. A table SE changed needs its signature cut down to the stable part.
 5. Update the build and sha256 at the top of this file, and write the `docs/modlog/` entry.
