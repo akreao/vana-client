@@ -2848,7 +2848,12 @@ impl Effects {
         };
         // Op 0x7b's offset turns by the actor's yaw alone (FUN_1003ba20: RotationY of vtable +0x1c0's y, then
         // TransformCoord), not by its ground tilt.
-        let off = Mat4::from_rotation_y((-m.x_axis.z).atan2(m.x_axis.x)).transform_vector3(off);
+        let yaw = match w {
+            Who::Actor(id) => actors.yaw(id),
+            _ => None,
+        }
+        .unwrap_or_else(|| (-m.x_axis.z).atan2(m.x_axis.x));
+        let off = Mat4::from_rotation_y(yaw).transform_vector3(off);
         let bare = |k: u16| local(k).map(|p| m.transform_point3(p));
         let world = |k: u16| bare(k).map(|p| p + off);
         let nearest = |to: Vec3| {
@@ -3535,9 +3540,10 @@ mod tests {
             Some(match id {
                 7 => Mat4::from_translation(Vec3::new(0.0, 0.0, 9.0)),
                 _ => {
+                    // Pitched about the world X after the yaw, as the client's plain_frame tilts.
                     Mat4::from_translation(Vec3::new(5.0, 0.0, 0.0))
-                        * Mat4::from_rotation_y(0.7)
                         * Mat4::from_rotation_x(0.3)
+                        * Mat4::from_rotation_y(0.7)
                 }
             })
         }
@@ -3562,6 +3568,9 @@ mod tests {
         fn face_target(&self, id: u32) -> Option<u32> {
             (self.face && id == HUME).then_some(7)
         }
+        fn yaw(&self, id: u32) -> Option<f32> {
+            (id != 7).then_some(0.7)
+        }
     }
 
     /// FUN_1003ba20: op 0x7b's offset turns by the actor's yaw only, and point 0x30 (the ground under point 0) does
@@ -3585,12 +3594,12 @@ mod tests {
     /// generator then points from the caster at actor 7, not at the task's target.
     #[test]
     fn attach_linked_target() {
-        let (Some((plain, _)), Some((linked, _))) = (
-            attached(101739, 0x1a, None, &Tilted { face: false }),
-            attached(101739, 0x1a, None, &Tilted { face: true }),
-        ) else {
+        // Only a missing game install skips; with the files a failed start fails the test.
+        if crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()).is_err() {
             return;
-        };
+        }
+        let (plain, _) = attached(101739, 0x1a, None, &Tilted { face: false }).expect("101739's mode 0x1a generator");
+        let (linked, _) = attached(101739, 0x1a, None, &Tilted { face: true }).expect("101739's mode 0x1a generator");
         // Without a face target both points sit on the same stand-in pose: no length to aim along.
         assert!(!plain.abs_diff_eq(linked, 1e-5), "{plain}");
         let from = linked.w_axis.truncate();

@@ -68,6 +68,11 @@ pub trait Actors {
     fn face_target(&self, _id: u32) -> Option<u32> {
         None
     }
+    /// The actor's heading (vtable +0x1c0's y) where its frame also carries a ground tilt; None = read it off the
+    /// frame.
+    fn yaw(&self, _id: u32) -> Option<f32> {
+        None
+    }
     /// Hidden actors (+0xb2 bit 1) get no attached effects.
     fn hidden(&self, id: u32) -> bool;
     /// Actors whose model is up, with the model's files (FUN_10083970 reads their generators).
