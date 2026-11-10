@@ -1869,3 +1869,8 @@ pub(super) fn set_money(w: &mut World, v: u32) {
         m.2 = v.min(m.1);
     }
 }
+
+/// The Delivery Box's itemctrl (the quantity to send) has the keys.
+pub(super) fn qty_open(w: &World) -> bool {
+    w.post.send_ui.as_ref().is_some_and(|s| s.focus == SFocus::Qty)
+}

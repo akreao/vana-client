@@ -1629,6 +1629,11 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
     rects
 }
 
+/// itemctrl (a slot's quantity, or ours: how many to make) has the keys.
+pub(super) fn qty_open(w: &World) -> bool {
+    w.synth.win.as_ref().is_some_and(|s| matches!(s.focus, Focus::Qty | Focus::Amount(..)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

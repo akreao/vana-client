@@ -2591,6 +2591,11 @@ fn world_hud(
                     keys.clear();
                 }
                 _ if world.typing => {}
+                // The window cursor ids 0x2b..0x2e are bound with flag 0x20 (no Shift): Shift + arrows only turn the
+                // camera (Input::axis), never a window's cursor. itemctrl (FUN_101356c0) and link11's colour channels
+                // (FUN_101dd4c0) read ids 0..3 instead, bound with no flag: Shift + arrows still step them.
+                egui::Key::ArrowUp | egui::Key::ArrowDown | egui::Key::ArrowLeft | egui::Key::ArrowRight
+                    if modifiers.shift && !arrows_take_shift(world) => {}
                 // Ours: Escape closes the modern UI Modes editor (/uimodes), drawn over everything.
                 egui::Key::Escape if world.modern && world.uimodes_open => {
                     world.uimodes_open = false;
@@ -19372,6 +19377,11 @@ fn menu_minus(menu: &mut Option<usize>, page: &mut u8, mem: &mut [usize; 2], mod
         *page ^= 1;
     }
     *menu = Some(mem[*page as usize & 1]);
+}
+
+/// The focused window steps on key ids 0..3, which take Shift (itemctrl's quantity, link11's colour channels).
+fn arrows_take_shift(w: &World) -> bool {
+    items::qty_open(w) || shop::qty_open(w) || post::qty_open(w) || synth::qty_open(w) || linkshell::channel_open(w)
 }
 
 /// A '-' key press among the events (egui maps the numpad's minus to Key::Minus too).
