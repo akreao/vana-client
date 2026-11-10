@@ -6987,6 +6987,8 @@ struct World {
     /// The environment's wind (DAT_1065cb04 +0x124..): gusts for the cloth; event op 0x97 retunes them.
     wind: cloth::Wind,
     renderer: Option<ZoneRenderer>,
+    /// The world frame's sets, kept for their room (WorldFrame).
+    frame: WorldFrame,
     /// Effect generators of the zone (fx/).
     effects: crate::fx::Effects,
     /// Per actor: its foot points' last heights relative to the root (actor+0x7e8..+0x7f4).
@@ -9459,6 +9461,7 @@ impl App {
                             zone: None,
                             loading: None,
                             renderer: None,
+                            frame: WorldFrame::default(),
                             effects: crate::fx::Effects::new(),
                             feet: HashMap::new(),
                             contacts: HashMap::new(),
@@ -17445,22 +17448,29 @@ struct WorldDraw<'a> {
 /// The world's frame (App::draw_world): the actors posed and drawn, the scene, the effects, plates, shadows, lamps
 /// and the world's screen effects, into the scene targets.
 fn world_frame(cx: &mut WorldDraw, gfx: &mut Gfx, g: &mut FrameGpu, w: &mut World, dt: f32) {
-    let wf = world_prepare(cx, gfx, g, w, dt);
-    // The renderer is out of the world while the steps take both.
-    let Some(mut r) = w.renderer.take() else { return };
-    world_uploads(gfx, g, w, &mut r, &wf);
-    world_lighting(cx, w, &mut r, &wf);
-    cross_capture(cx, gfx, g, w, &mut r, &wf);
-    let (seen, far_out) = pose_actors(gfx, g, w, &mut r, &wf);
-    let shadow_modes = shadow_setup(cx, gfx, g, w, &mut r, &wf, seen);
-    draw_scene(cx, gfx, g, w, &mut r, &wf, &far_out, shadow_modes);
-    draw_effects(cx, gfx, g, w, &mut r, &wf);
-    world_overlays(cx, gfx, g, w, &mut r, &wf);
-    w.renderer = Some(r);
+    // The frame's sets and the renderer come out of the world while the steps take them beside it.
+    let mut wf = std::mem::take(&mut w.frame);
+    wf.clear();
+    world_prepare(cx, gfx, g, w, &mut wf, dt);
+    if let Some(mut r) = w.renderer.take() {
+        world_uploads(gfx, g, w, &mut r, &wf);
+        world_lighting(cx, w, &mut r, &wf);
+        cross_capture(cx, gfx, g, w, &mut r, &wf);
+        pose_actors(gfx, g, w, &mut r, &mut wf);
+        let shadow_modes = shadow_setup(cx, gfx, g, w, &mut r, &mut wf);
+        draw_scene(cx, gfx, g, w, &mut r, &wf, shadow_modes);
+        draw_effects(cx, gfx, g, w, &mut r, &wf);
+        world_overlays(cx, gfx, g, w, &mut r, &wf);
+        w.renderer = Some(r);
+    }
+    w.frame = wf;
 }
 
-/// What the world frame's first step works out for the rest.
+/// The world frame's values and sets, passed through its steps. It stays in the world between frames so the sets
+/// keep their room: each frame starts with them empty (clear).
+#[derive(Default)]
 struct WorldFrame {
+    // world_prepare's, for the rest.
     dt: f32,
     camera: crate::render::Camera,
     hidden: HashSet<u32>,
@@ -17474,11 +17484,80 @@ struct WorldFrame {
     new_lamps: Option<Vec<lamps::Lamp>>,
     ev_clock: Option<event::HeldClock>,
     portrait_cams: Vec<(lua::hud::Wanted, crate::render::Camera)>,
+    // pose_actors' own.
+    visible: HashSet<u32>,
+    shines: HashMap<u32, crate::render::Shine>,
+    refracts: HashMap<u32, f32>,
+    leads: HashMap<u32, f32>,
+    sdep_ids: HashSet<u32>,
+    event_ids: HashSet<u32>,
+    // pose_actors' for the shadows and the scene.
+    seen: HashMap<u32, shadows::Seen>,
+    far_out: HashSet<u32>,
+}
+
+impl WorldFrame {
+    /// Empties the sets for a new frame, keeping their room; the values are set again by world_prepare.
+    fn clear(&mut self) {
+        let WorldFrame {
+            dt: _,
+            camera: _,
+            hidden,
+            model_hidden,
+            idles,
+            places,
+            drops,
+            look_points,
+            face_points,
+            fx_posed,
+            new_lamps,
+            ev_clock,
+            portrait_cams,
+            visible,
+            shines,
+            refracts,
+            leads,
+            sdep_ids,
+            event_ids,
+            seen,
+            far_out,
+        } = self;
+        (*new_lamps, *ev_clock) = (None, None);
+        hidden.clear();
+        model_hidden.clear();
+        idles.clear();
+        places.clear();
+        drops.clear();
+        look_points.clear();
+        face_points.clear();
+        fx_posed.clear();
+        portrait_cams.clear();
+        visible.clear();
+        shines.clear();
+        refracts.clear();
+        leads.clear();
+        sdep_ids.clear();
+        event_ids.clear();
+        seen.clear();
+        far_out.clear();
+    }
 }
 
 /// Before the renderer's steps: the held zone frame, who is hidden, placements and look points, footsteps, doors,
 /// lifts, furniture, ships, the overlay lines and the lamps.
-fn world_prepare(cx: &mut WorldDraw, gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, dt: f32) -> WorldFrame {
+fn world_prepare(cx: &mut WorldDraw, gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, wf: &mut WorldFrame, dt: f32) {
+    let WorldFrame {
+        hidden,
+        model_hidden,
+        idles,
+        places,
+        drops,
+        look_points,
+        face_points,
+        fx_posed,
+        portrait_cams,
+        ..
+    } = wf;
     // A zone change holds the last frame drawn, still in the scene texture.
     if let Some(zc) = w.zone_hold.as_mut().filter(|zc| !zc.captured) {
         let fx =
@@ -17487,8 +17566,8 @@ fn world_prepare(cx: &mut WorldDraw, gfx: &Gfx, fg: &mut FrameGpu, w: &mut World
         zc.captured = true;
     }
     let camera = App::camera(w);
-    let mut hidden = event::hidden(w);
-    let model_hidden = hidden.clone();
+    event::hide(w, hidden);
+    model_hidden.clone_from(hidden);
     // Misc.: Character Models Displayed (0x3c, 25..50; FUN_10081680): the nearest other PCs only *(inf: which
     // ones retail drops)*.
     let cap = w.game.get(0x3c) as usize;
@@ -17509,13 +17588,13 @@ fn world_prepare(cx: &mut WorldDraw, gfx: &Gfx, fg: &mut FrameGpu, w: &mut World
         .collect();
     hidden.extend(animals);
     hidden.extend(ride::hidden(w));
-    let idles = event::idles(w);
+    if let Some(l) = &w.event {
+        idles.clone_from(&l.st.idle);
+    }
     // Placements first (look targets read other actors), then each actor's motion and pose.
     let my_dir = w.net.me.lock().map(|m| m.dir).unwrap_or(0);
-    let mut places: HashMap<u32, Place> =
-        w.actors.keys().filter_map(|id| actor_place(w, *id, my_dir).map(|p| (*id, p))).collect();
-    let drops: HashMap<u32, f32> =
-        places.iter().map(|(id, p)| (*id, ride::bone0_drop(w, *id, p.status))).filter(|(_, d)| *d != 0.0).collect();
+    places.extend(w.actors.keys().filter_map(|id| actor_place(w, *id, my_dir).map(|p| (*id, p))));
+    drops.extend(places.iter().map(|(id, p)| (*id, ride::bone0_drop(w, *id, p.status))).filter(|(_, d)| *d != 0.0));
     // Doors have no model; their schedulers' sounds play at the door's own position (op 0x0b, actor2).
     for (id, e) in w.entities.iter().filter(|(_, e)| e.door != 0 || e.lift.is_some()) {
         places.entry(*id).or_insert(Place {
@@ -17527,41 +17606,30 @@ fn world_prepare(cx: &mut WorldDraw, gfx: &Gfx, fg: &mut FrameGpu, w: &mut World
             size: 0,
         });
     }
-    let look_points: HashMap<u32, Vec3> = w
-        .actors
-        .iter()
-        .filter_map(|(id, a)| match a.look.mode {
-            actmotion::LookMode::Actor(t, k) => attach_point(w, &places, t, k).map(|p| (*id, p)),
-            _ => None,
-        })
-        .collect();
+    look_points.extend(w.actors.iter().filter_map(|(id, a)| match a.look.mode {
+        actmotion::LookMode::Actor(t, k) => attach_point(w, places, t, k).map(|p| (*id, p)),
+        _ => None,
+    }));
     // FUN_100d5b10: we look at our target, everyone else at its server face target, only in the statuses
     // that allow it (FUN_10095790), never at doors; the target's point 3, 1.2 higher when it is hidden.
     let by_index = |i: u16| if i == w.my_index { Some(w.my_id) } else { w.entity_at(i).map(|(id, _)| id) };
-    let fx_posed = w.effects.posed_actors();
-    let face_points: HashMap<u32, Vec3> = w
-        .actors
-        .keys()
-        .filter_map(|id| {
-            let st = places.get(id)?.status;
-            if !matches!(st, 0 | 5 | 0x2f | 0x30 | 0x55 | 0x3f..=0x53) {
-                return None;
-            }
-            let t = if *id == w.my_id {
-                w.target?
-            } else {
-                by_index(w.entities.get(id).map(|e| e.face).filter(|f| *f != 0)?)?
-            };
-            if t == *id || t == myroom::DOOR_ID || w.entities.get(&t).is_some_and(|e| e.door != 0) {
-                return None;
-            }
-            let mut q = attach_point(w, &places, t, 3)?;
-            if hidden.contains(&t) {
-                q.y -= 1.2;
-            }
-            Some((*id, q))
-        })
-        .collect();
+    fx_posed.extend(w.effects.posed_actors());
+    face_points.extend(w.actors.keys().filter_map(|id| {
+        let st = places.get(id)?.status;
+        if !matches!(st, 0 | 5 | 0x2f | 0x30 | 0x55 | 0x3f..=0x53) {
+            return None;
+        }
+        let t =
+            if *id == w.my_id { w.target? } else { by_index(w.entities.get(id).map(|e| e.face).filter(|f| *f != 0)?)? };
+        if t == *id || t == myroom::DOOR_ID || w.entities.get(&t).is_some_and(|e| e.door != 0) {
+            return None;
+        }
+        let mut q = attach_point(w, places, t, 3)?;
+        if hidden.contains(&t) {
+            q.y -= 1.2;
+        }
+        Some((*id, q))
+    }));
     // Foot points that came back from earlier frames: steps (FUN_100d2970).
     if let Some(pts) = w.renderer.as_mut().map(|r| r.points.take()) {
         let (rides, pts): (Vec<_>, Vec<_>) = pts.into_iter().partition(|(k, _)| ride::is_key(*k));
@@ -17573,10 +17641,10 @@ fn world_prepare(cx: &mut WorldDraw, gfx: &Gfx, fg: &mut FrameGpu, w: &mut World
         }
         w.pick_points.extend(fresh);
         w.pick_points.retain(|id, _| w.pick_rect.contains(id));
-        footsteps::steps(w, &places, steps);
+        footsteps::steps(w, places, steps);
     }
     let eye = w.cam.eye;
-    footsteps::wade(w, &places, eye);
+    footsteps::wade(w, places, eye);
     // Door parts animate against the zone's tick clock; the frame's scheduler moves go in first.
     if let Some(r) = w.renderer.as_mut() {
         r.now = w.started.elapsed().as_secs_f32() * 60.0;
@@ -17609,7 +17677,7 @@ fn world_prepare(cx: &mut WorldDraw, gfx: &Gfx, fg: &mut FrameGpu, w: &mut World
             }
         }
         let removed = std::mem::take(&mut w.ships.removed);
-        let moved = ships::apply(w, dt * 60.0, &model_hidden);
+        let moved = ships::apply(w, dt * 60.0, model_hidden);
         if let Some(r) = w.renderer.as_mut() {
             for id in removed {
                 r.remove_model_actor(id);
@@ -17634,28 +17702,14 @@ fn world_prepare(cx: &mut WorldDraw, gfx: &Gfx, fg: &mut FrameGpu, w: &mut World
     };
     let ev_clock = event::clock(w);
     // The Lua HUD's portraits: each wanted actor's face camera (client/portrait.rs).
-    let portrait_cams: Vec<(lua::hud::Wanted, crate::render::Camera)> = w
-        .lua
-        .portraits_wanted()
-        .into_iter()
-        .take(portrait::SLOTS)
-        .filter_map(|p| Some((p, portrait::camera(w, &places, p.entity, p.look.oval)?)))
-        .collect();
-    WorldFrame {
-        dt,
-        camera,
-        hidden,
-        model_hidden,
-        idles,
-        places,
-        drops,
-        look_points,
-        face_points,
-        fx_posed,
-        new_lamps,
-        ev_clock,
-        portrait_cams,
-    }
+    portrait_cams.extend(
+        w.lua
+            .portraits_wanted()
+            .into_iter()
+            .take(portrait::SLOTS)
+            .filter_map(|p| Some((p, portrait::camera(w, places, p.entity, p.look.oval)?))),
+    );
+    (wf.dt, wf.camera, wf.new_lamps, wf.ev_clock) = (dt, camera, new_lamps, ev_clock);
 }
 
 /// This frame's uploads: the zone and the models actors wait for, under the frame's budget.
@@ -17811,23 +17865,33 @@ fn cross_capture(cx: &mut WorldDraw, gfx: &Gfx, fg: &FrameGpu, w: &mut World, r:
 
 /// Each actor's model, motion, pose, attach points and lights, the visible set and the poses up; the actors seen
 /// and those out of reach come back.
-fn pose_actors(
-    gfx: &Gfx,
-    fg: &mut FrameGpu,
-    w: &mut World,
-    r: &mut ZoneRenderer,
-    wf: &WorldFrame,
-) -> (HashMap<u32, shadows::Seen>, HashSet<u32>) {
+fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer, wf: &mut WorldFrame) {
     let aspect = fg.aspect;
     let dt = wf.dt;
-    let WorldFrame { camera, hidden, idles, places, look_points, face_points, fx_posed, .. } = wf;
+    let WorldFrame {
+        camera,
+        hidden,
+        idles,
+        places,
+        look_points,
+        face_points,
+        fx_posed,
+        visible,
+        shines,
+        refracts,
+        leads,
+        sdep_ids,
+        event_ids,
+        seen,
+        far_out,
+        ..
+    } = wf;
     r.begin_poses();
     // FUN_10014d50: the frame count the animation frame rate keys on.
     w.anim_frame = w.anim_frame.wrapping_add(1);
     let (anim_cfg, anim_frame) = (w.game.get(0x40), w.anim_frame);
     let (cview, cproj) = (camera.view(), camera.proj(aspect));
     let eye = camera.eye;
-    let mut visible = HashSet::new();
     // Doors: a +-0.6 cube at the door (FUN_100ac8e0's class), tested like the rest.
     let cube = box_corners([-0.6, 0.6, 0.6, -0.6, 0.6, -0.6]);
     // The Mog House door (entity +0x12c bit 17, vtable +0x148) is never culled.
@@ -17842,7 +17906,6 @@ fn pose_actors(
     }
     let in_event = w.event.is_some() || w.event_pending.is_some();
     // Scheduler ops 0x40..0x47: shine images go up once; each actor's overlay this frame.
-    let mut shines: HashMap<u32, crate::render::Shine> = HashMap::new();
     for (id, (lib, node), u, v, tf) in w.effects.shines() {
         let key = (w.effects.reg.libs[lib].file_id, node);
         if !r.has_shine(key)
@@ -17865,26 +17928,22 @@ fn pose_actors(
         shines.insert(w.my_id, crate::render::Shine { key, u: 0.25, v: 0.0, tf: [0.5, 0.5, 0.5, 0.5] });
     }
     // Ops 0x48 / 0x49: the refraction level per actor.
-    let refracts: HashMap<u32, f32> = w.effects.refractions().into_iter().collect();
+    refracts.extend(w.effects.refractions());
     let hold_now = Instant::now();
     // FUN_100cb400: each linked follower's leader frame (last frame's: one frame behind at most).
     let frame_of =
         |a: &Actor| Some(a.ticks * actmotion::find(&a.extra, a.character.as_ref()?, &a.motion).first()?.speed * 0.5);
-    let leads: HashMap<u32, f32> =
-        w.actors.iter().filter_map(|(id, a)| Some((*id, frame_of(w.actors.get(&a.motion_link?)?)?))).collect();
+    leads.extend(w.actors.iter().filter_map(|(id, a)| Some((*id, frame_of(w.actors.get(&a.motion_link?)?)?))));
     let me = w.my_id;
     let my_strafe = w.my_strafe;
     // `sdep` entities (trusts, death-flagged): no corpse pose in status 2 / 3 (actmotion::sdep_stand).
-    let sdep_ids: HashSet<u32> = w
-        .entities
-        .iter()
-        .filter(|(id, e)| **id != me && (e.marks.trust || e.marks.death_flag))
-        .map(|(id, _)| *id)
-        .collect();
-    let mut far_out: HashSet<u32> = HashSet::new();
+    sdep_ids.extend(
+        w.entities.iter().filter(|(id, e)| **id != me && (e.marks.trust || e.marks.death_flag)).map(|(id, _)| *id),
+    );
     // The event's actors log their motion changes as ours do (cutscene reports).
-    let event_ids: HashSet<u32> = w.event.as_ref().map(|l| l.st.bound.clone()).unwrap_or_default();
-    let mut seen: HashMap<u32, shadows::Seen> = HashMap::new();
+    if let Some(l) = &w.event {
+        event_ids.extend(&l.st.bound);
+    }
     // FUN_10188a50: the gusts, every frame in retail (30 fps); ours on the cloth's 30 Hz clock.
     w.wind.advance(dt);
     let wind = (w.wind.tick, w.wind.dir, w.wind.strength);
@@ -18634,10 +18693,10 @@ fn pose_actors(
     // Test 6: the occlusion results, a frame or two late, drop actors hidden behind scenery.
     r.occl.results.retain(|id, _| visible.contains(id));
     visible.retain(|id| r.occl.results.get(id) != Some(&false));
-    w.visible = visible;
+    // This frame's set in, last frame's out to the scratch room.
+    std::mem::swap(&mut w.visible, visible);
     r.upload_poses(&gfx.gpu, &mut fg.encoder);
     fg.mark("poses");
-    (seen, far_out)
 }
 
 /// The real shadows (sun, lamps) and ambient occlusion for the frame; the retail shadow modes come back.
@@ -18647,11 +18706,10 @@ fn shadow_setup(
     fg: &FrameGpu,
     w: &mut World,
     r: &mut ZoneRenderer,
-    wf: &WorldFrame,
-    mut seen: HashMap<u32, shadows::Seen>,
+    wf: &mut WorldFrame,
 ) -> Vec<(u32, u8, shadows::Seen)> {
     let bg = fg.bg;
-    let WorldFrame { camera, .. } = wf;
+    let WorldFrame { camera, seen, .. } = wf;
     let has = |id: u32| w.actors.contains_key(&id);
     let flags = |id: u32| w.actors.get(&id).map_or((false, false), |a| (a.shadow_off, a.noblob));
     // Real character shadows (ours, render/sunshadow.rs), unless config 0x3a turns shadows off. The actors their
@@ -18745,7 +18803,7 @@ fn shadow_setup(
                 flags: &flags,
                 layers: r.shadow_layers(bg),
             },
-            &seen,
+            seen,
             camera.eye,
         ),
         None => Vec::new(),
@@ -18768,13 +18826,12 @@ fn draw_scene(
     w: &mut World,
     r: &mut ZoneRenderer,
     wf: &WorldFrame,
-    far_out: &HashSet<u32>,
     shadow_modes: Vec<(u32, u8, shadows::Seen)>,
 ) {
     let (bg, aspect, scene_fmt) = (fg.bg, fg.aspect, fg.scene_fmt);
     let (scene_depth, scene_tex, scene_raw) = (fg.scene_depth.clone(), fg.scene_tex.clone(), fg.scene_raw.clone());
     let dt = wf.dt;
-    let WorldFrame { camera, hidden, places, portrait_cams, .. } = wf;
+    let WorldFrame { camera, hidden, places, portrait_cams, far_out, .. } = wf;
     // FUN_100cbde0: a drawn alpha under 0.0001 is not drawn (the near-camera fade, first person). A character
     // with +0xb2 bit 0 set (FUN_100c63d0's tests and the occlusion, not in `visible`) is not drawn either;
     // ours is never culled by them, nor are actors without a skeleton (props, ships).
