@@ -6976,6 +6976,8 @@ struct AreaSwitch {
         Option<(Option<ZoneRenderer>, Option<ground::Ground>, Option<crate::dat::weather::ZoneWeather>, Option<usize>)>,
     /// The zone's sub-area state meanwhile (the shown area's own takes the event's op 0x75 requests).
     home_sub: Option<subarea::SubArea>,
+    /// The zone's doors (states and flags; the event's commands stay in use) meanwhile.
+    home_doors: Option<doors::Doors>,
 }
 
 struct World {
@@ -10281,6 +10283,10 @@ impl App {
                         let old = std::mem::replace(&mut world.sub, sub);
                         if world.area.home_sub.is_none() {
                             world.area.home_sub = Some(old);
+                            // The event's door commands (+0x174) carry over; states and flags are the zone's.
+                            let mut home = std::mem::take(&mut world.doors);
+                            world.doors.event = std::mem::take(&mut home.event);
+                            world.area.home_doors = Some(home);
                         } else if old.current.is_some() {
                             world.effects.drop_sub_area();
                         }
@@ -10303,6 +10309,10 @@ impl App {
                             ));
                         }
                         world.ground = Some(ground);
+                        // FUN_10173c10 builds the new scene's door groups solid (+0xf0 = 1); its doors are seen anew. The
+                        // event's door commands carry over.
+                        let event = std::mem::take(&mut world.doors.event);
+                        world.doors = doors::Doors { event, ..Default::default() };
                         world.area.shown = Some(area);
                     }
                     Ok(_) => {}
@@ -10486,6 +10496,8 @@ impl App {
                     world.zone_uploading = Some(Instant::now());
                 }
                 world.ground = Some(ground);
+                // FUN_10173c10 builds the new zone's door groups solid (+0xf0 = 1); its doors are seen anew.
+                world.doors = Default::default();
                 let old_zone = world.zone.replace(zone_id);
                 world.lua.raise("zone_change", vec![zone_id.into(), old_zone.into()]);
                 world.scene = Some(map_no);
@@ -10548,13 +10560,17 @@ impl App {
                     let _ = w.net.commands.send(NetCommand::SubMap { state: 1, id: 0 });
                 }
             }
-            Some(subarea::Step::Load(id, from_event)) => {
+            Some(subarea::Step::Load(id, from_event, asked)) => {
                 let Some(zone_id) = w.zone else { return };
                 log::info!("sub-area {id} loading (zone {zone_id})");
                 w.sub.loading = Some((id, from_event));
-                // FUN_10176dd0(0): doors are solid while it loads.
-                if let Some(g) = &w.ground {
-                    g.close_all_doors();
+                // FUN_10178a20 -> FUN_10176dd0(0): a trigger's load makes every door box solid and holds door changes
+                // until it ends; the asked loads (FUN_10178900) do neither.
+                if !asked {
+                    w.sub.doors_held = true;
+                    for g in w.ground.iter().chain(w.sub.home.iter()) {
+                        g.close_all_doors();
+                    }
                 }
                 let (collision, keys, areas, textures) = (
                     w.sub.zone_collision.clone(),
@@ -10577,6 +10593,7 @@ impl App {
                         log::warn!("sub-area {id}: {e:#}");
                         if let Phase::World(w) = &mut self.phase {
                             w.sub.loading = None;
+                            doors::reapply(w);
                         }
                     }
                 }
@@ -10597,6 +10614,11 @@ impl App {
             && let Some((renderer, ground, weather, fx)) = w.area.home.take()
         {
             (w.renderer, w.ground, w.zone_weather) = (renderer, ground, weather);
+            if let Some(d) = w.area.home_doors.take() {
+                let event = std::mem::take(&mut w.doors.event);
+                w.doors = d;
+                w.doors.event = event;
+            }
             if let Some(sub) = w.area.home_sub.take() {
                 if w.sub.current.is_some() {
                     w.effects.drop_sub_area();
