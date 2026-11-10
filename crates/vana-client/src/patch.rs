@@ -511,6 +511,30 @@ pub fn applied_version(root: &Path) -> Option<String> {
     parse_manifest(&text).ok()?.iter().flat_map(|e| e.versions.iter().map(|v| v.stamp.clone())).max()
 }
 
+/// [`applied_version`], read again only when the stamp file changes (every Config::load asks for it).
+pub fn applied_version_cached(root: &Path) -> Option<String> {
+    type Seen = (PathBuf, Option<std::time::SystemTime>, u64, Option<String>);
+    static SEEN: std::sync::Mutex<Option<Seen>> = std::sync::Mutex::new(None);
+    let path = root.join(STAMP_FILE);
+    let meta = std::fs::metadata(&path).ok()?;
+    let key = (path, meta.modified().ok(), meta.len());
+    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((p, m, n, v)) = seen.as_ref()
+        && (p, m, n) == (&key.0, &key.1, &key.2)
+    {
+        return v.clone();
+    }
+    let v = applied_version(root);
+    *seen = Some((key.0, key.1, key.2, v.clone()));
+    v
+}
+
+/// A client version as a sortable key: "30261102_0" is (30261102, 0); None for any other shape.
+pub fn version_key(v: &str) -> Option<(u64, u64)> {
+    let (date, n) = v.trim().split_once('_')?;
+    Some((date.parse().ok()?, n.parse().ok()?))
+}
+
 /// The start-up check's quick part (one request): the server's version when it is not the one applied last or a
 /// code file is not current (installs once patched with data files only keep a 2019 FFXiMain.dll), else None.
 pub fn behind(root: &Path) -> Result<Option<ServerVersion>> {
@@ -756,6 +780,15 @@ mod tests {
         if root.join(STAMP_FILE).is_file() {
             assert!(code_current(&root));
         }
+    }
+
+    #[test]
+    fn version_keys_sort_by_date_then_number() {
+        assert_eq!(version_key("30261102_0"), Some((30261102, 0)));
+        assert!(version_key("30261102_0") > version_key("30261006_0"));
+        assert!(version_key("30261006_10") > version_key("30261006_9"));
+        assert_eq!(version_key("custom"), None);
+        assert_eq!(version_key(""), None);
     }
 
     #[test]
