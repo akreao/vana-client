@@ -15083,6 +15083,10 @@ impl App {
                                     // New and changed DATs: the next login opens the index again.
                                     if out.reload {
                                         self.index = None;
+                                        // The next login sends the patched files' version.
+                                        if self.cfg.follow_applied_version() {
+                                            let _ = self.cfg.save();
+                                        }
                                     }
                                     if out.restart {
                                         match updater::exe().map(|exe| {
