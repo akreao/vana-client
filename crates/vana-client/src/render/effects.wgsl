@@ -711,14 +711,16 @@ fn update(@builtin(global_invocation_id) gid: vec3<u32>) {
         let x3 = mat3x3<f32>(xm[0].xyz, xm[1].xyz, xm[2].xyz) * base;
         mv = mat4x4<f32>(vec4<f32>(x3[0], 0.0), vec4<f32>(x3[1], 0.0), vec4<f32>(x3[2], 0.0), vec4<f32>(e, 1.0));
     }
-    // Sort key +0x12c (FUN_100440d0).
+    // Sort key +0x12c (FUN_100440d0; asm 100450cf..1004516a).
     let bias = ef(b, E_BIAS);
     var key = bias;
     if ((flags & 0x400000u) == 0u) {
         key = bias - e.z;
         if (screen && abs(bias) > 0.03) { key = (1.0 - bias) - e.z; }
-        if ((flags & 0x8000000u) != 0u) { key = key + 400.0; }
     }
+    // Flag 0x8000000 then overwrites the key with bias - z + 400, with or without 0x400000: Port San d'Oria's dark
+    // underwater sheet (`t_sa/effe/wate/down`, flags 0x08401000) draws first, under the water colour, not over it.
+    if ((flags & 0x8000000u) != 0u) { key = bias - e.z + 400.0; }
     // Projection depth bias (FUN_10045230 step 4).
     var pbias = 0.0;
     if (bias != 0.0 && (flags & 0x8400000u) == 0u) {
@@ -1138,9 +1140,60 @@ fn vs_glare(@builtin(vertex_index) k: u32, @builtin(instance_index) inst: u32) -
     return out;
 }
 
-// CMoDist (FUN_100418b0, pass 2): a fan of the cross (0,0,0), (-1,0,0), (0,-1,0), (1,0,0), (0,1,0) through +0xa0
-// with its view translation shifted by (off, off), sampling the scene copy where the unshifted points project;
-// the centre has the element colour (alpha x fade), the tips 0x00808080. Variant 9.
+// CMoDist's cross point i ((0,0,0), (-1,0,0), (0,-1,0), (1,0,0), (0,1,0)) on the screen as FUN_100426f0 projects it
+// (FUN_1006e7d0: through +0xa0 and the plain projection, |w| with 0 -> 1): X = (x / w + 1) W / 2, Y = (1 - y / w) H / 2.
+fn dist_screen(o: u32, i: u32) -> vec2<f32> {
+    let cross = array<vec3<f32>, 5>(vec3<f32>(0.0), vec3<f32>(-1.0, 0.0, 0.0), vec3<f32>(0.0, -1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0));
+    let c = d.proj * (out_mat(o) * vec4<f32>(cross[i], 1.0));
+    var w = abs(c.w);
+    if (w == 0.0) { w = 1.0; }
+    return vec2<f32>((c.x / w + 1.0) * 0.5 * d.clip.z, (1.0 - c.y / w) * 0.5 * d.clip.w);
+}
+
+// FUN_100426f0's box over the five points: (min X, min Y, kx, ky), k = 255 / extent when the extent is 256 or more,
+// else 1. Point i lands in the 256x256 copy at (P - min) k.
+fn dist_box(o: u32) -> vec4<f32> {
+    var lo = dist_screen(o, 0u);
+    var hi = lo;
+    for (var i = 1u; i < 5u; i = i + 1u) {
+        let q = dist_screen(o, i);
+        lo = min(lo, q);
+        hi = max(hi, q);
+    }
+    let ext = hi - lo;
+    let k = select(vec2<f32>(1.0), vec2<f32>(255.0) / ext, ext >= vec2<f32>(256.0));
+    return vec4<f32>(lo, k);
+}
+
+// FUN_100426f0's copy pass: the four tips (strip 1, 2, 4, 3) as XYZRHW vertices at (P - min) k in the 256x256 target,
+// each with uv P / (W, H) into the scene (linear, MIRROR). Ours rasterises a pixel at its centre (+0.5) where D3D8
+// uses the corner, and our scene holds a point half a pixel left of and above D3D8's, hence the two half-pixel terms.
+@vertex
+fn vs_dist_copy(@builtin(vertex_index) k: u32, @builtin(instance_index) inst: u32) -> VOut {
+    let e = inst / PER_ELEM;
+    let o = e * OUT_WORDS;
+    if (douts[o + 23u] < 0.5 || k >= 6u) { return hidden(); }
+    let strip = array<u32, 4>(1u, 2u, 4u, 3u);
+    let tri = array<u32, 6>(0u, 1u, 2u, 1u, 2u, 3u);
+    let p = dist_screen(o, strip[tri[k]]);
+    let b = dist_box(o);
+    let t = (p - b.xy) * b.zw + 0.5;
+    var out = hidden();
+    out.clip = vec4<f32>(t.x / 128.0 - 1.0, 1.0 - t.y / 128.0, 0.5, 1.0);
+    out.uv = (p - 0.5) / d.clip.zw;
+    return out;
+}
+
+// TSS 0x10353028: colour the scene texel, alpha TFACTOR 0x80; no fog (RS 0x103530d0).
+@fragment
+fn fs_dist_copy(i: VOut) -> @location(0) vec4<f32> {
+    return vec4<f32>(textureSampleLevel(tex, samp, i.uv, 0.0).rgb, 128.0 / 255.0);
+}
+
+// CMoDist (FUN_100426f0, pass 2): a fan of the cross through +0xa0 with its view translation shifted by (off, off),
+// sampling the 256x256 copy at (P - min) k / 255 of the unshifted points (MIRROR, linear; 256 / 255 of the copy's
+// own scale, so the lookup drifts up to a pixel across the box); the centre has the element colour (alpha x fade),
+// the tips 0x00808080. Variant 9.
 @vertex
 fn vs_dist(@builtin(vertex_index) k: u32, @builtin(instance_index) inst: u32) -> VOut {
     let e = inst / PER_ELEM;
@@ -1153,10 +1206,10 @@ fn vs_dist(@builtin(vertex_index) k: u32, @builtin(instance_index) inst: u32) ->
     if (c == 1u) { pi = tri + 1u; } else if (c == 2u) { pi = (tri + 1u) % 4u + 1u; }
     let mv = out_mat(o);
     let vp = (mv * vec4<f32>(cross[pi], 1.0)).xyz;
-    let cl = to_clip(vp, douts[o + 24u]);
     let off = bitcast<f32>(dels[e * E_WORDS + E_DIST_OFF]);
     var out = vout(e, vp + vec3<f32>(off, off, 0.0), vec4<f32>(0.0), vec2<f32>(0.0), 9u);
-    out.uv = vec2<f32>(cl.x / cl.w * 0.5 + 0.5, 0.5 - cl.y / cl.w * 0.5);
+    let b = dist_box(o);
+    out.uv = (dist_screen(o, pi) - b.xy) * b.zw / 255.0;
     if (pi == 0u) { out.color = out.tf; } else { out.color = vec4<f32>(vec3<f32>(128.0 / 255.0), 0.0); }
     return out;
 }
@@ -1260,9 +1313,9 @@ fn fs_spec(i: VOut) -> @location(0) vec4<f32> {
     return vec4<f32>(rgb, a);
 }
 
-// CMoDistModelElem (FUN_10043320): the mesh drawn unshifted; each vertex samples the scene copy at the screen point of
-// pos + (off, off, 0) in model space through the element matrix; the UV scroll slides the lookup (V flipped back).
-// Variant 11.
+// CMoDistModelElem (FUN_10043320): the mesh drawn unshifted; each vertex samples the 256x256 copy (flipped,
+// FUN_10042d00) at the screen point of pos + (off, off, 0) in model space through the element matrix; the UV scroll
+// slides the lookup. Variant 11.
 @vertex
 fn vs_distmodel(v: VIn, @builtin(instance_index) inst: u32) -> VOut {
     let e = inst / PER_ELEM;
@@ -1273,7 +1326,8 @@ fn vs_distmodel(v: VIn, @builtin(instance_index) inst: u32) -> VOut {
     let vp = (mv * vec4<f32>(v.pos, 1.0)).xyz;
     let su = (mv * vec4<f32>(v.pos + vec3<f32>(off, off, 0.0), 1.0)).xyz;
     var out = vout(e, vp, v.color, vec2<f32>(0.0), 11u);
-    out.uv = screen_uv(su) + vec2<f32>(douts[o + 20u], -douts[o + 21u]);
+    let s = screen_uv(su);
+    out.uv = vec2<f32>(s.x, 1.0 - s.y) + vec2<f32>(douts[o + 20u], douts[o + 21u]);
     return out;
 }
 
@@ -1303,7 +1357,9 @@ fn vs_distring(@builtin(vertex_index) k: u32, @builtin(instance_index) inst: u32
     let cb = vec4<u32>((c >> 16u) & 0xffu, (c >> 8u) & 0xffu, c & 0xffu, c >> 24u);
     let dc = vec4<f32>(((cb * tf) >> vec4<u32>(7u)) & vec4<u32>(0xffu)) / 255.0;
     var out = vout(e, vp, dc, vec2<f32>(0.0), 12u);
-    out.uv = screen_uv(vp);
+    // The 256x256 copy is flipped: v = (H - 0.5 - sy) / H at the vertex's screen point (FUN_10042d00).
+    let s = screen_uv(vp);
+    out.uv = vec2<f32>(s.x, 1.0 - s.y);
     return out;
 }
 
@@ -1461,8 +1517,8 @@ fn vs_morph(@builtin(vertex_index) k: u32, @builtin(instance_index) inst: u32) -
 }
 
 // CMoDistMorphElem (FUN_10043590): the morph drawn shifted by (off, off, 0) in model space, each vertex sampling the
-// scene copy (WRAP) at the screen point of its unshifted position, the UV scroll sliding the lookup; the raw corner
-// colour. Variants 14 / 15 (alpha test).
+// 256x256 copy (flipped, FUN_10042d00; WRAP) at the screen point of its unshifted position, the UV scroll sliding the
+// lookup; the raw corner colour. Variants 14 / 15 (alpha test).
 @vertex
 fn vs_distmorph(@builtin(vertex_index) k: u32, @builtin(instance_index) inst: u32) -> VOut {
     let e = inst / PER_ELEM;
@@ -1475,7 +1531,8 @@ fn vs_distmorph(@builtin(vertex_index) k: u32, @builtin(instance_index) inst: u3
     let off = bitcast<f32>(dels[eb + E_DIST_OFF]);
     let vp = (mv * vec4<f32>(m.pos + vec3<f32>(off, off, 0.0), 1.0)).xyz;
     var out = vout(e, vp, m.color, vec2<f32>(0.0), select(14u, 15u, (dels[eb + E_GLARE] & 1u) != 0u));
-    out.uv = screen_uv((mv * vec4<f32>(m.pos, 1.0)).xyz) + vec2<f32>(douts[o + 20u], -douts[o + 21u]);
+    let s = screen_uv((mv * vec4<f32>(m.pos, 1.0)).xyz);
+    out.uv = vec2<f32>(s.x, 1.0 - s.y) + vec2<f32>(douts[o + 20u], douts[o + 21u]);
     return out;
 }
 
@@ -1598,6 +1655,15 @@ fn fs_trail(i: TrailOut) -> @location(0) vec4<f32> {
 fn sat(x: f32) -> f32 { return clamp(x, 0.0, 1.0); }
 fn sat3(x: vec3<f32>) -> vec3<f32> { return clamp(x, vec3<f32>(0.0), vec3<f32>(1.0)); }
 
+// FUN_10042d00's copy pass leaves FOGENABLE as the element's draw state set it (FUN_100467e0: on unless flag 25), so
+// with table fog its pre-transformed quad (rhw 1, W fog: depth 1) takes the fog factor (end - 1) / (end - start);
+// mode 0x48's fog colour is black (FUN_10045950). Fogging a texel before the bilinear lookup equals fogging after.
+fn copy_fog(t: vec3<f32>, flags: u32, mode: u32) -> vec3<f32> {
+    if ((flags & 0x2000000u) != 0u) { return t; }
+    let ff = sat((d.fog.y - 1.0) / (d.fog.y - d.fog.x));
+    return mix(select(d.fog_color.rgb, vec3<f32>(0.0), mode == 0x48u), t, ff);
+}
+
 // The texture stages of each path (MODLOG "Effect generators"). Texture alpha comes
 // doubled from the upload (0x80 = 1.0), so retail's 2 x Ta is `t.a` here.
 @fragment
@@ -1651,6 +1717,7 @@ fn fs(i: VOut) -> @location(0) vec4<f32> {
         // 2 x diffuse x TFACTOR, k 2 for 0x44 else 4. The mesh texture is never bound.
         var t = textureSample(tex, samp, i.uv).rgb;
         if (d.fog.z > 0.5) { t = pow(t, vec3<f32>(1.0 / 2.2)); }
+        t = copy_fog(t, flags, mode);
         rgb = t;
         a = sat(select(4.0, 2.0, mode == 0x44u) * (128.0 / 255.0) * sat(2.0 * dd.a * f.a));
     } else if (variant == 14u || variant == 15u) {
@@ -1658,6 +1725,7 @@ fn fs(i: VOut) -> @location(0) vec4<f32> {
         // then x TFACTOR x 4; alpha test GREATER 0x60 with res byte 2 bit 7.
         var t = textureSample(tex, samp, i.uv).rgb;
         if (d.fog.z > 0.5) { t = pow(t, vec3<f32>(1.0 / 2.2)); }
+        t = copy_fog(t, flags, mode);
         let s0 = sat3(2.0 * t * dd.rgb);
         let s0a = sat(2.0 * (128.0 / 255.0) * dd.a);
         rgb = sat3(2.0 * s0 * f.rgb);
@@ -1672,6 +1740,7 @@ fn fs(i: VOut) -> @location(0) vec4<f32> {
         // DistRing: colour 2 x diffuse x copy, alpha 4 x diffuse a x copy alpha (0x80).
         var t = textureSample(tex, samp, i.uv).rgb;
         if (d.fog.z > 0.5) { t = pow(t, vec3<f32>(1.0 / 2.2)); }
+        t = copy_fog(t, flags, mode);
         rgb = sat3(2.0 * dd.rgb * t);
         a = sat(4.0 * dd.a * (128.0 / 255.0));
     } else if (variant == 7u || variant == 8u) {

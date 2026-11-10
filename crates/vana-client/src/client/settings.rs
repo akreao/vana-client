@@ -22,6 +22,7 @@ pub struct Settings {
     pub send_interval: u32,
     pub party_tp: bool,
     pub lamp_lights: bool,
+    pub smooth_lights: bool,
     pub actor_shadows: u32,
     pub shadow_map: u32,
     pub ssao: bool,
@@ -62,6 +63,7 @@ impl Settings {
             send_interval: c.send_interval,
             party_tp: c.party_tp,
             lamp_lights: c.lamp_lights,
+            smooth_lights: c.smooth_lights,
             actor_shadows: c.actor_shadows,
             shadow_map: c.shadow_map,
             ssao: c.ssao,
@@ -99,6 +101,7 @@ impl Settings {
         c.send_interval = self.send_interval;
         c.party_tp = self.party_tp;
         c.lamp_lights = self.lamp_lights;
+        c.smooth_lights = self.smooth_lights;
         c.actor_shadows = self.actor_shadows;
         c.shadow_map = self.shadow_map;
         c.ssao = self.ssao;
@@ -147,6 +150,7 @@ enum Val {
     SendRate,
     PartyTp,
     LampLights,
+    SmoothLights,
     ActorShadows,
     ShadowMap,
     Ssao,
@@ -401,6 +405,13 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
             "Baked keeps the lamplight painted onto the walls, as retail. Real makes the lamps give off light of their own (not retail).",
             LampLights,
             &[(0, "Baked"), (1, "Real")],
+            Now,
+        ),
+        row(
+            "Light Shading",
+            "Retail lights the world from lamps at the corners of its triangles, cut off sharply at a light's reach. Smooth lights every pixel and fades the edge out (not retail).",
+            SmoothLights,
+            &[(0, "Retail"), (1, "Smooth")],
             Now,
         ),
         row(
@@ -922,6 +933,7 @@ impl SettingsUi {
             Val::PadDeadZone => self.s.gamepad_dead,
             Val::MouseCamSpeed => self.s.mouse_camera_speed,
             Val::LampLights => self.s.lamp_lights as u32,
+            Val::SmoothLights => self.s.smooth_lights as u32,
             Val::ActorShadows => self.s.actor_shadows,
             Val::ShadowMap => self.s.shadow_map,
             Val::Ssao => self.s.ssao as u32,
@@ -955,6 +967,7 @@ impl SettingsUi {
             Val::PadDeadZone => self.s.gamepad_dead = x,
             Val::MouseCamSpeed => self.s.mouse_camera_speed = x,
             Val::LampLights => self.s.lamp_lights = x != 0,
+            Val::SmoothLights => self.s.smooth_lights = x != 0,
             Val::ActorShadows => self.s.actor_shadows = x,
             Val::ShadowMap => self.s.shadow_map = x,
             Val::Ssao => self.s.ssao = x != 0,

@@ -9,6 +9,7 @@ pub mod effects;
 pub mod gputime;
 pub mod invwin;
 pub mod lampshadow;
+pub mod leak;
 pub mod mipgen;
 pub mod movie;
 pub mod mtext;
@@ -278,6 +279,32 @@ pub struct Uniforms {
     two: [[f32; 4]; 4],
     /// x: 1 with bump mapping on (one eased light, vertex fog), 0 off (two lights, table fog).
     modes: [f32; 4],
+    /// Windowed mode's light boost (light_boost): rgb factors, w = 1 on.
+    boost: [f32; 4],
+}
+
+/// Windowed mode's light boost (FUN_1000be50, the SetLight wrapper FUN_1000bf30's helper; only while config 0034 !=
+/// 0, where no gamma ramp is set): a light whose diffuse r, g and b are all below 0.8 has each multiplied by 2.3 x
+/// ramp[i] / 65535 of its channel's gamma ramp (FUN_10017100: red entry 120, green 116, blue 128) and capped at 1.
+/// The ramp is FUN_100171b0's, built whether or not it is set: ftol(65535 (i / 255)^(1 / max(g, 0.01))), g the
+/// channel's gamma (base 0028 + 1 + Gameplay R / G / B / 100). Returns the factors, w = 1.
+pub fn light_boost(gamma: [f32; 3]) -> [f32; 4] {
+    let ramp = |i: u32, g: f32| -> u16 {
+        let g = g.max(0.01) as f64;
+        ((i as f64 * (1.0f32 / 255.0) as f64).powf(1.0 / g) * 65535.0) as u16
+    };
+    let f = |i: u32, g: f32| ramp(i, g) as f32 * f32::from_bits(0x381333c6);
+    [f(120, gamma[0]), f(116, gamma[1]), f(128, gamma[2]), 1.0]
+}
+
+/// A colour through the windowed boost (zone.wgsl `boost`, FUN_1000be50 for lights, FUN_10188e00 for the ambient):
+/// with the boost on and every part below 0.8, each part times its factor, capped at 1.
+pub fn boosted(c: glam::Vec3, boost: [f32; 4]) -> glam::Vec3 {
+    if boost[3] > 0.5 && c.max_element() < 0.8 {
+        (c * glam::Vec3::new(boost[0], boost[1], boost[2])).min(glam::Vec3::ONE)
+    } else {
+        c
+    }
 }
 
 /// Area environments (DAT_10631f24 area objects) the scenery is lit by, slot 0 unused.
@@ -417,6 +444,11 @@ pub struct ZoneRenderer {
     /// and vertex fog; off: two lights and table fog).
     bump_groups: Vec<wgpu::BindGroup>,
     pub bump_mode: bool,
+    /// Settings' Light Shading (ours): false Retail (the scenery's point lights per vertex, hard cut at the range),
+    /// true Smooth (per pixel, soft edge; not retail).
+    pub smooth_lights: bool,
+    /// Windowed mode's light boost (light_boost; zero = off).
+    pub light_boost: [f32; 4],
     /// The zone's scenery culled on the GPU (render/cull.rs) when the device draws indirectly, and its passes.
     cull: Option<cull::Cull>,
     cull_pipes: [wgpu::ComputePipeline; 2],
@@ -432,6 +464,8 @@ pub struct ZoneRenderer {
     /// The zone's instances' placements and camera lists (ZoneGeometry), and the list in force (MZB offset, 0 none).
     inst_placement: Vec<u32>,
     camera_lists: HashMap<u32, Vec<u32>>,
+    /// The point-light slot leak replayed per frame (render/leak.rs), when a scenery placement has a 'c' ref.
+    leak: Option<leak::LeakState>,
     /// The list in force and, beyond retail's draw distance, the reach past which unlisted placements draw (ours).
     camera_list: (u32, Option<f32>),
     /// Per placement its variant group and whether it is the group's simplest mesh (ZoneScene::variant_groups).
@@ -1890,7 +1924,7 @@ const LAMP_REACH: f32 = 16.0;
 pub struct Instance {
     model: [[f32; 4]; 4],
     lights: [u32; 4],
-    /// x: the area slot it is lit by (0 = the zone's).
+    /// x: the area slot it is lit by (0 = the zone's); y: the sway step (sway.rs); z: 1 with NORMALIZENORMALS.
     area: [u32; 4],
     /// Level of detail: drawn while near² < d² <= far² from the camera to its origin; far 0 = always. z: the part,
     /// w: 1 for a voyage zone's world (drawn through the voyage matrix).
@@ -1901,6 +1935,34 @@ pub struct Instance {
 /// Mog House scene lists only it); none when the zone has no such light.
 fn furniture_lights(keys: &[u32]) -> [u32; 4] {
     [keys.iter().position(|&k| k == u32::from_le_bytes(*b"l_01")).map_or(0, |s| s as u32 + 1), 0, 0, 0]
+}
+
+/// The slot leak's replay data (render/leak.rs) for a geometry whose scenery has a 'c' ref, else None.
+fn leak_data(
+    scene: &ZoneScene,
+    refs: &HashMap<u32, [leak::Ref; 4]>,
+    inst_placement: &[u32],
+    matrices: &[Instance],
+    bounds: &[[f32; 8]],
+) -> Option<leak::LeakData> {
+    let mut leakers: Vec<u32> = refs.iter().filter(|(_, r)| leak::LeakData::has_keep(r)).map(|(p, _)| *p).collect();
+    if leakers.is_empty() {
+        return None;
+    }
+    leakers.sort_unstable();
+    let mut places: Vec<([leak::Ref; 4], bool, Vec<u32>)> = scene
+        .placements
+        .iter()
+        .enumerate()
+        .map(|(i, p)| (refs.get(&(i as u32)).copied().unwrap_or([leak::Ref::Off; 4]), p.deferred, Vec::new()))
+        .collect();
+    for (i, &p) in inst_placement.iter().enumerate() {
+        if refs.contains_key(&p) {
+            places[p as usize].2.push(i as u32);
+        }
+    }
+    let insts = matrices.iter().copied().zip(bounds.iter().copied()).collect();
+    Some(leak::LeakData { places, insts, leakers })
 }
 
 /// Instance stride (actors with a CPU-posed mesh use the same layout, lights 0).
@@ -1930,6 +1992,8 @@ pub struct ZoneGeometry {
     /// (zone::camera_lists).
     inst_placement: Vec<u32>,
     camera_lists: HashMap<u32, Vec<u32>>,
+    /// The point-light slot leak's replay data (render/leak.rs), when a scenery placement has a 'c' ref.
+    leak: Option<leak::LeakData>,
     variants: Vec<Option<(u32, bool)>>,
     /// Each instance's world bounding sphere (centre, radius), for the lamps' lights (set_lamps).
     spheres: Vec<[f32; 4]>,
@@ -1980,6 +2044,8 @@ impl ZoneGeometry {
         // Per instance: the placement's link, whether mirrored, its distance rule for the culling (cull.rs) and its
         // record.
         let mut by_mesh: HashMap<String, Vec<(Instance, u32, bool, [f32; 2], u32)>> = HashMap::new();
+        // The scenery placements' refs as the slot leak replays them.
+        let mut place_refs: HashMap<u32, [leak::Ref; 4]> = HashMap::new();
         for (pi, p) in scene.placements.iter().enumerate().filter(|(_, p)| p.drawn()) {
             let area = match area_keys.iter().position(|&k| k == p.area) {
                 _ if p.area == 0 => 0,
@@ -2023,6 +2089,16 @@ impl ZoneGeometry {
             }
             // Door parts draw through FUN_1017ce60 (2019), which takes every ref, 'c' keys too.
             let lights = p.lights.map(|k| slot_of(k, part != 0));
+            if part == 0 {
+                place_refs.insert(
+                    pi as u32,
+                    p.lights.map(|k| match slot_of(k, false) {
+                        0 if k != 0 && k as u8 == b'c' => leak::Ref::Keep,
+                        0 => leak::Ref::Off,
+                        s => leak::Ref::Set(s),
+                    }),
+                );
+            }
             let reach = cull::reach(p.own_dist, p.id != 0);
             // Door groups draw whatever the camera list (FUN_1017ade0): no record for it.
             let rec = if part != 0 { u32::MAX } else { pi as u32 };
@@ -2030,7 +2106,7 @@ impl ZoneGeometry {
                 let inst = Instance {
                     model: p.matrix(),
                     lights,
-                    area: [area, 0, 0, 0],
+                    area: [area, 0, p.normalize as u32, 0],
                     band: [b[0], b[1], part as f32, p.world as u32 as f32],
                 };
                 by_mesh.entry(name.into_owned()).or_default().push((
@@ -2196,7 +2272,9 @@ impl ZoneGeometry {
                 d.runs().into_iter().map(|(_, r)| (r, d.index_count, d.first_index, d.base_vertex)).collect()
             })
             .collect();
+        let cull_bounds = if place_refs.values().any(leak::LeakData::has_keep) { bounds.clone() } else { Vec::new() };
         let (cull, slots) = cull::CullData::build(bounds, &matrices, &subs);
+        let leak = leak_data(scene, &place_refs, &inst_placement, &matrices, &cull_bounds);
         for (d, s) in draws.iter_mut().zip(slots) {
             d.args = [s[0], s[1]];
         }
@@ -2230,6 +2308,7 @@ impl ZoneGeometry {
             cull,
             inst_placement,
             camera_lists: scene.camera_lists.clone(),
+            leak,
             variants: if scene.camera_lists.is_empty() { Vec::new() } else { scene.variant_groups() },
             spheres,
             deltas,
@@ -2242,6 +2321,22 @@ impl ZoneGeometry {
     fn parts(&self) -> [&[u8]; 3] {
         [bytemuck::cast_slice(&self.verts), bytemuck::cast_slice(&self.indices), bytemuck::cast_slice(&self.matrices)]
     }
+}
+
+/// A leaker's resolved slots (render/leak.rs) with the lamps its Lamp Lights patch added (slots that were free in
+/// `own`), in their order: each where it was if that is still free, else in the first free slot; none past four.
+fn with_lamps(resolved: [u32; 4], own: [u32; 4], patch: Option<[u32; 4]>) -> [u32; 4] {
+    let mut v = resolved;
+    let Some(patch) = patch else { return v };
+    for k in (0..4).filter(|&k| own[k] == 0 && patch[k] != 0) {
+        if v.contains(&patch[k]) {
+            continue;
+        }
+        if let Some(f) = std::iter::once(k).chain(0..4).find(|&f| v[f] == 0) {
+            v[f] = patch[k];
+        }
+    }
+    v
 }
 
 /// Each instance's free light places filled with the nearest lamps within LAMP_REACH of its sphere (instance -> slots,
@@ -2460,6 +2555,8 @@ impl ZoneRenderer {
             sway,
             bump_groups,
             bump_mode: true,
+            smooth_lights: false,
+            light_boost: [0.0; 4],
             scenery_bump: p.scenery_bump,
             scenery: p.scenery,
             scenery_furn: p.scenery_furn,
@@ -2490,6 +2587,7 @@ impl ZoneRenderer {
             lamps_last: Vec::new(),
             inst_placement: geo.inst_placement.clone(),
             camera_lists: geo.camera_lists.clone(),
+            leak: geo.leak.clone().map(leak::LeakState::new),
             camera_list: (0, None),
             variants: geo.variants.clone(),
             lights,
@@ -2618,6 +2716,9 @@ impl ZoneRenderer {
             return;
         }
         self.camera_list = (list, far);
+        if let Some(l) = &mut self.leak {
+            l.set_list(self.camera_lists.get(&list).map(Vec::as_slice));
+        }
         let Some(c) = self.cull.as_mut() else { return };
         match self.camera_lists.get(&list) {
             Some(l) => {
@@ -2705,6 +2806,43 @@ impl ZoneRenderer {
             }
         }
         self.lamp_patch = next;
+        // The slot leak writes its instances again over the new patch.
+        if let Some(l) = &mut self.leak {
+            l.written.clear();
+        }
+    }
+
+    /// The point-light slot leak (render/leak.rs) for this frame's view: the instances of placements with 'c' refs
+    /// take the slots their draw order leaves them, over the lamps' patch where that is off. Waits for a streamed
+    /// zone's geometry.
+    pub fn update_leak(&mut self, gpu: &Gpu, camera: &Camera, aspect: f32) {
+        if self.geo_pending.is_some() {
+            return;
+        }
+        let Some(l) = &self.leak else { return };
+        let view = leak::View {
+            view_proj: camera.view_proj(aspect),
+            eye: camera.eye,
+            far: self.clip[0],
+            k: self.clip[1],
+            voyage: self.voyage,
+        };
+        let hidden = |i: u32| self.links.iter().any(|(k, link, _)| *k == i && *link == self.hidden);
+        let next = l.resolve(&view, hidden);
+        let mut writes = Vec::new();
+        for (&i, slots) in &next {
+            let own = self.inst_lights.get(i as usize).copied().unwrap_or([0; 4]);
+            let v = with_lamps(*slots, own, self.lamp_patch.get(&i).copied());
+            if l.written.get(&i) != Some(&v) && !hidden(i) {
+                writes.push((i, v));
+            }
+        }
+        for (i, v) in &writes {
+            gpu.queue.put(&self.instances, *i as u64 * INSTANCE_BYTES + 64, bytemuck::cast_slice(v));
+        }
+        if let Some(l) = &mut self.leak {
+            l.written.extend(writes);
+        }
     }
 
     /// A sub-area's scenery replaces the loaded one (FUN_101787c0 state 2); `light_keys` is the zone's table with
@@ -3096,6 +3234,10 @@ impl ZoneRenderer {
             }
         }
         self.hidden = link;
+        // The slot leak writes its instances again over the restored ones.
+        if let Some(l) = &mut self.leak {
+            l.written.clear();
+        }
     }
 
     fn put_texture(&mut self, gpu: &Gpu, slot: usize, t: &crate::dat::zone::Texture) {
@@ -3593,7 +3735,8 @@ impl ZoneRenderer {
             area_info: [0.0; 4],
             voyage: self.voyage.to_cols_array_2d(),
             two: [[0.0; 4]; 4],
-            modes: [self.bump_mode as u32 as f32, 0.0, 0.0, 0.0],
+            modes: [self.bump_mode as u32 as f32, self.smooth_lights as u32 as f32, 0.0, 0.0],
+            boost: self.light_boost,
         };
         let mut clear = self.fog_color;
         if let Some(l) = &self.lighting {
@@ -4656,6 +4799,7 @@ pub fn render_pngs_post(
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
+        renderer.update_leak(&gpu, camera, width as f32 / height as f32);
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
         renderer.render(&gpu, &mut encoder, &view, &depth, camera, width as f32 / height as f32, &actor_refs);
         renderer.render_refraction(
@@ -4722,6 +4866,15 @@ mod refract_tests {
 
 #[cfg(test)]
 mod furniture_tests {
+    /// A lamp the leak's light displaces moves to a free slot; one already there is not doubled.
+    #[test]
+    fn leak_keeps_lamps() {
+        assert_eq!(super::with_lamps([9, 0, 0, 0], [0, 0, 0, 0], Some([4, 0, 0, 0])), [9, 4, 0, 0]);
+        assert_eq!(super::with_lamps([0, 0, 0, 0], [0, 0, 0, 0], Some([4, 5, 0, 0])), [4, 5, 0, 0]);
+        assert_eq!(super::with_lamps([4, 0, 0, 0], [0, 3, 0, 0], Some([4, 3, 0, 0])), [4, 0, 0, 0]);
+        assert_eq!(super::with_lamps([1, 2, 3, 6], [0, 0, 0, 0], Some([4, 5, 7, 8])), [1, 2, 3, 6]);
+    }
+
     /// FUN_101844c0: l_01 at table slot 0 is light 1; no l_01, no light.
     #[test]
     fn furniture_lights() {
@@ -4800,5 +4953,32 @@ mod faded_tests {
         gpu.queue.submit([enc.finish()]);
         let err = pollster::block_on(scope.pop());
         assert!(err.is_none(), "{err:?}");
+    }
+}
+
+#[cfg(test)]
+mod boost_tests {
+    /// FUN_1000be50 at the default gamma (1.5 per channel): red x 1.3915, green x 1.3604, blue x 1.4527; at 1.0 the
+    /// ramp is linear (2.3 x 120 / 255 ..).
+    #[test]
+    fn light_boost_factors() {
+        let near = |a: [f32; 4], b: [f32; 3]| (0..3).all(|k| (a[k] - b[k]).abs() < 1e-5) && a[3] == 1.0;
+        assert!(near(super::light_boost([1.5; 3]), [1.391_511, 1.360_417, 1.452_683]));
+        assert!(near(super::light_boost([1.0; 3]), [1.082_353, 1.046_274, 1.154_510]));
+    }
+
+    /// FUN_10188e00 / FUN_1000be50: boosted only while every part is below 0.8, then capped at 1; the ambient's
+    /// bytes after it (fx::elem::ambient_ref, zone.wgsl ambient_rs) are about half the env's.
+    #[test]
+    fn boosted_ambient() {
+        use glam::Vec3;
+        let b = super::light_boost([1.5; 3]);
+        let a = super::boosted(Vec3::splat(0.5), b);
+        assert!((a.x - 0.695_755).abs() < 1e-5 && (a.z - 0.726_341).abs() < 1e-5);
+        assert_eq!(super::boosted(Vec3::new(0.5, 0.5, 0.8), b), Vec3::new(0.5, 0.5, 0.8));
+        assert_eq!(super::boosted(Vec3::splat(0.75), b).max_element(), 1.0);
+        assert_eq!(super::boosted(Vec3::splat(0.5), [0.0; 4]), Vec3::splat(0.5));
+        // 0xa0 / 255 -> trunc(0.627 x 128) = 80 bytes: 80 / 255, not 160 / 255.
+        assert_eq!(crate::fx::elem::ambient_ref(Vec3::splat(160.0 / 255.0)).x * 255.0, 80.0);
     }
 }
