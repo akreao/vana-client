@@ -260,7 +260,6 @@ impl Ssao {
     }
 
     /// Darkens `color` by the occlusion of the scenery in `depth` (the scene's, the size given to `resize`).
-    #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &self,
         gpu: &Gpu,
@@ -391,7 +390,7 @@ mod tests {
             }
             ao.draw(&gpu, &mut enc, &cv, &depth, vp, cam.eye);
             gpu.queue.submit([enc.finish()]);
-            for p in read(&gpu, &color, n, n).chunks_exact(4) {
+            for p in read(&gpu, &color, n, n).as_chunks::<4>().0 {
                 assert!((p[0] as i32 - 204).abs() <= 3, "depth {z}: {p:?}");
             }
         }

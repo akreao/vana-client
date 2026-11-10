@@ -87,7 +87,7 @@ pub fn open<R: Render>(device: Option<&str>, make: impl FnOnce(u32) -> R) -> Res
     };
     let supported = device.default_output_config()?;
     let format = supported.sample_format();
-    let range = supported.buffer_size().clone();
+    let range = *supported.buffer_size();
     let mut config: StreamConfig = supported.into();
     let rate = config.sample_rate;
     // PulseAudio with the default buffer leaves every buffer attribute to the server and sets no ADJUST_LATENCY,
@@ -104,10 +104,10 @@ pub fn open<R: Render>(device: Option<&str>, make: impl FnOnce(u32) -> R) -> Res
     }
     let mixer = make(rate);
     let stream = match format {
-        SampleFormat::F32 => build::<f32, R>(&device, config.clone(), mixer)?,
-        SampleFormat::I16 => build::<i16, R>(&device, config.clone(), mixer)?,
-        SampleFormat::I32 => build::<i32, R>(&device, config.clone(), mixer)?,
-        SampleFormat::U16 => build::<u16, R>(&device, config.clone(), mixer)?,
+        SampleFormat::F32 => build::<f32, R>(&device, config, mixer)?,
+        SampleFormat::I16 => build::<i16, R>(&device, config, mixer)?,
+        SampleFormat::I32 => build::<i32, R>(&device, config, mixer)?,
+        SampleFormat::U16 => build::<u16, R>(&device, config, mixer)?,
         f => anyhow::bail!("unsupported output sample format {f}"),
     };
     stream.play()?;
@@ -149,7 +149,7 @@ fn build<T: SizedSample + FromSample<f32>, R: Render>(
             let frames = data.len() / channels.max(1);
             buf.resize(frames * 2, 0.0);
             mixer.render(&mut buf);
-            for (f, s) in data.chunks_exact_mut(channels).zip(buf.chunks_exact(2)) {
+            for (f, s) in data.chunks_exact_mut(channels).zip(buf.as_chunks::<2>().0) {
                 match f.len() {
                     1 => f[0] = T::from_sample((s[0] + s[1]) * 0.5),
                     _ => {

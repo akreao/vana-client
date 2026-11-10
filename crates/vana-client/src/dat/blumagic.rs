@@ -31,7 +31,7 @@ impl BluData {
         let mut entries = vec![None; 256];
         match index.read(FILE) {
             Ok(d) => {
-                for e in d.chunks_exact(6) {
+                for e in d.as_chunks::<6>().0 {
                     entries[e[0] as usize] =
                         Some(Entry { points: e[1], desc: e[2], family: e[3], level: e[4], physical: e[5] != 0 });
                 }

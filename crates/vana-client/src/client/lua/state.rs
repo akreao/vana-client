@@ -371,7 +371,8 @@ pub(super) fn install(lua: &Lua, game: &Table) -> mlua::Result<()> {
             t.set("file", r.file_id())?;
             t.set("scale", r.scale)?;
             let o = lua.create_table()?;
-            (o.set("x", r.ox)?, o.set("y", r.oy)?);
+            o.set("x", r.ox)?;
+            o.set("y", r.oy)?;
             t.set("origin", o)?;
             t.set("size", 512)?;
             t.set("px_per_unit", super::super::minimap::px_per_unit(&r))?;
@@ -397,7 +398,9 @@ pub(super) fn install(lua: &Lua, game: &Table) -> mlua::Result<()> {
     // The zone's collision in world coordinates (y down, as positions).
     let point = |lua: &Lua, v: glam::Vec3| -> mlua::Result<Table> {
         let p = lua.create_table()?;
-        (p.set("x", v.x)?, p.set("y", v.y)?, p.set("z", v.z)?);
+        p.set("x", v.x)?;
+        p.set("y", v.y)?;
+        p.set("z", v.z)?;
         Ok(p)
     };
     game.set(
@@ -408,8 +411,11 @@ pub(super) fn install(lua: &Lua, game: &Table) -> mlua::Result<()> {
             let out = lua.create_table()?;
             for (t, n, kind) in g.tris_near(x, z, r.unwrap_or(8.0).clamp(0.0, 64.0)) {
                 let e = lua.create_table()?;
-                (e.set(1, point(lua, t[0])?)?, e.set(2, point(lua, t[1])?)?, e.set(3, point(lua, t[2])?)?);
-                (e.set("normal", point(lua, n)?)?, e.set("kind", kind)?);
+                e.set(1, point(lua, t[0])?)?;
+                e.set(2, point(lua, t[1])?)?;
+                e.set(3, point(lua, t[2])?)?;
+                e.set("normal", point(lua, n)?)?;
+                e.set("kind", kind)?;
                 out.push(e)?;
             }
             Ok(Some(out))

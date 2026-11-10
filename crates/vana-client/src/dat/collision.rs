@@ -294,7 +294,7 @@ impl Collision {
             let base = out.objects.len() as u32;
             // The camera lists are the zone's (a sub-area's offsets name its own MZB; interiors carry none).
             out.objects.extend(
-                src.objects.iter().cloned().map(|o| Object { vis: if skip.is_some() { o.vis } else { 0 }, ..o }),
+                src.objects.iter().map(|o| Object { vis: if skip.is_some() { o.vis } else { 0 }, ..o.clone() }),
             );
             let mut entry = vec![None; src.entries.len()];
             for (i, e) in src.entries.iter().enumerate() {
@@ -441,9 +441,9 @@ mod water_tests {
     fn water_heights() {
         assert_eq!(water_of(0x03fe4000), -7.0);
         assert_eq!(water_of(0x0ffe4000), -7.0);
-        assert_eq!(water_of(0x03f6d340), -36.69921875);
+        assert_eq!(water_of(0x03f6d340), -9395.0 / 256.0);
         assert_eq!(water_of(0x03f18000), -58.0);
-        assert_eq!(water_of(0x00006640), 1.59765625);
+        assert_eq!(water_of(0x00006640), 409.0 / 256.0);
         assert_eq!(water_of(0x00000010), 0.0);
     }
 }

@@ -58,7 +58,6 @@ fn font_file(font: &Font) -> UiFile {
     f
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn dialogue_shot(
     out: &Path,
     zone: u16,

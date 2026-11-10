@@ -234,7 +234,6 @@ pub fn menu_key(w: &mut World, gu: &GameUi, key: egui::Key, sw: f32, sh: f32) {
 }
 
 /// The mouse: the region menu as the generic window; on a map a right click is its Escape (message 6 takes any).
-#[allow(clippy::too_many_arguments)]
 pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
     if w.cnq.is_some() {
         if right {
@@ -1032,7 +1031,7 @@ fn draw_marker(gu: &mut GameUi, v: &View, e: &CnqMarker, name: Option<&str>) {
     let Some(name) = name.filter(|_| e.alpha != 0 && e.flags & 8 == 0) else { return };
     let a = if e.flags & 0x800 != 0 { e.alpha as u32 / 2 } else { e.alpha as u32 };
     let rgb = COLOURS.get(e.colour as usize).copied().unwrap_or(0);
-    let c = |s: u32| (((rgb >> s) & 0xff) * a >> 7) << s;
+    let c = |s: u32| ((((rgb >> s) & 0xff) * a) >> 7) << s;
     let colour = a << 24 | c(16) | c(8) | c(0);
     let tw = gu.text_width(name) as i32;
     let q = |t: i32| t / 4;

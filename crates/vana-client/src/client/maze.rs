@@ -488,18 +488,8 @@ fn keys(w: &mut World, s: &mut Screen, key: egui::Key) -> Then {
             }
         },
         K::ArrowDown | K::ArrowUp | K::ArrowRight | K::ArrowLeft => {
-            let old = s.list.0;
-            let n = rows.len();
-            match key {
-                K::ArrowDown if s.list.0 + 1 < n => s.list.0 += 1,
-                K::ArrowUp if s.list.0 > 0 => s.list.0 -= 1,
-                K::ArrowRight => s.list.0 = (s.list.0 + VISIBLE).min(n.saturating_sub(1)),
-                K::ArrowLeft => s.list.0 = s.list.0.saturating_sub(VISIBLE),
-                _ => {}
-            }
-            let r = s.list.0;
-            list_to(s, r);
-            if s.list.0 != old {
+            let moved = crate::client::scrollbar::step(&mut s.list, rows.len(), VISIBLE, key);
+            if moved {
                 w.sounds.push(Ui::Cursor as u32);
             }
         }
@@ -621,7 +611,6 @@ fn alpha(a: f32) -> u32 {
 
 /// FUN_101fdcc0: sprite prvdunge 3 + 11 element + shape, turned by `rot` quarters about its origin and moved so it
 /// stays on its cells (rot 1 (h, 0), 2 (w, h), 3 (0, w)), at cell (x, y).
-#[allow(clippy::too_many_arguments)]
 fn rune_sprite(gu: &mut GameUi, element: u8, shape: u8, x: f32, y: f32, rot: u8, look: Look, pulse: i16, glint: i16) {
     let k = 3 + 11 * element.min(8) as usize + shape as usize;
     let (sw, sh) = (gu.sprite_width(LIB, k), gu.sprite_height(LIB, k));
@@ -846,7 +835,6 @@ fn hit(gu: &GameUi, sw: f32, sh: f32, p: (f32, f32)) -> Option<Hit> {
 /// Mouse *(inf: the generic handlers act on the focused window)*: prvdunsi's buttons while it is open; while a rune is
 /// carried a cell moves it there (message 9), a click places it, a right click drops it, a middle click turns it; the
 /// list's rows move the cursor, a click on the cursor's row is Enter, a right click Escape.
-#[allow(clippy::too_many_arguments)]
 pub fn pointer(
     w: &mut World,
     gu: &GameUi,

@@ -24,11 +24,11 @@ pub const POL_MASK: u64 = 0x1C27_3E45_6789_1133;
 /// polcore's sqCalcChecksum: the little-endian u32 words summed, a 1..3-byte tail folded in from the top.
 pub fn checksum(b: &[u8]) -> u32 {
     let mut sum = 0u32;
-    let mut chunks = b.chunks_exact(4);
-    for c in &mut chunks {
-        sum = sum.wrapping_add(u32::from_le_bytes([c[0], c[1], c[2], c[3]]));
+    let (words, rest) = b.as_chunks::<4>();
+    for c in words {
+        sum = sum.wrapping_add(u32::from_le_bytes(*c));
     }
-    let tail = chunks.remainder().iter().fold(0u32, |t, &x| t >> 8 | (x as u32) << 24);
+    let tail = rest.iter().fold(0u32, |t, &x| t >> 8 | (x as u32) << 24);
     sum.wrapping_add(tail)
 }
 

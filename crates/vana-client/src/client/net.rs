@@ -1624,7 +1624,7 @@ impl EntityUpdate {
     }
 }
 
-pub fn spawn(login: MapLogin, account: String, codec: Codec) -> NetHandle {
+pub fn spawn(login: MapLogin, account: String, codec: Codec, gm_window: bool) -> NetHandle {
     crate::net::search::begin_session();
     let (events_tx, events) = channel();
     let (commands, commands_rx) = channel();
@@ -1632,6 +1632,9 @@ pub fn spawn(login: MapLogin, account: String, codec: Codec) -> NetHandle {
     let shared = me.clone();
     let stats = Arc::new(NetStats::default());
     stats.now_ms();
+    // Set before the thread starts: on a LAN server the first zone-in can arrive before the first frame's
+    // poll_network stores it, and the GM list request (c2s 0x1F0) would then be skipped for the whole zone.
+    stats.gm_window.store(gm_window, std::sync::atomic::Ordering::Relaxed);
     let st = stats.clone();
     let hooks = Arc::new(AtomicU8::new(0));
     let hk = hooks.clone();
@@ -1652,7 +1655,6 @@ enum Outcome {
     Done,
 }
 
-#[allow(clippy::too_many_arguments)]
 fn run(
     mut login: MapLogin,
     account: &str,
@@ -1680,7 +1682,6 @@ fn run(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn session(
     addr: SocketAddr,
     login: &MapLogin,
@@ -2632,8 +2633,9 @@ mod tests {
     fn hooked_ids() {
         let s = NetStats::default();
         let mut ids = [0u64; 8];
-        ids[0x032 / 64] |= 1 << (0x032 % 64);
-        ids[0x1ff / 64] |= 1 << (0x1ff % 64);
+        for id in [0x032usize, 0x1ff] {
+            ids[id / 64] |= 1 << (id % 64);
+        }
         s.set_hooked(false, &ids);
         assert!(s.hooked(false, 0x032) && s.hooked(false, 0x1ff) && !s.hooked(false, 0x033));
         assert!(!s.hooked(true, 0x032));

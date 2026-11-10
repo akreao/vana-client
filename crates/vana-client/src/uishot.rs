@@ -181,7 +181,7 @@ pub fn ui_shot(out: &Path, width: u32, height: u32) -> Result<()> {
         let n = ally.get(k).copied().unwrap_or(0).min(6);
         (n > 0).then(|| {
             std::array::from_fn(|i| {
-                (i < n).then(|| crate::render::screens::AllyRow {
+                (i < n).then_some(crate::render::screens::AllyRow {
                     hp: 0.3 + 0.1 * i as f32,
                     hp_anim: 0.3 + 0.1 * i as f32,
                     away: i == 1,

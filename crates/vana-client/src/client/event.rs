@@ -1748,7 +1748,7 @@ impl Host for LiveHost<'_> {
                 let int = |i| Self::arg_int(&args, i).unwrap_or(0);
                 self.st.option_points.insert(int(0) as u32, (int(1) as u16, int(2) as u16));
             }
-            Effect::Op { op: 0xd4, sub: Some(s @ (3 | 4 | 5)), args, .. } => {
+            Effect::Op { op: 0xd4, sub: Some(s @ (3..=5)), args, .. } => {
                 let int = |i| Self::arg_int(&args, i).unwrap_or(0);
                 let ext = (s != 3).then(|| {
                     let mut e = [0u8; 24];

@@ -1023,11 +1023,16 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         let focus = w.confirm.is_none();
         let swaps: &[(u16, usize)] = if matches!(s.name, HOLDER | SACK | PEARL) { &[(2, 122)] } else { &[] };
         if let Some(win) = gu.lobby_window_swaps(s.name, sw, sh, (0.0, 0.0), Some(s.sel), focus, &s.off, swaps) {
-            gu.disabled_children(s.name, win.frame[0], win.frame[1], &s.off, Some(s.sel).filter(|_| focus));
+            gu.disabled_children(s.name, win.frame[0], win.frame[1], &s.off, focus.then_some(s.sel));
             rects.push(win.frame);
         }
     }
     rects
+}
+
+/// link11 is on a colour channel (FUN_101dd4c0 steps it by Left / Right).
+pub(super) fn channel_open(w: &World) -> bool {
+    w.linkshell.as_ref().and_then(|l| l.naming.as_ref()).is_some_and(|n| (2..=4).contains(&n.edit))
 }
 
 #[cfg(test)]

@@ -2886,12 +2886,10 @@ mod tests {
             let t = lua.create_table().unwrap();
             for (i, (l, needed, killed, known)) in slots.iter().enumerate() {
                 let s = lua.create_table().unwrap();
-                (
-                    s.set("label", *l).unwrap(),
-                    s.set("needed", *needed).unwrap(),
-                    s.set("killed", *killed).unwrap(),
-                    s.set("known", *known).unwrap(),
-                );
+                s.set("label", *l).unwrap();
+                s.set("needed", *needed).unwrap();
+                s.set("killed", *killed).unwrap();
+                s.set("known", *known).unwrap();
                 t.set(i + 1, s).unwrap();
             }
             module.get::<mlua::Function>("attribute").unwrap().call::<Option<usize>>((t, k, n, name)).unwrap()
@@ -5614,7 +5612,7 @@ fn migrate_regime(w: &World, data: &std::path::Path, char_file: &str) {
                 .into_iter()
                 .filter_map(|p| Some((std::fs::metadata(&p).and_then(|m| m.modified()).ok()?, p)))
                 .collect();
-            old.sort_by(|a, b| b.0.cmp(&a.0));
+            old.sort_by_key(|o| std::cmp::Reverse(o.0));
             old.into_iter().find_map(|(_, p)| read(&p))
         });
     if !v.is_object() {
@@ -6002,7 +6000,6 @@ impl Host {
 
     /// A mod window's canvas drawn this frame, at its element `i` (modwin's CanvasAt): kept for drops. Every frame, for
     /// every canvas: an entry already kept is updated in place.
-    #[allow(clippy::too_many_arguments)]
     fn canvas_at(&mut self, m: &str, win: &str, i: usize, origin: [f32; 2], shown: [f32; 4], ppp: f32, top: bool) {
         let now = std::time::Instant::now();
         let Some(vm) = self.vms.iter().find(|v| v.manifest.id == m) else { return };

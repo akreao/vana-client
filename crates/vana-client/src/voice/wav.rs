@@ -82,7 +82,7 @@ pub fn read(path: &Path) -> anyhow::Result<(Vec<f32>, u32)> {
             let s: Vec<f32> = body
                 .chunks_exact(2 * ch)
                 .map(|f| {
-                    f.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0).sum::<f32>()
+                    f.as_chunks::<2>().0.iter().map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0).sum::<f32>()
                         / ch as f32
                 })
                 .collect();

@@ -1560,7 +1560,6 @@ fn clipped(gu: &mut GameUi, s: &str, x: f32, y: f32, max: f32, tint: u32) {
 /// The eight slots (FUN_1015bd70: the 32x32 icon, "%2d" up to 99 right-aligned at (+30, +22) in white for stackable
 /// items but gil; the cursor cell shifted by (-1, -1)) and the gil total (FUN_10140910: "N  G" right-aligned at the gil
 /// child's right edge + 10, always drawn).
-#[allow(clippy::too_many_arguments)]
 pub(super) fn draw_slots(
     gu: &mut GameUi,
     info: &super::items::ItemCache,
@@ -1628,7 +1627,6 @@ pub(super) fn list_at(k: usize) -> (usize, usize) {
 }
 
 /// The inventory list moved to x 200 (the source's +4): the picker with its colours, or look-only.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn draw_list(
     gu: &mut GameUi,
     w: &World,
@@ -1664,7 +1662,6 @@ pub(super) fn picker_bar(w: &mut World, m: super::scrollbar::Msg) -> bool {
 }
 
 /// The inventory list at x 200 over some rows.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn draw_rows(
     gu: &mut GameUi,
     rows: &[crate::inventory::Slot],
@@ -1871,4 +1868,9 @@ pub(super) fn set_money(w: &mut World, v: u32) {
     if let Some(m) = w.post.send_ui.as_mut().and_then(|s| s.money.as_mut()) {
         m.2 = v.min(m.1);
     }
+}
+
+/// The Delivery Box's itemctrl (the quantity to send) has the keys.
+pub(super) fn qty_open(w: &World) -> bool {
+    w.post.send_ui.as_ref().is_some_and(|s| s.focus == SFocus::Qty)
 }

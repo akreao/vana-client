@@ -157,7 +157,7 @@ fn skill_files(category: u8, anim: u16, race: u8, skirt: i8) -> Option<(u32, Opt
         _ if a < 0x100 => (WS[r] + a, WS2[r][k] + a),
         _ => (WS_HI[r] + a - 0x100, WS_HI2[r][k] + a - 0x100),
     };
-    Some((file, Some(second).filter(|_| skirt > 0)))
+    Some((file, (skirt > 0).then_some(second)))
 }
 
 /// 0x4f1a00: a Vana'diel day in 1/60 seconds.
@@ -604,7 +604,7 @@ impl Effects {
             }
         }
         for x in self.insts.iter_mut().flatten() {
-            x.actors.iter_mut().for_each(|w| clear(w));
+            x.actors.iter_mut().for_each(&clear);
         }
     }
 
@@ -1032,7 +1032,7 @@ impl Effects {
                 s[r.k] = v;
             }
             let word = if r.k == 0 { super::elem::w::L_ISCALE } else { super::elem::w::L_RSCALE };
-            self.writes.push(super::Write::Words(e, word, vec![v.to_bits()]));
+            self.writes.push(super::Write::Word(e, word, v.to_bits()));
             if !done {
                 self.light_ramps.push(r);
             }
@@ -2903,7 +2903,6 @@ impl Effects {
 
     /// FUN_1003afd0's frame for attach `mode` / word `w` on two actor slots, with op 0x7b's offsets and the last matrix
     /// (dolls): the matrix (None while unplaced) and the two-point distance; None for a mode it does not know.
-    #[allow(clippy::too_many_arguments)]
     fn attach_frame(
         &self,
         mode: u8,

@@ -382,7 +382,6 @@ fn detail(ui: &mut Ui, m: &super::Modern, g: &gm::Gm, target: Option<u32>, click
     });
 }
 
-#[allow(clippy::too_many_arguments)]
 fn field(
     ui: &mut Ui,
     m: &super::Modern,

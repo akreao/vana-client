@@ -434,7 +434,7 @@ impl Items {
     pub fn guide_pages(&self, id: u32) -> Vec<u32> {
         let Some((Kind::Guide, r)) = self.record(id) else { return Vec::new() };
         let n = u16::from_le_bytes([r[6], r[7]]) as usize;
-        r[8..].chunks_exact(4).take(n.min(64)).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect()
+        r[8..].as_chunks::<4>().0.iter().take(n.min(64)).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect()
     }
 
     /// A Monstrosity instinct catalogue (FUN_1015ccc0, 0xeff8..0xefff): u16 count @4, then {u16 item, u16 cost} from @8.
@@ -442,7 +442,9 @@ impl Items {
         let Some((Kind::Keff8, r)) = self.record(id) else { return Vec::new() };
         let n = u16::from_le_bytes([r[4], r[5]]) as usize;
         r[8..]
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .take(n)
             .map(|c| (u16::from_le_bytes([c[0], c[1]]), u16::from_le_bytes([c[2], c[3]])))
             .collect()

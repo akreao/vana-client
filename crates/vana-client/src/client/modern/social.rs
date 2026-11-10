@@ -624,22 +624,20 @@ fn results(p: &mut Panels, w: &mut World, gu: &GameUi) {
         f.pick(w, Some(gu));
         return;
     }
-    if let Some(k) = mouse.click {
-        if let Some(r) = w.search.as_mut()
-            && r.cursor != k
-        {
-            r.cursor = k;
-            w.sounds.push(crate::audio::Ui::Cursor as u32);
-        }
+    if let Some(k) = mouse.click
+        && let Some(r) = w.search.as_mut()
+        && r.cursor != k
+    {
+        r.cursor = k;
+        w.sounds.push(crate::audio::Ui::Cursor as u32);
     }
-    if let Some(c) = mouse.opt_click {
-        if let Some(r) = w.search.as_mut()
-            && r.option.is_some()
-            && r.option != Some(c)
-        {
-            r.option = Some(c);
-            w.sounds.push(crate::audio::Ui::Cursor as u32);
-        }
+    if let Some(c) = mouse.opt_click
+        && let Some(r) = w.search.as_mut()
+        && r.option.is_some()
+        && r.option != Some(c)
+    {
+        r.option = Some(c);
+        w.sounds.push(crate::audio::Ui::Cursor as u32);
     }
     if mouse.click.is_some() || mouse.opt_click.is_some() {
         search::key(w, egui::Key::Enter);
@@ -763,15 +761,15 @@ fn friends(p: &mut Panels, w: &mut World, gu: &GameUi) {
         f.pick(w, Some(gu));
         return;
     }
-    if let Some(k) = mouse.click {
-        if friendlist::set_cursor(w, k) {
-            w.sounds.push(crate::audio::Ui::Cursor as u32);
-        }
+    if let Some(k) = mouse.click
+        && friendlist::set_cursor(w, k)
+    {
+        w.sounds.push(crate::audio::Ui::Cursor as u32);
     }
-    if let Some(c) = mouse.opt_click {
-        if friendlist::set_cursor(w, c as usize) {
-            w.sounds.push(crate::audio::Ui::Cursor as u32);
-        }
+    if let Some(c) = mouse.opt_click
+        && friendlist::set_cursor(w, c as usize)
+    {
+        w.sounds.push(crate::audio::Ui::Cursor as u32);
     }
     if mouse.click.is_some() || mouse.opt_click.is_some() {
         friendlist::key(w, egui::Key::Enter);
@@ -790,7 +788,7 @@ fn messages(p: &mut Panels, w: &mut World, gu: &GameUi) {
         let screen = p.ctx.content_rect();
         let edge = m.chat_edge.get().filter(|c| !c.1).map_or(screen.max.y, |(r, _)| r.min.y).min(screen.max.y);
         let h = m.rects.borrow().get("msgline").map_or(80.0, |r| r.height());
-        let caret = if (w.started.elapsed().as_secs_f32() * 2.0) as u32 % 2 == 0 { "|" } else { "" };
+        let caret = if ((w.started.elapsed().as_secs_f32() * 2.0) as u32).is_multiple_of(2) { "|" } else { "" };
         let shown = format!("{text}{caret}");
         p.panel_at(
             "msgline",
@@ -902,15 +900,15 @@ fn link_list(p: &mut Panels, w: &mut World, gu: &GameUi) {
         f.pick(w, Some(gu));
         return;
     }
-    if let Some(k) = mouse.click {
-        if linklist::set_cursor(w, k) {
-            w.sounds.push(crate::audio::Ui::Cursor as u32);
-        }
+    if let Some(k) = mouse.click
+        && linklist::set_cursor(w, k)
+    {
+        w.sounds.push(crate::audio::Ui::Cursor as u32);
     }
-    if let Some(c) = mouse.opt_click {
-        if linklist::set_act(w, c) {
-            w.sounds.push(crate::audio::Ui::Cursor as u32);
-        }
+    if let Some(c) = mouse.opt_click
+        && linklist::set_act(w, c)
+    {
+        w.sounds.push(crate::audio::Ui::Cursor as u32);
     }
     if mouse.click.is_some() || mouse.opt_click.is_some() {
         linklist::key(w, gu, egui::Key::Enter);
@@ -957,10 +955,10 @@ fn level_sync(p: &mut Panels, w: &mut World, gu: &GameUi) {
         f.pick(w, Some(gu));
         return;
     }
-    if let Some(k) = mouse.click {
-        if levelsync::set_cursor(w, k) {
-            w.sounds.push(crate::audio::Ui::Cursor as u32);
-        }
+    if let Some(k) = mouse.click
+        && levelsync::set_cursor(w, k)
+    {
+        w.sounds.push(crate::audio::Ui::Cursor as u32);
     }
     if mouse.click.is_some() {
         levelsync::key(w, egui::Key::Enter);
@@ -1073,13 +1071,12 @@ fn help_page(p: &mut Panels, v: &helpdesk::PageView) -> Option<i32> {
 
 /// The picker's mouse: a click moves the cursor and is Enter.
 fn area_act(w: &mut World, gu: &GameUi, click: Option<usize>) {
-    if let Some(k) = click {
-        if let Some(a) = w.arealist.as_mut()
-            && a.cursor != k
-        {
-            a.cursor = k;
-            w.sounds.push(crate::audio::Ui::Cursor as u32);
-        }
+    if let Some(k) = click
+        && let Some(a) = w.arealist.as_mut()
+        && a.cursor != k
+    {
+        a.cursor = k;
+        w.sounds.push(crate::audio::Ui::Cursor as u32);
     }
     if click.is_some() {
         arealist::key(w, gu, egui::Key::Enter);
@@ -1254,10 +1251,10 @@ pub fn draw(p: &mut Panels, w: &mut World) {
     // guide00 suspends faqsub (window group 0x1c): the Primer takes the window.
     if let Some(v) = helpdesk::view(w, gu).filter(|_| w.primer.is_none()) {
         let click = help_page(p, &v);
-        if let Some(id) = click {
-            if helpdesk::set_cursor(w, id) {
-                w.sounds.push(crate::audio::Ui::Cursor as u32);
-            }
+        if let Some(id) = click
+            && helpdesk::set_cursor(w, id)
+        {
+            w.sounds.push(crate::audio::Ui::Cursor as u32);
         }
         if click.is_some() {
             helpdesk::key(w, egui::Key::Enter);

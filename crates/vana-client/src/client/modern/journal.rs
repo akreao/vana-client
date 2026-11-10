@@ -256,7 +256,6 @@ fn nav_row(ui: &mut Ui, m: &super::Modern, text: &str, count: &str, on: bool, ke
 }
 
 /// The rows, the cursor's kept in view as it moves (lit while the rows have the keys); a click takes the row.
-#[allow(clippy::too_many_arguments)]
 fn list(ui: &mut Ui, m: &super::Modern, lines: &[Line], cursor: usize, keys: bool, follow: bool, mouse: &mut Mouse) {
     egui::ScrollArea::vertical()
         .id_salt("journal list")
@@ -569,7 +568,7 @@ pub fn draw(p: &mut Panels, w: &mut World) {
             desc = Some((nav[sel].0.clone(), "Enter or a click on an entry at the left opens it.".into()));
         }
         Tab::KeyItems => {
-            let Some(k) = w.keyitems.clone() else { return };
+            let Some(k) = w.keyitems.as_ref() else { return };
             waiting = k.state == 0;
             let cats = keyitems::all(w);
             for (title, items) in cats.iter() {
@@ -692,11 +691,11 @@ pub fn draw(p: &mut Panels, w: &mut World) {
     };
     let Some(at) = at else { return };
     if t == Tab::Roe {
-        if roe_list.is_some() {
-            if let Some(k) = mouse.click {
-                roe::set_cursor(w, k);
-                roe::modern_key(w, egui::Key::Enter, false);
-            }
+        if roe_list.is_some()
+            && let Some(k) = mouse.click
+        {
+            roe::set_cursor(w, k);
+            roe::modern_key(w, egui::Key::Enter, false);
         }
         return;
     }

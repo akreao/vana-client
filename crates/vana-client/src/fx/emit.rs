@@ -79,7 +79,6 @@ fn needs_no_resource(k: u8) -> bool {
 /// FUN_1004d920: builds one element from the instance's emission stream, or None when op 1's resource does not
 /// resolve (retail returns without emitting).
 /// `me`: whether the instance's actor1 / actor2 is our own player (emission op 0x82).
-#[allow(clippy::too_many_arguments)]
 /// Generator +0xdf bit 1 (asm 0x10047e42..0x10047f13): set at its start only for these door parts, whose lighting then
 /// skips the parent branch of FUN_100467e0.
 fn lit_parent_off(file: u32, name: [u8; 4]) -> bool {
@@ -110,7 +109,6 @@ pub fn emit(
     r
 }
 
-#[allow(clippy::too_many_arguments)]
 fn emit_ops(
     reg: &mut Registry,
     inst: &mut Instance,
@@ -238,7 +236,7 @@ fn emit_ops(
     let batched = inst.flags & 0x2000_0000 != 0;
     // Bit 1: no parent step in the light matrix; MMB stand-ins (elem +0x179) skip it too.
     let mmb = matches!(draw, Draw::Mesh(id) if reg.meshes.get(id as usize).and_then(|r| reg.libs[r.0].meshes.get(&r.1)).is_some_and(|m| m.mmb));
-    e.0[w::GEN_BITS] = (inst.de as u32) << 8 | (lit_parent_off(reg.libs[lib].file_id, inst.name) || mmb) as u32 * 2;
+    e.0[w::GEN_BITS] = ((inst.de as u32) << 8) | ((lit_parent_off(reg.libs[lib].file_id, inst.name) || mmb) as u32 * 2);
     e.0[w::KIND] = match draw {
         // FUN_10055340: key = the generator's 4cc; FUN_10171720 finds its table entry (none: it does nothing).
         Draw::None if res_kind == 0x47 => {
@@ -854,6 +852,7 @@ fn emit_ops(
         parts: None,
         light: (e.0[w::KIND] == dk::LIGHT && e.0[w::L_SLOT] != NONE).then_some(e.0[w::L_SLOT]),
         light_scale: (e.0[w::KIND] == dk::LIGHT).then(|| [e.f(w::L_ISCALE), e.f(w::L_RSCALE)]),
+        drift: reg.update_op_slot(inst.src, 0x02).is_some(),
     };
     Some(Spawn { elem: e, cpu, children, parts, sound })
 }

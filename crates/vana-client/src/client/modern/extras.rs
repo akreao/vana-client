@@ -538,7 +538,6 @@ fn top_edge(m: &super::Modern, screen: Rect, x0: f32, x1: f32) -> f32 {
 /// gives it back its own), `width` until then. `add` draws the contents (told the side, and whether the height is
 /// set: its body then scrolls in it, edge_body) and says whether its fold button was clicked; the tab's click counts
 /// too. Returns that.
-#[allow(clippy::too_many_arguments)]
 fn edge_window(
     p: &mut Panels,
     key: &str,
@@ -554,7 +553,6 @@ fn edge_window(
 /// `edge_window` whose body grew by `grow` points this frame and keeps its bottom where it was (a mod's `grow = "up"`):
 /// free or on a side edge its top (and its saved place) moves up by that much, on the bottom edge it stands on its new
 /// height at once; on the top edge it can only grow down.
-#[allow(clippy::too_many_arguments)]
 fn edge_window_up(
     p: &mut Panels,
     key: &str,
@@ -1789,7 +1787,8 @@ fn widescan_panel(p: &mut Panels, w: &mut World) {
         w.sounds.push(crate::audio::Ui::Select as u32);
     }
     if narrow {
-        (m.scan_picking.set(true), m.scan_pick.set(None));
+        m.scan_picking.set(true);
+        m.scan_pick.set(None);
         // The map is where the area is picked.
         p.folded.insert("minimap".into(), false);
         w.sounds.push(crate::audio::Ui::Select as u32);

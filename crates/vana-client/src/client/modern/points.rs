@@ -205,7 +205,6 @@ pub(super) fn search_pick(w: &mut World, gu: Option<&GameUi>, k: usize) {
 }
 
 /// `rows`, or a search's hits in their place while this list has the keys.
-#[allow(clippy::too_many_arguments)]
 fn rows_found(
     ui: &mut Ui,
     m: &super::Modern,

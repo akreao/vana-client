@@ -444,7 +444,6 @@ pub fn on_action(w: &mut World, a: &Action) {
 }
 
 /// One row landing on `target`.
-#[allow(clippy::too_many_arguments)]
 fn land(
     w: &mut World,
     c: &durations::Caster,
@@ -1127,7 +1126,6 @@ fn ease(s: f32) -> f32 {
 
 /// Draws the window at `p` with the drawer at `slide` (0 in .. 1 out); returns its rect and hot areas. `pulse` is the
 /// retail status icons' 40-tick triangle (their last 15 s dim with it).
-#[allow(clippy::too_many_arguments)]
 pub fn draw_panel(
     gu: &mut GameUi,
     secs: &[Vec<Group>; 3],
