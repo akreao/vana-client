@@ -3270,7 +3270,7 @@ impl Effects {
 
     /// Actors whose attach points the live effects read: the client poses their bones (FUN_100d4560 reads the
     /// drawn pose).
-    pub fn posed_actors(&self) -> std::collections::HashSet<u32> {
+    pub fn posed_actors(&self) -> impl Iterator<Item = u32> + '_ {
         let insts = self.insts.iter().flatten().filter(|x| x.mode != 0).flat_map(|x| x.actors);
         let tasks = self.tasks.iter().flatten().flat_map(|t| [t.a1, t.a2]);
         let pending = self.pending.iter().flat_map(|p| [p.a1, p.a2]);
@@ -3281,7 +3281,6 @@ impl Effects {
             .filter_map(|w| self.doll_of(w).id())
             .chain(self.dolls.iter().map(|d| d.of))
             .chain(trails)
-            .collect()
     }
 
     pub fn task_count(&self) -> usize {
@@ -3375,8 +3374,8 @@ impl Effects {
     }
 
     /// Actors with the refraction pass on, and its level.
-    pub fn refractions(&self) -> Vec<(u32, f32)> {
-        self.shine.iter().filter(|(_, s)| s.refract).map(|(id, s)| (*id, s.level)).collect()
+    pub fn refractions(&self) -> impl Iterator<Item = (u32, f32)> + '_ {
+        self.shine.iter().filter(|(_, s)| s.refract).map(|(id, s)| (*id, s.level))
     }
 
     /// Actors with the shine overlay on: (actor, its image, U, V, TFACTOR as ARGB).
@@ -4216,7 +4215,7 @@ mod tests {
         drive(&mut fx, 0.3, 0.0, 0.0);
         fx.step_shine(1.0, &[1]);
         assert!(fx.shine[&7].level == 0.0 && !fx.shine[&7].refract);
-        assert_eq!(fx.refractions(), vec![]);
+        assert_eq!(fx.refractions().count(), 0);
     }
 
     /// Op 0xac: actor1's death pick, u32 @8 & 3, at once.

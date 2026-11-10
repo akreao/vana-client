@@ -362,7 +362,7 @@ pub const NEAR: f32 = 0.1;
 const ZONE_TEXTURE: usize = 1 << 20;
 pub const FAR: f32 = 2000.0;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct Camera {
     pub eye: Vec3,
     pub target: Vec3,

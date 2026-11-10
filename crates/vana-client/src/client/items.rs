@@ -2224,6 +2224,11 @@ pub(super) fn persona(w: &World) -> Persona {
     })
 }
 
+/// The storage view's itemctrl (the quantity) has the keys.
+pub(super) fn qty_open(w: &World) -> bool {
+    matches!(&w.win, Some(Win::Items { store: Some(b), .. }) if b.qty.is_some())
+}
+
 #[cfg(test)]
 mod charged_tests {
     /// Blue names: a charged item's extdata (kind 1) with byte 3 bit 0x40; anything else stays green.
@@ -2238,9 +2243,4 @@ mod charged_tests {
         e[0] = 2;
         assert!(!super::charged_ready(&e));
     }
-}
-
-/// The storage view's itemctrl (the quantity) has the keys.
-pub(super) fn qty_open(w: &World) -> bool {
-    matches!(&w.win, Some(Win::Items { store: Some(b), .. }) if b.qty.is_some())
 }

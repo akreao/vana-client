@@ -5794,6 +5794,19 @@ fn anim_skip(config: u32, frame: u32, a: &mut Actor) -> bool {
 }
 
 impl Actor {
+    /// A model taken on: the motion and pose state start over, attach points from the rest pose until it poses. A
+    /// model taken on by an actor without one (loaded, or shared at once) seeds its weapon effects (wepfx); a look
+    /// swapped in for a drawn one does not, as the actor's `init` does not run again on a look change *(inf)*.
+    fn adopt(&mut self, m: &Arc<crate::dat::character::Character>, seed: bool) {
+        if seed {
+            wepfx::seed(self, m);
+        }
+        self.character = Some(m.clone());
+        (self.motion_names, self.rebase, self.fresh) = (None, true, true);
+        (self.rest, self.bones, self.motion_link) = (crate::dat::character::pose(&m.skeleton, &[]), Vec::new(), None);
+        (self.anchors, self.anchor_at) = (ANCHORS, [None; 2]);
+    }
+
     fn new() -> Self {
         Actor {
             key: String::new(),
@@ -6974,6 +6987,8 @@ struct World {
     /// The environment's wind (DAT_1065cb04 +0x124..): gusts for the cloth; event op 0x97 retunes them.
     wind: cloth::Wind,
     renderer: Option<ZoneRenderer>,
+    /// The world frame's sets, kept for their room (WorldFrame).
+    frame: WorldFrame,
     /// Effect generators of the zone (fx/).
     effects: crate::fx::Effects,
     /// Per actor: its foot points' last heights relative to the root (actor+0x7e8..+0x7f4).
@@ -9447,6 +9462,7 @@ impl App {
                             zone: None,
                             loading: None,
                             renderer: None,
+                            frame: WorldFrame::default(),
                             effects: crate::fx::Effects::new(),
                             feet: HashMap::new(),
                             contacts: HashMap::new(),
@@ -10056,14 +10072,9 @@ impl App {
                                 a.next = Some(ch.clone());
                                 continue;
                             }
-                            wepfx::seed(a, &ch);
-                            a.character = Some(ch.clone());
-                            a.gpu = None;
-                            (a.motion_names, a.rebase, a.fresh) = (None, true, true);
                             // Attach points from the rest pose while the GPU model builds ('spop' dolls it at once).
-                            (a.rest, a.bones, a.motion_link) =
-                                (crate::dat::character::pose(&ch.skeleton, &[]), Vec::new(), None);
-                            (a.anchors, a.anchor_at) = (ANCHORS, [None; 2]);
+                            a.adopt(&ch, true);
+                            a.gpu = None;
                         }
                         world.models.insert(key, ch);
                         // Looks no actor wears any more go once there are more than MODEL_CACHE.
@@ -11914,13 +11925,8 @@ impl App {
                 if actor.character.is_some() {
                     actor.next = Some(m.clone());
                 } else {
-                    wepfx::seed(actor, m);
-                    actor.character = Some(m.clone());
+                    actor.adopt(m, true);
                     actor.gpu = None;
-                    (actor.motion_names, actor.rebase, actor.fresh) = (None, true, true);
-                    (actor.rest, actor.bones, actor.motion_link) =
-                        (crate::dat::character::pose(&m.skeleton, &[]), Vec::new(), None);
-                    (actor.anchors, actor.anchor_at) = (ANCHORS, [None; 2]);
                 }
             } else if world.models_loading.insert(key.clone()) {
                 wanted.push((key, source));
@@ -16264,8 +16270,9 @@ impl App {
         matches!(self.phase, Phase::Login { .. } | Phase::Characters { screen: LobbyScreen::Main, .. })
     }
 
-    fn redraw(&mut self) {
-        let t0 = Instant::now();
+    /// The scenes behind the lobby and the game UI load as they are wanted: the title flyover, the select ring, the
+    /// creator's backdrop and dancer, the nation step's flyover.
+    fn scene_loads(&mut self) {
         if self.game_ui_state == LoadState::Idle {
             self.load_game_ui();
         }
@@ -16392,6 +16399,11 @@ impl App {
         if self.flyover.as_ref().is_some_and(|f| f.done) {
             self.flyover = None;
         }
+    }
+
+    /// The frame's work before any drawing: finished loader tasks, the network, area switches, then the world's
+    /// (or the lobby's) per-frame updates and the mods' frame.
+    fn frame_updates(&mut self) {
         while let Ok(t) = self.tasks.try_recv() {
             let name = t.name();
             perf::timed(|| format!("task {name}"), || self.handle_task(t));
@@ -16424,16 +16436,20 @@ impl App {
         } else {
             self.lobby_mods_frame();
         }
+    }
+
+    /// Whether this frame draws the game: not while the opening movie plays, nor before the title can draw.
+    fn frame_shown(&mut self) -> bool {
         // Config 0022: the opening movie before the title, which loads behind it.
         if self.opening.is_some() {
             self.draw_opening();
-            return;
+            return false;
         }
         // Nothing is shown until the title can draw.
         if !self.shown {
             if !self.title_ready() {
                 self.next_frame = Some(Instant::now() + std::time::Duration::from_millis(16));
-                return;
+                return false;
             }
             self.shown = true;
             if let Some(g) = &self.gfx {
@@ -16444,6 +16460,12 @@ impl App {
                 self.refullscreen.set(Some(3));
             }
         }
+        true
+    }
+
+    /// The frame's time (dt, sped up by a mod's cutscene speed) and the work that runs on it before the input: the
+    /// test drive's step (true when it wants a screenshot), key functions, movement and the lobby fades.
+    fn frame_clock(&mut self) -> (bool, f32) {
         let shoot = self.step_drive();
         let dt = self.last_frame.elapsed().as_secs_f32().min(0.1);
         self.last_frame = Instant::now();
@@ -16472,11 +16494,13 @@ impl App {
         if let Some(next) = self.lobby_fade.step(dt * 60.0) {
             next(self);
         }
-        let m_update = Instant::now();
+        (shoot, dt)
+    }
 
-        let Some(mut gfx) = self.gfx.take() else { return };
-        self.window_upkeep(&mut gfx);
-        let size = [gfx.config.width, gfx.config.height];
+    /// The frame's input for egui: the window's upkeep, egui-winit's events, the keys the mods pressed, the gamepad
+    /// (through retail's pad word and stick bytes too) and what the software keyboard typed.
+    fn frame_input(&mut self, gfx: &mut Gfx, dt: f32) -> egui::RawInput {
+        self.window_upkeep(gfx);
         let mut raw = gfx.egui_state.take_egui_input(&gfx.window);
         // egui-winit passes the texture limit in its first input only; lost, egui assumes 2048 and the modern atlases
         // (status_0@2x is 2184 wide) fail its debug check.
@@ -16529,6 +16553,12 @@ impl App {
         if let Phase::World(w) = &mut self.phase {
             raw.events.append(&mut w.swkbd_out);
         }
+        raw
+    }
+
+    /// A test drive's step (client/script.rs): its events into the frame's input and its actions; the screenshot it
+    /// asks for.
+    fn drive_frame(&mut self, gfx: &Gfx, raw: &mut egui::RawInput) -> Option<std::path::PathBuf> {
         let phase = self.phase_name();
         let mut script_shot = None;
         if let Some(sc) = &mut self.drive.input {
@@ -16704,6 +16734,12 @@ impl App {
                 self.apply_settings();
             }
         }
+        script_shot
+    }
+
+    /// The other screenshots asked for this frame: a Lua mod's (client.screenshot), Print Screen's (key function
+    /// 0x55: true).
+    fn shot_requests(&mut self, script_shot: &mut Option<std::path::PathBuf>) -> bool {
         // A Lua mod's screenshot (client.screenshot), under the screenshots folder.
         if let Phase::World(w) = &mut self.phase
             && let Some(n) = w.lua.shot.take()
@@ -16719,10 +16755,21 @@ impl App {
             if let Some(dir) = p.parent() {
                 let _ = std::fs::create_dir_all(dir);
             }
-            script_shot = Some(p);
+            *script_shot = Some(p);
             game_shot = true;
         }
-        let shoot = shoot || script_shot.is_some();
+        game_shot
+    }
+
+    /// egui's frame: the windows and the HUD (ui), the UI sounds and the audio, then the platform output (the
+    /// clipboard, the mods' window requests, the cursor, the chat line's IME); the meshes and their scale.
+    fn frame_ui(
+        &mut self,
+        gfx: &mut Gfx,
+        raw: egui::RawInput,
+        size: [u32; 2],
+        dt: f32,
+    ) -> (Vec<egui::ClippedPrimitive>, f32) {
         let ctx = gfx.egui_ctx.clone();
         self.update_netwait(dt);
         let before = self.ui_snap();
@@ -16836,20 +16883,12 @@ impl App {
             })
             .sum();
         crate::render::WRITTEN.fetch_add(egui_bytes as u64, std::sync::atomic::Ordering::Relaxed);
-        let m_ui = Instant::now();
+        (jobs, output.pixels_per_point)
+    }
 
-        let frame = match gfx.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
-            other => {
-                // Outdated or lost (KWin's full-screen re-ask makes the swapchain stale): rebuilt, and the next frame
-                // asked for here, or the loop waits on events with nothing scheduled and the window stays frozen.
-                log::debug!("surface: no frame ({other:?}), configured again");
-                gfx.surface.configure(&gfx.gpu.device, &gfx.config);
-                self.next_frame = Some(Instant::now() + std::time::Duration::from_millis(16));
-                self.gfx = Some(gfx);
-                return;
-            }
-        };
+    /// The frame's GPU work set up: its encoder and GPU timer, the background size and aspect (3D LCD Mode's wider
+    /// picture), the gamma, and the scene's targets (offscreen whenever the scaling pass runs).
+    fn frame_targets(&mut self, gfx: &Gfx, frame: wgpu::SurfaceTexture, size: [u32; 2]) -> FrameGpu {
         let view = frame.texture.create_view(&Default::default());
         let mut encoder = gfx.gpu.device.create_command_encoder(&Default::default());
         if !self.gpu_time_checked {
@@ -16915,1609 +16954,55 @@ impl App {
             .unwrap_or_else(|| scene_view.clone());
         let scene_fmt = gfx.config.format.remove_srgb_suffix();
         let m_acquire = Instant::now();
-        let mut m_actors = m_acquire;
-        let mut counts = perf::Counts::default();
-
-        let mut drew_world = false;
-        if let Phase::World(world) = &mut self.phase {
-            let w: &mut World = world;
-            // A zone change holds the last frame drawn, still in the scene texture.
-            if let Some(zc) = w.zone_hold.as_mut().filter(|zc| !zc.captured) {
-                self.screen_fx_zone
-                    .get_or_insert_with(|| crate::render::screenfx::ScreenFx::new(&gfx.gpu, scene_fmt))
-                    .hold(&gfx.gpu, &mut encoder, &scene_tex);
-                zc.captured = true;
-            }
-            let camera = Self::camera(w);
-            let mut hidden = event::hidden(w);
-            let model_hidden = hidden.clone();
-            // Misc.: Character Models Displayed (0x3c, 25..50; FUN_10081680): the nearest other PCs only *(inf: which
-            // ones retail drops)*.
-            let cap = w.game.get(0x3c) as usize;
-            let mut pcs: Vec<(f32, u32)> = w
-                .entities
-                .iter()
-                .filter(|(id, e)| **id != w.my_id && e.kind == EntityKind::Player)
-                .map(|(id, e)| ((e.pos - w.pos).length(), *id))
-                .collect();
-            if pcs.len() > cap {
-                pcs.sort_by(|a, b| a.0.total_cmp(&b.0));
-                hidden.extend(pcs[cap..].iter().map(|p| p.1));
-            }
-            // A riding animal goes with its rider; a rider waits hidden for its mount.
-            let animals: Vec<u32> = hidden
-                .iter()
-                .flat_map(|id| [ride::ANIMAL | id, indi::AURA | id, fishrod::ROD | id, chair::CHAIR | id])
-                .collect();
-            hidden.extend(animals);
-            hidden.extend(ride::hidden(w));
-            let idles = event::idles(w);
-            // Placements first (look targets read other actors), then each actor's motion and pose.
-            let my_dir = w.net.me.lock().map(|m| m.dir).unwrap_or(0);
-            let mut places: HashMap<u32, Place> =
-                w.actors.keys().filter_map(|id| actor_place(w, *id, my_dir).map(|p| (*id, p))).collect();
-            let drops: HashMap<u32, f32> = places
-                .iter()
-                .map(|(id, p)| (*id, ride::bone0_drop(w, *id, p.status)))
-                .filter(|(_, d)| *d != 0.0)
-                .collect();
-            // Doors have no model; their schedulers' sounds play at the door's own position (op 0x0b, actor2).
-            for (id, e) in w.entities.iter().filter(|(_, e)| e.door != 0 || e.lift.is_some()) {
-                places.entry(*id).or_insert(Place {
-                    pos: e.pos,
-                    forward: forward_from_dir(e.dir),
-                    tilt: [0.0; 2],
-                    status: 0,
-                    ratio: 0.0,
-                    size: 0,
-                });
-            }
-            let look_points: HashMap<u32, Vec3> = w
-                .actors
-                .iter()
-                .filter_map(|(id, a)| match a.look.mode {
-                    actmotion::LookMode::Actor(t, k) => attach_point(w, &places, t, k).map(|p| (*id, p)),
-                    _ => None,
-                })
-                .collect();
-            // FUN_100d5b10: we look at our target, everyone else at its server face target, only in the statuses
-            // that allow it (FUN_10095790), never at doors; the target's point 3, 1.2 higher when it is hidden.
-            let by_index = |i: u16| if i == w.my_index { Some(w.my_id) } else { w.entity_at(i).map(|(id, _)| id) };
-            let fx_posed = w.effects.posed_actors();
-            let face_points: HashMap<u32, Vec3> = w
-                .actors
-                .keys()
-                .filter_map(|id| {
-                    let st = places.get(id)?.status;
-                    if !matches!(st, 0 | 5 | 0x2f | 0x30 | 0x55 | 0x3f..=0x53) {
-                        return None;
-                    }
-                    let t = if *id == w.my_id {
-                        w.target?
-                    } else {
-                        by_index(w.entities.get(id).map(|e| e.face).filter(|f| *f != 0)?)?
-                    };
-                    if t == *id || t == myroom::DOOR_ID || w.entities.get(&t).is_some_and(|e| e.door != 0) {
-                        return None;
-                    }
-                    let mut q = attach_point(w, &places, t, 3)?;
-                    if hidden.contains(&t) {
-                        q.y -= 1.2;
-                    }
-                    Some((*id, q))
-                })
-                .collect();
-            // Foot points that came back from earlier frames: steps (FUN_100d2970).
-            if let Some(pts) = w.renderer.as_mut().map(|r| r.points.take()) {
-                let (rides, pts): (Vec<_>, Vec<_>) = pts.into_iter().partition(|(k, _)| ride::is_key(*k));
-                ride::points(w, rides);
-                let (pick, steps): (Vec<_>, Vec<_>) = pts.into_iter().partition(|(k, _)| k >> 63 != 0);
-                let mut fresh: HashMap<u32, HashMap<u16, Vec3>> = HashMap::new();
-                for (k, p) in pick {
-                    fresh.entry((k >> 16) as u32).or_default().insert(k as u16, p);
-                }
-                w.pick_points.extend(fresh);
-                w.pick_points.retain(|id, _| w.pick_rect.contains(id));
-                footsteps::steps(w, &places, steps);
-            }
-            let eye = w.cam.eye;
-            footsteps::wade(w, &places, eye);
-            // Door parts animate against the zone's tick clock; the frame's scheduler moves go in first.
-            if let Some(r) = w.renderer.as_mut() {
-                r.now = w.started.elapsed().as_secs_f32() * 60.0;
-                r.voyage = w.voyage.matrix;
-            }
-            doors::moves(w, &gfx.gpu);
-            lifts::moves(w, &gfx.gpu);
-            // Mog House furniture loaded for this scene goes up.
-            if w.renderer.is_some()
-                && let Some(l) = w.furniture.ready.take()
-            {
-                let files = furniture::State::apply(w, l);
-                if let Some(r) = w.renderer.as_mut() {
-                    r.set_furniture(&gfx.gpu, files);
-                }
-            }
-            // Pieces moved in place (layout mode).
-            if let Some(r) = w.renderer.as_mut() {
-                for (file, old, new) in std::mem::take(&mut w.furniture.moves) {
-                    r.move_furniture(&gfx.gpu, file, old, new);
-                }
-            }
-            // Ships (client/ships.rs): new models go up, gone ones down, then each one's pose from the last drives.
-            if w.renderer.is_some() {
-                for l in std::mem::take(&mut w.ships.ready) {
-                    if let Some(m) = ships::create(w, &l)
-                        && let Some(r) = w.renderer.as_mut()
-                    {
-                        r.set_model_actor(&gfx.gpu, l.entity, &l.geo, l.textures, m);
-                    }
-                }
-                let removed = std::mem::take(&mut w.ships.removed);
-                let moved = ships::apply(w, dt * 60.0, &model_hidden);
-                if let Some(r) = w.renderer.as_mut() {
-                    for id in removed {
-                        r.remove_model_actor(id);
-                    }
-                    for (id, m, shown) in moved {
-                        r.move_model_actor(&gfx.gpu, id, m, shown);
-                    }
-                }
-            }
-            let lines = layout::overlay(w);
-            let ceiling = !w.layout.as_ref().is_some_and(|l| l.view == 0);
-            let shapes = lua::world_shapes(w);
-            if let Some(r) = w.renderer.as_mut() {
-                r.set_lines(&gfx.gpu, lines);
-                r.set_world_shapes(&gfx.gpu, shapes);
-                r.show_link999(&gfx.gpu, ceiling);
-            }
-            let new_lamps = if w.renderer.as_ref().is_some_and(|r| r.ready(&gfx.gpu)) {
-                w.lamps.update(&mut w.effects, w.ground.as_ref(), self.cfg.lamp_lights)
-            } else {
-                None
-            };
-            let ev_clock = event::clock(w);
-            // The Lua HUD's portraits: each wanted actor's face camera (client/portrait.rs).
-            let portrait_cams: Vec<(lua::hud::Wanted, crate::render::Camera)> = w
-                .lua
-                .portraits_wanted()
-                .into_iter()
-                .take(portrait::SLOTS)
-                .filter_map(|p| Some((p, portrait::camera(w, &places, p.entity, p.look.oval)?)))
-                .collect();
-            if let Some(r) = &mut w.renderer {
-                if let Some(l) = &new_lamps {
-                    r.set_lamps(&gfx.gpu, &l.iter().map(|l| (l.pos, l.slot)).collect::<Vec<_>>());
-                }
-                // This frame's copies: a zone going up (more while its indicator hides the world), then the models
-                // actors are waiting for.
-                use crate::render::upload::{FRAME_MS, LOADING_MS};
-                gfx.gpu.begin_uploads(if w.downloading.is_some() { LOADING_MS } else { FRAME_MS });
-                perf::timed(|| "uploads".into(), || r.upload_step(&gfx.gpu, &mut encoder));
-                // A preloaded zone streams in whatever room is left (client/preload.rs).
-                if let Some(p) = w.preload.as_mut().and_then(|p| p.ready.as_mut()) {
-                    p.gpu.0.upload_step(&gfx.gpu, &mut encoder);
-                }
-                mark!("uploads");
-                if let Some(since) = w.zone_uploading
-                    && r.ready(&gfx.gpu)
-                {
-                    log::info!("zone on the GPU {:.0} ms after it loaded", since.elapsed().as_secs_f32() * 1000.0);
-                    w.zone_uploading = None;
-                    w.downloading = None;
-                }
-                // Zone lighting for the Vana'diel time and weather the server gave us.
-                if let (Some(zw), Some((t, at))) = (&w.zone_weather, w.clock) {
-                    // Op 0x77 sets the hour and weather while an event runs.
-                    let ev_weather = w.event.as_ref().and_then(|l| l.st.weather);
-                    let clock = crate::dat::weather::vana_minute(t, at.elapsed().as_secs_f32());
-                    let minute = ev_clock.map_or(clock, |c| c.minute as f32);
-                    // thunk_FUN_1018ade0: each weather object blends its child chain's output into its own env by
-                    // (total - left) / total; a finished one drops the chain before it. Op 0x77's weather stands alone.
-                    if let Some(k) =
-                        w.weather_chain.iter().rposition(|c| c.2 <= 0.0 || c.1.elapsed().as_secs_f32() >= c.2)
-                    {
-                        w.weather_chain.drain(..k);
-                    }
-                    let chain: Vec<(&str, f32)> = match ev_weather {
-                        Some(x) => vec![(crate::dat::weather::weather_tag(x), 1.0)],
-                        None if w.weather_chain.is_empty() => vec![(crate::dat::weather::weather_tag(w.weather), 1.0)],
-                        None => w
-                            .weather_chain
-                            .iter()
-                            .map(|c| {
-                                (
-                                    crate::dat::weather::weather_tag(c.0),
-                                    if c.2 <= 0.0 { 1.0 } else { (c.1.elapsed().as_secs_f32() / c.2).min(1.0) },
-                                )
-                            })
-                            .collect(),
-                    };
-                    let mix =
-                        |a: &dyn Fn(&str) -> Option<crate::dat::weather::Env>| -> Option<crate::dat::weather::Env> {
-                            let mut env = a(chain[0].0)?;
-                            for &(tag, t) in &chain[1..] {
-                                if let Some(e) = a(tag) {
-                                    env = crate::dat::weather::Env::lerp(&env, &e, t);
-                                }
-                            }
-                            Some(env)
-                        };
-                    // FUN_10187720 once a 2-tick retail frame (stock 30 fps), held between them.
-                    w.light_acc += dt * 60.0;
-                    let mut steps = 0;
-                    while w.light_acc >= 2.0 && steps < 8 {
-                        w.light_acc -= 2.0;
-                        steps += 1;
-                    }
-                    w.light_acc = w.light_acc.min(2.0);
-                    // The Clipping setting scales each env's fog and the scenery's draw distance (dat/weather.rs).
-                    let (x, zone) = (crate::dat::weather::clipping_factor(w.game.get(0x3e)), w.zone.unwrap_or(0));
-                    let step = |ease: &mut crate::dat::weather::LightEase, e: &crate::dat::weather::Env| {
-                        for _ in 0..steps {
-                            ease.step(e, minute);
-                        }
-                        crate::dat::weather::Lighting::from_env_eased(
-                            e,
-                            minute,
-                            ease,
-                            crate::dat::weather::clipping(e.draw_dist, x, zone).1,
-                        )
-                    };
-                    r.lighting = mix(&|t| zw.at(t, minute)).map(|e| step(&mut w.light_ease, &e));
-                    // Real character shadows (render/sunshadow.rs): cast by the sun, or by the moon at night (fainter by its
-                    // colour, softer), faded out around the change at 6:00 and 18:00. Indoors the room light keeps day's edges.
-                    r.shadow_level = crate::render::sunshadow::twilight(minute);
-                    r.shadow_soft =
-                        if r.lighting.is_some_and(|l| l.fixed) || crate::dat::weather::sun_moon(minute).0.y >= 0.0 {
-                            1.0
-                        } else {
-                            2.0
-                        };
-                    // FUN_1018b8f0: 100 before the env is up. Settings' Draw Distance scales it, or lifts it (0).
-                    let (d, k) = crate::dat::weather::clipping(r.lighting.map_or(100.0, |l| l.draw_dist), x, zone);
-                    let scale = self.cfg.draw_distance as f32 / 100.0;
-                    // Unlimited lifts the zone's distance only: a placement's own distance still holds (Ru'Aun's 1-unit
-                    // helper strips), as far as at the largest step (3x).
-                    r.clip = if scale > 0.0 { [d * scale, k * scale * scale] } else { [0.0, k * 9.0] };
-                    r.retail_reach = d;
-                    if steps > 0 {
-                        log::debug!(target: "light", "{minute:.3}: bg dir {:.3} colour {:.4}", w.light_ease.bg.dir, w.light_ease.bg.color);
-                    }
-                    let sub_areas = w.sub.weather.iter().flat_map(|s| s.areas.iter());
-                    w.area_lights = zw
-                        .areas
-                        .iter()
-                        .chain(sub_areas)
-                        .filter_map(|(&id, a)| Some((id, mix(&|t| a.at(t, minute))?.area_light())))
-                        .collect();
-                    // Scenery areas (FUN_101889c0 finds the area object by 4cc, the sub-area's after the zone's), each
-                    // with its own eased light.
-                    let keys: Vec<u32> = r.area_keys().to_vec();
-                    let mut lights = Vec::with_capacity(keys.len());
-                    for k in keys {
-                        let sub = w.sub.weather.as_ref().and_then(|s| s.areas.get(&k));
-                        let e = sub.or_else(|| zw.areas.get(&k)).and_then(|a| mix(&|t| a.at(t, minute)));
-                        lights.push(e.map(|e| step(w.area_ease.entry((sub.is_some(), k)).or_default(), &e)));
-                    }
-                    r.set_area_lights(lights);
-                }
-                // Op 0x10: the frame before the cut, drawn once offscreen from the camera it had (last frame's
-                // poses; its own submit so the zone uniforms keep that camera).
-                if let Some(cr) = w.screen.cross.filter(|c| !c.captured) {
-                    if let Some(cam) = cr.camera {
-                        let fx = self
-                            .screen_fx_world
-                            .get_or_insert_with(|| crate::render::screenfx::ScreenFx::new(&gfx.gpu, scene_fmt));
-                        let target = fx.capture_target(&gfx.gpu, bg);
-                        let actors: Vec<&crate::render::ActorGpu> = w
-                            .actors
-                            .iter()
-                            .filter(|(id, a)| !a.vanished() && !hidden.contains(id))
-                            .filter_map(|(_, a)| a.gpu.as_ref())
-                            .collect();
-                        let mut enc = gfx.gpu.device.create_command_encoder(&Default::default());
-                        r.render(&gfx.gpu, &mut enc, target, &scene_depth, &cam, aspect, &actors);
-                        gfx.gpu.queue.submit([enc.finish()]);
-                    }
-                    if let Some(c) = &mut w.screen.cross {
-                        c.captured = true;
-                    }
-                }
-                r.begin_poses();
-                // FUN_10014d50: the frame count the animation frame rate keys on.
-                w.anim_frame = w.anim_frame.wrapping_add(1);
-                let (anim_cfg, anim_frame) = (w.game.get(0x40), w.anim_frame);
-                let (cview, cproj) = (camera.view(), camera.proj(aspect));
-                let eye = camera.eye;
-                let mut visible = HashSet::new();
-                // Doors: a +-0.6 cube at the door (FUN_100ac8e0's class), tested like the rest.
-                let cube = box_corners([-0.6, 0.6, 0.6, -0.6, 0.6, -0.6]);
-                // The Mog House door (entity +0x12c bit 17, vtable +0x148) is never culled.
-                if w.entities.contains_key(&myroom::DOOR_ID) {
-                    visible.insert(myroom::DOOR_ID);
-                }
-                for (id, e) in w.entities.iter().filter(|(_, e)| e.door != 0) {
-                    if let Some((rect, z)) = box_on_screen(cview, cproj, glam::Mat4::from_translation(e.pos), &cube) {
-                        visible.insert(*id);
-                        r.occl.query(*id, rect, z);
-                    }
-                }
-                let in_event = w.event.is_some() || w.event_pending.is_some();
-                // Scheduler ops 0x40..0x47: shine images go up once; each actor's overlay this frame.
-                let mut shines: HashMap<u32, crate::render::Shine> = HashMap::new();
-                for (id, (lib, node), u, v, tf) in w.effects.shines() {
-                    let key = (w.effects.reg.libs[lib].file_id, node);
-                    if !r.has_shine(key)
-                        && let Some(t) = w.effects.reg.libs[lib].texture_at(node)
-                    {
-                        r.add_shine(&gfx.gpu, key, &w.effects.reg.libs[lib].textures[t]);
-                    }
-                    let c = |sh: u32| ((tf >> sh) & 0xff) as f32 / 255.0;
-                    shines.insert(id, crate::render::Shine { key, u, v, tf: [c(16), c(8), c(0), c(24)] });
-                }
-                // FFXI_SHINE_TEST (checks): a striped shine on our own actor, to see the pass and its 0040 wrap.
-                if std::env::var_os("FFXI_SHINE_TEST").is_some() {
-                    let key = (u32::MAX, 0);
-                    if !r.has_shine(key) {
-                        let rgba: Vec<u8> = (0..64 * 64)
-                            .flat_map(|i| if (i % 64) / 8 % 2 == 0 { [255, 255, 255, 128] } else { [0, 0, 0, 0] })
-                            .collect();
-                        r.add_shine(&gfx.gpu, key, &crate::dat::zone::Texture::new(String::new(), 0, 64, 64, rgba));
-                    }
-                    shines.insert(w.my_id, crate::render::Shine { key, u: 0.25, v: 0.0, tf: [0.5, 0.5, 0.5, 0.5] });
-                }
-                // Ops 0x48 / 0x49: the refraction level per actor.
-                let refracts: HashMap<u32, f32> = w.effects.refractions().into_iter().collect();
-                let hold_now = Instant::now();
-                // FUN_100cb400: each linked follower's leader frame (last frame's: one frame behind at most).
-                let frame_of = |a: &Actor| {
-                    Some(a.ticks * actmotion::find(&a.extra, a.character.as_ref()?, &a.motion).first()?.speed * 0.5)
-                };
-                let leads: HashMap<u32, f32> = w
-                    .actors
-                    .iter()
-                    .filter_map(|(id, a)| Some((*id, frame_of(w.actors.get(&a.motion_link?)?)?)))
-                    .collect();
-                let me = w.my_id;
-                let my_strafe = w.my_strafe;
-                // `sdep` entities (trusts, death-flagged): no corpse pose in status 2 / 3 (actmotion::sdep_stand).
-                let sdep_ids: HashSet<u32> = w
-                    .entities
-                    .iter()
-                    .filter(|(id, e)| **id != me && (e.marks.trust || e.marks.death_flag))
-                    .map(|(id, _)| *id)
-                    .collect();
-                let mut far_out: HashSet<u32> = HashSet::new();
-                // The event's actors log their motion changes as ours do (cutscene reports).
-                let event_ids: HashSet<u32> = w.event.as_ref().map(|l| l.st.bound.clone()).unwrap_or_default();
-                let mut seen: HashMap<u32, shadows::Seen> = HashMap::new();
-                // FUN_10188a50: the gusts, every frame in retail (30 fps); ours on the cloth's 30 Hz clock.
-                w.wind.advance(dt);
-                let wind = (w.wind.tick, w.wind.dir, w.wind.strength);
-                // FUN_100cd040's fishing fade needs our own drawobj (FUN_101cc4f0) and our place.
-                let (fish, my_pos) = (
-                    fishing::any_fishing_status(w.my_motion.status)
-                        && w.actors.get(&w.my_id).is_some_and(|a| a.character.is_some()),
-                    w.pos,
-                );
-                for (id, a) in w.actors.iter_mut() {
-                    // A changed look goes up in the background; the swap is one frame, the old model drawn till then.
-                    if let Some(nx) = a.next.clone()
-                        && let Some(g) = r.skinned_actor(&gfx.gpu, &nx)
-                    {
-                        a.next = None;
-                        a.character = Some(nx.clone());
-                        a.gpu = Some(g);
-                        a.top_key.clear();
-                        (a.motion_names, a.rebase, a.fresh) = (None, true, true);
-                        (a.rest, a.bones, a.motion_link) =
-                            (crate::dat::character::pose(&nx.skeleton, &[]), Vec::new(), None);
-                        (a.anchors, a.anchor_at) = (ANCHORS, [None; 2]);
-                    }
-                    let Some(ch) = a.character.clone() else { continue };
-                    let Some(&Place { pos, forward, tilt, status, ratio, size }) = places.get(id) else { continue };
-                    let (pick_status, pick_ratio) = actmotion::sdep_stand(status, ratio, sdep_ids.contains(id));
-                    if a.gpu.is_none() {
-                        // Not drawn until its model is on the GPU (a few new models a frame).
-                        let Some(g) = perf::timed(
-                            || format!("model {id:#x} {} ({} textures)", a.key, ch.textures.len()),
-                            || r.skinned_actor(&gfx.gpu, &ch),
-                        ) else {
-                            continue;
-                        };
-                        a.gpu = Some(g);
-                        a.top_key.clear();
-                    }
-                    // A one-off combat motion wins; it ends after its length and blends back.
-                    if a.oneshot.as_ref().is_some_and(|o| o.ticks >= o.len) {
-                        a.oneshot = None;
-                    }
-                    let extra = a.extra.clone();
-                    let cache = std::cell::RefCell::new(std::mem::take(&mut a.find_cache));
-                    let has = |n: &str| !actmotion::find_cached(&mut cache.borrow_mut(), &extra, &ch, n).is_empty();
-                    // Motion and rate as FFXiMain picks them (FUN_100c6b70); frame += ticks * speed * 0.5.
-                    // Then a scheduler's motion (event / weapon draw) over the status motion.
-                    // +0x80 up (ops 0x07 / 0x08 / 0x59, w.noreact): FUN_100c83c0 returns at once, no status motion re-pick.
-                    let held = w.noreact.get(id).is_some_and(|t| *t > hold_now);
-                    let (name, rate, once, blend) = match (&a.oneshot, a.play.as_ref().and_then(|p| p.current())) {
-                        (Some(o), _) => (o.name.clone(), o.speed, true, crate::motion::BLEND_TICKS),
-                        (None, Some(m)) => {
-                            let rate = actmotion::op_rate(
-                                actmotion::find_cached(&mut cache.borrow_mut(), &extra, &ch, &m.name).first().copied(),
-                                m.ticks as f32,
-                            );
-                            (m.name.clone(), rate, m.count == 1, m.blend.max(1) as f32)
-                        }
-                        // The motion stays, a counted one on its last frame.
-                        (None, None) if held && !a.motion.is_empty() => {
-                            (a.motion.clone(), a.rate_now, a.once, crate::motion::BLEND_TICKS)
-                        }
-                        // Op 0x5e / 0x6b: the event's idle motion while the actor stands.
-                        (None, None) if ratio < 1e-3 && idles.get(id).is_some_and(|n| has(n)) => {
-                            (idles[id].clone(), 1.0, false, crate::motion::BLEND_TICKS)
-                        }
-                        // FUN_100c8930 (LAB_100c8dde): while the jump timer runs, "jmp" at rate 1 ("jmp*" engaged, "jmp "
-                        // otherwise; ours takes the prefix).
-                        (None, None) if a.jump >= 0.0 && matches!(status, 0 | 1) => {
-                            ("jmp".to_string(), 1.0, false, crate::motion::BLEND_TICKS)
-                        }
-                        (None, None) => {
-                            // FUN_100c8bb0: our strafe / backpedal motions over the walk / run, at its rate.
-                            let (n, r) = crate::motion::choose_strafed(
-                                &a.motion_names.unwrap_or(ch.motions),
-                                pick_status,
-                                pick_ratio,
-                                if *id == me { my_strafe } else { 0 },
-                                fixed_model(a),
-                            );
-                            // FUN_100c6380: a status motion the model lacks is not queued (FUN_100cb8e0 fails, +0x1f6
-                            // stays), so what plays goes on: the walk of an NPC without a run.
-                            if !has(n) && !a.motion.is_empty() && has(&a.motion) {
-                                (a.motion.clone(), a.rate_now, a.once, crate::motion::BLEND_TICKS)
-                            } else {
-                                (n.to_string(), r * a.rate_scale, false, crate::motion::BLEND_TICKS)
-                            }
-                        }
-                    };
-                    a.rate_now = rate;
-                    // Fall back to idle when a model lacks a motion; chocobos idle with chi.
-                    let frames_of = |motion: &str, ticks: f32, once: bool| -> Vec<_> {
-                        [motion, ch.motions.idle, "idl", "chi"]
-                            .iter()
-                            .map(|n| actmotion::find_cached(&mut cache.borrow_mut(), &extra, &ch, n))
-                            .find(|a| !a.is_empty())
-                            .unwrap_or_default()
-                            .into_iter()
-                            .map(|x| {
-                                let f = ticks * x.speed * 0.5;
-                                (x, if once { f.min(x.frames as f32) } else { crate::motion::loop_frame(f, x.frames) })
-                            })
-                            .collect()
-                    };
-                    let mask = |v: &[(&crate::dat::character::Animation, f32)]| {
-                        v.iter().fold(0u8, |m, (x, _)| m | 1u8.checked_shl(actmotion::region(x) as u32).unwrap_or(0))
-                    };
-                    if name != a.motion
-                        || std::mem::take(&mut a.restart)
-                        || (once && a.oneshot.as_ref().is_some_and(|o| o.ticks == 0.0))
-                    {
-                        let line = format!(
-                            "actor {id:#x}: {} -> {name} at {:.1} (oneshot {}, play {}, status {status}, ratio {ratio:.2})",
-                            a.motion,
-                            a.ticks,
-                            a.oneshot.is_some(),
-                            a.play.is_some()
-                        );
-                        // Our own actor's at info (the user's runs log it), the others' at debug.
-                        if *id == me {
-                            log::info!(target: "motion_me", "{line}");
-                        } else if event_ids.contains(id) {
-                            log::info!(target: "motion_event", "{line}");
-                        } else {
-                            log::debug!(target: "motion", "{line}");
-                        }
-                        // FUN_100cb500: a new motion takes only the regions it has chunks for; the others go on with what
-                        // they play, but a finished counted one goes once region 0 is taken (FUN_100cb8e0's tail).
-                        // A play start (actmotion::start / play_op) has moved the old motion to `prev` already.
-                        let new = mask(&frames_of(&name, 0.0, false));
-                        let was = if a.motion.is_empty() {
-                            a.prev.clone()
-                        } else {
-                            Some((a.motion.clone(), a.ticks, a.once))
-                        };
-                        let old =
-                            was.as_ref().filter(|w| !w.0.is_empty()).map_or(0, |w| mask(&frames_of(&w.0, 0.0, false)));
-                        let old_mask = old;
-                        for r in 0..3u8 {
-                            let cur = if old >> r & 1 != 0 { was.clone() } else { a.keep[r as usize].take() };
-                            let done = |(n, t, o): &(String, f32, bool)| {
-                                *o && frames_of(n, *t, true)
-                                    .iter()
-                                    .any(|(x, f)| actmotion::region(x) == r && *f >= x.frames as f32)
-                            };
-                            a.keep[r as usize] =
-                                if new >> r & 1 != 0 || (new & 1 != 0 && cur.as_ref().is_some_and(done)) {
-                                    None
-                                } else {
-                                    cur
-                                };
-                        }
-                        if a.keep.iter().any(|k| k.is_some()) {
-                            let keeps: Vec<_> = a.keep.iter().map(|k| k.as_ref().map(|k| k.0.as_str())).collect();
-                            if *id == me {
-                                log::info!(target: "motion_me", "actor {id:#x}: {name} keeps {keeps:?}");
-                            } else {
-                                log::debug!(target: "motion", "actor {id:#x}: {name} keeps {keeps:?}");
-                            }
-                        }
-                        if !a.motion.is_empty() {
-                            a.prev = Some((std::mem::take(&mut a.motion), a.ticks, a.once));
-                            a.blend = 0.0;
-                        }
-                        a.blend_len = blend;
-                        // FUN_1001ad00 (batch 5 item 9): a new motion in a region that already held one starts at the
-                        // same fraction of its cycle as the old entry had reached, pushed on by half the blend at the
-                        // new rate, so the feet stay in step through a walk / run change. Retail's lengths and
-                        // positions are in frames / speed; our tick is twice that unit.
-                        let span = |m: &str| {
-                            frames_of(m, 0.0, false)
-                                .first()
-                                .map(|(x, _)| (x.frames as f32, x.speed))
-                                .filter(|(f, sp)| *f > 0.0 && *sp > 0.0)
-                        };
-                        let old = a
-                            .prev
-                            .as_ref()
-                            .filter(|p| !p.0.is_empty())
-                            .and_then(|p| span(&p.0).map(|(f, sp)| (p.1 * 0.5, f / sp)));
-                        // Back from a one-shot or scheduler motion to the status motion that went on under it: the
-                        // regions it kept were never queued again (FUN_100c83c0 queues only a changed +0x1f6), so they
-                        // go on in step and do not blend; the old motion's own regions blend back to it.
-                        // A new one-shot over the same status motion (the next swing) leaves the regions neither keys
-                        // to it, too.
-                        let under = a.under.take();
-                        a.under_skip = match &under {
-                            Some(u) if u.0 == name => !old_mask & 7,
-                            Some(_) => !old_mask & !new & 7,
-                            None => 0,
-                        };
-                        a.ticks = match (old, span(&name)) {
-                            _ if !once && under.as_ref().is_some_and(|u| u.0 == name) => {
-                                under.as_ref().map_or(0.0, |u| u.1)
-                            }
-                            (Some((at, old_len)), Some((frames, speed))) if !once && old_len > 0.001 => {
-                                crate::motion::cycle_sync(at, old_len, frames, speed, rate, blend)
-                            }
-                            _ => 0.0,
-                        };
-                        a.prev_under = under.filter(|u| u.0 != name);
-                        a.motion = name.clone();
-                    }
-                    a.once = once;
-                    a.ticks += dt * 60.0 * rate;
-                    // A leader frame in (0, ours] becomes ours.
-                    // The leader first: the chunk search runs only for actors that follow one.
-                    if let Some(&lf) = leads.get(id)
-                        && let Some(speed) =
-                            actmotion::find(&extra, &ch, &a.motion).first().map(|x| x.speed * 0.5).filter(|s| *s > 0.0)
-                        && lf > 0.0
-                        && lf <= a.ticks * speed
-                    {
-                        a.ticks = lf / speed;
-                    }
-                    if a.jump >= 0.0 {
-                        a.jump -= dt * 60.0;
-                    }
-                    // One-shots end by real ticks: their motion runs at the op's stretch rate.
-                    if let Some(o) = &mut a.oneshot {
-                        o.ticks += dt * 60.0;
-                    }
-                    // The kept regions run on at the status rate (FUN_100c83c0 sets a new rate on every region's newest
-                    // entry *(inf: every frame)*).
-                    for k in a.keep.iter_mut().flatten() {
-                        k.1 += dt * 60.0 * rate;
-                    }
-                    // FUN_1001ad00's queue replaces only the regions a new motion keys: under a one-shot or scheduler motion
-                    // the status motion goes on (an Elvaan's moving swing amf1 keys the upper body over the run), so it
-                    // goes first and the motion's tracks win where it has them.
-                    // +0x80 up (the swing's op 0x59 holds it from its start to about 30 ticks past the hit):
-                    // FUN_100c83c0 returns before the pick, so the status motion under a one-shot stays what it was,
-                    // at its rate, whatever the move does meanwhile.
-                    let (base, base_rate) = match a.play.as_ref().filter(|_| held) {
-                        Some(p) => (p.base.clone(), a.base_rate_now),
-                        None if held && a.under.is_some() && !a.base_name.is_empty() => {
-                            (a.base_name.clone(), a.base_rate_now)
-                        }
-                        None => {
-                            let (b, r) = crate::motion::choose_strafed(
-                                &a.motion_names.unwrap_or(ch.motions),
-                                pick_status,
-                                pick_ratio,
-                                if *id == me { my_strafe } else { 0 },
-                                fixed_model(a),
-                            );
-                            (b.to_string(), r)
-                        }
-                    };
-                    // A changed status motion under a one-shot is queued as any (FUN_1001ad00): it starts at the old
-                    // one's fraction of its cycle. *(inf: its 16-tick blend in those regions is not modelled.)*
-                    if base != a.base_name
-                        && a.under.is_some()
-                        && let (Some((of, osp)), Some((nf, nsp))) = (
-                            frames_of(&a.base_name, 0.0, false).first().map(|(x, _)| (x.frames as f32, x.speed)),
-                            frames_of(&base, 0.0, false).first().map(|(x, _)| (x.frames as f32, x.speed)),
-                        )
-                        && of > 0.0
-                        && osp > 0.0
-                        && nf > 0.0
-                        && nsp > 0.0
-                    {
-                        a.base_ticks = crate::motion::cycle_sync(
-                            a.base_ticks * 0.5,
-                            of / osp,
-                            nf,
-                            nsp,
-                            base_rate * a.rate_scale,
-                            crate::motion::BLEND_TICKS,
-                        );
-                    }
-                    a.base_rate_now = base_rate;
-                    a.base_ticks += dt * 60.0 * base_rate * a.rate_scale;
-                    // After a one-shot's end its motion may stay while +0x80 holds (no pick): still over the status
-                    // motion.
-                    let under =
-                        name != base && (a.oneshot.is_some() || a.play.is_some() || (held && a.under.is_some()));
-                    if under {
-                        a.under = Some((base.clone(), a.base_ticks));
-                    } else {
-                        a.under = None;
-                        // The status motion playing alone: its clock is the one a one-shot's regions go on with.
-                        if name == base {
-                            a.base_ticks = a.ticks;
-                        }
-                    }
-                    a.base_name = base.clone();
-                    // The kept regions' own chunks (the status motion under a one-shot covers them).
-                    let kept: Vec<_> = if under {
-                        Vec::new()
-                    } else {
-                        (0..3u8)
-                            .filter_map(|r| a.keep[r as usize].as_ref().map(|k| (r, k)))
-                            .flat_map(|(r, (n, t, o))| {
-                                frames_of(n, *t, *o).into_iter().filter(move |(x, _)| actmotion::region(x) == r)
-                            })
-                            .collect()
-                    };
-                    let mut anims = kept.clone();
-                    if under {
-                        anims.extend(frames_of(&base, a.base_ticks, false));
-                    }
-                    anims.extend(frames_of(&name, a.ticks, once));
-                    // FUN_1001a420 poses regions 4 down to 0 and the first to write a bone keeps it: higher regions win, so
-                    // they go last here (the last track wins); within a region the newer motion stays last.
-                    anims.sort_by_key(|(x, _)| actmotion::region(x));
-                    // The mouth motion of a spoken line goes over the body motion (its face tracks win).
-                    if let Some(m) = &mut a.mouth
-                        && let Some(mt) = m.ticks
-                    {
-                        // FUN_100ce0e0: the entity's face motion, else 'mou6'.
-                        let mouth: Vec<_> = [a.mouth_name, "mou6"]
-                            .iter()
-                            .map(|n| actmotion::find_cached(&mut cache.borrow_mut(), &extra, &ch, n))
-                            .find(|v| !v.is_empty())
-                            .unwrap_or_default();
-                        let mut playing = false;
-                        for x in mouth {
-                            let f = mt * x.speed * 0.5;
-                            if f < x.frames as f32 {
-                                anims.push((x, f));
-                                playing = true;
-                            }
-                        }
-                        if !playing {
-                            m.ticks = None;
-                        }
-                    }
-                    // FUN_100cdf90: every rand() % 480 ticks the eyes blink (eye3, region 3) unless op 0xb5 holds them.
-                    a.blink_wait -= dt * 60.0;
-                    if a.blink_wait < 0.0 {
-                        a.blink_wait = (actmotion::crand() % 480) as f32;
-                        if !w.effects.no_blink.contains(id) && !a.blink_off {
-                            a.blink = Some(0.0);
-                        }
-                    }
-                    if let Some(bt) = a.blink.as_mut() {
-                        *bt += dt * 60.0;
-                        let eyes = actmotion::find_cached(&mut cache.borrow_mut(), &extra, &ch, "eye3");
-                        let mut playing = false;
-                        for x in eyes {
-                            let f = *bt * x.speed * 0.5;
-                            if f < x.frames as f32 {
-                                anims.push((x, f));
-                                playing = true;
-                            }
-                        }
-                        if !playing {
-                            a.blink = None;
-                        }
-                    }
-                    let regions = mask(&anims) & 7;
-                    if regions != a.regions {
-                        log::debug!(target: "motion", "actor {id:#x}: regions {:#05b} -> {regions:#05b} ({name}, base {base}, keep {:?})", a.regions, a.keep.iter().map(|k| k.as_ref().map(|k| k.0.as_str())).collect::<Vec<_>>());
-                        a.regions = regions;
-                    }
-                    a.blend += dt * 60.0;
-                    if a.blend >= a.blend_len {
-                        a.prev = None;
-                        (a.prev_under, a.under_skip) = (None, 0);
-                    }
-                    // Motions are evaluated and skinned on the GPU (render/anim.rs, vs_skinned).
-                    // The old pose: its own regions, the kept ones live (a kept region does not blend).
-                    let kept_mask = mask(&kept);
-                    let mut from = a
-                        .prev
-                        .as_ref()
-                        .map(|(old, old_ticks, old_once)| {
-                            let mut v: Vec<_> = frames_of(old, *old_ticks, *old_once)
-                                .into_iter()
-                                .filter(|(x, _)| kept_mask >> actmotion::region(x).min(7) & 1 == 0)
-                                .collect();
-                            v.extend(kept.iter().copied());
-                            // The regions the old motion had no chunk for showed the status motion under it.
-                            let has_mask = mask(&v);
-                            let free = |x: &crate::dat::character::Animation| {
-                                let r = actmotion::region(x);
-                                r < 3 && has_mask >> r & 1 == 0
-                            };
-                            if let Some((b, bt)) = &a.prev_under {
-                                v.extend(frames_of(b, *bt, false).into_iter().filter(|(x, _)| free(x)));
-                            }
-                            let skip = a.under_skip;
-                            v.extend(
-                                anims.iter().copied().filter(|(x, _)| free(x) && skip >> actmotion::region(x) & 1 != 0),
-                            );
-                            v.sort_by_key(|(x, _)| actmotion::region(x));
-                            v
-                        })
-                        .unwrap_or_default();
-                    // The reaction overlay, its first animation found; dropped once faded out.
-                    let mut overlay = a.overlay.as_mut().and_then(|o| {
-                        o.ticks += dt * 60.0;
-                        let x =
-                            actmotion::find_cached(&mut cache.borrow_mut(), &extra, &ch, &o.name).into_iter().next()?;
-                        o.sample(x.frames as u32, x.speed).map(|(f, wt)| (x, f, wt))
-                    });
-                    if overlay.is_none() {
-                        a.overlay = None;
-                    }
-                    a.find_cache = cache.take();
-                    let mut t = a.blend / a.blend_len;
-                    // Misc. 2's animation frame rate: other actors (not one on a mount, status 0x55: FUN_100956a0) keep
-                    // last frame's whole pose (motion frames, reaction overlay, head look) when FUN_100cbde0 would not
-                    // skin them; the head look is held further down, once worked out.
-                    let addr = |v: &[(&crate::dat::character::Animation, f32)]| {
-                        v.iter().map(|(x, f)| (*x as *const _ as usize, *f)).collect::<Vec<_>>()
-                    };
-                    let same = |held: &[(usize, f32)], now: &[(&crate::dat::character::Animation, f32)]| {
-                        held.len() == now.len()
-                            && held.iter().zip(now).all(|(h, (x, _))| h.0 == *x as *const _ as usize)
-                    };
-                    let ov_addr = overlay.map(|(x, f, wt)| (x as *const _ as usize, f, wt));
-                    let mut skipped = false;
-                    if *id != me
-                        && status != 0x55
-                        && anim_skip(anim_cfg, anim_frame, a)
-                        && let Some(h) = a.anim_held.as_ref().filter(|h| {
-                            same(&h.to, &anims)
-                                && same(&h.from, &from)
-                                && h.overlay.map(|o| o.0) == ov_addr.map(|o| o.0)
-                        })
-                    {
-                        for (x, h) in anims.iter_mut().zip(&h.to) {
-                            x.1 = h.1;
-                        }
-                        for (x, h) in from.iter_mut().zip(&h.from) {
-                            x.1 = h.1;
-                        }
-                        if let (Some(o), Some(ho)) = (overlay.as_mut(), h.overlay) {
-                            (o.1, o.2) = (ho.1, ho.2);
-                        }
-                        t = h.t;
-                        skipped = true;
-                    } else {
-                        a.anim_held =
-                            Some(AnimHeld { to: addr(&anims), from: addr(&from), t, overlay: ov_addr, look: None });
-                    }
-                    a.scale = a.event_scale.unwrap_or_else(|| ch.scale(size)) * w.lua.look_scale(*id);
-                    // The rest pose's mesh top, once (stub models, plates without attach points).
-                    if a.top_key.is_empty() {
-                        a.rest = crate::dat::character::pose(&ch.skeleton, &[]);
-                        a.top = crate::render::character::skinned_top(&ch, &a.rest) * a.scale;
-                        a.top_key = "rest".into();
-                    }
-                    // CPU bones only where they are read: the locked camera (player bone 13, target bone 5), first
-                    // person, and the attach points of actors with live effects.
-                    // FUN_10029320: a drawn weapon's carry bone rides its grip; during the draw, once the motions that
-                    // carry it have ended (actmotion::draw_pins).
-                    let pins = a
-                        .draw_pins
-                        .as_ref()
-                        .zip(a.play.as_ref())
-                        .filter(|((n, _), p)| *n == p.name)
-                        .map(|((_, v), p)| (v, p.ticks));
-                    let riding = |c: u16| pins.is_none_or(|(v, t)| v.iter().all(|&(pc, end)| pc != c || t >= end));
-                    let held: Vec<(u16, u16)> = if a.drawn {
-                        ch.grips.iter().flatten().copied().filter(|&(c, _)| riding(c)).collect()
-                    } else {
-                        Vec::new()
-                    };
-                    let pose_now = || {
-                        if from.is_empty() {
-                            crate::dat::character::pose_held(&ch.skeleton, &anims, &held)
-                        } else {
-                            crate::render::character::pose_blend(&ch, &from, &anims, t, &held)
-                        }
-                    };
-                    let posed_anchor = a.anchors[..2].iter().any(|&k| k != 2);
-                    if (w.locked && (*id == w.my_id || w.target == Some(*id)))
-                        || (w.camst.first && *id == w.my_id)
-                        || fx_posed.contains(id)
-                        || posed_anchor
-                    {
-                        a.bones = pose_now();
-                    } else {
-                        a.bones.clear();
-                    }
-                    // FUN_100cbde0: leg mode 1 / 2 models and dead actors follow the ground (FUN_100d54c0); a riding animal
-                    // by its rider's status (box 1) and ground normal.
-                    let rider = (*id & ride::ANIMAL != 0).then_some(*id & !ride::ANIMAL);
-                    let gate_status = rider.and_then(|r| places.get(&r)).map_or(status, |p| p.status);
-                    a.tilt_rot = None;
-                    // FUN_100cbde0 / FUN_10084640: GroundFlag, HackMove or op 0x33's bit 21 means no ground tilt; a
-                    // riding animal has no entity, so it goes by its rider's.
-                    let flags_of = rider.unwrap_or(*id);
-                    let no_snap = w.entities.get(&flags_of).is_some_and(|e| e.no_snap)
-                        || (flags_of == w.my_id && w.my_plate.no_snap)
-                        || w.event.as_ref().is_some_and(|l| l.no_ground(w.my_id, flags_of));
-                    if tilt::eligible(ch.cib[0], gate_status) && !no_snap {
-                        // Ours: the player's walk normal, else the face under the position each frame (the rider's for an
-                        // animal at its place) *(retail skips far moving actors, up to 121 frames)*.
-                        let n = if rider.unwrap_or(*id) == w.my_id {
-                            w.ground.as_ref().map(|g| g.player_normal())
-                        } else {
-                            w.ground.as_ref().and_then(|g| g.floor_normal(pos)).map(|n| -n)
-                        };
-                        if let Some(n) = n {
-                            tilt::set_normal(&mut a.ground_tilt, n);
-                        }
-                        // FUN_100a4d10: info[0] == info[2] == 2 (behemoth, adamantoise, morbol ...) pitch with the ground under
-                        // the front feet (points 10 / 11) and the rear feet (8 / 9), each snapped *(inf: the rest pose through
-                        // last frame's matrix for retail's posed points)*.
-                        if ch.cib[0] == 2
-                            && ch.cib[2] == 2
-                            && let Some(g) = w.ground.as_ref()
-                        {
-                            let m = actor_frame(&Place { pos, forward, tilt, status, ratio, size }, a)
-                                * glam::Mat4::from_scale(a.axes.unwrap_or(Vec3::splat(a.scale)));
-                            let pt = |k: usize| {
-                                ch.skeleton.points.get(k).and_then(|(b, off)| {
-                                    a.rest.get(*b as usize).map(|x| m.transform_point3(x.at(*off)))
-                                })
-                            };
-                            let snapped = |p: Vec3| g.snap(p.x, p.z, p.y).map(|y| Vec3::new(p.x, y, p.z));
-                            if let (Some(p10), Some(p11), Some(p8), Some(p9)) = (pt(10), pt(11), pt(8), pt(9))
-                                && let (Some(fa), Some(fb)) = (snapped((p10 + p11) * 0.5), snapped((p8 + p9) * 0.5))
-                                && let Some(n) = tilt::feet_normal(fa, fb)
-                            {
-                                tilt::set_normal(&mut a.ground_tilt, n);
-                            }
-                        }
-                        let zf = plain_frame(pos, forward, tilt).z_axis.truncate();
-                        let bx = ch
-                            .skeleton
-                            .boxes
-                            .get(box_index(gate_status))
-                            .or(ch.skeleton.boxes.first())
-                            .copied()
-                            .unwrap_or([f32::NAN; 6]);
-                        a.tilt_rot = Some(a.ground_tilt.step(zf, Vec3::splat(a.scale), bx, tilt::rate(dt * 60.0)));
-                    }
-                    let frame = actor_frame(&Place { pos, forward, tilt, status, ratio, size }, a);
-                    let model = frame * glam::Mat4::from_scale(a.axes.unwrap_or(Vec3::splat(a.scale)));
-                    // FUN_1002b5e0: an arrow or plate point other than 2 is the posed point (FUN_10029930), in the world.
-                    for k in 0..2 {
-                        let bones = if a.bones.is_empty() { &a.rest } else { &a.bones };
-                        a.anchor_at[k] = ch
-                            .skeleton
-                            .points
-                            .get(a.anchors[k] as usize)
-                            .filter(|_| a.anchors[k] != 2)
-                            .and_then(|&(b, off)| bones.get(b as usize).map(|x| model.transform_point3(x.at(off))));
-                    }
-                    // FUN_100cd040 (MODLOG "The near-camera character fade"): the eye near posed point 12 fades
-                    // the actor (not the player in first person, who fades on its own). A CPU pose only when the
-                    // rest pose is close.
-                    // While we fish, every other character entity fades by its horizontal distance to us (not the
-                    // rod, chair, mount or aura actors, which have no entity); +0x130 bit 18 draws at 0.5 over
-                    // everything (near_fade_tail).
-                    let fishing = (fish && *id != w.my_id && w.entities.contains_key(id))
-                        .then(|| Vec3::new(pos.x - my_pos.x, 0.0, pos.z - my_pos.z).length());
-                    let half = w.entities.get(id).is_some_and(|e| e.half_fade);
-                    // In first person the player skips FUN_100cd040, tail included (0x100c7d83 -> the self fade); op
-                    // 0xa4's +0x12c bit 26 then sets 1.0 over the whole result, tail included (0x100c7dc0..0x100c7dd5).
-                    let self_first = *id == w.my_id && w.camst.first;
-                    let cam_fade = if self_first {
-                        1.0
-                    } else {
-                        let (b12, off12) = ch.skeleton.points.get(12).copied().unwrap_or((0, Vec3::ZERO));
-                        let at = |bones: &[crate::dat::character::BoneXf]| {
-                            model.transform_point3(bones.get(b12 as usize).map_or(Vec3::ZERO, |x| x.at(off12)))
-                        };
-                        let rest = at(&a.rest);
-                        if Vec3::new(rest.x - eye.x, 0.0, rest.z - eye.z).length() > 0.5 + 2.0 * a.scale {
-                            1.0
-                        } else if a.bones.is_empty() {
-                            near_camera_fade(at(&pose_now()), eye)
-                        } else {
-                            near_camera_fade(at(&a.bones), eye)
-                        }
-                    };
-                    let cam_fade = if w.entities.get(id).is_some_and(|e| e.no_near_fade) {
-                        1.0
-                    } else if self_first {
-                        cam_fade
-                    } else {
-                        near_fade_tail(cam_fade, fishing, half)
-                    };
-                    // FUN_100d5b10: an event's look, else the target / face target; eased and weighted in world space.
-                    let point = |k: usize| ch.skeleton.points.get(k).copied().unwrap_or((0, Vec3::ZERO));
-                    let p3 = model
-                        .transform_point3(a.rest.get(point(3).0 as usize).map_or(Vec3::ZERO, |x| x.at(point(3).1)));
-                    // FUN_100d5b10: while bit 1 is set the look has no target, forced look included.
-                    let target = match a.look.mode {
-                        _ if a.look_hold.is_some() => None,
-                        actmotion::LookMode::Actor(..) => look_points.get(id).copied(),
-                        actmotion::LookMode::Facing(pitch, yaw) => {
-                            let (p, y) = (pitch as f32 * TAU_4096, yaw as f32 * TAU_4096);
-                            let head = a.rest.get(point(7).0 as usize).map_or(Vec3::ZERO, |b| b.t);
-                            Some(model.transform_point3(
-                                head + Vec3::new(p.cos() * y.cos(), -p.sin(), -p.cos() * y.sin()) * 20.0,
-                            ))
-                        }
-                        actmotion::LookMode::Off => face_points.get(id).copied(),
-                    };
-                    // FUN_100d5b10: op 0x59's look percent replaces the 0.04 step during an event.
-                    let rate = if in_event && a.look_pct != 0 { a.look_pct as f32 * 0.01 } else { 1.0 };
-                    a.look.step(frame, p3, target, dt * 60.0, rate);
-                    // One bone (the head) when riding or sitting; point 4 a unit higher on a chocobo or a mount.
-                    let mut look = (a.look.weight > 0.0).then(|| crate::render::anim::HeadLook {
-                        bones: [3usize, 7].map(|k| ch.skeleton.points.get(k).map(|p| p.0)),
-                        two: !matches!(status, 5 | 0x55 | 0x2f | 0x30 | 0x3f..=0x53),
-                        weight: a.look.weight,
-                        point: model.inverse().transform_point3(a.look.point.unwrap_or(p3)),
-                        p3: point(3).1,
-                        p4: point(4),
-                        drop: if matches!(status, 5 | 0x55) { 1.0 / a.scale.max(1e-3) } else { 0.0 },
-                        limits: ch.skeleton.look_limits,
-                    });
-                    if let Some(h) = a.anim_held.as_mut() {
-                        if skipped {
-                            look = h.look;
-                        } else {
-                            h.look = look;
-                        }
-                    }
-                    let drawn = !a.vanished()
-                        && !hidden.contains(id)
-                        && !(*id == w.my_id && w.camst.self_alpha <= 0.0)
-                        && !w.lua.look_hidden(*id);
-                    let bx = ch.skeleton.boxes.get(box_index(status)).or(ch.skeleton.boxes.first()).copied();
-                    // FUN_100c63d0: past the draw distance by its box's farthest corner, neither drawn nor a target.
-                    if r.clip[0] > 0.0
-                        && *id != w.my_id
-                        && bx.is_some_and(|b| box_depth(cview, model, &box_corners(b)) > r.clip[0])
-                    {
-                        far_out.insert(*id);
-                    }
-                    // Invisible (InvisFlag, a GM's !hide): no shadow of any kind, as before the real shadows.
-                    if drawn
-                        && !(if *id == me {
-                            w.my_plate.invisible
-                        } else {
-                            *id >> 24 == 0 && w.entities.get(id).is_some_and(|e| e.invisible)
-                        })
-                        && let Some(b) = bx
-                    {
-                        let cs = box_corners(b);
-                        seen.insert(
-                            *id,
-                            shadows::Seen {
-                                pos: model.w_axis.truncate(),
-                                corners: cs.map(|c| model.transform_point3(c)),
-                                depth: box_depth(cview, model, &cs),
-                            },
-                        );
-                    }
-                    // Tests 1-5 of FUN_100c63d0 / FUN_100cbde0: a box, faded in, in front and on screen.
-                    if drawn
-                        && !far_out.contains(id)
-                        && a.alpha > 0.0
-                        && let Some(b) = bx
-                        && let Some((rect, z)) = box_on_screen(cview, cproj, model, &box_corners(b))
-                    {
-                        visible.insert(*id);
-                        if !w.opts.occlusion || w.entities.get(id).is_some_and(|e| e.no_occlusion) {
-                            r.occl.results.remove(id);
-                        } else if *id != w.my_id {
-                            r.occl.query(*id, rect, z);
-                        }
-                    }
-                    let screen =
-                        bx.and_then(|b| box_on_screen(cview, cproj, model, &box_corners(b))).map(|(rect, _)| rect);
-                    let g = a.gpu.as_mut().unwrap();
-                    g.screen = screen;
-                    // FUN_100cbde0: k = model alpha x the near-camera fade, drawn as 1 from 0.8 up, else 1.25 k; then
-                    // the first-person fade.
-                    let k = (a.alpha / actmotion::OPAQUE).max(0.0) * cam_fade;
-                    let k = if k >= 0.8 { 1.0 } else { k * 1.25 } * a.appear;
-                    g.alpha = (k * if *id == w.my_id { w.camst.self_alpha } else { 1.0 }).min(1.0);
-                    g.shadow_off = a.shadow_off;
-                    g.tint = a.rgb.map(|c| c.max(0.0) / actmotion::OPAQUE);
-                    if let Some((alpha, tint)) = w.lua.look_shade(*id) {
-                        g.alpha = g.alpha.min(alpha.unwrap_or(1.0));
-                        let t = tint.unwrap_or([1.0; 3]);
-                        g.tint = [g.tint[0] * t[0], g.tint[1] * t[1], g.tint[2] * t[2]];
-                    }
-                    g.hidden_weps = wepfx::mask(&a.wep_hide);
-                    g.lamp_caster = *id == w.my_id || *id == w.my_id | ride::ANIMAL;
-                    g.shine = shines.get(id).copied();
-                    // FUN_100d6d30: TFACTOR alpha (0x80 - model colour alpha) & 0xff; an opaque model adds nothing.
-                    let r8 = crate::render::Refract::tf_alpha(a.alpha.clamp(0.0, 255.0) as u32);
-                    g.refract =
-                        refracts.get(id).filter(|_| r8 > 0.0).map(|&level| crate::render::Refract { level, r: r8 });
-                    // The flash runs only while the actor is drawn, in 60 Hz ticks whatever the frame rate.
-                    g.flash = if drawn { a.flash.step(w.target == Some(*id), dt * 60.0) } else { flash::NONE };
-                    // The floor's lights (retail copies them at the ground probe, every 121 updates).
-                    g.lights = w.ground.as_ref().map_or([0; 4], |gr| gr.lights(pos));
-                    lamps::offer(&w.lamps.list, pos, &mut g.lights);
-                    g.area = actor_area(w.entities.get(id), w.ground.as_ref().and_then(|gr| gr.area(pos))).unwrap_or(0);
-                    // The cloth (stepped on the GPU from the pose, render/cloth.rs; client/cloth.rs the reference): a step
-                    // on each tick of the 30 Hz clock, on screen simulated (FUN_10023290), off screen carried along
-                    // (FUN_100231f0). A frame Misc. 2's animation frame rate skips never reaches FUN_10023290, so the
-                    // step waits for the next skinned frame *(inf: retail may drop that tick instead)*.
-                    let model_key = Arc::as_ptr(&ch) as usize;
-                    if a.cloth.as_ref().is_none_or(|(k, _)| *k != model_key) {
-                        a.cloth = ch
-                            .parts
-                            .iter()
-                            .any(|p| p.sim.is_some())
-                            .then_some((model_key, cloth::Track { tick: u64::MAX, at: Vec3::ZERO }));
-                    }
-                    let mut cloth_tick = None;
-                    if let Some((_, c)) = &mut a.cloth {
-                        let at = model.w_axis.truncate();
-                        let mut tick = crate::render::cloth::Tick::None;
-                        if c.tick != wind.0 && !skipped {
-                            // FUN_100c63d0: a move under 0.01 counts as none.
-                            let d = at - c.at;
-                            let moved = if d.length() < 0.01 { Vec3::ZERO } else { d };
-                            tick = if drawn && visible.contains(id) {
-                                // Actor +0x17c (FUN_100a4ed0): no wind on a covered floor (MZB object flags bit 2).
-                                let covered = w.ground.as_ref().is_some_and(|g| g.surface(pos).1);
-                                crate::render::cloth::Tick::Step { moved, wind: (!covered).then_some((wind.1, wind.2)) }
-                            } else {
-                                crate::render::cloth::Tick::Carry { moved }
-                            };
-                        }
-                        // Ours: between steps the particles ride along with the actor. Before the first step they hold
-                        // no positions and the cloth draws skinned.
-                        cloth_tick = Some((tick, at - c.at, at));
-                    }
-                    if drawn {
-                        let files: Vec<_> = extra.iter().map(|(_, f)| f.clone()).collect();
-                        r.pose_actor_gpu(
-                            g,
-                            &ch,
-                            &files,
-                            &anims,
-                            if a.prev.is_some() { &from } else { &[] },
-                            t,
-                            model,
-                            look,
-                            overlay,
-                            &held,
-                        );
-                        counts.posed += 1;
-                        // FUN_100c9330: a mounted rider's point 0x6b and the mount's saddle point, for the offset.
-                        if let Some((key, k)) = ride::query(&w.rides, *id)
-                            && let Some(&(bone, off)) = ch.skeleton.points.get(k)
-                        {
-                            r.query_point(g, key, bone, off);
-                        }
-                        // The pick's fine test: the geometry bones and attach points 1 / 3 / 13 / 15 of an actor whose rect
-                        // held the pointer, read back a frame or two late.
-                        if w.pick_rect.contains(id) {
-                            let key = Arc::as_ptr(&ch) as usize;
-                            if a.pick_bones.as_ref().is_none_or(|(k, _)| *k != key) {
-                                let f = ch.geometry_bones();
-                                a.pick_bones = Some((
-                                    key,
-                                    (1..f.len())
-                                        .filter(|&b| f[b] && f[ch.skeleton.bones[b].parent])
-                                        .map(|b| b as u16)
-                                        .collect(),
-                                ));
-                            }
-                            let bones = a.pick_bones.as_ref().map(|(_, v)| v.as_slice()).unwrap_or_default();
-                            let mut wanted: Vec<u16> =
-                                bones.iter().flat_map(|&b| [b, ch.skeleton.bones[b as usize].parent as u16]).collect();
-                            wanted.sort_unstable();
-                            wanted.dedup();
-                            for b in wanted {
-                                r.query_point(g, pick_key(*id, b), b, Vec3::ZERO);
-                            }
-                            for k in [1usize, 3, 13, 15] {
-                                if let Some(&(bone, off)) = ch.skeleton.points.get(k) {
-                                    r.query_point(g, pick_key(*id, 0x8000 | k as u16), bone, off);
-                                }
-                            }
-                        }
-                        if footsteps::wanted(&ch, status, pos, camera.eye) {
-                            for (slot, &k) in
-                                footsteps::POINTS.iter().enumerate().take(if ch.cib[0] == 2 { 4 } else { 2 })
-                            {
-                                if let Some(&(bone, off)) = ch.skeleton.points.get(k) {
-                                    r.query_point(g, footsteps::key(*id, slot), bone, off);
-                                }
-                            }
-                        }
-                    }
-                    // After the pose: the step reads this frame's bones in the pose region.
-                    // The tick is the renderer's once taken; one it could not take comes again next frame.
-                    if let Some((tick, ride, at)) = cloth_tick
-                        && r.cloth(g, tick, drawn.then_some((model, ride)))
-                        && let Some((_, c)) = &mut a.cloth
-                    {
-                        (c.tick, c.at) = (wind.0, at);
-                    }
-                }
-                // Test 6: the occlusion results, a frame or two late, drop actors hidden behind scenery.
-                r.occl.results.retain(|id, _| visible.contains(id));
-                visible.retain(|id| r.occl.results.get(id) != Some(&false));
-                w.visible = visible;
-                r.upload_poses(&gfx.gpu, &mut encoder);
-                mark!("poses");
-                // FUN_100cbde0: a drawn alpha under 0.0001 is not drawn (the near-camera fade, first person). A character
-                // with +0xb2 bit 0 set (FUN_100c63d0's tests and the occlusion, not in `visible`) is not drawn either;
-                // ours is never culled by them, nor are actors without a skeleton (props, ships).
-                let culled = |id: &u32, a: &Actor| a.character.is_some() && *id != w.my_id && !w.visible.contains(id);
-                let has = |id: u32| w.actors.contains_key(&id);
-                let flags = |id: u32| w.actors.get(&id).map_or((false, false), |a| (a.shadow_off, a.noblob));
-                // Real character shadows (ours, render/sunshadow.rs), unless config 0x3a turns shadows off. The actors their
-                // map covers this frame take no retail shadow (nor its casters or layers).
-                r.prepare_sun_shadow(
-                    &gfx.gpu,
-                    self.cfg.actor_shadows != 0 && w.game.get(0x3a) != 1,
-                    self.cfg.shadow_map,
-                );
-                // Ambient occlusion on the scenery (ours, render/ssao.rs), at the scene's size.
-                r.prepare_ssao(&gfx.gpu, self.cfg.ssao, bg);
-                // Lamp shadows (ours, render/lampshadow.rs): with Real shadows, the point lights nearest our own character
-                // (the zone's data lights, and with Real lamp lights the lamps) are cut behind it, one shadow each.
-                // Only ours casts them (with our mount while riding); others keep their sun or retail shadow. The lights
-                // are those lighting our character this frame (its floor's data lights and the lamps offered it), the
-                // ones retail's shadow eases toward.
-                let casters = [w.my_id, w.my_id | ride::ANIMAL];
-                let my_feet = seen.get(&w.my_id).map(|s| s.pos);
-                let feet: Vec<Vec3> = casters.iter().filter_map(|id| seen.get(id).map(|s| s.pos)).collect();
-                let lit: [u8; 4] = w.actors.get(&w.my_id).and_then(|a| a.gpu.as_ref()).map_or([0; 4], |g| g.lights);
-                let lights: Vec<(Vec3, u32)> = w
-                    .lamps
-                    .list
-                    .iter()
-                    .map(|l| (l.pos, l.slot))
-                    .chain(w.lamps.data.iter().copied())
-                    .filter(|(_, s)| lit.contains(&((s + 1) as u8)))
-                    .collect();
-                r.lamp_shadows = match my_feet {
-                    Some(f) if self.cfg.actor_shadows != 0 && w.game.get(0x3a) != 1 => {
-                        crate::render::lampshadow::pick(&lights, &feet, f)
-                    }
-                    _ => Vec::new(),
-                };
-                // The shadowed lights' positions: our character (or mount), casting from one, takes no retail shadow either.
-                let lamp_cast: Vec<(Vec3, glam::Mat4)> = r.lamp_shadows.iter().map(|(_, m, p)| (*p, *m)).collect();
-                // Which casters a lamp casts, from `seen` before the filters below take them out of it.
-                let lamp_lit = casters.map(|id| {
-                    seen.get(&id)
-                        .is_some_and(|s| lamp_cast.iter().any(|(l, m)| crate::render::lampshadow::casts(*l, *m, s.pos)))
-                });
-
-                // Diagnostics (log target "sunshadow"): the real shadows' state and ours on each change.
-                if self.cfg.actor_shadows != 0 && log::log_enabled!(target: "sunshadow", log::Level::Debug) {
-                    let light = r.sun_shadow_light(camera.target);
-                    let mine = seen.get(&w.my_id).map(|s| {
-                        light.is_some_and(|(m, _, _)| {
-                            crate::render::sunshadow::covers(
-                                m,
-                                s.pos,
-                                s.corners.iter().map(|c| c.distance(s.pos)).fold(0.0, f32::max),
-                            )
-                        })
-                    });
-                    let state = format!(
-                        "{}; ours seen {:?} (covered: {:?})",
-                        r.sun_shadow_state(
-                            &gfx.gpu,
-                            camera.target,
-                            w.actors.get(&w.my_id).and_then(|a| a.gpu.as_ref())
-                        ),
-                        mine.is_some(),
-                        mine
-                    );
-                    if w.sunshadow_diag != state {
-                        log::debug!(target: "sunshadow", "{state}");
-                        w.sunshadow_diag = state;
-                    }
-                }
-                // Only the actors drawn into the map lose retail's: the rest (fading, refracting, latched off) keep it.
-                if let Some((m, _, _)) = r.sun_shadow_light(camera.target) {
-                    let done = gfx.gpu.mips_done();
-                    let casts =
-                        |id: &u32| w.actors.get(id).and_then(|a| a.gpu.as_ref()).is_some_and(|g| g.casts_shadow(done));
-                    seen.retain(|id, s| {
-                        !casts(id)
-                            || !crate::render::sunshadow::covers(
-                                m,
-                                s.pos,
-                                s.corners.iter().map(|c| c.distance(s.pos)).fold(0.0, f32::max),
-                            )
-                    });
-                }
-                if !lamp_cast.is_empty() {
-                    let done = gfx.gpu.mips_done();
-                    let casts =
-                        |id: &u32| w.actors.get(id).and_then(|a| a.gpu.as_ref()).is_some_and(|g| g.casts_shadow(done));
-                    seen.retain(|id, s| {
-                        !casters.contains(id)
-                            || !casts(id)
-                            || !lamp_cast.iter().any(|(l, m)| crate::render::lampshadow::casts(*l, *m, s.pos))
-                    });
-                }
-                let shadow_modes = match w.ground.as_ref() {
-                    Some(g) => shadows::modes(
-                        &shadows::Ctx {
-                            ground: g,
-                            setting: w.game.get(0x3a),
-                            me: w.my_id,
-                            zone: w.pos_zone,
-                            has: &has,
-                            flags: &flags,
-                            layers: r.shadow_layers(bg),
-                        },
-                        &seen,
-                        camera.eye,
-                    ),
-                    None => Vec::new(),
-                };
-                // A lamp casting ours takes over its main shadow: the sun's map leaves it out (back past the lamp's reach).
-                for (id, lit) in casters.into_iter().zip(lamp_lit) {
-                    if let Some(g) = w.actors.get_mut(&id).and_then(|a| a.gpu.as_mut()) {
-                        g.lamp_lit = lit;
-                    }
-                }
-                let mut drawn: Vec<(u32, &crate::render::ActorGpu)> = w
-                    .actors
-                    .iter()
-                    .filter(|(id, a)| !a.vanished() && !hidden.contains(id) && !far_out.contains(id) && !culled(id, a))
-                    .filter_map(|(id, a)| Some((*id, a.gpu.as_ref()?)))
-                    .filter(|(_, g)| g.alpha >= 1e-4)
-                    .collect();
-                // One order every frame (a map's order changes with each new map): which overlapping edges blend over
-                // which, and which actors take the 64 shine and fade slots, stay put.
-                drawn.sort_unstable_by_key(|d| d.0);
-                let actors: Vec<&crate::render::ActorGpu> = drawn.iter().map(|d| d.1).collect();
-                let drawn_map: HashMap<u32, &crate::render::ActorGpu> = drawn.into_iter().collect();
-                counts = perf::Counts {
-                    entities: w.entities.len(),
-                    actors: w.actors.len(),
-                    posed: counts.posed,
-                    drawn: actors.len(),
-                    zone_draws: r.draw_count(),
-                    ui_vertices: 0,
-                    fx: [(0, 0); 3],
-                };
-                m_actors = Instant::now();
-                // Mips of new textures (models that came this frame, a zone going up) under the frame budget.
-                let budget = if w.zone_uploading.is_some() || w.downloading.is_some() {
-                    crate::render::MIP_BUDGET
-                } else {
-                    crate::render::MIP_BUDGET_WORLD
-                };
-                perf::timed(|| "mips".into(), || gfx.gpu.run_mips(&mut encoder, budget));
-                mark!("mips");
-                // FUN_10179390: the camera list under the eye (render/cull.rs); past Retail it holds within retail's
-                // distance and the rest draws beyond it.
-                let list = w.ground.as_ref().map_or(0, |g| g.camera_list(camera.eye));
-                let far = (self.cfg.draw_distance != 100).then_some(r.retail_reach).filter(|d| *d > 0.0);
-                r.set_camera_list(&gfx.gpu, list, far);
-                // Config 0017: bump mapping's lighting (one eased light, vertex fog) or the two-light model; never in 182.
-                r.bump_mode = self.cfg.tool("0017") != 0 && w.zone != Some(182);
-                (r.mod_clear, r.mod_ambient, r.wireframe) = (w.opts.clear, w.opts.ambient, w.opts.wireframe);
-                // Config 0011: the animated meshes' sway this frame (render/sway.rs).
-                let steps = match self.cfg.tool("0011") {
-                    0 => 1,
-                    1 => 16,
-                    _ => 32,
-                };
-                r.set_sway(
-                    dt * 60.0,
-                    steps,
-                    crate::dat::zone::SWAY_TAGS.iter().position(|t| *t == crate::dat::weather::weather_tag(w.weather)),
-                );
-                // FUN_1001d240's helper target for faded actors (drawn opaque, then blended as one quad).
-                r.prepare_faded(&gfx.gpu, &scene_tex);
-                perf::timed(
-                    || "zone render".into(),
-                    || r.render(&gfx.gpu, &mut encoder, &scene_raw, &scene_depth, &camera, aspect, &actors),
-                );
-                mark!("scene");
-                // The portraits, of actors drawn this frame.
-                let want: Vec<(lua::hud::Wanted, crate::render::Camera, &crate::render::ActorGpu)> =
-                    portrait_cams.iter().filter_map(|(p, c)| Some((*p, *c, *drawn_map.get(&p.entity)?))).collect();
-                let drawn = self.portraits.draw(
-                    &gfx.gpu,
-                    &mut gfx.egui_renderer,
-                    self.game_ui.as_mut(),
-                    r,
-                    &mut encoder,
-                    scene_fmt,
-                    &want,
-                );
-                w.lua.set_portraits(drawn);
-                // The actors' ground shadows over the scene (client/shadows.rs, render/shadow.rs).
-                if !r.has_shadow_texture()
-                    && let Some(t) = w.index.as_ref().and_then(|i| shadows::kage_texture(i))
-                {
-                    r.set_shadow_texture(&gfx.gpu, &t, scene_fmt);
-                }
-                if let Some(g) = w.ground.as_ref() {
-                    let casters = shadows::casters(&mut w.shadow_slots, g, shadow_modes, &drawn_map);
-                    let sun = r.lighting.map_or([0.0; 4], |l| [l.actor_dir.x, l.actor_dir.y, l.actor_dir.z, 1.0]);
-                    perf::timed(
-                        || "shadows".into(),
-                        || {
-                            r.draw_shadows(
-                                &gfx.gpu,
-                                &mut encoder,
-                                &scene_raw,
-                                &scene_depth,
-                                bg,
-                                g,
-                                &casters,
-                                sun,
-                                (dt * 60.0).max(1e-3),
-                            )
-                        },
-                    );
-                }
-                mark!("shadows");
-                // Refracting actors, farthest first (retail's sorted list), after the opaque scene.
-                let mut refracting: Vec<(f32, &crate::render::ActorGpu)> = w
-                    .actors
-                    .iter()
-                    .filter(|(id, a)| !a.vanished() && !hidden.contains(id) && !culled(id, a))
-                    .filter_map(|(id, a)| {
-                        Some((
-                            places.get(id)?.pos.distance(camera.eye),
-                            a.gpu.as_ref().filter(|g| g.refract.is_some() && g.alpha >= 1e-4)?,
-                        ))
-                    })
-                    .collect();
-                if !refracting.is_empty() {
-                    refracting.sort_by(|x, y| y.0.total_cmp(&x.0));
-                    let list: Vec<&crate::render::ActorGpu> = refracting.iter().map(|x| x.1).collect();
-                    r.render_refraction(
-                        &gfx.gpu,
-                        &mut encoder,
-                        &scene_raw,
-                        Some(&scene_tex),
-                        &scene_depth,
-                        &camera,
-                        aspect,
-                        &list,
-                    );
-                }
-                mark!("refraction");
-                r.occl.run(&gfx.gpu, &mut encoder, &scene_depth);
-                mark!("occlusion");
-                // Effect generators: CPU emission, the GPU update pass, then the elements over the scene.
-                // Its pipelines are made while the zone still goes up (behind the loading indicator), not on the
-                // first shown frame.
-                let eg = self
-                    .effects_gpu
-                    .get_or_insert_with(|| crate::render::effects::EffectsGpu::new(&gfx.gpu, scene_fmt));
-                if let Some(l) = &new_lamps {
-                    eg.set_lamps(
-                        &gfx.gpu,
-                        &l.iter().map(|l| (l.pos, l.slot, l.template, l.colour)).collect::<Vec<_>>(),
-                    );
-                }
-                if !eg.has_dmgnum()
-                    && let Some((lib, image)) = self.game_ui.as_ref().and_then(|g| g.dmgnum())
-                {
-                    eg.set_dmgnum(&gfx.gpu, lib, image);
-                }
-                if !r.ready(&gfx.gpu) {
-                    eg.upload_pending(&gfx.gpu, &mut w.effects);
-                }
-                if r.ready(&gfx.gpu) {
-                    let view = camera.view();
-                    let mut view_rot = view;
-                    view_rot.w_axis = glam::Vec4::W;
-                    let minute = w
-                        .clock
-                        .map(|(t, at)| crate::dat::weather::vana_minute(t, at.elapsed().as_secs_f32()))
-                        .unwrap_or(720.0);
-                    // Ops 0x77 / 0xa9 hold the clock (FUN_100b8710 / FUN_100bab50).
-                    let minute = ev_clock.map_or(minute, |c| c.minute as f32);
-                    let held_moon = ev_clock.and_then(|c| c.moon_weekday());
-                    let f = crate::fx::Frame {
-                        dt: (dt * 60.0).max(1e-3),
-                        seconds: dt,
-                        dayfrac: minute / 1440.0,
-                        view,
-                        view_rot,
-                        eye: camera.eye,
-                        // FUN_100496f0: an emitter without its own range shows within the scenery's draw distance
-                        // (none: Settings' Draw Distance at Unlimited).
-                        draw_distance: if r.clip[0] > 0.0 { r.clip[0] } else { 2000.0 },
-                        // Op 0x8f: the actor's area env, else the zone; areas are not loaded *(the zone's)*.
-                        area_light: r.lighting.map_or(Vec3::ONE, |l| l.area),
-                        focal: 192.0 / (camera.fov_y * 0.5).tan(),
-                        // FUN_10184dc0: ((Vana day of now + 12 h) / 7) % 12 (one Vana minute = 2.4 s).
-                        // Op 0xa9 (DAT_1065cb20): both from the held clock.
-                        moon_phase: if let Some((m, _)) = held_moon {
-                            m
-                        } else {
-                            w.clock.map_or(0, |(t, at)| {
-                                ((((t as f64 + at.elapsed().as_secs_f64()) / 2.4 + 720.0) / 1440.0) as u64 / 7 % 12)
-                                    as u32
-                            })
-                        },
-                        weekday: if let Some((_, d)) = held_moon {
-                            d
-                        } else {
-                            w.clock.map_or(0, |(t, at)| {
-                                (((t as f64 + at.elapsed().as_secs_f64()) / 2.4 / 1440.0) as u64 & 7) as u32
-                            })
-                        },
-                    };
-                    let party: Vec<u32> = std::iter::once(w.my_id)
-                        .chain(w.party.party().map(|m| m.id).filter(|&id| id != w.my_id))
-                        .collect();
-                    let ship_fx = ships::fx_actors(&w.ships, &w.entities);
-                    let fa = FxActors {
-                        actors: &w.actors,
-                        places: &places,
-                        contacts: &w.contacts,
-                        entities: &w.entities,
-                        me: w.my_id,
-                        me_moving: w.moving,
-                        me_strafe: w.my_strafe,
-                        pet: w.my_pet,
-                        party,
-                        my_index: w.my_index,
-                        areas: &w.area_lights,
-                        ground: w.ground.as_ref(),
-                        bells: w.game.get(0x99) & 2 != 0,
-                        furniture: &w.furniture.pieces,
-                        ships: &ship_fx,
-                        model_hidden: &model_hidden,
-                        drops: &drops,
-                        wades: &w.wades,
-                    };
-                    if let Some(g) = &w.ground {
-                        w.effects.set_covered(g.covered(camera.eye));
-                    }
-                    if let Some(a) = &self.audio {
-                        w.effects.set_alive(a.alive());
-                    }
-                    w.effects.filter = (w.game.get(0x92), matches!(w.my_motion.status, 1 | 3));
-                    w.effects.weapon_effect_off = w.game.get(0xbe) == 1;
-                    // Misc.'s weather density (LAB_101aa650 case 0x3b: DAT_10456a68 = the value as a float).
-                    w.effects.weather_density = if w.weather_forced { 1.0 } else { w.game.get(0x3b) as f32 };
-                    w.effects.reg.aspect = aspect;
-                    perf::timed(|| "effects".into(), || w.effects.tick(&f, &fa));
-                    event::camera_frame(&mut w.screen, &w.effects, &fa, f.dt);
-                    counts.fx = w.effects.counts();
-                    if self.fx_census.is_none_or(|t| t.elapsed().as_secs() >= 60) {
-                        self.fx_census = Some(Instant::now());
-                        let top: Vec<String> =
-                            w.effects.census().into_iter().take(8).map(|(n, k)| format!("{n} x{k}")).collect();
-                        let [t, g, e] = counts.fx;
-                        log::info!(
-                            "effects live: tasks {}/{}, generators {}/{}, elements {}/{}; most: {}",
-                            t.0,
-                            t.1,
-                            g.0,
-                            g.1,
-                            e.0,
-                            e.1,
-                            top.join(", ")
-                        );
-                    }
-                    w.ambient = w.effects.ambient(minute);
-                    // Effect sounds (fx/sound.rs) to the sound thread; without audio they are dropped.
-                    for c in std::mem::take(&mut w.effects.sound_cmds) {
-                        let Some(a) = &mut self.audio else { break };
-                        play_fx_sound(a, c);
-                    }
-                    eg.set_lights(&r.lights);
-                    eg.set_light(r.lighting.as_ref().map(|l| (l.dir, l.diffuse, l.ambient)));
-                    eg.set_depth(Some((&scene_depth, camera.proj(aspect))));
-                    perf::timed(|| "effects upload".into(), || eg.update(&gfx.gpu, &mut encoder, &mut w.effects, &f));
-                    mark!("fx update");
-                    let (fog_color, fog) = r
-                        .lighting
-                        .as_ref()
-                        .map_or(([0.0; 3], [150.0, 600.0]), |l| (l.fog.to_array(), [l.fog_start, l.fog_end]));
-                    eg.draw(
-                        &gfx.gpu,
-                        &mut encoder,
-                        (&scene_raw, &scene_depth, bg),
-                        Some(&scene_tex),
-                        &w.effects,
-                        (camera.proj(aspect), camera.view(), camera.eye),
-                        [crate::render::NEAR, crate::render::FAR],
-                        fog_color,
-                        fog,
-                    );
-                    mark!("fx draw");
-                }
-                // The Lua mods' world shapes, then layout mode's overlay over the finished scene.
-                r.render_world_shapes(&mut encoder, &scene_raw, &scene_depth);
-                r.render_lines(&mut encoder, &scene_raw);
-                // The mods' post-process passes over the scene, under the fades.
-                let want = w.lua.shaders();
-                if !want.is_empty() || self.post_fx.is_some() {
-                    let post =
-                        self.post_fx.get_or_insert_with(|| crate::render::postfx::PostFx::new(&gfx.gpu, scene_fmt));
-                    for (m, id, e) in post.sync(&gfx.gpu, &want) {
-                        w.lua.shader_error(&m, &id, &e);
-                    }
-                    post.draw(
-                        &gfx.gpu,
-                        &mut encoder,
-                        &scene_tex,
-                        &scene_raw,
-                        &scene_depth,
-                        w.started.elapsed().as_secs_f32(),
-                        &want,
-                    );
-                }
-                // A zone change's held frame under the fade to black (the camera has moved on).
-                if let (Some(_), Some(fx)) = (w.zone_hold.filter(|h| h.captured), &self.screen_fx_zone) {
-                    fx.draw_held(&gfx.gpu, &mut encoder, &scene_raw, 1.0);
-                }
-                // Event crossfade, the effect flash and feedback blur, and the fades over the scene, under the 2D layer;
-                // the zoning fade as a multiply too.
-                let (cross, m) = (w.screen.cross_alpha(), w.screen.multiply().map(|c| c * (1.0 - w.fade)));
-                let (flash, blur) = (w.screen.flash(w.effects.flash), w.screen.blur());
-                if cross.is_some() || flash.is_some() || blur.is_some() || m.iter().any(|c| (c - 1.0).abs() > 0.005) {
-                    let fx = self
-                        .screen_fx_world
-                        .get_or_insert_with(|| crate::render::screenfx::ScreenFx::new(&gfx.gpu, scene_fmt));
-                    fx.draw_all(&gfx.gpu, &mut encoder, &scene_raw, Some(&scene_tex), bg, cross, flash, blur, m);
-                }
-                mark!("screen fx");
-                w.last_camera = Some(camera);
-                drew_world = true;
-            }
+        let m_actors = m_acquire;
+        let counts = perf::Counts::default();
+        let drew_world = false;
+        FrameGpu {
+            frame,
+            view,
+            encoder,
+            gpu_time,
+            bg,
+            aspect,
+            lcd,
+            gamma,
+            scaled,
+            scene_view,
+            scene_depth,
+            scene_tex,
+            scene_raw,
+            scene_fmt,
+            m_acquire,
+            m_actors,
+            counts,
+            drew_world,
         }
+    }
 
+    /// The world's frame: the actors posed and drawn, the scene, the effects, plates, shadows, lamps and the world's
+    /// screen effects, into the scene targets.
+    fn draw_world(&mut self, gfx: &mut Gfx, g: &mut FrameGpu, dt: f32) {
+        let Phase::World(w) = &mut self.phase else { return };
+        let mut cx = WorldDraw {
+            cfg: &self.cfg,
+            portraits: &mut self.portraits,
+            game_ui: &mut self.game_ui,
+            screen_fx_world: &mut self.screen_fx_world,
+            screen_fx_zone: &mut self.screen_fx_zone,
+            effects_gpu: &mut self.effects_gpu,
+            post_fx: &mut self.post_fx,
+            audio: &mut self.audio,
+            fx_census: &mut self.fx_census,
+        };
+        world_frame(&mut cx, gfx, g, w, dt);
+    }
+
+    /// The lobby's scenes into the scene targets: the creator's dancer or the nation step's flyover, the select ring,
+    /// the title's flyover.
+    fn draw_lobby_scenes(&mut self, gfx: &Gfx, g: &mut FrameGpu, dt: f32) {
+        let (bg, aspect) = (g.bg, g.aspect);
+        let (scene_view, scene_depth, scene_tex) = (g.scene_view.clone(), g.scene_depth.clone(), g.scene_tex.clone());
+        let encoder = &mut g.encoder;
         if matches!(&self.phase, Phase::Characters { screen: LobbyScreen::Create, .. })
             && let Some(cr) = &mut self.creator
         {
@@ -18530,14 +17015,14 @@ impl App {
                     if fly.done {
                         fly.restart();
                     }
-                    fly.render(&gfx.gpu, gfx.config.format, &mut encoder, &scene_view, &scene_depth, bg, aspect);
+                    fly.render(&gfx.gpu, gfx.config.format, encoder, &scene_view, &scene_depth, bg, aspect);
                 }
                 _ => {
                     let alive = self.audio.as_ref().map(|a| a.alive());
                     cr.render(
                         &gfx.gpu,
                         gfx.config.format,
-                        &mut encoder,
+                        encoder,
                         (&scene_view, Some(&scene_tex), bg),
                         &scene_depth,
                         aspect,
@@ -18549,7 +17034,7 @@ impl App {
                     }
                 }
             }
-            drew_world = true;
+            g.drew_world = true;
         }
         if matches!(&self.phase, Phase::Characters { screen: LobbyScreen::Create, .. })
             && self.creator_simple
@@ -18560,8 +17045,8 @@ impl App {
             if fly.done {
                 fly.restart();
             }
-            fly.render(&gfx.gpu, gfx.config.format, &mut encoder, &scene_view, &scene_depth, bg, aspect);
-            drew_world = true;
+            fly.render(&gfx.gpu, gfx.config.format, encoder, &scene_view, &scene_depth, bg, aspect);
+            g.drew_world = true;
         }
         if matches!(&self.phase, Phase::Characters { screen: LobbyScreen::Select | LobbyScreen::Delete, .. })
             && let Some(sel) = &mut self.select
@@ -18571,7 +17056,7 @@ impl App {
             sel.render(
                 &gfx.gpu,
                 gfx.config.format,
-                &mut encoder,
+                encoder,
                 (&scene_view, Some(&scene_tex), bg),
                 &scene_depth,
                 aspect,
@@ -18581,15 +17066,23 @@ impl App {
                 let Some(a) = &mut self.audio else { break };
                 play_fx_sound(a, c);
             }
-            drew_world = true;
+            g.drew_world = true;
         }
         if self.title_backdrop()
             && let Some(fly) = &mut self.flyover
         {
             fly.advance(dt);
-            drew_world = fly.render(&gfx.gpu, gfx.config.format, &mut encoder, &scene_view, &scene_depth, bg, aspect)
-                || drew_world;
+            g.drew_world =
+                fly.render(&gfx.gpu, gfx.config.format, encoder, &scene_view, &scene_depth, bg, aspect) || g.drew_world;
         }
+    }
+
+    /// The scene finished: the lobby's fade over it, then the scaling pass into the window (gamma, 3D LCD Mode,
+    /// anti-aliasing, grading); the 2D layer's and the scene's levels.
+    fn finish_scene(&mut self, gfx: &Gfx, g: &mut FrameGpu, size: [u32; 2]) -> (f32, f32) {
+        let (bg, gamma, lcd, scaled) = (g.bg, g.gamma, g.lcd, g.scaled);
+        let (scene_view, view) = (g.scene_view.clone(), g.view.clone());
+        let encoder = &mut g.encoder;
         // The lobby scene fade (a multiply over the drawn scene) and the 2D layer's level.
         let (ui_level, scene_level) = match &self.phase {
             // While the indicator is up it alone is drawn, at full level. Out of the lobby the empty screen is
@@ -18598,19 +17091,19 @@ impl App {
             Phase::World(w) => ((1.0 - w.fade) * w.screen.ui_level(), 0.0),
             _ => (self.lobby_fade.ui, self.lobby_fade.scene),
         };
-        if !matches!(self.phase, Phase::World(_)) && drew_world && scene_level < 0.995 {
+        if !matches!(self.phase, Phase::World(_)) && g.drew_world && scene_level < 0.995 {
             let fx = self
                 .screen_fx
                 .get_or_insert_with(|| crate::render::screenfx::ScreenFx::new(&gfx.gpu, gfx.config.format));
-            fx.draw(&gfx.gpu, &mut encoder, &scene_view, bg, None, [scene_level; 3]);
+            fx.draw(&gfx.gpu, encoder, &scene_view, bg, None, [scene_level; 3]);
         }
-        if drew_world
+        if g.drew_world
             && scaled
             && let Some(sc) = &mut self.scene_scale
         {
             sc.blit(
                 &gfx.gpu,
-                &mut encoder,
+                encoder,
                 &view,
                 size,
                 gamma,
@@ -18618,6 +17111,21 @@ impl App {
                 self.cfg.antialias != 0,
                 self.cfg.grading,
             );
+        }
+        (ui_level, scene_level)
+    }
+
+    /// The game UI's pass (the lobby's and the world's windows, the HUD, the cursor sprite) over the scene.
+    fn draw_game_ui(&mut self, gfx: &Gfx, g: &mut FrameGpu, size: [u32; 2], dt: f32, levels: (f32, f32)) {
+        let (ui_level, scene_level) = levels;
+        let (scene_depth, view) = (g.scene_depth.clone(), g.view.clone());
+        let encoder = &mut g.encoder;
+        macro_rules! mark {
+            ($l:expr) => {
+                if let Some(t) = g.gpu_time.as_mut() {
+                    t.mark(encoder, $l);
+                }
+            };
         }
         self.window_size = size;
         self.mouse_kind(size);
@@ -18653,8 +17161,8 @@ impl App {
                     fs,
                 );
             }
-            counts.ui_vertices = lu.vertex_count();
-            lu.scene_depth = drew_world.then(|| scene_depth.clone());
+            g.counts.ui_vertices = lu.vertex_count();
+            lu.scene_depth = g.drew_world.then(|| scene_depth.clone());
             mark!("blit");
             perf::timed(
                 || "ui render".into(),
@@ -18662,21 +17170,41 @@ impl App {
                     lu.render(
                         &gfx.gpu,
                         gfx.config.format,
-                        &mut encoder,
+                        encoder,
                         &view,
                         self.cfg.ui_size(size),
                         size,
-                        drew_world,
+                        g.drew_world,
                         ui_level,
                         scene_level,
                     )
                 },
             );
             mark!("game ui");
-            drew_world = true;
+            g.drew_world = true;
         }
+    }
 
-        let screen = egui_wgpu::ScreenDescriptor { size_in_pixels: size, pixels_per_point: output.pixels_per_point };
+    /// egui's pass (the debug overlay, the settings screens, the modern layer) and the game UI's top layer over it;
+    /// the command buffers egui-wgpu wrote first.
+    fn draw_egui(
+        &mut self,
+        gfx: &mut Gfx,
+        g: &mut FrameGpu,
+        size: [u32; 2],
+        jobs: &[egui::ClippedPrimitive],
+        pixels_per_point: f32,
+    ) -> Vec<wgpu::CommandBuffer> {
+        let view = g.view.clone();
+        let encoder = &mut g.encoder;
+        macro_rules! mark {
+            ($l:expr) => {
+                if let Some(t) = g.gpu_time.as_mut() {
+                    t.mark(encoder, $l);
+                }
+            };
+        }
+        let screen = egui_wgpu::ScreenDescriptor { size_in_pixels: size, pixels_per_point };
         let mut textures = std::mem::take(&mut self.egui_deltas);
         if !textures.set.is_empty() {
             perf::note(|| format!("egui textures {}", textures.set.len()));
@@ -18686,9 +17214,9 @@ impl App {
                 gfx.egui_renderer.update_texture(&gfx.gpu.device, &gfx.gpu.queue, *id, delta);
             }
         }
-        let extra = gfx.egui_renderer.update_buffers(&gfx.gpu.device, &gfx.gpu.queue, &mut encoder, &jobs, &screen);
+        let extra = gfx.egui_renderer.update_buffers(&gfx.gpu.device, &gfx.gpu.queue, encoder, jobs, &screen);
         {
-            let load = if drew_world {
+            let load = if g.drew_world {
                 wgpu::LoadOp::Load
             } else {
                 wgpu::LoadOp::Clear(wgpu::Color { r: 0.05, g: 0.06, b: 0.1, a: 1.0 })
@@ -18708,18 +17236,25 @@ impl App {
                     multiview_mask: None,
                 })
                 .forget_lifetime();
-            gfx.egui_renderer.render(&mut pass, &jobs, &screen);
+            gfx.egui_renderer.render(&mut pass, jobs, &screen);
         }
         mark!("egui");
         if self.ui_drawn
             && let Some(lu) = &mut self.game_ui
         {
-            lu.render_top(&mut encoder, &view, self.cfg.ui_size(size), size);
+            lu.render_top(encoder, &view, self.cfg.ui_size(size), size);
         }
         for id in &textures.free {
             gfx.egui_renderer.free_texture(id);
         }
         textures.clear();
+        extra
+    }
+
+    /// A mod's recording: started, stopped or ended as asked, and this frame copied for it.
+    fn record_frame(&mut self, gfx: &Gfx, g: &mut FrameGpu, size: [u32; 2]) {
+        let encoder = &mut g.encoder;
+        let frame = &g.frame;
         // A mod's recording: started or stopped as asked, ended with its mod or a new size, a frame copied for it.
         if let Phase::World(w) = &mut self.phase
             && let Some((owner, req)) = w.lua.record_req.take()
@@ -18755,11 +17290,27 @@ impl App {
             r.stop();
         }
         if let Some(r) = self.recorder.as_mut() {
-            r.copy(&mut encoder, &frame.texture);
+            r.copy(encoder, &frame.texture);
         }
         if let Phase::World(w) = &self.phase {
             *w.lua.recording.borrow_mut() = self.recorder.as_ref().map(|r| (r.owner.clone(), r.path.clone()));
         }
+    }
+
+    /// The frame's end: a screenshot's copy, the submit and what waits on it, the screenshot written, the present,
+    /// the measures and the next frame's time; gfx goes back.
+    fn finish_frame(
+        &mut self,
+        gfx: Gfx,
+        g: FrameGpu,
+        size: [u32; 2],
+        extra: Vec<wgpu::CommandBuffer>,
+        shots: (bool, Option<std::path::PathBuf>, bool),
+        times: [Instant; 3],
+    ) {
+        let (shoot, script_shot, game_shot) = shots;
+        let [t0, m_update, m_ui] = times;
+        let FrameGpu { frame, mut encoder, mut gpu_time, m_acquire, m_actors, counts, .. } = g;
         let row = (size[0] * 4).div_ceil(256) * 256;
         let capture = (shoot && gfx.config.usage.contains(wgpu::TextureUsages::COPY_SRC)).then(|| {
             let buf = gfx.gpu.device.create_buffer(&wgpu::BufferDescriptor {
@@ -18852,6 +17403,1800 @@ impl App {
             gfx.window.request_redraw();
         }
         self.gfx = Some(gfx);
+    }
+
+    fn redraw(&mut self) {
+        let t0 = Instant::now();
+        self.scene_loads();
+        self.frame_updates();
+        if !self.frame_shown() {
+            return;
+        }
+        let (shoot, dt) = self.frame_clock();
+        let m_update = Instant::now();
+
+        let Some(mut gfx) = self.gfx.take() else { return };
+        let mut raw = self.frame_input(&mut gfx, dt);
+        let size = [gfx.config.width, gfx.config.height];
+        let mut script_shot = self.drive_frame(&gfx, &mut raw);
+        let game_shot = self.shot_requests(&mut script_shot);
+        let shoot = shoot || script_shot.is_some();
+        let (jobs, pixels_per_point) = self.frame_ui(&mut gfx, raw, size, dt);
+        let m_ui = Instant::now();
+
+        let frame = match gfx.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
+            other => {
+                // Outdated or lost (KWin's full-screen re-ask makes the swapchain stale): rebuilt, and the next frame
+                // asked for here, or the loop waits on events with nothing scheduled and the window stays frozen.
+                log::debug!("surface: no frame ({other:?}), configured again");
+                gfx.surface.configure(&gfx.gpu.device, &gfx.config);
+                self.next_frame = Some(Instant::now() + std::time::Duration::from_millis(16));
+                self.gfx = Some(gfx);
+                return;
+            }
+        };
+        let mut g = self.frame_targets(&gfx, frame, size);
+        self.draw_world(&mut gfx, &mut g, dt);
+        self.draw_lobby_scenes(&gfx, &mut g, dt);
+        let levels = self.finish_scene(&gfx, &mut g, size);
+        self.draw_game_ui(&gfx, &mut g, size, dt, levels);
+        let extra = self.draw_egui(&mut gfx, &mut g, size, &jobs, pixels_per_point);
+        self.record_frame(&gfx, &mut g, size);
+        self.finish_frame(gfx, g, size, extra, (shoot, script_shot, game_shot), [t0, m_update, m_ui]);
+    }
+}
+
+/// One frame's GPU work in progress, handed between redraw's steps: the window's texture and view, the encoder and
+/// GPU timer, the background size and aspect, 3D LCD Mode, the gamma, the scene's targets, the frame's measures.
+struct FrameGpu {
+    frame: wgpu::SurfaceTexture,
+    view: wgpu::TextureView,
+    encoder: wgpu::CommandEncoder,
+    gpu_time: Option<crate::render::gputime::GpuTime>,
+    bg: [u32; 2],
+    aspect: f32,
+    lcd: bool,
+    gamma: [f32; 3],
+    scaled: bool,
+    scene_view: wgpu::TextureView,
+    scene_depth: wgpu::TextureView,
+    scene_tex: wgpu::Texture,
+    scene_raw: wgpu::TextureView,
+    scene_fmt: wgpu::TextureFormat,
+    m_acquire: Instant,
+    m_actors: Instant,
+    counts: perf::Counts,
+    drew_world: bool,
+}
+
+/// What the world's frame uses of the app besides the world, borrowed beside it: its steps take the world and its
+/// renderer at once.
+struct WorldDraw<'a> {
+    cfg: &'a Config,
+    portraits: &'a mut portrait::Portraits,
+    game_ui: &'a mut Option<GameUi>,
+    screen_fx_world: &'a mut Option<crate::render::screenfx::ScreenFx>,
+    screen_fx_zone: &'a mut Option<crate::render::screenfx::ScreenFx>,
+    effects_gpu: &'a mut Option<crate::render::effects::EffectsGpu>,
+    post_fx: &'a mut Option<crate::render::postfx::PostFx>,
+    audio: &'a mut Option<crate::audio::Audio>,
+    fx_census: &'a mut Option<Instant>,
+}
+
+/// The world's frame (App::draw_world): the actors posed and drawn, the scene, the effects, plates, shadows, lamps
+/// and the world's screen effects, into the scene targets.
+fn world_frame(cx: &mut WorldDraw, gfx: &mut Gfx, g: &mut FrameGpu, w: &mut World, dt: f32) {
+    // The frame's sets and the renderer come out of the world while the steps take them beside it.
+    let mut wf = std::mem::take(&mut w.frame);
+    wf.clear();
+    world_prepare(cx, gfx, g, w, &mut wf, dt);
+    if let Some(mut r) = w.renderer.take() {
+        world_uploads(gfx, g, w, &mut r, &wf);
+        world_lighting(cx, w, &mut r, &wf);
+        cross_capture(cx, gfx, g, w, &mut r, &wf);
+        pose_actors(gfx, g, w, &mut r, &mut wf);
+        let shadow_modes = shadow_setup(cx, gfx, g, w, &mut r, &mut wf);
+        draw_scene(cx, gfx, g, w, &mut r, &wf, shadow_modes);
+        draw_effects(cx, gfx, g, w, &mut r, &wf);
+        world_overlays(cx, gfx, g, w, &mut r, &wf);
+        w.renderer = Some(r);
+    }
+    w.frame = wf;
+}
+
+/// The world frame's values and sets, passed through its steps. It stays in the world between frames so the sets
+/// keep their room: each frame starts with them empty (clear).
+#[derive(Default)]
+struct WorldFrame {
+    // world_prepare's, for the rest.
+    dt: f32,
+    camera: crate::render::Camera,
+    hidden: HashSet<u32>,
+    model_hidden: HashSet<u32>,
+    idles: HashMap<u32, String>,
+    places: HashMap<u32, Place>,
+    drops: HashMap<u32, f32>,
+    look_points: HashMap<u32, Vec3>,
+    face_points: HashMap<u32, Vec3>,
+    fx_posed: HashSet<u32>,
+    new_lamps: Option<Vec<lamps::Lamp>>,
+    ev_clock: Option<event::HeldClock>,
+    portrait_cams: Vec<(lua::hud::Wanted, crate::render::Camera)>,
+    // pose_actors' own.
+    visible: HashSet<u32>,
+    shines: HashMap<u32, crate::render::Shine>,
+    refracts: HashMap<u32, f32>,
+    leads: HashMap<u32, f32>,
+    sdep_ids: HashSet<u32>,
+    event_ids: HashSet<u32>,
+    // pose_actors' for the shadows and the scene.
+    seen: HashMap<u32, shadows::Seen>,
+    far_out: HashSet<u32>,
+}
+
+impl WorldFrame {
+    /// Empties the sets for a new frame, keeping their room; the values are set again by world_prepare.
+    fn clear(&mut self) {
+        let WorldFrame {
+            dt: _,
+            camera: _,
+            hidden,
+            model_hidden,
+            idles,
+            places,
+            drops,
+            look_points,
+            face_points,
+            fx_posed,
+            new_lamps,
+            ev_clock,
+            portrait_cams,
+            visible,
+            shines,
+            refracts,
+            leads,
+            sdep_ids,
+            event_ids,
+            seen,
+            far_out,
+        } = self;
+        (*new_lamps, *ev_clock) = (None, None);
+        hidden.clear();
+        model_hidden.clear();
+        idles.clear();
+        places.clear();
+        drops.clear();
+        look_points.clear();
+        face_points.clear();
+        fx_posed.clear();
+        portrait_cams.clear();
+        visible.clear();
+        shines.clear();
+        refracts.clear();
+        leads.clear();
+        sdep_ids.clear();
+        event_ids.clear();
+        seen.clear();
+        far_out.clear();
+    }
+}
+
+/// Before the renderer's steps: the held zone frame, who is hidden, placements and look points, footsteps, doors,
+/// lifts, furniture, ships, the overlay lines and the lamps.
+fn world_prepare(cx: &mut WorldDraw, gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, wf: &mut WorldFrame, dt: f32) {
+    let WorldFrame {
+        hidden,
+        model_hidden,
+        idles,
+        places,
+        drops,
+        look_points,
+        face_points,
+        fx_posed,
+        portrait_cams,
+        ..
+    } = wf;
+    // A zone change holds the last frame drawn, still in the scene texture.
+    if let Some(zc) = w.zone_hold.as_mut().filter(|zc| !zc.captured) {
+        let fx =
+            cx.screen_fx_zone.get_or_insert_with(|| crate::render::screenfx::ScreenFx::new(&gfx.gpu, fg.scene_fmt));
+        fx.hold(&gfx.gpu, &mut fg.encoder, &fg.scene_tex);
+        zc.captured = true;
+    }
+    let camera = App::camera(w);
+    event::hide(w, hidden);
+    model_hidden.clone_from(hidden);
+    // Misc.: Character Models Displayed (0x3c, 25..50; FUN_10081680): the nearest other PCs only *(inf: which
+    // ones retail drops)*.
+    let cap = w.game.get(0x3c) as usize;
+    let mut pcs: Vec<(f32, u32)> = w
+        .entities
+        .iter()
+        .filter(|(id, e)| **id != w.my_id && e.kind == EntityKind::Player)
+        .map(|(id, e)| ((e.pos - w.pos).length(), *id))
+        .collect();
+    if pcs.len() > cap {
+        pcs.sort_by(|a, b| a.0.total_cmp(&b.0));
+        hidden.extend(pcs[cap..].iter().map(|p| p.1));
+    }
+    // A riding animal goes with its rider; a rider waits hidden for its mount.
+    let animals: Vec<u32> = hidden
+        .iter()
+        .flat_map(|id| [ride::ANIMAL | id, indi::AURA | id, fishrod::ROD | id, chair::CHAIR | id])
+        .collect();
+    hidden.extend(animals);
+    hidden.extend(ride::hidden(w));
+    if let Some(l) = &w.event {
+        idles.clone_from(&l.st.idle);
+    }
+    // Placements first (look targets read other actors), then each actor's motion and pose.
+    let my_dir = w.net.me.lock().map(|m| m.dir).unwrap_or(0);
+    places.extend(w.actors.keys().filter_map(|id| actor_place(w, *id, my_dir).map(|p| (*id, p))));
+    drops.extend(places.iter().map(|(id, p)| (*id, ride::bone0_drop(w, *id, p.status))).filter(|(_, d)| *d != 0.0));
+    // Doors have no model; their schedulers' sounds play at the door's own position (op 0x0b, actor2).
+    for (id, e) in w.entities.iter().filter(|(_, e)| e.door != 0 || e.lift.is_some()) {
+        places.entry(*id).or_insert(Place {
+            pos: e.pos,
+            forward: forward_from_dir(e.dir),
+            tilt: [0.0; 2],
+            status: 0,
+            ratio: 0.0,
+            size: 0,
+        });
+    }
+    look_points.extend(w.actors.iter().filter_map(|(id, a)| match a.look.mode {
+        actmotion::LookMode::Actor(t, k) => attach_point(w, places, t, k).map(|p| (*id, p)),
+        _ => None,
+    }));
+    // FUN_100d5b10: we look at our target, everyone else at its server face target, only in the statuses
+    // that allow it (FUN_10095790), never at doors; the target's point 3, 1.2 higher when it is hidden.
+    let by_index = |i: u16| if i == w.my_index { Some(w.my_id) } else { w.entity_at(i).map(|(id, _)| id) };
+    fx_posed.extend(w.effects.posed_actors());
+    face_points.extend(w.actors.keys().filter_map(|id| {
+        let st = places.get(id)?.status;
+        if !matches!(st, 0 | 5 | 0x2f | 0x30 | 0x55 | 0x3f..=0x53) {
+            return None;
+        }
+        let t =
+            if *id == w.my_id { w.target? } else { by_index(w.entities.get(id).map(|e| e.face).filter(|f| *f != 0)?)? };
+        if t == *id || t == myroom::DOOR_ID || w.entities.get(&t).is_some_and(|e| e.door != 0) {
+            return None;
+        }
+        let mut q = attach_point(w, places, t, 3)?;
+        if hidden.contains(&t) {
+            q.y -= 1.2;
+        }
+        Some((*id, q))
+    }));
+    // Foot points that came back from earlier frames: steps (FUN_100d2970).
+    if let Some(pts) = w.renderer.as_mut().map(|r| r.points.take()) {
+        let (rides, pts): (Vec<_>, Vec<_>) = pts.into_iter().partition(|(k, _)| ride::is_key(*k));
+        ride::points(w, rides);
+        let (pick, steps): (Vec<_>, Vec<_>) = pts.into_iter().partition(|(k, _)| k >> 63 != 0);
+        let mut fresh: HashMap<u32, HashMap<u16, Vec3>> = HashMap::new();
+        for (k, p) in pick {
+            fresh.entry((k >> 16) as u32).or_default().insert(k as u16, p);
+        }
+        w.pick_points.extend(fresh);
+        w.pick_points.retain(|id, _| w.pick_rect.contains(id));
+        footsteps::steps(w, places, steps);
+    }
+    let eye = w.cam.eye;
+    footsteps::wade(w, places, eye);
+    // Door parts animate against the zone's tick clock; the frame's scheduler moves go in first.
+    if let Some(r) = w.renderer.as_mut() {
+        r.now = w.started.elapsed().as_secs_f32() * 60.0;
+        r.voyage = w.voyage.matrix;
+    }
+    doors::moves(w, &gfx.gpu);
+    lifts::moves(w, &gfx.gpu);
+    // Mog House furniture loaded for this scene goes up.
+    if w.renderer.is_some()
+        && let Some(l) = w.furniture.ready.take()
+    {
+        let files = furniture::State::apply(w, l);
+        if let Some(r) = w.renderer.as_mut() {
+            r.set_furniture(&gfx.gpu, files);
+        }
+    }
+    // Pieces moved in place (layout mode).
+    if let Some(r) = w.renderer.as_mut() {
+        for (file, old, new) in std::mem::take(&mut w.furniture.moves) {
+            r.move_furniture(&gfx.gpu, file, old, new);
+        }
+    }
+    // Ships (client/ships.rs): new models go up, gone ones down, then each one's pose from the last drives.
+    if w.renderer.is_some() {
+        for l in std::mem::take(&mut w.ships.ready) {
+            if let Some(m) = ships::create(w, &l)
+                && let Some(r) = w.renderer.as_mut()
+            {
+                r.set_model_actor(&gfx.gpu, l.entity, &l.geo, l.textures, m);
+            }
+        }
+        let removed = std::mem::take(&mut w.ships.removed);
+        let moved = ships::apply(w, dt * 60.0, model_hidden);
+        if let Some(r) = w.renderer.as_mut() {
+            for id in removed {
+                r.remove_model_actor(id);
+            }
+            for (id, m, shown) in moved {
+                r.move_model_actor(&gfx.gpu, id, m, shown);
+            }
+        }
+    }
+    let lines = layout::overlay(w);
+    let ceiling = !w.layout.as_ref().is_some_and(|l| l.view == 0);
+    let shapes = lua::world_shapes(w);
+    if let Some(r) = w.renderer.as_mut() {
+        r.set_lines(&gfx.gpu, lines);
+        r.set_world_shapes(&gfx.gpu, shapes);
+        r.show_link999(&gfx.gpu, ceiling);
+    }
+    let new_lamps = if w.renderer.as_ref().is_some_and(|r| r.ready(&gfx.gpu)) {
+        w.lamps.update(&mut w.effects, w.ground.as_ref(), cx.cfg.lamp_lights)
+    } else {
+        None
+    };
+    let ev_clock = event::clock(w);
+    // The Lua HUD's portraits: each wanted actor's face camera (client/portrait.rs).
+    portrait_cams.extend(
+        w.lua
+            .portraits_wanted()
+            .into_iter()
+            .take(portrait::SLOTS)
+            .filter_map(|p| Some((p, portrait::camera(w, places, p.entity, p.look.oval)?))),
+    );
+    (wf.dt, wf.camera, wf.new_lamps, wf.ev_clock) = (dt, camera, new_lamps, ev_clock);
+}
+
+/// This frame's uploads: the zone and the models actors wait for, under the frame's budget.
+fn world_uploads(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer, wf: &WorldFrame) {
+    let WorldFrame { new_lamps, .. } = wf;
+    if let Some(l) = &new_lamps {
+        r.set_lamps(&gfx.gpu, &l.iter().map(|l| (l.pos, l.slot)).collect::<Vec<_>>());
+    }
+    // This frame's copies: a zone going up (more while its indicator hides the world), then the models
+    // actors are waiting for.
+    use crate::render::upload::{FRAME_MS, LOADING_MS};
+    gfx.gpu.begin_uploads(if w.downloading.is_some() { LOADING_MS } else { FRAME_MS });
+    perf::timed(|| "uploads".into(), || r.upload_step(&gfx.gpu, &mut fg.encoder));
+    // A preloaded zone streams in whatever room is left (client/preload.rs).
+    if let Some(p) = w.preload.as_mut().and_then(|p| p.ready.as_mut()) {
+        p.gpu.0.upload_step(&gfx.gpu, &mut fg.encoder);
+    }
+    fg.mark("uploads");
+    if let Some(since) = w.zone_uploading
+        && r.ready(&gfx.gpu)
+    {
+        log::info!("zone on the GPU {:.0} ms after it loaded", since.elapsed().as_secs_f32() * 1000.0);
+        w.zone_uploading = None;
+        w.downloading = None;
+    }
+}
+
+/// The zone's lighting for the hour and weather: the eased env, the shadows' level, the draw distance and the
+/// areas' lights.
+fn world_lighting(cx: &WorldDraw, w: &mut World, r: &mut ZoneRenderer, wf: &WorldFrame) {
+    let (dt, ev_clock) = (wf.dt, wf.ev_clock);
+    // Zone lighting for the Vana'diel time and weather the server gave us.
+    if let (Some(zw), Some((t, at))) = (&w.zone_weather, w.clock) {
+        // Op 0x77 sets the hour and weather while an event runs.
+        let ev_weather = w.event.as_ref().and_then(|l| l.st.weather);
+        let clock = crate::dat::weather::vana_minute(t, at.elapsed().as_secs_f32());
+        let minute = ev_clock.map_or(clock, |c| c.minute as f32);
+        // thunk_FUN_1018ade0: each weather object blends its child chain's output into its own env by
+        // (total - left) / total; a finished one drops the chain before it. Op 0x77's weather stands alone.
+        if let Some(k) = w.weather_chain.iter().rposition(|c| c.2 <= 0.0 || c.1.elapsed().as_secs_f32() >= c.2) {
+            w.weather_chain.drain(..k);
+        }
+        let chain: Vec<(&str, f32)> = match ev_weather {
+            Some(x) => vec![(crate::dat::weather::weather_tag(x), 1.0)],
+            None if w.weather_chain.is_empty() => vec![(crate::dat::weather::weather_tag(w.weather), 1.0)],
+            None => w
+                .weather_chain
+                .iter()
+                .map(|c| {
+                    (
+                        crate::dat::weather::weather_tag(c.0),
+                        if c.2 <= 0.0 { 1.0 } else { (c.1.elapsed().as_secs_f32() / c.2).min(1.0) },
+                    )
+                })
+                .collect(),
+        };
+        let mix = |a: &dyn Fn(&str) -> Option<crate::dat::weather::Env>| -> Option<crate::dat::weather::Env> {
+            let mut env = a(chain[0].0)?;
+            for &(tag, t) in &chain[1..] {
+                if let Some(e) = a(tag) {
+                    env = crate::dat::weather::Env::lerp(&env, &e, t);
+                }
+            }
+            Some(env)
+        };
+        // FUN_10187720 once a 2-tick retail frame (stock 30 fps), held between them.
+        w.light_acc += dt * 60.0;
+        let mut steps = 0;
+        while w.light_acc >= 2.0 && steps < 8 {
+            w.light_acc -= 2.0;
+            steps += 1;
+        }
+        w.light_acc = w.light_acc.min(2.0);
+        // The Clipping setting scales each env's fog and the scenery's draw distance (dat/weather.rs).
+        let (x, zone) = (crate::dat::weather::clipping_factor(w.game.get(0x3e)), w.zone.unwrap_or(0));
+        let step = |ease: &mut crate::dat::weather::LightEase, e: &crate::dat::weather::Env| {
+            for _ in 0..steps {
+                ease.step(e, minute);
+            }
+            crate::dat::weather::Lighting::from_env_eased(
+                e,
+                minute,
+                ease,
+                crate::dat::weather::clipping(e.draw_dist, x, zone).1,
+            )
+        };
+        r.lighting = mix(&|t| zw.at(t, minute)).map(|e| step(&mut w.light_ease, &e));
+        // Real character shadows (render/sunshadow.rs): cast by the sun, or by the moon at night (fainter by its
+        // colour, softer), faded out around the change at 6:00 and 18:00. Indoors the room light keeps day's edges.
+        r.shadow_level = crate::render::sunshadow::twilight(minute);
+        r.shadow_soft = if r.lighting.is_some_and(|l| l.fixed) || crate::dat::weather::sun_moon(minute).0.y >= 0.0 {
+            1.0
+        } else {
+            2.0
+        };
+        // FUN_1018b8f0: 100 before the env is up. Settings' Draw Distance scales it, or lifts it (0).
+        let (d, k) = crate::dat::weather::clipping(r.lighting.map_or(100.0, |l| l.draw_dist), x, zone);
+        let scale = cx.cfg.draw_distance as f32 / 100.0;
+        // Unlimited lifts the zone's distance only: a placement's own distance still holds (Ru'Aun's 1-unit
+        // helper strips), as far as at the largest step (3x).
+        r.clip = if scale > 0.0 { [d * scale, k * scale * scale] } else { [0.0, k * 9.0] };
+        r.retail_reach = d;
+        if steps > 0 {
+            log::debug!(target: "light", "{minute:.3}: bg dir {:.3} colour {:.4}", w.light_ease.bg.dir, w.light_ease.bg.color);
+        }
+        let sub_areas = w.sub.weather.iter().flat_map(|s| s.areas.iter());
+        w.area_lights = zw
+            .areas
+            .iter()
+            .chain(sub_areas)
+            .filter_map(|(&id, a)| Some((id, mix(&|t| a.at(t, minute))?.area_light())))
+            .collect();
+        // Scenery areas (FUN_101889c0 finds the area object by 4cc, the sub-area's after the zone's), each
+        // with its own eased light.
+        let keys: Vec<u32> = r.area_keys().to_vec();
+        let mut lights = Vec::with_capacity(keys.len());
+        for k in keys {
+            let sub = w.sub.weather.as_ref().and_then(|s| s.areas.get(&k));
+            let e = sub.or_else(|| zw.areas.get(&k)).and_then(|a| mix(&|t| a.at(t, minute)));
+            lights.push(e.map(|e| step(w.area_ease.entry((sub.is_some(), k)).or_default(), &e)));
+        }
+        r.set_area_lights(lights);
+    }
+}
+
+/// Op 0x10: the frame before the cut, drawn once offscreen from the camera it had, for the crossfade.
+fn cross_capture(cx: &mut WorldDraw, gfx: &Gfx, fg: &FrameGpu, w: &mut World, r: &mut ZoneRenderer, wf: &WorldFrame) {
+    let (bg, aspect, scene_fmt) = (fg.bg, fg.aspect, fg.scene_fmt);
+    let scene_depth = fg.scene_depth.clone();
+    let WorldFrame { hidden, .. } = wf;
+    // Op 0x10: the frame before the cut, drawn once offscreen from the camera it had (last frame's
+    // poses; its own submit so the zone uniforms keep that camera).
+    if let Some(cr) = w.screen.cross.filter(|c| !c.captured) {
+        if let Some(cam) = cr.camera {
+            let fx =
+                cx.screen_fx_world.get_or_insert_with(|| crate::render::screenfx::ScreenFx::new(&gfx.gpu, scene_fmt));
+            let target = fx.capture_target(&gfx.gpu, bg);
+            let actors: Vec<&crate::render::ActorGpu> = w
+                .actors
+                .iter()
+                .filter(|(id, a)| !a.vanished() && !hidden.contains(id))
+                .filter_map(|(_, a)| a.gpu.as_ref())
+                .collect();
+            let mut enc = gfx.gpu.device.create_command_encoder(&Default::default());
+            r.render(&gfx.gpu, &mut enc, target, &scene_depth, &cam, aspect, &actors);
+            gfx.gpu.queue.submit([enc.finish()]);
+        }
+        if let Some(c) = &mut w.screen.cross {
+            c.captured = true;
+        }
+    }
+}
+
+/// Each actor's model, motion, pose, attach points and lights, the visible set and the poses up; the actors seen
+/// and those out of reach come back.
+fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer, wf: &mut WorldFrame) {
+    let aspect = fg.aspect;
+    let dt = wf.dt;
+    let WorldFrame {
+        camera,
+        hidden,
+        idles,
+        places,
+        look_points,
+        face_points,
+        fx_posed,
+        visible,
+        shines,
+        refracts,
+        leads,
+        sdep_ids,
+        event_ids,
+        seen,
+        far_out,
+        ..
+    } = wf;
+    r.begin_poses();
+    // FUN_10014d50: the frame count the animation frame rate keys on.
+    w.anim_frame = w.anim_frame.wrapping_add(1);
+    let (anim_cfg, anim_frame) = (w.game.get(0x40), w.anim_frame);
+    let (cview, cproj) = (camera.view(), camera.proj(aspect));
+    let eye = camera.eye;
+    // Doors: a +-0.6 cube at the door (FUN_100ac8e0's class), tested like the rest.
+    let cube = box_corners([-0.6, 0.6, 0.6, -0.6, 0.6, -0.6]);
+    // The Mog House door (entity +0x12c bit 17, vtable +0x148) is never culled.
+    if w.entities.contains_key(&myroom::DOOR_ID) {
+        visible.insert(myroom::DOOR_ID);
+    }
+    for (id, e) in w.entities.iter().filter(|(_, e)| e.door != 0) {
+        if let Some((rect, z)) = box_on_screen(cview, cproj, glam::Mat4::from_translation(e.pos), &cube) {
+            visible.insert(*id);
+            r.occl.query(*id, rect, z);
+        }
+    }
+    let in_event = w.event.is_some() || w.event_pending.is_some();
+    // Scheduler ops 0x40..0x47: shine images go up once; each actor's overlay this frame.
+    for (id, (lib, node), u, v, tf) in w.effects.shines() {
+        let key = (w.effects.reg.libs[lib].file_id, node);
+        if !r.has_shine(key)
+            && let Some(t) = w.effects.reg.libs[lib].texture_at(node)
+        {
+            r.add_shine(&gfx.gpu, key, &w.effects.reg.libs[lib].textures[t]);
+        }
+        let c = |sh: u32| ((tf >> sh) & 0xff) as f32 / 255.0;
+        shines.insert(id, crate::render::Shine { key, u, v, tf: [c(16), c(8), c(0), c(24)] });
+    }
+    // FFXI_SHINE_TEST (checks): a striped shine on our own actor, to see the pass and its 0040 wrap.
+    if std::env::var_os("FFXI_SHINE_TEST").is_some() {
+        let key = (u32::MAX, 0);
+        if !r.has_shine(key) {
+            let rgba: Vec<u8> = (0..64 * 64)
+                .flat_map(|i| if (i % 64) / 8 % 2 == 0 { [255, 255, 255, 128] } else { [0, 0, 0, 0] })
+                .collect();
+            r.add_shine(&gfx.gpu, key, &crate::dat::zone::Texture::new(String::new(), 0, 64, 64, rgba));
+        }
+        shines.insert(w.my_id, crate::render::Shine { key, u: 0.25, v: 0.0, tf: [0.5, 0.5, 0.5, 0.5] });
+    }
+    // Ops 0x48 / 0x49: the refraction level per actor.
+    refracts.extend(w.effects.refractions());
+    let hold_now = Instant::now();
+    // FUN_100cb400: each linked follower's leader frame (last frame's: one frame behind at most).
+    let frame_of =
+        |a: &Actor| Some(a.ticks * actmotion::find(&a.extra, a.character.as_ref()?, &a.motion).first()?.speed * 0.5);
+    leads.extend(w.actors.iter().filter_map(|(id, a)| Some((*id, frame_of(w.actors.get(&a.motion_link?)?)?))));
+    let me = w.my_id;
+    let my_strafe = w.my_strafe;
+    // `sdep` entities (trusts, death-flagged): no corpse pose in status 2 / 3 (actmotion::sdep_stand).
+    sdep_ids.extend(
+        w.entities.iter().filter(|(id, e)| **id != me && (e.marks.trust || e.marks.death_flag)).map(|(id, _)| *id),
+    );
+    // The event's actors log their motion changes as ours do (cutscene reports).
+    if let Some(l) = &w.event {
+        event_ids.extend(&l.st.bound);
+    }
+    // FUN_10188a50: the gusts, every frame in retail (30 fps); ours on the cloth's 30 Hz clock.
+    w.wind.advance(dt);
+    let wind = (w.wind.tick, w.wind.dir, w.wind.strength);
+    // FUN_100cd040's fishing fade needs our own drawobj (FUN_101cc4f0) and our place.
+    let (fish, my_pos) = (
+        fishing::any_fishing_status(w.my_motion.status)
+            && w.actors.get(&w.my_id).is_some_and(|a| a.character.is_some()),
+        w.pos,
+    );
+    for (id, a) in w.actors.iter_mut() {
+        // A changed look goes up in the background; the swap is one frame, the old model drawn till then.
+        if let Some(nx) = a.next.clone()
+            && let Some(g) = r.skinned_actor(&gfx.gpu, &nx)
+        {
+            a.next = None;
+            a.adopt(&nx, false);
+            a.gpu = Some(g);
+            a.top_key.clear();
+        }
+        let Some(ch) = a.character.clone() else { continue };
+        let Some(&Place { pos, forward, tilt, status, ratio, size }) = places.get(id) else { continue };
+        let (pick_status, pick_ratio) = actmotion::sdep_stand(status, ratio, sdep_ids.contains(id));
+        if a.gpu.is_none() {
+            // Not drawn until its model is on the GPU (a few new models a frame).
+            let Some(g) = perf::timed(
+                || format!("model {id:#x} {} ({} textures)", a.key, ch.textures.len()),
+                || r.skinned_actor(&gfx.gpu, &ch),
+            ) else {
+                continue;
+            };
+            a.gpu = Some(g);
+            a.top_key.clear();
+        }
+        // A one-off combat motion wins; it ends after its length and blends back.
+        if a.oneshot.as_ref().is_some_and(|o| o.ticks >= o.len) {
+            a.oneshot = None;
+        }
+        let extra = a.extra.clone();
+        let cache = std::cell::RefCell::new(std::mem::take(&mut a.find_cache));
+        let has = |n: &str| !actmotion::find_cached(&mut cache.borrow_mut(), &extra, &ch, n).is_empty();
+        // Motion and rate as FFXiMain picks them (FUN_100c6b70); frame += ticks * speed * 0.5.
+        // Then a scheduler's motion (event / weapon draw) over the status motion.
+        // +0x80 up (ops 0x07 / 0x08 / 0x59, w.noreact): FUN_100c83c0 returns at once, no status motion re-pick.
+        let held = w.noreact.get(id).is_some_and(|t| *t > hold_now);
+        let (name, rate, once, blend) = match (&a.oneshot, a.play.as_ref().and_then(|p| p.current())) {
+            (Some(o), _) => (o.name.clone(), o.speed, true, crate::motion::BLEND_TICKS),
+            (None, Some(m)) => {
+                let rate = actmotion::op_rate(
+                    actmotion::find_cached(&mut cache.borrow_mut(), &extra, &ch, &m.name).first().copied(),
+                    m.ticks as f32,
+                );
+                (m.name.clone(), rate, m.count == 1, m.blend.max(1) as f32)
+            }
+            // The motion stays, a counted one on its last frame.
+            (None, None) if held && !a.motion.is_empty() => {
+                (a.motion.clone(), a.rate_now, a.once, crate::motion::BLEND_TICKS)
+            }
+            // Op 0x5e / 0x6b: the event's idle motion while the actor stands.
+            (None, None) if ratio < 1e-3 && idles.get(id).is_some_and(|n| has(n)) => {
+                (idles[id].clone(), 1.0, false, crate::motion::BLEND_TICKS)
+            }
+            // FUN_100c8930 (LAB_100c8dde): while the jump timer runs, "jmp" at rate 1 ("jmp*" engaged, "jmp "
+            // otherwise; ours takes the prefix).
+            (None, None) if a.jump >= 0.0 && matches!(status, 0 | 1) => {
+                ("jmp".to_string(), 1.0, false, crate::motion::BLEND_TICKS)
+            }
+            (None, None) => {
+                // FUN_100c8bb0: our strafe / backpedal motions over the walk / run, at its rate.
+                let (n, r) = crate::motion::choose_strafed(
+                    &a.motion_names.unwrap_or(ch.motions),
+                    pick_status,
+                    pick_ratio,
+                    if *id == me { my_strafe } else { 0 },
+                    fixed_model(a),
+                );
+                // FUN_100c6380: a status motion the model lacks is not queued (FUN_100cb8e0 fails, +0x1f6
+                // stays), so what plays goes on: the walk of an NPC without a run.
+                if !has(n) && !a.motion.is_empty() && has(&a.motion) {
+                    (a.motion.clone(), a.rate_now, a.once, crate::motion::BLEND_TICKS)
+                } else {
+                    (n.to_string(), r * a.rate_scale, false, crate::motion::BLEND_TICKS)
+                }
+            }
+        };
+        a.rate_now = rate;
+        // Fall back to idle when a model lacks a motion; chocobos idle with chi.
+        let frames_of = |motion: &str, ticks: f32, once: bool| -> Vec<_> {
+            [motion, ch.motions.idle, "idl", "chi"]
+                .iter()
+                .map(|n| actmotion::find_cached(&mut cache.borrow_mut(), &extra, &ch, n))
+                .find(|a| !a.is_empty())
+                .unwrap_or_default()
+                .into_iter()
+                .map(|x| {
+                    let f = ticks * x.speed * 0.5;
+                    (x, if once { f.min(x.frames as f32) } else { crate::motion::loop_frame(f, x.frames) })
+                })
+                .collect()
+        };
+        let mask = |v: &[(&crate::dat::character::Animation, f32)]| {
+            v.iter().fold(0u8, |m, (x, _)| m | 1u8.checked_shl(actmotion::region(x) as u32).unwrap_or(0))
+        };
+        if name != a.motion
+            || std::mem::take(&mut a.restart)
+            || (once && a.oneshot.as_ref().is_some_and(|o| o.ticks == 0.0))
+        {
+            let line = format!(
+                "actor {id:#x}: {} -> {name} at {:.1} (oneshot {}, play {}, status {status}, ratio {ratio:.2})",
+                a.motion,
+                a.ticks,
+                a.oneshot.is_some(),
+                a.play.is_some()
+            );
+            // Our own actor's at info (the user's runs log it), the others' at debug.
+            if *id == me {
+                log::info!(target: "motion_me", "{line}");
+            } else if event_ids.contains(id) {
+                log::info!(target: "motion_event", "{line}");
+            } else {
+                log::debug!(target: "motion", "{line}");
+            }
+            // FUN_100cb500: a new motion takes only the regions it has chunks for; the others go on with what
+            // they play, but a finished counted one goes once region 0 is taken (FUN_100cb8e0's tail).
+            // A play start (actmotion::start / play_op) has moved the old motion to `prev` already.
+            let new = mask(&frames_of(&name, 0.0, false));
+            let was = if a.motion.is_empty() { a.prev.clone() } else { Some((a.motion.clone(), a.ticks, a.once)) };
+            let old = was.as_ref().filter(|w| !w.0.is_empty()).map_or(0, |w| mask(&frames_of(&w.0, 0.0, false)));
+            let old_mask = old;
+            for r in 0..3u8 {
+                let cur = if old >> r & 1 != 0 { was.clone() } else { a.keep[r as usize].take() };
+                let done = |(n, t, o): &(String, f32, bool)| {
+                    *o && frames_of(n, *t, true).iter().any(|(x, f)| actmotion::region(x) == r && *f >= x.frames as f32)
+                };
+                a.keep[r as usize] =
+                    if new >> r & 1 != 0 || (new & 1 != 0 && cur.as_ref().is_some_and(done)) { None } else { cur };
+            }
+            if a.keep.iter().any(|k| k.is_some()) {
+                let keeps: Vec<_> = a.keep.iter().map(|k| k.as_ref().map(|k| k.0.as_str())).collect();
+                if *id == me {
+                    log::info!(target: "motion_me", "actor {id:#x}: {name} keeps {keeps:?}");
+                } else {
+                    log::debug!(target: "motion", "actor {id:#x}: {name} keeps {keeps:?}");
+                }
+            }
+            if !a.motion.is_empty() {
+                a.prev = Some((std::mem::take(&mut a.motion), a.ticks, a.once));
+                a.blend = 0.0;
+            }
+            a.blend_len = blend;
+            // FUN_1001ad00 (batch 5 item 9): a new motion in a region that already held one starts at the
+            // same fraction of its cycle as the old entry had reached, pushed on by half the blend at the
+            // new rate, so the feet stay in step through a walk / run change. Retail's lengths and
+            // positions are in frames / speed; our tick is twice that unit.
+            let span = |m: &str| {
+                frames_of(m, 0.0, false)
+                    .first()
+                    .map(|(x, _)| (x.frames as f32, x.speed))
+                    .filter(|(f, sp)| *f > 0.0 && *sp > 0.0)
+            };
+            let old =
+                a.prev.as_ref().filter(|p| !p.0.is_empty()).and_then(|p| span(&p.0).map(|(f, sp)| (p.1 * 0.5, f / sp)));
+            // Back from a one-shot or scheduler motion to the status motion that went on under it: the
+            // regions it kept were never queued again (FUN_100c83c0 queues only a changed +0x1f6), so they
+            // go on in step and do not blend; the old motion's own regions blend back to it.
+            // A new one-shot over the same status motion (the next swing) leaves the regions neither keys
+            // to it, too.
+            let under = a.under.take();
+            a.under_skip = match &under {
+                Some(u) if u.0 == name => !old_mask & 7,
+                Some(_) => !old_mask & !new & 7,
+                None => 0,
+            };
+            a.ticks = match (old, span(&name)) {
+                _ if !once && under.as_ref().is_some_and(|u| u.0 == name) => under.as_ref().map_or(0.0, |u| u.1),
+                (Some((at, old_len)), Some((frames, speed))) if !once && old_len > 0.001 => {
+                    crate::motion::cycle_sync(at, old_len, frames, speed, rate, blend)
+                }
+                _ => 0.0,
+            };
+            a.prev_under = under.filter(|u| u.0 != name);
+            a.motion = name.clone();
+        }
+        a.once = once;
+        a.ticks += dt * 60.0 * rate;
+        // A leader frame in (0, ours] becomes ours.
+        // The leader first: the chunk search runs only for actors that follow one.
+        if let Some(&lf) = leads.get(id)
+            && let Some(speed) =
+                actmotion::find(&extra, &ch, &a.motion).first().map(|x| x.speed * 0.5).filter(|s| *s > 0.0)
+            && lf > 0.0
+            && lf <= a.ticks * speed
+        {
+            a.ticks = lf / speed;
+        }
+        if a.jump >= 0.0 {
+            a.jump -= dt * 60.0;
+        }
+        // One-shots end by real ticks: their motion runs at the op's stretch rate.
+        if let Some(o) = &mut a.oneshot {
+            o.ticks += dt * 60.0;
+        }
+        // The kept regions run on at the status rate (FUN_100c83c0 sets a new rate on every region's newest
+        // entry *(inf: every frame)*).
+        for k in a.keep.iter_mut().flatten() {
+            k.1 += dt * 60.0 * rate;
+        }
+        // FUN_1001ad00's queue replaces only the regions a new motion keys: under a one-shot or scheduler motion
+        // the status motion goes on (an Elvaan's moving swing amf1 keys the upper body over the run), so it
+        // goes first and the motion's tracks win where it has them.
+        // +0x80 up (the swing's op 0x59 holds it from its start to about 30 ticks past the hit):
+        // FUN_100c83c0 returns before the pick, so the status motion under a one-shot stays what it was,
+        // at its rate, whatever the move does meanwhile.
+        let (base, base_rate) = match a.play.as_ref().filter(|_| held) {
+            Some(p) => (p.base.clone(), a.base_rate_now),
+            None if held && a.under.is_some() && !a.base_name.is_empty() => (a.base_name.clone(), a.base_rate_now),
+            None => {
+                let (b, r) = crate::motion::choose_strafed(
+                    &a.motion_names.unwrap_or(ch.motions),
+                    pick_status,
+                    pick_ratio,
+                    if *id == me { my_strafe } else { 0 },
+                    fixed_model(a),
+                );
+                (b.to_string(), r)
+            }
+        };
+        // A changed status motion under a one-shot is queued as any (FUN_1001ad00): it starts at the old
+        // one's fraction of its cycle. *(inf: its 16-tick blend in those regions is not modelled.)*
+        if base != a.base_name
+            && a.under.is_some()
+            && let (Some((of, osp)), Some((nf, nsp))) = (
+                frames_of(&a.base_name, 0.0, false).first().map(|(x, _)| (x.frames as f32, x.speed)),
+                frames_of(&base, 0.0, false).first().map(|(x, _)| (x.frames as f32, x.speed)),
+            )
+            && of > 0.0
+            && osp > 0.0
+            && nf > 0.0
+            && nsp > 0.0
+        {
+            a.base_ticks = crate::motion::cycle_sync(
+                a.base_ticks * 0.5,
+                of / osp,
+                nf,
+                nsp,
+                base_rate * a.rate_scale,
+                crate::motion::BLEND_TICKS,
+            );
+        }
+        a.base_rate_now = base_rate;
+        a.base_ticks += dt * 60.0 * base_rate * a.rate_scale;
+        // After a one-shot's end its motion may stay while +0x80 holds (no pick): still over the status
+        // motion.
+        let under = name != base && (a.oneshot.is_some() || a.play.is_some() || (held && a.under.is_some()));
+        if under {
+            a.under = Some((base.clone(), a.base_ticks));
+        } else {
+            a.under = None;
+            // The status motion playing alone: its clock is the one a one-shot's regions go on with.
+            if name == base {
+                a.base_ticks = a.ticks;
+            }
+        }
+        a.base_name = base.clone();
+        // The kept regions' own chunks (the status motion under a one-shot covers them).
+        let kept: Vec<_> = if under {
+            Vec::new()
+        } else {
+            (0..3u8)
+                .filter_map(|r| a.keep[r as usize].as_ref().map(|k| (r, k)))
+                .flat_map(|(r, (n, t, o))| {
+                    frames_of(n, *t, *o).into_iter().filter(move |(x, _)| actmotion::region(x) == r)
+                })
+                .collect()
+        };
+        let mut anims = kept.clone();
+        if under {
+            anims.extend(frames_of(&base, a.base_ticks, false));
+        }
+        anims.extend(frames_of(&name, a.ticks, once));
+        // FUN_1001a420 poses regions 4 down to 0 and the first to write a bone keeps it: higher regions win, so
+        // they go last here (the last track wins); within a region the newer motion stays last.
+        anims.sort_by_key(|(x, _)| actmotion::region(x));
+        // The mouth motion of a spoken line goes over the body motion (its face tracks win).
+        if let Some(m) = &mut a.mouth
+            && let Some(mt) = m.ticks
+        {
+            // FUN_100ce0e0: the entity's face motion, else 'mou6'.
+            let mouth: Vec<_> = [a.mouth_name, "mou6"]
+                .iter()
+                .map(|n| actmotion::find_cached(&mut cache.borrow_mut(), &extra, &ch, n))
+                .find(|v| !v.is_empty())
+                .unwrap_or_default();
+            let mut playing = false;
+            for x in mouth {
+                let f = mt * x.speed * 0.5;
+                if f < x.frames as f32 {
+                    anims.push((x, f));
+                    playing = true;
+                }
+            }
+            if !playing {
+                m.ticks = None;
+            }
+        }
+        // FUN_100cdf90: every rand() % 480 ticks the eyes blink (eye3, region 3) unless op 0xb5 holds them.
+        a.blink_wait -= dt * 60.0;
+        if a.blink_wait < 0.0 {
+            a.blink_wait = (actmotion::crand() % 480) as f32;
+            if !w.effects.no_blink.contains(id) && !a.blink_off {
+                a.blink = Some(0.0);
+            }
+        }
+        if let Some(bt) = a.blink.as_mut() {
+            *bt += dt * 60.0;
+            let eyes = actmotion::find_cached(&mut cache.borrow_mut(), &extra, &ch, "eye3");
+            let mut playing = false;
+            for x in eyes {
+                let f = *bt * x.speed * 0.5;
+                if f < x.frames as f32 {
+                    anims.push((x, f));
+                    playing = true;
+                }
+            }
+            if !playing {
+                a.blink = None;
+            }
+        }
+        let regions = mask(&anims) & 7;
+        if regions != a.regions {
+            log::debug!(target: "motion", "actor {id:#x}: regions {:#05b} -> {regions:#05b} ({name}, base {base}, keep {:?})", a.regions, a.keep.iter().map(|k| k.as_ref().map(|k| k.0.as_str())).collect::<Vec<_>>());
+            a.regions = regions;
+        }
+        a.blend += dt * 60.0;
+        if a.blend >= a.blend_len {
+            a.prev = None;
+            (a.prev_under, a.under_skip) = (None, 0);
+        }
+        // Motions are evaluated and skinned on the GPU (render/anim.rs, vs_skinned).
+        // The old pose: its own regions, the kept ones live (a kept region does not blend).
+        let kept_mask = mask(&kept);
+        let mut from = a
+            .prev
+            .as_ref()
+            .map(|(old, old_ticks, old_once)| {
+                let mut v: Vec<_> = frames_of(old, *old_ticks, *old_once)
+                    .into_iter()
+                    .filter(|(x, _)| kept_mask >> actmotion::region(x).min(7) & 1 == 0)
+                    .collect();
+                v.extend(kept.iter().copied());
+                // The regions the old motion had no chunk for showed the status motion under it.
+                let has_mask = mask(&v);
+                let free = |x: &crate::dat::character::Animation| {
+                    let r = actmotion::region(x);
+                    r < 3 && has_mask >> r & 1 == 0
+                };
+                if let Some((b, bt)) = &a.prev_under {
+                    v.extend(frames_of(b, *bt, false).into_iter().filter(|(x, _)| free(x)));
+                }
+                let skip = a.under_skip;
+                v.extend(anims.iter().copied().filter(|(x, _)| free(x) && skip >> actmotion::region(x) & 1 != 0));
+                v.sort_by_key(|(x, _)| actmotion::region(x));
+                v
+            })
+            .unwrap_or_default();
+        // The reaction overlay, its first animation found; dropped once faded out.
+        let mut overlay = a.overlay.as_mut().and_then(|o| {
+            o.ticks += dt * 60.0;
+            let x = actmotion::find_cached(&mut cache.borrow_mut(), &extra, &ch, &o.name).into_iter().next()?;
+            o.sample(x.frames as u32, x.speed).map(|(f, wt)| (x, f, wt))
+        });
+        if overlay.is_none() {
+            a.overlay = None;
+        }
+        a.find_cache = cache.take();
+        let mut t = a.blend / a.blend_len;
+        // Misc. 2's animation frame rate: other actors (not one on a mount, status 0x55: FUN_100956a0) keep
+        // last frame's whole pose (motion frames, reaction overlay, head look) when FUN_100cbde0 would not
+        // skin them; the head look is held further down, once worked out.
+        let addr = |v: &[(&crate::dat::character::Animation, f32)]| {
+            v.iter().map(|(x, f)| (*x as *const _ as usize, *f)).collect::<Vec<_>>()
+        };
+        let same = |held: &[(usize, f32)], now: &[(&crate::dat::character::Animation, f32)]| {
+            held.len() == now.len() && held.iter().zip(now).all(|(h, (x, _))| h.0 == *x as *const _ as usize)
+        };
+        let ov_addr = overlay.map(|(x, f, wt)| (x as *const _ as usize, f, wt));
+        let mut skipped = false;
+        if *id != me
+            && status != 0x55
+            && anim_skip(anim_cfg, anim_frame, a)
+            && let Some(h) = a.anim_held.as_ref().filter(|h| {
+                same(&h.to, &anims) && same(&h.from, &from) && h.overlay.map(|o| o.0) == ov_addr.map(|o| o.0)
+            })
+        {
+            for (x, h) in anims.iter_mut().zip(&h.to) {
+                x.1 = h.1;
+            }
+            for (x, h) in from.iter_mut().zip(&h.from) {
+                x.1 = h.1;
+            }
+            if let (Some(o), Some(ho)) = (overlay.as_mut(), h.overlay) {
+                (o.1, o.2) = (ho.1, ho.2);
+            }
+            t = h.t;
+            skipped = true;
+        } else {
+            a.anim_held = Some(AnimHeld { to: addr(&anims), from: addr(&from), t, overlay: ov_addr, look: None });
+        }
+        a.scale = a.event_scale.unwrap_or_else(|| ch.scale(size)) * w.lua.look_scale(*id);
+        // The rest pose's mesh top, once (stub models, plates without attach points).
+        if a.top_key.is_empty() {
+            a.rest = crate::dat::character::pose(&ch.skeleton, &[]);
+            a.top = crate::render::character::skinned_top(&ch, &a.rest) * a.scale;
+            a.top_key = "rest".into();
+        }
+        // CPU bones only where they are read: the locked camera (player bone 13, target bone 5), first
+        // person, and the attach points of actors with live effects.
+        // FUN_10029320: a drawn weapon's carry bone rides its grip; during the draw, once the motions that
+        // carry it have ended (actmotion::draw_pins).
+        let pins = a
+            .draw_pins
+            .as_ref()
+            .zip(a.play.as_ref())
+            .filter(|((n, _), p)| *n == p.name)
+            .map(|((_, v), p)| (v, p.ticks));
+        let riding = |c: u16| pins.is_none_or(|(v, t)| v.iter().all(|&(pc, end)| pc != c || t >= end));
+        let held: Vec<(u16, u16)> =
+            if a.drawn { ch.grips.iter().flatten().copied().filter(|&(c, _)| riding(c)).collect() } else { Vec::new() };
+        let pose_now = || {
+            if from.is_empty() {
+                crate::dat::character::pose_held(&ch.skeleton, &anims, &held)
+            } else {
+                crate::render::character::pose_blend(&ch, &from, &anims, t, &held)
+            }
+        };
+        let posed_anchor = a.anchors[..2].iter().any(|&k| k != 2);
+        if (w.locked && (*id == w.my_id || w.target == Some(*id)))
+            || (w.camst.first && *id == w.my_id)
+            || fx_posed.contains(id)
+            || posed_anchor
+        {
+            a.bones = pose_now();
+        } else {
+            a.bones.clear();
+        }
+        // FUN_100cbde0: leg mode 1 / 2 models and dead actors follow the ground (FUN_100d54c0); a riding animal
+        // by its rider's status (box 1) and ground normal.
+        let rider = (*id & ride::ANIMAL != 0).then_some(*id & !ride::ANIMAL);
+        let gate_status = rider.and_then(|r| places.get(&r)).map_or(status, |p| p.status);
+        a.tilt_rot = None;
+        // FUN_100cbde0 / FUN_10084640: GroundFlag, HackMove or op 0x33's bit 21 means no ground tilt; a
+        // riding animal has no entity, so it goes by its rider's.
+        let flags_of = rider.unwrap_or(*id);
+        let no_snap = w.entities.get(&flags_of).is_some_and(|e| e.no_snap)
+            || (flags_of == w.my_id && w.my_plate.no_snap)
+            || w.event.as_ref().is_some_and(|l| l.no_ground(w.my_id, flags_of));
+        if tilt::eligible(ch.cib[0], gate_status) && !no_snap {
+            // Ours: the player's walk normal, else the face under the position each frame (the rider's for an
+            // animal at its place) *(retail skips far moving actors, up to 121 frames)*.
+            let n = if rider.unwrap_or(*id) == w.my_id {
+                w.ground.as_ref().map(|g| g.player_normal())
+            } else {
+                w.ground.as_ref().and_then(|g| g.floor_normal(pos)).map(|n| -n)
+            };
+            if let Some(n) = n {
+                tilt::set_normal(&mut a.ground_tilt, n);
+            }
+            // FUN_100a4d10: info[0] == info[2] == 2 (behemoth, adamantoise, morbol ...) pitch with the ground under
+            // the front feet (points 10 / 11) and the rear feet (8 / 9), each snapped *(inf: the rest pose through
+            // last frame's matrix for retail's posed points)*.
+            if ch.cib[0] == 2
+                && ch.cib[2] == 2
+                && let Some(g) = w.ground.as_ref()
+            {
+                let m = actor_frame(&Place { pos, forward, tilt, status, ratio, size }, a)
+                    * glam::Mat4::from_scale(a.axes.unwrap_or(Vec3::splat(a.scale)));
+                let pt = |k: usize| {
+                    ch.skeleton
+                        .points
+                        .get(k)
+                        .and_then(|(b, off)| a.rest.get(*b as usize).map(|x| m.transform_point3(x.at(*off))))
+                };
+                let snapped = |p: Vec3| g.snap(p.x, p.z, p.y).map(|y| Vec3::new(p.x, y, p.z));
+                if let (Some(p10), Some(p11), Some(p8), Some(p9)) = (pt(10), pt(11), pt(8), pt(9))
+                    && let (Some(fa), Some(fb)) = (snapped((p10 + p11) * 0.5), snapped((p8 + p9) * 0.5))
+                    && let Some(n) = tilt::feet_normal(fa, fb)
+                {
+                    tilt::set_normal(&mut a.ground_tilt, n);
+                }
+            }
+            let zf = plain_frame(pos, forward, tilt).z_axis.truncate();
+            let bx = ch
+                .skeleton
+                .boxes
+                .get(box_index(gate_status))
+                .or(ch.skeleton.boxes.first())
+                .copied()
+                .unwrap_or([f32::NAN; 6]);
+            a.tilt_rot = Some(a.ground_tilt.step(zf, Vec3::splat(a.scale), bx, tilt::rate(dt * 60.0)));
+        }
+        let frame = actor_frame(&Place { pos, forward, tilt, status, ratio, size }, a);
+        let model = frame * glam::Mat4::from_scale(a.axes.unwrap_or(Vec3::splat(a.scale)));
+        // FUN_1002b5e0: an arrow or plate point other than 2 is the posed point (FUN_10029930), in the world.
+        for k in 0..2 {
+            let bones = if a.bones.is_empty() { &a.rest } else { &a.bones };
+            a.anchor_at[k] = ch
+                .skeleton
+                .points
+                .get(a.anchors[k] as usize)
+                .filter(|_| a.anchors[k] != 2)
+                .and_then(|&(b, off)| bones.get(b as usize).map(|x| model.transform_point3(x.at(off))));
+        }
+        // FUN_100cd040 (MODLOG "The near-camera character fade"): the eye near posed point 12 fades
+        // the actor (not the player in first person, who fades on its own). A CPU pose only when the
+        // rest pose is close.
+        // While we fish, every other character entity fades by its horizontal distance to us (not the
+        // rod, chair, mount or aura actors, which have no entity); +0x130 bit 18 draws at 0.5 over
+        // everything (near_fade_tail).
+        let fishing = (fish && *id != w.my_id && w.entities.contains_key(id))
+            .then(|| Vec3::new(pos.x - my_pos.x, 0.0, pos.z - my_pos.z).length());
+        let half = w.entities.get(id).is_some_and(|e| e.half_fade);
+        // In first person the player skips FUN_100cd040, tail included (0x100c7d83 -> the self fade); op
+        // 0xa4's +0x12c bit 26 then sets 1.0 over the whole result, tail included (0x100c7dc0..0x100c7dd5).
+        let self_first = *id == w.my_id && w.camst.first;
+        let cam_fade = if self_first {
+            1.0
+        } else {
+            let (b12, off12) = ch.skeleton.points.get(12).copied().unwrap_or((0, Vec3::ZERO));
+            let at = |bones: &[crate::dat::character::BoneXf]| {
+                model.transform_point3(bones.get(b12 as usize).map_or(Vec3::ZERO, |x| x.at(off12)))
+            };
+            let rest = at(&a.rest);
+            if Vec3::new(rest.x - eye.x, 0.0, rest.z - eye.z).length() > 0.5 + 2.0 * a.scale {
+                1.0
+            } else if a.bones.is_empty() {
+                near_camera_fade(at(&pose_now()), eye)
+            } else {
+                near_camera_fade(at(&a.bones), eye)
+            }
+        };
+        let cam_fade = if w.entities.get(id).is_some_and(|e| e.no_near_fade) {
+            1.0
+        } else if self_first {
+            cam_fade
+        } else {
+            near_fade_tail(cam_fade, fishing, half)
+        };
+        // FUN_100d5b10: an event's look, else the target / face target; eased and weighted in world space.
+        let point = |k: usize| ch.skeleton.points.get(k).copied().unwrap_or((0, Vec3::ZERO));
+        let p3 = model.transform_point3(a.rest.get(point(3).0 as usize).map_or(Vec3::ZERO, |x| x.at(point(3).1)));
+        // FUN_100d5b10: while bit 1 is set the look has no target, forced look included.
+        let target = match a.look.mode {
+            _ if a.look_hold.is_some() => None,
+            actmotion::LookMode::Actor(..) => look_points.get(id).copied(),
+            actmotion::LookMode::Facing(pitch, yaw) => {
+                let (p, y) = (pitch as f32 * TAU_4096, yaw as f32 * TAU_4096);
+                let head = a.rest.get(point(7).0 as usize).map_or(Vec3::ZERO, |b| b.t);
+                Some(model.transform_point3(head + Vec3::new(p.cos() * y.cos(), -p.sin(), -p.cos() * y.sin()) * 20.0))
+            }
+            actmotion::LookMode::Off => face_points.get(id).copied(),
+        };
+        // FUN_100d5b10: op 0x59's look percent replaces the 0.04 step during an event.
+        let rate = if in_event && a.look_pct != 0 { a.look_pct as f32 * 0.01 } else { 1.0 };
+        a.look.step(frame, p3, target, dt * 60.0, rate);
+        // One bone (the head) when riding or sitting; point 4 a unit higher on a chocobo or a mount.
+        let mut look = (a.look.weight > 0.0).then(|| crate::render::anim::HeadLook {
+            bones: [3usize, 7].map(|k| ch.skeleton.points.get(k).map(|p| p.0)),
+            two: !matches!(status, 5 | 0x55 | 0x2f | 0x30 | 0x3f..=0x53),
+            weight: a.look.weight,
+            point: model.inverse().transform_point3(a.look.point.unwrap_or(p3)),
+            p3: point(3).1,
+            p4: point(4),
+            drop: if matches!(status, 5 | 0x55) { 1.0 / a.scale.max(1e-3) } else { 0.0 },
+            limits: ch.skeleton.look_limits,
+        });
+        if let Some(h) = a.anim_held.as_mut() {
+            if skipped {
+                look = h.look;
+            } else {
+                h.look = look;
+            }
+        }
+        let drawn = !a.vanished()
+            && !hidden.contains(id)
+            && !(*id == w.my_id && w.camst.self_alpha <= 0.0)
+            && !w.lua.look_hidden(*id);
+        let bx = ch.skeleton.boxes.get(box_index(status)).or(ch.skeleton.boxes.first()).copied();
+        // FUN_100c63d0: past the draw distance by its box's farthest corner, neither drawn nor a target.
+        if r.clip[0] > 0.0 && *id != w.my_id && bx.is_some_and(|b| box_depth(cview, model, &box_corners(b)) > r.clip[0])
+        {
+            far_out.insert(*id);
+        }
+        // Invisible (InvisFlag, a GM's !hide): no shadow of any kind, as before the real shadows.
+        if drawn
+            && !(if *id == me {
+                w.my_plate.invisible
+            } else {
+                *id >> 24 == 0 && w.entities.get(id).is_some_and(|e| e.invisible)
+            })
+            && let Some(b) = bx
+        {
+            let cs = box_corners(b);
+            seen.insert(
+                *id,
+                shadows::Seen {
+                    pos: model.w_axis.truncate(),
+                    corners: cs.map(|c| model.transform_point3(c)),
+                    depth: box_depth(cview, model, &cs),
+                },
+            );
+        }
+        // Tests 1-5 of FUN_100c63d0 / FUN_100cbde0: a box, faded in, in front and on screen.
+        if drawn
+            && !far_out.contains(id)
+            && a.alpha > 0.0
+            && let Some(b) = bx
+            && let Some((rect, z)) = box_on_screen(cview, cproj, model, &box_corners(b))
+        {
+            visible.insert(*id);
+            if !w.opts.occlusion || w.entities.get(id).is_some_and(|e| e.no_occlusion) {
+                r.occl.results.remove(id);
+            } else if *id != w.my_id {
+                r.occl.query(*id, rect, z);
+            }
+        }
+        let screen = bx.and_then(|b| box_on_screen(cview, cproj, model, &box_corners(b))).map(|(rect, _)| rect);
+        let g = a.gpu.as_mut().unwrap();
+        g.screen = screen;
+        // FUN_100cbde0: k = model alpha x the near-camera fade, drawn as 1 from 0.8 up, else 1.25 k; then
+        // the first-person fade.
+        let k = (a.alpha / actmotion::OPAQUE).max(0.0) * cam_fade;
+        let k = if k >= 0.8 { 1.0 } else { k * 1.25 } * a.appear;
+        g.alpha = (k * if *id == w.my_id { w.camst.self_alpha } else { 1.0 }).min(1.0);
+        g.shadow_off = a.shadow_off;
+        g.tint = a.rgb.map(|c| c.max(0.0) / actmotion::OPAQUE);
+        if let Some((alpha, tint)) = w.lua.look_shade(*id) {
+            g.alpha = g.alpha.min(alpha.unwrap_or(1.0));
+            let t = tint.unwrap_or([1.0; 3]);
+            g.tint = [g.tint[0] * t[0], g.tint[1] * t[1], g.tint[2] * t[2]];
+        }
+        g.hidden_weps = wepfx::mask(&a.wep_hide);
+        g.lamp_caster = *id == w.my_id || *id == w.my_id | ride::ANIMAL;
+        g.shine = shines.get(id).copied();
+        // FUN_100d6d30: TFACTOR alpha (0x80 - model colour alpha) & 0xff; an opaque model adds nothing.
+        let r8 = crate::render::Refract::tf_alpha(a.alpha.clamp(0.0, 255.0) as u32);
+        g.refract = refracts.get(id).filter(|_| r8 > 0.0).map(|&level| crate::render::Refract { level, r: r8 });
+        // The flash runs only while the actor is drawn, in 60 Hz ticks whatever the frame rate.
+        g.flash = if drawn { a.flash.step(w.target == Some(*id), dt * 60.0) } else { flash::NONE };
+        // The floor's lights (retail copies them at the ground probe, every 121 updates).
+        g.lights = w.ground.as_ref().map_or([0; 4], |gr| gr.lights(pos));
+        lamps::offer(&w.lamps.list, pos, &mut g.lights);
+        g.area = actor_area(w.entities.get(id), w.ground.as_ref().and_then(|gr| gr.area(pos))).unwrap_or(0);
+        // The cloth (stepped on the GPU from the pose, render/cloth.rs; client/cloth.rs the reference): a step
+        // on each tick of the 30 Hz clock, on screen simulated (FUN_10023290), off screen carried along
+        // (FUN_100231f0). A frame Misc. 2's animation frame rate skips never reaches FUN_10023290, so the
+        // step waits for the next skinned frame *(inf: retail may drop that tick instead)*.
+        let model_key = Arc::as_ptr(&ch) as usize;
+        if a.cloth.as_ref().is_none_or(|(k, _)| *k != model_key) {
+            a.cloth = ch
+                .parts
+                .iter()
+                .any(|p| p.sim.is_some())
+                .then_some((model_key, cloth::Track { tick: u64::MAX, at: Vec3::ZERO }));
+        }
+        let mut cloth_tick = None;
+        if let Some((_, c)) = &mut a.cloth {
+            let at = model.w_axis.truncate();
+            let mut tick = crate::render::cloth::Tick::None;
+            if c.tick != wind.0 && !skipped {
+                // FUN_100c63d0: a move under 0.01 fg.counts as none.
+                let d = at - c.at;
+                let moved = if d.length() < 0.01 { Vec3::ZERO } else { d };
+                tick = if drawn && visible.contains(id) {
+                    // Actor +0x17c (FUN_100a4ed0): no wind on a covered floor (MZB object flags bit 2).
+                    let covered = w.ground.as_ref().is_some_and(|g| g.surface(pos).1);
+                    crate::render::cloth::Tick::Step { moved, wind: (!covered).then_some((wind.1, wind.2)) }
+                } else {
+                    crate::render::cloth::Tick::Carry { moved }
+                };
+            }
+            // Ours: between steps the particles ride along with the actor. Before the first step they hold
+            // no positions and the cloth draws skinned.
+            cloth_tick = Some((tick, at - c.at, at));
+        }
+        if drawn {
+            let files: Vec<_> = extra.iter().map(|(_, f)| f.clone()).collect();
+            r.pose_actor_gpu(
+                g,
+                &ch,
+                &files,
+                &anims,
+                if a.prev.is_some() { &from } else { &[] },
+                t,
+                model,
+                look,
+                overlay,
+                &held,
+            );
+            fg.counts.posed += 1;
+            // FUN_100c9330: a mounted rider's point 0x6b and the mount's saddle point, for the offset.
+            if let Some((key, k)) = ride::query(&w.rides, *id)
+                && let Some(&(bone, off)) = ch.skeleton.points.get(k)
+            {
+                r.query_point(g, key, bone, off);
+            }
+            // The pick's fine test: the geometry bones and attach points 1 / 3 / 13 / 15 of an actor whose rect
+            // held the pointer, read back a frame or two late.
+            if w.pick_rect.contains(id) {
+                let key = Arc::as_ptr(&ch) as usize;
+                if a.pick_bones.as_ref().is_none_or(|(k, _)| *k != key) {
+                    let f = ch.geometry_bones();
+                    a.pick_bones = Some((
+                        key,
+                        (1..f.len()).filter(|&b| f[b] && f[ch.skeleton.bones[b].parent]).map(|b| b as u16).collect(),
+                    ));
+                }
+                let bones = a.pick_bones.as_ref().map(|(_, v)| v.as_slice()).unwrap_or_default();
+                let mut wanted: Vec<u16> =
+                    bones.iter().flat_map(|&b| [b, ch.skeleton.bones[b as usize].parent as u16]).collect();
+                wanted.sort_unstable();
+                wanted.dedup();
+                for b in wanted {
+                    r.query_point(g, pick_key(*id, b), b, Vec3::ZERO);
+                }
+                for k in [1usize, 3, 13, 15] {
+                    if let Some(&(bone, off)) = ch.skeleton.points.get(k) {
+                        r.query_point(g, pick_key(*id, 0x8000 | k as u16), bone, off);
+                    }
+                }
+            }
+            if footsteps::wanted(&ch, status, pos, camera.eye) {
+                for (slot, &k) in footsteps::POINTS.iter().enumerate().take(if ch.cib[0] == 2 { 4 } else { 2 }) {
+                    if let Some(&(bone, off)) = ch.skeleton.points.get(k) {
+                        r.query_point(g, footsteps::key(*id, slot), bone, off);
+                    }
+                }
+            }
+        }
+        // After the pose: the step reads this frame's bones in the pose region.
+        // The tick is the renderer's once taken; one it could not take comes again next frame.
+        if let Some((tick, ride, at)) = cloth_tick
+            && r.cloth(g, tick, drawn.then_some((model, ride)))
+            && let Some((_, c)) = &mut a.cloth
+        {
+            (c.tick, c.at) = (wind.0, at);
+        }
+    }
+    // Test 6: the occlusion results, a frame or two late, drop actors hidden behind scenery.
+    r.occl.results.retain(|id, _| visible.contains(id));
+    visible.retain(|id| r.occl.results.get(id) != Some(&false));
+    // This frame's set in, last frame's out to the scratch room.
+    std::mem::swap(&mut w.visible, visible);
+    r.upload_poses(&gfx.gpu, &mut fg.encoder);
+    fg.mark("poses");
+}
+
+/// The real shadows (sun, lamps) and ambient occlusion for the frame; the retail shadow modes come back.
+fn shadow_setup(
+    cx: &WorldDraw,
+    gfx: &Gfx,
+    fg: &FrameGpu,
+    w: &mut World,
+    r: &mut ZoneRenderer,
+    wf: &mut WorldFrame,
+) -> Vec<(u32, u8, shadows::Seen)> {
+    let bg = fg.bg;
+    let WorldFrame { camera, seen, .. } = wf;
+    let has = |id: u32| w.actors.contains_key(&id);
+    let flags = |id: u32| w.actors.get(&id).map_or((false, false), |a| (a.shadow_off, a.noblob));
+    // Real character shadows (ours, render/sunshadow.rs), unless config 0x3a turns shadows off. The actors their
+    // map covers this frame take no retail shadow (nor its casters or layers).
+    r.prepare_sun_shadow(&gfx.gpu, cx.cfg.actor_shadows != 0 && w.game.get(0x3a) != 1, cx.cfg.shadow_map);
+    // Ambient occlusion on the scenery (ours, render/ssao.rs), at the scene's size.
+    r.prepare_ssao(&gfx.gpu, cx.cfg.ssao, bg);
+    // Lamp shadows (ours, render/lampshadow.rs): with Real shadows, the point lights nearest our own character
+    // (the zone's data lights, and with Real lamp lights the lamps) are cut behind it, one shadow each.
+    // Only ours casts them (with our mount while riding); others keep their sun or retail shadow. The lights
+    // are those lighting our character this frame (its floor's data lights and the lamps offered it), the
+    // ones retail's shadow eases toward.
+    let casters = [w.my_id, w.my_id | ride::ANIMAL];
+    let my_feet = seen.get(&w.my_id).map(|s| s.pos);
+    let feet: Vec<Vec3> = casters.iter().filter_map(|id| seen.get(id).map(|s| s.pos)).collect();
+    let lit: [u8; 4] = w.actors.get(&w.my_id).and_then(|a| a.gpu.as_ref()).map_or([0; 4], |g| g.lights);
+    let lights: Vec<(Vec3, u32)> = w
+        .lamps
+        .list
+        .iter()
+        .map(|l| (l.pos, l.slot))
+        .chain(w.lamps.data.iter().copied())
+        .filter(|(_, s)| lit.contains(&((s + 1) as u8)))
+        .collect();
+    r.lamp_shadows = match my_feet {
+        Some(f) if cx.cfg.actor_shadows != 0 && w.game.get(0x3a) != 1 => {
+            crate::render::lampshadow::pick(&lights, &feet, f)
+        }
+        _ => Vec::new(),
+    };
+    // The shadowed lights' positions: our character (or mount), casting from one, takes no retail shadow either.
+    let lamp_cast: Vec<(Vec3, glam::Mat4)> = r.lamp_shadows.iter().map(|(_, m, p)| (*p, *m)).collect();
+    // Which casters a lamp casts, from `seen` before the filters below take them out of it.
+    let lamp_lit = casters.map(|id| {
+        seen.get(&id).is_some_and(|s| lamp_cast.iter().any(|(l, m)| crate::render::lampshadow::casts(*l, *m, s.pos)))
+    });
+
+    // Diagnostics (log target "sunshadow"): the real shadows' state and ours on each change.
+    if cx.cfg.actor_shadows != 0 && log::log_enabled!(target: "sunshadow", log::Level::Debug) {
+        let light = r.sun_shadow_light(camera.target);
+        let mine = seen.get(&w.my_id).map(|s| {
+            light.is_some_and(|(m, _, _)| {
+                crate::render::sunshadow::covers(
+                    m,
+                    s.pos,
+                    s.corners.iter().map(|c| c.distance(s.pos)).fold(0.0, f32::max),
+                )
+            })
+        });
+        let state = format!(
+            "{}; ours seen {:?} (covered: {:?})",
+            r.sun_shadow_state(&gfx.gpu, camera.target, w.actors.get(&w.my_id).and_then(|a| a.gpu.as_ref())),
+            mine.is_some(),
+            mine
+        );
+        if w.sunshadow_diag != state {
+            log::debug!(target: "sunshadow", "{state}");
+            w.sunshadow_diag = state;
+        }
+    }
+    // Only the actors drawn into the map lose retail's: the rest (fading, refracting, latched off) keep it.
+    if let Some((m, _, _)) = r.sun_shadow_light(camera.target) {
+        let done = gfx.gpu.mips_done();
+        let casts = |id: &u32| w.actors.get(id).and_then(|a| a.gpu.as_ref()).is_some_and(|g| g.casts_shadow(done));
+        seen.retain(|id, s| {
+            !casts(id)
+                || !crate::render::sunshadow::covers(
+                    m,
+                    s.pos,
+                    s.corners.iter().map(|c| c.distance(s.pos)).fold(0.0, f32::max),
+                )
+        });
+    }
+    if !lamp_cast.is_empty() {
+        let done = gfx.gpu.mips_done();
+        let casts = |id: &u32| w.actors.get(id).and_then(|a| a.gpu.as_ref()).is_some_and(|g| g.casts_shadow(done));
+        seen.retain(|id, s| {
+            !casters.contains(id)
+                || !casts(id)
+                || !lamp_cast.iter().any(|(l, m)| crate::render::lampshadow::casts(*l, *m, s.pos))
+        });
+    }
+    let shadow_modes = match w.ground.as_ref() {
+        Some(g) => shadows::modes(
+            &shadows::Ctx {
+                ground: g,
+                setting: w.game.get(0x3a),
+                me: w.my_id,
+                zone: w.pos_zone,
+                has: &has,
+                flags: &flags,
+                layers: r.shadow_layers(bg),
+            },
+            seen,
+            camera.eye,
+        ),
+        None => Vec::new(),
+    };
+    // A lamp casting ours takes over its main shadow: the sun's map leaves it out (back past the lamp's reach).
+    for (id, lit) in casters.into_iter().zip(lamp_lit) {
+        if let Some(g) = w.actors.get_mut(&id).and_then(|a| a.gpu.as_mut()) {
+            g.lamp_lit = lit;
+        }
+    }
+    shadow_modes
+}
+
+/// The drawn actors, mips, the camera list and sway, then the scene, the portraits, ground shadows, refraction and
+/// the occlusion queries.
+fn draw_scene(
+    cx: &mut WorldDraw,
+    gfx: &mut Gfx,
+    fg: &mut FrameGpu,
+    w: &mut World,
+    r: &mut ZoneRenderer,
+    wf: &WorldFrame,
+    shadow_modes: Vec<(u32, u8, shadows::Seen)>,
+) {
+    let (bg, aspect, scene_fmt) = (fg.bg, fg.aspect, fg.scene_fmt);
+    let (scene_depth, scene_tex, scene_raw) = (fg.scene_depth.clone(), fg.scene_tex.clone(), fg.scene_raw.clone());
+    let dt = wf.dt;
+    let WorldFrame { camera, hidden, places, portrait_cams, far_out, .. } = wf;
+    // FUN_100cbde0: a drawn alpha under 0.0001 is not drawn (the near-camera fade, first person). A character
+    // with +0xb2 bit 0 set (FUN_100c63d0's tests and the occlusion, not in `visible`) is not drawn either;
+    // ours is never culled by them, nor are actors without a skeleton (props, ships).
+    let culled = |id: &u32, a: &Actor| a.character.is_some() && *id != w.my_id && !w.visible.contains(id);
+    let mut drawn: Vec<(u32, &crate::render::ActorGpu)> = w
+        .actors
+        .iter()
+        .filter(|(id, a)| !a.vanished() && !hidden.contains(id) && !far_out.contains(id) && !culled(id, a))
+        .filter_map(|(id, a)| Some((*id, a.gpu.as_ref()?)))
+        .filter(|(_, g)| g.alpha >= 1e-4)
+        .collect();
+    // One order every frame (a map's order changes with each new map): which overlapping edges blend over
+    // which, and which actors take the 64 shine and fade slots, stay put.
+    drawn.sort_unstable_by_key(|d| d.0);
+    let actors: Vec<&crate::render::ActorGpu> = drawn.iter().map(|d| d.1).collect();
+    let drawn_map: HashMap<u32, &crate::render::ActorGpu> = drawn.into_iter().collect();
+    fg.counts = perf::Counts {
+        entities: w.entities.len(),
+        actors: w.actors.len(),
+        posed: fg.counts.posed,
+        drawn: actors.len(),
+        zone_draws: r.draw_count(),
+        ui_vertices: 0,
+        fx: [(0, 0); 3],
+    };
+    fg.m_actors = Instant::now();
+    // Mips of new textures (models that came this frame, a zone going up) under the frame budget.
+    let budget = if w.zone_uploading.is_some() || w.downloading.is_some() {
+        crate::render::MIP_BUDGET
+    } else {
+        crate::render::MIP_BUDGET_WORLD
+    };
+    perf::timed(|| "mips".into(), || gfx.gpu.run_mips(&mut fg.encoder, budget));
+    fg.mark("mips");
+    // FUN_10179390: the camera list under the eye (render/cull.rs); past Retail it holds within retail's
+    // distance and the rest draws beyond it.
+    let list = w.ground.as_ref().map_or(0, |g| g.camera_list(camera.eye));
+    let far = (cx.cfg.draw_distance != 100).then_some(r.retail_reach).filter(|d| *d > 0.0);
+    r.set_camera_list(&gfx.gpu, list, far);
+    // Config 0017: bump mapping's lighting (one eased light, vertex fog) or the two-light model; never in 182.
+    r.bump_mode = cx.cfg.tool("0017") != 0 && w.zone != Some(182);
+    (r.mod_clear, r.mod_ambient, r.wireframe) = (w.opts.clear, w.opts.ambient, w.opts.wireframe);
+    // Config 0011: the animated meshes' sway this frame (render/sway.rs).
+    let steps = match cx.cfg.tool("0011") {
+        0 => 1,
+        1 => 16,
+        _ => 32,
+    };
+    r.set_sway(
+        dt * 60.0,
+        steps,
+        crate::dat::zone::SWAY_TAGS.iter().position(|t| *t == crate::dat::weather::weather_tag(w.weather)),
+    );
+    // FUN_1001d240's helper target for faded actors (drawn opaque, then blended as one quad).
+    r.prepare_faded(&gfx.gpu, &scene_tex);
+    perf::timed(
+        || "zone render".into(),
+        || r.render(&gfx.gpu, &mut fg.encoder, &scene_raw, &scene_depth, camera, aspect, &actors),
+    );
+    fg.mark("scene");
+    // The portraits, of actors drawn this frame.
+    let want: Vec<(lua::hud::Wanted, crate::render::Camera, &crate::render::ActorGpu)> =
+        portrait_cams.iter().filter_map(|(p, c)| Some((*p, *c, *drawn_map.get(&p.entity)?))).collect();
+    let drawn =
+        cx.portraits.draw(&gfx.gpu, &mut gfx.egui_renderer, cx.game_ui.as_mut(), r, &mut fg.encoder, scene_fmt, &want);
+    w.lua.set_portraits(drawn);
+    // The actors' ground shadows over the scene (client/shadows.rs, render/shadow.rs).
+    if !r.has_shadow_texture()
+        && let Some(t) = w.index.as_ref().and_then(|i| shadows::kage_texture(i))
+    {
+        r.set_shadow_texture(&gfx.gpu, &t, scene_fmt);
+    }
+    if let Some(g) = w.ground.as_ref() {
+        let casters = shadows::casters(&mut w.shadow_slots, g, shadow_modes, &drawn_map);
+        let sun = r.lighting.map_or([0.0; 4], |l| [l.actor_dir.x, l.actor_dir.y, l.actor_dir.z, 1.0]);
+        perf::timed(
+            || "shadows".into(),
+            || {
+                r.draw_shadows(
+                    &gfx.gpu,
+                    &mut fg.encoder,
+                    &scene_raw,
+                    &scene_depth,
+                    bg,
+                    g,
+                    &casters,
+                    sun,
+                    (dt * 60.0).max(1e-3),
+                )
+            },
+        );
+    }
+    fg.mark("shadows");
+    // Refracting actors, farthest first (retail's sorted list), after the opaque scene.
+    let mut refracting: Vec<(f32, &crate::render::ActorGpu)> = w
+        .actors
+        .iter()
+        .filter(|(id, a)| !a.vanished() && !hidden.contains(id) && !culled(id, a))
+        .filter_map(|(id, a)| {
+            Some((
+                places.get(id)?.pos.distance(camera.eye),
+                a.gpu.as_ref().filter(|g| g.refract.is_some() && g.alpha >= 1e-4)?,
+            ))
+        })
+        .collect();
+    if !refracting.is_empty() {
+        refracting.sort_by(|x, y| y.0.total_cmp(&x.0));
+        let list: Vec<&crate::render::ActorGpu> = refracting.iter().map(|x| x.1).collect();
+        r.render_refraction(
+            &gfx.gpu,
+            &mut fg.encoder,
+            &scene_raw,
+            Some(&scene_tex),
+            &scene_depth,
+            camera,
+            aspect,
+            &list,
+        );
+    }
+    fg.mark("refraction");
+    r.occl.run(&gfx.gpu, &mut fg.encoder, &scene_depth);
+    fg.mark("occlusion");
+}
+
+/// The effect generators: their tick, sounds and lights, the GPU update, then the draw.
+fn draw_effects(
+    cx: &mut WorldDraw,
+    gfx: &Gfx,
+    fg: &mut FrameGpu,
+    w: &mut World,
+    r: &mut ZoneRenderer,
+    wf: &WorldFrame,
+) {
+    let (bg, aspect, scene_fmt) = (fg.bg, fg.aspect, fg.scene_fmt);
+    let (scene_depth, scene_tex, scene_raw) = (fg.scene_depth.clone(), fg.scene_tex.clone(), fg.scene_raw.clone());
+    let (dt, ev_clock) = (wf.dt, wf.ev_clock);
+    let WorldFrame { camera, model_hidden, places, drops, new_lamps, .. } = wf;
+    // Effect generators: CPU emission, the GPU update pass, then the elements over the scene.
+    // Its pipelines are made while the zone still goes up (behind the loading indicator), not on the
+    // first shown frame.
+    let eg = cx.effects_gpu.get_or_insert_with(|| crate::render::effects::EffectsGpu::new(&gfx.gpu, scene_fmt));
+    if let Some(l) = &new_lamps {
+        eg.set_lamps(&gfx.gpu, &l.iter().map(|l| (l.pos, l.slot, l.template, l.colour)).collect::<Vec<_>>());
+    }
+    if !eg.has_dmgnum()
+        && let Some((lib, image)) = cx.game_ui.as_ref().and_then(|g| g.dmgnum())
+    {
+        eg.set_dmgnum(&gfx.gpu, lib, image);
+    }
+    if !r.ready(&gfx.gpu) {
+        eg.upload_pending(&gfx.gpu, &mut w.effects);
+    }
+    if r.ready(&gfx.gpu) {
+        let view = camera.view();
+        let mut view_rot = view;
+        view_rot.w_axis = glam::Vec4::W;
+        let minute =
+            w.clock.map(|(t, at)| crate::dat::weather::vana_minute(t, at.elapsed().as_secs_f32())).unwrap_or(720.0);
+        // Ops 0x77 / 0xa9 hold the clock (FUN_100b8710 / FUN_100bab50).
+        let minute = ev_clock.map_or(minute, |c| c.minute as f32);
+        let held_moon = ev_clock.and_then(|c| c.moon_weekday());
+        let f = crate::fx::Frame {
+            dt: (dt * 60.0).max(1e-3),
+            seconds: dt,
+            dayfrac: minute / 1440.0,
+            view,
+            view_rot,
+            eye: camera.eye,
+            // FUN_100496f0: an emitter without its own range shows within the scenery's draw distance
+            // (none: Settings' Draw Distance at Unlimited).
+            draw_distance: if r.clip[0] > 0.0 { r.clip[0] } else { 2000.0 },
+            // Op 0x8f: the actor's area env, else the zone; areas are not loaded *(the zone's)*.
+            area_light: r.lighting.map_or(Vec3::ONE, |l| l.area),
+            focal: 192.0 / (camera.fov_y * 0.5).tan(),
+            // FUN_10184dc0: ((Vana day of now + 12 h) / 7) % 12 (one Vana minute = 2.4 s).
+            // Op 0xa9 (DAT_1065cb20): both from the held clock.
+            moon_phase: if let Some((m, _)) = held_moon {
+                m
+            } else {
+                w.clock.map_or(0, |(t, at)| {
+                    ((((t as f64 + at.elapsed().as_secs_f64()) / 2.4 + 720.0) / 1440.0) as u64 / 7 % 12) as u32
+                })
+            },
+            weekday: if let Some((_, d)) = held_moon {
+                d
+            } else {
+                w.clock
+                    .map_or(0, |(t, at)| (((t as f64 + at.elapsed().as_secs_f64()) / 2.4 / 1440.0) as u64 & 7) as u32)
+            },
+        };
+        let party: Vec<u32> =
+            std::iter::once(w.my_id).chain(w.party.party().map(|m| m.id).filter(|&id| id != w.my_id)).collect();
+        let ship_fx = ships::fx_actors(&w.ships, &w.entities);
+        let fa = FxActors {
+            actors: &w.actors,
+            places,
+            contacts: &w.contacts,
+            entities: &w.entities,
+            me: w.my_id,
+            me_moving: w.moving,
+            me_strafe: w.my_strafe,
+            pet: w.my_pet,
+            party,
+            my_index: w.my_index,
+            areas: &w.area_lights,
+            ground: w.ground.as_ref(),
+            bells: w.game.get(0x99) & 2 != 0,
+            furniture: &w.furniture.pieces,
+            ships: &ship_fx,
+            model_hidden,
+            drops,
+            wades: &w.wades,
+        };
+        if let Some(g) = &w.ground {
+            w.effects.set_covered(g.covered(camera.eye));
+        }
+        if let Some(a) = &cx.audio {
+            w.effects.set_alive(a.alive());
+        }
+        w.effects.filter = (w.game.get(0x92), matches!(w.my_motion.status, 1 | 3));
+        w.effects.weapon_effect_off = w.game.get(0xbe) == 1;
+        // Misc.'s weather density (LAB_101aa650 case 0x3b: DAT_10456a68 = the value as a float).
+        w.effects.weather_density = if w.weather_forced { 1.0 } else { w.game.get(0x3b) as f32 };
+        w.effects.reg.aspect = aspect;
+        perf::timed(|| "effects".into(), || w.effects.tick(&f, &fa));
+        event::camera_frame(&mut w.screen, &w.effects, &fa, f.dt);
+        fg.counts.fx = w.effects.counts();
+        if cx.fx_census.is_none_or(|t| t.elapsed().as_secs() >= 60) {
+            *cx.fx_census = Some(Instant::now());
+            let top: Vec<String> = w.effects.census().into_iter().take(8).map(|(n, k)| format!("{n} x{k}")).collect();
+            let [t, g, e] = fg.counts.fx;
+            log::info!(
+                "effects live: tasks {}/{}, generators {}/{}, elements {}/{}; most: {}",
+                t.0,
+                t.1,
+                g.0,
+                g.1,
+                e.0,
+                e.1,
+                top.join(", ")
+            );
+        }
+        w.ambient = w.effects.ambient(minute);
+        // Effect sounds (fx/sound.rs) to the sound thread; without audio they are dropped.
+        for c in std::mem::take(&mut w.effects.sound_cmds) {
+            let Some(a) = &mut cx.audio else { break };
+            play_fx_sound(a, c);
+        }
+        eg.set_lights(&r.lights);
+        eg.set_light(r.lighting.as_ref().map(|l| (l.dir, l.diffuse, l.ambient)));
+        eg.set_depth(Some((&scene_depth, camera.proj(aspect))));
+        perf::timed(|| "effects upload".into(), || eg.update(&gfx.gpu, &mut fg.encoder, &mut w.effects, &f));
+        fg.mark("fx update");
+        let (fog_color, fog) =
+            r.lighting.as_ref().map_or(([0.0; 3], [150.0, 600.0]), |l| (l.fog.to_array(), [l.fog_start, l.fog_end]));
+        eg.draw(
+            &gfx.gpu,
+            &mut fg.encoder,
+            (&scene_raw, &scene_depth, bg),
+            Some(&scene_tex),
+            &w.effects,
+            (camera.proj(aspect), camera.view(), camera.eye),
+            [crate::render::NEAR, crate::render::FAR],
+            fog_color,
+            fog,
+        );
+        fg.mark("fx draw");
+    }
+}
+
+/// Over the finished scene: the mods' shapes and post passes, layout mode's lines, the held zone frame and the
+/// screen effects.
+fn world_overlays(
+    cx: &mut WorldDraw,
+    gfx: &Gfx,
+    fg: &mut FrameGpu,
+    w: &mut World,
+    r: &mut ZoneRenderer,
+    wf: &WorldFrame,
+) {
+    let (bg, scene_fmt) = (fg.bg, fg.scene_fmt);
+    let (scene_depth, scene_tex, scene_raw) = (fg.scene_depth.clone(), fg.scene_tex.clone(), fg.scene_raw.clone());
+    let WorldFrame { camera, .. } = wf;
+    // The Lua mods' world shapes, then layout mode's overlay over the finished scene.
+    r.render_world_shapes(&mut fg.encoder, &scene_raw, &scene_depth);
+    r.render_lines(&mut fg.encoder, &scene_raw);
+    // The mods' post-process passes over the scene, under the fades.
+    let want = w.lua.shaders();
+    if !want.is_empty() || cx.post_fx.is_some() {
+        let post = cx.post_fx.get_or_insert_with(|| crate::render::postfx::PostFx::new(&gfx.gpu, scene_fmt));
+        for (m, id, e) in post.sync(&gfx.gpu, &want) {
+            w.lua.shader_error(&m, &id, &e);
+        }
+        post.draw(
+            &gfx.gpu,
+            &mut fg.encoder,
+            &scene_tex,
+            &scene_raw,
+            &scene_depth,
+            w.started.elapsed().as_secs_f32(),
+            &want,
+        );
+    }
+    // A zone change's held frame under the fade to black (the camera has moved on).
+    if let (Some(_), Some(fx)) = (w.zone_hold.filter(|h| h.captured), &cx.screen_fx_zone) {
+        fx.draw_held(&gfx.gpu, &mut fg.encoder, &scene_raw, 1.0);
+    }
+    // Event crossfade, the effect flash and feedback blur, and the fades over the scene, under the 2D layer;
+    // the zoning fade as a multiply too.
+    let (cross, m) = (w.screen.cross_alpha(), w.screen.multiply().map(|c| c * (1.0 - w.fade)));
+    let (flash, blur) = (w.screen.flash(w.effects.flash), w.screen.blur());
+    if cross.is_some() || flash.is_some() || blur.is_some() || m.iter().any(|c| (c - 1.0).abs() > 0.005) {
+        let fx = cx.screen_fx_world.get_or_insert_with(|| crate::render::screenfx::ScreenFx::new(&gfx.gpu, scene_fmt));
+        fx.draw_all(&gfx.gpu, &mut fg.encoder, &scene_raw, Some(&scene_tex), bg, cross, flash, blur, m);
+    }
+    fg.mark("screen fx");
+    w.last_camera = Some(*camera);
+    fg.drew_world = true;
+}
+
+impl FrameGpu {
+    /// A GPU time mark after what is recorded so far (F12).
+    fn mark(&mut self, label: &'static str) {
+        if let Some(t) = self.gpu_time.as_mut() {
+            t.mark(&mut self.encoder, label);
+        }
     }
 }
 
