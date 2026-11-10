@@ -27,7 +27,8 @@ commands.register("hello", function() ui.open("hello") end)
 | [`ui.window(id, spec)`](#uiwindow) | Creates a window, or replaces the definition of one you made before. |
 | [`ui.update(id, element, fields)`](#uiupdate) | Changes some fields of one element of a window. |
 | [`ui.get(id, element)`](#uiget) | Reads an element's value as the player left it. |
-| [`ui.open(id)`](#uiopen) | Shows a window and gives it the keys. |
+| [`ui.open(id, at?)`](#uiopen) | Shows a window and gives it the keys. |
+| [`ui.bounds(window, canvas)`](#uibounds) | Where one of your canvases was last drawn, to place a popup by it. |
 | [`ui.show(id)`](#uishow) | Shows a window without giving it the keys. |
 | [`ui.close(id)`](#uiclose) | Hides a window. |
 | [`ui.is_open(id)`](#uiis_open) | Whether a window is showing. |
@@ -41,17 +42,17 @@ commands.register("hello", function() ui.open("hello") end)
 A window's `elements` is a list of tables, drawn top to bottom in the order given. Every element table has a `type`
 (one of the types below). Most types also need an `id`, a string you choose, which is how `ui.update`, `ui.get` and
 the events name the element. Give each element of a window a different id. The window's own options (`title`,
-`width`, `help`, `hud`, `frame`, `x` / `y`, `modal`, `popup`) are listed under [`ui.window`](#uiwindow).
+`width`, `help`, `hud`, `frame`, `x` / `y`, `modal`, `popup`, `animate`) are listed under [`ui.window`](#uiwindow).
 
 Every element, of any type, may also have these fields:
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `type` | `string` | (required) | The element type: `text`, `buttons`, `slider`, `list`, `gauge`, `separator`, `tabs`, `input`, `key`, `choice`, `colour` (or `color`), `section` or `canvas`. |
+| `type` | `string` | (required) | The element type: `text`, `buttons`, `slider`, `list`, `gauge`, `separator`, `tabs`, `input`, `key`, `choice`, `dropdown`, `colour` (or `color`), `section` or `canvas`. |
 | `tip` | `string` | `""` | Help text shown while the cursor or the pointer is on this element (see [Tips and help](#tips-and-help)). |
 | `page` | `integer` | none | The page (from 1) of the tabs above it that this element belongs to (see [Pages](#pages-tabs)). Without it, the element shows on every page. |
 
-The keyboard cursor stops on buttons, sliders, lists, tabs, inputs, keys, choices, colours and sections. Texts, gauges,
+The keyboard cursor stops on buttons, sliders, lists, tabs, inputs, keys, choices, dropdowns, colours and sections. Texts, gauges,
 separators and canvases are not cursor stops (a canvas still takes the mouse). Tab moves the cursor as Down does,
 Shift+Tab as Up.
 
@@ -205,6 +206,21 @@ One value out of several, turned with Left / Right. Enter (or a click on the val
 | `items` | `string[]` | `{}` | The values. |
 | `at` | `integer` | `1` | The value shown, from 1. |
 
+### dropdown
+
+A choice whose values open in a list under it, drawn as the login form's combo fields. Enter (or a click) opens the
+list; Up / Down move through it and Enter (or a click on a value) picks one, sending a `set` event. Escape, or a click
+anywhere else, closes the list without a change. While it is closed, Left / Right turn it as they turn a choice.
+Released clients without dropdowns refuse the type; a mod for them can fall back to a `choice` (`pcall` around
+`ui.window`).
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | `string` | (required) | The element's id. |
+| `label` | `string` | `""` | The heading above it. |
+| `items` | `string[]` | `{}` | The values. |
+| `at` | `integer` | `1` | The value shown, from 1. |
+
 ### colour
 
 A colour the player can edit. Enter (or a click on the colour box) starts editing. With the keyboard, Up / Down pick
@@ -315,10 +331,11 @@ While a window has the keys:
 - **Up / Down** move the cursor from control to control, wrapping round at the ends. On a list they first move
   through its rows; past the first or last row they go on to the next control. Moving onto a list puts its cursor on
   its first row (coming from above) or its last row (coming from below).
-- **Left / Right** move between the buttons of a buttons element, and turn tabs and choices. While a slider or a colour
-  is being edited, they change it.
+- **Left / Right** move between the buttons of a buttons element, and turn tabs, choices and closed dropdowns. While a
+  slider or a colour is being edited, they change it. Up / Down move through an open dropdown's values.
 - **Enter** presses a button, chooses an option or a list row, starts moving a slider, starts typing in an input,
-  starts editing a colour, turns a choice forward, and folds or unfolds a section.
+  starts editing a colour, turns a choice forward, opens a dropdown (and picks the value its cursor is on), and folds
+  or unfolds a section.
 - **Escape** closes the window and sends `close`. While something is being edited it ends the edit instead: a slider
   keeps its value, a colour and a typed line go back to what they were.
 
@@ -337,7 +354,7 @@ the window has already changed: a list's cursor is on the chosen row, a closed w
 | `kind` | Fields | Sent when |
 | --- | --- | --- |
 | `"press"` | `id`, `index` | A plain button is pressed (Enter or a click). `index` is which button, from the left. |
-| `"set"` | `id`, `index` | An option button is chosen (only when the choice changes), a slider moves (`index` is its new step), tabs turn (`index` is the new page) or a choice turns (`index` is the new value). |
+| `"set"` | `id`, `index` | An option button is chosen (only when the choice changes), a slider moves (`index` is its new step), tabs turn (`index` is the new page), a choice turns or a dropdown's value is picked (`index` is the new value). |
 | `"select"` | `id`, `index` | A list row is chosen with Enter or a click. `index` is the row. |
 | `"edit"` | `id`, `text` | The text of an input changes while the player types. Also sent with the old text when Escape puts it back. |
 | `"change"` | `id`, `text` | Typing in an input ends with Enter, or because the player clicked another element or another window. |
@@ -430,7 +447,8 @@ redraws it with the new elements; the values you give (`at`, `text`, `open` and 
 | `frame` | `boolean` | `true` | `false` draws the window without its frame. |
 | `x`, `y` | `number` | none | The window's top left corner in the classic UI, in its own units. Give both, or neither. Without them, windows are placed one below and right of the other from the top left. The modern UI places its windows itself and does not use these. |
 | `modal` | `boolean` | `false` | While a modal window is open it keeps the keys and is the only mod window the pointer reaches; other mod windows cannot take the keys from it. It is centred on the screen (in the classic UI, at `x`, `y` when given). A click outside it does not close it. |
-| `popup` | `boolean` | `false` | A pop-up: a modal window placed with its top left at the pointer, which a click outside it closes (sending `close`). It opens where the pointer is when `ui.open` opens it. |
+| `popup` | `boolean` | `false` | A pop-up: a modal window placed with its top left at the pointer, which a click outside it closes (sending `close`). It opens where the pointer is when `ui.open` opens it, or where `ui.open`'s `at` says. |
+| `animate` | `boolean` | `false` | The modern UI fades the window in and grows it up from its bottom edge as it opens, and folds it back down as it closes (about a sixth of a second each way). The classic UI shows and hides it at once. |
 | `opacity` | `number` | `1` | The whole window's opacity, 0 to 1: its frame and everything in it (per-window opacity). `ui.opacity` changes it later. A value the player sets for the window wins. |
 | `edge` | `boolean` | `false` | An edge window, drawn as the Timers and the training regime windows are: on a screen edge (in the modern UI the player drags it along the edges), folding to a tab that shows `title`, with `heading` as a line over the elements; a click on that line folds it. It is a HUD window: it never takes the keys. |
 | `heading` | `string` | the title | An edge window's line over its elements. |
@@ -496,6 +514,7 @@ Which fields an element takes depends on its type. Any other field is ignored. E
 | tabs | `items`, `at` |
 | input | `label`, `text`, `max` |
 | choice | `label`, `items`, `at` |
+| dropdown | `label`, `items`, `at` |
 | colour | `label`, `value`, `alpha` |
 | section | `label`, `open` |
 | canvas | `w`, `h`, `draw` |
@@ -548,6 +567,7 @@ is open. Use it when you need a value at some later moment instead of tracking e
 | list | `at` | `integer` | The row the cursor is on, from 1. |
 | tabs | `at` | `integer` | The page shown, from 1. |
 | choice | `at` | `integer` | The value shown, from 1. |
+| dropdown | `at` | `integer` | The value shown, from 1. |
 | gauge | `value` | `number` | Its value, 0 to 1. |
 | colour | `value` | `{r, g, b, a}` | The colour, a table with fields `r`, `g`, `b`, `a` (0..255). |
 | section | `open` | `boolean` | Whether it is unfolded. |
@@ -574,18 +594,20 @@ end)
 ## `ui.open`
 
 ```lua
-ui.open(id)
+ui.open(id, at?)
 ```
 
 Shows a window and gives it the keys (arrows, Enter, Escape), so the player can use it with the keyboard at once. It
 takes the keys from any other window of a mod, at the end of the mod phase. A `hud = true` window shows but does not
-take the keys. While a modal window is open, only another modal window can take the keys from it.
+take the keys. While a modal window is open, only another modal window can take the keys from it. A `popup` window
+opens at the pointer, or at `at` when it is given; a popup already open stays where it is.
 
 **Parameters**
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `id` | `string` | yes | The window's id. |
+| `at` | `table` | no | A popup's place, in window pixels (as [`ui.bounds`](#uibounds) gives them): `{x, y}` puts its top left there, `{x, y, above = true}` its bottom left, so it opens upwards. It is kept on the screen. Other windows ignore it. |
 
 **Returns** nothing.
 
@@ -597,6 +619,36 @@ take the keys. While a modal window is open, only another modal window can take 
 commands.register("fruit", function()
   ui.open("fruit")
 end)
+```
+
+## `ui.bounds`
+
+```lua
+ui.bounds(window, canvas)
+```
+
+Where one of your mod's canvases was last drawn, so a popup can be opened by it (a list over a bar's slot, say). The
+place is in window pixels, which is what `ui.open`'s `at` takes. Only the modern UI records it.
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `window` | `string` | yes | The window's id. |
+| `canvas` | `string` | yes | The id of a `canvas` element in it. |
+
+**Returns** `{x, y, w, h, scale}`: the canvas's top left and its size in window pixels, and `scale`, the window pixels
+per canvas unit. `nil` when the canvas has not been drawn yet, in the classic UI, and for a window or element that is
+not one of your canvases.
+
+**Example**
+
+```lua
+-- A list opening upwards over slot 3 of a bar whose slots are 40 canvas units wide.
+local b = ui.bounds("bar", "slots")
+if b then
+  ui.open("pick", {x = b.x + 2 * 40 * b.scale, y = b.y, above = true})
+end
 ```
 
 ## `ui.show`
