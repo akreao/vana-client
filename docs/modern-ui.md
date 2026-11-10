@@ -78,7 +78,8 @@ pacing, decisions and atmosphere of Vana'diel.
 - **Spells and abilities:** one searchable action registry: categories, favourites, recent, job filters, costs,
   recasts, range, valid targets and why an action is disabled.
 - **Recommendations:** a deterministic, testable rules engine (Poisona for a poisoned ally, Cure for low HP, an
-  expiring Refresh, burst spells in a skillchain window, weapon skills at TP); never casts, never moves the cursor,
+  expiring Refresh, burst spells in a skillchain window, weapon skills at TP; RUN's rune for what it fights and
+  when to spend runes; GEO's colures and luopan); never casts, never moves the cursor,
   updates at safe points, shows its reason; no runtime LLM.
 - **Targeting:** target, sub-target, focus target, last target and party selection shown explicitly; clicks may set
   a target; cycling and target-by-name stay.
@@ -329,12 +330,14 @@ Milestone 1:
 - Config (modern/config.rs): retail's list without Windows, Misc. 1..4 as one page; Gameplay, Misc., Mouse/Cam.
   and Global drawn natively (rows from the pages' controls, named with their layouts' captions, help lines);
   the list pages open retail's windows over it.
-- Storage (modern/storage.rs): the bags as tabs, Mog Safe / Safe 2 and Mog Wardrobe 1..8 merged; the bag beside the
-  inventory; a click (or Ctrl-click) moves a stack (right click one), into a merged bag the first part with room that
-  takes it; retail's colours say what may move. Milestone 2 (2026-11-02): a row dragged onto the other pane moves
-  its stack, the pane outlined teal / red for a valid / invalid drop; Shift (on the drop, a click or Enter) asks how
-  many; a refused row says why (hover, and under the lists after a try); a sent move shows as pending until the
-  server moves it, and one the server ignores is explained (nothing moves optimistically, so nothing is restored).
+- Storage (modern/storage.rs): the bags as tabs, Mog Safe / Safe 2 and Mog Wardrobe 1..8 merged (only the parts the
+  account may use: no Safe 2 without the 2F); the bag beside the inventory; a click moves a stack (right click one),
+  into a merged bag the first part with room that takes it; retail's colours say what may move. A move made while the
+  last is pending waits for it, and the send gate holds it (one a second) rather than dropping it. The moogle's Storage row opens it at once on the first open bag (no container
+  list); closing it comes back to the moogle's menu. Each pane has Auto-sort / Manual Sort (Num+ reaches them):
+  Auto-sort sorts its bag (every part) and keeps it sorted as items come in (config auto_sort, saved); Manual Sort
+  stops that and puts rows in order by hand (pick a row, then the row to put it at, within one part of a merged bag;
+  Escape or Manual Sort ends it).
 - Plate badges: the approved SVG set (assets/modern/badges) in place of retail's glyphs; the pearl tinted by its
   linkshell; rank stars, the recruiter star in its orb, the master stars above.
 - Icons: batches 1 and 2 (131) redrawn in VectorCraft and approved.
@@ -499,14 +502,16 @@ Milestone 1:
   by keys, the login prompt (No), Settings by the mouse.
 - The title's buttons (2026-10-27, modern/lobby.rs title_buttons over render/screens.rs TitleState.modern): the pack's
   buttons on retail's rects (loby2win's backing and button sprites skipped), the cursor's lit, the disabled dimmed,
-  the Update button as retail places it; retail's keys and mouse untouched (hover moves the cursor, a click is Enter).
+  retail's keys and mouse untouched (hover moves the cursor, a click is Enter). The Update button moved to the login
+  form (2026-11-09).
   The labels are sized to the buttons (half their height; user, 2026-10-27: the panel-sized font was far too small). The
   logo, the expansion banners and the help bar stay. Live: hover, Select Character by the mouse, back by Escape.
 - The login screen (2026-10-27, modern/lobby.rs login_form / ok_popup / wait_panel / help_bar over client/mod.rs
   login_window, which keeps the keys): the form at 1.5x in the pack's input, checkbox and button art; the wait and
   error popups on retail's netwait / ok rects with their text above the form's size (user: as big as the original's
   or bigger) and OK centred on retail's row, lifted clear of the form; the help bar on retail's lobyhelp strip with
-  the version above it at loby2win's spot (title screen too). Character select's wait is the same panel.
+  the version above it at loby2win's spot (title screen too). Character select's wait is the same panel. Update
+  (2026-11-09, while something is out of date) at the right end of Remember password's row, in the lobby button art.
 - Panel Opacity (2026-10-27, Settings > Client, config modern_opacity, default 85 %): every window background the layer
   paints (the frame gradient, the other border styles' fill, the edge windows, the auto-translate list); borders and
   text stay opaque.

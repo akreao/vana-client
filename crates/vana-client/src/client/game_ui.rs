@@ -702,19 +702,18 @@ impl GameUi {
 
     /// The title art; `owned` is the lobby's expansion bitmask (bit 1 Zilart .. bit 11 Adoulin).
     pub fn title(&mut self, w: f32, h: f32, selected: Option<usize>, owned: u32, enabled: [bool; 5]) -> Vec<TextSlot> {
-        self.title_update(w, h, selected, owned, enabled, None, 0, None, true, false)
+        self.title_with(w, h, selected, owned, enabled, 0, None, true, false)
     }
 
-    /// The title with the Update button above Select Character (selected, enabled).
+    /// The title with the wardrobes, the selected button's press, the hand and the modern layer's part.
     #[allow(clippy::too_many_arguments)]
-    pub fn title_update(
+    pub fn title_with(
         &mut self,
         w: f32,
         h: f32,
         selected: Option<usize>,
         owned: u32,
         enabled: [bool; 5],
-        update: Option<(bool, bool)>,
         wardrobes: u32,
         press: Option<(f32, bool)>,
         hand: bool,
@@ -727,7 +726,6 @@ impl GameUi {
             buttons: selected.is_some(),
             shift: Self::shift(owned),
             enabled,
-            update,
             hand,
             wardrobes,
             press,
@@ -745,10 +743,6 @@ impl GameUi {
 
     pub fn button_rects(&self, w: f32, h: f32, owned: u32) -> Vec<[f32; 4]> {
         screens::title_button_rects(&self.data.lobby, w, h, Self::shift(owned))
-    }
-
-    pub fn update_button_rect(&self, w: f32, h: f32, owned: u32) -> Option<[f32; 4]> {
-        screens::update_button_rect(&self.data.lobby, w, h, Self::shift(owned))
     }
 
     pub fn text_width(&self, s: &str) -> f32 {
@@ -2443,6 +2437,18 @@ impl GameUi {
 
     pub fn rect(&mut self, x: f32, y: f32, w: f32, h: f32, rgba: [f32; 4]) {
         self.batch.push_rect(x, y, w, h, rgba);
+    }
+
+    /// A combo field's arrow on `a`, its right end (the login form's fields, the mods' dropdowns): white while its
+    /// list is open.
+    pub fn combo_arrow(&mut self, a: [f32; 4], open: bool) {
+        self.text("\u{25bc}", a[0] + 3.0, a[1] + 1.0, 0, if open { WHITE } else { GREY });
+    }
+
+    /// A row of a combo field's open list on `r`, over what is under it: the cursor's row lit.
+    pub fn combo_row(&mut self, r: [f32; 4], text: &str, lit: bool) {
+        self.rect(r[0], r[1], r[2], r[3], if lit { [0.16, 0.2, 0.45, 0.95] } else { [0.03, 0.03, 0.08, 0.95] });
+        self.text(text, r[0] + 4.0, r[1] + 1.0, 0, WHITE);
     }
 
     /// An untextured quad: corners top left, top right, bottom left, bottom right, each with its colour.

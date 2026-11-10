@@ -226,7 +226,7 @@ fn rows(w: &World, e: &EquipWin) -> Vec<Slot> {
 }
 
 /// Wardrobe 3..8 need their lobby feature bit (PTR_DAT_103601bc + 0xb4 bits 2..7).
-fn bag_open(w: &World, c: u8) -> bool {
+pub(super) fn bag_open(w: &World, c: u8) -> bool {
     !(0xb..=0x10).contains(&c) || w.features & (0x04 << (c - 0xb)) != 0
 }
 

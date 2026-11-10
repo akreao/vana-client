@@ -1064,6 +1064,10 @@ pub enum NetCommand {
     Check { target: u32, index: u16, kind: u8 },
     /// Any c2s packet: id and body (after the 4-byte header).
     Packet { id: u16, body: Vec<u8> },
+    /// Ours: a packet of a gated id held until FUN_100fc3c0's gate opens for it, where Packet would be dropped (the
+    /// modern storage view's moves, the sorts' 0x03A). The gate's time is the net thread's own, so callers need not
+    /// guess it.
+    PacketHeld { id: u16, body: Vec<u8> },
     /// c2s 0x0F1 {u16 BuffNo}: cancel a status effect (FUN_100a0590).
     CancelStatus(u16),
     /// c2s 0x076 {u8 Kind = 0}: the roster's names (FUN_100e9550); LSB answers with 0x0C8 and 0x0DD.
@@ -1313,6 +1317,21 @@ impl SendGate {
             }
             self.last.insert(id, now);
             k += 1;
+        }
+    }
+
+    /// A packet to hold rather than drop: queued now if its id's gate is open and none of its id is held (admit then
+    /// stamps it), else held for release. A sort (0x03A) of a container already waiting is not held twice.
+    fn hold(&mut self, queue: &mut Vec<Vec<u8>>, p: Vec<u8>, now: Instant) {
+        let id = packet_id(&p);
+        if id == 0x03A && self.held.iter().any(|h| packet_id(h) == id && h.get(4..) == p.get(4..)) {
+            return;
+        }
+        if GATED.binary_search(&id).is_ok() && (self.held.iter().any(|h| packet_id(h) == id) || !self.open(id, now)) {
+            log::info!("c2s {id:#05x} held: the 1000 ms gate (FUN_100fc3c0); sent when it opens");
+            self.held.push_back(p);
+        } else {
+            queue.push(p);
         }
     }
 
@@ -2509,6 +2528,7 @@ fn session(
                     queue.push(build(0x01A, &action_body(target, index, action)))
                 }
                 NetCommand::Packet { id, body } => queue.push(build(id, &body)),
+                NetCommand::PacketHeld { id, body } => gate.hold(&mut queue, build(id, &body), Instant::now()),
                 NetCommand::GroupListReq => queue.push(build(0x076, &[0u8; 4])),
                 NetCommand::CancelStatus(id) => queue.push(build(0x0F1, &[id as u8, (id >> 8) as u8, 0, 0])),
                 NetCommand::Check { target, index, kind } => {
@@ -2699,6 +2719,50 @@ mod tests {
         let mut q = vec![build(0x0B5, &[0; 4]), build(0x0B5, &[0; 4]), build(0x0B6, &[0; 20]), build(0x0B6, &[0; 20])];
         g.admit(&mut q, 0, ms(1000));
         assert_eq!(q.len(), 4);
+    }
+
+    /// A held packet (PacketHeld) waits for its id's gate where a plain one would be dropped, and goes in order: two
+    /// moves within the second both go, a second apart, and nothing of the id overtakes them.
+    #[test]
+    fn send_gate_hold() {
+        let t0 = Instant::now();
+        let ms = |n| t0 + Duration::from_millis(n);
+        let mut g = SendGate::default();
+        let mut q = Vec::new();
+        g.hold(&mut q, build(0x029, &[1; 8]), t0);
+        g.admit(&mut q, 0, t0);
+        assert_eq!(q.len(), 1);
+        q.clear();
+        g.hold(&mut q, build(0x029, &[2; 8]), ms(10));
+        g.hold(&mut q, build(0x029, &[3; 8]), ms(20));
+        q.push(build(0x029, &[4; 8]));
+        g.admit(&mut q, 0, ms(20));
+        assert!(q.is_empty());
+        assert_eq!(g.held.len(), 2);
+        g.release(&mut q, ms(999));
+        assert!(q.is_empty());
+        g.release(&mut q, ms(1000));
+        assert_eq!(q.iter().map(|p| p[4]).collect::<Vec<_>>(), [2]);
+        g.release(&mut q, ms(1999));
+        assert_eq!(q.len(), 1);
+        g.release(&mut q, ms(2000));
+        assert_eq!(q.iter().map(|p| p[4]).collect::<Vec<_>>(), [2, 3]);
+        assert!(g.held.is_empty());
+        // A sort of a container already waiting is not held again; another container's is.
+        g.hold(&mut q, build(0x03A, &[1, 0, 0, 0]), ms(2000));
+        g.admit(&mut q, 0, ms(2000));
+        q.clear();
+        for c in [8u8, 8, 10] {
+            g.hold(&mut q, build(0x03A, &[c, 0, 0, 0]), ms(2100));
+        }
+        assert!(q.is_empty());
+        assert_eq!(g.held.iter().map(|p| p[4]).collect::<Vec<_>>(), [8, 10]);
+        g.held.clear();
+        // An id outside the gate is never held.
+        let mut q = Vec::new();
+        g.hold(&mut q, build(0x015, &[0; 28]), ms(2000));
+        g.hold(&mut q, build(0x015, &[0; 28]), ms(2000));
+        assert_eq!(q.len(), 2);
     }
 
     /// FUN_100fc3c0 at the call site: once a second per id, each id on its own.

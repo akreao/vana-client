@@ -14,6 +14,7 @@ local jobs = require("src.jobs")
 local keys = require("src.keys")
 local actions = require("src.actions")
 local palette = require("src.palette")
+local chooser = require("src.chooser")
 
 local M = {}
 
@@ -87,12 +88,53 @@ local function signature()
   return table.concat({ tostring(mj), tostring(sj), o.bars, o.slots, o.size, o.gap, tostring(o.show_keys) }, ":")
 end
 
--- Runs the macro in a slot for the current jobs.
+local slot_xy
+
+-- Whether the battle menu suggests what a macro does (any member of a group).
+local function is_suggested(macro, act)
+  if macro and macro.group then
+    for _, m in ipairs(macro.group) do
+      local a = actions.of(m)
+      if a and suggested[a.kind .. ":" .. a.id] then return true end
+    end
+    return false
+  end
+  return act ~= nil and act ~= false and suggested[act.kind .. ":" .. act.id] == true
+end
+
+-- Where a group slot's list opens: over the slot (under it on the top edge), centred on it, in window pixels; nil
+-- when the bars' place on screen is not known (the list opens at the pointer).
+local function list_place(b, i)
+  local at = ui.bounds and ui.bounds(WIN, "c")
+  if not at or not geo then return nil end
+  local x, y = slot_xy(b, i)
+  local u = hud.screen().ui_scale
+  local cx = at.x + (x + geo.size / 2) * at.scale - chooser.WIDTH * u / 2
+  if top_dock then
+    return { x = cx, y = at.y + (y + geo.size) * at.scale + 6 * u }
+  end
+  return { x = cx, y = at.y + y * at.scale - 6 * u, above = true }
+end
+
+-- Runs the macro in a slot for the current jobs; a group opens its list. While a list is open the keys of the bar
+-- it came from pick its members by number; another bar's key closes it and acts as usual.
 function M.fire(bar, slot)
+  if chooser.is_open() then
+    if chooser.bar() == bar then
+      chooser.pick(slot)
+      return
+    end
+    chooser.close()
+  end
   local mj, sj = jobs.current()
   if not mj then return end
   local macro = data.resolve(mj, sj, bar, slot)
-  if macro then runner.run_checked(macro) end
+  if not macro then return end
+  if macro.group then
+    chooser.open(macro, list_place(bar, slot), function(m) return is_suggested(m, actions.of(m)) end, bar)
+  else
+    runner.run_checked(macro)
+  end
 end
 
 local function eased(r)
@@ -107,7 +149,7 @@ local function height(r)
 end
 
 -- Bar 1 stands on the edge that stays put; each next bar is further from it (coming into view as the canvas grows).
-local function slot_xy(b, i)
+slot_xy = function(b, i)
   local x = PAD + (i - 1) * (geo.size + geo.gap)
   if top_dock then return x, PAD + (b - 1) * (geo.size + geo.gap) end
   return x, height(reveal or 1) - PAD - geo.size - (b - 1) * (geo.size + geo.gap)
@@ -183,9 +225,31 @@ local function draw()
           colour = hover == key and KEY_HOVER or (macro and KEY or EMPTY_KEY) })
         add({ type = "rect", x = x, y = y, w = s, h = s, round = round, line = 1.5,
           colour = macro and EDGE[cell.from] or EMPTY_EDGE })
+        local sugg = is_suggested(macro, act)
+        if sugg then
+          -- Inside, gold at the edge fading into the key toward the middle (rings inset a step at a time), its depth
+          -- and strength pulsing with the glow round it.
+          local depth = s * (0.22 + 0.06 * glow)
+          local rings = 10
+          local step_w = depth / rings
+          for k = 0, rings - 1 do
+            local t = k / rings
+            local inset = k * step_w
+            add({ type = "rect", x = x + inset, y = y + inset, w = s - 2 * inset, h = s - 2 * inset,
+              round = math.max(0, round - inset), line = step_w + 0.5,
+              colour = { GLOW[1], GLOW[2], GLOW[3], math.floor((55 + 55 * glow) * (1 - t) * (1 - t)) } })
+          end
+        end
         if act then
           local isz = math.floor(s * 0.58)
           add({ type = "icon", x = x + (s - isz) / 2, y = y + 4, size = isz, kind = act.kind, id = act.id })
+        end
+        -- A group: a small arrow in the corner, pointing where its list opens.
+        if macro and macro.group then
+          local ax = x + s - 9
+          local base, tip = y + 10, y + 6
+          if top_dock then base, tip = tip, base end
+          add({ type = "tri", x1 = ax - 4, y1 = base, x2 = ax + 4, y2 = base, x3 = ax, y3 = tip, colour = GOLD })
         end
         local sh = shades[key]
         if sh and sh.left > 0 then
@@ -218,7 +282,7 @@ local function draw()
           local hint = keys.hint(b, i)
           add({ type = "text", x = x + 4, y = y + 2, text = hint, size = 0.9, colour = MUTED })
         end
-        if act and suggested[act.kind .. ":" .. act.id] then
+        if sugg then
           add({ type = "rect", x = x - 3, y = y - 3, w = s + 6, h = s + 6, round = round + 3, line = 3,
             colour = { GLOW[1], GLOW[2], GLOW[3], math.floor(25 + 45 * glow) } })
           add({ type = "rect", x = x - 1, y = y - 1, w = s + 2, h = s + 2, round = round + 1, line = 1.5,
@@ -468,6 +532,8 @@ events.on("suggestions", function(rows)
   animate()
   draw()
 end)
+
+chooser.hooks.picked = function() M.recasts() end
 
 function M.rebind()
   if not settings.get("on") then

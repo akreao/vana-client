@@ -1,12 +1,15 @@
 //! xi_connect's auth service (TCP 54231, TLS 1.3, one JSON request and reply per connection).
 //! Speaks the protocol of xiloader 3.0.x, which the server checks for; a server that names another version is asked
-//! again as that one. From 3.0 LSB serves the lobby data and view ports over TLS too, with this port's key; before it
-//! they are plain (lobby.rs).
+//! again as that one, and asked as it from then on. From 3.0 LSB serves the lobby data and view ports over TLS too,
+//! with this port's key; before it they are plain (lobby.rs).
 
 use super::tls;
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 pub const LOADER_VERSION: [u8; 3] = [3, 0, 0];
 /// The most of a login reply taken before giving up: xi_connect's replies are a few hundred bytes of JSON.
@@ -94,8 +97,9 @@ fn read_reply(stream: &mut impl Read) -> Result<Value> {
     }
 }
 
-/// The loader version a refusal asks for: the first `major.minor.patch` in it (patch may be `x`, sent as 0) that isn't ours.
-fn asked_version(msg: &str) -> Option<[u8; 3]> {
+/// The loader version a refusal asks for: the first `major.minor.patch` in it (patch may be `x`, sent as 0) that isn't
+/// the one `sent`.
+fn asked_version(msg: &str, sent: [u8; 3]) -> Option<[u8; 3]> {
     let b = msg.as_bytes();
     let num = |at: &mut usize| -> Option<u8> {
         let start = *at;
@@ -115,8 +119,40 @@ fn asked_version(msg: &str) -> Option<[u8; 3]> {
             (b.get(at) == Some(&b'.')).then_some(())?;
             at += 1;
             let patch = if matches!(b.get(at), Some(b'x' | b'X')) { 0 } else { num(&mut at)? };
-            ([major, minor] != LOADER_VERSION[..2]).then_some([major, minor, patch])
+            ([major, minor] != sent[..2]).then_some([major, minor, patch])
         })
+}
+
+/// Each server's last taken loader version, by "host:port": loader_versions.json beside known_servers.json.
+fn versions_path() -> PathBuf {
+    crate::config::known_servers_path().with_file_name("loader_versions.json")
+}
+
+fn read_versions(path: &Path) -> BTreeMap<String, [u8; 3]> {
+    std::fs::read_to_string(path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+}
+
+/// Keeps `v` for `server`; a file that can't be written only costs the refused first request next time.
+fn remember(path: &Path, server: &str, v: [u8; 3]) {
+    static WRITING: Mutex<()> = Mutex::new(());
+    let _held = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+    let mut all = read_versions(path);
+    if all.get(server) == Some(&v) {
+        return;
+    }
+    all.insert(server.to_string(), v);
+    let tmp = path.with_extension(format!("json.{}.tmp", std::process::id()));
+    let saved = (|| -> Result<()> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(&tmp, serde_json::to_string_pretty(&all)?)?;
+        std::fs::rename(&tmp, path)?;
+        Ok(())
+    })();
+    if let Err(e) = saved {
+        log::warn!("login: {} not saved: {e:#}", path.display());
+    }
 }
 
 /// The reply, and the key of the certificate the server sent.
@@ -138,16 +174,17 @@ pub fn send(host: &str, port: u16, command: Command, req: &Request) -> Result<Re
         "password": req.password,
         "otp": req.otp,
         "new_password": req.new_password,
-        "version": LOADER_VERSION,
     });
     if command == Command::Login {
         body["trust_token"] = json!(req.trust_token);
         body["trust_this_computer"] = json!(req.trust_this_computer);
     }
-    let mut version = LOADER_VERSION;
+    let (path, server) = (versions_path(), tls::key(host, port));
+    let mut version = read_versions(&path).get(&server).copied().unwrap_or(LOADER_VERSION);
+    body["version"] = json!(version);
     let (mut reply, mut key) = exchange(host, port, &body)?;
     // A server built for another loader names the version it checks for; the requests are the same, so ask as that.
-    if let Some(v) = reply["error_message"].as_str().and_then(asked_version) {
+    if let Some(v) = reply["error_message"].as_str().and_then(|m| asked_version(m, version)) {
         log::info!("login: {host} asks for loader {}.{}.x; asking again as {}.{}.{}", v[0], v[1], v[0], v[1], v[2]);
         body["version"] = json!(v);
         version = v;
@@ -157,6 +194,9 @@ pub fn send(host: &str, port: u16, command: Command, req: &Request) -> Result<Re
         bail!("{msg}");
     }
     let result = reply["result"].as_u64().context("reply has no result code")?;
+    if result != 0x0B {
+        remember(&path, &server, version);
+    }
     Ok(match result {
         0x01 => {
             let bytes: Vec<u8> = reply["session_hash"]
@@ -204,14 +244,38 @@ mod reply_tests {
         }
     }
 
-    /// LSB's refusal and one server's own wording both give the version to ask as; ours alone gives none.
+    /// LSB's refusal and one server's own wording both give the version to ask as; the one sent alone gives none.
     #[test]
     fn asked_version_from_refusals() {
+        let v3 = LOADER_VERSION;
         let lsb = "Unsupported xiloader version 3.0.0.\nThis server requires version 2.2.x.";
         let other = "Your xiloader is too old.\nPlease update to version '2.0.x'.\nYour client reported '3.0.0'.";
-        assert_eq!((asked_version(lsb), asked_version(other)), (Some([2, 2, 0]), Some([2, 0, 0])));
-        assert_eq!(asked_version("needs 1.12.3 here"), Some([1, 12, 3]));
-        assert_eq!((asked_version("Your client reported '3.0.0'."), asked_version("version 10.0")), (None, None));
+        assert_eq!((asked_version(lsb, v3), asked_version(other, v3)), (Some([2, 2, 0]), Some([2, 0, 0])));
+        assert_eq!(asked_version("needs 1.12.3 here", v3), Some([1, 12, 3]));
+        assert_eq!(
+            (asked_version("Your client reported '3.0.0'.", v3), asked_version("version 10.0", v3)),
+            (None, None)
+        );
+        // A remembered 2.2 that the server has since moved on from.
+        let moved = "Unsupported xiloader version 2.2.0.\nThis server requires version 3.0.x.";
+        assert_eq!(asked_version(moved, [2, 2, 0]), Some([3, 0, 0]));
+    }
+
+    /// A taken version is kept per server, and a store that can't be read or written only means none.
+    #[test]
+    fn versions_are_remembered() {
+        let dir = std::env::temp_dir().join(format!("vana-loader-versions-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("loader_versions.json");
+        assert!(read_versions(&path).is_empty());
+        remember(&path, "lsb:54231", [2, 2, 0]);
+        remember(&path, "other:54231", [3, 0, 0]);
+        remember(&path, "lsb:54231", [3, 0, 0]);
+        let all = read_versions(&path);
+        assert_eq!((all.get("lsb:54231"), all.get("other:54231")), (Some(&[3, 0, 0]), Some(&[3, 0, 0])));
+        std::fs::write(&path, "not json").unwrap();
+        assert!(read_versions(&path).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A 3.x server's lobby is held to its login key; a 2.x server's lobby is plain.

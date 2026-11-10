@@ -41,6 +41,22 @@ command such as `/attack`, `/heal`, `/assist` or `/lockon`, or Macro for typed l
 the target, and add lines to run after it. System commands show a game icon standing in for them (a sword for
 `/attack`, Regen for `/heal`).
 
+Abilities that open a list in the game's menu (Rune Enchantment, Ward, Effusion, Phantom Roll, Quick Draw, Sambas,
+Waltzes, Jigs, Steps, the Flourishes, Stratagems, Blood Pact: Rage and Ward, Ready) open the same list here, marked
+`›`: pick Rune Enchantment, then Ignis. Back returns to the list. A search finds the abilities in those lists too.
+
+**Group slots:** one slot for several actions. Open a list such as Rune Enchantment, or search (`cure` finds Cure to
+Cure VI), and press **Make a Group of These**; Save it and put it on a slot as any macro. The slot shows the member
+used last, with a small arrow in its corner. Pressing it (its key or a click) opens the members in a list over the
+slot, the one used last under the cursor: Up / Down and Enter, or a click, runs one; the number keys pick one too;
+Escape or a click elsewhere closes it. While you edit a group, the list shows its members (click one to take it
+out); search to add more, of any type. The Target menu sets every member's target. Groups are optional: one slot per
+rune still works as before.
+
+**Line it builds** shows the macro's first line (`/ja "Ignis" <me>`). Type your own line there to run it instead,
+for anything the Builder gets wrong; the slot keeps the picked action's icon and recast when your line names none.
+Clear the field to go back to the built line.
+
 The **palette** (`//hb palette`, or Palette on the Library page) shows the main job's library as tiles on the screen;
 drag its background to move it. Drag a tile onto a slot of the bars to put that macro there; click one to edit it.
 
@@ -52,7 +68,9 @@ The macros are kept in `mod-data/hotbar/files/macros.json`:
 {
   "WAR": {
     "library": { "1": { "name": "Provoke", "action": { "kind": "ja", "name": "Provoke", "target": "t" },
-                        "lines": ["/p Provoked <t>"] } },
+                        "lines": ["/p Provoked <t>"] },
+                 "2": { "name": "Ignis", "action": { "kind": "ja", "name": "Ignis", "target": "me",
+                                                     "line": "/ja \"Ignis\" <me> <wait 1>" } } },
     "main": { "1": { "1": { "ref": "1" }, "2": { "name": "Berserk", "lines": ["/ja \"Berserk\" <me>"] } } },
     "sub": { "NIN": { "1": { "6": { "name": "Utsusemi", "lines": ["/ma \"Utsusemi: Ichi\" <me>"] } } } }
   }

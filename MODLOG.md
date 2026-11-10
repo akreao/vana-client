@@ -18,8 +18,11 @@ New entries go in `docs/modlog/` as one file each and are folded in here later (
 
 ## Auth (xi_connect, TCP 54231)
 - TLS 1.3. LSB's server certs are self-signed X.509 v1 (webpki rejects them): RSA-4096 on the login port, P-256 for
-  xi_profile, SHA-384. xiloader checks nothing; ours checks them (see "TLS: certificates checked or pinned").
-- JSON in, JSON out. Must send `"version": [2,2,x]`. Login reply: `result` 1, `account_id`,
+  xi_profile, SHA-384. xiloader before 3.0 checks nothing; 3.0 pins the login port's key and holds the lobby to it
+  (see "Lobby"); ours checks them (see "TLS: certificates checked or pinned").
+- JSON in, JSON out. `"version"`: LSB checks its major and minor only and refuses another with "Unsupported xiloader
+  version a.b.c.\nThis server requires version x.y.x." (src/login/auth_session.cpp, before any credential check):
+  [2,2,x] until LSB 9b6df7c7 (2026-11-04), [3,0,x] from it. Login reply: `result` 1, `account_id`,
   `session_hash` as a 16-int array. Verified live (account 1000 created via command 0x20).
 
 ## Lobby (xi_connect view TCP 54001, data TCP 54230)
@@ -32,6 +35,11 @@ New entries go in `docs/modlog/` as one file each and are folded in here later (
   {07,14,1F,21,22,24,28,2B}, +1 per reply {03,0B,20,23}, +1 per error reply to {22,24,28,2B}.
   Verified: zone server decrypts our traffic.
 - chr_info_sub2 is 140 bytes; TC_OPERATION_MAKE GrapIDTbl @12, zone_no @28, mjob_level @29, zone_no2 @35.
+- (2026-11-09) TLS from LSB 778b7429 (released with 9b6df7c7, the 3.0 version check): data and view sessions run a TLS
+  server handshake first (handler_session::start) from the login port's ssl context (handler.h sslContext_), so they
+  present its certificate; the messages inside are unchanged. A plain client is dropped unanswered ("wrong version
+  number" in the server log). xiloader 3.0 (ec0835b) connects both without CA checks and compares the peer key's
+  SHA-256 with the login server's trusted key (checkPeerKey: lobby/data_connection.cpp, client/polrelay.cpp).
 
 ## Zone (xi_map, UDP 54230)
 - 28-byte header: u16 our seq, u16 last server seq seen, u32 time @8. Sub-packets: u16 (id:9 | size:7 in
@@ -18389,6 +18397,33 @@ From the research notes:
   the commands for half a second retook them. A list taken while a tier recast lacked it from then on. Held rows now
   keep their places but their families are retaken every half second (regroup), the open list's cursor kept on its
   spell, and a nuke family's suggestion goes back to its list's top; test held_rows_regroup.
+- (2026-11-10, user: "do better on the suggestions for RUN and GEO") The facts took job abilities only (ability kind
+  1), so no row of a list a job ability opens was ever offered: the runes (kind 21), Vallation .. Battuta (22), Swipe
+  .. Rayke (23), and the waltzes and sambas the old rules asked for (12, 11). They now take every kind a kind-1 opener
+  names (record +0xe). The facts also gained our main / support job and level, MP % and our pet (a luopan by its model,
+  0xb22..0xb31). Rules after the samba, before the debuffs; cases rune_tank, rune_tank_held, rune_damage, geo_fight,
+  geo_after.
+  - RUN (LSB rune_fencer.lua): rune statuses 523..530 (Ignis .. Tenebrae) in the spells' element order; each resists
+    the element it beats (Ignis ice, Gelus wind, Flabra earth, Tellus thunder, Sulpor water, Unda fire; Lux dark,
+    Tenebrae light: the runes' MEVA and Vallation / Valiance's SDT), and Swipe (one rune), Lunge (all) and Gambit spend
+    them as their own element. Up to 1 rune, 2 from RUN 35, 3 from 65, 300 s each. The rune to hold: on the monster,
+    the one that resists its own element, the element its ranks resist most by a clear margin (inferred: monsters
+    deal their own element); otherwise its weakness (resisted least, below 0), for Swipe and Lunge. Offered while
+    fewer than the most are that rune or one wears off within 30 s. Then: Elemental Sforzo under 35% HP on the
+    monster, Swordplay; with runes up and the monster on us Vallation (Valiance first with others here), Pflug,
+    Liement under 50% HP, Battuta with every rune up; not holding it, the runes spent unless the monster resists the
+    newest's element (spent first, getNewestRuneEffect): Gambit when a BLM / RDM / SCH / GEO is here and the monster
+    has none, else Lunge with two or more, else Swipe.
+  - GEO (main): an Indicolure while Colure Active (612) is off; a Geocolure on the target while no luopan is out,
+    Blaze of Glory first; with one out Ecliptic Attrition in a fight, Full Circle with nothing targeted, Life Cycle
+    under 50% (Dematerialize under 70%) of its HP, Radial Arcana under 25% MP, Mending Halation with three below 60%
+    HP. Melee colures (Indi-Fury / Precision / Haste / Regen, Geo-Frailty / Fury / Wilt) when the others here have more
+    melee than nukers, else magic ones (Indi-Acumen / Focus / Refresh / Regen, Geo-Malaise / Acumen / Languor); a GEO
+    alone nukes. Status ids from LSB effect.codegen.lua (Vallation 531 .. One for All 538, Battuta 570, Blaze of Glory
+    569, Ecliptic Attrition 516, Dematerialize 518).
+  - Seen live (Lnxcsfix as RUN 99, a River Crab: water ranked highest, ice lowest): engaged and not held, Gelus
+    ("weak to ice, for Swipe and Lunge"); the Hotbars' rune group slot glowed and its list showed Gelus in gold. GEO
+    not seen live.
 
 ## Extras: Clock and Trust Speech (ours, 2026-10-29)
 
@@ -20610,6 +20645,13 @@ Lessons from other games' mod layers (BG3 Script Extender, WoW, Skyrim, Factorio
   known_servers.json a directory: the three servers (54231, 51220, 51240) pinned once each, the line in the log.
 - `vana-client trust-server HOST [--port P] [--fingerprint F]` forgets the host's pins (every port: an LSB reinstall
   changes the login port's and xi_profile's 51220 / 51240), or sets a fixed key pin.
+- (2026-11-09) The lobby over TLS (LSB for xiloader 3.0, see "Lobby"): net/tls.rs connect_with_key holds data and view
+  to the key the login port sent (a fixed key pin; nothing is stored for those ports), only when the login server took
+  a 3.x version (auth.rs lobby_key). Both links open at once and nothing is sent until both handshakes pass. A lobby
+  port that sends no certificate is named as not TLS; a plain lobby that hangs up unanswered is named as maybe TLS.
+  There is no fallback from TLS to plain: it would hand a downgrade to anyone in between. The version each server took
+  is kept in loader_versions.json ("host:port" to [major, minor, patch], beside known_servers.json) and sent first next
+  time, so a 2.x server is not refused (and sent the password twice) at every login.
 - Character names from the server become file names (chat history, regime state) only as letters and digits, and not
   a Windows device name on Windows; anything else as '_' and the name's bytes in hex.
 - The Friend List's message names (GetFileList, up to 0x100 bytes) are written as files in the mail folder only when
@@ -23464,3 +23506,61 @@ still gave `cor`. Both now go through actmotion::sdep_stand.
   modelled)*.
 - Dropped: the mid-swing turn of our moving swing (combat::turned_swing, Play::rename_current, 2026-11-07 / 08). It
   covered for the legs re-picked mid-swing; retail picks the swing once and keeps the legs under it, so they match.
+
+## The Update button on the login form (ours, 2026-11-09)
+
+- The Update button (client/updater.rs's window) moves from the title (above Select Character) to the login form:
+  at the right end of Remember password's row, opposite Two-factor, while something is out of date. The title comes
+  only after a login and the character list, which an outdated client may not get through (LSB's xiloader 3.0 lobby
+  drops a 2.2 client's plain links), so its button could never be reached when it mattered most.
+- login_window focus n+5 (after Two-factor): Right from the box, Left back, Down to Exit, Up to the last field, Tab
+  after Two-factor; hover and click as the other buttons. The help line "Update the game files or vana-client.". The
+  form takes no input while the window is up, and the window's help line replaces the form's.
+- The form is wide enough for the box's caption and Update side by side (380 design px, or more for a wider caption;
+  440 with the game font), whether or not Update shows, so nothing moves when it appears.
+- The title's keytophd Update button (render/screens.rs update_button and its backing) is gone with it.
+
+## Mog storage gates on LSB, and the modern storage view (2026-11-09)
+
+- Lobby 0x05 +0x24 (the feature bits, wardrobes 3..8 at bits 2..7) was read from the character phase's lobby when
+  the World started. Every login path takes that lobby to run select, so World.features was always 0, and Wardrobes 3..8
+  were refused in the item moves (rule 4) and the equipment lists (equipwin bag_open) since 2026-10-23. The bits now
+  sit in Phase::Characters beside `expansions`; the world start logs both (LSB: 0xFC, 0xFFF).
+- FUN_101dbc20's Sack and Wardrobe 2..8 checks go through FUN_100eb940(c) = byte S+0x19891 + c: the container's s2c
+  0x01C ItemNum. FUN_100eb960(c) is the u16 at S+0x198a4 + 2c, ItemNum2. LSB sends ItemNum = 1 + size for every
+  container (0x01c_item_max.cpp), so these checks never close on LSB. Only ItemNum2 of the Locker is 0 there (no
+  lease).
+- LSB's item move validator (c2s 0x029) allows Safe 2 only with char_stats.mhflag & 0x20 (the 2F) and
+  ENABLE_MOG_HOUSE_2F; else "Category2 value 9 is not allowed" and nothing moves. Ours knows the 2F from s2c 0x067
+  kind 2 @0x27 bit 0 (mh_floors).
+- The modern storage view (ours) merged Safe and Safe 2 as one Mog Safe without checking that flag. It counted Safe 2's
+  room (50 / 100) and, with the Safe full, sent moves into Safe 2. Its merged bags now use only the parts
+  items::usable allows (View House: its open containers).
+- c2s 0x029 is in FUN_100fc3c0's gate (dropped within 1000 ms of the last). The net thread's gate stamps its own
+  time, so the view can't time it from the UI side: NetCommand::PacketHeld (ours) asks the net thread to hold a gated
+  packet until its gate opens instead of dropping it. The modern view's moves (and its Manual Sort's, and the item
+  menu's Move) go that way. The view holds one move made while the last is still pending, for the bag it was made for
+  (its tab may change meanwhile); when it goes the stack is checked again (still there, may still move) and an
+  inventory stack takes the bag part with room at that point. Before this, the dropped move was reported five seconds
+  later as refused by the server.
+- The merged bags also leave out Wardrobes 3..8 without their feature bit (equipwin bag_open), as for Safe 2.
+- The modern Moogle menu's Storage row opens the storage view on the first open row of the container list (ours,
+  user 2026-11-09); the list shows only when that row will not open. Closing the view returns to the Moogle menu.
+
+## The modern storage view's sorting, and LSB's sort limit (2026-11-10)
+
+- LSB's c2s 0x03A handler (0x03a_item_stack.cpp) keeps the time of the last sort per container. A 0x03A for that
+  container within 1 s of it is dropped and counted, and at map.LIGHTLUGGAGE_BLOCK (4 here) the player is logged out.
+  The count resets only on a sort that goes through. Other containers are not affected, so sorting the eight
+  wardrobes at once is fine; sending to one container repeatedly is not.
+- 0x03A is also in FUN_100fc3c0's gate, one a second over every container, so sorting the eight wardrobes sent one and
+  the gate dropped seven. Ours: items::send_sort sends 0x03A held (PacketHeld; a container's sort already held is not
+  held twice), and a container sorted again within 1.5 s (datagrams go up to 400 ms apart, so a second on our side can
+  be less at LSB) sorts once that has passed, through sort_due. Every sort goes through it: the kept-sorted re-sorts,
+  the Items window, the classic sort window's Auto (retail sends 0x03A twice there and its gate drops the second; ours
+  sends the one).
+- The modern storage view (ours): each pane has Auto-sort / Manual Sort, as the modern Items window has. Auto-sort sorts
+  the pane's containers (a merged bag's usable parts, or the inventory) and keeps them sorted (config auto_sort, the
+  same bits as the classic sort window's Auto). Manual Sort clears those bits and starts storage's Manual Sort on that
+  pane: a pick, then the row to put it at (FUN_101f0b30's rules), within one part. Num+ (FUN_101db690 case 8) focuses
+  the pair: Left / Right between them, Enter takes one.

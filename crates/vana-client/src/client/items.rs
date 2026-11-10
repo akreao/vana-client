@@ -316,13 +316,29 @@ pub struct Storage {
     pub read_only: bool,
     /// itmsortw focused: its cursor, the side it serves, Auto's sortyn.
     pub sortw: Option<SortW>,
-    /// Manual Sort (FUN_101dbed0) on a side (true: the bank), with the held (container, slot).
-    pub manual: Option<(bool, Option<(u8, u8)>)>,
+    /// Manual Sort (FUN_101dbed0) on a side (true: the bank), with the held slot.
+    pub manual: Option<(bool, Option<u8>)>,
     /// "menu    itmstora" (Switch) with its cursor row, for the side itmsortw serves.
     pub stora: Option<u16>,
+    /// Modern: the container of Manual Sort's held row (`manual`'s slot), a merged bag having several.
+    pub held_part: u8,
     /// Modern (not retail): the move sent and not yet seen in the inventory, and the line explaining the last refusal.
     pub pending: Option<Pending>,
     pub note: Option<&'static str>,
+    /// Modern: the next move, held until the last has settled (the net thread then holds it for the send gate).
+    pub waiting: Option<Waiting>,
+}
+
+/// A move held until the last has settled (modern, not retail): the bag shown when it was made (its tab may change
+/// meanwhile), the stack's place and item, where to and how many.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Waiting {
+    pub bag: u8,
+    pub from: u8,
+    pub to: u8,
+    pub index: u8,
+    pub id: u16,
+    pub n: u32,
 }
 
 /// A move sent to the server (modern, not retail): the slot it left and what was there, until the slot changes.
@@ -1031,14 +1047,8 @@ pub(super) fn follow_held(w: &mut World) {
 /// Seconds after the last new item before a container kept sorted sorts (a pickup's updates come in a burst).
 pub(super) const SORT_DELAY: f32 = 0.5;
 
-/// Ours: kept-sorted containers sort locally once their new items are in and queue c2s 0x03A stack-merge requests;
-/// requests (including merged-tab sorts) go one per SORT_GAP.
+/// Ours: the containers kept sorted (config auto_sort) sort again once their new items are in.
 pub(super) fn auto_sort_tick(w: &mut World, dt: f32) {
-    w.sort_packet_wait -= dt;
-    if w.sort_packet_wait <= 0.0 && !w.sort_packets.is_empty() {
-        let c = w.sort_packets.remove(0);
-        send_sort_packet(w, c);
-    }
     if w.sort_due.0 == 0 {
         return;
     }
@@ -1049,7 +1059,7 @@ pub(super) fn auto_sort_tick(w: &mut World, dt: f32) {
     let due = std::mem::take(&mut w.sort_due.0);
     for c in (0..32u8).filter(|c| due >> c & 1 != 0) {
         log::info!("items: container {c} kept sorted, sorting");
-        auto_sort_local(w, c);
+        auto_sort_c(w, c);
     }
 }
 
@@ -1105,8 +1115,8 @@ fn auto_sort(w: &mut World) {
     auto_sort_c(w, INVENTORY);
 }
 
-/// FUN_1021c7e0 on a container's view (no packet).
-fn sort_view(w: &mut World, c: u8) {
+/// FUN_1021c7e0 on a container; 0x03A {c} is sent again by the storage view's itmsortw (LAB_101f3780: two in all).
+pub(super) fn auto_sort_c(w: &mut World, c: u8) {
     let grouped = w.game.get(0xca) == 1;
     let info = w.item_info.clone();
     let key = |s: &Slot| (info.as_ref().and_then(|c| c.item(s.id)).map_or(0xffff, |it| it.resource), s.id);
@@ -1129,49 +1139,49 @@ fn sort_view(w: &mut World, c: u8) {
     if c == INVENTORY {
         w.sort_wait = 0.0;
     }
+    send_sort(w, c);
 }
 
-/// c2s 0x03A {c}: one sort / stack-merge request; queued sends keep SORT_GAP after the last one.
-fn send_sort_packet(w: &mut World, c: u8) {
-    let _ = w.net.commands.send(NetCommand::Packet { id: 0x03A, body: (c as u32).to_le_bytes().to_vec() });
-    w.sort_packet_wait = SORT_GAP;
-}
+/// LSB drops a 0x03A for a container within 1 s of its last and logs the player out at the 4th it drops
+/// (map.LIGHTLUGGAGE_BLOCK). Datagrams go every 400 ms at most, so two sends a second apart here can land closer than
+/// that: each container's sorts stay this far apart.
+const SORT_SPACING: std::time::Duration = std::time::Duration::from_millis(1500);
 
-/// c2s 0x03A {c} now: the storage view's itmsortw request (auto_sort_c sends another).
-pub(super) fn sort_request(w: &mut World, c: u8) {
-    send_sort_packet(w, c);
-}
-
-/// FUN_1021c7e0 on a container; 0x03A {c} is sent again by the storage view's itmsortw (LAB_101f3780: two in all).
-pub(super) fn auto_sort_c(w: &mut World, c: u8) {
-    sort_view(w, c);
-    send_sort_packet(w, c);
-}
-
-/// The view sorted now, its 0x03A queued: merged storage tabs sort several containers without tripping LSB's rate limit.
-pub(super) fn auto_sort_local(w: &mut World, c: u8) {
-    sort_view(w, c);
-    if !w.sort_packets.contains(&c) {
-        w.sort_packets.push(c);
+/// c2s 0x03A {c} (the server merges the container's stacks). Held by the net thread for FUN_100fc3c0's gate (one
+/// 0x03A a second over every container), where retail drops it, so sorting several containers merges each; a
+/// container sorted again within SORT_SPACING sorts once that has passed (sort_due). Ours: retail sends every one.
+fn send_sort(w: &mut World, c: u8) {
+    let now = std::time::Instant::now();
+    let Some(last) = w.sort_sent.get_mut(c as usize) else { return };
+    if let Some(left) = last.and_then(|t| SORT_SPACING.checked_sub(now.duration_since(t))).filter(|d| !d.is_zero()) {
+        let wait = left.as_secs_f32();
+        w.sort_due = (w.sort_due.0 | 1 << c, if w.sort_due.0 == 0 { wait } else { w.sort_due.1.max(wait) });
+        return;
     }
+    *last = Some(now);
+    let _ = w.net.commands.send(NetCommand::PacketHeld { id: 0x03A, body: (c as u32).to_le_bytes().to_vec() });
 }
 
 /// FUN_101f0b30's second pick: the same row splits one off (to index 0x52, inf: the server's first free slot) when
 /// the stack holds more than one and stacks; another row of the same item takes the whole first stack; then the view
 /// entry moves (FUN_1021cac0, client only).
 fn manual_move(w: &mut World, from: u8, to: &Slot) {
-    manual_move_c(w, INVENTORY, from, to);
+    manual_move_c(w, INVENTORY, from, to, false);
 }
 
-/// FUN_101dbed0: the same in a storage container.
-pub(super) fn manual_move_c(w: &mut World, c: u8, from: u8, to: &Slot) {
+/// FUN_101dbed0: the same in a storage container. `held` (the modern view, ours): its 0x029 waits for the send gate
+/// rather than being dropped.
+pub(super) fn manual_move_c(w: &mut World, c: u8, from: u8, to: &Slot, held: bool) {
     let Some(&(id, count)) = w.inv.slots.get(&(c, from)) else { return };
     let stack = w.item_info.as_ref().and_then(|c| c.item(id)).map_or(1, |it| it.stack);
     let mv = |w: &World, n: u32, i1: u8, i2: u8| {
         let mut b = vec![0u8; 8];
         b[0..4].copy_from_slice(&n.to_le_bytes());
         (b[4], b[5], b[6], b[7]) = (c, c, i1, i2);
-        let _ = w.net.commands.send(NetCommand::Packet { id: 0x029, body: b });
+        let body = b;
+        let cmd =
+            if held { NetCommand::PacketHeld { id: 0x029, body } } else { NetCommand::Packet { id: 0x029, body } };
+        let _ = w.net.commands.send(cmd);
     };
     if to.index == from {
         if count > 1 && stack > 1 {
@@ -1414,8 +1424,10 @@ fn open_view_n(w: &mut World, bank: u8, at_moogle: bool, nomad: bool, read_only:
         sortw: None,
         manual: None,
         stora: None,
+        held_part: 0,
         pending: None,
         note: None,
+        waiting: None,
     };
     match &mut w.win {
         Some(Win::Items { store, sort, direct: false, .. }) if from_menu => {
@@ -1585,7 +1597,7 @@ pub(super) fn judge(
 
 /// FUN_101dbdb0, Manual's colours: the held row orange, equipped gear green (still movable), a Storage piece a
 /// mannequin wears grey, installed furniture grey on this floor and dark red on another, else white.
-pub(super) fn manual_tint(w: &World, c: u8, held: Option<u8>, s: &Slot) -> u32 {
+fn manual_tint(w: &World, c: u8, held: Option<u8>, s: &Slot) -> u32 {
     let furniture =
         w.item_info.as_ref().and_then(|i| i.item(s.id)).is_some_and(|it| matches!(it.item_type, 10 | 12 | 14));
     let installed = w.inv.ext.get(&(c, s.index)).filter(|e| matches!(c, 1 | 9) && furniture && e[1] & 0x40 != 0);
@@ -1608,6 +1620,14 @@ pub(super) fn send_move(w: &World, from: u8, to: u8, index: u8, n: u32) {
     b[0..4].copy_from_slice(&n.to_le_bytes());
     (b[4], b[5], b[6], b[7]) = (from, to, index, 0x52);
     let _ = w.net.commands.send(NetCommand::Packet { id: 0x029, body: b });
+}
+
+/// send_move held by the net thread for the send gate rather than dropped (the modern views, ours).
+pub(super) fn send_move_held(w: &World, from: u8, to: u8, index: u8, n: u32) {
+    let mut b = vec![0u8; 8];
+    b[0..4].copy_from_slice(&n.to_le_bytes());
+    (b[4], b[5], b[6], b[7]) = (from, to, index, 0x52);
+    let _ = w.net.commands.send(NetCommand::PacketHeld { id: 0x029, body: b });
 }
 
 /// Num+ in the storage view (FUN_101db690 case 8): itmsortw for the focused side, SE 0013; nothing for the bin or the
@@ -1712,15 +1732,13 @@ fn store_key(w: &mut World, info: &ItemCache, key: egui::Key, page: bool, alt: b
                     sw.ask = Some(!yes);
                     w.sounds.push(Ui::Cursor as u32);
                 }
-                // LAB_101f3780: Yes sorts the side's container (0x03A {c} here and again in the sort), focus back.
+                // LAB_101f3780: Yes sorts the side's container, focus back. Retail sends 0x03A {c} here and again in
+                // the sort, and its gate drops the second; the sort's one is sent.
                 K::Enter | K::Escape => {
                     let yes = yes && key == K::Enter;
                     sw.ask = None;
                     w.sounds.push(if yes { Ui::Select } else { Ui::Cancel } as u32);
                     if yes {
-                        if c != INVENTORY {
-                            sort_request(w, c);
-                        }
                         auto_sort_c(w, c);
                         keep_sorted(w, c, true);
                         b.sortw = None;
@@ -1773,20 +1791,19 @@ fn store_key(w: &mut World, info: &ItemCache, key: egui::Key, page: bool, alt: b
         let c = if bank_side { b.bank } else { b.side };
         let rows = if bank_side { &banks } else { &inv };
         let (sc, cu) = if bank_side { (&mut b.scroll, &mut b.cursor) } else { (&mut scroll, &mut cursor) };
-        let held_index = held.map(|(_, index)| index);
         match key {
             K::Enter => {
                 // A grey row takes no Enter (FUN_101f6c70: SE 0004).
                 let row = rows.get(*sc + *cu).cloned();
-                if row.as_ref().is_some_and(|s| manual_tint(w, c, held_index, s) == crate::inventory::TINT_DIM) {
+                if row.as_ref().is_some_and(|s| manual_tint(w, c, held, s) == crate::inventory::TINT_DIM) {
                     w.sounds.push(Ui::Error as u32);
                 } else if let Some(s) = row {
                     w.sounds.push(Ui::Select as u32);
                     match held {
-                        None => b.manual = Some((bank_side, Some((c, s.index)))),
-                        Some((hc, from)) => {
+                        None => b.manual = Some((bank_side, Some(s.index))),
+                        Some(from) => {
                             b.manual = Some((bank_side, None));
-                            manual_move_c(w, hc, from, &s);
+                            manual_move_c(w, c, from, &s, false);
                         }
                     }
                 }
@@ -2041,14 +2058,12 @@ fn draw_storage(
         return rects;
     }
     let inv = store_rows(w, b.side);
-    let manual = |bank_side: bool, c: u8| {
-        b.manual.filter(|m| m.0 == bank_side).map(|m| m.1.filter(|held| held.0 == c).map(|held| held.1))
-    };
+    let manual = |bank_side: bool| b.manual.filter(|m| m.0 == bank_side).map(|m| m.1);
     let tinted = |rows: &[Slot], bank_side: bool| {
         let mut out = build_rows(rows, info, false);
         let c = if bank_side { b.bank } else { b.side };
         for (r, s) in out.iter_mut().zip(rows) {
-            r.tint = match manual(bank_side, c) {
+            r.tint = match manual(bank_side) {
                 Some(held) => manual_tint(w, c, held, s),
                 None => tint(w, info, b, bank_side, s),
             };

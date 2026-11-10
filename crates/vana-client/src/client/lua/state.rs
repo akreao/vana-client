@@ -50,6 +50,9 @@ pub(super) struct FrameInfo {
     pub models_ver: u64,
     /// The portraits drawn this frame (client/portrait.rs): entity -> (game UI image, modern UI texture).
     pub portraits: std::collections::HashMap<u32, (String, egui::TextureId)>,
+    /// The mods' canvases as the modern UI last drew them (ui.bounds): (mod, window, canvas) -> its origin in window
+    /// pixels and pixels per canvas unit.
+    pub canvas_rects: std::collections::HashMap<(String, String, String), [f32; 3]>,
 }
 
 /// A modern panel's place from a mod: its top left in window pixels (negative from the right or bottom edge; none

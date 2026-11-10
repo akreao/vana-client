@@ -147,7 +147,12 @@ function M.draw()
     local lines = data.entry_lines(it.entry)
     local name = it.entry.name or ""
     local label = data.display_label(it.entry)
-    local act = actions.of({ lines = lines })
+    local macro = data.macro_of(main, it.id)
+    if macro and macro.group then
+      lines = {}
+      for k, m in ipairs(macro.group) do lines[k] = ("%d. %s"):format(k, m.lines[1] or m.name) end
+    end
+    local act = macro and actions.of(macro)
     add("rect", id, { x = x, y = y, w = tile, h = tile, round = 6 * u, colour = TILE_BG, layer = 1,
       tip = { title = name, text = table.concat(lines, "\n") .. "\n\nDrag onto a slot; click to edit." } })
     add("rect", id .. "_f", { x = x, y = y, w = tile, h = tile, round = 6 * u, colour = TILE_EDGE, line = 1.2 * u,

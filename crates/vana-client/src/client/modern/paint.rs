@@ -52,6 +52,11 @@ fn quad(m: &mut Mesh, r: Rect, uv: Rect) {
 /// are never stretched), the last tile cut short.
 pub fn window(f: &Frame, r: Rect, k: f32, opacity: f32) -> Shape {
     let k = k.min(r.width() / (2.0 * f.corner)).min(r.height() / (2.0 * f.corner));
+    // A frame with no room (a window folded shut as it opens) draws nothing: its edges would tile in steps of 0.
+    // Under a pixel it would tile tens of thousands of slivers.
+    if k.is_nan() || k <= 0.0 || f.size <= 2.0 * f.corner || r.width() < 1.0 || r.height() < 1.0 {
+        return Shape::Noop;
+    }
     let inner = r.shrink(f.inset * k);
     let mut g = Mesh::default();
     let bands = 16;
@@ -83,6 +88,9 @@ pub fn window(f: &Frame, r: Rect, k: f32, opacity: f32) -> Shape {
         let ue = u0 + (u1 - u0) * w / s;
         quad(&mut b, Rect::from_min_size(pos2(x, r.min.y), vec2(w, c)), uv(u0, 0.0, ue, u0));
         quad(&mut b, Rect::from_min_size(pos2(x, r.max.y - c), vec2(w, c)), uv(u0, u1, ue, 1.0));
+        if w.is_nan() || w <= 0.0 {
+            break;
+        }
         x += w;
     }
     // Left and right edges, tiled down.
@@ -92,6 +100,9 @@ pub fn window(f: &Frame, r: Rect, k: f32, opacity: f32) -> Shape {
         let ve = u0 + (u1 - u0) * h / s;
         quad(&mut b, Rect::from_min_size(pos2(r.min.x, y), vec2(c, h)), uv(0.0, u0, u0, ve));
         quad(&mut b, Rect::from_min_size(pos2(r.max.x - c, y), vec2(c, h)), uv(u1, u0, 1.0, ve));
+        if h.is_nan() || h <= 0.0 {
+            break;
+        }
         y += h;
     }
     Shape::Vec(vec![Shape::mesh(g), Shape::mesh(b)])
@@ -169,5 +180,28 @@ pub fn gauge(p: &Painter, empty: &Sprite, full: &Sprite, r: Rect, f: f32) {
     if f > 0.0 {
         let clip = Rect::from_min_max(r.min, pos2(r.min.x + r.width() * f, r.max.y));
         p.with_clip_rect(clip.intersect(p.clip_rect())).add(nine_slice(full, r, k, Color32::WHITE));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A frame folded shut (an animated window's first frame) or squashed flat draws nothing and returns: its edges
+    /// once tiled in steps of 0 forever.
+    #[test]
+    fn window_frame_with_no_room() {
+        let ctx = egui::Context::default();
+        let border = ctx.load_texture("t", egui::ColorImage::new([4, 4], vec![Color32::WHITE; 16]), Default::default());
+        let f = Frame { border, gradient: vec![Color32::BLACK, Color32::WHITE], size: 64.0, corner: 16.0, inset: 4.0 };
+        for r in [
+            Rect::from_min_size(pos2(10.0, 10.0), vec2(300.0, 0.0)),
+            Rect::from_min_size(pos2(10.0, 10.0), vec2(0.0, 200.0)),
+            Rect::from_min_size(pos2(10.0, 10.0), vec2(300.0, 0.001)),
+            Rect::NOTHING,
+        ] {
+            assert!(matches!(window(&f, r, 1.0, 1.0), Shape::Noop | Shape::Vec(_)));
+        }
+        assert!(matches!(window(&f, Rect::from_min_size(pos2(0.0, 0.0), vec2(300.0, 200.0)), 1.0, 1.0), Shape::Vec(_)));
     }
 }

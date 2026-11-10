@@ -122,6 +122,7 @@ impl VoiceChat {
                         label: "Push-to-Talk Key".into(),
                         items: PTT_KEYS.iter().map(|k| k.1.to_string()).collect(),
                         at,
+                        drop: false,
                     },
                     "Hold it to talk. The game still sees the key.",
                 ));
@@ -198,7 +199,7 @@ impl VoiceChat {
             None => {}
         }
         v.push((
-            Elem::Choice { id: "device".into(), label: "Microphone Device".into(), items: names, at },
+            Elem::Choice { id: "device".into(), label: "Microphone Device".into(), items: names, at, drop: false },
             "The microphone voice chat listens to.",
         ));
         v.push((

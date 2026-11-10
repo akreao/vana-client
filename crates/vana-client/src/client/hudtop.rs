@@ -632,8 +632,9 @@ pub fn topbar_shot(
         chat_log: false,
     };
     gu.clear();
-    let login =
-        config.is_some_and(|c| c == "login" || c == "loginpol" || c == "logincombo" || c.starts_with("login2fa"));
+    let login = config.is_some_and(|c| {
+        c == "login" || c == "loginpol" || c == "logincombo" || c == "loginupdate" || c.starts_with("login2fa")
+    });
     let lobby = login || config.is_some_and(|c| c.starts_with("lobycwin") || c.starts_with("lobby"));
     if login {
         let input = super::UiInput {
@@ -716,6 +717,8 @@ pub fn topbar_shot(
         }
         fields[if pol { 3 } else { 2 }].options = vec!["tuxedo".into(), "lnxtest01".into()];
         let mut combo = (config == Some("logincombo")).then_some((1, 1));
+        // loginupdate: Update offered (something out of date).
+        let update = config == Some("loginupdate");
         super::login_window(
             &mut gu,
             &input,
@@ -726,6 +729,7 @@ pub fn topbar_shot(
             &mut remember,
             &mut 0,
             false,
+            update,
             "",
             help,
             &cfg.client_version,

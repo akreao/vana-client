@@ -637,7 +637,7 @@ const BUNDLED: &[(&str, &str, &[(&str, &str)])] = bundled!["dps", "auto-advance"
     "list-trimmer",
     "bag-manager",
     "gearshift" ["src/core.lua", "src/compat.lua", "src/names.lua", "src/gs.lua", "src/lac.lua", "src/windower.lua", "src/xml.lua", "src/acxml.lua", "src/modes.lua", "src/texts.lua", "src/regex.lua", "src/spellcast.lua"],
-    "hotbar" ["src/actions.lua", "src/bar.lua", "src/builder.lua", "src/data.lua", "src/ghost.lua", "src/jobs.lua", "src/keys.lua",
+    "hotbar" ["src/actions.lua", "src/bar.lua", "src/builder.lua", "src/chooser.lua", "src/data.lua", "src/ghost.lua", "src/jobs.lua", "src/keys.lua",
         "src/manager.lua", "src/menu.lua", "src/palette.lua", "src/runner.lua", "src/stock.lua"],
     "pad-bars" ["src/actions.lua", "src/runner.lua"],
     // After gearshift: its hooks see an action first.
@@ -4693,6 +4693,206 @@ return "acxml flow ok"
         vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
     }
 
+    /// Hotbars: back on the Builder by its tab (not New) after a Save, a second macro is a new entry; the first,
+    /// already on a slot, stays.
+    #[test]
+    fn hotbar_builder_tab_new_macro() {
+        let host = Host::default();
+        let files = BUNDLED.iter().find(|b| b.0 == "hotbar").unwrap().2;
+        let vm = Vm::new(bundled_manifest("hotbar").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
+        vm.lua.set_app_data(host.info.clone());
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        let script = r#"
+            local spells = { [1] = { name = "Cure", mp = 8, kind = 1, targets = 0x1F },
+              [144] = { name = "Fire", mp = 7, kind = 2, targets = 0x20 } }
+            res = { spell = function(id) return spells[id] end, ability = function() end,
+              job = function(id) return ({ [5] = "RDM", [3] = "WHM" })[id] end }
+            game = { player = function() return { main_job = 5, sub_job = 3 } end,
+              spells = function() return { 1, 144 } end, abilities = function() return {} end,
+              find_items = function() return {} end }
+            chat = { add = function() end }
+            local on_window = ui.on
+            ui.on = function(id, f) if id == "manager" then H = f end; on_window(id, f) end
+            local data = require("src.data")
+            data.init({ read = function() return nil end, write = function() end, decode = json.decode,
+              encode = json.encode })
+            local manager = require("src.manager")
+            manager.hooks = { changed = function() end, rebind = function() end }
+            manager.open()
+            -- New, Cure, Save; its tile dropped on bar 1, slot 1.
+            H("manager", { kind = "press", id = "lbtn", index = 1 })
+            H("manager", { kind = "select", id = "found", index = 1 })
+            H("manager", { kind = "press", id = "bbtn", index = 1 })
+            data.assign("RDM", nil, 1, 1, data.library("RDM")[1].id)
+            -- Back by the Builder tab: Fire, Save.
+            H("manager", { kind = "set", id = "tabs", index = 2 })
+            H("manager", { kind = "select", id = "found", index = 2 })
+            H("manager", { kind = "press", id = "bbtn", index = 1 })
+            local lib = data.library("RDM")
+            assert(#lib == 2 and lib[1].entry.name == "Cure" and lib[2].entry.name == "Fire", #lib)
+            assert(data.resolve("RDM", nil, 1, 1).name == "Cure")
+        "#;
+        vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
+    }
+
+    /// Hotbars' Builder: Rune Enchantment opens its runes, as the game's menu does (a search finds them too); the
+    /// line it builds can be replaced with the player's own, kept with the entry.
+    #[test]
+    fn hotbar_builder_sub_lists_and_own_line() {
+        let host = Host::default();
+        let files = BUNDLED.iter().find(|b| b.0 == "hotbar").unwrap().2;
+        let vm = Vm::new(bundled_manifest("hotbar").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
+        vm.lua.set_app_data(host.info.clone());
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        let script = r#"
+            local abilities = { [547] = { name = "Provoke", kind = 1, targets = 0x20, recast = 30 },
+              [869] = { name = "Rune Enchantment", kind = 1, sub = 21, targets = 1 },
+              [870] = { name = "Ignis", kind = 21, targets = 1, recast = 5 },
+              [877] = { name = "Tenebrae", kind = 21, targets = 1, recast = 5 } }
+            res = { spell = function() end, ability = function(id) return abilities[id] end,
+              job = function(id) return ({ [22] = "RUN" })[id] end }
+            game = { player = function() return { main_job = 22, sub_job = 0 } end,
+              spells = function() return {} end, abilities = function() return { 547, 869, 870, 877 } end,
+              find_items = function() return {} end }
+            chat = { add = function() end }
+            local on_window = ui.on
+            ui.on = function(id, f) if id == "manager" then H = f end; on_window(id, f) end
+            local data = require("src.data")
+            data.init({ read = function() return nil end, write = function() end, decode = json.decode,
+              encode = json.encode })
+            local manager = require("src.manager")
+            manager.hooks = { changed = function() end, rebind = function() end }
+            manager.open()
+            local function found() return ui.get("manager", "found") end
+            -- New, Job ability (the dropdown's second): Provoke and the opener; the runes only inside it.
+            H("manager", { kind = "press", id = "lbtn", index = 1 })
+            H("manager", { kind = "set", id = "btype", index = 2 })
+            H("manager", { kind = "select", id = "found", index = 2 })
+            -- Back, Ignis, Tenebrae.
+            H("manager", { kind = "select", id = "found", index = 2 })
+            local line = ui.get("manager", "line").text
+            assert(line == '/ja "Ignis" <me>', line)
+            -- A search finds a rune from the top list.
+            H("manager", { kind = "select", id = "found", index = 1 })
+            H("manager", { kind = "edit", id = "q", text = "tene" })
+            H("manager", { kind = "select", id = "found", index = 1 })
+            line = ui.get("manager", "line").text
+            assert(line == '/ja "Tenebrae" <me>', line)
+            -- Its own line, saved with the entry and run in place of the built one.
+            H("manager", { kind = "change", id = "line", text = '/ja "Tenebrae" <stpc>' })
+            H("manager", { kind = "press", id = "bbtn", index = 1 })
+            local e = data.library("RUN")[1].entry
+            assert(e.action.name == "Tenebrae" and e.action.line == '/ja "Tenebrae" <stpc>', e.action.line)
+            assert(data.entry_lines(e)[1] == '/ja "Tenebrae" <stpc>')
+            -- Provoke starts on the target, the Target dropdown sets another.
+            H("manager", { kind = "press", id = "lbtn", index = 1 })
+            H("manager", { kind = "set", id = "btype", index = 2 })
+            H("manager", { kind = "select", id = "found", index = 1 })
+            assert(ui.get("manager", "line").text == '/ja "Provoke" <t>')
+            H("manager", { kind = "set", id = "target", index = 3 })
+            assert(ui.get("manager", "line").text == '/ja "Provoke" <bt>', ui.get("manager", "line").text)
+        "#;
+        vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
+    }
+
+    /// Hotbars' group slots: Rune Enchantment's list made a group in the Builder; its list runs the member picked and
+    /// starts on it the next time.
+    #[test]
+    fn hotbar_group_slot() {
+        let host = Host::default();
+        let files = BUNDLED.iter().find(|b| b.0 == "hotbar").unwrap().2;
+        let vm = Vm::new(bundled_manifest("hotbar").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
+        vm.lua.set_app_data(host.info.clone());
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        let script = r#"
+            local abilities = { [869] = { name = "Rune Enchantment", kind = 1, sub = 21, targets = 1 },
+              [870] = { name = "Ignis", kind = 21, targets = 1, recast = 5 },
+              [877] = { name = "Tenebrae", kind = 21, targets = 1, recast = 5 } }
+            res = { spell = function() end, ability = function(id) return abilities[id] end,
+              job = function(id) return ({ [22] = "RUN" })[id] end }
+            game = { player = function() return { main_job = 22, sub_job = 0 } end,
+              spells = function() return {} end, abilities = function() return { 869, 870, 877 } end,
+              find_items = function() return {} end,
+              recasts = function() return { spells = {}, abilities = {}, totals = { spells = {}, abilities = {} } } end }
+            chat = { add = function() end }
+            SENT = {}
+            commands.run = function(line) SENT[#SENT + 1] = line end
+            local on_window = ui.on
+            ui.on = function(id, f)
+              if id == "manager" then H = f elseif id == "group" then G = f end
+              on_window(id, f)
+            end
+            local data = require("src.data")
+            data.init({ read = function() return nil end, write = function() end, decode = json.decode,
+              encode = json.encode })
+            local manager = require("src.manager")
+            manager.hooks = { changed = function() end, rebind = function() end }
+            manager.open()
+            -- New, Job ability, into Rune Enchantment, Make a Group of These, Save.
+            H("manager", { kind = "press", id = "lbtn", index = 1 })
+            H("manager", { kind = "set", id = "btype", index = 2 })
+            H("manager", { kind = "select", id = "found", index = 1 })
+            H("manager", { kind = "press", id = "grp", index = 1 })
+            -- Another target for the group leaves the runes, which take only us, on <me>.
+            H("manager", { kind = "set", id = "target", index = 3 })
+            H("manager", { kind = "press", id = "bbtn", index = 1 })
+            local it = data.library("RUN")[1]
+            assert(it.entry.name == "Rune Enchantment" and #it.entry.group == 2, it.entry.name)
+            assert(it.entry.group[2].action.name == "Tenebrae" and it.entry.group[2].action.target == "me")
+            local macro = data.macro_of("RUN", it.id)
+            assert(macro.group and #macro.lines == 0)
+            -- Its list: the second runs, and is the one shown and offered first next time.
+            local chooser = require("src.chooser")
+            chooser.open(macro, nil, nil, 1)
+            assert(chooser.is_open() and chooser.bar() == 1)
+            G("group", { kind = "select", index = 2 })
+            assert(not chooser.is_open())
+            assert(SENT[1] == '/ja "Tenebrae" <me>', tostring(SENT[1]))
+            assert(data.last_member(macro) == 2)
+            assert(data.current_member(macro).name == "Tenebrae")
+        "#;
+        vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
+    }
+
+    /// Hotbars on a client without the dropdown element (1.0.10): the manager opens with choices in their place.
+    #[test]
+    fn hotbar_manager_without_dropdowns() {
+        let host = Host::default();
+        let files = BUNDLED.iter().find(|b| b.0 == "hotbar").unwrap().2;
+        let vm = Vm::new(bundled_manifest("hotbar").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
+        vm.lua.set_app_data(host.info.clone());
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        let script = r#"
+            local abilities = { [547] = { name = "Provoke", kind = 1, targets = 0x20, recast = 30 } }
+            res = { spell = function() end, ability = function(id) return abilities[id] end,
+              job = function(id) return ({ [1] = "WAR" })[id] end }
+            game = { player = function() return { main_job = 1, sub_job = 0 } end,
+              spells = function() return {} end, abilities = function() return { 547 } end,
+              find_items = function() return {} end }
+            chat = { add = function() end }
+            local real = ui.window
+            ui.window = function(id, s)
+              for _, e in ipairs(s.elements or {}) do
+                if e.type == "dropdown" then error('unknown element type "dropdown"') end
+              end
+              return real(id, s)
+            end
+            local on_window = ui.on
+            ui.on = function(id, f) if id == "manager" then H = f end; on_window(id, f) end
+            local data = require("src.data")
+            data.init({ read = function() return nil end, write = function() end, decode = json.decode,
+              encode = json.encode })
+            local manager = require("src.manager")
+            manager.hooks = { changed = function() end, rebind = function() end }
+            manager.open()
+            H("manager", { kind = "press", id = "lbtn", index = 1 })
+            H("manager", { kind = "set", id = "btype", index = 2 })
+            H("manager", { kind = "select", id = "found", index = 1 })
+            assert(ui.get("manager", "line").text == '/ja "Provoke" <t>', ui.get("manager", "line").text)
+        "#;
+        vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
+    }
+
     /// Hotbars: a macro's first action names its icon and recast; a drag swaps two slots, in the sub job's set when
     /// either slot comes from it.
     #[test]
@@ -4772,75 +4972,6 @@ return "acxml flow ok"
             assert(data.command({ kind = "cmd", name = "/heal" }) == "/heal")
             local atk = a.of({ lines = { "/attack <t>" } })
             assert(atk and atk.kind == "item" and atk.no_recast and a.recast(atk, r) == 0)
-        "#;
-        vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
-    }
-
-    /// Hotbars' builder: after a macro is saved it starts a new one, so the next macro made from the Builder tab is
-    /// added to the library instead of saved over the one just made (and put on a bar).
-    #[test]
-    fn hotbar_builder_new_after_save() {
-        let host = Host::default();
-        let files = BUNDLED.iter().find(|b| b.0 == "hotbar").unwrap().2;
-        let vm = Vm::new(bundled_manifest("hotbar").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        let script = r#"
-            local W, ON = {}, nil
-            ui = {
-              window = function(_, spec)
-                for _, e in ipairs(spec.elements) do if e.id then W[e.id] = { text = e.text or "" } end end
-              end,
-              on = function(_, f) ON = f end,
-              update = function(_, id, p) W[id] = W[id] or {}; for k, v in pairs(p) do W[id][k] = v end end,
-              get = function(_, id) return W[id] or { text = "" } end,
-              open = function() end, close = function() end, is_open = function() return true end,
-              menu = function() end, prompt = function() end,
-            }
-            chat = { add = function() end }
-            settings = { get = function(k) return ({ bars = 3, slots = 10, size = 52 })[k] end }
-            local STUB = {
-              ["src.jobs"] = { current = function() return "WHM", nil end, parse = function(t) return t end },
-              ["src.keys"] = { MOD_LABELS = { "Ctrl" }, ROW_LABELS = { "1-0" }, index_of = function() return 1 end,
-                conflicts = function() return {} end, get_mod = function() end, get_row = function() end,
-                get_slot = function() end, hint_or = function() return "" end, combo = function() return "" end },
-              ["src.actions"] = { of = function() return nil end },
-              ["src.palette"] = { start_drag = function() end, end_drag = function() end },
-              ["src.builder"] = {
-                TYPES = { { kind = "ma", label = "Spell", search = "" } }, TYPE_LABELS = { "Spell" },
-                type_index = function() return 1 end, columns = function() return {} end,
-                target_label = function() return "<t>" end,
-                find = function(_, q)
-                  local n = q == "" and "Cure" or q
-                  return { { name = n, title = n, target = "t", cells = {} } }
-                end,
-              },
-            }
-            local real = require
-            require = function(n) return STUB[n] or real(n) end
-            local data = require("src.data")
-            data.init({ read = function() return nil end, write = function() end, decode = json.decode,
-              encode = json.encode })
-            local M = require("src.manager")
-            M.hooks = { changed = function() end, rebind = function() end }
-            M.open()
-            local function ev(e) ON("manager", e) end
-            local function make(spell)
-              ev({ kind = "edit", id = "q", text = spell })
-              ev({ kind = "select", id = "found", index = 1 })
-              ev({ kind = "press", id = "bbtn", index = 1 })
-            end
-            -- New, Cure, Save; it goes on bar 1, slot 1; then the Builder tab itself, Protect, Save.
-            ev({ kind = "press", id = "lbtn", index = 1 })
-            make("Cure")
-            data.assign("WHM", nil, 1, 1, "1")
-            M.refresh()
-            ev({ kind = "set", id = "tabs", index = 2 })
-            assert(W.bwhere.text == "New macro for WHM." and W.name.text == "", W.bwhere.text)
-            make("Protect")
-            local lib = data.library("WHM")
-            assert(#lib == 2 and lib[1].entry.name == "Cure" and lib[2].entry.name == "Protect", #lib)
-            assert(data.resolve("WHM", nil, 1, 1).name == "Cure")
         "#;
         vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
     }
@@ -5880,17 +6011,22 @@ impl Host {
         else {
             return;
         };
+        let id = id.clone();
+        drop(st);
+        // ui.bounds reads them from the frame info.
+        self.info.borrow_mut().canvas_rects.insert((m.into(), win.into(), id.clone()), [origin[0], origin[1], ppp]);
         if let Some(c) = self.canvases.iter_mut().find(|c| c.i == i && c.m == m && c.win == win) {
-            if c.id != *id {
-                c.id = id.clone();
+            if c.id != id {
+                c.id = id;
             }
             (c.origin, c.shown, c.ppp, c.top, c.at) = (origin, shown, ppp, top, now);
             return;
         }
-        let id = id.clone();
-        drop(st);
         self.canvases.retain(|c| now.duration_since(c.at) < std::time::Duration::from_secs(1));
         self.canvases.push(CanvasAt { m: m.into(), win: win.into(), i, id, origin, shown, ppp, top, at: now });
+        let live: std::collections::HashSet<(String, String, String)> =
+            self.canvases.iter().map(|c| (c.m.clone(), c.win.clone(), c.id.clone())).collect();
+        self.info.borrow_mut().canvas_rects.retain(|k, _| live.contains(k));
     }
 
     /// Where mod `m`'s canvas `id` of window `win`, at (x, y) in its units, is on screen (window pixels).
@@ -6112,12 +6248,17 @@ impl Host {
 
     /// The open windows `keep` takes (copied: the caller draws them while it changes the world).
     pub(super) fn open_windows_where(&self, keep: impl Fn(&window::Window) -> bool) -> Vec<(String, window::Window)> {
+        self.windows_where(|w| w.open && keep(w))
+    }
+
+    /// The windows `keep` takes, open or not (a closed animated window still folds away).
+    pub(super) fn windows_where(&self, keep: impl Fn(&window::Window) -> bool) -> Vec<(String, window::Window)> {
         let mut out = Vec::new();
         if self.all_hidden {
             return out;
         }
         for vm in self.vms.iter().filter(|v| v.suspended.is_none()) {
-            for win in vm.st.borrow().windows.iter().filter(|w| w.open && keep(w)) {
+            for win in vm.st.borrow().windows.iter().filter(|w| keep(w)) {
                 out.push((vm.manifest.id.clone(), win.clone()));
             }
         }
@@ -6242,7 +6383,7 @@ fn classic_places(w: &World) -> Vec<(usize, String, f32, f32)> {
                     v,
                     win.id.clone(),
                     (ax * uk.0).min(sw - ww).max(0.0),
-                    (ay * uk.1).min(sh - wh).max(0.0),
+                    (ay * uk.1 - if win.above { wh } else { 0.0 }).min(sh - wh).max(0.0),
                 )),
                 (None, Some((x, y))) if win.modal => modal.push((v, win.id.clone(), x, y)),
                 (None, None) if win.modal => {
@@ -6277,7 +6418,8 @@ pub(super) fn pointer_classic(
         let vm = &w.lua.vms[*v];
         let mut st = vm.st.borrow_mut();
         if let Some(win) = st.windows.iter_mut().find(|x| x.id == *id && x.hovered.is_some()) {
-            let (ww, wh) = win.classic_size();
+            // With an open dropdown's list hanging below it.
+            let (ww, wh) = win.classic_reach();
             if p.0 < *x || p.1 < *y || p.0 >= x + ww || p.1 >= y + wh {
                 left.extend(win.hover_off().into_iter().map(|e| (vm.manifest.id.clone(), id.clone(), e)));
             }
@@ -6288,8 +6430,13 @@ pub(super) fn pointer_classic(
     if let Some((k, mid)) = w.lua.modal() {
         places.retain(|(v, id, _, _)| *v == k && *id == mid);
         let inside = places.first().is_some_and(|(v, id, x, y)| {
-            let (ww, wh) =
-                w.lua.vms[*v].st.borrow().windows.iter().find(|x| x.id == *id).map_or((0.0, 0.0), |x| x.classic_size());
+            let (ww, wh) = w.lua.vms[*v]
+                .st
+                .borrow()
+                .windows
+                .iter()
+                .find(|x| x.id == *id)
+                .map_or((0.0, 0.0), |x| x.classic_reach());
             p.0 >= *x && p.1 >= *y && p.0 < x + ww && p.1 < y + wh
         });
         if (clicked || right) && !inside {
@@ -6302,8 +6449,14 @@ pub(super) fn pointer_classic(
             let vm = &w.lua.vms[v];
             let mut st = vm.st.borrow_mut();
             let Some(win) = st.windows.iter_mut().find(|x| x.id == id) else { continue };
-            let (wx, wy) = win.classic_size();
+            let (wx, wy) = win.classic_reach();
             if win.drag.is_none() && win.press.is_none() && (p.0 < x || p.1 < y || p.0 >= x + wx || p.1 >= y + wy) {
+                // A click off the window closes its open dropdown.
+                if (clicked || right)
+                    && let Some(d) = win.drop_open()
+                {
+                    win.drop_close(d);
+                }
                 continue;
             }
             let (hover, ev, se) = win.pointer_classic(gu, x, y, p, moved, clicked, right, held);

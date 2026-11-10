@@ -251,8 +251,10 @@ fn away(bank: u8) -> Storage {
         sortw: None,
         manual: None,
         stora: None,
+        held_part: 0,
         pending: None,
         note: None,
+        waiting: None,
     }
 }
 
@@ -413,7 +415,7 @@ fn item_act(w: &mut World, bag: u8, index: u8, id: u16, act: Act) {
             .find(|s| s.index == index && s.id == id)
             .map_or(0, |s| s.count.max(1));
         if n > 0 && destinations(w, index).iter().any(|d| d.0 == c) {
-            gitems::send_move(w, gitems::INVENTORY, c, index, n);
+            gitems::send_move_held(w, gitems::INVENTORY, c, index, n);
             w.sounds.push(crate::audio::Ui::Select as u32);
         }
         return;
