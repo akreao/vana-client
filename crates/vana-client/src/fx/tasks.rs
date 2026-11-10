@@ -538,6 +538,47 @@ impl Effects {
         });
     }
 
+    /// FUN_100c4410 -> FUN_100c46b0: a furniture actor takes its model file. Every scheduler of the file that is marked
+    /// self-starting and holds op 0xa2 (dat::sched::furniture_start: clocks, bells, chimes, music boxes on their
+    /// Vana'diel time windows) starts on (actor, actor), stepped at once; here when the file is in.
+    pub fn on_furniture(&mut self, actor: u32, file: u32) {
+        self.furn_starts.push((actor, file));
+    }
+
+    /// The furniture actor goes: its waiting start and the tasks on_furniture started on it, their copies too (its
+    /// links delete them, FUN_10057cf0).
+    pub fn stop_furniture(&mut self, actor: u32) {
+        let who = Who::Actor(actor);
+        self.furn_starts.retain(|f| f.0 != actor);
+        for t in self.tasks.iter_mut() {
+            if t.as_ref().is_some_and(|t| t.a1 == who && t.ops.iter().any(|o| o.code == 0xa2)) {
+                *t = None;
+            }
+        }
+    }
+
+    fn run_furniture(&mut self, actors: &dyn Actors) {
+        for (actor, file) in std::mem::take(&mut self.furn_starts) {
+            let Some(l) = self.lib_for(file) else {
+                if !self.failed.contains(&file) {
+                    self.furn_starts.push((actor, file));
+                }
+                continue;
+            };
+            let lib = &self.reg.libs[l];
+            let nodes: Vec<usize> = lib
+                .tree
+                .of_kind(kind::SCHEDULER)
+                .filter(|&n| crate::dat::sched::furniture_start(lib.data(n)))
+                .collect();
+            let who = Who::Actor(actor);
+            for n in nodes {
+                let ti = self.spawn_task((l, n), who, who, None, 1.0, None);
+                _ = self.run_new(ti, actors);
+            }
+        }
+    }
+
     /// FUN_10083650: a scheduler `name` waiting or running on the actor (as actor1).
     pub fn actor_scheduler_running(&self, actor: u32, name: u32) -> bool {
         let who = Who::Actor(actor);
@@ -579,6 +620,7 @@ impl Effects {
             }
         };
         self.pending.retain(|p| p.actor != Some(id));
+        self.furn_starts.retain(|f| f.0 != id);
         self.equip.remove(&id);
         self.equip_calls.retain(|c| c.0 != id);
         self.wading.remove(&id);
@@ -667,6 +709,7 @@ impl Effects {
 
     /// Starts waiting for files, when they are in.
     pub(super) fn run_pending(&mut self, f: &Frame, actors: &dyn Actors) {
+        self.run_furniture(actors);
         let list = std::mem::take(&mut self.pending);
         for mut p in list {
             p.age += f.dt;
@@ -2732,7 +2775,11 @@ impl Effects {
     }
 
     /// FUN_10056a50 / FUN_1018a7a0: every self-starting scheduler of library `l` (under folder `under` when given) starts
-    /// on no actors, speed 1.0 (retail steps it at once inside the load; ours at the next tick).
+    /// on no actors, speed 1.0 (retail steps it at once inside the load; ours at the next tick). The zone's `weat`
+    /// ones never reach that tick: retail builds the weather object in the same zone-in call as the parse
+    /// (FUN_10094190: FUN_1018b3a0, then FUN_101874f0), which ends them, and so does the set_weather that follows every
+    /// load here. Their one step inside the parse shows nothing: all 232 open with op 0x52 alone (census
+    /// dat::sched::census::auto_first_step_census), whose copy dies with them.
     pub(super) fn start_auto(&mut self, l: usize, under: Option<usize>) {
         let tree = &self.reg.libs[l].tree;
         let inside = |mut i: usize, f: usize| loop {
@@ -5536,6 +5583,48 @@ mod auto_tests {
         let (src, copy) = if tasks[0].vana { (tasks[0], tasks[1]) } else { (tasks[1], tasks[0]) };
         assert_eq!(src.countdown, 18000.0);
         assert!(!copy.vana && (79.0..=80.0).contains(&copy.countdown), "{}", copy.countdown);
+    }
+
+    /// FUN_100c46b0 on the clock (DAT 62933 `m_ev/toke`: `st00` / `st12`, op 0xa2 and a two-minute window at 00:00 /
+    /// 12:00): the parse starts neither; the furniture actor starts both on itself, and at 12:00 `st12` strikes (a copy
+    /// runs its ops); the actor's end takes them all.
+    #[test]
+    fn furniture_clock_strikes() {
+        let Some(index) = index() else { return };
+        if index.read(62933).is_err() {
+            return;
+        }
+        const CLOCK: u32 = 0x0400_03ff;
+        let who = Who::Actor(CLOCK);
+        let run = |dayfrac: f32| {
+            let mut fx = Effects::new();
+            fx.set_index(index.clone());
+            fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
+            while !fx.libs_ready(&[62933]) {
+                fx.poll_loads();
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            assert_eq!(fx.tasks.iter().flatten().count(), 0, "the parse starts no op-0xa2 scheduler");
+            fx.on_furniture(CLOCK, 62933);
+            let clock = Ship { file: 62933, pos: Default::default(), rot: Default::default() };
+            fx.tick(&frame(dayfrac), &clock);
+            fx
+        };
+        // The strike's first generator, on the clock.
+        let struck = |fx: &Effects| fx.insts.iter().flatten().filter(|x| x.name == *b"8075").count();
+        let on_clock = |fx: &Effects| fx.tasks.iter().flatten().filter(|t| t.a1 == who && t.a2 == who).count();
+        let waiting = |fx: &Effects| fx.tasks.iter().flatten().filter(|t| t.vana).count();
+        let mut fx = run(0.5);
+        assert_eq!((on_clock(&fx), waiting(&fx)), (3, 2), "st00 and st12 wait, a copy of st12 strikes");
+        assert_eq!(struck(&fx), 1);
+        let l = fx.reg.lib_of(62933).unwrap();
+        let st12 = (l, sched(&fx.reg.libs[l], &["m_ev", "toke"], "st12"));
+        assert_eq!(fx.tasks.iter().flatten().filter(|t| t.res == st12).count(), 2);
+        fx.stop_furniture(CLOCK);
+        assert_eq!(fx.tasks.iter().flatten().count(), 0);
+        let fx = run(11.0 / 24.0);
+        assert_eq!((on_clock(&fx), waiting(&fx)), (2, 2), "no strike at 11:00");
+        assert_eq!(struck(&fx), 0);
     }
 
     /// A ship (client/ships.rs in small): the drives' poses move it; the heading target eases 1/8 a tick.

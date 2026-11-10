@@ -739,6 +739,62 @@ mod tests {
         }
     }
 
+    /// Generators whose update stream has op 0x64 (the turn about a slot's centre): the emission and update ops with
+    /// their slots, to see which op fills op 0x64's slot (by hand: `cargo test --release update_64_census -- --ignored
+    /// --nocapture`).
+    #[test]
+    #[ignore]
+    fn update_64_census() {
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let trim = |n: [u8; 4]| String::from_utf8_lossy(&n).trim_end_matches(['\0', ' ']).to_string();
+        let mut sigs: std::collections::BTreeMap<String, (usize, Vec<String>)> = Default::default();
+        let mut fillers: std::collections::BTreeMap<String, usize> = Default::default();
+        let mut total = 0;
+        for id in 0..index.len() as u32 {
+            let Ok(file) = index.read(id) else { continue };
+            let Ok(tree) = Tree::build(&file) else { continue };
+            for node in tree.of_kind(kind::GENERATOR).collect::<Vec<_>>() {
+                let Ok(g) = Generator::parse(&tree, node, &file) else { continue };
+                let upd = &g.streams[stream::ELEMENT];
+                let Some(o64) = upd.iter().find(|o| o.code == 0x64) else { continue };
+                total += 1;
+                let show =
+                    |ops: &[Op]| ops.iter().map(|o| format!("{:02x}@{}", o.code, o.slot)).collect::<Vec<_>>().join(" ");
+                let same: Vec<String> = g.streams[stream::EMISSION]
+                    .iter()
+                    .filter(|o| o.slot == o64.slot)
+                    .map(|o| format!("{:02x}", o.code))
+                    .collect();
+                let near: Vec<String> = g.streams[stream::EMISSION]
+                    .iter()
+                    .filter(|o| o.slot != 0 && o.slot < o64.slot && o64.slot < o.slot + 8)
+                    .map(|o| format!("{:02x}@{}", o.code, o.slot))
+                    .collect();
+                *fillers.entry(format!("same [{}] below [{}]", same.join(" "), near.join(" "))).or_default() += 1;
+                let sig = format!(
+                    "emit [{}] update [{}] 0x64 slot {} factors {:?}",
+                    show(&g.streams[stream::EMISSION]),
+                    show(upd),
+                    o64.slot,
+                    [o64.f32(1), o64.f32(2), o64.f32(3)]
+                );
+                let e = sigs.entry(sig).or_default();
+                e.0 += 1;
+                if e.1.len() < 4 {
+                    let path: Vec<String> = tree.path(node).into_iter().map(trim).collect();
+                    e.1.push(format!("{id} {}/{}", path.join("/"), trim(g.name)));
+                }
+            }
+        }
+        println!("{total} generators with update op 0x64");
+        for (f, n) in &fillers {
+            println!("emission ops on its slot: {f} x{n}");
+        }
+        for (sig, (n, eg)) in &sigs {
+            println!("x{n} {sig}\n    {}", eg.join(", "));
+        }
+    }
+
     /// Prints a file's generators: attach word and mode (by hand: `cargo test --release gen_attach -- --ignored
     /// --nocapture`).
     #[test]

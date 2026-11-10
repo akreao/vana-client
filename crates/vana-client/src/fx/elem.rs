@@ -545,6 +545,21 @@ pub fn update_ref(
                 let k = w::ROT + (code - 0x61) as usize;
                 e.set(k, wrap(e.f(k) + half(kg(e, s)) * dt))
             }
+            // Case 0x1004b249: the turn from the last step S[s+3..] to this one (from the last position S[s..]) times
+            // the factors; then the slot takes this position and step (f32::atan2 answers two zeros as fpatan does).
+            0x64 => {
+                let pos = e.v3(w::POS);
+                let d = pos - e.sv3(s);
+                let a = -e.sf(s + 5).atan2(e.sf(s + 3));
+                let t = (d.x * a.sin() + d.z * a.cos()).atan2(d.x * a.cos() - d.z * a.sin());
+                for k in 0..3 {
+                    if of(1 + k) != 0.0 {
+                        e.set(w::ROT + k, wrap(t * of(1 + k)));
+                    }
+                }
+                e.set_sv3(s, pos);
+                e.set_sv3(s + 3, d);
+            }
             0x66..=0x68 => e.set(w::ROT + (code - 0x66) as usize, half(kg(e, s))),
             0x6b..=0x6d => {
                 let v = e.sf(s + 2) + k0(e, s, f.dayfrac);
