@@ -142,8 +142,8 @@ pub struct BattleText {
     filter_tables: Vec<Vec<u32>>,
     /// On-screen kind per message (0x1035cae0): 0 none, 1 damage (`damv`), 2 recovery (`curv`), 3 miss (`misv`).
     screen_kinds: Vec<u8>,
-    /// Chat call tags and their sounds (DAT_1036eba0).
-    pub calls: Vec<(String, u32)>,
+    /// Chat call tags, their sounds and rumble flags (DAT_1036eba0; tables::CALL_NEAR / CALL_QUIET).
+    pub calls: Vec<(String, u32, u32)>,
 }
 
 /// Config id -> colour id of the log palette (FUN_101262c0).
@@ -877,15 +877,17 @@ mod tests {
         assert!(l.lines[0].contains("First Step Forward"), "{:?}", l.lines);
     }
 
-    /// DAT_1036eba0: <call> and <call0> are 0017, <call21> 0038; <ncall> and <scall> follow with the same sounds.
+    /// DAT_1036eba0: <call> and <call0> are 0017, <call21> 0038; <ncall> and <scall> follow with the same sounds and
+    /// their rumble flags.
     #[test]
     fn call_tags() {
         let Some(b) = load() else { return };
-        assert_eq!(b.calls.first(), Some(&("<call>".to_string(), 17)));
-        assert_eq!(b.calls.get(1), Some(&("<call0>".to_string(), 17)));
-        assert_eq!(b.calls.get(22), Some(&("<call21>".to_string(), 38)));
-        assert_eq!(b.calls.get(23), Some(&("<ncall>".to_string(), 17)));
-        assert_eq!(b.calls.last(), Some(&("<scall21>".to_string(), 38)));
+        use super::super::tables::{CALL_NEAR, CALL_QUIET};
+        assert_eq!(b.calls.first(), Some(&("<call>".to_string(), 17, 0)));
+        assert_eq!(b.calls.get(1), Some(&("<call0>".to_string(), 17, 0)));
+        assert_eq!(b.calls.get(22), Some(&("<call21>".to_string(), 38, 0)));
+        assert_eq!(b.calls.get(23), Some(&("<ncall>".to_string(), 17, CALL_NEAR)));
+        assert_eq!(b.calls.last(), Some(&("<scall21>".to_string(), 38, CALL_QUIET)));
     }
 
     /// Grammar kinds 0x13 / 0x14: the status noun (206 "... stun effect wears off.") and adjective (204 "is no longer
