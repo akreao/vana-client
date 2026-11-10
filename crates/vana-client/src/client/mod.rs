@@ -2306,6 +2306,7 @@ fn world_hud(
     view_proj: glam::Mat4,
     numpad_slash: bool,
     numpad_minus: bool,
+    numpad_key: bool,
 ) -> Vec<[f32; 4]> {
     // A mod's TrueType text switch, from this frame's drawing on.
     gu.set_ttf(world.opts.ttf_text);
@@ -2525,7 +2526,7 @@ fn world_hud(
                 fep::delete_selection(world);
             }
             egui::Event::Cut if !event::cinema(world) => chat_prefix(world, "/linkshell2 "),
-            egui::Event::Key { key, pressed: true, modifiers, .. } => match key {
+            egui::Event::Key { key, physical_key, pressed: true, modifiers, .. } => match key {
                 // Ours: an open modern right-click menu has its keys (modern/ctxmenu.rs reads them from egui), so they
                 // reach nothing under it (Enter would target the nearest, Escape the target, the chat line send).
                 egui::Key::ArrowUp | egui::Key::ArrowDown | egui::Key::Enter | egui::Key::Escape
@@ -2601,6 +2602,34 @@ fn world_hud(
                 }
                 // The voice chat window (ours, hidden) takes the keys while open.
                 _ if world.voice.focused() => voicechat::key(world, *key),
+                // The chat line opens whatever window is up or event runs: FUN_101ab630 (Space, WM_CHAR) and
+                // FUN_101aa930 ('/', VK 0xBF; on the Full keyboard, config 0x42 = 0, also a letter, a main-row digit or a
+                // punctuation key, FUN_101ac1b0, which is then typed). Their gate FUN_101b0060 tests no window.
+                // Ctrl+Space stays the modern command palette's (ours).
+                egui::Key::Space
+                    if chat_opens(world)
+                        && !(modifiers.ctrl && !modifiers.alt && listsearch::palette_allowed(world)) =>
+                {
+                    world.typing = true;
+                    world.space_open = true;
+                    opened = true;
+                    keys.clear();
+                }
+                // egui reports numpad / as Slash too; that key is 0x45 / 0x88, not chat.
+                egui::Key::Slash if !modifiers.ctrl && !modifiers.alt && !numpad_slash && chat_opens(world) => {
+                    world.typing = true;
+                    keys.clear();
+                }
+                k if !modifiers.ctrl
+                    && !modifiers.alt
+                    && !numpad_key
+                    && world.game.get(0x42) == 0
+                    && typed_key(physical_key.unwrap_or(*k))
+                    && chat_opens(world) =>
+                {
+                    world.typing = true;
+                    keys.clear();
+                }
                 // The event's area picker (op 0xcc 0x10) and the concierge's list take the keys before the event.
                 _ if world.arealist.is_some() && arealist::picking(world) => arealist::key(world, gu, *key),
                 _ if world.concierge_ui.is_some() => concierge::key(world, gu, *key),
@@ -2609,18 +2638,6 @@ fn world_hud(
                 // The event's tabula preview (op 0x71 0x20) takes the keys; its Enter goes on to the event's message.
                 _ if world.maze.screen.is_some() && event::active(world) && world.confirm.is_none() => {
                     _ = maze::key(world, *key)
-                }
-                // The chat line opens during an event too: FUN_101ab630 (Space) and FUN_101aa930 ('/') test the field
-                // and the idle input, not the event (the pad's RB, FUN_1015dce0, is the one an event holds).
-                egui::Key::Space if event::active(world) => {
-                    world.typing = true;
-                    world.space_open = true;
-                    opened = true;
-                    keys.clear();
-                }
-                egui::Key::Slash if event::active(world) && !modifiers.ctrl && !modifiers.alt && !numpad_slash => {
-                    world.typing = true;
-                    keys.clear();
                 }
                 // An event takes the keys: Enter advances or picks, arrows move, Escape cancels.
                 _ if event::active(world) => event::key(world, *key),
@@ -2886,17 +2903,12 @@ fn world_hud(
                 _ if world.linklist.is_some() => linklist::key(world, gu, *key),
                 _ if world.linkshell.is_some() => linkshell::key(world, gu, *key),
                 _ if world.region_menu.is_some() => region::menu_key(world, gu, *key, sw, sh),
-                // Space and '/' still open the chat line with no layout window up (FUN_101ab630: the field).
                 _ if world.remodel.is_some() => remodel::key(world, *key),
                 _ if mannequin::active(world) => mannequin::key(world, gu, *key),
-                _ if world.layout.is_some()
-                    && !(layout::in_field(world) && matches!(key, egui::Key::Space | egui::Key::Slash)) =>
-                {
+                _ if world.layout.is_some() => {
                     layout::key(world, *key);
                 }
-                _ if garden::has_window(world) && !matches!(key, egui::Key::Space | egui::Key::Slash) => {
-                    garden::key(world, *key)
-                }
+                _ if garden::has_window(world) => garden::key(world, *key),
                 _ if world.auction.is_some() => {
                     auction::key(world, *key);
                 }
@@ -3099,18 +3111,6 @@ fn world_hud(
                     if !(world.target.is_none() && !event::active(world) && target::enter_nearest(world)) {
                         target::confirm_target(world);
                     }
-                }
-                egui::Key::Space if !event::cinema(world) => {
-                    world.typing = true;
-                    world.space_open = true;
-                    opened = true;
-                    keys.clear();
-                }
-                // FUN_101aa930 -> FUN_101ac1a0: VK 0xBF opens the input; the '/' character that follows is typed.
-                // egui reports numpad / as Slash too; that key is 0x45 / 0x88, not chat.
-                egui::Key::Slash if !modifiers.ctrl && !modifiers.alt && !numpad_slash && !event::cinema(world) => {
-                    world.typing = true;
-                    keys.clear();
                 }
                 _ => {}
             },
@@ -8117,6 +8117,9 @@ pub struct App {
     numpad_slash: bool,
     /// The last '-' key pressed was the numpad one (egui maps both to Key::Minus).
     numpad_minus: bool,
+    /// The last key pressed was on the numpad (egui maps its digits to the main row's keys; the Full keyboard types
+    /// only the main row's into the chat line).
+    numpad_key: bool,
     /// Ctrl+Alt+Shift+V was pressed: the voice chat window opens or closes next world frame.
     voice_key: bool,
     /// Retail key functions (DAT_103619f0 and FUN_1011ff30).
@@ -8413,6 +8416,7 @@ impl App {
             next_frame: None,
             numpad_slash: false,
             numpad_minus: false,
+            numpad_key: false,
             voice_key: false,
             input: input::Input::default(),
             gamepad: gamepad::Gamepad::default(),
@@ -8666,6 +8670,9 @@ impl App {
         let (key, mods) = k.diks();
         if k.down != Some(false) && matches!(k.key, KeyCode::Minus | KeyCode::NumpadSubtract) {
             self.numpad_minus = k.key == KeyCode::NumpadSubtract;
+        }
+        if k.down != Some(false) {
+            self.numpad_key = matches!(key, Some(0x37 | 0x47..=0x53 | 0x9c | 0xb5));
         }
         match k.down {
             None => mods.into_iter().chain(key).for_each(|d| self.input.tap(d)),
@@ -15532,6 +15539,7 @@ impl App {
                         view_proj,
                         self.numpad_slash,
                         self.numpad_minus,
+                        self.numpad_key,
                     );
                 }
                 // With the UI hidden (key function 0x56) retail draws no window at all, so the modern layer goes too; in
@@ -16515,9 +16523,12 @@ impl App {
                     _ => {}
                 }
             }
-            // A drive's Minus opens the menu on any keyboard type.
+            // A drive's Minus opens the menu on any keyboard type; its letters and digits are the main block's.
             if minus_pressed(&events) {
                 self.numpad_minus = true;
+            }
+            if events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, .. })) {
+                self.numpad_key = false;
             }
             raw.events.extend(events);
             script_shot = shot;
@@ -19067,6 +19078,9 @@ impl ApplicationHandler for App {
                             fx_dump(world);
                         }
                     }
+                    if event.state == ElementState::Pressed && !modifier {
+                        self.numpad_key = event.location == winit::keyboard::KeyLocation::Numpad;
+                    }
                     if event.state == ElementState::Pressed && matches!(code, KeyCode::Slash | KeyCode::NumpadDivide) {
                         self.numpad_slash = code == KeyCode::NumpadDivide;
                     }
@@ -19382,6 +19396,21 @@ fn menu_minus(menu: &mut Option<usize>, page: &mut u8, mem: &mut [usize; 2], mod
         *page ^= 1;
     }
     *menu = Some(mem[*page as usize & 1]);
+}
+
+/// FUN_101ac1b0's keys by position (an event's physical key): a letter, a main-row digit or VK 0xba..0xbe / 0xc0 /
+/// 0xdb..0xdf / 0xe2. Not '/' (VK 0xbf), which opens the line on every keyboard type. The numpad's digits arrive as
+/// the same keys: `App::numpad_key` tells them apart.
+fn typed_key(key: egui::Key) -> bool {
+    let s = key.symbol_or_name();
+    (s.len() == 1 && s != "/") || matches!(key, egui::Key::Minus | egui::Key::Quote | egui::Key::IntlBackslash)
+}
+
+/// FUN_101b0060, the chat line's gate for Space, '/' and the Full keyboard's keys: no window is tested. Not in cinema
+/// mode; ours leaves Key Assignment's key wait its keys.
+fn chat_opens(w: &World) -> bool {
+    !event::cinema(w)
+        && !w.config.as_ref().and_then(|c| c.stack.last()).is_some_and(|t| t.name == "k1assign" || t.name == "k2assign")
 }
 
 /// A '-' key press among the events (egui maps the numpad's minus to Key::Minus too).
