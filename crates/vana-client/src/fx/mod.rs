@@ -12,6 +12,7 @@ pub mod sched;
 pub mod sound;
 pub mod spline;
 mod tasks;
+pub use tasks::is_skill_file;
 pub mod trail;
 pub mod voyage;
 pub use tasks::event_action_file;
