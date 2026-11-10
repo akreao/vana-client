@@ -415,12 +415,22 @@ pub struct ConfigUi {
 
 /// configwi's layout name, for its remembered cursor child.
 pub const CONFIGWI_MENU: &str = "menu    configwi";
+/// Ours: cursor memory keys for the modern Config window's topic (m_entry) and row (m_row).
+pub const MODERN_ENTRY: &str = "modern config entry";
+pub const MODERN_ROW: &str = "modern config row";
 
 impl ConfigUi {
     /// The bottom window's cursor child from its layout (FUN_10118870 on an open by name); 1 = never opened.
     pub fn recall(&mut self, child: u16) {
         if let Some(w) = self.stack.first_mut() {
             w.cursor = child;
+        }
+    }
+
+    /// Ours: the modern Config window's topic and row as World::cursor_keep left them (none: the first topic).
+    pub fn recall_modern(&mut self, mem: &std::collections::HashMap<&'static str, u16>) {
+        if let (Some(&e), Some(&r)) = (mem.get(MODERN_ENTRY), mem.get(MODERN_ROW)) {
+            (self.m_entry, self.m_row) = (e as usize, r as usize);
         }
     }
 
