@@ -13879,12 +13879,29 @@ impl App {
                 hits.push((far, *id, true));
             }
         }
-        // Doors without a region box (FUN_100ad320): a 0.5-tall box at the door, always a hit inside it.
+        // Doors (FUN_100ad320, set up by FUN_100acba0): with a '_' RID record of their id (+0x870) the rect of its 8
+        // world corners; without one a 0.5-tall box at the door (+0x874 = 1), unless the door is named "StreetLamp"
+        // (then not pickable at all). Always a hit inside the rect (no fine test).
         for (id, e) in world
             .entities
             .iter()
             .filter(|(id, e)| (e.door != 0 || **id == myroom::DOOR_ID) && target::mouse_candidate(world, &hidden, **id))
         {
+            let rid = (e.door != 0)
+                .then(|| world.sub.regions.iter().find(|r| r.name.starts_with('_') && r.tag() == e.door))
+                .flatten();
+            if let Some(r) = rid {
+                let corners = r.box_corners().map(Vec3::from);
+                if let Some((lo, hi, far)) = rect(&corners, vp)
+                    && inside(lo, hi)
+                {
+                    hits.push((far, *id, false));
+                }
+                continue;
+            }
+            if e.name == "StreetLamp" {
+                continue;
+            }
             let (Some(a), Some(b)) = (rect(&[e.pos], vp), rect(&[e.pos + Vec3::new(0.0, -0.5, 0.0)], vp)) else {
                 continue;
             };
