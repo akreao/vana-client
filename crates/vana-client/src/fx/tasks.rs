@@ -1563,19 +1563,19 @@ impl Effects {
                 }
             }
             0x15 | 0x22 => {
-                t.a1 = self.doll(t.a1, 0, op.code == 0x22, actors, t.uid);
+                t.a1 = self.doll(t.a1, op.code == 0x22, actors);
                 Flow::Next
             }
             0x16 | 0x23 => {
-                t.a2 = self.doll(t.a2, 1, op.code == 0x23, actors, t.uid);
+                t.a2 = self.doll(t.a2, op.code == 0x23, actors);
                 Flow::Next
             }
             0x17 => {
-                t.a1 = self.undoll(t.a1, 0, t.uid);
+                t.a1 = self.doll_of(t.a1);
                 Flow::Next
             }
             0x18 => {
-                t.a2 = self.undoll(t.a2, 1, t.uid);
+                t.a2 = self.doll_of(t.a2);
                 Flow::Next
             }
             0x31 => {
@@ -2850,9 +2850,12 @@ impl Effects {
         }
     }
 
-    /// FUN_100abea0: a doll where the actor in slot `slot` (0 actor1, 1 actor2) stands now; FUN_10062d50 moves the
-    /// clones this task started (clone +0xf0 == the task) to it in that slot, others stay on the actor.
-    fn doll(&mut self, w: Who, slot: usize, follow: bool, actors: &dyn Actors, uid: u64) -> Who {
+    /// FUN_100abea0: a doll where the actor stands now, which the task's slot takes (FUN_10062830 / FUN_10062880).
+    /// The clones the task already started stay on the actor: FUN_10062d50, called just before, walks the actor's
+    /// list for CMoGeneratorClones whose +0xf0 is the task, and nothing in the DLL ever stores there (the clone's
+    /// constructor FUN_100536c0 zeroes it; op 0x02 puts the task at +0x64, FUN_1005e0f0), so it moves none. Only what
+    /// the task starts from here on attaches to the doll.
+    fn doll(&mut self, w: Who, follow: bool, actors: &dyn Actors) -> Who {
         let Who::Actor(id) = w else { return w };
         let Some(m) = actors.matrix(id) else { return w };
         let d = Who::Doll(self.dolls.len());
@@ -2865,33 +2868,15 @@ impl Effects {
         }
         let points = (0..DOLL_POINTS).map(|k| if unposed { None } else { actors.point(id, k) }).collect();
         self.dolls.push(Doll { of: id, matrix: m, follow, points, unposed });
-        self.move_clones(w, d, uid, slot);
         d
     }
 
-    /// Ops 0x17 / 0x18: back to the actor, with the clones of this task.
-    fn undoll(&mut self, w: Who, slot: usize, uid: u64) -> Who {
-        let back = self.doll_of(w);
-        if back != w {
-            self.move_clones(w, back, uid, slot);
-        }
-        back
-    }
-
-    /// The actor a doll stands for.
+    /// The actor a doll stands for (ops 0x17 / 0x18 put it back in the task's slot; the clones started on the doll
+    /// stay on it, as FUN_10062d50 matches none).
     pub(super) fn doll_of(&self, w: Who) -> Who {
         match w {
             Who::Doll(k) => self.dolls.get(k).map_or(w, |d| Who::Actor(d.of)),
             _ => w,
-        }
-    }
-
-    /// Only the one slot's handle moves (FUN_10062d50 walks the actor's actor1 list +0x68 or actor2 list +0x6c).
-    fn move_clones(&mut self, from: Who, to: Who, uid: u64, slot: usize) {
-        for x in self.insts.iter_mut().flatten().filter(|x| x.owner == Owner::Task(uid)) {
-            if x.actors[slot] == from {
-                x.actors[slot] = to;
-            }
         }
     }
 
@@ -4213,9 +4198,10 @@ mod tests {
         }
     }
 
-    /// A doll goes with the actor it stands for, and the clones on it with the doll. Weapon skill file 35595's `main`
-    /// starts g000 (endless, flag 0x1000) on the pair, dolls actor2 (op 0x23), and its `st44` stops g000 on the
-    /// undolled pair, which misses it: it glows on until the target despawns. Only actor2 moved to the doll.
+    /// A doll takes none of the clones its task already started (FUN_10062d50 matches clone +0xf0, which nothing
+    /// sets), and goes with the actor it stands for, the clones on it with it. Weapon skill file 35595's `main`
+    /// starts g000 (endless, flag 0x1000) on the pair and then dolls actor2 (op 0x23): g000 stays on the target,
+    /// where `st44`'s stop finds it, and the generators started after the op sit on the doll.
     #[test]
     fn despawn_takes_its_dolls() {
         let cfg = crate::config::Config::load();
@@ -4245,17 +4231,27 @@ mod tests {
             weekday: 0,
         };
         fx.on_event_scheduler(35595, u32::from_le_bytes(*b"main"), Who::Actor(HUME), Who::Actor(ORC));
-        for _ in 0..400 {
+        let of_lib = |fx: &Effects| -> Vec<([u8; 4], [Who; 2])> {
+            fx.insts.iter().flatten().filter(|x| x.src.0 == lib).map(|x| (x.name, x.actors)).collect()
+        };
+        for _ in 0..100 {
             fx.tick(&f, &Skilled);
         }
-        let left: Vec<_> = fx.insts.iter().flatten().filter(|x| x.src.0 == lib).map(|x| (x.name, x.actors)).collect();
-        assert!(
-            left.len() == 1
-                && &left[0].0 == b"g000"
-                && left[0].1[0] == Who::Actor(HUME)
-                && matches!(left[0].1[1], Who::Doll(_)),
-            "{left:?}"
-        );
+        // g000, started before the doll op, is still on the actor; what came after it is on the doll.
+        let now = of_lib(&fx);
+        assert!(now.iter().any(|x| &x.0 == b"g000" && x.1 == [Who::Actor(HUME), Who::Actor(ORC)]), "{now:?}");
+        assert!(now.iter().any(|x| x.1[0] == Who::Actor(HUME) && matches!(x.1[1], Who::Doll(_))), "{now:?}");
+        assert!(now.iter().all(|x| &x.0 == b"g000" || matches!(x.1[1], Who::Doll(_))), "{now:?}");
+        for _ in 0..300 {
+            fx.tick(&f, &Skilled);
+        }
+        // `st44` found g000 on the pair and stopped it; the rest ran out.
+        assert!(of_lib(&fx).is_empty(), "{:?}", of_lib(&fx));
+        fx.on_event_scheduler(35595, u32::from_le_bytes(*b"main"), Who::Actor(HUME), Who::Actor(ORC));
+        for _ in 0..100 {
+            fx.tick(&f, &Skilled);
+        }
+        assert!(of_lib(&fx).iter().any(|x| matches!(x.1[1], Who::Doll(_))));
         fx.forget_actor(ORC);
         assert!(fx.insts.iter().flatten().all(|x| x.src.0 != lib));
     }
