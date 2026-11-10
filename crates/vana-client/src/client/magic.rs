@@ -254,7 +254,11 @@ pub(super) fn ability_parent(ty: u16) -> u16 {
 /// The row of `rows` that opens the sub-list holding ability `id` (Rune Enchantment for Ignis, Ward for Vallation).
 pub(super) fn opener_row(w: &World, rows: &[u16], id: u16) -> Option<u16> {
     let acts = w.actions.as_ref()?;
+    // Sub 0 is every ordinary row: only a sub-list's type names an opener.
     let ty = acts.abilities.get(id as usize)?.kind;
+    if ty == 0 {
+        return None;
+    }
     rows.iter().copied().find(|&r| acts.abilities.get(r as usize).is_some_and(|a| a.sub == ty))
 }
 

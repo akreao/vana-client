@@ -289,11 +289,24 @@ function M.last_member(macro)
   return math.max(1, math.min(k, #(macro.group or {})))
 end
 
+-- Saved only when it changes: a group picked again and again in a fight writes nothing.
 function M.set_last_member(macro, k)
   if not (storage and storage.character) then return end
   if type(storage.character.hb_last) ~= "table" then storage.character.hb_last = {} end
-  storage.character.hb_last[last_key(macro)] = k
+  local key = last_key(macro)
+  if storage.character.hb_last[key] == k then return end
+  storage.character.hb_last[key] = k
   pcall(storage.save)
+end
+
+-- A deleted entry's remembered member goes with it.
+local function forget_last_member(main, id)
+  local t = storage and storage.character and storage.character.hb_last
+  local key = tostring(main) .. ":" .. tostring(id)
+  if type(t) == "table" and t[key] ~= nil then
+    t[key] = nil
+    pcall(storage.save)
+  end
 end
 
 -- The member a group's slot shows: the one picked last.
@@ -427,6 +440,7 @@ function M.delete_entry(main, id)
   id = tostring(id)
   local lib = library(main, false)
   if lib then lib[id] = nil end
+  forget_last_member(main, id)
   local job = db[main]
   local main_set = is_table(job) and is_table(job.main) and job.main or nil
   each_set(main, function(set)

@@ -546,8 +546,12 @@ local function set_target(index)
   local c = target_choices()[index]
   if not c or not E.kind then return end
   E.target = c[1]
+  -- A group's members take it, but those that can take only you stay on <me>.
   for _, m in ipairs(E.group or {}) do
-    if m.action and m.action.kind ~= "equip" and m.action.kind ~= "cmd" then m.action.target = c[1] end
+    if m.action and m.action.kind ~= "equip" and m.action.kind ~= "cmd"
+      and not builder.self_only(m.action.kind, m.action.name) then
+      m.action.target = c[1]
+    end
   end
   refresh_choice()
   refresh_preview()

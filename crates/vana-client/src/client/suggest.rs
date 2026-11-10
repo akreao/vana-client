@@ -166,6 +166,8 @@ pub struct Facts {
     pub own: Vec<(u16, Option<f32>)>,
     pub tp: u32,
     pub engaged: bool,
+    /// A monster our party claimed is about: a fight is on, whoever it is on.
+    pub party_fight: bool,
     pub spells: Vec<SpellFact>,
     pub abilities: Vec<AbilityFact>,
     pub weapon_skills: Vec<AbilityFact>,
@@ -618,30 +620,35 @@ fn rune_fencer(f: &Facts, out: &mut Vec<Suggestion>) {
             add(out, Suggestion::new(Action::Ability(a.index), None, format!("Parry the {foe} more.")));
         }
     }
-    // Spending them: the newest rune's element goes first (rune_fencer.lua, getNewestRuneEffect); held runes in
-    // the order they were cast, so the last.
+    // Spending them: Swipe takes the newest rune (rune_fencer.lua, getNewestRuneEffect), the one with the most time
+    // left as every rune lasts as long (the effects' order is their slots', not the order they were cast); Lunge and
+    // Gambit take every rune held. Not while the monster resists all of them.
     let Some(t) = t else { return };
     if tanking {
         return;
     }
-    let el = *held.last().unwrap_or(&0);
-    if ranks.is_some_and(|r| r[el] > 0) {
+    let resists = |e: usize| ranks.is_some_and(|r| r[e] > 0);
+    if held.iter().all(|&e| resists(e)) {
         return;
     }
-    let word = ELEMENT_WORDS[el];
+    let newest = up.iter().max_by(|a, b| a.1.unwrap_or(0.0).total_cmp(&b.1.unwrap_or(0.0))).map_or(0, |r| r.0);
+    let words = element_list(&held);
     let nukers = f.party.iter().any(|m| !m.me && m.here && NUKERS.contains(&m.job));
     if nukers
         && t.hpp > 30
         && !t.ours.contains(&536)
         && let Some(a) = f.ability("Gambit")
     {
-        add(out, Suggestion::new(Action::Ability(a.index), None, format!("The party's {word} magic hits harder.")));
+        add(out, Suggestion::new(Action::Ability(a.index), None, format!("The party's {words} magic hits harder.")));
     } else if held.len() >= 2
         && let Some(a) = f.ability("Lunge")
     {
         let n = held.len();
-        add(out, Suggestion::new(Action::Ability(a.index), None, format!("{n} runes as {word} on the {foe}.")));
-    } else if let Some(a) = f.ability("Swipe") {
+        add(out, Suggestion::new(Action::Ability(a.index), None, format!("{n} runes as {words} on the {foe}.")));
+    } else if !resists(newest)
+        && let Some(a) = f.ability("Swipe")
+    {
+        let word = ELEMENT_WORDS[newest];
         add(out, Suggestion::new(Action::Ability(a.index), None, format!("A rune as {word} on the {foe}.")));
     }
 }
@@ -654,8 +661,9 @@ fn first_spell<'a>(f: &'a Facts, names: &[&str]) -> Option<&'a SpellFact> {
 /// GEO (main): an Indicolure always on (Colure Active, 612), a Geocolure on what we fight while no luopan is out
 /// (Blaze of Glory first), and the luopan looked after: Ecliptic Attrition in a fight, Full Circle after it, Life
 /// Cycle or Dematerialize when it is hurt, Radial Arcana for our MP, Mending Halation for a hurt party. Melee
-/// colures (Fury, Frailty) when the party has more melee than nukers, else magic ones (Acumen, Malaise); a GEO alone
-/// nukes.
+/// colures (Indi-Fury, Geo-Frailty) when the party has more melee than nukers, else magic ones (Indi-Acumen,
+/// Geo-Malaise); a GEO alone nukes. The Geocolure and Full Circle go by whether a fight is on, not by the target
+/// alone: a monster passing by is no fight, a party member targeted for a Cure does not end one.
 fn geomancer(f: &Facts, out: &mut Vec<Suggestion>) {
     if f.main.0 != 21 {
         return;
@@ -675,12 +683,15 @@ fn geomancer(f: &Facts, out: &mut Vec<Suggestion>) {
     }
     let luopan = f.pet.as_ref().filter(|p| p.luopan);
     let foe = f.target.as_ref().filter(|t| t.hpp > 0);
-    if let Some(t) = foe {
+    // A GEO mostly stands back unengaged: a fight is on while one hits us or the party, or the party has a claim.
+    let in_fight = f.fighting() || f.party_fight || foe.is_some_and(|t| t.hitting.is_some());
+    if let Some(t) = foe.filter(|_| in_fight) {
         if luopan.is_none() {
+            // Only the colures cast on the monster (Fury, Acumen and the like go on the party).
             let (names, why): (&[&str], &str) = if melee_party {
-                (&["Geo-Frailty", "Geo-Fury", "Geo-Wilt"], "for your melee")
+                (&["Geo-Frailty", "Geo-Wilt"], "for your melee")
             } else {
-                (&["Geo-Malaise", "Geo-Acumen", "Geo-Languor"], "for your magic")
+                (&["Geo-Malaise", "Geo-Languor"], "for your magic")
             };
             if let Some(s) = first_spell(f, names) {
                 if !f.has(569)
@@ -692,8 +703,7 @@ fn geomancer(f: &Facts, out: &mut Vec<Suggestion>) {
                 let reason = format!("No luopan out: {} on the {}, {why}.", s.name, t.name);
                 add(out, Suggestion::new(Action::Spell(s.id), None, reason));
             }
-        } else if f.fighting()
-            && !f.has(516)
+        } else if !f.has(516)
             && let Some(a) = f.ability("Ecliptic Attrition")
         {
             add(out, Suggestion::new(Action::Ability(a.index), None, "The luopan's effect stronger.".into()));
@@ -701,6 +711,7 @@ fn geomancer(f: &Facts, out: &mut Vec<Suggestion>) {
     }
     let Some(p) = luopan else { return };
     if foe.is_none()
+        && !in_fight
         && let Some(a) = f.ability("Full Circle")
     {
         add(out, Suggestion::new(Action::Ability(a.index), None, "No fight now: the luopan's MP back.".into()));
@@ -1275,6 +1286,9 @@ pub fn facts(w: &World) -> Facts {
         own,
         tp: w.vitals.map_or(0, |v| v.2),
         engaged: w.my_motion.status == 1,
+        party_fight: w.entities.values().any(|e| {
+            e.mob && e.hpp > 0 && e.claim != 0 && (e.claim == w.my_id || w.party.party().any(|m| m.id == e.claim))
+        }),
         spells,
         abilities,
         weapon_skills,

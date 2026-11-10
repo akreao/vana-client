@@ -4834,6 +4834,8 @@ return "acxml flow ok"
             H("manager", { kind = "set", id = "btype", index = 2 })
             H("manager", { kind = "select", id = "found", index = 1 })
             H("manager", { kind = "press", id = "grp", index = 1 })
+            -- Another target for the group leaves the runes, which take only us, on <me>.
+            H("manager", { kind = "set", id = "target", index = 3 })
             H("manager", { kind = "press", id = "bbtn", index = 1 })
             local it = data.library("RUN")[1]
             assert(it.entry.name == "Rune Enchantment" and #it.entry.group == 2, it.entry.name)
@@ -4842,8 +4844,8 @@ return "acxml flow ok"
             assert(macro.group and #macro.lines == 0)
             -- Its list: the second runs, and is the one shown and offered first next time.
             local chooser = require("src.chooser")
-            chooser.open(macro)
-            assert(chooser.is_open())
+            chooser.open(macro, nil, nil, 1)
+            assert(chooser.is_open() and chooser.bar() == 1)
             G("group", { kind = "select", index = 2 })
             assert(not chooser.is_open())
             assert(SENT[1] == '/ja "Tenebrae" <me>', tostring(SENT[1]))
@@ -6417,7 +6419,8 @@ pub(super) fn pointer_classic(
         let vm = &w.lua.vms[*v];
         let mut st = vm.st.borrow_mut();
         if let Some(win) = st.windows.iter_mut().find(|x| x.id == *id && x.hovered.is_some()) {
-            let (ww, wh) = win.classic_size();
+            // With an open dropdown's list hanging below it.
+            let (ww, wh) = win.classic_reach();
             if p.0 < *x || p.1 < *y || p.0 >= x + ww || p.1 >= y + wh {
                 left.extend(win.hover_off().into_iter().map(|e| (vm.manifest.id.clone(), id.clone(), e)));
             }
@@ -6428,8 +6431,13 @@ pub(super) fn pointer_classic(
     if let Some((k, mid)) = w.lua.modal() {
         places.retain(|(v, id, _, _)| *v == k && *id == mid);
         let inside = places.first().is_some_and(|(v, id, x, y)| {
-            let (ww, wh) =
-                w.lua.vms[*v].st.borrow().windows.iter().find(|x| x.id == *id).map_or((0.0, 0.0), |x| x.classic_size());
+            let (ww, wh) = w.lua.vms[*v]
+                .st
+                .borrow()
+                .windows
+                .iter()
+                .find(|x| x.id == *id)
+                .map_or((0.0, 0.0), |x| x.classic_reach());
             p.0 >= *x && p.1 >= *y && p.0 < x + ww && p.1 < y + wh
         });
         if (clicked || right) && !inside {

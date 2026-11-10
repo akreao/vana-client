@@ -228,7 +228,7 @@ pub const FUNCS: &[Func] = &[
     Func {
         ns: "ui",
         name: "bounds",
-        doc: "Where one of the mod's canvases was last drawn, in window pixels: {x, y, w, h, scale} (scale: pixels per canvas unit), for placing a popup by it; nil before the modern UI drew it (or in the classic UI).",
+        doc: "Where one of the mod's canvases was last drawn, in window pixels: {x, y, w, h, scale} (scale: pixels per canvas unit), for placing a popup by it; nil before the modern UI drew it, while its window is closed, or in the classic UI.",
         params: &[("window", "string", ""), ("canvas", "string", "the canvas element's id")],
         ret: "table?",
     },

@@ -699,16 +699,25 @@ pub fn combo_list(
     font: FontId,
 ) -> ComboOut {
     const H: f32 = 26.0;
-    let top = field.max.y + 3.0;
+    // Under the field, or over it when it would run off the bottom of the screen and fits there.
+    let (h, screen) = (H * items.len() as f32, ctx.content_rect());
+    let below = field.max.y + 3.0;
+    let top = if below + h + 3.0 > screen.max.y && field.min.y - 3.0 - h >= screen.min.y {
+        field.min.y - 3.0 - h
+    } else {
+        below
+    };
     let rows: Vec<(Rect, &str)> = items
         .iter()
         .enumerate()
         .map(|(k, s)| (Rect::from_min_size(pos2(field.min.x, top + H * k as f32), vec2(field.width(), H)), s.as_str()))
         .collect();
     let mut out = ComboOut::default();
-    let area = egui::Area::new(id).order(egui::Order::Foreground).fixed_pos(field.left_bottom()).constrain(false).show(
-        ctx,
-        |ui| {
+    let area = egui::Area::new(id)
+        .order(egui::Order::Foreground)
+        .fixed_pos(pos2(field.min.x, top - 3.0))
+        .constrain(false)
+        .show(ctx, |ui| {
             ui.allocate_exact_size(vec2(field.width(), 6.0 + H * rows.len() as f32), Sense::hover());
             paint_combo_list(ui.painter(), m, &rows, cursor, &font);
             for (k, (r, _)) in rows.iter().enumerate() {
@@ -720,8 +729,7 @@ pub fn combo_list(
                     out.picked = Some(k);
                 }
             }
-        },
-    );
+        });
     let shown = area.response.rect;
     out.away = ctx.input(|i| {
         i.pointer.any_pressed() && i.pointer.interact_pos().is_some_and(|q| !shown.contains(q) && !field.contains(q))

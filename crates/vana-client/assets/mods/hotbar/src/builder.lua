@@ -220,6 +220,19 @@ end
 
 M.MAX_RESULTS = 150
 
+-- Whether action `name` of a kind can take only yourself (a rune, Utsusemi...): a group's Target leaves it on <me>.
+function M.self_only(kind, name)
+  if not ABILITY_KIND[kind] and kind ~= "ma" then return false end
+  for _, e in ipairs(all_of(kind)) do
+    if e.name == name and e.icon then
+      local r = e.icon.kind == "spell" and res.spell(e.icon.id) or e.icon.kind == "ability" and res.ability(e.icon.id)
+      local t = r and r.targets or 0
+      return t ~= 0 and t & ~1 == 0
+    end
+  end
+  return false
+end
+
 -- The choices of an action kind whose names hold `query` (any case), by name; `more` is true when there were more
 -- than MAX_RESULTS. With `list` (an opener's), the rows of that list; else the openers and the other rows, and with a
 -- query the rows of every list too.

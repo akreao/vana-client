@@ -116,19 +116,22 @@ local function list_place(b, i)
   return { x = cx, y = at.y + y * at.scale - 6 * u, above = true }
 end
 
--- Runs the macro in a slot for the current jobs; a group opens its list. While a list is open the bars' keys pick
--- its members by number.
+-- Runs the macro in a slot for the current jobs; a group opens its list. While a list is open the keys of the bar
+-- it came from pick its members by number; another bar's key closes it and acts as usual.
 function M.fire(bar, slot)
   if chooser.is_open() then
-    chooser.pick(slot)
-    return
+    if chooser.bar() == bar then
+      chooser.pick(slot)
+      return
+    end
+    chooser.close()
   end
   local mj, sj = jobs.current()
   if not mj then return end
   local macro = data.resolve(mj, sj, bar, slot)
   if not macro then return end
   if macro.group then
-    chooser.open(macro, list_place(bar, slot), function(m) return is_suggested(m, actions.of(m)) end)
+    chooser.open(macro, list_place(bar, slot), function(m) return is_suggested(m, actions.of(m)) end, bar)
   else
     runner.run_checked(macro)
   end

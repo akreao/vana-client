@@ -421,7 +421,7 @@ function ui.get(id, element) end
 ---@param at table? a popup's place: {x, y, above}
 function ui.open(id, at) end
 
---- Where one of the mod's canvases was last drawn, in window pixels: {x, y, w, h, scale} (scale: pixels per canvas unit), for placing a popup by it; nil before the modern UI drew it (or in the classic UI).
+--- Where one of the mod's canvases was last drawn, in window pixels: {x, y, w, h, scale} (scale: pixels per canvas unit), for placing a popup by it; nil before the modern UI drew it, while its window is closed, or in the classic UI.
 ---@param window string 
 ---@param canvas string the canvas element's id
 ---@return table?

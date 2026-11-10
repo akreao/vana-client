@@ -18,6 +18,8 @@ local DIM = { 160, 152, 136, 255 }
 local SUGGESTED = { 255, 214, 120, 255 }
 
 local open_macro = nil
+-- The bar whose slot opened the list: its keys pick members by number, another bar's keys act as usual.
+local open_bar = nil
 
 local function clock(secs)
   secs = math.ceil(secs)
@@ -42,8 +44,14 @@ function M.is_open()
 end
 
 local function close()
-  open_macro = nil
+  open_macro, open_bar = nil, nil
   if ui.is_open(WIN) then ui.close(WIN) end
+end
+M.close = close
+
+-- The bar the open list came from (nil: none, or not opened from a bar).
+function M.bar()
+  return M.is_open() and open_bar or nil
 end
 
 -- Runs member k of the open group and closes the list.
@@ -58,8 +66,8 @@ function M.pick(k)
 end
 
 -- Opens a group's list; `at` is where on screen ({x, y, above} in window pixels), else at the pointer; members
--- `suggested(member)` names (the battle menu's suggestions) show in gold.
-function M.open(macro, at, suggested)
+-- `suggested(member)` names (the battle menu's suggestions) show in gold; `bar` the bar whose slot opened it.
+function M.open(macro, at, suggested, bar)
   if not macro.group or #macro.group == 0 then return end
   local rows = rows_of(macro, suggested)
   ui.window(WIN, {
@@ -74,7 +82,7 @@ function M.open(macro, at, suggested)
           { title = "", width = 20, align = "right" } } },
     },
   })
-  open_macro = macro
+  open_macro, open_bar = macro, bar
   ui.open(WIN, at)
 end
 
@@ -82,7 +90,7 @@ ui.on(WIN, function(_, e)
   if e.kind == "select" then
     M.pick(e.index)
   elseif e.kind == "close" then
-    open_macro = nil
+    open_macro, open_bar = nil, nil
   end
 end)
 

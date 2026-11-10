@@ -638,7 +638,7 @@ place is in window pixels, which is what `ui.open`'s `at` takes. Only the modern
 | `canvas` | `string` | yes | The id of a `canvas` element in it. |
 
 **Returns** `{x, y, w, h, scale}`: the canvas's top left and its size in window pixels, and `scale`, the window pixels
-per canvas unit. `nil` when the canvas has not been drawn yet, in the classic UI, and for a window or element that is
+per canvas unit. `nil` when the canvas has not been drawn yet, while its window is closed, in the classic UI, and for a window or element that is
 not one of your canvases.
 
 **Example**

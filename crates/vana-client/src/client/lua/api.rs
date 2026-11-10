@@ -584,7 +584,8 @@ pub(super) fn install(
             };
             let st = state(lua);
             let s = st.borrow();
-            let size = s.windows.iter().find(|w| w.id == win).and_then(|w| {
+            // A closed window's last place is stale: none.
+            let size = s.windows.iter().find(|w| w.id == win && w.open).and_then(|w| {
                 w.elems.iter().find_map(|e| match e {
                     super::window::Elem::Canvas { id: c, w, h, .. } if *c == id => Some((*w, *h)),
                     _ => None,
