@@ -3083,7 +3083,7 @@ fn world_hud(
                         && !world.key_repeat
                         && (numpad_minus || world.game.get(0x42) != 0) =>
                 {
-                    menu_minus(&mut world.menu, &mut world.menu_page, &mut world.menu_mem)
+                    menu_minus(&mut world.menu, &mut world.menu_page, &mut world.menu_mem, world.modern)
                 }
                 // The modern Command Menu takes the menu keys (client/modern/command.rs).
                 egui::Key::ArrowDown
@@ -19750,8 +19750,13 @@ fn area_resample(src: &[u8], from: [u32; 2], to: [u32; 2]) -> Vec<u8> {
 }
 
 /// '-' and the main menu: it opens on the page it was closed on; pressed again it turns to the other page, each page
-/// on the row it last had (two windows, each with its own cursor), and never closes it.
-fn menu_minus(menu: &mut Option<usize>, page: &mut u8, mem: &mut [usize; 2]) {
+/// on the row it last had (two windows, each with its own cursor), and never closes it. The modern Command Menu has
+/// one page: there '-' closes it again (ours).
+fn menu_minus(menu: &mut Option<usize>, page: &mut u8, mem: &mut [usize; 2], modern: bool) {
+    if modern && menu.is_some() {
+        *menu = None;
+        return;
+    }
     if let Some(k) = *menu {
         mem[*page as usize & 1] = k;
         *page ^= 1;
@@ -19782,17 +19787,22 @@ mod tests {
     #[test]
     fn minus_turns_the_menu_page() {
         let (mut menu, mut page, mut mem) = (None, 0u8, [0usize; 2]);
-        super::menu_minus(&mut menu, &mut page, &mut mem);
+        super::menu_minus(&mut menu, &mut page, &mut mem, false);
         assert_eq!((menu, page), (Some(0), 0));
         menu = Some(3);
-        super::menu_minus(&mut menu, &mut page, &mut mem);
+        super::menu_minus(&mut menu, &mut page, &mut mem, false);
         assert_eq!((menu, page, mem), (Some(0), 1, [3, 0]));
         menu = Some(5);
-        super::menu_minus(&mut menu, &mut page, &mut mem);
+        super::menu_minus(&mut menu, &mut page, &mut mem, false);
         assert_eq!((menu, page, mem), (Some(3), 0, [3, 5]));
         // Closed on page 0, it opens there again.
         menu = None;
-        super::menu_minus(&mut menu, &mut page, &mut mem);
+        super::menu_minus(&mut menu, &mut page, &mut mem, false);
+        assert_eq!((menu, page), (Some(3), 0));
+        // The modern Command Menu has no second page: '-' closes it.
+        super::menu_minus(&mut menu, &mut page, &mut mem, true);
+        assert_eq!((menu, page), (None, 0));
+        super::menu_minus(&mut menu, &mut page, &mut mem, true);
         assert_eq!((menu, page), (Some(3), 0));
     }
 
