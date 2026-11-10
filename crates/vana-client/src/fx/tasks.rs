@@ -622,7 +622,10 @@ impl Effects {
                 t.a1 == who && u32::from_le_bytes(self.reg.libs[t.res.0].tree.nodes[t.res.1].name) == name
             });
             if hit {
-                self.tasks[i] = None;
+                // Its hold tasks are its children and go with it (as in kill_tasks).
+                if let Some(t) = self.tasks[i].take() {
+                    self.hold_cuts.push(t.uid);
+                }
             }
         }
     }
@@ -5361,6 +5364,14 @@ mod skillchain_tests {
         fx.tick(&f, &Pair);
         let op = |n, hide| crate::fx::WeaponOp { actor: 1, n, byte: 0, hide };
         assert_eq!(fx.weapons, [op(0, false), op(1, false), op(2, true)]);
+        // An explicit stop (model vtable +0x29c) frees the stopped task's holds too.
+        fx.hold_cuts.clear();
+        fx.on_scheduler_alone(1, name(b"bntg"));
+        fx.tick(&f, &Pair);
+        let uid = fx.tasks.iter().flatten().find(|t| t.a1 == Who::Actor(1)).unwrap().uid;
+        fx.stop_actor_scheduler(1, name(b"bntg"));
+        assert!(!fx.actor_scheduler_running(1, name(b"bntg")));
+        assert_eq!(fx.hold_cuts, [uid]);
     }
 
     /// MODLOG "Skillchains": DAT 0 `proc` (op 0x80) with record 0's proc kind 14 plays Impaction (3268) on the
