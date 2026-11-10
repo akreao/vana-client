@@ -883,7 +883,7 @@ pub fn update(
             (dead(input.axis(0x9d) * 15.0) * fast * ticks * 0.5, dead(input.axis(0x9e) * 15.0) * fast * ticks * 0.5);
         let (bx, by) = ([sw / 512.0 * 40.0, sw - sw / 512.0 * 60.0], [sh / 448.0 * 65.0, sh - sh / 448.0 * 180.0]);
         let d = match mouse.filter(|_| v == (0.0, 0.0)) {
-            Some(ms) => super::map::mouse_step(ms, &mut m.anchor, m.view.point, m.view.zoom),
+            Some(ms) => super::map::mouse_step(ms, &mut m.anchor, m.view.point),
             None => v,
         };
         if d != (0.0, 0.0) {
