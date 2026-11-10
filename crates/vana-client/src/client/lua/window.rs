@@ -1663,8 +1663,7 @@ impl Window {
                             .unwrap_or_default()
                             .as_millis()
                             / 500)
-                            % 2
-                            == 0;
+                            .is_multiple_of(2);
                         if blink {
                             gu.text("|", bx + 4.0 + lw - shift, by + 1.0, 0, [0x80; 4]);
                         }
@@ -2167,7 +2166,7 @@ mod tests {
         };
         let name = |e: &egui::Event| super::super::input::combo_of(e, None);
         // Not listening: nothing taken.
-        assert!(w.listen(&[ctrl_q.clone()], name).0.is_empty());
+        assert!(w.listen(std::slice::from_ref(&ctrl_q), name).0.is_empty());
         w.key(K::Enter);
         assert!(w.listening() && w.takes_text());
         assert_eq!(

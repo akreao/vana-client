@@ -888,7 +888,7 @@ pub fn update(w: &mut World, dt: f32) {
             Ok(r) => {
                 a.bid_query = None;
                 // The history window's top row: the first of the last ten.
-                let top = r.ok().and_then(|r| r.sales.iter().rev().take(10).last().map(|s| s.price));
+                let top = r.ok().and_then(|r| r.sales.iter().rev().take(10).next_back().map(|s| s.price));
                 if let Some(t) = a.bid_top.as_mut() {
                     t.1 = top;
                 }

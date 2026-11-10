@@ -2632,8 +2632,9 @@ mod tests {
     fn hooked_ids() {
         let s = NetStats::default();
         let mut ids = [0u64; 8];
-        ids[0x032 / 64] |= 1 << (0x032 % 64);
-        ids[0x1ff / 64] |= 1 << (0x1ff % 64);
+        for id in [0x032usize, 0x1ff] {
+            ids[id / 64] |= 1 << (id % 64);
+        }
         s.set_hooked(false, &ids);
         assert!(s.hooked(false, 0x032) && s.hooked(false, 0x1ff) && !s.hooked(false, 0x033));
         assert!(!s.hooked(true, 0x032));

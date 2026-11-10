@@ -562,7 +562,10 @@ pub(super) fn install(
                 Elem::Gauge { value, .. } => t.set("value", *value)?,
                 Elem::Colour { value: [r, g, b, a], .. } => {
                     let c = lua.create_table()?;
-                    (c.set("r", *r)?, c.set("g", *g)?, c.set("b", *b)?, c.set("a", *a)?);
+                    c.set("r", *r)?;
+                    c.set("g", *g)?;
+                    c.set("b", *b)?;
+                    c.set("a", *a)?;
                     t.set("value", c)?;
                 }
                 Elem::Section { open, .. } => t.set("open", *open)?,
@@ -1634,12 +1637,10 @@ pub(super) fn install(
             }
             for (text, id) in hits {
                 let t = lua.create_table()?;
-                (
-                    t.set("text", text)?,
-                    t.set("group", id[2])?,
-                    t.set("id", id[3])?,
-                    t.set("phrase", super::runtime::phrase(id))?,
-                );
+                t.set("text", text)?;
+                t.set("group", id[2])?;
+                t.set("id", id[3])?;
+                t.set("phrase", super::runtime::phrase(id))?;
                 out.push(t)?;
             }
             Ok(Some(out))
@@ -1653,7 +1654,9 @@ pub(super) fn install(
             let out = lua.create_table()?;
             for g in &d.groups {
                 let t = lua.create_table()?;
-                (t.set("group", g.id)?, t.set("title", g.title.as_str())?, t.set("count", g.phrases.len())?);
+                t.set("group", g.id)?;
+                t.set("title", g.title.as_str())?;
+                t.set("count", g.phrases.len())?;
                 out.push(t)?;
             }
             Ok(Some(out))
@@ -1723,7 +1726,9 @@ pub(super) fn install(
                     let list = lua.create_table()?;
                     for (slot, model, file) in parts {
                         let p = lua.create_table()?;
-                        (p.set("slot", slot)?, p.set("model", model)?, p.set("file", file)?);
+                        p.set("slot", slot)?;
+                        p.set("model", model)?;
+                        p.set("file", file)?;
                         list.push(p)?;
                     }
                     out.set("parts", list)?;
@@ -2029,7 +2034,8 @@ pub(super) fn self_entity(lua: &Lua, w: &World) -> mlua::Result<Table> {
     // Ours from s2c 0x037 @0x59 (actor +0x208).
     t.set("hitbox", w.my_plate.hitbox)?;
     if let Some((tid, e)) = w.target.and_then(|id| w.entities.get(&id).map(|e| (id, e))) {
-        (t.set("target_index", e.index)?, t.set("target_id", tid)?);
+        t.set("target_index", e.index)?;
+        t.set("target_id", tid)?;
     }
     Ok(t)
 }

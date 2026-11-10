@@ -157,7 +157,7 @@ fn skill_files(category: u8, anim: u16, race: u8, skirt: i8) -> Option<(u32, Opt
         _ if a < 0x100 => (WS[r] + a, WS2[r][k] + a),
         _ => (WS_HI[r] + a - 0x100, WS_HI2[r][k] + a - 0x100),
     };
-    Some((file, Some(second).filter(|_| skirt > 0)))
+    Some((file, (skirt > 0).then_some(second)))
 }
 
 /// 0x4f1a00: a Vana'diel day in 1/60 seconds.
@@ -604,7 +604,7 @@ impl Effects {
             }
         }
         for x in self.insts.iter_mut().flatten() {
-            x.actors.iter_mut().for_each(|w| clear(w));
+            x.actors.iter_mut().for_each(&clear);
         }
     }
 

@@ -163,8 +163,8 @@ pub fn open(w: &mut World) {
 
 /// mp_mncst's Escape (FUN_10141bf0): every Customization window closes; the main menu resumes.
 fn close(w: &mut World, s: &Screen) {
-    w.cursor_mem.insert(MNCST.into(), s.mncst);
-    w.cursor_mem.insert(CSTM.into(), s.cstm);
+    w.cursor_mem.insert(MNCST, s.mncst);
+    w.cursor_mem.insert(CSTM, s.cstm);
     w.moncustom = None;
 }
 

@@ -412,7 +412,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
     let rows: Vec<u16> = (1..=8).collect();
     let sel = (k.state == 1 && k.ask.is_none()).then(|| (k.cursor - k.top + 1) as u16);
     let hide: Vec<u16> =
-        if k.state == 1 { (1..=8u16).filter(|&c| k.top + c as usize - 1 >= cats.len()).collect() } else { rows };
+        if k.state == 1 { (1..=8u16).filter(|&c| k.top + c as usize > cats.len()).collect() } else { rows };
     let Some(win) = gu.lobby_window_off(WINDOW, sw, sh, (0.0, 0.0), sel, focused, &hide) else { return rects };
     let [fx, fy, fw, fh] = win.frame;
     let Some((x, y)) = gu.window_xy(WINDOW, sw, sh) else { return rects };

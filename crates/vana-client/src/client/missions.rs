@@ -388,7 +388,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         let focused = m.list.is_none() && w.confirm.is_none();
         if let Some(win) = gu.lobby_window_off(MENU, sw, sh, (0.0, 0.0), Some(sel), focused, &off) {
             if let Some((x, y)) = gu.window_xy(MENU, sw, sh) {
-                gu.disabled_children(MENU, x, y, &off, Some(sel).filter(|_| focused));
+                gu.disabled_children(MENU, x, y, &off, focused.then_some(sel));
             }
             rects.push(win.frame);
         }

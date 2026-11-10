@@ -510,16 +510,10 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         if let Some(t) = gu.title_msg(TITLES[l.mode.min(1)][l.area]) {
             text(gu, &t, x + 60.0, y + 10.0, WHITE);
         }
-        if l.rows.is_empty() {
-            if let Some(bt) = &w.battle {
-                text(
-                    gu,
-                    &bt.group9(if l.mode == 0 { 0x63 } else { 0x64 }).unwrap_or_default(),
-                    x + 20.0,
-                    y + 40.0,
-                    WHITE,
-                );
-            }
+        if l.rows.is_empty()
+            && let Some(bt) = &w.battle
+        {
+            text(gu, &bt.group9(if l.mode == 0 { 0x63 } else { 0x64 }).unwrap_or_default(), x + 20.0, y + 40.0, WHITE);
         }
         for &(id, [cx, cy, ..]) in win.children.iter().filter(|(id, _)| (1..=VISIBLE as u16).contains(id)) {
             let row = l.top + id as usize - 1;

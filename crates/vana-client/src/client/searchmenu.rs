@@ -458,7 +458,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         let off = &win.off;
         if let Some(lw) = gu.lobby_window_off(win.name, sw, sh, (0.0, 0.0), Some(win.sel), focused, off) {
             if let Some((x, y)) = gu.window_xy(win.name, sw, sh) {
-                gu.disabled_children(win.name, x, y, off, Some(win.sel).filter(|_| focused));
+                gu.disabled_children(win.name, x, y, off, focused.then_some(win.sel));
             }
             let child = |id: u16| lw.children.iter().find(|c| c.0 == id).map(|c| c.1);
             match win.name {

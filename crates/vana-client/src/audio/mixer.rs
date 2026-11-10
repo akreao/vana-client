@@ -443,7 +443,7 @@ impl Mixer {
                 let v = (LEVEL[b.file_level as usize] * b.ramp.value()) >> 12;
                 let (cb, pan) = dsound(v, 0x40);
                 let (gl, gr) = gains(cb, pan);
-                for f in buf.chunks_exact_mut(2) {
+                for f in buf.as_chunks_mut::<2>().0 {
                     let s = b.src.frame();
                     f[0] += s[0] * gl;
                     f[1] += s[1] * gr;
@@ -456,7 +456,7 @@ impl Mixer {
                 let Some(v) = slot else { continue };
                 let (cb, pan) = dsound(v.ramp.value(), v.pan);
                 let (gl, gr) = gains(cb, pan);
-                for f in buf.chunks_exact_mut(2) {
+                for f in buf.as_chunks_mut::<2>().0 {
                     let s = v.src.frame();
                     f[0] += s[0] * gl;
                     f[1] += s[1] * gr;

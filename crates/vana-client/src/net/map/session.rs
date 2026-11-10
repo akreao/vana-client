@@ -371,7 +371,7 @@ impl MapSession {
         self.server_ack = u16::from_le_bytes([dgram[2], dgram[3]]);
         self.last_in = Some(seq);
         // Every 30th datagram re-syncs the clock to the server's header (FUN_100fbd10; ours without the drift limit).
-        if seq % 30 == 0 && self.clock.is_some() {
+        if seq.is_multiple_of(30) && self.clock.is_some() {
             let at = |o: usize| u32::from_le_bytes(dgram[o..o + 4].try_into().unwrap());
             self.clock = Some((at(8), at(4), std::time::Instant::now()));
         }

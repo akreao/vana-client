@@ -432,7 +432,7 @@ fn model_tris(m: &crate::dat::zone::Model) -> Vec<[Vec3; 3]> {
     let idx: Vec<[u16; 3]> = if m.strip {
         m.indices.windows(3).map(|w| [w[0], w[1], w[2]]).collect()
     } else {
-        m.indices.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect()
+        m.indices.as_chunks::<3>().0.iter().map(|c| [c[0], c[1], c[2]]).collect()
     };
     idx.into_iter()
         .filter(|[a, b, c]| a != b && b != c && a != c)

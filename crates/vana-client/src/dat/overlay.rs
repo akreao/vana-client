@@ -28,7 +28,7 @@ impl Overlays {
             for rom in roms.flatten() {
                 let name = rom.file_name().to_string_lossy().to_ascii_uppercase();
                 let Some(n) =
-                    name.strip_prefix("ROM").map(|s| if s.is_empty() { Some(1u8) } else { s.parse().ok() }).flatten()
+                    name.strip_prefix("ROM").and_then(|s| if s.is_empty() { Some(1u8) } else { s.parse().ok() })
                 else {
                     continue;
                 };

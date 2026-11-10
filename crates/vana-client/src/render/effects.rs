@@ -1913,8 +1913,7 @@ mod tests {
             gpu.queue.submit([enc.finish()]);
             rb.slice(..).map_async(wgpu::MapMode::Read, |_| {});
             gpu.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None }).unwrap();
-            let v = bytemuck::cast_slice(&rb.slice(..).get_mapped_range().unwrap()).to_vec();
-            v
+            bytemuck::cast_slice(&rb.slice(..).get_mapped_range().unwrap()).to_vec()
         }
     }
 
@@ -1932,8 +1931,7 @@ mod tests {
             gpu.queue.submit([enc.finish()]);
             rb.slice(..).map_async(wgpu::MapMode::Read, |_| {});
             gpu.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None }).unwrap();
-            let v = bytemuck::cast_slice(&rb.slice(..).get_mapped_range().unwrap()).to_vec();
-            v
+            bytemuck::cast_slice(&rb.slice(..).get_mapped_range().unwrap()).to_vec()
         }
     }
 
@@ -1951,8 +1949,7 @@ mod tests {
             gpu.queue.submit([enc.finish()]);
             rb.slice(..).map_async(wgpu::MapMode::Read, |_| {});
             gpu.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None }).unwrap();
-            let v = bytemuck::cast_slice(&rb.slice(..).get_mapped_range().unwrap()).to_vec();
-            v
+            bytemuck::cast_slice(&rb.slice(..).get_mapped_range().unwrap()).to_vec()
         }
     }
 

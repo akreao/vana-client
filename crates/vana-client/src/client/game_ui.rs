@@ -81,7 +81,7 @@ fn menu_registry(ffximain: &[u8]) -> (std::collections::HashMap<String, u32>, st
         log::warn!("menu registry not found");
         return (out, groups);
     };
-    for e in ffximain[at..].chunks_exact(0x2c) {
+    for e in ffximain[at..].as_chunks::<0x2c>().0 {
         let name = &e[..32];
         let len = name.iter().position(|&c| c == 0).unwrap_or(32);
         if len == 0 {
@@ -2318,7 +2318,7 @@ impl GameUi {
                 s.push(cur);
             }
             s.push_str(&piece);
-            cur = piece.chars().filter(code).last().unwrap_or(cur);
+            cur = piece.chars().rfind(code).unwrap_or(cur);
             out.push(s);
         }
         out

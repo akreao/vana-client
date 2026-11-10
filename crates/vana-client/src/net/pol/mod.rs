@@ -84,7 +84,7 @@ impl Profile {
     /// LoadCharacterList (1/3, 0x100217a0): a linked record ([4]) fills its handle's ([5]) slot byte ([6]).
     fn load_characters(&mut self) -> Result<()> {
         let r = self.transact(1, 3, None, ReplyBody::Records(0x68))?;
-        self.characters = r[8..].chunks_exact(0x68).take(r[0] as usize).map(|c| c.to_vec()).collect();
+        self.characters = r[8..].as_chunks::<0x68>().0.iter().take(r[0] as usize).map(|c| c.to_vec()).collect();
         for c in &self.characters {
             if c[4] & 1 != 0 && c[5] < 0x40 && c[6] < 8 && c[0] < 0x40 {
                 self.slots[c[5] as usize][c[6] as usize] = c[0] << 1 | 1;

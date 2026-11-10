@@ -186,7 +186,7 @@ impl Shade {
         let (w, h) = (w as usize, h as usize);
         let (cols, rows) = (w.div_ceil(Self::BLOCK).max(1), h.div_ceil(Self::BLOCK).max(1));
         let mut sum = vec![(0.0f32, 0u32); cols * rows];
-        for (i, p) in rgba.chunks_exact(4).enumerate().take(w * h) {
+        for (i, p) in rgba.as_chunks::<4>().0.iter().enumerate().take(w * h) {
             let b = &mut sum[(i / w / Self::BLOCK) * cols + i % w / Self::BLOCK];
             b.0 += (0.299 * p[0] as f32 + 0.587 * p[1] as f32 + 0.114 * p[2] as f32) / 255.0;
             b.1 += 1;
@@ -228,7 +228,7 @@ impl Mode {
     pub fn of_event_zone(zone: i16) -> Mode {
         match zone {
             ..=-100 => Mode::Illustration,
-            ..0 => Mode::RegionMap,
+            -99..0 => Mode::RegionMap,
             _ => Mode::Event,
         }
     }
@@ -2572,8 +2572,7 @@ impl Overlay {
     pub fn follow(&mut self, w: &World, regions: &[Region]) {
         if self.hud {
             let rec = record(w, regions);
-            if rec.map(|r| r.0) != self.region || rec.map(|r| r.1) != Some(self.show).filter(|_| self.region.is_some())
-            {
+            if rec.map(|r| r.0) != self.region || rec.map(|r| r.1) != self.region.is_some().then_some(self.show) {
                 *self = Self::open_hud(w, regions);
             }
             return;

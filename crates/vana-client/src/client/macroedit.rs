@@ -203,15 +203,12 @@ pub fn text_events(w: &mut World, events: &[egui::Event]) {
             if line_edit(name, &mut b.caret, field_max(true, 0), ev) {
                 continue;
             }
-            match ev {
-                egui::Event::Key { key: K::Enter | K::Escape, pressed: true, .. } => {
-                    let (book, raw) = ((b.sel as usize - 1) + 20 * page, b.rename.take().unwrap_or_default());
-                    if let Some(m) = w.macros.as_mut() {
-                        m.rename_book(book, &raw);
-                    }
-                    w.sounds.push(Ui::Select as u32);
+            if let egui::Event::Key { key: K::Enter | K::Escape, pressed: true, .. } = ev {
+                let (book, raw) = ((b.sel as usize - 1) + 20 * page, b.rename.take().unwrap_or_default());
+                if let Some(m) = w.macros.as_mut() {
+                    m.rename_book(book, &raw);
                 }
-                _ => {}
+                w.sounds.push(Ui::Select as u32);
             }
             continue;
         }
@@ -1351,10 +1348,7 @@ mod tests {
 
     #[test]
     fn glyphs() {
-        assert_eq!(
-            [b'1', b'9', b'0', b'a', b'z', b'A', b'Z'].map(alpha_index),
-            [Some(0), Some(8), Some(9), Some(10), Some(35), Some(36), Some(61)]
-        );
+        assert_eq!(b"190azAZ".map(alpha_index), [Some(0), Some(8), Some(9), Some(10), Some(35), Some(36), Some(61)]);
         assert_eq!(alpha_index(b' '), None);
     }
 

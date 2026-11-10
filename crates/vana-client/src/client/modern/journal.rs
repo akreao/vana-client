@@ -692,11 +692,11 @@ pub fn draw(p: &mut Panels, w: &mut World) {
     };
     let Some(at) = at else { return };
     if t == Tab::Roe {
-        if roe_list.is_some() {
-            if let Some(k) = mouse.click {
-                roe::set_cursor(w, k);
-                roe::modern_key(w, egui::Key::Enter, false);
-            }
+        if roe_list.is_some()
+            && let Some(k) = mouse.click
+        {
+            roe::set_cursor(w, k);
+            roe::modern_key(w, egui::Key::Enter, false);
         }
         return;
     }

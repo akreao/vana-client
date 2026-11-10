@@ -1421,12 +1421,12 @@ impl Effects {
                 log::debug!("effects: wading ripple on {id:#x}");
             }
             self.wading.insert(id, inst);
-        } else if !water && let Some(inst) = self.wading.remove(&id) {
-            if let Some(i) = inst
+        } else if !water
+            && let Some(inst) = self.wading.remove(&id)
+            && let Some(i) = inst
                 .filter(|&i| self.insts[i].as_ref().is_some_and(|x| &x.name == b"i900" && x.owner == Owner::Step(id)))
-            {
-                self.kill(i);
-            }
+        {
+            self.kill(i);
         }
         if let Some(rain) = folder {
             self.foot_set(id, rain);
@@ -1504,10 +1504,10 @@ impl Effects {
         let serial = self.weather_serial;
         log::info!("effects: weather {tag} over {seconds:.0} s: {} generators", gens.len());
         for node in gens {
-            if let Some(i) = self.start((l, node), Owner::Weather(serial)) {
-                if let Some(x) = self.insts[i].as_mut() {
-                    x.weather = if seconds > 0.0 { 0.0 } else { 1.0 };
-                }
+            if let Some(i) = self.start((l, node), Owner::Weather(serial))
+                && let Some(x) = self.insts[i].as_mut()
+            {
+                x.weather = if seconds > 0.0 { 0.0 } else { 1.0 };
             }
         }
         self.weathers.push(WeatherSet { serial, tag: tag4, duration: seconds, remaining: seconds });
@@ -1834,7 +1834,7 @@ impl Effects {
     pub fn take_back(&mut self, words: &[u32]) {
         use elem::{BACK_WORDS, back};
         self.flash = [0; 3];
-        for (i, r) in words.chunks_exact(BACK_WORDS).enumerate() {
+        for (i, r) in words.as_chunks::<BACK_WORDS>().0.iter().enumerate() {
             let Some(Some(c)) = self.elems.get_mut(i) else { continue };
             if r[back::SERIAL] != c.serial {
                 continue;

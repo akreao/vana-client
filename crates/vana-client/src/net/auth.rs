@@ -20,6 +20,8 @@ const MAX_REPLY: usize = 64 * 1024;
 pub enum Command {
     Login = 0x10,
     CreateAccount = 0x20,
+    /// xi_connect's; our login has no password change yet.
+    #[allow(dead_code)]
     ChangePassword = 0x30,
     CreateTotp = 0x31,
     RemoveTotp = 0x32,
@@ -44,6 +46,8 @@ pub enum Reply {
     LoggedIn {
         account_id: u32,
         session_hash: [u8; 16],
+        /// For "trust this computer", which our login does not offer yet.
+        #[allow(dead_code)]
         trust_token: Option<String>,
         lobby_key: Option<tls::Fingerprint>,
     },

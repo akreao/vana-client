@@ -22,7 +22,7 @@ fn f32_at(d: &[u8], o: usize) -> Result<f32> {
 }
 fn floats(d: &[u8], o: usize, n: usize) -> Result<Vec<f32>> {
     ensure!(o + n * 4 <= d.len(), "float array past end at {o:#x}");
-    Ok(d[o..o + n * 4].chunks_exact(4).map(|c| f32::from_le_bytes(c.try_into().unwrap())).collect())
+    Ok(d[o..o + n * 4].as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes(*c)).collect())
 }
 fn al16(x: usize) -> usize {
     (x + 15) & !15
@@ -314,9 +314,9 @@ fn parse_tristrip(b: &[u8]) -> Result<Shape> {
         let f = floats(b, p + 8, nv * nc)?;
         p += 8 + nv * nc * 4;
         match (id, nc) {
-            (0, 3) => pos = f.chunks_exact(3).map(Vec3::from_slice).collect(),
-            (1, 3) => normal = f.chunks_exact(3).map(Vec3::from_slice).collect(),
-            (2, 2) => uv = f.chunks_exact(2).map(|c| [c[0], c[1]]).collect(),
+            (0, 3) => pos = f.as_chunks::<3>().0.iter().map(|c| Vec3::from(*c)).collect(),
+            (1, 3) => normal = f.as_chunks::<3>().0.iter().map(|c| Vec3::from(*c)).collect(),
+            (2, 2) => uv = f.as_chunks::<2>().0.iter().map(|c| [c[0], c[1]]).collect(),
             _ => {}
         }
     }

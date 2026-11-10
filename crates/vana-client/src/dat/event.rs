@@ -239,10 +239,10 @@ pub fn disasm(b: &Block, text: &dyn Fn(u32) -> Option<String>) -> Vec<String> {
                 Kind::Val | Kind::Set | Kind::Str => val_name(u16a(o), &b.consts),
                 Kind::Msg => {
                     let v = u16a(o);
-                    if v & 0x8000 != 0 {
-                        if let Some(t) = b.consts.get((v & 0x7fff) as usize).and_then(|&c| text(c)) {
-                            note = format!("  \"{t}\"");
-                        }
+                    if v & 0x8000 != 0
+                        && let Some(t) = b.consts.get((v & 0x7fff) as usize).and_then(|&c| text(c))
+                    {
+                        note = format!("  \"{t}\"");
                     }
                     format!("msg {}", val_name(v, &b.consts))
                 }

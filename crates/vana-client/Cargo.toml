@@ -8,6 +8,8 @@ license = "MIT"
 # Long argument lists and nested types are accepted here (functions opted out one by one before).
 too_many_arguments = "allow"
 type_complexity = "allow"
+# Index loops mirror the decompile and often read two rows at once.
+needless_range_loop = "allow"
 
 [features]
 default = ["pipewire"]

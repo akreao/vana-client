@@ -7,7 +7,7 @@
 pub fn key_stream(key: u32) -> [u8; 400] {
     let mut k = key.rotate_left(11);
     let mut out = [0u8; 400];
-    for c in out.chunks_exact_mut(4) {
+    for c in out.as_chunks_mut::<4>().0 {
         c.copy_from_slice(&k.to_le_bytes());
         k = k.wrapping_add(k.rotate_left(3));
     }
@@ -623,204 +623,6 @@ impl Atrac3 {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn key_stream_vector() {
-        let k = key_stream(0x46a65af4);
-        assert_eq!(&k[..8], &[53, 162, 215, 50, 222, 179, 148, 201]);
-        assert_eq!(&k[396..], &[117, 215, 13, 111]);
-    }
-
-    /// A unit with no gain, no tonal, one uncoded subband: header 0xa0, then 3 + 5 + 5 + 1 + 3 zero bits.
-    fn silent_frame(bytes: usize) -> Vec<u8> {
-        let mut f = vec![0u8; bytes];
-        for u in (0..bytes).step_by(bytes / 2) {
-            f[u] = 0xa0;
-        }
-        f
-    }
-
-    #[test]
-    fn silent_units_decode_to_zero() {
-        for mode in [0u8, 1] {
-            let mut d = Atrac3::new(2, mode);
-            let mut out = Vec::new();
-            let fr = silent_frame(d.frame_bytes());
-            for _ in 0..4 {
-                d.decode_frame(&fr, &mut out);
-            }
-            assert_eq!(out.len(), 4 * 2048);
-            assert!(out.iter().all(|&s| s == 0));
-            assert_eq!(d.errors(), 0);
-        }
-        let mut d = Atrac3::new(1, 0);
-        assert_eq!(d.frame_bytes(), 0xc0);
-        let mut out = Vec::new();
-        let mut fr = vec![0u8; 0xc0];
-        fr[0] = 0xa0;
-        d.decode_frame(&fr, &mut out);
-        assert_eq!(out.len(), 1024);
-        assert_eq!(d.errors(), 0);
-    }
-
-    /// Joint stereo (mode 2): unit 2 is stored byte-reversed at the frame end, behind its side info.
-    #[test]
-    fn silent_joint_frame() {
-        let mut d = Atrac3::new(2, 2);
-        assert_eq!(d.frame_bytes(), 0xc0);
-        let mut fr = vec![0u8; 0xc0];
-        fr[0] = 0xa0;
-        fr[0xbf] = 0x7f; // weight index 7, matrix codes 3 3
-        fr[0xbe] = 0xfc; // matrix codes 3 3, sync 11, no gain bands
-        let mut out = Vec::new();
-        for _ in 0..3 {
-            d.decode_frame(&fr, &mut out);
-        }
-        assert_eq!(d.errors(), 0);
-        assert!(out.iter().all(|&s| s == 0));
-    }
-
-    #[test]
-    fn bad_sync_is_an_error() {
-        let mut d = Atrac3::new(2, 0);
-        let mut out = Vec::new();
-        d.decode_frame(&[0u8; 0x180], &mut out);
-        assert_eq!(d.errors(), 1);
-        assert!(out.iter().all(|&s| s == 0));
-    }
-
-    #[test]
-    fn tables_match_known_values() {
-        assert_eq!(f(SF[15]), 1.0);
-        assert_eq!(f(GAIN_LEV[4]), 1.0);
-        assert_eq!(SUBBAND[32], 1024);
-        // Quantised values are mantissa * 4882.5 / max quant (1.5, 2.5, ..., 31.5).
-        assert_eq!(f(PAIRS[4]), 3255.0);
-        assert_eq!(f(VAL1[1]), 1953.0);
-        assert_eq!(f(VAL6[1]), 155.0);
-    }
-
-    const SCRATCH: &str = "/tmp/claude-1000/-home-lenon-Projects/54d8551b-f3bb-497f-b001-407002933c40/scratchpad/at3/";
-    const GAME: &str = "/home/lenon/ffxi/game/FINAL FANTASY XI/sound/win/";
-
-    /// Decodes a game file without priming (as ffmpeg) and returns (max, mean) abs error vs ffmpeg s16le.
-    /// The client output is the negation of ffmpeg (its QMF/IMDCT tables carry the opposite sign).
-    fn compare(file: &str, raw: &str, frames: usize) -> (i32, f64, u64) {
-        let d = std::fs::read(format!("{GAME}{file}")).unwrap();
-        let u32at = |o: usize| u32::from_le_bytes(d[o..o + 4].try_into().unwrap());
-        let se = &d[..6] == b"SeWave";
-        let (key, ch, mode, off) = if se {
-            (u32at(0x20), d[0x2a], d[0x2c], u32at(0x24))
-        } else {
-            (u32at(0x24), d[0x2e], d[0x2f], u32at(0x28))
-        };
-        let ks = key_stream(key);
-        let mut dec = Atrac3::new(ch, mode);
-        dec.prime = false;
-        let fb = dec.frame_bytes();
-        let mut ours = Vec::new();
-        let n = ((d.len() - off as usize) / fb).min(frames);
-        for i in 0..n {
-            let at = off as usize + i * fb;
-            let fr: Vec<u8> = d[at..at + fb].iter().zip(ks.iter()).map(|(a, b)| a ^ b).collect();
-            dec.decode_frame(&fr, &mut ours);
-        }
-        let dump: Vec<u8> = ours.iter().flat_map(|s| s.to_le_bytes()).collect();
-        std::fs::write(format!("{SCRATCH}{raw}.ours"), dump).unwrap();
-        let r = std::fs::read(format!("{SCRATCH}{raw}")).unwrap();
-        let theirs: Vec<i16> = r.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect();
-        let m = ours.len().min(theirs.len());
-        let mut max = 0;
-        let mut sum = 0f64;
-        for i in 0..m {
-            let e = (ours[i] as i32 + theirs[i] as i32).abs();
-            max = max.max(e);
-            sum += e as f64;
-        }
-        (max, sum / m as f64, dec.errors())
-    }
-
-    #[test]
-    #[ignore]
-    fn matches_ffmpeg() {
-        for (file, raw, frames) in [
-            ("music/data/music040.bgw", "m040.ffmpeg.raw", 200),
-            ("se/se000/se000040.spw", "s040.ffmpeg.raw", 1000),
-            ("se/se032/se032140.spw", "s32140.ffmpeg.raw", 1000),
-        ] {
-            let (max, mean, errs) = compare(file, raw, frames);
-            eprintln!("{file}: max {max} mean {mean:.4} errors {errs}");
-            assert_eq!(errs, 0);
-            assert!(max <= 2, "{file}: max error {max}");
-        }
-    }
-
-    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
-        let Ok(rd) = std::fs::read_dir(dir) else { return };
-        for e in rd.flatten() {
-            let p = e.path();
-            if p.is_dir() {
-                walk(&p, out);
-            } else if p.extension().is_some_and(|x| x == "bgw" || x == "spw") {
-                out.push(p);
-            }
-        }
-    }
-
-    /// Every format-3 file in the install decodes; only the final three frames of music069, 071 and 900 fail
-    /// (they are not ATRAC3 after descrambling).
-    #[test]
-    #[ignore]
-    fn all_game_files_decode() {
-        let mut files = Vec::new();
-        walk(std::path::Path::new("/home/lenon/ffxi/game/FINAL FANTASY XI"), &mut files);
-        let (mut n, mut frames, mut bad, mut bad_mid) = (0, 0u64, 0u64, 0u64);
-        let t = std::time::Instant::now();
-        for p in files {
-            let d = std::fs::read(&p).unwrap();
-            if d.len() < 0x30 || u32::from_le_bytes(d[0xc..0x10].try_into().unwrap()) != 3 {
-                continue;
-            }
-            let u32at = |o: usize| u32::from_le_bytes(d[o..o + 4].try_into().unwrap());
-            let se = &d[..6] == b"SeWave";
-            let (key, ch, mode, off) = if se {
-                (u32at(0x20), d[0x2a], d[0x2c], u32at(0x24))
-            } else {
-                (u32at(0x24), d[0x2e], d[0x2f], u32at(0x28))
-            };
-            let ks = key_stream(key);
-            let mut dec = Atrac3::new(ch, mode);
-            let fb = dec.frame_bytes();
-            let mut out = Vec::new();
-            for (fi, fr) in d[off as usize..].chunks_exact(fb).enumerate() {
-                let x: Vec<u8> = fr.iter().zip(ks.iter()).map(|(a, b)| a ^ b).collect();
-                out.clear();
-                let e = dec.errors();
-                dec.decode_frame(&x, &mut out);
-                if dec.errors() != e {
-                    let total = (d.len() - off as usize) / fb;
-                    eprintln!("bad frame {} of {} ({:02x?})", fi, total, &x[..8]);
-                    if fi + 3 < total {
-                        bad_mid += 1;
-                    }
-                }
-                frames += 1;
-            }
-            if dec.errors() != 0 {
-                eprintln!("{}: {} bad frames", p.display(), dec.errors());
-            }
-            bad += dec.errors();
-            n += 1;
-        }
-        let s = t.elapsed().as_secs_f64();
-        eprintln!("{n} files, {frames} frames, {bad} bad, {:.1} us/frame", s * 1e6 / frames as f64);
-        assert_eq!(bad_mid, 0);
-    }
-}
-
 // Tables copied from FFXiMain_unpacked.dll (generated by gen.py from the listed addresses).
 
 /// IMDCT twiddles: tw(u) = TW[127 - u], u = 1..=127 (0x103bf7f0).
@@ -1081,3 +883,201 @@ const LEN1_6: [i8; 63] = [
     6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
 ];
 const BITS1: [u8; 7] = [28, 13, 13, 12, 12, 11, 10];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn key_stream_vector() {
+        let k = key_stream(0x46a65af4);
+        assert_eq!(&k[..8], &[53, 162, 215, 50, 222, 179, 148, 201]);
+        assert_eq!(&k[396..], &[117, 215, 13, 111]);
+    }
+
+    /// A unit with no gain, no tonal, one uncoded subband: header 0xa0, then 3 + 5 + 5 + 1 + 3 zero bits.
+    fn silent_frame(bytes: usize) -> Vec<u8> {
+        let mut f = vec![0u8; bytes];
+        for u in (0..bytes).step_by(bytes / 2) {
+            f[u] = 0xa0;
+        }
+        f
+    }
+
+    #[test]
+    fn silent_units_decode_to_zero() {
+        for mode in [0u8, 1] {
+            let mut d = Atrac3::new(2, mode);
+            let mut out = Vec::new();
+            let fr = silent_frame(d.frame_bytes());
+            for _ in 0..4 {
+                d.decode_frame(&fr, &mut out);
+            }
+            assert_eq!(out.len(), 4 * 2048);
+            assert!(out.iter().all(|&s| s == 0));
+            assert_eq!(d.errors(), 0);
+        }
+        let mut d = Atrac3::new(1, 0);
+        assert_eq!(d.frame_bytes(), 0xc0);
+        let mut out = Vec::new();
+        let mut fr = vec![0u8; 0xc0];
+        fr[0] = 0xa0;
+        d.decode_frame(&fr, &mut out);
+        assert_eq!(out.len(), 1024);
+        assert_eq!(d.errors(), 0);
+    }
+
+    /// Joint stereo (mode 2): unit 2 is stored byte-reversed at the frame end, behind its side info.
+    #[test]
+    fn silent_joint_frame() {
+        let mut d = Atrac3::new(2, 2);
+        assert_eq!(d.frame_bytes(), 0xc0);
+        let mut fr = vec![0u8; 0xc0];
+        fr[0] = 0xa0;
+        fr[0xbf] = 0x7f; // weight index 7, matrix codes 3 3
+        fr[0xbe] = 0xfc; // matrix codes 3 3, sync 11, no gain bands
+        let mut out = Vec::new();
+        for _ in 0..3 {
+            d.decode_frame(&fr, &mut out);
+        }
+        assert_eq!(d.errors(), 0);
+        assert!(out.iter().all(|&s| s == 0));
+    }
+
+    #[test]
+    fn bad_sync_is_an_error() {
+        let mut d = Atrac3::new(2, 0);
+        let mut out = Vec::new();
+        d.decode_frame(&[0u8; 0x180], &mut out);
+        assert_eq!(d.errors(), 1);
+        assert!(out.iter().all(|&s| s == 0));
+    }
+
+    #[test]
+    fn tables_match_known_values() {
+        assert_eq!(f(SF[15]), 1.0);
+        assert_eq!(f(GAIN_LEV[4]), 1.0);
+        assert_eq!(SUBBAND[32], 1024);
+        // Quantised values are mantissa * 4882.5 / max quant (1.5, 2.5, ..., 31.5).
+        assert_eq!(f(PAIRS[4]), 3255.0);
+        assert_eq!(f(VAL1[1]), 1953.0);
+        assert_eq!(f(VAL6[1]), 155.0);
+    }
+
+    const SCRATCH: &str = "/tmp/claude-1000/-home-lenon-Projects/54d8551b-f3bb-497f-b001-407002933c40/scratchpad/at3/";
+    const GAME: &str = "/home/lenon/ffxi/game/FINAL FANTASY XI/sound/win/";
+
+    /// Decodes a game file without priming (as ffmpeg) and returns (max, mean) abs error vs ffmpeg s16le.
+    /// The client output is the negation of ffmpeg (its QMF/IMDCT tables carry the opposite sign).
+    fn compare(file: &str, raw: &str, frames: usize) -> (i32, f64, u64) {
+        let d = std::fs::read(format!("{GAME}{file}")).unwrap();
+        let u32at = |o: usize| u32::from_le_bytes(d[o..o + 4].try_into().unwrap());
+        let se = &d[..6] == b"SeWave";
+        let (key, ch, mode, off) = if se {
+            (u32at(0x20), d[0x2a], d[0x2c], u32at(0x24))
+        } else {
+            (u32at(0x24), d[0x2e], d[0x2f], u32at(0x28))
+        };
+        let ks = key_stream(key);
+        let mut dec = Atrac3::new(ch, mode);
+        dec.prime = false;
+        let fb = dec.frame_bytes();
+        let mut ours = Vec::new();
+        let n = ((d.len() - off as usize) / fb).min(frames);
+        for i in 0..n {
+            let at = off as usize + i * fb;
+            let fr: Vec<u8> = d[at..at + fb].iter().zip(ks.iter()).map(|(a, b)| a ^ b).collect();
+            dec.decode_frame(&fr, &mut ours);
+        }
+        let dump: Vec<u8> = ours.iter().flat_map(|s| s.to_le_bytes()).collect();
+        std::fs::write(format!("{SCRATCH}{raw}.ours"), dump).unwrap();
+        let r = std::fs::read(format!("{SCRATCH}{raw}")).unwrap();
+        let theirs: Vec<i16> = r.as_chunks::<2>().0.iter().map(|c| i16::from_le_bytes([c[0], c[1]])).collect();
+        let m = ours.len().min(theirs.len());
+        let mut max = 0;
+        let mut sum = 0f64;
+        for i in 0..m {
+            let e = (ours[i] as i32 + theirs[i] as i32).abs();
+            max = max.max(e);
+            sum += e as f64;
+        }
+        (max, sum / m as f64, dec.errors())
+    }
+
+    #[test]
+    #[ignore]
+    fn matches_ffmpeg() {
+        for (file, raw, frames) in [
+            ("music/data/music040.bgw", "m040.ffmpeg.raw", 200),
+            ("se/se000/se000040.spw", "s040.ffmpeg.raw", 1000),
+            ("se/se032/se032140.spw", "s32140.ffmpeg.raw", 1000),
+        ] {
+            let (max, mean, errs) = compare(file, raw, frames);
+            eprintln!("{file}: max {max} mean {mean:.4} errors {errs}");
+            assert_eq!(errs, 0);
+            assert!(max <= 2, "{file}: max error {max}");
+        }
+    }
+
+    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, out);
+            } else if p.extension().is_some_and(|x| x == "bgw" || x == "spw") {
+                out.push(p);
+            }
+        }
+    }
+
+    /// Every format-3 file in the install decodes; only the final three frames of music069, 071 and 900 fail
+    /// (they are not ATRAC3 after descrambling).
+    #[test]
+    #[ignore]
+    fn all_game_files_decode() {
+        let mut files = Vec::new();
+        walk(std::path::Path::new("/home/lenon/ffxi/game/FINAL FANTASY XI"), &mut files);
+        let (mut n, mut frames, mut bad, mut bad_mid) = (0, 0u64, 0u64, 0u64);
+        let t = std::time::Instant::now();
+        for p in files {
+            let d = std::fs::read(&p).unwrap();
+            if d.len() < 0x30 || u32::from_le_bytes(d[0xc..0x10].try_into().unwrap()) != 3 {
+                continue;
+            }
+            let u32at = |o: usize| u32::from_le_bytes(d[o..o + 4].try_into().unwrap());
+            let se = &d[..6] == b"SeWave";
+            let (key, ch, mode, off) = if se {
+                (u32at(0x20), d[0x2a], d[0x2c], u32at(0x24))
+            } else {
+                (u32at(0x24), d[0x2e], d[0x2f], u32at(0x28))
+            };
+            let ks = key_stream(key);
+            let mut dec = Atrac3::new(ch, mode);
+            let fb = dec.frame_bytes();
+            let mut out = Vec::new();
+            for (fi, fr) in d[off as usize..].chunks_exact(fb).enumerate() {
+                let x: Vec<u8> = fr.iter().zip(ks.iter()).map(|(a, b)| a ^ b).collect();
+                out.clear();
+                let e = dec.errors();
+                dec.decode_frame(&x, &mut out);
+                if dec.errors() != e {
+                    let total = (d.len() - off as usize) / fb;
+                    eprintln!("bad frame {} of {} ({:02x?})", fi, total, &x[..8]);
+                    if fi + 3 < total {
+                        bad_mid += 1;
+                    }
+                }
+                frames += 1;
+            }
+            if dec.errors() != 0 {
+                eprintln!("{}: {} bad frames", p.display(), dec.errors());
+            }
+            bad += dec.errors();
+            n += 1;
+        }
+        let s = t.elapsed().as_secs_f64();
+        eprintln!("{n} files, {frames} frames, {bad} bad, {:.1} us/frame", s * 1e6 / frames as f64);
+        assert_eq!(bad_mid, 0);
+    }
+}

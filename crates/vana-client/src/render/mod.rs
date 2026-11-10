@@ -2109,7 +2109,7 @@ impl ZoneGeometry {
                     });
                     let (first_index, base_vertex) = (all_indices.len() as u32, all_verts.len() as i32);
                     let count = (indices.len() / 3 * 3) as u32;
-                    for tri in indices[..count as usize].chunks_exact(3) {
+                    for tri in indices[..count as usize].as_chunks::<3>().0 {
                         let corner = |k: usize| model.vertices[tri[k] as usize];
                         for k in 0..3 {
                             let (a, b, c) = (corner(k), corner((k + 1) % 3), corner((k + 2) % 3));
@@ -2196,7 +2196,7 @@ impl ZoneGeometry {
         if all_verts.is_empty() {
             all_verts.push(GpuVertex::zeroed());
         }
-        while all_indices.len() % 2 != 0 || all_indices.is_empty() {
+        while !all_indices.len().is_multiple_of(2) || all_indices.is_empty() {
             all_indices.push(0);
         }
         let sway_curves = if sway_insts.is_empty() { Default::default() } else { scene.sway.clone() };
@@ -3370,7 +3370,7 @@ impl ZoneRenderer {
         };
         actor.origin = model.w_axis.truncate();
         let Some(skin) = actor.skin.as_mut() else { return };
-        while self.poses.len() % 16 != 0 {
+        while !self.poses.len().is_multiple_of(16) {
             self.poses.push([0.0; 4]);
         }
         skin.offset = (self.poses.len() * 16) as u32;

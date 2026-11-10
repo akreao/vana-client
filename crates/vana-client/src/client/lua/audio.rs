@@ -64,10 +64,7 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
     t.set(
         "music",
         lua.create_function(move |lua, id: Option<u32>| {
-            let m = match id {
-                Some(id) => Some(Music::Track(id)),
-                None => None,
-            };
+            let m = id.map(Music::Track);
             super::api::push_op(lua, super::Op::Music(me.clone(), m))?;
             Ok(())
         })?,

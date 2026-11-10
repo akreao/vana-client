@@ -1341,6 +1341,19 @@ pub fn step_camera(w: &mut World, ticks: f32, turn: f32, rise: f32) {
     w.cam = c;
 }
 
+/// FUN_100a6210: locked movement relative to the target. Side input circles it at the same radius,
+/// forward / back changes the radius, stopping at the two radii (inferred 0.8 together).
+pub fn locked_step(pos: Vec3, target: Vec3, fwd: f32, side: f32, dist: f32) -> Vec3 {
+    let r = Vec3::new(pos.x - target.x, 0.0, pos.z - target.z);
+    let radius = r.length().max(1e-3);
+    let facing = -r / radius;
+    let right = facing.cross(Vec3::NEG_Y);
+    let moved = r + right * side * dist;
+    let new_r = (radius - fwd * dist).max(0.8);
+    let p = target + moved.normalize_or(r / radius) * new_r;
+    Vec3::new(p.x, pos.y, p.z)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1447,17 +1460,4 @@ mod tests {
         let r = locked_step(p, t, 1.0, 0.0, 10.0);
         assert!(((r - t).length() - 0.8).abs() < 1e-4);
     }
-}
-
-/// FUN_100a6210: locked movement relative to the target. Side input circles it at the same radius,
-/// forward / back changes the radius, stopping at the two radii (inferred 0.8 together).
-pub fn locked_step(pos: Vec3, target: Vec3, fwd: f32, side: f32, dist: f32) -> Vec3 {
-    let r = Vec3::new(pos.x - target.x, 0.0, pos.z - target.z);
-    let radius = r.length().max(1e-3);
-    let facing = -r / radius;
-    let right = facing.cross(Vec3::NEG_Y);
-    let moved = r + right * side * dist;
-    let new_r = (radius - fwd * dist).max(0.8);
-    let p = target + moved.normalize_or(r / radius) * new_r;
-    Vec3::new(p.x, pos.y, p.z)
 }

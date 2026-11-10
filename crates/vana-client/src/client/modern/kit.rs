@@ -747,7 +747,7 @@ pub fn caret_text(ui: &Ui, m: &Modern, at: egui::Pos2, text: &str, caret: Option
     let clip = Rect::from_min_max(pos2(at.x - 2.0, at.y - 20.0), pos2(right, at.y + 20.0));
     let p = ui.painter().with_clip_rect(clip.intersect(ui.clip_rect()));
     p.text(pos2(at.x - shift, at.y), Align2::LEFT_CENTER, text, font.clone(), colour);
-    if caret.is_some() && (ui.ctx().input(|i| i.time) * 1.5) as u64 % 2 == 0 {
+    if caret.is_some() && ((ui.ctx().input(|i| i.time) * 1.5) as u64).is_multiple_of(2) {
         let x = at.x - shift + dx;
         let h = font.size * 0.6;
         p.line_segment([pos2(x, at.y - h), pos2(x, at.y + h)], Stroke::new(1.5, colour));

@@ -213,7 +213,7 @@ struct Bits {
 impl Bits {
     fn put(&mut self, v: u32, width: usize) {
         for i in (0..width).rev() {
-            if self.n % 8 == 0 {
+            if self.n.is_multiple_of(8) {
                 self.bytes.push(0);
             }
             if v >> i & 1 != 0 {

@@ -35,7 +35,7 @@ pub fn b64_encode(data: &[u8]) -> String {
 /// 0x100078a0: `n` characters, a short last group filled with the zero character; other bytes decode as zero.
 pub fn b64_decode(text: &[u8], n: usize) -> Vec<u8> {
     let mut t = text[..n.min(text.len())].to_vec();
-    while t.len() % 4 != 0 {
+    while !t.len().is_multiple_of(4) {
         t.push(b'T');
     }
     let idx = |c: u8| B64.iter().position(|&x| x == c).unwrap_or(0) as u32;
@@ -60,7 +60,7 @@ pub fn b32_encode(data: &[u8]) -> String {
 /// 0x10007210: 8 characters to 5 bytes; only bytes covered by real characters mean anything.
 pub fn b32_decode(text: &[u8], n: usize) -> Vec<u8> {
     let mut t = text[..n.min(text.len())].to_vec();
-    while t.len() % 8 != 0 {
+    while !t.len().is_multiple_of(8) {
         t.push(b'N');
     }
     let idx = |c: u8| B32.iter().position(|&x| x == c).unwrap_or(0) as u64;

@@ -1789,7 +1789,8 @@ fn widescan_panel(p: &mut Panels, w: &mut World) {
         w.sounds.push(crate::audio::Ui::Select as u32);
     }
     if narrow {
-        (m.scan_picking.set(true), m.scan_pick.set(None));
+        m.scan_picking.set(true);
+        m.scan_pick.set(None);
         // The map is where the area is picked.
         p.folded.insert("minimap".into(), false);
         w.sounds.push(crate::audio::Ui::Select as u32);

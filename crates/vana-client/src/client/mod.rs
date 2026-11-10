@@ -235,10 +235,10 @@ enum Task {
     Created(Result<(Lobby, Option<u16>, Vec<Character>)>),
     /// The two-factor window's request (client/twofa.rs).
     TwoFa(Result<auth::Reply>),
-    /// Zone number, scene (map number) and the scene off the loader thread.
-    ZoneLoaded(u16, u16, Result<ZoneData>),
+    /// Zone number, scene (map number) and the scene off the loader thread (boxed: the large variants).
+    ZoneLoaded(u16, u16, Result<Box<ZoneData>>),
     /// A zone a zone line leads to, loaded ahead (client/preload.rs).
-    ZonePreloaded(u16, u16, Result<ZoneData>),
+    ZonePreloaded(u16, u16, Result<Box<ZoneData>>),
     AreaLoaded(
         u16,
         Result<(
@@ -257,7 +257,7 @@ enum Task {
     Flyover(Result<flyover::FlyoverData>),
     /// A nation step flyover (file 24 + nation) has loaded.
     Nation(usize, Result<flyover::FlyoverData>),
-    Select(Result<select::SelectData>, String),
+    Select(Result<Box<select::SelectData>>, String),
     CreatorBackdrop(Result<creator::Backdrop>),
     Dancer(Result<creator::Dancer>),
     Battle(Result<crate::dat::battle::BattleText>),
@@ -3334,10 +3334,10 @@ fn world_hud(
     if let Some(p) = input.pointer.filter(|_| world.concierge_ui.is_some() && world.confirm.is_none()) {
         concierge::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked);
     }
-    if let Some(p) = input.pointer.filter(|_| world.arealist.is_some() && world.confirm.is_none()) {
-        if !world.modern {
-            arealist::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
-        }
+    if let Some(p) = input.pointer.filter(|_| world.arealist.is_some() && world.confirm.is_none())
+        && !world.modern
+    {
+        arealist::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.blklist.is_some() && world.confirm.is_none()) {
         blklist::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked);
@@ -3407,10 +3407,9 @@ fn world_hud(
             && world.arealist.is_none()
             && world.seacom_edit.is_none()
             && world.confirm.is_none()
-    }) {
-        if !world.modern {
-            search::pointer(world, gu, p, input.moved, input.clicked, input.right_clicked);
-        }
+    }) && !world.modern
+    {
+        search::pointer(world, gu, p, input.moved, input.clicked, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| polmail::focused(world) && !world.modern) {
         polmail::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked);
@@ -3431,15 +3430,15 @@ fn world_hud(
     if let Some(p) = input.pointer.filter(|_| !world.modern && partymenu::focused(world)) {
         partymenu::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
     }
-    if let Some(p) = input.pointer.filter(|_| viewhouse::focused(world)) {
-        if !world.modern {
-            viewhouse::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
-        }
+    if let Some(p) = input.pointer.filter(|_| viewhouse::focused(world))
+        && !world.modern
+    {
+        viewhouse::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
     }
-    if let Some(p) = input.pointer.filter(|_| bazaar::focused(world)) {
-        if !world.modern {
-            bazaar::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
-        }
+    if let Some(p) = input.pointer.filter(|_| bazaar::focused(world))
+        && !world.modern
+    {
+        bazaar::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
     }
     if let Some(p) = input.pointer.filter(|_| !world.modern && world.keyitems.is_some() && world.confirm.is_none()) {
         keyitems::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
@@ -3972,13 +3971,12 @@ fn world_hud(
             gu.sprite("anc     anc_l", frame, x.round(), y.round(), tint);
         }
     }
-    if let (Some(_), true, None) = (world.target, target_up, world.prompt.as_ref()) {
-        if world.locked
-            && !world.modern
-            && let Some(r) = gu.window_rect("menu    targetwi", sw, sh)
-        {
-            gu.sprite("menu    windowps", 212, r[0], r[1], 0x8080_8080);
-        }
+    if let (Some(_), true, None) = (world.target, target_up, world.prompt.as_ref())
+        && world.locked
+        && !world.modern
+        && let Some(r) = gu.window_rect("menu    targetwi", sw, sh)
+    {
+        gu.sprite("menu    windowps", 212, r[0], r[1], 0x8080_8080);
     }
     // FUN_101626e0's keep: the chat line holds the log while it is at 2 lines or fewer (asm 0x1016280f), a window with
     // flag 0x1000 is up
@@ -5525,7 +5523,7 @@ fn cut_pages(
             return pages;
         };
         pages.push(wrap(&rest[..at]).into_iter().take(4).collect());
-        let colour = rest[..at].chars().filter(code).last().map(String::from).unwrap_or_default();
+        let colour = rest[..at].chars().rfind(code).map(String::from).unwrap_or_default();
         rest = format!("{}{colour}{}", if mode97 { "" } else { "  " }, &rest[at..]);
     }
 }
@@ -5933,7 +5931,9 @@ fn near_camera_fade(p: Vec3, eye: Vec3) -> f32 {
 fn npc_names(index: &DatIndex, zone: u16) -> HashMap<u32, String> {
     let id = if zone < 0x100 { 0x1a40 + zone as u32 } else { 0x150db + zone as u32 };
     let Ok(d) = index.read(id) else { return HashMap::new() };
-    d.chunks_exact(0x20)
+    d.as_chunks::<0x20>()
+        .0
+        .iter()
         .filter_map(|r| {
             let id = u32::from_le_bytes(r[0x1c..0x20].try_into().ok()?);
             let name = &r[..r[..0x18].iter().position(|&b| b == 0).unwrap_or(0x18)];
@@ -6710,7 +6710,7 @@ fn box_on_screen(
         lo.z = 0.01;
     }
     (hi.x >= -1.0 && lo.x <= 1.0 && hi.y >= -1.0 && lo.y <= 1.0)
-        .then(|| ([lo.x, lo.y, hi.x, hi.y], lo.z + 0.25 * (hi.z - lo.z)))
+        .then_some(([lo.x, lo.y, hi.x, hi.y], lo.z + 0.25 * (hi.z - lo.z)))
 }
 
 /// The view depth of a box's farthest corner (FUN_100c63d0: -min z_view, against the actors' draw distance).
@@ -7768,7 +7768,7 @@ struct World {
     index_masks: HashMap<u16, (u32, u16)>,
     /// What others are casting or readying (0x028 categories 7 / 8), for the modern target panel (not retail).
     casts: HashMap<u32, combat::Casting>,
-    item_info: Option<Arc<items::ItemCache>>,
+    item_info: Option<std::rc::Rc<items::ItemCache>>,
     /// LAN voice chat (ours, hidden: Ctrl+Alt+Shift+V).
     voice: voicechat::VoiceChat,
     msgshift: Option<Arc<crate::dat::msgshift::MsgShift>>,
@@ -7955,6 +7955,8 @@ impl World {
     }
 }
 
+// One value for the whole run; the world, the largest by far, is boxed.
+#[allow(clippy::large_enum_variant)]
 enum Phase {
     /// `focus`: login_window's (the fields, then Remember password and the buttons). `pol_password`: PlayOnline's
     /// own password beside the Square Enix one, for the PlayOnline server.
@@ -8772,7 +8774,7 @@ impl App {
 
     /// Back to the login screen. The world entry (or the world) left the lobby faded out, so the fade starts over;
     /// an error waits in the OK window.
-    fn to_login(&mut self, error: bool) {
+    fn back_to_login(&mut self, error: bool) {
         if let Phase::World(w) = &mut self.phase {
             let mut mods = std::mem::take(&mut w.lua);
             if mods.started() {
@@ -9224,7 +9226,7 @@ impl App {
             Task::Names(res) => match (res, &mut self.phase) {
                 (Ok((n, m)), Phase::World(w)) => {
                     log::info!("names loaded; text id map for {} zones", m.zones.len());
-                    w.item_info = Some(Arc::new(items::ItemCache::new(n.clone())));
+                    w.item_info = Some(std::rc::Rc::new(items::ItemCache::new(n.clone())));
                     w.names = Some(n);
                     w.msgshift = Some(Arc::new(m));
                 }
@@ -9255,7 +9257,7 @@ impl App {
                 _ => {}
             },
             Task::Select(Ok(data), key) => {
-                self.select = Some(select::SelectScene::new(data));
+                self.select = Some(select::SelectScene::new(*data));
                 self.select_key = key;
                 self.select_state = LoadState::Idle;
             }
@@ -10154,16 +10156,16 @@ impl App {
                     world.area.done = true;
                 }
             }
-            Task::ZoneLoaded(zone_id, map_no, result) => self.zone_loaded(zone_id, map_no, result, None),
-            Task::ZonePreloaded(zone_id, map_no, result) => self.preloaded(zone_id, map_no, result),
+            Task::ZoneLoaded(zone_id, map_no, result) => self.zone_loaded(zone_id, map_no, result.map(|d| *d), None),
+            Task::ZonePreloaded(zone_id, map_no, result) => self.preloaded(zone_id, map_no, result.map(|d| *d)),
             Task::LoggedIn(Err(e)) | Task::AccountCreated(Err(e)) | Task::Selected(Err(e)) => {
                 self.status = format!("{e:#}");
-                self.to_login(true);
+                self.back_to_login(true);
             }
             Task::Lobby(Err(e)) | Task::NameChecked(Err(e)) | Task::Created(Err(e)) => {
                 self.deleting = false;
                 self.status = format!("{e:#}");
-                self.to_login(true);
+                self.back_to_login(true);
             }
             // Op 4 after the world step (FUN_10239720): passed, the nation step; refused, the error popup, then the name
             // step for 313 / 322 (remembered with the world), out for 331, else the world step again.
@@ -11278,7 +11280,7 @@ impl App {
                     // countdown on its own (moving), so the local flag can be off when its logout comes.
                     self.status = "Logged out.".into();
                     self.exit_requested = world.shutdown;
-                    self.to_login(false);
+                    self.back_to_login(false);
                     return;
                 }
                 NetEvent::StatusTimers { ids, ends } => world.buff_timers = Some((ids, ends)),
@@ -11804,7 +11806,7 @@ impl App {
                 }
                 NetEvent::Error(e) => {
                     self.status = format!("Disconnected: {e}");
-                    self.to_login(true);
+                    self.back_to_login(true);
                     return;
                 }
             }
@@ -11898,26 +11900,26 @@ impl App {
                 wanted.push((key, source));
             }
         }
-        if !wanted.is_empty() {
-            if let Ok((index, _)) = self.game_data() {
-                let tx = self.tasks_tx.clone();
-                std::thread::spawn(move || {
-                    for (key, source) in wanted {
-                        let model = match source {
-                            Source::Pc(look) => crate::dat::character::load_character(&index, &look),
-                            Source::Npc(look) => crate::dat::npc::load_npc(&index, &look),
-                            Source::File(file) => crate::dat::npc::load_file_model(&index, file),
-                        };
-                        let _ = tx.send(Task::CharacterLoaded(
-                            key,
-                            model.map(|mut m| {
-                                m.prepare();
-                                m
-                            }),
-                        ));
-                    }
-                });
-            }
+        if !wanted.is_empty()
+            && let Ok((index, _)) = self.game_data()
+        {
+            let tx = self.tasks_tx.clone();
+            std::thread::spawn(move || {
+                for (key, source) in wanted {
+                    let model = match source {
+                        Source::Pc(look) => crate::dat::character::load_character(&index, &look),
+                        Source::Npc(look) => crate::dat::npc::load_npc(&index, &look),
+                        Source::File(file) => crate::dat::npc::load_file_model(&index, file),
+                    };
+                    let _ = tx.send(Task::CharacterLoaded(
+                        key,
+                        model.map(|mut m| {
+                            m.prepare();
+                            m
+                        }),
+                    ));
+                }
+            });
         }
         let Phase::World(_) = &self.phase else { return };
         if let Some((zone_id, map_no, r, since)) = took {
@@ -11939,7 +11941,7 @@ impl App {
                     Task::ZonePreloaded(
                         zone_id,
                         map_no,
-                        load_zone_data(&index, &keys, zone_id, map_no, bump, need_global),
+                        load_zone_data(&index, &keys, zone_id, map_no, bump, need_global).map(Box::new),
                     )
                 });
             }
@@ -11954,7 +11956,11 @@ impl App {
             let bump = self.cfg.tool("0017") != 0 && map_no != 182;
             match self.game_data() {
                 Ok((index, keys)) => self.spawn(move || {
-                    Task::ZoneLoaded(zone_id, map_no, load_zone_data(&index, &keys, zone_id, map_no, bump, need_global))
+                    Task::ZoneLoaded(
+                        zone_id,
+                        map_no,
+                        load_zone_data(&index, &keys, zone_id, map_no, bump, need_global).map(Box::new),
+                    )
                 }),
                 Err(e) => self.status = format!("{e:#}"),
             }
@@ -13215,10 +13221,8 @@ impl App {
                 0x26
             } else if w.layout.is_some() {
                 layout::context(w)
-            } else if let Some(c) = garden::context(w) {
-                c
             } else {
-                0xffff
+                garden::context(w).unwrap_or(0xffff)
             };
             // Not with the UI hidden: the search gets no events then. Ours: the Settings window's search opens the same way.
             f.typing = text_field_open(w)
@@ -13457,10 +13461,9 @@ impl App {
                 .iter()
                 .position(|&k| self.input.test(k, input::mode::PRESS))
                 .or_else(|| ALT.iter().position(|&k| self.input.test(k, input::mode::PRESS)).map(|n| n + 10))
+                && let Some(m) = world.macros.as_mut()
             {
-                if let Some(m) = world.macros.as_mut() {
-                    m.start(n);
-                }
+                m.start(n);
             }
         }
         // FUN_100e9550: a listed member with no name asks the roster again (c2s 0x076), once per table.
@@ -14613,7 +14616,7 @@ impl App {
                                 let mo = self.modern.get_or_insert_with(|| modern::Modern::new(ctx));
                                 mo.title_buttons(
                                     ctx,
-                                    [screen_size[0] as u32, screen_size[1] as u32],
+                                    [screen_size[0], screen_size[1]],
                                     self.cfg.modern_scale,
                                     self.ui_k,
                                     &buttons,
@@ -14648,7 +14651,7 @@ impl App {
                                 {
                                     mo.help_bar(
                                         ctx,
-                                        [screen_size[0] as u32, screen_size[1] as u32],
+                                        [screen_size[0], screen_size[1]],
                                         self.cfg.modern_scale,
                                         self.ui_k,
                                         strip,
@@ -14689,7 +14692,7 @@ impl App {
                                 outs.push(mo.config_screen(
                                     ctx,
                                     lu,
-                                    [screen_size[0] as u32, screen_size[1] as u32],
+                                    [screen_size[0], screen_size[1]],
                                     self.cfg.modern_scale,
                                     c,
                                     &mut self.lobby_values,
@@ -14856,7 +14859,7 @@ impl App {
                                 if modern_title {
                                     self.modern.get_or_insert_with(|| modern::Modern::new(ctx)).notes_window(
                                         ctx,
-                                        [screen_size[0] as u32, screen_size[1] as u32],
+                                        [screen_size[0], screen_size[1]],
                                         self.cfg.modern_scale,
                                         self.ui_k,
                                         n,
@@ -14954,13 +14957,8 @@ impl App {
                                 v.help = t.to_string();
                             }
                             let m = self.modern.get_or_insert_with(|| modern::Modern::new(ctx));
-                            let ptr = m.select_screen(
-                                ctx,
-                                gu,
-                                [screen_size[0] as u32, screen_size[1] as u32],
-                                self.cfg.modern_scale,
-                                &v,
-                            );
+                            let ptr =
+                                m.select_screen(ctx, gu, [screen_size[0], screen_size[1]], self.cfg.modern_scale, &v);
                             let more = self.select_ui.pointer(gu, ptr, &list, chars, deleting, busy);
                             out.sounds.extend(more.sounds);
                             out.action = out.action.or(more.action);
@@ -15175,7 +15173,7 @@ impl App {
                                 m.creator_screen(
                                     ctx,
                                     gu,
-                                    [screen_size[0] as u32, screen_size[1] as u32],
+                                    [screen_size[0], screen_size[1]],
                                     self.cfg.modern_scale,
                                     &page,
                                 ),
@@ -15846,13 +15844,13 @@ impl App {
             Phase::Characters { lobby, chars, screen, .. }
                 if !self.drive.input.as_ref().is_some_and(|s| s.logs_in) || *screen == LobbyScreen::Select =>
             {
-                if let (Some(name), Some(_)) = (self.drive.character.clone(), lobby.as_ref()) {
-                    if let Some(c) = chars.iter().find(|c| c.name.eq_ignore_ascii_case(&name)).cloned() {
-                        self.drive.relogin = false;
-                        let l = lobby.take().unwrap();
-                        self.netwait = Some(netwait::NetWait::new(netwait::Op::Login, l.replies.clone()));
-                        self.spawn(move || Task::Selected(l.select(&c)));
-                    }
+                if let (Some(name), Some(_)) = (self.drive.character.clone(), lobby.as_ref())
+                    && let Some(c) = chars.iter().find(|c| c.name.eq_ignore_ascii_case(&name)).cloned()
+                {
+                    self.drive.relogin = false;
+                    let l = lobby.take().unwrap();
+                    self.netwait = Some(netwait::NetWait::new(netwait::Op::Login, l.replies.clone()));
+                    self.spawn(move || Task::Selected(l.select(&c)));
                 }
             }
             Phase::World(world) if world.renderer.is_some() && world.zone_uploading.is_none() => {
@@ -16146,7 +16144,7 @@ impl App {
             }
         }
         let p = &mut w.padcfg;
-        p.set = Some(gamepad::settings(&cfg, gp.retail()));
+        p.set = Some(gamepad::settings(cfg, gp.retail()));
         p.dead = (cfg.gamepad_deadzone * 100.0).round() as u32;
         p.retail = gp.retail().map(|r| r.source.clone());
         p.pads = gp.pads();
@@ -16257,7 +16255,8 @@ impl App {
                     self.select_state = LoadState::Loading;
                     let tx = self.tasks_tx.clone();
                     std::thread::spawn(move || {
-                        let _ = tx.send(Task::Select(select::SelectData::load(&index, &keys, &looks), key));
+                        let _ =
+                            tx.send(Task::Select(select::SelectData::load(&index, &keys, &looks).map(Box::new), key));
                     });
                 }
             }
@@ -16639,11 +16638,10 @@ impl App {
             // act:tool:KEY=VAL changes a Config-tool value and applies it, as the settings screen does.
             if let Some((k, v)) =
                 action.as_deref().and_then(|a| a.strip_prefix("tool:")).and_then(|a| a.split_once('='))
+                && let Ok(v) = v.parse()
             {
-                if let Ok(v) = v.parse() {
-                    self.cfg.set_tool(k, v);
-                    self.apply_settings();
-                }
+                self.cfg.set_tool(k, v);
+                self.apply_settings();
             }
         }
         // A Lua mod's screenshot (client.screenshot), under the screenshots folder.
@@ -17991,7 +17989,7 @@ impl App {
                         if let Some((key, k)) = ride::query(&w.rides, *id)
                             && let Some(&(bone, off)) = ch.skeleton.points.get(k)
                         {
-                            r.query_point(g, key, bone as u16, off);
+                            r.query_point(g, key, bone, off);
                         }
                         // The pick's fine test: the geometry bones and attach points 1 / 3 / 13 / 15 of an actor whose rect
                         // held the pointer, read back a frame or two late.
@@ -18017,7 +18015,7 @@ impl App {
                             }
                             for k in [1usize, 3, 13, 15] {
                                 if let Some(&(bone, off)) = ch.skeleton.points.get(k) {
-                                    r.query_point(g, pick_key(*id, 0x8000 | k as u16), bone as u16, off);
+                                    r.query_point(g, pick_key(*id, 0x8000 | k as u16), bone, off);
                                 }
                             }
                         }
@@ -18026,7 +18024,7 @@ impl App {
                                 footsteps::POINTS.iter().enumerate().take(if ch.cib[0] == 2 { 4 } else { 2 })
                             {
                                 if let Some(&(bone, off)) = ch.skeleton.points.get(k) {
-                                    r.query_point(g, footsteps::key(*id, slot), bone as u16, off);
+                                    r.query_point(g, footsteps::key(*id, slot), bone, off);
                                 }
                             }
                         }
@@ -18374,7 +18372,7 @@ impl App {
                     if let Some(a) = &self.audio {
                         w.effects.set_alive(a.alive());
                     }
-                    w.effects.filter = (w.game.get(0x92) as u32, matches!(w.my_motion.status, 1 | 3));
+                    w.effects.filter = (w.game.get(0x92), matches!(w.my_motion.status, 1 | 3));
                     w.effects.weapon_effect_off = w.game.get(0xbe) == 1;
                     // Misc.'s weather density (LAB_101aa650 case 0x3b: DAT_10456a68 = the value as a float).
                     w.effects.weather_density = if w.weather_forced { 1.0 } else { w.game.get(0x3b) as f32 };
@@ -18883,7 +18881,7 @@ impl ApplicationHandler for App {
         // A software adapter (a VM without a GPU): the first time, the scene draws at half the window's size.
         if gpu.adapter.get_info().device_type == wgpu::DeviceType::Cpu && !self.cfg.software_gpu_seen {
             self.cfg.software_gpu_seen = true;
-            if self.cfg.tool.get("0003").is_none() && self.cfg.tool.get("0004").is_none() {
+            if !self.cfg.tool.contains_key("0003") && !self.cfg.tool.contains_key("0004") {
                 self.cfg.set_tool("0003", (size.width / 2).max(320));
                 self.cfg.set_tool("0004", (size.height / 2).max(240));
                 log::info!("software GPU: background set to {}x{}", self.cfg.tool("0003"), self.cfg.tool("0004"));
@@ -19327,7 +19325,7 @@ fn save_capture(
     let bgra = matches!(format, wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb);
     let mut pixels = Vec::with_capacity((size[0] * size[1] * 4) as usize);
     for y in 0..size[1] {
-        for px in data[(y * row) as usize..(y * row + size[0] * 4) as usize].chunks_exact(4) {
+        for px in data[(y * row) as usize..(y * row + size[0] * 4) as usize].as_chunks::<4>().0 {
             pixels.extend_from_slice(&if bgra { [px[2], px[1], px[0], 255] } else { [px[0], px[1], px[2], 255] });
         }
     }
