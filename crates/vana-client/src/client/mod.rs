@@ -760,8 +760,6 @@ struct UiInput {
     down: bool,
     released: bool,
     right_clicked: bool,
-    /// A middle click (the maze grid's turn, message 7 *(inf)*).
-    middle_clicked: bool,
     /// Wheel notches for the focused list, up positive (FUN_10125360).
     wheel: i32,
     /// Ctrl or Alt held: the page modifier 0xa8 that a click on a list's arrows is tested against
@@ -1492,11 +1490,11 @@ pub(super) fn rank_icon(mentor: u8, mastery: u8) -> String {
 /// A chat line in its log mode's colour (the config colour before the message tables load), auto-translate blocks
 /// expanded with their brackets (FUN_10127c00 with param 5).
 /// FUN_10127990: a party line (modes 5 / 0x0d) with a call tag outside quotes plays its sound (the first tag that
-/// matches; FUN_100380f0 plays one at a time). A received tell (mode 0x0c) with config 0x47 names SeSep "0p40", which
-/// no game file holds; ours plays the <call> sound (0017) for it.
-fn call_sound(bt: &crate::dat::battle::BattleText, line: &str, mode: u8, tell_sound: bool) -> Option<u32> {
+/// matches; FUN_100380f0 plays one at a time), as (sound, rumble flags). A received tell (mode 0x0c) with config 0x47
+/// gives 0x30703430: SeSep "0040" once the quiet flag is off the name (asm 0x10127cb6), the tell's short tone.
+fn call_sound(bt: &crate::dat::battle::BattleText, line: &str, mode: u8, tell_sound: bool) -> Option<(u32, u32)> {
     if mode == 0x0c {
-        return tell_sound.then_some(17);
+        return tell_sound.then_some((40, crate::dat::tables::CALL_QUIET));
     }
     if !matches!(mode, 5 | 0x0d) {
         return None;
@@ -1506,12 +1504,49 @@ fn call_sound(bt: &crate::dat::battle::BattleText, line: &str, mode: u8, tell_so
     while let Some(open) = b[i..].iter().position(|&c| c == b'<').map(|p| p + i) {
         let Some(close) = b[open..].iter().position(|&c| c == b'>').map(|p| p + open) else { break };
         let quoted = open > 0 && b[open - 1] == b'"' && b.get(close + 1) == Some(&b'"');
-        if !quoted && let Some((_, n)) = bt.calls.iter().find(|(t, _)| line[open..].starts_with(t.as_str())) {
-            return Some(*n);
+        if !quoted && let Some((_, n, f)) = bt.calls.iter().find(|(t, ..)| line[open..].starts_with(t.as_str())) {
+            return Some((*n, *f));
         }
         i = open + 1;
     }
     None
+}
+
+/// The chat call's task (FUN_100380f0, update FUN_100381d0): `timer` (+0x34) runs down from 120 ticks and on below 0
+/// while the sound plays; the pad gets 60 a frame while bit 5 of the whole timer is set (120..96, 63..32, then
+/// -1..-32, ...) and `rumble` (+0x3c) holds.
+struct CallTask {
+    timer: f32,
+    rumble: bool,
+}
+
+impl CallTask {
+    /// A frame of `ticks`: false once its 120 ticks are over and its voice is (`heard.1`), or at once while the
+    /// call level is 0 (`heard.0`; event op 0x69 mask 0x10).
+    fn step(&mut self, ticks: f32, heard: (bool, bool)) -> bool {
+        self.timer -= ticks;
+        heard.0 && (self.timer >= 0.0 || heard.1)
+    }
+
+    /// What it adds to the pad's rumble this frame.
+    fn pulse(&self) -> i32 {
+        if self.rumble && self.timer as i32 & 0x20 != 0 { 0x3c } else { 0 }
+    }
+}
+
+/// FUN_10127ab0, an `<ncall>`'s rumble: the line's "(name)" is us, or an actor of that name within 4 of us on whole
+/// x / z (dx^2 + dz^2 < 16).
+fn call_near<'a>(line: &str, me: (&str, Vec3), mut others: impl Iterator<Item = (&'a str, Vec3)>) -> bool {
+    let Some(name) = line.find(')').filter(|&e| (2..0x21).contains(&e)).and_then(|e| line.get(1..e)) else {
+        return false;
+    };
+    let d = |a: f32, b: f32| (a as i32 - b as i32).pow(2);
+    name == me.0 || others.any(|(n, p)| n == name && d(me.1.x, p.x) + d(me.1.z, p.z) < 16)
+}
+
+/// The frame's rumble for the pad (DAT_10455c20 +0xdb4): effect op 0x5f's elements and the chat call.
+fn rumble_sum(world: &World) -> i32 {
+    world.effects.rumble + world.call.as_ref().map_or(0, CallTask::pulse)
 }
 
 fn push_chat_mode(world: &mut World, line: String, mode: u8, kind: u8) {
@@ -1563,9 +1598,21 @@ fn expand_phrases(world: &World, line: &str) -> String {
 /// A chat line in its mode, `gm` from s2c 0x017's Attr bit 0, `who` its record's name.
 fn push_chat_line(world: &mut World, line: String, mode: u8, kind: u8, gm: bool, who: Option<(String, u8)>) {
     let tell_sound = world.game.get(0x47) != 0;
-    if let Some(n) = world.battle.as_ref().and_then(|bt| call_sound(bt, &line, mode, tell_sound)) {
-        // Ours: the tell sound stays an interface sound; the call tags go through FUN_100380f0's level.
-        if mode == 0x0c { world.sounds.push(n) } else { world.call_sounds.push(n) }
+    if let Some((n, flags)) = world.battle.as_ref().and_then(|bt| call_sound(bt, &line, mode, tell_sound)) {
+        // 0x10127c8a: the pad rumbles with a <call>, with an <ncall> from someone near, never with an <scall> or
+        // the tell's tone.
+        let rumble = match flags {
+            0 => true,
+            f if f & crate::dat::tables::CALL_NEAR != 0 => {
+                call_near(&line, (&world.name, world.pos), world.entities.values().map(|e| (e.name.as_str(), e.pos)))
+            }
+            _ => false,
+        };
+        // FUN_100380f0: one call task at a time (DAT_10463938); a call that comes while it runs makes no sound.
+        if world.call.is_none() {
+            world.call = Some(CallTask { timer: 120.0, rumble });
+            world.call_sounds.push(n);
+        }
     }
     let (colour, line, indent) = match world.battle.clone() {
         Some(bt) => {
@@ -2292,6 +2339,59 @@ fn window_closes(w: &mut World, events: &[egui::Event]) {
     }
 }
 
+/// The input context (DAT_1036e3a0) that gates the key functions: the map's, the layout's, the gardening one's, else
+/// every flag.
+fn key_context(w: &World) -> u16 {
+    if w.map.is_some() || w.cnq.is_some() {
+        0x26
+    } else if w.layout.is_some() {
+        layout::context(w)
+    } else {
+        garden::context(w).unwrap_or(0xffff)
+    }
+}
+
+/// FUN_1013c220: the item info window's next page; past the last, back to 0 (key function 0x18, a middle press).
+fn info_page_turn(w: &World) {
+    if w.info_win.is_some() || items::info_source(w).is_some() {
+        let mut p = w.info_page.get();
+        p.0 = if p.0 + 1 >= p.2.min(3) { 0 } else { p.0 + 1 };
+        w.info_page.set(p);
+    }
+}
+
+/// FUN_1015df20: a middle-button release is FUN_1015dd00(7), message 7 to the focused window, or the main menu when
+/// no window has the focus; not in an input context without flag 4 (FUN_10123e50: laying out furniture), nor in
+/// cinema mode. Message 7 is what key function 0x18 (Num-) gives a window: with no window or only the main / action
+/// menu up the next frame gets a Num- press (the menu opens or closes); the maze grid turns its rune (FUN_101fdbf0);
+/// other windows ignore it. Retail also skips it with control type 2 (config 0x42, FUN_1025e070), where its middle
+/// button drags the camera. Ours: every control type looks around with a middle drag and only a click counts, so type
+/// 2 (the default) clicks too.
+fn middle_release(w: &mut World) {
+    if key_context(w) & 4 == 0 || event::cinema(w) {
+        return;
+    }
+    if w.maze.screen.is_some() {
+        maze::rotate(w);
+        return;
+    }
+    // Another window has the focus: message 7 is its own (the windows ours has take Num- as the key, not as this
+    // message), so nothing happens. The main menu and the action menu (playermo: FUN_1015ee40) take it as Num-.
+    let menu = w.menu.take();
+    let other = window_over_actions(w);
+    w.menu = menu;
+    if other {
+        return;
+    }
+    w.mouse_keys.extend([true, false].map(|pressed| egui::Event::Key {
+        key: egui::Key::Minus,
+        physical_key: Some(egui::Key::Minus),
+        pressed,
+        repeat: false,
+        modifiers: egui::Modifiers::default(),
+    }));
+}
+
 /// The in-game HUD in the game's own windows: chat log and input line, party, target, main menu
 /// ('-' opens it) and the KO prompt. Returns the rects that take clicks away from the world.
 fn world_hud(
@@ -2312,6 +2412,8 @@ fn world_hud(
     // The focused list's scroll bar and the wheel, before the windows see the press.
     let taken = scrollbar::frame(gu, world, input);
     let input = taken.as_ref().unwrap_or(input);
+    // A middle click is this frame's only: one made while the HUD is down (downloading, hidden) is dropped.
+    let middle = std::mem::take(&mut world.middle_click);
     // FUN_1022eca0: keytops3 165 + (n >> 2) % 5 at (W - 234, H - 48 + 8 - min(2n, 8)), y scale min(n / 4, 1), n
     // the draws since the open (taken at 30 a second, inferred); the HUD windows are not drawn meanwhile.
     if let Some(t) = world.downloading {
@@ -2326,6 +2428,9 @@ fn world_hud(
             world.ui_hidden = false;
         }
         return Vec::new();
+    }
+    if middle {
+        middle_release(world);
     }
     for mut c in std::mem::take(&mut world.map_cmds) {
         if let map::Cmd::Preview { point_y, .. } = &mut c {
@@ -3497,7 +3602,7 @@ fn world_hud(
         pupset::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.maze.screen.is_some() && world.confirm.is_none()) {
-        maze::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked, input.middle_clicked);
+        maze::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked);
     }
     // Mouse on the magic / ability lists and their category windows, or the Set Spells screen over them.
     if let Some(p) = input.pointer.filter(|_| world.bluset.is_some() && world.confirm.is_none()) {
@@ -6915,6 +7020,10 @@ struct World {
     /// after the zone.
     swkbd: Option<swkbd::Keyboard>,
     swkbd_out: Vec<egui::Event>,
+    /// Keys a mouse button stands for (`middle_release`), for the next frame's input.
+    mouse_keys: Vec<egui::Event>,
+    /// A middle click (released without a look drag) for the next HUD frame.
+    middle_click: bool,
     swkbd_reopen: bool,
     /// E (DAT_106627a8), which outlives the macro palettes: the focused palette (1 Ctrl, 2 Alt) and both columns.
     /// mcr1edit / mcr2edit open and regain the focus on column + 1 (FUN_101a44b0).
@@ -7583,8 +7692,11 @@ struct World {
     audio_cmds: Vec<(i32, f32, f32)>,
     /// DAT_104804c3: the per-zone sound-level reset has run, so the event end doesn't restore levels (batch 6 item 18).
     sound_reset: bool,
-    /// Chat call sounds to play (FUN_100380f0, at the op 0x69 mask 0x10 level).
+    /// Chat call sounds to play (FUN_100380f0, at the op 0x69 mask 0x10 level), the call's task, and what the audio
+    /// says of it: the call level is on (DAT_10351710), the call's voice still plays.
     call_sounds: Vec<u32>,
+    call: Option<CallTask>,
+    call_heard: (bool, bool),
     names: Option<Arc<crate::dat::names::Names>>,
     /// Spell / ability records, and the learned bits (s2c 0x0AA, 0x0AC).
     actions: Option<Arc<crate::dat::actions::Actions>>,
@@ -8116,6 +8228,8 @@ pub struct App {
     dragging: bool,
     left_down: bool,
     middle_down: bool,
+    /// Where and when the middle button went down (a click is told from a look drag on release).
+    middle_press: Option<((f64, f64), Instant)>,
     /// Where the right button went down (the camera arrow's reference).
     drag_from: Option<(f64, f64)>,
     /// FUN_10157fa0's +0x57: this movement push already sent its stand-up command.
@@ -8431,6 +8545,7 @@ impl App {
             dragging: false,
             left_down: false,
             middle_down: false,
+            middle_press: None,
             drag_from: None,
             stand_sent: false,
             mouse: Default::default(),
@@ -9021,6 +9136,7 @@ impl App {
             for id in w.call_sounds.drain(..) {
                 a.play_call(id);
             }
+            w.call_heard = a.call_heard();
             // The Lua mods' sounds.
             for s in w.lua.sounds.drain(..) {
                 match s {
@@ -9733,6 +9849,8 @@ impl App {
                             palette_flip: None,
                             swkbd: None,
                             swkbd_out: Vec::new(),
+                            mouse_keys: Vec::new(),
+                            middle_click: false,
                             swkbd_reopen: false,
                             key_shift: false,
                             key_repeat: false,
@@ -9863,6 +9981,8 @@ impl App {
                             audio_cmds: Vec::new(),
                             sound_reset: false,
                             call_sounds: Vec::new(),
+                            call: None,
+                            call_heard: (true, false),
                             names: None,
                             actions: None,
                             spells_known: Vec::new(),
@@ -13187,8 +13307,13 @@ impl App {
         }
         camera::step(world, dt, &cam_in);
         let in_event = event::active(world);
-        world.effects.in_event = in_event;
+        // FUN_100adf70: the "Screen shaking" filter is off while the player is busy, not only in an event.
+        world.effects.busy = textcmd::busy(world);
         camera::shake_step(world, dt);
+        let heard = world.call_heard;
+        if world.call.as_mut().is_some_and(|c| !c.step(dt * 60.0, heard)) {
+            world.call = None;
+        }
         if trace_move() && (cx != 0.0 || cy != 0.0 || (world.started.elapsed().as_secs_f32() * 2.0).fract() < dt * 2.0)
         {
             log::info!(
@@ -13309,13 +13434,7 @@ impl App {
         });
         if let Phase::World(w) = &self.phase {
             self.input.assign(&w.game);
-            self.input.context = if w.map.is_some() || w.cnq.is_some() {
-                0x26
-            } else if w.layout.is_some() {
-                layout::context(w)
-            } else {
-                garden::context(w).unwrap_or(0xffff)
-            };
+            self.input.context = key_context(w);
             // Not with the UI hidden: the search gets no events then. Ours: the Settings window's search opens the same way.
             f.typing = text_field_open(w)
                 || (!w.ui_hidden && starts_search && (listsearch::can_run(w) || modern::config_find_open(w)));
@@ -13396,12 +13515,8 @@ impl App {
             if self.input.test(0x18, input::mode::PRESS) {
                 maze::rotate(world);
             }
-        } else if self.input.test(0x18, input::mode::PRESS)
-            && (world.info_win.is_some() || items::info_source(world).is_some())
-        {
-            let mut p = world.info_page.get();
-            p.0 = if p.0 + 1 >= p.2.min(3) { 0 } else { p.0 + 1 };
-            world.info_page.set(p);
+        } else if self.input.test(0x18, input::mode::PRESS) {
+            info_page_turn(world);
         }
         items::compare_key(world, self.input.test(0x76, input::mode::HELD) || self.input.test(0x89, input::mode::HELD));
         if self.input.test(0x11, input::mode::PRESS) && world.pupset.is_some() {
@@ -13899,9 +14014,23 @@ impl App {
                 self.dragging = pressed;
             }
             MouseButton::Middle => {
-                // WM_MBUTTONDOWN turns an RoE description's page (FUN_102326b0).
+                // WM_MBUTTONDOWN (the mouse's press bit 2) turns an RoE description's page (FUN_102326b0) and the item
+                // info window's (FUN_1013cba0), as key function 0x18 does.
                 if pressed && let Phase::World(w) = &mut self.phase {
                     roe::flip_page(w);
+                    if w.maze.screen.is_none() {
+                        info_page_turn(w);
+                    }
+                }
+                // The release is told here, not from egui's click: a middle press starts the look drag on the first
+                // pixel of motion, and the grab that takes the pointer away from egui loses its click.
+                if pressed {
+                    self.middle_press = self.last_cursor.map(|c| (c, Instant::now()));
+                } else if let Some(((a, _), b)) = self.middle_press.take().zip(self.last_cursor)
+                    && let Phase::World(w) = &mut self.phase
+                {
+                    let (dx, dy) = ((b.0 - a.0) as f32 * k.0, (b.1 - a.1) as f32 * k.1);
+                    w.middle_click |= !consumed && !looked && dx * dx + dy * dy < 65.0;
                 }
                 self.middle_down = pressed;
             }
@@ -14095,7 +14224,6 @@ impl App {
             down: i.pointer.primary_down() && mine,
             released: i.pointer.primary_released() && !swallow && mine,
             right_clicked: i.pointer.secondary_clicked() && mine,
-            middle_clicked: i.pointer.button_clicked(egui::PointerButton::Middle) && mine,
             page: i.modifiers.ctrl || i.modifiers.alt,
             events: i.events.clone(),
         });
@@ -14254,7 +14382,6 @@ impl App {
                         down: false,
                         released: false,
                         right_clicked: false,
-                        middle_clicked: false,
                         wheel: 0,
                         page: false,
                         events: Vec::new(),
@@ -14407,8 +14534,11 @@ impl App {
                             if out.reload {
                                 self.index = None;
                                 // The next login sends the patched files' version.
-                                if self.cfg.follow_applied_version() {
-                                    let _ = self.cfg.save();
+                                // At once: the restart below starts a client that reads it.
+                                if self.cfg.follow_applied_version()
+                                    && let Err(e) = self.cfg.save()
+                                {
+                                    log::warn!("saving the config: {e:#}");
                                 }
                             }
                             if out.restart {
@@ -14482,9 +14612,7 @@ impl App {
                             let server = self.cfg.server.clone();
                             self.cfg.forget_login(&server, Some(a));
                         }
-                        if self.drive.login.is_none() || crate::config::is_copy() {
-                            let _ = self.cfg.save();
-                        }
+                        save |= self.drive.login.is_none() || crate::config::is_copy();
                     }
                     // Remember password is the account's own: unticked, its password goes at once.
                     if remembered != self.cfg.remember_password {
@@ -14504,9 +14632,7 @@ impl App {
                                 l.saved_password.clear();
                             }
                         }
-                        if self.drive.login.is_none() || crate::config::is_copy() {
-                            let _ = self.cfg.save();
-                        }
+                        save |= self.drive.login.is_none() || crate::config::is_copy();
                     }
                     if let Some(a) = self.audio.as_mut() {
                         for s in sounds {
@@ -14637,7 +14763,7 @@ impl App {
                                 Some(s) => self.whats_new = Some(s),
                                 None => {
                                     self.cfg.notes_seen = env!("CARGO_PKG_VERSION").into();
-                                    let _ = self.cfg.save();
+                                    save = true;
                                 }
                             }
                         }
@@ -14988,7 +15114,7 @@ impl App {
                                         self.notes_ui = None;
                                         notes::seen();
                                         self.cfg.notes_seen = env!("CARGO_PKG_VERSION").into();
-                                        let _ = self.cfg.save();
+                                        save = true;
                                         break;
                                     }
                                 }
@@ -16205,6 +16331,9 @@ impl App {
             w.sounds.push(crate::audio::Ui::Select as u32);
         }
         let mut save = false;
+        if let Some(on) = p.save_rumble.take() {
+            cfg.gamepad_rumble = on;
+        }
         if let Some((padsin, padexsin, on, bg, dead)) = p.save.take() {
             (cfg.gamepad_padsin, cfg.gamepad_padexsin) = (padsin, padexsin);
             (cfg.gamepad, cfg.gamepad_background) = (on, bg);
@@ -16556,6 +16685,9 @@ impl App {
             _ => Vec::new(),
         };
         let pad = self.gamepad.poll(&self.cfg, gfx.window.has_focus(), ctx, dt, &mut to_mods);
+        // FUN_10007ae0: the frame's rumble, from the world only (the creator's foley tracks carry none).
+        let sum = if let Phase::World(w) = &self.phase { rumble_sum(w) } else { 0 };
+        self.gamepad.rumble(&self.cfg, gfx.window.has_focus(), sum, dt);
         if let Phase::World(w) = &mut self.phase {
             Self::controller_window(&mut self.cfg, &mut self.gamepad, w, pad.capture.as_ref(), dt);
         }
@@ -16574,6 +16706,11 @@ impl App {
         // What the software keyboard typed, as the keys a field reads.
         if let Phase::World(w) = &mut self.phase {
             raw.events.append(&mut w.swkbd_out);
+            // A middle click is the numpad's minus (middle_release).
+            if minus_pressed(&w.mouse_keys) {
+                self.numpad_minus = true;
+            }
+            raw.events.append(&mut w.mouse_keys);
         }
         raw
     }
@@ -18934,6 +19071,16 @@ fn draw_scene(
     r.set_camera_list(&gfx.gpu, list, far);
     // Config 0017: bump mapping's lighting (one eased light, vertex fog) or the two-light model; never in 182.
     r.bump_mode = cx.cfg.tool("0017") != 0 && w.zone != Some(182);
+    // Light Shading (ours): Smooth lights the scenery's lamps per pixel, Retail per vertex.
+    r.smooth_lights = cx.cfg.smooth_lights;
+    // Windowed (0034 != 0, no gamma ramp): lights boosted by the channels' ramps (render::light_boost),
+    // gamma base 0028 + 1 + Gameplay R / G / B / 100 (FUN_101aa650).
+    r.light_boost = if cx.cfg.window_mode() != 0 {
+        let base = cx.cfg.gamma_base();
+        crate::render::light_boost([0x37, 0x38, 0x39].map(|id| base + 1.0 + w.game.get(id) as f32 / 100.0))
+    } else {
+        [0.0; 4]
+    };
     (r.mod_clear, r.mod_ambient, r.wireframe) = (w.opts.clear, w.opts.ambient, w.opts.wireframe);
     // Config 0011: the animated meshes' sway this frame (render/sway.rs).
     let steps = match cx.cfg.tool("0011") {
@@ -18948,6 +19095,8 @@ fn draw_scene(
     );
     // FUN_1001d240's helper target for faded actors (drawn opaque, then blended as one quad).
     r.prepare_faded(&gfx.gpu, &scene_tex);
+    // The point-light slot leak for this view (render/leak.rs).
+    r.update_leak(&gfx.gpu, camera, aspect);
     perf::timed(
         || "zone render".into(),
         || r.render(&gfx.gpu, &mut fg.encoder, &scene_raw, &scene_depth, camera, aspect, &actors),
@@ -19142,7 +19291,13 @@ fn draw_effects(
             play_fx_sound(a, c);
         }
         eg.set_lights(&r.lights);
-        eg.set_light(r.lighting.as_ref().map(|l| (l.dir, l.diffuse, l.ambient)));
+        // Lit effect elements take the boosted SetLight (FUN_1000bf30) and AMBIENT (FUN_10188e00).
+        let b = r.light_boost;
+        eg.set_light(
+            r.lighting
+                .as_ref()
+                .map(|l| (l.dir, crate::render::boosted(l.diffuse, b), crate::render::boosted(l.ambient, b))),
+        );
         eg.set_depth(Some((&scene_depth, camera.proj(aspect))));
         perf::timed(|| "effects upload".into(), || eg.update(&gfx.gpu, &mut fg.encoder, &mut w.effects, &f));
         fg.mark("fx update");
@@ -20094,6 +20249,43 @@ mod tests {
     }
 
     use super::*;
+
+    /// FUN_100381d0 at 2 ticks a frame: the pad's 60 comes while bit 5 of the whole timer is set (118..96, 62..32,
+    /// then -2..-32 while the sound is still heard); the task ends once the 120 ticks and the voice are over, or at
+    /// once with the call level off. An `<scall>` never rumbles.
+    #[test]
+    fn call_task_pulses() {
+        let mut c = CallTask { timer: 120.0, rumble: true };
+        let mut on = Vec::new();
+        for f in 1..=80 {
+            // The voice plays for 150 ticks.
+            if !c.step(2.0, (true, f <= 75)) {
+                assert_eq!(f, 76);
+                break;
+            }
+            if c.pulse() != 0 {
+                on.push(c.timer as i32);
+            }
+        }
+        let want: Vec<i32> =
+            (96..=118).rev().step_by(2).chain((32..=62).rev().step_by(2)).chain((-30..=-2).rev().step_by(2)).collect();
+        assert_eq!(on, want);
+        assert!(!CallTask { timer: 120.0, rumble: true }.step(2.0, (false, true)));
+        assert_eq!(CallTask { timer: 100.0, rumble: false }.pulse(), 0);
+    }
+
+    /// FUN_10127ab0: the "(name)" at the line's start is us, or stands within 4 on whole x / z.
+    #[test]
+    fn ncall_rumbles_near() {
+        let me = ("Lnxtest", Vec3::new(10.9, 0.0, -4.2));
+        let at = |x: f32, z: f32| [("Other", Vec3::new(x, 30.0, z)), ("Third", Vec3::ZERO)];
+        assert!(call_near("(Lnxtest) <ncall> here", me, at(500.0, 0.0).into_iter()));
+        // Whole coordinates: 10 - 13 and -4 - -6 give 9 + 4.
+        assert!(call_near("(Other) <ncall3>", me, at(13.9, -6.9).into_iter()));
+        assert!(!call_near("(Other) <ncall3>", me, at(14.0, -4.0).into_iter()));
+        assert!(!call_near("(Nobody) <ncall>", me, at(10.0, -4.0).into_iter()));
+        assert!(!call_near("<ncall> no name", me, at(10.0, -4.0).into_iter()));
+    }
 
     /// Hide PC armour: slots 1..5 to the defaults, face, weapons and a model look kept.
     #[test]

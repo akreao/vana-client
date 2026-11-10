@@ -330,6 +330,8 @@ pub fn load(index: &DatIndex, keys: &Keys, (entity, seq, file): Job) -> Result<L
         lod: [0.0; 2],
         world: false,
         own_dist: None,
+        normalize: false,
+        deferred: false,
     }];
     let geo = Arc::new(ZoneGeometry::build(&scene));
     let init = crate::dat::chunks(&bytes).is_ok_and(|c| c.iter().any(|c| c.kind == 0x07 && c.name() == "init"));
