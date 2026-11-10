@@ -8160,7 +8160,10 @@ impl World {
             kept.push((configui::CONFIGWI_MENU, w.cursor));
         }
         // Ours: the modern Config window's topic and row, so it reopens where it was left as configwi does.
-        if let Some(c) = self.config.as_ref().filter(|c| c.stack.first().is_some_and(|w| w.name == "configwi")) {
+        // Classic Config leaves m_entry / m_row at their defaults, so only the modern window writes them.
+        if self.modern
+            && let Some(c) = self.config.as_ref().filter(|c| c.stack.first().is_some_and(|w| w.name == "configwi"))
+        {
             kept.push((configui::MODERN_ENTRY, c.m_entry as u16));
             kept.push((configui::MODERN_ROW, c.m_row as u16));
         }

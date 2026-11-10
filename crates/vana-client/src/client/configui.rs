@@ -404,6 +404,8 @@ pub struct ConfigUi {
     pub m_retail: bool,
     pub m_open: bool,
     pub m_row: usize,
+    /// Ours: the topic and row recall_modern brought back, kept until the topic is next chosen (same topic: that row).
+    pub m_recall: Option<(usize, usize)>,
     /// The modern page's category (Log, Font Colors).
     pub m_cat: usize,
     /// The modern page's key assignment list (k1assign / k2assign) open over its page, and its row.
@@ -431,6 +433,7 @@ impl ConfigUi {
     pub fn recall_modern(&mut self, mem: &std::collections::HashMap<&'static str, u16>) {
         if let (Some(&e), Some(&r)) = (mem.get(MODERN_ENTRY), mem.get(MODERN_ROW)) {
             (self.m_entry, self.m_row) = (e as usize, r as usize);
+            self.m_recall = Some((e as usize, r as usize));
         }
     }
 

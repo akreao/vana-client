@@ -2672,7 +2672,7 @@ fn choose(w: &mut World, k: usize) {
     // Controller and Mods are buttons: they open their windows (padwin.rs, modmgr.rs), the list keeping its cursor.
     if let Some(name) = PAGES.get(k).map(|p| p.1).filter(|n| *n == CONTROLLER || *n == MODS) {
         if let Some(c) = w.config.as_mut() {
-            (c.m_entry, c.m_open) = (k, false);
+            (c.m_entry, c.m_open, c.m_recall) = (k, false, None);
         }
         if name == CONTROLLER {
             super::padwin::open(w);
@@ -2682,7 +2682,9 @@ fn choose(w: &mut World, k: usize) {
         return;
     }
     let Some(c) = w.config.as_mut() else { return };
-    (c.m_entry, c.m_open, c.m_row, c.m_keys, c.m_sub, c.m_find) = (k, true, 0, None, None, None);
+    // The remembered topic opens on its remembered row; any other topic (or a later choice) on its first.
+    let row = c.m_recall.take().filter(|&(e, _)| e == k).map_or(0, |(_, r)| r);
+    (c.m_entry, c.m_open, c.m_row, c.m_keys, c.m_sub, c.m_find) = (k, true, row, None, None, None);
     let out = configui::Out { sounds: vec![Se::Select], ..Default::default() };
     super::super::config_out(w, out);
     settings_follow(w);
