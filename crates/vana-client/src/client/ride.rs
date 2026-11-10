@@ -390,11 +390,13 @@ fn finish(w: &mut World, id: u32) {
     }
 }
 
-/// A running op 0x6e (actor +0x101): the step a tick (+0x120) and the ticks left to move (+0x118).
+/// A running op 0x6e (actor +0x101): the step a tick (+0x120) and the ticks left to move (+0x118); `goal`, another
+/// actor's slide goal when the op started.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SelfMove {
     vel: Vec3,
     left: f32,
+    goal: Option<Vec3>,
 }
 
 /// FUN_100aadf0 takes the frame's ticks off the count before it moves, and the frame that reaches 0 moves only by
@@ -411,6 +413,15 @@ pub fn self_step(m: &mut SelfMove, ticks: f32) -> (Vec3, bool) {
     (m.vel * n, m.left <= 0.0)
 }
 
+/// Not retail (the goal offsets aren't traced): at the end of a self-move the actor stays where it was moved unless
+/// the server sent a new position meanwhile, which the slide then goes on toward.
+pub fn self_settle(m: &SelfMove, pos: Vec3, target: &mut Vec3, remain: &mut f32) {
+    if m.goal == Some(*target) {
+        *target = pos;
+        *remain = 0.0;
+    }
+}
+
 /// Op 0x6e (FUN_100aad40): actor1 moves along the facing it has now, `speed` a tick for `ticks` ticks. A leaving
 /// animal runs from where it was left; any other actor through `World::self_moves` (no retail data reaches that:
 /// only the animals' `coff` / `cdam` hold the op).
@@ -423,7 +434,8 @@ pub fn self_move(w: &mut World, id: u32, ticks: f32, speed: f32) {
     }
     let my_dir = w.net.me.lock().map(|m| m.dir).unwrap_or(0);
     if let Some(p) = super::base_place(w, id, my_dir) {
-        w.self_moves.insert(id, SelfMove { vel: p.forward * speed, left: run_ticks(ticks) });
+        let goal = w.entities.get(&id).map(|e| e.target);
+        w.self_moves.insert(id, SelfMove { vel: p.forward * speed, left: run_ticks(ticks), goal });
     }
 }
 
@@ -635,7 +647,7 @@ mod tests {
     #[test]
     fn self_move_runs_two_ticks_short() {
         for dt in [2.0, 1.0, 0.4, 7.0] {
-            let mut m = super::SelfMove { vel: glam::Vec3::X * 0.2, left: super::run_ticks(72.0) };
+            let mut m = super::SelfMove { vel: glam::Vec3::X * 0.2, left: super::run_ticks(72.0), goal: None };
             let (mut x, mut frames) = (0.0, 0);
             loop {
                 let (d, done) = super::self_step(&mut m, dt);
@@ -650,6 +662,20 @@ mod tests {
             assert_eq!(super::self_step(&mut m, dt), (glam::Vec3::ZERO, true));
         }
         assert_eq!(super::run_ticks(1.0), 0.0);
+    }
+
+    /// An idle actor keeps the spot it was moved to; one the server moved meanwhile slides on to the new position.
+    #[test]
+    fn self_move_settles_goal() {
+        use glam::Vec3;
+        let m = super::SelfMove { vel: Vec3::X, left: 0.0, goal: Some(Vec3::ZERO) };
+        let (mut target, mut remain) = (Vec3::ZERO, 0.0);
+        super::self_settle(&m, Vec3::new(10.0, 0.0, 0.0), &mut target, &mut remain);
+        assert_eq!((target, remain), (Vec3::new(10.0, 0.0, 0.0), 0.0));
+        let sent = Vec3::new(3.0, 0.0, 4.0);
+        let (mut target, mut remain) = (sent, 12.0);
+        super::self_settle(&m, Vec3::new(10.0, 0.0, 0.0), &mut target, &mut remain);
+        assert_eq!((target, remain), (sent, 12.0));
     }
 
     #[test]

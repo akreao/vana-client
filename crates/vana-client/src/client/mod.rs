@@ -12762,6 +12762,7 @@ impl App {
                 }
                 e.slide = e.pos;
                 if done {
+                    ride::self_settle(m, e.pos, &mut e.target, &mut e.remain);
                     self_ends.push(*eid);
                 }
                 e.ratio = crate::motion::move_ratio(
