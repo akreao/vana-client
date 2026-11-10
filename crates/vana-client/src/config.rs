@@ -268,6 +268,10 @@ pub struct Config {
     pub gpu: String,
     /// Set once a software adapter (WARP, llvmpipe) was first seen and the background was halved for it. Not retail.
     pub software_gpu_seen: bool,
+    /// No config file was there to load: the UI sizes are picked from the screen once its window opens
+    /// (client/screen.rs).
+    #[serde(skip)]
+    pub first_start: bool,
     /// FFXiMain's own options by config id (the in-game and lobby Config menus).
     pub game: crate::gamecfg::GameConfig,
     /// DAT overlays (not retail; dat::overlay): folders under mods_dir(), highest priority first.
@@ -531,6 +535,7 @@ impl Default for Config {
             monitor: String::new(),
             gpu: String::new(),
             software_gpu_seen: false,
+            first_start: false,
             game: Default::default(),
         }
     }
@@ -555,7 +560,7 @@ impl Config {
                 let _ = std::fs::copy(&path, &aside);
                 Self::default()
             }),
-            Err(_) => Self::default(),
+            Err(_) => Self { first_start: true, ..Self::default() },
         };
         // A config from before the lists: its one login starts them.
         if c.logins.is_empty() && !c.server.trim().is_empty() && !c.username.trim().is_empty() {
