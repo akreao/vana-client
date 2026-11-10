@@ -189,7 +189,6 @@ impl Write for Link {
         }
     }
 
-    /// A TLS write is only buffered until flushed: every lobby message is flushed whole.
     fn flush(&mut self) -> std::io::Result<()> {
         match self {
             Link::Plain(s) => s.flush(),
@@ -197,6 +196,7 @@ impl Write for Link {
         }
     }
 
+    /// rustls's write sends the record but drops the socket's error until the next call: the flush reports it here.
     fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
         match self {
             Link::Plain(s) => s.write_all(buf),
@@ -278,19 +278,24 @@ impl Lobby {
         content: u32,
         replies: Arc<AtomicU32>,
     ) -> Result<Self> {
-        let key = match session {
-            Session::Lsb { lobby_key, .. } => lobby_key,
-            Session::PlayOnline { .. } => None,
+        // LSB: the data link too, and the key its TLS lobby holds (none: plain).
+        let (lsb, key) = match session {
+            Session::Lsb { lobby_key, .. } => (true, lobby_key),
+            Session::PlayOnline { .. } => (false, None),
         };
-        let data = match session {
-            Session::Lsb { .. } => Some(
-                Link::open(host, data_port, key)
-                    .with_context(|| format!("connecting to lobby data {host}:{data_port}"))?,
-            ),
-            Session::PlayOnline { .. } => None,
-        };
-        let view =
-            Link::open(host, view_port, key).with_context(|| format!("connecting to the lobby {host}:{view_port}"))?;
+        // Both open at once, so a TLS lobby's two handshakes cost one wait; nothing is sent until both have passed.
+        let (data, view) = std::thread::scope(|s| {
+            let data = lsb.then(|| {
+                s.spawn(|| {
+                    Link::open(host, data_port, key)
+                        .with_context(|| format!("connecting to lobby data {host}:{data_port}"))
+                })
+            });
+            let view =
+                Link::open(host, view_port, key).with_context(|| format!("connecting to the lobby {host}:{view_port}"));
+            (data.map(|h| h.join().unwrap_or_else(|p| std::panic::resume_unwind(p))), view)
+        });
+        let (data, view) = (data.transpose()?, view?);
         let server_ip = match view.tcp().peer_addr()?.ip() {
             std::net::IpAddr::V4(ip) => ip,
             std::net::IpAddr::V6(ip) => ip.to_ipv4().unwrap_or(Ipv4Addr::LOCALHOST),
@@ -329,7 +334,16 @@ impl Lobby {
         put_name(&mut p, 0x74, version);
         put(&mut p, 0x84, &content.to_le_bytes());
         lobby.send_view(0x26, p)?;
-        let reply = lobby.read_view(0x05, 0x28)?;
+        let reply = match lobby.read_view(0x05, 0x28) {
+            // A TLS lobby drops a plain link unanswered.
+            Err(e) if lsb && key.is_none() && e.downcast_ref::<Refused>().is_none() => {
+                return Err(e.context(
+                    "the lobby gave no answer. If it is TLS (LSB for xiloader 3.0), the login server, which took \
+                     loader 2.x, is from another version",
+                ));
+            }
+            r => r?,
+        };
         lobby.key_counter = rd_u32(&reply, 0x1C).wrapping_add(1);
         lobby.expansions = rd_u32(&reply, 0x20);
         lobby.features = rd_u32(&reply, 0x24);
@@ -790,6 +804,43 @@ mod create_tests {
         );
     }
 
+    /// A view request off the server's end: its command.
+    fn req(v: &mut impl Read) -> u8 {
+        let mut n = [0u8; 4];
+        v.read_exact(&mut n).unwrap();
+        let mut p = vec![0u8; u32::from_le_bytes(n) as usize - 4];
+        v.read_exact(&mut p).unwrap();
+        p[4]
+    }
+
+    /// A view reply `cmd` with `body` after the header.
+    fn reply(v: &mut impl Write, cmd: u8, body: &[u8]) {
+        let mut p = packet(28 + body.len());
+        p[8] = cmd;
+        p[28..].copy_from_slice(body);
+        v.write_all(&p).unwrap();
+        v.flush().unwrap();
+    }
+
+    /// A connection within 10 s, its reads timing out alike, so a failing client fails the test rather than hang it.
+    fn accept_by(l: &std::net::TcpListener) -> Option<TcpStream> {
+        l.set_nonblocking(true).unwrap();
+        let end = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            match l.accept() {
+                Ok((s, _)) => {
+                    s.set_nonblocking(false).unwrap();
+                    s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+                    return Some(s);
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock && std::time::Instant::now() < end => {
+                    std::thread::sleep(Duration::from_millis(5))
+                }
+                Err(_) => return None,
+            }
+        }
+    }
+
     /// LSB's dialect with its old fixed counter seed: a plain login reaches world entry at xiloader's 0xAD5DE058, the
     /// counter LSB's older login keyed the map with, so `old_key` is the loader's zero value and that counter.
     #[test]
@@ -802,19 +853,6 @@ mod create_tests {
             let (mut v, _) = view.accept().unwrap();
             let mut hello = [0u8; 28];
             d.read_exact(&mut hello).unwrap();
-            let req = |v: &mut TcpStream| {
-                let mut n = [0u8; 4];
-                v.read_exact(&mut n).unwrap();
-                let mut p = vec![0u8; u32::from_le_bytes(n) as usize - 4];
-                v.read_exact(&mut p).unwrap();
-                p[4]
-            };
-            let reply = |v: &mut TcpStream, cmd: u8, body: &[u8]| {
-                let mut p = packet(28 + body.len());
-                p[8] = cmd;
-                p[28..].copy_from_slice(body);
-                v.write_all(&p).unwrap();
-            };
             assert_eq!(req(&mut v), 0x26);
             let mut b = [0u8; 12];
             b[..4].copy_from_slice(&0xAD5DE04Fu32.to_le_bytes());
@@ -888,16 +926,16 @@ mod create_tests {
                 .with_cert_resolver(Arc::new(rustls::sign::SingleCertAndKey::from(certified))),
         );
         let key = super::super::tls::fingerprint(super::super::tls::cert_spki(CERT).unwrap());
+        // The server's end with its handshake run; none when the client never dialled.
         let accept = |l: &TcpListener| {
-            let (mut s, _) = l.accept().unwrap();
+            let mut s = accept_by(l)?;
             let mut c = ServerConnection::new(config.clone()).unwrap();
-            // The handshake runs here: the client opens data, then view, before it writes to either.
             while c.is_handshaking() {
                 if c.complete_io(&mut s).is_err() {
                     break;
                 }
             }
-            StreamOwned::new(c, s)
+            Some(StreamOwned::new(c, s))
         };
 
         let (view, data) = (TcpListener::bind("127.0.0.1:0").unwrap(), TcpListener::bind("127.0.0.1:0").unwrap());
@@ -905,25 +943,11 @@ mod create_tests {
         let hash = [0x33u8; 16];
         std::thread::scope(|scope| {
             let server = scope.spawn(|| {
-                let mut d = accept(&data);
-                let mut v = accept(&view);
+                let mut d = accept(&data).expect("no data connection");
+                let mut v = accept(&view).expect("no view connection");
                 let mut hello = [0u8; 28];
                 d.read_exact(&mut hello).unwrap();
                 assert_eq!((hello[0], &hello[12..]), (0xFE, &hash[..]));
-                let req = |v: &mut StreamOwned<ServerConnection, TcpStream>| {
-                    let mut n = [0u8; 4];
-                    v.read_exact(&mut n).unwrap();
-                    let mut p = vec![0u8; u32::from_le_bytes(n) as usize - 4];
-                    v.read_exact(&mut p).unwrap();
-                    p[4]
-                };
-                let reply = |v: &mut StreamOwned<ServerConnection, TcpStream>, cmd: u8, body: &[u8]| {
-                    let mut p = packet(28 + body.len());
-                    p[8] = cmd;
-                    p[28..].copy_from_slice(body);
-                    v.write_all(&p).unwrap();
-                    v.flush().unwrap();
-                };
                 assert_eq!(req(&mut v), 0x26);
                 reply(&mut v, 0x05, &[0u8; 12]);
                 assert_eq!(req(&mut v), 0x1F);
@@ -959,14 +983,12 @@ mod create_tests {
             server.join().unwrap();
         });
 
-        // Another key on the data port: refused, and the view port never dialled.
+        // Another key: refused, and nothing sent on either port (both are dialled at once).
         let other = [0u8; 32];
-        let refused = std::thread::scope(|scope| {
-            scope.spawn(|| {
-                let mut d = accept(&data);
-                let _ = d.read(&mut [0u8; 1]);
-            });
-            Lobby::connect(
+        let (refused, sent) = std::thread::scope(|scope| {
+            let server = scope
+                .spawn(|| [&data, &view].map(|l| accept(l).map_or(0, |mut s| s.read(&mut [0u8; 64]).unwrap_or(0))));
+            let e = Lobby::connect(
                 "127.0.0.1",
                 vp,
                 dp,
@@ -978,10 +1000,40 @@ mod create_tests {
                 Default::default(),
             )
             .err()
-            .unwrap()
+            .unwrap();
+            (e, server.join().unwrap())
         });
         let e = format!("{refused:#}");
         assert!(e.contains("another certificate than the login server"), "{e}");
+        assert_eq!(sent, [0, 0]);
+    }
+
+    /// A plain link to a lobby that hangs up unanswered, as a TLS one does: the error says it may be TLS.
+    #[test]
+    fn plain_link_dropped_names_tls() {
+        use std::net::TcpListener;
+        let (view, data) = (TcpListener::bind("127.0.0.1:0").unwrap(), TcpListener::bind("127.0.0.1:0").unwrap());
+        let (vp, dp) = (view.local_addr().unwrap().port(), data.local_addr().unwrap().port());
+        let server = std::thread::spawn(move || {
+            let (_d, mut v) = (accept_by(&data).unwrap(), accept_by(&view).unwrap());
+            req(&mut v);
+        });
+        let e = Lobby::connect(
+            "127.0.0.1",
+            vp,
+            dp,
+            Session::Lsb { account_id: 1, hash: [0; 16], lobby_key: None },
+            b"dll",
+            "30261006_0",
+            5,
+            0,
+            Default::default(),
+        )
+        .err()
+        .unwrap();
+        server.join().unwrap();
+        let e = format!("{e:#}");
+        assert!(e.contains("If it is TLS"), "{e}");
     }
 
     /// A lobby whose replies stop at the header: each one is an error, not a panic.

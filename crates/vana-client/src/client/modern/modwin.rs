@@ -15,6 +15,10 @@ pub enum Click {
     Row(usize, usize),
     /// Tabs or a choice turned by one, or to a page.
     Turn(usize, isize),
+    /// An open dropdown's item picked, hovered; a press off it.
+    DropPick(usize, usize),
+    DropHover(usize, usize),
+    DropClose(usize),
     TurnTo(usize, usize),
     Colour(usize, [u8; 3]),
     Alpha(usize, usize),
@@ -159,6 +163,9 @@ impl Click {
             Click::Row(i, r) => win.pick(i, r),
             Click::Turn(i, d) => win.turn_to(i, d, None),
             Click::TurnTo(i, k) => win.turn_to(i, 0, Some(k)),
+            Click::DropPick(i, k) => win.drop_pick(i, k),
+            Click::DropHover(i, k) => win.drop_hover(i, k),
+            Click::DropClose(i) => win.drop_close(i),
             Click::Colour(i, rgb) => win.set_colour(i, Some(rgb), None),
             Click::Alpha(i, s) => win.set_colour(i, None, Some(s)),
             Click::Sort(i, c) => win.sort(i, c),
@@ -172,17 +179,49 @@ impl Click {
     }
 }
 
+/// An animated window's state: 0 gone .. 1 open, eased, over ANIM seconds each way (reversing mid-way from where it
+/// is). One first seen open starts from 0.
+fn opened(ctx: &egui::Context, id: &str, open: bool) -> f32 {
+    const ANIM: f64 = 0.16;
+    let key = egui::Id::unique(("mod window open", id));
+    let now = ctx.input(|i| i.time);
+    let (was, since) =
+        ctx.data(|d| d.get_temp::<(bool, f64)>(key)).unwrap_or((open, if open { now } else { now - ANIM }));
+    let part = |since: f64| ((now - since) / ANIM).clamp(0.0, 1.0);
+    let since = if was == open {
+        since
+    } else {
+        let at = if was { part(since) } else { 1.0 - part(since) };
+        now - ANIM * if open { at } else { 1.0 - at }
+    };
+    ctx.data_mut(|d| d.insert_temp(key, (open, since)));
+    let done = part(since);
+    if done < 1.0 {
+        ctx.request_repaint();
+    }
+    let t = if open { done } else { 1.0 - done };
+    (1.0 - (1.0 - t).powi(3)) as f32
+}
+
 pub fn draw(p: &mut Panels, w: &mut World) {
     // Edge windows are the edge layer's (extras.rs).
     // The focus panel goes with the target window when an event takes it down (hud.rs).
     let target_down = !super::super::event::keeps_target(w);
-    for (mod_id, win) in w.lua.open_windows_where(|x| !x.edge) {
+    for (mod_id, win) in w.lua.windows_where(|x| !x.edge && (x.open || x.animate)) {
         // One standing in for a built-in panel takes its id: its place, docking, /uimodes and hiding.
         let id = win.panel.clone().unwrap_or_else(|| format!("mod:{mod_id}:{}", win.id));
         if id == "focus" && target_down {
             continue;
         }
-        let (clicks, shown) = panel(p, Some(&*w), &id, &win);
+        let t = if win.animate { opened(p.ctx, &id, win.open) } else { 1.0 };
+        if !win.open && t <= 0.0 {
+            continue;
+        }
+        let (clicks, shown) = panel(p, Some(&*w), &id, &win, t);
+        // Folding away after it closed: drawn only.
+        if !win.open {
+            continue;
+        }
         // A click outside a popup closes it.
         if let Some(r) = shown
             && win.popup
@@ -196,19 +235,21 @@ pub fn draw(p: &mut Panels, w: &mut World) {
     }
     // The voice chat's window and its list of who is talking (client/voicechat.rs).
     for (which, win) in super::super::voicechat::windows(w) {
-        let (clicks, _) = panel(p, None, if which == 0 { "voice" } else { "voice talk" }, &win);
+        let (clicks, _) = panel(p, None, if which == 0 { "voice" } else { "voice talk" }, &win, 1.0);
         for c in clicks {
             super::super::voicechat::click(w, which, c);
         }
     }
 }
 
-/// One window as a panel: the clicks on it and its rect.
+/// One window as a panel, `t` of the way open (an animated one: faded, and grown up from its bottom edge): the clicks
+/// on it and its rect.
 fn panel(
     p: &mut Panels,
     world: Option<&super::super::World>,
     pid: &str,
     win: &model::Window,
+    t: f32,
 ) -> (Vec<Click>, Option<Rect>) {
     let m = p.m;
     let (ctx, gu) = (p.ctx, p.gu);
@@ -223,14 +264,27 @@ fn panel(
         let at = if let Some((ax, ay)) = win.anchor {
             let k = ctx.pixels_per_point();
             let (p, screen) = (pos2(ax / k, ay / k), ctx.content_rect());
-            let y = if p.y + last_h > screen.max.y { p.y - last_h } else { p.y };
+            // Above the anchor by its whole height (drawn, not the part showing while it grows).
+            let full = m.sizes.borrow().get(pid).map_or(last_h, |s| s.y);
+            let y = if win.above {
+                if p.y - full < screen.min.y { p.y } else { p.y - full }
+            } else if p.y + last_h > screen.max.y {
+                p.y - last_h
+            } else {
+                p.y
+            };
             Some(pos2(p.x.min(screen.max.x - width).max(screen.min.x), y.min(screen.max.y - last_h).max(screen.min.y)))
         } else if win.modal {
             Some(ctx.content_rect().center() - vec2(width / 2.0, last_h / 2.0))
         } else {
             None
         };
-        let shown = p.show(pid, Show { title, size: vec2(width, 0.0), frame, at, ..Default::default() }, |ui, _| {
+        let (alpha, fold) = if t < 1.0 { (t, t) } else { (1.0, 1.0) };
+        let show = Show { title, size: vec2(width, 0.0), frame, at, alpha, fold, ..Default::default() };
+        let shown = p.show(pid, show, |ui, _| {
+            if t < 1.0 {
+                ui.multiply_opacity(t);
+            }
             body(ui, m, ctx, gu, world, pid, win, &mut clicks)
         });
         if let Some(r) = shown
@@ -453,6 +507,31 @@ pub(super) fn body(
                 });
                 if ui.interact(field, ui.scope_id().with(("mod input", &win.id, i)), Sense::click()).clicked() {
                     clicks.push(Click::Button(i, 0));
+                }
+            }
+            // As the login form's combo fields: the arrow at the right end, the open list under it over the window.
+            Elem::Choice { label, items, at, drop: true, .. } => {
+                let v = items.get(*at).map_or("", String::as_str);
+                let (field, _) = kit::setting(ui, m, label, here, false, here, |ui| {
+                    let r = kit::field(ui, m, v, None, ui.available_width(), small.clone(), None);
+                    let a = Rect::from_min_max(pos2(r.max.x - 28.0, r.min.y), r.max);
+                    kit::combo_arrow(ui.painter(), m, a, m.theme.small);
+                    r
+                });
+                if ui.interact(field, ui.scope_id().with(("mod dropdown", &win.id, i)), Sense::click()).clicked() {
+                    clicks.push(Click::Button(i, 0));
+                }
+                if win.drop_open() == Some(i) {
+                    let id = egui::Id::unique("mod dropdown list").with((pid, &win.id, i));
+                    let out = kit::combo_list(ctx, m, id, field, items, win.drop_at, small.clone());
+                    if let Some(k) = out.picked {
+                        clicks.push(Click::DropPick(i, k));
+                    } else if let Some(k) = out.hovered.filter(|k| *k != win.drop_at) {
+                        clicks.push(Click::DropHover(i, k));
+                    }
+                    if out.away {
+                        clicks.push(Click::DropClose(i));
+                    }
                 }
             }
             Elem::Choice { label, items, at, .. } => {

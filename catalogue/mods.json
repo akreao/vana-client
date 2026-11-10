@@ -1266,32 +1266,38 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "ab02e87a4fdd06d21b97baa49a7fb268f6f8f5635f07cdf2decb74e380a960aa",
+          "sha256": "7ad3eaf2902e3ec7ed83185bef0a68ed31b5b35629e861b8d2cb551879d57f7c",
           "size": 1985,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/hotbar/mod.toml"
         },
         {
           "path": "src/actions.lua",
-          "sha256": "4b26eea5ff6a4846ca3ef391fc24a94aa21282646752b7741db3780f78d65239",
-          "size": 5542,
+          "sha256": "60149ce35baf448f87fae13c05000a62f8d28d7af6097c1e4ae9dc4c66c49da7",
+          "size": 6171,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/hotbar/src/actions.lua"
         },
         {
           "path": "src/bar.lua",
-          "sha256": "13f3e84c789dcad1d1e9973f35999b108aae6af92720d88dc20a9d2a0c68000d",
-          "size": 19195,
+          "sha256": "cc154a0a3dde18f946a629d6c404e7d6b80b18ca177b1732c86469808df4e461",
+          "size": 21867,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/hotbar/src/bar.lua"
         },
         {
           "path": "src/builder.lua",
-          "sha256": "8a57ddfeb7196f49a097ef49002cc1a77a8790f447778e8b5a1d33da51db5699",
-          "size": 10199,
+          "sha256": "053d0640b80d5e3a228d18051502487f4d80d474fa1c90e985ad1f7994533de7",
+          "size": 12403,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/hotbar/src/builder.lua"
         },
         {
+          "path": "src/chooser.lua",
+          "sha256": "d49f9c60c322aae965e79fb5eef46085e2a7d539fc20ae21694df253c5b4fa96",
+          "size": 3164,
+          "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/hotbar/src/chooser.lua"
+        },
+        {
           "path": "src/data.lua",
-          "sha256": "15433e2e22a00047d6c414cc045908034811a6a040dd4dd9ca0a2e978408a297",
-          "size": 15002,
+          "sha256": "707564a71a2e1cdcf22dae366d4ff4abc4edc20188383a798b9157099de863f1",
+          "size": 18008,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/hotbar/src/data.lua"
         },
         {
@@ -1314,8 +1320,8 @@
         },
         {
           "path": "src/manager.lua",
-          "sha256": "a167433fa9232ab9f63b5ce78dfae0d1da6d65c01ab265e7d206ac59f6c8a034",
-          "size": 24816,
+          "sha256": "8e7ba840f734a123c3be73bf5b3e9b881fdb556796b96e6334ddb29af697c7ce",
+          "size": 33267,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/hotbar/src/manager.lua"
         },
         {
@@ -1326,8 +1332,8 @@
         },
         {
           "path": "src/palette.lua",
-          "sha256": "57f30a2e2321141426f9a4a790e2823a1496c5f9cbb0ae117b2c4d58cbddbf77",
-          "size": 6950,
+          "sha256": "2243da783149b7723accf8654c94dadcdae1da6422edfb2aaed1e9d2f64167be",
+          "size": 7151,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/hotbar/src/palette.lua"
         },
         {
@@ -1346,7 +1352,7 @@
       "id": "hotbar",
       "kind": "lua",
       "name": "Hotbars",
-      "version": "1.7.4"
+      "version": "1.8.1"
     },
     {
       "authors": [],

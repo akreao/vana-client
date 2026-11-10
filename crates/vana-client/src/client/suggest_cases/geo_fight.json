@@ -1,0 +1,199 @@
+{
+  "rule": "geomancer",
+  "note": "GEO 99 with a WAR and a SAM, a Goblin targeted, no Indicolure and no luopan: Indi-Fury, Blaze of Glory, Geo-Frailty.",
+  "facts": {
+    "party": [
+      {
+        "name": "Rune",
+        "me": true,
+        "here": true,
+        "hp": 1200,
+        "hp_max": 1200,
+        "job": 21,
+        "effects": []
+      },
+      {
+        "name": "Raven",
+        "me": false,
+        "here": true,
+        "hp": 1500,
+        "hp_max": 1500,
+        "job": 1,
+        "effects": []
+      },
+      {
+        "name": "Koru",
+        "me": false,
+        "here": true,
+        "hp": 1500,
+        "hp_max": 1500,
+        "job": 12,
+        "effects": []
+      }
+    ],
+    "main": [
+      21,
+      99
+    ],
+    "sub": [
+      4,
+      49
+    ],
+    "mpp": 100,
+    "pet": null,
+    "own": [],
+    "tp": 0,
+    "engaged": false,
+    "spells": [
+      {
+        "id": 768,
+        "name": "Indi-Regen",
+        "skill": 0,
+        "element": 0,
+        "mp": 0,
+        "targets": 0,
+        "area": false
+      },
+      {
+        "id": 779,
+        "name": "Indi-Fury",
+        "skill": 0,
+        "element": 0,
+        "mp": 0,
+        "targets": 0,
+        "area": false
+      },
+      {
+        "id": 781,
+        "name": "Indi-Acumen",
+        "skill": 0,
+        "element": 0,
+        "mp": 0,
+        "targets": 0,
+        "area": false
+      },
+      {
+        "id": 818,
+        "name": "Geo-Frailty",
+        "skill": 0,
+        "element": 0,
+        "mp": 0,
+        "targets": 0,
+        "area": false
+      },
+      {
+        "id": 820,
+        "name": "Geo-Malaise",
+        "skill": 0,
+        "element": 0,
+        "mp": 0,
+        "targets": 0,
+        "area": false
+      }
+    ],
+    "abilities": [
+      {
+        "index": 857,
+        "name": "Full Circle",
+        "props": [
+          0,
+          0,
+          0
+        ],
+        "power": 0
+      },
+      {
+        "index": 859,
+        "name": "Ecliptic Attrition",
+        "props": [
+          0,
+          0,
+          0
+        ],
+        "power": 0
+      },
+      {
+        "index": 861,
+        "name": "Life Cycle",
+        "props": [
+          0,
+          0,
+          0
+        ],
+        "power": 0
+      },
+      {
+        "index": 862,
+        "name": "Blaze of Glory",
+        "props": [
+          0,
+          0,
+          0
+        ],
+        "power": 0
+      },
+      {
+        "index": 863,
+        "name": "Dematerialize",
+        "props": [
+          0,
+          0,
+          0
+        ],
+        "power": 0
+      },
+      {
+        "index": 867,
+        "name": "Radial Arcana",
+        "props": [
+          0,
+          0,
+          0
+        ],
+        "power": 0
+      }
+    ],
+    "weapon_skills": [],
+    "target": {
+      "name": "Goblin",
+      "hpp": 90,
+      "ours": [],
+      "hitting": "Raven",
+      "hitting_me": false,
+      "ranks": null
+    },
+    "resonance": null,
+    "partners": [],
+    "weather_element": null,
+    "day_element": null
+  },
+  "expect": [
+    {
+      "action": {
+        "Spell": 779
+      },
+      "target": null,
+      "reason": "No Indicolure on you: Indi-Fury, for the melee round you.",
+      "group": [],
+      "label": null
+    },
+    {
+      "action": {
+        "Ability": 862
+      },
+      "target": null,
+      "reason": "The next luopan (Geo-Frailty) stronger.",
+      "group": [],
+      "label": null
+    },
+    {
+      "action": {
+        "Spell": 818
+      },
+      "target": null,
+      "reason": "No luopan out: Geo-Frailty on the Goblin, for your melee.",
+      "group": [],
+      "label": null
+    }
+  ]
+}
