@@ -711,14 +711,16 @@ fn update(@builtin(global_invocation_id) gid: vec3<u32>) {
         let x3 = mat3x3<f32>(xm[0].xyz, xm[1].xyz, xm[2].xyz) * base;
         mv = mat4x4<f32>(vec4<f32>(x3[0], 0.0), vec4<f32>(x3[1], 0.0), vec4<f32>(x3[2], 0.0), vec4<f32>(e, 1.0));
     }
-    // Sort key +0x12c (FUN_100440d0).
+    // Sort key +0x12c (FUN_100440d0; asm 100450cf..1004516a).
     let bias = ef(b, E_BIAS);
     var key = bias;
     if ((flags & 0x400000u) == 0u) {
         key = bias - e.z;
         if (screen && abs(bias) > 0.03) { key = (1.0 - bias) - e.z; }
-        if ((flags & 0x8000000u) != 0u) { key = key + 400.0; }
     }
+    // Flag 0x8000000 then overwrites the key with bias - z + 400, with or without 0x400000: Port San d'Oria's dark
+    // underwater sheet (`t_sa/effe/wate/down`, flags 0x08401000) draws first, under the water colour, not over it.
+    if ((flags & 0x8000000u) != 0u) { key = bias - e.z + 400.0; }
     // Projection depth bias (FUN_10045230 step 4).
     var pbias = 0.0;
     if (bias != 0.0 && (flags & 0x8400000u) == 0u) {
