@@ -1,0 +1,271 @@
+{
+  "rule": "rune_fencer",
+  "note": "Three Unda up, the Bomb on us, alone: Vallation (Valiance is for a party), Pflug and Battuta for the fire the runes resist.",
+  "facts": {
+    "party": [
+      {
+        "name": "Rune",
+        "me": true,
+        "here": true,
+        "hp": 2000,
+        "hp_max": 2000,
+        "job": 22,
+        "effects": []
+      }
+    ],
+    "main": [
+      22,
+      99
+    ],
+    "sub": [
+      0,
+      0
+    ],
+    "mpp": 100,
+    "pet": null,
+    "own": [
+      [
+        528,
+        250.0
+      ],
+      [
+        528,
+        260.0
+      ],
+      [
+        528,
+        280.0
+      ],
+      [
+        532,
+        100.0
+      ]
+    ],
+    "tp": 0,
+    "engaged": true,
+    "spells": [],
+    "abilities": [
+      {
+        "index": 870,
+        "name": "Ignis",
+        "props": [
+          0,
+          0,
+          0
+        ],
+        "power": 0
+      },
+      {
+        "index": 871,
+        "name": "Gelus",
+        "props": [
+          0,
+          0,
+          0
+        ],
+        "power": 0
+      },
+      {
+        "index": 872,
+        "name": "Flabra",
+        "props": [
+          0,
+          0,
+          0
+        ],
+        "power": 0
+      },
+      {
+        "index": 873,
+        "name": "Tellus",
+        "props": [
+          0,
+          0,
+          0
+        ],
+        "power": 0
+      },
+      {
+        "index": 874,
+        "name": "Sulpor",
+        "props": [
+          0,
+          0,
+          0
+        ],
+        "power": 0
+      },
+      {
+        "index": 875,
+        "name": "Unda",
+        "props": [
+          0,
+          0,
+          0
+        ],
+        "power": 0
+      },
+      {
+        "index": 876,
+        "name": "Lux",
+        "props": [
+          0,
+          0,
+          0
+        ],
+        "power": 0
+      },
+      {
+        "index": 877,
+        "name": "Tenebrae",
+        "props": [
+          0,
+          0,
+          0
+        ],
+        "power": 0
+      },
+      {
+        "index": 878,
+        "name": "Vallation",
+        "props": [
+          0,
+          0,
+          0
+        ],
+        "power": 0
+      },
+      {
+        "index": 879,
+        "name": "Swordplay",
+        "props": [
+          0,
+          0,
+          0
+        ],
+        "power": 0
+      },
+      {
+        "index": 880,
+        "name": "Lunge",
+        "props": [
+          0,
+          0,
+          0
+        ],
+        "power": 0
+      },
+      {
+        "index": 881,
+        "name": "Pflug",
+        "props": [
+          0,
+          0,
+          0
+        ],
+        "power": 0
+      },
+      {
+        "index": 883,
+        "name": "Valiance",
+        "props": [
+          0,
+          0,
+          0
+        ],
+        "power": 0
+      },
+      {
+        "index": 884,
+        "name": "Gambit",
+        "props": [
+          0,
+          0,
+          0
+        ],
+        "power": 0
+      },
+      {
+        "index": 885,
+        "name": "Liement",
+        "props": [
+          0,
+          0,
+          0
+        ],
+        "power": 0
+      },
+      {
+        "index": 888,
+        "name": "Battuta",
+        "props": [
+          0,
+          0,
+          0
+        ],
+        "power": 0
+      },
+      {
+        "index": 856,
+        "name": "Swipe",
+        "props": [
+          0,
+          0,
+          0
+        ],
+        "power": 0
+      }
+    ],
+    "weapon_skills": [],
+    "target": {
+      "name": "Bomb",
+      "hpp": 90,
+      "ours": [],
+      "hitting": null,
+      "hitting_me": true,
+      "ranks": [
+        3,
+        -1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "resonance": null,
+    "partners": [],
+    "weather_element": null,
+    "day_element": null
+  },
+  "expect": [
+    {
+      "action": {
+        "Ability": 878
+      },
+      "target": null,
+      "reason": "Less fire damage you take.",
+      "group": [],
+      "label": null
+    },
+    {
+      "action": {
+        "Ability": 881
+      },
+      "target": null,
+      "reason": "Fewer fire ailments.",
+      "group": [],
+      "label": null
+    },
+    {
+      "action": {
+        "Ability": 888
+      },
+      "target": null,
+      "reason": "Parry the Bomb more.",
+      "group": [],
+      "label": null
+    }
+  ]
+}

@@ -40,7 +40,8 @@ pub fn pick_action(w: &mut World, action: Action) {
         };
         magic::cat_rows(c.menu).iter().position(|&(_, cat)| match cat {
             Cat::Magic(t, _) => kind == Kind::Magic && t == ty,
-            Cat::Ability(t) => kind == Kind::Ability && (t == ty || (t == 3 && ty == 3)),
+            // A sub-list's member (a rune, a roll ...) through its parent's list and its opener there.
+            Cat::Ability(t) => kind == Kind::Ability && (t == ty || t == magic::ability_parent(ty)),
             _ => false,
         })
     });
@@ -900,6 +901,14 @@ pub fn pick(w: &mut World, h: &Hit, gu: Option<&GameUi>) {
     }
     if let (Some(k), Some(c)) = (h.cat, w.cats) {
         w.cats = Some(magic::Cats { sel: k, ..c });
+        magic::key(w, egui::Key::Enter);
+    }
+    // Not in the list: a sub-list's member, its opener's row opens the sub-list first.
+    let rows =
+        w.ability.as_ref().filter(|x| h.kind == Kind::Ability && !x.rows.contains(&h.id)).map(|x| x.rows.clone());
+    if let Some(op) = rows.and_then(|r| magic::opener_row(w, &r, h.id))
+        && w.ability.as_mut().is_some_and(|win| magic::focus_row(win, op))
+    {
         magic::key(w, egui::Key::Enter);
     }
     let win = if w.ability.is_some() { w.ability.as_mut() } else { w.magic.as_mut() };

@@ -2,7 +2,9 @@
 --
 --   Library  a main job's macros as tiles, dragged onto the bars: new, edit, copy, delete, and the palette.
 --   Builder  one macro: an action of a type (spell, job ability, weapon skill, pet command, item, equipment, system
---            command) and its target build the first line; lines typed under it run after it. A "Macro" is typed only.
+--            command) and its target build the first line (or the player's own line in its place); lines typed under
+--            it run after it. A "Macro" is typed only. A row that opens a list in the game's menu (Rune Enchantment,
+--            Phantom Roll...) opens that list here.
 --   Config   the hotkey modifier of each bar, the key row, and a slot's own key (changes apply at once).
 
 local data = require("src.data")
@@ -25,11 +27,15 @@ local S = { mj = nil }
 local defined = false
 
 -- The library rows as shown (ids, in order) and the builder's state: the entry edited (nil: a new one), the action
--- kind (nil: a macro of typed lines), the action picked ({name}), its target, the search results, and the slot it was
--- opened from ({bar, slot, main, sub}: the saved macro goes on it), if any.
+-- kind (nil: a macro of typed lines), the action picked ({name}), its target, the player's own line in place of the
+-- built one (nil: the built one), the search results, the opener whose list is shown ({list, name}), and the slot it
+-- was opened from ({bar, slot, main, sub}: the saved macro goes on it), if any.
 local lib_ids = {}
 local open_builder
-local E = { id = nil, kind = "ma", pick = nil, target = "t", results = {}, auto_name = nil, slot = nil }
+-- `group` is the members while the macro is a group ({name, action} each), else nil.
+local E = { id = nil, kind = "ma", pick = nil, target = "t", line = nil, results = {}, opened = nil, auto_name = nil,
+  slot = nil, group = nil }
+local MAX_MEMBERS = 12
 -- The Config tab's slot whose own key is set there.
 local K = { bar = 1, slot = 1 }
 
@@ -49,6 +55,11 @@ end
 -- ---------------------------------------------------------------------------
 
 local function does_text(entry)
+  if type(entry.group) == "table" then
+    local names = {}
+    for k, m in ipairs(entry.group) do names[k] = m.name or "?" end
+    return ("a group of %d: %s"):format(#names, table.concat(names, ", "))
+  end
   local first = data.command(entry.action)
   local n = #(entry.lines or {})
   if first then
@@ -165,8 +176,13 @@ local function refresh_library(select_id)
   local still = false
   for i, it in ipairs(data.library(S.mj)) do
     lib_ids[i] = it.id
+    local macro = data.macro_of(S.mj, it.id)
     local lines = data.entry_lines(it.entry)
-    tiles[i] = { id = it.id, entry = it.entry, lines = lines, act = actions.of({ lines = lines }),
+    if macro and macro.group then
+      lines = {}
+      for k, m in ipairs(macro.group) do lines[k] = ("%d. %s"):format(k, m.lines[1] or m.name) end
+    end
+    tiles[i] = { id = it.id, entry = it.entry, lines = lines, act = macro and actions.of(macro),
       label = data.display_label(it.entry) }
     if it.id == L.sel then still = true end
   end
@@ -264,10 +280,18 @@ local function type_def()
   return builder.TYPES[builder.type_index(E.kind)]
 end
 
+-- The line the picked action builds (nil: none picked).
+local function built_line()
+  return E.kind and E.pick and data.command({ kind = E.kind, name = E.pick.name, target = E.target }) or nil
+end
+
 local function builder_entry()
+  if E.group then
+    return { name = ui.get(WIN, "name").text, label = ui.get(WIN, "label").text, group = E.group }
+  end
   local action = nil
   if E.kind and E.pick then
-    action = { kind = E.kind, name = E.pick.name, target = E.target }
+    action = { kind = E.kind, name = E.pick.name, target = E.target, line = E.line }
   end
   return {
     name = ui.get(WIN, "name").text,
@@ -278,10 +302,42 @@ local function builder_entry()
 end
 
 local function refresh_preview()
+  if E.group then
+    ui.update(WIN, "preview", { text = "Runs: the member picked from its list (Up / Down, Enter).", dim = false })
+    return
+  end
   local lines = data.entry_lines(builder_entry())
   ui.update(WIN, "preview", {
     text = #lines == 0 and "Runs: (nothing yet)" or ("Runs: " .. table.concat(lines, "  |  ")),
     dim = #lines == 0,
+  })
+end
+
+-- The target menu's choices for the kind and pick, with the target held when it is none of them.
+local function target_choices()
+  if not E.kind then return { { "", "(not used)" } } end
+  local choices = {}
+  for i, c in ipairs(builder.targets_for(E.kind, E.pick and E.pick.name)) do choices[i] = c end
+  local held = false
+  for _, c in ipairs(choices) do
+    if c[1] == E.target then held = true end
+  end
+  if not held and data.trim(E.target) ~= "" then
+    choices[#choices + 1] = { E.target, builder.target_label(E.kind, E.target, E.pick and E.pick.name) }
+  end
+  return choices
+end
+
+-- The line field shows the player's own line, else the one the pick builds.
+local function refresh_line()
+  if E.group then
+    ui.update(WIN, "line", { label = "Line it builds (none: each member builds its own)", text = "" })
+    return
+  end
+  ui.update(WIN, "line", {
+    label = not E.kind and "Line it builds (none: a macro's lines are typed below)"
+      or E.line and "Its own line (clear it for the built one)" or "Line it builds (type your own to change it)",
+    text = E.line or built_line() or "",
   })
 end
 
@@ -295,13 +351,23 @@ local function refresh_choice()
   else
     text = ("%s: none yet. Search, then pick one from the list."):format(t.label)
   end
-  ui.update(WIN, "picked", { text = text, dim = not E.kind or not E.pick })
-  ui.update(WIN, "btype", { items = { t.label } })
-  ui.update(WIN, "target", {
-    label = E.kind == "equip" and "Equipment slot" or "Target",
-    items = { E.kind and builder.target_label(E.kind, E.target, E.pick and E.pick.name) or "(not used)" },
-  })
+  if E.group then
+    local names = {}
+    for k, m in ipairs(E.group) do names[k] = m.name end
+    text = #names == 0 and "Group: no members yet. Search, then click to add."
+      or ("Group of %d: %s."):format(#names, table.concat(names, ", "))
+  end
+  ui.update(WIN, "picked", { text = text, dim = not E.group and (not E.kind or not E.pick) })
+  ui.update(WIN, "grp", { items = { E.group and "One Action Again" or "Make a Group of These" } })
+  ui.update(WIN, "btype", { at = builder.type_index(E.kind) })
+  local labels, at = {}, 1
+  for i, c in ipairs(target_choices()) do
+    labels[i] = c[2]
+    if c[1] == (E.target or "") then at = i end
+  end
+  ui.update(WIN, "target", { label = E.kind == "equip" and "Equipment slot" or "Target", items = labels, at = at })
   ui.update(WIN, "extra", { label = E.kind and "Lines after it (| between lines, optional)" or "Lines (| between lines)" })
+  refresh_line()
 end
 
 local function refresh_results(query)
@@ -314,17 +380,44 @@ local function refresh_results(query)
     ui.update(WIN, "fcount", { text = "" })
     return
   end
-  local found, more = builder.find(E.kind, query)
-  E.results = found
+  -- A group with no search shows its members (a click takes one out).
+  if E.group and data.trim(query) == "" and not E.opened then
+    E.results = {}
+    local rows = {}
+    for k, m in ipairs(E.group) do
+      local a = actions.of({ lines = { data.command(m.action) or "" }, action = m.action })
+      E.results[k] = { member = k }
+      rows[k] = { m.name, "", "", icon = a and { kind = a.kind, id = a.id } or nil }
+    end
+    ui.update(WIN, "found", { rows = rows, at = 1 })
+    ui.update(WIN, "fcount", { text = #rows == 0 and "No members yet: search, then click one to add it."
+      or "Its members: click one to take it out. Search to add more." })
+    return
+  end
+  local found, more = builder.find(E.kind, query, E.opened and E.opened.list)
+  -- An opener's list starts with the row back out of it.
+  E.results = {}
   local rows = {}
-  for i, e in ipairs(found) do
-    rows[i] = { e.name, e.cells[1] or "", e.cells[2] or "", icon = e.icon }
+  if E.opened then
+    E.results[1] = { back = true }
+    rows[1] = { "\u{2039} Back", "", "", colour = { 200, 180, 130 } }
+  end
+  for _, e in ipairs(found) do
+    E.results[#E.results + 1] = e
+    local name = e.list and (e.name .. "  \u{203a}") or e.name
+    rows[#rows + 1] = { name, e.cells[1] or "", e.cells[2] or "", icon = e.icon,
+      colour = e.list and { 232, 210, 156 } or nil }
   end
   ui.update(WIN, "found", { rows = rows, at = 1 })
-  ui.update(WIN, "fcount", {
-    text = #found == 0 and "Nothing matches." or (more and ("First %d matches."):format(#found)
-      or ("%d found."):format(#found)),
-  })
+  local count = #found == 0 and "Nothing matches." or (more and ("First %d matches."):format(#found)
+    or ("%d found."):format(#found))
+  if E.opened then
+    count = ("%s: %s Back returns to the list."):format(E.opened.name, count)
+  end
+  if E.group then
+    count = count .. " Click one to add it to the group."
+  end
+  ui.update(WIN, "fcount", { text = count })
 end
 
 local function builder_where()
@@ -338,7 +431,8 @@ end
 
 local function set_kind(kind)
   if kind == E.kind then return end
-  E.kind, E.pick = kind, nil
+  -- A group keeps its members: another type adds other kinds to it.
+  E.kind, E.pick, E.line, E.opened = kind, nil, nil, nil
   E.target = kind == "equip" and "main" or kind == "cmd" and "" or "t"
   refresh_results(ui.get(WIN, "q").text)
   refresh_choice()
@@ -355,7 +449,7 @@ function open_builder(id, slot, macro)
   local entry = id and data.get_entry(S.mj, id) or nil
   E.id = entry and tostring(id) or nil
   E.slot = slot
-  E.kind, E.pick, E.target, E.auto_name = "ma", nil, "t", nil
+  E.kind, E.pick, E.target, E.auto_name, E.line, E.opened, E.group = "ma", nil, "t", nil, nil, nil, nil
   local name, label, extra = "", "", ""
   if macro then
     entry = { name = macro.name, label = macro.label, lines = macro.lines }
@@ -363,10 +457,20 @@ function open_builder(id, slot, macro)
   if entry then
     name, label = entry.name or "", entry.label or ""
     extra = data.join_lines(entry.lines)
-    if entry.action then
+    if type(entry.group) == "table" then
+      E.group = {}
+      for k, m in ipairs(entry.group) do
+        E.group[k] = { name = m.name, action = m.action and { kind = m.action.kind, name = m.action.name,
+          target = m.action.target, line = m.action.line }, lines = m.lines }
+      end
+      local first = E.group[1] and E.group[1].action
+      E.kind = first and first.kind or "ja"
+      E.target = first and first.target or "t"
+    elseif entry.action then
       E.kind = entry.action.kind
       E.pick = { name = entry.action.name }
       E.target = entry.action.target
+      E.line = entry.action.line
     else
       E.kind = nil
     end
@@ -382,48 +486,120 @@ function open_builder(id, slot, macro)
   ui.update(WIN, "tabs", { at = TAB_BUILD })
 end
 
+-- Into an opener's list (`e`), or back out of it (nil); the search starts over.
+local function open_list(e)
+  E.opened = e and { list = e.list, name = e.name } or nil
+  ui.update(WIN, "q", { text = "" })
+  refresh_results("")
+end
+
+-- A group's member from a result: its action on the result's usual target.
+local function member_of(e)
+  return { name = e.title or e.name, action = { kind = E.kind, name = e.name, target = e.target or "" } }
+end
+
 local function pick(index)
   local e = E.results[index]
   if not e then return end
+  if e.member then
+    table.remove(E.group, e.member)
+    refresh_results("")
+    refresh_choice()
+    return
+  end
+  if e.back or e.list then
+    open_list(not e.back and e or nil)
+    return
+  end
+  if E.group then
+    for _, m in ipairs(E.group) do
+      if m.action and m.action.kind == E.kind and m.action.name == e.name then
+        say(e.name .. " is in the group already.")
+        return
+      end
+    end
+    if #E.group >= MAX_MEMBERS then
+      say(("a group holds %d at most."):format(MAX_MEMBERS))
+      return
+    end
+    E.group[#E.group + 1] = member_of(e)
+    refresh_choice()
+    say(("%s added (%d in the group)."):format(e.name, #E.group))
+    return
+  end
   local name = data.trim(ui.get(WIN, "name").text)
   -- The name follows the pick until the player types their own.
   if name == "" or name == E.auto_name then
     ui.update(WIN, "name", { text = e.title or e.name })
     E.auto_name = e.title or e.name
   end
-  -- A new pick starts on its usual target; picking the same again keeps the one chosen.
+  -- A new pick starts on its usual target and the line it builds; picking the same again keeps them.
   if not E.pick or E.pick.name ~= e.name then
-    E.target = e.target
+    E.target, E.line = e.target, nil
   end
   E.pick = { name = e.name }
   refresh_choice()
   refresh_preview()
 end
 
-local function choose_type()
-  ui.menu(builder.TYPE_LABELS, function(i)
-    if i then set_kind(builder.TYPES[i].kind) end
-  end)
+local function set_target(index)
+  local c = target_choices()[index]
+  if not c or not E.kind then return end
+  E.target = c[1]
+  -- A group's members take it, but those that can take only you stay on <me>.
+  for _, m in ipairs(E.group or {}) do
+    if m.action and m.action.kind ~= "equip" and m.action.kind ~= "cmd"
+      and not builder.self_only(m.action.kind, m.action.name) then
+      m.action.target = c[1]
+    end
+  end
+  refresh_choice()
+  refresh_preview()
 end
 
-local function choose_target()
-  if not E.kind then
-    say("a macro's lines name their own targets.")
-    return
-  end
-  local choices = builder.targets_for(E.kind, E.pick and E.pick.name)
-  if choices[1][1] == "" and #choices == 1 then
-    say("that command takes no target.")
-    return
-  end
-  local labels = {}
-  for i, t in ipairs(choices) do labels[i] = t[2] end
-  ui.menu(labels, function(i)
-    if not i then return end
-    E.target = choices[i][1]
+-- The results shown as one group slot (an opener's list, a search such as "cure"), or back to one action.
+local function toggle_group()
+  if E.group then
+    E.group = nil
+    refresh_results(ui.get(WIN, "q").text)
     refresh_choice()
     refresh_preview()
-  end)
+    return
+  end
+  if not E.kind or E.kind == "cmd" then
+    say("search spells, abilities or items first, then make a group of what is found.")
+    return
+  end
+  local members = {}
+  for _, e in ipairs(E.results) do
+    if not e.back and not e.list and not e.member and #members < MAX_MEMBERS then members[#members + 1] = member_of(e) end
+  end
+  if #members == 0 then
+    say("nothing to group: search first, or open a list such as Rune Enchantment.")
+    return
+  end
+  E.group, E.pick, E.line = members, nil, nil
+  E.target = members[1].action.target
+  local name = data.trim(ui.get(WIN, "name").text)
+  if name == "" or name == E.auto_name then
+    local q = data.trim(ui.get(WIN, "q").text)
+    local auto = E.opened and E.opened.name or (q ~= "" and (q:sub(1, 1):upper() .. q:sub(2))) or members[1].name
+    ui.update(WIN, "name", { text = auto })
+    E.auto_name = auto
+  end
+  E.opened = nil
+  ui.update(WIN, "q", { text = "" })
+  refresh_results("")
+  refresh_choice()
+  refresh_preview()
+end
+
+-- The line field typed in: the player's own line, or (cleared, or the built one again) none.
+local function line_edited(text)
+  if not E.kind then return end
+  text = data.trim(text)
+  E.line = (text ~= "" and text ~= built_line()) and text or nil
+  refresh_preview()
 end
 
 local function save_builder()
@@ -431,15 +607,21 @@ local function save_builder()
     return
   end
   local entry = builder_entry()
-  if E.kind and not entry.action then
+  if entry.group then
+    if #entry.group == 0 then
+      say("the group has no members: search, then click to add.")
+      return
+    end
+    if data.trim(entry.name) == "" then entry.name = entry.group[1].name end
+  elseif E.kind and not entry.action then
     say("pick one from the list first.")
     return
   end
-  if not entry.action and #entry.lines == 0 then
+  if not entry.group and not entry.action and #entry.lines == 0 then
     say("add at least one line to the macro.")
     return
   end
-  if data.trim(entry.name) == "" then
+  if data.trim(entry.name) == "" and not entry.group then
     local c = entry.action and entry.action.kind == "cmd" and builder.command(entry.action.name)
     entry.name = c and c.title or entry.action and entry.action.name or entry.lines[1]:sub(1, 24)
   end
@@ -498,8 +680,9 @@ end
 -- The window
 -- ---------------------------------------------------------------------------
 
-local function define()
-  ui.window(WIN, {
+-- The window's spec with Type and Target as `drop` elements: "dropdown", or "choice" on a client without dropdowns.
+local function spec(drop)
+  return {
     title = "Hotbars",
     width = 520,
     help = "Drag a macro onto a slot of the bars. Right-click a slot to clear it.",
@@ -516,15 +699,21 @@ local function define()
 
       -- Builder
       { type = "text", id = "bwhere", text = "", page = TAB_BUILD },
-      { type = "buttons", id = "btype", label = "Type", items = { "Spell" }, page = TAB_BUILD,
+      { type = drop, id = "btype", label = "Type", items = builder.TYPE_LABELS, at = 1, page = TAB_BUILD,
         tip = "Choose what the macro does." },
       { type = "input", id = "q", label = "Search", text = "", max = 32, page = TAB_BUILD,
         tip = "Part of a name, e.g. cure." },
       { type = "list", id = "found", rows = {}, height = 7, page = TAB_BUILD, columns = builder.columns("ma"),
         tip = "Enter or click one to build the macro on it." },
       { type = "text", id = "fcount", text = "", dim = true, page = TAB_BUILD },
+      { type = "buttons", id = "grp", items = { "Make a Group of These" }, page = TAB_BUILD,
+        tip = "One slot for all of them: pressing it opens a list over it to pick one (Up / Down, Enter)." },
       { type = "text", id = "picked", text = "", page = TAB_BUILD },
-      { type = "buttons", id = "target", label = "Target", items = { "<t> Current target" }, page = TAB_BUILD },
+      { type = drop, id = "target", label = "Target", items = { "<t> Current target" }, at = 1,
+        page = TAB_BUILD },
+      { type = "input", id = "line", label = "Line it builds (type your own to change it)", text = "", max = 256,
+        page = TAB_BUILD, tip = "What the macro runs first. Type your own line in its place if the built one is not "
+          .. "right; clear it for the built one again." },
       { type = "input", id = "name", label = "Name", text = "", max = 32, page = TAB_BUILD },
       { type = "input", id = "label", label = "Button text (blank = from the name)", text = "", max = 14,
         page = TAB_BUILD },
@@ -555,7 +744,14 @@ local function define()
       { type = "buttons", id = "skeyb", items = { "Bar's Key" }, page = TAB_CONFIG,
         tip = "The slot takes its bar's key again." },
     },
-  })
+  }
+end
+
+local function define()
+  -- A client older than the dropdown element (1.0.10 and before) gets Type and Target as choices.
+  if not pcall(ui.window, WIN, spec("dropdown")) then
+    ui.window(WIN, spec("choice"))
+  end
 
   ui.on(WIN, function(_, e)
     if e.id == "tiles" then
@@ -570,13 +766,20 @@ local function define()
       elseif e.id == "kbar" then
         K.bar = e.index
         refresh_keys()
+      elseif e.id == "btype" then
+        set_kind(builder.TYPES[e.index].kind)
+      elseif e.id == "target" then
+        set_target(e.index)
       end
     elseif (e.kind == "change" and e.id == "skey") or (e.kind == "press" and e.id == "skeyb") then
       keys.set_slot(K.bar, K.slot, e.id == "skey" and e.text or nil)
       keys_changed()
-    elseif e.kind == "edit" then
+    elseif e.kind == "edit" or (e.kind == "change" and e.id == "line") then
       if e.id == "q" then
         refresh_results(e.text)
+      elseif e.id == "line" then
+        line_edited(e.text)
+        if e.kind == "change" then refresh_line() end
       elseif e.id == "extra" or e.id == "name" then
         refresh_preview()
       end
@@ -610,10 +813,8 @@ local function define()
         elseif M.hooks.palette then
           M.hooks.palette()
         end
-      elseif e.id == "btype" then
-        choose_type()
-      elseif e.id == "target" then
-        choose_target()
+      elseif e.id == "grp" then
+        toggle_group()
       elseif e.id == "bbtn" then
         if e.index == 1 then
           save_builder()

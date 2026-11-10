@@ -18380,6 +18380,33 @@ From the research notes:
   the commands for half a second retook them. A list taken while a tier recast lacked it from then on. Held rows now
   keep their places but their families are retaken every half second (regroup), the open list's cursor kept on its
   spell, and a nuke family's suggestion goes back to its list's top; test held_rows_regroup.
+- (2026-11-10, user: "do better on the suggestions for RUN and GEO") The facts took job abilities only (ability kind
+  1), so no row of a list a job ability opens was ever offered: the runes (kind 21), Vallation .. Battuta (22), Swipe
+  .. Rayke (23), and the waltzes and sambas the old rules asked for (12, 11). They now take every kind a kind-1 opener
+  names (record +0xe). The facts also gained our main / support job and level, MP % and our pet (a luopan by its model,
+  0xb22..0xb31). Rules after the samba, before the debuffs; cases rune_tank, rune_tank_held, rune_damage, geo_fight,
+  geo_after.
+  - RUN (LSB rune_fencer.lua): rune statuses 523..530 (Ignis .. Tenebrae) in the spells' element order; each resists
+    the element it beats (Ignis ice, Gelus wind, Flabra earth, Tellus thunder, Sulpor water, Unda fire; Lux dark,
+    Tenebrae light: the runes' MEVA and Vallation / Valiance's SDT), and Swipe (one rune), Lunge (all) and Gambit spend
+    them as their own element. Up to 1 rune, 2 from RUN 35, 3 from 65, 300 s each. The rune to hold: on the monster,
+    the one that resists its own element, the element its ranks resist most by a clear margin (inferred: monsters
+    deal their own element); otherwise its weakness (resisted least, below 0), for Swipe and Lunge. Offered while
+    fewer than the most are that rune or one wears off within 30 s. Then: Elemental Sforzo under 35% HP on the
+    monster, Swordplay; with runes up and the monster on us Vallation (Valiance first with others here), Pflug,
+    Liement under 50% HP, Battuta with every rune up; not holding it, the runes spent unless the monster resists the
+    newest's element (spent first, getNewestRuneEffect): Gambit when a BLM / RDM / SCH / GEO is here and the monster
+    has none, else Lunge with two or more, else Swipe.
+  - GEO (main): an Indicolure while Colure Active (612) is off; a Geocolure on the target while no luopan is out,
+    Blaze of Glory first; with one out Ecliptic Attrition in a fight, Full Circle with nothing targeted, Life Cycle
+    under 50% (Dematerialize under 70%) of its HP, Radial Arcana under 25% MP, Mending Halation with three below 60%
+    HP. Melee colures (Indi-Fury / Precision / Haste / Regen, Geo-Frailty / Fury / Wilt) when the others here have more
+    melee than nukers, else magic ones (Indi-Acumen / Focus / Refresh / Regen, Geo-Malaise / Acumen / Languor); a GEO
+    alone nukes. Status ids from LSB effect.codegen.lua (Vallation 531 .. One for All 538, Battuta 570, Blaze of Glory
+    569, Ecliptic Attrition 516, Dematerialize 518).
+  - Seen live (Lnxcsfix as RUN 99, a River Crab: water ranked highest, ice lowest): engaged and not held, Gelus
+    ("weak to ice, for Swipe and Lunge"); the Hotbars' rune group slot glowed and its list showed Gelus in gold. GEO
+    not seen live.
 
 ## Extras: Clock and Trust Speech (ours, 2026-10-29)
 
@@ -23413,3 +23440,48 @@ still gave `cor`. Both now go through actmotion::sdep_stand.
 - The form is wide enough for the box's caption and Update side by side (380 design px, or more for a wider caption;
   440 with the game font), whether or not Update shows, so nothing moves when it appears.
 - The title's keytophd Update button (render/screens.rs update_button and its backing) is gone with it.
+
+## Mog storage gates on LSB, and the modern storage view (2026-11-09)
+
+- Lobby 0x05 +0x24 (the feature bits, wardrobes 3..8 at bits 2..7) was read from the character phase's lobby when
+  the World started. Every login path takes that lobby to run select, so World.features was always 0, and Wardrobes 3..8
+  were refused in the item moves (rule 4) and the equipment lists (equipwin bag_open) since 2026-10-23. The bits now
+  sit in Phase::Characters beside `expansions`; the world start logs both (LSB: 0xFC, 0xFFF).
+- FUN_101dbc20's Sack and Wardrobe 2..8 checks go through FUN_100eb940(c) = byte S+0x19891 + c: the container's s2c
+  0x01C ItemNum. FUN_100eb960(c) is the u16 at S+0x198a4 + 2c, ItemNum2. LSB sends ItemNum = 1 + size for every
+  container (0x01c_item_max.cpp), so these checks never close on LSB. Only ItemNum2 of the Locker is 0 there (no
+  lease).
+- LSB's item move validator (c2s 0x029) allows Safe 2 only with char_stats.mhflag & 0x20 (the 2F) and
+  ENABLE_MOG_HOUSE_2F; else "Category2 value 9 is not allowed" and nothing moves. Ours knows the 2F from s2c 0x067
+  kind 2 @0x27 bit 0 (mh_floors).
+- The modern storage view (ours) merged Safe and Safe 2 as one Mog Safe without checking that flag. It counted Safe 2's
+  room (50 / 100) and, with the Safe full, sent moves into Safe 2. Its merged bags now use only the parts
+  items::usable allows (View House: its open containers).
+- c2s 0x029 is in FUN_100fc3c0's gate (dropped within 1000 ms of the last). The net thread's gate stamps its own
+  time, so the view can't time it from the UI side: NetCommand::PacketHeld (ours) asks the net thread to hold a gated
+  packet until its gate opens instead of dropping it. The modern view's moves (and its Manual Sort's, and the item
+  menu's Move) go that way. The view holds one move made while the last is still pending, for the bag it was made for
+  (its tab may change meanwhile); when it goes the stack is checked again (still there, may still move) and an
+  inventory stack takes the bag part with room at that point. Before this, the dropped move was reported five seconds
+  later as refused by the server.
+- The merged bags also leave out Wardrobes 3..8 without their feature bit (equipwin bag_open), as for Safe 2.
+- The modern Moogle menu's Storage row opens the storage view on the first open row of the container list (ours,
+  user 2026-11-09); the list shows only when that row will not open. Closing the view returns to the Moogle menu.
+
+## The modern storage view's sorting, and LSB's sort limit (2026-11-10)
+
+- LSB's c2s 0x03A handler (0x03a_item_stack.cpp) keeps the time of the last sort per container. A 0x03A for that
+  container within 1 s of it is dropped and counted, and at map.LIGHTLUGGAGE_BLOCK (4 here) the player is logged out.
+  The count resets only on a sort that goes through. Other containers are not affected, so sorting the eight
+  wardrobes at once is fine; sending to one container repeatedly is not.
+- 0x03A is also in FUN_100fc3c0's gate, one a second over every container, so sorting the eight wardrobes sent one and
+  the gate dropped seven. Ours: items::send_sort sends 0x03A held (PacketHeld; a container's sort already held is not
+  held twice), and a container sorted again within 1.5 s (datagrams go up to 400 ms apart, so a second on our side can
+  be less at LSB) sorts once that has passed, through sort_due. Every sort goes through it: the kept-sorted re-sorts,
+  the Items window, the classic sort window's Auto (retail sends 0x03A twice there and its gate drops the second; ours
+  sends the one).
+- The modern storage view (ours): each pane has Auto-sort / Manual Sort, as the modern Items window has. Auto-sort sorts
+  the pane's containers (a merged bag's usable parts, or the inventory) and keeps them sorted (config auto_sort, the
+  same bits as the classic sort window's Auto). Manual Sort clears those bits and starts storage's Manual Sort on that
+  pane: a pick, then the row to put it at (FUN_101f0b30's rules), within one part. Num+ (FUN_101db690 case 8) focuses
+  the pair: Left / Right between them, Enter takes one.
