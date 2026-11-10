@@ -16841,37 +16841,9 @@ impl App {
         (jobs, output.pixels_per_point)
     }
 
-    fn redraw(&mut self) {
-        let t0 = Instant::now();
-        self.scene_loads();
-        self.frame_updates();
-        if !self.frame_shown() {
-            return;
-        }
-        let (shoot, dt) = self.frame_clock();
-        let m_update = Instant::now();
-
-        let Some(mut gfx) = self.gfx.take() else { return };
-        let mut raw = self.frame_input(&mut gfx, dt);
-        let size = [gfx.config.width, gfx.config.height];
-        let mut script_shot = self.drive_frame(&gfx, &mut raw);
-        let game_shot = self.shot_requests(&mut script_shot);
-        let shoot = shoot || script_shot.is_some();
-        let (jobs, pixels_per_point) = self.frame_ui(&mut gfx, raw, size, dt);
-        let m_ui = Instant::now();
-
-        let frame = match gfx.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
-            other => {
-                // Outdated or lost (KWin's full-screen re-ask makes the swapchain stale): rebuilt, and the next frame
-                // asked for here, or the loop waits on events with nothing scheduled and the window stays frozen.
-                log::debug!("surface: no frame ({other:?}), configured again");
-                gfx.surface.configure(&gfx.gpu.device, &gfx.config);
-                self.next_frame = Some(Instant::now() + std::time::Duration::from_millis(16));
-                self.gfx = Some(gfx);
-                return;
-            }
-        };
+    /// The frame's GPU work set up: its encoder and GPU timer, the background size and aspect (3D LCD Mode's wider
+    /// picture), the gamma, and the scene's targets (offscreen whenever the scaling pass runs).
+    fn frame_targets(&mut self, gfx: &Gfx, frame: wgpu::SurfaceTexture, size: [u32; 2]) -> FrameGpu {
         let view = frame.texture.create_view(&Default::default());
         let mut encoder = gfx.gpu.device.create_command_encoder(&Default::default());
         if !self.gpu_time_checked {
@@ -16937,17 +16909,51 @@ impl App {
             .unwrap_or_else(|| scene_view.clone());
         let scene_fmt = gfx.config.format.remove_srgb_suffix();
         let m_acquire = Instant::now();
-        let mut m_actors = m_acquire;
-        let mut counts = perf::Counts::default();
+        let m_actors = m_acquire;
+        let counts = perf::Counts::default();
+        let drew_world = false;
+        FrameGpu {
+            frame,
+            view,
+            encoder,
+            gpu_time,
+            bg,
+            aspect,
+            lcd,
+            gamma,
+            scaled,
+            scene_view,
+            scene_depth,
+            scene_tex,
+            scene_raw,
+            scene_fmt,
+            m_acquire,
+            m_actors,
+            counts,
+            drew_world,
+        }
+    }
 
-        let mut drew_world = false;
+    /// The world's frame: the actors posed and drawn, the scene, the effects, plates, shadows, lamps and the world's
+    /// screen effects, into the scene targets.
+    fn draw_world(&mut self, gfx: &mut Gfx, g: &mut FrameGpu, dt: f32) {
+        let (bg, aspect, scene_fmt) = (g.bg, g.aspect, g.scene_fmt);
+        let (scene_depth, scene_tex, scene_raw) = (g.scene_depth.clone(), g.scene_tex.clone(), g.scene_raw.clone());
+        let FrameGpu { encoder, gpu_time, m_actors, counts, drew_world, .. } = g;
+        macro_rules! mark {
+            ($l:expr) => {
+                if let Some(t) = gpu_time.as_mut() {
+                    t.mark(&mut *encoder, $l);
+                }
+            };
+        }
         if let Phase::World(world) = &mut self.phase {
             let w: &mut World = world;
             // A zone change holds the last frame drawn, still in the scene texture.
             if let Some(zc) = w.zone_hold.as_mut().filter(|zc| !zc.captured) {
                 self.screen_fx_zone
                     .get_or_insert_with(|| crate::render::screenfx::ScreenFx::new(&gfx.gpu, scene_fmt))
-                    .hold(&gfx.gpu, &mut encoder, &scene_tex);
+                    .hold(&gfx.gpu, encoder, &scene_tex);
                 zc.captured = true;
             }
             let camera = Self::camera(w);
@@ -17116,10 +17122,10 @@ impl App {
                 // actors are waiting for.
                 use crate::render::upload::{FRAME_MS, LOADING_MS};
                 gfx.gpu.begin_uploads(if w.downloading.is_some() { LOADING_MS } else { FRAME_MS });
-                perf::timed(|| "uploads".into(), || r.upload_step(&gfx.gpu, &mut encoder));
+                perf::timed(|| "uploads".into(), || r.upload_step(&gfx.gpu, encoder));
                 // A preloaded zone streams in whatever room is left (client/preload.rs).
                 if let Some(p) = w.preload.as_mut().and_then(|p| p.ready.as_mut()) {
-                    p.gpu.0.upload_step(&gfx.gpu, &mut encoder);
+                    p.gpu.0.upload_step(&gfx.gpu, encoder);
                 }
                 mark!("uploads");
                 if let Some(since) = w.zone_uploading
@@ -18109,7 +18115,7 @@ impl App {
                 r.occl.results.retain(|id, _| visible.contains(id));
                 visible.retain(|id| r.occl.results.get(id) != Some(&false));
                 w.visible = visible;
-                r.upload_poses(&gfx.gpu, &mut encoder);
+                r.upload_poses(&gfx.gpu, encoder);
                 mark!("poses");
                 // FUN_100cbde0: a drawn alpha under 0.0001 is not drawn (the near-camera fade, first person). A character
                 // with +0xb2 bit 0 set (FUN_100c63d0's tests and the occlusion, not in `visible`) is not drawn either;
@@ -18242,7 +18248,7 @@ impl App {
                 drawn.sort_unstable_by_key(|d| d.0);
                 let actors: Vec<&crate::render::ActorGpu> = drawn.iter().map(|d| d.1).collect();
                 let drawn_map: HashMap<u32, &crate::render::ActorGpu> = drawn.into_iter().collect();
-                counts = perf::Counts {
+                *counts = perf::Counts {
                     entities: w.entities.len(),
                     actors: w.actors.len(),
                     posed: counts.posed,
@@ -18251,14 +18257,14 @@ impl App {
                     ui_vertices: 0,
                     fx: [(0, 0); 3],
                 };
-                m_actors = Instant::now();
+                *m_actors = Instant::now();
                 // Mips of new textures (models that came this frame, a zone going up) under the frame budget.
                 let budget = if w.zone_uploading.is_some() || w.downloading.is_some() {
                     crate::render::MIP_BUDGET
                 } else {
                     crate::render::MIP_BUDGET_WORLD
                 };
-                perf::timed(|| "mips".into(), || gfx.gpu.run_mips(&mut encoder, budget));
+                perf::timed(|| "mips".into(), || gfx.gpu.run_mips(encoder, budget));
                 mark!("mips");
                 // FUN_10179390: the camera list under the eye (render/cull.rs); past Retail it holds within retail's
                 // distance and the rest draws beyond it.
@@ -18283,7 +18289,7 @@ impl App {
                 r.prepare_faded(&gfx.gpu, &scene_tex);
                 perf::timed(
                     || "zone render".into(),
-                    || r.render(&gfx.gpu, &mut encoder, &scene_raw, &scene_depth, &camera, aspect, &actors),
+                    || r.render(&gfx.gpu, encoder, &scene_raw, &scene_depth, &camera, aspect, &actors),
                 );
                 mark!("scene");
                 // The portraits, of actors drawn this frame.
@@ -18294,7 +18300,7 @@ impl App {
                     &mut gfx.egui_renderer,
                     self.game_ui.as_mut(),
                     r,
-                    &mut encoder,
+                    encoder,
                     scene_fmt,
                     &want,
                 );
@@ -18313,7 +18319,7 @@ impl App {
                         || {
                             r.draw_shadows(
                                 &gfx.gpu,
-                                &mut encoder,
+                                encoder,
                                 &scene_raw,
                                 &scene_depth,
                                 bg,
@@ -18343,7 +18349,7 @@ impl App {
                     let list: Vec<&crate::render::ActorGpu> = refracting.iter().map(|x| x.1).collect();
                     r.render_refraction(
                         &gfx.gpu,
-                        &mut encoder,
+                        encoder,
                         &scene_raw,
                         Some(&scene_tex),
                         &scene_depth,
@@ -18353,7 +18359,7 @@ impl App {
                     );
                 }
                 mark!("refraction");
-                r.occl.run(&gfx.gpu, &mut encoder, &scene_depth);
+                r.occl.run(&gfx.gpu, encoder, &scene_depth);
                 mark!("occlusion");
                 // Effect generators: CPU emission, the GPU update pass, then the elements over the scene.
                 // Its pipelines are made while the zone still goes up (behind the loading indicator), not on the
@@ -18480,7 +18486,7 @@ impl App {
                     eg.set_lights(&r.lights);
                     eg.set_light(r.lighting.as_ref().map(|l| (l.dir, l.diffuse, l.ambient)));
                     eg.set_depth(Some((&scene_depth, camera.proj(aspect))));
-                    perf::timed(|| "effects upload".into(), || eg.update(&gfx.gpu, &mut encoder, &mut w.effects, &f));
+                    perf::timed(|| "effects upload".into(), || eg.update(&gfx.gpu, encoder, &mut w.effects, &f));
                     mark!("fx update");
                     let (fog_color, fog) = r
                         .lighting
@@ -18488,7 +18494,7 @@ impl App {
                         .map_or(([0.0; 3], [150.0, 600.0]), |l| (l.fog.to_array(), [l.fog_start, l.fog_end]));
                     eg.draw(
                         &gfx.gpu,
-                        &mut encoder,
+                        encoder,
                         (&scene_raw, &scene_depth, bg),
                         Some(&scene_tex),
                         &w.effects,
@@ -18500,8 +18506,8 @@ impl App {
                     mark!("fx draw");
                 }
                 // The Lua mods' world shapes, then layout mode's overlay over the finished scene.
-                r.render_world_shapes(&mut encoder, &scene_raw, &scene_depth);
-                r.render_lines(&mut encoder, &scene_raw);
+                r.render_world_shapes(encoder, &scene_raw, &scene_depth);
+                r.render_lines(encoder, &scene_raw);
                 // The mods' post-process passes over the scene, under the fades.
                 let want = w.lua.shaders();
                 if !want.is_empty() || self.post_fx.is_some() {
@@ -18512,7 +18518,7 @@ impl App {
                     }
                     post.draw(
                         &gfx.gpu,
-                        &mut encoder,
+                        encoder,
                         &scene_tex,
                         &scene_raw,
                         &scene_depth,
@@ -18522,7 +18528,7 @@ impl App {
                 }
                 // A zone change's held frame under the fade to black (the camera has moved on).
                 if let (Some(_), Some(fx)) = (w.zone_hold.filter(|h| h.captured), &self.screen_fx_zone) {
-                    fx.draw_held(&gfx.gpu, &mut encoder, &scene_raw, 1.0);
+                    fx.draw_held(&gfx.gpu, encoder, &scene_raw, 1.0);
                 }
                 // Event crossfade, the effect flash and feedback blur, and the fades over the scene, under the 2D layer;
                 // the zoning fade as a multiply too.
@@ -18532,12 +18538,73 @@ impl App {
                     let fx = self
                         .screen_fx_world
                         .get_or_insert_with(|| crate::render::screenfx::ScreenFx::new(&gfx.gpu, scene_fmt));
-                    fx.draw_all(&gfx.gpu, &mut encoder, &scene_raw, Some(&scene_tex), bg, cross, flash, blur, m);
+                    fx.draw_all(&gfx.gpu, encoder, &scene_raw, Some(&scene_tex), bg, cross, flash, blur, m);
                 }
                 mark!("screen fx");
                 w.last_camera = Some(camera);
-                drew_world = true;
+                *drew_world = true;
             }
+        }
+    }
+
+    fn redraw(&mut self) {
+        let t0 = Instant::now();
+        self.scene_loads();
+        self.frame_updates();
+        if !self.frame_shown() {
+            return;
+        }
+        let (shoot, dt) = self.frame_clock();
+        let m_update = Instant::now();
+
+        let Some(mut gfx) = self.gfx.take() else { return };
+        let mut raw = self.frame_input(&mut gfx, dt);
+        let size = [gfx.config.width, gfx.config.height];
+        let mut script_shot = self.drive_frame(&gfx, &mut raw);
+        let game_shot = self.shot_requests(&mut script_shot);
+        let shoot = shoot || script_shot.is_some();
+        let (jobs, pixels_per_point) = self.frame_ui(&mut gfx, raw, size, dt);
+        let m_ui = Instant::now();
+
+        let frame = match gfx.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
+            other => {
+                // Outdated or lost (KWin's full-screen re-ask makes the swapchain stale): rebuilt, and the next frame
+                // asked for here, or the loop waits on events with nothing scheduled and the window stays frozen.
+                log::debug!("surface: no frame ({other:?}), configured again");
+                gfx.surface.configure(&gfx.gpu.device, &gfx.config);
+                self.next_frame = Some(Instant::now() + std::time::Duration::from_millis(16));
+                self.gfx = Some(gfx);
+                return;
+            }
+        };
+        let mut g = self.frame_targets(&gfx, frame, size);
+        self.draw_world(&mut gfx, &mut g, dt);
+        let FrameGpu {
+            frame,
+            view,
+            mut encoder,
+            mut gpu_time,
+            bg,
+            aspect,
+            lcd,
+            gamma,
+            scaled,
+            scene_view,
+            scene_depth,
+            scene_tex,
+            m_acquire,
+            m_actors,
+            mut counts,
+            mut drew_world,
+            ..
+        } = g;
+        macro_rules! mark {
+            ($l:expr) => {
+                if let Some(t) = gpu_time.as_mut() {
+                    t.mark(&mut encoder, $l);
+                }
+            };
         }
 
         if matches!(&self.phase, Phase::Characters { screen: LobbyScreen::Create, .. })
@@ -18875,6 +18942,29 @@ impl App {
         }
         self.gfx = Some(gfx);
     }
+}
+
+/// One frame's GPU work in progress, handed between redraw's steps: the window's texture and view, the encoder and
+/// GPU timer, the background size and aspect, 3D LCD Mode, the gamma, the scene's targets, the frame's measures.
+struct FrameGpu {
+    frame: wgpu::SurfaceTexture,
+    view: wgpu::TextureView,
+    encoder: wgpu::CommandEncoder,
+    gpu_time: Option<crate::render::gputime::GpuTime>,
+    bg: [u32; 2],
+    aspect: f32,
+    lcd: bool,
+    gamma: [f32; 3],
+    scaled: bool,
+    scene_view: wgpu::TextureView,
+    scene_depth: wgpu::TextureView,
+    scene_tex: wgpu::Texture,
+    scene_raw: wgpu::TextureView,
+    scene_fmt: wgpu::TextureFormat,
+    m_acquire: Instant,
+    m_actors: Instant,
+    counts: perf::Counts,
+    drew_world: bool,
 }
 
 impl ApplicationHandler for App {
