@@ -532,6 +532,11 @@ pub fn prefer(w: &mut World, id: u32) {
     }
 }
 
+/// Ours (modern): the open prompt can take only us (a self-only spell or ability) and has no ground cursor to place.
+pub fn only_us(w: &World) -> bool {
+    w.prompt.as_ref().is_some_and(|s| s.inc == 0x200 && !s.ground)
+}
+
 /// FUN_10158db0(0): runs the callback on the pick, SE "0009", the saved target and lock come back.
 pub fn confirm_sub(w: &mut World) {
     let (Some(s), Some(t)) = (w.prompt.take(), w.target) else { return };

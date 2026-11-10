@@ -18380,6 +18380,33 @@ From the research notes:
   the commands for half a second retook them. A list taken while a tier recast lacked it from then on. Held rows now
   keep their places but their families are retaken every half second (regroup), the open list's cursor kept on its
   spell, and a nuke family's suggestion goes back to its list's top; test held_rows_regroup.
+- (2026-11-10, user: "do better on the suggestions for RUN and GEO") The facts took job abilities only (ability kind
+  1), so no row of a list a job ability opens was ever offered: the runes (kind 21), Vallation .. Battuta (22), Swipe
+  .. Rayke (23), and the waltzes and sambas the old rules asked for (12, 11). They now take every kind a kind-1 opener
+  names (record +0xe). The facts also gained our main / support job and level, MP % and our pet (a luopan by its model,
+  0xb22..0xb31). Rules after the samba, before the debuffs; cases rune_tank, rune_tank_held, rune_damage, geo_fight,
+  geo_after.
+  - RUN (LSB rune_fencer.lua): rune statuses 523..530 (Ignis .. Tenebrae) in the spells' element order; each resists
+    the element it beats (Ignis ice, Gelus wind, Flabra earth, Tellus thunder, Sulpor water, Unda fire; Lux dark,
+    Tenebrae light: the runes' MEVA and Vallation / Valiance's SDT), and Swipe (one rune), Lunge (all) and Gambit spend
+    them as their own element. Up to 1 rune, 2 from RUN 35, 3 from 65, 300 s each. The rune to hold: on the monster,
+    the one that resists its own element, the element its ranks resist most by a clear margin (inferred: monsters
+    deal their own element); otherwise its weakness (resisted least, below 0), for Swipe and Lunge. Offered while
+    fewer than the most are that rune or one wears off within 30 s. Then: Elemental Sforzo under 35% HP on the
+    monster, Swordplay; with runes up and the monster on us Vallation (Valiance first with others here), Pflug,
+    Liement under 50% HP, Battuta with every rune up; not holding it, the runes spent unless the monster resists the
+    newest's element (spent first, getNewestRuneEffect): Gambit when a BLM / RDM / SCH / GEO is here and the monster
+    has none, else Lunge with two or more, else Swipe.
+  - GEO (main): an Indicolure while Colure Active (612) is off; a Geocolure on the target while no luopan is out,
+    Blaze of Glory first; with one out Ecliptic Attrition in a fight, Full Circle with nothing targeted, Life Cycle
+    under 50% (Dematerialize under 70%) of its HP, Radial Arcana under 25% MP, Mending Halation with three below 60%
+    HP. Melee colures (Indi-Fury / Precision / Haste / Regen, Geo-Frailty / Fury / Wilt) when the others here have more
+    melee than nukers, else magic ones (Indi-Acumen / Focus / Refresh / Regen, Geo-Malaise / Acumen / Languor); a GEO
+    alone nukes. Status ids from LSB effect.codegen.lua (Vallation 531 .. One for All 538, Battuta 570, Blaze of Glory
+    569, Ecliptic Attrition 516, Dematerialize 518).
+  - Seen live (Lnxcsfix as RUN 99, a River Crab: water ranked highest, ice lowest): engaged and not held, Gelus
+    ("weak to ice, for Swipe and Lunge"); the Hotbars' rune group slot glowed and its list showed Gelus in gold. GEO
+    not seen live.
 
 ## Extras: Clock and Trust Speech (ours, 2026-10-29)
 

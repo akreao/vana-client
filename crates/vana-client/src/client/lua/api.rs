@@ -480,6 +480,7 @@ pub(super) fn install(
             w.modal = w.popup || spec.get::<Option<bool>>("modal")?.unwrap_or(false);
             // A popup opens at the pointer.
             w.anchor = w.popup.then(|| super::input::cursor(lua));
+            w.animate = spec.get::<Option<bool>>("animate")?.unwrap_or(false);
             // Its opacity (per-window opacity), kept with the window's key.
             let opacity = spec.get::<Option<f32>>("opacity")?;
             drop(s);
@@ -571,9 +572,45 @@ pub(super) fn install(
         })?,
     )?;
     ui.set(
+        "bounds",
+        lua.create_function(|lua, (win, id): (String, String)| {
+            let info = lua
+                .app_data_ref::<std::rc::Rc<std::cell::RefCell<super::state::FrameInfo>>>()
+                .map(|f| f.clone())
+                .unwrap_or_default();
+            let Some([x, y, k]) = info.borrow().canvas_rects.get(&(mod_id(lua)?, win.clone(), id.clone())).copied()
+            else {
+                return Ok(None);
+            };
+            let st = state(lua);
+            let s = st.borrow();
+            // A closed window's last place is stale: none.
+            let size = s.windows.iter().find(|w| w.id == win && w.open).and_then(|w| {
+                w.elems.iter().find_map(|e| match e {
+                    super::window::Elem::Canvas { id: c, w, h, .. } if *c == id => Some((*w, *h)),
+                    _ => None,
+                })
+            });
+            let Some((cw, ch)) = size else { return Ok(None) };
+            let t = lua.create_table()?;
+            for (key, v) in [("x", x), ("y", y), ("w", cw * k), ("h", ch * k), ("scale", k)] {
+                t.set(key, v)?;
+            }
+            Ok(Some(t))
+        })?,
+    )?;
+    ui.set(
         "open",
-        lua.create_function(|lua, id: String| {
+        lua.create_function(|lua, (id, at): (String, Option<Table>)| {
             let pointer = super::input::cursor(lua);
+            // Or at {x, y} (window pixels), its bottom there with above = true.
+            let place = match &at {
+                Some(t) => match (t.get::<Option<f32>>("x")?, t.get::<Option<f32>>("y")?) {
+                    (Some(x), Some(y)) => Some(((x, y), t.get::<Option<bool>>("above")?.unwrap_or(false))),
+                    _ => None,
+                },
+                None => None,
+            };
             let st = state(lua);
             let mut s = st.borrow_mut();
             let w = s
@@ -581,9 +618,12 @@ pub(super) fn install(
                 .iter_mut()
                 .find(|w| w.id == id)
                 .ok_or_else(|| mlua::Error::runtime(format!("no window {id:?}")))?;
-            // A popup opens at the pointer as it is now.
+            // A popup opens at the pointer as it is now, or where it is told.
             if w.popup && !w.open {
-                w.anchor = Some(pointer);
+                (w.anchor, w.above) = match place {
+                    Some((p, above)) => (Some(p), above),
+                    None => (Some(pointer), false),
+                };
             }
             w.open = true;
             w.settle();
@@ -2288,11 +2328,12 @@ fn elem_only(t: &Table) -> mlua::Result<super::window::Elem> {
             filter: false,
             key: true,
         },
-        "choice" => Elem::Choice {
+        "choice" | "dropdown" => Elem::Choice {
             id: id()?,
             label: t.get::<Option<String>>("label")?.unwrap_or_default(),
             items: t.get::<Option<Vec<String>>>("items")?.unwrap_or_default(),
             at: index("at")?.unwrap_or(0),
+            drop: kind == "dropdown",
         },
         "colour" | "color" => Elem::Colour {
             id: id()?,

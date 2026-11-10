@@ -132,6 +132,24 @@ end
 local ABILITY_KIND = { ja = 1, pet = 2, ws = 3 }
 local DEFAULT_TARGET = { ja = "me", pet = "t", ws = "t" }
 
+-- The rows that open a sub-list instead of acting (Rune Enchantment, Phantom Roll, Blood Pact: Rage, Ready...), by the
+-- kind of the rows in their list: { [kind] = { name, kind = the opener's own kind } }. /ja cannot use an opener; the
+-- rows of its list are what a macro names (/ja "Ignis" <me>).
+local openers_by_kind
+
+local function openers()
+  if not openers_by_kind then
+    openers_by_kind = {}
+    for id = 0, 0x7ff do
+      local a = res.ability(id)
+      if a and (a.sub or 0) ~= 0 and a.name and a.name ~= "" then
+        openers_by_kind[a.sub] = { name = a.name, kind = a.kind }
+      end
+    end
+  end
+  return openers_by_kind
+end
+
 -- Every choice of an action kind: { { name, cells = {...}, icon = {kind, id}, target, title? }, ... } where `target`
 -- is the one a new pick starts on and `title` the macro name it suggests (else `name`).
 local function all_of(kind)
@@ -152,15 +170,24 @@ local function all_of(kind)
       end
     end
   elseif ABILITY_KIND[kind] then
-    local seen = {}
+    -- An opener's row stands for its list (`list` its rows' kind); a row of a list names its opener (`under`).
+    local seen, op = {}, openers()
     for _, id in ipairs(game.abilities()) do
       local a = res.ability(id)
-      if a and a.kind == ABILITY_KIND[kind] and a.name and a.name ~= "" and not seen[a.name] then
+      local under = a and op[a.kind]
+      local of = under and under.kind or (a and a.kind)
+      if a and of == ABILITY_KIND[kind] and a.name and a.name ~= "" and not seen[a.name] then
         seen[a.name] = true
-        local cost = (a.cost or 0) > 0 and tostring(a.cost) or ""
-        local recast = a.recast and ("%ds"):format(a.recast) or ""
-        out[#out + 1] = { name = a.name, cells = { cost, recast }, icon = { kind = "ability", id = id },
-          target = DEFAULT_TARGET[kind] }
+        local icon = { kind = "ability", id = id }
+        if (a.sub or 0) ~= 0 then
+          out[#out + 1] = { name = a.name, list = a.sub, cells = { "", "" }, icon = icon }
+        else
+          local cost = (a.cost or 0) > 0 and tostring(a.cost) or ""
+          local recast = a.recast and ("%ds"):format(a.recast) or ""
+          local target = (a.targets or 0) ~= 0 and M.default_target(a.targets) or DEFAULT_TARGET[kind]
+          out[#out + 1] = { name = a.name, cells = { cost, recast }, icon = icon, target = target,
+            under = under and under.name, kind = a.kind }
+        end
       end
     end
   elseif kind == "item" or kind == "equip" then
@@ -193,15 +220,39 @@ end
 
 M.MAX_RESULTS = 150
 
+-- Whether action `name` of a kind can take only yourself (a rune, Utsusemi...): a group's Target leaves it on <me>.
+function M.self_only(kind, name)
+  if not ABILITY_KIND[kind] and kind ~= "ma" then return false end
+  for _, e in ipairs(all_of(kind)) do
+    if e.name == name and e.icon then
+      local r = e.icon.kind == "spell" and res.spell(e.icon.id) or e.icon.kind == "ability" and res.ability(e.icon.id)
+      local t = r and r.targets or 0
+      return t ~= 0 and t & ~1 == 0
+    end
+  end
+  return false
+end
+
 -- The choices of an action kind whose names hold `query` (any case), by name; `more` is true when there were more
--- than MAX_RESULTS.
-function M.find(kind, query)
+-- than MAX_RESULTS. With `list` (an opener's), the rows of that list; else the openers and the other rows, and with a
+-- query the rows of every list too.
+function M.find(kind, query, list)
   local q = tostring(query or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
   local found = {}
   for _, e in ipairs(all_of(kind)) do
-    if q == "" or e.name:lower():find(q, 1, true) or (e.search and e.search:lower():find(q, 1, true)) then
+    local here
+    if list then
+      here = e.kind == list and not e.list
+    else
+      here = q ~= "" or not e.under
+    end
+    if here and (q == "" or e.name:lower():find(q, 1, true) or (e.search and e.search:lower():find(q, 1, true))) then
       found[#found + 1] = e
     end
+  end
+  -- An opener's rows in the game's order (Ignis, Gelus, ... Tenebrae), as its menu lists them.
+  if list then
+    table.sort(found, function(a, b) return (a.icon and a.icon.id or 0) < (b.icon and b.icon.id or 0) end)
   end
   local more = #found > M.MAX_RESULTS
   while #found > M.MAX_RESULTS do

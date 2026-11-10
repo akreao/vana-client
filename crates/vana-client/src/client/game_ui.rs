@@ -2435,6 +2435,18 @@ impl GameUi {
         self.batch.push_rect(x, y, w, h, rgba);
     }
 
+    /// A combo field's arrow on `a`, its right end (the login form's fields, the mods' dropdowns): white while its
+    /// list is open.
+    pub fn combo_arrow(&mut self, a: [f32; 4], open: bool) {
+        self.text("\u{25bc}", a[0] + 3.0, a[1] + 1.0, 0, if open { WHITE } else { GREY });
+    }
+
+    /// A row of a combo field's open list on `r`, over what is under it: the cursor's row lit.
+    pub fn combo_row(&mut self, r: [f32; 4], text: &str, lit: bool) {
+        self.rect(r[0], r[1], r[2], r[3], if lit { [0.16, 0.2, 0.45, 0.95] } else { [0.03, 0.03, 0.08, 0.95] });
+        self.text(text, r[0] + 4.0, r[1] + 1.0, 0, WHITE);
+    }
+
     /// An untextured quad: corners top left, top right, bottom left, bottom right, each with its colour.
     pub fn quad(&mut self, corners: [[f32; 2]; 4], rgba: [[f32; 4]; 4]) {
         self.batch.push_corners(corners, rgba);
