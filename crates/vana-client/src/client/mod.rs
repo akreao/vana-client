@@ -2379,6 +2379,7 @@ fn world_hud(
     keys: &mut HashSet<KeyCode>,
     view_proj: glam::Mat4,
     numpad_slash: bool,
+    numpad_minus: bool,
 ) -> Vec<[f32; 4]> {
     // A mod's TrueType text switch, from this frame's drawing on.
     gu.set_ttf(world.opts.ttf_text);
@@ -3073,11 +3074,16 @@ fn world_hud(
                         _ => {}
                     }
                 }
-                // The menu opens on the page it was closed on.
+                // A full keyboard takes only the numpad's minus, Compact 1 / 2 the main row's too (egui maps both to
+                // Key::Minus). Held, it turns no pages (ours).
                 // While dead the K.O. window or the raise prompt has the focus and takes it (message 7, FUN_1015dd00).
-                egui::Key::Minus if !world.ko_open && world.ko_offer != 2 => {
-                    world.menu =
-                        if world.menu.is_some() { None } else { Some(world.menu_mem[world.menu_page as usize & 1]) }
+                egui::Key::Minus
+                    if !world.ko_open
+                        && world.ko_offer != 2
+                        && !world.key_repeat
+                        && (numpad_minus || world.game.get(0x42) != 0) =>
+                {
+                    menu_minus(&mut world.menu, &mut world.menu_page, &mut world.menu_mem)
                 }
                 // The modern Command Menu takes the menu keys (client/modern/command.rs).
                 egui::Key::ArrowDown
@@ -8283,6 +8289,8 @@ pub struct App {
     next_frame: Option<Instant>,
     /// The last '/' key pressed was the numpad one (egui maps both to Key::Slash).
     numpad_slash: bool,
+    /// The last '-' key pressed was the numpad one (egui maps both to Key::Minus).
+    numpad_minus: bool,
     /// Ctrl+Alt+Shift+V was pressed: the voice chat window opens or closes next world frame.
     voice_key: bool,
     /// Retail key functions (DAT_103619f0 and FUN_1011ff30).
@@ -8581,6 +8589,7 @@ impl App {
             last_frame: Instant::now(),
             next_frame: None,
             numpad_slash: false,
+            numpad_minus: false,
             voice_key: false,
             input: input::Input::default(),
             gamepad: gamepad::Gamepad::default(),
@@ -8833,6 +8842,9 @@ impl App {
     /// A key a mod pressed: the key functions now, egui with this frame's input.
     fn synth_key(&mut self, k: &lua::input::Synth) {
         let (key, mods) = k.diks();
+        if k.down != Some(false) && matches!(k.key, KeyCode::Minus | KeyCode::NumpadSubtract) {
+            self.numpad_minus = k.key == KeyCode::NumpadSubtract;
+        }
         match k.down {
             None => mods.into_iter().chain(key).for_each(|d| self.input.tap(d)),
             Some(down) => key.into_iter().for_each(|d| self.input.set(d, down)),
@@ -15823,8 +15835,16 @@ impl App {
                     gu.modern_scale = ctx.pixels_per_point() * self.ui_k.1;
                     gu.set_style(world.game.get(0x12) as usize);
                     window_closes(world, &input.events);
-                    self.hud_blockers =
-                        world_hud(gu, world, &input, screen_size, &mut self.keys, view_proj, self.numpad_slash);
+                    self.hud_blockers = world_hud(
+                        gu,
+                        world,
+                        &input,
+                        screen_size,
+                        &mut self.keys,
+                        view_proj,
+                        self.numpad_slash,
+                        self.numpad_minus,
+                    );
                 }
                 // With the UI hidden (key function 0x56) retail draws no window at all, so the modern layer goes too; in
                 // cinema mode only the event text box (drawn by world_hud).
@@ -16763,6 +16783,10 @@ impl App {
         if pad.pressed && !self.dragging && !self.left_down {
             self.mouse.visible = false;
         }
+        // The pad's menu slot is the numpad's minus.
+        if minus_pressed(&pad.events) {
+            self.numpad_minus = true;
+        }
         raw.events.extend(pad.events);
         // What the software keyboard typed, as the keys a field reads.
         if let Phase::World(w) = &mut self.phase {
@@ -16817,6 +16841,10 @@ impl App {
                     }
                     _ => {}
                 }
+            }
+            // A drive's Minus opens the menu on any keyboard type.
+            if minus_pressed(&events) {
+                self.numpad_minus = true;
             }
             raw.events.extend(events);
             script_shot = shot;
@@ -19422,6 +19450,10 @@ impl ApplicationHandler for App {
                     if event.state == ElementState::Pressed && matches!(code, KeyCode::Slash | KeyCode::NumpadDivide) {
                         self.numpad_slash = code == KeyCode::NumpadDivide;
                     }
+                    if event.state == ElementState::Pressed && matches!(code, KeyCode::Minus | KeyCode::NumpadSubtract)
+                    {
+                        self.numpad_minus = code == KeyCode::NumpadSubtract;
+                    }
                     if !event.repeat {
                         self.input.key(code, event.state == ElementState::Pressed, &event.logical_key);
                     }
@@ -19717,6 +19749,21 @@ fn area_resample(src: &[u8], from: [u32; 2], to: [u32; 2]) -> Vec<u8> {
     out
 }
 
+/// '-' and the main menu: it opens on the page it was closed on; pressed again it turns to the other page, each page
+/// on the row it last had (two windows, each with its own cursor), and never closes it.
+fn menu_minus(menu: &mut Option<usize>, page: &mut u8, mem: &mut [usize; 2]) {
+    if let Some(k) = *menu {
+        mem[*page as usize & 1] = k;
+        *page ^= 1;
+    }
+    *menu = Some(mem[*page as usize & 1]);
+}
+
+/// A '-' key press among the events (egui maps the numpad's minus to Key::Minus too).
+fn minus_pressed(events: &[egui::Event]) -> bool {
+    events.iter().any(|e| matches!(e, egui::Event::Key { key: egui::Key::Minus, pressed: true, .. }))
+}
+
 pub fn run(cfg: Config, drive: Drive) -> Result<()> {
     if desktop::supported()
         && let Err(e) = desktop::settle()
@@ -19732,6 +19779,36 @@ pub fn run(cfg: Config, drive: Drive) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn minus_turns_the_menu_page() {
+        let (mut menu, mut page, mut mem) = (None, 0u8, [0usize; 2]);
+        super::menu_minus(&mut menu, &mut page, &mut mem);
+        assert_eq!((menu, page), (Some(0), 0));
+        menu = Some(3);
+        super::menu_minus(&mut menu, &mut page, &mut mem);
+        assert_eq!((menu, page, mem), (Some(0), 1, [3, 0]));
+        menu = Some(5);
+        super::menu_minus(&mut menu, &mut page, &mut mem);
+        assert_eq!((menu, page, mem), (Some(3), 0, [3, 5]));
+        // Closed on page 0, it opens there again.
+        menu = None;
+        super::menu_minus(&mut menu, &mut page, &mut mem);
+        assert_eq!((menu, page), (Some(3), 0));
+    }
+
+    #[test]
+    fn minus_pressed_needs_a_press() {
+        let ev = |pressed| egui::Event::Key {
+            key: egui::Key::Minus,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers: egui::Modifiers::default(),
+        };
+        assert!(super::minus_pressed(&[ev(true)]));
+        assert!(!super::minus_pressed(&[ev(false)]));
+    }
+
     fn shortcut_key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
         egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers }
     }
