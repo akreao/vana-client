@@ -1691,3 +1691,8 @@ pub(super) fn set_money(w: &mut World, v: u32) {
         m.2 = v.min(m.1);
     }
 }
+
+/// itemctrl (the quantity to buy or sell) has the keys: no question or price over it.
+pub(super) fn qty_open(w: &World) -> bool {
+    w.shop.as_ref().is_some_and(|s| s.qty.is_some() && s.confirm.is_none() && s.money.is_none())
+}

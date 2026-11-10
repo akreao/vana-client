@@ -1030,6 +1030,11 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
     rects
 }
 
+/// link11 is on a colour channel (FUN_101dd4c0 steps it by Left / Right).
+pub(super) fn channel_open(w: &World) -> bool {
+    w.linkshell.as_ref().and_then(|l| l.naming.as_ref()).is_some_and(|n| (2..=4).contains(&n.edit))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

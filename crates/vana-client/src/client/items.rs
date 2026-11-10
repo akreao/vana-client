@@ -2252,3 +2252,8 @@ mod charged_tests {
         assert!(!super::charged_ready(&e));
     }
 }
+
+/// The storage view's itemctrl (the quantity) has the keys.
+pub(super) fn qty_open(w: &World) -> bool {
+    matches!(&w.win, Some(Win::Items { store: Some(b), .. }) if b.qty.is_some())
+}
