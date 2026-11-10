@@ -700,7 +700,7 @@ impl Region {
         let (s, c) = self.rot[1].sin_cos();
         let size = self.scale.map(f32::abs);
         std::array::from_fn(|i| {
-            let k = [i & 1, i >> 1 & 1, i >> 2 & 1].map(|b| (b as f32 - 0.5));
+            let k = [i & 1, i >> 1 & 1, i >> 2 & 1].map(|b| b as f32 - 0.5);
             let (x, y, z) = (k[0] * size[0], k[1] * size[1], k[2] * size[2]);
             [self.pos[0] + x * c + z * s, self.pos[1] + y, self.pos[2] - x * s + z * c]
         })
