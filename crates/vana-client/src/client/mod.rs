@@ -13572,6 +13572,9 @@ impl App {
                 || w.log_focus == 2
                 || event::choice(w).is_some()
                 || event::input(w).is_some();
+            // The 3D target prompt lets the arrows turn the camera through the window state (retail tests +0xc4 only);
+            // not the party-list cursor, whose Up / Down are its own.
+            f.prompt = w.prompt.is_some() && w.party_cursor.is_none();
             f.assigning = w
                 .config
                 .as_ref()

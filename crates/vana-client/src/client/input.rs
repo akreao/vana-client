@@ -127,6 +127,8 @@ pub struct Frame {
     pub keyboard: u32,
     /// A window is active (FUN_101584c0).
     pub window: bool,
+    /// The 3D target prompt is up (target object +0xc4): the arrows turn the camera even with a window active.
+    pub prompt: bool,
     /// Key Assignment (k1assign / k2assign) is open: the compact keys are off and flag 0x10 fails.
     pub assigning: bool,
 }
@@ -164,6 +166,7 @@ pub struct Input {
     typing: bool,
     assigning: bool,
     window: bool,
+    prompt: bool,
     /// DAT_104cf22c: a handler took Enter / Esc this frame (FUN_101202a0); only mode 4 tests still pass.
     consumed: bool,
     /// NumLock, from the last numpad digit's logical key (winit reports no toggle state).
@@ -198,6 +201,7 @@ impl Default for Input {
             typing: false,
             assigning: false,
             window: false,
+            prompt: false,
             consumed: false,
             numlock: true,
             pressed_any: false,
@@ -352,6 +356,7 @@ impl Input {
         self.typing = f.typing;
         self.assigning = f.assigning;
         self.window = f.window;
+        self.prompt = f.prompt;
         self.clock += f.ticks;
         let frames = (self.clock / FRAME_TICKS).floor();
         self.clock -= frames * FRAME_TICKS;
@@ -486,7 +491,9 @@ impl Input {
             0x7c => self.stick[3],
             _ => 0.0,
         };
-        let arrows = !self.typing && (!self.window || self.shift());
+        // The camera's arrows (FUN_10124770 / FUN_101248e0): not while typing; with a window active only with Shift,
+        // unless the 3D target prompt is up (the spell / ability list behind it keeps the window state).
+        let arrows = !self.typing && (!self.window || self.shift() || self.prompt);
         let (keys, pad) = match id {
             4 => (if self.typing && self.numlock { 0.0 } else { key(0x4d, 0x4b) }, stick(0x20_0000, 0x40_0000)),
             5 => (if self.typing && self.numlock { 0.0 } else { key(0x50, 0x48) }, stick(0x100_0000, 0x80_0000)),
@@ -875,6 +882,26 @@ mod tests {
         i.key(KeyCode::NumpadAdd, false, &nl);
         i.begin_frame(frame());
         assert!(i.test(0x78, mode::PRESS));
+    }
+
+    /// The camera's arrows: off with a window active unless Shift is held or the 3D target prompt is up; never while
+    /// typing.
+    #[test]
+    fn arrows_turn_camera_in_prompt() {
+        let mut i = Input::default();
+        i.masks[6] = 0xffff;
+        i.set(0xcd, true);
+        i.begin_frame(frame());
+        assert_eq!(i.axis(6), 1.0);
+        i.begin_frame(Frame { window: true, ..frame() });
+        assert_eq!(i.axis(6), 0.0);
+        i.begin_frame(Frame { window: true, prompt: true, ..frame() });
+        assert_eq!(i.axis(6), 1.0);
+        i.begin_frame(Frame { window: true, prompt: true, typing: true, ..frame() });
+        assert_eq!(i.axis(6), 0.0);
+        i.set(0x2a, true);
+        i.begin_frame(Frame { window: true, ..frame() });
+        assert_eq!(i.axis(6), 1.0);
     }
 
     #[test]
