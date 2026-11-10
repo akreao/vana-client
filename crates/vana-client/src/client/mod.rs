@@ -13202,6 +13202,7 @@ impl App {
             // state at 1.
             f.window = world_window_open(w)
                 || w.palette.0 != 0
+                || w.party_cursor.is_some()
                 || w.log_active
                 || w.log_focus == 2
                 || event::choice(w).is_some()
@@ -13357,6 +13358,9 @@ impl App {
         // when the gate allows (field, UI shown, no event, alive, no window), Ctrl / Alt + digit runs a macro and
         // Shift + Ctrl / Alt + digit picks a set. The palettes are not drawn yet.
         let sub_up = target::sub_up(world);
+        if let Some(m) = world.macros.as_mut() {
+            m.hold_wait(sub_up);
+        }
         let by_mod = world.macros.as_ref().is_some_and(|m| m.by_mod());
         if let Some(line) = world.macros.as_mut().filter(|_| !sub_up).and_then(|m| m.step(dt * 60.0)) {
             let line = crate::dat::font::decode_sjis(&line);
@@ -16400,9 +16404,10 @@ impl App {
             _ => true,
         };
         let keyboard = matches!(&self.phase, Phase::World(w) if w.swkbd.is_some());
+        let party_cursor = matches!(&self.phase, Phase::World(w) if w.party_cursor.is_some());
         // The Controller window waiting for a button: the pad goes to it.
         let capture = matches!(&self.phase, Phase::World(w) if w.padcfg.open && w.padcfg.listening.is_some());
-        let ctx = gamepad::Ctx { menu, palette, tabs, field, keyboard, capture };
+        let ctx = gamepad::Ctx { menu, palette, tabs, field, keyboard, party_cursor, capture };
         let phase = &mut self.phase;
         let mut to_mods = |b: &[u8], a: [f32; 6], on: bool| match phase {
             Phase::World(w) => lua::input::pad_filter(w, b, a, on),

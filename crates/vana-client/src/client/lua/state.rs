@@ -98,7 +98,11 @@ pub(super) fn by_tag(w: &World, tag: &str) -> Option<(u32, u16)> {
         return Some((m.id, m.index));
     }
     let tagged = format!("<{inner}>");
-    let probe = if ["t", "me", "bt", "scan", "pet", "ht", "lastst"].contains(&inner.as_str()) { tagged.as_str() } else { tag.trim() };
+    let probe = if ["t", "me", "bt", "scan", "pet", "ht", "lastst"].contains(&inner.as_str()) {
+        tagged.as_str()
+    } else {
+        tag.trim()
+    };
     super::super::textcmd::resolve(w, Some(probe), false, true, super::super::textcmd::Mode::Internal)
 }
 

@@ -1178,8 +1178,12 @@ pub fn draw(p: &mut Panels, w: &mut World) {
     }
     match picked {
         Some(PartyPick::Slot(k)) => {
-            let t = target::slot_target(w, k);
-            target::pick(w, t);
+            if w.party_cursor.is_some() {
+                target::party_cursor_pick(w, k);
+            } else {
+                let t = target::slot_target(w, k);
+                target::pick(w, t);
+            }
         }
         Some(PartyPick::Entity(id)) => target::pick(w, Some(id)),
         None => {}

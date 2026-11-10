@@ -103,7 +103,14 @@ fn last_subtarget_index(id: u32, my_id: u32, my_index: u16, entity_index: Option
 /// The last confirmed sub-target pick, `<lastst>`, while it is still here. A prompt can pick us.
 pub fn last_subtarget(w: &World) -> Option<(u32, u16)> {
     let id = w.last_subtarget?;
-    let entity_index = if id == w.my_id { None } else { w.entities.get(&id).map(|e| e.index) };
+    let entity_index = if id == w.my_id {
+        None
+    } else {
+        w.entities
+            .get(&id)
+            .map(|e| e.index)
+            .or_else(|| w.party.members().find(|m| m.id == id && m.away == 0 && m.zone == w.pos_zone).map(|m| m.index))
+    };
     last_subtarget_index(id, w.my_id, w.my_index, entity_index)
 }
 
@@ -252,6 +259,21 @@ pub fn party_cursor_key(w: &mut World, key: egui::Key) -> bool {
         _ => {}
     }
     true
+}
+
+/// A click on a party row while the cursor is up: move to that row and take Enter's pick.
+pub fn party_cursor_pick(w: &mut World, index: usize) -> bool {
+    let Some(pc) = w.party_cursor.as_ref() else { return false };
+    let ok = match pc.moving {
+        Some((_, base)) => (base..base + 6).contains(&index),
+        None => index < pc.count,
+    };
+    if !ok {
+        return false;
+    }
+    let pc = w.party_cursor.as_mut().unwrap();
+    (pc.index, pc.fellow) = (index, false);
+    party_cursor_key(w, egui::Key::Enter)
 }
 
 /// The cursor with the mouse over the party windows' rows (the windows' generic events *(inf)*): hovering a used row
