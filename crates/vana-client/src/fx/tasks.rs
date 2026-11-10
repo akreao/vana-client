@@ -547,7 +547,7 @@ impl Effects {
 
     /// The furniture actor goes: its waiting start, the tasks on_furniture started on it with their copies, and the
     /// generator clones those started on it, a finished copy's too (the actor's links delete them all, FUN_10082b10:
-    /// FUN_10057cf0 the tasks, FUN_10054380 the clones).
+    /// FUN_10057cf0 the tasks, FUN_10054380 the clones; a template instance is only unlinked).
     pub fn stop_furniture(&mut self, actor: u32) {
         let who = Who::Actor(actor);
         self.furn_starts.retain(|f| f.0 != actor);
@@ -568,8 +568,14 @@ impl Effects {
                         _ => false,
                     }
             });
-            if linked {
+            if !linked {
+                continue;
+            }
+            // A generator run as its own template only forgets the actor and runs on, as in forget_actor.
+            if self.insts[i].as_ref().is_some_and(|x| x.clone) {
                 self.kill(i);
+            } else if let Some(x) = self.insts[i].as_mut() {
+                x.actors.iter_mut().filter(|a| **a == who).for_each(|a| *a = Who::None);
             }
         }
     }
