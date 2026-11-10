@@ -13043,8 +13043,10 @@ impl App {
         // Locked on, autorun runs at the target (FUN_100a7b80 with a vector): the keys only end it (the test above),
         // the vector keeps its length and turns at the target each tick, and touching it (the gap less both radii
         // under 0) the step is none and the run goes on. Unlocked, the run goes on along the last way it took.
-        // Retail's last tick before touching runs at 0.3 of the vector (within one tick's move); ours stops at 0.
+        // A gap under one tick's move (|vector| x ticks) runs at 0.3 of the vector instead (_DAT_1032dfa4, see the
+        // step below; `lock_run_reach` holds the target and both radii for it).
         let lock_run = world.target.filter(|_| world.locked).and_then(|t| world.entities.get(&t).map(|e| (t, e.pos)));
+        let mut lock_run_reach = None;
         if world.autorun && !move_locked {
             if world.autorun_dir == Vec3::ZERO && step != Vec3::ZERO {
                 world.autorun_dir = step.normalize();
@@ -13058,7 +13060,9 @@ impl App {
                         world.autorun_dir = d.normalize();
                     }
                     let r = |id: u32| world.actors.get(&id).map_or(0.0, bump::radius);
-                    touching = d.length() - r(world.my_id) - r(t) < 0.0;
+                    let radii = r(world.my_id) + r(t);
+                    touching = d.length() - radii < 0.0;
+                    lock_run_reach = Some((tp, radii));
                 }
                 step = if touching { Vec3::ZERO } else { world.autorun_dir };
             } else if look_run {
@@ -13284,6 +13288,21 @@ impl App {
                     3 => speed / 3.0 * ground::STEP_TICKS / 60.0,
                     2 | 4 => (if riding { 0.125 } else { 0.0625 }) * ground::STEP_TICKS,
                     _ => speed * tier * ground::STEP_TICKS / 60.0,
+                };
+                // Locked autorun (FUN_100a7b80): a gap to the target under this step's move goes at 0.3 of it, and a
+                // gap under 0 not at all.
+                let d = match lock_run_reach {
+                    Some((tp, radii)) => {
+                        let gap = Vec3::new(tp.x - from.x, 0.0, tp.z - from.z).length() - radii;
+                        if gap < 0.0 {
+                            0.0
+                        } else if gap < d {
+                            d * 0.3
+                        } else {
+                            d
+                        }
+                    }
+                    None => d,
                 };
                 next = match lock_target {
                     Some(tp) => target::locked_step(from, tp, s.dot(forward), s.dot(right), d),
