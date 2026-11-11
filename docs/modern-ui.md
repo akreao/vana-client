@@ -482,8 +482,10 @@ Milestone 1:
 - UI Setup (2026-10-27 as Panel Places, settings.rs, Settings > Client, in game only): Reset drops this character's
   saved panel places (config modern_places) and saves; every panel goes back to where it starts the next frame
   (positions come from the places each frame). From <character> <job> (2026-11-10) copies another kept setup in (its
-  places, mode presets and chat window settings; this job's favourites stay). The row reads As Moved again. Live:
-  the Settings panel dragged away, Reset by keys and by the mouse; From Lnxcsfix WHM on WAR folded WHM's minimap.
+  places, mode presets and chat window settings; this job's favourites stay). Both replace this job's windows, so
+  stepping the slider only picks ("Reset?", "From Nine WHM?"): Enter, a click or letting go of a drag does it, and
+  Escape drops it. The row reads As Moved again. Live: the Settings panel dragged away, Reset by keys and by the
+  mouse; From Lnxcsfix WHM on WAR folded WHM's minimap.
 - Setups per character and job (2026-11-10, client/uiconf.rs; issue #94): each character's main job keeps its own
   window places (every display's), folded edge windows, mode presets, chat window settings and favourites, in
   <data>/ui/config/<World>-<Name>/<JOB>.json (beside an FFXI_CONFIG copy in test runs); the config's fields hold the

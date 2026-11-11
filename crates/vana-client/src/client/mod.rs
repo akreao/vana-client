@@ -7709,7 +7709,7 @@ struct World {
     fav_strip: bool,
     fav_save: bool,
     /// The character and main job whose modern UI setup is in use (client/uiconf.rs).
-    ui_profile: Option<(String, String)>,
+    ui_profile: Option<uiconf::InUse>,
     /// The battle menu's suggestions (suggest.rs::refresh_root), when they were taken, and the one the cursor is on.
     root_sugg: Vec<suggest::Suggestion>,
     root_sugg_at: Option<Instant>,
@@ -16048,6 +16048,9 @@ impl App {
                 }
                 if let Some(s) = world.settings.as_mut() {
                     s.tick();
+                    if !ctx.input(|i| i.pointer.any_down()) {
+                        s.mouse_up();
+                    }
                 }
                 // The Mods window: made from the config when asked for; its installs, its mods' changes, its list.
                 if let Some(id) = world.want_mods.take() {
