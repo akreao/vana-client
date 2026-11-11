@@ -5994,6 +5994,9 @@ struct Actor {
     tilt_rot: Option<glam::Mat3>,
     /// The front (points 10 / 11) and rear (8 / 9) feet midpoints of the last drawn pose, in the world (FUN_100a4d10).
     feet: Option<[Vec3; 2]>,
+    /// FUN_100a4ed0's probe counter (+0x5f0, None before the first update) and the position it last saw.
+    feet_count: Option<u8>,
+    feet_last: Vec3,
     /// Entity +0x130 bits 5..6 (op 0xac): which death scheduler runs (combat::death_scheduler).
     death_pick: u8,
     /// The riding files on `extra`.
@@ -6130,6 +6133,8 @@ impl Actor {
             mouth_name: "mou4",
             ground_tilt: Default::default(),
             feet: None,
+            feet_count: None,
+            feet_last: Vec3::ZERO,
             tilt_rot: None,
             death_pick: 0,
             mouth: None,
@@ -19184,11 +19189,32 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
         let posed_anchor = a.anchors[..2].iter().any(|&k| k != 2);
         // FUN_100a4d10 reads the feet points of the drawn pose (vt+0x1c4), so these models pose on the CPU.
         let feet_probe = ch.cib[0] == 2 && ch.cib[2] == 2;
+        // FUN_100a4ed0: the probe runs each frame for a moving actor (more than 1e-7) at view depth <= 10.0
+        // (+0xbc), on the first update, else on the 121st frame of a counter that starts at rand() % 120 (ours
+        // dealt by id). The feet read last frame's pose, so a far one poses only the frame before its probe.
+        let near = -cview.transform_point3(pos).z <= 10.0;
+        let probe_now = feet_probe && {
+            let moved = pos.distance(a.feet_last) > 1e-7;
+            a.feet_last = pos;
+            match a.feet_count {
+                None => {
+                    a.feet_count = Some((id.wrapping_mul(0x9e37_79b1) >> 8) as u8 % 120);
+                    true
+                }
+                Some(_) if near && moved => true,
+                Some(c) => {
+                    let c = c + 1;
+                    a.feet_count = Some(if c >= 120 { 0 } else { c });
+                    c >= 120
+                }
+            }
+        };
+        let feet_pose = feet_probe && (near || a.feet_count.is_some_and(|c| c >= 119));
         if (w.locked && (*id == w.my_id || w.target == Some(*id)))
             || (w.camst.first && *id == w.my_id)
             || fx_posed.contains(id)
             || posed_anchor
-            || feet_probe
+            || feet_pose
         {
             a.bones = pose_now();
         } else {
@@ -19214,14 +19240,15 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
             } else {
                 w.ground.as_ref().and_then(|g| g.floor_normal(pos)).map(|n| -n)
             };
-            if let Some(n) = n {
+            // A feet model's normal (+0x160) changes only on a probe; the easing below runs every frame.
+            if let Some(n) = n.filter(|_| !feet_probe || probe_now) {
                 tilt::set_normal(&mut a.ground_tilt, n);
             }
             // FUN_100a4d10: info[0] == info[2] == 2 (behemoth, adamantoise, morbol ...) pitch with the ground under
             // the front feet (points 10 / 11) and the rear feet (8 / 9), each snapped. The points come through
             // vt+0x1c4 (FUN_100d4560 -> FUN_1002a780): the bones FUN_100cbde0 posed on the last drawn frame's
             // world matrix (+0x998), tilt included; none before the first pose (model +0x30 bit 4).
-            if feet_probe
+            if probe_now
                 && let Some(g) = w.ground.as_ref()
                 && let Some([front, rear]) = a.feet
             {
@@ -19246,7 +19273,7 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
         let model = frame * glam::Mat4::from_scale(a.axes.unwrap_or(Vec3::splat(a.scale)));
         // The feet midpoints of this drawn pose, for next frame's probe (FUN_100a4d10).
         a.feet = None;
-        if feet_probe && !a.bones.is_empty() {
+        if feet_pose && !a.bones.is_empty() {
             let pt = |k: usize| {
                 ch.skeleton
                     .points
@@ -20299,10 +20326,6 @@ impl ApplicationHandler for App {
                         && let Some(p) = numpad_twin(code, event.text.as_deref())
                     {
                         self.numpad_presses.push(p);
-                    }
-                    if event.state == ElementState::Pressed && matches!(code, KeyCode::Minus | KeyCode::NumpadSubtract)
-                    {
-                        self.numpad_minus = code == KeyCode::NumpadSubtract;
                     }
                     if event.state == ElementState::Pressed && matches!(code, KeyCode::Minus | KeyCode::NumpadSubtract)
                     {

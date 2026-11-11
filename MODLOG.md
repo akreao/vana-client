@@ -12793,9 +12793,11 @@ From the research notes:
 - The normal: ours the player's walk normal (Ground::player_normal), else the face under the position each frame (the
   rider's for its animal) *(retail probes a far moving actor only every 121 frames)*. Quadrupeds with info[0] ==
   info[2] == 2 (behemoth, adamantoise, morbol, treant, wyrms ...) then take FUN_100a4d10's pitch-only normal: the
-  front feet points 10 / 11 and rear 8 / 9 (ours from the rest pose through last frame's matrix *(inf)*), their
-  midpoints snapped, N = normalize(d x (d x up)) facing up (tilt::feet_normal: d = (-2, 0.5, 0) gives
-  (-0.2425, -0.9701, 0)).
+  front feet points 10 / 11 and rear 8 / 9 (last drawn frame's CPU pose), their midpoints snapped,
+  N = normalize(d x (d x up)) facing up (tilt::feet_normal: d = (-2, 0.5, 0) gives (-0.2425, -0.9701, 0)).
+  These models follow FUN_100a4ed0's probe gate: each frame while moving at view depth <= 10.0, on the first update,
+  else every 121st frame (counter from rand() % 120, ours dealt by id); their normal holds between probes, and a far
+  one poses on the CPU only on the frame before its probe (2026-11-11).
   The tilted frame goes to the pose, attach_point and the effects (actor_frame).
 - Op 0xd8 (the plain path, FUN_100843b0): D3DX Scale . RotZ(z) . RotY(yaw) . RotX(x), i.e. glam T Rx(x) Ry(yaw) Rz(z):
   z about the model's Z, x about the world X after the yaw, both positive. Ours had z then x in the model frame with
