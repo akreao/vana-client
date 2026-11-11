@@ -650,7 +650,7 @@ pub fn topbar_shot(
             ("127.0.0.1".to_string(), "tuxedo".to_string(), "secret".to_string(), String::new());
         let mut remember = cfgset == Some("remember");
         let mut trust = cfgset == Some("trust");
-        // login2fa[:scan|:code|:done]: the two-factor window over the form, a sample key for the QR code.
+        // login2fa[:scan|:code|:done|:password]: the account window over the form, a sample key for the QR code.
         let mut twofa = config.and_then(|c| c.strip_prefix("login2fa")).map(|step| {
             let mut t = super::twofa::TwoFa::new();
             let uri = "otpauth://totp/Nameless:tuxedo?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=Nameless&algorithm=SHA1&digits=6&period=30";
@@ -660,6 +660,11 @@ pub fn topbar_shot(
                     t.reply(Ok(crate::net::auth::Reply::TotpCreated { uri: uri.into() }));
                     t.reply(Err(anyhow::anyhow!("Failed to validate credentials")));
                     t.code = "123456".into();
+                }
+                ":password" => {
+                    t.step = super::twofa::Step::Password;
+                    t.new = ["hunter22".into(), "hunter2".into()];
+                    t.focus = 1;
                 }
                 ":done" => {
                     t.reply(Ok(crate::net::auth::Reply::TotpCreated { uri: uri.into() }));

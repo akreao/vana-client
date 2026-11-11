@@ -20,8 +20,7 @@ const MAX_REPLY: usize = 64 * 1024;
 pub enum Command {
     Login = 0x10,
     CreateAccount = 0x20,
-    /// xi_connect's; our login has no password change yet.
-    #[allow(dead_code)]
+    /// The account window's Change password (client/twofa.rs): `password` the current one, `new_password`.
     ChangePassword = 0x30,
     CreateTotp = 0x31,
     RemoveTotp = 0x32,
