@@ -15994,6 +15994,13 @@ impl App {
                 // The modern UI's setup follows the character and main job (client/uiconf.rs).
                 if let Some(want) = uiconf::wanted(world) {
                     uiconf::switch(&mut self.cfg, world, want);
+                    // Settings open across the change: its From list follows.
+                    if world.settings.is_some() {
+                        let others = uiconf::others(world);
+                        if let Some(s) = world.settings.as_mut() {
+                            s.profiles = others;
+                        }
+                    }
                     save = true;
                 }
                 // With the UI hidden (key function 0x56) retail draws no window at all, so the modern layer goes too; in
