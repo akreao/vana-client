@@ -1294,6 +1294,11 @@ impl Effects {
         // Inside an `init`'s first step a task stepped at once sees its wanted sub-animation too (kept over a file
         // retry); one that steps later (ops 0x30, 0x5c, 0x76 / 0x77, 0x84) sees the model's own.
         t.init_sub = t.init_sub.or(self.sub_now);
+        // The first step is the whole update (FUN_100748c0 -> vt+0x20 = FUN_10057e10): the frame's ticks come off
+        // before the first op, so the wait after it is already one frame down.
+        if !t.waiting {
+            t.countdown -= if t.vana { self.vana_dt } else { self.frame_dt };
+        }
         self.run_ready(i, &mut t, actors);
         // Once a frame: the frame's step is still to come for a start before it or a slot past its running task.
         t.stepped = outer.is_none_or(|o| i > o);
@@ -1373,7 +1378,10 @@ impl Effects {
             // every drive on that actor goes first. Over a fast-forward it starts `seq_over` ticks in.
             0x26 | 0x27 => {
                 let on = if op.code == 0x26 { t.a1 } else { t.a2 };
-                let (Some(id), Some(r)) = (on.id(), scope(self, kind::VTX)) else { return Flow::Next };
+                let Some(id) = on.id() else { return Flow::Next };
+                // The actor's drives go before the path is looked at (the loop at 0x1005ca07, then FUN_1004e3b0).
+                self.drives.retain(|d| d.actor != id);
+                let Some(r) = scope(self, kind::VTX) else { return Flow::Next };
                 let Some(segs) = drive::path(self.reg.libs[r.0].data(r.1)) else { return Flow::Next };
                 // A curve above 6 is a KeyFrame's 4cc, sampled linearly *(inf: no ship file has one)*.
                 let curve = op.u32_at(0x14);
@@ -1384,7 +1392,6 @@ impl Effects {
                 } else {
                     None
                 };
-                self.drives.retain(|d| d.actor != id);
                 self.drives.push(drive::Drive::new(id, t.uid, segs, &op.raw, t.speed, self.seq_over, key));
                 Flow::Next
             }
@@ -2730,6 +2737,14 @@ impl Effects {
             String::from_utf8_lossy(&self.reg.libs[t.res.0].tree.nodes[t.res.1].name),
             if ended { "ended".to_string() } else { format!("op {} in {:.0}", t.ip, t.countdown) }
         );
+        // FUN_10056b20: one that did not end inside the skip takes its update at once (FUN_100748c0).
+        if !ended && !t.restart {
+            if !t.waiting {
+                t.countdown -= if t.vana { self.vana_dt } else { self.frame_dt };
+            }
+            self.run_ready(i, &mut t, actors);
+            ended = t.done;
+        }
         t.stepped = true;
         t.done = ended;
         self.settle(t, i);
@@ -4871,9 +4886,11 @@ mod tests {
                 }
             }
         }
-        // dada at 40 in Hume ati0; damg and its spark 5 ticks later (MODLOG "Effect schedulers").
+        // dada at 40 in Hume ati0; damg and its spark 5 ticks later (MODLOG "Effect schedulers"). Each scheduler on
+        // the way takes the frame's tick in the step that starts it (FUN_100748c0 runs the whole update), so three
+        // waits are each one frame short: tick 42 at these 1-tick frames.
         for g in ["g010", "g011", "g012", "g013"] {
-            assert!(started.iter().any(|s| s.1 == g && s.0 == 45), "{g}: {started:?}");
+            assert!(started.iter().any(|s| s.1 == g && s.0 == 42), "{g}: {started:?}");
         }
         // The orc hits back: orc ati0 dada at 36, then chit on the orc plays DAT 0 hit2 at the Hume (a doll).
         let a = Action {
@@ -5958,44 +5975,52 @@ mod auto_tests {
     }
 
     /// Selbina's arrival (file 31008 `seq0`; MODLOG "Ship actors"): `path` backward from the staging point, its
-    /// heading following the course, then `pat2` sideways into the berth.
+    /// heading following the course, then `pat2` sideways into the berth. Frame k is sequence time 2 (k + 1): the
+    /// sequence and its first drive both take the frame's ticks in the frame they start. `pat2` starts in the frame
+    /// the clock reaches 1800 (k 899) and takes that frame's ticks too, so it runs 2 ticks ahead of the clock.
     #[test]
     fn selbina_arrival() {
         let Some(run) = sail(31008, b"seq0", 0.0, 1201, Vec3::new(9.294, 0.0, -69.775)) else { return };
-        let at = |t: usize| run[t / 2];
-        assert!(near(at(0).0, [-401.468, 0.0, -123.873]), "t 0: {}", at(0).0);
+        let at = |t: usize| run[t / 2 - 1];
+        // The first frame is already 2 ticks out of the staging point (-401.468, 0, -123.873).
+        assert!(at(2).0.distance(Vec3::new(-401.468, 0.0, -123.873)) < 1.0 && at(2).0.x > -401.468);
         assert!(near(at(300).0, [-295.153, 0.0, -116.229]), "t 300: {}", at(300).0);
         assert!((at(300).1.y - -0.0980).abs() < 0.002, "t 300 yaw {}", at(300).1.y);
+        assert!(near(at(1798).0, [9.295, 0.0, -100.0]), "t 1798: {}", at(1798).0);
         assert!(near(at(1800).0, [9.295, 0.0, -100.0]), "t 1800: {}", at(1800).0);
-        assert!(near(at(2100).0, [9.295, 0.0, -84.887]), "t 2100: {}", at(2100).0);
+        assert!(near(at(2098).0, [9.295, 0.0, -84.887]), "t 2098: {}", at(2098).0);
         assert!(near(at(2398).0, [9.295, 0.0, -69.775]), "t 2398: {}", at(2398).0);
     }
 
-    /// 3.3: zoning in 1500 ticks into the arrival: `path` has 300 ticks left, so the boat starts near the berth.
+    /// 3.3: zoning in 1500 ticks into the arrival: `path` has 300 ticks left less the first frame's 2, so the boat
+    /// starts near the berth (t 1500 is (-4.737, 0, -100)).
     #[test]
     fn selbina_arrival_caught_up() {
         let Some(run) = sail(31008, b"seq0", 1500.0, 160, Vec3::new(9.294, 0.0, -69.775)) else { return };
-        assert!(near(run[0].0, [-4.737, 0.0, -100.0]), "t 1500: {}", run[0].0);
-        assert!(near(run[150].0, [9.295, 0.0, -100.0]), "t 1800: {}", run[150].0);
+        assert!(near(run[0].0, [-4.552, 0.0, -100.0]), "t 1502: {}", run[0].0);
+        assert!(near(run[149].0, [9.295, 0.0, -100.0]), "t 1800: {}", run[149].0);
     }
 
     /// 3.7: Port Jeuno's San d'Oria berth (file 31010 `seq0`): down from the sky, nose down.
     #[test]
     fn jeuno_descent() {
         let Some(run) = sail(31010, b"seq0", 0.0, 801, Vec3::new(-68.0, 10.45, 117.0)) else { return };
-        let (p, r) = run[100];
+        let (p, r) = run[99];
         assert!(near(p, [-254.825, -25.673, 356.751]), "t 200: {p}");
         assert!((r.y - 0.5498).abs() < 0.002 && (r.z - 0.1880).abs() < 0.002, "t 200 rot {r}");
-        assert!(near(run[799].0, [-68.0, 10.45, 117.0]), "t 1598: {}", run[799].0);
+        assert!(near(run[798].0, [-68.0, 10.45, 117.0]), "t 1598: {}", run[798].0);
+        assert!(near(run[800].0, [-68.0, 10.45, 117.0]), "after: {}", run[800].0);
     }
 
-    /// 3.7: the pirate ship's leaving (file 31017 `seq1`) ends offshore, its heading never set. The scheduler's end
-    /// takes the drive at 0 ticks left before its last step (3.8), and `come` runs back on a sine: 1.75 short.
+    /// 3.7: the pirate ship's leaving (file 31017 `seq1`) ends offshore, its heading never set. `come` starts in the
+    /// frame the clock reaches 1200 (k 599) and has its 1800 ticks by k 1498: the path's end, one frame before the
+    /// sequence's own (its last ops sit at 2998 and 2999).
     #[test]
     fn pirate_away() {
         let Some(run) = sail(31017, b"seq1", 0.0, 1600, Vec3::new(-30.0, 0.0, 0.0)) else { return };
+        assert!(near(run[1497].0, [-149.895, 0.0, -998.255]), "t 2996: {}", run[1497].0);
         let (p, r) = run[1599];
-        assert!(near(p, [-149.895, 0.0, -998.255]), "t 3198: {p}");
+        assert!(near(p, [-150.0, 0.0, -1000.0]), "end: {p}");
         assert_eq!(r, Vec3::ZERO);
     }
 }
