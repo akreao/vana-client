@@ -6783,7 +6783,7 @@ impl crate::fx::Actors for FxActors<'_> {
         }
         let Some(a) = self.actors.get(&id) else { return (Vec::new(), Vec::new()) };
         let Some(ch) = a.character.as_ref() else { return (Vec::new(), Vec::new()) };
-        (ch.part_files.clone(), a.extra.iter().rev().map(|(_, f)| f.id).chain(ch.files.iter().copied()).collect())
+        (ch.part_files.clone(), actmotion::listed(&a.extra).map(|f| f.id).chain(ch.files.iter().copied()).collect())
     }
 
     /// Actor +0xb2 bit 1 (the server's hide bits), not alpha: a 'spop' actor at alpha 0 still takes generators.
@@ -7249,6 +7249,9 @@ struct World {
     /// Swing holds (scheduler ops 0x20 / 0x59): until when an actor's server status changes wait (the applied status
     /// +0x170 vs the raw +0x16c), the waiting status, and until when it plays no hit reactions (op 0x59).
     holds: HashMap<u32, Instant>,
+    /// Each running hold behind `holds` / `noreact`: (the scheduler task's uid, 0 for the client's own; actor; kind
+    /// bits; end), so a killed scheduler's holds can end with it (combat::fx_hold_cut).
+    hold_list: Vec<(u64, u32, u8, Instant)>,
     /// The rest of a melee round by attacker: when the next swing starts, and its records (combat::on_action).
     rounds: HashMap<u32, (Instant, std::collections::VecDeque<crate::net::action::Action>)>,
     held_status: HashMap<u32, u8>,
@@ -9730,6 +9733,7 @@ impl App {
                             pending: Vec::new(),
                             rounds: HashMap::new(),
                             holds: HashMap::new(),
+                            hold_list: Vec::new(),
                             held_status: HashMap::new(),
                             noreact: HashMap::new(),
                             msg_queue: Vec::new(),
@@ -11094,6 +11098,7 @@ impl App {
                     world.pending.clear();
                     world.rounds.clear();
                     world.holds.clear();
+                    world.hold_list.clear();
                     world.held_status.clear();
                     world.noreact.clear();
                     world.loads.clear();
@@ -12507,8 +12512,11 @@ impl App {
         for id in std::mem::take(&mut world.effects.releases) {
             combat::fx_release(world, id);
         }
-        for (id, ticks, kind) in std::mem::take(&mut world.effects.holds) {
-            combat::fx_hold(world, id, ticks, kind);
+        for (id, ticks, kind, owner) in std::mem::take(&mut world.effects.holds) {
+            combat::fx_hold(world, id, ticks, kind, owner);
+        }
+        for owner in std::mem::take(&mut world.effects.hold_cuts) {
+            combat::fx_hold_cut(world, owner);
         }
         wepfx::apply_ops(world);
         for (id, pick) in std::mem::take(&mut world.effects.death_picks) {

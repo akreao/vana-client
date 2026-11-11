@@ -24,6 +24,10 @@ pub enum Kind {
     Effect,
     /// The riding files (FUN_100d2800, tag 7) while on a chocobo or mount.
     Ride,
+    /// Battle files retail has already taken off the list (FUN_100d44b0(1) in FUN_1008b460's state 5 / 7) while the
+    /// sheathe's motions still play from them (retail's motion player keeps its own reference): motions resolve,
+    /// schedulers do not.
+    Sheathed,
 }
 
 pub type Extra = Vec<(Kind, Arc<MotionFile>)>;
@@ -167,14 +171,34 @@ pub fn emoting(a: &Actor) -> bool {
     a.emote.is_some()
 }
 
-/// Battle files of a PC look (FUN_100cf650 on engaging, FUN_100d2340(1) after sheathing).
+/// Battle files of a PC look (FUN_100d16c0 / FUN_100d1970 on engaging, FUN_100d44b0(1) after sheathing) and where
+/// the entity's machine (FUN_1008b460) stands with them.
 #[derive(Clone, Debug, Default)]
 pub struct Battle {
     /// Files on the list.
     pub on: Vec<u32>,
-    /// Sheathing: the "out N" scheduler plays, then the files go.
+    /// State 0x11 / 6 comes next frame: the status left 1 / 3, `bntg` runs, the sheathe has not started.
+    pub wait: bool,
+    /// Sheathing (states 5 / 7 and after): the "out N" scheduler plays, then the files go.
     pub leaving: bool,
+    /// The sheathe's scheduler while it plays.
+    pub out: Option<String>,
+    /// Frames since the sheathe started (ours: the effect queue starts "out N" and its `waot` a frame later).
+    pub frames: u32,
 }
+
+impl Battle {
+    /// State 3: engaged with the files in, which a status of 3 (dead) keeps (0x1008c3f2: neither 1 nor 3 leaves).
+    pub fn held(&self) -> bool {
+        !self.on.is_empty() && !self.wait && !self.leaving
+    }
+}
+
+/// The DAT 0 schedulers FUN_1008b460 starts by name around the sheathe, and the `waot` it waits on.
+const BNTG: u32 = u32::from_le_bytes(*b"bntg");
+const KLBT: u32 = u32::from_le_bytes(*b"klbt");
+const HWAT: u32 = u32::from_le_bytes(*b"hwat");
+pub(super) const WAOT: u32 = u32::from_le_bytes(*b"waot");
 
 /// Loads motion files on worker threads and caches them by file id.
 pub struct Loader {
@@ -311,15 +335,20 @@ pub fn find_cached<'a>(cache: &mut FindCache, extra: &'a Extra, ch: &'a Characte
     found
 }
 
+/// The files on the actor's list (+0x7e4), newest first: every one but the battle files already taken off it.
+pub fn listed(extra: &Extra) -> impl Iterator<Item = &Arc<MotionFile>> {
+    extra.iter().rev().filter(|(k, _)| *k != Kind::Sheathed).map(|(_, f)| f)
+}
+
 /// A type-0x07 scheduler by name, newest file first, then the model (FUN_100cc440).
 pub fn scheduler<'a>(extra: &'a Extra, ch: &'a Character, name: &str) -> Option<&'a [u8]> {
-    let files = extra.iter().rev().flat_map(|(_, f)| f.schedulers.iter());
+    let files = listed(extra).flat_map(|f| f.schedulers.iter());
     files.chain(ch.schedulers.iter()).find(|(n, _)| n == name).map(|(_, d)| d.as_slice())
 }
 
 /// Scheduler names newest file first, then the model's.
 pub fn scheduler_names<'a>(extra: &'a Extra, ch: &'a Character) -> Vec<&'a str> {
-    let files = extra.iter().rev().flat_map(|(_, f)| f.schedulers.iter());
+    let files = listed(extra).flat_map(|f| f.schedulers.iter());
     files.chain(ch.schedulers.iter()).map(|(n, _)| n.as_str()).collect()
 }
 
@@ -658,7 +687,10 @@ pub(super) fn update(w: &mut World, dt: f32) {
             }
             w.actors.get_mut(&id).unwrap().status_motion = base.clone();
         }
-        let engaged = status(w, id) == 1;
+        // State 3 holds through a status of 3: dying engaged keeps the battle files and the weapon in the hand, and
+        // the sheathe plays when that status ends (a raise).
+        let st = status(w, id);
+        let engaged = st == 1 || (st == 3 && w.actors[&id].battle.held());
         let want = match (&ch.pc, engaged) {
             (Some(pc), true) => crate::dat::motionfile::battle_files(pc),
             _ => Vec::new(),
@@ -716,17 +748,42 @@ pub(super) fn update(w: &mut World, dt: f32) {
         }
         start_ready(w, id, &index, &ch, &base);
         let a = w.actors.get_mut(&id).unwrap();
-        if !want.is_empty() && want != a.battle.on {
+        if a.battle.wait {
+            // States 0x11 / 6, the frame after the status left (they do not test it again): `klbt` (10 ticks on it
+            // kills every `bntg` task, its hold with it), "out N", `hwat` on the actor itself (wep0 / wep1 shown,
+            // wep2 hidden: a cast's `hwmg` or a shot may have left them otherwise), vtable +0x31c(0, 0), every glow
+            // off (FUN_100cf160), +0x7d8 = "    ".
+            a.battle.wait = false;
+            a.battle.leaving = true;
+            a.battle.frames = 0;
+            log::info!("actor {id:#x}: disengaged, sheathing");
+            w.effects.on_scheduler_alone(id, KLBT);
+            a.drawn = false;
+            a.status_motion.clear();
+            for n in 0..2 {
+                w.effects.equip(id, crate::fx::EquipCall::Glow { n, on: false });
+            }
+            let out = ch.pc.as_ref().map(|pc| crate::dat::motionfile::draw_scheduler(pc, true));
+            match out {
+                Some(n) if start(a, &ch, &n, &base) => {
+                    fx_too(&mut w.effects, id, &n);
+                    a.battle.out = Some(n);
+                }
+                _ => a.play = None,
+            }
+            w.effects.on_scheduler(id, id, HWAT);
+        } else if !want.is_empty() && want != a.battle.on {
             // FUN_100d12d0: "in N" starts once the files are in, for its motions and its holds alike.
             let fx_ready = w.effects.libs_ready(&want);
             if let Some(files) = w.motion_files.all(&index, &want).filter(|_| fx_ready) {
                 drop_kind(&mut a.extra, Kind::Battle);
+                drop_kind(&mut a.extra, Kind::Sheathed);
                 add(&mut a.extra, Kind::Battle, files);
                 log::info!("actor {id:#x}: engaged, battle files {want:?}");
                 // The draw ("in N") plays when the actor becomes engaged, not when its files change mid-fight (a
                 // weapon change while engaged).
                 let drawing = a.battle.on.is_empty() || a.battle.leaving;
-                a.battle = Battle { on: want, leaving: false };
+                a.battle = Battle { on: want, ..Default::default() };
                 if drawing && let Some(pc) = &ch.pc {
                     // State 2 after "in N": vtable +0x31c(1, 0), the weapon drawn; +0x7d8 = "    " restarts the status
                     // motion.
@@ -743,19 +800,25 @@ pub(super) fn update(w: &mut World, dt: f32) {
                     }
                 }
             }
-        } else if want.is_empty() && !a.battle.on.is_empty() && !a.battle.leaving {
-            a.battle.leaving = true;
-            log::info!("actor {id:#x}: disengaged, sheathing");
-            // States 6 / 0x11 with "out N": vtable +0x31c(0, 0), every glow off (FUN_100cf160), +0x7d8 = "    ".
-            a.drawn = false;
-            a.status_motion.clear();
-            for n in 0..2 {
-                w.effects.equip(id, crate::fx::EquipCall::Glow { n, on: false });
-            }
-            let out = ch.pc.as_ref().map(|pc| crate::dat::motionfile::draw_scheduler(pc, true));
-            match out {
-                Some(n) if start(a, &ch, &n, &base) => fx_too(&mut w.effects, id, &n),
-                _ => a.play = None,
+        } else if want.is_empty() && a.battle.held() {
+            // State 3, the status neither 1 nor 3 any more: `bntg` with no second actor (DAT 0: op 0x07, no
+            // reactions and no new status motion for up to 300 ticks) covers the frame until the sheathe.
+            // *(FUN_100d14c0 puts the normal upper-body and skirt files back on top of the list here; ours never
+            // took them off.)*
+            a.battle.wait = true;
+            log::info!("actor {id:#x}: left the engaged status");
+            w.effects.on_scheduler_alone(id, BNTG);
+        }
+        // State 5 / 7 (the machine's second call of the sheathe's frame, FUN_1008e9a0): FUN_100d44b0(1) takes the
+        // battle files off the list once no `waot` runs on the actor. A dual wield "out0" starts one at its first
+        // step (op 0x03, 50 ticks), so its second hand's scheduler (op 0x84 at tick 36) is still found.
+        if a.battle.leaving && a.extra.iter().any(|(k, _)| *k == Kind::Battle) {
+            a.battle.frames += 1;
+            if a.battle.frames > 2 && !w.effects.actor_scheduler_running(id, WAOT) {
+                for e in a.extra.iter_mut().filter(|e| e.0 == Kind::Battle) {
+                    e.0 = Kind::Sheathed;
+                }
+                log::debug!("actor {id:#x}: battle files off the list");
             }
         }
         if let Some(p) = &mut a.play {
@@ -796,8 +859,10 @@ pub(super) fn update(w: &mut World, dt: f32) {
             }
             m.next -= ticks;
         }
-        if a.battle.leaving && a.play.is_none() {
+        // The sheathe's motions are over (or another play took their place): the files' last use.
+        if a.battle.leaving && a.play.as_ref().is_none_or(|p| Some(&p.name) != a.battle.out.as_ref()) {
             drop_kind(&mut a.extra, Kind::Battle);
+            drop_kind(&mut a.extra, Kind::Sheathed);
             a.battle = Battle::default();
         }
         if let Some(f) = &mut a.fade {
@@ -897,6 +962,47 @@ impl Fade {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Battle files off the list (state 5's FUN_100d44b0(1)) still give the sheathe its motions, but no scheduler: a
+    /// late swing finds no `ati?`. Hume M sword files 9672 + 9800.
+    #[test]
+    fn sheathed_files_keep_motions_only() {
+        let cfg = crate::config::Config::load();
+        let Ok(index) = DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let look = crate::dat::character::Look {
+            race: 1,
+            face: 0,
+            head: 0,
+            body: 8,
+            hands: 8,
+            legs: 8,
+            feet: 8,
+            main: 1,
+            sub: 0,
+            range: 0,
+        };
+        let ch = crate::dat::character::load_character(&index, &look).unwrap();
+        let file = Arc::new(MotionFile::load(&index, 9672).unwrap());
+        let mut extra: Extra = vec![(Kind::Battle, file)];
+        assert!(scheduler(&extra, &ch, "out0").is_some());
+        assert!(scheduler_names(&extra, &ch).contains(&"ati0"));
+        assert!(!find(&extra, &ch, "otd?").is_empty());
+        extra[0].0 = Kind::Sheathed;
+        assert!(scheduler(&extra, &ch, "out0").is_none());
+        assert!(!scheduler_names(&extra, &ch).contains(&"ati0"));
+        assert!(!find(&extra, &ch, "otd?").is_empty());
+        assert_eq!(listed(&extra).count(), 0);
+    }
+
+    /// State 3 holds through status 3 (dead): only an engaged actor whose sheathe has not begun.
+    #[test]
+    fn battle_held() {
+        let on = || Battle { on: vec![9672], ..Default::default() };
+        assert!(on().held());
+        assert!(!Battle::default().held());
+        assert!(!Battle { wait: true, ..on() }.held());
+        assert!(!Battle { leaving: true, ..on() }.held());
+    }
 
     /// Event op 0x50: a scheduler stopped at tick 30 starts no later motion and is no longer busy; its looping motion
     /// plays on, a counted one ends on its own.

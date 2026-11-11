@@ -425,4 +425,42 @@ mod census {
             println!("op {code:02x}: {n} in {} files, e.g. {eg:?}", files.len());
         }
     }
+    /// The disengage schedulers the entity state machine starts by name (FUN_1008b460 states 3 / 6 / 0x11: `bntg`,
+    /// `klbt`, `hwat`) and the `waot` it waits on: every file that holds one, by op sequence (by hand: `cargo test
+    /// --release disengage_sched_census -- --ignored --nocapture`).
+    #[test]
+    #[ignore]
+    fn disengage_sched_census() {
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let trim = |n: [u8; 4]| String::from_utf8_lossy(&n).trim_end_matches(['\0', ' ']).to_string();
+        let mut seqs: std::collections::BTreeMap<(String, String), (usize, Vec<String>)> = Default::default();
+        for id in 0..index.len() as u32 {
+            let Ok(file) = index.read(id) else { continue };
+            let Ok(tree) = Tree::build(&file) else { continue };
+            for node in tree.of_kind(kind::SCHEDULER).collect::<Vec<_>>() {
+                let name = trim(tree.nodes[node].name);
+                if !matches!(name.as_str(), "bntg" | "klbt" | "hwat" | "waot") {
+                    continue;
+                }
+                let data = &file[tree.nodes[node].data.clone()];
+                let seq: Vec<String> = ops(data)
+                    .iter()
+                    .map(|o| {
+                        let hex: Vec<String> = o.raw[6.min(o.raw.len())..].iter().map(|b| format!("{b:02x}")).collect();
+                        format!("{:02x} w{} {}", o.code, o.wait, hex.join(""))
+                    })
+                    .collect();
+                let key = format!("len {} loop {}: {}", length(data), loops(data), seq.join(" | "));
+                let e = seqs.entry((name, key)).or_default();
+                e.0 += 1;
+                if e.1.len() < 8 {
+                    let path: Vec<String> = tree.path(node).into_iter().map(trim).collect();
+                    e.1.push(format!("{id} {}", path.join("/")));
+                }
+            }
+        }
+        for ((name, seq), (count, eg)) in &seqs {
+            println!("{name} x{count} [{seq}]: {}", eg.join(", "));
+        }
+    }
 }
