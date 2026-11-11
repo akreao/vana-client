@@ -1000,6 +1000,8 @@ pub struct Effects {
     /// DAT_1065cb18 (the time of day in 1/60 Vana'diel seconds) and DAT_1065cb0c (its change this frame), for op 0x52.
     vana_now: i32,
     vana_dt: f32,
+    /// The frame's ticks, for a task's first step outside the frame's walk (FUN_100748c0 runs the full update).
+    frame_dt: f32,
     vana_seen: bool,
     /// The zone object's fixed sky time and sun tilt (W+0x1c8 / +0x1cc): cleared at every scene load, set by
     /// scheduler ops 0xc0 / 0xc3 (the zone's `@ini`).
@@ -1216,6 +1218,7 @@ impl Effects {
             vana_now: 0,
             sky: Default::default(),
             vana_dt: 0.0,
+            frame_dt: 0.0,
             vana_seen: false,
             leaked: Vec::new(),
             models: HashMap::new(),
@@ -1962,6 +1965,7 @@ impl Effects {
     /// One frame: attachments, generator updates and emissions, element lives (FUN_10043ca0) and expiry.
     pub fn tick(&mut self, f: &Frame, actors: &dyn Actors) {
         let dt = f.dt;
+        self.frame_dt = dt;
         self.ticks = self.ticks.wrapping_add(1);
         // FUN_1018c2b0: the time of day (rounded: 11:00 from an f32 day fraction must not land on 10:59:59.98) and
         // its change since the last frame.
