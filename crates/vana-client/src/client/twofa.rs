@@ -92,6 +92,27 @@ impl TwoFa {
         }
     }
 
+    /// Typed or pasted text into the focused field: a code letters and digits, a password plain ASCII; 32 at most. LSB
+    /// leaves a password over 32 bytes or with other bytes unanswered.
+    fn type_in(&mut self, t: &str) {
+        let password = matches!(self.step, Step::Password) && self.focus < 2;
+        let keep = |c: &char| if password { (' '..='~').contains(c) } else { c.is_ascii_alphanumeric() };
+        let v = self.field(self.focus);
+        v.extend(t.chars().filter(keep));
+        *v = v.chars().take(32).collect();
+    }
+
+    /// Why the step's button `k` may not send yet: the first button needs a code (the password's code is optional) or
+    /// a new password given twice.
+    fn refused(&self, k: usize) -> Option<&'static str> {
+        match (&self.step, k) {
+            (Step::Password, 0) if self.new[0].is_empty() => Some("Enter the new password."),
+            (Step::Password, 0) if self.new[0] != self.new[1] => Some("The two new passwords are not the same."),
+            (Step::Scan { .. } | Step::Code(_), 0) if self.code.is_empty() => Some("Enter a code first."),
+            _ => None,
+        }
+    }
+
     /// A field as shown.
     fn shown(&self, i: usize) -> String {
         match (&self.step, i) {
@@ -348,14 +369,7 @@ pub fn window(
             match ev {
                 // Ctrl+C copies the recovery code.
                 egui::Event::Copy if matches!(st.step, Step::Done { code: Some(_), .. }) => press = Some(0),
-                // A code takes letters and digits; a password plain ASCII (as the login form), 32 at most.
-                egui::Event::Text(t) | egui::Event::Paste(t) if st.focus < first => {
-                    let password = matches!(st.step, Step::Password) && st.focus < 2;
-                    let keep = |c: &char| if password { (' '..='~').contains(c) } else { c.is_ascii_alphanumeric() };
-                    let v = st.field(st.focus);
-                    v.extend(t.chars().filter(keep));
-                    *v = v.chars().take(32).collect();
-                }
+                egui::Event::Text(t) | egui::Event::Paste(t) if st.focus < first => st.type_in(t),
                 egui::Event::Key { key, pressed: true, modifiers, .. } => match key {
                     egui::Key::Tab if modifiers.shift => st.focus = (st.focus + items - 1) % items,
                     egui::Key::Tab => st.focus = (st.focus + 1) % items,
@@ -388,12 +402,7 @@ pub fn window(
         st.focus = i;
         let k = i - first;
         // The fields' first button: a code needed (the password's code is optional), a new password checked.
-        let refused = match (&st.step, k) {
-            (Step::Password, 0) if st.new[0].is_empty() => Some("Enter the new password."),
-            (Step::Password, 0) if st.new[0] != st.new[1] => Some("The two new passwords are not the same."),
-            (Step::Scan { .. } | Step::Code(_), 0) if st.code.is_empty() => Some("Enter a code first."),
-            _ => None,
-        };
+        let refused = st.refused(k);
         sounds.push(if refused.is_some() {
             crate::audio::Ui::Error
         } else if k + 1 == lay.buttons.len() && first > 0 {
@@ -484,4 +493,61 @@ pub fn window(
         lu.cursor(hx, hy);
     }
     act
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::net::auth::Refused;
+
+    fn password_step() -> TwoFa {
+        TwoFa { step: Step::Password, ..TwoFa::new() }
+    }
+
+    /// The new password is needed, twice the same; the code is not.
+    #[test]
+    fn password_checks() {
+        let mut t = password_step();
+        assert_eq!(t.refused(0), Some("Enter the new password."));
+        t.new = ["hunter22".into(), "hunter2".into()];
+        assert_eq!(t.refused(0), Some("The two new passwords are not the same."));
+        t.new[1] = "hunter22".into();
+        assert_eq!(t.refused(0), None);
+        // Cancel always goes; a two-factor code step needs its code.
+        assert_eq!(password_step().refused(1), None);
+        let code = TwoFa { step: Step::Code(Ask::Off), ..TwoFa::new() };
+        assert_eq!(code.refused(0), Some("Enter a code first."));
+    }
+
+    /// A password field takes plain ASCII (spaces and symbols too), a code letters and digits; both stop at 32.
+    #[test]
+    fn typing() {
+        let mut t = password_step();
+        t.type_in("pa ss!word\u{e9}\u{1}");
+        assert_eq!(t.new[0], "pa ss!word");
+        t.type_in(&"x".repeat(40));
+        assert_eq!(t.new[0].len(), 32);
+        t.focus = 2;
+        t.type_in("12 3-4ab");
+        assert_eq!(t.code, "1234ab");
+    }
+
+    /// 0x07 on the password step says what to check; 0x06 ends it with the new passwords gone.
+    #[test]
+    fn password_replies() {
+        let mut t = password_step();
+        t.reply(Err(Refused(0x07).into()));
+        assert!(t.error.as_deref().is_some_and(|e| e.starts_with("Not changed:")));
+        t.new = ["hunter22".into(), "hunter22".into()];
+        t.reply(Ok(Reply::PasswordChanged));
+        assert!(
+            matches!(t.step, Step::Done { code: None, .. })
+                && t.error.is_none()
+                && t.new == [String::new(), String::new()]
+        );
+        // Elsewhere 0x07 is the server's own line.
+        let mut menu = TwoFa::new();
+        menu.reply(Err(Refused(0x07).into()));
+        assert!(menu.error.as_deref().is_some_and(|e| e.contains("code 0x07")));
+    }
 }

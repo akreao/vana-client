@@ -13,8 +13,10 @@ changed the password in PlayOnline (the Viewer), never in FFXiMain; our login st
   goes through there is not known (a handler always answering 0x07 would look the same).
 - Ours: the login form's Two-factor button is now Account (focus n + 4, help "Change this account's password, or turn
   two-factor sign-in ... on or off"), its window titled Account, the menu Change password, Turn on two-factor, Turn
-  off two-factor, New recovery code, Close. Change password: New password and Again (stars, plain ASCII, 32 at most,
-  as the login form), Code (empty without two-factor sign-in), Change / Cancel; the current password is the form's.
+  off two-factor, New recovery code, Close. Change password: New password and Again (stars, plain ASCII, 32 at most:
+  LSB leaves a longer one, or one with other bytes, unanswered; login() checks the same before a login, though the
+  form's Password field itself takes up to 64), Code (empty without two-factor sign-in), Change / Cancel; the current
+  password is the form's.
   Checked before sending: a new password, and the two the same. 0x07 shows "Not changed: check the password in the
   login form, and the code if two-factor sign-in is on."; 0x06 "The password is changed: log in with the new one.",
   and the old one goes from the form's Password and from Remember password (the form's and the saved login's sealed
