@@ -4322,6 +4322,10 @@ fn world_hud(
     // moved for the chat line; placed on window 1's frame. A reopen rebuilds its lines (its init).
     if second_up && !world.log2_up {
         world.log2.reopen();
+        // Its open refills its ring from the history (FUN_1012aa60(8, ..) -> FUN_1012a520), and every row written
+        // tops up window 1's open ticks: window 1 grows toward its full height as window 2 opens.
+        let rows = world.log2.refill_rows(&world.chat, route);
+        world.log.refilled(rows);
     }
     world.log2_up = second_up;
     let log2 = second_up.then(|| {
@@ -11157,6 +11161,10 @@ impl App {
                     // comes.
                     // The new entity's forced-follow index starts at 0 (0x1008a65c).
                     world.my_pull = 0;
+                    // FUN_100fa000 (the map session's setup, run for every zone) zero-fills the whole character data
+                    // block, the auction parcel store with it: the slots start empty in each zone and come back
+                    // through the Sales Status LotChecks.
+                    world.ah_slots = Default::default();
                     world.my_plate = net::SelfPlate {
                         hitbox: world.my_plate.hitbox,
                         monstrosity: world.my_plate.monstrosity,
