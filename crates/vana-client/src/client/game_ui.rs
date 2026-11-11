@@ -2459,7 +2459,17 @@ impl GameUi {
 
     /// The pointing hand; its sprite reaches 32 px left of (x, y).
     pub fn cursor(&mut self, x: f32, y: f32) {
-        let frame = self.cursor_frame();
+        self.cursor_at(x, y, self.cursor_frame());
+    }
+
+    /// The Help Desk pages' hand (the entry marker draw FUN_10217de0, faqsub and faqmain): its own counter at entry
+    /// +0x2c steps once a drawn frame and wraps at 24, and the frame is (counter >> 2) % 6, so each of the six
+    /// frames holds for four retail frames (8 ticks) against the generic hand's 3 ticks.
+    pub fn faq_cursor(&mut self, x: f32, y: f32) {
+        self.cursor_at(x, y, faq_hand_frame(self.started.elapsed().as_secs_f32() * 30.0));
+    }
+
+    fn cursor_at(&mut self, x: f32, y: f32, frame: usize) {
         if let Some(anc) = self.data.lobby.lib("anc     anc_s") {
             self.batch.push_sprite(
                 &self.data.lobby,
@@ -2876,5 +2886,23 @@ impl GameUi {
         let t = self.lobby_msg(8, title, "");
         let c = (h / 2.0).trunc() - (bh / 2.0).trunc();
         self.text(&t, (w / 2.0).trunc(), c - 24.0, 1, WHITE);
+    }
+}
+
+/// FUN_10217de0's hand frame after `frames` drawn retail frames: (counter >> 2) % 6 with the counter wrapping at 24.
+fn faq_hand_frame(frames: f32) -> usize {
+    ((frames as usize % 24) >> 2) % 6
+}
+
+#[cfg(test)]
+mod tests {
+    use super::faq_hand_frame;
+
+    /// The Help Desk hand: six frames, four drawn frames each, a 24-frame cycle.
+    #[test]
+    fn faq_hand_holds_four_frames() {
+        let f: Vec<usize> = (0..26).map(|n| faq_hand_frame(n as f32)).collect();
+        assert_eq!(&f[..9], &[0, 0, 0, 0, 1, 1, 1, 1, 2]);
+        assert_eq!((f[23], f[24], f[25]), (5, 0, 0));
     }
 }
