@@ -206,7 +206,7 @@ fn parse_rows(dll: &[u8]) -> Option<Vec<(String, u16, u16)>> {
     (say[0x14], say[0x16]) = (1, 0xc3);
     let at = dll.windows(0x18).position(|w| w == say)?.checked_sub(0x18)?;
     let mut t = Vec::new();
-    for e in dll[at..].chunks_exact(0x18) {
+    for e in dll[at..].as_chunks::<0x18>().0 {
         let id = i16::from_le_bytes([e[0x14], e[0x15]]);
         if id < 0 {
             break;
@@ -781,7 +781,7 @@ fn open_prompt(w: &mut World, stash: &str, mask: u32, target_cmd: bool, quoted: 
     if target::open_sub(w, mask, then, range, String::new(), 0) {
         // 0x1007b7a8: /magic's prompt asks FUN_1022b850 too.
         if let Some(sp) = spell {
-            target::ground_mode(w, sp as u16);
+            target::ground_mode(w, sp);
         }
     } else {
         refuse(w, 0x46);
@@ -3125,8 +3125,14 @@ fn question(w: &mut World, args: &[String]) -> Done {
         }
     };
     let word = match args.get(1).map(String::as_str) {
-        None => return Ok(list(5, None)),
-        Some("normal") => return Ok(list(1, None)),
+        None => {
+            list(5, None);
+            return Ok(());
+        }
+        Some("normal") => {
+            list(1, None);
+            return Ok(());
+        }
         Some(word) => word,
     };
     let name: String =

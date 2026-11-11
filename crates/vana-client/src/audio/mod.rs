@@ -202,7 +202,6 @@ impl Audio {
         self.change(id, vol, vol2, fade_in, fade_out, save, false, 0, false);
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn change(
         &mut self,
         id: u32,

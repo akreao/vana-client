@@ -580,7 +580,7 @@ impl Vm {
             let st = self.st.borrow();
             let mut hs: Vec<&Handler> = st.handlers.iter().filter(|h| h.event == event).collect();
             // Highest first (a negation would wrap for i32::MIN); stable for equal priorities.
-            hs.sort_by(|a, b| b.priority.cmp(&a.priority));
+            hs.sort_by_key(|h| std::cmp::Reverse(h.priority));
             hs.iter().filter_map(|h| self.lua.registry_value::<Function>(&h.func).ok()).collect()
         };
         for f in funcs {

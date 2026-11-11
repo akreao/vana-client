@@ -78,7 +78,7 @@ fn skin_character(ch: &Character, world: &[BoneXf]) -> PosedMesh {
     let (mut min, mut max) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
     let mut batches: Vec<(String, [f32; 2], Vec<[f32; 8]>)> = Vec::new();
     for part in &ch.parts {
-        let skinned = skin(part, &world);
+        let skinned = skin(part, world);
         for g in &part.groups {
             let mut out = Vec::with_capacity(g.triangles.len() * 3);
             for t in &g.triangles {

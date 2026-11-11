@@ -33,7 +33,7 @@ pub fn pick_action(w: &mut World, action: Action) {
         Action::Ability(id) => (Kind::Ability, id),
     };
     let in_list = w.ability.as_ref().or(w.magic.as_ref()).is_some_and(|l| l.kind == kind && l.rows.contains(&id));
-    let cat = (!in_list).then(|| w.cats).flatten().and_then(|c| {
+    let cat = (!in_list).then_some(w.cats).flatten().and_then(|c| {
         let ty = match action {
             Action::Spell(s) => w.actions.as_ref()?.spell(s)?.kind,
             Action::Ability(a) => w.actions.as_ref()?.abilities.get(a as usize)?.kind as u16,
@@ -284,7 +284,7 @@ fn palette_scored(w: &World, query: &str) -> Vec<Hit> {
         let name = info.and_then(|c| c.item(id)).map(|it| it.name.clone()).unwrap_or_default();
         push(Kind::Ability, id, name, Some(slot), if n > 1 { format!("item · {n}") } else { "item".into() }, None);
     }
-    out.sort_by(|a, b| b.score.cmp(&a.score));
+    out.sort_by_key(|h| std::cmp::Reverse(h.score));
     out
 }
 
@@ -390,11 +390,11 @@ fn score_forms(name: &str, qs: &[String; 2]) -> Option<i32> {
     for f in [&lower, &lower_tight, &norm, &norm_tight] {
         for q in qs.iter().map(String::as_str) {
             let len = f.chars().count() as i32;
-            let s = if f.starts_with(&q) {
+            let s = if f.starts_with(q) {
                 1000 - len
-            } else if f.split([' ', '-', ':', '\'']).any(|w| w.starts_with(&q)) {
+            } else if f.split([' ', '-', ':', '\'']).any(|w| w.starts_with(q)) {
                 800 - len
-            } else if let Some(at) = f.find(&q) {
+            } else if let Some(at) = f.find(q) {
                 600 - at as i32 - len
             } else {
                 let mut chars = f.chars();
@@ -461,7 +461,7 @@ fn boost(recent: &[String], hits: &mut [Hit]) {
             h.recent = true;
         }
     }
-    hits.sort_by(|a, b| b.score.cmp(&a.score));
+    hits.sort_by_key(|h| std::cmp::Reverse(h.score));
 }
 
 /// The hits for the open window, best first: recent picks first among matches (boost), then the scores, then the list's
@@ -510,7 +510,7 @@ fn matches(w: &World, query: &str) -> Vec<Hit> {
                 });
             }
         }
-        out.sort_by(|a, b| b.score.cmp(&a.score));
+        out.sort_by_key(|h| std::cmp::Reverse(h.score));
         return out;
     }
     // The auction house's bid menus: every item of every category (its place as the note, filled by the modern layer);
@@ -534,7 +534,7 @@ fn matches(w: &World, query: &str) -> Vec<Hit> {
                 });
             }
         }
-        out.sort_by(|a, b| b.score.cmp(&a.score));
+        out.sort_by_key(|h| std::cmp::Reverse(h.score));
         return out;
     }
     // The key items we hold, over every category (the category as the note).
@@ -557,7 +557,7 @@ fn matches(w: &World, query: &str) -> Vec<Hit> {
                 }
             }
         }
-        out.sort_by(|a, b| b.score.cmp(&a.score));
+        out.sort_by_key(|h| std::cmp::Reverse(h.score));
         return out;
     }
     // The quests we have or have done, in every area (current or completed as the note).
@@ -586,7 +586,7 @@ fn matches(w: &World, query: &str) -> Vec<Hit> {
                 }
             }
         }
-        out.sort_by(|a, b| b.score.cmp(&a.score));
+        out.sort_by_key(|h| std::cmp::Reverse(h.score));
         return out;
     }
     // The current and completed missions of every log.
@@ -614,7 +614,7 @@ fn matches(w: &World, query: &str) -> Vec<Hit> {
                 }
             }
         }
-        out.sort_by(|a, b| b.score.cmp(&a.score));
+        out.sort_by_key(|h| std::cmp::Reverse(h.score));
         return out;
     }
     if let Some(direct) = item_list(w) {
@@ -647,7 +647,7 @@ fn matches(w: &World, query: &str) -> Vec<Hit> {
             let n = seen.iter().find(|(id, _)| *id == h.id).map_or(1, |x| x.1);
             h.note = if n > 1 { n.to_string() } else { String::new() };
         }
-        out.sort_by(|a, b| b.score.cmp(&a.score));
+        out.sort_by_key(|h| std::cmp::Reverse(h.score));
         return out;
     }
     let mut add = |kind: Kind, cat: Option<usize>, rows: Vec<u16>| {
@@ -687,7 +687,7 @@ fn matches(w: &World, query: &str) -> Vec<Hit> {
             }
         }
     }
-    out.sort_by(|a, b| b.score.cmp(&a.score));
+    out.sort_by_key(|h| std::cmp::Reverse(h.score));
     out
 }
 

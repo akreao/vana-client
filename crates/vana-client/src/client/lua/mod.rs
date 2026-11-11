@@ -914,10 +914,14 @@ impl Host {
         self.started = true;
         // In the world from here on: the mods loading now may queue world ops.
         self.lobby.borrow_mut().screen = "world";
+        // The list as saved: the app's copy (follow_scope's) differs only between a change and its save, and a scope
+        // or switch change is saved at once.
         let cfg = crate::config::Config::load();
         let root = mods_dir();
         install_stubs(root.clone());
-        for r in cfg.mods.iter().filter(|r| r.enabled) {
+        let (character, job) = (super::uiconf::character(&w.world_name, &w.name), super::uiconf::job_of(w));
+        self.dir.borrow_mut().at = Some((character.clone(), job.map(str::to_string)));
+        for r in cfg.mods.iter().filter(|r| r.active(Some(&character), job) == Some(true)) {
             let dir = root.join(&r.name);
             if !dir.join("mod.toml").is_file() || self.vms.iter().any(|v| v.dir == dir) {
                 continue;
@@ -2885,12 +2889,10 @@ mod tests {
             let t = lua.create_table().unwrap();
             for (i, (l, needed, killed, known)) in slots.iter().enumerate() {
                 let s = lua.create_table().unwrap();
-                (
-                    s.set("label", *l).unwrap(),
-                    s.set("needed", *needed).unwrap(),
-                    s.set("killed", *killed).unwrap(),
-                    s.set("known", *known).unwrap(),
-                );
+                s.set("label", *l).unwrap();
+                s.set("needed", *needed).unwrap();
+                s.set("killed", *killed).unwrap();
+                s.set("known", *known).unwrap();
                 t.set(i + 1, s).unwrap();
             }
             module.get::<mlua::Function>("attribute").unwrap().call::<Option<usize>>((t, k, n, name)).unwrap()
@@ -4693,10 +4695,10 @@ return "acxml flow ok"
         vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
     }
 
-    /// Hotbars: back on the Builder by its tab (not New) after a Save, a second macro is a new entry; the first,
-    /// already on a slot, stays.
+    /// Hotbars: New opens the Builder in the window's place (no tabs) and Save or Cancel brings the Library back; a
+    /// second New after a Save is a new entry, and the first, already on a slot, stays.
     #[test]
-    fn hotbar_builder_tab_new_macro() {
+    fn hotbar_builder_replaces_library() {
         let host = Host::default();
         let files = BUNDLED.iter().find(|b| b.0 == "hotbar").unwrap().2;
         let vm = Vm::new(bundled_manifest("hotbar").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
@@ -4719,15 +4721,23 @@ return "acxml flow ok"
             local manager = require("src.manager")
             manager.hooks = { changed = function() end, rebind = function() end }
             manager.open()
+            local function has(id) return (pcall(ui.get, "manager", id)) end
+            assert(has("tabs") and has("lbtn") and not has("found"))
             -- New, Cure, Save; its tile dropped on bar 1, slot 1.
             H("manager", { kind = "press", id = "lbtn", index = 1 })
+            assert(has("found") and not has("tabs") and not has("lbtn"))
             H("manager", { kind = "select", id = "found", index = 1 })
             H("manager", { kind = "press", id = "bbtn", index = 1 })
+            assert(has("tabs") and has("lbtn") and not has("found"))
             data.assign("RDM", nil, 1, 1, data.library("RDM")[1].id)
-            -- Back by the Builder tab: Fire, Save.
-            H("manager", { kind = "set", id = "tabs", index = 2 })
+            -- New again: Fire, Save.
+            H("manager", { kind = "press", id = "lbtn", index = 1 })
             H("manager", { kind = "select", id = "found", index = 2 })
             H("manager", { kind = "press", id = "bbtn", index = 1 })
+            -- Cancel keeps nothing and goes back.
+            H("manager", { kind = "press", id = "lbtn", index = 1 })
+            H("manager", { kind = "press", id = "bbtn", index = 2 })
+            assert(has("lbtn") and not has("found"))
             local lib = data.library("RDM")
             assert(#lib == 2 and lib[1].entry.name == "Cure" and lib[2].entry.name == "Fire", #lib)
             assert(data.resolve("RDM", nil, 1, 1).name == "Cure")
@@ -4889,6 +4899,82 @@ return "acxml flow ok"
             H("manager", { kind = "set", id = "btype", index = 2 })
             H("manager", { kind = "select", id = "found", index = 1 })
             assert(ui.get("manager", "line").text == '/ja "Provoke" <t>', ui.get("manager", "line").text)
+        "#;
+        vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
+    }
+
+    /// Hotbars' Builder lists the spells the magic list offers: learned and castable on our jobs at their levels
+    /// (RDM 54 / NIN 27: no Dia III, no Utsusemi: Ni), blue magic only while set.
+    #[test]
+    fn hotbar_builder_spells_for_jobs() {
+        let host = Host::default();
+        let files = BUNDLED.iter().find(|b| b.0 == "hotbar").unwrap().2;
+        let vm = Vm::new(bundled_manifest("hotbar").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
+        vm.lua.set_app_data(host.info.clone());
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        let script = r#"
+            local spells = {
+              [4] = { name = "Cure IV", mp = 88, kind = 1, levels = { [3] = 41, [5] = 48 } },
+              [24] = { name = "Dia II", mp = 30, kind = 1, targets = 0x20, levels = { [3] = 36, [5] = 31 },
+                description = "Deals light damage over time and lowers defense." },
+              [25] = { name = "Dia III", mp = 45, kind = 1, targets = 0x20, levels = { [5] = 75 } },
+              [338] = { name = "Utsusemi: Ichi", mp = 0, kind = 4, levels = { [13] = 12 } },
+              [339] = { name = "Utsusemi: Ni", mp = 0, kind = 4, levels = { [13] = 37 } },
+              [513] = { name = "Venom Shell", mp = 86, kind = 6, levels = { [16] = 42 } },
+              [519] = { name = "Screwdriver", mp = 21, kind = 6, levels = { [16] = 26 } } }
+            res = { spell = function(id) return spells[id] end, ability = function() end,
+              job = function(id) return ({ [5] = "RDM", [13] = "NIN", [16] = "BLU" })[id] end }
+            local me = { main_job = 5, main_level = 54, sub_job = 13, sub_level = 27, mp = 40 }
+            game = { player = function() return me end, spells = function() return { 4, 24, 25, 338, 339 } end,
+              abilities = function() return {} end, job_data = function() return {} end,
+              find_items = function() return {} end }
+            chat = { add = function() end }
+            local builder = require("src.builder")
+            local function names()
+              local out = {}
+              for _, e in ipairs(builder.find("ma", "")) do out[#out + 1] = e.name end
+              return table.concat(out, ", ")
+            end
+            local got = names()
+            assert(got == "Cure IV, Dia II, Utsusemi: Ichi", got)
+            -- A spell's default target: the party picker for one that takes no other player (Refresh 0x05), the
+            -- alliance's for 0x0d, any player for Protect's 0x1d, the current target for one that hits enemies.
+            assert(builder.default_target(0x05) == "stpt" and builder.default_target(0x0d) == "stal")
+            assert(builder.default_target(0x1d) == "stpc" and builder.default_target(0x3f) == "t")
+            assert(builder.default_target(0x01) == "me")
+            -- New: the Builder lists them, each row with its description.
+            local shown, update = nil, ui.update
+            ui.update = function(w, id, t)
+              if id == "found" and t.rows then shown = t.rows end
+              return update(w, id, t)
+            end
+            local on_window = ui.on
+            ui.on = function(id, f) if id == "manager" then H = f end; on_window(id, f) end
+            local data = require("src.data")
+            data.init({ read = function() return nil end, write = function() end, decode = json.decode,
+              encode = json.encode })
+            local manager = require("src.manager")
+            manager.hooks = { changed = function() end, rebind = function() end }
+            manager.open()
+            H("manager", { kind = "press", id = "lbtn", index = 1 })
+            local count = ui.get("manager", "fcount").text
+            assert(count == "3 found.", count)
+            assert(shown[2][1] == "Dia II" and shown[2].tip == spells[24].description and shown[1].tip == nil)
+            H("manager", { kind = "select", id = "found", index = 2 })
+            local line = ui.get("manager", "line").text
+            assert(line == '/ma "Dia II" <t>', line)
+            -- BLU 50 / NIN 25: Venom Shell set, Screwdriver learned but not set.
+            me = { main_job = 16, main_level = 50, sub_job = 13, sub_level = 25 }
+            game.spells = function() return { 338, 513, 519 } end
+            game.job_data = function() return { main = { blue_spells = { 513 } } } end
+            got = names()
+            assert(got == "Utsusemi: Ichi, Venom Shell", got)
+            -- The bar's shading uses the same rule, and the MP.
+            local actions = require("src.actions")
+            me = { main_job = 5, main_level = 54, sub_job = 13, sub_level = 27, mp = 40 }
+            assert(not actions.usable({ kind = "spell", id = 25 }, me))
+            assert(actions.usable({ kind = "spell", id = 24 }, me))
+            assert(not actions.usable({ kind = "spell", id = 4 }, me))
         "#;
         vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
     }
@@ -5613,7 +5699,7 @@ fn migrate_regime(w: &World, data: &std::path::Path, char_file: &str) {
                 .into_iter()
                 .filter_map(|p| Some((std::fs::metadata(&p).and_then(|m| m.modified()).ok()?, p)))
                 .collect();
-            old.sort_by(|a, b| b.0.cmp(&a.0));
+            old.sort_by_key(|o| std::cmp::Reverse(o.0));
             old.into_iter().find_map(|(_, p)| read(&p))
         });
     if !v.is_object() {
@@ -5681,14 +5767,47 @@ fn migrations(
 /// A mod's settings: the account file's keys, then the character file's for character-scoped ones.
 /// A mod's settings page: its settings as rows (the "on" switch left out: it is the Mods page's toggle) and its
 /// permissions, each allowed or not; none when it has neither.
+/// A mod's page: `scope` (per character, per job) for one in the mods folder, its first two rows.
 fn mod_page(
     m: &manifest::Manifest,
     settings: &serde_json::Map<String, serde_json::Value>,
     granted: &[String],
     bundled: bool,
+    scope: Option<(bool, bool)>,
 ) -> Option<super::settings::ModPage> {
     use super::settings::{Edit, ModPage, ModRow};
     let mut rows = Vec::new();
+    for (on, key, label, help) in scope.into_iter().flat_map(|(c, j)| {
+        [
+            (
+                c,
+                SCOPE_CHARACTER,
+                "Per Character",
+                "On: the Mods page's switch for this mod is each character's own. A \
+             character never switched follows it as it was (not retail).",
+            ),
+            (
+                j,
+                SCOPE_JOB,
+                "Per Job",
+                "On: the Mods page's switch for this mod is each job's own (with Per Character, \
+             each character's job's). A job never switched follows it as it was (not retail).",
+            ),
+        ]
+    }) {
+        rows.push(ModRow {
+            key: key.into(),
+            label: label.into(),
+            help: help.into(),
+            choices: vec![("ON".into(), true.into()), ("OFF".into(), false.into())],
+            at: if on { 0 } else { 1 },
+            tab: String::new(),
+            place: None,
+            place_modern: None,
+            preview: None,
+            edit: Edit::Choice,
+        });
+    }
     for (key, d) in &m.settings {
         if key == "on" && d.kind == "bool" {
             continue;
@@ -5842,6 +5961,14 @@ pub(in crate::client) fn grant_manifest(dir: &std::path::Path) {
 
 /// The Mods page's toggle as a setting change's key: its value turns the mod on (loads it) or off (unloads it).
 pub(in crate::client) const ENABLED: &str = "@enabled";
+/// A mod page's Per Character and Per Job rows as setting changes' keys: the app keeps them in the config's entry.
+pub(in crate::client) const SCOPE_CHARACTER: &str = "@scope:character";
+pub(in crate::client) const SCOPE_JOB: &str = "@scope:job";
+
+/// The mods folder's folder of mod `id` (a page names a mod by its manifest id, the config by its folder).
+pub(in crate::client) fn folder_name(id: &str) -> String {
+    folder_of(&mods_dir(), id).file_name().map_or_else(|| id.to_string(), |f| f.to_string_lossy().into_owned())
+}
 
 /// A mod's "on" switch is its enable toggle on the Mods page: a loaded mod is on.
 fn force_on(m: &manifest::Manifest, settings: &mut serde_json::Map<String, serde_json::Value>) {
@@ -5878,12 +6005,18 @@ impl Host {
     /// int and number).
     /// Every installed mod's settings page (Settings > Mods, its Settings button): its settings but the "on" switch (the
     /// page's toggle), and the permissions it asks for. A mod that is off reads its settings from its files.
-    pub(super) fn settings_pages(&self) -> Vec<super::settings::ModPage> {
+    /// `mods`: the config's list, for the Per Character and Per Job rows of the mods in the mods folder.
+    pub(super) fn settings_pages(&self, mods: &[crate::config::ModRef]) -> Vec<super::settings::ModPage> {
+        let scope_of = |folder: Option<&std::ffi::OsStr>| {
+            let r = mods.iter().find(|r| folder.is_some_and(|f| f == r.name.as_str()));
+            r.map(|r| (r.per_character, r.per_job))
+        };
         let mut pages = Vec::new();
         for vm in &self.vms {
             let st = vm.st.borrow();
             let bundled = matches!(vm.src, vm::Source::Bundled(_));
-            pages.extend(mod_page(&vm.manifest, &st.settings, &st.granted, bundled));
+            let scope = if bundled { None } else { scope_of(vm.dir.file_name()) };
+            pages.extend(mod_page(&vm.manifest, &st.settings, &st.granted, bundled, scope));
         }
         let char_file = self.vms.first().and_then(|v| v.st.borrow().char_file.clone());
         let g = grants();
@@ -5900,9 +6033,39 @@ impl Host {
                 .and_then(|v| v.as_array())
                 .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
                 .unwrap_or_default();
-            pages.extend(mod_page(&m, &settings, &given, false));
+            pages.extend(mod_page(&m, &settings, &given, false, scope_of(e.path().file_name())));
         }
         pages
+    }
+
+    /// The mods whose switch is kept per character or job: each loaded or unloaded as the character and job in play
+    /// (the job not known yet: left as they are), and those in `changed` (a scope just turned off: back to `enabled`).
+    /// After the start: it loads what it finds on then.
+    pub(super) fn follow_scope(&mut self, w: &World, mods: &[crate::config::ModRef], changed: &[String]) {
+        if !self.started {
+            return;
+        }
+        let (character, job) = (super::uiconf::character(&w.world_name, &w.name), super::uiconf::job_of(w));
+        self.dir.borrow_mut().at = Some((character.clone(), job.map(str::to_string)));
+        for r in mods.iter().filter(|r| r.per_character || r.per_job || changed.contains(&r.name)) {
+            let dir = mods_dir().join(&r.name);
+            let Some(want) = r.active(Some(&character), job).filter(|_| dir.join("mod.toml").is_file()) else {
+                continue;
+            };
+            match (want, self.named(&r.name)) {
+                (true, None) => {
+                    log::info!("lua mod {}: on for {character} {}", r.name, job.unwrap_or("?"));
+                    if let Err(e) = self.load(Some(w), dir) {
+                        log::warn!("lua mod {}: {e}", r.name);
+                    }
+                }
+                (false, Some(k)) => {
+                    log::info!("lua mod {}: off for {character} {}", r.name, job.unwrap_or("?"));
+                    self.unload(Some(w), k);
+                }
+                _ => {}
+            }
+        }
     }
 
     /// The loaded mod `id` names: the Mods page names a mod by its folder, the rest by its manifest id, and the two
@@ -6001,7 +6164,6 @@ impl Host {
 
     /// A mod window's canvas drawn this frame, at its element `i` (modwin's CanvasAt): kept for drops. Every frame, for
     /// every canvas: an entry already kept is updated in place.
-    #[allow(clippy::too_many_arguments)]
     fn canvas_at(&mut self, m: &str, win: &str, i: usize, origin: [f32; 2], shown: [f32; 4], ppp: f32, top: bool) {
         let now = std::time::Instant::now();
         let Some(vm) = self.vms.iter().find(|v| v.manifest.id == m) else { return };
@@ -6550,10 +6712,16 @@ fn bundled_manifest(id: &str) -> Option<manifest::Manifest> {
     BUNDLED.iter().find(|b| b.0 == id).and_then(|b| manifest::parse(b.1, id).ok())
 }
 
-/// Every mod installed (the mods folder): (id, name, version, enabled in the config, bundled: always false now).
-pub(super) fn installed() -> Vec<(String, String, String, bool, bool, Vec<String>)> {
+/// Every mod installed (the mods folder): (id, name, version, enabled in the config, bundled: always false now). With
+/// `at` (the character and job in play) a mod kept per character or job is enabled by its switch there.
+pub(super) fn installed(
+    at: Option<&(String, Option<String>)>,
+) -> Vec<(String, String, String, bool, bool, Vec<String>)> {
     let cfg = crate::config::Config::load();
-    let enabled = |id: &str, bundled: bool| cfg.mods.iter().find(|r| r.name == id).map_or(bundled, |r| r.enabled);
+    let (c, j) = at.map_or((None, None), |(c, j)| (Some(c.as_str()), j.as_deref()));
+    let enabled = |id: &str, bundled: bool| {
+        cfg.mods.iter().find(|r| r.name == id).map_or(bundled, |r| r.active(c, j).unwrap_or(r.enabled))
+    };
     let mut out = Vec::new();
     for e in std::fs::read_dir(mods_dir()).into_iter().flatten().flatten() {
         let dir = e.path();

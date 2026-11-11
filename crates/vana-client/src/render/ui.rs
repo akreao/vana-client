@@ -655,7 +655,6 @@ impl UiBatch {
 
     /// One cell through a 2x2 matrix about (x, y): screen = (x + a cx + b cy, y + c cx + d cy) (FUN_1011c880), with a
     /// blend word (0: the cell's own).
-    #[allow(clippy::too_many_arguments)]
     pub fn push_cell_affine_blend(
         &mut self,
         ui: &UiFile,
@@ -767,7 +766,6 @@ impl UiBatch {
 
     /// Modern text (Modern on): `s` in face `f` at an em of `em` layout pixels from x, its line's top at y, in `color`
     /// (straight, 1.0 full), a soft shadow under it when `shadow`. Returns the end x.
-    #[allow(clippy::too_many_arguments)]
     pub fn push_mtext(&mut self, s: &str, f: Face, em: f32, x: f32, y: f32, color: [f32; 4], shadow: bool) -> f32 {
         let (quads, end) = mtext::layout(s, f, em, x, y);
         let at = |r: [f32; 4], d: f32| {
@@ -848,7 +846,6 @@ impl UiBatch {
     /// The modern frame round (x, y, w, h) at alpha `a`: the interior's gradient, then the border in nine slices. The
     /// border is the panels' size and sits outside the window with a margin, clear of contents laid out for retail's
     /// thin edges. The rect drawn.
-    #[allow(clippy::too_many_arguments)]
     fn push_modern_frame(
         &mut self,
         f: &ModernFrame,
@@ -1227,7 +1224,6 @@ impl UiRenderer {
 
     /// `layout`: the size the batch is laid out at (menu size 0037 / 0038); `size`: the target's pixels it is stretched
     /// over. Clips are in layout units.
-    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
         gpu: &Gpu,
@@ -1425,7 +1421,7 @@ pub fn render_png(
     for y in 0..height {
         pixels.extend_from_slice(&data[(y * row) as usize..(y * row + width * 4) as usize]);
     }
-    for px in pixels.chunks_exact_mut(4) {
+    for px in pixels.as_chunks_mut::<4>().0 {
         px[3] = 255;
     }
     write_png(path, width, height, &pixels)

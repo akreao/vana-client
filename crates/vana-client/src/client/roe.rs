@@ -14,6 +14,10 @@ const VISIBLE: usize = 8;
 const WHITE: u32 = 0x8080_8080;
 const CURSOR: u32 = 0x8080_3040;
 const GREY: u32 = 0x8040_4040;
+/// FUN_10232090: the count of a record complete or at its goal.
+pub const AT_GOAL: u32 = 0x8020_60a0;
+/// FUN_10232090: the once-only note.
+pub const ONCE: u32 = 0x8080_4040;
 /// FUN_10232760: DAT_10668edc > 29, the frames since the open or the last send (30 frames, 1 s at 30 fps *(inf)*).
 const COOLDOWN: Duration = Duration::from_secs(1);
 
@@ -293,8 +297,9 @@ pub fn update(w: &mut World) {
         3 => build_tree(w, &mut l),
         _ => {}
     }
+    // Kept with a description open too: the modern Journal shows the list beside it, so its arrows stay.
     l.siblings = (0, 0);
-    if l.mode == 3 && l.state == 0 && l.stack.len() > 1 {
+    if l.mode == 3 && l.stack.len() > 1 {
         let cur = l.stack[l.stack.len() - 1].0;
         if let Some(parent) = w.item_info.as_ref().and_then(|c| c.category(l.stack[l.stack.len() - 2].0)) {
             l.siblings = siblings(&ctx(w), &parent, cur);
@@ -525,8 +530,13 @@ pub(super) fn bar(w: &mut World, m: super::scrollbar::Msg) -> bool {
     moved
 }
 
-/// The arrows (children 9 / 10, FUN_102324f0) work only with both siblings.
+/// The arrows (children 9 / 10, FUN_102324f0) work only with both siblings, on the list.
 fn arrows(l: &List) -> bool {
+    l.state == 0 && has_siblings(l)
+}
+
+/// Down in an Objective List category with both siblings (a description open or not).
+fn has_siblings(l: &List) -> bool {
     l.mode == 3 && l.stack.len() > 1 && l.siblings.0 != 0 && l.siblings.1 != 0
 }
 
@@ -612,7 +622,7 @@ pub struct RowView {
     pub count: Option<(u32, u32)>,
 }
 
-/// An objective's description there: its name and tint, both pages' text, the progress (its tint), the once-only
+/// An objective's description there: its name and tint, both pages' text, the progress and its tint, the once-only
 /// note and the rewards, with their labels.
 pub struct DescView {
     pub name: String,
@@ -627,7 +637,7 @@ pub struct DescView {
 }
 
 /// What the modern Journal draws of an open list: its title, rows, cursor, the empty line, the cursor row's
-/// description, whether it is down in a category and whether its sibling categories are there.
+/// description, whether it is down in a category and whether the sibling arrows show (children 9 / 10).
 pub struct View {
     pub mode: usize,
     pub title: String,
@@ -690,7 +700,7 @@ pub fn view(w: &World, gu: &GameUi) -> Option<View> {
             text,
             progress_label: gu.lobby_msg(0xc, 0x81, ""),
             progress: format!("{have}/{}", o.goal),
-            progress_tint: if full || at_goal { 0x8020_60a0 } else { WHITE },
+            progress_tint: if full || at_goal { AT_GOAL } else { WHITE },
             once: (!o.repeatable).then(|| gu.lobby_msg(0xc, 0x84, "")),
             rewards_label: gu.lobby_msg(0xc, 0x83, ""),
             rewards: rewards.join("   "),
@@ -704,7 +714,7 @@ pub fn view(w: &World, gu: &GameUi) -> Option<View> {
         empty,
         desc,
         deep: l.stack.len() > 1,
-        siblings: l.siblings != (0, 0),
+        siblings: has_siblings(l),
     })
 }
 
@@ -813,9 +823,9 @@ pub fn draw(gu: &mut GameUi, w: &World, l: &List, sw: f32, sh: f32, rects: &mut 
     let (have, full) = count(w, id, &o);
     let at_goal = l.mode == 4 && w.roe.done(id, Some(&o)) && have == o.goal;
     text(gu, &format!("{}：", gu.lobby_msg(0xc, 0x81, "")), x + 20.0, y + 180.0, WHITE);
-    text(gu, &format!("{have}/{}", o.goal), x + 180.0, y + 180.0, if full || at_goal { 0x8020_60a0 } else { WHITE });
+    text(gu, &format!("{have}/{}", o.goal), x + 180.0, y + 180.0, if full || at_goal { AT_GOAL } else { WHITE });
     if !o.repeatable {
-        text(gu, &gu.lobby_msg(0xc, 0x84, ""), x + 220.0, y + 200.0, 0x8080_4040);
+        text(gu, &gu.lobby_msg(0xc, 0x84, ""), x + 220.0, y + 200.0, ONCE);
     }
     text(gu, &gu.lobby_msg(0xc, 0x83, ""), x + 20.0, y + 200.0, WHITE);
     let extra = |v: u32, m: usize| (v != 0).then(|| format!("{v}{}", gu.lobby_msg(0xc, m, "")));
@@ -885,5 +895,28 @@ mod tests {
         assert_eq!(siblings(&c, &parent, 0xf210), (0xf212, 0xf212));
         assert_eq!(siblings(&c, &parent, 0xf212), (0xf210, 0xf210));
         assert_eq!(visible(&c, &parent), vec![0xf210, 0xf212]);
+    }
+
+    #[test]
+    fn sibling_arrows_with_a_description() {
+        let mut l = List {
+            mode: 3,
+            state: 0,
+            rows: Vec::new(),
+            built: true,
+            top: 0,
+            cursor: 0,
+            stack: vec![(ROOT, 0), (0xf210, 0)],
+            siblings: (0xf212, 0xf212),
+            described: 0,
+            page2: false,
+            sent: None,
+        };
+        assert!(arrows(&l) && has_siblings(&l));
+        // A row clicked in the modern Journal opens its description: the classic arrows hide, the modern ones stay.
+        l.state = 1;
+        assert!(!arrows(&l) && has_siblings(&l));
+        l.stack.pop();
+        assert!(!has_siblings(&l));
     }
 }

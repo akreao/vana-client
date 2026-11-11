@@ -18,7 +18,7 @@ pub fn host(host_byte: u8) -> String {
 /// polcore's dword sum (0x10063df0): little-endian u32s, then the tail bytes shifted in from the top.
 pub fn checksum(d: &[u8]) -> u32 {
     let whole = d.len() & !3;
-    let mut s = d[..whole].chunks_exact(4).fold(0u32, |s, w| s.wrapping_add(u32::from_le_bytes(w.try_into().unwrap())));
+    let mut s = d[..whole].as_chunks::<4>().0.iter().fold(0u32, |s, w| s.wrapping_add(u32::from_le_bytes(*w)));
     let mut t = 0u32;
     for &b in &d[whole..] {
         t = (t >> 8) | (b as u32) << 24;
@@ -344,7 +344,7 @@ impl C5 {
         let sub = w.to_le_bytes().iter().fold(0u32, |s, &x| s + x as u32).wrapping_add(8 * 0x88);
         let mut chain = ((pos >> 3) ^ 0x45) as u8;
         for x in v.to_le_bytes() {
-            chain = ((x as u32 + sub) as u8) ^ chain;
+            chain ^= (x as u32 + sub) as u8;
             out.push(chain);
         }
         self.pos = pos.wrapping_add(8);

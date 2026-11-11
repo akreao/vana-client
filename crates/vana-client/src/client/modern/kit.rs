@@ -571,7 +571,6 @@ pub fn scroll<R>(
 /// A list of `n` rows `h` tall in a scroll area at most `max` tall: each row's face (the cursor's chosen while `focus`,
 /// lit when not; under the pointer only lit), then `paint` draws its contents; the cursor's row kept in view when
 /// `follow`. Rows `off(k)` are greyed.
-#[allow(clippy::too_many_arguments)]
 pub fn list(
     ui: &mut Ui,
     m: &Modern,
@@ -747,7 +746,7 @@ pub fn caret_text(ui: &Ui, m: &Modern, at: egui::Pos2, text: &str, caret: Option
     let clip = Rect::from_min_max(pos2(at.x - 2.0, at.y - 20.0), pos2(right, at.y + 20.0));
     let p = ui.painter().with_clip_rect(clip.intersect(ui.clip_rect()));
     p.text(pos2(at.x - shift, at.y), Align2::LEFT_CENTER, text, font.clone(), colour);
-    if caret.is_some() && (ui.ctx().input(|i| i.time) * 1.5) as u64 % 2 == 0 {
+    if caret.is_some() && ((ui.ctx().input(|i| i.time) * 1.5) as u64).is_multiple_of(2) {
         let x = at.x - shift + dx;
         let h = font.size * 0.6;
         p.line_segment([pos2(x, at.y - h), pos2(x, at.y + h)], Stroke::new(1.5, colour));
@@ -800,28 +799,57 @@ pub fn chevrons(
         (true, Rect::from_min_max(r.min, pos2(r.max.x, r.center().y - 0.5)), up_off),
         (false, Rect::from_min_max(pos2(r.min.x, r.center().y + 0.5), r.max), down_off),
     ] {
-        let resp = ui.interact(half, ui.scope_id().with((salt, up)), Sense::click());
-        let face = match () {
-            _ if off => "controls/button_disabled",
-            _ if resp.hovered() => "controls/button_hover",
-            _ => "controls/button_normal",
-        };
-        if let Some(sp) = m.art.sprite(face) {
-            ui.painter().add(paint::nine_slice(&sp, half, 0.35, Color32::WHITE));
-        }
-        if cursor == Some(up) {
-            ring(ui.painter(), m, half.expand(0.5), 4.0);
-        }
-        let c = if off { m.theme.color("muted") } else { m.theme.color("gold") };
-        let (cx, cy, d) = (half.center().x, half.center().y, if up { -1.0 } else { 1.0 });
-        let st = Stroke::new(1.8, c);
-        ui.painter().line_segment([pos2(cx - 5.0, cy - 2.0 * d), pos2(cx, cy + 2.5 * d)], st);
-        ui.painter().line_segment([pos2(cx, cy + 2.5 * d), pos2(cx + 5.0, cy - 2.0 * d)], st);
-        if resp.clicked() && !off {
+        let dir = vec2(0.0, if up { -1.0 } else { 1.0 });
+        if chevron_button(ui, m, half, ui.scope_id().with((salt, up)), dir, off, cursor == Some(up)) {
             out = Some(up);
         }
     }
     out
+}
+
+/// Left / Right chevrons side by side (a list's sibling pages): which was clicked (true right), each lit under the
+/// pointer.
+pub fn arrows(
+    ui: &mut Ui,
+    m: &Modern,
+    salt: impl std::hash::Hash + std::fmt::Debug + Copy,
+    left_off: bool,
+    right_off: bool,
+) -> Option<bool> {
+    let (r, _) = ui.allocate_exact_size(vec2(56.0, 26.0), Sense::hover());
+    let mut out = None;
+    for (right, x, off) in [(false, r.min.x, left_off), (true, r.max.x - 26.0, right_off)] {
+        let b = Rect::from_min_size(pos2(x, r.min.y), vec2(26.0, 26.0));
+        let dir = vec2(if right { 1.0 } else { -1.0 }, 0.0);
+        if chevron_button(ui, m, b, ui.scope_id().with((salt, right)), dir, off, false) {
+            out = Some(right);
+        }
+    }
+    out
+}
+
+/// One chevron button over `r` pointing along `dir`: the pack's face, lit under the pointer, ringed for the cursor;
+/// whether it was clicked.
+fn chevron_button(ui: &Ui, m: &Modern, r: Rect, id: egui::Id, dir: egui::Vec2, off: bool, cursor: bool) -> bool {
+    let resp = ui.interact(r, id, Sense::click());
+    let face = match () {
+        _ if off => "controls/button_disabled",
+        _ if resp.hovered() => "controls/button_hover",
+        _ => "controls/button_normal",
+    };
+    if let Some(sp) = m.art.sprite(face) {
+        ui.painter().add(paint::nine_slice(&sp, r, 0.35, Color32::WHITE));
+    }
+    if cursor {
+        ring(ui.painter(), m, r.expand(0.5), 4.0);
+    }
+    let c = if off { m.theme.color("muted") } else { m.theme.color("gold") };
+    // The tip 2.5 ahead of the centre, the arms 5 to either side and 2 behind.
+    let (o, side, st) = (r.center(), vec2(-dir.y, dir.x), Stroke::new(1.8, c));
+    let tip = o + dir * 2.5;
+    ui.painter().line_segment([o - dir * 2.0 - side * 5.0, tip], st);
+    ui.painter().line_segment([tip, o - dir * 2.0 + side * 5.0], st);
+    resp.clicked() && !off
 }
 
 /// Hue, saturation and value (each 0..1) of an sRGB colour, as colour pickers show them.

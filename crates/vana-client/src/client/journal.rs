@@ -35,8 +35,8 @@ pub struct Store {
 /// The port of each quest area's current (0x50 + 8 a, then 0xE0, 0xF0, 0x100) and completed (+0x40, 0xE8 ..) record.
 fn area_port(port: u16) -> Option<(usize, bool)> {
     match port {
-        0x50..=0x88 if port % 8 == 0 => Some((((port - 0x50) / 8) as usize, false)),
-        0x90..=0xc8 if port % 8 == 0 => Some((((port - 0x90) / 8) as usize, true)),
+        0x50..=0x88 if port.is_multiple_of(8) => Some((((port - 0x50) / 8) as usize, false)),
+        0x90..=0xc8 if port.is_multiple_of(8) => Some((((port - 0x90) / 8) as usize, true)),
         0xe0 => Some((8, false)),
         0xe8 => Some((8, true)),
         0xf0 => Some((9, false)),

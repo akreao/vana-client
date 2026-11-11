@@ -104,7 +104,6 @@ impl LobbyFx {
     }
 
     /// One frame over the drawn zone.
-    #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &mut self,
         gpu: &Gpu,
@@ -382,7 +381,6 @@ impl SelectScene {
         self.effects.as_mut()
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
         gpu: &Gpu,
@@ -608,7 +606,6 @@ pub fn printf(fmt: &str, args: &[&str]) -> String {
 
 impl SelectUi {
     /// One frame: keys, the draw, then the mouse over what was drawn.
-    #[allow(clippy::too_many_arguments)]
     pub fn step(
         &mut self,
         gu: &mut GameUi,
@@ -679,7 +676,6 @@ impl SelectUi {
         gu.menu_links(menu, child).map(|l| l[k] as u16).filter(|&c| c != 0 && c != 0xff)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn key(
         &mut self,
         gu: &GameUi,
@@ -888,7 +884,6 @@ impl SelectUi {
         self.focus = Focus::List;
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn mouse(
         &mut self,
         gu: &GameUi,
@@ -1094,7 +1089,6 @@ fn name_tint(c: &Character) -> u32 {
 }
 
 /// The screen as FUN_102372c0 and its windows draw it.
-#[allow(clippy::too_many_arguments)]
 fn draw(
     gu: &mut GameUi,
     st: &SelectUi,
@@ -1112,10 +1106,11 @@ fn draw(
     gu.help_line(text, w, h, colour, None);
     // chfwin opens with the list (select only); unfocused it keeps no highlight (registry flag 0x80000).
     let options = if let Focus::Options(k) = st.focus { Some(k) } else { None };
-    if !deleting && let Some(win) = gu.lobby_window("menu    chfwin", w, h, false, options, options.is_some(), &[]) {
-        if options.is_some() {
-            rects.children = win.children;
-        }
+    if !deleting
+        && let Some(win) = gu.lobby_window("menu    chfwin", w, h, false, options, options.is_some(), &[])
+        && options.is_some()
+    {
+        rects.children = win.children;
     }
     let used: Vec<bool> = (0..SLOTS).map(|i| i < list.entries.len()).collect();
     let press = st.press.map(|t| (9.0 - t.elapsed().as_secs_f32() * 60.0).max(0.0));

@@ -115,7 +115,7 @@ pub fn boost(w: &World, hits: &mut [Hit]) {
             h.fav = true;
         }
     }
-    hits.sort_by(|a, b| b.score.cmp(&a.score));
+    hits.sort_by_key(|h| std::cmp::Reverse(h.score));
 }
 
 /// The favourites in order.

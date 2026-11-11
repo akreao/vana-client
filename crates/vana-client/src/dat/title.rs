@@ -349,6 +349,11 @@ pub fn focal_of(fov_y: f32) -> f32 {
     192.0 / (fov_y * 0.5).tan()
 }
 
+/// Vana'diel time value of op 0x7d: 216000 units per hour (FUN_10184f30).
+pub fn hour_of(time: u32) -> f32 {
+    (time % (216000 * 24)) as f32 / 216000.0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -424,9 +429,4 @@ mod tests {
         assert!((sample_from(&r, 1.0, Some(key(0.0)), None).eye.x - 20.0).abs() < 1e-3);
         assert!((focal_of(fov_y(350.0)) - 350.0).abs() < 1e-2);
     }
-}
-
-/// Vana'diel time value of op 0x7d: 216000 units per hour (FUN_10184f30).
-pub fn hour_of(time: u32) -> f32 {
-    (time % (216000 * 24)) as f32 / 216000.0
 }

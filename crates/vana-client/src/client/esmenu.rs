@@ -59,12 +59,9 @@ pub fn text_events(w: &mut World, events: &[egui::Event]) {
         if super::macroedit::line_edit(name, &mut s.caret, 15, ev) {
             continue;
         }
-        match ev {
-            egui::Event::Key { key: K::Enter | K::Escape, pressed: true, .. } => {
-                commit(w);
-                w.sounds.push(Ui::Select as u32);
-            }
-            _ => {}
+        if let egui::Event::Key { key: K::Enter | K::Escape, pressed: true, .. } = ev {
+            commit(w);
+            w.sounds.push(Ui::Select as u32);
         }
     }
 }

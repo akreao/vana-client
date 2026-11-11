@@ -235,13 +235,13 @@ fn encode(dxt1: bool, w: u32, h: u32, rgba: &[u8], levels: Option<&[(u8, f32)]>)
     let format = if dxt1 { texpresso::Format::Bc1 } else { texpresso::Format::Bc2 };
     let mut px = rgba.to_vec();
     if !dxt1 {
-        for p in px.chunks_exact_mut(4) {
+        for p in px.as_chunks_mut::<4>().0 {
             p[3] = (p[3] as u16).div_ceil(2) as u8;
         }
         if translucent(&px) {
             match levels {
                 Some(l) if !l.is_empty() => {
-                    let mut sorted: Vec<u8> = px.chunks_exact(4).map(|p| p[3]).collect();
+                    let mut sorted: Vec<u8> = px.as_chunks::<4>().0.iter().map(|p| p[3]).collect();
                     sorted.sort_unstable();
                     let n = sorted.len();
                     let mut acc = 0.0;
@@ -252,7 +252,7 @@ fn encode(dxt1: bool, w: u32, h: u32, rgba: &[u8], levels: Option<&[(u8, f32)]>)
                             sorted[((acc * n as f32) as usize).min(n - 1)]
                         })
                         .collect();
-                    for p in px.chunks_exact_mut(4) {
+                    for p in px.as_chunks_mut::<4>().0 {
                         p[3] = l[cuts.iter().position(|&c| p[3] < c).unwrap_or(l.len() - 1)].0;
                     }
                 }
@@ -276,7 +276,7 @@ fn encode(dxt1: bool, w: u32, h: u32, rgba: &[u8], levels: Option<&[(u8, f32)]>)
 fn stock_levels(stock: &[u8]) -> Option<Vec<(u8, f32)>> {
     let t = dat::zone::parse_img(stock).ok()?;
     let mut count = std::collections::BTreeMap::new();
-    for p in t.rgba().chunks_exact(4) {
+    for p in t.rgba().as_chunks::<4>().0 {
         *count.entry((p[3] as u16).div_ceil(2) as u8).or_insert(0usize) += 1;
     }
     let n = (t.rgba().len() / 4).max(1) as f32;
@@ -286,7 +286,7 @@ fn stock_levels(stock: &[u8]) -> Option<Vec<(u8, f32)>> {
 /// Half or more of the visible pixels have partial alpha (glows, smoke), not a cutout's 0 / full.
 fn translucent(px: &[u8]) -> bool {
     let (mut vis, mut mid) = (0usize, 0usize);
-    for p in px.chunks_exact(4) {
+    for p in px.as_chunks::<4>().0 {
         if p[3] > 5 {
             vis += 1;
             mid += (p[3] > 10 && p[3] < 118) as usize;
@@ -566,7 +566,7 @@ pub fn slim(pack: &Path, out: &Path) -> Result<()> {
                     }
                     let mut c = counts.lock().unwrap();
                     (c[0], c[2], c[3]) = (c[0] + 1, c[2] + full.len() as u64, c[3] + bytes.len() as u64);
-                    if c[0] % 2000 == 0 {
+                    if c[0].is_multiple_of(2000) {
                         println!("{} files written", c[0]);
                     }
                 }

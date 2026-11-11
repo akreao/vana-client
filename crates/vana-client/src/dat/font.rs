@@ -146,7 +146,7 @@ pub fn chat_cut(s: &[u8]) -> usize {
 
 /// Two-byte Shift-JIS to glyph index (FUN_10119620): JIS rows packed one after another.
 pub fn sjis_index(b0: u8, b1: u8) -> i32 {
-    let mut row: i32 = (b0 as i32 + if b0 < 0xA0 { -0x71 } else { -0xB1 }) * 2 | 1;
+    let mut row: i32 = ((b0 as i32 + if b0 < 0xA0 { -0x71 } else { -0xB1 }) * 2) | 1;
     let mut c = b1 as i32;
     if c > 0x7F {
         c -= 1;

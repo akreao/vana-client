@@ -45,7 +45,7 @@ impl Session {
 
 /// FUN_100185a0 over FFXiMain.dll (period 0x13): each signed byte shifted left by 4 * (i mod 20), summed. 0x07 sends it.
 pub fn ffximain_checksum(dll: &[u8]) -> u32 {
-    dll.iter().enumerate().fold(0u32, |s, (i, &b)| s.wrapping_add(((b as i8 as i32) << ((i % 20) * 4 & 31)) as u32))
+    dll.iter().enumerate().fold(0u32, |s, (i, &b)| s.wrapping_add(((b as i8 as i32) << (((i % 20) * 4) & 31)) as u32))
 }
 
 #[derive(Clone, Debug)]
@@ -266,7 +266,6 @@ pub struct Lobby {
 impl Lobby {
     /// `host`: the lobby (LSB's server, or ffxi00.pol.com); `data_port` is LSB's only. `content`: the installed
     /// ROMs (FUN_101c3400, dat::installed).
-    #[allow(clippy::too_many_arguments)]
     pub fn connect(
         host: &str,
         view_port: u16,
@@ -1133,7 +1132,7 @@ mod create_tests {
         let d: Vec<u8> = (0..45u32).map(|i| (i * 37 + 200) as u8).collect();
         let mut s = 0u32;
         for (i, &b) in d.iter().enumerate() {
-            s = s.wrapping_add(((b as i8 as i32) << ((i as u32 % 20) * 4 & 31)) as u32);
+            s = s.wrapping_add(((b as i8 as i32) << (((i as u32 % 20) * 4) & 31)) as u32);
         }
         assert_eq!(ffximain_checksum(&d), s);
         // The installed 30261006_0 (its value in MODLOG "PlayOnline sign-in"), when present.

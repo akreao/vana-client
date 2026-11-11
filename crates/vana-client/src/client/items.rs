@@ -499,19 +499,7 @@ pub(super) fn list_keys(scroll: &mut usize, cursor: &mut usize, n: usize, key: e
 /// FUN_101f6c70 messages 3 / 4: Right / Left turn a page of 10 keeping the cursor row; on the last / first page the
 /// cursor goes to the last / first row instead. True when something moved (SE 0001).
 pub(super) fn page_keys(scroll: &mut usize, cursor: &mut usize, n: usize, right: bool) -> bool {
-    if n == 0 {
-        return false;
-    }
-    let max = n.saturating_sub(VISIBLE_ROWS);
-    let before = (*scroll, *cursor);
-    match right {
-        true if *scroll == max => *cursor = (n - *scroll).min(VISIBLE_ROWS) - 1,
-        true => *scroll = (*scroll + VISIBLE_ROWS).min(max),
-        false if *scroll == 0 => *cursor = 0,
-        false => *scroll = scroll.saturating_sub(VISIBLE_ROWS),
-    }
-    *cursor = (*cursor).min(n - 1 - *scroll);
-    (*scroll, *cursor) != before
+    rows(if right { Msg::PageDown } else { Msg::PageUp }, scroll, cursor, n, VISIBLE_ROWS)
 }
 
 /// A scroll bar or wheel message (FUN_101f6c70) to the focused item list. True when it moved.
@@ -2018,7 +2006,6 @@ fn store_bars(gu: &GameUi, b: &Storage, bars: &mut super::hudtop::BarText) {
 /// The storage view's windows: "menu    bank" at its layout (16, 48), the inventory list moved to (200, 48), the
 /// cursor on the focused one; itmsortw at (384, 48) (not for the bin) with sortyn; itemctrl over them for a stack
 /// ("%2d" right-aligned at (+0x34, +0x16), "/%2d" at (+0x3a, +0x16), FUN_1013a520). Read-only: the item list alone.
-#[allow(clippy::too_many_arguments)]
 fn draw_storage(
     gu: &mut GameUi,
     w: &World,
@@ -2258,6 +2245,11 @@ pub(super) fn persona(w: &World) -> Persona {
         base: st.base,
         bonus: st.adj,
     })
+}
+
+/// The storage view's itemctrl (the quantity) has the keys.
+pub(super) fn qty_open(w: &World) -> bool {
+    matches!(&w.win, Some(Win::Items { store: Some(b), .. }) if b.qty.is_some())
 }
 
 #[cfg(test)]

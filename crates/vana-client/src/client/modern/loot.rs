@@ -175,9 +175,9 @@ pub fn draw(p: &mut Panels, w: &mut World) {
         treasure::pass_rest(w);
         return;
     }
-    if let Some(row) = click {
-        if treasure::set_cursor(w, row) {
-            w.sounds.push(Se::Cursor as u32);
-        }
+    if let Some(row) = click
+        && treasure::set_cursor(w, row)
+    {
+        w.sounds.push(Se::Cursor as u32);
     }
 }

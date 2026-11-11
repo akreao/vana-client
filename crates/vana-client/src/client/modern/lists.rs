@@ -24,7 +24,6 @@ enum Look {
 }
 
 /// A row's frame (the pack's list rows), its icon and name, greyed when `off` (can't be used now); its response.
-#[allow(clippy::too_many_arguments)]
 fn row(
     ui: &mut Ui,
     m: &super::Modern,
@@ -167,7 +166,6 @@ pub(super) fn search_rows(
 }
 
 /// The field and the hits (each with its note and greyed by `dim` or its list): what was clicked.
-#[allow(clippy::too_many_arguments)]
 fn hit_rows(
     ui: &mut Ui,
     m: &super::Modern,

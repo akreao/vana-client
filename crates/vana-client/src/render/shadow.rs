@@ -609,7 +609,6 @@ impl ZoneRenderer {
 
     /// This frame's shadows over the scene drawn so far (`size` the scene's; `sun`: the directional light's travel
     /// direction, w 1 when there is one; `ticks`: 60 Hz ticks this frame).
-    #[allow(clippy::too_many_arguments)]
     pub fn draw_shadows(
         &mut self,
         gpu: &Gpu,

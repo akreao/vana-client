@@ -595,7 +595,6 @@ impl DancerRenderer {
 
     /// Draws over what is in `view`, clearing only depth as the dancer does (FUN_10245ab0).
     /// `coverage` adds the alpha-only pass that marks the model for a transparent background.
-    #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &mut self,
         gpu: &Gpu,
@@ -891,7 +890,7 @@ pub fn render_png(
     }
     // The target alpha holds shader masks; the PNG is opaque unless the background is transparent.
     if !matches!(bg, Background::Transparent) {
-        pixels.chunks_exact_mut(4).for_each(|p| p[3] = 255);
+        pixels.as_chunks_mut::<4>().0.iter_mut().for_each(|p| p[3] = 255);
     }
     let mut pe = png::Encoder::new(std::io::BufWriter::new(std::fs::File::create(path)?), width, height);
     pe.set_color(png::ColorType::Rgba);

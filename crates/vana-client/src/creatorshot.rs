@@ -50,7 +50,7 @@ fn read_png(path: &std::path::Path, w: u32, h: u32) -> Result<Vec<u8>> {
     let px = &buf[..info.buffer_size()];
     Ok(match info.color_type {
         png::ColorType::Rgba => px.to_vec(),
-        png::ColorType::Rgb => px.chunks_exact(3).flat_map(|c| [c[0], c[1], c[2], 255]).collect(),
+        png::ColorType::Rgb => px.as_chunks::<3>().0.iter().flat_map(|c| [c[0], c[1], c[2], 255]).collect(),
         t => anyhow::bail!("backdrop colour type {t:?}"),
     })
 }
@@ -105,7 +105,7 @@ pub fn render(index: &DatIndex, shot: &Shot, out: &std::path::Path) -> Result<()
         for t in body.textures.iter().chain(&head.textures) {
             let mut o = t.clone();
             o.name = format!("{}#opaque", t.name);
-            o.rgba_mut().chunks_exact_mut(4).for_each(|p| p[3] = 255);
+            o.rgba_mut().as_chunks_mut::<4>().0.iter_mut().for_each(|p| p[3] = 255);
             textures.push(t.clone());
             textures.push(o);
         }

@@ -853,7 +853,7 @@ pub fn suggest(f: &Facts) -> Vec<Suggestion> {
     }
     // Job abilities.
     if f.fighting() {
-        let hp_pct = me.map_or(100, |m| if m.hp_max > 0 { m.hp * 100 / m.hp_max } else { 100 });
+        let hp_pct = me.map_or(100, |m| (m.hp * 100).checked_div(m.hp_max).unwrap_or(100));
         let targeted = f.target.as_ref().is_some_and(|t| t.hitting_me);
         for &(name, status, when, why) in &BUFFS {
             let Some(a) = f.ability(name) else { continue };

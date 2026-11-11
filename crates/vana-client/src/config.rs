@@ -114,8 +114,31 @@ pub(crate) fn config_path() -> PathBuf {
         .unwrap_or_else(|| app_dir(dirs::config_dir()).join("config.json"))
 }
 
+/// Menu Size's steps of a `window` after the window's own, as (fraction, size): 95 %, 90 % ... while the height stays
+/// 512 or more (the v5 tool). Settings lists them; a first start (client/screen.rs) picks one.
+pub fn ui_steps(window: [u32; 2]) -> Vec<(f32, [u32; 2])> {
+    let [w, h] = window;
+    let mut v = Vec::new();
+    let mut f = 0.95;
+    while h as f32 * f >= 512.0 && f > 0.3 {
+        v.push((f, [(w as f32 * f).round() as u32, (h as f32 * f).round() as u32]));
+        f -= 0.05;
+    }
+    v
+}
+
+/// Menu Size (0037 / 0038) when the window goes from `old` to `new`: one of the old window's steps moves to the same
+/// step of the new one (the last there is, else the window's), so menus keep their share of the window; None leaves
+/// any other size as it is.
+pub fn ui_step_moved(old: [u32; 2], new: [u32; 2], ui: [u32; 2]) -> Option<[u32; 2]> {
+    let i = ui_steps(old).iter().position(|s| s.1 == ui)?;
+    let new = ui_steps(new);
+    Some(new.get(i).or(new.last()).map_or([0, 0], |s| s.1))
+}
+
 /// A login that worked: the server, the account (the Square Enix ID for PlayOnline), PlayOnline's member ID, and its
-/// own Remember password with the password(s) sealed for that server and account (secret.rs).
+/// own Remember password with the password(s) sealed for that server and account (secret.rs), and its own Trust this
+/// computer with the server's trust token, sealed the same way.
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SavedLogin {
@@ -124,6 +147,8 @@ pub struct SavedLogin {
     pub pol_id: String,
     pub remember_password: bool,
     pub saved_password: String,
+    pub trust_computer: bool,
+    pub trust_token: String,
     /// Fields of a newer client, kept as they are.
     #[serde(flatten)]
     pub unknown: serde_json::Map<String, serde_json::Value>,
@@ -166,6 +191,10 @@ pub struct Config {
     /// (secret.rs; hex, empty when none).
     pub remember_password: bool,
     pub saved_password: String,
+    /// The login screen's Trust this computer (not retail): with two-factor sign-in, the server's trust token is kept
+    /// (secret.rs; hex, empty when none) and sent instead of the one-time code.
+    pub trust_computer: bool,
+    pub trust_token: String,
     pub auth_port: u16,
     pub data_port: u16,
     pub view_port: u16,
@@ -268,6 +297,10 @@ pub struct Config {
     pub gpu: String,
     /// Set once a software adapter (WARP, llvmpipe) was first seen and the background was halved for it. Not retail.
     pub software_gpu_seen: bool,
+    /// No config file was there to load: the UI sizes are picked from the screen once its window opens
+    /// (client/screen.rs).
+    #[serde(skip)]
+    pub first_start: bool,
     /// FFXiMain's own options by config id (the in-game and lobby Config menus).
     pub game: crate::gamecfg::GameConfig,
     /// DAT overlays (not retail; dat::overlay): folders under mods_dir(), highest priority first.
@@ -389,10 +422,63 @@ pub struct ModernDock {
 /// A character's panel places by panel id.
 pub type ModernLayout = std::collections::BTreeMap<String, ModernPlace>;
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct ModRef {
     pub name: String,
     pub enabled: bool,
+    /// A Lua mod's switch kept per character and / or per job (not retail): `on` holds a character's ("<World>-<Name>",
+    /// client/uiconf.rs), a job's ("WHM") or a character's job's ("<World>-<Name>/WHM"); one never switched follows
+    /// `enabled`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub per_character: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub per_job: bool,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub on: std::collections::BTreeMap<String, bool>,
+}
+
+impl ModRef {
+    pub fn new(name: impl Into<String>, enabled: bool) -> Self {
+        ModRef { name: name.into(), enabled, ..Default::default() }
+    }
+
+    /// The key of `on` this character and job switch (none without a scope, or before the scope's job or character
+    /// is known).
+    pub fn key(&self, character: Option<&str>, job: Option<&str>) -> Option<String> {
+        match (self.per_character, self.per_job) {
+            (false, false) => None,
+            (true, false) => character.map(str::to_string),
+            (false, true) => job.map(str::to_string),
+            (true, true) => Some(format!("{}/{}", character?, job?)),
+        }
+    }
+
+    /// Whether it runs for this character and job: its own switch, else `enabled`; none while a scope's job or
+    /// character is not known yet.
+    pub fn active(&self, character: Option<&str>, job: Option<&str>) -> Option<bool> {
+        if !self.per_character && !self.per_job {
+            return Some(self.enabled);
+        }
+        let k = self.key(character, job)?;
+        Some(self.on.get(&k).copied().unwrap_or(self.enabled))
+    }
+
+    /// Switched on or off for this character and job: its own switch with a scope; without one, or in the lobby (no
+    /// character yet), `enabled`, which every one never switched follows. In game before a Per Job mod's job is known
+    /// there is nothing to switch: false.
+    pub fn switch(&mut self, character: Option<&str>, job: Option<&str>, on: bool) -> bool {
+        match self.key(character, job) {
+            Some(k) => {
+                self.on.insert(k, on);
+                true
+            }
+            None if character.is_none() || (!self.per_character && !self.per_job) => {
+                self.enabled = on;
+                true
+            }
+            None => false,
+        }
+    }
 }
 
 /// Where mod folders live.
@@ -467,6 +553,8 @@ impl Default for Config {
             logins: Vec::new(),
             remember_password: false,
             saved_password: String::new(),
+            trust_computer: false,
+            trust_token: String::new(),
             auth_port: 54231,
             data_port: 54230,
             view_port: 54001,
@@ -536,6 +624,7 @@ impl Default for Config {
             monitor: String::new(),
             gpu: String::new(),
             software_gpu_seen: false,
+            first_start: false,
             game: Default::default(),
         }
     }
@@ -560,7 +649,12 @@ impl Config {
                 let _ = std::fs::copy(&path, &aside);
                 Self::default()
             }),
-            Err(_) => Self::default(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Self { first_start: true, ..Self::default() },
+            // There but unreadable: not a first start, so nothing saves over it on its own.
+            Err(e) => {
+                log::error!("{}: {e}; the defaults used", path.display());
+                Self::default()
+            }
         };
         // A config from before the lists: its one login starts them.
         if c.logins.is_empty() && !c.server.trim().is_empty() && !c.username.trim().is_empty() {
@@ -606,13 +700,33 @@ impl Config {
         self.logins.iter().find(|l| same_server(&l.server, server) && username.is_none_or(|u| l.username == u))
     }
 
-    /// Makes a saved login the form's: its server, account, PlayOnline ID, Remember password and sealed passwords.
+    /// Makes a saved login the form's: its server, account, PlayOnline ID, Remember password and sealed passwords,
+    /// Trust this computer and the token.
     pub fn use_login(&mut self, l: &SavedLogin) {
         self.server = l.server.clone();
         self.username = l.username.clone();
         self.pol_id = l.pol_id.clone();
         self.remember_password = l.remember_password;
         self.saved_password = l.saved_password.clone();
+        self.trust_computer = l.trust_computer;
+        self.trust_token = l.trust_token.clone();
+    }
+
+    /// The saved login for a server and account (outer spaces aside), to change.
+    pub fn saved_login_mut(&mut self, server: &str, username: &str) -> Option<&mut SavedLogin> {
+        let username = username.trim();
+        self.logins.iter_mut().find(|l| same_server(&l.server, server) && l.username == username)
+    }
+
+    /// A trust token for a server and account (sealed; empty: none): the form's when it is that login, and the saved
+    /// login's.
+    pub fn set_trust_token(&mut self, server: &str, username: &str, sealed: String) {
+        if same_server(&self.server, server) && self.username.trim() == username.trim() {
+            self.trust_token = sealed.clone();
+        }
+        if let Some(l) = self.saved_login_mut(server, username) {
+            l.trust_token = sealed;
+        }
     }
 
     /// The form's login, first in the lists (after a login that worked, or a change to its Remember password).
@@ -631,6 +745,8 @@ impl Config {
             pol_id: self.pol_id.clone(),
             remember_password: self.remember_password,
             saved_password: self.saved_password.clone(),
+            trust_computer: self.trust_computer,
+            trust_token: self.trust_token.clone(),
             unknown,
         };
         self.logins.retain(|o| !(same_server(&o.server, &l.server) && o.username == l.username));
@@ -708,6 +824,54 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A mod kept per job switches each job's own; one never switched follows `enabled`; per character and job keys
+    /// both; the job not known yet decides nothing.
+    #[test]
+    fn mod_scopes() {
+        let mut m = ModRef::new("gearswap", true);
+        assert_eq!(m.active(Some("W-Nine"), None), Some(true));
+        m.per_job = true;
+        assert_eq!(m.active(Some("W-Nine"), None), None);
+        m.switch(Some("W-Nine"), Some("WAR"), false);
+        assert_eq!(
+            (m.active(Some("W-Nine"), Some("WAR")), m.active(Some("W-Nine"), Some("WHM"))),
+            (Some(false), Some(true))
+        );
+        assert!(m.enabled && m.on.get("WAR") == Some(&false));
+        m.per_character = true;
+        assert_eq!(m.key(Some("W-Nine"), Some("WAR")).as_deref(), Some("W-Nine/WAR"));
+        assert_eq!(m.active(Some("W-Nine"), Some("WAR")), Some(true));
+        m.switch(Some("W-Nine"), Some("WAR"), false);
+        assert_eq!(m.active(Some("W-Tsetse"), Some("WAR")), Some(true));
+        // In the lobby (no character, no job) a scoped mod's switch is the one everybody follows; in game before the
+        // job is known a Per Job one has nothing to switch.
+        let mut lobby = ModRef { per_job: true, ..ModRef::new("dps", true) };
+        assert!(!lobby.switch(Some("W-Nine"), None, false) && lobby.enabled && lobby.on.is_empty());
+        assert!(lobby.switch(None, None, false) && !lobby.enabled && lobby.on.is_empty());
+        // Without a scope the switch is `enabled`, as before; an old config's entry reads as unscoped.
+        let mut plain = ModRef::new("clock", false);
+        plain.switch(None, None, true);
+        assert!(plain.enabled && plain.on.is_empty());
+        let old: ModRef = serde_json::from_str(r#"{"name": "clock", "enabled": true}"#).unwrap();
+        assert_eq!(old, ModRef::new("clock", true));
+        assert_eq!(serde_json::to_string(&old).unwrap(), r#"{"name":"clock","enabled":true}"#);
+    }
+
+    /// A Menu Size step moves to the same step of a new window (the last there is, else the window's); any other
+    /// size stays.
+    #[test]
+    fn ui_step_follows_the_window() {
+        let ui_90 = ui_steps([1280, 800])[1].1;
+        assert_eq!(ui_90, [1152, 720]);
+        assert_eq!(ui_step_moved([1280, 800], [2560, 1440], ui_90), Some([2304, 1296]));
+        // 600 lines (75 %) of 800; 640x480 has no steps of 512 lines.
+        assert_eq!(ui_step_moved([1280, 800], [1920, 1080], [960, 600]), Some([1440, 810]));
+        assert_eq!(ui_step_moved([1280, 800], [640, 480], [960, 600]), Some([0, 0]));
+        assert_eq!(ui_step_moved([2560, 1440], [1280, 800], ui_steps([2560, 1440])[8].1), Some([832, 520]));
+        assert_eq!(ui_step_moved([1280, 800], [1920, 1080], [1000, 700]), None);
+        assert_eq!(ui_step_moved([1280, 800], [1920, 1080], [0, 0]), None);
+    }
 
     /// After a patch the lobby gets the patched files' version; a newer or hand-written saved one stays.
     #[test]

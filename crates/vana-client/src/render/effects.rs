@@ -227,7 +227,6 @@ fn dist_copy_pass<'e>(encoder: &'e mut wgpu::CommandEncoder, view: &wgpu::Textur
     })
 }
 
-/// DAT_1047bb88: the distortion draws' 256x256 copy, its view and bind groups.
 /// A specular binding: (library, texture), cube, CLAMP, MIPFILTER LINEAR.
 type SpecKey = ((usize, usize), bool, bool, bool);
 
@@ -244,6 +243,7 @@ struct StageWalk {
     drawst: Vec<u32>,
 }
 
+/// DAT_1047bb88: the distortion draws' 256x256 copy, its view and bind groups.
 struct DistCopy {
     _tex: wgpu::Texture,
     view: wgpu::TextureView,
@@ -1611,8 +1611,8 @@ impl EffectsGpu {
                 Write::Full(e, el) => {
                     q.put(&self.elems, (e as usize * w::WORDS * 4) as u64, bytemuck::cast_slice(&el.0))
                 }
-                Write::Words(e, off, words) => {
-                    q.put(&self.elems, ((e as usize * w::WORDS + off) * 4) as u64, bytemuck::cast_slice(&words))
+                Write::Word(e, off, v) => {
+                    q.put(&self.elems, ((e as usize * w::WORDS + off) * 4) as u64, bytemuck::bytes_of(&v))
                 }
                 Write::Parts(first, recs) => {
                     q.put(&self.parts, (first as usize * PART_WORDS * 4) as u64, bytemuck::cast_slice(&recs))
@@ -1844,7 +1844,6 @@ impl EffectsGpu {
 
     /// Draws the live elements over the scene (same targets, depth tested, back to front). `color_tex` is the
     /// texture behind `color` (CMoDist copies it; without one, or without COPY_SRC, distortion is not drawn).
-    #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &mut self,
         gpu: &Gpu,
@@ -2657,8 +2656,7 @@ mod tests {
             gpu.queue.submit([enc.finish()]);
             rb.slice(..).map_async(wgpu::MapMode::Read, |_| {});
             gpu.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None }).unwrap();
-            let v = bytemuck::cast_slice(&rb.slice(..).get_mapped_range().unwrap()).to_vec();
-            v
+            bytemuck::cast_slice(&rb.slice(..).get_mapped_range().unwrap()).to_vec()
         }
     }
 
@@ -2676,8 +2674,7 @@ mod tests {
             gpu.queue.submit([enc.finish()]);
             rb.slice(..).map_async(wgpu::MapMode::Read, |_| {});
             gpu.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None }).unwrap();
-            let v = bytemuck::cast_slice(&rb.slice(..).get_mapped_range().unwrap()).to_vec();
-            v
+            bytemuck::cast_slice(&rb.slice(..).get_mapped_range().unwrap()).to_vec()
         }
     }
 
@@ -2695,8 +2692,7 @@ mod tests {
             gpu.queue.submit([enc.finish()]);
             rb.slice(..).map_async(wgpu::MapMode::Read, |_| {});
             gpu.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None }).unwrap();
-            let v = bytemuck::cast_slice(&rb.slice(..).get_mapped_range().unwrap()).to_vec();
-            v
+            bytemuck::cast_slice(&rb.slice(..).get_mapped_range().unwrap()).to_vec()
         }
     }
 
@@ -3032,9 +3028,9 @@ mod tests {
                     Write::Full(e, el) => {
                         cpu.insert(*e, (**el).clone());
                     }
-                    Write::Words(e, off, ws) => {
+                    Write::Word(e, off, v) => {
                         if let Some(c) = cpu.get_mut(e) {
-                            c.0[*off..*off + ws.len()].copy_from_slice(ws);
+                            c.0[*off] = *v;
                         }
                     }
                     Write::Parts(..) | Write::LightOff(_) => {}
@@ -3140,9 +3136,9 @@ mod tests {
                         cpu.insert(*e, (**el).clone());
                         start.insert(*e, el.v3(w::POS));
                     }
-                    Write::Words(e, off, ws) => {
+                    Write::Word(e, off, v) => {
                         if let Some(c) = cpu.get_mut(e) {
-                            c.0[*off..*off + ws.len()].copy_from_slice(ws);
+                            c.0[*off] = *v;
                         }
                     }
                     Write::Parts(..) | Write::LightOff(_) => {}

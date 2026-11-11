@@ -500,7 +500,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
     }));
     if let Some(name) = s.shown.and_then(page) {
         let layout_h = gu.layout(name).map_or(0.0, |m| m.elements[0].h as f32);
-        let two = |n: usize| ((n + 1) / 2) as f32 * 14.0 + 22.0;
+        let two = |n: usize| n.div_ceil(2) as f32 * 14.0 + 22.0;
         let h = match s.shown {
             Some(2) => Some(two(job_rows(w, false).len())),
             Some(12) => Some(two(job_rows(w, true).len())),
@@ -529,7 +529,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
     let focused = w.confirm.is_none() && w.currencies.is_none() && w.unity.is_none();
     if let Some(win) = gu.lobby_window_off(STATCOM, sw, sh, (0.0, 0.0), Some(s.sel), focused, &s.off) {
         if let Some((wx, wy)) = gu.window_xy(STATCOM, sw, sh) {
-            gu.disabled_children(STATCOM, wx, wy, &s.off, Some(s.sel).filter(|_| focused));
+            gu.disabled_children(STATCOM, wx, wy, &s.off, focused.then_some(s.sel));
         }
         rects.push(win.frame);
     }

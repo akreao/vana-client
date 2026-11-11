@@ -210,7 +210,6 @@ impl HudTop {
     }
 
     /// Draws the three windows from the bars' text slots.
-    #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &mut self,
         gu: &mut GameUi,
@@ -291,7 +290,6 @@ impl HudTop {
     }
 
     /// titlewin, helpwind and netstat at the current fade (also the offscreen topbar-shot).
-    #[allow(clippy::too_many_arguments)]
     pub fn draw_bars(&mut self, gu: &mut GameUi, sw: f32, sh: f32, title: &str, help: &str, ticks: f32, busy: bool) {
         let a = self.fade.alpha();
         // titlewin (16, 16) 112 x 30: the title at (+4, +8), clipped to width - 8 (FUN_1014a3b0); content always.
@@ -566,7 +564,6 @@ impl HudTop {
 
 /// The offscreen top bar (topbar-shot): the bars at a fade state, the main menu on child `menu`, the party
 /// row at `hpp` and a target window with ("mob") or without ("npc") the gauge.
-#[allow(clippy::too_many_arguments)]
 pub fn topbar_shot(
     out: &std::path::Path,
     fade: &str,
@@ -652,7 +649,8 @@ pub fn topbar_shot(
         let (mut a, mut b, mut c, mut d) =
             ("127.0.0.1".to_string(), "tuxedo".to_string(), "secret".to_string(), String::new());
         let mut remember = cfgset == Some("remember");
-        // login2fa[:scan|:code|:done]: the two-factor window over the form, a sample key for the QR code.
+        let mut trust = cfgset == Some("trust");
+        // login2fa[:scan|:code|:done|:password]: the account window over the form, a sample key for the QR code.
         let mut twofa = config.and_then(|c| c.strip_prefix("login2fa")).map(|step| {
             let mut t = super::twofa::TwoFa::new();
             let uri = "otpauth://totp/Nameless:tuxedo?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=Nameless&algorithm=SHA1&digits=6&period=30";
@@ -662,6 +660,11 @@ pub fn topbar_shot(
                     t.reply(Ok(crate::net::auth::Reply::TotpCreated { uri: uri.into() }));
                     t.reply(Err(anyhow::anyhow!("Failed to validate credentials")));
                     t.code = "123456".into();
+                }
+                ":password" => {
+                    t.step = super::twofa::Step::Password;
+                    t.new = ["hunter22".into(), "hunter2".into()];
+                    t.focus = 1;
                 }
                 ":done" => {
                     t.reply(Ok(crate::net::auth::Reply::TotpCreated { uri: uri.into() }));
@@ -727,6 +730,7 @@ pub fn topbar_shot(
             pol,
             &mut combo,
             &mut remember,
+            (!pol).then_some(&mut trust),
             &mut 0,
             false,
             update,
@@ -940,8 +944,10 @@ pub fn topbar_shot(
                 }
             }
         }
-        let mut ui = super::configui::ConfigUi::default();
-        ui.owned = installed.unwrap_or_else(|| crate::dat::installed(&cfg.ffxi_dir()));
+        let mut ui = super::configui::ConfigUi {
+            owned: installed.unwrap_or_else(|| crate::dat::installed(&cfg.ffxi_dir())),
+            ..Default::default()
+        };
         let mut settings = None;
         let mut update = None;
         for w in spec.split(',').filter(|w| !w.is_empty()) {

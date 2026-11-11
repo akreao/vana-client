@@ -694,10 +694,10 @@ fn concierge_list(p: &mut Panels, w: &mut World) {
         concierge::pick_filter(w, gu, k);
         return;
     }
-    if let Some(k) = click {
-        if concierge::set_row(w, k) {
-            w.sounds.push(Se::Cursor as u32);
-        }
+    if let Some(k) = click
+        && concierge::set_row(w, k)
+    {
+        w.sounds.push(Se::Cursor as u32);
     }
     if click.is_some() {
         concierge::key(w, gu, egui::Key::Enter);
@@ -945,10 +945,10 @@ fn block_list(p: &mut Panels, w: &mut World) {
         blklist::key(w, egui::Key::Enter);
         return;
     }
-    if let Some(k) = click {
-        if blklist::set_cursor(w, k) {
-            w.sounds.push(Se::Cursor as u32);
-        }
+    if let Some(k) = click
+        && blklist::set_cursor(w, k)
+    {
+        w.sounds.push(Se::Cursor as u32);
     }
     if click.is_some() {
         blklist::key(w, egui::Key::Enter);

@@ -230,7 +230,9 @@ pub(super) fn install(lua: &Lua, g: &Table, mod_id: &str) -> mlua::Result<()> {
             let c = super::super::camera::view(w);
             for (k, v) in [("eye", c.eye), ("look", c.target)] {
                 let p = lua.create_table()?;
-                (p.set("x", v.x)?, p.set("y", v.y)?, p.set("z", v.z)?);
+                p.set("x", v.x)?;
+                p.set("y", v.y)?;
+                p.set("z", v.z)?;
                 out.set(k, p)?;
             }
             Ok(out)

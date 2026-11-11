@@ -41,9 +41,9 @@ impl MeritTables {
     pub fn load(index: &DatIndex, names: Option<u32>) -> MeritTables {
         let read = |f: u32| index.read(f).map_err(|e| log::warn!("merit table {f}: {e:#}")).unwrap_or_default();
         let (c, e) = (read(89), read(88));
-        let cats = c.chunks_exact(12).map(|r| MeritCat { name: u16_at(r, 0), id: r[3], cap: r[4] }).collect();
-        let entries = e.chunks_exact(12).map(|r| MeritEntry { max: r[4], jobs: u32_at(r, 8) }).collect();
-        let keys = e.chunks_exact(12).map(|r| u16_at(r, 0)).collect();
+        let cats = c.as_chunks::<12>().0.iter().map(|r| MeritCat { name: u16_at(r, 0), id: r[3], cap: r[4] }).collect();
+        let entries = e.as_chunks::<12>().0.iter().map(|r| MeritEntry { max: r[4], jobs: u32_at(r, 8) }).collect();
+        let keys = e.as_chunks::<12>().0.iter().map(|r| u16_at(r, 0)).collect();
         let names = names.and_then(|f| DMsg::load(index, f).map_err(|e| log::warn!("merit names {f}: {e:#}")).ok());
         MeritTables { cats, entries, keys, names }
     }
@@ -98,11 +98,13 @@ impl JobPointTables {
         let read = |f: u32| index.read(f).map_err(|e| log::warn!("job point table {f}: {e:#}")).unwrap_or_default();
         let (c, e) = (read(94), read(93));
         let jobs = c
-            .chunks_exact(0x44)
+            .as_chunks::<0x44>()
+            .0
+            .iter()
             .filter(|r| r[2] != 0)
             .map(|r| (r[2], (0..32).map(|k| u16_at(r, 4 + 2 * k)).filter(|&id| id != 0).collect()))
             .collect();
-        let max = e.chunks_exact(4).map(|r| r[3]).collect();
+        let max = e.as_chunks::<4>().0.iter().map(|r| r[3]).collect();
         let names = names.and_then(|f| DMsg::load(index, f).map_err(|e| log::warn!("job point names {f}: {e:#}")).ok());
         JobPointTables { jobs, max, names }
     }
@@ -134,11 +136,13 @@ impl AeTables {
         let read = |f: u32| index.read(f).map_err(|e| log::warn!("alter ego table {f}: {e:#}")).unwrap_or_default();
         let (c, e) = (read(98), read(97));
         let cats = c
-            .chunks_exact(0x24)
+            .as_chunks::<0x24>()
+            .0
+            .iter()
             .map(|r| (u16_at(r, 0), (0..16).map(|k| u16_at(r, 4 + 2 * k)).filter(|&id| id != 0).collect::<Vec<_>>()))
             .filter(|(k, es)| *k != 0 && !es.is_empty())
             .collect();
-        let max = e.chunks_exact(4).map(|r| r[3]).collect();
+        let max = e.as_chunks::<4>().0.iter().map(|r| r[3]).collect();
         let names = names.and_then(|f| DMsg::load(index, f).map_err(|e| log::warn!("alter ego names {f}: {e:#}")).ok());
         AeTables { cats, max, names }
     }

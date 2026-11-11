@@ -597,7 +597,7 @@ pub fn parse_img(p: &[u8]) -> Result<Texture> {
                 let bgra: [u8; 4] = match bits {
                     4 | 8 => {
                         let idx = if bits == 4 {
-                            (p[px_at + i / 2] >> if i % 2 == 0 { 4 } else { 0 }) & 0xf
+                            (p[px_at + i / 2] >> if i.is_multiple_of(2) { 4 } else { 0 }) & 0xf
                         } else {
                             p[px_at + i]
                         } as usize;
@@ -652,7 +652,7 @@ pub fn parse_img(p: &[u8]) -> Result<Texture> {
     };
     // Uncompressed and DXT3 alpha is PS2-style: 0x80 is opaque.
     if half_alpha {
-        for px in rgba.chunks_exact_mut(4) {
+        for px in rgba.as_chunks_mut::<4>().0 {
             px[3] = px[3].saturating_mul(2);
         }
     }
@@ -718,7 +718,7 @@ impl Region {
         let (s, c) = self.rot[1].sin_cos();
         let size = self.scale.map(f32::abs);
         std::array::from_fn(|i| {
-            let k = [i & 1, i >> 1 & 1, i >> 2 & 1].map(|b| (b as f32 - 0.5));
+            let k = [i & 1, i >> 1 & 1, i >> 2 & 1].map(|b| b as f32 - 0.5);
             let (x, y, z) = (k[0] * size[0], k[1] * size[1], k[2] * size[2]);
             [self.pos[0] + x * c + z * s, self.pos[1] + y, self.pos[2] - x * s + z * c]
         })
@@ -967,7 +967,7 @@ mod tests {
         }
         block[8..].copy_from_slice(&[0x1f, 0xf8, 0xe0, 0x07, 0xe4, 0x1b, 0x6c, 0x93]);
         let mut first = super::decode_dxt(&block, 4, 4, true);
-        first.chunks_exact_mut(4).for_each(|p| p[3] = p[3].saturating_mul(2));
+        first.as_chunks_mut::<4>().0.iter_mut().for_each(|p| p[3] = p[3].saturating_mul(2));
         let mut doubled = block;
         crate::dat::texmip::double_bc2_alpha(&mut doubled);
         assert_eq!(first, super::decode_dxt(&doubled, 4, 4, true));

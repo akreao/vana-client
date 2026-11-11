@@ -188,7 +188,7 @@ impl Shade {
         let (w, h) = (w as usize, h as usize);
         let (cols, rows) = (w.div_ceil(Self::BLOCK).max(1), h.div_ceil(Self::BLOCK).max(1));
         let mut sum = vec![(0.0f32, 0u32); cols * rows];
-        for (i, p) in rgba.chunks_exact(4).enumerate().take(w * h) {
+        for (i, p) in rgba.as_chunks::<4>().0.iter().enumerate().take(w * h) {
             let b = &mut sum[(i / w / Self::BLOCK) * cols + i % w / Self::BLOCK];
             b.0 += (0.299 * p[0] as f32 + 0.587 * p[1] as f32 + 0.114 * p[2] as f32) / 255.0;
             b.1 += 1;
@@ -230,7 +230,7 @@ impl Mode {
     pub fn of_event_zone(zone: i16) -> Mode {
         match zone {
             ..=-100 => Mode::Illustration,
-            ..0 => Mode::RegionMap,
+            -99..0 => Mode::RegionMap,
             _ => Mode::Event,
         }
     }
@@ -636,7 +636,6 @@ impl MapWin {
     /// The preview of an op 0xd4 sub 0 menu (FUN_101f9a50 mode 6): fit zoom, no keys, no sets or map0, hidden until
     /// a point shows it; the cursor point midway between the top bar and the menu (`point_y`); the key -1 is the
     /// sub-map under the player. A zone without a record opens anyway and only says so.
-    #[allow(clippy::too_many_arguments)]
     pub fn open_preview(
         w: &World,
         regions: &[Region],
@@ -676,7 +675,6 @@ impl MapWin {
     /// FUN_101f8360 and the callers' zoom: the image, zoom W / 512 x config 0x8a / 1000 in mode 0 (W / 512 for a no-map
     /// record), x 1.75 in mode 1, W / 512 otherwise; fade 0x80 -> 0 at 8 a frame (mode 6: hidden at once); then the
     /// player under the cursor point (FUN_101f8ea0, FUN_101ef990). Modes with points ask for the masks (FUN_101f93d0).
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         region: Region,
         owned: bool,
@@ -2676,8 +2674,7 @@ impl Overlay {
     pub fn follow(&mut self, w: &World, regions: &[Region]) {
         if self.hud {
             let rec = record(w, regions);
-            if rec.map(|r| r.0) != self.region || rec.map(|r| r.1) != Some(self.show).filter(|_| self.region.is_some())
-            {
+            if rec.map(|r| r.0) != self.region || rec.map(|r| r.1) != self.region.is_some().then_some(self.show) {
                 *self = Self::open_hud(w, regions);
             }
             return;
@@ -2781,7 +2778,6 @@ impl Overlay {
     /// Extra, the minimap (client/minimap.rs): the style frame at `rect`, inside it `span` map pixels across centred on
     /// `pos`, the dots (world x, z, colour, the target drawn larger) and our marker, coloured as the overlay's at
     /// opacity `mix` (user, 2026-10-25: the two markers alike).
-    #[allow(clippy::too_many_arguments)]
     pub fn draw_mini(
         &mut self,
         gu: &mut GameUi,
