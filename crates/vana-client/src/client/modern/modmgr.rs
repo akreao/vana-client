@@ -1829,7 +1829,7 @@ pub(super) fn sample(p: &mut Panels) {
     s.lua_info.clear();
     s.s.mods.clear();
     for (id, name, on) in mods {
-        s.s.mods.push(crate::config::ModRef { name: id.into(), enabled: on });
+        s.s.mods.push(crate::config::ModRef::new(id, on));
         s.lua_names.insert(id.into());
         s.lua_info.insert(id.into(), LuaInfo { name: name.into(), ..Default::default() });
     }
