@@ -41,7 +41,8 @@ pub struct Primer {
     back: Option<(usize, u8)>,
     list: Option<List>,
     /// Title slot 2 holds group 9 0xdd "Help Desk": opened from the Help Desk or back from a page (LAB_101f7b40).
-    desk_title: bool,    /// guide00 raised over a still open guide01 with the focus: /primer typed while the Primer is up.
+    desk_title: bool,
+    /// guide00 raised over a still open guide01 with the focus: /primer typed while the Primer is up.
     over: bool,
 }
 
@@ -244,7 +245,8 @@ pub(super) fn look(w: &World) -> Option<Look> {
 
 /// The mouse's cursor moves: guide00's row (while guide01 is closed), guide01's row. True when it moved.
 pub(super) fn set_cat(w: &mut World, k: usize) -> bool {
-    let Some(p) = w.primer.as_mut().filter(|p| (p.list.is_none() || p.over) && p.cursor != k && k < p.cats.len()) else {
+    let Some(p) = w.primer.as_mut().filter(|p| (p.list.is_none() || p.over) && p.cursor != k && k < p.cats.len())
+    else {
         return false;
     };
     p.cursor = k;
