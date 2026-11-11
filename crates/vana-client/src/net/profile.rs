@@ -636,7 +636,25 @@ fn status_block(h: &[u8], ext_flags: u8) -> Option<(u8, bool)> {
     (ext_flags & 1 != 0 && h[0x10] <= 2).then(|| (entry_status(h[0x11]), h[0x12] & 1 != 0))
 }
 
-/// A notice's payload (3.4.3): the 0x48-byte header in 96 characters, then a status notice's extended block.
+/// The friend list's size in polcore (200 entries at DAT_10109288): a notice for a higher index changes nothing.
+const LIST_SIZE: u8 = 200;
+
+/// The extension's character primitive: its offset (after the 8-byte flags block, flag 2's 16 bytes and flag 4's 8)
+/// when the notice carries one the entry takes, flags 1 and 8 together (FUN_1001c9b0 stores it inside the status
+/// block's branch: 0x1001c9f6 `je 0x1001ca7f` jumps over both).
+fn primitive_at(flags: u8) -> Option<usize> {
+    (flags & 9 == 9).then(|| 8 + if flags & 2 != 0 { 16 } else { 0 } + if flags & 4 != 0 { 8 } else { 0 })
+}
+
+/// A notice's payload (3.4.3): the 0x48-byte header in 96 characters, then a status notice's extended block. The
+/// type-31 paths of polcore's handler (FUN_100160c0, header +0x19 / +0x1a / +0x1b):
+/// - +0x1b set: the legacy block. The sign-on is +0x10 == 1 with +0x18 and +0x1c both 0xff (LSB's profile-available
+///   notice); else the header's own status block applies to entry +0x1c (FUN_1001c970, newer only), no extension
+///   read.
+/// - +0x1a set: a message notice for the viewer (its title and text to callback 1); not a friend's status.
+/// - +0x19 bit 0 with +0x1a and +0x1b clear and a length under 0x158: the extension. Its flag 2 hands the notice to
+///   FUN_100200a0 (a 16-byte block for something other than the list) and the entry is not touched; otherwise the
+///   status block with flag 1 and the character with flags 1 and 8 (FUN_1001c9b0).
 fn notice(payload: &str) -> Option<Irc> {
     let h = b64_decode(payload.get(..96)?)?;
     if h.len() < 0x48 {
@@ -647,20 +665,33 @@ fn notice(payload: &str) -> Option<Irc> {
     if ty != 31 {
         return polpro.then_some(Irc::Mail);
     }
-    if h[0x10] == 1 {
-        return Some(Irc::SignedOn);
-    }
     let account = u64::from_le_bytes(h[..8].try_into().unwrap()) ^ POL_MASK;
+    let (list_index, age) = (h[0x1c], u64::from_le_bytes(h[0x30..0x38].try_into().unwrap()));
+    if h[0x1b] != 0 {
+        if h[0x10] == 1 && h[0x18] == 0xff && h[0x1c] == 0xff {
+            return Some(Irc::SignedOn);
+        }
+        return (list_index < LIST_SIZE).then(|| Irc::Status {
+            account,
+            list_index,
+            status: status_block(&h, 1),
+            char_id: None,
+            age,
+        });
+    }
+    let length = u32::from_le_bytes(h[0x38..0x3c].try_into().unwrap());
+    if h[0x1a] != 0 || h[0x19] & 1 == 0 || length >= 0x158 || list_index >= LIST_SIZE {
+        return None;
+    }
     let ext = b64_decode(&payload[96..]).unwrap_or_default();
-    let char_id = (ext.first().is_some_and(|f| f & 8 != 0) && ext.len() >= 0x18)
-        .then(|| u64::from_le_bytes(ext[0x10..0x18].try_into().unwrap()) as u32);
-    Some(Irc::Status {
-        account,
-        list_index: h[0x1c],
-        status: status_block(&h, ext.first().copied().unwrap_or(0)),
-        char_id,
-        age: u64::from_le_bytes(h[0x30..0x38].try_into().unwrap()),
-    })
+    let flags = ext.first().copied().unwrap_or(0);
+    if flags & 2 != 0 {
+        return None;
+    }
+    let char_id = primitive_at(flags)
+        .and_then(|at| ext.get(at + 8..at + 0x10))
+        .map(|id| u64::from_le_bytes(id.try_into().unwrap()) as u32);
+    Some(Irc::Status { account, list_index, status: status_block(&h, flags), char_id, age })
 }
 
 #[cfg(test)]
@@ -792,6 +823,52 @@ mod tests {
         assert_eq!(status_block(&h, 8), None);
         h[0x10] = 3;
         assert_eq!(status_block(&h, 1), None);
+    }
+
+    /// The handler's paths (FUN_100160c0) on LSB's two notices and the variants no server of ours sends.
+    #[test]
+    fn notice_paths() {
+        let head = |f: &dyn Fn(&mut [u8; 0x48])| {
+            let mut h = [0u8; 0x48];
+            h[0x3e..0x40].copy_from_slice(&(31u16 << 7).to_le_bytes());
+            h[0x42] = 1;
+            f(&mut h);
+            b64(&h, true)
+        };
+        let ext = |b: &[u8]| b64(b, false);
+        let status = |n: &str| match notice(n) {
+            Some(Irc::Status { list_index, status, char_id, .. }) => Some((list_index, status, char_id)),
+            _ => None,
+        };
+        // LSB's profile-available notice.
+        let sign_on = head(&|h| (h[0x10], h[0x18], h[0x1b], h[0x1c]) = (1, 0xff, 1, 0xff));
+        assert!(matches!(notice(&sign_on), Some(Irc::SignedOn)));
+        // A friend's "connected 1" is a status, not the sign-on.
+        let connected1 = head(&|h| (h[0x10], h[0x11], h[0x19], h[0x1c]) = (1, 2, 1, 4));
+        assert_eq!(status(&(connected1 + &ext(&[1, 0, 0, 0, 0, 0, 0, 0]))), Some((4, Some((1, false)), None)));
+        // The legacy block applies the header's status without an extension.
+        let legacy = head(&|h| (h[0x10], h[0x11], h[0x1b], h[0x1c]) = (2, 3, 1, 7));
+        assert_eq!(status(&legacy), Some((7, Some((2, false)), None)));
+        // LSB's playing friend: flags 1 | 8, the id at 0x10; with flag 4 the id moves to 0x18.
+        let playing = head(&|h| (h[0x10], h[0x11], h[0x12], h[0x19], h[0x1c]) = (2, 2, 1, 1, 3));
+        let mut e = vec![9u8, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0];
+        e.extend_from_slice(&0x1234u64.to_le_bytes());
+        assert_eq!(status(&(playing.clone() + &ext(&e))), Some((3, Some((1, true)), Some(0x1234))));
+        let mut e4 = vec![13u8, 0, 0, 0, 0, 0, 0, 0];
+        e4.extend_from_slice(&[0; 8]);
+        e4.extend_from_slice(&[1, 0, 0, 0, 0, 0, 0, 0]);
+        e4.extend_from_slice(&0x5678u64.to_le_bytes());
+        assert_eq!(status(&(playing.clone() + &ext(&e4))), Some((3, Some((1, true)), Some(0x5678))));
+        // Flag 8 without flag 1: neither status nor character, only the age.
+        e[0] = 8;
+        assert_eq!(status(&(playing.clone() + &ext(&e))), Some((3, None, None)));
+        // Flag 2 goes elsewhere; +0x1a or a clear +0x19 bit 0 is no status notice.
+        e[0] = 3;
+        assert_eq!(status(&(playing + &ext(&e))), None);
+        assert!(notice(&head(&|h| (h[0x19], h[0x1a]) = (1, 1))).is_none());
+        assert!(notice(&head(&|h| h[0x1c] = 3)).is_none());
+        // An index past polcore's 200 entries.
+        assert!(notice(&head(&|h| (h[0x1b], h[0x1c]) = (1, 200))).is_none());
     }
 
     #[test]

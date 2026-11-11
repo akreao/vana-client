@@ -5,7 +5,8 @@
 use super::World;
 use crate::net::profile::{self, Cred, FriendInfo, Irc, IrcLink};
 use crate::net::search::Record;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 /// One friend or block-list entry (sqPolFriend and FFXiMain's part of it, 2.2).
@@ -96,6 +97,9 @@ pub struct Friends {
     /// A change asked before the session could send it (not signed on, the loads not in, or our slot unknown): sent
     /// once it can, so a later LoadMyStatus does not undo it.
     pending: Option<u8>,
+    /// Set when this session's Friends goes (a logout): status jobs still trying stop, so an old change cannot land
+    /// after the next login has loaded its own status.
+    stop: StopOnDrop,
     /// What the last zone-in still owes our status, held until the loads are in.
     zone_owed: Option<ZoneStatus>,
     retry_at: Option<Instant>,
@@ -176,23 +180,33 @@ pub fn settle_ready(has_cred: bool, loading: bool, loaded: bool, signed_on: bool
     !has_cred || (!loading && (!loaded || signed_on))
 }
 
-/// Requests per ChangeMyStatus before ours gives up (FUN_100f12a0's 0x32 tries of one round).
-pub const STATUS_TRIES: u32 = 0x32;
+/// Requests per ChangeMyStatus before ours gives up (retail: 0x32 a round, rounds without end; see `change_retried`).
+pub const STATUS_TRIES: u32 = 5;
 
 /// The wait before try `n + 1` of a ChangeMyStatus: 250 ms doubling, at most 5 s.
 pub fn retry_delay(n: u32) -> Duration {
     Duration::from_millis(250u64 << n.min(5)).min(Duration::from_secs(5))
 }
 
-/// One ChangeMyStatus, tried again on failure. Retail's job runner (FUN_100f12a0) tries a failed request again each
-/// frame, up to 0x32 times for results above -0x800, and as the answer (FUN_100f7b00) leaves the job busy the whole
-/// job runs again after that, without end. Ours waits between tries and stops after `STATUS_TRIES` (a deviation:
-/// a dead xi_profile does not hold the status job forever).
-fn change_retried(c: &Cred, slot: Option<u8>, open: Option<u8>) -> anyhow::Result<()> {
+/// A failure worth another try: the connection or its I/O (a timeout, a reset, a closed stream), not an answer
+/// xi_profile gave (retail retries only results above -0x800, not refusals).
+pub fn transient(e: &anyhow::Error) -> bool {
+    e.chain().any(|c| c.is::<std::io::Error>())
+}
+
+/// One ChangeMyStatus, tried again on a connection failure. Retail's job runner (FUN_100f12a0) tries a failed
+/// request again each frame, up to 0x32 times for results above -0x800, and as the answer (FUN_100f7b00) leaves the
+/// job busy the whole job runs again after that, without end. Ours (a deviation) tries `STATUS_TRIES` times,
+/// `retry_delay` apart, only for `transient` errors, and not once `stop` is set. Each try can wait out the request's
+/// 30 s read timeout, so a server that never answers holds the status job for about 2 x 5 x 30 s, not an hour.
+fn change_retried(c: &Cred, stop: &AtomicBool, slot: Option<u8>, open: Option<u8>) -> anyhow::Result<()> {
     let mut n = 0;
     loop {
+        if stop.load(Ordering::Relaxed) {
+            anyhow::bail!("the session ended");
+        }
         match profile::change_my_status(c, slot, open) {
-            Err(e) if n + 1 < STATUS_TRIES => {
+            Err(e) if n + 1 < STATUS_TRIES && transient(&e) => {
                 log::debug!("friends: ChangeMyStatus try {}: {e:#}", n + 1);
                 std::thread::sleep(retry_delay(n));
                 n += 1;
@@ -205,6 +219,16 @@ fn change_retried(c: &Cred, slot: Option<u8>, open: Option<u8>) -> anyhow::Resul
 impl Friends {
     pub fn new(cred: Option<Cred>) -> Self {
         Self { cred, ..Default::default() }
+    }
+}
+
+/// A stop flag the status jobs share, set when its owner (Friends) is dropped.
+#[derive(Default)]
+struct StopOnDrop(Arc<AtomicBool>);
+
+impl Drop for StopOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
     }
 }
 
@@ -263,8 +287,10 @@ pub fn set_status(w: &mut World, open: u8) {
         Change::Hold => f.pending = Some(open),
         Change::Send(sends) => {
             (f.status_job, f.pending) = (true, None);
-            let s = slot(w);
-            spawn(w, move |c| Done::Status(sends.iter().try_for_each(|&o| change_retried(c, s, Some(o))), Some(open)));
+            let (s, stop) = (slot(w), w.friends.stop.0.clone());
+            spawn(w, move |c| {
+                Done::Status(sends.iter().try_for_each(|&o| change_retried(c, &stop, s, Some(o))), Some(open))
+            });
         }
     }
 }
@@ -306,11 +332,11 @@ fn settle(w: &mut World) {
             super::textcmd::config_flag(w, 1, effective_status(&w.friends) == 1);
         }
         ZoneStatus::Reread => {
-            let s = slot(w);
+            let (s, stop) = (slot(w), w.friends.stop.0.clone());
             (w.friends.status_job, w.friends.pending) = (true, None);
             spawn(w, move |c| {
                 let read = profile::load_my_status(c).and_then(|st| {
-                    change_retried(c, s, Some(st))?;
+                    change_retried(c, &stop, s, Some(st))?;
                     Ok(st)
                 });
                 Done::Then(Box::new(move |w| {
@@ -858,7 +884,8 @@ mod tests {
         assert!(settle_ready(true, false, false, false));
     }
 
-    /// The tries back off from 250 ms to at most 5 s, and the whole run stays bounded.
+    /// The tries back off from 250 ms to at most 5 s; a whole run, its sleeps and each try's 30 s read timeout, stays
+    /// under a few minutes.
     #[test]
     fn retry_backs_off() {
         assert_eq!(retry_delay(0), Duration::from_millis(250));
@@ -866,7 +893,27 @@ mod tests {
         assert_eq!(retry_delay(4), Duration::from_secs(4));
         assert_eq!(retry_delay(5), Duration::from_secs(5));
         assert_eq!(retry_delay(40), Duration::from_secs(5));
-        let total: Duration = (0..STATUS_TRIES - 1).map(retry_delay).sum();
-        assert!(total < Duration::from_secs(300), "{total:?}");
+        let sleeps: Duration = (0..STATUS_TRIES - 1).map(retry_delay).sum();
+        assert!(sleeps < Duration::from_secs(10), "{sleeps:?}");
+        let worst = (sleeps + Duration::from_secs(30) * STATUS_TRIES) * 2;
+        assert!(worst < Duration::from_secs(360), "{worst:?}");
+    }
+
+    /// Only a connection failure is tried again; an answer from xi_profile is final.
+    #[test]
+    fn retries_only_io() {
+        let io = anyhow::Error::from(std::io::Error::from(std::io::ErrorKind::TimedOut)).context("no answer");
+        assert!(transient(&io));
+        assert!(!transient(&anyhow::anyhow!("ChangeMyStatus: xi_profile error 0x1")));
+    }
+
+    /// A stopped session sends nothing more.
+    #[test]
+    fn dropped_friends_stop_their_jobs() {
+        let f = Friends::new(None);
+        let stop = f.stop.0.clone();
+        assert!(!stop.load(Ordering::Relaxed));
+        drop(f);
+        assert!(stop.load(Ordering::Relaxed));
     }
 }

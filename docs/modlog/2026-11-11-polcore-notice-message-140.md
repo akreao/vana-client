@@ -60,8 +60,26 @@ reach).
   list title with its cut flag; requests and accepts send 16-byte titles, an accept an empty text (ours sent the
   typed name), titles and names go out as Shift-JIS; an accept's or a decline's header keeps the request's title.
   `entry_status` caps the status; a notice changes the status only with extension flag 1 and a connected byte of
-  0..2, the character only with a primitive, shown only while the playing bit is set; an equal age is dropped.
+  0..2, the character only with flags 1 and 8 together (FUN_1001c9b0 stores the primitive inside the status
+  block's branch, 0x1001c9f6 `je 0x1001ca7f`), shown only while the playing bit is set; an equal age is dropped.
   Ours keeps one character per friend, not one per slot.
-- Tests: message_body, title_from_data, notice_status. Not checked live.
-- Not built: the accept's second data; the handle numbers and the area code in ours' header (zero); the counter
+- The type-31 handler's gates (FUN_100160c0; header +0x18 handle number, +0x19 extension, +0x1a message,
+  +0x1b legacy, +0x1c list index), built in `profile::notice`:
+  - +0x1b set: the sign-on only when +0x10 == 1 and +0x18 == +0x1c == 0xff (LSB's profile-available notice sets
+    exactly these); otherwise the header's status block applies to entry +0x1c with no extension (FUN_1001c970,
+    newer only, through the same FUN_10017560). Ours took any +0x10 == 1 as the sign-on, so a friend's
+    "connected 1" never reached the status.
+  - +0x1a set: a message notice for the viewer (title up to 0x07 and text to callback 1); no entry change.
+  - The extension only with +0x19 bit 0, +0x1a and +0x1b clear and a length under 0x158. Its flag byte, then 7
+    bytes, then the blocks in order: flag 2 16 bytes, flag 4 8 bytes, flag 8 the 16-byte primitive (the character
+    id at its +8: 0x10, or 0x18 after a flag-4 block), flag 0x10 16, flag 0x20 0x68. Flag 2 sends the notice to
+    FUN_100200a0 and not to the entry.
+  - An index of 200 or more changes nothing (polcore's list is 200 entries). With the list loaded (DAT_10111c30)
+    polcore also needs the entry's account and handle number (entry bits 13..18 == +0x18) to match; ours matches
+    the account and index (client/friends.rs `notice`).
+- Older builds: a client from before this change splits message data on NUL, so it shows the new data's
+  `title 07 text` as the title and no text. This build reads both.
+- Tests: message_body, title_from_data, notice_status, notice_paths. Not checked live.
+- Not built: the legacy path's data block (FUN_1001acf0, a length 1..0xae); flag 2's FUN_100200a0; the accept's
+  second data; the handle numbers and the area code in ours' header (zero); the counter
   (ours: the clock's nanoseconds).

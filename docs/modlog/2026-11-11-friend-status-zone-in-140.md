@@ -62,11 +62,13 @@ FUN_100ee2a0). Decompiled with Ghidra; the 0x00A branch, its jump table and the 
   of an IRC drop) it holds the change and `poll` sends it once it can, so the next LoadMyStatus does not undo it.
   The return's read-and-send runs on the status job too (FUN_100f7aa0) and is skipped without a ready session, as
   is any send with no slot (a ChangeMyStatus without one would tell xi_profile the character is not in game).
-  Deviation: each ChangeMyStatus is tried at most 0x32 times, 250 ms apart doubling to 5 s (`change_retried`),
-  where retail tries 0x32 times a frame apart and then runs the whole job again without end. Before, the status
-  was not kept without a session and nothing ran at a zone-in.
+  Deviation: each ChangeMyStatus is tried at most 5 times, 250 ms apart doubling to 5 s, and only after a
+  connection or I/O failure, not after xi_profile refused it (`change_retried`, `transient`); a logout (Friends
+  dropped) stops the tries, so an old change cannot land after the next login. Retail tries 0x32 times a frame
+  apart for results above -0x800 and then runs the whole job again without end. Before, the status was not kept
+  without a session and nothing ran at a zone-in.
 - Tests: zone_in_resets_only_away, a_change_repeats_the_old_status_first, change_decision, settle_gate,
-  retry_backs_off, pol_return_states. Not checked live.
+  retry_backs_off, retries_only_io, dropped_friends_stop_their_jobs, pol_return_states. Not checked live.
 - Still open:
   - polcore's own side is in "Friend List: polcore's notice status and message format" (2026-11-11).
   - Deleting, unblocking and reordering: retail has none in game (commenu's help sends the player to the viewer);
