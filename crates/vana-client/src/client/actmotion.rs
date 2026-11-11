@@ -48,8 +48,8 @@ pub struct Pending {
 pub struct Mouth {
     pub left: u32,
     pub next: f32,
-    /// Ticks into the current playback, None between them.
-    pub ticks: Option<f32>,
+    /// A playback starts now: the pose block queues the face motion (FUN_100ce0e0).
+    pub start: bool,
 }
 
 /// FUN_1008da00: an NPC with MonStat 2 takes its dft or df1 idle at random every 600..1199 ticks (+0x1ba), statuses
@@ -80,7 +80,7 @@ pub fn crand() -> u32 {
 
 impl Mouth {
     pub fn new(chars: usize) -> Mouth {
-        Mouth { left: (chars as u32 + 20) / 20, next: 0.0, ticks: None }
+        Mouth { left: (chars as u32 + 20) / 20, next: 0.0, start: false }
     }
 }
 
@@ -311,6 +311,65 @@ pub fn find_cached<'a>(cache: &mut FindCache, extra: &'a Extra, ch: &'a Characte
     found
 }
 
+/// A queued motion chunk: the model's animation by index, or a motion file's. The queue keeps the file, as
+/// retail's entry keeps its resource (the sheathe's motions outlive the battle files' place on the list).
+#[derive(Clone)]
+pub enum Chunk {
+    Model(usize),
+    File(Arc<MotionFile>, usize),
+}
+
+impl Chunk {
+    pub fn anim<'a>(&'a self, ch: &'a Character) -> Option<&'a Animation> {
+        match self {
+            Chunk::Model(i) => ch.animations.get(*i),
+            Chunk::File(f, i) => f.animations.get(*i),
+        }
+    }
+}
+
+impl PartialEq for Chunk {
+    fn eq(&self, o: &Chunk) -> bool {
+        match (self, o) {
+            (Chunk::Model(a), Chunk::Model(b)) => a == b,
+            (Chunk::File(f, a), Chunk::File(g, b)) => a == b && Arc::ptr_eq(f, g),
+            _ => false,
+        }
+    }
+}
+
+impl std::fmt::Debug for Chunk {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Chunk::Model(i) => write!(f, "model[{i}]"),
+            Chunk::File(m, i) => write!(f, "{}[{i}]", m.id),
+        }
+    }
+}
+
+/// The model's motion queues (FUN_1001a420's seven regions).
+pub type Queues = crate::motionq::Queues<Chunk>;
+
+/// A motion's chunks as FUN_100cd540 queues them: (region, chunk, frames, speed), the first one per region in search
+/// order. A PC look whose body has no skirt set (+0x881 == 0, model kinds 0 / 1 / 6) queues no region 2 chunk.
+pub fn chunks(cache: &mut FindCache, extra: &Extra, ch: &Character, name: &str) -> Vec<(u8, Chunk, f32, f32)> {
+    if find_cached(cache, extra, ch, name).is_empty() {
+        return Vec::new();
+    }
+    let skirtless = ch.pc.as_ref().is_some_and(|pc| pc.skirt == 0);
+    let Some(ids) = cache.map.get(name.get(..3).unwrap_or(name)) else { return Vec::new() };
+    ids.iter()
+        .filter_map(|&(s, i)| {
+            let c = if s == 0 { Chunk::Model(i) } else { Chunk::File(extra.get(s - 1)?.1.clone(), i) };
+            let (r, frames, speed) = {
+                let a = c.anim(ch)?;
+                (region(a), a.frames as f32, a.speed)
+            };
+            (r != 2 || !skirtless).then_some((r, c, frames, speed))
+        })
+        .collect()
+}
+
 /// A type-0x07 scheduler by name, newest file first, then the model (FUN_100cc440).
 pub fn scheduler<'a>(extra: &'a Extra, ch: &'a Character, name: &str) -> Option<&'a [u8]> {
     let files = extra.iter().rev().flat_map(|(_, f)| f.schedulers.iter());
@@ -337,10 +396,33 @@ pub struct Play {
     pub base: String,
     /// Motions started before this tick were cut by a forced default (+0x7d8 cleared, e.g. op 0x5e).
     pub cut: f32,
-    /// Scheduler op 0x28: the status motion comes back at this tick.
+    /// Scheduler op 0x28: the status motion comes back at this tick, blended in over `stance_blend` ticks (the op's
+    /// f32 @8); `stanced` once the pose block has queued it.
     pub stance_at: Option<f32>,
-    /// Event op 0xd3: every motion layer ends at this tick (FUN_1001b520(8): state 2, gone when its time runs out).
-    pub end: Option<f32>,
+    pub stance_blend: f32,
+    pub stanced: bool,
+    /// How many of `motions` the pose block has queued (each op 0x05 queues its motion once, FUN_100cd920).
+    pub queued: usize,
+    /// +0x7d8 was blanked (`cut`): the pose block queues the status motion again.
+    pub force: bool,
+}
+
+impl Default for Play {
+    fn default() -> Self {
+        Play {
+            name: String::new(),
+            motions: Vec::new(),
+            length: 0.0,
+            ticks: 0.0,
+            base: String::new(),
+            cut: -1.0,
+            stance_at: None,
+            stance_blend: 10.0,
+            stanced: false,
+            queued: 0,
+            force: false,
+        }
+    }
 }
 
 impl Play {
@@ -352,9 +434,7 @@ impl Play {
             length: p.length as f32,
             ticks: 0.0,
             base: base.to_string(),
-            cut: -1.0,
-            stance_at: None,
-            end: None,
+            ..Default::default()
         };
         play.stance_at = p.stance_at.map(|t| t as f32);
         play
@@ -363,6 +443,7 @@ impl Play {
     /// The status motion is forced back now (FUN_100c6380 sees +0x7d8 = "    ").
     pub fn cut(&mut self) {
         self.cut = self.ticks;
+        self.force = true;
     }
 
     /// The scheduler task is deleted now (event op 0x50, model vtable +0x29c -> FUN_10056ef0): no later motion starts,
@@ -375,11 +456,21 @@ impl Play {
         self.stance_at = self.stance_at.filter(|s| *s <= t);
     }
 
-    /// Event op 0xd3 (FUN_100ce070): the playing motion layers end in `ticks` (at their weights till then); the
-    /// scheduler task itself is left alone.
-    pub fn end_in(&mut self, ticks: f32) {
-        let at = self.ticks + ticks;
-        self.end = Some(self.end.map_or(at, |e| e.min(at)));
+    /// The motions whose start tick has come and that the motion queue has not had yet, in order; those a forced
+    /// default or the stance op cut are passed over.
+    pub fn take_starts(&mut self) -> Vec<sched::Motion> {
+        let cut = match self.stance_at {
+            Some(s) if s <= self.ticks => self.cut.max(s + 0.5),
+            _ => self.cut,
+        };
+        let mut out = Vec::new();
+        while let Some(m) = self.motions.get(self.queued).filter(|m| m.at as f32 <= self.ticks) {
+            if m.at as f32 >= cut {
+                out.push(m.clone());
+            }
+            self.queued += 1;
+        }
+        out
     }
 
     /// 0x53: the scheduler task still exists.
@@ -389,9 +480,6 @@ impl Play {
 
     /// The motion playing now and its start tick.
     pub fn current(&self) -> Option<&sched::Motion> {
-        if self.end.is_some_and(|e| self.ticks >= e) {
-            return None;
-        }
         let cut = match self.stance_at {
             Some(s) if s <= self.ticks => self.cut.max(s + 0.5),
             _ => self.cut,
@@ -484,25 +572,14 @@ pub(super) fn start(a: &mut Actor, ch: &Character, name: &str, base: &str) -> bo
                 ticks: len.ceil() as u16,
                 count: 1,
                 blend: crate::motion::BLEND_TICKS as u16,
+                out: crate::motion::BLEND_TICKS as u16,
+                half: 0,
             };
-            Play {
-                name: name.to_string(),
-                motions: vec![m],
-                length: len,
-                ticks: 0.0,
-                base: base.to_string(),
-                cut: -1.0,
-                stance_at: None,
-                end: None,
-            }
+            Play { name: name.to_string(), motions: vec![m], length: len, base: base.to_string(), ..Default::default() }
         }
         None => return false,
     };
-    // Blend from whatever plays now, even into a motion of the same name; the newest motion wins over a one-shot.
-    if !a.motion.is_empty() {
-        a.prev = Some((std::mem::take(&mut a.motion), a.ticks, a.once));
-        a.blend = 0.0;
-    }
+    // The newest motion wins over a one-shot (its queue entries go over it).
     a.oneshot = None;
     a.play = Some(play);
     true
@@ -521,6 +598,14 @@ pub(super) fn play_op(w: &mut World, id: u32, m: Option<sched::Motion>) {
     let me = id == w.my_id;
     let Some(a) = w.actors.get_mut(&id) else { return };
     match m {
+        // Op 0x28 (0x1005b12e): the status motion is queued again, blended in over the op's f32 @8, from its start.
+        Some(m) if m.name.is_empty() => {
+            a.status_force = Some(m.blend as f32);
+            if let Some(p) = &mut a.play {
+                p.stance_at = Some(p.ticks);
+                p.stanced = true;
+            }
+        }
         Some(m) if !find(&a.extra, &ch, &m.name).is_empty() => {
             let len = if m.ticks > 0 {
                 m.ticks as f32
@@ -539,27 +624,10 @@ pub(super) fn play_op(w: &mut World, id: u32, m: Option<sched::Motion>) {
                     m.count
                 );
             }
-            if !a.motion.is_empty() {
-                a.prev = Some((std::mem::take(&mut a.motion), a.ticks, a.once));
-                a.blend = 0.0;
-            }
-            a.play = Some(Play {
-                name: m.name.clone(),
-                motions: vec![m],
-                length: len,
-                ticks: 0.0,
-                base,
-                cut: -1.0,
-                stance_at: None,
-                end: None,
-            });
+            a.play = Some(Play { name: m.name.clone(), motions: vec![m], length: len, base, ..Default::default() });
         }
         Some(m) => log::debug!("actor {id:#x}: scheduler motion {} not in its files", m.name),
-        None => {
-            if let Some(p) = &mut a.play {
-                p.stance_at = Some(p.ticks);
-            }
-        }
+        None => {}
     }
 }
 
@@ -732,7 +800,7 @@ pub(super) fn update(w: &mut World, dt: f32) {
                     // State 2 after "in N": vtable +0x31c(1, 0), the weapon drawn; +0x7d8 = "    " restarts the status
                     // motion.
                     a.drawn = true;
-                    a.status_motion.clear();
+                    a.status_blank();
                     let name = crate::dat::motionfile::draw_scheduler(pc, false);
                     if start(a, &ch, &name, &base) {
                         a.draw_pins = draw_pins(a, &ch).map(|p| (name.clone(), p));
@@ -783,20 +851,16 @@ pub(super) fn update(w: &mut World, dt: f32) {
             a.emote = None;
             drop_kind(&mut a.extra, Kind::Emote);
         }
-        // FUN_10087e80: with the mouth off (event op 0x7c) a line's mouth is cancelled every frame *(the 8-tick blend
-        // out of FUN_100ce160 is not done)*.
+        // FUN_10087e80: with the mouth off (event op 0x7c) a line's mouth is cancelled every frame (FUN_10087e40:
+        // FUN_100ce160's fade, the countdowns zeroed).
         if mouth_off {
-            a.mouth = None;
+            a.mouth_off();
         }
         if let Some(m) = &mut a.mouth {
-            match &mut m.ticks {
-                Some(t) => *t += ticks,
-                None if m.left > 0 && m.next <= 0.0 => {
-                    m.ticks = Some(0.0);
-                    m.left -= 1;
-                    m.next = 142.0;
-                }
-                None => {}
+            if m.left > 0 && m.next <= 0.0 {
+                m.start = true;
+                m.left -= 1;
+                m.next = 142.0;
             }
             m.next -= ticks;
         }
@@ -820,37 +884,19 @@ pub(super) fn update(w: &mut World, dt: f32) {
     }
 }
 
-/// A region 5 / 6 overlay (FUN_100cd920 into FUN_1001ad00's queue): `name` at `weight` (the entry's +0x1c), `cycles`
-/// times through (+0x2c), in over 1 tick, then faded out over `fade` ticks (+0x20, FUN_1001b590).
+/// A reaction, guard or parry motion for the pose block to queue (FUN_100cdd60 / FUN_100cde70 / FUN_100cdf00 ->
+/// FUN_100cd920): `name` with share `weight` (the entry's +0x1c), `count` times through (+0x2c) at `rate`, in over
+/// `blend_in` ticks and out over `fade` (+0x20). `region` 5 is the overlay region; 0 queues the chunks into their
+/// regions as a counted motion (a standing guard or parry).
 #[derive(Clone, Debug)]
 pub struct Overlay {
     pub name: String,
-    pub ticks: f32,
     pub weight: f32,
-    pub cycles: u8,
+    pub count: u8,
     pub fade: f32,
-    /// Op 0x25's rate (frames advance at speed x rate) and blend-in ticks.
     pub rate: f32,
     pub blend_in: f32,
-}
-
-impl Overlay {
-    /// The frame and envelope weight `ticks` in, for an animation of `frames` at `speed`; None once faded out.
-    pub fn sample(&self, frames: u32, speed: f32) -> Option<(f32, f32)> {
-        let per = frames.max(1) as f32;
-        let speed = speed * self.rate.max(1e-3);
-        let f = self.ticks * speed * 0.5;
-        let full = per * self.cycles as f32;
-        // `frames` is the keys less one: the end holds the last key.
-        let frame = if f < full { f % per } else { per };
-        let env = if f < full {
-            (self.ticks / self.blend_in.max(1.0)).min(1.0)
-        } else {
-            let over = self.ticks - full / (speed * 0.5).max(1e-3);
-            1.0 - over / self.fade.max(1.0)
-        };
-        (env > 0.0).then_some((frame.min(per), self.weight * env))
-    }
+    pub region: u8,
 }
 
 /// Actor alpha (model colour high byte, 0x80 = opaque): op 0x6c (FUN_100b5800) steps it linearly
@@ -913,6 +959,8 @@ mod tests {
             ticks: 10,
             count,
             blend: 0,
+            out: 0,
+            half: 0,
         };
         let mut p = Play {
             name: "tk00".into(),
@@ -920,9 +968,8 @@ mod tests {
             length: 120.0,
             ticks: 30.0,
             base: "idl".into(),
-            cut: -1.0,
             stance_at: Some(90.0),
-            end: None,
+            ..Default::default()
         };
         p.stop();
         assert!(!p.busy());
@@ -945,6 +992,8 @@ mod tests {
             ticks: 480,
             count,
             blend: 0,
+            out: 0,
+            half: 0,
         };
         let mut p = Play {
             name: "bru0".into(),
@@ -952,9 +1001,8 @@ mod tests {
             length: 592.0,
             ticks: 120.0,
             base: "idl".into(),
-            cut: -1.0,
             stance_at: None,
-            end: None,
+            ..Default::default()
         };
         p.stop();
         p.cut();
@@ -963,54 +1011,6 @@ mod tests {
             assert!(p.current().is_none());
             assert!(p.over("idl"));
         }
-    }
-
-    /// Event op 0xd3: the looping motion plays 8 more ticks, then none; the scheduler stays busy as it was.
-    #[test]
-    fn motion_end_after_8() {
-        let m = |name: &str, at: u32, count: u8| sched::Motion {
-            name: name.into(),
-            at,
-            speed: 1.0,
-            ticks: 10,
-            count,
-            blend: 0,
-        };
-        let mut p = Play {
-            name: "fm01".into(),
-            motions: vec![m("a", 0, 0)],
-            length: 120.0,
-            ticks: 30.0,
-            base: "idl".into(),
-            cut: -1.0,
-            stance_at: None,
-            end: None,
-        };
-        p.end_in(8.0);
-        p.ticks = 37.0;
-        assert_eq!(p.current().map(|m| m.name.as_str()), Some("a"));
-        p.ticks = 38.0;
-        assert!(p.current().is_none());
-        assert!(p.busy());
-        p.ticks = 200.0;
-        assert!(p.over("idl"));
-    }
-
-    /// A hit pose of 2 frames (3 keys) at speed 1: in over a tick, full for 2 cycles (8 ticks), out over 24 on its
-    /// last key, then gone.
-    #[test]
-    fn reaction_overlay_envelope() {
-        let mut o =
-            Overlay { name: "dfi".into(), ticks: 0.5, weight: 0.5, cycles: 2, fade: 24.0, rate: 1.0, blend_in: 1.0 };
-        assert_eq!(o.sample(2, 1.0), Some((0.25, 0.25)));
-        o.ticks = 4.0;
-        assert_eq!(o.sample(2, 1.0).map(|s| s.1), Some(0.5));
-        o.ticks = 20.0;
-        let (frame, w) = o.sample(2, 1.0).unwrap();
-        assert_eq!(frame, 2.0);
-        assert!((w - 0.5 * (1.0 - 12.0 / 24.0)).abs() < 1e-5);
-        o.ticks = 33.0;
-        assert_eq!(o.sample(2, 1.0), None);
     }
 
     /// Curilla (model 69) and Rahal (an Elvaan M look) have the mouth motion and the attach points the head

@@ -362,13 +362,18 @@ impl ChatLog {
     }
 }
 
-/// A motion played once over the looping one (scheduler op 0x05): name, ticks played, length, speed.
+/// A motion played once over the looping one (scheduler op 0x05): name, ticks played, length, speed, and the op's
+/// play count, blend-in, out length and half (dat::sched::Motion) for the motion queue.
 #[derive(Clone, Debug)]
 pub struct OneShot {
     pub name: String,
     pub ticks: f32,
     pub len: f32,
     pub speed: f32,
+    pub count: u8,
+    pub blend: f32,
+    pub out: f32,
+    pub half: u8,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1380,7 +1385,16 @@ pub(super) fn knock(w: &mut World, k: &crate::fx::Knock) {
         actmotion::play_op(
             w,
             k.reactor,
-            Some(sched::Motion { name: k.motion.clone(), at: 0, speed: 1.0, ticks: 0, count: k.count, blend: 12 }),
+            Some(sched::Motion {
+                name: k.motion.clone(),
+                at: 0,
+                speed: 1.0,
+                ticks: 0,
+                count: k.count,
+                blend: 12,
+                out: 12,
+                half: 0,
+            }),
         );
     }
 }
@@ -1420,7 +1434,16 @@ pub(super) fn knock_recover(w: &mut World, id: u32) {
     actmotion::play_op(
         w,
         id,
-        Some(sched::Motion { name, at: 0, speed: 1.0, ticks: len.ceil() as u16, count: 1, blend: 12 }),
+        Some(sched::Motion {
+            name,
+            at: 0,
+            speed: 1.0,
+            ticks: len.ceil() as u16,
+            count: 1,
+            blend: 12,
+            out: 24,
+            half: 0,
+        }),
     );
 }
 
@@ -1488,14 +1511,14 @@ pub(super) fn react_op(w: &mut World, r: &crate::fx::React) {
     }
     let weight = r.amount * [0.0, 0.25, 0.5, 1.0][r.level.min(3) as usize];
     log::debug!(target: "motion", "actor {:#x}: op reaction {name} weight {weight} count {} blend {} fade {} side {}", r.reactor, r.count, r.blend_in, r.fade, r.side);
-    a.overlay = Some(actmotion::Overlay {
+    a.overlays.push(actmotion::Overlay {
         name: name.to_string(),
-        ticks: 0.0,
         weight,
-        cycles: r.count.clamp(1, 255) as u8,
+        count: r.count as u8,
         fade: r.fade,
-        rate: if r.rate > 0.0 { r.rate } else { 1.0 },
+        rate: r.rate,
         blend_in: r.blend_in,
+        region: 5,
     });
 }
 
@@ -1621,8 +1644,17 @@ fn moving(w: &World, id: u32) -> bool {
     if id == w.my_id { w.moving } else { w.entities.get(&id).is_some_and(|e| e.ratio > 1e-4) }
 }
 
-fn play(actor: &mut Actor, name: &str, len: f32, speed: f32) {
-    actor.oneshot = Some(OneShot { name: name.to_string(), ticks: 0.0, len, speed });
+fn play(actor: &mut Actor, m: &sched::Motion, len: f32, speed: f32) {
+    actor.oneshot = Some(OneShot {
+        name: m.name.clone(),
+        ticks: 0.0,
+        len,
+        speed,
+        count: m.count,
+        blend: m.blend as f32,
+        out: m.out as f32,
+        half: m.half,
+    });
 }
 
 /// Melee (FUN_100d4600 / FUN_100d46f0): standing (+0xf8 clear) a random "ati?" avoiding the one just
@@ -1691,7 +1723,7 @@ pub(super) fn start_attack(
     a.off_hand = name.starts_with('b') && ch.pc.is_some_and(|p| p.dual.is_some());
     let len = if m.ticks > 0 { m.ticks as f32 } else { motion_ticks(a, &ch, &m.name, 1.0) };
     let rate = actmotion::op_rate(actmotion::find(&a.extra, &ch, &m.name).first().copied(), len);
-    play(a, &m.name, len, rate);
+    play(a, m, len, rate);
     Some((
         Duration::from_secs_f32(plan.hit_at.unwrap_or(0) as f32 / 60.0),
         a.last_attack.clone(),
@@ -1724,14 +1756,16 @@ pub(super) fn guard_op(w: &mut World, g: &crate::fx::Guard) {
         return;
     }
     log::debug!(target: "motion", "actor {:#x}: {name} count {} fade {}", g.reactor, g.count, g.fade);
-    a.overlay = Some(actmotion::Overlay {
+    // Standing (`gdi?` / `pyi?`) the region argument is 0: the chunks go to their regions as a counted motion;
+    // moving, to the overlay region 5.
+    a.overlays.push(actmotion::Overlay {
         name: name.to_string(),
-        ticks: 0.0,
         weight: 1.0,
-        cycles: g.count.clamp(1, 255) as u8,
+        count: g.count as u8,
         fade: g.fade,
-        rate: if g.rate > 0.0 { g.rate } else { 1.0 },
+        rate: g.rate,
         blend_in: g.blend_in,
+        region: if name.ends_with('m') { 5 } else { 0 },
     });
 }
 
@@ -1745,17 +1779,30 @@ pub(super) fn die(actor: &mut Actor, sdep: bool) {
     }
     let which = death_scheduler(actor.death_pick, false);
     let plan = actmotion::scheduler(&actor.extra, &ch, which).map(|d| sched::plan(d, &[]));
-    let (name, len, speed) = match plan.as_ref().and_then(|p| p.motions.first()) {
+    let (m, len, speed) = match plan.as_ref().and_then(|p| p.motions.first()) {
         Some(m) => (
-            m.name.clone(),
+            m.clone(),
             m.ticks as f32,
             actmotion::op_rate(actmotion::find(&actor.extra, &ch, &m.name).first().copied(), m.ticks as f32),
         ),
         None if actor.death_pick != 0 => return,
-        None => ("ded".to_string(), motion_ticks(actor, &ch, "ded", 1.0), 1.0),
+        None => (
+            sched::Motion {
+                name: "ded".to_string(),
+                at: 0,
+                speed: 1.0,
+                ticks: 0,
+                count: 1,
+                blend: crate::motion::BLEND_TICKS as u16,
+                out: 1,
+                half: 0,
+            },
+            motion_ticks(actor, &ch, "ded", 1.0),
+            1.0,
+        ),
     };
-    if !actmotion::find(&actor.extra, &ch, &name).is_empty() && len > 0.0 {
-        play(actor, &name, len, speed);
+    if !actmotion::find(&actor.extra, &ch, &m.name).is_empty() && len > 0.0 {
+        play(actor, &m, len, speed);
     }
 }
 
