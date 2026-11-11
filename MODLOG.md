@@ -17388,7 +17388,7 @@ From the research notes:
 - Busy strip bit 0x10: set while msglist's list job, a read (FUN_100f75f0) or a msgline send runs; cleared at the
   job's end (result 1, the engine closed, only clears it). Every setter in MODLOG "The busy strip's 0x10".
 - Our status at login: s2c 0x00A (LAB_100facf0, LoginState @0x80 in {1, 2, 0, 6}) sets Away back to Online with a
-  0x0DC clear *(inf: only the first 0x00A)*; FUN_100daf30 state 4: FUN_100f7960 re-reads and re-sends our status with
+  0x0DC clear *(every zone-in: item 140)*; FUN_100daf30 state 4: FUN_100f7960 re-reads and re-sends our status with
   FUN_100e46a0(1, status == Away). At character select (FUN_100ee160) retail sends ChangeMyStatus(handle, character
   index, 0, -2 keep, -1, 1).
 - FUN_101ffa20(rec, flag) (/befriend flag 1, Befriend 0): key = id & 0xffff | world << 16 | (id & 0xf0000) << 8,

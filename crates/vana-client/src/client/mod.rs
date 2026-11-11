@@ -11117,10 +11117,12 @@ impl App {
                     send_count,
                     ship,
                     monstrosity,
+                    pol_return,
                 } => {
                     world.gm.zoned();
                     // The PlayOnline side (xi_profile): signed on and loaded once per session.
                     friends::start(world);
+                    friends::zone_in(world, pol_return);
                     // The spools close at a zone change (FUN_1015f3e0(0x200)).
                     world.log.clear_spool();
                     world.log2.clear_spool();

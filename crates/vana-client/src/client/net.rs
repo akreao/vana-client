@@ -426,6 +426,8 @@ pub enum NetEvent {
         send_count: u16,
         ship: Option<ShipData>,
         monstrosity: bool,
+        /// LoginState 3..5: the login that follows an exit to PlayOnline (`pol_return`).
+        pol_return: bool,
     },
     /// s2c 0x053 (GP_SERV_COMMAND_SYSTEMMES): para @4, para2 @8, Number @0xc (file 7031).
     SystemMessage {
@@ -1023,6 +1025,13 @@ pub fn scene_of(p: &SubPacket) -> (u16, Option<MyRoom>) {
     }
     let map = p.u16(0x42);
     (if map >= 0x100 { map + 0x1bc } else { map }, None)
+}
+
+/// The s2c 0x00A handler FUN_100fae40's LoginState switch (jump table 0x100fb790): 3 POLEXIT, 4 JOBEXIT and 5
+/// POLEXIT_MYROOM set zone flag 0x200 / 0x2000, which hands the game over to the PlayOnline viewer (FUN_100daf30);
+/// 1 MYROOM and everything else (2 GAME, 0, 6 and up) are a plain zone-in.
+pub fn pol_return(login_state: u32) -> bool {
+    matches!(login_state, 3..=5)
 }
 
 /// FUN_100f7de0: GAME (2), 0 and 6 print the area; MYROOM (1) the area for maps 0x118 / 0x11d, else the Mog
@@ -1869,6 +1878,7 @@ impl Session<'_> {
                     send_count: p.u16(0xac),
                     ship: ship_data(&p),
                     monstrosity: p.u16(0x7E) != 0,
+                    pol_return: pol_return(p.u32(0x80)),
                 })?;
             }
             // FUN_100fb730: 4 cancels a logout (nothing sent); otherwise 0x00D goes out with the old key, and 2
@@ -2705,6 +2715,13 @@ impl Session<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// LoginState by the 0x00A handler's jump table (0x100fb790): only 3, 4 and 5 are returns from PlayOnline.
+    #[test]
+    fn pol_return_states() {
+        let got: Vec<u32> = (0..=7).filter(|&s| pol_return(s)).collect();
+        assert_eq!(got, [3, 4, 5]);
+    }
 
     /// The hooked ids each way: only those (a sub-packet's first 9 bits) send a batch through the mods.
     #[test]
