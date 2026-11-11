@@ -1793,13 +1793,22 @@ impl SettingsUi {
         m.active(c, j).unwrap_or(m.enabled)
     }
 
-    /// Mod `k` switched on or off as its page shows it: a Lua mod kept per character or job switches this one's own.
-    fn set_mod(&mut self, k: usize, on: bool) {
-        self.dirty |= self.mod_on(k) != on;
+    /// Mod `k` switched on or off as its page shows it: a Lua mod kept per character or job switches this one's own,
+    /// and starts or stops at once (in game). False when there is nothing to switch yet (ModRef::switch).
+    fn set_mod(&mut self, k: usize, on: bool) -> bool {
+        let was = self.mod_on(k);
         let (c, j) = self.scope_at.as_ref().map_or((None, None), |(c, j)| (Some(c.as_str()), j.as_deref()));
         let lua = self.lua_page();
         let m = &mut self.s.mods[k];
-        if lua { m.switch(c, j, on) } else { m.enabled = on }
+        if !lua {
+            m.enabled = on;
+        } else if !m.switch(c, j, on) {
+            return false;
+        } else {
+            self.mod_changes.push((m.name.clone(), super::lua::ENABLED.into(), on.into()));
+        }
+        self.dirty |= was != on;
+        true
     }
 
     /// Per frame: the archive scan, the catalogue and an install coming in.
@@ -1898,9 +1907,12 @@ impl SettingsUi {
         let sh = self.on_page();
         let lua = self.lua_page();
         if let Some(&k) = sh.get(i) {
-            if self.col < 2 {
-                self.set_mod(k, self.col == 0);
-            } else if let Some(m) = self.mods_ui.as_mut() {
+            if self.col < 2 && !self.set_mod(k, self.col == 0) {
+                self.sounds.push(Se::Error);
+                return;
+            } else if self.col >= 2
+                && let Some(m) = self.mods_ui.as_mut()
+            {
                 m.held = Some(self.s.mods.clone());
             }
             self.sounds.push(Se::Select);
@@ -2014,12 +2026,8 @@ impl SettingsUi {
     /// The page's pack or mod `i` on or off.
     pub fn mod_enable(&mut self, i: usize, on: bool) {
         if let Some(&k) = self.on_page().get(i) {
-            self.set_mod(k, on);
-            // A Lua mod starts or stops at once (in game).
-            if self.lua_page() {
-                self.mod_changes.push((self.s.mods[k].name.clone(), super::lua::ENABLED.into(), on.into()));
-            }
-            self.sounds.push(Se::Select);
+            let done = self.set_mod(k, on);
+            self.sounds.push(if done { Se::Select } else { Se::Error });
         }
     }
 
@@ -2399,6 +2407,15 @@ mod tests {
         ui.col = 1;
         ui.key(egui::Key::Enter);
         assert_eq!((ui.s.mods[0].on.get("WHM"), ui.s.mods[0].enabled), (Some(&false), true));
+        // Each switch starts or stops the mod at once.
+        assert_eq!(ui.mod_changes.iter().filter(|c| c.1 == super::super::lua::ENABLED).count(), 2);
+        // In game before the job is known there is nothing to switch: no change, the error sound.
+        (ui.scope_at, ui.dirty, ui.col) = (Some(("W-Nine".into(), None)), false, 0);
+        ui.mod_changes.clear();
+        ui.sounds.clear();
+        ui.key(egui::Key::Enter);
+        assert!(!ui.dirty && ui.mod_changes.is_empty() && ui.s.mods[0].on.len() == 2);
+        assert!(matches!(ui.sounds.last(), Some(Se::Error)));
     }
 
     #[test]

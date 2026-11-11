@@ -453,14 +453,20 @@ impl ModRef {
         Some(self.on.get(&k).copied().unwrap_or(self.enabled))
     }
 
-    /// Switched on or off for this character and job: its own switch with a scope, else (no scope, or in the lobby
-    /// with no character or job yet) `enabled`, which every one never switched follows.
-    pub fn switch(&mut self, character: Option<&str>, job: Option<&str>, on: bool) {
+    /// Switched on or off for this character and job: its own switch with a scope; without one, or in the lobby (no
+    /// character yet), `enabled`, which every one never switched follows. In game before a Per Job mod's job is known
+    /// there is nothing to switch: false.
+    pub fn switch(&mut self, character: Option<&str>, job: Option<&str>, on: bool) -> bool {
         match self.key(character, job) {
             Some(k) => {
                 self.on.insert(k, on);
+                true
             }
-            None => self.enabled = on,
+            None if character.is_none() || (!self.per_character && !self.per_job) => {
+                self.enabled = on;
+                true
+            }
+            None => false,
         }
     }
 }
@@ -824,10 +830,11 @@ mod tests {
         assert_eq!(m.active(Some("W-Nine"), Some("WAR")), Some(true));
         m.switch(Some("W-Nine"), Some("WAR"), false);
         assert_eq!(m.active(Some("W-Tsetse"), Some("WAR")), Some(true));
-        // In the lobby (no character, no job) a scoped mod's switch is the one everybody follows.
+        // In the lobby (no character, no job) a scoped mod's switch is the one everybody follows; in game before the
+        // job is known a Per Job one has nothing to switch.
         let mut lobby = ModRef { per_job: true, ..ModRef::new("dps", true) };
-        lobby.switch(None, None, false);
-        assert!(!lobby.enabled && lobby.on.is_empty());
+        assert!(!lobby.switch(Some("W-Nine"), None, false) && lobby.enabled && lobby.on.is_empty());
+        assert!(lobby.switch(None, None, false) && !lobby.enabled && lobby.on.is_empty());
         // Without a scope the switch is `enabled`, as before; an old config's entry reads as unscoped.
         let mut plain = ModRef::new("clock", false);
         plain.switch(None, None, true);

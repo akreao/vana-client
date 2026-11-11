@@ -364,7 +364,10 @@ the mod's switch on the Mods page is that character's, that job's, or that chara
 "<World>-<Name>", "<JOB>" or "<World>-<Name>/<JOB>" (MON in Monstrosity). A character or job never switched follows
 the mod's switch as it was (`enabled`). Entering the world loads the mods on for this character and, once the job is
 known, this job; a job change loads and unloads the mods kept per job. Mods asked for in the lobby (`lobby = true`)
-follow `enabled` there, having no character yet, and a switch made there sets `enabled`.
+follow `enabled` there, having no character yet, and a switch made there sets `enabled`. In game, a Per Job mod's
+switch does nothing until the job is known (a moment after entering the world). Turning a scope off keeps its
+switches in `on`: turning it on again brings them back. `mods.installed()` gives a scoped mod's `enabled` as its
+switch for the character and job in play.
 
 ### 3.5 Permissions
 

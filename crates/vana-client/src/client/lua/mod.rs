@@ -915,10 +915,13 @@ impl Host {
         self.started = true;
         // In the world from here on: the mods loading now may queue world ops.
         self.lobby.borrow_mut().screen = "world";
+        // The list as saved: the app's copy (follow_scope's) differs only between a change and its save, and a scope
+        // or switch change is saved at once.
         let cfg = crate::config::Config::load();
         let root = mods_dir();
         install_stubs(root.clone());
         let (character, job) = (super::uiconf::character(&w.world_name, &w.name), super::uiconf::job_of(w));
+        self.dir.borrow_mut().at = Some((character.clone(), job.map(str::to_string)));
         for r in cfg.mods.iter().filter(|r| r.active(Some(&character), job) == Some(true)) {
             let dir = root.join(&r.name);
             if !dir.join("mod.toml").is_file() || self.vms.iter().any(|v| v.dir == dir) {
@@ -5960,6 +5963,7 @@ impl Host {
             return;
         }
         let (character, job) = (super::uiconf::character(&w.world_name, &w.name), super::uiconf::job_of(w));
+        self.dir.borrow_mut().at = Some((character.clone(), job.map(str::to_string)));
         for r in mods.iter().filter(|r| r.per_character || r.per_job || changed.contains(&r.name)) {
             let dir = mods_dir().join(&r.name);
             let Some(want) = r.active(Some(&character), job).filter(|_| dir.join("mod.toml").is_file()) else {
@@ -6625,10 +6629,16 @@ fn bundled_manifest(id: &str) -> Option<manifest::Manifest> {
     BUNDLED.iter().find(|b| b.0 == id).and_then(|b| manifest::parse(b.1, id).ok())
 }
 
-/// Every mod installed (the mods folder): (id, name, version, enabled in the config, bundled: always false now).
-pub(super) fn installed() -> Vec<(String, String, String, bool, bool, Vec<String>)> {
+/// Every mod installed (the mods folder): (id, name, version, enabled in the config, bundled: always false now). With
+/// `at` (the character and job in play) a mod kept per character or job is enabled by its switch there.
+pub(super) fn installed(
+    at: Option<&(String, Option<String>)>,
+) -> Vec<(String, String, String, bool, bool, Vec<String>)> {
     let cfg = crate::config::Config::load();
-    let enabled = |id: &str, bundled: bool| cfg.mods.iter().find(|r| r.name == id).map_or(bundled, |r| r.enabled);
+    let (c, j) = at.map_or((None, None), |(c, j)| (Some(c.as_str()), j.as_deref()));
+    let enabled = |id: &str, bundled: bool| {
+        cfg.mods.iter().find(|r| r.name == id).map_or(bundled, |r| r.active(c, j).unwrap_or(r.enabled))
+    };
     let mut out = Vec::new();
     for e in std::fs::read_dir(mods_dir()).into_iter().flatten().flatten() {
         let dir = e.path();
