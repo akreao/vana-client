@@ -13469,10 +13469,13 @@ impl App {
             }
             let g = world.ground.as_ref().filter(|g| !g.is_empty());
             if next != from {
-                world.pos = g.map_or(next, |g| g.walk_player(from, next, ground::STEP_TICKS, Some(&ride)));
-                if carried {
-                    world.pos.y = next.y;
-                }
+                world.pos = g.map_or(next, |g| {
+                    if carried {
+                        g.walk_carried(from, next)
+                    } else {
+                        g.walk_player(from, next, ground::STEP_TICKS, Some(&ride))
+                    }
+                });
             } else if falls && let Some(g) = g {
                 // A fall goes on without input.
                 world.pos = g.walk_player(from, from, ground::STEP_TICKS, Some(&ride));
