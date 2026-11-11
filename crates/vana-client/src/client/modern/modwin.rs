@@ -310,6 +310,8 @@ pub(super) fn body(
     let small = FontId::proportional(m.theme.small);
     let (text_c, muted) = (m.theme.color("text"), m.theme.color("muted"));
     let mut hover_tip: Option<&str> = None;
+    // A list row's tip under the pointer: before its element's.
+    let mut row_tip: Option<&str> = None;
     let hidden = win.hidden();
     for (i, e) in win.elems.iter().enumerate() {
         if hidden[i] {
@@ -384,6 +386,7 @@ pub(super) fn body(
                         }
                     }
                 }
+                let mut pointed = None;
                 let out = kit::list(
                     ui,
                     m,
@@ -397,6 +400,9 @@ pub(super) fn body(
                     |_| false,
                     |ui, row| {
                         let r = &rows[row.index];
+                        if ui.rect_contains_pointer(row.rect) {
+                            pointed = Some(row.index);
+                        }
                         let ink = r.colour.map_or_else(|| kit::ink(m, row), rgba);
                         let cy = row.rect.center().y;
                         let mut x = row.rect.min.x + 10.0;
@@ -432,6 +438,9 @@ pub(super) fn body(
                 );
                 if let Some(k) = out.clicked {
                     clicks.push(Click::Row(i, k));
+                }
+                if let Some(t) = pointed.and_then(|k| rows.get(k)).map(|r| r.tip.as_str()).filter(|t| !t.is_empty()) {
+                    row_tip = Some(t);
                 }
                 ui.add_space(6.0);
             }
@@ -680,7 +689,18 @@ pub(super) fn body(
             hover_tip = Some(t);
         }
     }
-    let help = hover_tip.unwrap_or(if win.focus { win.help_now() } else { &win.help });
+    // The last input picks the help: after a key the cursor's, after the pointer moves what it rests on.
+    let keys_id = egui::Id::unique(("mod help by keys", pid, &win.id));
+    let (moved, keyed) = ui.input(|i| {
+        (
+            i.pointer.delta() != vec2(0.0, 0.0),
+            i.events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, .. })),
+        )
+    });
+    let by_keys = keyed || (!moved && ui.data(|d| d.get_temp::<bool>(keys_id)).unwrap_or(false));
+    ui.data_mut(|d| d.insert_temp(keys_id, by_keys));
+    let pointed = if by_keys && win.focus { None } else { row_tip.or(hover_tip) };
+    let help = pointed.unwrap_or(if win.focus { win.help_now() } else { &win.help });
     if !help.is_empty() {
         ui.label(RichText::new(help).size(m.theme.small).color(muted));
     }

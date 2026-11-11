@@ -238,7 +238,7 @@ impl VoiceChat {
                     } else {
                         None
                     };
-                    Row { cells: vec![p.name.clone(), note, p.addr.ip().to_string()], icon: None, colour }
+                    Row { cells: vec![p.name.clone(), note, p.addr.ip().to_string()], colour, ..Default::default() }
                 })
                 .collect();
             let columns = vec![

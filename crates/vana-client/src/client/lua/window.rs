@@ -79,6 +79,8 @@ pub struct Row {
     pub cells: Vec<String>,
     pub icon: Option<Icon>,
     pub colour: Option<[u8; 4]>,
+    /// The help shown while the cursor or the pointer is on the row (a spell's description).
+    pub tip: String,
 }
 
 impl Row {
@@ -617,12 +619,29 @@ impl Window {
         self.elems.iter().enumerate().filter(|(i, e)| e.stop() && !hidden[*i]).map(|(i, _)| i).collect()
     }
 
-    /// The help under the cursor: its element's tip, else the window's.
+    /// The help under the cursor: a list row's tip, else its element's, else the window's.
     pub fn help_now(&self) -> &str {
+        if let Some(Elem::List { rows, at, .. }) = self.elems.get(self.at)
+            && let Some(r) = rows.get(*at).filter(|r| !r.tip.is_empty())
+        {
+            return &r.tip;
+        }
         match self.meta.get(self.at).map(|m| m.tip.as_str()) {
             Some(t) if !t.is_empty() => t,
             _ => &self.help,
         }
+    }
+
+    /// New elements (`ui.window` again): the cursor stays on its element, by id, when they still have it; else it
+    /// starts on the first stop.
+    pub fn set_elems(&mut self, elems: Vec<Elem>, meta: Vec<Meta>) {
+        let was = self.elems.get(self.at).and_then(|e| e.id()).map(str::to_string);
+        (self.elems, self.meta) = (elems, meta);
+        let kept = was.and_then(|id| self.elems.iter().position(|e| e.id() == Some(id.as_str())));
+        if kept != Some(self.at) {
+            (self.at, self.col, self.edit, self.undo) = (kept.unwrap_or(0), 0, false, None);
+        }
+        self.settle();
     }
 
     /// The cursor on a stop (the first when it is not on one), its column on the marked option.
@@ -2189,5 +2208,42 @@ mod tests {
         assert!(!w.listening());
         assert_eq!(super::super::input::combo_label("ctrl+shift+numpad+"), "Ctrl+Shift+Num +");
         assert_eq!(super::super::input::combo_label("alt+f1"), "Alt+F1");
+    }
+
+    /// The help under the cursor is a list row's tip (a spell's description) as the cursor moves down the list; a
+    /// row without one shows the list's own tip.
+    #[test]
+    fn list_row_tip_in_help() {
+        let mut w = Window::new("w");
+        let row = |s: &str, tip: &str| Row { cells: vec![s.into()], tip: tip.into(), ..Default::default() };
+        let rows = vec![row("Dia", "Lowers defense."), row("Cure", "")];
+        w.elems = vec![Elem::List { id: "l".into(), rows, columns: Vec::new(), at: 0, top: 0, height: 5 }];
+        w.meta = vec![Meta { tip: "Pick one.".into(), page: None }];
+        (w.open, w.focus) = (true, true);
+        w.settle();
+        assert_eq!(w.help_now(), "Lowers defense.");
+        w.key(K::ArrowDown);
+        assert_eq!(w.help_now(), "Pick one.");
+    }
+
+    /// New elements (a mod's other layout): the cursor stays on its element by id, else starts on the first stop.
+    #[test]
+    fn set_elems_keeps_cursor_by_id() {
+        let mut w = win();
+        (w.open, w.focus) = (true, true);
+        w.settle();
+        w.key(K::ArrowDown);
+        let at = w.at;
+        assert_eq!(w.elems[at].id(), Some("pick"));
+        let (elems, meta) = (w.elems.clone(), w.meta.clone());
+        w.set_elems(elems, meta);
+        assert_eq!(w.at, at);
+        let other = vec![
+            Elem::Text { id: String::new(), text: "Other".into(), dim: false, colour: None },
+            Elem::Buttons { id: "save".into(), label: String::new(), items: vec!["Save".into()], marked: None },
+            Elem::Buttons { id: "go".into(), label: String::new(), items: vec!["Go".into()], marked: None },
+        ];
+        w.set_elems(other, vec![Meta::default(); 3]);
+        assert_eq!(w.elems[w.at].id(), Some("save"));
     }
 }

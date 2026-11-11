@@ -1,11 +1,11 @@
 -- The macro manager window.
 --
 --   Library  a main job's macros as tiles, dragged onto the bars: new, edit, copy, delete, and the palette.
---   Builder  one macro: an action of a type (spell, job ability, weapon skill, pet command, item, equipment, system
---            command) and its target build the first line (or the player's own line in its place); lines typed under
---            it run after it. A "Macro" is typed only. A row that opens a list in the game's menu (Rune Enchantment,
---            Phantom Roll...) opens that list here.
 --   Config   the hotkey modifier of each bar, the key row, and a slot's own key (changes apply at once).
+--   Builder  (New, Edit: in the window's place until Save or Cancel) one macro: an action of a type (spell, job
+--            ability, weapon skill, pet command, item, equipment, system command) and its target build the first
+--            line (or the player's own line in its place); lines typed under it run after it. A "Macro" is typed
+--            only. A row that opens a list in the game's menu (Rune Enchantment, Phantom Roll...) opens that list.
 
 local data = require("src.data")
 local jobs = require("src.jobs")
@@ -21,10 +21,13 @@ local M = {}
 M.hooks = {}
 
 local WIN = "manager"
-local TAB_LIB, TAB_BUILD, TAB_CONFIG = 1, 2, 3
+local TAB_LIB, TAB_CONFIG = 1, 2
 
 local S = { mj = nil }
 local defined = false
+-- Type and Target's element ("dropdown", or "choice" on a client without dropdowns); whether the Builder shows.
+local DROP, building = "dropdown", false
+local layout, leave_builder
 
 -- The library rows as shown (ids, in order) and the builder's state: the entry edited (nil: a new one), the action
 -- kind (nil: a macro of typed lines), the action picked ({name}), its target, the player's own line in place of the
@@ -406,7 +409,7 @@ local function refresh_results(query)
     E.results[#E.results + 1] = e
     local name = e.list and (e.name .. "  \u{203a}") or e.name
     rows[#rows + 1] = { name, e.cells[1] or "", e.cells[2] or "", icon = e.icon,
-      colour = e.list and { 232, 210, 156 } or nil }
+      colour = e.list and { 232, 210, 156 } or nil, tip = e.tip }
   end
   ui.update(WIN, "found", { rows = rows, at = 1 })
   local count = #found == 0 and "Nothing matches." or (more and ("First %d matches."):format(#found)
@@ -475,6 +478,8 @@ function open_builder(id, slot, macro)
       E.kind = nil
     end
   end
+  -- The Builder takes the window's place.
+  layout(true)
   ui.update(WIN, "name", { text = name })
   ui.update(WIN, "label", { text = label })
   ui.update(WIN, "extra", { text = extra })
@@ -483,7 +488,6 @@ function open_builder(id, slot, macro)
   refresh_results("")
   refresh_choice()
   refresh_preview()
-  ui.update(WIN, "tabs", { at = TAB_BUILD })
 end
 
 -- Into an opener's list (`e`), or back out of it (nil); the search starts over.
@@ -632,10 +636,7 @@ local function save_builder()
     say(('"%s" is on bar %d, slot %d.'):format(entry.name, s.bar, s.slot))
   end
   M.hooks.changed()
-  -- The Builder tab starts a new macro next; Edit reopens this one.
-  open_builder(nil)
-  refresh_library(id)
-  ui.update(WIN, "tabs", { at = TAB_LIB })
+  leave_builder(id)
 end
 
 -- ---------------------------------------------------------------------------
@@ -680,14 +681,46 @@ end
 -- The window
 -- ---------------------------------------------------------------------------
 
--- The window's spec with Type and Target as `drop` elements: "dropdown", or "choice" on a client without dropdowns.
-local function spec(drop)
+-- The window's spec: the Builder (`build`), else the Library and Config tabs. Type and Target are `drop` elements:
+-- "dropdown", or "choice" on a client without dropdowns.
+local function spec(drop, build)
+  if build then
+    return {
+      title = "Hotbars",
+      width = 520,
+      help = "Save keeps the macro in the library; Cancel goes back to it.",
+      elements = {
+        { type = "text", id = "bwhere", text = "" },
+        { type = drop, id = "btype", label = "Type", items = builder.TYPE_LABELS, at = 1,
+          tip = "Choose what the macro does." },
+        { type = "input", id = "q", label = "Search", text = "", max = 32, tip = "Part of a name, e.g. cure." },
+        { type = "list", id = "found", rows = {}, height = 7, columns = builder.columns("ma"),
+          tip = "Enter or click one to build the macro on it." },
+        { type = "text", id = "fcount", text = "", dim = true },
+        { type = "buttons", id = "grp", items = { "Make a Group of These" },
+          tip = "One slot for all of them: pressing it opens a list over it to pick one (Up / Down, Enter)." },
+        { type = "text", id = "picked", text = "" },
+        { type = drop, id = "target", label = "Target", items = { "<t> Current target" }, at = 1 },
+        { type = "input", id = "line", label = "Line it builds (type your own to change it)", text = "", max = 256,
+          tip = "What the macro runs first. Type your own line in its place if the built one is not right; clear "
+            .. "it for the built one again." },
+        { type = "input", id = "name", label = "Name", text = "", max = 32 },
+        { type = "input", id = "label", label = "Button text (blank = from the name)", text = "", max = 14 },
+        { type = "input", id = "extra", label = "Lines after it (| between lines, optional)", text = "", max = 1024,
+          tip = 'Example: /p Casting <t> | /wait 2 | /echo done' },
+        { type = "text", id = "preview", text = "" },
+        { type = "text", id = "tip", text = "Waits: /wait 2 on its own line, or <wait 2> at the end of one.",
+          dim = true },
+        { type = "buttons", id = "bbtn", items = { "Save", "Cancel" } },
+      },
+    }
+  end
   return {
     title = "Hotbars",
     width = 520,
     help = "Drag a macro onto a slot of the bars. Right-click a slot to clear it.",
     elements = {
-      { type = "tabs", id = "tabs", items = { "Library", "Builder", "Config" }, at = 1 },
+      { type = "tabs", id = "tabs", items = { "Library", "Config" }, at = TAB_LIB },
 
       -- Library
       { type = "input", id = "job", label = "Job", text = "", max = 3, page = TAB_LIB,
@@ -696,33 +729,6 @@ local function spec(drop)
       { type = "canvas", id = "tiles", w = CW, h = T, page = TAB_LIB },
       { type = "text", id = "lsel", text = "", dim = true, page = TAB_LIB },
       { type = "buttons", id = "lbtn", items = { "New", "Edit", "Copy", "Delete", "Palette" }, page = TAB_LIB },
-
-      -- Builder
-      { type = "text", id = "bwhere", text = "", page = TAB_BUILD },
-      { type = drop, id = "btype", label = "Type", items = builder.TYPE_LABELS, at = 1, page = TAB_BUILD,
-        tip = "Choose what the macro does." },
-      { type = "input", id = "q", label = "Search", text = "", max = 32, page = TAB_BUILD,
-        tip = "Part of a name, e.g. cure." },
-      { type = "list", id = "found", rows = {}, height = 7, page = TAB_BUILD, columns = builder.columns("ma"),
-        tip = "Enter or click one to build the macro on it." },
-      { type = "text", id = "fcount", text = "", dim = true, page = TAB_BUILD },
-      { type = "buttons", id = "grp", items = { "Make a Group of These" }, page = TAB_BUILD,
-        tip = "One slot for all of them: pressing it opens a list over it to pick one (Up / Down, Enter)." },
-      { type = "text", id = "picked", text = "", page = TAB_BUILD },
-      { type = drop, id = "target", label = "Target", items = { "<t> Current target" }, at = 1,
-        page = TAB_BUILD },
-      { type = "input", id = "line", label = "Line it builds (type your own to change it)", text = "", max = 256,
-        page = TAB_BUILD, tip = "What the macro runs first. Type your own line in its place if the built one is not "
-          .. "right; clear it for the built one again." },
-      { type = "input", id = "name", label = "Name", text = "", max = 32, page = TAB_BUILD },
-      { type = "input", id = "label", label = "Button text (blank = from the name)", text = "", max = 14,
-        page = TAB_BUILD },
-      { type = "input", id = "extra", label = "Lines after it (| between lines, optional)", text = "", max = 1024,
-        page = TAB_BUILD, tip = 'Example: /p Casting <t> | /wait 2 | /echo done' },
-      { type = "text", id = "preview", text = "", page = TAB_BUILD },
-      { type = "text", id = "tip", text = "Waits: /wait 2 on its own line, or <wait 2> at the end of one.",
-        dim = true, page = TAB_BUILD },
-      { type = "buttons", id = "bbtn", items = { "Save", "Cancel" }, page = TAB_BUILD },
 
       -- Config
       { type = "text", id = "ktext", text = "Hotkey modifier for each bar:", page = TAB_CONFIG },
@@ -749,9 +755,9 @@ end
 
 local function define()
   -- A client older than the dropdown element (1.0.10 and before) gets Type and Target as choices.
-  if not pcall(ui.window, WIN, spec("dropdown")) then
-    ui.window(WIN, spec("choice"))
-  end
+  DROP = pcall(ui.window, WIN, spec("dropdown", true)) and "dropdown" or "choice"
+  ui.window(WIN, spec(DROP, false))
+  building = false
 
   ui.on(WIN, function(_, e)
     if e.id == "tiles" then
@@ -819,7 +825,7 @@ local function define()
         if e.index == 1 then
           save_builder()
         else
-          ui.update(WIN, "tabs", { at = TAB_LIB })
+          leave_builder()
         end
       elseif e.id == "kbtn" then
         keys.reset()
@@ -841,12 +847,24 @@ local function refresh_all(select_id)
   refresh_keys()
 end
 
+-- The window as the Builder (New, Edit) or as the Library and Config tabs; it stays open where it is.
+function layout(build)
+  building = build
+  ui.window(WIN, spec(DROP, build))
+end
+
+-- Back from the Builder to the Library (Save, Cancel), `select_id` chosen when given.
+function leave_builder(select_id)
+  layout(false)
+  refresh_all(select_id)
+end
+
 -- Opens the manager on the current main job's library, with `select_id` chosen when given.
 function M.open(select_id)
   ensure()
   S.mj = jobs.current() or S.mj
+  layout(false)
   refresh_all(select_id)
-  ui.update(WIN, "tabs", { at = TAB_LIB })
   ui.open(WIN)
 end
 
@@ -863,14 +881,14 @@ end
 function M.edit_entry(id)
   ensure()
   S.mj = jobs.current() or S.mj
-  refresh_all(id)
   open_builder(id)
   ui.open(WIN)
 end
 
--- Redraws the window's lists after the data changed from outside (//hb reload, a palette drop).
+-- Redraws the window's lists after the data changed from outside (//hb reload, a palette drop); the Builder keeps
+-- its macro until Save or Cancel.
 function M.refresh()
-  if defined then
+  if defined and not building then
     refresh_all()
   end
 end
