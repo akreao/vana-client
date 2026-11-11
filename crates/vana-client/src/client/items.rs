@@ -202,6 +202,10 @@ impl ItemCache {
     }
 
     pub fn item(&self, id: u16) -> Option<Arc<Item>> {
+        if self.cache.borrow().contains_key(&id) {
+            // Our cache answered: retail's record cache (the auto-translate Items group's source) still counts it.
+            self.names.items.touch(id as u32);
+        }
         self.cache.borrow_mut().entry(id).or_insert_with(|| self.names.items.item(id as u32).map(Arc::new)).clone()
     }
 
