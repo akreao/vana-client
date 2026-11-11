@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-/// One character's job's setup.
-#[derive(Clone, Default, Serialize, Deserialize)]
+/// One character's job's setup. A field its file lacks (one added since) starts as the config's default.
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiConfig {
     /// Window places by display: "" the latest (the template for a display not shown yet), else " @WxH S%".
@@ -26,9 +26,41 @@ pub struct UiConfig {
     pub scan_kinds: u8,
     pub favourites: Vec<String>,
     pub fav_strip: bool,
-    /// Fields of a newer client, kept as they are.
+    /// Fields of a newer client, kept as they are (InUse carries them to the next save).
     #[serde(flatten)]
     pub unknown: serde_json::Map<String, serde_json::Value>,
+}
+
+impl Default for UiConfig {
+    fn default() -> Self {
+        let c = Config::default();
+        Self {
+            places: BTreeMap::new(),
+            folded: c.modern_folded,
+            modes: c.modern_modes,
+            chat_font: c.modern_chat_font,
+            chat_hidden: c.modern_chat_hidden,
+            battle_in_all: c.modern_battle_in_all,
+            condense: c.modern_condense,
+            scan_kinds: c.modern_scan_kinds,
+            favourites: Vec::new(),
+            fav_strip: c.modern_fav_strip,
+            unknown: Default::default(),
+        }
+    }
+}
+
+/// The setup in use (World::ui_profile): its character folder and job, and the fields of a newer client its file had.
+pub struct InUse {
+    pub character: String,
+    pub job: String,
+    unknown: serde_json::Map<String, serde_json::Value>,
+}
+
+impl InUse {
+    fn is(&self, (character, job): &(String, String)) -> bool {
+        self.character == *character && self.job == *job
+    }
 }
 
 fn root() -> PathBuf {
@@ -59,7 +91,7 @@ fn job(w: &World) -> Option<&'static str> {
 /// The character and main job whose setup the world wants, when it is not the one in use (each frame: a world is one
 /// character's, so only the job is compared).
 pub fn wanted(w: &World) -> Option<(String, String)> {
-    let job = job(w).filter(|j| !w.name.is_empty() && w.ui_profile.as_ref().is_none_or(|p| p.1 != *j))?;
+    let job = job(w).filter(|j| !w.name.is_empty() && w.ui_profile.as_ref().is_none_or(|p| p.job != *j))?;
     Some((character(&w.world_name, &w.name), job.to_string()))
 }
 
@@ -68,7 +100,7 @@ struct Held<'a> {
     name: &'a str,
     favourites: &'a mut Vec<String>,
     fav_strip: &'a mut bool,
-    profile: &'a mut Option<(String, String)>,
+    profile: &'a mut Option<InUse>,
 }
 
 fn held(w: &mut World) -> Held<'_> {
@@ -121,7 +153,11 @@ fn put(cfg: &mut Config, h: &mut Held, u: &UiConfig, favourites: bool) {
 
 fn read(p: &Path) -> Option<UiConfig> {
     let text = std::fs::read(p).ok()?;
-    serde_json::from_slice(&text).map_err(|e| log::warn!("ui config {}: {e}", p.display())).ok()
+    let mut u: UiConfig =
+        serde_json::from_slice(&text).map_err(|e| log::warn!("ui config {}: {e}", p.display())).ok()?;
+    // The config's own fix-ups on load (Config::load), for a file written before them.
+    u.modes.split_timers();
+    Some(u)
 }
 
 /// The last file written and its bytes: a config save that changed nothing of the setup writes nothing.
@@ -174,13 +210,15 @@ pub fn switch(cfg: &mut Config, w: &mut World, to: (String, String)) {
 
 fn switch_in(root: &Path, cfg: &mut Config, h: &mut Held, to: (String, String)) {
     if let Some(from) = h.profile.take() {
-        write(&path(root, &from.0, &from.1), &take(cfg, h));
+        write(&path(root, &from.character, &from.job), &UiConfig { unknown: from.unknown, ..take(cfg, h) });
     }
     let (character, job) = &to;
+    let mut unknown = Default::default();
     match read(&path(root, character, job)) {
         Some(u) => {
             log::info!("ui config: {character} {job}");
             put(cfg, h, &u, true);
+            unknown = u.unknown;
         }
         None => {
             let source = latest(root, character, job);
@@ -197,14 +235,15 @@ fn switch_in(root: &Path, cfg: &mut Config, h: &mut Held, to: (String, String)) 
             write(&path(root, character, job), &u);
         }
     }
-    *h.profile = Some(to);
+    let (character, job) = to;
+    *h.profile = Some(InUse { character, job, unknown });
 }
 
 /// The setup in use to its file (after the config saved a change; unchanged, nothing is written).
 pub fn save(cfg: &Config, w: &mut World) {
     let h = held(w);
-    if let Some((character, job)) = h.profile.clone() {
-        write(&path(&root(), &character, &job), &take(cfg, &h));
+    if let Some(p) = h.profile.as_ref() {
+        write(&path(&root(), &p.character, &p.job), &UiConfig { unknown: p.unknown.clone(), ..take(cfg, &h) });
     }
 }
 
@@ -217,15 +256,15 @@ pub fn others(w: &World) -> Vec<(String, String)> {
     others_in(&root(), w.ui_profile.as_ref())
 }
 
-fn others_in(root: &Path, now: Option<&(String, String)>) -> Vec<(String, String)> {
+fn others_in(root: &Path, now: Option<&InUse>) -> Vec<(String, String)> {
     let mut all: Vec<(u8, std::cmp::Reverse<std::time::SystemTime>, String, String)> = Vec::new();
     for c in std::fs::read_dir(root).into_iter().flatten().flatten() {
         let Some(character) = c.file_name().to_str().map(String::from) else { continue };
         for (at, job) in jobs(root, &character) {
             let group = match now {
-                Some(n) if *n == (character.clone(), job.clone()) => continue,
-                Some((nc, _)) if *nc == character => 0,
-                Some((_, nj)) if *nj == job => 1,
+                Some(n) if n.character == character && n.job == job => continue,
+                Some(n) if n.character == character => 0,
+                Some(n) if n.job == job => 1,
                 _ => 2,
             };
             all.push((group, std::cmp::Reverse(at), character.clone(), job));
@@ -248,7 +287,7 @@ pub fn label(all: &[(String, String)], (character, job): &(String, String)) -> S
 /// Another character's or job's setup copied into the one in use: places, modes and the chat window's settings, not
 /// the favourites (this job's own). The one in use itself (a list from before a job change) is left alone.
 pub fn copy_from(cfg: &mut Config, w: &mut World, from: &(String, String)) {
-    if w.ui_profile.as_ref() == Some(from) {
+    if w.ui_profile.as_ref().is_some_and(|p| p.is(from)) {
         return;
     }
     if let Some(u) = read(&path(&root(), &from.0, &from.1)) {
@@ -280,7 +319,7 @@ mod tests {
         name: String,
         favourites: Vec<String>,
         strip: bool,
-        profile: Option<(String, String)>,
+        profile: Option<InUse>,
     }
 
     impl Char {
@@ -377,7 +416,7 @@ mod tests {
             let mut c = Char::new(name);
             c.to(&root, &mut cfg, job);
         }
-        let now = (character("W", "Nine"), "WHM".to_string());
+        let now = InUse { character: character("W", "Nine"), job: "WHM".into(), unknown: Default::default() };
         let list = others_in(&root, Some(&now));
         let jobs: Vec<String> = list.iter().map(|(c, j)| format!("{c} {j}")).collect();
         assert_eq!(jobs, ["W-Nine WAR", "W-Tsetse WHM", "W-Tsetse NIN"]);
@@ -386,5 +425,25 @@ mod tests {
         }
         assert_eq!(others_in(&root, Some(&now)).len(), LISTED);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A file without a field (one added since it was written) takes the config's default; a newer client's fields
+    /// are kept; the config's mode fix-ups run on it.
+    #[test]
+    fn file_fields() {
+        let dir = std::env::temp_dir().join(format!("vana-uiconf-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("WAR.json");
+        std::fs::write(&p, r#"{"chat_font": 18.0, "modes": {"pinned": ["timers"]}, "later": 5}"#).unwrap();
+        let u = read(&p).unwrap();
+        let c = Config::default();
+        assert_eq!(u.chat_font, 18.0);
+        assert_eq!((u.scan_kinds, u.battle_in_all, u.condense), (c.modern_scan_kinds, true, true));
+        assert_eq!(u.fav_strip, c.modern_fav_strip);
+        assert!(u.modes.pinned.iter().any(|p| p == "timers_buffs") && !u.modes.pinned.iter().any(|p| p == "timers"));
+        assert_eq!(u.unknown.get("later"), Some(&serde_json::json!(5)));
+        write(&p, &u);
+        assert_eq!(read(&p).unwrap().unknown.get("later"), Some(&serde_json::json!(5)));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
