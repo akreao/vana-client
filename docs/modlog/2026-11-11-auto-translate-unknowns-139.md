@@ -44,8 +44,12 @@ The linkshell message editor (found on the way):
   0x10: the caption's (0x13, -3)). The hover handler FUN_1015f360 wants the mouse inside the window frame
   (FUN_1011a0a0), so the lower six rows of the caption take the cursor (FUN_1011a240, message 9) and a click there
   is Enter on child 4 (FUN_1015f420, message 5). In link1 / link4 / link13 that only closes the submenu.
-- With the cursor on a caption an arrow key leaves it on 0xff (FUN_101196f0: the link is 0xff, FUN_1011a320 clamps
-  but the handler stores the link); Enter then reaches the window with child 0xff, which closes it.
+- With the cursor on a caption an arrow key does nothing: FUN_1011c6b0 reads the link as a signed byte (movsx at
+  0x1011c6f0), so 0xff is -1, and FUN_101196f0 skips the move (`test di, di; jl` at 0x101197a3). The cursor stays
+  on the caption and Enter still opens the editor. (Corrected after the post-merge review; the first version moved
+  ours to 0xff.)
+- While the editor is open link5 stays up under it but takes no mouse (the editor has no children, only the right
+  click); ours gates linkshell::pointer on the editor being closed, as the search window's pointer already was.
 - Mode 3 (win_comment_v04 / v08): flag 0x1000, line 0 edited, help 0xe 0x32, no title, the lines at x0 + 4 as in
   mode 0. On close, when the lines differ from the last-sent block: all blank sends "" and clears the sent block's
   first line; else the lines that have a first byte are joined by a line feed (FUN_101dec20, DAT_10351e4c = 0A 00)
