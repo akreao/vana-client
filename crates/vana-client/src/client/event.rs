@@ -923,6 +923,11 @@ impl LiveHost<'_> {
 }
 
 impl Host for LiveHost<'_> {
+    /// FUN_10094160 loads the dictionary, tests and unloads it at each call.
+    fn name_refused(&self, name: &[u8]) -> bool {
+        crate::poldic::NameFilter::load(self.index.game_dir()).event_refuses(name)
+    }
+
     fn effect(&mut self, e: Effect) {
         log::debug!("event: {}", crate::event_vm::describe(&e));
         let index = self.st.start.index;

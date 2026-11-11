@@ -8599,6 +8599,8 @@ pub struct App {
     creator_passed: Option<(String, String, String)>,
     creator_refused: Option<(String, String, u16)>,
     creator_checking: Option<(String, String, String)>,
+    /// The name filter (FFXiMain DAT_10662db8), loaded when the creator opens (FUN_102435f0 → FUN_101ba220).
+    name_filter: Option<crate::poldic::NameFilter>,
     /// The lobby's netwait / netbar while an operation runs (client/netwait.rs); a delete's notice after it (8 0x83).
     netwait: Option<netwait::NetWait>,
     deleting: bool,
@@ -8871,6 +8873,7 @@ impl App {
             creator_passed: None,
             creator_refused: None,
             creator_checking: None,
+            name_filter: None,
             netwait: None,
             deleting: false,
             exit_requested: false,
@@ -15672,6 +15675,7 @@ impl App {
                                 self.creator_step = 0;
                                 (self.creator_simple, self.portrait) = (self.cfg.tool("0023") != 0, Default::default());
                                 (self.creator_world, self.creator_passed, self.creator_refused) = (None, None, None);
+                                self.name_filter = Some(crate::poldic::NameFilter::load(&self.cfg.game_dir));
                             }
                             Some(2) => *screen = LobbyScreen::Delete,
                             // FUN_10235fa0 index 4: lobycwin over the title (FUN_10195e80 reads the values first).
@@ -15822,12 +15826,18 @@ impl App {
                         let (mut next, back, mut answer, mut ok) =
                             (false, escape && keys && step < 7 && !world_open, None, false);
                         let (mut world_se, mut world_check) = (Vec::new(), None);
-                        // FUN_102384d0: Num+ (DIK 0x4e) on the name step asks for a random name.
+                        // FUN_101ba240 through the creator's reading of it (0 allows): a refused word, or a
+                        // dictionary that does not load, refuses.
+                        let name_filter = self.name_filter.as_ref();
+                        let name_refused = |name: &[u8]| name_filter.is_some_and(|f| f.creator_refuses(name));
+                        // FUN_102384d0: Num+ (DIK 0x4e) on the name step asks for a random name; one the name
+                        // filter refuses is dropped (FUN_10238330 at 0x10238420) and the next Num+ rolls again.
                         if step == 5
                             && keys
                             && !world_open
                             && self.input.pressed(0x4e)
                             && let Some(n) = self.index.as_ref().and_then(|i| creator::roll_name(i))
+                            && !name_refused(n.as_bytes())
                         {
                             *new_name = n;
                         }
@@ -15975,6 +15985,7 @@ impl App {
                                 next |= ptr.row.1.is_some() || ptr.enter;
                                 if ptr.random
                                     && let Some(n) = self.index.as_ref().and_then(|i| creator::roll_name(i))
+                                    && !name_refused(n.as_bytes())
                                 {
                                     *new_name = n;
                                 }
@@ -16053,7 +16064,8 @@ impl App {
                             world_check = self.creator_world.take();
                         }
                         // Enter on the pass: the checks in retail's order (FUN_10239720 448223..); the world is always
-                        // a table row here, so 3118 / 3119 cannot come up, and the local filter (3322) is not traced.
+                        // a table row here, so 3118 / 3119 cannot come up. The name filter (0x1023a2f5: FFXI-3322 and
+                        // the name step) comes after the length and before the comparisons with earlier checks.
                         if let Some(ws) = world_check {
                             let world = ws.world().to_string();
                             let pass = ws.pass.map(|p| p.0).unwrap_or_default();
@@ -16074,6 +16086,8 @@ impl App {
                                     Some((3111, CreatorNext::World))
                                 } else if name.len() < 3 {
                                     Some((3110, CreatorNext::Step(5)))
+                                } else if name_refused(name.as_bytes()) {
+                                    Some((3322, CreatorNext::Step(5)))
                                 } else {
                                     refused.map(|code| (code, CreatorNext::Step(5)))
                                 };

@@ -53,7 +53,7 @@ detail inside implemented ops.
 | Select screen: FFXI-3117 (five failed user-file operations) has no counterpart in ours | Not built (different login flow) | L2832 | DLL |
 | Rename flow | Built, untested live (no character with renamef) | L2832 | Live |
 | Creator: child 3's element state 0x10 (FUN_10118b60(0x10, 3)) *([batch 5](notes/2026-11-03-modlog-gaps-batch5.md) item 6: state 0x10 is "inert": drawn at 0x80808080, never the cursor, no mouse hit, keys dropped, no help line. ptc6yesn's child 3 is the warning icon, which ours draws and never selects)* | Matches | L15623, L15640 | DLL |
-| Creator world step: the local name filter FUN_101ba240 (3322); the mouse and right click on chmkserv / chmkpass | Not traced | L15980, L16015 | DLL |
+| Creator world step: the local name filter FUN_101ba240 (3322); the mouse and right click on chmkserv / chmkpass *(items 48 + 49, [fragment](../modlog/2026-11-11-creator-name-filter-48-49.md), 2026-11-11: the filter is PlayOnline's dictionary "entryz.dic" matched as polcore does (`poldic.rs`), copied from the player's installer; [batch 9](notes/2026-11-03-modlog-gaps-batch9.md) item 48: a click is Enter and a right click Escape, as ours)* | Built | L15980, L16015 | DLL |
 | Config tool 0023 Simple Character Creation: the forced-on cases (app state 4, the fallback device) and the screen tint / music on leaving | Not built | L18552, L18561, L18570 | DLL |
 | PlayOnline sign-in: whether a server checks the token or the stale addr20 bytes 8..19 (ours zero); the handshake 0x0c..0x17; characters not yet linked to a handle; Friend List / POL messages through net/pol (ours use LSB's xi_profile) | Unknown, not verified | L19522 | Live on a POL server, DLL |
 | Map session: the 0x00E name rules (kinds 2..4 at >= 0x700, 16 characters, "NPC" fallback); reserved actors; index ranges; an event-held actor's despawn clearing +0x145; SubKind 7's words @0x3E..@0x42 | Not built | L19747, L19802 | DLL |
@@ -161,7 +161,7 @@ detail inside implemented ops.
 | Item | Status | Source | Settle by |
 |---|---|---|---|
 | Chat: the spam filter (config 0xce; kinds 1, 0x1a, 0x22, 0x23) *([batch 12](notes/2026-11-03-modlog-gaps-batch12.md) item 74: `client/spamfilter.rs` already matches the loader, the i / s / n flags, the classes and allowed-before-prohibited)* | Built | L5953, L5960 | DLL |
-| Chat: the profanity mask (vulgar2.dic, FUN_101ba200) *([batch 12](notes/2026-11-03-modlog-gaps-batch12.md) item 75: config 0x18 switches it; the masking engine is in the PlayOnline host's interface table (DAT_10456a2c + 0x5a8 / 0x5ac), not FFXiMain)* | Blocked: host module | L5970 | DLL |
+| Chat: the profanity mask (vulgar2.dic, FUN_101ba200) *(the word engine itself is built for the name filter, `poldic.rs` `Engine`, [fragment](../modlog/2026-11-11-creator-name-filter-48-49.md); the mask modes 0 / 4, FUN_10049960, are still to add)* *([batch 12](notes/2026-11-03-modlog-gaps-batch12.md) item 75: config 0x18 switches it; the masking engine is in the PlayOnline host's interface table (DAT_10456a2c + 0x5a8 / 0x5ac), not FFXiMain)* | Blocked: host module | L5970 | DLL |
 | Chat: the line cut at a control byte (FUN_1018fc40) *([batch 6](notes/2026-11-03-modlog-gaps-batch6.md) item 20: the assist kinds cut name and text apart; which packet carries MODLOG's icon-bearing filtered shout / yell is not traced)* | Built apart from the filtered shout / yell icon lines | L5974 | DLL |
 | Chat: the echoes' rank icon (mentor / mastery rank) | Not built | L5985 | DLL |
 | Chat: Shift-JIS text (ours decode UTF-8); SJIS quotes 0x8167 / 0x8168 print '?' *([batch 12](notes/2026-11-03-modlog-gaps-batch12.md) item 76: retail indexes the bytes as they are. The quotes already survived; 398 pairs and the bytes Shift-JIS lacks did not, and now keep their bytes)* | Built | L5953, L1634 | DLL |
@@ -258,7 +258,7 @@ detail inside implemented ops.
 | Mouse: right-button release clearing the target (key 0x8c); ours drags the camera with it *([batch 7](notes/2026-11-03-modlog-gaps-batch7.md) item 27: our right release already clears the target, drops a sub-target prompt and stops autorun as FUN_101587f0 does. Retail has no right-drag camera at all: a right drag only turns the cursor into an 8-way arrow and stops the edge pan, and the camera turns when the cursor touches the window edge (FUN_10124bc0). Our mouse-drag camera is a deliberate deviation (modern MMOs); the edge pan is not built and is a design question for Steven / upstream)* | Deviation (release built) | L3221 | DLL |
 | GM prompt / Moblin Maze Mongers: d5 bits 4..10; message 7's middle-button source; the late 0x0D8 at the event end; helpwind's line with grid focus; the pulse timing assumes 30 fps | Unknown | L17934 | DLL |
 | Maze Mongers: LSB logs GP_CLI_COMMAND_DUNGEON_PARAM as not implemented | Blocked: LSB | L17848 | LSB |
-| Creator random names: FUN_101ba240 (validity check, ours skips it) | Not traced | L5346 | DLL |
+| Creator random names: FUN_101ba240 (validity check, ours skips it) *(items 48 + 49, [fragment](../modlog/2026-11-11-creator-name-filter-48-49.md), 2026-11-11: a random name the dictionary refuses is dropped)* | Built | L5346 | DLL |
 
 ## 8. Map window
 
