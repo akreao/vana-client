@@ -4696,10 +4696,10 @@ return "acxml flow ok"
         vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
     }
 
-    /// Hotbars: back on the Builder by its tab (not New) after a Save, a second macro is a new entry; the first,
-    /// already on a slot, stays.
+    /// Hotbars: New opens the Builder in the window's place (no tabs) and Save or Cancel brings the Library back; a
+    /// second New after a Save is a new entry, and the first, already on a slot, stays.
     #[test]
-    fn hotbar_builder_tab_new_macro() {
+    fn hotbar_builder_replaces_library() {
         let host = Host::default();
         let files = BUNDLED.iter().find(|b| b.0 == "hotbar").unwrap().2;
         let vm = Vm::new(bundled_manifest("hotbar").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
@@ -4722,15 +4722,23 @@ return "acxml flow ok"
             local manager = require("src.manager")
             manager.hooks = { changed = function() end, rebind = function() end }
             manager.open()
+            local function has(id) return (pcall(ui.get, "manager", id)) end
+            assert(has("tabs") and has("lbtn") and not has("found"))
             -- New, Cure, Save; its tile dropped on bar 1, slot 1.
             H("manager", { kind = "press", id = "lbtn", index = 1 })
+            assert(has("found") and not has("tabs") and not has("lbtn"))
             H("manager", { kind = "select", id = "found", index = 1 })
             H("manager", { kind = "press", id = "bbtn", index = 1 })
+            assert(has("tabs") and has("lbtn") and not has("found"))
             data.assign("RDM", nil, 1, 1, data.library("RDM")[1].id)
-            -- Back by the Builder tab: Fire, Save.
-            H("manager", { kind = "set", id = "tabs", index = 2 })
+            -- New again: Fire, Save.
+            H("manager", { kind = "press", id = "lbtn", index = 1 })
             H("manager", { kind = "select", id = "found", index = 2 })
             H("manager", { kind = "press", id = "bbtn", index = 1 })
+            -- Cancel keeps nothing and goes back.
+            H("manager", { kind = "press", id = "lbtn", index = 1 })
+            H("manager", { kind = "press", id = "bbtn", index = 2 })
+            assert(has("lbtn") and not has("found"))
             local lib = data.library("RDM")
             assert(#lib == 2 and lib[1].entry.name == "Cure" and lib[2].entry.name == "Fire", #lib)
             assert(data.resolve("RDM", nil, 1, 1).name == "Cure")
@@ -4908,7 +4916,8 @@ return "acxml flow ok"
         let script = r#"
             local spells = {
               [4] = { name = "Cure IV", mp = 88, kind = 1, levels = { [3] = 41, [5] = 48 } },
-              [24] = { name = "Dia II", mp = 30, kind = 1, targets = 0x20, levels = { [3] = 36, [5] = 31 } },
+              [24] = { name = "Dia II", mp = 30, kind = 1, targets = 0x20, levels = { [3] = 36, [5] = 31 },
+                description = "Deals light damage over time and lowers defense." },
               [25] = { name = "Dia III", mp = 45, kind = 1, targets = 0x20, levels = { [5] = 75 } },
               [338] = { name = "Utsusemi: Ichi", mp = 0, kind = 4, levels = { [13] = 12 } },
               [339] = { name = "Utsusemi: Ni", mp = 0, kind = 4, levels = { [13] = 37 } },
@@ -4929,7 +4938,12 @@ return "acxml flow ok"
             end
             local got = names()
             assert(got == "Cure IV, Dia II, Utsusemi: Ichi", got)
-            -- The Builder opened by its tab (no New first) lists them too.
+            -- New: the Builder lists them, each row with its description.
+            local shown, update = nil, ui.update
+            ui.update = function(w, id, t)
+              if id == "found" and t.rows then shown = t.rows end
+              return update(w, id, t)
+            end
             local on_window = ui.on
             ui.on = function(id, f) if id == "manager" then H = f end; on_window(id, f) end
             local data = require("src.data")
@@ -4938,9 +4952,10 @@ return "acxml flow ok"
             local manager = require("src.manager")
             manager.hooks = { changed = function() end, rebind = function() end }
             manager.open()
-            H("manager", { kind = "set", id = "tabs", index = 2 })
+            H("manager", { kind = "press", id = "lbtn", index = 1 })
             local count = ui.get("manager", "fcount").text
             assert(count == "3 found.", count)
+            assert(shown[2][1] == "Dia II" and shown[2].tip == spells[24].description and shown[1].tip == nil)
             H("manager", { kind = "select", id = "found", index = 2 })
             local line = ui.get("manager", "line").text
             assert(line == '/ma "Dia II" <t>', line)

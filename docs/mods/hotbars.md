@@ -36,11 +36,13 @@ tiles: click one to choose it, right-click to edit it, drag it onto a slot of th
 name a library macro instead of holding its own copy, so editing the macro changes every slot (main or sub set) that
 names it.
 
-The **Builder** makes one: pick a type (spell, job ability, weapon skill, pet command, item, equipment, a system
+The **Builder** makes one. New or Edit opens it in the window's place; Save keeps the macro in the library and
+Cancel goes back to it. Pick a type (spell, job ability, weapon skill, pet command, item, equipment, a system
 command such as `/attack`, `/heal`, `/assist` or `/lockon`, or Macro for typed lines only), search, pick, choose
 the target, and add lines to run after it. System commands show a game icon standing in for them (a sword for
 `/attack`, Regen for `/heal`). Spells are the ones the magic list offers: learned, and castable by your main or
-support job at its level (blue magic only while set).
+support job at its level (blue magic only while set). The help line describes the spell, ability or item under the
+cursor or the pointer.
 
 Abilities that open a list in the game's menu (Rune Enchantment, Ward, Effusion, Phantom Roll, Quick Draw, Sambas,
 Waltzes, Jigs, Steps, the Flourishes, Stratagems, Blood Pact: Rage and Ward, Ready) open the same list here, marked

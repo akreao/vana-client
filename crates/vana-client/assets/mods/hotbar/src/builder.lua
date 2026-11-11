@@ -185,8 +185,8 @@ function M.castable(id, me)
   return not (id >= 0x200 and id < 0x2e0) or blue_set(id, me)
 end
 
--- Every choice of an action kind: { { name, cells = {...}, icon = {kind, id}, target, title? }, ... } where `target`
--- is the one a new pick starts on and `title` the macro name it suggests (else `name`).
+-- Every choice of an action kind: { { name, cells = {...}, icon = {kind, id}, target, title?, tip? }, ... } where
+-- `target` is the one a new pick starts on, `title` the macro name it suggests (else `name`) and `tip` its description.
 local function all_of(kind)
   local out = {}
   if kind == "cmd" then
@@ -203,7 +203,7 @@ local function all_of(kind)
       local s = res.spell(id)
       if s and s.name and s.name ~= "" and M.castable(id, me) then
         out[#out + 1] = { name = s.name, cells = { tostring(s.mp or 0), SPELL_KINDS[s.kind] or "" },
-          icon = { kind = "spell", id = id }, target = M.default_target(s.targets) }
+          icon = { kind = "spell", id = id }, target = M.default_target(s.targets), tip = s.description }
       end
     end
   elseif ABILITY_KIND[kind] then
@@ -217,13 +217,13 @@ local function all_of(kind)
         seen[a.name] = true
         local icon = { kind = "ability", id = id }
         if (a.sub or 0) ~= 0 then
-          out[#out + 1] = { name = a.name, list = a.sub, cells = { "", "" }, icon = icon }
+          out[#out + 1] = { name = a.name, list = a.sub, cells = { "", "" }, icon = icon, tip = a.description }
         else
           local cost = (a.cost or 0) > 0 and tostring(a.cost) or ""
           local recast = a.recast and ("%ds"):format(a.recast) or ""
           local target = (a.targets or 0) ~= 0 and M.default_target(a.targets) or DEFAULT_TARGET[kind]
           out[#out + 1] = { name = a.name, cells = { cost, recast }, icon = icon, target = target,
-            under = under and under.name, kind = a.kind }
+            under = under and under.name, kind = a.kind, tip = a.description }
         end
       end
     end
@@ -238,7 +238,7 @@ local function all_of(kind)
         if fits and r.name and r.name ~= "" then
           local e = by_id[it.id]
           if not e then
-            e = { name = r.name, count = 0, icon = { kind = "item", id = it.id },
+            e = { name = r.name, count = 0, icon = { kind = "item", id = it.id }, tip = r.description,
               target = kind == "equip" and first_slot(r.slots) or M.default_target(r.targets) }
             by_id[it.id] = e
             out[#out + 1] = e
