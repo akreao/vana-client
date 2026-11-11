@@ -30,6 +30,7 @@ mod rest;
 mod resttick;
 mod spamfilter;
 mod twofa;
+mod uiconf;
 #[cfg(windows)]
 mod windpi;
 pub use creator::{ScreenShot as CreatorScreenShot, screen_shot as creator_screen_shot};
@@ -7707,6 +7708,8 @@ struct World {
     favourites: Vec<String>,
     fav_strip: bool,
     fav_save: bool,
+    /// The character and main job whose modern UI setup is in use (client/uiconf.rs).
+    ui_profile: Option<(String, String)>,
     /// The battle menu's suggestions (suggest.rs::refresh_root), when they were taken, and the one the cursor is on.
     root_sugg: Vec<suggest::Suggestion>,
     root_sugg_at: Option<Instant>,
@@ -10116,6 +10119,7 @@ impl App {
                             favourites: self.cfg.modern_favourites.get(&login.name).cloned().unwrap_or_default(),
                             fav_strip: self.cfg.modern_fav_strip,
                             fav_save: false,
+                            ui_profile: None,
                             root_sugg: Vec::new(),
                             root_sugg_at: None,
                             battle_rows: Vec::new(),
@@ -15987,6 +15991,11 @@ impl App {
                         &mut self.numpad_presses,
                     );
                 }
+                // The modern UI's setup follows the character and main job (client/uiconf.rs).
+                if let Some(want) = uiconf::wanted(world) {
+                    uiconf::switch(&mut self.cfg, world, want);
+                    save = true;
+                }
                 // With the UI hidden (key function 0x56) retail draws no window at all, so the modern layer goes too; in
                 // cinema mode only the event text box (drawn by world_hud).
                 if world.modern
@@ -16027,6 +16036,7 @@ impl App {
                     s.monitors = self.monitors.clone();
                     s.gpus = self.gpus.clone();
                     s.in_game = true;
+                    s.profiles = uiconf::others(world);
                     // The installed mods' settings pages.
                     s.set_mod_pages(world.lua.settings_pages());
                     if kind == settings::Kind::Extras
@@ -16106,16 +16116,27 @@ impl App {
                 if world.modmgr.as_ref().is_some_and(|m| !m.open) {
                     world.modmgr = None;
                 }
+                let mut copy_ui = None;
                 if let Some(s) = world.settings.as_mut().filter(|s| s.dirty) {
                     s.dirty = false;
                     s.s.store(&mut self.cfg);
                     apply = true;
-                    // Panel Places' Reset: this character's saved places go; the row reads As Moved again.
+                    // UI Setup's Reset: this character's saved places go; From: another setup copied in; the row reads As
+                    // Moved again.
                     if std::mem::take(&mut s.s.reset_places) {
                         log::info!("modern: panel places of {} reset (every display)", world.name);
                         self.cfg.modern_places.retain(|k, _| !modern::layout_of(k, &world.name));
                         save = true;
                     }
+                    copy_ui = s.s.copy_ui.take().and_then(|k| s.profiles.get(k).cloned());
+                }
+                if let Some(from) = copy_ui {
+                    uiconf::copy_from(&mut self.cfg, world, &from);
+                    let others = uiconf::others(world);
+                    if let Some(s) = world.settings.as_mut() {
+                        s.profiles = others;
+                    }
+                    save = true;
                 }
                 if std::mem::take(&mut world.volume_dirty) {
                     apply = true;
@@ -16165,6 +16186,10 @@ impl App {
                 if std::mem::take(&mut world.game_save) || apply {
                     self.cfg.game.store(Some(&world.name), &world.game);
                     save = true;
+                }
+                // A change saved: the character's job's setup file too.
+                if save {
+                    uiconf::save(&self.cfg, world);
                 }
             }
         }

@@ -77,7 +77,7 @@ const PAGES: [(&str, &str, &[Item]); 13] = [
             Ours("Interface"),
             Ours("Interface Size"),
             Ours("Panel Opacity"),
-            Ours("Panel Places"),
+            Ours("UI Setup"),
             Retail("conf3win", 12),
             Head("Party & Target"),
             Ours("Party TP"),

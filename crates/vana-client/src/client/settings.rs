@@ -41,8 +41,10 @@ pub struct Settings {
     pub modern_opacity: u32,
     /// The mod packs in priority order (the Mods page; config `mods`).
     pub mods: Vec<crate::config::ModRef>,
-    /// Panel Places' Reset pressed: this character's modern panels go back to where they start (not kept).
+    /// UI Setup's Reset pressed: this character's modern panels go back to where they start; its From: the setup
+    /// in SettingsUi::profiles copied in (neither kept).
     pub reset_places: bool,
+    pub copy_ui: Option<usize>,
     /// A game controller read (config gamepad), and its sticks' dead zone in % of full (gamepad_deadzone).
     pub gamepad: bool,
     pub gamepad_dead: u32,
@@ -83,6 +85,7 @@ impl Settings {
             modern_opacity: pct(c.modern_opacity),
             mods: crate::modpack::merged(&c.mods, &crate::modpack::folders()),
             reset_places: false,
+            copy_ui: None,
             gamepad: c.gamepad,
             gamepad_dead: (c.gamepad_deadzone * 100.0).round() as u32,
             mouse_camera_speed: c.mouse_camera_speed,
@@ -562,8 +565,9 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
             Now,
         ),
         row(
-            "Panel Places",
-            "Reset puts this character's modern windows back where they started (not retail).",
+            "UI Setup",
+            "Each character and job keeps its own modern windows. Reset puts this one's back where they started; From \
+             copies another's places, modes and chat window settings (not retail).",
             ResetPlaces,
             &[(0, "As Moved"), (1, "Reset")],
             Now,
@@ -661,7 +665,7 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
         Kind::Extras => [MAPS, TIMERS, EXTRA_BATTLE, EXTRA_MISC].get(tab).copied().unwrap_or(&[]),
         Kind::Settings if in_game && tab == 4 => &SOUND[..3],
         Kind::Settings if tab >= PACKS => &[],
-        // Panel Places (the last Linux row) is a character's: in game only.
+        // UI Setup (the last Linux row) is a character's: in game only.
         Kind::Settings if !in_game && tab == 6 => &CLIENT[..CLIENT.len() - 1],
         Kind::Settings => [GENERAL, SCREEN, TEXTURES, EFFECTS, SOUND, MISC, CLIENT, GAMEPAD, GRAPHICS][tab.min(8)],
     }
@@ -712,6 +716,8 @@ pub struct SettingsUi {
     /// Monitors as (name, "name  W x H") and GPU names, set by the app after opening.
     pub monitors: Vec<(String, String)>,
     pub gpus: Vec<String>,
+    /// The other characters' and jobs' modern UI setups kept (client/uiconf.rs), for UI Setup's From.
+    pub profiles: Vec<(String, String)>,
     /// The window's pixels when opened (size lists).
     window: [u32; 2],
     /// Drawn where the in-game Config pages are (else centred, over the lobby).
@@ -765,6 +771,7 @@ impl SettingsUi {
             s: Settings::of(c),
             monitors: Vec::new(),
             gpus: Vec::new(),
+            profiles: Vec::new(),
             window,
             in_game: false,
             tab: 0,
@@ -880,6 +887,7 @@ impl SettingsUi {
             Val::Size(..)
             | Val::Gamma
             | Val::FrameLimit
+            | Val::ResetPlaces
             | Val::Monitor
             | Val::Gpu
             | Val::Music
@@ -1035,6 +1043,11 @@ impl SettingsUi {
                 (self.monitors.len().max(1), self.monitors.iter().position(|m| m.0 == self.s.monitor).unwrap_or(0))
             }
             Val::Gpu => (self.gpus.len() + 1, self.gpus.iter().position(|g| *g == self.s.gpu).map_or(0, |i| i + 1)),
+            // As Moved, Reset, then From each kept setup.
+            Val::ResetPlaces => {
+                let at = self.s.copy_ui.map_or(self.s.reset_places as usize, |k| k + 2);
+                (self.profiles.len() + 2, at)
+            }
             Val::Music => (21, (self.s.music / 5) as usize),
             Val::Effects => (21, (self.s.effects / 5) as usize),
             Val::ModernOpacity => (19, (self.s.modern_opacity.clamp(10, 100) / 5 - 2) as usize),
@@ -1067,6 +1080,9 @@ impl SettingsUi {
             }
             Val::Gpu => {
                 self.s.gpu = if i == 0 { String::new() } else { self.gpus.get(i - 1).cloned().unwrap_or_default() }
+            }
+            Val::ResetPlaces => {
+                (self.s.reset_places, self.s.copy_ui) = (i == 1, (i >= 2 && i - 2 < self.profiles.len()).then(|| i - 2))
             }
             Val::Music => self.s.music = (i as u32 * 5).min(100),
             Val::Effects => self.s.effects = (i as u32 * 5).min(100),
@@ -1101,6 +1117,11 @@ impl SettingsUi {
                 .find(|m| m.0 == self.s.monitor)
                 .or(self.monitors.first())
                 .map_or_else(|| "Default".into(), |m| m.0.clone()),
+            Val::ResetPlaces => match self.s.copy_ui.and_then(|k| self.profiles.get(k)) {
+                Some(p) => format!("From {}", super::uiconf::label(&self.profiles, p)),
+                None if self.s.reset_places => "Reset".into(),
+                None => "As Moved".into(),
+            },
             Val::Gpu if self.s.gpu.is_empty() => "Default".into(),
             // The name without the driver's part ("AMD Radeon RX 6800 XT (RADV NAVI21)").
             Val::Gpu => self.s.gpu.split(" (").next().unwrap_or_default().to_string(),
@@ -2072,7 +2093,7 @@ pub(super) fn marker(gu: &mut GameUi, x: f32, y: f32, w: f32) {
 mod tests {
     use super::*;
 
-    /// A page's frame holds 7 rows; at the title the Client page leaves out Panel Places and nothing else.
+    /// A page's frame holds 7 rows; at the title the Client page leaves out UI Setup and nothing else.
     #[test]
     fn pages_fit_their_frame() {
         for kind in [Kind::Settings, Kind::Extras] {
