@@ -492,7 +492,8 @@ Milestone 1:
   one in use, loaded when the character or the main job changes (MON in Monstrosity) and written with every save. A
   job new to the character starts as the one it comes from (this session's, else the character's latest file) with
   no favourites (a job's spells and abilities, as the hotbar's bars, which the hotbar keeps by job itself); a
-  character's first job takes the config as it was. Lua mods' data stays in mod-data (per character, as before).
+  character's first job takes the config as it was. Lua mods' data stays in mod-data (per character, as before);
+  which mods run can be kept per character and / or per job from each mod's page (docs/lua-mods.md 3.4.1).
   Live: WAR made from the config, WHM and RDM from WAR, a folded minimap kept to WHM through !changejob both ways.
 - The target's cast (2026-10-27, not retail: combat.rs track_cast, World.casts; hud.rs target_cast): 0x028 category 8
   with "ca" starts a spell, 7 with "ca" readies a skill (the first result's value: a mob skill from 0x100, else a

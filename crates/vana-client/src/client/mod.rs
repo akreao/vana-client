@@ -16033,13 +16033,18 @@ impl App {
                 // The modern UI's setup follows the character and main job (client/uiconf.rs).
                 if let Some(want) = uiconf::wanted(world) {
                     uiconf::switch(&mut self.cfg, world, want);
-                    // Settings open across the change: its From list follows.
-                    if world.settings.is_some() {
-                        let others = uiconf::others(world);
-                        if let Some(s) = world.settings.as_mut() {
-                            s.profiles = others;
-                        }
+                    // Settings open across the change: its From list and its mods' switches follow.
+                    let (others, at) = (uiconf::others(world), uiconf::at(world));
+                    if let Some(s) = world.settings.as_mut() {
+                        (s.profiles, s.scope_at) = (others, Some(at.clone()));
                     }
+                    if let Some(mm) = world.modmgr.as_mut() {
+                        mm.s.scope_at = Some(at);
+                    }
+                    // The mods kept per character or job (#94): those for this one run.
+                    let mut mods = std::mem::take(&mut world.lua);
+                    mods.follow_scope(world, &self.cfg.mods);
+                    world.lua = mods;
                     save = true;
                 }
                 // With the UI hidden (key function 0x56) retail draws no window at all, so the modern layer goes too; in
@@ -16083,8 +16088,9 @@ impl App {
                     s.gpus = self.gpus.clone();
                     s.in_game = true;
                     s.profiles = uiconf::others(world);
+                    s.scope_at = Some(uiconf::at(world));
                     // The installed mods' settings pages.
-                    s.set_mod_pages(world.lua.settings_pages());
+                    s.set_mod_pages(world.lua.settings_pages(&self.cfg.mods));
                     if kind == settings::Kind::Extras
                         && let Some(id) = world.lua.open_page.take()
                     {
@@ -16105,7 +16111,8 @@ impl App {
                         None => {
                             let mut s = settings::SettingsUi::open_kind(&self.cfg, window, settings::Kind::Settings);
                             s.in_game = true;
-                            world.modmgr = Some(modern::ModMgr::new(s, world.lua.settings_pages(), id));
+                            s.scope_at = Some(uiconf::at(world));
+                            world.modmgr = Some(modern::ModMgr::new(s, world.lua.settings_pages(&self.cfg.mods), id));
                         }
                     }
                 }
@@ -16113,7 +16120,7 @@ impl App {
                     mm.s.tick();
                     // A mod installed or updated: its settings and permissions as its files now have them.
                     if std::mem::take(&mut mm.s.installed) {
-                        mm.refresh(world.lua.settings_pages());
+                        mm.refresh(world.lua.settings_pages(&self.cfg.mods));
                     }
                 }
                 // The Lua mods' settings changed on their Extras pages or in the Mods window.
@@ -16137,17 +16144,43 @@ impl App {
                         }
                     }
                     let mut mods = std::mem::take(&mut world.lua);
+                    let mut scoped = false;
                     for (id, key, value) in changes {
+                        if key == lua::SCOPE_CHARACTER || key == lua::SCOPE_JOB {
+                            let (folder, on) = (lua::folder_name(&id), value.as_bool() == Some(true));
+                            let set = |list: &mut Vec<crate::config::ModRef>| {
+                                for r in list.iter_mut().filter(|r| r.name == folder) {
+                                    if key == lua::SCOPE_CHARACTER {
+                                        r.per_character = on;
+                                    } else {
+                                        r.per_job = on;
+                                    }
+                                }
+                            };
+                            set(&mut self.cfg.mods);
+                            if let Some(s) = world.settings.as_mut() {
+                                set(&mut s.s.mods);
+                            }
+                            if let Some(mm) = world.modmgr.as_mut() {
+                                set(&mut mm.s.s.mods);
+                            }
+                            log::info!("lua mod {folder}: {key} {on}");
+                            (scoped, save) = (true, true);
+                            continue;
+                        }
                         mods.apply_setting(world, &id, &key, value);
                     }
+                    if scoped {
+                        mods.follow_scope(world, &self.cfg.mods);
+                    }
                     world.lua = mods;
-                    // A mod turned on, off or installed: the pages follow.
-                    if toggled {
+                    // A mod turned on, off or installed, or its scope changed: the pages follow.
+                    if toggled || scoped {
                         if let Some(s) = world.settings.as_mut() {
-                            s.set_mod_pages(world.lua.settings_pages());
+                            s.set_mod_pages(world.lua.settings_pages(&self.cfg.mods));
                         }
                         if let Some(mm) = world.modmgr.as_mut() {
-                            mm.refresh(world.lua.settings_pages());
+                            mm.refresh(world.lua.settings_pages(&self.cfg.mods));
                         }
                     }
                 }

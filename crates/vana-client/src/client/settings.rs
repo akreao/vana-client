@@ -718,6 +718,8 @@ pub struct SettingsUi {
     pub gpus: Vec<String>,
     /// The other characters' and jobs' modern UI setups kept (client/uiconf.rs), for UI Setup's From.
     pub profiles: Vec<(String, String)>,
+    /// In game: the character and job (once known) a Lua mod's switch kept per character or job is for.
+    pub scope_at: Option<(String, Option<String>)>,
     /// UI Setup's stop picked but not done yet (0 As Moved, 1 Reset, then From each of `profiles`). Both replace this
     /// job's windows, so stepping the slider only picks: Enter, a click or letting go of a drag does it (ui_done).
     ui_pick: usize,
@@ -777,6 +779,7 @@ impl SettingsUi {
             monitors: Vec::new(),
             gpus: Vec::new(),
             profiles: Vec::new(),
+            scope_at: None,
             ui_pick: 0,
             ui_mouse: false,
             window,
@@ -1774,10 +1777,20 @@ impl SettingsUi {
 
     fn mods_marked(&self) -> usize {
         let sh = self.on_page();
-        match self.row.checked_sub(1).and_then(|i| sh.get(i)).map(|&k| &self.s.mods[k]) {
-            Some(m) if !m.enabled => 1,
+        match self.row.checked_sub(1).and_then(|i| sh.get(i)).copied() {
+            Some(k) if !self.mod_on(k) => 1,
             _ => 0,
         }
+    }
+
+    /// Whether mod `k` is on as its page shows it: a Lua mod kept per character or job by this one's switch.
+    fn mod_on(&self, k: usize) -> bool {
+        let m = &self.s.mods[k];
+        if !self.lua_page() {
+            return m.enabled;
+        }
+        let (c, j) = self.scope_at.as_ref().map_or((None, None), |(c, j)| (Some(c.as_str()), j.as_deref()));
+        m.active(c, j).unwrap_or(m.enabled)
     }
 
     /// Per frame: the archive scan, the catalogue and an install coming in.
@@ -1982,7 +1995,7 @@ impl SettingsUi {
     /// A Lua mod goes by its mod.toml's name.
     pub fn mods_rows(&self) -> (Vec<(String, bool)>, Vec<super::modsui::Offer>) {
         let name = |n: &String| self.lua_info.get(n).map_or_else(|| n.clone(), |i| i.name.clone());
-        let packs = self.on_page().into_iter().map(|k| (name(&self.s.mods[k].name), self.s.mods[k].enabled)).collect();
+        let packs = self.on_page().into_iter().map(|k| (name(&self.s.mods[k].name), self.mod_on(k))).collect();
         (packs, self.offers())
     }
 
@@ -1995,9 +2008,15 @@ impl SettingsUi {
     pub fn mod_enable(&mut self, i: usize, on: bool) {
         if let Some(&k) = self.on_page().get(i) {
             let lua = self.lua_page();
+            self.dirty |= self.mod_on(k) != on;
+            // A Lua mod kept per character or job switches this one's own.
+            let (c, j) = self.scope_at.as_ref().map_or((None, None), |(c, j)| (Some(c.as_str()), j.as_deref()));
             let m = &mut self.s.mods[k];
-            self.dirty |= m.enabled != on;
-            m.enabled = on;
+            if lua {
+                m.switch(c, j, on)
+            } else {
+                m.enabled = on
+            }
             // A Lua mod starts or stops at once (in game).
             if lua {
                 self.mod_changes.push((m.name.clone(), super::lua::ENABLED.into(), on.into()));
@@ -2363,7 +2382,7 @@ mod tests {
         use crate::config::ModRef;
         let c = Config::default();
         let mut ui = SettingsUi::open(&c, [1280, 800]);
-        let m = |n: &str, on: bool| ModRef { name: n.into(), enabled: on };
+        let m = |n: &str, on: bool| ModRef::new(n, on);
         ui.s.mods = vec![m("a", true), m("b", false), m("c", true)];
         ui.lua_names = std::collections::HashSet::new();
         ui.mods_ui = Some(super::super::modsui::Mods::empty());

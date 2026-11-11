@@ -412,10 +412,57 @@ pub struct ModernDock {
 /// A character's panel places by panel id.
 pub type ModernLayout = std::collections::BTreeMap<String, ModernPlace>;
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct ModRef {
     pub name: String,
     pub enabled: bool,
+    /// A Lua mod's switch kept per character and / or per job (not retail): `on` holds a character's ("<World>-<Name>",
+    /// client/uiconf.rs), a job's ("WHM") or a character's job's ("<World>-<Name>/WHM"); one never switched follows
+    /// `enabled`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub per_character: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub per_job: bool,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub on: std::collections::BTreeMap<String, bool>,
+}
+
+impl ModRef {
+    pub fn new(name: impl Into<String>, enabled: bool) -> Self {
+        ModRef { name: name.into(), enabled, ..Default::default() }
+    }
+
+    /// The key of `on` this character and job switch (none without a scope, or before the scope's job or character
+    /// is known).
+    pub fn key(&self, character: Option<&str>, job: Option<&str>) -> Option<String> {
+        match (self.per_character, self.per_job) {
+            (false, false) => None,
+            (true, false) => character.map(str::to_string),
+            (false, true) => job.map(str::to_string),
+            (true, true) => Some(format!("{}/{}", character?, job?)),
+        }
+    }
+
+    /// Whether it runs for this character and job: its own switch, else `enabled`; none while a scope's job or
+    /// character is not known yet.
+    pub fn active(&self, character: Option<&str>, job: Option<&str>) -> Option<bool> {
+        if !self.per_character && !self.per_job {
+            return Some(self.enabled);
+        }
+        let k = self.key(character, job)?;
+        Some(self.on.get(&k).copied().unwrap_or(self.enabled))
+    }
+
+    /// Switched on or off for this character and job: its own switch with a scope, else (no scope, or in the lobby
+    /// with no character or job yet) `enabled`, which every one never switched follows.
+    pub fn switch(&mut self, character: Option<&str>, job: Option<&str>, on: bool) {
+        match self.key(character, job) {
+            Some(k) => {
+                self.on.insert(k, on);
+            }
+            None => self.enabled = on,
+        }
+    }
 }
 
 /// Where mod folders live.
@@ -757,6 +804,38 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A mod kept per job switches each job's own; one never switched follows `enabled`; per character and job keys
+    /// both; the job not known yet decides nothing.
+    #[test]
+    fn mod_scopes() {
+        let mut m = ModRef::new("gearswap", true);
+        assert_eq!(m.active(Some("W-Nine"), None), Some(true));
+        m.per_job = true;
+        assert_eq!(m.active(Some("W-Nine"), None), None);
+        m.switch(Some("W-Nine"), Some("WAR"), false);
+        assert_eq!(
+            (m.active(Some("W-Nine"), Some("WAR")), m.active(Some("W-Nine"), Some("WHM"))),
+            (Some(false), Some(true))
+        );
+        assert!(m.enabled && m.on.get("WAR") == Some(&false));
+        m.per_character = true;
+        assert_eq!(m.key(Some("W-Nine"), Some("WAR")).as_deref(), Some("W-Nine/WAR"));
+        assert_eq!(m.active(Some("W-Nine"), Some("WAR")), Some(true));
+        m.switch(Some("W-Nine"), Some("WAR"), false);
+        assert_eq!(m.active(Some("W-Tsetse"), Some("WAR")), Some(true));
+        // In the lobby (no character, no job) a scoped mod's switch is the one everybody follows.
+        let mut lobby = ModRef { per_job: true, ..ModRef::new("dps", true) };
+        lobby.switch(None, None, false);
+        assert!(!lobby.enabled && lobby.on.is_empty());
+        // Without a scope the switch is `enabled`, as before; an old config's entry reads as unscoped.
+        let mut plain = ModRef::new("clock", false);
+        plain.switch(None, None, true);
+        assert!(plain.enabled && plain.on.is_empty());
+        let old: ModRef = serde_json::from_str(r#"{"name": "clock", "enabled": true}"#).unwrap();
+        assert_eq!(old, ModRef::new("clock", true));
+        assert_eq!(serde_json::to_string(&old).unwrap(), r#"{"name":"clock","enabled":true}"#);
+    }
 
     /// A Menu Size step moves to the same step of a new window (the last there is, else the window's); any other
     /// size stays.
