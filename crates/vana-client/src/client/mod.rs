@@ -55,6 +55,8 @@ mod flash;
 mod footsteps;
 mod game_ui;
 mod gamepad;
+#[cfg(target_os = "linux")]
+mod gamepad_sdl;
 mod hudtop;
 mod input;
 mod iteminfo;

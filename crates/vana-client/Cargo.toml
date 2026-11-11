@@ -78,6 +78,9 @@ windows-sys = { version = "0.61.2", features = ["Win32_System_Time", "Win32_Foun
 [target."cfg(target_os = \"linux\")".dependencies]
 # Keeps the screen awake while a controller plays (client/keepawake.rs); already in the tree through rfd.
 zbus = "5.19"
+# The pad fallback when gilrs fails or finds none (client/gamepad_sdl.rs): DroidDeck's fake /dev/input nodes refuse
+# gilrs's epoll, and SDL reads them by polling. Built from source and linked in, so nothing new to install.
+sdl2 = { version = "0.38.0", default-features = false, features = ["bundled", "static-link"] }
 
 [target."cfg(target_os = \"macos\")".dependencies]
 # Keeps the system and display awake while a controller plays (client/keepawake.rs); already in the tree through gilrs/winit.
