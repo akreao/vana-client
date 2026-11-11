@@ -1102,6 +1102,14 @@ impl Ground {
         pos
     }
 
+    /// Not retail: a step on a carrier (statuses 0x1c / 0x1f). Walls stop it as in the sweep, but no floor is needed
+    /// under it and its height stays: the carrier holds the rider (retail's floor ray meets the door model, which ours
+    /// has no floor for).
+    pub fn walk_carried(&self, from: Vec3, to: Vec3) -> Vec3 {
+        let (out, _) = self.sweep(from, to);
+        Vec3::new(out.x, to.y, out.z)
+    }
+
     /// Walks from `from` towards `to` as the player would at run speed, a frame at a time, until it gets
     /// there or stops getting closer. `_climb` is unused: retail has no climb limit, only the sweep's.
     pub fn walk(&self, from: Vec3, to: Vec3, _climb: f32) -> Vec3 {
@@ -1350,6 +1358,20 @@ mod tests {
             pos = g.walk_player(pos, pos, STEP_TICKS, None);
         }
         assert!(pos.x < -0.4 && pos.y.abs() < 0.01, "{pos}");
+    }
+
+    #[test]
+    fn carried_step_keeps_height_and_walls() {
+        // Off the block's edge with no floor under the step: the carrier holds the height.
+        let g = step(3.0);
+        let p = g.walk_carried(Vec3::new(1.0, -5.0, 0.0), Vec3::new(1.0 - RUN_STEP, -5.0, 0.0));
+        assert!((p.x - (1.0 - RUN_STEP)).abs() < 1e-4 && p.y == -5.0, "{p}");
+        // The block's side still stops a step at floor height.
+        let mut pos = Vec3::new(-2.0, 0.0, 0.0);
+        for _ in 0..30 {
+            pos = g.walk_carried(pos, pos + Vec3::new(RUN_STEP, 0.0, 0.0));
+        }
+        assert!(pos.x < 0.0 && pos.y == 0.0, "{pos}");
     }
 
     /// Crawlers' Nest region c_196, where LSB's height is 2.02 under the floor at (57, -25) and the snap from it finds

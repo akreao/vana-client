@@ -275,3 +275,47 @@ pub fn disasm(b: &Block, text: &dyn Fn(u32) -> Option<String>) -> Vec<String> {
     }
     out
 }
+
+#[cfg(test)]
+mod status_census {
+    /// Every zone's event code: the statuses ops 0x4f (val@1 + 0x12) and 0xac subs 0 / 1 (val@2) set, by who runs
+    /// them (modlog-gaps 136: the carrier statuses 0x1a..0x1f).
+    #[test]
+    #[ignore = "census over every zone's event file"]
+    fn event_status_census() {
+        let cfg = crate::config::Config::load();
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let mut tally = std::collections::BTreeMap::<(u8, i64), usize>::new();
+        for zone in 0..3000u16 {
+            let Ok(blocks) = super::load(&index, zone) else { continue };
+            for b in &blocks {
+                for (pc, _, _, sub) in super::walk(b).0 {
+                    let op = b.code[pc];
+                    let at = match (op, sub) {
+                        (0x4f, _) => 1,
+                        (0xac, Some(0 | 1)) => 2,
+                        _ => continue,
+                    };
+                    let v = u16::from_le_bytes([b.code[pc + at], b.code[pc + at + 1]]);
+                    let s = if v & 0x8000 != 0 {
+                        b.consts.get((v & 0x7fff) as usize).map_or(-2, |c| *c as i32 as i64)
+                            + if op == 0x4f { 0x12 } else { 0 }
+                    } else {
+                        -1
+                    };
+                    let key = if op == 0x4f { 0x4f } else { 0xa0 + sub.unwrap() };
+                    *tally.entry((key, s)).or_default() += 1;
+                    if (0x1a..=0x1f).contains(&s) || s < 0 {
+                        println!(
+                            "zone {zone} actor {:08x} pc {pc:04x} op {key:02x} status {s:#x} (operand {v:04x})",
+                            b.actor
+                        );
+                    }
+                }
+            }
+        }
+        for ((op, s), n) in tally {
+            println!("op {op:02x} status {s:#x}: {n}");
+        }
+    }
+}

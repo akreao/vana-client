@@ -40,6 +40,7 @@ mod augment;
 mod buffs;
 mod bump;
 mod camera;
+mod carrier;
 mod catalogue;
 mod cfgapply;
 mod clock;
@@ -5877,6 +5878,8 @@ struct Actor {
     /// The ground tilt state (client/tilt.rs) and this frame's tilted rotation (None: the plain Euler one).
     ground_tilt: tilt::GroundTilt,
     tilt_rot: Option<glam::Mat3>,
+    /// The front (points 10 / 11) and rear (8 / 9) feet midpoints of the last drawn pose, in the world (FUN_100a4d10).
+    feet: Option<[Vec3; 2]>,
     /// Entity +0x130 bits 5..6 (op 0xac): which death scheduler runs (combat::death_scheduler).
     death_pick: u8,
     /// The riding files on `extra`.
@@ -5999,6 +6002,7 @@ impl Actor {
             appear: 0.0,
             mouth_name: "mou4",
             ground_tilt: Default::default(),
+            feet: None,
             tilt_rot: None,
             death_pick: 0,
             mouth: None,
@@ -7044,6 +7048,8 @@ struct World {
     loading_scene: u16,
     /// Door states by entity (client/doors.rs).
     doors: doors::Doors,
+    /// The carrier statuses' steps (client/carrier.rs).
+    carriers: carrier::Carriers,
     /// In the Mog House (0x00A LoginState 1), its door menu, and a leave request sent.
     myroom: Option<net::MyRoom>,
     /// The party / alliance roster (client/party.rs) and whether its names were asked for (c2s 0x076).
@@ -9957,6 +9963,7 @@ impl App {
                             gmtell: Default::default(),
                             leaving_room: false,
                             doors: Default::default(),
+                            carriers: Default::default(),
                             event_voices: false,
                             event_looks: Vec::new(),
                             costumes: HashMap::new(),
@@ -12318,6 +12325,7 @@ impl App {
         event::rebuild_models(world);
         if world.in_scene() {
             doors::update(world);
+            carrier::update(world);
             lifts::update(world);
             let jobs = ships::update(world);
             world.ship_jobs.extend(jobs);
@@ -12737,7 +12745,25 @@ impl App {
         let shafts = world.lifts.shafts();
         let mut knock_ends = Vec::new();
         let mut self_ends = Vec::new();
+        // FUN_1008cd90: an unbound actor in status 0x1c / 0x1f moves by its carrier's step after its own slide, and
+        // its server place (+0x24) and move start (+0x44) follow, so the slide never pulls it back (client/carrier.rs).
+        let ev_bound: HashSet<u32> = event::bound_set(world);
+        if let Some(set) = carrier::rider_set(world.my_motion.status).filter(|_| !ev_bound.contains(&world.my_id)) {
+            world.pos += world.carriers.step(set, world.my_index);
+        }
+        let carriers = &world.carriers;
+        let carry = |eid: &u32, e: &mut Entity| {
+            if let Some(set) = carrier::rider_set(e.motion.status).filter(|_| !ev_bound.contains(eid)) {
+                e.pos += carriers.step(set, e.index);
+                e.slide = e.pos;
+                e.target = e.pos;
+            }
+        };
         for (eid, e) in world.entities.iter_mut() {
+            // Not retail: a rider's floor is its carrier (retail's floor ray also meets door models, FUN_1017a660,
+            // which ours lacks), so the static floor does not take back the carrier's lift while the status holds.
+            let carried = carrier::rider_set(e.motion.status).is_some() && !ev_bound.contains(eid);
+            let floor = floor.filter(|_| !carried);
             // Moved by someone else since last frame (an event script): take that as the slide and drawn spot.
             if e.pos != e.last_pos {
                 e.slide = e.pos;
@@ -12757,6 +12783,7 @@ impl App {
                 e.slide = e.pos;
                 knock_ends.push((*eid, recover, done));
                 bump::active_tick(e, ticks);
+                carry(eid, e);
                 e.last_pos = e.pos;
                 continue;
             }
@@ -12786,6 +12813,7 @@ impl App {
                 );
                 bump::active_tick(e, ticks);
                 actmotion::idle_swap(*eid, e, world.actors.get_mut(eid), ticks);
+                carry(eid, e);
                 e.last_pos = e.pos;
                 continue;
             }
@@ -12838,6 +12866,7 @@ impl App {
             // The actor is drawn at the slide (+0x34 = +4).
             let step = e.slide - start;
             e.pos = e.slide;
+            carry(eid, e);
             // Characters in a lift shaft stand at its height (FUN_100a4ed0 runs for every collision actor).
             if e.door == 0
                 && e.lift.is_none()
@@ -13389,7 +13418,9 @@ impl App {
         } else {
             0
         };
-        let falls = !in_event && !world.unsettled && world.in_scene();
+        // Not retail (see the entity loop): while a carrier moves us, no gravity or floor follow pulls us off it.
+        let carried = carrier::rider_set(world.my_motion.status).is_some() && !event::bound(world, world.my_id);
+        let falls = !in_event && !world.unsettled && world.in_scene() && !carried;
         let shafts = world.lifts.shafts();
         let ride = |a: Vec3, b: Vec3| lifts::ride_in(&shafts, a, b);
         let mut steps = 0;
@@ -13438,7 +13469,13 @@ impl App {
             }
             let g = world.ground.as_ref().filter(|g| !g.is_empty());
             if next != from {
-                world.pos = g.map_or(next, |g| g.walk_player(from, next, ground::STEP_TICKS, Some(&ride)));
+                world.pos = g.map_or(next, |g| {
+                    if carried {
+                        g.walk_carried(from, next)
+                    } else {
+                        g.walk_player(from, next, ground::STEP_TICKS, Some(&ride))
+                    }
+                });
             } else if falls && let Some(g) = g {
                 // A fall goes on without input.
                 world.pos = g.walk_player(from, from, ground::STEP_TICKS, Some(&ride));
@@ -13533,6 +13570,14 @@ impl App {
         }
         if let Ok(mut me) = world.net.me.lock() {
             me.pos = world.pos.to_array();
+            // FUN_100983f0: no 0x015 at all while our status in force is a rider's (0x1c / 0x1f); GroundMode (@0x15
+            // bit 2) = HackMove | +0x120 bit 21 | GroundFlag, the bits FUN_10084640 reads.
+            let bound = event::bound(world, world.my_id);
+            let status = if bound { event::event_status(world, world.my_id) } else { world.my_motion.status };
+            me.silent = carrier::rider_set(status).is_some();
+            me.ground_mode = world.my_plate.no_snap
+                || world.event.as_ref().is_some_and(|l| l.no_ground(world.my_id, world.my_id))
+                || carrier::no_ground(status, bound);
             // Standing still keeps the facing; only the camera turns. Locked, we face the target.
             let to = if let Some((_, Some(y))) = pin {
                 Some(Vec3::new(y.cos(), 0.0, -y.sin()))
@@ -18189,10 +18234,13 @@ impl App {
                         }
                     };
                     let posed_anchor = a.anchors[..2].iter().any(|&k| k != 2);
+                    // FUN_100a4d10 reads the feet points of the drawn pose (vt+0x1c4), so these models pose on the CPU.
+                    let feet_probe = ch.cib[0] == 2 && ch.cib[2] == 2;
                     if (w.locked && (*id == w.my_id || w.target == Some(*id)))
                         || (w.camst.first && *id == w.my_id)
                         || fx_posed.contains(id)
                         || posed_anchor
+                        || feet_probe
                     {
                         a.bones = pose_now();
                     } else {
@@ -18208,7 +18256,8 @@ impl App {
                     let flags_of = rider.unwrap_or(*id);
                     let no_snap = w.entities.get(&flags_of).is_some_and(|e| e.no_snap)
                         || (flags_of == w.my_id && w.my_plate.no_snap)
-                        || w.event.as_ref().is_some_and(|l| l.no_ground(w.my_id, flags_of));
+                        || w.event.as_ref().is_some_and(|l| l.no_ground(w.my_id, flags_of))
+                        || carrier::no_ground(gate_status, w.event.as_ref().is_some_and(|l| l.is_bound(flags_of)));
                     if tilt::eligible(ch.cib[0], gate_status) && !no_snap {
                         // Ours: the player's walk normal, else the face under the position each frame (the rider's for an
                         // animal at its place) *(retail skips far moving actors, up to 121 frames)*.
@@ -18221,22 +18270,15 @@ impl App {
                             tilt::set_normal(&mut a.ground_tilt, n);
                         }
                         // FUN_100a4d10: info[0] == info[2] == 2 (behemoth, adamantoise, morbol ...) pitch with the ground under
-                        // the front feet (points 10 / 11) and the rear feet (8 / 9), each snapped *(inf: the rest pose through
-                        // last frame's matrix for retail's posed points)*.
-                        if ch.cib[0] == 2
-                            && ch.cib[2] == 2
+                        // the front feet (points 10 / 11) and the rear feet (8 / 9), each snapped. The points come through
+                        // vt+0x1c4 (FUN_100d4560 -> FUN_1002a780): the bones FUN_100cbde0 posed on the last drawn frame's
+                        // world matrix (+0x998), tilt included; none before the first pose (model +0x30 bit 4).
+                        if feet_probe
                             && let Some(g) = w.ground.as_ref()
+                            && let Some([front, rear]) = a.feet
                         {
-                            let m = actor_frame(&Place { pos, forward, tilt, status, ratio, size }, a)
-                                * glam::Mat4::from_scale(a.axes.unwrap_or(Vec3::splat(a.scale)));
-                            let pt = |k: usize| {
-                                ch.skeleton.points.get(k).and_then(|(b, off)| {
-                                    a.rest.get(*b as usize).map(|x| m.transform_point3(x.at(*off)))
-                                })
-                            };
                             let snapped = |p: Vec3| g.snap(p.x, p.z, p.y).map(|y| Vec3::new(p.x, y, p.z));
-                            if let (Some(p10), Some(p11), Some(p8), Some(p9)) = (pt(10), pt(11), pt(8), pt(9))
-                                && let (Some(fa), Some(fb)) = (snapped((p10 + p11) * 0.5), snapped((p8 + p9) * 0.5))
+                            if let (Some(fa), Some(fb)) = (snapped(front), snapped(rear))
                                 && let Some(n) = tilt::feet_normal(fa, fb)
                             {
                                 tilt::set_normal(&mut a.ground_tilt, n);
@@ -18254,6 +18296,18 @@ impl App {
                     }
                     let frame = actor_frame(&Place { pos, forward, tilt, status, ratio, size }, a);
                     let model = frame * glam::Mat4::from_scale(a.axes.unwrap_or(Vec3::splat(a.scale)));
+                    // The feet midpoints of this drawn pose, for next frame's probe (FUN_100a4d10).
+                    a.feet = None;
+                    if feet_probe && !a.bones.is_empty() {
+                        let pt = |k: usize| {
+                            ch.skeleton.points.get(k).and_then(|&(b, off)| {
+                                a.bones.get(b as usize).map(|x| model.transform_point3(x.at(off)))
+                            })
+                        };
+                        if let (Some(p10), Some(p11), Some(p8), Some(p9)) = (pt(10), pt(11), pt(8), pt(9)) {
+                            a.feet = Some([(p10 + p11) * 0.5, (p8 + p9) * 0.5]);
+                        }
+                    }
                     // FUN_1002b5e0: an arrow or plate point other than 2 is the posed point (FUN_10029930), in the world.
                     for k in 0..2 {
                         let bones = if a.bones.is_empty() { &a.rest } else { &a.bones };
