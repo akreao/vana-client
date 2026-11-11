@@ -175,7 +175,6 @@ pub struct Modern {
     /// The top bar this frame: the span its boxes take and how far faded in (the top edge's windows sit under it).
     top_bar: std::cell::Cell<Option<(Rect, f32)>>,
     /// The skillchain helper's chains shown with all their ways.
-    sc_open: std::cell::RefCell<std::collections::HashSet<u8>>,
     /// Each keyboard list's cursor last frame (`moved`).
     cursors: std::cell::RefCell<HashMap<&'static str, usize>>,
     /// The chat window's mouse selection (chatsel.rs): over the lines and its text this frame, the chat line's caret /
@@ -250,7 +249,6 @@ impl Modern {
             edge_grip: Default::default(),
             edge_ghost: Default::default(),
             top_bar: Default::default(),
-            sc_open: Default::default(),
             cursors: Default::default(),
             log_sel: Default::default(),
             log_text: Default::default(),

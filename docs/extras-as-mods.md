@@ -104,12 +104,16 @@ Done so far (checked live, Lnxcsfix):
   `upgrades`, `game.player().pet`. An older client (no `res.status_info`) fills the sections from its own tracking
   (`builtin`). The modern UI: a window per section, its heading with the count folds it, the drawer (/timers, T) folds
   all three, the recasts' window in the old window's saved place and the others under it, mode presets that named
-  "timers" name the three. The classic UI keeps the one window with three sections. Left: Suggestions read our
-  effects on the target from the old engine; they come back when Suggestions is ported (the mod's `effects_on`).
-- **Skillchain Helper** (assets/mods/skillchain): the edge window panel `skillchains`, drawing the client's view
-  (skillchain.rs, its party skills, resonances and LSB's properties stay the client's) whatever the window's elements;
-  in the classic UI under the Timers and the regime as before. Not seen live: with a trust in the party (Kupipi, Nanaa
-  Mihgo) neither master nor the mod shows it (it needs party members' known weapon skills).
+  "timers" name the three. The classic UI keeps the one window with three sections. The Suggestions mod reads our
+  effects on its target through the mod's `effects_on`.
+- **Skillchain Helper** (assets/mods/skillchain): the edge window panel `skillchains`. Wholly the mod's since 2.0.0
+  (2026-11-11): the tracking (tracker.lua: resonances from the action results, the skills each member was seen using,
+  who each monster goes for, the trusts' lists), LSB's properties and chain rules (sc.lua, data/skillchains.txt moved
+  from the client; `vana-client skillchain-gen` writes it there) and the view, built as a `lines` element (the modern
+  view, folds the mod's; the classic one-colour lines, drawn in the Timers' dock under the Timers and the regime). The
+  client keeps the dock and draws `lines`. Compared with the client's old view offscreen: the modern sample line for
+  line, the classic window pixel for pixel. Seen live with Excenmille: an open Impaction, its wait and bar. It offers
+  `facts`, `weapon_skills` and `rules` to the Suggestions mod.
 - **Minimap** (assets/mods/minimap): the edge window panel `minimap`, in which the client draws its minimap (the map,
   the radar's dots, the wheel's zoom) and, in the modern UI, Wide Scan under it; Minimap Position and Size stay the
   client's rows for the classic place. Its layer is made when its map first draws, Wide Scan's held from the first
@@ -118,12 +122,16 @@ Done so far (checked live, Lnxcsfix):
 Every row of the Extras tabs is now a bundled mod's setting or a client setting for a native panel's place (Map
 Overlay Opacity, Minimap Position and Size, Timers Position).
 
-The battle menu's suggestions had no Extras row (the modern battle menu always showed them). Now the bundled
-**Battle Suggestions** mod (assets/mods/suggestions, on by default) shows them: the rules stay the client's
-(suggest.rs) and run only while a mod listens for the `suggestions` event, which carries their rows; the mod puts
-them in the `battle_rows` slot, rows above the battle menu's commands that any mod may fill (the family submenus, the
-hold while the cursor is on them and the pick through Magic or Abilities into the target prompt are the menu's).
-Seen live: Berserk suggested while engaged, gone with the setting off, back with it on.
+The battle menu's suggestions had no Extras row (the modern battle menu always showed them). The bundled **Battle
+Suggestions** mod (assets/mods/suggestions, on by default) is wholly theirs since 2.0.0 (2026-11-11): the rules
+(rules.lua, a port of the client's suggest.rs, pure: facts in, rows out) and the facts (facts.lua: the game's state
+through `game.usable`, `game.party`'s `hp_max`, `res.spell`'s `area`, and the Skillchain and Timers mods' services;
+LSB's resistance ranks as data/resistances.txt, moved from the client). Every half second while
+`ui.native.battle_menu()` says the menu shows its commands it fills the `battle_rows` slot; while the cursor is on a
+row it only retakes the rows' families. It sends the picks to other mods as the `suggestions` event (`mods.emit`).
+The recorded cases (src/client/suggest_cases) replay through rules.lua in a test. Seen live: Dia, Bio, Lightning
+("weak to lightning") and Protect for a RDM before a Forest Hare; Berserk, Warcry, Aggressor and Combo for a WAR in a
+fight.
 
 ### Edge windows
 

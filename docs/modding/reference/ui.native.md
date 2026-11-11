@@ -29,6 +29,7 @@ end)
 | [`ui.native.highlighted()`](#uinativehighlighted) | What the cursor is on in the game window that has the keys. |
 | [`ui.native.list()`](#uinativelist) | The rows, cursor and scroll of the game list that has the keys. |
 | [`ui.native.menu_open()`](#uinativemenu_open) | Whether any game window is open. |
+| [`ui.native.battle_menu()`](#uinativebattle_menu) | The modern battle menu's cursor on its suggestion rows. |
 | [`ui.native.interface_hidden()`](#uinativeinterface_hidden) | Whether the player has hidden the interface. |
 | [`ui.native.interface(show)`](#uinativeinterface) | Shows or hides the whole interface. |
 | [`ui.native.hide(piece, hidden?)`](#uinativehide) | Hides or shows a piece of the game's HUD, or a modern panel. |
@@ -274,6 +275,26 @@ hud.text("tip", {x = 20, y = 20, text = "Press F9 for help"})
 events.on("frame", function()
   hud.set("tip", {visible = not ui.native.menu_open()})
 end)
+```
+
+## `ui.native.battle_menu`
+
+```lua
+ui.native.battle_menu() -> table?
+```
+
+The modern battle menu while it shows its commands (no target prompt over it), as a mod filling its `battle_rows`
+[slot](#uinativeslot) needs it: which of those rows the cursor is on, and that row's submenu.
+
+**Returns** `table?`: `nil` while the menu is not up (or in the classic UI); otherwise `{row, sub}`: `row` the
+`battle_rows` row under the cursor (1-based; nil when the cursor is on the commands), `sub` the cursor in that row's
+open submenu (1-based; nil when it is not open).
+
+**Example**
+
+```lua
+local m = ui.native.battle_menu()
+if m and m.row then print("on suggestion " .. m.row) end
 ```
 
 ## `ui.native.interface_hidden`

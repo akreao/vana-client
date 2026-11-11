@@ -18358,6 +18358,12 @@ From the research notes:
 
 ## Skillchain helper and the battle menu's suggestions (ours, 2026-10-29)
 
+- Since 2026-11-11 both are Lua mods wholly: the Skillchain mod (assets/mods/skillchain: tracker.lua, sc.lua,
+  data/skillchains.txt) and the Battle Suggestions mod (assets/mods/suggestions: rules.lua, facts.lua,
+  data/resistances.txt). client/skillchain.rs keeps the classic dock drawing the mod's `lines` element; client/suggest.rs
+  the battle menu's rows (the battle_rows slot), cursor and family submenu; dat/skillchains.rs only the generator.
+  The rules below are the mods' now, as they were the client's.
+
 - Not retail (the skillchain add-ons; user's spec 2026-10-29: "a flyout ... anytime we're in a party, what skillchains
   we can make and what their elements are"). The client has no table of skill properties: the server applies them.
   So the data is LandSandBoat's, bundled as `crates/vana-client/data/skillchains.txt`. It is made by

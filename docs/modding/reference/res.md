@@ -140,6 +140,7 @@ loaded yet.
 | `cast_time` | `number` | The cast time in seconds. |
 | `recast` | `number` | The recast time in seconds. |
 | `range` | `integer` | The spell's range class, 0..15, as the game file stores it (an index into the game's range table, not a distance in yalms). |
+| `area` | `boolean` | It always hits an area (the -ga spells, Protectra and the like). |
 | `levels` | `table<integer, integer>` | The level each job learns it at, keyed by job id (1 WAR .. 22 RUN). Jobs that cannot learn the spell have no key. |
 | `main_only` | `integer?` | The job that casts it only as its main job (20 SCH, 21 GEO), else `nil`. |
 | `job_points` | `table<integer, boolean>` | Jobs for which `levels` holds the job points the spell takes at level 99 (a gift), keyed by job id. |
