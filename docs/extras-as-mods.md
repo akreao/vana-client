@@ -114,9 +114,11 @@ Done so far (checked live, Lnxcsfix):
   client keeps the dock and draws `lines`. Compared with the client's old view offscreen: the modern sample line for
   line, the classic window pixel for pixel. Seen live with Excenmille: an open Impaction, its wait and bar. It offers
   `facts`, `weapon_skills` and `rules` to the Suggestions mod.
-- **Minimap** (assets/mods/minimap): the edge window panel `minimap`, in which the client draws its minimap (the map,
-  the radar's dots, the wheel's zoom) and, in the modern UI, Wide Scan under it; Minimap Position and Size stay the
-  client's rows for the classic place. Its layer is made when its map first draws, Wide Scan's held from the first
+- **Minimap** (assets/mods/minimap): the edge window panel `minimap` with a `map` element (2.0.0, 2026-11-11): the
+  mod picks the dots (each entity's `radar` colour, the compass's; the target ringed; names as tooltips), handles the
+  wheel (`wheel` event; it sets the client option `minimap_span`) and words the heading (zone and grid). The client
+  draws the map, our marker and, in the modern UI, Wide Scan's marks and Wide Scan under it; Minimap Position and Size
+  stay the client's rows for the classic place. Seen live in both UIs at the West Ronfaure gate. Its layer is made when its map first draws, Wide Scan's held from the first
   frame, as the built-in ones were (the map over Wide Scan's tab). Compared with master in both UIs.
 
 Every row of the Extras tabs is now a bundled mod's setting or a client setting for a native panel's place (Map

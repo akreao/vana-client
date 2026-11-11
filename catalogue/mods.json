@@ -1960,13 +1960,13 @@
       "files": [
         {
           "path": "init.lua",
-          "sha256": "15916582fe5118567abaf49fb1b5514676b6ebdf01b8c9c97ea850ab094c42dc",
-          "size": 434,
+          "sha256": "72c7d77ffb9146a8bf1c3bb772a420c264f9042f03646b79ea1deaf8b8f412ca",
+          "size": 2454,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/minimap/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "44982b77909724e436eadbed9317fd3e5267d9dfd984d05f13223c5c129317b1",
+          "sha256": "43aba9b36776ce14d9f26466bb18e06fa1d9554e588327a2eaa0ae54145537d6",
           "size": 360,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/minimap/mod.toml"
         }
@@ -1974,7 +1974,7 @@
       "id": "minimap",
       "kind": "lua",
       "name": "Minimap",
-      "version": "1.0.0"
+      "version": "2.0.0"
     },
     {
       "authors": [],
@@ -2665,8 +2665,8 @@
         },
         {
           "path": "init.lua",
-          "sha256": "9b9ad2d972f570463db752119df6eb5b8b8ea619d111d41adf6bf3bfefd7863a",
-          "size": 8962,
+          "sha256": "0f17bc7b8d27b7ce0e7555cb017343c3e2b58919f1732f06a96c5ee75ac8630b",
+          "size": 9416,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/skillchain/init.lua"
         },
         {
@@ -2739,8 +2739,8 @@
         },
         {
           "path": "init.lua",
-          "sha256": "236eb5ddff7071383ac5c8c6831dbc8286c4088ade69449c5b5785f014bb687c",
-          "size": 2722,
+          "sha256": "960e87be27027c10bd17d4355f79d2bcaeb02e43884ff523106f16dcbf4c1308",
+          "size": 3306,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/suggestions/init.lua"
         },
         {

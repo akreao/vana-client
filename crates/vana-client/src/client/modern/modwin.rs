@@ -323,8 +323,8 @@ pub(super) fn body(
         let here = win.focus && i == win.at;
         let top = ui.cursor().min.y;
         match e {
-            // The Timers' panels draw their sections (extras.rs).
-            Elem::Timers { .. } => {}
+            // The Timers' panels draw their sections, the minimap's its map (extras.rs).
+            Elem::Timers { .. } | Elem::Map { .. } => {}
             Elem::Lines { lines, .. } => {
                 if let Some(line) = super::extras::lines_body(ui, m, lines) {
                     clicks.push(Click::Fold(i, line));

@@ -1892,6 +1892,22 @@ impl Host {
         })
     }
 
+    /// The wheel over the map element of the open window standing in for `panel`: its `wheel` event.
+    pub(in crate::client) fn map_wheel(&mut self, panel: &str, notches: f32) {
+        let hit = self.vms.iter().rev().filter(|v| v.suspended.is_none()).find_map(|v| {
+            let st = v.st.borrow();
+            let win = st.windows.iter().find(|w| w.open && w.edge && w.panel.as_deref() == Some(panel))?;
+            let id = win.elems.iter().find_map(|e| match e {
+                window::Elem::Map { id, .. } => Some(id.clone()),
+                _ => None,
+            })?;
+            Some((v.manifest.id.clone(), win.id.clone(), id))
+        });
+        if let Some((m, win, id)) = hit {
+            self.ui_events.push((m, win, window::Event::Wheel { id, notches }));
+        }
+    }
+
     /// Whether any timers panel's window is open and shown.
     pub(in crate::client) fn has_timers(&self) -> bool {
         TIMERS_PANELS.iter().any(|p| !self.hides(p) && self.has_edge_panel(p))
@@ -5012,6 +5028,61 @@ return "acxml flow ok"
             assert(not ok and tostring(err):find("numeric id"), tostring(err))
         "#;
         vm.lua.load(script).exec().unwrap();
+    }
+
+    /// The Minimap mod: a dot for each entity the radar shows (not us), in its colour, the target ringed, named; the
+    /// wheel sets the zoom a quarter a notch within 48..512.
+    #[test]
+    fn minimap_mod_dots_and_zoom() {
+        let host = Host::default();
+        let files = BUNDLED.iter().find(|b| b.0 == "minimap").unwrap().2;
+        let vm = Vm::new(bundled_manifest("minimap").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
+        vm.lua.set_app_data(host.info.clone());
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        vm.lua
+            .load(
+                r#"
+            ME = { id = 1, target = 3 }
+            game = {
+              player = function() return ME end, zone = function() return 100 end,
+              info = function() return { map_grid = "(G-6)" } end,
+              entities = function() return {
+                { id = 1, name = "Lnxcsfix", pos = { x = 0, z = 0 }, radar = 0x00b040 },
+                { id = 2, name = "Forest Hare", pos = { x = 10, z = 5 }, radar = 0x808080 },
+                { id = 3, name = "Orcish Fodder", pos = { x = -4, z = 2 }, radar = 0xe03030 },
+                { id = 4, name = "Hidden", pos = { x = 1, z = 1 } } } end,
+            }
+            res = { zone = function() return "West Ronfaure" end }
+            settings = { get = function() return true end }
+            ui.window = function(id, s) SPEC = s end
+            ui.open = function() end
+            ui.update = function(w, id, t) SPEC.elements[1].dots = t.dots end
+            ui.on = function(id, f) HANDLER = f end
+            client = { option = function() return SPAN or 160 end, set_option = function(_, v) SPAN = v end }
+            events.on = function(name, f) if name == "frame" then FRAME = f end end
+        "#,
+            )
+            .exec()
+            .unwrap();
+        let init = files.iter().find(|f| f.0 == "init.lua").unwrap().1;
+        vm.lua.load(init).exec().unwrap();
+        vm.lua
+            .load(
+                r#"
+            FRAME()
+            assert(SPEC.heading == "West Ronfaure  (G-6)", SPEC.heading)
+            local dots = SPEC.elements[1].dots
+            assert(#dots == 2 and dots[1].tip == "Forest Hare" and dots[1].colour == 0x808080 and not dots[1].target)
+            assert(dots[2].target and dots[2].x == -4 and dots[2].z == 2)
+            HANDLER("minimap", { kind = "wheel", notches = 1 })
+            assert(math.abs(SPAN - 128) < 0.01, SPAN)
+            SPAN = 60
+            HANDLER("minimap", { kind = "wheel", notches = 2 })
+            assert(SPAN == 48, SPAN)
+        "#,
+            )
+            .exec()
+            .unwrap();
     }
 
     /// The Skillchain mod's own tracking: LSB's chain rules and data, a Burning Blade opening Liquefaction on a

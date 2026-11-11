@@ -78,6 +78,23 @@ local function tick()
   set(#rows > 0 and R.rows(rows) or nil)
 end
 
-timer.every(0.1, tick)
-events.on("settings_changed", tick)
-events.on("zone_change", function() R.chain = nil end)
+if ui.native.battle_menu then
+  timer.every(0.1, tick)
+  events.on("settings_changed", tick)
+  events.on("zone_change", function() R.chain = nil end)
+else
+  -- An older client runs the rules itself and sends their rows as the suggestions event, while a mod listens.
+  local listening
+  local function show(r) ui.native.slot("battle_rows", #r > 0 and r or nil) end
+  local function apply()
+    if settings.get("on") and not listening then
+      listening = events.on("suggestions", show)
+    elseif not settings.get("on") and listening then
+      events.off(listening)
+      listening = nil
+      ui.native.slot("battle_rows", nil)
+    end
+  end
+  apply()
+  events.on("settings_changed", apply)
+end

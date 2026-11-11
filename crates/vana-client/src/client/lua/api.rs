@@ -574,6 +574,7 @@ pub(super) fn install(
                 Elem::Timers { groups, .. } => t.set("count", groups.iter().map(|g| g.rows.len()).sum::<usize>())?,
                 Elem::Targets { rows, .. } => t.set("count", rows.len())?,
                 Elem::Lines { lines, .. } => t.set("count", lines.len())?,
+                Elem::Map { dots, .. } => t.set("count", dots.len())?,
                 Elem::Chip { text, .. } => t.set("text", text.as_str())?,
                 Elem::Text { text, .. } | Elem::Input { text, .. } => t.set("text", text.as_str())?,
                 Elem::Buttons { marked, .. } => t.set("at", marked.map(|m| m + 1))?,
@@ -1921,6 +1922,11 @@ fn entity_in(
     t.set("master", e.master)?;
     // A trust (the server marks it so).
     t.set("trust", e.marks.trust)?;
+    // The compass radar's colour for it (0xRRGGBB, monsters included), while the radar shows it.
+    if id != w.my_id && super::super::radar::shown(e) {
+        let bits = super::super::radar::kind_bits(w, id, e);
+        t.set("radar", super::super::radar::colour(bits, e.monstrosity, e.motion.status, true))?;
+    }
     t.set("hidden", e.flags & 2 != 0)?;
     t.set("race", e.race.or(e.appearance.map(|l| l.race)))?;
     t.set("model", e.model)?;
@@ -2301,6 +2307,31 @@ fn timer_groups(v: Option<Table>) -> mlua::Result<Vec<super::window::TimerGroup>
         .collect()
 }
 
+/// A map element's dots: {x, z, colour = 0xRRGGBB or {r, g, b}, target, tip}.
+fn map_dots(v: Option<Table>) -> mlua::Result<Vec<super::window::MapDot>> {
+    let Some(v) = v else { return Ok(Vec::new()) };
+    v.sequence_values::<Table>()
+        .map(|d| {
+            let d = d?;
+            let colour = match d.get::<Value>("colour")? {
+                Value::Integer(c) => [(c >> 16) as u8, (c >> 8) as u8, c as u8],
+                Value::Number(c) => {
+                    let c = c as i64;
+                    [(c >> 16) as u8, (c >> 8) as u8, c as u8]
+                }
+                v => super::hud::colour(v)?.map_or([255; 3], |c| [c[0], c[1], c[2]]),
+            };
+            Ok(super::window::MapDot {
+                x: d.get("x")?,
+                z: d.get("z")?,
+                colour,
+                target: d.get::<Option<bool>>("target")?.unwrap_or(false),
+                tip: d.get::<Option<String>>("tip")?.unwrap_or_default(),
+            })
+        })
+        .collect()
+}
+
 /// A tone: "text", "muted", "gold", "bronze" or {r, g, b, a}.
 fn line_tone(v: Value) -> mlua::Result<super::window::Tone> {
     use super::window::Tone;
@@ -2507,6 +2538,7 @@ fn elem_only(t: &Table) -> mlua::Result<super::window::Elem> {
         "lines" => {
             Elem::Lines { id: t.get::<Option<String>>("id")?.unwrap_or_default(), lines: text_lines(t.get("lines")?)? }
         }
+        "map" => Elem::Map { id: t.get::<Option<String>>("id")?.unwrap_or_default(), dots: map_dots(t.get("dots")?)? },
         other => return Err(mlua::Error::runtime(format!("unknown element type {other:?}"))),
     })
 }
@@ -2623,6 +2655,11 @@ fn update(e: &mut super::window::Elem, t: &Table) -> mlua::Result<()> {
         Elem::Lines { lines, .. } => {
             if t.contains_key("lines")? {
                 *lines = text_lines(t.get("lines")?)?;
+            }
+        }
+        Elem::Map { dots, .. } => {
+            if t.contains_key("dots")? {
+                *dots = map_dots(t.get("dots")?)?;
             }
         }
         Elem::Chip { text, note, tone: k, detail, .. } => {

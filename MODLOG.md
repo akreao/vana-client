@@ -14036,6 +14036,11 @@ From the research notes:
 
 ## Minimap (Extra, 2026-10-25; ours, the add-ons' minimap)
 
+- Since 2026-11-11 (Minimap mod 2.0.0) the mod picks what it shows: the dots (each entity's `radar` colour, as the
+  compass radar's colour() gives it with monsters on; the target ringed; names as tooltips), the zoom (the wheel over
+  its `map` element sends `wheel`; the mod sets the client option minimap_span, a quarter a notch within 48..512) and
+  the heading (zone and grid). client/minimap.rs keeps the place, the map and our marker; the modern panel Wide Scan.
+
 - client/minimap.rs, map::Overlay::draw_mini: the zone map in the style frame (inset 5), north up and centred on us,
   SPAN map pixels across (48..512, the wheel over it: x 1.25 a notch, saved as config minimap_span); our marker as the
   map window's (keytops3 159, turned by our facing); the compass radar's entities (radar::shown, radar::colour with the

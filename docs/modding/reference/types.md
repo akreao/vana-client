@@ -65,6 +65,7 @@ A character, NPC or monster in the zone, from `game.entity`, `game.entities`, `g
 | `hidden` | `boolean` | It is hidden outside events. Always false for yourself. |
 | `master` | `integer` | For a pet or trust, its master's index; 0 for none. |
 | `trust` | `boolean` | It is a trust (an alter ego called into a party). |
+| `radar` | `integer?` | The compass radar's colour for it (`0xRRGGBB`; monsters included), nil while the radar does not show it. The minimap's dots. |
 | `me` | `boolean?` | true for your own character; nil for everyone else. |
 | `race` | `integer?` | Its race number; nil when unknown. |
 | `model` | `integer?` | The model id of an NPC or monster; 0 for one drawn from a look. nil for your own entity. |

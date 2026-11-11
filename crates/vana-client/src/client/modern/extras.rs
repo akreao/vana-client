@@ -1226,7 +1226,7 @@ fn minimap_panel(p: &mut Panels, w: &mut World) {
     let mut resize: Option<f32> = None;
     let (pos, facing, span) = (f.pos, f.facing, f.span);
     let dots = f.dots.clone();
-    let ids = f.ids.clone();
+    let tips = f.tips.clone();
     // The Wide Scan row picked and the area narrowed to, in world x / z.
     let origin = m.scan_origin.get();
     let picked = m.scan_pick.get().and_then(|i| {
@@ -1238,15 +1238,8 @@ fn minimap_panel(p: &mut Panels, w: &mut World) {
     });
     let (picking, narrowed) = (m.scan_picking.get(), m.scan_area.get());
     let mut chosen: Option<(f32, f32, f32)> = None;
-    let label =
-        p.gu.map(|gu| {
-            format!(
-                "{}  {}",
-                crate::dat::font::plain(&crate::dat::font::decode_sjis(&gu.area_name(w.pos_zone))),
-                m.grid(w, gu)
-            )
-        })
-        .unwrap_or_default();
+    // The heading the mod words (the zone and grid), else the title.
+    let label = if win.heading.is_empty() { title.clone() } else { win.heading.clone() };
     let folded = p.folded.get("minimap").copied().unwrap_or(false);
     let mut wheel = 0.0f32;
     let toggle = edge_window(p, "minimap", d + 30.0, false, folded, &title, |ui, side, _| {
@@ -1287,10 +1280,9 @@ fn minimap_panel(p: &mut Panels, w: &mut World) {
         }
         arrow_in(&painter, c, facing, 9.0, ME);
         if let (Some((_, k)), Some(h)) = (near.filter(|_| !picking), hover)
-            && let Some(name) =
-                ids.get(k).and_then(|id| w.entities.get(id)).map(|e| e.name.clone()).filter(|n| !n.is_empty())
+            && let Some(name) = tips.get(k).filter(|n| !n.is_empty())
         {
-            m.tip_at(ui.ctx(), h, &name, "");
+            m.tip_at(ui.ctx(), h, name, "");
         }
         // World x / z on the map and back.
         let at = |x: f32, wz: f32| c + vec2((x * s - px) * z, (-wz * s - py) * z);
@@ -1388,8 +1380,7 @@ fn minimap_panel(p: &mut Panels, w: &mut World) {
         w.sounds.push(crate::audio::Ui::Cursor as u32);
     }
     if wheel != 0.0 {
-        w.minimap_span = (w.minimap_span * 1.25f32.powf(-wheel)).clamp(minimap::SPAN.0, minimap::SPAN.1);
-        w.minimap_dirty = true;
+        w.lua.map_wheel("minimap", wheel);
     }
     if let Some(nd) = resize {
         let mut place = p.place("minimap");

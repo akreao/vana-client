@@ -168,6 +168,16 @@ impl TextLine {
     }
 }
 
+/// A dot on a map element: where (world x / z), its colour, ringed as the target, and the tooltip naming it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MapDot {
+    pub x: f32,
+    pub z: f32,
+    pub colour: [u8; 3],
+    pub target: bool,
+    pub tip: String,
+}
+
 /// A list column: its heading, width (0: a share of what is left) and alignment.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Col {
@@ -277,6 +287,12 @@ pub enum Elem {
         h: f32,
         cmds: Vec<Cmd>,
     },
+    /// The zone's map around us in the minimap panel's window (the client's map, our marker, Wide Scan's marks; the
+    /// zoom is the client option minimap_span): the mod's dots; the wheel over it sends `wheel`.
+    Map {
+        id: String,
+        dots: Vec<MapDot>,
+    },
     /// Lines of text in tones, with element icons, bars and fold headers (the skillchain helper's view); a fold
     /// header's click sends `fold` with its key.
     Lines {
@@ -378,6 +394,7 @@ impl Elem {
                 | Elem::Canvas { .. }
                 | Elem::Timers { .. }
                 | Elem::Lines { .. }
+                | Elem::Map { .. }
                 | Elem::Targets { .. }
                 | Elem::Chip { .. }
         )
@@ -398,6 +415,7 @@ impl Elem {
             | Elem::Gauge { id, .. }
             | Elem::Timers { id, .. }
             | Elem::Lines { id, .. }
+            | Elem::Map { id, .. }
             | Elem::Targets { id, .. }
             | Elem::Chip { id, .. }
                 if !id.is_empty() =>
@@ -516,6 +534,11 @@ pub enum Event {
         id: String,
         key: String,
     },
+    /// The wheel over a map element: notches up (zoom in) positive.
+    Wheel {
+        id: String,
+        notches: f32,
+    },
     /// A click on a canvas, in its units: `right` for the right button.
     Click {
         id: String,
@@ -578,6 +601,7 @@ impl Event {
             Event::Toggle { id, open } => json!({"kind": "toggle", "id": id, "open": open}),
             Event::Sort { id, column } => json!({"kind": "sort", "id": id, "column": column + 1}),
             Event::Fold { id, key } => json!({"kind": "fold", "id": id, "key": key}),
+            Event::Wheel { id, notches } => json!({"kind": "wheel", "id": id, "notches": notches}),
             Event::Click { id, x, y, right } => {
                 json!({"kind": "click", "id": id, "x": x.round() as i64, "y": y.round() as i64, "button": if *right { "right" } else { "left" }})
             }
@@ -1628,7 +1652,7 @@ impl Window {
         }
         match &self.elems[i] {
             // The Timers' panels draw their sections (timers.rs, modern/extras.rs); target rows are modern only.
-            Elem::Timers { .. } | Elem::Targets { .. } | Elem::Chip { .. } => 0.0,
+            Elem::Timers { .. } | Elem::Map { .. } | Elem::Targets { .. } | Elem::Chip { .. } => 0.0,
             Elem::Lines { lines, .. } => lines.iter().map(classic_line_h).sum::<f32>() + 4.0,
             Elem::Text { .. } => LINE,
             Elem::Buttons { .. } | Elem::Slider { .. } | Elem::Input { .. } | Elem::Choice { .. } => PITCH,
@@ -1692,7 +1716,7 @@ impl Window {
             }
             let here = self.focus && i == self.at;
             match e {
-                Elem::Timers { .. } | Elem::Targets { .. } | Elem::Chip { .. } => {}
+                Elem::Timers { .. } | Elem::Map { .. } | Elem::Targets { .. } | Elem::Chip { .. } => {}
                 Elem::Lines { lines, .. } => {
                     let mut ly = ey;
                     for l in lines {

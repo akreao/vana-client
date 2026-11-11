@@ -137,6 +137,18 @@ A bar filled from 0 to 1, with a label and a text. It is not a cursor stop.
 | `style` | `string` | none | `"row"`: a list row, as the training regime window's: the label at the left, the text at the right, a thin bar under them (a `value` of 0 or less: no bar fill, the bar dim). |
 | `dim` | `boolean` | `false` | A `row` drawn dim, as a finished one is. |
 
+### map
+
+The zone's map around you, north up, in the window standing in for the minimap panel (`panel = "minimap"`): the
+client draws the map and your marker (and, in the modern UI, Wide Scan's marks), as big as the panel; the zoom is the
+client option `minimap_span` (see [client](client.md)). The wheel over it sends a `wheel` event; the Minimap mod sets
+the zoom from it. Drawn only in that panel's window, in both UIs; it is not a cursor stop.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | `string` | `""` | Optional; `ui.update` with `dots` replaces them. |
+| `dots` | `table[]` | `{}` | Marks on the map: `{x, z, colour, target, tip}`: a world position, a colour (`0xRRGGBB` or `{r, g, b}`), `target` drawn larger and ringed in red, `tip` the tooltip naming it (modern UI). |
+
 ### lines
 
 Lines of text in tones, with element icons, thin bars and fold headers: the skillchain helper's view. The modern UI
@@ -404,6 +416,8 @@ the window has already changed: a list's cursor is on the chosen row, a closed w
 | `"change"` | `id`, `value` | A colour changes: each step while it is edited, and again when Escape puts the old colour back. `value` is `{r, g, b, a}`. |
 | `"toggle"` | `id`, `open` | A section is folded (`open = false`) or unfolded (`open = true`). |
 | `"sort"` | `id`, `column` | A list's column heading is clicked. `column` is which column. |
+| `"fold"` | `id`, `key` | A [`lines`](#lines) element's fold header is clicked: its `key`. |
+| `"wheel"` | `id`, `notches` | The wheel over a [`map`](#map) element: notches up (zoom in) positive. |
 | `"click"` | `id`, `x`, `y` | A canvas is clicked. `x` and `y` (integers) are where, in the canvas's units from its top left. |
 | `"drag_start"` | `id`, `x`, `y`, `dx`, `dy` | The pointer moves with the left button held down on a canvas: a drag starts. `x`, `y` are where the button went down. |
 | `"drag"` | `id`, `x`, `y`, `dx`, `dy` | The pointer moves during that drag. `dx`, `dy` are the move since the last report. The drag stays with the canvas, even when the pointer leaves it, until the button comes up. |
@@ -497,7 +511,7 @@ redraws it with the new elements; the values you give (`at`, `text`, `open` and 
 | `heading` | `string` | the title | An edge window's line over its elements. |
 | `resize` | `boolean` | `false` | An edge window the player can make wider (modern UI). |
 | `grow` | `string` | none | `"up"`: an edge window whose canvas grows or shrinks keeps its bottom edge where it is (free, or on a side or the bottom edge); on the top edge it keeps its top and grows down (modern UI). Its handler gets `dock` {side} (`"top"`, `"bottom"`, `"left"`, `"right"` or `"free"`) when it is first shown and whenever the player moves it to another edge, so it can lay itself out for that edge. |
-| `panel` | `string` | none | `"regime"`, `"timers_recasts"`, `"timers_buffs"`, `"timers_debuffs"`, `"skillchains"` (the skillchain helper's: its [`lines`](#lines) element, drawn in the Timers' dock in the classic UI) or `"minimap"` (the client's minimap, with Wide Scan under it in the modern UI): the edge window stands in for that built-in panel: its saved place and fold, its name for `ui.native.hide` and `/uimodes`, and in the classic UI its place in the Timers' dock (under the Timers window, with the drawer arrow and the slide). The classic UI draws an edge window without a `panel` as other windows; in the modern UI one takes a place the first time it shows (the left edge under the edge windows there if it fits above the location panel, else the right edge under the minimap) and keeps it until the player moves it. An ordinary (not edge) window takes `"focus"` (the modern focus panel, on the target panel; not drawn while an event takes the target window down) or `"pending"` (the pending-action chip's panel, over the cast bar): it stands in for that panel, with its place, `ui.native.hide` and `/uimodes`; neither is drawn in the classic UI. |
+| `panel` | `string` | none | `"regime"`, `"timers_recasts"`, `"timers_buffs"`, `"timers_debuffs"`, `"skillchains"` (the skillchain helper's: its [`lines`](#lines) element, drawn in the Timers' dock in the classic UI) or `"minimap"` (its [`map`](#map) element in a corner, with Wide Scan under it in the modern UI): the edge window stands in for that built-in panel: its saved place and fold, its name for `ui.native.hide` and `/uimodes`, and in the classic UI its place in the Timers' dock (under the Timers window, with the drawer arrow and the slide). The classic UI draws an edge window without a `panel` as other windows; in the modern UI one takes a place the first time it shows (the left edge under the edge windows there if it fits above the location panel, else the right edge under the minimap) and keeps it until the player moves it. An ordinary (not edge) window takes `"focus"` (the modern focus panel, on the target panel; not drawn while an event takes the target window down) or `"pending"` (the pending-action chip's panel, over the cast bar): it stands in for that panel, with its place, `ui.native.hide` and `/uimodes`; neither is drawn in the classic UI. |
 
 **Returns** nothing.
 

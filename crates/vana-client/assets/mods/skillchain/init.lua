@@ -12,6 +12,8 @@ local members, combos    -- kept a half second (they need the ability lists)
 local members_at = -math.huge
 local shown = nil        -- the lines last sent
 local made = false
+-- An older client knows no lines element: it draws its own view in the bare window, as before.
+local legacy = false
 
 local function level_tone(c)
   local l = SC.level(c)
@@ -134,6 +136,10 @@ local function classic_lines(v, ms, cbs)
 end
 
 local function refresh()
+  if legacy then
+    if settings.get("on") then ui.open("skillchains") else ui.close("skillchains") end
+    return
+  end
   T.tick()
   if not settings.get("on") then
     if made then ui.close("skillchains") end
@@ -154,8 +160,14 @@ local function refresh()
   local lines = game.info().modern_ui and modern_lines(v) or classic_lines(v, members, combos)
   local key = json.encode(lines)
   if not made then
-    ui.window("skillchains", { edge = true, panel = "skillchains", resize = true, fit = true, width = 240,
-      title = "Skillchains", elements = { { type = "lines", id = "view", lines = lines } } })
+    local ok = pcall(ui.window, "skillchains", { edge = true, panel = "skillchains", resize = true, fit = true,
+      width = 240, title = "Skillchains", elements = { { type = "lines", id = "view", lines = lines } } })
+    if not ok then
+      legacy = true
+      ui.window("skillchains", { edge = true, panel = "skillchains", resize = true, title = "Skillchains" })
+      ui.open("skillchains")
+      return
+    end
     made = true
   elseif key ~= shown then
     ui.update("skillchains", "view", { lines = lines })
