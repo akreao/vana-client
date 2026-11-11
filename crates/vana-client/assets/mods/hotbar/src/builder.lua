@@ -113,11 +113,12 @@ end
 local SPELL_KINDS = { "White", "Black", "Summoning", "Ninjutsu", "Song", "Blue", "Geomancy", "Trust" }
 
 -- A target from valid-target bits (spells and items): an enemy for one that can hit enemies, yourself for one that
--- only takes you, else a player.
+-- only takes you, a party (or alliance) member for one that takes no other player (Refresh: 0x05), else a player.
 function M.default_target(targets)
   local t = targets or 0
   if t & 0x20 ~= 0 then return "t" end
   if t & ~1 == 0 then return "me" end
+  if t & 0x12 == 0 then return t & 8 ~= 0 and "stal" or "stpt" end
   return "stpc"
 end
 

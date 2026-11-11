@@ -1284,8 +1284,8 @@
         },
         {
           "path": "src/builder.lua",
-          "sha256": "cb239ea39e850c42a90114951a73deb059b17552e0f82da37cbd7762f6eded98",
-          "size": 14106,
+          "sha256": "414d281ee9db1841c8dde5adf0fb52ae713fc82810fbad44741a91fed4d83fbc",
+          "size": 14254,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/builder.lua"
         },
         {

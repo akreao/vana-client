@@ -4938,6 +4938,11 @@ return "acxml flow ok"
             end
             local got = names()
             assert(got == "Cure IV, Dia II, Utsusemi: Ichi", got)
+            -- A spell's default target: the party picker for one that takes no other player (Refresh 0x05), the
+            -- alliance's for 0x0d, any player for Protect's 0x1d, the current target for one that hits enemies.
+            assert(builder.default_target(0x05) == "stpt" and builder.default_target(0x0d) == "stal")
+            assert(builder.default_target(0x1d) == "stpc" and builder.default_target(0x3f) == "t")
+            assert(builder.default_target(0x01) == "me")
             -- New: the Builder lists them, each row with its description.
             local shown, update = nil, ui.update
             ui.update = function(w, id, t)
