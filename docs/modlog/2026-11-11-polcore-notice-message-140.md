@@ -49,7 +49,8 @@ reach).
 - The header (FUN_100150e0): ids, sender (15 bytes), title (15 bytes, half a two-byte character dropped; +0x42 bit
   12 when the title given was longer), +0x30 a running counter (FUN_10015f00), +0x34 the time (FUN_10052050: the
   sign-on's clock plus elapsed seconds), +0x38 the data's length, +0x3c / +0x3d the two handle numbers *(inf)*, +0x3e
-  type << 7 with bit 15, +0x42 bits 1..7 FUN_10012920's value *(inf: the area code)*. The title FFXiMain gives it is cut from the data itself
+  type << 7 with bit 15, +0x42 bits 1..7 FUN_10012920's value *(inf: the area code)*. The title FFXiMain gives it
+  is cut from the data itself
   (FUN_100f4ff0(out, 0x20, data)): bytes up to the first NUL, every run of bytes at or under a space, the 0x07
   among them, as one space, at most 31 bytes: "Let's be friends Bob" in the list reads "Let's be friend". An accept
   or a decline does not build a header: +0x490 swaps the ids and the handle numbers of the request's own header,
