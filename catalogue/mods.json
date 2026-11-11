@@ -2969,8 +2969,8 @@
         },
         {
           "path": "durations.lua",
-          "sha256": "eb07a9ebeecea7cf2f773a226dc0c506aa4acda565278553f64408029064d783",
-          "size": 20595,
+          "sha256": "19ec2d25d9b9357b136f11ac65311af9f20e3a1f47fd96ffd27f6a8a4469049a",
+          "size": 20842,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/timers/durations.lua"
         },
         {
@@ -2993,8 +2993,8 @@
         },
         {
           "path": "rows.lua",
-          "sha256": "80ee3fb557a8cc994e338c22e8aeb0f97324d6479d488370e48da58684356134",
-          "size": 9562,
+          "sha256": "1a8d58d69611ffcfe0bf87d04e66a0955f3958135b162d580013a2cadc2bef34",
+          "size": 10607,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/timers/rows.lua"
         }
       ],

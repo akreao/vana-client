@@ -4875,8 +4875,6 @@ return "acxml flow ok"
         vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
     }
 
-    /// Hotbars' Builder lists the spells the magic list offers: learned and castable on our jobs at their levels
-    /// (RDM 54 / NIN 27: no Dia III, no Utsusemi: Ni), blue magic only while set.
     /// The Timers mod's own tracking: LSB's durations (the examples the client's engine was tested with), the charge
     /// rule, the luopan, a Slow landing on a monster, and our own effects shortest first.
     #[test]
@@ -5015,10 +5013,24 @@ return "acxml flow ok"
             assert(#secs[1] == 0 and secs[2][1].name == "Spawns" and secs[2][1].rows[1].name == "Pop")
             local ok, err = pcall(R.add, "countdowns", "Bad", 10, { icon = { kind = "status" } })
             assert(not ok and tostring(err):find("numeric id"), tostring(err))
+            -- A number name is the same row on add and remove.
+            R.clear("countdowns")
+            R.add("countdowns", 5, 30)
+            R.add("countdowns", 5, 30)
+            assert(#R.sections(false)[2][1].rows == 1)
+            R.remove("countdowns", 5)
+            assert(#R.sections(false)[2] == 0)
+            -- Copies of one status (maneuvers) each keep their own gauge.
+            buffs = { { id = 300, remaining = 20 }, { id = 300, remaining = 60 } }
+            R.sections(true)
+            local man = R.sections(true)[2][1].rows
+            assert(man[1].total == 20 and man[2].total == 60, man[1].total .. " " .. man[2].total)
         "#;
         vm.lua.load(script).exec().unwrap();
     }
 
+    /// Hotbars' Builder lists the spells the magic list offers: learned and castable on our jobs at their levels
+    /// (RDM 54 / NIN 27: no Dia III, no Utsusemi: Ni), blue magic only while set.
     #[test]
     fn hotbar_builder_spells_for_jobs() {
         let host = Host::default();

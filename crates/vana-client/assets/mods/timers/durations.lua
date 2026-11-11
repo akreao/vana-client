@@ -20,9 +20,12 @@ end
 -- rows[kind][id] = { row... }; kind "spell", "ability", "ws" or "pet".
 local rows, rules, gear, augments, merits, jps
 
+local function keep(...) rows, rules, gear, augments, merits, jps = ... end
+
+-- Built into locals and kept only once whole: a load cut short (the time budget) is tried again, never half used.
 local function load()
   if rows then return end
-  rows, rules, gear, augments, merits, jps = { spell = {}, ability = {}, ws = {}, pet = {} }, {}, {}, {}, {}, {}
+  local rows, rules, gear, augments, merits, jps = { spell = {}, ability = {}, ws = {}, pet = {} }, {}, {}, {}, {}, {}
   for _, f in ipairs(lines("data/actions.tsv")) do
     local kind, id = f[1], tonumber(f[2])
     if #f >= 11 and rows[kind] and id then
@@ -90,6 +93,7 @@ local function load()
     local id, job = tonumber(f[1]), tonumber(f[2])
     if id and job then jps[id] = job end
   end
+  keep(rows, rules, gear, augments, merits, jps)
 end
 
 function M.rows(kind, id)
