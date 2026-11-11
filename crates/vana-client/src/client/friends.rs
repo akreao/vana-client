@@ -19,10 +19,15 @@ pub struct Friend {
     /// What we call them (the handle name of the entry).
     pub name: String,
     pub pending: bool,
-    /// From the notices: 0 offline, 1 online, 2 away; the character they play; the newest notice's age.
+    /// From the notices: 0 offline, 1 online, 2 away (polcore's entry bits 13..15, `profile::entry_status`); the
+    /// character they play; the newest notice's age.
     pub status: u8,
     pub char_id: Option<u32>,
     pub age: u64,
+    /// The entry's playing bit (16) and the last character primitive a notice carried (polcore keeps one per
+    /// character slot; ours the last): `char_id` is that character while playing.
+    playing: bool,
+    last_char: Option<u32>,
     /// The playing character's search record (+0xb0) and whether it is current (+0xfc bit 0).
     pub record: Option<Record>,
     pub fresh: bool,
@@ -407,20 +412,29 @@ pub fn poll(w: &mut World) {
     }
 }
 
-/// A friend's status notice (3.4.3): applied to the entry at its list index when newer than the last.
-fn notice(w: &mut World, account: u64, index: u8, status: u8, char_id: Option<u32>, age: u64) {
+/// A friend's status notice (3.4.3), as polcore's handler applies it (the function at 0x100160a0.., FUN_1001c9b0):
+/// to the entry at its list index, only when newer than the last applied (an equal age is dropped too); the status
+/// block only when the notice says it applies, the character only when a primitive follows.
+fn notice(w: &mut World, account: u64, index: u8, status: Option<(u8, bool)>, char_id: Option<u32>, age: u64) {
     let Some(f) = w.friends.list.iter_mut().find(|f| !f.black && f.index == index && f.account == account) else {
         log::info!("friends: status of account {account} (index {index}) for no entry");
         return;
     };
-    if age < f.age {
+    if age <= f.age {
         return;
     }
-    if f.char_id != char_id {
-        (f.record, f.fresh) = (None, false);
+    f.age = age;
+    if let Some((st, playing)) = status {
+        (f.status, f.playing) = (st, playing);
     }
-    (f.status, f.char_id, f.age) = (status, char_id, age);
-    log::info!("friends: {} is {status} ({char_id:?})", f.name);
+    if char_id.is_some() {
+        f.last_char = char_id;
+    }
+    let now = f.last_char.filter(|_| f.playing);
+    if f.char_id != now {
+        (f.char_id, f.record, f.fresh) = (now, None, false);
+    }
+    log::info!("friends: {} is {} ({:?})", f.name, f.status, f.char_id);
 }
 
 /// FUN_100e63e0 / FUN_100e6650: the playing friends' characters from xi_search, 20 ids a query (wire type 1); a round
@@ -610,6 +624,7 @@ fn apply_list(w: &mut World, list: Vec<FriendInfo>) {
             if let Some(o) = old.iter().find(|o| o.black == f.black && o.account == f.account) {
                 (f.status, f.char_id, f.age, f.record, f.fresh) =
                     (o.status, o.char_id, o.age, o.record.clone(), o.fresh);
+                (f.playing, f.last_char) = (o.playing, o.last_char);
             }
             f
         })
@@ -653,17 +668,34 @@ pub fn send(w: &mut World, op: Op, text: Vec<u8>) {
         Op::Accept { to, .. } => (*to, profile::FRIEND_ACCEPTED),
         Op::Decline { to } => (*to, profile::FRIEND_DECLINED),
     };
-    let t = title(w, kind, matches!(op, Op::Reply { .. }));
+    let t = crate::dat::font::encode_sjis(&title(w, kind, matches!(op, Op::Reply { .. })));
+    // FUN_100f3190's title lengths: 0x10 for a request (FUN_100f3ba0) and an accept (FUN_100f39a0), else 0x32. A
+    // request's text is their character's name; an accept's is empty (the typed name only names the entry); a
+    // decline's is msgline's buffer, which nothing typed into.
     let body = match &op {
-        Op::Request { char_name, .. } => profile::encode_body(t.as_bytes(), char_name.as_bytes()),
-        _ => profile::encode_body(t.as_bytes(), &text),
+        Op::Request { char_name, .. } => {
+            profile::encode_body(&profile::body_title(&t, 0x10), &crate::dat::font::encode_sjis(char_name))
+        }
+        Op::Accept { .. } => profile::encode_body(&profile::body_title(&t, 0x10), &[]),
+        _ => profile::encode_body(&profile::body_title(&t, 0x32), &text),
     };
+    // The header's title comes from the data (FUN_100f4ff0), but an accept or a decline answers with the request's
+    // own header turned round (polcore table +0x490, FUN_10015050), title kept.
+    let (head_title, title_cut) = matches!(op, Op::Accept { .. } | Op::Decline { .. })
+        .then(|| {
+            let m = w.friends.mail.iter().rev();
+            let mut m = m.filter(|m| m.header.from == to && m.header.kind == profile::FRIEND_REQUEST);
+            m.next().map(|m| (m.header.title.clone(), m.header.title_cut))
+        })
+        .flatten()
+        .unwrap_or_else(|| profile::header_title(&body));
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos());
     let header = profile::MsgHeader {
         from: me,
         to,
         sender: w.name.clone(),
-        title: t.chars().take(15).collect(),
+        title: head_title,
+        title_cut,
         seq: nanos,
         date: now_unix(),
         length: body.len() as u32,

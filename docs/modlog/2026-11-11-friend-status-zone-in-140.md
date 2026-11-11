@@ -68,10 +68,6 @@ FUN_100ee2a0). Decompiled with Ghidra; the 0x00A branch, its jump table and the 
 - Tests: zone_in_resets_only_away, a_change_repeats_the_old_status_first, change_decision, settle_gate,
   retry_backs_off, pol_return_states. Not checked live.
 - Still open:
-  - polcore's own side: how it maps a notice's Status into the friend entry's bits 13-15, and the message body's
-    format (slots 0x110 / 0x10f). polcore.dll is not on this machine (no PlayOnline viewer install; xiloader stands
-    in for it), so neither could be traced. What FFXiMain shows agrees with ours' Status - 1: the entry's 1 and 2
-    are Online and Away with keytops3 64 / 65, and an open status + 1 puts Invisible (4) at 5, in the 5..7 that list
-    as offline *(inf)*.
+  - polcore's own side is in "Friend List: polcore's notice status and message format" (2026-11-11).
   - Deleting, unblocking and reordering: retail has none in game (commenu's help sends the player to the viewer);
     still the user's call.
