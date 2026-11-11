@@ -903,13 +903,7 @@ impl SettingsUi {
             }
             // The v5 tool: the window, then 95 %, 90 % ... while the height stays 512 or more.
             Sizes::Ui => {
-                let mut v = vec![[0, 0]];
-                let mut f = 0.95;
-                while h as f32 * f >= 512.0 && f > 0.3 {
-                    v.push(scaled(f));
-                    f -= 0.05;
-                }
-                v
+                std::iter::once([0, 0]).chain(crate::config::ui_steps(self.window).into_iter().map(|s| s.1)).collect()
             }
         }
     }
@@ -1052,8 +1046,19 @@ impl SettingsUi {
             Val::Size(a, b, k) => {
                 let list = self.sizes(k);
                 let [x, y] = list[i.min(list.len() - 1)];
+                let (old, ui) = ([self.tool_get(a), self.tool_get(b)], [self.tool_get("0037"), self.tool_get("0038")]);
                 self.tool_set(a, x);
                 self.tool_set(b, y);
+                // A new Resolution resizes the window unless it is borderless at the desktop's size (0034 = 3): a Menu
+                // Size step keeps its share of the window, and the lists follow the new size.
+                if k == Sizes::Window && self.tool_get("0034") != 3 {
+                    let moved = |from| crate::config::ui_step_moved(from, [x, y], ui);
+                    if let Some([w, h]) = moved(self.window).or_else(|| moved(old)) {
+                        self.tool_set("0037", w);
+                        self.tool_set("0038", h);
+                    }
+                    self.window = [x, y];
+                }
             }
             Val::Gamma => {
                 let g = ((i.min(20) as f32 - 10.0) / 10.0 * 10.0).round() / 10.0;

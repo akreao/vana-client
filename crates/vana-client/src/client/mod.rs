@@ -145,6 +145,7 @@ mod registry;
 mod remodel;
 mod ride;
 mod roe;
+mod screen;
 mod scrollbar;
 mod seacom;
 mod search;
@@ -19662,6 +19663,15 @@ impl ApplicationHandler for App {
         let window = Arc::new(event_loop.create_window(attrs).expect("creating the window"));
         #[cfg(windows)]
         windpi::keep_size(&window);
+        // A first start (no config yet): Menu Size and Interface Size from the screen's size (client/screen.rs).
+        if std::mem::take(&mut self.cfg.first_start)
+            && let Some(m) = window.current_monitor().or_else(|| monitor.clone())
+        {
+            screen::size_ui(&mut self.cfg, &m);
+            if let Err(e) = self.cfg.save() {
+                log::warn!("saving the config: {e:#}");
+            }
+        }
         if let Some(m) = window.current_monitor() {
             crate::gamecfg::set_desktop(m.size().width, m.size().height);
         }
