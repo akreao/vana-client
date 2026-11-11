@@ -180,6 +180,9 @@ word of the Items or Key Items group is held.
 
 **Returns** `string`: the phrase. It is built from the two values whether or not the dictionary has such a phrase.
 
+A phrase group's id `0` is the group itself, a category of the game's list and not something to send: a chat line ends
+at it. An `"item"` or `"key_item"` id `0` is that group's title, which can be sent.
+
 **Errors** A `group` or `id` outside its range raises an error.
 
 **Example**

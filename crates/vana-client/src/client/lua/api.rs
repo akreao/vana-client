@@ -1628,7 +1628,7 @@ pub(super) fn install(
         "autotranslate",
         lua.create_function(|lua, (word, group): (Option<String>, Option<Value>)| {
             let w = world(lua)?;
-            let filter = group.map(|g| super::runtime::phrase_block(&g, 0)).transpose()?;
+            let filter = group.map(|g| super::runtime::phrase_category(&g)).transpose()?;
             let Some(d) = w.battle.as_ref().and_then(|b| b.phrases.as_ref()) else { return Ok(None) };
             let word = word.unwrap_or_default();
             let (hits, matched) = d.query(&word, filter);
@@ -1653,7 +1653,15 @@ pub(super) fn install(
                         t.set("id", item)?;
                     }
                 }
-                t.set("phrase", super::runtime::phrase(id))?;
+                // A built group's title as a line holds it: id 0 by the game's encoder (the category block has a 00).
+                let block = match crate::dat::autotrans::block_item(id) {
+                    Some((key, 0)) => {
+                        use crate::dat::autotrans::{KIND_ITEMS, KIND_KEY_ITEMS, id_block};
+                        id_block(if key { KIND_KEY_ITEMS } else { KIND_ITEMS }, 0)
+                    }
+                    _ => id,
+                };
+                t.set("phrase", super::runtime::phrase(block))?;
                 out.push(t)?;
             }
             Ok(Some(out))

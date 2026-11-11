@@ -381,7 +381,7 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
             let hit = hit.or_else(|| {
                 d.built().iter().find_map(|g| {
                     if g.title.to_lowercase().trim_matches(|c| c == '【' || c == '】') == want.as_str() {
-                        return Some([g.kind, 2, 0, 0]);
+                        return Some(crate::dat::autotrans::id_block(g.kind, 0));
                     }
                     g.words.iter().find(|p| p.1.to_lowercase() == want).map(|p| p.0)
                 })
@@ -571,23 +571,39 @@ pub(super) fn phrase(b: [u8; 4]) -> String {
         .collect()
 }
 
-/// An auto-translate category a mod names: a phrase group's number, or "item" / "key_item" for the two groups the
-/// game builds (kinds 7 and 0x13); the id within it as a block (a phrase id; an item or key item id, 0 the title).
-pub(super) fn phrase_block(group: &Value, id: u32) -> mlua::Result<[u8; 4]> {
-    use crate::dat::autotrans::{KIND_ITEMS, KIND_KEY_ITEMS, id_block};
-    let byte = |n: i64, what: &str| u8::try_from(n).map_err(|_| mlua::Error::runtime(format!("{what}: 0 to 255")));
-    let built = |kind: u8| match u16::try_from(id) {
-        Ok(0) => Ok([kind, 2, 0, 0]),
-        Ok(id) => Ok(id_block(kind, id)),
-        Err(_) => Err(mlua::Error::runtime("id: 0 to 65535")),
-    };
+/// An auto-translate group a mod names: a phrase group's number (Ok), or "item" / "key_item" for the two groups the
+/// game builds (Err: kinds 7 and 0x13).
+fn phrase_group(group: &Value) -> mlua::Result<Result<u8, u8>> {
+    use crate::dat::autotrans::{KIND_ITEMS, KIND_KEY_ITEMS};
+    let byte = |n: i64| u8::try_from(n).map(Ok).map_err(|_| mlua::Error::runtime("group: 0 to 255"));
     match group {
-        Value::Integer(g) => Ok([2, 2, byte(*g, "group")?, byte(id as i64, "id")?]),
-        Value::Number(g) if g.fract() == 0.0 => Ok([2, 2, byte(*g as i64, "group")?, byte(id as i64, "id")?]),
-        Value::String(s) if s.as_bytes() == b"item" => built(KIND_ITEMS),
-        Value::String(s) if s.as_bytes() == b"key_item" => built(KIND_KEY_ITEMS),
+        Value::Integer(g) => byte(*g),
+        Value::Number(g) if g.fract() == 0.0 => byte(*g as i64),
+        Value::String(s) if s.as_bytes() == b"item" => Ok(Err(KIND_ITEMS)),
+        Value::String(s) if s.as_bytes() == b"key_item" => Ok(Err(KIND_KEY_ITEMS)),
         _ => Err(mlua::Error::runtime("group: a group number, \"item\" or \"key_item\"")),
     }
+}
+
+/// The block a line holds for (group, id): a phrase's group and id; an item or key item id as the game writes it
+/// (`id_block`: no 00 byte, so id 0, the built group's title, is [8 | 0x14, 2, FF, FF]).
+pub(super) fn phrase_block(group: &Value, id: u32) -> mlua::Result<[u8; 4]> {
+    match phrase_group(group)? {
+        Ok(g) => Ok([2, 2, g, u8::try_from(id).map_err(|_| mlua::Error::runtime("id: 0 to 255"))?]),
+        Err(kind) => match u16::try_from(id) {
+            Ok(id) => Ok(crate::dat::autotrans::id_block(kind, id)),
+            Err(_) => Err(mlua::Error::runtime("id: 0 to 65535")),
+        },
+    }
+}
+
+/// The category block of a group for the candidate list's query (FUN_101ae200: a block whose last byte is 0). It
+/// never goes into a line: the 00 would end it.
+pub(super) fn phrase_category(group: &Value) -> mlua::Result<[u8; 4]> {
+    Ok(match phrase_group(group)? {
+        Ok(g) => [2, 2, g, 0],
+        Err(kind) => [kind, 2, 0, 0],
+    })
 }
 
 /// Values copied between mods: plain data only (api::plain), an error naming what is not.
@@ -661,7 +677,15 @@ mod tests {
         assert_eq!(b(s("item"), 0x1010), Some([7, 2, 0x10, 0x10]));
         assert_eq!(b(s("item"), 0x50), Some([9, 2, 0xff, 0x50]));
         assert_eq!(b(s("key_item"), 0x200), Some([0x16, 2, 2, 0xff]));
-        assert_eq!((b(s("item"), 0), b(s("key_item"), 0)), (Some([7, 2, 0, 0]), Some([0x13, 2, 0, 0])));
+        // A built group's title in a line is id 0 written by the game's own encoder: no 00 byte (it would cut the
+        // line); the category block is the query's alone.
+        assert_eq!((b(s("item"), 0), b(s("key_item"), 0)), (Some([8, 2, 0xff, 0xff]), Some([0x14, 2, 0xff, 0xff])));
+        let c = |g: Value| super::phrase_category(&g).ok();
+        assert_eq!(
+            (c(s("item")), c(s("key_item")), c(Value::Integer(3))),
+            (Some([7, 2, 0, 0]), Some([0x13, 2, 0, 0]), Some([2, 2, 3, 0]))
+        );
+        assert_eq!((c(Value::Integer(256)), c(s("x"))), (None, None));
         assert_eq!(
             (b(Value::Integer(256), 1), b(Value::Integer(1), 256), b(s("item"), 0x10000), b(s("x"), 1)),
             (None, None, None, None)

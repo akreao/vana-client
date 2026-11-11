@@ -2262,6 +2262,33 @@ pub(super) fn qty_open(w: &World) -> bool {
 }
 
 #[cfg(test)]
+mod peek_tests {
+    /// A mod's reads (`Items::peek`, `noun_peek`, `ItemCache::peek`) take no slot of the record cache; the game's own
+    /// lookup of the same id afterwards does, whichever of our caches answers it.
+    #[test]
+    fn peeks_take_no_slot() {
+        use crate::dat::items::Lang;
+        let cfg = crate::config::Config::load();
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(names) = crate::dat::names::Names::load(&index, Lang::En) else { return };
+        let names = std::sync::Arc::new(names);
+        let cache = super::ItemCache::new(names.clone());
+        let items = &names.items;
+        let ids = || items.recent().iter().map(|s| s.0).collect::<Vec<_>>();
+        assert!(items.peek(0x1010).is_some() && items.noun_peek(0x1011).is_some() && cache.peek(0x1012).is_some());
+        // Again, now from our caches.
+        assert!(items.noun_peek(0x1011).is_some() && cache.peek(0x1012).is_some());
+        assert_eq!(ids(), Vec::<u32>::new());
+        assert!(items.item(0x1010).is_some() && items.noun(0x1011).is_some() && cache.item(0x1012).is_some());
+        assert_eq!(ids(), vec![0x1010, 0x1011, 0x1012]);
+        // A read first: `noun` and `ItemCache::item` count it once.
+        assert!(items.noun(0x1013).is_some() && cache.item(0x1014).is_some());
+        assert!(items.noun(0x1013).is_some() && cache.item(0x1014).is_some());
+        assert_eq!(ids(), vec![0x1010, 0x1011, 0x1012, 0x1013, 0x1014]);
+    }
+}
+
+#[cfg(test)]
 mod charged_tests {
     /// Blue names: a charged item's extdata (kind 1) with byte 3 bit 0x40; anything else stays green.
     #[test]
