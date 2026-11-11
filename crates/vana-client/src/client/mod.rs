@@ -989,7 +989,7 @@ fn login_window(
     let filled = fields[..n - 1].iter().all(|x| !x.text.trim().is_empty());
     let enabled = [filled, filled && !playonline, true];
     // Two-factor (also needing them) under the labels, on the box's row.
-    const TF: &str = "Two-factor";
+    const TF: &str = "Account";
     let tf_rect = (!playonline)
         .then(|| [wx + 16.0 * f, row(check) + 1.0 * f, ((lu.label_width(TF) + 14.0).max(88.0) * f).round(), 16.0 * f]);
     // Update at the row's other end, under the fields' right edge.
@@ -1260,7 +1260,9 @@ fn login_window(
     } else {
         match *focus {
             f if f == check => "Keep the passwords on this computer, encrypted, and fill them in next time.",
-            f if f == twofa => "Turn two-factor sign-in (a code from an authenticator app) on or off for this account.",
+            f if f == twofa => {
+                "Change this account's password, or turn two-factor sign-in (a code from an authenticator app) on or off."
+            }
             f if f == first => "Log in with this account.",
             f if f == first + 1 => "Create a new account on this server with the account name and password above.",
             f if f == first + 2 => "Exit the game.",
@@ -9492,12 +9494,19 @@ impl App {
         });
     }
 
-    /// A two-factor request with the form's account and password (client/twofa.rs).
-    fn twofa_send(&mut self, command: Command, password: String, otp: String) {
+    /// An account window request with the form's account and password (client/twofa.rs); `new_password` for
+    /// ChangePassword.
+    fn twofa_send(&mut self, command: Command, password: String, otp: String, new_password: String) {
         let cfg = self.cfg.clone();
         let user = cfg.username.trim().to_string();
         self.spawn(move || {
-            let req = Request { username: &user, password: &password, otp: &otp, ..Default::default() };
+            let req = Request {
+                username: &user,
+                password: &password,
+                otp: &otp,
+                new_password: &new_password,
+                ..Default::default()
+            };
             Task::TwoFa(auth::send(&cfg.server, cfg.auth_port, command, &req))
         });
     }
@@ -9651,6 +9660,25 @@ impl App {
             Task::TwoFa(r) => {
                 if matches!(r, Ok(Reply::TotpRemoved)) {
                     let (server, username) = (self.cfg.server.clone(), self.cfg.username.clone());
+                    keep_trust_token(
+                        &mut self.cfg,
+                        self.drive.login.is_none() || crate::config::is_copy(),
+                        &server,
+                        &username,
+                        "",
+                    );
+                }
+                // A changed password: the old one goes from the form and from Remember password, and the server has dropped
+                // the account's trust tokens.
+                if matches!(r, Ok(Reply::PasswordChanged)) {
+                    let (server, username) = (self.cfg.server.clone(), self.cfg.username.trim().to_string());
+                    if let Phase::Login { password, .. } = &mut self.phase {
+                        password.clear();
+                    }
+                    self.cfg.saved_password.clear();
+                    if let Some(l) = self.cfg.saved_login_mut(&server, &username) {
+                        l.saved_password.clear();
+                    }
                     keep_trust_token(
                         &mut self.cfg,
                         self.drive.login.is_none() || crate::config::is_copy(),
@@ -14702,7 +14730,14 @@ impl App {
                             }
                             Some(twofa::Act::Send(command, otp)) => {
                                 let p = password.clone();
-                                action = Some(Box::new(move |app: &mut App| app.twofa_send(command, p, otp)));
+                                action =
+                                    Some(Box::new(move |app: &mut App| app.twofa_send(command, p, otp, String::new())));
+                            }
+                            Some(twofa::Act::ChangePassword { new, otp }) => {
+                                let p = password.clone();
+                                action = Some(Box::new(move |app: &mut App| {
+                                    app.twofa_send(Command::ChangePassword, p, otp, new)
+                                }));
                             }
                             None => {}
                         }

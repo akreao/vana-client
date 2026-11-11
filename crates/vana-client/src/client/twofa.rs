@@ -1,13 +1,14 @@
-//! Two-factor sign-in (ours: retail logged in through PlayOnline), a window over the login form. Turn on: CreateTotp
-//! brings the otpauth URI, shown as a QR code with its key; a code from the app (VerifyTotp) switches it on and brings
-//! the recovery code. Turn off (RemoveTotp) and a new recovery code (RegenerateRecovery) take the app's code or the
-//! recovery code. LSB's auth service checks the password on each (src/login/auth_session.cpp).
+//! The account window over the login form (ours: retail changed the password and logged in through PlayOnline).
+//! Change password (ChangePassword) takes the new one twice and, with two-factor sign-in on, a code. Two-factor sign-in:
+//! CreateTotp brings the otpauth URI, shown as a QR code with its key; a code from the app (VerifyTotp) switches it on
+//! and brings the recovery code. Turn off (RemoveTotp) and a new recovery code (RegenerateRecovery) take the app's code
+//! or the recovery code. LSB's auth service checks the form's password on each (src/login/auth_session.cpp).
 
 use super::game_ui::{GREY, GameUi, WHITE, YELLOW};
 use super::{UiInput, inside};
 use crate::net::auth::{Command, Reply};
 
-const TITLE: &str = "Two-factor sign-in";
+const TITLE: &str = "Account";
 const LINE: f32 = 16.0;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -26,6 +27,8 @@ pub enum Step {
     },
     /// A code to turn it off or to make a new recovery code.
     Code(Ask),
+    /// The new password twice, and a code with two-factor sign-in on.
+    Password,
     /// The outcome, and a recovery code to keep.
     Done {
         text: &'static str,
@@ -37,24 +40,32 @@ pub struct TwoFa {
     pub step: Step,
     pub focus: usize,
     pub code: String,
+    /// Change password's new password and its repeat.
+    pub new: [String; 2],
     pub error: Option<String>,
 }
 
 /// What the window asks of the app.
 pub enum Act {
     Send(Command, String),
+    /// ChangePassword to `new`, with the code `otp` (empty without two-factor sign-in).
+    ChangePassword {
+        new: String,
+        otp: String,
+    },
     Close,
     /// The recovery code to the clipboard.
     Copy(String),
 }
 
 /// The window as drawn, for the modern layer (UI pixels): the frame, the text lines (rect, text, colour, centred),
-/// the QR code (rect, side, modules), the code field (rect, text), the buttons (rect, caption), the focus.
+/// the QR code (rect, side, modules), the fields (rect, text as shown; focus 0.. in order), the buttons (rect,
+/// caption), the focus.
 pub struct View {
     pub frame: [f32; 4],
     pub lines: Vec<([f32; 4], String, [u8; 4], bool)>,
     pub qr: Option<([f32; 4], usize, Vec<bool>)>,
-    pub field: Option<([f32; 4], String)>,
+    pub fields: Vec<([f32; 4], String)>,
     pub buttons: Vec<([f32; 4], &'static str)>,
     pub focus: usize,
     pub busy: bool,
@@ -62,19 +73,42 @@ pub struct View {
 
 impl TwoFa {
     pub fn new() -> Self {
-        TwoFa { step: Step::Menu, focus: 0, code: String::new(), error: None }
+        TwoFa { step: Step::Menu, focus: 0, code: String::new(), new: Default::default(), error: None }
     }
 
-    fn has_field(&self) -> bool {
-        matches!(self.step, Step::Scan { .. } | Step::Code(_))
+    /// The step's fields: their labels, focus 0.. in order (the new passwords are shown as stars).
+    fn fields(&self) -> &'static [&'static str] {
+        match self.step {
+            Step::Scan { .. } | Step::Code(_) => &["Code"],
+            Step::Password => &["New password", "Again", "Code"],
+            _ => &[],
+        }
+    }
+
+    fn field(&mut self, i: usize) -> &mut String {
+        match (&self.step, i) {
+            (Step::Password, 0 | 1) => &mut self.new[i],
+            _ => &mut self.code,
+        }
+    }
+
+    /// A field as shown.
+    fn shown(&self, i: usize) -> String {
+        match (&self.step, i) {
+            (Step::Password, 0 | 1) => "*".repeat(self.new[i].chars().count()),
+            _ => self.code.clone(),
+        }
     }
 
     fn buttons(&self) -> &'static [&'static str] {
         match self.step {
-            Step::Menu => &["Turn on", "Turn off", "New recovery code", "Close"],
+            Step::Menu => {
+                &["Change password", "Turn on two-factor", "Turn off two-factor", "New recovery code", "Close"]
+            }
             Step::Scan { .. } => &["Confirm", "Cancel"],
             Step::Code(Ask::Off) => &["Turn off", "Cancel"],
             Step::Code(Ask::Recovery) => &["Make a new code", "Cancel"],
+            Step::Password => &["Change", "Cancel"],
             Step::Done { code: Some(_), .. } => &["Copy code", "OK"],
             Step::Done { .. } => &["OK"],
         }
@@ -83,7 +117,12 @@ impl TwoFa {
     fn text(&self) -> &'static str {
         match &self.step {
             Step::Menu => {
-                "With two-factor sign-in on, logging in also asks for a code from an authenticator app on your phone."
+                "Change this account's password, or turn on two-factor sign-in: logging in then also asks for a code from \
+                 an authenticator app on your phone."
+            }
+            Step::Password => {
+                "The current password is the login form's. Enter the new one twice, and with two-factor sign-in on, the \
+                 code your authenticator app shows now."
             }
             Step::Scan { .. } => {
                 "Scan this with an authenticator app (or type in the key under it), then enter the 6-digit code it shows."
@@ -96,10 +135,14 @@ impl TwoFa {
     /// The help line while the window is up.
     pub fn help(&self) -> &'static str {
         match (&self.step, self.focus) {
-            (Step::Menu, 0) => "Turn on two-factor sign-in for this account.",
-            (Step::Menu, 1) => "Turn off two-factor sign-in (needs a code or the recovery code).",
-            (Step::Menu, 2) => "Replace the recovery code (needs a code or the old recovery code).",
+            (Step::Menu, 0) => "Change this account's password (the login form's is the current one).",
+            (Step::Menu, 1) => "Turn on two-factor sign-in for this account.",
+            (Step::Menu, 2) => "Turn off two-factor sign-in (needs a code or the recovery code).",
+            (Step::Menu, 3) => "Replace the recovery code (needs a code or the old recovery code).",
             (Step::Menu, _) => "Back to the login form.",
+            (Step::Password, 0) => "The new password: 1 to 32 plain ASCII characters.",
+            (Step::Password, 1) => "The new password again.",
+            (Step::Password, 2) => "With two-factor sign-in on, the code your app shows; else leave it empty.",
             (Step::Scan { .. } | Step::Code(_), 0) => "Type the code.",
             (Step::Done { code: Some(_), .. }, _) => "Write the recovery code down before closing this window.",
             _ => "",
@@ -135,6 +178,21 @@ impl TwoFa {
                 (self.step, self.focus, self.code) =
                     (Step::Done { text: "Two-factor sign-in is off.", code: None }, 0, String::new())
             }
+            Ok(Reply::PasswordChanged) => {
+                let text = "The password is changed: log in with the new one.";
+                (self.step, self.focus, self.code, self.new) =
+                    (Step::Done { text, code: None }, 0, String::new(), Default::default())
+            }
+            // LSB answers every refusal of a change with 0x07.
+            Err(e)
+                if matches!(self.step, Step::Password)
+                    && e.downcast_ref::<crate::net::auth::Refused>().is_some_and(|r| r.0 == 0x07) =>
+            {
+                self.error = Some(
+                    "Not changed: check the password in the login form, and the code if two-factor sign-in is on."
+                        .into(),
+                )
+            }
             Ok(_) => self.error = Some("Unexpected reply from the login server.".into()),
             // LSB answers every refusal with "Failed to validate credentials".
             Err(e) => {
@@ -169,7 +227,7 @@ struct Lay {
     frame: [f32; 4],
     lines: Vec<Line>,
     qr: Option<[f32; 4]>,
-    field: Option<[f32; 4]>,
+    fields: Vec<[f32; 4]>,
     buttons: Vec<[f32; 4]>,
 }
 
@@ -200,12 +258,16 @@ fn layout(lu: &GameUi, size: [u32; 2], st: &TwoFa, busy: bool, f: f32) -> Lay {
         y += 6.0 * f;
         line(&mut lines, &mut y, c.clone(), YELLOW, true);
     }
-    let mut field = None;
-    if st.has_field() {
+    let mut fields = Vec::new();
+    let labels = st.fields();
+    if !labels.is_empty() {
         y += 8.0 * f;
-        lines.push(([16.0 * f, y + 1.0 * f, 60.0 * f, LINE * f], "Code".into(), WHITE, false));
-        field = Some([80.0 * f, y, cw - 64.0 * f, 18.0 * f]);
-        y += 22.0 * f;
+        let lw = labels.iter().map(|l| lu.text_width(l)).fold(60.0, f32::max) + 4.0;
+        for l in labels {
+            lines.push(([16.0 * f, y + 1.0 * f, lw * f, LINE * f], (*l).into(), WHITE, false));
+            fields.push([(20.0 + lw) * f, y, cw - (4.0 + lw) * f, 18.0 * f]);
+            y += 22.0 * f;
+        }
     }
     if let Some(e) = &st.error {
         y += 4.0 * f;
@@ -243,13 +305,13 @@ fn layout(lu: &GameUi, size: [u32; 2], st: &TwoFa, busy: bool, f: f32) -> Lay {
         frame: [wx, wy, ww, wh],
         lines: lines.into_iter().map(|(r, t, c, centre)| (at(r), t, c, centre)).collect(),
         qr: qr.map(at),
-        field: field.map(at),
+        fields: fields.into_iter().map(at).collect(),
         buttons: buttons.into_iter().map(at).collect(),
     }
 }
 
 /// The window over the login form: keys and mouse (none while `busy`), then drawn here (classic) or handed to the
-/// modern layer through `modern`. Focus 0 is the code field where there is one, then the buttons.
+/// modern layer through `modern`. Focus 0.. are the step's fields, then the buttons.
 pub fn window(
     lu: &mut GameUi,
     input: &UiInput,
@@ -263,7 +325,7 @@ pub fn window(
     // The modern layer's rule: hovering only lights a button.
     let hover_moves = modern.is_none();
     let lay = layout(lu, size, st, busy, f);
-    let first = st.has_field() as usize;
+    let first = st.fields().len();
     let items = first + lay.buttons.len();
     let was = st.focus;
     let mut press = None;
@@ -277,29 +339,40 @@ pub fn window(
                 press = Some(first + k);
             }
         }
-        if input.clicked && lay.field.is_some_and(|r| input.pointer.is_some_and(|p| inside(&r, p))) {
-            st.focus = 0;
+        if let Some(i) =
+            input.pointer.filter(|_| input.clicked).and_then(|p| lay.fields.iter().position(|r| inside(r, p)))
+        {
+            st.focus = i;
         }
         for ev in &input.events {
             match ev {
                 // Ctrl+C copies the recovery code.
                 egui::Event::Copy if matches!(st.step, Step::Done { code: Some(_), .. }) => press = Some(0),
-                egui::Event::Text(t) | egui::Event::Paste(t) if first == 1 && st.focus == 0 => {
-                    st.code.extend(t.chars().filter(|c| c.is_ascii_alphanumeric()));
-                    st.code = st.code.chars().take(32).collect();
+                // A code takes letters and digits; a password plain ASCII (as the login form), 32 at most.
+                egui::Event::Text(t) | egui::Event::Paste(t) if st.focus < first => {
+                    let password = matches!(st.step, Step::Password) && st.focus < 2;
+                    let keep = |c: &char| if password { (' '..='~').contains(c) } else { c.is_ascii_alphanumeric() };
+                    let v = st.field(st.focus);
+                    v.extend(t.chars().filter(keep));
+                    *v = v.chars().take(32).collect();
                 }
                 egui::Event::Key { key, pressed: true, modifiers, .. } => match key {
                     egui::Key::Tab if modifiers.shift => st.focus = (st.focus + items - 1) % items,
                     egui::Key::Tab => st.focus = (st.focus + 1) % items,
-                    egui::Key::ArrowDown if first == 0 || st.focus == 0 => st.focus = (st.focus + 1) % items,
+                    egui::Key::ArrowDown if first == 0 || st.focus < first => st.focus = (st.focus + 1) % items,
                     egui::Key::ArrowUp if first == 0 => st.focus = (st.focus + items - 1) % items,
-                    egui::Key::ArrowUp => st.focus = 0,
-                    egui::Key::ArrowRight if first == 1 && st.focus > 0 => st.focus = (st.focus % (items - 1)) + 1,
-                    egui::Key::ArrowLeft if first == 1 && st.focus > 0 => {
-                        st.focus = if st.focus == 1 { items - 1 } else { st.focus - 1 }
+                    // Up from the buttons to the last field, then field by field.
+                    egui::Key::ArrowUp => {
+                        st.focus = if st.focus >= first { first - 1 } else { st.focus.saturating_sub(1) }
                     }
-                    egui::Key::Backspace if first == 1 && st.focus == 0 => {
-                        st.code.pop();
+                    egui::Key::ArrowRight if first > 0 && st.focus >= first => {
+                        st.focus = first + (st.focus - first + 1) % (items - first)
+                    }
+                    egui::Key::ArrowLeft if first > 0 && st.focus >= first => {
+                        st.focus = first + (st.focus - first + items - first - 1) % (items - first)
+                    }
+                    egui::Key::Backspace if st.focus < first => {
+                        st.field(st.focus).pop();
                     }
                     // The field's Enter is the first button's.
                     egui::Key::Enter => press = Some(st.focus.max(first)),
@@ -314,32 +387,40 @@ pub fn window(
     if let Some(i) = press {
         st.focus = i;
         let k = i - first;
-        let needs_code = first == 1 && k == 0 && st.code.is_empty();
-        sounds.push(if needs_code {
+        // The fields' first button: a code needed (the password's code is optional), a new password checked.
+        let refused = match (&st.step, k) {
+            (Step::Password, 0) if st.new[0].is_empty() => Some("Enter the new password."),
+            (Step::Password, 0) if st.new[0] != st.new[1] => Some("The two new passwords are not the same."),
+            (Step::Scan { .. } | Step::Code(_), 0) if st.code.is_empty() => Some("Enter a code first."),
+            _ => None,
+        };
+        sounds.push(if refused.is_some() {
             crate::audio::Ui::Error
-        } else if k + 1 == lay.buttons.len() && first == 1 {
+        } else if k + 1 == lay.buttons.len() && first > 0 {
             crate::audio::Ui::Cancel
         } else {
             crate::audio::Ui::Select
         });
         st.error = None;
         match (&st.step, k) {
-            (Step::Menu, 0) => act = Some(Act::Send(Command::CreateTotp, String::new())),
-            (Step::Menu, 1) => (st.step, st.focus) = (Step::Code(Ask::Off), 0),
-            (Step::Menu, 2) => (st.step, st.focus) = (Step::Code(Ask::Recovery), 0),
+            (Step::Menu, 0) => (st.step, st.focus, st.new) = (Step::Password, 0, Default::default()),
+            (Step::Menu, 1) => act = Some(Act::Send(Command::CreateTotp, String::new())),
+            (Step::Menu, 2) => (st.step, st.focus) = (Step::Code(Ask::Off), 0),
+            (Step::Menu, 3) => (st.step, st.focus) = (Step::Code(Ask::Recovery), 0),
             (Step::Done { code: Some(c), .. }, 0) => act = Some(Act::Copy(c.clone())),
             (Step::Menu, _) | (Step::Done { .. }, _) => act = Some(Act::Close),
-            _ if needs_code => st.error = Some("Enter a code first.".into()),
+            _ if refused.is_some() => st.error = refused.map(String::from),
+            (Step::Password, 0) => act = Some(Act::ChangePassword { new: st.new[0].clone(), otp: st.code.clone() }),
             (Step::Scan { .. }, 0) => act = Some(Act::Send(Command::VerifyTotp, st.code.clone())),
             (Step::Code(Ask::Off), 0) => act = Some(Act::Send(Command::RemoveTotp, st.code.clone())),
             (Step::Code(Ask::Recovery), 0) => act = Some(Act::Send(Command::RegenerateRecovery, st.code.clone())),
-            _ => (st.step, st.focus, st.code) = (Step::Menu, 0, String::new()),
+            _ => (st.step, st.focus, st.code, st.new) = (Step::Menu, 0, String::new(), Default::default()),
         }
     } else if st.focus != was {
         sounds.push(crate::audio::Ui::Cursor);
     }
     let lay = layout(lu, size, st, busy, f);
-    let first = st.has_field() as usize;
+    let first = st.fields().len();
     let names = st.buttons();
     if let Some(out) = modern {
         let qr = match (&st.step, lay.qr) {
@@ -350,7 +431,7 @@ pub fn window(
             frame: lay.frame,
             lines: lay.lines,
             qr,
-            field: lay.field.map(|r| (r, st.code.clone())),
+            fields: lay.fields.iter().enumerate().map(|(i, r)| (*r, st.shown(i))).collect(),
             buttons: lay.buttons.iter().zip(names).map(|(r, n)| (*r, *n)).collect(),
             focus: st.focus,
             busy,
@@ -373,12 +454,12 @@ pub fn window(
             lu.rect(r[0] + (x + 4.0) * m, r[1] + (y + 4.0) * m, m, m, [0.0, 0.0, 0.0, 1.0]);
         }
     }
-    if let Some(r) = lay.field {
-        let on = st.focus == 0 && !busy;
+    for (i, r) in lay.fields.iter().enumerate() {
+        let (on, text) = (st.focus == i && !busy, st.shown(i));
         lu.rect(r[0], r[1], r[2], r[3], if on { [0.16, 0.2, 0.45, 0.6] } else { [0.0, 0.0, 0.0, 0.35] });
-        lu.text(&st.code, r[0] + 4.0, r[1] + 1.0, 0, WHITE);
+        lu.text(&text, r[0] + 4.0, r[1] + 1.0, 0, WHITE);
         if on && lu.blink() {
-            lu.rect(r[0] + 4.0 + lu.text_width(&st.code), r[1] + 2.0, 2.0, 14.0, [1.0, 1.0, 1.0, 0.9]);
+            lu.rect(r[0] + 4.0 + lu.text_width(&text), r[1] + 2.0, 2.0, 14.0, [1.0, 1.0, 1.0, 0.9]);
         }
     }
     let mut hand = None;

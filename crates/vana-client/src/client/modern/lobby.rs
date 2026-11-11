@@ -295,9 +295,9 @@ impl Modern {
                 );
             }
         }
-        if let Some((r, text)) = &v.field {
+        for (i, (r, text)) in v.fields.iter().enumerate() {
             let r = pt(*r);
-            let on = v.focus == 0 && !v.busy;
+            let on = v.focus == i && !v.busy;
             if let Some(s) = self.art.sprite(if on { "controls/input_focused" } else { "controls/input_normal" }) {
                 p.add(paint::nine_slice(&s, r.expand2(vec2(2.0, 3.0)), 0.5, Color32::WHITE));
             }
@@ -312,7 +312,7 @@ impl Modern {
                 );
             }
         }
-        let first = v.field.is_some() as usize;
+        let first = v.fields.len();
         let hover = ctx.input(|i| i.pointer.hover_pos());
         for (i, (r, label)) in v.buttons.iter().enumerate() {
             self.lobby_button(
