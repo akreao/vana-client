@@ -12760,6 +12760,10 @@ impl App {
             }
         };
         for (eid, e) in world.entities.iter_mut() {
+            // Not retail: a rider's floor is its carrier (retail's floor ray also meets door models, FUN_1017a660,
+            // which ours lacks), so the static floor does not take back the carrier's lift while the status holds.
+            let carried = carrier::rider_set(e.motion.status).is_some() && !ev_bound.contains(eid);
+            let floor = floor.filter(|_| !carried);
             // Moved by someone else since last frame (an event script): take that as the slide and drawn spot.
             if e.pos != e.last_pos {
                 e.slide = e.pos;
@@ -13414,7 +13418,9 @@ impl App {
         } else {
             0
         };
-        let falls = !in_event && !world.unsettled && world.in_scene();
+        // Not retail (see the entity loop): while a carrier moves us, no gravity or floor follow pulls us off it.
+        let carried = carrier::rider_set(world.my_motion.status).is_some() && !event::bound(world, world.my_id);
+        let falls = !in_event && !world.unsettled && world.in_scene() && !carried;
         let shafts = world.lifts.shafts();
         let ride = |a: Vec3, b: Vec3| lifts::ride_in(&shafts, a, b);
         let mut steps = 0;
@@ -13464,6 +13470,9 @@ impl App {
             let g = world.ground.as_ref().filter(|g| !g.is_empty());
             if next != from {
                 world.pos = g.map_or(next, |g| g.walk_player(from, next, ground::STEP_TICKS, Some(&ride)));
+                if carried {
+                    world.pos.y = next.y;
+                }
             } else if falls && let Some(g) = g {
                 // A fall goes on without input.
                 world.pos = g.walk_player(from, from, ground::STEP_TICKS, Some(&ride));

@@ -40,6 +40,9 @@ the same addresses in 30261006_0.
     still takes last frame's step), `carrier::update` after `doors::update`, the step added to riders in the entity
     loop after the slide (also after a push or an op 0x6e step) with the slide goal moved along, and to our own
     position. A carrier that is not a door publishes nothing (retail: undefined).
+  - Not retail: while the rider status holds, riders skip the static floor snap and we skip gravity and the floor
+    follow (input moves keep their height). Retail's floor ray also meets door models (FUN_1017a660), so a rider
+    stands on its carrier there; ours has no door floors, and the static floor would take back a rising carrier's lift.
   - bit 21 from these statuses stops the ground tilt and the event ground snaps (`carrier::no_ground`).
   - c2s 0x015: GroundMode is sent (HackMove, GroundFlag, op 0x33's bit, the carrier statuses); no 0x015 while our
     status in force is 0x1c / 0x1f. LSB reads neither.
