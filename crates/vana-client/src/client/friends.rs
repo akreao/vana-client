@@ -84,6 +84,12 @@ pub struct Friends {
     started: bool,
     /// The in-game ChangeMyStatus went (after the map session exists, so friends see the character).
     announced: bool,
+    /// The loads of `start` are out: our status is not known yet.
+    loading: bool,
+    /// The status job runs (its busy byte, job +1): a change asked meanwhile is dropped (FUN_100f7bd0).
+    status_job: bool,
+    /// What the last zone-in still owes our status, held until the loads are in.
+    zone_owed: Option<ZoneStatus>,
     retry_at: Option<Instant>,
     /// The friends' characters asked of xi_search (2.3): the queries out, the chunks left of a round, the next round.
     lookups: Vec<(mpsc::Receiver<anyhow::Result<crate::net::search::Reply>>, Vec<u32>)>,
@@ -101,6 +107,29 @@ pub struct Friends {
     pub mail: Vec<Mail>,
     pub mail_new: u32,
     fetching: bool,
+}
+
+/// What an s2c 0x00A does to our open status (FUN_100fae40 by LoginState, `net::pol_return`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ZoneStatus {
+    /// A plain zone-in (LoginState 1, 2, 0, 6 and up): Away goes back to Online.
+    Reset,
+    /// The game came back from the PlayOnline viewer (3, 4, 5; FUN_100daf30 state 4): the status is read again.
+    Reread,
+}
+
+/// A plain zone-in's rule: only Away (1) is reset, to Online (0), and the away flag is cleared with it; Online and
+/// Invisible (4) stay and nothing is sent (0x100faf3c / 0x100faf9b: `cmp eax, 1`).
+pub fn zone_reset(status: u8) -> Option<u8> {
+    (status == 1).then_some(0)
+}
+
+/// The open statuses one change of ours sends, in order. Retail's status job (FUN_100f1a10) sends the object's
+/// current block, and FUN_100f7bd0 writes only the pending block: the first request repeats the status in force, its
+/// answer (FUN_100f7b00) copies the pending block over and leaves the job busy, and the second request carries the
+/// new status.
+pub fn change_sends(current: u8, new: u8) -> [u8; 2] {
+    [current, new]
 }
 
 impl Friends {
@@ -124,7 +153,7 @@ pub fn start(w: &mut World) {
     if f.started || f.cred.is_none() {
         return;
     }
-    f.started = true;
+    (f.started, f.loading) = (true, true);
     f.irc = f.cred.clone().map(profile::irc);
     spawn(w, |c| {
         Done::Loaded((|| {
@@ -142,13 +171,71 @@ fn slot(w: &World) -> Option<u8> {
     w.friends.chars.iter().find(|c| c.1 == w.my_id).map(|c| c.0)
 }
 
-/// FUN_100f7a90 (/online 0, /away 1, /hide 4, olstat): ChangeMyStatus when it differs; it is ours once answered.
+/// FUN_100f7bd0 (/online 0, /away 1, /hide 4, olstat, the zone-in): ChangeMyStatus when it differs and the status
+/// job is idle; it is ours once answered. The requests are `change_sends`. Without a PlayOnline session (no
+/// xi_profile, or not signed on yet) the status is only kept, as polcore's object would keep it.
 pub fn set_status(w: &mut World, open: u8) {
-    if open == w.friends.my_status || !w.friends.signed_on {
+    let f = &mut w.friends;
+    if open == f.my_status || f.status_job {
         return;
     }
-    let s = slot(w);
-    spawn(w, move |c| Done::Status(profile::change_my_status(c, s, Some(open)), Some(open)));
+    if !f.signed_on {
+        f.my_status = open;
+        return;
+    }
+    f.status_job = true;
+    let (s, sends) = (slot(w), change_sends(w.friends.my_status, open));
+    spawn(w, move |c| {
+        Done::Status(sends.iter().try_for_each(|&o| profile::change_my_status(c, s, Some(o))), Some(open))
+    });
+}
+
+/// s2c 0x00A (FUN_100fae40, connection state 2, so every zone-in): what it owes our status, settled by `poll` once
+/// the status is known.
+pub fn zone_in(w: &mut World, pol_return: bool) {
+    w.friends.zone_owed = Some(if pol_return { ZoneStatus::Reread } else { ZoneStatus::Reset });
+    settle(w);
+}
+
+/// The zone-in's status step. Retail has polcore's status in hand before the game starts; ours waits for
+/// LoadMyStatus and the sign-on.
+/// - Reset (0x100faf3c / 0x100faf9b): Away -> FUN_100f7bd0(0) and c2s 0x0DC away off (FUN_100e4710(1, 0)), the
+///   packet even when the status job is busy and the change is dropped.
+/// - Reread (FUN_100daf30 state 4, after the viewer gave the game back; ours has no viewer, so at once):
+///   FUN_100f7aa0 reads polcore's status again into both blocks and sends it once, then FUN_100e4710(1, status ==
+///   Away) sets or clears the away flag to match.
+fn settle(w: &mut World) {
+    let f = &w.friends;
+    // Not while the loads are out, nor between them and the sign-on (a change would only be kept, not sent).
+    let Some(owed) = f.zone_owed.filter(|_| !f.loading && (!f.loaded || f.signed_on)) else { return };
+    w.friends.zone_owed = None;
+    match owed {
+        ZoneStatus::Reset => {
+            if let Some(open) = zone_reset(w.friends.my_status) {
+                set_status(w, open);
+                super::textcmd::config_flag(w, 1, false);
+            }
+        }
+        ZoneStatus::Reread if w.friends.cred.is_none() => {
+            super::textcmd::config_flag(w, 1, w.friends.my_status == 1);
+        }
+        ZoneStatus::Reread => {
+            let s = slot(w);
+            spawn(w, move |c| {
+                let read = profile::load_my_status(c).and_then(|st| {
+                    profile::change_my_status(c, s, Some(st))?;
+                    Ok(st)
+                });
+                Done::Then(Box::new(move |w| {
+                    match read {
+                        Ok(st) => w.friends.my_status = st,
+                        Err(e) => log::warn!("friends: reading our status again: {e:#}"),
+                    }
+                    super::textcmd::config_flag(w, 1, w.friends.my_status == 1);
+                }))
+            });
+        }
+    }
 }
 
 /// Each frame: the jobs' answers and the IRC session's notices.
@@ -175,16 +262,23 @@ pub fn poll(w: &mut World) {
                 );
                 f.my_status = l.status;
                 f.list = l.list.iter().map(Friend::from_info).collect();
-                (f.handle, f.chars, f.loaded) = (Some(l.handle), l.chars, true);
+                (f.handle, f.chars, f.loaded, f.loading) = (Some(l.handle), l.chars, true, false);
             }
-            Done::Loaded(Err(e)) => log::warn!("friends: loading: {e:#}"),
-            Done::Status(Ok(()), open) => {
-                if let Some(o) = open {
-                    w.friends.my_status = o;
+            Done::Loaded(Err(e)) => {
+                w.friends.loading = false;
+                log::warn!("friends: loading: {e:#}");
+            }
+            Done::Status(r, open) => {
+                if open.is_some() {
+                    w.friends.status_job = false;
                 }
-                log::info!("friends: ChangeMyStatus {open:?} applied");
+                match (r, open) {
+                    (Ok(()), Some(o)) => w.friends.my_status = o,
+                    (Ok(()), None) => {}
+                    (Err(e), _) => log::warn!("friends: ChangeMyStatus: {e:#}"),
+                }
+                log::info!("friends: ChangeMyStatus {open:?} answered, status {}", w.friends.my_status);
             }
-            Done::Status(Err(e), _) => log::warn!("friends: ChangeMyStatus: {e:#}"),
             Done::Then(f) => f(w),
         }
     }
@@ -215,6 +309,7 @@ pub fn poll(w: &mut World) {
         start(w);
     }
     refresh(w);
+    settle(w);
     // This character is now the active one, once signed on and in a zone.
     let f = &w.friends;
     if f.signed_on && f.loaded && !f.announced && w.zone.is_some() {
@@ -593,4 +688,26 @@ pub fn befriend(w: &mut World, char_id: u32, char_name: String, from_command: bo
             }
         }))
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A plain zone-in resets only Away (FUN_100fae40: `cmp eax, 1` on FUN_100f7bc0's status); Online and Invisible
+    /// stay, and so does anything polcore might hold besides.
+    #[test]
+    fn zone_in_resets_only_away() {
+        assert_eq!(zone_reset(1), Some(0));
+        for s in [0, 2, 3, 4, 5] {
+            assert_eq!(zone_reset(s), None, "status {s}");
+        }
+    }
+
+    /// The status job sends the block in force first, then the pending one (FUN_100f1a10 / FUN_100f7b00).
+    #[test]
+    fn a_change_repeats_the_old_status_first() {
+        assert_eq!(change_sends(1, 0), [1, 0]);
+        assert_eq!(change_sends(0, 4), [0, 4]);
+    }
 }
