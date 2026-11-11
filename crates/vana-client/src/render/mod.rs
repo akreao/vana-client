@@ -2887,6 +2887,12 @@ impl ZoneRenderer {
         gpu.queue.put(&self.parts_gpu, at, bytemuck::bytes_of(&*p));
     }
 
+    /// Door part `slot`'s translation now (the door actor's +0x624 for its part 0).
+    pub fn part_pos(&self, slot: u32) -> Option<[f32; 3]> {
+        let p = self.parts.get(slot as usize)?;
+        Some(PartGpu::at(p.pos_from, p.pos_to, p.pos_time, self.now))
+    }
+
     /// Area 4ccs by slot - 1 (zone's, then the shown sub-area's).
     pub fn area_keys(&self) -> &[u32] {
         &self.area_keys
