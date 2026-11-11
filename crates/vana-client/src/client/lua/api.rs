@@ -494,8 +494,8 @@ pub(super) fn install(
                 }
                 None => Vec::new(),
             };
-            (w.elems, w.meta) = parsed.into_iter().unzip();
-            w.settle();
+            let (elems, meta) = parsed.into_iter().unzip();
+            w.set_elems(elems, meta);
             Ok(())
         })?,
     )?;
@@ -2237,7 +2237,12 @@ fn rows(v: Option<Table>) -> mlua::Result<Vec<super::window::Row>> {
                         )),
                         None => None,
                     };
-                    Row { cells, icon, colour: super::hud::colour(t.get("colour")?)? }
+                    Row {
+                        cells,
+                        icon,
+                        colour: super::hud::colour(t.get("colour")?)?,
+                        tip: t.get::<Option<String>>("tip")?.unwrap_or_default(),
+                    }
                 }
                 other => Row::text(&cell(other)),
             })
