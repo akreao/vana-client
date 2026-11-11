@@ -81,17 +81,23 @@ fn path(root: &Path, character: &str, job: &str) -> PathBuf {
 }
 
 /// The main job as its setup is named (MON in Monstrosity); none until it is known.
-fn job(w: &World) -> Option<&'static str> {
+pub(super) fn job_of(w: &World) -> Option<&'static str> {
     if super::monstrosity::active(w) {
         return Some("MON");
     }
     super::items::JOBS.get(w.stats.as_ref()?.main.0 as usize).copied().filter(|j| !j.is_empty())
 }
 
+/// The character (its folder name) and the main job, once known: the mods' switches kept per character or job are
+/// theirs (settings.rs).
+pub fn at(w: &World) -> (String, Option<String>) {
+    (character(&w.world_name, &w.name), job_of(w).map(str::to_string))
+}
+
 /// The character and main job whose setup the world wants, when it is not the one in use (each frame: a world is one
 /// character's, so only the job is compared).
 pub fn wanted(w: &World) -> Option<(String, String)> {
-    let job = job(w).filter(|j| !w.name.is_empty() && w.ui_profile.as_ref().is_none_or(|p| p.job != *j))?;
+    let job = job_of(w).filter(|j| !w.name.is_empty() && w.ui_profile.as_ref().is_none_or(|p| p.job != *j))?;
     Some((character(&w.world_name, &w.name), job.to_string()))
 }
 

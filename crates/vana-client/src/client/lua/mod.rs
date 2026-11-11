@@ -915,10 +915,14 @@ impl Host {
         self.started = true;
         // In the world from here on: the mods loading now may queue world ops.
         self.lobby.borrow_mut().screen = "world";
+        // The list as saved: the app's copy (follow_scope's) differs only between a change and its save, and a scope
+        // or switch change is saved at once.
         let cfg = crate::config::Config::load();
         let root = mods_dir();
         install_stubs(root.clone());
-        for r in cfg.mods.iter().filter(|r| r.enabled) {
+        let (character, job) = (super::uiconf::character(&w.world_name, &w.name), super::uiconf::job_of(w));
+        self.dir.borrow_mut().at = Some((character.clone(), job.map(str::to_string)));
+        for r in cfg.mods.iter().filter(|r| r.active(Some(&character), job) == Some(true)) {
             let dir = root.join(&r.name);
             if !dir.join("mod.toml").is_file() || self.vms.iter().any(|v| v.dir == dir) {
                 continue;
@@ -5680,14 +5684,47 @@ fn migrations(
 /// A mod's settings: the account file's keys, then the character file's for character-scoped ones.
 /// A mod's settings page: its settings as rows (the "on" switch left out: it is the Mods page's toggle) and its
 /// permissions, each allowed or not; none when it has neither.
+/// A mod's page: `scope` (per character, per job) for one in the mods folder, its first two rows.
 fn mod_page(
     m: &manifest::Manifest,
     settings: &serde_json::Map<String, serde_json::Value>,
     granted: &[String],
     bundled: bool,
+    scope: Option<(bool, bool)>,
 ) -> Option<super::settings::ModPage> {
     use super::settings::{Edit, ModPage, ModRow};
     let mut rows = Vec::new();
+    for (on, key, label, help) in scope.into_iter().flat_map(|(c, j)| {
+        [
+            (
+                c,
+                SCOPE_CHARACTER,
+                "Per Character",
+                "On: the Mods page's switch for this mod is each character's own. A \
+             character never switched follows it as it was (not retail).",
+            ),
+            (
+                j,
+                SCOPE_JOB,
+                "Per Job",
+                "On: the Mods page's switch for this mod is each job's own (with Per Character, \
+             each character's job's). A job never switched follows it as it was (not retail).",
+            ),
+        ]
+    }) {
+        rows.push(ModRow {
+            key: key.into(),
+            label: label.into(),
+            help: help.into(),
+            choices: vec![("ON".into(), true.into()), ("OFF".into(), false.into())],
+            at: if on { 0 } else { 1 },
+            tab: String::new(),
+            place: None,
+            place_modern: None,
+            preview: None,
+            edit: Edit::Choice,
+        });
+    }
     for (key, d) in &m.settings {
         if key == "on" && d.kind == "bool" {
             continue;
@@ -5841,6 +5878,14 @@ pub(in crate::client) fn grant_manifest(dir: &std::path::Path) {
 
 /// The Mods page's toggle as a setting change's key: its value turns the mod on (loads it) or off (unloads it).
 pub(in crate::client) const ENABLED: &str = "@enabled";
+/// A mod page's Per Character and Per Job rows as setting changes' keys: the app keeps them in the config's entry.
+pub(in crate::client) const SCOPE_CHARACTER: &str = "@scope:character";
+pub(in crate::client) const SCOPE_JOB: &str = "@scope:job";
+
+/// The mods folder's folder of mod `id` (a page names a mod by its manifest id, the config by its folder).
+pub(in crate::client) fn folder_name(id: &str) -> String {
+    folder_of(&mods_dir(), id).file_name().map_or_else(|| id.to_string(), |f| f.to_string_lossy().into_owned())
+}
 
 /// A mod's "on" switch is its enable toggle on the Mods page: a loaded mod is on.
 fn force_on(m: &manifest::Manifest, settings: &mut serde_json::Map<String, serde_json::Value>) {
@@ -5877,12 +5922,18 @@ impl Host {
     /// int and number).
     /// Every installed mod's settings page (Settings > Mods, its Settings button): its settings but the "on" switch (the
     /// page's toggle), and the permissions it asks for. A mod that is off reads its settings from its files.
-    pub(super) fn settings_pages(&self) -> Vec<super::settings::ModPage> {
+    /// `mods`: the config's list, for the Per Character and Per Job rows of the mods in the mods folder.
+    pub(super) fn settings_pages(&self, mods: &[crate::config::ModRef]) -> Vec<super::settings::ModPage> {
+        let scope_of = |folder: Option<&std::ffi::OsStr>| {
+            let r = mods.iter().find(|r| folder.is_some_and(|f| f == r.name.as_str()));
+            r.map(|r| (r.per_character, r.per_job))
+        };
         let mut pages = Vec::new();
         for vm in &self.vms {
             let st = vm.st.borrow();
             let bundled = matches!(vm.src, vm::Source::Bundled(_));
-            pages.extend(mod_page(&vm.manifest, &st.settings, &st.granted, bundled));
+            let scope = if bundled { None } else { scope_of(vm.dir.file_name()) };
+            pages.extend(mod_page(&vm.manifest, &st.settings, &st.granted, bundled, scope));
         }
         let char_file = self.vms.first().and_then(|v| v.st.borrow().char_file.clone());
         let g = grants();
@@ -5899,9 +5950,39 @@ impl Host {
                 .and_then(|v| v.as_array())
                 .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
                 .unwrap_or_default();
-            pages.extend(mod_page(&m, &settings, &given, false));
+            pages.extend(mod_page(&m, &settings, &given, false, scope_of(e.path().file_name())));
         }
         pages
+    }
+
+    /// The mods whose switch is kept per character or job: each loaded or unloaded as the character and job in play
+    /// (the job not known yet: left as they are), and those in `changed` (a scope just turned off: back to `enabled`).
+    /// After the start: it loads what it finds on then.
+    pub(super) fn follow_scope(&mut self, w: &World, mods: &[crate::config::ModRef], changed: &[String]) {
+        if !self.started {
+            return;
+        }
+        let (character, job) = (super::uiconf::character(&w.world_name, &w.name), super::uiconf::job_of(w));
+        self.dir.borrow_mut().at = Some((character.clone(), job.map(str::to_string)));
+        for r in mods.iter().filter(|r| r.per_character || r.per_job || changed.contains(&r.name)) {
+            let dir = mods_dir().join(&r.name);
+            let Some(want) = r.active(Some(&character), job).filter(|_| dir.join("mod.toml").is_file()) else {
+                continue;
+            };
+            match (want, self.named(&r.name)) {
+                (true, None) => {
+                    log::info!("lua mod {}: on for {character} {}", r.name, job.unwrap_or("?"));
+                    if let Err(e) = self.load(Some(w), dir) {
+                        log::warn!("lua mod {}: {e}", r.name);
+                    }
+                }
+                (false, Some(k)) => {
+                    log::info!("lua mod {}: off for {character} {}", r.name, job.unwrap_or("?"));
+                    self.unload(Some(w), k);
+                }
+                _ => {}
+            }
+        }
     }
 
     /// The loaded mod `id` names: the Mods page names a mod by its folder, the rest by its manifest id, and the two
@@ -6548,10 +6629,16 @@ fn bundled_manifest(id: &str) -> Option<manifest::Manifest> {
     BUNDLED.iter().find(|b| b.0 == id).and_then(|b| manifest::parse(b.1, id).ok())
 }
 
-/// Every mod installed (the mods folder): (id, name, version, enabled in the config, bundled: always false now).
-pub(super) fn installed() -> Vec<(String, String, String, bool, bool, Vec<String>)> {
+/// Every mod installed (the mods folder): (id, name, version, enabled in the config, bundled: always false now). With
+/// `at` (the character and job in play) a mod kept per character or job is enabled by its switch there.
+pub(super) fn installed(
+    at: Option<&(String, Option<String>)>,
+) -> Vec<(String, String, String, bool, bool, Vec<String>)> {
     let cfg = crate::config::Config::load();
-    let enabled = |id: &str, bundled: bool| cfg.mods.iter().find(|r| r.name == id).map_or(bundled, |r| r.enabled);
+    let (c, j) = at.map_or((None, None), |(c, j)| (Some(c.as_str()), j.as_deref()));
+    let enabled = |id: &str, bundled: bool| {
+        cfg.mods.iter().find(|r| r.name == id).map_or(bundled, |r| r.active(c, j).unwrap_or(r.enabled))
+    };
     let mut out = Vec::new();
     for e in std::fs::read_dir(mods_dir()).into_iter().flatten().flatten() {
         let dir = e.path();
