@@ -3564,10 +3564,13 @@ fn world_hud(
     {
         items::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked);
     }
-    if let Some(p) = input
-        .pointer
-        .filter(|_| world.linkshell.is_some() && !world.modern && world.linklist.is_none() && world.confirm.is_none())
-    {
+    if let Some(p) = input.pointer.filter(|_| {
+        world.linkshell.is_some()
+            && !world.modern
+            && world.linklist.is_none()
+            && world.confirm.is_none()
+            && world.seacom_edit.is_none()
+    }) {
         linkshell::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.concierge_ui.is_some() && world.confirm.is_none()) {

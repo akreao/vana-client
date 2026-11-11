@@ -605,8 +605,9 @@ fn select(w: &mut World, name: &'static str, child: u16) {
     }
 }
 
-/// The generic links (up, down, right, left = links 2..5), SE 0001 when the cursor moves. From a caption (links
-/// 0xff) FUN_101196f0 leaves the cursor on 0xff, no child: Enter then reaches the window's handler with that id.
+/// The generic links (up, down, right, left = links 2..5), SE 0001 when the cursor moves. A link is a signed byte
+/// (FUN_1011c6b0, movsx): a caption's 0xff is -1 and FUN_101196f0 does not move, so the cursor stays on the caption
+/// and Enter still opens it.
 fn step(w: &mut World, gu: &GameUi, name: &str, sel: &mut u16, key: egui::Key) {
     let k = match key {
         egui::Key::ArrowUp => 2,
@@ -615,11 +616,15 @@ fn step(w: &mut World, gu: &GameUi, name: &str, sel: &mut u16, key: egui::Key) {
         egui::Key::ArrowLeft => 5,
         _ => return,
     };
-    let to = gu.menu_links(name, *sel).map_or(*sel, |l| l[k] as u16);
-    if to != *sel && to != 0 && (to != 0xff || matches!(name, NEW | HOLDER | SACK | PEARL | UNWORN)) {
+    if let Some(to) = link_to(*sel, gu.menu_links(name, *sel).map(|l| l[k])) {
         *sel = to;
         w.sounds.push(Ui::Cursor as u32);
     }
+}
+
+/// The child a link moves the cursor to: none for 0, for the child itself, or for a link of 0xff (-1).
+fn link_to(sel: u16, link: Option<u8>) -> Option<u16> {
+    link.map(u16::from).filter(|&to| to != sel && to != 0 && to != 0xff)
 }
 
 /// The list base (FUN_101f6c70): Up / Down stop at the ends, Right / Left turn a page of 10, Escape closes link5 and
@@ -1058,6 +1063,16 @@ pub(super) fn channel_open(w: &World) -> bool {
 
 #[cfg(test)]
 mod tests {
+    /// FUN_1011c6b0 / FUN_101196f0: a caption's links (0xff) leave the cursor where it is.
+    #[test]
+    fn caption_links_stay() {
+        assert_eq!(super::link_to(4, Some(0xff)), None);
+        assert_eq!(super::link_to(4, None), None);
+        assert_eq!(super::link_to(1, Some(0)), None);
+        assert_eq!(super::link_to(1, Some(1)), None);
+        assert_eq!(super::link_to(1, Some(3)), Some(3));
+    }
+
     use super::*;
 
     #[test]
