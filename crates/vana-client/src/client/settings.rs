@@ -41,8 +41,10 @@ pub struct Settings {
     pub modern_opacity: u32,
     /// The mod packs in priority order (the Mods page; config `mods`).
     pub mods: Vec<crate::config::ModRef>,
-    /// Panel Places' Reset pressed: this character's modern panels go back to where they start (not kept).
+    /// UI Setup's Reset pressed: this character's modern panels go back to where they start; its From: the setup
+    /// in SettingsUi::profiles copied in (neither kept).
     pub reset_places: bool,
+    pub copy_ui: Option<usize>,
     /// A game controller read (config gamepad), and its sticks' dead zone in % of full (gamepad_deadzone).
     pub gamepad: bool,
     pub gamepad_dead: u32,
@@ -83,6 +85,7 @@ impl Settings {
             modern_opacity: pct(c.modern_opacity),
             mods: crate::modpack::merged(&c.mods, &crate::modpack::folders()),
             reset_places: false,
+            copy_ui: None,
             gamepad: c.gamepad,
             gamepad_dead: (c.gamepad_deadzone * 100.0).round() as u32,
             mouse_camera_speed: c.mouse_camera_speed,
@@ -562,8 +565,9 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
             Now,
         ),
         row(
-            "Panel Places",
-            "Reset puts this character's modern windows back where they started (not retail).",
+            "UI Setup",
+            "Each character and job keeps its own modern windows. Reset puts this one's back where they started; From \
+             copies another's places, modes and chat window settings. Pick one, then press Enter or click (not retail).",
             ResetPlaces,
             &[(0, "As Moved"), (1, "Reset")],
             Now,
@@ -661,7 +665,7 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
         Kind::Extras => [MAPS, TIMERS, EXTRA_BATTLE, EXTRA_MISC].get(tab).copied().unwrap_or(&[]),
         Kind::Settings if in_game && tab == 4 => &SOUND[..3],
         Kind::Settings if tab >= PACKS => &[],
-        // Panel Places (the last Linux row) is a character's: in game only.
+        // UI Setup (the last Linux row) is a character's: in game only.
         Kind::Settings if !in_game && tab == 6 => &CLIENT[..CLIENT.len() - 1],
         Kind::Settings => [GENERAL, SCREEN, TEXTURES, EFFECTS, SOUND, MISC, CLIENT, GAMEPAD, GRAPHICS][tab.min(8)],
     }
@@ -712,6 +716,13 @@ pub struct SettingsUi {
     /// Monitors as (name, "name  W x H") and GPU names, set by the app after opening.
     pub monitors: Vec<(String, String)>,
     pub gpus: Vec<String>,
+    /// The other characters' and jobs' modern UI setups kept (client/uiconf.rs), for UI Setup's From.
+    pub profiles: Vec<(String, String)>,
+    /// UI Setup's stop picked but not done yet (0 As Moved, 1 Reset, then From each of `profiles`). Both replace this
+    /// job's windows, so stepping the slider only picks: Enter, a click or letting go of a drag does it (ui_done).
+    ui_pick: usize,
+    /// The pick came from the mouse: done when its button is let go (mouse_up).
+    ui_mouse: bool,
     /// The window's pixels when opened (size lists).
     window: [u32; 2],
     /// Drawn where the in-game Config pages are (else centred, over the lobby).
@@ -765,6 +776,9 @@ impl SettingsUi {
             s: Settings::of(c),
             monitors: Vec::new(),
             gpus: Vec::new(),
+            profiles: Vec::new(),
+            ui_pick: 0,
+            ui_mouse: false,
             window,
             in_game: false,
             tab: 0,
@@ -880,6 +894,7 @@ impl SettingsUi {
             Val::Size(..)
             | Val::Gamma
             | Val::FrameLimit
+            | Val::ResetPlaces
             | Val::Monitor
             | Val::Gpu
             | Val::Music
@@ -1029,6 +1044,8 @@ impl SettingsUi {
                 (self.monitors.len().max(1), self.monitors.iter().position(|m| m.0 == self.s.monitor).unwrap_or(0))
             }
             Val::Gpu => (self.gpus.len() + 1, self.gpus.iter().position(|g| *g == self.s.gpu).map_or(0, |i| i + 1)),
+            // As Moved, Reset, then From each kept setup (the pick, not done yet).
+            Val::ResetPlaces => (self.profiles.len() + 2, self.ui_pick),
             Val::Music => (21, (self.s.music / 5) as usize),
             Val::Effects => (21, (self.s.effects / 5) as usize),
             Val::ModernOpacity => (19, (self.s.modern_opacity.clamp(10, 100) / 5 - 2) as usize),
@@ -1073,6 +1090,7 @@ impl SettingsUi {
             Val::Gpu => {
                 self.s.gpu = if i == 0 { String::new() } else { self.gpus.get(i - 1).cloned().unwrap_or_default() }
             }
+            Val::ResetPlaces => self.ui_pick = i.min(self.profiles.len() + 1),
             Val::Music => self.s.music = (i as u32 * 5).min(100),
             Val::Effects => self.s.effects = (i as u32 * 5).min(100),
             Val::ModernOpacity => self.s.modern_opacity = ((i as u32 + 2) * 5).clamp(10, 100),
@@ -1106,6 +1124,15 @@ impl SettingsUi {
                 .find(|m| m.0 == self.s.monitor)
                 .or(self.monitors.first())
                 .map_or_else(|| "Default".into(), |m| m.0.clone()),
+            // A pick not done yet asks.
+            Val::ResetPlaces => match self.ui_pick {
+                0 => "As Moved".into(),
+                1 => "Reset?".into(),
+                k => self.profiles.get(k - 2).map_or_else(
+                    || "As Moved".into(),
+                    |p| format!("From {}?", super::uiconf::label(&self.profiles, p)),
+                ),
+            },
             Val::Gpu if self.s.gpu.is_empty() => "Default".into(),
             // The name without the driver's part ("AMD Radeon RX 6800 XT (RADV NAVI21)").
             Val::Gpu => self.s.gpu.split(" (").next().unwrap_or_default().to_string(),
@@ -1203,6 +1230,13 @@ impl SettingsUi {
                 egui::Key::Enter | egui::Key::Escape => {
                     self.edit = false;
                     self.sounds.push(if key == egui::Key::Enter { Se::Select } else { Se::Cancel });
+                    if matches!(r.val, Val::ResetPlaces) {
+                        if key == egui::Key::Enter {
+                            self.ui_done();
+                        } else {
+                            self.ui_pick = 0;
+                        }
+                    }
                 }
                 _ => {}
             }
@@ -1327,6 +1361,9 @@ impl SettingsUi {
             let (n, _) = self.stops(&rw);
             let f = ((p.0 - x - r[0]) / r[2]).clamp(0.0, 1.0);
             self.set_stop(&rw, (f * (n - 1) as f32).round() as usize);
+            if matches!(rw.val, Val::ResetPlaces) {
+                self.ui_done();
+            }
             self.edit = false;
             self.sounds.push(Se::Select);
             return;
@@ -1531,7 +1568,39 @@ impl SettingsUi {
                         self.sounds.push(Se::Cursor);
                     }
                 }
+                self.ui_mouse |= click && matches!(r.val, Val::ResetPlaces);
             }
+        }
+    }
+
+    /// UI Setup's pick done: Reset or From goes to the app, and the row reads As Moved again.
+    fn ui_done(&mut self) {
+        let pick = std::mem::take(&mut self.ui_pick);
+        self.ui_mouse = false;
+        self.s.reset_places = pick == 1;
+        self.s.copy_ui = pick.checked_sub(2).filter(|k| *k < self.profiles.len());
+        self.dirty |= self.s.reset_places || self.s.copy_ui.is_some();
+    }
+
+    /// Enter in the modern pages on UI Setup (the topic page's row `label`, else this page's cursor row): its pick
+    /// done; true when there was one.
+    pub fn ui_enter(&mut self, label: Option<&str>) -> bool {
+        let row = match label {
+            Some(l) => self.find(l),
+            None => self.row.checked_sub(1).and_then(|i| self.rows().get(i).cloned()),
+        };
+        if self.ui_pick == 0 || !row.is_some_and(|r| matches!(r.val, Val::ResetPlaces)) {
+            return false;
+        }
+        self.ui_done();
+        self.sounds.push(Se::Select);
+        true
+    }
+
+    /// Each frame the mouse's buttons are up: a UI Setup pick the mouse made (a click, a drag let go) is done.
+    pub fn mouse_up(&mut self) {
+        if self.ui_mouse {
+            self.ui_done();
         }
     }
 
@@ -1644,7 +1713,8 @@ impl SettingsUi {
     }
 
     /// A slider set to stop `i` by the pointer.
-    pub fn m_slide(&mut self, row: usize, i: usize) {
+    /// A slider row set to stop `i`, by the mouse (`mouse`) or the keys.
+    pub fn m_slide(&mut self, row: usize, i: usize, mouse: bool) {
         self.sounds.clear();
         let Some(r) = row.checked_sub(1).and_then(|k| self.rows().get(k).cloned()) else { return };
         (self.row, self.col, self.edit) = (row, 0, false);
@@ -1653,6 +1723,7 @@ impl SettingsUi {
             self.set_stop(&r, i);
             self.sounds.push(Se::Cursor);
         }
+        self.ui_mouse |= mouse && matches!(r.val, Val::ResetPlaces);
     }
 }
 
@@ -2077,7 +2148,7 @@ pub(super) fn marker(gu: &mut GameUi, x: f32, y: f32, w: f32) {
 mod tests {
     use super::*;
 
-    /// A page's frame holds 7 rows; at the title the Client page leaves out Panel Places and nothing else.
+    /// A page's frame holds 7 rows; at the title the Client page leaves out UI Setup and nothing else.
     #[test]
     fn pages_fit_their_frame() {
         for kind in [Kind::Settings, Kind::Extras] {
@@ -2093,6 +2164,44 @@ mod tests {
             !title.iter().any(|r| matches!(r.val, Val::ResetPlaces))
                 && matches!(game.last().unwrap().val, Val::ResetPlaces)
         );
+    }
+
+    /// UI Setup's slider only picks: stepping onto Reset or From does nothing until Enter (Escape drops the pick),
+    /// and a mouse pick is done when the button is let go.
+    #[test]
+    fn ui_setup_picks_then_does() {
+        let mut ui = SettingsUi::open(&Config::default(), [1280, 800]);
+        ui.in_game = true;
+        ui.profiles = vec![("Asura-Tsetse".into(), "WHM".into()), ("Asura-Tsetse".into(), "WAR".into())];
+        let row = rows(Kind::Settings, 6, true, false).len();
+        ui.goto(6, row);
+        ui.key(egui::Key::Enter);
+        ui.key(egui::Key::ArrowRight);
+        ui.key(egui::Key::ArrowRight);
+        assert!(!ui.dirty && !ui.s.reset_places && ui.s.copy_ui.is_none());
+        let r = ui.rows()[row - 1].clone();
+        assert_eq!(ui.shown(&r), "From Tsetse WHM?");
+        ui.key(egui::Key::Escape);
+        assert!(!ui.dirty && ui.s.copy_ui.is_none());
+        assert_eq!(ui.shown(&r), "As Moved");
+        ui.key(egui::Key::Enter);
+        ui.key(egui::Key::ArrowRight);
+        ui.key(egui::Key::Enter);
+        assert!(ui.dirty && ui.s.reset_places && ui.s.copy_ui.is_none());
+        assert_eq!(ui.shown(&r), "As Moved");
+        // The modern pages: a drag across the stops picks; letting go does the last one.
+        (ui.dirty, ui.s.reset_places) = (false, false);
+        ui.m_slide(row, 1, true);
+        ui.m_slide(row, 3, true);
+        assert!(!ui.dirty && !ui.s.reset_places);
+        ui.mouse_up();
+        assert!(ui.dirty && !ui.s.reset_places && ui.s.copy_ui == Some(1));
+        // Their keys: Enter on the row does the pick.
+        (ui.dirty, ui.s.copy_ui) = (false, None);
+        ui.m_slide(row, 2, false);
+        ui.mouse_up();
+        assert!(!ui.dirty);
+        assert!(ui.ui_enter(None) && ui.dirty && ui.s.copy_ui == Some(0));
     }
 
     /// A bundled mod's rows on our Extras tabs stand at their places; its other rows make its own page; a choice there

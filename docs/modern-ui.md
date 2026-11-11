@@ -479,10 +479,21 @@ Milestone 1:
   the door asks Yes / No). Live: the Bastok Mines concierge's choice by keys and mouse, Escape cancelling.
 - An event's text input (passinpu): a panel stacked on the chat window, its title (group 0xb by kind) or "Password:"
   and the text with its caret; the keys stay event.rs's (not seen live: no event on hand asks for text).
-- Panel Places (2026-10-27, settings.rs, Settings > Client, in game only): Reset drops this character's saved panel
-  places (config modern_places) and saves; every panel goes back to where it starts the next frame (positions come
-  from the places each frame). The row reads As Moved again. Live: the Settings panel dragged away, Reset by keys and
-  by the mouse.
+- UI Setup (2026-10-27 as Panel Places, settings.rs, Settings > Client, in game only): Reset drops this character's
+  saved panel places (config modern_places) and saves; every panel goes back to where it starts the next frame
+  (positions come from the places each frame). From <character> <job> (2026-11-10) copies another kept setup in (its
+  places, mode presets and chat window settings; this job's favourites stay). Both replace this job's windows, so
+  stepping the slider only picks ("Reset?", "From Nine WHM?"): Enter, a click or letting go of a drag does it, and
+  Escape drops it. The row reads As Moved again. Live: the Settings panel dragged away, Reset by keys and by the
+  mouse; From Lnxcsfix WHM on WAR folded WHM's minimap.
+- Setups per character and job (2026-11-10, client/uiconf.rs; issue #94): each character's main job keeps its own
+  window places (every display's), folded edge windows, mode presets, chat window settings and favourites, in
+  <data>/ui/config/<World>-<Name>/<JOB>.json (beside an FFXI_CONFIG copy in test runs); the config's fields hold the
+  one in use, loaded when the character or the main job changes (MON in Monstrosity) and written with every save. A
+  job new to the character starts as the one it comes from (this session's, else the character's latest file) with
+  no favourites (a job's spells and abilities, as the hotbar's bars, which the hotbar keeps by job itself); a
+  character's first job takes the config as it was. Lua mods' data stays in mod-data (per character, as before).
+  Live: WAR made from the config, WHM and RDM from WAR, a folded minimap kept to WHM through !changejob both ways.
 - The target's cast (2026-10-27, not retail: combat.rs track_cast, World.casts; hud.rs target_cast): 0x028 category 8
   with "ca" starts a spell, 7 with "ca" readies a skill (the first result's value: a mob skill from 0x100, else a
   weapon skill); another arg there is the interrupt; categories 3 / 4 / 11 end it. The target panel shows a spell's name
@@ -658,7 +669,7 @@ Milestone 1:
   ("Name @2560x1440 60%": the window's pixels and the UI scale) beside the character's latest one (the plain name).
   A display not seen yet starts from the latest; a change saves both; a display shown for 2 s keeps its layout as
   its own, so arranging another display doesn't move its panels, and a window dragged through sizes stores nothing.
-  Panel Places' Reset clears every display's. No other panel resizes.
+  UI Setup's Reset clears every display's. No other panel resizes.
 - Favourites (2026-11-02, ours; the plan's "favourites" and "a small optional favourites strip"; client/favs.rs,
   modern/favs.rs): spells, abilities (not traits) and items are starred by the star at their row's right end in the
   magic and ability lists, the Items window and the search's hits, or with Ctrl+F on the cursor's row or the
