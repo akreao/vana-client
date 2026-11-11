@@ -56,13 +56,11 @@ pub struct Drive {
     last: Vec3,
     sample: Vec3,
     since: f32,
-    /// Made this frame: its first step places it without running its time.
-    pub fresh: bool,
 }
 
 impl Drive {
-    /// The op's fields: i16 @6 duration (x speed), u32 @0x10 flags, u32 @0x14 curve, f32 @0x18 yaw0; `over` is the
-    /// fast-forward's overshoot (DAT_1047bf14), taken off the time left.
+    /// The op's fields: i16 @6 duration (x speed, cut to whole ticks: __ftol at 0x1005cad3), u32 @0x10 flags, u32
+    /// @0x14 curve, f32 @0x18 yaw0; `over` is the fast-forward's overshoot (DAT_1047bf14), taken off the time left.
     pub fn new(
         actor: u32,
         owner: u64,
@@ -75,7 +73,7 @@ impl Drive {
         let u32_at = |o: usize| raw.get(o..o + 4).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()));
         let dur = raw.get(6..8).map_or(0, |b| i16::from_le_bytes([b[0], b[1]]));
         let flags = u32_at(0x10);
-        let total = dur as f32 * speed;
+        let total = (dur as f32 * speed).trunc();
         Self {
             actor,
             owner,
@@ -93,7 +91,6 @@ impl Drive {
             last: Vec3::ZERO,
             sample: Vec3::ZERO,
             since: 0.0,
-            fresh: true,
         }
     }
 
@@ -102,9 +99,10 @@ impl Drive {
     }
 
     /// One frame of `dt` ticks, the actor at `pos` turned `rot` now: what it sets, and whether it goes on (the end
-    /// applies u = 1.0 when it ever ran, whatever its direction).
+    /// applies u = 1.0 when it ever ran, whatever its direction). The frame it is made in counts: the task list puts
+    /// a new task straight after the running one and walks it next (FUN_100750b0 sets the walk's next, +0xd5c), and
+    /// FUN_1005e9c0 takes the frame's ticks off before anything else.
     pub fn step(&mut self, dt: f32, pos: Vec3, rot: Vec3) -> (ActorPose, bool) {
-        let dt = if std::mem::take(&mut self.fresh) { 0.0 } else { dt };
         self.left -= dt;
         if self.left >= 0.0 {
             let u = if self.total > 0.0 { self.left / self.total } else { 0.0 };

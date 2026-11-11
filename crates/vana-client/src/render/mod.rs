@@ -520,14 +520,14 @@ enum Culled<'a> {
     Cpu(&'a cull::CpuCull, &'a [std::ops::Range<u32>]),
 }
 
-/// The scene projection's near and far planes. Near is retail's 0.1 (FUN_100146e0): the eye keeps only 0.17 off the
+/// The scene projection's near plane. Near is retail's 0.1 (FUN_100146e0): the eye keeps only 0.17 off the
 /// floor, and a deeper near plane cut into slopes beside it.
 pub const NEAR: f32 = 0.1;
 /// A sub-area draw's texture from this up is the zone's slot (texture - ZONE_TEXTURE).
 const ZONE_TEXTURE: usize = 1 << 20;
-/// Ours: past every Draw Distance, Unlimited included (a voyage's coasts lie thousands away). Depth precision hangs on
-/// NEAR, not on this.
-pub const FAR: f32 = 20000.0;
+/// Far is retail's 65535 (camera +0x2e0, FUN_10015490). The draw distance is a cull, not this plane, and a ship has no
+/// distance test at all (its +0x8c stays 1.0): Selbina's ferry sails 1,975 units out from its berth.
+pub const FAR: f32 = 65535.0;
 
 #[derive(Clone, Copy, Default)]
 pub struct Camera {
