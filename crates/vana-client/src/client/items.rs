@@ -209,6 +209,11 @@ impl ItemCache {
         self.cache.borrow_mut().entry(id).or_insert_with(|| self.names.items.item(id as u32).map(Arc::new)).clone()
     }
 
+    /// The record for a mod (`Items::peek`): no slot of retail's record cache is taken, whichever cache answers.
+    pub fn peek(&self, id: u16) -> Option<Arc<Item>> {
+        self.cache.borrow_mut().entry(id).or_insert_with(|| self.names.items.peek(id as u32).map(Arc::new)).clone()
+    }
+
     /// A Records of Eminence objective record (0xe000 + n).
     pub fn objective(&self, id: u16) -> Option<Arc<crate::dat::roe::Objective>> {
         let items = &self.names.items;

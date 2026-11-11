@@ -364,7 +364,7 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
             Ok(if code == 0 { s } else { format!("{}{s}{}", colour_code(code), colour_code(1)) })
         })?,
     )?;
-    text.set("phrase", lua.create_function(|_, (group, id): (u8, u8)| Ok(phrase([2, 2, group, id])))?)?;
+    text.set("phrase", lua.create_function(|_, (group, id): (Value, u32)| Ok(phrase(phrase_block(&group, id)?)))?)?;
     text.set(
         "autotranslate",
         lua.create_function(|lua, s: String| {
@@ -376,6 +376,15 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
                     return Some([2, 2, g.id, 0]);
                 }
                 g.phrases.iter().find(|p| p.1.to_lowercase() == want).map(|p| [2, 2, g.id, p.0])
+            });
+            // The groups the game builds (Key Items, Items), as they stand since the category list last opened.
+            let hit = hit.or_else(|| {
+                d.built().iter().find_map(|g| {
+                    if g.title.to_lowercase().trim_matches(|c| c == '【' || c == '】') == want.as_str() {
+                        return Some([g.kind, 2, 0, 0]);
+                    }
+                    g.words.iter().find(|p| p.1.to_lowercase() == want).map(|p| p.0)
+                })
             });
             Ok(hit.map(phrase))
         })?,
@@ -562,6 +571,25 @@ pub(super) fn phrase(b: [u8; 4]) -> String {
         .collect()
 }
 
+/// An auto-translate category a mod names: a phrase group's number, or "item" / "key_item" for the two groups the
+/// game builds (kinds 7 and 0x13); the id within it as a block (a phrase id; an item or key item id, 0 the title).
+pub(super) fn phrase_block(group: &Value, id: u32) -> mlua::Result<[u8; 4]> {
+    use crate::dat::autotrans::{KIND_ITEMS, KIND_KEY_ITEMS, id_block};
+    let byte = |n: i64, what: &str| u8::try_from(n).map_err(|_| mlua::Error::runtime(format!("{what}: 0 to 255")));
+    let built = |kind: u8| match u16::try_from(id) {
+        Ok(0) => Ok([kind, 2, 0, 0]),
+        Ok(id) => Ok(id_block(kind, id)),
+        Err(_) => Err(mlua::Error::runtime("id: 0 to 65535")),
+    };
+    match group {
+        Value::Integer(g) => Ok([2, 2, byte(*g, "group")?, byte(id as i64, "id")?]),
+        Value::Number(g) if g.fract() == 0.0 => Ok([2, 2, byte(*g as i64, "group")?, byte(id as i64, "id")?]),
+        Value::String(s) if s.as_bytes() == b"item" => built(KIND_ITEMS),
+        Value::String(s) if s.as_bytes() == b"key_item" => built(KIND_KEY_ITEMS),
+        _ => Err(mlua::Error::runtime("group: a group number, \"item\" or \"key_item\"")),
+    }
+}
+
 /// Values copied between mods: plain data only (api::plain), an error naming what is not.
 fn copies(args: impl IntoIterator<Item = Value>, what: &str) -> mlua::Result<Vec<serde_json::Value>> {
     args.into_iter()
@@ -621,6 +649,25 @@ fn call(lua: &Lua, id: &str, name: &str, args: mlua::Variadic<Value>) -> mlua::R
 
 #[cfg(test)]
 mod tests {
+    /// A phrase is (group, id); "item" / "key_item" take the id as the game writes it into a block (FUN_101bc770 /
+    /// FUN_101bca80: no 00 byte), id 0 the category.
+    #[test]
+    fn phrase_blocks() {
+        use mlua::Value;
+        let lua = mlua::Lua::new();
+        let s = |t: &str| Value::String(lua.create_string(t).unwrap());
+        let b = |g: Value, id: u32| super::phrase_block(&g, id).ok();
+        assert_eq!(b(Value::Integer(0x10), 0x10), Some([2, 2, 0x10, 0x10]));
+        assert_eq!(b(s("item"), 0x1010), Some([7, 2, 0x10, 0x10]));
+        assert_eq!(b(s("item"), 0x50), Some([9, 2, 0xff, 0x50]));
+        assert_eq!(b(s("key_item"), 0x200), Some([0x16, 2, 2, 0xff]));
+        assert_eq!((b(s("item"), 0), b(s("key_item"), 0)), (Some([7, 2, 0, 0]), Some([0x13, 2, 0, 0])));
+        assert_eq!(
+            (b(Value::Integer(256), 1), b(Value::Integer(1), 256), b(s("item"), 0x10000), b(s("x"), 1)),
+            (None, None, None, None)
+        );
+    }
+
     #[test]
     fn paths() {
         assert!(super::rel("../x").is_err());

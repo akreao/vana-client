@@ -68,6 +68,12 @@ fn block_id(kind: u8, hi: u8, lo: u8) -> u32 {
     }
 }
 
+/// What a block names: None a phrase (its group and id are the block's last two bytes), else (key item, id) of an
+/// item or key item block, id 0 its group's title.
+pub fn block_item(b: [u8; 4]) -> Option<(bool, u32)> {
+    (b[0] >= 7).then(|| (norm(b[0]) == KIND_KEY_ITEMS, block_id(b[0], b[2], b[3])))
+}
+
 /// An item or key item id as a block (FUN_101bc770 / FUN_101bca80): no 00 byte; `base` 7 or 0x13, + 1 for id 0,
 /// + 2 when only the high byte is 0, + 3 when only the low byte is 0, the zero bytes written FF.
 pub fn id_block(base: u8, id: u16) -> [u8; 4] {
@@ -544,6 +550,19 @@ mod tests {
         assert_eq!(d.resolve([8, 2, 0xff, 0xff], None).as_deref(), Some("(Items)"));
         assert_eq!(d.resolve([0x17, 2, 1, 2], None).as_deref(), Some("(Key Items)"));
         assert_eq!((block_id(0xd, 0xff, 0x50), block_id(0x12, 0x10, 0xff), block_id(0xf, 1, 2)), (0x50, 0x1000, 0x102));
+        // What a block names: every built word gives its id back; a category block is id 0; a phrase is none.
+        assert_eq!(
+            b[1].words.iter().map(|w| block_item(w.0)).collect::<Vec<_>>(),
+            [0x1010, 0x50, 0x1000, 0xffff].map(|i| Some((false, i)))
+        );
+        assert_eq!(
+            b[0].words.iter().map(|w| block_item(w.0)).collect::<Vec<_>>(),
+            [0x45, 0x200].map(|i| Some((true, i)))
+        );
+        assert_eq!(
+            (block_item(cats[2].1), block_item(cats[1].1), block_item(cats[0].1)),
+            (Some((false, 0)), Some((true, 0)), None)
+        );
         // Nothing held and an empty cache: both groups go.
         d.rebuild(&[], &keys[..3].iter().map(|k| (k.0, k.1.clone(), false)).collect::<Vec<_>>());
         assert!(d.built().is_empty());
