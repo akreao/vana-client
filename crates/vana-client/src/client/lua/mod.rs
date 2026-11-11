@@ -5249,6 +5249,10 @@ return "acxml flow ok"
             -- Protect's family takes Protectra.
             local p = function(id, name, mp, area) return { id = id, name = name, skill = 34, mp = mp, targets = 1, area = area } end
             assert(R.family(p(44, "Protect II", 28, false)) == "Protect" and R.family(p(125, "Protectra", 9, true)) == "Protect")
+            -- LSB's resistance ranks moved with the mod (data/resistances.txt): a monster's own over its species'.
+            local F = require("facts")
+            assert(table.concat(F.ranks_of(100, " Wild Rabbit "), ",") == "-2,-1,-2,-1,-3,-3,-1,-3")
+            assert(F.ranks_of(100, "No Such Monster") == nil)
         "#,
             )
             .exec()

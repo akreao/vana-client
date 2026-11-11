@@ -135,22 +135,33 @@ local function classic_lines(v, ms, cbs)
   return out
 end
 
+-- The party and its chains, worked out again when half a second old (the view and the facts service share them).
+local function party()
+  if not members or os.clock() - members_at >= 0.5 then
+    members = T.members()
+    combos = T.combos(members)
+    members_at = os.clock()
+  end
+  return members, combos
+end
+
+-- Only an older client's refusal of the new element means legacy; any other error is a bug to show.
+local function older(err)
+  return tostring(err):find("unknown element type", 1, true) ~= nil
+end
+
 local function refresh()
+  T.tick()
   if legacy then
     if settings.get("on") then ui.open("skillchains") else ui.close("skillchains") end
     return
   end
-  T.tick()
   if not settings.get("on") then
     if made then ui.close("skillchains") end
     shown = nil
     return
   end
-  if os.clock() - members_at >= 0.5 then
-    members = T.members()
-    combos = T.combos(members)
-    members_at = os.clock()
-  end
+  party()
   local v = T.view(members, combos)
   if not v then
     if made then ui.close("skillchains") end
@@ -160,9 +171,10 @@ local function refresh()
   local lines = game.info().modern_ui and modern_lines(v) or classic_lines(v, members, combos)
   local key = json.encode(lines)
   if not made then
-    local ok = pcall(ui.window, "skillchains", { edge = true, panel = "skillchains", resize = true, fit = true,
+    local ok, err = pcall(ui.window, "skillchains", { edge = true, panel = "skillchains", resize = true, fit = true,
       width = 240, title = "Skillchains", elements = { { type = "lines", id = "view", lines = lines } } })
     if not ok then
+      if not older(err) then error(err, 0) end
       legacy = true
       ui.window("skillchains", { edge = true, panel = "skillchains", resize = true, title = "Skillchains" })
       ui.open("skillchains")
@@ -192,7 +204,7 @@ timer.every(0.1, refresh)
 -- resonance, and the other members with their skills' names and properties.
 mods.provide("facts", function()
   local focus = T.focus()
-  local ms = members or T.members()
+  local ms = party()
   local partners = {}
   for _, m in ipairs(ms) do
     if not m.me then

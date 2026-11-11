@@ -186,7 +186,9 @@ fn mod_edges(p: &mut Panels, w: &mut World) {
                     _ => 0.0,
                 })
                 .fold(0.0, f32::max);
-            (need.clamp(width, screen.width() * if across { 0.9 } else { 0.5 }), screen.height() * 0.6)
+            // Never under `width`, even on a screen too narrow for the share (clamp panics when min > max).
+            let most = (screen.width() * if across { 0.9 } else { 0.5 }).max(width);
+            (need.clamp(width, most), screen.height() * 0.6)
         } else {
             (width, f32::INFINITY)
         };

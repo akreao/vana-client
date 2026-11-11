@@ -33,9 +33,11 @@ end
 
 local function window()
   if legacy then return end
-  local ok = pcall(ui.window, "minimap", { edge = true, panel = "minimap", title = "Map", heading = heading,
+  local ok, err = pcall(ui.window, "minimap", { edge = true, panel = "minimap", title = "Map", heading = heading,
     elements = { { type = "map", id = "map", dots = dots() } } })
   if not ok then
+    -- Only an older client's refusal of the map element means legacy; any other error is a bug to show.
+    if not tostring(err):find("unknown element type", 1, true) then error(err, 0) end
     legacy = true
     ui.window("minimap", { edge = true, panel = "minimap", title = "Map" })
   end

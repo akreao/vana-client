@@ -1960,8 +1960,8 @@
       "files": [
         {
           "path": "init.lua",
-          "sha256": "72c7d77ffb9146a8bf1c3bb772a420c264f9042f03646b79ea1deaf8b8f412ca",
-          "size": 2454,
+          "sha256": "60399d9c8800f28a15be6a64f3e1c2d5e97baf94de118d8e6f22fc4a52f61568",
+          "size": 2650,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/minimap/init.lua"
         },
         {
@@ -2665,8 +2665,8 @@
         },
         {
           "path": "init.lua",
-          "sha256": "0f17bc7b8d27b7ce0e7555cb017343c3e2b58919f1732f06a96c5ee75ac8630b",
-          "size": 9416,
+          "sha256": "59fb2711244950e234ee8a8eef4efa068e945433354f1cc440495e42e22e3087",
+          "size": 9845,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/skillchain/init.lua"
         },
         {
