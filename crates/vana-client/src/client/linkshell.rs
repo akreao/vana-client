@@ -428,6 +428,14 @@ fn send_lsmes(w: &mut World, id: u16, flag: u8, bag: u8, slot: u8, text: &[u8], 
     let _ = w.net.commands.send(NetCommand::Packet { id, body: b });
 }
 
+/// The comment editor's mode 3 close (FUN_100e9870(.., 1) then FUN_100eae20): linkshell 1's message set to `text`
+/// ("" clears it); nothing without linkshell 1 worn.
+pub(super) fn set_message(w: &mut World, text: &[u8]) {
+    if let Some((slot, bag, _)) = equipped(w, 1) {
+        send_lsmes(w, 0x0E2, 0x40, bag, slot, text, None);
+    }
+}
+
 /// /lsmes (FUN_100805f0) and /ls2mes (FUN_100807d0): linkshell 1 (2) worn, else 7 0x71 *(inf: actor +0x124 bit 27, a
 /// zone-in flag, is not modelled)*. No argument asks for the message (reason 0); /lsmes "level" asks the edit level,
 /// "level ls|ps|all" sets it, "clear" empties the message, "set TEXT" or TEXT sets it.
@@ -564,6 +572,8 @@ fn enter(w: &mut World) -> bool {
 }
 
 /// A submenu's Enter (FUN_101e61b0, FUN_101e6250 / 6360 / 6470, FUN_101e6540); each closes its window after.
+/// link2 / link3's case 4 is the caption (child 4, which only the mouse reaches): menu_comment_fn opens the comment
+/// editor on the linkshell message. Any other child (a caption elsewhere, the cursor off every child) only closes.
 fn select(w: &mut World, name: &'static str, child: u16) {
     let n = cursor_row(w).map_or(0, |r| r.num);
     match (name, child) {
@@ -587,6 +597,7 @@ fn select(w: &mut World, name: &'static str, child: u16) {
                 super::linklist::open(w, n, g, r.state);
             }
         }
+        (HOLDER | SACK, 4) => super::seacom::open_ls_message(w),
         _ => {}
     }
     if let Some(l) = w.linkshell.as_mut() {
@@ -594,7 +605,8 @@ fn select(w: &mut World, name: &'static str, child: u16) {
     }
 }
 
-/// The generic links (up, down, right, left = links 2..5), SE 0001 when the cursor moves.
+/// The generic links (up, down, right, left = links 2..5), SE 0001 when the cursor moves. From a caption (links
+/// 0xff) FUN_101196f0 leaves the cursor on 0xff, no child: Enter then reaches the window's handler with that id.
 fn step(w: &mut World, gu: &GameUi, name: &str, sel: &mut u16, key: egui::Key) {
     let k = match key {
         egui::Key::ArrowUp => 2,
@@ -604,7 +616,7 @@ fn step(w: &mut World, gu: &GameUi, name: &str, sel: &mut u16, key: egui::Key) {
         _ => return,
     };
     let to = gu.menu_links(name, *sel).map_or(*sel, |l| l[k] as u16);
-    if to != *sel && to != 0 && to != 0xff {
+    if to != *sel && to != 0 && (to != 0xff || matches!(name, NEW | HOLDER | SACK | PEARL | UNWORN)) {
         *sel = to;
         w.sounds.push(Ui::Cursor as u32);
     }
@@ -819,7 +831,10 @@ pub fn focused(w: &World) -> bool {
     w.linkshell.as_ref().is_some_and(|l| l.sub.is_none() && l.naming.is_none()) && w.confirm.is_none()
 }
 
-/// Mouse *(inf: the generic child hit test)*: hover moves the cursor, a click on the cursor row is Enter.
+/// Mouse (FUN_1015f360 hover, FUN_1015f420 release, over the hit test FUN_1011a140): hover moves the cursor, a click
+/// on the cursor row is Enter. Every child is a part of the same kind, a caption too: its box is its place plus the
+/// layout's offset (head 0xe / 0x10), so the part of a submenu's caption inside the window frame (FUN_1011a0a0) takes
+/// the cursor, and a click there is Enter on that child.
 pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool) {
     let Some(l) = w.linkshell.clone() else { return };
     let (name, sel) = match (&l.naming, &l.sub) {
@@ -830,8 +845,14 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
     };
     let (Some((x, y)), Some(lay)) = (gu.window_xy(name, sw, sh), gu.layout(name)) else { return };
     let n = rows(w).len();
-    let Some(e) = lay.elements.iter().skip(1).filter(|e| e.links[2] != 0xff).find(|e| {
-        let (ex, ey) = (x + e.x as f32, y + e.y as f32);
+    let captions = l.naming.is_none() && l.sub.is_some();
+    let frame = lay.elements.first().map_or((0.0, 0.0), |f| (f.w as f32, f.h as f32));
+    if captions && !(p.0 >= x && p.0 <= x + frame.0 && p.1 >= y && p.1 <= y + frame.1) {
+        return;
+    }
+    let Some(e) = lay.elements.iter().skip(1).filter(|e| captions || e.links[2] != 0xff).find(|e| {
+        let off = |a: usize| i16::from_le_bytes([e.head[a], e.head[a + 1]]) as f32;
+        let (ex, ey) = (x + e.x as f32 + off(0xe), y + e.y as f32 + off(0x10));
         p.0 >= ex && p.0 < ex + e.w as f32 && p.1 >= ey && p.1 < ey + e.h as f32
     }) else {
         return;

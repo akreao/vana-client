@@ -7970,6 +7970,8 @@ struct World {
     /// Social row Set Bazaar, our bazaar message (comment holder slots 0 / 4) and its customers (s2c 0x108).
     bazaar: Option<bazaar::Bazaar>,
     bazaar_msg: seacom::Store,
+    /// The comment holder's blocks 3 / 6: the linkshell message as last typed in the editor and as last sent.
+    ls_edit_msg: seacom::Store,
     bazaar_customers: i32,
     /// The bazaar we browse (bazaar.rs Wares).
     wares: bazaar::Wares,
@@ -10361,6 +10363,7 @@ impl App {
                             unity_tables: Default::default(),
                             bazaar: None,
                             bazaar_msg: Default::default(),
+                            ls_edit_msg: Default::default(),
                             bazaar_customers: 0,
                             wares: Default::default(),
                             helpdesk: None,
