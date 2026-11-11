@@ -32,10 +32,15 @@ FUN_100ee2a0). Decompiled with Ghidra; the 0x00A branch, its jump table and the 
   the dirty byte and queues the job (FUN_100f7b40 -> FUN_100f1480, answer FUN_100f7b00).
 - The job sends twice. Its request FUN_100f1a10 passes the six dwords in force to polcore's ChangeMyStatus
   (FUN_103116a7), not the pending ones, so the first request repeats the old status. The answer FUN_100f7b00 with
-  the dirty byte set copies pending over in force (`rep movsd` from +0x18, 6 dwords), clears the byte and leaves the
-  job busy; the runner FUN_100f1230 keeps a job whose answer returns 1, so it runs again from step 0 and now sends
-  the new status; that answer finds the byte clear and frees the job. A failed request (result < 0) copies nothing
-  and runs again. FUN_100f7aa0's send has the byte clear: one request.
+  the dirty byte set copies pending over in force (`rep movsd` from +0x18, 6 dwords) and clears the dirty byte, but
+  not the job's busy byte (job +1), so the runner FUN_100f1230 runs the job again from step 0 and it now sends the
+  new status; that answer finds the dirty byte clear and clears the busy byte, which ends the job. FUN_100f7b00
+  returns 1 on every path, so the runner never frees the job itself (`FUN_100f1200` is skipped): the busy byte
+  decides. A failed request (result < 0) copies nothing and clears nothing, so the job runs again. Inside one run
+  FUN_100f12a0 tries a failed request again each frame up to 0x32 times (counter +0x28) for results above -0x800
+  other than -0x14cc; after that, or for other results, it reports the error (FUN_100182e0) and hands it to the
+  answer, which leaves the job busy: retail never gives up. FUN_100f7aa0's send has the dirty byte clear: one
+  request.
 - Dead in this build:
   - "menu    oplev" (menu table row 0x103740ec, handler DAT_1066484c with vtable 0x1033ade8): its key handler
     FUN_101ed350 sets the handle record's low two bits to child - 1 (FUN_100f7c70 -> FUN_100f1730, polcore slots
@@ -51,10 +56,17 @@ FUN_100ee2a0). Decompiled with Ghidra; the 0x00A branch, its jump table and the 
   zone-in: Away -> `set_status(0)` and c2s 0x0DC away off (`zone_reset`). A return: LoadMyStatus again,
   ChangeMyStatus with it once, then the away flag by it; ours has no viewer to hand over to, so the return is at
   once and the fade and the wait are not made.
-  `set_status` drops a change while the status job runs, sends the old status then the new (`change_sends`), and
-  without a PlayOnline session (no xi_profile, or not signed on) only keeps the status, so a zone-in still clears
-  an /away there. Before, the status was not kept without a session and nothing ran at a zone-in.
-- Tests: zone_in_resets_only_away, a_change_repeats_the_old_status_first, pol_return_states. Not checked live.
+  `set_status` (`change`) drops a change while the status job runs and sends the old status then the new
+  (`change_sends`). Without xi_profile it only keeps the status, so a zone-in still clears an /away there. With
+  xi_profile but before the session can send (not signed on, the loads not in, our slot unknown, or within 30 s
+  of an IRC drop) it holds the change and `poll` sends it once it can, so the next LoadMyStatus does not undo it.
+  The return's read-and-send runs on the status job too (FUN_100f7aa0) and is skipped without a ready session, as
+  is any send with no slot (a ChangeMyStatus without one would tell xi_profile the character is not in game).
+  Deviation: each ChangeMyStatus is tried at most 0x32 times, 250 ms apart doubling to 5 s (`change_retried`),
+  where retail tries 0x32 times a frame apart and then runs the whole job again without end. Before, the status
+  was not kept without a session and nothing ran at a zone-in.
+- Tests: zone_in_resets_only_away, a_change_repeats_the_old_status_first, change_decision, settle_gate,
+  retry_backs_off, pol_return_states. Not checked live.
 - Still open:
   - polcore's own side: how it maps a notice's Status into the friend entry's bits 13-15, and the message body's
     format (slots 0x110 / 0x10f). polcore.dll is not on this machine (no PlayOnline viewer install; xiloader stands
