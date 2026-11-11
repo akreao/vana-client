@@ -114,6 +114,28 @@ pub(crate) fn config_path() -> PathBuf {
         .unwrap_or_else(|| app_dir(dirs::config_dir()).join("config.json"))
 }
 
+/// Menu Size's steps of a `window` after the window's own, as (fraction, size): 95 %, 90 % ... while the height stays
+/// 512 or more (the v5 tool). Settings lists them; a first start (client/screen.rs) picks one.
+pub fn ui_steps(window: [u32; 2]) -> Vec<(f32, [u32; 2])> {
+    let [w, h] = window;
+    let mut v = Vec::new();
+    let mut f = 0.95;
+    while h as f32 * f >= 512.0 && f > 0.3 {
+        v.push((f, [(w as f32 * f).round() as u32, (h as f32 * f).round() as u32]));
+        f -= 0.05;
+    }
+    v
+}
+
+/// Menu Size (0037 / 0038) when the window goes from `old` to `new`: one of the old window's steps moves to the same
+/// step of the new one (the last there is, else the window's), so menus keep their share of the window; None leaves
+/// any other size as it is.
+pub fn ui_step_moved(old: [u32; 2], new: [u32; 2], ui: [u32; 2]) -> Option<[u32; 2]> {
+    let i = ui_steps(old).iter().position(|s| s.1 == ui)?;
+    let new = ui_steps(new);
+    Some(new.get(i).or(new.last()).map_or([0, 0], |s| s.1))
+}
+
 /// A login that worked: the server, the account (the Square Enix ID for PlayOnline), PlayOnline's member ID, and its
 /// own Remember password with the password(s) sealed for that server and account (secret.rs), and its own Trust this
 /// computer with the server's trust token, sealed the same way.
@@ -560,7 +582,12 @@ impl Config {
                 let _ = std::fs::copy(&path, &aside);
                 Self::default()
             }),
-            Err(_) => Self { first_start: true, ..Self::default() },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Self { first_start: true, ..Self::default() },
+            // There but unreadable: not a first start, so nothing saves over it on its own.
+            Err(e) => {
+                log::error!("{}: {e}; the defaults used", path.display());
+                Self::default()
+            }
         };
         // A config from before the lists: its one login starts them.
         if c.logins.is_empty() && !c.server.trim().is_empty() && !c.username.trim().is_empty() {
@@ -730,6 +757,21 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A Menu Size step moves to the same step of a new window (the last there is, else the window's); any other
+    /// size stays.
+    #[test]
+    fn ui_step_follows_the_window() {
+        let ui_90 = ui_steps([1280, 800])[1].1;
+        assert_eq!(ui_90, [1152, 720]);
+        assert_eq!(ui_step_moved([1280, 800], [2560, 1440], ui_90), Some([2304, 1296]));
+        // 600 lines (75 %) of 800; 640x480 has no steps of 512 lines.
+        assert_eq!(ui_step_moved([1280, 800], [1920, 1080], [960, 600]), Some([1440, 810]));
+        assert_eq!(ui_step_moved([1280, 800], [640, 480], [960, 600]), Some([0, 0]));
+        assert_eq!(ui_step_moved([2560, 1440], [1280, 800], ui_steps([2560, 1440])[8].1), Some([832, 520]));
+        assert_eq!(ui_step_moved([1280, 800], [1920, 1080], [1000, 700]), None);
+        assert_eq!(ui_step_moved([1280, 800], [1920, 1080], [0, 0]), None);
+    }
 
     /// After a patch the lobby gets the patched files' version; a newer or hand-written saved one stays.
     #[test]

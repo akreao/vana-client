@@ -55,23 +55,34 @@ fn edid_of(m: &MonitorHandle) -> Option<Edid> {
         let name = e.file_name().to_string_lossy().into_owned();
         let Some((card, conn)) = name.split_once('-') else { continue };
         let dir = e.path();
-        if !card.starts_with("card") || std::fs::read_to_string(dir.join("status")).ok()?.trim() != "connected" {
+        let connected = std::fs::read_to_string(dir.join("status")).is_ok_and(|s| s.trim() == "connected");
+        if !card.starts_with("card") || !connected {
             continue;
         }
         if let Some(edid) = std::fs::read(dir.join("edid")).ok().as_deref().and_then(parse) {
             found.push((conn.to_string(), edid));
         }
     }
+    pick(&found, &m.name().unwrap_or_default(), [m.size().width, m.size().height])
+}
+
+/// Of the connected connectors' EDIDs, the monitor's: by its name, else the one at its resolution, else the only one.
+/// A name match must also be at the monitor's resolution when another connector is: NVIDIA's X11 driver numbers its
+/// outputs from 0 (DP-0, HDMI-0) and the kernel from 1, so a name can be another port's, and two cards can have the
+/// same connector names.
+#[cfg(any(target_os = "linux", test))]
+fn pick(found: &[(String, Edid)], name: &str, px: [u32; 2]) -> Option<Edid> {
     let norm = |s: &str| s.replace("HDMI-A-", "HDMI-").to_ascii_lowercase();
-    let want = norm(&m.name().unwrap_or_default());
-    let px = [m.size().width, m.size().height];
-    let at_res: Vec<&Edid> =
-        found.iter().map(|f| &f.1).filter(|e| e.native.is_some_and(|n| n == px || n == [px[1], px[0]])).collect();
-    found
+    let want = norm(name);
+    let at = |e: &Edid| e.native.is_some_and(|n| n == px || n == [px[1], px[0]]);
+    let named: Vec<Edid> = found.iter().filter(|(c, _)| norm(c) == want).map(|f| f.1).collect();
+    let at_res: Vec<Edid> = found.iter().map(|f| f.1).filter(at).collect();
+    named
         .iter()
-        .find(|(c, _)| norm(c) == want)
-        .map(|f| f.1)
-        .or_else(|| (at_res.len() == 1).then(|| *at_res[0]))
+        .copied()
+        .find(at)
+        .or_else(|| (named.len() == 1 && at_res.is_empty()).then(|| named[0]))
+        .or_else(|| (at_res.len() == 1).then(|| at_res[0]))
         .or_else(|| (found.len() == 1).then(|| found[0].1))
 }
 
@@ -155,22 +166,12 @@ pub fn first_sizes(height_mm: Option<f32>, height_px: u32, scale: f32, window: [
     FirstSizes { menu: menu_step(f, window), interface: interface.clamp(REF_SCALE, 150.0) as u32 }
 }
 
-/// Settings' Menu Size step nearest `f` of the window (95 %, 90 % ... while 512 lines or more, as settings.rs lists
-/// them); None (the window's) from 97.5 % up.
+/// Settings' Menu Size step nearest `f` of the window (config::ui_steps); None (the window's) from 97.5 % up.
 fn menu_step(f: f32, window: [u32; 2]) -> Option<[u32; 2]> {
     if f >= 0.975 {
         return None;
     }
-    let [w, h] = window;
-    let mut best: Option<(f32, [u32; 2])> = None;
-    let mut k = 0.95;
-    while h as f32 * k >= 512.0 && k > 0.3 {
-        if best.is_none_or(|(b, _)| (k - f).abs() < (b - f).abs()) {
-            best = Some((k, [(w as f32 * k).round() as u32, (h as f32 * k).round() as u32]));
-        }
-        k -= 0.05;
-    }
-    best.map(|b| b.1)
+    crate::config::ui_steps(window).into_iter().min_by(|a, b| (a.0 - f).abs().total_cmp(&(b.0 - f).abs())).map(|s| s.1)
 }
 
 /// A new config's UI sizes from the monitor it opens on.
@@ -231,12 +232,31 @@ mod tests {
         assert_eq!(first_sizes(Some(165.0), 1080, 1.0, window).menu, Some([960, 600]));
         assert_eq!(first_sizes(Some(165.0), 1080, 1.0, window).interface, 80);
         assert_eq!(first_sizes(Some(165.0), 1080, 1.25, window).interface, 65);
-        // A 27-inch 4K screen at 150 %: retail's 1:1 menus are tiny there; the modern layer keeps 60.
+        // A 27-inch 4K screen at 150 % in a 4K window: retail's 1:1 menus are tiny there; the modern layer keeps 60.
+        // (A first start's 1280x800 window stops at 65 %, its last step of 512 lines or more.)
         assert_eq!(
             first_sizes(Some(336.0), 2160, 1.5, [3840, 2160]),
             FirstSizes { menu: Some([2112, 1188]), interface: 60 }
         );
         assert_eq!(first_sizes(None, 1600, 2.0, [2560, 1600]).menu, Some([1280, 800]));
         assert_eq!(first_sizes(None, 1080, 1.0, window), FirstSizes { menu: None, interface: 60 });
+        assert_eq!(first_sizes(Some(336.0), 2160, 1.5, window).menu, Some([832, 520]));
+    }
+
+    /// The monitor's EDID: by name, unless the name is another port's (NVIDIA's X11 numbering) while a connector is
+    /// at the monitor's resolution; by resolution; the only one.
+    #[test]
+    fn edid_picked() {
+        let e = |w: u32, h: u32, mm: f32| Edid { mm: [mm, mm * h as f32 / w as f32], native: Some([w, h]) };
+        let (a, b) = (e(2560, 1440, 698.0), e(1920, 1080, 527.0));
+        let found = vec![("DP-1".to_string(), a), ("DP-2".to_string(), b)];
+        assert_eq!(pick(&found, "DP-1", [2560, 1440]), Some(a));
+        // X11 on NVIDIA calls the 1080p monitor DP-1: the kernel's DP-1 is the 1440p one.
+        assert_eq!(pick(&found, "DP-1", [1920, 1080]), Some(b));
+        // Not at its native resolution and no other connector is: the name still counts.
+        assert_eq!(pick(&found, "DP-2", [1280, 720]), Some(b));
+        assert_eq!(pick(&found, "DisplayPort-0", [2560, 1440]), Some(a));
+        assert_eq!(pick(&[("HDMI-A-1".to_string(), b)], "HDMI-1", [1280, 720]), Some(b));
+        assert_eq!(pick(&found, "DisplayPort-0", [1280, 720]), None);
     }
 }
