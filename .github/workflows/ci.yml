@@ -1,4 +1,6 @@
 # Build, clippy and tests on Linux and Windows for every push to master and every pull request.
+# No separate `cargo build`: nothing used its binary, and it cost a full release compile of the crate (4 to 6 min on
+# Windows). Clippy --all-targets type-checks the normal build, and cargo test compiles and links its own release binary.
 # Clippy fails on its errors (deny-by-default lints) only; its warnings are reported but don't fail the run.
 # The runners have no GPU: GPU tests skip when Gpu::headless() finds no adapter. Windows always has one, WARP, its
 # software D3D12 renderer, so they run there (see the Windows WARP step).
@@ -49,8 +51,6 @@ jobs:
           /c/Windows/System32/tar.exe -xf warp-tmp/warp.zip -C warp-tmp build/native/bin/x64/d3d10warp.dll
           cp warp-tmp/build/native/bin/x64/d3d10warp.dll target/release/deps/
           rm -rf warp-tmp
-      - name: Build
-        run: cargo build --release --locked
       - name: Clippy
         run: cargo clippy --release --locked --all-targets
       - name: Test
