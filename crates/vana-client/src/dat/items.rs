@@ -410,6 +410,47 @@ pub struct Items {
     paths: Vec<Option<(std::path::PathBuf, usize)>>,
     /// `noun`'s answers: event and battle text ask on the UI thread.
     nouns: std::sync::Mutex<std::collections::HashMap<u32, Option<super::names::Noun>>>,
+    recent: std::sync::Mutex<Recent>,
+}
+
+/// The item record cache (DAT_10602620: 200 records of 0x294 bytes, id +0, name +0x1b4): FUN_1015d210 answers a
+/// lookup from it (FUN_1015b580) or reads the record into the next slot round robin (FUN_1015b5c0: DAT_106229cc is
+/// stepped first, so slot 1 fills first). The auto-translate Items group is built from it (FUN_101bc880). Ours keeps
+/// only the id and the name; `seen` remembers names so a lookup our own caches answer still counts.
+#[derive(Default)]
+struct Recent {
+    slots: Vec<(u32, String)>,
+    at: usize,
+    seen: std::collections::HashMap<u32, String>,
+}
+
+/// The cache's slots.
+pub const RECENT: usize = 200;
+
+impl Recent {
+    fn touch(&mut self, id: u32, name: &str) {
+        if id == 0 {
+            return;
+        }
+        if self.slots.is_empty() {
+            self.slots = vec![(0, String::new()); RECENT];
+        }
+        if self.slots.iter().any(|s| s.0 == id) {
+            return;
+        }
+        self.at = (self.at + 1) % RECENT;
+        // The name is copied with strncpy(.., 0x20) and cut at +0x1d2: 30 bytes.
+        let mut cut = String::new();
+        let mut n = 0;
+        for ch in name.chars() {
+            n += super::font::encode_sjis(ch.encode_utf8(&mut [0u8; 4])).len();
+            if n > 30 {
+                break;
+            }
+            cut.push(ch);
+        }
+        self.slots[self.at] = (id, cut);
+    }
 }
 
 impl Items {
@@ -423,7 +464,7 @@ impl Items {
             .map(|r| index.path(r.3[lang as usize]).map(|p| (stride(&p, r.1 - r.0), p)).map(|(n, p)| (p, n)))
             .collect();
         paths.iter().any(|p| p.is_some()).then_some(()).context("no item files")?;
-        Ok(Items { lang, paths, nouns: Default::default() })
+        Ok(Items { lang, paths, nouns: Default::default(), recent: Default::default() })
     }
 
     pub fn lang(&self) -> Lang {
@@ -462,15 +503,59 @@ impl Items {
         Some((RANGES[i].2, r))
     }
 
+    /// FUN_1015d210: the record, which also takes a slot of the record cache.
     pub fn item(&self, id: u32) -> Option<Item> {
+        let it = self.item_raw(id)?;
+        if let Ok(mut r) = self.recent.lock() {
+            r.seen.insert(id, it.name.clone());
+            r.touch(id, &it.name);
+        }
+        Some(it)
+    }
+
+    /// The record without the record cache (ours' scans over every id, which retail has no like of).
+    pub fn item_raw(&self, id: u32) -> Option<Item> {
         let (kind, r) = self.record(id)?;
         let it = parse(&r, kind, self.lang, r.len() == 0x1400);
         (it.id == id).then_some(it)
     }
 
+    /// A lookup one of our own caches answered: the record cache takes it as retail's would.
+    pub fn touch(&self, id: u32) {
+        if let Ok(mut r) = self.recent.lock()
+            && let Some(name) = r.seen.get(&id).cloned()
+        {
+            r.touch(id, &name);
+        }
+    }
+
+    /// The record cache's name of an item (record +0x1b4: the record's first string, 30 bytes at most), looked up as
+    /// FUN_1015d210 does.
+    pub fn cached_name(&self, id: u32) -> Option<String> {
+        if id == 0 {
+            return None;
+        }
+        let held = |r: &Recent| r.slots.iter().find(|s| s.0 == id).map(|s| s.1.clone());
+        if let Some(n) = self.recent.lock().ok().and_then(|r| held(&r)) {
+            return Some(n);
+        }
+        if self.recent.lock().ok().is_some_and(|r| r.seen.contains_key(&id)) {
+            self.touch(id);
+        } else {
+            self.item(id)?;
+        }
+        self.recent.lock().ok().and_then(|r| held(&r))
+    }
+
+    /// The record cache's filled slots in slot order: (id, name).
+    pub fn recent(&self) -> Vec<(u32, String)> {
+        self.recent.lock().map(|r| r.slots.iter().filter(|s| s.0 != 0).cloned().collect()).unwrap_or_default()
+    }
+
     /// The item's noun for message text (`names::item_noun`; the bare name outside English), read once.
     pub fn noun(&self, id: u32) -> Option<super::names::Noun> {
         if let Some(n) = self.nouns.lock().ok().and_then(|c| c.get(&id).cloned()) {
+            self.touch(id);
             return n;
         }
         let n = self.item(id).map(|it| match self.lang {
@@ -490,6 +575,29 @@ impl Items {
 
 #[cfg(test)]
 mod tests {
+    /// FUN_1015b5c0: a new id takes the next slot round robin, from slot 1; a held id takes none; names stop at 30
+    /// bytes.
+    #[test]
+    fn record_cache_ring() {
+        let mut r = super::Recent::default();
+        r.touch(5, "Five");
+        r.touch(0, "none");
+        r.touch(6, "A name that is longer than thirty bytes");
+        r.touch(5, "Five");
+        assert_eq!(
+            (r.slots[1].clone(), r.slots[2].1.as_str()),
+            ((5, "Five".to_string()), "A name that is longer than thi")
+        );
+        assert_eq!(r.slots[0].0, 0);
+        for id in 100..100 + super::RECENT as u32 - 2 {
+            r.touch(id, "x");
+        }
+        // 200 ids fill the ring (slot 0 last); the next one takes slot 1 from the oldest.
+        assert_eq!((r.slots[0].0, r.slots[1].0), (297, 5));
+        r.touch(1000, "new");
+        assert_eq!((r.slots[1].0, r.slots.iter().any(|s| s.0 == 5)), (1000, false));
+    }
+
     use super::*;
 
     /// The Primer: "Basics" (0xf620) lists 56 topics from "Movement" (0xf631: image number 1, three images).

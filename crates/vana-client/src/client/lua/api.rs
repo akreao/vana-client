@@ -1629,7 +1629,7 @@ pub(super) fn install(
             let w = world(lua)?;
             let Some(d) = w.battle.as_ref().and_then(|b| b.phrases.as_ref()) else { return Ok(None) };
             let word = word.unwrap_or_default();
-            let (hits, matched) = d.query(&word, group);
+            let (hits, matched) = d.query(&word, group.map(|g| [2, 2, g, 0]));
             let out = lua.create_table()?;
             // A word that matches nothing gives nothing (the game's candidate list shows the groups instead).
             if !word.trim().is_empty() && group.is_none() && !matched {
