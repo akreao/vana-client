@@ -63,8 +63,7 @@ fn timers_panel(p: &mut Panels, w: &mut World) {
     if hidden(w) {
         return;
     }
-    let panels = w.lua.timers_panels();
-    let secs = if panels.iter().any(Option::is_some) { timers::sections(w, gu, panels) } else { Default::default() };
+    let secs = timers::sections(w);
     let (m, ctx) = (p.m, p.ctx);
     let small = w.game.get(0x99) & 4 != 0;
     let t = 40.0 - (w.started.elapsed().as_secs_f32() * 60.0) % 40.0;

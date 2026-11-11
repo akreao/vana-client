@@ -94,12 +94,18 @@ Done so far (checked live, Lnxcsfix):
   stacks under the HUD panels as the built-in did (a layer first shown later goes on top). Compared with master in
   both UIs (the same kept regime); seen live at a Field Manual: accept, Review, cancel.
 - **Timers** (assets/mods/timers): three edge windows (panels timers_recasts, timers_buffs, timers_debuffs; the user:
-  so /uimodes controls each), each with a `timers` element for its section. The tracking and LSB's durations stay the
-  client's engine (timers.rs, durations.rs); the element's `builtin` (the mod's setting) adds its rows, the mods'
-  timers.add rows show either way. The modern UI: a window per section, its heading with the count folds it, the
-  drawer (/timers, T) folds all three, the recasts' window in the old window's saved place and the others under it,
-  mode presets that named "timers" name the three. The classic UI keeps the one window with three sections:
-  compared with master, the same.
+  so /uimodes controls each), each with a `timers` element for its section. Wholly the mod's since 2.0.0 (the user,
+  2026-11-11: built-ins are done completely in the Lua API): the tracking (engine.lua: action results, wear-offs, the
+  party's effect lists, deaths, zoning, the luopan), LSB's durations (durations.lua and data/*.tsv, moved from the
+  client) and the rows and their order (rows.lua: recasts with the charge rule, our own effects shortest first, the
+  others', the monsters'). The client only counts the element's rows down and draws them, and forwards the `timers`
+  namespace to the mod's service (`add`, `remove`, `clear`; also `effects_on` for other mods). General API it took:
+  the element's `groups`, `res.status_info`, the `party_buffs` event, `game.recasts().calc`, `game.job_points()`'s
+  `upgrades`, `game.player().pet`. An older client (no `res.status_info`) fills the sections from its own tracking
+  (`builtin`). The modern UI: a window per section, its heading with the count folds it, the drawer (/timers, T) folds
+  all three, the recasts' window in the old window's saved place and the others under it, mode presets that named
+  "timers" name the three. The classic UI keeps the one window with three sections. Left: Suggestions read our
+  effects on the target from the old engine; they come back when Suggestions is ported (the mod's `effects_on`).
 - **Skillchain Helper** (assets/mods/skillchain): the edge window panel `skillchains`, drawing the client's view
   (skillchain.rs, its party skills, resonances and LSB's properties stay the client's) whatever the window's elements;
   in the classic UI under the Timers and the regime as before. Not seen live: with a trust in the party (Kupipi, Nanaa

@@ -2932,22 +2932,76 @@
       "description": "Recasts, your effects and the ones you put on others and on monsters, in windows that slide in and out (the timers add-ons).",
       "files": [
         {
+          "path": "data/actions.tsv",
+          "sha256": "933edc9293ffc66cbb219f930495cc45a3a12f5e6f8930bf2ae1f6353fa8ab6c",
+          "size": 76037,
+          "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/timers/data/actions.tsv"
+        },
+        {
+          "path": "data/augments.tsv",
+          "sha256": "c34d52797a4de57722d19629d1a9b436e0a157197f555e5c330eede5534373d7",
+          "size": 178,
+          "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/timers/data/augments.tsv"
+        },
+        {
+          "path": "data/gear.tsv",
+          "sha256": "92ddc1259e1f81c496d375c6e0bff004a245b6b95a1b516c1b915dd0bf209832",
+          "size": 10155,
+          "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/timers/data/gear.tsv"
+        },
+        {
+          "path": "data/jobpoints.tsv",
+          "sha256": "b0be6c612783d28fe84f28e752a3579a4e750610560d0a24faa753e3e20be7cf",
+          "size": 1435,
+          "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/timers/data/jobpoints.tsv"
+        },
+        {
+          "path": "data/merits.tsv",
+          "sha256": "2e1713206d559bfe736da9401692e340393510214fbc762b1e20b722e5248181",
+          "size": 3960,
+          "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/timers/data/merits.tsv"
+        },
+        {
+          "path": "data/status.tsv",
+          "sha256": "bdb46acc9cd6d1672b25fb46a6f42bf791f6e9d7f86eb9fd2dfe1917939b76b1",
+          "size": 23286,
+          "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/timers/data/status.tsv"
+        },
+        {
+          "path": "durations.lua",
+          "sha256": "eb07a9ebeecea7cf2f773a226dc0c506aa4acda565278553f64408029064d783",
+          "size": 20595,
+          "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/timers/durations.lua"
+        },
+        {
+          "path": "engine.lua",
+          "sha256": "e066fc295b75c33e3ba2e609dbc273a367399e6ccaf7992ed96a3e2387487be0",
+          "size": 21723,
+          "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/timers/engine.lua"
+        },
+        {
           "path": "init.lua",
-          "sha256": "889eb50bde98b6127fe5b530d6580b65541dcb65a60a4e03c1bc85d4fc7546cd",
-          "size": 889,
+          "sha256": "4b1dd7f5afee57a94002393eca27e6b576129009392ce5e2faf61bfd1a05c0dc",
+          "size": 2447,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/timers/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "f9c80ca65b192685dc3413b9cc77e789cb45a379aa9366d1fd980c905b8d4390",
+          "sha256": "5a2ca0f6c43d374d91d7f9686de5c019a170faa3dadc439371f332d00ebf7ce1",
           "size": 444,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/timers/mod.toml"
+        },
+        {
+          "path": "rows.lua",
+          "sha256": "80ee3fb557a8cc994e338c22e8aeb0f97324d6479d488370e48da58684356134",
+          "size": 9562,
+          "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/timers/rows.lua"
         }
       ],
       "id": "timers",
       "kind": "lua",
       "name": "Timers",
-      "version": "1.0.0"
+      "version": "2.0.0"
     },
     {
       "authors": [],

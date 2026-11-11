@@ -8,6 +8,25 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Instant;
 
+/// The `timers` namespace: calls to the Timers mod's `add`, `remove` and `clear` with the calling mod's id; quiet while
+/// that mod is not running.
+const TIMERS_SHIM: &str = r#"
+local function send(name, ...)
+  local ok, err = pcall(mods.call, "timers", name, mod.id, ...)
+  if ok then return end
+  local e = tostring(err)
+  if e:find("no mod timers loaded", 1, true) or e:find("is suspended", 1, true) or e:find("provides no", 1, true) then
+    return
+  end
+  error(e, 3)
+end
+return {
+  add = function(name, seconds, options) send("add", name, seconds, options) end,
+  remove = function(name) send("remove", name) end,
+  clear = function() send("clear") end,
+}
+"#;
+
 /// The world, lent while the host runs a mod's Lua (null otherwise).
 pub(super) struct WorldRef(pub *const World);
 
@@ -551,7 +570,7 @@ pub(super) fn install(
                 .ok_or_else(|| mlua::Error::runtime(format!("no element {eid:?} in {id:?}")))?;
             let t = lua.create_table()?;
             match e {
-                Elem::Timers { builtin, .. } => t.set("builtin", *builtin)?,
+                Elem::Timers { groups, .. } => t.set("count", groups.iter().map(|g| g.rows.len()).sum::<usize>())?,
                 Elem::Targets { rows, .. } => t.set("count", rows.len())?,
                 Elem::Chip { text, .. } => t.set("text", text.as_str())?,
                 Elem::Text { text, .. } | Elem::Input { text, .. } => t.set("text", text.as_str())?,
@@ -718,85 +737,8 @@ pub(super) fn install(
     super::skin::install(lua, &ui, vm)?;
     g.set("ui", ui)?;
 
-    // timers: rows in the Timers window (the Extra's drawer, shown for them even when the Extra is off).
-    let timers = lua.create_table()?;
-    let me = m.id.clone();
-    timers.set(
-        "add",
-        lua.create_function(move |lua, (name, secs, opts): (String, f32, Option<Table>)| {
-            let (mut section, mut group, mut icon, mut total, mut fills) = (1, None, None, 0.0, false);
-            if let Some(o) = &opts {
-                section = match o.get::<Option<String>>("section")?.as_deref() {
-                    Some("recast") | Some("recasts") => 0,
-                    Some("debuff") | Some("debuffs") => 2,
-                    _ => 1,
-                };
-                group = o.get("group")?;
-                if let Some(i) = o.get::<Option<Table>>("icon")? {
-                    icon = Some((
-                        i.get::<Option<String>>("kind")?.unwrap_or_else(|| "status".into()),
-                        i.get::<u16>("id")?,
-                    ));
-                }
-                total = o.get::<Option<f32>>("total")?.unwrap_or(0.0);
-                fills = o.get::<Option<bool>>("fills")?.unwrap_or(section == 0);
-            }
-            push_op(
-                lua,
-                super::Op::Timer {
-                    mod_id: me.clone(),
-                    name: Some(name),
-                    secs: Some(secs),
-                    section,
-                    group,
-                    icon,
-                    total,
-                    fills,
-                },
-            )?;
-            Ok(())
-        })?,
-    )?;
-    let me = m.id.clone();
-    timers.set(
-        "remove",
-        lua.create_function(move |lua, name: String| {
-            push_op(
-                lua,
-                super::Op::Timer {
-                    mod_id: me.clone(),
-                    name: Some(name),
-                    secs: None,
-                    section: 0,
-                    group: None,
-                    icon: None,
-                    total: 0.0,
-                    fills: false,
-                },
-            )?;
-            Ok(())
-        })?,
-    )?;
-    let me = m.id.clone();
-    timers.set(
-        "clear",
-        lua.create_function(move |lua, ()| {
-            push_op(
-                lua,
-                super::Op::Timer {
-                    mod_id: me.clone(),
-                    name: None,
-                    secs: None,
-                    section: 0,
-                    group: None,
-                    icon: None,
-                    total: 0.0,
-                    fills: false,
-                },
-            )?;
-            Ok(())
-        })?,
-    )?;
+    // timers: rows in the Timers mod's windows, through the service it offers (nothing while it is not running).
+    let timers: Table = lua.load(TIMERS_SHIM).set_name("=timers").set_environment(g.clone()).eval()?;
     g.set("timers", timers)?;
 
     // packets (docs/lua-mods.md 4.7): hooks both ways with Windower's chain, injection, the last of each id.
@@ -1271,10 +1213,19 @@ pub(super) fn install(
             let totals = lua.create_table()?;
             totals.set("spells", st)?;
             totals.set("abilities", at)?;
+            // The 0x119 entries' adjustments: calc1 (sixtieths off the whole, low 6 bits), calc2 (seconds added).
+            let calc = lua.create_table()?;
+            for (id, &(c1, c2)) in &w.ability_calc {
+                let c = lua.create_table()?;
+                c.set("calc1", c1)?;
+                c.set("calc2", c2)?;
+                calc.set(*id, c)?;
+            }
             let t = lua.create_table()?;
             t.set("spells", spells)?;
             t.set("abilities", abilities)?;
             t.set("totals", totals)?;
+            t.set("calc", calc)?;
             Ok(t)
         })?,
     )?;
@@ -1509,6 +1460,23 @@ pub(super) fn install(
         lua.create_function(|lua, id: u16| {
             let w = world(lua)?;
             Ok(w.battle.as_ref().map(|b| b.status_title(id)).filter(|n| !n.is_empty()))
+        })?,
+    )?;
+    // The game's status info for an effect (the status icons' file): whether it can be cancelled, whether its icon
+    // never shows a time, its description.
+    res.set(
+        "status_info",
+        lua.create_function(|lua, id: u16| {
+            let w = world(lua)?;
+            let gu = gu(lua)?;
+            let small = w.game.get(0x99) & 4 != 0;
+            let Some(e) = gu.status_entry(small, id) else { return Ok(None) };
+            let (cancel, untimed) = gu.status_flags(small, id).unwrap_or((false, false));
+            let t = lua.create_table()?;
+            t.set("cancellable", cancel)?;
+            t.set("untimed", untimed)?;
+            t.set("description", e.desc)?;
+            Ok(Some(t))
         })?,
     )?;
     res.set(
@@ -2115,6 +2083,8 @@ fn player(lua: &Lua) -> mlua::Result<Table> {
     // The focus target (/focustarget, one of our six) and the target before the current one, while here.
     t.set("focus_target", super::super::target::focus_member(w))?;
     t.set("last_target", super::super::target::last_target(w).map(|t| t.0))?;
+    // Our pet as our status names it (s2c 0x037: avatars, wyverns, jug pets, automatons, luopans).
+    t.set("pet", (w.my_pet != 0).then(|| w.entity_at(w.my_pet).map(|(id, _)| id)).flatten())?;
     Ok(t)
 }
 
@@ -2250,6 +2220,42 @@ fn rows(v: Option<Table>) -> mlua::Result<Vec<super::window::Row>> {
         .collect()
 }
 
+/// A timers element's groups: `{name?, rows = {{name, left, total?, fills?, icon = {kind, id}}...}}...` (an icon's
+/// kind defaults to "status").
+fn timer_groups(v: Option<Table>) -> mlua::Result<Vec<super::window::TimerGroup>> {
+    use super::window::{Icon, TimerGroup, TimerRow};
+    let Some(v) = v else { return Ok(Vec::new()) };
+    v.sequence_values::<Table>()
+        .map(|g| {
+            let g = g?;
+            let rows = match g.get::<Option<Table>>("rows")? {
+                Some(r) => r
+                    .sequence_values::<Table>()
+                    .map(|r| {
+                        let r = r?;
+                        let icon = match r.get::<Option<Table>>("icon")? {
+                            Some(i) => Some(Icon::of(
+                                Some(i.get::<Option<String>>("kind")?.as_deref().unwrap_or("status")),
+                                i.get::<u16>("id")?,
+                            )),
+                            None => None,
+                        };
+                        Ok(TimerRow {
+                            icon,
+                            name: r.get::<Option<String>>("name")?.unwrap_or_default(),
+                            left: r.get::<Option<f32>>("left")?.unwrap_or(0.0),
+                            total: r.get::<Option<f32>>("total")?.unwrap_or(0.0).max(0.0),
+                            fills: r.get::<Option<bool>>("fills")?.unwrap_or(false),
+                        })
+                    })
+                    .collect::<mlua::Result<_>>()?,
+                None => Vec::new(),
+            };
+            Ok(TimerGroup { name: g.get::<Option<String>>("name")?.filter(|n| !n.is_empty()), rows })
+        })
+        .collect()
+}
+
 fn columns(v: Option<Table>) -> mlua::Result<Vec<super::window::Col>> {
     let Some(v) = v else { return Ok(Vec::new()) };
     v.sequence_values::<Table>()
@@ -2367,7 +2373,8 @@ fn elem_only(t: &Table) -> mlua::Result<super::window::Elem> {
                     return Err(mlua::Error::runtime(format!("timers section {s:?}: recasts, buffs or debuffs")));
                 }
             },
-            builtin: t.get::<Option<bool>>("builtin")?.unwrap_or(true),
+            groups: timer_groups(t.get("groups")?)?,
+            at: Instant::now(),
         },
         "gauge" => Elem::Gauge {
             id: t.get::<Option<String>>("id")?.unwrap_or_default(),
@@ -2491,9 +2498,10 @@ fn update(e: &mut super::window::Elem, t: &Table) -> mlua::Result<()> {
                 *height = v.max(1);
             }
         }
-        Elem::Timers { builtin, .. } => {
-            if let Some(v) = t.get::<Option<bool>>("builtin")? {
-                *builtin = v;
+        Elem::Timers { groups, at, .. } => {
+            if t.contains_key("groups")? {
+                *groups = timer_groups(t.get("groups")?)?;
+                *at = Instant::now();
             }
         }
         Elem::Targets { rows, .. } => {
