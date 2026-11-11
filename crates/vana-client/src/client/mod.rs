@@ -10,6 +10,7 @@ pub mod combat;
 mod costume;
 mod creator;
 mod flyover;
+mod forced;
 mod friendlist;
 mod friends;
 mod gm;
@@ -1562,15 +1563,28 @@ fn chat_channel(cmd: &str) -> Option<u8> {
 /// "[GM]"; the yell takes the zone's name; assist (0x22 / 0x23) the rank icon 0xEF (mentor x 10 + mastery + 0x24,
 /// 0x2f..0x4c) when Data is set. The name and text arrive already cut at a control byte (net.rs chat_text). Not done:
 /// PvP (s2c 0x0B4) dropping the linkshell's "[n]", the profanity mask.
-fn chat_line(kind: u8, attr: u8, data: u16, from: &str, text: &str, zone: &str) -> Option<(String, u8)> {
+///
+/// `filtered`: the Misc. 4 chat filter swapped the text (FUN_100da5e0 gave 2). The shout (FUN_100da170), the yell
+/// (FUN_100da200) and the assist lines (FUN_100da2a0 / FUN_100da380) then put the icon 0xEF 0x4D in front of the name,
+/// after the rank icon when there is one.
+fn chat_line(
+    kind: u8,
+    attr: u8,
+    data: u16,
+    from: &str,
+    text: &str,
+    zone: &str,
+    filtered: bool,
+) -> Option<(String, u8)> {
     let gm = if attr & 1 != 0 { "[GM]" } else { "" };
+    let mark = if filtered { crate::dat::font::decode_sjis(&[0xef, 0x4d]) } else { String::new() };
     let n = from;
     let say = || format!("{gm}{n} : {text}");
     Some(match kind {
         0 | 0x18 => (say(), 9),
         0x19 if n.is_empty() => (text.to_string(), 9),
         0x19 => (say(), 9),
-        1 => (say(), 10),
+        1 => (format!("{gm}{mark}{n} : {text}"), 10),
         3 => (format!("{gm}{n}>> {text}"), 0xc),
         4 => (format!("({gm}{n}) {text}"), 0xd),
         5 => (format!("[1]<{gm}{n}> {text}"), 0xe),
@@ -1578,13 +1592,13 @@ fn chat_line(kind: u8, attr: u8, data: u16, from: &str, text: &str, zone: &str) 
         0x1e => (format!("[3]<{gm}{n}> {text}"), 0x79),
         6 | 7 => (format!("----== SystemMessage ==----\n{text}"), 0xc8),
         8 => (format!("{gm}{n} {text}"), 0xf),
-        0x1a => (format!("{gm}{n}[{zone}]: {text}"), 0xb),
+        0x1a => (format!("{gm}{mark}{n}[{zone}]: {text}"), 0xb),
         0x21 => (format!("{{{gm}{n}}} {text}"), 0xd4),
         0x22 | 0x23 => {
             let c = if kind == 0x22 { 'J' } else { 'E' };
             let [mastery, mentor] = data.to_le_bytes();
             let rank = if data != 0 { rank_icon(mentor, mastery) } else { String::new() };
-            (format!("{gm}{rank}{n}({c}) : {text}"), if kind == 0x22 { 0xdc } else { 0xde })
+            (format!("{gm}{rank}{mark}{n}({c}) : {text}"), if kind == 0x22 { 0xdc } else { 0xde })
         }
         // "NS" kinds: the text alone.
         0xd => (text.to_string(), 9),
@@ -2269,7 +2283,9 @@ fn name_plates(gu: &mut GameUi, world: &World, sw: f32, sh: f32, view_proj: glam
     };
     // FUN_100d0510's gates: the chocobo / mount / rod / chair actors (+0xa4 1..4, 0x54) are not entities here, so
     // they have no plate; models 0xb22..0xb31 (the luopans, FUN_10098320) have none either. Then /names: off hides
-    // every name, otherpc other players' only.
+    // every name, otherpc other players' only. Its first test: in first person the forced follow's leader (our
+    // entity +0x2a2, forced.rs) has no plate.
+    let led = |e: &Entity| world.camst.first && world.my_pull != 0 && e.index == world.my_pull;
     let named = |id: &u32| match world.names_hidden {
         None => true,
         Some(others) => others && (*id >> 24 != 0 || *id == world.my_id),
@@ -2278,6 +2294,7 @@ fn name_plates(gu: &mut GameUi, world: &World, sw: f32, sh: f32, view_proj: glam
         !monstrosity::name(e).is_empty()
             && !e.name.starts_with('_')
             && !e.no_plate
+            && !led(e)
             && !(0xb22..=0xb31).contains(&e.model)
             && visible(id, e)
             && !hidden.contains(id)
@@ -6193,7 +6210,10 @@ fn party_battle(w: &World) -> bool {
 /// FUN_100cd040's tail, on the cylinder's result: while we fish, another character within 1.0 of us is hidden and one
 /// out to 2.5 is faded by (d - 1) x 2/3; entity +0x130 bit 18 draws at 0.5 whatever the rest said; the result is
 /// capped at 1. The vt+0x260 test before them never fires in this build (nothing sets drawobj +0x8ac bit 0).
-fn near_fade_tail(f: f32, fishing: Option<f32>, half: bool) -> f32 {
+///
+/// `led`: in first person, the character our forced follow names (entity +0x2a2, forced.rs) is hidden first.
+fn near_fade_tail(f: f32, led: bool, fishing: Option<f32>, half: bool) -> f32 {
+    let f = if led { 0.0 } else { f };
     let f = match fishing {
         Some(d) if d < 1.0 => 0.0,
         Some(d) if d < 2.5 => f * (d - 1.0) * (2.0 / 3.0),
@@ -7590,6 +7610,8 @@ struct World {
     journal: journal::Store,
     /// Our adventuring fellow's ActIndex (0x037 u16 @0x48, player +0x29c).
     my_fellow: u16,
+    /// The forced follow's ActIndex (0x037 u16 @0x46, our entity +0x2a2; forced.rs), 0 none.
+    my_pull: u16,
     /// Our costume (0x037 @0x44) and whether it is on (+0x120 bit 5).
     costume: costume::Costume,
     /// The Search row's windows (searchma and its criteria), and scname's name (kept between opens, +0x18).
@@ -10107,6 +10129,7 @@ impl App {
                             ls_msg: Default::default(),
                             ls_msg_seq: 0,
                             my_fellow: 0,
+                            my_pull: 0,
                             costume: Default::default(),
                             search_name: String::new(),
                             search_cond: Default::default(),
@@ -11126,8 +11149,21 @@ impl App {
                     ship,
                     monstrosity,
                     pol_return,
+                    plate,
                 } => {
                     world.gm.zoned();
+                    // FUN_10094190: the new entity takes its flags from the 0x00A (net::zone_in_plate). The model
+                    // radius, the Monstrosity fields and the zone's pool flag are 0x037's alone and stay until it
+                    // comes.
+                    // The new entity's forced-follow index starts at 0 (0x1008a65c).
+                    world.my_pull = 0;
+                    world.my_plate = net::SelfPlate {
+                        hitbox: world.my_plate.hitbox,
+                        monstrosity: world.my_plate.monstrosity,
+                        mon_prefix: world.my_plate.mon_prefix,
+                        zone_pool: world.my_plate.zone_pool,
+                        ..plate
+                    };
                     // The PlayOnline side (xi_profile): signed on and loaded once per session.
                     friends::start(world);
                     friends::zone_in(world, pol_return);
@@ -11760,10 +11796,10 @@ impl App {
                         continue;
                     }
                     // The Misc. 4 filter (FUN_100da5e0): a hit hides the line or swaps its text.
-                    let text = match spamfilter::screen(world, kind, attr, &from, &text) {
-                        spamfilter::Verdict::Show => text,
+                    let (text, filtered) = match spamfilter::screen(world, kind, attr, &from, &text) {
+                        spamfilter::Verdict::Show => (text, false),
                         spamfilter::Verdict::Hide => continue,
-                        spamfilter::Verdict::Replace(t) => t,
+                        spamfilter::Verdict::Replace(t) => (t, true),
                     };
                     world.lua.raise(
                         "chat_message",
@@ -11794,7 +11830,7 @@ impl App {
                     // Attr bit 3: Mes opens with a message source, its number and five num[] (FUN_100fd910).
                     let coded = if attr & 8 != 0 { event::coded_chat(&text) } else { None };
                     let text = coded.as_ref().map_or(text.as_str(), |c| c.rest);
-                    if let Some((line, mode)) = chat_line(kind, attr, data, &from, text, &zone) {
+                    if let Some((line, mode)) = chat_line(kind, attr, data, &from, text, &zone, filtered) {
                         match coded {
                             Some(c) if c.source != 0 => event::source_line(world, c.source, c.id, c.num, mode, &line),
                             _ => push_chat_line(
@@ -12114,6 +12150,7 @@ impl App {
                     icons,
                     team,
                     fellow,
+                    follow,
                     plate,
                     ride,
                     indi,
@@ -12136,6 +12173,7 @@ impl App {
                     indi::apply(world, me, indi);
                     world.my_plate = plate;
                     world.my_fellow = fellow;
+                    world.my_pull = follow;
                     world.costume.set_id(costume);
                     world.self_flags = flags;
                     config_anon(world.config.as_mut(), flags);
@@ -13616,6 +13654,24 @@ impl App {
         if world.dead() || world.my_motion.status == 33 || in_event {
             step = Vec3::ZERO;
         }
+        // FUN_100a6240's head: the forced follow (s2c 0x037 @0x46, forced.rs) replaces the input wherever the move
+        // step runs (FUN_100a57f0: not dead, resting, seated, synthesising or in a chair; FUN_100a5dc0: not in an
+        // event, not charmed). The run motion while pulled is ours *(inferred: retail's motion follows the actor's
+        // own displacement)*.
+        let pull = (world.my_pull != 0
+            && !in_event
+            && !held
+            && !world.dead()
+            && !world.my_plate.charmed
+            && !matches!(world.my_motion.status, 7 | 0x21 | 0x2c | 0x2f | 0x30 | 0x3f..=0x53))
+        .then(|| world.entity_at(world.my_pull).map(|(_, e)| (e.pos, e.yaw)))
+        .flatten();
+        let my_radius = world.actors.get(&world.my_id).map_or(0.0, bump::radius);
+        if let Some((tp, _)) = pull {
+            step = forced::step(world.pos, tp, my_radius) * Vec3::new(1.0, 0.0, 1.0);
+            world.move_tier = if step == Vec3::ZERO { 0.0 } else { 1.0 };
+            world.autorun = false;
+        }
         let stepping = step != Vec3::ZERO;
         let moving = stepping;
         // Whole retail frames of FUN_100a48d0 / FUN_100a3560; a position set elsewhere starts over from it.
@@ -13672,7 +13728,9 @@ impl App {
             }
             let from = world.pos;
             let mut next = from;
-            if stepping {
+            if let Some((tp, _)) = pull {
+                next = from + forced::step(from, tp, my_radius);
+            } else if stepping {
                 let s = step.normalize();
                 let d = match lock_dir {
                     3 => speed / 3.0 * ground::STEP_TICKS / 60.0,
@@ -13702,7 +13760,7 @@ impl App {
             }
             // FUN_100a8770 at the end of the move input (also with no input): a character in the way holds the step
             // (the run motion and facing stay).
-            if !in_event && bump::blocks(world, from, next - from, ground::STEP_TICKS) {
+            if !in_event && pull.is_none() && bump::blocks(world, from, next - from, ground::STEP_TICKS) {
                 next = from;
             }
             let g = world.ground.as_ref().filter(|g| !g.is_empty());
@@ -13823,6 +13881,17 @@ impl App {
                 // FUN_100a6240 (cur 30261006) returns before any turn while an effect holds us: the camera moves, the
                 // facing stays.
                 None
+            } else if let Some((_, to_yaw)) = pull {
+                // The forced follow: third person faces the step; first person eases to the leader's own yaw, a
+                // quarter of the difference each retail frame.
+                let y = if world.camst.first {
+                    let y = (0..steps).fold(entity_yaw(world.yaw), |y, _| forced::ease(y, to_yaw));
+                    world.yaw = player_yaw(y);
+                    (steps > 0).then_some(y)
+                } else {
+                    forced::face(step)
+                };
+                y.map(|y| Vec3::new(y.cos(), 0.0, -y.sin()))
             } else if let Some(f) = tank_face {
                 Some(f)
             } else if face_cam {
@@ -19348,7 +19417,8 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
         } else if self_first {
             cam_fade
         } else {
-            near_fade_tail(cam_fade, fishing, half)
+            let led = w.camst.first && w.my_pull != 0 && w.entities.get(id).is_some_and(|e| e.index == w.my_pull);
+            near_fade_tail(cam_fade, led, fishing, half)
         };
         // FUN_100d5b10: an event's look, else the target / face target; eased and weighted in world space.
         let point = |k: usize| ch.skeleton.points.get(k).copied().unwrap_or((0, Vec3::ZERO));
@@ -21064,15 +21134,18 @@ mod tests {
     /// which wins over everything.
     #[test]
     fn near_fade_tail_steps() {
-        assert_eq!(near_fade_tail(1.0, None, false), 1.0);
-        assert_eq!(near_fade_tail(1.0, Some(0.9), false), 0.0);
-        assert!((near_fade_tail(1.0, Some(1.75), false) - 0.5).abs() < 1e-5);
-        assert!((near_fade_tail(1.0, Some(2.5), false) - 1.0).abs() < 1e-5);
+        assert_eq!(near_fade_tail(1.0, false, None, false), 1.0);
+        assert_eq!(near_fade_tail(1.0, false, Some(0.9), false), 0.0);
+        assert!((near_fade_tail(1.0, false, Some(1.75), false) - 0.5).abs() < 1e-5);
+        assert!((near_fade_tail(1.0, false, Some(2.5), false) - 1.0).abs() < 1e-5);
         // The cylinder's fade and the fishing fade multiply.
-        assert!((near_fade_tail(0.5, Some(2.5 - 1e-4), false) - 0.5).abs() < 1e-3);
+        assert!((near_fade_tail(0.5, false, Some(2.5 - 1e-4), false) - 0.5).abs() < 1e-3);
         // Bit 18 overrides both ways.
-        assert_eq!(near_fade_tail(1.0, Some(0.5), true), 0.5);
-        assert_eq!(near_fade_tail(0.0, None, true), 0.5);
+        assert_eq!(near_fade_tail(1.0, false, Some(0.5), true), 0.5);
+        assert_eq!(near_fade_tail(0.0, false, None, true), 0.5);
+        // First person: the forced follow's leader is hidden, unless bit 18 draws it at half.
+        assert_eq!(near_fade_tail(1.0, true, None, false), 0.0);
+        assert_eq!(near_fade_tail(1.0, true, None, true), 0.5);
     }
 
     /// MODLOG "The near-camera character fade": 0 within 0.2, linear to 0.5, nothing with the eye more than 0.5
@@ -21092,27 +21165,38 @@ mod tests {
     /// s2c 0x017 lines and modes (LAB_100e37a0): GM tag, yell zone, system header, dropped kinds.
     #[test]
     fn chat_kinds() {
-        assert_eq!(chat_line(0, 1, 0, "Rabbit", "hi", ""), Some(("[GM]Rabbit : hi".into(), 9)));
-        assert_eq!(chat_line(3, 0, 0, "Rabbit", "hi", ""), Some(("Rabbit>> hi".into(), 0xc)));
+        assert_eq!(chat_line(0, 1, 0, "Rabbit", "hi", "", false), Some(("[GM]Rabbit : hi".into(), 9)));
+        assert_eq!(chat_line(3, 0, 0, "Rabbit", "hi", "", false), Some(("Rabbit>> hi".into(), 0xc)));
         assert_eq!(
-            chat_line(0x1a, 0, 230, "Rabbit", "hi", "Southern San d'Oria"),
+            chat_line(0x1a, 0, 230, "Rabbit", "hi", "Southern San d'Oria", false),
             Some(("Rabbit[Southern San d'Oria]: hi".into(), 0xb))
         );
         assert_eq!(
-            chat_line(6, 0, 0, "", "Restarting", ""),
+            chat_line(6, 0, 0, "", "Restarting", "", false),
             Some(("----== SystemMessage ==----\nRestarting".into(), 0xc8))
         );
-        assert_eq!(chat_line(0x22, 0, 0, "Rabbit", "hi", ""), Some(("Rabbit(J) : hi".into(), 0xdc)));
+        assert_eq!(chat_line(0x22, 0, 0, "Rabbit", "hi", "", false), Some(("Rabbit(J) : hi".into(), 0xdc)));
         // Mentor 1, mastery 3: 0xEF 0x31; out of range falls back to 0x2f; the 0x017 icon and our echo's agree.
         assert_eq!(
-            chat_line(0x23, 0, 0x0103, "Rabbit", "hi", ""),
+            chat_line(0x23, 0, 0x0103, "Rabbit", "hi", "", false),
             Some((format!("{}Rabbit(E) : hi", rank_icon(1, 3)), 0xde))
         );
         assert_eq!(rank_icon(1, 3), crate::dat::font::decode_sjis(&[0xef, 0x31]));
         assert_eq!(rank_icon(9, 9), crate::dat::font::decode_sjis(&[0xef, 0x2f]));
-        assert_eq!(chat_line(0x11, 0, 0, "Rabbit", "text only", ""), Some(("text only".into(), 0x79)));
-        assert_eq!(chat_line(0xc, 0, 0, "GM", "menu", ""), None);
-        assert_eq!(chat_line(2, 0, 0, "Rabbit", "hi", ""), None);
+        assert_eq!(chat_line(0x11, 0, 0, "Rabbit", "text only", "", false), Some(("text only".into(), 0x79)));
+        assert_eq!(chat_line(0xc, 0, 0, "GM", "menu", "", false), None);
+        assert_eq!(chat_line(2, 0, 0, "Rabbit", "hi", "", false), None);
+        // The chat filter's swapped text: 0xEF 0x4D before the name, after the rank icon.
+        let mark = crate::dat::font::decode_sjis(&[0xef, 0x4d]);
+        assert_eq!(chat_line(1, 0, 0, "Rabbit", "x", "", true), Some((format!("{mark}Rabbit : x"), 10)));
+        assert_eq!(chat_line(0x1a, 0, 0, "Rabbit", "x", "Jeuno", true), Some((format!("{mark}Rabbit[Jeuno]: x"), 0xb)));
+        assert_eq!(chat_line(0x22, 0, 0, "Rabbit", "x", "", true), Some((format!("{mark}Rabbit(J) : x"), 0xdc)));
+        assert_eq!(
+            chat_line(0x23, 0, 0x0103, "Rabbit", "x", "", true),
+            Some((format!("{}{mark}Rabbit(E) : x", rank_icon(1, 3)), 0xde))
+        );
+        // Other kinds are never screened; the flag changes nothing there.
+        assert_eq!(chat_line(0, 0, 0, "Rabbit", "x", "", true), Some(("Rabbit : x".into(), 9)));
     }
 
     /// A steady slope is drawn exactly (one step late); the downhill bob (drops 0.046, 0.083, 0.046 ...) is not.

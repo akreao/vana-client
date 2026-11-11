@@ -436,11 +436,20 @@ pub(super) fn set_message(w: &mut World, text: &[u8]) {
     }
 }
 
-/// /lsmes (FUN_100805f0) and /ls2mes (FUN_100807d0): linkshell 1 (2) worn, else 7 0x71 *(inf: actor +0x124 bit 27, a
-/// zone-in flag, is not modelled)*. No argument asks for the message (reason 0); /lsmes "level" asks the edit level,
-/// "level ls|ps|all" sets it, "clear" empties the message, "set TEXT" or TEXT sets it.
+/// FUN_100805f0's second test: linkshell 1's command needs the server's LinkShellFlag on our entity.
+fn lsmes_flag(n: usize, flag: bool) -> bool {
+    n != 1 || flag
+}
+
+/// /lsmes (FUN_100805f0) and /ls2mes (FUN_100807d0): linkshell 1 (2) worn, else 7 0x71. /lsmes also needs our entity's
+/// LinkShellFlag (+0x124 bit 27: s2c 0x037 u32 @0x28 bit 25, at zone-in 0x00A u32 @0x20 bit 17), so with the shell just
+/// put on and no 0x037 yet it still refuses; /ls2mes has no such test. No argument asks for the message (reason 0);
+/// /lsmes "level" asks the edit level, "level ls|ps|all" sets it, "clear" empties the message, "set TEXT" or TEXT sets
+/// it.
 pub fn lsmes(w: &mut World, n: usize, args: &[String], tail1: &str, tail2: &str) {
-    let Some((slot, bag, _)) = equipped(w, n) else { return super::textcmd::refuse(w, 0x71) };
+    let Some((slot, bag, _)) = equipped(w, n).filter(|_| lsmes_flag(n, w.my_plate.marks.ls)) else {
+        return super::textcmd::refuse(w, 0x71);
+    };
     if args.len() <= 1 {
         return ask_message(w, n as u8, bag, slot, 0);
     }
@@ -1069,6 +1078,13 @@ pub(super) fn channel_open(w: &World) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// FUN_100805f0 tests entity +0x124 bit 27 beside the worn shell; FUN_100807d0 (/ls2mes) only the shell.
+    #[test]
+    fn lsmes_needs_the_flag() {
+        assert!(!lsmes_flag(1, false) && lsmes_flag(1, true));
+        assert!(lsmes_flag(2, false) && lsmes_flag(2, true));
+    }
 
     /// FUN_1011c6b0 / FUN_101196f0: a caption's links (0xff, any negative link) leave the cursor where it is.
     #[test]
