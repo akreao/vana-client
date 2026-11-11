@@ -46,18 +46,6 @@ pub fn pose_character_held(
     skin_character(ch, &pose_held(&ch.skeleton, anims, grips))
 }
 
-/// The bone transforms of a cross-fade from one motion to another (t = 0 all `from`; FUN_100c6380 blend).
-pub fn pose_blend(
-    ch: &Character,
-    from: &[(&crate::dat::character::Animation, f32)],
-    to: &[(&crate::dat::character::Animation, f32)],
-    t: f32,
-    grips: &[(u16, u16)],
-) -> Vec<BoneXf> {
-    let (a, b) = (pose_held(&ch.skeleton, from, grips), pose_held(&ch.skeleton, to, grips));
-    a.iter().zip(&b).map(|(x, y)| x.lerp(y, t)).collect()
-}
-
 /// Highest point (smallest y, y down) of the skinned mesh, positions only.
 pub fn skinned_top(ch: &Character, world: &[BoneXf]) -> f32 {
     let mut top = f32::MAX;

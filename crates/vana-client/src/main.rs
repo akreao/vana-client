@@ -42,6 +42,7 @@ mod invitems;
 mod invshot;
 mod modpack;
 mod motion;
+mod motionq;
 mod msi_db;
 mod net;
 mod render;

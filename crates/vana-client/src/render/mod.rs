@@ -3721,18 +3721,15 @@ impl ZoneRenderer {
         self.cloth.begin();
     }
 
-    /// Queues a skinned actor posed on the GPU from its motions (to, and from at blend `t`), and its placement.
+    /// Queues a skinned actor posed on the GPU from its motion queues' layers (render/anim.rs), and its placement.
     pub fn pose_actor_gpu(
         &mut self,
         actor: &mut ActorGpu,
         ch: &std::sync::Arc<crate::dat::character::Character>,
-        files: &[std::sync::Arc<crate::dat::motionfile::MotionFile>],
-        to: &[(&crate::dat::character::Animation, f32)],
-        from: &[(&crate::dat::character::Animation, f32)],
-        t: f32,
+        layers: &[anim::JobLayer],
+        over: [f32; 2],
         model: Mat4,
         look: Option<anim::HeadLook>,
-        overlay: Option<(&crate::dat::character::Animation, f32, f32)>,
         grips: &[(u16, u16)],
     ) {
         if actor.skin.is_none() {
@@ -3741,7 +3738,7 @@ impl ZoneRenderer {
         self.pose_actor(actor, &[], model);
         if let Some(skin) = &actor.skin {
             let out = skin.offset / 16 + POSE_HEAD as u32;
-            self.anim.job(ch, files, to, from, t, out, look, overlay, grips);
+            self.anim.job(ch, layers, over, out, look, grips);
         }
     }
 
