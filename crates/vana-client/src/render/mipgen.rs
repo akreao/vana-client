@@ -662,7 +662,7 @@ fn main(@builtin(global_invocation_id) g: vec3<u32>) {
         let cpu = reference::rgba_chain(&img, w, h);
         let t = Texture::new(String::new(), 0, w, h, img.clone());
         let tex = texture(&gpu, &t, wgpu::TextureFormat::Rgba8UnormSrgb, Kind::Rgba);
-        let cov = |p: &[u8]| p.chunks_exact(4).filter(|p| p[3] as f32 >= 76.5).count();
+        let cov = |p: &[u8]| p.as_chunks::<4>().0.iter().filter(|p| p[3] as f32 >= 76.5).count();
         for (k, (px, lw, lh)) in cpu.iter().enumerate().skip(1) {
             let got = read(
                 &gpu,
@@ -683,11 +683,12 @@ fn main(@builtin(global_invocation_id) g: vec3<u32>) {
         if !gpu.device.features().contains(wgpu::Features::TEXTURE_COMPRESSION_BC) {
             return;
         }
-        let opaque: Vec<u8> = img.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2], 255]).collect();
+        let opaque: Vec<u8> = img.as_chunks::<4>().0.iter().flat_map(|p| [p[0], p[1], p[2], 255]).collect();
         let blocks = reference::encode_bc1(&opaque, w, h, false);
         let mut t = Texture::new(String::new(), 0, w, h, decode_dxt(&blocks, w, h, false));
         t.dxt = Some((false, blocks.clone()));
         let want = reference::levels(t.rgba(), w, h, Some((false, &blocks)));
+        assert_eq!(want.format, reference::Format::Bc1);
         let tex = texture(&gpu, &t, wgpu::TextureFormat::Bc1RgbaUnormSrgb, Kind::Bc1);
         for k in 1..want.data.len() {
             let (lw, lh) = ((w >> k).max(1), (h >> k).max(1));

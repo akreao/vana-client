@@ -252,7 +252,6 @@ impl SceneScale {
     /// 3D LCD Mode's side-by-side eyes (the scene `extra` wider) and whether this frame carries the strip. `smaa`: the
     /// anti-aliasing filter (not retail; skipped in 3D LCD Mode and when downscaling). The SMAA passes are made on
     /// first use; turning it off leaves them idle. `grading`: the colour grading preset (`grading`, 0 off).
-    #[allow(clippy::too_many_arguments)]
     pub fn blit(
         &mut self,
         gpu: &Gpu,
@@ -397,7 +396,7 @@ mod tests {
             s.blit(&gpu, &mut enc, &out.create_view(&Default::default()), dst, [1.0; 3], None, false, 0);
             gpu.queue.submit([enc.finish()]);
             let px = read(&gpu, &out, dst[0], dst[1]);
-            for p in px.chunks_exact(4) {
+            for p in px.as_chunks::<4>().0 {
                 assert!(
                     (p[0] as i32 - 153).abs() <= 2 && (p[1] as i32 - 102).abs() <= 2 && (p[2] as i32 - 51).abs() <= 2,
                     "{p:?}"
@@ -430,7 +429,7 @@ mod tests {
         let mut enc = gpu.device.create_command_encoder(&Default::default());
         s.blit(&gpu, &mut enc, &out.create_view(&Default::default()), [4, 4], [1.0; 3], None, false, 0);
         gpu.queue.submit([enc.finish()]);
-        for p in read(&gpu, &out, 4, 4).chunks_exact(4) {
+        for p in read(&gpu, &out, 4, 4).as_chunks::<4>().0 {
             assert!((p[0] as i32 - 128).abs() <= 3, "{p:?}");
         }
     }
@@ -454,7 +453,7 @@ mod tests {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
-        let mut run = |s: &mut SceneScale, px: &[u8], smaa: bool| {
+        let run = |s: &mut SceneScale, px: &[u8], smaa: bool| {
             let tex = s.target.as_ref().unwrap().tex.clone();
             gpu.queue.write_texture(
                 tex.as_image_copy(),
@@ -468,7 +467,7 @@ mod tests {
             read(&gpu, &out, n, n)
         };
         let flat: Vec<u8> = (0..n * n).flat_map(|_| [153u8, 102, 51, 255]).collect();
-        for p in run(&mut s, &flat, true).chunks_exact(4) {
+        for p in run(&mut s, &flat, true).as_chunks::<4>().0 {
             assert!(
                 (p[0] as i32 - 153).abs() <= 2 && (p[1] as i32 - 102).abs() <= 2 && (p[2] as i32 - 51).abs() <= 2,
                 "{p:?}"
@@ -478,13 +477,13 @@ mod tests {
         let edge: Vec<u8> = (0..n * n)
             .flat_map(|i| if i / n > (i % n) / 4 { [255u8, 255, 255, 255] } else { [0, 0, 0, 255] })
             .collect();
-        let grey = |px: &[u8]| px.chunks_exact(4).filter(|p| p[0] > 20 && p[0] < 235).count();
+        let grey = |px: &[u8]| px.as_chunks::<4>().0.iter().filter(|p| p[0] > 20 && p[0] < 235).count();
         let off = run(&mut s, &edge, false);
         let on = run(&mut s, &edge, true);
         assert!(grey(&off) == 0, "no filter: {} in-between pixels", grey(&off));
         assert!(grey(&on) >= 12, "SMAA: {} in-between pixels", grey(&on));
         // Far from the edge nothing changes.
-        for (i, (a, b)) in off.chunks_exact(4).zip(on.chunks_exact(4)).enumerate() {
+        for (i, (a, b)) in off.as_chunks::<4>().0.iter().zip(on.as_chunks::<4>().0).enumerate() {
             let (x, y) = (i as u32 % n, i as u32 / n);
             if (y as i32 - (x / 4) as i32).abs() > 2 {
                 assert_eq!(a, b, "pixel {x},{y} changed");

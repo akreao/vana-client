@@ -938,7 +938,6 @@ enum Click {
 
 /// A text, colour or key setting (Settings' row `k`): its value in a field (typed in after Enter or a click; a key
 /// setting waits for its key), a colour's swatch and Pick… with the picker under it when open, then its help.
-#[allow(clippy::too_many_arguments)]
 fn edit_row(
     ui: &mut Ui,
     m: &super::Modern,
@@ -1097,7 +1096,6 @@ fn list(ui: &mut Ui, m: &super::Modern, mm: &ModMgr, updates: &[bool], follow: b
 }
 
 /// The picked mod's page: its head, then the sub's tabs and body.
-#[allow(clippy::too_many_arguments)]
 fn page(
     ui: &mut Ui,
     m: &super::Modern,
@@ -1223,7 +1221,6 @@ fn page(
 }
 
 /// Commands: the forms at the left, the picked form at the right (its fields, the line, Run, the replies).
-#[allow(clippy::too_many_arguments)]
 fn commands(
     ui: &mut Ui,
     m: &super::Modern,
@@ -1293,7 +1290,6 @@ fn commands(
     });
 }
 
-#[allow(clippy::too_many_arguments)]
 fn form(
     ui: &mut Ui,
     m: &super::Modern,
@@ -1833,7 +1829,7 @@ pub(super) fn sample(p: &mut Panels) {
     s.lua_info.clear();
     s.s.mods.clear();
     for (id, name, on) in mods {
-        s.s.mods.push(crate::config::ModRef { name: id.into(), enabled: on });
+        s.s.mods.push(crate::config::ModRef::new(id, on));
         s.lua_names.insert(id.into());
         s.lua_info.insert(id.into(), LuaInfo { name: name.into(), ..Default::default() });
     }

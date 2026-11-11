@@ -20,6 +20,7 @@ const MAX_REPLY: usize = 64 * 1024;
 pub enum Command {
     Login = 0x10,
     CreateAccount = 0x20,
+    /// The account window's Change password (client/twofa.rs): `password` the current one, `new_password`.
     ChangePassword = 0x30,
     CreateTotp = 0x31,
     RemoveTotp = 0x32,
@@ -37,13 +38,14 @@ pub struct Request<'a> {
     pub trust_this_computer: bool,
 }
 
-#[derive(Debug)]
 pub enum Reply {
     /// `lobby_key`: the login server's key when it took a 3.x loader version, whose lobby is TLS with that key; none
     /// for an older server's plain lobby.
     LoggedIn {
         account_id: u32,
         session_hash: [u8; 16],
+        /// A new trust token, when asked for with a one-time code ("Trust this computer"): sent instead of the code
+        /// next time.
         trust_token: Option<String>,
         lobby_key: Option<tls::Fingerprint>,
     },
@@ -57,6 +59,43 @@ pub enum Reply {
     },
     TotpRemoved,
 }
+
+/// Without the secrets: the session hash, the trust token, the TOTP key (in its URI) and the recovery code.
+impl std::fmt::Debug for Reply {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let hidden = |on: bool| if on { "<hidden>" } else { "none" };
+        match self {
+            Reply::LoggedIn { account_id, trust_token, lobby_key, .. } => f
+                .debug_struct("LoggedIn")
+                .field("account_id", account_id)
+                .field("trust_token", &hidden(trust_token.is_some()))
+                .field("lobby_key", lobby_key)
+                .finish_non_exhaustive(),
+            Reply::AccountCreated => f.write_str("AccountCreated"),
+            Reply::PasswordChanged => f.write_str("PasswordChanged"),
+            Reply::TotpCreated { .. } => f.write_str("TotpCreated { .. }"),
+            Reply::TotpVerified { recovery_code } => {
+                f.debug_struct("TotpVerified").field("recovery_code", &hidden(recovery_code.is_some())).finish()
+            }
+            Reply::TotpRemoved => f.write_str("TotpRemoved"),
+        }
+    }
+}
+
+/// The result code a trust token was turned down with (expired, or the password changed): the code is needed again.
+pub const TRUST_REJECTED: u64 = 0x13;
+
+/// A login server's refusal: its result code (`describe` says what it means).
+#[derive(Debug)]
+pub struct Refused(pub u64);
+
+impl std::fmt::Display for Refused {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{} (code 0x{:02X})", describe(self.0), self.0)
+    }
+}
+
+impl std::error::Error for Refused {}
 
 fn describe(result: u64) -> &'static str {
     match result {
@@ -217,7 +256,7 @@ pub fn send(host: &str, port: u16, command: Command, req: &Request) -> Result<Re
         0x10 => Reply::TotpCreated { uri: reply["TOTP_uri"].as_str().unwrap_or_default().to_string() },
         0x11 => Reply::TotpVerified { recovery_code: reply["recovery_code"].as_str().map(str::to_string) },
         0x12 => Reply::TotpRemoved,
-        other => bail!("{} (code 0x{other:02X})", describe(other)),
+        other => return Err(Refused(other).into()),
     })
 }
 

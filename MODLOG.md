@@ -12118,13 +12118,72 @@ From the research notes:
   2), shrinks 0.001 / 0.05, delay 20, split, dur 70, n 45: rate 0.643 a tick): 0 samples at tick 24, 9 at 28 (8
   agings), 13 at 30, 12 at 60, 9 at 62, 4 at 80, done at 92. Visible spans over the data: 20..190 ticks, 60..80 in
   1308 runs.
-- Open: (1) the mob-move effect files (50287.., 51130.., 88040.., 4223..) hold their Afb only in the effect file;
+- Open (closed 2026-11-10, next section): (1) the mob-move effect files (50287.., 51130.., 88040.., 4223..) hold their Afb only in the effect file;
   FUN_100ce480 searches only the actor's lists, and neither the file's run callback (LAB_100a7640 in the 2019 build)
   nor op 0x05 (FUN_100cd920 / FUN_100cd4e0 not traced for an append) puts the file there; footage of a trust or NPC
   weapon skill (50288 Swift Blade) would settle it. (2) The watcher's CMoAttachments callbacks: FUN_10060ac0 (+0x10)
   deletes itself and the after-image, FUN_10060af0 (+0x14) only itself (leaving the after-image updating with a dead
   actor handle); which one the actor's removal fires is not traced. (3) ZBIAS during the draw (inherited) and the
   WORLD in force when the key is computed. (4) D3D's handling of NaN vertices.
+
+## Weapon after-image: the four open points (2026-11-10)
+
+Modlog-gaps item 127 ("Weapon after-image: whether retail finds Afbs that sit only in mob-move effect files; which
+removal callback fires; ZBIAS and WORLD during the draw; NaN vertices", MODLOG "Weapon after-image: scheduler op 0x2c,
+Afb chunks"). Addresses are Steven's FFXiMain.dll; all read in the disassembly.
+
+- Lookup. Op 0x2c (0x1005a432) asks only the actor: FUN_100ce480(actor1, 0x54, name & 0xffffff, mask 0xffffff)
+  walks the motion list +0x7e4 newest first (FUN_1002c7c0, then +8), then vtable +0x400 (+0x864, a part resource set
+  by FUN_100d0b50) and +0x1dc (+0xb4, the model file). Each starts at the file's root (resource +0x14 is its own
+  handle) and stops there: roots are their own parents (FUN_10072270; the loaded-file list of FUN_100730e0 tests
+  exactly that), and only the scoped lookup FUN_100722c0 goes on to DAT 0. Miss: vtable +0x1e8 = FUN_100ceb00,
+  kind 0x54 with name 0 / mask -1: actor +0x674 -> skeletons (+0x44) -> meshes (+0x20, resource at +8, added by
+  FUN_10029f70), from each mesh's folder (+0x28) up to its file root, then +0xb4 (vtable +0x1e0, no climb).
+- There is no lookup in the scheduler's scope, unlike op 0x05, which finds its motion there first (FUN_10072290 /
+  FUN_100725c0 on the task's resource, then vtable +0x1e0) and plays that resource directly (FUN_100cd4e0 ->
+  FUN_1001a660) without putting the file on the actor.
+- The +0x7e4 list has one appender, FUN_100d4410(resource, slot, id, kind), called only from the actor's own loaders
+  (0x100d14c0..0x100d2d6e: battle, event, the skill files of FUN_100d25e0 kind 6, riding 7 / 8). The action start
+  FUN_100a9230 takes FUN_100d25e0 only for categories 3 / 0xe / 0xf on a CXiSkeletonActor (race code < 9); every
+  other action loads its file with FUN_100730e0 and the callback 0x100a8fb0 only starts `main` (FUN_10072290 type 7,
+  FUN_10056c70). Mob skills: 0xf3c + id, 0xc1ef + id from 0x200, 0xe739 from 0x600, 0x14b07 from 0x800.
+- So an Afb that sits only in such a file is never found. Census (fx::trail::tests::afb_census, 37 s): 2371 ops
+  0x2c in 1507 files, 5054 Afbs in 1526. Named in their own file and on the motion list (skill files): 33228..38074,
+  58055..60390, 61451..61740, 88040..97285. Plain effect files whose Afbs retail cannot reach: 4223 `ym2_`, 4316
+  `yam_`, 49794 / 57842..57855 / 62148 `mot_`, 50287..50297 (the NPC race skills `chm_` `cef_` `cmt_` `ctr_`
+  `cgl_`: Swift Blade 50288 plays `ws00` from its own file and names `s0a?` `s0b?` `s0c?`), 50326..50328 `volk`,
+  51130 `sui_`, 51153 / 51154 `nana`. 28 more name an Afb and hold none (50329.. `zeid` `c4a?`, 50441 / 50442,
+  50684..50688, 5078..5111, 61234, 61501, 67374, 67510, 67566, 87028, 87358). Model files holding Afbs: `caml`
+  2099 / 2609 (their own ops name them) and `maou` 2089 / 2090 (`at10` `at20` `at00`, no op names them: the
+  any-name fallback's only data). No equipment file holds one (confirmed by the census).
+- Ours found them because op 0x05's effect files go on the actor's list (actmotion Kind::Effect). find_afb now
+  leaves out the files in `owned_motions`, and its any-name pass takes the part files, then the model's files (not
+  the motion list). fx-shot `--file N` puts a race skill file (fx::is_skill_file) on the caster's list first, as
+  FUN_100d25e0 would. Test afb_lookup_skips_effect_files.
+- Removal. The watcher's CMoAttachments (base vtable 0x1032ab08) holds the actor twice: FUN_1003b7b0 links it as
+  actor1 (the actor's +0x68 list, FUN_10085d50), FUN_1003b830 as actor2 (+0x6c, FUN_10085d60). FUN_10082b10 (the
+  actor destructor FUN_10082b40, the skeleton's FUN_100c5c00, the model release FUN_100c42f0) empties +0x68 first
+  through FUN_1003b5e0 -> vtable +0x10 = FUN_10060ac0, which deletes the watcher and the after-image; the watcher's
+  destructor (FUN_1003b690) unlinks it from +0x6c, so FUN_10060af0 (+0x14) never runs for it. Ours:
+  Effects::forget_actor drops the actor's trails (before, only an actor without a matrix lost them).
+- ZBIAS. Every pass that raises it puts it back: the element draw FUN_100467e0 sets DAT_1065c4d0 (15; 2 on ATI) and
+  its end FUN_100472f0 sets 0 (both skipped with the projection-bias flag [DAT_10631f24] + 0x39598); the shadow /
+  ground passes 0x10183xxx..0x10186xxx set DAT_1065c4d0 / DAT_10631c88 and end on DAT_10621c00 (0) through
+  FUN_10177400; scenery uses DAT_10632038 (0); the model renderer keeps its own count (FUN_10283fe0(0), FUN_10283f90
+  +1 / -1, +2 / -2). The ribbon draws at ZBIAS 0, as ours (vs_trail has no bias).
+- Key. FUN_100276f0(out, p) = p x WORLD x VIEW x PROJECTION from the device wrapper's cache (+0x93c / +0x97c /
+  +0x9bc, written by FUN_1000bd50), divided by w; the key is out.z x out.w, the clip z. The after-image sets no WORLD
+  before it (the actor's own key at 0x100c7e40 does: 0x100c7701). Its task sits right after the scheduler that made
+  it (FUN_100750b0 inserts after the running task; schedulers go in at priority 9), and the one walk updates and
+  draws each task in turn (FUN_10075000: vtable +0x20, then +0x24), so the WORLD is what the last task before it
+  left: the identity global 0x104574b8 from an actor's update (FUN_100cbde0, FUN_100c63d0), or a translation by
+  skeleton +0x34 when the last actor drew from its cached skin (FUN_1002b6e0 with DAT_10457460 = 0 and skeleton
+  +0xb8 = 1: the frames a distant actor's animation skips, 0x100cc9c0..0x100ccab8), or a shadow pass's. The key only
+  places the ribbon in the translucent list (FUN_100553c0 clamps it; FUN_1006ca20 refuses only a non-finite one),
+  and the draw is additive without z write. Ours keys on the tip's view depth d (the identity case is (d - n) f / (f
+  - n)); the stale-WORLD cases are not reproduced.
+- NaN vertices: nothing in the DLL decides it (DrawPrimitiveUP, FVF 0x42, through the device); a current
+  rasteriser discards a triangle with a NaN position, which is what ours draws *(inferred)*.
 
 ## Chat line: selection, copy, cut, paste (ours; 2026-10-25)
 
@@ -23564,3 +23623,152 @@ still gave `cor`. Both now go through actmotion::sdep_stand.
   same bits as the classic sort window's Auto). Manual Sort clears those bits and starts storage's Manual Sort on that
   pane: a pick, then the row to put it at (FUN_101f0b30's rules), within one part. Num+ (FUN_101db690 case 8) focuses
   the pair: Left / Right between them, Enter takes one.
+
+## s2c 0x03B: an NPC line in the event message window (2026-11-08)
+
+client/net.rs (0x03B), event.rs (`zone_text` 0x03B arm, `loose_*`, `cancel_queues`), fishing.rs `send`, mod.rs (Enter,
+zone-out). LSB never sends it; built from the DLL for retail servers, not seen live.
+- Handler LAB_100a1600 (FUN_100fc340(0x3b, ..)): u32 UniqueNo @4, u16 ActIndex @8, u16 MesNum @0xa. Dropped unless the
+  index is valid (FUN_10086fc0) and that actor's id (+0x78) is @4 and not 0, named or not. Text: FUN_100964a0(8, MesNum
+  & 0x7fff), source 8 = DAT_10487e84 = the zone's dialogue (FUN_1008a7d0: language slot 0x6b + zone, 0x6e + zone -
+  0x100, 0x6d + sub-zone - 1000 for 1000..0x513), the same file as 0x036 in ours. Sets DAT_104804cc, both message actors
+  (DAT_10482f40 / DAT_104855aa) to the index and DAT_10488208 = 1.
+- Bit 15 clear: FUN_100ad5e0 with "%s : " (0x1035bb48) and the shown name (+0x214 in Monstrosity, else +0x7c); set:
+  FUN_100ad660, no prefix. Mode {0x96, 2, 0}: the event message mode, so the line goes into both event message queues
+  and the rem with its pages and key waits (written to the log as each page opens, mode 0x98), not printed at once.
+- Ours: World.loose_msgs, shown through the same message accessors as an event's message (the rem, the kaipage
+  arrow, the log pages). Enter pages it (SE 0015) when no event message is up; a line without 7f 31 closes after its
+  wait. With an event's message open the event's shows first *(inf: retail keeps one queue for both)*.
+- FUN_10127ea0 (both queues cancelled, DAT_10488208 = 2) drops them: after each successful fishing c2s 0x110 mode 3
+  (0x1008936e / 0x100894a1), at an event's end (FUN_100ae3f0 -> FUN_100ae3a0, also ops 0x25 / 0x7f), and on leaving
+  the field (FUN_1015ef60 game mode 0x70 / 0xe0).
+- Not done: the speaker's mouth (FUN_100c14d0 runs for event messages; not traced for this path); Escape on such a line
+  (the rem's Escape needs DAT_10485a70, which only event ops set: nothing outside an event).
+
+## Retail FFXiMain 30261102_0 as the baseline; what changed from 30261006_0 (2026-11-10)
+
+The November 2026 retail update replaced FFXiMain.dll. Addresses below are 30261102_0, with the 30261006_0 address
+in brackets where the function existed. Both builds were unpacked, analysed in Ghidra (functions reached only through
+pointers and unreferenced code defined as functions too) and compared function by function: blanked instruction bytes
+for every function, every address checked through an old -> new map, tables and data compared byte for byte.
+
+- Size of the change: 23,632 functions in .text before, 23,679 after. 23,379 are identical; 231 differ only in constants
+  (a struct grew, below); 14 pairs were flagged as changed, of which 8 are real (the rest: the same code compiled in
+  another order, offsets moved only, or table bytes decoded as code); 51 are new (45 functions and six decode
+  fragments), 4 gone (one thunk, three decode fragments). .text grew by 0x1600 bytes, .rdata and .data start 0x1000
+  higher. 45 identical `sub ecx, 0x30; jmp f` thunks were placed in another order by the linker (their vtable slots
+  follow them: no change).
+- The session object (DAT_104e0f48 [DAT_104dfd98]) grew by 0xb0 bytes at +0x2d67c: everything after moved up, which is
+  all that changed in 223 functions (flag byte +0x40db5 is now +0x40e65; the object is 0x44c64 bytes, cleared as 0x11319
+  dwords in FUN_100f9a80 [FUN_100f9940]). FUN_10004060..FUN_10004452 hold three copies on the stack (+0x210).
+- New s2c 0x08F: FUN_100fa1a0's table set-up FUN_100e4340 registers FUN_100e5290 after 0x08C..0x08E. The handler copies
+  0x2b dwords from packet +4 to session +0x2d67c, calls the callback at session +0x2d728 when one is set, and sets bit 5
+  of session +0x40e65 ("received"). FUN_100e4340, FUN_100e4420 [FUN_100e43f0] and FUN_100e44e0 [FUN_100e4490] clear the
+  block, the callback and the bit with the 0x08C..0x08E state.
+- New c2s 0x0C5 (FUN_100e5200, 0x10 bytes: +4 u8 set, +5 ten slot bytes) and c2s 0x0C6 (FUN_100e5260, 4 bytes, no
+  payload: asks for the 0x08F data; sent by fe_equip's open when the bit is clear).
+- Three new menus, rows added to the menu table (the inserted bytes start at 0x1037557b): "menu    fe_main " (object
+  DAT_105795f4, 0x14 bytes, vtable 0x10335680), "menu    fe_equip" (DAT_104e2d20, 100 bytes, vtable 0x10333fe8, built by
+  FUN_101170f0) and "menu    fe_inven" (DAT_104e2d24, 0x60 bytes, vtable 0x10334058, built by FUN_10117c30). The window
+  set-up FUN_10147740 [FUN_10146340] creates them and FUN_10148100 [FUN_10146c60] deletes them. New code: 0x101170f0 to
+  0x1011842d (37 functions; the shared one-instruction stubs FUN_101171b0.. moved in between them), FUN_1014caa0,
+  FUN_1014cb40, FUN_1014cb50, and a deleting destructor FUN_101480d0 for the class at vtable 0x10335638.
+  - fe_main: vtable +4 FUN_1014caa0 (run at open, as read) disables children 1..8, then at main level above 0x62
+    (DAT_104867f1) enables child 1 with key item 0xd21 and children 2..7 with key item 0xd2f (FUN_10097e80). Vtable +8
+    FUN_1014cb40 loads the menu, +0x18 FUN_1014cb50 takes its events: event 5 on child 1 opens "menu    fp_cat  ",
+    children 2..7 call FUN_10117360(0..5), which stores the set in fe_equip +0x58 and opens fe_inven and fe_equip.
+  - fe_equip reads the 0x08F block through FUN_10117af0 (session +0x2d67c once received): six sets of ten slot bytes at
+    block +0x2a + set x 0x14 (FUN_10117b70 builds the 0x0C5 packet from them); FUN_10117580 fills ten list rows of 0x54
+    bytes (cell kinds 0xe and 0x19, item id = slot value + 0x72f0); FUN_10117750 is its key handler (events 3 / 4 step
+    the set mod 6, 5 picks a slot and hands over to fe_inven, 6 backs out).
+- statcom2's frame FUN_1014a0b0 [FUN_10148be0]: child 0xd is enabled (FUN_10119ff0(0xb, 0xd)) at main level above 0x62
+  with key item 0xd21 or, new, key item 0xd2f.
+- List cells: FUN_101f60f0 [FUN_101f4b20] accepts kinds up to 0x4d (was 0x4c), and the draw FUN_101f6180 [FUN_101f4bb0]
+  has a 78th case (jump table 0x101f7b98, case at 0x101f7b57): FUN_1015d340(u16 value, x, y + 2, 0.5, 0, the cell's
+  colour, 0).
+- In-line colour code 9 (`1e 09`) is 0x60404040 (table 0x10336510 [0x103353c8] + 0x24; was 0 = the line's colour). The
+  client reads this table from the DLL; its signature covered all 17 entries and missed the new build, so chat colours
+  fell back to none there. It is signed over codes 0..8 now.
+- Mog House layout, Move keys FUN_101cf930 [FUN_101ce360]: the 0x8d / 0x8e steps of +0x20 (0..3) are skipped while
+  FUN_101d01b0 is set (bit 0 of the byte at *(this + 0xf0)); the re-centring after a step (FUN_101cf520, FUN_101cf360,
+  FUN_101ce720) now runs before the FUN_101d01d0 test, not inside its failed branch.
+- No behaviour change, checked in the decompile: FUN_100d7240 and FUN_10169520 [FUN_10167f50] (same code, other
+  instruction order); FUN_100ec2d0 [FUN_100ec190] and FUN_100f9ce0 [FUN_100f9ba0] (offsets moved by 0xb0 only);
+  FUN_1012da60 [FUN_1012c660] and FUN_1020a170 [FUN_10208b60] (two side-effect-free getters called in the other order
+  before being added).
+- Data: every other initialised byte of .rdata / .data is equal once moved, pointers included, except the build date
+  strings and the PE timestamp. All 29 table signatures of `dat/tables.rs` are found in both builds.
+- Ours: nothing of the 0x08F / 0x0C5 / 0x0C6 feature is built (LSB has stubs for the three packets).
+
+## Mouse picking: doors with a RID box, StreetLamp (2026-11-08)
+
+- FFXiMain.dll (checked 2026-11-08): a door actor's setup FUN_100acba0(id) looks up the '_' RID record with its id
+  (FUN_1017ad70 -> FUN_101747f0, records of 0xf4 with the 4cc @0x40) into +0x870; with none, and a name other than
+  "StreetLamp", +0x874 = 1. Its pick rect FUN_100ad320: no record and +0x874 == 0 = not pickable; +0x874 == 1 the
+  0.5-tall box at the door (already built); a record = the min / max of its 8 world corners (record +0x4c..+0xab,
+  written by FUN_10173c10 from the unit box through S(|size|) RotY(yaw) T(pos)) through the view-projection. The pick
+  FUN_10083750 then needs every corner in front (min w > 0) and takes the nearest; a door has no fine test.
+- Ours: under_pointer finds the door's record in the zone's RID list by tag (zone::Region::box_corners), else the
+  0.5 box unless the entity is named "StreetLamp". Test zone::tests::region_box_corners.
+- The other "Not done" items of "Mouse picking in the world" and "Mouse cursor" checked 2026-11-08: the talk lock is
+  in (event::talk_with refuses while World.control_lock is set, the "control lock" entry); cursor kind 1 over an
+  enabled menu item is in (mouse_kind, GameUi::hover). Still open: "the hover's frame lag". FUN_10125360 runs the
+  pick each frame (FUN_10126270 -> FUN_10158d90 -> FUN_10083750 with the current camera, FUN_10015250); the only lag
+  found there is the pointer glide (+0x48 > 0: the drawn point moves half way to the cursor each frame), not traced
+  to what starts it.
+
+## Autorun while locked on (2026-11-10)
+
+For lenonk/vana-client#172. Addresses are 30261006_0.
+
+- The locked step FUN_100a7b80 (FUN_100a6240 calls it when vt+0x330 is 0) has its own autorun branch, taken when
+  autorun is on (DAT_10487f81) and its vector (DAT_10487f64 / +0x6c) is not zero:
+  - the move input is turned by the camera's yaw (FUN_10015250 +0x24 / +0x2c), normalised and dotted with the
+    normalised vector; under 0.3 (_DAT_1032b15c) autorun ends (FUN_100a6070(0)). The input does nothing else;
+  - the vector keeps its length and is turned at the target every tick (FUN_100272e0 with the unit way from the target,
+    scaled by -|vector|). The target is FUN_10157cf0's (the lock), else FUN_10081600's (the follow);
+  - gap = horizontal distance less both radii (FUN_100aaef0 for each). gap >= |vector| x ticks (FUN_10014cf0, at
+    least 1): the step is the vector; 0 <= gap < that: the unit way x |vector| x 0.3 (_DAT_1032dfa4 is -0.3, against
+    the from-target way); gap < 0: the step is DAT_10487f98 (zero). Autorun stays on throughout.
+  - No 0.8 / 0.1 floor in this branch (that clamp is the input branch's, _DAT_1032a378).
+- With no vector yet, the normal locked step runs, and LAB_100a6d1e in FUN_100a6240 makes its result the vector, as
+  unlocked. No input and no vector ends autorun (the test before FUN_10027990).
+- Since the vector is rewritten every tick, the lock going off leaves autorun running along the last way to the target.
+- Ours: the autorun block now runs while locked (client/mod.rs update_movement), steps straight along the vector, keeps
+  a Lua mod's run to a point on its own way (ours), and keeps the run at full tier.
+
+## Middle mouse button: message 7, the item info page; Maze Tabula open points (2026-11-08)
+
+- FFXiMain.dll (checked 2026-11-08): the mouse object DAT_104e1d4c keeps its buttons as bits 1 left, 2 right, 4
+  middle (+0x5c held, +0x60 press edge, +0x58 release); key functions 0x8b / 0x8c / 0x96 read them (callbacks
+  0x10120980 / 0x10120a20 / 0x10120ad0). Key function 0x18's callback (keyfn_18_19_25_cb, FUN_10121000) reads the
+  pad object DAT_104e1d44 (bit 2), not the mouse: Num- / - with Ctrl or Alt and the pad, no mouse button.
+- FUN_1015fa00 each frame: 0x96 release -> FUN_1015df20: not with keyboard type 2 (FUN_1025e070, config 0x42 == 2,
+  where 0x96 replaces the left button in the move drag) and only with input-context flag 4 (FUN_10123e50(4)):
+  FUN_1015dd00(7): nothing in cinema mode / with the UI hidden; with a focused window (FUN_1015edb0), message 7 to it
+  (FUN_10118260); else (or with WM +0xb4 == 1) menuwind opens. Message 7 is the one key function 0x18 gives a window
+  (prvdungp's onkey FUN_101fe290 case 7 = FUN_101fdbf0, the turn).
+- The middle press bit (+0x60 & 4) turns pages beside key function 0x18: the RoE description (FUN_102326b0, already
+  built) and the item info window (FUN_1013cba0 -> FUN_1013c220, also iteminfo / itemxinf's per-frame hooks).
+- Ours: a middle click (a press and release without a look drag; ours drags the camera with it) runs
+  `middle_release`: the layout / gardening contexts (no flag 4) and cinema mode skip it, keyboard type 2 does not
+  (ours: every type looks with a middle drag, and 0x42 = 2 is the default, so the retail skip lost the click); the
+  maze editor turns the carried rune (its grid focused, as before, but now wherever the pointer is); with no window
+  or only the main / action menu up, the next frame gets a Num- press (the main menu opens / closes); with another
+  window up nothing happens *(inf: the windows ours has take no message 7 of their own)*. Not over a modern panel
+  (egui keeps its pointer; the modern maze grid has its own middle click). A middle press also
+  turns the item info window's page (`info_page_turn`, shared with key function 0x18). maze::pointer no longer reads
+  the middle button.
+- Maze Tabula open points (MODLOG "Moblin Maze Mongers: the Maze Tabula editor", Open):
+  - d5 bits 4..10: the encoder FUN_101fd600 starts from a zeroed buffer and writes d5 bits 0..3 only (runes 10 / 11's
+    rotation), so a client save clears them; only the R iteminfo reads them. Their meaning is server-side (not in
+    the DLL); ours matches (encode leaves them 0).
+  - The late 0x0D8: confirmed. FUN_1015ef60 broadcasts 0x800 through FUN_1015f3e0 when FUN_10087070(0) turns on
+    (DAT_10487e48, the event running); prvdungp (flags 0x00420002, 0x400000 set) closes by FUN_1015e910, whose close
+    hook FUN_101fd1d0 only closes bluinven / bluehelp. FUN_101fcfb0 (mode 0, slot >= 0, decoded) then saves at the
+    event end. Ours keeps it.
+  - helpwind with the grid focused: empty. The help line is the focused window's +0x3c (FUN_1011ae10); the WM window's
+    ctor FUN_1012ab20 zeroes +0x36..+0x4d and no prvdungp function sets it (only prvdunsi's v04 / v08, 0xe 0x2a4).
+    Ours already shows nothing.
+  - Pulse / glint timing: stepped once per draw call (FUN_101fe0b0, the window's +0x10 draw), so once per rendered
+    frame; ours steps at 30 a second, retail's frame rate.

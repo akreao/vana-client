@@ -155,7 +155,7 @@ pub fn merged(cfg: &[ModRef], folders: &[String]) -> Vec<ModRef> {
     let mut out: Vec<ModRef> = cfg.iter().filter(|m| folders.contains(&m.name)).cloned().collect();
     for f in folders {
         if !out.iter().any(|m| &m.name == f) {
-            out.push(ModRef { name: f.clone(), enabled: false });
+            out.push(ModRef::new(f.clone(), false));
         }
     }
     out
@@ -398,13 +398,13 @@ fn plan(members: &[(String, u64)]) -> HashMap<String, (String, usize, u64)> {
 /// Where packs are looked for: the mods folder, the Downloads folder and the folders right inside it.
 pub fn pack_dirs() -> Vec<PathBuf> {
     let mut dirs = vec![crate::config::mods_dir()];
-    if let Some(d) = dirs::download_dir() {
-        if let Ok(rd) = std::fs::read_dir(&d) {
-            let mut subs: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
-            subs.sort();
-            dirs.push(d);
-            dirs.extend(subs);
-        }
+    if let Some(d) = dirs::download_dir()
+        && let Ok(rd) = std::fs::read_dir(&d)
+    {
+        let mut subs: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
+        subs.sort();
+        dirs.push(d);
+        dirs.extend(subs);
     }
     dirs
 }
@@ -820,11 +820,7 @@ mod tests {
 
     #[test]
     fn merged_order() {
-        let cfg = vec![
-            ModRef { name: "b".into(), enabled: true },
-            ModRef { name: "gone".into(), enabled: true },
-            ModRef { name: "a".into(), enabled: false },
-        ];
+        let cfg = vec![ModRef::new("b", true), ModRef::new("gone", true), ModRef::new("a", false)];
         let got = merged(&cfg, &["a".into(), "b".into(), "c".into()]);
         let names: Vec<(&str, bool)> = got.iter().map(|m| (m.name.as_str(), m.enabled)).collect();
         assert_eq!(names, [("b", true), ("a", false), ("c", false)]);

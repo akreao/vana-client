@@ -1060,86 +1060,6 @@ fn selector(info: Option<[u8; 16]>, at: usize) -> u32 {
     info.map_or(0, |i| (i[at] as i8).max(0) as u32)
 }
 
-#[cfg(test)]
-mod tests {
-    /// Point 2 of the PC skeletons anchors the name plate: bone 0, (0, -h, 0) with h by race.
-    #[test]
-    fn plate_points() {
-        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
-        for (file, h) in [(7072u32, 2.0f32), (16600, 2.4), (26352, 2.6)] {
-            let Ok(d) = index.read(file) else { return };
-            let skel = super::load_file(&d).unwrap().skeleton.unwrap();
-            let (bone, t) = skel.points[2];
-            assert_eq!(bone, 0, "file {file}");
-            assert!((t.y + h).abs() < 1e-3 && t.x.abs() < 1e-3, "file {file}: {t}");
-        }
-    }
-
-    /// First person's eye (FUN_10020ba0): attach point 12 sits at head height in every PC's rest pose.
-    #[test]
-    fn eye_points() {
-        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
-        for (file, lo, hi) in [(7072u32, 1.4f32, 2.1), (16600, 1.7, 2.5), (19776, 0.7, 1.4), (26352, 1.8, 2.7)] {
-            let Ok(d) = index.read(file) else { return };
-            let skel = super::load_file(&d).unwrap().skeleton.unwrap();
-            let rest = super::pose(&skel, &[]);
-            let (bone, off) = skel.points[12];
-            let h = -rest[bone as usize].at(off).y;
-            println!("file {file}: point 12 bone {bone} height {h:.2}");
-            assert!((lo..hi).contains(&h), "file {file}: {h}");
-        }
-    }
-
-    /// A Taru's thinking loop (th1, event motion file 32752) over the idle under it: the idle keys bone 2 (its hip
-    /// sway) and th10 marks bone 2 with bit 31, which in a legs chunk still writes the bone. The feet stay put
-    /// whatever frame the idle is on.
-    #[test]
-    fn legs_chunk_flagged_tracks_cover_the_idle() {
-        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
-        let (Ok(skel), Ok(ev)) = (index.read(19776), index.read(32752)) else { return };
-        let base = super::load_file(&skel).unwrap();
-        let ev = super::load_file(&ev).unwrap();
-        let skel = base.skeleton.unwrap();
-        let find = |list: &[super::Animation], n: &str| list.iter().find(|a| a.name == n).cloned().unwrap();
-        let (idl, th1) = (find(&base.animations, "idl0"), find(&ev.animations, "th10"));
-        assert!(th1.tracks.iter().any(|t| t.bone == 2), "th10 keeps its flagged bone 2 track");
-        let foot = |f: f32| super::pose(&skel, &[(&idl, f), (&th1, 4.0)])[77].t;
-        let first = foot(0.0);
-        for f in 1..idl.frames {
-            assert!(foot(f as f32).distance(first) < 1e-3, "idle frame {f}: {:?} vs {first:?}", foot(f as f32));
-        }
-    }
-
-    /// Two looks of a race share its parsed motions and packed set, which match a fresh parse of the skeleton file.
-    #[test]
-    fn race_files_shared() {
-        use super::{Look, load_character, load_file};
-        use crate::dat::animpack::pack;
-        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
-        let (a, b) =
-            (Look { race: 1, body: 8, ..Default::default() }, Look { race: 1, head: 3, body: 8, ..Default::default() });
-        let (Ok(mut x), Ok(mut y)) = (load_character(&index, &a), load_character(&index, &b)) else { return };
-        x.prepare();
-        y.prepare();
-        assert!(std::sync::Arc::ptr_eq(&x.animations[0].tracks, &y.animations[0].tracks));
-        assert!(std::sync::Arc::ptr_eq(x.packed.as_ref().unwrap(), y.packed.as_ref().unwrap()));
-        let fresh = load_file(&index.read(7072).unwrap()).unwrap().animations;
-        assert_eq!(pack(&fresh).words, pack(&x.animations[..fresh.len()]).words);
-    }
-
-    /// Every PC skeleton's head look: head (0.24, 0.16, 0.5), neck (0.16, 0.06, 0.5); points 3 / 7 head / neck.
-    #[test]
-    fn look_limits() {
-        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
-        for (file, head) in [(7072u32, 51u16), (10248, 29), (19776, 6), (26352, 39)] {
-            let Ok(d) = index.read(file) else { return };
-            let skel = super::load_file(&d).unwrap().skeleton.unwrap();
-            assert_eq!(skel.look_limits, [[0.24, 0.16, 0.5], [0.16, 0.06, 0.5]], "file {file}");
-            assert_eq!((skel.points[3].0, skel.points[7].0), (head, head - 1), "file {file}");
-        }
-    }
-}
-
 /// A PC race's skeleton or motion file, parsed once and shared by every look of the race. Kept by the file's path
 /// (another install, or a DAT mod standing in for it, is another file), not its id.
 fn race_file(index: &DatIndex, id: u32) -> Result<std::sync::Arc<CharFile>> {
@@ -1272,4 +1192,84 @@ pub fn load_character(index: &DatIndex, look: &Look) -> Result<Character> {
         }
     }
     Ok(ch)
+}
+
+#[cfg(test)]
+mod tests {
+    /// Point 2 of the PC skeletons anchors the name plate: bone 0, (0, -h, 0) with h by race.
+    #[test]
+    fn plate_points() {
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        for (file, h) in [(7072u32, 2.0f32), (16600, 2.4), (26352, 2.6)] {
+            let Ok(d) = index.read(file) else { return };
+            let skel = super::load_file(&d).unwrap().skeleton.unwrap();
+            let (bone, t) = skel.points[2];
+            assert_eq!(bone, 0, "file {file}");
+            assert!((t.y + h).abs() < 1e-3 && t.x.abs() < 1e-3, "file {file}: {t}");
+        }
+    }
+
+    /// First person's eye (FUN_10020ba0): attach point 12 sits at head height in every PC's rest pose.
+    #[test]
+    fn eye_points() {
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        for (file, lo, hi) in [(7072u32, 1.4f32, 2.1), (16600, 1.7, 2.5), (19776, 0.7, 1.4), (26352, 1.8, 2.7)] {
+            let Ok(d) = index.read(file) else { return };
+            let skel = super::load_file(&d).unwrap().skeleton.unwrap();
+            let rest = super::pose(&skel, &[]);
+            let (bone, off) = skel.points[12];
+            let h = -rest[bone as usize].at(off).y;
+            println!("file {file}: point 12 bone {bone} height {h:.2}");
+            assert!((lo..hi).contains(&h), "file {file}: {h}");
+        }
+    }
+
+    /// A Taru's thinking loop (th1, event motion file 32752) over the idle under it: the idle keys bone 2 (its hip
+    /// sway) and th10 marks bone 2 with bit 31, which in a legs chunk still writes the bone. The feet stay put
+    /// whatever frame the idle is on.
+    #[test]
+    fn legs_chunk_flagged_tracks_cover_the_idle() {
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let (Ok(skel), Ok(ev)) = (index.read(19776), index.read(32752)) else { return };
+        let base = super::load_file(&skel).unwrap();
+        let ev = super::load_file(&ev).unwrap();
+        let skel = base.skeleton.unwrap();
+        let find = |list: &[super::Animation], n: &str| list.iter().find(|a| a.name == n).cloned().unwrap();
+        let (idl, th1) = (find(&base.animations, "idl0"), find(&ev.animations, "th10"));
+        assert!(th1.tracks.iter().any(|t| t.bone == 2), "th10 keeps its flagged bone 2 track");
+        let foot = |f: f32| super::pose(&skel, &[(&idl, f), (&th1, 4.0)])[77].t;
+        let first = foot(0.0);
+        for f in 1..idl.frames {
+            assert!(foot(f as f32).distance(first) < 1e-3, "idle frame {f}: {:?} vs {first:?}", foot(f as f32));
+        }
+    }
+
+    /// Two looks of a race share its parsed motions and packed set, which match a fresh parse of the skeleton file.
+    #[test]
+    fn race_files_shared() {
+        use super::{Look, load_character, load_file};
+        use crate::dat::animpack::pack;
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let (a, b) =
+            (Look { race: 1, body: 8, ..Default::default() }, Look { race: 1, head: 3, body: 8, ..Default::default() });
+        let (Ok(mut x), Ok(mut y)) = (load_character(&index, &a), load_character(&index, &b)) else { return };
+        x.prepare();
+        y.prepare();
+        assert!(std::sync::Arc::ptr_eq(&x.animations[0].tracks, &y.animations[0].tracks));
+        assert!(std::sync::Arc::ptr_eq(x.packed.as_ref().unwrap(), y.packed.as_ref().unwrap()));
+        let fresh = load_file(&index.read(7072).unwrap()).unwrap().animations;
+        assert_eq!(pack(&fresh).words, pack(&x.animations[..fresh.len()]).words);
+    }
+
+    /// Every PC skeleton's head look: head (0.24, 0.16, 0.5), neck (0.16, 0.06, 0.5); points 3 / 7 head / neck.
+    #[test]
+    fn look_limits() {
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        for (file, head) in [(7072u32, 51u16), (10248, 29), (19776, 6), (26352, 39)] {
+            let Ok(d) = index.read(file) else { return };
+            let skel = super::load_file(&d).unwrap().skeleton.unwrap();
+            assert_eq!(skel.look_limits, [[0.24, 0.16, 0.5], [0.16, 0.06, 0.5]], "file {file}");
+            assert_eq!((skel.points[3].0, skel.points[7].0), (head, head - 1), "file {file}");
+        }
+    }
 }

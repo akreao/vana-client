@@ -759,7 +759,6 @@ pub fn linked(v: &mut Values, id: u16, out: &mut Out) {
 }
 
 /// The pointer on windows with their own handling; true when taken.
-#[allow(clippy::too_many_arguments)]
 pub fn pointer(
     ui: &mut ConfigUi,
     gu: &GameUi,
@@ -809,7 +808,6 @@ pub fn pointer(
 }
 
 /// Draws windows with their own drawing; true when drawn.
-#[allow(clippy::too_many_arguments)]
 pub fn draw(
     ui: &ConfigUi,
     w: &Win,

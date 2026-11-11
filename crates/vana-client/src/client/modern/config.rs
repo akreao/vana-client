@@ -77,7 +77,7 @@ const PAGES: [(&str, &str, &[Item]); 13] = [
             Ours("Interface"),
             Ours("Interface Size"),
             Ours("Panel Opacity"),
-            Ours("Panel Places"),
+            Ours("UI Setup"),
             Retail("conf3win", 12),
             Head("Party & Target"),
             Ours("Party TP"),
@@ -549,7 +549,6 @@ fn group_head(ui: &mut Ui, m: &super::Modern, text: &str, first: bool) {
 
 /// A topic page: its headings and settings, the cursor's ringed while it has the keys. What the mouse did, and the
 /// help of the line under the pointer.
-#[allow(clippy::too_many_arguments)]
 fn topic_page(
     ui: &mut Ui,
     m: &super::Modern,
@@ -1273,7 +1272,7 @@ fn ours_act(s: &mut SettingsUi, v: &settings::View, act: kit::Act, at: At, skip:
             let row = r + 1 - first;
             match v.rows.get(row - 1).map(|r| &r.ctl) {
                 Some(settings::VCtl::Buttons(_)) => s.m_click(row, x),
-                Some(settings::VCtl::Slider { .. }) => s.m_slide(row, x),
+                Some(settings::VCtl::Slider { .. }) => s.m_slide(row, x, false),
                 None => {}
             }
         }
@@ -1297,6 +1296,10 @@ fn ours_key(s: &mut SettingsUi, key: egui::Key, shift: bool, skip: usize, tabs: 
     // Row 0 is the page name (the tabs) in SettingsUi; the kit's stops start there too when there are tabs.
     if first == 1 {
         at.stop = v.row;
+    }
+    // UI Setup's pick (its slider only picks) is done by Enter.
+    if key == egui::Key::Enter && s.ui_enter(None) {
+        return false;
     }
     let act = kit::key(&stops, &mut at, key, shift);
     ours_act(s, &v, act, at, skip, first)
@@ -1421,7 +1424,6 @@ enum Got {
 }
 
 /// A native setting: its heading and its options as buttons, its slider, or its button; ringed with the cursor.
-#[allow(clippy::too_many_arguments)]
 fn native_row(
     ui: &mut Ui,
     m: &super::Modern,
@@ -1490,7 +1492,6 @@ fn native_row(
 }
 
 /// A native page's settings (the title's Config); the setting under the pointer (for the help line).
-#[allow(clippy::too_many_arguments)]
 fn native_rows(
     ui: &mut Ui,
     m: &super::Modern,
@@ -1530,7 +1531,6 @@ fn help_line(ui: &mut Ui, m: &super::Modern, text: &str) {
 }
 
 /// A list page's rows: the label, its state as a button at the right (a click steps it as Enter does).
-#[allow(clippy::too_many_arguments)]
 fn list_rows(
     ui: &mut Ui,
     m: &super::Modern,
@@ -1559,7 +1559,6 @@ fn list_rows(
 
 /// Font Colors: each colour's name, sample line and swatch; the cursor's colour open with the picker and its hue,
 /// saturation and brightness sliders (the cursor's ringed).
-#[allow(clippy::too_many_arguments)]
 /// Font Colors' columns: the swatch's, the widest name's and the widest sample's of category `cat`; the page is made
 /// as wide as they need.
 const SWATCH_W: f32 = 38.0;
@@ -1721,7 +1720,7 @@ fn settings_do(s: &mut SettingsUi, act: Vec<Do>) {
             Do::Select(_) => {}
             Do::Tab(k) => s.m_tab(k),
             Do::Click(r, c) => s.m_click(r, c),
-            Do::Slide(r, i) => s.m_slide(r, i),
+            Do::Slide(r, i) => s.m_slide(r, i, true),
         }
     }
 }
@@ -2059,13 +2058,7 @@ fn ours_help(s: &SettingsUi) -> String {
 
 /// The title's Config (lobycwin) in the modern style: the list, then retail's page or our Settings (`s`). Its step
 /// comes back: the sounds, the changed ids.
-pub fn lobby(
-    p: &mut Panels,
-    c: &mut ConfigUi,
-    v: &mut Values,
-    mut s: Option<&mut SettingsUi>,
-    sw: f32,
-) -> configui::Out {
+pub fn lobby(p: &mut Panels, c: &mut ConfigUi, v: &mut Values, s: Option<&mut SettingsUi>, sw: f32) -> configui::Out {
     let mut out = configui::Out::default();
     let Some(gu) = p.gu else { return out };
     let m = p.m;
@@ -2143,7 +2136,7 @@ pub fn lobby(
             }
         },
     );
-    if let Some(s) = s.as_deref_mut().filter(|_| !sact.is_empty() || !mact.is_empty()) {
+    if let Some(s) = s.filter(|_| !sact.is_empty() || !mact.is_empty()) {
         s.sounds.clear();
         settings_do(s, sact);
         mods_do(s, mact);
@@ -2735,6 +2728,15 @@ pub fn key(w: &mut World, key: egui::Key, shift: bool) -> bool {
                 return true;
             }
             let mut at = At::new(c.m_row.min(stops.len() - 1), 0);
+            // UI Setup's pick (its slider only picks) is done by Enter.
+            if key == egui::Key::Enter
+                && let Some(Ours(label)) = stop_lines(&all).get(at.stop).map(|l| l.item)
+                && let Some(s) = w.settings.as_mut()
+                && s.ui_enter(Some(label))
+            {
+                w.sounds.extend(s.sounds.drain(..).map(|x| x as u32));
+                return true;
+            }
             let act = kit::key(&stops, &mut at, key, shift);
             c.m_row = at.stop;
             match act {

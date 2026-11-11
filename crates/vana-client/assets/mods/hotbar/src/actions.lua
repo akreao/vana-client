@@ -96,42 +96,15 @@ function M.recast(a, recasts)
   return left, total > 0 and math.min(1, left / total) or 1
 end
 
--- Whether blue magic `id` is set (only set blue magic can be cast), from the BLU side's job data; cached on `me`.
-local function blue_set(id, me)
-  if not me._blue then
-    me._blue = {}
-    local d = game.job_data() or {}
-    for _, side in ipairs({ d.main, d.sub }) do
-      for _, s in ipairs(side and side.blue_spells or {}) do me._blue[s] = true end
-    end
-  end
-  return me._blue[id] == true
-end
-
 -- Whether we can use it now, apart from its recast (shaded on its own): a weapon skill needs 1000 TP, a pet command a
--- pet, a spell what the magic list asks (a job that has it at our level, as main for SCH's and GEO's main-only spells
--- and gifts, blue magic set) and its MP. Nil `a` (a macro with no known action) counts as usable.
+-- pet, a spell what the magic list asks (builder.castable) and its MP. Nil `a` (a macro with no known action) counts
+-- as usable.
 function M.usable(a, me)
   if not a or not me or a.no_recast then return true end
   if a.kind == "spell" then
     local s = res.spell(a.id)
     if not s then return true end
-    if s.kind ~= 8 and s.levels then
-      if s.main_only and s.main_only ~= me.main_job then return false end
-      local jp = s.job_points or {}
-      local lv = function(job, level, main)
-        if not (job and s.levels[job]) then return false end
-        -- A gift: main job at 99 (the job points it takes are not known here).
-        if jp[job] then return main and (level or 0) >= 99 end
-        return s.levels[job] <= (level or 0)
-      end
-      if jp[me.main_job] then
-        if not lv(me.main_job, me.main_level, true) then return false end
-      elseif not (lv(me.main_job, me.main_level, true) or lv(me.sub_job, me.sub_level, false)) then
-        return false
-      end
-    end
-    if a.id >= 0x200 and a.id < 0x2e0 and not blue_set(a.id, me) then return false end
+    if not builder.castable(a.id, me) then return false end
     return (s.mp or 0) <= (me.mp or 0)
   elseif a.kind == "ability" then
     if a.ws or a.id < 0x200 then return (me.tp or 0) >= 1000 end

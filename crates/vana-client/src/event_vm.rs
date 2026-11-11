@@ -1688,11 +1688,12 @@ impl Runtime {
                 if host.ready(t) { self.adv(v, 5) } else { self.jump(v, 3) }
             }
             0x45 | 0x62 | 0x9f | 0xbb | 0xc5 | 0xcd | 0xd0 | 0xd5 => {
-                if let Some((file, tag, a, t)) = self.sched(v, sched_base(opc)) {
-                    if host.ready(a) && host.ready(t) {
-                        let param = self.val(v, 0xf);
-                        host.effect(Effect::Scheduler { file, tag, actor: a, target: t, param });
-                    }
+                if let Some((file, tag, a, t)) = self.sched(v, sched_base(opc))
+                    && host.ready(a)
+                    && host.ready(t)
+                {
+                    let param = self.val(v, 0xf);
+                    host.effect(Effect::Scheduler { file, tag, actor: a, target: t, param });
                 }
                 self.adv(v, 17);
             }
@@ -2877,10 +2878,10 @@ fn sched_base(op: u8) -> u32 {
         0x45 | 0x52 | 0x55 => 0x77f0,
         0x62 | 0xa0 | 0xa1 => 0x1394,
         0x9f | 0xa2 | 0xa3 => 0xc7ef,
-        0xbb | 0xbc | 0xbd => 0xdd6d,
-        0xc5 | 0xc6 | 0xc7 => 0x1071b,
-        0xcd | 0xce | 0xcf => 0x11323,
-        0xd0 | 0xd1 | 0xd2 => 0x11423,
+        0xbb..=0xbd => 0xdd6d,
+        0xc5..=0xc7 => 0x1071b,
+        0xcd..=0xcf => 0x11323,
+        0xd0..=0xd2 => 0x11423,
         _ => 0x19031,
     }
 }

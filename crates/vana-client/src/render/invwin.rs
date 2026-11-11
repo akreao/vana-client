@@ -91,7 +91,6 @@ pub const LIST_BAR: f32 = 8.0;
 
 /// An item list window with its rows `inset` px in ("menu    bank" rows sit at x 4) and the cursor only when focused.
 /// Returns its scroll bar's (x, y, h).
-#[allow(clippy::too_many_arguments)]
 pub fn push_item_list(
     b: &mut UiBatch,
     ui: &UiFile,
@@ -308,7 +307,6 @@ pub struct ActionRow {
 /// prints its line at (10, 0x14).
 /// `bar`: the whole list's (total, top) for its 12-row scroll bar (FUN_10221920), at x1 - 8 on the stacked frame;
 /// returns the bar's (x, y, h).
-#[allow(clippy::too_many_arguments)]
 pub fn push_action_list(
     b: &mut UiBatch,
     ui: &UiFile,
@@ -348,7 +346,6 @@ pub fn push_action_list(
 }
 
 /// A category window (mgcmenu, abiselec ...): its children's label sprites and the hand.
-#[allow(clippy::too_many_arguments)]
 pub fn push_category(
     b: &mut UiBatch,
     ui: &UiFile,
@@ -365,7 +362,6 @@ pub fn push_category(
 }
 
 /// subwindo (FUN_1014f960): label lines at (+5, +8) and (+5, +0x1a), their values right-aligned at +0x69.
-#[allow(clippy::too_many_arguments)]
 /// All in the sprite font (FUN_101c9780 / FUN_101c9b50 draw fontshp).
 /// subwindo kind 9 (FUN_1014feb0): "TP" at (5, 8), "%d / " of our TP right-aligned at (0x47, 0x1a), the cost at
 /// (0x69, 0x1a).

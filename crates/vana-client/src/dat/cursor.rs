@@ -92,9 +92,9 @@ fn dib(img: &[u8], w0: u32, h0: u32) -> Result<(u32, u32, Vec<u8>)> {
     };
     let pal_at = hdr as usize;
     let px_at = pal_at + if bpp <= 8 { colors * 4 } else { 0 };
-    let stride = ((w as usize * bpp as usize + 31) / 32) * 4;
+    let stride = (w as usize * bpp as usize).div_ceil(32) * 4;
     let mask_at = px_at + stride * h as usize;
-    let mask_stride = ((w as usize + 31) / 32) * 4;
+    let mask_stride = (w as usize).div_ceil(32) * 4;
     let mut out = vec![0u8; (w * h * 4) as usize];
     let mut any_alpha = false;
     for y in 0..h as usize {

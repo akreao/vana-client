@@ -130,22 +130,25 @@ impl Modern {
                 );
             }
         }
-        let (cr, caption, onv) = &v.check;
-        let cr = pt(*cr);
         let n = v.fields.len();
-        let lit = v.focus == n && !v.busy;
-        let side = size * 1.1;
-        let bx = egui::Rect::from_min_size(pos2(cr.min.x, cr.center().y - side / 2.0), vec2(side, side));
-        if let Some(s) = self.art.sprite(if *onv { "controls/checkbox_on" } else { "controls/checkbox_off" }) {
-            p.add(paint::image(&s, bx.min, side, if v.busy { Color32::from_gray(120) } else { Color32::WHITE }));
+        // Remember password (focus n) and Trust this computer (n + 6): the box art and its caption, gold with the focus.
+        let boxes = std::iter::once((v.check, n)).chain(v.trust.map(|t| (t, n + 6)));
+        for ((cr, caption, onv), at) in boxes {
+            let cr = pt(cr);
+            let lit = v.focus == at && !v.busy;
+            let side = size * 1.1;
+            let bx = egui::Rect::from_min_size(pos2(cr.min.x, cr.center().y - side / 2.0), vec2(side, side));
+            if let Some(s) = self.art.sprite(if onv { "controls/checkbox_on" } else { "controls/checkbox_off" }) {
+                p.add(paint::image(&s, bx.min, side, if v.busy { Color32::from_gray(120) } else { Color32::WHITE }));
+            }
+            p.text(
+                pos2(bx.max.x + 6.0, bx.center().y),
+                Align2::LEFT_CENTER,
+                caption,
+                font.clone(),
+                if lit { self.theme.color("gold") } else { self.theme.color("text") },
+            );
         }
-        p.text(
-            pos2(bx.max.x + 6.0, bx.center().y),
-            Align2::LEFT_CENTER,
-            *caption,
-            font.clone(),
-            if lit { self.theme.color("gold") } else { self.theme.color("text") },
-        );
         let hover = ctx.input(|i| i.pointer.hover_pos());
         for (k, (r, label, enabled)) in v.buttons.iter().enumerate() {
             let r = pt(*r).expand2(vec2(4.0, 3.0));
@@ -292,9 +295,9 @@ impl Modern {
                 );
             }
         }
-        if let Some((r, text)) = &v.field {
+        for (i, (r, text)) in v.fields.iter().enumerate() {
             let r = pt(*r);
-            let on = v.focus == 0 && !v.busy;
+            let on = v.focus == i && !v.busy;
             if let Some(s) = self.art.sprite(if on { "controls/input_focused" } else { "controls/input_normal" }) {
                 p.add(paint::nine_slice(&s, r.expand2(vec2(2.0, 3.0)), 0.5, Color32::WHITE));
             }
@@ -309,7 +312,7 @@ impl Modern {
                 );
             }
         }
-        let first = v.field.is_some() as usize;
+        let first = v.fields.len();
         let hover = ctx.input(|i| i.pointer.hover_pos());
         for (i, (r, label)) in v.buttons.iter().enumerate() {
             self.lobby_button(
@@ -396,7 +399,6 @@ impl Modern {
     /// The change notes (client/notes.rs) on the rects their view placed (UI pixels): the frame and title, the notes in
     /// Fira Sans (headings and bold in the strong face, code in mono) clipped to the text's area and scrolled by points,
     /// a thin scroll bar, OK; their keys and mouse stay the notes window's.
-    #[allow(clippy::too_many_arguments)]
     pub fn notes_window(
         &mut self,
         ctx: &Context,
@@ -472,7 +474,6 @@ impl Modern {
 
     /// The lobby's help bar on retail's lobyhelp strip (UI pixels, the screen's width): the help line centred in its
     /// colour, the client version above the strip at retail's spot.
-    #[allow(clippy::too_many_arguments)]
     pub fn help_bar(
         &mut self,
         ctx: &Context,
@@ -687,7 +688,6 @@ impl Modern {
     }
 
     /// The title's Config (modern/config.rs's lobby page): its step.
-    #[allow(clippy::too_many_arguments)]
     pub fn config_screen(
         &mut self,
         ctx: &Context,

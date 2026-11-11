@@ -646,16 +646,13 @@ fn switch(w: &mut World, g: usize) {
 
 /// The cursor onto row `k` of a side (kept as scroll 0, cursor k).
 fn set_cursor(w: &mut World, bank_side: bool, k: usize) {
-    match w.win.as_mut() {
-        Some(Win::Items { store: Some(b), scroll, cursor, .. }) => {
-            b.on_bank = bank_side;
-            if bank_side {
-                (b.scroll, b.cursor) = (0, k);
-            } else {
-                (*scroll, *cursor) = (0, k);
-            }
+    if let Some(Win::Items { store: Some(b), scroll, cursor, .. }) = w.win.as_mut() {
+        b.on_bank = bank_side;
+        if bank_side {
+            (b.scroll, b.cursor) = (0, k);
+        } else {
+            (*scroll, *cursor) = (0, k);
         }
-        _ => {}
     }
 }
 

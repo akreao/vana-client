@@ -139,7 +139,7 @@ pub fn strafe_dir(f: glam::Vec3, step: glam::Vec3) -> u8 {
 /// alone picked a side each frame and the motion and speed flipped between run and strafe (lenonk/vana-client#95).
 pub fn strafe_dir_held(f: glam::Vec3, step: glam::Vec3, old: u8) -> u8 {
     let new = strafe_dir(f, step);
-    if new == 0 || old == 0 || new == old || (new + old) % 2 == 0 {
+    if new == 0 || old == 0 || new == old || (new + old).is_multiple_of(2) {
         return new;
     }
     let r = f.cross(glam::Vec3::NEG_Y);

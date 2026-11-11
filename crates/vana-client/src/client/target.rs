@@ -54,8 +54,6 @@ pub enum SubThen {
     Item { container: u8, index: u8 },
     /// The emote list's line (LAB_10225c50): run while the pick is still the target, then the old one comes back.
     Command(String),
-    /// The engaged battle menu's Check (LAB_1012bec0): FUN_101347b0 on the pick.
-    Check,
     /// A party menu pick (client/partymenu.rs).
     Party(super::partymenu::Pick),
     /// The main menu's Trade (FUN_1013fe70): FUN_1013fd30 on the pick.
@@ -278,7 +276,6 @@ pub fn party_cursor_pick(w: &mut World, index: usize) -> bool {
 
 /// The cursor with the mouse over the party windows' rows (the windows' generic events *(inf)*): hovering a used row
 /// moves it (SE 0001), a click on the cursor row is Enter, a right click on a party window Escape.
-#[allow(clippy::too_many_arguments)]
 pub fn party_cursor_pointer(
     w: &mut World,
     gu: &super::game_ui::GameUi,
@@ -586,11 +583,6 @@ pub fn confirm_sub(w: &mut World) {
         super::items::use_slot(w, container, index, t);
         return;
     }
-    if matches!(s.then, SubThen::Check) {
-        restore(w, &s);
-        super::combat::check(w, Some(t), 0, false);
-        return;
-    }
     if matches!(s.then, SubThen::Trade) {
         restore(w, &s);
         super::trade::start_on(w, Some(t));
@@ -602,9 +594,7 @@ pub fn confirm_sub(w: &mut World) {
         return;
     }
     let line = match &s.then {
-        SubThen::Item { .. } | SubThen::Command(_) | SubThen::Check | SubThen::Party(_) | SubThen::Trade => {
-            String::new()
-        }
+        SubThen::Item { .. } | SubThen::Command(_) | SubThen::Party(_) | SubThen::Trade => String::new(),
         SubThen::Magic(name) => format!("/magic \"{name}\" {t}"),
         SubThen::Ability(cmd, name) => format!("{cmd} \"{name}\" {t}"),
         SubThen::Line { stash, quoted: true, .. } => format!("{stash}\"{}\"", super::textcmd::display_name(w, t)),
@@ -1341,6 +1331,19 @@ pub fn step_camera(w: &mut World, ticks: f32, turn: f32, rise: f32) {
     w.cam = c;
 }
 
+/// FUN_100a6210: locked movement relative to the target. Side input circles it at the same radius,
+/// forward / back changes the radius, stopping at the two radii (inferred 0.8 together).
+pub fn locked_step(pos: Vec3, target: Vec3, fwd: f32, side: f32, dist: f32) -> Vec3 {
+    let r = Vec3::new(pos.x - target.x, 0.0, pos.z - target.z);
+    let radius = r.length().max(1e-3);
+    let facing = -r / radius;
+    let right = facing.cross(Vec3::NEG_Y);
+    let moved = r + right * side * dist;
+    let new_r = (radius - fwd * dist).max(0.8);
+    let p = target + moved.normalize_or(r / radius) * new_r;
+    Vec3::new(p.x, pos.y, p.z)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1447,17 +1450,4 @@ mod tests {
         let r = locked_step(p, t, 1.0, 0.0, 10.0);
         assert!(((r - t).length() - 0.8).abs() < 1e-4);
     }
-}
-
-/// FUN_100a6210: locked movement relative to the target. Side input circles it at the same radius,
-/// forward / back changes the radius, stopping at the two radii (inferred 0.8 together).
-pub fn locked_step(pos: Vec3, target: Vec3, fwd: f32, side: f32, dist: f32) -> Vec3 {
-    let r = Vec3::new(pos.x - target.x, 0.0, pos.z - target.z);
-    let radius = r.length().max(1e-3);
-    let facing = -r / radius;
-    let right = facing.cross(Vec3::NEG_Y);
-    let moved = r + right * side * dist;
-    let new_r = (radius - fwd * dist).max(0.8);
-    let p = target + moved.normalize_or(r / radius) * new_r;
-    Vec3::new(p.x, pos.y, p.z)
 }

@@ -77,7 +77,8 @@ Built (client/lua/, modern/modwin.rs), each checked live:
     list under it, as the login form's combo fields), colours (RGBA, a channel at a time; the classic UI shows
     channel sliders, the modern UI the kit's picker), folding sections, list columns with headings
     (a click sends sort), right-aligned cells, row icons (item, status) and colours; a tip on any element (the help
-    bar in classic, the help line in modern); a canvas element the mod draws in (lines, rects with gradients or
+    bar in classic, the help line in modern), and on a list row (`tip`: shown while the cursor or the pointer is on
+    it, as a spell's description); a canvas element the mod draws in (lines, rects with gradients or
     outlines, circles, triangles, text, icons; clicks report where, drags their start, moves and release, both UIs
     checked live); coloured text; modal windows, `ui.prompt`
     (a question with buttons) and `ui.menu` (a popup list at the pointer, closed by a click outside it); checked
@@ -355,6 +356,19 @@ through the main thread, only while some mod hooks that direction (an atomic fla
     storage kept, and a notice.
 - **Accounting on F12:** time per frame (average, peak), instructions, memory, errors per mod.
   - The soft warning is 2 ms per callback, the hard cap 50-100 ms; both to be tuned by measurement.
+
+### 3.4.1 On and off per character and per job
+
+Each installed mod loads for every character and job by default. Its page in the Mods window has two more rows,
+**Per Character** and **Per Job** (config `mods`, the mod's entry: `per_character`, `per_job`, `on`). With either on,
+the mod's switch on the Mods page is that character's, that job's, or that character's job's own, kept in `on` by
+"<World>-<Name>", "<JOB>" or "<World>-<Name>/<JOB>" (MON in Monstrosity). A character or job never switched follows
+the mod's switch as it was (`enabled`). Entering the world loads the mods on for this character and, once the job is
+known, this job; a job change loads and unloads the mods kept per job. Mods asked for in the lobby (`lobby = true`)
+follow `enabled` there, having no character yet, and a switch made there sets `enabled`. In game, a Per Job mod's
+switch does nothing until the job is known (a moment after entering the world). Turning a scope off keeps its
+switches in `on`: turning it on again brings them back. `mods.installed()` gives a scoped mod's `enabled` as its
+switch for the character and job in play.
 
 ### 3.5 Permissions
 

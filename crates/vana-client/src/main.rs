@@ -2032,7 +2032,7 @@ fn main() -> Result<()> {
                     let tris: Vec<[u16; 3]> = if model.strip {
                         model.indices.windows(3).map(|t| [t[0], t[1], t[2]]).collect()
                     } else {
-                        model.indices.chunks_exact(3).map(|t| [t[0], t[1], t[2]]).collect()
+                        model.indices.as_chunks::<3>().0.iter().map(|t| [t[0], t[1], t[2]]).collect()
                     };
                     let hit = tris.iter().find_map(|t| {
                         let [a, b, c] = t.map(|i| w[i as usize]);
@@ -2042,14 +2042,14 @@ fn main() -> Result<()> {
                         }
                         let u = ((x - a.x) * (c.z - a.z) - (c.x - a.x) * (z - a.z)) / d;
                         let v = ((b.x - a.x) * (z - a.z) - (x - a.x) * (b.z - a.z)) / d;
-                        (u >= 0.0 && v >= 0.0 && u + v <= 1.0).then(|| a.y + u * (b.y - a.y) + v * (c.y - a.y))
+                        (u >= 0.0 && v >= 0.0 && u + v <= 1.0).then_some(a.y + u * (b.y - a.y) + v * (c.y - a.y))
                     });
                     let Some(y) = hit else { continue };
                     let va = model.vertices.iter().map(|v| (v.color >> 24) as f32).sum::<f32>()
                         / model.vertices.len() as f32;
                     let tex = textures.get(model.texture.as_str()).map(|t| {
-                        let a =
-                            t.rgba().chunks_exact(4).map(|p| p[3] as f32).sum::<f32>() / (t.rgba().len() / 4) as f32;
+                        let a = t.rgba().as_chunks::<4>().0.iter().map(|p| p[3] as f32).sum::<f32>()
+                            / (t.rgba().len() / 4) as f32;
                         format!("fmt {:#04x} {}x{} texel alpha {:.0}", t.format, t.width, t.height, a)
                     });
                     println!(
@@ -2161,7 +2161,7 @@ fn main() -> Result<()> {
             // Alpha profile per texture format: how much would an alpha test at 0.3 discard?
             let mut by_format: std::collections::BTreeMap<u8, (usize, f64, f64)> = Default::default();
             for t in &scene.textures {
-                let a: Vec<u8> = t.rgba().chunks_exact(4).map(|p| p[3]).collect();
+                let a: Vec<u8> = t.rgba().as_chunks::<4>().0.iter().map(|p| p[3]).collect();
                 let mean = a.iter().map(|&x| x as f64).sum::<f64>() / a.len() as f64;
                 let low = a.iter().filter(|&&x| x < 77).count() as f64 / a.len() as f64;
                 let e = by_format.entry(t.format).or_default();
@@ -2325,7 +2325,7 @@ fn main() -> Result<()> {
             let dll = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir()))?;
             // A value past the slot range is a file id (0x86 grammar blocks read file 0xd8b2 directly).
             let file = if slot >= 0x1000 {
-                slot as u32
+                slot
             } else {
                 dat::msg::current_slot_file(&dll, 1, slot as usize)
                     .ok_or_else(|| anyhow::anyhow!("no file for slot {slot:#x}"))?
@@ -2640,7 +2640,6 @@ fn sjis_with_escapes(s: &str) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn text_shot(
     text: &[String],
     font: &str,
@@ -3159,7 +3158,7 @@ fn weather_sweep(out: &std::path::Path, zones: u32, ticks: u32) -> Result<()> {
     std::fs::write(out, rows)?;
     let mut summary = format!("{runs} weather runs\n\n== gaps (zones) ==\n");
     let mut ranked: Vec<_> = gaps.into_iter().collect();
-    ranked.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+    ranked.sort_by_key(|r| std::cmp::Reverse(r.1.len()));
     for (gap, z) in &ranked {
         let _ = writeln!(summary, "{:4}  {gap}  e.g. {:?}", z.len(), z.iter().take(10).collect::<Vec<_>>());
     }
@@ -3491,7 +3490,7 @@ fn fx_sweep(
                 gaps.entry(format!("attach mode {m:#x} unplaced")).or_default().push(file);
             }
             // What is still not done: point 0x35 (the water height).
-            for ((_, a, b), _) in au.attach.iter() {
+            for (_, a, b) in au.attach.keys() {
                 if *a == 0x35 || *b == 0x35 {
                     gaps.entry("attach point 0x35 (water height)".into()).or_default().push(file);
                 }
@@ -3510,7 +3509,7 @@ fn fx_sweep(
     }
     std::fs::write(out, rows)?;
     let mut ranked: Vec<(String, Vec<u32>)> = gaps.into_iter().collect();
-    ranked.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+    ranked.sort_by_key(|r| std::cmp::Reverse(r.1.len()));
     let mut summary = format!("{runs} files run\n");
     for (gap, files) in &ranked {
         let _ = writeln!(summary, "{:5}  {gap}  e.g. {:?}", files.len(), &files[..files.len().min(8)]);
@@ -3590,7 +3589,6 @@ impl fx::Actors for ShotActors {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 /// `movie-shot`: decodes the opening movie up to the last frame asked for, writing those frames (BT.601 to RGB).
 fn movie_shot(frames: &[u32], out: &std::path::Path, size: Option<&str>) -> Result<()> {
     let cfg = config::Config::load();

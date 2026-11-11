@@ -299,6 +299,9 @@ pub struct ElemCpu {
     /// CMoPointLightProgElem: its intensity / range multipliers (+0x1a4 / +0x1a8) as last written from the CPU, the
     /// start of scheduler ops 0x6f / 0x70.
     pub light_scale: Option<[f32; 2]>,
+    /// Its generator's update stream has op 0x02 (FUN_10048380), so the readback's velocity is kept: looked up at
+    /// spawn, not per readback.
+    pub drift: bool,
 }
 
 /// Op 0x25 (reactor actor2) / 0x21 (actor1): amount f32 @8, rate @0xc, count u32 @0x10, blend-in ticks @0x14, fade
@@ -462,7 +465,8 @@ pub fn clone_follow(face_camera: bool, rot: Vec3, world: Vec3, frame: Option<Mat
 /// A word range of an element for the GPU this frame.
 pub enum Write {
     Full(u32, Box<Elem>),
-    Words(u32, usize, Vec<u32>),
+    /// One word of an element (its index, the word, the value).
+    Word(u32, usize, u32),
     /// Particle records from this index of the pool.
     Parts(u32, Vec<[f32; 9]>),
     /// A point light switched off (the CMoPointLightProgElem dtor: a black light).
@@ -956,6 +960,8 @@ pub struct LampScan {
 pub struct Effects {
     pub reg: Registry,
     pub insts: Vec<Option<Instance>>,
+    /// The instance slots of each generator, ascending (kept by `start` and `kill`) for `template_inst`.
+    by_src: HashMap<Ref, Vec<usize>>,
     pub elems: Vec<Option<ElemCpu>>,
     free: Vec<u32>,
     pub writes: Vec<Write>,
@@ -1188,6 +1194,7 @@ impl Effects {
         Self {
             reg: Registry::new(),
             insts: Vec::new(),
+            by_src: HashMap::new(),
             elems: Vec::new(),
             free: Vec::new(),
             writes: Vec::new(),
@@ -1511,12 +1518,12 @@ impl Effects {
                 log::debug!("effects: wading ripple on {id:#x}");
             }
             self.wading.insert(id, inst);
-        } else if !water && let Some(inst) = self.wading.remove(&id) {
-            if let Some(i) = inst
+        } else if !water
+            && let Some(inst) = self.wading.remove(&id)
+            && let Some(i) = inst
                 .filter(|&i| self.insts[i].as_ref().is_some_and(|x| &x.name == b"i900" && x.owner == Owner::Step(id)))
-            {
-                self.kill(i);
-            }
+        {
+            self.kill(i);
         }
         if let Some(rain) = folder {
             self.foot_set(id, rain);
@@ -1594,10 +1601,10 @@ impl Effects {
         let serial = self.weather_serial;
         log::info!("effects: weather {tag} over {seconds:.0} s: {} generators", gens.len());
         for node in gens {
-            if let Some(i) = self.start((l, node), Owner::Weather(serial)) {
-                if let Some(x) = self.insts[i].as_mut() {
-                    x.weather = if seconds > 0.0 { 0.0 } else { 1.0 };
-                }
+            if let Some(i) = self.start((l, node), Owner::Weather(serial))
+                && let Some(x) = self.insts[i].as_mut()
+            {
+                x.weather = if seconds > 0.0 { 0.0 } else { 1.0 };
             }
         }
         self.weathers.push(WeatherSet { serial, tag: tag4, duration: seconds, remaining: seconds });
@@ -1805,6 +1812,8 @@ impl Effects {
                 self.insts.len() - 1
             }
         };
+        let v = self.by_src.entry(src).or_default();
+        v.insert(v.partition_point(|&k| k < i), i);
         Some(i)
     }
 
@@ -1861,6 +1870,12 @@ impl Effects {
     /// FUN_10052930(0): the instance and its elements go now.
     pub fn kill(&mut self, i: usize) {
         let Some(inst) = self.insts[i].take() else { return };
+        if let Some(v) = self.by_src.get_mut(&inst.src) {
+            v.retain(|&k| k != i);
+            if v.is_empty() {
+                self.by_src.remove(&inst.src);
+            }
+        }
         for e in inst.live {
             self.drop_elem(e);
         }
@@ -1916,7 +1931,7 @@ impl Effects {
                 x.stopping = true;
             }
         }
-        self.writes.push(Write::Words(e, w::STATE, vec![0]));
+        self.writes.push(Write::Word(e, w::STATE, 0));
         self.free.push(e);
     }
 
@@ -1924,7 +1939,7 @@ impl Effects {
     pub fn take_back(&mut self, words: &[u32]) {
         use elem::{BACK_WORDS, back};
         self.flash = [0; 3];
-        for (i, r) in words.chunks_exact(BACK_WORDS).enumerate() {
+        for (i, r) in words.as_chunks::<BACK_WORDS>().0.iter().enumerate() {
             let Some(Some(c)) = self.elems.get_mut(i) else { continue };
             if r[back::SERIAL] != c.serial {
                 continue;
@@ -1934,11 +1949,6 @@ impl Effects {
                 self.flash[k] = self.flash[k].saturating_add(*v);
             }
             let f = |k: usize| f32::from_bits(r[k]);
-            let has_drift = self
-                .insts
-                .get(c.inst)
-                .and_then(|x| x.as_ref())
-                .is_some_and(|x| self.reg.update_op_slot(x.src, 2).is_some());
             c.key = f(back::KEY);
             c.drawn = r[back::STATUS] & back::DRAWN != 0;
             c.back = Some(emit::Parent {
@@ -1951,7 +1961,7 @@ impl Effects {
                 max_life: c.max_life,
                 uv: [0.0; 2],
                 bias: 0.0,
-                vel: has_drift.then(|| Vec3::new(f(back::VEL), f(back::VEL + 1), f(back::VEL + 2))),
+                vel: c.drift.then(|| Vec3::new(f(back::VEL), f(back::VEL + 1), f(back::VEL + 2))),
                 frame: None,
                 src: self.insts.get(c.inst).and_then(|x| x.as_ref()).map(|x| x.src),
             });
@@ -2562,9 +2572,10 @@ impl Effects {
         self.reg.libs[g.0].generator(g.1).is_some_and(|gd| !matches!(gd.attach_mode(), 0 | 0xe | 0xf | 0x14))
     }
 
-    /// The generator resource running as itself: its instance (no clone, no element's sub-clone).
+    /// The generator resource running as itself: its instance (no clone, no element's sub-clone), the lowest slot.
     pub(super) fn template_inst(&self, g: Ref) -> Option<usize> {
-        self.insts.iter().position(|x| x.as_ref().is_some_and(|x| x.src == g && !x.clone && x.driven.is_none()))
+        let template = |i: usize| self.insts[i].as_ref().is_some_and(|x| !x.clone && x.driven.is_none());
+        self.by_src.get(&g)?.iter().copied().find(|&i| template(i))
     }
 
     /// FUN_100538e0(G, 0): its live elements go, the instance stays.
@@ -2592,11 +2603,12 @@ impl Effects {
     fn expire(&mut self, e: u32, f: &Frame, acts: &dyn Actors) {
         let Some(c) = self.elems[e as usize].as_ref() else { return };
         let inst = c.inst;
-        let (ops, src, actors) = self
+        // The end stream is lent out while it runs, as `emit` lends stream 1, and put back below.
+        let (ops, src, actors, started) = self
             .insts
-            .get(inst)
-            .and_then(|x| x.as_ref())
-            .map(|x| (x.streams[3].clone(), x.src, x.actors))
+            .get_mut(inst)
+            .and_then(|x| x.as_mut())
+            .map(|x| (std::mem::take(&mut x.streams[3]), x.src, x.actors, Some(x.started)))
             .unwrap_or_default();
         for op in &ops {
             match op.code {
@@ -2615,13 +2627,16 @@ impl Effects {
                     let c = self.elems[e as usize].as_mut().unwrap();
                     c.life = c.max_life;
                     let life = c.life;
-                    self.writes.push(Write::Words(e, w::LIFE, vec![life.to_bits()]));
-                    self.writes.push(Write::Words(e, w::CTRL, vec![ctl::LIFE_SET]));
+                    self.writes.push(Write::Word(e, w::LIFE, life.to_bits()));
+                    self.writes.push(Write::Word(e, w::CTRL, ctl::LIFE_SET));
                 }
                 // FUN_10063b20: the spline path's reference count (ours keep none).
                 0x04 => {}
                 _ => self.reg.unhandled(3, op.code),
             }
+        }
+        if let Some(x) = self.insts.get_mut(inst).and_then(|x| x.as_mut()).filter(|x| Some(x.started) == started) {
+            x.streams[3] = ops;
         }
         // A held element goes once its linked clone has no live elements (theirs keep the clone's count at 2 or more).
         let child = self.elems[e as usize].as_ref().and_then(|c| c.child);
@@ -2631,8 +2646,8 @@ impl Effects {
         if c.life < 1.0 {
             if c.flags & 0x2000_0000 != 0 && !released {
                 c.life = 0.0;
-                self.writes.push(Write::Words(e, w::LIFE, vec![0]));
-                self.writes.push(Write::Words(e, w::CTRL, vec![ctl::LIFE_SET]));
+                self.writes.push(Write::Word(e, w::LIFE, 0));
+                self.writes.push(Write::Word(e, w::CTRL, ctl::LIFE_SET));
             } else {
                 self.elem_gone(inst, e);
             }
@@ -2657,7 +2672,6 @@ impl Effects {
     /// `model` (vtable +0x1e0; flyers keep their wing beats there) becomes its folder; else DAT 0's 'foot' (se 12, a
     /// plain tone). One shot at `pos`, centred, at `level` (101 walking, 127 running). Then the dust generator `dust`
     /// of that folder, if any, bursts once on actor `id`.
-    #[allow(clippy::too_many_arguments)]
     pub fn footstep(
         &mut self,
         id: u32,

@@ -268,7 +268,7 @@ impl Mods {
                     e.1 = None;
                 }
                 if !mods.iter().any(|m| m.name == slug) {
-                    mods.insert(0, ModRef { name: slug, enabled: true });
+                    mods.insert(0, ModRef::new(slug, true));
                 }
                 self.error = None;
                 true

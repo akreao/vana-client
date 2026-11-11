@@ -172,7 +172,6 @@ pub fn nearest(caps: &[(Vec3, f32, Vec3, f32)], l: Vec3) -> Vec3 {
 }
 
 /// FUN_10035e50: volume and pan of a source at `pos` for the listener at the eye. None = silent (stop).
-#[allow(clippy::too_many_arguments)]
 pub fn attenuate(
     pan_in: f32,
     vol: i32,

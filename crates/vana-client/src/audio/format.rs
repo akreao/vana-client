@@ -273,7 +273,7 @@ impl Decoder {
             Codec::Pcm16 { big_endian } => {
                 let at = h.data + self.unit as usize * 2 * ch;
                 let Some(src) = self.bytes.get(at..at + 2 * ch) else { return false };
-                for s in src.chunks_exact(2) {
+                for s in src.as_chunks::<2>().0 {
                     let b = [s[0], s[1]];
                     self.pending.push(if big_endian { i16::from_be_bytes(b) } else { i16::from_le_bytes(b) });
                 }

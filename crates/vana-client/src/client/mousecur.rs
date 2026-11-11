@@ -98,7 +98,6 @@ impl MouseCursor {
     /// sprite steps one frame each 1/30 s (retail: each drawn frame at 30 fps), cycling 0..n-1 then 0 twice (a null
     /// sprite resets the counter).
     /// `size` scales the sprite and `file_size` the pack's images (UI pixels per screen pixel times the setting).
-    #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &mut self,
         gu: &mut GameUi,

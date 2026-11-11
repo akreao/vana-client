@@ -1759,7 +1759,7 @@ impl Host for LiveHost<'_> {
                 let int = |i| Self::arg_int(&args, i).unwrap_or(0);
                 self.st.option_points.insert(int(0) as u32, (int(1) as u16, int(2) as u16));
             }
-            Effect::Op { op: 0xd4, sub: Some(s @ (3 | 4 | 5)), args, .. } => {
+            Effect::Op { op: 0xd4, sub: Some(s @ (3..=5)), args, .. } => {
                 let int = |i| Self::arg_int(&args, i).unwrap_or(0);
                 let ext = (s != 3).then(|| {
                     let mut e = [0u8; 24];
@@ -3045,9 +3045,15 @@ fn unloads(pc: bool, flags: u32, structure: bool, reserved: bool, trust: bool) -
 /// 0x20000); otherwise by the server bits (+0x120 bits 14 / 15) or, unless it takes part, by (DAT_1046df04 |
 /// Mode) & 0x02 for player characters and & 0x10 for NPCs and monsters (+0x120 bit 0x800000).
 pub fn hidden(w: &World) -> HashSet<u32> {
+    let mut out = HashSet::new();
+    hide(w, &mut out);
+    out
+}
+
+/// `hidden` into a set the caller keeps.
+pub fn hide(w: &World, out: &mut HashSet<u32>) {
     let rule = HideRule::of(w);
-    let mut out: HashSet<u32> =
-        w.entities.iter().filter(|(id, e)| rule.entity(w, **id, e)).map(|(id, _)| *id).collect();
+    out.extend(w.entities.iter().filter(|(id, e)| rule.entity(w, **id, e)).map(|(id, _)| *id));
     if rule.me(w) {
         out.insert(w.my_id);
     }
@@ -3055,7 +3061,6 @@ pub fn hidden(w: &World) -> HashSet<u32> {
     if let Some(id) = moogle_gone(w) {
         out.insert(id);
     }
-    out
 }
 
 /// `hidden(w).contains(&id)` for one actor, without building the set.
@@ -3118,10 +3123,6 @@ impl<'a> HideRule<'a> {
         // FUN_101d4d90: laying out the Mog House or gardening in it the player is not drawn (+0xb2 bit 4).
         hide_me || w.layout.is_some() || super::garden::hides_player(w)
     }
-}
-
-pub fn idles(w: &World) -> HashMap<u32, String> {
-    w.event.as_ref().map(|l| l.st.idle.clone()).unwrap_or_default()
 }
 
 /// The open message waits for a key (the kaipage arrow shows).

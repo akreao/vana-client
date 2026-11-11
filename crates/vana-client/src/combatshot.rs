@@ -111,7 +111,6 @@ fn replay(bt: &BattleText, mob: &str) -> Vec<(String, [u8; 4])> {
         targets: vec![ActionTarget { id: MOB, results: vec![res(1, 9)] }],
         seq: 0,
     });
-    let mut lines = lines;
     for (p, two) in [
         (message_packet(0x29, ME, MOB, [0, 0], 6), false),
         (message_packet(0x2d, ME, ME, [50, 0], 8), true),

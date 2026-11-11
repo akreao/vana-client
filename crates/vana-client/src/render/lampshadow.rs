@@ -214,7 +214,6 @@ impl LampShadows {
     /// Darkens `color` where this frame's `lamps` (as given to `set`, whose maps are drawn) shadow the scenery in
     /// `depth` (the scene's). `lights`: the zone's point lights (zone.wgsl plights), whose live range and intensity
     /// limit each shadow to where its light reaches. Nothing without lamps.
-    #[allow(clippy::too_many_arguments)]
     pub fn receive(
         &self,
         gpu: &Gpu,

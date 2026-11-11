@@ -363,7 +363,6 @@ impl SunShadow {
     }
 
     /// Darkens `color` where the map shadows the scenery in `depth` (the scene's). `soft`: the PCF spacing in texels.
-    #[allow(clippy::too_many_arguments)]
     pub fn receive(
         &self,
         gpu: &Gpu,
@@ -570,17 +569,17 @@ mod tests {
         };
         let lit = (0.8f32 * 255.0).round() as i32;
         let dark = (0.8 * (1.0 - STRENGTH) * 255.0).round() as i32;
-        for p in run(1.0, 0.0).chunks_exact(4) {
+        for p in run(1.0, 0.0).as_chunks::<4>().0 {
             assert!((p[0] as i32 - lit).abs() <= 2, "unshadowed {p:?}");
         }
-        for p in run(floor_lz - 1.0 / DEPTH, 0.0).chunks_exact(4) {
+        for p in run(floor_lz - 1.0 / DEPTH, 0.0).as_chunks::<4>().0 {
             assert!((p[0] as i32 - dark).abs() <= 3, "shadowed {p:?} want {dark}");
         }
         // y is down: feet 20 above the floor.
-        for p in run(floor_lz - 20.0 / DEPTH, -20.0).chunks_exact(4) {
+        for p in run(floor_lz - 20.0 / DEPTH, -20.0).as_chunks::<4>().0 {
             assert!((p[0] as i32 - lit).abs() <= 2, "caster far above {p:?}");
         }
-        for p in run(floor_lz - 20.0 / DEPTH, -1.0).chunks_exact(4) {
+        for p in run(floor_lz - 20.0 / DEPTH, -1.0).as_chunks::<4>().0 {
             assert!((p[0] as i32 - dark).abs() <= 3, "caster a step above {p:?} want {dark}");
         }
     }

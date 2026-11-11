@@ -282,7 +282,7 @@ pub struct KeyFrame {
 impl KeyFrame {
     pub fn parse(d: &[u8]) -> Self {
         let mut keys = Vec::new();
-        for c in d.chunks_exact(8) {
+        for c in d.as_chunks::<8>().0 {
             let t = f32::from_le_bytes(c[0..4].try_into().unwrap());
             let v = f32::from_le_bytes(c[4..8].try_into().unwrap());
             keys.push((t, v));
@@ -371,7 +371,7 @@ impl D3m {
         if d.len() < 8 {
             bail!("d3m: {} bytes", d.len());
         }
-        let mut format = (d[0] & 0xf) as u8;
+        let mut format = d[0] & 0xf;
         let (n, m, tris) = (d[4] as usize, d[5] as usize, u16::from_le_bytes([d[6], d[7]]) as usize);
         let counts: Vec<u16> =
             (0..n).map(|k| d.get(8 + 2 * k..10 + 2 * k).map_or(0, |b| u16::from_le_bytes([b[0], b[1]]))).collect();

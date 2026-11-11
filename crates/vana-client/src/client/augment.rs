@@ -34,11 +34,11 @@ fn table<'a>(dll: &'a [u8], hint: &str, len: usize, md5: &str) -> Option<&'a [u8
 }
 
 fn pairs<const N: usize>(t: &[u8]) -> Vec<[u8; N]> {
-    t.chunks_exact(N).map(|c| c.try_into().unwrap()).collect()
+    t.as_chunks::<N>().0.to_vec()
 }
 
 fn words(t: &[u8]) -> Vec<u16> {
-    t.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect()
+    t.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes([c[0], c[1]])).collect()
 }
 
 impl AugTables {
@@ -1057,8 +1057,7 @@ pub fn wrap(s: &str, max: f32, width: &dyn Fn(&str) -> f32) -> Vec<String> {
             line = rest;
             last_break = line
                 .char_indices()
-                .filter(|(_, ch)| matches!(ch, ' ' | '\t' | ',' | '/'))
-                .last()
+                .rfind(|(_, ch)| matches!(ch, ' ' | '\t' | ',' | '/'))
                 .map(|(i, ch)| i + ch.len_utf8());
         } else if matches!(c, ' ' | '\t' | ',' | '/') {
             last_break = Some(line.len());

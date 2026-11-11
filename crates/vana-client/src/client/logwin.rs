@@ -607,145 +607,6 @@ pub fn caption(channel: &str) -> usize {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// FUN_1015ae90 at 100 %: W - 160 (frame W - 146) from 512 up; never under 352. Say is sprite 276.
-    #[test]
-    fn width_and_caption() {
-        assert_eq!(text_width(1280.0, 100.0), 1120.0);
-        assert_eq!(text_width(640.0, 100.0), 480.0);
-        assert_eq!(text_width(512.0, 100.0), 352.0);
-        assert_eq!(text_width(1280.0, 50.0), 736.0);
-        assert_eq!(caption(""), 276);
-        assert_eq!(caption("/p"), 280);
-        assert_eq!((caption_1("/p", true), caption_1("/yell", true), caption_1("", false)), (735, 278, 276));
-    }
-
-    /// The tabs in English order; Window 2 only with a second window; Num+ wraps; Shout takes yells.
-    #[test]
-    fn full_log_tabs() {
-        assert_eq!(full_tabs(false), [0, 3, 4, 1, 2, 7, 10, 9, 6, 5]);
-        assert_eq!((next_tab(0, true), next_tab(0, false), next_tab(5, true)), (8, 3, 0));
-        let r = Route::default();
-        assert!(
-            tab_shows(5, &r, Some(11), false)
-                && tab_shows(1, &r, Some(0xd2), false)
-                && !tab_shows(3, &r, Some(7), false)
-        );
-    }
-
-    /// Default masks with window 2 on: chat, emotes and NPC talk to window 2; battle, system and modeless lines to
-    /// window 1; GM lines to window 1 only; everything to window 1 with window 2 off. Window 2 above or right of 1.
-    #[test]
-    fn routing_and_place() {
-        let mut v = crate::gamecfg::Values::default();
-        let off = Route::from_config(&v);
-        v.set(0xb4, 1);
-        let on = Route::from_config(&v);
-        let say = Some(1);
-        assert!(off.shows(0, say, false) && !on.shows(0, say, false) && on.shows(1, say, false));
-        for battle in [Some(80), Some(121), None, Some(36)] {
-            assert!(on.shows(0, battle, false) && !on.shows(1, battle, false), "{battle:?}");
-        }
-        assert!(on.shows(1, Some(0x98), false) && !on.shows(0, Some(0x98), false));
-        assert!(on.shows(0, say, true) && !on.shows(1, say, true));
-        assert_eq!(second_rect(1, [16.0, 500.0, 366.0, 134.0], 300.0, 70.0), [16.0, 430.0, 300.0, 70.0]);
-        assert_eq!(second_rect(2, [16.0, 500.0, 366.0, 134.0], 300.0, 70.0), [382.0, 564.0, 300.0, 70.0]);
-        // 0xc6 / 0xc5 at -1 follow window 1.
-        crate::client::cfgapply::normalise(&mut v);
-        assert_eq!(LogCfg::for_window(&v, true), LogCfg::for_window(&v, false));
-    }
-
-    /// FUN_101626e0 at stock 30 fps (2 ticks a frame): one line slides 14 12 11 9 8 6 4 3 1 0 px; two lines enter
-    /// one after the other (the second shown once the first has slid); a backlog over 64 jumps to the newest.
-    #[test]
-    fn slide_like_retail() {
-        let (mut l, cfg) = (LogAnim::default(), LogCfg::default());
-        l.fill(&cfg);
-        l.add_line(&cfg);
-        let offs: Vec<i32> = (0..10)
-            .map(|_| {
-                l.step(2, false, false, false, &cfg);
-                l.off
-            })
-            .collect();
-        assert_eq!(offs, [14, 12, 11, 9, 8, 6, 4, 3, 1, 0]);
-        assert_eq!(l.pending, 0);
-        l.add_line(&cfg);
-        l.add_line(&cfg);
-        l.step(2, false, false, false, &cfg);
-        assert_eq!(l.pending, 1);
-        // The first slides 10 frames and rests at 20 (offset 0) for one more; then the second is shown.
-        for _ in 0..9 {
-            l.step(2, false, false, false, &cfg);
-        }
-        assert_eq!((l.pending, l.slide, l.off), (1, 20, 0));
-        l.step(2, false, false, false, &cfg);
-        assert_eq!((l.pending, l.off), (0, 14));
-        for _ in 0..70 {
-            l.add_line(&cfg);
-        }
-        l.step(2, false, false, false, &cfg);
-        assert_eq!((l.pending, l.slide), (0, 0));
-    }
-
-    /// A channel tab kept up as lines come and change gives the rows a rebuild gives (needs the game's files).
-    #[test]
-    fn tab_rows_follow_the_log() {
-        let cfg = crate::config::Config::load();
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
-        let Ok(dll) = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())) else { return };
-        let Ok(data) = super::super::game_ui::GameUiData::load(&index, &dll) else { return };
-        let gu = GameUi::new(data);
-        let mut chat = super::super::combat::ChatLog::default();
-        let mut kept = LogWin { width: 200.0, ..Default::default() };
-        let tell = |i: usize| format!("Someone >> a tell number {i} long enough to wrap on a narrow window");
-        let mut last_tell = 0;
-        for i in 0..300 {
-            match i % 7 {
-                0 => {
-                    chat.push_mode(tell(i), [0x80; 4], false, 12, false, None);
-                    last_tell = chat.len() - 1;
-                }
-                1 => chat.push_battle(format!("battle {i}"), [0x80; 4], 20),
-                _ => chat.push_mode(format!("say {i}"), [0x80; 4], false, 9, false, None),
-            }
-            // An earlier tell changed in place (wrapped again, maybe to more rows).
-            if i % 20 == 19 {
-                chat.set_text(last_tell, format!("{} and now changed to wrap to more rows than before", tell(i)));
-            }
-            kept.prepare_tab(&gu, &chat, 4, Route::default());
-            let mut fresh = LogWin { width: 200.0, ..Default::default() };
-            fresh.prepare_tab(&gu, &chat, 4, Route::default());
-            assert_eq!(kept.tab.rows, fresh.tab.rows, "after line {i}");
-        }
-        assert!(kept.tab.rows.len() >= 100);
-    }
-
-    /// 23 + (H - 448) / 16 rows; the row moves first, then the view scrolls; pages clamp to the history.
-    #[test]
-    fn full_log_keys() {
-        assert_eq!([full_lines(480.0), full_lines(600.0), full_lines(800.0)], [25, 32, 45]);
-        let mut f = FullLog::open(480.0);
-        assert_eq!(f, FullLog { row: 25, scroll: 0, filter: 0 });
-        f.key(egui::Key::ArrowDown, false, 25, 100);
-        assert_eq!(f, FullLog { row: 25, scroll: 0, filter: 0 });
-        f.key(egui::Key::ArrowUp, true, 25, 100);
-        assert_eq!(f, FullLog { row: 25, scroll: 1, filter: 0 });
-        f.key(egui::Key::ArrowLeft, false, 25, 100);
-        f.key(egui::Key::ArrowLeft, false, 25, 100);
-        f.key(egui::Key::ArrowLeft, false, 25, 100);
-        assert_eq!(f, FullLog { row: 1, scroll: 75, filter: 0 });
-        f.key(egui::Key::ArrowRight, false, 25, 100);
-        assert_eq!(f.scroll, 50);
-        f.key(egui::Key::ArrowRight, false, 25, 100);
-        f.key(egui::Key::ArrowRight, false, 25, 100);
-        assert_eq!(f, FullLog { row: 25, scroll: 0, filter: 0 });
-    }
-}
-
 impl LogWin {
     /// The full log's rows for `filter` (FUN_101295d0 over the history): Window 1 is this window's rows; Window 2 every
     /// line of its mask up to KEEP rows; a channel the newest 100 rows *(inf: ~50 rows at the open, up to 100 while
@@ -873,7 +734,6 @@ impl LogWin {
     /// open, `shrink` is Escape (key 0x95, FUN_1015b830). Lines this window's mask leaves out are not taken; stamps
     /// are added as lines come (a change of 0xb5 shows on new lines; ours, the every-line switch, rewraps them all, as
     /// the modern chat shows it).
-    #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
         gu: &GameUi,
@@ -1203,7 +1063,6 @@ impl LogWin {
     /// (FUN_10138020's offset -16), the hand with them. Returns the frame rect.
     /// `band`: the cursor row is a player's line (+0x26): child 1 (the row) shows keytops3 538, a translucent blue band,
     /// instead of windowps 332 (blank) (FUN_10137c70; drawn under the text *(inf: the order)*).
-    #[allow(clippy::too_many_arguments)]
     pub fn draw_full(
         &self,
         gu: &mut GameUi,
@@ -1349,4 +1208,143 @@ fn stamped(gu: &mut GameUi, line: &str, st: usize, x: f32, y: f32, colour: [u8; 
     let (head, rest) = line.split_at(st);
     gu.text(head, x, y, 0, stamp);
     gu.text(rest, x + gu.text_width(head), y, 0, colour);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// FUN_1015ae90 at 100 %: W - 160 (frame W - 146) from 512 up; never under 352. Say is sprite 276.
+    #[test]
+    fn width_and_caption() {
+        assert_eq!(text_width(1280.0, 100.0), 1120.0);
+        assert_eq!(text_width(640.0, 100.0), 480.0);
+        assert_eq!(text_width(512.0, 100.0), 352.0);
+        assert_eq!(text_width(1280.0, 50.0), 736.0);
+        assert_eq!(caption(""), 276);
+        assert_eq!(caption("/p"), 280);
+        assert_eq!((caption_1("/p", true), caption_1("/yell", true), caption_1("", false)), (735, 278, 276));
+    }
+
+    /// The tabs in English order; Window 2 only with a second window; Num+ wraps; Shout takes yells.
+    #[test]
+    fn full_log_tabs() {
+        assert_eq!(full_tabs(false), [0, 3, 4, 1, 2, 7, 10, 9, 6, 5]);
+        assert_eq!((next_tab(0, true), next_tab(0, false), next_tab(5, true)), (8, 3, 0));
+        let r = Route::default();
+        assert!(
+            tab_shows(5, &r, Some(11), false)
+                && tab_shows(1, &r, Some(0xd2), false)
+                && !tab_shows(3, &r, Some(7), false)
+        );
+    }
+
+    /// Default masks with window 2 on: chat, emotes and NPC talk to window 2; battle, system and modeless lines to
+    /// window 1; GM lines to window 1 only; everything to window 1 with window 2 off. Window 2 above or right of 1.
+    #[test]
+    fn routing_and_place() {
+        let mut v = crate::gamecfg::Values::default();
+        let off = Route::from_config(&v);
+        v.set(0xb4, 1);
+        let on = Route::from_config(&v);
+        let say = Some(1);
+        assert!(off.shows(0, say, false) && !on.shows(0, say, false) && on.shows(1, say, false));
+        for battle in [Some(80), Some(121), None, Some(36)] {
+            assert!(on.shows(0, battle, false) && !on.shows(1, battle, false), "{battle:?}");
+        }
+        assert!(on.shows(1, Some(0x98), false) && !on.shows(0, Some(0x98), false));
+        assert!(on.shows(0, say, true) && !on.shows(1, say, true));
+        assert_eq!(second_rect(1, [16.0, 500.0, 366.0, 134.0], 300.0, 70.0), [16.0, 430.0, 300.0, 70.0]);
+        assert_eq!(second_rect(2, [16.0, 500.0, 366.0, 134.0], 300.0, 70.0), [382.0, 564.0, 300.0, 70.0]);
+        // 0xc6 / 0xc5 at -1 follow window 1.
+        crate::client::cfgapply::normalise(&mut v);
+        assert_eq!(LogCfg::for_window(&v, true), LogCfg::for_window(&v, false));
+    }
+
+    /// FUN_101626e0 at stock 30 fps (2 ticks a frame): one line slides 14 12 11 9 8 6 4 3 1 0 px; two lines enter
+    /// one after the other (the second shown once the first has slid); a backlog over 64 jumps to the newest.
+    #[test]
+    fn slide_like_retail() {
+        let (mut l, cfg) = (LogAnim::default(), LogCfg::default());
+        l.fill(&cfg);
+        l.add_line(&cfg);
+        let offs: Vec<i32> = (0..10)
+            .map(|_| {
+                l.step(2, false, false, false, &cfg);
+                l.off
+            })
+            .collect();
+        assert_eq!(offs, [14, 12, 11, 9, 8, 6, 4, 3, 1, 0]);
+        assert_eq!(l.pending, 0);
+        l.add_line(&cfg);
+        l.add_line(&cfg);
+        l.step(2, false, false, false, &cfg);
+        assert_eq!(l.pending, 1);
+        // The first slides 10 frames and rests at 20 (offset 0) for one more; then the second is shown.
+        for _ in 0..9 {
+            l.step(2, false, false, false, &cfg);
+        }
+        assert_eq!((l.pending, l.slide, l.off), (1, 20, 0));
+        l.step(2, false, false, false, &cfg);
+        assert_eq!((l.pending, l.off), (0, 14));
+        for _ in 0..70 {
+            l.add_line(&cfg);
+        }
+        l.step(2, false, false, false, &cfg);
+        assert_eq!((l.pending, l.slide), (0, 0));
+    }
+
+    /// A channel tab kept up as lines come and change gives the rows a rebuild gives (needs the game's files).
+    #[test]
+    fn tab_rows_follow_the_log() {
+        let cfg = crate::config::Config::load();
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(dll) = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())) else { return };
+        let Ok(data) = super::super::game_ui::GameUiData::load(&index, &dll) else { return };
+        let gu = GameUi::new(data);
+        let mut chat = super::super::combat::ChatLog::default();
+        let mut kept = LogWin { width: 200.0, ..Default::default() };
+        let tell = |i: usize| format!("Someone >> a tell number {i} long enough to wrap on a narrow window");
+        let mut last_tell = 0;
+        for i in 0..300 {
+            match i % 7 {
+                0 => {
+                    chat.push_mode(tell(i), [0x80; 4], false, 12, false, None);
+                    last_tell = chat.len() - 1;
+                }
+                1 => chat.push_battle(format!("battle {i}"), [0x80; 4], 20),
+                _ => chat.push_mode(format!("say {i}"), [0x80; 4], false, 9, false, None),
+            }
+            // An earlier tell changed in place (wrapped again, maybe to more rows).
+            if i % 20 == 19 {
+                chat.set_text(last_tell, format!("{} and now changed to wrap to more rows than before", tell(i)));
+            }
+            kept.prepare_tab(&gu, &chat, 4, Route::default());
+            let mut fresh = LogWin { width: 200.0, ..Default::default() };
+            fresh.prepare_tab(&gu, &chat, 4, Route::default());
+            assert_eq!(kept.tab.rows, fresh.tab.rows, "after line {i}");
+        }
+        assert!(kept.tab.rows.len() >= 100);
+    }
+
+    /// 23 + (H - 448) / 16 rows; the row moves first, then the view scrolls; pages clamp to the history.
+    #[test]
+    fn full_log_keys() {
+        assert_eq!([full_lines(480.0), full_lines(600.0), full_lines(800.0)], [25, 32, 45]);
+        let mut f = FullLog::open(480.0);
+        assert_eq!(f, FullLog { row: 25, scroll: 0, filter: 0 });
+        f.key(egui::Key::ArrowDown, false, 25, 100);
+        assert_eq!(f, FullLog { row: 25, scroll: 0, filter: 0 });
+        f.key(egui::Key::ArrowUp, true, 25, 100);
+        assert_eq!(f, FullLog { row: 25, scroll: 1, filter: 0 });
+        f.key(egui::Key::ArrowLeft, false, 25, 100);
+        f.key(egui::Key::ArrowLeft, false, 25, 100);
+        f.key(egui::Key::ArrowLeft, false, 25, 100);
+        assert_eq!(f, FullLog { row: 1, scroll: 75, filter: 0 });
+        f.key(egui::Key::ArrowRight, false, 25, 100);
+        assert_eq!(f.scroll, 50);
+        f.key(egui::Key::ArrowRight, false, 25, 100);
+        f.key(egui::Key::ArrowRight, false, 25, 100);
+        assert_eq!(f, FullLog { row: 25, scroll: 0, filter: 0 });
+    }
 }

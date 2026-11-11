@@ -164,7 +164,7 @@ fn pick(w: &mut World, c: &CharLnk) {
         4 => run(w, format!("/partyrequestcmd add {name}")),
         5 => run(w, format!("/partyrequestcmd remove {name}")),
         // comyn (FUN_10210e30, default No): 0xe 0x417 / 0x419 / 0x418.
-        6 | 7 | 8 => {
+        6..=8 => {
             w.assist_name = name;
             let kind = match c.cursor {
                 6 => WARNING,

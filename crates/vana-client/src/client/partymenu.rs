@@ -629,7 +629,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
             continue;
         };
         let Some((wx, wy)) = gu.window_xy(win.name, sw, sh) else { continue };
-        gu.disabled_children(win.name, wx, wy, &off, Some(win.sel).filter(|_| focused));
+        gu.disabled_children(win.name, wx, wy, &off, focused.then_some(win.sel));
         let at: Vec<(u16, f32, f32)> = gu.layout(win.name).map_or(Vec::new(), |l| {
             l.elements.iter().skip(1).map(|e| (e.id, wx + e.x as f32, wy + e.y as f32)).collect()
         });

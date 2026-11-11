@@ -13,6 +13,8 @@ pub(super) struct Directory {
     pub mods: Vec<Entry>,
     /// mods.emit since the last mod phase: (sender, event, values).
     pub emitted: Vec<(String, String, Vec<serde_json::Value>)>,
+    /// The character (folder name) and job once known, for the switches kept per character or job (mods.installed).
+    pub at: Option<(String, Option<String>)>,
 }
 
 pub(super) struct Entry {
@@ -276,7 +278,9 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
                 let st = m.st.borrow();
                 let provides: Vec<String> = st.provided.iter().map(|p| p.0.clone()).collect();
                 t.set("provides", provides)?;
-                (t.set("avg_ms", st.stats.avg)?, t.set("peak_ms", st.stats.peak)?, t.set("errors", st.errors.len())?);
+                t.set("avg_ms", st.stats.avg)?;
+                t.set("peak_ms", st.stats.peak)?;
+                t.set("errors", st.errors.len())?;
                 if let Some(l) = m.lua.try_upgrade() {
                     t.set("memory_kb", l.used_memory() / 1024)?;
                 }
@@ -288,17 +292,19 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
     mods.set(
         "installed",
         lua.create_function(|lua, ()| {
-            let loaded: Vec<String> = directory(lua).borrow().mods.iter().map(|m| m.id.clone()).collect();
+            let d = directory(lua);
+            let loaded: Vec<String> = d.borrow().mods.iter().map(|m| m.id.clone()).collect();
+            let at = d.borrow().at.clone();
             let out = lua.create_table()?;
-            for (id, name, version, enabled, bundled, commands) in super::installed() {
+            for (id, name, version, enabled, bundled, commands) in super::installed(at.as_ref()) {
                 let t = lua.create_table()?;
-                (
-                    t.set("loaded", loaded.contains(&id))?,
-                    t.set("id", id)?,
-                    t.set("name", name)?,
-                    t.set("version", version)?,
-                );
-                (t.set("enabled", enabled)?, t.set("bundled", bundled)?, t.set("commands", commands)?);
+                t.set("loaded", loaded.contains(&id))?;
+                t.set("id", id)?;
+                t.set("name", name)?;
+                t.set("version", version)?;
+                t.set("enabled", enabled)?;
+                t.set("bundled", bundled)?;
+                t.set("commands", commands)?;
                 out.push(t)?;
             }
             Ok(out)
@@ -423,9 +429,12 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
             let f = f.borrow();
             let t = lua.create_table()?;
             if let Some((x, y)) = f.win_pos {
-                (t.set("x", x)?, t.set("y", y)?);
+                t.set("x", x)?;
+                t.set("y", y)?;
             }
-            (t.set("w", f.window[0] as i64)?, t.set("h", f.window[1] as i64)?, t.set("focused", f.focused)?);
+            t.set("w", f.window[0] as i64)?;
+            t.set("h", f.window[1] as i64)?;
+            t.set("focused", f.focused)?;
             Ok(t)
         })?,
     )?;

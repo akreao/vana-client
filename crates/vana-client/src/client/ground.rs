@@ -733,7 +733,7 @@ impl Ground {
             }
             let u = ((x - a.x) * (c.z - a.z) - (c.x - a.x) * (z - a.z)) / d;
             let v = ((b.x - a.x) * (z - a.z) - (x - a.x) * (b.z - a.z)) / d;
-            (u >= 0.0 && v >= 0.0 && u + v <= 1.0).then(|| (a.y + u * (b.y - a.y) + v * (c.y - a.y), i))
+            (u >= 0.0 && v >= 0.0 && u + v <= 1.0).then_some((a.y + u * (b.y - a.y) + v * (c.y - a.y), i))
         })
     }
 

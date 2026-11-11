@@ -106,7 +106,6 @@ fn rasterize(text: &str, px: f32) -> Option<(Raster, Vec<u8>)> {
 /// A plate: the name centred on x with its baseline BASELINE units below y, tinted (ARGB, 0x80 = 1.0) and pulsed;
 /// retail's badges just left of it and its master stars above, darkened with the name by the screen fade `shade`
 /// (`tint` and `icon` come faded already).
-#[allow(clippy::too_many_arguments)]
 pub fn draw(
     gu: &mut GameUi,
     prefix: &[u8],

@@ -1,7 +1,7 @@
 ## Character creator: packed motion channels with no deltas (2026-11-10)
 
-Black creation screen after the master-into-custom merge (#350): every dancer was refused with `channels 31511:
-channel size past the file`. Upstream twin lenonk/vana-client#197.
+Black creation screen after the quality pass's channel size check (0bc39923 / b0ecd256): every dancer was refused
+with `channels 31511: channel size past the file`. Fixed in lenonk/vana-client#197; this entry records the finding.
 
 - PlaybackChannel v3 (kind 0x50003, FUN_1027ace0), packed: each channel is a 16-byte stream header (length, bits,
   step, initial value) and `length` bytes of deltas (FUN_102886a0: value(n) = initial + the sum of deltas 0..n-1).

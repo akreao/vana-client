@@ -315,7 +315,7 @@ fn order(w: &World, aix: bool, known: &[u8]) -> std::rc::Rc<Vec<u16>> {
 }
 
 /// The merged order itself, for a sort: merged in place in Macros first.
-fn order_mut<'a>(w: &'a mut World, aix: bool) -> Option<&'a mut super::macros::Order> {
+fn order_mut(w: &mut World, aix: bool) -> Option<&mut super::macros::Order> {
     let known = if aix { super::monstrosity::ability_bits(w).unwrap_or_default() } else { w.spells_known.clone() };
     let m = w.macros.as_mut()?;
     let o = if aix { &mut m.aix } else { &mut m.mix };
