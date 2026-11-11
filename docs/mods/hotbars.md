@@ -39,7 +39,8 @@ names it.
 The **Builder** makes one: pick a type (spell, job ability, weapon skill, pet command, item, equipment, a system
 command such as `/attack`, `/heal`, `/assist` or `/lockon`, or Macro for typed lines only), search, pick, choose
 the target, and add lines to run after it. System commands show a game icon standing in for them (a sword for
-`/attack`, Regen for `/heal`).
+`/attack`, Regen for `/heal`). Spells are the ones the magic list offers: learned, and castable by your main or
+support job at its level (blue magic only while set).
 
 Abilities that open a list in the game's menu (Rune Enchantment, Ward, Effusion, Phantom Roll, Quick Draw, Sambas,
 Waltzes, Jigs, Steps, the Flourishes, Stratagems, Blood Pact: Rage and Ward, Ready) open the same list here, marked

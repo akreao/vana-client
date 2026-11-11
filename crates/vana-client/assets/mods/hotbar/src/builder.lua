@@ -150,6 +150,41 @@ local function openers()
   return openers_by_kind
 end
 
+-- Whether blue magic `id` is set (only set blue magic can be cast), from the BLU side's job data; cached on `me`.
+local function blue_set(id, me)
+  if not me._blue then
+    me._blue = {}
+    local d = game.job_data and game.job_data() or {}
+    for _, side in ipairs({ d.main, d.sub }) do
+      for _, s in ipairs(side and side.blue_spells or {}) do me._blue[s] = true end
+    end
+  end
+  return me._blue[id] == true
+end
+
+-- Whether spell `id` is one the magic list offers: a job that has it at our level (as main for SCH's and GEO's
+-- main-only spells and gifts), blue magic set. An unknown spell or player counts as castable.
+function M.castable(id, me)
+  local s = res.spell(id)
+  if not s or not me then return true end
+  if s.kind ~= 8 and s.levels then
+    if s.main_only and s.main_only ~= me.main_job then return false end
+    local jp = s.job_points or {}
+    local lv = function(job, level, main)
+      if not (job and s.levels[job]) then return false end
+      -- A gift: main job at 99 (the job points it takes are not known here).
+      if jp[job] then return main and (level or 0) >= 99 end
+      return s.levels[job] <= (level or 0)
+    end
+    if jp[me.main_job] then
+      if not lv(me.main_job, me.main_level, true) then return false end
+    elseif not (lv(me.main_job, me.main_level, true) or lv(me.sub_job, me.sub_level, false)) then
+      return false
+    end
+  end
+  return not (id >= 0x200 and id < 0x2e0) or blue_set(id, me)
+end
+
 -- Every choice of an action kind: { { name, cells = {...}, icon = {kind, id}, target, title? }, ... } where `target`
 -- is the one a new pick starts on and `title` the macro name it suggests (else `name`).
 local function all_of(kind)
@@ -162,9 +197,11 @@ local function all_of(kind)
     end
     return out
   elseif kind == "ma" then
+    -- Learned spells our jobs can cast at their levels, as the magic list shows.
+    local me = game.player()
     for _, id in ipairs(game.spells()) do
       local s = res.spell(id)
-      if s and s.name and s.name ~= "" then
+      if s and s.name and s.name ~= "" and M.castable(id, me) then
         out[#out + 1] = { name = s.name, cells = { tostring(s.mp or 0), SPELL_KINDS[s.kind] or "" },
           icon = { kind = "spell", id = id }, target = M.default_target(s.targets) }
       end

@@ -766,6 +766,9 @@ local function define()
       elseif e.id == "kbar" then
         K.bar = e.index
         refresh_keys()
+      elseif e.id == "tabs" then
+        -- The Builder opened by its tab before any New: its list for the type and search shown.
+        if e.index == TAB_BUILD and #E.results == 0 then refresh_results(ui.get(WIN, "q").text) end
       elseif e.id == "btype" then
         set_kind(builder.TYPES[e.index].kind)
       elseif e.id == "target" then
