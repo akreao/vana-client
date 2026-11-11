@@ -16043,7 +16043,7 @@ impl App {
                     }
                     // The mods kept per character or job (#94): those for this one run.
                     let mut mods = std::mem::take(&mut world.lua);
-                    mods.follow_scope(world, &self.cfg.mods);
+                    mods.follow_scope(world, &self.cfg.mods, &[]);
                     world.lua = mods;
                     save = true;
                 }
@@ -16144,7 +16144,7 @@ impl App {
                         }
                     }
                     let mut mods = std::mem::take(&mut world.lua);
-                    let mut scoped = false;
+                    let mut scoped = Vec::new();
                     for (id, key, value) in changes {
                         if key == lua::SCOPE_CHARACTER || key == lua::SCOPE_JOB {
                             let (folder, on) = (lua::folder_name(&id), value.as_bool() == Some(true));
@@ -16165,17 +16165,18 @@ impl App {
                                 set(&mut mm.s.s.mods);
                             }
                             log::info!("lua mod {folder}: {key} {on}");
-                            (scoped, save) = (true, true);
+                            scoped.push(folder);
+                            save = true;
                             continue;
                         }
                         mods.apply_setting(world, &id, &key, value);
                     }
-                    if scoped {
-                        mods.follow_scope(world, &self.cfg.mods);
+                    if !scoped.is_empty() {
+                        mods.follow_scope(world, &self.cfg.mods, &scoped);
                     }
                     world.lua = mods;
                     // A mod turned on, off or installed, or its scope changed: the pages follow.
-                    if toggled || scoped {
+                    if toggled || !scoped.is_empty() {
                         if let Some(s) = world.settings.as_mut() {
                             s.set_mod_pages(world.lua.settings_pages(&self.cfg.mods));
                         }

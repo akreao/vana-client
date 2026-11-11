@@ -5953,13 +5953,14 @@ impl Host {
     }
 
     /// The mods whose switch is kept per character or job: each loaded or unloaded as the character and job in play
-    /// (the job not known yet: left as they are). After the start: it loads what it finds on then.
-    pub(super) fn follow_scope(&mut self, w: &World, mods: &[crate::config::ModRef]) {
+    /// (the job not known yet: left as they are), and those in `changed` (a scope just turned off: back to `enabled`).
+    /// After the start: it loads what it finds on then.
+    pub(super) fn follow_scope(&mut self, w: &World, mods: &[crate::config::ModRef], changed: &[String]) {
         if !self.started {
             return;
         }
         let (character, job) = (super::uiconf::character(&w.world_name, &w.name), super::uiconf::job_of(w));
-        for r in mods.iter().filter(|r| r.per_character || r.per_job) {
+        for r in mods.iter().filter(|r| r.per_character || r.per_job || changed.contains(&r.name)) {
             let dir = mods_dir().join(&r.name);
             let Some(want) = r.active(Some(&character), job).filter(|_| dir.join("mod.toml").is_file()) else {
                 continue;
