@@ -9,6 +9,12 @@ local gs = require("src.gs")
 local lac = require("src.lac")
 local acxml = require("src.acxml")
 local spellcast = require("src.spellcast")
+local builder = require("src.build.run")
+
+-- A file of the player's own runs instead of the set builder.
+local function file_loaded()
+  return gs.loaded() or lac.loaded() or acxml.loaded() or spellcast.loaded()
+end
 
 local job_now
 
@@ -49,6 +55,7 @@ local function on_out(p)
   if gs.loaded() then return gs.action(act) end
   if lac.loaded() then return lac.action(act) end
   if acxml.loaded() then return acxml.action(act) end
+  if not spellcast.loaded() then return builder.action(act) end
 end
 packets.on_out(0x01A, on_out)
 packets.on_out(0x037, on_out)
@@ -64,6 +71,7 @@ events.on("action", function(a)
   gs.on_action(a)
   lac.on_action(a)
   acxml.on_action(a)
+  if not file_loaded() then builder.on_action(a) end
 end)
 events.on("battle_message", function(actor, target, message) gs.battle_message(actor, target, message) end)
 events.on("status_change", function(new, old)
@@ -99,6 +107,7 @@ local texts = require("src.texts")
 events.on("frame", function()
   core.decode_augments()
   texts.frame()
+  builder.frame()
   if not started and main_job() and main_job() ~= 0 then
     gs.sub = game.player().sub_job
     start()
@@ -107,7 +116,10 @@ end)
 timer.every(0.4, function()
   lac.tick()
   acxml.tick()
+  if not file_loaded() then builder.tick() end
 end)
+timer.every(1.0, function() builder.refresh() end)
+events.on("item_change", function() builder.refresh() end)
 
 -- For other mods (Bag Manager): the item names the loaded file's sets hold, and which file.
 mods.provide("gear_names", function()
@@ -123,8 +135,12 @@ commands.register("lac", function(...) lac.command({ ... }) end)
 commands.register("ac", function(...) acxml.command({ ... }) end)
 -- /sc is the game's (search comment) until a Spellcast file is loaded; then the typed filter takes it.
 commands.register("spellcast", function(...) spellcast.command({ ... }) end)
-commands.register("gearshift", function(cmd)
+commands.register("gearshift", function(cmd, arg)
   cmd = (cmd or ""):lower()
+  if cmd == "mode" then
+    chat.add("Gearshift: " .. builder.toggle((arg or "off"):lower()))
+    return
+  end
   if cmd == "reload" then start() end
   chat.add("Gearshift: " .. (gs.file or lac.file or acxml.file or spellcast.file
     or "no file for this job (gearswap/, ashitacast/ or spellcast/ in its data folder)"))

@@ -9,6 +9,19 @@ default = true
 label = "Gear Swapping"
 help = "Runs your GearSwap job file, LuAshitacast profile or Ashitacast XML profile for the job you play (in this mod's data folder: gearswap/ or ashitacast/)."
 
+[settings.builder]
+type = "bool"
+default = true
+label = "Set Builder"
+help = "Builds every set of your job from the gear you hold and wears them around your actions, when no GearSwap, LuAshitacast, Ashitacast or Spellcast file is loaded for the job. //gearshift opens its window."
+
+[settings.cap]
+type = "enum"
+default = "Auto"
+options = ["Auto", "75", "99"]
+label = "Level Cap"
+help = "The level cap the best-in-slot references are for: Auto takes 75 up to level 75 and 99 above it."
+
 [commands.gs]
 help = "GearSwap's own commands, for the loaded GearSwap file."
 args = "<command>"
@@ -30,4 +43,5 @@ help = "Shows the loaded gear file."
 args = ""
 forms = [
   { args = "reload", help = "Reads the gear file again." },
+  { args = "mode <hybrid|acc|pdt|mdt|mb|macc|off>", help = "The set builder's toggles: hybrid or accuracy TP, physical or magic defence, magic burst or magic accuracy nukes; off clears them." },
 ]
