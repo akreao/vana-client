@@ -23853,3 +23853,15 @@ All of it is the mod's Lua over the general API; the client gained nothing.
 - catalogue.rs standard_mods_listed now fails, with or without VANA_WRITE_CATALOGUE, when a mod's files differ from
   its committed catalogue entry under the same version, naming each one. catalogue/README.md says to raise the
   version first.
+
+## egui's zoom and quit keys off (2026-11-12)
+
+- User report: Ctrl+0 (a macro key) changed the interface size. egui 0.37 handles Ctrl+0 / Ctrl+Plus / Ctrl+Equals /
+  Ctrl+Minus as its zoom keys in Context::end_pass (gui_zoom::zoom_with_keyboard, `command` = Ctrl off macOS), and
+  sets its zoom factor behind ours: Modern::ui sets the zoom for the Interface Size only when its computed value changes,
+  so the size stayed wrong until the window or the setting changed. At 1920x1080 and 100 % the zoom is 1.0, so
+  Ctrl+0 showed nothing there. The app's context now has `zoom_with_keyboard = false` and no `quit_shortcuts` (Ctrl+Q,
+  egui's ViewportCommand::Close; we never act on viewport commands, but it is a macro key too).
+- Scripted `ctrl+` keys now carry `command` as egui-winit gives them off macOS, so a driven window hits the same
+  shortcuts a keyboard does. Checked at the login screen with Interface Size 125 %: before, Ctrl+0 took the form to
+  100 % and Ctrl+Minus below; now neither changes it.

@@ -19835,6 +19835,11 @@ impl ApplicationHandler for App {
         surface.configure(&gpu.device, &config);
         let depth = depth_view(&gpu.device, config.width, config.height);
         let egui_ctx = egui::Context::default();
+        // Ctrl+0 / Ctrl+Plus / Ctrl+Minus (egui's zoom keys) and Ctrl+Q (its quit) are macro keys here, never egui's.
+        egui_ctx.options_mut(|o| {
+            o.zoom_with_keyboard = false;
+            o.quit_shortcuts.clear();
+        });
         // The device's texture limit (egui assumes 2048; the modern atlases are larger).
         let egui_state = egui_winit::State::new(
             egui_ctx.clone(),
