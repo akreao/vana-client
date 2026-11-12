@@ -86,6 +86,9 @@ pub struct MapSession {
     cert: Option<[u32; 2]>,
     /// The header clock (DAT_10492e10): seconds and ms at an instant, set by the zone-in and every 30th datagram.
     clock: Option<(u32, u32, std::time::Instant)>,
+    /// Retail's simulated loss (DAT_104e1ca0 +0x184, FUN_100fa710 0x100fa7f1): the percentage of read datagrams thrown
+    /// away, and the generator's state. Ours takes it from FFXI_NET_DROP, for testing the lag step.
+    drop: (u32, u32),
 }
 
 const LOG_DATAGRAMS: u32 = 40;
@@ -121,8 +124,18 @@ fn bind_socket() -> Result<UdpSocket> {
     bail!("no local UDP port for the zone server: 54090 and the 50 after it 256 apart are all taken")
 }
 
-/// FUN_100fac80's raw payload limit.
-const MAX_PAYLOAD: usize = 4000;
+/// FUN_100fdd40's raw limit: the build stops before the header and sub-packets pass 3999 bytes.
+const MAX_PAYLOAD: usize = 3999 - HEADER;
+/// FUN_100fab40 hands FUN_100dd590 a 0x550-byte buffer: a datagram that would be larger is not sent.
+const MAX_DATAGRAM: usize = 0x550;
+
+/// FUN_100fab40 (0x100fad1c): the sequence after `seq`; it steps over 0, which marks a sub-packet not sent yet.
+fn seq_after(seq: u16) -> u16 {
+    match seq.wrapping_add(1) {
+        0 => 1,
+        n => n,
+    }
+}
 
 impl MapSession {
     pub fn connect(server: SocketAddr, key: &[u8; 20], codec: Codec) -> Result<Self> {
@@ -143,6 +156,7 @@ impl MapSession {
             bad_in: 0,
             bad_run: 0,
             unacked: Vec::new(),
+            drop: (std::env::var("FFXI_NET_DROP").ok().and_then(|v| v.parse().ok()).unwrap_or(0), now() | 1),
             server_ack: 0,
             last_in: None,
             logged: (0, 0),
@@ -165,7 +179,7 @@ impl MapSession {
     /// @0 our sequence, @2 the last server datagram handled, @4 / @8 the clock's ms and seconds; after the zone-in
     /// @0x0C = 1 and the zone-in's two words @0x10 / @0x14 (FUN_100fa9f0, FUN_100fdbf0).
     fn header(&mut self) -> Vec<u8> {
-        self.seq = self.seq.wrapping_add(1);
+        self.seq = seq_after(self.seq);
         let mut h = vec![0u8; HEADER];
         h[..2].copy_from_slice(&self.seq.to_le_bytes());
         h[2..4].copy_from_slice(&self.server_seq.to_le_bytes());
@@ -234,39 +248,75 @@ impl MapSession {
         Ok(())
     }
 
+    /// FUN_100fab40's lag measure (0x100fab59): the sequence the next datagram will carry (+6) less the last of ours
+    /// the server acknowledged (+0xA, its header u16 @2), both as plain u16 values (no wrap handling, as retail).
+    pub fn lag(&self) -> i32 {
+        seq_after(self.seq) as i32 - self.server_ack as i32
+    }
+
+    /// Sub-packets sent and not acknowledged yet (they hold their queue slots in retail), without the position.
+    pub fn pending(&self) -> usize {
+        self.unacked.iter().filter(|(_, p)| u16::from_le_bytes([p[0], p[1]]) & 0x1ff != 0x015).count()
+    }
+
     /// One datagram: the new sub-packets plus every earlier one the server has not acked; a new 0x015 replaces
     /// a queued one (retail rewrites its single 0x015 slot).
     pub fn send(&mut self, packets: &[Vec<u8>]) -> Result<()> {
         let mut dgram = self.header();
         let (seq, ack) = (self.seq, self.server_ack);
-        self.unacked.retain(|(s, _)| ack.wrapping_sub(*s) >= 0x8000);
+        // FUN_100fdd40: a slot goes while its sync is 0 (not sent yet) or the server's ack has not reached it.
+        self.unacked.retain(|(s, _)| *s == 0 || ack.wrapping_sub(*s) >= 0x8000);
         let id = |p: &[u8]| u16::from_le_bytes([p[0], p[1]]) & 0x1ff;
         if packets.iter().any(|p| id(p) == 0x015) {
             self.unacked.retain(|(_, p)| id(p) != 0x015);
         }
-        for p in packets {
-            let mut p = p.clone();
-            p[2..4].copy_from_slice(&seq.to_le_bytes());
-            self.unacked.push((seq, p));
-        }
-        let mut raw = Vec::new();
-        for (_, p) in &self.unacked {
-            if raw.len() + p.len() > MAX_PAYLOAD {
-                break;
-            }
-            raw.extend_from_slice(p);
-        }
+        self.unacked.extend(packets.iter().map(|p| (0, p.clone())));
         if let Some([a, b]) = self.cert {
             dgram[0x0C] = 1;
             dgram[0x10..0x14].copy_from_slice(&a.to_le_bytes());
             dgram[0x14..0x18].copy_from_slice(&b.to_le_bytes());
         }
+        // Retail drops a datagram over 0x550 bytes whole (FUN_100dd590 returns -1) and builds the same one again at
+        // the next send. Ours: the newest sub-packets wait for the next datagram instead, so the oldest still go.
+        let mut count = 0;
+        let mut size = 0;
+        for (_, p) in &self.unacked {
+            if size + p.len() > MAX_PAYLOAD {
+                break;
+            }
+            size += p.len();
+            count += 1;
+        }
+        let (raw, mut body) = loop {
+            let mut raw = Vec::with_capacity(size);
+            for (sync, p) in &self.unacked[..count] {
+                raw.extend_from_slice(p);
+                // A sub-packet takes the sequence of the first datagram that carries it.
+                if *sync == 0 {
+                    let at = raw.len() - p.len() + 2;
+                    raw[at..at + 2].copy_from_slice(&seq.to_le_bytes());
+                }
+            }
+            let (mut body, bits) = self.codec.compress(&raw);
+            body.extend_from_slice(&bits.to_le_bytes());
+            if HEADER + body.len() + 16 <= MAX_DATAGRAM || count <= 1 {
+                break (raw, body);
+            }
+            count -= 1;
+        };
+        for (sync, p) in &mut self.unacked[..count] {
+            if *sync == 0 {
+                *sync = seq;
+                p[2..4].copy_from_slice(&seq.to_le_bytes());
+            }
+        }
+        if count < self.unacked.len() {
+            log::warn!("map out: {} sub-packets wait for the next datagram (size limit)", self.unacked.len() - count);
+        }
         if self.logged.1 < LOG_DATAGRAMS {
             self.logged.1 += 1;
             log::info!("map out: header {} [{}]", hex::encode(&dgram[..HEADER]), sub_ids(&raw));
         }
-        let (mut body, bits) = self.codec.compress(&raw);
-        body.extend_from_slice(&bits.to_le_bytes());
         let digest = Md5::digest(&body);
         body.extend_from_slice(&digest);
         self.cipher.encrypt(&mut body);
@@ -339,6 +389,13 @@ impl MapSession {
         self.bad_run = 0;
         // FUN_100f76b0 counts a datagram's bytes (FUN_100f9b90) only once FUN_100dad80 has read it.
         self.bytes_in += n as u64;
+        if self.drop.0 > 0 {
+            self.drop.1 = self.drop.1.wrapping_mul(1_103_515_245).wrapping_add(12345);
+            if (self.drop.1 >> 16) % 100 < self.drop.0 {
+                log::debug!("map in: datagram thrown away (FFXI_NET_DROP)");
+                return Ok(None);
+            }
+        }
         // FUN_100f76b0: a datagram not newer than the last one handled is dropped (counted), and so is a sub-packet
         // whose sync is not newer; only an accepted datagram moves the stored sequence and ack.
         let seq = u16::from_le_bytes([dgram[0], dgram[1]]);
@@ -382,6 +439,23 @@ impl MapSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The sequence steps over 0, and the lag is the next sequence less the server's ack.
+    #[test]
+    fn sequence_and_lag() {
+        assert_eq!((seq_after(0), seq_after(1), seq_after(0xFFFE), seq_after(0xFFFF)), (1, 2, 0xFFFF, 1));
+        let server = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let mut s = MapSession::connect(server.local_addr().unwrap(), &[7; 20], plain_codec()).unwrap();
+        // Nothing sent: the first datagram will be 1, nothing acknowledged.
+        assert_eq!(s.lag(), 1);
+        s.send(&[build(0x0DD, &[0; 12]), build(0x015, &[0; 28])]).unwrap();
+        assert_eq!((s.seq, s.lag(), s.pending()), (1, 2, 1));
+        assert!(s.unacked.iter().all(|(sync, p)| *sync == 1 && p[2..4] == [1, 0]));
+        s.server_ack = 1;
+        assert_eq!(s.lag(), 1);
+        s.send(&[build(0x015, &[0; 28])]).unwrap();
+        assert_eq!((s.seq, s.pending(), s.unacked.len()), (2, 0, 1));
+    }
 
     /// Set FFXI_MAIN_DLL to run: a resent datagram (same header sequence) and an older one carry nothing.
     #[test]
