@@ -78,6 +78,9 @@ Mostly already in MODLOG. This adds the exact copy and the packet size.
 
 ## Item 4: the mouth's 8-tick blend out on op 0x23 and unbind (gaps L69, MODLOG L2440 / L14093)
 
+*(2026-11-11: read again for the build, [2026-11-11-motion-queues.md](2026-11-11-motion-queues.md): the queue is region 4, and
+the entries keep their weight for the 8 ticks and are then dropped.)*
+
 **One function does it: FUN_100ce160(model)** (0x100ce160..0x100ce17e). It takes the motion pointer at **model +0x6b8**
 (`+0x674` plus FUN_1002b5a0's `+0x44`; the mouth region the talk motion plays in) and, if it is non-null, calls
 **FUN_1001b170(8.0) on that pointer +0x74**. FUN_1001b170 walks the region's motion list (`+4` next) and calls
@@ -194,6 +197,9 @@ Build: keep a per-model off-hand flag set at each swing (1 only for a dual-wield
 scheduler value 0x3b.
 
 ## Item 9: a new motion's start frame carries the old entry's phase (gaps L100, MODLOG L13932)
+
+*(2026-11-11: built per region, [2026-11-11-motion-queues.md](2026-11-11-motion-queues.md); L.vt+0x30 is the entry's frame as it is,
+not in frames / speed.)*
 
 MODLOG's FUN_10019ed0 is an old-build address (not an instruction start here). The enqueue in this build is
 **FUN_1001ad00** (thiscall on a region queue; reached from FUN_100cd540 → FUN_1001a660 / FUN_1001a6e0 → FUN_1001acb0 /

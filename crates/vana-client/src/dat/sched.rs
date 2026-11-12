@@ -103,7 +103,9 @@ pub fn length(data: &[u8]) -> u32 {
 
 /// A motion a scheduler plays (op 0x05 -> FUN_100cb8e0): name with the region '?' stripped ("at0?" ->
 /// "at0"), the tick it starts, f32 speed @0x10, the play length u16 @6, the play count byte @0x1e & 0x7f
-/// (0 = loop until replaced; motion player +0x2c) and the blend-in ticks u16 @0x18.
+/// (0 = loop until replaced; motion player +0x2c) and the blend-in ticks u16 @0x18. `out` is u16 @0x1c, the queue
+/// entry's out length (+0x20: the blend back to the status motion once a counted one ends); `half` the top nibble of
+/// byte @0x1f: 1 plays the first half of the frames, 2 starts at the second half (0x1005ccb2).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Motion {
     pub name: String,
@@ -112,6 +114,19 @@ pub struct Motion {
     pub ticks: u16,
     pub count: u8,
     pub blend: u16,
+    pub out: u16,
+    pub half: u8,
+}
+
+impl Motion {
+    /// The start and end frames op 0x05 queues a chunk of `frames` with (0 = from the start / to the chunk's end).
+    pub fn span(half: u8, frames: f32) -> (f32, f32) {
+        match half {
+            1 => (0.0, (frames + 1.0) * 0.5 - 1.0),
+            2 => ((frames + 1.0) * 0.5, 0.0),
+            _ => (0.0, 0.0),
+        }
+    }
 }
 
 /// What a scheduler does that combat shows: its motions and when sub-scheduler `hit` (op 0x03) runs.
@@ -146,6 +161,8 @@ pub fn plan(data: &[u8], hit: &[&str]) -> Plan {
                         ticks: u16_at(6),
                         count,
                         blend: u16_at(0x18),
+                        out: u16_at(0x1c),
+                        half: op.raw.get(0x1f).map_or(0, |b| b >> 4),
                     });
                 }
             }
@@ -196,7 +213,10 @@ mod tests {
         let chunks = crate::dat::chunks(&file).unwrap();
         let get = |n: &str| chunks.iter().find(|c| c.kind == 7 && c.name() == n).unwrap().data;
         let p = plan(get("ati0"), &["dada"]);
-        assert_eq!(p.motions, vec![Motion { name: "at0".into(), at: 0, speed: 1.0, ticks: 80, count: 1, blend: 10 }]);
+        assert_eq!(
+            p.motions,
+            vec![Motion { name: "at0".into(), at: 0, speed: 1.0, ticks: 80, count: 1, blend: 10, out: 0, half: 0 }]
+        );
         assert_eq!((p.hit_at, p.length), (Some(36), 80));
         assert_eq!(p.target_hold, Some(40));
         let d = plan(get("dead"), &[]);

@@ -1838,6 +1838,8 @@ impl Effects {
                         ticks: (op.dur.max(0) as f32 * t.speed).round() as u16,
                         count,
                         blend: op.u16_at(0x18),
+                        out: op.u16_at(0x1c),
+                        half: op.raw.get(0x1f).map_or(0, |b| b >> 4),
                     };
                     self.motions.push((id, Some(m)));
                 }
@@ -1900,7 +1902,18 @@ impl Effects {
             }
             0x28 if t.motions => {
                 if let Some(id) = self.doll_of(t.a1).id() {
-                    self.motions.push((id, None));
+                    // An empty name: the status motion, blended in over the op's f32 @8 (0x1005b12e).
+                    let m = crate::dat::sched::Motion {
+                        name: String::new(),
+                        at: 0,
+                        speed: 1.0,
+                        ticks: 0,
+                        count: 0,
+                        blend: f32::from_bits(op.u32_at(8)).round().clamp(0.0, 65535.0) as u16,
+                        out: 1,
+                        half: 0,
+                    };
+                    self.motions.push((id, Some(m)));
                 }
                 Flow::Next
             }
