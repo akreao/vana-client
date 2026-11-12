@@ -36,7 +36,8 @@ M.H = {
   end,
   storage = function() return storage.character end,
   cap_setting = function() return settings.get("cap") end,
-  on = function() return settings.get("builder") ~= false end,
+  -- Gear Swapping and Set Builder on: the sets are built (worn only with the window's switch on too).
+  on = function() return settings.get("on") ~= false and settings.get("builder") ~= false end,
 }
 
 -- Equipment item ids (armour and weapons).
@@ -68,6 +69,10 @@ function M.hand(job, set_name)
 end
 
 function M.modes() return saved().modes end
+
+-- The player turned the builder's swapping on (the window's switch), per character.
+function M.active() return saved().active == true end
+function M.set_active(on) saved().active = on or nil end
 
 -- ---- The level cap the references are for ----
 
@@ -303,8 +308,10 @@ end
 local OBI_SETS = { Nuke = true, Nuke_MB = true, Cure = true, DrainAspir = true, Divine = true, Dark = true,
   Ninjutsu_Nuke = true, BluMag = true, QuickDraw = true, MagicAcc = true, Enfeebling_MND = true,
   Enfeebling_INT = true }
-local function element_gear(pieces, set_name, element_id)
-  local el = sets.ELEMENT_ID[element_id or -1]
+-- game.time().weekday (0 Firesday .. 7 Darksday) -> the day's element.
+local DAY_ELEMENT = { [0] = "fire", "earth", "water", "wind", "ice", "thunder", "light", "dark" }
+
+local function element_gear(pieces, set_name, el)
   if not el or not OBI_SETS[set_name] then return end
   if sets.MAGE_JOBS[state.job] and (state.level or 0) <= 75 then
     local staves = sets.STAVES[el]
@@ -313,7 +320,7 @@ local function element_gear(pieces, set_name, element_id)
   end
   local t = M.H.time() or {}
   local weather = M.H.weather()
-  local day_el = sets.ELEMENT_ID[t.weekday or -1]
+  local day_el = DAY_ELEMENT[t.weekday or -1]
   local w_el = weather and res and res.weather_element and sets.ELEMENT_ID[res.weather_element(weather) or -1]
   if day_el == el or w_el == el then
     local obi = owned_named({ sets.OBIS[el], sets.OBI_ALL })
@@ -346,7 +353,17 @@ local function wants(pieces)
   return w
 end
 
+-- Ammo stays while a bow, gun or crossbow is worn, or while the ammo is thrown (shuriken): another piece there would
+-- break the next shot or throw.
+local function keep_ammo()
+  local worn = core.worn()
+  local range = worn[2] and pick.H.item(worn[2].id)
+  local ammo = worn[3] and pick.H.item(worn[3].id)
+  return (range and (range.skill == 25 or range.skill == 26)) or (ammo and ammo.skill == 27)
+end
+
 local function wear(pieces, style)
+  if pieces[3] and keep_ammo() then pieces[3] = nil end
   local list = core.resolve(wants(pieces), { log_names = false })
   core.send(core.packets(list, style or "auto", 8))
 end
@@ -383,9 +400,13 @@ end
 -- ---- Actions ----
 
 local busy_until = 0
+-- An action wore its own sets: the status set goes back on once it ends.
+local restore = false
 
+-- Wearing the sets: the settings, and the player turned it on in the window (nothing moves after an update until
+-- they do).
 function M.loaded()
-  return M.H.on() and state.job ~= nil and state.ready
+  return M.H.on() and M.active() and state.job ~= nil and state.ready
 end
 
 -- The sets an action wears: {precast, midcast} names, and its element / weapon skill.
@@ -400,7 +421,8 @@ function M.route(act)
     local r = sets.spell_sets(sp, blu)
     if r[2] == "Nuke" and modes.mb and job_sets.Nuke_MB then r[2] = "Nuke_MB" end
     if r[2] == "Nuke" and modes.macc and job_sets.MagicAcc then r[2] = "MagicAcc" end
-    return { job_sets[r[1]] and r[1] or nil, job_sets[r[2]] and r[2] or nil, element = sp.element }
+    return { job_sets[r[1]] and r[1] or nil, job_sets[r[2]] and r[2] or nil, element = sets.ELEMENT_ID[sp.element or -1],
+      cast = sp.cast_time }
   elseif act.category == 7 then
     local id = act.param
     local ws = wslist[id]
@@ -428,12 +450,14 @@ function M.action(act)
     local pieces = M.pieces(r[2])
     element_gear(pieces, r[2], r.element)
     if r.ws then
-      if r.ws.kind == "magic" then element_gear(pieces, "Nuke", nil) end
+      if r.ws.kind == "magic" then element_gear(pieces, "Nuke", r.ws.element) end
       ws_gear(pieces, r.ws)
     end
     wear(pieces, "single")
   end
-  busy_until = clock() + 3
+  -- Held until the action ends (its finish or interruption below), at most its cast time and a margin.
+  busy_until = clock() + math.max(3, (r.cast or 0) + 2)
+  restore = true
   return false
 end
 
@@ -441,7 +465,9 @@ local DONE = { [2] = true, [3] = true, [4] = true, [5] = true, [6] = true, [14] 
 function M.on_action(a)
   if not M.loaded() then return end
   local p = M.H.player()
-  if p and a.actor == p.id and DONE[a.category] then busy_until = 0 end
+  if not p or a.actor ~= p.id then return end
+  -- A finish, or an interrupted cast / shot (param 28787).
+  if DONE[a.category] or ((a.category == 8 or a.category == 12) and a.param == 28787) then busy_until = 0 end
 end
 
 -- Between actions: the status's set, and the Movement set's moving pieces while we run.
@@ -455,6 +481,9 @@ local function moving()
   return moved or false
 end
 
+-- The status set is worn when it changes (the status, a toggle, the level's picks, running) or after an action, not
+-- every tick: a piece changed by hand stays on until then.
+local last_sig
 function M.tick()
   if not M.loaded() or clock() < busy_until then return end
   local name = M.default_set()
@@ -468,6 +497,11 @@ function M.tick()
     end
   end
   last_default = name
+  local sig = {}
+  for slot = 0, 15 do sig[#sig + 1] = pieces[slot] and pieces[slot].name or "" end
+  sig = name .. "|" .. table.concat(sig, "|")
+  if sig == last_sig and not restore then return end
+  last_sig, restore = sig, false
   wear(pieces, "auto")
 end
 

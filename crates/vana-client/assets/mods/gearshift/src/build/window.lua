@@ -80,7 +80,7 @@ local function slot_rows(name, def, r)
       wearing = h.name .. " *" .. (held(h.name) and "" or " (not held)")
     elseif o and o.pick then
       wearing = item_name(o.pick.id)
-    elseif not (def.weapons or (sets.MAGE_JOBS[run.state.job] and not sets.MELEE_SETS[name] and not def.ws)) and slot <= 2 then
+    elseif not (sets.MAGE_JOBS[run.state.job] and not sets.MELEE_SETS[name] and not def.ws) and slot <= 2 then
       wearing = "(kept)"
     end
     if o then
@@ -152,6 +152,8 @@ function M.draw()
     title = title, width = 800,
     help = "Your sets, built from the gear you hold for your level. Pick a slot to choose its piece yourself.",
     elements = {
+      { type = "choice", id = "active", label = "Wear These Sets", items = { "Off", "On" }, at = run.active() and 2 or 1,
+        tip = "On: Gearshift wears these sets around your actions and between them. Off: they are only shown." },
       { type = "dropdown", id = "set", label = "Set", items = #labels > 0 and labels or { "-" }, at = view.set,
         tip = "The job's sets: what each is worn for is in its line below." },
       { type = "text", id = "when", text = def and ("Worn " .. (def.when or "") .. ".") or "", dim = true },
@@ -223,7 +225,10 @@ end
 
 function M.install()
   ui.on(WIN, function(_, e)
-    if e.kind == "set" and e.id == "set" then
+    if e.kind == "set" and e.id == "active" then
+      run.set_active(e.index == 2)
+      M.draw()
+    elseif e.kind == "set" and e.id == "set" then
       view.set, view.slot = e.index, nil
       M.draw()
     elseif e.kind == "select" and e.id == "slots" then

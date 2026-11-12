@@ -6,8 +6,9 @@ Gearshift is a bundled mod that changes your gear around your actions from the j
 
 ## The set builder (no file needed)
 
-With no file for the job, Gearshift builds your sets itself from the gear you hold and wears them the same way.
-`//gearshift` opens its window.
+With no file for the job, Gearshift builds your sets itself from the gear you hold. `//gearshift` opens its window;
+turn **Wear These Sets** on there (per character, off until you do) and it wears them around your actions too. The
+Gear Swapping and Set Builder settings switch it off whatever the window says.
 
 - **Sets:** every set of your job: idle, resting, movement, PDT / MDT, TP (hybrid and accuracy too), a set per weapon
   skill of the weapon types you hold, Fast Cast, each kind of magic, songs, blood pacts, ninjutsu, blue magic,
@@ -23,8 +24,12 @@ With no file for the job, Gearshift builds your sets itself from the gear you ho
   slot the piece, how alike it is ("Match"), the best in slot and what is worth getting. Pick a slot to compare the
   pieces' stats and choose one yourself (marked `*`, kept through rebuilds; "Automatic" frees it). Better pieces kept
   where gear cannot be worn from are named.
-- **Around actions:** Fast Cast before a spell and the spell's set after it; a weapon skill's set; ability sets;
-  Preshot and Midshot. A mage's elemental staff (up to level 75), an obi on its element's day or weather, and a gorget
+- **Around actions:** Fast Cast before a spell and the spell's set after it (held until the cast lands or is
+  interrupted); a weapon skill's set; ability sets; Preshot and Midshot. Between actions the set for your status goes
+  on when it changes or after an action, so a piece you change by hand stays on until then.
+- **Weapons:** only the pure mages (WHM, BLM, SMN, SCH, GEO) have weapons in their sets, outside the melee sets; every
+  other job keeps what it holds (changing main, sub or range would lose TP). Ammo stays while a bow, gun or crossbow
+  is worn or the ammo is thrown. A mage's elemental staff (up to level 75), an obi on its element's day or weather, and a gorget
   and belt matching a weapon skill go on by themselves.
 - **Toggles:** `//gearshift mode hybrid | acc | pdt | mdt | mb | macc`, `//gearshift mode off`.
 - **Not yet:** pieces that take two slots (a suit, a cloak) are left out.

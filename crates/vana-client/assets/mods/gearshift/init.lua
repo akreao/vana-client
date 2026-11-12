@@ -121,7 +121,7 @@ timer.every(0.4, function()
   acxml.tick()
   if not file_loaded() then builder.tick() end
 end)
-timer.every(1.0, function() builder.refresh() end)
+timer.every(3.0, function() builder.refresh() end)
 timer.every(0.5, function() builder_window.redraw() end)
 events.on("item_change", function() builder.refresh() end)
 

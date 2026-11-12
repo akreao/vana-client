@@ -23783,5 +23783,11 @@ All of it is the mod's Lua over the general API; the client gained nothing.
   2 ms and stopped at 100 ms): the item list indexed by slot, the job's candidates at the cap and at the level (once
   per job or level change), then one set at a time, the one the window shows first. Only hand picks and the toggles
   are saved (storage.character.builder); every other pick follows the level, so level sync needs no rebuild.
+- After review (#236): sets are worn only with the window's Wear These Sets on (per character, off after an update)
+  and both settings on; the status set goes on when it changes or after an action (a hand change stays); a cast holds
+  its sets for its cast time + 2 s or to its finish / interruption (0x028 category 8 / 12 param 28787); only pure
+  mages swap weapons; ammo stays for a bow / gun / crossbow or thrown ammo; the obi takes the weekday's element by a
+  day table (game.time().weekday is day order: 0 Fire, 1 Earth, 2 Water, 3 Wind, 4 Ice, 5 Lightning, 6 Light, 7
+  Dark), and magical weapon skills pass their element to it.
 - Live (Lnxcsfix, WAR 23, nine pieces given by GM): the window in both UIs, a hand pick kept through a relog, Wear
   Now and the idle set worn; WAR TP at 99 references Boii +3, Sulevia +2, Pummeler's +4, Telos, Schere, Null.

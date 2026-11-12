@@ -200,7 +200,8 @@ end
 -- at_level (M.candidates at the cap and at our level), bis (curated {slot = item name or id} or nil), names (name -> id).
 -- Returns {slots = {slot = {pick, share, how, ref, worth}}, score}.
 function M.build(ctx, set, set_name)
-  local swap_weapons = set.weapons or (ctx.mage and not set.ws and not ctx.melee_sets[set_name])
+  -- Only pure mages swap weapons (main, sub or range resets TP), and not in melee sets.
+  local swap_weapons = ctx.mage and not set.ws and not ctx.melee_sets[set_name]
   local function wanted(slot) return swap_weapons or not WEAPON_SLOTS[slot] end
 
   -- The owned pieces, wearable now, by slot.
