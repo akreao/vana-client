@@ -20,6 +20,7 @@ mod itemshot;
 mod mpeg1;
 mod padreg;
 mod patch;
+mod poldic;
 
 /// unrar_sys's build script picks its sources by the host (`cfg!(windows)`), so a MinGW cross build from Linux
 /// leaves out UnRAR's isnt.cpp; these are its two functions, under their C++ names.
@@ -80,6 +81,14 @@ enum Cmd {
         no_verify: bool,
         #[arg(long)]
         keep_staging: bool,
+    },
+    /// Copy the name dictionary the character creator checks names against (PlayOnline's entryz.dic) into the game
+    /// folder, for an install made before `install` did it. The source is the installer
+    /// (FFXIFullSetup_US.part1.exe), a folder it was extracted into, or PlayOnlineViewer.msi.
+    Dictionary {
+        source: PathBuf,
+        #[arg(long)]
+        game_dir: Option<PathBuf>,
     },
     /// Bring the game files up to the current retail version from the PlayOnline patch server (no login).
     /// Data and code files (the client reads its tables out of the current FFXiMain.dll).
@@ -1308,6 +1317,16 @@ fn main() -> Result<()> {
             cfg.installed = true;
             cfg.save()?;
             println!("Installed to {}", cfg.ffxi_dir().display());
+            Ok(())
+        }
+        Cmd::Dictionary { source, game_dir } => {
+            let game_dir = game_dir.unwrap_or_else(|| config::Config::load().game_dir);
+            let progress = install::Progress::default();
+            let path = install::install_name_dic(&source, &game_dir, &game_dir.join(".staging-dic"), &progress)?;
+            match poldic::NameFilter::load(&game_dir) {
+                poldic::NameFilter::Loaded(_) => println!("Name dictionary copied to {}", path.display()),
+                _ => anyhow::bail!("{} was copied but does not load", path.display()),
+            }
             Ok(())
         }
         Cmd::DumpMsi { msi, out } => dump_msi(&msi, &out),

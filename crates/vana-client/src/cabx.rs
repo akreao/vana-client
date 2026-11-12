@@ -189,17 +189,17 @@ pub fn extract_all<R: Read + Seek>(
         let mut stored: std::collections::HashMap<(u32, u32), (PathBuf, [u8; 16])> = Default::default();
         for e in files {
             if (e.folder_offset as u64) < at {
+                // A copy of a file nobody asked for is not asked for either, as a rule; one that is cannot be made.
+                let Some(path) = dest_for(&e.name) else { continue };
                 let Some((src, md5)) = stored.get(&(e.folder_offset, e.size)).cloned() else {
                     bail!("{}: overlaps another file in the cabinet", e.name);
                 };
-                if let Some(path) = dest_for(&e.name) {
-                    if let Some(parent) = path.parent() {
-                        fs::create_dir_all(parent)?;
-                    }
-                    fs::copy(&src, &path)?;
-                    on_bytes(e.size as u64);
-                    done.push(Extracted { name: e.name.clone(), path, md5 });
+                if let Some(parent) = path.parent() {
+                    fs::create_dir_all(parent)?;
                 }
+                fs::copy(&src, &path)?;
+                on_bytes(e.size as u64);
+                done.push(Extracted { name: e.name.clone(), path, md5 });
                 continue;
             }
             let skip = e.folder_offset as u64 - at;

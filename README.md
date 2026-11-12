@@ -113,6 +113,15 @@ installer uses. Use `--game-dir` to put it somewhere else. An existing Windows i
 or pointed at with `game_dir` in the config (see below). Started without game files, the client offers to download
 them, or to use an install already on disk with "Use existing game files...".
 
+The install also copies PlayOnline's name dictionary (`entryz.dic`, from the setup's `PlayOnlineViewer.msi`) to
+`PlayOnlineViewer/data/dic` beside the game folder, as a Windows install has it; the character creator checks new
+names against it. An install made by an older vana-client does not have it and leaves name checks to the server. To
+add it, give the same setup (or `PlayOnlineViewer.msi` itself) to:
+
+```sh
+target/release/vana-client dictionary /path/to/FFXIFullSetup_US.part1.exe
+```
+
 The installer's data is years old. To bring it up to the current retail version from the PlayOnline patch server:
 
 ```sh
