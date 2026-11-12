@@ -23860,8 +23860,8 @@ All of it is the mod's Lua over the general API; the client gained nothing.
   Ctrl+Minus as its zoom keys in Context::end_pass (gui_zoom::zoom_with_keyboard, `command` = Ctrl off macOS), and
   sets its zoom factor behind ours: Modern::ui sets the zoom for the Interface Size only when its computed value changes,
   so the size stayed wrong until the window or the setting changed. At 1920x1080 and 100 % the zoom is 1.0, so
-  Ctrl+0 showed nothing there. The app's context now has `zoom_with_keyboard = false` and no `quit_shortcuts` (Ctrl+Q,
-  egui's ViewportCommand::Close; we never act on viewport commands, but it is a macro key too).
+  Ctrl+0 showed nothing there. The app's context now has `zoom_with_keyboard = false` and no `quit_shortcuts` (Ctrl+Q:
+  egui consumes it for its ViewportCommand::Close, which we never act on).
 - Scripted `ctrl+` keys now carry `command` as egui-winit gives them off macOS, so a driven window hits the same
   shortcuts a keyboard does. Checked at the login screen with Interface Size 125 %: before, Ctrl+0 took the form to
   100 % and Ctrl+Minus below; now neither changes it.
