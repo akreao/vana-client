@@ -48,7 +48,8 @@ local state = {
   index = {}, next_id = nil, range = 1, ready = false,
   job = nil, level = nil, owned = nil, owned_sig = nil,
   at_cap = nil, at_level = nil, need_cands = false,
-  built = {}, queue = {}, names = {},
+  -- built: the sets (stale ones kept through a rebuild); fresh: those built since the last rebuild began.
+  built = {}, queue = {}, names = {}, fresh = {}, built_job = nil,
 }
 M.state = state
 
@@ -171,6 +172,8 @@ function M.build(name)
   local r = pick.build(c, def, name)
   r.at = state.level
   state.built[name] = r
+  state.fresh = state.fresh or {}
+  state.fresh[name] = true
   return r
 end
 
@@ -199,16 +202,18 @@ local function index_step()
   end
 end
 
--- Queues every set of the job again.
+-- Queues every set of the job again. The sets built stay in use until each is built again (a weapon skill right
+-- after a loot still has its set); another job's are dropped.
 function M.rebuild()
-  state.built, state.queue = {}, {}
+  state.queue, state.fresh = {}, {}
+  if state.built_job ~= state.job then state.built, state.built_job = {}, state.job end
   if not state.job then return end
   for _, s in ipairs(M.job_sets(state.job)) do state.queue[#state.queue + 1] = s end
 end
 
 -- Puts a set first in the queue (the one the window shows, or an action wants).
 function M.want_first(name)
-  if state.built[name] then return end
+  if state.fresh and state.fresh[name] then return end
   for i, s in ipairs(state.queue) do
     if s == name then table.remove(state.queue, i) break end
   end
@@ -245,7 +250,7 @@ function M.step()
     local me = M.H.me() or {}
     state.at_cap = pick.candidates(state.index, p.main_job, me.race, M.cap())
     state.at_level = pick.candidates(state.index, p.main_job, me.race, state.level)
-    state.built = {}
+    if state.built_job ~= state.job then state.built, state.built_job = {}, state.job end
     return true
   end
   if #state.queue > 0 then
@@ -279,7 +284,7 @@ end
 function M.pieces(name)
   local out = {}
   local r = state.built[name]
-  if not r then M.want_first(name) end
+  if not (state.fresh and state.fresh[name]) then M.want_first(name) end
   if r then
     for slot, o in pairs(r.slots) do
       if o.pick then

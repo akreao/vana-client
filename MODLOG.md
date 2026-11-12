@@ -23880,3 +23880,12 @@ All of it is the mod's Lua over the general API; the client gained nothing.
   r.ring ...) and group 0x18, which FUN_10153b70 loads from the fixed file 0xd8af (55471) in every language: the same
   16 names, then ear1, ear2, ring1, ring2 (slots 11..14). Ours had only group 0x17, so `/equip ring1 ...` (as the
   Hotbar mod's equip command writes it) was a command error. dat/battle.rs slot_name_alt reads 0xd8af.
+- User report after that (0.2.2): the WS set "sometimes doesn't switch at all". Two causes:
+  - Gearshift: a bag change (a loot) rebuilt every set from nothing (run.rebuild cleared state.built), so a weapon
+    skill before its set came round again had no set and no swap. Now the sets built stay in use until each is built
+    again (state.fresh marks those built since the rebuild began; another job's are still dropped), and the set an
+    action or the status asks for is built first. 0.2.3.
+  - The look: FUN_10095dd0 holds a changed look while its actor is busy (ops 0x1f / 0x20 / 0x59), and a newer look
+    replaces the held one. The WS set's look arrives during the weapon skill's hold; if the status set's comes before
+    the hold ends, the WS look is never shown, otherwise it shows after the weapon skill. The gear itself is on at the
+    server before the weapon skill runs (same datagram, ahead of it); the model is as retail draws it.

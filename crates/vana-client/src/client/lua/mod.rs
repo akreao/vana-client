@@ -3165,6 +3165,14 @@ mod tests {
             settle()
             local nuke = run.state.built.Cure
             assert(nuke, "the Cure set is built")
+            -- A bag change rebuilds every set; the one built stays in use until built again, and the one an action
+            -- asks for goes first.
+            run.rebuild()
+            assert(run.state.built.Cure == nuke, "the Cure set dropped by a rebuild")
+            run.pieces("Cure")
+            assert(run.state.queue[1] == "Cure", "the asked-for set not first")
+            for _ = 1, 80 do run.frame() end
+            assert(run.state.built.Cure ~= nuke and run.state.fresh.Cure, "the Cure set not built again")
 
             local function cast()
               return core.parse_action({ id = 0x01A, data = packets.build(0x01A, string.pack("<I4I2I2I4fff", 100, 1, 3, 1, 0, 0, 0)) })
