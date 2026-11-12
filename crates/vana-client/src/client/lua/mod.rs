@@ -637,7 +637,7 @@ const BUNDLED: &[(&str, &str, &[(&str, &str)])] = bundled!["dps", "auto-advance"
     "exit-markers",
     "list-trimmer",
     "bag-manager",
-    "gearshift" ["src/core.lua", "src/compat.lua", "src/names.lua", "src/gs.lua", "src/lac.lua", "src/windower.lua", "src/xml.lua", "src/acxml.lua", "src/modes.lua", "src/texts.lua", "src/regex.lua", "src/spellcast.lua"],
+    "gearshift" ["src/build/stats.lua", "src/core.lua", "src/compat.lua", "src/names.lua", "src/gs.lua", "src/lac.lua", "src/windower.lua", "src/xml.lua", "src/acxml.lua", "src/modes.lua", "src/texts.lua", "src/regex.lua", "src/spellcast.lua"],
     "hotbar" ["src/actions.lua", "src/bar.lua", "src/builder.lua", "src/chooser.lua", "src/data.lua", "src/ghost.lua", "src/jobs.lua", "src/keys.lua",
         "src/manager.lua", "src/menu.lua", "src/palette.lua", "src/runner.lua", "src/stock.lua"],
     "pad-bars" ["src/actions.lua", "src/runner.lua"],
@@ -3104,6 +3104,48 @@ mod tests {
             let got: String = vm.lua.load(script).eval().unwrap_or_else(|e| panic!("{e}"));
             assert_eq!(got, want);
         }
+    }
+
+    /// Gearshift's set builder reads stats from every armour and weapon description in the game's files: at least 99%
+    /// of them with no phrase it does not know (the rest are listed when it fails).
+    #[test]
+    fn gearshift_reads_item_descriptions() {
+        let cfg = crate::config::Config::load();
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(items) = crate::dat::items::Items::load(&index, crate::dat::items::Lang::En) else { return };
+        let descs: Vec<String> = (0x2800u32..0x7000)
+            .filter_map(|id| items.item(id))
+            .filter(|it| it.slots != 0 && !it.name.is_empty())
+            .map(|it| it.description)
+            .collect();
+        let files = BUNDLED.iter().find(|b| b.0 == "gearshift").unwrap().2;
+        let host = Host::default();
+        let vm =
+            Vm::new(bundled_manifest("gearshift").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
+        vm.lua.set_app_data(host.info.clone());
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        vm.lua.globals().set("DESCS", descs.clone()).unwrap();
+        let (clean, unknown): (usize, String) = vm
+            .lua
+            .load(
+                r#"
+            local S = require("src.build.stats")
+            local clean, unknown = 0, {}
+            for _, d in ipairs(DESCS) do
+              local r = S.parse(d)
+              if next(r.unknown) == nil then clean = clean + 1 end
+              for k, n in pairs(r.unknown) do unknown[k] = (unknown[k] or 0) + n end
+            end
+            local list = {}
+            for k, n in pairs(unknown) do list[#list + 1] = n .. " " .. k end
+            table.sort(list)
+            return clean, table.concat(list, "\n")
+        "#,
+            )
+            .eval()
+            .unwrap();
+        assert!(descs.len() > 15000, "{} equipment records", descs.len());
+        assert!(clean * 100 >= descs.len() * 99, "{clean} of {} read fully; unknown:\n{unknown}", descs.len());
     }
 
     /// Gearshift's built-in GearSwap libraries: M() modes, and texts boxes drawn as HUD texts (fields filled, colour
