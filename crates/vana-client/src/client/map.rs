@@ -152,12 +152,7 @@ impl Region {
 
     /// FUN_101ee650: world (x, z) to raw map pixels, k = 2560 / |scale|; C truncation.
     pub fn px(&self, x: f32, z: f32) -> (i32, i32) {
-        let s = self.scale.unsigned_abs() as f32;
-        if s == 0.0 {
-            return (0, 0);
-        }
-        let k = 2560.0 / s;
-        ((x * (1.0 / k) * 512.0 + 0.5) as i32, -((z * (1.0 / k) * 512.0 + 0.5) as i32))
+        px_of(self.scale, x, z)
     }
 
     /// FUN_101f1a60: "(%c-%d)" from 32-pixel cells 16 in from the origin.
@@ -560,14 +555,11 @@ impl MapWin {
     }
 
     /// s2c 0x0A0 (FUN_100f07b0 -> FUN_101f94d0) for a listed member in our zone on the sub-map asked for: placed by
-    /// FUN_101fa720, so a member the actors already placed stays where they were. `from` is `rest_from` now.
-    pub fn party_pos(&mut self, name: &str, x: f32, z: f32, party: bool, from: usize) {
-        if !self.here {
-            return;
-        }
+    /// FUN_101fa720 on whatever map is open, so a member the actors already placed stays where they were. `from` is
+    /// `rest_from` now.
+    pub fn party_pos(&mut self, name: &str, px: (i16, i16), party: bool, from: usize) {
         self.rest_from = from;
-        let (px, py) = self.region.px(x, z);
-        self.add_member(name, (px as f32, py as f32), party);
+        self.add_member(name, (px.0 as f32, px.1 as f32), party);
     }
 
     /// Set s, slot i: its map pixel, label and sprite, when it holds a marker.
@@ -2308,6 +2300,12 @@ pub enum Cmd {
     },
     /// FUN_100b2a60 -> FUN_101fa420(1): an answer closes the event map (any event mode), no reopen.
     CloseEvent,
+    /// s2c 0x0A0 (FUN_100f07b0): a party member's position.
+    Party {
+        id: u32,
+        zone: u16,
+        pos: [f32; 3],
+    },
     /// FUN_101fb140: a Primer page's image (mode 7); nothing while another map is up (FUN_101f9a20).
     Primer {
         first: u32,
@@ -2324,6 +2322,25 @@ fn not_owned(w: &mut World, zone: u16) {
     let line = bt.group10(7).unwrap_or_default().replacen("%s", &place, 1);
     let colour = bt.colour_in(0x79, &w.game);
     w.chat.push_colour(line, colour);
+}
+
+/// FUN_101f8a40(zone, key, 0) -> FUN_101f8b80: a reply's map pixel (16-bit) through the record of exactly this zone
+/// and sub-key. With no such record the index is -1 and FUN_101f8bd0 reads the scale byte 14 bytes before the table
+/// (0x103832af, 0x10 in 30261102_0).
+fn reply_px(regions: &[Region], zone: u16, key: u8, x: f32, z: f32) -> (i16, i16) {
+    let (px, py) = px_of(Region::find_key(regions, zone, key).map_or(0x10, |r| r.scale), x, z);
+    (px as i16, py as i16)
+}
+
+/// FUN_101ee650 / FUN_101f8b80: world (x, z) to raw map pixels for a record's scale byte, k = 2560 / |scale|; C
+/// truncation.
+fn px_of(scale: i8, x: f32, z: f32) -> (i32, i32) {
+    let s = scale.unsigned_abs() as f32;
+    if s == 0.0 {
+        return (0, 0);
+    }
+    let k = 2560.0 / s;
+    ((x * (1.0 / k) * 512.0 + 0.5) as i32, -((z * (1.0 / k) * 512.0 + 0.5) as i32))
 }
 
 /// Where the alliance's other members start among the 20 member slots (FUN_101fa720: slot 0x13 + the party window's
@@ -2360,6 +2377,30 @@ fn edit_file(
 
 pub(super) fn apply(w: &mut World, regions: &[Region], c: Cmd, sw: f32, sh: f32) {
     match c {
+        Cmd::Party { id, zone, pos } => {
+            // FUN_100f07b0: no handler until a map has asked (+0x1c794). FUN_101f94d0 then clears the busy strip
+            // and wants a map open, someone other than us, our own zone, and the position on the sub-map asked for
+            // (FUN_101827a0, 0 with no floor); a listed member is placed as our party's when the low two flag bits
+            // are ours.
+            let Some(key) = w.scan.party_key else { return };
+            w.scan.party_busy = false;
+            if w.map.is_none()
+                || zone != w.pos_zone
+                || w.ground.as_ref().map_or(0, |g| g.map_key(glam::Vec3::from(pos))) != key
+            {
+                return;
+            }
+            let own = w.party.own_flags;
+            let Some((name, party)) =
+                w.party.members().skip(1).find(|m| m.id == id).map(|m| (m.name.clone(), (m.flags ^ own) & 3 == 0))
+            else {
+                return;
+            };
+            let (px, from) = (reply_px(regions, zone, key, pos[0], pos[2]), rest_from(w));
+            if let Some(m) = w.map.as_mut() {
+                m.party_pos(&name, px, party, from);
+            }
+        }
         // FUN_101f9a50: not while riding a lift (group 7 0x61).
         Cmd::Menu | Cmd::Other { .. } if w.riding => super::textcmd::refuse(w, 0x61),
         Cmd::Menu => match MapWin::open(w, regions, sw, sh) {
@@ -3163,6 +3204,25 @@ mod marker_tests {
         };
         m.text_events(&[egui::Event::Text("2".into()), key(K::Escape)]);
         assert_eq!((m.typing(), m.marks.sets[0][0].name.as_str()), (false, "Gate2"));
+    }
+
+    /// FUN_101f8a40 / FUN_101f8b80 / FUN_101f8bd0: a reply's pixel goes through the record of exactly (zone, sub-key);
+    /// with none, the byte before the table gives scale 16. FUN_101f94d0 places on whatever map is open.
+    #[test]
+    fn reply_pixel_and_placing() {
+        let rec = |key, scale| Region { zone: 230, key, num: 0, flags: 0, scale, ki: -1, file: 0, ox: 0, oy: 0 };
+        let regs = [rec(0, 1), rec(2, 4)];
+        assert_eq!(reply_px(&regs, 230, 2, 100.0, 50.0), (80, -40));
+        assert_eq!(reply_px(&regs, 230, 0, 100.0, 50.0), (20, -10));
+        assert_eq!(reply_px(&regs, 230, 1, 100.0, 50.0), (320, -160));
+        assert_eq!(reply_px(&regs, 231, 2, 100.0, 50.0), (320, -160));
+        let mut m = win(Mode::Other);
+        m.here = false;
+        m.party_pos("Mate", (80, 40), true, 3);
+        m.party_pos("Ally", (7, 8), false, 3);
+        m.party_pos("Mate", (1, 1), true, 3);
+        let at = |i: usize| m.members[i].as_ref().map(|k| (k.name.as_str(), k.px));
+        assert_eq!((at(0), at(3)), (Some(("Mate", (80.0, 40.0))), Some(("Ally", (7.0, 8.0)))));
     }
 
     /// FUN_101fa680 / FUN_101fd680: Left / Right ask for the positions once, whatever the set; an event map's mapv3
