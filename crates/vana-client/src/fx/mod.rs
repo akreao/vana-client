@@ -1120,6 +1120,8 @@ pub struct Effects {
     pub sound_cmds: Vec<sound::SoundCmd>,
     alive: HashSet<u32>,
     next_voice: u32,
+    /// High bits of this engine's voice handles, so engines sharing the mixer never reuse one another's.
+    voice_base: u32,
     /// FUN_10036460's start list this retail frame: ticks into the frame, SeSep resources started.
     start_window: (f32, Vec<(usize, usize)>),
     /// DAT_104638f4: the 2239 / 2063 voice playing.
@@ -1136,6 +1138,8 @@ struct WeatherSet {
 
 /// Elements and batched particles the GPU buffers hold.
 pub const MAX_ELEMS: usize = 8192;
+/// The counter part of an effect voice handle; the bits above it are the engine's base (set_voice_base).
+pub const VOICE_MASK: u32 = 0x00ff_ffff;
 pub const MAX_PARTS: usize = 65536;
 
 impl Default for Effects {
@@ -1262,6 +1266,7 @@ impl Effects {
             sound_cmds: Vec::new(),
             alive: HashSet::new(),
             next_voice: 0,
+            voice_base: 0,
             start_window: (0.0, Vec::new()),
             solo: None,
         }
@@ -2645,7 +2650,6 @@ impl Effects {
         self.alive = alive.into_iter().collect();
     }
 
-    /// FUN_10036b90 / FUN_10036af0: a voice of the one-at-a-time ids stopping frees the flag.
     /// Leaving the world: every effect voice (the zone's scenery loops among them) stops at once.
     pub fn stop_sounds(&mut self) {
         for s in std::mem::take(&mut self.sounds) {
@@ -2656,6 +2660,27 @@ impl Effects {
         }
     }
 
+    /// The scene stopped ticking (a lobby screen left): voices stop; persistent sounds start again when it resumes,
+    /// one-shots are dropped.
+    pub fn pause_sounds(&mut self) {
+        for k in (0..self.sounds.len()).rev() {
+            let h = std::mem::take(&mut self.sounds[k].handle);
+            if h != 0 {
+                self.sound_cmds.push(sound::SoundCmd::Stop { handle: h, ticks: 0 });
+                self.voice_ended(h);
+            }
+            if !self.sounds[k].persistent() {
+                self.sounds.swap_remove(k);
+            }
+        }
+    }
+
+    /// Voice handles from this engine carry `base` in their high byte (see VOICE_MASK).
+    pub fn set_voice_base(&mut self, base: u32) {
+        self.voice_base = base & !VOICE_MASK;
+    }
+
+    /// FUN_10036b90 / FUN_10036af0: a voice of the one-at-a-time ids stopping frees the flag.
     fn voice_ended(&mut self, handle: u32) {
         if self.solo == Some(handle) {
             self.solo = None;
@@ -2735,8 +2760,8 @@ impl Effects {
                 if !self.start_window.1.contains(&s.res) {
                     self.start_window.1.push(s.res);
                 }
-                self.next_voice = self.next_voice.wrapping_add(1).max(1);
-                s.handle = self.next_voice;
+                self.next_voice = (self.next_voice.wrapping_add(1) & VOICE_MASK).max(1);
+                s.handle = self.voice_base | self.next_voice;
                 if solo {
                     self.solo = Some(s.handle);
                 }

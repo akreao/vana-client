@@ -17490,9 +17490,24 @@ impl App {
         let (bg, aspect) = (g.bg, g.aspect);
         let (scene_view, scene_depth, scene_tex) = (g.scene_view.clone(), g.scene_depth.clone(), g.scene_tex.clone());
         let encoder = &mut g.encoder;
-        if matches!(&self.phase, Phase::Characters { screen: LobbyScreen::Create, .. })
-            && let Some(cr) = &mut self.creator
-        {
+        // A scene not drawn this frame (Select <-> Create, the nation flyover) holds no voices; paused first.
+        let creating = matches!(&self.phase, Phase::Characters { screen: LobbyScreen::Create, .. });
+        let create_ticks = creating && !(self.creator_step >= 6 && self.nation.fly.is_some());
+        let select_ticks =
+            matches!(&self.phase, Phase::Characters { screen: LobbyScreen::Select | LobbyScreen::Delete, .. });
+        let mut paused = Vec::new();
+        if !create_ticks && let Some(fx) = self.creator.as_mut().and_then(|c| c.effects.as_mut()) {
+            paused.extend(fx.pause_sounds());
+        }
+        if !select_ticks && let Some(fx) = self.select.as_mut().and_then(|s| s.effects()) {
+            paused.extend(fx.pause_sounds());
+        }
+        if let Some(a) = &mut self.audio {
+            for c in paused {
+                play_fx_sound(a, c);
+            }
+        }
+        if creating && let Some(cr) = &mut self.creator {
             cr.advance(dt);
             let nation_step = self.creator_step >= 6;
             cr.show_dancer = !nation_step;
