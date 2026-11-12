@@ -9,6 +9,22 @@ use crate::dat::motionfile::PcMotion;
 /// The rod's actor id: its angler's with this bit. Never an entity, a target, a bump or a pick.
 pub const ROD: u32 = 0x1000_0000;
 
+/// After a result's put-away (`fsh2`..`fsh6` over, the status still 0x3a..0x3e) the angler keeps its last pose until
+/// the status leaves fishing *(inf: retail goes from the put-away straight to the stand; the traced paths would start
+/// `fh1` again, MODLOG "Fishing: the release and the holds after it")*.
+pub fn put_away(w: &World, id: u32) -> bool {
+    (0x3a..=0x3e).contains(&status_of(w, id))
+        && ![b"fsh2", b"fsh3", b"fsh4", b"fsh5", b"fsh6"]
+            .iter()
+            .any(|s| w.effects.actor_scheduler_running(id, u32::from_le_bytes(**s)))
+}
+
+/// FUN_100c63d0 never re-picks a status motion for actor kinds 5..0x24 (vt +0x360, FUN_10082820): the rod holds what
+/// its schedulers last played (fh4's stowed pose after a put-away) until it is deleted.
+pub fn is_rod(id: u32) -> bool {
+    id & ROD != 0
+}
+
 /// DAT_1035f598 by race: the rod files, + the range look.
 const ROD_FILES: [u32; 9] = [39307, 39307, 39339, 39371, 39403, 39435, 39435, 39467, 39499];
 

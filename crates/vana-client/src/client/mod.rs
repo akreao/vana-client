@@ -18472,6 +18472,7 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
             && w.actors.get(&w.my_id).is_some_and(|a| a.character.is_some()),
         w.pos,
     );
+    let put_away: HashSet<u32> = w.actors.keys().copied().filter(|id| fishrod::put_away(w, *id)).collect();
     for (id, a) in w.actors.iter_mut() {
         // A changed look goes up in the background; the swap is one frame, the old model drawn till then.
         if let Some(nx) = a.next.clone()
@@ -18507,7 +18508,9 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
         // Then a scheduler's motion (event / weapon draw) over the status motion.
         // +0x80 up (ops 0x07 / 0x08 / 0x59, w.noreact): FUN_100c83c0 returns at once, no status motion re-pick.
         let held = w.noreact.get(id).is_some_and(|t| *t > hold_now)
-            || w.effects.held.get(id).is_some_and(|k| k & crate::fx::HOLD_REACT != 0);
+            || w.effects.held.get(id).is_some_and(|k| k & crate::fx::HOLD_REACT != 0)
+            || fishrod::is_rod(*id)
+            || put_away.contains(id);
         let (name, rate, once, blend) = match (&a.oneshot, a.play.as_ref().and_then(|p| p.current())) {
             (Some(o), _) => (o.name.clone(), o.speed, true, crate::motion::BLEND_TICKS),
             (None, Some(m)) => {

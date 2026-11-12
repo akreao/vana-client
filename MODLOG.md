@@ -15162,7 +15162,7 @@ The 2013 mini-game: statuses 0x38..0x3e, s2c 0x115, c2s 0x110. The old PS2-era s
   with the basket) in the riding slot; the status's scheduler (0x38 fsh0, 0x39 fsh7, 0x3a..0x3e fsh2..fsh6) on the
   model once those files are in, and on the rod once it is (a scheduler asked for before its file loads is dropped);
   fsh0..fsh9 stopped when the angler stops fishing. The rod is its own actor (id 0x1000_0000 | angler; file
-  DAT_1035f598[race] + look, Mithra willow 39477) at the angler's place with the angler's status (its fh1 -> fh10) and
+  DAT_1035f598[race] + look, Mithra willow 39477) at the angler's place (no status motion of its own: "Fishing: the release and the holds after it") and
   scale *(inf)*; hidden with its angler; other players' rods the same (not seen live).
 - Live (Lnxcsfix, East Ronfaure river 458.6 / -16.5 / -316.7, willow rod and little worms, skill 30 then 60): casts
   with no bite ("You didn't catch anything.", fsh6, then the release), a timed-out fight (the warning line, "You lost
@@ -23716,6 +23716,15 @@ For lenonk/vana-client#172. Addresses are 30261006_0.
   248 / 292 ticks (`fh6?` / `fh3?`, then `fh4?`). The rod (39477) has the same motions and the line sounds (op 0x0a
   8231..8234, 6095), and no holds.
 - The rod: FUN_1008f740 makes it (+0xa4) while FUN_100956c0 (any fishing status) holds. FUN_10092870 deletes it,
-  drops the fishing motion files (FUN_100d44b0(7 / 8 / 9)) and clears +0x7d8 once that is false. FUN_100c8bb0 gives
-  `fh1 ` for every fishing status, 0x3e too. So, as far as traced, retail also returns to `fh1` (rod in hand)
-  between the end of `fh4` and the server's status 0 (here 0.7 s: one send interval and an LSB tick).
+  drops the fishing motion files (FUN_100d44b0(7 / 8 / 9)) and clears +0x7d8 once that is false. The rod's +0x70 is
+  the angler's entity (FUN_100c59b0), but FUN_100c63d0 never runs the status motion (FUN_100c83c0) for actor kinds
+  5..0x24 (vt +0x360, FUN_10082820), with or without +0x80. So the rod plays only what its schedulers start, and a
+  counted motion's end freezes it on its last frame (FUN_10019ab0: rate 0, the frame kept). After a put-away it stays
+  stowed (`fh4`'s last frame) until it is deleted. This corrects "The rod ... with the angler's status (its fh1 ->
+  fh10) *(inf)*" above: ours gave the rod `fh1`, so it came back into her hand for the 0.7 s between the end of `fh4`
+  and the server's status 0.
+- The angler too goes from the put-away straight to the stand in retail (user, 2026-11-11, seen in retail): no `fh1`
+  between the end of `fh2`..`fh6` and the server's status 0. Not found in the decompile: by the traced paths
+  (FUN_100c63d0's gates, FUN_100c83c0, the count end setting +0x79c in FUN_1001a8e0, the 0x07 hold dying with its
+  task, the release only once `fsh6` is over) `fh1` would start again. Ours: after a result's put-away, with the status
+  still 0x3a..0x3e, the angler keeps the last pose until the status leaves fishing (fishrod::put_away) *(inf)*.
