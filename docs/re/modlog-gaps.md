@@ -270,7 +270,7 @@ detail inside implemented ops.
 | Item | Status | Source | Settle by |
 |---|---|---|---|
 | Markers (mapv3 / mapv2, the .MRK file, sets 0..3) *(built 2026-10-22; queue row 141, [fragment](../modlog/2026-11-12-map-markers-141.md), 2026-11-12: audited against 30261102_0, thirteen differences fixed: mapv2 closes after each choice, Remove keeps the name, Escape keeps a typed name, fixed party / alliance slots, markers only while mapv3 is open, the file named by the asked sub-key, event maps locked)* | Built | L5029, L2564 | DLL |
-| Party dots (c2s 0x0D2 / s2c 0x0A0 positions) | Not built | L5029, L5041 | DLL / LSB |
+| Party dots (c2s 0x0D2 / s2c 0x0A0 positions) *(built with the markers; queue row 142, [fragment](../modlog/2026-11-12-party-dots-142.md), 2026-11-12: packets compared with LSB, the answer is taken by the key stored at the request, checked live with two characters)* | Built | L5029, L5041 | DLL / LSB |
 | Change Map; the Mog House branch (myroom); group 7 messages 97 / 98; the no-key-item chat line (group 10 id 7) | Not built | L2564, L5029 | DLL |
 | The left-drag joystick | Not built | L5011 | DLL |
 | The view and scroll-to formula, fade levels and the arrow taken at open only: as decompiled, flagged open | Inferred | L5012 | Footage |
