@@ -13885,7 +13885,7 @@ impl App {
             // bit 2) = HackMove | +0x120 bit 21 | GroundFlag, the bits FUN_10084640 reads.
             let bound = event::bound(world, world.my_id);
             let status = if bound { event::event_status(world, world.my_id) } else { world.my_motion.status };
-            me.silent = carrier::rider_set(status).is_some();
+            me.silent = carrier::rider_set(status).is_some() || event::no_position(world);
             me.ground_mode = world.my_plate.no_snap
                 || world.event.as_ref().is_some_and(|l| l.no_ground(world.my_id, world.my_id))
                 || carrier::no_ground(status, bound);

@@ -1206,7 +1206,8 @@ pub struct SelfState {
     pub target: u16,
     /// c2s 0x015 @0x15 bit 2, GroundMode (FUN_100983f0): HackMove, GroundFlag or entity +0x120 bit 21.
     pub ground_mode: bool,
-    /// Our status in force is 0x1c / 0x1f: FUN_100983f0 builds no 0x015 (the datagram still goes).
+    /// FUN_100983f0 builds no 0x015 (the datagram still goes): our status in force is 0x1c / 0x1f, the control lock
+    /// is on, or we are bound to the running event without Mode bit 4 (`event::no_position`).
     pub silent: bool,
 }
 
@@ -1868,7 +1869,10 @@ impl Session<'_> {
                 self.map.zoned_in(&p);
                 let pos = [p.f32(12), p.f32(16), p.f32(20)];
                 let (scene, myroom) = scene_of(&p);
-                *self.me.lock().unwrap() = SelfState { pos, dir: p.u8(11), ..Default::default() };
+                // FUN_10094190: a zone-in that carries an event sets the control lock (DAT_104840c8) at once, so no
+                // c2s 0x015 goes out before the event has ended (FUN_100983f0).
+                let silent = p.u16(0x62) != 0;
+                *self.me.lock().unwrap() = SelfState { pos, dir: p.u8(11), silent, ..Default::default() };
                 self.zoned = true;
                 self.my_index = p.u16(8);
                 self.queue.push(build(0x00C, &[0u8; 8]));
