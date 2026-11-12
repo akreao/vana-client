@@ -131,7 +131,7 @@ through `game.usable`, `game.party`'s `hp_max`, `res.spell`'s `area`, and the Sk
 LSB's resistance ranks as data/resistances.txt, moved from the client). Every half second while
 `ui.native.battle_menu()` says the menu shows its commands it fills the `battle_rows` slot; while the cursor is on a
 row it only retakes the rows' families. It sends the picks to other mods as the `suggestions` event (`mods.emit`).
-The recorded cases (src/client/suggest_cases) replay through rules.lua in a test. Seen live: Dia, Bio, Lightning
+The recorded cases (the mod's tests/cases) replay through rules.lua in its test (tests/cases.lua). Seen live: Dia, Bio, Lightning
 ("weak to lightning") and Protect for a RDM before a Forest Hare; Berserk, Warcry, Aggressor and Combo for a WAR in a
 fight.
 

@@ -581,7 +581,6 @@ pub(super) fn load_png(
         super::vm::Source::Dir(d) => super::vm::inside(d, path)
             .and_then(std::fs::read)
             .map_err(|e| mlua::Error::runtime(format!("{path}: {e}")))?,
-        super::vm::Source::Bundled(_) => return Err(mlua::Error::runtime("bundled mods carry no image files")),
     };
     let img = decode_png(&bytes).map_err(|e| mlua::Error::runtime(format!("{path}: {e} (a PNG)")))?;
     use std::hash::{Hash, Hasher};
@@ -633,7 +632,6 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
                 super::vm::Source::Dir(d) => super::vm::inside(d, &path)
                     .and_then(std::fs::read)
                     .map_err(|e| mlua::Error::runtime(format!("{path}: {e}")))?,
-                super::vm::Source::Bundled(_) => return Err(mlua::Error::runtime("bundled mods carry no image files")),
             };
             let (w, h, rgba) = decode_png(&bytes).map_err(|e| mlua::Error::runtime(format!("{path}: {e} (a PNG)")))?;
             let c = super::super::chaticons::add(&format!("{mod2}/{path}"), w, h, rgba)

@@ -41,12 +41,10 @@ function setmetatable(t, mt)
 end
 "#;
 
-/// Where a mod's files come from: its folder, or the binary (a bundled mod, assets/mods).
+/// Where a mod's files come from: its folder.
 #[derive(Clone)]
 pub(super) enum Source {
     Dir(PathBuf),
-    #[cfg_attr(not(test), allow(dead_code))]
-    Bundled(&'static [(&'static str, &'static str)]),
 }
 
 /// A path a mod gave that names something outside its folder: absolute (a root or a drive), or with a ".." part. A
@@ -77,11 +75,6 @@ impl Source {
     pub fn read(&self, rel: &str) -> std::io::Result<String> {
         match self {
             Source::Dir(d) => std::fs::read_to_string(inside(d, rel)?),
-            Source::Bundled(files) => files
-                .iter()
-                .find(|f| f.0 == rel)
-                .map(|f| f.1.to_string())
-                .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound)),
         }
     }
 
@@ -89,25 +82,19 @@ impl Source {
     pub fn read_bytes(&self, rel: &str) -> std::io::Result<Vec<u8>> {
         match self {
             Source::Dir(d) => std::fs::read(inside(d, rel)?),
-            Source::Bundled(files) => files
-                .iter()
-                .find(|f| f.0 == rel)
-                .map(|f| f.1.as_bytes().to_vec())
-                .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound)),
         }
     }
 
     pub fn exists(&self, rel: &str) -> bool {
         match self {
             Source::Dir(d) => inside(d, rel).is_ok_and(|p| p.is_file()),
-            Source::Bundled(files) => files.iter().any(|f| f.0 == rel),
         }
     }
 }
 
 pub(super) struct Vm {
     pub manifest: Manifest,
-    /// The folder (a bundled mod's is "bundled/<id>"), and where its files are read.
+    /// The folder, where its files are read.
     pub dir: PathBuf,
     pub src: Source,
     pub lua: Lua,
