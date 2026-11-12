@@ -5056,7 +5056,11 @@ return "acxml flow ok"
             game = {
               player = function() return ME end, zone = function() return 100 end,
               info = function() return { map_grid = "(G-6)" } end,
-              entities = function() return {
+              map = function() return { px_per_unit = 0.2 } end,
+              entities = function(filter)
+                -- Within the map shown at 160 map pixels: 160 / 2 / 0.2 x 1.5 + 10 = 610 yalms.
+                assert(filter and math.abs(filter.distance - 610) < 0.01, filter and filter.distance)
+                return {
                 { id = 1, name = "Lnxcsfix", pos = { x = 0, z = 0 }, radar = 0x00b040 },
                 { id = 2, name = "Forest Hare", pos = { x = 10, z = 5 }, radar = 0x808080 },
                 { id = 3, name = "Orcish Fodder", pos = { x = -4, z = 2 }, radar = 0xe03030 },

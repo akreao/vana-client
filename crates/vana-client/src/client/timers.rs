@@ -124,6 +124,7 @@ impl Timers {
 }
 
 // ---- Charges (/recast) ----
+// The Timers mod has the same rule in Lua (assets/mods/timers/rows.lua): change both together.
 
 /// FUN_10222c90: the charge abilities by their moves' kind (9 Quick Draw, 0xf Stratagems, 0x12 Ready): the charges
 /// at our job's level and the full recast in seconds; none when the job does not give them.
