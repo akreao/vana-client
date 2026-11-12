@@ -199,8 +199,6 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
-const RUN_SPEED: f32 = 5.0;
-
 impl Task {
     fn name(&self) -> &'static str {
         match self {
@@ -3532,8 +3530,10 @@ fn world_hud(
                 helpdesk::open(world);
                 world.sounds.push(crate::audio::Ui::Select as u32);
             }
-            (1, 11) => world.confirm = Some((Confirm::Shutdown, false)),
-            (1, 12) => world.confirm = Some((Confirm::Logout, false)),
+            // FUN_10161f30 / FUN_10161fc0 open the prompt only when FUN_10096270 lets us act.
+            (1, 11) if !prompt_held(world) => world.confirm = Some((Confirm::Shutdown, false)),
+            (1, 12) if !prompt_held(world) => world.confirm = Some((Confirm::Logout, false)),
+            (1, 11 | 12) => {}
             _ => log::info!("main menu item {id} on page {} is not implemented yet", world.menu_page),
         }
         // The prompt leaves the menu open under it (FUN_1014e7b0 items 0xb / 0xc), unfocused.
@@ -6676,9 +6676,18 @@ fn effect_held(w: &World) -> bool {
     w.my_plate.frozen || w.buffs.iter().any(|&b| matches!(b, 2 | 7 | 10 | 14 | 28 | 633))
 }
 
-/// Our run speed in units per second (FUN_100a48d0): Speed x0.1, doubled while riding (status 5 / 0x55), at most 30.
+/// FUN_10096270 failing: K.O. (0), sleep (2), petrification (7), stun (10) or terror (28) among our effects. The
+/// log-out and shut-down prompts (FUN_10161fc0 / FUN_10161f30: the main menu's rows, Pause, the pad's slot) do not
+/// open then, with no line.
+fn prompt_held(w: &World) -> bool {
+    w.dead() || w.buffs.iter().any(|&b| matches!(b, 2 | 7 | 10 | 28))
+}
+
+/// Our run speed in units per second (FUN_100a6240, vt+0x1a0 = actor +0x15c): Speed x0.1, doubled while riding
+/// (status 5 / 0x55), at most 30. Speed 0 is 0: retail has no default, and a server roots us with it (LSB's Bind sets
+/// the base speed 0, so 0x037 carries Speed 0).
 fn own_speed(w: &World) -> f32 {
-    let s = if w.my_motion.speed > 0 { w.my_motion.speed as f32 * 0.1 } else { RUN_SPEED };
+    let s = w.my_motion.speed as f32 * 0.1;
     let riding = matches!(w.my_motion.status, 5 | 0x55);
     (if riding { s * 2.0 } else { s }).min(30.0)
 }
@@ -13682,9 +13691,12 @@ impl App {
         // Autorun: the first move becomes the vector; X input steers it 2 degrees a tick (ticks x 0.01745 x 2); no
         // input and no vector ends it. Forced off while dead, resting or seated and in events. Locked on, it runs at
         // the target (below).
+        // Speed 0 (FUN_100a6240): the run's vector is cut to the tick's move, none, and the |vector| <= 0.001 test ends
+        // it.
         if world.autorun
             && (in_event
                 || world.dead()
+                || own_speed(world) == 0.0
                 || matches!(world.my_motion.status, 6 | 7 | 0x21 | 0x26..=0x2c | 0x2f | 0x30 | 0x32..=0x35 | 0x38..=0x53))
         {
             world.autorun = false;
@@ -13967,6 +13979,16 @@ impl App {
             world.move_tier = if step == Vec3::ZERO { 0.0 } else { 1.0 };
             world.autorun = false;
         }
+        // FUN_100a6240 at speed 0 (Bind): the move vector is the input x the tick's speed, so there is none and the
+        // function goes on as with no input (+0x598 = 0, no step, no strafe: FUN_100a8000 scales the same zero
+        // vector). Its tail still turns a free, unlocked third-person heading to the input by the camera, so the keys
+        // turn us in place. The forced follow moves by its own step.
+        let mut rooted_face = None;
+        if pull.is_none() && step != Vec3::ZERO && own_speed(world) == 0.0 {
+            rooted_face = (!tank).then(|| step.normalize());
+            step = Vec3::ZERO;
+            world.move_tier = 0.0;
+        }
         let stepping = step != Vec3::ZERO;
         let moving = stepping;
         // Whole retail frames of FUN_100a48d0 / FUN_100a3560; a position set elsewhere starts over from it.
@@ -14198,7 +14220,7 @@ impl App {
             } else if stepping {
                 Some(step.normalize())
             } else {
-                None
+                rooted_face
             };
             if let Some(f) = to {
                 me.dir = dir_from_forward(f);
@@ -14586,7 +14608,11 @@ impl App {
         // The pad's extra slots 32 / 33 / 35 / 36 (key functions 0xb7..0xba, pad only, unbound by default): the shut
         // down prompt, F8's nearest target, /jump and /map.
         if !event::active(world) && !world.typing && !world_window_open(world) {
-            if self.input.test(0xb7, input::mode::PRESS) && world.confirm.is_none() && world.my_motion.status != 1 {
+            if self.input.test(0xb7, input::mode::PRESS)
+                && world.confirm.is_none()
+                && world.my_motion.status != 1
+                && !prompt_held(world)
+            {
                 world.confirm = Some((Confirm::Shutdown, false));
             } else if self.input.test(0xb8, input::mode::PRESS) && !world.ko_open {
                 target::nearest_kind(world, 0x10, false, false);
@@ -14603,6 +14629,7 @@ impl App {
             && world.my_motion.status != 1
             && world.confirm.is_none()
             && world.ko_offer != 2
+            && !prompt_held(world)
         {
             world.confirm = Some((Confirm::Logout, false));
         }
