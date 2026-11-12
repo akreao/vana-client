@@ -25,6 +25,7 @@ pub mod opening;
 mod petrow;
 mod polmail;
 mod racing;
+mod randname;
 mod record;
 mod regime;
 mod rest;
@@ -8627,6 +8628,8 @@ pub struct App {
     creator_checking: Option<(String, String, String)>,
     /// The name filter (FFXiMain DAT_10662db8), loaded when the creator opens (FUN_102435f0 → FUN_101ba220).
     name_filter: Option<crate::poldic::NameFilter>,
+    /// The random names' tables out of the install's FFXiMain.dll, read when the creator opens.
+    name_tables: Option<randname::Tables>,
     /// The lobby's netwait / netbar while an operation runs (client/netwait.rs); a delete's notice after it (8 0x83).
     netwait: Option<netwait::NetWait>,
     deleting: bool,
@@ -8900,6 +8903,7 @@ impl App {
             creator_refused: None,
             creator_checking: None,
             name_filter: None,
+            name_tables: None,
             netwait: None,
             deleting: false,
             exit_requested: false,
@@ -15753,6 +15757,9 @@ impl App {
                                 (self.creator_simple, self.portrait) = (self.cfg.tool("0023") != 0, Default::default());
                                 (self.creator_world, self.creator_passed, self.creator_refused) = (None, None, None);
                                 self.name_filter = Some(crate::poldic::NameFilter::load(&self.cfg.game_dir));
+                                if self.name_tables.is_none() {
+                                    self.name_tables = randname::Tables::load(&self.cfg.ffxi_dir());
+                                }
                             }
                             Some(2) => *screen = LobbyScreen::Delete,
                             // FUN_10235fa0 index 4: lobycwin over the title (FUN_10195e80 reads the values first).
@@ -15907,13 +15914,17 @@ impl App {
                         // dictionary that does not load, refuses.
                         let name_filter = self.name_filter.as_ref();
                         let name_refused = |name: &[u8]| name_filter.is_some_and(|f| f.creator_refuses(name));
-                        // FUN_102384d0: Num+ (DIK 0x4e) on the name step asks for a random name; one the name
-                        // filter refuses is dropped (FUN_10238330 at 0x10238420) and the next Num+ rolls again.
+                        // Num+ (DIK 0x4e) on the name step (FUN_10239ae0 / FUN_10239b10 message 0xc): a random name
+                        // by race and face; one the name filter refuses is dropped and the next Num+ rolls again.
+                        // The account name stands in for the PlayOnline handle (a Mithra's name starts from it).
                         if step == 5
                             && keys
                             && !world_open
                             && self.input.pressed(0x4e)
-                            && let Some(n) = self.index.as_ref().and_then(|i| creator::roll_name(i))
+                            && let Some(n) = self.index.as_ref().and_then(|i| {
+                                let tables = self.name_tables.as_ref();
+                                creator::roll_name(i, tables, *race, *face as usize / 2, self.cfg.username.trim())
+                            })
                             && !name_refused(n.as_bytes())
                         {
                             *new_name = n;
@@ -16061,7 +16072,16 @@ impl App {
                                 }
                                 next |= ptr.row.1.is_some() || ptr.enter;
                                 if ptr.random
-                                    && let Some(n) = self.index.as_ref().and_then(|i| creator::roll_name(i))
+                                    && let Some(n) = self.index.as_ref().and_then(|i| {
+                                        let tables = self.name_tables.as_ref();
+                                        creator::roll_name(
+                                            i,
+                                            tables,
+                                            *race,
+                                            *face as usize / 2,
+                                            self.cfg.username.trim(),
+                                        )
+                                    })
                                     && !name_refused(n.as_bytes())
                                 {
                                     *new_name = n;
