@@ -96,6 +96,12 @@ impl LobbyFx {
         std::mem::take(&mut self.fx.sound_cmds)
     }
 
+    /// The scene is going: the stops for every voice it still holds.
+    pub fn stop_sounds(&mut self) -> Vec<crate::fx::sound::SoundCmd> {
+        self.fx.stop_sounds();
+        self.take_sounds()
+    }
+
     /// After the frame's submit: the effects' readback.
     pub fn after_submit(&mut self, gpu: &Gpu) {
         if let Some(eg) = &mut self.gpu {

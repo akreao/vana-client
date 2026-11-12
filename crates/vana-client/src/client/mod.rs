@@ -9070,6 +9070,12 @@ impl App {
     /// an error waits in the OK window.
     fn back_to_login(&mut self, error: bool) {
         if let Phase::World(w) = &mut self.phase {
+            // The world's effect voices go with it; dropped unsent, the loops played on in the lobby.
+            w.effects.stop_sounds();
+            for c in std::mem::take(&mut w.effects.sound_cmds) {
+                let Some(a) = &mut self.audio else { break };
+                play_fx_sound(a, c);
+            }
             let mut mods = std::mem::take(&mut w.lua);
             if mods.started() {
                 mods.stop(w);
@@ -16784,6 +16790,12 @@ impl App {
                 }
             }
         } else if !matches!(self.phase, Phase::Characters { .. }) {
+            if let Some(fx) = self.select.as_mut().and_then(|s| s.effects()) {
+                for c in fx.stop_sounds() {
+                    let Some(a) = &mut self.audio else { break };
+                    play_fx_sound(a, c);
+                }
+            }
             self.select = None;
             self.select_key.clear();
         }
@@ -16818,6 +16830,12 @@ impl App {
                 }
             }
         } else if !in_create && !matches!(self.phase, Phase::Characters { .. }) {
+            if let Some(fx) = self.creator.as_mut().and_then(|c| c.effects.as_mut()) {
+                for c in fx.stop_sounds() {
+                    let Some(a) = &mut self.audio else { break };
+                    play_fx_sound(a, c);
+                }
+            }
             self.creator = None;
             self.dancer_loading = None;
         }

@@ -2646,6 +2646,16 @@ impl Effects {
     }
 
     /// FUN_10036b90 / FUN_10036af0: a voice of the one-at-a-time ids stopping frees the flag.
+    /// Leaving the world: every effect voice (the zone's scenery loops among them) stops at once.
+    pub fn stop_sounds(&mut self) {
+        for s in std::mem::take(&mut self.sounds) {
+            if s.handle != 0 {
+                self.sound_cmds.push(sound::SoundCmd::Stop { handle: s.handle, ticks: 0 });
+                self.voice_ended(s.handle);
+            }
+        }
+    }
+
     fn voice_ended(&mut self, handle: u32) {
         if self.solo == Some(handle) {
             self.solo = None;
