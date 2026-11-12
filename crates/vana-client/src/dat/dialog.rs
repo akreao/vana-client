@@ -107,6 +107,8 @@ fn grammar(kind: u8, args: &[u8]) -> String {
         0x89 => format!("{{unity num{arg}}}"),
         0x8a => format!("{{0x1b line work{arg}}}"),
         0x04 => format!("{{count work{arg}}}"),
+        0x17 => format!("{{weather adj num{arg}}}"),
+        0x18 => format!("{{weather noun num{arg}}}"),
         _ => format!("{{grammar {kind:02x} {arg}}}"),
     }
 }
@@ -405,6 +407,12 @@ fn grammar_expand(kind: u8, args: &[u8], ctx: &Ctx, lines: &mut [Vec<u8>], pendi
         }
         0x12 => {
             if let Some(t) = at(1).and_then(|id| names?.title(id)) {
+                push(lines, &t);
+            }
+        }
+        // FUN_100be760 0x17 / 0x18: weather num[k] from language slot 0x14, its adjective (field 1) or noun (field 0).
+        0x17 | 0x18 => {
+            if let Some(t) = at(1).and_then(|id| names?.weather(id, kind == 0x17)) {
                 push(lines, &t);
             }
         }

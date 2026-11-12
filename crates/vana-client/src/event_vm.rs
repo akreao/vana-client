@@ -2899,6 +2899,8 @@ pub struct Scripted {
     pub cancel: Option<usize>,
     /// Scheduler length in ticks by (file, tag, param); None = unknown or looping.
     pub sched_ticks: Option<Box<dyn FnMut(u32, &str, i32) -> Option<f32>>>,
+    /// Op 0x72's weather bytes by (zone, day); None = the files are not read.
+    pub weather: Option<Box<dyn FnMut(u32, u32) -> Option<[u8; 3]>>>,
     /// The player's race byte (value 0x7f87).
     pub race: u8,
     /// Texts typed into op 0x71's input window, in order (empty once used up).
@@ -2961,6 +2963,7 @@ impl Scripted {
             update_params: None,
             cancel: None,
             sched_ticks: None,
+            weather: None,
             race: 0,
             inputs: Default::default(),
             map_busy: false,
@@ -2977,6 +2980,10 @@ impl Scripted {
 impl Host for Scripted {
     fn game_time(&self) -> u32 {
         self.time
+    }
+
+    fn weather_day(&mut self, zone: u32, day: u32) -> Option<[u8; 3]> {
+        self.weather.as_mut()?(zone, day)
     }
 
     fn ranking(&self, _full: bool) -> Option<[i32; 8]> {
@@ -3123,6 +3130,8 @@ pub fn run_cli(
     let mut host = Scripted::new(choices);
     host.race = race;
     host.sched_ticks = Some(sched_timer(crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir())?));
+    let weather = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir())?;
+    host.weather = Some(Box::new(move |zone, day| crate::dat::weather::forecast_day(&weather, zone, day)));
     let start = Start { zone, event, target, params, strings: Vec::new() };
     let mut rt = Runtime::start(blocks, dialog, start, Memory::default(), &mut host);
     if let Ok(n) = crate::dat::names::Names::load(&index, crate::dat::items::Lang::En) {

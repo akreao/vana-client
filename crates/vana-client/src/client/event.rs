@@ -2197,7 +2197,7 @@ impl Host for LiveHost<'_> {
     }
 
     fn weather_day(&mut self, zone: u32, day: u32) -> Option<[u8; 3]> {
-        weather_day(self.w.index.as_ref()?, zone, day)
+        crate::dat::weather::forecast_day(self.w.index.as_ref()?, zone, day)
     }
 
     /// Bounded as retail's (50 down, else 15 up): a place far off any floor keeps its height (the Ark Angels'
@@ -3340,16 +3340,6 @@ pub fn placement(w: &World, sw: f32, sh: f32) -> Option<(f32, f32)> {
     Some((px, py))
 }
 
-/// Op 0x72's table: files 0x1b78 / 0x1b79 (zones under 100) or 0x1b7c / 0x1b7d give the zone's row, then 0x870 days
-/// of 3 bytes a row (FUN_100b84b0).
-pub fn weather_day(index: &DatIndex, zone: u32, day: u32) -> Option<[u8; 3]> {
-    let (rows, data, z) = if zone < 100 { (0x1b78, 0x1b79, zone) } else { (0x1b7c, 0x1b7d, zone - 100) };
-    let row = *index.read(rows).ok()?.get(z as usize)? as usize;
-    let d = index.read(data).ok()?;
-    let at = row * 0x1950 + (day % 0x870) as usize * 3;
-    d.get(at..at + 3).map(|b| [b[0], b[1], b[2]])
-}
-
 /// The target window stays up in an event only with EventPara2 bit 1 (FUN_10085a00(0, 1)).
 pub fn keeps_target(w: &World) -> bool {
     w.event.as_ref().is_none_or(|l| l.st.start.para2 & 1 != 0) && w.event_pending.is_none()
@@ -3994,10 +3984,13 @@ mod tests {
     #[test]
     fn weather_table() {
         let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
-        let days: Vec<[u8; 3]> = (0..8).filter_map(|d| weather_day(&index, 230, d)).collect();
+        let days: Vec<[u8; 3]> = (0..8).filter_map(|d| crate::dat::weather::forecast_day(&index, 230, d)).collect();
         eprintln!("230: {days:?}");
         assert_eq!(days.len(), 8);
-        assert!(weather_day(&index, 100, 0x86f).is_some() && weather_day(&index, 11, 0x86f).is_some());
+        assert!(
+            crate::dat::weather::forecast_day(&index, 100, 0x86f).is_some()
+                && crate::dat::weather::forecast_day(&index, 11, 0x86f).is_some()
+        );
     }
 
     /// LSB 6439 "Obtained: <item>." sat in a gap of the 2019 zone 230 map (at 6432 there); retail 30261006_0's
