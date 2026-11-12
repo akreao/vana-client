@@ -23969,3 +23969,25 @@ All of it is the mod's Lua over the general API; the client gained nothing.
   the boots); legs 3 / 10 with feet 8 (their knee plates are part 6, hidden by the 0x32 feet). Body 17 / 18 sleeves
   change no pixel (the hidden wrists sit inside the sleeve). Live: Lnxcsfix with helm 230, hose 323, boots 110, front
   and side.
+
+## Door generators: started, and placed on the door's parts (2026-11-12)
+
+- Reported: Rala Waterways' sluice gates (zone 258, scene DAT 83893, door `_76t` and kin) opened (the walk across
+  worked) but looked wrong: no bridge, no gate, open or shut. The whole gate is effect meshes: folder `d_la/door/mon0`,
+  generators in attach mode 2 on the door actor: `hasi` bridge halves (`hl0?` x -2.52, `hr0?` x +2.55, the right one
+  turned (pi, 0, z)), flat (`?00`) or raised 60 degrees (`?02`), swung by keys `l1rz` / `l3rz` (`?01` / `?03`); the
+  `monf` sluice gate, down (`fmn0`) or 23.5 up (`fmn2`), moved by `m1py` / `m3py`; water (`wav?`, `sib0`). `open` ->
+  `fopn` (op 0x3f fmn2 -> fmn3, then hr02 -> hr03, hl02 -> hl03, then the flat statics), `clos` -> `fcls`, first sight
+  `into` / `intc` -> `fiop` / `ficl`. The placement `idpol` is the door group's only part.
+- Cause: scheduler op 0x02 refuses an attached generator on a hidden actor, and ours called every id without a model
+  actor hidden, doors included. Retail's test is +0xb2 bit 1 (the hide bits, "Effects on a hidden actor"); an
+  XiDoorActor has no model and is not hidden. Now doors and lifts are hidden only by those bits. Every lift generator
+  found (files 109, 241, 243, 337) is an unattached sound, so for lifts nothing changes.
+- XiDoorActor's points: FUN_100acab0 (vt +0x1c4): point 4 = the actor position (+0x1bc), else door part k's world
+  origin (k past the part count: part 0; FUN_100ad2e0 the count, FUN_100ad300 the part matrix). FUN_100acb50 (point
+  frame): the part matrix, its rows normalised. Ours: ZoneRenderer::door_frames (base * T * Rx * Ry * Rz at the part
+  clock, as vs_main) per door entity each frame, FxActors::point / point_frame from them.
+- Scope: 784 attached generators in door folders across about 40 zone files never started before (Eldieme Necropolis
+  138, Ru'Aun Gardens 52, the Aht Urhgan instance zones 47 each, Windurst Waters [S] 30, ...); 607 of them attach mode
+  0xa (the point frame). Seen live: the Rala gate's close and open (Lnxcsfix, `openDoor` / `closeDoor`), and Windurst
+  Waters [S] `_2m0` (a `dammy00` part turned (pi, 0, pi)) showing its `sdor` light panels. Not compared with retail.
