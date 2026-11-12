@@ -23853,3 +23853,21 @@ All of it is the mod's Lua over the general API; the client gained nothing.
 - catalogue.rs standard_mods_listed now fails, with or without VANA_WRITE_CATALOGUE, when a mod's files differ from
   its committed catalogue entry under the same version, naming each one. catalogue/README.md says to raise the
   version first.
+
+## Covered mesh parts: hair under hats, lower legs in boots (2026-11-12)
+- Every 0x2A mesh material (0x8010 record) has a part number: byte @15 low nibble. Equipment is 0; faces use 1..4
+  (Hume F face 2, file 10258: 1 = 103 triangles, 3 = 32, 4 = 225; the ponytail and upper hair are in 1..3), hands 5,
+  lower legs 6 (every legs file seen), feet 7.
+- FUN_1002cb80 (load): a part-4 material with u16 @30 set becomes part 8, and the mesh is marked as holding face parts
+  (+0x69) when any material is 1..4. FUN_1002dc10 (draw, asm 0x1002e0bb): with +0x69 set and u16 @30 set the part is 8.
+- FUN_1002dc10 (asm 0x1002dfa4..0x1002e073): the mesh's header byte 3 (chunk object +0x33) sets hide flags on the
+  draw context's byte array +0xa8 + part: 2 -> 1; 3 -> 1, 2; 4 -> 1, 2, 3; 5 -> 1, 2, 3, 4, 8; 6 -> 1, 2, 3, 8;
+  0x12 -> 5; 0x22 -> 7; 0x32 -> 6; any other value nothing. A material whose part flag is set draws nothing (the cloth
+  path reads the same array, asm 0x1002266f).
+- Values seen: headgear 0..4 and 0x11 (helm 230 = 4), feet 0x32 or 0x31, legs 0x21, bodies 0 / 0x11.
+- Where the array is cleared, and so whether a hat drawn after the face hides it in the same frame, is not traced;
+  ours takes the flags of every mesh of the model as one set *(inf)*.
+- Ours: Group.part, MeshPart.hides (dat/character.rs hidden_parts); Character::hide_covered drops the covered groups
+  once in load_character, npc::load_model and load_file_model (a look change reloads the model). Test
+  covered_parts_are_dropped. Seen offscreen (char-shot, Hume F with eight hats; legs 323 with feet 110 and 8, the
+  hose's knee plates now inside the boots) and live (Lnxcsfix with helm 230).

@@ -1036,6 +1036,7 @@ mod tests {
             groups: Vec::new(),
             cloth: true,
             sim: Some(Arc::new(spec)),
+            hides: 0,
         };
         let bone = Bone { parent: 0, term: 0, rot: glam::Quat::IDENTITY, pos: Vec3::ZERO };
         let skeleton = Skeleton {
