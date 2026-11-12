@@ -637,7 +637,7 @@ const BUNDLED: &[(&str, &str, &[(&str, &str)])] = bundled!["dps", "auto-advance"
     "exit-markers",
     "list-trimmer",
     "bag-manager",
-    "gearshift" ["src/build/stats.lua", "src/build/sets.lua", "src/build/ws.lua", "src/build/blu.lua", "src/build/pick.lua", "src/build/run.lua", "src/build/bis.lua", "src/core.lua", "src/compat.lua", "src/names.lua", "src/gs.lua", "src/lac.lua", "src/windower.lua", "src/xml.lua", "src/acxml.lua", "src/modes.lua", "src/texts.lua", "src/regex.lua", "src/spellcast.lua"],
+    "gearshift" ["src/build/stats.lua", "src/build/sets.lua", "src/build/ws.lua", "src/build/blu.lua", "src/build/pick.lua", "src/build/run.lua", "src/build/bis.lua", "src/build/window.lua", "src/core.lua", "src/compat.lua", "src/names.lua", "src/gs.lua", "src/lac.lua", "src/windower.lua", "src/xml.lua", "src/acxml.lua", "src/modes.lua", "src/texts.lua", "src/regex.lua", "src/spellcast.lua"],
     "hotbar" ["src/actions.lua", "src/bar.lua", "src/builder.lua", "src/chooser.lua", "src/data.lua", "src/ghost.lua", "src/jobs.lua", "src/keys.lua",
         "src/manager.lua", "src/menu.lua", "src/palette.lua", "src/runner.lua", "src/stock.lua"],
     "pad-bars" ["src/actions.lua", "src/runner.lua"],
@@ -3137,7 +3137,7 @@ mod tests {
             run.RANGES = { { 1001, 1010 } }
             local function settle()
               run.refresh()
-              for _ = 1, 40 do run.frame() end
+              for _ = 1, 80 do run.frame() end
             end
             settle()
             local nuke = run.state.built.Cure

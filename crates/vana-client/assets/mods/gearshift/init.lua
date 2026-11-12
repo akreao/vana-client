@@ -10,6 +10,10 @@ local lac = require("src.lac")
 local acxml = require("src.acxml")
 local spellcast = require("src.spellcast")
 local builder = require("src.build.run")
+local builder_window = require("src.build.window")
+builder_window.install()
+-- The set builder's background work, one coroutine for the session.
+timer.after(0, function() builder.worker() end)
 
 -- A file of the player's own runs instead of the set builder.
 local function file_loaded()
@@ -107,7 +111,6 @@ local texts = require("src.texts")
 events.on("frame", function()
   core.decode_augments()
   texts.frame()
-  builder.frame()
   if not started and main_job() and main_job() ~= 0 then
     gs.sub = game.player().sub_job
     start()
@@ -119,6 +122,7 @@ timer.every(0.4, function()
   if not file_loaded() then builder.tick() end
 end)
 timer.every(1.0, function() builder.refresh() end)
+timer.every(0.5, function() builder_window.redraw() end)
 events.on("item_change", function() builder.refresh() end)
 
 -- For other mods (Bag Manager): the item names the loaded file's sets hold, and which file.
@@ -141,8 +145,12 @@ commands.register("gearshift", function(cmd, arg)
     chat.add("Gearshift: " .. builder.toggle((arg or "off"):lower()))
     return
   end
+  if cmd == "" then
+    builder_window.toggle()
+    return
+  end
   if cmd == "reload" then start() end
   chat.add("Gearshift: " .. (gs.file or lac.file or acxml.file or spellcast.file
-    or "no file for this job (gearswap/, ashitacast/ or spellcast/ in its data folder)"))
+    or "no file for this job (gearswap/, ashitacast/ or spellcast/ in its data folder): the set builder's sets"))
 end)
 

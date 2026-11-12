@@ -29,6 +29,9 @@ M.H = {
   item = function(id) return res.item(id) end,
 }
 
+-- Called in every long loop: the engine sets it to yield when its frame's share of time is used (tests: nothing).
+M.pace = function() end
+
 -- ---- Item stats, read once ----
 
 local cache = {}
@@ -63,18 +66,20 @@ function M.score(s, set)
   return t
 end
 
--- How much of the reference's weighted stats the piece gives, 0..1 (per stat at most the reference's amount).
+-- What the piece gives of the reference's kind of stats: its set value from stats the reference also gives
+-- (`aligned`), and that value's share of all the piece's set value (`share`, 0..1: how alike they are, whatever
+-- their levels).
 function M.share(s, ref, set)
-  local have, want = 0, 0
+  local aligned, total = 0, 0
   for k, w in pairs(set.weights) do
-    local r = w * value(ref, k)
-    if r > 0 then
-      want = want + r
-      have = have + math.max(0, math.min(r, w * value(s, k)))
+    local v = w * value(s, k)
+    if v > 0 then
+      total = total + v
+      if w * value(ref, k) > 0 then aligned = aligned + v end
     end
   end
-  if want <= 0 then return 0 end
-  return have / want
+  if total <= 0 then return 0, 0 end
+  return aligned / total, aligned
 end
 
 -- ---- What may go in a slot ----
@@ -150,6 +155,7 @@ function M.best_by_score(cands, set)
             local v = pass == 1 and M.score(c.s, set) or marginal(c.s, set, others)
             if v > best_v then best, best_v = c, v end
           end
+          M.pace()
         end
         if best and best_v > 0 then picks[slot] = best else picks[slot] = nil end
       end
@@ -158,21 +164,40 @@ function M.best_by_score(cands, set)
   return picks
 end
 
--- The reference for each slot (by share's rule): the piece in `ref` that slot, and the best share among cands.
+-- The candidate giving the most of the reference's kind of stats, among those at least MIN_SHARE alike; with its
+-- share (nil when none is alike enough).
 local function by_share(cands, ref, set, used)
-  local best, best_sh, best_sc = nil, -1, -math.huge
+  local best, best_sh, best_al = nil, nil, 0
   for _, c in ipairs(cands) do
+    M.pace()
     if not (c.key and used[c.key]) then
-      local sh = M.share(c.s, ref, set)
-      local sc = M.score(c.s, set)
-      if sh > best_sh or (sh == best_sh and sc > best_sc) then best, best_sh, best_sc = c, sh, sc end
+      local sh, al = M.share(c.s, ref, set)
+      if sh >= M.MIN_SHARE and al > best_al then best, best_sh, best_al = c, sh, al end
     end
   end
   return best, best_sh
 end
 
--- Builds one set. ctx: job (e.g. "WAR"), job_id, race, level, owned (list of {id, key, augments}), index (the
--- equipment ids by slot: index[slot] = {ids}), bis (curated {slot = item name or id} or nil), names (name -> id).
+-- The pieces the job and race may wear in each slot at a level (nil: any), from the index: {slot = {{id, rec, s}}},
+-- stats read as they go. Paced.
+function M.candidates(index, job_id, race, level)
+  local out = {}
+  for slot = 0, 15 do
+    local list = {}
+    for _, id in ipairs(index[slot] or {}) do
+      local rec = M.H.item(id)
+      if M.fits(rec, slot, job_id, race, level) then
+        list[#list + 1] = { id = id, key = id, rec = rec, s = M.stats_of(id) }
+      end
+      M.pace()
+    end
+    out[slot] = list
+  end
+  return out
+end
+
+-- Builds one set. ctx: job (e.g. "WAR"), job_id, race, level, owned (list of {id, key, augments}), at_cap and
+-- at_level (M.candidates at the cap and at our level), bis (curated {slot = item name or id} or nil), names (name -> id).
 -- Returns {slots = {slot = {pick, share, how, ref, worth}}, score}.
 function M.build(ctx, set, set_name)
   local swap_weapons = set.weapons or (ctx.mage and not set.ws and not ctx.melee_sets[set_name])
@@ -194,16 +219,7 @@ function M.build(ctx, set, set_name)
   local ref = {}
   local cap_cands = {}
   for slot = 0, 15 do
-    if wanted(slot) and ctx.index[slot] then
-      local list = {}
-      for _, id in ipairs(ctx.index[slot]) do
-        local rec = M.H.item(id)
-        if M.fits(rec, slot, ctx.job_id, ctx.race, ctx.cap) then
-          list[#list + 1] = { id = id, key = id, rec = rec, s = M.stats_of(id) }
-        end
-      end
-      cap_cands[slot] = list
-    end
+    if wanted(slot) then cap_cands[slot] = ctx.at_cap[slot] end
   end
   local auto = M.best_by_score(cap_cands, set)
   for slot = 0, 15 do
@@ -226,12 +242,11 @@ function M.build(ctx, set, set_name)
     local pick, share, how
     if list and r and M.score(r.s, set) > 0 then
       pick, share = by_share(list, r.s, set, used)
-      how = "bis"
-      if share < M.MIN_SHARE then pick, how = nil, nil end
+      how = pick and "bis" or nil
     end
     if not pick and by_score[slot] and not (by_score[slot].key and used[by_score[slot].key]) then
       pick, how = by_score[slot], "score"
-      share = r and M.share(pick.s, r.s, set) or nil
+      share = r and (M.share(pick.s, r.s, set)) or nil
     end
     if pick and M.score(pick.s, set) <= 0 then pick, how = nil, nil end
     if not pick then share = nil end
@@ -255,25 +270,22 @@ function M.build(ctx, set, set_name)
 
   -- Worth getting: from every item wearable at this level, the reference's rule again; shown when it beats the pick.
   for slot = 0, 15 do
-    if wanted(slot) and ctx.index[slot] then
+    if wanted(slot) and ctx.at_level[slot] then
       local cands = {}
-      for _, id in ipairs(ctx.index[slot]) do
-        local rec = M.H.item(id)
-        if M.fits(rec, slot, ctx.job_id, ctx.race, ctx.level) and not (ctx.owns and ctx.owns[id]) then
-          cands[#cands + 1] = { id = id, rec = rec, s = M.stats_of(id) }
-        end
+      for _, c in ipairs(ctx.at_level[slot]) do
+        if not (ctx.owns and ctx.owns[c.id]) then cands[#cands + 1] = c end
       end
       local o = out.slots[slot]
       local w
       if o.ref and M.score(o.ref.s, set) > 0 then
-        local best, sh = by_share(cands, o.ref.s, set, {})
-        if best and sh >= M.MIN_SHARE then w = best end
+        w = by_share(cands, o.ref.s, set, {})
       end
       if not w then
         local best, bv = nil, 0
         for _, c in ipairs(cands) do
           local v = M.score(c.s, set)
           if v > bv then best, bv = c, v end
+          M.pace()
         end
         w = best
       end
@@ -292,14 +304,23 @@ function M.build(ctx, set, set_name)
     for slot, c in pairs(p) do t = t + marginal(c.s, set, totals(p, slot)) end
     return t
   end
+  -- The best this level allows: per slot the owned pick or what is worth getting, the better.
+  local reach = {}
+  for slot, o in pairs(out.slots) do
+    local c = o.pick
+    if o.worth and (not c or M.score(o.worth.s, set) > M.score(c.s, set)) then c = o.worth end
+    if c then reach[slot] = c end
+  end
   out.score = capped(picks)
   out.ref_score = capped(refs)
+  out.reach_score = capped(reach)
   return out
 end
 
 -- The equipment ids by slot, from a list of ids (the whole item list, read a slice at a time by the caller).
 function M.index_add(index, ids)
   for _, id in ipairs(ids) do
+    M.pace()
     local rec = M.H.item(id)
     if rec and rec.slots and rec.slots ~= 0 and (rec.name or "") ~= "" then
       for slot = 0, 15 do

@@ -46,6 +46,7 @@ M.SLICE = 600
 local state = {
   index = {}, next_id = nil, range = 1, ready = false,
   job = nil, level = nil, owned = nil, owned_sig = nil,
+  at_cap = nil, at_level = nil, need_cands = false,
   built = {}, queue = {}, names = {},
 }
 M.state = state
@@ -147,14 +148,15 @@ local function ctx()
   local owns = {}
   for _, o in ipairs(state.owned or {}) do owns[o.id] = true end
   return { job = state.job, job_id = p.main_job, race = me.race, level = state.level, cap = M.cap(),
-    owned = state.owned or {}, owns = owns, index = state.index, names = state.names,
+    owned = state.owned or {}, owns = owns, at_cap = state.at_cap or {}, at_level = state.at_level or {},
+    names = state.names,
     mage = sets.MAGE_JOBS[state.job], melee_sets = sets.MELEE_SETS, bis = nil }
 end
 
 -- Builds one set now (the window's selection may ask before the queue reaches it).
 function M.build(name)
   local def = M.set_def(name)
-  if not def or not state.ready then return nil end
+  if not def or not state.ready or not state.at_cap then return nil end
   local c = ctx()
   local ok, bis = pcall(require, "src.build.bis")
   if ok and bis then c.bis = bis.lookup(M.cap(), state.job, name) end
@@ -193,6 +195,15 @@ function M.rebuild()
   for _, s in ipairs(M.job_sets(state.job)) do state.queue[#state.queue + 1] = s end
 end
 
+-- Puts a set first in the queue (the one the window shows, or an action wants).
+function M.want_first(name)
+  if state.built[name] then return end
+  for i, s in ipairs(state.queue) do
+    if s == name then table.remove(state.queue, i) break end
+  end
+  table.insert(state.queue, 1, name)
+end
+
 -- The job, the level and the bags: a change rebuilds every set (a timer and item_change call it).
 function M.refresh()
   if not M.H.on() then return end
@@ -201,28 +212,63 @@ function M.refresh()
   local job = M.H.job(p.main_job)
   local owned, elsewhere, sig = scan()
   state.elsewhere = elsewhere
+  if job ~= state.job or p.main_level ~= state.level then state.need_cands = true end
   if job ~= state.job or p.main_level ~= state.level or sig ~= state.owned_sig then
     state.job, state.level, state.owned, state.owned_sig = job, p.main_level, owned, sig
     M.rebuild()
   end
 end
 
--- Each frame: a slice of the index, then one set from the queue.
-function M.frame()
-  if not M.H.on() then return end
-  index_step()
-  if state.ready and state.job and #state.queue > 0 then
-    local name = table.remove(state.queue, 1)
-    M.build(name)
+-- One step of the work: a slice of the index; once it is whole, the job's candidates (at the cap and at our level)
+-- when the job or the level changed; then one set from the queue. Returns true while there is work left.
+function M.step()
+  if not M.H.on() then return false end
+  if not state.ready then
+    index_step()
+    return true
+  end
+  if not state.job then return false end
+  if state.need_cands or not state.at_cap then
+    state.need_cands = false
+    local p = M.H.player() or {}
+    local me = M.H.me() or {}
+    state.at_cap = pick.candidates(state.index, p.main_job, me.race, M.cap())
+    state.at_level = pick.candidates(state.index, p.main_job, me.race, state.level)
+    state.built = {}
+    return true
+  end
+  if #state.queue > 0 then
+    M.build(table.remove(state.queue, 1))
+    return true
+  end
+  return false
+end
+M.frame = M.step
+
+-- The worker: steps the work in the background, yielding when its share of a frame is used.
+local SHARE = 0.0015
+function M.worker()
+  local t0 = clock()
+  pick.pace = function()
+    if clock() - t0 > SHARE then
+      sleep_frames(1)
+      t0 = clock()
+    end
+  end
+  while true do
+    t0 = clock()
+    local more = M.step()
+    sleep_frames(more and 1 or 10)
   end
 end
 
 -- ---- Wearing sets ----
 
--- A set's pieces: the hand picks first, then the build's.
+-- A set's pieces: the hand picks first, then the build's (a set not built yet is asked for first).
 function M.pieces(name)
   local out = {}
-  local r = state.built[name] or M.build(name)
+  local r = state.built[name]
+  if not r then M.want_first(name) end
   if r then
     for slot, o in pairs(r.slots) do
       if o.pick then
@@ -300,6 +346,11 @@ end
 local function wear(pieces, style)
   local list = core.resolve(wants(pieces), { log_names = false })
   core.send(core.packets(list, style or "auto", 8))
+end
+
+-- Wears a set now (the window's Wear Now).
+function M.wear_set(name)
+  wear(M.pieces(name), "set")
 end
 
 -- The set our status and toggles want between actions.
