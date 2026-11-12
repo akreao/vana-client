@@ -66,6 +66,10 @@ impl FxLibs {
     }
 }
 
+/// Voice handle bases of the two lobby scenes (the world's engine uses 0).
+pub const SELECT_VOICES: u32 = 0x0100_0000;
+pub const CREATOR_VOICES: u32 = 0x0200_0000;
+
 /// The effects engine in a lobby scene (select, creator): the zone's generators and the weather 'suny' start with
 /// the zone (FUN_10242cd0, FUN_10239720), the sky's clouds among them. Its GPU side: ids are per registry.
 pub struct LobbyFx {
@@ -77,8 +81,9 @@ pub struct LobbyFx {
 }
 
 impl LobbyFx {
-    pub fn new(libs: FxLibs, minute: f32) -> Self {
+    pub fn new(libs: FxLibs, minute: f32, voices: u32) -> Self {
         let mut fx = crate::fx::Effects::new();
+        fx.set_voice_base(voices);
         fx.set_keys(libs.files.1);
         fx.set_index(libs.files.0);
         fx.set_global(libs.global);
@@ -94,6 +99,18 @@ impl LobbyFx {
     /// Effect sounds since the last call, for the sound thread.
     pub fn take_sounds(&mut self) -> Vec<crate::fx::sound::SoundCmd> {
         std::mem::take(&mut self.fx.sound_cmds)
+    }
+
+    /// The scene is going: the stops for every voice it still holds.
+    pub fn stop_sounds(&mut self) -> Vec<crate::fx::sound::SoundCmd> {
+        self.fx.stop_sounds();
+        self.take_sounds()
+    }
+
+    /// The scene is not drawn this frame: the stops for its voices (loops start again when it is).
+    pub fn pause_sounds(&mut self) -> Vec<crate::fx::sound::SoundCmd> {
+        self.fx.pause_sounds();
+        self.take_sounds()
     }
 
     /// After the frame's submit: the effects' readback.
@@ -271,7 +288,7 @@ pub struct SelectScene {
 impl SelectScene {
     pub fn new(mut data: SelectData) -> Self {
         let s = data.slots[0];
-        let effects = data.fx.take().map(|l| LobbyFx::new(l, MINUTE));
+        let effects = data.fx.take().map(|l| LobbyFx::new(l, MINUTE, SELECT_VOICES));
         let mut scene = Self {
             data,
             zone: None,

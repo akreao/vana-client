@@ -267,6 +267,36 @@ mod tests {
         assert_eq!(plays(&mut fx).len(), 20);
     }
 
+    /// A paused lobby scene: every voice stops, loops start again on its next tick (with its handle base), one-shots
+    /// are gone; stop_sounds then has nothing left to stop.
+    #[test]
+    fn pause_and_voice_base() {
+        let mut fx = crate::fx::Effects::new();
+        fx.set_voice_base(crate::client::select::CREATOR_VOICES);
+        let mut lp = stream(2003, 1);
+        lp.loops = true;
+        fx.sounds.extend([lp, stream(2004, 2)]);
+        fx.tick(&frame(0.5), &crate::fx::NoActors);
+        let handles: Vec<u32> = std::mem::take(&mut fx.sound_cmds)
+            .into_iter()
+            .filter_map(|c| if let SoundCmd::Play { handle, .. } = c { Some(handle) } else { None })
+            .collect();
+        assert_eq!(handles, [0x0200_0001, 0x0200_0002]);
+        fx.pause_sounds();
+        let stops: Vec<u32> = std::mem::take(&mut fx.sound_cmds)
+            .into_iter()
+            .filter_map(|c| if let SoundCmd::Stop { handle, .. } = c { Some(handle) } else { None })
+            .collect();
+        assert_eq!(stops.len(), 2);
+        fx.pause_sounds();
+        assert!(fx.sound_cmds.is_empty());
+        fx.tick(&frame(2.0), &crate::fx::NoActors);
+        assert_eq!(plays(&mut fx), [2003]);
+        fx.stop_sounds();
+        assert_eq!(fx.sound_cmds.len(), 1);
+        assert!(fx.sounds.is_empty());
+    }
+
     /// FUN_10038330: of 2239 / 2063 one voice at a time; the next starts after it stops.
     #[test]
     fn one_at_a_time() {

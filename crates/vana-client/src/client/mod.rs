@@ -9070,6 +9070,12 @@ impl App {
     /// an error waits in the OK window.
     fn back_to_login(&mut self, error: bool) {
         if let Phase::World(w) = &mut self.phase {
+            // The world's effect voices go with it; dropped unsent, the loops played on in the lobby.
+            w.effects.stop_sounds();
+            for c in std::mem::take(&mut w.effects.sound_cmds) {
+                let Some(a) = &mut self.audio else { break };
+                play_fx_sound(a, c);
+            }
             let mut mods = std::mem::take(&mut w.lua);
             if mods.started() {
                 mods.stop(w);
@@ -16784,6 +16790,12 @@ impl App {
                 }
             }
         } else if !matches!(self.phase, Phase::Characters { .. }) {
+            if let Some(fx) = self.select.as_mut().and_then(|s| s.effects()) {
+                for c in fx.stop_sounds() {
+                    let Some(a) = &mut self.audio else { break };
+                    play_fx_sound(a, c);
+                }
+            }
             self.select = None;
             self.select_key.clear();
         }
@@ -16818,6 +16830,12 @@ impl App {
                 }
             }
         } else if !in_create && !matches!(self.phase, Phase::Characters { .. }) {
+            if let Some(fx) = self.creator.as_mut().and_then(|c| c.effects.as_mut()) {
+                for c in fx.stop_sounds() {
+                    let Some(a) = &mut self.audio else { break };
+                    play_fx_sound(a, c);
+                }
+            }
             self.creator = None;
             self.dancer_loading = None;
         }
@@ -17472,9 +17490,24 @@ impl App {
         let (bg, aspect) = (g.bg, g.aspect);
         let (scene_view, scene_depth, scene_tex) = (g.scene_view.clone(), g.scene_depth.clone(), g.scene_tex.clone());
         let encoder = &mut g.encoder;
-        if matches!(&self.phase, Phase::Characters { screen: LobbyScreen::Create, .. })
-            && let Some(cr) = &mut self.creator
-        {
+        // A scene not drawn this frame (Select <-> Create, the nation flyover) holds no voices; paused first.
+        let creating = matches!(&self.phase, Phase::Characters { screen: LobbyScreen::Create, .. });
+        let create_ticks = creating && !(self.creator_step >= 6 && self.nation.fly.is_some());
+        let select_ticks =
+            matches!(&self.phase, Phase::Characters { screen: LobbyScreen::Select | LobbyScreen::Delete, .. });
+        let mut paused = Vec::new();
+        if !create_ticks && let Some(fx) = self.creator.as_mut().and_then(|c| c.effects.as_mut()) {
+            paused.extend(fx.pause_sounds());
+        }
+        if !select_ticks && let Some(fx) = self.select.as_mut().and_then(|s| s.effects()) {
+            paused.extend(fx.pause_sounds());
+        }
+        if let Some(a) = &mut self.audio {
+            for c in paused {
+                play_fx_sound(a, c);
+            }
+        }
+        if creating && let Some(cr) = &mut self.creator {
             cr.advance(dt);
             let nation_step = self.creator_step >= 6;
             cr.show_dancer = !nation_step;
