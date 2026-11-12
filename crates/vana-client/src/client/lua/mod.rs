@@ -1319,6 +1319,14 @@ fn save(vm: &Vm, w: Option<&World>) {
 }
 
 /// The mod phase (docs/lua-mods.md 3.2): once a frame in the world.
+/// The events queued for one mod (Host.mod_events: settings_changed), run in the mod phase.
+fn emit_mod_events(vm: &Vm, events: &[(String, &'static str, Vec<serde_json::Value>)]) {
+    for (_, name, args) in events.iter().filter(|e| e.0 == vm.manifest.id) {
+        let vals: Vec<mlua::Value> = args.iter().map(|a| api::to_lua(&vm.lua, a).unwrap_or(mlua::Value::Nil)).collect();
+        vm.emit(name, mlua::MultiValue::from_iter(vals));
+    }
+}
+
 pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
     if !w.lua.opt_owners.is_empty() {
         release_options(w);
@@ -1480,11 +1488,7 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
                         args.iter().map(|a| api::to_lua(&vm.lua, a).unwrap_or(mlua::Value::Nil)).collect();
                     vm.emit(name, mlua::MultiValue::from_iter(vals));
                 }
-                for (_, name, args) in mod_events.iter().filter(|e| e.0 == vm.manifest.id) {
-                    let vals: Vec<mlua::Value> =
-                        args.iter().map(|a| api::to_lua(&vm.lua, a).unwrap_or(mlua::Value::Nil)).collect();
-                    vm.emit(name, mlua::MultiValue::from_iter(vals));
-                }
+                emit_mod_events(vm, &mod_events);
                 let mine: Vec<(String, window::Event)> =
                     ui_events.iter().filter(|e| e.0 == vm.manifest.id).map(|e| (e.1.clone(), e.2.clone())).collect();
                 for (win, ev) in mine {
@@ -2524,11 +2528,19 @@ mod tests {
         )
         .unwrap();
         api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        vm.lua.load(r#"RAN = false; events.on("settings_changed", function() RAN = true end)"#).exec().unwrap();
+        vm.lua
+            .load(r#"RAN = nil; events.on("settings_changed", function(key, value) RAN = key .. "=" .. value end)"#)
+            .exec()
+            .unwrap();
         host.vms.push(vm);
         host.settings_changed("t", "opacity", serde_json::json!(0.55));
-        assert!(!host.vms[0].lua.globals().get::<bool>("RAN").unwrap());
-        assert_eq!(host.mod_events, vec![("t".to_string(), "settings_changed", vec!["opacity".into(), 0.55.into()])]);
+        host.settings_changed("other", "size", serde_json::json!(3));
+        assert!(host.vms[0].lua.globals().get::<Option<String>>("RAN").unwrap().is_none());
+        assert_eq!(host.mod_events[0], ("t".to_string(), "settings_changed", vec!["opacity".into(), 0.55.into()]));
+        // The frame's delivery: only this mod's event reaches it.
+        let events = std::mem::take(&mut host.mod_events);
+        emit_mod_events(&host.vms[0], &events);
+        assert_eq!(host.vms[0].lua.globals().get::<String>("RAN").unwrap(), "opacity=0.55");
     }
 
     /// hud.portrait: its actor is wanted once however many show it, a later entity moves it, none is an error.
