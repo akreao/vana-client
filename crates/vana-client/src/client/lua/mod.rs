@@ -3200,6 +3200,13 @@ mod tests {
             end
             assert(not obi, "the light obi worn on Earthsday")
 
+            -- A weapon skill: one chat line naming its set (or saying there is none).
+            local said, add = {}, chat.add
+            chat.add = function(t) said[#said + 1] = t end
+            run.action(core.parse_action({ id = 0x01A, data = packets.build(0x01A, string.pack("<I4I2I2I4fff", 100, 1, 7, 1, 0, 0, 0)) }))
+            chat.add = add
+            assert(#said == 1 and said[1]:find("^Gearshift: "), tostring(said[1]))
+
             -- At level 30 the Healer Hat (40) is out: the Mender Hat, the most of the reference we hold; the Shop Hat
             -- (20, not held) is worth getting.
             level = 30

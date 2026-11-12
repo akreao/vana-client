@@ -36,6 +36,7 @@ M.H = {
   end,
   storage = function() return storage.character end,
   cap_setting = function() return settings.get("cap") end,
+  ws_line = function() return settings.get("ws_line") ~= false end,
   -- Gear Swapping and Set Builder on: the sets are built (worn only with the window's switch on too).
   on = function() return settings.get("on") ~= false and settings.get("builder") ~= false end,
 }
@@ -387,11 +388,13 @@ local function keep_usable(pieces)
   end
 end
 
+-- Returns how many slots it changed.
 local function wear(pieces, style)
   if pieces[3] and keep_ammo() then pieces[3] = nil end
   keep_usable(pieces)
   local list = core.resolve(wants(pieces), { log_names = false })
   core.send(core.packets(list, style or "auto", 8))
+  return #list
 end
 
 -- Wears a set now (the window's Wear Now).
@@ -483,7 +486,21 @@ function M.action(act)
   -- A weapon skill or an ability lands at once: its set goes first (the server also refuses weapons and ammo once a
   -- weapon skill has started). A spell's or a shot's comes after, for the cast.
   local instant = act.category == 7 or act.category == 9
-  if main and instant then wear(main, "single") end
+  local changed = main and instant and wear(main, "single")
+  if act.category == 7 and M.H.ws_line() then
+    local a = M.H.ability(act.param)
+    local ws = a and a.name or ("weapon skill " .. act.param)
+    local def = r[2] and M.set_def(r[2])
+    local set = def and def.label or r[2]
+    if not r[2] then
+      chat.add("Gearshift: no set for " .. ws .. ".")
+    elseif changed == 0 then
+      chat.add(string.format("Gearshift: %s, the %s set already on.", ws, set))
+    else
+      chat.add(string.format("Gearshift: %s, the %s set on before it (%d piece%s).", ws, set, changed,
+        changed == 1 and "" or "s"))
+    end
+  end
   core.H.inject(act.packet)
   if main and not instant then wear(main, "single") end
   -- Held until the action ends (its finish or interruption below), at most its cast time and a margin.

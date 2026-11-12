@@ -23889,3 +23889,6 @@ All of it is the mod's Lua over the general API; the client gained nothing.
     replaces the held one. The WS set's look arrives during the weapon skill's hold; if the status set's comes before
     the hold ends, the WS look is never shown, otherwise it shows after the weapon skill. The gear itself is on at the
     server before the weapon skill runs (same datagram, ahead of it); the model is as retail draws it.
+- Ours (user, 2026-11-12: "have it print a line"): with the builder wearing sets, a chat line before each weapon
+  skill names the set put on and how many slots it changed ("already on" for none, "no set" when the job has none);
+  setting ws_line (Weapon Skill Line), on. 0.2.4.

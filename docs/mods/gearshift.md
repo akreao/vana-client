@@ -29,6 +29,9 @@ Gear Swapping and Set Builder settings switch it off whatever the window says.
   actions the set for your status goes on when it changes or after an action, so a piece you change by hand stays on
   until then. A usable piece you put on (one with charges: Warp Ring, Empress Band...) keeps its slot until you use
   it or take it off; then the status set comes back.
+- **Weapon Skill Line** (a setting, on): before each weapon skill a chat line names the set put on and how many
+  pieces changed. The model may show the set late or not at all (the game holds a look change during the weapon
+  skill), but the gear is on before the skill.
 - **Weapons:** only the pure mages (WHM, BLM, SMN, SCH, GEO) have weapons in their sets, outside the melee sets; every
   other job keeps what it holds (changing main, sub or range would lose TP). Ammo stays while a bow, gun or crossbow
   is worn or the ammo is thrown. A mage's elemental staff (up to level 75), an obi on its element's day or weather, and a gorget
