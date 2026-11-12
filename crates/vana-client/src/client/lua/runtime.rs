@@ -82,7 +82,6 @@ fn in_mod(src: &super::vm::Source, r: &Path) -> bool {
     let name = r.to_string_lossy().replace('\\', "/");
     match src {
         super::vm::Source::Dir(d) => super::vm::inside(d, &name).is_ok_and(|p| p.exists()),
-        super::vm::Source::Bundled(files) => files.iter().any(|f| f.0 == name || f.0.starts_with(&format!("{name}/"))),
     }
 }
 
@@ -169,21 +168,6 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
                         }
                         if !names.contains(&n) {
                             names.push(n);
-                        }
-                    }
-                }
-                if let super::vm::Source::Bundled(files) = &src {
-                    let prefix = rel(&path)?.to_string_lossy().replace('\\', "/");
-                    for (f, _) in files.iter() {
-                        let rest = if prefix.is_empty() { Some(*f) } else { f.strip_prefix(&format!("{prefix}/")) };
-                        if let Some(rest) = rest {
-                            let n = match rest.split_once('/') {
-                                Some((d, _)) => format!("{d}/"),
-                                None => rest.to_string(),
-                            };
-                            if !names.contains(&n) {
-                                names.push(n);
-                            }
                         }
                     }
                 }

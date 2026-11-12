@@ -579,18 +579,6 @@ fn changes(a: &Snap, b: &Snap) -> Vec<(&'static str, Vec<serde_json::Value>)> {
     out
 }
 
-/// Mods built into the client (assets/mods): our features on the mod API (docs/lua-mods.md 7.4). Each is (id,
-/// mod.toml, files).
-/// Our features on the mod API (docs/extras-as-mods.md): id, mod.toml, files.
-#[cfg(test)]
-macro_rules! bundled {
-    ($($id:literal $([$($file:literal),*])?),* $(,)?) => {
-        &[$(($id, include_str!(concat!("../../../assets/mods/", $id, "/mod.toml")), &[
-            ("init.lua", include_str!(concat!("../../../assets/mods/", $id, "/init.lua")))
-            $($(, ($file, include_str!(concat!("../../../assets/mods/", $id, "/", $file))))*)?
-        ])),*]
-    };
-}
 /// The built-in edge panels a mod's edge window may stand in for (ui.window's `panel`).
 pub(in crate::client) const EDGE_PANELS: [&str; 6] =
     ["regime", "timers_recasts", "timers_buffs", "timers_debuffs", "skillchains", "minimap"];
@@ -601,39 +589,6 @@ pub(in crate::client) const STAND_IN_PANELS: [&str; 2] = ["focus", "pending"];
 
 /// The timers' sections' panels, in section order.
 pub(in crate::client) const TIMERS_PANELS: [&str; 3] = ["timers_recasts", "timers_buffs", "timers_debuffs"];
-
-/// The mods kept in this repository (assets/mods), for the tests: the client loads only installed mods (the mods
-/// folder); these reach players from GitHub (Settings > Mods, Download Standard Mods).
-#[cfg(test)]
-const BUNDLED: &[(&str, &str, &[(&str, &str)])] = bundled!["dps", "auto-advance", "trust-speech", "find", "map-overlay", "clock", "target-info", "battle-text", "timestamps", "synth-amount", "regime", "timers" ["durations.lua", "engine.lua", "rows.lua", "data/actions.tsv", "data/status.tsv", "data/gear.tsv", "data/augments.tsv", "data/merits.tsv", "data/jobpoints.tsv"], "skillchain" ["sc.lua", "tracker.lua", "data/skillchains.txt"], "minimap", "suggestions" ["rules.lua", "facts.lua", "data/resistances.txt"], "xp-tracker", "cutscene-speed", "loot-rules", "client-tweaks", "equipment-grid", "inventory-hud", "chat-alerts", "player-bars", "effect-remover", "macro-books", "mount-picker", "log-files", "tell-inbox", "link-catcher", "trust-lineups", "sell-hand-in", "web-search", "camera-range", "chat-filter", "target-bar", "quick-commands", "countdowns", "party-tools", "key-commands", "event-rules", "music-picker", "typing-helpers", "zone-banner", "use-all", "hide-rules", "screen-notes", "calculator", "attendance", "screen-capture", "quick-play", "target-marker", "cast-grid", "target-debuffs", "skill-log", "swing-timer", "weather-watch", "targeting", "entity-styles", "visual-tweaks", "window-placement", "range-rings", "tracking", "pet-status", "job-gauges", "roll-helper", "automaton-sets", "loot-tracker", "monster-alerts", "gathering-log", "casket-solver",
-    "blue-sets" ["src/learn.lua"],
-    "warp-helper" ["src/places.lua"],
-    "dialogue-bubbles",
-    "look-changer" ["src/models.lua"],
-    "content-trackers" ["src/omen.lua", "src/delve.lua", "src/odyssey.lua", "src/sortie.lua", "src/reive.lua", "src/pops.lua", "src/empy.lua", "src/znm.lua"],
-    "auction-desk",
-    "npc-errands",
-    "completion-log",
-    "monster-notes",
-    "chat-windows",
-    "multibox",
-    "gear-stats",
-    "item-details" ["src/trials.lua"],
-    "objective-sets",
-    "focus-target",
-    "pending-actions",
-    "action-panel",
-    "map-notes",
-    "exit-markers",
-    "list-trimmer",
-    "bag-manager",
-    "gearshift" ["src/build/stats.lua", "src/build/sets.lua", "src/build/ws.lua", "src/build/blu.lua", "src/build/pick.lua", "src/build/run.lua", "src/build/bis.lua", "src/build/window.lua", "src/core.lua", "src/compat.lua", "src/names.lua", "src/gs.lua", "src/lac.lua", "src/windower.lua", "src/xml.lua", "src/acxml.lua", "src/modes.lua", "src/texts.lua", "src/regex.lua", "src/spellcast.lua"],
-    "hotbar" ["src/actions.lua", "src/bar.lua", "src/builder.lua", "src/chooser.lua", "src/data.lua", "src/ghost.lua", "src/jobs.lua", "src/keys.lua",
-        "src/manager.lua", "src/menu.lua", "src/palette.lua", "src/runner.lua", "src/stock.lua"],
-    "pad-bars" ["src/actions.lua", "src/runner.lua"],
-    // After gearshift: its hooks see an action first.
-    "steady-cast" ["src/hold.lua"],
-];
 
 /// Where mods keep their settings and storage: beside an FFXI_CONFIG copy for test runs.
 fn data_dir() -> PathBuf {
@@ -771,14 +726,6 @@ impl Host {
         self.load_with(w, m, dir.clone(), vm::Source::Dir(dir))
     }
 
-    /// A bundled mod (assets/mods) by id (tests).
-    #[cfg(test)]
-    fn load_bundled(&mut self, w: Option<&World>, id: &str) -> Result<(), String> {
-        let (_, text, files) = BUNDLED.iter().find(|b| b.0 == id).ok_or_else(|| format!("no bundled mod {id}"))?;
-        let m = manifest::parse(text, id).map_err(|e| format!("{e:#}"))?;
-        self.load_with(w, m, PathBuf::from("bundled").join(id), vm::Source::Bundled(files))
-    }
-
     fn load_with(
         &mut self,
         w: Option<&World>,
@@ -811,9 +758,7 @@ impl Host {
             .and_then(|v| v.as_array())
             .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
             .unwrap_or_default();
-        // A bundled mod is the client's code: it has what it asks for.
-        let bundled = matches!(src, vm::Source::Bundled(_));
-        let granted: Vec<String> = m.permissions.iter().filter(|p| bundled || given.contains(p)).cloned().collect();
+        let granted: Vec<String> = m.permissions.iter().filter(|p| given.contains(p)).cloned().collect();
         let missing: Vec<String> = m.permissions.iter().filter(|p| !granted.contains(p)).cloned().collect();
         let vm = Vm::new(m, dir, src).map_err(|e| format!("{e:#}"))?;
         vm.st.borrow_mut().char_file = Self::char_file(w);
@@ -984,14 +929,8 @@ impl Host {
     fn reload(&mut self, w: Option<&World>, k: usize) -> Result<String, String> {
         let dir = self.vms[k].dir.clone();
         let id = self.vms[k].manifest.id.clone();
-        #[cfg(test)]
-        let bundled = matches!(self.vms[k].src, vm::Source::Bundled(_));
         self.unload(w, k);
-        #[cfg(test)]
-        let r = if bundled { self.load_bundled(w, &id) } else { self.load(w, dir) };
-        #[cfg(not(test))]
-        let r = self.load(w, dir);
-        r.map_err(|e| format!("{id}: {e}"))?;
+        self.load(w, dir).map_err(|e| format!("{id}: {e}"))?;
         let vm = self.vms.pop().expect("just loaded");
         self.vms.insert(k.min(self.vms.len()), vm);
         Ok(id)
@@ -2214,7 +2153,7 @@ fn help_lines(list: &[CmdInfo], cmd: &str, args: &[&str], out: &mut Vec<(String,
         out.push((format!("{cmd} <mod or command>: its commands. Mods: {names}."), INFO));
         return;
     }
-    // A mod (by id or name) first: a mod with a command of the same name (Gearshift's //gearshift) lists them all.
+    // A mod (by id or name) first: a mod with a command of the same name lists them all.
     let of: Vec<&CmdInfo> =
         list.iter().filter(|c| !c.id.is_empty() && (c.owner.to_ascii_lowercase() == want || c.id == want)).collect();
     if of.is_empty()
@@ -2295,16 +2234,193 @@ fn install_stubs(root: PathBuf) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The repository's mods (assets/mods), each a folder.
+    fn repo_mods() -> Vec<PathBuf> {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/mods");
+        let mut dirs: Vec<PathBuf> = std::fs::read_dir(&root)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.join("mod.toml").is_file())
+            .collect();
+        dirs.sort();
+        dirs
+    }
+
+    /// A repository mod's Lua files, its tests left out: (path in its folder, text).
+    fn repo_mod_lua(dir: &Path) -> Vec<(String, String)> {
+        fn walk(root: &Path, d: &Path, out: &mut Vec<(String, String)>) {
+            let mut paths: Vec<PathBuf> = std::fs::read_dir(d).unwrap().flatten().map(|e| e.path()).collect();
+            paths.sort();
+            for p in paths {
+                if p.is_dir() {
+                    if !(d == root && p.file_name().is_some_and(|n| n == "tests")) {
+                        walk(root, &p, out);
+                    }
+                } else if p.extension().is_some_and(|x| x == "lua") {
+                    let rel = p.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/");
+                    out.push((rel, std::fs::read_to_string(&p).unwrap()));
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(dir, dir, &mut out);
+        out
+    }
+
+    /// A mod of the repository loaded from its folder into a fresh VM, the API installed, as the client loads it.
+    fn repo_mod_vm(dir: &Path) -> Vm {
+        let manifest = manifest::read(dir).unwrap_or_else(|e| panic!("{}: {e:#}", dir.display()));
+        let host = Host::default();
+        let vm = Vm::new(manifest, dir.to_path_buf(), vm::Source::Dir(dir.to_path_buf())).unwrap();
+        vm.lua.set_app_data(host.info.clone());
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        install_test_api(&vm.lua, dir).unwrap();
+        vm
+    }
+
+    /// What a mod's tests get beyond the mod API: the TEST table. Nothing in it names a mod.
+    fn install_test_api(lua: &mlua::Lua, dir: &Path) -> mlua::Result<()> {
+        let t = lua.create_table()?;
+        // source(path): a file of the mod's folder as text, nil when it has none.
+        let d = dir.to_path_buf();
+        t.set(
+            "source",
+            lua.create_function(move |_, rel: String| {
+                Ok(vm::inside(&d, &rel).ok().and_then(|p| std::fs::read_to_string(p).ok()))
+            })?,
+        )?;
+        // list(path): the file names in a folder of the mod's, sorted.
+        let d = dir.to_path_buf();
+        t.set(
+            "list",
+            lua.create_function(move |_, rel: String| {
+                let p = vm::inside(&d, &rel).map_err(mlua::Error::external)?;
+                let mut names: Vec<String> = std::fs::read_dir(p)
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .filter(|e| e.path().is_file())
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect();
+                names.sort();
+                Ok(names)
+            })?,
+        )?;
+        // grant(permission): as the player allowing it.
+        t.set(
+            "grant",
+            lua.create_function(|lua, p: String| {
+                api::state(lua).borrow_mut().granted.push(p);
+                Ok(())
+            })?,
+        )?;
+        // window(id): one of the mod's windows as the client holds it ({open, hud, focus, rows: its first list's
+        // cells}), nil when it has none.
+        t.set(
+            "window",
+            lua.create_function(|lua, id: String| {
+                let st = api::state(lua);
+                let st = st.borrow();
+                let Some(w) = st.windows.iter().find(|w| w.id == id) else { return Ok(None) };
+                let out = lua.create_table()?;
+                out.set("open", w.open)?;
+                out.set("hud", w.hud)?;
+                out.set("focus", w.focus)?;
+                let rows = lua.create_table()?;
+                if let Some(list) = w.elems.iter().find_map(|e| match e {
+                    window::Elem::List { rows, .. } => Some(rows),
+                    _ => None,
+                }) {
+                    for r in list {
+                        rows.push(r.cells.clone())?;
+                    }
+                }
+                out.set("rows", rows)?;
+                Ok(Some(out))
+            })?,
+        )?;
+        // zone_text(zone): a zone's dialogue entries by id (raw bytes) and their count; nil without the game's files.
+        t.set(
+            "zone_text",
+            lua.create_function(|lua, zone: u16| {
+                let cfg = crate::config::Config::load();
+                let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return Ok((None, None)) };
+                let Ok(d) = crate::dat::dialog::Dialog::load(&index, zone) else { return Ok((None, None)) };
+                let out = lua.create_table()?;
+                for id in 0..d.len() as u32 {
+                    if let Some(b) = d.raw(id) {
+                        out.set(id, lua.create_string(&b)?)?;
+                    }
+                }
+                Ok((Some(out), Some(d.len())))
+            })?,
+        )?;
+        // game_items(): the game's armour and weapon records ({id, name, slots, description}); nil without its files.
+        t.set(
+            "game_items",
+            lua.create_function(|lua, ()| {
+                let cfg = crate::config::Config::load();
+                let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return Ok(mlua::Value::Nil) };
+                let Ok(items) = crate::dat::items::Items::load(&index, crate::dat::items::Lang::En) else {
+                    return Ok(mlua::Value::Nil);
+                };
+                let out = lua.create_table()?;
+                for id in 0x2800u32..0x7000 {
+                    let Some(it) = items.item(id).filter(|it| it.slots != 0 && !it.name.is_empty()) else { continue };
+                    let rec = lua.create_table()?;
+                    rec.set("id", id)?;
+                    rec.set("name", it.name.as_str())?;
+                    rec.set("slots", it.slots)?;
+                    rec.set("description", it.description.as_str())?;
+                    out.push(rec)?;
+                }
+                Ok(mlua::Value::Table(out))
+            })?,
+        )?;
+        lua.globals().set("TEST", t)
+    }
+
+    /// Every mod's tests: each assets/mods/<id>/tests/*.lua in a fresh VM of its mod. VANA_MOD_TEST=<id> or
+    /// <id>/<file stem> runs only those; every failure is listed.
+    #[test]
+    fn mod_tests() {
+        let only = std::env::var("VANA_MOD_TEST").ok();
+        let (mut ran, mut failed) = (0, Vec::new());
+        for dir in repo_mods() {
+            let id = dir.file_name().unwrap().to_string_lossy().into_owned();
+            let Ok(rd) = std::fs::read_dir(dir.join("tests")) else { continue };
+            let mut files: Vec<PathBuf> =
+                rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "lua")).collect();
+            files.sort();
+            for file in files {
+                let name = format!("{id}/{}", file.file_stem().unwrap().to_string_lossy());
+                if only.as_deref().is_some_and(|o| o != id && o != name) {
+                    continue;
+                }
+                ran += 1;
+                let code = std::fs::read_to_string(&file).unwrap();
+                let vm = repo_mod_vm(&dir);
+                if let Err(e) = vm.lua.load(code).set_name(format!("@{name}.lua")).exec() {
+                    failed.push(format!("{name}: {e}"));
+                }
+            }
+        }
+        assert!(failed.is_empty(), "{} of {ran} mod tests failed:\n{}", failed.len(), failed.join("\n\n"));
+        assert!(ran > 0 || only.is_some(), "no mod tests found");
+    }
     use mlua::{Table, Value};
 
-    /// Every bundled mod declares (`[commands.<name>]`, with help and usage) exactly the commands its code registers,
-    /// so the chat line's hint, //mods and the Mods page show them all.
+    /// Every repository mod declares (`[commands.<name>]`, with help and usage) exactly the commands its code
+    /// registers, so the chat line's hint, //mods and the Mods page show them all.
     #[test]
-    fn bundled_commands_declared() {
-        for (id, text, files) in BUNDLED {
-            let m = manifest::parse(text, id).unwrap();
+    fn repo_commands_declared() {
+        for dir in repo_mods() {
+            let m = manifest::read(&dir).unwrap();
+            let id = &m.id;
             let mut registered: Vec<String> = Vec::new();
-            for (_, src) in files.iter() {
+            for (_, src) in repo_mod_lua(&dir) {
                 for part in src.split("commands.register(").skip(1) {
                     let part = part.trim_start();
                     let q = part.chars().next().filter(|c| *c == '"' || *c == '\'');
@@ -2335,9 +2451,9 @@ mod tests {
             forms: forms.iter().map(|(a, h)| (a.to_string(), h.to_string())).collect(),
         };
         let list = vec![
-            info("ahbuy", "auction-desk", "Auction Desk", &[("<item> <price> [stack]", "Bids.")]),
-            info("ahsell", "auction-desk", "Auction Desk", &[("<item> <price> [stack]", "Sells.")]),
-            info("hb", "hotbar", "Hotbars", &[("", "Opens the manager."), ("show", "Shows the bars.")]),
+            info("tdbuy", "trade-desk", "Trade Desk", &[("<item> <price> [stack]", "Bids.")]),
+            info("tdsell", "trade-desk", "Trade Desk", &[("<item> <price> [stack]", "Sells.")]),
+            info("sb", "sample", "Samples", &[("", "Opens the window."), ("show", "Shows the bars.")]),
             info("lua", "", "Mods", &[("list", "The mods.")]),
         ];
         let text = |args: &[&str]| {
@@ -2345,26 +2461,26 @@ mod tests {
             help_lines(&list, "//mods", args, &mut out);
             out.into_iter().map(|l| l.0).collect::<Vec<_>>()
         };
-        assert_eq!(text(&[]), ["//mods <mod or command>: its commands. Mods: auction-desk, hotbar."]);
+        assert_eq!(text(&[]), ["//mods <mod or command>: its commands. Mods: sample, trade-desk."]);
         assert_eq!(
-            text(&["hb"]),
-            ["//hb (Hotbars): hb help", "  //hb - Opens the manager.", "  //hb show - Shows the bars."]
+            text(&["sb"]),
+            ["//sb (Samples): sb help", "  //sb - Opens the window.", "  //sb show - Shows the bars."]
         );
-        assert_eq!(text(&["auction", "desk"]).len(), 3);
-        assert_eq!(text(&["hotbar"]).len(), 3);
+        assert_eq!(text(&["trade", "desk"]).len(), 3);
+        assert_eq!(text(&["sample"]).len(), 3);
         // A mod with a command of the same name: the mod's commands, all of them.
-        let gear = vec![
-            info("gearshift", "gearshift", "Gearshift", &[("", "Shows the file.")]),
-            info("gs", "gearshift", "Gearshift", &[("<command>", "GearSwap's.")]),
+        let same = vec![
+            info("sample", "sample", "Sample", &[("", "Shows the file.")]),
+            info("sa", "sample", "Sample", &[("<command>", "Runs one.")]),
         ];
         let mut out = Vec::new();
-        help_lines(&gear, "//mods", &["gearshift"], &mut out);
+        help_lines(&same, "//mods", &["sample"], &mut out);
         assert_eq!(
             out.into_iter().map(|l| l.0).collect::<Vec<_>>(),
-            ["Gearshift:", "  //gearshift - Shows the file.", "  //gs <command> - GearSwap's."]
+            ["Sample:", "  //sample - Shows the file.", "  //sa <command> - Runs one."]
         );
-        assert_eq!(nearest(&list, "ahbyu").as_deref(), Some("ahbuy"));
-        assert_eq!(nearest(&list, "ahs").as_deref(), Some("ahsell"));
+        assert_eq!(nearest(&list, "tdbyu").as_deref(), Some("tdbuy"));
+        assert_eq!(nearest(&list, "tds").as_deref(), Some("tdsell"));
         assert_eq!(nearest(&list, "zzzz"), None);
         // A declaration's forms: the main one first (when given, or when alone), a form's help else the command's.
         let c =
@@ -2814,2821 +2930,21 @@ mod tests {
         );
     }
 
-    /// The bundled Battle Text's short lines: the common forms; an unknown one stays as printed; names in their colours.
+    /// No two repository mods register the same // command (the first loaded would take it).
     #[test]
-    fn battle_text_short_lines() {
-        let host = Host::default();
-        let vm =
-            Vm::new(bundled_manifest("battle-text").unwrap(), PathBuf::from("."), vm::Source::Dir(PathBuf::from(".")))
-                .unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        let src = BUNDLED
-            .iter()
-            .find(|b| b.0 == "battle-text")
-            .and_then(|b| b.2.iter().find(|f| f.0 == "init.lua"))
-            .unwrap()
-            .1;
-        let module: mlua::Table = vm.lua.load(src).eval().unwrap();
-        let shorten: mlua::Function = module.get("shorten").unwrap();
-        let who = |name: &str, pc: bool, colour: u8| {
-            let t = vm.lua.create_table().unwrap();
-            t.set("name", name).unwrap();
-            t.set("pc", pc).unwrap();
-            t.set("colour", colour).unwrap();
-            t
-        };
-        let (me, rabbit) = (who("Lnxcsfix", true, 0), who("Wild Rabbit", false, 0));
-        let s = |l: &[&str], a: &mlua::Table, t: &mlua::Table| {
-            shorten.call::<Option<String>>((l.to_vec(), a.clone(), t.clone())).unwrap()
-        };
-        assert_eq!(
-            s(&["Lnxcsfix uses Fast Blade.", "The Wild Rabbit takes 123 points of damage."], &me, &rabbit).as_deref(),
-            Some("Lnxcsfix [Fast Blade] → Wild Rabbit: 123")
-        );
-        assert_eq!(
-            s(&["Lnxcsfix hits the Wild Rabbit for 18 points of damage."], &me, &rabbit).as_deref(),
-            Some("Lnxcsfix → Wild Rabbit: 18")
-        );
-        assert_eq!(
-            s(&["Lnxcsfix scores a critical hit!", "The Wild Rabbit takes 31 points of damage."], &me, &rabbit)
-                .as_deref(),
-            Some("Lnxcsfix → Wild Rabbit: 31!")
-        );
-        assert_eq!(
-            s(&["Lnxcsfix misses the Wild Rabbit."], &me, &rabbit).as_deref(),
-            Some("Lnxcsfix → Wild Rabbit: miss")
-        );
-        assert_eq!(
-            s(&["Lnxcsfix casts Dia.", "The Wild Rabbit gains the effect of dia."], &me, &rabbit).as_deref(),
-            Some("Lnxcsfix [Dia] → Wild Rabbit: +Dia")
-        );
-        assert_eq!(
-            s(&["Lnxcsfix casts Fire.", "Magic Burst! The Wild Rabbit takes 80 points of damage."], &me, &rabbit)
-                .as_deref(),
-            Some("Lnxcsfix [Fire] → Wild Rabbit: 80 (Magic Burst)")
-        );
-        assert_eq!(
-            s(&["The Wild Rabbit takes 48 points of damage."], &me, &rabbit).as_deref(),
-            Some("Wild Rabbit: 48")
-        );
-        assert_eq!(s(&["Lnxcsfix defeats the Wild Rabbit."], &me, &rabbit), None);
-        assert_eq!(
-            s(&["Lnxcsfix uses Provoke on the Wild Rabbit."], &me, &rabbit).as_deref(),
-            Some("Lnxcsfix [Provoke] → Wild Rabbit")
-        );
-        assert_eq!(
-            s(&["Lnxcsfix casts Cure.", "Lnxcsfix recovers 45 HP."], &me, &me).as_deref(),
-            Some("Lnxcsfix [Cure] → Lnxcsfix: +45 HP")
-        );
-        let red = who("Wild Rabbit", false, 8);
-        let c = s(&["Lnxcsfix misses the Wild Rabbit."], &me, &red).unwrap();
-        assert_eq!(crate::dat::font::strip_codes(&c), "Lnxcsfix → Wild Rabbit: miss");
-        assert!(c.contains(crate::dat::font::colour_code(8)));
-    }
-
-    /// The bundled Training Regime's page labels, credit attribution, and its block on the real zone 100 dialogue.
-    #[test]
-    fn regime_labels_and_credits() {
-        let host = Host::default();
-        let vm = Vm::new(bundled_manifest("regime").unwrap(), PathBuf::from("."), vm::Source::Dir(PathBuf::from(".")))
-            .unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        vm.st.borrow_mut().granted.push("packets.read".into());
-        let src =
-            BUNDLED.iter().find(|b| b.0 == "regime").and_then(|b| b.2.iter().find(|f| f.0 == "init.lua")).unwrap().1;
-        let module: mlua::Table = vm.lua.load(src).eval().unwrap();
-        let lua = &vm.lua;
-        let label = |b: &[u8]| {
-            module.get::<mlua::Function>("label").unwrap().call::<String>(lua.create_string(b).unwrap()).unwrap()
-        };
-        assert_eq!(label(b"\x0a\x00 \x7f\x92\x00[Siege Bat/Siege Bats]."), "Siege Bat");
-        assert_eq!(label(b"\x0a\x01 member\x7f\x92\x01[/s] of the worm family."), "Worm family");
-        assert_eq!(label(b"\x0a\x02 undead-type creature\x7f\x92\x02[/s]."), "Undead-type");
-        // Credits: by counts, then names; a family slot takes the monster no name fits; nothing fits a full slot.
-        let attribute = |slots: &[(&str, u8, u8, bool)], k: u8, n: u8, name: Option<&str>| {
-            let t = lua.create_table().unwrap();
-            for (i, (l, needed, killed, known)) in slots.iter().enumerate() {
-                let s = lua.create_table().unwrap();
-                s.set("label", *l).unwrap();
-                s.set("needed", *needed).unwrap();
-                s.set("killed", *killed).unwrap();
-                s.set("known", *known).unwrap();
-                t.set(i + 1, s).unwrap();
-            }
-            module.get::<mlua::Function>("attribute").unwrap().call::<Option<usize>>((t, k, n, name)).unwrap()
-        };
-        let s = [("Siege Bat", 4, 2, true), ("Borer Beetle", 2, 0, true)];
-        assert_eq!((attribute(&s, 3, 4, None), attribute(&s, 1, 2, None)), (Some(1), Some(2)));
-        assert_eq!(
-            attribute(&[("Goblin family", 4, 1, true), ("Gigas family", 4, 1, true)], 2, 4, Some("Goblin Mugger")),
-            Some(1)
-        );
-        let s = [("Crab family", 6, 2, true), ("Hill Lizard", 6, 2, true)];
-        assert_eq!(
-            (attribute(&s, 3, 6, Some("Snipper")), attribute(&s, 3, 6, Some("Hill Lizard"))),
-            (Some(1), Some(2))
-        );
-        // Counts unknown (a book's page, no kills yet): the name decides.
-        assert_eq!(
-            attribute(&[("Siege Bat", 0, 0, false), ("Borer Beetle", 0, 0, false)], 3, 4, Some("Borer Beetle")),
-            Some(2)
-        );
-        let matches = |a: &str, b: &str| module.get::<mlua::Function>("matches").unwrap().call::<bool>((a, b)).unwrap();
-        assert!(
-            matches("Bat family", "Seeker Bats")
-                && matches("Siege Bat", "siege bat")
-                && !matches("Siege Bat", "Siege Bats")
-        );
-        // The real block of zone 100, through stand-ins for res.zone_text / zone_text_find.
-        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
-        let Ok(d) = crate::dat::dialog::Dialog::load(&index, 100) else { return };
-        let d = std::sync::Arc::new(d);
-        let res: mlua::Table = lua.globals().get("res").unwrap();
-        let d1 = d.clone();
-        res.set(
-            "zone_text",
-            lua.create_function(move |lua, (_z, id): (u16, u32)| d1.raw(id).map(|b| lua.create_string(&b)).transpose())
-                .unwrap(),
-        )
-        .unwrap();
-        let d2 = d.clone();
-        res.set(
-            "zone_text_find",
-            lua.create_function(move |_, (_z, p): (u16, mlua::LuaString)| {
-                Ok((0..d2.len() as u32).find(|&i| d2.raw(i).is_some_and(|r| r.starts_with(&p.as_bytes()))))
-            })
-            .unwrap(),
-        )
-        .unwrap();
-        let r: u32 = res
-            .get::<mlua::Function>("zone_text_find")
-            .unwrap()
-            .call((100, "New training regime registered!"))
-            .unwrap();
-        let page = |id: u32| {
-            module.get::<mlua::Function>("page").unwrap().call::<(Vec<String>, String)>((100, r, id)).unwrap()
-        };
-        let (l, area) = page(2);
-        assert_eq!(l, ["Forest Hare"]);
-        assert!(area.contains("Ronfaure"), "{area}");
-        assert_eq!(
-            page(704),
-            (vec!["Siege Bat".to_string(), "Borer Beetle".to_string()], "Garlaige Citadel".to_string())
-        );
-    }
-
-    /// Gearshift with a fake game: a GearSwap file and a LuAshitacast profile each wear their precast gear before a
-    /// Cure's action packet and their midcast gear after it, in one batch; the client's packet is dropped.
-    #[test]
-    fn gearshift_swaps_around_a_cast() {
-        let host = Host::default();
-        let files = BUNDLED.iter().find(|b| b.0 == "gearshift").unwrap().2;
-        let vm =
-            Vm::new(bundled_manifest("gearshift").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        let script = r#"
-            local sent, said = {}, {}
-            local ITEMS = {
-              [1001] = { name = "Fast Hat", log_name = "Fast Hat", slots = 1 << 4, jobs = 1 << 3, level = 1 },
-              [1002] = { name = "Cast Coat", log_name = "Cast Coat", slots = 1 << 5, jobs = 1 << 3, level = 1 },
-              [1003] = { name = "Heal Gloves", log_name = "Healing Gloves", slots = 1 << 6, jobs = 1 << 3, level = 1 },
-              [1004] = { name = "Idle Hat", log_name = "Idle Hat", slots = 1 << 4, jobs = 1 << 3, level = 1 },
-            }
-            local FILES = {}
-            game = {
-              player = function() return { name = "Tester", id = 100, index = 1, main_job = 3, main_level = 75, sub_job = 4,
-                sub_level = 37, hp = 900, mp = 500, tp = 0, hpp = 100, mpp = 100, hp_max = 900, mp_max = 500, status = 0, zone = 230 } end,
-              equipment = function() return {} end,
-              items = function(bag) if bag ~= 0 then return {} end
-                return { { bag = 0, slot = 1, id = 1001, count = 1, locked = 0 }, { bag = 0, slot = 2, id = 1002, count = 1, locked = 0 },
-                  { bag = 0, slot = 3, id = 1003, count = 1, locked = 0 }, { bag = 0, slot = 4, id = 1004, count = 1, locked = 0 } } end,
-              buffs = function() return {} end,
-              target = function() return nil end,
-              entity = function(id) return { id = id, index = 5, name = "Tester", kind = "player", me = true, hpp = 100, distance = 0, status = 0 } end,
-              entity_by_tag = function() return nil end,
-              time = function() return { weekday = 0, moon_phase = 0, moon = 50, hour = 12, minute = 0, day = 1 } end,
-              weather = function() return 0 end,
-              info = function() return { mog_house = false, zone = 230 } end,
-              party = function() return {} end,
-              find_items = function() return {} end,
-              entities = function() return {} end,
-            }
-            res = setmetatable({
-              item = function(id) return ITEMS[id] end,
-              spell = function(id) if id == 1 then return { name = "Cure", kind = 1, skill = 33, element = 6, mp = 8, cast_time = 2, recast = 5, targets = 63 } end end,
-              ability = function() return nil end,
-              job = function(id) return ({ "WAR", "MNK", "WHM", "BLM" })[id] end,
-              status = function() return nil end,
-              zone = function() return "Somewhere" end,
-              day = function() return "Firesday" end, moon = function() return "Full Moon" end, weather = function() return "Clear" end,
-            }, { __index = function() return function() return nil end end })
-            packets.inject_out = function(d) sent[#sent + 1] = d end
-            fs = { list = function(dir) local t = {} for k in pairs(FILES) do local n = k:match("^" .. dir:gsub("%p", "%%%0") .. "([^/]+)$") if n then t[#t + 1] = n end end return t end,
-              read = function(p) return FILES[p] end, exists = function(p) return FILES[p] ~= nil end }
-            chat = { add = function(t) said[#said + 1] = t end }
-            local function cast_packet()
-              return packets.build(0x01A, string.pack("<I4I2I2I4fff", 100, 1, 3, 1, 0, 0, 0))
-            end
-            local function ids()
-              local t = {}
-              for _, d in ipairs(sent) do t[#t + 1] = string.format("%03X", string.unpack("<I2", d) & 0x1ff) end
-              return table.concat(t, " ")
-            end
-            local core = require("src.core")
-
-            FILES["gearswap/Tester_WHM.lua"] = [[
-              function get_sets()
-                sets.precast = { FC = { head = "Fast Hat", body = "Cast Coat" } }
-                sets.midcast = { Cure = { hands = "Healing Gloves" } }
-              end
-              function precast(spell) if spell.action_type == "Magic" then equip(sets.precast.FC) end end
-              function midcast(spell) if spell.english == "Cure" then equip(sets.midcast.Cure) end end
-            ]]
-            local gs = require("src.gs")
-            assert(gs.find() == "gearswap/Tester_WHM.lua", tostring(gs.find()))
-            assert(gs.load(gs.find()), table.concat(said, " | "))
-            gs.typed('/ma "Cure" <me>')
-            local act = core.parse_action({ id = 0x01A, data = cast_packet() })
-            assert(gs.action(act) == false)
-            local gs_order = ids()
-            assert(sent[#sent]:sub(5, 8) == string.pack("BBBB", 3, 6, 0, 0), "the gloves after the action")
-            gs.unload()
-
-            sent = {}
-            core.sent = {}
-            FILES["ashitacast/Tester_100/WHM.lua"] = [[
-              local profile = {}
-              profile.Sets = { Precast = { Head = "Fast Hat", Body = "Cast Coat" }, Cure = { Hands = "Heal Gloves" } }
-              profile.HandlePrecast = function() gFunc.EquipSet("precast") end
-              profile.HandleMidcast = function() if gData.GetAction().Name == "Cure" then gFunc.EquipSet(profile.Sets.Cure) end end
-              return profile
-            ]]
-            local lac = require("src.lac")
-            assert(lac.find() == "ashitacast/Tester_100/WHM.lua", tostring(lac.find()))
-            assert(lac.load(lac.find()), table.concat(said, " | "))
-            act = core.parse_action({ id = 0x01A, data = cast_packet() })
-            assert(lac.action(act) == false)
-            local lac_order = ids()
-            lac.unload()
-
-            sent = {}
-            core.sent = {}
-            FILES["ashitacast/Tester_WHM.xml"] = [[<?xml version="1.0"?>
-              <ashitacast>
-                <sets>
-                  <set name="Base"><head>Idle Hat</head></set>
-                  <set name="FC" baseset="Base"><head>Fast Hat</head><body>Cast Coat</body></set>
-                </sets>
-                <precast><equip set="FC"/></precast>
-                <midcast>
-                  <if ad_name="Cure*" p_mainjob="WHM"><equip><hands>Heal Gloves</hands></equip></if>
-                  <else><echo>not a cure</echo></else>
-                </midcast>
-              </ashitacast>]]
-            local ac = require("src.acxml")
-            assert(ac.find() == "ashitacast/Tester_WHM.xml", tostring(ac.find()))
-            assert(ac.load(ac.find()), table.concat(said, " | "))
-            act = core.parse_action({ id = 0x01A, data = cast_packet() })
-            assert(ac.action(act) == false)
-            return gs_order, lac_order, ids()
-        "#;
-        let (gs, lac, xml): (String, String, String) = vm.lua.load(script).eval().unwrap_or_else(|e| panic!("{e}"));
-        // GearSwap: two pieces go as single equips, then the action, then the midcast piece.
-        assert_eq!(gs, "050 050 01A 050");
-        // LuAshitacast: its precast is one equipset, its midcast single equips.
-        assert_eq!(lac, "051 01A 050");
-        // Ashitacast XML: precast as single equips, the action, midcast as one equipset.
-        assert_eq!(xml, "050 050 01A 051");
-    }
-
-    /// Gearshift's set builder: items read from their descriptions, each set picked from our bags for our level, the
-    /// Fast Cast piece before a cast and the Cure piece after it; below an item's level the next best is taken, and
-    /// "worth getting" offers a piece wearable at our level that we do not hold.
-    #[test]
-    fn gearshift_builder_sets() {
-        let files = BUNDLED.iter().find(|b| b.0 == "gearshift").unwrap().2;
-        let host = Host::default();
-        let vm =
-            Vm::new(bundled_manifest("gearshift").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        let script = r#"
-            local sent = {}
-            local HEAD, RING = 1 << 4, (1 << 13) | (1 << 14)
-            local WHM, ALL = 1 << 3, 0x1fe
-            local ITEMS = {
-              [1001] = { name = "Fast Hat", slots = HEAD, jobs = WHM, races = ALL, level = 1, description = 'DEF:5 "Fast Cast"+5%' },
-              [1002] = { name = "Healer Hat", slots = HEAD, jobs = WHM, races = ALL, level = 40, description = 'DEF:6 MND+3\n"Cure" potency +10%' },
-              [1003] = { name = "Plain Hat", slots = HEAD, jobs = WHM, races = ALL, level = 1, description = "DEF:10" },
-              [1004] = { name = "Mender Hat", slots = HEAD, jobs = WHM, races = ALL, level = 10, description = 'DEF:4 MND+2\n"Cure" potency +5%' },
-              [1005] = { name = "Shop Hat", slots = HEAD, jobs = WHM, races = ALL, level = 20, description = 'DEF:4 MND+3\n"Cure" potency +8%' },
-              [1006] = { name = "Mind Ring", slots = RING, jobs = WHM, races = ALL, level = 1, description = "MND+4" },
-              [1007] = { name = "Korin Obi", slots = 1 << 10, jobs = WHM, races = ALL, level = 71, description = "DEF:7" },
-            }
-            local BAG = { { slot = 1, id = 1001 }, { slot = 2, id = 1002 }, { slot = 3, id = 1003 }, { slot = 4, id = 1004 },
-              { slot = 5, id = 1006 }, { slot = 6, id = 1007 } }
-            local level = 75
-            game = {
-              player = function() return { name = "Tester", id = 100, index = 1, main_job = 3, main_level = level, sub_job = 0,
-                status = 0, pos = { x = 0, y = 0, z = 0 } } end,
-              entity = function() return { race = 1 } end,
-              entities = function() return {} end,
-              equipment = function() return {} end,
-              items = function(bag)
-                if bag ~= 0 then return {} end
-                local t = {}
-                for _, b in ipairs(BAG) do t[#t + 1] = { bag = 0, slot = b.slot, id = b.id, count = 1, locked = 0 } end
-                return t
-              end,
-              time = function() return { weekday = WEEKDAY } end, weather = function() return 0 end, buffs = function() return {} end,
-            }
-            res = setmetatable({
-              item = function(id) return ITEMS[id] end,
-              spell = function(id) if id == 1 then return { name = "Cure", kind = 1, skill = 33, element = 6 } end end,
-              job = function(id) return ({ "WAR", "MNK", "WHM" })[id] end,
-            }, { __index = function() return function() return nil end end })
-            storage = { character = { builder = { jobs = {}, modes = {} } } }
-            WEEKDAY = 6
-            settings = { get = function(k) if k == "cap" then return "Auto" end return true end }
-            packets.inject_out = function(d) sent[#sent + 1] = d end
-
-            local run = require("src.build.run")
-            local core = require("src.core")
-            run.RANGES = { { 1001, 1010 } }
-            local function settle()
-              run.refresh()
-              for _ = 1, 80 do run.frame() end
-            end
-            settle()
-            local nuke = run.state.built.Cure
-            assert(nuke, "the Cure set is built")
-            -- A bag change rebuilds every set; the one built stays in use until built again, and the one an action
-            -- asks for goes first.
-            run.rebuild()
-            assert(run.state.built.Cure == nuke, "the Cure set dropped by a rebuild")
-            run.pieces("Cure")
-            assert(run.state.queue[1] == "Cure", "the asked-for set not first")
-            for _ = 1, 80 do run.frame() end
-            assert(run.state.built.Cure ~= nuke and run.state.fresh.Cure, "the Cure set not built again")
-
-            local function cast()
-              return core.parse_action({ id = 0x01A, data = packets.build(0x01A, string.pack("<I4I2I2I4fff", 100, 1, 3, 1, 0, 0, 0)) })
-            end
-            -- The window's switch off: nothing is worn.
-            assert(run.action(cast()) == nil and #sent == 0, "worn with the switch off")
-            run.set_active(true)
-            -- The cast on Lightsday: Fast Hat (bag index 1) before it, Healer Hat (index 2) after it, and the light obi
-            -- (index 6) for Cure on the light day.
-            assert(run.action(cast()) == false)
-            local order = {}
-            for _, d in ipairs(sent) do
-              local id = string.unpack("<I2", d) & 0x1ff
-              order[#order + 1] = string.format("%03X", id) .. (id == 0x050 and (":" .. string.unpack("B", d, 5)) or "")
-            end
-
-            -- Earthsday: no obi for Cure (the day is earth, not light).
-            WEEKDAY = 1
-            local before = #sent
-            core.sent = {}
-            run.action(cast())
-            local obi = false
-            for i = before + 1, #sent do
-              if (string.unpack("<I2", sent[i]) & 0x1ff) == 0x050 and string.unpack("B", sent[i], 5) == 6 then obi = true end
-            end
-            assert(not obi, "the light obi worn on Earthsday")
-
-            -- A weapon skill: one chat line naming its set (or saying there is none).
-            local said, add = {}, chat.add
-            chat.add = function(t) said[#said + 1] = t end
-            run.action(core.parse_action({ id = 0x01A, data = packets.build(0x01A, string.pack("<I4I2I2I4fff", 100, 1, 7, 1, 0, 0, 0)) }))
-            chat.add = add
-            assert(#said == 1 and said[1]:find("^Gearshift: "), tostring(said[1]))
-
-            -- At level 30 the Healer Hat (40) is out: the Mender Hat, the most of the reference we hold; the Shop Hat
-            -- (20, not held) is worth getting.
-            level = 30
-            core.sent = {}
-            settle()
-            local cure = run.state.built.Cure.slots[4]
-            local low = ITEMS[cure.pick.id].name .. " " .. cure.how .. " / " .. (cure.worth and ITEMS[cure.worth.id].name or "none")
-            return table.concat(order, " "), low
-        "#;
-        let (order, low): (String, String) = vm.lua.load(script).eval().unwrap_or_else(|e| panic!("{e}"));
-        // The midcast in slot order: the Cure hat, the light obi on Lightsday (waist), the MND ring.
-        assert_eq!(order, "050:1 01A 050:2 050:6 050:5");
-        assert_eq!(low, "Mender Hat bis / Shop Hat");
-    }
-
-    /// Gearshift's XML front ends. Ashitacast: substitution, basic and advanced rules with the original's quirks,
-    /// setvar arithmetic, augment paths; a profile's commands, default and sets; a v3 file through the import rules.
-    /// Spellcast: wildcards, regex, variables, Advanced; a file's command lines, phases and timers, a trigger, an
-    /// include and the idle autoset. The regex engine alone.
-    #[test]
-    fn gearshift_ashitacast_rules() {
-        let files = BUNDLED.iter().find(|b| b.0 == "gearshift").unwrap().2;
-        for (script, want) in [
-            (ACXML_EVAL, "acxml eval ok"),
-            (ACXML_FLOW, "acxml flow ok"),
-            (SPELLCAST, "spellcast ok"),
-            (REGEX, "regex ok"),
-        ] {
-            let host = Host::default();
-            let vm = Vm::new(bundled_manifest("gearshift").unwrap(), PathBuf::from("."), vm::Source::Bundled(files))
-                .unwrap();
-            vm.lua.set_app_data(host.info.clone());
-            api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-            let got: String = vm.lua.load(script).eval().unwrap_or_else(|e| panic!("{e}"));
-            assert_eq!(got, want);
-        }
-    }
-
-    /// Gearshift's set builder reads stats from every armour and weapon description in the game's files: at least 99%
-    /// of them with no phrase it does not know (the rest are listed when it fails).
-    #[test]
-    fn gearshift_reads_item_descriptions() {
-        let cfg = crate::config::Config::load();
-        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
-        let Ok(items) = crate::dat::items::Items::load(&index, crate::dat::items::Lang::En) else { return };
-        let descs: Vec<String> = (0x2800u32..0x7000)
-            .filter_map(|id| items.item(id))
-            .filter(|it| it.slots != 0 && !it.name.is_empty())
-            .map(|it| it.description)
-            .collect();
-        let files = BUNDLED.iter().find(|b| b.0 == "gearshift").unwrap().2;
-        let host = Host::default();
-        let vm =
-            Vm::new(bundled_manifest("gearshift").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        vm.lua.globals().set("DESCS", descs.clone()).unwrap();
-        let (clean, unknown): (usize, String) = vm
-            .lua
-            .load(
-                r#"
-            local S = require("src.build.stats")
-            local clean, unknown = 0, {}
-            for _, d in ipairs(DESCS) do
-              local r = S.parse(d)
-              if next(r.unknown) == nil then clean = clean + 1 end
-              for k, n in pairs(r.unknown) do unknown[k] = (unknown[k] or 0) + n end
-            end
-            local list = {}
-            for k, n in pairs(unknown) do list[#list + 1] = n .. " " .. k end
-            table.sort(list)
-            return clean, table.concat(list, "\n")
-        "#,
-            )
-            .eval()
-            .unwrap();
-        assert!(descs.len() > 15000, "{} equipment records", descs.len());
-        assert!(clean * 100 >= descs.len() * 99, "{clean} of {} read fully; unknown:\n{unknown}", descs.len());
-    }
-
-    /// Gearshift's built-in GearSwap libraries: M() modes, and texts boxes drawn as HUD texts (fields filled, colour
-    /// runs placed one after another by their drawn widths).
-    #[test]
-    fn gearshift_gearswap_libs() {
-        let files = BUNDLED.iter().find(|b| b.0 == "gearshift").unwrap().2;
-        let host = Host::default();
-        let vm =
-            Vm::new(bundled_manifest("gearshift").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        let script = r#"
-            local M = require("src.modes")
-            local idle = M('refresh', 'dt', 'mdt')
-            assert(idle.value == 'refresh' and idle.current == 'refresh' and idle[1] == 'refresh' and idle.index == 1)
-            assert(idle:cycle() == 'dt' and idle:cycleback() == 'refresh' and idle:cycleback() == 'mdt')
-            idle:set('DT')
-            assert(idle.value == 'dt' and idle:contains('mdt') and not idle:contains('x') and tostring(idle) == 'dt')
-            idle:reset()
-            assert(idle.value == 'refresh')
-            local burst = M(false, 'Magic Burst')
-            assert(burst.value == false and burst.description == 'Magic Burst')
-            burst:toggle()
-            assert(burst.value == true)
-            burst:set('off')
-            assert(burst.value == false)
-            local s = M{ ['description'] = 'Weapon', ['string'] = 'Naegling' }
-            assert(s.value == 'Naegling' and s.description == 'Weapon')
-            local d = M{ ['description'] = 'Nuke', 'normal', 'acc' }
-            assert(d.description == 'Nuke' and d:length() == 2)
-
-            local drawn = {}
-            hud = { text = function(id, spec) drawn[id] = spec end, rect = function(id, spec) drawn[id] = spec end,
-              remove = function(id) drawn[id] = nil end, screen = function() return { width = 1000, height = 800, ui_scale = 1 } end,
-              bounds = function(id) local d = drawn[id] return d and d.text and { x = d.x, y = d.y, w = #d.text * 10, h = 18 * d.size } end }
-            local texts = require("src.texts")
-            local t = texts.new('Idle: \\cs(0,0,255)${idle|none}\\cr!', { pos = { x = 100, y = 50 }, padding = 5 })
-            t:show()
-            texts.frame()
-            texts.frame()
-            local a, b, c = drawn['gstext1_1_1'], drawn['gstext1_1_2'], drawn['gstext1_1_3']
-            assert(a.text == 'Idle: ' and b.text == 'none' and c.text == '!', tostring(b and b.text))
-            assert(b.colour[3] == 255 and a.x == 105 and b.x == 105 + 60 and c.x == 105 + 100, b.x .. ' ' .. c.x)
-            t.idle = 'dt'
-            texts.frame()
-            texts.frame()
-            assert(drawn['gstext1_1_2'].text == 'dt' and drawn['gstext1_1_3'].x == 105 + 80)
-            t:hide()
-            assert(next(drawn) == nil)
-            return "ok"
-        "#;
-        let got: String = vm.lua.load(script).eval().unwrap_or_else(|e| panic!("{e}"));
-        assert_eq!(got, "ok");
-    }
-
-    const SPELLCAST: &str = r#"local said, ran, sent, timers = {}, {}, {}, {}
-local FILES = {}
-local BUFFS = {}
-local ITEMS = {
-  [11] = { name = "Idle Hat", log_name = "idle hat", slots = 1 << 4, jobs = 1 << 3, level = 1 },
-  [12] = { name = "Fast Hat", log_name = "fast hat", slots = 1 << 4, jobs = 1 << 3, level = 1 },
-  [13] = { name = "Cast Coat", log_name = "cast coat", slots = 1 << 5, jobs = 1 << 3, level = 1 },
-  [14] = { name = "Heal Gloves", log_name = "healing gloves", slots = 1 << 6, jobs = 1 << 3, level = 1 },
-}
-local PLAYER = { name = "Tester", id = 100, index = 1, main_job = 3, main_level = 75, sub_job = 4, sub_level = 37,
-  hp = 900, hp_max = 1000, mp = 400, mp_max = 500, tp = 0, hpp = 90, mpp = 80, status = 0, zone = 230 }
-local SPELLS = { [1] = { name = "Cure", kind = 1, skill = 33, element = 6, mp = 8, cast_time = 2, recast = 5, targets = 63 },
-  [3] = { name = "Cure III", kind = 1, skill = 33, element = 6, mp = 46, cast_time = 2.5, recast = 6, targets = 63 },
-  [144] = { name = "Fire", kind = 2, skill = 36, element = 0, mp = 7, cast_time = 1, recast = 2, targets = 32 },
-  [338] = { name = "Utsusemi: Ichi", kind = 4, skill = 39, element = 2, mp = 0, cast_time = 4, recast = 30, targets = 1 } }
-game = {
-  player = function() return PLAYER end,
-  buffs = function() return BUFFS end,
-  party = function() return {} end,
-  target = function() return { id = 200, index = 50, name = "Goblin", kind = "mob", hpp = 100, distance = 5, status = 1 } end,
-  entity = function(id) if id == 100 then return { id = 100, index = 1, name = "Tester", kind = "player", me = true, hpp = 90 } end end,
-  entities = function() return {} end,
-  entity_by_tag = function() return nil end,
-  time = function() return { earth = 0, weekday = 5, hour = 7, minute = 5, moon = 50, moon_phase = 0 } end,
-  weather = function() return 4 end,
-  equipment = function() return {} end,
-  items = function(bag)
-    if bag ~= 0 then return {} end
-    return { { bag = 0, slot = 1, id = 11 }, { bag = 0, slot = 2, id = 12 }, { bag = 0, slot = 3, id = 13 }, { bag = 0, slot = 4, id = 14 } }
-  end,
-}
-res = {
-  job = function(id) return ({ "WAR", "MNK", "WHM", "BLM" })[id] end,
-  status = function(id) return ({ [33] = "Haste", [5] = "Blindness" })[id] end,
-  spell = function(id) return SPELLS[id] end,
-  ability = function(id) if id == 0x200 + 10 then return { name = "Divine Seal", recast_id = 26, targets = 1 } end end,
-  item = function(id) return ITEMS[id] end,
-  zone = function() return "Southern San d'Oria" end,
-  moon = function() return "Full Moon" end,
-}
-chat = { add = function(t) said[#said + 1] = t end }
-clock = function() return 1000 end
-timer = { after = function(secs, f) timers[#timers + 1] = { secs, f } end }
-commands = { run = function(l) ran[#ran + 1] = l end }
-packets = { inject_out = function(d) sent[#sent + 1] = d end, build = function(id, b) return string.pack("<I2I2", id, 0) .. b end }
-fs = {
-  list = function(dir)
-    local t = {}
-    for k in pairs(FILES) do
-      local n = k:match("^" .. dir:gsub("%p", "%%%0") .. "([^/]+)$")
-      if n then t[#t + 1] = n end
-    end
-    return t
-  end,
-  read = function(p) return FILES[p] end,
-}
-local function equips()
-  local t = {}
-  for _, d in ipairs(sent) do
-    local id = string.unpack("<I2", d)
-    if id == 0x050 then
-      local index, slot = string.unpack("BB", d, 5)
-      t[#t + 1] = slot .. ":" .. ITEMS[({ 11, 12, 13, 14 })[index]].name
-    elseif id == 0x051 then
-      local n = string.unpack("B", d, 5)
-      for k = 0, n - 1 do
-        local index, slot = string.unpack("BB", d, 9 + k * 4)
-        t[#t + 1] = slot .. ":" .. ITEMS[({ 11, 12, 13, 14 })[index]].name
-      end
-    end
-  end
-  sent = {}
-  table.sort(t)
-  return table.concat(t, " ")
-end
-local function fire_timers()
-  local list = timers
-  timers = {}
-  table.sort(list, function(a, b) return a[1] < b[1] end)
-  local order = {}
-  for _, x in ipairs(list) do
-    x[2]()
-    order[#order + 1] = string.format("%.1f", x[1])
-  end
-  return table.concat(order, " ")
-end
-
-local core = require("src.core")
-local sc = require("src.spellcast")
-
--- Matching, variables, Advanced.
-assert(sc._match("m*d*", "mad") and not sc._match("m*d*", "master") and sc._match("m???e?", "monkey"))
-assert(sc._match("Cure*|Fire", "fire") and sc._match("(regex)^cure (ii|iii)$(/regex)", "Cure III"))
-assert(not sc._match("(regex-case)^cure$(/regex)", "Cure"))
-assert(sc._key("Cure III") == "cure3" and sc._key("Utsusemi: Ichi") == "utsusemiichi")
-sc._uvars({ instra1 = { name = "instra1", value = "A" }, fireobi = { name = "FireObi", value = "Karin Obi" },
-  use = { name = "use", value = "$" }, b = { name = "B", value = "bee" } })
-assert(sc._expand("$instra11") == "A1", sc._expand("$instra11"))
-assert(sc._expand("$%SpellElementObi", { spell = { element = "Fire" } }) == "Karin Obi")
-assert(sc._expand("%MoonPCT %Moon %Time %Weather %MainJob/%SubJob") == "50 Full Moon 07.05 Fire WHM/BLM", sc._expand("%MoonPCT %Moon %Time %Weather %MainJob/%SubJob"))
-assert(sc._expand("\\$B and $B") == "$B and bee")
-local A = sc._advanced
-assert(A('"%MainJob"="WHM" AND "%SubJob"="BLM"') and not A('"%MainJob"="WHM" AND %MPP < 50'))
-assert(A("(float)%MP/%MPMax*100 > 79") and A("%MP/%MPMax*100 = 0") and A("!(%HPP < 50)"))
-assert(A('(bool)strmatch("Southern*","%Area")') and A('(bool)isArea("*d\'Oria")') and A('(bool)regex("%HPP","8[5-9]|9.")'))
-assert(not A('(bool)buffactive("Haste")') and A("(regex)%Weather=^fire$(/regex)") and not A("broken ((("))
-
-FILES["spellcast/WHM.xml"] = [==[<?xml version="1.0" ?>
-<spellcast xmlns:xi="http://www.w3.org/2001/XInclude">
-  <config ShowGearSwaps="false" RequiredVersion="2.30"/>
-  <variables clear="true">
-    <var name="IdleSet">Standard</var>
-  </variables>
-  <sets>
-    <group name="WHM|WhiteMage" default="yes">
-      <set name="Standard"><head>Idle Hat</head></set>
-      <set name="FastCast" baseset="Standard"><head>Fast Hat</head><body>Cast Coat</body></set>
-      <set name="Cure"><hands>Healing Gloves</hands></set>
-    </group>
-  </sets>
-  <rules>
-    <xi:include href="inc.xml" xpointer="//include[@name='Auto']/*"/>
-    <if Type="WhiteMagic|BlackMagic">
-      <equip when="precast" set="FastCast"/>
-    </if>
-    <if Spell="Cure*">
-      <action type="equip" when="midcast" set="Cure"/>
-      <midcastdelay delay="0.4"/>
-    </if>
-    <elseif Spell="Fire*">
-      <addtochat>fire chain</addtochat>
-    </elseif>
-    <if Spell="Trigger1">
-      <var cmd="set IdleSet FastCast"/>
-      <addtochat when="precast">idle $IdleSet</addtochat>
-    </if>
-    <if NotSpellTargetType="SELF" Spell="Fire">
-      <cmd when="aftercast">input /p burned %SpellTargetName</cmd>
-    </if>
-    <equip when="aftercast" set="$IdleSet"/>
-  </rules>
-</spellcast>]==]
-FILES["spellcast/inc.xml"] = [==[<includes><include name="Auto">
-  <if spell="autoset"><equip when="idle" set="$IdleSet"/><return/></if>
-</include></includes>]==]
-
-assert(sc.find() == "spellcast/WHM.xml", tostring(sc.find()))
-assert(sc.load(sc.find()), table.concat(said, " | "))
-
--- Cure III typed loosely: the line goes out canonical, the precast set (FastCast over its base) at once.
-local out = sc.typed("/ma cure3 me")
-assert(out == '/ma "Cure III" <me>', tostring(out))
-assert(equips() == "4:Fast Hat 5:Cast Coat", "precast")
-local when = fire_timers()
-assert(when == "0.4 4.0", when)
-local got = equips()
-assert(got == "4:Idle Hat 6:Heal Gloves", got)
-
--- Fire at the target: aftercast command.
-core.sent = {}
-assert(sc.typed('/ma "Fire" <t>') == '/ma "Fire" <t>')
-equips()
-assert(said[#said] == "fire chain", "the elseif runs when the if before it failed")
-fire_timers()
-equips()
-assert(ran[#ran] == "/p burned Goblin", tostring(ran[#ran]))
-
--- A trigger: never sent; its var and chat run.
-assert(sc.typed("/ma Trigger1") == false)
-assert(said[#said] == "idle FastCast", said[#said])
-
--- The idle autoset uses the variable now.
-core.sent = {}
-sc.status_change(0)
-local idle = equips()
-assert(idle == "4:Fast Hat 5:Cast Coat", idle .. " | " .. table.concat(said, " | "))
-
--- /sc takes over; other lines get their variables.
-assert(sc.typed("/sc var set IdleSet Standard") == false and sc._uvars().idleset.value == "Standard")
-assert(sc.typed("/p job %MainJob, %HPP%") == "/p job WHM, 90%")
-assert(sc.typed("/echo plain") == nil)
-return "spellcast ok"
-"#;
-
-    const REGEX: &str = r#"local R = require("src.regex").test
-local cases = {
-  { "^.* x2$", "Fire x2", true }, { "^.* x2$", "Fire", false }, { "8[5-9]|9.", "87", true }, { "8[5-9]|9.", "84", false },
-  { "8[5-9]|9.", "93", true }, { "^(Cure|Curaga)( I+V?)?$", "cure iii", true }, { "^(Cure|Curaga)( I+V?)?$", "Cura", false },
-  { "a{2,3}b", "caaab", true }, { "^a{2}b", "aaab", false }, { "\\d+\\.\\d", "v2.45", true }, { "\\bfire\\b", "firestorm", false },
-  { "\\bfire\\b", "the fire burns", true }, { "[^aeiou]x", "ax", false }, { "[^aeiou]x", "bx", true }, { "a.*?b", "aXbYb", true },
-  { "Dynamis.*", "Dynamis - Bastok", true }, { "^$", "", true }, { "x?", "", true }, { "(ab)+c", "ababc", true },
-}
-for _, c in ipairs(cases) do
-  local got = R(c[1], c[2])
-  assert(got == c[3], c[1] .. " ~ " .. c[2] .. " gave " .. tostring(got))
-end
-assert(R("ABC", "abc", true) == false and R("ABC", "abc") == true)
-assert(not pcall(R, "(ab", "ab"))
-return "regex ok"
-"#;
-
-    const ACXML_EVAL: &str = r#"local said, ran, sent = {}, {}, {}
-local BUFFS = { { id = 5 }, { id = 33 } }
-local PLAYER = { name = "Tester", id = 100, index = 1, main_job = 1, main_level = 75, sub_job = 13, sub_level = 37,
-  hp = 300, hp_max = 1000, mp = 50, mp_max = 100, tp = 1000, hpp = 75, mpp = 50, status = 1, zone = 230, pos = { x = 0, y = 0, z = 0 } }
-game = {
-  player = function() return PLAYER end,
-  buffs = function() return BUFFS end,
-  party = function() return {} end,
-  target = function() return nil end,
-  entity = function() return nil end,
-  entities = function() return {} end,
-  entity_by_tag = function() return nil end,
-  stats = function() return { attack = 300, defense = 250, resist = { 1, 2, 3, 4, 5, 6, 7, 8 } } end,
-  time = function() return { earth = 0, weekday = 0, hour = 7, minute = 5, moon = 50, moon_phase = 0 } end,
-  weather = function() return 4 end,
-  equipment = function() return {} end,
-  items = function() return {} end,
-}
-res = {
-  job = function(id) return ({ [0] = nil, "WAR", "MNK", "WHM", [13] = "NIN" })[id] end,
-  status = function(id) return ({ [5] = "Blindness", [33] = "Haste", [580] = "Haste" })[id] end,
-  spell = function(id) if id == 1 then return { name = "Cure", mp = 8, cast_time = 2, element = 6, skill = 33, kind = 1 } end end,
-  ability = function() return nil end,
-  item = function() return nil end,
-  zone = function() return "Somewhere" end,
-  mob_skill = function() return nil end,
-}
-chat = { add = function(t) said[#said + 1] = t end }
-clock = function() return 1000 end
-timer = { after = function(_, f) f() end }
-commands = { run = function(l) ran[#ran + 1] = l end }
-packets = { inject_out = function(d) sent[#sent + 1] = d end, build = function(id, b) return string.pack("<I2", id) .. b end }
-fs = { list = function() return {} end, read = function() return nil end }
-
-local ac = require("src.acxml")
-local R, B, A, S = ac._resolve, ac._basic, ac._advanced, ac._setvar
-
--- Substitution: longest names, text after a name kept, unknown names lose their $, right to left.
-assert(R("$p_hpp") == "75" and R("$p_hp") == "300" and R("$p_hpmax") == "1000", R("$p_hpp"))
-assert(R("$p_hppx") == "75x", R("$p_hppx"))
-assert(R("$U_x") == "U_x" and R("$nope") == "nope")
-ac._uvars({ x = "p" })
-assert(R("$p_hp$u_x") == "75", R("$p_hp$u_x"))
-assert(R("$p_job") == "WAR/NIN" and R("$e_time") == "07.05" and R("$e_weather") == "fire")
--- Buffs by id and by name (the longest name; several ids under one name summed).
-assert(R("$b_33") == "1" and R("$b_haste") == "1" and R("$b_5 ") == "1 ")
--- The single-digit quirk: $b_5=1 reads "5=" as the id.
-assert(R("$b_5=1") == "11")
-assert(B("b_5", "1") == false)
--- Arguments only inside a command match.
-assert(R("$arg1") == "arg1")
-ac._args({ [0] = "/acc", "x", "y", text = "x y" })
-assert(R("$args|$arg0|$arg1|$arg2|$arg9") == "x y|/acc|x|y|arg9", R("$args|$arg0|$arg1|$arg2|$arg9"))
-assert(R("$arg1st") == "x")
-ac._args(nil)
-
--- Basic rules: | before &, operators anywhere, wildcards, the stray character of two-character operators.
-assert(B("p_hpp", "<50") == false and B("p_hpp", ">=75") == true and B("p_hpp", "75") == true)
-assert(B("p_mainjob", "WAR|NIN") == true and B("p_mainjob", "NIN|THF") == false)
-assert(B("p_mainjob", "W*") == true and B("p_mainjob", "w*R") == true and B("p_mainjob", "WA**") == true and B("p_mainjob", "WAR**") == false)
-assert(B("p_mainjob", "!WAR") == false and B("p_mainjob", "!=WAR") == true)
-assert(B("p_mainjob", "THF|") == true, "an empty piece compares as numbers")
-assert(B("p_hpp", ">50&<80") == true and B("p_hpp", ">50&<70") == false)
-
--- Advanced rules: precedence, left association, signed values (no hang), no crash on division by zero.
-assert(A("$p_hpp > 50 & $p_mp >= 10") == true)
-assert(A("($p_hp - 500) > 0") == false and A("$p_hp-500<0") == true)
-assert(A("2^3^2=64.000000") == true and A("8-2-1=5") == true and A("7/2=3") == true and A("-7/2=-3") == true)
-assert(A("5/0=0") == true and A("$p_job=WAR/NIN") == true)
--- "*" multiplies here: WAR=W* is WAR=0, true for any name (as in the original).
-assert(A("$p_mainjob=war") == true and A("$p_mainjob=W*") == true and A("$p_mainjob=NIN") == false)
-assert(A("($p_mainjob=WAR)|($p_mainjob=NIN)") == true and A("!true") == false)
-
--- setvar arithmetic: * / + - only, names with - become numbers.
-ac._uvars({ n = "3" })
-assert(S("$u_n + 1") == "4" and S("$u_n - 5") == "-2" and S("Mid-Acc") == "0" and S("Plain") == "Plain")
-
--- Augment path / rank / trial from extdata.
-local ext = string.char(2, 0x20, 0x07, 0) .. string.rep("\0", 20)
-local p, r = ac._aug_meta(ext)
-assert(p == 4 and r == 1, p .. " " .. r)
-
-return "acxml eval ok"
-"#;
-
-    const ACXML_FLOW: &str = r#"local said, ran, sent = {}, {}, {}
-local FILES = {}
-local BUFFS = {}
-local ITEMS = {
-  [11] = { name = "Idle Hat", slots = 1 << 4, jobs = 1 << 1, level = 1 },
-  [12] = { name = "Acc Hat", slots = 1 << 4, jobs = 1 << 1, level = 1 },
-  [13] = { name = "Ear A", slots = (1 << 11) | (1 << 12), jobs = 1 << 1, level = 1 },
-  [14] = { name = "Body B", slots = 1 << 5, jobs = 1 << 1, level = 1 },
-}
-local PLAYER = { name = "Tester", id = 100, index = 1, main_job = 1, main_level = 75, sub_job = 13, sub_level = 37,
-  hp = 900, hp_max = 1000, mp = 50, mp_max = 100, tp = 0, hpp = 90, mpp = 50, status = 0, zone = 230, pos = { x = 0, y = 0, z = 0 } }
-game = {
-  player = function() return PLAYER end,
-  buffs = function() return BUFFS end,
-  party = function() return {} end,
-  target = function() return nil end,
-  entity = function() return nil end,
-  entities = function() return {} end,
-  entity_by_tag = function() return nil end,
-  time = function() return { earth = 0, weekday = 0, hour = 7, minute = 5 } end,
-  weather = function() return 0 end,
-  equipment = function() return {} end,
-  items = function(bag)
-    if bag ~= 0 then return {} end
-    return { { bag = 0, slot = 1, id = 11 }, { bag = 0, slot = 2, id = 12 }, { bag = 0, slot = 3, id = 13 }, { bag = 0, slot = 4, id = 14 } }
-  end,
-}
-res = {
-  job = function(id) return ({ "WAR", "MNK", "WHM", [13] = "NIN" })[id] end,
-  status = function(id) return ({ [33] = "Haste" })[id] end,
-  spell = function() return nil end,
-  ability = function() return nil end,
-  item = function(id) return ITEMS[id] end,
-  zone = function() return "Somewhere" end,
-}
-chat = { add = function(t) said[#said + 1] = t end }
-clock = function() return 1000 end
-timer = { after = function(_, f) f() end }
-commands = { run = function(l) ran[#ran + 1] = l end }
-packets = { inject_out = function(d) sent[#sent + 1] = d end, build = function(id, b) return string.pack("<I2", id) .. b end }
-fs = {
-  list = function(dir)
-    local t = {}
-    for k in pairs(FILES) do
-      local n = k:match("^" .. dir:gsub("%p", "%%%0") .. "([^/]+)$")
-      if n then t[#t + 1] = n end
-    end
-    return t
-  end,
-  read = function(p) return FILES[p] end,
-}
-local function ids()
-  local t = {}
-  for _, d in ipairs(sent) do
-    local id = string.unpack("<I2", d)
-    if id == 0x050 then
-      local index, slot = string.unpack("BB", d, 3)
-      t[#t + 1] = string.format("%d:%d", slot, index)
-    else
-      t[#t + 1] = string.format("%03X", id)
-    end
-  end
-  sent = {}
-  return table.concat(t, " ")
-end
-
-local core = require("src.core")
-local ac = require("src.acxml")
-
-FILES["ashitacast/Tester_WAR.xml"] = [==[<?xml version="1.0"?>
-<!-- a comment with <tags> in it -->
-<ashitacast>
-  <sets>
-    <set name="Idle"><head>Idle Hat</head></set>
-    <set name="Acc" baseset="Idle"><head>Acc Hat</head><body>Body B</body></set>
-  </sets>
-  <load><setvar name="mode" value="Idle"/><echo>loaded $p_name</echo></load>
-  <commands>
-    <command input="/mode"><setvar name="mode" value="$arg1"/><echo>mode $u_mode</echo></command>
-    <command input="/modex"><echo>never: the shorter input wins</echo></command>
-  </commands>
-  <default>
-    <if u_mode="Acc"><equip set="Acc"/></if>
-    <else><equip set="Idle"/></else>
-  </default>
-</ashitacast>]==]
-
-assert(ac.find() == "ashitacast/Tester_WAR.xml", tostring(ac.find()))
-assert(ac.load(ac.find()), table.concat(said, " | "))
-assert(said[#said] == "loaded Tester", said[#said])
-ac.tick()
-assert(ids() == "4:1", "idle hat")
--- /modex is taken by /mode (a prefix, the shorter input); the line is consumed.
-assert(ac.typed("/modex Acc") == false and said[#said] == "mode Acc", said[#said])
-assert(ac.typed("/other") == nil)
-core.sent = {}
-ac.tick()
-assert(ids() == "4:2 5:4", "acc set over its baseset")
-
--- A v3 file through the import rules: idlegear, buffactive, lear, variables.
-ac.unload()
-core.sent = {}
-FILES["ashitacast/Tester_WAR.xml"] = [==[<ashitacast>
-  <variables><var name="x">7</var></variables>
-  <sets><set name="Ears" lock="true"><lear>Ear A</lear></set></sets>
-  <idlegear>
-    <if buffactive="Haste"><equip set="Ears"/></if>
-    <elseif advanced="%p_hpp &lt; 50"><equip><head>Acc Hat</head></equip></elseif>
-    <doidlegear/>
-  </idlegear>
-</ashitacast>]==]
-assert(ac.load(ac.find()), table.concat(said, " | "))
-assert(ac._uvars().x == "7")
-ac.tick()
-assert(ids() == "", "no haste: nothing")
-BUFFS = { { id = 33 } }
-ac.tick()
-assert(ids() == "11:3", "ear1 from lear under haste")
-return "acxml flow ok"
-"#;
-
-    /// Steady Cast: a spell sent while moving waits with what follows it, and all of it goes in order once we stand
-    /// still; a spell sent standing goes at once; a hold ends after three seconds even while moving.
-    #[test]
-    fn steady_cast_holds_while_moving() {
-        let files = BUNDLED.iter().find(|b| b.0 == "steady-cast").unwrap().2;
-        let host = Host::default();
-        let vm =
-            Vm::new(bundled_manifest("steady-cast").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        let script = r#"
-            local hold = require("src.hold")
-            local function act(cat) return string.pack("<I2I2I4I2I2I4", 0x01A, 0, 200, 50, cat, 1) end
-            local equip = string.pack("<I2I2BBBB", 0x050, 0, 1, 4, 0, 0)
-            local sent = {}
-            local send = function(d) sent[#sent + 1] = d end
-            -- Moving: the cast and the midcast gear behind it wait.
-            hold.frame({ x = 0, z = 0 }, 1.00, send)
-            hold.frame({ x = 1, z = 0 }, 1.05, send)
-            assert(hold.out(0x01A, act(3), 1.06) == false and hold.out(0x050, equip, 1.06) == false and hold.held() == 2)
-            hold.frame({ x = 1, z = 0 }, 1.10, send)
-            assert(#sent == 0, "still too short")
-            hold.frame({ x = 1, z = 0 }, 1.25, send)
-            assert(#sent == 2 and sent[1] == act(3) and sent[2] == equip)
-            -- What we send again passes once.
-            assert(hold.out(0x01A, sent[1], 1.25) == nil and hold.out(0x050, sent[2], 1.25) == nil)
-            -- Standing: at once; a weapon skill never waits.
-            assert(hold.out(0x01A, act(3), 2.0) == nil)
-            hold.frame({ x = 2, z = 0 }, 2.1, send)
-            assert(hold.out(0x01A, act(7), 2.1) == nil)
-            -- Moving all along: three seconds, then it goes anyway.
-            sent = {}
-            assert(hold.out(0x01A, act(3), 2.1) == false)
-            for t = 2.2, 5.3, 0.1 do hold.frame({ x = t, z = 0 }, t, send) end
-            assert(#sent == 1)
-            return "ok"
-        "#;
-        let got: String = vm.lua.load(script).eval().unwrap_or_else(|e| panic!("{e}"));
-        assert_eq!(got, "ok");
-    }
-
-    /// Chat Alerts: a tell, our name and a chosen word call; our lines, other people's names and a second call
-    /// within a second do not.
-    #[test]
-    fn chat_alerts_calls() {
-        let host = Host::default();
-        let files = BUNDLED.iter().find(|b| b.0 == "chat-alerts").unwrap().2;
-        let vm =
-            Vm::new(bundled_manifest("chat-alerts").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        let init = files.iter().find(|f| f.0 == "init.lua").unwrap().1;
-        let script = r#"
-            local S = { on = true, sound = 2, tells = true, mentions = true, party = false, linkshell = false, invites = true,
-              examined = false, emotes = false, away = false, words = "rare drop, nm" }
-            local H, calls, clock = {}, {}, 0
-            settings = { get = function(k) return S[k] end }
-            events = { on = function(n, f) H[n] = f end }
-            audio = { play_ui = function(id) calls[#calls + 1] = id end }
-            game = { player = function() return { name = "Tester", id = 7 } end }
-            text = { plain = function(t) return t end }
-            os.clock = function() return clock end
-            load(INIT)()
-            local function heard(line, sender, kind)
-              local n = #calls
-              clock = clock + 2
-              H.chat_message(line, sender, kind, false)
-              return #calls > n
-            end
-            assert(heard("hi", "Friend", 3))
-            assert(not heard("hi", "Tester", 3))
-            assert(heard("Tester, over here", "Friend", 0))
-            assert(not heard("Testers unite", "Friend", 0))
-            assert(heard("an NM popped", "Friend", 1))
-            assert(not heard("nothing", "Friend", 4))
-            assert(calls[1] == 19)
-            -- Two tells in one moment: one call.
-            clock = clock + 2
-            H.chat_message("hi", "Friend", 3, false)
-            H.chat_message("hi again", "Friend", 3, false)
-            assert(#calls == 4, #calls)
-        "#;
-        vm.lua.globals().set("INIT", init).unwrap();
-        vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
-    }
-
-    /// Blue Magic Sets: a monster readying a move that teaches a blue spell we lack gives a line and a call (only as
-    /// a Blue Mage, never for one we know); the codex lists what is missing and what teaches it.
-    #[test]
-    fn blue_sets_learnable_moves() {
-        let host = Host::default();
-        let files = BUNDLED.iter().find(|b| b.0 == "blue-sets").unwrap().2;
-        let vm =
-            Vm::new(bundled_manifest("blue-sets").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        let init = files.iter().find(|f| f.0 == "init.lua").unwrap().1;
-        let script = r#"
-            local S = { on = true, alert = true, alert_sound = true }
-            local H, C, said, calls, wins = {}, {}, {}, {}, {}
-            local job, learned = 16, { [517] = true }
-            settings = { get = function(k) return S[k] end }
-            events = { on = function(n, f) H[n] = f end }
-            commands = { register = function(n, f) C[n] = f end }
-            timer = { every = function() end }
-            chat = { add = function(t) said[#said + 1] = t end }
-            audio = { play_ui = function(id) calls[#calls + 1] = id end }
-            ui = { window = function(id, w) wins[id] = w end, open = function() end, close = function() end,
-              is_open = function() return false end, on = function() end, update = function() end }
-            game = {
-              player = function() return { name = "Tester", main_job = job, main_level = 75 } end,
-              entity = function(id) return { id = id, name = "Bat", kind = id == 9 and "player" or "mob" } end,
-              spells = function() local t = {} for id in pairs(learned) do t[#t + 1] = id end return t end,
-            }
-            res = { spell = function(id) return ({ [515] = { name = "Maelstrom", levels = { [16] = 61 } },
-                [517] = { name = "Metallic Body", levels = { [16] = 8 } } })[id] or { name = "Spell " .. id, levels = {} } end,
-              mob_skill = function(id) return ({ [462] = "Maelstrom", [448] = "Metallic Body" })[id] end }
-            load(INIT)()
-            local function readies(actor, move, cat)
-              H.action({ actor = actor, category = cat or 7, param = 0, targets = { { id = 1, results = { { value = move, message = 43 } } } } })
-            end
-            readies(5, 462)
-            assert(said[#said] == "Blue Magic: Bat readies Maelstrom, which teaches Maelstrom.", said[#said])
-            assert(#calls == 1 and calls[1] == 18)
-            readies(5, 448)
-            readies(9, 462)
-            readies(5, 462, 8)
-            assert(#said == 1, "a learned spell, a player, a spell cast: none")
-            job = 1
-            readies(5, 462)
-            assert(#said == 1, "not a Blue Mage")
-            C.blu("codex")
-            local w = wins.blucodex
-            assert(w and w.elements[1].text:match("^1 of %d+ learned$"), w and w.elements[1].text)
-            local rows = w.elements[3].rows
-            local found
-            for _, r in ipairs(rows) do
-              if r[1] == "Maelstrom" then found = r end
-              assert(r[1] ~= "Metallic Body", "the Missing tab leaves learned spells out")
-            end
-            assert(found and found[2] == "61" and found[4] == "Maelstrom")
-            return "ok"
-        "#;
-        vm.lua.globals().set("INIT", init).unwrap();
-        let got: String = vm.lua.load(script).eval().unwrap_or_else(|e| panic!("{e}"));
-        assert_eq!(got, "ok");
-    }
-
-    /// Tell Inbox: tells while /away are kept and each sender gets one away reply; none kept while online; back
-    /// online, the count is told; //r answers the last sender.
-    #[test]
-    fn tell_inbox_keeps_and_replies() {
-        let host = Host::default();
-        let files = BUNDLED.iter().find(|b| b.0 == "tell-inbox").unwrap().2;
-        let vm =
-            Vm::new(bundled_manifest("tell-inbox").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        let init = files.iter().find(|f| f.0 == "init.lua").unwrap().1;
-        let script = r#"
-            local S = { on = true, reply = "Back soon." }
-            local H, C, T, ran, said, away = {}, {}, {}, {}, {}, true
-            settings = { get = function(k) return S[k] end }
-            events = { on = function(n, f) H[n] = f end }
-            commands = { register = function(n, f) C[n] = f end, run = function(l) ran[#ran + 1] = l end }
-            timer = { every = function(_, f) T[#T + 1] = f end }
-            game = { player = function() return { name = "Tester", away = away } end }
-            text = { plain = function(t) return t end, strip = function(t) return t end }
-            chat = { add = function(t) said[#said + 1] = t end }
-            ui = { window = function() end, open = function() end, on = function() end, close = function() end }
-            storage = { character = {}, save = function() end }
-            load(INIT)()
-            T[1]()
-            H.chat_message("are you there?", "Friend", 3, false)
-            H.chat_message("hello?", "Friend", 3, false)
-            assert(#storage.character.inbox == 2)
-            assert(#ran == 1 and ran[1] == "/tell Friend Back soon.", ran[1])
-            away = false
-            T[1]()
-            assert(said[#said]:find("2 tells"), said[#said])
-            H.chat_message("ok", "Other", 3, false)
-            assert(#storage.character.inbox == 2)
-            C.r("see", "you")
-            assert(ran[#ran] == "/tell Other see you", ran[#ran])
-        "#;
-        vm.lua.globals().set("INIT", init).unwrap();
-        vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
-    }
-
-    /// Target Debuffs: an effect landing on the target shows its icon; it goes when it wears off, and all go when the
-    /// target is defeated.
-    #[test]
-    fn target_debuffs_track() {
-        let host = Host::default();
-        let files = BUNDLED.iter().find(|b| b.0 == "target-debuffs").unwrap().2;
-        let vm = Vm::new(bundled_manifest("target-debuffs").unwrap(), PathBuf::from("."), vm::Source::Bundled(files))
-            .unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        let init = files.iter().find(|f| f.0 == "init.lua").unwrap().1;
-        let script = r#"
-            local H, icons = {}, {}
-            settings = { get = function() return true end }
-            events = { on = function(n, f) H[n] = f end }
-            game = { target = function() return { id = 77 } end }
-            res = { status = function(id) return "Effect " .. id end }
-            ui = { native = { rect = function() return nil end } }
-            hud = { screen = function() return { width = 1920, height = 1080, ui_scale = 1 } end,
-              clear = function() icons = {} end, icon = function(k, s) icons[k] = s.id end }
-            load(INIT)()
-            local function count() local n = 0 for _ in pairs(icons) do n = n + 1 end return n end
-            H.action({ actor = 5, category = 4, targets = { { id = 77, results = { { message = 236, value = 4 } } } } })
-            H.action({ actor = 5, category = 4, targets = { { id = 77, results = { { message = 2, value = 30 } } } } })
-            H.frame()
-            assert(icons.d4 == 4 and count() == 1)
-            H.action({ actor = 5, category = 4, targets = { { id = 77, results = { { message = 237, value = 13 } } } } })
-            H.frame()
-            assert(count() == 2)
-            H.battle_message(5, 77, 206, 4, 0)
-            H.frame()
-            assert(icons.d4 == nil and icons.d13 == 13)
-            H.battle_message(5, 77, 6, 0, 0)
-            H.frame()
-            assert(count() == 0)
-        "#;
-        vm.lua.globals().set("INIT", init).unwrap();
-        vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
-    }
-
-    /// Pending Actions: a melee round or another spell's finish while a spell waits is not its answer, nor a message
-    /// that is not one of the spell's refusals (akreao/vana-client#243); the spell's start, finish and
-    /// refusals are, and each kind matches its ids. The game scripts' checks ("You cannot learn...") and the
-    /// target check's refusals refuse too.
-    #[test]
-    fn pending_actions_match_the_ask() {
-        let host = Host::default();
-        let files = BUNDLED.iter().find(|b| b.0 == "pending-actions").unwrap().2;
-        let vm = Vm::new(bundled_manifest("pending-actions").unwrap(), PathBuf::from("."), vm::Source::Bundled(files))
-            .unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        let init = files.iter().find(|f| f.0 == "init.lua").unwrap().1;
-        let script = r#"
-            local H, OUT, chip = {}, {}, nil
-            local T = 100
-            os.clock = function() return T end
-            settings = { get = function() return true end }
-            events = { on = function(n, f) H[n] = f end }
-            local IN = {}
-            packets = { on_out = function(id, f) OUT[id] = f end, on_in = function(id, f) IN[id] = f end }
-            game = { player = function() return { id = 5 } end, entity = function() return nil end,
-              items = function() return { { slot = 3, id = 4112 } } end }
-            res = { spell = function() return { name = "Cure" } end, ability = function() return { name = "Provoke" } end,
-              item = function() return { name = "Potion" } end,
-              message = function() return { text = "No." } end }
-            text = { strip = function(s) return s end }
-            ui = { window = function(_, spec) chip = spec.elements[1] end, update = function(_, _, v) chip = v end,
-              open = function() end, close = function() chip = nil end }
-            load(INIT)()
-            local function ask(cat, param) OUT[0x01A]({ data = string.pack("<I4I4I2I2I4", 0, 0, 0, cat, param) }) end
-            local function item() OUT[0x037]({ data = string.pack("<I4I4I4BBI4I4", 0, 0, 0, 0, 0, 0, 0)
-              :sub(1, 0x0e) .. string.pack("<BBI4I4", 3, 0, 0, 0) }) end
-            local function state() T = T + 0.2 H.frame() return chip and chip.tone end
-            local function act(cat, param, value)
-              local targets = value and { { id = 9, results = { { value = value } } } } or {}
-              H.action({ actor = 5, category = cat, param = param, targets = targets })
-            end
-            -- A spell (Cure, 1): a melee round, another spell's finish, an interrupt and another spell's start leave
-            -- it waiting.
-            ask(3, 1)
-            act(1, 0x746b6174) act(4, 2) act(8, 0x6f737073, 1) act(8, 0x6f736163, 2)
-            assert(state() == "waiting")
-            -- Melee-side chatter of ours (71 with no spell id, experience) is no refusal; its start answers.
-            H.battle_message(5, 9, 71, 0, 0) H.battle_message(5, 5, 8, 300, 0)
-            assert(state() == "waiting")
-            act(8, 0x6f736163, 1)
-            assert(state() == nil)
-            -- Its finish answers too; its refusal (47 with its id) refuses.
-            ask(3, 1) act(4, 1) assert(state() == nil)
-            ask(3, 1) H.battle_message(5, 9, 47, 2, 0) assert(state() == "waiting")
-            H.battle_message(5, 9, 47, 1, 0) assert(state() == "refused")
-            T = T + 10 state()
-            -- A job ability (Provoke, 0x01A param 0x23): its finish's param, not another's.
-            ask(9, 0x23) act(6, 0x24) assert(state() == "waiting")
-            act(6, 0x23) assert(state() == nil)
-            ask(9, 0x23) H.battle_message(5, 9, 88, 0x24, 0) assert(state() == "waiting")
-            H.battle_message(5, 9, 88, 0, 0) assert(state() == "refused")
-            T = T + 10 state()
-            -- A weapon skill: its start's record value; a monster skill finish answers whatever its id.
-            ask(7, 32) act(7, 0x65746163, 33) assert(state() == "waiting")
-            act(7, 0x65746163, 32) assert(state() == nil)
-            ask(7, 32) act(11, 999) assert(state() == nil)
-            ask(7, 32) H.battle_message(5, 9, 192, 0, 0) assert(state() == "refused")
-            T = T + 10 state()
-            -- An item: its category alone; 62 only with no id or its id.
-            item() act(1, 0) assert(state() == "waiting")
-            act(9, 0) assert(state() == nil)
-            item() H.battle_message(5, 9, 62, 4113, 0) assert(state() == "waiting")
-            H.battle_message(5, 9, 62, 4112, 0) assert(state() == "refused")
-            T = T + 10 state()
-            -- The scripts' checks: a scroll the player cannot learn yet (95, naming the spell it teaches), a
-            -- medicated player's potion (111 with the item id, not another's), the 0 a stun sends with the item id
-            -- (not a bare 0).
-            item() H.battle_message(5, 5, 95, 1, 0) assert(state() == "refused")
-            T = T + 10 state()
-            item() H.battle_message(5, 5, 111, 4113, 0) H.battle_message(5, 5, 0, 0, 0) assert(state() == "waiting")
-            H.battle_message(5, 5, 111, 4112, 0) assert(state() == "refused")
-            T = T + 10 state()
-            item() H.battle_message(5, 5, 0, 4112, 0) assert(state() == "refused")
-            T = T + 10 state()
-            -- A spell's script check names it (316 not here); the target check names none (12 claimed).
-            ask(3, 1) H.battle_message(5, 9, 316, 2, 0) H.battle_message(5, 9, 316, 0, 0) assert(state() == "waiting")
-            H.battle_message(5, 9, 316, 1, 0) assert(state() == "refused")
-            T = T + 10 state()
-            ask(3, 1) H.battle_message(5, 9, 12, 0, 0) assert(state() == "refused")
-            T = T + 10 state()
-            -- An ability's script check names it as both values (523 already active); a weapon skill's target check.
-            ask(9, 0x23) H.battle_message(5, 5, 523, 0x24, 0x24) assert(state() == "waiting")
-            H.battle_message(5, 5, 523, 0x23, 0x23) assert(state() == "refused")
-            T = T + 10 state()
-            ask(7, 32) H.battle_message(5, 9, 446, 0, 0) assert(state() == "refused")
-            T = T + 10 state()
-            -- A player blocking outside help answers with system message 225 (0x053); another system message does
-            -- not, nor 225 for a weapon skill, and none after the refusal window.
-            local function sys(n) IN[0x053]({ data = string.pack("<I4I4I4I2I2", 0, 0, 0, n, 0) }) end
-            ask(3, 1) sys(224) assert(state() == "waiting")
-            sys(225) assert(state() == "refused")
-            T = T + 10 state()
-            ask(7, 32) sys(225) assert(state() == "waiting")
-            T = T + 10 state()
-            ask(3, 1) T = T + 3 sys(225) assert(state() == "waiting")
-        "#;
-        vm.lua.globals().set("INIT", init).unwrap();
-        vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
-    }
-
-    /// Job Gauges: SCH 99 with 100 s of the stratagem recast left has 2 of 5 charges, the next in 4 s; a NIN sub sees
-    /// its shadows and tools.
-    #[test]
-    fn job_gauges_counts() {
-        let host = Host::default();
-        let files = BUNDLED.iter().find(|b| b.0 == "job-gauges").unwrap().2;
-        let vm =
-            Vm::new(bundled_manifest("job-gauges").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        let init = files.iter().find(|f| f.0 == "init.lua").unwrap().1;
-        let script = r#"
-            local T, shown = nil, nil
-            settings = { get = function() return true end }
-            timer = { every = function(_, f) T = f end }
-            game = {
-              player = function() return { main_job = 20, main_level = 99, sub_job = 13, sub_level = 49 } end,
-              recasts = function() return { abilities = { [231] = 100 }, spells = {}, totals = { abilities = {}, spells = {} } } end,
-              buffs = function() return { { id = 445 } } end,
-              find_items = function(n) return n == "Shihei" and { { count = 30 } } or {} end,
-            }
-            ui = { window = function(_, spec) shown = spec.elements end, open = function() end, close = function() end }
-            load(INIT)()
-            T()
-            local by = {}
-            for _, e in ipairs(shown) do by[e.label] = e.text end
-            assert(by["Stratagems"] == "2 / 5  +1 in 4s", by["Stratagems"])
-            assert(by["Shadows"] == "3", by["Shadows"])
-            assert(by["Shihei"] == "30")
-            assert(by["Ready"] == nil)
-        "#;
-        vm.lua.globals().set("INIT", init).unwrap();
-        vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
-    }
-
-    /// Roll Helper: a Chaos Roll of 4 is lucky (+25), a Double-Up typed then is held back; at 9 it goes through; a
-    /// bust ends the roll.
-    #[test]
-    fn roll_helper_lucky() {
-        let host = Host::default();
-        let files = BUNDLED.iter().find(|b| b.0 == "roll-helper").unwrap().2;
-        let vm =
-            Vm::new(bundled_manifest("roll-helper").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        let init = files.iter().find(|f| f.0 == "init.lua").unwrap().1;
-        let script = r#"
-            local H, F, said = {}, nil, {}
-            settings = { get = function() return true end }
-            events = { on = function(n, f) H[n] = f end }
-            filters = { typed = function(f) F = f end }
-            chat = { add = function(t) said[#said + 1] = t end }
-            game = { player = function() return { id = 5 } end }
-            res = { ability = function(id) return ({ [0x200 + 98] = { name = "Chaos Roll" }, [0x200 + 123] = { name = "Double-Up" } })[id] end,
-              status = function() return nil end }
-            load(INIT)()
-            local function act(param, msg, value)
-              H.action({ actor = 5, category = 6, param = param, targets = { { id = 5, results = { { message = msg, value = value } } } } })
-            end
-            act(98, 420, 4)
-            assert(said[#said] == "Chaos Roll 4 (Lucky!): Attack % +25  (lucky 4, unlucky 8)", said[#said])
-            assert(F('/ja "Double-Up" <me>') == false)
-            act(123, 424, 9)
-            assert(said[#said]:find("^Chaos Roll 9: Attack %% %+17"), said[#said])
-            assert(F('/ja "Double-Up" <me>') == nil)
-            act(123, 426, 0)
-            assert(said[#said] == "Chaos Roll: Bust!")
-            assert(F('/ja "Double-Up" <me>') == nil)
-        "#;
-        vm.lua.globals().set("INIT", init).unwrap();
-        vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
-    }
-
-    /// Automaton Sets: a saved set changes only the slots that differ: a different attachment off, then the head,
-    /// the frame and the set's attachments on.
-    #[test]
-    fn automaton_sets_round_trip() {
-        let host = Host::default();
-        let files = BUNDLED.iter().find(|b| b.0 == "automaton-sets").unwrap().2;
-        let vm = Vm::new(bundled_manifest("automaton-sets").unwrap(), PathBuf::from("."), vm::Source::Bundled(files))
-            .unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        let init = files.iter().find(|f| f.0 == "init.lua").unwrap().1;
-        let script = r#"
-            local C, ops, said = {}, {}, {}
-            local job = { job = 18, head = 8193, frame = 8226, attachments = { 8449, 8450 }, attachment_slots = { 8449, 8450, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 } }
-            settings = { get = function() return true end }
-            commands = { register = function(n, f) C[n] = f end }
-            chat = { add = function(t) said[#said + 1] = t end }
-            storage = { account = {}, save = function() end }
-            sleep = function() end
-            res = { item = function(id) return { name = "item" .. id } end }
-            actions = { attach = function(slot, id) ops[#ops + 1] = "a" .. slot .. ":" .. id end,
-              detach = function(slot) ops[#ops + 1] = "d" .. slot end }
-            game = { job_data = function() return { main = job } end, entity_by_tag = function() return nil end }
-            load(INIT)()
-            C.automaton("save", "Tank")
-            assert(storage.account.sets.tank.head == 8193)
-            job = { job = 18, head = 8194, frame = 8227, attachments = { 8451 }, attachment_slots = { 0, 0, 8451, 0, 0, 0, 0, 0, 0, 0, 0, 0 } }
-            C.automaton("tank")
-            local s = table.concat(ops, " ")
-            assert(s == "d5 a1:8193 a2:8226 a3:8449 a4:8450", s)
-            assert(said[#said]:find("but not"), said[#said])
-        "#;
-        vm.lua.globals().set("INIT", init).unwrap();
-        vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
-    }
-
-    /// Loot Tracker: a TH rise (proc 603) shows on the target; a new pool item counts as its dropper's drop, with the
-    /// pool's time left.
-    #[test]
-    fn loot_tracker_th_and_pool() {
-        let host = Host::default();
-        let files = BUNDLED.iter().find(|b| b.0 == "loot-tracker").unwrap().2;
-        let vm =
-            Vm::new(bundled_manifest("loot-tracker").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        let init = files.iter().find(|f| f.0 == "init.lua").unwrap().1;
-        let script = r#"
-            local H, T, shown = {}, nil, {}
-            settings = { get = function() return true end }
-            events = { on = function(n, f) H[n] = f end }
-            timer = { every = function(_, f) T = f end }
-            commands = { register = function() end }
-            local mob = { id = 77, name = "Forest Hare", kind = "mob" }
-            game = { target = function() return mob end, entity = function(id) return id == 77 and mob or nil end,
-              treasure = function() return { { slot = 0, item = 4358, count = 1, dropper = 77 } } end }
-            res = { item = function() return { name = "Hare Meat" } end }
-            ui = { window = function(_, s) shown = s.elements end, open = function() end, close = function() end }
-            os.clock = function() return 100 end
-            load(INIT)()
-            H.action({ targets = { { id = 77, results = { { proc = { message = 603, value = 3 } } } } } })
-            H.battle_message(5, 77, 6, 0, 0)
-            T()
-            assert(shown[1].label == "Treasure Hunter: Forest Hare" and shown[1].text == "3", shown[1].text)
-            assert(shown[2].label == "Hare Meat" and shown[2].text == "5:00", shown[2].text)
-            assert(shown[3].text == "Forest Hare: 1 killed \u{2014} Hare Meat x1", shown[3].text)
-        "#;
-        vm.lua.globals().set("INIT", init).unwrap();
-        vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
-    }
-
-    /// Monster Alerts: a monster's readied move and started spell make lines in the box; a watched move calls; a
-    /// player's action makes none.
-    #[test]
-    fn monster_alerts_lines() {
-        let host = Host::default();
-        let files = BUNDLED.iter().find(|b| b.0 == "monster-alerts").unwrap().2;
-        let vm = Vm::new(bundled_manifest("monster-alerts").unwrap(), PathBuf::from("."), vm::Source::Bundled(files))
-            .unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        let init = files.iter().find(|f| f.0 == "init.lua").unwrap().1;
-        let script = r#"
-            local H, texts, calls = {}, {}, 0
-            local S = { on = true, moves = "Foot Kick", monsters = "" }
-            settings = { get = function(k) return S[k] end }
-            events = { on = function(n, f) H[n] = f end }
-            timer = { every = function() end }
-            local E = { [9] = { id = 9, name = "Forest Hare", kind = "mob" }, [5] = { id = 5, name = "Lnxcsfix", kind = "player" } }
-            game = { entity = function(id) return E[id] end, entities = function() return {} end }
-            res = { mob_skill = function(id) return id == 257 and "Foot Kick" or nil end, ability = function() return nil end,
-              spell = function(id) return id == 144 and { name = "Fire" } or nil end }
-            audio = { play_ui = function() calls = calls + 1 end }
-            hud = { screen = function() return { width = 1920, height = 1080, ui_scale = 1 } end, clear = function() texts = {} end,
-              text = function(k, s) texts[k] = s.text end }
-            load(INIT)()
-            local function act(actor, cat, value)
-              H.action({ actor = actor, category = cat, param = 24931, targets = { { id = 5, results = { { message = 43, value = value } } } } })
-            end
-            act(9, 7, 257)
-            act(9, 8, 144)
-            act(5, 7, 257)
-            H.frame()
-            assert(texts.l1 == "Forest Hare readies Foot Kick.", texts.l1)
-            assert(texts.l2 == "Forest Hare starts casting Fire on Lnxcsfix.", texts.l2)
-            assert(texts.l3 == nil and calls == 1)
-        "#;
-        vm.lua.globals().set("INIT", init).unwrap();
-        vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
-    }
-
-    /// Casket Solver: hint lines narrow 10..99; the answer comes when one is left.
-    #[test]
-    fn casket_solver_narrows() {
-        let host = Host::default();
-        let files = BUNDLED.iter().find(|b| b.0 == "casket-solver").unwrap().2;
-        let vm = Vm::new(bundled_manifest("casket-solver").unwrap(), PathBuf::from("."), vm::Source::Bundled(files))
-            .unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        let init = files.iter().find(|f| f.0 == "init.lua").unwrap().1;
-        let script = r#"
-            local F, T, said = nil, nil, {}
-            settings = { get = function() return true end }
-            filters = { chat = function(f) F = f end }
-            timer = { every = function(_, f) T = f end }
-            chat = { add = function(t) said[#said + 1] = t end }
-            text = { strip = function(t) return t end }
-            load(INIT)()
-            F("The monster was concealing a treasure chest!")
-            F("You have a hunch that the combination is greater than 40 and less than 60.")
-            T()
-            assert(said[#said] == "Casket Solver: 19 left. Try 50.", said[#said])
-            F("You have a hunch that the first digit is odd.")
-            F("You have a hunch that the second digit is 2, 7, or 9.")
-            T()
-            assert(said[#said] == "Casket Solver: 3 left: 52, 57, 59. Try 57.", said[#said])
-            F("You have a hunch that the lock's combination is greater than 57.")
-            T()
-            assert(said[#said] == "Casket Solver: the combination is 59.", said[#said])
-        "#;
-        vm.lua.globals().set("INIT", init).unwrap();
-        vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
-    }
-
-    /// Warp Helper: the Home Point and Survival Guide walks pick the rows the menus showed live, through a second page.
-    #[test]
-    fn warp_helper_walks() {
-        let host = Host::default();
-        let files = BUNDLED.iter().find(|b| b.0 == "warp-helper").unwrap().2;
-        let vm =
-            Vm::new(bundled_manifest("warp-helper").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        let init = files.iter().find(|f| f.0 == "init.lua").unwrap().1;
-        let script = r#"
-            local C, said, picks, menus, at = {}, {}, {}, {}, 0
-            settings = { get = function(k) return k == "fare" and "Gil" or true end }
-            commands = { register = function(n, f) C[n] = f end }
-            chat = { add = function(t) said[#said + 1] = t end }
-            events = { on = function() end }
-            sleep = function() end
-            game = {
-              event = function()
-                if at == 0 or at > #menus then return nil end
-                return { menu = { question = menus[at][1], options = menus[at][2], cursor = 1 } }
-              end,
-              entities = function() return { { id = 7, name = "Home Point #1", distance = 3, pos = { x = 0, z = 0 } },
-                { id = 8, name = "Survival Guide", distance = 40, pos = { x = 0, z = 0 } } } end,
-            }
-            actions = {
-              talk = function() at = 1 end,
-              choose = function(i) picks[#picks + 1] = i; at = at + 1 end,
-            }
-            load(INIT)()
-            menus = {
-              { "What will you do?", { "Travel to another home point.", "Set this as your home point.", "Other settings.", "On second thought, never mind." } },
-              { "Teleport to which region?", { "On second thought, none.", "Select from favorites.", "Current region.", "San d'Oria.", "Bastok.", "Windurst.", "Jeuno.", "Next page." } },
-              { "Teleport where?", { "Never mind.", "Ru'Lude Gardens.", "Upper Jeuno.", "Lower Jeuno.", "Port Jeuno." } },
-              { "Teleport where?(Lower Jeuno)", { "Nowhere.", "Home Point #1 (E).", "Home Point #2 (M)." } },
-              { "Teleport? (Current gil: 97531)", { "Add to favorites.", "Yes, please.", "No, thank you." } },
-            }
-            C.warp("hp", "lower", "jeuno", "2")
-            assert(table.concat(picks, " ") == "1 7 4 3 2", table.concat(picks, " "))
-            C.warp("jeuno")
-            assert(said[#said] == "Warp Helper: which one: Upper Jeuno, Lower Jeuno, Port Jeuno?", said[#said])
-            picks, at = {}, 0
-            game.entities = function() return { { id = 8, name = "Survival Guide", distance = 2, pos = { x = 0, z = 0 } } } end
-            menus = {
-              { "What chapter will you read?", { "None.", "\u{201C}Teleportation Assistance.\u{201D}", "\u{201C}Other mysteries.\u{201D}" } },
-              { "Travel to which region?", { "On second thought, none.", "Select from amongst favorites.", "Bastok.", "Ronfaure.", "Next page." } },
-              { "Travel to which region?", { "On second thought, none.", "Select from amongst favorites.", "Movalpolos.", "Mamool Ja Savage.", "Previous page." } },
-              { "Where will you travel?", { "Nowhere.", "Wajaom Woodlands.", "Mamook.", "Aydeewa Subterrane." } },
-              { "Travel to Wajaom Woodlands?", { "Add to favorites.", "Travel using 1000 gil. (97531 gil)", "Travel using 50 tabs. (0 total)", "Not just yet." } },
-            }
-            C.warp("wajaom")
-            assert(table.concat(picks, " ") == "2 5 4 2 2", table.concat(picks, " "))
-        "#;
-        vm.lua.globals().set("INIT", init).unwrap();
-        vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
-    }
-
-    /// Content Trackers: each content's lines become its window's rows; a new zone starts afresh; Odyssey only from
-    /// Rabao; the pop windows.
-    #[test]
-    fn content_trackers_read() {
-        let host = Host::default();
-        let files = BUNDLED.iter().find(|b| b.0 == "content-trackers").unwrap().2;
-        let vm = Vm::new(bundled_manifest("content-trackers").unwrap(), PathBuf::from("."), vm::Source::Bundled(files))
-            .unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        let init = files.iter().find(|f| f.0 == "init.lua").unwrap().1;
-        let script = r##"
-            local F, T, W, Z = nil, nil, nil, 1
-            local NAMES = { [1] = "Dynamis - San d'Oria", [2] = "Abyssea - Konschtat", [3] = "Zhayolm Remnants", [4] = "Nyzul Isle",
-              [292] = "Reisenjima Henge", [264] = "Yorcia Weald [U]", [261] = "Ceizak Battlegrounds", [262] = "Foret de Hennetiel",
-              [247] = "Rabao", [298] = "Walk of Echoes [P1]", [279] = "Walk of Echoes [P2]", [275] = "Outer Ra'Kaznar [U1]" }
-            local WINS, ON, CMDS, SAID, UPD = {}, {}, {}, {}, {}
-            settings = { get = function() return true end }
-            filters = { chat = function(f) F = f end }
-            timer = { every = function(_, f) T = f end }
-            text = { strip = function(t) return t end }
-            commands = { register = function(n, f) CMDS[n] = f end }
-            chat = { add = function(t) SAID[#SAID + 1] = t end }
-            storage = { character = {} }
-            ui = { window = function(id, spec) WINS[id] = spec if id == "content" then W = spec end end, open = function() end,
-              close = function(id) WINS[id] = nil if id == "content" then W = nil end end, on = function(id, f) ON[id] = f end,
-              is_open = function(id) return WINS[id] ~= nil end, update = function(id, el, f) UPD[#UPD + 1] = { id, el, f } end }
-            res = { zone = function(id) return NAMES[id] end, item = function(id) return { name = "item" .. id } end,
-              key_item = function(id) return { name = "ki" .. id } end }
-            local bag = { { id = 1452, count = 30 }, { id = 1453, count = 2 } }
-            local KEYS, BUFFS, POOL, COUNT = { 1546, 9 }, {}, {}, nil
-            game = { player = function() return { zone = Z, name = "Lnxcsfix" } end, items = function(b) return b == 0 and bag or {} end,
-              key_items = function() return KEYS end, buffs = function() return BUFFS end, treasure = function() return POOL end,
-              countdown = function() return COUNT end }
-            load(INIT)()
-            local function texts()
-              local out = {}
-              for _, e in ipairs(W.elements) do out[#out + 1] = e.text end
-              return table.concat(out, "|")
-            end
-            local function el(t)
-              for _, e in ipairs(W.elements) do if e.text == t then return e end end
-            end
-            T()
-            F("The sands of the hourglass have begun to fall.\nYou have 60 minutes (Earth time) remaining in Dynamis.")
-            F("Your stay in Dynamis has been extended by 10 minutes.")
-            T()
-            assert(W.title == "Dynamis")
-            assert(texts() == "69:59|Bronzepiece: 30|Silverpiece: 2|Currency worth 230 singles|Granules: Azure"
-              or texts() == "70:00|Bronzepiece: 30|Silverpiece: 2|Currency worth 230 singles|Granules: Azure", texts())
-            Z = 2
-            T()
-            F("Visitant Light Intensity")
-            F("Pearlescent: 12 / Ebon: 3")
-            F("Golden: 40 / Silvery: 5")
-            F("Azure: 100 / Ruby: 0 / Amber: 255")
-            F("Lnxcsfix's body emits a strong golden light!")
-            F("Obtained 120 cruor. (Total: 4410)")
-            F("Exiting in 5 minutes.")
-            T()
-            assert(W.elements[1].text == "4:59" or W.elements[1].text == "5:00", W.elements[1].text)
-            F("Your visitant status will wear off in 30 minutes.")
-            T()
-            assert(texts():find("Pearlescent: 12|Ebon: 3|Golden: 40 %+|Silvery: 5|Azure: 100|Ruby: 0|Amber: 255|Cruor: 4410"), texts())
-            Z = 3
-            bag = { { id = 5365, count = 1 }, { id = 5376, count = 2 } }
-            T()
-            F("Main Weapon/Sub-Weapon restriction removed.")
-            F("STR Down removed.")
-            T()
-            local t = texts()
-            assert(not t:find("Main Weapon") and not t:find("STR Down") and t:find("Head/Neck|Body"), t)
-            Z = 4
-            T()
-            F("Transfer complete. Welcome to Floor 21.")
-            F("Objective: Eliminate all enemies.")
-            F("You obtain 160 tokens!")
-            F("Floor 21 objective complete. Rune of Transfer activated.")
-            T()
-            assert(texts() == "Floor 21 \u{2014} cleared|Eliminate all enemies|Tokens this run: 160", texts())
-
-            -- Omen: the floor objective, omens, the bonus objectives; a cleared floor's next objective drops them.
-            Z = 292
-            T()
-            F("Vanquish 5 sweetwater foes.")
-            F("There are 12 omens from your foes!")
-            F("Follow the light and carry out your charge before time runs out.\nYou have 120 seconds remaining.")
-            F("1: Deal 3 critical hits to your foes.")
-            F("2: Reduce your foe's HP by at least 2000 using a single weapon skill.")
-            F("3: Restore at least 500 HP 4 times.")
-            F("1: You have dealt 3 critical hits to your foes.")
-            F("3: You have restored at least 500 HP 2 times.")
-            F("2: You have failed to reduce your foe's HP by at least 2000 using a single weapon skill.")
-            T()
-            assert(W.title == "Omen")
-            t = texts()
-            assert(t:find("Floor 1  \u{00b7}  Omens: 12|Vanquish 5 sweetwater foes|", 1, true), t)
-            assert(el("1  Critical hits  3/3").colour[2] == 220 and el("2  Weapon skill damage  at least 2000").colour[1] == 235, t)
-            assert(el("3  Cures  2/4") and el("3  Cures  2/4").colour == nil, t)
-            F("A spectral light flares up.")
-            F("Your stay has been extended by 5 minutes.")
-            F("Vanquish all monsters.")
-            T()
-            t = texts()
-            assert(t == "Floor 2  \u{00b7}  Omens: 12|Vanquish all monsters", t)
-
-            -- Delve: a fracture's plasm, kills, stage and airlixirs; in a field zone the plasm opens the window.
-            Z = 264
-            T()
-            F("You receive 150 corpuscles of mweya plasm.")
-            F("You receive 500 corpuscles, making for a total of 12500.")
-            F("Your ears pick up a discordant howl.")
-            F("You find an airlixir +1 on the Yorcia Bloodfly.")
-            T()
-            assert(W.title == "Delve")
-            assert(texts() == "Plasm: 650 (total 12500)|Kills (estimate): 4|3 of 6|Airlixirs: 0  \u{00b7}  +1: 1  \u{00b7}  +2: 0", texts())
-            Z = 261
-            T()
-            assert(W == nil)
-            F("You receive 100 corpuscles of mweya plasm.")
-            T()
-            assert(W.title == "Delve" and texts():find("Plasm: 100", 1, true), texts())
-
-            -- A reive: ours joined, momentum, bayld (a quest's is not counted).
-            Z = 262
-            T()
-            F("Lnxcsfix has joined the Colonization Reive!")
-            F("Reive momentum score: Physical attack.")
-            F("Momentum bonus: HP recovery!")
-            F("Momentum Bonus: Fast Cast!")
-            F("Lnxcsfix obtained 300 bayld!")
-            F("You have obtained 50 bayld!")
-            T()
-            assert(W.title == "Reive", tostring(W and W.title))
-            t = texts()
-            assert(t:find("Colonization Reive|", 1, true) and t:find("Bayld: 300", 1, true) and t:find("1  Physical attack", 1, true)
-              and t:find("HP recovery \u{00d7}1", 1, true) and t:find("Fast Cast \u{00d7}1", 1, true), t)
-
-            -- Odyssey: armed in Rabao, the run, the last run back in Rabao; the moglophone's wait.
-            KEYS = { 3212 }
-            Z = 247
-            T()
-            assert(W.title == "Odyssey" and texts() == "Moglophone: in hand", texts())
-            F("Entering Sheol B: Difficult.")
-            T()
-            KEYS = {}
-            Z = 298
-            T()
-            assert(W.title == "Odyssey")
-            F("You receive 20 moogle segments for a total of 1020.")
-            F("You receive 5 izzat, for a total of 35.")
-            F("Moogle Mastery is now level IV.")
-            T()
-            assert(texts() == "Sheol B (Difficult)|Segments: 20 (total 1020)|Izzat: 5 (total 35)|Moogle Mastery: IV", texts())
-            Z = 247
-            T()
-            t = texts()
-            assert(t:find("Last run: Sheol B (Difficult)|Segments: 20 (total 1020)|Another moglophone in about ", 1, true), t)
-            Z = 279
-            T()
-            assert(W == nil, "not entered from Rabao: not Odyssey")
-
-            -- Sortie: our gallimaufry, coffer reports, temporary items; the game's countdown for the time.
-            Z = 275
-            COUNT = { left = 600, length = 1800 }
-            T()
-            F("Lnxcsfix received 100 gallimaufry for a total of 900.")
-            F("Someone received 50 gallimaufry for a total of 60.")
-            F("#B treasure coffer status report: 3/3 #?: 1/1.")
-            F("You obtain the temporary item: Ra'Kaznarian Ether!")
-            T()
-            assert(W.title == "Sortie")
-            t = texts()
-            assert(t:find("^10:00|Gallimaufry: 100 %(total 900%)|#A  no report yet|#B  3/3   #%?: 1/1|"), t)
-            assert(el("#B  3/3   #?: 1/1").colour[2] == 220 and t:find("Temporary items: Ra'Kaznarian Ether", 1, true), t)
-
-            -- Pop lists: an NM's tree with what we hold; the NM list; the Zeni NMs and a ???'s place.
-            KEYS = { 1530 }
-            bag = { { id = 3262, count = 1 }, { id = 3291, count = 12 } }
-            CMDS.pops("alf")
-            local P = WINS.pops
-            assert(P.title == "Alfard", P.title)
-            local tree = P.elements[2].rows
-            assert(#tree == 5 and tree[1].colour[2] == 220 and tree[2].colour[2] == 220 and tree[3].colour[1] == 235, #tree)
-            assert(tree[1].cells[1] == "ki1530" and tree[4].cells[1] == "        item3267" and tree[1].cells[2] == "Ningishzida  Forced (I-7/I-8)",
-              tree[4].cells[1])
-            assert(P.elements[3].text == "Every pop held" and P.elements[4].text == "item3291: 12 / 75", P.elements[4].text)
-            T()
-            assert(#UPD > 0 and UPD[1][1] == "pops")
-            CMDS.pops("")
-            assert(WINS.pops.title == "Pop lists" and #WINS.pops.elements[1].rows == 28)
-            ON.pops("pops", { kind = "select", id = "nms", index = 2 })
-            assert(WINS.pops.title == "Amphitrite")
-            CMDS.pops("nobody")
-            assert(SAID[#SAID]:find("No pop list", 1, true))
-            CMDS.znm()
-            assert(WINS.znm.elements[1].type == "tabs" and #WINS.znm.elements[1].items == 4)
-            ON.znm("znm", { kind = "select", id = "t1_1", index = 1 })
-            assert(SAID[#SAID] == "Vulpangue: its ??? is at (-697, -7, -123) in zone 51.", SAID[#SAID])
-        "##;
-        vm.lua.globals().set("INIT", init).unwrap();
-        vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
-    }
-
-    /// No two bundled mods register the same // command (the first loaded would take it).
-    #[test]
-    fn bundled_commands_unique() {
-        let mut seen: std::collections::HashMap<String, &str> = std::collections::HashMap::new();
-        for (id, _, files) in BUNDLED {
-            for (_, src) in files.iter() {
+    fn repo_commands_unique() {
+        let mut seen: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        for dir in repo_mods() {
+            let id = manifest::read(&dir).unwrap().id;
+            for (_, src) in repo_mod_lua(&dir) {
                 for part in src.split("commands.register(\"").skip(1) {
                     let name = part.split('"').next().unwrap().to_string();
-                    if let Some(other) = seen.insert(name.clone(), id) {
-                        assert_eq!(other, *id, "//{name} is registered by both {other} and {id}");
+                    if let Some(other) = seen.insert(name.clone(), id.clone()) {
+                        assert_eq!(other, id, "//{name} is registered by both {other} and {id}");
                     }
                 }
             }
         }
-    }
-
-    /// Multibox Control: //send, //sendtarget and //stna go out as ipc lines; a window that gets them acts.
-    #[test]
-    fn multibox_routes() {
-        let host = Host::default();
-        let files = BUNDLED.iter().find(|b| b.0 == "multibox").unwrap().2;
-        let vm =
-            Vm::new(bundled_manifest("multibox").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        let init = files.iter().find(|f| f.0 == "init.lua").unwrap().1;
-        let script = r#"
-            local C, E, sent, ran, cast, said = {}, {}, {}, {}, {}, {}
-            settings = { get = function() return true end }
-            commands = { register = function(n, f) C[n] = f end, run = function(l) ran[#ran + 1] = l end }
-            events = { on = function(n, f) E[n] = f end }
-            chat = { add = function(t) said[#said + 1] = t end }
-            ipc = { send = function(t, to) sent[#sent + 1] = (to or "*") .. "|" .. t end }
-            client = { focus = function() ran[#ran + 1] = "focus" end }
-            actions = { cast = function(s, who) cast[#cast + 1] = s .. ">" .. who end, target = function(id) ran[#ran + 1] = "target " .. id end }
-            game = {
-              player = function() return { name = "Mage" } end,
-              target = function() return { id = 1234 } end,
-              spells = function() return { 14, 15, 20, 143 } end,
-              recasts = function() return { spells = {} } end,
-              party = function() return {
-                { slot = 0, name = "Mage", in_zone = true, hp = 500, buffs = { 3 } },
-                { slot = 1, name = "Tank", in_zone = true, hp = 900, buffs = { 4, 13 } },
-              } end,
-            }
-            load(INIT)()
-            C.send("Tank", "/ja", "Provoke", "<t>")
-            C.sendtarget()
-            C.stna("Mage")
-            assert(sent[1] == "Tank|run\t/ja Provoke <t>", sent[1])
-            assert(sent[2] == "*|target\t1234", sent[2])
-            assert(cast[1] == "15>Tank", tostring(cast[1]))
-            E.ipc_message("run\t/heal", "Mage")
-            E.ipc_message("target\t77", "Mage")
-            E.ipc_message("focus\t", "Mage")
-            assert(table.concat(ran, ",") == "/heal,target 77,focus", table.concat(ran, ","))
-            E.chat_message("hello", "Friend", 3, false)
-            assert(sent[3] == "*|tell\t[Mage] Friend>> hello", sent[3])
-        "#;
-        vm.lua.globals().set("INIT", init).unwrap();
-        vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
-    }
-
-    /// Action Panel: //actions shows its window (a HUD one: the game keeps its keys), listing the castable spells by
-    /// school and the abilities by tab with the costs the game's lists show; a row runs its macro line; the list
-    /// follows a pet called while it is open.
-    #[test]
-    fn action_panel_opens() {
-        let host = Host::default();
-        let files = BUNDLED.iter().find(|b| b.0 == "action-panel").unwrap().2;
-        let vm =
-            Vm::new(bundled_manifest("action-panel").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        let init = files.iter().find(|f| f.0 == "init.lua").unwrap().1;
-        let script = r#"
-            C, E, ran, said, tick = {}, {}, {}, {}, nil
-            on, pet = true, nil
-            settings = { get = function() return on end }
-            commands = { register = function(n, f) C[n] = f end, run = function(l) ran[#ran + 1] = l end }
-            events = { on = function(n, f) E[n] = f end }
-            chat = { add = function(t) said[#said + 1] = t end }
-            timer = { every = function(_, f) tick = f end }
-            local spells = {
-              [1] = { name = "Cure", kind = 1, levels = { [3] = 1 }, mp = 8, targets = 0x1F },
-              [100] = { name = "Protect", kind = 1, levels = { [3] = 7 }, mp = 9, targets = 1 },
-              [144] = { name = "Fire", kind = 2, levels = { [4] = 13 }, mp = 7, targets = 0x20 },
-              [145] = { name = "Fire II", kind = 2, levels = { [4] = 38 }, mp = 26, targets = 0x20 },
-              [146] = { name = nil, kind = 2, levels = { [4] = 1 }, mp = 1, targets = 0x20 },
-            }
-            local function ab(name, kind, t) t.name, t.kind = name, kind; t.tp = t.tp or 255; t.cost = t.cost or 0
-              t.targets = t.targets or 1; t.recast_id = t.recast_id or 900; t.sub = t.sub or 0; return t end
-            local abilities = {
-              [0x20] = ab("Fast Blade", 3, { targets = 0x20 }),
-              [0x210] = ab("Divine Seal", 1, { recast_id = 26 }),
-              [0x220] = ab("Curing Waltz", 11, { tp = 200, targets = 0x1F }),
-              -- Not listed: a trait, and a row that only opens a sub-list (its rolls are listed).
-              [0x230] = ab("Resist Sleep", 4, {}),
-              [0x240] = ab("Phantom Roll", 1, { recast_id = 193, sub = 8 }),
-              [0x250] = ab("Fighter's Roll", 8, { recast_id = 193 }),
-              -- Pet commands, only with a pet: a blood pact costs MP, a Ready move charges.
-              [0x400] = ab("Fight", 2, { targets = 0x20 }),
-              [0x410] = ab("Foot Kick", 0x12, { cost = 1, targets = 0x20 }),
-              [0x420] = ab("Searing Light", 6, { cost = 107, targets = 0x20 }),
-            }
-            game = {
-              player = function() return { main_job = 3, main_level = 75, sub_job = 4, sub_level = 37 } end,
-              info = function() return { pet_index = pet } end,
-              job_data = function() return {} end,
-              spells = function() return { 1, 100, 144, 145, 146 } end,
-              abilities = function() return { 0x20, 0x210, 0x220, 0x230, 0x240, 0x250, 0x400, 0x410, 0x420 } end,
-              recasts = function() return { spells = { [1] = 3.2 }, abilities = { [26] = 300 }, totals = {} } end,
-            }
-            res = { spell = function(id) return spells[id] end, ability = function(id) return abilities[id] end }
-            local on_window = ui.on
-            ui.on = function(id, f) H = f; on_window(id, f) end
-            load(INIT)()
-            C.actions()
-            assert(ui.is_open("actions"), "//actions opened no window")
-            tick()
-            -- White magic (the first school): Cure and Protect by name; a pick runs its line.
-            H("actions", { kind = "select", id = "list", index = 1 })
-            H("actions", { kind = "select", id = "list", index = 2 })
-            -- Black magic: the nameless spell (names still loading) is left out.
-            H("actions", { kind = "set", id = "school", index = 2 })
-            H("actions", { kind = "select", id = "list", index = 1 })
-            -- Weapon skills.
-            H("actions", { kind = "set", id = "tabs", index = 3 })
-            H("actions", { kind = "select", id = "list", index = 1 })
-            assert(table.concat(ran, "|") == '/ma "Cure" <st>|/ma "Protect" <me>|/ma "Fire" <st>|/ws "Fast Blade" <st>',
-              table.concat(ran, "|"))
-            C.actions()
-            assert(not ui.is_open("actions"), "a second //actions closes it")
-            on = false
-            C.actions()
-            assert(not ui.is_open("actions"), "off: //actions does nothing")
-            on = true
-            C.actions()
-            on = false
-            E.settings_changed("on", false)
-            assert(not ui.is_open("actions"), "switched off: the window closes")
-            on = true
-            C.actions()
-            H("actions", { kind = "press", id = "close", index = 1 })
-            assert(not ui.is_open("actions"), "Close closes it")
-            C.actions()
-            H("actions", { kind = "set", id = "tabs", index = 2 })
-        "#;
-        vm.lua.globals().set("INIT", init).unwrap();
-        let run = |code: &str| vm.lua.load(code).exec().unwrap_or_else(|e| panic!("{e}"));
-        let rows = || -> Vec<Vec<String>> {
-            let st = vm.st.borrow();
-            let win = st.windows.iter().find(|w| w.id == "actions").unwrap();
-            assert!(win.open && win.hud && !win.focus, "a HUD window, open, without the keys");
-            win.elems
-                .iter()
-                .find_map(|e| match e {
-                    window::Elem::List { rows, .. } => Some(rows.iter().map(|r| r.cells.clone()).collect()),
-                    _ => None,
-                })
-                .unwrap()
-        };
-        run(script);
-        // The Abilities page: the waltz's TP, Divine Seal's recast, Fighter's Roll.
-        assert_eq!(rows(), [["Curing Waltz", "200 TP", ""], ["Divine Seal", "", "5:00"], ["Fighter's Roll", "", ""]]);
-        // The Pet page: nothing without a pet; the commands once one is called.
-        run(r#"H("actions", { kind = "set", id = "tabs", index = 4 })"#);
-        assert!(rows().is_empty());
-        run("pet = 1234; tick()");
-        assert_eq!(rows(), [["Fight", "", ""], ["Foot Kick", "1 charge", ""], ["Searing Light", "107 MP", ""]]);
-    }
-
-    /// Gear Stats: descriptions and augments summed; conditional lines and DMG / Delay left out.
-    #[test]
-    fn gear_stats_sum() {
-        let host = Host::default();
-        let files = BUNDLED.iter().find(|b| b.0 == "gear-stats").unwrap().2;
-        let vm =
-            Vm::new(bundled_manifest("gear-stats").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        let init = files.iter().find(|f| f.0 == "init.lua").unwrap().1;
-        let script = r#"
-            local C, W = {}, nil
-            settings = { get = function() return true end }
-            commands = { register = function(n, f) C[n] = f end }
-            timer = { every = function() end }
-            local open = false
-            ui = { window = function(_, spec) W = spec end, open = function() open = true end, close = function() end,
-              is_open = function() return open end }
-            local desc = {
-              [1] = "DMG:20 Delay:240\nSTR+2 Accuracy+5",
-              [2] = "DEF:30 HP+20 MP-10\n\"Store TP\"+3 Haste+3%\nPet: Attack+10",
-              [3] = "DEF:5 Accuracy+2\nSet: Increases Haste",
-            }
-            res = {
-              item = function(id) return { description = desc[id] } end,
-              augments = function(id) return { lines = id == 3 and { "STR+1", "Magic Atk. Bonus+4" } or {} } end,
-            }
-            game = {
-              equipment = function() return { [0] = { id = 1, bag = 0, slot = 1 }, [5] = { id = 2, bag = 0, slot = 2 },
-                [15] = { id = 3, bag = 0, slot = 3 } } end,
-              items = function() return { { slot = 3, extdata = "x" } } end,
-            }
-            load(INIT)()
-            C.gearstats()
-            local got = {}
-            for _, r in ipairs(W.elements[1].rows) do got[#got + 1] = r[1] .. "=" .. r[2] end
-            local s = table.concat(got, " ")
-            assert(s == '"Store TP"=+3 Accuracy=+7 DEF=35 HP=+20 Haste=+3% MP=-10 Magic Atk. Bonus=+4 STR=+3', s)
-        "#;
-        vm.lua.globals().set("INIT", init).unwrap();
-        vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
-    }
-
-    /// Calculator: precedence, brackets, powers, k / m, commas in the answer; bad input is an error line, never run.
-    #[test]
-    fn calculator_answers() {
-        let host = Host::default();
-        let files = BUNDLED.iter().find(|b| b.0 == "calculator").unwrap().2;
-        let vm =
-            Vm::new(bundled_manifest("calculator").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        let init = files.iter().find(|f| f.0 == "init.lua").unwrap().1;
-        let script = r#"
-            local C, said = {}, {}
-            settings = { get = function() return true end }
-            commands = { register = function(n, f) C[n] = f end }
-            chat = { add = function(t) said[#said + 1] = t end }
-            ui = { window = function() end, open = function() end, on = function() end, update = function() end }
-            load(INIT)()
-            local function calc(s) C.calc(s) return said[#said] end
-            assert(calc("12 * 99 + 450") == "12 * 99 + 450 = 1,638", said[#said])
-            assert(calc("(2+3)*4") == "(2+3)*4 = 20")
-            assert(calc("2^10") == "2^10 = 1,024")
-            assert(calc("1.5k / 4") == "1.5k / 4 = 375")
-            assert(calc("2m - 1") == "2m - 1 = 1,999,999")
-            assert(calc("10 / 4") == "10 / 4 = 2.5")
-            assert(calc("os.exit()"):find("^Calculator: "))
-            assert(calc("1/0"):find("no answer"))
-        "#;
-        vm.lua.globals().set("INIT", init).unwrap();
-        vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
-    }
-
-    /// Chat Filter: a listed player, a listed word, a hidden kind and a repeat are dropped; others pass.
-    #[test]
-    fn chat_filter_drops() {
-        let host = Host::default();
-        let files = BUNDLED.iter().find(|b| b.0 == "chat-filter").unwrap().2;
-        let vm =
-            Vm::new(bundled_manifest("chat-filter").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        let init = files.iter().find(|f| f.0 == "init.lua").unwrap().1;
-        let script = r#"
-            local S = { on = true, players = "Spammer, Bot", words = "gil selling", shouts = false, yells = true, repeats = true }
-            local F, clock = nil, 0
-            settings = { get = function(k) return S[k] end }
-            filters = { chat = function(f) F = f end }
-            timer = { every = function() end }
-            text = { strip = function(t) return t end }
-            os.clock = function() return clock end
-            load(INIT)()
-            assert(F("Spammer : hi", 9) == false)
-            assert(F("[1]<Bot> hi", 14) == false)
-            assert(F("(Friend) hi", 13) == nil)
-            assert(F("Friend : cheap GIL SELLING here", 10) == false)
-            assert(F("Friend : party?", 11) == false)
-            assert(F("Friend : need a healer", 10) == nil)
-            clock = 30
-            assert(F("Friend : need a healer", 10) == false)
-            clock = 100
-            assert(F("Friend : need a healer", 10) == nil)
-            assert(F("The Forest Hare is paralyzed.", 36) == nil)
-        "#;
-        vm.lua.globals().set("INIT", init).unwrap();
-        vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
-    }
-
-    /// Web Search: the words given, else the item under a list's cursor, else the target, go to the site, encoded.
-    #[test]
-    fn web_search_urls() {
-        let host = Host::default();
-        let files = BUNDLED.iter().find(|b| b.0 == "web-search").unwrap().2;
-        let vm =
-            Vm::new(bundled_manifest("web-search").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        let init = files.iter().find(|f| f.0 == "init.lua").unwrap().1;
-        let script = r#"
-            local C, opened, high, target = {}, {}, nil, nil
-            settings = { get = function() return true end }
-            commands = { register = function(n, f) C[n] = f end }
-            net = { open_url = function(u) opened[#opened + 1] = u end }
-            chat = { add = function() end }
-            ui = { native = { highlighted = function() return high end } }
-            game = { target = function() return target end }
-            res = { item = function(id) return id == 4096 and { name = "Fire Crystal" } or nil end }
-            load(INIT)()
-            C.wiki("Kupipi's", "Trust")
-            assert(opened[1] == "https://www.bg-wiki.com/index.php?search=Kupipi%27s%20Trust", opened[1])
-            high = { kind = "item", id = 4096 }
-            C.ah()
-            assert(opened[2] == "https://www.ffxiah.com/search/item?q=Fire%20Crystal", opened[2])
-            high, target = nil, { name = "Forest Hare" }
-            C.wiki()
-            assert(opened[3] == "https://www.bg-wiki.com/index.php?search=Forest%20Hare", opened[3])
-        "#;
-        vm.lua.globals().set("INIT", init).unwrap();
-        vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
-    }
-
-    /// Hotbars: New opens the Builder in the window's place (no tabs) and Save or Cancel brings the Library back; a
-    /// second New after a Save is a new entry, and the first, already on a slot, stays.
-    #[test]
-    fn hotbar_builder_replaces_library() {
-        let host = Host::default();
-        let files = BUNDLED.iter().find(|b| b.0 == "hotbar").unwrap().2;
-        let vm = Vm::new(bundled_manifest("hotbar").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        let script = r#"
-            local spells = { [1] = { name = "Cure", mp = 8, kind = 1, targets = 0x1F },
-              [144] = { name = "Fire", mp = 7, kind = 2, targets = 0x20 } }
-            res = { spell = function(id) return spells[id] end, ability = function() end,
-              job = function(id) return ({ [5] = "RDM", [3] = "WHM" })[id] end }
-            game = { player = function() return { main_job = 5, sub_job = 3 } end,
-              spells = function() return { 1, 144 } end, abilities = function() return {} end,
-              find_items = function() return {} end }
-            chat = { add = function() end }
-            local on_window = ui.on
-            ui.on = function(id, f) if id == "manager" then H = f end; on_window(id, f) end
-            local data = require("src.data")
-            data.init({ read = function() return nil end, write = function() end, decode = json.decode,
-              encode = json.encode })
-            local manager = require("src.manager")
-            manager.hooks = { changed = function() end, rebind = function() end }
-            manager.open()
-            local function has(id) return (pcall(ui.get, "manager", id)) end
-            assert(has("tabs") and has("lbtn") and not has("found"))
-            -- New, Cure, Save; its tile dropped on bar 1, slot 1.
-            H("manager", { kind = "press", id = "lbtn", index = 1 })
-            assert(has("found") and not has("tabs") and not has("lbtn"))
-            H("manager", { kind = "select", id = "found", index = 1 })
-            H("manager", { kind = "press", id = "bbtn", index = 1 })
-            assert(has("tabs") and has("lbtn") and not has("found"))
-            data.assign("RDM", nil, 1, 1, data.library("RDM")[1].id)
-            -- New again: Fire, Save.
-            H("manager", { kind = "press", id = "lbtn", index = 1 })
-            H("manager", { kind = "select", id = "found", index = 2 })
-            H("manager", { kind = "press", id = "bbtn", index = 1 })
-            -- Cancel keeps nothing and goes back.
-            H("manager", { kind = "press", id = "lbtn", index = 1 })
-            H("manager", { kind = "press", id = "bbtn", index = 2 })
-            assert(has("lbtn") and not has("found"))
-            local lib = data.library("RDM")
-            assert(#lib == 2 and lib[1].entry.name == "Cure" and lib[2].entry.name == "Fire", #lib)
-            assert(data.resolve("RDM", nil, 1, 1).name == "Cure")
-        "#;
-        vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
-    }
-
-    /// Hotbars' Builder: Rune Enchantment opens its runes, as the game's menu does (a search finds them too); the
-    /// line it builds can be replaced with the player's, kept with the entry.
-    #[test]
-    fn hotbar_builder_sub_lists_and_own_line() {
-        let host = Host::default();
-        let files = BUNDLED.iter().find(|b| b.0 == "hotbar").unwrap().2;
-        let vm = Vm::new(bundled_manifest("hotbar").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        let script = r#"
-            local abilities = { [547] = { name = "Provoke", kind = 1, targets = 0x20, recast = 30 },
-              [869] = { name = "Rune Enchantment", kind = 1, sub = 21, targets = 1 },
-              [870] = { name = "Ignis", kind = 21, targets = 1, recast = 5 },
-              [877] = { name = "Tenebrae", kind = 21, targets = 1, recast = 5 } }
-            res = { spell = function() end, ability = function(id) return abilities[id] end,
-              job = function(id) return ({ [22] = "RUN" })[id] end }
-            game = { player = function() return { main_job = 22, sub_job = 0 } end,
-              spells = function() return {} end, abilities = function() return { 547, 869, 870, 877 } end,
-              find_items = function() return {} end }
-            chat = { add = function() end }
-            local on_window = ui.on
-            ui.on = function(id, f) if id == "manager" then H = f end; on_window(id, f) end
-            local data = require("src.data")
-            data.init({ read = function() return nil end, write = function() end, decode = json.decode,
-              encode = json.encode })
-            local manager = require("src.manager")
-            manager.hooks = { changed = function() end, rebind = function() end }
-            manager.open()
-            local function found() return ui.get("manager", "found") end
-            -- New, Job ability (the dropdown's second): Provoke and the opener; the runes only inside it.
-            H("manager", { kind = "press", id = "lbtn", index = 1 })
-            H("manager", { kind = "set", id = "btype", index = 2 })
-            H("manager", { kind = "select", id = "found", index = 2 })
-            -- Back, Ignis, Tenebrae.
-            H("manager", { kind = "select", id = "found", index = 2 })
-            local line = ui.get("manager", "line").text
-            assert(line == '/ja "Ignis" <me>', line)
-            -- A search finds a rune from the top list.
-            H("manager", { kind = "select", id = "found", index = 1 })
-            H("manager", { kind = "edit", id = "q", text = "tene" })
-            H("manager", { kind = "select", id = "found", index = 1 })
-            line = ui.get("manager", "line").text
-            assert(line == '/ja "Tenebrae" <me>', line)
-            -- Its line, saved with the entry and run in place of the built one.
-            H("manager", { kind = "change", id = "line", text = '/ja "Tenebrae" <stpc>' })
-            H("manager", { kind = "press", id = "bbtn", index = 1 })
-            local e = data.library("RUN")[1].entry
-            assert(e.action.name == "Tenebrae" and e.action.line == '/ja "Tenebrae" <stpc>', e.action.line)
-            assert(data.entry_lines(e)[1] == '/ja "Tenebrae" <stpc>')
-            -- Provoke starts on the target, the Target dropdown sets another.
-            H("manager", { kind = "press", id = "lbtn", index = 1 })
-            H("manager", { kind = "set", id = "btype", index = 2 })
-            H("manager", { kind = "select", id = "found", index = 1 })
-            assert(ui.get("manager", "line").text == '/ja "Provoke" <t>')
-            H("manager", { kind = "set", id = "target", index = 3 })
-            assert(ui.get("manager", "line").text == '/ja "Provoke" <bt>', ui.get("manager", "line").text)
-        "#;
-        vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
-    }
-
-    /// Hotbars' group slots: Rune Enchantment's list made a group in the Builder; its list runs the member picked and
-    /// starts on it the next time.
-    #[test]
-    fn hotbar_group_slot() {
-        let host = Host::default();
-        let files = BUNDLED.iter().find(|b| b.0 == "hotbar").unwrap().2;
-        let vm = Vm::new(bundled_manifest("hotbar").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        let script = r#"
-            local abilities = { [869] = { name = "Rune Enchantment", kind = 1, sub = 21, targets = 1 },
-              [870] = { name = "Ignis", kind = 21, targets = 1, recast = 5 },
-              [877] = { name = "Tenebrae", kind = 21, targets = 1, recast = 5 } }
-            res = { spell = function() end, ability = function(id) return abilities[id] end,
-              job = function(id) return ({ [22] = "RUN" })[id] end }
-            game = { player = function() return { main_job = 22, sub_job = 0 } end,
-              spells = function() return {} end, abilities = function() return { 869, 870, 877 } end,
-              find_items = function() return {} end,
-              recasts = function() return { spells = {}, abilities = {}, totals = { spells = {}, abilities = {} } } end }
-            chat = { add = function() end }
-            SENT = {}
-            commands.run = function(line) SENT[#SENT + 1] = line end
-            local on_window = ui.on
-            ui.on = function(id, f)
-              if id == "manager" then H = f elseif id == "group" then G = f end
-              on_window(id, f)
-            end
-            local data = require("src.data")
-            data.init({ read = function() return nil end, write = function() end, decode = json.decode,
-              encode = json.encode })
-            local manager = require("src.manager")
-            manager.hooks = { changed = function() end, rebind = function() end }
-            manager.open()
-            -- New, Job ability, into Rune Enchantment, Make a Group of These, Save.
-            H("manager", { kind = "press", id = "lbtn", index = 1 })
-            H("manager", { kind = "set", id = "btype", index = 2 })
-            H("manager", { kind = "select", id = "found", index = 1 })
-            H("manager", { kind = "press", id = "grp", index = 1 })
-            -- Another target for the group leaves the runes, which take only us, on <me>.
-            H("manager", { kind = "set", id = "target", index = 3 })
-            H("manager", { kind = "press", id = "bbtn", index = 1 })
-            local it = data.library("RUN")[1]
-            assert(it.entry.name == "Rune Enchantment" and #it.entry.group == 2, it.entry.name)
-            assert(it.entry.group[2].action.name == "Tenebrae" and it.entry.group[2].action.target == "me")
-            local macro = data.macro_of("RUN", it.id)
-            assert(macro.group and #macro.lines == 0)
-            -- Its list: the second runs, and is the one shown and offered first next time.
-            local chooser = require("src.chooser")
-            chooser.open(macro, nil, nil, 1)
-            assert(chooser.is_open() and chooser.bar() == 1)
-            G("group", { kind = "select", index = 2 })
-            assert(not chooser.is_open())
-            assert(SENT[1] == '/ja "Tenebrae" <me>', tostring(SENT[1]))
-            assert(data.last_member(macro) == 2)
-            assert(data.current_member(macro).name == "Tenebrae")
-        "#;
-        vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
-    }
-
-    /// Hotbars on a client without the dropdown element (1.0.10): the manager opens with choices in their place.
-    #[test]
-    fn hotbar_manager_without_dropdowns() {
-        let host = Host::default();
-        let files = BUNDLED.iter().find(|b| b.0 == "hotbar").unwrap().2;
-        let vm = Vm::new(bundled_manifest("hotbar").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        let script = r#"
-            local abilities = { [547] = { name = "Provoke", kind = 1, targets = 0x20, recast = 30 } }
-            res = { spell = function() end, ability = function(id) return abilities[id] end,
-              job = function(id) return ({ [1] = "WAR" })[id] end }
-            game = { player = function() return { main_job = 1, sub_job = 0 } end,
-              spells = function() return {} end, abilities = function() return { 547 } end,
-              find_items = function() return {} end }
-            chat = { add = function() end }
-            local real = ui.window
-            ui.window = function(id, s)
-              for _, e in ipairs(s.elements or {}) do
-                if e.type == "dropdown" then error('unknown element type "dropdown"') end
-              end
-              return real(id, s)
-            end
-            local on_window = ui.on
-            ui.on = function(id, f) if id == "manager" then H = f end; on_window(id, f) end
-            local data = require("src.data")
-            data.init({ read = function() return nil end, write = function() end, decode = json.decode,
-              encode = json.encode })
-            local manager = require("src.manager")
-            manager.hooks = { changed = function() end, rebind = function() end }
-            manager.open()
-            H("manager", { kind = "press", id = "lbtn", index = 1 })
-            H("manager", { kind = "set", id = "btype", index = 2 })
-            H("manager", { kind = "select", id = "found", index = 1 })
-            assert(ui.get("manager", "line").text == '/ja "Provoke" <t>', ui.get("manager", "line").text)
-        "#;
-        vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
-    }
-
-    /// The Timers mod's tracking: LSB's durations (the examples the client's engine was tested with), the charge
-    /// rule, the luopan, a Slow landing on a monster, and our effects shortest first.
-    #[test]
-    fn timers_mod_tracking() {
-        let host = Host::default();
-        let files = BUNDLED.iter().find(|b| b.0 == "timers").unwrap().2;
-        let vm = Vm::new(bundled_manifest("timers").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        let script = r#"
-            local D = require("durations")
-            local function row(kind, id) return D.rows(kind, id)[1] end
-            local function rdm99() return D.Caster.new({ main = { 5, 99 } }) end
-            -- The tables load.
-            assert(D.rule(2).overwrite == "higher" and row("spell", 57).formula == "ENH" and row("spell", 57).effect == 33)
-            -- Slow: RDM 99, 5/5 merits, 20 job points, ENF_MAG_DURATION 20, Saboteur on the first target: 492.
-            local c = rdm99()
-            c.merits[2316], c.jps[167], c.mods[1151], c.statuses[454] = 5, 20, 20, true
-            assert(D.predict(c, row("spell", 56), { first = true, has = {} }, false) == 492)
-            assert(D.predict(c, row("spell", 56), { has = {} }, false) == 276)
-            -- Haste: 180; Composure x3 on ourselves only; Perpetuance x2; a level-48 member gets 48/96 of Haste II.
-            c = rdm99()
-            local me, other = { me = true, has = {} }, { has = {} }
-            assert(D.predict(c, row("spell", 57), other, true) == 180)
-            c.statuses[419] = true
-            assert(D.predict(c, row("spell", 57), me, true) == 540 and D.predict(c, row("spell", 57), other, true) == 180)
-            c.statuses[469] = true
-            assert(D.predict(c, row("spell", 57), other, true) == 360)
-            assert(D.predict(c, row("spell", 511), { level = 48, has = {} }, true) == 180)
-            -- Songs: song+ 3: 156; Troubadour 312.
-            c = D.Caster.new({ main = { 10, 75 }, mods = { [434] = 2, [452] = 1 } })
-            assert(D.predict(c, row("spell", 398), other, false) == 156)
-            c.statuses[348] = true
-            assert(D.predict(c, row("spell", 398), other, false) == 312)
-            -- Steps: 60 new, then the time left + 30 up to 120.
-            c = D.Caster.new({ main = { 19, 75 } })
-            assert(D.predict(c, row("ability", 201), other, false) == 60)
-            assert(D.predict(c, row("ability", 201), other, false, 45.5) == 75)
-            assert(D.predict(c, row("ability", 201), other, false, 100) == 120)
-            -- Rolls: 300 + 20 a Winning Streak merit.
-            c = D.Caster.new({ main = { 17, 75 }, merits = { [3076] = 2 } })
-            assert(D.predict(c, row("ability", 105), other, false) == 340)
-            assert(D.lands(row("ability", 105), 421, 11) and not D.lands(row("ability", 105), 421, 0))
-            -- Landing, icons and replacement.
-            assert(D.lands(row("spell", 23), 2, 37) and D.lands(row("spell", 23), 85, 0))
-            assert(D.lands(row("spell", 57), 230, 33) and not D.lands(row("spell", 57), 230, 0))
-            assert(not D.lands(row("spell", 57), 75, 0))
-            assert(D.icon_matches(66, 445) and D.icon_matches(19, 2) and not D.icon_matches(33, 2))
-            local function has(list, x)
-              for _, v in ipairs(list) do if v == x then return true end end
-              return false
-            end
-            assert(has(D.ends(128), 129) and has(D.ends(134), 135))
-            -- Weapon skills by TP.
-            c = D.Caster.new({ main = { 1, 75 }, tp = 2000 })
-            assert(D.predict(c, D.rows("ws", 83)[1], other, false) == 240)
-            c.tp = 3000
-            assert(D.predict(c, D.rows("ws", 87)[1], other, false) == 150)
-            c.tp = 1500
-            assert(D.predict(c, D.rows("ws", 129)[1], other, false) == 45)
-            -- Wards: the Summoning skill over 300 (at most 200); Perfect Defense 30 + skill / 20.
-            c = D.Caster.new({ main = { 15, 75 }, skills = { [38] = 420 } })
-            assert(D.predict(c, D.rows("pet", 595)[1], other, false) == 300)
-            c.skills[38] = 600
-            assert(D.predict(c, D.rows("pet", 595)[1], other, false) == 380)
-            assert(D.predict(c, D.rows("pet", 671)[1], other, false) == 60)
-            -- Dancer: Chocobo Jig II, a samba.
-            c = D.Caster.new({ main = { 19, 99 }, jps = { [613] = 10 }, mods = { [492] = 60 } })
-            assert(D.predict(c, row("ability", 381), other, false) == 195)
-            c.mods[490], c.mods[498] = 10, 10
-            assert(D.predict(c, row("ability", 189), me, false) == 143)
-            -- Helix; Indi on an Entrust target.
-            c = D.Caster.new({ main = { 20, 75 }, mods = { [477] = 72 } })
-            assert(D.predict(c, row("spell", 278), other, false) == 162)
-            c.mods[960] = 21
-            assert(D.predict(c, row("spell", 768), other, false) == 201)
-            -- Merits count only for the main job at 75.
-            c = D.Caster.new({ main = { 1, 75 }, merits = { [3076] = 5 } })
-            assert(c:merit(3076) == 0)
-            c.main = { 17, 74 }
-            assert(c:merit(3076) == 0)
-            c.main = { 17, 75 }
-            assert(c:merit(3076) == 100)
-
-            -- The game as the engine and rows see it: RDM 99 with four buffs, a Valkurm Emperor in front.
-            local buffs = { { id = 41, remaining = 600 }, { id = 40, remaining = 300 }, { id = 33, remaining = 120 },
-              { id = 42, remaining = 200 } }
-            local names = { [33] = "Haste", [40] = "Protect", [41] = "Shell", [42] = "Regen", [13] = "Slow" }
-            local p = { id = 1, name = "Lnxcsfix", main_job = 5, main_level = 99, sub_job = 13, sub_level = 49, zone = 103,
-              tp = 0 }
-            game = {
-              player = function() return p end, buffs = function() return buffs end, party = function() return {} end,
-              entity = function(id) if id == 0x1000 then return { id = id, name = "Valkurm Emperor", kind = "mob", status = 1 } end end,
-              merits = function() return {} end, job_points = function() return {} end,
-              skills = function() return { combat = {}, magic = {} } end, equipment = function() return {} end,
-              items = function() return {} end, recasts = function() return { spells = {}, abilities = {}, calc = {} } end,
-              abilities = function() return {} end,
-            }
-            res = { status = function(id) return names[id] end, status_info = function() return { untimed = false } end,
-              spell = function(id) return id == 56 and { name = "Slow", kind = 1 } or nil end, ability = function() end,
-              item = function() end }
-            mods = { list = function() return {} end }
-            local E = require("engine")
-            local R = require("rows")
-            -- The luopan at 99: 207 s; with Blaze of Glory half.
-            c = D.Caster.new({ main = { 21, 99 } })
-            assert(E.luopan_life(c) == 207)
-            c.statuses[569] = true
-            assert(E.luopan_life(c) == 105)
-            -- Charges: Stratagems at SCH 99 with 100 s left: 4 s to the next, 2 ready; Ready with calc2 -15: 25-s shares.
-            local n, ready, per = R.charges(100, 5, 240, 0, 0)
-            assert(n == 4 and ready == 2 and per == 48, n .. " " .. ready .. " " .. per)
-            n, ready, per = R.charges(96, 5, 240, 0, 0)
-            assert(n == 48 and ready == 3)
-            n, ready, per = R.charges(60, 3, 90, 0, -15)
-            assert(n == 10 and ready == 0 and per == 25)
-            assert(R.charges(10, 0, 90, 0, 0) == nil)
-            -- Our Slow lands on the Emperor: its row under its name, 180 s (no merits, no Saboteur).
-            E.on_action({ actor = 1, category = 4, param = 56, targets = { { id = 0x1000, results = { { message = 236, value = 13, info = 0 } } } } })
-            local secs = R.sections(true)
-            local mob = secs[3][1]
-            assert(mob.name == "Valkurm Emperor" and mob.rows[1].name == "Slow", tostring(mob and mob.name))
-            assert(math.abs(mob.rows[1].left - 180) < 1 and mob.rows[1].total == 180)
-            -- Our effects, shortest first.
-            local own = secs[2][1]
-            local order = {}
-            for _, r in ipairs(own.rows) do order[#order + 1] = r.name end
-            assert(own.name == "Lnxcsfix" and table.concat(order, ",") == "Haste,Regen,Protect,Shell", table.concat(order, ","))
-            -- It wears off: the server's message ends it.
-            E.on_message(0x1000, 13, 204)
-            assert(#R.sections(true)[3] == 0)
-            -- Another mod's row (timers.add through the service), in the buffs section under "Timers".
-            mods.list = function() return { { id = "countdowns" } } end
-            R.add("countdowns", "Pop", 300, { group = "Spawns" })
-            secs = R.sections(false)
-            assert(#secs[1] == 0 and secs[2][1].name == "Spawns" and secs[2][1].rows[1].name == "Pop")
-            local ok, err = pcall(R.add, "countdowns", "Bad", 10, { icon = { kind = "status" } })
-            assert(not ok and tostring(err):find("numeric id"), tostring(err))
-            -- A number name is the same row on add and remove.
-            R.clear("countdowns")
-            R.add("countdowns", 5, 30)
-            R.add("countdowns", 5, 30)
-            assert(#R.sections(false)[2][1].rows == 1)
-            R.remove("countdowns", 5)
-            assert(#R.sections(false)[2] == 0)
-            -- Copies of one status (maneuvers) each keep their gauge.
-            buffs = { { id = 300, remaining = 20 }, { id = 300, remaining = 60 } }
-            R.sections(true)
-            local man = R.sections(true)[2][1].rows
-            assert(man[1].total == 20 and man[2].total == 60, man[1].total .. " " .. man[2].total)
-        "#;
-        vm.lua.load(script).exec().unwrap();
-    }
-
-    /// The Minimap mod: a dot for each entity the radar shows (not us), in its colour, the target ringed, named; the
-    /// wheel sets the zoom a quarter a notch within 48..512.
-    #[test]
-    fn minimap_mod_dots_and_zoom() {
-        let host = Host::default();
-        let files = BUNDLED.iter().find(|b| b.0 == "minimap").unwrap().2;
-        let vm = Vm::new(bundled_manifest("minimap").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        vm.lua
-            .load(
-                r#"
-            ME = { id = 1, target = 3 }
-            game = {
-              player = function() return ME end, zone = function() return 100 end,
-              info = function() return { map_grid = "(G-6)" } end,
-              map = function() return { px_per_unit = 0.2 } end,
-              entities = function(filter)
-                -- Within the map shown at 160 map pixels: 160 / 2 / 0.2 x 1.5 + 10 = 610 yalms.
-                assert(filter and math.abs(filter.distance - 610) < 0.01, filter and filter.distance)
-                return {
-                { id = 1, name = "Lnxcsfix", pos = { x = 0, z = 0 }, radar = 0x00b040 },
-                { id = 2, name = "Forest Hare", pos = { x = 10, z = 5 }, radar = 0x808080 },
-                { id = 3, name = "Orcish Fodder", pos = { x = -4, z = 2 }, radar = 0xe03030 },
-                { id = 4, name = "Hidden", pos = { x = 1, z = 1 } } } end,
-            }
-            res = { zone = function() return "West Ronfaure" end }
-            settings = { get = function() return true end }
-            ui.window = function(id, s) SPEC = s end
-            ui.open = function() end
-            ui.update = function(w, id, t) SPEC.elements[1].dots = t.dots end
-            ui.on = function(id, f) HANDLER = f end
-            client = { option = function() return SPAN or 160 end, set_option = function(_, v) SPAN = v end }
-            events.on = function(name, f) if name == "frame" then FRAME = f end end
-        "#,
-            )
-            .exec()
-            .unwrap();
-        let init = files.iter().find(|f| f.0 == "init.lua").unwrap().1;
-        vm.lua.load(init).exec().unwrap();
-        vm.lua
-            .load(
-                r#"
-            FRAME()
-            assert(SPEC.heading == "West Ronfaure  (G-6)", SPEC.heading)
-            local dots = SPEC.elements[1].dots
-            assert(#dots == 2 and dots[1].tip == "Forest Hare" and dots[1].colour == 0x808080 and not dots[1].target)
-            assert(dots[2].target and dots[2].x == -4 and dots[2].z == 2)
-            HANDLER("minimap", { kind = "wheel", notches = 1 })
-            assert(math.abs(SPAN - 128) < 0.01, SPAN)
-            SPAN = 60
-            HANDLER("minimap", { kind = "wheel", notches = 2 })
-            assert(SPAN == 48, SPAN)
-        "#,
-            )
-            .exec()
-            .unwrap();
-    }
-
-    /// The Skillchain mod's tracking: LSB's chain rules and data, a Burning Blade opening Liquefaction on a
-    /// monster, Naji's Flat Blade closing it into Fusion (the proc's chain), and the view of it with the party's chains.
-    #[test]
-    fn skillchain_mod_tracking() {
-        let host = Host::default();
-        let files = BUNDLED.iter().find(|b| b.0 == "skillchain").unwrap().2;
-        let vm =
-            Vm::new(bundled_manifest("skillchain").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        vm.lua
-            .load(
-                r#"
-            local SC = require("sc")
-            -- Liquefaction then Impaction: Fusion; Fusion then Fragmentation: Light; Light then Light: Light II.
-            assert(SC.form({ 3 }, { 8 }) == 11 and SC.form({ 11 }, { 12 }) == 13 and SC.form({ 13 }, { 13 }) == 15)
-            -- The resonance's first property that pairs wins.
-            assert(SC.form({ 1, 3 }, { 4 }) == 10 and SC.form({ 3, 1 }, { 4 }) == 4 and SC.form({ 1 }, { 1 }) == nil)
-            local d = SC.data()
-            assert(d.weapon[128].props[1] == 1 and d.weapon[134].props[1] == 6 and d.weapon[134].props[2] == 8)
-            assert(SC.trust("Naji") and SC.fold("D. Shantotto") == "dshantotto")
-            assert(SC.chain_text(11) == "Fusion (Light, Fire)")
-            local me = { id = 1, index = 10, name = "Lnxcsfix", target = 0x1000, tp = 1000 }
-            local ents = { [0x1000] = { id = 0x1000, name = "Valkurm Emperor", kind = "mob", hpp = 80, master = 0 },
-              [2] = { id = 2, name = "Naji", kind = "player", hpp = 100, master = 10, trust = true } }
-            game = {
-              player = function() return me end, entity = function(id) return ents[id] end,
-              party = function() return { { id = 1, name = "Lnxcsfix", party = 0, tp = 1000 },
-                { id = 2, name = "Naji", party = 0, tp = 1200 } } end,
-              abilities = function() return { 33, 35 } end,
-            }
-            res = { ability = function(id)
-              return ({ [33] = { kind = 3, name = "Burning Blade" }, [35] = { kind = 3, name = "Flat Blade" },
-                [34] = { kind = 3, name = "Red Lotus Blade" }, [40] = { kind = 3, name = "Vorpal Blade" } })[id] end,
-              spell = function() end }
-            local T = require("tracker")
-            T.on_action({ actor = 1, category = 3, param = 33,
-              targets = { { id = 0x1000, results = { { miss = 0, message = 185, value = 100, info = 0 } } } } })
-            local r = T.on[0x1000]
-            assert(r and r.chain == nil and r.props[1] == 3, "opened")
-            -- Naji (a trust: his skills from LSB's list) closes it: the proc's kind 6 is Fusion.
-            T.on_action({ actor = 2, category = 11, param = 35,
-              targets = { { id = 0x1000, results = { { miss = 0, message = 185, value = 90, info = 0,
-                proc = { kind = 6, message = 288, value = 50, info = 0 } } } } } })
-            r = T.on[0x1000]
-            assert(r.chain == 11 and r.links == 1 and r.life == 9, "closed")
-            local v = T.view()
-            assert(v.now.mob == "Valkurm Emperor" and v.now.chain == 11 and v.now.by == "Naji: Flat Blade", v.now.by)
-            assert(#v.chains > 0)
-            -- Fusion then Fragmentation (Naji's Vorpal Blade: Scission / Impaction is not; his list has Red Lotus
-            -- Blade): every closer named, the strongest first.
-            for _, c in ipairs(v.now.closers) do assert(c.who and c.skill and c.chain) end
-        "#,
-            )
-            .exec()
-            .unwrap();
-    }
-
-    /// The Suggestions mod's rules replay every recorded case (src/client/suggest_cases: the game's facts and the
-    /// rows the rules made of them), with the Skillchain mod's chain rules; each rule has a case; held rows regroup.
-    #[test]
-    fn suggestions_mod_cases() {
-        const RULES: [&str; 19] = [
-            "raise",
-            "shadows",
-            "ailment",
-            "curaga",
-            "cure",
-            "waltz",
-            "burst",
-            "close",
-            "provoke",
-            "job_ability",
-            "ninja_stance",
-            "samba",
-            "rune_fencer",
-            "geomancer",
-            "debuff",
-            "open_chain",
-            "strongest_ws",
-            "renew",
-            "between",
-        ];
-        let host = Host::default();
-        let files = BUNDLED.iter().find(|b| b.0 == "suggestions").unwrap().2;
-        let vm =
-            Vm::new(bundled_manifest("suggestions").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        let sc = BUNDLED.iter().find(|b| b.0 == "skillchain").unwrap().2.iter().find(|f| f.0 == "sc.lua").unwrap().1;
-        let sc: Table = vm.lua.load(sc).eval().unwrap();
-        vm.lua.globals().set("SC", sc).unwrap();
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/client/suggest_cases");
-        let mut paths: Vec<_> = std::fs::read_dir(&dir)
-            .unwrap()
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| p.extension().is_some_and(|x| x == "json"))
-            .collect();
-        paths.sort();
-        assert!(!paths.is_empty());
-        let mut rules_seen = Vec::new();
-        let mut failed = Vec::new();
-        for p in &paths {
-            let text = std::fs::read_to_string(p).unwrap();
-            let case: serde_json::Value = serde_json::from_str(&text).unwrap();
-            let rule = case["rule"].as_str().unwrap_or_default().to_string();
-            assert!(RULES.contains(&rule.as_str()), "{}: rule {rule:?}", p.display());
-            rules_seen.push(rule);
-            vm.lua.globals().set("CASE", text).unwrap();
-            let got: String = vm
-                .lua
-                .load(
-                    r#"
-                local R = require("rules")
-                R.chain = { form = SC.form, level = SC.level, elements = SC.elements, chain_text = SC.chain_text }
-                local case = json.decode(CASE)
-                local got = R.rows(R.suggest(case.facts))
-                local want = {}
-                for _, e in ipairs(case.expect) do
-                  local kind, id = "spell", e.action.Spell
-                  if not id then kind, id = "ability", e.action.Ability end
-                  want[#want + 1] = { kind = kind, id = id, target = e.target, reason = e.reason, label = e.label,
-                    group = e.group or {} }
-                end
-                local a, b = json.encode(got), json.encode(want)
-                return a == b and "" or ("expected " .. b .. "\n got " .. a)
-            "#,
-                )
-                .eval()
-                .unwrap_or_else(|e| panic!("{}: {e}", p.display()));
-            if !got.is_empty() {
-                failed.push(format!("{} ({}): {got}", p.display(), case["note"]));
-            }
-        }
-        assert!(failed.is_empty(), "{}", failed.join("\n\n"));
-        let missing: Vec<&str> = RULES.iter().copied().filter(|r| !rules_seen.iter().any(|x| x == r)).collect();
-        assert!(missing.is_empty(), "rules without a case: {missing:?}");
-        // Held rows: a tier back from its recast returns to its family, the nuke row back to the list's top; down to
-        // one castable spell the row casts it, and the family comes back.
-        vm.lua
-            .load(
-                r#"
-            local R = require("rules")
-            local function named(id, name, mp, area)
-              return { id = id, name = name, skill = 36, element = 1, mp = mp, targets = 0x20, area = area }
-            end
-            local all = { named(150, "Blizzard II", 31, false), named(149, "Blizzard", 8, false),
-              named(180, "Blizzaga II", 175, true), named(179, "Blizzaga", 80, true) }
-            local target = { name = "Bark Spider", hpp = 90, ranks = { 0, -2, 0, 0, 0, 0, 0, 0 } }
-            local f = { party = { { name = "Lenon", me = true, here = true, hp = 1000, hp_max = 1000 } },
-              spells = { all[2], all[4] }, target = target }
-            local s = R.suggest(f)
-            local k
-            for i, x in ipairs(s) do if x.label == "Ice" then k = i end end
-            assert(k and s[k].id == 149 and table.concat(s[k].group, ",") == "149,179")
-            R.regroup({ party = f.party, spells = all, target = target }, s)
-            assert(s[k].id == 150 and table.concat(s[k].group, ",") == "150,149,180,179")
-            R.regroup({ party = f.party, spells = { all[2] }, target = target }, s)
-            assert(s[k].id == 149 and #s[k].group == 0 and s[k].label == nil)
-            R.regroup({ party = f.party, spells = all, target = target }, s)
-            assert(s[k].id == 150 and s[k].label == "Ice")
-            -- Protect's family takes Protectra.
-            local p = function(id, name, mp, area) return { id = id, name = name, skill = 34, mp = mp, targets = 1, area = area } end
-            assert(R.family(p(44, "Protect II", 28, false)) == "Protect" and R.family(p(125, "Protectra", 9, true)) == "Protect")
-            -- LSB's resistance ranks moved with the mod (data/resistances.txt): a monster's over its species'.
-            local F = require("facts")
-            assert(table.concat(F.ranks_of(100, " Wild Rabbit "), ",") == "-2,-1,-2,-1,-3,-3,-1,-3")
-            assert(F.ranks_of(100, "No Such Monster") == nil)
-        "#,
-            )
-            .exec()
-            .unwrap();
-    }
-
-    /// Hotbars' Builder lists the spells the magic list offers: learned and castable on our jobs at their levels
-    /// (RDM 54 / NIN 27: no Dia III, no Utsusemi: Ni), blue magic only while set.
-    #[test]
-    fn hotbar_builder_spells_for_jobs() {
-        let host = Host::default();
-        let files = BUNDLED.iter().find(|b| b.0 == "hotbar").unwrap().2;
-        let vm = Vm::new(bundled_manifest("hotbar").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        let script = r#"
-            local spells = {
-              [4] = { name = "Cure IV", mp = 88, kind = 1, levels = { [3] = 41, [5] = 48 } },
-              [24] = { name = "Dia II", mp = 30, kind = 1, targets = 0x20, levels = { [3] = 36, [5] = 31 },
-                description = "Deals light damage over time and lowers defense." },
-              [25] = { name = "Dia III", mp = 45, kind = 1, targets = 0x20, levels = { [5] = 75 } },
-              [338] = { name = "Utsusemi: Ichi", mp = 0, kind = 4, levels = { [13] = 12 } },
-              [339] = { name = "Utsusemi: Ni", mp = 0, kind = 4, levels = { [13] = 37 } },
-              [513] = { name = "Venom Shell", mp = 86, kind = 6, levels = { [16] = 42 } },
-              [519] = { name = "Screwdriver", mp = 21, kind = 6, levels = { [16] = 26 } } }
-            res = { spell = function(id) return spells[id] end, ability = function() end,
-              job = function(id) return ({ [5] = "RDM", [13] = "NIN", [16] = "BLU" })[id] end }
-            local me = { main_job = 5, main_level = 54, sub_job = 13, sub_level = 27, mp = 40 }
-            game = { player = function() return me end, spells = function() return { 4, 24, 25, 338, 339 } end,
-              abilities = function() return {} end, job_data = function() return {} end,
-              find_items = function() return {} end }
-            chat = { add = function() end }
-            local builder = require("src.builder")
-            local function names()
-              local out = {}
-              for _, e in ipairs(builder.find("ma", "")) do out[#out + 1] = e.name end
-              return table.concat(out, ", ")
-            end
-            local got = names()
-            assert(got == "Cure IV, Dia II, Utsusemi: Ichi", got)
-            -- A spell's default target: the party picker for one that takes no other player (Refresh 0x05), the
-            -- alliance's for 0x0d, any player for Protect's 0x1d, the current target for one that hits enemies.
-            assert(builder.default_target(0x05) == "stpt" and builder.default_target(0x0d) == "stal")
-            assert(builder.default_target(0x1d) == "stpc" and builder.default_target(0x3f) == "t")
-            assert(builder.default_target(0x01) == "me")
-            -- New: the Builder lists them, each row with its description.
-            local shown, update = nil, ui.update
-            ui.update = function(w, id, t)
-              if id == "found" and t.rows then shown = t.rows end
-              return update(w, id, t)
-            end
-            local on_window = ui.on
-            ui.on = function(id, f) if id == "manager" then H = f end; on_window(id, f) end
-            local data = require("src.data")
-            data.init({ read = function() return nil end, write = function() end, decode = json.decode,
-              encode = json.encode })
-            local manager = require("src.manager")
-            manager.hooks = { changed = function() end, rebind = function() end }
-            manager.open()
-            H("manager", { kind = "press", id = "lbtn", index = 1 })
-            local count = ui.get("manager", "fcount").text
-            assert(count == "3 found.", count)
-            assert(shown[2][1] == "Dia II" and shown[2].tip == spells[24].description and shown[1].tip == nil)
-            H("manager", { kind = "select", id = "found", index = 2 })
-            local line = ui.get("manager", "line").text
-            assert(line == '/ma "Dia II" <t>', line)
-            -- BLU 50 / NIN 25: Venom Shell set, Screwdriver learned but not set.
-            me = { main_job = 16, main_level = 50, sub_job = 13, sub_level = 25 }
-            game.spells = function() return { 338, 513, 519 } end
-            game.job_data = function() return { main = { blue_spells = { 513 } } } end
-            got = names()
-            assert(got == "Utsusemi: Ichi, Venom Shell", got)
-            -- The bar's shading uses the same rule, and the MP.
-            local actions = require("src.actions")
-            me = { main_job = 5, main_level = 54, sub_job = 13, sub_level = 27, mp = 40 }
-            assert(not actions.usable({ kind = "spell", id = 25 }, me))
-            assert(actions.usable({ kind = "spell", id = 24 }, me))
-            assert(not actions.usable({ kind = "spell", id = 4 }, me))
-        "#;
-        vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
-    }
-
-    /// Hotbars: a macro's first action names its icon and recast; a drag swaps two slots, in the sub job's set when
-    /// either slot comes from it.
-    #[test]
-    fn hotbar_actions_and_swap() {
-        let host = Host::default();
-        let files = BUNDLED.iter().find(|b| b.0 == "hotbar").unwrap().2;
-        let vm = Vm::new(bundled_manifest("hotbar").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
-        vm.lua.set_app_data(host.info.clone());
-        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
-        let script = r#"
-            res = setmetatable({
-              spell = function(id) if id == 1 then return { name = "Cure" } end end,
-              ability = function(id)
-                if id == 0x20 then return { name = "Raging Axe" } end
-                if id == 0x210 then return { name = "Provoke", recast_id = 5 } end
-              end,
-            }, { __index = function() return function() return nil end end })
-            game.find_items = function(name) if name == "potion" then return { { id = 4112 } } end return {} end
-            local a = require("src.actions")
-            local p = a.of({ lines = { "/echo go", '/ja "Provoke" <t>' } })
-            assert(p.kind == "ability" and p.id == 0x210 and p.recast_id == 5)
-            assert(a.of({ lines = { "/ma Cure <me>" } }).id == 1)
-            assert(a.of({ lines = { '/ws "Raging Axe" <t>' } }).id == 0x20)
-            assert(a.of({ lines = { '/item "Potion" <me>' } }).id == 4112)
-            assert(a.of({ lines = { "/echo nothing" } }) == false)
-            local r = { spells = {}, abilities = { [5] = 15 }, totals = { spells = {}, abilities = { [5] = 30 } } }
-            local left, frac = a.recast(p, r)
-            assert(left == 15 and frac == 0.5)
-
-            local saved
-            local data = require("src.data")
-            data.init({ read = function() return nil end, write = function(_, t) saved = t end, decode = json.decode,
-              encode = json.encode })
-            local m = function(n) return { name = n, lines = { "/echo " .. n } } end
-            data.set_macro("WAR", nil, 1, 1, m("one"))
-            data.set_macro("WAR", nil, 1, 2, m("two"))
-            data.set_macro("WAR", "NIN", 1, 3, m("sub"))
-            data.swap("WAR", nil, 1, 1, 1, 2)
-            assert(data.resolve("WAR", nil, 1, 1).name == "two" and data.resolve("WAR", nil, 1, 2).name == "one")
-            -- Into the sub set: the main set keeps its macro under the sub set's.
-            data.swap("WAR", "NIN", 1, 3, 1, 4)
-            local four, from = data.resolve("WAR", "NIN", 1, 4)
-            assert(four.name == "sub" and from == "sub")
-            assert(data.resolve("WAR", "NIN", 1, 3) == nil)
-            assert(saved ~= nil)
-
-            -- The library: an entry on slots of both sets by reference; editing it changes them all.
-            local id = data.save_entry("WAR", nil, { name = "Prov", action = { kind = "ja", name = "Provoke",
-              target = "t" }, lines = { "/p Provoked <t>" } })
-            data.assign("WAR", nil, 2, 1, id)
-            data.assign("WAR", "NIN", 2, 2, id)
-            local got, gf = data.resolve("WAR", "NIN", 2, 2)
-            assert(got.ref == id and gf == "sub" and got.lines[1] == '/ja "Provoke" <t>'
-              and got.lines[2] == "/p Provoked <t>")
-            assert(data.uses("WAR", id) == 2)
-            data.save_entry("WAR", id, { name = "Provoke!", action = { kind = "ja", name = "Provoke", target = "bt" } })
-            assert(data.resolve("WAR", nil, 2, 1).name == "Provoke!")
-            assert(data.effective("WAR", "NIN")[2][2].macro.lines[1] == '/ja "Provoke" <bt>')
-            -- A swap keeps the reference (not a copy of its lines).
-            data.swap("WAR", nil, 2, 1, 2, 5)
-            assert(data.get_raw("WAR", nil, 2, 5).ref == id and data.get_raw("WAR", nil, 2, 1) == nil)
-            -- set_macro with a resolved library macro (as the pickers give) puts the reference.
-            data.set_macro("WAR", nil, 2, 6, data.resolve("WAR", nil, 2, 5))
-            assert(data.get_raw("WAR", nil, 2, 6).ref == id and data.uses("WAR", id) == 3)
-            -- A sub slot over a main macro: deleting the entry leaves it blank, not showing the main macro again.
-            data.set_macro("WAR", nil, 2, 7, { name = "under", lines = { "/ja \"Berserk\" <me>" } })
-            data.assign("WAR", "NIN", 2, 7, id)
-            data.delete_entry("WAR", id)
-            assert(data.resolve("WAR", "NIN", 2, 2) == nil and data.resolve("WAR", nil, 2, 5) == nil)
-            assert(data.uses("WAR", id) == 0 and data.resolve("WAR", nil, 1, 1).name == "two")
-            assert(data.get_raw("WAR", "NIN", 2, 7) == false and data.resolve("WAR", "NIN", 2, 7) == nil)
-            assert(data.resolve("WAR", nil, 2, 7).name == "under")
-
-            -- The builder's lines, and a system command's stand-in icon with no recast.
-            assert(data.command({ kind = "equip", name = "Warp Ring", target = "ring1" }) == '/equip ring1 "Warp Ring"')
-            assert(data.command({ kind = "cmd", name = "/attack", target = "t" }) == "/attack <t>")
-            assert(data.command({ kind = "cmd", name = "/heal" }) == "/heal")
-            local atk = a.of({ lines = { "/attack <t>" } })
-            assert(atk and atk.kind == "item" and atk.no_recast and a.recast(atk, r) == 0)
-        "#;
-        vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
     }
 
     /// ui.native.place / rect / panels and ui.skin: names checked, the permission asked, each change its mod's (another
@@ -5722,15 +3038,16 @@ return "acxml flow ok"
         assert_eq!(n as usize, native::PANELS.len());
     }
 
-    /// Every bundled mod's manifest parses and its Lua compiles; settings on our Extras tabs name one and label their
-    /// values.
+    /// Every repository mod's manifest parses and its Lua compiles; settings on our Extras tabs name one and label
+    /// their values.
     #[test]
-    fn bundled_mods_load() {
-        for (id, text, files) in BUNDLED {
-            let m = manifest::parse(text, id).unwrap_or_else(|e| panic!("{id}: {e:#}"));
-            for (name, src) in files.iter().filter(|f| f.0.ends_with(".lua")) {
+    fn repo_mods_load() {
+        for dir in repo_mods() {
+            let m = manifest::read(&dir).unwrap_or_else(|e| panic!("{}: {e:#}", dir.display()));
+            let id = &m.id;
+            for (name, src) in repo_mod_lua(&dir) {
                 let lua = mlua::Lua::new();
-                lua.load(*src).set_name(*name).into_function().unwrap_or_else(|e| panic!("{id}/{name}: {e}"));
+                lua.load(&src).set_name(&name).into_function().unwrap_or_else(|e| panic!("{id}/{name}: {e}"));
             }
             for (key, d) in &m.settings {
                 assert!(d.tab.is_empty() || !d.label.is_empty(), "{id}.{key}: a tabbed setting needs its row's label");
@@ -6341,7 +3658,6 @@ fn mod_page(
     m: &manifest::Manifest,
     settings: &serde_json::Map<String, serde_json::Value>,
     granted: &[String],
-    bundled: bool,
     scope: Option<(bool, bool)>,
 ) -> Option<super::settings::ModPage> {
     use super::settings::{Edit, ModPage, ModRow};
@@ -6454,8 +3770,8 @@ fn mod_page(
             edit: Edit::Choice,
         });
     }
-    // The permissions it asks for (docs/lua-mods.md 3.5); a bundled mod's are given.
-    for p in m.permissions.iter().filter(|_| !bundled) {
+    // The permissions it asks for (docs/lua-mods.md 3.5).
+    for p in &m.permissions {
         let (label, help) = permission_text(p);
         let on = granted.contains(p);
         let choices = vec![("ON".into(), true.into()), ("OFF".into(), false.into())];
@@ -6583,9 +3899,7 @@ impl Host {
         let mut pages = Vec::new();
         for vm in &self.vms {
             let st = vm.st.borrow();
-            let bundled = matches!(vm.src, vm::Source::Bundled(_));
-            let scope = if bundled { None } else { scope_of(vm.dir.file_name()) };
-            pages.extend(mod_page(&vm.manifest, &st.settings, &st.granted, bundled, scope));
+            pages.extend(mod_page(&vm.manifest, &st.settings, &st.granted, scope_of(vm.dir.file_name())));
         }
         let char_file = self.vms.first().and_then(|v| v.st.borrow().char_file.clone());
         let g = grants();
@@ -6602,7 +3916,7 @@ impl Host {
                 .and_then(|v| v.as_array())
                 .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
                 .unwrap_or_default();
-            pages.extend(mod_page(&m, &settings, &given, false, scope_of(e.path().file_name())));
+            pages.extend(mod_page(&m, &settings, &given, scope_of(e.path().file_name())));
         }
         pages
     }
@@ -7274,14 +4588,6 @@ mod stub_tests {
             "assets/mods/library/vana.lua is stale"
         );
     }
-}
-
-/// The bundled mods' settings on our Extras tabs: (label, tab, place).
-#[cfg(test)]
-/// A bundled mod's manifest (tests).
-#[cfg(test)]
-fn bundled_manifest(id: &str) -> Option<manifest::Manifest> {
-    BUNDLED.iter().find(|b| b.0 == id).and_then(|b| manifest::parse(b.1, id).ok())
 }
 
 /// Every mod installed (the mods folder): (id, name, version, enabled in the config, bundled: always false now). With

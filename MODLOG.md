@@ -23157,10 +23157,11 @@ From FFXiMain.dll (Steven's unpacked copy), full_text.asm, FUN_100a7b80.
 ## Suggestion tests from recorded game states (ours, 2026-11-02)
 
 - suggest.rs (plan G): `Facts` and `Suggestion` serialize; a `Case` is a game state with what the rules made of it
-  (`rule`, `note`, `facts`, `expect`). Cases live in client/suggest_cases/*.json and `recorded_cases` replays each one
-  against the rules (the whole list must match); `every_rule_has_a_case` checks each name in `RULES` (raise, shadows,
-  ailment, curaga, cure, waltz, burst, close, provoke, job_ability, ninja_stance, samba, debuff, open_chain,
-  strongest_ws, renew, between) has one.
+  (`rule`, `note`, `facts`, `expect`). Cases live in client/suggest_cases/*.json (since 2026-11-12 the Suggestions
+  mod's tests/cases/*.json, replayed by its tests/cases.lua) and `recorded_cases` replays each one against the rules
+  (the whole list must match); `every_rule_has_a_case` checks each name in `RULES` (raise, shadows, ailment,
+  curaga, cure, waltz, burst, close, provoke, job_ability, ninja_stance, samba, debuff, open_chain, strongest_ws,
+  renew, between) has one.
 - Recording: with `VANA_SUGGEST_RECORD=<folder>` the client writes each new non-empty set of battle-menu
   suggestions with its facts there (suggest-<ms>.json); fill in `rule` and `note`, replace the real player names in
   the facts, and move it under suggest_cases/.
@@ -23899,3 +23900,26 @@ All of it is the mod's Lua over the general API; the client gained nothing.
   the weapon skill without its set. Now pick.item caches records, the scan keeps each piece's name, and resolve
   reads each bag once. Measured on Lnxcsfix with 320 pieces in four wardrobes: 19.4 ms before, 1.4 / 1.6 ms after;
   the 3 s bag scan about 2 ms. 0.2.5.
+- Review (Steve, #248), 0.2.6: keep_usable froze charged gear the builder itself picked (Maat's Cap in a TP set
+  pinned the head for every later set): core.mine now records what we last put in each slot, and only a piece not
+  ours keeps its slot. A refusal is retried only if no later wear overtook it (core.gen, bumped by each resolve) and
+  it was sent within LOCK (6 s) of a weapon skill or a shot (core.note_action from the outgoing hook), so a
+  permanent refusal (NeedDualWield, Requires2HForGrip) prints once. Only using a worn charged piece of the player's
+  restores the status set (not a potion). Tests: gearshift/tests/refused_swaps_resent.lua and builder_sets.lua.
+
+## Mods test themselves: tests/ in each mod, one harness in the client (2026-11-12)
+
+- User: "MODS ARE SUPPOSED TO BE SELF CONTAINED". The client's lua/mod.rs held 40 tests for 26 repository mods
+  and BUNDLED, a list of every mod's files compiled into the test build. Now each mod keeps its tests in
+  assets/mods/<id>/tests/*.lua, and the client has one test, `mod_tests`, that runs each file in a fresh VM of its
+  mod loaded from its folder (vm::Source::Dir), naming no mod. VANA_MOD_TEST=<id> or <id>/<file stem> filters.
+- What a mod test gets beyond the mod API (TEST, tests only, naming no mod): game_items() (the game's equipment
+  records, nil without the game's files), zone_text(zone), source(path) / list(path) (the mod's files), grant(perm),
+  window(id).
+- The catalogue leaves a mod's tests/ out (catalogue.rs walk), so players never download them and a test change
+  needs no version bump. The Suggestions cases moved from client/suggest_cases to the mod's tests/cases; its test
+  fakes Skillchain's rules call with a copy of that mod's chain table.
+- Gone: BUNDLED, bundled!, bundled_manifest, Host::load_bundled and vm::Source::Bundled (test-only; no build used
+  it). The all-mods checks walk assets/mods (repo_mods): repo_commands_declared, repo_commands_unique, repo_mods_load.
+- Mod names still in client code (behaviour, left for now): migrate_regime, the timers.* API's mods.call("timers"),
+  the edge panels a mod may stand in for (regime, timers, minimap).

@@ -710,7 +710,8 @@ Milestone 1:
   nation ranking, Al Zahbi's and each army's level and orders, a stronghold's forces, mirrors and prisoners, an
   area's development and bivouacs, the coalition ranks and the legend's value.
 - Suggestion tests (2026-11-02, plan G): game states recorded as JSON cases (VANA_SUGGEST_RECORD=<folder>) and
-  replayed against the rules by `cargo test suggest` (client/suggest_cases/, a case for every rule).
+  replayed against the rules by the Suggestions mod's test (`VANA_MOD_TEST=suggestions cargo test mod_tests`;
+  assets/mods/suggestions/tests/cases/, a case for every rule).
 - UI modes (2026-11-02, ours; the plan's "UI states" as adaptive presets; modern/modes.rs): the mode follows the game:
   Combat while engaged and 4 s after (a pull's pause keeps it), Management while a window or menu the command menu
   opens has the keys, else Exploration. It never takes the keyboard or moves anything: each mode only hides HUD panels
