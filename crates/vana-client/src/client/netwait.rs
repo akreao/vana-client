@@ -72,9 +72,10 @@ const fn c(text: Option<u16>, sub: u32, reply: bool) -> Call {
 /// FUN_100ee900 / FUN_100eeb70, FUN_100ef020, FUN_100ee0a0). Step 1 on a live link jumps from sub 5 to 21; step 3 takes
 /// the PlayOnline short path (14 -> 15 -> 22): polcore's entry for the character is linked to a handle (+0x10 bit
 /// 0x8000), as every entry xiloader writes is, so sub 14 asks ChangeMyStatus and sub 15 polls it. An entry not
-/// linked yet would go 14 -> 16..21 (the link is made and stored) -> 20 -> 21 -> 22; ours refuses that log-in.
-/// docs/modlog/2026-11-12-lobby-playonline-returns-145.md.
-fn step(id: u8, fresh: bool) -> (u32, Vec<Call>) {
+/// linked yet (`registers`) goes 14 -> 16 (the link is made and the list's store started) -> 17 (its poll) -> 18 (the
+/// handle list's store) -> 19 (its poll) -> 20 -> 21 (14 and 15 again) -> 22, each with its own text.
+/// docs/modlog/2026-11-12-lobby-playonline-returns-145.md, 2026-11-12-playonline-register-146.md.
+fn step(id: u8, fresh: bool, registers: bool) -> (u32, Vec<Call>) {
     match id {
         1 if fresh => {
             let text = |s: u32| match s {
@@ -92,6 +93,20 @@ fn step(id: u8, fresh: bool) -> (u32, Vec<Call>) {
         }
         1 => (21, vec![c(Some(0), 3, false), c(Some(1), 4, false), c(None, 5, false), c(None, 21, false)]),
         2 => (4, vec![c(Some(8), 1, false), c(None, 2, true), c(None, 3, false), c(None, 4, false)]),
+        3 if registers => {
+            let (_, mut calls) = step(3, fresh, false);
+            calls.truncate(calls.len() - 2);
+            calls.extend([
+                c(Some(0x10), 16, false),
+                c(Some(0x12), 17, false),
+                c(Some(0x13), 18, false),
+                c(Some(0x14), 19, false),
+                c(Some(0x15), 20, false),
+                c(Some(0x10), 21, false),
+                c(Some(0x11), 22, false),
+            ]);
+            (22, calls)
+        }
         3 => (
             22,
             vec![
@@ -172,6 +187,16 @@ pub struct NetWait {
 impl NetWait {
     /// FUN_1023b550: the op's steps (every caller passes param_3 = 0); `replies` is the link's reply counter.
     pub fn new(op: Op, replies: Arc<Watch>) -> Self {
+        Self::build(op, replies, false)
+    }
+
+    /// The log-in's run; `registers` when the character is first registered to a PlayOnline handle
+    /// (`Lobby::registers`).
+    pub fn login(replies: Arc<Watch>, registers: bool) -> Self {
+        Self::build(Op::Login, replies, registers)
+    }
+
+    fn build(op: Op, replies: Arc<Watch>, registers: bool) -> Self {
         let steps: &[u8] = match op {
             Op::Connect => &[1],
             Op::Login => &[1, 3],
@@ -180,7 +205,7 @@ impl NetWait {
             Op::NameCheck => &[1, 0x14],
             Op::Rename => &[1, 0x16, 0x13, 2],
         };
-        let built: Vec<(u32, Vec<Call>)> = steps.iter().map(|&s| step(s, op == Op::Connect)).collect();
+        let built: Vec<(u32, Vec<Call>)> = steps.iter().map(|&s| step(s, op == Op::Connect, registers)).collect();
         let total = built.iter().map(|b| b.0).sum::<u32>().max(1) as f32;
         let mut frames = Vec::new();
         let mut done = 0;
@@ -370,6 +395,35 @@ mod tests {
         assert!(!watch.abandon.load(Ordering::Relaxed));
         assert!(matches!(nw.tick(), Some(End::TimedOut { op: Op::Connect, refresh: false })));
         assert!(watch.abandon.load(Ordering::Relaxed));
+    }
+
+    /// Step 3 for a character no PlayOnline handle holds yet (FUN_100ee2a0 subs 0xe, 0x10..0x15): the same calls up
+    /// to sub 14, then the link's texts 8 0x12..0x15 and subs 14 / 15 again.
+    #[test]
+    fn step_3_registering_a_character() {
+        let (n, plain) = step(3, false, false);
+        let (m, reg) = step(3, false, true);
+        assert_eq!((n, m), (22, 22));
+        assert_eq!(reg.len(), plain.len() + 5);
+        let tail: Vec<(Option<u16>, u32)> = reg[plain.len() - 2..].iter().map(|c| (c.text, c.sub)).collect();
+        assert_eq!(
+            tail,
+            [
+                (Some(0x10), 16),
+                (Some(0x12), 17),
+                (Some(0x13), 18),
+                (Some(0x14), 19),
+                (Some(0x15), 20),
+                (Some(0x10), 21),
+                (Some(0x11), 22)
+            ]
+        );
+        assert!(
+            reg.iter()
+                .zip(&plain)
+                .take(plain.len() - 2)
+                .all(|(a, b)| (a.text, a.sub, a.reply) == (b.text, b.sub, b.reply))
+        );
     }
 
     /// The counter starts over with each step, and a time-out in the refresh after a change is told apart (FFXI-3115
