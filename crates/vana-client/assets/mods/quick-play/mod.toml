@@ -1,5 +1,5 @@
 name = "Quick Play"
-version = "1.0.0"
+version = "1.0.1"
 description = "Plays the character you choose as soon as the character list shows, once per start (the auto-login add-ons)."
 permissions = ["automation"]
 lobby = true

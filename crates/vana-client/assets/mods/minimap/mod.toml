@@ -1,5 +1,5 @@
 name = "Minimap"
-version = "2.0.0"
+version = "2.0.1"
 description = "A small map in a corner that follows you and shows what is nearby (the minimap add-ons)."
 permissions = []
 

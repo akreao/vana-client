@@ -1,5 +1,5 @@
 name = "Entity Styles"
-version = "1.0.1"
+version = "1.0.2"
 description = "Renames characters and monsters on your screen, hides your name plate, and sets your size (the renamer and name plate add-ons). Only you see it."
 permissions = []
 

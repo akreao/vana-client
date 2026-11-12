@@ -1,5 +1,5 @@
 name = "Monster Notes"
-version = "1.0.1"
+version = "1.0.2"
 description = "A bar across the top of the screen with the zone, the time and weather, and your target: its /check result and the notes you keep on it (the info bar add-ons)."
 permissions = []
 

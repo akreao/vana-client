@@ -1,5 +1,5 @@
 name = "Tracking Tools"
-version = "1.0.1"
+version = "1.0.2"
 description = "Tracks a monster or NPC by name with Wide Scan, and lists who in the zone matches a name (the wide scan add-ons)."
 permissions = ["actions"]
 

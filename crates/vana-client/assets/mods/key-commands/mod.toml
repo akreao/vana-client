@@ -1,5 +1,5 @@
 name = "Key Commands"
-version = "1.0.1"
+version = "1.0.2"
 description = "Binds keys to command lines and makes short aliases for long commands, kept per character (the bind and alias add-ons)."
 permissions = ["actions"]
 

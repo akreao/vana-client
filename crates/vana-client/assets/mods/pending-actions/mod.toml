@@ -1,5 +1,5 @@
 name = "Pending Actions"
-version = "1.0.0"
+version = "1.0.1"
 description = "The modern UI's chip over the cast bar: the spell, weapon skill, ability or item asked for while the server has not answered, its refusal in the server's words, or that no answer came."
 permissions = ["packets.read"]
 

@@ -1,5 +1,5 @@
 name = "Calculator"
-version = "1.0.1"
+version = "1.0.2"
 description = "Works out sums in the chat line or a small window: gil, stacks, prices (the calculator add-ons)."
 permissions = []
 

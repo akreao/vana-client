@@ -1,5 +1,5 @@
 name = "Monster Alerts"
-version = "1.0.0"
+version = "1.0.1"
 description = "A box on screen with what nearby monsters ready or start casting, a sound for the moves you watch, and an alert when a monster you watch for comes near (the monster alert add-ons)."
 permissions = []
 

@@ -23842,3 +23842,14 @@ All of it is the mod's Lua over the general API; the client gained nothing.
   DAT Packs page only with two or more, since each pack's update already has a row there).
 - Seen live in both UIs (Lnxcsfix; clock and countdowns copied in with an old version mark): Update and Update All
   by keys, each mod unloaded and loaded again after its update. Test updates_and_update_all_row.
+
+## Standard mods: a file change needs a version bump (2026-11-12)
+
+- User report: Gearshift still showed its old command help wording and offered no update. The text was
+  fixed in master (#241, #245), but no mod's version was raised, and the client offers an update only when the
+  catalogue's version is newer than the installed copy's mark (catalogue::offer). 55 standard mods had files
+  changed after their version was last set (#236, #241, #245 and earlier); each got a patch bump, the catalogue
+  regenerated.
+- catalogue.rs standard_mods_listed now fails, with or without VANA_WRITE_CATALOGUE, when a mod's files differ from
+  its committed catalogue entry under the same version, naming each one. catalogue/README.md says to raise the
+  version first.

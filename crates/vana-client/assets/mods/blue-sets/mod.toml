@@ -1,5 +1,5 @@
 name = "Blue Magic Sets"
-version = "1.0.1"
+version = "1.0.2"
 description = "Saves your set blue magic as named sets and puts a set back with one command; a codex of every blue spell and what teaches it; a call when a monster readies a move that teaches one you lack (the blue magic add-ons)."
 permissions = ["actions"]
 
