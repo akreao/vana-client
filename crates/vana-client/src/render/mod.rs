@@ -2706,6 +2706,24 @@ impl ZoneRenderer {
         gpu.queue.put(&self.parts_gpu, at, bytemuck::bytes_of(&*p));
     }
 
+    /// Door `door`'s parts in the world as drawn now (FUN_100acef0: base * T(t) * Rx * Ry * Rz, as vs_main).
+    pub fn door_frames(&self, door: u32) -> Option<Vec<Mat4>> {
+        let (slots, bases) = (self.door_parts.get(&door)?, self.door_bases.get(&door)?);
+        let frames = slots.iter().zip(bases).filter_map(|(&s, base)| {
+            let p = self.parts.get(s as usize)?;
+            let a = PartGpu::at(p.rot_from, p.rot_to, p.rot_time, self.now);
+            let t = PartGpu::at(p.pos_from, p.pos_to, p.pos_time, self.now);
+            Some(
+                *base
+                    * Mat4::from_translation(t.into())
+                    * Mat4::from_rotation_x(a[0])
+                    * Mat4::from_rotation_y(a[1])
+                    * Mat4::from_rotation_z(a[2]),
+            )
+        });
+        Some(frames.collect())
+    }
+
     /// Area 4ccs by slot - 1 (zone's, then the shown sub-area's).
     pub fn area_keys(&self) -> &[u32] {
         &self.area_keys

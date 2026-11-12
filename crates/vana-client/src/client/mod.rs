@@ -6677,9 +6677,23 @@ struct FxActors<'a> {
     /// FUN_100d4560's bone-0 drop by actor (riders, chair sitters), ride::bone0_drop.
     drops: &'a HashMap<u32, f32>,
     wades: &'a HashMap<u32, Vec3>,
+    /// Door entities' parts in the world (XiDoorActor's attach points, FUN_100acab0 / FUN_100acb50).
+    doors: &'a HashMap<u32, Vec<glam::Mat4>>,
 }
 
 impl FxActors<'_> {
+    /// Doors and lifts: actors without a model, hidden only by their hide bits.
+    fn model_less(&self, id: u32) -> bool {
+        self.entities.get(&id).is_some_and(|e| e.door != 0 || e.lift.is_some())
+    }
+
+    /// FUN_100acab0 / FUN_100acb50: door part k's world frame (k past the parts: part 0), in the actor's frame.
+    fn door_part(&self, id: u32, k: u16) -> Option<glam::Mat4> {
+        let parts = self.doors.get(&id)?;
+        let part = parts.get(k as usize).or(parts.first())?;
+        Some(crate::fx::Actors::matrix(self, id)?.inverse() * *part)
+    }
+
     fn furniture(&self, id: u32) -> Option<&(u32, u32, glam::Mat4)> {
         self.furniture.iter().find(|f| f.0 == id)
     }
@@ -6776,6 +6790,10 @@ impl crate::fx::Actors for FxActors<'_> {
         if self.ship(id).is_some() {
             return Some(Vec3::ZERO);
         }
+        // FUN_100acab0: 4 is the door's position, the rest its parts' origins.
+        if self.doors.contains_key(&id) {
+            return if k == 4 { Some(Vec3::ZERO) } else { self.door_part(id, k).map(|m| m.w_axis.truncate()) };
+        }
         let a = self.actors.get(&id)?;
         let ch = a.character.as_ref()?;
         let (bone, off) = ch.skeleton.points.get(k as usize)?;
@@ -6797,6 +6815,12 @@ impl crate::fx::Actors for FxActors<'_> {
     fn point_frame(&self, id: u32, k: u16) -> Option<glam::Mat4> {
         if self.ship(id).is_some() {
             return Some(glam::Mat4::IDENTITY);
+        }
+        // FUN_100acb50: the part's frame, its axes normalised.
+        if self.doors.contains_key(&id) {
+            let m = self.door_part(id, k)?;
+            let n = |v: glam::Vec4| v.truncate().normalize_or_zero().extend(0.0);
+            return Some(glam::Mat4::from_cols(n(m.x_axis), n(m.y_axis), n(m.z_axis), m.w_axis));
         }
         let a = self.actors.get(&id)?;
         let ch = a.character.as_ref()?;
@@ -6876,6 +6900,9 @@ impl crate::fx::Actors for FxActors<'_> {
     fn hidden(&self, id: u32) -> bool {
         if let Some(s) = self.ship(id) {
             return s.4 || self.model_hidden.contains(&id);
+        }
+        if self.model_less(id) {
+            return self.model_hidden.contains(&id);
         }
         self.furniture(id).is_none() && (!self.actors.contains_key(&id) || self.model_hidden.contains(&id))
     }
@@ -19595,6 +19622,12 @@ fn draw_effects(
         let party: Vec<u32> =
             std::iter::once(w.my_id).chain(w.party.party().map(|m| m.id).filter(|&id| id != w.my_id)).collect();
         let ship_fx = ships::fx_actors(&w.ships, &w.entities);
+        let door_fx: HashMap<u32, Vec<glam::Mat4>> = w
+            .entities
+            .iter()
+            .filter(|(_, e)| e.door != 0)
+            .filter_map(|(id, e)| Some((*id, r.door_frames(e.door)?)))
+            .collect();
         let fa = FxActors {
             actors: &w.actors,
             places,
@@ -19614,6 +19647,7 @@ fn draw_effects(
             model_hidden,
             drops,
             wades: &w.wades,
+            doors: &door_fx,
         };
         if let Some(g) = &w.ground {
             w.effects.set_covered(g.covered(camera.eye));
