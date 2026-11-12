@@ -103,7 +103,12 @@ impl Fishing {
 }
 
 /// c2s 0x110 (FUN_10088380): UniqueNo, para, ActIndex, mode, 0, para2.
-fn send(w: &mut World, para: i32, mode: u8, para2: u32) {
+/// FUN_10088380: false when FUN_100fc3c0's 1 s gate refuses it; the controller then stays and tries again next frame.
+fn send(w: &mut World, para: i32, mode: u8, para2: u32) -> bool {
+    if !super::net::call_gate(&mut w.call_gate, 0x110, std::time::Instant::now()) {
+        log::trace!("fishing: c2s 0x110 mode {mode} refused by the 1 s gate, tried again next frame");
+        return false;
+    }
     let mut body = w.my_id.to_le_bytes().to_vec();
     body.extend(para.to_le_bytes());
     body.extend(w.my_index.to_le_bytes());
@@ -111,10 +116,7 @@ fn send(w: &mut World, para: i32, mode: u8, para2: u32) {
     body.extend(para2.to_le_bytes());
     log::info!("fishing: c2s 0x110 mode {mode} para {para} para2 {para2}");
     let _ = w.net.commands.send(NetCommand::Packet { id: 0x110, body });
-    // FUN_10127ea0 after every mode-3 send (0x1008936e / 0x100894a1): the event message queues are emptied.
-    if mode == 3 {
-        super::event::cancel_queues(w);
-    }
+    true
 }
 
 /// The fishing statuses and the request latch keep us in place (FUN_100964f0).
@@ -334,12 +336,12 @@ fn frame(w: &mut World, f: &mut Fishing) {
             }
             f.clear = 0;
             if !f.early {
-                if w.hook_wait <= 0 {
-                    send(w, 0, 2, 0);
+                if w.hook_wait > 0 {
+                    w.hook_wait -= U;
+                } else if send(w, 0, 2, 0) {
                     (f.sub, f.frames) = (1, 0);
                     return;
                 }
-                w.hook_wait -= U;
             }
             if f.enter_free || f.click {
                 f.early = true;
@@ -348,8 +350,8 @@ fn frame(w: &mut World, f: &mut Fishing) {
                 f.lockout -= U;
                 return;
             }
-            if f.escape || f.early {
-                send(w, 201, 3, 0);
+            // No FUN_10127ea0 after this one.
+            if (f.escape || f.early) && send(w, 201, 3, 0) {
                 f.sub = 3;
             }
         }
@@ -361,8 +363,8 @@ fn frame(w: &mut World, f: &mut Fishing) {
             }
             let check = f.frames & 0x3f == 0;
             f.frames = f.frames.wrapping_add(1);
-            if check && !water(w) {
-                send(w, 200, 3, 0);
+            if check && !water(w) && send(w, 200, 3, 0) {
+                super::event::cancel_queues(w);
                 f.sub = 3;
                 return;
             }
@@ -372,26 +374,31 @@ fn frame(w: &mut World, f: &mut Fishing) {
             }
             tick(w, f);
             let Some(g) = f.game.as_mut() else { return };
-            if f.enter {
+            let sent = if f.enter {
                 let pct = if g.max == 0 { 0 } else { (g.cur as f64 * 100.0 / g.max as f64) as i32 };
                 let special = g.special;
-                send(w, pct, 3, special);
+                send(w, pct, 3, special)
             } else if !f.escape {
                 g.time -= U;
                 if g.time <= 0 {
-                    send(w, 300, 3, 0);
+                    send(w, 300, 3, 0)
                 } else {
                     if !g.warned && g.time < 420 {
                         let left = g.time / 60;
-                        g.warned = true;
-                        send(w, left, 5, 0);
+                        if send(w, left, 5, 0) {
+                            g.warned = true;
+                        }
                     }
                     return;
                 }
             } else {
-                send(w, 200, 3, 0);
+                send(w, 200, 3, 0)
+            };
+            // FUN_10127ea0 after an admitted end (0x100894a1): the event message queues are emptied.
+            if sent {
+                super::event::cancel_queues(w);
+                f.sub = 2;
             }
-            f.sub = 2;
         }
         // The end sent: the result.
         2 => {
@@ -409,10 +416,11 @@ fn frame(w: &mut World, f: &mut Fishing) {
             if fishing_status(status) && [b"fsh2", b"fsh3", b"fsh4", b"fsh5", b"fsh6"].iter().any(|s| running(w, s)) {
                 return;
             }
-            send(w, 0, 4, 0);
-            f.sub = 4;
-            stop_all(w);
-            f.game = None;
+            if send(w, 0, 4, 0) {
+                f.sub = 4;
+                stop_all(w);
+                f.game = None;
+            }
             w.fish_gauge = None;
             clear_arrows(w, f, true);
         }

@@ -1001,6 +1001,15 @@ impl Effects {
         let live: Vec<u64> = self.tasks.iter().flatten().map(|t| t.uid).collect();
         self.step_shine(f.dt, &live);
         self.step_wep_timers(f.dt, &live);
+        // The hold sub-tasks end with their time or their task (its dtor deletes its children, FUN_10074890).
+        self.held.clear();
+        for (owner, id, kind, left) in std::mem::take(&mut self.task_holds) {
+            let left = left - f.dt;
+            if left >= 0.0 && live.contains(&owner) {
+                *self.held.entry(id).or_default() |= kind;
+                self.task_holds.push((owner, id, kind, left));
+            }
+        }
         // Op 0xb5's holds end with their time or their task (FUN_100ce0c0).
         self.no_blink.clear();
         for (owner, id, left) in std::mem::take(&mut self.blink_holds) {
@@ -1845,7 +1854,7 @@ impl Effects {
                     _ => (t.a2, HOLD_REACT),
                 };
                 if let Some(id) = self.doll_of(who).id() {
-                    self.holds.push((id, op.dur.max(0) as f32 * t.speed, kind));
+                    self.task_holds.push((t.uid, id, kind, op.dur.max(0) as f32 * t.speed));
                 }
                 Flow::Next
             }
@@ -1855,11 +1864,11 @@ impl Effects {
                 match &t.action {
                     Some(a) => {
                         let ids: Vec<u32> = a.borrow().action.targets.iter().map(|x| x.id).collect();
-                        self.holds.extend(ids.into_iter().map(|id| (id, ticks, HOLD_STATUS)));
+                        self.task_holds.extend(ids.into_iter().map(|id| (t.uid, id, HOLD_STATUS, ticks)));
                     }
                     None => {
                         if let Some(id) = self.doll_of(t.a2).id() {
-                            self.holds.push((id, ticks, HOLD_STATUS));
+                            self.task_holds.push((t.uid, id, HOLD_STATUS, ticks));
                         }
                     }
                 }
@@ -5080,12 +5089,16 @@ mod skillchain_tests {
                 client_swing: false,
             }));
             fx.spawn_task((g, proc_), Who::Actor(1), Who::Actor(2), Some(ctx), 1.0, None);
-            let (mut prints, mut reacts, mut holds) = (Vec::new(), Vec::new(), Vec::new());
+            let (mut prints, mut reacts, mut holds) = (Vec::new(), Vec::new(), Vec::<(u32, u8)>::new());
             for _ in 0..600 {
                 fx.tick(&f, &Pair);
                 prints.extend(fx.action_prints.drain(..).map(|p| (p.1, p.2)));
                 reacts.extend(fx.reacts.drain(..).map(|r| r.reactor));
-                holds.extend(fx.holds.drain(..).map(|h| (h.0, h.1)));
+                for (&id, &kind) in &fx.held {
+                    if !holds.contains(&(id, kind)) {
+                        holds.push((id, kind));
+                    }
+                }
                 std::thread::sleep(std::time::Duration::from_millis(1));
             }
             if burst {
@@ -5093,7 +5106,7 @@ mod skillchain_tests {
                 assert_eq!(std::mem::take(&mut fx.releases), vec![1, 2]);
                 assert_eq!(prints, vec![(0, 1)]);
                 assert_eq!(reacts, vec![2]);
-                assert_eq!(holds, vec![(2, 64.0)]);
+                assert_eq!(holds, vec![(2, HOLD_STATUS)]);
             } else {
                 assert!(prints.is_empty() && reacts.is_empty() && holds.is_empty() && fx.loads.is_empty());
             }
