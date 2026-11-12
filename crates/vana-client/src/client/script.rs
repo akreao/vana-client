@@ -88,7 +88,11 @@ impl Script {
                     let (mut mods, mut name) = (egui::Modifiers::NONE, arg);
                     for (p, m) in [
                         ("shift+", egui::Modifiers::SHIFT),
-                        ("ctrl+", egui::Modifiers::CTRL),
+                        // As egui-winit gives it: Ctrl is also `command` off macOS.
+                        (
+                            "ctrl+",
+                            egui::Modifiers { ctrl: true, command: !cfg!(target_os = "macos"), ..Default::default() },
+                        ),
                         ("alt+", egui::Modifiers::ALT),
                     ] {
                         if let Some(n) = name.strip_prefix(p) {

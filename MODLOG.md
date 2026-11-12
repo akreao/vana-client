@@ -23855,6 +23855,18 @@ All of it is the mod's Lua over the general API; the client gained nothing.
   its committed catalogue entry under the same version, naming each one. catalogue/README.md says to raise the
   version first.
 
+## egui's zoom and quit keys off (2026-11-12)
+
+- User report: Ctrl+0 (a macro key) changed the interface size. egui 0.37 handles Ctrl+0 / Ctrl+Plus / Ctrl+Equals /
+  Ctrl+Minus as its zoom keys in Context::end_pass (gui_zoom::zoom_with_keyboard, `command` = Ctrl off macOS), and
+  sets its zoom factor behind ours: Modern::ui sets the zoom for the Interface Size only when its computed value changes,
+  so the size stayed wrong until the window or the setting changed. At 1920x1080 and 100 % the zoom is 1.0, so
+  Ctrl+0 showed nothing there. The app's context now has `zoom_with_keyboard = false` and no `quit_shortcuts` (Ctrl+Q:
+  egui consumes it for its ViewportCommand::Close, which we never act on).
+- Scripted `ctrl+` keys now carry `command` as egui-winit gives them off macOS, so a driven window hits the same
+  shortcuts a keyboard does. Checked at the login screen with Interface Size 125 %: before, Ctrl+0 took the form to
+  100 % and Ctrl+Minus below; now neither changes it.
+
 ## Gearshift: weapon skill sets first, refused swaps resent, usable gear kept; /equip's other slot names (2026-11-12)
 
 - User report (Nine, RDM/NIN): Vorpal Blade's set sometimes went on only after the weapon skill and then stayed until
@@ -23906,13 +23918,16 @@ All of it is the mod's Lua over the general API; the client gained nothing.
   it was sent within LOCK (6 s) of a weapon skill or a shot (core.note_action from the outgoing hook), so a
   permanent refusal (NeedDualWield, Requires2HForGrip) prints once. Only using a worn charged piece of the player's
   restores the status set (not a potion). Tests: gearshift/tests/refused_swaps_resent.lua and builder_sets.lua.
+- Review (Steve, #249), 0.2.7: core.worn forgets a slot's core.mine entry once the slot is seen without that piece,
+  so our piece taken off and put back by hand is the player's (kept by keep_usable).
 
 ## Mods test themselves: tests/ in each mod, one harness in the client (2026-11-12)
 
 - User: "MODS ARE SUPPOSED TO BE SELF CONTAINED". The client's lua/mod.rs held 40 tests for 26 repository mods
   and BUNDLED, a list of every mod's files compiled into the test build. Now each mod keeps its tests in
   assets/mods/<id>/tests/*.lua, and the client has one test, `mod_tests`, that runs each file in a fresh VM of its
-  mod loaded from its folder (vm::Source::Dir), naming no mod. VANA_MOD_TEST=<id> or <id>/<file stem> filters.
+  mod loaded from its folder (vm::Source::Dir), naming no mod. VANA_MOD_TEST=<id> or <id>/<file stem> filters; a
+  filter that matches no test fails.
 - What a mod test gets beyond the mod API (TEST, tests only, naming no mod): game_items() (the game's equipment
   records, nil without the game's files), zone_text(zone), source(path) / list(path) (the mod's files), grant(perm),
   window(id).
