@@ -197,7 +197,7 @@ pub fn matching<'a>(names: impl Iterator<Item = &'a str>, pattern: &str) -> Vec<
 mod tests {
     use super::*;
 
-    /// Model 0 (file 1300) "ati0": motion at0? for 80 ticks; "dada" (the hit) runs after 24 + 12 ticks.
+    /// Model 0 (file 1300) "ati0": motion at0? for 80 ticks, blend-in 10 and out 20 (bytes 0x18 / 0x1c: 0a 00, 14 00); "dada" (the hit) runs after 24 + 12 ticks.
     #[test]
     fn mob_attack_plan() {
         let cfg = crate::config::Config::load();
@@ -208,7 +208,7 @@ mod tests {
         let p = plan(get("ati0"), &["dada"]);
         assert_eq!(
             p.motions,
-            vec![Motion { name: "at0".into(), at: 0, speed: 1.0, ticks: 80, count: 1, blend: 10, out: 0, half: 0 }]
+            vec![Motion { name: "at0".into(), at: 0, speed: 1.0, ticks: 80, count: 1, blend: 10, out: 20, half: 0 }]
         );
         assert_eq!((p.hit_at, p.length), (Some(36), 80));
         assert_eq!(p.target_hold, Some(40));
