@@ -259,6 +259,7 @@ detail inside implemented ops.
 | GM prompt / Moblin Maze Mongers: d5 bits 4..10; message 7's middle-button source; the late 0x0D8 at the event end; helpwind's line with grid focus; the pulse timing assumes 30 fps | Unknown | L17934 | DLL |
 | Maze Mongers: LSB logs GP_CLI_COMMAND_DUNGEON_PARAM as not implemented | Blocked: LSB | L17848 | LSB |
 | Creator random names: FUN_101ba240 (validity check, ours skips it) *(items 48 + 49, [fragment](../modlog/2026-11-11-creator-name-filter-48-49.md), 2026-11-11: a random name the dictionary refuses is dropped)* | Built | L5346 | DLL |
+| Creator random names: one generator per race (name step message 0xc, FUN_10239b10 → FUN_10239cc0); ours gave every race the Galka adjective + noun *(queue row 164, [fragment](../modlog/2026-11-11-creator-random-names-164.md), 2026-11-11: all eight built, tables read from the install's FFXiMain.dll, 1,105,000 names the same as retail's code under Wine)* | Built | L5346 | DLL |
 
 ## 8. Map window
 
