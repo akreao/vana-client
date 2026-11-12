@@ -1,5 +1,5 @@
 name = "Gear Stats"
-version = "1.0.1"
+version = "1.0.2"
 description = "The totals of the stats on everything you wear, from the items' descriptions and their augments (the gear stat add-ons)."
 permissions = []
 

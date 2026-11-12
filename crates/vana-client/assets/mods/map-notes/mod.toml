@@ -1,5 +1,5 @@
 name = "Map Notes"
-version = "1.0.1"
+version = "1.0.2"
 description = "Notes pinned to places on a zone's map, your party and the monsters you track, marked on the Map Overlay (the map marker add-ons)."
 permissions = []
 

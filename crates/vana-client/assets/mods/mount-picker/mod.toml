@@ -1,5 +1,5 @@
 name = "Mount Picker"
-version = "1.0.1"
+version = "1.0.2"
 description = "Calls a random mount of yours, or one by part of its name (the mount roulette add-ons)."
 permissions = ["actions"]
 

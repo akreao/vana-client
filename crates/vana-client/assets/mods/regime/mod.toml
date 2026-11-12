@@ -1,5 +1,5 @@
 name = "Training Regime"
-version = "1.0.0"
+version = "1.0.1"
 description = "The Fields or Grounds of Valor regime in force and your kills, in a window beside the timers."
 permissions = ["packets.read"]
 

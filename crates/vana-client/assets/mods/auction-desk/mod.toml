@@ -1,5 +1,5 @@
 name = "Auction Desk"
-version = "1.0.2"
+version = "1.0.3"
 description = "Bids and sales at the auction house by command, and your listings in the log (the auction helper add-ons)."
 permissions = ["actions"]
 

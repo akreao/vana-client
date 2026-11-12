@@ -1,5 +1,5 @@
 name = "Screen Notes"
-version = "1.0.1"
+version = "1.0.2"
 description = "Puts your notes on the screen by command, where you drag them (the text add-ons)."
 permissions = []
 
