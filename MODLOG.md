@@ -14036,6 +14036,11 @@ From the research notes:
 
 ## Minimap (Extra, 2026-10-25; ours, the add-ons' minimap)
 
+- Since 2026-11-11 (Minimap mod 2.0.0) the mod picks what it shows: the dots (each entity's `radar` colour, as the
+  compass radar's colour() gives it with monsters on; the target ringed; names as tooltips), the zoom (the wheel over
+  its `map` element sends `wheel`; the mod sets the client option minimap_span, a quarter a notch within 48..512) and
+  the heading (zone and grid). client/minimap.rs keeps the place, the map and our marker; the modern panel Wide Scan.
+
 - client/minimap.rs, map::Overlay::draw_mini: the zone map in the style frame (inset 5), north up and centred on us,
   SPAN map pixels across (48..512, the wheel over it: x 1.25 a notch, saved as config minimap_span); our marker as the
   map window's (keytops3 159, turned by our facing); the compass radar's entities (radar::shown, radar::colour with the
@@ -18357,6 +18362,12 @@ From the research notes:
 - mmb-dump prints each model's blending word and vertex colour mean / range.
 
 ## Skillchain helper and the battle menu's suggestions (ours, 2026-10-29)
+
+- Since 2026-11-11 both are Lua mods wholly: the Skillchain mod (assets/mods/skillchain: tracker.lua, sc.lua,
+  data/skillchains.txt) and the Battle Suggestions mod (assets/mods/suggestions: rules.lua, facts.lua,
+  data/resistances.txt). client/skillchain.rs keeps the classic dock drawing the mod's `lines` element; client/suggest.rs
+  the battle menu's rows (the battle_rows slot), cursor and family submenu; dat/skillchains.rs only the generator.
+  The rules below are the mods' now, as they were the client's.
 
 - Not retail (the skillchain add-ons; user's spec 2026-10-29: "a flyout ... anytime we're in a party, what skillchains
   we can make and what their elements are"). The client has no table of skill properties: the server applies them.

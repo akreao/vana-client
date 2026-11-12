@@ -1,10 +1,11 @@
-//! Extra (not retail; the Windower / Ashita minimap add-ons): the zone map in a frame in a corner, north up and centred
-//! on us, with our marker and the compass radar's dots (monsters included) for what stands in view. The wheel over it
-//! zooms. Nothing without the map's key item, as the map window.
+//! The minimap's view (not retail; the Windower / Ashita minimap add-ons): the Minimap mod's window (panel "minimap")
+//! with its `map` element: the zone map in a frame in a corner, north up and centred on us, our marker, and the mod's
+//! dots. The wheel over it goes to the mod (`wheel`), which sets the zoom (the client option minimap_span). Nothing
+//! without the map's key item, as the map window.
 
 use super::game_ui::GameUi;
 use super::map::{Overlay, Region};
-use super::{World, event, radar};
+use super::{World, event};
 
 /// The sides of Small / Medium / Large (layout pixels; user, 2026-10-25: 20 % over the first 128 / 176 / 224).
 pub const SIZES: [f32; 3] = [154.0, 211.0, 269.0];
@@ -34,8 +35,8 @@ pub struct Frame {
     pub facing: f32,
     pub span: f32,
     pub dots: Vec<(f32, f32, u32, bool)>,
-    /// Each dot's entity (the modern minimap's tooltip names the one hovered).
-    pub ids: Vec<u32>,
+    /// Each dot's tooltip (the modern minimap's names the one hovered).
+    pub tips: Vec<String>,
     /// The map overlay's opacity: the marker is coloured as the overlay's.
     mix: f32,
 }
@@ -68,20 +69,20 @@ pub fn prepare(gu: &GameUi, w: &mut World, sw: f32) {
     let column = [menu, gu.edge_column(sw, 50.0, 50.0 + side)].into_iter().flatten().reduce(f32::min);
     let rect = place(w.minimap_dock, w.minimap_size, sw, icons, column);
     let facing = w.net.me.lock().map_or(0.0, |m| event::rad_of(m.dir));
-    let (dots, ids) = w
-        .entities
-        .iter()
-        .filter(|(id, e)| **id != w.my_id && radar::shown(e))
-        .filter_map(|(&id, e)| {
-            Some((
-                (
-                    e.pos.x,
-                    e.pos.z,
-                    radar::colour(radar::kind_bits(w, id, e), e.monstrosity, e.motion.status, true)? | 0x8000_0000,
-                    w.target == Some(id),
-                ),
-                id,
-            ))
+    let (dots, tips) = w
+        .lua
+        .edge_panel("minimap")
+        .and_then(|win| {
+            win.elems.into_iter().find_map(|e| match e {
+                super::lua::window::Elem::Map { dots, .. } => Some(dots),
+                _ => None,
+            })
+        })
+        .unwrap_or_default()
+        .into_iter()
+        .map(|d| {
+            let [r, g, b] = d.colour;
+            ((d.x, d.z, 0x8000_0000 | (r as u32) << 16 | (g as u32) << 8 | b as u32, d.target), d.tip)
         })
         .unzip();
     w.minimap_rect = Some(rect);
@@ -91,7 +92,7 @@ pub fn prepare(gu: &GameUi, w: &mut World, sw: f32) {
         facing,
         span: w.minimap_span.clamp(SPAN.0, SPAN.1),
         dots,
-        ids,
+        tips,
         mix: w.map_opacity,
     });
 }
@@ -103,14 +104,13 @@ pub fn draw(gu: &mut GameUi, map: &mut Option<Overlay>, f: Option<Frame>) {
     }
 }
 
-/// The wheel over it: notches up zoom in (fewer map pixels across); true when it took the wheel.
+/// The wheel over it: to the mod's map element (`wheel`, notches up positive); true when it took the wheel.
 pub fn wheel(w: &mut World, p: (f32, f32), notches: f32) -> bool {
     let Some([x, y, sw, sh]) = w.minimap_rect else { return false };
     if p.0 < x || p.0 >= x + sw || p.1 < y || p.1 >= y + sh {
         return false;
     }
-    w.minimap_span = (w.minimap_span * 1.25f32.powf(-notches)).clamp(SPAN.0, SPAN.1);
-    w.minimap_dirty = true;
+    w.lua.map_wheel("minimap", notches);
     true
 }
 

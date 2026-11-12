@@ -1219,7 +1219,6 @@ fn track_cast(w: &mut World, a: &Action) {
 /// work = [cmd_arg, value, proc value, react value, bit]; melee waits for the attacker's hit.
 fn one_action(w: &mut World, a: &Action) {
     track_cast(w, a);
-    super::skillchain::on_action(w, a);
     // Our cast finished (category 4, magic file 0xaf0): the spell's recast (asm 0x100a900d).
     if a.actor == w.my_id && a.category == category::MAGIC_FINISH {
         super::magic::set_recast(w, a.arg as u16, a.info);
@@ -1573,7 +1572,6 @@ pub(super) fn apply_status(w: &mut World, id: u32, status: u8) {
 
 /// Fires pending hits whose time has come, and applies statuses whose swing hold has ended.
 pub(super) fn tick(w: &mut World) {
-    super::skillchain::tick(w);
     let now = Instant::now();
     // The next swing of a round whose last swing has ended.
     let due: Vec<u32> = w.rounds.iter().filter(|(_, (at, _))| *at <= now).map(|(id, _)| *id).collect();
@@ -2842,13 +2840,4 @@ mod queue_tests {
         assert_eq!(crate::client::net::battle_message2(&pkt(0x2d, 0x32b)).queued, 0x32b);
         assert_eq!(crate::client::net::battle_message2(&pkt(0x2d, 6)).queued, 0);
     }
-}
-
-/// Us, a party member, or the pet of either (its master's ActIndex).
-pub(super) fn ours(w: &World, actor: u32) -> bool {
-    if actor == w.my_id || w.party.party().any(|m| m.id == actor) {
-        return true;
-    }
-    let Some(master) = w.entities.get(&actor).map(|e| e.master).filter(|&m| m != 0) else { return false };
-    master == w.my_index || w.party.party().any(|m| w.entities.get(&m.id).is_some_and(|e| e.index == master))
 }

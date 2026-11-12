@@ -167,6 +167,20 @@ pub(super) fn install(lua: &Lua, ui: &Table, mod_id: &str) -> mlua::Result<()> {
     let t = lua.create_table()?;
     t.set("windows", lua.create_function(|lua, ()| Ok(super::super::open_windows(world(lua)?)))?)?;
     t.set("menu_open", lua.create_function(|lua, ()| Ok(super::super::world_window_open(world(lua)?)))?)?;
+    // The modern battle menu while it shows its commands (no target prompt over it): the battle_rows row the cursor is
+    // on and the row's open submenu's cursor (1-based), or nil.
+    t.set(
+        "battle_menu",
+        lua.create_function(|lua, ()| {
+            let w = world(lua)?;
+            if !w.modern || w.action_menu.is_none() || w.prompt.is_some() {
+                return Ok(None);
+            }
+            let row = w.suggest_sel.filter(|&k| k < w.battle_rows.len());
+            to_lua(lua, &serde_json::json!({"row": row.map(|k| k + 1), "sub": row.and(w.suggest_sub).map(|c| c + 1)}))
+                .map(Some)
+        })?,
+    )?;
     t.set(
         "highlighted",
         lua.create_function(|lua, ()| {

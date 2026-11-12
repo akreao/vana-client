@@ -508,19 +508,19 @@ end)
 
 ## `suggestions`
 
-The client's suggestion rules picked new rows for the modern battle menu: a spell, ability or weapon skill worth using
-now, and why. The rules run only while the modern battle menu is open and some mod has a handler for this event; when
-the menu closes an empty list comes. While the player's cursor is on one of the rows they hold still, and only their
-submenus' spells are taken again.
+The Battle Suggestions mod's rules picked new rows for the modern battle menu: a spell, ability or weapon skill worth
+using now, and why. The mod sends it (`mods.emit`) while the modern battle menu is open; when the menu closes an empty
+list comes. While the player's cursor is on one of the rows they hold still, and only their submenus' spells are taken
+again (no event then).
 
 | Argument | Type | Description |
 | --- | --- | --- |
 | `rows` | `table[]` | Rows as the `battle_rows` [slot](ui.native.md#uinativeslot) takes them: `{kind, id, target, reason, label, group}`. |
 
 ```lua
--- What the bundled Battle Suggestions mod does.
+-- Log what the Battle Suggestions mod picks.
 events.on("suggestions", function(rows)
-  ui.native.slot("battle_rows", #rows > 0 and rows or nil)
+  for _, r in ipairs(rows) do print(r.kind, r.id, r.reason) end
 end)
 ```
 

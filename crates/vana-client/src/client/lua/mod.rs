@@ -603,7 +603,7 @@ pub(in crate::client) const TIMERS_PANELS: [&str; 3] = ["timers_recasts", "timer
 /// The mods kept in this repository (assets/mods), for the tests: the client loads only installed mods (the mods
 /// folder); these reach players from GitHub (Settings > Mods, Download Standard Mods).
 #[cfg(test)]
-const BUNDLED: &[(&str, &str, &[(&str, &str)])] = bundled!["dps", "auto-advance", "trust-speech", "find", "map-overlay", "clock", "target-info", "battle-text", "timestamps", "synth-amount", "regime", "timers" ["durations.lua", "engine.lua", "rows.lua", "data/actions.tsv", "data/status.tsv", "data/gear.tsv", "data/augments.tsv", "data/merits.tsv", "data/jobpoints.tsv"], "skillchain", "minimap", "suggestions", "xp-tracker", "cutscene-speed", "loot-rules", "client-tweaks", "equipment-grid", "inventory-hud", "chat-alerts", "player-bars", "effect-remover", "macro-books", "mount-picker", "log-files", "tell-inbox", "link-catcher", "trust-lineups", "sell-hand-in", "web-search", "camera-range", "chat-filter", "target-bar", "quick-commands", "countdowns", "party-tools", "key-commands", "event-rules", "music-picker", "typing-helpers", "zone-banner", "use-all", "hide-rules", "screen-notes", "calculator", "attendance", "screen-capture", "quick-play", "target-marker", "cast-grid", "target-debuffs", "skill-log", "swing-timer", "weather-watch", "targeting", "entity-styles", "visual-tweaks", "window-placement", "range-rings", "tracking", "pet-status", "job-gauges", "roll-helper", "automaton-sets", "loot-tracker", "monster-alerts", "gathering-log", "casket-solver",
+const BUNDLED: &[(&str, &str, &[(&str, &str)])] = bundled!["dps", "auto-advance", "trust-speech", "find", "map-overlay", "clock", "target-info", "battle-text", "timestamps", "synth-amount", "regime", "timers" ["durations.lua", "engine.lua", "rows.lua", "data/actions.tsv", "data/status.tsv", "data/gear.tsv", "data/augments.tsv", "data/merits.tsv", "data/jobpoints.tsv"], "skillchain" ["sc.lua", "tracker.lua", "data/skillchains.txt"], "minimap", "suggestions" ["rules.lua", "facts.lua", "data/resistances.txt"], "xp-tracker", "cutscene-speed", "loot-rules", "client-tweaks", "equipment-grid", "inventory-hud", "chat-alerts", "player-bars", "effect-remover", "macro-books", "mount-picker", "log-files", "tell-inbox", "link-catcher", "trust-lineups", "sell-hand-in", "web-search", "camera-range", "chat-filter", "target-bar", "quick-commands", "countdowns", "party-tools", "key-commands", "event-rules", "music-picker", "typing-helpers", "zone-banner", "use-all", "hide-rules", "screen-notes", "calculator", "attendance", "screen-capture", "quick-play", "target-marker", "cast-grid", "target-debuffs", "skill-log", "swing-timer", "weather-watch", "targeting", "entity-styles", "visual-tweaks", "window-placement", "range-rings", "tracking", "pet-status", "job-gauges", "roll-helper", "automaton-sets", "loot-tracker", "monster-alerts", "gathering-log", "casket-solver",
     "blue-sets" ["src/learn.lua"],
     "warp-helper" ["src/places.lua"],
     "dialogue-bubbles",
@@ -672,11 +672,6 @@ impl Host {
         if self.started {
             self.events.push((name, args));
         }
-    }
-
-    /// Whether a running mod has a handler for an event.
-    pub(in crate::client) fn listens(&self, event: &str) -> bool {
-        self.vms.iter().any(|v| v.suspended.is_none() && v.has_handler(event))
     }
 
     /// The running mods' text commands by name, each with its mod's name and its `[commands]` usage and help (none
@@ -1895,6 +1890,22 @@ impl Host {
                 })
             })
         })
+    }
+
+    /// The wheel over the map element of the open window standing in for `panel`: its `wheel` event.
+    pub(in crate::client) fn map_wheel(&mut self, panel: &str, notches: f32) {
+        let hit = self.vms.iter().rev().filter(|v| v.suspended.is_none()).find_map(|v| {
+            let st = v.st.borrow();
+            let win = st.windows.iter().find(|w| w.open && w.edge && w.panel.as_deref() == Some(panel))?;
+            let id = win.elems.iter().find_map(|e| match e {
+                window::Elem::Map { id, .. } => Some(id.clone()),
+                _ => None,
+            })?;
+            Some((v.manifest.id.clone(), win.id.clone(), id))
+        });
+        if let Some((m, win, id)) = hit {
+            self.ui_events.push((m, win, window::Event::Wheel { id, notches }));
+        }
     }
 
     /// Whether any timers panel's window is open and shown.
@@ -5027,6 +5038,239 @@ return "acxml flow ok"
             assert(man[1].total == 20 and man[2].total == 60, man[1].total .. " " .. man[2].total)
         "#;
         vm.lua.load(script).exec().unwrap();
+    }
+
+    /// The Minimap mod: a dot for each entity the radar shows (not us), in its colour, the target ringed, named; the
+    /// wheel sets the zoom a quarter a notch within 48..512.
+    #[test]
+    fn minimap_mod_dots_and_zoom() {
+        let host = Host::default();
+        let files = BUNDLED.iter().find(|b| b.0 == "minimap").unwrap().2;
+        let vm = Vm::new(bundled_manifest("minimap").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
+        vm.lua.set_app_data(host.info.clone());
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        vm.lua
+            .load(
+                r#"
+            ME = { id = 1, target = 3 }
+            game = {
+              player = function() return ME end, zone = function() return 100 end,
+              info = function() return { map_grid = "(G-6)" } end,
+              map = function() return { px_per_unit = 0.2 } end,
+              entities = function(filter)
+                -- Within the map shown at 160 map pixels: 160 / 2 / 0.2 x 1.5 + 10 = 610 yalms.
+                assert(filter and math.abs(filter.distance - 610) < 0.01, filter and filter.distance)
+                return {
+                { id = 1, name = "Lnxcsfix", pos = { x = 0, z = 0 }, radar = 0x00b040 },
+                { id = 2, name = "Forest Hare", pos = { x = 10, z = 5 }, radar = 0x808080 },
+                { id = 3, name = "Orcish Fodder", pos = { x = -4, z = 2 }, radar = 0xe03030 },
+                { id = 4, name = "Hidden", pos = { x = 1, z = 1 } } } end,
+            }
+            res = { zone = function() return "West Ronfaure" end }
+            settings = { get = function() return true end }
+            ui.window = function(id, s) SPEC = s end
+            ui.open = function() end
+            ui.update = function(w, id, t) SPEC.elements[1].dots = t.dots end
+            ui.on = function(id, f) HANDLER = f end
+            client = { option = function() return SPAN or 160 end, set_option = function(_, v) SPAN = v end }
+            events.on = function(name, f) if name == "frame" then FRAME = f end end
+        "#,
+            )
+            .exec()
+            .unwrap();
+        let init = files.iter().find(|f| f.0 == "init.lua").unwrap().1;
+        vm.lua.load(init).exec().unwrap();
+        vm.lua
+            .load(
+                r#"
+            FRAME()
+            assert(SPEC.heading == "West Ronfaure  (G-6)", SPEC.heading)
+            local dots = SPEC.elements[1].dots
+            assert(#dots == 2 and dots[1].tip == "Forest Hare" and dots[1].colour == 0x808080 and not dots[1].target)
+            assert(dots[2].target and dots[2].x == -4 and dots[2].z == 2)
+            HANDLER("minimap", { kind = "wheel", notches = 1 })
+            assert(math.abs(SPAN - 128) < 0.01, SPAN)
+            SPAN = 60
+            HANDLER("minimap", { kind = "wheel", notches = 2 })
+            assert(SPAN == 48, SPAN)
+        "#,
+            )
+            .exec()
+            .unwrap();
+    }
+
+    /// The Skillchain mod's own tracking: LSB's chain rules and data, a Burning Blade opening Liquefaction on a
+    /// monster, Naji's Flat Blade closing it into Fusion (the proc's chain), and the view of it with the party's chains.
+    #[test]
+    fn skillchain_mod_tracking() {
+        let host = Host::default();
+        let files = BUNDLED.iter().find(|b| b.0 == "skillchain").unwrap().2;
+        let vm =
+            Vm::new(bundled_manifest("skillchain").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
+        vm.lua.set_app_data(host.info.clone());
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        vm.lua
+            .load(
+                r#"
+            local SC = require("sc")
+            -- Liquefaction then Impaction: Fusion; Fusion then Fragmentation: Light; Light then Light: Light II.
+            assert(SC.form({ 3 }, { 8 }) == 11 and SC.form({ 11 }, { 12 }) == 13 and SC.form({ 13 }, { 13 }) == 15)
+            -- The resonance's first property that pairs wins.
+            assert(SC.form({ 1, 3 }, { 4 }) == 10 and SC.form({ 3, 1 }, { 4 }) == 4 and SC.form({ 1 }, { 1 }) == nil)
+            local d = SC.data()
+            assert(d.weapon[128].props[1] == 1 and d.weapon[134].props[1] == 6 and d.weapon[134].props[2] == 8)
+            assert(SC.trust("Naji") and SC.fold("D. Shantotto") == "dshantotto")
+            assert(SC.chain_text(11) == "Fusion (Light, Fire)")
+            local me = { id = 1, index = 10, name = "Lnxcsfix", target = 0x1000, tp = 1000 }
+            local ents = { [0x1000] = { id = 0x1000, name = "Valkurm Emperor", kind = "mob", hpp = 80, master = 0 },
+              [2] = { id = 2, name = "Naji", kind = "player", hpp = 100, master = 10, trust = true } }
+            game = {
+              player = function() return me end, entity = function(id) return ents[id] end,
+              party = function() return { { id = 1, name = "Lnxcsfix", party = 0, tp = 1000 },
+                { id = 2, name = "Naji", party = 0, tp = 1200 } } end,
+              abilities = function() return { 33, 35 } end,
+            }
+            res = { ability = function(id)
+              return ({ [33] = { kind = 3, name = "Burning Blade" }, [35] = { kind = 3, name = "Flat Blade" },
+                [34] = { kind = 3, name = "Red Lotus Blade" }, [40] = { kind = 3, name = "Vorpal Blade" } })[id] end,
+              spell = function() end }
+            local T = require("tracker")
+            T.on_action({ actor = 1, category = 3, param = 33,
+              targets = { { id = 0x1000, results = { { miss = 0, message = 185, value = 100, info = 0 } } } } })
+            local r = T.on[0x1000]
+            assert(r and r.chain == nil and r.props[1] == 3, "opened")
+            -- Naji (a trust: his skills from LSB's list) closes it: the proc's kind 6 is Fusion.
+            T.on_action({ actor = 2, category = 11, param = 35,
+              targets = { { id = 0x1000, results = { { miss = 0, message = 185, value = 90, info = 0,
+                proc = { kind = 6, message = 288, value = 50, info = 0 } } } } } })
+            r = T.on[0x1000]
+            assert(r.chain == 11 and r.links == 1 and r.life == 9, "closed")
+            local v = T.view()
+            assert(v.now.mob == "Valkurm Emperor" and v.now.chain == 11 and v.now.by == "Naji: Flat Blade", v.now.by)
+            assert(#v.chains > 0)
+            -- Fusion then Fragmentation (Naji's Vorpal Blade: Scission / Impaction is not; his list has Red Lotus
+            -- Blade): every closer named, the strongest first.
+            for _, c in ipairs(v.now.closers) do assert(c.who and c.skill and c.chain) end
+        "#,
+            )
+            .exec()
+            .unwrap();
+    }
+
+    /// The Suggestions mod's rules replay every recorded case (src/client/suggest_cases: the game's facts and the
+    /// rows the rules made of them), with the Skillchain mod's chain rules; each rule has a case; held rows regroup.
+    #[test]
+    fn suggestions_mod_cases() {
+        const RULES: [&str; 19] = [
+            "raise",
+            "shadows",
+            "ailment",
+            "curaga",
+            "cure",
+            "waltz",
+            "burst",
+            "close",
+            "provoke",
+            "job_ability",
+            "ninja_stance",
+            "samba",
+            "rune_fencer",
+            "geomancer",
+            "debuff",
+            "open_chain",
+            "strongest_ws",
+            "renew",
+            "between",
+        ];
+        let host = Host::default();
+        let files = BUNDLED.iter().find(|b| b.0 == "suggestions").unwrap().2;
+        let vm =
+            Vm::new(bundled_manifest("suggestions").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
+        vm.lua.set_app_data(host.info.clone());
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        let sc = BUNDLED.iter().find(|b| b.0 == "skillchain").unwrap().2.iter().find(|f| f.0 == "sc.lua").unwrap().1;
+        let sc: Table = vm.lua.load(sc).eval().unwrap();
+        vm.lua.globals().set("SC", sc).unwrap();
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/client/suggest_cases");
+        let mut paths: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "json"))
+            .collect();
+        paths.sort();
+        assert!(!paths.is_empty());
+        let mut rules_seen = Vec::new();
+        let mut failed = Vec::new();
+        for p in &paths {
+            let text = std::fs::read_to_string(p).unwrap();
+            let case: serde_json::Value = serde_json::from_str(&text).unwrap();
+            let rule = case["rule"].as_str().unwrap_or_default().to_string();
+            assert!(RULES.contains(&rule.as_str()), "{}: rule {rule:?}", p.display());
+            rules_seen.push(rule);
+            vm.lua.globals().set("CASE", text).unwrap();
+            let got: String = vm
+                .lua
+                .load(
+                    r#"
+                local R = require("rules")
+                R.chain = { form = SC.form, level = SC.level, elements = SC.elements, chain_text = SC.chain_text }
+                local case = json.decode(CASE)
+                local got = R.rows(R.suggest(case.facts))
+                local want = {}
+                for _, e in ipairs(case.expect) do
+                  local kind, id = "spell", e.action.Spell
+                  if not id then kind, id = "ability", e.action.Ability end
+                  want[#want + 1] = { kind = kind, id = id, target = e.target, reason = e.reason, label = e.label,
+                    group = e.group or {} }
+                end
+                local a, b = json.encode(got), json.encode(want)
+                return a == b and "" or ("expected " .. b .. "\n got " .. a)
+            "#,
+                )
+                .eval()
+                .unwrap_or_else(|e| panic!("{}: {e}", p.display()));
+            if !got.is_empty() {
+                failed.push(format!("{} ({}): {got}", p.display(), case["note"]));
+            }
+        }
+        assert!(failed.is_empty(), "{}", failed.join("\n\n"));
+        let missing: Vec<&str> = RULES.iter().copied().filter(|r| !rules_seen.iter().any(|x| x == r)).collect();
+        assert!(missing.is_empty(), "rules without a case: {missing:?}");
+        // Held rows: a tier back from its recast returns to its family, the nuke row back to the list's top; down to
+        // one castable spell the row casts it, and the family comes back.
+        vm.lua
+            .load(
+                r#"
+            local R = require("rules")
+            local function named(id, name, mp, area)
+              return { id = id, name = name, skill = 36, element = 1, mp = mp, targets = 0x20, area = area }
+            end
+            local all = { named(150, "Blizzard II", 31, false), named(149, "Blizzard", 8, false),
+              named(180, "Blizzaga II", 175, true), named(179, "Blizzaga", 80, true) }
+            local target = { name = "Bark Spider", hpp = 90, ranks = { 0, -2, 0, 0, 0, 0, 0, 0 } }
+            local f = { party = { { name = "Lenon", me = true, here = true, hp = 1000, hp_max = 1000 } },
+              spells = { all[2], all[4] }, target = target }
+            local s = R.suggest(f)
+            local k
+            for i, x in ipairs(s) do if x.label == "Ice" then k = i end end
+            assert(k and s[k].id == 149 and table.concat(s[k].group, ",") == "149,179")
+            R.regroup({ party = f.party, spells = all, target = target }, s)
+            assert(s[k].id == 150 and table.concat(s[k].group, ",") == "150,149,180,179")
+            R.regroup({ party = f.party, spells = { all[2] }, target = target }, s)
+            assert(s[k].id == 149 and #s[k].group == 0 and s[k].label == nil)
+            R.regroup({ party = f.party, spells = all, target = target }, s)
+            assert(s[k].id == 150 and s[k].label == "Ice")
+            -- Protect's family takes Protectra.
+            local p = function(id, name, mp, area) return { id = id, name = name, skill = 34, mp = mp, targets = 1, area = area } end
+            assert(R.family(p(44, "Protect II", 28, false)) == "Protect" and R.family(p(125, "Protectra", 9, true)) == "Protect")
+            -- LSB's resistance ranks moved with the mod (data/resistances.txt): a monster's own over its species'.
+            local F = require("facts")
+            assert(table.concat(F.ranks_of(100, " Wild Rabbit "), ",") == "-2,-1,-2,-1,-3,-3,-1,-3")
+            assert(F.ranks_of(100, "No Such Monster") == nil)
+        "#,
+            )
+            .exec()
+            .unwrap();
     }
 
     /// Hotbars' Builder lists the spells the magic list offers: learned and castable on our jobs at their levels

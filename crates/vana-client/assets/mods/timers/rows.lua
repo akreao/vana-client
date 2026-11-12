@@ -58,7 +58,8 @@ local function ability_for_timer(timer, known)
 end
 
 -- The charge abilities by their moves' kind (9 Quick Draw, 0xf Stratagems, 0x12 Ready): the charges at our job's
--- level and the full recast in seconds; none when the job does not give them (retail's rule).
+-- level and the full recast in seconds; none when the job does not give them (retail's rule). The client has the same
+-- rule for /recast (client/timers.rs, charge_rule and charges): change both together.
 function R.charge_rule(kind, mj, ml, sj, sl)
   local n, full
   if kind == 9 then

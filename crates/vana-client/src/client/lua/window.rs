@@ -107,6 +107,77 @@ pub struct TimerRow {
     pub fills: bool,
 }
 
+/// A lines element's colour: the UI's text, muted, gold or bronze, or its own.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum Tone {
+    #[default]
+    Text,
+    Muted,
+    Gold,
+    Bronze,
+    Rgba([u8; 4]),
+}
+
+impl Tone {
+    pub fn of(name: &str) -> Option<Tone> {
+        Some(match name {
+            "text" => Tone::Text,
+            "muted" => Tone::Muted,
+            "gold" => Tone::Gold,
+            "bronze" => Tone::Bronze,
+            _ => return None,
+        })
+    }
+}
+
+/// A run of text in a line: its tone, the strong face (a size up), and element icons after it (0 fire .. 7 dark).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Span {
+    pub text: String,
+    pub tone: Tone,
+    pub strong: bool,
+    pub elements: Vec<u8>,
+}
+
+/// A line of a lines element. One span without icons wraps; several (or icons) make one row, with `right` at its
+/// right end; `column` starts the spans after the first that far in. A `bar` is a thin gauge instead of text; a
+/// `fold` line is a header with a chevron (`open`) whose click sends `fold`; a `heading` is a label (`big`: a size up).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TextLine {
+    pub spans: Vec<Span>,
+    pub right: Option<Span>,
+    pub column: f32,
+    pub indent: f32,
+    pub bar: Option<(f32, Tone)>,
+    pub fold: Option<String>,
+    pub open: bool,
+    pub heading: bool,
+    pub big: bool,
+    /// Space after it.
+    pub gap: f32,
+}
+
+impl TextLine {
+    /// The line as plain text (the classic UI's one-colour lines): its spans, then `right`.
+    pub fn plain(&self) -> String {
+        let mut t: Vec<&str> = self.spans.iter().map(|s| s.text.as_str()).filter(|t| !t.is_empty()).collect();
+        if let Some(r) = &self.right {
+            t.push(&r.text);
+        }
+        t.join(" ")
+    }
+}
+
+/// A dot on a map element: where (world x / z), its colour, ringed as the target, and the tooltip naming it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MapDot {
+    pub x: f32,
+    pub z: f32,
+    pub colour: [u8; 3],
+    pub target: bool,
+    pub tip: String,
+}
+
 /// A list column: its heading, width (0: a share of what is left) and alignment.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Col {
@@ -216,6 +287,18 @@ pub enum Elem {
         h: f32,
         cmds: Vec<Cmd>,
     },
+    /// The zone's map around us in the minimap panel's window (the client's map, our marker, Wide Scan's marks; the
+    /// zoom is the client option minimap_span): the mod's dots; the wheel over it sends `wheel`.
+    Map {
+        id: String,
+        dots: Vec<MapDot>,
+    },
+    /// Lines of text in tones, with element icons, bars and fold headers (the skillchain helper's view); a fold
+    /// header's click sends `fold` with its key.
+    Lines {
+        id: String,
+        lines: Vec<TextLine>,
+    },
     /// Rows naming entities (a label, the entity's name in its colour, its HP), drawn as the focus panel's; a click
     /// targets the entity. Modern UI only.
     Targets {
@@ -310,6 +393,8 @@ impl Elem {
                 | Elem::Separator
                 | Elem::Canvas { .. }
                 | Elem::Timers { .. }
+                | Elem::Lines { .. }
+                | Elem::Map { .. }
                 | Elem::Targets { .. }
                 | Elem::Chip { .. }
         )
@@ -329,6 +414,8 @@ impl Elem {
             Elem::Text { id, .. }
             | Elem::Gauge { id, .. }
             | Elem::Timers { id, .. }
+            | Elem::Lines { id, .. }
+            | Elem::Map { id, .. }
             | Elem::Targets { id, .. }
             | Elem::Chip { id, .. }
                 if !id.is_empty() =>
@@ -401,6 +488,9 @@ pub struct Window {
     pub resize: bool,
     /// An edge window that grows and shrinks upward: its bottom stays put (`grow = "up"`).
     pub grow_up: bool,
+    /// An edge window as wide as its lines need (`fit`), at least `width`, at most half the screen (most of it on
+    /// the top or the bottom edge), as tall as 60% of the screen before it scrolls.
+    pub fit: bool,
     /// The edge an edge window stands on, as last told to the mod: "top", "bottom", "left", "right" or "free".
     pub dock: Option<&'static str>,
     pub panel: Option<String>,
@@ -438,6 +528,16 @@ pub enum Event {
     Sort {
         id: String,
         column: usize,
+    },
+    /// A lines element's fold header clicked: its key.
+    Fold {
+        id: String,
+        key: String,
+    },
+    /// The wheel over a map element: notches up (zoom in) positive.
+    Wheel {
+        id: String,
+        notches: f32,
     },
     /// A click on a canvas, in its units: `right` for the right button.
     Click {
@@ -500,6 +600,8 @@ impl Event {
             }
             Event::Toggle { id, open } => json!({"kind": "toggle", "id": id, "open": open}),
             Event::Sort { id, column } => json!({"kind": "sort", "id": id, "column": column + 1}),
+            Event::Fold { id, key } => json!({"kind": "fold", "id": id, "key": key}),
+            Event::Wheel { id, notches } => json!({"kind": "wheel", "id": id, "notches": notches}),
             Event::Click { id, x, y, right } => {
                 json!({"kind": "click", "id": id, "x": x.round() as i64, "y": y.round() as i64, "button": if *right { "right" } else { "left" }})
             }
@@ -569,6 +671,54 @@ fn tint([r, g, b, a]: [u8; 4]) -> u32 {
     h(a) << 24 | h(r) << 16 | h(g) << 8 | h(b)
 }
 
+/// A tone as the classic UI's text colour (0x80 = 1.0): white, grey, the headings' gold, a darker grey.
+pub fn classic_tone(t: Tone) -> u32 {
+    match t {
+        Tone::Text => N,
+        Tone::Muted => 0x8058_5858,
+        Tone::Gold => 0x80a0_a080,
+        Tone::Bronze => 0x8070_7070,
+        Tone::Rgba(c) => tint(c),
+    }
+}
+
+/// A tone as a bar's vertex colour (0x80 = 1.0, alpha as the gauge fill's).
+pub fn classic_bar(t: Tone) -> [u8; 4] {
+    match t {
+        Tone::Rgba(c) => c,
+        Tone::Gold => [0x80, 0x70, 0x20, 0xa9],
+        Tone::Muted | Tone::Bronze => [0x40, 0x40, 0x40, 0xa9],
+        Tone::Text => [0x80, 0x80, 0x80, 0xa9],
+    }
+}
+
+/// One line of a lines element on a classic page (or the Timers' dock) at (x, y), `w` wide: a heading in the
+/// headings' font, a bar as the Timers' gauge (frame 38 and its fill 97), else its text in its first span's tone.
+pub fn draw_classic_line(gu: &mut GameUi, l: &TextLine, x: f32, y: f32, w: f32) {
+    if let Some((f, tone)) = l.bar {
+        if f > 0.0 {
+            gu.sprite_coloured("menu    windowps", 97, x + 4.0, y + 1.0, f.min(1.0), 1.0, classic_bar(tone), 8);
+        }
+        gu.sprite("menu    windowps", 38, x, y, N);
+    } else if l.heading {
+        gu.shape_fit(&l.plain(), x, y + 1.0, w, classic_tone(l.spans.first().map_or(Tone::Gold, |s| s.tone)));
+    } else {
+        let tone = l.spans.first().map_or(Tone::Text, |s| s.tone);
+        gu.text_fit(&l.plain(), x + l.indent, y - 3.0, w - l.indent, classic_tone(tone));
+    }
+}
+
+/// A classic line's height: a bar 10, a heading 16, text 15.
+pub fn classic_line_h(l: &TextLine) -> f32 {
+    if l.bar.is_some() {
+        10.0
+    } else if l.heading {
+        16.0
+    } else {
+        15.0
+    }
+}
+
 impl Window {
     pub fn new(id: &str) -> Self {
         Window {
@@ -601,6 +751,7 @@ impl Window {
             heading: String::new(),
             resize: false,
             grow_up: false,
+            fit: false,
             dock: None,
             hovered: None,
             panel: None,
@@ -1217,6 +1368,17 @@ impl Window {
         (ev, vec![Se::Select])
     }
 
+    /// A lines element's fold header (its line) clicked.
+    pub fn fold(&mut self, i: usize, line: usize) -> (Vec<Event>, Vec<Se>) {
+        match self.elems.get(i) {
+            Some(Elem::Lines { id, lines }) => match lines.get(line).and_then(|l| l.fold.clone()) {
+                Some(key) => (vec![Event::Fold { id: id.clone(), key }], vec![Se::Cursor]),
+                None => (Vec::new(), Vec::new()),
+            },
+            _ => (Vec::new(), Vec::new()),
+        }
+    }
+
     /// A canvas clicked at (x, y) in its units.
     pub fn canvas_click(&mut self, i: usize, x: f32, y: f32, right: bool) -> (Vec<Event>, Vec<Se>) {
         let mut ev = self.end_edit();
@@ -1490,7 +1652,8 @@ impl Window {
         }
         match &self.elems[i] {
             // The Timers' panels draw their sections (timers.rs, modern/extras.rs); target rows are modern only.
-            Elem::Timers { .. } | Elem::Targets { .. } | Elem::Chip { .. } => 0.0,
+            Elem::Timers { .. } | Elem::Map { .. } | Elem::Targets { .. } | Elem::Chip { .. } => 0.0,
+            Elem::Lines { lines, .. } => lines.iter().map(classic_line_h).sum::<f32>() + 4.0,
             Elem::Text { .. } => LINE,
             Elem::Buttons { .. } | Elem::Slider { .. } | Elem::Input { .. } | Elem::Choice { .. } => PITCH,
             Elem::List { height, columns, .. } => LINE * (*height + usize::from(has_header(columns))) as f32 + 6.0,
@@ -1553,7 +1716,14 @@ impl Window {
             }
             let here = self.focus && i == self.at;
             match e {
-                Elem::Timers { .. } | Elem::Targets { .. } | Elem::Chip { .. } => {}
+                Elem::Timers { .. } | Elem::Map { .. } | Elem::Targets { .. } | Elem::Chip { .. } => {}
+                Elem::Lines { lines, .. } => {
+                    let mut ly = ey;
+                    for l in lines {
+                        draw_classic_line(gu, l, x + 20.0, ly, w - 40.0);
+                        ly += classic_line_h(l);
+                    }
+                }
                 Elem::Text { text, dim, colour, .. } => {
                     gu.text_fit(text, x + 20.0, ey, w - 40.0, colour.map_or(if *dim { DIM } else { N }, tint));
                 }

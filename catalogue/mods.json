@@ -1960,13 +1960,13 @@
       "files": [
         {
           "path": "init.lua",
-          "sha256": "15916582fe5118567abaf49fb1b5514676b6ebdf01b8c9c97ea850ab094c42dc",
-          "size": 434,
+          "sha256": "41b214cf4683753c21913356d72e4552c864806dceee02c319cfd90557cf71a9",
+          "size": 3234,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/minimap/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "44982b77909724e436eadbed9317fd3e5267d9dfd984d05f13223c5c129317b1",
+          "sha256": "43aba9b36776ce14d9f26466bb18e06fa1d9554e588327a2eaa0ae54145537d6",
           "size": 360,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/minimap/mod.toml"
         }
@@ -1974,7 +1974,7 @@
       "id": "minimap",
       "kind": "lua",
       "name": "Minimap",
-      "version": "1.0.0"
+      "version": "2.0.0"
     },
     {
       "authors": [],
@@ -2658,22 +2658,40 @@
       "description": "In a party, the skillchains your party can make together; on your target, an open skillchain, what closes it, and when to magic burst (the skillchain add-ons).",
       "files": [
         {
+          "path": "data/skillchains.txt",
+          "sha256": "a1d32b91f03f877c3933ed85850504fe45a6b1df468aad9ab0444d51332435c2",
+          "size": 17381,
+          "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/skillchain/data/skillchains.txt"
+        },
+        {
           "path": "init.lua",
-          "sha256": "2ab614c55a83e9f470e8a38c95150b6b9af9ae22dcb88a77970719ff2e0e4fde",
-          "size": 485,
+          "sha256": "59fb2711244950e234ee8a8eef4efa068e945433354f1cc440495e42e22e3087",
+          "size": 9845,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/skillchain/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "d4807bc4973ffe5eacef61c5059c2dcb1b3fbf1113371ac97dc202ea8e146468",
+          "sha256": "7bfdf7b9bfdb30466b60333394e8b6e2b1e2f21aadb8fc1af53dda2baafa7d63",
           "size": 541,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/skillchain/mod.toml"
+        },
+        {
+          "path": "sc.lua",
+          "sha256": "81994dfaff102f2306980ee4c051cb5c5bcca36724233c1901e014b958618621",
+          "size": 5430,
+          "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/skillchain/sc.lua"
+        },
+        {
+          "path": "tracker.lua",
+          "sha256": "36c535e37a68bc981d330db820de556731e4c605c7f0c4aca48c9bf590c0daac",
+          "size": 12045,
+          "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/skillchain/tracker.lua"
         }
       ],
       "id": "skillchain",
       "kind": "lua",
       "name": "Skillchain Helper",
-      "version": "1.0.0"
+      "version": "2.0.0"
     },
     {
       "authors": [],
@@ -2708,22 +2726,40 @@
       "description": "Rows at the top of the modern battle menu naming a spell, ability or weapon skill worth using now, and why.",
       "files": [
         {
+          "path": "data/resistances.txt",
+          "sha256": "70e92a1aaff03f84aaacb85652667f29d3950d7c8b8302a9225e1a9cb08166d2",
+          "size": 391905,
+          "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/suggestions/data/resistances.txt"
+        },
+        {
+          "path": "facts.lua",
+          "sha256": "0a2020fbbabfd3f8b4b183ca85754ab82d53a0b641eb080d3d0574d81f7f012e",
+          "size": 8400,
+          "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/suggestions/facts.lua"
+        },
+        {
           "path": "init.lua",
-          "sha256": "0e2a875224dab86d1666a634f5db3b670394092960f3a4ce23ba6121edba4c6f",
-          "size": 636,
+          "sha256": "960e87be27027c10bd17d4355f79d2bcaeb02e43884ff523106f16dcbf4c1308",
+          "size": 3306,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/suggestions/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "b8d4306838aac67d60a9e0e6f7395cca7e42eaa96eab31c4387d5fb866c2d617",
+          "sha256": "6f48833a2f0e88fe129f156d2d99946f674d400cf1823bd26a96cb8cda238e76",
           "size": 415,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/suggestions/mod.toml"
+        },
+        {
+          "path": "rules.lua",
+          "sha256": "4eee34747a9e08b76bcbbe706ae5b1f5a81edabda1ed7acf687ed94f04406b90",
+          "size": 30633,
+          "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/suggestions/rules.lua"
         }
       ],
       "id": "suggestions",
       "kind": "lua",
       "name": "Battle Suggestions",
-      "version": "1.0.0"
+      "version": "2.0.0"
     },
     {
       "authors": [],
@@ -2993,8 +3029,8 @@
         },
         {
           "path": "rows.lua",
-          "sha256": "1a8d58d69611ffcfe0bf87d04e66a0955f3958135b162d580013a2cadc2bef34",
-          "size": 10607,
+          "sha256": "9e09e8a0f43cfd97d1dc0f6f9f1ec6fa98727bdd45b66f66a2b2761dc965bb7b",
+          "size": 10718,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/timers/rows.lua"
         }
       ],

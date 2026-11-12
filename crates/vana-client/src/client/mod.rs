@@ -7714,9 +7714,6 @@ struct World {
     fav_save: bool,
     /// The character and main job whose modern UI setup is in use (client/uiconf.rs).
     ui_profile: Option<uiconf::InUse>,
-    /// The battle menu's suggestions (suggest.rs::refresh_root), when they were taken, and the one the cursor is on.
-    root_sugg: Vec<suggest::Suggestion>,
-    root_sugg_at: Option<Instant>,
     /// The rows above the battle menu's commands: a mod's (ui.native.slot battle_rows), and that slot's value.
     battle_rows: Vec<suggest::Suggestion>,
     battle_src: serde_json::Value,
@@ -10150,8 +10147,6 @@ impl App {
                             fav_strip: self.cfg.modern_fav_strip,
                             fav_save: false,
                             ui_profile: None,
-                            root_sugg: Vec::new(),
-                            root_sugg_at: None,
                             battle_rows: Vec::new(),
                             battle_src: serde_json::Value::Null,
                             suggest_sel: None,

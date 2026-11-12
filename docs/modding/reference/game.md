@@ -31,6 +31,7 @@ end)
 | [`game.synth()`](#gamesynth) | Whether a synthesis is under way, and whether the synthesis window is open. |
 | [`game.clock()`](#gameclock) | Earth time, the moon and the next Vana'diel day, as the clock slot shows them. |
 | [`game.weather()`](#gameweather) | The current weather id. |
+| [`game.usable(kind, id)`](#gameusable) | Whether a spell or ability can be used now, and the game's refusal. |
 | [`game.key_items()`](#gamekey_items) | The key items you hold. |
 | [`game.treasure()`](#gametreasure) | The items in the treasure pool. |
 | [`game.countdown()`](#gamecountdown) | The content countdown the client shows: seconds left and the whole limit. |
@@ -630,6 +631,34 @@ The current weather.
 local w = game.weather()
 local el = res.weather_element(w)
 print("Weather:", res.weather(w), el and res.element(el) or "no element")
+```
+
+## `game.usable`
+
+```lua
+game.usable(kind, id) -> boolean, integer?
+```
+
+Whether a spell or an ability can be used now, as the game's own magic and ability lists decide: your status (asleep,
+fishing, mounted ...), the recast, your jobs and levels, MP, TP, a blue spell being set.
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `kind` | `string` | yes | `"spell"` or `"ability"`. |
+| `id` | `integer` | yes | The spell id, or the ability id as `res.ability` takes it. |
+
+**Returns** `boolean, integer?`: `true` when it can be used; else `false` and the game's refusal, a group 7 message id
+(nil for a refusal the game does not word).
+
+**Errors** "game state is not available here" in the lobby or a chat filter; `usable: kind "<k>" (spell or ability)`.
+
+**Example**
+
+```lua
+local ok, why = game.usable("spell", 1) -- Cure
+print(ok and "Cure is ready" or ("no Cure: message " .. tostring(why)))
 ```
 
 ## `game.key_items`
