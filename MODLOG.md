@@ -23859,7 +23859,9 @@ All of it is the mod's Lua over the general API; the client gained nothing.
   (Hume F face 2, file 10258: 1 = 103 triangles, 3 = 32, 4 = 225; the ponytail and upper hair are in 1..3), hands 5,
   lower legs 6 (every legs file seen), feet 7.
 - FUN_1002cb80 (load): a part-4 material with u16 @30 set becomes part 8, and the mesh is marked as holding face parts
-  (+0x69) when any material is 1..4. FUN_1002dc10 (draw, asm 0x1002e0bb): with +0x69 set and u16 @30 set the part is 8.
+  (+0x69) when any material record is 1..4 (strip or not). FUN_1002dc10 (draw, asm 0x1002e0bb): with +0x69 set and
+  u16 @30 set the part is 8, whatever its nibble. parse_polys follows the draw rule (it covers the load one): in a mesh
+  with a face-part record, every material with u16 @30 set is part 8.
 - FUN_1002dc10 (asm 0x1002dfa4..0x1002e073): the mesh's header byte 3 (chunk object +0x33) sets hide flags on the
   draw context's byte array +0xa8 + part: 2 -> 1; 3 -> 1, 2; 4 -> 1, 2, 3; 5 -> 1, 2, 3, 4, 8; 6 -> 1, 2, 3, 8;
   0x12 -> 5; 0x22 -> 7; 0x32 -> 6; any other value nothing. A material whose part flag is set draws nothing (the cloth

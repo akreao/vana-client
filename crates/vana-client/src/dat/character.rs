@@ -448,6 +448,8 @@ fn parse_polys(name: &str, p: &[u8]) -> Result<Vec<Group>> {
     let mut light = 1.0f32;
     let (mut part, mut alt) = (0u8, false);
     let mut alts = Vec::new();
+    // FUN_1002cb80's +0x69: any material record with a face part, drawn or not.
+    let mut face = false;
     let mut at = 0;
     while at + 4 <= p.len() {
         let (tag, n) = (u16_at(p, at), u16_at(p, at + 2) as usize);
@@ -460,6 +462,7 @@ fn parse_polys(name: &str, p: &[u8]) -> Result<Vec<Group>> {
             need(46)?;
             light = Some(f32_at(p, at + 18)).filter(|f| f.is_finite()).unwrap_or(1.0);
             (part, alt) = (p[at + 15] & 0xf, u16_at(p, at + 30) != 0);
+            face |= (1..=4).contains(&part);
             at += 46;
         } else if tag & 0x80F0 == 0x8000 {
             need(18)?;
@@ -501,7 +504,7 @@ fn parse_polys(name: &str, p: &[u8]) -> Result<Vec<Group>> {
             bail!("mesh {name}: unknown poly record {tag:#06x} at {at:#x}");
         }
     }
-    if groups.iter().any(|g| (1..=4).contains(&g.part)) {
+    if face {
         for (g, _) in groups.iter_mut().zip(&alts).filter(|(_, a)| **a) {
             g.part = 8;
         }
