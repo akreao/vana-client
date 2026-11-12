@@ -1554,8 +1554,29 @@ impl EffectsGpu {
         fog_color: [f32; 3],
         fog: [f32; 2],
     ) {
+        self.draw_with_breaks(gpu, encoder, target, color_tex, fx, cam, clip, fog_color, fog, &[], &mut |_, _| {});
+    }
+
+    /// As draw, with other transparent things in the sorted list: `breaks` are their keys (view depth, as the
+    /// elements', back to front); before the first element nearer than break i, the pass ends, `on_break(encoder, i)`
+    /// draws it, and a new pass goes on. Returns how many breaks it ran (the caller draws the rest, all nearer).
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_with_breaks(
+        &mut self,
+        gpu: &Gpu,
+        encoder: &mut wgpu::CommandEncoder,
+        target: (&wgpu::TextureView, &wgpu::TextureView, [u32; 2]),
+        color_tex: Option<&wgpu::Texture>,
+        fx: &Effects,
+        cam: (Mat4, Mat4, glam::Vec3),
+        clip: [f32; 2],
+        fog_color: [f32; 3],
+        fog: [f32; 2],
+        breaks: &[f32],
+        on_break: &mut dyn FnMut(&mut wgpu::CommandEncoder, usize),
+    ) -> usize {
         if self.draw_group.is_none() || (self.count == 0 && fx.trails.iter().all(|t| t.is_none())) {
-            return;
+            return 0;
         }
         let order = fx.draw_order();
         let any_dist = order.iter().any(|&e| {
@@ -1643,7 +1664,7 @@ impl EffectsGpu {
             self.gp_vb = Some((b, fx.decal_version, ranges));
         }
         let soft = self.copy_depth(gpu, encoder, target.1, fx, &order);
-        let Some(group) = self.draw_group.as_ref() else { return };
+        let Some(group) = self.draw_group.as_ref() else { return 0 };
         let (color, depth, size) = target;
         let (proj, view, eye) = cam;
         let u = DrawU {
@@ -1790,7 +1811,16 @@ impl EffectsGpu {
         // Unknown modes keep the previous element's blend (additive before the first).
         let mut class = 2usize;
         let mut bound: Option<(bool, usize, bool)> = None;
-        for e in fx.draw_items() {
+        let mut next_break = 0;
+        for (key, e) in fx.draw_items_keyed() {
+            // Another transparent thing farther than this item: it goes first, outside the pass.
+            while let Some(i) = break_before(breaks, next_break, key) {
+                drop(pass);
+                on_break(encoder, i);
+                next_break = i + 1;
+                pass = new_pass(encoder);
+                bound = None;
+            }
             // An after-image among the elements (0x1001c930 from the shared depth list).
             if e & crate::fx::TRAIL_ITEM != 0 {
                 let slot = e & !crate::fx::TRAIL_ITEM;
@@ -2032,11 +2062,36 @@ impl EffectsGpu {
                 pass.draw(0..3, e * PER_ELEM..e * PER_ELEM + 1);
             }
         }
+        next_break
     }
+}
+
+/// The next break (from `next`) farther than an item at `key`, if any: breaks are back to front, so it is `next`
+/// when its key is larger.
+fn break_before(breaks: &[f32], next: usize, key: f32) -> Option<usize> {
+    breaks.get(next).filter(|&&b| b > key).map(|_| next)
 }
 
 #[cfg(test)]
 mod tests {
+    /// A faded actor at view depth 10 between effects at 30, 12 (behind it) and 8, 2 (in front): it goes after the
+    /// farther two and before the nearer two; a second one at 1 goes after all of them (the caller draws it).
+    #[test]
+    fn breaks_interleave_by_depth() {
+        let items = [30.0f32, 12.0, 8.0, 2.0];
+        let breaks = [10.0f32, 1.0];
+        let (mut next, mut out) = (0usize, Vec::new());
+        for (k, &key) in items.iter().enumerate() {
+            while let Some(i) = super::break_before(&breaks, next, key) {
+                out.push(format!("actor{i}"));
+                next = i + 1;
+            }
+            out.push(format!("fx{k}"));
+        }
+        assert_eq!(out, ["fx0", "fx1", "actor0", "fx2", "fx3"]);
+        assert_eq!(next, 1);
+    }
+
     #[test]
     fn vu_dist_weather_density() {
         use super::vu_dist_count;

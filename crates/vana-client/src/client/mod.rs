@@ -17430,6 +17430,7 @@ impl App {
             view,
             encoder,
             gpu_time,
+            refracting: Vec::new(),
             bg,
             aspect,
             lcd,
@@ -17936,6 +17937,8 @@ struct FrameGpu {
     m_actors: Instant,
     counts: perf::Counts,
     drew_world: bool,
+    /// The refracting actors draw_scene found shown; draw_effects draws them among the effects.
+    refracting: Vec<u32>,
 }
 
 /// What the world's frame uses of the app besides the world, borrowed beside it: its steps take the world and its
@@ -18361,6 +18364,8 @@ fn cross_capture(cx: &mut WorldDraw, gfx: &Gfx, fg: &FrameGpu, w: &mut World, r:
                 .filter_map(|(_, a)| a.gpu.as_ref())
                 .collect();
             let mut enc = gfx.gpu.device.create_command_encoder(&Default::default());
+            // A snapshot alone: its faded actors drawn at once.
+            r.defer_faded = false;
             r.render(&gfx.gpu, &mut enc, target, &scene_depth, &cam, aspect, &actors);
             gfx.gpu.queue.submit([enc.finish()]);
         }
@@ -19406,8 +19411,10 @@ fn draw_scene(
         steps,
         crate::dat::zone::SWAY_TAGS.iter().position(|t| *t == crate::dat::weather::weather_tag(w.weather)),
     );
-    // FUN_1001d240's helper target for faded actors (drawn opaque, then blended as one quad).
+    // FUN_1001d240's helper target for faded actors (drawn opaque, then blended as one quad), composited after the
+    // effects (draw_effects' end) as retail's sorted transparent list puts them over what is behind them.
     r.prepare_faded(&gfx.gpu, &scene_tex);
+    r.defer_faded = true;
     // The point-light slot leak for this view (render/leak.rs).
     r.update_leak(&gfx.gpu, camera, aspect);
     perf::timed(
@@ -19448,33 +19455,14 @@ fn draw_scene(
         );
     }
     fg.mark("shadows");
-    // Refracting actors, farthest first (retail's sorted list), after the opaque scene.
-    let mut refracting: Vec<(f32, &crate::render::ActorGpu)> = w
+    // Refracting actors: drawn by draw_effects, among the effects and the faded actors by depth.
+    fg.refracting = w
         .actors
         .iter()
-        .filter(|(id, a)| !a.vanished() && !hidden.contains(id) && !culled(id, a))
-        .filter_map(|(id, a)| {
-            Some((
-                places.get(id)?.pos.distance(camera.eye),
-                a.gpu.as_ref().filter(|g| g.refract.is_some() && g.alpha >= 1e-4)?,
-            ))
-        })
+        .filter(|(id, a)| !a.vanished() && !hidden.contains(id) && !culled(id, a) && places.contains_key(id))
+        .filter(|(_, a)| a.gpu.as_ref().is_some_and(|g| g.refract.is_some() && g.alpha >= 1e-4))
+        .map(|(&id, _)| id)
         .collect();
-    if !refracting.is_empty() {
-        refracting.sort_by(|x, y| y.0.total_cmp(&x.0));
-        let list: Vec<&crate::render::ActorGpu> = refracting.iter().map(|x| x.1).collect();
-        r.render_refraction(
-            &gfx.gpu,
-            &mut fg.encoder,
-            &scene_raw,
-            Some(&scene_tex),
-            &scene_depth,
-            camera,
-            aspect,
-            &list,
-        );
-    }
-    fg.mark("refraction");
     r.occl.run(&gfx.gpu, &mut fg.encoder, &scene_depth);
     fg.mark("occlusion");
 }
@@ -19507,6 +19495,32 @@ fn draw_effects(
     if !r.ready(&gfx.gpu) {
         eg.upload_pending(&gfx.gpu, &mut w.effects);
     }
+    // The faded actors render left out (defer_faded) and the refracting ones, farthest first: each is drawn where it
+    // falls among the effects (retail's one sorted transparent list), so what is behind it shows through.
+    let faded_all: Vec<&crate::render::ActorGpu> = w.actors.values().filter_map(|a| a.gpu.as_ref()).collect();
+    let cam_view = camera.view();
+    let mut late: Vec<(f32, Late)> = r
+        .faded_pending(camera, &faded_all)
+        .into_iter()
+        .enumerate()
+        .map(|(k, (key, a))| (key, Late::Faded(a, k)))
+        .collect();
+    let refracting = std::mem::take(&mut fg.refracting);
+    late.extend(
+        refracting
+            .iter()
+            .filter_map(|id| w.actors.get(id)?.gpu.as_ref())
+            .enumerate()
+            .map(|(k, a)| (a.sort_key(&cam_view), Late::Refract(a, k))),
+    );
+    late.sort_by(|x, y| y.0.total_cmp(&x.0));
+    let late_one = |r: &mut ZoneRenderer, enc: &mut wgpu::CommandEncoder, l: &Late| match *l {
+        Late::Faded(a, k) => r.render_faded_one(&gfx.gpu, enc, &scene_raw, &scene_depth, a, k),
+        Late::Refract(a, k) => {
+            r.render_refraction_at(&gfx.gpu, enc, &scene_raw, Some(&scene_tex), &scene_depth, camera, aspect, &[a], k)
+        }
+    };
+    let mut late_done = 0;
     if r.ready(&gfx.gpu) {
         let view = camera.view();
         let mut view_rot = view;
@@ -19616,7 +19630,8 @@ fn draw_effects(
         fg.mark("fx update");
         let (fog_color, fog) =
             r.lighting.as_ref().map_or(([0.0; 3], [150.0, 600.0]), |l| (l.fog.to_array(), [l.fog_start, l.fog_end]));
-        eg.draw(
+        let keys: Vec<f32> = late.iter().map(|p| p.0).collect();
+        late_done = eg.draw_with_breaks(
             &gfx.gpu,
             &mut fg.encoder,
             (&scene_raw, &scene_depth, bg),
@@ -19626,9 +19641,22 @@ fn draw_effects(
             [crate::render::NEAR, crate::render::FAR],
             fog_color,
             fog,
+            &keys,
+            &mut |enc, i| late_one(&mut *r, enc, &late[i].1),
         );
         fg.mark("fx draw");
     }
+    // Those nearer than every effect (or all of them, with no effects drawn).
+    for (_, l) in late.iter().skip(late_done) {
+        late_one(&mut *r, &mut fg.encoder, l);
+    }
+    r.defer_faded = false;
+}
+
+/// An actor draw_effects draws among the effects, with its uniform slot.
+enum Late<'a> {
+    Faded(&'a crate::render::ActorGpu, usize),
+    Refract(&'a crate::render::ActorGpu, usize),
 }
 
 /// Over the finished scene: the mods' shapes and post passes, layout mode's lines, the held zone frame and the
