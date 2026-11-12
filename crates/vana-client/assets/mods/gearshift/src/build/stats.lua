@@ -161,6 +161,9 @@ M.ALIAS = {
 M.PETS = { ["pet"] = "pet", ["avatar"] = "avatar", ["wyvern"] = "wyvern", ["automaton"] = "automaton",
   ["luopan"] = "luopan", ["jug pet"] = "pet" }
 
+local ELEMENT_WORDS = { fire = true, ice = true, wind = true, earth = true, lightning = true, thunder = true,
+  water = true, light = true, dark = true }
+
 -- Lowercase, quotes gone, single spaces, no space before % or after a line break.
 function M.norm(s)
   s = s:lower():gsub('"', ""):gsub("%s+", " ")
@@ -191,7 +194,7 @@ end
 -- Adds one text's stats into r = {stats, pet = {kind = {key = n}}, cond = {lines}, unknown = {phrase = n}}.
 local function scan(text, r)
   text = text:gsub("\n", " ")
-  local ctx = nil
+  local ctx, ctx_once = nil, nil
   local pos = 1
   while pos <= #text do
     local s1, e1, sign, num, pct = text:find("([%+%-])%s*(%d+)(%%?)", pos)
@@ -218,12 +221,16 @@ local function scan(text, r)
     local tail = before:match("([^:]*)$") or before
     local name = M.norm(tail)
     local key = lookup(name, is_pct)
+    -- "Water Elemental Magic Accuracy+30": one element's, set aside as conditional.
+    local el = name:match("^(%a+) elemental ")
+    if el and ELEMENT_WORDS[el] then ctx_once = "cond" end
     -- An unknown quoted name ("Boost"+5): that job ability's effect.
     if key == nil then
       local q = tail:match('"([^"]+)"%s*$')
       if q then key = "ja:" .. M.norm(q) end
     end
-    if ctx == "cond" then
+    if ctx == "cond" or ctx_once == "cond" then
+      ctx_once = nil
       r.cond[#r.cond + 1] = name .. (value >= 0 and "+" or "") .. value .. (is_pct and "%" or "")
     elseif key == nil then
       if name ~= "" then r.unknown[name] = (r.unknown[name] or 0) + 1 end

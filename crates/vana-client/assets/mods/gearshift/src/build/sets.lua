@@ -263,6 +263,12 @@ function M.ws_ids(job, wslist)
   return out
 end
 
+-- Jobs that swap weapons in every set but the melee ones (no TP to lose).
+M.MAGE_JOBS = { WHM = true, BLM = true, SMN = true, SCH = true, GEO = true }
+-- The melee sets (weapons kept, whatever the job).
+M.MELEE_SETS = { TP = true, TP_Hybrid = true, TP_Acc = true, TP_MNK = true, TP_Pet = true, WS = true, RangedWS = true,
+  Preshot = true, Midshot = true, Waltz = true, Steps = true, Jump = true, Automaton = true }
+
 -- ---- Which set an action wears ----
 
 -- Spell skills (res.spell().skill).
