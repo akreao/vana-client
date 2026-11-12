@@ -4142,15 +4142,18 @@ fn world_hud(
     if let Some(m) = world.map.as_mut() {
         m.draw(gu, sw, sh, modern);
         world.sounds.append(&mut m.sounds);
-        let zone = m.zone();
+        let (zone, key) = (m.zone(), m.asked_key());
         for out in std::mem::take(&mut m.outs) {
             let send = |w: &World, id: u16, v: u32| {
                 let _ = w.net.commands.send(NetCommand::Packet { id, body: v.to_le_bytes().to_vec() });
             };
             match out {
                 map::Out::AskParty => {
-                    send(world, 0x0D2, zone as u32);
+                    // FUN_100f0800: ZoneNo is the map's zone, sign-extended; the reply is tested against this map's
+                    // sub-key from now on.
+                    send(world, 0x0D2, zone as i16 as u32);
                     world.scan.party_busy = true;
+                    world.scan.party_key = Some(key);
                 }
                 // FUN_101fb7d0: the strip for either packet (0x0F6 while the last list is still open).
                 map::Out::Scan => {
@@ -12347,26 +12350,8 @@ impl App {
                         }
                     }
                 }
-                NetEvent::MapGroup { id, zone, pos } => {
-                    world.scan.party_busy = false;
-                    // FUN_100f07b0 -> FUN_101f94d0: our own zone, a listed member after us, on the sub-map the map was
-                    // asked for.
-                    let own = world.party.own_flags;
-                    let member = world
-                        .party
-                        .members()
-                        .skip(1)
-                        .find(|m| m.id == id)
-                        .map(|m| (m.name.clone(), (m.flags ^ own) & 3 == 0));
-                    let key = world.ground.as_ref().map(|g| g.map_key(Vec3::from(pos)));
-                    let from = map::rest_from(world);
-                    if let (Some((name, party)), Some(m)) = (member, world.map.as_mut())
-                        && zone == world.pos_zone
-                        && key.is_none_or(|k| k == m.asked_key())
-                    {
-                        m.party_pos(&name, pos[0], pos[2], party, from);
-                    }
-                }
+                // FUN_100f07b0: handled where the map records are.
+                NetEvent::MapGroup { id, zone, pos } => world.map_cmds.push(map::Cmd::Party { id, zone, pos }),
                 NetEvent::EventAnswer { id, data } => {
                     if let Some(l) = world.event.as_mut() {
                         l.rt.answer(id, &data);
