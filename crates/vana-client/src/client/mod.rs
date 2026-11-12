@@ -55,6 +55,8 @@ mod flash;
 mod footsteps;
 mod game_ui;
 mod gamepad;
+#[cfg(target_os = "linux")]
+mod gamepad_sdl;
 mod hudtop;
 mod input;
 mod iteminfo;
@@ -96,7 +98,6 @@ mod chatctrl;
 mod cmdhint;
 mod concierge;
 mod currencies;
-mod durations;
 mod equipsets;
 mod equipwin;
 mod esedit;
@@ -3016,7 +3017,7 @@ fn world_hud(
                 egui::Key::T
                     if !modifiers.ctrl
                         && !modifiers.alt
-                        && world.lua.timers_panels().iter().any(Option::is_some)
+                        && world.lua.has_timers()
                         && world.win.is_none()
                         && world.menu.is_none()
                         && world.config.is_none()
@@ -7713,9 +7714,6 @@ struct World {
     fav_save: bool,
     /// The character and main job whose modern UI setup is in use (client/uiconf.rs).
     ui_profile: Option<uiconf::InUse>,
-    /// The battle menu's suggestions (suggest.rs::refresh_root), when they were taken, and the one the cursor is on.
-    root_sugg: Vec<suggest::Suggestion>,
-    root_sugg_at: Option<Instant>,
     /// The rows above the battle menu's commands: a mod's (ui.native.slot battle_rows), and that slot's value.
     battle_rows: Vec<suggest::Suggestion>,
     battle_src: serde_json::Value,
@@ -10149,8 +10147,6 @@ impl App {
                             fav_strip: self.cfg.modern_fav_strip,
                             fav_save: false,
                             ui_profile: None,
-                            root_sugg: Vec::new(),
-                            root_sugg_at: None,
                             battle_rows: Vec::new(),
                             battle_src: serde_json::Value::Null,
                             suggest_sel: None,
@@ -11199,7 +11195,6 @@ impl App {
                     camera::face(world, f.x.atan2(f.z));
                     world.my_id = char_id;
                     world.name = name;
-                    timers::on_zone(world);
                     seacom::zone_in(world);
                     world.entities.clear();
                     world.entity_index.clear();
@@ -11263,7 +11258,6 @@ impl App {
                             world.actors.remove(&e.id);
                             world.rests.remove(&e.id);
                             world.effects.forget_actor(e.id);
-                            timers::on_gone(world, e.id, false);
                         }
                         continue;
                     }
@@ -11465,10 +11459,6 @@ impl App {
                         && let Some(a) = world.actors.get_mut(&e.id)
                     {
                         combat::die(a, sd);
-                    }
-                    // Effects end with a death.
-                    if died {
-                        world.timers.died(e.id);
                     }
                     if let Some((old, new)) = status_change.filter(|_| !quiet) {
                         combat::status_schedulers(&mut world.effects, &world.actors, e.id, old, new, sd);
@@ -11695,14 +11685,13 @@ impl App {
                 }
                 NetEvent::PartyEffects(rows) => {
                     world.party_buffs = rows.into_iter().collect();
-                    timers::on_party_effects(world);
+                    world.lua.raise("party_buffs", vec![]);
                 }
                 NetEvent::Battle(m) => {
                     world.lua.raise(
                         "battle_message",
                         vec![m.actor.into(), m.target.into(), m.message.into(), m.data[0].into(), m.data[1].into()],
                     );
-                    timers::on_message(world, m.target, m.data[0] as u32, m.message);
                     combat::on_battle_message(world, &m);
                 }
                 NetEvent::Event(s) => event::queue(world, s),
@@ -11747,7 +11736,7 @@ impl App {
                 NetEvent::EmoteUnlocks { jobs, chairs } => (world.emote_jobs, world.emote_chairs) = (jobs, chairs),
                 NetEvent::GmCatalog(p) => world.gm.on_catalog(&p),
                 NetEvent::GmResult(p) => world.gm.on_result(&p),
-                NetEvent::PetSync(p) => (world.timers.pet_tp, world.pet_sync) = (p.map(|p| p.tp), p),
+                NetEvent::PetSync(p) => world.pet_sync = p,
                 NetEvent::MountRecast(s) => {
                     world.mount_recast = (s > 0).then(|| Instant::now() + std::time::Duration::from_secs(s as u64))
                 }
@@ -11866,7 +11855,6 @@ impl App {
                 NetEvent::SkillBase(s) => world.skill_base = Some(s),
                 NetEvent::Action(a) => {
                     world.lua.raise("action", vec![lua::action_json(&a)]);
-                    timers::on_action(world, &a);
                     combat::on_action(world, &a);
                 }
                 NetEvent::Scheduler { actor, target, name } => combat::on_scheduler(world, actor, target, name),
@@ -12605,9 +12593,6 @@ impl App {
         }
         for id in std::mem::take(&mut world.effects.releases) {
             combat::fx_release(world, id);
-        }
-        for (id, ticks, kind) in std::mem::take(&mut world.effects.holds) {
-            combat::fx_hold(world, id, ticks, kind);
         }
         wepfx::apply_ops(world);
         for (id, pick) in std::mem::take(&mut world.effects.death_picks) {
@@ -18475,6 +18460,7 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
             && w.actors.get(&w.my_id).is_some_and(|a| a.character.is_some()),
         w.pos,
     );
+    let put_away: HashSet<u32> = w.actors.keys().copied().filter(|id| fishrod::put_away(w, *id)).collect();
     for (id, a) in w.actors.iter_mut() {
         // A changed look goes up in the background; the swap is one frame, the old model drawn till then.
         if let Some(nx) = a.next.clone()
@@ -18509,7 +18495,10 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
         // Motion and rate as FFXiMain picks them (FUN_100c6b70); frame += ticks * speed * 0.5.
         // Then a scheduler's motion (event / weapon draw) over the status motion.
         // +0x80 up (ops 0x07 / 0x08 / 0x59, w.noreact): FUN_100c83c0 returns at once, no status motion re-pick.
-        let held = w.noreact.get(id).is_some_and(|t| *t > hold_now);
+        let held = w.noreact.get(id).is_some_and(|t| *t > hold_now)
+            || w.effects.held.get(id).is_some_and(|k| k & crate::fx::HOLD_REACT != 0)
+            || fishrod::is_rod(*id)
+            || put_away.contains(id);
         let (name, rate, once, blend) = match (&a.oneshot, a.play.as_ref().and_then(|p| p.current())) {
             (Some(o), _) => (o.name.clone(), o.speed, true, crate::motion::BLEND_TICKS),
             (None, Some(m)) => {

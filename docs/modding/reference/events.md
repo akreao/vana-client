@@ -113,7 +113,7 @@ Some things hold for all of them:
 | --- | --- |
 | [Lifecycle](#lifecycle) | [`load`](#load), [`unload`](#unload), [`login`](#login), [`logout`](#logout), [`lobby_screen`](#lobby_screen), [`frame`](#frame) |
 | [Character](#character) | [`hp_change`](#hp_change), [`mp_change`](#mp_change), [`tp_change`](#tp_change), [`hpp_change`](#hpp_change), [`mpp_change`](#mpp_change), [`status_change`](#status_change), [`job_change`](#job_change), [`level_up`](#level_up), [`level_down`](#level_down), [`buff_gain`](#buff_gain), [`buff_lose`](#buff_lose), [`target_change`](#target_change) |
-| [Party](#party) | [`party_change`](#party_change), [`party_invite`](#party_invite) |
+| [Party](#party) | [`party_change`](#party_change), [`party_buffs`](#party_buffs), [`party_invite`](#party_invite) |
 | [Combat](#combat) | [`action`](#action), [`battle_message`](#battle_message), [`damage`](#damage), [`suggestions`](#suggestions) |
 | [Chat](#chat) | [`chat_message`](#chat_message), [`emote`](#emote), [`examined`](#examined) |
 | [Crafting](#crafting) | [`synth_amount`](#synth_amount), [`synth_result`](#synth_result) |
@@ -414,6 +414,22 @@ events.on("party_change", function()
 end)
 ```
 
+## `party_buffs`
+
+The server sent our party's status effects (the other members' lists, as their party window icons show them). Read
+`game.party()`: each member's `buffs` holds them. It comes whenever the server sends the lists, also when nothing
+changed.
+
+No arguments.
+
+```lua
+events.on("party_buffs", function()
+  for _, m in ipairs(game.party()) do
+    if m.slot > 0 then print(m.name, #m.buffs .. " effects") end
+  end
+end)
+```
+
 ## `party_invite`
 
 Someone invited us to a party or an alliance.
@@ -492,19 +508,19 @@ end)
 
 ## `suggestions`
 
-The client's suggestion rules picked new rows for the modern battle menu: a spell, ability or weapon skill worth using
-now, and why. The rules run only while the modern battle menu is open and some mod has a handler for this event; when
-the menu closes an empty list comes. While the player's cursor is on one of the rows they hold still, and only their
-submenus' spells are taken again.
+The Battle Suggestions mod's rules picked new rows for the modern battle menu: a spell, ability or weapon skill worth
+using now, and why. The mod sends it (`mods.emit`) while the modern battle menu is open; when the menu closes an empty
+list comes. While the player's cursor is on one of the rows they hold still, and only their submenus' spells are taken
+again (no event then).
 
 | Argument | Type | Description |
 | --- | --- | --- |
 | `rows` | `table[]` | Rows as the `battle_rows` [slot](ui.native.md#uinativeslot) takes them: `{kind, id, target, reason, label, group}`. |
 
 ```lua
--- What the bundled Battle Suggestions mod does.
+-- Log what the Battle Suggestions mod picks.
 events.on("suggestions", function(rows)
-  ui.native.slot("battle_rows", #rows > 0 and rows or nil)
+  for _, r in ipairs(rows) do print(r.kind, r.id, r.reason) end
 end)
 ```
 

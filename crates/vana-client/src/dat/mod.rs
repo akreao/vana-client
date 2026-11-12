@@ -212,7 +212,6 @@ pub mod names;
 pub mod npc;
 pub mod overlay;
 pub mod recasts;
-pub mod resists;
 pub mod roe;
 pub mod sched;
 pub mod skillchains;

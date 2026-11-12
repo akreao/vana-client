@@ -994,9 +994,11 @@ pub struct Effects {
     pub anchor_points: Vec<(u32, u8, u8)>,
     /// Op 0x9a for the client: actor, entity +0x130 bit 1.
     pub gens_off: Vec<(u32, bool)>,
-    /// Skill / magic actions' holds for the client: op 0x20 (actor2) / 0x59 (actor1, no reactions) as (actor, ticks,
-    /// no reactions), and the actors whose load hold ends (their "main" started or was given up, FUN_100a9610).
-    pub holds: Vec<(u32, f32, u8)>,
+    /// Ops 0x20 / 0x1f / 0x56 / 0x59 / 0x07 / 0x08's holds: (owner task uid, actor, HOLD_* kind, ticks left). They are
+    /// child sub-tasks of their scheduler task, so they end with their time or their task.
+    pub(crate) task_holds: Vec<(u64, u32, u8, f32)>,
+    /// The HOLD_* kinds the live task holds put on each actor this frame.
+    pub held: HashMap<u32, u8>,
     /// Ops 0x2e (actor1's move input, our own player only) and 0x2f (actor1's facing) locked for ticks.
     pub locks: Vec<(u32, u8, f32)>,
     /// Op 0x2e: (owner task uid, actor1, ticks left); the actors whose move input is off this frame, and those whose
@@ -1191,7 +1193,8 @@ impl Effects {
             self_moves: Vec::new(),
             anchor_points: Vec::new(),
             gens_off: Vec::new(),
-            holds: Vec::new(),
+            task_holds: Vec::new(),
+            held: HashMap::new(),
             locks: Vec::new(),
             roots: Vec::new(),
             rooted: HashSet::new(),

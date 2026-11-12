@@ -76,18 +76,6 @@ pub(super) enum Op {
     Paste,
     /// A behaviour switch set (client.set_option): (mod, name, value).
     Option(String, String, serde_json::Value),
-    /// A timer in the Timers window added or replaced (mod, name, seconds, section, group, icon kind and id, total,
-    /// fills), or removed (seconds None), or all the mod's removed (name None).
-    Timer {
-        mod_id: String,
-        name: Option<String>,
-        secs: Option<f32>,
-        section: usize,
-        group: Option<String>,
-        icon: Option<(String, u16)>,
-        total: f32,
-        fills: bool,
-    },
     /// A lobby action (sign in, play a character), for the app before login.
     Lobby(lobby::Act),
     /// A mod's recording started (file, frames a second) or stopped (client.record).
@@ -330,6 +318,8 @@ pub struct Host {
     print_seq: u64,
     /// Window events for the mods' handlers: (mod, window, event).
     ui_events: Vec<(String, String, window::Event)>,
+    /// Events for one mod (its settings changed), delivered in the mod phase: (mod, name, arguments).
+    mod_events: Vec<(String, &'static str, Vec<serde_json::Value>)>,
     /// Where the mods' canvases were last drawn (the modern UI), for a HUD drag let go over one.
     canvases: Vec<CanvasAt>,
     /// The canvas a HUD drag is over now: (mod, window, canvas, the dragged element).
@@ -615,7 +605,7 @@ pub(in crate::client) const TIMERS_PANELS: [&str; 3] = ["timers_recasts", "timer
 /// The mods kept in this repository (assets/mods), for the tests: the client loads only installed mods (the mods
 /// folder); these reach players from GitHub (Settings > Mods, Download Standard Mods).
 #[cfg(test)]
-const BUNDLED: &[(&str, &str, &[(&str, &str)])] = bundled!["dps", "auto-advance", "trust-speech", "find", "map-overlay", "clock", "target-info", "battle-text", "timestamps", "synth-amount", "regime", "timers", "skillchain", "minimap", "suggestions", "xp-tracker", "cutscene-speed", "loot-rules", "client-tweaks", "equipment-grid", "inventory-hud", "chat-alerts", "player-bars", "effect-remover", "macro-books", "mount-picker", "log-files", "tell-inbox", "link-catcher", "trust-lineups", "sell-hand-in", "web-search", "camera-range", "chat-filter", "target-bar", "quick-commands", "countdowns", "party-tools", "key-commands", "event-rules", "music-picker", "typing-helpers", "zone-banner", "use-all", "hide-rules", "screen-notes", "calculator", "attendance", "screen-capture", "quick-play", "target-marker", "cast-grid", "target-debuffs", "skill-log", "swing-timer", "weather-watch", "targeting", "entity-styles", "visual-tweaks", "window-placement", "range-rings", "tracking", "pet-status", "job-gauges", "roll-helper", "automaton-sets", "loot-tracker", "monster-alerts", "gathering-log", "casket-solver",
+const BUNDLED: &[(&str, &str, &[(&str, &str)])] = bundled!["dps", "auto-advance", "trust-speech", "find", "map-overlay", "clock", "target-info", "battle-text", "timestamps", "synth-amount", "regime", "timers" ["durations.lua", "engine.lua", "rows.lua", "data/actions.tsv", "data/status.tsv", "data/gear.tsv", "data/augments.tsv", "data/merits.tsv", "data/jobpoints.tsv"], "skillchain" ["sc.lua", "tracker.lua", "data/skillchains.txt"], "minimap", "suggestions" ["rules.lua", "facts.lua", "data/resistances.txt"], "xp-tracker", "cutscene-speed", "loot-rules", "client-tweaks", "equipment-grid", "inventory-hud", "chat-alerts", "player-bars", "effect-remover", "macro-books", "mount-picker", "log-files", "tell-inbox", "link-catcher", "trust-lineups", "sell-hand-in", "web-search", "camera-range", "chat-filter", "target-bar", "quick-commands", "countdowns", "party-tools", "key-commands", "event-rules", "music-picker", "typing-helpers", "zone-banner", "use-all", "hide-rules", "screen-notes", "calculator", "attendance", "screen-capture", "quick-play", "target-marker", "cast-grid", "target-debuffs", "skill-log", "swing-timer", "weather-watch", "targeting", "entity-styles", "visual-tweaks", "window-placement", "range-rings", "tracking", "pet-status", "job-gauges", "roll-helper", "automaton-sets", "loot-tracker", "monster-alerts", "gathering-log", "casket-solver",
     "blue-sets" ["src/learn.lua"],
     "warp-helper" ["src/places.lua"],
     "dialogue-bubbles",
@@ -684,11 +674,6 @@ impl Host {
         if self.started {
             self.events.push((name, args));
         }
-    }
-
-    /// Whether a running mod has a handler for an event.
-    pub(in crate::client) fn listens(&self, event: &str) -> bool {
-        self.vms.iter().any(|v| v.suspended.is_none() && v.has_handler(event))
     }
 
     /// The running mods' text commands by name, each with its mod's name and its `[commands]` usage and help (none
@@ -1329,6 +1314,14 @@ fn save(vm: &Vm, w: Option<&World>) {
 }
 
 /// The mod phase (docs/lua-mods.md 3.2): once a frame in the world.
+/// The events queued for one mod (Host.mod_events: settings_changed), run in the mod phase.
+fn emit_mod_events(vm: &Vm, events: &[(String, &'static str, Vec<serde_json::Value>)]) {
+    for (_, name, args) in events.iter().filter(|e| e.0 == vm.manifest.id) {
+        let vals: Vec<mlua::Value> = args.iter().map(|a| api::to_lua(&vm.lua, a).unwrap_or(mlua::Value::Nil)).collect();
+        vm.emit(name, mlua::MultiValue::from_iter(vals));
+    }
+}
+
 pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
     if !w.lua.opt_owners.is_empty() {
         release_options(w);
@@ -1429,6 +1422,7 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
             }
         }
         let events = std::mem::take(&mut host.events);
+        let mod_events = std::mem::take(&mut host.mod_events);
         let ui_events = std::mem::take(&mut host.ui_events);
         let pasted = host.pasted.take();
         // The bus to the other clients, and what they sent (to the same mod, when it holds multibox).
@@ -1489,6 +1483,7 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
                         args.iter().map(|a| api::to_lua(&vm.lua, a).unwrap_or(mlua::Value::Nil)).collect();
                     vm.emit(name, mlua::MultiValue::from_iter(vals));
                 }
+                emit_mod_events(vm, &mod_events);
                 let mine: Vec<(String, window::Event)> =
                     ui_events.iter().filter(|e| e.0 == vm.manifest.id).map(|e| (e.1.clone(), e.2.clone())).collect();
                 for (win, ev) in mine {
@@ -1804,32 +1799,6 @@ fn apply(w: &mut World, gu: Option<&super::game_ui::GameUi>, op: Op) {
                 w.lua.opt_owners.insert(name, mod_id);
             }
         }
-        Op::Timer { mod_id, name, secs, section, group, icon, total, fills } => {
-            let Some(name) = name else {
-                w.timers.mods.retain(|t| t.mod_id != mod_id);
-                return;
-            };
-            w.timers.mods.retain(|t| !(t.mod_id == mod_id && t.name == name));
-            if let Some(s) = secs {
-                use super::timers::Icon;
-                let icon = match icon {
-                    Some((k, id)) if k == "status" => Icon::Status(id),
-                    Some((k, id)) => super::timers::list_icon(w, k == "spell", id),
-                    None => Icon::None,
-                };
-                let end = std::time::Instant::now() + vm::secs(s as f64);
-                w.timers.mods.push(super::timers::ModTimer {
-                    mod_id,
-                    section,
-                    group,
-                    icon,
-                    name,
-                    end,
-                    total: if total > 0.0 { total } else { s.max(0.0) },
-                    fills,
-                });
-            }
-        }
         Op::Interface(show) => w.ui_hidden = !show,
         // In the world there is no lobby to act on.
         Op::Lobby(_) => {}
@@ -1916,8 +1885,9 @@ impl Host {
         self.info.borrow().slots.get(name).map(|s| s.1.clone())
     }
 
-    /// The timers' sections shown: per section, whether its panel's window is open, and with the client's own rows.
-    pub(in crate::client) fn timers_panels(&self) -> [Option<bool>; 3] {
+    /// The timers' sections: per section, the groups of the timers element in its panel's open window (the newest
+    /// mod's) and when they were given; None while the panel is hidden or has no such window.
+    pub(in crate::client) fn timers_sections(&self) -> [Option<(Vec<window::TimerGroup>, std::time::Instant)>; 3] {
         TIMERS_PANELS.map(|p| {
             if self.all_hidden || self.hides(p) {
                 return None;
@@ -1926,9 +1896,33 @@ impl Host {
             self.vms.iter().rev().filter(|v| v.suspended.is_none()).find_map(|v| {
                 let st = v.st.borrow();
                 let win = st.windows.iter().find(|w| w.open && w.edge && w.panel.as_deref() == Some(p))?;
-                Some(win.elems.iter().any(|e| matches!(e, window::Elem::Timers { builtin: true, .. })))
+                win.elems.iter().find_map(|e| match e {
+                    window::Elem::Timers { groups, at, .. } => Some((groups.clone(), *at)),
+                    _ => None,
+                })
             })
         })
+    }
+
+    /// The wheel over the map element of the open window standing in for `panel`: its `wheel` event.
+    pub(in crate::client) fn map_wheel(&mut self, panel: &str, notches: f32) {
+        let hit = self.vms.iter().rev().filter(|v| v.suspended.is_none()).find_map(|v| {
+            let st = v.st.borrow();
+            let win = st.windows.iter().find(|w| w.open && w.edge && w.panel.as_deref() == Some(panel))?;
+            let id = win.elems.iter().find_map(|e| match e {
+                window::Elem::Map { id, .. } => Some(id.clone()),
+                _ => None,
+            })?;
+            Some((v.manifest.id.clone(), win.id.clone(), id))
+        });
+        if let Some((m, win, id)) = hit {
+            self.ui_events.push((m, win, window::Event::Wheel { id, notches }));
+        }
+    }
+
+    /// Whether any timers panel's window is open and shown.
+    pub(in crate::client) fn has_timers(&self) -> bool {
+        TIMERS_PANELS.iter().any(|p| !self.hides(p) && self.has_edge_panel(p))
     }
 
     /// Whether an open edge window stands in for a built-in panel (edge_panel, without copying the window).
@@ -2531,6 +2525,33 @@ mod tests {
         assert_eq!(tail_of(&vm), Some((Some(hud::Tail { at: [100.0, 300.0], w: 30.0, len: 22.0 }), 300.0)));
         vm.lua.load(r#"hud.set("b", {tail = false})"#).exec().unwrap();
         assert_eq!(tail_of(&vm), Some((None, 300.0)));
+    }
+
+    /// A setting changed (the Mods window, outside the mod phase) is queued for the mod phase, for that mod only; its
+    /// handler does not run at once.
+    #[test]
+    fn settings_changed_waits_for_the_mod_phase() {
+        let mut host = Host::default();
+        let vm = Vm::new(
+            manifest::Manifest { id: "t".into(), ..Default::default() },
+            PathBuf::from("."),
+            vm::Source::Dir(PathBuf::from(".")),
+        )
+        .unwrap();
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        vm.lua
+            .load(r#"RAN = nil; events.on("settings_changed", function(key, value) RAN = key .. "=" .. value end)"#)
+            .exec()
+            .unwrap();
+        host.vms.push(vm);
+        host.settings_changed("t", "opacity", serde_json::json!(0.55));
+        host.settings_changed("other", "size", serde_json::json!(3));
+        assert!(host.vms[0].lua.globals().get::<Option<String>>("RAN").unwrap().is_none());
+        assert_eq!(host.mod_events[0], ("t".to_string(), "settings_changed", vec!["opacity".into(), 0.55.into()]));
+        // The frame's delivery: only this mod's event reaches it.
+        let events = std::mem::take(&mut host.mod_events);
+        emit_mod_events(&host.vms[0], &events);
+        assert_eq!(host.vms[0].lua.globals().get::<String>("RAN").unwrap(), "opacity=0.55");
     }
 
     /// hud.portrait: its actor is wanted once however many show it, a later entity moves it, none is an error.
@@ -4904,6 +4925,393 @@ return "acxml flow ok"
         vm.lua.load(script).exec().unwrap_or_else(|e| panic!("{e}"));
     }
 
+    /// The Timers mod's own tracking: LSB's durations (the examples the client's engine was tested with), the charge
+    /// rule, the luopan, a Slow landing on a monster, and our own effects shortest first.
+    #[test]
+    fn timers_mod_tracking() {
+        let host = Host::default();
+        let files = BUNDLED.iter().find(|b| b.0 == "timers").unwrap().2;
+        let vm = Vm::new(bundled_manifest("timers").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
+        vm.lua.set_app_data(host.info.clone());
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        let script = r#"
+            local D = require("durations")
+            local function row(kind, id) return D.rows(kind, id)[1] end
+            local function rdm99() return D.Caster.new({ main = { 5, 99 } }) end
+            -- The tables load.
+            assert(D.rule(2).overwrite == "higher" and row("spell", 57).formula == "ENH" and row("spell", 57).effect == 33)
+            -- Slow: RDM 99, 5/5 merits, 20 job points, ENF_MAG_DURATION 20, Saboteur on the first target: 492.
+            local c = rdm99()
+            c.merits[2316], c.jps[167], c.mods[1151], c.statuses[454] = 5, 20, 20, true
+            assert(D.predict(c, row("spell", 56), { first = true, has = {} }, false) == 492)
+            assert(D.predict(c, row("spell", 56), { has = {} }, false) == 276)
+            -- Haste: 180; Composure x3 on ourselves only; Perpetuance x2; a level-48 member gets 48/96 of Haste II.
+            c = rdm99()
+            local me, other = { me = true, has = {} }, { has = {} }
+            assert(D.predict(c, row("spell", 57), other, true) == 180)
+            c.statuses[419] = true
+            assert(D.predict(c, row("spell", 57), me, true) == 540 and D.predict(c, row("spell", 57), other, true) == 180)
+            c.statuses[469] = true
+            assert(D.predict(c, row("spell", 57), other, true) == 360)
+            assert(D.predict(c, row("spell", 511), { level = 48, has = {} }, true) == 180)
+            -- Songs: song+ 3: 156; Troubadour 312.
+            c = D.Caster.new({ main = { 10, 75 }, mods = { [434] = 2, [452] = 1 } })
+            assert(D.predict(c, row("spell", 398), other, false) == 156)
+            c.statuses[348] = true
+            assert(D.predict(c, row("spell", 398), other, false) == 312)
+            -- Steps: 60 new, then the time left + 30 up to 120.
+            c = D.Caster.new({ main = { 19, 75 } })
+            assert(D.predict(c, row("ability", 201), other, false) == 60)
+            assert(D.predict(c, row("ability", 201), other, false, 45.5) == 75)
+            assert(D.predict(c, row("ability", 201), other, false, 100) == 120)
+            -- Rolls: 300 + 20 a Winning Streak merit.
+            c = D.Caster.new({ main = { 17, 75 }, merits = { [3076] = 2 } })
+            assert(D.predict(c, row("ability", 105), other, false) == 340)
+            assert(D.lands(row("ability", 105), 421, 11) and not D.lands(row("ability", 105), 421, 0))
+            -- Landing, icons and replacement.
+            assert(D.lands(row("spell", 23), 2, 37) and D.lands(row("spell", 23), 85, 0))
+            assert(D.lands(row("spell", 57), 230, 33) and not D.lands(row("spell", 57), 230, 0))
+            assert(not D.lands(row("spell", 57), 75, 0))
+            assert(D.icon_matches(66, 445) and D.icon_matches(19, 2) and not D.icon_matches(33, 2))
+            local function has(list, x)
+              for _, v in ipairs(list) do if v == x then return true end end
+              return false
+            end
+            assert(has(D.ends(128), 129) and has(D.ends(134), 135))
+            -- Weapon skills by TP.
+            c = D.Caster.new({ main = { 1, 75 }, tp = 2000 })
+            assert(D.predict(c, D.rows("ws", 83)[1], other, false) == 240)
+            c.tp = 3000
+            assert(D.predict(c, D.rows("ws", 87)[1], other, false) == 150)
+            c.tp = 1500
+            assert(D.predict(c, D.rows("ws", 129)[1], other, false) == 45)
+            -- Wards: the Summoning skill over 300 (at most 200); Perfect Defense 30 + skill / 20.
+            c = D.Caster.new({ main = { 15, 75 }, skills = { [38] = 420 } })
+            assert(D.predict(c, D.rows("pet", 595)[1], other, false) == 300)
+            c.skills[38] = 600
+            assert(D.predict(c, D.rows("pet", 595)[1], other, false) == 380)
+            assert(D.predict(c, D.rows("pet", 671)[1], other, false) == 60)
+            -- Dancer: Chocobo Jig II, a samba.
+            c = D.Caster.new({ main = { 19, 99 }, jps = { [613] = 10 }, mods = { [492] = 60 } })
+            assert(D.predict(c, row("ability", 381), other, false) == 195)
+            c.mods[490], c.mods[498] = 10, 10
+            assert(D.predict(c, row("ability", 189), me, false) == 143)
+            -- Helix; Indi on an Entrust target.
+            c = D.Caster.new({ main = { 20, 75 }, mods = { [477] = 72 } })
+            assert(D.predict(c, row("spell", 278), other, false) == 162)
+            c.mods[960] = 21
+            assert(D.predict(c, row("spell", 768), other, false) == 201)
+            -- Merits count only for the main job at 75.
+            c = D.Caster.new({ main = { 1, 75 }, merits = { [3076] = 5 } })
+            assert(c:merit(3076) == 0)
+            c.main = { 17, 74 }
+            assert(c:merit(3076) == 0)
+            c.main = { 17, 75 }
+            assert(c:merit(3076) == 100)
+
+            -- The game as the engine and rows see it: RDM 99 with four buffs, a Valkurm Emperor in front.
+            local buffs = { { id = 41, remaining = 600 }, { id = 40, remaining = 300 }, { id = 33, remaining = 120 },
+              { id = 42, remaining = 200 } }
+            local names = { [33] = "Haste", [40] = "Protect", [41] = "Shell", [42] = "Regen", [13] = "Slow" }
+            local p = { id = 1, name = "Lnxcsfix", main_job = 5, main_level = 99, sub_job = 13, sub_level = 49, zone = 103,
+              tp = 0 }
+            game = {
+              player = function() return p end, buffs = function() return buffs end, party = function() return {} end,
+              entity = function(id) if id == 0x1000 then return { id = id, name = "Valkurm Emperor", kind = "mob", status = 1 } end end,
+              merits = function() return {} end, job_points = function() return {} end,
+              skills = function() return { combat = {}, magic = {} } end, equipment = function() return {} end,
+              items = function() return {} end, recasts = function() return { spells = {}, abilities = {}, calc = {} } end,
+              abilities = function() return {} end,
+            }
+            res = { status = function(id) return names[id] end, status_info = function() return { untimed = false } end,
+              spell = function(id) return id == 56 and { name = "Slow", kind = 1 } or nil end, ability = function() end,
+              item = function() end }
+            mods = { list = function() return {} end }
+            local E = require("engine")
+            local R = require("rows")
+            -- The luopan at 99: 207 s; with Blaze of Glory half.
+            c = D.Caster.new({ main = { 21, 99 } })
+            assert(E.luopan_life(c) == 207)
+            c.statuses[569] = true
+            assert(E.luopan_life(c) == 105)
+            -- Charges: Stratagems at SCH 99 with 100 s left: 4 s to the next, 2 ready; Ready with calc2 -15: 25-s shares.
+            local n, ready, per = R.charges(100, 5, 240, 0, 0)
+            assert(n == 4 and ready == 2 and per == 48, n .. " " .. ready .. " " .. per)
+            n, ready, per = R.charges(96, 5, 240, 0, 0)
+            assert(n == 48 and ready == 3)
+            n, ready, per = R.charges(60, 3, 90, 0, -15)
+            assert(n == 10 and ready == 0 and per == 25)
+            assert(R.charges(10, 0, 90, 0, 0) == nil)
+            -- Our Slow lands on the Emperor: its row under its name, 180 s (no merits, no Saboteur).
+            E.on_action({ actor = 1, category = 4, param = 56, targets = { { id = 0x1000, results = { { message = 236, value = 13, info = 0 } } } } })
+            local secs = R.sections(true)
+            local mob = secs[3][1]
+            assert(mob.name == "Valkurm Emperor" and mob.rows[1].name == "Slow", tostring(mob and mob.name))
+            assert(math.abs(mob.rows[1].left - 180) < 1 and mob.rows[1].total == 180)
+            -- Our own effects, shortest first.
+            local own = secs[2][1]
+            local order = {}
+            for _, r in ipairs(own.rows) do order[#order + 1] = r.name end
+            assert(own.name == "Lnxcsfix" and table.concat(order, ",") == "Haste,Regen,Protect,Shell", table.concat(order, ","))
+            -- It wears off: the server's message ends it.
+            E.on_message(0x1000, 13, 204)
+            assert(#R.sections(true)[3] == 0)
+            -- Another mod's row (timers.add through the service), in the buffs section under "Timers".
+            mods.list = function() return { { id = "countdowns" } } end
+            R.add("countdowns", "Pop", 300, { group = "Spawns" })
+            secs = R.sections(false)
+            assert(#secs[1] == 0 and secs[2][1].name == "Spawns" and secs[2][1].rows[1].name == "Pop")
+            local ok, err = pcall(R.add, "countdowns", "Bad", 10, { icon = { kind = "status" } })
+            assert(not ok and tostring(err):find("numeric id"), tostring(err))
+            -- A number name is the same row on add and remove.
+            R.clear("countdowns")
+            R.add("countdowns", 5, 30)
+            R.add("countdowns", 5, 30)
+            assert(#R.sections(false)[2][1].rows == 1)
+            R.remove("countdowns", 5)
+            assert(#R.sections(false)[2] == 0)
+            -- Copies of one status (maneuvers) each keep their own gauge.
+            buffs = { { id = 300, remaining = 20 }, { id = 300, remaining = 60 } }
+            R.sections(true)
+            local man = R.sections(true)[2][1].rows
+            assert(man[1].total == 20 and man[2].total == 60, man[1].total .. " " .. man[2].total)
+        "#;
+        vm.lua.load(script).exec().unwrap();
+    }
+
+    /// The Minimap mod: a dot for each entity the radar shows (not us), in its colour, the target ringed, named; the
+    /// wheel sets the zoom a quarter a notch within 48..512.
+    #[test]
+    fn minimap_mod_dots_and_zoom() {
+        let host = Host::default();
+        let files = BUNDLED.iter().find(|b| b.0 == "minimap").unwrap().2;
+        let vm = Vm::new(bundled_manifest("minimap").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
+        vm.lua.set_app_data(host.info.clone());
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        vm.lua
+            .load(
+                r#"
+            ME = { id = 1, target = 3 }
+            game = {
+              player = function() return ME end, zone = function() return 100 end,
+              info = function() return { map_grid = "(G-6)" } end,
+              map = function() return { px_per_unit = 0.2 } end,
+              entities = function(filter)
+                -- Within the map shown at 160 map pixels: 160 / 2 / 0.2 x 1.5 + 10 = 610 yalms.
+                assert(filter and math.abs(filter.distance - 610) < 0.01, filter and filter.distance)
+                return {
+                { id = 1, name = "Lnxcsfix", pos = { x = 0, z = 0 }, radar = 0x00b040 },
+                { id = 2, name = "Forest Hare", pos = { x = 10, z = 5 }, radar = 0x808080 },
+                { id = 3, name = "Orcish Fodder", pos = { x = -4, z = 2 }, radar = 0xe03030 },
+                { id = 4, name = "Hidden", pos = { x = 1, z = 1 } } } end,
+            }
+            res = { zone = function() return "West Ronfaure" end }
+            settings = { get = function() return true end }
+            ui.window = function(id, s) SPEC = s end
+            ui.open = function() end
+            ui.update = function(w, id, t) SPEC.elements[1].dots = t.dots end
+            ui.on = function(id, f) HANDLER = f end
+            client = { option = function() return SPAN or 160 end, set_option = function(_, v) SPAN = v end }
+            events.on = function(name, f) if name == "frame" then FRAME = f end end
+        "#,
+            )
+            .exec()
+            .unwrap();
+        let init = files.iter().find(|f| f.0 == "init.lua").unwrap().1;
+        vm.lua.load(init).exec().unwrap();
+        vm.lua
+            .load(
+                r#"
+            FRAME()
+            assert(SPEC.heading == "West Ronfaure  (G-6)", SPEC.heading)
+            local dots = SPEC.elements[1].dots
+            assert(#dots == 2 and dots[1].tip == "Forest Hare" and dots[1].colour == 0x808080 and not dots[1].target)
+            assert(dots[2].target and dots[2].x == -4 and dots[2].z == 2)
+            HANDLER("minimap", { kind = "wheel", notches = 1 })
+            assert(math.abs(SPAN - 128) < 0.01, SPAN)
+            SPAN = 60
+            HANDLER("minimap", { kind = "wheel", notches = 2 })
+            assert(SPAN == 48, SPAN)
+        "#,
+            )
+            .exec()
+            .unwrap();
+    }
+
+    /// The Skillchain mod's own tracking: LSB's chain rules and data, a Burning Blade opening Liquefaction on a
+    /// monster, Naji's Flat Blade closing it into Fusion (the proc's chain), and the view of it with the party's chains.
+    #[test]
+    fn skillchain_mod_tracking() {
+        let host = Host::default();
+        let files = BUNDLED.iter().find(|b| b.0 == "skillchain").unwrap().2;
+        let vm =
+            Vm::new(bundled_manifest("skillchain").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
+        vm.lua.set_app_data(host.info.clone());
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        vm.lua
+            .load(
+                r#"
+            local SC = require("sc")
+            -- Liquefaction then Impaction: Fusion; Fusion then Fragmentation: Light; Light then Light: Light II.
+            assert(SC.form({ 3 }, { 8 }) == 11 and SC.form({ 11 }, { 12 }) == 13 and SC.form({ 13 }, { 13 }) == 15)
+            -- The resonance's first property that pairs wins.
+            assert(SC.form({ 1, 3 }, { 4 }) == 10 and SC.form({ 3, 1 }, { 4 }) == 4 and SC.form({ 1 }, { 1 }) == nil)
+            local d = SC.data()
+            assert(d.weapon[128].props[1] == 1 and d.weapon[134].props[1] == 6 and d.weapon[134].props[2] == 8)
+            assert(SC.trust("Naji") and SC.fold("D. Shantotto") == "dshantotto")
+            assert(SC.chain_text(11) == "Fusion (Light, Fire)")
+            local me = { id = 1, index = 10, name = "Lnxcsfix", target = 0x1000, tp = 1000 }
+            local ents = { [0x1000] = { id = 0x1000, name = "Valkurm Emperor", kind = "mob", hpp = 80, master = 0 },
+              [2] = { id = 2, name = "Naji", kind = "player", hpp = 100, master = 10, trust = true } }
+            game = {
+              player = function() return me end, entity = function(id) return ents[id] end,
+              party = function() return { { id = 1, name = "Lnxcsfix", party = 0, tp = 1000 },
+                { id = 2, name = "Naji", party = 0, tp = 1200 } } end,
+              abilities = function() return { 33, 35 } end,
+            }
+            res = { ability = function(id)
+              return ({ [33] = { kind = 3, name = "Burning Blade" }, [35] = { kind = 3, name = "Flat Blade" },
+                [34] = { kind = 3, name = "Red Lotus Blade" }, [40] = { kind = 3, name = "Vorpal Blade" } })[id] end,
+              spell = function() end }
+            local T = require("tracker")
+            T.on_action({ actor = 1, category = 3, param = 33,
+              targets = { { id = 0x1000, results = { { miss = 0, message = 185, value = 100, info = 0 } } } } })
+            local r = T.on[0x1000]
+            assert(r and r.chain == nil and r.props[1] == 3, "opened")
+            -- Naji (a trust: his skills from LSB's list) closes it: the proc's kind 6 is Fusion.
+            T.on_action({ actor = 2, category = 11, param = 35,
+              targets = { { id = 0x1000, results = { { miss = 0, message = 185, value = 90, info = 0,
+                proc = { kind = 6, message = 288, value = 50, info = 0 } } } } } })
+            r = T.on[0x1000]
+            assert(r.chain == 11 and r.links == 1 and r.life == 9, "closed")
+            local v = T.view()
+            assert(v.now.mob == "Valkurm Emperor" and v.now.chain == 11 and v.now.by == "Naji: Flat Blade", v.now.by)
+            assert(#v.chains > 0)
+            -- Fusion then Fragmentation (Naji's Vorpal Blade: Scission / Impaction is not; his list has Red Lotus
+            -- Blade): every closer named, the strongest first.
+            for _, c in ipairs(v.now.closers) do assert(c.who and c.skill and c.chain) end
+        "#,
+            )
+            .exec()
+            .unwrap();
+    }
+
+    /// The Suggestions mod's rules replay every recorded case (src/client/suggest_cases: the game's facts and the
+    /// rows the rules made of them), with the Skillchain mod's chain rules; each rule has a case; held rows regroup.
+    #[test]
+    fn suggestions_mod_cases() {
+        const RULES: [&str; 19] = [
+            "raise",
+            "shadows",
+            "ailment",
+            "curaga",
+            "cure",
+            "waltz",
+            "burst",
+            "close",
+            "provoke",
+            "job_ability",
+            "ninja_stance",
+            "samba",
+            "rune_fencer",
+            "geomancer",
+            "debuff",
+            "open_chain",
+            "strongest_ws",
+            "renew",
+            "between",
+        ];
+        let host = Host::default();
+        let files = BUNDLED.iter().find(|b| b.0 == "suggestions").unwrap().2;
+        let vm =
+            Vm::new(bundled_manifest("suggestions").unwrap(), PathBuf::from("."), vm::Source::Bundled(files)).unwrap();
+        vm.lua.set_app_data(host.info.clone());
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        let sc = BUNDLED.iter().find(|b| b.0 == "skillchain").unwrap().2.iter().find(|f| f.0 == "sc.lua").unwrap().1;
+        let sc: Table = vm.lua.load(sc).eval().unwrap();
+        vm.lua.globals().set("SC", sc).unwrap();
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/client/suggest_cases");
+        let mut paths: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "json"))
+            .collect();
+        paths.sort();
+        assert!(!paths.is_empty());
+        let mut rules_seen = Vec::new();
+        let mut failed = Vec::new();
+        for p in &paths {
+            let text = std::fs::read_to_string(p).unwrap();
+            let case: serde_json::Value = serde_json::from_str(&text).unwrap();
+            let rule = case["rule"].as_str().unwrap_or_default().to_string();
+            assert!(RULES.contains(&rule.as_str()), "{}: rule {rule:?}", p.display());
+            rules_seen.push(rule);
+            vm.lua.globals().set("CASE", text).unwrap();
+            let got: String = vm
+                .lua
+                .load(
+                    r#"
+                local R = require("rules")
+                R.chain = { form = SC.form, level = SC.level, elements = SC.elements, chain_text = SC.chain_text }
+                local case = json.decode(CASE)
+                local got = R.rows(R.suggest(case.facts))
+                local want = {}
+                for _, e in ipairs(case.expect) do
+                  local kind, id = "spell", e.action.Spell
+                  if not id then kind, id = "ability", e.action.Ability end
+                  want[#want + 1] = { kind = kind, id = id, target = e.target, reason = e.reason, label = e.label,
+                    group = e.group or {} }
+                end
+                local a, b = json.encode(got), json.encode(want)
+                return a == b and "" or ("expected " .. b .. "\n got " .. a)
+            "#,
+                )
+                .eval()
+                .unwrap_or_else(|e| panic!("{}: {e}", p.display()));
+            if !got.is_empty() {
+                failed.push(format!("{} ({}): {got}", p.display(), case["note"]));
+            }
+        }
+        assert!(failed.is_empty(), "{}", failed.join("\n\n"));
+        let missing: Vec<&str> = RULES.iter().copied().filter(|r| !rules_seen.iter().any(|x| x == r)).collect();
+        assert!(missing.is_empty(), "rules without a case: {missing:?}");
+        // Held rows: a tier back from its recast returns to its family, the nuke row back to the list's top; down to
+        // one castable spell the row casts it, and the family comes back.
+        vm.lua
+            .load(
+                r#"
+            local R = require("rules")
+            local function named(id, name, mp, area)
+              return { id = id, name = name, skill = 36, element = 1, mp = mp, targets = 0x20, area = area }
+            end
+            local all = { named(150, "Blizzard II", 31, false), named(149, "Blizzard", 8, false),
+              named(180, "Blizzaga II", 175, true), named(179, "Blizzaga", 80, true) }
+            local target = { name = "Bark Spider", hpp = 90, ranks = { 0, -2, 0, 0, 0, 0, 0, 0 } }
+            local f = { party = { { name = "Lenon", me = true, here = true, hp = 1000, hp_max = 1000 } },
+              spells = { all[2], all[4] }, target = target }
+            local s = R.suggest(f)
+            local k
+            for i, x in ipairs(s) do if x.label == "Ice" then k = i end end
+            assert(k and s[k].id == 149 and table.concat(s[k].group, ",") == "149,179")
+            R.regroup({ party = f.party, spells = all, target = target }, s)
+            assert(s[k].id == 150 and table.concat(s[k].group, ",") == "150,149,180,179")
+            R.regroup({ party = f.party, spells = { all[2] }, target = target }, s)
+            assert(s[k].id == 149 and #s[k].group == 0 and s[k].label == nil)
+            R.regroup({ party = f.party, spells = all, target = target }, s)
+            assert(s[k].id == 150 and s[k].label == "Ice")
+            -- Protect's family takes Protectra.
+            local p = function(id, name, mp, area) return { id = id, name = name, skill = 34, mp = mp, targets = 1, area = area } end
+            assert(R.family(p(44, "Protect II", 28, false)) == "Protect" and R.family(p(125, "Protectra", 9, true)) == "Protect")
+            -- LSB's resistance ranks moved with the mod (data/resistances.txt): a monster's own over its species'.
+            local F = require("facts")
+            assert(table.concat(F.ranks_of(100, " Wild Rabbit "), ",") == "-2,-1,-2,-1,-3,-3,-1,-3")
+            assert(F.ranks_of(100, "No Such Monster") == nil)
+        "#,
+            )
+            .exec()
+            .unwrap();
+    }
+
     /// Hotbars' Builder lists the spells the magic list offers: learned and castable on our jobs at their levels
     /// (RDM 54 / NIN 27: no Dia III, no Utsusemi: Ni), blue magic only while set.
     #[test]
@@ -5160,7 +5568,7 @@ return "acxml flow ok"
     fn bundled_mods_load() {
         for (id, text, files) in BUNDLED {
             let m = manifest::parse(text, id).unwrap_or_else(|e| panic!("{id}: {e:#}"));
-            for (name, src) in files.iter() {
+            for (name, src) in files.iter().filter(|f| f.0.ends_with(".lua")) {
                 let lua = mlua::Lua::new();
                 lua.load(*src).set_name(*name).into_function().unwrap_or_else(|e| panic!("{id}/{name}: {e}"));
             }
@@ -6137,10 +6545,13 @@ impl Host {
         if let Err(e) = std::fs::write(&file, serde_json::to_vec_pretty(&v).unwrap_or_default()) {
             log::warn!("lua mod {id}: saving {}: {e}", file.display());
         }
-        lend(vm, w, |vm| {
-            let v = api::to_lua(&vm.lua, &value).unwrap_or(mlua::Value::Nil);
-            vm.emit("settings_changed", (key.to_string(), v));
-        });
+        self.settings_changed(id, key, value);
+    }
+
+    /// A mod's setting changed: told to it in the mod phase, where its handler can read all the game state (the Mods
+    /// window changes settings outside it).
+    fn settings_changed(&mut self, id: &str, key: &str, value: serde_json::Value) {
+        self.mod_events.push((id.to_string(), "settings_changed", vec![key.into(), value]));
     }
 }
 

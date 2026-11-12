@@ -8,6 +8,25 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Instant;
 
+/// The `timers` namespace: calls to the Timers mod's `add`, `remove` and `clear` with the calling mod's id; quiet while
+/// that mod is not running.
+const TIMERS_SHIM: &str = r#"
+local function send(name, ...)
+  local ok, err = pcall(mods.call, "timers", name, mod.id, ...)
+  if ok then return end
+  local e = tostring(err)
+  if e:find("no mod timers loaded", 1, true) or e:find("is suspended", 1, true) or e:find("provides no", 1, true) then
+    return
+  end
+  error(e, 3)
+end
+return {
+  add = function(name, seconds, options) send("add", name, seconds, options) end,
+  remove = function(name) send("remove", name) end,
+  clear = function() send("clear") end,
+}
+"#;
+
 /// The world, lent while the host runs a mod's Lua (null otherwise).
 pub(super) struct WorldRef(pub *const World);
 
@@ -465,6 +484,7 @@ pub(super) fn install(
             w.heading = spec.get::<Option<String>>("heading")?.unwrap_or_default();
             w.resize = spec.get::<Option<bool>>("resize")?.unwrap_or(false);
             w.grow_up = spec.get::<Option<String>>("grow")?.as_deref() == Some("up");
+            w.fit = spec.get::<Option<bool>>("fit")?.unwrap_or(false);
             w.panel = spec.get::<Option<String>>("panel")?;
             if let Some(p) = w.panel.as_deref() {
                 let (list, kind) = if w.edge {
@@ -551,8 +571,10 @@ pub(super) fn install(
                 .ok_or_else(|| mlua::Error::runtime(format!("no element {eid:?} in {id:?}")))?;
             let t = lua.create_table()?;
             match e {
-                Elem::Timers { builtin, .. } => t.set("builtin", *builtin)?,
+                Elem::Timers { groups, .. } => t.set("count", groups.iter().map(|g| g.rows.len()).sum::<usize>())?,
                 Elem::Targets { rows, .. } => t.set("count", rows.len())?,
+                Elem::Lines { lines, .. } => t.set("count", lines.len())?,
+                Elem::Map { dots, .. } => t.set("count", dots.len())?,
                 Elem::Chip { text, .. } => t.set("text", text.as_str())?,
                 Elem::Text { text, .. } | Elem::Input { text, .. } => t.set("text", text.as_str())?,
                 Elem::Buttons { marked, .. } => t.set("at", marked.map(|m| m + 1))?,
@@ -718,85 +740,8 @@ pub(super) fn install(
     super::skin::install(lua, &ui, vm)?;
     g.set("ui", ui)?;
 
-    // timers: rows in the Timers window (the Extra's drawer, shown for them even when the Extra is off).
-    let timers = lua.create_table()?;
-    let me = m.id.clone();
-    timers.set(
-        "add",
-        lua.create_function(move |lua, (name, secs, opts): (String, f32, Option<Table>)| {
-            let (mut section, mut group, mut icon, mut total, mut fills) = (1, None, None, 0.0, false);
-            if let Some(o) = &opts {
-                section = match o.get::<Option<String>>("section")?.as_deref() {
-                    Some("recast") | Some("recasts") => 0,
-                    Some("debuff") | Some("debuffs") => 2,
-                    _ => 1,
-                };
-                group = o.get("group")?;
-                if let Some(i) = o.get::<Option<Table>>("icon")? {
-                    icon = Some((
-                        i.get::<Option<String>>("kind")?.unwrap_or_else(|| "status".into()),
-                        i.get::<u16>("id")?,
-                    ));
-                }
-                total = o.get::<Option<f32>>("total")?.unwrap_or(0.0);
-                fills = o.get::<Option<bool>>("fills")?.unwrap_or(section == 0);
-            }
-            push_op(
-                lua,
-                super::Op::Timer {
-                    mod_id: me.clone(),
-                    name: Some(name),
-                    secs: Some(secs),
-                    section,
-                    group,
-                    icon,
-                    total,
-                    fills,
-                },
-            )?;
-            Ok(())
-        })?,
-    )?;
-    let me = m.id.clone();
-    timers.set(
-        "remove",
-        lua.create_function(move |lua, name: String| {
-            push_op(
-                lua,
-                super::Op::Timer {
-                    mod_id: me.clone(),
-                    name: Some(name),
-                    secs: None,
-                    section: 0,
-                    group: None,
-                    icon: None,
-                    total: 0.0,
-                    fills: false,
-                },
-            )?;
-            Ok(())
-        })?,
-    )?;
-    let me = m.id.clone();
-    timers.set(
-        "clear",
-        lua.create_function(move |lua, ()| {
-            push_op(
-                lua,
-                super::Op::Timer {
-                    mod_id: me.clone(),
-                    name: None,
-                    secs: None,
-                    section: 0,
-                    group: None,
-                    icon: None,
-                    total: 0.0,
-                    fills: false,
-                },
-            )?;
-            Ok(())
-        })?,
-    )?;
+    // timers: rows in the Timers mod's windows, through the service it offers (nothing while it is not running).
+    let timers: Table = lua.load(TIMERS_SHIM).set_name("=timers").set_environment(g.clone()).eval()?;
     g.set("timers", timers)?;
 
     // packets (docs/lua-mods.md 4.7): hooks both ways with Windower's chain, injection, the last of each id.
@@ -1271,10 +1216,19 @@ pub(super) fn install(
             let totals = lua.create_table()?;
             totals.set("spells", st)?;
             totals.set("abilities", at)?;
+            // The 0x119 entries' adjustments: calc1 (sixtieths off the whole, low 6 bits), calc2 (seconds added).
+            let calc = lua.create_table()?;
+            for (id, &(c1, c2)) in &w.ability_calc {
+                let c = lua.create_table()?;
+                c.set("calc1", c1)?;
+                c.set("calc2", c2)?;
+                calc.set(*id, c)?;
+            }
             let t = lua.create_table()?;
             t.set("spells", spells)?;
             t.set("abilities", abilities)?;
             t.set("totals", totals)?;
+            t.set("calc", calc)?;
             Ok(t)
         })?,
     )?;
@@ -1298,6 +1252,32 @@ pub(super) fn install(
         })?,
     )?;
     game.set("weather", lua.create_function(|lua, ()| Ok(world(lua)?.weather))?)?;
+    // Whether a spell or ability can be used now, as the game's lists decide (status, recast, job and level, MP, TP,
+    // blue magic set): true, or false and the game's refusal (a group 7 message id; none for a silent one).
+    game.set(
+        "usable",
+        lua.create_function(|lua, (kind, id): (String, u16)| {
+            let w = world(lua)?;
+            let refusal = match kind.as_str() {
+                "spell" => super::super::magic::magic_check(w, id),
+                "ability" => {
+                    let index = w.actions.as_ref().and_then(|a| {
+                        if a.abilities.get(id as usize).is_some_and(|x| x.id == id) {
+                            Some(id)
+                        } else {
+                            a.abilities.iter().position(|x| x.id == id).map(|p| p as u16)
+                        }
+                    });
+                    match index {
+                        Some(i) => super::super::magic::ability_check(w, i),
+                        None => Some(super::super::magic::SILENT),
+                    }
+                }
+                other => return Err(mlua::Error::runtime(format!("usable: kind {other:?} (spell or ability)"))),
+            };
+            Ok((refusal.is_none(), refusal.filter(|&r| r != super::super::magic::SILENT).map(|r| r as u32)))
+        })?,
+    )?;
     // The held key items' ids, from the server's bit table (one bit per id, 32 to a word).
     game.set(
         "key_items",
@@ -1452,6 +1432,8 @@ pub(super) fn install(
             t.set("cast_time", f32::from(s.cast) / 4.0)?;
             t.set("recast", f32::from(s.recast) / 4.0)?;
             t.set("range", s.range)?;
+            // It always hits an area (record +0x47).
+            t.set("area", s.area != 0)?;
             let levels = lua.create_table()?;
             for (job, l) in s.levels.iter().enumerate() {
                 if *l >= 0 {
@@ -1509,6 +1491,23 @@ pub(super) fn install(
         lua.create_function(|lua, id: u16| {
             let w = world(lua)?;
             Ok(w.battle.as_ref().map(|b| b.status_title(id)).filter(|n| !n.is_empty()))
+        })?,
+    )?;
+    // The game's status info for an effect (the status icons' file): whether it can be cancelled, whether its icon
+    // never shows a time, its description.
+    res.set(
+        "status_info",
+        lua.create_function(|lua, id: u16| {
+            let w = world(lua)?;
+            let gu = gu(lua)?;
+            let small = w.game.get(0x99) & 4 != 0;
+            let Some(e) = gu.status_entry(small, id) else { return Ok(None) };
+            let (cancel, untimed) = gu.status_flags(small, id).unwrap_or((false, false));
+            let t = lua.create_table()?;
+            t.set("cancellable", cancel)?;
+            t.set("untimed", untimed)?;
+            t.set("description", e.desc)?;
+            Ok(Some(t))
         })?,
     )?;
     res.set(
@@ -1921,6 +1920,13 @@ fn entity_in(
     t.set("claim", e.claim)?;
     t.set("targetable", e.flags & 6 == 0 && !e.untargetable && !e.target_off)?;
     t.set("master", e.master)?;
+    // A trust (the server marks it so).
+    t.set("trust", e.marks.trust)?;
+    // The compass radar's colour for it (0xRRGGBB, monsters included), while the radar shows it.
+    if id != w.my_id && super::super::radar::shown(e) {
+        let bits = super::super::radar::kind_bits(w, id, e);
+        t.set("radar", super::super::radar::colour(bits, e.monstrosity, e.motion.status, true))?;
+    }
     t.set("hidden", e.flags & 2 != 0)?;
     t.set("race", e.race.or(e.appearance.map(|l| l.race)))?;
     t.set("model", e.model)?;
@@ -2072,6 +2078,19 @@ fn party(lua: &Lua) -> mlua::Result<Table> {
             .map(|b| b.iter().copied().filter(|&b| b != 0xffff && b != 0).collect())
             .unwrap_or_default();
         t.set("buffs", buffs)?;
+        // The max HP the party window goes by: ours from our stats, a member's as last seen at 100 % (HP / HP %
+        // when that no longer fits).
+        let max = if m.id == w.my_id {
+            w.stats.as_ref().map(|st| match w.vitals {
+                Some((hp, _, _, hpp, _)) => {
+                    super::super::party::hp_max(Some(w.own_hp_max.unwrap_or(st.hp_max)), hp, hpp).unwrap_or(st.hp_max)
+                }
+                None => st.hp_max,
+            })
+        } else {
+            super::super::party::hp_max(w.party_hp_max.get(&m.id).copied(), m.hp, m.hpp)
+        };
+        t.set("hp_max", max)?;
         out.push(t)?;
     }
     Ok(out)
@@ -2115,6 +2134,8 @@ fn player(lua: &Lua) -> mlua::Result<Table> {
     // The focus target (/focustarget, one of our six) and the target before the current one, while here.
     t.set("focus_target", super::super::target::focus_member(w))?;
     t.set("last_target", super::super::target::last_target(w).map(|t| t.0))?;
+    // Our pet as our status names it (s2c 0x037: avatars, wyverns, jug pets, automatons, luopans).
+    t.set("pet", (w.my_pet != 0).then(|| w.entity_at(w.my_pet).map(|(id, _)| id)).flatten())?;
     Ok(t)
 }
 
@@ -2250,6 +2271,130 @@ fn rows(v: Option<Table>) -> mlua::Result<Vec<super::window::Row>> {
         .collect()
 }
 
+/// A timers element's groups: `{name?, rows = {{name, left, total?, fills?, icon = {kind, id}}...}}...` (an icon's
+/// kind defaults to "status").
+fn timer_groups(v: Option<Table>) -> mlua::Result<Vec<super::window::TimerGroup>> {
+    use super::window::{Icon, TimerGroup, TimerRow};
+    let Some(v) = v else { return Ok(Vec::new()) };
+    v.sequence_values::<Table>()
+        .map(|g| {
+            let g = g?;
+            let rows = match g.get::<Option<Table>>("rows")? {
+                Some(r) => r
+                    .sequence_values::<Table>()
+                    .map(|r| {
+                        let r = r?;
+                        let icon = match r.get::<Option<Table>>("icon")? {
+                            Some(i) => Some(Icon::of(
+                                Some(i.get::<Option<String>>("kind")?.as_deref().unwrap_or("status")),
+                                i.get::<u16>("id")?,
+                            )),
+                            None => None,
+                        };
+                        Ok(TimerRow {
+                            icon,
+                            name: r.get::<Option<String>>("name")?.unwrap_or_default(),
+                            left: r.get::<Option<f32>>("left")?.unwrap_or(0.0),
+                            total: r.get::<Option<f32>>("total")?.unwrap_or(0.0).max(0.0),
+                            fills: r.get::<Option<bool>>("fills")?.unwrap_or(false),
+                        })
+                    })
+                    .collect::<mlua::Result<_>>()?,
+                None => Vec::new(),
+            };
+            Ok(TimerGroup { name: g.get::<Option<String>>("name")?.filter(|n| !n.is_empty()), rows })
+        })
+        .collect()
+}
+
+/// A map element's dots: {x, z, colour = 0xRRGGBB or {r, g, b}, target, tip}.
+fn map_dots(v: Option<Table>) -> mlua::Result<Vec<super::window::MapDot>> {
+    let Some(v) = v else { return Ok(Vec::new()) };
+    v.sequence_values::<Table>()
+        .map(|d| {
+            let d = d?;
+            let colour = match d.get::<Value>("colour")? {
+                Value::Integer(c) => [(c >> 16) as u8, (c >> 8) as u8, c as u8],
+                Value::Number(c) => {
+                    let c = c as i64;
+                    [(c >> 16) as u8, (c >> 8) as u8, c as u8]
+                }
+                v => super::hud::colour(v)?.map_or([255; 3], |c| [c[0], c[1], c[2]]),
+            };
+            Ok(super::window::MapDot {
+                x: d.get("x")?,
+                z: d.get("z")?,
+                colour,
+                target: d.get::<Option<bool>>("target")?.unwrap_or(false),
+                tip: d.get::<Option<String>>("tip")?.unwrap_or_default(),
+            })
+        })
+        .collect()
+}
+
+/// A tone: "text", "muted", "gold", "bronze" or {r, g, b, a}.
+fn line_tone(v: Value) -> mlua::Result<super::window::Tone> {
+    use super::window::Tone;
+    Ok(match v {
+        Value::Nil => Tone::Text,
+        Value::String(s) => {
+            let s = s.to_string_lossy();
+            Tone::of(&s)
+                .ok_or_else(|| mlua::Error::runtime(format!("tone {s:?}: text, muted, gold, bronze or a colour")))?
+        }
+        v => super::hud::colour(v)?.map_or(Tone::Text, Tone::Rgba),
+    })
+}
+
+/// A span: {text, tone, strong, elements = {element ids}}, or a string.
+fn span(v: Value) -> mlua::Result<super::window::Span> {
+    Ok(match v {
+        Value::Table(t) => super::window::Span {
+            text: t.get::<Option<String>>("text")?.unwrap_or_default(),
+            tone: line_tone(t.get("tone")?)?,
+            strong: t.get::<Option<bool>>("strong")?.unwrap_or(false),
+            elements: t.get::<Option<Vec<u8>>>("elements")?.unwrap_or_default(),
+        },
+        Value::String(s) => super::window::Span { text: s.to_string_lossy(), ..Default::default() },
+        _ => return Err(mlua::Error::runtime("a span is {text, tone, strong, elements} or a string")),
+    })
+}
+
+/// A lines element's lines: each {spans} or one span's fields ({text, tone, strong, elements}), with right, column,
+/// indent, bar (0..1, in its tone), fold (a key), open, heading, big and gap.
+fn text_lines(v: Option<Table>) -> mlua::Result<Vec<super::window::TextLine>> {
+    let Some(v) = v else { return Ok(Vec::new()) };
+    v.sequence_values::<Table>()
+        .map(|l| {
+            let l = l?;
+            let spans = match l.get::<Option<Table>>("spans")? {
+                Some(sp) => sp.sequence_values::<Value>().map(|x| span(x?)).collect::<mlua::Result<_>>()?,
+                None if l.contains_key("text")? => vec![span(Value::Table(l.clone()))?],
+                None => Vec::new(),
+            };
+            let bar = match l.get::<Option<f32>>("bar")? {
+                Some(f) => Some((f.clamp(0.0, 1.0), line_tone(l.get("tone")?)?)),
+                None => None,
+            };
+            Ok(super::window::TextLine {
+                spans,
+                right: match l.get::<Value>("right")? {
+                    Value::Nil => None,
+                    v => Some(span(v)?),
+                },
+                column: l.get::<Option<f32>>("column")?.unwrap_or(0.0).max(0.0),
+                indent: l.get::<Option<f32>>("indent")?.unwrap_or(0.0).max(0.0),
+                bar,
+                fold: l.get::<Option<String>>("fold")?,
+                open: l.get::<Option<bool>>("open")?.unwrap_or(false),
+                heading: l.get::<Option<bool>>("heading")?.unwrap_or(false),
+                big: l.get::<Option<bool>>("big")?.unwrap_or(false),
+                gap: l.get::<Option<f32>>("gap")?.unwrap_or(0.0).max(0.0),
+            })
+        })
+        .collect()
+}
+
 fn columns(v: Option<Table>) -> mlua::Result<Vec<super::window::Col>> {
     let Some(v) = v else { return Ok(Vec::new()) };
     v.sequence_values::<Table>()
@@ -2367,7 +2512,8 @@ fn elem_only(t: &Table) -> mlua::Result<super::window::Elem> {
                     return Err(mlua::Error::runtime(format!("timers section {s:?}: recasts, buffs or debuffs")));
                 }
             },
-            builtin: t.get::<Option<bool>>("builtin")?.unwrap_or(true),
+            groups: timer_groups(t.get("groups")?)?,
+            at: Instant::now(),
         },
         "gauge" => Elem::Gauge {
             id: t.get::<Option<String>>("id")?.unwrap_or_default(),
@@ -2389,6 +2535,10 @@ fn elem_only(t: &Table) -> mlua::Result<super::window::Elem> {
         "targets" => {
             Elem::Targets { id: t.get::<Option<String>>("id")?.unwrap_or_default(), rows: target_rows(t.get("rows")?)? }
         }
+        "lines" => {
+            Elem::Lines { id: t.get::<Option<String>>("id")?.unwrap_or_default(), lines: text_lines(t.get("lines")?)? }
+        }
+        "map" => Elem::Map { id: t.get::<Option<String>>("id")?.unwrap_or_default(), dots: map_dots(t.get("dots")?)? },
         other => return Err(mlua::Error::runtime(format!("unknown element type {other:?}"))),
     })
 }
@@ -2491,14 +2641,25 @@ fn update(e: &mut super::window::Elem, t: &Table) -> mlua::Result<()> {
                 *height = v.max(1);
             }
         }
-        Elem::Timers { builtin, .. } => {
-            if let Some(v) = t.get::<Option<bool>>("builtin")? {
-                *builtin = v;
+        Elem::Timers { groups, at, .. } => {
+            if t.contains_key("groups")? {
+                *groups = timer_groups(t.get("groups")?)?;
+                *at = Instant::now();
             }
         }
         Elem::Targets { rows, .. } => {
             if t.contains_key("rows")? {
                 *rows = target_rows(t.get("rows")?)?;
+            }
+        }
+        Elem::Lines { lines, .. } => {
+            if t.contains_key("lines")? {
+                *lines = text_lines(t.get("lines")?)?;
+            }
+        }
+        Elem::Map { dots, .. } => {
+            if t.contains_key("dots")? {
+                *dots = map_dots(t.get("dots")?)?;
             }
         }
         Elem::Chip { text, note, tone: k, detail, .. } => {

@@ -10,3 +10,7 @@ rustflags = ["-C", "target-feature=+crt-static"]
 
 [env]
 CPLUS_INCLUDE_PATH = { value = ".cargo/mingw-include", relative = true }
+# SDL2's bundled build (sdl2-sys, the Linux pad fallback): its CMakeLists asks for CMake < 3.5, which CMake 4 refuses
+# without the policy minimum; the toolchain file leaves out SDL's audio and video.
+CMAKE_POLICY_VERSION_MINIMUM = "3.5"
+SDL2_TOOLCHAIN = { value = "release/sdl2-pads.cmake", relative = true }
