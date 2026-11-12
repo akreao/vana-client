@@ -8,7 +8,7 @@ local sets = require("src.build.sets")
 local M = {}
 local WIN = "gsbuilder"
 local SLOT_LABEL = { [0] = "Main", "Sub", "Range", "Ammo", "Head", "Body", "Hands", "Legs", "Feet", "Neck", "Waist",
-  "Left Ear", "Right Ear", "Left Ring", "Right Ring", "Back" }
+  "L. Ear", "R. Ear", "L. Ring", "R. Ring", "Back" }
 local BAG_LABEL = { [1] = "Mog Safe", [2] = "Storage", [4] = "Mog Locker", [5] = "Mog Satchel", [6] = "Mog Sack",
   [7] = "Mog Case", [9] = "Mog Safe 2" }
 -- Score bands against the reference.
@@ -140,7 +140,7 @@ function M.draw()
   local score, colour = score_line(r)
   local title = run.state.job and ("Gearshift: %s %d"):format(run.state.job, run.state.level or 0) or "Gearshift"
   ui.window(WIN, {
-    title = title, width = 760,
+    title = title, width = 800,
     help = "Your sets, built from the gear you hold for your level. Pick a slot to choose its piece yourself.",
     elements = {
       { type = "dropdown", id = "set", label = "Set", items = #labels > 0 and labels or { "-" }, at = view.set,
@@ -149,7 +149,7 @@ function M.draw()
       { type = "text", id = "score", text = score, colour = colour or false },
       { type = "list", id = "slots", rows = name and def and slot_rows(name, def, r) or {}, height = 16,
         at = view.slot and (view.slot + 1) or nil,
-        columns = { { title = "Slot", width = 90 }, { title = "Wearing", width = 190 }, { title = "Like BiS", width = 64,
+        columns = { { title = "Slot", width = 110 }, { title = "Wearing", width = 190 }, { title = "Match", width = 80,
           align = "right" }, { title = "Best in slot", width = 180 }, { title = "Worth getting", width = 200 } } },
       { type = "text", id = "detail", text = name and def and detail(name, def, r) or "", dim = true },
       { type = "text", id = "warn", text = name and def and warnings(def, r) or "", colour = FAIR },
