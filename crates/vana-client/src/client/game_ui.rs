@@ -2749,6 +2749,24 @@ impl GameUi {
         Some((x, y))
     }
 
+    /// "menu    ptcbgwin" / "menu    hnbackwi", the backdrop behind a lobby run (registry flags 0x11002f: no frame, no
+    /// open animation, 0x100000 scaled): the window's sprite (lobbywin 85: two dark 640 x 240 halves and the small
+    /// logo), every cell, at the file place and size scaled by (w / 640, h / 480).
+    /// `black`: nothing shows through it (ours, for the entry: retail has no scene behind it yet).
+    pub fn backdrop_window(&mut self, name: &str, w: f32, h: f32, black: bool) {
+        let (fx, fy) = (w / 640.0, h / 480.0);
+        if black {
+            self.batch.push_corners([[0.0, 0.0], [w, 0.0], [0.0, h], [w, h]], [[0.0, 0.0, 0.0, 1.0]; 4]);
+        }
+        let Some(m) = self.data.lobby.menu(name) else { return };
+        let (x, y) = screens::window_pos(m, w, h, fx, fy);
+        if let Some(r) = m.elements[0].refs.iter().find(|r| r.kind == 0)
+            && let Some(lib) = self.data.lobby.lib(&r.lib)
+        {
+            self.batch.push_sprite(&self.data.lobby, lib, r.index as usize, x, y, fx, fy, 0x8080_8080, 0);
+        }
+    }
+
     /// menu netwait (FUN_102408a0), centred as the prompts: the status text in the frame rect, 28 px off the bottom.
     pub fn netwait_window(&mut self, text: &str, w: f32, h: f32) {
         let Some(win) = self.lobby_window("menu    netwait", w, h, true, None, false, &[]) else { return };
