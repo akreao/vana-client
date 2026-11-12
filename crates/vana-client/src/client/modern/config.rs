@@ -2527,7 +2527,7 @@ fn mods_summary(s: Option<&SettingsUi>) -> Vec<(&'static str, String)> {
     let mut out = vec![("Lua mods", count(true)), ("DAT packs", count(false))];
     if let Some(m) = s.mods_state().filter(|m| !m.loading()) {
         let n = m.standard().iter().filter(|e| e.1 == Some(true)).count();
-        out.push(("Updates", if n == 0 { "none".into() } else { format!("{n} in Get mods") }));
+        out.push(("Updates", if n == 0 { "none".into() } else { format!("{n} waiting") }));
     }
     out
 }

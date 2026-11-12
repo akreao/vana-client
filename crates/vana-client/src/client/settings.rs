@@ -1761,18 +1761,33 @@ impl SettingsUi {
         self.on_page().len() + self.offers().len()
     }
 
-    /// Buttons on a row: ON / OFF (and Move for a pack), or an offer's one.
+    /// Buttons on a row: ON / OFF (and Move for a pack, Update for a mod with one), or an offer's one.
     fn mods_cols(&self, row: usize) -> usize {
         match row.checked_sub(1) {
             Some(i) if i < self.on_page().len() => {
                 if self.lua_page() {
-                    2
+                    2 + self.mod_update(i).is_some() as usize
                 } else {
                     3
                 }
             }
             _ => 1,
         }
+    }
+
+    /// The newer version the catalogue has of the page's mod `i` (Lua mods only: a DAT pack's update is an offer).
+    pub fn mod_update(&self, i: usize) -> Option<String> {
+        let id = self.mod_id(i).filter(|_| self.lua_page())?;
+        self.mods_ui.as_ref()?.update_for(&id).map(str::to_string)
+    }
+
+    /// The page's mod `i` updated from the catalogue (after the install running, if one is).
+    pub fn mod_update_now(&mut self, i: usize) {
+        let ok = match self.mod_id(i) {
+            Some(id) => self.mods_ui.as_mut().is_some_and(|m| m.update(&id)),
+            None => false,
+        };
+        self.sounds.push(if ok { Se::Select } else { Se::Error });
     }
 
     fn mods_marked(&self) -> usize {
@@ -1824,9 +1839,23 @@ impl SettingsUi {
                     self.mod_changes.push((id.clone(), super::lua::ENABLED.into(), true.into()));
                 }
             }
+            // A Lua mod updated while on restarts on its new files.
+            let (c, j) = self.scope_at.as_ref().map_or((None, None), |(c, j)| (Some(c.as_str()), j.as_deref()));
+            let updated = self.mods_ui.as_mut().map(|m| std::mem::take(&mut m.updated)).unwrap_or_default();
+            for id in updated.iter().filter(|id| self.lua_names.contains(*id)) {
+                if self.s.mods.iter().any(|m| &m.name == id && m.active(c, j).unwrap_or(m.enabled)) {
+                    self.mod_changes.push((id.clone(), super::lua::ENABLED.into(), false.into()));
+                    self.mod_changes.push((id.clone(), super::lua::ENABLED.into(), true.into()));
+                }
+            }
             self.lua_names = now;
             self.lua_info = crate::modpack::lua_info();
             self.installed = true;
+            // A row or its Update button gone: the cursor stays on one that is there.
+            if self.on_mods() {
+                self.row = self.row.min(self.mods_total());
+                self.col = self.col.min(self.mods_cols(self.row).saturating_sub(1));
+            }
         }
     }
 
@@ -1907,6 +1936,9 @@ impl SettingsUi {
         let sh = self.on_page();
         let lua = self.lua_page();
         if let Some(&k) = sh.get(i) {
+            if lua && self.col >= 2 {
+                return self.mod_update_now(i);
+            }
             if self.col < 2 && !self.set_mod(k, self.col == 0) {
                 self.sounds.push(Se::Error);
                 return;
@@ -1928,12 +1960,11 @@ impl SettingsUi {
     fn mods_controls(&self) -> Vec<(usize, usize, [f32; 4])> {
         let top = self.mods_ui.as_ref().map_or(0, |m| m.top);
         let n = self.on_page().len();
-        let cols = if self.lua_page() { 2 } else { 3 };
         let mut out = Vec::new();
         for (vis, i) in (top..self.mods_total()).take(super::modsui::VISIBLE).enumerate() {
             let y = Self::TOP + PITCH * vis as f32 + 14.0;
             if i < n {
-                for (c, bx) in NARROW.iter().enumerate().take(cols) {
+                for (c, bx) in NARROW.iter().enumerate().take(self.mods_cols(i + 1)) {
                     out.push((i + 1, c, [*bx, y, 64.0, 16.0]));
                 }
             } else {
@@ -1959,7 +1990,12 @@ impl SettingsUi {
             }
             let (mut label, tint) = match (sh.get(i), offers.get(i.wrapping_sub(n))) {
                 (Some(&k), _) => {
-                    (format!("{}. {}", i + 1, self.s.mods[k].name), if held && self.row == i + 1 { ON } else { N })
+                    let name = &self.s.mods[k].name;
+                    match m.and_then(|m| m.progress(name)) {
+                        // Being updated: its per cent, lit.
+                        Some(pm) => (format!("{}%  {}. {name}", pm / 10, i + 1), ON),
+                        None => (format!("{}. {name}", i + 1), if held && self.row == i + 1 { ON } else { N }),
+                    }
                 }
                 // A row being installed shows its per cent, lit.
                 (None, Some(o)) => (o.label.clone(), if o.label.contains("%  ") { ON } else { N }),
@@ -1968,7 +2004,7 @@ impl SettingsUi {
             while gu.label_width(&label) > W - 52.0 && label.pop().is_some() {}
             gu.label(&label, x + 32.0, hy, tint, false);
         }
-        let captions: [&str; 3] = ["ON", "OFF", "Move"];
+        let captions: [&str; 3] = ["ON", "OFF", if self.lua_page() { "Update" } else { "Move" }];
         let mut hand = None;
         for (row, c, b) in self.mods_controls() {
             let on = self.row == row && self.col == c;
@@ -2117,7 +2153,13 @@ impl SettingsUi {
             Some(_) if m.and_then(|m| m.error.as_ref()).is_some() => {
                 format!("The last install failed: {}", m.and_then(|m| m.error.clone()).unwrap_or_default())
             }
-            Some(i) if i < n && self.lua_page() => "A Lua mod: ON / OFF. Takes effect at the next login.".into(),
+            Some(i) if i < n && self.lua_page() => match self.mod_update(i) {
+                Some(v) if self.col >= 2 => {
+                    format!("Update downloads version {v} from GitHub. A mod that is on restarts on it.")
+                }
+                Some(v) => format!("A Lua mod: ON / OFF. Version {v} is out: Update gets it."),
+                None => "A Lua mod: ON / OFF. Takes effect at the next login.".into(),
+            },
             Some(i) if i < n => format!(
                 "DAT pack {} of {n}: a higher one's textures win. ON / OFF, or Move it. Takes effect on restart.",
                 i + 1

@@ -1,6 +1,6 @@
 //! Ours (not retail): the Mods window, the modern UI's one place for mods. Installed: the Lua mods down the left (a
-//! search over them); the picked one's ON / OFF, version and description, then its Settings (its manifest's
-//! settings), Commands (every form of its `[commands]`; the picked form's fields, pickers for typed params, the line,
+//! search over them, Update All under it); the picked one's ON / OFF / Uninstall / Update, version and description, then
+//! its Settings (its manifest's settings), Commands (every form of its `[commands]`; the picked form's fields, pickers for typed params, the line,
 //! Run and Put in Chat Line, and what the mod printed since Run) and Permissions. Get mods: Install from File, the
 //! standard mods on GitHub, the mod archives in the Downloads folder. DATs: the DAT packs. Opened from Settings > Mods,
 //! /lua mods and /lua settings. Tab turns the window's tabs; on the list Up / Down pick a mod, typing searches, Enter
@@ -36,6 +36,8 @@ enum Focus {
     #[default]
     List,
     Page,
+    /// Update All, under the list.
+    All,
 }
 
 /// The window's state, made by the app (it holds a SettingsUi, made from the config).
@@ -153,10 +155,7 @@ impl ModMgr {
         let page = self.pages.iter().find(|p| p.id.eq_ignore_ascii_case(&id));
         let (perms, rows): (Vec<ModRow>, Vec<ModRow>) =
             page.map(|p| p.rows.clone()).unwrap_or_default().into_iter().partition(|r| r.key.starts_with(PERM));
-        let update = self
-            .s
-            .mods_state()
-            .is_some_and(|m| m.standard().iter().any(|(e, st)| e.id.eq_ignore_ascii_case(&id) && *st == Some(true)));
+        let update = self.s.mods_state().and_then(|m| m.update_for(&id)).map(str::to_string);
         let forms = forms_of(&info);
         Some(Sel { id, name, on, info, update, rows, perms, forms })
     }
@@ -194,7 +193,8 @@ struct Sel {
     name: String,
     on: bool,
     info: LuaInfo,
-    update: bool,
+    /// The newer version the catalogue has.
+    update: Option<String>,
     rows: Vec<ModRow>,
     perms: Vec<ModRow>,
     forms: Vec<Form>,
@@ -334,7 +334,7 @@ fn chips(p: Option<&LuaParam>, found: Option<&gm::Found>) -> Vec<String> {
 /// What a stop on the Installed page is.
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Kind {
-    /// ON, OFF, Uninstall.
+    /// ON, OFF, Uninstall, and Update when the catalogue has a newer version.
     Header,
     Subs,
     /// A setting or a permission (the sub's) by its place.
@@ -416,7 +416,7 @@ fn stops(mm: &ModMgr, sel: &Sel, ks: &[Kind], chips: &[Vec<String>]) -> Vec<Stop
     let rows = if mm.sub == SUB_SETTINGS { &sel.rows } else { &sel.perms };
     ks.iter()
         .map(|k| match *k {
-            Kind::Header => Stop::Buttons { n: 3, off: 0, pair: None },
+            Kind::Header => Stop::Buttons { n: 3 + sel.update.is_some() as usize, off: 0, pair: None },
             Kind::Subs => Stop::Tabs { n: SUBS.len(), at: mm.sub },
             Kind::Row(r) => {
                 let r = &rows[r];
@@ -551,6 +551,7 @@ fn key(w: &mut World, key: egui::Key, shift: bool) {
     }
     match mm.tab {
         0 if mm.focus == Focus::List => list_key(w, key),
+        0 if mm.focus == Focus::All => all_key(w, key),
         0 => page_key(w, key, shift),
         1 => get_key(w, key, shift),
         _ => {
@@ -575,6 +576,11 @@ fn list_key(w: &mut World, key: egui::Key) {
     let at = shown.iter().position(|&i| i == mm.sel);
     match key {
         egui::Key::ArrowUp | egui::Key::ArrowDown if !shown.is_empty() => {
+            let ups = mm.s.mods_state().map_or(0, |s| s.updates(true));
+            if key == egui::Key::ArrowDown && at == Some(shown.len() - 1) && ups > 0 {
+                mm.focus = Focus::All;
+                return sound(w, Se::Cursor);
+            }
             let next = match (at, key == egui::Key::ArrowDown) {
                 (None, _) => 0,
                 (Some(k), true) => (k + 1).min(shown.len() - 1),
@@ -602,6 +608,30 @@ fn list_key(w: &mut World, key: egui::Key) {
         egui::Key::Escape => close(w),
         _ => {}
     }
+}
+
+/// On Update All: Enter presses it, Up goes back to the list.
+fn all_key(w: &mut World, key: egui::Key) {
+    let Some(mm) = w.modmgr.as_mut() else { return };
+    match key {
+        egui::Key::ArrowUp => {
+            mm.focus = Focus::List;
+            if let Some(&i) = mm.shown().last() {
+                mm.pick(i);
+            }
+            sound(w, Se::Cursor);
+        }
+        egui::Key::Enter => update_all(w),
+        egui::Key::Escape => close(w),
+        _ => {}
+    }
+}
+
+/// Every installed Lua mod with an update, one after another.
+fn update_all(w: &mut World) {
+    let Some(mm) = w.modmgr.as_mut() else { return };
+    let n = mm.s.mods_mut().map_or(0, |m| m.update_all(true));
+    sound(w, if n > 0 { Se::Select } else { Se::Error });
 }
 
 fn page_key(w: &mut World, key: egui::Key, shift: bool) {
@@ -798,6 +828,10 @@ fn press(w: &mut World, sel: &Sel, ks: &[Kind], chips: &[Vec<String>], s: usize,
             mm.s.mod_enable(mm.sel, b == 0);
             flush(w);
         }
+        Kind::Header if b == 3 => {
+            mm.s.mod_update_now(mm.sel);
+            flush(w);
+        }
         Kind::Header => {
             mm.s.m_remove = Some((mm.sel, false));
             sound(w, Se::Select);
@@ -879,7 +913,7 @@ fn get_stops(s: &SettingsUi) -> Vec<Stop> {
     let standard = s.mods_state().map_or(Vec::new(), |m| m.standard().iter().map(|(_, st)| st.is_none()).collect());
     std::iter::once(Stop::Buttons { n: 1, off: busy as u64, pair: None })
         .chain(standard.into_iter().map(|done| Stop::Buttons { n: 1, off: (busy || done) as u64, pair: None }))
-        .chain(s.mods_rows().1.iter().map(|_| Stop::Buttons { n: 1, off: busy as u64, pair: None }))
+        .chain(s.mods_rows().1.iter().filter(|o| !o.all).map(|_| Stop::Buttons { n: 1, off: busy as u64, pair: None }))
         .collect()
 }
 
@@ -933,6 +967,7 @@ enum Click {
     Get(usize),
     GetPoint(usize),
     Dats(Vec<ModDo>),
+    UpdateAll,
     Close,
 }
 
@@ -1092,6 +1127,14 @@ fn list(ui: &mut Ui, m: &super::Modern, mm: &ModMgr, updates: &[bool], follow: b
         if let Some(k) = out.clicked {
             click.push(Click::Mod(shown[k]));
         }
+        // Update All: every installed mod with a newer version, one after another.
+        if let Some(st) = mm.s.mods_state().filter(|s| s.updates(true) > 0) {
+            ui.add_space(6.0);
+            let b = Btn { cursor: mm.focus == Focus::All, off: st.waiting(true) == 0, ..Default::default() };
+            if kit::clicked(&kit::button(ui, m, &format!("Update All ({})", st.updates(true)), LIST_W, b), b) {
+                click.push(Click::UpdateAll);
+            }
+        }
     });
 }
 
@@ -1121,20 +1164,28 @@ fn page(
                 v = format!("{v} · {}", sel.id);
             }
             ui.label(egui::RichText::new(v).size(m.theme.small).color(m.theme.color("muted")));
-            if sel.update {
-                ui.label(egui::RichText::new("update in Get mods").size(m.theme.small).color(m.theme.color("gold")));
+            let state = mm.s.mods_state();
+            let news = match (state.and_then(|s| s.progress(&sel.id)), &sel.update) {
+                (Some(pm), _) => Some(format!("updating: {}%", pm / 10)),
+                (None, Some(_)) if state.is_some_and(|s| s.queued(&sel.id)) => Some("update queued".into()),
+                (None, Some(v)) => Some(format!("{v} is out")),
+                _ => None,
+            };
+            if let Some(n) = news {
+                ui.label(egui::RichText::new(n).size(m.theme.small).color(m.theme.color("gold")));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let on_head = cur(Kind::Header);
-                let labels = ["Uninstall", "OFF", "ON"];
-                for (k, label) in labels.iter().enumerate() {
-                    let b = 2 - k;
+                // Right to left: Update (when there is one), Uninstall, OFF, ON.
+                let busy = state.is_some_and(|s| s.progress(&sel.id).is_some() || s.queued(&sel.id));
+                for b in (0..3 + sel.update.is_some() as usize).rev() {
+                    let label = ["ON", "OFF", "Uninstall", "Update"][b];
                     let s = Btn {
                         lit: (b == 0 && sel.on) || (b == 1 && !sel.on),
                         cursor: on_head && mm.at.sub == b,
-                        off: false,
+                        off: b == 3 && busy,
                     };
-                    if kit::clicked(&kit::button(ui, m, label, if b == 2 { 0.0 } else { 64.0 }, s), s) {
+                    if kit::clicked(&kit::button(ui, m, label, if b >= 2 { 0.0 } else { 64.0 }, s), s) {
                         click.push(Click::Press(0, b));
                     }
                 }
@@ -1414,7 +1465,8 @@ fn get_mods(ui: &mut Ui, m: &super::Modern, s: &SettingsUi, row: usize, follow: 
     let Some(state) = s.mods_state() else { return };
     let busy = state.installing();
     let standard = state.standard();
-    let offers = s.mods_rows().1;
+    // The archives found (Update All is the Installed tab's).
+    let offers: Vec<_> = s.mods_rows().1.into_iter().filter(|o| !o.all).collect();
     let mut hover = None;
     ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
@@ -1607,6 +1659,10 @@ fn apply(w: &mut World, clicks: Vec<Click>) {
                 }
                 flush(w);
             }
+            Click::UpdateAll => {
+                mm.focus = Focus::All;
+                update_all(w);
+            }
             Click::Close => close(w),
         }
     }
@@ -1627,6 +1683,13 @@ pub fn draw(p: &mut Panels, w: &mut World) {
         p.ctx.set_sublayer(layer(c), layer("mods"));
     }
     fill_pickers(w);
+    // Update All gone (every update done): the cursor back on the list.
+    if let Some(mm) = w.modmgr.as_mut()
+        && mm.focus == Focus::All
+        && mm.s.mods_state().is_none_or(|s| s.updates(true) == 0)
+    {
+        mm.focus = Focus::List;
+    }
     // Who runs each command now, for Run (a name two mods register is the first loaded's).
     if let Some(mm) = w.modmgr.as_mut()
         && mm.tab == 0
@@ -1774,6 +1837,11 @@ fn installed_help(mm: &ModMgr, sel: Option<&Sel>, ks: &[Kind]) -> String {
     if mm.focus == Focus::List {
         return "Type to search. Up / Down: a mod. Enter or Right: its page. Tab: the next tab. Escape: close.".into();
     }
+    if mm.focus == Focus::All {
+        return "Enter: update every mod with a newer version, one after another; a mod that is on restarts on it. Up: \
+                back to the list."
+            .into();
+    }
     if mm.field.is_some() {
         return "Type the value. Tab: the next field. Enter or Escape: done.".into();
     }
@@ -1786,7 +1854,13 @@ fn installed_help(mm: &ModMgr, sel: Option<&Sel>, ks: &[Kind]) -> String {
     }
     let rows = if mm.sub == SUB_SETTINGS { &sel.rows } else { &sel.perms };
     match ks.get(mm.at.stop) {
-        Some(Kind::Header) => "ON starts the mod at once, OFF stops it. Uninstall deletes its folder.".into(),
+        Some(Kind::Header) => match &sel.update {
+            Some(v) => format!(
+                "ON starts the mod at once, OFF stops it. Uninstall deletes its folder. Update gets version {v} from \
+                 GitHub; a mod that is on restarts on it."
+            ),
+            None => "ON starts the mod at once, OFF stops it. Uninstall deletes its folder.".into(),
+        },
         Some(Kind::Subs) => "Left / Right: Settings, Commands or Permissions. Escape: back to the list.".into(),
         Some(Kind::Row(r)) => rows.get(*r).map_or(String::new(), |r| {
             let how = match r.edit {
@@ -1856,7 +1930,7 @@ forms = [
         id: "look-changer".into(),
         name: info.name.clone(),
         on: true,
-        update: false,
+        update: None,
         rows: Vec::new(),
         perms: Vec::new(),
         forms: forms_of(&info),

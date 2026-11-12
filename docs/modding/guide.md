@@ -697,7 +697,7 @@ Get mods > Install from File (classic: Settings > Mods > Install from File) and 
 unzip it into the mods folder yourself. A mod installed by hand shows up in the list switched off; switch it on, and
 grant the permissions it asks for on its Permissions tab (classic: its Extras page).
 
-To list it in the mod catalogue, so players can install and update it from Get mods, publish the zip as a
+To list it in the mod catalogue, so players can install it from Get mods and update it from the installed list, publish the zip as a
 GitHub release and add an entry for it to [catalogue/mods.json](../../catalogue/README.md) with a pull request.
 
 Put a `README.md` in the folder saying what the mod does, its commands, and which permissions it asks for and why.
