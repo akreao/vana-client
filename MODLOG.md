@@ -23892,3 +23892,10 @@ All of it is the mod's Lua over the general API; the client gained nothing.
 - Ours (user, 2026-11-12: "have it print a line"): with the builder wearing sets, a chat line before each weapon
   skill names the set put on and how many slots it changed ("already on" for none, "no set" when the job has none);
   setting ws_line (Weapon Skill Line), on. 0.2.4.
+- User report: "Gearshift ran past its time budget", and the log puts nearly every one on a /ws. A packet hook has
+  FILTER_CAP (20 ms), and the builder's action hook ran past it with full bags: run.lua read every item record
+  through res.item uncached (owned_named looked up every owned piece once per candidate name for the gorget, belt
+  and obi), and core.resolve read the worn piece's whole bag once per wanted slot. Stopped mid-way, the hook left
+  the weapon skill without its set. Now pick.item caches records, the scan keeps each piece's name, and resolve
+  reads each bag once. Measured on Lnxcsfix with 320 pieces in four wardrobes: 19.4 ms before, 1.4 / 1.6 ms after;
+  the 3 s bag scan about 2 ms. 0.2.5.

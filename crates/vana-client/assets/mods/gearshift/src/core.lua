@@ -146,6 +146,16 @@ end
 function M.resolve(wants, opt)
   local p = M.H.player() or {}
   local worn = M.worn()
+  -- Each bag read once: a read is a call into the game, and a wear runs inside the action packet's hook.
+  local bags = {}
+  local function items(bag)
+    local l = bags[bag]
+    if not l then
+      l = M.H.items(bag) or {}
+      bags[bag] = l
+    end
+    return l
+  end
   local out, used, left = {}, {}, {}
   local function key(bag, index) return bag * 256 + index end
   for slot, w in pairs(wants) do
@@ -156,7 +166,7 @@ function M.resolve(wants, opt)
       local r = cur and M.record(cur.id)
       local ext
       if cur then
-        for _, it in ipairs(M.H.items(cur.bag) or {}) do
+        for _, it in ipairs(items(cur.bag)) do
           if it.slot == cur.index then ext = it.extdata break end
         end
       end
@@ -174,7 +184,7 @@ function M.resolve(wants, opt)
   end
   if next(left) then
     for _, bag in ipairs(opt.bags or M.EQUIP_BAGS) do
-      for _, it in ipairs(M.H.items(bag) or {}) do
+      for _, it in ipairs(items(bag)) do
         local lock = it.locked or 0
         if (lock == 0 or lock == 5) and not used[key(bag, it.slot)] then
           local r = M.record(it.id)

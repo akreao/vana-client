@@ -96,10 +96,10 @@ local function scan()
   local owned, elsewhere, sig = {}, {}, {}
   for _, bag in ipairs(ALL_BAGS) do
     for _, it in ipairs(M.H.items(bag) or {}) do
-      local rec = it.id and it.id > 0 and pick.H.item(it.id)
+      local rec = it.id and it.id > 0 and pick.item(it.id)
       if rec and rec.slots and rec.slots ~= 0 then
         core.want_augments(it.extdata, it.id)
-        local entry = { id = it.id, key = bag .. ":" .. it.slot, bag = bag, index = it.slot,
+        local entry = { id = it.id, name = rec.name, key = bag .. ":" .. it.slot, bag = bag, index = it.slot,
           augments = it.extdata and core.augments[it.extdata] or nil }
         if EQUIP[bag] then owned[#owned + 1] = entry else elsewhere[#elsewhere + 1] = entry end
         -- The augments themselves, not whether they are decoded yet: an enchantment's timer changes the data when
@@ -122,7 +122,7 @@ local SKILL_NAME = { [1] = "hand_to_hand", [2] = "dagger", [3] = "sword", [4] = 
 function M.weapon_types()
   local out = {}
   for _, o in ipairs(state.owned or {}) do
-    local rec = pick.H.item(o.id)
+    local rec = pick.item(o.id)
     if rec and rec.skill and SKILL_NAME[rec.skill] then out[SKILL_NAME[rec.skill]] = true end
   end
   return out
@@ -189,7 +189,7 @@ local function index_step()
   for id = from, to do ids[#ids + 1] = id end
   pick.index_add(state.index, ids)
   for _, id in ipairs(ids) do
-    local rec = pick.H.item(id)
+    local rec = pick.item(id)
     if rec and rec.name and rec.name ~= "" and rec.slots and rec.slots ~= 0 then
       state.names[rec.name] = state.names[rec.name] or {}
       table.insert(state.names[rec.name], id)
@@ -289,7 +289,7 @@ function M.pieces(name)
   if r then
     for slot, o in pairs(r.slots) do
       if o.pick then
-        local rec = pick.H.item(o.pick.id)
+        local rec = pick.item(o.pick.id)
         out[slot] = { name = rec and rec.name, augments = o.pick.owned and o.pick.owned.augments or nil }
       end
     end
@@ -306,8 +306,7 @@ end
 local function owned_named(names)
   for _, n in ipairs(names) do
     for _, o in ipairs(state.owned or {}) do
-      local rec = pick.H.item(o.id)
-      if rec and rec.name == n then return { name = n } end
+      if o.name == n then return { name = n } end
     end
   end
 end
@@ -366,8 +365,8 @@ end
 -- break the next shot or throw.
 local function keep_ammo()
   local worn = core.worn()
-  local range = worn[2] and pick.H.item(worn[2].id)
-  local ammo = worn[3] and pick.H.item(worn[3].id)
+  local range = worn[2] and pick.item(worn[2].id)
+  local ammo = worn[3] and pick.item(worn[3].id)
   return (range and (range.skill == 25 or range.skill == 26)) or (ammo and ammo.skill == 27)
 end
 
@@ -376,7 +375,7 @@ local used = {}
 local function keep_usable(pieces)
   local worn = core.worn()
   for slot, w in pairs(worn) do
-    local rec = pick.H.item(w.id)
+    local rec = pick.item(w.id)
     if rec and (rec.max_charges or 0) > 0 and not used[w.id] and pieces[slot] and pieces[slot].name ~= rec.name then
       pieces[slot] = nil
     end
@@ -550,7 +549,7 @@ function M.tick()
     local mv = state.built.Movement
     if mv then
       for slot, o in pairs(mv.slots) do
-        if o.pick and (o.pick.s.stats.move or 0) > 0 then pieces[slot] = { name = pick.H.item(o.pick.id).name } end
+        if o.pick and (o.pick.s.stats.move or 0) > 0 then pieces[slot] = { name = pick.item(o.pick.id).name } end
       end
     end
   end

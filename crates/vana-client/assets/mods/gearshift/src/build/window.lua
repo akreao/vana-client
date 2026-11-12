@@ -17,7 +17,7 @@ local GOOD, FAIR, LOW = { 240, 170, 60, 255 }, { 230, 220, 110, 255 }, { 120, 17
 local view = { set = 1, slot = nil }
 
 local function item_name(id)
-  local r = id and pick.H.item(id)
+  local r = id and pick.item(id)
   return r and r.name or "-"
 end
 
@@ -63,7 +63,7 @@ end
 -- We hold a piece of that name in the bags gear is worn from.
 local function held(name)
   for _, o in ipairs(run.state.owned or {}) do
-    local rec = pick.H.item(o.id)
+    local rec = pick.item(o.id)
     if rec and rec.name == name then return true end
   end
   return false
@@ -86,7 +86,7 @@ local function slot_rows(name, def, r)
     if o then
       if o.share and o.pick and not h then share = ("%d%%"):format(math.floor(o.share * 100 + 0.5)) end
       if o.ref then ref = item_name(o.ref.id) end
-      if o.worth then worth = item_name(o.worth.id) .. " (" .. ((pick.H.item(o.worth.id) or {}).level or "?") .. ")" end
+      if o.worth then worth = item_name(o.worth.id) .. " (" .. ((pick.item(o.worth.id) or {}).level or "?") .. ")" end
     end
     local icon_id = (o and o.pick and o.pick.id)
     rows[#rows + 1] = { SLOT_LABEL[slot], wearing, share, ref, worth,
@@ -101,7 +101,7 @@ local function warnings(def, r)
   local p = run.H.player() or {}
   local me = run.H.me() or {}
   for _, e in ipairs(run.state.elsewhere or {}) do
-    local rec = pick.H.item(e.id)
+    local rec = pick.item(e.id)
     for slot = 0, 15 do
       local o = r and r.slots[slot]
       if o and pick.fits(rec, slot, p.main_job or 0, me.race, run.state.level) then
@@ -177,7 +177,7 @@ local function alternatives(name, def, slot)
   local me = run.H.me() or {}
   local seen, cands = {}, {}
   for _, e in ipairs(run.state.owned or {}) do
-    local rec = pick.H.item(e.id)
+    local rec = pick.item(e.id)
     if pick.fits(rec, slot, p.main_job or 0, me.race, run.state.level) and not seen[e.key] then
       seen[e.key] = true
       local s = pick.stats_of(e.id, e.augments)

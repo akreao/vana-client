@@ -32,6 +32,17 @@ M.H = {
 -- Called in every long loop: the engine sets it to yield when its frame's share of time is used (tests: nothing).
 M.pace = function() end
 
+-- An item's record, read once (records never change; each read is a call into the game).
+local records = {}
+function M.item(id)
+  local r = records[id]
+  if r == nil then
+    r = M.H.item(id) or false
+    records[id] = r
+  end
+  return r or nil
+end
+
 -- ---- Item stats, read once ----
 
 local cache = {}
@@ -41,7 +52,7 @@ function M.stats_of(id, augments)
   if augments and #augments > 0 then key = id .. "|" .. table.concat(augments, "|") end
   local s = cache[key]
   if not s then
-    local r = M.H.item(id)
+    local r = M.item(id)
     s = stats.parse(r and r.description or "", augments)
     cache[key] = s
   end
@@ -185,7 +196,7 @@ function M.candidates(index, job_id, race, level)
   for slot = 0, 15 do
     local list = {}
     for _, id in ipairs(index[slot] or {}) do
-      local rec = M.H.item(id)
+      local rec = M.item(id)
       if M.fits(rec, slot, job_id, race, level) then
         list[#list + 1] = { id = id, key = id, rec = rec, s = M.stats_of(id) }
       end
@@ -207,7 +218,7 @@ function M.build(ctx, set, set_name)
   -- The owned pieces, wearable now, by slot.
   local owned = {}
   for _, o in ipairs(ctx.owned) do
-    local rec = M.H.item(o.id)
+    local rec = M.item(o.id)
     for slot = 0, 15 do
       if wanted(slot) and M.fits(rec, slot, ctx.job_id, ctx.race, ctx.level) then
         owned[slot] = owned[slot] or {}
@@ -230,7 +241,7 @@ function M.build(ctx, set, set_name)
     if type(want) == "string" and ctx.names and ctx.names[want] then
       local best = -math.huge
       for _, cand in ipairs(ctx.names[want]) do
-        local rec = M.H.item(cand)
+        local rec = M.item(cand)
         if M.fits(rec, slot, ctx.job_id, ctx.race, ctx.cap) then
           local v = M.score(M.stats_of(cand), set)
           if v > best then id, best = cand, v end
@@ -238,7 +249,7 @@ function M.build(ctx, set, set_name)
       end
     end
     if id and wanted(slot) then
-      ref[slot] = { id = id, s = M.stats_of(id), rec = M.H.item(id) }
+      ref[slot] = { id = id, s = M.stats_of(id), rec = M.item(id) }
     elseif auto[slot] then
       ref[slot] = auto[slot]
     end
@@ -333,7 +344,7 @@ end
 function M.index_add(index, ids)
   for _, id in ipairs(ids) do
     M.pace()
-    local rec = M.H.item(id)
+    local rec = M.item(id)
     if rec and rec.slots and rec.slots ~= 0 and (rec.name or "") ~= "" then
       for slot = 0, 15 do
         if rec.slots & (1 << slot) ~= 0 then
