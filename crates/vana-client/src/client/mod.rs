@@ -3530,8 +3530,10 @@ fn world_hud(
                 helpdesk::open(world);
                 world.sounds.push(crate::audio::Ui::Select as u32);
             }
-            (1, 11) => world.confirm = Some((Confirm::Shutdown, false)),
-            (1, 12) => world.confirm = Some((Confirm::Logout, false)),
+            // FUN_10161f30 / FUN_10161fc0 open the prompt only when FUN_10096270 lets us act.
+            (1, 11) if !prompt_held(world) => world.confirm = Some((Confirm::Shutdown, false)),
+            (1, 12) if !prompt_held(world) => world.confirm = Some((Confirm::Logout, false)),
+            (1, 11 | 12) => {}
             _ => log::info!("main menu item {id} on page {} is not implemented yet", world.menu_page),
         }
         // The prompt leaves the menu open under it (FUN_1014e7b0 items 0xb / 0xc), unfocused.
@@ -6672,6 +6674,13 @@ fn actor_place(w: &World, id: u32, my_dir: u8) -> Option<Place> {
 /// the server.
 fn effect_held(w: &World) -> bool {
     w.my_plate.frozen || w.buffs.iter().any(|&b| matches!(b, 2 | 7 | 10 | 14 | 28 | 633))
+}
+
+/// FUN_10096270 failing: K.O. (0), sleep (2), petrification (7), stun (10) or terror (28) among our effects. The
+/// log-out and shut-down prompts (FUN_10161fc0 / FUN_10161f30: the main menu's rows, Pause, the pad's slot) do not
+/// open then, with no line.
+fn prompt_held(w: &World) -> bool {
+    w.dead() || w.buffs.iter().any(|&b| matches!(b, 2 | 7 | 10 | 28))
 }
 
 /// Our run speed in units per second (FUN_100a6240, vt+0x1a0 = actor +0x15c): Speed x0.1, doubled while riding
@@ -14599,7 +14608,11 @@ impl App {
         // The pad's extra slots 32 / 33 / 35 / 36 (key functions 0xb7..0xba, pad only, unbound by default): the shut
         // down prompt, F8's nearest target, /jump and /map.
         if !event::active(world) && !world.typing && !world_window_open(world) {
-            if self.input.test(0xb7, input::mode::PRESS) && world.confirm.is_none() && world.my_motion.status != 1 {
+            if self.input.test(0xb7, input::mode::PRESS)
+                && world.confirm.is_none()
+                && world.my_motion.status != 1
+                && !prompt_held(world)
+            {
                 world.confirm = Some((Confirm::Shutdown, false));
             } else if self.input.test(0xb8, input::mode::PRESS) && !world.ko_open {
                 target::nearest_kind(world, 0x10, false, false);
@@ -14616,6 +14629,7 @@ impl App {
             && world.my_motion.status != 1
             && world.confirm.is_none()
             && world.ko_offer != 2
+            && !prompt_held(world)
         {
             world.confirm = Some((Confirm::Logout, false));
         }

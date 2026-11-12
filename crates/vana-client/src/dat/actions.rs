@@ -165,11 +165,137 @@ impl Actions {
             reach(main) || reach(sub)
         }
     }
+
+    /// FUN_101021a0, the magic check's job rule: `can_cast`, and by the spell's +0x44 and our effects: bit 5 GEO main
+    /// only; bit 3 on SCH needs Tabula Rasa (377); bit 4 needs Elemental Seal (79) unless the main job is 23; bit 2 on
+    /// SCH needs the addendum of the spell's school (white 401, black 402) or Enlightenment (416). A job that fails
+    /// its rule leaves the spell to the other job, then to the job points.
+    pub fn can_cast_now(&self, id: u16, main: (u8, u8), sub: (u8, u8), job_points: u16, effects: &[u16]) -> bool {
+        let Some(s) = self.spell(id) else { return false };
+        let has = |e: u16| effects.contains(&e);
+        let reach = |(job, level): (u8, u8)| s.levels.get(job as usize).is_some_and(|&l| l >= 0 && l <= level as i16);
+        let addendum = (s.kind == 1 && (has(401) || has(416))) || (s.kind == 2 && (has(402) || has(416)));
+        if reach(main) {
+            if s.flags & 0x20 != 0 {
+                return main.0 == 21;
+            }
+            if main.0 == 20 && s.flags & 8 != 0 {
+                return has(377);
+            }
+            if s.flags & 0x10 != 0 {
+                return main.0 == 23 || has(79);
+            }
+            if main.0 != 20 || s.flags & 4 == 0 || addendum {
+                return true;
+            }
+        }
+        if reach(sub) {
+            if s.flags & 0x20 != 0 {
+                return false;
+            }
+            if sub.0 != 20 {
+                return true;
+            }
+            if s.flags & 8 != 0 {
+                return has(377);
+            }
+            if s.flags & 4 == 0 || addendum {
+                return true;
+            }
+        }
+        let lv = s.levels.get(main.0 as usize).copied().unwrap_or(-1);
+        s.jp_mask & (1 << (main.0 & 0x1f)) != 0 && main.1 >= 99 && lv >= 0 && lv as u16 <= job_points
+    }
+}
+
+/// FUN_10101e50 / FUN_10102050: an MP cost under our effects, by the spell's type (+2; 99 for an ability's cost) and
+/// its +0x44 bits 0 / 1. Manafont (47) or Manawell (229): none. White under Light Arts (358) or Addendum: White (401):
+/// x2 with Accession (366) on a bit 0 spell, then half with Penury (360), else 90 %; without the arts 90 % with Tabula
+/// Rasa (377), else 120 % under Dark Arts (359) or Addendum: Black (402). Black the same the other way round
+/// (Manifestation 367 on bit 1, Parsimony 361). An ability's cost x1.5 with Apogee (583). Each step rounds up
+/// (FUN_10102180).
+pub fn mp_cost(cost: u16, kind: u16, flags: u8, effects: &[u16]) -> u16 {
+    let has = |e: u16| effects.contains(&e);
+    let pct = |c: u32, p: u32| (c * p).div_ceil(100);
+    if has(47) || has(229) {
+        return 0;
+    }
+    let c = cost as u32;
+    let (light, dark) = (has(358) || has(401), has(359) || has(402));
+    let school = |own: bool, other: bool, wide: bool, half: bool| {
+        if !own {
+            return if has(377) {
+                pct(c, 90)
+            } else if other {
+                pct(c, 120)
+            } else {
+                c
+            };
+        }
+        let c2 = if wide { pct(c, 200) } else { c };
+        if half {
+            pct(c2, 50)
+        } else if wide {
+            c2
+        } else {
+            pct(c2, 90)
+        }
+    };
+    (match kind {
+        1 => school(light, dark, has(366) && flags & 1 != 0, has(360)),
+        2 => school(dark, light, has(367) && flags & 2 != 0, has(361)),
+        99 if has(583) => pct(c, 150),
+        _ => c,
+    }) as u16
+}
+
+/// FUN_10102430: a spell's valid targets under our effects: a song (type 5) on ourselves alone takes the party too
+/// with Pianissimo (409), a geomancy spell (type 7) without +0x44 bit 5 with Entrust (584).
+pub fn spell_targets(targets: u16, kind: u16, flags: u8, effects: &[u16]) -> u16 {
+    let wider = match kind {
+        5 => effects.contains(&409),
+        7 => flags & 0x20 == 0 && effects.contains(&584),
+        _ => false,
+    };
+    if wider && targets == 1 { 5 } else { targets }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// FUN_10102050's branches on a 100 MP spell, and the round up.
+    #[test]
+    fn mp_cost_by_effects() {
+        assert_eq!(mp_cost(100, 1, 0, &[]), 100);
+        assert_eq!(mp_cost(100, 1, 0, &[47]), 0);
+        assert_eq!(mp_cost(100, 6, 0, &[229]), 0);
+        assert_eq!(mp_cost(100, 1, 0, &[358]), 90);
+        assert_eq!(mp_cost(100, 1, 0, &[359]), 120);
+        assert_eq!(mp_cost(100, 2, 0, &[359]), 90);
+        assert_eq!(mp_cost(100, 2, 0, &[401]), 120);
+        assert_eq!(mp_cost(100, 1, 0, &[377]), 90);
+        assert_eq!(mp_cost(100, 1, 0, &[358, 360]), 50);
+        assert_eq!(mp_cost(100, 1, 1, &[358, 366]), 200);
+        assert_eq!(mp_cost(100, 1, 0, &[358, 366]), 90);
+        assert_eq!(mp_cost(100, 1, 1, &[358, 366, 360]), 100);
+        assert_eq!(mp_cost(100, 2, 2, &[402, 367]), 200);
+        assert_eq!(mp_cost(100, 2, 0, &[359, 361]), 50);
+        assert_eq!(mp_cost(100, 99, 0, &[583]), 150);
+        assert_eq!(mp_cost(100, 5, 0, &[358, 583]), 100);
+        assert_eq!(mp_cost(7, 1, 0, &[358]), 7);
+        assert_eq!(mp_cost(8, 1, 0, &[359]), 10);
+    }
+
+    #[test]
+    fn targets_by_effects() {
+        assert_eq!(spell_targets(1, 5, 0, &[409]), 5);
+        assert_eq!(spell_targets(1, 5, 0, &[]), 1);
+        assert_eq!(spell_targets(0x20, 5, 0, &[409]), 0x20);
+        assert_eq!(spell_targets(1, 7, 0, &[584]), 5);
+        assert_eq!(spell_targets(1, 7, 0x20, &[584]), 1);
+        assert_eq!(spell_targets(1, 1, 0, &[409, 584]), 1);
+    }
 
     fn real() -> Option<Actions> {
         let index = DatIndex::open(&crate::config::Config::load().ffxi_dir()).ok()?;
