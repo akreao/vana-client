@@ -142,6 +142,202 @@ pub fn change_my_status(cur: &Status, a: [i32; 6], slots: impl Fn(i32) -> [u8; 8
     (b, new)
 }
 
+/// One entry of polcore's character table (0x104533e0, 0x68 bytes each; addresses here are polcore 1.18.12, the one
+/// installed beside FFXiMain 30261102_0) as far as the lobby's lookup and the link need it.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Entry {
+    /// +0 bit 0.
+    pub used: bool,
+    /// +2, the record's u16 @8 (1 = FINAL FANTASY XI).
+    pub product: u16,
+    /// +4 / +8 / +0xc, the record's dwords @0xc / @0x10 / @0x14.
+    pub ids: [u32; 3],
+    /// +0x10's low byte: the entry's place in the Viewer's order (the record's byte 1).
+    pub order: u8,
+    /// +0x10 bit 0x8000: registered to a handle; bits 16..21 the handle, 22..24 the slot.
+    pub linked: bool,
+    pub handle: u8,
+    pub slot: u8,
+}
+
+/// polcore's character and handle tables: what LoadHandleList (0/9, FUN_1001a480) and LoadCharacterList (1/3,
+/// FUN_1001d340) leave, what the link calls change, and the body StoreCharacterList (1/10, FUN_1001db80) sends.
+#[derive(Clone)]
+pub struct Tables {
+    pub entries: [Entry; 64],
+    /// The entries changed since the last store (0x104533c0, a bit each).
+    dirty: u64,
+    /// The order was changed by the normalising pass before a store (0x10111c34).
+    reordered: bool,
+    /// A handle exists (0x1045b520 +0 bit 0).
+    pub handles: [bool; 64],
+    /// Each handle's 8 slot bytes (+0x20): `character << 1 | 1`.
+    pub slots: [[u8; 8]; 64],
+}
+
+impl Default for Tables {
+    fn default() -> Self {
+        Self { entries: [Entry::default(); 64], dirty: 0, reordered: false, handles: [false; 64], slots: [[0; 8]; 64] }
+    }
+}
+
+impl Tables {
+    /// The handle list's 0x88-byte records (FUN_1001a480 states 0 and 6): byte 0 is the handle's index.
+    pub fn load_handles(&mut self, records: &[[u8; 0x88]]) {
+        self.handles = [false; 64];
+        for r in records.iter().filter(|r| r[0] < 0x40) {
+            self.handles[r[0] as usize] = true;
+        }
+    }
+
+    /// The character list's 0x68-byte records (FUN_1001d340 states 0, 6 and 8). Every entry loses its used and
+    /// linked bits and every slot its taken bit first. A record: [0] index, [1] order, [4] linked, [5] handle, [6]
+    /// slot. The entry's slot bits come from the handle byte (`[5] & 7`, 0x1001d641), as retail has it; the handle's
+    /// slot byte from [6] whenever [4] is not zero.
+    pub fn load_characters(&mut self, records: &[[u8; 0x68]]) {
+        for e in &mut self.entries {
+            e.used = false;
+            e.linked = false;
+        }
+        for s in self.slots.iter_mut().flatten() {
+            *s &= 0xfe;
+        }
+        let u32_at = |c: &[u8], o: usize| u32::from_le_bytes(c[o..o + 4].try_into().unwrap());
+        for c in records.iter().filter(|c| c[0] < 0x40) {
+            let e = &mut self.entries[c[0] as usize];
+            e.used = true;
+            e.product = u16::from_le_bytes([c[8], c[9]]);
+            e.ids = [u32_at(c, 0xc), u32_at(c, 0x10), u32_at(c, 0x14)];
+            e.handle = c[5] & 0x3f;
+            e.linked = c[4] & 1 != 0;
+            // polcore does not bound the slot; a record with one past 7 would write into the next handle.
+            if c[4] != 0 && c[5] < 0x40 && c[6] < 8 {
+                let s = &mut self.slots[c[5] as usize][c[6] as usize];
+                *s = (c[0] & 0x3f) << 1 | (*s & 0x81) | 1;
+            }
+            e.slot = c[5] & 7;
+            e.order = c[1];
+        }
+        self.normalise(false);
+    }
+
+    /// FUN_1001d9d0: every entry gets its own place in the order. The used entries claim theirs first, in index
+    /// order; then any entry whose place another holds takes the lowest free one. `store` marks the list changed.
+    fn normalise(&mut self, store: bool) {
+        let mut at = [-1i8; 64];
+        for (i, e) in self.entries.iter().enumerate() {
+            let p = (e.order & 0x3f) as usize;
+            if e.used && at[p] < 0 {
+                at[p] = i as i8;
+            }
+        }
+        for (i, e) in self.entries.iter_mut().enumerate() {
+            let p = (e.order & 0x3f) as usize;
+            if at[p] < 0 {
+                at[p] = i as i8;
+            } else if at[p] != i as i8
+                && let Some(free) = at.iter().position(|&a| a < 0)
+            {
+                at[free] = i as i8;
+                e.order = free as u8;
+                self.reordered |= store;
+            }
+        }
+    }
+
+    /// FFXiMain's lookup (FUN_100eff30): the first used entry, by index, of product 1 with these dwords at +4 and
+    /// +8 and zero at +0xc.
+    pub fn find(&self, at4: u32, at8: u32) -> Option<usize> {
+        self.entries.iter().position(|e| e.used && e.product == 1 && e.ids == [at4, at8, 0])
+    }
+
+    /// FFXiMain's pick of a handle to register a character to (FUN_100efe60): the first one with a free slot.
+    pub fn free_handle(&self) -> Option<usize> {
+        (0..64).find(|&h| self.handles[h] && self.slots[h].iter().any(|s| s & 1 == 0))
+    }
+
+    /// polcore's unlink (slot 0xb8, FUN_1001dde0): frees the handle's slot that names the character. FFXiMain calls
+    /// it before the link and ignores its answer, -0x1c06 when no slot does.
+    pub fn unlink(&mut self, character: usize, handle: usize) -> i32 {
+        if character > 0x3f {
+            return -0x1c03;
+        }
+        // polcore tests the handle's used bit before its range: one past the table reads the first byte after it,
+        // the handle list's own changed bits (never set here).
+        if handle > 0x3f || !self.handles[handle] {
+            return -0x1c04;
+        }
+        if !self.entries[character].used {
+            return -0x1c05;
+        }
+        let Some(slot) = self.slots[handle].iter().position(|&s| s & 1 != 0 && (s >> 1 & 0x3f) as usize == character)
+        else {
+            return -0x1c06;
+        };
+        self.dirty |= 1 << character;
+        self.slots[handle][slot] &= 0xfe;
+        self.entries[character].linked = false;
+        0
+    }
+
+    /// polcore's link (slot 0xb7, FUN_1001dee0): the character takes the handle's first free slot. -0x1c00 when it
+    /// is linked already (its own bit, or a slot of this handle names it), -0x1c01 when the handle is full.
+    pub fn link(&mut self, character: usize, handle: usize) -> i32 {
+        if character > 0x3f {
+            return -0x1c03;
+        }
+        if handle > 0x3f {
+            return -0x1c16;
+        }
+        if !self.handles[handle] {
+            return -0x1c04;
+        }
+        let e = &mut self.entries[character];
+        if !e.used {
+            return -0x1c05;
+        }
+        if e.linked {
+            return -0x1c00;
+        }
+        let slots = &mut self.slots[handle];
+        if slots.iter().any(|&s| s & 1 != 0 && (s >> 1 & 0x3f) as usize == character) {
+            return -0x1c00;
+        }
+        let Some(slot) = slots.iter().position(|s| s & 1 == 0) else {
+            return -0x1c01;
+        };
+        self.dirty |= 1 << character;
+        slots[slot] = (character as u8 & 0x3f) << 1 | (slots[slot] & 0x81) | 1;
+        (e.slot, e.handle, e.linked) = (slot as u8, handle as u8, true);
+        0
+    }
+
+    /// StoreCharacterList's 0x244-byte payload (1/10; FUN_1001da90, then FUN_1001db80 state 3), or None when
+    /// nothing changed (state 1 ends the call without a connection). Bytes 0..0x40 are every entry's order byte;
+    /// then 8 bytes an entry: 0 for one that did not change, else 1 linked / 2 not, the handle and the slot. Retail
+    /// builds it in the transaction's buffer without clearing it: an unchanged entry's handle and slot bytes, a
+    /// changed but unused entry's three and the last 4 bytes are whatever the buffer held; zeros here.
+    pub fn store_body(&mut self) -> Option<[u8; 0x244]> {
+        self.normalise(true);
+        if !self.reordered && self.dirty == 0 {
+            return None;
+        }
+        let mut b = [0u8; 0x244];
+        for (i, e) in self.entries.iter().enumerate() {
+            b[i] = e.order;
+            if self.dirty >> i & 1 != 0 && e.used {
+                b[0x40 + i * 8..][..3].copy_from_slice(&[if e.linked { 1 } else { 2 }, e.handle, e.slot]);
+            }
+        }
+        Some(b)
+    }
+
+    /// The store went through (state 6): nothing is changed any more.
+    pub fn stored(&mut self) {
+        (self.dirty, self.reordered) = (0, false);
+    }
+}
+
 /// A reply status as polcore's error code (0x1001f690, 0x1001f400).
 pub fn error_code(status: u8) -> i32 {
     match -0x1450 - status as i32 {
@@ -513,6 +709,67 @@ mod tests {
         // A character in the handle's slot 2: 1 / 2 (0x11 / 0x12).
         let (b, _) = change_my_status(&cur, [3, 9, 0, -2, -1, 1], |_| [0, 0, 9 << 1 | 1, 0, 0, 0, 0, 0]);
         assert_eq!((b[0x11], b[0x12]), (1, 2));
+    }
+
+    fn record(index: u8, order: u8, link: Option<(u8, u8)>, ids: [u32; 2]) -> [u8; 0x68] {
+        let mut r = [0u8; 0x68];
+        (r[0], r[1], r[8]) = (index, order, 1);
+        if let Some((handle, slot)) = link {
+            (r[4], r[5], r[6]) = (1, handle, slot);
+        }
+        r[0xc..0x10].copy_from_slice(&ids[0].to_le_bytes());
+        r[0x10..0x14].copy_from_slice(&ids[1].to_le_bytes());
+        r
+    }
+
+    /// polcore's tables through a load, FFXiMain's lookup and handle pick, the link and the store's body. The port
+    /// matched polcore 1.18.12 run under Wine on 20,000 random lists (69,877 link / unlink calls): the tables after
+    /// the load, each call's answer, the slots and the body.
+    #[test]
+    fn character_tables() {
+        let mut t = Tables::default();
+        let mut h0 = [0u8; 0x88];
+        let mut h2 = [0u8; 0x88];
+        (h0[0], h2[0]) = (0, 2);
+        t.load_handles(&[h0, h2]);
+        // Handle 0 holds entries 0..7 in its 8 slots; entry 9 is not linked; entries 3 and 9 share place 3.
+        let mut recs: Vec<[u8; 0x68]> = (0..8).map(|i| record(i, i, Some((0, i)), [0x100 + i as u32, 7])).collect();
+        recs.push(record(9, 3, None, [0x109, 7]));
+        t.load_characters(&recs);
+        assert_eq!(t.slots[0], [1, 3, 5, 7, 9, 11, 13, 15]);
+        // The used entries keep their places; the rest take the free ones in turn, entry 9 after entry 8.
+        assert_eq!(t.entries[3].order, 3);
+        assert_eq!((t.entries[8].order, t.entries[9].order, t.entries[10].order), (8, 9, 10));
+        assert_eq!(t.find(0x109, 7), Some(9));
+        assert_eq!(t.find(0x109, 8), None);
+        assert!(!t.entries[9].linked);
+        // Nothing changed: no store.
+        assert!(t.store_body().is_none());
+        // Handle 0 is full, 1 does not exist: handle 2.
+        assert_eq!(t.free_handle(), Some(2));
+        assert_eq!(t.link(9, 0), -0x1c01);
+        assert_eq!(t.link(9, 1), -0x1c04);
+        assert_eq!(t.link(3, 2), -0x1c00);
+        assert_eq!(t.link(20, 2), -0x1c05);
+        assert_eq!(t.unlink(9, 2), -0x1c06);
+        assert_eq!(t.link(9, 2), 0);
+        assert_eq!(t.slots[2], [9 << 1 | 1, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(t.link(9, 2), -0x1c00);
+        let b = t.store_body().unwrap();
+        assert_eq!(b[..12], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+        let mut want = [0u8; 0x204];
+        want[9 * 8..][..3].copy_from_slice(&[1, 2, 0]);
+        assert_eq!(b[0x40..], want);
+        t.stored();
+        assert!(t.store_body().is_none());
+        // An unlink frees the slot and is stored as 2, the handle and slot bytes as they were.
+        assert_eq!(t.unlink(9, 2), 0);
+        assert_eq!(t.slots[2][0], 9 << 1);
+        assert_eq!(t.store_body().unwrap()[0x40 + 9 * 8..][..3], [2, 2, 0]);
+        // A load takes an entry's slot bits from its handle byte, as retail does.
+        t.load_characters(&[record(1, 0, Some((2, 5)), [1, 1])]);
+        assert_eq!((t.entries[1].handle, t.entries[1].slot, t.slots[2][5]), (2, 2, 1 << 1 | 1));
+        assert!(!t.entries[9].used);
     }
 
     #[test]

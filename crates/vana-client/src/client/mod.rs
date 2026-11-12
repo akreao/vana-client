@@ -9150,14 +9150,14 @@ impl App {
                 };
                 let (Some(l), c) = (lobby.take(), chars[k].clone()) else { return };
                 *selected = Some(k);
-                let replies = l.replies.clone();
+                let (replies, registers) = (l.replies.clone(), l.registers(&c));
                 self.lobby_fade.out(Box::new(move |app: &mut App| {
                     // FUN_10241200: hnbackwi opens behind the run, which starts after FUN_1023fb20's 8 frames.
                     app.backdrop = Some(Backdrop::Login);
                     if let Phase::Characters { screen, .. } = &mut app.phase {
                         *screen = LobbyScreen::Run;
                     }
-                    app.netwait = Some(netwait::NetWait::new(netwait::Op::Login, replies).after(8));
+                    app.netwait = Some(netwait::NetWait::login(replies, registers).after(8));
                     app.spawn(move || lobby_job(l, move |l| l.select(&c), select_done));
                     app.lobby_fade.enter(true);
                 }));
@@ -10789,14 +10789,14 @@ impl App {
                         *selected = list.iter().position(|x| x.content_id == c.content_id).or(*selected);
                         *chars = list;
                     }
-                    let replies = l.replies.clone();
+                    let (replies, registers) = (l.replies.clone(), l.registers(&c));
                     self.busy = true;
                     self.lobby_fade.out(Box::new(move |app: &mut App| {
                         app.backdrop = Some(Backdrop::Login);
                         if let Phase::Characters { screen, .. } = &mut app.phase {
                             *screen = LobbyScreen::Run;
                         }
-                        app.netwait = Some(netwait::NetWait::new(netwait::Op::Login, replies).after(8));
+                        app.netwait = Some(netwait::NetWait::login(replies, registers).after(8));
                         app.spawn(move || lobby_job(l, move |l| l.select(&c), select_done));
                         app.lobby_fade.enter(true);
                     }));
@@ -15796,14 +15796,14 @@ impl App {
                         match out.action {
                             Some(select::Action::Login(i)) => {
                                 if let (Some(l), Some(c)) = (lobby.take(), chars.get(i).cloned()) {
-                                    let replies = l.replies.clone();
+                                    let (replies, registers) = (l.replies.clone(), l.registers(&c));
                                     action = Some(Box::new(move |app: &mut App| {
                                         // FUN_10241200: hnbackwi opens behind the run, which starts after FUN_1023fb20's 8 frames.
                                         app.backdrop = Some(Backdrop::Login);
                                         if let Phase::Characters { screen, .. } = &mut app.phase {
                                             *screen = LobbyScreen::Run;
                                         }
-                                        app.netwait = Some(netwait::NetWait::new(netwait::Op::Login, replies).after(8));
+                                        app.netwait = Some(netwait::NetWait::login(replies, registers).after(8));
                                         app.spawn(move || lobby_job(l, move |l| l.select(&c), select_done))
                                     }));
                                     fade_action = true;
@@ -15831,7 +15831,7 @@ impl App {
                                                         crate::net::lobby::refusal(l.rename(&c, &name))?.err();
                                                     let list = match refused {
                                                         None => l
-                                                            .characters()
+                                                            .refresh()
                                                             .map_err(|e| e.context(crate::net::lobby::InRefresh))?,
                                                         Some(_) => Vec::new(),
                                                     };
@@ -15858,7 +15858,7 @@ impl App {
                                                         crate::net::lobby::refusal(l.delete_character(&c))?.err();
                                                     let list = match refused {
                                                         None => l
-                                                            .characters()
+                                                            .refresh()
                                                             .map_err(|e| e.context(crate::net::lobby::InRefresh))?,
                                                         Some(_) => Vec::new(),
                                                     };
@@ -16238,15 +16238,14 @@ impl App {
                                     if let Some(l) = lobby.take() {
                                         *selected = chars.iter().position(|x| x.content_id == c.content_id);
                                         fade_action = true;
-                                        let replies = l.replies.clone();
+                                        let (replies, registers) = (l.replies.clone(), l.registers(&c));
                                         action = Some(Box::new(move |app: &mut App| {
                                             // FUN_10241200: hnbackwi opens behind the run, which starts after FUN_1023fb20's 8 frames.
                                             app.backdrop = Some(Backdrop::Login);
                                             if let Phase::Characters { screen, .. } = &mut app.phase {
                                                 *screen = LobbyScreen::Run;
                                             }
-                                            app.netwait =
-                                                Some(netwait::NetWait::new(netwait::Op::Login, replies).after(8));
+                                            app.netwait = Some(netwait::NetWait::login(replies, registers).after(8));
                                             app.spawn(move || lobby_job(l, move |l| l.select(&c), select_done))
                                         }));
                                     }
@@ -16281,7 +16280,7 @@ impl App {
                                                     ))?;
                                                     let chars = match made {
                                                         Ok(()) => l
-                                                            .characters()
+                                                            .refresh()
                                                             .map_err(|e| e.context(crate::net::lobby::InRefresh))?,
                                                         Err(_) => Vec::new(),
                                                     };
@@ -16812,7 +16811,7 @@ impl App {
                     let l = lobby.take().unwrap();
                     self.backdrop = Some(Backdrop::Login);
                     *screen = LobbyScreen::Run;
-                    self.netwait = Some(netwait::NetWait::new(netwait::Op::Login, l.replies.clone()));
+                    self.netwait = Some(netwait::NetWait::login(l.replies.clone(), l.registers(&c)));
                     self.spawn(move || lobby_job(l, move |l| l.select(&c), select_done));
                 }
             }
