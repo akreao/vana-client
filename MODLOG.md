@@ -23821,3 +23821,24 @@ All of it is the mod's Lua over the general API; the client gained nothing.
 - release/build-windows.sh stays for local MinGW test builds, written as vana-client-windows-x86_64-mingw.exe so
   release/publish.sh never ships one.
 - Left: an Authenticode signature (Azure Trusted Signing or SignPath), the real fix for unsigned-binary detections.
+
+## Mod updates from the installed list (2026-11-12)
+
+- User: "I shouldn't have to go to the install page for mods to update them ... there should be an update button
+  there, as well as an Update All button". Ours (not retail).
+- modsui.rs: `update(id)` installs a catalogue entry with a newer version now, or queues it behind the install
+  running; `update_all(lua)` queues every Lua mod's (or DAT pack's) update; `tick` starts the next queued one when an
+  install ends (a failure does not stop the queue). `update_for`, `updates`, `waiting` and `queued` answer the pages.
+  An install that was an update is put in `updated`.
+- SettingsUi::tick: a Lua mod in `updated` that is on (by its scope) is unloaded and loaded again (ENABLED false,
+  then true, through mod_changes), so it runs its new files at once. After an install, the classic page's cursor is
+  clamped to the rows and buttons still there.
+- Modern Mods window, Installed: the mod's header has Update (right of Uninstall) when the catalogue has a newer
+  version; beside the version, "X is out", "update queued" or "updating: N%". Under the list, Update All (N) when
+  any mod has one: Down from the last row reaches it, Up goes back, Enter presses it; off while every update is
+  already queued or running. The cursor goes back to the list when it disappears. Get mods keeps its Update buttons.
+- Classic Settings > Mods: an installed mod with an update has a third button, Update (where DAT packs have Move);
+  the row shows its per cent while it installs. Below the archives, an "Update all (N)" row with Update All (on the
+  DAT Packs page only with two or more, since each pack's update already has a row there).
+- Seen live in both UIs (Lnxcsfix; clock and countdowns copied in with an old version mark): Update and Update All
+  by keys, each mod unloaded and loaded again after its update. Test updates_and_update_all_row.
