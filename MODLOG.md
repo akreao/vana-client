@@ -23768,7 +23768,11 @@ All of it is the mod's Lua over the general API; the client gained nothing.
   data/gearshift_ws_gen.py (LandSandBoat data/weapon_skills.yaml and the scripts: kind, wsc modifiers with the Adoulin
   values, element, jobs, skillchain properties; 206), blue magic kinds from data/gearshift_blu_gen.py (126).
 - Picks (src/build/pick.lua): the reference per slot is the set's best at the cap (curated in bis.lua, else the
-  best-scoring piece in the whole item list the job and race can wear at the cap). "Like the best in slot" is the
+  best-scoring piece in the whole item list the job and race can wear at the cap). bis.lua: 1,496 slots from public
+  guides (the sources above each job: BG-Wiki community and gear-set guides for 99, FFXIclopedia, FFXIAH and
+  horizonffxi.wiki for 75), each name checked against the item list for slot, job and level; unsourced 75-era staples
+  and the 99 "PDT" sets that were engaged sets with DT were left out. A curated name with several items (levels'
+  versions) takes the best one wearable at the cap. "Like the best in slot" is the
   share of a piece's set value from stats the reference also gives (its kind of stats, not its amount, so a low-level
   piece can match a level-75 one). The owned pick is the most of those among pieces at least 25% alike, else the
   set's own best by its weights; "worth getting" is the same rule over every item wearable at the level. Caps hold

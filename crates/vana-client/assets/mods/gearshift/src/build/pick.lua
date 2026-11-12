@@ -224,8 +224,19 @@ function M.build(ctx, set, set_name)
   local auto = M.best_by_score(cap_cands, set)
   for slot = 0, 15 do
     local want = ctx.bis and ctx.bis[M.SLOT_NAMES[slot]]
-    local id = type(want) == "number" and want or (want and ctx.names and ctx.names[want])
-    if id then
+    local id = type(want) == "number" and want or nil
+    -- A name: of its items (one name may be several levels' versions), the best one wearable at the cap.
+    if type(want) == "string" and ctx.names and ctx.names[want] then
+      local best = -math.huge
+      for _, cand in ipairs(ctx.names[want]) do
+        local rec = M.H.item(cand)
+        if M.fits(rec, slot, ctx.job_id, ctx.race, ctx.cap) then
+          local v = M.score(M.stats_of(cand), set)
+          if v > best then id, best = cand, v end
+        end
+      end
+    end
+    if id and wanted(slot) then
       ref[slot] = { id = id, s = M.stats_of(id), rec = M.H.item(id) }
     elseif auto[slot] then
       ref[slot] = auto[slot]

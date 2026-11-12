@@ -178,7 +178,10 @@ local function index_step()
   pick.index_add(state.index, ids)
   for _, id in ipairs(ids) do
     local rec = pick.H.item(id)
-    if rec and rec.name and rec.name ~= "" and rec.slots and rec.slots ~= 0 then state.names[rec.name] = state.names[rec.name] or id end
+    if rec and rec.name and rec.name ~= "" and rec.slots and rec.slots ~= 0 then
+      state.names[rec.name] = state.names[rec.name] or {}
+      table.insert(state.names[rec.name], id)
+    end
   end
   if to >= r[2] then
     state.range, state.next_id = state.range + 1, nil

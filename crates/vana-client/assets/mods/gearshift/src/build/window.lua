@@ -60,6 +60,15 @@ local function current()
   return name, name and run.set_def(name)
 end
 
+-- We hold a piece of that name in the bags gear is worn from.
+local function held(name)
+  for _, o in ipairs(run.state.owned or {}) do
+    local rec = pick.H.item(o.id)
+    if rec and rec.name == name then return true end
+  end
+  return false
+end
+
 local function slot_rows(name, def, r)
   local hand = run.hand(run.state.job, name)
   local rows = {}
@@ -68,7 +77,7 @@ local function slot_rows(name, def, r)
     local h = hand[pick.SLOT_NAMES[slot]]
     local wearing, share, ref, worth = "-", "", "", ""
     if h then
-      wearing = h.name .. " *"
+      wearing = h.name .. " *" .. (held(h.name) and "" or " (not held)")
     elseif o and o.pick then
       wearing = item_name(o.pick.id)
     elseif not (def.weapons or (sets.MAGE_JOBS[run.state.job] and not sets.MELEE_SETS[name] and not def.ws)) and slot <= 2 then

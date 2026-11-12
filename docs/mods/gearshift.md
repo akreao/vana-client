@@ -15,7 +15,8 @@ With no file for the job, Gearshift builds your sets itself from the gear you ho
 - **Item stats** come from each item's description and its augments. Lines that need a condition (Set:, Latent
   effect:, weather, days, an element) are not counted; a pet's stats count for pet sets.
 - **For your level:** each slot's reference is the best piece for the set at the level cap (75 or 99: the Level Cap
-  setting, Auto by your level). Your pick is the piece you hold that gives the most of that piece's kind of stats; if
+  setting, Auto by your level): from public gear guides where they list one (src/build/bis.lua names its sources),
+  else the best-scoring piece in the whole item list. Your pick is the piece you hold that gives the most of that piece's kind of stats; if
   nothing you hold is at least a quarter alike, the set's own stat weights pick. "Worth getting" names a piece wearable
   at your level that would do better. The sets follow your level, so level sync needs nothing.
 - **The window:** the job's sets, each set's score against the best for your level and the cap's best in slot, and per
