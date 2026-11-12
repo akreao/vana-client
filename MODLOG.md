@@ -23853,3 +23853,30 @@ All of it is the mod's Lua over the general API; the client gained nothing.
 - catalogue.rs standard_mods_listed now fails, with or without VANA_WRITE_CATALOGUE, when a mod's files differ from
   its committed catalogue entry under the same version, naming each one. catalogue/README.md says to raise the
   version first.
+
+## Gearshift: weapon skill sets first, refused swaps resent, usable gear kept; /equip's other slot names (2026-11-12)
+
+- User report (Nine, RDM/NIN): Vorpal Blade's set sometimes went on only after the weapon skill and then stayed until
+  the next trigger. Seen on Lnxcsfix (RDM 75, hand picks: TP Peacock Charm + Morion Tathlum, WS Spike Necklace +
+  Tiphia Sting): the builder sent the WS set after the 0x01A (as a spell's midcast); LSB's 0x01A handler enters
+  CWeaponSkillState at once (ai_container enterState; the weapon skill itself runs on the next zone tick), and
+  charutils::EquipItem refuses main / sub / ranged / ammo while that state is current (until the skill's animation
+  time has passed). So the WS ammo never went on, and the restore's weapons or ammo just after the finish were
+  refused too; nothing sent them again, so the slot kept the WS piece until the next wear.
+- Ours: the builder wears a weapon skill's (category 7) or an ability's (9) set before the action packet; spells and
+  shots keep precast before, midcast after. core.worn notes a sent change still unconfirmed after SENT_HOLD (2 s)
+  whose slot still holds what it held (was_bag / was_index): refused; core.retry (Gearshift's 0.4 s timer) sends
+  each again, up to 4 times. A slot holding something else is the player's change and is left. Seen: Tiphia Sting on
+  for the weapon skill; the TP ammo refused once, then on 4 s after the finish.
+- User report: an Empress Band or a Warp Ring put on by hand came off about 3 s later with an idle set on. The bag
+  scan (every 3 s) put "a" in its signature for an item whose augments were decoded; equipping an enchantment item
+  changes its extdata (its use timer), so the signature changed twice (undecoded, then decoded), each rebuilding every
+  set, and the status set was worn half built (hand picks only) and again built, over the ring. Now: the signature
+  holds the decoded augment lines only when there are some; the status set is not worn while it is being built; and
+  a worn item with charges (max_charges > 0) the set does not name keeps its slot until an item use (action category
+  5, param = the item id) or until it is taken off. Seen: the Warp Ring kept through four scans; the Empress Band used,
+  and the idle Defending Ring back 0.3 s later.
+- /equip: FUN_1007b390's slot names come from table 0x1036f7a8 {group, id, slot}: group 0x17 (l.ear, r.ear, l.ring,
+  r.ring ...) and group 0x18, which FUN_10153b70 loads from the fixed file 0xd8af (55471) in every language: the same
+  16 names, then ear1, ear2, ring1, ring2 (slots 11..14). Ours had only group 0x17, so `/equip ring1 ...` (as the
+  Hotbar mod's equip command writes it) was a command error. dat/battle.rs slot_name_alt reads 0xd8af.

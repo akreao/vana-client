@@ -92,9 +92,13 @@ end
 
 -- ---- What is worn: the server's, with what we sent over it ----
 
--- slot -> {bag, index, id, at}: sent, not yet seen worn.
+-- slot -> {bag, index, id, at, was_bag, was_index, tries}: sent, not yet seen worn (`was_*`: what the slot held).
 M.sent = {}
 M.SENT_HOLD = 2
+-- Sent changes the server refused (the slot still holds what it held): sent again by retry, up to RETRIES times.
+-- LandSandBoat refuses weapons and ammo while a weapon skill or a shot is under way.
+M.refused = {}
+M.RETRIES = 4
 
 function M.worn()
   local now, eq = M.H.now(), M.H.equipment() or {}
@@ -102,7 +106,11 @@ function M.worn()
   for s = 0, 15 do
     local cur = eq[s] or {}
     local p = M.sent[s]
-    if p and (now - p.at > M.SENT_HOLD or (cur.bag == p.bag and cur.slot == p.index)) then
+    if p and cur.bag == p.bag and cur.slot == p.index then
+      M.sent[s], p = nil, nil
+    elseif p and now - p.at > M.SENT_HOLD then
+      -- Still what it held: refused. Anything else is a change the player made.
+      if cur.bag == p.was_bag and cur.slot == p.was_index then M.refused[s] = p end
       M.sent[s], p = nil, nil
     end
     if p then
@@ -217,11 +225,31 @@ function M.packets(list, style, max)
   else
     for _, c in ipairs(list) do out[#out + 1] = M.equip_packet(c) end
   end
-  local now = M.H.now()
+  local now, eq = M.H.now(), M.H.equipment() or {}
   for _, c in ipairs(list) do
-    M.sent[c.slot] = { bag = c.bag, index = c.index, id = c.id, at = now }
+    local cur = eq[c.slot] or {}
+    M.sent[c.slot] = { bag = c.bag, index = c.index, id = c.id, at = now, was_bag = cur.bag, was_index = cur.slot,
+      tries = c.tries or 0 }
   end
   return out
+end
+
+-- The changes the server refused, sent again one by one (a piece no longer where it was is dropped).
+function M.retry()
+  M.worn()
+  local again = {}
+  for s, p in pairs(M.refused) do
+    if p.tries < M.RETRIES and M.sent[s] == nil then
+      local there = p.index == 0
+      for _, it in ipairs(p.index ~= 0 and M.H.items(p.bag) or {}) do
+        if it.slot == p.index and it.id == p.id then there = true break end
+      end
+      if there then again[#again + 1] = { slot = s, bag = p.bag, index = p.index, id = p.id, tries = p.tries + 1 } end
+    end
+  end
+  M.refused = {}
+  if #again > 0 then M.send(M.packets(again, "single")) end
+  return #again
 end
 
 function M.send(pkts)

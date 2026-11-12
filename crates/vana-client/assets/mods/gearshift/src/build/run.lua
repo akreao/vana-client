@@ -100,7 +100,10 @@ local function scan()
         local entry = { id = it.id, key = bag .. ":" .. it.slot, bag = bag, index = it.slot,
           augments = it.extdata and core.augments[it.extdata] or nil }
         if EQUIP[bag] then owned[#owned + 1] = entry else elsewhere[#elsewhere + 1] = entry end
-        sig[#sig + 1] = entry.key .. "=" .. it.id .. (entry.augments and "a" or "")
+        -- The augments themselves, not whether they are decoded yet: an enchantment's timer changes the data when
+        -- the item is put on, and must not rebuild every set.
+        local aug = entry.augments and #entry.augments > 0 and ("a" .. table.concat(entry.augments, ";")) or ""
+        sig[#sig + 1] = entry.key .. "=" .. it.id .. aug
       end
     end
   end
@@ -362,8 +365,26 @@ local function keep_ammo()
   return (range and (range.skill == 25 or range.skill == 26)) or (ammo and ammo.skill == 27)
 end
 
+-- Usable gear the player put on (charges: Warp Ring, Empress Band...) keeps its slot until used or taken off.
+local used = {}
+local function keep_usable(pieces)
+  local worn = core.worn()
+  for slot, w in pairs(worn) do
+    local rec = pick.H.item(w.id)
+    if rec and (rec.max_charges or 0) > 0 and not used[w.id] and pieces[slot] and pieces[slot].name ~= rec.name then
+      pieces[slot] = nil
+    end
+  end
+  for id in pairs(used) do
+    local on = false
+    for _, w in pairs(worn) do on = on or w.id == id end
+    if not on then used[id] = nil end
+  end
+end
+
 local function wear(pieces, style)
   if pieces[3] and keep_ammo() then pieces[3] = nil end
+  keep_usable(pieces)
   local list = core.resolve(wants(pieces), { log_names = false })
   core.send(core.packets(list, style or "auto", 8))
 end
@@ -445,16 +466,21 @@ function M.action(act)
   local r = M.route(act)
   if not r or (not r[1] and not r[2]) then return end
   if r[1] then wear(M.pieces(r[1]), "auto") end
-  core.H.inject(act.packet)
+  local main
   if r[2] then
-    local pieces = M.pieces(r[2])
-    element_gear(pieces, r[2], r.element)
+    main = M.pieces(r[2])
+    element_gear(main, r[2], r.element)
     if r.ws then
-      if r.ws.kind == "magic" then element_gear(pieces, "Nuke", r.ws.element) end
-      ws_gear(pieces, r.ws)
+      if r.ws.kind == "magic" then element_gear(main, "Nuke", r.ws.element) end
+      ws_gear(main, r.ws)
     end
-    wear(pieces, "single")
   end
+  -- A weapon skill or an ability lands at once: its set goes first (the server also refuses weapons and ammo once a
+  -- weapon skill has started). A spell's or a shot's comes after, for the cast.
+  local instant = act.category == 7 or act.category == 9
+  if main and instant then wear(main, "single") end
+  core.H.inject(act.packet)
+  if main and not instant then wear(main, "single") end
   -- Held until the action ends (its finish or interruption below), at most its cast time and a margin.
   busy_until = clock() + math.max(3, (r.cast or 0) + 2)
   restore = true
@@ -468,6 +494,11 @@ function M.on_action(a)
   if not p or a.actor ~= p.id then return end
   -- A finish, or an interrupted cast / shot (param 28787).
   if DONE[a.category] or ((a.category == 8 or a.category == 12) and a.param == 28787) then busy_until = 0 end
+  -- An item used (category 5, the item's id): worn usable gear is let go, and the status set comes back.
+  if a.category == 5 and a.param then
+    used[a.param] = true
+    restore = true
+  end
 end
 
 -- Between actions: the status's set, and the Movement set's moving pieces while we run.
@@ -487,6 +518,11 @@ local last_sig
 function M.tick()
   if not M.loaded() or clock() < busy_until then return end
   local name = M.default_set()
+  -- Not while it is being built: half a set would be worn, then the whole one.
+  if not state.built[name] then
+    M.want_first(name)
+    return
+  end
   local pieces = M.pieces(name)
   if moving() then
     local mv = state.built.Movement

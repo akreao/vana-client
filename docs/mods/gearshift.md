@@ -25,8 +25,10 @@ Gear Swapping and Set Builder settings switch it off whatever the window says.
   pieces' stats and choose one yourself (marked `*`, kept through rebuilds; "Automatic" frees it). Better pieces kept
   where gear cannot be worn from are named.
 - **Around actions:** Fast Cast before a spell and the spell's set after it (held until the cast lands or is
-  interrupted); a weapon skill's set; ability sets; Preshot and Midshot. Between actions the set for your status goes
-  on when it changes or after an action, so a piece you change by hand stays on until then.
+  interrupted); a weapon skill's or an ability's set before it (they land at once); Preshot and Midshot. Between
+  actions the set for your status goes on when it changes or after an action, so a piece you change by hand stays on
+  until then. A usable piece you put on (one with charges: Warp Ring, Empress Band...) keeps its slot until you use
+  it or take it off; then the status set comes back.
 - **Weapons:** only the pure mages (WHM, BLM, SMN, SCH, GEO) have weapons in their sets, outside the melee sets; every
   other job keeps what it holds (changing main, sub or range would lose TP). Ammo stays while a bow, gun or crossbow
   is worn or the ammo is thrown. A mage's elemental staff (up to level 75), an obi on its element's day or weather, and a gorget
@@ -91,7 +93,8 @@ Files a GearSwap file `include`s are looked for in the same GearSwap folders.
   reach the game; XInclude includes; `FishingSet`, `HELMSet`, `ShowGearSwaps`, the `Disable*` options.
 
 Around an action the gear goes out as each add-on sends it: the precast gear, the action, the midcast gear, in that
-order in one batch.
+order in one batch. A change the server refuses (LandSandBoat takes no weapons or ammo while a weapon skill or a shot
+is under way) is sent again every 2 seconds, up to 4 times, unless something else has gone into that slot.
 
 ## Commands
 

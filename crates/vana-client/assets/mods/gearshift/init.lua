@@ -117,6 +117,7 @@ events.on("frame", function()
   end
 end)
 timer.every(0.4, function()
+  core.retry()
   lac.tick()
   acxml.tick()
   if not file_loaded() then builder.tick() end

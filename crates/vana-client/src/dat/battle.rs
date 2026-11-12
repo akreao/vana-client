@@ -118,6 +118,7 @@ pub struct BattleText {
     pub phrases: Option<super::autotrans::Dictionary>,
     /// Group 0x17: equipment slot names for /equip ("main" .. "feet").
     slot_names: Option<Messages>,
+    slot_names_alt: Option<Messages>,
     group9: Option<Messages>,
     /// Group 10: formatted client lines (the guild shop's hours, ...); group 0x10: the weekday names.
     group10: Option<Messages>,
@@ -244,6 +245,8 @@ impl BattleText {
             group7: super::msg::group_file(ffximain, 1, 7).and_then(msgs),
             emotes: dialog(SLOT_EMOTES).map_err(|e| log::warn!("emote messages: {e:#}")).ok(),
             slot_names: super::msg::group_file(ffximain, 1, 0x17).and_then(msgs),
+            // Group 0x18: FUN_10153b70 loads it from this fixed file in every language.
+            slot_names_alt: msgs(0xd8af),
             group9: super::msg::group_file(ffximain, 1, 9).and_then(msgs),
             group10: super::msg::group_file(ffximain, 1, 10).and_then(msgs),
             group12: super::msg::group_file(ffximain, 1, 0xc).and_then(msgs),
@@ -412,6 +415,11 @@ impl BattleText {
     /// Group 0x17 entry `id` (an /equip slot name).
     pub fn slot_name(&self, id: usize) -> Option<String> {
         self.slot_names.as_ref()?.get(id)
+    }
+
+    /// Group 0x18 entry `id`: /equip's other spellings, 0x17's then ear1, ear2, ring1, ring2.
+    pub fn slot_name_alt(&self, id: usize) -> Option<String> {
+        self.slot_names_alt.as_ref()?.get(id)
     }
 
     /// A race name of language slot 0x1c (the toteboard's FUN_101c8450) by grade.
