@@ -1,8 +1,32 @@
-# Gearshift: GearSwap, LuAshitacast, Ashitacast and Spellcast files
+# Gearshift: GearSwap, LuAshitacast, Ashitacast and Spellcast files, and its own set builder
 
 Gearshift is a bundled mod that changes your gear around your actions from the job files you already have. It reads
 **GearSwap** job files, **LuAshitacast** profiles, **Ashitacast** XML profiles (v4, and v3 / LegacyAC files) and
 **Spellcast** XML files as they are; you don't rewrite them.
+
+## The set builder (no file needed)
+
+With no file for the job, Gearshift builds your sets itself from the gear you hold and wears them the same way.
+`//gearshift` opens its window.
+
+- **Sets:** every set of your job: idle, resting, movement, PDT / MDT, TP (hybrid and accuracy too), a set per weapon
+  skill of the weapon types you hold, Fast Cast, each kind of magic, songs, blood pacts, ninjutsu, blue magic,
+  geomancy, pet and job ability sets.
+- **Item stats** come from each item's description and its augments. Lines that need a condition (Set:, Latent
+  effect:, weather, days, an element) are not counted; a pet's stats count for pet sets.
+- **For your level:** each slot's reference is the best piece for the set at the level cap (75 or 99: the Level Cap
+  setting, Auto by your level). Your pick is the piece you hold that gives the most of that piece's kind of stats; if
+  nothing you hold is at least a quarter alike, the set's own stat weights pick. "Worth getting" names a piece wearable
+  at your level that would do better. The sets follow your level, so level sync needs nothing.
+- **The window:** the job's sets, each set's score against the best for your level and the cap's best in slot, and per
+  slot the piece, how alike it is ("Match"), the best in slot and what is worth getting. Pick a slot to compare the
+  pieces' stats and choose one yourself (marked `*`, kept through rebuilds; "Automatic" frees it). Better pieces kept
+  where gear cannot be worn from are named.
+- **Around actions:** Fast Cast before a spell and the spell's set after it; a weapon skill's set; ability sets;
+  Preshot and Midshot. A mage's elemental staff (up to level 75), an obi on its element's day or weather, and a gorget
+  and belt matching a weapon skill go on by themselves.
+- **Toggles:** `//gearshift mode hybrid | acc | pdt | mdt | mb | macc`, `//gearshift mode off`.
+- **Not yet:** pieces that take two slots (a suit, a cloak) are left out.
 
 ## Where the files go
 

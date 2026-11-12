@@ -64,7 +64,7 @@ Playable on a local LSB server. Working today:
   actions with the player's permission. See [writing mods](docs/modding/README.md)
 - The standard mods, downloaded from Settings > Mods > Download Standard Mods: the map overlay, minimap, timers,
   skillchain helper and chat timestamps that used to be Extras, hotbars, Gearshift (which runs GearSwap files and
-  LuAshitacast profiles) and many more. None come with the client; the list is [catalogue/mods.json](catalogue/mods.json)
+  LuAshitacast profiles, or builds your sets itself from the gear you hold) and many more. None come with the client; the list is [catalogue/mods.json](catalogue/mods.json)
 
 ## Requirements
 
