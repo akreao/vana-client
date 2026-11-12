@@ -23791,3 +23791,18 @@ All of it is the mod's Lua over the general API; the client gained nothing.
   Dark), and magical weapon skills pass their element to it.
 - Live (Lnxcsfix, WAR 23, nine pieces given by GM): the window in both UIs, a hand pick kept through a relog, Wear
   Now and the idle set worn; WAR TP at 99 references Boii +3, Sulevia +2, Pummeler's +4, Telos, Schere, Null.
+
+## The Windows release built with MSVC on GitHub (2026-11-11)
+
+- Issue #229: Microsoft Defender flagged the 1.0.11 Windows exe as a trojan (2 of 70 engines on VirusTotal); a false
+  positive. The exe was a MinGW cross build (release/build-windows.sh) without an Authenticode signature (our Ed25519
+  signature is only for the in-app updater). MinGW-built Rust binaries draw these machine-learning detections more
+  often than MSVC ones *(inf: widely reported, not measured here)*.
+- release-builds.yml now has a Windows job (windows-latest, x86_64-pc-windows-msvc, dist profile, RUSTFLAGS
+  x86-64-v2 and +crt-static since RUSTFLAGS replaces .cargo/config.toml's): it checks with llvm-objdump that the exe
+  imports no vcruntime / msvcp / api-ms-win-crt DLL, runs `--version` and uploads vana-client-windows-x86_64.exe.
+  release/fetch-ci-builds.sh downloads it with the others; release/publish.sh still requires it. ci.yml is unchanged:
+  its Windows job only lints and tests (its release build was dropped for time and stays dropped).
+- release/build-windows.sh stays for local MinGW test builds, written as vana-client-windows-x86_64-mingw.exe so
+  release/publish.sh never ships one.
+- Left: an Authenticode signature (Azure Trusted Signing or SignPath), the real fix for unsigned-binary detections.

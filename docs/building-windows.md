@@ -1,7 +1,8 @@
 # Building on Windows
 
-A native build with Microsoft's toolchain (MSVC), edited and run from VS Code. The Windows release asset still comes
-from `release/build-windows.sh` (a MinGW cross build on Linux); this is for working on the client on Windows.
+A native build with Microsoft's toolchain (MSVC), edited and run from VS Code. The Windows release asset is built the
+same way on GitHub (the Release builds workflow, fetched by `release/fetch-ci-builds.sh`); this is for working on the
+client on Windows.
 
 ## Install once
 

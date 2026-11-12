@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# The Windows release binary, cross-built with MinGW (rustup target x86_64-pc-windows-gnu, x86_64-w64-mingw32-gcc):
-# target/assets/vana-client-windows-x86_64.exe, the asset name the in-app Update looks for. Everything is linked in
+# A Windows binary cross-built with MinGW (rustup target x86_64-pc-windows-gnu, x86_64-w64-mingw32-gcc), for testing
+# here: target/assets/vana-client-windows-x86_64-mingw.exe, named apart so release/publish.sh never ships it; releases
+# use the MSVC build from release-builds.yml (release/fetch-ci-builds.sh puts it at vana-client-windows-x86_64.exe). Everything is linked in
 # (+crt-static, -static). unrar_sys asks for a dynamic -lpthread on a Linux host, so a static copy of winpthread sits
 # first in the search path under that name: otherwise the exe needs libwinpthread-1.dll, which Windows does not have.
 set -euo pipefail
@@ -15,5 +16,5 @@ if x86_64-w64-mingw32-objdump -p target/x86_64-pc-windows-gnu/dist/vana-client.e
     exit 1
 fi
 mkdir -p target/assets
-cp target/x86_64-pc-windows-gnu/dist/vana-client.exe target/assets/vana-client-windows-x86_64.exe
-echo "target/assets/vana-client-windows-x86_64.exe"
+cp target/x86_64-pc-windows-gnu/dist/vana-client.exe target/assets/vana-client-windows-x86_64-mingw.exe
+echo "target/assets/vana-client-windows-x86_64-mingw.exe"
