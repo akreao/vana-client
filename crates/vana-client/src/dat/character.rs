@@ -143,6 +143,8 @@ pub struct Group {
     pub triangles: Vec<[Corner; 3]>,
     /// The material's light factor (0x8010 record f32 @18; 1 for most, faces up to 1.6).
     pub light: f32,
+    /// The body part another mesh can hide (0x8010 record byte @15 low nibble; 0 never hidden).
+    pub part: u8,
 }
 
 /// One drawable copy of a 0x2A mesh; mirrored meshes yield a second copy for the other side.
@@ -157,6 +159,25 @@ pub struct MeshPart {
     pub cloth: bool,
     /// The cloth simulation's data (mesh class 1, not mirrored).
     pub sim: Option<std::sync::Arc<ClothSpec>>,
+    /// Bit n: this mesh hides part n of every mesh of the model (header byte 3, [`hidden_parts`]).
+    pub hides: u16,
+}
+
+/// FUN_1002dc10's switch on a mesh's header byte 3: the parts it hides on the model (a hat the hair, feet the lower
+/// legs, sleeves the wrists).
+pub fn hidden_parts(code: u8) -> u16 {
+    let parts: &[u8] = match code {
+        2 => &[1],
+        3 => &[1, 2],
+        4 => &[1, 2, 3],
+        5 => &[1, 2, 3, 4, 8],
+        6 => &[1, 2, 3, 8],
+        0x12 => &[5],
+        0x22 => &[7],
+        0x32 => &[6],
+        _ => &[],
+    };
+    parts.iter().fold(0, |m, p| m | 1 << p)
 }
 
 /// One cloth constraint: particle indices (bit 0x8000 = that end stays put) and the rest length.
@@ -399,14 +420,23 @@ pub fn parse_mesh(name: &str, d: &[u8]) -> Result<Vec<MeshPart>> {
         } else {
             None
         };
-        parts.push(MeshPart { name: name.to_string(), mirrored, vertices, groups, cloth, sim });
+        parts.push(MeshPart {
+            name: name.to_string(),
+            mirrored,
+            vertices,
+            groups,
+            cloth,
+            sim,
+            hides: hidden_parts(d[3]),
+        });
     }
     Ok(parts)
 }
 
 /// Poly stream of u16-tagged records: 0x8010 material (46 B, light factor f32 @18), 0x8000 texture name (18 B),
 /// "ST" strip, "T\0" list; colour-only "SC" strip (3 idx, u32 colour, n-1 idx) and "C\0" list are
-/// skipped; 0xFFFF ends it. Corners carry their UV.
+/// skipped; 0xFFFF ends it. Corners carry their UV. A material's part is its byte @15's low nibble; in a mesh with
+/// face parts (1..4) one with u16 @30 set is part 8 (FUN_1002cb80 at load, FUN_1002dc10 at draw).
 fn parse_polys(name: &str, p: &[u8]) -> Result<Vec<Group>> {
     let corner = |o: usize| Corner { vertex: u16_at(p, o), uv: [f32_at(p, o + 2), f32_at(p, o + 6)] };
     let tri = |o: usize| -> [Corner; 3] {
@@ -416,6 +446,10 @@ fn parse_polys(name: &str, p: &[u8]) -> Result<Vec<Group>> {
     let mut groups: Vec<Group> = Vec::new();
     let mut texture = String::new();
     let mut light = 1.0f32;
+    let (mut part, mut alt) = (0u8, false);
+    let mut alts = Vec::new();
+    // FUN_1002cb80's +0x69: any material record with a face part, drawn or not.
+    let mut face = false;
     let mut at = 0;
     while at + 4 <= p.len() {
         let (tag, n) = (u16_at(p, at), u16_at(p, at + 2) as usize);
@@ -427,6 +461,8 @@ fn parse_polys(name: &str, p: &[u8]) -> Result<Vec<Group>> {
         } else if tag & 0x80F0 == 0x8010 {
             need(46)?;
             light = Some(f32_at(p, at + 18)).filter(|f| f.is_finite()).unwrap_or(1.0);
+            (part, alt) = (p[at + 15] & 0xf, u16_at(p, at + 30) != 0);
+            face |= (1..=4).contains(&part);
             at += 46;
         } else if tag & 0x80F0 == 0x8000 {
             need(18)?;
@@ -447,7 +483,8 @@ fn parse_polys(name: &str, p: &[u8]) -> Result<Vec<Group>> {
                 }
                 tris.push(if i % 2 == 0 { [a, b, c] } else { [b, a, c] });
             }
-            groups.push(Group { texture: texture.clone(), triangles: tris, light });
+            groups.push(Group { texture: texture.clone(), triangles: tris, light, part });
+            alts.push(alt);
             at += 4 + 30 + n.saturating_sub(1) * 10;
         } else if tag == 0x0054 {
             need(4 + n * 30)?;
@@ -455,7 +492,9 @@ fn parse_polys(name: &str, p: &[u8]) -> Result<Vec<Group>> {
                 texture: texture.clone(),
                 triangles: (0..n).map(|k| tri(at + 4 + k * 30)).collect(),
                 light,
+                part,
             });
+            alts.push(alt);
             at += 4 + n * 30;
         } else if tag == 0x4353 {
             at += n * 2 + 12;
@@ -463,6 +502,11 @@ fn parse_polys(name: &str, p: &[u8]) -> Result<Vec<Group>> {
             at += n * 10 + 4;
         } else {
             bail!("mesh {name}: unknown poly record {tag:#06x} at {at:#x}");
+        }
+    }
+    if face {
+        for (g, _) in groups.iter_mut().zip(&alts).filter(|(_, a)| **a) {
+            g.part = 8;
         }
     }
     Ok(groups)
@@ -1019,6 +1063,18 @@ impl Character {
         }
     }
 
+    /// Drops the groups another of the model's meshes covers (hair under a hat, lower legs in boots). Retail skips
+    /// them at draw (FUN_1002dc10); a look change reloads the model, so ours drops them once.
+    pub fn hide_covered(&mut self) {
+        let hidden = self.parts.iter().fold(0u16, |m, p| m | p.hides);
+        if hidden == 0 {
+            return;
+        }
+        for p in &mut self.parts {
+            p.groups.retain(|g| hidden & 1 << g.part == 0);
+        }
+    }
+
     /// Fills unset size bytes from a file's info chunk; the client copies only bytes not yet set.
     pub fn merge_size_info(&mut self, info: Option<[u8; 16]>) {
         let Some(info) = info else { return };
@@ -1078,6 +1134,12 @@ fn race_file(index: &DatIndex, id: u32) -> Result<std::sync::Arc<CharFile>> {
 }
 
 pub fn load_character(index: &DatIndex, look: &Look) -> Result<Character> {
+    let mut ch = load_look(index, look)?;
+    ch.hide_covered();
+    Ok(ch)
+}
+
+fn load_look(index: &DatIndex, look: &Look) -> Result<Character> {
     let (skel_id, part_ids) = file_ids(look)?;
     let base = match pc_race(look.race) {
         Some(_) => race_file(index, skel_id)?.as_ref().clone(),
@@ -1271,5 +1333,50 @@ mod tests {
             assert_eq!(skel.look_limits, [[0.24, 0.16, 0.5], [0.16, 0.06, 0.5]], "file {file}");
             assert_eq!((skel.points[3].0, skel.points[7].0), (head, head - 1), "file {file}");
         }
+    }
+
+    #[test]
+    fn hidden_parts_table() {
+        assert_eq!(super::hidden_parts(0), 0);
+        assert_eq!(super::hidden_parts(4), 0b1110);
+        assert_eq!(super::hidden_parts(5), 0b1_0001_1110);
+        assert_eq!(super::hidden_parts(0x32), 1 << 6);
+        assert_eq!(super::hidden_parts(0x31), 0);
+    }
+
+    /// Hume F face 2 (file 10258: parts 1, 3, 4 and two part-4 records turned 8) and starting gear (hands part 5,
+    /// legs part 6, feet part 7, feet 8 = 0x32): each code family drops what it covers and nothing else.
+    #[test]
+    fn covered_parts_are_dropped() {
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let look = |head, body, legs| super::Look {
+            race: 2,
+            face: 2,
+            head,
+            body,
+            hands: 8,
+            legs,
+            feet: 8,
+            ..Default::default()
+        };
+        let parts = |l| -> Vec<u8> {
+            let ch = super::load_character(&index, &l).unwrap();
+            let mut v: Vec<u8> = ch.parts.iter().flat_map(|p| p.groups.iter().map(|g| g.part)).collect();
+            v.sort();
+            v.dedup();
+            v
+        };
+        // Feet 8 (0x32) already takes the legs' part 6.
+        assert_eq!(parts(look(0, 8, 8)), [0, 1, 3, 4, 5, 7, 8]);
+        // Helm 230 (4): face parts 1..3.
+        assert_eq!(parts(look(230, 8, 8)), [0, 4, 5, 7, 8]);
+        // Head 22 (5): every face part.
+        assert_eq!(parts(look(22, 8, 8)), [0, 5, 7]);
+        // Body 3 (a hood 4, sleeves 0x12): face parts 1..3 and the hands' part 5.
+        assert_eq!(parts(look(0, 3, 8)), [0, 4, 7, 8]);
+        // Body 17 (0x12): the hands' part 5.
+        assert_eq!(parts(look(0, 17, 8)), [0, 1, 3, 4, 7, 8]);
+        // Legs 3 (0x22): the feet's part 7.
+        assert_eq!(parts(look(0, 8, 3)), [0, 1, 3, 4, 5, 8]);
     }
 }
