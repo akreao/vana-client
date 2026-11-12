@@ -1,5 +1,5 @@
 name = "Gearshift"
-version = "0.2.1"
+version = "0.2.6"
 description = "Swaps gear around your actions from GearSwap job files and LuAshitacast and Ashitacast XML profiles, unchanged (the gear-swap add-ons), or builds every set of your job from the gear you hold (//gearshift)."
 permissions = ["packets.read", "packets.write", "automation"]
 
@@ -21,6 +21,12 @@ default = "Auto"
 options = ["Auto", "75", "99"]
 label = "Level Cap"
 help = "The level cap the best-in-slot references are for: Auto takes 75 up to level 75 and 99 above it."
+
+[settings.ws_line]
+type = "bool"
+default = true
+label = "Weapon Skill Line"
+help = "With the set builder wearing sets: a chat line before each weapon skill naming the set it put on and how many pieces it changed. The model may show the set late or not at all (the game holds a look change during the weapon skill), but the gear is on before the skill."
 
 [commands.gs]
 help = "GearSwap's commands, for the loaded GearSwap file."
