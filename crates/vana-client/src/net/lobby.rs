@@ -7,7 +7,7 @@ use md5::{Digest, Md5};
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, TcpStream};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 
 const MAGIC: &[u8; 4] = b"IXFF";
@@ -149,6 +149,87 @@ impl std::fmt::Display for Refused {
 
 impl std::error::Error for Refused {}
 
+/// What the netwait run shares with a lobby link's worker (client/netwait.rs).
+#[derive(Default)]
+pub struct Watch {
+    /// View replies read so far: the netbar's waits.
+    pub replies: AtomicU32,
+    /// The run gave up on its reply (the 3600-call time-out, FUN_100edff0): the worker stops waiting and hands the
+    /// link back with its request still open, as retail's link stays.
+    pub abandon: AtomicBool,
+}
+
+/// The run stopped waiting for a reply (`Watch::abandon`).
+#[derive(Debug)]
+pub struct Abandoned;
+
+impl std::fmt::Display for Abandoned {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "the wait for the lobby's reply was given up")
+    }
+}
+
+impl std::error::Error for Abandoned {}
+
+/// Marks a failure of the list refresh after a change (steps 0x13 / 2 of ops 2, 3 and 5): FFXI-3115 follows it.
+#[derive(Debug)]
+pub struct InRefresh;
+
+impl std::fmt::Display for InRefresh {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "refreshing the character list")
+    }
+}
+
+/// A step that failed with a code of its own (thunk_FUN_100efa60): the link's 0x68 (FFXI-3104, the 0x0B came with
+/// no character list held, FUN_10115ea0 case 5), or a negative one from PlayOnline (the state's +0x136ac: -1 when
+/// polcore's list has no entry for the character, FUN_100eff30, else polcore's own code, FUN_100ee2a0 subs 0xe / 0xf).
+#[derive(Debug)]
+pub struct Failed(pub i32);
+
+impl std::fmt::Display for Failed {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self.0 {
+            c if c < 0 => write!(f, "PlayOnline failed the log-in (POL-{:04})", -(c as i64)),
+            c => write!(f, "the lobby step failed (FFXI-{})", 3000 + c),
+        }
+    }
+}
+
+impl std::error::Error for Failed {}
+
+/// The lobby's 0x0B with an empty character list held.
+pub const NO_LIST_CODE: i32 = 0x68;
+
+/// The code retail's popup shows for a failed lobby step (thunk_FUN_100efa60): the lobby's refusal, a step's own
+/// code (`Failed`), else 0x65 (FFXI-3101, a broken or unexpected reply).
+pub fn failure_code(e: &anyhow::Error) -> i32 {
+    e.chain()
+        .find_map(|c| {
+            c.downcast_ref::<Refused>().map(|r| r.0 as i32).or_else(|| c.downcast_ref::<Failed>().map(|f| f.0))
+        })
+        .unwrap_or(0x65)
+}
+
+/// Whether the view link outlives the failure: a refusal (0x04) and the 0x68 only zero the link's wait state
+/// (FUN_10115ea0 LAB_101163f3), so the next run's step 1 finds it alive (FUN_101164f0).
+pub fn link_kept(e: &anyhow::Error) -> bool {
+    e.chain().any(|c| {
+        c.downcast_ref::<Refused>().is_some() || matches!(c.downcast_ref::<Failed>(), Some(Failed(NO_LIST_CODE)))
+    })
+}
+
+/// polcore's character list as xiloader fills it from LSB's data message 0x03 (count @1, 16-byte entries from
+/// 0x10: the content id, then the world key): (content id, key). xiloader marks every entry linked to handle 0
+/// (+0x10 = its index, +0x11 = 0x80), so FFXiMain's step 3 takes the short path, sub 0xe -> 0xf -> 0x16.
+fn pol_entries(msg: &[u8]) -> Vec<(u32, u32)> {
+    let count = (msg[1] as usize).min((msg.len() - 8) / 16);
+    (1..=count).filter_map(|x| Some((rd_u32(msg, x * 16), rd_u32(msg.get(..x * 16 + 8)?, x * 16 + 4)))).collect()
+}
+
+/// How long a read waits before it looks at `Watch::abandon` again.
+const POLL: Duration = Duration::from_millis(100);
+
 /// A lobby connection: plain, or TLS (LSB's data and view ports since xiloader 3.0).
 enum Link {
     Plain(TcpStream),
@@ -208,6 +289,27 @@ impl Write for Link {
     }
 }
 
+/// Reads until `buf` holds `need` bytes. The link's read wakes every `POLL`; a run that gave up its wait
+/// (`Watch::abandon`) ends the read with `Abandoned`, the bytes so far kept in `buf`.
+fn fill(link: &mut Link, buf: &mut Vec<u8>, need: usize, watch: &Watch) -> Result<()> {
+    let mut chunk = [0u8; 4096];
+    while buf.len() < need {
+        let want = (need - buf.len()).min(chunk.len());
+        match link.read(&mut chunk[..want]) {
+            Ok(0) => return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof).into()),
+            Ok(n) => buf.extend_from_slice(&chunk[..n]),
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {
+                if watch.abandon.load(Ordering::Relaxed) {
+                    return Err(Abandoned.into());
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(())
+}
+
 /// A lobby result with the server's refusal split out: Err only when the link itself failed.
 pub fn refusal<T>(r: Result<T>) -> Result<std::result::Result<T, u16>> {
     match r {
@@ -253,12 +355,19 @@ pub struct Lobby {
     last_request: u8,
     pub expansions: u32,
     pub features: u32,
-    /// View replies read so far: the netbar's waits (client/netwait.rs).
-    pub replies: Arc<AtomicU32>,
+    /// The netbar's reply count and the run's give-up flag (client/netwait.rs).
+    pub replies: Arc<Watch>,
+    /// Bytes read off the view and data links that are not a whole message yet (a wait given up keeps them).
+    view_in: Vec<u8>,
+    data_in: Vec<u8>,
+    /// Sends of the FFXI_LOBBY_MUTE command so far.
+    mute_seen: u32,
     /// The world table (0x23), kept for the creator's world step.
     pub worlds: Vec<(u32, String)>,
     /// The last 0x20's records, as sent: requests take their ids from them.
     records: Vec<[u8; CHAR_INFO_LEN]>,
+    /// LSB: polcore's character list as xiloader would hold it (`pol_entries`).
+    pol_list: Vec<(u32, u32)>,
     /// PlayOnline: the signed-in member (net/pol).
     pub pol: Option<super::pol::Pol>,
 }
@@ -275,7 +384,7 @@ impl Lobby {
         version: &str,
         region: u32,
         content: u32,
-        replies: Arc<AtomicU32>,
+        replies: Arc<Watch>,
     ) -> Result<Self> {
         // LSB: the data link too, and the key its TLS lobby holds (none: plain).
         let (lsb, key) = match session {
@@ -295,6 +404,11 @@ impl Lobby {
             (data.map(|h| h.join().unwrap_or_else(|p| std::panic::resume_unwind(p))), view)
         });
         let (data, view) = (data.transpose()?, view?);
+        // Reads wake up to look at the run's give-up flag.
+        view.tcp().set_read_timeout(Some(POLL))?;
+        if let Some(d) = &data {
+            d.tcp().set_read_timeout(Some(POLL))?;
+        }
         let server_ip = match view.tcp().peer_addr()?.ip() {
             std::net::IpAddr::V4(ip) => ip,
             std::net::IpAddr::V6(ip) => ip.to_ipv4().unwrap_or(Ipv4Addr::LOCALHOST),
@@ -312,8 +426,12 @@ impl Lobby {
             expansions: 0,
             features: 0,
             replies,
+            view_in: Vec::new(),
+            data_in: Vec::new(),
+            mute_seen: 0,
             worlds: Vec::new(),
             records: Vec::new(),
+            pol_list: Vec::new(),
             pol: None,
         };
 
@@ -349,6 +467,18 @@ impl Lobby {
         Ok(lobby)
     }
 
+    /// Test hook: FFXI_LOBBY_MUTE=CMD[:N] (hex command, e.g. `14` or `1f:2`) holds back every send of that view
+    /// request, or only its Nth on this link, so its reply never comes and the run times out (FFXI-3113).
+    fn muted(&mut self, command: u8) -> bool {
+        let Ok(v) = std::env::var("FFXI_LOBBY_MUTE") else { return false };
+        let (cmd, nth) = v.split_once(':').map_or((v.as_str(), None), |(c, n)| (c, n.parse::<u32>().ok()));
+        if u8::from_str_radix(cmd.trim_start_matches("0x"), 16) != Ok(command) {
+            return false;
+        }
+        self.mute_seen += 1;
+        nth.is_none_or(|n| n == self.mute_seen)
+    }
+
     fn playonline(&self) -> bool {
         matches!(self.session, Session::PlayOnline { .. })
     }
@@ -374,23 +504,25 @@ impl Lobby {
             Session::PlayOnline { .. } => Md5::digest(&pkt).into(),
         };
         put(&mut pkt, 12, &tag);
-        self.view.write_all(&pkt)?;
         self.last_request = command;
+        if self.muted(command) {
+            log::warn!("lobby: request 0x{command:02X} held back (FFXI_LOBBY_MUTE)");
+            return Ok(());
+        }
+        self.view.write_all(&pkt)?;
         Ok(())
     }
 
     /// Reads one view packet and checks it is `expect` and at least `min_len` bytes, the end of the last field its
     /// caller reads (lobby errors become `Err`).
     fn read_view(&mut self, expect: u8, min_len: usize) -> Result<Vec<u8>> {
-        let mut size = [0u8; 4];
-        self.view.read_exact(&mut size).context("the lobby closed the view connection")?;
-        let size = u32::from_le_bytes(size) as usize;
+        fill(&mut self.view, &mut self.view_in, 4, &self.replies).context("the lobby closed the view connection")?;
+        let size = u32::from_le_bytes(self.view_in[..4].try_into().unwrap()) as usize;
         if !(28..=MAX_REPLY).contains(&size) {
             bail!("bad lobby packet size {size}");
         }
-        let mut pkt = vec![0u8; size];
-        pkt[..4].copy_from_slice(&(size as u32).to_le_bytes());
-        self.view.read_exact(&mut pkt[4..])?;
+        fill(&mut self.view, &mut self.view_in, size, &self.replies)?;
+        let pkt: Vec<u8> = self.view_in.drain(..size).collect();
         if &pkt[4..8] != MAGIC {
             bail!("not a lobby packet");
         }
@@ -405,7 +537,7 @@ impl Lobby {
         }
         let command = pkt[8];
         log::info!("lobby: reply 0x{command:02X} ({size} bytes) to 0x{:02X}", self.last_request);
-        self.replies.fetch_add(1, Ordering::Relaxed);
+        self.replies.replies.fetch_add(1, Ordering::Relaxed);
         if matches!(command, 0x03 | 0x0B | 0x20 | 0x23)
             || (command == 0x04 && matches!(self.last_request, 0x22 | 0x24 | 0x28 | 0x2B))
         {
@@ -428,16 +560,14 @@ impl Lobby {
     /// Reads one server-to-loader message from LSB's data socket.
     fn read_data(&mut self) -> Result<Vec<u8>> {
         let data = self.data.as_mut().context("no lobby data link")?;
-        let mut first = [0u8; 1];
-        data.read_exact(&mut first).context("the lobby closed the data connection")?;
-        let len = match first[0] {
+        fill(data, &mut self.data_in, 1, &self.replies).context("the lobby closed the data connection")?;
+        let len = match self.data_in[0] {
             0x01 | 0x02 => 5,
             0x03 => 0x148,
             other => bail!("unknown lobby data message 0x{other:02X}"),
         };
-        let mut msg = vec![first[0]; len];
-        data.read_exact(&mut msg[1..])?;
-        Ok(msg)
+        fill(data, &mut self.data_in, len, &self.replies)?;
+        Ok(self.data_in.drain(..len).collect())
     }
 
     /// The 0x20 record of a content id.
@@ -475,6 +605,7 @@ impl Lobby {
             if list[0] != 0x03 {
                 bail!("expected the character list, got 0x{:02X}", list[0]);
             }
+            self.pol_list = pol_entries(&list);
         }
         let pkt = self.read_view(0x20, 32)?;
         let count = (rd_u32(&pkt, 28) as usize).min(16);
@@ -535,8 +666,15 @@ impl Lobby {
     }
 
     /// Picks a character; the lobby answers with where its zone runs.
-    pub fn select(mut self, ch: &Character) -> Result<MapLogin> {
-        let rec = *self.record(ch.content_id).context("that character is not in the lobby's list")?;
+    pub fn select(&mut self, ch: &Character) -> Result<MapLogin> {
+        // With no list held (the 0x20's count 0, data +0x144) retail still asks, from an empty slot, and fails once
+        // the 0x0B is in.
+        let listed = !self.records.is_empty();
+        let rec = match self.record(ch.content_id) {
+            Some(r) => *r,
+            None if !listed => [0; CHAR_INFO_LEN],
+            None => bail!("that character is not in the lobby's list"),
+        };
         let mut p = packet(0x58);
         put(&mut p, 0x1C, &ch.content_id.to_le_bytes());
         put(&mut p, 0x20, &(rd_u16(&rec, 4) as u32).to_le_bytes());
@@ -559,8 +697,12 @@ impl Lobby {
             Session::PlayOnline { .. } => Md5::digest(&p).into(),
         };
         put(&mut p, 12, &tag);
-        self.view.write_all(&p)?;
         self.last_request = 0x07;
+        if self.muted(0x07) {
+            log::warn!("lobby: request 0x07 held back (FFXI_LOBBY_MUTE)");
+        } else {
+            self.view.write_all(&p)?;
+        }
 
         if self.data.is_some() {
             let msg = self.read_data()?;
@@ -576,6 +718,11 @@ impl Lobby {
 
         let pkt = self.read_view(0x0B, 0x48)?;
         let ip = |o| Ipv4Addr::from(rd_u32(&pkt, o).to_le_bytes());
+        // FUN_10115ea0 case 5: the 0x0B is taken, then data +0x144 == 0 fails the wait with the link's code 0x68.
+        if !listed {
+            return Err(Failed(NO_LIST_CODE).into());
+        }
+        let world_key = rd_u16(&rec, 4) as u32 | (rd_u16(&rec, 6) as u32) << 16 | (rec[0xB] as u32) << 24;
         // The lobby closes the link after 0x0B and the game waits for it (FUN_100ee160 sub 2), then makes the character
         // PlayOnline's active one (subs 0xE..0x15); a failure there ends the login.
         if self.playonline() {
@@ -583,10 +730,14 @@ impl Lobby {
             let mut rest = Vec::new();
             // Bounded: anything after 0x0B is ignored, and a lobby that keeps sending can't grow it without limit.
             let _ = (&mut self.view).take(MAX_REPLY as u64).read_to_end(&mut rest);
-            let world_key = rd_u16(&rec, 4) as u32 | (rd_u16(&rec, 6) as u32) << 16 | (rec[0xB] as u32) << 24;
             if let Some(p) = self.pol.as_mut() {
                 p.profile.select(ch.content_id, world_key)?;
             }
+        } else if !self.pol_list.contains(&(ch.content_id, world_key)) {
+            // Sub 0xe under xiloader (FUN_100efee0 -> FUN_100eff30): polcore's list is the data link's 0x03, and a
+            // character it does not hold under the same content id and key fails the step with -1. A listed one is
+            // linked there, and its ChangeMyStatus (subs 0xe / 0xf) is answered by the loader, so the step ends.
+            return Err(Failed(-1).into());
         }
         // World entry hashes the counter after two more steps (step 6: FUN_101158e0 twice); 0x0B made one.
         let mut key20 = [0u8; 20];
@@ -844,6 +995,56 @@ mod create_tests {
     /// counter LSB's older login keyed the map with, so `old_key` is the loader's zero value and that counter.
     #[test]
     fn old_key_matches_the_older_lsb_login() {
+        let hash = [0x33u8; 16];
+        let m = lsb_select(hash, 1).unwrap();
+        let old = m.old_key.unwrap();
+        assert_eq!(
+            (old[..16].to_vec(), u32::from_le_bytes(old[16..].try_into().unwrap())),
+            (vec![0u8; 16], 0xAD5DE058)
+        );
+        assert_eq!((m.key[..16].to_vec(), m.key[16..].to_vec()), (Md5::digest(hash).to_vec(), old[16..].to_vec()));
+    }
+
+    /// Step 3 sub 0xe under xiloader (FUN_100efee0 -> FUN_100eff30): the character has to be in polcore's list, which
+    /// the loader fills from the data link's 0x03, under the same content id and key; else the step fails with -1
+    /// (the popup's "Error code: POL-0001"), after the lobby has answered and closed, so the link is not kept.
+    #[test]
+    fn a_character_the_loader_list_lacks_fails_the_log_in() {
+        let e = lsb_select([0; 16], 0).unwrap_err();
+        assert_eq!(failure_code(&e), -1);
+        assert!(!link_kept(&e));
+    }
+
+    /// The codes of a failed step: the lobby's refusal, a step's own, else 0x65; a refusal and the 0x68 leave the
+    /// link up.
+    #[test]
+    fn failure_codes() {
+        let refused = anyhow::Error::from(Refused(201));
+        assert_eq!((failure_code(&refused), link_kept(&refused)), (201, true));
+        let empty = anyhow::Error::from(Failed(NO_LIST_CODE)).context("select");
+        assert_eq!((failure_code(&empty), link_kept(&empty)), (0x68, true));
+        let pol = anyhow::Error::from(Failed(-0x104));
+        assert_eq!((failure_code(&pol), link_kept(&pol)), (-0x104, false));
+        let broken = anyhow::anyhow!("closed");
+        assert_eq!((failure_code(&broken), link_kept(&broken)), (0x65, false));
+    }
+
+    /// The loader's list from the data message 0x03, as xiloader's applyList reads it.
+    #[test]
+    fn loader_list_entries() {
+        let mut msg = vec![0u8; 0x148];
+        (msg[0], msg[1]) = (3, 2);
+        msg[16..24].copy_from_slice(&[7, 0, 0, 0, 0x34, 0x12, 9, 1]);
+        msg[32..40].copy_from_slice(&[8, 0, 0, 0, 0, 0, 0, 0]);
+        msg[48..52].copy_from_slice(&[9, 0, 0, 0]);
+        assert_eq!(pol_entries(&msg), vec![(7, 0x0109_1234), (8, 0)]);
+        // A count past the message's room stops at its end.
+        msg[1] = 0xff;
+        assert_eq!(pol_entries(&msg).len(), 20);
+    }
+
+    /// An LSB log-in against a spec server whose data list holds `listed` characters (the one picked is the first).
+    fn lsb_select(hash: [u8; 16], listed: u8) -> Result<MapLogin> {
         use std::net::TcpListener;
         let (view, data) = (TcpListener::bind("127.0.0.1:0").unwrap(), TcpListener::bind("127.0.0.1:0").unwrap());
         let (vp, dp) = (view.local_addr().unwrap().port(), data.local_addr().unwrap().port());
@@ -861,7 +1062,8 @@ mod create_tests {
             let mut ident = [0u8; 28];
             d.read_exact(&mut ident).unwrap();
             let mut list = vec![0u8; 0x148];
-            list[0] = 3;
+            (list[0], list[1]) = (3, listed);
+            list[16..20].copy_from_slice(&7u32.to_le_bytes());
             d.write_all(&list).unwrap();
             let mut chars = vec![0u8; 4 + CHAR_INFO_LEN];
             chars[0] = 1;
@@ -876,7 +1078,6 @@ mod create_tests {
             d.read_exact(&mut key).unwrap();
             reply(&mut v, 0x0B, &[0u8; 0x48 - 28]);
         });
-        let hash = [0x33u8; 16];
         let mut l = Lobby::connect(
             "127.0.0.1",
             vp,
@@ -891,14 +1092,9 @@ mod create_tests {
         .unwrap();
         let chars = l.characters().unwrap();
         l.worlds().unwrap();
-        let m = l.select(&chars[0]).unwrap();
+        let m = l.select(&chars[0]);
         server.join().unwrap();
-        let old = m.old_key.unwrap();
-        assert_eq!(
-            (old[..16].to_vec(), u32::from_le_bytes(old[16..].try_into().unwrap())),
-            (vec![0u8; 16], 0xAD5DE058)
-        );
-        assert_eq!((m.key[..16].to_vec(), m.key[16..].to_vec()), (Md5::digest(hash).to_vec(), old[16..].to_vec()));
+        m
     }
 
     /// LSB since xiloader 3.0: data and view are TLS with the login server's key. The lobby talks over both as before;
@@ -1091,11 +1287,71 @@ mod create_tests {
         list[0] = 1;
         list[4..8].copy_from_slice(&7u32.to_le_bytes());
         list[4 + 12..4 + 16].copy_from_slice(b"Nine");
-        let (l, s) = lobby(vec![ok05, (0x20, list), (0x0B, vec![0; 0x40 - 28])]);
+        let (l, s) = lobby(vec![ok05.clone(), (0x20, list), (0x0B, vec![0; 0x40 - 28])]);
         let mut l = l.unwrap();
         let chars = l.characters().unwrap();
         assert!(l.select(&chars[0]).is_err());
         s.join().unwrap();
+        // A 0x0B with no character list held (the 0x20's count 0): the request still goes, the answer is taken, and
+        // the wait fails with the link's code 0x68 (FUN_10115ea0 case 5), the link kept.
+        let (l, s) = lobby(vec![ok05, (0x20, vec![0; 4]), (0x0B, vec![0; 0x48 - 28])]);
+        let mut l = l.unwrap();
+        assert!(l.characters().unwrap().is_empty());
+        let e = l.select(&parse_char(&[0; CHAR_INFO_LEN])).unwrap_err();
+        assert_eq!((failure_code(&e), link_kept(&e)), (NO_LIST_CODE, true));
+        s.join().unwrap();
+    }
+
+    /// A wait the run gave up (the 3600-call time-out) hands the link back; the late reply is still the next one read,
+    /// as on retail's link, whose request stays open.
+    #[test]
+    fn a_given_up_wait_keeps_the_link() {
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (go, wait) = std::sync::mpsc::channel::<()>();
+        let server = std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            let mut answer = |cmd: u8, body: &[u8], hold: bool| {
+                let mut n = [0u8; 4];
+                s.read_exact(&mut n).unwrap();
+                let mut p = vec![0u8; u32::from_le_bytes(n) as usize - 4];
+                s.read_exact(&mut p).unwrap();
+                let mut r = packet(28 + body.len());
+                r[8] = cmd;
+                r[28..].copy_from_slice(body);
+                let d = Md5::digest(&r);
+                r[12..28].copy_from_slice(&d);
+                if hold {
+                    // Half the reply, then nothing until the client has given up.
+                    s.write_all(&r[..20]).unwrap();
+                    wait.recv().unwrap();
+                    s.write_all(&r[20..]).unwrap();
+                } else {
+                    s.write_all(&r).unwrap();
+                }
+            };
+            answer(0x05, &[0u8; 12], false);
+            answer(0x23, &[0u8; 4], true);
+        });
+        let watch: Arc<Watch> = Default::default();
+        let session = Session::PlayOnline { auth_code: [0; 64], k16: [0; 16] };
+        let mut l = Lobby::connect("127.0.0.1", port, 0, session, b"dll", "30261102_0", 5, 0, watch.clone()).unwrap();
+        let w = watch.clone();
+        let giver = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            w.abandon.store(true, Ordering::Relaxed);
+        });
+        let e = l.worlds().unwrap_err();
+        assert!(e.downcast_ref::<Abandoned>().is_some(), "{e:#}");
+        giver.join().unwrap();
+        // The reply comes late: the next read takes it whole.
+        watch.abandon.store(false, Ordering::Relaxed);
+        go.send(()).unwrap();
+        assert_eq!(l.read_view(0x23, 32).unwrap().len(), 32);
+        server.join().unwrap();
+        assert_eq!(failure_code(&anyhow::Error::from(Refused(313)).context(InRefresh)), 313);
+        assert_eq!(failure_code(&anyhow::anyhow!("closed").context(InRefresh)), 0x65);
     }
 
     /// A lobby record whose model ids carry their slot nibble parses to bare ids every part file resolves from.
