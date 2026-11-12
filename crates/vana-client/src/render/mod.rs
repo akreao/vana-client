@@ -869,6 +869,11 @@ impl ActorGpu {
     pub fn casts_shadow(&self, done: u64) -> bool {
         self.mips <= done && self.refract.is_none() && self.alpha >= 0.5 && !self.shadow_off && self.skin.is_some()
     }
+
+    /// Its key among the effects' sorted elements: the view depth of its origin, clamped as theirs.
+    pub fn sort_key(&self, view: &Mat4) -> f32 {
+        (-view.transform_point3(self.origin).z).clamp(0.0, 512.0)
+    }
 }
 
 /// Bind-pose corners with up to two weighted influences, skinned in vs_skinned.
@@ -4153,12 +4158,8 @@ impl ZoneRenderer {
     /// behind it shows through and what is in front stays in front. `actors`: any list holding them.
     pub fn faded_pending<'a>(&self, camera: &Camera, actors: &[&'a ActorGpu]) -> Vec<(f32, &'a ActorGpu)> {
         let view = camera.view();
-        let mut list: Vec<(f32, &ActorGpu)> = actors
-            .iter()
-            .copied()
-            .filter(|a| a.faded_pending.replace(false))
-            .map(|a| ((-view.transform_point3(a.origin).z).clamp(0.0, 512.0), a))
-            .collect();
+        let mut list: Vec<(f32, &ActorGpu)> =
+            actors.iter().copied().filter(|a| a.faded_pending.replace(false)).map(|a| (a.sort_key(&view), a)).collect();
         list.sort_by(|a, b| b.0.total_cmp(&a.0));
         list
     }
@@ -4523,6 +4524,22 @@ impl ZoneRenderer {
         aspect: f32,
         actors: &[&ActorGpu],
     ) {
+        self.render_refraction_at(gpu, encoder, color, color_tex, depth, camera, aspect, actors, 0);
+    }
+
+    /// render_refraction from uniform slot `base` on: one actor at a time among the effects, each its own slot.
+    pub fn render_refraction_at(
+        &mut self,
+        gpu: &Gpu,
+        encoder: &mut wgpu::CommandEncoder,
+        color: &wgpu::TextureView,
+        color_tex: Option<&wgpu::Texture>,
+        depth: &wgpu::TextureView,
+        camera: &Camera,
+        aspect: f32,
+        actors: &[&ActorGpu],
+        base: usize,
+    ) {
         let done = gpu.mips_done();
         let list: Vec<&ActorGpu> = actors
             .iter()
@@ -4530,7 +4547,7 @@ impl ZoneRenderer {
             .filter(|a| {
                 a.mips <= done && a.refract.is_some() && a.skin.as_ref().is_some_and(|s| s.frame == self.pose_frame)
             })
-            .take(SHINE_SLOTS)
+            .take(SHINE_SLOTS.saturating_sub(base))
             .collect();
         if list.is_empty() || self.pose_gpu.is_none() {
             return;
@@ -4558,7 +4575,8 @@ impl ZoneRenderer {
         let proj = camera.proj(aspect);
         let (p00, p11) = (proj.x_axis.x, proj.y_axis.y);
         let Some((_, group, _)) = &self.pose_gpu else { return };
-        for (slot, a) in list.iter().enumerate() {
+        for (i, a) in list.iter().enumerate() {
+            let slot = base + i;
             let (Some(rf), Some(skin)) = (a.refract, a.skin.as_ref()) else { continue };
             let off = (slot as u64 * SHINE_STRIDE) as u32;
             gpu.queue.put(

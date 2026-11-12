@@ -21758,8 +21758,10 @@ Checked in Steven's unpacked FFXiMain.dll (sha256 8097dbf8..., 2026-11-03); note
   front and, before the first element nearer than each actor, ends its pass, composites that actor
   (`render_faded_one`) and goes on; the ones nearer than every element follow. Effects behind a faded actor show
   through it and effects in front stay over it. Test breaks_interleave_by_depth. The op 0x10 crossfade snapshot and
-  the select / shot tools still draw them at once. Left: a refracting actor in front of a faded one (the refraction
-  pass runs before the effects, so the faded actor is drawn over it).
+  the select / shot tools still draw them at once. The refracting actors (ops 0x48 / 0x49) are in the same walk:
+  `draw_scene` only lists them, `draw_effects` sorts faded and refracting actors together by `ActorGpu::sort_key`
+  and draws each at its break (`render_refraction_at`, its own uniform slot), so a refracting actor in front of a
+  faded one is drawn after it, and its scene copy holds the effects behind it.
 
 ## Footsteps: areas 704..706 give surface 3 surface 2's sound (2026-11-03)
 
