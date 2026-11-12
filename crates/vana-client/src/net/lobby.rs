@@ -198,25 +198,32 @@ impl std::fmt::Display for Failed {
 
 impl std::error::Error for Failed {}
 
+/// The key FFXiMain looks a character up by in polcore's list (FUN_100efee0): the 0x20 record's u16 +4, u16 +6 and
+/// byte +0xB.
+fn world_key(rec: &[u8; CHAR_INFO_LEN]) -> u32 {
+    rd_u16(rec, 4) as u32 | (rd_u16(rec, 6) as u32) << 16 | (rec[0xB] as u32) << 24
+}
+
 /// The lobby's 0x0B with an empty character list held.
 pub const NO_LIST_CODE: i32 = 0x68;
 
 /// The code retail's popup shows for a failed lobby step (thunk_FUN_100efa60): the lobby's refusal, a step's own
 /// code (`Failed`), else 0x65 (FFXI-3101, a broken or unexpected reply).
 pub fn failure_code(e: &anyhow::Error) -> i32 {
-    e.chain()
-        .find_map(|c| {
-            c.downcast_ref::<Refused>().map(|r| r.0 as i32).or_else(|| c.downcast_ref::<Failed>().map(|f| f.0))
-        })
+    // A code attached as a context (PlayOnline's, over the refusal it came from) is not in the chain as itself.
+    e.downcast_ref::<Failed>()
+        .map(|f| f.0)
+        .or_else(|| e.chain().find_map(|c| c.downcast_ref::<Refused>().map(|r| r.0 as i32)))
         .unwrap_or(0x65)
 }
 
 /// Whether the view link outlives the failure: a refusal (0x04) and the 0x68 only zero the link's wait state
 /// (FUN_10115ea0 LAB_101163f3), so the next run's step 1 finds it alive (FUN_101164f0).
 pub fn link_kept(e: &anyhow::Error) -> bool {
-    e.chain().any(|c| {
-        c.downcast_ref::<Refused>().is_some() || matches!(c.downcast_ref::<Failed>(), Some(Failed(NO_LIST_CODE)))
-    })
+    match e.downcast_ref::<Failed>() {
+        Some(f) => f.0 == NO_LIST_CODE,
+        None => e.chain().any(|c| c.downcast_ref::<Refused>().is_some()),
+    }
 }
 
 /// polcore's character list as xiloader fills it from LSB's data message 0x03 (count @1, 16-byte entries from
@@ -588,6 +595,16 @@ impl Lobby {
         self.record(content_id).map_or(content_id & 0xFFFF, |r| rd_u16(&r[..], 4) as u32)
     }
 
+    /// The list again after a change (steps 0x13 and 2 of the create, delete and rename runs): PlayOnline's own
+    /// character list first (FUN_100ee1e0; under xiloader the loader rewrites polcore's from the 0x03 that follows),
+    /// then the lobby's.
+    pub fn refresh(&mut self) -> Result<Vec<Character>> {
+        if let Some(p) = self.pol.as_mut() {
+            p.profile.reload_characters()?;
+        }
+        self.characters()
+    }
+
     pub fn characters(&mut self) -> Result<Vec<Character>> {
         self.send_view(0x1F, packet(0x2C))?;
         if let Session::Lsb { account_id, hash, .. } = self.session.clone() {
@@ -665,6 +682,13 @@ impl Lobby {
         Ok(())
     }
 
+    /// Whether logging this character in registers it to a PlayOnline handle first (step 3's subs 0x10..0x13):
+    /// PlayOnline lists it and no handle holds it. Never under xiloader, whose entries are all linked.
+    pub fn registers(&self, ch: &Character) -> bool {
+        let (Some(pol), Some(rec)) = (self.pol.as_ref(), self.record(ch.content_id)) else { return false };
+        pol.profile.unlinked(ch.content_id, world_key(rec))
+    }
+
     /// Picks a character; the lobby answers with where its zone runs.
     pub fn select(&mut self, ch: &Character) -> Result<MapLogin> {
         // With no list held (the 0x20's count 0, data +0x144) retail still asks, from an empty slot, and fails once
@@ -722,7 +746,7 @@ impl Lobby {
         if !listed {
             return Err(Failed(NO_LIST_CODE).into());
         }
-        let world_key = rd_u16(&rec, 4) as u32 | (rd_u16(&rec, 6) as u32) << 16 | (rec[0xB] as u32) << 24;
+        let world_key = world_key(&rec);
         // The lobby closes the link after 0x0B and the game waits for it (FUN_100ee160 sub 2), then makes the character
         // PlayOnline's active one (subs 0xE..0x15); a failure there ends the login.
         if self.playonline() {
@@ -1027,6 +1051,9 @@ mod create_tests {
         assert_eq!((failure_code(&pol), link_kept(&pol)), (-0x104, false));
         let broken = anyhow::anyhow!("closed");
         assert_eq!((failure_code(&broken), link_kept(&broken)), (0x65, false));
+        // PlayOnline's code as net/pol attaches it: a context over the profile service's refusal.
+        let coded = anyhow::Error::from(super::super::pol::polpro::Refused(0xb4)).context("x").context(Failed(-0x104));
+        assert_eq!((failure_code(&coded), link_kept(&coded)), (-0x104, false));
     }
 
     /// The loader's list from the data message 0x03, as xiloader's applyList reads it.
