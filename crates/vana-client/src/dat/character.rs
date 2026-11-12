@@ -1341,25 +1341,39 @@ mod tests {
         assert_eq!(super::hidden_parts(0x31), 0);
     }
 
-    /// Hume F face 2 (file 10258: parts 1, 3, 4 and two part-4 records turned 8): a helm (head 230, byte 3 = 4)
-    /// leaves only parts 4 and 8; boots (feet 8, 0x32) take the hose's part 6.
+    /// Hume F face 2 (file 10258: parts 1, 3, 4 and two part-4 records turned 8) and starting gear (hands part 5,
+    /// legs part 6, feet part 7, feet 8 = 0x32): each code family drops what it covers and nothing else.
     #[test]
     fn covered_parts_are_dropped() {
         let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
-        let look =
-            |head, legs| super::Look { race: 2, face: 2, head, body: 8, hands: 8, legs, feet: 8, ..Default::default() };
-        let parts = |l| -> Vec<(String, u8)> {
+        let look = |head, body, legs| super::Look {
+            race: 2,
+            face: 2,
+            head,
+            body,
+            hands: 8,
+            legs,
+            feet: 8,
+            ..Default::default()
+        };
+        let parts = |l| -> Vec<u8> {
             let ch = super::load_character(&index, &l).unwrap();
-            ch.parts.iter().flat_map(|p| p.groups.iter().map(|g| (p.name.clone(), g.part))).collect()
+            let mut v: Vec<u8> = ch.parts.iter().flat_map(|p| p.groups.iter().map(|g| g.part)).collect();
+            v.sort();
+            v.dedup();
+            v
         };
-        let (bare, helm) = (parts(look(0, 8)), parts(look(230, 8)));
-        let face = |v: &[(String, u8)]| {
-            let mut f: Vec<u8> = v.iter().filter(|(n, _)| n == "hf_h").map(|g| g.1).collect();
-            f.dedup();
-            f
-        };
-        assert!(face(&bare).contains(&1) && face(&bare).contains(&8), "{:?}", face(&bare));
-        assert!(face(&helm).iter().all(|p| matches!(p, 4 | 8)), "{:?}", face(&helm));
-        assert!(!parts(look(0, 323)).iter().any(|g| g.1 == 6));
+        // Feet 8 (0x32) already takes the legs' part 6.
+        assert_eq!(parts(look(0, 8, 8)), [0, 1, 3, 4, 5, 7, 8]);
+        // Helm 230 (4): face parts 1..3.
+        assert_eq!(parts(look(230, 8, 8)), [0, 4, 5, 7, 8]);
+        // Head 22 (5): every face part.
+        assert_eq!(parts(look(22, 8, 8)), [0, 5, 7]);
+        // Body 3 (a hood 4, sleeves 0x12): face parts 1..3 and the hands' part 5.
+        assert_eq!(parts(look(0, 3, 8)), [0, 4, 7, 8]);
+        // Body 17 (0x12): the hands' part 5.
+        assert_eq!(parts(look(0, 17, 8)), [0, 1, 3, 4, 7, 8]);
+        // Legs 3 (0x22): the feet's part 7.
+        assert_eq!(parts(look(0, 8, 3)), [0, 1, 3, 4, 5, 8]);
     }
 }
