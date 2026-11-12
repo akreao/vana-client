@@ -23693,3 +23693,29 @@ For lenonk/vana-client#172. Addresses are 30261006_0.
     Ours already shows nothing.
   - Pulse / glint timing: stepped once per draw call (FUN_101fe0b0, the window's +0x10 draw), so once per rendered
     frame; ours steps at 30 a second, retail's frame rate.
+
+## Fishing: the release and the holds after it (2026-11-11)
+
+- FUN_10089100 moves on only when FUN_10088380 is admitted by FUN_100fc3c0's 1 s gate (0x110 is gated with force 0).
+  A refused send leaves the sub-state as it was, and the controller tries again next frame: the bite check (sub 0
+  then goes on to the early press / Escape checks), the ends (sub 0 / 1), the timeout warning (G[9] set only when
+  admitted) and the release (sub 3). FUN_10127ea0 runs only after an admitted end in sub 1 (0x1008936e /
+  0x100894a1), not after sub 0's 201.
+- Ours had dropped a refused 0x110. An Escape in the wait sends mode 3, and mode 4 came 35 ms later: refused,
+  dropped, so LSB never left NewFishingStop (62). The player could not move or log out (LSB refuses 0x0E7 while
+  fishing), and the rod stayed in her hand. Now 0x110 is gated at the caller (`call_gate`, as chat and tells), so
+  the release goes once the gate opens and the put-away (`fsh6`) has finished.
+- Ops 0x20 / 0x1f / 0x56 / 0x59 / 0x07 / 0x08 make hold sub-tasks, children of their scheduler task. Deleting the
+  task (op 0x5f, vtable +0x29c, its end) deletes them, and their dtors lower +0x80 / the busy counter. Ours kept them
+  as free timers. `fsh0` (the cast, 2700 ticks) opens with op 0x07 for 2700 ticks, so the hold outlived the
+  scheduler that `fsh6`'s op 0x5f kills: for up to 45 s the status motion was not re-picked, and the player glided
+  in the put-away pose. An attack's swing hold replaced it and ended it. The holds now live in fx with their task's
+  uid (`task_holds`, `held`), like op 0xb5's blink holds.
+- Mithra fishing file 39084: `fsh6` (length 164): op 0x1f 164 (actor1's status changes wait), 0x5f `fsh1` and
+  `fsh0`, op 0x07 164, `fh9?` 40 (blend 8), `fh4?` 124 (blend 0, u16 @0x1c 8). `fsh4` / `fsh2`: the same pattern for
+  248 / 292 ticks (`fh6?` / `fh3?`, then `fh4?`). The rod (39477) has the same motions and the line sounds (op 0x0a
+  8231..8234, 6095), and no holds.
+- The rod: FUN_1008f740 makes it (+0xa4) while FUN_100956c0 (any fishing status) holds. FUN_10092870 deletes it,
+  drops the fishing motion files (FUN_100d44b0(7 / 8 / 9)) and clears +0x7d8 once that is false. FUN_100c8bb0 gives
+  `fh1 ` for every fishing status, 0x3e too. So, as far as traced, retail also returns to `fh1` (rod in hand)
+  between the end of `fh4` and the server's status 0 (here 0.7 s: one send interval and an LSB tick).

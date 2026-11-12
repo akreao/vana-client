@@ -1335,6 +1335,7 @@ pub(super) fn print_record(w: &mut World, a: &Action, k: usize, which: u8) {
 pub(super) fn held(w: &World, id: u32) -> bool {
     let now = Instant::now();
     w.holds.get(&id).is_some_and(|t| *t > now)
+        || w.effects.held.get(&id).is_some_and(|k| k & crate::fx::HOLD_STATUS != 0)
         || w.loads.get(&id).is_some_and(|l| l.1 > now)
         || w.knocks.contains_key(&id)
         || w.rounds.values().any(|(_, rest)| rest.iter().any(|a| a.targets.iter().any(|t| t.id == id)))
@@ -1431,17 +1432,10 @@ pub(super) fn fx_load(w: &mut World, id: u32) {
     e.1 = Instant::now() + Duration::from_secs(30);
 }
 
-/// The skill holds from fx (ops 0x20 / 0x1f / 0x56 / 0x59 / 0x07 / 0x08) for their ticks, the longest winning.
-pub(super) fn fx_hold(w: &mut World, id: u32, ticks: f32, kind: u8) {
-    let until = Instant::now() + Duration::from_secs_f32(ticks.max(0.0) / 60.0);
-    if kind & crate::fx::HOLD_STATUS != 0 {
-        let e = w.holds.entry(id).or_insert(until);
-        *e = (*e).max(until);
-    }
-    if kind & crate::fx::HOLD_REACT != 0 {
-        let e = w.noreact.entry(id).or_insert(until);
-        *e = (*e).max(until);
-    }
+/// +0x80 up: a swing's hold or a live scheduler's op 0x07 / 0x08 / 0x59 (no reactions, no status motion re-pick).
+pub(super) fn no_react(w: &World, id: u32) -> bool {
+    w.noreact.get(&id).is_some_and(|t| *t > Instant::now())
+        || w.effects.held.get(&id).is_some_and(|k| k & crate::fx::HOLD_REACT != 0)
 }
 
 /// FUN_100a9610: one load hold ends (busy -1); op 0x20 holds run on.
@@ -1464,10 +1458,7 @@ pub(super) fn react_op(w: &mut World, r: &crate::fx::React) {
         w.entities.get(&r.reactor).map_or(0, |e| e.motion.status)
     };
     // FUN_1005e5f0: none while the reactor is being knocked back.
-    if r.level == 0
-        || w.noreact.get(&r.reactor).is_some_and(|t| *t > Instant::now())
-        || w.knocks.contains_key(&r.reactor)
-        || matches!(status, 2 | 3 | 5 | 0x55)
+    if r.level == 0 || no_react(w, r.reactor) || w.knocks.contains_key(&r.reactor) || matches!(status, 2 | 3 | 5 | 0x55)
     {
         return;
     }
@@ -1720,10 +1711,7 @@ pub(super) fn guard_op(w: &mut World, g: &crate::fx::Guard) {
     } else {
         w.entities.get(&g.reactor).map_or(0, |e| e.motion.status)
     };
-    if w.noreact.get(&g.reactor).is_some_and(|t| *t > Instant::now())
-        || w.knocks.contains_key(&g.reactor)
-        || matches!(status, 5 | 0x55)
-    {
+    if no_react(w, g.reactor) || w.knocks.contains_key(&g.reactor) || matches!(status, 5 | 0x55) {
         return;
     }
     let name = match (g.parry, moving(w, g.reactor)) {

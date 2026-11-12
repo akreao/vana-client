@@ -649,7 +649,7 @@ pub(super) fn update(w: &mut World, dt: f32) {
         let base = status_motion(w, id, &ch);
         // FUN_100c83c0: a new status motion on an entity's own actor (+0x7d8), once it plays (FUN_100cd920 finds it).
         let a = &w.actors[&id];
-        let held = w.noreact.get(&id).is_some_and(|t| *t > std::time::Instant::now());
+        let held = super::combat::no_react(w, id);
         if !held && a.status_motion != base && !find(&a.extra, &ch, &base).is_empty() {
             if id == w.my_id || w.entities.contains_key(&id) {
                 let st =
@@ -762,7 +762,8 @@ pub(super) fn update(w: &mut World, dt: f32) {
             p.ticks += ticks;
         }
         // +0x80 up: the status motion is not re-picked, so a base change does not end the play.
-        let held = w.noreact.get(&id).is_some_and(|t| *t > std::time::Instant::now());
+        let held = w.noreact.get(&id).is_some_and(|t| *t > std::time::Instant::now())
+            || w.effects.held.get(&id).is_some_and(|k| k & crate::fx::HOLD_REACT != 0);
         if a.play.as_ref().is_some_and(|p| p.over(if held { &p.base } else { &base })) {
             // A counted motion's end restarts the status motion (FUN_100c83c0 via vtable +0x200): a status start,
             // so the shot's crossbow (wep2) goes again.
