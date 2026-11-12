@@ -12,8 +12,11 @@ pub const ROD: u32 = 0x1000_0000;
 /// After a result's put-away (`fsh2`..`fsh6` over, the status still 0x3a..0x3e) the angler keeps its last pose until
 /// the status leaves fishing *(inf: retail goes from the put-away straight to the stand; the traced paths would start
 /// `fh1` again, MODLOG "Fishing: the release and the holds after it")*.
+/// Only once that status's scheduler started: an angler whose files are not in yet keeps re-picking.
 pub fn put_away(w: &World, id: u32) -> bool {
-    (0x3a..=0x3e).contains(&status_of(w, id))
+    let status = status_of(w, id);
+    (0x3a..=0x3e).contains(&status)
+        && w.anglers.get(&id).is_some_and(|a| a.model == status)
         && ![b"fsh2", b"fsh3", b"fsh4", b"fsh5", b"fsh6"]
             .iter()
             .any(|s| w.effects.actor_scheduler_running(id, u32::from_le_bytes(**s)))
