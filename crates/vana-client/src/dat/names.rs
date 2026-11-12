@@ -22,6 +22,9 @@ pub const MOUNT_TEXTS: [u32; 4] = [55562, 55682, 55802, 56222];
 pub const EMOTE_TEXTS: [u32; 4] = [55556, 55676, 55796, 56216];
 pub const PLACES: [u32; 4] = [55535, 55465, 55775, 56195];
 pub const TITLES: [u32; 4] = [55584, 55704, 55824, 56244];
+/// Weather words (this build's language slot 0x14, FUN_10167340): field 0 the noun ("rain"), field 1 the adjective
+/// ("rainy").
+pub const WEATHER: [u32; 4] = [55537, 55657, 55777, 56197];
 
 fn u32_at(b: &[u8], o: usize) -> Option<u32> {
     Some(u32::from_le_bytes(b.get(o..o + 4)?.try_into().ok()?))
@@ -129,6 +132,10 @@ pub trait NameSource: Send + Sync {
     fn ability(&self, id: u32) -> Option<String>;
     fn place(&self, id: u32) -> Option<String>;
     fn title(&self, id: u32) -> Option<String>;
+    /// Weather `id`'s adjective ("sunny") or noun ("sunshine").
+    fn weather(&self, _id: u32, _adjective: bool) -> Option<String> {
+        None
+    }
     /// FUN_101552e0 on the English key item entry: types 0 / 1 take "the" (FUN_101540a0's mode 0 / 1).
     fn key_item_definite(&self, _id: u32) -> bool {
         false
@@ -150,6 +157,7 @@ pub struct Names {
     mounts: Option<DMsg>,
     mount_texts: Option<DMsg>,
     emote_texts: Option<DMsg>,
+    weather: Option<DMsg>,
 }
 
 impl Names {
@@ -177,6 +185,7 @@ impl Names {
             mounts: DMsg::load(index, MOUNTS[l]).ok(),
             mount_texts: DMsg::load(index, MOUNT_TEXTS[l]).ok(),
             emote_texts: DMsg::load(index, EMOTE_TEXTS[l]).ok(),
+            weather: DMsg::load(index, WEATHER[l]).ok(),
         })
     }
 
@@ -342,6 +351,13 @@ impl NameSource for Names {
     fn title(&self, id: u32) -> Option<String> {
         self.titles.text(id as usize)
     }
+
+    fn weather(&self, id: u32, adjective: bool) -> Option<String> {
+        match self.weather.as_ref()?.fields(id as usize)?.get(adjective as usize)? {
+            Field::Text(t) => Some(t.clone()),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -386,6 +402,9 @@ mod tests {
         fn title(&self, _: u32) -> Option<String> {
             None
         }
+        fn weather(&self, id: u32, adjective: bool) -> Option<String> {
+            (id == 513).then(|| if adjective { "rainy" } else { "rain" }.into())
+        }
     }
 
     #[test]
@@ -410,6 +429,11 @@ mod tests {
             line(b"\x01\x05\x25\x82\x81\x80\x80 in \x01\x05\x37\x82\xe6\x81\x80"),
             "linkshells in Southern San d'Oria"
         );
+        // Port Jeuno #6883: weather adjective (0x17) then noun (0x18), both from num1.
+        assert_eq!(
+            line(b"be \x01\x05\x17\x82\x81\x80\x80 with a chance of \x01\x05\x18\x82\x81\x80\x80."),
+            "be rainy with a chance of rain."
+        );
     }
 
     #[test]
@@ -418,6 +442,8 @@ mod tests {
         let Ok(n) = Names::load(&index, Lang::En) else { return };
         assert_eq!(n.spell(1).as_deref(), Some("Cure"));
         assert_eq!(n.ability(0x200 + 16).as_deref(), Some("Mighty Strikes"));
+        assert_eq!(n.weather(6, true).as_deref(), Some("rainy"));
+        assert_eq!(n.weather(6, false).as_deref(), Some("rain"));
         assert_eq!(n.place(230).as_deref(), Some("Southern San d'Oria"));
         assert_eq!(n.title(1).as_deref(), Some("Fodderchief Flayer"));
         assert_eq!(n.key_item(1).map(|k| k.singular), Some("Zeruhn report".to_string()));

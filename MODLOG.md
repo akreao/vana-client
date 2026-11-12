@@ -23969,3 +23969,18 @@ All of it is the mod's Lua over the general API; the client gained nothing.
   the boots); legs 3 / 10 with feet 8 (their knee plates are part 6, hidden by the 0x32 feet). Body 17 / 18 sleeves
   change no pixel (the hidden wrists sit inside the sleeve). Live: Lnxcsfix with helm 230, hose 323, boots 110, front
   and side.
+
+## Grammar blocks 0x17 / 0x18: weather words (2026-11-12)
+
+- Reported (from the LSB side): weather reporters (Leffquen, Port Jeuno, event 0x2726) said "The weather in that area
+  today will be ." The forecast lines (Port Jeuno 6880..6891) name the weather with 0x01 blocks 0x17 / 0x18 on num[],
+  which the expander skipped.
+- FUN_100be760 case 0x17 / 0x18: the index from num[] (+0xc64), then FUN_101673e0 / FUN_101673f0 on the object at
+  DAT_10621950 = FUN_102578d0(index, field 1 / field 0). That object loads language slot 0x14 (this build's numbering,
+  FUN_10167340 via FUN_1025b580(0x14)): files 55537 / 55657 / 55777 / 56197 (ja / en / de / fr), 20 entries by
+  weather id, field 0 the noun ("rain", "fine patches"), field 1 the adjective ("rainy", "fine"). 0x17 takes the
+  adjective ("will be sunny"), 0x18 the noun ("a chance of clouds").
+- Ours: Names::weather, dialog grammar_expand 0x17 / 0x18, the disassembler prints {weather adj / noun}. Op 0x72's file
+  read moved to dat::weather::forecast_day so `event-run` reads the real forecast too (it gave weather 0 before).
+  Headless, Port Jeuno 246 #10022 at Earth second 784700135: Valkurm Dunes "sunny with a chance of clouds", Qufim
+  Island "snow with occasional clouds ... slight chance of blizzards".
