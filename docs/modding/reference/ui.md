@@ -137,18 +137,73 @@ A bar filled from 0 to 1, with a label and a text. It is not a cursor stop.
 | `style` | `string` | none | `"row"`: a list row, as the training regime window's: the label at the left, the text at the right, a thin bar under them (a `value` of 0 or less: no bar fill, the bar dim). |
 | `dim` | `boolean` | `false` | A `row` drawn dim, as a finished one is. |
 
-### timers
+### map
 
-A section of the client's timers, drawn as the Timers draw it: recasts as rows with their bars, effects as icon cells
-by who bears them. It shows in an edge window standing in for that section's panel (`panel = "timers_recasts"` and so
-on); in the classic UI the three panels make the one Timers window with three sections. It is not a cursor stop, and
-an edge window whose sections are empty is not drawn.
+The zone's map around you, north up, in the window standing in for the minimap panel (`panel = "minimap"`): the
+client draws the map and your marker (and, in the modern UI, Wide Scan's marks), as big as the panel; the zoom is the
+client option `minimap_span` (see [client](client.md)). The wheel over it sends a `wheel` event; the Minimap mod sets
+the zoom from it. Drawn only in that panel's window, in both UIs; it is not a cursor stop.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `id` | `string` | `""` | Optional. |
+| `id` | `string` | `""` | Optional; `ui.update` with `dots` replaces them. |
+| `dots` | `table[]` | `{}` | Marks on the map: `{x, z, colour, target, tip}`: a world position, a colour (`0xRRGGBB` or `{r, g, b}`), `target` drawn larger and ringed in red, `tip` the tooltip naming it (modern UI). |
+
+### lines
+
+Lines of text in tones, with element icons, thin bars and fold headers: the skillchain helper's view. The modern UI
+draws each line as below; the classic UI draws each as one line of text in its first span's tone (a bar as the Timers'
+gauge, a heading in the headings' gold). It is not a cursor stop. A fold header's click sends a `fold` event with its
+`key`; the mod shows or leaves out the lines under it and sets `open`.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | `string` | `""` | Optional; `ui.update` with `lines` replaces them. |
+| `lines` | `table[]` | `{}` | The lines in order. |
+
+Each line is one span's fields (`text`, `tone`, `strong`, `elements`) or `spans`, a list of them (a string is a plain
+span), with:
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `tone` | `string` or colour | `"text"` | `"text"`, `"muted"`, `"gold"`, `"bronze"` (the UI's colours) or `{r, g, b, a}`. |
+| `strong` | `boolean` | `false` | The strong face, a size up. |
+| `elements` | `integer[]` | none | Element icons after the text (0 fire, 1 ice, 2 wind, 3 earth, 4 thunder, 5 water, 6 light, 7 dark). |
+| `right` | span | none | Text at the right end of the line. |
+| `column` | `number` | `0` | The spans after the first start this far in (wrapped there); the first sits at the left. |
+| `indent` | `number` | `0` | Space before the text. |
+| `bar` | `number` | none | A thin gauge filled to this (0..1) in the line's `tone`, instead of text. |
+| `fold` | `string` | none | A header with a chevron, `open` or not; a click sends `fold` with this key. |
+| `open` | `boolean` | `false` | A fold header's chevron open. |
+| `heading` | `boolean` | `false` | A heading (`big`: a size up). |
+| `gap` | `number` | `0` | Space after the line. |
+
+One span without icons wraps to the window's width; several spans (or icons, or a `right`) make one row.
+
+### timers
+
+Timer rows in groups, drawn as the Timers draw them: in the `recasts` section as rows with their bars, in the others
+as icon cells by group (the modern UI; the classic UI draws rows in all three). It shows in an edge window standing in
+for that section's panel (`panel = "timers_recasts"` and so on); in the classic UI the three panels make the one
+Timers window with three sections. It is not a cursor stop, and an edge window whose sections are empty is not drawn.
+The rows are the mod's, in the order it gives them; the client only counts them down and draws them. The Timers mod
+fills its three windows this way.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | `string` | `""` | Optional; `ui.update` with `groups` replaces the rows. |
 | `section` | `string` | `"recasts"` | `"recasts"`, `"buffs"` or `"debuffs"`. |
-| `builtin` | `boolean` | `true` | The client's own rows too (our recasts and effects, the effects we put on others); the mods' [`timers.add`](timers.md) rows show either way. |
+| `groups` | `table[]` | `{}` | The groups in order: `{name, rows}`, `name` the heading (none: the rows alone). |
+
+Each row:
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `name` | `string` | `""` | The row's text. |
+| `left` | `number` | `0` | Seconds left when given: the client counts it down from then. At or below 0 the row is dimmed (its end is awaited). |
+| `total` | `number` | `0` | The gauge's whole length in seconds; 0: no gauge, the time shows `--:--`. |
+| `fills` | `boolean` | `false` | `true`: the gauge fills toward ready (recasts); `false`: it drains, and the icon dims and brightens in the last 15 seconds as the status icons do. |
+| `icon` | `table` | none | `{kind = "status" (default) \| "spell" \| "ability", id}`: a status icon, or a spell's or ability's list icon. |
 
 ### separator
 
@@ -361,6 +416,8 @@ the window has already changed: a list's cursor is on the chosen row, a closed w
 | `"change"` | `id`, `value` | A colour changes: each step while it is edited, and again when Escape puts the old colour back. `value` is `{r, g, b, a}`. |
 | `"toggle"` | `id`, `open` | A section is folded (`open = false`) or unfolded (`open = true`). |
 | `"sort"` | `id`, `column` | A list's column heading is clicked. `column` is which column. |
+| `"fold"` | `id`, `key` | A [`lines`](#lines) element's fold header is clicked: its `key`. |
+| `"wheel"` | `id`, `notches` | The wheel over a [`map`](#map) element: notches up (zoom in) positive. |
 | `"click"` | `id`, `x`, `y` | A canvas is clicked. `x` and `y` (integers) are where, in the canvas's units from its top left. |
 | `"drag_start"` | `id`, `x`, `y`, `dx`, `dy` | The pointer moves with the left button held down on a canvas: a drag starts. `x`, `y` are where the button went down. |
 | `"drag"` | `id`, `x`, `y`, `dx`, `dy` | The pointer moves during that drag. `dx`, `dy` are the move since the last report. The drag stays with the canvas, even when the pointer leaves it, until the button comes up. |
@@ -454,7 +511,7 @@ redraws it with the new elements; the values you give (`at`, `text`, `open` and 
 | `heading` | `string` | the title | An edge window's line over its elements. |
 | `resize` | `boolean` | `false` | An edge window the player can make wider (modern UI). |
 | `grow` | `string` | none | `"up"`: an edge window whose canvas grows or shrinks keeps its bottom edge where it is (free, or on a side or the bottom edge); on the top edge it keeps its top and grows down (modern UI). Its handler gets `dock` {side} (`"top"`, `"bottom"`, `"left"`, `"right"` or `"free"`) when it is first shown and whenever the player moves it to another edge, so it can lay itself out for that edge. |
-| `panel` | `string` | none | `"regime"`, `"timers_recasts"`, `"timers_buffs"`, `"timers_debuffs"`, `"skillchains"` (the client's skillchain helper view, drawn whatever the window's elements are) or `"minimap"` (the client's minimap, with Wide Scan under it in the modern UI): the edge window stands in for that built-in panel: its saved place and fold, its name for `ui.native.hide` and `/uimodes`, and in the classic UI its place in the Timers' dock (under the Timers window, with the drawer arrow and the slide). The classic UI draws an edge window without a `panel` as other windows; in the modern UI one takes a place the first time it shows (the left edge under the edge windows there if it fits above the location panel, else the right edge under the minimap) and keeps it until the player moves it. An ordinary (not edge) window takes `"focus"` (the modern focus panel, on the target panel; not drawn while an event takes the target window down) or `"pending"` (the pending-action chip's panel, over the cast bar): it stands in for that panel, with its place, `ui.native.hide` and `/uimodes`; neither is drawn in the classic UI. |
+| `panel` | `string` | none | `"regime"`, `"timers_recasts"`, `"timers_buffs"`, `"timers_debuffs"`, `"skillchains"` (the skillchain helper's: its [`lines`](#lines) element, drawn in the Timers' dock in the classic UI) or `"minimap"` (its [`map`](#map) element in a corner, with Wide Scan under it in the modern UI): the edge window stands in for that built-in panel: its saved place and fold, its name for `ui.native.hide` and `/uimodes`, and in the classic UI its place in the Timers' dock (under the Timers window, with the drawer arrow and the slide). The classic UI draws an edge window without a `panel` as other windows; in the modern UI one takes a place the first time it shows (the left edge under the edge windows there if it fits above the location panel, else the right edge under the minimap) and keeps it until the player moves it. An ordinary (not edge) window takes `"focus"` (the modern focus panel, on the target panel; not drawn while an event takes the target window down) or `"pending"` (the pending-action chip's panel, over the cast bar): it stands in for that panel, with its place, `ui.native.hide` and `/uimodes`; neither is drawn in the classic UI. |
 
 **Returns** nothing.
 

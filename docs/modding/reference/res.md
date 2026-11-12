@@ -23,6 +23,7 @@ end)
 | [`res.spell(id)`](#resspell) | A spell's record: name, MP, cast time, recast, levels by job. |
 | [`res.ability(id)`](#resability) | A job ability, weapon skill or pet command's record. |
 | [`res.status(id)`](#resstatus) | A status effect's name. |
+| [`res.status_info(id)`](#resstatus_info) | Whether a status effect can be cancelled or ever shows a time, and its description. |
 | [`res.zone(id)`](#reszone) | A zone's name. |
 | [`res.zone_text(zone, id)`](#reszone_text) | A zone dialogue entry's bytes, as the game file holds them. |
 | [`res.zone_text_find(zone, prefix)`](#reszone_text_find) | The first zone dialogue entry starting with some bytes. |
@@ -139,6 +140,7 @@ loaded yet.
 | `cast_time` | `number` | The cast time in seconds. |
 | `recast` | `number` | The recast time in seconds. |
 | `range` | `integer` | The spell's range class, 0..15, as the game file stores it (an index into the game's range table, not a distance in yalms). |
+| `area` | `boolean` | It always hits an area (the -ga spells, Protectra and the like). |
 | `levels` | `table<integer, integer>` | The level each job learns it at, keyed by job id (1 WAR .. 22 RUN). Jobs that cannot learn the spell have no key. |
 | `main_only` | `integer?` | The job that casts it only as its main job (20 SCH, 21 GEO), else `nil`. |
 | `job_points` | `table<integer, boolean>` | Jobs for which `levels` holds the job points the spell takes at level 99 (a gift), keyed by job id. |
@@ -229,6 +231,41 @@ the `buff_gain` / `buff_lose` events pass.
 for _, b in ipairs(game.buffs()) do
   local left = b.remaining and string.format(" (%.0f s)", b.remaining) or ""
   print((res.status(b.id) or ("status " .. b.id)) .. left)
+end
+```
+
+## `res.status_info`
+
+```lua
+res.status_info(id) -> table?
+```
+
+What the game's status info file says of a status effect: the facts its status icons go by.
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | `integer` | yes | The status effect id, 0..65535. |
+
+**Returns** `table?`: `nil` when the game has no entry for it (or its files have not loaded yet); otherwise:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `cancellable` | `boolean` | The player can cancel it (from its icon, or with `/cancel`). |
+| `untimed` | `boolean` | Its icon never shows a time, even when the server sent an end time. |
+| `description` | `string` | Its description, as the help line shows it for its icon. |
+
+**Errors** "game state is not available here" in the lobby or inside a filter.
+
+**Example**
+
+```lua
+for _, b in ipairs(game.buffs()) do
+  local info = res.status_info(b.id)
+  if b.remaining and not (info and info.untimed) then
+    print(res.status(b.id), math.floor(b.remaining) .. "s")
+  end
 end
 ```
 

@@ -995,6 +995,12 @@ impl MapWin {
             return true;
         }
         if !self.has_menu() {
+            // A map we opened where none is needed (a ship's or airship's route chart) has no map0 (the only way
+            // here for Menu / Other), but Escape still closes it; an event's map takes no keys (the event closes it).
+            if key == egui::Key::Escape && matches!(self.mode, Mode::Menu | Mode::Other) {
+                self.sounds.push(Ui::Cancel as u32);
+                return false;
+            }
             return true;
         }
         match key {

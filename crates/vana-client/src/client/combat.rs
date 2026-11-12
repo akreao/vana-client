@@ -1219,7 +1219,6 @@ fn track_cast(w: &mut World, a: &Action) {
 /// work = [cmd_arg, value, proc value, react value, bit]; melee waits for the attacker's hit.
 fn one_action(w: &mut World, a: &Action) {
     track_cast(w, a);
-    super::skillchain::on_action(w, a);
     // Our cast finished (category 4, magic file 0xaf0): the spell's recast (asm 0x100a900d).
     if a.actor == w.my_id && a.category == category::MAGIC_FINISH {
         super::magic::set_recast(w, a.arg as u16, a.info);
@@ -1335,6 +1334,7 @@ pub(super) fn print_record(w: &mut World, a: &Action, k: usize, which: u8) {
 pub(super) fn held(w: &World, id: u32) -> bool {
     let now = Instant::now();
     w.holds.get(&id).is_some_and(|t| *t > now)
+        || w.effects.held.get(&id).is_some_and(|k| k & crate::fx::HOLD_STATUS != 0)
         || w.loads.get(&id).is_some_and(|l| l.1 > now)
         || w.knocks.contains_key(&id)
         || w.rounds.values().any(|(_, rest)| rest.iter().any(|a| a.targets.iter().any(|t| t.id == id)))
@@ -1431,17 +1431,10 @@ pub(super) fn fx_load(w: &mut World, id: u32) {
     e.1 = Instant::now() + Duration::from_secs(30);
 }
 
-/// The skill holds from fx (ops 0x20 / 0x1f / 0x56 / 0x59 / 0x07 / 0x08) for their ticks, the longest winning.
-pub(super) fn fx_hold(w: &mut World, id: u32, ticks: f32, kind: u8) {
-    let until = Instant::now() + Duration::from_secs_f32(ticks.max(0.0) / 60.0);
-    if kind & crate::fx::HOLD_STATUS != 0 {
-        let e = w.holds.entry(id).or_insert(until);
-        *e = (*e).max(until);
-    }
-    if kind & crate::fx::HOLD_REACT != 0 {
-        let e = w.noreact.entry(id).or_insert(until);
-        *e = (*e).max(until);
-    }
+/// +0x80 up: a swing's hold or a live scheduler's op 0x07 / 0x08 / 0x59 (no reactions, no status motion re-pick).
+pub(super) fn no_react(w: &World, id: u32) -> bool {
+    w.noreact.get(&id).is_some_and(|t| *t > Instant::now())
+        || w.effects.held.get(&id).is_some_and(|k| k & crate::fx::HOLD_REACT != 0)
 }
 
 /// FUN_100a9610: one load hold ends (busy -1); op 0x20 holds run on.
@@ -1464,10 +1457,7 @@ pub(super) fn react_op(w: &mut World, r: &crate::fx::React) {
         w.entities.get(&r.reactor).map_or(0, |e| e.motion.status)
     };
     // FUN_1005e5f0: none while the reactor is being knocked back.
-    if r.level == 0
-        || w.noreact.get(&r.reactor).is_some_and(|t| *t > Instant::now())
-        || w.knocks.contains_key(&r.reactor)
-        || matches!(status, 2 | 3 | 5 | 0x55)
+    if r.level == 0 || no_react(w, r.reactor) || w.knocks.contains_key(&r.reactor) || matches!(status, 2 | 3 | 5 | 0x55)
     {
         return;
     }
@@ -1573,7 +1563,6 @@ pub(super) fn apply_status(w: &mut World, id: u32, status: u8) {
 
 /// Fires pending hits whose time has come, and applies statuses whose swing hold has ended.
 pub(super) fn tick(w: &mut World) {
-    super::skillchain::tick(w);
     let now = Instant::now();
     // The next swing of a round whose last swing has ended.
     let due: Vec<u32> = w.rounds.iter().filter(|(_, (at, _))| *at <= now).map(|(id, _)| *id).collect();
@@ -1720,10 +1709,7 @@ pub(super) fn guard_op(w: &mut World, g: &crate::fx::Guard) {
     } else {
         w.entities.get(&g.reactor).map_or(0, |e| e.motion.status)
     };
-    if w.noreact.get(&g.reactor).is_some_and(|t| *t > Instant::now())
-        || w.knocks.contains_key(&g.reactor)
-        || matches!(status, 5 | 0x55)
-    {
+    if no_react(w, g.reactor) || w.knocks.contains_key(&g.reactor) || matches!(status, 5 | 0x55) {
         return;
     }
     let name = match (g.parry, moving(w, g.reactor)) {
@@ -2842,13 +2828,4 @@ mod queue_tests {
         assert_eq!(crate::client::net::battle_message2(&pkt(0x2d, 0x32b)).queued, 0x32b);
         assert_eq!(crate::client::net::battle_message2(&pkt(0x2d, 6)).queued, 0);
     }
-}
-
-/// Us, a party member, or the pet of either (its master's ActIndex).
-pub(super) fn ours(w: &World, actor: u32) -> bool {
-    if actor == w.my_id || w.party.party().any(|m| m.id == actor) {
-        return true;
-    }
-    let Some(master) = w.entities.get(&actor).map(|e| e.master).filter(|&m| m != 0) else { return false };
-    master == w.my_index || w.party.party().any(|m| w.entities.get(&m.id).is_some_and(|e| e.index == master))
 }

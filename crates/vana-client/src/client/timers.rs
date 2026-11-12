@@ -1,14 +1,10 @@
-//! Timers (an Extra, not retail: the user's Ashita "Timers" add-on built in). Our recasts (0x119 and our own casts),
-//! the effects on us (0x037 / 0x063 end times) and the effects we put on others: started by the 0x028 results that
-//! say they landed, ended by the server's wear-off, dispel and defeat messages and the party's 0x076 lists; how long
-//! they last is LSB's own reckoning (durations.rs). One framed window docked at a screen edge that slides in and out
-//! like a drawer; its sections fold.
+//! The Timers' dock (not retail: the user's Ashita "Timers" add-on): the Timers mod's three edge windows
+//! (timers_recasts, timers_buffs, timers_debuffs) drawn as one framed window at a screen edge that slides in and out
+//! like a drawer, its sections folding. The rows are the mod's (its `timers` elements); the client only draws them.
+//! Also the retail charge rule for /recast.
 
 use super::World;
 use super::game_ui::GameUi;
-use crate::dat::names::NameSource;
-use crate::net::action::Action;
-use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 /// Extras "Timers Position".
@@ -43,13 +39,6 @@ pub enum Icon {
     List(&'static str, usize, Option<u16>),
 }
 
-/// A spell's or ability record's list icon.
-pub fn list_icon(w: &World, spell: bool, id: u16) -> Icon {
-    let kind = if spell { super::magic::Kind::Magic } else { super::magic::Kind::Ability };
-    super::magic::row_icon(w, kind, id)
-        .map_or(Icon::None, |(l, k)| Icon::List(l, k, super::magic::picture(w, kind, id)))
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct Row {
     pub icon: Icon,
@@ -68,86 +57,16 @@ pub struct Group {
     pub rows: Vec<Row>,
 }
 
-/// What put an effect on.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Source {
-    Spell(u16),
-    Ability(u16),
-    Ws(u16),
-    /// Our avatar's or wyvern's move (category 13: an ability id).
-    Pet(u16),
-    /// Our jug pet's, luopan's or automaton's move (category 11: a mob skill id).
-    MobSkill(u16),
-    /// Our weapon's additional effect (the status itself).
-    Proc(u16),
-}
-
-/// An effect we put on someone.
-#[derive(Clone, Debug)]
-pub struct Applied {
-    pub status: u16,
-    pub name: String,
-    pub start: Instant,
-    /// LSB's length for it (None on ourselves: the server's own times are shown).
-    pub secs: Option<f32>,
-    /// The server will tell us when it ends (0x029 to its origin); else it ends at `secs`.
-    pub told: bool,
-    /// Song tiers (copies of one song effect differ by tier).
-    pub tier: u8,
-}
-
-/// Someone carrying our effects: the name kept from when they landed (for when they are out of range).
-#[derive(Clone, Debug, Default)]
-pub struct Bearer {
-    pub name: String,
-    pub mob: bool,
-    pub effects: Vec<Applied>,
-}
-
-impl Bearer {
-    fn left(&self, status: u16, now: Instant) -> Option<f32> {
-        self.effects
-            .iter()
-            .filter(|e| e.status == status)
-            .find_map(|e| e.secs.map(|s| s - now.duration_since(e.start).as_secs_f32()))
-    }
-}
-
-/// How long a row stays after its predicted end while the server's word is awaited.
-const GRACE: f32 = 3.0;
-/// A party member's 0x076 list may be older than an effect that just landed.
-const LIST_LAG: f32 = 3.0;
-/// Our own effects that wore off this long ago still count for the action that used them (MODLOG "Timers", Event flow).
-const LOST_FOR: f32 = 1.5;
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Hit {
     Drawer,
     Section(usize),
 }
 
-/// A Lua mod's timer (timers.add): its section (0 recasts, 1 buffs, 2 debuffs), group, row and when it ends.
-#[derive(Clone, Debug)]
-pub struct ModTimer {
-    pub mod_id: String,
-    pub section: usize,
-    pub group: Option<String>,
-    pub icon: Icon,
-    pub name: String,
-    pub end: Instant,
-    pub total: f32,
-    pub fills: bool,
-}
-
 /// The window's hot areas.
 pub type Hits = Vec<(Hit, [f32; 4])>;
 
 pub struct Timers {
-    pub on: HashMap<u32, Bearer>,
-    /// Lua mods' timers (shown even with the Extra off).
-    pub mods: Vec<ModTimer>,
-    /// The longest time left seen per recast and per status of ours: the gauge's full length.
-    totals: HashMap<(u8, u32), f32>,
     /// The drawer is out; `slide` runs 0 (in) .. 1 (out).
     pub out: bool,
     slide: f32,
@@ -161,20 +80,6 @@ pub struct Timers {
     pub dirty: bool,
     /// This frame's rows and place, from `prepare` to `draw`.
     frame: Option<Prepared>,
-    /// Our pet's TP (s2c 0x068).
-    pub pet_tp: Option<u16>,
-    /// Our effects that just wore off (status, when).
-    lost: Vec<(u16, Instant)>,
-    /// Our TP when our weapon skill started.
-    ws_tp: Option<f32>,
-    /// Roll totals that landed on us, by roll effect (Naturalist's Roll's power).
-    rolls: HashMap<u16, u32>,
-    /// Party members' zones as last seen (a change drops their zone-flagged effects).
-    zones: HashMap<u32, u16>,
-    /// Players we cast Arise on (Reraise follows their acceptance).
-    arise: Vec<(u32, Instant)>,
-    /// A Geo- spell of ours waiting for its luopan.
-    luopan: Option<(u16, Instant)>,
     /// The log window's rect last frame (the right dock stacks on it where it reaches under).
     pub log: Option<[f32; 4]>,
 }
@@ -189,9 +94,6 @@ struct Prepared {
 impl Default for Timers {
     fn default() -> Self {
         Self {
-            on: HashMap::new(),
-            mods: Vec::new(),
-            totals: HashMap::new(),
             out: true,
             slide: 1.0,
             folded: 0,
@@ -200,13 +102,6 @@ impl Default for Timers {
             hits: Vec::new(),
             dirty: false,
             frame: None,
-            pet_tp: None,
-            lost: Vec::new(),
-            ws_tp: None,
-            rolls: HashMap::new(),
-            zones: HashMap::new(),
-            arise: Vec::new(),
-            luopan: None,
             log: None,
         }
     }
@@ -215,15 +110,6 @@ impl Default for Timers {
 impl Timers {
     pub fn new(out: bool, folded: u8) -> Self {
         Self { out, slide: out as u8 as f32, folded, ..Default::default() }
-    }
-
-    fn total(&mut self, key: (u8, u32), left: f32, seen: &mut HashSet<(u8, u32)>) -> f32 {
-        seen.insert(key);
-        let t = self.totals.entry(key).or_insert(left);
-        if left > *t {
-            *t = left;
-        }
-        *t
     }
 
     pub fn toggle(&mut self) {
@@ -235,545 +121,10 @@ impl Timers {
     pub fn rect(&self) -> Option<[f32; 4]> {
         self.rect
     }
-
-    /// The total of a roll that landed on us.
-    pub fn roll_on_me(&self, status: u16) -> Option<u32> {
-        self.rolls.get(&status).copied()
-    }
-
-    /// The bearer died: effects with the death flag go (all of a monster's).
-    pub fn died(&mut self, id: u32) {
-        if let Some(b) = self.on.get_mut(&id) {
-            log::debug!("timers: {id:#x} died");
-            let mob = b.mob;
-            b.effects.retain(|e| !mob && !durations::flag(e.status, 'd'));
-        }
-    }
-
-    fn end(&mut self, target: u32, icon: u16) {
-        let Some(b) = self.on.get_mut(&target) else { return };
-        // Copies of one effect: the one ending first goes.
-        let now = Instant::now();
-        let at = |e: &Applied| e.secs.map_or(f32::MAX, |s| s - now.duration_since(e.start).as_secs_f32());
-        if let Some(i) = b
-            .effects
-            .iter()
-            .enumerate()
-            .filter(|(_, e)| durations::icon_matches(e.status, icon))
-            .min_by(|a, b| at(a.1).total_cmp(&at(b.1)))
-            .map(|(i, _)| i)
-        {
-            log::debug!(
-                "timers: {target:#x} {} ended by the server, {:.1} s before the predicted end",
-                b.effects[i].status,
-                at(&b.effects[i])
-            );
-            if durations::duplicates(b.effects[i].status) {
-                b.effects.remove(i);
-            } else {
-                b.effects.retain(|e| !durations::icon_matches(e.status, icon));
-            }
-        }
-    }
 }
 
-// ---- What the server tells us ----
-
-use super::durations::{self, Kind};
-
-/// 0x028 result messages removing the status in the value from the target (-na, Healing Waltz, Erase / Dispel /
-/// Finale, Larceny, steals: MODLOG "Timers", Ends).
-const REMOVED: &[u16] = &[83, 123, 159, 321, 341, 343, 378, 453];
-/// A proc removing the status in its value.
-const PROC_REMOVED: u16 = 168;
-/// 0x028 messages of anyone's effect landing with its status in the value (replaces ours of the same status).
-const OTHERS_LANDED: &[u16] = &[127, 186, 230, 236, 237, 242, 243, 266, 267, 268, 271, 277, 278, 319, 320];
-/// 0x029: the effect with the icon in Data wore off (LSB sends only these two: MODLOG "Timers", Wear-off).
-const WORN: &[u16] = &[204, 206];
-/// 0x029: the target was defeated.
-const DEFEATED: &[u16] = &[6, 20, 97];
-/// Weapon skill messages (category 3 is shared with some abilities: MODLOG "Timers", Lookup).
-const WS_MSGS: &[u16] = &[185, 188, 189, 264, 282, 283];
-
-/// Our pet: its server id from the entity list (my_pet is its target index).
-fn my_pet(w: &World) -> Option<u32> {
-    let i = w.my_pet;
-    if i == 0 {
-        return None;
-    }
-    w.entity_at(i).map(|(id, _)| id)
-}
-
-fn bearer_name(w: &World, id: u32) -> (String, bool) {
-    if id == w.my_id {
-        return (w.name.clone(), false);
-    }
-    if let Some(e) = w.entities.get(&id) {
-        return (e.name.clone(), e.mob);
-    }
-    (w.party.members().find(|m| m.id == id).map(|m| m.name.clone()).unwrap_or_default(), false)
-}
-
-fn source_name(w: &World, s: Source) -> String {
-    let n = w.names.as_ref();
-    match s {
-        Source::Spell(id) => n.and_then(|n| n.spell(id as u32)),
-        Source::Ability(id) | Source::Pet(id) => n.and_then(|n| n.ability(0x200 + id as u32)),
-        Source::Ws(id) => n.and_then(|n| n.ability(id as u32)),
-        Source::MobSkill(id) => w.battle.as_ref().map(|b| b.mob_skill(id)),
-        Source::Proc(status) => w.battle.as_ref().map(|b| b.status_title(status)),
-    }
-    .unwrap_or_default()
-}
-
-/// What the target looks like to the formulas: ourselves, a party member (level, 0x076 icons) or someone else.
-fn target_of(w: &World, id: u32, first: bool, c: &durations::Caster) -> durations::Target {
-    let me = id == w.my_id;
-    let level = w.party.members().find(|m| m.id == id).map(|m| m.jobs[1]).filter(|&l| l > 0);
-    let has = if me {
-        w.buffs.iter().copied().filter(|&b| b != 0xffff).collect()
-    } else {
-        w.party_buffs.get(&id).map_or(HashSet::new(), |l| l.iter().copied().filter(|&b| b != 0xffff).collect())
-    };
-    let mods = if me { c.mods.clone() } else { HashMap::new() };
-    durations::Target { me, level, has, first, mods }
-}
-
-/// The TP our weapon skill used: the TP at its start, the gear's TP Bonus (not the off-hand's; not the ranged slot's
-/// for a melee skill, nor the main hand's for a ranged one), Fencer gear when single-wielding (MODLOG "Timers").
-fn ws_tp(w: &World, ws: u16) -> f32 {
-    let ranged = (192..=223).contains(&ws);
-    let skip: &[usize] = if ranged { &[0, 1] } else { &[1, 2] };
-    let mut tp = w.timers.ws_tp.unwrap_or(1000.0);
-    for slot in (0..16).filter(|s| !skip.contains(s)) {
-        tp += durations::slot_mod(w, slot, 345);
-    }
-    let skill = |slot: usize| {
-        durations::slot_item(w, slot).and_then(|i| w.item_info.as_ref()?.item(i)).map_or(0, |it| it.skill)
-    };
-    if !ranged && matches!(skill(0), 2 | 3 | 5 | 9 | 11) && skill(1) == 0 {
-        tp += (0..16).map(|s| durations::slot_mod(w, s, 903)).sum::<f32>();
-    }
-    tp.min(3000.0)
-}
-
-/// A 0x028 for anyone: removals, defeats and others' landings end ours; our own (and our pet's) landings start them.
-pub fn on_action(w: &mut World, a: &Action) {
-    use crate::net::action::category as cat;
-    for t in &a.targets {
-        for r in &t.results {
-            if REMOVED.contains(&r.message) {
-                w.timers.end(t.id, r.value as u16);
-            }
-            if let Some(p) = r.proc.as_ref().filter(|p| p.message == PROC_REMOVED) {
-                w.timers.end(t.id, p.value as u16);
-            }
-            // Bust (426 / 427): the roll leaves every target, silently.
-            if matches!(r.message, 426 | 427)
-                && let Some(row) = durations::tables().rows.get(&(Kind::Ability, a.arg as u16)).and_then(|r| r.first())
-                && let Some(b) = w.timers.on.get_mut(&t.id)
-            {
-                b.effects.retain(|e| e.status != row.effect);
-            }
-            if r.info & 1 != 0 {
-                w.timers.died(t.id);
-            }
-        }
-    }
-    let pet = my_pet(w);
-    if a.actor != w.my_id && Some(a.actor) != pet {
-        others(w, a);
-        return;
-    }
-    let ours = a.actor == w.my_id;
-    if ours && a.category == cat::SKILL_START {
-        w.timers.ws_tp = w.vitals.map(|v| v.2 as f32);
-        return;
-    }
-    let first_msg = a.targets.first().and_then(|t| t.results.first()).map_or(0, |r| r.message);
-    let (kind, source) = match a.category {
-        cat::MAGIC_FINISH => (Kind::Spell, Source::Spell(a.arg as u16)),
-        cat::ABILITY_FINISH | 14 | 15 if ours => (Kind::Ability, Source::Ability(a.arg as u16)),
-        cat::SKILL_FINISH if ours && WS_MSGS.contains(&first_msg) => (Kind::Ws, Source::Ws(a.arg as u16)),
-        cat::SKILL_FINISH if ours => (Kind::Ability, Source::Ability(a.arg as u16)),
-        cat::SKILL_FINISH | cat::MOB_SKILL_FINISH => (Kind::Pet, Source::MobSkill(a.arg as u16)),
-        13 => (Kind::Pet, Source::Pet(a.arg as u16)),
-        cat::BASIC_ATTACK | cat::RANGED_FINISH if ours => {
-            procs(w, a);
-            return;
-        }
-        _ => return,
-    };
-    let lost: Vec<u16> = w.timers.lost.iter().map(|l| l.0).collect();
-    let tp = (kind == Kind::Ws).then(|| ws_tp(w, a.arg as u16));
-    let mut c = durations::Caster::of(w, &lost, tp);
-    // A pet casting a spell has none of our inputs (MODLOG "Timers", Pet casters).
-    c.pet = !ours && kind == Kind::Spell;
-    let Some(rows) = durations::tables().rows.get(&(kind, a.arg as u16)) else { return };
-    let white = kind == Kind::Spell && durations::white(w, a.arg as u16);
-    let double_up = first_msg == 424;
-    let now = Instant::now();
-    for (i, t) in a.targets.iter().enumerate() {
-        for r in &t.results {
-            let hit: Vec<&durations::Row> = rows
-                .iter()
-                .filter(|row| durations::lands(row, r.message, r.value) && row.know != 'n' && row.effect != 0)
-                .collect();
-            // Several effects in one result: the value names the best; it being the first of the action means all
-            // landed (Warm-Up, Amplification ...).
-            let hit: Vec<&durations::Row> = match hit.iter().position(|row| row.param == 'E') {
-                Some(k)
-                    if hit[k].effect as u32 != r.value
-                        || rows.iter().position(|x| std::ptr::eq(x, hit[k]))
-                            != rows.iter().position(|x| x.param == 'E') =>
-                {
-                    hit.into_iter().filter(|row| row.param != 'E' || row.effect as u32 == r.value).collect()
-                }
-                _ => hit,
-            };
-            for row in hit {
-                land(w, &c, a, row, source, t.id, i == 0, r.value, white, double_up, now);
-            }
-        }
-    }
-    if ours && kind == Kind::Spell && a.arg == 494 {
-        for t in &a.targets {
-            w.timers.arise.push((t.id, now));
-        }
-    }
-}
-
-/// One row landing on `target`.
-fn land(
-    w: &mut World,
-    c: &durations::Caster,
-    a: &Action,
-    row: &durations::Row,
-    source: Source,
-    target: u32,
-    first: bool,
-    value: u32,
-    white: bool,
-    double_up: bool,
-    now: Instant,
-) {
-    let me = w.my_id;
-    match row.formula.as_str() {
-        // Quick Draw boosts and Double-Up keep the end time; removals were handled.
-        "QD_BOOST" | "REMOVE" | "DISPEL" | "COPY" | "STEAL" | "AURA" | "HIDDEN_ELE" | "NONE" => return,
-        // The luopan comes as our pet; its life is timed once it is there.
-        "AURA_LUOPAN" => {
-            w.timers.luopan = Some((a.arg as u16, now));
-            return;
-        }
-        "SOLACE_SS" if !(c.has(417) && !target_of(w, target, first, c).has.contains(&37)) => return,
-        _ => {}
-    }
-    if row.target == "self" && target != a.actor {
-        return;
-    }
-    let status = row.effect;
-    let mut name = source_name(w, source);
-    if row.formula == "ROLL" {
-        name = format!("{name} ({value})");
-        if target == me {
-            w.timers.rolls.insert(status, value);
-        }
-        if double_up
-            && let Some(e) =
-                w.timers.on.get_mut(&target).and_then(|b| b.effects.iter_mut().find(|e| e.status == status))
-        {
-            e.name = name;
-            return;
-        }
-    }
-    if row.formula == "STEP" {
-        name = format!("{name} ({value})");
-    }
-    let prior = w.timers.on.get(&target).and_then(|b| b.left(status, now));
-    let t = target_of(w, target, first, c);
-    let secs = durations::predict(c, row, &t, white, prior);
-    if secs.is_none() && target != me {
-        return;
-    }
-    // No wear-off reaches us: icon-0 / no-loss effects, our pet's, songs on others, Valiance / Vallation on others
-    // (their origin is the bearer), Gambit (the mob's).
-    let told = !durations::silent_end(status)
-        && !matches!(source, Source::Pet(_) | Source::MobSkill(_))
-        && !(row.formula.starts_with("ENH_SONG") && target != me)
-        && !(matches!(status, 531 | 535) && target != me)
-        && status != 536;
-    let (who, mob) = bearer_name(w, target);
-    let max_songs = if c.instrument { 2.0 } else { 1.0 } + c.m(453);
-    let b = w.timers.on.entry(target).or_default();
-    if !who.is_empty() {
-        (b.name, b.mob) = (who, mob);
-    }
-    if durations::duplicates(status) {
-        if row.formula.starts_with("ENH_SONG") {
-            // MODLOG "Timers", Song slots: the same song and tier is replaced (and, as LSB counts it, still fills its
-            // slot); at our cap the song of ours that ends first goes.
-            let ours = b.effects.iter().filter(|e| e.tier > 0 && (195..=223).contains(&e.status)).count();
-            b.effects.retain(|e| !(e.status == status && e.tier == row.tier));
-            if ours as f32 >= max_songs {
-                let at = |e: &Applied| e.secs.map_or(f32::MAX, |s| s - now.duration_since(e.start).as_secs_f32());
-                if let Some(i) = b
-                    .effects
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, e)| e.tier > 0 && (195..=223).contains(&e.status))
-                    .min_by(|x, y| at(x.1).total_cmp(&at(y.1)))
-                    .map(|(i, _)| i)
-                {
-                    b.effects.remove(i);
-                }
-            }
-        } else {
-            b.effects.retain(|e| !(e.status == status && e.tier == row.tier));
-        }
-    } else {
-        b.effects.retain(|e| e.status != status);
-    }
-    // Rolls: a COR keeps two of its own on a target (one as a sub job); the one ending first goes.
-    if row.formula == "ROLL" {
-        let limit = if c.main.0 == 17 { 2 } else { 1 };
-        let rolls: Vec<usize> =
-            b.effects.iter().enumerate().filter(|(_, e)| matches!(e.status, 310..=339 | 600)).map(|(i, _)| i).collect();
-        if rolls.len() >= limit {
-            let at = |e: &Applied| e.secs.map_or(f32::MAX, |s| s - now.duration_since(e.start).as_secs_f32());
-            if let Some(&i) = rolls.iter().min_by(|&&x, &&y| at(&b.effects[x]).total_cmp(&at(&b.effects[y]))) {
-                b.effects.remove(i);
-            }
-        }
-    }
-    let gone = durations::ends(status);
-    b.effects.retain(|e| !gone.contains(&e.status));
-    log::debug!("timers: {source:?} landed {status} on {target:#x}: {secs:?} s ({}), told {told}", row.formula);
-    b.effects.push(Applied { status, name, start: now, secs, told, tier: row.tier });
-}
-
-/// Our melee / ranged hit's additional effect (MODLOG "Timers", Weapon procs): the weapon's own length for it.
-fn procs(w: &mut World, a: &Action) {
-    let ranged = a.category == crate::net::action::category::RANGED_FINISH;
-    let now = Instant::now();
-    for t in &a.targets {
-        for r in &t.results {
-            let Some(p) = r.proc.as_ref().filter(|p| matches!(p.message, 160 | 164)) else { continue };
-            let status = p.value as u16;
-            let slots: &[usize] = if ranged { &[2, 3] } else { &[0, 1] };
-            let Some(secs) = slots.iter().map(|&s| durations::slot_mod(w, s, 953)).find(|&v| v > 0.0) else { continue };
-            let source = Source::Proc(status);
-            let name = source_name(w, source);
-            let (who, mob) = bearer_name(w, t.id);
-            let b = w.timers.on.entry(t.id).or_default();
-            if !who.is_empty() {
-                (b.name, b.mob) = (who, mob);
-            }
-            b.effects.retain(|e| e.status != status);
-            b.effects.push(Applied {
-                status,
-                name,
-                start: now,
-                secs: Some(secs),
-                told: !durations::silent_end(status),
-                tier: 0,
-            });
-        }
-    }
-}
-
-/// Someone else's action: their landing of an effect we keep a timer for replaces ours (silently on the server);
-/// their step extends the daze we put on; the player we raised with Arise accepting brings Reraise.
-fn others(w: &mut World, a: &Action) {
-    let now = Instant::now();
-    let tiers = |status: u16| {
-        durations::tables()
-            .rows
-            .get(&(Kind::Spell, a.arg as u16))
-            .and_then(|r| r.iter().find(|r| r.effect == status))
-            .map_or(0, |r| r.tier)
-    };
-    for t in &a.targets {
-        for r in &t.results {
-            let Some(b) = w.timers.on.get_mut(&t.id) else { continue };
-            if a.category == 14 && matches!(r.message, 519..=521 | 591) {
-                let Some(row) = durations::tables().rows.get(&(Kind::Ability, a.arg as u16)).and_then(|r| r.first())
-                else {
-                    continue;
-                };
-                if let Some(e) = b.effects.iter_mut().find(|e| e.status == row.effect) {
-                    let gone = now.duration_since(e.start).as_secs_f32();
-                    let left = e.secs.unwrap_or(0.0) - gone;
-                    e.secs = Some(gone + (left.floor() + 30.0).min(120.0));
-                    e.told = false;
-                }
-                continue;
-            }
-            if !OTHERS_LANDED.contains(&r.message) || r.value == 0 {
-                continue;
-            }
-            let status = r.value as u16;
-            if durations::duplicates(status) {
-                let tier = tiers(status);
-                b.effects.retain(|e| !(e.status == status && e.tier == tier));
-            } else {
-                let gone = durations::ends(status);
-                b.effects.retain(|e| e.status != status && !gone.contains(&e.status));
-            }
-        }
-    }
-    // Arise accepted: the raised player's category-4 Arise action (MODLOG "Timers"); Reraise for an hour, no origin.
-    if a.category == crate::net::action::category::MAGIC_FINISH
-        && a.arg == 494
-        && w.timers.arise.iter().any(|x| x.0 == a.actor)
-    {
-        w.timers.arise.retain(|x| x.0 != a.actor);
-        let name = source_name(w, Source::Spell(494));
-        let (who, mob) = bearer_name(w, a.actor);
-        let b = w.timers.on.entry(a.actor).or_default();
-        (b.name, b.mob) = (who, mob);
-        b.effects.retain(|e| e.status != 113);
-        b.effects.push(Applied { status: 113, name, start: now, secs: Some(3600.0), told: false, tier: 0 });
-    }
-}
-
-/// A 0x029 / 0x02D message: wear-offs (Data = the icon) and defeats.
-pub fn on_message(w: &mut World, target: u32, param: u32, message: u16) {
-    let m = message & 0x7fff;
-    if WORN.contains(&m) {
-        log::debug!("timers: wear-off {m} on {target:#x}, icon {param}");
-        w.timers.end(target, param as u16);
-        if target == w.my_id {
-            w.timers.lost.push((param as u16, Instant::now()));
-        }
-    } else if DEFEATED.contains(&m) {
-        w.timers.died(target);
-    }
-}
-
-/// s2c 0x076: a member's effects no longer listed have ended (copies of a song: as many of ours as icons left).
-pub fn on_party_effects(w: &mut World) {
-    let now = Instant::now();
-    for (id, b) in w.timers.on.iter_mut() {
-        let Some(list) = w.party_buffs.get(id) else { continue };
-        let fresh = |e: &Applied| now.duration_since(e.start).as_secs_f32() < LIST_LAG;
-        let mut keep: Vec<bool> =
-            b.effects.iter().map(|e| fresh(e) || list.iter().any(|&i| durations::icon_matches(e.status, i))).collect();
-        let statuses: HashSet<u16> =
-            b.effects.iter().filter(|e| durations::duplicates(e.status)).map(|e| e.status).collect();
-        for s in statuses {
-            let icons = list.iter().filter(|&&i| i == s).count();
-            let mut ours: Vec<usize> =
-                (0..b.effects.len()).filter(|&i| b.effects[i].status == s && !fresh(&b.effects[i])).collect();
-            let at = |e: &Applied| e.secs.map_or(f32::MAX, |x| x - now.duration_since(e.start).as_secs_f32());
-            ours.sort_by(|&x, &y| at(&b.effects[x]).total_cmp(&at(&b.effects[y])));
-            for &i in ours.iter().take(ours.len().saturating_sub(icons)) {
-                keep[i] = false;
-            }
-        }
-        let mut k = keep.into_iter();
-        b.effects.retain(|_| k.next().unwrap_or(true));
-    }
-}
-
-/// Zoning: effects on anyone outside our party stay behind.
-pub fn on_zone(w: &mut World) {
-    let party: HashSet<u32> = w.party.members().map(|m| m.id).collect();
-    let me = w.my_id;
-    w.timers.on.retain(|id, _| *id == me || party.contains(id));
-    w.timers.luopan = None;
-}
-
-/// An entity despawned: a monster's effects go; a player's stay while in our party.
-pub fn on_gone(w: &mut World, id: u32, died: bool) {
-    if died || !w.party.members().any(|m| m.id == id) {
-        if w.timers.on.contains_key(&id) {
-            log::debug!("timers: {id:#x} despawned");
-        }
-        w.timers.on.remove(&id);
-    }
-}
-
-/// The luopan's life (MODLOG "Timers", Geomancy): 600 s at most, or its HP over the drain each 3 s; Bolster and
-/// Blaze of Glory as they were at the cast.
-fn luopan_life(c: &durations::Caster) -> f32 {
-    let lvl = c.main.1 as f32;
-    let bolster = c.has(513);
-    let jp = if bolster { c.jp(672) } else { 0.0 };
-    let max = (250.0 * lvl / 15.0).floor() * (1.0 + 0.03 * jp);
-    let hp = if c.has(569) { max / 2.0 + max * c.jp(675) / 100.0 } else { max };
-    let drain = ((lvl / 4.0).floor() - jp).max(1.0);
-    (600f32).min((hp / drain).ceil() * 3.0)
-}
-
-/// Once a frame: drop what ended unannounced, follow party members' zone changes, time a luopan that came.
-fn maintain(w: &mut World) {
-    let now = Instant::now();
-    let me = w.my_id;
-    w.timers.lost.retain(|l| now.duration_since(l.1).as_secs_f32() < LOST_FOR);
-    w.timers.arise.retain(|x| now.duration_since(x.1).as_secs() < 600);
-    // A party member who changed zones lost their zone-flagged effects.
-    let zones: Vec<(u32, u16)> = w.party.members().map(|m| (m.id, m.zone)).collect();
-    for (id, z) in zones {
-        if w.timers.zones.insert(id, z).is_some_and(|old| old != z)
-            && let Some(b) = w.timers.on.get_mut(&id)
-        {
-            b.effects.retain(|e| !durations::flag(e.status, 'z'));
-        }
-    }
-    let present: HashSet<u16> = w.buffs.iter().copied().filter(|&b| b != 0xffff).collect();
-    for (id, b) in w.timers.on.iter_mut() {
-        b.effects.retain(|e| {
-            let gone = now.duration_since(e.start).as_secs_f32();
-            let keep = match e.secs {
-                _ if *id == me => present.iter().any(|&i| durations::icon_matches(e.status, i)) || gone < LIST_LAG,
-                Some(s) => gone < s + if e.told { GRACE } else { 0.3 },
-                None => false,
-            };
-            if !keep && *id != me {
-                log::debug!("timers: {id:#x} {} timed out after {gone:.1} s (told {})", e.status, e.told);
-            }
-            keep
-        });
-    }
-    w.timers.on.retain(|_, b| !b.effects.is_empty());
-    if let Some((spell, at)) = w.timers.luopan {
-        if now.duration_since(at).as_secs() > 5 {
-            w.timers.luopan = None;
-        } else if let Some(pet) = my_pet(w) {
-            w.timers.luopan = None;
-            let c = durations::Caster::of(w, &[], None);
-            let secs = luopan_life(&c);
-            let name = source_name(w, Source::Spell(spell));
-            let (who, _) = bearer_name(w, pet);
-            let b = w.timers.on.entry(pet).or_default();
-            (b.name, b.mob) = (who, false);
-            b.effects.push(Applied { status: 612, name, start: at, secs: Some(secs), told: false, tier: 0 });
-        }
-    }
-}
-
-// ---- Rows ----
-
-/// The ability on a 0x119 timer: the one we know (job abilities by the 0x0AC bits, pet commands always).
-fn ability_for_timer(w: &World, timer: u16) -> Option<&crate::dat::actions::Ability> {
-    let acts = w.actions.as_ref()?;
-    let known = |id: u16| {
-        let bit = id.wrapping_sub(0x200) as usize;
-        id >= 0x400 || w.commands_known.get(64 + bit / 8).is_some_and(|b| b & (1 << (bit % 8)) != 0)
-    };
-    let mut found = None;
-    for a in acts.abilities.iter().filter(|a| a.id >= 0x200 && a.timer == timer) {
-        // A sub-list's row (Ready, Quick Draw, Stratagems) names the timer over its moves.
-        if a.sub != 0 && known(a.id) {
-            return Some(a);
-        }
-        if found.is_none() && known(a.id) {
-            found = Some(a);
-        }
-    }
-    found
-}
+// ---- Charges (/recast) ----
+// The Timers mod has the same rule in Lua (assets/mods/timers/rows.lua): change both together.
 
 /// FUN_10222c90: the charge abilities by their moves' kind (9 Quick Draw, 0xf Stratagems, 0x12 Ready): the charges
 /// at our job's level and the full recast in seconds; none when the job does not give them.
@@ -838,167 +189,42 @@ pub fn charges(left_secs: i32, n: i32, full: i32, calc: (u8, i16)) -> Option<(i3
     Some((next, (total - left_secs) / (total / n), per))
 }
 
-/// The charge kind of the abilities on a timer (the sub-list row's sub, or a move's own kind).
-fn charge_kind(a: &crate::dat::actions::Ability) -> u8 {
-    if a.sub != 0 {
-        return a.sub;
-    }
-    a.kind
-}
-
-fn recast_rows(w: &World, t: &mut Timers, now: Instant, seen: &mut HashSet<(u8, u32)>) -> Vec<Row> {
-    let mut rows = Vec::new();
-    let names = w.names.clone();
-    let name_of = |id: u32, spell: bool| {
-        names.as_ref().and_then(|n| if spell { n.spell(id) } else { n.ability(id) }).unwrap_or_default()
-    };
-    for (&timer, &end) in &w.ability_recast {
-        let left = end.saturating_duration_since(now).as_secs_f32();
-        if left <= 0.0 {
-            continue;
-        }
-        let Some(a) = ability_for_timer(w, timer) else { continue };
-        let icon = list_icon(w, false, a.id);
-        let mut name = name_of(a.id as u32, false);
-        let calc = w.ability_calc.get(&timer).copied().unwrap_or((0, 0));
-        let rule = charge_rule(w, charge_kind(a)).and_then(|(n, full)| charges(left.ceil() as i32, n, full, calc));
-        let (left, total) = match rule {
-            Some((next, ready, per)) => {
-                name = format!("{name} ({ready})");
-                // The share's fraction of a second carries over from the whole.
-                (next as f32 - (left.ceil() - left), per as f32)
-            }
-            None => (left, t.total((0, timer as u32), left, seen)),
-        };
-        rows.push(Row { icon, name, left, total, fills: true });
-    }
-    for (&spell, &end) in &w.spell_recast {
-        let left = end.saturating_duration_since(now).as_secs_f32();
-        if left <= 0.0 {
-            continue;
-        }
-        let icon = list_icon(w, true, spell);
-        let total = t.total((1, spell as u32), left, seen);
-        rows.push(Row { icon, name: name_of(spell as u32, true), left, total, fills: true });
-    }
-    rows.sort_by(|a, b| a.left.total_cmp(&b.left).then_with(|| a.name.cmp(&b.name)));
-    rows
-}
-
-/// Our own effects with 0x063 end times, in 0x037's order (as the status icons), named by what we cast when it was
-/// ours.
-fn own_rows(w: &World, gu: &GameUi, t: &mut Timers, seen: &mut HashSet<(u8, u32)>) -> Vec<Row> {
-    let small = w.game.get(0x99) & 4 != 0;
-    let now60 = w.clock.map_or(0.0, |(c, at)| (c as f64 + at.elapsed().as_secs_f64()) * 60.0) as u64 as u32;
-    let names: Vec<(u16, String)> =
-        t.on.get(&w.my_id).map_or(Vec::new(), |b| b.effects.iter().map(|e| (e.status, e.name.clone())).collect());
-    let mut rows = Vec::new();
-    for i in 0..32 {
-        let id = w.buffs[i];
-        if id == 0xffff || id == 0 {
-            continue;
-        }
-        let Some(end) = w.buff_timers.as_ref().filter(|b| b.0[i] == id).map(|b| b.1[i]).filter(|&e| e != 0x7fff_ffff)
-        else {
-            continue;
-        };
-        if gu.status_flags(small, id).is_some_and(|f| f.1) {
-            continue;
-        }
-        let left = end.wrapping_sub(now60) as i32 as f32 / 60.0;
-        if left <= 0.0 {
-            continue;
-        }
-        let total = t.total((2, end), left, seen);
-        let name = names.iter().rev().find(|e| e.0 == id).map(|e| e.1.clone()).filter(|n| !n.is_empty());
-        let name = name.unwrap_or_else(|| w.battle.as_ref().map(|b| b.status_title(id)).unwrap_or_default());
-        rows.push(Row { icon: Icon::Status(id), name, left, total, fills: false });
-    }
-    rows
-}
-
-fn applied_rows(b: &Bearer, now: Instant) -> Vec<Row> {
-    let mut rows: Vec<Row> = b
-        .effects
-        .iter()
-        .map(|e| {
-            let gone = now.duration_since(e.start).as_secs_f32();
-            match e.secs {
-                Some(s) => {
-                    Row { icon: Icon::Status(e.status), name: e.name.clone(), left: s - gone, total: s, fills: false }
-                }
-                None => Row { icon: Icon::Status(e.status), name: e.name.clone(), left: 0.0, total: 0.0, fills: false },
-            }
-        })
-        .collect();
-    rows.sort_by(|a, b| a.left.total_cmp(&b.left));
-    rows
-}
-
-/// The sections' groups: recasts; us, then others by party order, then the rest; monsters, ours targeted first.
-/// The sections as their panels show them: `builtin` per section the client's own rows, the mods' rows always; a
+/// The sections as the mods' timers elements give them (the Timers mod's panels), each row's time left now; a
 /// section whose panel is not open is empty.
-pub fn sections(w: &mut World, gu: &GameUi, panels: [Option<bool>; 3]) -> [Vec<Group>; 3] {
+pub fn sections(w: &World) -> [Vec<Group>; 3] {
     let now = Instant::now();
-    maintain(w);
-    let me = w.my_id;
-    let mut t = std::mem::take(&mut w.timers);
-    let mut seen = HashSet::new();
-    let recasts = recast_rows(w, &mut t, now, &mut seen);
-    let own = own_rows(w, gu, &mut t, &mut seen);
-    t.totals.retain(|k, _| seen.contains(k));
-    w.timers = t;
-
-    let mut buffs = Vec::new();
-    if !own.is_empty() {
-        buffs.push(Group { name: Some(w.name.clone()), rows: own });
-    }
-    let order: Vec<u32> = w.party.members().map(|m| m.id).collect();
-    let mut others: Vec<(&u32, &Bearer)> = w.timers.on.iter().filter(|(id, b)| **id != me && !b.mob).collect();
-    others.sort_by_key(|(id, b)| (order.iter().position(|o| o == *id).unwrap_or(usize::MAX), b.name.clone()));
-    for (_, b) in others {
-        buffs.push(Group { name: Some(b.name.clone()), rows: applied_rows(b, now) });
-    }
-    let mut mobs: Vec<(&u32, &Bearer)> = w.timers.on.iter().filter(|(_, b)| b.mob).collect();
-    mobs.sort_by_key(|(id, b)| {
-        (Some(**id) != w.target, b.effects.iter().map(|e| e.start).max().map(std::cmp::Reverse), b.name.clone())
-    });
-    let debuffs =
-        mobs.into_iter().map(|(_, b)| Group { name: Some(b.name.clone()), rows: applied_rows(b, now) }).collect();
-    let recasts = if recasts.is_empty() { Vec::new() } else { vec![Group { name: None, rows: recasts }] };
-    let mut secs = [recasts, buffs, debuffs];
-    for (k, s) in secs.iter_mut().enumerate() {
-        if panels[k] != Some(true) {
-            s.clear();
-        }
-    }
-    mod_rows(w, now, &mut secs);
-    for (k, s) in secs.iter_mut().enumerate() {
-        if panels[k].is_none() {
-            s.clear();
-        }
-    }
-    secs
+    w.lua.timers_sections().map(|s| {
+        let Some((groups, at)) = s else { return Vec::new() };
+        let gone = now.duration_since(at).as_secs_f32();
+        groups
+            .into_iter()
+            .map(|g| Group {
+                name: g.name,
+                rows: g
+                    .rows
+                    .into_iter()
+                    .map(|r| Row {
+                        icon: icon_of(w, r.icon),
+                        name: r.name,
+                        left: r.left - gone,
+                        total: r.total,
+                        fills: r.fills,
+                    })
+                    .collect(),
+            })
+            .collect()
+    })
 }
 
-/// The Lua mods' timers in their sections and groups (those of unloaded mods and a second past their end dropped).
-fn mod_rows(w: &mut World, now: Instant, secs: &mut [Vec<Group>; 3]) {
-    let loaded = w.lua.mod_ids();
-    w.timers
-        .mods
-        .retain(|t| loaded.contains(&t.mod_id) && (t.end > now || now.duration_since(t.end).as_secs_f32() < 1.0));
-    for t in &w.timers.mods {
-        let left = if t.end > now { t.end.duration_since(now).as_secs_f32() } else { 0.0 };
-        let row = Row { icon: t.icon, name: t.name.clone(), left, total: t.total, fills: t.fills };
-        let sec = &mut secs[t.section.min(2)];
-        let name = t.group.clone().or_else(|| (t.section > 0).then(|| "Timers".to_string()));
-        match sec.iter_mut().find(|g| g.name == name) {
-            Some(g) => {
-                g.rows.push(row);
-                g.rows.sort_by(|a, b| a.left.total_cmp(&b.left));
-            }
-            None => sec.push(Group { name, rows: vec![row] }),
+/// A row's icon as the Timers draw it: a status icon, or a spell's or ability's list sprite and picture.
+fn icon_of(w: &World, icon: Option<super::lua::window::Icon>) -> Icon {
+    use super::lua::window::Icon as W;
+    match icon {
+        Some(W::Status(id)) => Icon::Status(id),
+        Some(i @ (W::Spell(_) | W::Ability(_))) => {
+            i.sprite(w).map_or(Icon::None, |(l, k)| Icon::List(l, k, i.picture(w)))
         }
+        _ => Icon::None,
     }
 }
 
@@ -1282,11 +508,10 @@ pub fn prepare(gu: &GameUi, w: &mut World, sw: f32, sh: f32, foot: f32) {
     let step = dt * 60.0 / SLIDE_TICKS;
     w.timers.slide = if w.timers.out { (w.timers.slide + step).min(1.0) } else { (w.timers.slide - step).max(0.0) };
     w.timers.frame = None;
-    let panels = w.lua.timers_panels();
-    if panels.iter().all(Option::is_none) || super::event::active(w) || w.map.is_some() || w.cnq.is_some() {
+    if !w.lua.has_timers() || super::event::active(w) || w.map.is_some() || w.cnq.is_some() {
         return;
     }
-    let secs = sections(w, gu, panels);
+    let secs = sections(w);
     let place = base_place(gu, w, sw, sh, foot);
     let t = 40.0 - (w.started.elapsed().as_secs_f32() * 60.0) % 40.0;
     let pulse = if t <= 20.0 { t } else { 40.0 - t } * 0.05;
@@ -1466,15 +691,6 @@ mod tests {
         // Folded: the heading alone.
         let (l, hidden) = lines(&secs, 0b001, all);
         assert_eq!((l.len(), hidden), (8, [2, 0, 0]));
-    }
-
-    /// The luopan at level 99: 1650 HP draining 24 a tick (69 ticks, 207 s); with Blaze of Glory half of it.
-    #[test]
-    fn luopan() {
-        let mut c = durations::Caster { main: (21, 99), ..Default::default() };
-        assert_eq!(luopan_life(&c), 207.0);
-        c.statuses.insert(569);
-        assert_eq!(luopan_life(&c), 105.0);
     }
 
     #[test]

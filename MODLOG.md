@@ -13723,6 +13723,12 @@ From the research notes:
   it; the drawer in folds all three; config timers_out / timers_folded keep the folds), the recasts' window in the one
   window's saved place, modes and pins that named "timers" naming the three; the classic UI keeps the one window with
   three sections, drawn from the panels that are open.
+- Since 2026-11-11 (Timers mod 2.0.0) all of it is the mod's Lua: the tracking (engine.lua), LSB's lengths
+  (durations.lua, the tables now assets/mods/timers/data/*.tsv) and the rows (rows.lua). client/durations.rs is gone;
+  client/timers.rs keeps the classic dock (place, drawer, sections, drawing) and the retail charge rule for /recast.
+  The `timers` element takes the mod's rows (`groups`: name, rows {name, left, total, fills, icon}) and counts them
+  down from when it got them; the `timers` namespace calls the mod's service. The rules below are the mod's now, as
+  they were the client's; where they name timers.rs / durations.rs, read engine.lua / durations.lua / rows.lua.
 - Retail's charge abilities (/recast's "[%s] %s (%d)", now done too): FUN_10222c90 maps an ability (or the sub-list
   row opening it, record +0xe 9 / 0xf / 0x12, via FUN_10222c10) by its kind (+2): 9 Quick Draw (COR main or sub;
   2 charges from level 0x28; full 0x78 s), 0xf Stratagems (SCH main or sub; (level - 10) / 0x14 + 1; full 0xf0 s),
@@ -14029,6 +14035,11 @@ From the research notes:
   Not done: FUN_10019ed0 carries the old entry's frame into a status motion's start frame (ours starts at 0).
 
 ## Minimap (Extra, 2026-10-25; ours, the add-ons' minimap)
+
+- Since 2026-11-11 (Minimap mod 2.0.0) the mod picks what it shows: the dots (each entity's `radar` colour, as the
+  compass radar's colour() gives it with monsters on; the target ringed; names as tooltips), the zoom (the wheel over
+  its `map` element sends `wheel`; the mod sets the client option minimap_span, a quarter a notch within 48..512) and
+  the heading (zone and grid). client/minimap.rs keeps the place, the map and our marker; the modern panel Wide Scan.
 
 - client/minimap.rs, map::Overlay::draw_mini: the zone map in the style frame (inset 5), north up and centred on us,
   SPAN map pixels across (48..512, the wheel over it: x 1.25 a notch, saved as config minimap_span); our marker as the
@@ -15162,7 +15173,7 @@ The 2013 mini-game: statuses 0x38..0x3e, s2c 0x115, c2s 0x110. The old PS2-era s
   with the basket) in the riding slot; the status's scheduler (0x38 fsh0, 0x39 fsh7, 0x3a..0x3e fsh2..fsh6) on the
   model once those files are in, and on the rod once it is (a scheduler asked for before its file loads is dropped);
   fsh0..fsh9 stopped when the angler stops fishing. The rod is its own actor (id 0x1000_0000 | angler; file
-  DAT_1035f598[race] + look, Mithra willow 39477) at the angler's place with the angler's status (its fh1 -> fh10) and
+  DAT_1035f598[race] + look, Mithra willow 39477) at the angler's place (no status motion of its own: "Fishing: the release and the holds after it") and
   scale *(inf)*; hidden with its angler; other players' rods the same (not seen live).
 - Live (Lnxcsfix, East Ronfaure river 458.6 / -16.5 / -316.7, willow rod and little worms, skill 30 then 60): casts
   with no bite ("You didn't catch anything.", fsh6, then the release), a timed-out fight (the warning line, "You lost
@@ -16678,7 +16689,8 @@ From the research notes:
   ~8%, upload_poses); CommandEncoder::finish's validation 15%. wgpu-hal maps every MAP_WRITE buffer to gpu-allocator's
   CpuToGpu, which prefers DEVICE_LOCAL | HOST_VISIBLE | HOST_COHERENT: VRAM through the BAR, every store across the
   link.
-- vendor/gpu-allocator (0.28.0, [patch.crates-io]) measures it, as bg3le's memsteer does: at device creation CPU writes
+- gpu-allocator 0.28.0 with our patch ([patch.crates-io]; vendor/gpu-allocator until 2026-11-11, now the fork
+  github.com/lenonk/gpu-allocator, branch vana-client, pinned by rev) measures it, as bg3le's memsteer does: at device creation CPU writes
   into the two types the allocator would pick are timed (4 MiB, best of 3 after a warm copy), and CpuToGpu goes to the
   first HOST_VISIBLE | HOST_COHERENT type without DEVICE_LOCAL only when the VRAM type writes under a quarter of host
   speed. Here: host 37-38 GB/s, VRAM 0.25 GB/s, steered; a desktop link stays as it was. FFXI_MEMSTEER=on / off
@@ -18351,6 +18363,12 @@ From the research notes:
 - mmb-dump prints each model's blending word and vertex colour mean / range.
 
 ## Skillchain helper and the battle menu's suggestions (ours, 2026-10-29)
+
+- Since 2026-11-11 both are Lua mods wholly: the Skillchain mod (assets/mods/skillchain: tracker.lua, sc.lua,
+  data/skillchains.txt) and the Battle Suggestions mod (assets/mods/suggestions: rules.lua, facts.lua,
+  data/resistances.txt). client/skillchain.rs keeps the classic dock drawing the mod's `lines` element; client/suggest.rs
+  the battle menu's rows (the battle_rows slot), cursor and family submenu; dat/skillchains.rs only the generator.
+  The rules below are the mods' now, as they were the client's.
 
 - Not retail (the skillchain add-ons; user's spec 2026-10-29: "a flyout ... anytime we're in a party, what skillchains
   we can make and what their elements are"). The client has no table of skill properties: the server applies them.
@@ -23693,6 +23711,41 @@ For lenonk/vana-client#172. Addresses are 30261006_0.
     Ours already shows nothing.
   - Pulse / glint timing: stepped once per draw call (FUN_101fe0b0, the window's +0x10 draw), so once per rendered
     frame; ours steps at 30 a second, retail's frame rate.
+
+## Fishing: the release and the holds after it (2026-11-11)
+
+- FUN_10089100 moves on only when FUN_10088380 is admitted by FUN_100fc3c0's 1 s gate (0x110 is gated with force 0).
+  A refused send leaves the sub-state as it was, and the controller tries again next frame: the bite check (sub 0
+  then goes on to the early press / Escape checks), the ends (sub 0 / 1), the timeout warning (G[9] set only when
+  admitted) and the release (sub 3). FUN_10127ea0 runs only after an admitted end in sub 1 (0x1008936e /
+  0x100894a1), not after sub 0's 201.
+- Ours had dropped a refused 0x110. An Escape in the wait sends mode 3, and mode 4 came 35 ms later: refused,
+  dropped, so LSB never left NewFishingStop (62). The player could not move or log out (LSB refuses 0x0E7 while
+  fishing), and the rod stayed in her hand. Now 0x110 is gated at the caller (`call_gate`, as chat and tells), so
+  the release goes once the gate opens and the put-away (`fsh6`) has finished.
+- Ops 0x20 / 0x1f / 0x56 / 0x59 / 0x07 / 0x08 make hold sub-tasks, children of their scheduler task. Deleting the
+  task (op 0x5f, vtable +0x29c, its end) deletes them, and their dtors lower +0x80 / the busy counter. Ours kept them
+  as free timers. `fsh0` (the cast, 2700 ticks) opens with op 0x07 for 2700 ticks, so the hold outlived the
+  scheduler that `fsh6`'s op 0x5f kills: for up to 45 s the status motion was not re-picked, and the player glided
+  in the put-away pose. An attack's swing hold replaced it and ended it. The holds now live in fx with their task's
+  uid (`task_holds`, `held`), like op 0xb5's blink holds.
+- Mithra fishing file 39084: `fsh6` (length 164): op 0x1f 164 (actor1's status changes wait), 0x5f `fsh1` and
+  `fsh0`, op 0x07 164, `fh9?` 40 (blend 8), `fh4?` 124 (blend 0, u16 @0x1c 8). `fsh4` / `fsh2`: the same pattern for
+  248 / 292 ticks (`fh6?` / `fh3?`, then `fh4?`). The rod (39477) has the same motions and the line sounds (op 0x0a
+  8231..8234, 6095), and no holds.
+- The rod: FUN_1008f740 makes it (+0xa4) while FUN_100956c0 (any fishing status) holds. FUN_10092870 deletes it,
+  drops the fishing motion files (FUN_100d44b0(7 / 8 / 9)) and clears +0x7d8 once that is false. The rod's +0x70 is
+  the angler's entity (FUN_100c59b0), but FUN_100c63d0 never runs the status motion (FUN_100c83c0) for actor kinds
+  5..0x24 (vt +0x360, FUN_10082820), with or without +0x80. So the rod plays only what its schedulers start, and a
+  counted motion's end freezes it on its last frame (FUN_10019ab0: rate 0, the frame kept). After a put-away it stays
+  stowed (`fh4`'s last frame) until it is deleted. This corrects "The rod ... with the angler's status (its fh1 ->
+  fh10) *(inf)*" above: ours gave the rod `fh1`, so it came back into her hand for the 0.7 s between the end of `fh4`
+  and the server's status 0.
+- The angler too goes from the put-away straight to the stand in retail (user, 2026-11-11, seen in retail): no `fh1`
+  between the end of `fh2`..`fh6` and the server's status 0. Not found in the decompile: by the traced paths
+  (FUN_100c63d0's gates, FUN_100c83c0, the count end setting +0x79c in FUN_1001a8e0, the 0x07 hold dying with its
+  task, the release only once `fsh6` is over) `fh1` would start again. Ours: after a result's put-away, with the status
+  still 0x3a..0x3e, the angler keeps the last pose until the status leaves fishing (fishrod::put_away) *(inf)*.
 
 ## Gearshift's set builder (2026-11-11)
 

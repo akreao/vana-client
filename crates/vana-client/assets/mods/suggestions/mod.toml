@@ -1,5 +1,5 @@
 name = "Battle Suggestions"
-version = "1.0.0"
+version = "2.0.0"
 description = "Rows at the top of the modern battle menu naming a spell, ability or weapon skill worth using now, and why."
 permissions = ["ui.native"]
 

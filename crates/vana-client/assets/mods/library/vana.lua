@@ -25,6 +25,7 @@
 ---| "level_down" # Our main job's level went down.
 ---| "buff_gain" # We gained a status effect.
 ---| "buff_lose" # We lost a status effect.
+---| "party_buffs" # The server sent our party's status effects (s2c 0x076); game.party()'s buffs hold them.
 ---| "target_change" # Our target changed (nil: none).
 ---| "time_change" # A Vana'diel minute passed (minutes since midnight).
 ---| "day_change" # A new Vana'diel day (0 Firesday).
@@ -36,7 +37,7 @@
 ---| "chat_message" # A chat line from a player (or a GM): its text, sender, kind (0 say, 1 shout, 3 tell, 4 party, 5 linkshell, 0x1a yell, 0x1b linkshell 2, 0x21 unity) and whether a GM sent it.
 ---| "action" # A decoded action packet (s2c 0x028): actor, category, param, info and targets with their results.
 ---| "battle_message" # A battle message (s2c 0x029 / 0x02D): actor, target, message id and its two parameters.
----| "suggestions" # The client's suggestion rules picked new rows for the modern battle menu (while it is open and a mod listens; none when it closes): a list of battle_rows rows ({kind, id, target, reason, label, group}); held still while the cursor is on one of them, only its submenu's spells retaken.
+---| "suggestions" # From the Battle Suggestions mod (mods.emit): its rules picked new rows for the modern battle menu (none when it closes): a list of battle_rows rows ({kind, id, target, reason, label, group}).
 ---| "synth_amount" # The synthesis window's count step (client option synth_amount) was answered: the first synthesis has gone out; recipe = {crystal, items (one material id per unit)} for actions.synth.
 ---| "synth_result" # Our synthesis was answered (s2c 0x06F): result 0 and 12 made, 1 failed (materials lost); others refused or cut short (the reason's line printed); item, count, grade (0 normal, 1..3 high quality) of what was made.
 ---| "zone_text" # A zone dialogue line came (s2c 0x036 / 0x02A / 0x027): its id in the install (res.zone_text), its actor, whether MesNum's bit 15 marks it plain, the packet.
@@ -67,6 +68,7 @@
 ---@field target integer? our target's server id
 ---@field focus_target integer? the focus target's server id (/focustarget: one of our party, not us)
 ---@field last_target integer? the target before the current one, while it is here and can be targeted
+---@field pet integer? our pet's server id (an avatar, wyvern, jug pet, automaton or luopan) while it is here
 ---@field away boolean the /away flag (the server's word; /online clears it)
 ---@field anonymous boolean the /anon flag
 ---@field seeking boolean seeking a party (/seacom's flag)
@@ -88,6 +90,8 @@
 ---@field targetable boolean
 ---@field hidden boolean
 ---@field master integer the master's index (pets), 0 for none
+---@field trust boolean a trust (an alter ego called into the party)
+---@field radar integer? the compass radar's colour for it (0xRRGGBB), nil while the radar does not show it
 ---@field me boolean? true for our own character
 ---@field race integer?
 ---@field model integer a monster or NPC model id (0 for a player-style look)
@@ -125,6 +129,7 @@
 ---@field leader boolean
 ---@field alliance_leader boolean
 ---@field buffs integer[]
+---@field hp_max integer? the max HP the party window goes by (a member's as last seen at 100 %)
 
 --- An item in a bag (game.items).
 ---@class vana.Item
@@ -375,7 +380,7 @@ function filters.battle(filter) end
 ---@param id integer what filters.chat / typed / battle returned
 function filters.off(id) end
 
---- Adds or replaces a row in the Timers window (shown for mods' rows even with the Timers Extra off), counting down `seconds`: options section ('recast' | 'buff' (default) | 'debuff'), group (a heading, e.g. a target's name), icon {kind = 'status' | 'spell' | 'ability', id}, total (the gauge's whole length), fills (toward ready, as recasts do).
+--- Adds or replaces a row in the Timers mod's windows (through its service; nothing while it is not running; shown even with its own tracking off), counting down `seconds`: options section ('recast' | 'buff' (default) | 'debuff'), group (a heading, e.g. a target's name), icon {kind = 'status' | 'spell' | 'ability', id}, total (the gauge's whole length), fills (toward ready, as recasts do).
 ---@param name string 
 ---@param seconds number 
 ---@param options? table 
@@ -388,7 +393,7 @@ function timers.remove(name) end
 --- Removes every row of the mod's.
 function timers.clear() end
 
---- Creates or replaces a window: title, width, help, and elements in order. Element types: text {id, text, dim, colour}; buttons {id, label, items, marked} (marked makes them options); slider {id, label, steps, at, shown}; list {id, rows, columns, at, height} (a row is a string or {cells..., icon = {kind = 'item' | 'status' | 'spell' | 'ability', id}, colour}; columns {title, width, align = 'right'}, a heading click sends 'sort'); gauge {id, label, value 0..1, text, kind hp|mp|tp|cast|experience|recast, style = 'row' (a list row: the label, the text at the right, a thin bar under, as the training regime's; dim when done)}; separator; tabs {id, items, at} (pages: an element's page = n shows only on page n of the tabs above it); input {id, label, text, max, filter} (filter = true: typing goes into it while the window has the focus, or into the line under the cursor, the other keys work the window) (a typed line: Enter starts and ends it, Escape undoes it); key {id, label, text} (a key combination such as 'ctrl+q': Enter or a click listens, the next key press with its modifiers becomes the text and sends 'change', Backspace clears it, Escape stops; ui.update(window, id, {listen = true}) starts listening); choice {id, label, items, at} (Left / Right turn it); dropdown {id, label, items, at} (a choice whose items open in a list under it, as the login form's combo fields: Enter or a click opens it, Up / Down and Enter or a click pick, sending 'set', Escape or a click elsewhere closes it; Left / Right still turn it); colour {id, label, value = {r, g, b, a}, alpha} (Enter edits it a channel at a time); section {id, label, open} (folds what is under it, to the next section or tabs); timers {id, section = 'recasts' | 'buffs' | 'debuffs', builtin} (a section of the client's timers in an edge window with its panel: the mods' timers.add rows, and with builtin (the default) the client's own: our recasts and effects, the ones we put on others); canvas {id, w, h, draw} (a region the mod draws in, in its own units: draw is a list of {type = 'line', x1, y1, x2, y2, width} | {type = 'rect', x, y, w, h, to (a bottom colour: a gradient), line (outline width), round (corner radius)} | {type = 'circle', x, y, r, line} | {type = 'tri', x1, y1, x2, y2, x3, y3} | {type = 'text', x, y, text, size, align = 'center' | 'right', font = 'bold', outline} | {type = 'tip', x, y, w, h, title, text} (a tooltip region, not drawn) | {type = 'icon', x, y, size, kind = 'item' | 'status' | 'spell' | 'ability', id} (its colour tints it), each with a colour; ui.update(window, canvas, {draw = ...}) redraws it; a click sends 'click' {x, y, button = 'left' | 'right'}, the pointer 'hover' {x, y} as it moves and 'leave', a drag 'drag_start', 'drag' and 'drag_end' {x, y, dx, dy, sx, sy (on screen, window pixels: modern UI), window (the mod's other window whose canvas is under the pointer)}, held to the release wherever the pointer goes, crossing the mod's other canvases as a HUD drag does (drag_over, drag_out, drop {from = this canvas}); one of the mod's HUD elements dragged over it sends 'drag_over' {x, y, from = the element} as it moves and 'drag_out' as it leaves, and let go over it 'drop' {x, y, from}, in the modern UI). chip {id, text, note, tone = 'waiting' | 'refused' | 'quiet', detail} (a status line as the pending-action chip's: a dot, the text, the note at the right in the tone's colour, the detail under it; modern UI only); targets {id, rows} (rows {entity (server id), label, tag}: each the label, the entity's name in its colour and its HP, as the focus panel's rows; a click targets it; modern UI only). Tab moves the cursor as Down, Shift+Tab as Up. Every element may have tip (the help shown while the cursor or pointer is on it) and page. Indexes are 1-based. Window options: opacity (0..1, the whole window: per-window opacity; ui.opacity changes it), hud (never takes the keys), frame = false (no frame), x / y (its place in the classic UI), modal (keeps the keys and the pointer while open; centred unless placed), popup (modal, opened at the pointer or where ui.open says, closed by a click outside it), animate (the modern UI fades it in and grows it up from its bottom edge as it opens, and folds it back as it closes), edge (an edge window, as the Timers and the training regime: on a screen edge, the title its tab when folded, heading a line over the elements whose click folds it; never takes the keys; resize lets it be made wider; grow = 'up' keeps its bottom edge as its canvas grows or shrinks, its top on the top edge, and its handler gets 'dock' {side = 'top' | 'bottom' | 'left' | 'right' | 'free'} when that changes), panel ('regime', 'timers_recasts', 'timers_buffs', 'timers_debuffs', 'skillchains' (the client's skillchain view, whatever its elements), 'minimap' (the client's minimap, and Wide Scan under it in the modern UI): it stands in for that built-in panel, with its place, fold, ui.native.hide and /uimodes; the classic UI draws only such edge windows in the Timers' dock); an ordinary window's panel 'focus' stands in for the modern focus panel (on the target panel, gone while an event takes the target window down) and 'pending' for the pending-action chip's panel (over the cast bar); neither is drawn in the classic UI. It draws in the active UI's look (classic Config page or modern panel).
+--- Creates or replaces a window: title, width, help, and elements in order. Element types: text {id, text, dim, colour}; buttons {id, label, items, marked} (marked makes them options); slider {id, label, steps, at, shown}; list {id, rows, columns, at, height} (a row is a string or {cells..., icon = {kind = 'item' | 'status' | 'spell' | 'ability', id}, colour}; columns {title, width, align = 'right'}, a heading click sends 'sort'); gauge {id, label, value 0..1, text, kind hp|mp|tp|cast|experience|recast, style = 'row' (a list row: the label, the text at the right, a thin bar under, as the training regime's; dim when done)}; separator; tabs {id, items, at} (pages: an element's page = n shows only on page n of the tabs above it); input {id, label, text, max, filter} (filter = true: typing goes into it while the window has the focus, or into the line under the cursor, the other keys work the window) (a typed line: Enter starts and ends it, Escape undoes it); key {id, label, text} (a key combination such as 'ctrl+q': Enter or a click listens, the next key press with its modifiers becomes the text and sends 'change', Backspace clears it, Escape stops; ui.update(window, id, {listen = true}) starts listening); choice {id, label, items, at} (Left / Right turn it); dropdown {id, label, items, at} (a choice whose items open in a list under it, as the login form's combo fields: Enter or a click opens it, Up / Down and Enter or a click pick, sending 'set', Escape or a click elsewhere closes it; Left / Right still turn it); colour {id, label, value = {r, g, b, a}, alpha} (Enter edits it a channel at a time); section {id, label, open} (folds what is under it, to the next section or tabs); map {id, dots} (the zone's map around us in the minimap panel's window, drawn by the client with our marker; dots {x, z, colour = 0xRRGGBB or {r, g, b}, target, tip}; the wheel over it sends 'wheel' {notches}; the zoom is the client option minimap_span); lines {id, lines} (lines of text in tones: each {text, tone = 'text' | 'muted' | 'gold' | 'bronze' | {r, g, b, a}, strong, elements = {element ids, icons after it}} or {spans = {...}, right (a span at the right end), column (the spans after the first from there), indent, bar = 0..1 (a thin gauge in its tone), fold = key (a header with a chevron, open; a click sends 'fold' {key}), heading, big, gap}; the skillchain helper's view); timers {id, section = 'recasts' | 'buffs' | 'debuffs', groups} (timer rows drawn as the Timers' sections, in an edge window with its panel: groups {name?, rows {name, left (seconds, counting down from when given; at or below 0 dimmed), total (the gauge's length; 0 none), fills (toward ready), icon {kind = 'status' (default) | 'spell' | 'ability', id}}}, in the order given; recasts as rows, the others as icon cells by group in the modern UI); canvas {id, w, h, draw} (a region the mod draws in, in its own units: draw is a list of {type = 'line', x1, y1, x2, y2, width} | {type = 'rect', x, y, w, h, to (a bottom colour: a gradient), line (outline width), round (corner radius)} | {type = 'circle', x, y, r, line} | {type = 'tri', x1, y1, x2, y2, x3, y3} | {type = 'text', x, y, text, size, align = 'center' | 'right', font = 'bold', outline} | {type = 'tip', x, y, w, h, title, text} (a tooltip region, not drawn) | {type = 'icon', x, y, size, kind = 'item' | 'status' | 'spell' | 'ability', id} (its colour tints it), each with a colour; ui.update(window, canvas, {draw = ...}) redraws it; a click sends 'click' {x, y, button = 'left' | 'right'}, the pointer 'hover' {x, y} as it moves and 'leave', a drag 'drag_start', 'drag' and 'drag_end' {x, y, dx, dy, sx, sy (on screen, window pixels: modern UI), window (the mod's other window whose canvas is under the pointer)}, held to the release wherever the pointer goes, crossing the mod's other canvases as a HUD drag does (drag_over, drag_out, drop {from = this canvas}); one of the mod's HUD elements dragged over it sends 'drag_over' {x, y, from = the element} as it moves and 'drag_out' as it leaves, and let go over it 'drop' {x, y, from}, in the modern UI). chip {id, text, note, tone = 'waiting' | 'refused' | 'quiet', detail} (a status line as the pending-action chip's: a dot, the text, the note at the right in the tone's colour, the detail under it; modern UI only); targets {id, rows} (rows {entity (server id), label, tag}: each the label, the entity's name in its colour and its HP, as the focus panel's rows; a click targets it; modern UI only). Tab moves the cursor as Down, Shift+Tab as Up. Every element may have tip (the help shown while the cursor or pointer is on it) and page. Indexes are 1-based. Window options: opacity (0..1, the whole window: per-window opacity; ui.opacity changes it), hud (never takes the keys), frame = false (no frame), x / y (its place in the classic UI), modal (keeps the keys and the pointer while open; centred unless placed), popup (modal, opened at the pointer or where ui.open says, closed by a click outside it), animate (the modern UI fades it in and grows it up from its bottom edge as it opens, and folds it back as it closes), edge (an edge window, as the Timers and the training regime: on a screen edge, the title its tab when folded, heading a line over the elements whose click folds it; never takes the keys; resize lets it be made wider; fit = true makes it as wide as its lines need (width the least, half the screen the most); grow = 'up' keeps its bottom edge as its canvas grows or shrinks, its top on the top edge, and its handler gets 'dock' {side = 'top' | 'bottom' | 'left' | 'right' | 'free'} when that changes), panel ('regime', 'timers_recasts', 'timers_buffs', 'timers_debuffs', 'skillchains' (the skillchain helper's: its lines element drawn in the Timers' dock in the classic UI), 'minimap' (its map element in a corner, and Wide Scan under it in the modern UI): it stands in for that built-in panel, with its place, fold, ui.native.hide and /uimodes; the classic UI draws only such edge windows in the Timers' dock); an ordinary window's panel 'focus' stands in for the modern focus panel (on the target panel, gone while an event takes the target window down) and 'pending' for the pending-action chip's panel (over the cast bar); neither is drawn in the classic UI. It draws in the active UI's look (classic Config page or modern panel).
 ---@param id string 
 ---@param spec vana.WindowSpec 
 function ui.window(id, spec) end
@@ -540,6 +545,10 @@ function ui.native.list() end
 --- Whether any game window has the keys (a HUD may hide meanwhile).
 ---@return boolean
 function ui.native.menu_open() end
+
+--- The modern battle menu while it shows its commands (no target prompt over it): {row (the battle_rows row under the cursor, 1-based), sub (that row's open submenu's cursor)}; nil otherwise.
+---@return {row: integer?, sub: integer?}?
+function ui.native.battle_menu() end
 
 --- Whether the interface is hidden (the UI-hide key).
 ---@return boolean
@@ -982,8 +991,8 @@ function game.equipment() end
 ---@return {id: integer, remaining: number?}[]
 function game.buffs() end
 
---- Seconds left on recasts: spells by spell id, abilities by recast id (0 once ready); totals: each running recast's whole length, as the server gave it when it started (gear, merits and job points in), or the base recast for one already running at login.
----@return {spells: table<integer, number>, abilities: table<integer, number>, totals: {spells: table<integer, number>, abilities: table<integer, number>}}
+--- Seconds left on recasts: spells by spell id, abilities by recast id (0 once ready); totals: each running recast's whole length, as the server gave it when it started (gear, merits and job points in), or the base recast for one already running at login; calc: by recast id, the server's two adjustments to an ability's recast (calc1: sixtieths off the whole, its low 6 bits; calc2: seconds added), which the charge abilities' shares follow.
+---@return {spells: table<integer, number>, abilities: table<integer, number>, totals: {spells: table<integer, number>, abilities: table<integer, number>}, calc: table<integer, {calc1: integer, calc2: integer}>}
 function game.recasts() end
 
 --- The Vana'diel clock: earth (seconds since the Vana'diel epoch), year, month, day, hour, minute, weekday (0 Firesday), moon_phase, moon (percent).
@@ -1001,6 +1010,12 @@ function game.clock() end
 --- The weather id.
 ---@return integer
 function game.weather() end
+
+--- Whether a spell or ability ('spell' | 'ability', id) can be used now, as the game's lists decide (status, recast, job and level, MP, TP, a blue spell set): true, or false and the game's refusal (a group 7 message id; nil for a silent refusal).
+---@param kind string 
+---@param id integer 
+---@return boolean, integer?
+function game.usable(kind, id) end
 
 --- The key item ids we hold.
 ---@return integer[]
@@ -1039,8 +1054,8 @@ function game.stats() end
 ---@return table<integer, {level: integer, next_cost: integer}>
 function game.merits() end
 
---- Capacity points, job points and job points spent, by job id.
----@return table<integer, {capacity: integer, points: integer, spent: integer}>
+--- Capacity points, job points and job points spent, by job id; upgrades: each job point upgrade's level by its id (the job is the id's upper bits, id >> 5).
+---@return table<integer, {capacity: integer, points: integer, spent: integer, upgrades: table<integer, integer>}>
 function game.job_points() end
 
 --- Our gil.
@@ -1383,7 +1398,7 @@ function res.zone_text_find(zone, prefix) end
 ---@return table?
 function res.item(id) end
 
---- A spell's record: name, description, kind (1 white .. 8 trust), element, targets (bits), skill, mp, cast_time and recast (seconds), range, levels (by job), main_only (the job it is cast as main only: 20 SCH, 21 GEO), job_points (jobs whose levels value is the job points it takes at 99).
+--- A spell's record: name, description, kind (1 white .. 8 trust), element, targets (bits), skill, mp, cast_time and recast (seconds), range, area (it always hits an area), levels (by job), main_only (the job it is cast as main only: 20 SCH, 21 GEO), job_points (jobs whose levels value is the job points it takes at 99).
 ---@param id integer 
 ---@return table?
 function res.spell(id) end
@@ -1397,6 +1412,11 @@ function res.ability(id) end
 ---@param id integer 
 ---@return string?
 function res.status(id) end
+
+--- The game's status info for an effect: cancellable (the player can cancel it), untimed (its icon never shows a time), description; nil when the game has none.
+---@param id integer 
+---@return {cancellable: boolean, untimed: boolean, description: string}?
+function res.status_info(id) end
 
 --- A zone's name.
 ---@param id integer 
@@ -1754,6 +1774,7 @@ function settings.get(key) end
 --   level_down(level: integer): Our main job's level went down.
 --   buff_gain(id: integer): We gained a status effect.
 --   buff_lose(id: integer): We lost a status effect.
+--   party_buffs(): The server sent our party's status effects (s2c 0x076); game.party()'s buffs hold them.
 --   target_change(id: integer?, previous: integer?): Our target changed (nil: none).
 --   time_change(minute: integer, previous: integer): A Vana'diel minute passed (minutes since midnight).
 --   day_change(weekday: integer, previous: integer): A new Vana'diel day (0 Firesday).
@@ -1765,7 +1786,7 @@ function settings.get(key) end
 --   chat_message(text: string, sender: string, kind: integer, gm: boolean): A chat line from a player (or a GM): its text, sender, kind (0 say, 1 shout, 3 tell, 4 party, 5 linkshell, 0x1a yell, 0x1b linkshell 2, 0x21 unity) and whether a GM sent it.
 --   action(action: vana.Action): A decoded action packet (s2c 0x028): actor, category, param, info and targets with their results.
 --   battle_message(actor: integer, target: integer, message: integer, param1: integer, param2: integer): A battle message (s2c 0x029 / 0x02D): actor, target, message id and its two parameters.
---   suggestions(rows: table[]): The client's suggestion rules picked new rows for the modern battle menu (while it is open and a mod listens; none when it closes): a list of battle_rows rows ({kind, id, target, reason, label, group}); held still while the cursor is on one of them, only its submenu's spells retaken.
+--   suggestions(rows: table[]): From the Battle Suggestions mod (mods.emit): its rules picked new rows for the modern battle menu (none when it closes): a list of battle_rows rows ({kind, id, target, reason, label, group}).
 --   synth_amount(count: integer, recipe: table): The synthesis window's count step (client option synth_amount) was answered: the first synthesis has gone out; recipe = {crystal, items (one material id per unit)} for actions.synth.
 --   synth_result(result: integer, item: integer, count: integer, grade: integer): Our synthesis was answered (s2c 0x06F): result 0 and 12 made, 1 failed (materials lost); others refused or cut short (the reason's line printed); item, count, grade (0 normal, 1..3 high quality) of what was made.
 --   zone_text(id: integer, actor: integer, plain: boolean, packet: integer): A zone dialogue line came (s2c 0x036 / 0x02A / 0x027): its id in the install (res.zone_text), its actor, whether MesNum's bit 15 marks it plain, the packet.

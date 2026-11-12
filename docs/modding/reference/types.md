@@ -28,6 +28,7 @@ Your own character, as `game.player()` returns it. Fields that need data from th
 | `sub_level` | `integer?` | Support job level. |
 | `target` | `integer?` | Your target's server id; nil without a target. |
 | `focus_target` | `integer?` | The focus target's server id (`/focustarget`: a member of your party, not you); nil without one. |
+| `pet` | `integer?` | Your pet's server id (an avatar, wyvern, jug pet, automaton or luopan), as your status names it, while it is here; nil without one. |
 | `last_target` | `integer?` | The target before the current one, while it is here and can be targeted; nil otherwise. |
 | `away` | `boolean` | The /away flag as the server last sent it (/online clears it). |
 | `anonymous` | `boolean` | The /anon flag. |
@@ -63,6 +64,8 @@ A character, NPC or monster in the zone, from `game.entity`, `game.entities`, `g
 | `targetable` | `boolean` | It can be targeted. Always true for yourself. |
 | `hidden` | `boolean` | It is hidden outside events. Always false for yourself. |
 | `master` | `integer` | For a pet or trust, its master's index; 0 for none. |
+| `trust` | `boolean` | It is a trust (an alter ego called into a party). |
+| `radar` | `integer?` | The compass radar's colour for it (`0xRRGGBB`; monsters included), nil while the radar does not show it. The minimap's dots. |
 | `me` | `boolean?` | true for your own character; nil for everyone else. |
 | `race` | `integer?` | Its race number; nil when unknown. |
 | `model` | `integer?` | The model id of an NPC or monster; 0 for one drawn from a look. nil for your own entity. |
@@ -113,6 +116,7 @@ A party or alliance member, from `game.party()`. Members in another zone are lis
 | `leader` | `boolean` | The member leads its party. |
 | `alliance_leader` | `boolean` | The member leads the alliance. |
 | `buffs` | `integer[]` | The status effect ids the server sent for the member (use `game.buffs()` for your own). |
+| `hp_max` | `integer?` | The max HP the party window goes by: yours from your stats, a member's as last seen at 100 % HP (HP / HP % when that no longer fits). nil when not known. |
 
 ```lua
 for _, m in ipairs(game.party()) do

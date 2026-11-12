@@ -665,11 +665,11 @@ enum Cmd {
     },
     /// Map LSB text ids of a zone to installed dialogue ids with the bundled table.
     MsgshiftMap { zone: u16, ids: Vec<u32> },
-    /// Regenerate data/skillchains.txt (skill properties, trust skill lists) from LandSandBoat sql/.
+    /// Regenerate the Skillchain mod's data/skillchains.txt (skill properties, trust skill lists) from LandSandBoat sql/.
     SkillchainGen {
         #[arg(long)]
         lsb: PathBuf,
-        #[arg(long, default_value = "crates/vana-client/data/skillchains.txt")]
+        #[arg(long, default_value = "crates/vana-client/assets/mods/skillchain/data/skillchains.txt")]
         out: PathBuf,
     },
     /// Print item records (name, flags, slots, jobs, level, description); --key: key items.

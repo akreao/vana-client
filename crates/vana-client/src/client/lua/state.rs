@@ -219,6 +219,12 @@ pub(super) fn install(lua: &Lua, game: &Table) -> mlua::Result<()> {
                     j.set("capacity", capacity)?;
                     j.set("points", current)?;
                     j.set("spent", spent)?;
+                    // Each upgrade's level by its id (the job in the id's upper bits: id >> 5).
+                    let up = lua.create_table()?;
+                    for (&id, &(level, _)) in w.jp_list.iter().filter(|(id, _)| (**id >> 5) as usize == job) {
+                        up.set(id, level)?;
+                    }
+                    j.set("upgrades", up)?;
                     out.set(job, j)?;
                 }
             }
