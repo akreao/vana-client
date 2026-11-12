@@ -406,7 +406,8 @@ fn tag(w: &World, tag: &str, target_cmd: bool) -> Option<String> {
                 None => job(s.main)?,
             })
         }
-        "<pos>" if !w.room_flag => Some(w.hud_top.grid().to_string()).filter(|g| !g.is_empty()),
+        // Type 0xe: FUN_101f7600(1), worked out now (not the compass's cached suffix).
+        "<pos>" => Some(super::map::grid_text(w, &w.map_regions)).filter(|g| !g.is_empty()),
         // FUN_10076ff0 type 0x15: the tracked target's name from the zone NPC list.
         "<scan>" => w.scan.tracking().and_then(|t| {
             w.npc_names.iter().find(|(id, _)| (*id & 0x3ff) as u16 == t.index & 0x3ff).map(|(_, n)| n.clone())
