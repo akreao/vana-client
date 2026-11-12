@@ -98,7 +98,7 @@ VS Code, see [docs/building-windows.md](docs/building-windows.md).
 
 The binary is `target/release/vana-client` (`vana-client.exe` on Windows). Release builds are incremental, without link-time optimisation; for a binary to hand out, `cargo build --profile dist` (fat LTO, one codegen unit) writes `target/dist/vana-client`.
 
-Published releases are built with `release/build-linux.sh` (in the Steam Runtime 3 "sniper" SDK container, so one binary runs on every current distro) and `release/build-windows.sh` (a MinGW cross build); `release/fetch-ci-builds.sh` runs the Release builds workflow on GitHub for Linux on ARM (the SDK's arm64 image) and macOS (Apple Silicon and Intel) and downloads those. Then `release/publish.sh VERSION` tags them, signs each with the release key (Ed25519, kept outside the repo; its public half is `release/signing-key.pub`, built into the client) and creates the GitHub release that the in-app Update offers. The client installs a release only when its signature checks.
+Published releases are built with `release/build-linux.sh` (in the Steam Runtime 3 "sniper" SDK container, so one binary runs on every current distro); `release/fetch-ci-builds.sh` runs the Release builds workflow on GitHub for Linux on ARM (the SDK's arm64 image), macOS (Apple Silicon and Intel) and Windows (MSVC, the C runtime linked in) and downloads those. Then `release/publish.sh VERSION` tags them, signs each with the release key (Ed25519, kept outside the repo; its public half is `release/signing-key.pub`, built into the client) and creates the GitHub release that the in-app Update offers. The client installs a release only when its signature checks.
 
 ## Install the game data
 

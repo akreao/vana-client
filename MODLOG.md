@@ -23693,3 +23693,17 @@ For lenonk/vana-client#172. Addresses are 30261006_0.
     Ours already shows nothing.
   - Pulse / glint timing: stepped once per draw call (FUN_101fe0b0, the window's +0x10 draw), so once per rendered
     frame; ours steps at 30 a second, retail's frame rate.
+
+## The Windows release built with MSVC on GitHub (2026-11-11)
+
+- Issue #229: Microsoft Defender flagged the 1.0.11 Windows exe as a trojan (2 of 70 engines on VirusTotal); a false
+  positive. The exe was a MinGW cross build (release/build-windows.sh) without an Authenticode signature (our Ed25519
+  signature is only for the in-app updater). MinGW-built Rust binaries draw these machine-learning detections more
+  often than MSVC ones *(inf: widely reported, not measured here)*.
+- release-builds.yml now has a Windows job (windows-latest, x86_64-pc-windows-msvc, dist profile, RUSTFLAGS
+  x86-64-v2 and +crt-static since RUSTFLAGS replaces .cargo/config.toml's): it checks with llvm-objdump that the exe
+  imports no vcruntime / msvcp / api-ms-win-crt DLL, runs `--version` and uploads vana-client-windows-x86_64.exe.
+  release/fetch-ci-builds.sh downloads it with the others; release/publish.sh still requires it. ci.yml is unchanged:
+  its Windows job only lints and tests (its release build was dropped for time and stays dropped).
+- release/build-windows.sh stays for local MinGW test builds.
+- Left: an Authenticode signature (Azure Trusted Signing or SignPath), the real fix for unsigned-binary detections.
