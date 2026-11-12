@@ -1108,15 +1108,15 @@ impl Host for LiveHost<'_> {
                 let (id, target) = (self.wid(*a1), self.wid(*a2));
                 self.stop_scheduler(id, target, name);
             }
-            // FUN_100b7140: on a skeleton actor with a model (+0x120 bit 9), FUN_100ce070 gives every layer of its two
-            // motion lists (+0x674 -> +0x44, lists +0x60 / +0x9c) FUN_1001b520(8.0): each plays on for 8 frames, then
-            // goes, and the status motion (or the idle the script sets next) shows.
+            // FUN_100b7140: on a skeleton actor with a model (+0x120 bit 9), FUN_100ce070 gives every entry of two
+            // motion regions (+0x674 -> +0x44, queues +0x60 / +0x9c = regions 3 and 6: the eyes, and the overlay a
+            // `mou6` talk plays in) FUN_1001b520(8.0): each plays on for 8 ticks, then goes. The body's motions are
+            // not touched.
             Effect::Op { op: 0xd3, sub: Some(0), args, .. } => {
                 let Some(id) = self.arg_actor(&args, 0) else { return };
-                if let Some(p) =
-                    self.w.actors.get_mut(&id).filter(|a| a.character.is_some()).and_then(|a| a.play.as_mut())
-                {
-                    p.end_in(8.0);
+                if let Some(a) = self.w.actors.get_mut(&id).filter(|a| a.character.is_some()) {
+                    a.q.fade_region(3, 8.0);
+                    a.q.fade_region(6, 8.0);
                 }
             }
             // FUN_100b72c0 subs 0 / 1: the thread's own actor (+0x124 bit 29 = sub).
@@ -1353,7 +1353,7 @@ impl Host for LiveHost<'_> {
                     if on == 0
                         && let Some(a) = self.w.actors.get_mut(&id)
                     {
-                        a.mouth = None;
+                        a.mouth_off();
                     }
                 }
             }
@@ -2569,11 +2569,12 @@ pub fn update(w: &mut World, dt: f32) {
     w.event = Some(live);
 }
 
-/// The message window closed: its speaker's mouth stops (FUN_100b1140 on 0x23).
+/// The message window closed: its speaker's mouth stops (FUN_100b2dd0 on 0x23: the countdown +0x14e zeroed and
+/// FUN_100ce160's fade of the mouth region).
 fn close_msg(st: &mut State, w: &mut World) {
     (st.msg, st.auto_advance) = (None, false);
-    for a in w.actors.values_mut() {
-        a.mouth = None;
+    for a in w.actors.values_mut().filter(|a| a.mouth.is_some()) {
+        a.mouth_off();
     }
 }
 
@@ -2725,7 +2726,8 @@ fn finish(w: &mut World, live: Box<Live>) {
             a.pending = None;
             a.play = None;
         }
-        a.mouth = None;
+        // Unbind (FUN_100bd5f0 -> FUN_10087e40): the mouth region fades out and the countdowns go.
+        a.mouth_off();
         a.look.mode = super::actmotion::LookMode::Off;
     }
     for id in &live.st.faded {
