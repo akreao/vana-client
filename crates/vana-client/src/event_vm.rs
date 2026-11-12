@@ -244,6 +244,11 @@ pub trait Host {
     fn race_value(&self, _sub: u8, _a: i32, _b: i32) -> u32 {
         0
     }
+    /// Op 0x71 sub 3 (FUN_10094160): the name filter refuses the input window's text. A dictionary that does not load
+    /// allows it.
+    fn name_refused(&self, _name: &[u8]) -> bool {
+        false
+    }
     /// Op 0xcc 0x11: None while arealist's event pick is up (+0x6d), then its pick (+0x6e: a zone, -1 cancelled).
     fn area_pick(&mut self) -> Option<i32> {
         Some(-1)
@@ -2227,7 +2232,7 @@ impl Runtime {
             }
             // FUN_100b7e10: the input window. 0 / 0x10 / 0x12 / 0x30 / 0x32 open it (kind 0 / val@2 + 1 / val@2 + 3,
             // max 16 / 8 / val@4), 1 sends the last text (c2s 0x060) once it is closed, 2 waits for 0x052 mode 3, 3 the
-            // vulgar-name check (no dictionary here: 0), 0x11 / 0x13 atoi into set@2, 0x31 the 16 bytes into str@2.
+            // name filter's answer into set@2 (0 allowed, 1 refused), 0x11 / 0x13 atoi into set@2, 0x31 the 16 bytes into str@2.
             // The rest go to the host; unknown subs stay. Every call ends the frame.
             0x71 => {
                 let s = sub.unwrap_or(0xff);
@@ -2254,7 +2259,9 @@ impl Runtime {
                         }
                         2 if !self.input_wait => self.adv(v, 2),
                         3 => {
-                            self.set_at(v, 2, 0, 0);
+                            let len = self.input_buf.iter().position(|&c| c == 0).unwrap_or(self.input_buf.len());
+                            let refused = host.name_refused(&self.input_buf[..len]);
+                            self.set_at(v, 2, 0, refused as u32);
                             self.adv(v, 4);
                         }
                         0x11 | 0x13 if !self.input_open => {
@@ -2903,6 +2910,8 @@ pub struct Scripted {
     pub race: u8,
     /// Texts typed into op 0x71's input window, in order (empty once used up).
     pub inputs: std::collections::VecDeque<Vec<u8>>,
+    /// Names the name filter refuses (op 0x71 sub 3).
+    pub refused_names: Vec<Vec<u8>>,
     /// The map is not ready (op 0xd4 sub 0 waits).
     pub map_busy: bool,
     /// The game clock op 0x83 reads (Earth seconds since the Vana'diel epoch).
@@ -2963,6 +2972,7 @@ impl Scripted {
             sched_ticks: None,
             race: 0,
             inputs: Default::default(),
+            refused_names: Vec::new(),
             map_busy: false,
             time: 0,
             ranking: Some([-1, 0, 0, 0, 0, 0, 0, 0]),
@@ -2975,6 +2985,10 @@ impl Scripted {
 }
 
 impl Host for Scripted {
+    fn name_refused(&self, name: &[u8]) -> bool {
+        self.refused_names.iter().any(|n| n == name)
+    }
+
     fn game_time(&self) -> u32 {
         self.time
     }
@@ -3389,7 +3403,6 @@ mod tests {
         assert_eq!(end(&host.log), Some(1_234_567_891));
     }
 
-    /// Op 0x71 over hand-made code: an "Enter number:" input read with atoi, then a name stored as words.
     /// Op 0xb3 (FUN_100bbaf0) over hand-made code: sub 0 starts the request (an effect), sub 1 waits for the result
     /// then sets six values, sub 9 reads the window; here L1 (the entry count) comes back as the end option.
     #[test]
@@ -3743,6 +3756,35 @@ mod tests {
     fn input_window() {
         assert_eq!((Runtime::atoi(b" -42x"), Runtime::atoi(b"+7"), Runtime::atoi(b"")), (-42, 7, 0));
         assert_eq!(Runtime::atoi(b"1234567890123456"), 1234567890123456u64 as i32);
+    }
+
+    /// Op 0x71 sub 3 over hand-made code: the typed name goes to the name filter without its padding, and the answer
+    /// (1 refused, 0 allowed) lands in the operand; here L0 comes back as the end option.
+    #[test]
+    fn input_name_filter() {
+        let code = vec![
+            0x71, 0x00, // open the input window
+            0x71, 0x01, // send the text once the window is closed
+            0x71, 0x02, // wait for the server's answer
+            0x71, 0x03, 0x00, 0x00, // L0 = the name filter's answer
+            0x03, 0x01, 0x10, 0x00, 0x00, // Z1 (the end option) = L0
+            0x21, 0x00,
+        ];
+        let actor = 0x010e_601b;
+        for (typed, want) in [(&b"Badname"[..], 1), (b"Goodname", 0)] {
+            let blocks = vec![event::Block { actor, events: vec![(1, 0)], consts: vec![], code: code.clone() }];
+            let mut host = Scripted::new(&[]);
+            host.refused_names.push(b"Badname".to_vec());
+            let start = Start { zone: 248, event: 1, target: actor, ..Default::default() };
+            let mut rt = Runtime::start(blocks, None, start, Memory::default(), &mut host);
+            // The block's first entry runs at the start and again as the event (FUN_100baf30), so the window is
+            // up before the first frame, whose open is ignored; then the player closes it with the text.
+            assert!(host.log.iter().any(|e| matches!(e, Effect::Input { kind: 0, max: 16 })));
+            rt.tick(&mut host, 1.0);
+            rt.input_done(typed);
+            run_scripted(&mut rt, &mut host, 60).expect("finished");
+            assert_eq!(end(&host.log), Some(want), "{}", String::from_utf8_lossy(typed));
+        }
     }
 
     /// Lower Jeuno 0xc7 (compatibility test): the Password: input (kind 0), its text sent with c2s 0x060, then the wait
